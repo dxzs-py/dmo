@@ -1,3 +1,4 @@
 export default {
-  Host: 'http://127.0.0.1',
+  Host: 'http://127.0.0.1:8000',
+  API_BASE_URL: 'http://127.0.0.1:8000/api',
 }

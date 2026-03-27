@@ -16,8 +16,37 @@ Including another URLconf
 """
 
 from django.contrib import admin
-from django.urls import path
+from django.urls import path, include
+from django.http import JsonResponse
+from django.conf import settings
+
+def health_check(request):
+    return JsonResponse({
+        "status": "healthy",
+        "version": settings.APP_VERSION,
+        "debug": settings.DEBUG,
+    })
+
+def root_info(request):
+    return JsonResponse({
+        "name": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+        "description": "LC-StudyLab 智能学习 & 研究助手 API",
+        "health": "/health",
+        "api": {
+            "chat": "/api/chat/",
+            "rag": "/api/rag/",
+            "workflow": "/api/workflow/",
+            "deep_research": "/api/deep-research/",
+        }
+    })
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("", root_info),
+    path("health/", health_check),
+    path("api/chat/", include("Django_xm.apps.chat.urls")),
+    path("api/rag/", include("Django_xm.apps.rag.urls")),
+    path("api/workflow/", include("Django_xm.apps.workflow.urls")),
+    path("api/deep-research/", include("Django_xm.apps.deep_research.urls")),
 ]

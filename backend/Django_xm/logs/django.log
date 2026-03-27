@@ -1,0 +1,17 @@
+INFO 2026-03-27 18:13:47,579 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 18:21:08,020 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 18:22:30,695 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 18:22:38,537 basehttp 213 "GET / HTTP/1.1" 200 271
+WARNING 2026-03-27 18:22:39,224 log 253 Not Found: /favicon.ico
+WARNING 2026-03-27 18:22:39,226 basehttp 213 "GET /favicon.ico HTTP/1.1" 404 3131
+INFO 2026-03-27 20:11:39,305 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 20:38:57,190 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 20:41:42,394 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\libs\langchain_core\tools.py changed, reloading.
+INFO 2026-03-27 20:41:45,301 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 20:42:20,422 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 20:47:31,973 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 20:49:30,371 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\libs\langchain_rag\index_manager.py changed, reloading.
+INFO 2026-03-27 20:49:32,804 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 20:49:55,070 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\libs\langchain_rag\index_manager.py changed, reloading.
+INFO 2026-03-27 20:49:57,348 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 20:50:57,088 autoreload 667 Watching for file changes with StatReloader
