@@ -1,0 +1,4 @@
+./idea
+./idea/*
+./git
+./backend/db.sqlite3
