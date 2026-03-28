@@ -3,10 +3,12 @@ import time
 import uuid
 from datetime import datetime
 from typing import Optional, Dict, Any
+from pathlib import Path
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from django.http import FileResponse
 
 from .serializers import (
     ResearchStartSerializer,
@@ -15,6 +17,7 @@ from .serializers import (
 )
 from .models import ResearchTask
 from .deep_agent import create_deep_research_agent
+from Django_xm.apps.core.tools.filesystem import get_filesystem
 
 logger = logging.getLogger(__name__)
 
@@ -263,7 +266,91 @@ class DeepResearchFilesView(APIView):
                 }, status=status.HTTP_404_NOT_FOUND)
                 
         except Exception as e:
-            logger.error(f"❌ 列出研究文件失败：{e}", exc_info=True)
+                logger.error(f"❌ 列出研究文件失败：{e}", exc_info=True)
+                return Response({
+                    'error': str(e)
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class DeepResearchFileDownloadView(APIView):
+    """
+    获取研究文件内容
+    """
+    
+    def get(self, request, task_id, filename):
+        try:
+            try:
+                task = ResearchTask.objects.get(task_id=task_id)
+                
+                logger.info(f"📖 读取研究文件：{task_id}/{filename}")
+                
+                fs = get_filesystem(task_id)
+                
+                # 解析文件路径
+                if "/" in filename:
+                    parts = filename.split("/")
+                    subdirectory = "/".join(parts[:-1])
+                    file_name = parts[-1]
+                else:
+                    subdirectory = None
+                    file_name = filename
+                
+                # 读取文件内容
+                try:
+                    if subdirectory:
+                        content = fs.read_file(file_name, subdir=subdirectory)
+                    else:
+                        content = fs.read_file(file_name)
+                except Exception as e:
+                    return Response({
+                        'error': f'读取文件失败：{str(e)}'
+                    }, status=status.HTTP_404_NOT_FOUND)
+                
+                # 获取文件信息
+                return Response({
+                    'filename': filename,
+                    'content': content,
+                })
+                
+            except ResearchTask.DoesNotExist:
+                return Response({
+                    'error': '研究任务不存在'
+                }, status=status.HTTP_404_NOT_FOUND)
+                
+        except Exception as e:
+            logger.error(f"❌ 读取文件失败：{e}", exc_info=True)
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class DeepResearchTaskDeleteView(APIView):
+    """
+    删除研究任务
+    """
+    
+    def delete(self, request, task_id):
+        try:
+            logger.info(f"🗑️ 删除研究任务：{task_id}")
+            
+            # 删除缓存的任务状态
+            if task_id in _research_tasks:
+                del _research_tasks[task_id]
+            
+            # 删除数据库记录
+            try:
+                task = ResearchTask.objects.get(task_id=task_id)
+                task.delete()
+            except ResearchTask.DoesNotExist:
+                pass
+            
+            return Response({
+                'status': 'success',
+                'message': f'研究任务 {task_id} 已删除'
+            })
+            
+        except Exception as e:
+            logger.error(f"❌ 删除研究任务失败：{e}", exc_info=True)
             return Response({
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

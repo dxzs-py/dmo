@@ -3,6 +3,7 @@
 """
 
 import logging
+from datetime import datetime
 from typing import Dict, Any, List
 from pydantic import BaseModel, Field
 
@@ -30,6 +31,14 @@ class QuizSchema(BaseModel):
 
 
 def quiz_generator_node(state: StudyFlowState) -> Dict[str, Any]:
+    """
+    练习题生成节点
+
+    功能：
+    1. 根据学习计划生成练习题
+    2. 支持多种题型
+    3. 提供答案解析
+    """
     logger.info("[Quiz Generator Node] 开始生成练习题")
 
     try:
@@ -63,7 +72,11 @@ def quiz_generator_node(state: StudyFlowState) -> Dict[str, Any]:
 3. 难度适配：根据学习计划的难度级别出题
 4. 覆盖知识点：题目应覆盖学习计划中的关键知识点
 5. 答案解析：每题都要提供详细的答案解析
-6. 分值分配：总分控制在100分左右
+6. 分值分配：
+   - 选择题：每题10-15分
+   - 填空题：每题15-20分
+   - 简答题：每题20-30分
+   - 总分控制在100分左右
 
 请确保题目清晰、答案准确、解析详细。"""
 
@@ -71,12 +84,12 @@ def quiz_generator_node(state: StudyFlowState) -> Dict[str, Any]:
 主题：{learning_plan['topic']}
 难度：{learning_plan['difficulty']}
 关键知识点：
-{', '.join(learning_plan['key_points'])}
+{chr(10).join(f"- {point}" for point in learning_plan['key_points'])}
 
 参考文档：
 {context}
 
-请根据以上信息生成一套练习题。"""
+请根据以上信息生成练习题。"""
 
         logger.info("[Quiz Generator Node] 调用 LLM 生成练习题...")
         quiz_response = structured_model.invoke([
@@ -104,8 +117,25 @@ def quiz_generator_node(state: StudyFlowState) -> Dict[str, Any]:
 
         logger.info(f"[Quiz Generator Node] 练习题生成成功，共 {len(questions)} 题")
 
-        return {"quiz": quiz}
+        quiz_display = f"\n\n📝 **练习题已生成**（共 {len(questions)} 题，总分 {quiz['total_points']} 分，建议用时 {quiz['time_limit']} 分钟）\n\n"
+
+        for i, q in enumerate(questions, 1):
+            quiz_display += f"**第 {i} 题** ({q['points']} 分)\n"
+            quiz_display += f"{q['question']}\n"
+
+            if q['type'] == 'multiple_choice' and q['options']:
+                for j, opt in enumerate(q['options'], 1):
+                    quiz_display += f"  {chr(64+j)}. {opt}\n"
+
+            quiz_display += "\n"
+
+        return {
+            "quiz": quiz,
+            "messages": [{"role": "assistant", "content": quiz_display}],
+            "current_step": "quiz_generator",
+            "updated_at": datetime.now().isoformat()
+        }
 
     except Exception as e:
-        logger.error(f"[Quiz Generator Node] 生成练习题失败: {e}")
+        logger.error(f"[Quiz Generator Node] 生成练习题失败: {e}", exc_info=True)
         raise

@@ -123,3 +123,67 @@ async def aquery_rag_agent(agent, query: str, return_sources: bool = True) -> Di
     except Exception as e:
         logger.error(f"异步查询失败: {e}")
         raise
+
+
+def format_rag_response(
+    output: str,
+    intermediate_steps: Optional[List] = None,
+) -> Dict[str, Any]:
+    """格式化 RAG 响应，提取来源文档"""
+    response = {
+        "answer": output,
+        "sources": [],
+        "retrieved_documents": [],
+    }
+
+    if not intermediate_steps:
+        return response
+
+    for step in intermediate_steps:
+        if len(step) >= 2:
+            action, observation = step[0], step[1]
+
+            if hasattr(action, "tool") and "knowledge" in action.tool.lower():
+                if isinstance(observation, list):
+                    for doc in observation:
+                        response["retrieved_documents"].append(doc)
+
+                        if hasattr(doc, "metadata") and doc.metadata:
+                            source = doc.metadata.get("source") or doc.metadata.get("filename")
+                            if source and source not in response["sources"]:
+                                response["sources"].append(source)
+
+    return response
+
+
+def create_conversational_rag_agent(
+    retriever: BaseRetriever,
+    model: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+    **kwargs,
+):
+    """创建支持对话历史的 RAG Agent"""
+    if system_prompt is None:
+        system_prompt = """你是一个智能问答助手，专门回答基于知识库的问题。
+
+你的任务：
+1. 理解用户的问题，考虑对话历史的上下文
+2. 使用 knowledge_base 工具搜索相关信息
+3. 基于检索到的文档内容和对话历史回答问题
+4. 保持对话的连贯性和上下文感知
+
+回答要求：
+- 上下文感知：理解用户问题与之前对话的关系
+- 准确：严格基于文档内容
+- 自然：像人类一样进行对话
+- 引用：适当引用来源文档
+"""
+
+    logger.info("💬 创建对话式 RAG Agent")
+
+    return create_rag_agent(
+        retriever=retriever,
+        model=model,
+        system_prompt=system_prompt,
+        **kwargs,
+    )

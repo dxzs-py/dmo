@@ -1,5 +1,7 @@
 """
 自动评分节点 (Grading Node)
+
+本节点负责对用户提交的答案进行自动评分。
 """
 
 import logging
@@ -13,6 +15,15 @@ logger = get_logger(__name__)
 
 
 def grading_node(state: StudyFlowState) -> Dict[str, Any]:
+    """
+    自动评分节点
+
+    功能：
+    1. 对比用户答案和标准答案
+    2. 对于选择题和填空题，进行精确匹配
+    3. 对于简答题，使用 LLM 进行语义评分
+    4. 生成详细的评分报告
+    """
     logger.info("[Grading Node] 开始评分")
 
     try:
@@ -72,40 +83,50 @@ def grading_node(state: StudyFlowState) -> Dict[str, Any]:
 评语: XXX"""
 
                 response = model.invoke([{"role": "user", "content": grading_prompt}])
+                response_text = response.content
 
                 try:
-                    content = response.content
-                    lines = content.split("\n")
-                    score_line = [l for l in lines if l.startswith("得分:")][0]
-                    points_earned = int(score_line.split(":")[1].strip())
-                    feedback_lines = [l for l in lines if l.startswith("评语:")]
-                    feedback = feedback_lines[0].split(":", 1)[1].strip() if feedback_lines else ""
-                    is_correct = points_earned >= points_possible * 0.6
-                except Exception:
-                    points_earned = 0
-                    feedback = "评分失败"
-                    is_correct = False
+                    lines = response_text.strip().split('\n')
+                    score_line = [l for l in lines if '得分' in l or 'score' in l.lower()][0]
+                    points_earned = int(''.join(filter(str.isdigit, score_line)))
+                    points_earned = min(max(points_earned, 0), points_possible)
+
+                    feedback_line = [l for l in lines if '评语' in l or 'feedback' in l.lower()]
+                    feedback = feedback_line[0].split(':', 1)[1].strip() if feedback_line else response_text
+
+                except Exception as parse_error:
+                    logger.warning(f"[Grading Node] 解析 LLM 评分失败: {parse_error}，使用默认评分")
+                    keywords = correct_answer.lower().split()[:5]
+                    matched = sum(1 for kw in keywords if kw in user_answer.lower())
+                    points_earned = int((matched / len(keywords)) * points_possible)
+                    feedback = f"得分基于关键词匹配。建议参考标准答案：{correct_answer}"
+
+                is_correct = points_earned >= points_possible * 0.6
 
             else:
-                points_earned = 0
-                feedback = "未知题型"
+                logger.warning(f"[Grading Node] 未知题型: {q_type}")
                 is_correct = False
+                points_earned = 0
+                feedback = "未知题型，无法评分"
 
-            score_details.append({
+            detail: ScoreDetail = {
                 "question_id": q_id,
+                "user_answer": user_answer,
+                "correct_answer": correct_answer,
                 "is_correct": is_correct,
                 "points_earned": points_earned,
                 "points_possible": points_possible,
                 "feedback": feedback
-            })
+            }
+            score_details.append(detail)
 
             total_earned += points_earned
             if is_correct:
                 correct_count += 1
 
-        score = (total_earned / total_points * 100) if total_points > 0 else 0
+        score = int((total_earned / total_points) * 100) if total_points > 0 else 0
 
-        logger.info(f"[Grading Node] 评分完成: {score}分 ({correct_count}/{len(questions)})")
+        logger.info(f"[Grading Node] 评分完成: {score}分 ({correct_count}/{len(questions)} 题正确)")
 
         return {
             "score": score,
@@ -113,9 +134,10 @@ def grading_node(state: StudyFlowState) -> Dict[str, Any]:
                 "total_count": len(questions),
                 "correct_count": correct_count,
                 "question_scores": score_details
-            }
+            },
+            "current_step": "grading_completed"
         }
 
     except Exception as e:
-        logger.error(f"[Grading Node] 评分失败: {e}")
+        logger.error(f"[Grading Node] 评分失败: {e}", exc_info=True)
         raise

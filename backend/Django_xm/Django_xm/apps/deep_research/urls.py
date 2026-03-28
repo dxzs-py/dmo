@@ -4,6 +4,8 @@ from .views import (
     DeepResearchStatusView,
     DeepResearchResultView,
     DeepResearchFilesView,
+    DeepResearchFileDownloadView,
+    DeepResearchTaskDeleteView,
 )
 
 app_name = 'deep_research'
@@ -20,4 +22,10 @@ urlpatterns = [
     
     # 列出文件
     path('files/<str:task_id>/', DeepResearchFilesView.as_view(), name='files'),
+    
+    # 下载文件
+    path('file/<str:task_id>/<path:filename>/', DeepResearchFileDownloadView.as_view(), name='file-download'),
+    
+    # 删除任务
+    path('task/<str:task_id>/', DeepResearchTaskDeleteView.as_view(), name='task-delete'),
 ]

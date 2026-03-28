@@ -86,3 +86,5 @@ INFO 2026-03-28 12:52:44,648 basehttp 213 "GET /static/rest_framework/img/grid.p
 INFO 2026-03-28 12:52:44,732 basehttp 213 "GET /static/rest_framework/js/jquery-3.7.1.min.js HTTP/1.1" 200 87533
 INFO 2026-03-28 13:06:06,200 autoreload 667 Watching for file changes with StatReloader
 INFO 2026-03-28 13:56:18,930 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 15:39:02,338 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 16:10:51,467 autoreload 667 Watching for file changes with StatReloader
