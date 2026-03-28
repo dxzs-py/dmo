@@ -1,0 +1,10 @@
+---
+alwaysApply: true
+---
+
+前端项目使用 Lucide icon 作为项目基本 icon
+
+官方文档 icon 列表：https://lucide.dev/icons/
+
+本地 node_modules 目录可以查看到 icon 类型定义。路径为：frontend/node_modules/.pnpm/lucide-react@0.553.0_react@19.2.0/node_modules/lucide-react/dist/lucide-react.d.ts
+

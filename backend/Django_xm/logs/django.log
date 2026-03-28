@@ -15,3 +15,74 @@ INFO 2026-03-27 20:49:32,804 autoreload 667 Watching for file changes with StatR
 INFO 2026-03-27 20:49:55,070 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\libs\langchain_rag\index_manager.py changed, reloading.
 INFO 2026-03-27 20:49:57,348 autoreload 667 Watching for file changes with StatReloader
 INFO 2026-03-27 20:50:57,088 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 21:36:06,809 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 21:37:04,740 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
+INFO 2026-03-27 21:37:08,951 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 21:37:20,642 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\core\apps.py changed, reloading.
+INFO 2026-03-27 21:37:27,485 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 21:38:51,456 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 21:39:37,781 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\core\tools\__init__.py changed, reloading.
+INFO 2026-03-27 21:39:44,430 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 21:40:46,865 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\core\__init__.py changed, reloading.
+INFO 2026-03-27 21:40:54,432 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 21:41:04,190 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\core\__init__.py changed, reloading.
+INFO 2026-03-27 21:41:10,504 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 21:41:27,555 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 21:42:16,782 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\core\tools\__init__.py changed, reloading.
+INFO 2026-03-27 21:42:21,356 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 21:42:53,134 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 21:43:34,038 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\core\tools\__init__.py changed, reloading.
+INFO 2026-03-27 21:43:41,641 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 21:44:03,288 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 21:45:13,445 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 21:47:18,530 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 21:53:02,128 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 21:53:20,362 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 22:01:31,398 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\study_flow.py changed, reloading.
+INFO 2026-03-27 22:01:31,618 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\study_flow.py changed, reloading.
+INFO 2026-03-27 22:01:32,128 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\study_flow.py changed, reloading.
+INFO 2026-03-27 22:01:38,465 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 22:01:42,949 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 22:01:43,447 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 22:01:46,131 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\__init__.py changed, reloading.
+INFO 2026-03-27 22:01:49,392 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\__init__.py changed, reloading.
+INFO 2026-03-27 22:01:49,987 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\__init__.py changed, reloading.
+INFO 2026-03-27 22:01:52,629 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 22:01:58,723 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 22:01:59,236 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 22:02:27,924 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflow\views.py changed, reloading.
+INFO 2026-03-27 22:02:28,202 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflow\views.py changed, reloading.
+INFO 2026-03-27 22:02:28,610 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflow\views.py changed, reloading.
+INFO 2026-03-27 22:02:37,072 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 22:02:42,191 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 22:02:42,431 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 22:02:43,591 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflow\serializers.py changed, reloading.
+INFO 2026-03-27 22:02:52,056 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 22:03:35,346 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 22:21:50,312 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 22:27:00,145 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-27 22:27:09,859 basehttp 213 "GET / HTTP/1.1" 200 271
+WARNING 2026-03-27 22:27:10,779 log 253 Not Found: /favicon.ico
+WARNING 2026-03-27 22:27:10,782 basehttp 213 "GET /favicon.ico HTTP/1.1" 404 3288
+INFO 2026-03-27 23:06:51,759 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 12:52:10,230 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 12:52:16,864 basehttp 213 "GET / HTTP/1.1" 200 271
+WARNING 2026-03-28 12:52:17,460 log 253 Not Found: /favicon.ico
+WARNING 2026-03-28 12:52:17,461 basehttp 213 "GET /favicon.ico HTTP/1.1" 404 3288
+INFO 2026-03-28 12:52:43,692 basehttp 213 "GET /api/chat HTTP/1.1" 301 0
+WARNING 2026-03-28 12:52:44,027 log 253 Method Not Allowed: /api/chat/
+WARNING 2026-03-28 12:52:44,029 basehttp 213 "GET /api/chat/ HTTP/1.1" 405 10332
+INFO 2026-03-28 12:52:44,398 basehttp 213 "GET /static/rest_framework/css/bootstrap-tweaks.css HTTP/1.1" 200 3426
+INFO 2026-03-28 12:52:44,425 basehttp 213 "GET /static/rest_framework/css/bootstrap.min.css HTTP/1.1" 200 121457
+INFO 2026-03-28 12:52:44,426 basehttp 213 "GET /static/rest_framework/css/prettify.css HTTP/1.1" 200 817
+INFO 2026-03-28 12:52:44,427 basehttp 213 "GET /static/rest_framework/css/default.css HTTP/1.1" 200 1152
+INFO 2026-03-28 12:52:44,504 basehttp 213 "GET /static/rest_framework/js/csrf.js HTTP/1.1" 200 1793
+INFO 2026-03-28 12:52:44,505 basehttp 213 "GET /static/rest_framework/js/ajax-form.js HTTP/1.1" 200 3796
+INFO 2026-03-28 12:52:44,514 basehttp 213 "GET /static/rest_framework/js/default.js HTTP/1.1" 200 1268
+INFO 2026-03-28 12:52:44,543 basehttp 213 "GET /static/rest_framework/js/prettify-min.js HTTP/1.1" 200 13632
+INFO 2026-03-28 12:52:44,570 basehttp 213 "GET /static/rest_framework/js/bootstrap.min.js HTTP/1.1" 200 39680
+INFO 2026-03-28 12:52:44,607 basehttp 213 "GET /static/rest_framework/js/load-ajax-form.js HTTP/1.1" 200 59
+INFO 2026-03-28 12:52:44,648 basehttp 213 "GET /static/rest_framework/img/grid.png HTTP/1.1" 200 1458
+INFO 2026-03-28 12:52:44,732 basehttp 213 "GET /static/rest_framework/js/jquery-3.7.1.min.js HTTP/1.1" 200 87533
+INFO 2026-03-28 13:06:06,200 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 13:56:18,930 autoreload 667 Watching for file changes with StatReloader

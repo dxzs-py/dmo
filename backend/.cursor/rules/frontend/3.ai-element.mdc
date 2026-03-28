@@ -1,0 +1,62 @@
+---
+alwaysApply: true
+---
+
+#  AI Elements 文档导航
+
+## 📘 Docs
+- [Introduction](https://v6.ai-sdk.dev/elements)
+- [Usage](https://v6.ai-sdk.dev/elements/usage)
+- [Troubleshooting](https://v6.ai-sdk.dev/elements/troubleshooting)
+- [MCP Server](https://v6.ai-sdk.dev/elements/mcp)
+
+---
+
+## 💡 Examples
+- [Chatbot](https://v6.ai-sdk.dev/elements/examples/chatbot)
+- [v0 clone](https://v6.ai-sdk.dev/elements/examples/v0)
+- [Workflow](https://v6.ai-sdk.dev/elements/examples/workflow)
+
+---
+
+## 🧩 Components
+
+### Chatbot
+- [Chain of Thought](https://v6.ai-sdk.dev/elements/components/chain-of-thought)
+- [Checkpoint](https://v6.ai-sdk.dev/elements/components/checkpoint)
+- [Confirmation](https://v6.ai-sdk.dev/elements/components/confirmation)
+- [Context](https://v6.ai-sdk.dev/elements/components/context)
+- [Conversation](https://v6.ai-sdk.dev/elements/components/conversation)
+- [Inline Citation](https://v6.ai-sdk.dev/elements/components/inline-citation)
+- [Message](https://v6.ai-sdk.dev/elements/components/message)
+- [Model Selector](https://v6.ai-sdk.dev/elements/components/model-selector)
+- [Plan](https://v6.ai-sdk.dev/elements/components/plan)
+- [Prompt Input](https://v6.ai-sdk.dev/elements/components/prompt-input)
+- [Queue](https://v6.ai-sdk.dev/elements/components/queue)
+- [Reasoning](https://v6.ai-sdk.dev/elements/components/reasoning)
+- [Shimmer](https://v6.ai-sdk.dev/elements/components/shimmer)
+- [Sources](https://v6.ai-sdk.dev/elements/components/sources)
+- [Suggestion](https://v6.ai-sdk.dev/elements/components/suggestion)
+- [Task](https://v6.ai-sdk.dev/elements/components/task)
+- [Tool](https://v6.ai-sdk.dev/elements/components/tool)
+
+### Workflow
+- [Canvas](https://v6.ai-sdk.dev/elements/components/canvas)
+- [Connection](https://v6.ai-sdk.dev/elements/components/connection)
+- [Controls](https://v6.ai-sdk.dev/elements/components/controls)
+- [Edge](https://v6.ai-sdk.dev/elements/components/edge)
+- [Node](https://v6.ai-sdk.dev/elements/components/node)
+- [Panel](https://v6.ai-sdk.dev/elements/components/panel)
+- [Toolbar](https://v6.ai-sdk.dev/elements/components/toolbar)
+
+### Vibe coding
+- [Artifact](https://v6.ai-sdk.dev/elements/components/artifact)
+- [Web Preview](https://v6.ai-sdk.dev/elements/components/web-preview)
+
+### Documentation
+- [Open In Chat](https://v6.ai-sdk.dev/elements/components/open-in-chat)
+
+### Utilities
+- [Code Block](https://v6.ai-sdk.dev/elements/components/code-block)
+- [Image](https://v6.ai-sdk.dev/elements/components/image)
+- [Loader](https://v6.ai-sdk.dev/elements/components/loader)

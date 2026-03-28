@@ -37,6 +37,15 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "corsheaders",
+    "rest_framework",
+    "Django_xm.apps.core",
+    "Django_xm.apps.agents",
+    "Django_xm.apps.chat",
+    "Django_xm.apps.rag",
+    "Django_xm.apps.workflows",
+    "Django_xm.apps.workflow",
+    "Django_xm.apps.deep_research",
 ]
 
 MIDDLEWARE = [
