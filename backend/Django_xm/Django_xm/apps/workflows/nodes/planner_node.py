@@ -1,10 +1,14 @@
 """
 学习规划节点 (Planner Node)
+
+本节点负责分析用户问题，生成个性化的学习计划。
 """
 
 import logging
+from datetime import datetime
 from typing import Dict, Any
 from pydantic import BaseModel, Field
+from langchain_core.messages import AIMessage
 
 from ..state import StudyFlowState
 from Django_xm.apps.core.models import get_chat_model
@@ -14,6 +18,7 @@ logger = get_logger(__name__)
 
 
 class LearningPlanSchema(BaseModel):
+    """学习计划的结构化输出模式"""
     topic: str = Field(description="学习主题")
     objectives: list[str] = Field(description="学习目标列表，至少3个")
     key_points: list[str] = Field(description="关键知识点列表，至少5个")
@@ -22,6 +27,14 @@ class LearningPlanSchema(BaseModel):
 
 
 def planner_node(state: StudyFlowState) -> Dict[str, Any]:
+    """
+    学习规划节点
+
+    功能：
+    1. 分析用户问题
+    2. 生成结构化的学习计划
+    3. 使用 LLM 的结构化输出功能
+    """
     logger.info(f"[Planner Node] 开始生成学习计划，用户问题: {state['user_question']}")
 
     try:
@@ -59,11 +72,32 @@ def planner_node(state: StudyFlowState) -> Dict[str, Any]:
 
         logger.info(f"[Planner Node] 学习计划生成成功: {learning_plan['topic']}")
 
+        plan_summary = f"""已为您制定学习计划：
+
+📚 **学习主题**: {learning_plan['topic']}
+
+🎯 **学习目标**:
+{chr(10).join(f"{i+1}. {obj}" for i, obj in enumerate(learning_plan['objectives']))}
+
+💡 **关键知识点**:
+{chr(10).join(f"• {point}" for point in learning_plan['key_points'])}
+
+📊 **难度级别**: {learning_plan['difficulty']}
+⏱️ **预计时间**: {learning_plan['estimated_time']} 分钟
+"""
+
         return {
             "learning_plan": learning_plan,
-            "retry_count": 0
+            "messages": [AIMessage(content=plan_summary)],
+            "current_step": "planner",
+            "updated_at": datetime.now().isoformat()
         }
 
     except Exception as e:
-        logger.error(f"[Planner Node] 生成学习计划失败: {e}")
-        raise
+        logger.error(f"[Planner Node] 生成学习计划失败: {str(e)}", exc_info=True)
+        return {
+            "error": f"学习计划生成失败: {str(e)}",
+            "error_node": "planner",
+            "current_step": "planner_error",
+            "updated_at": datetime.now().isoformat()
+        }

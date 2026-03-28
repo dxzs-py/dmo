@@ -151,3 +151,36 @@ def load_documents_from_directory(
     except Exception as e:
         logger.error(f"目录加载失败: {directory_path}, 错误: {e}")
         raise
+
+
+def load_documents_from_paths(
+    file_paths: List[str],
+    show_progress: bool = True,
+) -> List[Document]:
+    """从文件路径列表加载文档"""
+    logger.info(f"📚 开始加载 {len(file_paths)} 个文件")
+
+    all_documents: List[Document] = []
+    success_count = 0
+    error_count = 0
+
+    for i, file_path in enumerate(file_paths, 1):
+        try:
+            if show_progress:
+                logger.info(f"   [{i}/{len(file_paths)}] 加载: {Path(file_path).name}")
+
+            documents = load_document(file_path, add_metadata=True)
+            all_documents.extend(documents)
+            success_count += 1
+
+        except Exception as e:
+            logger.error(f"   ❌ 加载失败: {file_path}, 错误: {e}")
+            error_count += 1
+            continue
+
+    logger.info(f"✅ 批量加载完成:")
+    logger.info(f"   成功: {success_count} 个文件")
+    logger.info(f"   失败: {error_count} 个文件")
+    logger.info(f"   总计: {len(all_documents)} 个文档块")
+
+    return all_documents

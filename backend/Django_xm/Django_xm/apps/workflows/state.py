@@ -24,6 +24,10 @@ class StudyFlowState(TypedDict):
     retry_count: int
     current_step: str
     thread_id: str
+    created_at: Optional[str]
+    updated_at: Optional[str]
+    error: Optional[str]
+    error_node: Optional[str]
 
 
 class RetrievedDocument(TypedDict):

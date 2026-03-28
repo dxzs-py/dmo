@@ -76,3 +76,108 @@ def get_embeddings(
     except Exception as e:
         logger.error(f"❌ Embedding 模型创建失败: {e}")
         raise
+
+
+def get_embedding_dimension(model: Optional[str] = None) -> int:
+    """获取 Embedding 模型的向量维度"""
+    model = model or get_embedding_model()
+
+    dimensions = {
+        "text-embedding-3-small": 1536,
+        "text-embedding-3-large": 3072,
+        "text-embedding-ada-002": 1538,
+    }
+
+    if model not in dimensions:
+        logger.warning(f"未知的模型维度: {model}，返回默认值 1536")
+        return 1536
+
+    return dimensions[model]
+
+
+def estimate_embedding_cost(
+    num_tokens: int,
+    model: Optional[str] = None,
+) -> float:
+    """估算 Embedding 成本（美元）"""
+    model = model or get_embedding_model()
+
+    pricing = {
+        "text-embedding-3-small": 0.02,
+        "text-embedding-3-large": 0.13,
+        "text-embedding-ada-002": 0.10,
+    }
+
+    if model not in pricing:
+        price_per_million = 0.02
+    else:
+        price_per_million = pricing[model]
+
+    cost = (num_tokens / 1_000_000) * price_per_million
+
+    logger.info(
+        f"💰 Embedding 成本估算: "
+        f"{num_tokens:,} tokens × ${price_per_million}/M = ${cost:.4f}"
+    )
+
+    return cost
+
+
+def test_embeddings(
+    model: Optional[str] = None,
+    test_text: str = "这是一个测试文本",
+) -> bool:
+    """测试 Embedding 模型是否正常工作"""
+    try:
+        logger.info("🧪 测试 Embedding 模型...")
+
+        embeddings = get_embeddings(model=model)
+
+        vector = embeddings.embed_query(test_text)
+        logger.info(f"   单文本嵌入: 维度={len(vector)}")
+
+        texts = [test_text, test_text + " 2", test_text + " 3"]
+        vectors = embeddings.embed_documents(texts)
+        logger.info(f"   批量嵌入: {len(vectors)} 个向量")
+
+        logger.info("✅ Embedding 模型测试通过")
+        return True
+
+    except Exception as e:
+        logger.error(f"❌ Embedding 模型测试失败: {e}")
+        return False
+
+
+EMBEDDING_CONFIGS = {
+    "fast": {
+        "model": "text-embedding-3-small",
+        "description": "快速模型，适合开发和测试",
+    },
+    "quality": {
+        "model": "text-embedding-3-large",
+        "description": "高质量模型，适合生产环境",
+    },
+    "legacy": {
+        "model": "text-embedding-ada-002",
+        "description": "旧版模型（不推荐）",
+    },
+}
+
+
+def get_embeddings_by_preset(
+    preset: str = "fast",
+    **kwargs,
+) -> Embeddings:
+    """根据预设配置获取 Embedding 模型"""
+    if preset not in EMBEDDING_CONFIGS:
+        available = ", ".join(EMBEDDING_CONFIGS.keys())
+        raise ValueError(
+            f"未知的预设: {preset}. 可用预设: {available}"
+        )
+
+    config = EMBEDDING_CONFIGS[preset].copy()
+    model_name = config.pop("model")
+    config.update(kwargs)
+
+    logger.info(f"使用 Embedding 预设: {preset} (model={model_name})")
+    return get_embeddings(model=model_name, **config)

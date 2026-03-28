@@ -176,3 +176,35 @@ def get_optimal_chunk_size(
     )
 
     return chunk_size, overlap
+
+
+def analyze_chunks(chunks: List[Document]) -> dict:
+    """分析分块结果的统计信息"""
+    if not chunks:
+        return {
+            "total_chunks": 0,
+            "total_chars": 0,
+            "avg_chunk_size": 0,
+            "min_chunk_size": 0,
+            "max_chunk_size": 0,
+        }
+
+    chunk_sizes = [len(chunk.page_content) for chunk in chunks]
+    total_chars = sum(chunk_sizes)
+
+    stats = {
+        "total_chunks": len(chunks),
+        "total_chars": total_chars,
+        "avg_chunk_size": total_chars / len(chunks),
+        "min_chunk_size": min(chunk_sizes),
+        "max_chunk_size": max(chunk_sizes),
+    }
+
+    logger.info("📊 分块统计:")
+    logger.info(f"   总块数: {stats['total_chunks']}")
+    logger.info(f"   总字符数: {stats['total_chars']}")
+    logger.info(f"   平均大小: {stats['avg_chunk_size']:.0f} 字符")
+    logger.info(f"   最小块: {stats['min_chunk_size']} 字符")
+    logger.info(f"   最大块: {stats['max_chunk_size']} 字符")
+
+    return stats

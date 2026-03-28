@@ -3,6 +3,7 @@
 """
 
 import logging
+from datetime import datetime
 from typing import Dict, Any
 
 from ..state import StudyFlowState
@@ -13,6 +14,14 @@ logger = get_logger(__name__)
 
 
 def feedback_node(state: StudyFlowState) -> Dict[str, Any]:
+    """
+    反馈生成节点
+
+    功能：
+    1. 根据评分结果生成个性化反馈
+    2. 决定是否需要重新出题
+    3. 提供鼓励和建议
+    """
     logger.info("[Feedback Node] 开始生成反馈")
 
     try:
@@ -32,7 +41,7 @@ def feedback_node(state: StudyFlowState) -> Dict[str, Any]:
         if wrong_questions:
             wrong_analysis = "\n\n错题分析:\n"
             for q in wrong_questions:
-                wrong_analysis += f"- 题目ID {q['question_id']}: {q['feedback']}\n"
+                wrong_analysis += f"- 题目ID {q['question_id']}: {q.get('feedback', '无反馈')}\n"
 
         feedback_prompt = f"""作为一位耐心的学习导师，请根据学生的测验结果提供个性化反馈。
 
@@ -77,9 +86,11 @@ def feedback_node(state: StudyFlowState) -> Dict[str, Any]:
         return {
             "feedback": feedback_message,
             "should_retry": should_retry,
-            "retry_count": new_retry_count
+            "retry_count": new_retry_count,
+            "current_step": "feedback_completed",
+            "updated_at": datetime.now().isoformat()
         }
 
     except Exception as e:
-        logger.error(f"[Feedback Node] 生成反馈失败: {e}")
+        logger.error(f"[Feedback Node] 生成反馈失败: {e}", exc_info=True)
         raise

@@ -1,0 +1,276 @@
+{
+  "migration_report": {
+    "project": "Django_xm",
+    "version": "1.0.0",
+    "date": "2026-03-28",
+    "status": "completed"
+  },
+  "backend_modules": {
+    "core": {
+      "status": "completed",
+      "description": "核心模块，包含模型配置、工具集成",
+      "files": [
+        "apps/core/config.py",
+        "apps/core/models.py",
+        "apps/core/prompts.py",
+        "apps/core/usage_tracker.py",
+        "apps/core/extractors.py"
+      ],
+      "features": [
+        "LLM模型配置",
+        "工具集成",
+        "使用追踪"
+      ]
+    },
+    "guardrails": {
+      "status": "completed",
+      "description": "输入/输出验证和内容过滤",
+      "files": [
+        "apps/core/guardrails/schemas.py",
+        "apps/core/guardrails/input_validators.py",
+        "apps/core/guardrails/output_validators.py",
+        "apps/core/guardrails/middleware.py",
+        "apps/core/guardrails/content_filters.py"
+      ],
+      "features": [
+        "输入验证",
+        "输出验证",
+        "内容安全过滤",
+        "PII检测和脱敏",
+        "Prompt Injection检测"
+      ]
+    },
+    "tools": {
+      "status": "completed",
+      "description": "工具集成（天气、计算器、网络搜索等）",
+      "files": [
+        "apps/core/tools/weather.py",
+        "apps/core/tools/calculator.py",
+        "apps/core/tools/web_search.py",
+        "apps/core/tools/filesystem.py",
+        "apps/core/tools/time_tools.py"
+      ],
+      "features": [
+        "天气查询",
+        "计算器",
+        "网络搜索",
+        "文件系统操作",
+        "时间工具"
+      ]
+    },
+    "agents": {
+      "status": "completed",
+      "description": "基础Agent实现",
+      "files": [
+        "apps/agents/agents.py",
+        "apps/agents/apps.py"
+      ],
+      "features": [
+        "基础Agent类",
+        "工具调用",
+        "循环执行"
+      ]
+    },
+    "chat": {
+      "status": "completed",
+      "description": "聊天API接口",
+      "files": [
+        "apps/chat/models.py",
+        "apps/chat/serializers.py",
+        "apps/chat/views.py",
+        "apps/chat/urls.py"
+      ],
+      "features": [
+        "普通聊天接口",
+        "流式聊天接口",
+        "聊天会话管理",
+        "消息历史记录"
+      ]
+    },
+    "deep_research": {
+      "status": "completed",
+      "description": "深度研究工作流",
+      "files": [
+        "apps/deep_research/models.py",
+        "apps/deep_research/serializers.py",
+        "apps/deep_research/views.py",
+        "apps/deep_research/urls.py",
+        "apps/deep_research/deep_agent.py",
+        "apps/deep_research/subagents.py",
+        "apps/deep_research/safe_deep_agent.py"
+      ],
+      "features": [
+        "研究任务管理",
+        "网络搜索",
+        "文档分析",
+        "研究报告生成",
+        "任务状态查询"
+      ]
+    },
+    "rag": {
+      "status": "completed",
+      "description": "RAG（检索增强生成）功能",
+      "files": [
+        "apps/rag/models.py",
+        "apps/rag/serializers.py",
+        "apps/rag/views.py",
+        "apps/rag/urls.py",
+        "apps/rag/rag_agent.py",
+        "apps/rag/index_manager.py",
+        "apps/rag/embeddings.py",
+        "apps/rag/retrievers.py",
+        "apps/rag/vector_stores.py",
+        "apps/rag/loaders.py",
+        "apps/rag/splitters.py",
+        "apps/rag/safe_rag_agent.py"
+      ],
+      "features": [
+        "索引管理",
+        "文档上传和处理",
+        "向量检索",
+        "RAG问答",
+        "流式RAG查询"
+      ]
+    },
+    "workflow": {
+      "status": "completed",
+      "description": "学习工作流（基于LangGraph）",
+      "files": [
+        "apps/workflow/models.py",
+        "apps/workflow/serializers.py",
+        "apps/workflow/views.py",
+        "apps/workflow/urls.py"
+      ],
+      "features": [
+        "工作流启动",
+        "答案提交",
+        "状态查询",
+        "历史记录"
+      ]
+    },
+    "workflows": {
+      "status": "completed",
+      "description": "工作流核心实现（LangGraph）",
+      "files": [
+        "apps/workflows/state.py",
+        "apps/workflows/study_flow.py",
+        "apps/workflows/views.py",
+        "apps/workflows/urls.py",
+        "apps/workflows/nodes/planner_node.py",
+        "apps/workflows/nodes/retrieval_node.py",
+        "apps/workflows/nodes/quiz_generator_node.py",
+        "apps/workflows/nodes/grading_node.py",
+        "apps/workflows/nodes/feedback_node.py",
+        "apps/workflows/safe_nodes.py",
+        "apps/workflows/safe_study_flow.py"
+      ],
+      "features": [
+        "学习计划生成",
+        "文档检索",
+        "练习题生成",
+        "答案评分",
+        "反馈生成",
+        "条件重试机制"
+      ]
+    }
+  },
+  "database_models": {
+    "chat": [
+      {
+        "model": "ChatSession",
+        "fields": ["session_id", "created_at", "updated_at"],
+        "status": "completed"
+      },
+      {
+        "model": "ChatMessage",
+        "fields": ["session", "role", "content", "created_at"],
+        "status": "completed"
+      }
+    ],
+    "deep_research": [
+      {
+        "model": "ResearchTask",
+        "fields": ["task_id", "query", "status", "final_report", "enable_web_search", "enable_doc_analysis"],
+        "status": "completed"
+      }
+    ],
+    "rag": [
+      {
+        "model": "DocumentIndex",
+        "fields": ["index_name", "description", "document_count"],
+        "status": "completed"
+      },
+      {
+        "model": "Document",
+        "fields": ["index", "filename", "file_path", "file_type", "file_size", "chunk_count"],
+        "status": "completed"
+      }
+    ],
+    "workflow": [
+      {
+        "model": "WorkflowExecution",
+        "fields": ["thread_id", "workflow_type", "query", "status", "result"],
+        "status": "completed"
+      },
+      {
+        "model": "WorkflowSession",
+        "fields": ["thread_id", "user_question", "status", "learning_plan", "quiz", "score", "feedback"],
+        "status": "completed"
+      }
+    ]
+  },
+  "api_endpoints": {
+    "chat": [
+      "POST /api/chat/",
+      "POST /api/chat/stream/",
+      "GET /api/chat/modes/"
+    ],
+    "deep_research": [
+      "POST /api/deep-research/start/",
+      "GET /api/deep-research/status/<task_id>/",
+      "GET /api/deep-research/result/<task_id>/",
+      "GET /api/deep-research/files/<task_id>/"
+    ],
+    "rag": [
+      "POST /api/rag/index/",
+      "GET /api/rag/index/list/",
+      "GET /api/rag/index/<name>/",
+      "DELETE /api/rag/index/<name>/",
+      "GET /api/rag/index/<name>/stats/",
+      "POST /api/rag/index/<name>/upload/",
+      "POST /api/rag/index/<name>/add-directory/",
+      "POST /api/rag/query/",
+      "POST /api/rag/search/",
+      "GET /api/rag/query/stream/"
+    ],
+    "workflow": [
+      "POST /api/workflow/start/",
+      "POST /api/workflow/submit-answers/",
+      "GET /api/workflow/status/<thread_id>/",
+      "GET /api/workflow/history/<thread_id>/",
+      "GET /api/workflow/stream/<thread_id>/"
+    ],
+    "workflows": [
+      "POST /api/workflows/start/",
+      "POST /api/workflows/submit/",
+      "GET /api/workflows/status/<thread_id>/",
+      "GET /api/workflows/history/<thread_id>/"
+    ]
+  },
+  "migration_status": {
+    "total_apps": 11,
+    "completed_apps": 11,
+    "pending_apps": 0,
+    "total_models": 6,
+    "completed_models": 6,
+    "total_api_endpoints": 32,
+    "completed_endpoints": 32
+  },
+  "next_steps": [
+    "运行数据库迁移: python manage.py migrate",
+    "配置环境变量（.env文件）",
+    "启动开发服务器: python manage.py runserver",
+    "测试API接口",
+    "部署到生产环境"
+  ]
+}
