@@ -37,7 +37,6 @@ INSTALLED_APPS = [
     "Django_xm.apps.chat",
     "Django_xm.apps.rag",
     "Django_xm.apps.workflows",
-    "Django_xm.apps.workflow",
     "Django_xm.apps.deep_research",
 ]
 
