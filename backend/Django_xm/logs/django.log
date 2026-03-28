@@ -134,3 +134,4 @@ INFO 2026-03-28 22:37:27,618 basehttp 213 "POST /admin/login/?next=/admin/ HTTP/
 INFO 2026-03-28 22:37:37,019 basehttp 213 "POST /admin/login/?next=/admin/ HTTP/1.1" 200 4353
 INFO 2026-03-28 22:37:55,300 basehttp 213 "POST /admin/login/?next=/admin/ HTTP/1.1" 200 4343
 INFO 2026-03-28 22:39:21,799 basehttp 213 "POST /admin/login/?next=/admin/ HTTP/1.1" 200 4353
+INFO 2026-03-28 23:07:39,903 autoreload 667 Watching for file changes with StatReloader
