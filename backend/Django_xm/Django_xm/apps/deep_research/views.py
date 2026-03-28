@@ -1,6 +1,7 @@
 import logging
 import time
 import uuid
+import threading
 from datetime import datetime
 from typing import Optional, Dict, Any
 from pathlib import Path
@@ -27,6 +28,9 @@ logger = logging.getLogger(__name__)
 # 存储研究任务状态（内存缓存）
 _research_tasks: Dict[str, Dict[str, Any]] = {}
 
+# 存储后台线程引用
+_research_threads: Dict[str, threading.Thread] = {}
+
 
 def get_task_status(thread_id: str) -> Optional[Dict[str, Any]]:
     """获取任务状态"""
@@ -38,6 +42,80 @@ def update_task_status(thread_id: str, status: Dict[str, Any]) -> None:
     if thread_id not in _research_tasks:
         _research_tasks[thread_id] = {}
     _research_tasks[thread_id].update(status)
+
+
+def run_research_in_background(thread_id: str, query: str, 
+                               enable_web_search: bool, enable_doc_analysis: bool):
+    """在后台线程中执行研究任务"""
+    try:
+        logger.info(f"🚀 后台任务开始：{thread_id}")
+        
+        # 更新状态为运行中
+        update_task_status(thread_id, {
+            'status': 'running',
+            'current_step': 'researching',
+            'start_time': datetime.now().isoformat(),
+        })
+        
+        # 更新数据库状态
+        try:
+            task = ResearchTask.objects.get(task_id=thread_id)
+            task.status = 'running'
+            task.save()
+        except ResearchTask.DoesNotExist:
+            pass
+        
+        # 创建Agent并执行研究
+        agent = create_deep_research_agent(
+            thread_id=thread_id,
+            enable_web_search=enable_web_search,
+            enable_doc_analysis=enable_doc_analysis
+        )
+        
+        result = agent.research(query)
+        
+        # 更新任务状态为完成
+        update_task_status(thread_id, {
+            'status': 'completed',
+            'current_step': 'completed',
+            'end_time': datetime.now().isoformat(),
+            'result': result,
+        })
+        
+        # 更新数据库
+        try:
+            task = ResearchTask.objects.get(task_id=thread_id)
+            task.status = 'completed'
+            task.final_report = result.get('final_report', '')
+            task.save()
+        except ResearchTask.DoesNotExist:
+            pass
+        
+        logger.info(f"✅ 后台任务完成：{thread_id}")
+        
+    except Exception as e:
+        logger.error(f"❌ 后台任务失败：{thread_id}, 错误：{e}", exc_info=True)
+        
+        # 更新任务状态为失败
+        update_task_status(thread_id, {
+            'status': 'failed',
+            'current_step': 'failed',
+            'end_time': datetime.now().isoformat(),
+            'error': str(e),
+        })
+        
+        # 更新数据库
+        try:
+            task = ResearchTask.objects.get(task_id=thread_id)
+            task.status = 'failed'
+            task.final_report = f"错误：{str(e)}"
+            task.save()
+        except ResearchTask.DoesNotExist:
+            pass
+    finally:
+        # 清理线程引用
+        if thread_id in _research_threads:
+            del _research_threads[thread_id]
 
 
 class DeepResearchStartView(APIView):
@@ -76,7 +154,7 @@ class DeepResearchStartView(APIView):
             task = ResearchTask.objects.create(
                 task_id=thread_id,
                 query=data['query'],
-                status='running',
+                status='pending',
                 enable_web_search=data.get('enable_web_search', True),
                 enable_doc_analysis=data.get('enable_doc_analysis', False)
             )
@@ -90,55 +168,27 @@ class DeepResearchStartView(APIView):
             else:
                 estimated_time = '5-10 分钟'
             
-            # 执行研究（同步执行）
-            try:
-                agent = create_deep_research_agent(
-                    thread_id=thread_id,
-                    enable_web_search=data.get('enable_web_search', True),
-                    enable_doc_analysis=data.get('enable_doc_analysis', False)
-                )
-                
-                update_task_status(thread_id, {'current_step': 'researching'})
-                
-                result = agent.research(data['query'])
-                
-                # 更新任务状态
-                task.status = 'completed'
-                task.final_report = result.get('final_report', '')
-                task.save()
-                
-                # 更新缓存状态
-                update_task_status(thread_id, {
-                    'status': 'completed',
-                    'current_step': 'completed',
-                    'end_time': datetime.now().isoformat(),
-                    'result': result,
-                })
-                
-                logger.info(f"✅ 研究任务已完成：{thread_id}")
-                
-                return Response({
-                    'status': 'success',
-                    'thread_id': thread_id,
-                    'message': '研究任务已完成',
-                    'estimated_time': estimated_time,
-                })
-                
-            except Exception as e:
-                # 更新任务状态为失败
-                task.status = 'failed'
-                task.final_report = f"错误：{str(e)}"
-                task.save()
-                
-                update_task_status(thread_id, {
-                    'status': 'failed',
-                    'current_step': 'failed',
-                    'end_time': datetime.now().isoformat(),
-                    'error': str(e),
-                })
-                
-                logger.error(f"❌ 研究任务失败：{thread_id}, 错误：{e}")
-                return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            # 在后台线程中执行研究任务
+            research_thread = threading.Thread(
+                target=run_research_in_background,
+                args=(thread_id, data['query'], 
+                      data.get('enable_web_search', True), 
+                      data.get('enable_doc_analysis', False))
+            )
+            research_thread.daemon = True
+            research_thread.start()
+            
+            # 保存线程引用
+            _research_threads[thread_id] = research_thread
+            
+            logger.info(f"✅ 研究任务已启动（后台执行）：{thread_id}")
+            
+            return Response({
+                'status': 'success',
+                'thread_id': thread_id,
+                'message': '研究任务已启动，正在后台执行',
+                'estimated_time': estimated_time,
+            })
 
         except Exception as e:
             logger.error(f"❌ 启动研究任务失败：{e}", exc_info=True)
