@@ -1,7 +1,23 @@
 from django.urls import path
-from . import views
+from .views import (
+    DeepResearchStartView,
+    DeepResearchStatusView,
+    DeepResearchResultView,
+    DeepResearchFilesView,
+)
+
+app_name = 'deep_research'
 
 urlpatterns = [
-    path('start/', views.DeepResearchStartView.as_view(), name='deep-research-start'),
-    path('status/<str:task_id>/', views.DeepResearchStatusView.as_view(), name='deep-research-status'),
+    # 启动研究
+    path('start/', DeepResearchStartView.as_view(), name='start'),
+    
+    # 查询状态
+    path('status/<str:task_id>/', DeepResearchStatusView.as_view(), name='status'),
+    
+    # 获取结果
+    path('result/<str:task_id>/', DeepResearchResultView.as_view(), name='result'),
+    
+    # 列出文件
+    path('files/<str:task_id>/', DeepResearchFilesView.as_view(), name='files'),
 ]

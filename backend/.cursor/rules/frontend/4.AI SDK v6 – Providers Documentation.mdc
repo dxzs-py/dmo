@@ -1,0 +1,108 @@
+---
+alwaysApply: true
+---
+
+# 🧭 AI SDK v6 – Providers Documentation
+
+## 📘 AI SDK Providers
+- [AI Gateway](https://v6.ai-sdk.dev/providers/ai-sdk-providers/ai-gateway)
+- [xAI Grok](https://v6.ai-sdk.dev/providers/ai-sdk-providers/xai)
+- [Vercel](https://v6.ai-sdk.dev/providers/ai-sdk-providers/vercel)
+- [OpenAI](https://v6.ai-sdk.dev/providers/ai-sdk-providers/openai)
+- [Azure OpenAI](https://v6.ai-sdk.dev/providers/ai-sdk-providers/azure)
+- [Anthropic](https://v6.ai-sdk.dev/providers/ai-sdk-providers/anthropic)
+- [Amazon Bedrock](https://v6.ai-sdk.dev/providers/ai-sdk-providers/amazon-bedrock)
+- [Groq](https://v6.ai-sdk.dev/providers/ai-sdk-providers/groq)
+- [Fal](https://v6.ai-sdk.dev/providers/ai-sdk-providers/fal)
+- [DeepInfra](https://v6.ai-sdk.dev/providers/ai-sdk-providers/deepinfra)
+- [Google Generative AI](https://v6.ai-sdk.dev/providers/ai-sdk-providers/google-generative-ai)
+- [Google Vertex AI](https://v6.ai-sdk.dev/providers/ai-sdk-providers/google-vertex)
+- [Mistral AI](https://v6.ai-sdk.dev/providers/ai-sdk-providers/mistral)
+- [Together.ai](https://v6.ai-sdk.dev/providers/ai-sdk-providers/togetherai)
+- [Cohere](https://v6.ai-sdk.dev/providers/ai-sdk-providers/cohere)
+- [Fireworks](https://v6.ai-sdk.dev/providers/ai-sdk-providers/fireworks)
+- [DeepSeek](https://v6.ai-sdk.dev/providers/ai-sdk-providers/deepseek)
+- [Cerebras](https://v6.ai-sdk.dev/providers/ai-sdk-providers/cerebras)
+- [Replicate](https://v6.ai-sdk.dev/providers/ai-sdk-providers/replicate)
+- [Perplexity](https://v6.ai-sdk.dev/providers/ai-sdk-providers/perplexity)
+- [Luma](https://v6.ai-sdk.dev/providers/ai-sdk-providers/luma)
+- [ElevenLabs](https://v6.ai-sdk.dev/providers/ai-sdk-providers/elevenlabs)
+- [AssemblyAI](https://v6.ai-sdk.dev/providers/ai-sdk-providers/assemblyai)
+- [Deepgram](https://v6.ai-sdk.dev/providers/ai-sdk-providers/deepgram)
+- [Gladia](https://v6.ai-sdk.dev/providers/ai-sdk-providers/gladia)
+- [LMNT](https://v6.ai-sdk.dev/providers/ai-sdk-providers/lmnt)
+- [Hume](https://v6.ai-sdk.dev/providers/ai-sdk-providers/hume)
+- [Rev.ai](https://v6.ai-sdk.dev/providers/ai-sdk-providers/revai)
+- [Baseten](https://v6.ai-sdk.dev/providers/ai-sdk-providers/baseten)
+- [Hugging Face](https://v6.ai-sdk.dev/providers/ai-sdk-providers/huggingface)
+
+---
+
+## 🤖 OpenAI Compatible Providers
+- [Writing a Custom Provider](https://v6.ai-sdk.dev/providers/openai-compatible-providers/custom-providers)
+- [LM Studio](https://v6.ai-sdk.dev/providers/openai-compatible-providers/lmstudio)
+- [NVIDIA NIM](https://v6.ai-sdk.dev/providers/openai-compatible-providers/nim)
+- [Heroku](https://v6.ai-sdk.dev/providers/openai-compatible-providers/heroku)
+
+---
+
+## 🌍 Community Providers
+- [Writing a Custom Provider](https://v6.ai-sdk.dev/providers/community-providers/custom-providers)
+- [Qwen](https://v6.ai-sdk.dev/providers/community-providers/qwen)
+- [Ollama](https://v6.ai-sdk.dev/providers/community-providers/ollama)
+- [A2A](https://v6.ai-sdk.dev/providers/community-providers/a2a)
+- [Requesty](https://v6.ai-sdk.dev/providers/community-providers/requesty)
+- [Helicone](https://v6.ai-sdk.dev/providers/community-providers/helicone)
+- [FriendliAI](https://v6.ai-sdk.dev/providers/community-providers/friendliai)
+- [Portkey](https://v6.ai-sdk.dev/providers/community-providers/portkey)
+- [Cloudflare Workers AI](https://v6.ai-sdk.dev/providers/community-providers/cloudflare-workers-ai)
+- [Cloudflare AI Gateway](https://v6.ai-sdk.dev/providers/community-providers/cloudflare-ai-gateway)
+- [OpenRouter](https://v6.ai-sdk.dev/providers/community-providers/openrouter)
+- [Azure AI](https://v6.ai-sdk.dev/providers/community-providers/azure-ai)
+- [Aihubmix](https://v6.ai-sdk.dev/providers/community-providers/aihubmix)
+- [SAP AI Core](https://v6.ai-sdk.dev/providers/community-providers/sap-ai)
+- [Crosshatch](https://v6.ai-sdk.dev/providers/community-providers/crosshatch)
+- [Runpod](https://v6.ai-sdk.dev/providers/community-providers/runpod)
+- [Mixedbread](https://v6.ai-sdk.dev/providers/community-providers/mixedbread)
+- [Voyage AI](https://v6.ai-sdk.dev/providers/community-providers/voyage-ai)
+- [Jina AI](https://v6.ai-sdk.dev/providers/community-providers/jina-ai)
+- [Mem0](https://v6.ai-sdk.dev/providers/community-providers/mem0)
+- [Letta](https://v6.ai-sdk.dev/providers/community-providers/letta)
+- [Supermemory](https://v6.ai-sdk.dev/providers/community-providers/supermemory)
+- [React Native Apple](https://v6.ai-sdk.dev/providers/community-providers/react-native-apple)
+- [Anthropic Vertex](https://v6.ai-sdk.dev/providers/community-providers/anthropic-vertex-ai)
+- [Spark](https://v6.ai-sdk.dev/providers/community-providers/spark)
+- [Inflection AI](https://v6.ai-sdk.dev/providers/community-providers/inflection-ai)
+- [LangDB](https://v6.ai-sdk.dev/providers/community-providers/langdb)
+- [Zhipu AI](https://v6.ai-sdk.dev/providers/community-providers/zhipu)
+- [SambaNova](https://v6.ai-sdk.dev/providers/community-providers/sambanova)
+- [Dify](https://v6.ai-sdk.dev/providers/community-providers/dify)
+- [Sarvam](https://v6.ai-sdk.dev/providers/community-providers/sarvam)
+- [AI/ML API](https://v6.ai-sdk.dev/providers/community-providers/aimlapi)
+- [Claude Code](https://v6.ai-sdk.dev/providers/community-providers/claude-code)
+- [Built-in AI](https://v6.ai-sdk.dev/providers/community-providers/built-in-ai)
+- [Gemini CLI](https://v6.ai-sdk.dev/providers/community-providers/gemini-cli)
+- [Automatic1111](https://v6.ai-sdk.dev/providers/community-providers/automatic1111)
+
+---
+
+## 🔌 Adapters
+- [LangChain](https://v6.ai-sdk.dev/providers/adapters/langchain)
+- [LlamaIndex](https://v6.ai-sdk.dev/providers/adapters/llamaindex)
+
+---
+
+## 🧭 Observability Integrations
+- [Axiom](https://v6.ai-sdk.dev/providers/observability/axiom)
+- [Braintrust](https://v6.ai-sdk.dev/providers/observability/braintrust)
+- [Helicone](https://v6.ai-sdk.dev/providers/observability/helicone)
+- [Laminar](https://v6.ai-sdk.dev/providers/observability/laminar)
+- [Langfuse](https://v6.ai-sdk.dev/providers/observability/langfuse)
+- [LangSmith](https://v6.ai-sdk.dev/providers/observability/langsmith)
+- [LangWatch](https://v6.ai-sdk.dev/providers/observability/langwatch)
+- [Maxim](https://v6.ai-sdk.dev/providers/observability/maxim)
+- [Patronus](https://v6.ai-sdk.dev/providers/observability/patronus)
+- [Scorecard](https://v6.ai-sdk.dev/providers/observability/scorecard)
+- [SigNoz](https://v6.ai-sdk.dev/providers/observability/signoz)
+- [Traceloop](https://v6.ai-sdk.dev/providers/observability/traceloop)
+- [Weave](https://v6.ai-sdk.dev/providers/observability/weave)

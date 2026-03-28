@@ -1,0 +1,301 @@
+---
+alwaysApply: true
+---
+
+
+直接按「产品级前端」来设计一套路线图。
+
+---
+
+## 1. 顶层目标 & 设计原则
+
+**目标：**
+用 **Next.js 16 + shadcn/ui + Tailwind + Vercel AI SDK + AI Elements**，搭一套可以**完整可视化你后端 5 大阶段能力**的前端：
+
+* Chat 页：作为统一入口，把「基础 Agent / RAG / LangGraph Workflow / DeepAgents / Guardrails」全部映射成「可切换模式的对话体验」。
+* 后续多个视图：RAG 知识库、Workflow 运行可视化、Deep Research 会话、系统配置等。
+
+**设计原则：**
+
+1. 所有能力**先在 Chat UI 暴露出来**（不同模式 / 调试折叠面板），后面再拆成专门页面。
+2. 利用 **AI Elements = shadcn 上的一层 AI 组件库**（Conversation / Message / PromptInput / ModelSelector / Sources / Reasoning…）来快速搭 UI，再逐步定制。([AI SDK][1])
+3. Next 16 默认 app router + Turbopack，遵循它的新异步请求 API 约束，后面要做 React Server Components 时也留好扩展点。([Next.js][2])
+
+---
+
+## 2. 前端项目信息架构（IA）& 路由规划
+
+先画一个**最终形态**的路由，第一期只重点做 `/chat`，其它可以先空页面 / skeleton：
+
+```txt
+app/
+  layout.tsx                 # 顶层布局（header + sidebar）
+  page.tsx                   # 重定向到 /chat 或展示总览
+
+  chat/
+    page.tsx                 # ✅ 第一优先级：统一 Chat UI
+
+  rag/
+    page.tsx                 # RAG 文档库 & 问答历史可视化
+
+  workflows/
+    page.tsx                 # LangGraph workflow 运行流 & 状态可视化
+
+  deep-research/
+    page.tsx                 # DeepAgents 研究会话 & 报告视图
+
+  settings/
+    page.tsx                 # 模型/后端配置、Guardrails 策略开关
+```
+
+全局再补几块「跨页面共享能力」：
+
+* `components/ai/`
+
+  * 封装 AI Elements 组件的组合版本（ChatShell、MessageList、SidePanel 等）。
+* `lib/api-client.ts`
+
+  * 封装对你 Python 后端的 HTTP 调用（/chat, /rag, /workflow, /deep-research）。
+* `lib/session.ts`
+
+  * 维护 `thread_id` / `session_id`，映射到后端 LangGraph checkpointer / DeepAgents session。
+* `providers/`
+
+  * `ThemeProvider` / `ToasterProvider` / `SessionProvider`（如果需要跨页面共享当前会话）。
+
+---
+
+## 3. Chat 页面：第一期 MVP 的详细规划
+
+你现在的目标：**一个 Chat 页面就能「看见」后端 5 阶段的全部威力**。
+
+### 3.1 Chat Page 功能切片
+
+MVP 功能：
+
+1. 基础对话 + 实时流式输出
+
+   * 使用 AI SDK 的 `useChat` 或 `useStreamableValue`（配合 route handler）实现。([AI SDK][3])
+   * 后端 `/chat` 已经支持 streaming，就在 Next 的 `/api/chat` 做转发+封装。
+
+2. 模式切换（映射后端 5 能力）：
+
+   * `mode` 下拉或 Segmented Control：
+
+     * `basic-agent`
+     * `rag`
+     * `workflow`（调用 LangGraph）
+     * `deep-research`
+     * `guarded`（开启 Guardrails 强约束）
+   * `mode` 会传给后端，后端走不同 pipeline。
+
+3. 高级信息侧栏（AI Elements 自带能力）：
+
+   * 显示：
+
+     * sources（RAG 文档来源）
+     * tools 调用信息（工具名、参数、结果）
+     * reasoning 片段（如果你后台有「思考流」再渲染）
+   * 用 AI Elements 的 `Sources`, `Reasoning`, `Message`, `MessageResponse` 等组件来做。([AI SDK][4])
+
+4. 会话管理（后端 thread_id 映射）
+
+   * 左侧会话列表（可先简单存 localStorage）。
+   * 每个会话对应后端的 `thread_id` / `session_id`，确保 LangGraph checkpointer / DeepAgents 能恢复上下文。
+
+### 3.2 Chat Page UI 结构（组件拆分）
+
+大致拆成这样：
+
+```txt
+app/chat/page.tsx
+  -> <ChatLayout>
+       <ChatSidebar />   // 会话列表、模式过滤、统计
+       <ChatPanel />     // 核心对话区
+```
+
+`<ChatPanel>` 内再拆：
+
+* `<ChatHeader>`：显示当前模式、模型选择器（用 AI Elements `ModelSelector`）。([AI SDK][4])
+* `<ChatConversation>`：
+
+  * 组合 `Conversation` / `MessageList` / `Message` 组件，映射 AI SDK 的 message 流。
+* `<ChatInput>`：
+
+  * 使用 `PromptInput` 系列组件 + `useChat` 的 `input`, `handleSubmit`。([AI SDK][4])
+* `<ChatRightPanel>`（可折叠）：
+
+  * Tabs：`Sources` / `Tools` / `Reasoning` / `JSON`
+  * 显示每条消息的详细信息。
+
+**关键点：**
+AI Elements 本身是 UI 组件库，你可以把它当成「view 层」，**状态管理交给 Vercel AI SDK 的 hooks（`useChat`）**。AI Elements Chat 示例里已经展示了如何把消息结构（带 `tools`, `reasoning`, `sources`）映射到 UI。([AI SDK][4])
+
+### 3.3 Chat 数据流设计
+
+1. 前端 `useChat` / 自己封装的 `useLcChat`：
+
+   * `messages`：用 AI SDK 维护的 message 列表。
+   * 每条 message 附加一个 `meta` 字段（sources/tools/reasoning/thread_id 等），由后端返回。
+
+2. Next 路由 `/api/chat`：
+
+   * 请求体： `{ messages, mode, threadId, extraConfig }`
+   * 使用 `ai` SDK 的 `StreamingTextResponse` 或 `streamText`，**从你的 Python 后端读取 SSE / chunk，再推给前端**。([Vercel][5])
+
+3. Python 后端：
+
+   * 不用改架构，只要统一输出一种「AI SDK 友好格式」：
+
+     * 要么直接模仿 OpenAI Chat Completion SSE 流。
+     * 要么输出你自定义 JSON chunk，Next 中间层做适配。
+
+4. 模式切换：
+
+   * 前端 `mode` 变更后，开启新会话或继续当前 `thread_id`。
+   * 后端根据 `mode` 路由到：
+
+     * basic → 第 1 阶段 agent
+     * rag → RAG agent
+     * workflow → LangGraph 图
+     * deep-research → DeepAgents
+     * guarded → 包一层 Guardrails
+
+### 3.4 Chat 调试 / 可视化增强（第二轮迭代）
+
+在 Chat 页加一个开发者友好区域（右上角小 bug 图标触发展开）：
+
+* 显示原始后端 JSON 流（JSON viewer）。
+* 显示 LangGraph 节点执行 timeline（如果你后端暴露 node 名和时间，可以画一个 step timeline）。
+* 显示 token/step 计数（便于你以后做性能调优）。
+
+这样 Chat 页已经是一个「**可观测的后端行为控制台**」，而不只是聊天窗口。
+
+---
+
+## 4. 后续模块规划：把 5 大后端能力「拆视图」
+
+当 Chat 页成型后，可以开始拆分「专题视图」，复用同一套 API 和会话结构。
+
+### 4.1 RAG 页面 `/rag`
+
+目标：可视化「文档库 + 索引 + 问答」：
+
+* 左侧：文档列表（标题、来源、最近使用时间）。
+* 中间：RAG 问答历史（只过滤 `mode = rag` 的会话）。
+* 右侧：当前问题命中的 chunk 列表（高亮、相似度、文档名）。
+
+UI 上可以复用 Chat 的一部分，只是强制 mode=rag，并增加「文档维度」的视图。
+
+### 4.2 Workflow 页面 `/workflows`
+
+目标：展示 LangGraph 工作流运行轨迹。
+
+* 顶部：选择某个 `thread_id` / run id。
+* 左侧：节点列表（按执行顺序）。
+* 右侧：选中节点的输入/输出/耗时/错误信息。
+* 中间可选：简单的 node graph（以后可以用 d3 / ReactFlow，第一版可以只用 timeline）。
+
+这里完全是「读后端日志/trace」的可视化，不一定实时，但你已经在 Chat 页试验过「实时 step 流」，可以在这里做 replay。
+
+### 4.3 Deep Research 页面 `/deep-research`
+
+目标：把 DeepAgents 的「研究模式」变成一个 multi-pane 体验：
+
+* 左栏：研究课题列表（research session list）。
+* 中间：研究过程对话 / 规划步骤 / 子任务树。
+* 右栏：最终报告预览 / 导出按钮（Markdown / PDF）。
+
+前端可以用 tabs 分隔「过程」和「成果」，很适合展示 DeepAgents 的 planning + subagents 行为。
+
+### 4.4 Settings 页面 `/settings`
+
+主要是：
+
+* 选择当前模型 / provider（你前端也可以直接用 AI Elements 的 `ModelSelector` 统一管理）。([AI SDK][4])
+* 配置后端 base URL、超时时间、流式开关。
+* Guardrails 策略开关（比如：是否启用安全过滤 / 是否允许工具执行某些危险操作）。
+
+---
+
+## 5. 技术细节与基础设施
+
+### 5.1 脚手架 & 依赖初始化
+
+1. Next.js 16 app-router 项目（官方 init）。
+2. Tailwind + shadcn/ui 组合。
+3. 安装 AI SDK + AI Elements：([AI SDK][1])
+
+```bash
+# AI SDK
+npm install ai
+
+npm install @ai-sdk/openai @ai-sdk/anthropic @ai-sdk/google
+
+# AI Elements
+npx ai-elements@latest
+```
+
+AI Elements 默认会把组件生成到 `@/components/ai-elements/` 下，用的就是 shadcn 的模式。([AI SDK][1])
+
+### 5.2 跨页面状态：Session / Thread 映射
+
+* 全局定义 `SessionContext` 保存：
+
+  * `sessionId`（前端）
+  * `backendThreadId`（后端 LangGraph / DeepAgents）
+  * 当前 `mode` / `model`
+* 每次发消息都带上 `backendThreadId`，保证 LangGraph checkpointer 能恢复状态。
+
+你后端已经有 thread_id 概念，这里就是做一层「统一的 ID 映射」。
+
+### 5.3 错误 / 空状态 / Skeleton
+
+前端要给你自己「调后台」留出空间：
+
+* Chat 页：
+
+  * 流被中断 → 给出「重新连接」按钮。
+  * 后端 500 → 显示错误 toast + 支持导出 raw error JSON。
+* RAG / Workflow / Research：
+
+  * 初次无数据 → 直接用空状态卡片解释如何触发（比如：请先在 Chat 中使用对应模式生成一次）。
+
+---
+
+## 6. 推荐开发顺序（你现在可以直接按这个拆任务）
+
+**Sprint 1：基础框架 & Chat MVP**
+
+1. 初始化 Next 16 + Tailwind + shadcn + AI SDK + AI Elements。
+2. 全局布局 + 顶部导航（Chat / RAG / Workflows / Research / Settings）。
+3. 建立 `/api/chat` route handler，打通到 Python `/chat`（只做 basic-agent）。
+4. 使用 AI Elements 的 `Conversation + PromptInput` 组件，完成最小可用 Chat UI + 流式输出。
+
+**Sprint 2：Chat 增强 & 5 模式打通**
+
+1. 加上模式切换控件（basic / rag / workflow / deep-research / guarded）。
+2. 在请求中带 `mode` / `threadId`，后端按模式走不同 pipeline。
+3. 使用 `Sources / Reasoning / Tools` 组件，把 RAG / DeepAgents / LangGraph 的附加信息渲染出来。
+4. 实现会话列表 + 本地持久化。
+
+**Sprint 3：RAG / Workflow / Research 独立视图**
+
+1. `/rag`：基于「RAG 模式」会话渲染文档和命中片段视图。
+2. `/workflows`：加载某次 workflow run 的节点执行详情，做 timeline。
+3. `/deep-research`：拆分「研究过程」和「报告结果」两栏。
+4. `/settings`：基本配置页 + Guardrails 开关。
+
+---
+
+一句话收束：
+
+> 让 `/chat` 成为你后端所有智能体能力的「控制台」，其它页面只是把同一批数据，从不同维度「投影」成可视化视图。
+
+等 Chat MVP 打通，我们可以再把「/api/chat 的具体实现、useChat + AI Elements 的最佳组合」细到代码级，直接帮你写出 `app/chat/page.tsx` 的首版骨架。
+
+[1]: https://ai-sdk.dev/elements "Introduction | ▲ AI Elements"
+[2]: https://nextjs.org/blog/next-16?utm_source=chatgpt.com "Next.js 16"
+[3]: https://ai-sdk.dev/docs/ai-sdk-ui/chatbot?utm_source=chatgpt.com "AI SDK UI: Chatbot"
+[4]: https://ai-sdk.dev/elements/examples/chatbot "Chatbot | ▲ AI Elements"
+[5]: https://vercel.com/docs/ai-sdk?utm_source=chatgpt.com "AI SDK"
