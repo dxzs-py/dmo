@@ -4,6 +4,7 @@
 """
 
 from rest_framework import serializers
+from .models import WorkflowExecution, WorkflowSession
 
 
 class WorkflowStartSerializer(serializers.Serializer):
@@ -103,3 +104,27 @@ class RetrievedDocumentSerializer(serializers.Serializer):
     content = serializers.CharField()
     metadata = serializers.DictField(required=False)
     relevance_score = serializers.FloatField(required=False)
+
+
+class WorkflowExecutionSerializer(serializers.ModelSerializer):
+    """工作流执行记录序列化器"""
+    class Meta:
+        model = WorkflowExecution
+        fields = '__all__'
+
+
+class WorkflowSessionSerializer(serializers.ModelSerializer):
+    """工作流会话序列化器"""
+    class Meta:
+        model = WorkflowSession
+        fields = '__all__'
+
+
+class WorkflowSessionStatusSerializer(serializers.ModelSerializer):
+    """工作流状态序列化器（简化版）"""
+    class Meta:
+        model = WorkflowSession
+        fields = [
+            'thread_id', 'current_step', 'created_at', 'updated_at',
+            'status'
+        ]

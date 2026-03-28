@@ -1,4 +1,4 @@
-# Workflow 数据库迁移脚本
+# Workflows 数据库迁移脚本
 
 from django.db import migrations, models
 
@@ -56,4 +56,41 @@ class Migration(migrations.Migration):
                 'ordering': ['-created_at'],
             },
         ),
+        migrations.AddIndex(
+            model_name='workflowexecution',
+            index=models.Index(fields=['thread_id'], name='workflow_exec_thread__b63f37_idx'),
+        ),
+        migrations.AddIndex(
+            model_name='workflowexecution',
+            index=models.Index(fields=['workflow_type'], name='workflow_exec_workflo_7e5d77_idx'),
+        ),
+        migrations.AddIndex(
+            model_name='workflowexecution',
+            index=models.Index(fields=['status'], name='workflow_exec_status_4e0b8a_idx'),
+        ),
+        migrations.AddIndex(
+            model_name='workflowexecution',
+            index=models.Index(fields=['created_at'], name='workflow_exec_created_7c6e14_idx'),
+        ),
+        migrations.AddIndex(
+            model_name='workflowexecution',
+            index=models.Index(fields=['workflow_type', 'status', '-created_at'], name='workflow_exec_type_st_5c2a1f_idx'),
+        ),
+        migrations.AddIndex(
+            model_name='workflowsession',
+            index=models.Index(fields=['thread_id'], name='workflow_sess_thread__0c9a2b_idx'),
+        ),
+        migrations.AddIndex(
+            model_name='workflowsession',
+            index=models.Index(fields=['status'], name='workflow_sess_status_1d8b3c_idx'),
+        ),
+        migrations.AddIndex(
+            model_name='workflowsession',
+            index=models.Index(fields=['created_at'], name='workflow_sess_created_2e7c4d_idx'),
+        ),
+        migrations.AddIndex(
+            model_name='workflowsession',
+            index=models.Index(fields=['status', '-created_at'], name='workflow_sess_status_3f6d5e_idx'),
+        ),
     ]
+
