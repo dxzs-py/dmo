@@ -89,3 +89,48 @@ INFO 2026-03-28 13:56:18,930 autoreload 667 Watching for file changes with StatR
 INFO 2026-03-28 15:39:02,338 autoreload 667 Watching for file changes with StatReloader
 INFO 2026-03-28 16:10:51,467 autoreload 667 Watching for file changes with StatReloader
 INFO 2026-03-28 16:53:34,289 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 22:15:00,923 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 22:18:41,369 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
+INFO 2026-03-28 22:18:46,289 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 22:19:00,414 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
+INFO 2026-03-28 22:19:06,082 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 22:19:10,731 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
+INFO 2026-03-28 22:19:16,273 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 22:19:35,209 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
+INFO 2026-03-28 22:19:40,341 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 22:20:16,066 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 22:20:40,576 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
+INFO 2026-03-28 22:20:41,029 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
+INFO 2026-03-28 22:20:45,569 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 22:20:46,702 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 22:21:01,686 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
+INFO 2026-03-28 22:21:01,733 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
+INFO 2026-03-28 22:21:06,719 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 22:21:08,912 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 22:22:15,441 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
+INFO 2026-03-28 22:22:15,936 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
+INFO 2026-03-28 22:22:20,500 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 22:22:21,933 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 22:22:23,065 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
+INFO 2026-03-28 22:25:56,435 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
+INFO 2026-03-28 22:26:03,210 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 22:26:11,245 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 22:36:53,533 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-28 22:36:55,889 basehttp 213 "GET / HTTP/1.1" 200 271
+WARNING 2026-03-28 22:36:56,200 log 253 Not Found: /favicon.ico
+WARNING 2026-03-28 22:36:56,201 basehttp 213 "GET /favicon.ico HTTP/1.1" 404 3288
+INFO 2026-03-28 22:37:02,707 basehttp 213 "GET /admin HTTP/1.1" 301 0
+INFO 2026-03-28 22:37:02,730 basehttp 213 "GET /admin/ HTTP/1.1" 302 0
+INFO 2026-03-28 22:37:03,106 basehttp 213 "GET /admin/login/?next=/admin/ HTTP/1.1" 200 4187
+INFO 2026-03-28 22:37:03,320 basehttp 213 "GET /static/admin/css/responsive.css HTTP/1.1" 200 16565
+INFO 2026-03-28 22:37:03,329 basehttp 213 "GET /static/admin/css/dark_mode.css HTTP/1.1" 200 2808
+INFO 2026-03-28 22:37:03,329 basehttp 213 "GET /static/admin/css/login.css HTTP/1.1" 200 951
+INFO 2026-03-28 22:37:03,330 basehttp 213 "GET /static/admin/css/nav_sidebar.css HTTP/1.1" 200 2810
+INFO 2026-03-28 22:37:03,333 basehttp 213 "GET /static/admin/css/base.css HTTP/1.1" 200 22120
+INFO 2026-03-28 22:37:03,339 basehttp 213 "GET /static/admin/js/theme.js HTTP/1.1" 200 1653
+INFO 2026-03-28 22:37:03,370 basehttp 213 "GET /static/admin/js/nav_sidebar.js HTTP/1.1" 200 3063
+INFO 2026-03-28 22:37:15,989 basehttp 213 "POST /admin/login/?next=/admin/ HTTP/1.1" 200 4346
+INFO 2026-03-28 22:37:27,618 basehttp 213 "POST /admin/login/?next=/admin/ HTTP/1.1" 200 4348
+INFO 2026-03-28 22:37:37,019 basehttp 213 "POST /admin/login/?next=/admin/ HTTP/1.1" 200 4353
+INFO 2026-03-28 22:37:55,300 basehttp 213 "POST /admin/login/?next=/admin/ HTTP/1.1" 200 4343
+INFO 2026-03-28 22:39:21,799 basehttp 213 "POST /admin/login/?next=/admin/ HTTP/1.1" 200 4353

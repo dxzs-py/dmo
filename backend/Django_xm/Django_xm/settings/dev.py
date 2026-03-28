@@ -76,6 +76,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "Django_xm.wsgi.application"
 
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.mysql",
@@ -90,6 +91,14 @@ DATABASES = {
         },
     }
 }
+
+
+# DATABASES = {
+#     "default": {
+#         "ENGINE": "django.db.backends.sqlite3",
+#         "NAME": BASE_DIR / "db.sqlite3",
+#     }
+# }
 
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -185,22 +194,46 @@ OPENAI_STREAMING = os.environ.get("OPENAI_STREAMING", "True").lower() == "true"
 OPENAI_MAX_TOKENS = int(os.environ.get("OPENAI_MAX_TOKENS")) if os.environ.get("OPENAI_MAX_TOKENS") else None
 
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
+TAVILY_MAX_RESULTS = int(os.environ.get("TAVILY_MAX_RESULTS", "5"))
 AMAP_KEY = os.environ.get("AMAP_KEY", "")
+
+SERVER_HOST = os.environ.get("SERVER_HOST", "0.0.0.0")
+SERVER_PORT = int(os.environ.get("SERVER_PORT", "8000"))
+SERVER_RELOAD = os.environ.get("SERVER_RELOAD", "True").lower() == "true"
+
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+LOG_FILE = os.environ.get("LOG_FILE", "logs/app.log")
+LOG_ROTATION = os.environ.get("LOG_ROTATION", "100 MB")
+LOG_RETENTION = os.environ.get("LOG_RETENTION", "30 days")
 
 # 向量存储配置
 VECTOR_STORE_PATH = os.environ.get("VECTOR_STORE_PATH", str("INDEXES_DIR"))
 VECTOR_STORE_TYPE = os.environ.get("VECTOR_STORE_TYPE", "faiss")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
+EMBEDDING_BATCH_SIZE = int(os.environ.get("EMBEDDING_BATCH_SIZE", "100"))
+
+# 文本分块配置
+CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", "1000"))
+CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", "200"))
 
 # 检索器配置
 RETRIEVER_SEARCH_TYPE = os.environ.get("RETRIEVER_SEARCH_TYPE", "similarity")
 RETRIEVER_K = int(os.environ.get("RETRIEVER_K", "4"))
-RETRIEVER_SCORE_THRESHOLD = float(os.environ.get("RETRIEVER_SCORE_THRESHOLD", "0.7"))
+RETRIEVER_SCORE_THRESHOLD = float(os.environ.get("RETRIEVER_SCORE_THRESHOLD", "0.5"))
 RETRIEVER_FETCH_K = int(os.environ.get("RETRIEVER_FETCH_K", "20"))
+
+# Agent配置
+AGENT_MAX_ITERATIONS = int(os.environ.get("AGENT_MAX_ITERATIONS", "15"))
+AGENT_MAX_EXECUTION_TIME = float(os.environ.get("AGENT_MAX_EXECUTION_TIME")) if os.environ.get("AGENT_MAX_EXECUTION_TIME") else None
+
+# RAG Agent配置
+RAG_AGENT_MAX_ITERATIONS = int(os.environ.get("RAG_AGENT_MAX_ITERATIONS", "10"))
+RAG_AGENT_RETURN_SOURCE_DOCUMENTS = os.environ.get("RAG_AGENT_RETURN_SOURCE_DOCUMENTS", "True").lower() == "true"
 
 DATA_DIR = BASE_DIR / "data"
 DOCUMENTS_DIR = DATA_DIR / "documents"
 INDEXES_DIR = DATA_DIR / "indexes"
+UPLOADS_DIR = DATA_DIR / "uploads"
 
-for directory in [DATA_DIR, DOCUMENTS_DIR, INDEXES_DIR]:
+for directory in [DATA_DIR, DOCUMENTS_DIR, INDEXES_DIR, UPLOADS_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
