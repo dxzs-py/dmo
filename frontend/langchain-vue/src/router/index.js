@@ -4,7 +4,7 @@ const routes = [
   {
     path: '/',
     name: 'home',
-    redirect: '/chat'
+    component: () => import('../views/HomeView.vue')
   },
   {
     path: '/chat',
@@ -17,8 +17,8 @@ const routes = [
     component: () => import('../views/RagView.vue')
   },
   {
-    path: '/workflow',
-    name: 'workflow',
+    path: '/workflows',
+    name: 'workflows',
     component: () => import('../views/WorkflowView.vue')
   },
   {

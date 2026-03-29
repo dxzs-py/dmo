@@ -1,69 +1,68 @@
 <template>
   <div class="deep-research-view">
-    <el-container>
-      <el-header>
-        <h2>深度研究</h2>
-      </el-header>
-      
-      <el-main>
-        <el-card class="start-card">
-          <el-form :model="researchForm" label-width="120px">
-            <el-form-item label="研究主题">
-              <el-input
-                v-model="researchForm.query"
-                type="textarea"
-                :rows="3"
-                placeholder="请输入您想研究的主题..."
-              />
-            </el-form-item>
-            <el-form-item label="启用网络搜索">
-              <el-switch v-model="researchForm.enable_web_search" />
-            </el-form-item>
-            <el-form-item label="启用文档分析">
-              <el-switch v-model="researchForm.enable_doc_analysis" />
-            </el-form-item>
-            <el-form-item>
-              <el-button type="primary" @click="startResearch" :loading="isLoading">
-                开始研究
-              </el-button>
-            </el-form-item>
-          </el-form>
-        </el-card>
-        
-        <el-card v-if="task" class="task-card">
-          <template #header>
-            <div class="card-header">
-              <span>研究任务</span>
-              <el-tag :type="getStatusType(task.status)">
-                {{ getStatusText(task.status) }}
-              </el-tag>
-            </div>
-          </template>
-          
-          <el-descriptions :column="1" border>
-            <el-descriptions-item label="任务ID">{{ task.task_id }}</el-descriptions-item>
-            <el-descriptions-item label="研究主题">{{ task.query }}</el-descriptions-item>
-            <el-descriptions-item label="创建时间">{{ task.created_at }}</el-descriptions-item>
-            <el-descriptions-item label="更新时间">{{ task.updated_at }}</el-descriptions-item>
-            <el-descriptions-item label="网络搜索">
-              <el-tag :type="task.enable_web_search ? 'success' : 'info'">
-                {{ task.enable_web_search ? '已启用' : '未启用' }}
-              </el-tag>
-            </el-descriptions-item>
-            <el-descriptions-item label="文档分析">
-              <el-tag :type="task.enable_doc_analysis ? 'success' : 'info'">
-                {{ task.enable_doc_analysis ? '已启用' : '未启用' }}
-              </el-tag>
-            </el-descriptions-item>
-          </el-descriptions>
-          
-          <div v-if="task.final_report" class="report-section">
-            <h4>研究报告</h4>
-            <div class="report-content" v-html="formatReport(task.final_report)"></div>
+    <div class="view-content">
+      <el-card class="start-card">
+        <template #header>
+          <div class="card-header">
+            <span class="page-title">深度研究</span>
           </div>
-        </el-card>
-      </el-main>
-    </el-container>
+        </template>
+        <el-form :model="researchForm" label-width="120px">
+          <el-form-item label="研究主题">
+            <el-input
+              v-model="researchForm.query"
+              type="textarea"
+              :rows="3"
+              placeholder="请输入您想研究的主题..."
+            />
+          </el-form-item>
+          <el-form-item label="启用网络搜索">
+            <el-switch v-model="researchForm.enable_web_search" />
+          </el-form-item>
+          <el-form-item label="启用文档分析">
+            <el-switch v-model="researchForm.enable_doc_analysis" />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="startResearch" :loading="isLoading">
+              开始研究
+            </el-button>
+          </el-form-item>
+        </el-form>
+      </el-card>
+      
+      <el-card v-if="task" class="task-card">
+        <template #header>
+          <div class="card-header">
+            <span>研究任务</span>
+            <el-tag :type="getStatusType(task.status)">
+              {{ getStatusText(task.status) }}
+            </el-tag>
+          </div>
+        </template>
+        
+        <el-descriptions :column="1" border>
+          <el-descriptions-item label="任务ID">{{ task.task_id }}</el-descriptions-item>
+          <el-descriptions-item label="研究主题">{{ task.query }}</el-descriptions-item>
+          <el-descriptions-item label="创建时间">{{ task.created_at }}</el-descriptions-item>
+          <el-descriptions-item label="更新时间">{{ task.updated_at }}</el-descriptions-item>
+          <el-descriptions-item label="网络搜索">
+            <el-tag :type="task.enable_web_search ? 'success' : 'info'">
+              {{ task.enable_web_search ? '已启用' : '未启用' }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="文档分析">
+            <el-tag :type="task.enable_doc_analysis ? 'success' : 'info'">
+              {{ task.enable_doc_analysis ? '已启用' : '未启用' }}
+            </el-tag>
+          </el-descriptions-item>
+        </el-descriptions>
+        
+        <div v-if="task.final_report" class="report-section">
+          <h4>研究报告</h4>
+          <div class="report-content" v-html="formatReport(task.final_report)"></div>
+        </div>
+      </el-card>
+    </div>
   </div>
 </template>
 
@@ -129,31 +128,20 @@ const startResearch = async () => {
 
 <style scoped>
 .deep-research-view {
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
-}
-
-.el-container {
   height: 100%;
-}
-
-.el-header {
-  display: flex;
-  align-items: center;
-  background: #f5f7fa;
-  border-bottom: 1px solid #e4e7ed;
-}
-
-.el-header h2 {
-  margin: 0;
-  font-size: 20px;
-  color: #303133;
-}
-
-.el-main {
-  padding: 20px;
+  padding: 24px;
   overflow-y: auto;
+}
+
+.view-content {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.page-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
 }
 
 .start-card {
@@ -179,7 +167,7 @@ const startResearch = async () => {
 }
 
 .report-content {
-  background: #f5f7fa;
+  background: var(--el-fill-color-lighter);
   padding: 20px;
   border-radius: 4px;
   line-height: 1.8;
