@@ -166,3 +166,39 @@ WARNING 2026-03-29 13:05:37,545 log 253 Not Found: /api/api/chat/modes/
 WARNING 2026-03-29 13:05:37,547 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 4211
 INFO 2026-03-29 13:09:33,915 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
 INFO 2026-03-29 13:09:48,060 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
+INFO 2026-03-29 13:26:11,695 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
+INFO 2026-03-29 13:26:25,322 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
+INFO 2026-03-29 13:56:03,560 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
+INFO 2026-03-29 13:56:23,076 basehttp 213 "OPTIONS /api/chat/stream/ HTTP/1.1" 200 0
+ERROR 2026-03-29 13:56:23,187 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 500 59
+INFO 2026-03-29 13:57:45,705 basehttp 213 "GET / HTTP/1.1" 200 271
+INFO 2026-03-29 13:58:29,964 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\chat\views.py changed, reloading.
+INFO 2026-03-29 13:58:40,285 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-29 13:59:48,772 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 200 247
+INFO 2026-03-29 14:00:05,368 basehttp 213 "GET / HTTP/1.1" 200 271
+INFO 2026-03-29 14:00:05,384 basehttp 213 "GET / HTTP/1.1" 200 271
+INFO 2026-03-29 14:00:05,392 basehttp 213 "GET / HTTP/1.1" 200 271
+WARNING 2026-03-29 14:00:12,941 log 253 Bad Request: /api/chat/stream/
+WARNING 2026-03-29 14:00:12,942 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 400 68
+INFO 2026-03-29 14:00:51,257 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-29 14:01:03,501 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 200 247
+INFO 2026-03-29 14:01:45,668 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\core\prompts.py changed, reloading.
+INFO 2026-03-29 14:01:52,334 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-29 14:02:09,786 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-29 14:03:27,850 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 200 167
+INFO 2026-03-29 14:09:14,944 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-29 14:10:04,532 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-29 14:10:24,914 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 200 167
+INFO 2026-03-29 14:13:25,021 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\chat\views.py changed, reloading.
+INFO 2026-03-29 14:13:30,877 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-29 14:13:49,648 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\chat\views.py changed, reloading.
+INFO 2026-03-29 14:13:55,717 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-29 14:15:51,849 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-29 14:15:51,850 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-29 14:16:35,793 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-29 14:18:29,610 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-29 14:19:22,327 autoreload 667 Watching for file changes with StatReloader
+WARNING 2026-03-29 14:19:32,426 log 253 Bad Request: /api/chat/stream/
+WARNING 2026-03-29 14:19:32,427 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 400 62
+WARNING 2026-03-29 14:19:59,154 log 253 Bad Request: /api/chat/stream/
+WARNING 2026-03-29 14:19:59,155 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 400 68

@@ -396,13 +396,23 @@ class ChatStreamView(APIView):
         def sync_generate():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+            client_connected = True
+            
             try:
                 gen = generate()
-                while True:
+                while client_connected:
                     try:
-                        yield loop.run_until_complete(gen.__anext__())
+                        chunk = loop.run_until_complete(gen.__anext__())
+                        yield chunk
                     except StopAsyncIteration:
                         break
+                    except (BrokenPipeError, ConnectionResetError, IOError) as e:
+                        logger.info(f"客户端断开连接，停止生成: {e}")
+                        client_connected = False
+                        break
+                    except Exception as e:
+                        logger.error(f"生成过程出错: {e}")
+                        raise
             finally:
                 loop.close()
 
@@ -411,7 +421,6 @@ class ChatStreamView(APIView):
             content_type='text/event-stream',
             headers={
                 'Cache-Control': 'no-cache',
-                'Connection': 'keep-alive',
                 'X-Accel-Buffering': 'no',
             }
         )

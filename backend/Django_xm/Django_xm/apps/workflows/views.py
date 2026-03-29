@@ -194,7 +194,6 @@ def workflow_stream(request, thread_id):
             content_type='text/event-stream',
             headers={
                 'Cache-Control': 'no-cache',
-                'Connection': 'keep-alive',
                 'X-Accel-Buffering': 'no',
             }
         )

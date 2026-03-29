@@ -1,6 +1,10 @@
 <script setup>
+defineOptions({
+  name: 'SourceList'
+})
+
 import { ref, computed } from 'vue'
-import { ElCollapse, ElCollapseItem, ElTag, ElLink } from 'element-plus'
+import { ElTag, ElLink, ElCollapseTransition } from 'element-plus'
 import { Document, Link, ArrowRight } from '@element-plus/icons-vue'
 
 const props = defineProps({
