@@ -135,3 +135,27 @@ INFO 2026-03-28 22:37:37,019 basehttp 213 "POST /admin/login/?next=/admin/ HTTP/
 INFO 2026-03-28 22:37:55,300 basehttp 213 "POST /admin/login/?next=/admin/ HTTP/1.1" 200 4343
 INFO 2026-03-28 22:39:21,799 basehttp 213 "POST /admin/login/?next=/admin/ HTTP/1.1" 200 4353
 INFO 2026-03-28 23:07:39,903 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-29 10:55:09,118 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-29 10:56:01,257 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
+INFO 2026-03-29 10:56:11,126 basehttp 213 "OPTIONS /api/chat/stream/ HTTP/1.1" 200 0
+ERROR 2026-03-29 10:56:11,286 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 500 59
+INFO 2026-03-29 10:58:34,296 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-29 11:00:26,904 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
+INFO 2026-03-29 11:27:34,782 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-29 11:33:09,475 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
+INFO 2026-03-29 11:33:19,002 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
+INFO 2026-03-29 11:49:07,634 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
+WARNING 2026-03-29 12:44:10,095 log 253 Not Found: /api/api/chat/modes/
+WARNING 2026-03-29 12:44:10,098 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 3305
+WARNING 2026-03-29 12:44:32,540 log 253 Not Found: /api/api/chat/modes/
+WARNING 2026-03-29 12:44:32,541 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 3305
+WARNING 2026-03-29 12:47:05,292 log 253 Not Found: /api/api/chat/modes/
+WARNING 2026-03-29 12:47:05,293 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 3305
+WARNING 2026-03-29 12:47:51,394 log 253 Not Found: /api/api/chat/modes/
+WARNING 2026-03-29 12:47:51,394 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 3305
+WARNING 2026-03-29 12:48:09,750 log 253 Not Found: /api/api/chat/modes/
+WARNING 2026-03-29 12:48:09,751 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 3305
+WARNING 2026-03-29 12:48:23,561 log 253 Not Found: /api/api/chat/modes/
+WARNING 2026-03-29 12:48:23,562 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 3305
+WARNING 2026-03-29 12:48:29,466 log 253 Not Found: /api/api/chat/modes/
+WARNING 2026-03-29 12:48:29,466 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 3305

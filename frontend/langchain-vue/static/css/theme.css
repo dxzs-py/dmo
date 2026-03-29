@@ -1,0 +1,118 @@
+html.dark {
+  color-scheme: dark;
+}
+
+html.dark .el-container {
+  background-color: #141414;
+}
+
+html.dark .app-sidebar {
+  background-color: #1f1f1f;
+  border-right-color: #303030;
+}
+
+html.dark .sidebar-header {
+  background-color: #1f1f1f;
+  border-bottom-color: #303030;
+}
+
+html.dark .sidebar-header h2 {
+  color: #e4e4e4;
+}
+
+html.dark .app-main {
+  background-color: #141414;
+}
+
+html.dark .chat-header {
+  background-color: #1f1f1f;
+  border-bottom-color: #303030;
+}
+
+html.dark .chat-header h2 {
+  color: #e4e4e4;
+}
+
+html.dark .chat-main {
+  background-color: #141414;
+}
+
+html.dark .chat-footer {
+  background-color: #1f1f1f;
+  border-top-color: #303030;
+}
+
+html.dark .empty-state {
+  color: #a3a3a3;
+}
+
+html.dark .empty-state .empty-icon {
+  color: #525252;
+}
+
+html.dark .empty-state h3 {
+  color: #e4e4e4;
+}
+
+html.dark .message-text {
+  background-color: #262626;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+html.dark .message.user .message-text {
+  background: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
+}
+
+html.dark .el-header {
+  background-color: #1f1f1f;
+  border-bottom-color: #303030;
+}
+
+html.dark .el-header h2 {
+  color: #e4e4e4;
+}
+
+html.dark .el-card {
+  background-color: #1f1f1f;
+  border-color: #303030;
+}
+
+html.dark .el-card__header {
+  border-bottom-color: #303030;
+}
+
+html.dark .el-form-item__label {
+  color: #a3a3a3;
+}
+
+html.dark .answer {
+  background-color: #262626;
+}
+
+html.dark .report-content {
+  background-color: #262626;
+}
+
+html.dark .result-section pre {
+  background-color: #262626;
+}
+
+html.dark .session-item:hover {
+  background-color: #262626;
+}
+
+html.dark .session-item.active {
+  background-color: #1e3a5f;
+}
+
+html.dark .session-title {
+  color: #e4e4e4;
+}
+
+html.dark .session-meta {
+  color: #737373;
+}
+
+html.dark .nav-menu .el-menu {
+  background-color: transparent;
+}

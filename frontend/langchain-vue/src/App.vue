@@ -1,60 +1,28 @@
 <script setup>
 import { ref } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
-import { Fold, Expand, ChatDotRound, Document, Management, Reading, Setting } from '@element-plus/icons-vue'
-
-const router = useRouter()
-const route = useRoute()
+import AppSidebar from './components/AppSidebar.vue'
+import AppHeader from './components/AppHeader.vue'
 
 const isCollapse = ref(false)
+const isScrolled = ref(false)
 
-const menuItems = [
-  { index: '/chat', label: '智能聊天', icon: ChatDotRound },
-  { index: '/rag', label: 'RAG 知识库', icon: Document },
-  { index: '/workflow', label: '学习工作流', icon: Management },
-  { index: '/deep-research', label: '深度研究', icon: Reading },
-  { index: '/settings', label: '设置', icon: Setting },
-]
-
-const handleMenuSelect = (index) => {
-  router.push(index)
+const handleScroll = (event) => {
+  const scrollTop = event.target.scrollTop
+  isScrolled.value = scrollTop > 0
 }
 </script>
 
 <template>
   <el-container class="app-container">
-    <el-aside :width="isCollapse ? '64px' : '200px'">
-      <div class="logo">
-        <h2 v-if="!isCollapse">LC-StudyLab</h2>
-        <h2 v-else>LC</h2>
+    <AppSidebar v-model:collapse="isCollapse" />
+    <el-container class="main-container" :class="{ 'sidebar-collapsed': isCollapse }">
+      <div class="header-wrapper" :class="{ 'has-shadow': isScrolled }">
+        <AppHeader />
       </div>
-      <el-menu
-        :default-active="route.path"
-        :collapse="isCollapse"
-        @select="handleMenuSelect"
-      >
-        <el-menu-item v-for="item in menuItems" :key="item.index" :index="item.index">
-          <el-icon><component :is="item.icon" /></el-icon>
-          <template #title>{{ item.label }}</template>
-        </el-menu-item>
-      </el-menu>
-    </el-aside>
-    
-    <el-container>
-      <el-header class="app-header">
-        <div class="header-left">
-          <el-icon class="collapse-btn" @click="isCollapse = !isCollapse">
-            <Fold v-if="!isCollapse" />
-            <Expand v-else />
-          </el-icon>
-        </div>
-        <div class="header-right">
-          <span class="app-title">LC-StudyLab - 智能学习与研究助手</span>
-        </div>
-      </el-header>
-      
       <el-main class="app-main">
-        <router-view />
+        <div class="scroll-container" @scroll="handleScroll">
+          <router-view />
+        </div>
       </el-main>
     </el-container>
   </el-container>
@@ -76,83 +44,32 @@ html, body, #app {
   height: 100%;
 }
 
-.el-aside {
-  background-color: #304156;
-  transition: width 0.3s;
+.main-container {
+  height: 100%;
   overflow: hidden;
-}
-
-.logo {
-  height: 60px;
+  transition: margin-left 0.3s ease;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background-color: #2b3a4a;
-  color: white;
+  flex-direction: column;
 }
 
-.logo h2 {
-  font-size: 18px;
-  margin: 0;
-  white-space: nowrap;
+.header-wrapper {
+  flex-shrink: 0;
+  transition: box-shadow 0.2s;
 }
 
-.el-menu {
-  border-right: none;
-  background-color: #304156;
-}
-
-.el-menu-item {
-  color: #bfcbd9;
-}
-
-.el-menu-item:hover {
-  background-color: #263445 !important;
-}
-
-.el-menu-item.is-active {
-  background-color: #409eff !important;
-  color: white;
-}
-
-.app-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background-color: #fff;
-  border-bottom: 1px solid #e4e7ed;
-  padding: 0 20px;
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-}
-
-.collapse-btn {
-  font-size: 20px;
-  cursor: pointer;
-  color: #606266;
-}
-
-.collapse-btn:hover {
-  color: #409eff;
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-}
-
-.app-title {
-  font-size: 16px;
-  color: #303133;
-  font-weight: 500;
+.header-wrapper.has-shadow {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .app-main {
-  background-color: #f0f2f5;
+  flex: 1;
   padding: 0;
   overflow: hidden;
+  background-color: #fff;
+}
+
+.scroll-container {
+  height: 100%;
+  overflow-y: auto;
 }
 </style>
