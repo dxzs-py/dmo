@@ -1,10 +1,12 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import AppSidebar from './components/AppSidebar.vue'
 import AppHeader from './components/AppHeader.vue'
+import { useThemeStore } from './stores/theme'
 
 const route = useRoute()
+const themeStore = useThemeStore()
 const isCollapse = ref(false)
 const isScrolled = ref(false)
 
@@ -14,6 +16,10 @@ const handleScroll = (event) => {
   const scrollTop = event.target.scrollTop
   isScrolled.value = scrollTop > 0
 }
+
+onMounted(() => {
+  themeStore.setTheme(themeStore.theme)
+})
 </script>
 
 <template>

@@ -79,6 +79,66 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  const appendToLastMessage = (sessionId, content) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (session && session.messages.length > 0) {
+      const lastMessage = session.messages[session.messages.length - 1]
+      if (lastMessage.role === 'assistant') {
+        lastMessage.content = (lastMessage.content || '') + content
+      }
+    }
+  }
+
+  const addSourceToLastMessage = (sessionId, source) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (session && session.messages.length > 0) {
+      const lastMessage = session.messages[session.messages.length - 1]
+      if (lastMessage.role === 'assistant' && lastMessage.sources) {
+        lastMessage.sources.push(source)
+      }
+    }
+  }
+
+  const setSourcesToLastMessage = (sessionId, sources) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (session && session.messages.length > 0) {
+      const lastMessage = session.messages[session.messages.length - 1]
+      if (lastMessage.role === 'assistant') {
+        lastMessage.sources = sources
+      }
+    }
+  }
+
+  const setPlanToLastMessage = (sessionId, plan) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (session && session.messages.length > 0) {
+      const lastMessage = session.messages[session.messages.length - 1]
+      if (lastMessage.role === 'assistant') {
+        lastMessage.plan = plan
+      }
+    }
+  }
+
+  const setChainOfThoughtToLastMessage = (sessionId, cot) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (session && session.messages.length > 0) {
+      const lastMessage = session.messages[session.messages.length - 1]
+      if (lastMessage.role === 'assistant') {
+        lastMessage.chainOfThought = cot
+      }
+    }
+  }
+
+  const addToolCallToLastMessage = (sessionId, toolCall) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (session && session.messages.length > 0) {
+      const lastMessage = session.messages[session.messages.length - 1]
+      if (lastMessage.role === 'assistant' && lastMessage.toolCalls) {
+        lastMessage.toolCalls.push(toolCall)
+      }
+    }
+  }
+
   const getSessionMessages = (sessionId) => {
     const session = sessions.value.find(s => s.id === sessionId)
     return session ? session.messages : []
@@ -89,6 +149,14 @@ export const useSessionStore = defineStore('session', () => {
     if (session && session.messages.length > startIndex) {
       session.messages.splice(startIndex)
       session.messageCount = session.messages.length
+    }
+  }
+
+  const clearCurrentSessionMessages = () => {
+    const session = sessions.value.find(s => s.id === currentSessionId.value)
+    if (session) {
+      session.messages = []
+      session.messageCount = 0
     }
   }
 
@@ -107,7 +175,14 @@ export const useSessionStore = defineStore('session', () => {
     updateSessionTitle,
     addMessageToSession,
     updateLastMessage,
+    appendToLastMessage,
+    addSourceToLastMessage,
+    setSourcesToLastMessage,
+    setPlanToLastMessage,
+    setChainOfThoughtToLastMessage,
+    addToolCallToLastMessage,
     getSessionMessages,
     removeMessagesFromIndex,
+    clearCurrentSessionMessages,
   }
 })

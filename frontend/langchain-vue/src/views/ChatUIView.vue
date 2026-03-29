@@ -59,14 +59,27 @@
         <div class="top-bar-content">
           <span class="page-title">智能助手</span>
           <div class="top-bar-actions">
-            <el-button link @click="toggleSidebar">
+            <el-dropdown @command="handleTopBarAction">
+              <el-button link>
+                <el-icon><More /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="clear">
+                    <el-icon><Delete /></el-icon>
+                    清空对话
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <el-button link @click="toggleSidebar" class="mobile-menu-btn">
               <el-icon><Menu /></el-icon>
             </el-button>
           </div>
         </div>
       </div>
-      
-      <div class="chat-area" @scroll="handleScroll">
+
+      <div class="chat-area" ref="messagesContainer" @scroll="handleScroll">
         <div v-if="messages.length === 0" class="empty-state">
           <div class="empty-icon">
             <el-icon :size="64"><ChatDotRound /></el-icon>
@@ -76,8 +89,8 @@
         </div>
         
         <div v-else class="messages-list">
-          <div 
-            v-for="(msg, index) in messages" 
+          <div
+            v-for="(msg, index) in messages"
             :key="msg.id"
             :class="['message', msg.role]"
           >
@@ -88,13 +101,31 @@
             <div class="message-content">
               <div class="message-header">
                 <span class="message-role">{{ msg.role === 'user' ? '用户' : 'AI助手' }}</span>
+                <el-dropdown v-if="msg.role === 'assistant'" @command="(cmd) => handleMessageAction(cmd, index)" trigger="click">
+                  <el-button link size="small">
+                    <el-icon><More /></el-icon>
+                  </el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="regenerate">
+                        <el-icon><Refresh /></el-icon>
+                        重新生成
+                      </el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
               </div>
               <div class="message-text">
                 <MarkdownRenderer :content="msg.content" />
               </div>
+              <div v-if="isStreaming && index === messages.length - 1 && msg.role === 'assistant'" class="streaming-indicator">
+                <span class="streaming-dot"></span>
+                <span class="streaming-dot"></span>
+                <span class="streaming-dot"></span>
+              </div>
             </div>
           </div>
-          
+
           <div v-if="isLoading && (messages.length === 0 || messages[messages.length - 1].role === 'user')" class="message assistant">
             <div class="message-avatar">
               <el-icon><ChatDotRound /></el-icon>
@@ -103,8 +134,9 @@
               <div class="message-header">
                 <span class="message-role">AI助手</span>
               </div>
-              <div class="message-text">
-                <el-icon class="is-loading"><Loading /></el-icon> 正在思考...
+              <div class="message-text loading">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                正在思考<span class="loading-dots">...</span>
               </div>
             </div>
           </div>
@@ -112,49 +144,63 @@
       </div>
       
       <div class="input-area">
+        <div class="input-controls">
+          <ModelSelector v-model="selectedModel" @change="handleModelChange" />
+        </div>
         <div class="input-wrapper">
           <el-input
             v-model="inputMessage"
             type="textarea"
-            :rows="2"
+            :rows="3"
             :disabled="isLoading"
             placeholder="输入您的问题... (Enter 发送，Shift+Enter 换行)"
             @keydown="handleKeyDown"
             resize="none"
           />
         </div>
-        <el-button 
-          type="primary" 
-          @click="sendMessage" 
-          :loading="isLoading"
-          :disabled="!inputMessage.trim()"
-        >
-          发送
-        </el-button>
+        <div class="input-actions">
+          <el-button
+            v-if="isLoading"
+            type="warning"
+            @click="stopGeneration"
+          >
+            <el-icon><Loading /></el-icon>
+            停止
+          </el-button>
+          <el-button
+            v-else
+            type="primary"
+            @click="sendMessage"
+            :disabled="!inputMessage.trim()"
+          >
+            发送
+          </el-button>
+        </div>
       </div>
     </main>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted } from 'vue'
+import { ref, computed, nextTick, onMounted, watch } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
-import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { 
-  ChatDotRound, 
-  Edit, 
-  User, 
-  UserFilled, 
-  Loading, 
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  ChatDotRound,
+  Edit,
+  User,
+  Loading,
   Menu,
   DArrowLeft,
-  DArrowRight
+  DArrowRight,
+  More,
+  Delete,
+  Refresh
 } from '@element-plus/icons-vue'
 import MarkdownRenderer from '../components/MarkdownRenderer.vue'
+import ModelSelector from '../components/ModelSelector.vue'
 
-const router = useRouter()
 const chatStore = useChatStore()
 const sessionStore = useSessionStore()
 
@@ -162,19 +208,33 @@ const sidebarCollapsed = ref(false)
 const isScrolled = ref(false)
 const inputMessage = ref('')
 const selectedChat = ref(null)
+const selectedModel = ref('deepseek-chat')
+const messagesContainer = ref(null)
 
-const chatHistory = ref([
-  { id: '1', title: '系统指令解读' },
-  { id: '2', title: '学习 Python 基础' },
-  { id: '3', title: '代码审查建议' },
-  { id: '4', title: 'React Hooks 最佳实践' },
-])
+const chatHistory = computed(() => sessionStore.sessions)
 
 const messages = computed(() => {
   return sessionStore.getSessionMessages(sessionStore.currentSessionId)
 })
 
 const isLoading = computed(() => chatStore.isLoading)
+const isStreaming = computed(() => chatStore.isStreaming)
+
+const scrollToBottom = () => {
+  nextTick(() => {
+    if (messagesContainer.value) {
+      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+    }
+  })
+}
+
+watch(() => messages.value.length, () => {
+  scrollToBottom()
+})
+
+watch(() => sessionStore.currentSessionId, () => {
+  scrollToBottom()
+})
 
 const toggleSidebar = () => {
   sidebarCollapsed.value = !sidebarCollapsed.value
@@ -188,26 +248,53 @@ const createNewChat = () => {
   sessionStore.createNewSession('basic-agent')
   selectedChat.value = sessionStore.currentSessionId
   inputMessage.value = ''
+  ElMessage.success('已创建新对话')
 }
 
 const selectChat = (chatId) => {
   selectedChat.value = chatId
-  sessionStore.currentSessionId = chatId
+  sessionStore.switchSession(chatId)
+}
+
+const handleModelChange = (model) => {
+  selectedModel.value = model
+  ElMessage.success(`已切换到 ${model}`)
 }
 
 const sendMessage = async () => {
   if (!inputMessage.value.trim() || chatStore.isLoading) {
     return
   }
-  
+
   const message = inputMessage.value
   inputMessage.value = ''
-  
+
   try {
-    await chatStore.sendMessage(message)
+    await chatStore.sendMessage(message, {
+      useTools: true,
+      useAdvancedTools: false
+    })
   } catch (error) {
     console.error('发送消息失败:', error)
     ElMessage.error('发送消息失败，请稍后重试')
+  }
+}
+
+const stopGeneration = () => {
+  chatStore.stopStreaming?.()
+  ElMessage.info('已停止生成')
+}
+
+const regenerateResponse = async (index) => {
+  if (chatStore.isLoading) {
+    return
+  }
+  try {
+    await chatStore.regenerateMessage(index)
+    ElMessage.success('正在重新生成...')
+  } catch (error) {
+    console.error('重新生成失败:', error)
+    ElMessage.error('重新生成失败，请稍后重试')
   }
 }
 
@@ -218,10 +305,46 @@ const handleKeyDown = (event) => {
   }
 }
 
-onMounted(() => {
-  if (chatHistory.value.length > 0) {
-    selectedChat.value = chatHistory.value[0].id
+const clearChat = () => {
+  ElMessageBox.confirm(
+    '确定要清空当前对话吗？',
+    '提示',
+    {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning'
+    }
+  ).then(() => {
+    const session = sessionStore.sessions.find(s => s.id === sessionStore.currentSessionId)
+    if (session) {
+      session.messages = []
+      session.messageCount = 0
+    }
+    ElMessage.success('对话已清空')
+  }).catch(() => {})
+}
+
+const handleTopBarAction = (command) => {
+  switch (command) {
+    case 'clear':
+      clearChat()
+      break
   }
+}
+
+const handleMessageAction = (command, index) => {
+  switch (command) {
+    case 'regenerate':
+      regenerateResponse(index)
+      break
+  }
+}
+
+onMounted(() => {
+  if (sessionStore.currentSessionId) {
+    selectedChat.value = sessionStore.currentSessionId
+  }
+  scrollToBottom()
 })
 </script>
 
@@ -495,19 +618,90 @@ onMounted(() => {
   flex-shrink: 0;
   padding: 16px 24px;
   border-top: 1px solid #e5e7eb;
+  background-color: #fff;
+}
+
+.input-controls {
+  margin-bottom: 12px;
   display: flex;
+  align-items: center;
   gap: 12px;
-  align-items: flex-end;
 }
 
 .input-wrapper {
-  flex: 1;
-  max-width: 800px;
-  margin: 0 auto;
+  margin-bottom: 12px;
 }
 
 .input-wrapper :deep(.el-textarea__inner) {
   border-radius: 12px;
   padding: 12px 16px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.input-wrapper :deep(.el-textarea__inner:focus) {
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+}
+
+.input-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.streaming-indicator {
+  display: flex;
+  gap: 4px;
+  padding: 8px 0;
+}
+
+.streaming-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #3b82f6;
+  animation: bounce 1.4s infinite ease-in-out both;
+}
+
+.streaming-dot:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.streaming-dot:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+@keyframes bounce {
+  0%, 80%, 100% {
+    transform: scale(0);
+  }
+  40% {
+    transform: scale(1);
+  }
+}
+
+.message-text.loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.loading-dots {
+  animation: dots 1.5s steps(4, end) infinite;
+}
+
+@keyframes dots {
+  0%, 20% { content: '.'; }
+  40% { content: '..'; }
+  60%, 100% { content: '...'; }
+}
+
+.mobile-menu-btn {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .mobile-menu-btn {
+    display: flex;
+  }
 }
 </style>

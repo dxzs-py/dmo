@@ -1,6 +1,6 @@
 <script setup>
-import { ref, computed } from 'vue'
-import { ElPopover, ElSelect, ElOption, ElTag } from 'element-plus'
+import { computed } from 'vue'
+import { ElSelect, ElOption, ElTag } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 
 const props = defineProps({
@@ -36,10 +36,6 @@ const currentModel = computed({
     emit('update:modelValue', value)
     emit('change', value)
   }
-})
-
-const selectedModelInfo = computed(() => {
-  return models.find(m => m.value === currentModel.value) || models[0]
 })
 </script>
 
