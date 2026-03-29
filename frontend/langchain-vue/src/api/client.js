@@ -11,10 +11,10 @@ const apiClient = axios.create({
 
 export const chatAPI = {
   sendMessage(data) {
-    return apiClient.post('/api/chat/', data)
+    return apiClient.post('/chat/', data)
   },
   streamMessage(data) {
-    return fetch(`${settings.API_BASE_URL}/api/chat/stream/`, {
+    return fetch(`${settings.API_BASE_URL}/chat/stream/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -23,31 +23,37 @@ export const chatAPI = {
     })
   },
   getModes() {
-    return apiClient.get('/api/chat/modes/')
+    return apiClient.get('/chat/modes/')
   },
 }
 
 export const ragAPI = {
   query(data) {
-    return apiClient.post('/api/rag/query/', data)
+    return apiClient.post('/rag/query/', data)
   },
 }
 
 export const workflowAPI = {
   start(data) {
-    return apiClient.post('/api/workflow/start/', data)
+    return apiClient.post('/workflow/start/', data)
   },
   getState(threadId) {
-    return apiClient.get(`/api/workflow/status/${threadId}/`)
+    return apiClient.get(`/workflow/status/${threadId}/`)
   },
   submitAnswers(threadId, data) {
-    return apiClient.post(`/api/workflow/submit/`, { thread_id: threadId, ...data })
+    return apiClient.post(`/workflow/submit/`, { thread_id: threadId, ...data })
   },
 }
 
 export const deepResearchAPI = {
   start(data) {
-    return apiClient.post('/api/deep-research/', data)
+    return apiClient.post('/deep-research/start/', data)
+  },
+  getStatus(taskId) {
+    return apiClient.get(`/deep-research/status/${taskId}/`)
+  },
+  getResult(taskId) {
+    return apiClient.get(`/deep-research/result/${taskId}/`)
   },
 }
 

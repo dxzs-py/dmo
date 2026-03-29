@@ -45,9 +45,17 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("", root_info),
     path("health/", health_check),
+    path("health", health_check),
+    
     path("api/chat/", include("Django_xm.apps.chat.urls")),
     path("api/rag/", include("Django_xm.apps.rag.urls")),
     path("api/workflow/", include("Django_xm.apps.workflows.urls")),
     path("api/workflows/", include("Django_xm.apps.workflows.urls")),
     path("api/deep-research/", include("Django_xm.apps.deep_research.urls")),
+    
+    path("chat/", include("Django_xm.apps.chat.urls")),
+    path("rag/", include("Django_xm.apps.rag.urls")),
+    path("workflow/", include("Django_xm.apps.workflows.urls")),
+    path("workflows/", include("Django_xm.apps.workflows.urls")),
+    path("deep-research/", include("Django_xm.apps.deep_research.urls")),
 ]

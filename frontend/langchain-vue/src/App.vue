@@ -1,10 +1,14 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import AppSidebar from './components/AppSidebar.vue'
 import AppHeader from './components/AppHeader.vue'
 
+const route = useRoute()
 const isCollapse = ref(false)
 const isScrolled = ref(false)
+
+const isChatUIRoute = computed(() => route.path === '/chat-ui')
 
 const handleScroll = (event) => {
   const scrollTop = event.target.scrollTop
@@ -13,7 +17,10 @@ const handleScroll = (event) => {
 </script>
 
 <template>
-  <el-container class="app-container">
+  <div v-if="isChatUIRoute" class="chat-ui-wrapper">
+    <router-view />
+  </div>
+  <el-container v-else class="app-container">
     <AppSidebar v-model:collapse="isCollapse" />
     <el-container class="main-container" :class="{ 'sidebar-collapsed': isCollapse }">
       <div class="header-wrapper" :class="{ 'has-shadow': isScrolled }">

@@ -159,3 +159,10 @@ WARNING 2026-03-29 12:48:23,561 log 253 Not Found: /api/api/chat/modes/
 WARNING 2026-03-29 12:48:23,562 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 3305
 WARNING 2026-03-29 12:48:29,466 log 253 Not Found: /api/api/chat/modes/
 WARNING 2026-03-29 12:48:29,466 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 3305
+INFO 2026-03-29 13:05:10,751 autoreload 667 Watching for file changes with StatReloader
+WARNING 2026-03-29 13:05:21,593 log 253 Not Found: /api/api/chat/modes/
+WARNING 2026-03-29 13:05:21,594 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 4211
+WARNING 2026-03-29 13:05:37,545 log 253 Not Found: /api/api/chat/modes/
+WARNING 2026-03-29 13:05:37,547 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 4211
+INFO 2026-03-29 13:09:33,915 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
+INFO 2026-03-29 13:09:48,060 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
