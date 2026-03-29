@@ -33,6 +33,7 @@ const toggleCollapse = () => {
 
 const menuItems = [
   { index: '/chat', label: '智能聊天', icon: ChatDotRound },
+  { index: '/chat-ui', label: 'ChatUI', icon: ChatDotRound },
   { index: '/rag', label: 'RAG 知识库', icon: Document },
   { index: '/workflows', label: '学习工作流', icon: Management },
   { index: '/deep-research', label: '深度研究', icon: Reading },

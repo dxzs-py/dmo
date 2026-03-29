@@ -125,7 +125,7 @@ onMounted(() => {
                 </div>
                 <div v-if="msg.role === 'assistant' && !chatStore.isLoading" class="message-actions">
                   <el-button 
-                    type="text" 
+                    link 
                     size="small" 
                     :icon="Refresh"
                     @click="handleRegenerate(index)"
