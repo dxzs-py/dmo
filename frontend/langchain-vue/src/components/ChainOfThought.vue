@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { ArrowDown, MagicStick } from '@element-plus/icons-vue'
+import ToolCallCard from './ToolCallCard.vue'
 
 const props = defineProps({
   steps: {
@@ -64,16 +65,6 @@ const formattedSteps = computed(() => {
     </div>
   </div>
 </template>
-
-<script>
-import ToolCallCard from './ToolCallCard.vue'
-
-export default {
-  components: {
-    ToolCallCard
-  }
-}
-</script>
 
 <style scoped>
 .chain-of-thought {

@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed } from 'vue'
-import { Copy, Check } from '@element-plus/icons-vue'
+import { DocumentCopy, Check } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 const props = defineProps({
@@ -67,7 +67,7 @@ const isHighlighted = (lineIndex) => {
       <button class="ai-code-block__copy" @click="handleCopy">
         <el-icon :size="16">
           <Check v-if="isCopied" />
-          <Copy v-else />
+          <DocumentCopy v-else />
         </el-icon>
         <span>{{ isCopied ? '已复制' : '复制' }}</span>
       </button>

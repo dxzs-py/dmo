@@ -7,10 +7,10 @@ import {
   Management, 
   Reading, 
   Setting, 
-  Plus,
-  Delete,
-  Fold,
-  Expand
+  Promotion,
+  Close,
+  ArrowLeft,
+  ArrowRight
 } from '@element-plus/icons-vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 
@@ -33,6 +33,7 @@ const toggleCollapse = () => {
 
 const menuItems = [
   { index: '/chat', label: '智能聊天', icon: ChatDotRound },
+  { index: '/chat-enhanced', label: '增强聊天', icon: ChatDotRound },
   { index: '/chat-ui', label: 'ChatUI', icon: ChatDotRound },
   { index: '/rag', label: 'RAG 知识库', icon: Document },
   { index: '/workflows', label: '学习工作流', icon: Management },
@@ -75,7 +76,7 @@ const handleDeleteSession = (sessionId, event) => {
       <h2 v-else>LC</h2>
       <el-button 
         class="collapse-btn" 
-        :icon="collapse ? Expand : Fold" 
+        :icon="collapse ? ArrowRight : ArrowLeft" 
         @click="toggleCollapse"
         text
       />
@@ -87,7 +88,7 @@ const handleDeleteSession = (sessionId, event) => {
         class="new-chat-btn" 
         type="primary" 
         @click="handleNewChat"
-        :icon="Plus"
+        :icon="Promotion"
       >
         新建对话
       </el-button>
@@ -96,7 +97,7 @@ const handleDeleteSession = (sessionId, event) => {
         class="new-chat-btn" 
         type="primary" 
         @click="handleNewChat"
-        :icon="Plus"
+        :icon="Promotion"
         circle
       />
       
@@ -137,7 +138,7 @@ const handleDeleteSession = (sessionId, event) => {
               class="delete-icon" 
               @click="handleDeleteSession(session.id, $event)"
             >
-              <Delete />
+              <Close />
             </el-icon>
           </div>
         </div>

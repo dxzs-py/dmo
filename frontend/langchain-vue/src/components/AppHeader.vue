@@ -32,6 +32,9 @@ const themeStore = useThemeStore()
   position: sticky;
   top: 0;
   z-index: 50;
+  position: sticky;
+  top: 0;
+  z-index: 50;
   width: 100%;
   border-bottom: 1px solid var(--el-border-color);
   background-color: var(--el-bg-color);

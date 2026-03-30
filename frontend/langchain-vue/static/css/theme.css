@@ -1,61 +1,117 @@
+:root {
+  --radius: 0.625rem;
+  --background: #ffffff;
+  --foreground: #262626;
+  --card: #ffffff;
+  --card-foreground: #262626;
+  --popover: #ffffff;
+  --popover-foreground: #262626;
+  --primary: #374151;
+  --primary-foreground: #fafafa;
+  --secondary: #f7f7f7;
+  --secondary-foreground: #374151;
+  --muted: #f7f7f7;
+  --muted-foreground: #8c8c8c;
+  --accent: #f7f7f7;
+  --accent-foreground: #374151;
+  --destructive: #dc2626;
+  --border: #e5e7eb;
+  --input: #e5e7eb;
+  --ring: #a3a3a3;
+  --sidebar: #fafafa;
+  --sidebar-foreground: #262626;
+  --sidebar-primary: #374151;
+  --sidebar-primary-foreground: #fafafa;
+  --sidebar-accent: #f7f7f7;
+  --sidebar-accent-foreground: #374151;
+  --sidebar-border: #e5e7eb;
+  --sidebar-ring: #a3a3a3;
+}
+
 html.dark {
   color-scheme: dark;
+  --background: #1f1f1f;
+  --foreground: #fafafa;
+  --card: #262626;
+  --card-foreground: #fafafa;
+  --popover: #262626;
+  --popover-foreground: #fafafa;
+  --primary: #e5e7eb;
+  --primary-foreground: #262626;
+  --secondary: #404040;
+  --secondary-foreground: #fafafa;
+  --muted: #404040;
+  --muted-foreground: #a3a3a3;
+  --accent: #404040;
+  --accent-foreground: #fafafa;
+  --destructive: #ef4444;
+  --border: rgba(255, 255, 255, 0.1);
+  --input: rgba(255, 255, 255, 0.15);
+  --ring: #8c8c8c;
+  --sidebar: #262626;
+  --sidebar-foreground: #fafafa;
+  --sidebar-primary: #3b82f6;
+  --sidebar-primary-foreground: #fafafa;
+  --sidebar-accent: #404040;
+  --sidebar-accent-foreground: #fafafa;
+  --sidebar-border: rgba(255, 255, 255, 0.1);
+  --sidebar-ring: #8c8c8c;
 }
 
 html.dark .el-container {
-  background-color: #141414;
+  background-color: var(--background);
 }
 
 html.dark .app-sidebar {
-  background-color: #1f1f1f;
-  border-right-color: #303030;
+  background-color: var(--sidebar);
+  border-right-color: var(--sidebar-border);
 }
 
 html.dark .sidebar-header {
-  background-color: #1f1f1f;
-  border-bottom-color: #303030;
+  background-color: var(--sidebar);
+  border-bottom-color: var(--sidebar-border);
 }
 
 html.dark .sidebar-header h2 {
-  color: #e4e4e4;
+  color: var(--sidebar-foreground);
 }
 
 html.dark .app-main {
-  background-color: #141414;
+  background-color: var(--background);
 }
 
 html.dark .chat-header {
-  background-color: #1f1f1f;
-  border-bottom-color: #303030;
+  background-color: var(--sidebar);
+  border-bottom-color: var(--sidebar-border);
 }
 
 html.dark .chat-header h2 {
-  color: #e4e4e4;
+  color: var(--sidebar-foreground);
 }
 
 html.dark .chat-main {
-  background-color: #141414;
+  background-color: var(--background);
 }
 
 html.dark .chat-footer {
-  background-color: #1f1f1f;
-  border-top-color: #303030;
+  background-color: var(--sidebar);
+  border-top-color: var(--sidebar-border);
 }
 
 html.dark .empty-state {
-  color: #a3a3a3;
+  color: var(--muted-foreground);
 }
 
 html.dark .empty-state .empty-icon {
-  color: #525252;
+  color: var(--muted);
 }
 
 html.dark .empty-state h3 {
-  color: #e4e4e4;
+  color: var(--foreground);
 }
 
 html.dark .message-text {
-  background-color: #262626;
+  background-color: var(--card);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
@@ -64,41 +120,41 @@ html.dark .message.user .message-text {
 }
 
 html.dark .el-header {
-  background-color: #1f1f1f;
-  border-bottom-color: #303030;
+  background-color: var(--sidebar);
+  border-bottom-color: var(--sidebar-border);
 }
 
 html.dark .el-header h2 {
-  color: #e4e4e4;
+  color: var(--sidebar-foreground);
 }
 
 html.dark .el-card {
-  background-color: #1f1f1f;
-  border-color: #303030;
+  background-color: var(--card);
+  border-color: var(--border);
 }
 
 html.dark .el-card__header {
-  border-bottom-color: #303030;
+  border-bottom-color: var(--border);
 }
 
 html.dark .el-form-item__label {
-  color: #a3a3a3;
+  color: var(--muted-foreground);
 }
 
 html.dark .answer {
-  background-color: #262626;
+  background-color: var(--card);
 }
 
 html.dark .report-content {
-  background-color: #262626;
+  background-color: var(--card);
 }
 
 html.dark .result-section pre {
-  background-color: #262626;
+  background-color: var(--card);
 }
 
 html.dark .session-item:hover {
-  background-color: #262626;
+  background-color: var(--accent);
 }
 
 html.dark .session-item.active {
@@ -106,11 +162,11 @@ html.dark .session-item.active {
 }
 
 html.dark .session-title {
-  color: #e4e4e4;
+  color: var(--foreground);
 }
 
 html.dark .session-meta {
-  color: #737373;
+  color: var(--muted-foreground);
 }
 
 html.dark .nav-menu .el-menu {

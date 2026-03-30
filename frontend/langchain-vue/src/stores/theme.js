@@ -1,41 +1,53 @@
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
+import { ref, computed } from 'vue'
 
 export const useThemeStore = defineStore('theme', () => {
-  const theme = ref(localStorage.getItem('theme') || 'light')
-  const isDark = ref(theme.value === 'dark')
-
-  const applyTheme = (newTheme) => {
-    theme.value = newTheme
-    localStorage.setItem('theme', newTheme)
-    
-    const html = document.documentElement
-    if (newTheme === 'dark') {
-      html.classList.add('dark')
-      isDark.value = true
-    } else {
-      html.classList.remove('dark')
-      isDark.value = false
+  // 主题状态：'light' 或 'dark'
+  const currentTheme = ref(localStorage.getItem('theme') || 'light')
+  
+  // 计算属性：当前主题是否为深色
+  const isDark = computed(() => currentTheme.value === 'dark')
+  
+  // 切换主题
+  const toggleTheme = () => {
+    currentTheme.value = currentTheme.value === 'light' ? 'dark' : 'light'
+    saveThemeToLocalStorage()
+    updateDocumentTheme()
+  }
+  
+  // 设置主题
+  const setTheme = (theme) => {
+    if (['light', 'dark'].includes(theme)) {
+      currentTheme.value = theme
+      saveThemeToLocalStorage()
+      updateDocumentTheme()
     }
   }
-
-  const toggleTheme = () => {
-    const newTheme = theme.value === 'light' ? 'dark' : 'light'
-    applyTheme(newTheme)
+  
+  // 保存主题到本地存储
+  const saveThemeToLocalStorage = () => {
+    localStorage.setItem('theme', currentTheme.value)
   }
-
-  const setTheme = (newTheme) => {
-    applyTheme(newTheme)
+  
+  // 更新文档的主题类
+  const updateDocumentTheme = () => {
+    if (currentTheme.value === 'dark') {
+      document.documentElement.classList.add('dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+    }
   }
-
-  watch(theme, (newTheme) => {
-    applyTheme(newTheme)
-  }, { immediate: true })
-
+  
+  // 初始化主题
+  const initTheme = () => {
+    updateDocumentTheme()
+  }
+  
   return {
-    theme,
+    currentTheme,
     isDark,
     toggleTheme,
     setTheme,
+    initTheme
   }
 })

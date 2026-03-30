@@ -12,6 +12,11 @@ const routes = [
     component: () => import('../views/ChatView.vue')
   },
   {
+    path: '/chat-enhanced',
+    name: 'chat-enhanced',
+    component: () => import('../views/EnhancedChatView.vue')
+  },
+  {
     path: '/chat-ui',
     name: 'chat-ui',
     component: () => import('../views/ChatUIView.vue')

@@ -1,0 +1,253 @@
+/* 响应式设计 CSS */
+
+/* 基础断点定义 */
+:root {
+  --breakpoint-xs: 480px;
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+  --breakpoint-2xl: 1536px;
+}
+
+/* 超小屏幕 (手机竖屏) */
+@media (max-width: 480px) {
+  /* 整体布局 */
+  .app-container {
+    flex-direction: column;
+  }
+
+  /* 侧边栏 */
+  .app-sidebar {
+    width: 100%;
+    height: auto;
+    position: relative;
+  }
+
+  .app-sidebar.collapse {
+    display: none;
+  }
+
+  /* 主内容区域 */
+  .main-container {
+    margin-left: 0 !important;
+  }
+
+  /* 聊天相关 */
+  .chat-enhanced {
+    padding: 0;
+  }
+
+  .messages-container {
+    padding: 12px;
+  }
+
+  .messages-wrapper {
+    max-width: 100%;
+  }
+
+  .empty-title {
+    font-size: 20px;
+  }
+
+  .ai-suggestions {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .input-container {
+    padding: 12px;
+  }
+
+  .input-wrapper {
+    max-width: 100%;
+  }
+
+  /* 页面视图 */
+  .rag-view,
+  .deep-research-view,
+  .workflow-view,
+  .settings-view {
+    padding: 12px;
+  }
+
+  .view-content {
+    max-width: 100%;
+  }
+
+  .el-card {
+    margin-bottom: 12px;
+  }
+
+  /* 表单 */
+  .el-form-item {
+    margin-bottom: 16px;
+  }
+
+  .el-form-item__label {
+    font-size: 14px;
+  }
+
+  /* 按钮 */
+  .el-button {
+    padding: 8px 16px;
+    font-size: 14px;
+  }
+
+  /* 描述列表 */
+  .el-descriptions {
+    font-size: 13px;
+  }
+
+  .el-descriptions__label {
+    width: 80px !important;
+  }
+}
+
+/* 小屏幕 (手机横屏/小平板) */
+@media (min-width: 481px) and (max-width: 640px) {
+  .app-sidebar {
+    width: 200px;
+  }
+
+  .messages-wrapper,
+  .view-content,
+  .input-wrapper {
+    max-width: 100%;
+  }
+
+  .ai-suggestions {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* 中等屏幕 (平板) */
+@media (min-width: 641px) and (max-width: 768px) {
+  .app-sidebar {
+    width: 220px;
+  }
+
+  .messages-wrapper,
+  .view-content,
+  .input-wrapper {
+    max-width: 600px;
+  }
+
+  .ai-suggestions {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* 大屏幕 (笔记本/桌面) */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .app-sidebar {
+    width: 240px;
+  }
+
+  .messages-wrapper,
+  .view-content,
+  .input-wrapper {
+    max-width: 700px;
+  }
+}
+
+/* 超大屏幕 (大桌面) */
+@media (min-width: 1025px) and (max-width: 1280px) {
+  .app-sidebar {
+    width: 260px;
+  }
+
+  .messages-wrapper,
+  .view-content,
+  .input-wrapper {
+    max-width: 800px;
+  }
+}
+
+/* 超超大屏幕 */
+@media (min-width: 1281px) {
+  .app-sidebar {
+    width: 280px;
+  }
+
+  .messages-wrapper,
+  .view-content,
+  .input-wrapper {
+    max-width: 900px;
+  }
+}
+
+/* 横屏优化 */
+@media (orientation: landscape) and (max-height: 600px) {
+  .app-container {
+    height: 100vh;
+  }
+
+  .messages-container {
+    max-height: calc(100vh - 200px);
+  }
+}
+
+/* 打印样式 */
+@media print {
+  .app-sidebar,
+  .chat-header,
+  .input-container,
+  .el-header {
+    display: none !important;
+  }
+
+  .main-container {
+    margin-left: 0 !important;
+  }
+
+  .messages-container {
+    overflow: visible;
+    height: auto;
+  }
+
+  .message-wrapper {
+    page-break-inside: avoid;
+  }
+}
+
+/* 高对比度模式支持 */
+@media (prefers-contrast: high) {
+  :root {
+    --border: #000000;
+    --text-color-primary: #000000;
+  }
+
+  html.dark {
+    --border: #ffffff;
+    --text-color-primary: #ffffff;
+  }
+}
+
+/* 减少动画模式 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* 触摸设备优化 */
+@media (hover: none) and (pointer: coarse) {
+  .message-wrapper:hover {
+    background-color: transparent;
+  }
+
+  .el-button,
+  .stop-button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .el-input__inner {
+    font-size: 16px; /* 防止 iOS 缩放 */
+  }
+}
