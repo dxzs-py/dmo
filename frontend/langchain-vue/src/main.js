@@ -6,6 +6,7 @@ import App from './App.vue'
 import router from './router'
 import settings from './settings'
 import { useThemeStore } from './stores/theme'
+import ErrorBoundary from './components/ErrorBoundary.vue'
 
 // 引入 Element Plus
 import ElementPlus from 'element-plus'
@@ -38,5 +39,13 @@ app.config.globalProperties.$settings = settings
 // 初始化主题
 const themeStore = useThemeStore()
 themeStore.initTheme()
+
+// 使用全局错误边界包装应用
+app.component('ErrorBoundary', ErrorBoundary)
+
+// 全局错误处理
+app.config.errorHandler = (err, instance, info) => {
+  console.error('全局错误:', err, info)
+}
 
 app.mount('#app')
