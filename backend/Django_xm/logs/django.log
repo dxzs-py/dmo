@@ -422,3 +422,56 @@ ERROR 2026-03-30 11:44:05,242 basehttp 213 "POST /api/deep-research/start/ HTTP/
 INFO 2026-03-30 11:44:12,391 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
 WARNING 2026-03-30 11:44:19,871 log 253 Not Found: /api/rag/query/
 WARNING 2026-03-30 11:44:19,872 basehttp 213 "POST /api/rag/query/ HTTP/1.1" 404 40
+INFO 2026-03-30 15:27:46,442 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-30 15:28:13,837 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:28:21,333 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:28:28,025 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
+INFO 2026-03-30 15:28:32,030 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:28:37,076 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:28:39,885 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:28:42,255 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
+INFO 2026-03-30 15:28:47,205 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:28:48,541 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:28:50,121 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:28:50,694 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:28:52,219 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:28:58,046 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:29:02,533 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:29:23,554 basehttp 213 "OPTIONS /api/chat/stream/ HTTP/1.1" 200 0
+INFO 2026-03-30 15:29:30,977 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 200 4152
+INFO 2026-03-30 15:29:44,822 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:32:52,544 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
+INFO 2026-03-30 15:37:01,174 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
+INFO 2026-03-30 15:37:04,772 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:40:17,097 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:40:26,594 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:40:27,902 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
+INFO 2026-03-30 15:44:19,213 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:44:27,577 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:44:33,088 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
+INFO 2026-03-30 15:47:12,855 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:47:24,093 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
+INFO 2026-03-30 15:48:09,285 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:48:14,362 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 15:48:17,810 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 16:54:30,850 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\chat\views.py changed, reloading.
+INFO 2026-03-30 16:54:44,590 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-30 16:55:39,245 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\deep_research\views.py changed, reloading.
+INFO 2026-03-30 16:55:47,045 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-30 16:56:19,157 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\rag\views.py changed, reloading.
+INFO 2026-03-30 16:56:28,854 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-30 17:01:09,735 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\rag\views.py changed, reloading.
+INFO 2026-03-30 17:01:16,195 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-30 17:02:55,510 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\services.py changed, reloading.
+INFO 2026-03-30 17:03:09,277 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-30 17:03:15,236 basehttp 213 "GET / HTTP/1.1" 200 271
+WARNING 2026-03-30 17:03:15,860 log 253 Not Found: /favicon.ico
+WARNING 2026-03-30 17:03:15,862 basehttp 213 "GET /favicon.ico HTTP/1.1" 404 4194
+WARNING 2026-03-30 17:03:22,415 log 253 Not Found: /api/deep-research/
+WARNING 2026-03-30 17:03:22,416 basehttp 213 "GET /api/deep-research/ HTTP/1.1" 404 5818
+WARNING 2026-03-30 17:03:38,901 log 253 Not Found: /workflow/
+WARNING 2026-03-30 17:03:38,901 basehttp 213 "GET /workflow/ HTTP/1.1" 404 5701
+INFO 2026-03-30 17:04:13,741 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-30 17:04:34,789 basehttp 213 "OPTIONS /api/chat/stream/ HTTP/1.1" 200 0
+INFO 2026-03-30 17:04:42,134 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 200 4187
+INFO 2026-03-30 17:05:02,634 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 200 3974

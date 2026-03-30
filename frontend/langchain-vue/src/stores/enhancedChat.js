@@ -9,6 +9,8 @@ export const useEnhancedChatStore = defineStore('enhancedChat', () => {
   const currentStreamingMessageId = ref(null);
   const abortController = ref(null);
   const modelSuggestions = ref([]);
+  const currentMode = ref('default');
+  const availableModes = ref(['default', 'rag', 'workflow', 'deep-research']);
 
   const allMessages = computed(() => {
     return Array.from(messages.value.values()).sort(
@@ -310,6 +312,14 @@ export const useEnhancedChatStore = defineStore('enhancedChat', () => {
     }));
   }
 
+  function setMode(mode) {
+    currentMode.value = mode;
+  }
+
+  function setAvailableModes(modes) {
+    availableModes.value = modes;
+  }
+
   return {
     messages,
     isStreaming,
@@ -317,6 +327,8 @@ export const useEnhancedChatStore = defineStore('enhancedChat', () => {
     currentStreamingMessageId,
     abortController,
     modelSuggestions,
+    currentMode,
+    availableModes,
     allMessages,
     lastAssistantMessage,
     getAllMessages,
@@ -349,5 +361,7 @@ export const useEnhancedChatStore = defineStore('enhancedChat', () => {
     stopStreaming,
     setError,
     getChatHistory,
+    setMode,
+    setAvailableModes,
   };
 });

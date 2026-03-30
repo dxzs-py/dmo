@@ -1,6 +1,6 @@
 /* 响应式设计 CSS */
 
-/* 基础断点定义 */
+/* 基础断点定义 - 与 Tailwind CSS 保持一致 */
 :root {
   --breakpoint-xs: 480px;
   --breakpoint-sm: 640px;
@@ -10,7 +10,7 @@
   --breakpoint-2xl: 1536px;
 }
 
-/* 超小屏幕 (手机竖屏) */
+/* 超小屏幕 (手机竖屏) - Tailwind xs: 480px */
 @media (max-width: 480px) {
   /* 整体布局 */
   .app-container {
@@ -102,9 +102,75 @@
   .el-descriptions__label {
     width: 80px !important;
   }
+
+  /* 间距工具类 */
+  .p-2 {
+    padding: 8px !important;
+  }
+
+  .p-3 {
+    padding: 12px !important;
+  }
+
+  .p-4 {
+    padding: 16px !important;
+  }
+
+  .px-2 {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+
+  .px-3 {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }
+
+  .py-2 {
+    padding-top: 8px !important;
+    padding-bottom: 8px !important;
+  }
+
+  .py-3 {
+    padding-top: 12px !important;
+    padding-bottom: 12px !important;
+  }
+
+  /* 字体大小 */
+  .text-xs {
+    font-size: 12px !important;
+  }
+
+  .text-sm {
+    font-size: 14px !important;
+  }
+
+  .text-base {
+    font-size: 16px !important;
+  }
+
+  .text-lg {
+    font-size: 18px !important;
+  }
+
+  .text-xl {
+    font-size: 20px !important;
+  }
+
+  .text-2xl {
+    font-size: 24px !important;
+  }
+
+  .text-3xl {
+    font-size: 30px !important;
+  }
+
+  .text-4xl {
+    font-size: 36px !important;
+  }
 }
 
-/* 小屏幕 (手机横屏/小平板) */
+/* 小屏幕 (手机横屏/小平板) - Tailwind sm: 640px */
 @media (min-width: 481px) and (max-width: 640px) {
   .app-sidebar {
     width: 200px;
@@ -119,9 +185,55 @@
   .ai-suggestions {
     grid-template-columns: repeat(2, 1fr);
   }
+
+  /* 间距工具类 */
+  .p-4 {
+    padding: 16px !important;
+  }
+
+  .p-6 {
+    padding: 24px !important;
+  }
+
+  .px-4 {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+
+  .px-6 {
+    padding-left: 24px !important;
+    padding-right: 24px !important;
+  }
+
+  .py-4 {
+    padding-top: 16px !important;
+    padding-bottom: 16px !important;
+  }
+
+  .py-6 {
+    padding-top: 24px !important;
+    padding-bottom: 24px !important;
+  }
+
+  /* 字体大小 */
+  .text-lg {
+    font-size: 18px !important;
+  }
+
+  .text-xl {
+    font-size: 20px !important;
+  }
+
+  .text-2xl {
+    font-size: 24px !important;
+  }
+
+  .text-3xl {
+    font-size: 30px !important;
+  }
 }
 
-/* 中等屏幕 (平板) */
+/* 中等屏幕 (平板) - Tailwind md: 768px */
 @media (min-width: 641px) and (max-width: 768px) {
   .app-sidebar {
     width: 220px;
@@ -136,9 +248,55 @@
   .ai-suggestions {
     grid-template-columns: repeat(2, 1fr);
   }
+
+  /* 间距工具类 */
+  .p-6 {
+    padding: 24px !important;
+  }
+
+  .p-8 {
+    padding: 32px !important;
+  }
+
+  .px-6 {
+    padding-left: 24px !important;
+    padding-right: 24px !important;
+  }
+
+  .px-8 {
+    padding-left: 32px !important;
+    padding-right: 32px !important;
+  }
+
+  .py-6 {
+    padding-top: 24px !important;
+    padding-bottom: 24px !important;
+  }
+
+  .py-8 {
+    padding-top: 32px !important;
+    padding-bottom: 32px !important;
+  }
+
+  /* 字体大小 */
+  .text-xl {
+    font-size: 20px !important;
+  }
+
+  .text-2xl {
+    font-size: 24px !important;
+  }
+
+  .text-3xl {
+    font-size: 30px !important;
+  }
+
+  .text-4xl {
+    font-size: 36px !important;
+  }
 }
 
-/* 大屏幕 (笔记本/桌面) */
+/* 大屏幕 (笔记本/桌面) - Tailwind lg: 1024px */
 @media (min-width: 769px) and (max-width: 1024px) {
   .app-sidebar {
     width: 240px;
@@ -149,9 +307,55 @@
   .input-wrapper {
     max-width: 700px;
   }
+
+  /* 间距工具类 */
+  .p-8 {
+    padding: 32px !important;
+  }
+
+  .p-10 {
+    padding: 40px !important;
+  }
+
+  .px-8 {
+    padding-left: 32px !important;
+    padding-right: 32px !important;
+  }
+
+  .px-10 {
+    padding-left: 40px !important;
+    padding-right: 40px !important;
+  }
+
+  .py-8 {
+    padding-top: 32px !important;
+    padding-bottom: 32px !important;
+  }
+
+  .py-10 {
+    padding-top: 40px !important;
+    padding-bottom: 40px !important;
+  }
+
+  /* 字体大小 */
+  .text-2xl {
+    font-size: 24px !important;
+  }
+
+  .text-3xl {
+    font-size: 30px !important;
+  }
+
+  .text-4xl {
+    font-size: 36px !important;
+  }
+
+  .text-5xl {
+    font-size: 48px !important;
+  }
 }
 
-/* 超大屏幕 (大桌面) */
+/* 超大屏幕 (大桌面) - Tailwind xl: 1280px */
 @media (min-width: 1025px) and (max-width: 1280px) {
   .app-sidebar {
     width: 260px;
@@ -162,9 +366,55 @@
   .input-wrapper {
     max-width: 800px;
   }
+
+  /* 间距工具类 */
+  .p-10 {
+    padding: 40px !important;
+  }
+
+  .p-12 {
+    padding: 48px !important;
+  }
+
+  .px-10 {
+    padding-left: 40px !important;
+    padding-right: 40px !important;
+  }
+
+  .px-12 {
+    padding-left: 48px !important;
+    padding-right: 48px !important;
+  }
+
+  .py-10 {
+    padding-top: 40px !important;
+    padding-bottom: 40px !important;
+  }
+
+  .py-12 {
+    padding-top: 48px !important;
+    padding-bottom: 48px !important;
+  }
+
+  /* 字体大小 */
+  .text-3xl {
+    font-size: 30px !important;
+  }
+
+  .text-4xl {
+    font-size: 36px !important;
+  }
+
+  .text-5xl {
+    font-size: 48px !important;
+  }
+
+  .text-6xl {
+    font-size: 60px !important;
+  }
 }
 
-/* 超超大屏幕 */
+/* 超超大屏幕 - Tailwind 2xl: 1536px */
 @media (min-width: 1281px) {
   .app-sidebar {
     width: 280px;
@@ -174,6 +424,52 @@
   .view-content,
   .input-wrapper {
     max-width: 900px;
+  }
+
+  /* 间距工具类 */
+  .p-12 {
+    padding: 48px !important;
+  }
+
+  .p-16 {
+    padding: 64px !important;
+  }
+
+  .px-12 {
+    padding-left: 48px !important;
+    padding-right: 48px !important;
+  }
+
+  .px-16 {
+    padding-left: 64px !important;
+    padding-right: 64px !important;
+  }
+
+  .py-12 {
+    padding-top: 48px !important;
+    padding-bottom: 48px !important;
+  }
+
+  .py-16 {
+    padding-top: 64px !important;
+    padding-bottom: 64px !important;
+  }
+
+  /* 字体大小 */
+  .text-4xl {
+    font-size: 36px !important;
+  }
+
+  .text-5xl {
+    font-size: 48px !important;
+  }
+
+  .text-6xl {
+    font-size: 60px !important;
+  }
+
+  .text-7xl {
+    font-size: 72px !important;
   }
 }
 
@@ -248,6 +544,50 @@
   }
 
   .el-input__inner {
-    font-size: 16px; /* 防止 iOS 缩放 */
+    font-size: 16px;
+    /* 防止 iOS 缩放 */
+  }
+}
+
+/* 高清屏 (Retina) 优化 */
+@media (min-device-pixel-ratio: 2), (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+  .el-card {
+    border-width: 0.5px;
+  }
+
+  .el-input__wrapper {
+    border-width: 0.5px;
+  }
+}
+
+/* 暗色模式响应式 */
+@media (prefers-color-scheme: dark) {
+  html {
+    color-scheme: dark;
+  }
+}
+
+/* 最小宽度限制 */
+@media (max-width: 320px) {
+  .el-card {
+    margin: 8px;
+  }
+
+  .el-button {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+}
+
+/* 最大宽度限制 */
+@media (min-width: 1920px) {
+  .messages-wrapper,
+  .view-content,
+  .input-wrapper {
+    max-width: 1200px;
+  }
+
+  .app-sidebar {
+    width: 300px;
   }
 }

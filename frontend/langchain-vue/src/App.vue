@@ -23,20 +23,22 @@ onMounted(() => {
 </script>
 
 <template>
-  <div v-if="isChatUIRoute" class="chat-ui-wrapper">
-    <router-view />
-  </div>
-  <div v-else class="app-container">
-    <AppHeader />
-    <div class="content-wrapper">
-      <AppSidebar v-model:collapse="isCollapse" />
-      <main class="main-content" :class="{ 'sidebar-collapsed': isCollapse }">
-        <div class="scroll-container" @scroll="handleScroll">
-          <router-view />
-        </div>
-      </main>
+  <ErrorBoundary>
+    <div v-if="isChatUIRoute" class="chat-ui-wrapper">
+      <router-view />
     </div>
-  </div>
+    <div v-else class="app-container">
+      <AppHeader />
+      <div class="content-wrapper">
+        <AppSidebar v-model:collapse="isCollapse" />
+        <main class="main-content" :class="{ 'sidebar-collapsed': isCollapse }">
+          <div class="scroll-container" @scroll="handleScroll">
+            <router-view />
+          </div>
+        </main>
+      </div>
+    </div>
+  </ErrorBoundary>
 </template>
 
 <style>

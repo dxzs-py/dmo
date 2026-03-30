@@ -40,6 +40,35 @@ def _lcp_len(a: str, b: str) -> int:
     return i
 
 
+def convert_chat_history(messages) -> list:
+    """
+    将 API 的消息格式转换为 LangChain 的消息格式
+
+    Args:
+        messages: API 消息列表（字典列表）
+
+    Returns:
+        LangChain 消息列表
+    """
+    from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+
+    if not messages:
+        return []
+
+    langchain_messages = []
+    for msg in messages:
+        role = msg.get('role', '')
+        content = msg.get('content', '')
+        if role == 'user':
+            langchain_messages.append(HumanMessage(content=content))
+        elif role == 'assistant':
+            langchain_messages.append(AIMessage(content=content))
+        elif role == 'system':
+            langchain_messages.append(SystemMessage(content=content))
+
+    return langchain_messages
+
+
 class ChatView(APIView):
     def post(self, request):
         serializer = ChatRequestSerializer(data=request.data)
@@ -54,10 +83,11 @@ class ChatView(APIView):
             agent = create_base_agent(tools=tools, prompt_mode=data['mode'])
 
             chat_history = data.get('chat_history', [])
+            langchain_chat_history = convert_chat_history(chat_history)
 
             response = agent.invoke(
                 input_text=data['message'],
-                chat_history=chat_history,
+                chat_history=langchain_chat_history,
                 config={"recursion_limit": 50}
             )
 
@@ -170,9 +200,10 @@ class ChatStreamView(APIView):
                 agent = create_base_agent(tools=tools, prompt_mode=data['mode'])
 
                 chat_history = data.get('chat_history', [])
+                langchain_chat_history = convert_chat_history(chat_history)
                 messages = []
-                if chat_history:
-                    messages.extend(chat_history)
+                if langchain_chat_history:
+                    messages.extend(langchain_chat_history)
 
                 messages.append(HumanMessage(content=data['message']))
                 graph_input = {"messages": messages}
