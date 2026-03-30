@@ -26,19 +26,17 @@ onMounted(() => {
   <div v-if="isChatUIRoute" class="chat-ui-wrapper">
     <router-view />
   </div>
-  <el-container v-else class="app-container">
-    <AppSidebar v-model:collapse="isCollapse" />
-    <el-container class="main-container" :class="{ 'sidebar-collapsed': isCollapse }">
-      <div class="header-wrapper" :class="{ 'has-shadow': isScrolled }">
-        <AppHeader />
-      </div>
-      <el-main class="app-main">
+  <div v-else class="app-container">
+    <AppHeader />
+    <div class="content-wrapper">
+      <AppSidebar v-model:collapse="isCollapse" />
+      <main class="main-content" :class="{ 'sidebar-collapsed': isCollapse }">
         <div class="scroll-container" @scroll="handleScroll">
           <router-view />
         </div>
-      </el-main>
-    </el-container>
-  </el-container>
+      </main>
+    </div>
+  </div>
 </template>
 
 <style>
@@ -55,30 +53,25 @@ html, body, #app {
 
 .app-container {
   height: 100%;
-}
-
-.main-container {
-  height: 100%;
-  overflow: hidden;
-  transition: margin-left 0.3s ease;
   display: flex;
   flex-direction: column;
 }
 
-.header-wrapper {
-  flex-shrink: 0;
-  transition: box-shadow 0.2s;
-}
-
-.header-wrapper.has-shadow {
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-.app-main {
+.content-wrapper {
   flex: 1;
-  padding: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.main-content {
+  flex: 1;
   overflow: hidden;
   background-color: #fff;
+  transition: margin-left 0.3s ease;
+}
+
+.main-content.sidebar-collapsed {
+  margin-left: 0;
 }
 
 .scroll-container {

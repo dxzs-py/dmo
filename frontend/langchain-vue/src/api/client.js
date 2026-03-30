@@ -57,7 +57,11 @@ export const ragAPI = {
   },
 
   getIndexes() {
-    return apiClient.get('/rag/indexes/')
+    return apiClient.get('/rag/index/list/')
+  },
+
+  buildIndex(data) {
+    return apiClient.post('/rag/index/', data)
   },
 }
 
@@ -71,7 +75,7 @@ export const workflowAPI = {
   },
 
   submitAnswers(threadId, data) {
-    return apiClient.post(`/workflow/submit/`, { thread_id: threadId, ...data })
+    return apiClient.post('/workflow/submit/', { thread_id: threadId, ...data })
   },
 }
 

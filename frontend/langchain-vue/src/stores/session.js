@@ -1,9 +1,80 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
+import { nanoid } from 'nanoid'
+
+const SESSIONS_KEY = 'lc-studylab-sessions'
+const CURRENT_SESSION_KEY = 'lc-studylab-current-session'
+
+function generateId() {
+  return nanoid()
+}
+
+function migrateMessage(msg) {
+  if (!msg.versions) {
+    return {
+      ...msg,
+      versions: [
+        {
+          id: msg.id,
+          content: msg.content,
+          sources: msg.sources || [],
+          plan: msg.plan || null,
+          chainOfThought: msg.chainOfThought || null,
+          toolCalls: msg.toolCalls || [],
+          reasoning: msg.reasoning || null
+        }
+      ],
+      currentVersion: 0
+    }
+  }
+  return msg
+}
+
+function getSessionsFromStorage() {
+  if (typeof window === 'undefined') return []
+  try {
+    const data = localStorage.getItem(SESSIONS_KEY)
+    if (data) {
+      const sessions = JSON.parse(data)
+      return sessions.map(session => ({
+        ...session,
+        messages: session.messages ? session.messages.map(migrateMessage) : []
+      }))
+    }
+    return []
+  } catch (error) {
+    console.error('Failed to load sessions from storage:', error)
+    return []
+  }
+}
+
+function saveSessionsToStorage(sessions) {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions))
+  } catch (error) {
+    console.error('Failed to save sessions to storage:', error)
+  }
+}
+
+function getCurrentSessionIdFromStorage() {
+  if (typeof window === 'undefined') return null
+  return localStorage.getItem(CURRENT_SESSION_KEY)
+}
+
+function saveCurrentSessionIdToStorage(sessionId) {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(CURRENT_SESSION_KEY, sessionId)
+}
+
+function clearCurrentSessionIdFromStorage() {
+  if (typeof window === 'undefined') return
+  localStorage.removeItem(CURRENT_SESSION_KEY)
+}
 
 export const useSessionStore = defineStore('session', () => {
-  const sessions = ref([])
-  const currentSessionId = ref(null)
+  const sessions = ref(getSessionsFromStorage())
+  const currentSessionId = ref(getCurrentSessionIdFromStorage())
 
   const currentSession = computed(() => {
     return sessions.value.find(s => s.id === currentSessionId.value)
@@ -11,23 +82,24 @@ export const useSessionStore = defineStore('session', () => {
 
   const getModeLabel = (mode) => {
     const modeLabels = {
-      'basic-agent': '基础代理',
-      'rag': 'RAG 检索',
+      'basic-agent': '基础对话',
+      'rag': 'RAG 问答',
       'workflow': '学习工作流',
       'deep-research': '深度研究',
-      'guarded': '安全代理',
+      'guarded': '安全模式',
     }
     return modeLabels[mode] || mode
   }
 
-  const createNewSession = (mode = 'basic-agent') => {
+  const createNewSession = (mode = 'basic-agent', title) => {
     const newSession = {
-      id: Date.now().toString(),
-      title: '新对话',
+      id: generateId(),
+      title: title || `新对话 - ${getModeLabel(mode)}`,
       mode: mode,
       messageCount: 0,
       messages: [],
-      createdAt: new Date().toISOString(),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
     }
     sessions.value.unshift(newSession)
     currentSessionId.value = newSession.id
@@ -49,23 +121,90 @@ export const useSessionStore = defineStore('session', () => {
           currentSessionId.value = sessions.value[0].id
         } else {
           currentSessionId.value = null
+          clearCurrentSessionIdFromStorage()
         }
       }
     }
   }
 
-  const updateSessionTitle = (sessionId, title) => {
-    const session = sessions.value.find(s => s.id === sessionId)
-    if (session) {
-      session.title = title
+  const updateSession = (sessionId, updates) => {
+    const index = sessions.value.findIndex(s => s.id === sessionId)
+    if (index !== -1) {
+      sessions.value[index] = {
+        ...sessions.value[index],
+        ...updates,
+        updatedAt: Date.now(),
+      }
     }
+  }
+
+  const updateSessionTitle = (sessionId, title) => {
+    updateSession(sessionId, { title })
   }
 
   const addMessageToSession = (sessionId, message) => {
     const session = sessions.value.find(s => s.id === sessionId)
     if (session) {
-      session.messages.push(message)
+      const messageWithVersions = {
+        ...message,
+        versions: [
+          {
+            id: message.id,
+            content: message.content,
+            sources: message.sources || [],
+            plan: message.plan || null,
+            chainOfThought: message.chainOfThought || null,
+            toolCalls: message.toolCalls || [],
+            reasoning: message.reasoning || null
+          }
+        ],
+        currentVersion: 0
+      }
+      session.messages.push(messageWithVersions)
       session.messageCount = session.messages.length
+      session.updatedAt = Date.now()
+    }
+  }
+
+  const addVersionToMessage = (sessionId, messageIndex, version) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (session && session.messages[messageIndex]) {
+      const message = session.messages[messageIndex]
+      if (!message.versions) {
+        message.versions = [
+          {
+            id: message.id,
+            content: message.content,
+            sources: message.sources || [],
+            plan: message.plan || null,
+            chainOfThought: message.chainOfThought || null,
+            toolCalls: message.toolCalls || [],
+            reasoning: message.reasoning || null
+          }
+        ]
+        message.currentVersion = 0
+      }
+      message.versions.push(version)
+      message.currentVersion = message.versions.length - 1
+      session.updatedAt = Date.now()
+    }
+  }
+
+  const switchMessageVersion = (sessionId, messageIndex, versionIndex) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (session && session.messages[messageIndex]) {
+      const message = session.messages[messageIndex]
+      if (message.versions && versionIndex >= 0 && versionIndex < message.versions.length) {
+        message.currentVersion = versionIndex
+        const version = message.versions[versionIndex]
+        message.content = version.content
+        message.sources = version.sources
+        message.plan = version.plan
+        message.chainOfThought = version.chainOfThought
+        message.toolCalls = version.toolCalls
+        message.reasoning = version.reasoning
+        session.updatedAt = Date.now()
+      }
     }
   }
 
@@ -75,6 +214,7 @@ export const useSessionStore = defineStore('session', () => {
       const lastMessage = session.messages[session.messages.length - 1]
       if (lastMessage.role === 'assistant') {
         lastMessage.content = content
+        session.updatedAt = Date.now()
       }
     }
   }
@@ -85,6 +225,7 @@ export const useSessionStore = defineStore('session', () => {
       const lastMessage = session.messages[session.messages.length - 1]
       if (lastMessage.role === 'assistant') {
         lastMessage.content = (lastMessage.content || '') + content
+        session.updatedAt = Date.now()
       }
     }
   }
@@ -93,8 +234,12 @@ export const useSessionStore = defineStore('session', () => {
     const session = sessions.value.find(s => s.id === sessionId)
     if (session && session.messages.length > 0) {
       const lastMessage = session.messages[session.messages.length - 1]
-      if (lastMessage.role === 'assistant' && lastMessage.sources) {
+      if (lastMessage.role === 'assistant') {
+        if (!lastMessage.sources) {
+          lastMessage.sources = []
+        }
         lastMessage.sources.push(source)
+        session.updatedAt = Date.now()
       }
     }
   }
@@ -105,6 +250,7 @@ export const useSessionStore = defineStore('session', () => {
       const lastMessage = session.messages[session.messages.length - 1]
       if (lastMessage.role === 'assistant') {
         lastMessage.sources = sources
+        session.updatedAt = Date.now()
       }
     }
   }
@@ -115,6 +261,7 @@ export const useSessionStore = defineStore('session', () => {
       const lastMessage = session.messages[session.messages.length - 1]
       if (lastMessage.role === 'assistant') {
         lastMessage.plan = plan
+        session.updatedAt = Date.now()
       }
     }
   }
@@ -125,6 +272,7 @@ export const useSessionStore = defineStore('session', () => {
       const lastMessage = session.messages[session.messages.length - 1]
       if (lastMessage.role === 'assistant') {
         lastMessage.chainOfThought = cot
+        session.updatedAt = Date.now()
       }
     }
   }
@@ -133,8 +281,12 @@ export const useSessionStore = defineStore('session', () => {
     const session = sessions.value.find(s => s.id === sessionId)
     if (session && session.messages.length > 0) {
       const lastMessage = session.messages[session.messages.length - 1]
-      if (lastMessage.role === 'assistant' && lastMessage.toolCalls) {
+      if (lastMessage.role === 'assistant') {
+        if (!lastMessage.toolCalls) {
+          lastMessage.toolCalls = []
+        }
         lastMessage.toolCalls.push(toolCall)
+        session.updatedAt = Date.now()
       }
     }
   }
@@ -149,6 +301,7 @@ export const useSessionStore = defineStore('session', () => {
     if (session && session.messages.length > startIndex) {
       session.messages.splice(startIndex)
       session.messageCount = session.messages.length
+      session.updatedAt = Date.now()
     }
   }
 
@@ -157,11 +310,26 @@ export const useSessionStore = defineStore('session', () => {
     if (session) {
       session.messages = []
       session.messageCount = 0
+      session.updatedAt = Date.now()
     }
   }
 
+  watch(sessions, (newSessions) => {
+    saveSessionsToStorage(newSessions)
+  }, { deep: true })
+
+  watch(currentSessionId, (newId) => {
+    if (newId) {
+      saveCurrentSessionIdToStorage(newId)
+    } else {
+      clearCurrentSessionIdFromStorage()
+    }
+  })
+
   if (sessions.value.length === 0) {
     createNewSession('basic-agent')
+  } else if (!currentSessionId.value || !sessions.value.find(s => s.id === currentSessionId.value)) {
+    currentSessionId.value = sessions.value[0].id
   }
 
   return {
@@ -172,8 +340,11 @@ export const useSessionStore = defineStore('session', () => {
     createNewSession,
     switchSession,
     deleteSession,
+    updateSession,
     updateSessionTitle,
     addMessageToSession,
+    addVersionToMessage,
+    switchMessageVersion,
     updateLastMessage,
     appendToLastMessage,
     addSourceToLastMessage,

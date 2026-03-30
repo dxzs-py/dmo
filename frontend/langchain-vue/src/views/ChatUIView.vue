@@ -16,15 +16,15 @@
             @click="sidebarCollapsed = !sidebarCollapsed"
           >
             <el-icon>
-              <DArrowLeft v-if="!sidebarCollapsed" />
-              <DArrowRight v-else />
+              <ArrowLeft v-if="!sidebarCollapsed" />
+              <ArrowRight v-else />
             </el-icon>
           </el-button>
         </div>
         
         <div class="menu-section">
           <el-button class="menu-btn" type="primary" @click="createNewChat">
-            <el-icon><Edit /></el-icon>
+            <el-icon><Promotion /></el-icon>
             <span v-if="!sidebarCollapsed">新聊天</span>
           </el-button>
         </div>
@@ -61,19 +61,19 @@
           <div class="top-bar-actions">
             <el-dropdown @command="handleTopBarAction">
               <el-button link>
-                <el-icon><More /></el-icon>
+                <el-icon><Tools /></el-icon>
               </el-button>
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item command="clear">
-                    <el-icon><Delete /></el-icon>
+                    <el-icon><Close /></el-icon>
                     清空对话
                   </el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
             <el-button link @click="toggleSidebar" class="mobile-menu-btn">
-              <el-icon><Menu /></el-icon>
+              <el-icon><Setting /></el-icon>
             </el-button>
           </div>
         </div>
@@ -188,14 +188,14 @@ import { useSessionStore } from '../stores/session'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ChatDotRound,
-  Edit,
+  Promotion,
   User,
   Loading,
-  Menu,
-  DArrowLeft,
-  DArrowRight,
-  More,
-  Delete,
+  Setting,
+  ArrowLeft,
+  ArrowRight,
+  Tools,
+  Close,
   Refresh
 } from '@element-plus/icons-vue'
 import MarkdownRenderer from '../components/MarkdownRenderer.vue'

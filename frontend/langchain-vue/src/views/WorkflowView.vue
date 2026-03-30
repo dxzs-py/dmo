@@ -56,12 +56,13 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, onUnmounted } from 'vue'
 import { workflowAPI } from '../api/client'
 import { ElMessage } from 'element-plus'
 
 const isLoading = ref(false)
 const execution = ref(null)
+let pollingInterval = null
 
 const workflowForm = reactive({
   query: '',
@@ -88,6 +89,23 @@ const getStatusText = (status) => {
   return textMap[status] || status
 }
 
+const pollExecutionStatus = async () => {
+  if (!execution.value || execution.value.status === 'completed' || execution.value.status === 'failed') {
+    if (pollingInterval) {
+      clearInterval(pollingInterval)
+      pollingInterval = null
+    }
+    return
+  }
+  
+  try {
+    const response = await workflowAPI.getState(execution.value.thread_id)
+    execution.value = { ...execution.value, ...response.data }
+  } catch (error) {
+    console.error('获取工作流状态失败:', error)
+  }
+}
+
 const startWorkflow = async () => {
   if (!workflowForm.query.trim()) {
     ElMessage.warning('请输入学习主题')
@@ -101,6 +119,8 @@ const startWorkflow = async () => {
     const response = await workflowAPI.start(workflowForm)
     execution.value = response.data
     ElMessage.success('工作流已启动')
+    
+    pollingInterval = setInterval(pollExecutionStatus, 2000)
   } catch (error) {
     console.error('启动工作流失败:', error)
     ElMessage.error('启动工作流失败，请稍后重试')
@@ -108,6 +128,12 @@ const startWorkflow = async () => {
     isLoading.value = false
   }
 }
+
+onUnmounted(() => {
+  if (pollingInterval) {
+    clearInterval(pollingInterval)
+  }
+})
 </script>
 
 <style scoped>

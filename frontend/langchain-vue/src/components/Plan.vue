@@ -5,7 +5,7 @@ defineOptions({
 
 import { ref, computed } from 'vue'
 import { ElCard, ElButton, ElTag, ElProgress, ElEmpty } from 'element-plus'
-import { List, CircleCheck, Clock, Loading } from '@element-plus/icons-vue'
+import { List, CircleCheck, Clock, Loading, Check } from '@element-plus/icons-vue'
 
 const props = defineProps({
   title: {

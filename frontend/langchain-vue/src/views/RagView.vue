@@ -9,8 +9,13 @@
         </template>
         <el-form :model="queryForm" label-width="100px">
           <el-form-item label="索引名称">
-            <el-select v-model="queryForm.index_name" placeholder="请选择索引">
-              <el-option label="test_index" value="test_index" />
+            <el-select v-model="queryForm.index_name" placeholder="请选择索引" :loading="isLoadingIndexes">
+              <el-option
+                v-for="index in availableIndexes"
+                :key="index"
+                :label="index"
+                :value="index"
+              />
             </el-select>
           </el-form-item>
           <el-form-item label="查询内容">
@@ -74,13 +79,15 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { ragAPI } from '../api/client'
 import { ElMessage, ElAlert } from 'element-plus'
 
 const isLoading = ref(false)
+const isLoadingIndexes = ref(false)
 const result = ref(null)
 const errorMessage = ref('')
+const availableIndexes = ref(['test_index'])
 
 const queryForm = reactive({
   index_name: 'test_index',
@@ -108,6 +115,23 @@ const validateForm = () => {
   }
   
   return true
+}
+
+const fetchIndexes = async () => {
+  isLoadingIndexes.value = true
+  try {
+    const response = await ragAPI.getIndexes()
+    if (response.data && response.data.indexes) {
+      availableIndexes.value = response.data.indexes
+      if (availableIndexes.value.length > 0 && !availableIndexes.value.includes(queryForm.index_name)) {
+        queryForm.index_name = availableIndexes.value[0]
+      }
+    }
+  } catch (error) {
+    console.error('获取索引列表失败:', error)
+  } finally {
+    isLoadingIndexes.value = false
+  }
 }
 
 const executeQuery = async () => {
@@ -147,6 +171,10 @@ const executeQuery = async () => {
     isLoading.value = false
   }
 }
+
+onMounted(() => {
+  fetchIndexes()
+})
 </script>
 
 <style scoped>

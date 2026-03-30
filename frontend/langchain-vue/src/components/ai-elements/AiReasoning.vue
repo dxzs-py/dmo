@@ -1,138 +1,145 @@
-<script setup>
-import { ref } from 'vue'
-import { ArrowDown, MagicStick } from '@element-plus/icons-vue'
+<template>
+  <div class="ai-reasoning" :class="className" v-bind="$attrs">
+    <el-collapse v-model="isOpen" @change="handleOpenChange">
+      <el-collapse-item>
+        <template #title>
+          <div class="reasoning-trigger" @click.stop>
+            <el-icon class="reasoning-icon"><ChatDotRound /></el-icon>
+            <span class="reasoning-text">{{ thinkingMessage }}</span>
+            <el-icon :class="{ 'rotated': isOpen }" class="reasoning-arrow"><ArrowDown /></el-icon>
+          </div>
+        </template>
+        <div class="reasoning-content">
+          <MarkdownRenderer :content="content" />
+        </div>
+      </el-collapse-item>
+    </el-collapse>
+  </div>
+</template>
 
-defineProps({
-  reasoning: {
-    type: Object,
-    default: () => ({})
+<script setup>
+import { ref, computed, watch, onMounted } from 'vue'
+import { ChatDotRound, ArrowDown } from '@element-plus/icons-vue'
+import MarkdownRenderer from '../MarkdownRenderer.vue'
+
+const props = defineProps({
+  content: {
+    type: String,
+    required: true
+  },
+  duration: {
+    type: Number,
+    default: undefined
   },
   isStreaming: {
     type: Boolean,
     default: false
+  },
+  defaultOpen: {
+    type: Boolean,
+    default: true
+  },
+  className: {
+    type: String,
+    default: ''
   }
 })
 
-const isExpanded = ref(true)
+const emit = defineEmits(['openChange'])
 
-const toggleExpand = () => {
-  isExpanded.value = !isExpanded.value
+const isOpen = ref(props.defaultOpen)
+const hasAutoClosed = ref(false)
+const startTime = ref(null)
+const duration = ref(props.duration)
+
+const AUTO_CLOSE_DELAY = 1000
+const MS_IN_S = 1000
+
+const thinkingMessage = computed(() => {
+  if (props.isStreaming || duration.value === 0) {
+    return '正在思考...'
+  }
+  if (duration.value === undefined) {
+    return '思考了几秒钟'
+  }
+  return `思考了 ${duration.value} 秒钟`
+})
+
+const handleOpenChange = (value) => {
+  isOpen.value = value.length > 0
+  emit('openChange', isOpen.value)
 }
+
+// 跟踪流式传输时的持续时间
+watch(() => props.isStreaming, (isStreaming) => {
+  if (isStreaming) {
+    if (startTime.value === null) {
+      startTime.value = Date.now()
+    }
+  } else if (startTime.value !== null) {
+    duration.value = Math.ceil((Date.now() - startTime.value) / MS_IN_S)
+    startTime.value = null
+  }
+})
+
+// 流式传输开始时自动打开，结束时自动关闭（仅一次）
+watch([() => props.isStreaming, isOpen, () => props.defaultOpen], ([isStreaming, open, defaultOpen]) => {
+  if (defaultOpen && !isStreaming && open && !hasAutoClosed.value) {
+    // 添加小延迟，让用户有时间看到内容
+    const timer = setTimeout(() => {
+      isOpen.value = false
+      hasAutoClosed.value = true
+    }, AUTO_CLOSE_DELAY)
+
+    return () => clearTimeout(timer)
+  }
+}, { flush: 'post' })
+
+// 监听duration属性变化
+watch(() => props.duration, (newDuration) => {
+  duration.value = newDuration
+})
 </script>
-
-<template>
-  <div class="ai-reasoning" :class="{ 'is-streaming': isStreaming }">
-    <div class="ai-reasoning__header" @click="toggleExpand">
-      <div class="ai-reasoning__title">
-        <el-icon class="brain-icon"><MagicStick /></el-icon>
-        <span>推理过程</span>
-        <span v-if="reasoning.duration" class="duration">
-          {{ reasoning.duration }}s
-        </span>
-      </div>
-      <el-icon class="expand-icon" :class="{ 'is-expanded': isExpanded }">
-        <ArrowDown />
-      </el-icon>
-    </div>
-
-    <div v-if="isExpanded && reasoning.content" class="ai-reasoning__content">
-      <div class="reasoning-text">
-        {{ reasoning.content }}
-      </div>
-      <div v-if="isStreaming" class="streaming-indicator">
-        <span class="streaming-dot"></span>
-        <span class="streaming-dot"></span>
-        <span class="streaming-dot"></span>
-      </div>
-    </div>
-  </div>
-</template>
 
 <style scoped>
 .ai-reasoning {
-  background-color: var(--el-fill-color-light);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  margin: 12px 0;
-  overflow: hidden;
+  margin-bottom: 16px;
 }
 
-.ai-reasoning.is-streaming {
-  border-color: var(--el-color-primary-light-5);
-}
-
-.ai-reasoning__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.ai-reasoning__header:hover {
-  background-color: var(--el-fill-color);
-}
-
-.ai-reasoning__title {
+.reasoning-trigger {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-weight: 600;
   font-size: 14px;
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.reasoning-trigger:hover {
   color: var(--el-text-color-primary);
 }
 
-.brain-icon {
-  color: var(--el-color-primary);
+.reasoning-icon {
+  font-size: 16px;
 }
 
-.duration {
+.reasoning-arrow {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
-  font-weight: normal;
+  transition: transform 0.3s;
 }
 
-.expand-icon {
-  transition: transform 0.2s;
-  color: var(--el-text-color-secondary);
-}
-
-.expand-icon.is-expanded {
+.reasoning-arrow.rotated {
   transform: rotate(180deg);
 }
 
-.ai-reasoning__content {
-  padding: 12px 16px;
-  border-top: 1px solid var(--el-border-color-lighter);
-}
-
-.reasoning-text {
-  font-size: 14px;
-  line-height: 1.8;
-  color: var(--el-text-color-regular);
-  white-space: pre-wrap;
-}
-
-.streaming-indicator {
-  display: flex;
-  gap: 4px;
+.reasoning-content {
   margin-top: 12px;
-}
-
-.streaming-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background-color: var(--el-color-primary);
-  animation: bounce 1.4s infinite ease-in-out both;
-}
-
-.streaming-dot:nth-child(1) { animation-delay: -0.32s; }
-.streaming-dot:nth-child(2) { animation-delay: -0.16s; }
-
-@keyframes bounce {
-  0%, 80%, 100% { transform: scale(0); }
-  40% { transform: scale(1); }
+  padding: 12px;
+  background-color: var(--el-fill-color-light);
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 </style>
