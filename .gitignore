@@ -2,3 +2,5 @@
 ./idea/*
 ./git
 ./backend/db.sqlite3
+./backend/.env
+./performance_benchmark.py
