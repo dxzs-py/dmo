@@ -22,10 +22,14 @@ logger = logging.getLogger(__name__)
 def get_data_dir() -> str:
     try:
         from Django_xm.apps.core.config import settings
-        return getattr(settings, 'data_dir', "/tmp/data")
-    except ImportError:
+        return str(getattr(settings, 'DATA_DIR', settings.DATA_DIR))
+    except (ImportError, AttributeError):
         import os
-        return os.environ.get("DATA_DIR", "/tmp/data")
+        from pathlib import Path
+        base_dir = Path(__file__).resolve().parent.parent.parent.parent
+        data_dir = base_dir / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        return str(data_dir)
 
 
 class ResearchFileSystem:
@@ -64,14 +68,14 @@ class ResearchFileSystem:
         file_dir = self.workspace_path / subdir
         file_dir.mkdir(parents=True, exist_ok=True)
 
-        file_path = file_dir / relative_path
+        file_path = file_dir / Path(relative_path).name
 
         try:
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(content)
 
             logger.info(f"✅ 写入文件: {file_path}")
-            return f"成功写入文件: {relative_path}"
+            return f"成功写入文件: {Path(relative_path).name}"
         except Exception as e:
             error_msg = f"写入文件失败: {str(e)}"
             logger.error(error_msg)
@@ -81,7 +85,7 @@ class ResearchFileSystem:
         if ".." in relative_path:
             return "错误：不允许使用 .. 路径"
 
-        file_path = self.workspace_path / subdir / relative_path
+        file_path = self.workspace_path / subdir / Path(relative_path).name
 
         try:
             with open(file_path, "r", encoding="utf-8") as f:
@@ -90,7 +94,7 @@ class ResearchFileSystem:
             logger.info(f"📖 读取文件: {file_path}")
             return content
         except FileNotFoundError:
-            return f"错误：文件不存在: {relative_path}"
+            return f"错误：文件不存在: {Path(relative_path).name}"
         except Exception as e:
             error_msg = f"读取文件失败: {str(e)}"
             logger.error(error_msg)
@@ -123,15 +127,15 @@ class ResearchFileSystem:
         if ".." in relative_path:
             return "错误：不允许使用 .. 路径"
 
-        file_path = self.workspace_path / subdir / relative_path
+        file_path = self.workspace_path / subdir / Path(relative_path).name
 
         try:
             if file_path.exists():
                 file_path.unlink()
                 logger.info(f"🗑️ 删除文件: {file_path}")
-                return f"成功删除文件: {relative_path}"
+                return f"成功删除文件: {Path(relative_path).name}"
             else:
-                return f"文件不存在: {relative_path}"
+                return f"文件不存在: {Path(relative_path).name}"
         except Exception as e:
             error_msg = f"删除文件失败: {str(e)}"
             logger.error(error_msg)
