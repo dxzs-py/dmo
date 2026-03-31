@@ -117,11 +117,6 @@ const pollTaskStatus = async () => {
   try {
     const response = await deepResearchAPI.getStatus(task.value.task_id)
     task.value = { ...task.value, ...response.data }
-    
-    if (response.data.status === 'completed' && !task.value.final_report) {
-      const resultResponse = await deepResearchAPI.getResult(task.value.task_id)
-      task.value.final_report = resultResponse.data.report
-    }
   } catch (error) {
     console.error('获取任务状态失败:', error)
   }
@@ -141,7 +136,7 @@ const startResearch = async () => {
     task.value = response.data
     ElMessage.success('研究任务已启动')
     
-    pollingInterval = setInterval(pollTaskStatus, 2000)
+    pollingInterval = setInterval(pollTaskStatus, 3000)
   } catch (error) {
     console.error('启动研究任务失败:', error)
     ElMessage.error('启动研究任务失败，请稍后重试')

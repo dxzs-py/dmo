@@ -19,20 +19,14 @@ from django.contrib import admin
 from django.urls import path, include
 from django.http import JsonResponse
 from django.conf import settings
-
-def health_check(request):
-    return JsonResponse({
-        "status": "healthy",
-        "version": settings.APP_VERSION,
-        "debug": settings.DEBUG,
-    })
+from Django_xm.apps.core.views import health_check as core_health_check, request_monitor
 
 def root_info(request):
     return JsonResponse({
         "name": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "description": "LC-StudyLab 智能学习 & 研究助手 API",
-        "health": "/health",
+        "health": "/api/health/",
         "api": {
             "chat": "/api/chat/",
             "rag": "/api/rag/",
@@ -44,18 +38,11 @@ def root_info(request):
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("", root_info),
-    path("health/", health_check),
-    path("health", health_check),
+    path("api/health/", core_health_check),
+    path("api/monitor/", request_monitor),
     
     path("api/chat/", include("Django_xm.apps.chat.urls")),
     path("api/rag/", include("Django_xm.apps.rag.urls")),
     path("api/workflow/", include("Django_xm.apps.workflows.urls")),
-    path("api/workflows/", include("Django_xm.apps.workflows.urls")),
     path("api/deep-research/", include("Django_xm.apps.deep_research.urls")),
-    
-    path("chat/", include("Django_xm.apps.chat.urls")),
-    path("rag/", include("Django_xm.apps.rag.urls")),
-    path("workflow/", include("Django_xm.apps.workflows.urls")),
-    path("workflows/", include("Django_xm.apps.workflows.urls")),
-    path("deep-research/", include("Django_xm.apps.deep_research.urls")),
 ]

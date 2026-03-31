@@ -1,5 +1,6 @@
 from django.db import models
 
+
 class ResearchTask(models.Model):
     task_id = models.CharField(max_length=100, unique=True, verbose_name='任务ID')
     query = models.TextField(verbose_name='研究主题')
@@ -18,3 +19,14 @@ class ResearchTask(models.Model):
         verbose_name = '研究任务'
         verbose_name_plural = '研究任务'
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', '-created_at']),
+            models.Index(fields=['task_id']),
+        ]
+
+    def __str__(self):
+        return f"ResearchTask({self.task_id}, {self.status})"
+
+    def get_absolute_url(self):
+        from django.urls import reverse
+        return reverse('deep_research:status', kwargs={'task_id': self.task_id})

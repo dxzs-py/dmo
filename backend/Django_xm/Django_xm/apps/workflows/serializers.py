@@ -11,8 +11,18 @@ class WorkflowStartSerializer(serializers.Serializer):
     """启动工作流请求"""
     user_question = serializers.CharField(
         min_length=1,
-        required=True,
+        required=False,
         help_text="用户的学习问题"
+    )
+    query = serializers.CharField(
+        min_length=1,
+        required=False,
+        help_text="用户的学习问题 (别名)"
+    )
+    workflow_type = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="工作流类型"
     )
     thread_id = serializers.CharField(
         required=False,
@@ -20,6 +30,12 @@ class WorkflowStartSerializer(serializers.Serializer):
         allow_blank=True,
         help_text="可选的线程ID"
     )
+
+    def validate(self, data):
+        """确保至少提供 user_question 或 query"""
+        if not data.get('user_question') and not data.get('query'):
+            raise serializers.ValidationError('必须提供 user_question 或 query')
+        return data
 
 
 class WorkflowSubmitSerializer(serializers.Serializer):

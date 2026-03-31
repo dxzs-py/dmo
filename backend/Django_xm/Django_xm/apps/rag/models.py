@@ -1,5 +1,6 @@
 from django.db import models
 
+
 class DocumentIndex(models.Model):
     index_name = models.CharField(max_length=100, unique=True, verbose_name='索引名称')
     description = models.TextField(blank=True, verbose_name='描述')
@@ -11,6 +12,18 @@ class DocumentIndex(models.Model):
         db_table = 'rag_document_index'
         verbose_name = '文档索引'
         verbose_name_plural = '文档索引'
+        indexes = [
+            models.Index(fields=['created_at']),
+            models.Index(fields=['updated_at']),
+        ]
+
+    def __str__(self):
+        return self.index_name
+
+    def get_absolute_url(self):
+        from django.urls import reverse
+        return reverse('rag:index-detail', kwargs={'name': self.index_name})
+
 
 class Document(models.Model):
     index = models.ForeignKey(DocumentIndex, on_delete=models.CASCADE, related_name='documents', verbose_name='所属索引')
@@ -25,3 +38,10 @@ class Document(models.Model):
         db_table = 'rag_document'
         verbose_name = '文档'
         verbose_name_plural = '文档'
+        indexes = [
+            models.Index(fields=['index', 'uploaded_at']),
+            models.Index(fields=['file_type']),
+        ]
+
+    def __str__(self):
+        return f"{self.filename} ({self.index.index_name})"

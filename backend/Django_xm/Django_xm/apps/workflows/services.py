@@ -3,10 +3,11 @@
 封装工作流相关的业务逻辑
 """
 import uuid
+from datetime import datetime
 from typing import Dict, Any, Optional
 
 from .study_flow import (
-    create_study_flow,
+    _get_study_flow,
     submit_answers,
     get_workflow_state,
     get_workflow_history,
@@ -37,8 +38,9 @@ class WorkflowService:
 
         logger.info(f"[Service] 启动工作流，thread_id={thread_id}")
 
-        study_flow = create_study_flow(thread_id=thread_id)
+        study_flow = _get_study_flow(thread_id=thread_id)
 
+        now = datetime.now().isoformat()
         initial_state: StudyFlowState = {
             "messages": [],
             "user_question": user_question,
@@ -53,19 +55,34 @@ class WorkflowService:
             "should_retry": False,
             "current_step": "start",
             "thread_id": thread_id,
+            "created_at": now,
+            "updated_at": now,
+            "error": None,
+            "error_node": None
         }
-
         config = {"configurable": {"thread_id": thread_id}}
-        result = study_flow.invoke(initial_state, config=config)
+        study_flow.invoke(dict(initial_state), config=config)
+        
+        result = get_workflow_state(thread_id)
 
         logger.info(f"[Service] 工作流启动成功，thread_id={thread_id}")
 
         return {
             "thread_id": thread_id,
-            "status": result.get("current_step", "unknown"),
-            "current_step": result.get("current_step", "unknown"),
+            "user_question": user_question,
+            "status": result.get("current_step", "waiting_for_answers"),
+            "current_step": result.get("current_step", "waiting_for_answers"),
             "learning_plan": result.get("learning_plan"),
+            "retrieved_docs": result.get("retrieved_docs"),
             "quiz": result.get("quiz"),
+            "user_answers": result.get("user_answers"),
+            "score": result.get("score"),
+            "score_details": result.get("score_details"),
+            "feedback": result.get("feedback"),
+            "should_retry": result.get("should_retry", False),
+            "retry_count": result.get("retry_count", 0),
+            "created_at": result.get("created_at", ""),
+            "updated_at": result.get("updated_at", ""),
             "message": "学习计划和练习题已生成"
         }
 
@@ -99,12 +116,19 @@ class WorkflowService:
 
         return {
             "thread_id": thread_id,
+            "user_question": result.get("user_question"),
             "status": status,
             "current_step": result.get("current_step"),
+            "learning_plan": result.get("learning_plan"),
+            "quiz": result.get("quiz"),
+            "user_answers": result.get("user_answers"),
             "score": result.get("score"),
             "score_details": result.get("score_details"),
             "feedback": result.get("feedback"),
             "should_retry": should_retry,
+            "retry_count": result.get("retry_count", 0),
+            "created_at": result.get("created_at", ""),
+            "updated_at": result.get("updated_at", ""),
             "message": message
         }
 

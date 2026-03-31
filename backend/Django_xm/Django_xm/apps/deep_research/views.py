@@ -184,10 +184,13 @@ class DeepResearchStartView(APIView):
             logger.info(f"✅ 研究任务已启动（后台执行）：{thread_id}")
             
             return Response({
-                'status': 'success',
-                'thread_id': thread_id,
-                'message': '研究任务已启动，正在后台执行',
-                'estimated_time': estimated_time,
+                'task_id': thread_id,
+                'status': 'pending',
+                'query': data['query'],
+                'created_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat(),
+                'enable_web_search': data.get('enable_web_search', True),
+                'enable_doc_analysis': data.get('enable_doc_analysis', False),
             })
 
         except Exception as e:
@@ -211,12 +214,24 @@ class DeepResearchStatusView(APIView):
                 
                 # 构建响应
                 response_data = {
+                    'task_id': task.task_id,
                     'status': task.status,
-                    'thread_id': task.task_id,
+                    'query': task.query,
+                    'created_at': task.created_at.isoformat() if task.created_at else '',
+                    'updated_at': task.updated_at.isoformat() if task.updated_at else '',
+                    'enable_web_search': task.enable_web_search,
+                    'enable_doc_analysis': task.enable_doc_analysis,
                     'current_step': cached_status.get('current_step', 'unknown') if cached_status else task.status,
-                    'progress': 100 if task.status == 'completed' else 50 if task.status == 'running' else 0,
-                    'message': f'研究任务{task.get_status_display()}',
                 }
+                
+                # 如果任务已完成，直接返回报告
+                if task.status == 'completed' and task.final_report:
+                    response_data['final_report'] = task.final_report
+                    # 获取缓存的结果
+                    if cached_status:
+                        result = cached_status.get('result', {})
+                        response_data['plan'] = result.get('plan')
+                        response_data['steps_completed'] = result.get('steps_completed')
                 
                 return Response(response_data)
                 
@@ -254,20 +269,18 @@ class DeepResearchResultView(APIView):
                 cached_status = get_task_status(task_id)
                 result = cached_status.get('result', {}) if cached_status else {}
                 
-                return Response(ResearchResultSerializer({
+                return Response({
                     'status': 'completed',
-                    'thread_id': task.task_id,
+                    'task_id': task.task_id,
                     'query': task.query,
-                    'final_report': task.final_report,
+                    'report': task.final_report,
                     'plan': result.get('plan'),
                     'steps_completed': result.get('steps_completed'),
-                    'metadata': {
-                        'created_at': task.created_at.isoformat(),
-                        'completed_at': task.updated_at.isoformat(),
-                        'enable_web_search': task.enable_web_search,
-                        'enable_doc_analysis': task.enable_doc_analysis,
-                    }
-                }).data)
+                    'created_at': task.created_at.isoformat() if task.created_at else '',
+                    'updated_at': task.updated_at.isoformat() if task.updated_at else '',
+                    'enable_web_search': task.enable_web_search,
+                    'enable_doc_analysis': task.enable_doc_analysis,
+                })
                 
             except ResearchTask.DoesNotExist:
                 return Response({
