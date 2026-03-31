@@ -99,7 +99,7 @@ def quiz_generator_node(state: StudyFlowState) -> Dict[str, Any]:
 
         questions = []
         for q in quiz_response.questions:
-            questions.append({
+            question = {
                 "id": q.id,
                 "type": q.type,
                 "question": q.question,
@@ -107,7 +107,8 @@ def quiz_generator_node(state: StudyFlowState) -> Dict[str, Any]:
                 "answer": q.answer,
                 "explanation": q.explanation,
                 "points": q.points
-            })
+            }
+            questions.append(question)
 
         quiz = {
             "questions": questions,
@@ -132,7 +133,7 @@ def quiz_generator_node(state: StudyFlowState) -> Dict[str, Any]:
         return {
             "quiz": quiz,
             "messages": [{"role": "assistant", "content": quiz_display}],
-            "current_step": "quiz_generator",
+            "current_step": "waiting_for_answers",
             "updated_at": datetime.now().isoformat()
         }
 

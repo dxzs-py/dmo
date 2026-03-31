@@ -1,477 +1,219 @@
-INFO 2026-03-27 18:13:47,579 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 18:21:08,020 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 18:22:30,695 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 18:22:38,537 basehttp 213 "GET / HTTP/1.1" 200 271
-WARNING 2026-03-27 18:22:39,224 log 253 Not Found: /favicon.ico
-WARNING 2026-03-27 18:22:39,226 basehttp 213 "GET /favicon.ico HTTP/1.1" 404 3131
-INFO 2026-03-27 20:11:39,305 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 20:38:57,190 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 20:41:42,394 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\libs\langchain_core\tools.py changed, reloading.
-INFO 2026-03-27 20:41:45,301 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 20:42:20,422 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 20:47:31,973 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 20:49:30,371 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\libs\langchain_rag\index_manager.py changed, reloading.
-INFO 2026-03-27 20:49:32,804 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 20:49:55,070 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\libs\langchain_rag\index_manager.py changed, reloading.
-INFO 2026-03-27 20:49:57,348 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 20:50:57,088 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 21:36:06,809 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 21:37:04,740 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
-INFO 2026-03-27 21:37:08,951 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 21:37:20,642 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\core\apps.py changed, reloading.
-INFO 2026-03-27 21:37:27,485 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 21:38:51,456 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 21:39:37,781 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\core\tools\__init__.py changed, reloading.
-INFO 2026-03-27 21:39:44,430 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 21:40:46,865 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\core\__init__.py changed, reloading.
-INFO 2026-03-27 21:40:54,432 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 21:41:04,190 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\core\__init__.py changed, reloading.
-INFO 2026-03-27 21:41:10,504 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 21:41:27,555 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 21:42:16,782 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\core\tools\__init__.py changed, reloading.
-INFO 2026-03-27 21:42:21,356 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 21:42:53,134 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 21:43:34,038 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\core\tools\__init__.py changed, reloading.
-INFO 2026-03-27 21:43:41,641 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 21:44:03,288 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 21:45:13,445 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 21:47:18,530 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 21:53:02,128 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 21:53:20,362 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 22:01:31,398 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\study_flow.py changed, reloading.
-INFO 2026-03-27 22:01:31,618 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\study_flow.py changed, reloading.
-INFO 2026-03-27 22:01:32,128 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\study_flow.py changed, reloading.
-INFO 2026-03-27 22:01:38,465 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 22:01:42,949 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 22:01:43,447 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 22:01:46,131 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\__init__.py changed, reloading.
-INFO 2026-03-27 22:01:49,392 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\__init__.py changed, reloading.
-INFO 2026-03-27 22:01:49,987 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\__init__.py changed, reloading.
-INFO 2026-03-27 22:01:52,629 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 22:01:58,723 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 22:01:59,236 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 22:02:27,924 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflow\views.py changed, reloading.
-INFO 2026-03-27 22:02:28,202 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflow\views.py changed, reloading.
-INFO 2026-03-27 22:02:28,610 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflow\views.py changed, reloading.
-INFO 2026-03-27 22:02:37,072 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 22:02:42,191 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 22:02:42,431 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 22:02:43,591 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflow\serializers.py changed, reloading.
-INFO 2026-03-27 22:02:52,056 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 22:03:35,346 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 22:21:50,312 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 22:27:00,145 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 22:27:09,859 basehttp 213 "GET / HTTP/1.1" 200 271
-WARNING 2026-03-27 22:27:10,779 log 253 Not Found: /favicon.ico
-WARNING 2026-03-27 22:27:10,782 basehttp 213 "GET /favicon.ico HTTP/1.1" 404 3288
-INFO 2026-03-27 23:06:51,759 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 12:52:10,230 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 12:52:16,864 basehttp 213 "GET / HTTP/1.1" 200 271
-WARNING 2026-03-28 12:52:17,460 log 253 Not Found: /favicon.ico
-WARNING 2026-03-28 12:52:17,461 basehttp 213 "GET /favicon.ico HTTP/1.1" 404 3288
-INFO 2026-03-28 12:52:43,692 basehttp 213 "GET /api/chat HTTP/1.1" 301 0
-WARNING 2026-03-28 12:52:44,027 log 253 Method Not Allowed: /api/chat/
-WARNING 2026-03-28 12:52:44,029 basehttp 213 "GET /api/chat/ HTTP/1.1" 405 10332
-INFO 2026-03-28 12:52:44,398 basehttp 213 "GET /static/rest_framework/css/bootstrap-tweaks.css HTTP/1.1" 200 3426
-INFO 2026-03-28 12:52:44,425 basehttp 213 "GET /static/rest_framework/css/bootstrap.min.css HTTP/1.1" 200 121457
-INFO 2026-03-28 12:52:44,426 basehttp 213 "GET /static/rest_framework/css/prettify.css HTTP/1.1" 200 817
-INFO 2026-03-28 12:52:44,427 basehttp 213 "GET /static/rest_framework/css/default.css HTTP/1.1" 200 1152
-INFO 2026-03-28 12:52:44,504 basehttp 213 "GET /static/rest_framework/js/csrf.js HTTP/1.1" 200 1793
-INFO 2026-03-28 12:52:44,505 basehttp 213 "GET /static/rest_framework/js/ajax-form.js HTTP/1.1" 200 3796
-INFO 2026-03-28 12:52:44,514 basehttp 213 "GET /static/rest_framework/js/default.js HTTP/1.1" 200 1268
-INFO 2026-03-28 12:52:44,543 basehttp 213 "GET /static/rest_framework/js/prettify-min.js HTTP/1.1" 200 13632
-INFO 2026-03-28 12:52:44,570 basehttp 213 "GET /static/rest_framework/js/bootstrap.min.js HTTP/1.1" 200 39680
-INFO 2026-03-28 12:52:44,607 basehttp 213 "GET /static/rest_framework/js/load-ajax-form.js HTTP/1.1" 200 59
-INFO 2026-03-28 12:52:44,648 basehttp 213 "GET /static/rest_framework/img/grid.png HTTP/1.1" 200 1458
-INFO 2026-03-28 12:52:44,732 basehttp 213 "GET /static/rest_framework/js/jquery-3.7.1.min.js HTTP/1.1" 200 87533
-INFO 2026-03-28 13:06:06,200 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 13:56:18,930 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 15:39:02,338 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 16:10:51,467 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 16:53:34,289 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 22:15:00,923 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 22:18:41,369 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
-INFO 2026-03-28 22:18:46,289 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 22:19:00,414 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
-INFO 2026-03-28 22:19:06,082 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 22:19:10,731 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
-INFO 2026-03-28 22:19:16,273 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 22:19:35,209 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
-INFO 2026-03-28 22:19:40,341 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 22:20:16,066 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 22:20:40,576 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
-INFO 2026-03-28 22:20:41,029 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
-INFO 2026-03-28 22:20:45,569 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 22:20:46,702 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 22:21:01,686 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
-INFO 2026-03-28 22:21:01,733 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
-INFO 2026-03-28 22:21:06,719 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 22:21:08,912 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 22:22:15,441 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
-INFO 2026-03-28 22:22:15,936 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
-INFO 2026-03-28 22:22:20,500 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 22:22:21,933 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 22:22:23,065 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
-INFO 2026-03-28 22:25:56,435 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
-INFO 2026-03-28 22:26:03,210 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 22:26:11,245 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 22:36:53,533 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-28 22:36:55,889 basehttp 213 "GET / HTTP/1.1" 200 271
-WARNING 2026-03-28 22:36:56,200 log 253 Not Found: /favicon.ico
-WARNING 2026-03-28 22:36:56,201 basehttp 213 "GET /favicon.ico HTTP/1.1" 404 3288
-INFO 2026-03-28 22:37:02,707 basehttp 213 "GET /admin HTTP/1.1" 301 0
-INFO 2026-03-28 22:37:02,730 basehttp 213 "GET /admin/ HTTP/1.1" 302 0
-INFO 2026-03-28 22:37:03,106 basehttp 213 "GET /admin/login/?next=/admin/ HTTP/1.1" 200 4187
-INFO 2026-03-28 22:37:03,320 basehttp 213 "GET /static/admin/css/responsive.css HTTP/1.1" 200 16565
-INFO 2026-03-28 22:37:03,329 basehttp 213 "GET /static/admin/css/dark_mode.css HTTP/1.1" 200 2808
-INFO 2026-03-28 22:37:03,329 basehttp 213 "GET /static/admin/css/login.css HTTP/1.1" 200 951
-INFO 2026-03-28 22:37:03,330 basehttp 213 "GET /static/admin/css/nav_sidebar.css HTTP/1.1" 200 2810
-INFO 2026-03-28 22:37:03,333 basehttp 213 "GET /static/admin/css/base.css HTTP/1.1" 200 22120
-INFO 2026-03-28 22:37:03,339 basehttp 213 "GET /static/admin/js/theme.js HTTP/1.1" 200 1653
-INFO 2026-03-28 22:37:03,370 basehttp 213 "GET /static/admin/js/nav_sidebar.js HTTP/1.1" 200 3063
-INFO 2026-03-28 22:37:15,989 basehttp 213 "POST /admin/login/?next=/admin/ HTTP/1.1" 200 4346
-INFO 2026-03-28 22:37:27,618 basehttp 213 "POST /admin/login/?next=/admin/ HTTP/1.1" 200 4348
-INFO 2026-03-28 22:37:37,019 basehttp 213 "POST /admin/login/?next=/admin/ HTTP/1.1" 200 4353
-INFO 2026-03-28 22:37:55,300 basehttp 213 "POST /admin/login/?next=/admin/ HTTP/1.1" 200 4343
-INFO 2026-03-28 22:39:21,799 basehttp 213 "POST /admin/login/?next=/admin/ HTTP/1.1" 200 4353
-INFO 2026-03-28 23:07:39,903 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 10:55:09,118 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 10:56:01,257 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
-INFO 2026-03-29 10:56:11,126 basehttp 213 "OPTIONS /api/chat/stream/ HTTP/1.1" 200 0
-ERROR 2026-03-29 10:56:11,286 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 500 59
-INFO 2026-03-29 10:58:34,296 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 11:00:26,904 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
-INFO 2026-03-29 11:27:34,782 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 11:33:09,475 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
-INFO 2026-03-29 11:33:19,002 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
-INFO 2026-03-29 11:49:07,634 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
-WARNING 2026-03-29 12:44:10,095 log 253 Not Found: /api/api/chat/modes/
-WARNING 2026-03-29 12:44:10,098 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 3305
-WARNING 2026-03-29 12:44:32,540 log 253 Not Found: /api/api/chat/modes/
-WARNING 2026-03-29 12:44:32,541 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 3305
-WARNING 2026-03-29 12:47:05,292 log 253 Not Found: /api/api/chat/modes/
-WARNING 2026-03-29 12:47:05,293 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 3305
-WARNING 2026-03-29 12:47:51,394 log 253 Not Found: /api/api/chat/modes/
-WARNING 2026-03-29 12:47:51,394 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 3305
-WARNING 2026-03-29 12:48:09,750 log 253 Not Found: /api/api/chat/modes/
-WARNING 2026-03-29 12:48:09,751 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 3305
-WARNING 2026-03-29 12:48:23,561 log 253 Not Found: /api/api/chat/modes/
-WARNING 2026-03-29 12:48:23,562 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 3305
-WARNING 2026-03-29 12:48:29,466 log 253 Not Found: /api/api/chat/modes/
-WARNING 2026-03-29 12:48:29,466 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 3305
-INFO 2026-03-29 13:05:10,751 autoreload 667 Watching for file changes with StatReloader
-WARNING 2026-03-29 13:05:21,593 log 253 Not Found: /api/api/chat/modes/
-WARNING 2026-03-29 13:05:21,594 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 4211
-WARNING 2026-03-29 13:05:37,545 log 253 Not Found: /api/api/chat/modes/
-WARNING 2026-03-29 13:05:37,547 basehttp 213 "GET /api/api/chat/modes/ HTTP/1.1" 404 4211
-INFO 2026-03-29 13:09:33,915 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
-INFO 2026-03-29 13:09:48,060 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
-INFO 2026-03-29 13:26:11,695 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
-INFO 2026-03-29 13:26:25,322 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
-INFO 2026-03-29 13:56:03,560 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 433
-INFO 2026-03-29 13:56:23,076 basehttp 213 "OPTIONS /api/chat/stream/ HTTP/1.1" 200 0
-ERROR 2026-03-29 13:56:23,187 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 500 59
-INFO 2026-03-29 13:57:45,705 basehttp 213 "GET / HTTP/1.1" 200 271
-INFO 2026-03-29 13:58:29,964 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\chat\views.py changed, reloading.
-INFO 2026-03-29 13:58:40,285 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 13:59:48,772 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 200 247
-INFO 2026-03-29 14:00:05,368 basehttp 213 "GET / HTTP/1.1" 200 271
-INFO 2026-03-29 14:00:05,384 basehttp 213 "GET / HTTP/1.1" 200 271
-INFO 2026-03-29 14:00:05,392 basehttp 213 "GET / HTTP/1.1" 200 271
-WARNING 2026-03-29 14:00:12,941 log 253 Bad Request: /api/chat/stream/
-WARNING 2026-03-29 14:00:12,942 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 400 68
-INFO 2026-03-29 14:00:51,257 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 14:01:03,501 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 200 247
-INFO 2026-03-29 14:01:45,668 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\core\prompts.py changed, reloading.
-INFO 2026-03-29 14:01:52,334 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 14:02:09,786 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 14:03:27,850 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 200 167
-INFO 2026-03-29 14:09:14,944 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 14:10:04,532 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 14:10:24,914 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 200 167
-INFO 2026-03-29 14:13:25,021 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\chat\views.py changed, reloading.
-INFO 2026-03-29 14:13:30,877 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 14:13:49,648 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\chat\views.py changed, reloading.
-INFO 2026-03-29 14:13:55,717 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 14:15:51,849 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 14:15:51,850 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 14:16:35,793 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 14:18:29,610 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 14:19:22,327 autoreload 667 Watching for file changes with StatReloader
-WARNING 2026-03-29 14:19:32,426 log 253 Bad Request: /api/chat/stream/
-WARNING 2026-03-29 14:19:32,427 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 400 62
-WARNING 2026-03-29 14:19:59,154 log 253 Bad Request: /api/chat/stream/
-WARNING 2026-03-29 14:19:59,155 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 400 68
-INFO 2026-03-29 14:47:36,681 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 14:49:22,115 basehttp 213 "GET /api/chat/modes HTTP/1.1" 301 0
-INFO 2026-03-29 14:49:22,129 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 14:49:34,869 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 15:12:52,896 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 15:12:58,609 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 15:30:12,012 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 15:32:37,914 basehttp 213 "GET /api/chat/modes HTTP/1.1" 301 0
-INFO 2026-03-29 15:32:37,919 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 15:55:01,898 basehttp 213 "GET /api/chat/modes HTTP/1.1" 301 0
-INFO 2026-03-29 15:55:01,917 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:23:47,085 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:23:50,860 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:35:58,139 basehttp 213 "GET /api/chat/modes HTTP/1.1" 301 0
-INFO 2026-03-29 16:35:58,215 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:36:03,172 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:36:09,270 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:48:03,562 basehttp 213 "GET /api/chat/modes HTTP/1.1" 301 0
-INFO 2026-03-29 16:48:03,631 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:50:22,691 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:55:05,939 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:55:06,612 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:55:15,688 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:55:18,097 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:55:20,360 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:55:44,003 basehttp 213 "GET /api/chat/modes HTTP/1.1" 301 0
-INFO 2026-03-29 16:55:44,018 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:55:45,161 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:55:46,400 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:55:47,635 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:55:48,658 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:55:49,239 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:55:58,654 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:56:20,401 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:56:21,224 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:56:26,532 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:56:34,663 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:56:38,614 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:56:40,040 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:58:47,731 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:58:51,914 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 16:58:54,665 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 17:03:52,318 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 17:26:36,400 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 17:44:58,965 basehttp 213 "GET /api/chat/modes HTTP/1.1" 301 0
-INFO 2026-03-29 17:44:59,008 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 17:45:47,630 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 17:49:26,209 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 17:49:27,793 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 17:49:28,921 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 17:50:10,728 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 17:50:14,674 basehttp 213 "OPTIONS /api/chat HTTP/1.1" 200 0
-ERROR 2026-03-29 17:50:15,149 log 253 Internal Server Error: /api/chat
-Traceback (most recent call last):
-  File "D:\Anaconda\envs\Django_xm\Lib\site-packages\django\core\handlers\exception.py", line 55, in inner
-    response = get_response(request)
-               ^^^^^^^^^^^^^^^^^^^^^
-  File "D:\Anaconda\envs\Django_xm\Lib\site-packages\django\utils\deprecation.py", line 122, in __call__
-    response = self.process_response(request, response)
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "D:\Anaconda\envs\Django_xm\Lib\site-packages\django\middleware\common.py", line 108, in process_response
-    return self.response_redirect_class(self.get_full_path_with_slash(request))
-                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "D:\Anaconda\envs\Django_xm\Lib\site-packages\django\middleware\common.py", line 87, in get_full_path_with_slash
-    raise RuntimeError(
-RuntimeError: You called this URL via POST, but the URL doesn't end in a slash and you have APPEND_SLASH set. Django can't redirect to the slash URL while maintaining POST data. Change your form to point to 127.0.0.1:8000/api/chat/ (note the trailing slash), or set APPEND_SLASH=False in your Django settings.
-ERROR 2026-03-29 17:50:15,157 basehttp 213 "POST /api/chat HTTP/1.1" 500 80834
-INFO 2026-03-29 17:51:39,192 basehttp 213 "GET / HTTP/1.1" 200 271
-INFO 2026-03-29 17:53:58,579 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 17:54:23,334 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 17:54:46,073 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 17:54:52,637 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 17:57:35,557 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 17:57:38,218 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 17:57:41,607 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 17:57:49,436 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 18:18:29,088 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 18:18:35,977 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 18:18:39,365 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 18:19:05,090 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 18:19:08,814 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 18:20:45,798 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 18:20:47,023 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 20:34:06,871 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 20:34:18,450 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 10797
-INFO 2026-03-29 20:34:18,660 basehttp 213 "GET /static/rest_framework/css/bootstrap-tweaks.css HTTP/1.1" 200 3426
-INFO 2026-03-29 20:34:18,664 basehttp 213 "GET /static/rest_framework/css/default.css HTTP/1.1" 200 1152
-INFO 2026-03-29 20:34:18,664 basehttp 213 "GET /static/rest_framework/css/prettify.css HTTP/1.1" 200 817
-INFO 2026-03-29 20:34:18,675 basehttp 213 "GET /static/rest_framework/css/bootstrap.min.css HTTP/1.1" 200 121457
-INFO 2026-03-29 20:34:18,699 basehttp 213 "GET /static/rest_framework/js/ajax-form.js HTTP/1.1" 200 3796
-INFO 2026-03-29 20:34:18,708 basehttp 213 "GET /static/rest_framework/js/csrf.js HTTP/1.1" 200 1793
-INFO 2026-03-29 20:34:18,718 basehttp 213 "GET /static/rest_framework/js/default.js HTTP/1.1" 200 1268
-INFO 2026-03-29 20:34:18,725 basehttp 213 "GET /static/rest_framework/js/load-ajax-form.js HTTP/1.1" 200 59
-INFO 2026-03-29 20:34:18,728 basehttp 213 "GET /static/rest_framework/js/prettify-min.js HTTP/1.1" 200 13632
-INFO 2026-03-29 20:34:18,749 basehttp 213 "GET /static/rest_framework/js/bootstrap.min.js HTTP/1.1" 200 39680
-INFO 2026-03-29 20:34:18,752 basehttp 213 "GET /static/rest_framework/img/grid.png HTTP/1.1" 200 1458
-INFO 2026-03-29 20:34:18,803 basehttp 213 "GET /static/rest_framework/js/jquery-3.7.1.min.js HTTP/1.1" 200 87533
-WARNING 2026-03-29 20:34:18,932 log 253 Not Found: /favicon.ico
-WARNING 2026-03-29 20:34:18,933 basehttp 213 "GET /favicon.ico HTTP/1.1" 404 4187
-INFO 2026-03-29 20:34:30,396 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 20:34:32,353 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 20:34:36,855 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 20:34:54,260 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 20:34:55,266 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 20:35:00,422 basehttp 213 "OPTIONS /api/chat/ HTTP/1.1" 200 0
-INFO 2026-03-29 20:35:03,242 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 20:35:20,840 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 20:35:24,131 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 20:35:47,540 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 20:37:10,137 basehttp 81 - Broken pipe from ('127.0.0.1', 56450)
-INFO 2026-03-29 20:41:58,026 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 20:41:59,981 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-WARNING 2026-03-29 20:42:04,384 log 253 Bad Request: /api/chat/
-WARNING 2026-03-29 20:42:04,385 basehttp 213 "POST /api/chat/ HTTP/1.1" 400 62
-INFO 2026-03-29 20:42:07,012 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 20:42:18,094 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-WARNING 2026-03-29 20:42:29,930 log 253 Bad Request: /api/chat/
-WARNING 2026-03-29 20:42:29,931 basehttp 213 "POST /api/chat/ HTTP/1.1" 400 68
-INFO 2026-03-29 20:42:33,986 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 20:42:52,718 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 20:42:54,655 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-WARNING 2026-03-29 20:43:00,344 log 253 Bad Request: /api/chat/
-WARNING 2026-03-29 20:43:00,346 basehttp 213 "POST /api/chat/ HTTP/1.1" 400 74
-INFO 2026-03-29 20:43:08,193 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 20:43:24,589 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 20:43:32,110 basehttp 213 "OPTIONS /api/chat/ HTTP/1.1" 200 0
-WARNING 2026-03-29 20:43:32,114 log 253 Bad Request: /api/chat/
-WARNING 2026-03-29 20:43:32,115 basehttp 213 "POST /api/chat/ HTTP/1.1" 400 80
-INFO 2026-03-29 20:43:34,598 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-WARNING 2026-03-29 20:43:49,695 log 253 Bad Request: /api/chat/
-WARNING 2026-03-29 20:43:49,696 basehttp 213 "POST /api/chat/ HTTP/1.1" 400 86
-INFO 2026-03-29 21:06:00,316 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-29 21:06:30,697 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 21:06:34,343 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 21:06:37,278 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-WARNING 2026-03-29 21:06:38,437 log 253 Not Found: /api/rag/indexes/
-WARNING 2026-03-29 21:06:38,438 basehttp 213 "GET /api/rag/indexes/ HTTP/1.1" 404 6860
-WARNING 2026-03-29 21:06:47,751 log 253 Not Found: /api/rag/indexes/
-WARNING 2026-03-29 21:06:47,752 basehttp 213 "GET /api/rag/indexes/ HTTP/1.1" 404 6860
-INFO 2026-03-29 21:09:35,217 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-INFO 2026-03-29 21:12:48,344 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-INFO 2026-03-29 21:12:59,962 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 21:13:12,065 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 21:13:15,529 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 21:13:20,057 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 21:13:21,721 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-INFO 2026-03-29 21:13:26,957 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 21:13:27,955 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 21:16:08,226 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 21:16:09,558 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 21:16:12,870 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 21:16:14,280 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-INFO 2026-03-29 22:02:18,927 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 22:02:26,078 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 22:02:31,910 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-29 22:02:33,133 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-INFO 2026-03-30 10:55:47,868 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-30 10:56:03,185 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 10:56:06,523 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 10:56:09,845 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 10:56:11,551 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-INFO 2026-03-30 11:08:08,020 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-INFO 2026-03-30 11:08:12,464 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-INFO 2026-03-30 11:08:13,770 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:08:14,780 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:08:19,468 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:14:11,855 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:15:18,476 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:15:39,956 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:15:45,743 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-INFO 2026-03-30 11:15:47,338 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:15:51,073 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-INFO 2026-03-30 11:15:51,653 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:18:37,349 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:18:43,517 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:18:45,947 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:18:51,079 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:18:53,414 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:19:06,962 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:19:36,404 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:19:37,133 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:19:40,218 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:19:43,085 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:19:44,572 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:19:45,241 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:19:47,722 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:20:43,433 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:21:14,237 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:21:39,052 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:21:43,069 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:21:45,250 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:25:22,173 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:25:23,609 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:25:25,233 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-INFO 2026-03-30 11:25:28,618 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:25:32,471 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:35:20,718 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:37:55,258 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:37:57,511 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:37:58,672 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-INFO 2026-03-30 11:38:09,412 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:38:16,532 basehttp 213 "OPTIONS /api/chat/stream/ HTTP/1.1" 200 0
-WARNING 2026-03-30 11:39:43,949 log 253 Bad Request: /api/chat/stream/
-WARNING 2026-03-30 11:39:43,950 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 400 62
-INFO 2026-03-30 11:41:54,444 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 200 3429
-INFO 2026-03-30 11:41:58,513 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:42:11,610 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:42:14,459 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:42:25,419 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:43:11,586 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 11:43:15,314 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-INFO 2026-03-30 11:43:23,647 basehttp 213 "OPTIONS /api/rag/query/ HTTP/1.1" 200 0
-WARNING 2026-03-30 11:43:23,651 log 253 Not Found: /api/rag/query/
-WARNING 2026-03-30 11:43:23,651 basehttp 213 "POST /api/rag/query/ HTTP/1.1" 404 40
-INFO 2026-03-30 11:44:04,854 basehttp 213 "OPTIONS /api/deep-research/start/ HTTP/1.1" 200 0
-ERROR 2026-03-30 11:44:05,241 log 253 Internal Server Error: /api/deep-research/start/
-ERROR 2026-03-30 11:44:05,242 basehttp 213 "POST /api/deep-research/start/ HTTP/1.1" 500 69
-INFO 2026-03-30 11:44:12,391 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-WARNING 2026-03-30 11:44:19,871 log 253 Not Found: /api/rag/query/
-WARNING 2026-03-30 11:44:19,872 basehttp 213 "POST /api/rag/query/ HTTP/1.1" 404 40
-INFO 2026-03-30 15:27:46,442 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-30 15:28:13,837 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:28:21,333 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:28:28,025 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-INFO 2026-03-30 15:28:32,030 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:28:37,076 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:28:39,885 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:28:42,255 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-INFO 2026-03-30 15:28:47,205 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:28:48,541 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:28:50,121 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:28:50,694 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:28:52,219 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:28:58,046 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:29:02,533 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:29:23,554 basehttp 213 "OPTIONS /api/chat/stream/ HTTP/1.1" 200 0
-INFO 2026-03-30 15:29:30,977 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 200 4152
-INFO 2026-03-30 15:29:44,822 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:32:52,544 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-INFO 2026-03-30 15:37:01,174 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-INFO 2026-03-30 15:37:04,772 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:40:17,097 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:40:26,594 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:40:27,902 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-INFO 2026-03-30 15:44:19,213 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:44:27,577 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:44:33,088 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-INFO 2026-03-30 15:47:12,855 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:47:24,093 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 2
-INFO 2026-03-30 15:48:09,285 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:48:14,362 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 15:48:17,810 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 16:54:30,850 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\chat\views.py changed, reloading.
-INFO 2026-03-30 16:54:44,590 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-30 16:55:39,245 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\deep_research\views.py changed, reloading.
-INFO 2026-03-30 16:55:47,045 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-30 16:56:19,157 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\rag\views.py changed, reloading.
-INFO 2026-03-30 16:56:28,854 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-30 17:01:09,735 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\rag\views.py changed, reloading.
-INFO 2026-03-30 17:01:16,195 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-30 17:02:55,510 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\services.py changed, reloading.
-INFO 2026-03-30 17:03:09,277 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-30 17:03:15,236 basehttp 213 "GET / HTTP/1.1" 200 271
-WARNING 2026-03-30 17:03:15,860 log 253 Not Found: /favicon.ico
-WARNING 2026-03-30 17:03:15,862 basehttp 213 "GET /favicon.ico HTTP/1.1" 404 4194
-WARNING 2026-03-30 17:03:22,415 log 253 Not Found: /api/deep-research/
-WARNING 2026-03-30 17:03:22,416 basehttp 213 "GET /api/deep-research/ HTTP/1.1" 404 5818
-WARNING 2026-03-30 17:03:38,901 log 253 Not Found: /workflow/
-WARNING 2026-03-30 17:03:38,901 basehttp 213 "GET /workflow/ HTTP/1.1" 404 5701
-INFO 2026-03-30 17:04:13,741 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
-INFO 2026-03-30 17:04:34,789 basehttp 213 "OPTIONS /api/chat/stream/ HTTP/1.1" 200 0
-INFO 2026-03-30 17:04:42,134 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 200 4187
-INFO 2026-03-30 17:05:02,634 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 200 3974
+INFO 2026-03-31 09:16:48,329 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 09:17:37,226 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-31 09:17:53,366 basehttp 213 "OPTIONS /api/chat/stream/ HTTP/1.1" 200 0
+INFO 2026-03-31 09:18:01,698 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 200 4973
+INFO 2026-03-31 09:18:18,557 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 225
+INFO 2026-03-31 09:18:23,285 basehttp 213 "OPTIONS /api/rag/query/ HTTP/1.1" 200 0
+INFO 2026-03-31 09:18:30,852 basehttp 213 "POST /api/rag/query/ HTTP/1.1" 200 1856
+INFO 2026-03-31 09:19:33,074 basehttp 213 "OPTIONS /api/workflow/start/ HTTP/1.1" 200 0
+INFO 2026-03-31 09:19:57,306 basehttp 213 "POST /api/workflow/start/ HTTP/1.1" 200 2303
+INFO 2026-03-31 09:24:58,418 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\services.py changed, reloading.
+INFO 2026-03-31 09:25:03,623 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 09:27:36,156 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\services.py changed, reloading.
+INFO 2026-03-31 09:27:40,527 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 09:30:58,808 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\services.py changed, reloading.
+INFO 2026-03-31 09:31:03,561 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 09:32:59,012 basehttp 213 "POST /api/workflow/start/ HTTP/1.1" 200 3015
+INFO 2026-03-31 09:33:20,997 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 225
+INFO 2026-03-31 09:34:28,293 basehttp 213 "OPTIONS /api/chat/stream/ HTTP/1.1" 200 0
+INFO 2026-03-31 09:34:40,352 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 200 17192
+INFO 2026-03-31 09:36:29,868 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-31 09:36:47,603 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-31 09:40:32,092 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\views.py changed, reloading.
+INFO 2026-03-31 09:40:44,689 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 09:41:42,883 basehttp 213 "POST /api/workflow/start/ HTTP/1.1" 200 2387
+INFO 2026-03-31 09:47:50,847 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\nodes\quiz_generator_node.py changed, reloading.
+INFO 2026-03-31 09:48:00,495 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 09:51:09,533 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-31 09:51:49,573 basehttp 213 "POST /api/workflow/start/ HTTP/1.1" 200 2615
+INFO 2026-03-31 09:52:36,432 basehttp 213 "OPTIONS /api/workflow/submit/ HTTP/1.1" 200 0
+WARNING 2026-03-31 09:52:36,772 log 253 Bad Request: /api/workflow/submit/
+WARNING 2026-03-31 09:52:36,774 basehttp 213 "POST /api/workflow/submit/ HTTP/1.1" 400 40
+WARNING 2026-03-31 09:53:28,953 log 253 Bad Request: /api/workflow/submit/
+WARNING 2026-03-31 09:53:28,954 basehttp 213 "POST /api/workflow/submit/ HTTP/1.1" 400 40
+INFO 2026-03-31 10:00:04,605 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:00:33,978 basehttp 213 "POST /api/workflow/start/ HTTP/1.1" 200 2781
+ERROR 2026-03-31 10:01:46,347 log 253 Internal Server Error: /api/workflow/submit/
+ERROR 2026-03-31 10:01:46,348 basehttp 213 "POST /api/workflow/submit/ HTTP/1.1" 500 72
+INFO 2026-03-31 10:03:21,871 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\services.py changed, reloading.
+INFO 2026-03-31 10:03:27,062 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:03:40,632 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\services.py changed, reloading.
+INFO 2026-03-31 10:03:44,763 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:07:06,067 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\services.py changed, reloading.
+INFO 2026-03-31 10:07:10,329 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:07:52,657 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\study_flow.py changed, reloading.
+INFO 2026-03-31 10:07:57,228 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:08:08,498 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\study_flow.py changed, reloading.
+INFO 2026-03-31 10:08:12,957 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:09:34,631 basehttp 213 "POST /api/workflow/start/ HTTP/1.1" 200 2187
+INFO 2026-03-31 10:10:32,334 basehttp 213 "POST /api/workflow/submit/ HTTP/1.1" 200 2590
+INFO 2026-03-31 10:12:38,926 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\study_flow.py changed, reloading.
+INFO 2026-03-31 10:12:43,140 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:12:48,868 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\study_flow.py changed, reloading.
+INFO 2026-03-31 10:12:53,634 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:12:56,100 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\study_flow.py changed, reloading.
+INFO 2026-03-31 10:13:00,106 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:13:08,076 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\services.py changed, reloading.
+INFO 2026-03-31 10:13:12,580 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:13:31,542 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\study_flow.py changed, reloading.
+INFO 2026-03-31 10:13:35,770 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:23:37,008 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\study_flow.py changed, reloading.
+INFO 2026-03-31 10:23:42,486 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:24:43,230 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\study_flow.py changed, reloading.
+INFO 2026-03-31 10:24:47,536 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:26:48,790 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:27:13,955 basehttp 213 "POST /api/workflow/start/ HTTP/1.1" 200 2968
+INFO 2026-03-31 10:27:41,269 basehttp 213 "POST /api/workflow/submit/ HTTP/1.1" 200 5712
+INFO 2026-03-31 10:29:43,291 basehttp 213 "POST /api/workflow/submit/ HTTP/1.1" 200 7425
+INFO 2026-03-31 10:32:21,295 basehttp 213 "POST /api/workflow/submit/ HTTP/1.1" 200 7878
+INFO 2026-03-31 10:32:24,329 basehttp 213 "GET /api/workflow/status/study_7d8361a95086/ HTTP/1.1" 200 16583
+INFO 2026-03-31 10:32:27,313 basehttp 213 "GET /api/workflow/status/study_7d8361a95086/ HTTP/1.1" 200 16583
+INFO 2026-03-31 10:32:30,319 basehttp 213 "GET /api/workflow/status/study_7d8361a95086/ HTTP/1.1" 200 16583
+INFO 2026-03-31 10:32:33,330 basehttp 213 "GET /api/workflow/status/study_7d8361a95086/ HTTP/1.1" 200 16583
+INFO 2026-03-31 10:32:36,974 basehttp 213 "GET /api/workflow/status/study_7d8361a95086/ HTTP/1.1" 200 16583
+INFO 2026-03-31 10:32:39,990 basehttp 213 "GET /api/workflow/status/study_7d8361a95086/ HTTP/1.1" 200 16583
+INFO 2026-03-31 10:32:42,980 basehttp 213 "GET /api/workflow/status/study_7d8361a95086/ HTTP/1.1" 200 16583
+INFO 2026-03-31 10:32:45,314 basehttp 213 "GET /api/workflow/status/study_7d8361a95086/ HTTP/1.1" 200 16583
+INFO 2026-03-31 10:32:48,323 basehttp 213 "GET /api/workflow/status/study_7d8361a95086/ HTTP/1.1" 200 16583
+INFO 2026-03-31 10:32:51,324 basehttp 213 "GET /api/workflow/status/study_7d8361a95086/ HTTP/1.1" 200 16583
+INFO 2026-03-31 10:32:54,333 basehttp 213 "GET /api/workflow/status/study_7d8361a95086/ HTTP/1.1" 200 16583
+INFO 2026-03-31 10:33:09,971 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:33:29,561 basehttp 213 "POST /api/workflow/start/ HTTP/1.1" 200 2942
+INFO 2026-03-31 10:35:18,370 basehttp 213 "POST /api/workflow/submit/ HTTP/1.1" 200 5704
+INFO 2026-03-31 10:36:19,972 basehttp 213 "OPTIONS /api/deep-research/start/ HTTP/1.1" 200 0
+ERROR 2026-03-31 10:36:22,007 log 253 Internal Server Error: /api/deep-research/start/
+ERROR 2026-03-31 10:36:22,008 basehttp 213 "POST /api/deep-research/start/ HTTP/1.1" 500 60
+ERROR 2026-03-31 10:36:29,205 log 253 Internal Server Error: /api/deep-research/start/
+ERROR 2026-03-31 10:36:29,208 basehttp 213 "POST /api/deep-research/start/ HTTP/1.1" 500 70
+INFO 2026-03-31 10:36:59,683 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 225
+INFO 2026-03-31 10:37:07,400 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 225
+INFO 2026-03-31 10:39:07,574 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\nodes\grading_node.py changed, reloading.
+INFO 2026-03-31 10:39:12,085 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:40:14,482 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\apps\workflows\nodes\grading_node.py changed, reloading.
+INFO 2026-03-31 10:40:18,938 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:44:54,353 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\urls.py changed, reloading.
+INFO 2026-03-31 10:44:58,871 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:45:19,194 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\urls.py changed, reloading.
+INFO 2026-03-31 10:45:24,038 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:45:28,248 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
+INFO 2026-03-31 10:48:14,056 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:58:40,924 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 10:59:20,615 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\urls.py changed, reloading.
+INFO 2026-03-31 10:59:27,108 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 11:00:17,021 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 11:00:25,661 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-31 11:01:20,371 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 11:01:48,126 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-31 11:03:54,076 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\urls.py changed, reloading.
+INFO 2026-03-31 11:03:58,342 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 11:04:09,656 autoreload 265 D:\Project\codeBuddy\langchain_xm\backend\Django_xm\Django_xm\settings\dev.py changed, reloading.
+INFO 2026-03-31 11:05:01,717 autoreload 667 Watching for file changes with StatReloader
+INFO 2026-03-31 11:05:20,183 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-31 11:05:28,343 basehttp 213 "GET /api/chat/modes/ HTTP/1.1" 200 536
+INFO 2026-03-31 11:05:49,007 basehttp 213 "POST /api/chat/stream/ HTTP/1.1" 200 3137
+INFO 2026-03-31 11:07:27,003 basehttp 213 "POST /api/workflow/start/ HTTP/1.1" 200 2227
+INFO 2026-03-31 11:09:08,614 basehttp 213 "POST /api/workflow/submit/ HTTP/1.1" 200 5385
+INFO 2026-03-31 11:11:03,095 basehttp 213 "POST /api/workflow/submit/ HTTP/1.1" 200 5324
+INFO 2026-03-31 11:11:24,479 basehttp 213 "POST /api/deep-research/start/ HTTP/1.1" 200 217
+INFO 2026-03-31 11:11:27,523 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:11:30,563 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:11:33,514 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:11:36,508 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:11:39,510 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:11:42,514 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:11:45,507 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:11:48,508 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:11:51,499 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:11:54,502 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:11:57,499 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:12:00,512 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:12:03,500 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:12:06,503 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:12:09,509 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:12:12,505 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:12:15,500 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:12:18,513 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:12:21,505 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:12:24,491 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:12:27,975 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 258
+INFO 2026-03-31 11:12:30,508 basehttp 213 "GET /api/deep-research/status/research_df35e4dcfa76/ HTTP/1.1" 200 4128
+INFO 2026-03-31 11:12:52,761 basehttp 213 "POST /api/deep-research/start/ HTTP/1.1" 200 222
+INFO 2026-03-31 11:12:55,792 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:12:58,976 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:13:01,986 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:13:04,980 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:13:07,988 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:13:10,992 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:13:13,977 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:13:16,987 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:13:19,982 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:13:22,986 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:13:25,988 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:13:28,981 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:13:31,982 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:13:34,970 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:13:37,778 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:13:40,786 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:13:43,787 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:13:46,796 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:13:49,791 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:13:52,799 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:13:55,796 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:13:58,796 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:14:01,779 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:14:04,982 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:14:07,975 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:14:10,977 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:14:13,778 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 263
+INFO 2026-03-31 11:14:16,975 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 261
+INFO 2026-03-31 11:14:19,975 basehttp 213 "GET /api/deep-research/status/research_7bafc08b654d/ HTTP/1.1" 200 1766
+INFO 2026-03-31 11:16:03,580 basehttp 213 "POST /api/deep-research/start/ HTTP/1.1" 200 220
+INFO 2026-03-31 11:16:06,598 basehttp 213 "GET /api/deep-research/status/research_21613dcadfdb/ HTTP/1.1" 200 261
+INFO 2026-03-31 11:16:09,980 basehttp 213 "GET /api/deep-research/status/research_21613dcadfdb/ HTTP/1.1" 200 261
+INFO 2026-03-31 11:16:12,609 basehttp 213 "GET /api/deep-research/status/research_21613dcadfdb/ HTTP/1.1" 200 261
+INFO 2026-03-31 11:16:15,965 basehttp 213 "GET /api/deep-research/status/research_21613dcadfdb/ HTTP/1.1" 200 261
+INFO 2026-03-31 11:16:18,993 basehttp 213 "GET /api/deep-research/status/research_21613dcadfdb/ HTTP/1.1" 200 261
+INFO 2026-03-31 11:16:21,982 basehttp 213 "GET /api/deep-research/status/research_21613dcadfdb/ HTTP/1.1" 200 261
+INFO 2026-03-31 11:16:24,983 basehttp 213 "GET /api/deep-research/status/research_21613dcadfdb/ HTTP/1.1" 200 261
+INFO 2026-03-31 11:16:27,997 basehttp 213 "GET /api/deep-research/status/research_21613dcadfdb/ HTTP/1.1" 200 261
+INFO 2026-03-31 11:16:30,981 basehttp 213 "GET /api/deep-research/status/research_21613dcadfdb/ HTTP/1.1" 200 261
+INFO 2026-03-31 11:16:33,997 basehttp 213 "GET /api/deep-research/status/research_21613dcadfdb/ HTTP/1.1" 200 261
+INFO 2026-03-31 11:16:36,984 basehttp 213 "GET /api/deep-research/status/research_21613dcadfdb/ HTTP/1.1" 200 2581
+INFO 2026-03-31 11:17:27,027 basehttp 213 "POST /api/deep-research/start/ HTTP/1.1" 200 223
+INFO 2026-03-31 11:17:30,062 basehttp 213 "GET /api/deep-research/status/research_04e027e97935/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:17:33,053 basehttp 213 "GET /api/deep-research/status/research_04e027e97935/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:17:36,329 basehttp 213 "GET /api/deep-research/status/research_04e027e97935/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:17:39,046 basehttp 213 "GET /api/deep-research/status/research_04e027e97935/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:17:42,050 basehttp 213 "GET /api/deep-research/status/research_04e027e97935/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:17:45,073 basehttp 213 "GET /api/deep-research/status/research_04e027e97935/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:17:48,060 basehttp 213 "GET /api/deep-research/status/research_04e027e97935/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:17:51,069 basehttp 213 "GET /api/deep-research/status/research_04e027e97935/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:17:54,046 basehttp 213 "GET /api/deep-research/status/research_04e027e97935/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:17:57,066 basehttp 213 "GET /api/deep-research/status/research_04e027e97935/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:18:00,055 basehttp 213 "GET /api/deep-research/status/research_04e027e97935/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:18:03,062 basehttp 213 "GET /api/deep-research/status/research_04e027e97935/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:18:06,075 basehttp 213 "GET /api/deep-research/status/research_04e027e97935/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:18:09,052 basehttp 213 "GET /api/deep-research/status/research_04e027e97935/ HTTP/1.1" 200 2682
+INFO 2026-03-31 11:18:47,274 basehttp 213 "POST /api/deep-research/start/ HTTP/1.1" 200 223
+INFO 2026-03-31 11:18:50,303 basehttp 213 "GET /api/deep-research/status/research_e2f8c95b20f1/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:18:53,310 basehttp 213 "GET /api/deep-research/status/research_e2f8c95b20f1/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:18:56,308 basehttp 213 "GET /api/deep-research/status/research_e2f8c95b20f1/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:18:59,300 basehttp 213 "GET /api/deep-research/status/research_e2f8c95b20f1/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:19:02,307 basehttp 213 "GET /api/deep-research/status/research_e2f8c95b20f1/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:19:05,307 basehttp 213 "GET /api/deep-research/status/research_e2f8c95b20f1/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:19:08,293 basehttp 213 "GET /api/deep-research/status/research_e2f8c95b20f1/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:19:11,286 basehttp 213 "GET /api/deep-research/status/research_e2f8c95b20f1/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:19:14,309 basehttp 213 "GET /api/deep-research/status/research_e2f8c95b20f1/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:19:17,300 basehttp 213 "GET /api/deep-research/status/research_e2f8c95b20f1/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:19:20,302 basehttp 213 "GET /api/deep-research/status/research_e2f8c95b20f1/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:19:23,300 basehttp 213 "GET /api/deep-research/status/research_e2f8c95b20f1/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:19:26,295 basehttp 213 "GET /api/deep-research/status/research_e2f8c95b20f1/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:19:29,304 basehttp 213 "GET /api/deep-research/status/research_e2f8c95b20f1/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:19:32,296 basehttp 213 "GET /api/deep-research/status/research_e2f8c95b20f1/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:19:35,967 basehttp 213 "GET /api/deep-research/status/research_e2f8c95b20f1/ HTTP/1.1" 200 264
+INFO 2026-03-31 11:19:38,978 basehttp 213 "GET /api/deep-research/status/research_e2f8c95b20f1/ HTTP/1.1" 200 2286
+INFO 2026-03-31 11:20:07,303 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 225
+INFO 2026-03-31 11:20:22,436 basehttp 213 "OPTIONS /api/rag/query/ HTTP/1.1" 200 0
+INFO 2026-03-31 11:20:27,892 basehttp 213 "POST /api/rag/query/ HTTP/1.1" 200 966
+INFO 2026-03-31 11:21:05,587 basehttp 213 "POST /api/rag/query/ HTTP/1.1" 200 1562
+INFO 2026-03-31 11:21:29,844 basehttp 213 "GET /api/rag/index/list/ HTTP/1.1" 200 225

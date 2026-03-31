@@ -22,9 +22,16 @@ class ChatSession(models.Model):
         db_table = 'chat_session'
         verbose_name = '聊天会话'
         verbose_name_plural = '聊天会话'
+        indexes = [
+            models.Index(fields=['created_at']),
+        ]
 
     def __str__(self):
         return f"ChatSession {self.session_id}"
+
+    def get_absolute_url(self):
+        from django.urls import reverse
+        return reverse('chat:chat')
 
 
 class ChatMessage(models.Model):
@@ -66,7 +73,12 @@ class ChatMessage(models.Model):
         ordering = ['created_at']
         indexes = [
             models.Index(fields=['session', 'created_at']),
+            models.Index(fields=['role']),
         ]
 
     def __str__(self):
         return f"{self.role}: {self.content[:50]}..."
+
+    def get_absolute_url(self):
+        from django.urls import reverse
+        return reverse('chat:chat')

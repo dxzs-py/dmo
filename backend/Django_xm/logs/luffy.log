@@ -1,9 +1,0 @@
-INFO 2026-03-27 10:05:03,585 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 10:06:45,631 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 10:06:49,341 basehttp 213 "GET / HTTP/1.1" 200 12068
-INFO 2026-03-27 10:25:42,170 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 10:25:44,153 basehttp 213 "GET / HTTP/1.1" 200 12068
-INFO 2026-03-27 11:33:04,481 autoreload 667 Watching for file changes with StatReloader
-INFO 2026-03-27 11:33:06,381 basehttp 213 "GET / HTTP/1.1" 200 12068
-WARNING 2026-03-27 11:33:06,663 log 253 Not Found: /favicon.ico
-WARNING 2026-03-27 11:33:06,664 basehttp 213 "GET /favicon.ico HTTP/1.1" 404 2218

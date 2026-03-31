@@ -51,10 +51,15 @@ class WorkflowExecution(models.Model):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['workflow_type', 'status', '-created_at']),
+            models.Index(fields=['thread_id', 'status']),
         ]
 
     def __str__(self):
         return f"WorkflowExecution({self.thread_id}, {self.status})"
+
+    def get_absolute_url(self):
+        from django.urls import reverse
+        return reverse('workflows:status', kwargs={'thread_id': self.thread_id})
 
 
 class WorkflowSession(models.Model):
@@ -120,8 +125,13 @@ class WorkflowSession(models.Model):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['status', '-created_at']),
+            models.Index(fields=['thread_id', 'status']),
         ]
 
     def __str__(self):
         return f"WorkflowSession({self.thread_id}, {self.status})"
+
+    def get_absolute_url(self):
+        from django.urls import reverse
+        return reverse('workflows:status', kwargs={'thread_id': self.thread_id})
 

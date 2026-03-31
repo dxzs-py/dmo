@@ -90,7 +90,7 @@ class StudyFlow:
             }
         )
 
-        return workflow.compile(checkpointer=self.checkpointer)
+        return workflow.compile(checkpointer=self.checkpointer, interrupt_before=["human_review"])
 
     def invoke(self, inputs: Dict[str, Any], config: Dict[str, Any] = None):
         if self.thread_id:
@@ -227,9 +227,11 @@ def submit_answers(thread_id: str, user_answers: dict) -> dict:
     )
 
     logger.info("[Study Flow] 继续执行工作流...")
-    result = study_flow.invoke({"continue": True}, config=config)
+    study_flow.invoke(None, config=config)
 
-    logger.info(f"[Study Flow] 工作流执行完成，最终状态: {result.get('current_step')}")
+    result = get_workflow_state(thread_id)
+
+    logger.info(f"[Study Flow] 工作流执行完成，最终状态: {result.get('current_step') if result else 'unknown'}")
 
     return result
 

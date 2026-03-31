@@ -38,8 +38,9 @@ class WorkflowStartView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         try:
+            user_question = serializer.validated_data.get('user_question') or serializer.validated_data.get('query')
             result = WorkflowService.start_workflow(
-                user_question=serializer.validated_data['user_question'],
+                user_question=user_question,
                 thread_id=serializer.validated_data.get('thread_id')
             )
 
@@ -90,8 +91,10 @@ class WorkflowStatusView(APIView):
         """
         try:
             state = WorkflowService.get_workflow_status(thread_id)
+            logger.info(f"[WorkflowStatusView] Got state for thread {thread_id}: {state}")
 
             if not state:
+                logger.warning(f"[WorkflowStatusView] No state found for thread {thread_id}")
                 return Response(
                     {"error": "工作流会话不存在"},
                     status=status.HTTP_404_NOT_FOUND
@@ -101,7 +104,18 @@ class WorkflowStatusView(APIView):
                 "thread_id": thread_id,
                 "current_step": state.get("current_step"),
                 "status": state.get("current_step"),
-                "state": state
+                "user_question": state.get("user_question"),
+                "learning_plan": state.get("learning_plan"),
+                "retrieved_docs": state.get("retrieved_docs"),
+                "quiz": state.get("quiz"),
+                "user_answers": state.get("user_answers"),
+                "score": state.get("score"),
+                "score_details": state.get("score_details"),
+                "feedback": state.get("feedback"),
+                "should_retry": state.get("should_retry", False),
+                "retry_count": state.get("retry_count", 0),
+                "created_at": state.get("created_at", ""),
+                "updated_at": state.get("updated_at", "")
             })
 
         except Exception as e:

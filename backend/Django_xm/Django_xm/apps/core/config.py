@@ -1,11 +1,14 @@
 """
 统一配置管理模块
 使用 Pydantic Settings 管理所有配置项，支持从环境变量和 .env 文件加载
+向后兼容：使用Django settings作为主要配置源
 """
 
+import os
 from typing import Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from django.conf import settings as django_settings
 
 
 class Settings(BaseSettings):
@@ -13,7 +16,7 @@ class Settings(BaseSettings):
     应用配置类
     
     所有配置项都可以通过环境变量或 .env 文件设置
-    优先级：环境变量 > .env 文件 > 默认值
+    优先级：环境变量 > Django settings > Pydantic默认值
     """
     
     # ==================== OpenAI 配置 ====================
@@ -241,6 +244,106 @@ class Settings(BaseSettings):
         extra="ignore",
     )
     
+    def __init__(self, *args, **kwargs):
+        """初始化时从Django settings加载配置"""
+        super().__init__(*args, **kwargs)
+        
+        # 从Django settings加载配置（如果可用）
+        try:
+            # OpenAI配置
+            if hasattr(django_settings, 'OPENAI_API_KEY') and django_settings.OPENAI_API_KEY:
+                self.openai_api_key = django_settings.OPENAI_API_KEY
+            if hasattr(django_settings, 'OPENAI_API_BASE') and django_settings.OPENAI_API_BASE:
+                self.openai_api_base = django_settings.OPENAI_API_BASE
+            if hasattr(django_settings, 'OPENAI_MODEL') and django_settings.OPENAI_MODEL:
+                self.openai_model = django_settings.OPENAI_MODEL
+            if hasattr(django_settings, 'OPENAI_TEMPERATURE') and django_settings.OPENAI_TEMPERATURE:
+                self.openai_temperature = float(django_settings.OPENAI_TEMPERATURE)
+            if hasattr(django_settings, 'OPENAI_STREAMING') and django_settings.OPENAI_STREAMING:
+                self.openai_streaming = django_settings.OPENAI_STREAMING
+            if hasattr(django_settings, 'OPENAI_MAX_TOKENS') and django_settings.OPENAI_MAX_TOKENS:
+                self.openai_max_tokens = int(django_settings.OPENAI_MAX_TOKENS)
+            
+            # Tavily配置
+            if hasattr(django_settings, 'TAVILY_API_KEY') and django_settings.TAVILY_API_KEY:
+                self.tavily_api_key = django_settings.TAVILY_API_KEY
+            if hasattr(django_settings, 'TAVILY_MAX_RESULTS') and django_settings.TAVILY_MAX_RESULTS:
+                self.tavily_max_results = int(django_settings.TAVILY_MAX_RESULTS)
+            
+            # AMap配置
+            if hasattr(django_settings, 'AMAP_KEY') and django_settings.AMAP_KEY:
+                self.amap_key = django_settings.AMAP_KEY
+            
+            # 日志配置
+            if hasattr(django_settings, 'LOG_LEVEL') and django_settings.LOG_LEVEL:
+                self.log_level = django_settings.LOG_LEVEL
+            if hasattr(django_settings, 'LOG_FILE') and django_settings.LOG_FILE:
+                self.log_file = django_settings.LOG_FILE
+            if hasattr(django_settings, 'LOG_ROTATION') and django_settings.LOG_ROTATION:
+                self.log_rotation = django_settings.LOG_ROTATION
+            if hasattr(django_settings, 'LOG_RETENTION') and django_settings.LOG_RETENTION:
+                self.log_retention = django_settings.LOG_RETENTION
+            
+            # 应用配置
+            if hasattr(django_settings, 'APP_NAME') and django_settings.APP_NAME:
+                self.app_name = django_settings.APP_NAME
+            if hasattr(django_settings, 'APP_VERSION') and django_settings.APP_VERSION:
+                self.app_version = django_settings.APP_VERSION
+            if hasattr(django_settings, 'DEBUG') and django_settings.DEBUG:
+                self.debug = django_settings.DEBUG
+            
+            # 向量存储配置
+            if hasattr(django_settings, 'VECTOR_STORE_PATH') and django_settings.VECTOR_STORE_PATH:
+                self.vector_store_path = str(django_settings.VECTOR_STORE_PATH)
+            if hasattr(django_settings, 'VECTOR_STORE_TYPE') and django_settings.VECTOR_STORE_TYPE:
+                self.vector_store_type = django_settings.VECTOR_STORE_TYPE
+            if hasattr(django_settings, 'EMBEDDING_MODEL') and django_settings.EMBEDDING_MODEL:
+                self.embedding_model = django_settings.EMBEDDING_MODEL
+            if hasattr(django_settings, 'EMBEDDING_BATCH_SIZE') and django_settings.EMBEDDING_BATCH_SIZE:
+                self.embedding_batch_size = int(django_settings.EMBEDDING_BATCH_SIZE)
+            
+            # 文本分块配置
+            if hasattr(django_settings, 'CHUNK_SIZE') and django_settings.CHUNK_SIZE:
+                self.chunk_size = int(django_settings.CHUNK_SIZE)
+            if hasattr(django_settings, 'CHUNK_OVERLAP') and django_settings.CHUNK_OVERLAP:
+                self.chunk_overlap = int(django_settings.CHUNK_OVERLAP)
+            
+            # 检索器配置
+            if hasattr(django_settings, 'RETRIEVER_SEARCH_TYPE') and django_settings.RETRIEVER_SEARCH_TYPE:
+                self.retriever_search_type = django_settings.RETRIEVER_SEARCH_TYPE
+            if hasattr(django_settings, 'RETRIEVER_K') and django_settings.RETRIEVER_K:
+                self.retriever_k = int(django_settings.RETRIEVER_K)
+            if hasattr(django_settings, 'RETRIEVER_SCORE_THRESHOLD') and django_settings.RETRIEVER_SCORE_THRESHOLD:
+                self.retriever_score_threshold = float(django_settings.RETRIEVER_SCORE_THRESHOLD)
+            if hasattr(django_settings, 'RETRIEVER_FETCH_K') and django_settings.RETRIEVER_FETCH_K:
+                self.retriever_fetch_k = int(django_settings.RETRIEVER_FETCH_K)
+            
+            # Agent配置
+            if hasattr(django_settings, 'AGENT_MAX_ITERATIONS') and django_settings.AGENT_MAX_ITERATIONS:
+                self.agent_max_iterations = int(django_settings.AGENT_MAX_ITERATIONS)
+            if hasattr(django_settings, 'AGENT_MAX_EXECUTION_TIME') and django_settings.AGENT_MAX_EXECUTION_TIME:
+                self.agent_max_execution_time = float(django_settings.AGENT_MAX_EXECUTION_TIME)
+            
+            # RAG Agent配置
+            if hasattr(django_settings, 'RAG_AGENT_MAX_ITERATIONS') and django_settings.RAG_AGENT_MAX_ITERATIONS:
+                self.rag_agent_max_iterations = int(django_settings.RAG_AGENT_MAX_ITERATIONS)
+            if hasattr(django_settings, 'RAG_AGENT_RETURN_SOURCE_DOCUMENTS') and django_settings.RAG_AGENT_RETURN_SOURCE_DOCUMENTS:
+                self.rag_agent_return_source_documents = django_settings.RAG_AGENT_RETURN_SOURCE_DOCUMENTS
+            
+            # 数据目录配置
+            if hasattr(django_settings, 'DATA_DIR') and django_settings.DATA_DIR:
+                self.DATA_DIR = str(django_settings.DATA_DIR)
+            if hasattr(django_settings, 'DOCUMENTS_DIR') and django_settings.DOCUMENTS_DIR:
+                self.data_documents_path = str(django_settings.DOCUMENTS_DIR)
+            if hasattr(django_settings, 'INDEXES_DIR') and django_settings.INDEXES_DIR:
+                self.vector_store_path = str(django_settings.INDEXES_DIR)
+            if hasattr(django_settings, 'UPLOADS_DIR') and django_settings.UPLOADS_DIR:
+                self.data_uploads_path = str(django_settings.UPLOADS_DIR)
+                
+        except Exception:
+            # 如果Django未加载，继续使用Pydantic默认值
+            pass
+    
     def validate_required_keys(self) -> None:
         """
         验证必需的配置项是否已设置
@@ -285,19 +388,35 @@ class Settings(BaseSettings):
         }
 
 
-settings = Settings()
+_settings_instance = None
 
 
-# 在导入时验证必需的配置
+def get_settings():
+    """延迟获取 settings 实例，确保 Django settings 已加载"""
+    global _settings_instance
+    if _settings_instance is None:
+        try:
+            _settings_instance = Settings()
+        except Exception as e:
+            print(f"⚠️  配置初始化失败: {e}")
+            _settings_instance = Settings()
+    return _settings_instance
+
+
 def validate_settings() -> None:
     """验证配置的辅助函数"""
     try:
-        settings.validate_required_keys()
+        s = get_settings()
+        s.validate_required_keys()
     except ValueError as e:
         # 在开发环境下，如果没有设置 API Key，只打印警告而不抛出异常
-        if settings.debug:
-            print(f"⚠️  配置警告: {e}")
-        else:
+        try:
+            s = get_settings()
+            if s.debug:
+                print(f"⚠️  配置警告: {e}")
+            else:
+                raise
+        except:
             raise
 
 
@@ -305,6 +424,30 @@ import sys
 if "pytest" not in sys.modules:
     # 延迟验证，允许在导入后再设置环境变量
     pass
+
+
+# 兼容性：提供 settings 实例，但延迟初始化
+class _SettingsProxy:
+    """代理类，延迟初始化 settings"""
+    def __getattr__(self, name):
+        # 使用 object.__getattribute__ 避免递归
+        try:
+            s = object.__getattribute__(self, '_settings_instance')
+        except AttributeError:
+            s = get_settings()
+            object.__setattr__(self, '_settings_instance', s)
+        return getattr(s, name)
+    
+    def __setattr__(self, name, value):
+        try:
+            s = object.__getattribute__(self, '_settings_instance')
+        except AttributeError:
+            s = get_settings()
+            object.__setattr__(self, '_settings_instance', s)
+        return setattr(s, name, value)
+
+
+settings = _SettingsProxy()
 
 
 import logging

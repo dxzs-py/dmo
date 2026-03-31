@@ -184,3 +184,32 @@ def load_documents_from_paths(
     logger.info(f"   总计: {len(all_documents)} 个文档块")
 
     return all_documents
+
+
+def load_directory(
+    directory_path: str,
+    glob_pattern: str = "**/*",
+    exclude_patterns: Optional[List[str]] = None,
+    recursive: bool = True,
+    show_progress: bool = True,
+    max_files: Optional[int] = None,
+) -> List[Document]:
+    """
+    批量加载目录中的文档（兼容源项目API）
+    
+    Args:
+        directory_path: 目录路径
+        glob_pattern: 文件匹配模式
+        exclude_patterns: 排除的文件模式列表
+        recursive: 是否递归加载子目录
+        show_progress: 是否显示加载进度
+        max_files: 最大加载文件数
+        
+    Returns:
+        Document 对象列表
+    """
+    return load_documents_from_directory(
+        directory_path=directory_path,
+        recursive=recursive,
+        add_metadata=True,
+    )

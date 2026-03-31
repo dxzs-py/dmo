@@ -3,7 +3,7 @@ import settings from '../settings'
 
 const apiClient = axios.create({
   baseURL: settings.API_BASE_URL,
-  timeout: 120000,
+  timeout: 300000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -75,7 +75,7 @@ export const workflowAPI = {
   },
 
   submitAnswers(threadId, data) {
-    return apiClient.post('/workflow/submit/', { thread_id: threadId, ...data })
+    return apiClient.post('/workflow/submit/', { thread_id: threadId, answers: data })
   },
 }
 

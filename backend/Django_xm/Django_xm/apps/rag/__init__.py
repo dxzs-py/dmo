@@ -10,6 +10,7 @@ rag模块
 
 from .loaders import (
     load_document,
+    load_directory,
     load_documents_from_directory,
     load_documents_from_paths,
     get_supported_extensions,
@@ -53,6 +54,7 @@ from .index_manager import IndexManager
 
 __all__ = [
     "load_document",
+    "load_directory",
     "load_documents_from_directory",
     "load_documents_from_paths",
     "get_supported_extensions",
