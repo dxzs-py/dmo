@@ -49,6 +49,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "Django_xm.apps.core.views.RequestTimeoutMiddleware",
 ]
 
 CORS_ALLOWED_ORIGINS = os.environ.get(
