@@ -17,11 +17,13 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.environ.get("SECRET_KEY", "django-insecure-w238&(hlsxs)*#fsyi0mrun%on-l=j^@q9pw*gd!l#%k#0!cp")
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError("SECRET_KEY environment variable is not set!")
 
 DEBUG = True
 
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -32,6 +34,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "corsheaders",
     "rest_framework",
+    "drf_spectacular",
     "Django_xm.apps.core",
     "Django_xm.apps.agents",
     "Django_xm.apps.chat",
@@ -102,15 +105,22 @@ DATABASES = {
         "ENGINE": "django.db.backends.mysql",
         "HOST": os.environ.get("DB_HOST", "127.0.0.1"),
         "PORT": int(os.environ.get("DB_PORT", 3306)),
-        "USER": os.environ.get("DB_USER", "langchain_user"),
-        "PASSWORD": os.environ.get("DB_PASSWORD", "langchain"),
-        "NAME": os.environ.get("DB_NAME", "langchain"),
+        "USER": os.environ.get("DB_USER"),
+        "PASSWORD": os.environ.get("DB_PASSWORD"),
+        "NAME": os.environ.get("DB_NAME"),
         "OPTIONS": {
             "charset": "utf8mb4",
             "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
         },
     }
 }
+
+if not DATABASES["default"]["USER"]:
+    raise ValueError("DB_USER environment variable is not set!")
+if not DATABASES["default"]["PASSWORD"]:
+    raise ValueError("DB_PASSWORD environment variable is not set!")
+if not DATABASES["default"]["NAME"]:
+    raise ValueError("DB_NAME environment variable is not set!")
 
 
 # DATABASES = {
@@ -156,6 +166,20 @@ REST_FRAMEWORK = {
         "rest_framework.renderers.BrowsableAPIRenderer",
     ],
     "EXCEPTION_HANDLER": "Django_xm.utils.exceptions.custom_exception_handler",
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "LC-StudyLab API",
+    "DESCRIPTION": "LC-StudyLab 智能学习 & 研究助手 API",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "CONTACT": {
+        "name": "API Support",
+    },
+    "LICENSE": {
+        "name": "MIT License",
+    },
 }
 
 LOGGING = {

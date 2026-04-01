@@ -12,7 +12,7 @@ from .study_flow import (
     get_workflow_history,
     get_study_flow_app,
 )
-from .state import StudyFlowState, LearningPlan, RetrievedDocument, ScoreDetail
+from .state import StudyFlowState, RetrievedDocument, ScoreDetail
 
 __all__ = [
     "StudyFlow",
@@ -23,7 +23,6 @@ __all__ = [
     "get_workflow_history",
     "get_study_flow_app",
     "StudyFlowState",
-    "LearningPlan",
     "RetrievedDocument",
     "ScoreDetail",
 ]

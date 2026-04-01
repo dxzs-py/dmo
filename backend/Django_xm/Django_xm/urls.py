@@ -19,6 +19,7 @@ from django.contrib import admin
 from django.urls import path, include
 from django.http import JsonResponse
 from django.conf import settings
+from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 from Django_xm.apps.core.views import health_check as core_health_check, request_monitor
 
 def root_info(request):
@@ -27,6 +28,11 @@ def root_info(request):
         "version": settings.APP_VERSION,
         "description": "LC-StudyLab 智能学习 & 研究助手 API",
         "health": "/api/health/",
+        "docs": {
+            "swagger": "/api/docs/swagger/",
+            "redoc": "/api/docs/redoc/",
+            "schema": "/api/schema/",
+        },
         "api": {
             "chat": "/api/chat/",
             "rag": "/api/rag/",
@@ -40,6 +46,10 @@ urlpatterns = [
     path("", root_info),
     path("api/health/", core_health_check),
     path("api/monitor/", request_monitor),
+    
+    path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
+    path("api/docs/swagger/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
+    path("api/docs/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
     
     path("api/chat/", include("Django_xm.apps.chat.urls")),
     path("api/rag/", include("Django_xm.apps.rag.urls")),

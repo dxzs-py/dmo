@@ -1,14 +1,15 @@
 import json
 import asyncio
 import time
-import re
 from django.conf import settings
 from django.http import StreamingHttpResponse
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from langchain_core.messages import HumanMessage, AIMessage
 
 from .serializers import ChatRequestSerializer, ChatResponseSerializer
+from .utils import _needs_completion, _lcp_len, convert_chat_history, extract_suggestions
 from Django_xm.apps.agents import create_base_agent
 from Django_xm.apps.core.tools import get_tools_for_request, WEATHER_TOOLS
 from Django_xm.apps.deep_research import create_deep_research_agent, should_use_deep_research
@@ -18,55 +19,6 @@ from Django_xm.apps.core.models import get_chat_model
 import logging
 
 logger = logging.getLogger(__name__)
-
-
-def _needs_completion(text: str) -> bool:
-    if not text:
-        return True
-    t = text.strip()
-    if len(t) < 30:
-        return True
-    if not any(t.endswith(p) for p in ["。", "！", "？", ".", "!", "?"]):
-        return True
-    return False
-
-
-def _lcp_len(a: str, b: str) -> int:
-    i = 0
-    for ca, cb in zip(a, b):
-        if ca != cb:
-            break
-        i += 1
-    return i
-
-
-def convert_chat_history(messages) -> list:
-    """
-    将 API 的消息格式转换为 LangChain 的消息格式
-
-    Args:
-        messages: API 消息列表（字典列表）
-
-    Returns:
-        LangChain 消息列表
-    """
-    from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-
-    if not messages:
-        return []
-
-    langchain_messages = []
-    for msg in messages:
-        role = msg.get('role', '')
-        content = msg.get('content', '')
-        if role == 'user':
-            langchain_messages.append(HumanMessage(content=content))
-        elif role == 'assistant':
-            langchain_messages.append(AIMessage(content=content))
-        elif role == 'system':
-            langchain_messages.append(SystemMessage(content=content))
-
-    return langchain_messages
 
 
 class ChatView(APIView):
@@ -383,22 +335,7 @@ class ChatStreamView(APIView):
                     )
                     completion = await model.ainvoke([{"role": "user", "content": suggestions_prompt}])
                     raw = getattr(completion, "content", "")
-                    suggestions: list[str] = []
-                    try:
-                        parsed = json.loads(raw)
-                        if isinstance(parsed, list):
-                            suggestions = [str(x) for x in parsed if isinstance(x, (str, int, float))]
-                            suggestions = [s for s in suggestions if s.strip()][:4]
-                    except Exception:
-                        m = re.search(r"\[.*\]", raw, re.DOTALL)
-                        if m:
-                            try:
-                                parsed2 = json.loads(m.group(0))
-                                if isinstance(parsed2, list):
-                                    suggestions = [str(x) for x in parsed2 if isinstance(x, (str, int, float))]
-                                    suggestions = [s for s in suggestions if s.strip()][:4]
-                            except Exception:
-                                suggestions = []
+                    suggestions = extract_suggestions(raw)
                     if suggestions:
                         yield f"data: {json.dumps({'type': 'suggestions', 'data': suggestions}, ensure_ascii=False)}\n\n"
                 except Exception:
