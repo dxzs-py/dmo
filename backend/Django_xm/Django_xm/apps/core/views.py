@@ -6,14 +6,13 @@ import time
 import logging
 from datetime import datetime
 from django.http import JsonResponse
-from django.utils.deprecation import MiddlewareMixin
 
 from .config import get_logger
 
 logger = get_logger(__name__)
 
 
-class RequestTimeoutMiddleware(MiddlewareMixin):
+class RequestTimeoutMiddleware:
     """
     请求超时监控中间件
     监控长时间运行的请求并记录日志
@@ -22,12 +21,16 @@ class RequestTimeoutMiddleware(MiddlewareMixin):
     REQUEST_TIMEOUT_WARNING = 60  # 警告阈值：60秒
     REQUEST_TIMEOUT_CRITICAL = 180  # 严重阈值：180秒
     
-    def process_request(self, request):
-        """记录请求开始时间"""
+    def __init__(self, get_response):
+        self.get_response = get_response
+    
+    def __call__(self, request):
+        """记录请求开始时间并处理请求"""
         request.start_time = time.time()
-        request.path_info = request.path  # 保存路径信息
+        request.path_info = request.path
         
-    def process_response(self, request, response):
+        response = self.get_response(request)
+        
         """检查请求耗时并记录"""
         if hasattr(request, 'start_time'):
             duration = time.time() - request.start_time

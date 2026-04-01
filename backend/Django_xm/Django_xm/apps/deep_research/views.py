@@ -18,30 +18,11 @@ from .serializers import (
 )
 from .models import ResearchTask
 from .deep_agent import create_deep_research_agent
+from .task_manager import get_task_manager, get_task_status, update_task_status
 from Django_xm.apps.core.tools.filesystem import get_filesystem
 
 logger = logging.getLogger(__name__)
-
-
-# ==================== 全局状态管理 ====================
-
-# 存储研究任务状态（内存缓存）
-_research_tasks: Dict[str, Dict[str, Any]] = {}
-
-# 存储后台线程引用
-_research_threads: Dict[str, threading.Thread] = {}
-
-
-def get_task_status(thread_id: str) -> Optional[Dict[str, Any]]:
-    """获取任务状态"""
-    return _research_tasks.get(thread_id)
-
-
-def update_task_status(thread_id: str, status: Dict[str, Any]) -> None:
-    """更新任务状态"""
-    if thread_id not in _research_tasks:
-        _research_tasks[thread_id] = {}
-    _research_tasks[thread_id].update(status)
+task_manager = get_task_manager()
 
 
 def run_research_in_background(thread_id: str, query: str, 
@@ -50,22 +31,12 @@ def run_research_in_background(thread_id: str, query: str,
     try:
         logger.info(f"🚀 后台任务开始：{thread_id}")
         
-        # 更新状态为运行中
         update_task_status(thread_id, {
             'status': 'running',
             'current_step': 'researching',
             'start_time': datetime.now().isoformat(),
         })
         
-        # 更新数据库状态
-        try:
-            task = ResearchTask.objects.get(task_id=thread_id)
-            task.status = 'running'
-            task.save()
-        except ResearchTask.DoesNotExist:
-            pass
-        
-        # 创建Agent并执行研究
         agent = create_deep_research_agent(
             thread_id=thread_id,
             enable_web_search=enable_web_search,
@@ -74,48 +45,28 @@ def run_research_in_background(thread_id: str, query: str,
         
         result = agent.research(query)
         
-        # 更新任务状态为完成
         update_task_status(thread_id, {
             'status': 'completed',
             'current_step': 'completed',
             'end_time': datetime.now().isoformat(),
             'result': result,
+            'final_report': result.get('final_report', ''),
         })
-        
-        # 更新数据库
-        try:
-            task = ResearchTask.objects.get(task_id=thread_id)
-            task.status = 'completed'
-            task.final_report = result.get('final_report', '')
-            task.save()
-        except ResearchTask.DoesNotExist:
-            pass
         
         logger.info(f"✅ 后台任务完成：{thread_id}")
         
     except Exception as e:
         logger.error(f"❌ 后台任务失败：{thread_id}, 错误：{e}", exc_info=True)
         
-        # 更新任务状态为失败
         update_task_status(thread_id, {
             'status': 'failed',
             'current_step': 'failed',
             'end_time': datetime.now().isoformat(),
             'error': str(e),
+            'final_report': f"错误：{str(e)}",
         })
-        
-        # 更新数据库
-        try:
-            task = ResearchTask.objects.get(task_id=thread_id)
-            task.status = 'failed'
-            task.final_report = f"错误：{str(e)}"
-            task.save()
-        except ResearchTask.DoesNotExist:
-            pass
     finally:
-        # 清理线程引用
-        if thread_id in _research_threads:
-            del _research_threads[thread_id]
+        task_manager.unregister_thread(thread_id)
 
 
 class DeepResearchStartView(APIView):
@@ -136,30 +87,18 @@ class DeepResearchStartView(APIView):
         logger.info(f"📥 收到研究请求：{data['query'][:50]}...")
 
         try:
-            # 检查是否已存在
-            if thread_id in _research_tasks:
+            if task_manager.task_exists(thread_id):
                 return Response({
                     'error': f'研究任务 {thread_id} 已存在'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # 初始化任务状态
-            update_task_status(thread_id, {
-                'status': 'pending',
-                'query': data['query'],
-                'current_step': 'pending',
-                'created_at': datetime.now().isoformat(),
-            })
-            
-            # 创建数据库记录
-            task = ResearchTask.objects.create(
-                task_id=thread_id,
-                query=data['query'],
-                status='pending',
+            task_manager.create_task(
+                thread_id,
+                data['query'],
                 enable_web_search=data.get('enable_web_search', True),
                 enable_doc_analysis=data.get('enable_doc_analysis', False)
             )
             
-            # 估算完成时间
             research_depth = data.get('research_depth', 'standard')
             if research_depth == 'basic':
                 estimated_time = '3-5 分钟'
@@ -168,7 +107,6 @@ class DeepResearchStartView(APIView):
             else:
                 estimated_time = '5-10 分钟'
             
-            # 在后台线程中执行研究任务
             research_thread = threading.Thread(
                 target=run_research_in_background,
                 args=(thread_id, data['query'], 
@@ -178,8 +116,7 @@ class DeepResearchStartView(APIView):
             research_thread.daemon = True
             research_thread.start()
             
-            # 保存线程引用
-            _research_threads[thread_id] = research_thread
+            task_manager.register_thread(thread_id, research_thread)
             
             logger.info(f"✅ 研究任务已启动（后台执行）：{thread_id}")
             
@@ -396,16 +333,7 @@ class DeepResearchTaskDeleteView(APIView):
         try:
             logger.info(f"🗑️ 删除研究任务：{task_id}")
             
-            # 删除缓存的任务状态
-            if task_id in _research_tasks:
-                del _research_tasks[task_id]
-            
-            # 删除数据库记录
-            try:
-                task = ResearchTask.objects.get(task_id=task_id)
-                task.delete()
-            except ResearchTask.DoesNotExist:
-                pass
+            task_manager.delete_task(task_id)
             
             return Response({
                 'status': 'success',

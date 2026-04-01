@@ -17,6 +17,7 @@ from Django_xm.apps.core.config import settings, get_logger
 from Django_xm.apps.core.models import get_chat_model
 from Django_xm.apps.core.prompts import WRITER_GUIDELINES
 from Django_xm.apps.core.tools.filesystem import ResearchFileSystem, get_filesystem
+from Django_xm.apps.core.guardrails.output_validators import OutputValidator
 from .subagents import create_web_researcher, create_doc_analyst, create_report_writer
 
 logger = get_logger(__name__)
@@ -222,6 +223,7 @@ class DeepResearchAgent:
         logger.info("执行网络研究节点...")
 
         query = state["query"]
+        thread_id = state["thread_id"]
         plan = state.get("plan", {})
 
         if self.web_researcher is None:
@@ -240,13 +242,68 @@ class DeepResearchAgent:
 - 关键问题：{', '.join(plan.get('key_questions', []))}
 - 搜索关键词：{', '.join(plan.get('search_keywords', []))}
 
-请使用网络搜索工具收集相关信息，并保存研究笔记。
+请使用网络搜索工具收集相关信息，并使用 write_research_file 保存研究笔记到 notes/web_research.md。
+
+请确保：
+1. 使用搜索工具查找相关信息
+2. 评估信息的可信度和相关性
+3. 提取关键信息和数据
+4. 整理为要点与段落混合的研究笔记
+5. 使用内联引用并在结尾列出参考来源
+
+thread_id: {thread_id}
 """
 
         try:
             result = self.web_researcher.invoke({
                 "messages": [HumanMessage(content=research_instruction)]
             })
+
+            # 验证笔记是否已保存（文件系统已保证同步写入）
+            notes_saved = False
+            try:
+                notes = self.filesystem.read_file("web_research.md", subdirectory="notes")
+                notes_saved = True
+                logger.info("网络研究笔记已保存到文件系统")
+            except Exception:
+                logger.debug("未在文件系统中找到笔记，尝试从 Agent 输出提取...")
+
+            # 如果笔记没有保存，尝试从 Agent 输出中提取
+            if not notes_saved:
+                if isinstance(result, dict) and "messages" in result:
+                    messages = result["messages"]
+
+                    research_content = []
+                    for msg in messages:
+                        if isinstance(msg, AIMessage) and msg.content:
+                            content = msg.content.strip()
+                            if not content.startswith("找到") and not content.startswith("搜索"):
+                                research_content.append(content)
+
+                    if research_content:
+                        combined_content = "\n\n".join(research_content)
+
+                        if not combined_content.strip().startswith("#"):
+                            combined_content = f"""# 研究笔记：{query}
+
+## 研究内容
+
+{combined_content}
+
+---
+*生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
+"""
+
+                        try:
+                            self.filesystem.write_file(
+                                "web_research.md",
+                                combined_content,
+                                subdirectory="notes",
+                                metadata={"source": "agent_output_extraction"}
+                            )
+                            logger.info("已从 Agent 输出提取并保存研究笔记")
+                        except Exception as save_error:
+                            logger.error(f"保存提取的笔记失败: {save_error}")
 
             logger.info("网络研究完成")
 
@@ -265,6 +322,7 @@ class DeepResearchAgent:
         logger.info("执行文档分析节点...")
 
         query = state["query"]
+        thread_id = state["thread_id"]
 
         if self.doc_analyst is None:
             logger.warning("DocAnalyst 未启用，跳过文档分析")
@@ -277,13 +335,53 @@ class DeepResearchAgent:
 
 研究问题：{query}
 
-请使用检索工具在知识库中查找相关文档，并保存分析笔记。
+请使用检索工具在知识库中查找相关文档，并使用 write_research_file 保存分析笔记到 notes/doc_analysis.md。
+
+请确保：
+1. 检索多个相关文档
+2. 直接引用原文
+3. 记录文档来源
+4. 提炼核心观点
+
+thread_id: {thread_id}
 """
 
         try:
             result = self.doc_analyst.invoke({
                 "messages": [HumanMessage(content=analysis_instruction)]
             })
+
+            # 验证笔记是否已保存
+            notes_saved = False
+            try:
+                notes = self.filesystem.read_file("doc_analysis.md", subdirectory="notes")
+                notes_saved = True
+                logger.info("文档分析笔记已保存到文件系统")
+            except Exception:
+                logger.debug("未在文件系统中找到文档分析笔记...")
+
+            if not notes_saved:
+                if isinstance(result, dict) and "messages" in result:
+                    messages = result["messages"]
+                    analysis_content = []
+                    for msg in messages:
+                        if isinstance(msg, AIMessage) and msg.content:
+                            content = msg.content.strip()
+                            if content and len(content) > 50:
+                                analysis_content.append(content)
+
+                    if analysis_content:
+                        combined = "\n\n".join(analysis_content)
+                        try:
+                            self.filesystem.write_file(
+                                "doc_analysis.md",
+                                combined,
+                                subdirectory="notes",
+                                metadata={"source": "agent_output_extraction"}
+                            )
+                            logger.info("已从 Agent 输出提取并保存文档分析笔记")
+                        except Exception as save_error:
+                            logger.error(f"保存文档分析笔记失败: {save_error}")
 
             logger.info("文档分析完成")
 
@@ -302,6 +400,7 @@ class DeepResearchAgent:
         logger.info("执行报告撰写节点...")
 
         query = state["query"]
+        thread_id = state["thread_id"]
         plan = state.get("plan", {})
 
         writing_instruction = f"""请根据研究计划撰写最终研究报告：
@@ -311,12 +410,21 @@ class DeepResearchAgent:
 研究计划：
 - 目标：{plan.get('research_goal', query)}
 - 关键问题：{', '.join(plan.get('key_questions', []))}
+- 搜索关键词：{', '.join(plan.get('search_keywords', []))}
 - 预期成果：{', '.join(plan.get('expected_outcomes', []))}
 
 写作指南：
 {WRITER_GUIDELINES}
 
-请撰写一份完整、有深度、有见解的研究报告，并保存到文件系统。
+请撰写一份完整、有深度、有见解的研究报告，并使用 write_research_file 保存到 reports/final_report.md。
+
+请确保报告：
+1. 有清晰的章节结构
+2. 包含真实示例或代码片段（技术主题）
+3. 保留内联引用并在结尾列出参考来源
+4. 提供可操作的建议或结论
+
+thread_id: {thread_id}
 """
 
         try:
@@ -324,16 +432,196 @@ class DeepResearchAgent:
                 "messages": [HumanMessage(content=writing_instruction)]
             })
 
-            if isinstance(result, dict) and "messages" in result:
-                messages = result["messages"]
-                for msg in reversed(messages):
-                    if isinstance(msg, AIMessage) and msg.content and len(msg.content) > 100:
-                        final_report = msg.content
-                        break
+            final_report = None
+
+            # 1. 先尝试从文件系统读取（文件系统已保证同步写入）
+            try:
+                final_report = self.filesystem.read_file(
+                    "final_report.md",
+                    subdirectory="reports"
+                )
+                logger.info("从文件系统读取最终报告")
+            except Exception as fs_error:
+                logger.debug(f"无法从文件系统读取报告: {fs_error}")
+
+            # 2. 如果文件系统没有，尝试从 Agent 输出提取
+            if not final_report:
+                logger.info("从 Agent 输出中提取报告内容...")
+
+                if isinstance(result, dict) and "messages" in result:
+                    messages = result["messages"]
+
+                    # 收集所有 AI 消息内容
+                    ai_contents = []
+                    for msg in messages:
+                        if isinstance(msg, AIMessage) and msg.content:
+                            content = msg.content.strip()
+                            # 跳过工具调用结果消息
+                            if content and not content.startswith("找到") and not content.startswith("文件已保存"):
+                                ai_contents.append(content)
+
+                    # 尝试找到最长的、看起来像报告的内容
+                    for content in sorted(ai_contents, key=len, reverse=True):
+                        is_report = (
+                            len(content) > 200 and
+                            (content.startswith("#") or
+                             "##" in content or
+                             "执行摘要" in content or
+                             "研究背景" in content or
+                             "主要发现" in content)
+                        )
+
+                        if is_report:
+                            final_report = content
+                            logger.info(f"从 Agent 输出中提取到报告（长度: {len(content)} 字符）")
+                            break
+
+            # 3. 如果还是没有，生成综合报告
+            if not final_report:
+                logger.info("Agent 未直接生成报告，使用研究材料生成综合报告")
+
+                research_materials = []
+
+                # 尝试读取研究计划
+                try:
+                    plan_content = self.filesystem.read_file(
+                        "research_plan.md",
+                        subdirectory="plans"
+                    )
+                    research_materials.append(("研究计划", plan_content))
+                    logger.debug("读取研究计划")
+                except Exception:
+                    logger.debug("未找到研究计划")
+
+                # 尝试读取网络研究笔记
+                try:
+                    web_notes = self.filesystem.read_file(
+                        "web_research.md",
+                        subdirectory="notes"
+                    )
+                    research_materials.append(("网络研究笔记", web_notes))
+                    logger.debug("读取网络研究笔记")
+                except Exception:
+                    logger.debug("未找到网络研究笔记")
+
+                # 尝试读取文档分析报告
+                try:
+                    doc_notes = self.filesystem.read_file(
+                        "doc_analysis.md",
+                        subdirectory="notes"
+                    )
+                    research_materials.append(("文档分析报告", doc_notes))
+                    logger.debug("读取文档分析报告")
+                except Exception:
+                    logger.debug("未找到文档分析报告")
+
+                # 生成综合报告
+                if research_materials:
+                    logger.info(f"找到 {len(research_materials)} 个研究材料，生成综合报告")
+
+                    materials_section = ""
+                    for title, content in research_materials:
+                        materials_section += f"\n### {title}\n\n{content}\n\n"
+
+                    final_report = f"""# {query}
+
+{materials_section}
+
+结论与建议：基于上述材料给出清晰结论与可执行建议，并在文中保留关键证据的内联引用。
+
+参考来源：请在文末列出来源。
+
+---
+*报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
+*研究任务ID：{thread_id}*
+"""
                 else:
-                    final_report = messages[-1].content if messages else ""
-            else:
-                final_report = str(result)
+                    logger.warning("未找到任何研究材料")
+                    final_report = f"""# {query}
+
+## 执行摘要
+
+本研究针对"{query}"进行了调研。
+
+## 说明
+
+研究过程已完成，但未能找到保存的研究材料。这可能是由于：
+1. 研究任务刚刚启动，材料尚未生成
+2. 文件保存过程中出现问题
+3. 研究工具未能正确调用
+
+建议：
+- 查看日志文件了解详细情况
+- 重新运行研究任务
+- 检查 API 配置和网络连接
+
+---
+*报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
+*研究任务 ID：{thread_id}*
+"""
+
+            # 4. 验证报告（技术主题需要示例）
+            is_technical = any(w in query.lower() for w in [
+                "react", "hook", "api", "编程", "代码", "javascript",
+                "python", "框架", "架构", "实现", "技术"
+            ])
+            validator = OutputValidator(require_examples=is_technical)
+            validation_result = validator.validate(final_report)
+
+            if not validation_result.is_valid:
+                logger.warning(f"报告验证失败: {validation_result.errors}")
+                
+                # 尝试修订
+                revision_prompt = f"""请在保持现有结构与引用的前提下，补充示例或代码片段，并提升信息密度与可操作性。
+
+写作准则：
+{WRITER_GUIDELINES}
+
+原始报告：
+{final_report}
+
+验证失败原因：
+{chr(10).join(validation_result.errors)}
+
+请重新撰写报告，确保：
+1. 包含实际示例或代码片段
+2. 保留原有的研究和引用内容
+3. 提供可操作的建议
+"""
+                try:
+                    model = get_chat_model()
+                    revised = model.invoke([HumanMessage(content=revision_prompt)])
+                    revised_text = revised.content or final_report
+
+                    # 验证修订后的报告
+                    revised_validation = validator.validate(revised_text)
+                    if revised_validation.is_valid:
+                        final_report = revised_text
+                        logger.info("报告修订成功并通过验证")
+                    else:
+                        logger.warning(f"修订后仍验证失败: {revised_validation.errors}")
+                        # 仍然使用修订版，即使未完全通过验证
+                        final_report = revised_text
+                except Exception as revision_error:
+                    logger.error(f"修订报告失败: {revision_error}")
+                    # 保留原始报告
+
+            # 5. 保存最终报告到文件系统
+            try:
+                self.filesystem.write_file(
+                    "final_report.md",
+                    final_report,
+                    subdirectory="reports",
+                    metadata={
+                        "source": "deep_research_agent",
+                        "query": query,
+                        "validated": validation_result.is_valid,
+                        "generated_at": datetime.now().isoformat()
+                    }
+                )
+                logger.info("最终报告已保存到文件系统")
+            except Exception as save_error:
+                logger.warning(f"保存报告失败: {save_error}")
 
             logger.info("报告撰写完成")
 
