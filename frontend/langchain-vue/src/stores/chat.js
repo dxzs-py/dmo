@@ -80,7 +80,7 @@ export const useChatStore = defineStore('chat', () => {
       chainOfThought: null,
       toolCalls: [],
     }
-    sessionStore.addMessageToSession(sessionStore.currentSessionId, assistantMessage)
+    sessionStore.addMessageToSession(sessionStore.currentSessionId, assistantMessage, false)
 
     try {
       const messages = sessionStore.getSessionMessages(sessionStore.currentSessionId)
@@ -153,6 +153,8 @@ export const useChatStore = defineStore('chat', () => {
         sessionStore.updateSessionTitle(sessionStore.currentSessionId, title)
       }
 
+      sessionStore.syncLastMessageToBackend(sessionStore.currentSessionId).catch(() => {})
+
     } catch (error) {
       if (error.name === 'AbortError') {
         console.log('请求已取消')
@@ -181,6 +183,7 @@ export const useChatStore = defineStore('chat', () => {
           }
         }
 
+        sessionStore.syncLastMessageToBackend(sessionStore.currentSessionId).catch(() => {})
         ElMessage.error('发送消息失败，请稍后重试')
       }
 

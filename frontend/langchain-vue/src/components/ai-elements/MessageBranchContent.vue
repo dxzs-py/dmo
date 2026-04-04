@@ -7,9 +7,9 @@
 </template>
 
 <script setup>
-import { ref, inject, watch, computed, useSlots } from 'vue'
+import { inject, watch, computed, useSlots } from 'vue'
 
-const props = defineProps({
+defineProps({
   className: {
     type: String,
     default: ''

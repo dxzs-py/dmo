@@ -3,6 +3,8 @@ import { ref, watch, onMounted } from 'vue';
 import { useEnhancedChat } from '../../composables/useEnhancedChat';
 import EnhancedMessageRenderer from './EnhancedMessageRenderer.vue';
 import AiSuggestions from '../ai-elements/AiSuggestions.vue';
+import AiSuggestion from '../ai-elements/AiSuggestion.vue';
+import ChatHeader from './ChatHeader.vue';
 import { ElMessage } from 'element-plus';
 import { Close, Search, ChatDotRound } from '@element-plus/icons-vue';
 
@@ -17,10 +19,13 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['scrollChange']);
+const emit = defineEmits(['scrollChange', 'regenerate', 'suggestion-click']);
 
 const scrollContainerRef = ref(null);
 const isScrolled = ref(false);
+const selectedModel = ref('deepseek-chat');
+const showDebug = ref(false);
+const showRightPanel = ref(true);
 
 const {
   text,
@@ -28,12 +33,16 @@ const {
   isStreaming,
   error,
   modelSuggestions,
+  currentMode,
+  availableModes,
   sendMessage,
   stopStreaming,
   clearMessages,
   regenerateMessage,
+  loadAvailableModes,
+  setMode,
 } = useEnhancedChat({
-  mode: props.mode,
+  initialMode: props.mode,
   useTools: props.useTools,
   onError: (err) => {
     ElMessage.error(err.message || '发生错误');
@@ -56,6 +65,7 @@ const handleSubmit = () => {
 
 const handleSuggestionClick = (suggestion) => {
   sendMessage(suggestion);
+  emit('suggestion-click', suggestion);
 };
 
 const handleStop = () => {
@@ -77,11 +87,30 @@ watch(messages, () => {
 
 onMounted(() => {
   handleScroll();
+  loadAvailableModes();
+});
+
+defineExpose({
+  regenerateMessage,
+  sendMessage,
+  clearMessages,
 });
 </script>
 
 <template>
   <div class="chat-enhanced">
+    <ChatHeader
+      title="智能聊天"
+      :selected-model="selectedModel"
+      :current-mode="currentMode"
+      :available-modes="availableModes"
+      :show-debug="showDebug"
+      :show-right-panel="showRightPanel"
+      @update:selected-model="selectedModel = $event"
+      @update:current-mode="setMode($event)"
+      @toggle-debug="showDebug = !showDebug"
+      @toggle-right-panel="showRightPanel = !showRightPanel"
+    />
     <div
       ref="scrollContainerRef"
       class="messages-container"
@@ -108,10 +137,14 @@ onMounted(() => {
         </div>
 
         <div v-if="!isStreaming && modelSuggestions.length > 0" class="suggestions-section">
-          <AiSuggestions 
-            :suggestions="modelSuggestions"
-            @click="handleSuggestionClick"
-          />
+          <AiSuggestions>
+            <AiSuggestion
+              v-for="(suggestion, index) in modelSuggestions"
+              :key="index"
+              :suggestion="suggestion"
+              @click="handleSuggestionClick"
+            />
+          </AiSuggestions>
         </div>
 
         <div v-if="error" class="error-section">

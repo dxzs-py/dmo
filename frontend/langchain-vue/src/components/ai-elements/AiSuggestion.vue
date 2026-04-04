@@ -11,7 +11,7 @@
 </template>
 
 <script setup>
-import { computed, useSlots } from 'vue'
+import { useSlots } from 'vue'
 
 const props = defineProps({
   suggestion: {

@@ -1,13 +1,15 @@
 import { ref, computed } from 'vue';
 import { useEnhancedChatStore } from '../stores/enhancedChat';
-import { chatStreamEnhanced } from '../api/enhanced-client';
+import { chatStreamEnhanced, getAvailableModes } from '../api/enhanced-client';
 import { ElMessage } from 'element-plus';
 
 export function useEnhancedChat(options = {}) {
-  const { mode = 'default', useTools = true, onError, onStreamStart, onStreamEnd } = options;
+  const { initialMode = 'default', useTools = true, onError, onStreamStart, onStreamEnd } = options;
   
   const chatStore = useEnhancedChatStore();
   const text = ref('');
+  const currentMode = ref(initialMode);
+  const availableModes = ref({});
 
   const messages = computed(() => chatStore.allMessages);
   const isStreaming = computed(() => chatStore.isStreaming);
@@ -41,7 +43,7 @@ export function useEnhancedChat(options = {}) {
       const request = {
         message: messageText.trim(),
         chat_history: chatHistory,
-        mode,
+        mode: currentMode.value,
         use_tools: useTools,
       };
 
@@ -153,16 +155,56 @@ export function useEnhancedChat(options = {}) {
     await sendMessage(userMessage.content);
   };
 
+  const loadAvailableModes = async () => {
+    try {
+      const modes = await getAvailableModes();
+      if (modes && typeof modes === 'object') {
+        if (modes.modes) {
+          availableModes.value = modes.modes;
+        } else {
+          availableModes.value = modes;
+        }
+      } else {
+        availableModes.value = {
+          'default': '默认助手',
+          'basic-agent': '基础模式',
+          'coding': '编程助手',
+          'research': '研究助手',
+          'concise': '简洁模式',
+          'detailed': '详细模式'
+        };
+      }
+    } catch (err) {
+      console.warn('Failed to load modes, using defaults:', err);
+      availableModes.value = {
+        'default': '默认助手',
+        'basic-agent': '基础模式',
+        'coding': '编程助手',
+        'research': '研究助手',
+        'concise': '简洁模式',
+        'detailed': '详细模式'
+      };
+    }
+  };
+
+  const setMode = (mode) => {
+    currentMode.value = mode;
+  };
+
   return {
     text,
     messages,
     isStreaming,
     error,
     modelSuggestions,
+    currentMode,
+    availableModes,
     sendMessage,
     stopStreaming,
     clearMessages,
     regenerateLastResponse,
     regenerateMessage,
+    loadAvailableModes,
+    setMode,
   };
 }

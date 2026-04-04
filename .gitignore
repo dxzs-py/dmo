@@ -5,3 +5,5 @@ backend/db.sqlite3
 backend/.env
 performance_benchmark.py
 backend/Django_xm/logs/*
+.trae
+.trae/*

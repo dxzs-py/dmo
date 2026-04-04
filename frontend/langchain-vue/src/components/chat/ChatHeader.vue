@@ -1,7 +1,8 @@
 <script setup>
+import { InfoFilled, Tools } from '@element-plus/icons-vue'
 import ModelSelector from '../ModelSelector.vue'
 
-const props = defineProps({
+defineProps({
   title: {
     type: String,
     default: '智能聊天',
@@ -75,17 +76,6 @@ const emit = defineEmits(['update:selectedModel', 'update:currentMode', 'toggleD
     </div>
   </div>
 </template>
-
-<script>
-import { InfoFilled, Tools } from '@element-plus/icons-vue'
-
-export default {
-  components: {
-    InfoFilled,
-    Tools
-  }
-}
-</script>
 
 <style scoped>
 .chat-header {

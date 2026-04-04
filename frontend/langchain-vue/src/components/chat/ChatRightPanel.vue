@@ -1,7 +1,6 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { ElBadge, ElTag } from 'element-plus'
-import LxCard from '../LxCard.vue'
 import LxScrollArea from '../LxScrollArea.vue'
 
 const props = defineProps({

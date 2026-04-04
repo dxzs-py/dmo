@@ -1,0 +1,159 @@
+import { defineStore } from 'pinia'
+import { ref, computed } from 'vue'
+import apiClient from '@/api/client'
+
+const TOKEN_KEY = 'user_token'
+const REFRESH_TOKEN_KEY = 'user_refresh_token'
+const USER_INFO_KEY = 'user_info'
+
+export const useUserStore = defineStore('user', () => {
+  const token = ref(localStorage.getItem(TOKEN_KEY) || '')
+  const refreshToken = ref(localStorage.getItem(REFRESH_TOKEN_KEY) || '')
+  const userInfo = ref(JSON.parse(localStorage.getItem(USER_INFO_KEY) || '{}'))
+  const isLoggedIn = computed(() => !!token.value)
+  const isAuthenticated = isLoggedIn
+  const username = computed(() => userInfo.value?.username || '')
+
+  function setToken(newToken, newRefreshToken = null) {
+    token.value = newToken
+    localStorage.setItem(TOKEN_KEY, newToken)
+    if (newRefreshToken) {
+      refreshToken.value = newRefreshToken
+      localStorage.setItem(REFRESH_TOKEN_KEY, newRefreshToken)
+    }
+  }
+
+  function setUserInfo(info) {
+    userInfo.value = info
+    localStorage.setItem(USER_INFO_KEY, JSON.stringify(info))
+  }
+
+  function clearUser() {
+    token.value = ''
+    refreshToken.value = ''
+    userInfo.value = {}
+    localStorage.removeItem(TOKEN_KEY)
+    localStorage.removeItem(REFRESH_TOKEN_KEY)
+    localStorage.removeItem(USER_INFO_KEY)
+  }
+
+  async function login(credentials) {
+    try {
+      const response = await apiClient.post('/users/login/', credentials)
+      const data = response.data
+      if (data.code === 200) {
+        setToken(data.access, data.refresh)
+        setUserInfo({
+          id: data.id,
+          username: data.username,
+          email: data.email
+        })
+        return { success: true, message: data.message }
+      }
+      return { success: false, message: data.message || '登录失败' }
+    } catch (error) {
+      console.error('登录失败:', error)
+      let errorMessage = '登录失败，请检查网络连接'
+      if (error.response?.data) {
+        if (error.response.data.detail) {
+          errorMessage = error.response.data.detail
+        } else if (error.response.data.message) {
+          errorMessage = error.response.data.message
+        } else if (typeof error.response.data === 'string') {
+          errorMessage = error.response.data
+        }
+      }
+      return {
+        success: false,
+        message: errorMessage
+      }
+    }
+  }
+
+  async function register(userData) {
+    try {
+      const response = await apiClient.post('/users/register/', userData)
+      const data = response.data
+      if (response.status === 201 || data.code === 200) {
+        return { success: true, message: data.message || '注册成功' }
+      }
+      return { success: false, message: data.message || '注册失败' }
+    } catch (error) {
+      console.error('注册失败:', error)
+      const errors = error.response?.data
+      let message = '注册失败'
+      if (typeof errors === 'object' && errors !== null) {
+        const firstError = Object.values(errors)[0]
+        message = Array.isArray(firstError) ? firstError[0] : firstError
+      }
+      return { success: false, message }
+    }
+  }
+
+  async function refreshAccessToken() {
+    if (!refreshToken.value) return false
+    try {
+      const response = await apiClient.post('/users/login/refresh/', {
+        refresh: refreshToken.value
+      })
+      const data = response.data
+      if (data.access) {
+        setToken(data.access)
+        return true
+      }
+      return false
+    } catch (error) {
+      console.error('刷新 token 失败:', error)
+      clearUser()
+      return false
+    }
+  }
+
+  async function getUserInfo() {
+    if (!token.value) return null
+    try {
+      const response = await apiClient.get('/users/info/')
+      const data = response.data
+      if (data.code === 200) {
+        setUserInfo(data.data)
+        return data.data
+      }
+      return null
+    } catch (error) {
+      console.error('获取用户信息失败:', error)
+      return null
+    }
+  }
+
+  async function logout() {
+    try {
+      if (refreshToken.value) {
+        await apiClient.post('/users/secure-logout/', {
+          refresh: refreshToken.value
+        })
+        console.log('[Security] Secure logout completed, server-side data cleared')
+      }
+    } catch (error) {
+      console.warn('[Security] Secure logout request failed:', error)
+    } finally {
+      clearUser()
+    }
+  }
+
+  return {
+    token,
+    refreshToken,
+    userInfo,
+    isLoggedIn,
+    isAuthenticated,
+    username,
+    setToken,
+    setUserInfo,
+    clearUser,
+    login,
+    register,
+    refreshAccessToken,
+    getUserInfo,
+    logout
+  }
+})
