@@ -19,7 +19,7 @@ Celery 配置模块
 import os
 from celery import Celery
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'Django_xm.settings.dev')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'Django_xm.settings')
 
 app = Celery('Django_xm', include=['Django_xm.tasks.deep_research', 'Django_xm.tasks.base'])
 

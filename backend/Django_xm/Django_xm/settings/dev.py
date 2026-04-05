@@ -57,7 +57,7 @@ MIDDLEWARE = [
     "Django_xm.apps.core.middleware.SessionSecurityMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "Django_xm.apps.core.views.RequestTimeoutMiddleware",
+    "Django_xm.apps.core.middleware.RequestTimeoutMiddleware",
     "Django_xm.apps.core.middleware.SecurityHeadersMiddleware",
 ]
 
@@ -114,9 +114,14 @@ DATABASES = {
         "USER": os.environ.get("DB_USER"),
         "PASSWORD": os.environ.get("DB_PASSWORD"),
         "NAME": os.environ.get("DB_NAME"),
+        "CONN_MAX_AGE": 60,
+        "CONN_HEALTH_CHECKS": True,
         "OPTIONS": {
             "charset": "utf8mb4",
             "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+            "connect_timeout": 10,
+            "read_timeout": 30,
+            "write_timeout": 30,
         },
     }
 }
@@ -226,6 +231,8 @@ REST_FRAMEWORK = {
         "chat_stream": "30/min",
         "sensitive": "10/min",
     },
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 20,
 }
 
 SIMPLE_JWT = {

@@ -1,13 +1,13 @@
 import logging
+import time
 from django.conf import settings
-from django.utils.deprecation import MiddlewareMixin
-from django.contrib.auth import authenticate
+from django.contrib.auth import logout
 from django.http import JsonResponse
 
 logger = logging.getLogger(__name__)
 
 
-class SecurityHeadersMiddleware(MiddlewareMixin):
+class SecurityHeadersMiddleware:
     """
     安全响应头中间件
     
@@ -18,6 +18,13 @@ class SecurityHeadersMiddleware(MiddlewareMixin):
     - Strict-Transport-Security: 强制HTTPS
     - Content-Security-Policy: 内容安全策略
     """
+    
+    def __init__(self, get_response):
+        self.get_response = get_response
+    
+    def __call__(self, request):
+        response = self.get_response(request)
+        return self.process_response(request, response)
     
     def process_response(self, request, response):
         response['X-Content-Type-Options'] = 'nosniff'
@@ -33,7 +40,7 @@ class SecurityHeadersMiddleware(MiddlewareMixin):
         return response
 
 
-class SessionSecurityMiddleware(MiddlewareMixin):
+class SessionSecurityMiddleware:
     """
     会话安全中间件
     
@@ -43,6 +50,16 @@ class SessionSecurityMiddleware(MiddlewareMixin):
     3. 记录安全相关事件
     4. 防止会话固定攻击
     """
+    
+    def __init__(self, get_response):
+        self.get_response = get_response
+    
+    def __call__(self, request):
+        response = self.process_request(request)
+        if response is not None:
+            return response
+        response = self.get_response(request)
+        return self.process_response(request, response)
     
     def process_request(self, request):
         if not hasattr(request, 'user') or not request.user.is_authenticated:
@@ -61,7 +78,6 @@ class SessionSecurityMiddleware(MiddlewareMixin):
                 f"This could indicate a security issue."
             )
             
-            from django.contrib.auth import logout
             logout(request)
             
             return JsonResponse({
@@ -77,10 +93,39 @@ class SessionSecurityMiddleware(MiddlewareMixin):
         return None
     
     def process_response(self, request, response):
-        if request.user.is_authenticated:
+        if hasattr(request, 'user') and request.user.is_authenticated:
             response['X-User-ID'] = str(request.user.id)
         
         return response
 
+
+class RequestTimeoutMiddleware:
+    """
+    请求超时中间件
+
+    用于设置请求超时时间，防止长时间运行的请求占用服务器资源。
+    记录请求处理耗时，便于性能监控。
+    """
+    
+    def __init__(self, get_response):
+        self.get_response = get_response
+    
+    def __call__(self, request):
+        request._start_time = time.time()
+        response = self.get_response(request)
+        return self.process_response(request, response)
+    
+    def process_response(self, request, response):
+        if hasattr(request, '_start_time'):
+            duration = time.time() - request._start_time
+            response['X-Request-Duration'] = f'{duration:.3f}'
+            if duration > 30:
+                logger.warning(
+                    'Slow request: %s %s took %.2fs',
+                    request.method,
+                    request.get_full_path(),
+                    duration
+                )
+        return response
 
 

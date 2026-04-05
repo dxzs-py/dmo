@@ -7,7 +7,6 @@ import time
 from typing import Optional
 
 from django.http import Http404, HttpRequest, JsonResponse
-from django.utils.deprecation import MiddlewareMixin
 from rest_framework.views import exception_handler
 from rest_framework.exceptions import (
     ValidationError,
@@ -139,16 +138,3 @@ def _handle_auth_error(exc) -> Response:
         'message': message,
     }, status=http_status.HTTP_401_UNAUTHORIZED)
 
-
-class RequestTimeoutMiddleware(MiddlewareMixin):
-    """
-    请求超时中间件
-    
-    用于设置请求超时时间，防止长时间运行的请求占用服务器资源
-    """
-
-    def process_request(self, request):
-        return None
-
-    def process_response(self, request, response):
-        return response

@@ -142,7 +142,11 @@ const isLoading = ref(false)
 const isSubmitting = ref(false)
 const execution = ref(null)
 const answersForm = reactive({})
-let pollingInterval = null
+let pollingTimer = null
+let currentPollInterval = 3000
+const BASE_POLL_INTERVAL = 3000
+const MAX_POLL_INTERVAL = 30000
+const POLL_BACKOFF_FACTOR = 1.5
 
 const workflowForm = reactive({
   query: '',
@@ -189,23 +193,17 @@ const getQuestionTypeText = (type) => {
 
 const pollExecutionStatus = async () => {
   if (!execution.value) {
-    if (pollingInterval) {
-      clearInterval(pollingInterval)
-      pollingInterval = null
-    }
+    stopPolling()
     return
   }
-  
+
   const currentStep = execution.value.current_step
-  
+
   if (currentStep === 'waiting_for_answers' || currentStep === 'end' || currentStep === 'completed') {
-    if (pollingInterval) {
-      clearInterval(pollingInterval)
-      pollingInterval = null
-    }
+    stopPolling()
     return
   }
-  
+
   try {
     const response = await workflowAPI.getState(execution.value.thread_id)
     const data = response.data
@@ -217,9 +215,32 @@ const pollExecutionStatus = async () => {
         answersForm[q.id] = ''
       })
     }
+
+    if (currentStep !== execution.value.current_step) {
+      currentPollInterval = BASE_POLL_INTERVAL
+    } else {
+      currentPollInterval = Math.min(
+        Math.floor(currentPollInterval * POLL_BACKOFF_FACTOR),
+        MAX_POLL_INTERVAL
+      )
+    }
+    pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
   } catch (error) {
     console.error('获取工作流状态失败:', error)
+    currentPollInterval = Math.min(
+      Math.floor(currentPollInterval * POLL_BACKOFF_FACTOR),
+      MAX_POLL_INTERVAL
+    )
+    pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
   }
+}
+
+const stopPolling = () => {
+  if (pollingTimer) {
+    clearTimeout(pollingTimer)
+    pollingTimer = null
+  }
+  currentPollInterval = BASE_POLL_INTERVAL
 }
 
 const startWorkflow = async () => {
@@ -231,13 +252,15 @@ const startWorkflow = async () => {
   isLoading.value = true
   execution.value = null
   Object.keys(answersForm).forEach(key => delete answersForm[key])
+  currentPollInterval = BASE_POLL_INTERVAL
 
   try {
     const response = await workflowAPI.start(workflowForm)
     execution.value = response.data.data || response.data
     ElMessage.success('工作流已启动')
 
-    pollingInterval = setInterval(pollExecutionStatus, 3000)
+    stopPolling()
+    pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
   } catch (error) {
     console.error('启动工作流失败:', error)
     ElMessage.error('启动工作流失败，请稍后重试')
@@ -263,7 +286,8 @@ const submitAnswers = async () => {
 
     if (responseData.should_retry) {
       Object.keys(answersForm).forEach(key => delete answersForm[key])
-      pollingInterval = setInterval(pollExecutionStatus, 3000)
+      stopPolling()
+      pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
     }
   } catch (error) {
     console.error('提交答案失败:', error)
@@ -277,16 +301,11 @@ const resetWorkflow = () => {
   execution.value = null
   Object.keys(answersForm).forEach(key => delete answersForm[key])
   workflowForm.query = ''
-  if (pollingInterval) {
-    clearInterval(pollingInterval)
-    pollingInterval = null
-  }
+  stopPolling()
 }
 
 onUnmounted(() => {
-  if (pollingInterval) {
-    clearInterval(pollingInterval)
-  }
+  stopPolling()
 })
 </script>
 

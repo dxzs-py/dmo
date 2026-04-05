@@ -6,6 +6,29 @@ const TOKEN_KEY = 'user_token'
 const REFRESH_TOKEN_KEY = 'user_refresh_token'
 const USER_INFO_KEY = 'user_info'
 
+const ERROR_CODE_MESSAGES = {
+  10001: '认证失败，请重新登录',
+  10002: 'Token已过期，请重新登录',
+  10003: '无效的Token，请重新登录',
+  20001: '数据验证失败，请检查输入',
+  20003: '请求的资源不存在',
+  30001: '权限不足，无法执行此操作',
+  30002: '请求过于频繁，请稍后再试',
+  50001: '服务器内部错误，请稍后重试',
+  50002: '服务器繁忙，请稍后重试',
+}
+
+function resolveErrorMessage(error) {
+  if (!error.response?.data) return null
+  const data = error.response.data
+  if (data.code && ERROR_CODE_MESSAGES[data.code]) {
+    return ERROR_CODE_MESSAGES[data.code]
+  }
+  if (data.message) return data.message
+  if (data.detail) return data.detail
+  return null
+}
+
 export const useUserStore = defineStore('user', () => {
   const token = ref(localStorage.getItem(TOKEN_KEY) || '')
   const refreshToken = ref(localStorage.getItem(REFRESH_TOKEN_KEY) || '')
@@ -54,19 +77,10 @@ export const useUserStore = defineStore('user', () => {
       return { success: false, message: data.message || '登录失败' }
     } catch (error) {
       console.error('登录失败:', error)
-      let errorMessage = '登录失败，请检查网络连接'
-      if (error.response?.data) {
-        if (error.response.data.detail) {
-          errorMessage = error.response.data.detail
-        } else if (error.response.data.message) {
-          errorMessage = error.response.data.message
-        } else if (typeof error.response.data === 'string') {
-          errorMessage = error.response.data
-        }
-      }
+      const resolved = resolveErrorMessage(error)
       return {
         success: false,
-        message: errorMessage
+        message: resolved || '登录失败，请检查网络连接'
       }
     }
   }
@@ -81,9 +95,14 @@ export const useUserStore = defineStore('user', () => {
       return { success: false, message: data.message || '注册失败' }
     } catch (error) {
       console.error('注册失败:', error)
+      const resolved = resolveErrorMessage(error)
+      if (resolved) return { success: false, message: resolved }
       const errors = error.response?.data
       let message = '注册失败'
-      if (typeof errors === 'object' && errors !== null) {
+      if (typeof errors === 'object' && errors !== null && errors.details) {
+        const firstField = Object.keys(errors.details)[0]
+        message = Array.isArray(errors.details[firstField]) ? errors.details[firstField][0] : firstField
+      } else if (typeof errors === 'object' && errors !== null) {
         const firstError = Object.values(errors)[0]
         message = Array.isArray(firstError) ? firstError[0] : firstError
       }

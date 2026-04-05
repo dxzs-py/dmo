@@ -31,16 +31,21 @@ function _migrateMessage(msg) {
 }
 
 function transformBackendSessionToFrontend(session) {
-  return {
+  const sanitized = {
     id: session.session_id,
     sessionId: session.session_id,
-    title: session.title,
-    mode: session.mode,
+    title: session.title || '新对话',
+    mode: session.mode || 'basic-agent',
     messageCount: session.message_count || 0,
     messages: (session.messages || []).map(msg => transformBackendMessageToFrontend(msg)),
-    createdAt: new Date(session.created_at).getTime(),
-    updatedAt: new Date(session.updated_at).getTime(),
+    createdAt: session.created_at ? new Date(session.created_at).getTime() : Date.now(),
+    updatedAt: session.updated_at ? new Date(session.updated_at).getTime() : Date.now(),
   }
+  if (!sanitized.id && session.id) {
+    sanitized.id = session.id
+    sanitized.sessionId = session.id
+  }
+  return sanitized
 }
 
 function transformBackendMessageToFrontend(msg) {
@@ -89,6 +94,13 @@ export const useSessionStore = defineStore('session', () => {
   const currentSessionId = ref(null)
   const isLoading = ref(false)
   const lastLoadedUserId = ref(null)
+  const paginationMeta = ref({
+    total: 0,
+    page: 1,
+    pageSize: 20,
+    totalPages: 1,
+    hasMore: false,
+  })
 
   const userStore = useUserStore()
 
@@ -114,7 +126,7 @@ export const useSessionStore = defineStore('session', () => {
     console.log('[Security] Cleared all local session data')
   }
 
-  const loadSessionsFromBackend = async () => {
+  const loadSessionsFromBackend = async (page = 1) => {
     if (!userStore.isLoggedIn) {
       clearAllLocalData()
       return
@@ -129,11 +141,37 @@ export const useSessionStore = defineStore('session', () => {
 
     isLoading.value = true
     try {
-      const response = await chatAPI.getSessions()
+      const response = await chatAPI.getSessions({ page, page_size: paginationMeta.value.pageSize })
       if (response.data.code === 0) {
         const data = response.data.data
         const sessionList = Array.isArray(data) ? data : (data?.items || [])
-        sessions.value = sessionList.map(transformBackendSessionToFrontend)
+
+        if (page <= 1) {
+          sessions.value = sessionList.map(transformBackendSessionToFrontend)
+        } else {
+          const newSessions = sessionList.map(transformBackendSessionToFrontend)
+          const existingIds = new Set(sessions.value.map(s => s.id))
+          newSessions.forEach(s => { if (!existingIds.has(s.id)) sessions.value.push(s) })
+        }
+
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+          paginationMeta.value = {
+            total: data.total || 0,
+            page: data.page || page,
+            pageSize: data.page_size || paginationMeta.value.pageSize,
+            totalPages: data.total_pages || 1,
+            hasMore: (data.page || page) < (data.total_pages || 1),
+          }
+        } else {
+          paginationMeta.value = {
+            total: sessions.value.length,
+            page: 1,
+            pageSize: paginationMeta.value.pageSize,
+            totalPages: 1,
+            hasMore: false,
+          }
+        }
+
         lastLoadedUserId.value = currentUserId
 
         if (sessions.value.length > 0) {
@@ -144,7 +182,7 @@ export const useSessionStore = defineStore('session', () => {
           currentSessionId.value = null
         }
 
-        console.log(`[Security] Loaded ${sessions.value.length} sessions for user ${currentUserId}`)
+        console.log(`[Security] Loaded ${sessions.value.length} sessions (page ${paginationMeta.value.page}/${paginationMeta.value.totalPages}) for user ${currentUserId}`)
       }
     } catch (error) {
       console.error('Failed to load sessions from backend:', error)
@@ -152,6 +190,11 @@ export const useSessionStore = defineStore('session', () => {
     } finally {
       isLoading.value = false
     }
+  }
+
+  const loadMoreSessions = async () => {
+    if (isLoading.value || !paginationMeta.value.hasMore) return
+    await loadSessionsFromBackend(paginationMeta.value.page + 1)
   }
 
   const loadSessionDetail = async (sessionId) => {
@@ -536,8 +579,10 @@ export const useSessionStore = defineStore('session', () => {
     currentSessionId,
     currentSession,
     isLoading,
+    paginationMeta,
     getModeLabel,
     loadSessionsFromBackend,
+    loadMoreSessions,
     loadSessionDetail,
     createNewSession,
     switchSession,

@@ -63,7 +63,7 @@ MIDDLEWARE = [
     "Django_xm.apps.core.middleware.SessionSecurityMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "Django_xm.apps.core.views.RequestTimeoutMiddleware",
+    "Django_xm.apps.core.middleware.RequestTimeoutMiddleware",
     "Django_xm.apps.core.middleware.SecurityHeadersMiddleware",
 ]
 

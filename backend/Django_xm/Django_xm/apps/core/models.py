@@ -1,17 +1,9 @@
 """
-注意：此文件已重命名为 llm_models.py
-保留此文件仅用于向后兼容
-请使用 from .llm_models import ... 代替
+Core models public API
+
+统一导出核心模型和LLM相关功能。
+此模块作为 core 应用的模型层入口，提供清晰的公共接口。
 """
-import warnings
-
-warnings.warn(
-    "core.models 模块已重命名为 core.llm_models，"
-    "请更新您的导入语句",
-    DeprecationWarning,
-    stacklevel=2
-)
-
 from .llm_models import (
     get_chat_model,
     get_streaming_model,
@@ -22,6 +14,8 @@ from .llm_models import (
 )
 
 __all__ = [
+    'BaseModel',
+    'AuditModel',
     'get_chat_model',
     'get_streaming_model',
     'get_structured_output_model',
@@ -29,3 +23,12 @@ __all__ = [
     'get_model_string',
     'MODEL_CONFIGS',
 ]
+
+
+def __getattr__(name):
+    if name in ('BaseModel', 'AuditModel'):
+        from .base_models import BaseModel, AuditModel
+        if name == 'BaseModel':
+            return BaseModel
+        return AuditModel
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
