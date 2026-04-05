@@ -208,10 +208,12 @@ const pollExecutionStatus = async () => {
   
   try {
     const response = await workflowAPI.getState(execution.value.thread_id)
-    execution.value = { ...execution.value, ...response.data }
-    
-    if (response.data.quiz && !Object.keys(answersForm).length) {
-      response.data.quiz.questions.forEach(q => {
+    const data = response.data
+    execution.value = { ...execution.value, ...(data.data || data) }
+
+    const responseData = data.data || data
+    if (responseData.quiz && !Object.keys(answersForm).length) {
+      responseData.quiz.questions.forEach(q => {
         answersForm[q.id] = ''
       })
     }
@@ -225,16 +227,16 @@ const startWorkflow = async () => {
     ElMessage.warning('请输入学习主题')
     return
   }
-  
+
   isLoading.value = true
   execution.value = null
   Object.keys(answersForm).forEach(key => delete answersForm[key])
-  
+
   try {
     const response = await workflowAPI.start(workflowForm)
-    execution.value = response.data
+    execution.value = response.data.data || response.data
     ElMessage.success('工作流已启动')
-    
+
     pollingInterval = setInterval(pollExecutionStatus, 3000)
   } catch (error) {
     console.error('启动工作流失败:', error)
@@ -250,15 +252,16 @@ const submitAnswers = async () => {
     ElMessage.warning('请完成所有题目')
     return
   }
-  
+
   isSubmitting.value = true
-  
+
   try {
     const response = await workflowAPI.submitAnswers(execution.value.thread_id, answersForm)
-    execution.value = { ...execution.value, ...response.data }
+    const responseData = response.data.data || response.data
+    execution.value = { ...execution.value, ...responseData }
     ElMessage.success('答案已提交')
-    
-    if (response.data.should_retry) {
+
+    if (responseData.should_retry) {
       Object.keys(answersForm).forEach(key => delete answersForm[key])
       pollingInterval = setInterval(pollExecutionStatus, 3000)
     }

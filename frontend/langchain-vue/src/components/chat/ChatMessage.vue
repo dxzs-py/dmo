@@ -7,7 +7,7 @@ import Sources from '../Sources.vue'
 import Plan from '../Plan.vue'
 import { AiReasoning } from '../ai-elements'
 
-const props = defineProps({
+defineProps({
   message: {
     type: Object,
     required: true,
@@ -30,7 +30,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['regenerate'])
+defineEmits(['regenerate'])
 </script>
 
 <template>

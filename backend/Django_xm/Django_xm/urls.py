@@ -34,6 +34,7 @@ def root_info(request):
             "schema": "/api/schema/",
         },
         "api": {
+            "auth": "/api/users/",
             "chat": "/api/chat/",
             "rag": "/api/rag/",
             "workflow": "/api/workflow/",
@@ -51,6 +52,7 @@ urlpatterns = [
     path("api/docs/swagger/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
     path("api/docs/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
     
+    path("api/users/", include("Django_xm.apps.users.urls")),
     path("api/chat/", include("Django_xm.apps.chat.urls")),
     path("api/rag/", include("Django_xm.apps.rag.urls")),
     path("api/workflow/", include("Django_xm.apps.workflows.urls")),

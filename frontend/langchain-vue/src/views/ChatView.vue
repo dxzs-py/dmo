@@ -1,9 +1,8 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
 import { ElMessage } from 'element-plus'
-import { Search, Link, ArrowRight, Close } from '@element-plus/icons-vue'
 import ChatHeader from '../components/chat/ChatHeader.vue'
 import ChatMessages from '../components/chat/ChatMessages.vue'
 import ChatInput from '../components/chat/ChatInput.vue'

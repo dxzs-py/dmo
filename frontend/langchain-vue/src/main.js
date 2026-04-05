@@ -6,6 +6,8 @@ import App from './App.vue'
 import router from './router'
 import settings from './settings'
 import { useThemeStore } from './stores/theme'
+import { useUserStore } from './stores/user'
+import { useSessionStore } from './stores/session'
 import ErrorBoundary from './components/ErrorBoundary.vue'
 
 // 引入 Element Plus
@@ -39,6 +41,20 @@ app.config.globalProperties.$settings = settings
 // 初始化主题
 const themeStore = useThemeStore()
 themeStore.initTheme()
+
+// 初始化用户状态
+const userStore = useUserStore()
+if (userStore.token) {
+  userStore.getUserInfo().catch(err => {
+    console.warn('自动获取用户信息失败:', err)
+  })
+}
+
+// 初始化会话状态
+const sessionStore = useSessionStore()
+sessionStore.initialize().catch(err => {
+  console.warn('初始化会话状态失败:', err)
+})
 
 // 使用全局错误边界包装应用
 app.component('ErrorBoundary', ErrorBoundary)

@@ -11,10 +11,10 @@
 </template>
 
 <script setup>
-import { inject, computed } from 'vue'
+import { inject } from 'vue'
 import { ArrowRight } from '@element-plus/icons-vue'
 
-const props = defineProps({
+defineProps({
   className: {
     type: String,
     default: ''

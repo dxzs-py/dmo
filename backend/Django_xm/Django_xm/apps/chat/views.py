@@ -1,14 +1,26 @@
 import json
 import asyncio
 import time
+import uuid
 from django.conf import settings
 from django.http import StreamingHttpResponse
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from asgiref.sync import sync_to_async
 from langchain_core.messages import HumanMessage, AIMessage
 
-from .serializers import ChatRequestSerializer, ChatResponseSerializer
+from .serializers import (
+    ChatRequestSerializer,
+    ChatResponseSerializer,
+    ChatSessionSerializer,
+    ChatSessionCreateSerializer,
+    ChatSessionUpdateSerializer,
+    ChatMessageSerializer
+)
+from .models import ChatSession, ChatMessage
+from .services import SecureSessionCacheService
 from .utils import _needs_completion, _lcp_len, convert_chat_history, extract_suggestions
 from Django_xm.apps.agents import create_base_agent
 from Django_xm.apps.core.tools import get_tools_for_request, WEATHER_TOOLS
@@ -22,6 +34,8 @@ logger = logging.getLogger(__name__)
 
 
 class ChatView(APIView):
+    permission_classes = [IsAuthenticated]
+    
     def post(self, request):
         serializer = ChatRequestSerializer(data=request.data)
         if not serializer.is_valid():
@@ -58,27 +72,37 @@ class ChatView(APIView):
 
             logger.info(f"聊天请求处理完成，响应长度: {len(response)} 字符")
 
-            return Response(ChatResponseSerializer({
-                'message': response,
-                'mode': data['mode'],
-                'tools_used': tool_names,
-                'success': True
-            }).data)
+            return Response({
+                'code': 0,
+                'message': '操作成功',
+                'data': ChatResponseSerializer({
+                    'message': response,
+                    'mode': data['mode'],
+                    'tools_used': tool_names,
+                    'success': True
+                }).data
+            })
 
         except Exception as e:
             error_msg = f"处理聊天请求时出错: {str(e)}"
             logger.error(error_msg)
 
-            return Response(ChatResponseSerializer({
-                'message': '抱歉，处理您的请求时出现错误。',
-                'mode': data['mode'],
-                'tools_used': [],
-                'success': False,
-                'error': str(e)
-            }).data, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({
+                'code': 500,
+                'message': '抱歉，处理您的请求时出现错误',
+                'data': ChatResponseSerializer({
+                    'message': '抱歉，处理您的请求时出现错误。',
+                    'mode': data['mode'],
+                    'tools_used': [],
+                    'success': False,
+                    'error': str(e)
+                }).data
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class ChatStreamView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def post(self, request):
         serializer = ChatRequestSerializer(data=request.data)
         if not serializer.is_valid():
@@ -365,7 +389,7 @@ class ChatStreamView(APIView):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             client_connected = True
-            
+
             try:
                 gen = generate()
                 while client_connected:
@@ -395,11 +419,259 @@ class ChatStreamView(APIView):
 
 
 class ChatModesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    FRONTEND_SUPPORTED_MODES = ['basic-agent', 'rag', 'workflow', 'deep-research', 'guarded']
+
     def get(self, request):
         modes = {}
         for mode_name, prompt in SYSTEM_PROMPTS.items():
-            modes[mode_name] = prompt.split('\n')[0]
+            if mode_name in self.FRONTEND_SUPPORTED_MODES:
+                modes[mode_name] = prompt.split('\n')[0]
         return Response({
-            'modes': modes,
-            'default': 'default'
+            'code': 0,
+            'message': '操作成功',
+            'data': {
+                'modes': modes,
+                'default': 'basic-agent'
+            }
         })
+
+
+class ChatSessionListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user_id = request.user.id
+
+        cached_sessions = SecureSessionCacheService.get_user_sessions_list(user_id)
+
+        if cached_sessions:
+            try:
+                sessions_data = []
+                for session_id in cached_sessions:
+                    cached_session = SecureSessionCacheService.get_cached_session(user_id, session_id)
+                    if cached_session:
+                        sessions_data.append(cached_session)
+
+                if sessions_data:
+                    logger.info(f"Returning {len(sessions_data)} cached sessions for user {user_id}")
+                    return Response({
+                        'code': 0,
+                        'message': '操作成功',
+                        'data': sessions_data,
+                        'source': 'cache'
+                    })
+            except Exception as e:
+                logger.warning(f"Cache read failed, falling back to DB: {str(e)}")
+
+        sessions = ChatSession.objects.filter(user=request.user).order_by('-updated_at')
+        serializer = ChatSessionSerializer(sessions, many=True)
+        response_data = serializer.data
+
+        for session_data in response_data:
+            SecureSessionCacheService.cache_session(user_id, session_data)
+
+        return Response({
+            'code': 0,
+            'message': '操作成功',
+            'data': response_data,
+            'source': 'database'
+        })
+
+
+class ChatSessionDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get_object(self, session_id, user):
+        try:
+            return ChatSession.objects.get(session_id=session_id, user=user)
+        except ChatSession.DoesNotExist:
+            return None
+    
+    def get(self, request, session_id):
+        session = self.get_object(session_id, request.user)
+        if not session:
+            return Response({
+                'code': 404,
+                'message': '会话不存在'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ChatSessionSerializer(session)
+        return Response({
+            'code': 0,
+            'message': '操作成功',
+            'data': serializer.data
+        })
+
+    def put(self, request, session_id):
+        session = self.get_object(session_id, request.user)
+        if not session:
+            return Response({
+                'code': 404,
+                'message': '会话不存在'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ChatSessionUpdateSerializer(session, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                'code': 0,
+                'message': '操作成功',
+                'data': ChatSessionSerializer(session).data
+            })
+        return Response({
+            'code': 400,
+            'message': '参数错误',
+            'errors': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, session_id):
+        session = self.get_object(session_id, request.user)
+        if not session:
+            return Response({
+                'code': 404,
+                'message': '会话不存在'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        user_id = request.user.id
+        SecureSessionCacheService.invalidate_user_session(user_id, session_id)
+        session.delete()
+        return Response({
+            'code': 0,
+            'message': '操作成功'
+        })
+
+
+class ChatSessionCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChatSessionCreateSerializer(data=request.data)
+        if serializer.is_valid():
+            session_id = str(uuid.uuid4())
+            session = ChatSession.objects.create(
+                session_id=session_id,
+                user=request.user,
+                title=serializer.validated_data.get('title', '新对话'),
+                mode=serializer.validated_data.get('mode', 'basic-agent')
+            )
+            return Response({
+                'code': 0,
+                'message': '操作成功',
+                'data': ChatSessionSerializer(session).data
+            })
+        return Response({
+            'code': 400,
+            'message': '参数错误',
+            'errors': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ChatMessageCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_session(self, session_id, user):
+        try:
+            return ChatSession.objects.get(session_id=session_id, user=user)
+        except ChatSession.DoesNotExist:
+            return None
+
+    def post(self, request, session_id):
+        session = self.get_session(session_id, request.user)
+        if not session:
+            return Response({
+                'code': 404,
+                'message': '会话不存在'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        data = request.data.copy()
+        data['session'] = session.id
+
+        serializer = ChatMessageSerializer(data=data)
+        if serializer.is_valid():
+            serializer.save()
+            session.save()
+            return Response({
+                'code': 0,
+                'message': '操作成功',
+                'data': serializer.data
+            })
+        return Response({
+            'code': 400,
+            'message': '参数错误',
+            'errors': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ChatMessageBatchCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_session(self, session_id, user):
+        try:
+            return ChatSession.objects.get(session_id=session_id, user=user)
+        except ChatSession.DoesNotExist:
+            return None
+
+    def post(self, request, session_id):
+        session = self.get_session(session_id, request.user)
+        if not session:
+            return Response({
+                'code': 404,
+                'message': '会话不存在'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        messages_data = request.data.get('messages', [])
+        created_messages = []
+
+        for msg_data in messages_data:
+            msg_data['session'] = session.id
+            serializer = ChatMessageSerializer(data=msg_data)
+            if serializer.is_valid():
+                created_messages.append(serializer.save())
+            else:
+                return Response({
+                    'code': 400,
+                    'message': '参数错误',
+                    'errors': serializer.errors
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        session.save()
+        return Response({
+            'code': 0,
+            'message': '操作成功',
+            'data': ChatMessageSerializer(created_messages, many=True).data
+        })
+
+
+class ChatMessageUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_message(self, message_id, user):
+        try:
+            return ChatMessage.objects.get(id=message_id, session__user=user)
+        except ChatMessage.DoesNotExist:
+            return None
+
+    def put(self, request, message_id):
+        message = self.get_message(message_id, request.user)
+        if not message:
+            return Response({
+                'code': 404,
+                'message': '消息不存在'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ChatMessageSerializer(message, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            message.session.save()
+            return Response({
+                'code': 0,
+                'message': '操作成功',
+                'data': serializer.data
+            })
+        return Response({
+            'code': 400,
+            'message': '参数错误',
+            'errors': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)

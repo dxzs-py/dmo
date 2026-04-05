@@ -1,45 +1,39 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { useRoute } from 'vue-router';
 import { useEnhancedChatStore } from '../stores/enhancedChat';
 import { useSessionStore } from '../stores/session';
 import { useThemeStore } from '../stores/theme';
 import { ElMessage, ElMessageBox, ElDrawer } from 'element-plus';
-import { 
-  ChatDotRound, 
-  Refresh, 
-  Delete, 
-  Setting, 
-  Download, 
-  Moon, 
+import {
+  Delete,
+  Download,
+  Moon,
   Sunny,
-  Close
 } from '@element-plus/icons-vue';
 import ChatHeader from '../components/chat/ChatHeader.vue';
 import ChatEnhanced from '../components/chat/ChatEnhanced.vue';
 
-const route = useRoute();
 const enhancedChatStore = useEnhancedChatStore();
 const sessionStore = useSessionStore();
 const themeStore = useThemeStore();
 const selectedModel = ref('deepseek-chat');
-const useWebSearch = ref(false);
 const isScrolled = ref(false);
 const showSettings = ref(false);
-const showSidebar = ref(false);
 
 const messages = computed(() => enhancedChatStore.allMessages);
-const isStreaming = computed(() => enhancedChatStore.isStreaming);
-const error = computed(() => enhancedChatStore.error);
 const currentSession = computed(() => sessionStore.currentSession);
 
 const handleScrollChange = (scrolled) => {
   isScrolled.value = scrolled;
 };
 
+const chatEnhancedRef = ref(null);
+
 const handleRegenerate = async (index) => {
   try {
-    await enhancedChatStore.regenerateMessage(index);
+    if (chatEnhancedRef.value?.regenerateMessage) {
+      await chatEnhancedRef.value.regenerateMessage(index);
+    }
     ElMessage.success('正在重新生成回复...');
   } catch (err) {
     console.error('重新生成失败:', err);
@@ -47,13 +41,7 @@ const handleRegenerate = async (index) => {
   }
 };
 
-const handleSuggestionClick = async (suggestion) => {
-  try {
-    await enhancedChatStore.sendMessage(suggestion);
-  } catch (err) {
-    console.error('发送建议消息失败:', err);
-    ElMessage.error('发送消息失败，请稍后重试');
-  }
+const handleSuggestionClick = async () => {
 };
 
 const handleClearMessages = async () => {
@@ -66,15 +54,7 @@ const handleClearMessages = async () => {
     enhancedChatStore.clear();
     ElMessage.success('消息已清空');
   } catch {
-  }
-};
-
-const handleCopyMessage = async (content) => {
-  try {
-    await navigator.clipboard.writeText(content);
-    ElMessage.success('已复制到剪贴板');
-  } catch {
-    ElMessage.error('复制失败');
+    // User cancelled
   }
 };
 
@@ -92,7 +72,7 @@ const handleExportChat = () => {
       chainOfThought: msg.chainOfThought,
     })),
   };
-  
+
   const blob = new Blob([JSON.stringify(chatData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -100,14 +80,14 @@ const handleExportChat = () => {
   a.download = `chat-${Date.now()}.json`;
   a.click();
   URL.revokeObjectURL(url);
-  
+
   ElMessage.success('聊天记录已导出');
 };
 
 const handleImportChat = (event) => {
   const file = event.target.files[0];
   if (!file) return;
-  
+
   const reader = new FileReader();
   reader.onload = (e) => {
     try {
@@ -123,8 +103,8 @@ const handleImportChat = (event) => {
       } else {
         ElMessage.error('无效的聊天记录文件');
       }
-    } catch (err) {
-      console.error('导入失败:', err);
+    } catch {
+      console.error('导入失败');
       ElMessage.error('导入失败：无效的JSON格式');
     }
   };
@@ -142,23 +122,6 @@ const handleToggleTheme = () => {
   themeStore.toggleTheme();
 };
 
-const handleMenuClick = (item) => {
-  switch (item) {
-    case 'clear':
-      handleClearMessages();
-      break;
-    case 'export':
-      document.getElementById('import-export').click();
-      break;
-    case 'theme':
-      handleToggleTheme();
-      break;
-    case 'settings':
-      showSettings.value = true;
-      break;
-  }
-};
-
 onMounted(() => {
   window.addEventListener('keydown', handleKeyDown);
 });
@@ -173,15 +136,15 @@ onUnmounted(() => {
     <ChatHeader
       title="增强版智能聊天"
       v-model:selected-model="selectedModel"
-      :current-mode="enhancedChatStore.currentMode || 'default'"
-      :available-modes="enhancedChatStore.availableModes || []"
+      :current-mode="enhancedChatStore.currentMode || 'basic-agent'"
+      :available-modes="enhancedChatStore.availableModes || {}"
       @update:current-mode="(val) => enhancedChatStore.currentMode = val"
     />
 
     <div class="chat-main">
       <ChatEnhanced
         ref="chatEnhancedRef"
-        :mode="enhancedChatStore.currentMode || 'default'"
+        :mode="enhancedChatStore.currentMode || 'basic-agent'"
         :use-tools="true"
         @scroll-change="handleScrollChange"
         @regenerate="handleRegenerate"
@@ -254,7 +217,7 @@ onUnmounted(() => {
       <div class="settings-content">
         <el-form label-width="100px">
           <el-form-item label="当前模式">
-            <el-tag>{{ enhancedChatStore.currentMode || 'default' }}</el-tag>
+            <el-tag>{{ enhancedChatStore.currentMode || 'basic-agent' }}</el-tag>
           </el-form-item>
           
           <el-form-item label="消息数量">
