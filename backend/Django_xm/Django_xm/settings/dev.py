@@ -156,6 +156,11 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+CSRF_TRUSTED_ORIGINS = os.environ.get(
+    "CSRF_TRUSTED_ORIGINS",
+    "http://localhost:3000,http://localhost:8000,http://www.langchain.cn:8080"
+).split(",")
+
 LANGUAGE_CODE = "zh-hans"
 TIME_ZONE = "Asia/Shanghai"
 USE_I18N = True
@@ -201,7 +206,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 AUTH_USER_MODEL = 'users.User'
 AUTHENTICATION_BACKENDS = [
-    'Django_xm.apps.users.serializers.UsernameMobileAuthBackend',
+    'Django_xm.apps.users.backends.UsernameMobileAuthBackend',
     'django.contrib.auth.backends.ModelBackend',
 ]
 

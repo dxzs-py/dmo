@@ -1,12 +1,15 @@
 """
 工作流API视图
-使用类视图和服务层实现
+使用类视图和服务层实现，遵循项目统一的响应格式规范
 """
 import json
 from django.http import StreamingHttpResponse
 from rest_framework.views import APIView
-from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+
+from Django_xm.utils.responses import success_response, error_response, not_found_response, validation_error_response
+from Django_xm.utils.error_codes import ErrorCode
 
 from .serializers import (
     WorkflowStartSerializer,
@@ -22,6 +25,7 @@ logger = get_logger(__name__)
 
 class WorkflowStartView(APIView):
     """启动学习工作流视图"""
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         """
@@ -35,7 +39,10 @@ class WorkflowStartView(APIView):
         """
         serializer = WorkflowStartSerializer(data=request.data)
         if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return validation_error_response(
+                errors=serializer.errors,
+                message="数据验证失败"
+            )
 
         try:
             user_question = serializer.validated_data.get('user_question') or serializer.validated_data.get('query')
@@ -45,22 +52,23 @@ class WorkflowStartView(APIView):
             )
 
             response_serializer = WorkflowResponseSerializer(result)
-            return Response({
-                'code': 0,
-                'message': '操作成功',
-                'data': response_serializer.data
-            })
+            return success_response(
+                data=response_serializer.data,
+                message='操作成功'
+            )
 
         except Exception as e:
             logger.error(f"[API] 启动工作流失败：{str(e)}", exc_info=True)
-            return Response({
-                'code': 500,
-                'message': str(e)
-            }, status=status.HTTP_500_INTERNAL_ERROR)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class WorkflowSubmitView(APIView):
     """提交用户答案视图"""
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         """
@@ -68,7 +76,10 @@ class WorkflowSubmitView(APIView):
         """
         serializer = WorkflowSubmitSerializer(data=request.data)
         if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return validation_error_response(
+                errors=serializer.errors,
+                message="数据验证失败"
+            )
 
         try:
             result = WorkflowService.submit_user_answers(
@@ -76,22 +87,23 @@ class WorkflowSubmitView(APIView):
                 answers=serializer.validated_data['answers']
             )
 
-            return Response({
-                'code': 0,
-                'message': '操作成功',
-                'data': result
-            })
+            return success_response(
+                data=result,
+                message='操作成功'
+            )
 
         except Exception as e:
             logger.error(f"[API] 提交答案失败：{str(e)}", exc_info=True)
-            return Response({
-                'code': 500,
-                'message': str(e)
-            }, status=status.HTTP_500_INTERNAL_ERROR)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class WorkflowStatusView(APIView):
     """获取工作流状态视图"""
+    permission_classes = [IsAuthenticated]
 
     def get(self, request, thread_id):
         """
@@ -103,15 +115,10 @@ class WorkflowStatusView(APIView):
 
             if not state:
                 logger.warning(f"[WorkflowStatusView] No state found for thread {thread_id}")
-                return Response({
-                    'code': 404,
-                    'message': '工作流会话不存在'
-                }, status=status.HTTP_404_NOT_FOUND)
+                return not_found_response(message='工作流会话不存在')
 
-            return Response({
-                'code': 0,
-                'message': '操作成功',
-                'data': {
+            return success_response(
+                data={
                     "thread_id": thread_id,
                     "current_step": state.get("current_step"),
                     "status": state.get("current_step"),
@@ -128,54 +135,56 @@ class WorkflowStatusView(APIView):
                     "created_at": state.get("created_at", ""),
                     "updated_at": state.get("updated_at", "")
                 }
-            })
+            )
 
         except Exception as e:
             logger.error(f"[API] 查询状态失败：{str(e)}", exc_info=True)
-            return Response({
-                'code': 500,
-                'message': str(e)
-            }, status=status.HTTP_500_INTERNAL_ERROR)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class WorkflowHistoryView(APIView):
     """获取工作流历史视图"""
+    permission_classes = [IsAuthenticated]
 
     def get(self, request, thread_id):
         try:
             history = WorkflowService.get_workflow_history(thread_id)
-            return Response({
-                'code': 0,
-                'message': '操作成功',
-                'data': {"thread_id": thread_id, "history": history}
-            })
+            return success_response(
+                data={"thread_id": thread_id, "history": history}
+            )
 
         except Exception as e:
             logger.error(f"[API] 查询历史失败：{str(e)}", exc_info=True)
-            return Response({
-                'code': 500,
-                'message': str(e)
-            }, status=status.HTTP_500_INTERNAL_ERROR)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class WorkflowDeleteView(APIView):
     """删除工作流视图"""
+    permission_classes = [IsAuthenticated]
 
     def delete(self, request, thread_id):
         try:
             result = WorkflowService.delete_workflow(thread_id)
-            return Response({
-                'code': 0,
-                'message': '操作成功',
-                'data': result
-            })
+            return success_response(
+                data=result,
+                message='操作成功'
+            )
 
         except Exception as e:
             logger.error(f"[API] 删除工作流失败：{str(e)}", exc_info=True)
-            return Response({
-                'code': 500,
-                'message': str(e)
-            }, status=status.HTTP_500_INTERNAL_ERROR)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 def workflow_stream(request, thread_id):
@@ -183,6 +192,16 @@ def workflow_stream(request, thread_id):
     流式获取工作流执行进度（Server-Sent Events）
     使用 LangGraph 的 stream 方法获取真实的事件流
     """
+    from rest_framework.permissions import IsAuthenticated
+    from Django_xm.utils.responses import error_response
+
+    if not request.user or not request.user.is_authenticated:
+        return error_response(
+            code=ErrorCode.UNAUTHORIZED,
+            message='未登录或登录已过期',
+            http_status=status.HTTP_401_UNAUTHORIZED
+        )
+
     try:
         logger.info(f"[API] 流式获取工作流，thread_id={thread_id}")
 
@@ -228,7 +247,8 @@ def workflow_stream(request, thread_id):
 
     except Exception as e:
         logger.error(f"[API] 流式输出失败：{str(e)}", exc_info=True)
-        return Response({
-            'code': 500,
-            'message': str(e)
-        }, status=status.HTTP_500_INTERNAL_ERROR)
+        return error_response(
+            code=ErrorCode.SERVER_ERROR,
+            message=str(e),
+            http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

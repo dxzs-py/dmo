@@ -39,7 +39,14 @@ class ResearchTaskSerializer(serializers.ModelSerializer):
     """研究任务序列化器"""
     class Meta:
         model = ResearchTask
-        fields = '__all__'
+        fields = [
+            'id', 'task_id', 'query', 'status', 'final_report',
+            'enable_web_search', 'enable_doc_analysis', 'research_depth',
+            'error_message', 'celery_task_id',
+            'created_by', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'task_id', 'created_at', 'updated_at',
+                           'celery_task_id', 'error_message']
 
 
 class ResearchResultSerializer(serializers.Serializer):

@@ -5,13 +5,17 @@ from .models import DocumentIndex, Document
 class DocumentIndexSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocumentIndex
-        fields = '__all__'
+        fields = ['id', 'index_name', 'description', 'document_count',
+                  'created_at', 'updated_at']
+        read_only_fields = ['id', 'document_count', 'created_at', 'updated_at']
 
 
 class DocumentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Document
-        fields = '__all__'
+        fields = ['id', 'filename', 'file_path', 'file_type', 'file_size',
+                  'chunk_count', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'chunk_count', 'created_at', 'updated_at']
 
 
 class RagQuerySerializer(serializers.Serializer):

@@ -272,7 +272,7 @@ class DeepResearchFileDownloadView(APIView):
                 
                 try:
                     if subdirectory:
-                        content = fs.read_file(file_name, subdir=subdirectory)
+                        content = fs.read_file(file_name, subdirectory=subdirectory)
                     else:
                         content = fs.read_file(file_name)
                 except Exception as e:

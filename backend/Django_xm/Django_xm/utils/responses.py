@@ -1,12 +1,12 @@
 """
 统一响应工具模块
 所有API响应格式: { code, message, data }
-code: ErrorCode枚举值 (0=成功)
+code: ErrorCode枚举值 (200=成功)
 message: 响应消息
 data: 响应数据(成功时) 或 details(失败时)
 """
 from rest_framework.response import Response
-from rest_framework import status as http_status
+from rest_framework import status as _status
 from typing import Any, Dict, Optional, List
 
 from .error_codes import ErrorCode, get_error_message
@@ -42,19 +42,19 @@ def api_response(
 
     if http_status is None:
         if code == ErrorCode.SUCCESS:
-            http_status = http_status.HTTP_200_OK
+            http_status = _status.HTTP_200_OK
         elif 40001 <= code <= 40005:
-            http_status = http_status.HTTP_400_BAD_REQUEST
+            http_status = _status.HTTP_400_BAD_REQUEST
         elif 40101 <= code <= 40105:
-            http_status = http_status.HTTP_401_UNAUTHORIZED
+            http_status = _status.HTTP_401_UNAUTHORIZED
         elif 40301 <= code <= 40303:
-            http_status = http_status.HTTP_403_FORBIDDEN
+            http_status = _status.HTTP_403_FORBIDDEN
         elif 40401 <= code <= 40404:
-            http_status = http_status.HTTP_404_NOT_FOUND
+            http_status = _status.HTTP_404_NOT_FOUND
         elif code in (42901, 42902):
-            http_status = http_status.HTTP_429_TOO_MANY_REQUESTS
+            http_status = _status.HTTP_429_TOO_MANY_REQUESTS
         else:
-            http_status = http_status.HTTP_500_INTERNAL_SERVER_RESPONSE
+            http_status = _status.HTTP_500_INTERNAL_SERVER_ERROR
 
     return Response(response_data, status=http_status, headers=headers)
 
@@ -62,9 +62,11 @@ def api_response(
 def success_response(
     data: Any = None,
     message: str = "操作成功",
-    status_code: int = http_status.HTTP_200_OK,
+    status_code: int = None,
 ) -> Response:
     """成功响应快捷方法"""
+    if status_code is None:
+        status_code = _status.HTTP_200_OK
     return api_response(
         code=ErrorCode.SUCCESS,
         message=message,
@@ -78,7 +80,7 @@ def created_response(
     message: str = "创建成功",
 ) -> Response:
     """创建成功响应 (201)"""
-    return success_response(data, message, http_status.HTTP_201_CREATED)
+    return success_response(data, message, _status.HTTP_201_CREATED)
 
 
 def error_response(
@@ -89,7 +91,7 @@ def error_response(
 ) -> Response:
     """
     错误响应快捷方法
-    
+
     Args:
         code: 错误码
         message: 错误消息
@@ -106,17 +108,17 @@ def error_response(
 
     if http_status is None:
         if 40001 <= code <= 40005:
-            http_status = http_status.HTTP_400_BAD_REQUEST
+            http_status = _status.HTTP_400_BAD_REQUEST
         elif 40101 <= code <= 40105:
-            http_status = http_status.HTTP_401_UNAUTHORIZED
+            http_status = _status.HTTP_401_UNAUTHORIZED
         elif 40301 <= code <= 40303:
-            http_status = http_status.HTTP_403_FORBIDDEN
+            http_status = _status.HTTP_403_FORBIDDEN
         elif 40401 <= code <= 40404:
-            http_status = http_status.HTTP_404_NOT_FOUND
+            http_status = _status.HTTP_404_NOT_FOUND
         elif code in (42901, 42902):
-            http_status = http_status.HTTP_429_TOO_MANY_REQUESTS
+            http_status = _status.HTTP_429_TOO_MANY_REQUESTS
         else:
-            http_status = http_status.HTTP_500_INTERNAL_SERVER_ERROR
+            http_status = _status.HTTP_500_INTERNAL_SERVER_ERROR
 
     return Response(response_data, status=http_status)
 
@@ -164,5 +166,5 @@ def not_found_response(
         code=ErrorCode.NOT_FOUND,
         message=message,
         details=details,
-        http_status=http_status.HTTP_404_NOT_FOUND,
+        http_status=_status.HTTP_404_NOT_FOUND,
     )
