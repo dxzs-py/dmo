@@ -1,8 +1,9 @@
 from django.db import models
-from Django_xm.apps.core.base_models import BaseModel
+from Django_xm.apps.core.base_models import AuditModel
+from django.conf import settings
 
 
-class ResearchTask(BaseModel):
+class ResearchTask(AuditModel):
     task_id = models.CharField(max_length=100, unique=True, verbose_name='任务ID')
     query = models.TextField(verbose_name='研究主题')
     status = models.CharField(max_length=20, choices=(
@@ -12,6 +13,14 @@ class ResearchTask(BaseModel):
     final_report = models.TextField(blank=True, verbose_name='最终报告')
     enable_web_search = models.BooleanField(default=True, verbose_name='启用网络搜索')
     enable_doc_analysis = models.BooleanField(default=False, verbose_name='启用文档分析')
+    research_depth = models.CharField(
+        max_length=20,
+        choices=(('basic', '基础'), ('standard', '标准'), ('comprehensive', '综合')),
+        default='standard',
+        verbose_name='研究深度'
+    )
+    error_message = models.TextField(blank=True, null=True, verbose_name='错误信息')
+    celery_task_id = models.CharField(max_length=100, blank=True, null=True, verbose_name='Celery任务ID')
 
     class Meta:
         db_table = 'research_task'
@@ -21,6 +30,7 @@ class ResearchTask(BaseModel):
         indexes = [
             models.Index(fields=['status', '-created_at']),
             models.Index(fields=['task_id']),
+            models.Index(fields=['created_by', 'status']),
         ]
 
     def __str__(self):

@@ -64,7 +64,7 @@ export const useUserStore = defineStore('user', () => {
     try {
       const response = await apiClient.post('/users/login/', credentials)
       const data = response.data
-      if (data.code === 0) {
+      if (data.code === 200) {
         const userData = data.data || data
         setToken(userData.access, userData.refresh)
         setUserInfo({
@@ -89,7 +89,7 @@ export const useUserStore = defineStore('user', () => {
     try {
       const response = await apiClient.post('/users/register/', userData)
       const data = response.data
-      if (response.status === 201 || data.code === 0) {
+      if (response.status === 201 || data.code === 200) {
         return { success: true, message: data.message || '注册成功' }
       }
       return { success: false, message: data.message || '注册失败' }
@@ -134,7 +134,7 @@ export const useUserStore = defineStore('user', () => {
     try {
       const response = await apiClient.get('/users/info/')
       const data = response.data
-      if (data.code === 0) {
+      if (data.code === 200) {
         setUserInfo(data.data)
         return data.data
       }

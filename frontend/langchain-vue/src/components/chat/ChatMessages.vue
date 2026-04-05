@@ -93,6 +93,19 @@ const handleSuggestionClick = (suggestion) => {
         </div>
         <h3>您今天在想什么？</h3>
         <p>开始一个新的对话，我会尽力帮助您</p>
+        
+        <div class="suggestions-section">
+          <h4 class="suggestions-title">推荐问题</h4>
+          <AiSuggestions>
+            <AiSuggestion 
+              v-for="(suggestion, index) in suggestions" 
+              :key="index"
+              :suggestion="suggestion"
+              @click="handleSuggestionClick"
+              variant="outline"
+            />
+          </AiSuggestions>
+        </div>
       </div>
       
       <div v-else class="messages-list">
@@ -123,19 +136,6 @@ const handleSuggestionClick = (suggestion) => {
               <el-icon class="is-loading"><Loading /></el-icon> 正在思考...
             </div>
           </div>
-        </div>
-        
-        <div v-if="!isLoading && messages.length === 0" class="suggestions-section">
-          <h4 class="suggestions-title">推荐问题</h4>
-          <AiSuggestions>
-            <AiSuggestion 
-              v-for="(suggestion, index) in suggestions" 
-              :key="index"
-              :suggestion="suggestion"
-              @click="handleSuggestionClick"
-              variant="outline"
-            />
-          </AiSuggestions>
         </div>
       </div>
     </div>
