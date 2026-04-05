@@ -17,6 +17,9 @@ class SoftDeleteManager(models.Manager):
 class AllObjectsManager(models.Manager):
     """包含已软删除记录的管理器"""
 
+    def get_queryset(self):
+        return super().get_queryset()
+
 
 class BaseModel(models.Model):
     """基础抽象模型 - 包含时间戳和软删除"""

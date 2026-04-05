@@ -61,11 +61,11 @@ class ResearchFileSystem:
         for directory in directories:
             directory.mkdir(parents=True, exist_ok=True)
 
-    def write_file(self, relative_path: str, content: str, subdir: str = "notes") -> str:
+    def write_file(self, relative_path: str, content: str, subdirectory: str = "notes", **kwargs) -> str:
         if ".." in relative_path:
             return "错误：不允许使用 .. 路径"
 
-        file_dir = self.workspace_path / subdir
+        file_dir = self.workspace_path / subdirectory
         file_dir.mkdir(parents=True, exist_ok=True)
 
         file_path = file_dir / Path(relative_path).name
@@ -81,11 +81,11 @@ class ResearchFileSystem:
             logger.error(error_msg)
             return error_msg
 
-    def read_file(self, relative_path: str, subdir: str = "notes") -> str:
+    def read_file(self, relative_path: str, subdirectory: str = "notes") -> str:
         if ".." in relative_path:
             return "错误：不允许使用 .. 路径"
 
-        file_path = self.workspace_path / subdir / Path(relative_path).name
+        file_path = self.workspace_path / subdirectory / Path(relative_path).name
 
         try:
             with open(file_path, "r", encoding="utf-8") as f:
@@ -100,8 +100,8 @@ class ResearchFileSystem:
             logger.error(error_msg)
             return error_msg
 
-    def list_files(self, subdir: str = "notes", pattern: str = "*") -> str:
-        search_dir = self.workspace_path / subdir
+    def list_files(self, subdirectory: str = "notes", pattern: str = "*") -> str:
+        search_dir = self.workspace_path / subdirectory
 
         if not search_dir.exists():
             return "目录不存在或为空"
@@ -110,7 +110,7 @@ class ResearchFileSystem:
             files = list(search_dir.glob(pattern))
 
             if not files:
-                return f"目录 {subdir} 中没有找到匹配 {pattern} 的文件"
+                return f"目录 {subdirectory} 中没有找到匹配 {pattern} 的文件"
 
             file_list = []
             for f in files:
@@ -123,11 +123,11 @@ class ResearchFileSystem:
         except Exception as e:
             return f"列出文件失败: {str(e)}"
 
-    def delete_file(self, relative_path: str, subdir: str = "notes") -> str:
+    def delete_file(self, relative_path: str, subdirectory: str = "notes") -> str:
         if ".." in relative_path:
             return "错误：不允许使用 .. 路径"
 
-        file_path = self.workspace_path / subdir / Path(relative_path).name
+        file_path = self.workspace_path / subdirectory / Path(relative_path).name
 
         try:
             if file_path.exists():
@@ -141,8 +141,8 @@ class ResearchFileSystem:
             logger.error(error_msg)
             return error_msg
 
-    def search_files(self, keyword: str, subdir: str = "notes") -> str:
-        search_dir = self.workspace_path / subdir
+    def search_files(self, keyword: str, subdirectory: str = "notes") -> str:
+        search_dir = self.workspace_path / subdirectory
 
         if not search_dir.exists():
             return "目录不存在"
@@ -164,7 +164,7 @@ class ResearchFileSystem:
             if matches:
                 return f"找到 {len(matches)} 个匹配的文件:\n" + "\n".join(matches)
             else:
-                return f"在 {subdir} 目录中没有找到包含 '{keyword}' 的文件"
+                return f"在 {subdirectory} 目录中没有找到包含 '{keyword}' 的文件"
 
         except Exception as e:
             return f"搜索文件失败: {str(e)}"
@@ -199,12 +199,12 @@ def fs_write_file(relative_path: str, content: str, thread_id: str = "default") 
         '成功写入文件: plan.md'
     """
     fs = get_filesystem(thread_id)
-    subdir = "notes"
+    subdirectory = "notes"
     if "plans" in relative_path:
-        subdir = "plans"
+        subdirectory = "plans"
     elif "reports" in relative_path:
-        subdir = "reports"
-    return fs.write_file(relative_path, content, subdir)
+        subdirectory = "reports"
+    return fs.write_file(relative_path, content, subdirectory)
 
 
 @tool
@@ -230,36 +230,36 @@ def fs_read_file(relative_path: str, thread_id: str = "default") -> str:
 
 
 @tool
-def fs_list_files(subdir: str = "notes", thread_id: str = "default") -> str:
+def fs_list_files(subdirectory: str = "notes", thread_id: str = "default") -> str:
     """
     列出目录下的文件
 
     Args:
-        subdir: 子目录名称（plans/notes/reports/temp）
+        subdirectory: 子目录名称（plans/notes/reports/temp）
         thread_id: 线程 ID
 
     Returns:
         文件列表
     """
     fs = get_filesystem(thread_id)
-    return fs.list_files(subdir)
+    return fs.list_files(subdirectory)
 
 
 @tool
-def fs_search_files(keyword: str, subdir: str = "notes", thread_id: str = "default") -> str:
+def fs_search_files(keyword: str, subdirectory: str = "notes", thread_id: str = "default") -> str:
     """
     在文件中搜索关键词
 
     Args:
         keyword: 要搜索的关键词
-        subdir: 要搜索的子目录
+        subdirectory: 要搜索的子目录
         thread_id: 线程 ID
 
     Returns:
         搜索结果
     """
     fs = get_filesystem(thread_id)
-    return fs.search_files(keyword, subdir)
+    return fs.search_files(keyword, subdirectory)
 
 
 FILESYSTEM_TOOLS = [fs_write_file, fs_read_file, fs_list_files, fs_search_files]

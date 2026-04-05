@@ -109,7 +109,6 @@ function transformFrontendMessageToBackend(msg) {
     chain_of_thought: msg.chainOfThought || currentVersion.chainOfThought || null,
     tool_calls: msg.toolCalls || currentVersion.toolCalls || [],
     reasoning: msg.reasoning || currentVersion.reasoning || null,
-    versions: msg.versions || [],
     current_version: msg.currentVersion || 0,
   }
 }

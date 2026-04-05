@@ -32,6 +32,7 @@ class ChatMessageSerializer(serializers.ModelSerializer):
         fields = ['id', 'session', 'role', 'content', 'sources', 'plan',
                   'chain_of_thought', 'tool_calls', 'reasoning',
                   'current_version', 'created_at']
+        read_only_fields = ['id', 'session', 'created_at']
 
 
 class ChatSessionListSerializer(serializers.ModelSerializer):

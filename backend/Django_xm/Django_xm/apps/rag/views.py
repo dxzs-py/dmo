@@ -23,7 +23,7 @@ from rest_framework.permissions import IsAuthenticated
 from django.conf import settings as django_settings
 from django.http import StreamingHttpResponse
 
-from Django_xm.utils.responses import success_response, error_response, not_found_response
+from Django_xm.utils.responses import success_response, error_response, not_found_response, validation_error_response
 from Django_xm.utils.error_codes import ErrorCode
 
 from .serializers import (
@@ -201,63 +201,57 @@ class RAGIndexDeleteView(APIView):
     删除索引
     """
     permission_classes = [IsAuthenticated]
-    
+
     def delete(self, request, name):
         try:
             manager = IndexManager()
 
             if not manager.index_exists(name):
-                return Response({
-                    'code': 404,
-                    'message': f'索引不存在：{name}'
-                }, status=status.HTTP_404_NOT_FOUND)
+                return not_found_response(message=f'索引不存在：{name}')
 
             manager.delete_index(name)
 
-            return Response({
-                'code': 0,
-                'message': '操作成功',
-                'data': {'message': f'索引已删除：{name}'}
-            })
+            return success_response(
+                data={'message': f'索引已删除：{name}'},
+                message='操作成功'
+            )
 
         except Exception as e:
-            logger.error(f"❌ 删除索引失败：{e}", exc_info=True)
-            return Response({
-                'code': 500,
-                'message': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"删除索引失败：{e}", exc_info=True)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class RAGIndexStatsView(APIView):
     """
     获取索引统计信息
     """
-    
+
     def get(self, request, name):
         try:
             manager = IndexManager()
 
             if not manager.index_exists(name):
-                return Response({
-                    'code': 404,
-                    'message': f'索引不存在：{name}'
-                }, status=status.HTTP_404_NOT_FOUND)
+                return not_found_response(message=f'索引不存在：{name}')
 
             embeddings = get_embeddings()
             stats = manager.get_index_stats(name, embeddings)
 
-            return Response({
-                'code': 0,
-                'message': '操作成功',
-                'data': stats
-            })
+            return success_response(
+                data=stats,
+                message='操作成功'
+            )
 
         except Exception as e:
-            logger.error(f"❌ 获取统计信息失败：{e}", exc_info=True)
-            return Response({
-                'code': 500,
-                'message': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"获取统计信息失败：{e}", exc_info=True)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 # ==================== 文档管理接口 ====================
@@ -267,123 +261,115 @@ class RAGDocumentUploadView(APIView):
     上传文档到索引
     """
     parser_classes = (MultiPartParser, FormParser)
-    
+
     def post(self, request, name):
         try:
             manager = IndexManager()
 
             if not manager.index_exists(name):
-                return Response({
-                    'code': 404,
-                    'message': f'索引不存在：{name}'
-                }, status=status.HTTP_404_NOT_FOUND)
+                return not_found_response(message=f'索引不存在：{name}')
 
             if 'file' not in request.FILES:
-                return Response({
-                    'code': 400,
-                    'message': '没有上传文件'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
+                return error_response(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message='没有上传文件',
+                    http_status=status.HTTP_400_BAD_REQUEST
+                )
+
             uploaded_file = request.FILES['file']
-            
-            # 保存上传文件
+
             upload_dir = Path(django_settings.MEDIA_ROOT) / 'rag_uploads' / name
             upload_dir.mkdir(parents=True, exist_ok=True)
-            
+
             file_path = upload_dir / uploaded_file.name
             with open(file_path, 'wb') as f:
                 for chunk in uploaded_file.chunks():
                     f.write(chunk)
-            
-            # 加载文档
-            logger.info(f"📂 加载上传的文档：{file_path}")
+
+            logger.info(f"加载上传的文档：{file_path}")
             documents = load_document(str(file_path))
-            
+
             if not documents:
-                return Response({
-                    'code': 400,
-                    'message': '无法加载文档，格式可能不支持'
-                }, status=status.HTTP_400_BAD_REQUEST)
+                return error_response(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message='无法加载文档，格式可能不支持',
+                    http_status=status.HTTP_400_BAD_REQUEST
+                )
 
             chunks = split_documents(documents)
 
             embeddings = get_embeddings()
             count = manager.add_documents(name, chunks, embeddings)
 
-            logger.info(f"✅ 成功添加 {count} 个文档到索引 {name}")
+            logger.info(f"成功添加 {count} 个文档到索引 {name}")
 
-            return Response({
-                'code': 0,
-                'message': '操作成功',
-                'data': {'message': f'成功添加 {count} 个文档', 'count': count}
-            })
+            return success_response(
+                data={'message': f'成功添加 {count} 个文档', 'count': count},
+                message='操作成功'
+            )
 
         except Exception as e:
-            logger.error(f"❌ 上传文档失败：{e}", exc_info=True)
-            return Response({
-                'code': 500,
-                'message': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"上传文档失败：{e}", exc_info=True)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class RAGDocumentAddDirectoryView(APIView):
     """
     添加目录到索引
     """
-    
+
     def post(self, request, name):
         try:
             manager = IndexManager()
 
             if not manager.index_exists(name):
-                return Response({
-                    'code': 404,
-                    'message': f'索引不存在：{name}'
-                }, status=status.HTTP_404_NOT_FOUND)
+                return not_found_response(message=f'索引不存在：{name}')
 
             directory_path = request.data.get('directory_path')
             if not directory_path:
-                return Response({
-                    'code': 400,
-                    'message': 'directory_path 参数必填'
-                }, status=status.HTTP_400_BAD_REQUEST)
+                return error_response(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message='directory_path 参数必填',
+                    http_status=status.HTTP_400_BAD_REQUEST
+                )
 
             directory_path = Path(directory_path)
             if not directory_path.exists():
-                return Response({
-                    'code': 404,
-                    'message': f'目录不存在：{directory_path}'
-                }, status=status.HTTP_404_NOT_FOUND)
-            
-            # 加载文档
-            logger.info(f"📂 加载目录：{directory_path}")
+                return not_found_response(message=f'目录不存在：{directory_path}')
+
+            logger.info(f"加载目录：{directory_path}")
             documents = load_documents_from_directory(str(directory_path))
-            
+
             if not documents:
-                return Response({
-                    'code': 400,
-                    'message': '目录中没有找到支持的文档'
-                }, status=status.HTTP_400_BAD_REQUEST)
+                return error_response(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message='目录中没有找到支持的文档',
+                    http_status=status.HTTP_400_BAD_REQUEST
+                )
 
             chunks = split_documents(documents)
 
             embeddings = get_embeddings()
             count = manager.add_documents(name, chunks, embeddings)
 
-            logger.info(f"✅ 成功添加 {count} 个文档到索引 {name}")
+            logger.info(f"成功添加 {count} 个文档到索引 {name}")
 
-            return Response({
-                'code': 0,
-                'message': '操作成功',
-                'data': {'message': f'成功添加 {count} 个文档', 'count': count}
-            })
+            return success_response(
+                data={'message': f'成功添加 {count} 个文档', 'count': count},
+                message='操作成功'
+            )
 
         except Exception as e:
-            logger.error(f"❌ 添加目录失败：{e}", exc_info=True)
-            return Response({
-                'code': 500,
-                'message': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"添加目录失败：{e}", exc_info=True)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 # ==================== 查询接口 ====================
@@ -391,25 +377,25 @@ class RAGDocumentAddDirectoryView(APIView):
 class RAGQueryView(APIView):
     """
     RAG 查询（非流式）
-    
+
     基于索引内容回答问题。
     """
-    
+
     def post(self, request):
         serializer = RagQuerySerializer(data=request.data)
         if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
+            return validation_error_response(
+                errors=serializer.errors,
+                message="数据验证失败"
+            )
+
         data = serializer.validated_data
-        logger.info(f"🔍 RAG 查询：{data['query'][:50]}...")
-        
+        logger.info(f"RAG 查询：{data['query'][:50]}...")
+
         try:
             manager = IndexManager()
             if not manager.index_exists(data['index_name']):
-                return Response({
-                    'code': 404,
-                    'message': f'索引不存在：{data["index_name"]}'
-                }, status=status.HTTP_404_NOT_FOUND)
+                return not_found_response(message=f'索引不存在：{data["index_name"]}')
 
             embeddings = get_embeddings()
             vector_store = manager.load_index(data['index_name'], embeddings)
@@ -424,24 +410,24 @@ class RAGQueryView(APIView):
                 return_sources=data.get('return_sources', True),
             )
 
-            logger.info("✅ 查询完成")
+            logger.info("查询完成")
 
-            return Response({
-                'code': 0,
-                'message': '操作成功',
-                'data': RagResponseSerializer({
+            return success_response(
+                data=RagResponseSerializer({
                     'answer': result.get('answer', ''),
                     'sources': result.get('sources', []),
                     'success': True
-                }).data
-            })
+                }).data,
+                message='操作成功'
+            )
 
         except Exception as e:
-            logger.error(f"❌ 查询失败：{e}", exc_info=True)
-            return Response({
-                'code': 500,
-                'message': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"查询失败：{e}", exc_info=True)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class RAGSearchView(APIView):
@@ -452,18 +438,18 @@ class RAGSearchView(APIView):
     def post(self, request):
         serializer = SearchRequestSerializer(data=request.data)
         if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return validation_error_response(
+                errors=serializer.errors,
+                message="数据验证失败"
+            )
 
         data = serializer.validated_data
-        logger.info(f"🔍 RAG 检索：{data['query'][:50]}...")
+        logger.info(f"RAG 检索：{data['query'][:50]}...")
 
         try:
             manager = IndexManager()
             if not manager.index_exists(data['index_name']):
-                return Response({
-                    'code': 404,
-                    'message': f'索引不存在：{data["index_name"]}'
-                }, status=status.HTTP_404_NOT_FOUND)
+                return not_found_response(message=f'索引不存在：{data["index_name"]}')
 
             embeddings = get_embeddings()
             vector_store = manager.load_index(data['index_name'], embeddings)
@@ -488,18 +474,18 @@ class RAGSearchView(APIView):
                     result_item['score'] = float(score)
                 search_results.append(result_item)
 
-            return Response({
-                'code': 0,
-                'message': '操作成功',
-                'data': SearchResultSerializer(search_results, many=True).data
-            })
+            return success_response(
+                data=SearchResultSerializer(search_results, many=True).data,
+                message='操作成功'
+            )
 
         except Exception as e:
-            logger.error(f"❌ 检索失败：{e}", exc_info=True)
-            return Response({
-                'code': 500,
-                'message': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"检索失败：{e}", exc_info=True)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 @api_view(['POST'])

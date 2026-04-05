@@ -128,14 +128,26 @@ class WorkflowExecutionSerializer(serializers.ModelSerializer):
     """工作流执行记录序列化器"""
     class Meta:
         model = WorkflowExecution
-        fields = '__all__'
+        fields = [
+            'id', 'thread_id', 'workflow_type', 'status',
+            'query', 'result',
+            'created_by', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'thread_id', 'created_at', 'updated_at']
 
 
 class WorkflowSessionSerializer(serializers.ModelSerializer):
     """工作流会话序列化器"""
     class Meta:
         model = WorkflowSession
-        fields = '__all__'
+        fields = [
+            'id', 'thread_id', 'current_step', 'status',
+            'user_question', 'learning_plan', 'quiz', 'user_answers',
+            'score', 'score_details', 'feedback', 'should_retry',
+            'error_message',
+            'created_by', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'thread_id', 'created_at', 'updated_at']
 
 
 class WorkflowSessionStatusSerializer(serializers.ModelSerializer):
