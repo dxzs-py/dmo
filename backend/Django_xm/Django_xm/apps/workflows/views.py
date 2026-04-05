@@ -45,14 +45,18 @@ class WorkflowStartView(APIView):
             )
 
             response_serializer = WorkflowResponseSerializer(result)
-            return Response(response_serializer.data)
+            return Response({
+                'code': 0,
+                'message': '操作成功',
+                'data': response_serializer.data
+            })
 
         except Exception as e:
             logger.error(f"[API] 启动工作流失败：{str(e)}", exc_info=True)
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({
+                'code': 500,
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_ERROR)
 
 
 class WorkflowSubmitView(APIView):
@@ -72,14 +76,18 @@ class WorkflowSubmitView(APIView):
                 answers=serializer.validated_data['answers']
             )
 
-            return Response(result)
+            return Response({
+                'code': 0,
+                'message': '操作成功',
+                'data': result
+            })
 
         except Exception as e:
             logger.error(f"[API] 提交答案失败：{str(e)}", exc_info=True)
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({
+                'code': 500,
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_ERROR)
 
 
 class WorkflowStatusView(APIView):
@@ -95,73 +103,79 @@ class WorkflowStatusView(APIView):
 
             if not state:
                 logger.warning(f"[WorkflowStatusView] No state found for thread {thread_id}")
-                return Response(
-                    {"error": "工作流会话不存在"},
-                    status=status.HTTP_404_NOT_FOUND
-                )
+                return Response({
+                    'code': 404,
+                    'message': '工作流会话不存在'
+                }, status=status.HTTP_404_NOT_FOUND)
 
             return Response({
-                "thread_id": thread_id,
-                "current_step": state.get("current_step"),
-                "status": state.get("current_step"),
-                "user_question": state.get("user_question"),
-                "learning_plan": state.get("learning_plan"),
-                "retrieved_docs": state.get("retrieved_docs"),
-                "quiz": state.get("quiz"),
-                "user_answers": state.get("user_answers"),
-                "score": state.get("score"),
-                "score_details": state.get("score_details"),
-                "feedback": state.get("feedback"),
-                "should_retry": state.get("should_retry", False),
-                "retry_count": state.get("retry_count", 0),
-                "created_at": state.get("created_at", ""),
-                "updated_at": state.get("updated_at", "")
+                'code': 0,
+                'message': '操作成功',
+                'data': {
+                    "thread_id": thread_id,
+                    "current_step": state.get("current_step"),
+                    "status": state.get("current_step"),
+                    "user_question": state.get("user_question"),
+                    "learning_plan": state.get("learning_plan"),
+                    "retrieved_docs": state.get("retrieved_docs"),
+                    "quiz": state.get("quiz"),
+                    "user_answers": state.get("user_answers"),
+                    "score": state.get("score"),
+                    "score_details": state.get("score_details"),
+                    "feedback": state.get("feedback"),
+                    "should_retry": state.get("should_retry", False),
+                    "retry_count": state.get("retry_count", 0),
+                    "created_at": state.get("created_at", ""),
+                    "updated_at": state.get("updated_at", "")
+                }
             })
 
         except Exception as e:
             logger.error(f"[API] 查询状态失败：{str(e)}", exc_info=True)
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({
+                'code': 500,
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_ERROR)
 
 
 class WorkflowHistoryView(APIView):
     """获取工作流历史视图"""
 
     def get(self, request, thread_id):
-        """
-        获取工作流的执行历史
-        """
         try:
             history = WorkflowService.get_workflow_history(thread_id)
-            return Response({"thread_id": thread_id, "history": history})
+            return Response({
+                'code': 0,
+                'message': '操作成功',
+                'data': {"thread_id": thread_id, "history": history}
+            })
 
         except Exception as e:
             logger.error(f"[API] 查询历史失败：{str(e)}", exc_info=True)
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({
+                'code': 500,
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_ERROR)
 
 
 class WorkflowDeleteView(APIView):
     """删除工作流视图"""
 
     def delete(self, request, thread_id):
-        """
-        删除工作流及其检查点数据
-        """
         try:
             result = WorkflowService.delete_workflow(thread_id)
-            return Response(result)
+            return Response({
+                'code': 0,
+                'message': '操作成功',
+                'data': result
+            })
 
         except Exception as e:
             logger.error(f"[API] 删除工作流失败：{str(e)}", exc_info=True)
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({
+                'code': 500,
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_ERROR)
 
 
 def workflow_stream(request, thread_id):
@@ -214,7 +228,7 @@ def workflow_stream(request, thread_id):
 
     except Exception as e:
         logger.error(f"[API] 流式输出失败：{str(e)}", exc_info=True)
-        return Response(
-            {"error": str(e)},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
+        return Response({
+            'code': 500,
+            'message': str(e)
+        }, status=status.HTTP_500_INTERNAL_ERROR)

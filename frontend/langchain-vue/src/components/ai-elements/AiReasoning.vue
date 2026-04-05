@@ -18,7 +18,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { ChatDotRound, ArrowDown } from '@element-plus/icons-vue'
 import MarkdownRenderer from '../MarkdownRenderer.vue'
 

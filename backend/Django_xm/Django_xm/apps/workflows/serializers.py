@@ -32,9 +32,11 @@ class WorkflowStartSerializer(serializers.Serializer):
     )
 
     def validate(self, data):
-        """确保至少提供 user_question 或 query"""
         if not data.get('user_question') and not data.get('query'):
-            raise serializers.ValidationError('必须提供 user_question 或 query')
+            raise serializers.ValidationError({
+                'user_question': '必须提供 user_question 或 query',
+                'query': '必须提供 user_question 或 query'
+            })
         return data
 
 

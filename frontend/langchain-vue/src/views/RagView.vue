@@ -11,10 +11,10 @@
           <el-form-item label="索引名称">
             <el-select v-model="queryForm.index_name" placeholder="请选择索引" :loading="isLoadingIndexes">
               <el-option
-                v-for="index in availableIndexes"
-                :key="index"
-                :label="index"
-                :value="index"
+                v-for="item in availableIndexes"
+                :key="item.name"
+                :label="item.name"
+                :value="item.name"
               />
             </el-select>
           </el-form-item>
@@ -87,7 +87,7 @@ const isLoading = ref(false)
 const isLoadingIndexes = ref(false)
 const result = ref(null)
 const errorMessage = ref('')
-const availableIndexes = ref(['test_index'])
+const availableIndexes = ref([{ name: 'test_index' }])
 
 const queryForm = reactive({
   index_name: 'test_index',
@@ -121,11 +121,18 @@ const fetchIndexes = async () => {
   isLoadingIndexes.value = true
   try {
     const response = await ragAPI.getIndexes()
-    if (response.data && response.data.indexes) {
-      availableIndexes.value = response.data.indexes
-      if (availableIndexes.value.length > 0 && !availableIndexes.value.includes(queryForm.index_name)) {
-        queryForm.index_name = availableIndexes.value[0]
-      }
+    const data = response.data
+    let indexes = []
+    if (data.code === 0 && data.data) {
+      indexes = Array.isArray(data.data) ? data.data : data.data.indexes || []
+    } else if (data.indexes) {
+      indexes = data.indexes
+    }
+    availableIndexes.value = indexes
+      .map(item => (typeof item === 'string' ? { name: item } : item))
+      .filter(item => item && item.name)
+    if (availableIndexes.value.length > 0 && !availableIndexes.value.some(item => item.name === queryForm.index_name)) {
+      queryForm.index_name = availableIndexes.value[0].name
     }
   } catch (error) {
     console.error('获取索引列表失败:', error)
@@ -139,31 +146,33 @@ const executeQuery = async () => {
     ElMessage.warning(errorMessage.value)
     return
   }
-  
+
   isLoading.value = true
   result.value = null
   errorMessage.value = ''
-  
+
   try {
     const response = await ragAPI.query(queryForm)
-    result.value = response.data
+    result.value = response.data.data || response.data
     ElMessage.success('查询成功')
   } catch (error) {
     console.error('查询失败:', error)
     let errorMsg = '查询失败，请稍后重试'
-    
+
     if (error.response) {
       if (error.response.status === 404) {
         errorMsg = '索引不存在，请检查索引名称'
       } else if (error.response.status === 500) {
         errorMsg = '服务器内部错误，请联系管理员'
+      } else if (error.response.data && error.response.data.message) {
+        errorMsg = error.response.data.message
       } else if (error.response.data && error.response.data.detail) {
         errorMsg = error.response.data.detail
       }
     } else if (error.request) {
       errorMsg = '网络连接失败，请检查网络设置'
     }
-    
+
     errorMessage.value = errorMsg
     ElMessage.error(errorMsg)
     result.value = { success: false, error: errorMsg }

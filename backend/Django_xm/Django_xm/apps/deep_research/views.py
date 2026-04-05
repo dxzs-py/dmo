@@ -1,7 +1,6 @@
 import logging
 import time
 import uuid
-import threading
 from datetime import datetime
 from typing import Optional, Dict, Any
 from pathlib import Path
@@ -17,56 +16,12 @@ from .serializers import (
     ResearchResultSerializer,
 )
 from .models import ResearchTask
-from .deep_agent import create_deep_research_agent
+from Django_xm.tasks.deep_research import run_research_task
 from .task_manager import get_task_manager, get_task_status, update_task_status
 from Django_xm.apps.core.tools.filesystem import get_filesystem
 
 logger = logging.getLogger(__name__)
 task_manager = get_task_manager()
-
-
-def run_research_in_background(thread_id: str, query: str, 
-                               enable_web_search: bool, enable_doc_analysis: bool):
-    """在后台线程中执行研究任务"""
-    try:
-        logger.info(f"🚀 后台任务开始：{thread_id}")
-        
-        update_task_status(thread_id, {
-            'status': 'running',
-            'current_step': 'researching',
-            'start_time': datetime.now().isoformat(),
-        })
-        
-        agent = create_deep_research_agent(
-            thread_id=thread_id,
-            enable_web_search=enable_web_search,
-            enable_doc_analysis=enable_doc_analysis
-        )
-        
-        result = agent.research(query)
-        
-        update_task_status(thread_id, {
-            'status': 'completed',
-            'current_step': 'completed',
-            'end_time': datetime.now().isoformat(),
-            'result': result,
-            'final_report': result.get('final_report', ''),
-        })
-        
-        logger.info(f"✅ 后台任务完成：{thread_id}")
-        
-    except Exception as e:
-        logger.error(f"❌ 后台任务失败：{thread_id}, 错误：{e}", exc_info=True)
-        
-        update_task_status(thread_id, {
-            'status': 'failed',
-            'current_step': 'failed',
-            'end_time': datetime.now().isoformat(),
-            'error': str(e),
-            'final_report': f"错误：{str(e)}",
-        })
-    finally:
-        task_manager.unregister_thread(thread_id)
 
 
 class DeepResearchStartView(APIView):
@@ -89,7 +44,8 @@ class DeepResearchStartView(APIView):
         try:
             if task_manager.task_exists(thread_id):
                 return Response({
-                    'error': f'研究任务 {thread_id} 已存在'
+                    'code': 400,
+                    'message': f'研究任务 {thread_id} 已存在'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
             task_manager.create_task(
@@ -106,33 +62,37 @@ class DeepResearchStartView(APIView):
                 estimated_time = '10-15 分钟'
             else:
                 estimated_time = '5-10 分钟'
-            
-            research_thread = threading.Thread(
-                target=run_research_in_background,
-                args=(thread_id, data['query'], 
-                      data.get('enable_web_search', True), 
-                      data.get('enable_doc_analysis', False))
+
+            celery_result = run_research_task.delay(
+                thread_id=thread_id,
+                query=data['query'],
+                enable_web_search=data.get('enable_web_search', True),
+                enable_doc_analysis=data.get('enable_doc_analysis', False)
             )
-            research_thread.daemon = True
-            research_thread.start()
-            
-            task_manager.register_thread(thread_id, research_thread)
-            
-            logger.info(f"✅ 研究任务已启动（后台执行）：{thread_id}")
-            
+
+            logger.info(f"✅ 研究任务已提交到 Celery 队列：{thread_id} (task_id: {celery_result.id})")
+
             return Response({
-                'task_id': thread_id,
-                'status': 'pending',
-                'query': data['query'],
-                'created_at': datetime.now().isoformat(),
-                'updated_at': datetime.now().isoformat(),
-                'enable_web_search': data.get('enable_web_search', True),
-                'enable_doc_analysis': data.get('enable_doc_analysis', False),
+                'code': 0,
+                'message': '操作成功',
+                'data': {
+                    'task_id': thread_id,
+                    'celery_task_id': celery_result.id,
+                    'status': 'pending',
+                    'query': data['query'],
+                    'created_at': datetime.now().isoformat(),
+                    'updated_at': datetime.now().isoformat(),
+                    'enable_web_search': data.get('enable_web_search', True),
+                    'enable_doc_analysis': data.get('enable_doc_analysis', False),
+                }
             })
 
         except Exception as e:
             logger.error(f"❌ 启动研究任务失败：{e}", exc_info=True)
-            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({
+                'code': 500,
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class DeepResearchStatusView(APIView):
@@ -170,17 +130,23 @@ class DeepResearchStatusView(APIView):
                         response_data['plan'] = result.get('plan')
                         response_data['steps_completed'] = result.get('steps_completed')
                 
-                return Response(response_data)
-                
+                return Response({
+                    'code': 0,
+                    'message': '操作成功',
+                    'data': response_data
+                })
+
             except ResearchTask.DoesNotExist:
                 return Response({
-                    'error': '研究任务不存在'
+                    'code': 404,
+                    'message': '研究任务不存在'
                 }, status=status.HTTP_404_NOT_FOUND)
-                
+
         except Exception as e:
             logger.error(f"❌ 查询研究状态失败：{e}", exc_info=True)
             return Response({
-                'error': str(e)
+                'code': 500,
+                'message': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
@@ -196,38 +162,46 @@ class DeepResearchResultView(APIView):
                 
                 if task.status != 'completed':
                     return Response({
-                        'status': task.status,
-                        'thread_id': task.task_id,
-                        'query': task.query,
-                        'error': '研究任务尚未完成' if task.status == 'running' else '研究任务失败',
-                    })
-                
-                # 获取缓存的结果
+                        'code': 200,
+                        'message': '研究任务尚未完成' if task.status == 'running' else '研究任务失败',
+                        'data': {
+                            'status': task.status,
+                            'thread_id': task.task_id,
+                            'query': task.query,
+                        }
+                })
+
                 cached_status = get_task_status(task_id)
                 result = cached_status.get('result', {}) if cached_status else {}
-                
+
                 return Response({
-                    'status': 'completed',
-                    'task_id': task.task_id,
-                    'query': task.query,
-                    'report': task.final_report,
-                    'plan': result.get('plan'),
-                    'steps_completed': result.get('steps_completed'),
-                    'created_at': task.created_at.isoformat() if task.created_at else '',
-                    'updated_at': task.updated_at.isoformat() if task.updated_at else '',
-                    'enable_web_search': task.enable_web_search,
-                    'enable_doc_analysis': task.enable_doc_analysis,
+                    'code': 0,
+                    'message': '操作成功',
+                    'data': {
+                        'status': 'completed',
+                        'task_id': task.task_id,
+                        'query': task.query,
+                        'report': task.final_report,
+                        'plan': result.get('plan'),
+                        'steps_completed': result.get('steps_completed'),
+                        'created_at': task.created_at.isoformat() if task.created_at else '',
+                        'updated_at': task.updated_at.isoformat() if task.updated_at else '',
+                        'enable_web_search': task.enable_web_search,
+                        'enable_doc_analysis': task.enable_doc_analysis,
+                    }
                 })
-                
+
             except ResearchTask.DoesNotExist:
                 return Response({
-                    'error': '研究任务不存在'
+                    'code': 404,
+                    'message': '研究任务不存在'
                 }, status=status.HTTP_404_NOT_FOUND)
-                
+
         except Exception as e:
             logger.error(f"❌ 获取研究结果失败：{e}", exc_info=True)
             return Response({
-                'error': str(e)
+                'code': 500,
+                'message': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
@@ -255,20 +229,26 @@ class DeepResearchFilesView(APIView):
                             files.append(source)
                 
                 return Response({
-                    'thread_id': task.task_id,
-                    'files': files,
-                    'total': len(files),
+                    'code': 0,
+                    'message': '操作成功',
+                    'data': {
+                        'thread_id': task.task_id,
+                        'files': files,
+                        'total': len(files),
+                    }
                 })
-                
+
             except ResearchTask.DoesNotExist:
                 return Response({
-                    'error': '研究任务不存在'
+                    'code': 404,
+                    'message': '研究任务不存在'
                 }, status=status.HTTP_404_NOT_FOUND)
-                
+
         except Exception as e:
                 logger.error(f"❌ 列出研究文件失败：{e}", exc_info=True)
                 return Response({
-                    'error': str(e)
+                    'code': 500,
+                    'message': str(e)
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
@@ -303,24 +283,30 @@ class DeepResearchFileDownloadView(APIView):
                         content = fs.read_file(file_name)
                 except Exception as e:
                     return Response({
-                        'error': f'读取文件失败：{str(e)}'
+                        'code': 404,
+                        'message': f'读取文件失败：{str(e)}'
                     }, status=status.HTTP_404_NOT_FOUND)
-                
-                # 获取文件信息
+
                 return Response({
-                    'filename': filename,
-                    'content': content,
+                    'code': 0,
+                    'message': '操作成功',
+                    'data': {
+                        'filename': filename,
+                        'content': content,
+                    }
                 })
-                
+
             except ResearchTask.DoesNotExist:
                 return Response({
-                    'error': '研究任务不存在'
+                    'code': 404,
+                    'message': '研究任务不存在'
                 }, status=status.HTTP_404_NOT_FOUND)
-                
+
         except Exception as e:
             logger.error(f"❌ 读取文件失败：{e}", exc_info=True)
             return Response({
-                'error': str(e)
+                'code': 500,
+                'message': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
@@ -332,16 +318,21 @@ class DeepResearchTaskDeleteView(APIView):
     def delete(self, request, task_id):
         try:
             logger.info(f"🗑️ 删除研究任务：{task_id}")
-            
+
             task_manager.delete_task(task_id)
-            
+
             return Response({
-                'status': 'success',
-                'message': f'研究任务 {task_id} 已删除'
+                'code': 0,
+                'message': '操作成功',
+                'data': {
+                    'status': 'success',
+                    'message': f'研究任务 {task_id} 已删除'
+                }
             })
-            
+
         except Exception as e:
             logger.error(f"❌ 删除研究任务失败：{e}", exc_info=True)
             return Response({
-                'error': str(e)
+                'code': 500,
+                'message': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

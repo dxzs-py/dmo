@@ -1,16 +1,23 @@
-const API_BASE_URL = 'http://localhost:8000';
+import settings from '../settings';
+import { useUserStore } from '../stores/user';
 
 export async function* chatStreamEnhanced(request) {
-  const url = `${API_BASE_URL}/api/chat/stream/`;
+  const url = `${settings.API_BASE_URL}/chat/stream/`;
   
   let response;
   
   try {
+    const userStore = useUserStore();
+    const headers = {
+      'Content-Type': 'application/json',
+    };
+    if (userStore.token) {
+      headers['Authorization'] = `Bearer ${userStore.token}`;
+    }
+    
     response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify(request),
     });
 
@@ -82,13 +89,19 @@ export async function* chatStreamEnhanced(request) {
 }
 
 export async function chatNonStreaming(request) {
-  const url = `${API_BASE_URL}/api/chat/`;
+  const url = `${settings.API_BASE_URL}/chat/`;
+  
+  const userStore = useUserStore();
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+  if (userStore.token) {
+    headers['Authorization'] = `Bearer ${userStore.token}`;
+  }
   
   const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(request),
   });
 
@@ -101,8 +114,17 @@ export async function chatNonStreaming(request) {
 }
 
 export async function healthCheck() {
-  const response = await fetch(`${API_BASE_URL}/api/health/`, {
+  const userStore = useUserStore();
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+  if (userStore.token) {
+    headers['Authorization'] = `Bearer ${userStore.token}`;
+  }
+  
+  const response = await fetch(`${settings.API_BASE_URL}/health/`, {
     method: 'GET',
+    headers,
   });
 
   if (!response.ok) {
@@ -113,8 +135,17 @@ export async function healthCheck() {
 }
 
 export async function getAvailableModes() {
-  const response = await fetch(`${API_BASE_URL}/api/chat/modes/`, {
+  const userStore = useUserStore();
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+  if (userStore.token) {
+    headers['Authorization'] = `Bearer ${userStore.token}`;
+  }
+  
+  const response = await fetch(`${settings.API_BASE_URL}/chat/modes/`, {
     method: 'GET',
+    headers,
   });
 
   if (!response.ok) {

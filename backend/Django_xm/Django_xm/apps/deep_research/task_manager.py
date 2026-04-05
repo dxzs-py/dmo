@@ -34,11 +34,8 @@ class TaskManager:
     def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
         """
         获取任务状态
-        优先从缓存获取，缓存不存在时从数据库加载
+        始终从数据库加载最新状态，确保与 Celery Worker 同步
         """
-        if task_id in self._cache:
-            return self._cache[task_id]
-        
         try:
             task = ResearchTask.objects.get(task_id=task_id)
             status_data = {
@@ -76,8 +73,6 @@ class TaskManager:
             
             if 'status' in status_data:
                 task.status = status_data['status']
-            if 'current_step' in status_data:
-                task.status = status_data['current_step']
             if 'final_report' in status_data:
                 task.final_report = status_data.get('final_report', '')
             

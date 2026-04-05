@@ -9,8 +9,14 @@ export const useEnhancedChatStore = defineStore('enhancedChat', () => {
   const currentStreamingMessageId = ref(null);
   const abortController = ref(null);
   const modelSuggestions = ref([]);
-  const currentMode = ref('default');
-  const availableModes = ref(['default', 'rag', 'workflow', 'deep-research']);
+  const currentMode = ref('basic-agent');
+  const availableModes = ref({
+    'basic-agent': '基础代理',
+    'rag': 'RAG 检索',
+    'workflow': '学习工作流',
+    'deep-research': '深度研究',
+    'guarded': '安全代理',
+  });
 
   const allMessages = computed(() => {
     return Array.from(messages.value.values()).sort(
@@ -27,12 +33,6 @@ export const useEnhancedChatStore = defineStore('enhancedChat', () => {
     }
     return undefined;
   });
-
-  function subscribe(callback) {
-  }
-
-  function notify() {
-  }
 
   function getAllMessages() {
     return allMessages.value;

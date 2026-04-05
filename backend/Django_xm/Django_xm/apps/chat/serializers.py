@@ -1,9 +1,11 @@
 from rest_framework import serializers
 from .models import ChatSession, ChatMessage
 
+
 class MessageSerializer(serializers.Serializer):
     role = serializers.CharField()
     content = serializers.CharField()
+
 
 class ChatRequestSerializer(serializers.Serializer):
     message = serializers.CharField(min_length=1)
@@ -14,6 +16,7 @@ class ChatRequestSerializer(serializers.Serializer):
     streaming = serializers.BooleanField(default=False)
     session_id = serializers.CharField(required=False, allow_null=True)
 
+
 class ChatResponseSerializer(serializers.Serializer):
     message = serializers.CharField()
     mode = serializers.CharField()
@@ -22,12 +25,33 @@ class ChatResponseSerializer(serializers.Serializer):
     error = serializers.CharField(required=False, allow_null=True)
     session_id = serializers.CharField(required=False, allow_null=True)
 
-class ChatSessionSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ChatSession
-        fields = '__all__'
 
 class ChatMessageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ChatMessage
         fields = '__all__'
+
+
+class ChatSessionSerializer(serializers.ModelSerializer):
+    messages = ChatMessageSerializer(many=True, read_only=True)
+    message_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ChatSession
+        fields = ['id', 'session_id', 'title', 'mode', 'created_at', 'updated_at', 'messages', 'message_count']
+        read_only_fields = ['session_id', 'created_at', 'updated_at']
+
+    def get_message_count(self, obj):
+        return obj.messages.count()
+
+
+class ChatSessionCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ChatSession
+        fields = ['title', 'mode']
+
+
+class ChatSessionUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ChatSession
+        fields = ['title']

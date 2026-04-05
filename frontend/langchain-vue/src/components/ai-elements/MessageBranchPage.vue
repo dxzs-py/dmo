@@ -7,7 +7,7 @@
 <script setup>
 import { inject } from 'vue'
 
-const props = defineProps({
+defineProps({
   className: {
     type: String,
     default: ''

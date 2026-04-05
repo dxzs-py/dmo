@@ -74,6 +74,8 @@ import { ElMessage } from 'element-plus'
 const isLoading = ref(false)
 const task = ref(null)
 let pollingInterval = null
+let pollCount = 0
+const MAX_POLL_COUNT = 600
 
 const researchForm = reactive({
   query: '',
@@ -107,18 +109,34 @@ const formatReport = (content) => {
 
 const pollTaskStatus = async () => {
   if (!task.value || task.value.status === 'completed' || task.value.status === 'failed') {
-    if (pollingInterval) {
-      clearInterval(pollingInterval)
-      pollingInterval = null
-    }
+    stopPolling()
+    return
+  }
+
+  pollCount++
+  if (pollCount >= MAX_POLL_COUNT) {
+    ElMessage.warning('研究任务轮询超时，请刷新页面查看最新状态')
+    stopPolling()
     return
   }
   
   try {
     const response = await deepResearchAPI.getStatus(task.value.task_id)
-    task.value = { ...task.value, ...response.data }
+    const responseData = response.data.data || response.data
+    task.value = { ...task.value, ...responseData }
+
+    if (task.value.status === 'completed' || task.value.status === 'failed') {
+      stopPolling()
+    }
   } catch (error) {
     console.error('获取任务状态失败:', error)
+  }
+}
+
+const stopPolling = () => {
+  if (pollingInterval) {
+    clearInterval(pollingInterval)
+    pollingInterval = null
   }
 }
 
@@ -127,15 +145,17 @@ const startResearch = async () => {
     ElMessage.warning('请输入研究主题')
     return
   }
-  
+
   isLoading.value = true
   task.value = null
-  
+  pollCount = 0
+
   try {
     const response = await deepResearchAPI.start(researchForm)
-    task.value = response.data
+    task.value = response.data.data || response.data
     ElMessage.success('研究任务已启动')
-    
+
+    stopPolling()
     pollingInterval = setInterval(pollTaskStatus, 3000)
   } catch (error) {
     console.error('启动研究任务失败:', error)
@@ -146,9 +166,7 @@ const startResearch = async () => {
 }
 
 onUnmounted(() => {
-  if (pollingInterval) {
-    clearInterval(pollingInterval)
-  }
+  stopPolling()
 })
 </script>
 

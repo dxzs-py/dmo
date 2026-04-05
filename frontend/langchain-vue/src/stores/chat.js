@@ -80,7 +80,7 @@ export const useChatStore = defineStore('chat', () => {
       chainOfThought: null,
       toolCalls: [],
     }
-    sessionStore.addMessageToSession(sessionStore.currentSessionId, assistantMessage)
+    sessionStore.addMessageToSession(sessionStore.currentSessionId, assistantMessage, false)
 
     try {
       const messages = sessionStore.getSessionMessages(sessionStore.currentSessionId)
@@ -153,6 +153,8 @@ export const useChatStore = defineStore('chat', () => {
         sessionStore.updateSessionTitle(sessionStore.currentSessionId, title)
       }
 
+      sessionStore.syncLastMessageToBackend(sessionStore.currentSessionId).catch(() => {})
+
     } catch (error) {
       if (error.name === 'AbortError') {
         console.log('请求已取消')
@@ -181,6 +183,7 @@ export const useChatStore = defineStore('chat', () => {
           }
         }
 
+        sessionStore.syncLastMessageToBackend(sessionStore.currentSessionId).catch(() => {})
         ElMessage.error('发送消息失败，请稍后重试')
       }
 
@@ -335,11 +338,12 @@ export const useChatStore = defineStore('chat', () => {
   const fetchModes = async () => {
     try {
       const response = await chatAPI.getModes()
-      if (response.data.modes) {
-        availableModes.value = response.data.modes
+      const data = response.data
+      if (data.code === 0 && data.data?.modes) {
+        availableModes.value = data.data.modes
       }
-      if (response.data.default && !currentMode.value) {
-        currentMode.value = response.data.default
+      if (data.data?.default && !currentMode.value) {
+        currentMode.value = data.data.default
       }
     } catch {
       console.log('使用默认模式列表（后端未连接）')

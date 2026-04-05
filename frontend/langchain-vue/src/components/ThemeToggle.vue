@@ -13,7 +13,7 @@ import { computed } from 'vue'
 import { Moon, Sunny } from '@element-plus/icons-vue'
 import { useThemeStore } from '../stores/theme'
 
-const props = defineProps({
+defineProps({
   className: {
     type: String,
     default: ''

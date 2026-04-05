@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, watch, nextTick } from 'vue'
 import { ArrowRight, Document, Search, Link } from '@element-plus/icons-vue'
 
 const props = defineProps({
@@ -50,10 +50,6 @@ const handleAttach = () => {
   emit('attach')
 }
 
-const handleVoice = () => {
-  emit('voice')
-}
-
 const handleWebSearch = () => {
   emit('webSearch')
 }
@@ -62,7 +58,6 @@ const handleMicrophone = () => {
   emit('microphone')
 }
 
-// 自动调整文本框高度
 const adjustTextareaHeight = async () => {
   await nextTick()
   if (textareaRef.value) {

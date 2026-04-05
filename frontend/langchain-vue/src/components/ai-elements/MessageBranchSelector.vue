@@ -14,7 +14,7 @@ import MessageBranchPrevious from './MessageBranchPrevious.vue'
 import MessageBranchNext from './MessageBranchNext.vue'
 import MessageBranchPage from './MessageBranchPage.vue'
 
-const props = defineProps({
+defineProps({
   from: {
     type: String,
     required: true
