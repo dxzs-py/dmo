@@ -29,20 +29,30 @@ class ChatResponseSerializer(serializers.Serializer):
 class ChatMessageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ChatMessage
-        fields = '__all__'
+        fields = ['id', 'session', 'role', 'content', 'sources', 'plan',
+                  'chain_of_thought', 'tool_calls', 'reasoning',
+                  'current_version', 'created_at']
 
 
-class ChatSessionSerializer(serializers.ModelSerializer):
-    messages = ChatMessageSerializer(many=True, read_only=True)
-    message_count = serializers.SerializerMethodField()
+class ChatSessionListSerializer(serializers.ModelSerializer):
+    message_count = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = ChatSession
-        fields = ['id', 'session_id', 'title', 'mode', 'created_at', 'updated_at', 'messages', 'message_count']
+        fields = ['id', 'session_id', 'title', 'mode', 'message_count',
+                  'created_at', 'updated_at']
         read_only_fields = ['session_id', 'created_at', 'updated_at']
 
-    def get_message_count(self, obj):
-        return obj.messages.count()
+
+class ChatSessionDetailSerializer(serializers.ModelSerializer):
+    messages = ChatMessageSerializer(many=True, read_only=True)
+    message_count = serializers.IntegerField(source='messages.count', read_only=True)
+
+    class Meta:
+        model = ChatSession
+        fields = ['id', 'session_id', 'title', 'mode', 'messages',
+                  'message_count', 'created_at', 'updated_at']
+        read_only_fields = ['session_id', 'created_at', 'updated_at']
 
 
 class ChatSessionCreateSerializer(serializers.ModelSerializer):

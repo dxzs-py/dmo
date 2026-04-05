@@ -131,7 +131,9 @@ export const useSessionStore = defineStore('session', () => {
     try {
       const response = await chatAPI.getSessions()
       if (response.data.code === 0) {
-        sessions.value = response.data.data.map(transformBackendSessionToFrontend)
+        const data = response.data.data
+        const sessionList = Array.isArray(data) ? data : (data?.items || [])
+        sessions.value = sessionList.map(transformBackendSessionToFrontend)
         lastLoadedUserId.value = currentUserId
 
         if (sessions.value.length > 0) {
@@ -150,6 +152,26 @@ export const useSessionStore = defineStore('session', () => {
     } finally {
       isLoading.value = false
     }
+  }
+
+  const loadSessionDetail = async (sessionId) => {
+    if (!userStore.isLoggedIn || !sessionId) return null
+
+    try {
+      const response = await chatAPI.getSession(sessionId)
+      if (response.data.code === 0 && response.data.data) {
+        const detailData = transformBackendSessionToFrontend(response.data.data)
+        const index = sessions.value.findIndex(s => s.id === sessionId)
+        if (index !== -1) {
+          sessions.value[index] = detailData
+        }
+        console.log(`[Session] Loaded detail for session ${sessionId} with ${detailData.messages?.length || 0} messages`)
+        return detailData
+      }
+    } catch (error) {
+      console.error('Failed to load session detail:', error)
+    }
+    return null
   }
 
   const createNewSession = async (mode = 'basic-agent', title) => {
@@ -177,9 +199,13 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  const switchSession = (sessionId) => {
+  const switchSession = async (sessionId) => {
     if (sessions.value.find(s => s.id === sessionId)) {
       currentSessionId.value = sessionId
+      const session = sessions.value.find(s => s.id === sessionId)
+      if (session && (!session.messages || session.messages.length === 0)) {
+        await loadSessionDetail(sessionId)
+      }
     }
   }
 
@@ -496,6 +522,15 @@ export const useSessionStore = defineStore('session', () => {
     }
   })
 
+  watch(currentSessionId, async (sessionId) => {
+    if (sessionId && userStore.isLoggedIn) {
+      const session = sessions.value.find(s => s.id === sessionId)
+      if (session && (!session.messages || session.messages.length === 0)) {
+        await loadSessionDetail(sessionId)
+      }
+    }
+  })
+
   return {
     sessions,
     currentSessionId,
@@ -503,6 +538,7 @@ export const useSessionStore = defineStore('session', () => {
     isLoading,
     getModeLabel,
     loadSessionsFromBackend,
+    loadSessionDetail,
     createNewSession,
     switchSession,
     deleteSession,

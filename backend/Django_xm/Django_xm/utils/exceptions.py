@@ -1,28 +1,24 @@
-from django.conf import settings
-from rest_framework.views import exception_handler
-from rest_framework.response import Response
-from rest_framework import status
-import logging
+"""
+统一异常处理器入口
 
-logger = logging.getLogger(__name__)
+本模块作为 DRF EXCEPTION_HANDLER 的统一入口，
+实际逻辑委托给 Django_xm.apps.core.views.custom_exception_handler 实现，
+确保全局只有一份异常处理逻辑，避免维护多套重复代码。
+
+注意: 使用函数级延迟导入以避免与 core.views 的循环依赖
+"""
+import importlib
+
+_custom_exception_handler = None
+
 
 def custom_exception_handler(exc, context):
-    response = exception_handler(exc, context)
-    
-    if response is not None:
-        response.data['success'] = False
-        response.data['error'] = response.data.get('detail', str(exc))
-        if 'detail' in response.data:
-            del response.data['detail']
-    else:
-        logger.error(f"未处理的异常: {str(exc)}", exc_info=True)
-        response = Response(
-            {
-                'success': False,
-                'error': '服务器内部错误',
-                'message': str(exc) if settings.DEBUG else None
-            },
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-    
-    return response
+    global _custom_exception_handler
+    if _custom_exception_handler is None:
+        _custom_exception_handler = importlib.import_module(
+            "Django_xm.apps.core.views"
+        ).custom_exception_handler
+    return _custom_exception_handler(exc, context)
+
+
+__all__ = ['custom_exception_handler']

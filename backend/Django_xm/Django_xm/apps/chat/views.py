@@ -3,6 +3,8 @@ import asyncio
 import time
 import uuid
 from django.conf import settings
+from django.db import models
+from django.core.paginator import Paginator
 from django.http import StreamingHttpResponse
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -16,7 +18,8 @@ from Django_xm.apps.core.throttling import ChatStreamRateThrottle
 from .serializers import (
     ChatRequestSerializer,
     ChatResponseSerializer,
-    ChatSessionSerializer,
+    ChatSessionListSerializer,
+    ChatSessionDetailSerializer,
     ChatSessionCreateSerializer,
     ChatSessionUpdateSerializer,
     ChatMessageSerializer
@@ -446,6 +449,7 @@ class ChatSessionListView(APIView):
 
     def get(self, request):
         user_id = request.user.id
+        page_size = int(request.query_params.get('page_size', 20))
 
         cached_sessions = SecureSessionCacheService.get_user_sessions_list(user_id)
 
@@ -472,14 +476,25 @@ class ChatSessionListView(APIView):
             user=request.user
         ).select_related(
             'user'
-        ).prefetch_related(
-            'messages'
+        ).annotate(
+            message_count=models.Count('messages')
         ).order_by('-updated_at')
-        serializer = ChatSessionSerializer(sessions, many=True)
-        response_data = serializer.data
 
-        for session_data in response_data:
-            SecureSessionCacheService.cache_session(user_id, session_data)
+        paginator = Paginator(sessions, page_size)
+        page_number = request.query_params.get('page', 1)
+        page_obj = paginator.get_page(page_number)
+
+        serializer = ChatSessionListSerializer(page_obj.object_list, many=True)
+        response_data = {
+            'items': serializer.data,
+            'total': paginator.count,
+            'page': page_obj.number,
+            'page_size': page_size,
+            'total_pages': paginator.num_pages,
+        }
+
+        for item_data in response_data['items']:
+            SecureSessionCacheService.cache_session(user_id, item_data)
 
         return Response({
             'code': 0,
@@ -510,7 +525,7 @@ class ChatSessionDetailView(APIView):
                 'message': '会话不存在'
             }, status=status.HTTP_404_NOT_FOUND)
 
-        serializer = ChatSessionSerializer(session)
+        serializer = ChatSessionDetailSerializer(session)
         return Response({
             'code': 0,
             'message': '操作成功',
@@ -531,7 +546,7 @@ class ChatSessionDetailView(APIView):
             return Response({
                 'code': 0,
                 'message': '操作成功',
-                'data': ChatSessionSerializer(session).data
+                'data': ChatSessionDetailSerializer(session).data
             })
         return Response({
             'code': 400,
@@ -572,7 +587,7 @@ class ChatSessionCreateView(APIView):
             return Response({
                 'code': 0,
                 'message': '操作成功',
-                'data': ChatSessionSerializer(session).data
+                'data': ChatSessionDetailSerializer(session).data
             })
         return Response({
             'code': 400,

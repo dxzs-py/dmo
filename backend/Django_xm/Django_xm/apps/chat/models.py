@@ -1,8 +1,9 @@
 from django.db import models
 from django.conf import settings
+from Django_xm.apps.core.base_models import AuditModel
 
 
-class ChatSession(models.Model):
+class ChatSession(AuditModel):
     session_id = models.CharField(
         max_length=100, 
         unique=True, 
@@ -12,11 +13,11 @@ class ChatSession(models.Model):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
+        null=True,
+        blank=True,
         related_name='chat_sessions',
         db_index=True,
-        verbose_name='用户',
-        null=True,
-        blank=True
+        verbose_name='用户'
     )
     title = models.CharField(
         max_length=200,
@@ -27,15 +28,6 @@ class ChatSession(models.Model):
         max_length=50,
         default='basic-agent',
         verbose_name='对话模式'
-    )
-    created_at = models.DateTimeField(
-        auto_now_add=True, 
-        db_index=True,
-        verbose_name='创建时间'
-    )
-    updated_at = models.DateTimeField(
-        auto_now=True, 
-        verbose_name='更新时间'
     )
 
     class Meta:
@@ -55,7 +47,7 @@ class ChatSession(models.Model):
         return reverse('chat:chat')
 
 
-class ChatMessage(models.Model):
+class ChatMessage(AuditModel):
     ROLE_USER = 'user'
     ROLE_ASSISTANT = 'assistant'
     ROLE_SYSTEM = 'system'
@@ -117,11 +109,6 @@ class ChatMessage(models.Model):
     current_version = models.IntegerField(
         default=0,
         verbose_name='当前版本索引'
-    )
-    created_at = models.DateTimeField(
-        auto_now_add=True, 
-        db_index=True,
-        verbose_name='创建时间'
     )
 
     class Meta:
