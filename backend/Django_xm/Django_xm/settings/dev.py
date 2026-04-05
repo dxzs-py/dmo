@@ -215,6 +215,17 @@ REST_FRAMEWORK = {
     ],
     "EXCEPTION_HANDLER": "Django_xm.utils.exceptions.custom_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_THROTTLE_CLASSES": [
+        "Django_xm.apps.core.throttling.AnonymousRateThrottle",
+        "Django_xm.apps.core.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anonymous": "100/min",
+        "user": "200/min",
+        "login": "5/min",
+        "chat_stream": "30/min",
+        "sensitive": "10/min",
+    },
 }
 
 SIMPLE_JWT = {

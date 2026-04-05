@@ -11,6 +11,8 @@ from rest_framework.permissions import IsAuthenticated
 from asgiref.sync import sync_to_async
 from langchain_core.messages import HumanMessage, AIMessage
 
+from Django_xm.apps.core.throttling import ChatStreamRateThrottle
+
 from .serializers import (
     ChatRequestSerializer,
     ChatResponseSerializer,
@@ -102,6 +104,7 @@ class ChatView(APIView):
 
 class ChatStreamView(APIView):
     permission_classes = [IsAuthenticated]
+    throttle_classes = [ChatStreamRateThrottle]
 
     def post(self, request):
         serializer = ChatRequestSerializer(data=request.data)
@@ -465,7 +468,13 @@ class ChatSessionListView(APIView):
             except Exception as e:
                 logger.warning(f"Cache read failed, falling back to DB: {str(e)}")
 
-        sessions = ChatSession.objects.filter(user=request.user).order_by('-updated_at')
+        sessions = ChatSession.objects.filter(
+            user=request.user
+        ).select_related(
+            'user'
+        ).prefetch_related(
+            'messages'
+        ).order_by('-updated_at')
         serializer = ChatSessionSerializer(sessions, many=True)
         response_data = serializer.data
 
@@ -485,7 +494,11 @@ class ChatSessionDetailView(APIView):
     
     def get_object(self, session_id, user):
         try:
-            return ChatSession.objects.get(session_id=session_id, user=user)
+            return ChatSession.objects.select_related(
+                'user'
+            ).prefetch_related(
+                'messages'
+            ).get(session_id=session_id, user=user)
         except ChatSession.DoesNotExist:
             return None
     
@@ -573,7 +586,7 @@ class ChatMessageCreateView(APIView):
 
     def get_session(self, session_id, user):
         try:
-            return ChatSession.objects.get(session_id=session_id, user=user)
+            return ChatSession.objects.select_related('user').get(session_id=session_id, user=user)
         except ChatSession.DoesNotExist:
             return None
 
@@ -609,7 +622,7 @@ class ChatMessageBatchCreateView(APIView):
 
     def get_session(self, session_id, user):
         try:
-            return ChatSession.objects.get(session_id=session_id, user=user)
+            return ChatSession.objects.select_related('user').get(session_id=session_id, user=user)
         except ChatSession.DoesNotExist:
             return None
 
