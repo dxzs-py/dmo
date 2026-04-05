@@ -5,6 +5,12 @@ import { chatAPI } from '../api/client'
 import { useUserStore } from './user'
 import { ElMessage } from 'element-plus'
 
+const API_SUCCESS_CODE = 200
+
+function isApiSuccess(response) {
+  return response?.data?.code === API_SUCCESS_CODE
+}
+
 function generateId() {
   return nanoid()
 }
@@ -31,46 +37,65 @@ function _migrateMessage(msg) {
 }
 
 function transformBackendSessionToFrontend(session) {
+  if (!session) {
+    return null
+  }
+  
+  const sessionObj = session || {}
+  
+  const rawMessages = sessionObj.messages || []
+  const validMessages = Array.isArray(rawMessages) ? rawMessages : []
+  
   const sanitized = {
-    id: session.session_id,
-    sessionId: session.session_id,
-    title: session.title || '新对话',
-    mode: session.mode || 'basic-agent',
-    messageCount: session.message_count || 0,
-    messages: (session.messages || []).map(msg => transformBackendMessageToFrontend(msg)),
-    createdAt: session.created_at ? new Date(session.created_at).getTime() : Date.now(),
-    updatedAt: session.updated_at ? new Date(session.updated_at).getTime() : Date.now(),
+    id: sessionObj.session_id || sessionObj.id,
+    sessionId: sessionObj.session_id || sessionObj.id,
+    title: sessionObj.title || '新对话',
+    mode: sessionObj.mode || 'basic-agent',
+    messageCount: sessionObj.message_count || 0,
+    messages: validMessages
+      .map(msg => transformBackendMessageToFrontend(msg))
+      .filter(msg => msg !== null),
+    createdAt: sessionObj.created_at ? new Date(sessionObj.created_at).getTime() : Date.now(),
+    updatedAt: sessionObj.updated_at ? new Date(sessionObj.updated_at).getTime() : Date.now(),
   }
-  if (!sanitized.id && session.id) {
-    sanitized.id = session.id
-    sanitized.sessionId = session.id
+  
+  if (!sanitized.id && sessionObj.id) {
+    sanitized.id = sessionObj.id
+    sanitized.sessionId = sessionObj.id
   }
+  
   return sanitized
 }
 
 function transformBackendMessageToFrontend(msg) {
+  if (!msg) {
+    return null
+  }
+  
+  const msgObj = msg || {}
+  
   return {
-    id: msg.id?.toString() || generateId(),
-    role: msg.role,
-    content: msg.content,
-    sources: msg.sources || [],
-    plan: msg.plan,
-    chainOfThought: msg.chain_of_thought,
-    toolCalls: msg.tool_calls || [],
-    reasoning: msg.reasoning,
-    versions: msg.versions?.length > 0 ? msg.versions : [
+    id: msgObj.id?.toString() || generateId(),
+    role: msgObj.role || 'assistant',
+    content: msgObj.content || '',
+    sources: msgObj.sources || [],
+    plan: msgObj.plan || null,
+    chainOfThought: msgObj.chain_of_thought || null,
+    toolCalls: msgObj.tool_calls || [],
+    reasoning: msgObj.reasoning || null,
+    versions: msgObj.versions?.length > 0 ? msgObj.versions : [
       {
-        id: msg.id?.toString() || generateId(),
-        content: msg.content,
-        sources: msg.sources || [],
-        plan: msg.plan,
-        chainOfThought: msg.chain_of_thought,
-        toolCalls: msg.tool_calls || [],
-        reasoning: msg.reasoning
+        id: msgObj.id?.toString() || generateId(),
+        content: msgObj.content || '',
+        sources: msgObj.sources || [],
+        plan: msgObj.plan || null,
+        chainOfThought: msgObj.chain_of_thought || null,
+        toolCalls: msgObj.tool_calls || [],
+        reasoning: msgObj.reasoning || null
       }
     ],
-    currentVersion: msg.current_version || 0,
-    timestamp: new Date(msg.created_at).getTime(),
+    currentVersion: msgObj.current_version || 0,
+    timestamp: msgObj.created_at ? new Date(msgObj.created_at).getTime() : Date.now(),
   }
 }
 
@@ -142,17 +167,35 @@ export const useSessionStore = defineStore('session', () => {
     isLoading.value = true
     try {
       const response = await chatAPI.getSessions({ page, page_size: paginationMeta.value.pageSize })
-      if (response.data.code === 0) {
+      // console.log('[DEBUG] getSessions response:', JSON.stringify(response.data, null, 2))
+      
+      if (isApiSuccess(response)) {
         const data = response.data.data
-        const sessionList = Array.isArray(data) ? data : (data?.items || [])
+        // console.log('[DEBUG] parsed data:', data, 'isArray:', Array.isArray(data))
+        
+        let sessionList = []
+        
+        if (Array.isArray(data)) {
+          sessionList = data
+        } else if (data && typeof data === 'object') {
+          sessionList = data.items || []
+        }
+
+        // console.log('[DEBUG] sessionList before transform:', sessionList)
 
         if (page <= 1) {
-          sessions.value = sessionList.map(transformBackendSessionToFrontend)
+          sessions.value = sessionList
+            .map(transformBackendSessionToFrontend)
+            .filter(s => s !== null)
         } else {
-          const newSessions = sessionList.map(transformBackendSessionToFrontend)
+          const newSessions = sessionList
+            .map(transformBackendSessionToFrontend)
+            .filter(s => s !== null)
           const existingIds = new Set(sessions.value.map(s => s.id))
           newSessions.forEach(s => { if (!existingIds.has(s.id)) sessions.value.push(s) })
         }
+
+        // console.log('[DEBUG] sessions after transform:', sessions.value.map(s => ({ id: s.id, title: s.title, msgCount: s.messages?.length })))
 
         if (data && typeof data === 'object' && !Array.isArray(data)) {
           paginationMeta.value = {
@@ -177,6 +220,7 @@ export const useSessionStore = defineStore('session', () => {
         if (sessions.value.length > 0) {
           if (!currentSessionId.value || !sessions.value.find(s => s.id === currentSessionId.value)) {
             currentSessionId.value = sessions.value[0].id
+            // console.log('[DEBUG] Set currentSessionId to:', currentSessionId.value)
           }
         } else {
           currentSessionId.value = null
@@ -199,14 +243,20 @@ export const useSessionStore = defineStore('session', () => {
 
   const loadSessionDetail = async (sessionId) => {
     if (!userStore.isLoggedIn || !sessionId) return null
+    // console.log('[DEBUG] loadSessionDetail called for:', sessionId)
 
     try {
       const response = await chatAPI.getSession(sessionId)
-      if (response.data.code === 0 && response.data.data) {
+      // console.log('[DEBUG] getSession response:', JSON.stringify(response.data, null, 2))
+      
+      if (isApiSuccess(response) && response.data.data) {
         const detailData = transformBackendSessionToFrontend(response.data.data)
+        // console.log('[DEBUG] transformed detailData:', { id: detailData.id, msgCount: detailData.messages?.length })
+        
         const index = sessions.value.findIndex(s => s.id === sessionId)
         if (index !== -1) {
           sessions.value[index] = detailData
+          // console.log('[DEBUG] Updated session at index', index)
         }
         console.log(`[Session] Loaded detail for session ${sessionId} with ${detailData.messages?.length || 0} messages`)
         return detailData
@@ -229,7 +279,7 @@ export const useSessionStore = defineStore('session', () => {
         mode: mode
       })
 
-      if (response.data.code === 0) {
+      if (isApiSuccess(response)) {
         const newSession = transformBackendSessionToFrontend(response.data.data)
         sessions.value.unshift(newSession)
         currentSessionId.value = newSession.id
@@ -321,7 +371,7 @@ export const useSessionStore = defineStore('session', () => {
       if (saveToBackend && userStore.isLoggedIn) {
         const backendMsg = transformFrontendMessageToBackend(messageWithVersions)
         chatAPI.addMessage(sessionId, backendMsg).then(res => {
-          if (res.data.code === 0 && res.data.data?.id) {
+          if (isApiSuccess(res) && res.data.data?.id) {
             messageWithVersions.backendId = res.data.data.id
           }
         }).catch(error => {
@@ -341,7 +391,7 @@ export const useSessionStore = defineStore('session', () => {
       const backendMsg = transformFrontendMessageToBackend(lastMessage)
       try {
         const res = await chatAPI.addMessage(sessionId, backendMsg)
-        if (res.data.code === 0 && res.data.data?.id) {
+        if (isApiSuccess(res) && res.data.data?.id) {
           lastMessage.backendId = res.data.data.id
         }
       } catch (error) {
@@ -566,9 +616,12 @@ export const useSessionStore = defineStore('session', () => {
   })
 
   watch(currentSessionId, async (sessionId) => {
+    // console.log('[DEBUG] currentSessionId changed to:', sessionId)
     if (sessionId && userStore.isLoggedIn) {
       const session = sessions.value.find(s => s.id === sessionId)
+      // console.log('[DEBUG] found session:', session ? { id: session.id, msgCount: session.messages?.length } : 'not found')
       if (session && (!session.messages || session.messages.length === 0)) {
+        // console.log('[DEBUG] calling loadSessionDetail for:', sessionId)
         await loadSessionDetail(sessionId)
       }
     }

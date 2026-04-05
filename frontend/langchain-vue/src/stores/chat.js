@@ -83,10 +83,10 @@ export const useChatStore = defineStore('chat', () => {
     sessionStore.addMessageToSession(sessionStore.currentSessionId, assistantMessage, false)
 
     try {
-      const messages = sessionStore.getSessionMessages(sessionStore.currentSessionId)
+      const messages = sessionStore.getSessionMessages(sessionStore.currentSessionId) || []
       const chatHistory = messages.slice(0, -2).map(m => ({
-        role: m.role,
-        content: m.content,
+        role: m.role || 'user',
+        content: m.content || '',
       }))
 
       const response = await chatAPI.streamMessage({
@@ -146,11 +146,13 @@ export const useChatStore = defineStore('chat', () => {
         }
       }
 
-      const finalMessages = sessionStore.getSessionMessages(sessionStore.currentSessionId)
+      const finalMessages = sessionStore.getSessionMessages(sessionStore.currentSessionId) || []
       if (finalMessages.length <= 2) {
         const lastMsg = finalMessages[finalMessages.length - 1]
-        const title = lastMsg.content.slice(0, 30) + (lastMsg.content.length > 30 ? '...' : '')
-        sessionStore.updateSessionTitle(sessionStore.currentSessionId, title)
+        if (lastMsg && lastMsg.content) {
+          const title = lastMsg.content.slice(0, 30) + (lastMsg.content.length > 30 ? '...' : '')
+          sessionStore.updateSessionTitle(sessionStore.currentSessionId, title)
+        }
       }
 
       sessionStore.syncLastMessageToBackend(sessionStore.currentSessionId).catch(() => {})
@@ -231,12 +233,12 @@ export const useChatStore = defineStore('chat', () => {
 
     try {
       const chatHistory = messages.slice(0, messageIndex).map(m => ({
-        role: m.role,
-        content: m.content,
+        role: m.role || 'user',
+        content: m.content || '',
       }))
 
       const response = await chatAPI.streamMessage({
-        message: userMessage.content,
+        message: userMessage.content || '',
         chat_history: chatHistory,
         mode: currentMode.value,
         use_tools: true,
@@ -339,7 +341,7 @@ export const useChatStore = defineStore('chat', () => {
     try {
       const response = await chatAPI.getModes()
       const data = response.data
-      if (data.code === 0 && data.data?.modes) {
+      if (data.code === 200 && data.data?.modes) {
         availableModes.value = data.data.modes
       }
       if (data.data?.default && !currentMode.value) {

@@ -18,9 +18,13 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.permissions import IsAuthenticated
 
 from django.conf import settings as django_settings
 from django.http import StreamingHttpResponse
+
+from Django_xm.utils.responses import success_response, error_response, not_found_response
+from Django_xm.utils.error_codes import ErrorCode
 
 from .serializers import (
     RagQuerySerializer,
@@ -51,56 +55,61 @@ class RAGIndexCreateView(APIView):
     创建新索引
     
     从指定目录加载文档，创建向量索引。
+    需要用户认证。
     """
+    permission_classes = [IsAuthenticated]
     
     def post(self, request):
         serializer = IndexCreateSerializer(data=request.data)
         if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return error_response(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="数据验证失败",
+                details=serializer.errors,
+                http_status=status.HTTP_400_BAD_REQUEST
+            )
         
         data = serializer.validated_data
-        logger.info(f"📝 创建索引请求：{data['name']}")
+        logger.info(f"创建索引请求：{data['name']}")
         
         try:
-            # 检查目录是否存在
             directory_path = Path(data['directory_path'])
             if not directory_path.exists():
-                return Response({
-                    'code': 404,
-                    'message': f'目录不存在：{data["directory_path"]}'
-                }, status=status.HTTP_404_NOT_FOUND)
+                return error_response(
+                    code=ErrorCode.NOT_FOUND,
+                    message=f'目录不存在：{data["directory_path"]}',
+                    http_status=status.HTTP_404_NOT_FOUND
+                )
 
             manager = IndexManager()
             if not manager.index_exists(data['name']) and not data.get('overwrite', False):
-                return Response({
-                    'code': 409,
-                    'message': f'索引已存在：{data["name"]}。使用 overwrite=true 来覆盖。'
-                }, status=status.HTTP_409_CONFLICT)
+                return error_response(
+                    code=ErrorCode.DUPLICATE_RESOURCE,
+                    message=f'索引已存在：{data["name"]}。使用 overwrite=true 来覆盖。',
+                    http_status=status.HTTP_409_CONFLICT
+                )
             
-            # 加载文档
-            logger.info(f"📂 加载文档：{directory_path}")
+            logger.info(f"加载文档：{directory_path}")
             documents = load_documents_from_directory(str(directory_path))
             
             if not documents:
-                return Response({
-                    'code': 400,
-                    'message': '目录中没有找到支持的文档'
-                }, status=status.HTTP_400_BAD_REQUEST)
+                return error_response(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message='目录中没有找到支持的文档',
+                    http_status=status.HTTP_400_BAD_REQUEST
+                )
             
-            # 分块文档
-            logger.info("✂️  分块文档...")
+            logger.info("分块文档...")
             chunks = split_documents(
                 documents,
                 chunk_size=data.get('chunk_size'),
                 chunk_overlap=data.get('chunk_overlap'),
             )
             
-            # 创建 embeddings
-            logger.info("🔢 创建 embeddings...")
+            logger.info("创建 embeddings...")
             embeddings = get_embeddings()
             
-            # 创建索引
-            logger.info("🗄️  创建向量索引...")
+            logger.info("创建向量索引...")
             vector_store = manager.create_index(
                 name=data['name'],
                 documents=chunks,
@@ -109,15 +118,12 @@ class RAGIndexCreateView(APIView):
                 overwrite=data.get('overwrite', False),
             )
             
-            # 获取索引信息
             stats = manager.get_index_stats(data['name'])
             
-            logger.info(f"✅ 索引创建成功：{data['name']}")
+            logger.info(f"索引创建成功：{data['name']}")
 
-            return Response({
-                'code': 0,
-                'message': '操作成功',
-                'data': IndexInfoSerializer({
+            return success_response(
+                data=IndexInfoSerializer({
                     'name': data['name'],
                     'description': data.get('description', ''),
                     'created_at': stats.get('created_at', ''),
@@ -125,76 +131,76 @@ class RAGIndexCreateView(APIView):
                     'num_documents': stats.get('num_documents', 0),
                     'store_type': stats.get('store_type', 'faiss'),
                     'embedding_model': stats.get('embedding_model', ''),
-                }).data
-            })
+                }).data,
+                message='索引创建成功'
+            )
             
         except Exception as e:
-            logger.error(f"❌ 创建索引失败：{e}", exc_info=True)
-            return Response({
-                'code': 500,
-                'message': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"创建索引失败：{e}", exc_info=True)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class RAGIndexListView(APIView):
     """
     列出所有索引
     """
+    permission_classes = [IsAuthenticated]
     
     def get(self, request):
         try:
             manager = IndexManager()
             indexes = manager.list_indexes()
 
-            return Response({
-                'code': 0,
-                'message': '操作成功',
-                'data': IndexInfoSerializer(indexes, many=True).data
-            })
+            return success_response(
+                data=IndexInfoSerializer(indexes, many=True).data
+            )
 
         except Exception as e:
-            logger.error(f"❌ 列出索引失败：{e}", exc_info=True)
-            return Response({
-                'code': 500,
-                'message': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"列出索引失败：{e}", exc_info=True)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class RAGIndexDetailView(APIView):
     """
     获取索引详细信息
     """
+    permission_classes = [IsAuthenticated]
     
     def get(self, request, name):
         try:
             manager = IndexManager()
 
             if not manager.index_exists(name):
-                return Response({
-                    'code': 404,
-                    'message': f'索引不存在：{name}'
-                }, status=status.HTTP_404_NOT_FOUND)
+                return not_found_response(message=f'索引不存在：{name}')
 
             stats = manager.get_index_stats(name)
 
-            return Response({
-                'code': 0,
-                'message': '操作成功',
-                'data': IndexInfoSerializer(stats).data
-            })
+            return success_response(
+                data=IndexInfoSerializer(stats).data
+            )
 
         except Exception as e:
-            logger.error(f"❌ 获取索引信息失败：{e}", exc_info=True)
-            return Response({
-                'code': 500,
-                'message': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"获取索引信息失败：{e}", exc_info=True)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class RAGIndexDeleteView(APIView):
     """
     删除索引
     """
+    permission_classes = [IsAuthenticated]
     
     def delete(self, request, name):
         try:

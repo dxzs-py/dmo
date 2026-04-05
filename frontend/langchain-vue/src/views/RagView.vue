@@ -123,7 +123,7 @@ const fetchIndexes = async () => {
     const response = await ragAPI.getIndexes()
     const data = response.data
     let indexes = []
-    if (data.code === 0 && data.data) {
+    if (data.code === 200 && data.data) {
       indexes = Array.isArray(data.data) ? data.data : data.data.indexes || []
     } else if (data.indexes) {
       indexes = data.indexes

@@ -1,3 +1,4 @@
+import uuid
 from django.db import models
 from django.conf import settings
 from Django_xm.apps.core.base_models import AuditModel
@@ -45,6 +46,11 @@ class ChatSession(AuditModel):
     def get_absolute_url(self):
         from django.urls import reverse
         return reverse('chat:chat')
+
+    def save(self, *args, **kwargs):
+        if not self.session_id:
+            self.session_id = str(uuid.uuid4())
+        super().save(*args, **kwargs)
 
 
 class ChatMessage(AuditModel):
