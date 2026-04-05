@@ -83,41 +83,4 @@ class SessionSecurityMiddleware(MiddlewareMixin):
         return response
 
 
-class RateLimitMiddleware(MiddlewareMixin):
-    """
-    简单的API速率限制中间件
-    
-    防止暴力破解和滥用API
-    """
-    
-    def process_request(self, request):
-        if not request.path.startswith('/api/'):
-            return None
-        
-        from django.core.cache import cache
-        
-        client_ip = self._get_client_ip(request)
-        cache_key = f'rate_limit:{client_ip}'
-        
-        requests_count = cache.get(cache_key, 0)
-        
-        if requests_count >= 100:
-            logger.warning(f"Rate limit exceeded for IP: {client_ip}")
-            return JsonResponse({
-                'code': 429,
-                'message': '请求过于频繁，请稍后再试',
-                'error': 'RATE_LIMIT_EXCEEDED'
-            }, status=429)
-        
-        cache.set(cache_key, requests_count + 1, timeout=60)
-        
-        return None
-    
-    @staticmethod
-    def _get_client_ip(request):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            ip = x_forwarded_for.split(',')[0].strip()
-        else:
-            ip = request.META.get('REMOTE_ADDR')
-        return ip
+

@@ -66,7 +66,7 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
         refresh = self.get_token(self.user)
         data = {
             'id': self.user.id,
-            'code': 200,
+            'code': 0,
             'message': '登录成功',
             'username': self.user.username,
             'email': self.user.email if self.user.email else '',

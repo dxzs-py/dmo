@@ -81,7 +81,7 @@ class Command(BaseCommand):
         backup_filename = f'chat_backup_{timestamp}.json'
         backup_path = os.path.join(output_dir, backup_filename)
         
-        queryset = ChatSession.objects.all()
+        queryset = ChatSession.objects.all().select_related('user').prefetch_related('messages')
         
         if user_filter:
             if user_filter.isdigit():

@@ -10,6 +10,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+from Django_xm.apps.core.throttling import LoginRateThrottle, SensitiveOperationRateThrottle
 from .models import User
 from .serializers import (
     MyTokenObtainPairSerializer,
@@ -25,6 +26,7 @@ class MyObtainTokenPairView(TokenObtainPairView):
     """
     serializer_class = MyTokenObtainPairSerializer
     permission_classes = [AllowAny]
+    throttle_classes = [LoginRateThrottle]
 
     def post(self, request, *args, **kwargs):
         captcha_key = request.data.get('captcha_key')
@@ -76,6 +78,7 @@ class UserRegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = UserRegisterSerializer
     permission_classes = [AllowAny]
+    throttle_classes = [SensitiveOperationRateThrottle]
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)

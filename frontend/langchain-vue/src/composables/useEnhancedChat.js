@@ -159,8 +159,10 @@ export function useEnhancedChat(options = {}) {
     try {
       const modes = await getAvailableModes();
       if (modes && typeof modes === 'object') {
-        if (modes.modes) {
-          availableModes.value = modes.modes;
+        if (modes.data && modes.data.modes) {
+          availableModes.value = modes.data.modes;
+        } else if (modes.code !== undefined && modes.data) {
+          availableModes.value = typeof modes.data === 'object' ? modes.data : {};
         } else {
           availableModes.value = modes;
         }
