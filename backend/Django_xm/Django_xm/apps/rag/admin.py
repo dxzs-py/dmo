@@ -15,11 +15,11 @@ class DocumentIndexAdmin(admin.ModelAdmin):
 
 @admin.register(Document)
 class DocumentAdmin(admin.ModelAdmin):
-    list_display = ['filename', 'index', 'file_type', 'file_size_display', 'chunk_count', 'uploaded_at']
-    list_filter = ['file_type', 'uploaded_at']
+    list_display = ['filename', 'index', 'file_type', 'file_size_display', 'chunk_count', 'created_at']
+    list_filter = ['file_type', 'created_at']
     search_fields = ['filename', 'file_path']
-    ordering = ['-uploaded_at']
-    readonly_fields = ['uploaded_at']
+    ordering = ['-created_at']
+    readonly_fields = ['created_at']
 
     def file_size_display(self, obj):
         size = obj.file_size

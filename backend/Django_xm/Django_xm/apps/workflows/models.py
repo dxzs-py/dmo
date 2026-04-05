@@ -1,7 +1,8 @@
 from django.db import models
+from Django_xm.apps.core.base_models import BaseModel
 
 
-class WorkflowExecution(models.Model):
+class WorkflowExecution(BaseModel):
     STATUS_PENDING = 'pending'
     STATUS_RUNNING = 'running'
     STATUS_COMPLETED = 'completed'
@@ -33,15 +34,6 @@ class WorkflowExecution(models.Model):
         db_index=True,
         verbose_name='状态'
     )
-    created_at = models.DateTimeField(
-        auto_now_add=True,
-        db_index=True,
-        verbose_name='创建时间'
-    )
-    updated_at = models.DateTimeField(
-        auto_now=True,
-        verbose_name='更新时间'
-    )
     result = models.JSONField(null=True, blank=True, verbose_name='执行结果')
 
     class Meta:
@@ -62,11 +54,7 @@ class WorkflowExecution(models.Model):
         return reverse('workflows:status', kwargs={'thread_id': self.thread_id})
 
 
-class WorkflowSession(models.Model):
-    """
-    学习工作流会话模型
-    用于跟踪和管理学习工作流的执行状态
-    """
+class WorkflowSession(BaseModel):
     STATUS_RUNNING = 'running'
     STATUS_WAITING_FOR_ANSWERS = 'waiting_for_answers'
     STATUS_RETRY = 'retry'
@@ -98,6 +86,7 @@ class WorkflowSession(models.Model):
     current_step = models.CharField(
         max_length=50, 
         blank=True,
+        default='',
         verbose_name='当前步骤'
     )
     learning_plan = models.JSONField(null=True, blank=True, verbose_name='学习计划')
@@ -108,15 +97,6 @@ class WorkflowSession(models.Model):
     feedback = models.TextField(blank=True, verbose_name='反馈信息')
     should_retry = models.BooleanField(default=False, verbose_name='是否重试')
     error_message = models.TextField(blank=True, verbose_name='错误信息')
-    created_at = models.DateTimeField(
-        auto_now_add=True,
-        db_index=True,
-        verbose_name='创建时间'
-    )
-    updated_at = models.DateTimeField(
-        auto_now=True,
-        verbose_name='更新时间'
-    )
 
     class Meta:
         db_table = 'workflow_session'
@@ -134,4 +114,3 @@ class WorkflowSession(models.Model):
     def get_absolute_url(self):
         from django.urls import reverse
         return reverse('workflows:status', kwargs={'thread_id': self.thread_id})
-
