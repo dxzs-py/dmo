@@ -46,13 +46,18 @@ class ChatSessionListSerializer(serializers.ModelSerializer):
 
 class ChatSessionDetailSerializer(serializers.ModelSerializer):
     messages = ChatMessageSerializer(many=True, read_only=True)
-    message_count = serializers.IntegerField(source='messages.count', read_only=True)
+    message_count = serializers.SerializerMethodField()
 
     class Meta:
         model = ChatSession
         fields = ['id', 'session_id', 'title', 'mode', 'messages',
                   'message_count', 'created_at', 'updated_at']
         read_only_fields = ['session_id', 'created_at', 'updated_at']
+
+    def get_message_count(self, obj):
+        if hasattr(obj, '_message_count'):
+            return obj._message_count
+        return obj.messages.count()
 
 
 class ChatSessionCreateSerializer(serializers.ModelSerializer):

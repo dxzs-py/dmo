@@ -73,9 +73,13 @@ import { ElMessage } from 'element-plus'
 
 const isLoading = ref(false)
 const task = ref(null)
-let pollingInterval = null
+let pollingTimer = null
 let pollCount = 0
+let currentPollInterval = 3000
 const MAX_POLL_COUNT = 600
+const BASE_POLL_INTERVAL = 3000
+const MAX_POLL_INTERVAL = 30000
+const POLL_BACKOFF_FACTOR = 1.5
 
 const researchForm = reactive({
   query: '',
@@ -119,25 +123,44 @@ const pollTaskStatus = async () => {
     stopPolling()
     return
   }
-  
+
   try {
     const response = await deepResearchAPI.getStatus(task.value.task_id)
     const responseData = response.data.data || response.data
+    const prevStatus = task.value.status
     task.value = { ...task.value, ...responseData }
 
     if (task.value.status === 'completed' || task.value.status === 'failed') {
       stopPolling()
+      return
     }
+
+    if (prevStatus === 'pending' && task.value.status === 'running') {
+      currentPollInterval = BASE_POLL_INTERVAL
+    } else {
+      currentPollInterval = Math.min(
+        Math.floor(currentPollInterval * POLL_BACKOFF_FACTOR),
+        MAX_POLL_INTERVAL
+      )
+    }
+
+    pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
   } catch (error) {
     console.error('获取任务状态失败:', error)
+    currentPollInterval = Math.min(
+      Math.floor(currentPollInterval * POLL_BACKOFF_FACTOR),
+      MAX_POLL_INTERVAL
+    )
+    pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
   }
 }
 
 const stopPolling = () => {
-  if (pollingInterval) {
-    clearInterval(pollingInterval)
-    pollingInterval = null
+  if (pollingTimer) {
+    clearTimeout(pollingTimer)
+    pollingTimer = null
   }
+  currentPollInterval = BASE_POLL_INTERVAL
 }
 
 const startResearch = async () => {
@@ -149,6 +172,7 @@ const startResearch = async () => {
   isLoading.value = true
   task.value = null
   pollCount = 0
+  currentPollInterval = BASE_POLL_INTERVAL
 
   try {
     const response = await deepResearchAPI.start(researchForm)
@@ -156,7 +180,7 @@ const startResearch = async () => {
     ElMessage.success('研究任务已启动')
 
     stopPolling()
-    pollingInterval = setInterval(pollTaskStatus, 3000)
+    pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
   } catch (error) {
     console.error('启动研究任务失败:', error)
     ElMessage.error('启动研究任务失败，请稍后重试')

@@ -39,6 +39,16 @@ function onTokenRefreshed(token) {
 
 apiClient.interceptors.response.use(
   (response) => {
+    const duration = response.headers['x-request-duration']
+    if (duration) {
+      const durationMs = parseFloat(duration)
+      if (durationMs > 5) {
+        console.log(`[API] ${response.config.method?.toUpperCase()} ${response.config.url} - ${durationMs.toFixed(3)}s`)
+      }
+      if (durationMs > 10) {
+        console.warn(`[API] Slow response: ${response.config.url} took ${durationMs.toFixed(3)}s`)
+      }
+    }
     return response
   },
   async (error) => {
@@ -111,8 +121,8 @@ export const chatAPI = {
     return apiClient.get('/chat/modes/')
   },
 
-  getSessions() {
-    return apiClient.get('/chat/sessions/')
+  getSessions(params = {}) {
+    return apiClient.get('/chat/sessions/', { params })
   },
 
   createSession(data) {

@@ -7,6 +7,17 @@ from django.db import models
 from django.conf import settings
 
 
+class SoftDeleteManager(models.Manager):
+    """默认管理器，自动过滤已软删除的记录"""
+
+    def get_queryset(self):
+        return super().get_queryset().filter(is_deleted=False)
+
+
+class AllObjectsManager(models.Manager):
+    """包含已软删除记录的管理器"""
+
+
 class BaseModel(models.Model):
     """基础抽象模型 - 包含时间戳和软删除"""
 
@@ -29,6 +40,9 @@ class BaseModel(models.Model):
         blank=True,
         verbose_name='删除时间'
     )
+
+    objects = SoftDeleteManager()
+    all_objects = AllObjectsManager()
 
     class Meta:
         abstract = True
@@ -76,24 +90,3 @@ class AuditModel(BaseModel):
                 self.created_by = request.user
             self.updated_by = request.user
         super().save(*args, **kwargs)
-
-
-class SoftDeleteManager(models.Manager):
-    """默认管理器，自动过滤已软删除的记录"""
-
-    def get_queryset(self):
-        return super().get_queryset().filter(is_deleted=False)
-
-
-class AllObjectsManager(models.Manager):
-    """包含已软删除记录的管理器"""
-
-
-class SoftDeleteModel(models.Model):
-    """带软删除功能的模型混入类"""
-
-    objects = SoftDeleteManager()
-    all_objects = AllObjectsManager()
-
-    class Meta:
-        abstract = True

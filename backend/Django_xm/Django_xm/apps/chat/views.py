@@ -3,7 +3,7 @@ import asyncio
 import time
 import uuid
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 from django.core.paginator import Paginator
 from django.http import StreamingHttpResponse
 from rest_framework.views import APIView
@@ -513,6 +513,8 @@ class ChatSessionDetailView(APIView):
                 'user'
             ).prefetch_related(
                 'messages'
+            ).annotate(
+                _message_count=models.Count('messages')
             ).get(session_id=session_id, user=user)
         except ChatSession.DoesNotExist:
             return None
@@ -564,7 +566,7 @@ class ChatSessionDetailView(APIView):
 
         user_id = request.user.id
         SecureSessionCacheService.invalidate_user_session(user_id, session_id)
-        session.delete()
+        session.soft_delete()
         return Response({
             'code': 0,
             'message': '操作成功'
@@ -577,13 +579,14 @@ class ChatSessionCreateView(APIView):
     def post(self, request):
         serializer = ChatSessionCreateSerializer(data=request.data)
         if serializer.is_valid():
-            session_id = str(uuid.uuid4())
-            session = ChatSession.objects.create(
-                session_id=session_id,
-                user=request.user,
-                title=serializer.validated_data.get('title', '新对话'),
-                mode=serializer.validated_data.get('mode', 'basic-agent')
-            )
+            with transaction.atomic():
+                session_id = str(uuid.uuid4())
+                session = ChatSession.objects.create(
+                    session_id=session_id,
+                    user=request.user,
+                    title=serializer.validated_data.get('title', '新对话'),
+                    mode=serializer.validated_data.get('mode', 'basic-agent')
+                )
             return Response({
                 'code': 0,
                 'message': '操作成功',
@@ -618,8 +621,9 @@ class ChatMessageCreateView(APIView):
 
         serializer = ChatMessageSerializer(data=data)
         if serializer.is_valid():
-            serializer.save()
-            session.save()
+            with transaction.atomic():
+                serializer.save()
+                session.save()
             return Response({
                 'code': 0,
                 'message': '操作成功',
