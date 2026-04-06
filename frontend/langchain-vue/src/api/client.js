@@ -96,12 +96,67 @@ apiClient.interceptors.response.use(
   }
 )
 
+function validateChatRequest(data) {
+  const errors = []
+
+  if (!data.message || typeof data.message !== 'string') {
+    errors.push('消息内容不能为空')
+  } else {
+    const trimmedMessage = data.message.trim()
+    if (trimmedMessage.length === 0) {
+      errors.push('消息内容不能为空或仅包含空格')
+    } else if (trimmedMessage.length > settings.API_VALIDATION.MESSAGE_MAX_LENGTH) {
+      errors.push(`消息内容不能超过${settings.API_VALIDATION.MESSAGE_MAX_LENGTH}个字符`)
+    }
+  }
+
+  if (data.mode && !settings.API_VALIDATION.ALLOWED_MODES.includes(data.mode)) {
+    errors.push(`不支持的模式: ${data.mode}。允许的模式: ${settings.API_VALIDATION.ALLOWED_MODES.join(', ')}`)
+  }
+
+  if (data.session_id && !settings.API_VALIDATION.SESSION_ID_PATTERN.test(data.session_id)) {
+    errors.push('会话ID格式无效')
+  }
+
+  if (data.chat_history && Array.isArray(data.chat_history)) {
+    if (data.chat_history.length > settings.API_VALIDATION.CHAT_HISTORY_MAX_ITEMS) {
+      errors.push(`聊天历史记录不能超过${settings.API_VALIDATION.CHAT_HISTORY_MAX_ITEMS}条`)
+    }
+    data.chat_history.forEach((msg, index) => {
+      if (!['user', 'assistant', 'system'].includes(msg.role)) {
+        errors.push(`聊天历史第${index + 1}条消息的角色无效`)
+      }
+      if (msg.content && msg.content.length > 50000) {
+        errors.push(`聊天历史第${index + 1}条消息内容过长`)
+      }
+    })
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    sanitizedData: {
+      ...data,
+      message: data.message ? data.message.trim() : data.message,
+    }
+  }
+}
+
 export const chatAPI = {
   sendMessage(data) {
-    return apiClient.post('/chat/', data)
+    const validation = validateChatRequest(data)
+    if (!validation.valid) {
+      return Promise.reject(new Error(validation.errors.join('; ')))
+    }
+    return apiClient.post('/chat/', validation.sanitizedData)
   },
 
   streamMessage(data, options = {}) {
+    const validation = validateChatRequest(data)
+    if (!validation.valid) {
+      return Promise.reject(new Error(validation.errors.join('; ')))
+    }
+
     const userStore = useUserStore()
     const headers = {
       'Content-Type': 'application/json',
@@ -111,8 +166,10 @@ export const chatAPI = {
     }
     return fetch(`${settings.API_BASE_URL}/chat/stream/`, {
       method: 'POST',
+      mode: 'cors',
+      credentials: 'include',
       headers,
-      body: JSON.stringify(data),
+      body: JSON.stringify(validation.sanitizedData),
       signal: options.signal,
     })
   },
@@ -122,35 +179,92 @@ export const chatAPI = {
   },
 
   getSessions(params = {}) {
-    return apiClient.get('/chat/sessions/', { params })
+    const validatedParams = { ...params }
+    if (validatedParams.page_size && validatedParams.page_size > 100) {
+      validatedParams.page_size = 100
+    }
+    return apiClient.get('/chat/sessions/', { params: validatedParams })
   },
 
   createSession(data) {
-    return apiClient.post('/chat/sessions/create/', data)
+    const sessionData = { ...data }
+    if (sessionData.title && sessionData.title.length > 200) {
+      sessionData.title = sessionData.title.slice(0, 200)
+    }
+    if (sessionData.mode && !settings.API_VALIDATION.ALLOWED_MODES.includes(sessionData.mode)) {
+      sessionData.mode = 'basic-agent'
+    }
+    return apiClient.post('/chat/sessions/create/', sessionData)
   },
 
   getSession(sessionId) {
+    if (!sessionId || !settings.API_VALIDATION.SESSION_ID_PATTERN.test(sessionId)) {
+      return Promise.reject(new Error('会话ID格式无效'))
+    }
     return apiClient.get(`/chat/sessions/${sessionId}/`)
   },
 
   updateSession(sessionId, data) {
-    return apiClient.put(`/chat/sessions/${sessionId}/`, data)
+    if (!sessionId) {
+      return Promise.reject(new Error('会话ID不能为空'))
+    }
+    const updateData = {}
+    if (data.title !== undefined) {
+      if (typeof data.title !== 'string' || data.title.trim().length === 0) {
+        return Promise.reject(new Error('标题不能为空'))
+      }
+      if (data.title.length > 200) {
+        updateData.title = data.title.slice(0, 200)
+      } else {
+        updateData.title = data.title.trim()
+      }
+    }
+    return apiClient.put(`/chat/sessions/${sessionId}/`, updateData)
   },
 
   deleteSession(sessionId) {
+    if (!sessionId) {
+      return Promise.reject(new Error('会话ID不能为空'))
+    }
     return apiClient.delete(`/chat/sessions/${sessionId}/`)
   },
 
   addMessage(sessionId, data) {
-    return apiClient.post(`/chat/sessions/${sessionId}/messages/`, data)
+    if (!sessionId) {
+      return Promise.reject(new Error('会话ID不能为空'))
+    }
+    const messageData = { ...data }
+    if (messageData.content && messageData.content.length > 50000) {
+      messageData.content = messageData.content.slice(0, 50000)
+    }
+    if (!['user', 'assistant', 'system'].includes(messageData.role)) {
+      messageData.role = 'user'
+    }
+    return apiClient.post(`/chat/sessions/${sessionId}/messages/`, messageData)
   },
 
   addMessagesBatch(sessionId, data) {
+    if (!sessionId) {
+      return Promise.reject(new Error('会话ID不能为空'))
+    }
+    if (!Array.isArray(data.messages) || data.messages.length === 0) {
+      return Promise.reject(new Error('messages必须是非空数组'))
+    }
+    if (data.messages.length > settings.API_VALIDATION.BATCH_CREATE_MAX_ITEMS) {
+      return Promise.reject(new Error(`批量创建数量不能超过${settings.API_VALIDATION.BATCH_CREATE_MAX_ITEMS}条`))
+    }
     return apiClient.post(`/chat/sessions/${sessionId}/messages/batch/`, data)
   },
 
   updateMessage(messageId, data) {
-    return apiClient.put(`/chat/messages/${messageId}/`, data)
+    if (!messageId) {
+      return Promise.reject(new Error('消息ID不能为空'))
+    }
+    const updateData = { ...data }
+    if (updateData.content && updateData.content.length > 50000) {
+      updateData.content = updateData.content.slice(0, 50000)
+    }
+    return apiClient.put(`/chat/messages/${messageId}/`, updateData)
   },
 }
 
@@ -203,6 +317,11 @@ export const healthAPI = {
 }
 
 export async function* streamChat(request) {
+  const validation = validateChatRequest(request)
+  if (!validation.valid) {
+    throw new Error(validation.errors.join('; '))
+  }
+
   const url = `${settings.API_BASE_URL}/chat/stream/`
 
   const userStore = useUserStore()
@@ -219,7 +338,7 @@ export async function* streamChat(request) {
     response = await fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify(request),
+      body: JSON.stringify(validation.sanitizedRequest || request),
     })
 
     if (!response.ok) {

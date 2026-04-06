@@ -1,11 +1,12 @@
 import json
-import asyncio
 import time
 import uuid
+from functools import wraps
 from django.conf import settings
 from django.db import models, transaction
 from django.core.paginator import Paginator
-from django.http import StreamingHttpResponse
+from django.http import StreamingHttpResponse, HttpResponse
+from django.core.exceptions import ObjectDoesNotExist
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -31,6 +32,71 @@ from .services.chat_service import ChatService, ChatModeService
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def log_view_action(view_func):
+    """视图操作日志装饰器"""
+    @wraps(view_func)
+    def wrapper(self, request, *args, **kwargs):
+        start_time = time.time()
+        logger.info(
+            f"请求开始: {request.method} {request.get_full_path()} - "
+            f"用户: {request.user.id if request.user.is_authenticated else 'anonymous'}"
+        )
+        try:
+            result = view_func(self, request, *args, **kwargs)
+            duration = time.time() - start_time
+            logger.info(f"请求完成: 耗时 {duration:.3f}s")
+            return result
+        except Exception as e:
+            duration = time.time() - start_time
+            logger.error(f"请求失败: 耗时 {duration:.3f}s - 错误: {str(e)}", exc_info=True)
+            raise
+    return wrapper
+
+
+class BaseChatAPIView(APIView):
+    """
+    聊天模块基础API视图
+    
+    提供通用的权限控制和辅助方法，减少子类重复代码
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get_session_or_404(self, session_id, user):
+        """获取会话对象或返回404错误响应"""
+        try:
+            return ChatSession.objects.prefetch_related('messages').get(
+                session_id=session_id,
+                user=user,
+                is_deleted=False
+            )
+        except ObjectDoesNotExist:
+            return None
+
+    def get_message_or_404(self, message_id, user):
+        """获取消息对象或返回404错误响应"""
+        try:
+            return ChatMessage.objects.select_related('session').get(
+                id=message_id,
+                session__user=user,
+                is_deleted=False
+            )
+        except ObjectDoesNotExist:
+            return None
+
+    def paginate_queryset(self, queryset, page_size=20):
+        """分页查询集"""
+        paginator = Paginator(queryset, page_size)
+        page_number = self.request.query_params.get('page', 1)
+        page_obj = paginator.get_page(page_number)
+        return {
+            'items': page_obj.object_list,
+            'total': paginator.count,
+            'page': page_obj.number,
+            'page_size': page_size,
+            'total_pages': paginator.num_pages,
+        }
 
 
 class ChatView(APIView):
@@ -91,9 +157,22 @@ class ChatStreamView(APIView):
     1. 请求验证（序列化器）
     2. 将服务层的异步生成器转换为 SSE 响应
     3. 处理连接异常
+    
+    使用 asyncio.run() 在独立线程中运行异步生成器，
+    通过 queue 实现跨线程数据传递，避免事件循环冲突。
     """
     permission_classes = [IsAuthenticated]
     throttle_classes = [ChatStreamRateThrottle]
+
+    def options(self, request):
+        response = HttpResponse(status=200)
+        origin = request.headers.get('Origin', '*')
+        response['Access-Control-Allow-Origin'] = origin
+        response['Access-Control-Allow-Credentials'] = 'true'
+        response['Access-Control-Allow-Headers'] = 'authorization,content-type,x-csrftoken,x-requested-with'
+        response['Access-Control-Allow-Methods'] = 'GET,POST,OPTIONS'
+        response['Access-Control-Max-Age'] = '86400'
+        return response
 
     def post(self, request):
         serializer = ChatRequestSerializer(data=request.data)
@@ -106,54 +185,62 @@ class ChatStreamView(APIView):
         data = serializer.validated_data
         logger.info(f"收到流式聊天请求: {data['message'][:50]}...")
 
-        async def generate():
-            """异步生成器 - 使用 ChatService 处理流式聊天"""
-            try:
-                async for event in ChatService.process_stream_chat_request(data):
-                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        import queue
+        result_queue = queue.Queue()
+        sentinel = object()
 
-            except Exception as e:
-                error_msg = f"流式处理出错: {str(e)}"
-                logger.error(error_msg)
-                logger.exception(e)
+        def run_async_generator():
+            """在独立线程中运行异步生成器，通过队列传递结果"""
+            import asyncio
 
-                error_data = {
-                    "type": "error",
-                    "message": "抱歉，处理您的请求时出现错误",
-                    "error": str(e),
-                }
-                yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+            async def collect():
+                try:
+                    async for event in ChatService.process_stream_chat_request(data):
+                        result_queue.put(f"data: {json.dumps(event, ensure_ascii=False)}\n\n")
+                except Exception as e:
+                    logger.error(f"流式处理出错: {str(e)}", exc_info=True)
+                    error_data = {
+                        "type": "error",
+                        "message": "抱歉，处理您的请求时出现错误",
+                        "error": str(e),
+                    }
+                    result_queue.put(f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n")
+                finally:
+                    result_queue.put(sentinel)
 
-        def sync_generate():
-            """同步包装器 - 在同步 Django 环境中运行异步代码"""
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            client_connected = True
+            asyncio.run(collect())
 
-            try:
-                gen = generate()
-                while client_connected:
-                    try:
-                        chunk = loop.run_until_complete(gen.__anext__())
-                        yield chunk
-                    except StopAsyncIteration:
+        import threading
+        thread = threading.Thread(target=run_async_generator, daemon=True)
+        thread.start()
+
+        def generate():
+            """同步生成器 - 从队列中读取异步结果"""
+            while True:
+                try:
+                    item = result_queue.get(timeout=120)
+                    if item is sentinel:
                         break
-                    except (BrokenPipeError, ConnectionResetError, IOError) as e:
-                        logger.info(f"客户端断开连接，停止生成: {e}")
-                        client_connected = False
-                        break
-                    except Exception as e:
-                        logger.error(f"生成过程出错: {e}")
-                        raise
-            finally:
-                loop.close()
+                    yield item
+                except queue.Empty:
+                    yield ": keep-alive\n\n"
+                    continue
+                except GeneratorExit:
+                    logger.info("客户端断开连接，停止生成")
+                    break
 
         return StreamingHttpResponse(
-            sync_generate(),
+            generate(),
             content_type='text/event-stream',
             headers={
                 'Cache-Control': 'no-cache',
                 'X-Accel-Buffering': 'no',
+                'Access-Control-Allow-Origin': request.headers.get('Origin', '*'),
+                'Access-Control-Allow-Credentials': 'true',
+                'Access-Control-Allow-Headers': 'authorization,content-type,x-csrftoken,x-requested-with',
+                'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+                'Access-Control-Max-Age': '86400',
+                'X-Content-Type-Options': 'nosniff',
             }
         )
 
@@ -178,12 +265,11 @@ class ChatModesView(APIView):
         )
 
 
-class ChatSessionListView(APIView):
-    permission_classes = [IsAuthenticated]
-
+class ChatSessionListView(BaseChatAPIView):
+    @log_view_action
     def get(self, request):
         user_id = request.user.id
-        page_size = int(request.query_params.get('page_size', 20))
+        page_size = min(int(request.query_params.get('page_size', 20)), 100)
 
         cached_sessions = SecureSessionCacheService.get_user_sessions_list(user_id)
 
@@ -197,51 +283,40 @@ class ChatSessionListView(APIView):
 
                 if sessions_data:
                     logger.info(f"Returning {len(sessions_data)} cached sessions for user {user_id}")
-                    return success_response(
-                        data=sessions_data
-                    )
+                    return success_response(data=sessions_data)
             except Exception as e:
                 logger.warning(f"Cache read failed, falling back to DB: {str(e)}")
 
         sessions = ChatSession.objects.filter(
-            user=request.user
-        ).select_related(
-            'user'
+            user=request.user,
+            is_deleted=False
         ).annotate(
             message_count=models.Count('messages')
         ).order_by('-updated_at')
 
-        paginator = Paginator(sessions, page_size)
-        page_number = request.query_params.get('page', 1)
-        page_obj = paginator.get_page(page_number)
-
-        serializer = ChatSessionListSerializer(page_obj.object_list, many=True)
+        paginated_data = self.paginate_queryset(sessions, page_size)
+        serializer = ChatSessionListSerializer(paginated_data['items'], many=True)
         response_data = {
+            **paginated_data,
             'items': serializer.data,
-            'total': paginator.count,
-            'page': page_obj.number,
-            'page_size': page_size,
-            'total_pages': paginator.num_pages,
         }
 
         for item_data in response_data['items']:
             SecureSessionCacheService.cache_session(user_id, item_data)
 
-        return success_response(
-            data=response_data
-        )
+        return success_response(data=response_data)
 
 
-class ChatSessionCreateView(APIView):
-    permission_classes = [IsAuthenticated]
-
+class ChatSessionCreateView(BaseChatAPIView):
+    @log_view_action
+    @transaction.atomic
     def post(self, request):
         serializer = ChatSessionCreateSerializer(data=request.data)
         if not serializer.is_valid():
             return validation_error_response(errors=serializer.errors)
 
         session = serializer.save(user=request.user)
-        
+
         SecureSessionCacheService.cache_session(
             request.user.id,
             {
@@ -252,7 +327,7 @@ class ChatSessionCreateView(APIView):
                 'updated_at': session.updated_at.isoformat(),
             }
         )
-        
+
         return success_response(
             data=ChatSessionDetailSerializer(session).data,
             message='会话创建成功',
@@ -260,23 +335,10 @@ class ChatSessionCreateView(APIView):
         )
 
 
-class ChatSessionDetailView(APIView):
-    permission_classes = [IsAuthenticated]
-    
-    def get_object(self, session_id, user):
-        try:
-            return ChatSession.objects.select_related(
-                'user'
-            ).prefetch_related(
-                'messages'
-            ).annotate(
-                _message_count=models.Count('messages')
-            ).get(session_id=session_id, user=user)
-        except ChatSession.DoesNotExist:
-            return None
-    
+class ChatSessionDetailView(BaseChatAPIView):
+    @log_view_action
     def get(self, request, session_id):
-        session = self.get_object(session_id, request.user)
+        session = self.get_session_or_404(session_id, request.user)
         if not session:
             return error_response(
                 code=ErrorCode.NOT_FOUND,
@@ -287,8 +349,10 @@ class ChatSessionDetailView(APIView):
         serializer = ChatSessionDetailSerializer(session)
         return success_response(data=serializer.data)
 
+    @log_view_action
+    @transaction.atomic
     def put(self, request, session_id):
-        session = self.get_object(session_id, request.user)
+        session = self.get_session_or_404(session_id, request.user)
         if not session:
             return error_response(
                 code=ErrorCode.NOT_FOUND,
@@ -297,20 +361,18 @@ class ChatSessionDetailView(APIView):
             )
 
         serializer = ChatSessionUpdateSerializer(session, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return success_response(
-                data=ChatSessionDetailSerializer(session).data,
-                message='会话更新成功'
-            )
-        
-        return validation_error_response(
-            errors=serializer.errors,
-            message='更新参数错误'
+        if not serializer.is_valid():
+            return validation_error_response(errors=serializer.errors, message='更新参数错误')
+
+        serializer.save()
+        return success_response(
+            data=ChatSessionDetailSerializer(session).data,
+            message='会话更新成功'
         )
 
+    @log_view_action
     def delete(self, request, session_id):
-        session = self.get_object(session_id, request.user)
+        session = self.get_session_or_404(session_id, request.user)
         if not session:
             return error_response(
                 code=ErrorCode.NOT_FOUND,
@@ -320,17 +382,16 @@ class ChatSessionDetailView(APIView):
 
         session.soft_delete()
         SecureSessionCacheService.invalidate_user_session(request.user.id, session.session_id)
-        
+
         return success_response(message='会话删除成功')
 
 
-class ChatMessageCreateView(APIView):
-    permission_classes = [IsAuthenticated]
-
+class ChatMessageCreateView(BaseChatAPIView):
+    @log_view_action
+    @transaction.atomic
     def post(self, request, session_id):
-        try:
-            session = ChatSession.objects.get(session_id=session_id, user=request.user)
-        except ChatSession.DoesNotExist:
+        session = self.get_session_or_404(session_id, request.user)
+        if not session:
             return error_response(
                 code=ErrorCode.NOT_FOUND,
                 message='会话不存在',
@@ -342,7 +403,7 @@ class ChatMessageCreateView(APIView):
             return validation_error_response(errors=serializer.errors)
 
         message = serializer.save(session=session, role='user')
-        
+
         return success_response(
             data=ChatMessageSerializer(message).data,
             message='消息发送成功',
@@ -350,13 +411,11 @@ class ChatMessageCreateView(APIView):
         )
 
 
-class ChatMessageBatchCreateView(APIView):
-    permission_classes = [IsAuthenticated]
-
+class ChatMessageBatchCreateView(BaseChatAPIView):
+    @log_view_action
     def post(self, request, session_id):
-        try:
-            session = ChatSession.objects.get(session_id=session_id, user=request.user)
-        except ChatSession.DoesNotExist:
+        session = self.get_session_or_404(session_id, request.user)
+        if not session:
             return error_response(
                 code=ErrorCode.NOT_FOUND,
                 message='会话不存在',
@@ -368,6 +427,12 @@ class ChatMessageBatchCreateView(APIView):
             return error_response(
                 code=ErrorCode.INVALID_PARAMS,
                 message='messages 字段必须是数组'
+            )
+
+        if len(messages_data) > 50:
+            return error_response(
+                code=ErrorCode.INVALID_PARAMS,
+                message='单次批量创建消息数量不能超过50条'
             )
 
         created_messages = []
@@ -388,16 +453,12 @@ class ChatMessageBatchCreateView(APIView):
         )
 
 
-class ChatMessageUpdateView(APIView):
-    permission_classes = [IsAuthenticated]
-
+class ChatMessageUpdateView(BaseChatAPIView):
+    @log_view_action
+    @transaction.atomic
     def put(self, request, message_id):
-        try:
-            message = ChatMessage.objects.select_related('session').get(
-                id=message_id, 
-                session__user=request.user
-            )
-        except ChatMessage.DoesNotExist:
+        message = self.get_message_or_404(message_id, request.user)
+        if not message:
             return error_response(
                 code=ErrorCode.NOT_FOUND,
                 message='消息不存在',
@@ -405,14 +466,11 @@ class ChatMessageUpdateView(APIView):
             )
 
         serializer = ChatMessageSerializer(message, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return success_response(
-                data=ChatMessageSerializer(message).data,
-                message='消息更新成功'
-            )
-        
-        return validation_error_response(
-            errors=serializer.errors,
-            message='更新参数错误'
+        if not serializer.is_valid():
+            return validation_error_response(errors=serializer.errors, message='更新参数错误')
+
+        serializer.save()
+        return success_response(
+            data=ChatMessageSerializer(message).data,
+            message='消息更新成功'
         )
