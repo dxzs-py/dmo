@@ -1,13 +1,14 @@
 import uuid
 from django.db import models
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from Django_xm.apps.core.base_models import AuditModel
 
 
 class ChatSession(AuditModel):
     session_id = models.CharField(
-        max_length=100, 
-        unique=True, 
+        max_length=100,
+        unique=True,
         db_index=True,
         verbose_name='会话ID'
     )
@@ -38,6 +39,13 @@ class ChatSession(AuditModel):
         indexes = [
             models.Index(fields=['created_at']),
             models.Index(fields=['user', 'created_at']),
+            models.Index(fields=['mode']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['session_id'],
+                name='unique_session_id'
+            )
         ]
 
     def __str__(self):
@@ -47,9 +55,17 @@ class ChatSession(AuditModel):
         from django.urls import reverse
         return reverse('chat:chat')
 
+    def clean(self):
+        super().clean()
+        if self.title and len(self.title.strip()) == 0:
+            raise ValidationError({'title': '会话标题不能为空'})
+        if self.mode and len(self.mode) > 50:
+            raise ValidationError({'mode': '模式标识不能超过50个字符'})
+
     def save(self, *args, **kwargs):
         if not self.session_id:
             self.session_id = str(uuid.uuid4())
+        self.full_clean()
         super().save(*args, **kwargs)
 
 
@@ -57,28 +73,33 @@ class ChatMessage(AuditModel):
     ROLE_USER = 'user'
     ROLE_ASSISTANT = 'assistant'
     ROLE_SYSTEM = 'system'
-    
+
     ROLE_CHOICES = [
         (ROLE_USER, '用户'),
         (ROLE_ASSISTANT, '助手'),
         (ROLE_SYSTEM, '系统'),
     ]
-    
+
+    CONTENT_MAX_LENGTH = 50000
+
     session = models.ForeignKey(
-        ChatSession, 
-        on_delete=models.CASCADE, 
+        ChatSession,
+        on_delete=models.CASCADE,
         related_name='messages',
         db_index=True,
         verbose_name='会话'
     )
     role = models.CharField(
-        max_length=20, 
+        max_length=20,
         choices=ROLE_CHOICES,
         default=ROLE_USER,
         db_index=True,
         verbose_name='角色'
     )
-    content = models.TextField(blank=True, verbose_name='内容')
+    content = models.TextField(
+        blank=True,
+        verbose_name='内容'
+    )
     sources = models.JSONField(
         default=list,
         blank=True,
@@ -125,11 +146,29 @@ class ChatMessage(AuditModel):
         indexes = [
             models.Index(fields=['session', 'created_at']),
             models.Index(fields=['role']),
+            models.Index(fields=['session', 'role', 'created_at']),
         ]
 
     def __str__(self):
-        return f"{self.role}: {self.content[:50]}..."
+        content_preview = self.content[:50] if self.content else ''
+        return f"{self.role}: {content_preview}..."
 
     def get_absolute_url(self):
         from django.urls import reverse
         return reverse('chat:chat')
+
+    def clean(self):
+        super().clean()
+        if self.content and len(self.content) > self.CONTENT_MAX_LENGTH:
+            raise ValidationError({
+                'content': f'内容长度不能超过{self.CONTENT_MAX_LENGTH}个字符'
+            })
+        if self.role not in [choice[0] for choice in self.ROLE_CHOICES]:
+            raise ValidationError({'role': '无效的角色类型'})
+        if self.current_version < 0:
+            raise ValidationError({'current_version': '版本索引不能为负数'})
+
+    def save(self, *args, **kwargs):
+        if self.content:
+            self.content = self.content[:self.CONTENT_MAX_LENGTH]
+        super().save(*args, **kwargs)

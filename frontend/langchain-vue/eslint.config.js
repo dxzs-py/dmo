@@ -26,5 +26,11 @@ export default defineConfig([
 
   ...pluginOxlint.buildFromOxlintConfigFile('.oxlintrc.json'),
 
+  {
+    rules: {
+      'no-empty': ['error', { allowEmptyCatch: true }],
+    },
+  },
+
   skipFormatting,
 ])

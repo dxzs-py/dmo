@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from django.http import FileResponse
+from django.db import transaction
 
 from Django_xm.utils.responses import success_response, error_response, not_found_response
 from Django_xm.utils.error_codes import ErrorCode
@@ -37,6 +38,7 @@ class DeepResearchStartView(APIView):
     """
     permission_classes = [IsAuthenticated]
     
+    @transaction.atomic
     def post(self, request):
         serializer = ResearchStartSerializer(data=request.data)
         if not serializer.is_valid():
@@ -119,7 +121,7 @@ class DeepResearchStatusView(APIView):
             cached_status = get_task_status(task_id)
             
             try:
-                task = ResearchTask.objects.get(task_id=task_id)
+                task = ResearchTask.objects.select_related('created_by').get(task_id=task_id)
                 
                 response_data = {
                     'task_id': task.task_id,
@@ -162,7 +164,7 @@ class DeepResearchResultView(APIView):
     def get(self, request, task_id):
         try:
             try:
-                task = ResearchTask.objects.get(task_id=task_id)
+                task = ResearchTask.objects.select_related('created_by').get(task_id=task_id)
                 
                 if task.status != 'completed':
                     status_msg = '研究任务尚未完成' if task.status == 'running' else '研究任务失败'
@@ -214,7 +216,7 @@ class DeepResearchFilesView(APIView):
     def get(self, request, task_id):
         try:
             try:
-                task = ResearchTask.objects.get(task_id=task_id)
+                task = ResearchTask.objects.select_related('created_by').get(task_id=task_id)
                 
                 cached_status = get_task_status(task_id)
                 result = cached_status.get('result', {}) if cached_status else {}
@@ -256,7 +258,7 @@ class DeepResearchFileDownloadView(APIView):
     def get(self, request, task_id, filename):
         try:
             try:
-                task = ResearchTask.objects.get(task_id=task_id)
+                task = ResearchTask.objects.select_related('created_by').get(task_id=task_id)
                 
                 logger.info(f"读取研究文件：{task_id}/{filename}")
                 

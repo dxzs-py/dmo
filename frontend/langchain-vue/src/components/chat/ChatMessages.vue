@@ -25,10 +25,13 @@ const emit = defineEmits(['regenerate', 'suggestionClick', 'scrollChange'])
 const messagesContainer = ref(null)
 const isScrolled = ref(false)
 
-const scrollToBottom = () => {
+const scrollToBottom = (behavior = 'smooth') => {
   nextTick(() => {
     if (messagesContainer.value) {
-      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+      messagesContainer.value.scrollTo({
+        top: messagesContainer.value.scrollHeight,
+        behavior: props.messages.length > 50 ? 'instant' : behavior,
+      })
     }
   })
 }
@@ -44,7 +47,7 @@ const handleScroll = () => {
 
 onMounted(() => {
   if (messagesContainer.value) {
-    messagesContainer.value.addEventListener('scroll', handleScroll)
+    messagesContainer.value.addEventListener('scroll', handleScroll, { passive: true })
   }
 })
 
@@ -59,9 +62,7 @@ watch(() => props.messages, () => {
 }, { deep: true })
 
 watch(() => props.isStreaming, (newVal) => {
-  if (newVal) {
-    scrollToBottom()
-  }
+  if (newVal) scrollToBottom()
 })
 
 const showLoadingIndicator = computed(() => {
@@ -108,9 +109,14 @@ const handleSuggestionClick = (suggestion) => {
         </div>
       </div>
       
-      <div v-else class="messages-list">
-        <TransitionGroup name="slide-up">
-          <div v-for="(msg, msgIndex) in messages" :key="msg.id || msgIndex" class="message-wrapper">
+      <div v-else class="messages-list" role="log" aria-live="polite">
+        <TransitionGroup name="slide-up" tag="div" class="messages-list-inner">
+          <div 
+            v-for="(msg, msgIndex) in messages" 
+            :key="msg.id || msgIndex" 
+            class="message-wrapper"
+            style="content-visibility: auto; contain-intrinsic-size: auto 200px;"
+          >
             <ChatMessage
               :message="msg"
               :index="msgIndex"
@@ -152,6 +158,7 @@ const handleSuggestionClick = (suggestion) => {
 .messages-container {
   height: 100%;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 24px;
 }
 
@@ -184,8 +191,14 @@ const handleSuggestionClick = (suggestion) => {
   margin: 0 auto;
 }
 
+.messages-list-inner {
+  display: flex;
+  flex-direction: column;
+}
+
 .message-wrapper {
   margin-bottom: 24px;
+  will-change: transform;
 }
 
 .message {

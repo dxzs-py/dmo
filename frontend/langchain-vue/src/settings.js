@@ -1,4 +1,9 @@
-const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8000/api'
+const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8000/api/v1'
+
+const API_VERSIONS = {
+  v1: '/api/v1',
+  current: '/api/v1'
+}
 
 const getApiBaseUrl = () => {
   if (typeof window !== 'undefined') {
@@ -20,10 +25,20 @@ const settings = {
       localStorage.setItem('lc-studylab-api-url', value)
     }
   },
-  
+
+  API_VERSIONS,
+
   HOME_PAGE: {
     REDIRECT_TO_CHAT: false,
     ENABLE_QUICK_START: true
+  },
+
+  API_VALIDATION: {
+    MESSAGE_MAX_LENGTH: 10000,
+    CHAT_HISTORY_MAX_ITEMS: 50,
+    SESSION_ID_PATTERN: /^[a-f0-9-]{36}$/,
+    ALLOWED_MODES: ['default', 'basic-agent', 'advanced-agent', 'research-agent', 'rag-agent'],
+    BATCH_CREATE_MAX_ITEMS: 50,
   }
 }
 
