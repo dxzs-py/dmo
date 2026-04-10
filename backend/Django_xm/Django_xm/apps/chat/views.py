@@ -402,7 +402,9 @@ class ChatMessageCreateView(BaseChatAPIView):
         if not serializer.is_valid():
             return validation_error_response(errors=serializer.errors)
 
-        message = serializer.save(session=session, role='user')
+        # 使用请求中的 role，如果没有提供则默认使用 'user'
+        role = request.data.get('role', 'user')
+        message = serializer.save(session=session, role=role)
 
         return success_response(
             data=ChatMessageSerializer(message).data,

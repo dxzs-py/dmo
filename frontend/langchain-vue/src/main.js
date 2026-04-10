@@ -15,13 +15,13 @@ import ElementPlus from 'element-plus'
 // 引入 Element Plus 核心样式
 import 'element-plus/dist/index.css'
 // 引入全局样式
-import '../static/css/reset.css'
+import './assets/css/reset.css'
 // 引入主题样式
-import '../static/css/theme.css'
+import './assets/css/theme.css'
 // 引入动画样式
-import '../static/css/animations.css'
+import './assets/css/animations.css'
 // 引入响应式样式
-import '../static/css/responsive.css'
+import './assets/css/responsive.css'
 
 const app = createApp(App)
 

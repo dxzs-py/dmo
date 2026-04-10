@@ -280,6 +280,16 @@ export const ragAPI = {
   buildIndex(data) {
     return apiClient.post('/rag/index/', data)
   },
+
+  uploadDocument(indexName, file) {
+    const formData = new FormData()
+    formData.append('file', file)
+    return apiClient.post(`/rag/index/${indexName}/upload/`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    })
+  },
 }
 
 export const workflowAPI = {

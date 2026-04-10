@@ -74,9 +74,15 @@ function transformBackendMessageToFrontend(msg) {
   
   const msgObj = msg || {}
   
+  // 确保角色正确处理
+  let role = msgObj.role
+  if (!role || !['user', 'assistant', 'system'].includes(role)) {
+    role = 'user' // 默认设为 user
+  }
+  
   return {
     id: msgObj.id?.toString() || generateId(),
-    role: msgObj.role || 'assistant',
+    role: role,
     content: msgObj.content || '',
     sources: msgObj.sources || [],
     plan: msgObj.plan || null,
