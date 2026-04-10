@@ -1,4 +1,4 @@
-const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8000/api/v1'
+const DEFAULT_API_BASE_URL = '/api/v1'
 
 const API_VERSIONS = {
   v1: '/api/v1',
@@ -8,7 +8,7 @@ const API_VERSIONS = {
 const getApiBaseUrl = () => {
   if (typeof window !== 'undefined') {
     const saved = localStorage.getItem('lc-studylab-api-url')
-    if (saved) {
+    if (saved && !saved.startsWith('/api')) {
       return saved
     }
   }
@@ -16,7 +16,7 @@ const getApiBaseUrl = () => {
 }
 
 const settings = {
-  Host: 'http://127.0.0.1:8000',
+  Host: '',
   get API_BASE_URL() {
     return getApiBaseUrl()
   },

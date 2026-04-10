@@ -25,6 +25,7 @@ from django.http import StreamingHttpResponse
 
 from Django_xm.utils.responses import success_response, error_response, not_found_response, validation_error_response
 from Django_xm.utils.error_codes import ErrorCode
+from Django_xm.apps.core.config import settings as app_cfg
 
 from .serializers import (
     RagQuerySerializer,
@@ -260,6 +261,7 @@ class RAGDocumentUploadView(APIView):
     """
     上传文档到索引
     """
+    permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser)
 
     def post(self, request, name):
@@ -278,7 +280,7 @@ class RAGDocumentUploadView(APIView):
 
             uploaded_file = request.FILES['file']
 
-            upload_dir = Path(django_settings.MEDIA_ROOT) / 'rag_uploads' / name
+            upload_dir = Path(app_cfg.data_uploads_path) / name
             upload_dir.mkdir(parents=True, exist_ok=True)
 
             file_path = upload_dir / uploaded_file.name
@@ -321,6 +323,7 @@ class RAGDocumentAddDirectoryView(APIView):
     """
     添加目录到索引
     """
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, name):
         try:
@@ -380,6 +383,7 @@ class RAGQueryView(APIView):
 
     基于索引内容回答问题。
     """
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         serializer = RagQuerySerializer(data=request.data)
@@ -434,6 +438,7 @@ class RAGSearchView(APIView):
     """
     纯检索接口（不生成回答）
     """
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         serializer = SearchRequestSerializer(data=request.data)

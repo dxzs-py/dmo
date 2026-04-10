@@ -21,12 +21,13 @@ from django.http import JsonResponse
 from django.conf import settings
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 from Django_xm.apps.core.views import health_check as core_health_check, request_monitor
+from Django_xm.apps.core.config import settings as app_cfg
 
 
 def root_info(request):
     return JsonResponse({
-        "name": settings.APP_NAME,
-        "version": settings.APP_VERSION,
+        "name": app_cfg.app_name,
+        "version": app_cfg.app_version,
         "description": "LC-StudyLab 智能学习 & 研究助手 API",
         "api_versions": {
             "v1": "/api/v1/",

@@ -36,6 +36,38 @@
             </el-button>
           </el-form-item>
         </el-form>
+        
+        <el-divider />
+        
+        <div class="upload-section">
+          <h4 class="upload-title">上传文档到索引</h4>
+          <el-upload
+            ref="uploadRef"
+            :auto-upload="false"
+            :on-change="handleFileChange"
+            :show-file-list="true"
+            :limit="1"
+            accept=".txt,.md,.pdf,.doc,.docx"
+          >
+            <el-button type="primary">选择文件</el-button>
+            <template #tip>
+              <div class="el-upload__tip">
+                支持上传 .txt, .md, .pdf, .doc, .docx 格式文件，选中后点击「上传并索引」
+              </div>
+            </template>
+          </el-upload>
+          <div class="upload-actions">
+            <el-button 
+              type="success" 
+              :disabled="!selectedFile || !queryForm.index_name" 
+              :loading="isUploading"
+              @click="handleUpload"
+            >
+              上传并索引
+            </el-button>
+            <el-button @click="clearUpload">清除</el-button>
+          </div>
+        </div>
       </el-card>
       
       <el-alert
@@ -85,9 +117,12 @@ import { ElMessage, ElAlert } from 'element-plus'
 
 const isLoading = ref(false)
 const isLoadingIndexes = ref(false)
+const isUploading = ref(false)
 const result = ref(null)
 const errorMessage = ref('')
 const availableIndexes = ref([{ name: 'test_index' }])
+const uploadRef = ref(null)
+const selectedFile = ref(null)
 
 const queryForm = reactive({
   index_name: 'test_index',
@@ -181,6 +216,46 @@ const executeQuery = async () => {
   }
 }
 
+const handleFileChange = (file) => {
+  selectedFile.value = file.raw
+}
+
+const clearUpload = () => {
+  selectedFile.value = null
+  if (uploadRef.value) {
+    uploadRef.value.clearFiles()
+  }
+}
+
+const handleUpload = async () => {
+  if (!selectedFile.value) {
+    ElMessage.warning('请先选择文件')
+    return
+  }
+  if (!queryForm.index_name) {
+    ElMessage.warning('请先选择索引')
+    return
+  }
+
+  isUploading.value = true
+  try {
+    const response = await ragAPI.uploadDocument(queryForm.index_name, selectedFile.value)
+    ElMessage.success('文件上传并索引成功！')
+    clearUpload()
+  } catch (error) {
+    console.error('上传失败:', error)
+    let errorMsg = '上传失败'
+    if (error.response?.data?.message) {
+      errorMsg = error.response.data.message
+    } else if (error.response?.status === 404) {
+      errorMsg = '索引不存在'
+    }
+    ElMessage.error(errorMsg)
+  } finally {
+    isUploading.value = false
+  }
+}
+
 onMounted(() => {
   fetchIndexes()
 })
@@ -222,5 +297,22 @@ onMounted(() => {
 
 .error {
   margin-top: 20px;
+}
+
+.upload-section {
+  margin-top: 20px;
+}
+
+.upload-title {
+  margin: 0 0 16px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.upload-actions {
+  margin-top: 16px;
+  display: flex;
+  gap: 12px;
 }
 </style>

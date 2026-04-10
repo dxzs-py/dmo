@@ -2,36 +2,51 @@
 Django settings for Django_xm project - 生产环境配置
 
 重要: 本文件为生产环境专用，请勿在开发环境使用!
-切换方式: 修改 settings/__init__.py 中的 import 目标
+切换方式: 修改 settings/__init__.py 中的 DJANGO_ENV 环境变量
+
+配置架构（迁移后）:
+  - 真相源: apps/core/config.py (Pydantic Settings, 读取 .env / 环境变量)
+  - 本文件: 仅保留 Django 框架原生设置 + 从 Pydantic 注入所需值
 
 安全检查清单:
 - DEBUG=False (必须)
 - SECRET_KEY 从环境变量读取 (必须)
 - ALLOWED_HOSTS 配置正确域名 (必须)
-- 数据库连接池配置 (推荐)
 - 安全响应头已启用 (已通过中间件实现)
 - CSRF/Clickjacking 保护已启用 (已通过中间件实现)
 """
+
 import os
 from pathlib import Path
-from dotenv import load_dotenv
 from datetime import timedelta
+from dotenv import load_dotenv
 
 load_dotenv()
 
+# ==================== 导入统一配置（Django 无关，可安全前置导入）====================
+import sys
+_project_root = Path(__file__).resolve().parent.parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
+from Django_xm.apps.core.config import settings as app_cfg
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.environ.get("SECRET_KEY")
+# ==================== 核心安全配置（从 Pydantic 注入）====================
+SECRET_KEY = os.environ.get("SECRET_KEY", app_cfg.secret_key)
 if not SECRET_KEY:
     raise ValueError("SECRET_KEY environment variable is not set! 生产环境必须设置SECRET_KEY")
 
 DEBUG = False
 
-ALLOWED_HOSTS = os.environ.get(
-    "ALLOWED_HOSTS",
-    "localhost,127.0.0.1"
-).split(",")
+ALLOWED_HOSTS = (
+    [h.strip() for h in app_cfg.allowed_hosts.split(",") if h.strip()]
+    if app_cfg.allowed_hosts
+    else ["localhost", "127.0.0.1"]
+)
 
+# ==================== 应用注册 ====================
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -67,22 +82,16 @@ MIDDLEWARE = [
     "Django_xm.apps.core.middleware.SecurityHeadersMiddleware",
 ]
 
-CORS_ALLOWED_ORIGINS = os.environ.get(
-    "CORS_ALLOWED_ORIGINS",
-    ""
-).split(",") if os.environ.get("CORS_ALLOWED_ORIGINS") else []
+CORS_ALLOWED_ORIGINS = (
+    [o.strip() for o in app_cfg.cors_allowed_origins.split(",") if o.strip()]
+    if app_cfg.cors_allowed_origins and app_cfg.cors_allowed_origins.strip()
+    else []
+)
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 CORS_ALLOW_HEADERS = [
-    "accept",
-    "accept-encoding",
-    "authorization",
-    "content-type",
-    "dnt",
-    "origin",
-    "user-agent",
-    "x-csrftoken",
-    "x-requested-with",
+    "accept", "accept-encoding", "authorization", "content-type",
+    "dnt", "origin", "user-agent", "x-csrftoken", "x-requested-with",
 ]
 CORS_EXPOSE_HEADERS = ["content-disposition", "X-Captcha-Key"]
 
@@ -105,14 +114,15 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "Django_xm.wsgi.application"
 
+# ==================== 数据库（生产环境不持久连接）====================
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.mysql",
-        "HOST": os.environ.get("DB_HOST", "127.0.0.1"),
-        "PORT": int(os.environ.get("DB_PORT", 3306)),
+        "HOST": os.environ.get("DB_HOST", app_cfg.db_host),
+        "PORT": int(os.environ.get("DB_PORT", str(app_cfg.db_port))),
         "USER": os.environ.get("DB_USER"),
         "PASSWORD": os.environ.get("DB_PASSWORD"),
-        "NAME": os.environ.get("DB_NAME"),
+        "NAME": os.environ.get("DB_NAME", app_cfg.db_name),
         "OPTIONS": {
             "charset": "utf8mb4",
             "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
@@ -120,7 +130,6 @@ DATABASES = {
             "read_timeout": 30,
             "write_timeout": 30,
         },
-        "CONN_MAX_AGE": 60,
         "CONN_HEALTH_CHECKS": True,
     }
 }
@@ -139,6 +148,7 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
+# ==================== 生产安全头 ====================
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
@@ -146,43 +156,45 @@ SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax'
 CSRF_COOKIE_SAMESITE = 'Lax'
-CSRF_TRUSTED_ORIGINS = os.environ.get(
-    "CSRF_TRUSTED_ORIGINS",
-    ""
-).split(",") if os.environ.get("CSRF_TRUSTED_ORIGINS") else []
+CSRF_TRUSTED_ORIGINS = (
+    [o.strip() for o in app_cfg.csrf_trusted_origins.split(",") if o.strip()]
+    if app_cfg.csrf_trusted_origins and app_cfg.csrf_trusted_origins.strip()
+    else []
+)
 
 LANGUAGE_CODE = "zh-hans"
 TIME_ZONE = "Asia/Shanghai"
 USE_I18N = True
 USE_TZ = True
 
+# ==================== 缓存（从 Pydantic 注入 Redis 配置）====================
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379/1'),
+        'LOCATION': os.environ.get('REDIS_URL', app_cfg.redis_url),
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
             'CONNECTION_POOL_KWARGS': {
                 'max_connections': 50,
                 'retry_on_timeout': True,
             },
-            'PASSWORD': os.environ.get('REDIS_PASSWORD', ''),
+            'PASSWORD': os.environ.get('REDIS_PASSWORD', app_cfg.redis_password),
         },
-        'TIMEOUT': 300,
+        'TIMEOUT': app_cfg.redis_default_timeout,
         'KEY_PREFIX': 'langchain_xm',
     },
     'chat_sessions': {
         'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379/2'),
+        'LOCATION': os.environ.get('REDIS_CHAT_URL', app_cfg.redis_chat_url),
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
             'CONNECTION_POOL_KWARGS': {
                 'max_connections': 100,
                 'retry_on_timeout': True,
             },
-            'PASSWORD': os.environ.get('REDIS_PASSWORD', ''),
+            'PASSWORD': os.environ.get('REDIS_PASSWORD', app_cfg.redis_password),
         },
-        'TIMEOUT': 3600,
+        'TIMEOUT': app_cfg.redis_chat_timeout,
         'KEY_PREFIX': 'chat_session',
     }
 }
@@ -200,6 +212,7 @@ AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
 ]
 
+# ==================== DRF 配置（生产：仅 JWT + JSON）====================
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
@@ -227,9 +240,10 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 20,
 }
 
+# ==================== JWT（生产：短 Access Token）====================
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=app_cfg.jwt_access_token_lifetime_minutes),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=app_cfg.jwt_refresh_token_lifetime_days),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'ALGORITHM': 'HS256',
@@ -239,14 +253,15 @@ SIMPLE_JWT = {
 }
 
 SPECTACULAR_SETTINGS = {
-    "TITLE": "LC-StudyLab API",
-    "DESCRIPTION": "LC-StudyLab 智能学习 & 研究助手 API",
-    "VERSION": "1.0.0",
+    "TITLE": f"{app_cfg.app_name} API",
+    "DESCRIPTION": f"{app_cfg.app_name} 智能学习 & 研究助手 API",
+    "VERSION": app_cfg.app_version,
     "SERVE_INCLUDE_SCHEMA": False,
     "CONTACT": {"name": "API Support"},
     "LICENSE": {"name": "MIT License"},
 }
 
+# ==================== 日志（生产：仅文件 + WARNING 级别）====================
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -287,61 +302,39 @@ LOGGING = {
     },
 }
 
-APP_NAME = "LC-StudyLab"
-APP_VERSION = "1.0.0"
-
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_API_BASE = os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
-OPENAI_TEMPERATURE = float(os.environ.get("OPENAI_TEMPERATURE", "0.7"))
-OPENAI_STREAMING = os.environ.get("OPENAI_STREAMING", "True").lower() == "true"
-OPENAI_MAX_TOKENS = int(os.environ.get("OPENAI_MAX_TOKENS")) if os.environ.get("OPENAI_MAX_TOKENS") else None
-
-TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
-TAVILY_MAX_RESULTS = int(os.environ.get("TAVILY_MAX_RESULTS", "5"))
-AMAP_KEY = os.environ.get("AMAP_KEY", "")
-
-SERVER_HOST = os.environ.get("SERVER_HOST", "0.0.0.0")
-SERVER_PORT = int(os.environ.get("SERVER_PORT", "8000"))
-SERVER_RELOAD = False
-
-LOG_LEVEL = os.environ.get("LOG_LEVEL", "WARNING")
-LOG_FILE = os.environ.get("LOG_FILE", "logs/app.log")
-
-VECTOR_STORE_PATH = os.environ.get("VECTOR_STORE_PATH", str("INDEXES_DIR"))
-VECTOR_STORE_TYPE = os.environ.get("VECTOR_STORE_TYPE", "faiss")
-EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
-EMBEDDING_BATCH_SIZE = int(os.environ.get("EMBEDDING_BATCH_SIZE", "100"))
-
-CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", "1000"))
-CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", "200"))
-
-RETRIEVER_SEARCH_TYPE = os.environ.get("RETRIEVER_SEARCH_TYPE", "similarity")
-RETRIEVER_K = int(os.environ.get("RETRIEVER_K", "4"))
-RETRIEVER_SCORE_THRESHOLD = float(os.environ.get("RETRIEVER_SCORE_THRESHOLD", "0.5"))
-RETRIEVER_FETCH_K = int(os.environ.get("RETRIEVER_FETCH_K", "20"))
-
-AGENT_MAX_ITERATIONS = int(os.environ.get("AGENT_MAX_ITERATIONS", "15"))
-AGENT_MAX_EXECUTION_TIME = float(os.environ.get("AGENT_MAX_EXECUTION_TIME")) if os.environ.get("AGENT_MAX_EXECUTION_TIME") else None
-
-RAG_AGENT_MAX_ITERATIONS = int(os.environ.get("RAG_AGENT_MAX_ITERATIONS", "10"))
-RAG_AGENT_RETURN_SOURCE_DOCUMENTS = os.environ.get("RAG_AGENT_RETURN_SOURCE_DOCUMENTS", "True").lower() == "true"
-
-DATA_DIR = BASE_DIR / "data"
-DOCUMENTS_DIR = DATA_DIR / "documents"
-INDEXES_DIR = DATA_DIR / "indexes"
-UPLOADS_DIR = DATA_DIR / "uploads"
-
-for directory in [DATA_DIR, DOCUMENTS_DIR, INDEXES_DIR, UPLOADS_DIR]:
-    directory.mkdir(parents=True, exist_ok=True)
-
-CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://127.0.0.1:6379/3')
-CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://127.0.0.1:6379/4')
+# ==================== Celery（从 Pydantic 注入）====================
+CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', app_cfg.celery_broker_url)
+CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', app_cfg.celery_result_backend)
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
-CELERY_TASK_TIME_LIMIT = 1800
+CELERY_TASK_TIME_LIMIT = app_cfg.celery_task_time_limit
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
-CELERY_WORKER_MAX_TASKS_PER_CHILD = 1000
+CELERY_WORKER_MAX_TASKS_PER_CHILD = app_cfg.celery_worker_max_tasks_per_child
+
+# ==================== 文件上传限制（从 Pydantic 注入）====================
+_upload_limit = app_cfg.upload_max_memory_size_mb * 1024 * 1024
+DATA_UPLOAD_MAX_MEMORY_SIZE = _upload_limit
+FILE_UPLOAD_MAX_MEMORY_SIZE = _upload_limit
+FILE_UPLOAD_PERMISSIONS = 0o644
+FILE_UPLOAD_DIRECTORY_PERMISSIONS = 0o755
+
+# ==================== 邮件（从 Pydantic 注入）====================
+EMAIL_BACKEND = app_cfg.email_backend
+DEFAULT_FROM_EMAIL = app_cfg.default_from_email
+SERVER_EMAIL = app_cfg.default_from_email
+
+# ==================== 向后兼容（从 Pydantic 注入）====================
+APP_NAME = app_cfg.app_name
+APP_VERSION = app_cfg.app_version
+
+# ==================== 数据目录初始化（从 Pydantic 注入路径）====================
+DATA_DIR = BASE_DIR / app_cfg.data_dir
+DOCUMENTS_DIR = BASE_DIR / app_cfg.data_documents_path
+INDEXES_DIR = BASE_DIR / app_cfg.vector_store_path
+UPLOADS_DIR = BASE_DIR / app_cfg.data_uploads_path
+
+for directory in [DATA_DIR, DOCUMENTS_DIR, INDEXES_DIR, UPLOADS_DIR]:
+    directory.mkdir(parents=True, exist_ok=True)
