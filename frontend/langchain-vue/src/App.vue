@@ -4,21 +4,29 @@ import { useRoute } from 'vue-router'
 import AppSidebar from './components/AppSidebar.vue'
 import AppHeader from './components/AppHeader.vue'
 import { useThemeStore } from './stores/theme'
+import { useSessionStore } from './stores/session'
+import { useUserStore } from './stores/user'
+import { useThrottle } from './composables/useDebounce'
 
 const route = useRoute()
 const themeStore = useThemeStore()
+const sessionStore = useSessionStore()
+const userStore = useUserStore()
 const isCollapse = ref(false)
 const isScrolled = ref(false)
 
 const isChatUIRoute = computed(() => route.path === '/chat-ui')
 
-const handleScroll = (event) => {
+const { throttledFn: handleScrollThrottled } = useThrottle((event) => {
   const scrollTop = event.target.scrollTop
   isScrolled.value = scrollTop > 0
-}
+}, 100)
 
-onMounted(() => {
+onMounted(async () => {
   themeStore.setTheme(themeStore.theme)
+  if (userStore.isLoggedIn) {
+    await sessionStore.loadSessionsFromBackend()
+  }
 })
 </script>
 
@@ -32,7 +40,7 @@ onMounted(() => {
       <div class="content-wrapper">
         <AppSidebar v-model:collapse="isCollapse" />
         <main class="main-content" :class="{ 'sidebar-collapsed': isCollapse }">
-          <div class="scroll-container" @scroll="handleScroll">
+          <div class="scroll-container" @scroll="handleScrollThrottled">
             <router-view />
           </div>
         </main>

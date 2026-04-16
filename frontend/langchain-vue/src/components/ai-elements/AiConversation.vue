@@ -46,7 +46,7 @@ defineExpose({
 </script>
 
 <template>
-  <div class="ai-conversation" ref="containerRef">
+  <div ref="containerRef" class="ai-conversation">
     <div v-if="messages.length === 0" class="ai-conversation__empty">
       <div class="empty-icon">
         <el-icon :size="64"><ChatDotRound /></el-icon>

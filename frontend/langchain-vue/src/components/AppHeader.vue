@@ -60,7 +60,7 @@ const handleCommand = async (command) => {
           </router-link>
         </div>
 
-        <el-dropdown v-else @command="handleCommand" trigger="click">
+        <el-dropdown v-else trigger="click" @command="handleCommand">
           <div class="user-info">
             <el-avatar :size="32" :icon="User" />
             <span class="username">{{ userStore.username }}</span>

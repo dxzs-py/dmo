@@ -236,8 +236,8 @@ const getProviderStyle = (provider) => {
       :suffix-icon="disabled ? Loading : undefined"
       filterable
       :filter-method="(val) => { searchQuery = val }"
-      @visible-change="handleOpenChange"
       popper-class="model-selector-popper"
+      @visible-change="handleOpenChange"
     >
       <template #header>
         <div class="selector-header">

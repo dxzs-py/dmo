@@ -77,8 +77,8 @@ const handleDeleteSession = (sessionId, event) => {
       <el-button 
         class="collapse-btn" 
         :icon="collapse ? ArrowRight : ArrowLeft" 
-        @click="toggleCollapse"
         text
+        @click="toggleCollapse"
       />
     </div>
     
@@ -87,8 +87,8 @@ const handleDeleteSession = (sessionId, event) => {
         v-if="!collapse"
         class="new-chat-btn" 
         type="primary" 
-        @click="handleNewChat"
         :icon="Promotion"
+        @click="handleNewChat"
       >
         新建对话
       </el-button>
@@ -96,9 +96,9 @@ const handleDeleteSession = (sessionId, event) => {
         v-else
         class="new-chat-btn" 
         type="primary" 
-        @click="handleNewChat"
         :icon="Promotion"
         circle
+        @click="handleNewChat"
       />
       
       <el-divider />
@@ -106,9 +106,9 @@ const handleDeleteSession = (sessionId, event) => {
       <div class="nav-menu">
         <el-menu
           :default-active="route.path"
-          @select="handleMenuSelect"
           :ellipsis="false"
           :collapse="collapse"
+          @select="handleMenuSelect"
         >
           <el-menu-item v-for="item in menuItems" :key="item.index" :index="item.index">
             <el-icon><component :is="item.icon" /></el-icon>

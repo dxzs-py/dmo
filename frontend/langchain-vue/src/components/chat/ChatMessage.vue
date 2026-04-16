@@ -7,30 +7,46 @@ import Sources from '../Sources.vue'
 import Plan from '../Plan.vue'
 import { AiReasoning } from '../ai-elements'
 
-defineProps({
+const props = defineProps({
   message: {
     type: Object,
     required: true,
+    validator: (value) => {
+      if (!value || typeof value !== 'object') return false
+      const validRoles = ['user', 'assistant', 'system']
+      if (!validRoles.includes(value.role)) {
+        console.warn(`ChatMessage: invalid role "${value.role}"`)
+        return false
+      }
+      return true
+    }
   },
   index: {
     type: Number,
     required: true,
+    validator: (value) => value >= 0
   },
   isLast: {
     type: Boolean,
-    default: false,
+    default: false
   },
   isLoading: {
     type: Boolean,
-    default: false,
+    default: false
   },
   isStreaming: {
     type: Boolean,
-    default: false,
-  },
+    default: false
+  }
 })
 
-defineEmits(['regenerate'])
+const emit = defineEmits({
+  regenerate: (index) => typeof index === 'number' && index >= 0
+})
+
+function handleRegenerate() {
+  emit('regenerate', props.index)
+}
 </script>
 
 <template>
@@ -45,12 +61,12 @@ defineEmits(['regenerate'])
           {{ message.role === 'user' ? '用户' : 'AI助手' }}
         </div>
         <div v-if="message.role === 'assistant' && !isLoading" class="message-actions">
-          <el-button 
-            link 
-            size="small" 
+          <el-button
+            link
+            size="small"
             :icon="Refresh"
-            @click="emit('regenerate', index)"
             title="重新生成"
+            @click="handleRegenerate"
           />
         </div>
       </div>

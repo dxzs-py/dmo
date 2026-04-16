@@ -81,7 +81,7 @@ async function handleSave() {
                 编辑信息
               </el-button>
               <template v-else>
-                <el-button type="primary" @click="handleSave" :loading="loading">
+                <el-button type="primary" :loading="loading" @click="handleSave">
                   保存
                 </el-button>
                 <el-button @click="editMode = false; loadUserInfo()">

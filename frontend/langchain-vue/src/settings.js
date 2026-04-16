@@ -37,7 +37,7 @@ const settings = {
     MESSAGE_MAX_LENGTH: 10000,
     CHAT_HISTORY_MAX_ITEMS: 50,
     SESSION_ID_PATTERN: /^[a-f0-9-]{36}$/,
-    ALLOWED_MODES: ['default', 'basic-agent', 'advanced-agent', 'research-agent', 'rag-agent'],
+    ALLOWED_MODES: ['basic-agent', 'rag', 'workflow', 'deep-research', 'guarded'],
     BATCH_CREATE_MAX_ITEMS: 50,
   }
 }

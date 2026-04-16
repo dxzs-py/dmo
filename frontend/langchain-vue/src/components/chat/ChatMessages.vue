@@ -1,33 +1,109 @@
 <script setup>
 import { ref, watch, nextTick, computed, onMounted, onUnmounted } from 'vue'
 import { ChatDotRound, Loading } from '@element-plus/icons-vue'
+import { RecycleScroller } from 'vue-virtual-scroller'
 import ChatMessage from './ChatMessage.vue'
 import MessageVersionSelector from './MessageVersionSelector.vue'
 import { AiSuggestion, AiSuggestions } from '../ai-elements'
+import { validateMessage } from '../../types/props'
 
+/**
+ * ChatMessages组件 - 聊天消息列表容器
+ * @component
+ * @description 渲染聊天消息列表，支持虚拟滚动、加载状态、建议问题等功能
+ */
 const props = defineProps({
+  /**
+   * 消息数组
+   * @type {Array<import('../../types').ChatMessage>}
+   */
   messages: {
     type: Array,
     default: () => [],
+    validator: (value) => {
+      if (!Array.isArray(value)) return false
+      return value.every(msg => validateMessage(msg))
+    },
   },
+  /**
+   * 是否正在加载
+   * @type {boolean}
+   */
   isLoading: {
     type: Boolean,
     default: false,
   },
+  /**
+   * 是否正在流式输出
+   * @type {boolean}
+   */
   isStreaming: {
     type: Boolean,
     default: false,
   },
+  /**
+   * 最大显示消息数量（性能优化）
+   * @type {number}
+   */
+  maxVisibleMessages: {
+    type: Number,
+    default: 0,
+    validator: (value) => value >= 0,
+  },
+  /**
+   * 启用虚拟滚动（当消息超过此数量时自动启用）
+   * @type {number}
+   */
+  virtualScrollThreshold: {
+    type: Number,
+    default: 20,
+    validator: (value) => value >= 10,
+  },
 })
 
-const emit = defineEmits(['regenerate', 'suggestionClick', 'scrollChange'])
+const emit = defineEmits({
+  /**
+   * 重新生成消息事件
+   * @param {number} index - 消息索引
+   */
+  regenerate: (index) => typeof index === 'number' && index >= 0,
+  /**
+   * 点击建议问题事件
+   * @param {string} suggestion - 建议文本
+   */
+  suggestionClick: (suggestion) => typeof suggestion === 'string',
+  /**
+   * 滚动状态变化事件
+   * @param {boolean} isScrolled - 是否已滚动
+   */
+  scrollChange: (isScrolled) => typeof isScrolled === 'boolean',
+})
 
 const messagesContainer = ref(null)
+const virtualScrollerRef = ref(null)
 const isScrolled = ref(false)
+
+/**
+ * 是否启用虚拟滚动（基于消息数量动态决定）
+ */
+const shouldUseVirtualScroll = computed(() => {
+  return props.messages.length > props.virtualScrollThreshold
+})
+
+/**
+ * 预估消息项高度（用于虚拟滚动计算）
+ */
+const ITEM_SIZE = 200
 
 const scrollToBottom = (behavior = 'smooth') => {
   nextTick(() => {
-    if (messagesContainer.value) {
+    if (shouldUseVirtualScroll.value && virtualScrollerRef.value?.$el) {
+      const el = virtualScrollerRef.value.$el
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior: props.messages.length > 50 ? 'instant' : behavior,
+      })
+    } else if (messagesContainer.value) {
       messagesContainer.value.scrollTo({
         top: messagesContainer.value.scrollHeight,
         behavior: props.messages.length > 50 ? 'instant' : behavior,
@@ -37,8 +113,12 @@ const scrollToBottom = (behavior = 'smooth') => {
 }
 
 const handleScroll = () => {
-  if (!messagesContainer.value) return
-  const isCurrentlyScrolled = messagesContainer.value.scrollTop > 0
+  const container = shouldUseVirtualScroll.value 
+    ? virtualScrollerRef.value?.$el 
+    : messagesContainer.value
+  
+  if (!container) return
+  const isCurrentlyScrolled = container.scrollTop > 0
   if (isCurrentlyScrolled !== isScrolled.value) {
     isScrolled.value = isCurrentlyScrolled
     emit('scrollChange', isScrolled.value)
@@ -46,14 +126,16 @@ const handleScroll = () => {
 }
 
 onMounted(() => {
-  if (messagesContainer.value) {
-    messagesContainer.value.addEventListener('scroll', handleScroll, { passive: true })
+  const container = messagesContainer.value
+  if (container) {
+    container.addEventListener('scroll', handleScroll, { passive: true })
   }
 })
 
 onUnmounted(() => {
-  if (messagesContainer.value) {
-    messagesContainer.value.removeEventListener('scroll', handleScroll)
+  const container = messagesContainer.value
+  if (container) {
+    container.removeEventListener('scroll', handleScroll)
   }
 })
 
@@ -87,7 +169,7 @@ const handleSuggestionClick = (suggestion) => {
 
 <template>
   <div class="chat-main">
-    <div class="messages-container" ref="messagesContainer">
+    <div ref="messagesContainer" class="messages-container">
       <div v-if="messages.length === 0" class="empty-state">
         <div class="empty-icon">
           <ChatDotRound :size="64" />
@@ -102,15 +184,45 @@ const handleSuggestionClick = (suggestion) => {
               v-for="(suggestion, index) in suggestions" 
               :key="index"
               :suggestion="suggestion"
-              @click="handleSuggestionClick"
               variant="outline"
+              @click="handleSuggestionClick"
             />
           </AiSuggestions>
         </div>
       </div>
       
       <div v-else class="messages-list" role="log" aria-live="polite">
-        <TransitionGroup name="slide-up" tag="div" class="messages-list-inner">
+        <!-- 虚拟滚动模式：消息数量超过阈值时启用 -->
+        <RecycleScroller
+          v-if="shouldUseVirtualScroll"
+          ref="virtualScrollerRef"
+          class="virtual-scroller"
+          :items="messages"
+          :item-size="ITEM_SIZE"
+          key-field="id"
+          :buffer="200"
+          @scroll="handleScroll"
+        >
+          <template #default="{ item: msg, index: msgIndex }">
+            <div class="message-wrapper">
+              <ChatMessage
+                :message="msg"
+                :index="msgIndex"
+                :is-last="msgIndex === messages.length - 1"
+                :is-loading="isLoading"
+                :is-streaming="isStreaming"
+                @regenerate="(idx) => emit('regenerate', idx)"
+              />
+              <MessageVersionSelector 
+                :message="msg" 
+                :message-index="msgIndex" 
+              />
+            </div>
+          </template>
+        </RecycleScroller>
+
+        <!-- 普通模式：消息数量较少时使用 -->
+        <TransitionGroup v-else name="slide-up" tag="div" class="messages-list-inner">
           <div 
             v-for="(msg, msgIndex) in messages" 
             :key="msg.id || msgIndex" 
@@ -196,9 +308,16 @@ const handleSuggestionClick = (suggestion) => {
   flex-direction: column;
 }
 
+.virtual-scroller {
+  height: 100%;
+  overflow-y: auto;
+}
+
 .message-wrapper {
   margin-bottom: 24px;
   will-change: transform;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .message {

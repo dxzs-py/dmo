@@ -2,34 +2,111 @@
 import { ref, watch, nextTick } from 'vue'
 import { ArrowRight, Document, Search, Link } from '@element-plus/icons-vue'
 
+/**
+ * ChatInput组件 - 聊天输入框
+ * @component
+ * @description 提供消息输入、附件上传、网络搜索、语音输入等功能
+ */
 const props = defineProps({
+  /**
+   * 输入框绑定值（v-model）
+   * @type {string}
+   */
   modelValue: {
     type: String,
     default: '',
   },
+  /**
+   * 是否禁用
+   * @type {boolean}
+   */
   disabled: {
     type: Boolean,
     default: false,
   },
+  /**
+   * 发送按钮加载状态
+   * @type {boolean}
+   */
   loading: {
     type: Boolean,
     default: false,
   },
+  /**
+   * 是否启用网络搜索
+   * @type {boolean}
+   */
   useWebSearch: {
     type: Boolean,
     default: false,
   },
+  /**
+   * 是否启用语音输入
+   * @type {boolean}
+   */
   useMicrophone: {
     type: Boolean,
     default: false,
   },
+  /**
+   * 占位提示文本
+   * @type {string}
+   */
   placeholder: {
     type: String,
     default: '输入您的问题... (Enter 发送，Shift+Enter 换行)',
   },
+  /**
+   * 最大输入字符数
+   * @type {number}
+   */
+  maxLength: {
+    type: Number,
+    default: 10000,
+    validator: (value) => value > 0 && value <= 50000,
+  },
+  /**
+   * 是否显示工具栏（附件、搜索等）
+   * @type {boolean}
+   */
+  showToolbar: {
+    type: Boolean,
+    default: true,
+  },
 })
 
-const emit = defineEmits(['update:modelValue', 'send', 'keydown', 'attach', 'voice', 'webSearch', 'microphone'])
+const emit = defineEmits({
+  /**
+   * 更新modelValue事件（v-model）
+   * @param {string} value - 新值
+   */
+  'update:modelValue': (value) => typeof value === 'string',
+  /**
+   * 发送消息事件
+   */
+  send: () => true,
+  /**
+   * 键盘按下事件
+   * @param {KeyboardEvent} event - 键盘事件对象
+   */
+  keydown: (event) => event instanceof KeyboardEvent,
+  /**
+   * 点击附件按钮事件
+   */
+  attach: () => true,
+  /**
+   * 点击语音按钮事件
+   */
+  voice: () => true,
+  /**
+   * 切换网络搜索状态事件
+   */
+  webSearch: () => true,
+  /**
+   * 切换麦克风状态事件
+   */
+  microphone: () => true,
+})
 
 const textareaRef = ref(null)
 const isFocused = ref(false)
@@ -80,54 +157,54 @@ watch(() => props.modelValue, adjustTextareaHeight)
           <el-button
             circle
             :icon="Document"
-            @click="handleAttach"
             :disabled="disabled || loading"
             size="small"
             title="添加附件"
+            @click="handleAttach"
           />
           <el-button
             circle
             :icon="Search"
-            @click="handleWebSearch"
             :disabled="disabled || loading"
             size="small"
             :type="useWebSearch ? 'primary' : 'default'"
             :title="useWebSearch ? '关闭网络搜索' : '开启网络搜索'"
+            @click="handleWebSearch"
           />
           <el-button
             circle
             :icon="Link"
-            @click="handleMicrophone"
             :disabled="disabled || loading"
             size="small"
             :type="useMicrophone ? 'primary' : 'default'"
             :title="useMicrophone ? '关闭语音输入' : '开启语音输入'"
+            @click="handleMicrophone"
           />
         </div>
         <el-input
           ref="textareaRef"
           :model-value="modelValue"
-          @update:model-value="(val) => emit('update:modelValue', val)"
           type="textarea"
           :rows="1"
           :disabled="disabled"
           :placeholder="placeholder"
+          resize="none"
+          class="auto-resize"
+          @update:model-value="(val) => emit('update:modelValue', val)"
           @keydown="handleKeyDown"
           @focus="handleFocus"
           @blur="handleBlur"
-          resize="none"
-          class="auto-resize"
         />
       </div>
       <div class="action-buttons">
         <el-button
           type="primary"
-          @click="emit('send')"
           :loading="loading"
           :disabled="!modelValue.trim() || disabled"
           :icon="ArrowRight"
           round
           size="small"
+          @click="emit('send')"
         >
           发送
         </el-button>

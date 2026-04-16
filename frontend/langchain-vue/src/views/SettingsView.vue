@@ -13,7 +13,7 @@
             <el-input v-model="settingsForm.apiBaseUrl" placeholder="http://localhost:8000" />
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" @click="saveSettings" :loading="isSaving">
+            <el-button type="primary" :loading="isSaving" @click="saveSettings">
               保存设置
             </el-button>
             <el-button @click="resetSettings">

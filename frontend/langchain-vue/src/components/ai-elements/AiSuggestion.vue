@@ -3,8 +3,8 @@
     :class="['ai-suggestion', className]" 
     :variant="variant" 
     :size="size"
-    @click="handleClick"
     v-bind="$attrs"
+    @click="handleClick"
   >
     {{ children || suggestion }}
   </el-button>

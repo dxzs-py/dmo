@@ -21,15 +21,19 @@ logger = logging.getLogger(__name__)
 
 def get_data_dir() -> str:
     try:
-        from Django_xm.apps.core.config import settings
-        return str(getattr(settings, 'DATA_DIR', settings.DATA_DIR))
+        from django.conf import settings as django_settings
+        return str(django_settings.DATA_DIR)
     except (ImportError, AttributeError):
-        import os
-        from pathlib import Path
-        base_dir = Path(__file__).resolve().parent.parent.parent.parent
-        data_dir = base_dir / "data"
-        data_dir.mkdir(parents=True, exist_ok=True)
-        return str(data_dir)
+        try:
+            from Django_xm.apps.core.config import settings
+            return str(getattr(settings, 'DATA_DIR', settings.DATA_DIR))
+        except (ImportError, AttributeError):
+            import os
+            from pathlib import Path
+            base_dir = Path(__file__).resolve().parent.parent.parent.parent.parent
+            data_dir = base_dir / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            return str(data_dir)
 
 
 class ResearchFileSystem:
