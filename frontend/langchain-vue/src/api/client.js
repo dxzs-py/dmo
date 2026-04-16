@@ -348,7 +348,7 @@ export async function* streamChat(request) {
     response = await fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify(validation.sanitizedRequest || request),
+      body: JSON.stringify(validation.sanitizedData || request),
     })
 
     if (!response.ok) {

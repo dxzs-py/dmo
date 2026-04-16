@@ -170,7 +170,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="lx-tooltip-wrapper" ref="wrapperRef">
+  <div ref="wrapperRef" class="lx-tooltip-wrapper">
     <div
       ref="triggerRef"
       class="lx-tooltip__trigger"

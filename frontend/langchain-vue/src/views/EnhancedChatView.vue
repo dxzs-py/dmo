@@ -9,6 +9,7 @@ import {
   Download,
   Moon,
   Sunny,
+  Setting,
 } from '@element-plus/icons-vue';
 import ChatHeader from '../components/chat/ChatHeader.vue';
 import ChatEnhanced from '../components/chat/ChatEnhanced.vue';
@@ -134,8 +135,8 @@ onUnmounted(() => {
 <template>
   <div class="enhanced-chat-view">
     <ChatHeader
-      title="增强版智能聊天"
       v-model:selected-model="selectedModel"
+      title="增强版智能聊天"
       :current-mode="enhancedChatStore.currentMode || 'basic-agent'"
       :available-modes="enhancedChatStore.availableModes || {}"
       @update:current-mode="(val) => enhancedChatStore.currentMode = val"
@@ -158,8 +159,8 @@ onUnmounted(() => {
           circle
           type="info"
           size="small"
-          @click="handleClearMessages"
           :disabled="messages.length === 0"
+          @click="handleClearMessages"
         >
           <el-icon><Delete /></el-icon>
         </el-button>

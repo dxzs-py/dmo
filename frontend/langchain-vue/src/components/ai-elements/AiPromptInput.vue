@@ -104,8 +104,8 @@ defineExpose({
           <el-button
             v-if="loading"
             class="action-btn stop-btn"
-            @click="handleStop"
             title="停止生成"
+            @click="handleStop"
           >
             <el-icon :size="18"><Refresh /></el-icon>
           </el-button>
@@ -113,9 +113,9 @@ defineExpose({
           <el-button
             v-else
             class="action-btn"
-            @click="handleRegenerate"
             :disabled="disabled || !modelValue"
             title="重新生成"
+            @click="handleRegenerate"
           >
             <el-icon :size="18"><Refresh /></el-icon>
           </el-button>
@@ -123,8 +123,8 @@ defineExpose({
           <el-button
             class="action-btn submit-btn"
             type="primary"
-            @click="handleSubmit"
             :disabled="disabled || loading || !modelValue?.trim()"
+            @click="handleSubmit"
           >
             <el-icon :size="18"><Promotion /></el-icon>
           </el-button>

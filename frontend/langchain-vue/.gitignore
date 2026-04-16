@@ -14,6 +14,14 @@ dist-ssr
 coverage
 *.local
 
+# Environment variables
+.env.local
+.env.*.local
+
+# Auto-generated files
+src/auto-imports.d.ts
+src/components.d.ts
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

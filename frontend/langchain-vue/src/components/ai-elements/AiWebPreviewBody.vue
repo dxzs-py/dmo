@@ -6,7 +6,7 @@
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
       title="Preview"
     />
-    <slot name="loading" v-if="loading"></slot>
+    <slot v-if="loading" name="loading"></slot>
   </div>
 </template>
 

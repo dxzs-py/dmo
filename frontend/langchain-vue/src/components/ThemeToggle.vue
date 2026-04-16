@@ -2,9 +2,9 @@
   <el-button 
     :class="['theme-toggle', className]" 
     :icon="isDark ? Sunny : Moon" 
-    @click="toggleTheme"
     :title="isDark ? '切换到浅色模式' : '切换到深色模式'"
     v-bind="$attrs"
+    @click="toggleTheme"
   />
 </template>
 

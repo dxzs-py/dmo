@@ -1,7 +1,7 @@
 <template>
   <el-input
-    :class="className"
     v-model="inputValue"
+    :class="className"
     size="small"
     placeholder="Enter URL..."
     @keydown="handleKeyDown"

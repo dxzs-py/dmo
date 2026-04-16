@@ -17,7 +17,7 @@
             />
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" @click="startWorkflow" :loading="isLoading">
+            <el-button type="primary" :loading="isLoading" @click="startWorkflow">
               启动工作流
             </el-button>
           </el-form-item>
@@ -82,7 +82,7 @@
             <el-input v-else v-model="answersForm[question.id]" type="textarea" :rows="3" placeholder="请输入答案" />
           </div>
           
-          <el-button type="primary" @click="submitAnswers" :loading="isSubmitting" size="large">
+          <el-button type="primary" :loading="isSubmitting" size="large" @click="submitAnswers">
             提交答案
           </el-button>
         </el-form>

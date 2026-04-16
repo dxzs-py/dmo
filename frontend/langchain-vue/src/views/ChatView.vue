@@ -1,12 +1,13 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
 import { ElMessage } from 'element-plus'
+import { Close } from '@element-plus/icons-vue'
 import ChatHeader from '../components/chat/ChatHeader.vue'
 import ChatMessages from '../components/chat/ChatMessages.vue'
 import ChatInput from '../components/chat/ChatInput.vue'
-
+import { useDebounce } from '../composables/useDebounce'
 const chatStore = useChatStore()
 const sessionStore = useSessionStore()
 const inputMessage = ref('')
@@ -15,6 +16,7 @@ const useWebSearch = ref(false)
 const useMicrophone = ref(false)
 const scrollContainerRef = ref(null)
 const isScrolled = ref(false)
+const isSending = ref(false)
 
 const messages = computed(() => {
   return sessionStore.getSessionMessages(sessionStore.currentSessionId)
@@ -24,11 +26,15 @@ const handleScrollChange = (scrolled) => {
   isScrolled.value = scrolled
 }
 
+/**
+ * 发送消息（带防抖保护，防止快速重复点击）
+ */
 const sendMessage = async () => {
-  if (!inputMessage.value.trim() || chatStore.isLoading) {
+  if (!inputMessage.value.trim() || chatStore.isLoading || isSending.value) {
     return
   }
 
+  isSending.value = true
   const message = inputMessage.value
   inputMessage.value = ''
 
@@ -40,11 +46,15 @@ const sendMessage = async () => {
   } catch (error) {
     console.error('发送消息失败:', error)
     ElMessage.error('发送消息失败，请稍后重试')
+  } finally {
+    setTimeout(() => {
+      isSending.value = false
+    }, 500)
   }
 }
 
 const handleRegenerate = async (index) => {
-  if (chatStore.isLoading) {
+  if (chatStore.isLoading || isSending.value) {
     return
   }
 
@@ -64,7 +74,12 @@ const handleKeyDown = (event) => {
   }
 }
 
-const handleSuggestionClick = async (suggestion) => {
+/**
+ * 建议问题点击（带防抖）
+ */
+const { debouncedFn: debouncedSuggestionClick } = useDebounce(async (suggestion) => {
+  if (chatStore.isLoading || isSending.value) return
+  
   try {
     await chatStore.sendMessage(suggestion, {
       useTools: true,
@@ -74,6 +89,10 @@ const handleSuggestionClick = async (suggestion) => {
     console.error('发送建议消息失败:', error)
     ElMessage.error('发送消息失败，请稍后重试')
   }
+}, 300)
+
+const handleSuggestionClick = (suggestion) => {
+  debouncedSuggestionClick(suggestion)
 }
 
 const handleAttach = () => {
@@ -98,16 +117,33 @@ const handleStopStreaming = () => {
   chatStore.stopStreaming()
 }
 
+const loadCurrentSessionDetail = async () => {
+  const sessionId = sessionStore.currentSessionId
+  if (sessionId) {
+    await sessionStore.loadSessionDetail(sessionId)
+  }
+}
+
 onMounted(() => {
   chatStore.fetchModes()
+  loadCurrentSessionDetail()
 })
+
+watch(
+  () => sessionStore.currentSessionId,
+  (newSessionId) => {
+    if (newSessionId) {
+      loadCurrentSessionDetail()
+    }
+  }
+)
 </script>
 
 <template>
   <div class="chat-view">
     <ChatHeader
-      title="智能聊天"
       v-model:selected-model="selectedModel"
+      title="智能聊天"
       :current-mode="chatStore.currentMode"
       :available-modes="chatStore.availableModes"
       @update:current-mode="(val) => chatStore.currentMode = val"

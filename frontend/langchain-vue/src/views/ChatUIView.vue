@@ -72,14 +72,14 @@
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
-            <el-button link @click="toggleSidebar" class="mobile-menu-btn">
+            <el-button link class="mobile-menu-btn" @click="toggleSidebar">
               <el-icon><Setting /></el-icon>
             </el-button>
           </div>
         </div>
       </div>
 
-      <div class="chat-area" ref="messagesContainer" @scroll="handleScroll">
+      <div ref="messagesContainer" class="chat-area" @scroll="handleScroll">
         <div v-if="messages.length === 0" class="empty-state">
           <div class="empty-icon">
             <el-icon :size="64"><ChatDotRound /></el-icon>
@@ -101,7 +101,7 @@
             <div class="message-content">
               <div class="message-header">
                 <span class="message-role">{{ msg.role === 'user' ? '用户' : 'AI助手' }}</span>
-                <el-dropdown v-if="msg.role === 'assistant'" @command="(cmd) => handleMessageAction(cmd, index)" trigger="click">
+                <el-dropdown v-if="msg.role === 'assistant'" trigger="click" @command="(cmd) => handleMessageAction(cmd, index)">
                   <el-button link size="small">
                     <el-icon><More /></el-icon>
                   </el-button>
@@ -154,8 +154,8 @@
             :rows="3"
             :disabled="isLoading"
             placeholder="输入您的问题... (Enter 发送，Shift+Enter 换行)"
-            @keydown="handleKeyDown"
             resize="none"
+            @keydown="handleKeyDown"
           />
         </div>
         <div class="input-actions">
@@ -170,8 +170,8 @@
           <el-button
             v-else
             type="primary"
-            @click="sendMessage"
             :disabled="!inputMessage.trim()"
+            @click="sendMessage"
           >
             发送
           </el-button>
@@ -196,7 +196,8 @@ import {
   ArrowRight,
   Tools,
   Close,
-  Refresh
+  Refresh,
+  More
 } from '@element-plus/icons-vue'
 import MarkdownRenderer from '../components/MarkdownRenderer.vue'
 import ModelSelector from '../components/ModelSelector.vue'

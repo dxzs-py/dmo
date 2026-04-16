@@ -2,9 +2,9 @@
   <el-button 
     size="small" 
     :disabled="totalBranches <= 1" 
-    @click="goToPrevious"
     :class="className"
     v-bind="$attrs"
+    @click="goToPrevious"
   >
     <el-icon><ArrowLeft /></el-icon>
   </el-button>

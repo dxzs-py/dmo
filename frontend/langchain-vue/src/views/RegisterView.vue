@@ -6,7 +6,7 @@
         <p class="subtitle">加入 LC-StudyLab，开启智能学习之旅</p>
       </div>
 
-      <form @submit.prevent="handleRegister" class="register-form">
+      <form class="register-form" @submit.prevent="handleRegister">
         <div class="form-group">
           <label class="label">用户名</label>
           <input 

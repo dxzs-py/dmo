@@ -7,15 +7,15 @@
       </div>
 
       <div class="login-tabs">
-        <div 
-          class="tab" 
+        <div
+          class="tab"
           :class="{ active: loginType === 0 }"
           @click="loginType = 0"
         >
           密码登录
         </div>
-        <div 
-          class="tab" 
+        <div
+          class="tab"
           :class="{ active: loginType === 1 }"
           @click="loginType = 1"
         >
@@ -23,93 +23,106 @@
         </div>
       </div>
 
-      <form @submit.prevent="handleLogin" class="login-form">
-        <div v-if="loginType === 0" class="form-group">
-          <input 
-            v-model="formData.username"
-            type="text"
-            placeholder="用户名 / 手机号"
-            class="input-field"
-            required
-          />
-        </div>
+      <el-form
+        ref="formRef"
+        class="login-form"
+        :model="formData"
+        :rules="rules"
+        @submit.prevent="handleLogin"
+      >
+        <template v-if="loginType === 0">
+          <el-form-item prop="username">
+            <el-input
+              v-model="formData.username"
+              placeholder="用户名 / 手机号"
+              prefix-icon="User"
+              size="large"
+            />
+          </el-form-item>
 
-        <div v-if="loginType === 0" class="form-group">
-          <input 
-            v-model="formData.password"
-            type="password"
-            placeholder="密码"
-            class="input-field"
-            required
-          />
-        </div>
+          <el-form-item prop="password">
+            <el-input
+              v-model="formData.password"
+              type="password"
+              placeholder="密码"
+              prefix-icon="Lock"
+              size="large"
+              show-password
+            />
+          </el-form-item>
 
-        <div v-if="loginType === 0" class="form-group captcha-group">
-          <input 
-            v-model="formData.captcha"
-            type="text"
-            placeholder="验证码"
-            class="input-field captcha-input"
-            required
-          />
-          <img 
-            :src="captchaSrc" 
-            class="captcha-img" 
-            alt="验证码" 
-            @click="refreshCaptcha"
-            title="点击刷新"
-          />
-        </div>
+          <el-form-item prop="captcha">
+            <div class="captcha-wrapper">
+              <el-input
+                v-model="formData.captcha"
+                placeholder="验证码"
+                prefix-icon="CircleCheck"
+                size="large"
+                style="flex: 1"
+              />
+              <img
+                :src="captchaSrc"
+                class="captcha-img"
+                alt="验证码"
+                title="点击刷新"
+                @click="refreshCaptcha"
+              />
+            </div>
+          </el-form-item>
 
-        <div v-if="loginType === 1" class="form-group">
-          <input 
-            v-model="formData.mobile"
-            type="text"
-            placeholder="手机号"
-            class="input-field"
-            required
-          />
-        </div>
+          <div class="form-options">
+            <el-checkbox v-model="formData.remember">记住密码</el-checkbox>
+            <a href="#" class="forgot-link">忘记密码？</a>
+          </div>
+        </template>
 
-        <div v-if="loginType === 1" class="form-group code-group">
-          <input 
-            v-model="formData.code"
-            type="text"
-            placeholder="验证码"
-            class="input-field code-input"
-            required
-          />
-          <button 
-            type="button"
-            class="code-button"
-            @click="getCode"
-            :disabled="countdown > 0"
+        <template v-else>
+          <el-form-item prop="mobile">
+            <el-input
+              v-model="formData.mobile"
+              placeholder="手机号"
+              prefix-icon="Phone"
+              size="large"
+            />
+          </el-form-item>
+
+          <el-form-item prop="code">
+            <div class="code-wrapper">
+              <el-input
+                v-model="formData.code"
+                placeholder="验证码"
+                prefix-icon="CircleCheck"
+                size="large"
+                style="flex: 1"
+              />
+              <el-button
+                size="large"
+                :disabled="countdown > 0"
+                @click="getCode"
+              >
+                {{ countdown > 0 ? `${countdown}秒后重试` : '获取验证码' }}
+              </el-button>
+            </div>
+          </el-form-item>
+        </template>
+
+        <el-form-item>
+          <el-button
+            type="primary"
+            native-type="submit"
+            size="large"
+            :loading="loading"
+            class="login-button"
           >
-            {{ countdown > 0 ? `${countdown}秒后重试` : '获取验证码' }}
-          </button>
-        </div>
-
-        <div v-if="loginType === 0" class="form-options">
-          <label class="checkbox-label">
-            <input v-model="formData.remember" type="checkbox" />
-            <span>记住密码</span>
-          </label>
-          <a href="#" class="forgot-link">忘记密码？</a>
-        </div>
-
-        <button 
-          type="submit"
-          class="login-button"
-          :disabled="loading"
-        >
-          {{ loading ? '登录中...' : '登录' }}
-        </button>
+            {{ loading ? '登录中...' : '登录' }}
+          </el-button>
+        </el-form-item>
 
         <p class="register-link">
           还没有账号？
           <router-link to="/register">立即注册</router-link>
         </p>
-      </form>
+      </el-form>
 
       <div class="back-home">
         <router-link to="/">← 返回首页</router-link>
@@ -119,7 +132,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { ElMessage } from 'element-plus'
@@ -127,12 +140,61 @@ import settings from '@/settings'
 
 const router = useRouter()
 const userStore = useUserStore()
+const formRef = ref(null)
 
 const loginType = ref(0)
 const loading = ref(false)
 const countdown = ref(0)
 const captchaSrc = ref('')
 const captchaKey = ref('')
+
+const validateUsername = (rule, value, callback) => {
+  if (!value) {
+    callback(new Error('请输入用户名'))
+  } else if (value.length < 2) {
+    callback(new Error('用户名至少2个字符'))
+  } else {
+    callback()
+  }
+}
+
+const validatePassword = (rule, value, callback) => {
+  if (!value) {
+    callback(new Error('请输入密码'))
+  } else if (value.length < 6) {
+    callback(new Error('密码至少6个字符'))
+  } else {
+    callback()
+  }
+}
+
+const validateCaptcha = (rule, value, callback) => {
+  if (loginType.value === 0 && !value) {
+    callback(new Error('请输入验证码'))
+  } else {
+    callback()
+  }
+}
+
+const validateMobile = (rule, value, callback) => {
+  if (!value) {
+    callback(new Error('请输入手机号'))
+  } else if (!/^1[3-9]\d{9}$/.test(value)) {
+    callback(new Error('请输入有效的手机号'))
+  } else {
+    callback()
+  }
+}
+
+const validateCode = (rule, value, callback) => {
+  if (!value) {
+    callback(new Error('请输入验证码'))
+  } else if (!/^\d{4,6}$/.test(value)) {
+    callback(new Error('验证码为4-6位数字'))
+  } else {
+    callback()
+  }
+}
 
 const formData = reactive({
   username: '',
@@ -141,6 +203,28 @@ const formData = reactive({
   mobile: '',
   code: '',
   remember: false
+})
+
+const baseRules = computed(() => ({
+  username: [{ validator: validateUsername, trigger: 'blur' }],
+  password: [{ validator: validatePassword, trigger: 'blur' }],
+  captcha: [{ validator: validateCaptcha, trigger: 'blur' }],
+  mobile: [{ validator: validateMobile, trigger: 'blur' }],
+  code: [{ validator: validateCode, trigger: 'blur' }]
+}))
+
+const rules = computed(() => {
+  if (loginType.value === 0) {
+    return {
+      username: baseRules.value.username,
+      password: baseRules.value.password,
+      captcha: baseRules.value.captcha
+    }
+  }
+  return {
+    mobile: baseRules.value.mobile,
+    code: baseRules.value.code
+  }
 })
 
 onMounted(() => {
@@ -153,32 +237,24 @@ async function refreshCaptcha() {
       method: 'GET',
       credentials: 'include'
     })
-    
+
     if (response.ok) {
       captchaKey.value = response.headers.get('X-Captcha-Key')
       const blob = await response.blob()
       captchaSrc.value = URL.createObjectURL(blob)
     }
-  } catch {
-    console.error('获取验证码失败')
+  } catch (error) {
+    console.error('获取验证码失败:', error)
   }
 }
 
 async function handleLogin() {
-  if (loginType.value === 0) {
-    if (!formData.username || !formData.password) {
-      ElMessage.warning('请输入用户名和密码')
-      return
-    }
-    if (!formData.captcha) {
-      ElMessage.warning('请输入验证码')
-      return
-    }
-  } else {
-    if (!formData.mobile || !formData.code) {
-      ElMessage.warning('请输入手机号和验证码')
-      return
-    }
+  if (!formRef.value) return
+
+  try {
+    await formRef.value.validate()
+  } catch {
+    return
   }
 
   loading.value = true
@@ -216,19 +292,18 @@ async function handleLogin() {
 }
 
 function getCode() {
-  if (!formData.mobile) {
-    ElMessage.warning('请输入手机号')
-    return
-  }
-  
-  ElMessage.success('验证码已发送（演示）')
-  countdown.value = 60
-  const timer = setInterval(() => {
-    countdown.value--
-    if (countdown.value <= 0) {
-      clearInterval(timer)
+  formRef.value?.validateField('mobile', (error) => {
+    if (!error) {
+      ElMessage.success('验证码已发送（演示）')
+      countdown.value = 60
+      const timer = setInterval(() => {
+        countdown.value--
+        if (countdown.value <= 0) {
+          clearInterval(timer)
+        }
+      }, 1000)
     }
-  }, 1000)
+  })
 }
 </script>
 
@@ -309,126 +384,60 @@ function getCode() {
   gap: 16px;
 }
 
-.form-group {
+.captcha-wrapper {
   display: flex;
-  flex-direction: column;
-}
-
-.form-group.captcha-group {
-  flex-direction: row;
   gap: 12px;
-}
-
-.form-group.code-group {
-  flex-direction: row;
-  gap: 12px;
-}
-
-.input-field {
   width: 100%;
-  padding: 12px 16px;
-  border: 2px solid #e5e7eb;
-  border-radius: 8px;
-  font-size: 14px;
-  transition: all 0.2s;
-  outline: none;
-}
-
-.input-field:focus {
-  border-color: #667eea;
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-}
-
-.captcha-input {
-  flex: 1;
 }
 
 .captcha-img {
-  height: 46px;
+  height: 40px;
   border-radius: 8px;
   cursor: pointer;
-  border: 2px solid #e5e7eb;
-  transition: all 0.2s;
+  border: 1px solid #dcdfe6;
+  transition: border-color 0.2s;
+  flex-shrink: 0;
 }
 
 .captcha-img:hover {
   border-color: #667eea;
 }
 
-.code-input {
-  flex: 1;
-}
-
-.code-button {
-  padding: 12px 16px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: all 0.2s;
-}
-
-.code-button:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-}
-
-.code-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.code-wrapper {
+  display: flex;
+  gap: 12px;
+  width: 100%;
 }
 
 .form-options {
   display: flex;
   justify-content: space-between;
   align-items: center;
-}
-
-.checkbox-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 14px;
-  color: #6b7280;
-  cursor: pointer;
+  margin-bottom: 8px;
 }
 
 .forgot-link {
-  font-size: 14px;
   color: #667eea;
+  font-size: 14px;
   text-decoration: none;
+  transition: color 0.2s;
 }
 
 .forgot-link:hover {
-  text-decoration: underline;
+  color: #764ba2;
 }
 
 .login-button {
   width: 100%;
-  padding: 14px;
+  height: 48px;
+  font-size: 16px;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
   border: none;
   border-radius: 8px;
-  font-size: 16px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-  margin-top: 8px;
 }
 
-.login-button:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-}
-
-.login-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.login-button:hover {
+  background: linear-gradient(135deg, #5a6fd6 0%, #6a4190 100%);
 }
 
 .register-link {
@@ -451,14 +460,13 @@ function getCode() {
 .back-home {
   text-align: center;
   margin-top: 24px;
-  padding-top: 24px;
-  border-top: 1px solid #e5e7eb;
 }
 
 .back-home a {
   color: #6b7280;
   text-decoration: none;
   font-size: 14px;
+  transition: color 0.2s;
 }
 
 .back-home a:hover {

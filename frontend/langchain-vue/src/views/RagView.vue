@@ -31,7 +31,7 @@
             <el-input-number v-model="queryForm.k" :min="1" :max="10" />
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" @click="executeQuery" :loading="isLoading">
+            <el-button type="primary" :loading="isLoading" @click="executeQuery">
               查询
             </el-button>
           </el-form-item>
@@ -75,8 +75,8 @@
         :title="errorMessage"
         type="error"
         :closable="true"
-        @close="errorMessage = ''"
         style="margin-bottom: 20px;"
+        @close="errorMessage = ''"
       />
       
       <el-card v-if="result" class="result-card">
@@ -239,7 +239,7 @@ const handleUpload = async () => {
 
   isUploading.value = true
   try {
-    const response = await ragAPI.uploadDocument(queryForm.index_name, selectedFile.value)
+    await ragAPI.uploadDocument(queryForm.index_name, selectedFile.value)
     ElMessage.success('文件上传并索引成功！')
     clearUpload()
   } catch (error) {

@@ -166,13 +166,13 @@ defineExpose({
             :rows="3"
             :disabled="isStreaming"
             :placeholder="isStreaming ? '正在生成回复...' : '输入您的问题...'"
+            resize="none"
             @keydown="(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 handleSubmit();
               }
             }"
-            resize="none"
           />
         </div>
 
@@ -188,8 +188,8 @@ defineExpose({
           <el-button
             v-else
             type="primary"
-            @click="handleSubmit"
             :disabled="!text.trim()"
+            @click="handleSubmit"
           >
             <el-icon><Search /></el-icon>
             发送

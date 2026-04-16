@@ -106,9 +106,9 @@ watch(() => props.src, (newSrc) => {
       :src="imgSrc"
       :alt="alt"
       :class="['image-content', `fit-${fit}`]"
+      loading="lazy"
       @load="handleLoad"
       @error="handleError"
-      loading="lazy"
     >
     
     <div v-if="hasError" class="image-error">

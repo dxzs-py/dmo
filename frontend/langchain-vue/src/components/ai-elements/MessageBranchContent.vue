@@ -1,5 +1,6 @@
 <template>
-  <div v-for="(branch, index) in branchChildren" :key="index" 
+  <div
+v-for="(branch, index) in branchChildren" :key="index" 
        :class="{ 'block': index === currentBranch, 'hidden': index !== currentBranch }"
        v-bind="$attrs">
     <component :is="branch" />

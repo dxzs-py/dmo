@@ -23,7 +23,7 @@
             <el-switch v-model="researchForm.enable_doc_analysis" />
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" @click="startResearch" :loading="isLoading">
+            <el-button type="primary" :loading="isLoading" @click="startResearch">
               开始研究
             </el-button>
           </el-form-item>
@@ -59,6 +59,7 @@
         
         <div v-if="task.final_report" class="report-section">
           <h4>研究报告</h4>
+          <!-- eslint-disable-next-line vue/no-v-html -->
           <div class="report-content" v-html="formatReport(task.final_report)"></div>
         </div>
       </el-card>
@@ -68,6 +69,7 @@
 
 <script setup>
 import { ref, reactive, onUnmounted } from 'vue'
+import DOMPurify from 'dompurify'
 import { deepResearchAPI } from '../api/client'
 import { ElMessage } from 'element-plus'
 
@@ -108,7 +110,8 @@ const getStatusText = (status) => {
 }
 
 const formatReport = (content) => {
-  return content.replace(/\n/g, '<br>')
+  const escaped = content.replace(/\n/g, '<br>')
+  return DOMPurify.sanitize(escaped)
 }
 
 const pollTaskStatus = async () => {

@@ -7,13 +7,13 @@
       link
       @click="$emit('click', $event)"
     >
-      <component v-if="icon" :is="icon" />
+      <component :is="icon" v-if="icon" />
       <slot v-else></slot>
       <span class="sr-only">{{ label || tooltip }}</span>
     </el-button>
   </el-tooltip>
   <el-button v-else :class="className" size="small" type="button" link @click="$emit('click', $event)">
-    <component v-if="icon" :is="icon" />
+    <component :is="icon" v-if="icon" />
     <slot v-else></slot>
     <span class="sr-only">{{ label || tooltip }}</span>
   </el-button>

@@ -1,31 +1,68 @@
 <script setup>
 import { computed } from 'vue'
 import { marked } from 'marked'
-import hljs from 'highlight.js'
+import DOMPurify from 'dompurify'
+import hljs from 'highlight.js/lib/core'
+import javascript from 'highlight.js/lib/languages/javascript'
+import python from 'highlight.js/lib/languages/python'
+import json from 'highlight.js/lib/languages/json'
+import bash from 'highlight.js/lib/languages/bash'
+import sql from 'highlight.js/lib/languages/sql'
+import xml from 'highlight.js/lib/languages/xml'
+import css from 'highlight.js/lib/languages/css'
+import yaml from 'highlight.js/lib/languages/yaml'
+import markdown from 'highlight.js/lib/languages/markdown'
 import 'highlight.js/styles/github.css'
+
+hljs.registerLanguage('javascript', javascript)
+hljs.registerLanguage('js', javascript)
+hljs.registerLanguage('python', python)
+hljs.registerLanguage('py', python)
+hljs.registerLanguage('json', json)
+hljs.registerLanguage('bash', bash)
+hljs.registerLanguage('sh', bash)
+hljs.registerLanguage('shell', bash)
+hljs.registerLanguage('sql', sql)
+hljs.registerLanguage('xml', xml)
+hljs.registerLanguage('html', xml)
+hljs.registerLanguage('css', css)
+hljs.registerLanguage('yaml', yaml)
+hljs.registerLanguage('yml', yaml)
+hljs.registerLanguage('markdown', markdown)
+hljs.registerLanguage('md', markdown)
+
+marked.use({
+  renderer: {
+    code(code, lang) {
+      const language = lang && hljs.getLanguage(lang) ? lang : null
+      const highlighted = language
+        ? hljs.highlight(code, { language }).value
+        : hljs.highlightAuto(code).value
+      return `<pre><code class="hljs ${language ? `language-${language}` : ''}">${highlighted}</code></pre>`
+    }
+  },
+  breaks: true,
+  gfm: true
+})
 
 const props = defineProps({
   content: {
     type: String,
-    required: true,
-  },
-})
-
-marked.setOptions({
-  highlight: function(code, lang) {
-    const language = hljs.getLanguage(lang) ? lang : 'plaintext'
-    return hljs.highlight(code, { language }).value
-  },
-  breaks: true,
-  gfm: true,
+    required: true
+  }
 })
 
 const renderedContent = computed(() => {
-  return marked(props.content)
+  const rawHtml = marked(props.content)
+  return DOMPurify.sanitize(rawHtml, {
+    USE_PROFILES: { html: true },
+    ADD_ATTR: ['target']
+  })
 })
 </script>
 
 <template>
+  <!-- eslint-disable-next-line vue/no-v-html -->
   <div class="markdown-renderer" v-html="renderedContent"></div>
 </template>
 
@@ -67,51 +104,29 @@ const renderedContent = computed(() => {
   margin: 10px 0;
 }
 
-.markdown-renderer :deep(ul),
-.markdown-renderer :deep(ol) {
-  margin: 10px 0;
-  padding-left: 24px;
-}
-
-.markdown-renderer :deep(li) {
-  margin: 4px 0;
+.markdown-renderer :deep(pre) {
+  background-color: #f6f8fa;
+  border-radius: 6px;
+  padding: 16px;
+  overflow-x: auto;
+  margin: 12px 0;
 }
 
 .markdown-renderer :deep(code) {
-  background-color: #f5f7fa;
+  font-family: 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+}
+
+.markdown-renderer :deep(p code),
+.markdown-renderer :deep(li code) {
+  background-color: #f6f8fa;
   padding: 2px 6px;
   border-radius: 4px;
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-  font-size: 13px;
-  color: #c7254e;
-}
-
-.markdown-renderer :deep(pre) {
-  background-color: #f5f7fa;
-  border-radius: 8px;
-  padding: 16px;
-  margin: 14px 0;
-  overflow-x: auto;
-}
-
-.markdown-renderer :deep(pre code) {
-  background-color: transparent;
-  padding: 0;
-  color: inherit;
-}
-
-.markdown-renderer :deep(blockquote) {
-  border-left: 4px solid #409eff;
-  padding-left: 16px;
-  margin: 14px 0;
-  color: #606266;
-  background-color: #ecf5ff;
-  padding: 12px 16px;
-  border-radius: 0 8px 8px 0;
+  font-size: 0.9em;
 }
 
 .markdown-renderer :deep(a) {
-  color: #409eff;
+  color: var(--el-color-primary);
   text-decoration: none;
 }
 
@@ -119,33 +134,34 @@ const renderedContent = computed(() => {
   text-decoration: underline;
 }
 
+.markdown-renderer :deep(blockquote) {
+  border-left: 4px solid #dfe2e5;
+  padding-left: 16px;
+  margin: 12px 0;
+  color: #6a737d;
+}
+
+.markdown-renderer :deep(ul),
+.markdown-renderer :deep(ol) {
+  padding-left: 24px;
+  margin: 12px 0;
+}
+
 .markdown-renderer :deep(table) {
-  width: 100%;
   border-collapse: collapse;
-  margin: 14px 0;
+  width: 100%;
+  margin: 12px 0;
 }
 
 .markdown-renderer :deep(th),
 .markdown-renderer :deep(td) {
-  border: 1px solid #e4e7ed;
+  border: 1px solid #dfe2e5;
   padding: 8px 12px;
   text-align: left;
 }
 
 .markdown-renderer :deep(th) {
-  background-color: #f5f7fa;
+  background-color: #f6f8fa;
   font-weight: 600;
-}
-
-.markdown-renderer :deep(img) {
-  max-width: 100%;
-  height: auto;
-  border-radius: 8px;
-}
-
-.markdown-renderer :deep(hr) {
-  border: none;
-  border-top: 1px solid #e4e7ed;
-  margin: 20px 0;
 }
 </style>

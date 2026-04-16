@@ -1,123 +1,14 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
-import { nanoid } from 'nanoid'
 import { chatAPI } from '../api/client'
 import { useUserStore } from './user'
 import { ElMessage } from 'element-plus'
-
-const API_SUCCESS_CODE = 200
-
-function isApiSuccess(response) {
-  return response?.data?.code === API_SUCCESS_CODE
-}
-
-function generateId() {
-  return nanoid()
-}
-
-function _migrateMessage(msg) {
-  if (!msg.versions) {
-    return {
-      ...msg,
-      versions: [
-        {
-          id: msg.id,
-          content: msg.content,
-          sources: msg.sources || [],
-          plan: msg.plan || null,
-          chainOfThought: msg.chainOfThought || null,
-          toolCalls: msg.toolCalls || [],
-          reasoning: msg.reasoning || null
-        }
-      ],
-      currentVersion: 0
-    }
-  }
-  return msg
-}
-
-function transformBackendSessionToFrontend(session) {
-  if (!session) {
-    return null
-  }
-  
-  const sessionObj = session || {}
-  
-  const rawMessages = sessionObj.messages || []
-  const validMessages = Array.isArray(rawMessages) ? rawMessages : []
-  
-  const sanitized = {
-    id: sessionObj.session_id || sessionObj.id,
-    sessionId: sessionObj.session_id || sessionObj.id,
-    title: sessionObj.title || '新对话',
-    mode: sessionObj.mode || 'basic-agent',
-    messageCount: sessionObj.message_count || 0,
-    messages: validMessages
-      .map(msg => transformBackendMessageToFrontend(msg))
-      .filter(msg => msg !== null),
-    createdAt: sessionObj.created_at ? new Date(sessionObj.created_at).getTime() : Date.now(),
-    updatedAt: sessionObj.updated_at ? new Date(sessionObj.updated_at).getTime() : Date.now(),
-  }
-  
-  if (!sanitized.id && sessionObj.id) {
-    sanitized.id = sessionObj.id
-    sanitized.sessionId = sessionObj.id
-  }
-  
-  return sanitized
-}
-
-function transformBackendMessageToFrontend(msg) {
-  if (!msg) {
-    return null
-  }
-  
-  const msgObj = msg || {}
-  
-  // 确保角色正确处理
-  let role = msgObj.role
-  if (!role || !['user', 'assistant', 'system'].includes(role)) {
-    role = 'user' // 默认设为 user
-  }
-  
-  return {
-    id: msgObj.id?.toString() || generateId(),
-    role: role,
-    content: msgObj.content || '',
-    sources: msgObj.sources || [],
-    plan: msgObj.plan || null,
-    chainOfThought: msgObj.chain_of_thought || null,
-    toolCalls: msgObj.tool_calls || [],
-    reasoning: msgObj.reasoning || null,
-    versions: msgObj.versions?.length > 0 ? msgObj.versions : [
-      {
-        id: msgObj.id?.toString() || generateId(),
-        content: msgObj.content || '',
-        sources: msgObj.sources || [],
-        plan: msgObj.plan || null,
-        chainOfThought: msgObj.chain_of_thought || null,
-        toolCalls: msgObj.tool_calls || [],
-        reasoning: msgObj.reasoning || null
-      }
-    ],
-    currentVersion: msgObj.current_version || 0,
-    timestamp: msgObj.created_at ? new Date(msgObj.created_at).getTime() : Date.now(),
-  }
-}
-
-function transformFrontendMessageToBackend(msg) {
-  const currentVersion = msg.versions?.[msg.currentVersion || 0] || msg
-  return {
-    role: msg.role,
-    content: msg.content,
-    sources: msg.sources || currentVersion.sources || [],
-    plan: msg.plan || currentVersion.plan || null,
-    chain_of_thought: msg.chainOfThought || currentVersion.chainOfThought || null,
-    tool_calls: msg.toolCalls || currentVersion.toolCalls || [],
-    reasoning: msg.reasoning || currentVersion.reasoning || null,
-    current_version: msg.currentVersion || 0,
-  }
-}
+import {
+  isApiSuccess,
+  transformBackendSessionToFrontend,
+  transformFrontendMessageToBackend,
+  getModeLabel
+} from '../utils/session-transformers'
 
 export const useSessionStore = defineStore('session', () => {
   const sessions = ref([])
@@ -137,17 +28,6 @@ export const useSessionStore = defineStore('session', () => {
   const currentSession = computed(() => {
     return sessions.value.find(s => s.id === currentSessionId.value)
   })
-
-  const getModeLabel = (mode) => {
-    const modeLabels = {
-      'basic-agent': '基础对话',
-      'rag': 'RAG 问答',
-      'workflow': '学习工作流',
-      'deep-research': '深度研究',
-      'guarded': '安全模式',
-    }
-    return modeLabels[mode] || mode
-  }
 
   const clearAllLocalData = () => {
     sessions.value = []

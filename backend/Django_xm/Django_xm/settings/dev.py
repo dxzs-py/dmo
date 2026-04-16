@@ -24,6 +24,7 @@ if str(_project_root) not in sys.path:
 from Django_xm.apps.core.config import settings as app_cfg
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = BASE_DIR.parent
 
 # ==================== 核心安全配置（从 Pydantic 注入）====================
 SECRET_KEY = os.environ.get("SECRET_KEY", app_cfg.secret_key)
@@ -351,10 +352,10 @@ APP_NAME = app_cfg.app_name
 APP_VERSION = app_cfg.app_version
 
 # ==================== 数据目录初始化（从 Pydantic 注入路径）====================
-DATA_DIR = BASE_DIR / app_cfg.data_dir
-DOCUMENTS_DIR = BASE_DIR / app_cfg.data_documents_path
-INDEXES_DIR = BASE_DIR / app_cfg.vector_store_path
-UPLOADS_DIR = BASE_DIR / app_cfg.data_uploads_path
+DATA_DIR = PROJECT_ROOT / app_cfg.data_dir
+DOCUMENTS_DIR = PROJECT_ROOT / app_cfg.data_documents_path
+INDEXES_DIR = PROJECT_ROOT / app_cfg.vector_store_path
+UPLOADS_DIR = PROJECT_ROOT / app_cfg.data_uploads_path
 
 for directory in [DATA_DIR, DOCUMENTS_DIR, INDEXES_DIR, UPLOADS_DIR]:
     directory.mkdir(parents=True, exist_ok=True)

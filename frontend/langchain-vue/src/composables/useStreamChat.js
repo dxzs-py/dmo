@@ -52,7 +52,8 @@ function parseBackendError(response) {
           errorMsg += ` [${detailsStr}]`
         }
       }
-    } catch {
+    } catch (error) {
+      console.warn('解析错误响应失败:', error)
     }
     return new Error(errorMsg)
   }
@@ -111,7 +112,8 @@ async function readSSEStream(response, isStreamingRef, appendFn, sessionOps) {
         try {
           const parsed = JSON.parse(dataStr)
           parseSSEEvent(parsed, appendFn, sessionOps)
-        } catch {
+        } catch (error) {
+          console.warn('解析 SSE 数据失败:', dataStr, error)
         }
       }
     }
@@ -126,7 +128,10 @@ export function useStreamChat() {
 
   function abort() {
     if (abortController.value) {
-      try { abortController.value.abort() } catch {
+      try {
+        abortController.value.abort()
+      } catch (error) {
+        console.warn('中止请求失败:', error)
       }
     }
     isStreaming.value = false

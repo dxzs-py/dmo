@@ -1,20 +1,22 @@
 <template>
   <div v-if="hasMultipleVersions" class="message-version-selector">
-    <el-button-group size="small">
+    <div class="version-container">
       <el-button 
-        :disabled="!hasMultipleVersions" 
-        @click="goToPrevious"
+        size="small"
+        :disabled="currentVersion <= 0" 
         :icon="ArrowLeft"
+        @click="goToPrevious"
       />
       <span class="version-label">
         {{ currentVersion + 1 }} of {{ totalVersions }}
       </span>
       <el-button 
-        :disabled="!hasMultipleVersions" 
-        @click="goToNext"
+        size="small"
+        :disabled="currentVersion >= totalVersions - 1" 
         :icon="ArrowRight"
+        @click="goToNext"
       />
-    </el-button-group>
+    </div>
   </div>
 </template>
 
@@ -73,14 +75,21 @@ const goToNext = () => {
   margin-bottom: 8px;
 }
 
-.version-label {
-  padding: 0 12px;
-  display: flex;
+.version-container {
+  display: inline-flex;
   align-items: center;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  background-color: var(--el-bg-color);
-  border-top: 1px solid var(--el-border-color);
-  border-bottom: 1px solid var(--el-border-color);
+  gap: 8px;
+  padding: 4px 12px;
+  background-color: var(--el-fill-color-light);
+  border-radius: 6px;
+}
+
+.version-label {
+  padding: 0 8px;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+  font-weight: 500;
+  min-width: 60px;
+  text-align: center;
 }
 </style>
