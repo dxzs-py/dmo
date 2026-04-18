@@ -320,3 +320,177 @@ html.dark .nav-menu .el-menu {
   background-color: #f3f4f6;
   border-color: #d1d5db;
 }
+
+/* 美化 MessageBox 样式 - 豆包风格 */
+.el-overlay {
+  background: rgba(0, 0, 0, 0.4) !important;
+  backdrop-filter: blur(8px);
+}
+
+.el-message-box {
+  border-radius: 20px !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25), 
+              0 0 0 1px rgba(255, 255, 255, 0.1) !important;
+  padding: 0 !important;
+  overflow: hidden;
+  border: none !important;
+}
+
+.el-message-box__header {
+  padding: 28px 28px 20px !important;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-bottom: none !important;
+}
+
+.el-message-box__title {
+  color: #ffffff !important;
+  font-size: 18px !important;
+  font-weight: 600 !important;
+  text-align: center;
+}
+
+.el-message-box__headerbtn {
+  top: 20px !important;
+  right: 20px !important;
+}
+
+.el-message-box__headerbtn .el-message-box__close {
+  color: rgba(255, 255, 255, 0.8) !important;
+  font-size: 22px !important;
+  transition: all 0.3s ease;
+}
+
+.el-message-box__headerbtn:hover .el-message-box__close {
+  color: #ffffff !important;
+  transform: rotate(90deg);
+}
+
+.el-message-box__content {
+  padding: 32px 28px 24px !important;
+  text-align: center;
+}
+
+.el-message-box__status {
+  display: none !important;
+}
+
+.el-message-box__message {
+  color: #374151 !important;
+  font-size: 16px !important;
+  line-height: 1.6 !important;
+}
+
+html.dark .el-message-box__message {
+  color: #e5e7eb !important;
+}
+
+.el-message-box__footer {
+  padding: 0 28px 28px !important;
+  border-top: none !important;
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.el-message-box__btns {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.el-message-box__btns .el-button {
+  min-width: 100px;
+  height: 44px;
+  border-radius: 12px !important;
+  font-size: 15px;
+  font-weight: 500;
+  padding: 0 24px;
+  border: none !important;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.el-message-box__btns .el-button--default {
+  background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
+  color: #374151;
+}
+
+.el-message-box__btns .el-button--default:hover {
+  background: linear-gradient(135deg, #e5e7eb 0%, #d1d5db 100%);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+}
+
+.el-message-box__btns .el-button--primary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #ffffff;
+  box-shadow: 0 4px 14px rgba(102, 126, 234, 0.4);
+}
+
+.el-message-box__btns .el-button--primary:hover {
+  background: linear-gradient(135deg, #5a67d8 0%, #6b46c1 100%);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px rgba(102, 126, 234, 0.5);
+}
+
+.el-message-box__btns .el-button:active {
+  transform: translateY(0);
+}
+
+/* 警告类型的 MessageBox */
+.el-message-box--warning .el-message-box__header {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+}
+
+.el-message-box--warning .el-message-box__btns .el-button--primary {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  box-shadow: 0 4px 14px rgba(245, 87, 108, 0.4);
+}
+
+.el-message-box--warning .el-message-box__btns .el-button--primary:hover {
+  background: linear-gradient(135deg, #e879e8 0%, #f34a60 100%);
+  box-shadow: 0 12px 24px rgba(245, 87, 108, 0.5);
+}
+
+/* 成功类型的 MessageBox */
+.el-message-box--success .el-message-box__header {
+  background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+}
+
+.el-message-box--success .el-message-box__btns .el-button--primary {
+  background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+  box-shadow: 0 4px 14px rgba(17, 153, 142, 0.4);
+}
+
+.el-message-box--success .el-message-box__btns .el-button--primary:hover {
+  background: linear-gradient(135deg, #0f867c 0%, #2dd86b 100%);
+  box-shadow: 0 12px 24px rgba(17, 153, 142, 0.5);
+}
+
+/* 错误类型的 MessageBox */
+.el-message-box--error .el-message-box__header {
+  background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
+}
+
+.el-message-box--error .el-message-box__btns .el-button--primary {
+  background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
+  box-shadow: 0 4px 14px rgba(235, 51, 73, 0.4);
+}
+
+.el-message-box--error .el-message-box__btns .el-button--primary:hover {
+  background: linear-gradient(135deg, #d92d41 0%, #f14a33 100%);
+  box-shadow: 0 12px 24px rgba(235, 51, 73, 0.5);
+}
+
+/* 深色主题适配 */
+html.dark .el-message-box {
+  background: linear-gradient(135deg, #1f1f1f 0%, #262626 100%);
+}
+
+html.dark .el-message-box__btns .el-button--default {
+  background: linear-gradient(135deg, #374151 0%, #4b5563 100%);
+  color: #e5e7eb;
+}
+
+html.dark .el-message-box__btns .el-button--default:hover {
+  background: linear-gradient(135deg, #4b5563 0%, #6b7280 100%);
+}

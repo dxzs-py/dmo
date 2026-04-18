@@ -102,6 +102,7 @@ export function transformFrontendMessageToBackend(msg) {
 export function getModeLabel(mode) {
   const modeLabels = {
     'basic-agent': '基础对话',
+    'deep-thinking': '深度思考',
     'rag': 'RAG 问答',
     'workflow': '学习工作流',
     'deep-research': '深度研究',

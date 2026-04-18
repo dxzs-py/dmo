@@ -2,63 +2,27 @@
 import { InfoFilled, Tools } from '@element-plus/icons-vue'
 import ModelSelector from '../ModelSelector.vue'
 
-/**
- * ChatHeader组件 - 聊天页面头部
- * @component
- * @description 显示标题、模型选择器、模式切换、调试面板控制等
- */
 defineProps({
-  /**
-   * 页面标题
-   * @type {string}
-   */
   title: {
     type: String,
     default: '智能聊天',
   },
-  /**
-   * 当前选中的模型（v-model）
-   * @type {string}
-   */
   selectedModel: {
     type: String,
     default: 'deepseek-chat',
   },
-  /**
-   * 当前聊天模式
-   * @type {string}
-   * @required
-   */
   currentMode: {
     type: String,
     required: true,
   },
-  /**
-   * 可用模式配置对象
-   * @type {Object.<string, string>}
-   * @required
-   * @example { 'basic-agent': '基础代理', 'rag': 'RAG 检索' }
-   */
   availableModes: {
     type: Object,
     required: true,
-    validator: (value) => {
-      if (!value || typeof value !== 'object') return false
-      return Object.values(value).every(v => typeof v === 'string')
-    },
   },
-  /**
-   * 是否显示调试面板
-   * @type {boolean}
-   */
   showDebug: {
     type: Boolean,
     default: false,
   },
-  /**
-   * 是否显示右侧详情面板
-   * @type {boolean}
-   */
   showRightPanel: {
     type: Boolean,
     default: true,
@@ -66,25 +30,24 @@ defineProps({
 })
 
 const emit = defineEmits({
-  /**
-   * 更新选中模型事件（v-model）
-   * @param {string} model - 模型名称
-   */
   'update:selectedModel': (model) => typeof model === 'string',
-  /**
-   * 更新当前模式事件（v-model）
-   * @param {string} mode - 模式标识符
-   */
   'update:currentMode': (mode) => typeof mode === 'string',
-  /**
-   * 切换调试面板显示状态
-   */
   toggleDebug: () => true,
-  /**
-   * 切换右侧面板显示状态
-   */
   toggleRightPanel: () => true,
 })
+
+const modeConfig = {
+  'basic-agent': { icon: '🤖', label: '基础代理', desc: '日常问答与任务执行' },
+  'deep-thinking': { icon: '🧠', label: '深度思考', desc: '深度分析与推理' },
+  'rag': { icon: '📚', label: 'RAG 检索', desc: '基于知识库的检索增强' },
+  'workflow': { icon: '🔄', label: '学习工作流', desc: '计划-练习-反馈学习' },
+  'deep-research': { icon: '🔬', label: '深度研究', desc: '多步骤深度研究分析' },
+  'guarded': { icon: '🛡️', label: '安全代理', desc: '带安全防护的对话' },
+}
+
+function getModeConfig(mode) {
+  return modeConfig[mode] || { icon: '💬', label: mode, desc: '' }
+}
 </script>
 
 <template>
@@ -97,6 +60,7 @@ const emit = defineEmits({
         <el-button
           :type="showRightPanel ? 'primary' : 'default'"
           size="small"
+          circle
           @click="emit('toggleRightPanel')"
         >
           <el-icon><InfoFilled /></el-icon>
@@ -106,27 +70,37 @@ const emit = defineEmits({
         <el-button
           :type="showDebug ? 'primary' : 'default'"
           size="small"
+          circle
           @click="emit('toggleDebug')"
         >
           <el-icon><Tools /></el-icon>
         </el-button>
       </el-tooltip>
-      <ModelSelector 
-        :model-value="selectedModel" 
-        @update:model-value="(val) => emit('update:selectedModel', val)" 
+      <ModelSelector
+        :model-value="selectedModel"
+        @update:model-value="(val) => emit('update:selectedModel', val)"
       />
-      <el-select 
-        :model-value="currentMode" 
+      <el-select
+        :model-value="currentMode"
         placeholder="选择模式"
-        style="width: 180px;" 
+        class="mode-selector"
+        popper-class="mode-selector-popper"
         @update:model-value="(val) => emit('update:currentMode', val)"
       >
         <el-option
           v-for="(desc, mode) in availableModes"
           :key="mode"
-          :label="desc"
+          :label="`${getModeConfig(mode).icon} ${getModeConfig(mode).label}`"
           :value="mode"
-        />
+        >
+          <div class="mode-option">
+            <span class="mode-icon">{{ getModeConfig(mode).icon }}</span>
+            <div class="mode-info">
+              <span class="mode-name">{{ getModeConfig(mode).label }}</span>
+              <span class="mode-desc">{{ getModeConfig(mode).desc || desc }}</span>
+            </div>
+          </div>
+        </el-option>
       </el-select>
     </div>
   </div>
@@ -138,8 +112,9 @@ const emit = defineEmits({
   align-items: center;
   justify-content: space-between;
   background: var(--el-bg-color);
-  border-bottom: 1px solid var(--el-border-color);
-  padding: 12px 24px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  padding: 10px 24px;
+  flex-shrink: 0;
 }
 
 .header-left {
@@ -150,12 +125,49 @@ const emit = defineEmits({
 .header-right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .page-title {
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 600;
   color: var(--el-text-color-primary);
+}
+
+.mode-selector {
+  width: 180px;
+}
+
+.mode-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.mode-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+  width: 28px;
+  text-align: center;
+}
+
+.mode-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mode-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+  line-height: 1.3;
+}
+
+.mode-desc {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.3;
 }
 </style>

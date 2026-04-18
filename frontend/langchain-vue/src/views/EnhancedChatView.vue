@@ -51,6 +51,7 @@ const handleClearMessages = async () => {
       confirmButtonText: '确定',
       cancelButtonText: '取消',
       type: 'warning',
+      appendToBody: true
     });
     enhancedChatStore.clear();
     ElMessage.success('消息已清空');

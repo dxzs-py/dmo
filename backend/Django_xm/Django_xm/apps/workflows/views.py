@@ -3,7 +3,8 @@
 使用类视图和服务层实现，遵循项目统一的响应格式规范
 """
 import json
-from django.http import StreamingHttpResponse
+from urllib.parse import quote
+from django.http import StreamingHttpResponse, FileResponse, HttpResponse
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -14,13 +15,18 @@ from Django_xm.utils.error_codes import ErrorCode
 from .serializers import (
     WorkflowStartSerializer,
     WorkflowSubmitSerializer,
-    WorkflowResponseSerializer
+    WorkflowResponseSerializer,
+    WorkflowSessionSerializer
 )
 from .services import WorkflowService
 from .study_flow import get_workflow_state, _get_study_flow
+from .models import WorkflowSession
+from Django_xm.apps.core.services.file_manager import get_file_manager
 from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.permissions import IsAuthenticatedOrQueryParam
 
 logger = get_logger(__name__)
+file_manager = get_file_manager()
 
 
 class WorkflowStartView(APIView):
@@ -48,7 +54,8 @@ class WorkflowStartView(APIView):
             user_question = serializer.validated_data.get('user_question') or serializer.validated_data.get('query')
             result = WorkflowService.start_workflow(
                 user_question=user_question,
-                thread_id=serializer.validated_data.get('thread_id')
+                thread_id=serializer.validated_data.get('thread_id'),
+                user_id=request.user.id
             )
 
             response_serializer = WorkflowResponseSerializer(result)
@@ -64,6 +71,153 @@ class WorkflowStartView(APIView):
                 message=str(e),
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class WorkflowStartStreamView(APIView):
+    """启动学习工作流（SSE流式输出）"""
+    permission_classes = [IsAuthenticated]
+
+    def options(self, request):
+        response = HttpResponse(status=200)
+        origin = request.headers.get('Origin', '*')
+        response['Access-Control-Allow-Origin'] = origin
+        response['Access-Control-Allow-Credentials'] = 'true'
+        response['Access-Control-Allow-Headers'] = 'authorization,content-type,x-csrftoken,x-requested-with'
+        response['Access-Control-Allow-Methods'] = 'GET,POST,OPTIONS'
+        response['Access-Control-Max-Age'] = '86400'
+        return response
+
+    def post(self, request):
+        """
+        启动工作流并以SSE流式返回执行进度
+
+        SSE事件类型：
+        - start: 工作流开始
+        - step: 步骤更新
+        - state_update: 状态更新（含完整数据）
+        - waiting: 等待用户输入
+        - complete: 工作流完成
+        - error: 错误
+        """
+        serializer = WorkflowStartSerializer(data=request.data)
+        if not serializer.is_valid():
+            return validation_error_response(
+                errors=serializer.errors,
+                message="数据验证失败"
+            )
+
+        user_question = serializer.validated_data.get('user_question') or serializer.validated_data.get('query')
+        thread_id = serializer.validated_data.get('thread_id') or f"study_{__import__('uuid').uuid4().hex[:12]}"
+        user_id = request.user.id
+
+        logger.info(f"[API] 流式启动工作流，thread_id={thread_id}")
+
+        def event_stream():
+            try:
+                yield f"data: {json.dumps({'type': 'start', 'thread_id': thread_id, 'message': '工作流启动中...'}, ensure_ascii=False)}\n\n"
+
+                from .study_flow import _get_study_flow, StudyFlowState
+                from datetime import datetime
+
+                study_flow = _get_study_flow(thread_id)
+
+                initial_state = {
+                    "messages": [],
+                    "user_question": user_question,
+                    "learning_plan": None,
+                    "retrieved_docs": None,
+                    "quiz": None,
+                    "user_answers": None,
+                    "score": None,
+                    "score_details": None,
+                    "feedback": None,
+                    "retry_count": 0,
+                    "should_retry": False,
+                    "current_step": "start",
+                    "thread_id": thread_id,
+                    "created_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now().isoformat(),
+                    "error": None,
+                    "error_node": None
+                }
+
+                config = {"configurable": {"thread_id": thread_id}}
+
+                yield f"data: {json.dumps({'type': 'step', 'step': 'planner', 'message': '正在生成学习计划...'}, ensure_ascii=False)}\n\n"
+
+                for event in study_flow.graph.stream(initial_state, config, stream_mode="values"):
+                    if not event:
+                        continue
+
+                    current_step = event.get('current_step', 'unknown')
+
+                    step_messages = {
+                        'planner': '正在生成学习计划...',
+                        'retrieval': '正在检索相关资料...',
+                        'quiz_generator': '正在生成练习题...',
+                        'waiting_for_answers': '等待您提交答案...',
+                        'grading': '正在评分...',
+                        'feedback': '正在生成反馈...',
+                        'end': '工作流已完成',
+                    }
+
+                    step_message = step_messages.get(current_step, f'当前步骤: {current_step}')
+
+                    yield f"data: {json.dumps({'type': 'step', 'step': current_step, 'message': step_message}, ensure_ascii=False)}\n\n"
+
+                    if current_step == 'waiting_for_answers':
+                        waiting_data = {
+                            'type': 'waiting',
+                            'step': current_step,
+                            'data': {
+                                'thread_id': thread_id,
+                                'learning_plan': event.get('learning_plan'),
+                                'quiz': event.get('quiz'),
+                                'current_step': current_step,
+                            }
+                        }
+                        yield f"data: {json.dumps(waiting_data, ensure_ascii=False, default=str)}\n\n"
+                        break
+
+                    state_data = {
+                        'type': 'state_update',
+                        'step': current_step,
+                        'data': {
+                            'learning_plan': event.get('learning_plan'),
+                            'retrieved_docs': event.get('retrieved_docs'),
+                            'quiz': event.get('quiz'),
+                        }
+                    }
+                    yield f"data: {json.dumps(state_data, ensure_ascii=False, default=str)}\n\n"
+
+                yield f"data: {json.dumps({'type': 'complete', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
+
+                try:
+                    from .persistence import get_persistence_service
+                    persistence_service = get_persistence_service()
+                    persistence_service.save_session(
+                        thread_id=thread_id,
+                        user_question=user_question,
+                        state=study_flow.graph.get_state(config).values,
+                        user_id=user_id
+                    )
+                except Exception as persist_err:
+                    logger.warning(f"持久化工作流会话失败: {persist_err}")
+
+            except Exception as e:
+                logger.error(f"[API] 流式工作流执行失败：{str(e)}", exc_info=True)
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+
+        return StreamingHttpResponse(
+            event_stream(),
+            content_type='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no',
+                'Access-Control-Allow-Origin': request.headers.get('Origin', '*'),
+                'Access-Control-Allow-Credentials': 'true',
+            }
+        )
 
 
 class WorkflowSubmitView(APIView):
@@ -84,7 +238,8 @@ class WorkflowSubmitView(APIView):
         try:
             result = WorkflowService.submit_user_answers(
                 thread_id=serializer.validated_data['thread_id'],
-                answers=serializer.validated_data['answers']
+                answers=serializer.validated_data['answers'],
+                user_id=request.user.id
             )
 
             return success_response(
@@ -172,7 +327,7 @@ class WorkflowDeleteView(APIView):
 
     def delete(self, request, thread_id):
         try:
-            result = WorkflowService.delete_workflow(thread_id)
+            result = WorkflowService.delete_workflow(thread_id, request.user.id)
             return success_response(
                 data=result,
                 message='操作成功'
@@ -187,23 +342,207 @@ class WorkflowDeleteView(APIView):
             )
 
 
+class WorkflowListView(APIView):
+    """获取工作流列表视图"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            status_filter = request.query_params.get('status')
+            search_query = request.query_params.get('search')
+            page = int(request.query_params.get('page', 1))
+            page_size = min(int(request.query_params.get('page_size', 20)), 100)
+
+            queryset = WorkflowService.list_user_workflows(
+                user_id=request.user.id,
+                status=status_filter,
+                search=search_query
+            )
+
+            total = queryset.count()
+            start = (page - 1) * page_size
+            end = start + page_size
+            sessions = queryset[start:end]
+
+            serializer = WorkflowSessionSerializer(sessions, many=True)
+
+            return success_response(
+                data={
+                    'items': serializer.data,
+                    'total': total,
+                    'page': page,
+                    'page_size': page_size,
+                    'total_pages': (total + page_size - 1) // page_size,
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"[API] 获取工作流列表失败：{str(e)}", exc_info=True)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class WorkflowFilesListView(APIView):
+    """列出工作流文件视图"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, thread_id):
+        try:
+            try:
+                session = WorkflowSession.objects.get(
+                    thread_id=thread_id, 
+                    created_by=request.user, 
+                    is_deleted=False
+                )
+            except WorkflowSession.DoesNotExist:
+                # 会话不存在也可以列出文件，因为文件可能在会话创建之前就存在
+                pass
+
+            files = file_manager.list_task_files(thread_id, 'workflow')
+            
+            from Django_xm.apps.deep_research.serializers import FileInfoSerializer
+            serializer = FileInfoSerializer([f.to_dict() for f in files], many=True)
+
+            return success_response(
+                data={
+                    'thread_id': thread_id,
+                    'files': serializer.data,
+                    'total': len(files),
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"[API] 列出工作流文件失败：{str(e)}", exc_info=True)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class WorkflowFileDownloadView(APIView):
+    """下载工作流文件视图"""
+    permission_classes = [IsAuthenticatedOrQueryParam]
+
+    def get(self, request, thread_id, filename):
+        try:
+            try:
+                session = WorkflowSession.objects.get(
+                    thread_id=thread_id, 
+                    created_by=request.user, 
+                    is_deleted=False
+                )
+            except WorkflowSession.DoesNotExist:
+                # 会话不存在也可以下载文件
+                pass
+
+            file_info = file_manager.get_file_info(thread_id, filename, 'workflow')
+            if not file_info:
+                return not_found_response(message='文件不存在')
+
+            file_path = file_info.path
+
+            content_type = 'application/octet-stream'
+            if file_path.suffix.lower() in ['.md', '.txt']:
+                content_type = 'text/plain; charset=utf-8'
+            elif file_path.suffix.lower() == '.json':
+                content_type = 'application/json'
+
+            response = FileResponse(
+                open(file_path, 'rb'),
+                content_type=content_type,
+                as_attachment=True,
+                filename=quote(file_path.name)
+            )
+            return response
+
+        except Exception as e:
+            logger.error(f"[API] 下载文件失败：{str(e)}", exc_info=True)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class WorkflowFileContentView(APIView):
+    """获取工作流文件内容视图"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, thread_id, filename):
+        try:
+            try:
+                session = WorkflowSession.objects.get(
+                    thread_id=thread_id, 
+                    created_by=request.user, 
+                    is_deleted=False
+                )
+            except WorkflowSession.DoesNotExist:
+                # 会话不存在也可以读取文件内容
+                pass
+
+            file_info = file_manager.get_file_info(thread_id, filename, 'workflow')
+            if not file_info:
+                return not_found_response(message='文件不存在')
+
+            content = file_manager.read_file_content(thread_id, filename, 'workflow')
+
+            from Django_xm.apps.deep_research.serializers import FileInfoSerializer
+            return success_response(
+                data={
+                    'filename': filename,
+                    'content': content,
+                    'file_info': FileInfoSerializer(file_info.to_dict()).data,
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"[API] 读取文件内容失败：{str(e)}", exc_info=True)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 def workflow_stream(request, thread_id):
     """
     流式获取工作流执行进度（Server-Sent Events）
     使用 LangGraph 的 stream 方法获取真实的事件流
+    支持查询参数传递token进行认证
     """
-    from rest_framework.permissions import IsAuthenticated
-    from Django_xm.utils.responses import error_response
+    from rest_framework_simplejwt.tokens import AccessToken
+    from Django_xm.apps.users.models import User
 
-    if not request.user or not request.user.is_authenticated:
-        return error_response(
-            code=ErrorCode.UNAUTHORIZED,
-            message='未登录或登录已过期',
-            http_status=status.HTTP_401_UNAUTHORIZED
+    # 尝试从查询参数获取token进行认证
+    user = None
+    if request.user and request.user.is_authenticated:
+        user = request.user
+    else:
+        token = request.GET.get('token')
+        if token:
+            try:
+                access_token = AccessToken(token)
+                user_id = access_token['user_id']
+                user = User.objects.get(id=user_id)
+            except Exception as auth_err:
+                logger.warning(f"[Auth] 从查询参数获取用户失败: {auth_err}")
+
+    if not user or not user.is_authenticated:
+        def error_event():
+            yield f"data: {json.dumps({'type': 'error', 'message': '未登录或登录已过期'}, ensure_ascii=False)}\n\n"
+        return StreamingHttpResponse(
+            error_event(),
+            content_type='text/event-stream',
+            status=401,
+            headers={'Cache-Control': 'no-cache'}
         )
 
     try:
-        logger.info(f"[API] 流式获取工作流，thread_id={thread_id}")
+        logger.info(f"[API] 流式获取工作流，thread_id={thread_id}, user_id={user.id}")
 
         def event_stream():
             """生成 SSE 事件流"""
@@ -247,8 +586,11 @@ def workflow_stream(request, thread_id):
 
     except Exception as e:
         logger.error(f"[API] 流式输出失败：{str(e)}", exc_info=True)
-        return error_response(
-            code=ErrorCode.SERVER_ERROR,
-            message=str(e),
-            http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        def error_event():
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+        return StreamingHttpResponse(
+            error_event(),
+            content_type='text/event-stream',
+            status=500,
+            headers={'Cache-Control': 'no-cache'}
         )

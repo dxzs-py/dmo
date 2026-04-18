@@ -1,8 +1,66 @@
 import uuid
+import os
 from django.db import models
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from Django_xm.apps.core.base_models import AuditModel
+
+
+def chat_attachment_upload_path(instance, filename):
+    return f'chat_attachments/{instance.session.session_id}/{uuid.uuid4().hex[:8]}_{filename}'
+
+
+class ChatAttachment(AuditModel):
+    session = models.ForeignKey(
+        'ChatSession',
+        on_delete=models.CASCADE,
+        related_name='attachments',
+        verbose_name='会话'
+    )
+    message = models.ForeignKey(
+        'ChatMessage',
+        on_delete=models.CASCADE,
+        related_name='attachments',
+        null=True,
+        blank=True,
+        verbose_name='消息'
+    )
+    file = models.FileField(
+        upload_to=chat_attachment_upload_path,
+        verbose_name='文件'
+    )
+    original_name = models.CharField(
+        max_length=255,
+        verbose_name='原始文件名'
+    )
+    file_size = models.PositiveIntegerField(
+        verbose_name='文件大小(字节)'
+    )
+    file_type = models.CharField(
+        max_length=100,
+        blank=True,
+        verbose_name='文件类型'
+    )
+    mime_type = models.CharField(
+        max_length=255,
+        blank=True,
+        verbose_name='MIME类型'
+    )
+
+    class Meta:
+        db_table = 'chat_attachment'
+        verbose_name = '聊天附件'
+        verbose_name_plural = '聊天附件'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Attachment: {self.original_name}"
+
+    def clean(self):
+        super().clean()
+        max_size = getattr(settings, 'DATA_UPLOAD_MAX_MEMORY_SIZE', 10 * 1024 * 1024)
+        if self.file_size > max_size:
+            raise ValidationError({'file_size': f'文件大小不能超过{max_size // (1024*1024)}MB'})
 
 
 class ChatSession(AuditModel):
@@ -127,6 +185,17 @@ class ChatMessage(AuditModel):
         blank=True,
         null=True,
         verbose_name='推理'
+    )
+    suggestions = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='建议问题'
+    )
+    context = models.JSONField(
+        default=dict,
+        blank=True,
+        null=True,
+        verbose_name='上下文信息'
     )
     versions = models.JSONField(
         default=list,

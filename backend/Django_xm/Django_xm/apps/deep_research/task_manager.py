@@ -7,6 +7,7 @@ import threading
 from datetime import datetime
 from typing import Optional, Dict, Any
 
+from django.conf import settings
 from .models import ResearchTask
 
 logger = logging.getLogger(__name__)
@@ -83,7 +84,8 @@ class TaskManager:
     
     def create_task(self, task_id: str, query: str, 
                    enable_web_search: bool = True, 
-                   enable_doc_analysis: bool = False) -> Dict[str, Any]:
+                   enable_doc_analysis: bool = False,
+                   created_by=None) -> Dict[str, Any]:
         """
         创建新任务
         """
@@ -104,7 +106,8 @@ class TaskManager:
             query=query,
             status='pending',
             enable_web_search=enable_web_search,
-            enable_doc_analysis=enable_doc_analysis
+            enable_doc_analysis=enable_doc_analysis,
+            created_by=created_by
         )
         
         return task_data
@@ -129,9 +132,17 @@ class TaskManager:
         try:
             task = ResearchTask.objects.get(task_id=task_id)
             task.delete()
-            return True
         except ResearchTask.DoesNotExist:
-            return False
+            pass
+        
+        try:
+            from Django_xm.apps.core.services.file_manager import get_file_manager
+            file_manager = get_file_manager()
+            file_manager.delete_task_files(task_id, "research")
+        except Exception as e:
+            logger.warning(f"[TaskManager] 删除研究任务文件失败: {e}")
+        
+        return True
     
     def task_exists(self, task_id: str) -> bool:
         """检查任务是否存在"""

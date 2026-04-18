@@ -1,7 +1,7 @@
 <template>
   <div class="ai-reasoning" :class="className" v-bind="$attrs">
-    <el-collapse v-model="isOpen" @change="handleOpenChange">
-      <el-collapse-item>
+    <el-collapse v-model="activePanels" @change="handleOpenChange">
+      <el-collapse-item name="reasoning">
         <template #title>
           <div class="reasoning-trigger" @click.stop>
             <el-icon class="reasoning-icon"><ChatDotRound /></el-icon>
@@ -47,13 +47,15 @@ const props = defineProps({
 
 const emit = defineEmits(['openChange'])
 
-const isOpen = ref(props.defaultOpen)
+const activePanels = ref(props.defaultOpen ? ['reasoning'] : [])
 const hasAutoClosed = ref(false)
 const startTime = ref(null)
 const duration = ref(props.duration)
 
 const AUTO_CLOSE_DELAY = 1000
 const MS_IN_S = 1000
+
+const isOpen = computed(() => activePanels.value.includes('reasoning'))
 
 const thinkingMessage = computed(() => {
   if (props.isStreaming || duration.value === 0) {
@@ -66,8 +68,7 @@ const thinkingMessage = computed(() => {
 })
 
 const handleOpenChange = (value) => {
-  isOpen.value = value.length > 0
-  emit('openChange', isOpen.value)
+  emit('openChange', value.includes('reasoning'))
 }
 
 // 跟踪流式传输时的持续时间
@@ -87,7 +88,7 @@ watch([() => props.isStreaming, isOpen, () => props.defaultOpen], ([isStreaming,
   if (defaultOpen && !isStreaming && open && !hasAutoClosed.value) {
     // 添加小延迟，让用户有时间看到内容
     const timer = setTimeout(() => {
-      isOpen.value = false
+      activePanels.value = []
       hasAutoClosed.value = true
     }, AUTO_CLOSE_DELAY)
 

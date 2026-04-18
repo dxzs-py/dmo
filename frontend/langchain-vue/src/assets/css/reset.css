@@ -3,8 +3,22 @@
 *::before,
 *::after {
   box-sizing: border-box;
+}
+
+/* 不影响 Element Plus 组件的定位 */
+html,
+body,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+ul,
+p {
   margin: 0;
   padding: 0;
+  font-weight: normal;
 }
 
 body,
@@ -109,6 +123,18 @@ html.dark ::-webkit-scrollbar-thumb:hover {
 *:focus-visible {
   outline: 2px solid #3b82f6;
   outline-offset: 2px;
+}
+
+/* 保护 Element Plus 组件样式 */
+.el-overlay,
+.el-dialog,
+.el-drawer,
+.el-popover,
+.el-dropdown-menu,
+.el-select-dropdown,
+.el-popper {
+  margin: 0;
+  padding: 0;
 }
 
 /* 优化选择器性能 */

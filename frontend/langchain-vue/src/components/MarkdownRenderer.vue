@@ -33,11 +33,11 @@ hljs.registerLanguage('md', markdown)
 
 marked.use({
   renderer: {
-    code(code, lang) {
+    code({ text, lang }) {
       const language = lang && hljs.getLanguage(lang) ? lang : null
       const highlighted = language
-        ? hljs.highlight(code, { language }).value
-        : hljs.highlightAuto(code).value
+        ? hljs.highlight(text, { language }).value
+        : hljs.highlightAuto(text).value
       return `<pre><code class="hljs ${language ? `language-${language}` : ''}">${highlighted}</code></pre>`
     }
   },
@@ -53,6 +53,9 @@ const props = defineProps({
 })
 
 const renderedContent = computed(() => {
+  if (!props.content || typeof props.content !== 'string') {
+    return ''
+  }
   const rawHtml = marked(props.content)
   return DOMPurify.sanitize(rawHtml, {
     USE_PROFILES: { html: true },

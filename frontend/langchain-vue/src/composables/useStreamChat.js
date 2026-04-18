@@ -78,6 +78,18 @@ const SSE_EVENT_HANDLERS = {
   tool: (parsed, _appendFn, sessionOps) => {
     if (parsed.data) sessionOps.addToolCall?.(parsed.data)
   },
+  tool_result: (parsed, _appendFn, sessionOps) => {
+    if (parsed.data) sessionOps.addToolCall?.(parsed.data)
+  },
+  reasoning: (parsed, _appendFn, sessionOps) => {
+    if (parsed.data) sessionOps.setReasoning?.(parsed.data)
+  },
+  suggestions: (parsed, _appendFn, sessionOps) => {
+    if (parsed.data) sessionOps.setSuggestions?.(parsed.data)
+  },
+  context: (parsed, _appendFn, sessionOps) => {
+    if (parsed.data) sessionOps.setContext?.(parsed.data)
+  },
 }
 
 function parseSSEEvent(parsed, appendFn, sessionOps) {

@@ -3,6 +3,7 @@ export const AgentMode = {
   RAG: 'rag',
   WORKFLOW: 'workflow',
   DEEP_RESEARCH: 'deep-research',
+  DEEP_THINKING: 'deep-thinking',
   GUARDED: 'guarded',
 }
 
@@ -117,6 +118,7 @@ export function getModeLabel(mode) {
     [AgentMode.RAG]: 'RAG 检索',
     [AgentMode.WORKFLOW]: '学习工作流',
     [AgentMode.DEEP_RESEARCH]: '深度研究',
+    [AgentMode.DEEP_THINKING]: '深度思考',
     [AgentMode.GUARDED]: '安全代理',
   }
   return labels[mode] || mode

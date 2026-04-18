@@ -84,6 +84,16 @@ class ChatService:
 
         yield {'type': 'start', 'message': '开始生成...'}
 
+        if data['mode'] == 'deep-thinking':
+            async for event in ChatService._process_deep_thinking_stream(data, usage_tracker):
+                yield event
+            context_info = usage_tracker.get_usage_info()
+            yield {'type': 'context', 'data': context_info}
+            yield {'type': 'end', 'message': '生成完成'}
+            usage_tracker.log_summary()
+            logger.info("深度思考流程完成")
+            return
+
         if should_use_deep_research(data['message']):
             logger.info("触发深度研究流程")
             
@@ -138,6 +148,100 @@ class ChatService:
 
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, _task)
+
+    @staticmethod
+    async def _process_deep_thinking_stream(
+        data: Dict[str, Any],
+        usage_tracker
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """处理深度思考模式的流式响应"""
+        tools = get_tools_for_request(data['use_tools'], data['use_advanced_tools'])
+        agent = create_base_agent(tools=tools, prompt_mode='deep-thinking')
+
+        chat_history = data.get('chat_history', [])
+        langchain_chat_history = convert_chat_history(chat_history)
+        messages = []
+        if langchain_chat_history:
+            messages.extend(langchain_chat_history)
+        messages.append(HumanMessage(content=data['message']))
+        graph_input = {"messages": messages}
+
+        current_message_content = ""
+        all_messages = []
+        tool_calls_map: Dict[str, Dict] = {}
+        thinking_start_time = time.time()
+        has_sent_reasoning = False
+
+        config = {"recursion_limit": 50}
+
+        yield {
+            "type": "reasoning",
+            "data": {
+                "content": "正在深度思考中，分析问题的多个维度...",
+                "duration": 0,
+            },
+        }
+        has_sent_reasoning = True
+
+        async for chunk in agent.graph.astream(graph_input, config=config, stream_mode="messages"):
+            if isinstance(chunk, tuple) and len(chunk) == 2:
+                message, metadata = chunk
+            else:
+                message = chunk
+                metadata = {}
+
+            if metadata:
+                usage_tracker.update_from_metadata(metadata)
+
+            all_messages.append(message)
+
+            if isinstance(message, AIMessage):
+                tool_calls = getattr(message, "tool_calls", [])
+                if tool_calls:
+                    for tool_call in tool_calls:
+                        tool_id = tool_call.get("id", "")
+                        tool_name = tool_call.get("name", "")
+                        tool_info = {
+                            "id": tool_id,
+                            "name": tool_name,
+                            "type": f"tool-call-{tool_name}",
+                            "state": "input-available",
+                            "parameters": tool_call.get("args", {}),
+                            "result": None,
+                            "error": None,
+                        }
+                        tool_calls_map[tool_id] = tool_info
+                        yield {'type': 'tool', 'data': tool_info}
+
+                if message.content and not tool_calls:
+                    lcp = _lcp_len(current_message_content, message.content)
+                    if lcp < len(message.content):
+                        new_content = message.content[lcp:]
+                        current_message_content = message.content
+                        yield {"type": "chunk", "content": new_content}
+
+            elif isinstance(message, ToolMessage):
+                tool_call_id = getattr(message, "tool_call_id", "")
+                is_error = getattr(message, "status", None) == "error"
+                if tool_call_id in tool_calls_map:
+                    tool_info = tool_calls_map[tool_call_id]
+                    tool_info["state"] = "output-error" if is_error else "output-available"
+                    tool_info["result"] = None if is_error else message.content
+                    tool_info["error"] = message.content if is_error else None
+                    yield {'type': 'tool_result', 'data': tool_info}
+
+            await asyncio.sleep(0.01)
+
+        thinking_duration = round(time.time() - thinking_start_time, 1)
+
+        if has_sent_reasoning:
+            yield {
+                "type": "reasoning",
+                "data": {
+                    "content": f"深度思考完成，共思考了 {thinking_duration} 秒",
+                    "duration": thinking_duration,
+                },
+            }
 
     @staticmethod
     async def _process_normal_stream_chat(
@@ -335,7 +439,7 @@ class ChatService:
 class ChatModeService:
     """聊天模式服务类"""
 
-    FRONTEND_SUPPORTED_MODES = ['basic-agent', 'rag', 'workflow', 'deep-research', 'guarded']
+    FRONTEND_SUPPORTED_MODES = ['basic-agent', 'rag', 'workflow', 'deep-research', 'guarded', 'deep-thinking']
 
     @classmethod
     def get_supported_modes(cls) -> Dict[str, str]:

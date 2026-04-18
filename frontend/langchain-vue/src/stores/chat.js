@@ -12,6 +12,7 @@ export const useChatStore = defineStore('chat', () => {
   const currentMode = ref('basic-agent')
   const availableModes = ref({
     'basic-agent': '基础代理',
+    'deep-thinking': '深度思考',
     'rag': 'RAG 检索',
     'workflow': '学习工作流',
     'deep-research': '深度研究',
@@ -57,6 +58,9 @@ export const useChatStore = defineStore('chat', () => {
       plan: null,
       chainOfThought: null,
       toolCalls: [],
+      reasoning: null,
+      suggestions: null,
+      context: null,
     }
     sessionStore.addMessageToSession(sessionStore.currentSessionId, assistantMessage, false)
 
@@ -93,6 +97,12 @@ export const useChatStore = defineStore('chat', () => {
             sessionStore.setChainOfThoughtToLastMessage(sessionStore.currentSessionId, data),
           addToolCall: (data) =>
             sessionStore.addToolCallToLastMessage(sessionStore.currentSessionId, data),
+          setReasoning: (data) =>
+            sessionStore.setReasoningToLastMessage(sessionStore.currentSessionId, data),
+          setSuggestions: (data) =>
+            sessionStore.setSuggestionsToLastMessage(sessionStore.currentSessionId, data),
+          setContext: (data) =>
+            sessionStore.setContextToLastMessage(sessionStore.currentSessionId, data),
         }
       )
 
