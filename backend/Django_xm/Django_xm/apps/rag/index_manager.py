@@ -137,25 +137,26 @@ class IndexManager:
     def create_index(
         self,
         name: str,
-        documents: List[Document],
-        embeddings: Embeddings,
+        documents: Optional[List[Document]] = None,
+        embeddings: Optional[Embeddings] = None,
         description: str = "",
         store_type: Optional[str] = None,
         overwrite: bool = False,
         **kwargs,
     ):
-        """创建新索引"""
+        """创建新索引，支持创建空索引"""
         index_path = self._get_index_path(name)
 
         if index_path.exists() and not overwrite:
             raise ValueError(f"索引已存在: {name}。使用 overwrite=True 来覆盖。")
 
-        logger.info(f"创建索引: {name}，文档数量: {len(documents)}")
+        logger.info(f"创建索引: {name}，文档数量: {len(documents) if documents else 0}")
 
         try:
-            vector_store = create_vector_store(documents, embeddings, store_type, **kwargs)
-            index_path = self._get_index_path(name)
-            save_vector_store(vector_store, str(index_path), embeddings)
+            vector_store = None
+            if documents and embeddings:
+                vector_store = create_vector_store(documents, embeddings, store_type, **kwargs)
+                save_vector_store(vector_store, str(index_path), embeddings)
 
             from datetime import datetime
             metadata = {
@@ -163,7 +164,7 @@ class IndexManager:
                 "description": description,
                 "created_at": datetime.now().isoformat(),
                 "updated_at": datetime.now().isoformat(),
-                "num_documents": len(documents),
+                "num_documents": len(documents) if documents else 0,
                 "store_type": store_type or settings.vector_store_type,
                 "embedding_model": settings.embedding_model,
             }
@@ -178,6 +179,23 @@ class IndexManager:
                 import shutil
                 shutil.rmtree(index_path)
             raise
+
+    def create_empty_index(
+        self,
+        name: str,
+        description: str = "",
+        store_type: Optional[str] = None,
+        overwrite: bool = False,
+    ):
+        """创建空索引（无需指定文档）"""
+        return self.create_index(
+            name=name,
+            documents=None,
+            embeddings=None,
+            description=description,
+            store_type=store_type,
+            overwrite=overwrite,
+        )
 
     def load_index(self, name: str, embeddings: Embeddings, **kwargs):
         """加载索引"""
@@ -315,24 +333,33 @@ class IndexManager:
         logger.info(f"向索引 {name} 添加 {len(documents)} 个文档")
         
         try:
-            # 加载现有向量库
-            vector_store = self.load_index(name, embeddings)
+            # 检查是否为空索引（只有 metadata 文件）
+            metadata = self._load_metadata(name)
+            is_empty_index = metadata and metadata.get("num_documents", 0) == 0
             
-            # 添加文档
-            if hasattr(vector_store, 'add_documents'):
-                vector_store.add_documents(documents)
-            elif hasattr(vector_store, 'add_texts'):
-                texts = [doc.page_content for doc in documents]
-                metadatas = [doc.metadata for doc in documents]
-                vector_store.add_texts(texts, metadatas)
+            if is_empty_index:
+                # 如果是空索引，直接创建新的向量库
+                logger.info(f"索引 {name} 为空，创建新的向量库")
+                vector_store = create_vector_store(documents, embeddings)
+                save_vector_store(vector_store, str(index_path), embeddings)
             else:
-                raise ValueError("向量库不支持添加文档")
-            
-            # 保存更新后的向量库
-            save_vector_store(vector_store, str(index_path), embeddings)
+                # 加载现有向量库
+                vector_store = self.load_index(name, embeddings)
+                
+                # 添加文档
+                if hasattr(vector_store, 'add_documents'):
+                    vector_store.add_documents(documents)
+                elif hasattr(vector_store, 'add_texts'):
+                    texts = [doc.page_content for doc in documents]
+                    metadatas = [doc.metadata for doc in documents]
+                    vector_store.add_texts(texts, metadatas)
+                else:
+                    raise ValueError("向量库不支持添加文档")
+                
+                # 保存更新后的向量库
+                save_vector_store(vector_store, str(index_path), embeddings)
             
             # 更新元数据
-            metadata = self._load_metadata(name)
             if metadata:
                 old_count = metadata.get("num_documents", 0)
                 metadata["num_documents"] = old_count + len(documents)

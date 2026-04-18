@@ -33,6 +33,7 @@ from .serializers import (
     DocumentIndexSerializer,
     DocumentSerializer,
     IndexCreateSerializer,
+    EmptyIndexCreateSerializer,
     IndexInfoSerializer,
     SearchRequestSerializer,
     SearchResultSerializer,
@@ -55,7 +56,7 @@ class RAGIndexCreateView(APIView):
     """
     创建新索引
     
-    从指定目录加载文档，创建向量索引。
+    从指定目录加载文档，创建向量索引，或者创建空索引。
     需要用户认证。
     """
     permission_classes = [IsAuthenticated]
@@ -74,50 +75,61 @@ class RAGIndexCreateView(APIView):
         logger.info(f"创建索引请求：{data['name']}")
         
         try:
-            directory_path = Path(data['directory_path'])
-            if not directory_path.exists():
-                return error_response(
-                    code=ErrorCode.NOT_FOUND,
-                    message=f'目录不存在：{data["directory_path"]}',
-                    http_status=status.HTTP_404_NOT_FOUND
-                )
-
             manager = IndexManager()
-            if not manager.index_exists(data['name']) and not data.get('overwrite', False):
+            if manager.index_exists(data['name']) and not data.get('overwrite', False):
                 return error_response(
                     code=ErrorCode.DUPLICATE_RESOURCE,
                     message=f'索引已存在：{data["name"]}。使用 overwrite=true 来覆盖。',
                     http_status=status.HTTP_409_CONFLICT
                 )
             
-            logger.info(f"加载文档：{directory_path}")
-            documents = load_documents_from_directory(str(directory_path))
-            
-            if not documents:
-                return error_response(
-                    code=ErrorCode.INVALID_PARAMS,
-                    message='目录中没有找到支持的文档',
-                    http_status=status.HTTP_400_BAD_REQUEST
+            # 检查是否提供了 directory_path
+            directory_path_str = data.get('directory_path')
+            if directory_path_str:
+                directory_path = Path(directory_path_str)
+                if not directory_path.exists():
+                    return error_response(
+                        code=ErrorCode.NOT_FOUND,
+                        message=f'目录不存在：{directory_path_str}',
+                        http_status=status.HTTP_404_NOT_FOUND
+                    )
+
+                logger.info(f"加载文档：{directory_path}")
+                documents = load_documents_from_directory(str(directory_path))
+                
+                if not documents:
+                    return error_response(
+                        code=ErrorCode.INVALID_PARAMS,
+                        message='目录中没有找到支持的文档',
+                        http_status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                logger.info("分块文档...")
+                chunks = split_documents(
+                    documents,
+                    chunk_size=data.get('chunk_size'),
+                    chunk_overlap=data.get('chunk_overlap'),
                 )
-            
-            logger.info("分块文档...")
-            chunks = split_documents(
-                documents,
-                chunk_size=data.get('chunk_size'),
-                chunk_overlap=data.get('chunk_overlap'),
-            )
-            
-            logger.info("创建 embeddings...")
-            embeddings = get_embeddings()
-            
-            logger.info("创建向量索引...")
-            vector_store = manager.create_index(
-                name=data['name'],
-                documents=chunks,
-                embeddings=embeddings,
-                description=data.get('description', ''),
-                overwrite=data.get('overwrite', False),
-            )
+                
+                logger.info("创建 embeddings...")
+                embeddings = get_embeddings()
+                
+                logger.info("创建向量索引...")
+                vector_store = manager.create_index(
+                    name=data['name'],
+                    documents=chunks,
+                    embeddings=embeddings,
+                    description=data.get('description', ''),
+                    overwrite=data.get('overwrite', False),
+                )
+            else:
+                # 创建空索引
+                logger.info("创建空索引...")
+                manager.create_empty_index(
+                    name=data['name'],
+                    description=data.get('description', ''),
+                    overwrite=data.get('overwrite', False),
+                )
             
             stats = manager.get_index_stats(data['name'])
             
@@ -138,6 +150,72 @@ class RAGIndexCreateView(APIView):
             
         except Exception as e:
             logger.error(f"创建索引失败：{e}", exc_info=True)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class RAGEmptyIndexCreateView(APIView):
+    """
+    创建空索引
+    
+    创建一个空的向量索引，用于后续上传文档。
+    需要用户认证。
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        serializer = EmptyIndexCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="数据验证失败",
+                details=serializer.errors,
+                http_status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        data = serializer.validated_data
+        index_name = data['name']
+        logger.info(f"创建空索引请求：{index_name}")
+        
+        try:
+            manager = IndexManager()
+            
+            # 检查索引是否已存在
+            if manager.index_exists(index_name) and not data.get('overwrite', False):
+                return error_response(
+                    code=ErrorCode.DUPLICATE_RESOURCE,
+                    message=f'索引已存在：{index_name}。使用 overwrite=true 来覆盖，或者选择其他名称。',
+                    http_status=status.HTTP_409_CONFLICT
+                )
+            
+            # 创建空索引
+            manager.create_empty_index(
+                name=index_name,
+                description=data.get('description', ''),
+                overwrite=data.get('overwrite', False),
+            )
+            
+            stats = manager.get_index_stats(index_name)
+            
+            logger.info(f"空索引创建成功：{index_name}")
+            return success_response(
+                data=IndexInfoSerializer({
+                    'name': index_name,
+                    'description': data.get('description', ''),
+                    'created_at': stats.get('created_at', ''),
+                    'updated_at': stats.get('updated_at', ''),
+                    'num_documents': stats.get('num_documents', 0),
+                    'store_type': stats.get('store_type', 'faiss'),
+                    'embedding_model': stats.get('embedding_model', ''),
+                }).data,
+                message=f'索引 "{index_name}" 创建成功'
+            )
+            
+        except Exception as e:
+            logger.error(f"创建空索引失败：{e}", exc_info=True)
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
                 message=str(e),
@@ -210,7 +288,18 @@ class RAGIndexDeleteView(APIView):
             if not manager.index_exists(name):
                 return not_found_response(message=f'索引不存在：{name}')
 
+            # 删除索引数据
             manager.delete_index(name)
+            
+            # 删除对应的上传文件
+            upload_dir = Path(app_cfg.data_uploads_path) / name
+            if upload_dir.exists() and upload_dir.is_dir():
+                try:
+                    import shutil
+                    shutil.rmtree(upload_dir)
+                    logger.info(f"已删除索引 {name} 的上传文件目录")
+                except Exception as e:
+                    logger.warning(f"删除上传文件目录失败：{e}")
 
             return success_response(
                 data={'message': f'索引已删除：{name}'},
@@ -237,9 +326,18 @@ class RAGIndexStatsView(APIView):
 
             if not manager.index_exists(name):
                 return not_found_response(message=f'索引不存在：{name}')
-
-            embeddings = get_embeddings()
-            stats = manager.get_index_stats(name, embeddings)
+            
+            # 检查是否为空索引
+            metadata = manager._load_metadata(name)
+            num_documents = metadata.get('num_documents', 0) if metadata else 0
+            
+            if num_documents > 0:
+                # 只有在有文档时才加载向量存储获取详细统计
+                embeddings = get_embeddings()
+                stats = manager.get_index_stats(name, embeddings)
+            else:
+                # 空索引只返回基本统计信息
+                stats = manager.get_index_stats(name)
 
             return success_response(
                 data=stats,
@@ -375,6 +473,87 @@ class RAGDocumentAddDirectoryView(APIView):
             )
 
 
+class RAGDocumentListView(APIView):
+    """
+    获取索引下的文件列表
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, name):
+        try:
+            manager = IndexManager()
+
+            if not manager.index_exists(name):
+                return not_found_response(message=f'索引不存在：{name}')
+
+            upload_dir = Path(app_cfg.data_uploads_path) / name
+            
+            files = []
+            if upload_dir.exists():
+                for item in upload_dir.iterdir():
+                    if item.is_file():
+                        file_stat = item.stat()
+                        files.append({
+                            'name': item.name,
+                            'size': file_stat.st_size,
+                            'uploaded_at': datetime.fromtimestamp(file_stat.st_ctime).isoformat()
+                        })
+
+            return success_response(
+                data={'files': files, 'count': len(files)},
+                message='操作成功'
+            )
+
+        except Exception as e:
+            logger.error(f"获取文件列表失败：{e}", exc_info=True)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class RAGDocumentDeleteView(APIView):
+    """
+    删除索引下的文件
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, name, filename):
+        try:
+            manager = IndexManager()
+
+            if not manager.index_exists(name):
+                return not_found_response(message=f'索引不存在：{name}')
+
+            upload_dir = Path(app_cfg.data_uploads_path) / name
+            file_path = upload_dir / filename
+
+            if not file_path.exists() or not file_path.is_file():
+                return not_found_response(message=f'文件不存在：{filename}')
+
+            # 删除文件
+            file_path.unlink()
+            
+            logger.info(f"删除文件：{file_path}")
+
+            # TODO：这里我们可以考虑重新构建索引，或者从索引中移除该文件的内容
+            # 目前为了简化，我们只是删除文件，索引中仍然保留文档片段
+
+            return success_response(
+                data={'message': f'文件已删除：{filename}'},
+                message='操作成功'
+            )
+
+        except Exception as e:
+            logger.error(f"删除文件失败：{e}", exc_info=True)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message=str(e),
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 # ==================== 查询接口 ====================
 
 class RAGQueryView(APIView):
@@ -400,6 +579,15 @@ class RAGQueryView(APIView):
             manager = IndexManager()
             if not manager.index_exists(data['index_name']):
                 return not_found_response(message=f'索引不存在：{data["index_name"]}')
+            
+            # 检查是否为空索引
+            metadata = manager._load_metadata(data['index_name'])
+            num_documents = metadata.get('num_documents', 0) if metadata else 0
+            if num_documents == 0:
+                return validation_error_response(
+                    message="索引中暂无文档，请先上传文档后再查询",
+                    errors=[]
+                )
 
             embeddings = get_embeddings()
             vector_store = manager.load_index(data['index_name'], embeddings)
@@ -455,6 +643,15 @@ class RAGSearchView(APIView):
             manager = IndexManager()
             if not manager.index_exists(data['index_name']):
                 return not_found_response(message=f'索引不存在：{data["index_name"]}')
+            
+            # 检查是否为空索引
+            metadata = manager._load_metadata(data['index_name'])
+            num_documents = metadata.get('num_documents', 0) if metadata else 0
+            if num_documents == 0:
+                return validation_error_response(
+                    message="索引中暂无文档，请先上传文档后再检索",
+                    errors=[]
+                )
 
             embeddings = get_embeddings()
             vector_store = manager.load_index(data['index_name'], embeddings)

@@ -175,7 +175,7 @@ class ChatSession:
     
     def _create_agent(self):
         """创建或重新创建 Agent"""
-        tools = get_tools_for_request(self.use_tools, self.use_advanced_tools)
+        tools = get_tools_for_request(self.use_tools, self.use_advanced_tools, use_web_search=self.use_advanced_tools)
         
         self.agent = create_base_agent(
             tools=tools,

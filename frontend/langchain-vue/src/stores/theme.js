@@ -1,51 +1,61 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 
 export const useThemeStore = defineStore('theme', () => {
-  // 主题状态：'light' 或 'dark'
   const currentTheme = ref(localStorage.getItem('theme') || 'light')
-  
-  // 计算属性：当前主题是否为深色
-  const isDark = computed(() => currentTheme.value === 'dark')
-  
-  // 切换主题
+
+  const isDark = computed(() => {
+    if (currentTheme.value === 'system') {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches
+    }
+    return currentTheme.value === 'dark'
+  })
+
+  const effectiveTheme = computed(() => isDark.value ? 'dark' : 'light')
+
   const toggleTheme = () => {
-    currentTheme.value = currentTheme.value === 'light' ? 'dark' : 'light'
+    const themes = ['light', 'dark', 'system']
+    const currentIndex = themes.indexOf(currentTheme.value)
+    currentTheme.value = themes[(currentIndex + 1) % themes.length]
     saveThemeToLocalStorage()
     updateDocumentTheme()
   }
-  
-  // 设置主题
+
   const setTheme = (theme) => {
-    if (['light', 'dark'].includes(theme)) {
+    if (['light', 'dark', 'system'].includes(theme)) {
       currentTheme.value = theme
       saveThemeToLocalStorage()
       updateDocumentTheme()
     }
   }
-  
-  // 保存主题到本地存储
+
   const saveThemeToLocalStorage = () => {
     localStorage.setItem('theme', currentTheme.value)
   }
-  
-  // 更新文档的主题类
+
   const updateDocumentTheme = () => {
-    if (currentTheme.value === 'dark') {
+    if (isDark.value) {
       document.documentElement.classList.add('dark')
     } else {
       document.documentElement.classList.remove('dark')
     }
+    document.documentElement.setAttribute('data-theme', effectiveTheme.value)
   }
-  
-  // 初始化主题
+
   const initTheme = () => {
     updateDocumentTheme()
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    mediaQuery.addEventListener('change', () => {
+      if (currentTheme.value === 'system') {
+        updateDocumentTheme()
+      }
+    })
   }
-  
+
   return {
     currentTheme,
     isDark,
+    effectiveTheme,
     toggleTheme,
     setTheme,
     initTheme

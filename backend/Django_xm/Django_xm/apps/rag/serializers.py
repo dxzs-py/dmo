@@ -66,8 +66,10 @@ class IndexCreateSerializer(serializers.Serializer):
         help_text="索引名称"
     )
     directory_path = serializers.CharField(
-        required=True,
-        help_text="文档目录路径"
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        help_text="文档目录路径（可选，不提供则创建空索引）"
     )
     description = serializers.CharField(
         default="",
@@ -89,6 +91,35 @@ class IndexCreateSerializer(serializers.Serializer):
         required=False,
         help_text="是否覆盖已存在的索引"
     )
+
+
+class EmptyIndexCreateSerializer(serializers.Serializer):
+    """创建空索引请求序列化器"""
+    name = serializers.CharField(
+        min_length=1,
+        max_length=100,
+        required=True,
+        help_text="索引名称（只能包含字母、数字、下划线和连字符）"
+    )
+    description = serializers.CharField(
+        default="",
+        allow_blank=True,
+        max_length=500,
+        required=False,
+        help_text="索引描述（可选）"
+    )
+    overwrite = serializers.BooleanField(
+        default=False,
+        required=False,
+        help_text="是否覆盖已存在的索引"
+    )
+    
+    def validate_name(self, value):
+        """验证索引名称格式"""
+        import re
+        if not re.match(r'^[a-zA-Z0-9_-]+$', value):
+            raise serializers.ValidationError("索引名称只能包含字母、数字、下划线和连字符")
+        return value
 
 
 class IndexInfoSerializer(serializers.Serializer):

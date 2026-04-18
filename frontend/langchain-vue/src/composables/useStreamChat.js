@@ -88,7 +88,17 @@ const SSE_EVENT_HANDLERS = {
     if (parsed.data) sessionOps.setSuggestions?.(parsed.data)
   },
   context: (parsed, _appendFn, sessionOps) => {
-    if (parsed.data) sessionOps.setContext?.(parsed.data)
+    if (parsed.data) {
+      sessionOps.setContext?.(parsed.data)
+      if (parsed.data.cost) {
+        sessionOps.setCost?.(parsed.data.cost)
+      }
+    }
+  },
+  command: (parsed, _appendFn, sessionOps) => {
+    if (parsed.data) {
+      sessionOps.setContext?.({ command: parsed.data })
+    }
   },
 }
 

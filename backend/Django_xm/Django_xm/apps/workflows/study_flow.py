@@ -231,7 +231,8 @@ def submit_answers(
 
     current_state = study_flow.get_state(thread_id)
     logger.info(f"[Study Flow] 当前状态: {current_state.values.get('current_step')}")
-
+    
+    # 更新状态
     study_flow.update_state(
         thread_id,
         {
@@ -241,6 +242,7 @@ def submit_answers(
     )
 
     logger.info("[Study Flow] 继续执行工作流...")
+    # 不传入输入，让工作流从检查点继续执行
     study_flow.invoke(None, config=config)
 
     result = get_workflow_state(thread_id)

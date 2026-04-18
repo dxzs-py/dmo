@@ -35,7 +35,8 @@ def planner_node(state: StudyFlowState) -> Dict[str, Any]:
     2. 生成结构化的学习计划
     3. 使用 LLM 的结构化输出功能
     """
-    logger.info(f"[Planner Node] 开始生成学习计划，用户问题: {state['user_question']}")
+    user_question = state.get("user_question", "")
+    logger.info(f"[Planner Node] 开始生成学习计划，用户问题: {user_question}")
 
     try:
         model = get_chat_model()
@@ -54,7 +55,7 @@ def planner_node(state: StudyFlowState) -> Dict[str, Any]:
 
 请确保计划具有针对性和可操作性。"""
 
-        user_prompt = f"用户的学习问题：{state['user_question']}\n\n请为此问题制定学习计划。"
+        user_prompt = f"用户的学习问题：{user_question}\n\n请为此问题制定学习计划。"
 
         logger.info("[Planner Node] 调用 LLM 生成学习计划...")
         plan_response = structured_model.invoke([
