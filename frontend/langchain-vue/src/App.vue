@@ -36,7 +36,7 @@ onMounted(async () => {
       <router-view />
     </div>
     <div v-else class="app-container">
-      <AppHeader />
+      <AppHeader :sidebar-collapsed="isCollapse" @toggle-sidebar="isCollapse = !isCollapse" />
       <div class="content-wrapper">
         <AppSidebar v-model:collapse="isCollapse" />
         <main class="main-content" :class="{ 'sidebar-collapsed': isCollapse }">
@@ -50,15 +50,12 @@ onMounted(async () => {
 </template>
 
 <style>
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
 html, body, #app {
   height: 100%;
   width: 100%;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
 .app-container {

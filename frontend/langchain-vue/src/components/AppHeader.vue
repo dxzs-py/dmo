@@ -2,8 +2,17 @@
 import { useThemeStore } from '../stores/theme'
 import { useUserStore } from '../stores/user'
 import { useRouter } from 'vue-router'
-import { Sunny, Moon, User, Setting, Lock } from '@element-plus/icons-vue'
+import { Sunny, Moon, User, Setting, SwitchButton, Fold, Expand } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+
+const props = defineProps({
+  sidebarCollapsed: {
+    type: Boolean,
+    default: true
+  }
+})
+
+const emit = defineEmits(['toggle-sidebar'])
 
 const themeStore = useThemeStore()
 const userStore = useUserStore()
@@ -19,7 +28,8 @@ const handleCommand = async (command) => {
       await ElMessageBox.confirm('确定要退出登录吗？', '提示', {
         confirmButtonText: '确定',
         cancelButtonText: '取消',
-        type: 'warning'
+        type: 'warning',
+        appendToBody: true
       })
       userStore.logout()
       ElMessage.success('已退出登录')
@@ -35,6 +45,12 @@ const handleCommand = async (command) => {
   <header class="app-header">
     <div class="header-content">
       <div class="header-left">
+        <el-button
+          class="menu-toggle-btn"
+          :icon="sidebarCollapsed ? Expand : Fold"
+          text
+          @click="emit('toggle-sidebar')"
+        />
         <router-link to="/" class="logo-link">
           <h1 class="app-title">LC-StudyLab</h1>
           <span class="app-subtitle">智能学习 & 研究助手</span>
@@ -69,7 +85,7 @@ const handleCommand = async (command) => {
             <el-dropdown-menu>
               <el-dropdown-item command="profile" :icon="User">个人中心</el-dropdown-item>
               <el-dropdown-item command="settings" :icon="Setting">设置</el-dropdown-item>
-              <el-dropdown-item divided command="logout" :icon="Lock">退出登录</el-dropdown-item>
+              <el-dropdown-item divided command="logout" :icon="SwitchButton">退出登录</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -151,5 +167,44 @@ const handleCommand = async (command) => {
 .username {
   font-size: 14px;
   color: var(--el-text-color-primary);
+}
+
+.menu-toggle-btn {
+  font-size: 20px;
+  color: var(--el-text-color-regular);
+  padding: 4px;
+}
+
+.menu-toggle-btn:hover {
+  color: var(--el-color-primary);
+}
+
+@media (max-width: 768px) {
+  .header-content {
+    padding: 0 12px;
+  }
+
+  .app-subtitle {
+    display: none;
+  }
+
+  .app-title {
+    font-size: 16px;
+  }
+
+  .username {
+    display: none;
+  }
+
+  .header-right {
+    gap: 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  .auth-buttons .el-button {
+    padding: 6px 12px;
+    font-size: 13px;
+  }
 }
 </style>

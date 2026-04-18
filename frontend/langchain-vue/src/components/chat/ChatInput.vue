@@ -1,117 +1,96 @@
 <script setup>
-import { ref, watch, nextTick } from 'vue'
-import { ArrowRight, Document, Search, Link } from '@element-plus/icons-vue'
+import { ref, watch, nextTick, computed } from 'vue'
+import { Promotion, Search, Microphone, Document, Close, VideoPause } from '@element-plus/icons-vue'
 
-/**
- * ChatInput组件 - 聊天输入框
- * @component
- * @description 提供消息输入、附件上传、网络搜索、语音输入等功能
- */
 const props = defineProps({
-  /**
-   * 输入框绑定值（v-model）
-   * @type {string}
-   */
   modelValue: {
     type: String,
     default: '',
   },
-  /**
-   * 是否禁用
-   * @type {boolean}
-   */
   disabled: {
     type: Boolean,
     default: false,
   },
-  /**
-   * 发送按钮加载状态
-   * @type {boolean}
-   */
   loading: {
     type: Boolean,
     default: false,
   },
-  /**
-   * 是否启用网络搜索
-   * @type {boolean}
-   */
+  isStreaming: {
+    type: Boolean,
+    default: false,
+  },
   useWebSearch: {
     type: Boolean,
     default: false,
   },
-  /**
-   * 是否启用语音输入
-   * @type {boolean}
-   */
   useMicrophone: {
     type: Boolean,
     default: false,
   },
-  /**
-   * 占位提示文本
-   * @type {string}
-   */
   placeholder: {
     type: String,
-    default: '输入您的问题... (Enter 发送，Shift+Enter 换行)',
+    default: '',
   },
-  /**
-   * 最大输入字符数
-   * @type {number}
-   */
   maxLength: {
     type: Number,
     default: 10000,
-    validator: (value) => value > 0 && value <= 50000,
   },
-  /**
-   * 是否显示工具栏（附件、搜索等）
-   * @type {boolean}
-   */
   showToolbar: {
     type: Boolean,
     default: true,
   },
+  attachments: {
+    type: Array,
+    default: () => [],
+  },
 })
 
 const emit = defineEmits({
-  /**
-   * 更新modelValue事件（v-model）
-   * @param {string} value - 新值
-   */
   'update:modelValue': (value) => typeof value === 'string',
-  /**
-   * 发送消息事件
-   */
   send: () => true,
-  /**
-   * 键盘按下事件
-   * @param {KeyboardEvent} event - 键盘事件对象
-   */
   keydown: (event) => event instanceof KeyboardEvent,
-  /**
-   * 点击附件按钮事件
-   */
   attach: () => true,
-  /**
-   * 点击语音按钮事件
-   */
+  removeAttachment: (index) => typeof index === 'number',
   voice: () => true,
-  /**
-   * 切换网络搜索状态事件
-   */
   webSearch: () => true,
-  /**
-   * 切换麦克风状态事件
-   */
   microphone: () => true,
+  stopStreaming: () => true,
 })
 
 const textareaRef = ref(null)
 const isFocused = ref(false)
+const fileInputRef = ref(null)
+
+const computedPlaceholder = computed(() => {
+  if (props.isStreaming) return '正在生成回复...'
+  return props.placeholder || '输入您的问题，按 Enter 发送...'
+})
+
+const hasAttachments = computed(() => props.attachments.length > 0)
+const canSend = computed(() => (props.modelValue.trim() || hasAttachments.value) && !props.disabled)
+
+const formatFileSize = (bytes) => {
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
+const getFileIcon = (type) => {
+  const iconMap = {
+    pdf: '📄', doc: '📝', docx: '📝', txt: '📃',
+    png: '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', webp: '🖼️', svg: '🖼️',
+    xls: '📊', xlsx: '📊', csv: '📊',
+    py: '🐍', js: '📜', ts: '📜', html: '🌐', css: '🎨',
+    json: '📋', xml: '📋', md: '📝',
+  }
+  return iconMap[type] || '📎'
+}
 
 const handleKeyDown = (event) => {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault()
+    emit('send')
+  }
   emit('keydown', event)
 }
 
@@ -124,7 +103,19 @@ const handleBlur = () => {
 }
 
 const handleAttach = () => {
-  emit('attach')
+  fileInputRef.value?.click()
+}
+
+const handleFileChange = (event) => {
+  const files = event.target.files
+  if (files && files.length > 0) {
+    emit('attach', files)
+  }
+  event.target.value = ''
+}
+
+const handleRemoveAttachment = (index) => {
+  emit('removeAttachment', index)
 }
 
 const handleWebSearch = () => {
@@ -137,12 +128,10 @@ const handleMicrophone = () => {
 
 const adjustTextareaHeight = async () => {
   await nextTick()
-  if (textareaRef.value) {
-    const textarea = textareaRef.value.$el?.querySelector('textarea') || textareaRef.value.textarea
-    if (textarea) {
-      textarea.style.height = 'auto'
-      textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px'
-    }
+  const textarea = textareaRef.value
+  if (textarea) {
+    textarea.style.height = 'auto'
+    textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px'
   }
 }
 
@@ -151,63 +140,109 @@ watch(() => props.modelValue, adjustTextareaHeight)
 
 <template>
   <div class="chat-footer">
-    <div class="input-area">
-      <div class="input-wrapper" :class="{ 'is-focused': isFocused }">
-        <div class="input-tools">
-          <el-button
-            circle
-            :icon="Document"
+    <div class="input-container">
+      <Transition name="slide-down">
+        <div v-if="hasAttachments" class="attachment-preview">
+          <TransitionGroup name="list" tag="div" class="attachment-list">
+            <div
+              v-for="(file, index) in attachments"
+              :key="file.name + index"
+              class="attachment-item"
+            >
+              <span class="attachment-icon">{{ getFileIcon(file.fileType || file.name?.split('.').pop()) }}</span>
+              <div class="attachment-info">
+                <span class="attachment-name">{{ file.name || file.originalName }}</span>
+                <span v-if="file.size" class="attachment-size">{{ formatFileSize(file.size) }}</span>
+              </div>
+              <button class="attachment-remove" @click="handleRemoveAttachment(index)">
+                <el-icon :size="12"><Close /></el-icon>
+              </button>
+            </div>
+          </TransitionGroup>
+        </div>
+      </Transition>
+
+      <div class="input-card" :class="{ 'is-focused': isFocused, 'is-streaming': isStreaming }">
+        <div class="input-toolbar">
+          <button
+            class="toolbar-btn"
+            :class="{ active: hasAttachments }"
             :disabled="disabled || loading"
-            size="small"
             title="添加附件"
             @click="handleAttach"
-          />
-          <el-button
-            circle
-            :icon="Search"
+          >
+            <el-icon :size="18"><Document /></el-icon>
+          </button>
+          <button
+            class="toolbar-btn"
+            :class="{ active: useWebSearch }"
             :disabled="disabled || loading"
-            size="small"
-            :type="useWebSearch ? 'primary' : 'default'"
             :title="useWebSearch ? '关闭网络搜索' : '开启网络搜索'"
             @click="handleWebSearch"
-          />
-          <el-button
-            circle
-            :icon="Link"
+          >
+            <el-icon :size="18"><Search /></el-icon>
+          </button>
+          <button
+            class="toolbar-btn"
+            :class="{ active: useMicrophone }"
             :disabled="disabled || loading"
-            size="small"
-            :type="useMicrophone ? 'primary' : 'default'"
             :title="useMicrophone ? '关闭语音输入' : '开启语音输入'"
             @click="handleMicrophone"
-          />
+          >
+            <el-icon :size="18"><Microphone /></el-icon>
+          </button>
         </div>
-        <el-input
+
+        <textarea
           ref="textareaRef"
-          :model-value="modelValue"
-          type="textarea"
-          :rows="1"
+          :value="modelValue"
           :disabled="disabled"
-          :placeholder="placeholder"
-          resize="none"
-          class="auto-resize"
-          @update:model-value="(val) => emit('update:modelValue', val)"
+          :placeholder="computedPlaceholder"
+          :maxlength="maxLength"
+          class="input-textarea"
+          rows="1"
+          @input="(e) => emit('update:modelValue', e.target.value)"
           @keydown="handleKeyDown"
           @focus="handleFocus"
           @blur="handleBlur"
-        />
+        ></textarea>
+
+        <div class="input-actions">
+          <Transition name="fade" mode="out-in">
+            <button
+              v-if="isStreaming"
+              key="stop"
+              class="stop-btn"
+              @click="emit('stopStreaming')"
+            >
+              <el-icon :size="14"><VideoPause /></el-icon>
+              <span>停止</span>
+            </button>
+            <button
+              v-else
+              key="send"
+              class="send-btn"
+              :class="{ active: canSend }"
+              :disabled="!canSend"
+              @click="emit('send')"
+            >
+              <el-icon :size="18"><Promotion /></el-icon>
+            </button>
+          </Transition>
+        </div>
       </div>
-      <div class="action-buttons">
-        <el-button
-          type="primary"
-          :loading="loading"
-          :disabled="!modelValue.trim() || disabled"
-          :icon="ArrowRight"
-          round
-          size="small"
-          @click="emit('send')"
-        >
-          发送
-        </el-button>
+
+      <input
+        ref="fileInputRef"
+        type="file"
+        style="display: none;"
+        multiple
+        accept=".txt,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.gif,.webp,.svg,.csv,.json,.xml,.md,.py,.js,.ts,.html,.css"
+        @change="handleFileChange"
+      />
+
+      <div class="input-hint">
+        <span>Enter 发送 · Shift+Enter 换行</span>
       </div>
     </div>
   </div>
@@ -216,80 +251,269 @@ watch(() => props.modelValue, adjustTextareaHeight)
 <style scoped>
 .chat-footer {
   background: var(--el-bg-color);
-  border-top: 1px solid var(--el-border-color);
-  padding: 16px 24px;
-  transition: all 0.3s ease;
+  padding: 8px 24px 12px;
+  border-top: 1px solid var(--el-border-color-lighter);
+  flex-shrink: 0;
 }
 
-.input-area {
-  display: flex;
-  gap: 12px;
-  align-items: flex-end;
-  max-width: 900px;
+.input-container {
+  max-width: 768px;
   margin: 0 auto;
 }
 
-.input-wrapper {
-  flex: 1;
-  position: relative;
-  border-radius: 12px;
-  border: 1px solid var(--el-border-color);
-  transition: all 0.3s ease;
-  background-color: var(--el-bg-color);
+.attachment-preview {
+  margin-bottom: 8px;
 }
 
-.input-wrapper.is-focused {
-  border-color: var(--el-color-primary);
-  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.2);
-}
-
-.input-tools {
-  position: absolute;
-  top: 8px;
-  left: 8px;
+.attachment-list {
   display: flex;
-  gap: 4px;
-  z-index: 1;
-}
-
-.auto-resize :deep(.el-textarea) {
-  height: auto;
-  min-height: 40px;
-  max-height: 120px;
-}
-
-.auto-resize :deep(.el-textarea__inner) {
-  border: none;
-  border-radius: 12px;
-  padding: 12px 16px 12px 60px;
-  font-size: 14px;
-  line-height: 1.6;
-  resize: none;
-  overflow-y: auto;
-  min-height: 40px;
-  max-height: 120px;
-}
-
-.auto-resize :deep(.el-textarea__inner:focus) {
-  box-shadow: none;
-}
-
-.action-buttons {
-  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
-.action-buttons :deep(.el-button) {
-  transition: all 0.3s ease;
+.attachment-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: var(--el-fill-color-light);
+  border: 1px solid var(--el-border-color-lighter);
+  font-size: 13px;
+  max-width: 200px;
+  transition: all 0.2s;
 }
 
-.action-buttons :deep(.el-button:hover) {
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+.attachment-item:hover {
+  border-color: var(--el-color-primary-light-5);
 }
 
-.action-buttons :deep(.el-button:disabled) {
-  transform: none;
-  box-shadow: none;
+.attachment-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.attachment-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.attachment-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--el-text-color-primary);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.attachment-size {
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+}
+
+.attachment-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+
+.attachment-remove:hover {
+  background: var(--el-color-danger-light-9);
+  color: var(--el-color-danger);
+}
+
+.input-card {
+  display: flex;
+  align-items: flex-end;
+  border-radius: 24px;
+  border: 1.5px solid var(--el-border-color);
+  background: var(--el-bg-color);
+  padding: 6px 8px 6px 4px;
+  transition: all 0.25s ease;
+  gap: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.input-card.is-focused {
+  border-color: var(--el-color-primary);
+  box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.1), 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.input-card.is-streaming {
+  border-color: var(--el-color-warning);
+  box-shadow: 0 0 0 3px rgba(230, 162, 60, 0.1);
+}
+
+.input-toolbar {
+  display: flex;
+  gap: 2px;
+  padding-bottom: 4px;
+  padding-left: 4px;
+  flex-shrink: 0;
+}
+
+.toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.toolbar-btn:hover:not(:disabled) {
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-primary);
+}
+
+.toolbar-btn.active {
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.input-textarea {
+  flex: 1;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--el-text-color-primary);
+  padding: 8px 4px;
+  min-height: 24px;
+  max-height: 150px;
+  overflow-y: auto;
+  font-family: inherit;
+}
+
+.input-textarea::placeholder {
+  color: var(--el-text-color-placeholder);
+}
+
+.input-textarea:disabled {
+  opacity: 0.6;
+}
+
+.input-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding-bottom: 4px;
+  padding-right: 4px;
+}
+
+.send-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: none;
+  border-radius: 50%;
+  background: var(--el-fill-color);
+  color: var(--el-text-color-disabled);
+  cursor: not-allowed;
+  transition: all 0.25s;
+}
+
+.send-btn.active {
+  background: var(--el-color-primary);
+  color: white;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.3);
+}
+
+.send-btn.active:hover {
+  background: var(--el-color-primary-dark-2);
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.4);
+}
+
+.send-btn.active:active {
+  transform: scale(0.95);
+}
+
+.stop-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 14px;
+  border: 1px solid var(--el-color-danger-light-5);
+  border-radius: 18px;
+  background: var(--el-color-danger-light-9);
+  color: var(--el-color-danger);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.stop-btn:hover {
+  background: var(--el-color-danger-light-7);
+  border-color: var(--el-color-danger-light-3);
+}
+
+.input-hint {
+  text-align: center;
+  padding: 6px 0 0;
+  font-size: 12px;
+  color: var(--el-text-color-placeholder);
+  letter-spacing: 0.3px;
+}
+
+.slide-down-enter-active,
+.slide-down-leave-active {
+  transition: all 0.25s ease;
+}
+
+.slide-down-enter-from,
+.slide-down-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+.list-enter-active,
+.list-leave-active {
+  transition: all 0.25s ease;
+}
+
+.list-enter-from,
+.list-leave-to {
+  opacity: 0;
+  transform: scale(0.9);
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>

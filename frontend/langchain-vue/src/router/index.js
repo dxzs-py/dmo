@@ -27,18 +27,6 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
-    path: '/chat-enhanced',
-    name: 'chat-enhanced',
-    component: () => import('../views/EnhancedChatView.vue'),
-    meta: { requiresAuth: true }
-  },
-  {
-    path: '/chat-ui',
-    name: 'chat-ui',
-    component: () => import('../views/ChatUIView.vue'),
-    meta: { requiresAuth: true }
-  },
-  {
     path: '/rag',
     name: 'rag',
     component: () => import('../views/RagView.vue'),
@@ -67,12 +55,6 @@ const routes = [
     name: 'settings',
     component: () => import('../views/SettingsView.vue'),
     meta: { requiresAuth: true }
-  },
-  {
-    path: '/test',
-    name: 'test',
-    component: () => import('../views/TestPage.vue'),
-    meta: { requiresAuth: false }
   },
   {
     path: '/:pathMatch(.*)*',

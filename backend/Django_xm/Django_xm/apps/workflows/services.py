@@ -11,25 +11,33 @@ from .study_flow import (
     submit_answers,
     get_workflow_state,
     get_workflow_history,
-    _study_flow_cache
+    _study_flow_cache,
+    start_study_flow
 )
 from .state import StudyFlowState
+from .persistence import get_persistence_service
 from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
+persistence_service = get_persistence_service()
 
 
 class WorkflowService:
     """工作流服务类"""
 
     @staticmethod
-    def start_workflow(user_question: str, thread_id: Optional[str] = None) -> Dict[str, Any]:
+    def start_workflow(
+        user_question: str, 
+        thread_id: Optional[str] = None,
+        user_id: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
         启动新的学习工作流
 
         Args:
             user_question: 用户的学习问题
             thread_id: 可选的线程ID
+            user_id: 可选的用户ID
 
         Returns:
             工作流执行结果
@@ -38,32 +46,7 @@ class WorkflowService:
 
         logger.info(f"[Service] 启动工作流，thread_id={thread_id}")
 
-        study_flow = _get_study_flow(thread_id=thread_id)
-
-        now = datetime.now().isoformat()
-        initial_state: StudyFlowState = {
-            "messages": [],
-            "user_question": user_question,
-            "learning_plan": None,
-            "retrieved_docs": None,
-            "quiz": None,
-            "user_answers": None,
-            "score": None,
-            "score_details": None,
-            "feedback": None,
-            "retry_count": 0,
-            "should_retry": False,
-            "current_step": "start",
-            "thread_id": thread_id,
-            "created_at": now,
-            "updated_at": now,
-            "error": None,
-            "error_node": None
-        }
-        config = {"configurable": {"thread_id": thread_id}}
-        study_flow.invoke(dict(initial_state), config=config)
-        
-        result = get_workflow_state(thread_id)
+        result = start_study_flow(user_question, thread_id, user_id)
 
         logger.info(f"[Service] 工作流启动成功，thread_id={thread_id}")
 
@@ -87,19 +70,24 @@ class WorkflowService:
         }
 
     @staticmethod
-    def submit_user_answers(thread_id: str, answers: Dict[str, str]) -> Dict[str, Any]:
+    def submit_user_answers(
+        thread_id: str, 
+        answers: Dict[str, str],
+        user_id: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
         提交用户答案，继续执行工作流
 
         Args:
             thread_id: 线程ID
             answers: 用户答案字典
+            user_id: 可选的用户ID
 
         Returns:
             工作流执行结果
         """
         logger.info(f"[Service] 提交答案，thread_id={thread_id}")
-        result = submit_answers(thread_id, answers)
+        result = submit_answers(thread_id, answers, user_id)
 
         should_retry = result.get("should_retry", False)
         if should_retry:
@@ -161,12 +149,13 @@ class WorkflowService:
         return get_workflow_history(thread_id)
 
     @staticmethod
-    def delete_workflow(thread_id: str) -> Dict[str, Any]:
+    def delete_workflow(thread_id: str, user_id: Optional[int] = None) -> Dict[str, Any]:
         """
         删除工作流
 
         Args:
             thread_id: 线程ID
+            user_id: 可选的用户ID
 
         Returns:
             删除结果
@@ -176,8 +165,42 @@ class WorkflowService:
         if thread_id in _study_flow_cache:
             del _study_flow_cache[thread_id]
 
+        try:
+            from .models import WorkflowSession
+            session = WorkflowSession.objects.get(thread_id=thread_id, is_deleted=False)
+            session.is_deleted = True
+            session.save()
+        except WorkflowSession.DoesNotExist:
+            pass
+
+        try:
+            from Django_xm.apps.core.services.file_manager import get_file_manager
+            file_manager = get_file_manager()
+            file_manager.delete_task_files(thread_id, "workflow")
+        except Exception as e:
+            logger.warning(f"[Service] 删除工作流文件失败: {e}")
+
         return {
             "thread_id": thread_id,
             "status": "deleted",
-            "message": "工作流已删除（注意：检查点数据可能仍然存在）"
+            "message": "工作流已删除"
         }
+
+    @staticmethod
+    def list_user_workflows(
+        user_id: int,
+        status: Optional[str] = None,
+        search: Optional[str] = None,
+    ):
+        """
+        列出用户的所有工作流
+
+        Args:
+            user_id: 用户ID
+            status: 可选的状态筛选
+            search: 可选的搜索关键词
+
+        Returns:
+            工作流列表
+        """
+        return persistence_service.list_user_sessions(user_id, status, search)

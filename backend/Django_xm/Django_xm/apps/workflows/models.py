@@ -1,8 +1,8 @@
 from django.db import models
-from Django_xm.apps.core.base_models import BaseModel
+from Django_xm.apps.core.base_models import AuditModel
 
 
-class WorkflowExecution(BaseModel):
+class WorkflowExecution(AuditModel):
     STATUS_PENDING = 'pending'
     STATUS_RUNNING = 'running'
     STATUS_COMPLETED = 'completed'
@@ -54,7 +54,7 @@ class WorkflowExecution(BaseModel):
         return reverse('workflows:status', kwargs={'thread_id': self.thread_id})
 
 
-class WorkflowSession(BaseModel):
+class WorkflowSession(AuditModel):
     STATUS_RUNNING = 'running'
     STATUS_WAITING_FOR_ANSWERS = 'waiting_for_answers'
     STATUS_RETRY = 'retry'

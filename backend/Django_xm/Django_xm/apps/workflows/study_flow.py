@@ -5,7 +5,7 @@
 
 import logging
 from datetime import datetime
-from typing import Literal, Dict, Any
+from typing import Literal, Dict, Any, Optional
 
 from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.graph import StateGraph, START, END
@@ -21,8 +21,10 @@ from .nodes import (
     grading_node,
     feedback_node
 )
+from .persistence import get_persistence_service
 
 logger = get_logger(__name__)
+persistence_service = get_persistence_service()
 
 
 def should_continue(state: StudyFlowState) -> Literal["retry", "end"]:
@@ -145,13 +147,18 @@ def _get_study_flow(thread_id: str) -> StudyFlow:
     return _study_flow_cache[thread_id]
 
 
-def start_study_flow(user_question: str, thread_id: str) -> dict:
+def start_study_flow(
+    user_question: str, 
+    thread_id: str, 
+    user_id: Optional[int] = None
+) -> dict:
     """
     启动新的学习工作流
 
     Args:
         user_question: 用户的学习问题
         thread_id: 线程 ID（用于标识会话）
+        user_id: 用户ID（可选，用于持久化）
 
     Returns:
         工作流执行结果
@@ -191,16 +198,23 @@ def start_study_flow(user_question: str, thread_id: str) -> dict:
 
     logger.info(f"[Study Flow] 工作流暂停在: {result.get('current_step')}")
 
+    persistence_service.save_workflow_state(thread_id, result, user_id)
+
     return result
 
 
-def submit_answers(thread_id: str, user_answers: dict) -> dict:
+def submit_answers(
+    thread_id: str, 
+    user_answers: dict,
+    user_id: Optional[int] = None
+) -> dict:
     """
     提交用户答案，继续执行工作流
 
     Args:
         thread_id: 线程 ID
         user_answers: 用户答案字典 {"q1": "A", "q2": "xxx", ...}
+        user_id: 用户ID（可选，用于持久化）
 
     Returns:
         工作流执行结果
@@ -233,6 +247,9 @@ def submit_answers(thread_id: str, user_answers: dict) -> dict:
 
     logger.info(f"[Study Flow] 工作流执行完成，最终状态: {result.get('current_step') if result else 'unknown'}")
 
+    if result:
+        persistence_service.save_workflow_state(thread_id, result, user_id)
+
     return result
 
 
@@ -256,9 +273,24 @@ def get_workflow_state(thread_id: str) -> dict:
         }
     }
 
-    state = study_flow.get_state(thread_id)
+    try:
+        state = study_flow.get_state(thread_id)
+        if state and state.values:
+            return state.values
+    except Exception as e:
+        logger.warning(f"[Study Flow] 从内存获取状态失败: {e}")
 
-    return state.values if state else None
+    logger.info(f"[Study Flow] 尝试从持久化服务恢复状态，thread_id={thread_id}")
+    saved_state = persistence_service.load_workflow_state(thread_id)
+    if saved_state:
+        study_flow = _get_study_flow(thread_id)
+        study_flow.graph.update_state(
+            config={"configurable": {"thread_id": thread_id}},
+            values=saved_state
+        )
+        return saved_state
+
+    return None
 
 
 def get_workflow_history(thread_id: str) -> list:

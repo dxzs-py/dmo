@@ -58,3 +58,16 @@ class ResearchResultSerializer(serializers.Serializer):
     plan = serializers.DictField(required=False, allow_null=True)
     steps_completed = serializers.DictField(required=False, allow_null=True)
     metadata = serializers.DictField(required=False, allow_null=True)
+
+
+class FileInfoSerializer(serializers.Serializer):
+    """文件信息序列化器"""
+    name = serializers.CharField()
+    relative_path = serializers.CharField()
+    size = serializers.IntegerField()
+    size_formatted = serializers.CharField()
+    created_at = serializers.CharField()
+    modified_at = serializers.CharField()
+    file_type = serializers.CharField()
+    task_id = serializers.CharField(allow_null=True)
+    extension = serializers.CharField()

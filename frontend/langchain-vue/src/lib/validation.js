@@ -14,7 +14,7 @@ export const ChatMessageSchema = z.object({
 export const ChatSessionSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
-  mode: z.enum(['basic-agent', 'rag', 'workflow', 'deep-research', 'guarded']),
+  mode: z.enum(['basic-agent', 'rag', 'workflow', 'deep-research', 'guarded', 'deep-thinking']),
   messageCount: z.number().int().nonnegative(),
   messages: z.array(ChatMessageSchema),
   createdAt: z.number().int(),
@@ -27,14 +27,14 @@ export const ChatRequestSchema = z.object({
     role: z.enum(['user', 'assistant', 'system']),
     content: z.string(),
   })).optional(),
-  mode: z.enum(['basic-agent', 'rag', 'workflow', 'deep-research', 'guarded']).optional(),
+  mode: z.enum(['basic-agent', 'rag', 'workflow', 'deep-research', 'guarded', 'deep-thinking']).optional(),
   use_tools: z.boolean().optional(),
   use_advanced_tools: z.boolean().optional(),
 })
 
 export const SettingsSchema = z.object({
   apiUrl: z.string().url('请输入有效的 API 地址'),
-  defaultMode: z.enum(['basic-agent', 'rag', 'workflow', 'deep-research', 'guarded']),
+  defaultMode: z.enum(['basic-agent', 'rag', 'workflow', 'deep-research', 'guarded', 'deep-thinking']),
   theme: z.enum(['light', 'dark', 'system']),
 })
 

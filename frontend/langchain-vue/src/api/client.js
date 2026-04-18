@@ -266,6 +266,29 @@ export const chatAPI = {
     }
     return apiClient.put(`/chat/messages/${messageId}/`, updateData)
   },
+
+  uploadAttachment(sessionId, file) {
+    if (!sessionId) {
+      return Promise.reject(new Error('会话ID不能为空'))
+    }
+    if (!file) {
+      return Promise.reject(new Error('请选择要上传的文件'))
+    }
+    const formData = new FormData()
+    formData.append('file', file)
+    return apiClient.post(`/chat/sessions/${sessionId}/attachments/`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    })
+  },
+
+  getAttachments(sessionId) {
+    if (!sessionId) {
+      return Promise.reject(new Error('会话ID不能为空'))
+    }
+    return apiClient.get(`/chat/sessions/${sessionId}/attachments/list/`)
+  },
 }
 
 export const ragAPI = {
@@ -297,12 +320,40 @@ export const workflowAPI = {
     return apiClient.post('/workflow/start/', data)
   },
 
+  startStreamUrl() {
+    return `${settings.API_BASE_URL}/workflow/start/stream/`
+  },
+
+  streamUrl(threadId) {
+    return `${settings.API_BASE_URL}/workflow/stream/${threadId}/`
+  },
+
   getState(threadId) {
     return apiClient.get(`/workflow/status/${threadId}/`)
   },
 
   submitAnswers(threadId, data) {
     return apiClient.post('/workflow/submit/', { thread_id: threadId, answers: data })
+  },
+
+  getTasks(params = {}) {
+    return apiClient.get('/workflow/tasks/', { params })
+  },
+
+  getFiles(threadId) {
+    return apiClient.get(`/workflow/${threadId}/files/`)
+  },
+
+  downloadFile(threadId, filename) {
+    return `${settings.API_BASE_URL}/workflow/${threadId}/file/download/${filename}`
+  },
+
+  getFileContent(threadId, filename) {
+    return apiClient.get(`/workflow/${threadId}/file/content/${filename}/`)
+  },
+
+  deleteTask(threadId) {
+    return apiClient.delete(`/workflow/task/${threadId}/`)
   },
 }
 
@@ -317,6 +368,34 @@ export const deepResearchAPI = {
 
   getResult(taskId) {
     return apiClient.get(`/deep-research/result/${taskId}/`)
+  },
+
+  getTasks(params = {}) {
+    return apiClient.get('/deep-research/tasks/', { params })
+  },
+
+  getFiles(taskId) {
+    return apiClient.get(`/deep-research/${taskId}/files/`)
+  },
+
+  downloadFile(taskId, filename) {
+    return `${settings.API_BASE_URL}/deep-research/${taskId}/file/download/${filename}`
+  },
+
+  getFileContent(taskId, filename) {
+    return apiClient.get(`/deep-research/${taskId}/file/content/${filename}/`)
+  },
+
+  deleteTask(taskId) {
+    return apiClient.delete(`/deep-research/task/${taskId}/`)
+  },
+
+  streamUrl(taskId) {
+    return `${settings.API_BASE_URL}/deep-research/stream/${taskId}/`
+  },
+
+  searchFiles(params = {}) {
+    return apiClient.get('/deep-research/search/', { params })
   },
 }
 

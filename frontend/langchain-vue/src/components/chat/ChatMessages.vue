@@ -1,22 +1,13 @@
 <script setup>
 import { ref, watch, nextTick, computed, onMounted, onUnmounted } from 'vue'
-import { ChatDotRound, Loading } from '@element-plus/icons-vue'
+import { ChatDotRound } from '@element-plus/icons-vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import ChatMessage from './ChatMessage.vue'
 import MessageVersionSelector from './MessageVersionSelector.vue'
-import { AiSuggestion, AiSuggestions } from '../ai-elements'
+import { AiSuggestion, AiSuggestions, AiShimmer } from '../ai-elements'
 import { validateMessage } from '../../types/props'
 
-/**
- * ChatMessages组件 - 聊天消息列表容器
- * @component
- * @description 渲染聊天消息列表，支持虚拟滚动、加载状态、建议问题等功能
- */
 const props = defineProps({
-  /**
-   * 消息数组
-   * @type {Array<import('../../types').ChatMessage>}
-   */
   messages: {
     type: Array,
     default: () => [],
@@ -25,74 +16,45 @@ const props = defineProps({
       return value.every(msg => validateMessage(msg))
     },
   },
-  /**
-   * 是否正在加载
-   * @type {boolean}
-   */
   isLoading: {
     type: Boolean,
     default: false,
   },
-  /**
-   * 是否正在流式输出
-   * @type {boolean}
-   */
   isStreaming: {
     type: Boolean,
     default: false,
   },
-  /**
-   * 最大显示消息数量（性能优化）
-   * @type {number}
-   */
   maxVisibleMessages: {
     type: Number,
     default: 0,
     validator: (value) => value >= 0,
   },
-  /**
-   * 启用虚拟滚动（当消息超过此数量时自动启用）
-   * @type {number}
-   */
   virtualScrollThreshold: {
     type: Number,
     default: 20,
     validator: (value) => value >= 10,
   },
+  selectedMessageId: {
+    type: String,
+    default: null,
+  },
 })
 
 const emit = defineEmits({
-  /**
-   * 重新生成消息事件
-   * @param {number} index - 消息索引
-   */
   regenerate: (index) => typeof index === 'number' && index >= 0,
-  /**
-   * 点击建议问题事件
-   * @param {string} suggestion - 建议文本
-   */
   suggestionClick: (suggestion) => typeof suggestion === 'string',
-  /**
-   * 滚动状态变化事件
-   * @param {boolean} isScrolled - 是否已滚动
-   */
   scrollChange: (isScrolled) => typeof isScrolled === 'boolean',
+  messageClick: (message) => message && typeof message === 'object',
 })
 
 const messagesContainer = ref(null)
 const virtualScrollerRef = ref(null)
 const isScrolled = ref(false)
 
-/**
- * 是否启用虚拟滚动（基于消息数量动态决定）
- */
 const shouldUseVirtualScroll = computed(() => {
   return props.messages.length > props.virtualScrollThreshold
 })
 
-/**
- * 预估消息项高度（用于虚拟滚动计算）
- */
 const ITEM_SIZE = 200
 
 const scrollToBottom = (behavior = 'smooth') => {
@@ -151,19 +113,42 @@ const showLoadingIndicator = computed(() => {
   return props.isLoading && (props.messages.length === 0 || props.messages[props.messages.length - 1].role === 'user')
 })
 
-const suggestions = [
-  "什么是人工智能？",
-  "如何学习编程？",
-  "解释机器学习的基本原理",
-  "什么是深度学习？",
-  "如何提高英语水平？",
-  "推荐一些好书",
-  "如何保持健康的生活方式？",
-  "什么是区块链技术？"
+const lastAssistantMessage = computed(() => {
+  for (let i = props.messages.length - 1; i >= 0; i--) {
+    if (props.messages[i].role === 'assistant') return props.messages[i]
+  }
+  return null
+})
+
+const dynamicSuggestions = computed(() => {
+  const last = lastAssistantMessage.value
+  if (last?.suggestions && Array.isArray(last.suggestions) && last.suggestions.length > 0) {
+    return last.suggestions
+  }
+  return []
+})
+
+const defaultSuggestions = [
+  { text: "什么是人工智能？", icon: "🤖" },
+  { text: "如何学习编程？", icon: "💻" },
+  { text: "解释机器学习的基本原理", icon: "🧠" },
+  { text: "什么是深度学习？", icon: "🔬" },
+  { text: "如何提高英语水平？", icon: "📚" },
+  { text: "推荐一些好书", icon: "📖" },
+  { text: "如何保持健康的生活方式？", icon: "🏃" },
+  { text: "什么是区块链技术？", icon: "⛓️" },
 ]
 
+const displaySuggestions = computed(() => {
+  if (dynamicSuggestions.value.length > 0) {
+    return dynamicSuggestions.value.map(s => typeof s === 'string' ? { text: s, icon: '💡' } : s)
+  }
+  return defaultSuggestions
+})
+
 const handleSuggestionClick = (suggestion) => {
-  emit('suggestionClick', suggestion)
+  const text = typeof suggestion === 'string' ? suggestion : suggestion.text
+  emit('suggestionClick', text)
 }
 </script>
 
@@ -171,28 +156,30 @@ const handleSuggestionClick = (suggestion) => {
   <div class="chat-main">
     <div ref="messagesContainer" class="messages-container">
       <div v-if="messages.length === 0" class="empty-state">
-        <div class="empty-icon">
-          <ChatDotRound :size="64" />
+        <div class="empty-icon-wrapper">
+          <div class="empty-icon-bg"></div>
+          <el-icon class="empty-icon" :size="48"><ChatDotRound /></el-icon>
         </div>
-        <h3>您今天在想什么？</h3>
-        <p>开始一个新的对话，我会尽力帮助您</p>
+        <h3 class="empty-title">您好，有什么可以帮您？</h3>
+        <p class="empty-desc">我是您的智能学习助手，可以回答问题、辅助学习、深度研究</p>
         
         <div class="suggestions-section">
-          <h4 class="suggestions-title">推荐问题</h4>
-          <AiSuggestions>
-            <AiSuggestion 
-              v-for="(suggestion, index) in suggestions" 
+          <h4 class="suggestions-title">试试以下问题</h4>
+          <div class="suggestions-grid">
+            <button
+              v-for="(suggestion, index) in displaySuggestions"
               :key="index"
-              :suggestion="suggestion"
-              variant="outline"
-              @click="handleSuggestionClick"
-            />
-          </AiSuggestions>
+              class="suggestion-card"
+              @click="handleSuggestionClick(suggestion)"
+            >
+              <span class="suggestion-icon">{{ suggestion.icon }}</span>
+              <span class="suggestion-text">{{ suggestion.text }}</span>
+            </button>
+          </div>
         </div>
       </div>
       
       <div v-else class="messages-list" role="log" aria-live="polite">
-        <!-- 虚拟滚动模式：消息数量超过阈值时启用 -->
         <RecycleScroller
           v-if="shouldUseVirtualScroll"
           ref="virtualScrollerRef"
@@ -211,7 +198,9 @@ const handleSuggestionClick = (suggestion) => {
                 :is-last="msgIndex === messages.length - 1"
                 :is-loading="isLoading"
                 :is-streaming="isStreaming"
+                :is-selected="selectedMessageId && msg.id === selectedMessageId"
                 @regenerate="(idx) => emit('regenerate', idx)"
+                @click="(message) => emit('messageClick', message)"
               />
               <MessageVersionSelector 
                 :message="msg" 
@@ -221,7 +210,6 @@ const handleSuggestionClick = (suggestion) => {
           </template>
         </RecycleScroller>
 
-        <!-- 普通模式：消息数量较少时使用 -->
         <TransitionGroup v-else name="slide-up" tag="div" class="messages-list-inner">
           <div 
             v-for="(msg, msgIndex) in messages" 
@@ -235,7 +223,9 @@ const handleSuggestionClick = (suggestion) => {
               :is-last="msgIndex === messages.length - 1"
               :is-loading="isLoading"
               :is-streaming="isStreaming"
+              :is-selected="selectedMessageId && msg.id === selectedMessageId"
               @regenerate="(idx) => emit('regenerate', idx)"
+              @click="(message) => emit('messageClick', message)"
             />
             <MessageVersionSelector 
               :message="msg" 
@@ -251,8 +241,22 @@ const handleSuggestionClick = (suggestion) => {
           <div class="message-content">
             <div class="message-role">AI助手</div>
             <div class="message-text">
-              <el-icon class="is-loading"><Loading /></el-icon> 正在思考...
+              <AiShimmer class="loading-shimmer" />
             </div>
+          </div>
+        </div>
+
+        <div v-if="dynamicSuggestions.length > 0 && !isStreaming" class="dynamic-suggestions">
+          <div class="suggestions-grid compact">
+            <button
+              v-for="(suggestion, index) in displaySuggestions"
+              :key="index"
+              class="suggestion-card small"
+              @click="handleSuggestionClick(suggestion)"
+            >
+              <span class="suggestion-icon">{{ suggestion.icon }}</span>
+              <span class="suggestion-text">{{ suggestion.text }}</span>
+            </button>
           </div>
         </div>
       </div>
@@ -272,6 +276,25 @@ const handleSuggestionClick = (suggestion) => {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 24px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--el-border-color) transparent;
+}
+
+.messages-container::-webkit-scrollbar {
+  width: 6px;
+}
+
+.messages-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.messages-container::-webkit-scrollbar-thumb {
+  background-color: var(--el-border-color);
+  border-radius: 3px;
+}
+
+.messages-container::-webkit-scrollbar-thumb:hover {
+  background-color: var(--el-border-color-darker);
 }
 
 .empty-state {
@@ -281,25 +304,119 @@ const handleSuggestionClick = (suggestion) => {
   justify-content: center;
   height: 100%;
   color: var(--el-text-color-secondary);
+  padding: 40px 20px;
 }
 
-.empty-state .empty-icon {
-  color: var(--el-fill-color);
-  margin-bottom: 20px;
+.empty-icon-wrapper {
+  position: relative;
+  margin-bottom: 24px;
 }
 
-.empty-state h3 {
+.empty-icon-bg {
+  position: absolute;
+  inset: -12px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--el-color-primary-light-8), var(--el-color-primary-light-9));
+  animation: pulse-bg 3s ease-in-out infinite;
+}
+
+@keyframes pulse-bg {
+  0%, 100% { transform: scale(1); opacity: 0.6; }
+  50% { transform: scale(1.1); opacity: 0.3; }
+}
+
+.empty-icon {
+  position: relative;
+  color: var(--el-color-primary);
+}
+
+.empty-title {
   font-size: 24px;
   color: var(--el-text-color-primary);
   margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.empty-desc {
+  font-size: 14px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 0;
 }
 
 .empty-state p {
   font-size: 14px;
 }
 
+.suggestions-section {
+  margin-top: 32px;
+  width: 100%;
+  max-width: 640px;
+}
+
+.suggestions-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.suggestions-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.suggestions-grid.compact {
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+.suggestion-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-lighter);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+  line-height: 1.4;
+}
+
+.suggestion-card:hover {
+  border-color: var(--el-color-primary-light-5);
+  background: var(--el-color-primary-light-9);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.suggestion-card:active {
+  transform: translateY(0);
+}
+
+.suggestion-card.small {
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+
+.suggestion-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.suggestion-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .messages-list {
-  max-width: 900px;
+  max-width: 768px;
   margin: 0 auto;
 }
 
@@ -363,14 +480,33 @@ const handleSuggestionClick = (suggestion) => {
   word-break: break-word;
 }
 
-.suggestions-section {
-  margin-top: 24px;
+.loading-shimmer {
+  width: 120px;
+  height: 20px;
+  border-radius: 4px;
 }
 
-.suggestions-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
-  margin-bottom: 12px;
+.dynamic-suggestions {
+  max-width: 768px;
+  margin: 0 auto;
+  padding: 8px 16px 16px;
+}
+
+@media (max-width: 768px) {
+  .messages-container {
+    padding: 16px 12px;
+  }
+
+  .suggestions-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .suggestion-card {
+    padding: 10px 14px;
+  }
+
+  .message-wrapper {
+    padding: 8px 8px;
+  }
 }
 </style>

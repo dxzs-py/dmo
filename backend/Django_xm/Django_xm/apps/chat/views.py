@@ -1,4 +1,5 @@
 import json
+import os
 import time
 import uuid
 from functools import wraps
@@ -25,7 +26,7 @@ from .serializers import (
     ChatSessionUpdateSerializer,
     ChatMessageSerializer
 )
-from .models import ChatSession, ChatMessage
+from .models import ChatSession, ChatMessage, ChatAttachment
 from .services import SecureSessionCacheService
 from .services.chat_service import ChatService, ChatModeService
 
@@ -476,3 +477,102 @@ class ChatMessageUpdateView(BaseChatAPIView):
             data=ChatMessageSerializer(message).data,
             message='消息更新成功'
         )
+
+
+class ChatAttachmentUploadView(BaseChatAPIView):
+    ALLOWED_EXTENSIONS = {
+        'txt', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+        'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg',
+        'csv', 'json', 'xml', 'md', 'py', 'js', 'ts', 'html', 'css',
+    }
+    MAX_FILE_SIZE = 10 * 1024 * 1024
+
+    @log_view_action
+    def post(self, request, session_id):
+        session = self.get_session_or_404(session_id, request.user)
+        if not session:
+            return error_response(
+                code=ErrorCode.NOT_FOUND,
+                message='会话不存在',
+                http_status=status.HTTP_404_NOT_FOUND
+            )
+
+        uploaded_file = request.FILES.get('file')
+        if not uploaded_file:
+            return error_response(
+                code=ErrorCode.INVALID_PARAMS,
+                message='请选择要上传的文件'
+            )
+
+        if uploaded_file.size > self.MAX_FILE_SIZE:
+            return error_response(
+                code=ErrorCode.INVALID_PARAMS,
+                message=f'文件大小不能超过{self.MAX_FILE_SIZE // (1024*1024)}MB'
+            )
+
+        ext = os.path.splitext(uploaded_file.name)[1].lower().lstrip('.')
+        if ext not in self.ALLOWED_EXTENSIONS:
+            return error_response(
+                code=ErrorCode.INVALID_PARAMS,
+                message=f'不支持的文件类型: .{ext}，支持的类型: {", ".join(sorted(self.ALLOWED_EXTENSIONS))}'
+            )
+
+        import mimetypes
+        mime_type, _ = mimetypes.guess_type(uploaded_file.name)
+
+        attachment = ChatAttachment.objects.create(
+            session=session,
+            file=uploaded_file,
+            original_name=uploaded_file.name,
+            file_size=uploaded_file.size,
+            file_type=ext,
+            mime_type=mime_type or 'application/octet-stream',
+        )
+
+        file_url = attachment.file.url if hasattr(attachment.file, 'url') else ''
+
+        return success_response(
+            data={
+                'id': attachment.id,
+                'original_name': attachment.original_name,
+                'file_size': attachment.file_size,
+                'file_type': attachment.file_type,
+                'mime_type': attachment.mime_type,
+                'url': file_url,
+                'created_at': attachment.created_at.isoformat(),
+            },
+            message='文件上传成功',
+            status_code=status.HTTP_201_CREATED
+        )
+
+
+class ChatAttachmentListView(BaseChatAPIView):
+    @log_view_action
+    def get(self, request, session_id):
+        session = self.get_session_or_404(session_id, request.user)
+        if not session:
+            return error_response(
+                code=ErrorCode.NOT_FOUND,
+                message='会话不存在',
+                http_status=status.HTTP_404_NOT_FOUND
+            )
+
+        attachments = ChatAttachment.objects.filter(
+            session=session
+        ).order_by('-created_at')
+
+        data = []
+        for att in attachments:
+            file_url = att.file.url if hasattr(att.file, 'url') else ''
+            data.append({
+                'id': att.id,
+                'original_name': att.original_name,
+                'file_size': att.file_size,
+                'file_type': att.file_type,
+                'mime_type': att.mime_type,
+                'url': file_url,
+                'message_id': att.message_id,
+                'created_at': att.created_at.isoformat(),
+            })
+
+        return success_response(data=data)

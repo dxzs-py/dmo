@@ -424,6 +424,48 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  const setReasoningToLastMessage = (sessionId, reasoning) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (session && session.messages.length > 0) {
+      const lastMessage = session.messages[session.messages.length - 1]
+      if (lastMessage.role === 'assistant') {
+        lastMessage.reasoning = reasoning
+        if (lastMessage.versions && lastMessage.versions[lastMessage.currentVersion]) {
+          lastMessage.versions[lastMessage.currentVersion].reasoning = reasoning
+        }
+        session.updatedAt = Date.now()
+      }
+    }
+  }
+
+  const setSuggestionsToLastMessage = (sessionId, suggestions) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (session && session.messages.length > 0) {
+      const lastMessage = session.messages[session.messages.length - 1]
+      if (lastMessage.role === 'assistant') {
+        lastMessage.suggestions = suggestions
+        if (lastMessage.versions && lastMessage.versions[lastMessage.currentVersion]) {
+          lastMessage.versions[lastMessage.currentVersion].suggestions = suggestions
+        }
+        session.updatedAt = Date.now()
+      }
+    }
+  }
+
+  const setContextToLastMessage = (sessionId, context) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (session && session.messages.length > 0) {
+      const lastMessage = session.messages[session.messages.length - 1]
+      if (lastMessage.role === 'assistant') {
+        lastMessage.context = context
+        if (lastMessage.versions && lastMessage.versions[lastMessage.currentVersion]) {
+          lastMessage.versions[lastMessage.currentVersion].context = context
+        }
+        session.updatedAt = Date.now()
+      }
+    }
+  }
+
   const addToolCallToLastMessage = (sessionId, toolCall) => {
     const session = sessions.value.find(s => s.id === sessionId)
     if (session && session.messages.length > 0) {
@@ -536,6 +578,9 @@ export const useSessionStore = defineStore('session', () => {
     setSourcesToLastMessage,
     setPlanToLastMessage,
     setChainOfThoughtToLastMessage,
+    setReasoningToLastMessage,
+    setSuggestionsToLastMessage,
+    setContextToLastMessage,
     addToolCallToLastMessage,
     getSessionMessages,
     removeMessagesFromIndex,

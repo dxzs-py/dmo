@@ -313,7 +313,8 @@ const clearChat = () => {
     {
       confirmButtonText: '确定',
       cancelButtonText: '取消',
-      type: 'warning'
+      type: 'warning',
+      appendToBody: true
     }
   ).then(() => {
     const session = sessionStore.sessions.find(s => s.id === sessionStore.currentSessionId)

@@ -76,7 +76,8 @@ class ChatRequestSerializer(serializers.Serializer):
         """验证模式标识"""
         allowed_modes = [
             'default', 'basic-agent', 'advanced-agent',
-            'research-agent', 'rag-agent'
+            'research-agent', 'rag-agent', 'deep-thinking',
+            'deep-research', 'workflow', 'guarded',
         ]
         if value not in allowed_modes:
             raise serializers.ValidationError(f'不支持的模式: {value}')
@@ -134,6 +135,7 @@ class ChatMessageSerializer(serializers.ModelSerializer):
         model = ChatMessage
         fields = ['id', 'session', 'role', 'content', 'sources', 'plan',
                   'chain_of_thought', 'tool_calls', 'reasoning',
+                  'suggestions', 'context', 'versions',
                   'current_version', 'created_at']
         read_only_fields = ['id', 'session', 'created_at']
 
@@ -225,9 +227,12 @@ class ChatSessionCreateSerializer(serializers.ModelSerializer):
 
     def validate_mode(self, value):
         allowed_modes = [
-            'basic-agent', 'advanced-agent',
-            'research-agent', 'rag-agent'
+            'basic-agent', 'advanced-agent', 'research-agent',
+            'rag-agent', 'deep-thinking', 'deep-research',
+            'workflow', 'guarded',
         ]
+        if value and value not in allowed_modes:
+            raise serializers.ValidationError(f'不支持的模式: {value}')
         if value and len(value) > 50:
             raise serializers.ValidationError('模式标识不能超过50个字符')
         return value
