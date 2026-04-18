@@ -16,33 +16,176 @@ from Django_xm.apps.core.models import get_chat_model
 from Django_xm.apps.core.prompts import SYSTEM_PROMPTS
 from Django_xm.apps.core.tools import get_tools_for_request, WEATHER_TOOLS
 from Django_xm.apps.core.usage_tracker import create_usage_tracker
+from Django_xm.apps.core.cost_tracker import create_cost_tracker, CostTracker
+from Django_xm.apps.core.permissions import PermissionService
+from Django_xm.apps.chat.services.session_compactor import apply_compaction_to_chat_history
+from Django_xm.apps.chat.services.slash_commands import parse_command, execute_command
 from ..utils import _needs_completion, _lcp_len, convert_chat_history, extract_suggestions
 
 logger = logging.getLogger(__name__)
+
+
+class AttachmentService:
+    """附件内容加载服务"""
+
+    @staticmethod
+    def load_attachment_contents(attachment_ids: List[int]) -> Optional[str]:
+        if not attachment_ids:
+            return None
+
+        try:
+            from Django_xm.apps.core.tools.file_reader_tool import read_multiple_attachments
+            content = read_multiple_attachments(attachment_ids)
+            if content:
+                logger.info(f"📎 成功加载 {len(attachment_ids)} 个附件内容，共 {len(content)} 字符")
+            return content if content.strip() else None
+        except Exception as e:
+            logger.error(f"📎 加载附件内容失败: {e}")
+            return None
+
+    @staticmethod
+    def build_message_with_attachments(user_message: str, attachment_content: Optional[str]) -> str:
+        if not attachment_content:
+            return user_message
+
+        return (
+            f"{user_message}\n\n"
+            f"---\n"
+            f"以下是用户上传的文件内容，请基于这些内容回答问题：\n\n"
+            f"{attachment_content}\n"
+            f"---\n"
+        )
+    
+    @staticmethod
+    def link_attachments_to_message(message, attachment_ids: Optional[List[int]]):
+        """将附件关联到消息"""
+        if not attachment_ids:
+            return
+        
+        from Django_xm.apps.chat.models import ChatAttachment
+        
+        ChatAttachment.objects.filter(
+            id__in=attachment_ids,
+            session=message.session,
+            message__isnull=True
+        ).update(message=message)
+
+
+class MessagePersistenceService:
+    """消息持久化服务"""
+    
+    @staticmethod
+    def save_message_pair(
+        session,
+        user_content: str,
+        ai_content: str,
+        user_role: str = 'user',
+        ai_role: str = 'assistant',
+        attachment_ids: Optional[List[int]] = None
+    ):
+        """保存用户消息和 AI 回复消息对"""
+        from Django_xm.apps.chat.models import ChatMessage
+        
+        # 保存用户消息
+        user_message = ChatMessage.objects.create(
+            session=session,
+            role=user_role,
+            content=user_content
+        )
+        
+        # 关联附件到用户消息
+        if attachment_ids:
+            AttachmentService.link_attachments_to_message(user_message, attachment_ids)
+        
+        # 保存 AI 回复
+        ai_message = ChatMessage.objects.create(
+            session=session,
+            role=ai_role,
+            content=ai_content
+        )
+        
+        return user_message, ai_message
 
 
 class ChatService:
     """聊天服务类 - 处理聊天相关的业务逻辑"""
 
     @staticmethod
-    def process_chat_request(data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        处理非流式聊天请求
-        
-        Args:
-            data: 验证后的请求数据
-            
-        Returns:
-            包含响应消息的字典
-        """
-        tools = get_tools_for_request(data['use_tools'], data['use_advanced_tools'])
+    def _get_tools(data: Dict[str, Any], user_id: Optional[int] = None) -> List:
+        use_tools = data.get('use_tools', True)
+        use_advanced_tools = data.get('use_advanced_tools', False)
+        use_web_search = data.get('use_web_search', False)
+        attachment_ids = data.get('attachment_ids')
+
+        tools = get_tools_for_request(
+            use_tools=use_tools,
+            use_advanced_tools=use_advanced_tools,
+            use_web_search=use_web_search,
+            attachment_ids=attachment_ids,
+        )
+
+        if user_id:
+            session_id = data.get('session_id')
+            tools = PermissionService.filter_tools_by_permission(user_id, tools, session_id)
+
+        return tools
+
+    @staticmethod
+    def _build_user_message(data: Dict[str, Any]) -> str:
+        user_message = data['message']
+        attachment_ids = data.get('attachment_ids')
+
+        if attachment_ids:
+            attachment_content = AttachmentService.load_attachment_contents(attachment_ids)
+            if attachment_content:
+                user_message = AttachmentService.build_message_with_attachments(
+                    user_message, attachment_content
+                )
+
+        return user_message
+
+    @staticmethod
+    def _apply_compaction(chat_history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        compacted, result = apply_compaction_to_chat_history(chat_history)
+        if result.compressed:
+            logger.info(
+                f"会话已自动压缩: {result.original_message_count} -> "
+                f"{result.kept_message_count} 条消息"
+            )
+        return compacted
+
+    @staticmethod
+    def process_chat_request(data: Dict[str, Any], user_id: Optional[int] = None) -> Dict[str, Any]:
+        parsed = parse_command(data.get('message', ''))
+        if parsed:
+            command_name, args = parsed
+            context = {
+                "args": args,
+                "user_id": user_id,
+                "session_id": data.get('session_id'),
+                "messages": data.get('chat_history', []),
+            }
+            cmd_result = execute_command(command_name, context)
+            return {
+                'message': cmd_result.get('content', ''),
+                'mode': data.get('mode', 'default'),
+                'tools_used': [],
+                'success': True,
+                'is_command': True,
+                'command_type': cmd_result.get('type', 'info'),
+            }
+
+        tools = ChatService._get_tools(data, user_id)
         agent = create_base_agent(tools=tools, prompt_mode=data['mode'])
 
         chat_history = data.get('chat_history', [])
+        chat_history = ChatService._apply_compaction(chat_history)
         langchain_chat_history = convert_chat_history(chat_history)
 
+        user_message = ChatService._build_user_message(data)
+
         response = agent.invoke(
-            input_text=data['message'],
+            input_text=user_message,
             chat_history=langchain_chat_history,
             config={"recursion_limit": 50}
         )
@@ -70,33 +213,47 @@ class ChatService:
         }
 
     @staticmethod
-    async def process_stream_chat_request(data: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
-        """
-        处理流式聊天请求
-        
-        Args:
-            data: 验证后的请求数据
-            
-        Yields:
-            包含事件类型和数据的字典
-        """
+    async def process_stream_chat_request(data: Dict[str, Any], user_id: Optional[int] = None) -> AsyncGenerator[Dict[str, Any], None]:
         usage_tracker = create_usage_tracker()
+        cost_tracker = create_cost_tracker()
 
         yield {'type': 'start', 'message': '开始生成...'}
 
+        parsed = parse_command(data.get('message', ''))
+        if parsed:
+            command_name, args = parsed
+            context = {
+                "args": args,
+                "user_id": user_id,
+                "session_id": data.get('session_id'),
+                "messages": data.get('chat_history', []),
+                "cost_info": cost_tracker.get_summary(),
+            }
+            cmd_result = execute_command(command_name, context)
+            yield {
+                'type': 'command',
+                'data': cmd_result,
+                'content': cmd_result.get('content', ''),
+            }
+            yield {'type': 'end', 'message': '命令执行完成'}
+            return
+
         if data['mode'] == 'deep-thinking':
-            async for event in ChatService._process_deep_thinking_stream(data, usage_tracker):
+            async for event in ChatService._process_deep_thinking_stream(data, usage_tracker, cost_tracker):
                 yield event
             context_info = usage_tracker.get_usage_info()
+            cost_info = cost_tracker.get_summary()
+            context_info['cost'] = cost_info
             yield {'type': 'context', 'data': context_info}
             yield {'type': 'end', 'message': '生成完成'}
             usage_tracker.log_summary()
+            cost_tracker.log_summary()
             logger.info("深度思考流程完成")
             return
 
         if should_use_deep_research(data['message']):
             logger.info("触发深度研究流程")
-            
+
             yield {
                 "type": "reasoning",
                 "data": {
@@ -116,26 +273,31 @@ class ChatService:
             yield {"type": "chunk", "content": final_report}
 
             context_info = usage_tracker.get_usage_info()
+            cost_info = cost_tracker.get_summary()
+            context_info['cost'] = cost_info
             yield {'type': 'context', 'data': context_info}
             yield {'type': 'end', 'message': '生成完成'}
 
             usage_tracker.log_summary()
+            cost_tracker.log_summary()
             logger.info("深度研究流程完成")
             return
 
-        async for event in ChatService._process_normal_stream_chat(data, usage_tracker):
+        async for event in ChatService._process_normal_stream_chat(data, usage_tracker, cost_tracker, user_id):
             yield event
 
         context_info = usage_tracker.get_usage_info()
+        cost_info = cost_tracker.get_summary()
+        context_info['cost'] = cost_info
         yield {'type': 'context', 'data': context_info}
         yield {'type': 'end', 'message': '生成完成'}
 
         usage_tracker.log_summary()
+        cost_tracker.log_summary()
         logger.info("流式聊天请求处理完成")
 
     @staticmethod
     async def _run_deep_research_task(query: str) -> Dict[str, Any]:
-        """运行深度研究任务"""
         thread_id = f"deep_{int(time.time() * 1000)}"
 
         def _task():
@@ -152,10 +314,10 @@ class ChatService:
     @staticmethod
     async def _process_deep_thinking_stream(
         data: Dict[str, Any],
-        usage_tracker
+        usage_tracker,
+        cost_tracker: Optional[CostTracker] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """处理深度思考模式的流式响应"""
-        tools = get_tools_for_request(data['use_tools'], data['use_advanced_tools'])
+        tools = ChatService._get_tools(data)
         agent = create_base_agent(tools=tools, prompt_mode='deep-thinking')
 
         chat_history = data.get('chat_history', [])
@@ -163,7 +325,9 @@ class ChatService:
         messages = []
         if langchain_chat_history:
             messages.extend(langchain_chat_history)
-        messages.append(HumanMessage(content=data['message']))
+
+        user_message = ChatService._build_user_message(data)
+        messages.append(HumanMessage(content=user_message))
         graph_input = {"messages": messages}
 
         current_message_content = ""
@@ -246,22 +410,25 @@ class ChatService:
     @staticmethod
     async def _process_normal_stream_chat(
         data: Dict[str, Any],
-        usage_tracker
+        usage_tracker,
+        cost_tracker: Optional[CostTracker] = None,
+        user_id: Optional[int] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """处理普通流式聊天"""
-        tools = get_tools_for_request(data['use_tools'], data['use_advanced_tools'])
+        tools = ChatService._get_tools(data, user_id)
         tool_names = [tool.name for tool in tools]
         weather_tool_names = {tool.name for tool in WEATHER_TOOLS}
 
         agent = create_base_agent(tools=tools, prompt_mode=data['mode'])
 
         chat_history = data.get('chat_history', [])
+        chat_history = ChatService._apply_compaction(chat_history)
         langchain_chat_history = convert_chat_history(chat_history)
         messages = []
         if langchain_chat_history:
             messages.extend(langchain_chat_history)
 
-        messages.append(HumanMessage(content=data['message']))
+        user_message = ChatService._build_user_message(data)
+        messages.append(HumanMessage(content=user_message))
         graph_input = {"messages": messages}
 
         tool_calls_map: Dict[str, Dict] = {}
@@ -364,7 +531,6 @@ class ChatService:
         data: Dict[str, Any],
         weather_tool_names: set
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """完成流式响应的最终处理"""
         final_ai_message = None
         for msg in reversed(all_messages):
             if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
@@ -443,7 +609,6 @@ class ChatModeService:
 
     @classmethod
     def get_supported_modes(cls) -> Dict[str, str]:
-        """获取支持的模式列表"""
         modes = {}
         for mode_name, prompt in SYSTEM_PROMPTS.items():
             if mode_name in cls.FRONTEND_SUPPORTED_MODES:

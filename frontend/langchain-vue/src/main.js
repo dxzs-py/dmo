@@ -100,9 +100,42 @@ window.addEventListener('unhandledrejection', (event) => {
 })
 
 window.addEventListener('error', (event) => {
-  if (event.error) {
-    console.error('❌ [Runtime Error]', event.error)
+  // 忽略浏览器扩展导致的错误（基于文件名特征）
+  const isExtensionError = 
+    // 检查错误源文件名
+    (event.filename && (
+      event.filename.includes('content.js') || 
+      event.filename.includes('stat-') ||
+      event.filename.includes('extension') ||
+      event.filename.includes('chrome-extension://')
+    )) ||
+    // 检查错误堆栈信息
+    (event.error && event.error.stack && (
+      event.error.stack.includes('content.js') ||
+      event.error.stack.includes('stat-') ||
+      event.error.stack.includes('chrome-extension://')
+    )) ||
+    // 检查错误消息
+    (event.error && event.error.message && (
+      event.error.message.includes('runtime.lastError') ||
+      event.error.message.includes('message port closed') ||
+      event.error.message.includes('indexOf is not a function')
+    ));
+  
+  if (isExtensionError) {
+    console.debug('⚠️ [Ignored Extension Error]', event.error?.message || event.message);
+    event.preventDefault();
+    return;
   }
-})
+  
+  if (event.error) {
+    console.error('❌ [Runtime Error]', event.error);
+  }
+});
+
+// 捕获并忽略 chrome.runtime.lastError
+if (typeof chrome !== 'undefined' && chrome.runtime) {
+  chrome.runtime.lastError = null;
+}
 
 app.mount('#app')

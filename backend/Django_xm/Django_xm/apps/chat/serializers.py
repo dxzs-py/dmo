@@ -10,7 +10,7 @@
 from rest_framework import serializers
 from django.core.exceptions import ValidationError
 from django.utils import timezone
-from .models import ChatSession, ChatMessage
+from .models import ChatSession, ChatMessage, ChatAttachment
 
 
 # ==================== 输入验证序列化（Serializer） ====================
@@ -60,8 +60,15 @@ class ChatRequestSerializer(serializers.Serializer):
     )
     use_tools = serializers.BooleanField(default=True, help_text='是否使用工具')
     use_advanced_tools = serializers.BooleanField(default=False, help_text='是否使用高级工具')
+    use_web_search = serializers.BooleanField(default=False, help_text='是否启用联网搜索')
     streaming = serializers.BooleanField(default=False, help_text='是否流式输出')
     session_id = serializers.CharField(required=False, allow_null=True, max_length=100)
+    attachment_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        allow_null=True,
+        help_text='附件ID列表，用于基于文件内容回答问题'
+    )
 
     def validate_message(self, value):
         """验证消息内容"""
@@ -97,6 +104,12 @@ class ChatRequestSerializer(serializers.Serializer):
             raise serializers.ValidationError('聊天历史记录不能超过50条')
         return value
 
+    def validate_attachment_ids(self, value):
+        """验证附件ID列表"""
+        if value is not None and len(value) > 10:
+            raise serializers.ValidationError('单次请求附件数量不能超过10个')
+        return value
+
     def validate(self, attrs):
         """跨字段验证"""
         if attrs.get('streaming') and not attrs.get('message'):
@@ -124,6 +137,21 @@ class ChatResponseSerializer(serializers.Serializer):
 
 # ==================== 模型序列化器（ModelSerializer） ====================
 
+class ChatAttachmentSerializer(serializers.ModelSerializer):
+    """
+    聊天附件序列化器
+    """
+    url = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ChatAttachment
+        fields = ['id', 'original_name', 'file_size', 'file_type', 'mime_type', 'url', 'created_at']
+        read_only_fields = ['id', 'created_at']
+    
+    def get_url(self, obj):
+        return obj.file.url if hasattr(obj.file, 'url') else ''
+
+
 class ChatMessageSerializer(serializers.ModelSerializer):
     """
     聊天消息模型序列化器
@@ -131,12 +159,14 @@ class ChatMessageSerializer(serializers.ModelSerializer):
     用途：消息的读取、创建、更新操作
     绑定模型：ChatMessage
     """
+    attachments = ChatAttachmentSerializer(many=True, read_only=True)
+    
     class Meta:
         model = ChatMessage
         fields = ['id', 'session', 'role', 'content', 'sources', 'plan',
                   'chain_of_thought', 'tool_calls', 'reasoning',
                   'suggestions', 'context', 'versions',
-                  'current_version', 'created_at']
+                  'current_version', 'attachments', 'created_at']
         read_only_fields = ['id', 'session', 'created_at']
 
     def validate_content(self, value):

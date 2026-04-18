@@ -289,30 +289,81 @@ export const chatAPI = {
     }
     return apiClient.get(`/chat/sessions/${sessionId}/attachments/list/`)
   },
+
+  compactSession(sessionId) {
+    if (!sessionId) {
+      return Promise.reject(new Error('会话ID不能为空'))
+    }
+    return apiClient.post(`/chat/sessions/${sessionId}/compact/`)
+  },
+
+  getCommands() {
+    return apiClient.get('/chat/commands/')
+  },
+
+  executeCommand(command, sessionId = null) {
+    return apiClient.post('/chat/commands/execute/', { command, session_id: sessionId })
+  },
+
+  getPermissions(sessionId = null) {
+    const params = {}
+    if (sessionId) params.session_id = sessionId
+    return apiClient.get('/chat/permissions/', { params })
+  },
+
+  updatePermissions(data) {
+    return apiClient.put('/chat/permissions/', data)
+  },
+
+  getCostInfo() {
+    return apiClient.get('/chat/cost/')
+  },
+
+  getProjectContext(path = null) {
+    const params = {}
+    if (path) params.path = path
+    return apiClient.get('/chat/project-context/', { params })
+  },
 }
 
 export const ragAPI = {
-  query(data) {
-    return apiClient.post('/rag/query/', data)
-  },
+    query(data) {
+        return apiClient.post('/rag/query/', data)
+    },
 
-  getIndexes() {
-    return apiClient.get('/rag/index/list/')
-  },
+    getIndexes() {
+        return apiClient.get('/rag/index/list/')
+    },
 
-  buildIndex(data) {
-    return apiClient.post('/rag/index/', data)
-  },
+    buildIndex(data) {
+        return apiClient.post('/rag/index/', data)
+    },
 
-  uploadDocument(indexName, file) {
-    const formData = new FormData()
-    formData.append('file', file)
-    return apiClient.post(`/rag/index/${indexName}/upload/`, formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    })
-  },
+    createEmptyIndex(data) {
+        return apiClient.post('/rag/index/empty/', data)
+    },
+
+    deleteIndex(indexName) {
+        return apiClient.delete(`/rag/index/${indexName}/delete/`)
+    },
+
+    getDocuments(indexName) {
+        return apiClient.get(`/rag/index/${indexName}/documents/`)
+    },
+
+    deleteDocument(indexName, filename) {
+        return apiClient.delete(`/rag/index/${indexName}/documents/${filename}/`)
+    },
+
+    uploadDocument(indexName, file) {
+        const formData = new FormData()
+        formData.append('file', file)
+        return apiClient.post(`/rag/index/${indexName}/upload/`, formData, {
+            headers: {
+                'Content-Type': 'multipart/form-data',
+            },
+        })
+    },
 }
 
 export const workflowAPI = {

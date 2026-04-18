@@ -15,7 +15,7 @@ const userStore = useUserStore()
 const isCollapse = ref(false)
 const isScrolled = ref(false)
 
-const isChatUIRoute = computed(() => route.path === '/chat-ui')
+const isChatRoute = computed(() => route.path === '/chat')
 
 const { throttledFn: handleScrollThrottled } = useThrottle((event) => {
   const scrollTop = event.target.scrollTop
@@ -23,7 +23,7 @@ const { throttledFn: handleScrollThrottled } = useThrottle((event) => {
 }, 100)
 
 onMounted(async () => {
-  themeStore.setTheme(themeStore.theme)
+  themeStore.setTheme(themeStore.currentTheme)
   if (userStore.isLoggedIn) {
     await sessionStore.loadSessionsFromBackend()
   }
@@ -32,14 +32,11 @@ onMounted(async () => {
 
 <template>
   <ErrorBoundary>
-    <div v-if="isChatUIRoute" class="chat-ui-wrapper">
-      <router-view />
-    </div>
-    <div v-else class="app-container">
+    <div class="app-container">
       <AppHeader :sidebar-collapsed="isCollapse" @toggle-sidebar="isCollapse = !isCollapse" />
       <div class="content-wrapper">
         <AppSidebar v-model:collapse="isCollapse" />
-        <main class="main-content" :class="{ 'sidebar-collapsed': isCollapse }">
+        <main class="main-content" :class="{ 'sidebar-collapsed': isCollapse, 'chat-main': isChatRoute }">
           <div class="scroll-container" @scroll="handleScrollThrottled">
             <router-view />
           </div>
@@ -56,6 +53,12 @@ html, body, #app {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+}
+
+.chat-fullscreen-wrapper {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
 }
 
 .app-container {

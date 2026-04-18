@@ -1,6 +1,7 @@
 <script setup>
 import { ref, watch, nextTick, computed } from 'vue'
 import { Promotion, Search, Microphone, Document, Close, VideoPause } from '@element-plus/icons-vue'
+import SlashCommandPanel from '@/components/SlashCommandPanel.vue'
 
 const props = defineProps({
   modelValue: {
@@ -55,19 +56,43 @@ const emit = defineEmits({
   webSearch: () => true,
   microphone: () => true,
   stopStreaming: () => true,
+  commandSelect: (cmd) => cmd instanceof Object,
 })
 
 const textareaRef = ref(null)
 const isFocused = ref(false)
 const fileInputRef = ref(null)
+const showCommandPanel = ref(false)
+const commandFilter = ref('')
+const selectedCommandIndex = ref(0)
 
 const computedPlaceholder = computed(() => {
   if (props.isStreaming) return '正在生成回复...'
-  return props.placeholder || '输入您的问题，按 Enter 发送...'
+  return props.placeholder || '输入您的问题，按 Enter 发送... 输入 / 查看命令'
 })
 
 const hasAttachments = computed(() => props.attachments.length > 0)
 const canSend = computed(() => (props.modelValue.trim() || hasAttachments.value) && !props.disabled)
+
+const isSlashCommand = computed(() => {
+  return props.modelValue.startsWith('/') && !props.modelValue.includes('\n')
+})
+
+watch(isSlashCommand, (val) => {
+  if (val) {
+    showCommandPanel.value = true
+    commandFilter.value = props.modelValue.slice(1)
+  } else {
+    showCommandPanel.value = false
+    commandFilter.value = ''
+  }
+})
+
+watch(() => props.modelValue, (val) => {
+  if (val.startsWith('/') && !val.includes('\n')) {
+    commandFilter.value = val.slice(1)
+  }
+})
 
 const formatFileSize = (bytes) => {
   if (bytes < 1024) return bytes + ' B'
@@ -87,6 +112,18 @@ const getFileIcon = (type) => {
 }
 
 const handleKeyDown = (event) => {
+  if (showCommandPanel.value) {
+    if (event.key === 'Escape') {
+      showCommandPanel.value = false
+      event.preventDefault()
+      return
+    }
+    if (event.key === 'Tab' || event.key === 'Enter') {
+      event.preventDefault()
+      return
+    }
+  }
+
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault()
     emit('send')
@@ -100,6 +137,9 @@ const handleFocus = () => {
 
 const handleBlur = () => {
   isFocused.value = false
+  setTimeout(() => {
+    showCommandPanel.value = false
+  }, 200)
 }
 
 const handleAttach = () => {
@@ -124,6 +164,11 @@ const handleWebSearch = () => {
 
 const handleMicrophone = () => {
   emit('microphone')
+}
+
+const handleCommandSelect = (cmd) => {
+  showCommandPanel.value = false
+  emit('commandSelect', cmd)
 }
 
 const adjustTextareaHeight = async () => {
@@ -163,72 +208,83 @@ watch(() => props.modelValue, adjustTextareaHeight)
       </Transition>
 
       <div class="input-card" :class="{ 'is-focused': isFocused, 'is-streaming': isStreaming }">
-        <div class="input-toolbar">
-          <button
-            class="toolbar-btn"
-            :class="{ active: hasAttachments }"
-            :disabled="disabled || loading"
-            title="添加附件"
-            @click="handleAttach"
-          >
-            <el-icon :size="18"><Document /></el-icon>
-          </button>
-          <button
-            class="toolbar-btn"
-            :class="{ active: useWebSearch }"
-            :disabled="disabled || loading"
-            :title="useWebSearch ? '关闭网络搜索' : '开启网络搜索'"
-            @click="handleWebSearch"
-          >
-            <el-icon :size="18"><Search /></el-icon>
-          </button>
-          <button
-            class="toolbar-btn"
-            :class="{ active: useMicrophone }"
-            :disabled="disabled || loading"
-            :title="useMicrophone ? '关闭语音输入' : '开启语音输入'"
-            @click="handleMicrophone"
-          >
-            <el-icon :size="18"><Microphone /></el-icon>
-          </button>
-        </div>
-
-        <textarea
-          ref="textareaRef"
-          :value="modelValue"
-          :disabled="disabled"
-          :placeholder="computedPlaceholder"
-          :maxlength="maxLength"
-          class="input-textarea"
-          rows="1"
-          @input="(e) => emit('update:modelValue', e.target.value)"
-          @keydown="handleKeyDown"
-          @focus="handleFocus"
-          @blur="handleBlur"
-        ></textarea>
-
-        <div class="input-actions">
-          <Transition name="fade" mode="out-in">
+        <Transition name="slide-down">
+          <SlashCommandPanel
+            v-if="showCommandPanel && isSlashCommand"
+            :filter="commandFilter"
+            :selected-index="selectedCommandIndex"
+            @select="handleCommandSelect"
+            class="command-panel-inline"
+          />
+        </Transition>
+        <div class="input-content">
+          <div class="input-toolbar">
             <button
-              v-if="isStreaming"
-              key="stop"
-              class="stop-btn"
-              @click="emit('stopStreaming')"
+              class="toolbar-btn"
+              :class="{ active: hasAttachments }"
+              :disabled="disabled || loading"
+              title="添加附件"
+              @click="handleAttach"
             >
-              <el-icon :size="14"><VideoPause /></el-icon>
-              <span>停止</span>
+              <el-icon :size="18"><Document /></el-icon>
             </button>
             <button
-              v-else
-              key="send"
-              class="send-btn"
-              :class="{ active: canSend }"
-              :disabled="!canSend"
-              @click="emit('send')"
+              class="toolbar-btn"
+              :class="{ active: useWebSearch }"
+              :disabled="disabled || loading"
+              :title="useWebSearch ? '关闭网络搜索' : '开启网络搜索'"
+              @click="handleWebSearch"
             >
-              <el-icon :size="18"><Promotion /></el-icon>
+              <el-icon :size="18"><Search /></el-icon>
             </button>
-          </Transition>
+            <button
+              class="toolbar-btn"
+              :class="{ active: useMicrophone }"
+              :disabled="disabled || loading"
+              :title="useMicrophone ? '关闭语音输入' : '开启语音输入'"
+              @click="handleMicrophone"
+            >
+              <el-icon :size="18"><Microphone /></el-icon>
+            </button>
+          </div>
+
+          <textarea
+            ref="textareaRef"
+            :value="modelValue"
+            :disabled="disabled"
+            :placeholder="computedPlaceholder"
+            :maxlength="maxLength"
+            class="input-textarea"
+            rows="1"
+            @input="(e) => emit('update:modelValue', e.target.value)"
+            @keydown="handleKeyDown"
+            @focus="handleFocus"
+            @blur="handleBlur"
+          ></textarea>
+
+          <div class="input-actions">
+            <Transition name="fade" mode="out-in">
+              <button
+                v-if="isStreaming"
+                key="stop"
+                class="stop-btn"
+                @click="emit('stopStreaming')"
+              >
+                <el-icon :size="14"><VideoPause /></el-icon>
+                <span>停止</span>
+              </button>
+              <button
+                v-else
+                key="send"
+                class="send-btn"
+                :class="{ active: canSend }"
+                :disabled="!canSend"
+                @click="emit('send')"
+              >
+                <el-icon :size="18"><Promotion /></el-icon>
+              </button>
+            </Transition>
+          </div>
         </div>
       </div>
 
@@ -336,14 +392,24 @@ watch(() => props.modelValue, adjustTextareaHeight)
 
 .input-card {
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
   border-radius: 24px;
   border: 1.5px solid var(--el-border-color);
   background: var(--el-bg-color);
-  padding: 6px 8px 6px 4px;
+  padding: 6px 8px;
   transition: all 0.25s ease;
   gap: 4px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  position: relative;
+}
+
+.command-panel-inline {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  margin-bottom: 8px;
+  z-index: 100;
 }
 
 .input-card.is-focused {
@@ -356,11 +422,15 @@ watch(() => props.modelValue, adjustTextareaHeight)
   box-shadow: 0 0 0 3px rgba(230, 162, 60, 0.1);
 }
 
+.input-content {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+}
+
 .input-toolbar {
   display: flex;
   gap: 2px;
-  padding-bottom: 4px;
-  padding-left: 4px;
   flex-shrink: 0;
 }
 
@@ -421,8 +491,6 @@ watch(() => props.modelValue, adjustTextareaHeight)
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  padding-bottom: 4px;
-  padding-right: 4px;
 }
 
 .send-btn {

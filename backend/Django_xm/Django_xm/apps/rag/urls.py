@@ -1,11 +1,14 @@
 from django.urls import path
 from .views import (
     RAGIndexCreateView,
+    RAGEmptyIndexCreateView,
     RAGIndexListView,
     RAGIndexDetailView,
     RAGIndexDeleteView,
     RAGIndexStatsView,
     RAGDocumentUploadView,
+    RAGDocumentListView,
+    RAGDocumentDeleteView,
     RAGDocumentAddDirectoryView,
     RAGQueryView,
     RAGSearchView,
@@ -17,6 +20,7 @@ app_name = 'rag'
 urlpatterns = [
     # 索引管理
     path('index/', RAGIndexCreateView.as_view(), name='index-create'),
+    path('index/empty/', RAGEmptyIndexCreateView.as_view(), name='empty-index-create'),
     path('index/list/', RAGIndexListView.as_view(), name='index-list'),
     path('index/<str:name>/', RAGIndexDetailView.as_view(), name='index-detail'),
     path('index/<str:name>/delete/', RAGIndexDeleteView.as_view(), name='index-delete'),
@@ -24,6 +28,8 @@ urlpatterns = [
     
     # 文档管理
     path('index/<str:name>/upload/', RAGDocumentUploadView.as_view(), name='document-upload'),
+    path('index/<str:name>/documents/', RAGDocumentListView.as_view(), name='document-list'),
+    path('index/<str:name>/documents/<str:filename>/', RAGDocumentDeleteView.as_view(), name='document-delete'),
     path('index/<str:name>/add-directory/', RAGDocumentAddDirectoryView.as_view(), name='document-add-directory'),
     
     # 查询接口

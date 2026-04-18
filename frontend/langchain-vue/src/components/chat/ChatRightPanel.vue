@@ -1,8 +1,10 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { ElTag } from 'element-plus'
-import { Document, Tools, MagicStick, View } from '@element-plus/icons-vue'
+import { Document, Tools, MagicStick, View, Coin, Lock } from '@element-plus/icons-vue'
 import LxScrollArea from '../LxScrollArea.vue'
+import CostTracker from '../CostTracker.vue'
+import PermissionManager from '../PermissionManager.vue'
 
 const props = defineProps({
   message: {
@@ -12,6 +14,14 @@ const props = defineProps({
   visible: {
     type: Boolean,
     default: false,
+  },
+  costSummary: {
+    type: Object,
+    default: () => ({}),
+  },
+  sessionId: {
+    type: String,
+    default: null,
   },
 })
 
@@ -42,7 +52,7 @@ const rawJson = computed(() => {
   return {
     id: props.message.id,
     role: props.message.role,
-    content: props.message.content?.substring(0, 500),
+    content: props.message.content,
     sources: props.message.sources,
     plan: props.message.plan,
     reasoning: props.message.reasoning,
@@ -64,6 +74,8 @@ const tabs = computed(() => [
   { value: 'sources', label: '来源', icon: Document, count: hasSources.value ? metadata.value.sources.length : 0 },
   { value: 'tools', label: '工具', icon: Tools, count: hasTools.value ? metadata.value.tools.length : 0 },
   { value: 'reasoning', label: '推理', icon: MagicStick, count: 0 },
+  { value: 'cost', label: '成本', icon: Coin, count: 0 },
+  { value: 'permissions', label: '权限', icon: Lock, count: 0 },
   { value: 'json', label: 'JSON', icon: View, count: 0 },
 ])
 
@@ -245,6 +257,14 @@ watch(() => props.message, () => {
             <el-icon :size="32" color="var(--el-text-color-placeholder)"><View /></el-icon>
             <span>暂无 JSON 数据</span>
           </div>
+        </div>
+
+        <div v-show="activeTab === 'cost'" class="tab-content">
+          <CostTracker :cost-summary="costSummary" />
+        </div>
+
+        <div v-show="activeTab === 'permissions'" class="tab-content">
+          <PermissionManager :session-id="sessionId" />
         </div>
       </LxScrollArea>
     </div>

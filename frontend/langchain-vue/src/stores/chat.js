@@ -18,6 +18,7 @@ export const useChatStore = defineStore('chat', () => {
     'deep-research': '深度研究',
     'guarded': '安全代理',
   })
+  const costSummary = ref({})
 
   const { isStreaming, abortController, abort: stopStreaming, streamChat } = useStreamChat()
 
@@ -103,6 +104,9 @@ export const useChatStore = defineStore('chat', () => {
             sessionStore.setSuggestionsToLastMessage(sessionStore.currentSessionId, data),
           setContext: (data) =>
             sessionStore.setContextToLastMessage(sessionStore.currentSessionId, data),
+          setCost: (data) => {
+            costSummary.value = data
+          },
         }
       )
 
@@ -266,6 +270,7 @@ export const useChatStore = defineStore('chat', () => {
     currentMode,
     availableModes,
     abortController,
+    costSummary,
     sendMessage,
     regenerateMessage,
     fetchModes,

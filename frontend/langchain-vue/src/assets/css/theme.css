@@ -173,6 +173,245 @@ html.dark .nav-menu .el-menu {
   background-color: transparent;
 }
 
+html.dark .chat-fullscreen {
+  background-color: var(--background);
+}
+
+html.dark .chat-sidebar {
+  background-color: var(--sidebar);
+  border-right-color: var(--sidebar-border);
+}
+
+html.dark .sidebar-new-chat-btn {
+  background: var(--card);
+  border-color: var(--border);
+  color: var(--foreground);
+}
+
+html.dark .sidebar-new-chat-btn:hover {
+  background: var(--accent);
+  border-color: var(--sidebar-primary);
+}
+
+html.dark .session-item:hover {
+  background-color: var(--accent);
+}
+
+html.dark .session-item.active {
+  background-color: rgba(59, 130, 246, 0.15);
+}
+
+html.dark .chat-topbar {
+  background-color: var(--background);
+  border-bottom-color: var(--border);
+}
+
+html.dark .topbar-title {
+  color: var(--foreground);
+}
+
+html.dark .messages-scroll {
+  background-color: var(--background);
+}
+
+html.dark .message-content.user {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--foreground);
+}
+
+html.dark .message-content.assistant {
+  color: var(--foreground);
+}
+
+html.dark .message-role-label {
+  color: var(--muted-foreground);
+}
+
+html.dark .message-time {
+  color: var(--muted-foreground);
+}
+
+html.dark .suggestion-card {
+  background: var(--card);
+  border-color: var(--border);
+  color: var(--foreground);
+}
+
+html.dark .suggestion-card:hover {
+  border-color: var(--sidebar-primary);
+  background: rgba(59, 130, 246, 0.1);
+}
+
+html.dark .input-card {
+  background: var(--card);
+  border-color: var(--border);
+}
+
+html.dark .input-card.is-focused {
+  border-color: var(--sidebar-primary);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+html.dark .input-textarea {
+  color: var(--foreground);
+}
+
+html.dark .input-textarea::placeholder {
+  color: var(--muted-foreground);
+}
+
+html.dark .send-btn.active {
+  background: var(--sidebar-primary);
+}
+
+html.dark .toolbar-btn:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+html.dark .toolbar-btn.active {
+  color: var(--sidebar-primary);
+  background: rgba(59, 130, 246, 0.1);
+}
+
+html.dark .action-btn:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+html.dark .scroll-bottom-btn {
+  background: var(--card);
+  border-color: var(--border);
+  color: var(--muted-foreground);
+}
+
+html.dark .scroll-bottom-btn:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+html.dark .attachment-item {
+  background: var(--accent);
+  border-color: var(--border);
+}
+
+html.dark .source-badge {
+  background: rgba(59, 130, 246, 0.1);
+  border-color: rgba(59, 130, 246, 0.2);
+  color: var(--sidebar-primary);
+}
+
+html.dark .empty-title {
+  color: var(--foreground);
+}
+
+html.dark .empty-subtitle {
+  color: var(--muted-foreground);
+}
+
+html.dark .empty-logo-icon {
+  color: var(--sidebar-primary);
+}
+
+html.dark .sidebar-nav-btn:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+html.dark .sidebar-theme-btn:hover {
+  background: var(--accent);
+}
+
+html.dark .sidebar-user-info:hover {
+  background: var(--accent);
+}
+
+html.dark .sidebar-username {
+  color: var(--foreground);
+}
+
+html.dark .mode-desc {
+  color: var(--muted-foreground);
+}
+
+html.dark .mode-name {
+  color: var(--foreground);
+}
+
+html.dark .chat-input-area {
+  background-color: var(--background);
+  border-top-color: var(--border);
+}
+
+html.dark .input-hint {
+  color: var(--muted-foreground);
+}
+
+html.dark .stop-btn {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+}
+
+html.dark .stop-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+html.dark .sidebar-empty {
+  color: var(--muted-foreground);
+}
+
+html.dark .session-group-label {
+  color: var(--muted-foreground);
+}
+
+html.dark .session-delete-btn:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+html.dark .session-item-title {
+  color: var(--foreground);
+}
+
+html.dark .topbar-icon-btn:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+html.dark .topbar-icon-btn.active {
+  color: var(--sidebar-primary);
+  background: rgba(59, 130, 246, 0.1);
+}
+
+html.dark .user-avatar {
+  background: linear-gradient(135deg, #6d28d9 0%, #8b5cf6 100%);
+}
+
+html.dark .assistant-avatar {
+  background: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
+}
+
+html.dark .tool-calls-label {
+  color: var(--muted-foreground);
+}
+
+html.dark .context-tokens {
+  color: var(--muted-foreground);
+}
+
+html.dark .edit-actions .el-button--default {
+  background: var(--accent);
+  border-color: var(--border);
+  color: var(--foreground);
+}
+
+html.dark .message-edit-area .el-textarea__inner {
+  background: var(--card);
+  border-color: var(--border);
+  color: var(--foreground);
+}
+
 /* 统一按钮样式 */
 .el-button {
   border-radius: 6px;

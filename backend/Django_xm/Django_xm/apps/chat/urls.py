@@ -14,5 +14,11 @@ urlpatterns = [
     path('sessions/<str:session_id>/messages/batch/', views.ChatMessageBatchCreateView.as_view(), name='chat-messages-batch-create'),
     path('sessions/<str:session_id>/attachments/', views.ChatAttachmentUploadView.as_view(), name='chat-attachments-upload'),
     path('sessions/<str:session_id>/attachments/list/', views.ChatAttachmentListView.as_view(), name='chat-attachments-list'),
+    path('sessions/<str:session_id>/compact/', views.ChatSessionCompactView.as_view(), name='chat-sessions-compact'),
     path('messages/<int:message_id>/', views.ChatMessageUpdateView.as_view(), name='chat-messages-update'),
+    path('commands/', views.ChatCommandsView.as_view(), name='chat-commands'),
+    path('commands/execute/', views.ChatCommandExecuteView.as_view(), name='chat-commands-execute'),
+    path('permissions/', views.ChatPermissionsView.as_view(), name='chat-permissions'),
+    path('cost/', views.ChatCostView.as_view(), name='chat-cost'),
+    path('project-context/', views.ProjectContextView.as_view(), name='chat-project-context'),
 ]

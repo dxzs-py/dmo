@@ -64,10 +64,19 @@ class BaseChatAPIView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
-    def get_session_or_404(self, session_id, user):
+    def get_session_or_404(self, session_id, user, prefetch_attachments=False):
         """获取会话对象或返回404错误响应"""
         try:
-            return ChatSession.objects.prefetch_related('messages').get(
+            queryset = ChatSession.objects
+            if prefetch_attachments:
+                from django.db.models import Prefetch
+                queryset = queryset.prefetch_related(
+                    Prefetch('messages', queryset=ChatMessage.objects.prefetch_related('attachments'))
+                )
+            else:
+                queryset = queryset.prefetch_related('messages')
+            
+            return queryset.get(
                 session_id=session_id,
                 user=user,
                 is_deleted=False
@@ -111,6 +120,7 @@ class ChatView(APIView):
     """
     permission_classes = [IsAuthenticated]
     
+    @transaction.atomic
     def post(self, request):
         serializer = ChatRequestSerializer(data=request.data)
         if not serializer.is_valid():
@@ -122,13 +132,47 @@ class ChatView(APIView):
         data = serializer.validated_data
         logger.info(f"收到聊天请求: {data['message'][:50]}...")
 
+        # 获取或创建会话
+        session = None
+        session_id = data.get('session_id')
+        if session_id:
+            session = ChatSession.objects.filter(
+                session_id=session_id,
+                user=request.user,
+                is_deleted=False
+            ).first()
+        
+        if not session:
+            # 创建新会话
+            session = ChatSession.objects.create(
+                user=request.user,
+                mode=data.get('mode', 'basic-agent'),
+                title=data['message'][:100] if len(data['message']) > 100 else data['message']
+            )
+            logger.info(f"创建新会话: {session.session_id}")
+
         try:
             result = ChatService.process_chat_request(data)
             
             logger.info(f"聊天请求处理完成，响应长度: {len(result.get('message', ''))} 字符")
 
+            # 保存消息对
+            from .services.chat_service import MessagePersistenceService
+            user_message, ai_message = MessagePersistenceService.save_message_pair(
+                session=session,
+                user_content=data['message'],
+                ai_content=result.get('message', ''),
+                attachment_ids=data.get('attachment_ids')
+            )
+            
+            # 为响应添加消息信息
+            result_data = ChatResponseSerializer(result).data
+            result_data['session_id'] = session.session_id
+            result_data['user_message_id'] = user_message.id
+            result_data['ai_message_id'] = ai_message.id
+
             return success_response(
-                data=ChatResponseSerializer(result).data,
+                data=result_data,
                 message='操作成功'
             )
 
@@ -144,7 +188,8 @@ class ChatView(APIView):
                     'mode': data.get('mode', 'default'),
                     'tools_used': [],
                     'success': False,
-                    'error': str(e)
+                    'error': str(e),
+                    'session_id': session.session_id if session else None
                 }).data,
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
@@ -339,7 +384,7 @@ class ChatSessionCreateView(BaseChatAPIView):
 class ChatSessionDetailView(BaseChatAPIView):
     @log_view_action
     def get(self, request, session_id):
-        session = self.get_session_or_404(session_id, request.user)
+        session = self.get_session_or_404(session_id, request.user, prefetch_attachments=True)
         if not session:
             return error_response(
                 code=ErrorCode.NOT_FOUND,
@@ -576,3 +621,149 @@ class ChatAttachmentListView(BaseChatAPIView):
             })
 
         return success_response(data=data)
+
+
+class ChatSessionCompactView(BaseChatAPIView):
+    @log_view_action
+    def post(self, request, session_id):
+        session = self.get_session_or_404(session_id, request.user, prefetch_attachments=True)
+        if not session:
+            return error_response(
+                code=ErrorCode.NOT_FOUND,
+                message='会话不存在',
+                http_status=status.HTTP_404_NOT_FOUND
+            )
+
+        from .services.session_compactor import SessionCompactor
+        messages = ChatMessage.objects.filter(session=session).order_by('created_at')
+        message_list = []
+        for msg in messages:
+            message_list.append({
+                'role': msg.role,
+                'content': msg.content,
+                'tool_calls': msg.tool_calls or [],
+            })
+
+        compactor = SessionCompactor()
+        result = compactor.compact(message_list)
+
+        return success_response(data={
+            'compressed': result.compressed,
+            'originalMessageCount': result.original_message_count,
+            'keptMessageCount': result.kept_message_count,
+            'summary': result.summary,
+            'summaryTokenEstimate': result.summary_token_estimate,
+        })
+
+
+class ChatCommandsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .services.slash_commands import get_all_commands
+        commands = get_all_commands()
+        return success_response(data={'commands': commands})
+
+
+class ChatCommandExecuteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        command = request.data.get('command', '')
+        session_id = request.data.get('session_id')
+
+        from .services.slash_commands import parse_command, execute_command
+
+        parsed = parse_command(command)
+        if not parsed:
+            return error_response(
+                code=ErrorCode.INVALID_PARAMS,
+                message='无效的命令格式',
+            )
+
+        command_name, args = parsed
+        context = {
+            "args": args,
+            "user_id": request.user.id,
+            "session_id": session_id,
+        }
+
+        if session_id:
+            session = ChatSession.objects.filter(
+                session_id=session_id,
+                user=request.user,
+                is_deleted=False,
+            ).first()
+            if session:
+                messages = ChatMessage.objects.filter(session=session).order_by('created_at')
+                context["session"] = {
+                    "session_id": session.session_id,
+                    "title": session.title,
+                    "mode": session.mode,
+                }
+                context["messages"] = [
+                    {"role": m.role, "content": m.content}
+                    for m in messages
+                ]
+
+        result = execute_command(command_name, context)
+        return success_response(data=result)
+
+
+class ChatPermissionsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from Django_xm.apps.core.permissions import PermissionService
+        session_id = request.query_params.get('session_id')
+        info = PermissionService.get_permission_info(request.user.id, session_id)
+        return success_response(data=info)
+
+    def put(self, request):
+        from Django_xm.apps.core.permissions import PermissionService
+        session_mode = request.data.get('session_mode')
+        tool_permissions = request.data.get('tool_permissions', {})
+        session_id = request.data.get('session_id')
+
+        if session_mode:
+            try:
+                policy = PermissionService.update_session_mode(
+                    request.user.id, session_mode, session_id
+                )
+            except ValueError as e:
+                return error_response(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message=str(e),
+                )
+
+        for tool_name, permission in tool_permissions.items():
+            try:
+                PermissionService.set_tool_permission(
+                    request.user.id, tool_name, permission, session_id
+                )
+            except ValueError:
+                pass
+
+        info = PermissionService.get_permission_info(request.user.id, session_id)
+        return success_response(data=info, message='权限更新成功')
+
+
+class ChatCostView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from Django_xm.apps.core.cost_tracker import get_all_model_pricing, MODEL_PRICING
+        return success_response(data={
+            'modelPricing': get_all_model_pricing(),
+            'supportedModels': list(MODEL_PRICING.keys()),
+        })
+
+
+class ProjectContextView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from Django_xm.apps.core.project_context import detect_project_context
+        search_path = request.query_params.get('path')
+        context = detect_project_context(search_path)
+        return success_response(data=context.to_dict())

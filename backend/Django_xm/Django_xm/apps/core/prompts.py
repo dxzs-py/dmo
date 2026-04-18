@@ -208,20 +208,40 @@ def create_custom_prompt(
 
 TOOL_USAGE_INSTRUCTIONS = """
 可用工具说明：
-- 🔍 web_search: 搜索互联网获取最新信息
-- 🕐 get_current_time: 获取当前时间和日期
+- 🔍 web_search / duckduckgo_search: 搜索互联网获取最新信息
+- 🕐 get_current_time / get_current_date: 获取当前时间和日期
 - 🧮 calculator: 执行数学计算
-- 🌤️ get_daily_weather: 查询某一天的天气（今天/明天/后天）
+- 🌤️ weather_query: 查询城市天气（实时/预报）
+- 🌐 translate_text: 翻译文本到指定语言
+- 🌐 detect_language: 检测文本的语言
+- 📄 file_reader: 读取指定路径的文件内容
+- 📎 attachment_reader: 读取用户上传的聊天附件内容
+- 📁 fs_write_file / fs_read_file / fs_list_files / fs_search_files: 文件系统操作
+- 🌐 web_fetch: 抓取网页内容并转换为纯文本
+- ✅ todo_write / todo_read: 任务管理（创建/读取待办事项）
+- 🤖 agent_create / agent_run / agent_list: 子代理管理（创建/执行/列出子代理任务）
 
 使用工具的时机：
-- 需要最新信息或实时数据时，使用 web_search
+- 需要最新信息或实时数据时，使用 web_search 或 duckduckgo_search
 - 需要知道当前时间或日期时，使用 get_current_time
 - 需要精确计算时，使用 calculator
-- 查询天气时，直接使用 get_daily_weather
+- 查询天气时，使用 weather_query（不需要先获取时间）
+- 需要翻译文本时，使用 translate_text
+- 需要检测语言时，使用 detect_language
+- 用户上传了文件并基于文件提问时，使用 attachment_reader 读取文件内容
+- 需要读取服务器上的文件时，使用 file_reader
+- 需要获取网页内容时，使用 web_fetch
+- 需要管理任务列表时，使用 todo_write 和 todo_read
+- 需要委派子任务给独立代理时，使用 agent_create 和 agent_run
 
 重要提示：
 - 优先使用工具获取准确信息
 - 避免重复调用工具
+- 查询天气不需要先调用时间工具
+- 翻译时只需指定目标语言，源语言会自动检测
+- 用户消息中如果包含文件内容，直接基于该内容回答即可
+- web_fetch 可以获取网页内容，适用于需要读取特定URL信息的场景
+- 子代理适合处理独立的子任务，如探索、规划、验证等
 """
 
 
