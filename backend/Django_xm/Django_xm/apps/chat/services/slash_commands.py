@@ -10,7 +10,7 @@ from typing import Dict, Any, Optional, List, Callable
 from dataclasses import dataclass
 from enum import Enum
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.ai_engine.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -134,7 +134,7 @@ def _handle_compact(context: Dict[str, Any]) -> Dict[str, Any]:
 
 def _handle_model(context: Dict[str, Any]) -> Dict[str, Any]:
     args = context.get("args", "").strip()
-    from Django_xm.apps.core.config import settings
+    from Django_xm.apps.ai_engine.config import settings
 
     current_model = getattr(settings, 'openai_model', 'gpt-4o')
 
@@ -249,7 +249,7 @@ def _handle_export(context: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _handle_version(context: Dict[str, Any]) -> Dict[str, Any]:
-    from Django_xm.apps.core.config import settings
+    from Django_xm.apps.ai_engine.config import settings
     return {
         "type": "info",
         "content": (

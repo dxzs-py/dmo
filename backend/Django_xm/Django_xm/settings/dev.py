@@ -21,7 +21,7 @@ _project_root = Path(__file__).resolve().parent.parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-from Django_xm.apps.core.config import settings as app_cfg
+from Django_xm.apps.ai_engine.config import settings as app_cfg
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = BASE_DIR.parent
@@ -58,11 +58,12 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "Django_xm.apps.users",
     "Django_xm.apps.core",
-    "Django_xm.apps.agents",
+    "Django_xm.apps.ai_engine",
+    "Django_xm.apps.tools",
     "Django_xm.apps.chat",
-    "Django_xm.apps.rag",
-    "Django_xm.apps.workflows",
-    "Django_xm.apps.deep_research",
+    "Django_xm.apps.knowledge",
+    "Django_xm.apps.learning",
+    "Django_xm.apps.research",
 ]
 
 MIDDLEWARE = [
@@ -72,10 +73,14 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "Django_xm.apps.core.middleware.CurrentRequestMiddleware",
     "Django_xm.apps.core.middleware.SessionSecurityMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "Django_xm.apps.core.middleware.RequestTimeoutMiddleware",
+    "Django_xm.apps.core.middleware.RequestLoggingMiddleware",
+    "Django_xm.apps.core.middleware.CacheControlMiddleware",
+    "Django_xm.apps.core.middleware.RateLimitMiddleware",
     "Django_xm.apps.core.middleware.SecurityHeadersMiddleware",
 ]
 
@@ -88,7 +93,7 @@ CORS_ALLOW_HEADERS = [
     "accept", "accept-encoding", "authorization", "content-type",
     "dnt", "origin", "user-agent", "x-csrftoken", "x-requested-with",
 ]
-CORS_EXPOSE_HEADERS = ["content-disposition", "X-Captcha-Key"]
+CORS_EXPOSE_HEADERS = ["content-disposition", "X-Captcha-Key", "X-Request-Duration"]
 
 ROOT_URLCONF = "Django_xm.urls"
 
@@ -206,13 +211,13 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.BasicAuthentication',
     ],
     "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticatedOrReadOnly",
+        "rest_framework.permissions.IsAuthenticated",
     ],
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
         "rest_framework.renderers.BrowsableAPIRenderer",
     ],
-    "EXCEPTION_HANDLER": "Django_xm.utils.exceptions.custom_exception_handler",
+    "EXCEPTION_HANDLER": "Django_xm.apps.common.exceptions.custom_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_THROTTLE_CLASSES": [
         "Django_xm.apps.core.throttling.AnonymousRateThrottle",
@@ -318,7 +323,7 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = app_cfg.celery_task_time_limit
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
-CELERY_WORKER_MAX_TASKS_PER_CHILD = app_cfg.celery_worker_max_tasks_per_child
+CELERY_RESULT_EXPIRES = 86400
 
 # ==================== 安全配置（开发环境宽松）====================
 SECURE_SSL_REDIRECT = False
@@ -344,7 +349,6 @@ DEFAULT_FROM_EMAIL = app_cfg.default_from_email
 SERVER_EMAIL = app_cfg.default_from_email
 
 # ==================== 国际化 ====================
-USE_L10N = True
 LOCALE_PATHS = [BASE_DIR / 'locale']
 
 # ==================== 向后兼容（从 Pydantic 注入）====================

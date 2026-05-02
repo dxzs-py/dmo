@@ -2,12 +2,28 @@
 import { computed, ref } from 'vue'
 import { User, ChatDotRound, Refresh, CopyDocument, Check, InfoFilled, Tools } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import MarkdownRenderer from '../MarkdownRenderer.vue'
-import ChainOfThought from '../ChainOfThought.vue'
-import ToolCallCard from '../ToolCallCard.vue'
-import Sources from '../Sources.vue'
-import Plan from '../Plan.vue'
+import MarkdownRenderer from '../common/MarkdownRenderer.vue'
+import ChainOfThought from './ChainOfThought.vue'
+import ToolCallCard from './ToolCallCard.vue'
+import Sources from './Sources.vue'
+import Plan from './Plan.vue'
 import { AiReasoning, AiContext } from '../ai-elements'
+import AiTask from '../ai-elements/AiTask.vue'
+import AiImage from '../ai-elements/AiImage.vue'
+import AiControls from '../ai-elements/AiControls.vue'
+import AiQueue from '../ai-elements/AiQueue.vue'
+import AiConfirmation from '../ai-elements/AiConfirmation.vue'
+import AiConfirmationTitle from '../ai-elements/AiConfirmationTitle.vue'
+import AiConfirmationRequest from '../ai-elements/AiConfirmationRequest.vue'
+import AiConfirmationActions from '../ai-elements/AiConfirmationActions.vue'
+import AiConfirmationAction from '../ai-elements/AiConfirmationAction.vue'
+import AiConfirmationAccepted from '../ai-elements/AiConfirmationAccepted.vue'
+import AiConfirmationRejected from '../ai-elements/AiConfirmationRejected.vue'
+import MessageBranch from '../ai-elements/MessageBranch.vue'
+import MessageBranchContent from '../ai-elements/MessageBranchContent.vue'
+import MessageBranchSelector from '../ai-elements/MessageBranchSelector.vue'
+import { useSessionStore } from '../../stores/session'
+import { logger } from '../../utils/logger'
 
 const props = defineProps({
   message: {
@@ -17,7 +33,7 @@ const props = defineProps({
       if (!value || typeof value !== 'object') return false
       const validRoles = ['user', 'assistant', 'system']
       if (!validRoles.includes(value.role)) {
-        console.warn(`ChatMessage: invalid role "${value.role}"`)
+        logger.warn(`ChatMessage: invalid role "${value.role}"`)
         return false
       }
       return true
@@ -48,10 +64,13 @@ const props = defineProps({
 
 const emit = defineEmits({
   regenerate: (index) => typeof index === 'number' && index >= 0,
-  click: (message) => message && typeof message === 'object'
+  click: (message) => message && typeof message === 'object',
+  approve: (message) => message && typeof message === 'object',
+  reject: (message) => message && typeof message === 'object'
 })
 
 const copied = ref(false)
+const sessionStore = useSessionStore()
 
 const hasMetadata = computed(() => {
   const m = props.message
@@ -86,6 +105,10 @@ async function handleCopy() {
 
 function handleRegenerate() {
   emit('regenerate', props.index)
+}
+
+function handleBranchChange(versionIndex) {
+  sessionStore.switchMessageVersion(sessionStore.currentSessionId, props.index, versionIndex)
 }
 
 function handleMessageClick() {
@@ -154,7 +177,34 @@ function handleMessageClick() {
         <MarkdownRenderer :content="message.content" />
       </div>
       <div v-else class="message-text assistant-text">
-        <MarkdownRenderer :content="message.content" />
+        <MessageBranch
+          v-if="message.versions && message.versions.length > 1"
+          :default-branch="message.currentVersion || 0"
+          :total-branches="message.versions.length"
+          @branch-change="handleBranchChange"
+        >
+          <MessageBranchContent
+            v-for="(version, vIdx) in message.versions"
+            :key="vIdx"
+            :index="vIdx"
+          >
+            <MarkdownRenderer :content="typeof version === 'string' ? version : (version?.content ?? '')" />
+          </MessageBranchContent>
+          <MessageBranchSelector from="assistant" />
+        </MessageBranch>
+        <MarkdownRenderer v-else :content="message.content" :citations="message.sources || []" />
+      </div>
+
+      <div v-if="message.images && message.images.length > 0" class="message-images">
+        <AiImage
+          v-for="(img, imgIdx) in message.images"
+          :key="imgIdx"
+          :base64="img.base64 || img.data"
+          :uint8-array="img.uint8Array"
+          :media-type="img.mediaType || img.mime_type || 'image/png'"
+          :alt="img.alt || `AI生成图片 ${imgIdx + 1}`"
+          class="message-ai-image"
+        />
       </div>
 
       <div
@@ -193,6 +243,15 @@ function handleMessageClick() {
         <ChainOfThought :steps="message.chainOfThought" />
       </div>
 
+      <div v-if="message.tasks && message.tasks.length > 0" class="message-tasks">
+        <AiTask
+          v-for="(task, idx) in message.tasks"
+          :key="idx"
+          :task="task"
+          @click="emit('click', message)"
+        />
+      </div>
+
       <div v-if="message.toolCalls && message.toolCalls.length > 0" class="message-tool-calls">
         <div class="tool-calls-header">
           <span class="tool-calls-label">
@@ -201,16 +260,50 @@ function handleMessageClick() {
           </span>
         </div>
         <TransitionGroup name="tool-call" tag="div" class="tool-calls-list">
+          <AiQueue v-if="message.toolCalls && message.toolCalls.length > 1" :items="message.toolCalls" class="tool-calls-queue">
+            <ToolCallCard
+              v-for="(toolCall, idx) in message.toolCalls"
+              :key="toolCall.id || idx"
+              :tool-name="toolCall.name"
+              :input="toolCall.input || toolCall.parameters"
+              :output="toolCall.output || toolCall.result"
+              :status="toolCall.status || 'completed'"
+            />
+          </AiQueue>
           <ToolCallCard
-            v-for="(toolCall, idx) in message.toolCalls"
-            :key="toolCall.id || idx"
-            :tool-name="toolCall.name"
-            :input="toolCall.input || toolCall.parameters"
-            :output="toolCall.output || toolCall.result"
-            :status="toolCall.status || 'completed'"
+            v-else-if="message.toolCalls && message.toolCalls.length === 1"
+            :tool-name="message.toolCalls[0].name"
+            :input="message.toolCalls[0].input || message.toolCalls[0].parameters"
+            :output="message.toolCalls[0].output || message.toolCalls[0].result"
+            :status="message.toolCalls[0].status || 'completed'"
           />
         </TransitionGroup>
       </div>
+
+      <AiConfirmation
+        v-if="message.approval"
+        :approval="message.approval"
+        :state="message.approvalState || 'approval-requested'"
+        class="message-confirmation"
+      >
+        <AiConfirmationRequest>
+          <AiConfirmationTitle>{{ message.approval.title || '确认操作' }}</AiConfirmationTitle>
+        </AiConfirmationRequest>
+        <AiConfirmationActions>
+          <AiConfirmationAction class="confirm-reject" @click="emit('reject', message)">
+            拒绝
+          </AiConfirmationAction>
+          <AiConfirmationAction @click="emit('approve', message)">
+            确认
+          </AiConfirmationAction>
+        </AiConfirmationActions>
+        <AiConfirmationAccepted>
+          <el-tag type="success" size="small">已确认</el-tag>
+        </AiConfirmationAccepted>
+        <AiConfirmationRejected>
+          <el-tag type="danger" size="small">已拒绝</el-tag>
+        </AiConfirmationRejected>
+      </AiConfirmation>
 
       <AiContext
         v-if="message.context && (message.context.usedTokens || message.context.percentage)"
@@ -233,6 +326,15 @@ function handleMessageClick() {
           </div>
         </div>
       </AiContext>
+
+      <AiControls v-if="message.role === 'assistant' && !isLoading" class="message-bottom-controls">
+        <el-button link size="small" :icon="copied ? Check : CopyDocument" @click.stop="handleCopy">
+          {{ copied ? '已复制' : '复制' }}
+        </el-button>
+        <el-button link size="small" :icon="Refresh" @click.stop="handleRegenerate">
+          重新生成
+        </el-button>
+      </AiControls>
     </div>
   </div>
 </template>
@@ -326,6 +428,27 @@ function handleMessageClick() {
   color: var(--el-color-success) !important;
 }
 
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.message-ai-image {
+  max-width: 300px;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.message-ai-image:hover {
+  transform: scale(1.02);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
 .message-role {
   font-size: 12px;
   color: var(--el-text-color-secondary);
@@ -406,6 +529,26 @@ function handleMessageClick() {
   gap: 8px;
 }
 
+.tool-calls-queue :deep(.queue-items) {
+  max-height: 300px;
+}
+
+.tool-calls-queue :deep(.queue-header) {
+  padding: 8px 12px;
+}
+
+.tool-calls-queue :deep(.queue-title) {
+  font-size: 13px;
+}
+
+.message-confirmation {
+  margin-top: 12px;
+}
+
+.confirm-reject {
+  background-color: var(--el-color-danger) !important;
+}
+
 .tool-call-enter-active {
   transition: all 0.3s ease;
 }
@@ -417,6 +560,16 @@ function handleMessageClick() {
 
 .message-context {
   margin-top: 12px;
+}
+
+.message-bottom-controls {
+  margin-top: 8px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.message:hover .message-bottom-controls {
+  opacity: 1;
 }
 
 .context-info {

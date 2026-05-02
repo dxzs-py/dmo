@@ -1,34 +1,34 @@
 """
-Core models public API
+Core models - Django基础设施
 
-统一导出核心模型和LLM相关功能。
-此模块作为 core 应用的模型层入口，提供清晰的公共接口。
+提供基础模型类：
+- BaseModel：带软删除的抽象基类
+- AuditModel：带创建人和更新人的审计模型
+- UserPermissionPolicy：用户权限策略模型
+- CeleryTaskRecord：Celery 任务持久化记录
+
+注意：LLM模型封装已移至 Django_xm.apps.llm.llm_models
 """
-from .llm_models import (
-    get_chat_model,
-    get_streaming_model,
-    get_structured_output_model,
-    get_model_by_preset,
-    get_model_string,
-    MODEL_CONFIGS,
-)
 
 __all__ = [
-    'BaseModel',
-    'AuditModel',
-    'get_chat_model',
-    'get_streaming_model',
-    'get_structured_output_model',
-    'get_model_by_preset',
-    'get_model_string',
-    'MODEL_CONFIGS',
+    "BaseModel",
+    "AuditModel",
+    "UserPermissionPolicy",
+    "CeleryTaskRecord",
 ]
 
 
 def __getattr__(name):
-    if name in ('BaseModel', 'AuditModel'):
+    if name in ("BaseModel", "AuditModel"):
         from .base_models import BaseModel, AuditModel
-        if name == 'BaseModel':
+        if name == "BaseModel":
             return BaseModel
         return AuditModel
+    if name == "UserPermissionPolicy":
+        from .permission_models import UserPermissionPolicy
+        return UserPermissionPolicy
+    if name == "CeleryTaskRecord":
+        from .task_models import CeleryTaskRecord
+        return CeleryTaskRecord
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+

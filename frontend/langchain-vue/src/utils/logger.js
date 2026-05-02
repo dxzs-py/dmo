@@ -18,7 +18,22 @@ export const logger = {
     if (isDev) {
       console.info(...args)
     }
-  }
+  },
+  debug: (...args) => {
+    if (isDev) {
+      console.debug(...args)
+    }
+  },
+  group: (...args) => {
+    if (isDev) {
+      console.group(...args)
+    }
+  },
+  groupEnd: () => {
+    if (isDev) {
+      console.groupEnd()
+    }
+  },
 }
 
 export default logger

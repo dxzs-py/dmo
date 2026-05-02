@@ -12,10 +12,11 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.renderers import BaseRenderer
 
 from Django_xm.apps.core.throttling import ChatStreamRateThrottle
-from Django_xm.utils.responses import success_response, error_response, validation_error_response
-from Django_xm.utils.error_codes import ErrorCode
+from Django_xm.apps.common.responses import success_response, error_response, validation_error_response
+from Django_xm.apps.common.error_codes import ErrorCode
 
 from .serializers import (
     ChatRequestSerializer,
@@ -120,7 +121,6 @@ class ChatView(APIView):
     """
     permission_classes = [IsAuthenticated]
     
-    @transaction.atomic
     def post(self, request):
         serializer = ChatRequestSerializer(data=request.data)
         if not serializer.is_valid():
@@ -132,7 +132,6 @@ class ChatView(APIView):
         data = serializer.validated_data
         logger.info(f"收到聊天请求: {data['message'][:50]}...")
 
-        # 获取或创建会话
         session = None
         session_id = data.get('session_id')
         if session_id:
@@ -143,29 +142,36 @@ class ChatView(APIView):
             ).first()
         
         if not session:
-            # 创建新会话
-            session = ChatSession.objects.create(
-                user=request.user,
-                mode=data.get('mode', 'basic-agent'),
-                title=data['message'][:100] if len(data['message']) > 100 else data['message']
-            )
+            with transaction.atomic():
+                session = ChatSession.objects.create(
+                    user=request.user,
+                    mode=data.get('mode', 'basic-agent'),
+                    selected_knowledge_base=data.get('selected_knowledge_base'),
+                    title=data['message'][:100] if len(data['message']) > 100 else data['message']
+                )
             logger.info(f"创建新会话: {session.session_id}")
+        else:
+            # 更新会话的知识库选择
+            if data.get('selected_knowledge_base') is not None:
+                session.selected_knowledge_base = data['selected_knowledge_base']
+                session.save()
 
         try:
-            result = ChatService.process_chat_request(data)
+            chat_service = ChatService(user_id=request.user.id if request.user.is_authenticated else None)
+            result = chat_service.process_chat_request(data)
             
             logger.info(f"聊天请求处理完成，响应长度: {len(result.get('message', ''))} 字符")
 
-            # 保存消息对
-            from .services.chat_service import MessagePersistenceService
-            user_message, ai_message = MessagePersistenceService.save_message_pair(
-                session=session,
-                user_content=data['message'],
-                ai_content=result.get('message', ''),
-                attachment_ids=data.get('attachment_ids')
-            )
+            with transaction.atomic():
+                from .services.chat_service import MessagePersistenceService
+                persistence = MessagePersistenceService()
+                user_message, ai_message = persistence.save_message_pair(
+                    session=session,
+                    user_content=data['message'],
+                    ai_content=result.get('message', ''),
+                    attachment_ids=data.get('attachment_ids')
+                )
             
-            # 为响应添加消息信息
             result_data = ChatResponseSerializer(result).data
             result_data['session_id'] = session.session_id
             result_data['user_message_id'] = user_message.id
@@ -185,7 +191,7 @@ class ChatView(APIView):
                 message='抱歉，处理您的请求时出现错误',
                 data=ChatResponseSerializer({
                     'message': '抱歉，处理您的请求时出现错误。',
-                    'mode': data.get('mode', 'default'),
+                    'mode': data.get('mode', 'basic-agent'),
                     'tools_used': [],
                     'success': False,
                     'error': str(e),
@@ -195,30 +201,29 @@ class ChatView(APIView):
             )
 
 
+class SSERenderer(BaseRenderer):
+    media_type = 'text/event-stream'
+    format = 'txt'
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        return data
+
+
 class ChatStreamView(APIView):
     """
     流式聊天视图
-    
+
     使用 ChatService 处理业务逻辑，视图只负责：
     1. 请求验证（序列化器）
     2. 将服务层的异步生成器转换为 SSE 响应
     3. 处理连接异常
-    
-    使用 asyncio.run() 在独立线程中运行异步生成器，
-    通过 queue 实现跨线程数据传递，避免事件循环冲突。
+
+    使用同步生成器 + asyncio 事件循环桥接，
+    避免为每个请求创建独立线程和事件循环。
     """
     permission_classes = [IsAuthenticated]
+    renderer_classes = [SSERenderer]
     throttle_classes = [ChatStreamRateThrottle]
-
-    def options(self, request):
-        response = HttpResponse(status=200)
-        origin = request.headers.get('Origin', '*')
-        response['Access-Control-Allow-Origin'] = origin
-        response['Access-Control-Allow-Credentials'] = 'true'
-        response['Access-Control-Allow-Headers'] = 'authorization,content-type,x-csrftoken,x-requested-with'
-        response['Access-Control-Allow-Methods'] = 'GET,POST,OPTIONS'
-        response['Access-Control-Max-Age'] = '86400'
-        return response
 
     def post(self, request):
         serializer = ChatRequestSerializer(data=request.data)
@@ -231,49 +236,41 @@ class ChatStreamView(APIView):
         data = serializer.validated_data
         logger.info(f"收到流式聊天请求: {data['message'][:50]}...")
 
-        import queue
-        result_queue = queue.Queue()
-        sentinel = object()
-
-        def run_async_generator():
-            """在独立线程中运行异步生成器，通过队列传递结果"""
-            import asyncio
-
-            async def collect():
-                try:
-                    async for event in ChatService.process_stream_chat_request(data):
-                        result_queue.put(f"data: {json.dumps(event, ensure_ascii=False)}\n\n")
-                except Exception as e:
-                    logger.error(f"流式处理出错: {str(e)}", exc_info=True)
-                    error_data = {
-                        "type": "error",
-                        "message": "抱歉，处理您的请求时出现错误",
-                        "error": str(e),
-                    }
-                    result_queue.put(f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n")
-                finally:
-                    result_queue.put(sentinel)
-
-            asyncio.run(collect())
-
-        import threading
-        thread = threading.Thread(target=run_async_generator, daemon=True)
-        thread.start()
-
         def generate():
-            """同步生成器 - 从队列中读取异步结果"""
-            while True:
+            import asyncio
+            loop = None
+            gen = None
+            try:
                 try:
-                    item = result_queue.get(timeout=120)
-                    if item is sentinel:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_closed():
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+
+                chat_service = ChatService(user_id=request.user.id if request.user.is_authenticated else None)
+                gen = chat_service.process_stream_chat_request(data).__aiter__()
+
+                while True:
+                    try:
+                        event = loop.run_until_complete(gen.__anext__())
+                        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    except StopAsyncIteration:
                         break
-                    yield item
-                except queue.Empty:
-                    yield ": keep-alive\n\n"
-                    continue
-                except GeneratorExit:
-                    logger.info("客户端断开连接，停止生成")
-                    break
+            except Exception as e:
+                logger.error(f"流式处理出错: {str(e)}", exc_info=True)
+                error_data = {
+                    "type": "error",
+                    "message": "抱歉，处理您的请求时出现错误",
+                    "error": str(e),
+                }
+                yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+            finally:
+                if gen is not None:
+                    loop.run_until_complete(gen.aclose())
+                yield "data: [DONE]\n\n"
 
         return StreamingHttpResponse(
             generate(),
@@ -281,11 +278,6 @@ class ChatStreamView(APIView):
             headers={
                 'Cache-Control': 'no-cache',
                 'X-Accel-Buffering': 'no',
-                'Access-Control-Allow-Origin': request.headers.get('Origin', '*'),
-                'Access-Control-Allow-Credentials': 'true',
-                'Access-Control-Allow-Headers': 'authorization,content-type,x-csrftoken,x-requested-with',
-                'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-                'Access-Control-Max-Age': '86400',
                 'X-Content-Type-Options': 'nosniff',
             }
         )
@@ -315,7 +307,10 @@ class ChatSessionListView(BaseChatAPIView):
     @log_view_action
     def get(self, request):
         user_id = request.user.id
-        page_size = min(int(request.query_params.get('page_size', 20)), 100)
+        try:
+            page_size = min(int(request.query_params.get('page_size', 20)), 100)
+        except (ValueError, TypeError):
+            page_size = 20
 
         cached_sessions = SecureSessionCacheService.get_user_sessions_list(user_id)
 
@@ -328,14 +323,28 @@ class ChatSessionListView(BaseChatAPIView):
                         sessions_data.append(cached_session)
 
                 if sessions_data:
-                    logger.info(f"Returning {len(sessions_data)} cached sessions for user {user_id}")
-                    return success_response(data=sessions_data)
+                    sessions_data.sort(key=lambda x: x.get('updated_at', ''), reverse=True)
+                    total = len(sessions_data)
+                    page = 1
+                    start = (page - 1) * page_size
+                    end = start + page_size
+                    paged_items = sessions_data[start:end]
+                    logger.info(f"Returning {len(paged_items)} cached sessions for user {user_id}")
+                    return success_response(data={
+                        'items': paged_items,
+                        'total': total,
+                        'page': page,
+                        'page_size': page_size,
+                        'total_pages': (total + page_size - 1) // page_size,
+                    })
             except Exception as e:
                 logger.warning(f"Cache read failed, falling back to DB: {str(e)}")
 
         sessions = ChatSession.objects.filter(
             user=request.user,
             is_deleted=False
+        ).select_related(
+            'user'
         ).annotate(
             message_count=models.Count('messages')
         ).order_by('-updated_at')
@@ -363,16 +372,7 @@ class ChatSessionCreateView(BaseChatAPIView):
 
         session = serializer.save(user=request.user)
 
-        SecureSessionCacheService.cache_session(
-            request.user.id,
-            {
-                'session_id': session.session_id,
-                'title': session.title,
-                'mode': session.mode,
-                'created_at': session.created_at.isoformat(),
-                'updated_at': session.updated_at.isoformat(),
-            }
-        )
+        SecureSessionCacheService.invalidate_all_user_sessions(request.user.id)
 
         return success_response(
             data=ChatSessionDetailSerializer(session).data,
@@ -427,7 +427,7 @@ class ChatSessionDetailView(BaseChatAPIView):
             )
 
         session.soft_delete()
-        SecureSessionCacheService.invalidate_user_session(request.user.id, session.session_id)
+        SecureSessionCacheService.invalidate_all_user_sessions(request.user.id)
 
         return success_response(message='会话删除成功')
 
@@ -448,9 +448,7 @@ class ChatMessageCreateView(BaseChatAPIView):
         if not serializer.is_valid():
             return validation_error_response(errors=serializer.errors)
 
-        # 使用请求中的 role，如果没有提供则默认使用 'user'
-        role = request.data.get('role', 'user')
-        message = serializer.save(session=session, role=role)
+        message = serializer.save(session=session)
 
         return success_response(
             data=ChatMessageSerializer(message).data,
@@ -565,6 +563,38 @@ class ChatAttachmentUploadView(BaseChatAPIView):
         import mimetypes
         mime_type, _ = mimetypes.guess_type(uploaded_file.name)
 
+        VALIDATED_MIME_MAP = {
+            'pdf': {'application/pdf'},
+            'txt': {'text/plain'},
+            'md': {'text/plain', 'text/markdown'},
+            'csv': {'text/csv', 'text/plain', 'application/vnd.ms-excel'},
+            'json': {'application/json', 'text/plain'},
+            'py': {'text/x-python', 'text/plain'},
+            'js': {'text/javascript', 'application/javascript', 'text/plain'},
+            'html': {'text/html', 'text/plain'},
+            'css': {'text/css', 'text/plain'},
+            'png': {'image/png'},
+            'jpg': {'image/jpeg'},
+            'jpeg': {'image/jpeg'},
+            'gif': {'image/gif'},
+            'webp': {'image/webp'},
+            'svg': {'image/svg+xml'},
+            'docx': {'application/vnd.openxmlformats-officedocument.wordprocessingml.document'},
+            'xlsx': {'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},
+        }
+
+        if ext in VALIDATED_MIME_MAP:
+            header = uploaded_file.read(512)
+            uploaded_file.seek(0)
+            import imghdr
+            if ext in ('png', 'jpg', 'jpeg', 'gif', 'webp') and imghdr.what(None, header) is None:
+                detected_mime = mimetypes.guess_type(uploaded_file.name)[0] or 'application/octet-stream'
+                if detected_mime not in VALIDATED_MIME_MAP[ext]:
+                    return error_response(
+                        code=ErrorCode.INVALID_PARAMS,
+                        message=f'文件内容与扩展名 .{ext} 不匹配，可能存在安全风险'
+                    )
+
         attachment = ChatAttachment.objects.create(
             session=session,
             file=uploaded_file,
@@ -623,6 +653,41 @@ class ChatAttachmentListView(BaseChatAPIView):
         return success_response(data=data)
 
 
+class ChatAttachmentDeleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, attachment_id):
+        try:
+            attachment = ChatAttachment.objects.filter(
+                id=attachment_id,
+                session__user=request.user,
+                is_deleted=False
+            ).first()
+            if not attachment:
+                return error_response(
+                    code=ErrorCode.NOT_FOUND,
+                    message='附件不存在',
+                    http_status=status.HTTP_404_NOT_FOUND
+                )
+            try:
+                if attachment.file and hasattr(attachment.file, 'path'):
+                    import os
+                    if os.path.isfile(attachment.file.path):
+                        os.remove(attachment.file.path)
+            except Exception as file_err:
+                logger.warning(f"删除附件文件失败: {file_err}")
+
+            attachment.soft_delete()
+            return success_response(message='附件删除成功')
+        except Exception as e:
+            logger.error(f"删除附件失败: {e}", exc_info=True)
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message='删除附件失败',
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 class ChatSessionCompactView(BaseChatAPIView):
     @log_view_action
     def post(self, request, session_id):
@@ -635,14 +700,10 @@ class ChatSessionCompactView(BaseChatAPIView):
             )
 
         from .services.session_compactor import SessionCompactor
-        messages = ChatMessage.objects.filter(session=session).order_by('created_at')
-        message_list = []
-        for msg in messages:
-            message_list.append({
-                'role': msg.role,
-                'content': msg.content,
-                'tool_calls': msg.tool_calls or [],
-            })
+        messages = ChatMessage.objects.filter(
+            session=session
+        ).only('role', 'content', 'tool_calls').order_by('created_at')
+        message_list = list(messages.values('role', 'content', 'tool_calls'))
 
         compactor = SessionCompactor()
         result = compactor.compact(message_list)
@@ -736,13 +797,20 @@ class ChatPermissionsView(APIView):
                     message=str(e),
                 )
 
+        tool_errors = []
         for tool_name, permission in tool_permissions.items():
             try:
                 PermissionService.set_tool_permission(
                     request.user.id, tool_name, permission, session_id
                 )
-            except ValueError:
-                pass
+            except ValueError as e:
+                tool_errors.append(f'{tool_name}: {str(e)}')
+
+        if tool_errors:
+            return error_response(
+                code=ErrorCode.INVALID_PARAMS,
+                message=f'部分工具权限设置失败: {"; ".join(tool_errors)}',
+            )
 
         info = PermissionService.get_permission_info(request.user.id, session_id)
         return success_response(data=info, message='权限更新成功')
@@ -752,7 +820,7 @@ class ChatCostView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        from Django_xm.apps.core.cost_tracker import get_all_model_pricing, MODEL_PRICING
+        from Django_xm.apps.ai_engine.services.cost_tracker import get_all_model_pricing, MODEL_PRICING
         return success_response(data={
             'modelPricing': get_all_model_pricing(),
             'supportedModels': list(MODEL_PRICING.keys()),
@@ -763,7 +831,101 @@ class ProjectContextView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        from Django_xm.apps.core.project_context import detect_project_context
+        from Django_xm.apps.ai_engine.services.project_context import detect_project_context
         search_path = request.query_params.get('path')
         context = detect_project_context(search_path)
         return success_response(data=context.to_dict())
+
+
+class ChatDashboardView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.db.models import Count, Sum, Avg
+        from django.db.models.functions import TruncDate
+        from django.utils import timezone
+        from datetime import timedelta
+
+        user = request.user
+        now = timezone.now()
+        seven_days_ago = now - timedelta(days=7)
+
+        sessions = ChatSession.objects.filter(user=user, is_deleted=False)
+        messages = ChatMessage.objects.filter(session__user=user, session__is_deleted=False)
+
+        total_sessions = sessions.count()
+
+        agg = messages.aggregate(
+            total_messages=Count('id'),
+            total_tokens=Sum('token_count'),
+            total_cost=Sum('cost'),
+            avg_response_time=Avg('response_time'),
+        )
+        total_messages = agg['total_messages'] or 0
+        total_tokens = agg['total_tokens'] or 0
+        total_cost = float(agg['total_cost'] or 0)
+        avg_response_time = round(float(agg['avg_response_time'] or 0), 2)
+
+        daily_stats = messages.filter(
+            created_at__gte=seven_days_ago
+        ).annotate(
+            day=TruncDate('created_at')
+        ).values('day').annotate(
+            msg_count=Count('id'),
+            token_sum=Sum('token_count'),
+        ).order_by('day')
+
+        daily_map = {stat['day']: stat for stat in daily_stats}
+        usage_trend = []
+        for i in range(7):
+            day = (now - timedelta(days=6 - i)).date()
+            stat = daily_map.get(day)
+            usage_trend.append({
+                'date': day.strftime('%m/%d'),
+                'messages': stat['msg_count'] if stat else 0,
+                'tokens': stat['token_sum'] if stat else 0,
+            })
+
+        model_distribution = []
+        try:
+            model_dist = messages.values('model').annotate(
+                count=Count('id')
+            ).order_by('-count')[:5]
+            for item in model_dist:
+                model_distribution.append({
+                    'name': item['model'] or 'unknown',
+                    'value': item['count'],
+                })
+        except Exception:
+            model_distribution = [
+                {'name': 'default', 'value': total_messages}
+            ]
+
+        mode_distribution = []
+        try:
+            mode_dist = sessions.values('mode').annotate(
+                count=Count('id')
+            ).order_by('-count')
+            from .models import ChatMode
+            mode_labels = {m.value: m.label for m in ChatMode}
+            total_mode = sum(item['count'] for item in mode_dist) or 1
+            for item in mode_dist:
+                mode_distribution.append({
+                    'name': mode_labels.get(item['mode'], item['mode']),
+                    'value': round(item['count'] / total_mode * 100),
+                })
+        except Exception:
+            mode_distribution = [
+                {'name': '基础对话', 'value': 100}
+            ]
+
+        return success_response(data={
+            'total_sessions': total_sessions,
+            'total_messages': total_messages,
+            'total_tokens': total_tokens,
+            'total_cost': total_cost,
+            'avg_response_time': avg_response_time,
+            'usage_trend': usage_trend,
+            'model_distribution': model_distribution,
+            'mode_distribution': mode_distribution,
+        })

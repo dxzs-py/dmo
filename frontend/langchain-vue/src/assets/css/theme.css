@@ -58,361 +58,174 @@ html.dark {
   --sidebar-ring: #8c8c8c;
 }
 
-html.dark .el-container {
+.app-sidebar,
+.chat-sidebar {
+  background-color: var(--sidebar);
+  border-color: var(--sidebar-border);
+}
+
+.app-main,
+.chat-main,
+.messages-scroll,
+.chat-fullscreen {
   background-color: var(--background);
 }
 
-html.dark .app-sidebar {
+.chat-header,
+.chat-topbar,
+.chat-footer,
+.chat-input-area {
   background-color: var(--sidebar);
-  border-right-color: var(--sidebar-border);
-}
-
-html.dark .sidebar-header {
-  background-color: var(--sidebar);
-  border-bottom-color: var(--sidebar-border);
-}
-
-html.dark .sidebar-header h2 {
-  color: var(--sidebar-foreground);
-}
-
-html.dark .app-main {
-  background-color: var(--background);
-}
-
-html.dark .chat-header {
-  background-color: var(--sidebar);
-  border-bottom-color: var(--sidebar-border);
-}
-
-html.dark .chat-header h2 {
-  color: var(--sidebar-foreground);
-}
-
-html.dark .chat-main {
-  background-color: var(--background);
-}
-
-html.dark .chat-footer {
-  background-color: var(--sidebar);
-  border-top-color: var(--sidebar-border);
-}
-
-html.dark .empty-state {
-  color: var(--muted-foreground);
-}
-
-html.dark .empty-state .empty-icon {
-  color: var(--muted);
-}
-
-html.dark .empty-state h3 {
-  color: var(--foreground);
-}
-
-html.dark .message-text {
-  background-color: var(--card);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
-
-html.dark .message.user .message-text {
-  background: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
-}
-
-html.dark .el-header {
-  background-color: var(--sidebar);
-  border-bottom-color: var(--sidebar-border);
-}
-
-html.dark .el-header h2 {
-  color: var(--sidebar-foreground);
-}
-
-html.dark .el-card {
-  background-color: var(--card);
   border-color: var(--border);
 }
 
-html.dark .el-card__header {
-  border-bottom-color: var(--border);
-}
-
-html.dark .el-form-item__label {
-  color: var(--muted-foreground);
-}
-
-html.dark .answer {
-  background-color: var(--card);
-}
-
-html.dark .report-content {
-  background-color: var(--card);
-}
-
-html.dark .result-section pre {
-  background-color: var(--card);
-}
-
-html.dark .session-item:hover {
-  background-color: var(--accent);
-}
-
-html.dark .session-item.active {
-  background-color: #1e3a5f;
-}
-
-html.dark .session-title {
-  color: var(--foreground);
-}
-
-html.dark .session-meta {
-  color: var(--muted-foreground);
-}
-
-html.dark .nav-menu .el-menu {
-  background-color: transparent;
-}
-
-html.dark .chat-fullscreen {
-  background-color: var(--background);
-}
-
-html.dark .chat-sidebar {
-  background-color: var(--sidebar);
-  border-right-color: var(--sidebar-border);
-}
-
-html.dark .sidebar-new-chat-btn {
+.sidebar-new-chat-btn {
   background: var(--card);
   border-color: var(--border);
   color: var(--foreground);
 }
 
-html.dark .sidebar-new-chat-btn:hover {
+.sidebar-new-chat-btn:hover {
   background: var(--accent);
   border-color: var(--sidebar-primary);
 }
 
-html.dark .session-item:hover {
+.session-item:hover {
   background-color: var(--accent);
 }
 
-html.dark .session-item.active {
+.session-item.active {
   background-color: rgba(59, 130, 246, 0.15);
 }
 
-html.dark .chat-topbar {
-  background-color: var(--background);
-  border-bottom-color: var(--border);
-}
-
-html.dark .topbar-title {
+.session-item-title,
+.topbar-title,
+.sidebar-username,
+.mode-name,
+.empty-title {
   color: var(--foreground);
 }
 
-html.dark .messages-scroll {
-  background-color: var(--background);
-}
-
-html.dark .message-content.user {
-  background: rgba(59, 130, 246, 0.15);
-  color: var(--foreground);
-}
-
-html.dark .message-content.assistant {
-  color: var(--foreground);
-}
-
-html.dark .message-role-label {
+.session-group-label,
+.session-meta,
+.mode-desc,
+.empty-subtitle,
+.sidebar-empty,
+.message-role-label,
+.message-time,
+.input-hint,
+.context-tokens,
+.tool-calls-label {
   color: var(--muted-foreground);
 }
 
-html.dark .message-time {
-  color: var(--muted-foreground);
+.empty-logo-icon,
+.topbar-icon-btn.active,
+.toolbar-btn.active {
+  color: var(--sidebar-primary);
 }
 
-html.dark .suggestion-card {
-  background: var(--card);
-  border-color: var(--border);
-  color: var(--foreground);
-}
-
-html.dark .suggestion-card:hover {
-  border-color: var(--sidebar-primary);
-  background: rgba(59, 130, 246, 0.1);
-}
-
-html.dark .input-card {
+.input-card {
   background: var(--card);
   border-color: var(--border);
 }
 
-html.dark .input-card.is-focused {
+.input-card.is-focused {
   border-color: var(--sidebar-primary);
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
 }
 
-html.dark .input-textarea {
+.input-textarea {
   color: var(--foreground);
 }
 
-html.dark .input-textarea::placeholder {
+.input-textarea::placeholder {
   color: var(--muted-foreground);
 }
 
-html.dark .send-btn.active {
+.send-btn.active {
   background: var(--sidebar-primary);
 }
 
-html.dark .toolbar-btn:hover:not(:disabled) {
+.toolbar-btn:hover:not(:disabled),
+.sidebar-nav-btn:hover,
+.topbar-icon-btn:hover,
+.action-btn:hover,
+.sidebar-theme-btn:hover,
+.sidebar-user-info:hover {
   background: var(--accent);
   color: var(--foreground);
 }
 
-html.dark .toolbar-btn.active {
-  color: var(--sidebar-primary);
+.toolbar-btn.active {
   background: rgba(59, 130, 246, 0.1);
 }
 
-html.dark .action-btn:hover {
-  background: var(--accent);
-  color: var(--foreground);
-}
-
-html.dark .scroll-bottom-btn {
+.scroll-bottom-btn {
   background: var(--card);
   border-color: var(--border);
   color: var(--muted-foreground);
 }
 
-html.dark .scroll-bottom-btn:hover {
+.scroll-bottom-btn:hover {
   background: var(--accent);
   color: var(--foreground);
 }
 
-html.dark .attachment-item {
-  background: var(--accent);
+.suggestion-card {
+  background: var(--card);
   border-color: var(--border);
+  color: var(--foreground);
 }
 
-html.dark .source-badge {
+.suggestion-card:hover {
+  border-color: var(--sidebar-primary);
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.source-badge {
   background: rgba(59, 130, 246, 0.1);
   border-color: rgba(59, 130, 246, 0.2);
   color: var(--sidebar-primary);
 }
 
-html.dark .empty-title {
-  color: var(--foreground);
-}
-
-html.dark .empty-subtitle {
-  color: var(--muted-foreground);
-}
-
-html.dark .empty-logo-icon {
-  color: var(--sidebar-primary);
-}
-
-html.dark .sidebar-nav-btn:hover {
-  background: var(--accent);
-  color: var(--foreground);
-}
-
-html.dark .sidebar-theme-btn:hover {
-  background: var(--accent);
-}
-
-html.dark .sidebar-user-info:hover {
-  background: var(--accent);
-}
-
-html.dark .sidebar-username {
-  color: var(--foreground);
-}
-
-html.dark .mode-desc {
-  color: var(--muted-foreground);
-}
-
-html.dark .mode-name {
-  color: var(--foreground);
-}
-
-html.dark .chat-input-area {
-  background-color: var(--background);
-  border-top-color: var(--border);
-}
-
-html.dark .input-hint {
-  color: var(--muted-foreground);
-}
-
-html.dark .stop-btn {
+.stop-btn {
   background: rgba(239, 68, 68, 0.1);
   border-color: rgba(239, 68, 68, 0.3);
   color: #ef4444;
 }
 
-html.dark .stop-btn:hover {
+.stop-btn:hover {
   background: rgba(239, 68, 68, 0.2);
 }
 
-html.dark .sidebar-empty {
-  color: var(--muted-foreground);
-}
-
-html.dark .session-group-label {
-  color: var(--muted-foreground);
-}
-
-html.dark .session-delete-btn:hover {
+.session-delete-btn:hover {
   background: rgba(239, 68, 68, 0.1);
   color: #ef4444;
 }
 
-html.dark .session-item-title {
-  color: var(--foreground);
-}
-
-html.dark .topbar-icon-btn:hover {
+.attachment-item {
   background: var(--accent);
+  border-color: var(--border);
+}
+
+.message-content.user {
+  background: rgba(59, 130, 246, 0.15);
   color: var(--foreground);
 }
 
-html.dark .topbar-icon-btn.active {
-  color: var(--sidebar-primary);
-  background: rgba(59, 130, 246, 0.1);
+.message-content.assistant {
+  color: var(--foreground);
 }
 
-html.dark .user-avatar {
+.user-avatar {
   background: linear-gradient(135deg, #6d28d9 0%, #8b5cf6 100%);
 }
 
-html.dark .assistant-avatar {
+.assistant-avatar {
   background: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
 }
 
-html.dark .tool-calls-label {
-  color: var(--muted-foreground);
-}
-
-html.dark .context-tokens {
-  color: var(--muted-foreground);
-}
-
-html.dark .edit-actions .el-button--default {
-  background: var(--accent);
-  border-color: var(--border);
-  color: var(--foreground);
-}
-
-html.dark .message-edit-area .el-textarea__inner {
-  background: var(--card);
-  border-color: var(--border);
-  color: var(--foreground);
-}
-
-/* 统一按钮样式 */
 .el-button {
   border-radius: 6px;
   font-weight: 500;
@@ -428,29 +241,6 @@ html.dark .message-edit-area .el-textarea__inner {
   transform: translateY(0);
 }
 
-.el-button-primary {
-  background-color: var(--primary);
-  border-color: var(--primary);
-  color: var(--primary-foreground);
-}
-
-.el-button-primary:hover {
-  background-color: #4b5563;
-  border-color: #4b5563;
-}
-
-.el-button-secondary {
-  background-color: var(--secondary);
-  border-color: var(--secondary);
-  color: var(--secondary-foreground);
-}
-
-.el-button-secondary:hover {
-  background-color: #e5e5e5;
-  border-color: #e5e5e5;
-}
-
-/* 统一输入框样式 */
 .el-input__wrapper {
   border-radius: 6px;
   transition: all 0.3s ease;
@@ -465,11 +255,6 @@ html.dark .message-edit-area .el-textarea__inner {
   box-shadow: 0 0 0 2px rgba(55, 65, 81, 0.1);
 }
 
-.el-input__inner {
-  border-radius: 6px;
-}
-
-/* 统一卡片样式 */
 .el-card {
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
@@ -489,7 +274,6 @@ html.dark .message-edit-area .el-textarea__inner {
   padding: 20px;
 }
 
-/* 统一表单样式 */
 .el-form-item {
   margin-bottom: 20px;
 }
@@ -500,11 +284,6 @@ html.dark .message-edit-area .el-textarea__inner {
   margin-bottom: 8px;
 }
 
-.el-form-item__content {
-  line-height: 1.5;
-}
-
-/* 统一对话框样式 */
 .el-dialog {
   border-radius: 12px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
@@ -513,11 +292,6 @@ html.dark .message-edit-area .el-textarea__inner {
 .el-dialog__header {
   padding: 20px 24px;
   border-bottom: 1px solid var(--border);
-}
-
-.el-dialog__headerbtn {
-  top: 20px;
-  right: 24px;
 }
 
 .el-dialog__header .el-dialog__title {
@@ -534,33 +308,11 @@ html.dark .message-edit-area .el-textarea__inner {
   border-top: 1px solid var(--border);
 }
 
-/* 统一消息提示样式 */
 .el-message {
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
-.el-message--success {
-  background-color: #f0fdf4;
-  border-color: #86efac;
-}
-
-.el-message--error {
-  background-color: #fef2f2;
-  border-color: #fca5a5;
-}
-
-.el-message--warning {
-  background-color: #fffbeb;
-  border-color: #fcd34d;
-}
-
-.el-message--info {
-  background-color: #f3f4f6;
-  border-color: #d1d5db;
-}
-
-/* 美化 MessageBox 样式 - 豆包风格 */
 .el-overlay {
   background: rgba(0, 0, 0, 0.4) !important;
   backdrop-filter: blur(8px);
@@ -568,8 +320,7 @@ html.dark .message-edit-area .el-textarea__inner {
 
 .el-message-box {
   border-radius: 20px !important;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25), 
-              0 0 0 1px rgba(255, 255, 255, 0.1) !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.1) !important;
   padding: 0 !important;
   overflow: hidden;
   border: none !important;
@@ -614,21 +365,14 @@ html.dark .message-edit-area .el-textarea__inner {
 }
 
 .el-message-box__message {
-  color: #374151 !important;
+  color: var(--foreground) !important;
   font-size: 16px !important;
   line-height: 1.6 !important;
-}
-
-html.dark .el-message-box__message {
-  color: #e5e7eb !important;
 }
 
 .el-message-box__footer {
   padding: 0 28px 28px !important;
   border-top: none !important;
-  display: flex;
-  gap: 12px;
-  justify-content: center;
 }
 
 .el-message-box__btns {
@@ -675,7 +419,6 @@ html.dark .el-message-box__message {
   transform: translateY(0);
 }
 
-/* 警告类型的 MessageBox */
 .el-message-box--warning .el-message-box__header {
   background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
 }
@@ -685,12 +428,6 @@ html.dark .el-message-box__message {
   box-shadow: 0 4px 14px rgba(245, 87, 108, 0.4);
 }
 
-.el-message-box--warning .el-message-box__btns .el-button--primary:hover {
-  background: linear-gradient(135deg, #e879e8 0%, #f34a60 100%);
-  box-shadow: 0 12px 24px rgba(245, 87, 108, 0.5);
-}
-
-/* 成功类型的 MessageBox */
 .el-message-box--success .el-message-box__header {
   background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
 }
@@ -700,12 +437,6 @@ html.dark .el-message-box__message {
   box-shadow: 0 4px 14px rgba(17, 153, 142, 0.4);
 }
 
-.el-message-box--success .el-message-box__btns .el-button--primary:hover {
-  background: linear-gradient(135deg, #0f867c 0%, #2dd86b 100%);
-  box-shadow: 0 12px 24px rgba(17, 153, 142, 0.5);
-}
-
-/* 错误类型的 MessageBox */
 .el-message-box--error .el-message-box__header {
   background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
 }
@@ -715,16 +446,6 @@ html.dark .el-message-box__message {
   box-shadow: 0 4px 14px rgba(235, 51, 73, 0.4);
 }
 
-.el-message-box--error .el-message-box__btns .el-button--primary:hover {
-  background: linear-gradient(135deg, #d92d41 0%, #f14a33 100%);
-  box-shadow: 0 12px 24px rgba(235, 51, 73, 0.5);
-}
-
-/* 深色主题适配 */
-html.dark .el-message-box {
-  background: linear-gradient(135deg, #1f1f1f 0%, #262626 100%);
-}
-
 html.dark .el-message-box__btns .el-button--default {
   background: linear-gradient(135deg, #374151 0%, #4b5563 100%);
   color: #e5e7eb;
@@ -732,4 +453,43 @@ html.dark .el-message-box__btns .el-button--default {
 
 html.dark .el-message-box__btns .el-button--default:hover {
   background: linear-gradient(135deg, #4b5563 0%, #6b7280 100%);
+}
+
+html.dark .el-card {
+  background-color: var(--card);
+  border-color: var(--border);
+}
+
+html.dark .el-form-item__label {
+  color: var(--muted-foreground);
+}
+
+html.dark .message-text {
+  background-color: var(--card);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+html.dark .message.user .message-text {
+  background: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
+}
+
+html.dark .answer,
+html.dark .report-content {
+  background-color: var(--card);
+}
+
+html.dark .result-section pre {
+  background-color: var(--card);
+}
+
+html.dark .edit-actions .el-button--default {
+  background: var(--accent);
+  border-color: var(--border);
+  color: var(--foreground);
+}
+
+html.dark .message-edit-area .el-textarea__inner {
+  background: var(--card);
+  border-color: var(--border);
+  color: var(--foreground);
 }

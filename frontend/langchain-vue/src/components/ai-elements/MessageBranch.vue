@@ -12,6 +12,10 @@ const props = defineProps({
     type: Number,
     default: 0
   },
+  totalBranches: {
+    type: Number,
+    default: 0
+  },
   className: {
     type: String,
     default: ''
@@ -21,22 +25,19 @@ const props = defineProps({
 const emit = defineEmits(['branchChange'])
 
 const currentBranch = ref(props.defaultBranch)
-const branches = ref([])
-
-const totalBranches = computed(() => branches.value.length)
 
 const goToPrevious = () => {
-  if (totalBranches.value <= 1) return
-  const newBranch = currentBranch.value > 0 
-    ? currentBranch.value - 1 
-    : totalBranches.value - 1
+  if (props.totalBranches <= 1) return
+  const newBranch = currentBranch.value > 0
+    ? currentBranch.value - 1
+    : props.totalBranches - 1
   handleBranchChange(newBranch)
 }
 
 const goToNext = () => {
-  if (totalBranches.value <= 1) return
-  const newBranch = currentBranch.value < totalBranches.value - 1 
-    ? currentBranch.value + 1 
+  if (props.totalBranches <= 1) return
+  const newBranch = currentBranch.value < props.totalBranches - 1
+    ? currentBranch.value + 1
     : 0
   handleBranchChange(newBranch)
 }
@@ -46,21 +47,13 @@ const handleBranchChange = (newBranch) => {
   emit('branchChange', newBranch)
 }
 
-const setBranches = (newBranches) => {
-  branches.value = newBranches
-}
-
-// 提供上下文
 provide('messageBranchContext', {
   currentBranch,
-  branches,
-  totalBranches,
+  totalBranches: computed(() => props.totalBranches),
   goToPrevious,
   goToNext,
-  setBranches
 })
 
-// 监听defaultBranch变化
 watch(() => props.defaultBranch, (newValue) => {
   currentBranch.value = newValue
 })

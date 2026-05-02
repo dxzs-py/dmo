@@ -6,8 +6,8 @@ import vueDevTools from 'vite-plugin-vue-devtools'
 import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
+import viteCompression from 'vite-plugin-compression'
 
-// https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const isDev = mode === 'development'
@@ -25,6 +25,11 @@ export default defineConfig(({ mode }) => {
         resolvers: [ElementPlusResolver()],
         dts: 'src/components.d.ts',
       }),
+      !isDev ? viteCompression({
+        algorithm: 'gzip',
+        threshold: 10240,
+        deleteOriginFile: false,
+      }) : undefined,
     ].filter(Boolean),
     resolve: {
       alias: {
@@ -54,16 +59,29 @@ export default defineConfig(({ mode }) => {
     build: {
       rollupOptions: {
         output: {
-          manualChunks: {
-            vue: ['vue', 'vue-router', 'pinia'],
-            element: ['element-plus', '@element-plus/icons-vue'],
-            vendors: ['axios'],
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return
+            if (id.includes('@element-plus/icons-vue')) return 'ep-icons'
+            if (id.includes('element-plus/es/components/') || id.includes('@element-plus/es/components/')) return 'ep-components'
+            if (id.includes('element-plus') || id.includes('@element-plus')) return 'element-plus'
+            if (id.includes('vue/') || id.includes('vue-router') || id.includes('pinia') || id.includes('@vue/')) return 'vue-vendor'
+            if (id.includes('marked') || id.includes('highlight.js') || id.includes('dompurify')) return 'markdown'
+            if (id.includes('axios')) return 'axios'
+            if (id.includes('zod') || id.includes('nanoid') || id.includes('@vueuse/')) return 'utils-vendor'
           },
         },
       },
-      chunkSizeWarningLimit: 1000,
-      reportCompressedSize: true,
+      chunkSizeWarningLimit: 750,
+      reportCompressedSize: !isDev,
       sourcemap: isDev,
+      minify: !isDev ? 'terser' : false,
+      terserOptions: isDev ? undefined : {
+        compress: {
+          drop_console: true,
+          drop_debugger: true,
+          pure_funcs: ['console.log', 'console.info', 'console.debug'],
+        },
+      },
     },
     optimizeDeps: {
       include: [
@@ -73,14 +91,8 @@ export default defineConfig(({ mode }) => {
         'element-plus',
         '@element-plus/icons-vue',
         'axios',
+        '@vueuse/core',
       ],
-    },
-    css: {
-      preprocessorOptions: {
-        css: {
-          includePaths: ['src/assets'],
-        },
-      },
     },
   }
 })

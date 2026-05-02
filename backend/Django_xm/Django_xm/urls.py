@@ -21,7 +21,7 @@ from django.http import JsonResponse
 from django.conf import settings
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 from Django_xm.apps.core.views import health_check as core_health_check, request_monitor
-from Django_xm.apps.core.config import settings as app_cfg
+from Django_xm.apps.ai_engine.config import settings as app_cfg
 
 
 def root_info(request):
@@ -42,9 +42,9 @@ def root_info(request):
         "api_endpoints": {
             "auth": "/api/v1/users/",
             "chat": "/api/v1/chat/",
-            "rag": "/api/v1/rag/",
-            "workflow": "/api/v1/workflow/",
-            "deep_research": "/api/v1/deep-research/",
+            "knowledge": "/api/v1/knowledge/",
+            "learning": "/api/v1/learning/",
+            "research": "/api/v1/research/",
         }
     })
 
@@ -65,9 +65,10 @@ urlpatterns = [
 
             path("users/", include("Django_xm.apps.users.urls")),
             path("chat/", include("Django_xm.apps.chat.urls")),
-            path("rag/", include("Django_xm.apps.rag.urls")),
-            path("workflow/", include("Django_xm.apps.workflows.urls")),
-            path("deep-research/", include("Django_xm.apps.deep_research.urls")),
+            path("knowledge/", include("Django_xm.apps.knowledge.urls")),
+            path("learning/", include("Django_xm.apps.learning.urls")),
+            path("research/", include("Django_xm.apps.research.urls")),
+            path("core/", include("Django_xm.apps.core.urls")),
         ])),
     ])),
 

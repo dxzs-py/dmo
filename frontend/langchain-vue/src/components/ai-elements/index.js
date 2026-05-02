@@ -17,13 +17,6 @@ export { default as AiArtifactActions } from './AiArtifactActions.vue'
 export { default as AiArtifactAction } from './AiArtifactAction.vue'
 export { default as AiArtifactContent } from './AiArtifactContent.vue'
 
-export { default as AiWebPreview } from './AiWebPreview.vue'
-export { default as AiWebPreviewNavigation } from './AiWebPreviewNavigation.vue'
-export { default as AiWebPreviewNavigationButton } from './AiWebPreviewNavigationButton.vue'
-export { default as AiWebPreviewUrl } from './AiWebPreviewUrl.vue'
-export { default as AiWebPreviewBody } from './AiWebPreviewBody.vue'
-export { default as AiWebPreviewConsole } from './AiWebPreviewConsole.vue'
-
 export { default as AiImage } from './AiImage.vue'
 export { default as AiPanel } from './AiPanel.vue'
 export { default as AiShimmer } from './AiShimmer.vue'

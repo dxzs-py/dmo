@@ -1,40 +1,20 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import apiClient from '@/api/client'
+import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { apiClient } from '@/api'
+import { logger } from '../utils/logger'
+import { extractErrorMessage } from '../utils/api-error-handler'
 
 const TOKEN_KEY = 'user_token'
 const REFRESH_TOKEN_KEY = 'user_refresh_token'
 const USER_INFO_KEY = 'user_info'
 
-const ERROR_CODE_MESSAGES = {
-  10001: '认证失败，请重新登录',
-  10002: 'Token已过期，请重新登录',
-  10003: '无效的Token，请重新登录',
-  20001: '数据验证失败，请检查输入',
-  20003: '请求的资源不存在',
-  30001: '权限不足，无法执行此操作',
-  30002: '请求过于频繁，请稍后再试',
-  50001: '服务器内部错误，请稍后重试',
-  50002: '服务器繁忙，请稍后重试',
-}
-
-function resolveErrorMessage(error) {
-  if (!error.response?.data) return null
-  const data = error.response.data
-  if (data.code && ERROR_CODE_MESSAGES[data.code]) {
-    return ERROR_CODE_MESSAGES[data.code]
-  }
-  if (data.message) return data.message
-  if (data.detail) return data.detail
-  return null
-}
-
 export const useUserStore = defineStore('user', () => {
   const token = ref(localStorage.getItem(TOKEN_KEY) || '')
   const refreshToken = ref(localStorage.getItem(REFRESH_TOKEN_KEY) || '')
-  const userInfo = ref(JSON.parse(localStorage.getItem(USER_INFO_KEY) || '{}'))
+  const userInfo = ref((() => { try { return JSON.parse(localStorage.getItem(USER_INFO_KEY) || '{}') } catch { return {} } })())
   const isLoggedIn = computed(() => !!token.value)
-  const isAuthenticated = isLoggedIn
   const username = computed(() => userInfo.value?.username || '')
 
   function setToken(newToken, newRefreshToken = null) {
@@ -76,8 +56,8 @@ export const useUserStore = defineStore('user', () => {
       }
       return { success: false, message: data.message || '登录失败' }
     } catch (error) {
-      console.error('登录失败:', error)
-      const resolved = resolveErrorMessage(error)
+      logger.error('登录失败:', error)
+      const resolved = extractErrorMessage(error)
       return {
         success: false,
         message: resolved || '登录失败，请检查网络连接'
@@ -94,8 +74,8 @@ export const useUserStore = defineStore('user', () => {
       }
       return { success: false, message: data.message || '注册失败' }
     } catch (error) {
-      console.error('注册失败:', error)
-      const resolved = resolveErrorMessage(error)
+      logger.error('注册失败:', error)
+      const resolved = extractErrorMessage(error)
       if (resolved) return { success: false, message: resolved }
       const errors = error.response?.data
       let message = '注册失败'
@@ -123,7 +103,7 @@ export const useUserStore = defineStore('user', () => {
       }
       return false
     } catch (error) {
-      console.error('刷新 token 失败:', error)
+      logger.error('刷新 token 失败:', error)
       clearUser()
       return false
     }
@@ -140,7 +120,7 @@ export const useUserStore = defineStore('user', () => {
       }
       return null
     } catch (error) {
-      console.error('获取用户信息失败:', error)
+      logger.error('获取用户信息失败:', error)
       return null
     }
   }
@@ -151,12 +131,44 @@ export const useUserStore = defineStore('user', () => {
         await apiClient.post('/users/secure-logout/', {
           refresh: refreshToken.value
         })
-        console.log('[Security] Secure logout completed, server-side data cleared')
+        logger.log('[Security] Secure logout completed, server-side data cleared')
       }
     } catch (error) {
-      console.warn('[Security] Secure logout request failed:', error)
+      logger.warn('[Security] Secure logout request failed:', error)
     } finally {
       clearUser()
+    }
+  }
+
+  function forceLogout(reason = 'token_expired') {
+    clearUser()
+    const reasonMessages = {
+      token_expired: '登录已过期，请重新登录',
+      token_invalid: '登录凭证无效，请重新登录',
+      session_expired: '会话已过期，请重新登录',
+    }
+    const message = reasonMessages[reason] || '登录已过期，请重新登录'
+
+    try {
+      const router = useRouter()
+      ElMessage.warning({
+        message,
+        duration: 3000,
+        showClose: true,
+      })
+      const currentPath = router.currentRoute.value.fullPath
+      const redirectPath = currentPath && currentPath !== '/login' ? currentPath : '/'
+      router.push({
+        path: '/login',
+        query: { redirect: redirectPath, expired: '1' },
+      })
+    } catch {
+      ElMessage.warning({
+        message,
+        duration: 3000,
+        showClose: true,
+      })
+      window.location.href = '/login?expired=1'
     }
   }
 
@@ -165,7 +177,6 @@ export const useUserStore = defineStore('user', () => {
     refreshToken,
     userInfo,
     isLoggedIn,
-    isAuthenticated,
     username,
     setToken,
     setUserInfo,
@@ -174,6 +185,7 @@ export const useUserStore = defineStore('user', () => {
     register,
     refreshAccessToken,
     getUserInfo,
-    logout
+    logout,
+    forceLogout,
   }
 })

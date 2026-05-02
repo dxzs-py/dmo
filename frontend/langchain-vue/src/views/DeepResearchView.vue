@@ -76,7 +76,10 @@
         </div>
 
         <div v-if="task.final_report" class="report-section">
-          <h4>研究报告</h4>
+          <div class="report-header">
+            <h4>研究报告</h4>
+            <AiOpenInChat label="在聊天中讨论" @click="openInChat" />
+          </div>
           <div class="report-content">
             <MarkdownRenderer :content="task.final_report" />
           </div>
@@ -98,8 +101,44 @@
         <template #header>
           <div class="card-header">
             <span>历史任务</span>
+            <el-button text type="primary" @click="showFileSearch = !showFileSearch">
+              {{ showFileSearch ? '收起搜索' : '全局文件搜索' }}
+            </el-button>
           </div>
         </template>
+
+        <div v-if="showFileSearch" class="file-search-section">
+          <el-input
+            v-model="fileSearchQuery"
+            placeholder="搜索所有研究任务的文件..."
+            @keyup.enter="handleFileSearch"
+            clearable
+          >
+            <template #append>
+              <el-button @click="handleFileSearch" :loading="fileSearchLoading">搜索</el-button>
+            </template>
+          </el-input>
+          <div v-if="fileSearchResults.length" class="file-search-results">
+            <el-table :data="fileSearchResults" style="width: 100%" size="small">
+              <el-table-column prop="filename" label="文件名" />
+              <el-table-column prop="task_id" label="任务ID" width="160" />
+              <el-table-column prop="size" label="大小" width="100">
+                <template #default="scope">
+                  {{ scope.row.size ? formatFileSize(scope.row.size) : '-' }}
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="100">
+                <template #default="scope">
+                  <el-button link type="primary" size="small" @click="viewTask({ task_id: scope.row.task_id })">
+                    查看任务
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+          <el-empty v-else-if="fileSearchSearched && !fileSearchLoading" description="未找到匹配的文件" :image-size="60" />
+        </div>
+
         <TaskList
           ref="taskListRef"
           module-type="deep-research"
@@ -115,23 +154,33 @@
 
 <script setup>
 import { ref, reactive, computed, onUnmounted } from 'vue'
-import { deepResearchAPI } from '../api/client'
-import { useUserStore } from '../stores/user'
+import { useRouter } from 'vue-router'
+import { deepResearchAPI } from '../api'
+import { readSSEStream } from '../utils/sse'
 import { ElMessage } from 'element-plus'
-import TaskList from '../components/TaskList.vue'
-import FileBrowser from '../components/FileBrowser.vue'
-import MarkdownRenderer from '../components/MarkdownRenderer.vue'
+import TaskList from '../components/chat/TaskList.vue'
+import FileBrowser from '../components/chat/FileBrowser.vue'
+import MarkdownRenderer from '../components/common/MarkdownRenderer.vue'
+import AiOpenInChat from '../components/ai-elements/AiOpenInChat.vue'
+import { formatDate as _formatDate, formatFileSize } from '../utils/format'
+import { logger } from '../utils/logger'
 
-const userStore = useUserStore()
 const isLoading = ref(false)
+const router = useRouter()
 const task = ref(null)
 const showTaskDetail = ref(false)
 const taskListRef = ref(null)
 const fileBrowserRef = ref(null)
 const progressMessage = ref('')
 const elapsedSeconds = ref(0)
+const showFileSearch = ref(false)
+const fileSearchQuery = ref('')
+const fileSearchResults = ref([])
+const fileSearchLoading = ref(false)
+const fileSearchSearched = ref(false)
 let pollingTimer = null
-let eventSource = null
+let sseAbortController = null
+let sseReaderActive = false
 let elapsedTimer = null
 let pollCount = 0
 let currentPollInterval = 3000
@@ -160,27 +209,15 @@ const researchForm = reactive({
 })
 
 const statusOptions = [
-  { value: 'pending',
-  label: '待执行'
-},
-  {
-    value: 'running',
-    label: '执行中'
-  },
-  {
-    value: 'completed',
-    label: '已完成'
-  },
-  {
-    value: 'failed',
-    label: '失败'
-  },
+  { value: 'pending', label: '待执行' },
+  { value: 'running', label: '执行中' },
+  { value: 'completed', label: '已完成' },
+  { value: 'failed', label: '失败' },
 ]
 
 const formatDate = (dateStr) => {
   if (!dateStr) return '-'
-  const date = new Date(dateStr)
-  return date.toLocaleString('zh-CN')
+  return _formatDate(dateStr)
 }
 
 const getStatusType = (status) => {
@@ -244,7 +281,7 @@ const pollTaskStatus = async () => {
 
     pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
   } catch (error) {
-    console.error('获取任务状态失败:', error)
+    logger.error('获取任务状态失败:', error)
     currentPollInterval = Math.min(
       Math.floor(currentPollInterval * POLL_BACKOFF_FACTOR),
       MAX_POLL_INTERVAL
@@ -283,7 +320,7 @@ const startResearch = async () => {
     startElapsedTimer()
     connectSSE(task.value.task_id)
   } catch (error) {
-    console.error('启动研究任务失败:', error)
+    logger.error('启动研究任务失败:', error)
     ElMessage.error('启动研究任务失败，请稍后重试')
   } finally {
     isLoading.value = false
@@ -304,35 +341,49 @@ const stopElapsedTimer = () => {
   }
 }
 
-const connectSSE = (taskId) => {
+const connectSSE = async (taskId) => {
   closeSSE()
 
-  const url = deepResearchAPI.streamUrl(taskId)
-  const token = userStore.token
-  const separator = url.includes('?') ? '&' : '?'
-  const fullUrl = token ? `${url}${separator}token=${token}` : url
+  sseAbortController = new AbortController()
+  sseReaderActive = true
 
   try {
-    eventSource = new EventSource(fullUrl)
+    const response = await deepResearchAPI.streamFetch(taskId, {
+      signal: sseAbortController.signal,
+    })
 
-    eventSource.onmessage = (event) => {
+    if (!response.ok) {
+      let errorMsg = `HTTP ${response.status}`
       try {
-        const data = JSON.parse(event.data)
-        handleSSEEvent(data)
-      } catch (e) {
-        console.error('解析SSE数据失败:', e)
-      }
+        const errBody = await response.text()
+        const sseMatch = errBody.match(/data:\s*(.*)/)
+        if (sseMatch) {
+          const parsed = JSON.parse(sseMatch[1])
+          errorMsg = parsed.message || parsed.error || errorMsg
+        }
+      } catch {}
+      throw new Error(errorMsg)
     }
 
-    eventSource.onerror = () => {
-      closeSSE()
-      if (task.value && task.value.status !== 'completed' && task.value.status !== 'failed') {
-        pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
-      }
+    await readSSEStream(response, (data) => {
+      if (!sseReaderActive) return
+      handleSSEEvent(data)
+    }, sseAbortController.signal)
+
+    if (sseReaderActive && task.value && task.value.status !== 'completed' && task.value.status !== 'failed') {
+      pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
     }
-  } catch (e) {
-    console.error('SSE连接失败，回退到轮询:', e)
-    pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      return
+    }
+    logger.error('SSE连接失败，回退到轮询:', error)
+    if (task.value && task.value.status !== 'completed' && task.value.status !== 'failed') {
+      pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
+    }
+  } finally {
+    sseReaderActive = false
+    sseAbortController = null
   }
 }
 
@@ -378,20 +429,69 @@ const handleSSEEvent = (data) => {
 }
 
 const closeSSE = () => {
-  if (eventSource) {
-    eventSource.close()
-    eventSource = null
+  sseReaderActive = false
+  if (sseAbortController) {
+    sseAbortController.abort()
+    sseAbortController = null
   }
 }
 
-const viewTask = (selectedTask) => {
+const viewTask = async (selectedTask) => {
+  closeSSE()
+  stopPolling()
+  stopElapsedTimer()
+
   task.value = selectedTask
   showTaskDetail.value = true
+
+  if (selectedTask.status === 'running' || selectedTask.status === 'pending') {
+    startElapsedTimer()
+    connectSSE(selectedTask.task_id)
+  } else if (selectedTask.task_id) {
+    try {
+      const resp = await deepResearchAPI.getStatus(selectedTask.task_id)
+      const fresh = resp.data?.data || resp.data
+      if (fresh) {
+        task.value = { ...selectedTask, ...fresh }
+        if (fresh.status === 'running' || fresh.status === 'pending') {
+          startElapsedTimer()
+          connectSSE(fresh.task_id)
+        }
+      }
+    } catch (e) {
+      logger.warn('获取任务最新状态失败:', e)
+    }
+  }
 }
 
 const deleteTask = () => {
   task.value = null
   showTaskDetail.value = false
+}
+
+const openInChat = () => {
+  if (!task.value?.query) return
+  router.push({
+    path: '/chat',
+    query: { q: `关于"${task.value.query}"的深度研究，请帮我进一步分析` }
+  })
+}
+
+const handleFileSearch = async () => {
+  if (!fileSearchQuery.value.trim()) return
+  fileSearchLoading.value = true
+  fileSearchSearched.value = true
+  try {
+    const response = await deepResearchAPI.searchFiles({ query: fileSearchQuery.value })
+    if (response.data?.code === 200) {
+      fileSearchResults.value = response.data.data?.files || response.data.data?.items || []
+    }
+  } catch (error) {
+    logger.error('文件搜索失败:', error)
+    ElMessage.error('文件搜索失败')
+  } finally {
+    fileSearchLoading.value = false
+  }
 }
 
 onUnmounted(() => {
@@ -467,6 +567,17 @@ onUnmounted(() => {
   margin-top: 24px;
 }
 
+.report-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.report-header h4 {
+  margin: 0;
+}
+
 .report-section h4 {
   margin: 0 0 16px 0;
   font-size: 16px;
@@ -489,6 +600,17 @@ onUnmounted(() => {
   font-size: 16px;
   font-weight: 600;
   color: var(--el-text-color-primary);
+}
+
+.file-search-section {
+  margin-bottom: 16px;
+  padding: 16px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 8px;
+}
+
+.file-search-results {
+  margin-top: 12px;
 }
 
 @media (max-width: 768px) {

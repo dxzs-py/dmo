@@ -1,8 +1,10 @@
 <script setup>
-import { InfoFilled, Tools } from '@element-plus/icons-vue'
-import ModelSelector from '../ModelSelector.vue'
+import { computed } from 'vue'
+import { InfoFilled, Tools, FolderOpened } from '@element-plus/icons-vue'
+import ModelSelector from '../common/ModelSelector.vue'
+import { useSessionStore } from '../../stores/session'
 
-defineProps({
+const props = defineProps({
   title: {
     type: String,
     default: '智能聊天',
@@ -34,6 +36,15 @@ const emit = defineEmits({
   'update:currentMode': (mode) => typeof mode === 'string',
   toggleDebug: () => true,
   toggleRightPanel: () => true,
+})
+
+const sessionStore = useSessionStore()
+
+const selectedKnowledgeBaseId = computed({
+  get: () => sessionStore.selectedKnowledgeBase?.id || null,
+  set: (val) => {
+    sessionStore.setSelectedKnowledgeBase(val)
+  }
 })
 
 const modeConfig = {
@@ -80,6 +91,25 @@ function getModeConfig(mode) {
         :model-value="selectedModel"
         @update:model-value="(val) => emit('update:selectedModel', val)"
       />
+      <el-select
+        :model-value="selectedKnowledgeBaseId"
+        placeholder="选择知识库"
+        class="knowledge-selector"
+        clearable
+        @update:model-value="(val) => selectedKnowledgeBaseId = val"
+      >
+        <el-option
+          v-for="kb in sessionStore.knowledgeBases"
+          :key="kb.id"
+          :label="kb.name"
+          :value="kb.id"
+        >
+          <div class="knowledge-option">
+            <el-icon class="knowledge-icon"><FolderOpened /></el-icon>
+            <span>{{ kb.name }}</span>
+          </div>
+        </el-option>
+      </el-select>
       <el-select
         :model-value="currentMode"
         placeholder="选择模式"
@@ -132,6 +162,20 @@ function getModeConfig(mode) {
   font-size: 17px;
   font-weight: 600;
   color: var(--el-text-color-primary);
+}
+
+.knowledge-selector {
+  width: 160px;
+}
+
+.knowledge-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.knowledge-icon {
+  color: var(--el-color-primary);
 }
 
 .mode-selector {

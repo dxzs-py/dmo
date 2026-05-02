@@ -1,11 +1,11 @@
 <template>
   <span class="message-branch-page" :class="className" v-bind="$attrs">
-    {{ currentBranch + 1 }} of {{ totalBranches }}
+    {{ currentBranchValue + 1 }} of {{ totalBranchesValue }}
   </span>
 </template>
 
 <script setup>
-import { inject } from 'vue'
+import { inject, computed } from 'vue'
 
 defineProps({
   className: {
@@ -20,7 +20,15 @@ if (!branchContext) {
   throw new Error('MessageBranchPage must be used within MessageBranch')
 }
 
-const { currentBranch, totalBranches } = branchContext
+const currentBranchValue = computed(() => {
+  const val = branchContext.currentBranch
+  return typeof val === 'object' && val !== null && 'value' in val ? val.value : (val ?? 0)
+})
+
+const totalBranchesValue = computed(() => {
+  const val = branchContext.totalBranches
+  return typeof val === 'object' && val !== null && 'value' in val ? val.value : (val ?? 0)
+})
 </script>
 
 <style scoped>

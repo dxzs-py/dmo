@@ -1,54 +1,27 @@
-# 项目规则
+- **环境**  
+  后端Python：必须先激活 conda环境 `conda activate Django_xm`，Django最新稳定版；智能体模块使用LangChain。  
+  前端：Node v20.19.5，npm管理依赖；Vue 3 + Composition API + Element Plus + Tailwind CSS。
 
-## 1. 开发环境配置
+- **后端架构**  
+  Django MTV，功能模块独立app；Django REST Framework构建API，统一前缀 `/api/`，RESTful设计（GET/POST/PUT/DELETE），JSON格式交互。  
+  智能体功能为核心，集成LangChain（配置智能体、模型、工具），与前端API交互实现对话。  
+  中间件合理使用，CORS配置开放必要来源。配置拆分 `dev.py`（开发可改）与 `prod.py`（生产不动）。
 
-### 后端环境
+- **前端架构**  
+  Vue 3 + Composition API，组件拆分复用；Pinia全局状态，Vue Router路由；Axios请求封装，统一拦截错误处理；开发环境配置代理解决跨域。适配多设备。
 
-- Python环境：用conda激活`Django_xm`环境，命令：`conda activate Django_xm`
-- Django版本：建议使用最新稳定版
+- **数据与交互**  
+  请求/响应JSON，统一响应结构（code、message、data），规范错误码。  
+  Axios实例化，拦截器注入token、处理异常；后端Serializer校验，模型关系合理设计。
 
-### 前端环境
+- **代码风格**  
+  Python：PEP 8，类型注解，docstring；Vue：官方风格指南。变量命名有语义，关键逻辑注释。提交信息清晰。
 
-- NVM 1.2.2、Node.js v20.19.5、npm 10.8.2
-- 依赖管理：使用npm管理前端依赖
+- **安全与性能**  
+  注意鉴权、SQL注入、XSS防护，查询优化、缓存策略按需，可扩展可维护。
 
-## 2. 项目架构最佳实践
+- **参考资源**  
+- 后端参考：[Django REST Framework](https://www.django-rest-framework.org/)
+- 智能体参考：[Langchain](https://python.langchain.com/docs/)
 
-### 后端架构
 
-- 采用Django的MTV架构，功能模块化拆分独立app
-- 用Django REST Framework构建RESTful API，合理使用中间件
-- 数据库设计遵循规范，合理设置模型关系
-
-### 前端架构
-
-- Vue 3 + Composition API，UI拆分为可复用组件
-- 用Pinia管理全局状态，Vue Router管理路由，适配多设备
-
-## 3. 前后端交互规范
-
-### API设计
-
-- 统一前缀`/api/`，规范使用GET/POST/PUT/DELETE方法
-- 统一响应格式、错误码及错误信息
-
-### 数据传输与跨域
-
-- JSON格式传输，前端用Axios请求，配置拦截器及异常处理
-- 后端配置CORS，前端开发环境配置代理
-
-## 4. 代码规范
-
-- Python遵循PEP 8，使用类型注解和文档字符串；Vue遵循官方风格指南
-- 通用规范：变量命名有意义，关键逻辑加注释，用对应工具格式化代码
-- Git提交信息清晰，遵循版本控制规范
-
-## 5. 参考优秀项目
-
-后端参考Django REST Framework官方示例及优秀开源项目；前端参考Vue官方实践、大型项目结构及Element Plus示例。
-
-## 6. 注意事项
-
-- 注重安全性、性能、可扩展性及可维护性，及时同步代码与文档
-- 本项目已采用配置文件夹实现配置管理结构，其中包含不同环境的独立配置文件：
-    - 项目处于开发阶段，配置文件分dev.py（开发环境，可修改）和prod.py（生产环境，暂不修改）

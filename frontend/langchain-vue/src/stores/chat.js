@@ -2,10 +2,13 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useStreamChat } from '../composables/useStreamChat'
 import { useSessionStore } from './session'
-import { chatAPI } from '../api/client'
+import { chatAPI } from '../api'
 import { ElMessage } from 'element-plus'
 import { nanoid } from 'nanoid'
-import { ChatRequestSchema, validateSchema } from '../lib/validation'
+import { ChatRequestSchema, validateSchema } from '../utils/validation'
+import { logger } from '../utils/logger'
+import { getModeLabel } from '../utils/format'
+import { transformFrontendMessageToBackend } from '../utils/session-transformers'
 
 export const useChatStore = defineStore('chat', () => {
   const isLoading = ref(false)
@@ -23,14 +26,20 @@ export const useChatStore = defineStore('chat', () => {
   const { isStreaming, abortController, abort: stopStreaming, streamChat } = useStreamChat()
 
   const sendMessage = async (message, options = {}) => {
+    logger.log('[ChatStore] sendMessage called')
+    
     const sessionStore = useSessionStore()
-    const sessionId = sessionStore.currentSessionId
+    let sessionId = sessionStore.currentSessionId
+    const selectedKnowledgeBaseId = sessionStore.selectedKnowledgeBase?.id || null
+    
+    logger.log('[ChatStore] sessionId:', sessionId)
 
     const validation = validateSchema(ChatRequestSchema, {
       message,
       mode: currentMode.value,
       use_tools: options.useTools !== false,
       use_advanced_tools: options.useAdvancedTools || false,
+      selected_knowledge_base: selectedKnowledgeBaseId,
     })
 
     if (!validation.success) {
@@ -38,7 +47,15 @@ export const useChatStore = defineStore('chat', () => {
       return
     }
 
-    if (!sessionId) sessionStore.createNewSession(currentMode.value)
+    if (!sessionId) {
+      logger.log('[ChatStore] Creating new session...')
+      await sessionStore.createNewSession(currentMode.value)
+      sessionId = sessionStore.currentSessionId
+      if (selectedKnowledgeBaseId) {
+        await sessionStore.setSelectedKnowledgeBase(selectedKnowledgeBaseId)
+      }
+      logger.log('[ChatStore] New sessionId:', sessionId)
+    }
 
     isLoading.value = true
 
@@ -48,7 +65,7 @@ export const useChatStore = defineStore('chat', () => {
       content: message,
       timestamp: new Date().toISOString(),
     }
-    sessionStore.addMessageToSession(sessionStore.currentSessionId, userMessage)
+    sessionStore.addMessageToSession(sessionId, userMessage)
 
     const assistantMessage = {
       id: nanoid(),
@@ -63,10 +80,11 @@ export const useChatStore = defineStore('chat', () => {
       suggestions: null,
       context: null,
     }
-    sessionStore.addMessageToSession(sessionStore.currentSessionId, assistantMessage, false)
+    sessionStore.addMessageToSession(sessionId, assistantMessage, false)
 
     try {
-      const messages = sessionStore.getSessionMessages(sessionStore.currentSessionId) || []
+      const messages = sessionStore.getSessionMessages(sessionId) || []
+      
       const chatHistory = messages
         .slice(0, -2)
         .map(m => ({
@@ -83,70 +101,51 @@ export const useChatStore = defineStore('chat', () => {
           use_tools: options.useTools !== false,
           use_advanced_tools: options.useAdvancedTools || false,
           streaming: true,
-          session_id: sessionStore.currentSessionId,
+          session_id: sessionId,
+          selected_knowledge_base: selectedKnowledgeBaseId,
         },
         {
-          appendToLastMessage: (content) =>
-            sessionStore.appendToLastMessage(sessionStore.currentSessionId, content),
-          addSource: (data) =>
-            sessionStore.addSourceToLastMessage(sessionStore.currentSessionId, data),
-          setSources: (data) =>
-            sessionStore.setSourcesToLastMessage(sessionStore.currentSessionId, data),
-          setPlan: (data) =>
-            sessionStore.setPlanToLastMessage(sessionStore.currentSessionId, data),
-          setChainOfThought: (data) =>
-            sessionStore.setChainOfThoughtToLastMessage(sessionStore.currentSessionId, data),
-          addToolCall: (data) =>
-            sessionStore.addToolCallToLastMessage(sessionStore.currentSessionId, data),
-          setReasoning: (data) =>
-            sessionStore.setReasoningToLastMessage(sessionStore.currentSessionId, data),
-          setSuggestions: (data) =>
-            sessionStore.setSuggestionsToLastMessage(sessionStore.currentSessionId, data),
-          setContext: (data) =>
-            sessionStore.setContextToLastMessage(sessionStore.currentSessionId, data),
-          setCost: (data) => {
-            costSummary.value = data
-          },
+          appendToLastMessage: (content) => sessionStore.appendToLastMessage(sessionId, content),
+          addSource: (data) => sessionStore.addSourceToLastMessage(sessionId, data),
+          setSources: (data) => sessionStore.setSourcesToLastMessage(sessionId, data),
+          setPlan: (data) => sessionStore.setPlanToLastMessage(sessionId, data),
+          setChainOfThought: (data) => sessionStore.setChainOfThoughtToLastMessage(sessionId, data),
+          addToolCall: (data) => sessionStore.addToolCallToLastMessage(sessionId, data),
+          setReasoning: (data) => sessionStore.setReasoningToLastMessage(sessionId, data),
+          setSuggestions: (data) => sessionStore.setSuggestionsToLastMessage(sessionId, data),
+          setContext: (data) => sessionStore.setContextToLastMessage(sessionId, data),
+          setCost: (data) => { costSummary.value = data },
         }
       )
 
       if (!result.success && !result.aborted) {
-        const mockResponses = [
-          '您好！我是您的智能学习助手。很高兴为您服务！',
-          '感谢您的提问！让我为您解答。',
-          '这是一个很好的问题！我会尽力为您提供帮助。',
-        ]
-        const randomResponse = mockResponses[Math.floor(Math.random() * mockResponses.length)]
-        let currentContent = ''
-        for (let i = 0; i < randomResponse.length; i++) {
-          if (!isStreaming.value) break
-          await new Promise(resolve => setTimeout(resolve, 30))
-          currentContent += randomResponse[i]
-          sessionStore.updateLastMessage(sessionStore.currentSessionId, currentContent)
-        }
+        sessionStore.updateLastMessage(sessionId, '抱歉，消息发送失败，请稍后重试。')
         ElMessage.error('发送消息失败，请稍后重试')
       }
 
       if (result.aborted) return
 
-      const finalMessages = sessionStore.getSessionMessages(sessionStore.currentSessionId) || []
+      const finalMessages = sessionStore.getSessionMessages(sessionId) || []
       if (finalMessages.length <= 2) {
         const lastMsg = finalMessages[finalMessages.length - 1]
         if (lastMsg?.content) {
           const title = lastMsg.content.slice(0, 30) + (lastMsg.content.length > 30 ? '...' : '')
-          sessionStore.updateSessionTitle(sessionStore.currentSessionId, title)
+          sessionStore.updateSessionTitle(sessionId, title)
         }
       }
 
-      sessionStore.syncLastMessageToBackend(sessionStore.currentSessionId).catch(() => {})
+      sessionStore.syncLastMessageToBackend(sessionId).catch(() => {})
     } finally {
       isLoading.value = false
+      sessionStore.touchSessionUpdatedAt(sessionId)
     }
   }
 
   const regenerateMessage = async (messageIndex) => {
     const sessionStore = useSessionStore()
-    const messages = sessionStore.getSessionMessages(sessionStore.currentSessionId)
+    const sid = sessionStore.currentSessionId
+    const selectedKnowledgeBaseId = sessionStore.selectedKnowledgeBase?.id || null
+    const messages = sessionStore.getSessionMessages(sid)
 
     if (messageIndex < 1 || !messages?.length || messages.length < 2) return
 
@@ -154,8 +153,30 @@ export const useChatStore = defineStore('chat', () => {
     const assistantMessage = messages[messageIndex]
     if (userMessage?.role !== 'user' || assistantMessage?.role !== 'assistant') return
 
+    const session = sessionStore.sessions.find(s => s.id === sid)
+    if (!session || !session.messages[messageIndex]) return
+
+    const currentMessage = session.messages[messageIndex]
+
+    if (!currentMessage.versions) {
+      currentMessage.versions = [
+        {
+          id: currentMessage.id,
+          content: currentMessage.content,
+          sources: currentMessage.sources || [],
+          plan: currentMessage.plan || null,
+          chainOfThought: currentMessage.chainOfThought || null,
+          toolCalls: currentMessage.toolCalls || [],
+          reasoning: currentMessage.reasoning || null,
+          suggestions: currentMessage.suggestions || null,
+          context: currentMessage.context || null,
+        },
+      ]
+      currentMessage.currentVersion = 0
+    }
+
     const newVersionId = nanoid()
-    sessionStore.addVersionToMessage(sessionStore.currentSessionId, messageIndex, {
+    currentMessage.versions.push({
       id: newVersionId,
       content: '',
       sources: [],
@@ -163,7 +184,19 @@ export const useChatStore = defineStore('chat', () => {
       chainOfThought: null,
       toolCalls: [],
       reasoning: null,
+      suggestions: null,
+      context: null,
     })
+    currentMessage.currentVersion = currentMessage.versions.length - 1
+
+    currentMessage.content = ''
+    currentMessage.sources = []
+    currentMessage.plan = null
+    currentMessage.chainOfThought = null
+    currentMessage.toolCalls = []
+    currentMessage.reasoning = null
+    currentMessage.suggestions = null
+    currentMessage.context = null
 
     isLoading.value = true
 
@@ -184,67 +217,36 @@ export const useChatStore = defineStore('chat', () => {
           use_tools: true,
           use_advanced_tools: false,
           streaming: true,
-          session_id: sessionStore.currentSessionId,
+          session_id: sid,
+          selected_knowledge_base: selectedKnowledgeBaseId,
         },
         {
-          appendToLastMessage: (content) => {
-            const sessionMessages = sessionStore.getSessionMessages(sessionStore.currentSessionId)
-            const msg = sessionMessages[messageIndex]
-            if (msg?.versions?.[msg.currentVersion] !== undefined) {
-              msg.versions[msg.currentVersion].content += content
-              msg.content = msg.versions[msg.currentVersion].content
-            }
-          },
-          addSource: (data) => {
-            const sessionMessages = sessionStore.getSessionMessages(sessionStore.currentSessionId)
-            const msg = sessionMessages[messageIndex]
-            if (msg?.versions?.[msg.currentVersion]) {
-              if (!msg.versions[msg.currentVersion].sources) msg.versions[msg.currentVersion].sources = []
-              msg.versions[msg.currentVersion].sources.push(data)
-              msg.sources = msg.versions[msg.currentVersion].sources
-            }
-          },
-          setSources: (data) => {
-            const sessionMessages = sessionStore.getSessionMessages(sessionStore.currentSessionId)
-            const msg = sessionMessages[messageIndex]
-            if (msg?.versions?.[msg.currentVersion]) {
-              msg.versions[msg.currentVersion].sources = data
-              msg.sources = data
-            }
-          },
-          setPlan: (data) => {
-            const sessionMessages = sessionStore.getSessionMessages(sessionStore.currentSessionId)
-            const msg = sessionMessages[messageIndex]
-            if (msg?.versions?.[msg.currentVersion]) {
-              msg.versions[msg.currentVersion].plan = data
-              msg.plan = data
-            }
-          },
-          setChainOfThought: (data) => {
-            const sessionMessages = sessionStore.getSessionMessages(sessionStore.currentSessionId)
-            const msg = sessionMessages[messageIndex]
-            if (msg?.versions?.[msg.currentVersion]) {
-              msg.versions[msg.currentVersion].chainOfThought = data
-              msg.chainOfThought = data
-            }
-          },
-          addToolCall: (data) => {
-            const sessionMessages = sessionStore.getSessionMessages(sessionStore.currentSessionId)
-            const msg = sessionMessages[messageIndex]
-            if (msg?.versions?.[msg.currentVersion]) {
-              if (!msg.versions[msg.currentVersion].toolCalls) msg.versions[msg.currentVersion].toolCalls = []
-              msg.versions[msg.currentVersion].toolCalls.push(data)
-              msg.toolCalls = msg.versions[msg.currentVersion].toolCalls
-            }
-          },
+          appendToLastMessage: (content) => sessionStore.appendToMessage(sid, messageIndex, content),
+          addSource: (data) => sessionStore.addSourceToMessage(sid, messageIndex, data),
+          setSources: (data) => sessionStore.setSourcesToMessage(sid, messageIndex, data),
+          setPlan: (data) => sessionStore.setPlanToMessage(sid, messageIndex, data),
+          setChainOfThought: (data) => sessionStore.setChainOfThoughtToMessage(sid, messageIndex, data),
+          addToolCall: (data) => sessionStore.addToolCallToMessage(sid, messageIndex, data),
+          setReasoning: (data) => sessionStore.setReasoningToMessage(sid, messageIndex, data),
+          setSuggestions: (data) => sessionStore.setSuggestionsToMessage(sid, messageIndex, data),
+          setContext: (data) => sessionStore.setContextToMessage(sid, messageIndex, data),
+          setCost: (data) => { costSummary.value = data },
         }
       )
 
       if (!result.success && !result.aborted) {
         ElMessage.error('重新生成失败，请稍后重试')
       }
+
+      if (result.success && currentMessage.backendId) {
+        const backendMsg = transformFrontendMessageToBackend(currentMessage)
+        chatAPI.updateMessage(currentMessage.backendId, backendMsg).catch(error => {
+          logger.error('Failed to sync regenerated message to backend:', error)
+        })
+      }
     } finally {
       isLoading.value = false
+      sessionStore.touchSessionUpdatedAt(sid)
     }
   }
 
@@ -255,7 +257,7 @@ export const useChatStore = defineStore('chat', () => {
       if (data.code === 200 && data.data?.modes) availableModes.value = data.data.modes
       if (data.data?.default && !currentMode.value) currentMode.value = data.data.default
     } catch (error) {
-      console.error('Failed to fetch modes:', error)
+      logger.error('Failed to fetch modes:', error)
     }
   }
 

@@ -2,13 +2,15 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
-import { chatAPI } from '../api/client'
+import { chatAPI } from '../api'
 import { ElMessage } from 'element-plus'
 import ChatHeader from '../components/chat/ChatHeader.vue'
 import ChatMessages from '../components/chat/ChatMessages.vue'
 import ChatInput from '../components/chat/ChatInput.vue'
 import ChatRightPanel from '../components/chat/ChatRightPanel.vue'
-import { useDebounce } from '../composables/useDebounce'
+import ProjectContext from '../components/chat/ProjectContext.vue'
+import { logger } from '../utils/logger'
+
 
 const chatStore = useChatStore()
 const sessionStore = useSessionStore()
@@ -18,7 +20,6 @@ const selectedModel = ref('deepseek-chat')
 const useWebSearch = ref(false)
 const useMicrophone = ref(false)
 const isScrolled = ref(false)
-const isSending = ref(false)
 const pendingAttachments = ref([])
 const showRightPanel = ref(false)
 const showDebug = ref(false)
@@ -33,11 +34,10 @@ const handleScrollChange = (scrolled) => {
 }
 
 const sendMessage = async () => {
-  if ((!inputMessage.value.trim() && pendingAttachments.value.length === 0) || chatStore.isLoading || isSending.value) {
+  if ((!inputMessage.value.trim() && pendingAttachments.value.length === 0) || chatStore.isLoading) {
     return
   }
 
-  isSending.value = true
   const message = inputMessage.value
   inputMessage.value = ''
 
@@ -50,7 +50,7 @@ const sendMessage = async () => {
         try {
           await chatAPI.uploadAttachment(sessionStore.currentSessionId, att.file)
         } catch (err) {
-          console.error('附件上传失败:', err)
+          logger.error('附件上传失败:', err)
           ElMessage.warning(`附件 ${att.name} 上传失败`)
         }
       }
@@ -61,17 +61,13 @@ const sendMessage = async () => {
       useAdvancedTools: useWebSearch.value,
     })
   } catch (error) {
-    console.error('发送消息失败:', error)
+    logger.error('发送消息失败:', error)
     ElMessage.error('发送消息失败，请稍后重试')
-  } finally {
-    setTimeout(() => {
-      isSending.value = false
-    }, 500)
   }
 }
 
 const handleRegenerate = async (index) => {
-  if (chatStore.isLoading || isSending.value) {
+  if (chatStore.isLoading) {
     return
   }
 
@@ -79,13 +75,13 @@ const handleRegenerate = async (index) => {
     await chatStore.regenerateMessage(index)
     ElMessage.success('正在重新生成回复...')
   } catch (error) {
-    console.error('重新生成失败:', error)
+    logger.error('重新生成失败:', error)
     ElMessage.error('重新生成失败，请稍后重试')
   }
 }
 
 const handleSuggestionClick = (suggestion) => {
-  if (chatStore.isLoading || isSending.value) return
+  if (chatStore.isLoading) return
   inputMessage.value = suggestion
   sendMessage()
 }
@@ -163,20 +159,20 @@ watch(
   () => sessionStore.currentSessionId,
   (newSessionId) => {
     if (newSessionId) {
-      loadCurrentSessionDetail()
+      // 这里不重复调用 loadSessionDetail，因为 session store 中的 watch 已经处理了
       selectedMessage.value = null
     }
   }
 )
 
-watch(messages, (newMessages) => {
-  if (newMessages?.length > 0) {
-    const lastMsg = newMessages[newMessages.length - 1]
-    if (lastMsg.role === 'assistant' && (lastMsg.sources?.length || lastMsg.toolCalls?.length || lastMsg.reasoning)) {
+watch(() => messages.value?.length, (newLen) => {
+  if (newLen > 0) {
+    const lastMsg = messages.value[newLen - 1]
+    if (lastMsg?.role === 'assistant' && (lastMsg.sources?.length || lastMsg.toolCalls?.length || lastMsg.reasoning)) {
       selectedMessage.value = lastMsg
     }
   }
-}, { deep: true })
+})
 </script>
 
 <template>
@@ -195,7 +191,15 @@ watch(messages, (newMessages) => {
 
     <div class="chat-body">
       <div class="chat-main-area">
+        <div v-if="!messages || messages.length === 0" class="chat-welcome">
+          <div class="welcome-content">
+            <h2>欢迎使用智能助手</h2>
+            <p class="welcome-desc">我可以帮你解答问题、分析代码、生成内容，还可以进行深度研究和工作流学习。</p>
+            <ProjectContext class="welcome-context" />
+          </div>
+        </div>
         <ChatMessages
+          v-else
           :messages="messages"
           :is-loading="chatStore.isLoading"
           :is-streaming="chatStore.isStreaming"
@@ -240,6 +244,42 @@ watch(messages, (newMessages) => {
   background-color: var(--el-bg-color-page);
   position: relative;
   overflow: hidden;
+}
+
+.chat-welcome {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+}
+
+.welcome-content {
+  max-width: 600px;
+  text-align: center;
+}
+
+.welcome-content h2 {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0 0 12px;
+  color: var(--el-text-color-primary);
+}
+
+.welcome-desc {
+  font-size: 14px;
+  color: var(--el-text-color-secondary);
+  margin: 0 0 24px;
+  line-height: 1.6;
+}
+
+.welcome-context {
+  text-align: left;
+  max-width: 480px;
+  margin: 0 auto;
+  background: var(--el-bg-color);
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
 }
 
 .chat-body {

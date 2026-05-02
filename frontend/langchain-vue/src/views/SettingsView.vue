@@ -10,7 +10,7 @@
 
         <el-form :model="settingsForm" label-width="150px">
           <el-form-item label="后端 API 地址">
-            <el-input v-model="settingsForm.apiBaseUrl" placeholder="http://localhost:8000" />
+            <el-input v-model="settingsForm.apiBaseUrl" placeholder="/api/v1" />
           </el-form-item>
           <el-form-item>
             <el-button type="primary" :loading="isSaving" @click="saveSettings">
@@ -88,10 +88,11 @@
 <script setup>
 import { reactive, ref, watch, onMounted, computed } from 'vue'
 import { useThemeStore } from '../stores/theme'
-import settings from '../settings'
+import settings from '../config/settings'
 import { ElMessage } from 'element-plus'
-import { chatAPI } from '../api/client'
-import PermissionManager from '../components/PermissionManager.vue'
+import { chatAPI } from '../api'
+import PermissionManager from '../components/chat/PermissionManager.vue'
+import { logger } from '../utils/logger'
 
 const isSaving = ref(false)
 const themeStore = useThemeStore()
@@ -126,7 +127,7 @@ const loadPricing = async () => {
       modelPricing.value = res.data.data.modelPricing
     }
   } catch (e) {
-    console.error('加载定价信息失败:', e)
+    logger.error('加载定价信息失败:', e)
   }
 }
 
@@ -146,7 +147,7 @@ const saveSettings = async () => {
     settings.API_BASE_URL = settingsForm.apiBaseUrl
     ElMessage.success('设置已保存')
   } catch (error) {
-    console.error('保存设置失败:', error)
+    logger.error('保存设置失败:', error)
     ElMessage.error('保存设置失败')
   } finally {
     isSaving.value = false
@@ -154,7 +155,7 @@ const saveSettings = async () => {
 }
 
 const resetSettings = () => {
-  settingsForm.apiBaseUrl = 'http://localhost:8000'
+  settingsForm.apiBaseUrl = '/api/v1'
   ElMessage.info('已重置为默认值')
 }
 </script>

@@ -1,10 +1,21 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { ElTag } from 'element-plus'
-import { Document, Tools, MagicStick, View, Coin, Lock } from '@element-plus/icons-vue'
-import LxScrollArea from '../LxScrollArea.vue'
-import CostTracker from '../CostTracker.vue'
-import PermissionManager from '../PermissionManager.vue'
+import { Document, Tools, MagicStick, View, Coin, Lock, Files } from '@element-plus/icons-vue'
+import LxScrollArea from '../common/LxScrollArea.vue'
+import CostTracker from './CostTracker.vue'
+import PermissionManager from './PermissionManager.vue'
+import TokenStats from './TokenStats.vue'
+import AiArtifact from '../ai-elements/AiArtifact.vue'
+import AiArtifactHeader from '../ai-elements/AiArtifactHeader.vue'
+import AiArtifactTitle from '../ai-elements/AiArtifactTitle.vue'
+import AiArtifactDescription from '../ai-elements/AiArtifactDescription.vue'
+import AiArtifactActions from '../ai-elements/AiArtifactActions.vue'
+import AiArtifactAction from '../ai-elements/AiArtifactAction.vue'
+import AiArtifactContent from '../ai-elements/AiArtifactContent.vue'
+import AiArtifactClose from '../ai-elements/AiArtifactClose.vue'
+import AiPanel from '../ai-elements/AiPanel.vue'
+import AiToolbar from '../ai-elements/AiToolbar.vue'
 
 const props = defineProps({
   message: {
@@ -70,8 +81,15 @@ const hasChainOfThought = computed(() => !!metadata.value?.chainOfThought)
 const hasPlan = computed(() => !!metadata.value?.plan)
 const hasAnyReasoning = computed(() => hasReasoning.value || hasChainOfThought.value || hasPlan.value)
 
+const artifacts = computed(() => {
+  if (!props.message || !props.message.artifacts) return []
+  return props.message.artifacts
+})
+const hasArtifacts = computed(() => artifacts.value.length > 0)
+
 const tabs = computed(() => [
   { value: 'sources', label: '来源', icon: Document, count: hasSources.value ? metadata.value.sources.length : 0 },
+  { value: 'artifacts', label: '产物', icon: Files, count: hasArtifacts.value ? artifacts.value.length : 0 },
   { value: 'tools', label: '工具', icon: Tools, count: hasTools.value ? metadata.value.tools.length : 0 },
   { value: 'reasoning', label: '推理', icon: MagicStick, count: 0 },
   { value: 'cost', label: '成本', icon: Coin, count: 0 },
@@ -129,7 +147,7 @@ watch(() => props.message, () => {
       </div>
 
       <div class="panel-tabs">
-        <div class="tabs-list">
+        <AiToolbar class="tabs-toolbar">
           <button
             v-for="tab in tabs"
             :key="tab.value"
@@ -140,16 +158,18 @@ watch(() => props.message, () => {
             <span class="tab-label">{{ tab.label }}</span>
             <span v-if="tab.count > 0" class="tab-count">{{ tab.count }}</span>
           </button>
-        </div>
+        </AiToolbar>
       </div>
 
       <LxScrollArea class="panel-content" native>
-        <div v-show="activeTab === 'sources'" class="tab-content">
+        <AiPanel class="tab-panel">
+          <div v-show="activeTab === 'sources'" class="tab-content">
           <div v-if="hasSources" class="sources-container">
             <div
               v-for="(source, index) in metadata.sources"
               :key="index"
               class="source-item"
+              v-memo="[source.title, source.content, source.href || source.url]"
             >
               <div class="source-index">{{ index + 1 }}</div>
               <div class="source-body">
@@ -171,12 +191,41 @@ watch(() => props.message, () => {
           </div>
         </div>
 
+        <div v-show="activeTab === 'artifacts'" class="tab-content">
+          <div v-if="hasArtifacts" class="artifacts-container">
+            <AiArtifact v-for="(artifact, idx) in artifacts" :key="idx">
+              <AiArtifactHeader>
+                <AiArtifactTitle>{{ artifact.title || `产物 ${idx + 1}` }}</AiArtifactTitle>
+                <AiArtifactDescription v-if="artifact.description">{{ artifact.description }}</AiArtifactDescription>
+                <AiArtifactActions>
+                  <AiArtifactAction
+                    v-if="artifact.copyable !== false"
+                    tooltip="复制内容"
+                    label="复制"
+                    @click="navigator.clipboard.writeText(typeof artifact.content === 'string' ? artifact.content : JSON.stringify(artifact.content))"
+                  />
+                  <AiArtifactClose @click="artifacts.splice(idx, 1)" />
+                </AiArtifactActions>
+              </AiArtifactHeader>
+              <AiArtifactContent>
+                <pre v-if="typeof artifact.content === 'string'" class="artifact-text">{{ artifact.content }}</pre>
+                <pre v-else class="artifact-json">{{ JSON.stringify(artifact.content, null, 2) }}</pre>
+              </AiArtifactContent>
+            </AiArtifact>
+          </div>
+          <div v-else class="empty-state">
+            <el-icon :size="32" color="var(--el-text-color-placeholder)"><Files /></el-icon>
+            <span>暂无产物信息</span>
+          </div>
+        </div>
+
         <div v-show="activeTab === 'tools'" class="tab-content">
           <div v-if="hasTools" class="tools-container">
             <div
               v-for="tool in metadata.tools"
               :key="tool.id"
               class="tool-item"
+              v-memo="[tool.name, tool.state, tool.result, tool.error]"
             >
               <div class="tool-header">
                 <div class="tool-name-row">
@@ -260,12 +309,18 @@ watch(() => props.message, () => {
         </div>
 
         <div v-show="activeTab === 'cost'" class="tab-content">
+          <TokenStats
+            :prompt-tokens="costSummary.promptTokens || 0"
+            :completion-tokens="costSummary.completionTokens || 0"
+            :total-tokens="costSummary.totalTokens || 0"
+          />
           <CostTracker :cost-summary="costSummary" />
         </div>
 
         <div v-show="activeTab === 'permissions'" class="tab-content">
           <PermissionManager :session-id="sessionId" />
         </div>
+        </AiPanel>
       </LxScrollArea>
     </div>
   </Transition>
@@ -317,10 +372,18 @@ watch(() => props.message, () => {
 .panel-tabs {
   border-bottom: 1px solid var(--el-border-color-lighter);
   padding: 0 4px;
+  position: relative;
 }
 
-.tabs-list {
+.tabs-toolbar {
+  position: static;
+  transform: none;
+  margin-bottom: 0;
   display: flex;
+  border: none;
+  background: transparent;
+  padding: 0;
+  gap: 0;
 }
 
 .tab-trigger {
@@ -378,6 +441,14 @@ watch(() => props.message, () => {
   overflow: hidden;
 }
 
+.tab-panel {
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+
 .tab-content {
   padding: 16px;
 }
@@ -395,10 +466,24 @@ watch(() => props.message, () => {
 
 .sources-container,
 .tools-container,
-.reasoning-container {
+.reasoning-container,
+.artifacts-container {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.artifact-text,
+.artifact-json {
+  margin: 0;
+  font-size: 13px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.artifact-json {
+  color: var(--el-text-color-secondary);
 }
 
 .source-item {
