@@ -9,6 +9,7 @@ import ChatMessages from '../components/chat/ChatMessages.vue'
 import ChatInput from '../components/chat/ChatInput.vue'
 import ChatRightPanel from '../components/chat/ChatRightPanel.vue'
 import ProjectContext from '../components/chat/ProjectContext.vue'
+import ToolConfirmationDialog from '../components/chat/ToolConfirmationDialog.vue'
 import { logger } from '../utils/logger'
 
 
@@ -24,6 +25,7 @@ const pendingAttachments = ref([])
 const showRightPanel = ref(false)
 const showDebug = ref(false)
 const selectedMessage = ref(null)
+const showToolConfirmation = ref(false)
 
 const messages = computed(() => {
   return sessionStore.getSessionMessages(sessionStore.currentSessionId)
@@ -173,6 +175,22 @@ watch(() => messages.value?.length, (newLen) => {
     }
   }
 })
+
+watch(() => chatStore.pendingToolConfirmation, (val) => {
+  if (val) {
+    showToolConfirmation.value = true
+  }
+})
+
+const handleToolApproved = (data) => {
+  showToolConfirmation.value = false
+  chatStore.pendingToolConfirmation = null
+}
+
+const handleToolDenied = () => {
+  showToolConfirmation.value = false
+  chatStore.pendingToolConfirmation = null
+}
 </script>
 
 <template>
@@ -233,6 +251,15 @@ watch(() => messages.value?.length, (newLen) => {
         :visible="showRightPanel"
       />
     </div>
+
+    <ToolConfirmationDialog
+      v-model="showToolConfirmation"
+      :confirm-id="chatStore.pendingToolConfirmation?.confirmId || ''"
+      :tool-name="chatStore.pendingToolConfirmation?.toolName || ''"
+      :tool-args="chatStore.pendingToolConfirmation?.toolArgs || {}"
+      @approved="handleToolApproved"
+      @denied="handleToolDenied"
+    />
   </div>
 </template>
 

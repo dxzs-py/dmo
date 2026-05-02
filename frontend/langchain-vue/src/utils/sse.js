@@ -24,6 +24,9 @@ const SSE_EVENT_HANDLERS = {
   tool_result: (parsed, _appendFn, sessionOps) => {
     if (parsed.data) sessionOps.addToolCall?.(parsed.data)
   },
+  tool_confirmation: (parsed, _appendFn, sessionOps) => {
+    if (parsed.data) sessionOps.requestToolConfirmation?.(parsed.data)
+  },
   reasoning: (parsed, _appendFn, sessionOps) => {
     if (parsed.data) sessionOps.setReasoning?.(parsed.data)
   },
