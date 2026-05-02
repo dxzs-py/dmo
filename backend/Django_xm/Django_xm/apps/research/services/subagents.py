@@ -18,6 +18,7 @@ from Django_xm.apps.tools.web.search import create_tavily_search_tool
 from Django_xm.apps.tools.file.filesystem import FILESYSTEM_TOOLS
 from Django_xm.apps.ai_engine.config import get_logger
 from Django_xm.apps.ai_engine.prompts.system_prompts import WRITER_GUIDELINES
+from Django_xm.apps.core.permissions import PermissionService
 
 logger = get_logger(__name__)
 
@@ -50,6 +51,8 @@ REPORT_WRITER_PROMPT = (
 def create_web_researcher(
     model: Optional[str] = None,
     tools: Optional[Sequence[BaseTool]] = None,
+    user_id: Optional[int] = None,
+    session_id: Optional[str] = None,
     **kwargs,
 ):
     logger.info("🔍 创建 WebResearcher 子智能体")
@@ -69,6 +72,12 @@ def create_web_researcher(
         agent_tools.extend(FILESYSTEM_TOOLS)
         tools = agent_tools
 
+    if user_id:
+        tools = PermissionService.wrap_tools_with_permission(
+            tools, user_id=user_id, session_id=session_id
+        )
+        logger.info(f"WebResearcher 权限过滤后工具数: {len(tools)}")
+
     agent = create_agent(
         model=model,
         tools=tools,
@@ -84,6 +93,8 @@ def create_doc_analyst(
     model: Optional[str] = None,
     tools: Optional[Sequence[BaseTool]] = None,
     retriever_tool: Optional[BaseTool] = None,
+    user_id: Optional[int] = None,
+    session_id: Optional[str] = None,
     **kwargs,
 ):
     logger.info("📚 创建 DocAnalyst 子智能体")
@@ -104,6 +115,12 @@ def create_doc_analyst(
         logger.debug(f"   添加文件系统工具: {len(FILESYSTEM_TOOLS)} 个")
         tools = agent_tools
 
+    if user_id:
+        tools = PermissionService.wrap_tools_with_permission(
+            tools, user_id=user_id, session_id=session_id
+        )
+        logger.info(f"DocAnalyst 权限过滤后工具数: {len(tools)}")
+
     agent = create_agent(
         model=model,
         tools=tools,
@@ -118,6 +135,8 @@ def create_doc_analyst(
 def create_report_writer(
     model: Optional[str] = None,
     tools: Optional[Sequence[BaseTool]] = None,
+    user_id: Optional[int] = None,
+    session_id: Optional[str] = None,
     **kwargs,
 ):
     logger.info("✍️ 创建 ReportWriter 子智能体")
@@ -128,6 +147,12 @@ def create_report_writer(
     if tools is None:
         tools = FILESYSTEM_TOOLS
         logger.debug(f"   添加文件系统工具: {len(FILESYSTEM_TOOLS)} 个")
+
+    if user_id:
+        tools = PermissionService.wrap_tools_with_permission(
+            tools, user_id=user_id, session_id=session_id
+        )
+        logger.info(f"ReportWriter 权限过滤后工具数: {len(tools)}")
 
     agent = create_agent(
         model=model,

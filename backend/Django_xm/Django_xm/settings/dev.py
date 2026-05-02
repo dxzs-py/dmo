@@ -64,6 +64,7 @@ INSTALLED_APPS = [
     "Django_xm.apps.knowledge",
     "Django_xm.apps.learning",
     "Django_xm.apps.research",
+    "Django_xm.apps.analytics",
 ]
 
 MIDDLEWARE = [
@@ -81,6 +82,7 @@ MIDDLEWARE = [
     "Django_xm.apps.core.middleware.RequestLoggingMiddleware",
     "Django_xm.apps.core.middleware.CacheControlMiddleware",
     "Django_xm.apps.core.middleware.RateLimitMiddleware",
+    "Django_xm.apps.analytics.middleware.AnalyticsMiddleware",
     "Django_xm.apps.core.middleware.SecurityHeadersMiddleware",
 ]
 

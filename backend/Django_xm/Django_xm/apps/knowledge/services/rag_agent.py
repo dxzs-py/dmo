@@ -10,6 +10,7 @@ from langchain_core.retrievers import BaseRetriever
 
 from Django_xm.apps.ai_engine.config import get_logger
 from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
+from Django_xm.apps.core.permissions import PermissionService
 from .retrieval_service import create_retriever_tool
 
 logger = get_logger(__name__)
@@ -36,6 +37,8 @@ def create_rag_agent(
     tool_name: str = "knowledge_base",
     tool_description: Optional[str] = None,
     streaming: bool = True,
+    user_id: Optional[int] = None,
+    session_id: Optional[str] = None,
     **kwargs,
 ):
     """创建 RAG Agent"""
@@ -61,6 +64,12 @@ def create_rag_agent(
     )
 
     tools = [retriever_tool]
+
+    if user_id:
+        tools = PermissionService.wrap_tools_with_permission(
+            tools, user_id=user_id, session_id=session_id
+        )
+        logger.info(f"RAG Agent 权限过滤后工具数: {len(tools)}")
 
     logger.debug("创建 Agent...")
 
@@ -160,6 +169,8 @@ def create_conversational_rag_agent(
     retriever: BaseRetriever,
     model: Optional[str] = None,
     system_prompt: Optional[str] = None,
+    user_id: Optional[int] = None,
+    session_id: Optional[str] = None,
     **kwargs,
 ):
     """创建支持对话历史的 RAG Agent"""
@@ -185,5 +196,7 @@ def create_conversational_rag_agent(
         retriever=retriever,
         model=model,
         system_prompt=system_prompt,
+        user_id=user_id,
+        session_id=session_id,
         **kwargs,
     )
