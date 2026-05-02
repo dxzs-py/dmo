@@ -429,6 +429,14 @@ class VectorSearchCacheService:
         key = generate_embedding_cache_key(text, model)
         return CacheService.set(key, embedding, ttl)
 
+    @classmethod
+    def invalidate_index_queries(cls, index_name: str) -> int:
+        """清除指定索引的所有向量搜索缓存"""
+        pattern = f"{CACHE_PREFIX_VECTOR}:{index_name}:*"
+        count = CacheService.delete_pattern(pattern)
+        logger.info(f"向量搜索缓存已失效: {index_name}, 清除 {count} 个键")
+        return count
+
 
 # ==================== 缓存装饰器 ====================
 

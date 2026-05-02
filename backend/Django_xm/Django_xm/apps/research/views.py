@@ -510,35 +510,37 @@ def _authenticate_sse_request(request):
     """SSE端点统一认证：支持session、Authorization header、query param token"""
     from rest_framework_simplejwt.authentication import JWTAuthentication
     from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+    from rest_framework import HTTP_HEADER_ENCODING
 
     if request.user and request.user.is_authenticated:
         return request.user
+
+    auth = JWTAuthentication()
 
     auth_header = request.META.get('HTTP_AUTHORIZATION', '')
     if auth_header.startswith('Bearer '):
         token_str = auth_header.split(' ', 1)[1]
         try:
-            raw_token = JWTAuthentication().get_raw_token(
-                type('Request', (), {'META': {'HTTP_AUTHORIZATION': f'Bearer {token_str}'}})()
-            )
-            validated_token = JWTAuthentication().get_validated_token(raw_token)
-            user = JWTAuthentication().get_user(validated_token)
-            if user and user.is_authenticated:
-                return user
+            header_bytes = f'Bearer {token_str}'.encode(HTTP_HEADER_ENCODING)
+            raw_token = auth.get_raw_token(header_bytes)
+            if raw_token:
+                validated_token = auth.get_validated_token(raw_token)
+                user = auth.get_user(validated_token)
+                if user and user.is_authenticated:
+                    return user
         except (InvalidToken, TokenError, Exception) as auth_err:
             logging.warning(f"[Auth] SSE端点Header Token验证失败: {auth_err}")
 
     token = request.GET.get('token')
     if token:
         try:
-            validated_token = JWTAuthentication().get_validated_token(
-                JWTAuthentication().get_raw_token(
-                    type('Request', (), {'META': {'HTTP_AUTHORIZATION': f'Bearer {token}'}})()
-                )
-            )
-            user = JWTAuthentication().get_user(validated_token)
-            if user and user.is_authenticated:
-                return user
+            header_bytes = f'Bearer {token}'.encode(HTTP_HEADER_ENCODING)
+            raw_token = auth.get_raw_token(header_bytes)
+            if raw_token:
+                validated_token = auth.get_validated_token(raw_token)
+                user = auth.get_user(validated_token)
+                if user and user.is_authenticated:
+                    return user
         except (InvalidToken, TokenError, Exception) as auth_err:
             logging.warning(f"[Auth] SSE端点QueryParam Token验证失败: {auth_err}")
 

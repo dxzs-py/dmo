@@ -67,6 +67,7 @@ def success_response(
     data: Any = None,
     message: str = "操作成功",
     status_code: int = None,
+    headers: Dict = None,
 ) -> Response:
     if status_code is None:
         status_code = _status.HTTP_200_OK
@@ -75,6 +76,7 @@ def success_response(
         message=message,
         data=data,
         http_status=status_code,
+        headers=headers,
     )
 
 

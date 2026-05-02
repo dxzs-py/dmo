@@ -3,7 +3,8 @@ import { useThemeStore } from '../../stores/theme'
 import { useUserStore } from '../../stores/user'
 import { useRouter } from 'vue-router'
 import { User, Setting, SwitchButton, Fold, Expand } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
+import { confirmLogout } from '../../utils/dialog'
 import ThemeToggle from './ThemeToggle.vue'
 
 const props = defineProps({
@@ -26,12 +27,7 @@ const handleCommand = async (command) => {
     router.push('/settings')
   } else if (command === 'logout') {
     try {
-      await ElMessageBox.confirm('确定要退出登录吗？', '提示', {
-        confirmButtonText: '确定',
-        cancelButtonText: '取消',
-        type: 'warning',
-        appendToBody: true
-      })
+      await confirmLogout()
       userStore.logout()
       ElMessage.success('已退出登录')
       router.push('/')

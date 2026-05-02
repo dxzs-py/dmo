@@ -56,7 +56,7 @@
             <el-icon><View /></el-icon>
             查看
           </el-button>
-          <el-button link type="danger" size="small" @click="confirmDelete(row)">
+          <el-button link type="danger" size="small" @click="confirmDeleteTask(row)">
             <el-icon><Delete /></el-icon>
             删除
           </el-button>
@@ -85,6 +85,7 @@ import { ref, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Refresh, View, Delete } from '@element-plus/icons-vue'
 import { logger } from '../../utils/logger'
+import { confirmDelete } from '../../utils/dialog'
 
 const props = defineProps({
   moduleType: {
@@ -200,10 +201,13 @@ const viewTask = (task) => {
   emit('view-task', task)
 }
 
-const confirmDelete = (task) => {
+const confirmDeleteTask = async (task) => {
   const name = task.query || task.user_question || task.task_id || task.thread_id
-  if (window.confirm(`确定要删除任务"${name}"吗？此操作不可撤销。`)) {
-    deleteTask(task)
+  try {
+    await confirmDelete(`确定要删除任务"${name}"吗？此操作不可撤销。`)
+    await deleteTask(task)
+  } catch {
+    // cancelled
   }
 }
 

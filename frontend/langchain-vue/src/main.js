@@ -1,4 +1,5 @@
 import { createApp } from 'vue'
+import { setActivePinia } from 'pinia'
 
 import App from './App.vue'
 import router from './router'
@@ -22,6 +23,8 @@ app.use(pinia)
 app.use(router)
 
 app.config.globalProperties.$settings = settings
+
+setActivePinia(pinia)
 
 const themeStore = useThemeStore()
 themeStore.initTheme()

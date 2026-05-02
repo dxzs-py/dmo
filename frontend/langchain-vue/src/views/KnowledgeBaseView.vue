@@ -1,10 +1,11 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Plus, Search, Upload, Delete, View, Document, FolderOpened, Edit, Refresh, Download } from '@element-plus/icons-vue'
 import { knowledgeAPI } from '../api'
 import { logger } from '../utils/logger'
 import { formatFileSize } from '../utils/format'
+import { confirmDelete, confirmAction } from '../utils/dialog'
 
 const knowledgeBases = ref([])
 const loading = ref(false)
@@ -31,6 +32,8 @@ const cacheHealth = ref(null)
 const cacheLoading = ref(false)
 const cacheClearLoading = ref(false)
 const cacheAutoRefresh = ref(false)
+const mysqlStatus = ref(null)
+const vectorStoreStatus = ref(null)
 let cacheTimer = null
 
 const filteredKBs = computed(() => {
@@ -97,11 +100,7 @@ async function handleCreate() {
 
 async function handleDelete(kb) {
   try {
-    await ElMessageBox.confirm(`确定要删除知识库 "${kb.name}" 吗？此操作不可恢复。`, '确认删除', {
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
-      type: 'warning',
-    })
+    await confirmDelete(`确定要删除知识库 "${kb.name}" 吗？此操作不可恢复。`)
     const response = await knowledgeAPI.deleteKnowledgeBase(kb.id)
     if (response.data?.code === 200) {
       ElMessage.success('删除成功')
@@ -190,9 +189,13 @@ async function openDocuments(kb) {
     const response = await knowledgeAPI.getDocuments(kb.id)
     if (response.data?.code === 200) {
       documents.value = response.data.data?.files || []
+      logger.info('获取文档列表成功:', documents.value)
+    } else {
+      ElMessage.error('获取文档列表失败: ' + (response.data?.message || '未知错误'))
     }
   } catch (error) {
-    ElMessage.error('获取文档列表失败')
+    logger.error('获取文档列表失败:', error)
+    ElMessage.error('获取文档列表失败，请重试')
   } finally {
     documentsLoading.value = false
   }
@@ -201,19 +204,35 @@ async function openDocuments(kb) {
 
 async function handleDeleteDocument(kbId, filename) {
   try {
-    await ElMessageBox.confirm(`确定要删除文档 "${filename}" 吗？`, '确认删除', {
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
-      type: 'warning',
-    })
+    await confirmDelete(`确定要删除文档 "${filename}" 吗？`)
+    
+    logger.info('正在删除文档:', filename)
     const response = await knowledgeAPI.deleteDocument(kbId, filename)
+    logger.info('删除文档响应:', response.data)
+    
     if (response.data?.code === 200) {
       ElMessage.success('删除成功')
-      await openDocuments(currentKB.value)
-      await loadKnowledgeBases()
+      
+      // 立即从本地列表中移除，确保用户看到立即的反馈
+      const initialLength = documents.value.length
+      documents.value = documents.value.filter(d => d.name !== filename)
+      logger.info(`从列表中移除文件: ${filename}, 之前: ${initialLength}, 之后: ${documents.value.length}`)
+      
+      // 稍等一下后再刷新，确保后端处理完成
+      setTimeout(async () => {
+        logger.info('重新加载文档列表...')
+        await openDocuments(currentKB.value)
+        await loadKnowledgeBases()
+        logger.info('文档列表刷新完成')
+      }, 300)
+    } else {
+      ElMessage.error('删除失败: ' + (response.data?.message || '未知错误'))
     }
-  } catch {
-    // cancelled
+  } catch (error) {
+    if (error !== 'cancel') {
+      logger.error('删除文档失败:', error)
+      ElMessage.error('删除失败，请重试')
+    }
   }
 }
 
@@ -249,9 +268,10 @@ function handleFileChange(file, fileList) {
 async function loadCacheInfo() {
   cacheLoading.value = true
   try {
-    const [healthRes, statsRes] = await Promise.allSettled([
+    const [healthRes, statsRes, dbOverviewRes] = await Promise.allSettled([
       knowledgeAPI.getCacheHealth(),
       knowledgeAPI.getCacheStats(),
+      knowledgeAPI.getDatabaseOverview(),
     ])
     if (healthRes.status === 'fulfilled' && healthRes.value.data?.code === 200) {
       cacheHealth.value = healthRes.value.data.data
@@ -259,8 +279,13 @@ async function loadCacheInfo() {
     if (statsRes.status === 'fulfilled' && statsRes.value.data?.code === 200) {
       cacheStats.value = statsRes.value.data.data
     }
+    if (dbOverviewRes.status === 'fulfilled' && dbOverviewRes.value.data?.code === 200) {
+      const overview = dbOverviewRes.value.data.data
+      mysqlStatus.value = overview.mysql
+      vectorStoreStatus.value = overview.vector_store
+    }
   } catch (error) {
-    logger.error('加载缓存信息失败:', error)
+    logger.error('加载数据库信息失败:', error)
   } finally {
     cacheLoading.value = false
   }
@@ -268,10 +293,9 @@ async function loadCacheInfo() {
 
 async function handleClearCache(scope = 'all') {
   try {
-    await ElMessageBox.confirm(
+    await confirmAction(
       scope === 'all' ? '确定要清除所有缓存吗？此操作不可恢复。' : `确定要清除 ${scope} 缓存吗？`,
-      '确认清除',
-      { confirmButtonText: '清除', cancelButtonText: '取消', type: 'warning' }
+      { confirmButtonText: '清除', type: 'warning' }
     )
     cacheClearLoading.value = true
     const response = await knowledgeAPI.clearCache({ scope })
@@ -358,7 +382,7 @@ async function handleClearCache(scope = 'all') {
     <el-card class="cache-card" shadow="hover" v-loading="cacheLoading">
       <template #header>
         <div class="cache-card-header">
-          <span class="card-title">缓存实时监控</span>
+          <span class="card-title">数据库实时监控</span>
           <div class="cache-actions">
             <el-switch
               v-model="cacheAutoRefresh"
@@ -375,8 +399,48 @@ async function handleClearCache(scope = 'all') {
         </div>
       </template>
       <el-row :gutter="20">
+        <!-- MySQL 状态 -->
         <el-col :xs="24" :md="8">
-          <el-descriptions title="Redis 状态" :column="1" border v-if="cacheHealth">
+          <el-descriptions title="MySQL 数据库" :column="1" border v-if="mysqlStatus">
+            <el-descriptions-item label="连接状态">
+              <el-tag :type="mysqlStatus.connection === 'healthy' ? 'success' : 'danger'" size="small">
+                {{ mysqlStatus.connection === 'healthy' ? '已连接' : '未连接' }}
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="版本">{{ mysqlStatus.version || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="数据库名">{{ mysqlStatus.database_name || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="表数量">{{ mysqlStatus.table_count ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item label="总大小">{{ mysqlStatus.total_size_mb ? mysqlStatus.total_size_mb + ' MB' : '-' }}</el-descriptions-item>
+            <el-descriptions-item label="当前连接">{{ mysqlStatus.threads_connected ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item label="总查询数">{{ mysqlStatus.questions ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item label="慢查询">{{ mysqlStatus.slow_queries ?? '-' }}</el-descriptions-item>
+          </el-descriptions>
+          <el-empty v-else description="无法获取 MySQL 状态" :image-size="60" />
+        </el-col>
+        
+        <!-- 向量存储状态 -->
+        <el-col :xs="24" :md="8">
+          <el-descriptions title="向量存储" :column="1" border v-if="vectorStoreStatus">
+            <el-descriptions-item label="连接状态">
+              <el-tag :type="vectorStoreStatus.connection === 'healthy' ? 'success' : 'danger'" size="small">
+                {{ vectorStoreStatus.connection === 'healthy' ? '正常' : '异常' }}
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="类型">{{ vectorStoreStatus.backend || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="索引数量">{{ vectorStoreStatus.index_count ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item label="总大小">{{ vectorStoreStatus.total_size_human || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="存储路径" :span="1">
+              <el-tooltip :content="vectorStoreStatus.base_path" placement="top">
+                <span class="truncate-text">{{ vectorStoreStatus.base_path || '-' }}</span>
+              </el-tooltip>
+            </el-descriptions-item>
+          </el-descriptions>
+          <el-empty v-else description="无法获取向量存储状态" :image-size="60" />
+        </el-col>
+        
+        <!-- Redis 状态 -->
+        <el-col :xs="24" :md="8">
+          <el-descriptions title="Redis 缓存" :column="1" border v-if="cacheHealth">
             <el-descriptions-item label="连接状态">
               <el-tag :type="cacheHealth.connection === 'healthy' ? 'success' : 'danger'" size="small">
                 {{ cacheHealth.connection === 'healthy' ? '已连接' : '未连接' }}
@@ -385,38 +449,31 @@ async function handleClearCache(scope = 'all') {
             <el-descriptions-item label="版本">{{ cacheHealth.version || '-' }}</el-descriptions-item>
             <el-descriptions-item label="内存使用">{{ cacheHealth.used_memory_human || '-' }}</el-descriptions-item>
             <el-descriptions-item label="连接客户端">{{ cacheHealth.connected_clients ?? '-' }}</el-descriptions-item>
-            <el-descriptions-item label="运行时间">{{ cacheHealth.uptime_in_seconds ? Math.floor(cacheHealth.uptime_in_seconds / 3600) + ' 小时' : '-' }}</el-descriptions-item>
             <el-descriptions-item label="总键数">{{ cacheHealth.total_keys ?? '-' }}</el-descriptions-item>
-          </el-descriptions>
-          <el-empty v-else description="无法获取缓存状态" :image-size="60" />
-        </el-col>
-        <el-col :xs="24" :md="8">
-          <el-descriptions title="Redis 命中统计" :column="1" border v-if="cacheStats">
-            <el-descriptions-item label="总键数">{{ cacheStats.total_keys ?? '-' }}</el-descriptions-item>
-            <el-descriptions-item label="内存使用">{{ cacheStats.used_memory_human || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="峰值内存">{{ cacheStats.peak_memory_human || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="Redis 命中">{{ cacheStats.keyspace_hits ?? '-' }}</el-descriptions-item>
-            <el-descriptions-item label="Redis 未命中">{{ cacheStats.keyspace_misses ?? '-' }}</el-descriptions-item>
-            <el-descriptions-item label="Redis 命中率">
+            <el-descriptions-item label="命中率" v-if="cacheStats">
               <el-progress
                 :percentage="cacheStats.redis_hit_rate ?? 0"
-                :stroke-width="12"
+                :stroke-width="10"
                 :color="cacheStats.redis_hit_rate > 80 ? '#67c23a' : cacheStats.redis_hit_rate > 50 ? '#e6a23c' : '#f56c6c'"
                 :format="(p) => p + '%'"
               />
             </el-descriptions-item>
           </el-descriptions>
-          <el-empty v-else description="无法获取缓存统计" :image-size="60" />
-        </el-col>
-        <el-col :xs="24" :md="8">
-          <el-descriptions title="缓存分类统计" :column="1" border v-if="cacheStats?.categories?.length">
-            <el-descriptions-item v-for="cat in cacheStats.categories" :key="cat.prefix" :label="cat.label">
-              <el-tag :type="cat.count > 0 ? 'primary' : 'info'" size="small">{{ cat.count }}</el-tag>
-            </el-descriptions-item>
-          </el-descriptions>
-          <el-empty v-else description="无分类数据" :image-size="60" />
+          <el-empty v-else description="无法获取缓存状态" :image-size="60" />
         </el-col>
       </el-row>
+      
+      <!-- 向量存储索引详情 -->
+      <div v-if="vectorStoreStatus?.indices?.length" style="margin-top: 20px;">
+        <h4 style="margin-bottom: 12px;">索引详情</h4>
+        <el-table :data="vectorStoreStatus.indices" style="width: 100%" size="small">
+          <el-table-column prop="original_name" label="索引名称" />
+          <el-table-column prop="num_documents" label="文档数" width="100" />
+          <el-table-column prop="size_human" label="大小" width="100" />
+          <el-table-column prop="created_at" label="创建时间" />
+          <el-table-column prop="updated_at" label="更新时间" />
+        </el-table>
+      </div>
     </el-card>
 
     <el-dialog v-model="createDialog" title="创建知识库" width="480px">
@@ -712,5 +769,14 @@ async function handleClearCache(scope = 'all') {
   .search-input {
     max-width: 100%;
   }
+}
+
+.truncate-text {
+  display: inline-block;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 </style>

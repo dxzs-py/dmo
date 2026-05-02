@@ -27,6 +27,9 @@ from .cache_views import (
     CacheHealthCheckView,
     CacheStatsView,
     CacheClearView,
+    MySQLStatusView,
+    VectorStoreStatusView,
+    DatabaseOverviewView,
 )
 
 app_name = 'rag'
@@ -68,4 +71,9 @@ urlpatterns = [
     path('cache/health/', CacheHealthCheckView.as_view(), name='cache-health'),
     path('cache/stats/', CacheStatsView.as_view(), name='cache-stats'),
     path('cache/clear/', CacheClearView.as_view(), name='cache-clear'),
+    
+    # 数据库状态接口
+    path('database/overview/', DatabaseOverviewView.as_view(), name='database-overview'),
+    path('database/mysql/status/', MySQLStatusView.as_view(), name='mysql-status'),
+    path('database/vector-store/status/', VectorStoreStatusView.as_view(), name='vector-store-status'),
 ]

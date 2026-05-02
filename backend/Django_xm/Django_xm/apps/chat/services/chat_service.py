@@ -11,14 +11,17 @@ from typing import Optional, Dict, Any, List, AsyncGenerator
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
+from langchain_community.callbacks.manager import get_openai_callback
+
 from Django_xm.apps.ai_engine.services.agent_factory import create_base_agent
 from Django_xm.apps.research.services.deep_agent import create_deep_research_agent
 from Django_xm.apps.research.services.deep_agent import should_use_deep_research
-from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
+from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model, get_model_string
 from Django_xm.apps.ai_engine.prompts.system_prompts import SYSTEM_PROMPTS
 from Django_xm.apps.tools import get_tools_for_request, WEATHER_TOOLS
 from Django_xm.apps.ai_engine.services.usage_tracker import create_usage_tracker
 from Django_xm.apps.ai_engine.services.cost_tracker import create_cost_tracker, CostTracker
+from Django_xm.apps.ai_engine.services.cache_service import ModelResponseCacheService
 from Django_xm.apps.core.permissions import PermissionService
 from Django_xm.apps.chat.services.session_compactor import apply_compaction_to_chat_history
 from Django_xm.apps.chat.services.slash_commands import parse_command, execute_command
@@ -159,7 +162,21 @@ class ChatService:
 
         if self.user_id:
             session_id = data.get('session_id')
-            tools = PermissionService.filter_tools_by_permission(self.user_id, tools, session_id)
+            try:
+                asyncio.get_running_loop()
+                from asgiref.sync import sync_to_async
+                _filter = sync_to_async(
+                    PermissionService.filter_tools_by_permission, thread_sensitive=True
+                )
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(
+                        PermissionService.filter_tools_by_permission,
+                        self.user_id, tools, session_id
+                    )
+                    tools = future.result(timeout=5)
+            except RuntimeError:
+                tools = PermissionService.filter_tools_by_permission(self.user_id, tools, session_id)
 
         return tools
 
@@ -204,6 +221,16 @@ class ChatService:
                 'is_command': True,
                 'command_type': cmd_result.get('type', 'info'),
             }
+
+        mode = data.get('mode', 'default')
+        user_message = self._build_user_message(data)
+
+        cached_response = ModelResponseCacheService.get_cached_response(
+            user_message, get_model_string(), mode
+        )
+        if cached_response is not None:
+            logger.info("模型响应缓存命中")
+            return cached_response['response']
 
         selected_kb = data.get('selected_knowledge_base')
         
@@ -252,12 +279,18 @@ class ChatService:
 
         logger.info(f"聊天请求处理完成，响应长度: {len(response)} 字符")
 
-        return {
+        result = {
             'message': response,
             'mode': data['mode'],
             'tools_used': tool_names,
             'success': True
         }
+
+        ModelResponseCacheService.cache_model_response(
+            user_message, result, get_model_string(), mode
+        )
+
+        return result
 
     async def process_stream_chat_request(self, data: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
         usage_tracker = create_usage_tracker()
@@ -357,7 +390,6 @@ class ChatService:
         logger.info("流式聊天请求处理完成")
 
     async def _process_rag_stream(self, data: Dict[str, Any], retriever, usage_tracker, cost_tracker):
-        """处理流式 RAG 查询"""
         agent = create_rag_agent(retriever, streaming=True)
         
         messages = []
@@ -374,14 +406,26 @@ class ChatService:
             full_response = ""
             sources = []
             
-            for chunk in agent.stream({"messages": messages}):
-                if isinstance(chunk, dict) and "messages" in chunk:
-                    chunk_messages = chunk["messages"]
-                    if chunk_messages:
-                        content = chunk_messages[-1].content if hasattr(chunk_messages[-1], 'content') else str(chunk_messages[-1])
-                        if content:
-                            full_response += content
-                            yield {"type": "chunk", "content": content}
+            with get_openai_callback() as cb:
+                for chunk in agent.stream({"messages": messages}):
+                    if isinstance(chunk, dict) and "messages" in chunk:
+                        chunk_messages = chunk["messages"]
+                        if chunk_messages:
+                            last_msg = chunk_messages[-1]
+                            content = last_msg.content if hasattr(last_msg, 'content') else str(last_msg)
+                            if content:
+                                full_response += content
+                                yield {"type": "chunk", "content": content}
+
+            usage_tracker.add_input_tokens(cb.prompt_tokens)
+            usage_tracker.add_output_tokens(cb.completion_tokens)
+            if cost_tracker:
+                cost_tracker.update_from_metadata(
+                    {'usage_metadata': {
+                        'input_tokens': cb.prompt_tokens,
+                        'output_tokens': cb.completion_tokens,
+                    }}
+                )
             
             if retriever:
                 try:
@@ -451,54 +495,63 @@ class ChatService:
         }
         has_sent_reasoning = True
 
-        async for chunk in agent.graph.astream(graph_input, config=config, stream_mode="messages"):
-            if isinstance(chunk, tuple) and len(chunk) == 2:
-                message, metadata = chunk
-            else:
-                message = chunk
-                metadata = {}
+        with get_openai_callback() as cb:
+            async for chunk in agent.graph.astream(graph_input, config=config, stream_mode="messages"):
+                if isinstance(chunk, tuple) and len(chunk) == 2:
+                    message, metadata = chunk
+                else:
+                    message = chunk
+                    metadata = {}
 
-            if metadata:
-                usage_tracker.update_from_metadata(metadata)
+                all_messages.append(message)
 
-            all_messages.append(message)
+                if isinstance(message, AIMessage):
+                    tool_calls = getattr(message, "tool_calls", [])
+                    if tool_calls:
+                        for tool_call in tool_calls:
+                            tool_id = tool_call.get("id", "")
+                            tool_name = tool_call.get("name", "")
+                            tool_info = {
+                                "id": tool_id,
+                                "name": tool_name,
+                                "type": f"tool-call-{tool_name}",
+                                "state": "input-available",
+                                "parameters": tool_call.get("args", {}),
+                                "result": None,
+                                "error": None,
+                            }
+                            tool_calls_map[tool_id] = tool_info
+                            yield {'type': 'tool', 'data': tool_info}
 
-            if isinstance(message, AIMessage):
-                tool_calls = getattr(message, "tool_calls", [])
-                if tool_calls:
-                    for tool_call in tool_calls:
-                        tool_id = tool_call.get("id", "")
-                        tool_name = tool_call.get("name", "")
-                        tool_info = {
-                            "id": tool_id,
-                            "name": tool_name,
-                            "type": f"tool-call-{tool_name}",
-                            "state": "input-available",
-                            "parameters": tool_call.get("args", {}),
-                            "result": None,
-                            "error": None,
-                        }
-                        tool_calls_map[tool_id] = tool_info
-                        yield {'type': 'tool', 'data': tool_info}
+                    if message.content and not tool_calls:
+                        lcp = _lcp_len(current_message_content, message.content)
+                        if lcp < len(message.content):
+                            new_content = message.content[lcp:]
+                            current_message_content = message.content
+                            yield {"type": "chunk", "content": new_content}
 
-                if message.content and not tool_calls:
-                    lcp = _lcp_len(current_message_content, message.content)
-                    if lcp < len(message.content):
-                        new_content = message.content[lcp:]
-                        current_message_content = message.content
-                        yield {"type": "chunk", "content": new_content}
+                elif isinstance(message, ToolMessage):
+                    tool_call_id = getattr(message, "tool_call_id", "")
+                    is_error = getattr(message, "status", None) == "error"
+                    if tool_call_id in tool_calls_map:
+                        tool_info = tool_calls_map[tool_call_id]
+                        tool_info["state"] = "output-error" if is_error else "output-available"
+                        tool_info["result"] = None if is_error else message.content
+                        tool_info["error"] = message.content if is_error else None
+                        yield {'type': 'tool_result', 'data': tool_info}
 
-            elif isinstance(message, ToolMessage):
-                tool_call_id = getattr(message, "tool_call_id", "")
-                is_error = getattr(message, "status", None) == "error"
-                if tool_call_id in tool_calls_map:
-                    tool_info = tool_calls_map[tool_call_id]
-                    tool_info["state"] = "output-error" if is_error else "output-available"
-                    tool_info["result"] = None if is_error else message.content
-                    tool_info["error"] = message.content if is_error else None
-                    yield {'type': 'tool_result', 'data': tool_info}
+                await asyncio.sleep(0.01)
 
-            await asyncio.sleep(0.01)
+        usage_tracker.add_input_tokens(cb.prompt_tokens)
+        usage_tracker.add_output_tokens(cb.completion_tokens)
+        if cost_tracker:
+            cost_tracker.update_from_metadata(
+                {'usage_metadata': {
+                    'input_tokens': cb.prompt_tokens,
+                    'output_tokens': cb.completion_tokens,
+                }}
+            )
+            cost_tracker.finish_record()
 
         thinking_duration = round(time.time() - thinking_start_time, 1)
 
@@ -543,81 +596,90 @@ class ChatService:
 
         config = {"recursion_limit": 50}
 
-        async for chunk in agent.graph.astream(graph_input, config=config, stream_mode="messages"):
-            if isinstance(chunk, tuple) and len(chunk) == 2:
-                message, metadata = chunk
-            else:
-                message = chunk
-                metadata = {}
+        with get_openai_callback() as cb:
+            async for chunk in agent.graph.astream(graph_input, config=config, stream_mode="messages"):
+                if isinstance(chunk, tuple) and len(chunk) == 2:
+                    message, metadata = chunk
+                else:
+                    message = chunk
+                    metadata = {}
 
-            if metadata:
-                usage_tracker.update_from_metadata(metadata)
+                all_messages.append(message)
 
-            all_messages.append(message)
+                if isinstance(message, AIMessage):
+                    last_ai_message = message
+                    tool_calls = getattr(message, "tool_calls", [])
+                    if tool_calls:
+                        for tool_call in tool_calls:
+                            tool_id = tool_call.get("id", "")
+                            tool_name = tool_call.get("name", "")
 
-            if isinstance(message, AIMessage):
-                last_ai_message = message
-                tool_calls = getattr(message, "tool_calls", [])
-                if tool_calls:
-                    for tool_call in tool_calls:
-                        tool_id = tool_call.get("id", "")
-                        tool_name = tool_call.get("name", "")
+                            if tool_name not in tool_call_count:
+                                tool_call_count[tool_name] = 0
+                            tool_call_count[tool_name] += 1
 
-                        if tool_name not in tool_call_count:
-                            tool_call_count[tool_name] = 0
-                        tool_call_count[tool_name] += 1
+                            if tool_call_count[tool_name] > 3:
+                                logger.warning(f"工具 {tool_name} 被调用了 {tool_call_count[tool_name]} 次，可能存在循环调用")
 
-                        if tool_call_count[tool_name] > 3:
-                            logger.warning(f"工具 {tool_name} 被调用了 {tool_call_count[tool_name]} 次，可能存在循环调用")
+                            tool_info = {
+                                "id": tool_id,
+                                "name": tool_name,
+                                "type": f"tool-call-{tool_name}",
+                                "state": "input-available",
+                                "parameters": tool_call.get("args", {}),
+                                "result": None,
+                                "error": None,
+                            }
+                            tool_calls_map[tool_id] = tool_info
 
-                        tool_info = {
-                            "id": tool_id,
-                            "name": tool_name,
-                            "type": f"tool-call-{tool_name}",
-                            "state": "input-available",
-                            "parameters": tool_call.get("args", {}),
-                            "result": None,
-                            "error": None,
-                        }
-                        tool_calls_map[tool_id] = tool_info
+                            yield {'type': 'tool', 'data': tool_info}
 
-                        yield {'type': 'tool', 'data': tool_info}
+                    if message.content and not tool_calls and not prefer_tool_result:
+                        lcp = _lcp_len(current_message_content, message.content)
+                        if lcp < len(message.content):
+                            new_content = message.content[lcp:]
+                            current_message_content = message.content
+                            yield {"type": "chunk", "content": new_content}
 
-                if message.content and not tool_calls and not prefer_tool_result:
-                    lcp = _lcp_len(current_message_content, message.content)
-                    if lcp < len(message.content):
-                        new_content = message.content[lcp:]
-                        current_message_content = message.content
-                        yield {"type": "chunk", "content": new_content}
+                elif isinstance(message, ToolMessage):
+                    tool_call_id = getattr(message, "tool_call_id", "")
+                    is_error = getattr(message, "status", None) == "error"
 
-            elif isinstance(message, ToolMessage):
-                tool_call_id = getattr(message, "tool_call_id", "")
-                is_error = getattr(message, "status", None) == "error"
+                    if tool_call_id in tool_calls_map:
+                        tool_info = tool_calls_map[tool_call_id]
+                        tool_info["state"] = "output-error" if is_error else "output-available"
+                        tool_info["result"] = None if is_error else message.content
+                        tool_info["error"] = message.content if is_error else None
 
-                if tool_call_id in tool_calls_map:
-                    tool_info = tool_calls_map[tool_call_id]
-                    tool_info["state"] = "output-error" if is_error else "output-available"
-                    tool_info["result"] = None if is_error else message.content
-                    tool_info["error"] = message.content if is_error else None
+                        yield {'type': 'tool_result', 'data': tool_info}
 
-                    yield {'type': 'tool_result', 'data': tool_info}
+                        if (not is_error
+                                and tool_info.get("name") in weather_tool_names
+                                and tool_info.get("result")
+                                and not tool_info.get("delivered")):
+                            weather_result = tool_info["result"]
+                            yield {"type": "chunk", "content": weather_result}
+                            current_message_content += weather_result
 
-                    if (not is_error
-                            and tool_info.get("name") in weather_tool_names
-                            and tool_info.get("result")
-                            and not tool_info.get("delivered")):
-                        weather_result = tool_info["result"]
-                        yield {"type": "chunk", "content": weather_result}
-                        current_message_content += weather_result
+                            ai_message = AIMessage(content=weather_result)
+                            all_messages.append(ai_message)
+                            last_ai_message = ai_message
 
-                        ai_message = AIMessage(content=weather_result)
-                        all_messages.append(ai_message)
-                        last_ai_message = ai_message
+                            tool_info["delivered"] = True
+                            prefer_tool_result = True
 
-                        tool_info["delivered"] = True
-                        prefer_tool_result = True
+                await asyncio.sleep(0.01)
 
-            await asyncio.sleep(0.01)
+        usage_tracker.add_input_tokens(cb.prompt_tokens)
+        usage_tracker.add_output_tokens(cb.completion_tokens)
+        if cost_tracker:
+            cost_tracker.update_from_metadata(
+                {'usage_metadata': {
+                    'input_tokens': cb.prompt_tokens,
+                    'output_tokens': cb.completion_tokens,
+                }}
+            )
+            cost_tracker.finish_record()
 
         async for final_event in self._finalize_stream_response(
             all_messages, current_message_content, tool_calls_map,
@@ -703,6 +765,35 @@ class ChatService:
                 yield {'type': 'suggestions', 'data': suggestions}
         except Exception:
             pass
+
+    @staticmethod
+    def _sync_usage_from_messages(all_messages, usage_tracker, cost_tracker=None):
+        seen_ids = set()
+        for msg in reversed(all_messages):
+            if not isinstance(msg, AIMessage):
+                continue
+            msg_id = getattr(msg, 'id', None)
+            if msg_id and msg_id in seen_ids:
+                continue
+            if msg_id:
+                seen_ids.add(msg_id)
+            resp_meta = getattr(msg, 'response_metadata', {}) or {}
+            token_usage = resp_meta.get('token_usage', {})
+            if token_usage:
+                usage_tracker.add_input_tokens(token_usage.get('prompt_tokens', 0))
+                usage_tracker.add_output_tokens(token_usage.get('completion_tokens', 0))
+                if cost_tracker:
+                    cost_tracker.update_from_metadata(
+                        {'usage_metadata': {
+                            'input_tokens': token_usage.get('prompt_tokens', 0),
+                            'output_tokens': token_usage.get('completion_tokens', 0),
+                        }}
+                    )
+            usage_meta = resp_meta.get('usage_metadata', {})
+            if usage_meta:
+                usage_tracker.update_from_metadata({'usage_metadata': usage_meta})
+                if cost_tracker:
+                    cost_tracker.update_from_metadata({'usage_metadata': usage_meta})
 
 
 class ChatModeService:

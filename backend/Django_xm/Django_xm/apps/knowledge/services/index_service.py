@@ -515,3 +515,94 @@ class IndexManager:
         except Exception as e:
             logger.error(f"删除文档失败：{e}")
             raise
+
+    def remove_documents_by_filename(
+        self,
+        name: str,
+        embeddings: Embeddings,
+        filename: str,
+    ) -> int:
+        """
+        根据文件名从索引中删除所有相关文档
+
+        Args:
+            name: 索引名称
+            embeddings: Embedding 模型
+            filename: 要删除的文件名
+
+        Returns:
+            成功删除的文档数量
+        """
+        index_path = self._get_index_path(name)
+
+        if not index_path.exists():
+            raise FileNotFoundError(f"索引不存在：{name}")
+
+        logger.info(f"从索引 {name} 按文件名删除文档: {filename}")
+
+        try:
+            vector_store = self.load_index(name, embeddings)
+            
+            # 打印索引中的文档数量
+            if hasattr(vector_store, 'index_to_docstore_id'):
+                total_docs = len(vector_store.index_to_docstore_id)
+                logger.info(f"索引 {name} 中共有 {total_docs} 个文档块")
+
+            ids_to_delete = []
+            debug_matched = []
+
+            if hasattr(vector_store, 'docstore') and hasattr(vector_store, 'index_to_docstore_id'):
+                index_to_id = vector_store.index_to_docstore_id
+                for idx, doc_id in index_to_id.items():
+                    try:
+                        doc = vector_store.docstore.search(doc_id)
+                        if doc is not None:
+                            doc_source = ""
+                            doc_file_name = ""
+                            if isinstance(doc, Document):
+                                doc_source = doc.metadata.get('source', '')
+                                doc_file_name = doc.metadata.get('file_name', '')
+                                
+                                # 添加调试日志
+                                if idx < 5:  # 只打印前5个文档的信息
+                                    logger.debug(f"文档 {doc_id}: file_name={doc_file_name}, source={doc_source}")
+                            elif isinstance(doc, str):
+                                continue
+
+                            if (doc_file_name == filename
+                                    or doc_source.endswith(filename)
+                                    or (filename in doc_source)):
+                                ids_to_delete.append(doc_id)
+                                debug_matched.append((doc_id, doc_file_name, doc_source))
+                    except Exception as e:
+                        logger.warning(f"查找文档 {doc_id} 失败: {e}")
+                        continue
+
+            logger.info(f"找到 {len(ids_to_delete)} 个匹配的文档块: {debug_matched}")
+
+            if not ids_to_delete:
+                logger.warning(f"未在索引 {name} 中找到文件 {filename} 的文档")
+                return 0
+
+            if hasattr(vector_store, 'delete'):
+                logger.info(f"调用 vector_store.delete 删除 {len(ids_to_delete)} 个文档")
+                vector_store.delete(ids_to_delete)
+            else:
+                logger.warning("向量库不支持删除操作")
+                return 0
+
+            save_vector_store(vector_store, str(index_path), embeddings)
+
+            metadata = self._load_metadata(name)
+            if metadata:
+                old_count = metadata.get("num_documents", 0)
+                metadata["num_documents"] = max(0, old_count - len(ids_to_delete))
+                metadata["updated_at"] = datetime.now().isoformat()
+                self._save_metadata(name, metadata)
+
+            logger.info(f"成功从索引 {name} 删除文件 {filename} 的 {len(ids_to_delete)} 个文档块")
+            return len(ids_to_delete)
+
+        except Exception as e:
+            logger.error(f"按文件名删除文档失败：{e}")
+            raise

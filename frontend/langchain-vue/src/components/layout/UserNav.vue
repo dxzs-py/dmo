@@ -35,26 +35,25 @@
 <script setup>
 import { useUserStore } from '@/stores/user'
 import { useRouter } from 'vue-router'
-import { ElMessageBox, ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { ArrowDown, Setting, SwitchButton } from '@element-plus/icons-vue'
+import { confirmLogout } from '@/utils/dialog'
 
 const userStore = useUserStore()
 const router = useRouter()
 
-function handleCommand(command) {
+async function handleCommand(command) {
   if (command === 'settings') {
     router.push('/settings')
   } else if (command === 'logout') {
-    ElMessageBox.confirm('确定要退出登录吗？', '提示', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning',
-      appendToBody: true
-    }).then(() => {
+    try {
+      await confirmLogout()
       userStore.logout()
       ElMessage.success('已退出登录')
       router.push('/')
-    }).catch(() => {})
+    } catch {
+      // User cancelled
+    }
   }
 }
 </script>

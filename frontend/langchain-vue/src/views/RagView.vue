@@ -121,29 +121,36 @@
           <h4 class="upload-title">上传文档到索引</h4>
           <el-upload
             ref="uploadRef"
+            multiple
+            drag
             :auto-upload="false"
             :on-change="handleFileChange"
-            :show-file-list="true"
-            :limit="1"
-            accept=".txt,.md,.pdf,.doc,.docx"
+            :file-list="uploadFiles"
+            accept=".pdf,.txt,.md,.csv,.json,.docx"
           >
-            <el-button type="primary">选择文件</el-button>
+            <el-icon :size="48"><Upload /></el-icon>
+            <div>拖拽文件到此处或 <em>点击上传</em></div>
             <template #tip>
-              <div class="el-upload__tip">
-                支持上传 .txt, .md, .pdf, .doc, .docx 格式文件，选中后点击「上传并索引」
-              </div>
+              <div class="upload-tip">支持 PDF、TXT、Markdown、CSV、JSON、DOCX 格式，支持多选上传</div>
             </template>
           </el-upload>
+          <div v-if="uploadFiles.length > 0" class="upload-file-list">
+            <div v-for="(file, idx) in uploadFiles" :key="idx" class="upload-file-item">
+              <el-icon><Document /></el-icon>
+              <span>{{ file.name }}</span>
+              <span class="file-size">{{ formatFileSize(file.size) }}</span>
+            </div>
+          </div>
           <div class="upload-actions">
             <el-button 
               type="success" 
-              :disabled="!selectedFile || !selectedIndexName" 
+              :disabled="!uploadFiles.length || !selectedIndexName" 
               :loading="isUploading"
               @click="handleUpload"
             >
-              上传并索引
+              {{ isUploading ? '正在上传并索引...' : '上传并索引' }}
             </el-button>
-            <el-button @click="clearUpload">清除</el-button>
+            <el-button @click="clearUpload" :disabled="!uploadFiles.length">清除</el-button>
           </div>
         </div>
         
@@ -273,11 +280,13 @@
 <script setup>
 import { ref, reactive, onMounted, computed, onUnmounted } from 'vue'
 import { ragAPI } from '../api'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
+import { Upload, Document } from '@element-plus/icons-vue'
 import { formatDate, formatFileSize } from '../utils/format'
 import MarkdownRenderer from '../components/common/MarkdownRenderer.vue'
 import { logger } from '../utils/logger'
 import { readSSEStream } from '../utils/sse'
+import { confirmDelete, confirmAction } from '../utils/dialog'
 
 const isLoading = ref(false)
 const isLoadingIndexes = ref(false)
@@ -293,7 +302,7 @@ const availableIndexes = ref([])
 const files = ref([])
 const uploadRef = ref(null)
 const createFormRef = ref(null)
-const selectedFile = ref(null)
+const uploadFiles = ref([])
 const showCreateDialog = ref(false)
 const streamingAnswer = ref('')
 let abortController = null
@@ -375,15 +384,7 @@ const loadFiles = async () => {
 
 const handleDeleteFile = async (filename) => {
   try {
-    await ElMessageBox.confirm(
-      `确定要删除文件 "${filename}" 吗？`,
-      '提示',
-      {
-        confirmButtonText: '确定',
-        cancelButtonText: '取消',
-        type: 'warning',
-      }
-    )
+    await confirmDelete(`确定要删除文件 "${filename}" 吗？`)
     
     isDeletingFile.value = filename
     await ragAPI.deleteDocument(selectedIndexName.value, filename)
@@ -402,15 +403,7 @@ const handleDeleteFile = async (filename) => {
 
 const handleDeleteIndex = async () => {
   try {
-    await ElMessageBox.confirm(
-      `确定要删除索引 "${selectedIndexName.value}" 吗？此操作不可恢复！`,
-      '警告',
-      {
-        confirmButtonText: '确定删除',
-        cancelButtonText: '取消',
-        type: 'warning',
-      }
-    )
+    await confirmDelete(`确定要删除索引 "${selectedIndexName.value}" 吗？此操作不可恢复！`, { confirmButtonText: '确定删除' })
     
     isDeletingIndex.value = true
     await ragAPI.deleteIndex(selectedIndexName.value)
@@ -647,19 +640,19 @@ const clearResult = () => {
   streamingAnswer.value = ''
 }
 
-const handleFileChange = (file) => {
-  selectedFile.value = file.raw
+const handleFileChange = (file, fileList) => {
+  uploadFiles.value = fileList
 }
 
 const clearUpload = () => {
-  selectedFile.value = null
+  uploadFiles.value = []
   if (uploadRef.value) {
     uploadRef.value.clearFiles()
   }
 }
 
 const handleUpload = async () => {
-  if (!selectedFile.value) {
+  if (!uploadFiles.value.length) {
     ElMessage.warning('请先选择文件')
     return
   }
@@ -671,7 +664,9 @@ const handleUpload = async () => {
   isUploading.value = true
   try {
     const formData = new FormData()
-    formData.append('file', selectedFile.value)
+    uploadFiles.value.forEach(file => {
+      formData.append('files', file.raw)
+    })
     await ragAPI.uploadDocuments(selectedIndexName.value, formData)
     ElMessage.success('文件上传并索引成功！')
     clearUpload()
@@ -709,14 +704,9 @@ const handleCreateIndex = async () => {
   const isIndexExists = availableIndexes.value.some(index => index.name === createForm.name)
   if (isIndexExists) {
     try {
-      await ElMessageBox.confirm(
+      await confirmAction(
         `索引 "${createForm.name}" 已存在，是否覆盖？`,
-        '提示',
-        {
-          confirmButtonText: '覆盖',
-          cancelButtonText: '取消',
-          type: 'warning',
-        }
+        { confirmButtonText: '覆盖', type: 'warning' }
       )
     } catch {
       return
@@ -880,6 +870,41 @@ onUnmounted(() => {
   margin-top: 16px;
   display: flex;
   gap: 12px;
+}
+
+.upload-tip {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.upload-file-list {
+  margin-top: 16px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  padding: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.upload-file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--el-fill-color-lighter);
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+.upload-file-item:last-child {
+  margin-bottom: 0;
+}
+
+.file-size {
+  margin-left: auto;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 
 .files-section {
