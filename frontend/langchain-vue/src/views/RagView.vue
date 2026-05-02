@@ -11,37 +11,37 @@
         <el-form :model="queryForm" label-width="100px">
           <el-form-item label="选择索引">
             <div class="index-selector">
-            <el-select 
+              <el-select 
                 v-model="selectedIndexName" 
                 placeholder="请选择或创建索引"
                 :loading="isLoadingIndexes"
                 style="width: 100%"
                 clearable
                 @change="handleIndexChange"
-            >
+              >
                 <el-option
-                    v-for="index in availableIndexes"
-                    :key="index.name"
-                    :label="`${index.name} (${index.num_documents} 文档)`"
-                    :value="index.name"
+                  v-for="index in availableIndexes"
+                  :key="index.name"
+                  :label="`${index.name} (${index.num_documents} 文档)`"
+                  :value="index.name"
                 >
-                    <div class="index-option">
-                        <span class="index-name">{{ index.name }}</span>
-                        <el-tag v-if="index.description" type="info" size="small" style="margin-left: 10px">
-                            {{ index.description }}
-                        </el-tag>
-                        <el-tag 
-                            v-if="index.num_documents === 0" 
-                            type="warning" 
-                            size="small" 
-                            style="margin-left: auto"
-                        >
-                            空索引
-                        </el-tag>
-                        <span v-else class="index-count" style="margin-left: auto">{{ index.num_documents }} 文档</span>
-                    </div>
+                  <div class="index-option">
+                    <span class="index-name">{{ index.name }}</span>
+                    <el-tag v-if="index.description" type="info" size="small" style="margin-left: 10px">
+                      {{ index.description }}
+                    </el-tag>
+                    <el-tag 
+                      v-if="index.num_documents === 0" 
+                      type="warning" 
+                      size="small" 
+                      style="margin-left: auto"
+                    >
+                      空索引
+                    </el-tag>
+                    <span v-else class="index-count" style="margin-left: auto">{{ index.num_documents }} 文档</span>
+                  </div>
                 </el-option>
-            </el-select>
+              </el-select>
               
               <el-button 
                 type="primary" 
@@ -75,17 +75,43 @@
               :rows="3"
               placeholder="请输入您的查询..."
               clearable
+              @keydown.enter.ctrl="executeQuery"
             />
           </el-form-item>
           
           <el-form-item label="返回结果数">
             <el-input-number v-model="queryForm.k" :min="1" :max="10" />
           </el-form-item>
+
+          <el-form-item label="流式输出">
+            <el-switch v-model="queryForm.streaming" />
+            <span class="switch-hint">开启后实时逐字显示回答内容</span>
+          </el-form-item>
           
           <el-form-item>
-            <el-button type="primary" :loading="isLoading" @click="executeQuery" :disabled="!selectedIndexName">
-              查询
-            </el-button>
+            <div class="query-actions">
+              <el-button 
+                type="primary" 
+                :loading="isLoading && !isStreaming" 
+                @click="executeQuery" 
+                :disabled="!selectedIndexName || isStreaming"
+              >
+                {{ queryForm.streaming ? '流式查询' : '查询' }}
+              </el-button>
+              <el-button 
+                v-if="isStreaming" 
+                type="danger" 
+                @click="stopStreaming"
+              >
+                停止生成
+              </el-button>
+              <el-button 
+                @click="clearResult" 
+                :disabled="isLoading"
+              >
+                清除结果
+              </el-button>
+            </div>
           </el-form-item>
         </el-form>
         
@@ -136,7 +162,8 @@
             </el-button>
           </h4>
           <div v-if="files.length > 0" class="files-list">
-            <div v-for="file in files" :key="file.name" class="file-item">
+            <div v-for="file in files" :key="file.name" class="file-item"
+                 v-memo="[file.name, file.size, file.uploaded_at, isDeletingFile === file.name]">
               <div class="file-info">
                 <span class="file-name">{{ file.name }}</span>
                 <span class="file-meta">
@@ -170,23 +197,31 @@
         <template #header>
           <div class="card-header">
             <span>查询结果</span>
+            <el-tag v-if="isStreaming" type="warning" class="streaming-tag">
+              生成中...
+            </el-tag>
           </div>
         </template>
         
-        <div v-if="result.success">
+        <div v-if="result.success !== false">
           <h4>答案</h4>
-          <p class="answer">{{ result.answer }}</p>
+          <div class="answer-content">
+            <MarkdownRenderer :content="result.answer || streamingAnswer" />
+          </div>
           
-          <h4>参考来源</h4>
-          <el-collapse>
-            <el-collapse-item
-              v-for="(source, index) in result.sources"
-              :key="index"
-              :title="`来源 ${index + 1}`"
-            >
-              <p>{{ source.content }}</p>
-            </el-collapse-item>
-          </el-collapse>
+          <div v-if="result.sources && result.sources.length > 0">
+            <h4>参考来源</h4>
+            <el-collapse>
+              <el-collapse-item
+                v-for="(source, index) in result.sources"
+                :key="index"
+                :title="getSourceTitle(source, index)"
+                v-memo="[source.content || source, getSourceTitle(source, index)]"
+              >
+                <p class="source-content">{{ source.content || source }}</p>
+              </el-collapse-item>
+            </el-collapse>
+          </div>
         </div>
         
         <div v-else class="error">
@@ -236,11 +271,14 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue'
-import { ragAPI } from '../api/client'
+import { ref, reactive, onMounted, computed, onUnmounted } from 'vue'
+import { ragAPI } from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { formatDate, formatFileSize } from '../utils/format'
+import MarkdownRenderer from '../components/common/MarkdownRenderer.vue'
+import { logger } from '../utils/logger'
+import { readSSEStream } from '../utils/sse'
 
-// 状态变量
 const isLoading = ref(false)
 const isLoadingIndexes = ref(false)
 const isUploading = ref(false)
@@ -248,6 +286,7 @@ const isCreating = ref(false)
 const isDeletingIndex = ref(false)
 const isLoadingFiles = ref(false)
 const isDeletingFile = ref('')
+const isStreaming = ref(false)
 const result = ref(null)
 const errorMessage = ref('')
 const availableIndexes = ref([])
@@ -256,29 +295,27 @@ const uploadRef = ref(null)
 const createFormRef = ref(null)
 const selectedFile = ref(null)
 const showCreateDialog = ref(false)
+const streamingAnswer = ref('')
+let abortController = null
 
-// 当前选中的索引名称
 const selectedIndexName = ref('')
 
-// 计算当前选中的索引对象
 const selectedIndex = computed(() => {
-    return availableIndexes.value.find(index => index.name === selectedIndexName.value) || { num_documents: 0 }
+  return availableIndexes.value.find(index => index.name === selectedIndexName.value) || { num_documents: 0 }
 })
 
-// 查询表单
 const queryForm = reactive({
-    query: '',
-    k: 4,
-    use_rag_agent: true,
+  query: '',
+  k: 4,
+  use_rag_agent: true,
+  streaming: true,
 })
 
-// 创建索引表单
 const createForm = reactive({
   name: '',
   description: '',
 })
 
-// 创建索引表单验证规则
 const createRules = {
   name: [
     { required: true, message: '请输入索引名称', trigger: 'blur' },
@@ -294,7 +331,13 @@ const createRules = {
   ]
 }
 
-// 处理索引选择变化
+const getSourceTitle = (source, index) => {
+  if (source.metadata && source.metadata.source) {
+    return `来源 ${index + 1}: ${source.metadata.source}`
+  }
+  return `来源 ${index + 1}`
+}
+
 const handleIndexChange = (value) => {
   if (value) {
     queryForm.index_name = value
@@ -304,7 +347,6 @@ const handleIndexChange = (value) => {
   }
 }
 
-// 加载文件列表
 const loadFiles = async () => {
   if (!selectedIndexName.value) return
   
@@ -323,7 +365,7 @@ const loadFiles = async () => {
       files.value = []
     }
   } catch (error) {
-    console.error('获取文件列表失败:', error)
+    logger.error('获取文件列表失败:', error)
     ElMessage.error('获取文件列表失败')
     files.value = []
   } finally {
@@ -331,23 +373,6 @@ const loadFiles = async () => {
   }
 }
 
-// 格式化文件大小
-const formatFileSize = (bytes) => {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
-}
-
-// 格式化日期
-const formatDate = (dateStr) => {
-  if (!dateStr) return ''
-  const date = new Date(dateStr)
-  return date.toLocaleString('zh-CN')
-}
-
-// 处理删除文件
 const handleDeleteFile = async (filename) => {
   try {
     await ElMessageBox.confirm(
@@ -367,7 +392,7 @@ const handleDeleteFile = async (filename) => {
     await fetchIndexes()
   } catch (error) {
     if (error !== 'cancel') {
-      console.error('删除文件失败:', error)
+      logger.error('删除文件失败:', error)
       ElMessage.error('删除文件失败')
     }
   } finally {
@@ -375,7 +400,6 @@ const handleDeleteFile = async (filename) => {
   }
 }
 
-// 处理删除索引
 const handleDeleteIndex = async () => {
   try {
     await ElMessageBox.confirm(
@@ -396,7 +420,7 @@ const handleDeleteIndex = async () => {
     await fetchIndexes()
   } catch (error) {
     if (error !== 'cancel') {
-      console.error('删除索引失败:', error)
+      logger.error('删除索引失败:', error)
       ElMessage.error('删除索引失败')
     }
   } finally {
@@ -404,11 +428,10 @@ const handleDeleteIndex = async () => {
   }
 }
 
-// 获取索引列表
 const fetchIndexes = async () => {
   isLoadingIndexes.value = true
   try {
-    const response = await ragAPI.getIndexes()
+    const response = await ragAPI.getIndices()
     const data = response.data
     
     let indexes = []
@@ -428,45 +451,57 @@ const fetchIndexes = async () => {
       updated_at: index.updated_at
     })).filter(index => index.name)
     
-    // 如果有可用索引且当前没有选中，则选中第一个
     if (availableIndexes.value.length > 0 && !selectedIndexName.value) {
       selectedIndexName.value = availableIndexes.value[0].name
       queryForm.index_name = availableIndexes.value[0].name
     }
   } catch (error) {
-    console.error('获取索引列表失败:', error)
+    logger.error('获取索引列表失败:', error)
     ElMessage.error('获取索引列表失败')
   } finally {
     isLoadingIndexes.value = false
   }
 }
 
-// 执行查询
-const executeQuery = async () => {
-  // 验证表单
+const validateQuery = () => {
   if (!selectedIndexName.value) {
     ElMessage.warning('请选择一个索引')
-    return
+    return false
   }
   
   if (selectedIndex.value.num_documents === 0) {
     ElMessage.warning('此索引暂无文档，请先上传文档后再查询')
-    return
+    return false
   }
   
   if (!queryForm.query || queryForm.query.trim() === '') {
     ElMessage.warning('请输入查询内容')
-    return
+    return false
   }
   
   if (queryForm.k < 1 || queryForm.k > 10) {
     ElMessage.warning('返回结果数应在 1-10 之间')
-    return
+    return false
   }
   
+  return true
+}
+
+const executeQuery = async () => {
+  if (!validateQuery()) return
+
+  if (queryForm.streaming) {
+    await executeStreamQuery()
+  } else {
+    await executeNormalQuery()
+  }
+}
+
+const executeNormalQuery = async () => {
   isLoading.value = true
   result.value = null
   errorMessage.value = ''
+  streamingAnswer.value = ''
 
   try {
     const response = await ragAPI.query({
@@ -480,7 +515,7 @@ const executeQuery = async () => {
     result.value = response.data.data || response.data
     ElMessage.success('查询成功')
   } catch (error) {
-    console.error('查询失败:', error)
+    logger.error('查询失败:', error)
     let errorMsg = '查询失败，请稍后重试'
     
     if (error.response) {
@@ -505,12 +540,117 @@ const executeQuery = async () => {
   }
 }
 
-// 处理文件选择
+const executeStreamQuery = async () => {
+  isLoading.value = true
+  isStreaming.value = true
+  result.value = { answer: '', sources: [] }
+  errorMessage.value = ''
+  streamingAnswer.value = ''
+
+  abortController = new AbortController()
+
+  try {
+    const response = await ragAPI.streamQuery({
+      index_name: selectedIndexName.value,
+      query: queryForm.query,
+      k: queryForm.k,
+      use_rag_agent: queryForm.use_rag_agent,
+      return_sources: true
+    }, {
+      signal: abortController.signal,
+    })
+
+    if (!response.ok) {
+      let errorMsg = `HTTP ${response.status}`
+      try {
+        const errBody = await response.json()
+        errorMsg = errBody.message || errBody.error || errorMsg
+      } catch {}
+      throw new Error(errorMsg)
+    }
+
+    await readSSEStream(response, (parsed) => {
+      if (!isStreaming.value) return
+      handleStreamEvent(parsed)
+    }, abortController.signal)
+
+    ElMessage.success('查询完成')
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      ElMessage.info('已停止生成')
+    } else {
+      logger.error('流式查询失败:', error)
+      const errorMsg = error.message || '流式查询失败'
+      errorMessage.value = errorMsg
+      ElMessage.error(errorMsg)
+      if (!result.value || !streamingAnswer.value) {
+        result.value = { success: false, error: errorMsg }
+      }
+    }
+  } finally {
+    isLoading.value = false
+    isStreaming.value = false
+    abortController = null
+    if (result.value && streamingAnswer.value) {
+      result.value.answer = streamingAnswer.value
+    }
+  }
+}
+
+const handleStreamEvent = (data) => {
+  switch (data.type) {
+    case 'start':
+      break
+    case 'chunk':
+    case 'content':
+      if (data.content) {
+        streamingAnswer.value += data.content
+        if (result.value) {
+          result.value.answer = streamingAnswer.value
+        }
+      }
+      break
+    case 'end':
+    case 'done':
+      if (result.value) {
+        result.value.answer = streamingAnswer.value
+        result.value.success = true
+      }
+      break
+    case 'error':
+      errorMessage.value = data.message || data.error || '查询出错'
+      if (result.value) {
+        result.value.success = false
+        result.value.error = errorMessage.value
+      }
+      break
+    default:
+      if (data.content) {
+        streamingAnswer.value += data.content
+        if (result.value) {
+          result.value.answer = streamingAnswer.value
+        }
+      }
+  }
+}
+
+const stopStreaming = () => {
+  if (abortController) {
+    abortController.abort()
+  }
+  isStreaming.value = false
+}
+
+const clearResult = () => {
+  result.value = null
+  errorMessage.value = ''
+  streamingAnswer.value = ''
+}
+
 const handleFileChange = (file) => {
   selectedFile.value = file.raw
 }
 
-// 清除上传
 const clearUpload = () => {
   selectedFile.value = null
   if (uploadRef.value) {
@@ -518,7 +658,6 @@ const clearUpload = () => {
   }
 }
 
-// 上传文件
 const handleUpload = async () => {
   if (!selectedFile.value) {
     ElMessage.warning('请先选择文件')
@@ -531,14 +670,15 @@ const handleUpload = async () => {
 
   isUploading.value = true
   try {
-    await ragAPI.uploadDocument(selectedIndexName.value, selectedFile.value)
+    const formData = new FormData()
+    formData.append('file', selectedFile.value)
+    await ragAPI.uploadDocuments(selectedIndexName.value, formData)
     ElMessage.success('文件上传并索引成功！')
     clearUpload()
-    // 刷新索引列表和文件列表
     await fetchIndexes()
     await loadFiles()
   } catch (error) {
-    console.error('上传失败:', error)
+    logger.error('上传失败:', error)
     let errorMsg = '上传失败'
     
     if (error.response) {
@@ -557,7 +697,6 @@ const handleUpload = async () => {
   }
 }
 
-// 处理创建索引
 const handleCreateIndex = async () => {
   if (!createFormRef.value) return
   
@@ -567,7 +706,6 @@ const handleCreateIndex = async () => {
     return
   }
   
-  // 检查索引名称是否已存在
   const isIndexExists = availableIndexes.value.some(index => index.name === createForm.name)
   if (isIndexExists) {
     try {
@@ -581,14 +719,13 @@ const handleCreateIndex = async () => {
         }
       )
     } catch {
-      // 用户取消
       return
     }
   }
   
   isCreating.value = true
   try {
-    await ragAPI.createEmptyIndex({
+    await ragAPI.createIndex({
       name: createForm.name,
       description: createForm.description,
       overwrite: isIndexExists
@@ -597,18 +734,15 @@ const handleCreateIndex = async () => {
     ElMessage.success(`索引 "${createForm.name}" 创建成功！`)
     showCreateDialog.value = false
     
-    // 重置表单
     createForm.name = ''
     createForm.description = ''
     
-    // 刷新索引列表并选中新索引
     await fetchIndexes()
     selectedIndexName.value = createForm.name
     queryForm.index_name = createForm.name
-    // 加载文件列表
     await loadFiles()
   } catch (error) {
-    console.error('创建索引失败:', error)
+    logger.error('创建索引失败:', error)
     let errorMsg = '创建索引失败'
     
     if (error.response) {
@@ -627,12 +761,15 @@ const handleCreateIndex = async () => {
   }
 }
 
-// 初始化
 onMounted(async () => {
   await fetchIndexes()
   if (selectedIndexName.value) {
     await loadFiles()
   }
+})
+
+onUnmounted(() => {
+  stopStreaming()
 })
 </script>
 
@@ -681,6 +818,18 @@ onMounted(async () => {
   margin-top: 4px;
 }
 
+.switch-hint {
+  margin-left: 12px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.query-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
 .query-card {
   margin-bottom: 20px;
 }
@@ -689,12 +838,27 @@ onMounted(async () => {
   margin-top: 20px;
 }
 
-.answer {
+.streaming-tag {
+  animation: pulse-opacity 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-opacity {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.answer-content {
   background: var(--el-fill-color-lighter);
-  padding: 15px;
-  border-radius: 4px;
+  padding: 16px;
+  border-radius: 6px;
   line-height: 1.8;
+  min-height: 60px;
+}
+
+.source-content {
   white-space: pre-wrap;
+  line-height: 1.6;
+  color: var(--el-text-color-regular);
 }
 
 .error {
@@ -761,5 +925,19 @@ onMounted(async () => {
 .file-meta {
   font-size: 12px;
   color: var(--el-text-color-secondary);
+}
+
+@media (max-width: 768px) {
+  .rag-view {
+    padding: 12px;
+  }
+
+  .index-selector {
+    flex-wrap: wrap;
+  }
+
+  .query-actions {
+    flex-wrap: wrap;
+  }
 }
 </style>

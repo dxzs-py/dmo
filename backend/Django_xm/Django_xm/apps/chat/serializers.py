@@ -54,7 +54,7 @@ class ChatRequestSerializer(serializers.Serializer):
     )
     chat_history = MessageSerializer(many=True, required=False, allow_null=True)
     mode = serializers.CharField(
-        default='default',
+        default='basic-agent',
         max_length=50,
         help_text='对话模式标识'
     )
@@ -63,6 +63,10 @@ class ChatRequestSerializer(serializers.Serializer):
     use_web_search = serializers.BooleanField(default=False, help_text='是否启用联网搜索')
     streaming = serializers.BooleanField(default=False, help_text='是否流式输出')
     session_id = serializers.CharField(required=False, allow_null=True, max_length=100)
+    selected_knowledge_base = serializers.CharField(
+        required=False, allow_null=True, max_length=200,
+        help_text='选中的知识库ID'
+    )
     attachment_ids = serializers.ListField(
         child=serializers.IntegerField(),
         required=False,
@@ -80,11 +84,10 @@ class ChatRequestSerializer(serializers.Serializer):
         return value
 
     def validate_mode(self, value):
-        """验证模式标识"""
         allowed_modes = [
-            'default', 'basic-agent', 'advanced-agent',
-            'research-agent', 'rag-agent', 'deep-thinking',
-            'deep-research', 'workflow', 'guarded',
+            'basic-agent', 'advanced-agent', 'research-agent',
+            'rag-agent', 'deep-thinking', 'deep-research',
+            'workflow', 'guarded',
         ]
         if value not in allowed_modes:
             raise serializers.ValidationError(f'不支持的模式: {value}')
@@ -177,7 +180,8 @@ class ChatMessageSerializer(serializers.ModelSerializer):
 
     def validate_role(self, value):
         """验证角色字段"""
-        valid_roles = [choice[0] for choice in ChatMessage.ROLE_CHOICES]
+        from Django_xm.apps.chat.models import MessageRole
+        valid_roles = [choice[0] for choice in MessageRole.choices]
         if value not in valid_roles:
             raise serializers.ValidationError(f'无效的角色: {value}')
         return value
@@ -200,7 +204,7 @@ class ChatSessionListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ChatSession
-        fields = ['id', 'session_id', 'title', 'mode', 'message_count',
+        fields = ['id', 'session_id', 'title', 'mode', 'selected_knowledge_base', 'message_count',
                   'created_at', 'updated_at']
         read_only_fields = ['session_id', 'created_at', 'updated_at']
 
@@ -225,7 +229,7 @@ class ChatSessionDetailSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ChatSession
-        fields = ['id', 'session_id', 'title', 'mode', 'messages',
+        fields = ['id', 'session_id', 'title', 'mode', 'selected_knowledge_base', 'messages',
                   'message_count', 'created_at', 'updated_at']
         read_only_fields = ['session_id', 'created_at', 'updated_at']
 
@@ -244,7 +248,7 @@ class ChatSessionCreateSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = ChatSession
-        fields = ['title', 'mode']
+        fields = ['title', 'mode', 'selected_knowledge_base']
 
     def validate_title(self, value):
         if not value:
@@ -274,11 +278,11 @@ class ChatSessionUpdateSerializer(serializers.ModelSerializer):
     
     用途：更新会话标题等字段
     绑定模型：ChatSession
-    仅允许修改 title 字段
+    允许修改 title 和 selected_knowledge_base 字段
     """
     class Meta:
         model = ChatSession
-        fields = ['title']
+        fields = ['title', 'selected_knowledge_base']
 
     def validate_title(self, value):
         if value is not None:

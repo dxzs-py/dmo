@@ -1,89 +1,42 @@
 """
-core模块
+Core模块 - Django基础设施
 
-提供 LangChain 核心功能：
-- 配置管理 (config)
-- 模型封装 (llm_models)
-- 提示词模板 (prompts)
-- 工具函数 (tools)
-- 输入输出验证 (guardrails)
+职责：
+- Django基础模型类（BaseModel, AuditModel）
+- 权限模型（UserPermissionPolicy）
+- 中间件
+- 视图和异常处理
+- 节流和权限控制
+
+注意：LangChain/LLM相关功能已移至 Django_xm.apps.llm
 """
 
-from .config import settings, get_logger, Settings
-from .llm_models import get_chat_model, get_streaming_model, get_structured_output_model, get_model_by_preset, get_model_string
-from .prompts import SYSTEM_PROMPTS, WRITER_GUIDELINES, get_system_prompt, create_custom_prompt, get_prompt_with_tools
-from .tools import (
-    get_current_time, get_current_date, calculator,
-    web_search, create_tavily_search_tool, web_search_simple,
-    weather_query, get_daily_weather,
-    BASIC_TOOLS, ADVANCED_TOOLS, ALL_TOOLS,
-    get_tools_for_request,
-)
-from .guardrails import (
-    ContentFilter,
-    ContentSafetyLevel,
-    FilterResult,
-    InputValidator,
-    InputValidationResult,
-    OutputValidator,
-    OutputValidationResult,
-    RAGResponse,
-    StudyPlan,
-    StudyPlanStep,
-    DifficultyLevel,
-    ResearchReport,
-    ResearchSection,
-    Quiz,
-    QuizQuestion,
-    QuizAnswer,
-    QuestionType,
-    GuardrailsMiddleware,
-    create_guardrails_runnable,
-)
-
 __all__ = [
-    "settings",
-    "get_logger",
-    "Settings",
-    "get_chat_model",
-    "get_streaming_model",
-    "get_structured_output_model",
-    "get_model_by_preset",
-    "get_model_string",
-    "SYSTEM_PROMPTS",
-    "WRITER_GUIDELINES",
-    "get_system_prompt",
-    "create_custom_prompt",
-    "get_prompt_with_tools",
-    "get_current_time",
-    "get_current_date",
-    "calculator",
-    "web_search",
-    "web_search_simple",
-    "create_tavily_search_tool",
-    "weather_query",
-    "get_daily_weather",
-    "BASIC_TOOLS",
-    "ADVANCED_TOOLS",
-    "ALL_TOOLS",
-    "get_tools_for_request",
-    "ContentFilter",
-    "ContentSafetyLevel",
-    "FilterResult",
-    "InputValidator",
-    "InputValidationResult",
-    "OutputValidator",
-    "OutputValidationResult",
-    "RAGResponse",
-    "StudyPlan",
-    "StudyPlanStep",
-    "DifficultyLevel",
-    "ResearchReport",
-    "ResearchSection",
-    "Quiz",
-    "QuizQuestion",
-    "QuizAnswer",
-    "QuestionType",
-    "GuardrailsMiddleware",
-    "create_guardrails_runnable",
+    "BaseModel",
+    "AuditModel",
+    "UserPermissionPolicy",
+    "health_check",
+    "request_monitor",
+    "custom_exception_handler",
 ]
+
+
+def __getattr__(name):
+    if name in ("BaseModel", "AuditModel"):
+        from .base_models import BaseModel, AuditModel
+        if name == "BaseModel":
+            return BaseModel
+        return AuditModel
+    if name == "UserPermissionPolicy":
+        from .permission_models import UserPermissionPolicy
+        return UserPermissionPolicy
+    if name in ("health_check", "request_monitor", "custom_exception_handler"):
+        from .views import health_check, request_monitor, custom_exception_handler
+        if name == "health_check":
+            return health_check
+        if name == "request_monitor":
+            return request_monitor
+        return custom_exception_handler
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+

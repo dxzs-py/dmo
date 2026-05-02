@@ -1,4 +1,5 @@
 import { ElMessage, ElNotification } from 'element-plus'
+import { logger } from './logger'
 
 const ERROR_MESSAGES = {
   400: '请求参数有误，请检查输入内容',
@@ -14,10 +15,32 @@ const ERROR_MESSAGES = {
   503: '服务暂时不可用，请稍后重试',
 }
 
-function extractErrorMessage(error) {
+const BIZ_ERROR_CODES = {
+  40001: '请求参数有误，请检查输入',
+  40002: '数据验证失败，请检查输入',
+  40003: '无效的请求参数',
+  40004: '请求参数缺失',
+  40005: '请求体格式错误',
+  40101: '认证失败，请重新登录',
+  40102: 'Token已过期，请重新登录',
+  40103: '无效的Token，请重新登录',
+  40104: '未提供认证信息',
+  40105: '认证方式不被支持',
+  40301: '权限不足，无法执行此操作',
+  40302: '资源访问被拒绝',
+  40401: '请求的资源不存在',
+  40402: '接口端点不存在',
+  42901: '请求过于频繁，请稍后再试',
+  50001: '服务器内部错误，请稍后重试',
+  50002: '服务器繁忙，请稍后重试',
+  50003: '服务暂时不可用',
+}
+
+export function extractErrorMessage(error) {
   if (error.response?.data) {
     const data = error.response.data
 
+    if (data.code && BIZ_ERROR_CODES[data.code]) return BIZ_ERROR_CODES[data.code]
     if (data.message) return data.message
     if (data.error) return data.error
     if (data.detail) return data.detail
@@ -44,12 +67,48 @@ function extractErrorMessage(error) {
   return ERROR_MESSAGES[error.status] || '未知错误，请稍后重试'
 }
 
-export function handleApiError(error, options = {}) {
+export async function extractSSEError(response) {
+  let errorMsg = `HTTP ${response.status}`
+  try {
+    const errBody = await response.json()
+    if (errBody.message) {
+      errorMsg = errBody.message
+    } else if (errBody.error) {
+      errorMsg = errBody.error
+    }
+    if (errBody.errors && typeof errBody.errors === 'object') {
+      const validationDetails = Object.entries(errBody.errors)
+        .map(([field, messages]) => `${field}: ${Array.isArray(messages) ? messages.join(', ') : messages}`)
+        .join('; ')
+      if (validationDetails) {
+        errorMsg += ` (${validationDetails})`
+      }
+    }
+    if (errBody.details && Array.isArray(errBody.details)) {
+      const detailsStr = errBody.details.map(d => d.message || d.msg || JSON.stringify(d)).join(', ')
+      if (detailsStr) {
+        errorMsg += ` [${detailsStr}]`
+      }
+    }
+  } catch {
+    try {
+      const text = await response.text()
+      const sseMatch = text.match(/data:\s*(.*)/)
+      if (sseMatch) {
+        const parsed = JSON.parse(sseMatch[1])
+        errorMsg = parsed.message || parsed.error || errorMsg
+      }
+    } catch {}
+  }
+  return new Error(errorMsg)
+}
+
+export async function handleApiError(error, options = {}) {
   const { showToast = true, showNotification = false, customMessage = null } = options
   const status = error.response?.status || error.status || 0
   const message = customMessage || extractErrorMessage(error)
 
-  console.error('[API Error]', {
+  logger.error('[API Error]', {
     status,
     url: error.config?.url || error.request?.responseURL || 'unknown',
     message,
@@ -58,12 +117,17 @@ export function handleApiError(error, options = {}) {
   })
 
   if (status === 401) {
-    const userStore = window.__pinia?._s?.get('user')
-    if (userStore?.logout) {
-      userStore.logout()
-      setTimeout(() => {
-        window.location.href = '/login'
-      }, 100)
+    try {
+      const { useUserStore } = await import('../stores/user.js')
+      const userStore = useUserStore()
+      if (userStore?.logout) {
+        userStore.logout()
+        setTimeout(() => {
+          window.location.href = '/login'
+        }, 100)
+      }
+    } catch {
+      window.location.href = '/login'
     }
   }
 
@@ -211,10 +275,10 @@ export function createRetryHandler(maxRetries = 3, delay = 1000) {
       if (
         retryCount < maxRetries &&
         [500, 502, 503, 504].includes(status) &&
-        !navigator.onLine === false
+        navigator.onLine
       ) {
         retryCount++
-        console.warn(`[Retry] Attempt ${retryCount}/${maxRetries} for ${error.config?.url}`)
+        logger.warn(`[Retry] Attempt ${retryCount}/${maxRetries} for ${error.config?.url}`)
         await new Promise(resolve => setTimeout(resolve, delay * retryCount))
         return retryWrapper(fn, ...args)
       }
@@ -233,4 +297,5 @@ export default {
   validateBeforeRequest,
   createRetryHandler,
   ERROR_MESSAGES,
+  BIZ_ERROR_CODES,
 }

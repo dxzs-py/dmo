@@ -6,6 +6,16 @@
         <p class="subtitle">智能学习 & 研究助手</p>
       </div>
 
+      <el-alert
+        v-if="isExpired"
+        type="warning"
+        title="登录已过期"
+        description="您的登录凭证已过期，请重新登录以继续使用"
+        show-icon
+        closable
+        class="expired-alert"
+      />
+
       <div class="login-tabs">
         <div
           class="tab"
@@ -136,7 +146,8 @@ import { ref, reactive, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { ElMessage } from 'element-plus'
-import settings from '@/settings'
+import settings from '@/config/settings'
+import { logger } from '../utils/logger'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -147,6 +158,7 @@ const loading = ref(false)
 const countdown = ref(0)
 const captchaSrc = ref('')
 const captchaKey = ref('')
+const isExpired = ref(false)
 
 const validateUsername = (rule, value, callback) => {
   if (!value) {
@@ -229,6 +241,10 @@ const rules = computed(() => {
 
 onMounted(() => {
   refreshCaptcha()
+  const query = router.currentRoute.value.query
+  if (query.expired === '1') {
+    isExpired.value = true
+  }
 })
 
 async function refreshCaptcha() {
@@ -244,7 +260,7 @@ async function refreshCaptcha() {
       captchaSrc.value = URL.createObjectURL(blob)
     }
   } catch (error) {
-    console.error('获取验证码失败:', error)
+    logger.error('获取验证码失败:', error)
   }
 }
 
@@ -276,7 +292,8 @@ async function handleLogin() {
 
     if (result.success) {
       ElMessage.success(result.message)
-      router.push('/')
+      const redirect = router.currentRoute.value.query.redirect || '/'
+      router.push(redirect)
     } else {
       ElMessage.error(result.message)
       if (loginType.value === 0) {
@@ -329,6 +346,10 @@ function getCode() {
 .login-header {
   text-align: center;
   margin-bottom: 30px;
+}
+
+.expired-alert {
+  margin-bottom: 20px;
 }
 
 .title {

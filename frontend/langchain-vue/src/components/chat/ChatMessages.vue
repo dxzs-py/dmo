@@ -3,9 +3,9 @@ import { ref, watch, nextTick, computed, onMounted, onUnmounted } from 'vue'
 import { ChatDotRound } from '@element-plus/icons-vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import ChatMessage from './ChatMessage.vue'
-import MessageVersionSelector from './MessageVersionSelector.vue'
 import { AiSuggestion, AiSuggestions, AiShimmer } from '../ai-elements'
-import { validateMessage } from '../../types/props'
+import AiLoader from '../ai-elements/AiLoader.vue'
+import { validateMessage } from '../../types'
 
 const props = defineProps({
   messages: {
@@ -55,7 +55,16 @@ const shouldUseVirtualScroll = computed(() => {
   return props.messages.length > props.virtualScrollThreshold
 })
 
-const ITEM_SIZE = 200
+const estimateItemSize = (msgIndex) => {
+  const msg = props.messages[msgIndex]
+  if (!msg) return 200
+  const contentLen = (msg.content || '').length
+  if (contentLen < 50) return 120
+  if (contentLen < 200) return 180
+  if (contentLen < 500) return 280
+  if (contentLen < 1000) return 400
+  return 500
+}
 
 const scrollToBottom = (behavior = 'smooth') => {
   nextTick(() => {
@@ -101,9 +110,9 @@ onUnmounted(() => {
   }
 })
 
-watch(() => props.messages, () => {
+watch(() => props.messages?.length, () => {
   scrollToBottom()
-}, { deep: true })
+})
 
 watch(() => props.isStreaming, (newVal) => {
   if (newVal) scrollToBottom()
@@ -185,9 +194,10 @@ const handleSuggestionClick = (suggestion) => {
           ref="virtualScrollerRef"
           class="virtual-scroller"
           :items="messages"
-          :item-size="ITEM_SIZE"
+          :item-size="200"
+          size-field="estimatedSize"
           key-field="id"
-          :buffer="200"
+          :buffer="400"
           @scroll="handleScroll"
         >
           <template #default="{ item: msg, index: msgIndex }">
@@ -201,12 +211,8 @@ const handleSuggestionClick = (suggestion) => {
                 :is-selected="selectedMessageId && msg.id === selectedMessageId"
                 @regenerate="(idx) => emit('regenerate', idx)"
                 @click="(message) => emit('messageClick', message)"
-              />
-              <MessageVersionSelector 
-                :message="msg" 
-                :message-index="msgIndex" 
-              />
-            </div>
+            />
+          </div>
           </template>
         </RecycleScroller>
 
@@ -227,10 +233,6 @@ const handleSuggestionClick = (suggestion) => {
               @regenerate="(idx) => emit('regenerate', idx)"
               @click="(message) => emit('messageClick', message)"
             />
-            <MessageVersionSelector 
-              :message="msg" 
-              :message-index="msgIndex" 
-            />
           </div>
         </TransitionGroup>
         
@@ -241,9 +243,19 @@ const handleSuggestionClick = (suggestion) => {
           <div class="message-content">
             <div class="message-role">AI助手</div>
             <div class="message-text">
+              <AiLoader type="dots" size="small" text="AI 正在思考..." />
               <AiShimmer class="loading-shimmer" />
             </div>
           </div>
+        </div>
+
+        <div v-if="isStreaming && !showLoadingIndicator" class="ai-typing-indicator">
+          <div class="typing-dots">
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+          </div>
+          <span class="typing-text">AI正在输入...</span>
         </div>
 
         <div v-if="dynamicSuggestions.length > 0 && !isStreaming" class="dynamic-suggestions">
@@ -484,6 +496,42 @@ const handleSuggestionClick = (suggestion) => {
   width: 120px;
   height: 20px;
   border-radius: 4px;
+}
+
+.ai-typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  max-width: 768px;
+  margin: 0 auto;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.typing-dots {
+  display: flex;
+  gap: 4px;
+}
+
+.typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--el-color-primary);
+  animation: typing-bounce 1.4s infinite ease-in-out both;
+}
+
+.typing-dot:nth-child(1) { animation-delay: -0.32s; }
+.typing-dot:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes typing-bounce {
+  0%, 80%, 100% { transform: scale(0); }
+  40% { transform: scale(1); }
+}
+
+.typing-text {
+  color: var(--el-text-color-placeholder);
 }
 
 .dynamic-suggestions {

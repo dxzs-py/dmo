@@ -3,27 +3,37 @@
 提供软删除、审计字段等通用功能
 所有业务模型应继承此类
 """
+import threading
 from django.db import models
 from django.conf import settings
 
+_thread_locals = threading.local()
+
+
+def set_current_request(request):
+    _thread_locals.request = request
+
+
+def get_current_request():
+    return getattr(_thread_locals, 'request', None)
+
+
+def clear_current_request():
+    if hasattr(_thread_locals, 'request'):
+        del _thread_locals.request
+
 
 class SoftDeleteManager(models.Manager):
-    """默认管理器，自动过滤已软删除的记录"""
-
     def get_queryset(self):
         return super().get_queryset().filter(is_deleted=False)
 
 
 class AllObjectsManager(models.Manager):
-    """包含已软删除记录的管理器"""
-
     def get_queryset(self):
         return super().get_queryset()
 
 
 class BaseModel(models.Model):
-    """基础抽象模型 - 包含时间戳和软删除"""
-
     created_at = models.DateTimeField(
         auto_now_add=True,
         db_index=True,
@@ -50,7 +60,7 @@ class BaseModel(models.Model):
     class Meta:
         abstract = True
 
-    def soft_delete(self, using=None, keep_parents=False):
+    def soft_delete(self, using=None):
         self.is_deleted = True
         from django.utils import timezone
         self.deleted_at = timezone.now()
@@ -63,8 +73,6 @@ class BaseModel(models.Model):
 
 
 class AuditModel(BaseModel):
-    """审计模型 - 在BaseModel基础上增加创建/更新人追踪"""
-
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -86,9 +94,11 @@ class AuditModel(BaseModel):
         abstract = True
 
     def save(self, *args, **kwargs):
-        from django.contrib.auth import get_user_model
         request = kwargs.pop('request', None)
-        if request and request.user and request.user.is_authenticated:
+        if request is None:
+            request = get_current_request()
+
+        if request and hasattr(request, 'user') and request.user and request.user.is_authenticated:
             if not self.pk:
                 self.created_by = request.user
             self.updated_by = request.user

@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from .suggestion_views import SuggestionsView
 
 app_name = 'chat'
 
@@ -14,6 +15,7 @@ urlpatterns = [
     path('sessions/<str:session_id>/messages/batch/', views.ChatMessageBatchCreateView.as_view(), name='chat-messages-batch-create'),
     path('sessions/<str:session_id>/attachments/', views.ChatAttachmentUploadView.as_view(), name='chat-attachments-upload'),
     path('sessions/<str:session_id>/attachments/list/', views.ChatAttachmentListView.as_view(), name='chat-attachments-list'),
+    path('attachments/<int:attachment_id>/', views.ChatAttachmentDeleteView.as_view(), name='chat-attachments-delete'),
     path('sessions/<str:session_id>/compact/', views.ChatSessionCompactView.as_view(), name='chat-sessions-compact'),
     path('messages/<int:message_id>/', views.ChatMessageUpdateView.as_view(), name='chat-messages-update'),
     path('commands/', views.ChatCommandsView.as_view(), name='chat-commands'),
@@ -21,4 +23,6 @@ urlpatterns = [
     path('permissions/', views.ChatPermissionsView.as_view(), name='chat-permissions'),
     path('cost/', views.ChatCostView.as_view(), name='chat-cost'),
     path('project-context/', views.ProjectContextView.as_view(), name='chat-project-context'),
+    path('dashboard/', views.ChatDashboardView.as_view(), name='chat-dashboard'),
+    path('suggestions/', SuggestionsView.as_view(), name='chat-suggestions'),
 ]

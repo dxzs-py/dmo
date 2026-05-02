@@ -1,7 +1,7 @@
 <template>
-  <el-button 
-    size="small" 
-    :disabled="totalBranches <= 1" 
+  <el-button
+    size="small"
+    :disabled="totalBranchesValue <= 1"
     :class="className"
     v-bind="$attrs"
     @click="goToNext"
@@ -11,7 +11,7 @@
 </template>
 
 <script setup>
-import { inject } from 'vue'
+import { inject, computed } from 'vue'
 import { ArrowRight } from '@element-plus/icons-vue'
 
 defineProps({
@@ -27,9 +27,10 @@ if (!branchContext) {
   throw new Error('MessageBranchNext must be used within MessageBranch')
 }
 
-const { goToNext, totalBranches } = branchContext
-</script>
+const { goToNext } = branchContext
 
-<style scoped>
-/* 可根据需要添加样式 */
-</style>
+const totalBranchesValue = computed(() => {
+  const val = branchContext.totalBranches
+  return typeof val === 'object' && val !== null && 'value' in val ? val.value : (val ?? 0)
+})
+</script>

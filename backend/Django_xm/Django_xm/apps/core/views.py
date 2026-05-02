@@ -19,7 +19,7 @@ from rest_framework.exceptions import (
 from rest_framework import status as http_status
 from rest_framework.response import Response
 
-from Django_xm.utils.error_codes import ErrorCode
+from Django_xm.apps.common.error_codes import ErrorCode
 
 logger = logging.getLogger(__name__)
 

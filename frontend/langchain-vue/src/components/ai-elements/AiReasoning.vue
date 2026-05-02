@@ -20,7 +20,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { ChatDotRound, ArrowDown } from '@element-plus/icons-vue'
-import MarkdownRenderer from '../MarkdownRenderer.vue'
+import MarkdownRenderer from '../common/MarkdownRenderer.vue'
 
 const props = defineProps({
   content: {

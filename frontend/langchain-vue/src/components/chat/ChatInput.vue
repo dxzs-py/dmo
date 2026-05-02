@@ -1,7 +1,7 @@
 <script setup>
 import { ref, watch, nextTick, computed } from 'vue'
 import { Promotion, Search, Microphone, Document, Close, VideoPause } from '@element-plus/icons-vue'
-import SlashCommandPanel from '@/components/SlashCommandPanel.vue'
+import SlashCommandPanel from '@/components/common/SlashCommandPanel.vue'
 
 const props = defineProps({
   modelValue: {
@@ -73,6 +73,7 @@ const computedPlaceholder = computed(() => {
 
 const hasAttachments = computed(() => props.attachments.length > 0)
 const canSend = computed(() => (props.modelValue.trim() || hasAttachments.value) && !props.disabled)
+const charCount = computed(() => props.modelValue?.length || 0)
 
 const isSlashCommand = computed(() => {
   return props.modelValue.startsWith('/') && !props.modelValue.includes('\n')
@@ -263,6 +264,7 @@ watch(() => props.modelValue, adjustTextareaHeight)
           ></textarea>
 
           <div class="input-actions">
+            <span v-if="charCount > 0" class="char-count">{{ charCount }} / {{ maxLength }}</span>
             <Transition name="fade" mode="out-in">
               <button
                 v-if="isStreaming"
@@ -490,7 +492,14 @@ watch(() => props.modelValue, adjustTextareaHeight)
 .input-actions {
   display: flex;
   align-items: center;
+  gap: 8px;
   flex-shrink: 0;
+}
+
+.char-count {
+  font-size: 12px;
+  color: var(--el-text-color-placeholder);
+  white-space: nowrap;
 }
 
 .send-btn {

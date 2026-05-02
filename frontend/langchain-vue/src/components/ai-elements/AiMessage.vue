@@ -1,11 +1,11 @@
 <script setup>
 import { computed } from 'vue'
 import { User, ChatDotRound } from '@element-plus/icons-vue'
-import MarkdownRenderer from '../MarkdownRenderer.vue'
-import ToolCallCard from '../ToolCallCard.vue'
-import ChainOfThought from '../ChainOfThought.vue'
-import Plan from '../Plan.vue'
-import Sources from '../Sources.vue'
+import MarkdownRenderer from '../common/MarkdownRenderer.vue'
+import ToolCallCard from '../chat/ToolCallCard.vue'
+import ChainOfThought from '../chat/ChainOfThought.vue'
+import Plan from '../chat/Plan.vue'
+import Sources from '../chat/Sources.vue'
 
 const props = defineProps({
   message: {

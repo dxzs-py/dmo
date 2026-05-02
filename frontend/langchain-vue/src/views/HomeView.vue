@@ -1,8 +1,8 @@
 <script setup>
 import { useRouter } from 'vue-router'
 import { onMounted } from 'vue'
-import { ChatDotRound, Document, Management, Reading, ArrowRight, Setting } from '@element-plus/icons-vue'
-import settings from '../settings'
+import { ChatDotRound, Document, Management, Reading, ArrowRight, Setting, FolderOpened, DataAnalysis } from '@element-plus/icons-vue'
+import settings from '../config/settings'
 
 const router = useRouter()
 
@@ -24,6 +24,14 @@ const features = [
     gradient: 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)'
   },
   {
+    title: '知识库管理',
+    description: '创建和管理知识库，上传文档并构建向量索引',
+    icon: FolderOpened,
+    path: '/knowledge',
+    color: '#9b59b6',
+    gradient: 'linear-gradient(135deg, #a18cd1 0%, #fbc2eb 100%)'
+  },
+  {
     title: '学习工作流',
     description: '自动化的学习流程，帮助您系统地掌握新知识',
     icon: Management,
@@ -38,6 +46,14 @@ const features = [
     path: '/deep-research',
     color: '#f56c6c',
     gradient: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)'
+  },
+  {
+    title: '数据分析',
+    description: '查看使用统计、Token消耗和成本分析',
+    icon: DataAnalysis,
+    path: '/dashboard',
+    color: '#3498db',
+    gradient: 'linear-gradient(135deg, #89f7fe 0%, #66a6ff 100%)'
   }
 ]
 
@@ -94,7 +110,7 @@ onMounted(() => {
         <h2 class="section-title">核心功能</h2>
         <p class="section-subtitle">探索我们为您精心打造的智能工具</p>
       </div>
-      <div class="features-grid">
+      <div class="features-grid" v-once>
         <div
           v-for="feature in features"
           :key="feature.path"
@@ -118,7 +134,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <div class="tech-section">
+    <div class="tech-section" v-once>
       <div class="section-header">
         <h2 class="section-title">技术栈</h2>
         <p class="section-subtitle">构建在最先进的技术之上</p>

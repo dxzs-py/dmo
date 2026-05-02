@@ -5,21 +5,27 @@
 import json
 import asyncio
 import time
+import uuid
 import logging
 from typing import Optional, Dict, Any, List, AsyncGenerator
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
-from Django_xm.apps.agents import create_base_agent
-from Django_xm.apps.deep_research import create_deep_research_agent, should_use_deep_research
-from Django_xm.apps.core.models import get_chat_model
-from Django_xm.apps.core.prompts import SYSTEM_PROMPTS
-from Django_xm.apps.core.tools import get_tools_for_request, WEATHER_TOOLS
-from Django_xm.apps.core.usage_tracker import create_usage_tracker
-from Django_xm.apps.core.cost_tracker import create_cost_tracker, CostTracker
+from Django_xm.apps.ai_engine.services.agent_factory import create_base_agent
+from Django_xm.apps.research.services.deep_agent import create_deep_research_agent
+from Django_xm.apps.research.services.deep_agent import should_use_deep_research
+from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
+from Django_xm.apps.ai_engine.prompts.system_prompts import SYSTEM_PROMPTS
+from Django_xm.apps.tools import get_tools_for_request, WEATHER_TOOLS
+from Django_xm.apps.ai_engine.services.usage_tracker import create_usage_tracker
+from Django_xm.apps.ai_engine.services.cost_tracker import create_cost_tracker, CostTracker
 from Django_xm.apps.core.permissions import PermissionService
 from Django_xm.apps.chat.services.session_compactor import apply_compaction_to_chat_history
 from Django_xm.apps.chat.services.slash_commands import parse_command, execute_command
+from Django_xm.apps.knowledge.services.rag_agent import create_rag_agent, query_rag_agent
+from Django_xm.apps.knowledge.services.index_service import IndexManager
+from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
+from Django_xm.apps.knowledge.services.retrieval_service import create_retriever
 from ..utils import _needs_completion, _lcp_len, convert_chat_history, extract_suggestions
 
 logger = logging.getLogger(__name__)
@@ -28,23 +34,21 @@ logger = logging.getLogger(__name__)
 class AttachmentService:
     """附件内容加载服务"""
 
-    @staticmethod
-    def load_attachment_contents(attachment_ids: List[int]) -> Optional[str]:
+    def load_attachment_contents(self, attachment_ids: List[int]) -> Optional[str]:
         if not attachment_ids:
             return None
 
         try:
-            from Django_xm.apps.core.tools.file_reader_tool import read_multiple_attachments
+            from Django_xm.apps.tools.file.reader import read_multiple_attachments
             content = read_multiple_attachments(attachment_ids)
             if content:
-                logger.info(f"📎 成功加载 {len(attachment_ids)} 个附件内容，共 {len(content)} 字符")
+                logger.info(f"成功加载 {len(attachment_ids)} 个附件内容，共 {len(content)} 字符")
             return content if content.strip() else None
         except Exception as e:
-            logger.error(f"📎 加载附件内容失败: {e}")
+            logger.error(f"加载附件内容失败: {e}")
             return None
 
-    @staticmethod
-    def build_message_with_attachments(user_message: str, attachment_content: Optional[str]) -> str:
+    def build_message_with_attachments(self, user_message: str, attachment_content: Optional[str]) -> str:
         if not attachment_content:
             return user_message
 
@@ -55,15 +59,13 @@ class AttachmentService:
             f"{attachment_content}\n"
             f"---\n"
         )
-    
-    @staticmethod
-    def link_attachments_to_message(message, attachment_ids: Optional[List[int]]):
-        """将附件关联到消息"""
+
+    def link_attachments_to_message(self, message, attachment_ids: Optional[List[int]]):
         if not attachment_ids:
             return
-        
+
         from Django_xm.apps.chat.models import ChatAttachment
-        
+
         ChatAttachment.objects.filter(
             id__in=attachment_ids,
             session=message.session,
@@ -73,9 +75,9 @@ class AttachmentService:
 
 class MessagePersistenceService:
     """消息持久化服务"""
-    
-    @staticmethod
+
     def save_message_pair(
+        self,
         session,
         user_content: str,
         ai_content: str,
@@ -83,35 +85,66 @@ class MessagePersistenceService:
         ai_role: str = 'assistant',
         attachment_ids: Optional[List[int]] = None
     ):
-        """保存用户消息和 AI 回复消息对"""
         from Django_xm.apps.chat.models import ChatMessage
-        
-        # 保存用户消息
+
         user_message = ChatMessage.objects.create(
             session=session,
             role=user_role,
             content=user_content
         )
-        
-        # 关联附件到用户消息
+
         if attachment_ids:
-            AttachmentService.link_attachments_to_message(user_message, attachment_ids)
-        
-        # 保存 AI 回复
+            AttachmentService().link_attachments_to_message(user_message, attachment_ids)
+
         ai_message = ChatMessage.objects.create(
             session=session,
             role=ai_role,
             content=ai_content
         )
-        
+
         return user_message, ai_message
 
 
 class ChatService:
     """聊天服务类 - 处理聊天相关的业务逻辑"""
 
-    @staticmethod
-    def _get_tools(data: Dict[str, Any], user_id: Optional[int] = None) -> List:
+    def __init__(self, user_id: Optional[int] = None):
+        self.user_id = user_id
+        self._attachment_service = AttachmentService()
+
+    def _get_user_index_name(self, index_name):
+        """生成带用户标识的索引名称"""
+        return f"user_{self.user_id}_{index_name}" if self.user_id else index_name
+
+    def _get_rag_retriever(self, index_name):
+        """获取 RAG 检索器"""
+        if not self.user_id:
+            return None
+        
+        try:
+            user_index_name = self._get_user_index_name(index_name)
+            manager = IndexManager()
+            
+            if not manager.index_exists(user_index_name):
+                logger.warning(f"索引不存在: {user_index_name}")
+                return None
+            
+            metadata = manager._load_metadata(user_index_name)
+            num_documents = metadata.get('num_documents', 0) if metadata else 0
+            if num_documents == 0:
+                logger.warning(f"索引中无文档: {user_index_name}")
+                return None
+            
+            embeddings = get_embeddings()
+            vector_store = manager.load_index(user_index_name, embeddings)
+            retriever = create_retriever(vector_store, k=4)
+            
+            return retriever
+        except Exception as e:
+            logger.error(f"获取 RAG 检索器失败: {e}", exc_info=True)
+            return None
+
+    def _get_tools(self, data: Dict[str, Any]) -> List:
         use_tools = data.get('use_tools', True)
         use_advanced_tools = data.get('use_advanced_tools', False)
         use_web_search = data.get('use_web_search', False)
@@ -124,28 +157,26 @@ class ChatService:
             attachment_ids=attachment_ids,
         )
 
-        if user_id:
+        if self.user_id:
             session_id = data.get('session_id')
-            tools = PermissionService.filter_tools_by_permission(user_id, tools, session_id)
+            tools = PermissionService.filter_tools_by_permission(self.user_id, tools, session_id)
 
         return tools
 
-    @staticmethod
-    def _build_user_message(data: Dict[str, Any]) -> str:
+    def _build_user_message(self, data: Dict[str, Any]) -> str:
         user_message = data['message']
         attachment_ids = data.get('attachment_ids')
 
         if attachment_ids:
-            attachment_content = AttachmentService.load_attachment_contents(attachment_ids)
+            attachment_content = self._attachment_service.load_attachment_contents(attachment_ids)
             if attachment_content:
-                user_message = AttachmentService.build_message_with_attachments(
+                user_message = self._attachment_service.build_message_with_attachments(
                     user_message, attachment_content
                 )
 
         return user_message
 
-    @staticmethod
-    def _apply_compaction(chat_history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _apply_compaction(self, chat_history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         compacted, result = apply_compaction_to_chat_history(chat_history)
         if result.compressed:
             logger.info(
@@ -154,14 +185,13 @@ class ChatService:
             )
         return compacted
 
-    @staticmethod
-    def process_chat_request(data: Dict[str, Any], user_id: Optional[int] = None) -> Dict[str, Any]:
+    def process_chat_request(self, data: Dict[str, Any]) -> Dict[str, Any]:
         parsed = parse_command(data.get('message', ''))
         if parsed:
             command_name, args = parsed
             context = {
                 "args": args,
-                "user_id": user_id,
+                "user_id": self.user_id,
                 "session_id": data.get('session_id'),
                 "messages": data.get('chat_history', []),
             }
@@ -175,14 +205,31 @@ class ChatService:
                 'command_type': cmd_result.get('type', 'info'),
             }
 
-        tools = ChatService._get_tools(data, user_id)
+        selected_kb = data.get('selected_knowledge_base')
+        
+        if selected_kb:
+            retriever = self._get_rag_retriever(selected_kb)
+            if retriever:
+                logger.info(f"使用知识库 {selected_kb} 进行 RAG 查询")
+                agent = create_rag_agent(retriever)
+                result = query_rag_agent(agent, data['message'], return_sources=True)
+                
+                return {
+                    'message': result.get('answer', ''),
+                    'mode': 'rag',
+                    'tools_used': ['rag_retrieve'],
+                    'success': True,
+                    'sources': result.get('sources', [])
+                }
+
+        tools = self._get_tools(data)
         agent = create_base_agent(tools=tools, prompt_mode=data['mode'])
 
         chat_history = data.get('chat_history', [])
-        chat_history = ChatService._apply_compaction(chat_history)
+        chat_history = self._apply_compaction(chat_history)
         langchain_chat_history = convert_chat_history(chat_history)
 
-        user_message = ChatService._build_user_message(data)
+        user_message = self._build_user_message(data)
 
         response = agent.invoke(
             input_text=user_message,
@@ -212,8 +259,7 @@ class ChatService:
             'success': True
         }
 
-    @staticmethod
-    async def process_stream_chat_request(data: Dict[str, Any], user_id: Optional[int] = None) -> AsyncGenerator[Dict[str, Any], None]:
+    async def process_stream_chat_request(self, data: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
         usage_tracker = create_usage_tracker()
         cost_tracker = create_cost_tracker()
 
@@ -224,7 +270,7 @@ class ChatService:
             command_name, args = parsed
             context = {
                 "args": args,
-                "user_id": user_id,
+                "user_id": self.user_id,
                 "session_id": data.get('session_id'),
                 "messages": data.get('chat_history', []),
                 "cost_info": cost_tracker.get_summary(),
@@ -238,8 +284,22 @@ class ChatService:
             yield {'type': 'end', 'message': '命令执行完成'}
             return
 
+        selected_kb = data.get('selected_knowledge_base')
+        if selected_kb:
+            retriever = self._get_rag_retriever(selected_kb)
+            if retriever:
+                logger.info(f"使用知识库 {selected_kb} 进行流式 RAG 查询")
+                async for event in self._process_rag_stream(data, retriever, usage_tracker, cost_tracker):
+                    yield event
+                context_info = usage_tracker.get_usage_info()
+                cost_info = cost_tracker.get_summary()
+                context_info['cost'] = cost_info
+                yield {'type': 'context', 'data': context_info}
+                yield {'type': 'end', 'message': '生成完成'}
+                return
+
         if data['mode'] == 'deep-thinking':
-            async for event in ChatService._process_deep_thinking_stream(data, usage_tracker, cost_tracker):
+            async for event in self._process_deep_thinking_stream(data, usage_tracker, cost_tracker):
                 yield event
             context_info = usage_tracker.get_usage_info()
             cost_info = cost_tracker.get_summary()
@@ -262,7 +322,7 @@ class ChatService:
                 },
             }
 
-            deep_result = await ChatService._run_deep_research_task(data['message'])
+            deep_result = await self._run_deep_research_task(data['message'])
             final_report = deep_result.get("final_report") or deep_result.get("error")
             if not final_report:
                 final_report = (
@@ -283,7 +343,7 @@ class ChatService:
             logger.info("深度研究流程完成")
             return
 
-        async for event in ChatService._process_normal_stream_chat(data, usage_tracker, cost_tracker, user_id):
+        async for event in self._process_normal_stream_chat(data, usage_tracker, cost_tracker):
             yield event
 
         context_info = usage_tracker.get_usage_info()
@@ -296,9 +356,53 @@ class ChatService:
         cost_tracker.log_summary()
         logger.info("流式聊天请求处理完成")
 
-    @staticmethod
-    async def _run_deep_research_task(query: str) -> Dict[str, Any]:
-        thread_id = f"deep_{int(time.time() * 1000)}"
+    async def _process_rag_stream(self, data: Dict[str, Any], retriever, usage_tracker, cost_tracker):
+        """处理流式 RAG 查询"""
+        agent = create_rag_agent(retriever, streaming=True)
+        
+        messages = []
+        chat_history = data.get('chat_history', [])
+        chat_history = self._apply_compaction(chat_history)
+        langchain_chat_history = convert_chat_history(chat_history)
+        if langchain_chat_history:
+            messages.extend(langchain_chat_history)
+        
+        user_message = self._build_user_message(data)
+        messages.append(HumanMessage(content=user_message))
+        
+        try:
+            full_response = ""
+            sources = []
+            
+            for chunk in agent.stream({"messages": messages}):
+                if isinstance(chunk, dict) and "messages" in chunk:
+                    chunk_messages = chunk["messages"]
+                    if chunk_messages:
+                        content = chunk_messages[-1].content if hasattr(chunk_messages[-1], 'content') else str(chunk_messages[-1])
+                        if content:
+                            full_response += content
+                            yield {"type": "chunk", "content": content}
+            
+            if retriever:
+                try:
+                    retrieved_docs = retriever.get_relevant_documents(data['message'])
+                    for doc in retrieved_docs:
+                        sources.append({
+                            'content': doc.page_content,
+                            'source': doc.metadata.get('source', 'Unknown')
+                        })
+                except Exception as e:
+                    logger.warning(f"获取来源文档失败: {e}")
+            
+            if sources:
+                yield {'type': 'sources', 'data': sources}
+            
+        except Exception as e:
+            logger.error(f"RAG 流式查询失败: {e}", exc_info=True)
+            yield {"type": "error", "message": str(e)}
+
+    async def _run_deep_research_task(self, query: str) -> Dict[str, Any]:
+        thread_id = f"deep_{uuid.uuid4().hex[:12]}"
 
         def _task():
             agent = create_deep_research_agent(
@@ -311,13 +415,13 @@ class ChatService:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, _task)
 
-    @staticmethod
     async def _process_deep_thinking_stream(
+        self,
         data: Dict[str, Any],
         usage_tracker,
         cost_tracker: Optional[CostTracker] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        tools = ChatService._get_tools(data)
+        tools = self._get_tools(data)
         agent = create_base_agent(tools=tools, prompt_mode='deep-thinking')
 
         chat_history = data.get('chat_history', [])
@@ -326,7 +430,7 @@ class ChatService:
         if langchain_chat_history:
             messages.extend(langchain_chat_history)
 
-        user_message = ChatService._build_user_message(data)
+        user_message = self._build_user_message(data)
         messages.append(HumanMessage(content=user_message))
         graph_input = {"messages": messages}
 
@@ -407,27 +511,26 @@ class ChatService:
                 },
             }
 
-    @staticmethod
     async def _process_normal_stream_chat(
+        self,
         data: Dict[str, Any],
         usage_tracker,
         cost_tracker: Optional[CostTracker] = None,
-        user_id: Optional[int] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        tools = ChatService._get_tools(data, user_id)
+        tools = self._get_tools(data)
         tool_names = [tool.name for tool in tools]
         weather_tool_names = {tool.name for tool in WEATHER_TOOLS}
 
         agent = create_base_agent(tools=tools, prompt_mode=data['mode'])
 
         chat_history = data.get('chat_history', [])
-        chat_history = ChatService._apply_compaction(chat_history)
+        chat_history = self._apply_compaction(chat_history)
         langchain_chat_history = convert_chat_history(chat_history)
         messages = []
         if langchain_chat_history:
             messages.extend(langchain_chat_history)
 
-        user_message = ChatService._build_user_message(data)
+        user_message = self._build_user_message(data)
         messages.append(HumanMessage(content=user_message))
         graph_input = {"messages": messages}
 
@@ -516,14 +619,14 @@ class ChatService:
 
             await asyncio.sleep(0.01)
 
-        async for final_event in ChatService._finalize_stream_response(
+        async for final_event in self._finalize_stream_response(
             all_messages, current_message_content, tool_calls_map,
             prefer_tool_result, data, weather_tool_names
         ):
             yield final_event
 
-    @staticmethod
     async def _finalize_stream_response(
+        self,
         all_messages: List,
         current_message_content: str,
         tool_calls_map: Dict[str, Dict],

@@ -124,6 +124,7 @@ DATABASES = {
         "USER": os.environ.get("DB_USER"),
         "PASSWORD": os.environ.get("DB_PASSWORD"),
         "NAME": os.environ.get("DB_NAME", app_cfg.db_name),
+        "CONN_MAX_AGE": 60,
         "OPTIONS": {
             "charset": "utf8mb4",
             "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
@@ -157,6 +158,8 @@ SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax'
 CSRF_COOKIE_SAMESITE = 'Lax'
+SECURE_SSL_REDIRECT = True
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 CSRF_TRUSTED_ORIGINS = (
     [o.strip() for o in app_cfg.csrf_trusted_origins.split(",") if o.strip()]
     if app_cfg.csrf_trusted_origins and app_cfg.csrf_trusted_origins.strip()
@@ -224,7 +227,7 @@ REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
     ],
-    "EXCEPTION_HANDLER": "Django_xm.utils.exceptions.custom_exception_handler",
+    "EXCEPTION_HANDLER": "Django_xm.apps.common.exceptions.custom_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_THROTTLE_CLASSES": [
         "Django_xm.apps.core.throttling.AnonymousRateThrottle",

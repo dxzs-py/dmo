@@ -42,6 +42,33 @@
           </div>
         </template>
 
+        <div class="workflow-progress">
+          <AiCanvas class="progress-canvas">
+            <div class="progress-steps">
+              <template v-for="(step, idx) in workflowSteps" :key="step.key">
+                <div
+                  :class="['progress-step', {
+                    'is-completed': completedSteps.includes(step.key),
+                    'is-active': execution?.current_step === step.key,
+                    'is-pending': !completedSteps.includes(step.key) && execution?.current_step !== step.key
+                  }]"
+                >
+                  <AiCheckpoint v-if="completedSteps.includes(step.key)" class="step-checkpoint">
+                    <span class="step-label">{{ step.label }}</span>
+                  </AiCheckpoint>
+                  <div v-else class="step-node-wrapper">
+                    <AiNode :title="step.label" :status="execution?.current_step === step.key ? 'running' : ''" />
+                  </div>
+                </div>
+                <AiEdge
+                  v-if="idx < workflowSteps.length - 1"
+                  :status="completedSteps.includes(step.key) ? 'success' : (execution?.current_step === step.key ? 'active' : 'default')"
+                />
+              </template>
+            </div>
+          </AiCanvas>
+        </div>
+
         <el-card v-if="execution.learning_plan" class="plan-card">
           <template #header>
             <div class="card-header">
@@ -177,14 +204,20 @@
 </template>
 
 <script setup>
-import { ref, reactive, onUnmounted } from 'vue'
-import { workflowAPI } from '../api/client'
-import { useUserStore } from '../stores/user'
+import { ref, reactive, computed, onUnmounted } from 'vue'
+import { workflowAPI } from '../api'
+import { readSSEStream } from '../utils/sse'
 import { ElMessage } from 'element-plus'
-import TaskList from '../components/TaskList.vue'
-import FileBrowser from '../components/FileBrowser.vue'
+import TaskList from '../components/chat/TaskList.vue'
+import FileBrowser from '../components/chat/FileBrowser.vue'
+import AiCheckpoint from '../components/ai-elements/AiCheckpoint.vue'
+import AiNode from '../components/ai-elements/AiNode.vue'
+import AiConnection from '../components/ai-elements/AiConnection.vue'
+import AiEdge from '../components/ai-elements/AiEdge.vue'
+import AiCanvas from '../components/ai-elements/AiCanvas.vue'
+import { formatDate as _formatDate } from '../utils/format'
+import { logger } from '../utils/logger'
 
-const userStore = useUserStore()
 const isLoading = ref(false)
 const isSubmitting = ref(false)
 const execution = ref(null)
@@ -193,7 +226,8 @@ const answersForm = reactive({})
 const fileBrowserRef = ref(null)
 const currentStepMessage = ref('')
 let pollingTimer = null
-let eventSource = null
+let sseAbortController = null
+let sseReaderActive = false
 let currentPollInterval = 3000
 const BASE_POLL_INTERVAL = 3000
 const MAX_POLL_INTERVAL = 30000
@@ -204,52 +238,41 @@ const workflowForm = reactive({
 })
 
 const statusOptions = [
-  {
-    value: 'start',
-    label: '准备中'
-  },
-  {
-    value: 'planner',
-    label: '生成学习计划'
-  },
-  {
-    value: 'retrieval',
-    label: '检索资料'
-  },
-  {
-    value: 'quiz_generator',
-    label: '生成练习题'
-  },
-  {
-    value: 'waiting_for_answers',
-    label: '等待答题'
-  },
-  {
-    value: 'grading',
-    label: '评分中'
-  },
-  {
-    value: 'feedback',
-    label: '生成反馈'
-  },
-  {
-    value: 'end',
-    label: '已结束'
-  },
-  {
-    value: 'completed',
-    label: '已完成'
-  },
-  {
-    value: 'failed',
-    label: '失败'
-  },
+  { value: 'start', label: '准备中' },
+  { value: 'planner', label: '生成学习计划' },
+  { value: 'retrieval', label: '检索资料' },
+  { value: 'quiz_generator', label: '生成练习题' },
+  { value: 'waiting_for_answers', label: '等待答题' },
+  { value: 'grading', label: '评分中' },
+  { value: 'feedback', label: '生成反馈' },
+  { value: 'end', label: '已结束' },
+  { value: 'completed', label: '已完成' },
+  { value: 'failed', label: '失败' },
 ]
+
+const workflowSteps = [
+  { key: 'start', label: '启动' },
+  { key: 'planner', label: '规划' },
+  { key: 'retrieval', label: '检索' },
+  { key: 'quiz_generator', label: '出题' },
+  { key: 'waiting_for_answers', label: '答题' },
+  { key: 'grading', label: '评分' },
+  { key: 'feedback', label: '反馈' },
+  { key: 'end', label: '完成' },
+]
+
+const stepOrder = workflowSteps.map(s => s.key)
+
+const completedSteps = computed(() => {
+  if (!execution.value) return []
+  const currentIdx = stepOrder.indexOf(execution.value.current_step)
+  if (currentIdx < 0) return []
+  return stepOrder.slice(0, currentIdx)
+})
 
 const formatDate = (dateStr) => {
   if (!dateStr) return '-'
-  const date = new Date(dateStr)
-  return date.toLocaleString('zh-CN')
+  return _formatDate(dateStr)
 }
 
 const getStepType = (step) => {
@@ -329,7 +352,7 @@ const pollExecutionStatus = async () => {
     }
     pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
   } catch (error) {
-    console.error('获取工作流状态失败:', error)
+    logger.error('获取工作流状态失败:', error)
     currentPollInterval = Math.min(
       Math.floor(currentPollInterval * POLL_BACKOFF_FACTOR),
       MAX_POLL_INTERVAL
@@ -367,45 +390,62 @@ const startWorkflow = async () => {
     stopPolling()
     connectSSE(result.thread_id)
   } catch (error) {
-    console.error('启动工作流失败:', error)
+    logger.error('启动工作流失败:', error)
     ElMessage.error('启动工作流失败，请稍后重试')
   } finally {
     isLoading.value = false
   }
 }
 
-const connectSSE = (threadId) => {
+const connectSSE = async (threadId) => {
   closeSSE()
 
-  const url = workflowAPI.streamUrl(threadId)
-  const token = userStore.token
-  const separator = url.includes('?') ? '&' : '?'
-  const fullUrl = token ? `${url}${separator}token=${token}` : url
+  sseAbortController = new AbortController()
+  sseReaderActive = true
 
   try {
-    eventSource = new EventSource(fullUrl)
+    const response = await workflowAPI.streamFetch(threadId, {
+      signal: sseAbortController.signal,
+    })
 
-    eventSource.onmessage = (event) => {
+    if (!response.ok) {
+      let errorMsg = `HTTP ${response.status}`
       try {
-        const data = JSON.parse(event.data)
-        handleSSEEvent(data)
-      } catch (e) {
-        console.error('解析SSE数据失败:', e)
-      }
+        const errBody = await response.text()
+        const sseMatch = errBody.match(/data:\s*(.*)/)
+        if (sseMatch) {
+          const parsed = JSON.parse(sseMatch[1])
+          errorMsg = parsed.message || parsed.error || errorMsg
+        }
+      } catch {}
+      throw new Error(errorMsg)
     }
 
-    eventSource.onerror = () => {
-      closeSSE()
-      if (execution.value) {
-        const step = execution.value.current_step
-        if (step !== 'waiting_for_answers' && step !== 'end' && step !== 'completed') {
-          pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
-        }
+    await readSSEStream(response, (data) => {
+      if (!sseReaderActive) return
+      handleSSEEvent(data)
+    }, sseAbortController.signal)
+
+    if (sseReaderActive && execution.value) {
+      const step = execution.value.current_step
+      if (step !== 'waiting_for_answers' && step !== 'end' && step !== 'completed') {
+        pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
       }
     }
-  } catch (e) {
-    console.error('SSE连接失败，回退到轮询:', e)
-    pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      return
+    }
+    logger.error('SSE连接失败，回退到轮询:', error)
+    if (execution.value) {
+      const step = execution.value.current_step
+      if (step !== 'waiting_for_answers' && step !== 'end' && step !== 'completed') {
+        pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
+      }
+    }
+  } finally {
+    sseReaderActive = false
+    sseAbortController = null
   }
 }
 
@@ -422,6 +462,7 @@ const handleSSEEvent = (data) => {
       break
     case 'state_update':
       if (execution.value && data.data) {
+        if (data.data.current_step) execution.value.current_step = data.data.current_step
         if (data.data.learning_plan) execution.value.learning_plan = data.data.learning_plan
         if (data.data.retrieved_docs) execution.value.retrieved_docs = data.data.retrieved_docs
         if (data.data.quiz) execution.value.quiz = data.data.quiz
@@ -444,6 +485,9 @@ const handleSSEEvent = (data) => {
         fileBrowserRef.value.loadFiles()
       }
       break
+    case 'stream_error':
+      logger.warn('工作流流式执行异常:', data.message)
+      break
     case 'error':
       ElMessage.error(data.message || '工作流执行出错')
       closeSSE()
@@ -452,9 +496,10 @@ const handleSSEEvent = (data) => {
 }
 
 const closeSSE = () => {
-  if (eventSource) {
-    eventSource.close()
-    eventSource = null
+  sseReaderActive = false
+  if (sseAbortController) {
+    sseAbortController.abort()
+    sseAbortController = null
   }
 }
 
@@ -479,8 +524,9 @@ const submitAnswers = async () => {
       connectSSE(execution.value.thread_id)
     }
   } catch (error) {
-    console.error('提交答案失败:', error)
-    ElMessage.error('提交答案失败，请稍后重试')
+    logger.error('提交答案失败:', error)
+    const msg = error.response?.data?.message || error.message || '提交答案失败，请稍后重试'
+    ElMessage.error(msg)
   } finally {
     isSubmitting.value = false
   }
@@ -495,13 +541,50 @@ const resetWorkflow = () => {
   closeSSE()
 }
 
-const viewTask = (selectedTask) => {
+const viewTask = async (selectedTask) => {
+  closeSSE()
+  stopPolling()
+
   execution.value = selectedTask
   showDetail.value = true
   if (selectedTask.quiz && !Object.keys(answersForm).length) {
     selectedTask.quiz.questions.forEach(q => {
       answersForm[q.id] = ''
     })
+  }
+
+  const isActive = selectedTask.status === 'running'
+    || selectedTask.current_step === 'planner'
+    || selectedTask.current_step === 'retrieval'
+    || selectedTask.current_step === 'quiz_generator'
+    || selectedTask.current_step === 'grading'
+    || selectedTask.current_step === 'feedback'
+
+  if (isActive && selectedTask.thread_id) {
+    connectSSE(selectedTask.thread_id)
+  } else if (selectedTask.thread_id) {
+    try {
+      const resp = await workflowAPI.getState(selectedTask.thread_id)
+      const fresh = resp.data?.data || resp.data
+      if (fresh) {
+        execution.value = { ...selectedTask, ...fresh }
+        const freshActive = fresh.current_step
+          && fresh.current_step !== 'waiting_for_answers'
+          && fresh.current_step !== 'end'
+          && fresh.current_step !== 'completed'
+          && fresh.current_step !== 'failed'
+        if (freshActive) {
+          connectSSE(fresh.thread_id)
+        }
+        if (fresh.quiz && !Object.keys(answersForm).length) {
+          fresh.quiz.questions.forEach(q => {
+            answersForm[q.id] = ''
+          })
+        }
+      }
+    } catch (e) {
+      logger.warn('获取工作流最新状态失败:', e)
+    }
   }
 }
 
@@ -545,6 +628,60 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.workflow-progress {
+  margin-bottom: 20px;
+  padding: 16px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.progress-canvas {
+  background: transparent;
+  min-height: auto;
+}
+
+.progress-steps {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: max-content;
+}
+
+.progress-step {
+  flex-shrink: 0;
+}
+
+.progress-step.is-completed .step-label {
+  color: var(--el-color-success);
+  font-weight: 600;
+}
+
+.progress-step.is-active .step-node-wrapper {
+  animation: pulse-border 2s ease-in-out infinite;
+}
+
+.progress-step.is-pending {
+  opacity: 0.5;
+}
+
+.step-checkpoint {
+  padding: 6px 10px;
+}
+
+.step-label {
+  font-size: 13px;
+}
+
+.step-node-wrapper :deep(.ai-node) {
+  min-width: 80px;
+}
+
+@keyframes pulse-border {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(64, 158, 255, 0.3); }
+  50% { box-shadow: 0 0 0 4px rgba(64, 158, 255, 0.1); }
 }
 
 .header-actions {

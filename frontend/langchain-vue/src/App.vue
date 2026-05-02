@@ -1,8 +1,9 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
-import AppSidebar from './components/AppSidebar.vue'
-import AppHeader from './components/AppHeader.vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import AppSidebar from './components/layout/AppSidebar.vue'
+import AppHeader from './components/layout/AppHeader.vue'
+import GlobalSearch from './components/common/GlobalSearch.vue'
 import { useThemeStore } from './stores/theme'
 import { useSessionStore } from './stores/session'
 import { useUserStore } from './stores/user'
@@ -14,8 +15,17 @@ const sessionStore = useSessionStore()
 const userStore = useUserStore()
 const isCollapse = ref(false)
 const isScrolled = ref(false)
+const showSearch = ref(false)
 
 const isChatRoute = computed(() => route.path === '/chat')
+
+const cachedViews = ref([])
+
+watch(() => route.name, (name) => {
+  if (name && route.meta.keepAlive && !cachedViews.value.includes(name)) {
+    cachedViews.value.push(name)
+  }
+}, { immediate: true })
 
 const { throttledFn: handleScrollThrottled } = useThrottle((event) => {
   const scrollTop = event.target.scrollTop
@@ -24,9 +34,6 @@ const { throttledFn: handleScrollThrottled } = useThrottle((event) => {
 
 onMounted(async () => {
   themeStore.setTheme(themeStore.currentTheme)
-  if (userStore.isLoggedIn) {
-    await sessionStore.loadSessionsFromBackend()
-  }
 })
 </script>
 
@@ -38,11 +45,16 @@ onMounted(async () => {
         <AppSidebar v-model:collapse="isCollapse" />
         <main class="main-content" :class="{ 'sidebar-collapsed': isCollapse, 'chat-main': isChatRoute }">
           <div class="scroll-container" @scroll="handleScrollThrottled">
-            <router-view />
+            <router-view v-slot="{ Component, route: currentRoute }">
+              <keep-alive :include="cachedViews" :max="10">
+                <component :is="Component" :key="currentRoute.fullPath" />
+              </keep-alive>
+            </router-view>
           </div>
         </main>
       </div>
     </div>
+    <GlobalSearch v-model="showSearch" />
   </ErrorBoundary>
 </template>
 
@@ -76,7 +88,7 @@ html, body, #app {
 .main-content {
   flex: 1;
   overflow: hidden;
-  background-color: #fff;
+  background-color: var(--el-bg-color);
   transition: margin-left 0.3s ease;
 }
 
