@@ -19,6 +19,9 @@ export const knowledgeAPI = {
   getCacheHealth() { return apiClient.get('/knowledge/cache/health/') },
   getCacheStats() { return apiClient.get('/knowledge/cache/stats/') },
   clearCache(data = {}) { return apiClient.post('/knowledge/cache/clear/', data) },
+  getDatabaseOverview() { return apiClient.get('/knowledge/database/overview/') },
+  getMySQLStatus() { return apiClient.get('/knowledge/database/mysql/status/') },
+  getVectorStoreStatus() { return apiClient.get('/knowledge/database/vector-store/status/') },
 }
 
 export const ragAPI = {

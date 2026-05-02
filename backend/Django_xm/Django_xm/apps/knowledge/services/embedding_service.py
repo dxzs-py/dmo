@@ -2,15 +2,86 @@
 Embeddings 模块
 
 提供统一的 Embedding 模型接口，用于将文本转换为向量。
+集成 Redis 缓存，避免重复调用 Embedding API。
 """
 
-from typing import Optional
+from typing import Optional, List
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.embeddings import Embeddings
 
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class CachedEmbeddings(Embeddings):
+    """带 Redis 缓存的 Embeddings 包装器"""
+
+    def __init__(self, embeddings: Embeddings, model: str = "default"):
+        self._embeddings = embeddings
+        self._model = model
+        self._hit = 0
+        self._miss = 0
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        from Django_xm.apps.ai_engine.services.cache_service import (
+            VectorSearchCacheService
+        )
+
+        results = []
+        uncached_texts = []
+        uncached_indices = []
+
+        for i, text in enumerate(texts):
+            cached = VectorSearchCacheService.get_cached_embedding(text, self._model)
+            if cached is not None:
+                results.append(cached)
+                self._hit += 1
+            else:
+                results.append(None)
+                uncached_texts.append(text)
+                uncached_indices.append(i)
+                self._miss += 1
+
+        if uncached_texts:
+            new_vectors = self._embeddings.embed_documents(uncached_texts)
+            for idx, text, vector in zip(uncached_indices, uncached_texts, new_vectors):
+                results[idx] = vector
+                VectorSearchCacheService.cache_embedding(text, vector, self._model)
+
+        if self._hit + self._miss > 0 and (self._hit + self._miss) % 100 == 0:
+            total = self._hit + self._miss
+            logger.info(
+                f"Embedding 缓存统计: 命中={self._hit}, 未命中={self._miss}, "
+                f"命中率={self._hit / total * 100:.1f}%"
+            )
+
+        return results
+
+    def embed_query(self, text: str) -> List[float]:
+        from Django_xm.apps.ai_engine.services.cache_service import (
+            VectorSearchCacheService
+        )
+
+        cached = VectorSearchCacheService.get_cached_embedding(text, self._model)
+        if cached is not None:
+            self._hit += 1
+            return cached
+
+        self._miss += 1
+        vector = self._embeddings.embed_query(text)
+        VectorSearchCacheService.cache_embedding(text, vector, self._model)
+        return vector
+
+    @property
+    def cache_stats(self):
+        total = self._hit + self._miss
+        return {
+            'hit': self._hit,
+            'miss': self._miss,
+            'total': total,
+            'hit_rate': round(self._hit / total * 100, 2) if total > 0 else 0,
+        }
 
 
 def get_openai_api_key() -> Optional[str]:
@@ -52,12 +123,13 @@ def get_embedding_batch_size() -> int:
 def get_embeddings(
     model: Optional[str] = None,
     batch_size: Optional[int] = None,
+    use_cache: bool = True,
     **kwargs,
 ) -> Embeddings:
     model = model or get_embedding_model()
     batch_size = batch_size or get_embedding_batch_size()
 
-    logger.info(f"🔢 创建 Embedding 模型: {model}, batch_size={batch_size}")
+    logger.info(f"🔢 创建 Embedding 模型: {model}, batch_size={batch_size}, cache={use_cache}")
 
     try:
         embeddings = OpenAIEmbeddings(
@@ -69,6 +141,9 @@ def get_embeddings(
             max_retries=3,
             **kwargs,
         )
+
+        if use_cache:
+            embeddings = CachedEmbeddings(embeddings, model=model)
 
         logger.debug("✅ Embedding 模型创建成功")
         return embeddings

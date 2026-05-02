@@ -53,6 +53,10 @@ class WorkflowPersistenceService:
                 serializable[key] = [self._serialize_message(msg) for msg in value]
             elif isinstance(value, dict):
                 serializable[key] = self._make_serializable(value)
+            elif hasattr(value, 'model_dump'):
+                serializable[key] = value.model_dump()
+            elif hasattr(value, 'dict') and callable(value.dict):
+                serializable[key] = value.dict()
             else:
                 serializable[key] = value
         return serializable
@@ -172,9 +176,9 @@ class WorkflowPersistenceService:
                 "user_answers": state.get("user_answers"),
                 "score": state.get("score"),
                 "score_details": state.get("score_details"),
-                "feedback": state.get("feedback"),
+                "feedback": state.get("feedback") or "",
                 "should_retry": state.get("should_retry", False),
-                "error_message": state.get("error") or state.get("error_message", ""),
+                "error_message": state.get("error") or state.get("error_message") or "",
             },
         )
 

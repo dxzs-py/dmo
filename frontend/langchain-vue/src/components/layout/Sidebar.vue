@@ -16,6 +16,7 @@ import {
   FolderOpened
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import { confirmDelete } from '../../utils/dialog'
 import { computed, ref } from 'vue'
 
 const props = defineProps({
@@ -82,11 +83,14 @@ const handleNewChat = () => {
   }
 }
 
-const handleDeleteSession = (sessionId) => {
-  if (!window.confirm('确定要删除这个会话吗？')) return
-  sessionStore.deleteSession(sessionId).then(() => {
+const handleDeleteSession = async (sessionId) => {
+  try {
+    await confirmDelete('确定要删除这个会话吗？')
+    await sessionStore.deleteSession(sessionId)
     ElMessage.success('会话已删除')
-  }).catch(() => {})
+  } catch {
+    // cancelled
+  }
 }
 
 function getTimeGroup(timestamp) {

@@ -80,9 +80,9 @@ class WorkflowSession(AuditModel):
     user_answers = models.JSONField(null=True, blank=True, verbose_name='用户答案')
     score = models.IntegerField(null=True, blank=True, verbose_name='得分')
     score_details = models.JSONField(null=True, blank=True, verbose_name='评分详情')
-    feedback = models.TextField(blank=True, verbose_name='反馈信息')
+    feedback = models.TextField(null=True, blank=True, verbose_name='反馈信息')
     should_retry = models.BooleanField(default=False, verbose_name='是否重试')
-    error_message = models.TextField(blank=True, verbose_name='错误信息')
+    error_message = models.TextField(null=True, blank=True, verbose_name='错误信息')
 
     class Meta:
         db_table = 'workflow_session'

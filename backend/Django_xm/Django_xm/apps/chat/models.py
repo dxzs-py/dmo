@@ -110,6 +110,7 @@ class ChatMessage(AuditModel):
     sources = models.JSONField(
         default=list,
         blank=True,
+        null=True,
         verbose_name='来源'
     )
     plan = models.JSONField(
@@ -127,6 +128,7 @@ class ChatMessage(AuditModel):
     tool_calls = models.JSONField(
         default=list,
         blank=True,
+        null=True,
         verbose_name='工具调用'
     )
     reasoning = models.JSONField(
@@ -138,6 +140,7 @@ class ChatMessage(AuditModel):
     suggestions = models.JSONField(
         default=list,
         blank=True,
+        null=True,
         verbose_name='建议问题'
     )
     context = models.JSONField(
@@ -149,6 +152,7 @@ class ChatMessage(AuditModel):
     versions = models.JSONField(
         default=list,
         blank=True,
+        null=True,
         verbose_name='消息版本'
     )
     current_version = models.IntegerField(

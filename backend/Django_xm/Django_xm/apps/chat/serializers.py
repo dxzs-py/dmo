@@ -173,21 +173,32 @@ class ChatMessageSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'session', 'created_at']
 
     def validate_content(self, value):
-        """验证内容字段"""
         if value and len(value) > 50000:
             raise serializers.ValidationError('消息内容不能超过50000个字符')
         return value
 
     def validate_role(self, value):
-        """验证角色字段"""
         from Django_xm.apps.chat.models import MessageRole
         valid_roles = [choice[0] for choice in MessageRole.choices]
         if value not in valid_roles:
             raise serializers.ValidationError(f'无效的角色: {value}')
         return value
 
+    def validate_sources(self, value):
+        return value if value is not None else []
+
+    def validate_tool_calls(self, value):
+        return value if value is not None else []
+
+    def validate_suggestions(self, value):
+        return value if value is not None else []
+
+    def validate_versions(self, value):
+        return value if value is not None else []
+
     def validate_current_version(self, value):
-        """验证版本索引"""
+        if value is None:
+            return 0
         if value < 0:
             raise serializers.ValidationError('版本索引不能为负数')
         return value

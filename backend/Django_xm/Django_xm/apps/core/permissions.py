@@ -41,15 +41,11 @@ class QueryParamTokenAuthentication:
         try:
             from rest_framework_simplejwt.authentication import JWTAuthentication
             from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+            from rest_framework import HTTP_HEADER_ENCODING
 
             auth = JWTAuthentication()
-
-            class MockRequest:
-                def __init__(self, token_str):
-                    self.META = {'HTTP_AUTHORIZATION': f'Bearer {token_str}'}
-
-            mock_request = MockRequest(token)
-            raw_token = auth.get_raw_token(mock_request)
+            header_bytes = f'Bearer {token}'.encode(HTTP_HEADER_ENCODING)
+            raw_token = auth.get_raw_token(header_bytes)
             if raw_token:
                 validated_token = auth.get_validated_token(raw_token)
                 user = auth.get_user(validated_token)
@@ -80,15 +76,11 @@ class IsAuthenticatedOrQueryParam(BasePermission):
             try:
                 from rest_framework_simplejwt.authentication import JWTAuthentication
                 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+                from rest_framework import HTTP_HEADER_ENCODING
 
                 auth = JWTAuthentication()
-
-                class MockRequest:
-                    def __init__(self, token_str):
-                        self.META = {'HTTP_AUTHORIZATION': f'Bearer {token_str}'}
-
-                mock_request = MockRequest(token)
-                raw_token = auth.get_raw_token(mock_request)
+                header_bytes = f'Bearer {token}'.encode(HTTP_HEADER_ENCODING)
+                raw_token = auth.get_raw_token(header_bytes)
                 if raw_token:
                     validated_token = auth.get_validated_token(raw_token)
                     user = auth.get_user(validated_token)
@@ -97,7 +89,6 @@ class IsAuthenticatedOrQueryParam(BasePermission):
                         return True
             except Exception as e:
                 logger.warning(f"查询参数token验证失败: {e}")
-                pass
 
         return False
 

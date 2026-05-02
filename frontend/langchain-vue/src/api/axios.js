@@ -17,6 +17,15 @@ apiClient.interceptors.request.use(
     if (userStore.token) {
       config.headers.Authorization = `Bearer ${userStore.token}`
     }
+    // 防止浏览器缓存 GET 请求
+    if (config.method === 'get') {
+      config.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+      config.headers['Pragma'] = 'no-cache'
+      config.headers['Expires'] = '0'
+      // 添加时间戳作为查询参数，强制每次请求都获取新数据
+      if (!config.params) config.params = {}
+      config.params._t = Date.now()
+    }
     return config
   },
   (error) => Promise.reject(error)

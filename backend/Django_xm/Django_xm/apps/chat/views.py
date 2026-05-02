@@ -292,15 +292,21 @@ class ChatModesView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        from Django_xm.apps.ai_engine.services.cache_service import CacheService, CacheTTL
+
+        cache_key = "chat:modes"
+        cached = CacheService.get(cache_key)
+        if cached is not None:
+            return success_response(data=cached)
+
         modes = ChatModeService.get_supported_modes()
-        
-        return success_response(
-            data={
-                'modes': modes,
-                'default': 'basic-agent'
-            },
-            message='操作成功'
-        )
+
+        result = {
+            'modes': modes,
+            'default': 'basic-agent'
+        }
+        CacheService.set(cache_key, result, CacheTTL.TOOL_LONG)
+        return success_response(data=result, message='操作成功')
 
 
 class ChatSessionListView(BaseChatAPIView):
@@ -366,6 +372,8 @@ class ChatSessionCreateView(BaseChatAPIView):
     @log_view_action
     @transaction.atomic
     def post(self, request):
+        from Django_xm.apps.ai_engine.services.cache_service import CacheService
+
         serializer = ChatSessionCreateSerializer(data=request.data)
         if not serializer.is_valid():
             return validation_error_response(errors=serializer.errors)
@@ -373,6 +381,7 @@ class ChatSessionCreateView(BaseChatAPIView):
         session = serializer.save(user=request.user)
 
         SecureSessionCacheService.invalidate_all_user_sessions(request.user.id)
+        CacheService.delete(f"dashboard:user_{request.user.id}")
 
         return success_response(
             data=ChatSessionDetailSerializer(session).data,
@@ -398,6 +407,8 @@ class ChatSessionDetailView(BaseChatAPIView):
     @log_view_action
     @transaction.atomic
     def put(self, request, session_id):
+        from Django_xm.apps.ai_engine.services.cache_service import CacheService
+
         session = self.get_session_or_404(session_id, request.user)
         if not session:
             return error_response(
@@ -411,6 +422,7 @@ class ChatSessionDetailView(BaseChatAPIView):
             return validation_error_response(errors=serializer.errors, message='更新参数错误')
 
         serializer.save()
+        CacheService.delete(f"dashboard:user_{request.user.id}")
         return success_response(
             data=ChatSessionDetailSerializer(session).data,
             message='会话更新成功'
@@ -418,6 +430,8 @@ class ChatSessionDetailView(BaseChatAPIView):
 
     @log_view_action
     def delete(self, request, session_id):
+        from Django_xm.apps.ai_engine.services.cache_service import CacheService
+
         session = self.get_session_or_404(session_id, request.user)
         if not session:
             return error_response(
@@ -428,6 +442,7 @@ class ChatSessionDetailView(BaseChatAPIView):
 
         session.soft_delete()
         SecureSessionCacheService.invalidate_all_user_sessions(request.user.id)
+        CacheService.delete(f"dashboard:user_{request.user.id}")
 
         return success_response(message='会话删除成功')
 
@@ -436,6 +451,8 @@ class ChatMessageCreateView(BaseChatAPIView):
     @log_view_action
     @transaction.atomic
     def post(self, request, session_id):
+        from Django_xm.apps.ai_engine.services.cache_service import CacheService
+
         session = self.get_session_or_404(session_id, request.user)
         if not session:
             return error_response(
@@ -446,9 +463,12 @@ class ChatMessageCreateView(BaseChatAPIView):
 
         serializer = ChatMessageSerializer(data=request.data)
         if not serializer.is_valid():
+            logger.warning(f"消息验证失败: {serializer.errors}, 请求数据: {request.data}")
             return validation_error_response(errors=serializer.errors)
 
         message = serializer.save(session=session)
+
+        CacheService.delete(f"dashboard:user_{request.user.id}")
 
         return success_response(
             data=ChatMessageSerializer(message).data,
@@ -721,9 +741,18 @@ class ChatCommandsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        from Django_xm.apps.ai_engine.services.cache_service import CacheService, CacheTTL
+
+        cache_key = "chat:commands"
+        cached = CacheService.get(cache_key)
+        if cached is not None:
+            return success_response(data=cached)
+
         from .services.slash_commands import get_all_commands
         commands = get_all_commands()
-        return success_response(data={'commands': commands})
+        result = {'commands': commands}
+        CacheService.set(cache_key, result, CacheTTL.TOOL_LONG)
+        return success_response(data=result)
 
 
 class ChatCommandExecuteView(APIView):
@@ -820,21 +849,47 @@ class ChatCostView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        from Django_xm.apps.ai_engine.services.cache_service import CacheService, CacheTTL
+
+        cache_key = "chat:cost_pricing"
+        cached = CacheService.get(cache_key)
+        if cached is not None:
+            return success_response(data=cached)
+
         from Django_xm.apps.ai_engine.services.cost_tracker import get_all_model_pricing, MODEL_PRICING
-        return success_response(data={
+        result = {
             'modelPricing': get_all_model_pricing(),
             'supportedModels': list(MODEL_PRICING.keys()),
-        })
+        }
+        CacheService.set(cache_key, result, CacheTTL.TOOL_LONG)
+        return success_response(data=result)
 
 
 class ProjectContextView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        from Django_xm.apps.ai_engine.services.project_context import detect_project_context
-        search_path = request.query_params.get('path')
-        context = detect_project_context(search_path)
-        return success_response(data=context.to_dict())
+        from Django_xm.apps.ai_engine.services.cache_service import CacheService, CacheTTL
+
+        user = request.user
+        cache_key = f"project_context:user_{user.id}"
+        cached = CacheService.get(cache_key)
+        if cached is not None:
+            logger.info("项目上下文缓存命中")
+            return success_response(data=cached)
+
+        try:
+            from Django_xm.apps.ai_engine.services.project_context import detect_project_context
+            search_path = request.query_params.get('path')
+            context = detect_project_context(search_path)
+            result = context.to_dict()
+            CacheService.set(cache_key, result, CacheTTL.QUERY_LONG)
+            return success_response(data=result)
+        except Exception as e:
+            return error_response(
+                code=ErrorCode.INTERNAL_ERROR,
+                message=str(e),
+            )
 
 
 class ChatDashboardView(APIView):
@@ -845,8 +900,15 @@ class ChatDashboardView(APIView):
         from django.db.models.functions import TruncDate
         from django.utils import timezone
         from datetime import timedelta
+        from Django_xm.apps.ai_engine.services.cache_service import CacheService, CacheTTL
 
         user = request.user
+        cache_key = f"dashboard:user_{user.id}"
+        cached = CacheService.get(cache_key)
+        if cached is not None:
+            logger.info("Dashboard 缓存命中")
+            return success_response(data=cached)
+
         now = timezone.now()
         seven_days_ago = now - timedelta(days=7)
 
@@ -919,7 +981,7 @@ class ChatDashboardView(APIView):
                 {'name': '基础对话', 'value': 100}
             ]
 
-        return success_response(data={
+        dashboard_data = {
             'total_sessions': total_sessions,
             'total_messages': total_messages,
             'total_tokens': total_tokens,
@@ -928,4 +990,6 @@ class ChatDashboardView(APIView):
             'usage_trend': usage_trend,
             'model_distribution': model_distribution,
             'mode_distribution': mode_distribution,
-        })
+        }
+        CacheService.set(cache_key, dashboard_data, CacheTTL.QUERY_SHORT)
+        return success_response(data=dashboard_data)

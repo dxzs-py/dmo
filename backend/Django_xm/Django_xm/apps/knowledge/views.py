@@ -95,6 +95,12 @@ class KnowledgeBaseListView(APIView):
     def get(self, request):
         try:
             user = request.user
+            cache_key = f"kb_list:user_{user.id}"
+            cached = CacheService.get(cache_key)
+            if cached is not None:
+                logger.info("知识库列表缓存命中")
+                return success_response(data={'items': cached})
+
             manager = IndexManager()
             all_indexes = manager.list_indexes()
             
@@ -113,6 +119,7 @@ class KnowledgeBaseListView(APIView):
                         'updated_at': idx_data.get('updated_at', ''),
                     })
             
+            CacheService.set(cache_key, user_indexes, ttl=120)
             return success_response(data={'items': user_indexes})
         except Exception as e:
             logger.error(f"获取知识库列表失败: {e}", exc_info=True)
@@ -146,15 +153,34 @@ class KnowledgeBaseListView(APIView):
                 )
             
             manager.create_empty_index(name=user_index_name, description=description)
-            
-            # 创建 DocumentIndex 对象，注意需要调用 save(request=request)
-            index_obj = DocumentIndex(
-                user=user,
-                index_name=name,
-                description=description
-            )
-            index_obj.save(request=request)
-            
+
+            existing = DocumentIndex.all_objects.filter(user=user, index_name=name).first()
+            if existing:
+                if existing.is_deleted:
+                    existing.is_deleted = False
+                    existing.deleted_at = None
+                    existing.description = description
+                    existing.save(request=request)
+                    index_obj = existing
+                else:
+                    CacheService.delete(f"kb_list:user_{user.id}")
+                    return success_response(data={
+                        'id': name,
+                        'name': name,
+                        'description': existing.description,
+                        'document_count': existing.document_count,
+                        'chunk_count': 0,
+                    }, message='知识库已存在')
+            else:
+                index_obj = DocumentIndex(
+                    user=user,
+                    index_name=name,
+                    description=description
+                )
+                index_obj.save(request=request)
+
+            CacheService.delete(f"kb_list:user_{user.id}")
+
             return success_response(data={
                 'id': name,
                 'name': name,
@@ -225,7 +251,9 @@ class KnowledgeBaseDetailView(APIView):
             if index_obj:
                 index_obj.description = description
                 index_obj.save(request=request)
-            
+
+            CacheService.delete(f"kb_list:user_{user.id}")
+
             return success_response(data={
                 'id': kb_id,
                 'name': kb_id,
@@ -262,7 +290,12 @@ class KnowledgeBaseDetailView(APIView):
                     shutil.rmtree(upload_dir)
                 except Exception as e:
                     logger.warning(f"删除上传文件目录失败: {e}")
-            
+
+            CacheService.delete(f"kb_list:user_{user.id}")
+            CacheService.delete(f"doc_list:{user_index_name}")
+            QueryCacheService.invalidate_index_queries(user_index_name)
+            VectorSearchCacheService.invalidate_index_queries(user_index_name)
+
             return success_response(message='知识库删除成功')
         except Exception as e:
             logger.error(f"删除知识库失败: {e}", exc_info=True)
@@ -298,7 +331,19 @@ class KnowledgeBaseDocumentListView(APIView):
                             'uploaded_at': datetime.fromtimestamp(stat.st_ctime).isoformat(),
                         })
             
-            return success_response(data={'files': files, 'count': len(files)})
+            logger.info(f"返回 {len(files)} 个文档给用户 {user.username}")
+            
+            # 添加缓存控制头，防止浏览器缓存
+            headers = {
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0',
+            }
+            
+            return success_response(
+                data={'files': files, 'count': len(files)},
+                headers=headers
+            )
         except Exception as e:
             logger.error(f"获取文档列表失败: {e}", exc_info=True)
             return error_response(
@@ -377,7 +422,11 @@ class KnowledgeBaseUploadView(APIView):
                     doc.save()
                 index_obj.document_count += len(saved_files)
                 index_obj.save(request=request)
-            
+
+            CacheService.delete(f"doc_list:{user_index_name}")
+            QueryCacheService.invalidate_index_queries(user_index_name)
+            VectorSearchCacheService.invalidate_index_queries(user_index_name)
+
             return success_response(data={
                 'documents_uploaded': len(saved_files),
                 'chunks_created': count,
@@ -410,6 +459,15 @@ class KnowledgeBaseDocumentDeleteView(APIView):
             if not file_path.exists() or not file_path.is_file():
                 return not_found_response(message=f'文件不存在: {filename}')
             
+            logger.info(f"删除文档: {filename} 从 {user_index_name}")
+
+            try:
+                embeddings = get_embeddings()
+                removed = manager.remove_documents_by_filename(user_index_name, embeddings, filename)
+                logger.info(f"从向量索引中删除 {removed} 个文档块")
+            except Exception as ve:
+                logger.warning(f"从向量索引中删除文档失败: {ve}")
+
             index_obj = DocumentIndex.objects.filter(user=user, index_name=kb_id).first()
             if index_obj:
                 doc = Document.objects.filter(index=index_obj, filename=filename).first()
@@ -418,8 +476,22 @@ class KnowledgeBaseDocumentDeleteView(APIView):
                 index_obj.document_count = max(0, index_obj.document_count - 1)
                 index_obj.save(request=request)
             
+            # 删除文件
             file_path.unlink()
+            logger.info(f"文件已从磁盘删除: {file_path}")
             
+            # 更新索引元数据中的文档计数
+            metadata = manager._load_metadata(user_index_name) or {}
+            metadata['updated_at'] = datetime.now().isoformat()
+            if 'num_documents' in metadata:
+                metadata['num_documents'] = max(0, metadata['num_documents'] - 1)
+            manager._save_metadata(user_index_name, metadata)
+            logger.info(f"索引元数据已更新")
+
+            CacheService.delete(f"doc_list:{user_index_name}")
+            QueryCacheService.invalidate_index_queries(user_index_name)
+            VectorSearchCacheService.invalidate_index_queries(user_index_name)
+
             return success_response(data={'message': f'文件已删除: {filename}'}, message='操作成功')
         except Exception as e:
             logger.error(f"删除文档失败: {e}", exc_info=True)
@@ -792,57 +864,72 @@ class RAGDocumentUploadView(APIView):
             if not manager.index_exists(user_index_name):
                 return not_found_response(message=f'索引不存在: {name}')
 
-            if 'file' not in request.FILES:
+            files = request.FILES.getlist('files')
+            if not files and 'file' in request.FILES:
+                files = [request.FILES['file']]
+            if not files:
                 return error_response(
                     code=ErrorCode.INVALID_PARAMS,
                     message='没有上传文件',
                     http_status=status.HTTP_400_BAD_REQUEST
                 )
 
-            uploaded_file = request.FILES['file']
             upload_dir = Path(app_cfg.data_uploads_path) / user_index_name
             upload_dir.mkdir(parents=True, exist_ok=True)
 
-            file_path = upload_dir / uploaded_file.name
-            with open(file_path, 'wb') as f:
-                for chunk in uploaded_file.chunks():
-                    f.write(chunk)
+            all_documents = []
+            saved_files = []
 
-            logger.info(f"加载上传的文档: {file_path}")
-            documents = load_document(str(file_path))
+            for uploaded_file in files:
+                file_path = upload_dir / uploaded_file.name
+                with open(file_path, 'wb') as f:
+                    for chunk in uploaded_file.chunks():
+                        f.write(chunk)
 
-            if not documents:
+                docs = load_document(str(file_path))
+                all_documents.extend(docs)
+                saved_files.append({
+                    'name': uploaded_file.name,
+                    'size': file_path.stat().st_size,
+                })
+
+            if not all_documents:
                 return error_response(
                     code=ErrorCode.INVALID_PARAMS,
-                    message='无法加载文档，格式可能不支持',
+                    message='未能从上传文件中提取内容',
                     http_status=status.HTTP_400_BAD_REQUEST
                 )
 
-            chunks = split_documents(documents)
+            chunks = split_documents(all_documents)
             embeddings = get_embeddings()
             count = manager.add_documents(user_index_name, chunks, embeddings)
 
             index_obj = DocumentIndex.objects.filter(user=user, index_name=name).first()
             if index_obj:
-                ext = get_file_extension(uploaded_file.name)
-                doc_type = get_document_type(ext)
-                # 创建 Document 对象，Document 继承自 BaseModel，save() 不需要 request
-                doc = Document(
-                    index=index_obj,
-                    filename=uploaded_file.name,
-                    file_path=str(file_path),
-                    file_type=doc_type,
-                    file_size=file_path.stat().st_size,
-                    chunk_count=len(chunks)
-                )
-                doc.save()
-                index_obj.document_count += 1
+                for file_info in saved_files:
+                    ext = get_file_extension(file_info['name'])
+                    doc_type = get_document_type(ext)
+                    doc = Document(
+                        index=index_obj,
+                        filename=file_info['name'],
+                        file_path=str(upload_dir / file_info['name']),
+                        file_type=doc_type,
+                        file_size=file_info['size'],
+                        chunk_count=len(chunks) // len(saved_files) if saved_files else 0
+                    )
+                    doc.save()
+                index_obj.document_count += len(saved_files)
                 index_obj.save(request=request)
 
-            return success_response(
-                data={'message': f'成功添加 {count} 个文档', 'count': count},
-                message='操作成功'
-            )
+            CacheService.delete(f"doc_list:{user_index_name}")
+            QueryCacheService.invalidate_index_queries(user_index_name)
+            VectorSearchCacheService.invalidate_index_queries(user_index_name)
+
+            return success_response(data={
+                'documents_uploaded': len(saved_files),
+                'chunks_created': count,
+                'files': saved_files,
+            }, message='操作成功')
 
         except Exception as e:
             logger.error(f"上传文档失败: {e}", exc_info=True)
@@ -912,6 +999,13 @@ class RAGDocumentListView(APIView):
         try:
             user = request.user
             user_index_name = get_user_index_name(user, name)
+
+            cache_key = f"doc_list:{user_index_name}"
+            cached = CacheService.get(cache_key)
+            if cached is not None:
+                logger.info("文档列表缓存命中")
+                return success_response(data=cached)
+
             manager = IndexManager()
 
             if not manager.index_exists(user_index_name):
@@ -929,7 +1023,9 @@ class RAGDocumentListView(APIView):
                             'uploaded_at': datetime.fromtimestamp(stat.st_ctime).isoformat(),
                         })
 
-            return success_response(data={'files': files, 'count': len(files)}, message='操作成功')
+            result = {'files': files, 'count': len(files)}
+            CacheService.set(cache_key, result, ttl=60)
+            return success_response(data=result, message='操作成功')
 
         except Exception as e:
             logger.error(f"获取文件列表失败: {e}", exc_info=True)
@@ -958,6 +1054,13 @@ class RAGDocumentDeleteView(APIView):
             if not file_path.exists() or not file_path.is_file():
                 return not_found_response(message=f'文件不存在: {filename}')
 
+            try:
+                embeddings = get_embeddings()
+                removed = manager.remove_documents_by_filename(user_index_name, embeddings, filename)
+                logger.info(f"从向量索引中删除 {removed} 个文档块")
+            except Exception as ve:
+                logger.warning(f"从向量索引中删除文档失败: {ve}")
+
             index_obj = DocumentIndex.objects.filter(user=user, index_name=name).first()
             if index_obj:
                 doc = Document.objects.filter(index=index_obj, filename=filename).first()
@@ -968,6 +1071,10 @@ class RAGDocumentDeleteView(APIView):
 
             file_path.unlink()
             logger.info(f"删除文件: {file_path}")
+
+            CacheService.delete(f"doc_list:{user_index_name}")
+            QueryCacheService.invalidate_index_queries(user_index_name)
+            VectorSearchCacheService.invalidate_index_queries(user_index_name)
 
             return success_response(data={'message': f'文件已删除: {filename}'}, message='操作成功')
 
@@ -992,10 +1099,26 @@ class RAGQueryView(APIView):
         user = request.user
         index_name = data['index_name']
         user_index_name = get_user_index_name(user, index_name)
+        k = data.get('k', 4)
 
         logger.info(f"RAG 查询: {data['query'][:50]}...")
 
         try:
+            cached_result = QueryCacheService.get_cached_query(
+                data['query'], user_index_name, k
+            )
+            if cached_result is not None:
+                logger.info("RAG 查询缓存命中")
+                return success_response(
+                    data=RagResponseSerializer({
+                        'answer': cached_result['result'].get('answer', ''),
+                        'sources': cached_result['result'].get('sources', []),
+                        'success': True,
+                        'cached': True,
+                    }).data,
+                    message='操作成功'
+                )
+
             manager = IndexManager()
             if not manager.index_exists(user_index_name):
                 return not_found_response(message=f'索引不存在: {index_name}')
@@ -1010,12 +1133,16 @@ class RAGQueryView(APIView):
 
             embeddings = get_embeddings()
             vector_store = manager.load_index(user_index_name, embeddings)
-            retriever = create_retriever(vector_store, k=data.get('k', 4))
+            retriever = create_retriever(vector_store, k=k)
             agent = create_rag_agent(retriever)
             result = query_rag_agent(
                 agent,
                 data['query'],
                 return_sources=data.get('return_sources', True),
+            )
+
+            QueryCacheService.cache_query_result(
+                data['query'], result, user_index_name, k
             )
 
             logger.info("查询完成")
@@ -1049,10 +1176,22 @@ class RAGSearchView(APIView):
         user = request.user
         index_name = data['index_name']
         user_index_name = get_user_index_name(user, index_name)
+        k = data.get('k', 4)
+        score_threshold = data.get('score_threshold')
 
         logger.info(f"RAG 检索: {data['query'][:50]}...")
 
         try:
+            cached_results = VectorSearchCacheService.get_cached_search(
+                data['query'], user_index_name, k
+            )
+            if cached_results is not None:
+                logger.info("向量搜索缓存命中")
+                return success_response(
+                    data=SearchResultSerializer(cached_results, many=True).data,
+                    message='操作成功'
+                )
+
             manager = IndexManager()
             if not manager.index_exists(user_index_name):
                 return not_found_response(message=f'索引不存在: {index_name}')
@@ -1067,8 +1206,6 @@ class RAGSearchView(APIView):
 
             embeddings = get_embeddings()
             vector_store = manager.load_index(user_index_name, embeddings)
-            k = data.get('k', 4)
-            score_threshold = data.get('score_threshold')
 
             results = search_vector_store(vector_store, data['query'], k=k, score_threshold=score_threshold)
 
@@ -1081,6 +1218,10 @@ class RAGSearchView(APIView):
                 if score is not None:
                     item['score'] = float(score)
                 search_results.append(item)
+
+            VectorSearchCacheService.cache_search_result(
+                data['query'], search_results, user_index_name, k
+            )
 
             return success_response(data=SearchResultSerializer(search_results, many=True).data, message='操作成功')
 
@@ -1254,42 +1395,47 @@ class AsyncRAGDocumentUploadView(APIView):
             if not manager.index_exists(user_index_name):
                 return not_found_response(message=f'索引不存在: {name}')
 
-            if 'file' not in request.FILES:
+            files = request.FILES.getlist('files')
+            if not files and 'file' in request.FILES:
+                files = [request.FILES['file']]
+            if not files:
                 return error_response(
                     code=ErrorCode.INVALID_PARAMS,
                     message='没有上传文件',
                     http_status=status.HTTP_400_BAD_REQUEST
                 )
 
-            uploaded_file = request.FILES['file']
             upload_dir = Path(app_cfg.data_uploads_path) / user_index_name
             upload_dir.mkdir(parents=True, exist_ok=True)
 
-            file_path = upload_dir / uploaded_file.name
-            with open(file_path, 'wb') as f:
-                for chunk in uploaded_file.chunks():
-                    f.write(chunk)
+            file_paths = []
+            for uploaded_file in files:
+                file_path = upload_dir / uploaded_file.name
+                with open(file_path, 'wb') as f:
+                    for chunk in uploaded_file.chunks():
+                        f.write(chunk)
+                file_paths.append(str(file_path))
 
-            # 创建任务
+            task_name = f'添加文档: {", ".join(f.name for f in files)}'
+
             task_manager = get_task_manager()
             task_id = task_manager.create_task(
                 task_type=TaskType.RAG_ADD_DOCS,
                 user_id=user.id,
-                task_name=f'添加文档: {uploaded_file.name}',
+                task_name=task_name,
                 task_params={
                     'index_name': user_index_name,
                     'original_name': name,
-                    'file_path': str(file_path),
+                    'file_paths': file_paths,
                 }
             )
 
-            # 提交异步任务
             add_documents_to_index_task.delay(
                 task_id=task_id,
                 index_name=user_index_name,
                 original_name=name,
                 user_id=user.id,
-                file_paths=[str(file_path)],
+                file_paths=file_paths,
             )
 
             return success_response(

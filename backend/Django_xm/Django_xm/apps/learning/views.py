@@ -30,6 +30,20 @@ logger = get_logger(__name__)
 file_manager = get_file_manager()
 
 
+class _WorkflowJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        from langchain_core.messages import BaseMessage
+        if isinstance(obj, BaseMessage):
+            return {"type": obj.type, "content": obj.content}
+        if hasattr(obj, 'model_dump'):
+            return obj.model_dump()
+        if hasattr(obj, 'dict'):
+            return obj.dict()
+        if hasattr(obj, '__dict__'):
+            return str(obj)
+        return super().default(obj)
+
+
 class WorkflowStartView(APIView):
     """启动学习工作流视图"""
     permission_classes = [IsAuthenticated]
@@ -188,7 +202,7 @@ class WorkflowStartStreamView(APIView):
                                 'current_step': current_step,
                             }
                         }
-                        yield f"data: {json.dumps(waiting_data, ensure_ascii=False, default=str)}\n\n"
+                        yield f"data: {json.dumps(waiting_data, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
                         break
 
                     state_data = {
@@ -200,7 +214,7 @@ class WorkflowStartStreamView(APIView):
                             'quiz': event.get('quiz'),
                         }
                     }
-                    yield f"data: {json.dumps(state_data, ensure_ascii=False, default=str)}\n\n"
+                    yield f"data: {json.dumps(state_data, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
 
                 yield f"data: {json.dumps({'type': 'complete', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
 
@@ -313,19 +327,27 @@ class WorkflowStatusView(APIView):
                 created_by=request.user,
                 is_deleted=False
             ).first()
-            if not session:
+
+            state = WorkflowService.get_workflow_status(thread_id)
+
+            if not session and state:
+                try:
+                    from .services.persistence_service import get_persistence_service
+                    persistence_service = get_persistence_service()
+                    persistence_service.save_workflow_state(
+                        thread_id=thread_id,
+                        state=state,
+                        user_id=request.user.id
+                    )
+                except Exception:
+                    pass
+
+            if not state:
                 return error_response(
                     code=ErrorCode.NOT_FOUND,
                     message='工作流会话不存在或无权访问',
                     http_status=status.HTTP_404_NOT_FOUND
                 )
-
-            state = WorkflowService.get_workflow_status(thread_id)
-            logger.info(f"[WorkflowStatusView] Got state for thread {thread_id}: {state}")
-
-            if not state:
-                logger.warning(f"[WorkflowStatusView] No state found for thread {thread_id}")
-                return not_found_response(message='工作流会话不存在')
 
             return success_response(
                 data={
@@ -592,8 +614,23 @@ def workflow_stream(request, thread_id):
             created_by=user,
             is_deleted=False
         ).first()
+
         if not session:
-            return _sse_error_response('工作流不存在或无权访问', 404)
+            state = get_workflow_state(thread_id)
+            if not state:
+                return _sse_error_response('工作流不存在或无权访问', 404)
+
+            try:
+                from .services.persistence_service import get_persistence_service
+                persistence_service = get_persistence_service()
+                persistence_service.save_workflow_state(
+                    thread_id=thread_id,
+                    state=state,
+                    user_id=user.id
+                )
+                logger.info(f"[API] 从checkpointer恢复工作流会话: {thread_id}")
+            except Exception as persist_err:
+                logger.warning(f"[API] 恢复工作流会话失败: {persist_err}")
 
         logger.info(f"[API] 流式获取工作流，thread_id={thread_id}, user_id={user.id}")
 
@@ -606,7 +643,19 @@ def workflow_stream(request, thread_id):
                     yield f"data: {json.dumps({'type': 'error', 'message': '工作流不存在'}, ensure_ascii=False)}\n\n"
                     return
 
-                yield f"data: {json.dumps({'type': 'start', 'state': state.get('current_step')}, ensure_ascii=False)}\n\n"
+                current_step = state.get('current_step', 'unknown')
+                yield f"data: {json.dumps({'type': 'start', 'state': current_step}, ensure_ascii=False)}\n\n"
+
+                if current_step == 'waiting_for_answers':
+                    yield f"data: {json.dumps({'type': 'state_update', 'step': current_step, 'data': {'learning_plan': state.get('learning_plan'), 'quiz': state.get('quiz'), 'current_step': current_step, 'thread_id': thread_id}}, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
+                    yield f"data: {json.dumps({'type': 'waiting', 'step': current_step, 'message': '等待用户提交答案'}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'complete'}, ensure_ascii=False)}\n\n"
+                    return
+
+                if current_step in ('completed', 'end', 'feedback_completed'):
+                    yield f"data: {json.dumps({'type': 'state_update', 'step': current_step, 'data': {'score': state.get('score'), 'feedback': state.get('feedback'), 'score_details': state.get('score_details')}}, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
+                    yield f"data: {json.dumps({'type': 'complete'}, ensure_ascii=False)}\n\n"
+                    return
 
                 study_flow = _get_study_flow(thread_id)
                 config = {"configurable": {"thread_id": thread_id}}
@@ -614,8 +663,13 @@ def workflow_stream(request, thread_id):
                 try:
                     for event in study_flow.graph.stream(None, config, stream_mode="values"):
                         if event:
-                            current_step = event.get('current_step', 'unknown')
-                            yield f"data: {json.dumps({'type': 'state_update', 'step': current_step, 'data': event}, ensure_ascii=False)}\n\n"
+                            step = event.get('current_step', 'unknown')
+                            yield f"data: {json.dumps({'type': 'state_update', 'step': step, 'data': event}, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
+
+                            if step == 'waiting_for_answers':
+                                yield f"data: {json.dumps({'type': 'waiting', 'step': step, 'message': '等待用户提交答案'}, ensure_ascii=False)}\n\n"
+                                yield f"data: {json.dumps({'type': 'complete'}, ensure_ascii=False)}\n\n"
+                                return
 
                     yield f"data: {json.dumps({'type': 'complete'}, ensure_ascii=False)}\n\n"
 
