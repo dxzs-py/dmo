@@ -7,9 +7,13 @@
 
 import json
 import logging
-from typing import Dict, Any, Optional, List, Set
+import uuid
+from typing import Dict, Any, Optional, List, Set, Callable
 from enum import Enum
 from dataclasses import dataclass, field
+
+from langchain_core.tools import BaseTool
+from langchain_core.runnables import RunnableConfig
 
 from Django_xm.apps.ai_engine.config import get_logger
 from rest_framework.permissions import BasePermission
@@ -363,3 +367,132 @@ class PermissionService:
                 for m in SessionPermissionMode
             },
         }
+
+    @staticmethod
+    def wrap_tools_with_permission(
+        tools: List[BaseTool],
+        user_id: Optional[int] = None,
+        session_id: Optional[str] = None,
+    ) -> List[BaseTool]:
+        if not user_id or not tools:
+            return tools
+
+        policy = PermissionService.get_policy(user_id, session_id)
+        wrapped = []
+
+        for tool in tools:
+            tool_name = getattr(tool, 'name', str(tool))
+            perm = policy.get_tool_permission(tool_name)
+
+            if perm == PermissionMode.DENY:
+                logger.info(f"用户 {user_id} 工具 {tool_name} 被拒绝，已移除")
+                continue
+
+            if perm == PermissionMode.PROMPT:
+                wrapped_tool = _create_prompt_tool(tool, user_id, session_id)
+                wrapped.append(wrapped_tool)
+            else:
+                wrapped.append(tool)
+
+        return wrapped
+
+    @staticmethod
+    def check_tool_permission(
+        tool_name: str,
+        user_id: Optional[int] = None,
+        session_id: Optional[str] = None,
+    ) -> str:
+        if not user_id:
+            return "allow"
+
+        policy = PermissionService.get_policy(user_id, session_id)
+        perm = policy.get_tool_permission(tool_name)
+        return perm.value
+
+
+_PENDING_TOOL_CONFIRMATIONS: Dict[str, Dict[str, Any]] = {}
+
+
+def _create_prompt_tool(original_tool: BaseTool, user_id: int, session_id: Optional[str] = None) -> BaseTool:
+    from langchain_core.tools import tool as lc_tool
+
+    original_name = original_tool.name
+    original_description = original_tool.description or ""
+
+    @lc_tool(name=original_name, description=f"[需确认] {original_description}")
+    def _permission_guarded_tool(**kwargs) -> str:
+        confirm_id = str(uuid.uuid4())[:8]
+        _PENDING_TOOL_CONFIRMATIONS[confirm_id] = {
+            "tool_name": original_name,
+            "tool_args": kwargs,
+            "user_id": user_id,
+            "session_id": session_id,
+            "original_tool": original_tool,
+            "status": "pending",
+            "created_at": __import__('time').time(),
+        }
+        logger.info(f"工具 {original_name} 需要用户确认 (confirm_id={confirm_id})")
+        return (
+            f"⚠️ 工具「{original_name}」需要您的确认才能执行。\n"
+            f"确认ID: {confirm_id}\n"
+            f"参数: {json.dumps(kwargs, ensure_ascii=False, default=str)}\n"
+            f"请回复「确认 {confirm_id}」以允许执行，或「拒绝 {confirm_id}」以取消。"
+        )
+
+    return _permission_guarded_tool
+
+
+def get_pending_confirmation(confirm_id: str) -> Optional[Dict[str, Any]]:
+    return _PENDING_TOOL_CONFIRMATIONS.get(confirm_id)
+
+
+def approve_tool_confirmation(confirm_id: str) -> Optional[str]:
+    entry = _PENDING_TOOL_CONFIRMATIONS.get(confirm_id)
+    if not entry:
+        return None
+    if entry["status"] != "pending":
+        return entry["status"]
+
+    entry["status"] = "approved"
+    original_tool = entry["original_tool"]
+    tool_args = entry["tool_args"]
+
+    try:
+        if isinstance(original_tool, BaseTool):
+            result = original_tool.invoke(tool_args)
+        elif callable(original_tool):
+            result = original_tool(**tool_args)
+        else:
+            result = str(original_tool)
+
+        entry["result"] = result
+        entry["status"] = "executed"
+        logger.info(f"工具确认已批准并执行: {entry['tool_name']} (confirm_id={confirm_id})")
+        return result
+    except Exception as e:
+        entry["status"] = "error"
+        entry["error"] = str(e)
+        logger.error(f"工具确认执行失败: {entry['tool_name']} - {e}")
+        return f"工具执行失败: {e}"
+
+
+def deny_tool_confirmation(confirm_id: str) -> bool:
+    entry = _PENDING_TOOL_CONFIRMATIONS.get(confirm_id)
+    if not entry:
+        return False
+    entry["status"] = "denied"
+    logger.info(f"工具确认已拒绝: {entry['tool_name']} (confirm_id={confirm_id})")
+    return True
+
+
+def cleanup_expired_confirmations(max_age_seconds: int = 300) -> int:
+    import time as _time
+    now = _time.time()
+    expired_ids = [
+        cid for cid, entry in _PENDING_TOOL_CONFIRMATIONS.items()
+        if now - entry.get("created_at", 0) > max_age_seconds
+    ]
+    for cid in expired_ids:
+        _PENDING_TOOL_CONFIRMATIONS[cid]["status"] = "expired"
+        del _PENDING_TOOL_CONFIRMATIONS[cid]
+    return len(expired_ids)

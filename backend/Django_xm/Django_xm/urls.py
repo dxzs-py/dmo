@@ -45,6 +45,7 @@ def root_info(request):
             "knowledge": "/api/v1/knowledge/",
             "learning": "/api/v1/learning/",
             "research": "/api/v1/research/",
+            "analytics": "/api/v1/analytics/",
         }
     })
 
@@ -68,13 +69,14 @@ urlpatterns = [
             path("knowledge/", include("Django_xm.apps.knowledge.urls")),
             path("learning/", include("Django_xm.apps.learning.urls")),
             path("research/", include("Django_xm.apps.research.urls")),
+            path("analytics/", include("Django_xm.apps.analytics.urls")),
             path("core/", include("Django_xm.apps.core.urls")),
         ])),
     ])),
 
-    # 兼容旧版API（无版本前缀），重定向到v1
-    path("api/health/", core_health_check),
-    path("api/schema/", SpectacularAPIView.as_view()),
-    path("api/docs/swagger/", SpectacularSwaggerView.as_view(url_name="schema")),
-    path("api/docs/redoc/", SpectacularRedocView.as_view(url_name="schema")),
+    # # 兼容旧版API（无版本前缀），重定向到v1
+    # path("api/health/", core_health_check),
+    # path("api/schema/", SpectacularAPIView.as_view()),
+    # path("api/docs/swagger/", SpectacularSwaggerView.as_view(url_name="schema")),
+    # path("api/docs/redoc/", SpectacularRedocView.as_view(url_name="schema")),
 ]

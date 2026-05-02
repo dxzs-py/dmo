@@ -14,6 +14,7 @@ from Django_xm.apps.ai_engine.config import settings, get_logger
 from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model, get_model_string
 from Django_xm.apps.ai_engine.prompts.system_prompts import get_system_prompt, get_prompt_with_tools
 from Django_xm.apps.tools import BASIC_TOOLS
+from Django_xm.apps.core.permissions import PermissionService
 
 logger = get_logger(__name__)
 
@@ -28,6 +29,8 @@ class BaseAgent:
         system_prompt: Optional[str] = None,
         prompt_mode: str = "default",
         debug: bool = False,
+        user_id: Optional[int] = None,
+        session_id: Optional[str] = None,
         **kwargs: Any,
     ):
         if model is None:
@@ -46,6 +49,15 @@ class BaseAgent:
         else:
             self.tools = list(tools) if tools else []
             logger.info(f"使用自定义工具集 ({len(self.tools)} 个工具)")
+
+        self.user_id = user_id
+        self.session_id = session_id
+
+        if self.user_id and self.tools:
+            self.tools = PermissionService.wrap_tools_with_permission(
+                self.tools, user_id=self.user_id, session_id=self.session_id
+            )
+            logger.info(f"权限过滤后工具集 ({len(self.tools)} 个工具)")
 
         if self.tools:
             tool_names = [tool.name for tool in self.tools]
@@ -183,15 +195,19 @@ def create_base_agent(
     tools: Optional[Sequence[BaseTool]] = None,
     prompt_mode: str = "default",
     debug: bool = False,
+    user_id: Optional[int] = None,
+    session_id: Optional[str] = None,
     **kwargs: Any,
 ) -> BaseAgent:
     """创建基础 Agent 的便捷工厂函数"""
-    logger.info(f"创建 Base Agent (mode={prompt_mode}, debug={debug})")
+    logger.info(f"创建 Base Agent (mode={prompt_mode}, debug={debug}, user_id={user_id})")
 
     return BaseAgent(
         model=model,
         tools=tools,
         prompt_mode=prompt_mode,
         debug=debug,
+        user_id=user_id,
+        session_id=session_id,
         **kwargs,
     )

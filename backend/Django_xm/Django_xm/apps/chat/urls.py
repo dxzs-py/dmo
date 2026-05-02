@@ -21,8 +21,8 @@ urlpatterns = [
     path('commands/', views.ChatCommandsView.as_view(), name='chat-commands'),
     path('commands/execute/', views.ChatCommandExecuteView.as_view(), name='chat-commands-execute'),
     path('permissions/', views.ChatPermissionsView.as_view(), name='chat-permissions'),
+    path('tool-confirmation/', views.ToolConfirmationView.as_view(), name='tool-confirmation'),
     path('cost/', views.ChatCostView.as_view(), name='chat-cost'),
     path('project-context/', views.ProjectContextView.as_view(), name='chat-project-context'),
-    path('dashboard/', views.ChatDashboardView.as_view(), name='chat-dashboard'),
     path('suggestions/', SuggestionsView.as_view(), name='chat-suggestions'),
 ]

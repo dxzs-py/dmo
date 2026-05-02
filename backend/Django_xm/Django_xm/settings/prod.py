@@ -67,6 +67,7 @@ INSTALLED_APPS = [
     "Django_xm.apps.rag",
     "Django_xm.apps.workflows",
     "Django_xm.apps.deep_research",
+    "Django_xm.apps.analytics",
 ]
 
 MIDDLEWARE = [
@@ -80,6 +81,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "Django_xm.apps.core.middleware.RequestTimeoutMiddleware",
+    "Django_xm.apps.analytics.middleware.AnalyticsMiddleware",
     "Django_xm.apps.core.middleware.SecurityHeadersMiddleware",
 ]
 

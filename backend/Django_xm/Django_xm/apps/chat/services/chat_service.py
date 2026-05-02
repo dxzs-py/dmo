@@ -160,24 +160,6 @@ class ChatService:
             attachment_ids=attachment_ids,
         )
 
-        if self.user_id:
-            session_id = data.get('session_id')
-            try:
-                asyncio.get_running_loop()
-                from asgiref.sync import sync_to_async
-                _filter = sync_to_async(
-                    PermissionService.filter_tools_by_permission, thread_sensitive=True
-                )
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(
-                        PermissionService.filter_tools_by_permission,
-                        self.user_id, tools, session_id
-                    )
-                    tools = future.result(timeout=5)
-            except RuntimeError:
-                tools = PermissionService.filter_tools_by_permission(self.user_id, tools, session_id)
-
         return tools
 
     def _build_user_message(self, data: Dict[str, Any]) -> str:
@@ -233,12 +215,17 @@ class ChatService:
             return cached_response['response']
 
         selected_kb = data.get('selected_knowledge_base')
+        session_id = data.get('session_id')
         
         if selected_kb:
             retriever = self._get_rag_retriever(selected_kb)
             if retriever:
                 logger.info(f"使用知识库 {selected_kb} 进行 RAG 查询")
-                agent = create_rag_agent(retriever)
+                agent = create_rag_agent(
+                    retriever,
+                    user_id=self.user_id,
+                    session_id=session_id,
+                )
                 result = query_rag_agent(agent, data['message'], return_sources=True)
                 
                 return {
@@ -250,7 +237,12 @@ class ChatService:
                 }
 
         tools = self._get_tools(data)
-        agent = create_base_agent(tools=tools, prompt_mode=data['mode'])
+        agent = create_base_agent(
+            tools=tools,
+            prompt_mode=data['mode'],
+            user_id=self.user_id,
+            session_id=session_id,
+        )
 
         chat_history = data.get('chat_history', [])
         chat_history = self._apply_compaction(chat_history)
@@ -355,7 +347,9 @@ class ChatService:
                 },
             }
 
-            deep_result = await self._run_deep_research_task(data['message'])
+            deep_result = await self._run_deep_research_task(
+                data['message'], session_id=data.get('session_id')
+            )
             final_report = deep_result.get("final_report") or deep_result.get("error")
             if not final_report:
                 final_report = (
@@ -390,7 +384,12 @@ class ChatService:
         logger.info("流式聊天请求处理完成")
 
     async def _process_rag_stream(self, data: Dict[str, Any], retriever, usage_tracker, cost_tracker):
-        agent = create_rag_agent(retriever, streaming=True)
+        agent = create_rag_agent(
+            retriever,
+            streaming=True,
+            user_id=self.user_id,
+            session_id=data.get('session_id'),
+        )
         
         messages = []
         chat_history = data.get('chat_history', [])
@@ -445,7 +444,7 @@ class ChatService:
             logger.error(f"RAG 流式查询失败: {e}", exc_info=True)
             yield {"type": "error", "message": str(e)}
 
-    async def _run_deep_research_task(self, query: str) -> Dict[str, Any]:
+    async def _run_deep_research_task(self, query: str, session_id: Optional[str] = None) -> Dict[str, Any]:
         thread_id = f"deep_{uuid.uuid4().hex[:12]}"
 
         def _task():
@@ -453,6 +452,8 @@ class ChatService:
                 thread_id=thread_id,
                 enable_web_search=True,
                 enable_doc_analysis=False,
+                user_id=self.user_id,
+                session_id=session_id,
             )
             return agent.research(query)
 
@@ -466,7 +467,12 @@ class ChatService:
         cost_tracker: Optional[CostTracker] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         tools = self._get_tools(data)
-        agent = create_base_agent(tools=tools, prompt_mode='deep-thinking')
+        agent = create_base_agent(
+            tools=tools,
+            prompt_mode='deep-thinking',
+            user_id=self.user_id,
+            session_id=data.get('session_id'),
+        )
 
         chat_history = data.get('chat_history', [])
         langchain_chat_history = convert_chat_history(chat_history)
@@ -574,7 +580,12 @@ class ChatService:
         tool_names = [tool.name for tool in tools]
         weather_tool_names = {tool.name for tool in WEATHER_TOOLS}
 
-        agent = create_base_agent(tools=tools, prompt_mode=data['mode'])
+        agent = create_base_agent(
+            tools=tools,
+            prompt_mode=data['mode'],
+            user_id=self.user_id,
+            session_id=data.get('session_id'),
+        )
 
         chat_history = data.get('chat_history', [])
         chat_history = self._apply_compaction(chat_history)

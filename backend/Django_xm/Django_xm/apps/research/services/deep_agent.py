@@ -18,6 +18,7 @@ from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
 from Django_xm.apps.ai_engine.prompts.system_prompts import WRITER_GUIDELINES
 from Django_xm.apps.tools.file.filesystem import ResearchFileSystem, get_filesystem
 from Django_xm.apps.ai_engine.guardrails import OutputValidator
+from Django_xm.apps.core.permissions import PermissionService
 from .subagents import create_web_researcher, create_doc_analyst, create_report_writer
 
 logger = get_logger(__name__)
@@ -64,16 +65,21 @@ class DeepResearchAgent:
         enable_doc_analysis: bool = False,
         retriever_tool: Optional[BaseTool] = None,
         checkpointer: Optional[Any] = None,
+        user_id: Optional[int] = None,
+        session_id: Optional[str] = None,
         **kwargs,
     ):
         self.thread_id = thread_id
         self.enable_web_search = enable_web_search
         self.enable_doc_analysis = enable_doc_analysis
         self.retriever_tool = retriever_tool
+        self.user_id = user_id
+        self.session_id = session_id
 
         logger.info(f"初始化 DeepResearchAgent: {thread_id}")
         logger.info(f"  网络搜索: {enable_web_search}")
         logger.info(f"  文档分析: {enable_doc_analysis}")
+        logger.info(f"  用户ID: {user_id}")
 
         self.filesystem = get_filesystem(thread_id)
 
@@ -87,18 +93,25 @@ class DeepResearchAgent:
         logger.info("初始化子智能体...")
 
         if self.enable_web_search:
-            self.web_researcher = create_web_researcher()
+            self.web_researcher = create_web_researcher(
+                user_id=self.user_id, session_id=self.session_id
+            )
             logger.debug("   WebResearcher 已创建")
         else:
             self.web_researcher = None
 
         if self.enable_doc_analysis:
-            self.doc_analyst = create_doc_analyst(retriever_tool=retriever_tool)
+            self.doc_analyst = create_doc_analyst(
+                retriever_tool=retriever_tool,
+                user_id=self.user_id, session_id=self.session_id
+            )
             logger.debug("   DocAnalyst 已创建")
         else:
             self.doc_analyst = None
 
-        self.report_writer = create_report_writer()
+        self.report_writer = create_report_writer(
+            user_id=self.user_id, session_id=self.session_id
+        )
         logger.debug("   ReportWriter 已创建")
 
     def _build_graph(self, checkpointer: Optional[Any] = None):
@@ -752,6 +765,8 @@ def create_deep_research_agent(
     enable_web_search: bool = True,
     enable_doc_analysis: bool = False,
     retriever_tool: Optional[BaseTool] = None,
+    user_id: Optional[int] = None,
+    session_id: Optional[str] = None,
     **kwargs,
 ) -> DeepResearchAgent:
     """创建深度研究智能体的便捷工厂函数"""
@@ -760,5 +775,7 @@ def create_deep_research_agent(
         enable_web_search=enable_web_search,
         enable_doc_analysis=enable_doc_analysis,
         retriever_tool=retriever_tool,
+        user_id=user_id,
+        session_id=session_id,
         **kwargs,
     )

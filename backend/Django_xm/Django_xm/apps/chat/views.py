@@ -845,6 +845,69 @@ class ChatPermissionsView(APIView):
         return success_response(data=info, message='权限更新成功')
 
 
+class ToolConfirmationView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from Django_xm.apps.core.permissions import get_pending_confirmation
+        confirm_id = request.query_params.get('confirm_id')
+        if not confirm_id:
+            return error_response(code=ErrorCode.INVALID_PARAMS, message='缺少 confirm_id')
+
+        entry = get_pending_confirmation(confirm_id)
+        if not entry:
+            return error_response(code=ErrorCode.NOT_FOUND, message='确认请求不存在或已过期')
+
+        if entry['user_id'] != request.user.id:
+            return error_response(code=ErrorCode.PERMISSION_DENIED, message='无权操作此确认请求')
+
+        return success_response(data={
+            'confirm_id': confirm_id,
+            'tool_name': entry['tool_name'],
+            'tool_args': entry['tool_args'],
+            'status': entry['status'],
+        })
+
+    def post(self, request):
+        from Django_xm.apps.core.permissions import (
+            get_pending_confirmation, approve_tool_confirmation, deny_tool_confirmation,
+        )
+        confirm_id = request.data.get('confirm_id')
+        action = request.data.get('action', 'approve')
+
+        if not confirm_id:
+            return error_response(code=ErrorCode.INVALID_PARAMS, message='缺少 confirm_id')
+
+        entry = get_pending_confirmation(confirm_id)
+        if not entry:
+            return error_response(code=ErrorCode.NOT_FOUND, message='确认请求不存在或已过期')
+
+        if entry['user_id'] != request.user.id:
+            return error_response(code=ErrorCode.PERMISSION_DENIED, message='无权操作此确认请求')
+
+        if action == 'approve':
+            result = approve_tool_confirmation(confirm_id)
+            if result is None:
+                return error_response(code=ErrorCode.NOT_FOUND, message='确认请求不存在')
+            return success_response(data={
+                'confirm_id': confirm_id,
+                'tool_name': entry['tool_name'],
+                'status': 'executed',
+                'result': result,
+            }, message='工具已批准并执行')
+        elif action == 'deny':
+            success = deny_tool_confirmation(confirm_id)
+            if not success:
+                return error_response(code=ErrorCode.NOT_FOUND, message='确认请求不存在')
+            return success_response(data={
+                'confirm_id': confirm_id,
+                'tool_name': entry['tool_name'],
+                'status': 'denied',
+            }, message='工具已拒绝')
+        else:
+            return error_response(code=ErrorCode.INVALID_PARAMS, message=f'无效的操作: {action}')
+
+
 class ChatCostView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -892,104 +955,4 @@ class ProjectContextView(APIView):
             )
 
 
-class ChatDashboardView(APIView):
-    permission_classes = [IsAuthenticated]
 
-    def get(self, request):
-        from django.db.models import Count, Sum, Avg
-        from django.db.models.functions import TruncDate
-        from django.utils import timezone
-        from datetime import timedelta
-        from Django_xm.apps.ai_engine.services.cache_service import CacheService, CacheTTL
-
-        user = request.user
-        cache_key = f"dashboard:user_{user.id}"
-        cached = CacheService.get(cache_key)
-        if cached is not None:
-            logger.info("Dashboard 缓存命中")
-            return success_response(data=cached)
-
-        now = timezone.now()
-        seven_days_ago = now - timedelta(days=7)
-
-        sessions = ChatSession.objects.filter(user=user, is_deleted=False)
-        messages = ChatMessage.objects.filter(session__user=user, session__is_deleted=False)
-
-        total_sessions = sessions.count()
-
-        agg = messages.aggregate(
-            total_messages=Count('id'),
-            total_tokens=Sum('token_count'),
-            total_cost=Sum('cost'),
-            avg_response_time=Avg('response_time'),
-        )
-        total_messages = agg['total_messages'] or 0
-        total_tokens = agg['total_tokens'] or 0
-        total_cost = float(agg['total_cost'] or 0)
-        avg_response_time = round(float(agg['avg_response_time'] or 0), 2)
-
-        daily_stats = messages.filter(
-            created_at__gte=seven_days_ago
-        ).annotate(
-            day=TruncDate('created_at')
-        ).values('day').annotate(
-            msg_count=Count('id'),
-            token_sum=Sum('token_count'),
-        ).order_by('day')
-
-        daily_map = {stat['day']: stat for stat in daily_stats}
-        usage_trend = []
-        for i in range(7):
-            day = (now - timedelta(days=6 - i)).date()
-            stat = daily_map.get(day)
-            usage_trend.append({
-                'date': day.strftime('%m/%d'),
-                'messages': stat['msg_count'] if stat else 0,
-                'tokens': stat['token_sum'] if stat else 0,
-            })
-
-        model_distribution = []
-        try:
-            model_dist = messages.values('model').annotate(
-                count=Count('id')
-            ).order_by('-count')[:5]
-            for item in model_dist:
-                model_distribution.append({
-                    'name': item['model'] or 'unknown',
-                    'value': item['count'],
-                })
-        except Exception:
-            model_distribution = [
-                {'name': 'default', 'value': total_messages}
-            ]
-
-        mode_distribution = []
-        try:
-            mode_dist = sessions.values('mode').annotate(
-                count=Count('id')
-            ).order_by('-count')
-            from .models import ChatMode
-            mode_labels = {m.value: m.label for m in ChatMode}
-            total_mode = sum(item['count'] for item in mode_dist) or 1
-            for item in mode_dist:
-                mode_distribution.append({
-                    'name': mode_labels.get(item['mode'], item['mode']),
-                    'value': round(item['count'] / total_mode * 100),
-                })
-        except Exception:
-            mode_distribution = [
-                {'name': '基础对话', 'value': 100}
-            ]
-
-        dashboard_data = {
-            'total_sessions': total_sessions,
-            'total_messages': total_messages,
-            'total_tokens': total_tokens,
-            'total_cost': total_cost,
-            'avg_response_time': avg_response_time,
-            'usage_trend': usage_trend,
-            'model_distribution': model_distribution,
-            'mode_distribution': mode_distribution,
-        }
-        CacheService.set(cache_key, dashboard_data, CacheTTL.QUERY_SHORT)
-        return success_response(data=dashboard_data)

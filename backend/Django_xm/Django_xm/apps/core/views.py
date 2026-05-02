@@ -35,8 +35,8 @@ def health_check(request):
 def request_monitor(request):
     """请求监控中间件视图"""
     if request.method == 'OPTIONS':
-        return Response(status=http_status.HTTP_200_OK)
-    return Response({'message': 'request_monitor'})
+        return JsonResponse({}, status=http_status.HTTP_200_OK)
+    return JsonResponse({'message': 'request_monitor'})
 
 
 def custom_exception_handler(exc, context):
