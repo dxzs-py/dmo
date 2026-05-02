@@ -22,6 +22,7 @@ export const useChatStore = defineStore('chat', () => {
     'guarded': '安全代理',
   })
   const costSummary = ref({})
+  const pendingToolConfirmation = ref(null)
 
   const { isStreaming, abortController, abort: stopStreaming, streamChat } = useStreamChat()
 
@@ -115,6 +116,13 @@ export const useChatStore = defineStore('chat', () => {
           setSuggestions: (data) => sessionStore.setSuggestionsToLastMessage(sessionId, data),
           setContext: (data) => sessionStore.setContextToLastMessage(sessionId, data),
           setCost: (data) => { costSummary.value = data },
+          requestToolConfirmation: (data) => {
+            pendingToolConfirmation.value = {
+              confirmId: data.confirm_id,
+              toolName: data.tool_name,
+              toolArgs: data.tool_args,
+            }
+          },
         }
       )
 
@@ -273,6 +281,7 @@ export const useChatStore = defineStore('chat', () => {
     availableModes,
     abortController,
     costSummary,
+    pendingToolConfirmation,
     sendMessage,
     regenerateMessage,
     fetchModes,

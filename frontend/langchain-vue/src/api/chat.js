@@ -141,6 +141,9 @@ export const chatAPI = {
   executeCommand(command, sessionId = null) { return apiClient.post('/chat/commands/execute/', { command, session_id: sessionId }) },
   getPermissions(sessionId = null) { return apiClient.get('/chat/permissions/', { params: sessionId ? { session_id: sessionId } : {} }) },
   updatePermissions(data) { return apiClient.put('/chat/permissions/', data) },
+  getToolConfirmation(confirmId) { return apiClient.get('/chat/tool-confirmation/', { params: { confirm_id: confirmId } }) },
+  approveToolConfirmation(confirmId) { return apiClient.post('/chat/tool-confirmation/', { confirm_id: confirmId, action: 'approve' }) },
+  denyToolConfirmation(confirmId) { return apiClient.post('/chat/tool-confirmation/', { confirm_id: confirmId, action: 'deny' }) },
   getCostInfo() { return apiClient.get('/chat/cost/') },
   getProjectContext(path = null) { return apiClient.get('/chat/project-context/', { params: path ? { path } : {} }) },
 }
