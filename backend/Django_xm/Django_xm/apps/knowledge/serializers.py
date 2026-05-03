@@ -123,7 +123,6 @@ class EmptyIndexCreateSerializer(serializers.Serializer):
 
 
 class IndexInfoSerializer(serializers.Serializer):
-    """索引信息序列化器"""
     name = serializers.CharField()
     description = serializers.CharField()
     created_at = serializers.CharField()

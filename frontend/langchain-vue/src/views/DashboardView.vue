@@ -26,6 +26,8 @@ const overview = ref({
   total_documents: 0,
   total_workflows: 0,
   total_research: 0,
+  cost_breakdown: { chat: 0, research: 0, workflow: 0 },
+  token_breakdown: { chat: 0, research: 0, workflow: 0 },
 })
 
 const usageTrend = ref([])
@@ -427,6 +429,18 @@ function getCategoryColor(name) {
               </el-descriptions-item>
               <el-descriptions-item label="总事件数">
                 {{ formatNumber(overview.total_events) }}
+              </el-descriptions-item>
+              <el-descriptions-item label="聊天成本">
+                ${{ (overview.cost_breakdown?.chat || 0).toFixed(4) }}
+              </el-descriptions-item>
+              <el-descriptions-item label="深度研究成本">
+                ${{ (overview.cost_breakdown?.research || 0).toFixed(4) }}
+              </el-descriptions-item>
+              <el-descriptions-item label="工作流成本">
+                ${{ (overview.cost_breakdown?.workflow || 0).toFixed(4) }}
+              </el-descriptions-item>
+              <el-descriptions-item label="聊天 Token">
+                {{ formatNumber(overview.token_breakdown?.chat || 0) }}
               </el-descriptions-item>
             </el-descriptions>
           </el-card>

@@ -46,11 +46,22 @@ const sendMessage = async () => {
   const attachmentsToUpload = [...pendingAttachments.value]
   pendingAttachments.value = []
 
+  const uploadedAttachmentIds = []
+
   try {
-    if (attachmentsToUpload.length > 0 && sessionStore.currentSessionId) {
+    if (attachmentsToUpload.length > 0) {
+      if (!sessionStore.currentSessionId) {
+        await sessionStore.createNewSession(chatStore.currentMode)
+      }
+
       for (const att of attachmentsToUpload) {
         try {
-          await chatAPI.uploadAttachment(sessionStore.currentSessionId, att.file)
+          const response = await chatAPI.uploadAttachment(sessionStore.currentSessionId, att.file)
+          const data = response.data
+          logger.log('[ChatView] 上传响应:', JSON.stringify(data))
+          if (data?.data?.id) {
+            uploadedAttachmentIds.push(data.data.id)
+          }
         } catch (err) {
           logger.error('附件上传失败:', err)
           ElMessage.warning(`附件 ${att.name} 上传失败`)
@@ -58,9 +69,11 @@ const sendMessage = async () => {
       }
     }
 
+    logger.log('[ChatView] 发送消息, attachmentIds:', uploadedAttachmentIds)
     await chatStore.sendMessage(message, {
       useTools: true,
       useAdvancedTools: useWebSearch.value,
+      attachmentIds: uploadedAttachmentIds,
     })
   } catch (error) {
     logger.error('发送消息失败:', error)

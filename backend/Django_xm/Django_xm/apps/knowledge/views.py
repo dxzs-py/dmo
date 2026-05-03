@@ -95,11 +95,6 @@ class KnowledgeBaseListView(APIView):
     def get(self, request):
         try:
             user = request.user
-            cache_key = f"kb_list:user_{user.id}"
-            cached = CacheService.get(cache_key)
-            if cached is not None:
-                logger.info("知识库列表缓存命中")
-                return success_response(data={'items': cached})
 
             manager = IndexManager()
             all_indexes = manager.list_indexes()
@@ -113,13 +108,11 @@ class KnowledgeBaseListView(APIView):
                         'id': original_name,
                         'name': original_name,
                         'description': idx_data.get('description', ''),
-                        'document_count': idx_data.get('num_documents', 0),
                         'chunk_count': idx_data.get('num_documents', 0),
                         'created_at': idx_data.get('created_at', ''),
                         'updated_at': idx_data.get('updated_at', ''),
                     })
             
-            CacheService.set(cache_key, user_indexes, ttl=120)
             return success_response(data={'items': user_indexes})
         except Exception as e:
             logger.error(f"获取知识库列表失败: {e}", exc_info=True)
@@ -211,12 +204,11 @@ class KnowledgeBaseDetailView(APIView):
             
             stats = manager.get_index_stats(user_index_name)
             metadata = manager._load_metadata(user_index_name) or {}
-            
+
             return success_response(data={
                 'id': kb_id,
                 'name': kb_id,
                 'description': metadata.get('description', ''),
-                'document_count': stats.get('num_documents', 0),
                 'chunk_count': stats.get('num_documents', 0),
                 'store_type': stats.get('store_type', ''),
                 'embedding_model': stats.get('embedding_model', ''),
@@ -379,13 +371,13 @@ class KnowledgeBaseUploadView(APIView):
             
             all_documents = []
             saved_files = []
-            
+
             for uploaded_file in files:
                 file_path = upload_dir / uploaded_file.name
                 with open(file_path, 'wb') as f:
                     for chunk in uploaded_file.chunks():
                         f.write(chunk)
-                
+
                 docs = load_document(str(file_path))
                 all_documents.extend(docs)
                 saved_files.append({
@@ -410,7 +402,6 @@ class KnowledgeBaseUploadView(APIView):
                 for file_info in saved_files:
                     ext = get_file_extension(file_info['name'])
                     doc_type = get_document_type(ext)
-                    # 创建 Document 对象，Document 继承自 BaseModel，save() 不需要 request
                     doc = Document(
                         index=index_obj,
                         filename=file_info['name'],
@@ -624,14 +615,34 @@ class RAGIndexCreateView(APIView):
                     overwrite=data.get('overwrite', False),
                 )
 
-            # 创建 DocumentIndex 对象，使用 save(request=request)
-            index_obj = DocumentIndex(
-                user=user,
-                index_name=original_name,
-                description=data.get('description', ''),
-                document_count=len(documents)
-            )
-            index_obj.save(request=request)
+            existing = DocumentIndex.all_objects.filter(user=user, index_name=original_name).first()
+            if existing:
+                if existing.is_deleted:
+                    existing.is_deleted = False
+                    existing.deleted_at = None
+                    existing.description = data.get('description', '')
+                    existing.document_count = len(documents)
+                    existing.save(request=request)
+                elif data.get('overwrite', False):
+                    existing.description = data.get('description', existing.description)
+                    existing.document_count = len(documents)
+                    existing.save(request=request)
+                else:
+                    return error_response(
+                        code=ErrorCode.DUPLICATE_RESOURCE,
+                        message=f'索引 "{original_name}" 已存在，请使用其他名称或先删除已有索引',
+                        http_status=status.HTTP_409_CONFLICT
+                    )
+            else:
+                index_obj = DocumentIndex(
+                    user=user,
+                    index_name=original_name,
+                    description=data.get('description', ''),
+                    document_count=len(documents)
+                )
+                index_obj.save(request=request)
+
+            CacheService.delete(f"kb_list:user_{user.id}")
 
             stats = manager.get_index_stats(user_index_name)
             return success_response(
@@ -691,13 +702,31 @@ class RAGEmptyIndexCreateView(APIView):
                 overwrite=data.get('overwrite', False),
             )
 
-            # 创建 DocumentIndex 对象，使用 save(request=request)
-            index_obj = DocumentIndex(
-                user=user,
-                index_name=original_name,
-                description=data.get('description', '')
-            )
-            index_obj.save(request=request)
+            existing = DocumentIndex.all_objects.filter(user=user, index_name=original_name).first()
+            if existing:
+                if existing.is_deleted:
+                    existing.is_deleted = False
+                    existing.deleted_at = None
+                    existing.description = data.get('description', '')
+                    existing.save(request=request)
+                elif data.get('overwrite', False):
+                    existing.description = data.get('description', existing.description)
+                    existing.save(request=request)
+                else:
+                    return error_response(
+                        code=ErrorCode.DUPLICATE_RESOURCE,
+                        message=f'索引 "{original_name}" 已存在，请使用其他名称或先删除已有索引',
+                        http_status=status.HTTP_409_CONFLICT
+                    )
+            else:
+                index_obj = DocumentIndex(
+                    user=user,
+                    index_name=original_name,
+                    description=data.get('description', '')
+                )
+                index_obj.save(request=request)
+
+            CacheService.delete(f"kb_list:user_{user.id}")
 
             stats = manager.get_index_stats(user_index_name)
             return success_response(
@@ -736,10 +765,7 @@ class RAGIndexListView(APIView):
                 name = idx_data.get('name', '')
                 if name.startswith(f"user_{user.id}_"):
                     original_name = get_original_index_name(name)
-                    user_indexes.append({
-                        **idx_data,
-                        'name': original_name,
-                    })
+                    user_indexes.append({**idx_data, 'name': original_name})
 
             return success_response(
                 data=IndexInfoSerializer(user_indexes, many=True).data
@@ -796,6 +822,8 @@ class RAGIndexDeleteView(APIView):
             if index_obj:
                 Document.objects.filter(index=index_obj).update(is_deleted=True)
                 index_obj.soft_delete()
+
+            CacheService.delete(f"kb_list:user_{user.id}")
 
             upload_dir = Path(app_cfg.data_uploads_path) / user_index_name
             if upload_dir.exists() and upload_dir.is_dir():

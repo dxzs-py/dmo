@@ -41,6 +41,7 @@ export const useChatStore = defineStore('chat', () => {
       use_tools: options.useTools !== false,
       use_advanced_tools: options.useAdvancedTools || false,
       selected_knowledge_base: selectedKnowledgeBaseId,
+      attachment_ids: options.attachmentIds || [],
     })
 
     if (!validation.success) {
@@ -94,6 +95,7 @@ export const useChatStore = defineStore('chat', () => {
         }))
         .filter(m => m.content && m.content.trim())
 
+      logger.log('[ChatStore] streamChat 请求参数, attachment_ids:', options.attachmentIds || [])
       const result = await streamChat(
         {
           message,
@@ -104,6 +106,7 @@ export const useChatStore = defineStore('chat', () => {
           streaming: true,
           session_id: sessionId,
           selected_knowledge_base: selectedKnowledgeBaseId,
+          attachment_ids: options.attachmentIds || [],
         },
         {
           appendToLastMessage: (content) => sessionStore.appendToLastMessage(sessionId, content),
@@ -116,6 +119,7 @@ export const useChatStore = defineStore('chat', () => {
           setSuggestions: (data) => sessionStore.setSuggestionsToLastMessage(sessionId, data),
           setContext: (data) => sessionStore.setContextToLastMessage(sessionId, data),
           setCost: (data) => { costSummary.value = data },
+          setUsage: (data) => sessionStore.setUsageToLastMessage(sessionId, data),
           requestToolConfirmation: (data) => {
             pendingToolConfirmation.value = {
               confirmId: data.confirm_id,
@@ -239,6 +243,12 @@ export const useChatStore = defineStore('chat', () => {
           setSuggestions: (data) => sessionStore.setSuggestionsToMessage(sid, messageIndex, data),
           setContext: (data) => sessionStore.setContextToMessage(sid, messageIndex, data),
           setCost: (data) => { costSummary.value = data },
+          setUsage: (data) => {
+            if (data.model !== undefined) currentMessage.model = data.model
+            if (data.tokenCount !== undefined) currentMessage.tokenCount = data.tokenCount
+            if (data.cost !== undefined) currentMessage.cost = data.cost
+            if (data.responseTime !== undefined) currentMessage.responseTime = data.responseTime
+          },
         }
       )
 

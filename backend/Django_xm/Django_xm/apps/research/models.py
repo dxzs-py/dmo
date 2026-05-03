@@ -62,6 +62,26 @@ class ResearchTask(AuditModel):
         null=True,
         verbose_name='Celery任务ID'
     )
+    model = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name='使用的模型'
+    )
+    token_count = models.IntegerField(
+        default=0,
+        verbose_name='Token 数量'
+    )
+    cost = models.DecimalField(
+        max_digits=12,
+        decimal_places=6,
+        default=0,
+        verbose_name='成本(美元)'
+    )
+    response_time = models.FloatField(
+        default=0,
+        verbose_name='响应时间(秒)'
+    )
 
     class Meta:
         db_table = 'research_task'

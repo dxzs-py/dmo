@@ -169,7 +169,8 @@ class ChatMessageSerializer(serializers.ModelSerializer):
         fields = ['id', 'session', 'role', 'content', 'sources', 'plan',
                   'chain_of_thought', 'tool_calls', 'reasoning',
                   'suggestions', 'context', 'versions',
-                  'current_version', 'attachments', 'created_at']
+                  'current_version', 'attachments', 'created_at',
+                  'model', 'token_count', 'cost', 'response_time']
         read_only_fields = ['id', 'session', 'created_at']
 
     def validate_content(self, value):

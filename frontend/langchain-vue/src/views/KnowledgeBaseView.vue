@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onActivated, onUnmounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Search, Upload, Delete, View, Document, FolderOpened, Edit, Refresh, Download } from '@element-plus/icons-vue'
 import { knowledgeAPI } from '../api'
@@ -47,6 +47,10 @@ const filteredKBs = computed(() => {
 onMounted(async () => {
   await loadKnowledgeBases()
   await loadCacheInfo()
+})
+
+onActivated(async () => {
+  await loadKnowledgeBases()
 })
 
 onUnmounted(() => {
@@ -333,7 +337,7 @@ async function handleClearCache(scope = 'all') {
 
     <el-row :gutter="20" v-loading="loading">
       <el-col :xs="24" :sm="12" :md="8" v-for="kb in filteredKBs" :key="kb.id"
-              v-memo="[kb.name, kb.description, kb.document_count, kb.chunk_count, kb.updated_at]">
+              v-memo="[kb.name, kb.description, kb.chunk_count, kb.updated_at]">
         <el-card class="kb-card" shadow="hover">
           <template #header>
             <div class="kb-card-header">
@@ -370,7 +374,6 @@ async function handleClearCache(scope = 'all') {
           </template>
           <p class="kb-desc">{{ kb.description || '暂无描述' }}</p>
           <div class="kb-stats">
-            <span><el-icon><Document /></el-icon>{{ kb.document_count || 0 }} 文档</span>
             <span>{{ kb.chunk_count || 0 }} 分段</span>
           </div>
         </el-card>
@@ -510,7 +513,6 @@ async function handleClearCache(scope = 'all') {
       <template v-if="currentKB">
         <el-descriptions :column="2" border>
           <el-descriptions-item label="名称">{{ currentKB.name }}</el-descriptions-item>
-          <el-descriptions-item label="文档数">{{ currentKB.document_count || 0 }}</el-descriptions-item>
           <el-descriptions-item label="分段数">{{ currentKB.chunk_count || 0 }}</el-descriptions-item>
           <el-descriptions-item label="创建时间">{{ currentKB.created_at }}</el-descriptions-item>
           <el-descriptions-item label="描述" :span="2">{{ currentKB.description || '暂无' }}</el-descriptions-item>

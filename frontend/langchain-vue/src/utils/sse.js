@@ -39,6 +39,14 @@ const SSE_EVENT_HANDLERS = {
       if (parsed.data.cost) {
         sessionOps.setCost?.(parsed.data.cost)
       }
+      const usageData = {}
+      if (parsed.data.model) usageData.model = parsed.data.model
+      if (parsed.data.total_tokens) usageData.tokenCount = parsed.data.total_tokens
+      if (parsed.data.cost?.totalCost !== undefined) usageData.cost = parsed.data.cost.totalCost
+      if (parsed.data.response_time) usageData.responseTime = parsed.data.response_time
+      if (Object.keys(usageData).length > 0) {
+        sessionOps.setUsage?.(usageData)
+      }
     }
   },
   command: (parsed, _appendFn, sessionOps) => {
