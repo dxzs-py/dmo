@@ -4,15 +4,20 @@
 """
 
 import logging
+import time
 from datetime import datetime
+from decimal import Decimal
 from typing import Literal, Dict, Any, Optional
 
 from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
+from langchain_community.callbacks.manager import get_openai_callback
 
 from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.ai_engine.services.cost_tracker import create_cost_tracker
+from Django_xm.apps.ai_engine.services.usage_tracker import create_usage_tracker
 from .state import StudyFlowState
 from ..nodes import (
     planner_node,
@@ -152,17 +157,6 @@ def start_study_flow(
     thread_id: str, 
     user_id: Optional[int] = None
 ) -> dict:
-    """
-    启动新的学习工作流
-
-    Args:
-        user_question: 用户的学习问题
-        thread_id: 线程 ID（用于标识会话）
-        user_id: 用户ID（可选，用于持久化）
-
-    Returns:
-        工作流执行结果
-    """
     logger.info(f"[Study Flow] 启动新的学习工作流，thread_id={thread_id}")
 
     study_flow = _get_study_flow(thread_id)
@@ -194,9 +188,17 @@ def start_study_flow(
     }
 
     logger.info("[Study Flow] 开始执行工作流...")
-    result = study_flow.invoke(initial_state, config)
+    start_time = time.time()
+    with get_openai_callback() as cb:
+        result = study_flow.invoke(initial_state, config)
 
     logger.info(f"[Study Flow] 工作流暂停在: {result.get('current_step')}")
+
+    total_cost = cb.total_cost
+    total_tokens = cb.prompt_tokens + cb.completion_tokens
+    response_time = round(time.time() - start_time, 2)
+
+    _update_workflow_session_cost(thread_id, total_cost, total_tokens, response_time)
 
     persistence_service.save_workflow_state(thread_id, result, user_id)
 
@@ -208,17 +210,6 @@ def submit_answers(
     user_answers: dict,
     user_id: Optional[int] = None
 ) -> dict:
-    """
-    提交用户答案，继续执行工作流
-
-    Args:
-        thread_id: 线程 ID
-        user_answers: 用户答案字典 {"q1": "A", "q2": "xxx", ...}
-        user_id: 用户ID（可选，用于持久化）
-
-    Returns:
-        工作流执行结果
-    """
     logger.info(f"[Study Flow] 提交答案，thread_id={thread_id}")
 
     study_flow = _get_study_flow(thread_id)
@@ -253,13 +244,20 @@ def submit_answers(
     )
 
     logger.info("[Study Flow] 继续执行工作流...")
-    study_flow.invoke(None, config=config)
+    start_time = time.time()
+    with get_openai_callback() as cb:
+        study_flow.invoke(None, config=config)
 
     result = get_workflow_state(thread_id)
 
     logger.info(f"[Study Flow] 工作流执行完成，最终状态: {result.get('current_step') if result else 'unknown'}")
 
     if result:
+        total_cost = cb.total_cost
+        total_tokens = cb.prompt_tokens + cb.completion_tokens
+        response_time = round(time.time() - start_time, 2)
+        _update_workflow_session_cost(thread_id, total_cost, total_tokens, response_time, is_incremental=True)
+
         persistence_service.save_workflow_state(thread_id, result, user_id)
 
     return result
@@ -339,15 +337,39 @@ def get_workflow_history(thread_id: str) -> list:
 
 
 def get_study_flow_app(thread_id: str = None) -> StudyFlow:
-    """
-    获取工作流实例（兼容性别名）
-
-    Args:
-        thread_id: 线程 ID
-
-    Returns:
-        StudyFlow 实例
-    """
     if thread_id:
         return _get_study_flow(thread_id)
     return StudyFlow()
+
+
+def _update_workflow_session_cost(
+    thread_id: str,
+    total_cost: float,
+    total_tokens: int,
+    response_time: float,
+    is_incremental: bool = False,
+):
+    try:
+        from ..models import WorkflowSession
+        session = WorkflowSession.objects.filter(thread_id=thread_id, is_deleted=False).first()
+        if not session:
+            logger.warning(f"[Study Flow] 未找到工作流会话: {thread_id}")
+            return
+
+        from Django_xm.apps.ai_engine.config import settings as ai_settings
+        model_name = getattr(ai_settings, 'openai_model', 'gpt-4o')
+
+        if is_incremental:
+            session.token_count = (session.token_count or 0) + total_tokens
+            session.cost = (session.cost or 0) + Decimal(str(round(total_cost, 6)))
+            session.response_time = (session.response_time or 0) + response_time
+        else:
+            session.model = model_name
+            session.token_count = total_tokens
+            session.cost = Decimal(str(round(total_cost, 6)))
+            session.response_time = response_time
+
+        session.save(update_fields=['model', 'token_count', 'cost', 'response_time'])
+        logger.info(f"[Study Flow] 更新工作流成本: thread_id={thread_id}, cost=${total_cost:.4f}, tokens={total_tokens}")
+    except Exception as e:
+        logger.warning(f"[Study Flow] 更新工作流会话成本失败: {e}")

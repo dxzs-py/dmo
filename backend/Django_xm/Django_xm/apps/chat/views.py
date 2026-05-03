@@ -234,7 +234,24 @@ class ChatStreamView(APIView):
             )
 
         data = serializer.validated_data
-        logger.info(f"收到流式聊天请求: {data['message'][:50]}...")
+        logger.info(f"收到流式聊天请求: {data['message'][:50]}..., attachment_ids={data.get('attachment_ids')}")
+
+        attachment_ids = data.get('attachment_ids') or []
+        if attachment_ids:
+            try:
+                from Django_xm.apps.chat.services.chat_service import AttachmentService
+                att_svc = AttachmentService()
+                user_content = att_svc.build_user_content(data['message'], attachment_ids)
+                if user_content["type"] == "text":
+                    data['message'] = user_content["content"]
+                    data['_preloaded_attachment_type'] = 'text'
+                else:
+                    data['_preloaded_attachment_content'] = user_content["content"]
+                    data['_preloaded_attachment_type'] = 'multimodal'
+                data['_has_attachments'] = True
+                data['attachment_ids'] = []
+            except Exception as e:
+                logger.error(f"预加载附件内容失败: {e}", exc_info=True)
 
         def generate():
             import asyncio

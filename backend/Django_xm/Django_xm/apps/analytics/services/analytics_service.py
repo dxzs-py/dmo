@@ -69,6 +69,40 @@ class AnalyticsService:
         total_cost = float(msg_agg['cost'] or 0)
         avg_response_time = round(float(msg_agg['avg_time'] or 0), 2)
 
+        research_agg = ResearchTask.objects.filter(
+            created_by=user, is_deleted=False
+        ).aggregate(
+            tokens=Sum('token_count'),
+            cost=Sum('cost'),
+            avg_time=Avg('response_time'),
+        )
+        research_tokens = research_agg['tokens'] or 0
+        research_cost = float(research_agg['cost'] or 0)
+        research_avg_time = float(research_agg['avg_time'] or 0)
+
+        workflow_agg = WorkflowSession.objects.filter(
+            created_by=user, is_deleted=False
+        ).aggregate(
+            tokens=Sum('token_count'),
+            cost=Sum('cost'),
+            avg_time=Avg('response_time'),
+        )
+        workflow_tokens = workflow_agg['tokens'] or 0
+        workflow_cost = float(workflow_agg['cost'] or 0)
+        workflow_avg_time = float(workflow_agg['avg_time'] or 0)
+
+        all_tokens = total_tokens + research_tokens + workflow_tokens
+        all_cost = total_cost + research_cost + workflow_cost
+
+        all_times = []
+        if msg_agg['avg_time']:
+            all_times.append(float(msg_agg['avg_time']))
+        if research_avg_time > 0:
+            all_times.append(research_avg_time)
+        if workflow_avg_time > 0:
+            all_times.append(workflow_avg_time)
+        combined_avg_time = round(sum(all_times) / len(all_times), 2) if all_times else 0
+
         events = UserEvent.objects.filter(user=user, is_deleted=False)
         total_events = events.count()
         api_requests = events.filter(event_type=EventType.API_REQUEST).count()
@@ -89,15 +123,25 @@ class AnalyticsService:
         return {
             'total_sessions': chat_sessions,
             'total_messages': total_messages,
-            'total_tokens': total_tokens,
-            'total_cost': total_cost,
-            'avg_response_time': avg_response_time,
+            'total_tokens': all_tokens,
+            'total_cost': all_cost,
+            'avg_response_time': combined_avg_time,
             'total_events': total_events,
             'api_requests': api_requests,
             'api_errors': api_errors,
             'total_documents': total_documents,
             'total_workflows': total_workflows,
             'total_research': total_research,
+            'cost_breakdown': {
+                'chat': total_cost,
+                'research': research_cost,
+                'workflow': workflow_cost,
+            },
+            'token_breakdown': {
+                'chat': total_tokens,
+                'research': research_tokens,
+                'workflow': workflow_tokens,
+            },
         }
 
     @classmethod

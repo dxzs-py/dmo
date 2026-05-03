@@ -22,7 +22,7 @@
                 <el-option
                   v-for="index in availableIndexes"
                   :key="index.name"
-                  :label="`${index.name} (${index.num_documents} 文档)`"
+                  :label="`${index.name} (${index.num_documents} 分段)`"
                   :value="index.name"
                 >
                   <div class="index-option">
@@ -38,7 +38,7 @@
                     >
                       空索引
                     </el-tag>
-                    <span v-else class="index-count" style="margin-left: auto">{{ index.num_documents }} 文档</span>
+                    <span v-else class="index-count" style="margin-left: auto">{{ index.num_documents }} 分段</span>
                   </div>
                 </el-option>
               </el-select>
@@ -278,7 +278,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed, onUnmounted } from 'vue'
+import { ref, reactive, onMounted, onActivated, computed, onUnmounted } from 'vue'
 import { ragAPI } from '../api'
 import { ElMessage } from 'element-plus'
 import { Upload, Document } from '@element-plus/icons-vue'
@@ -756,6 +756,10 @@ onMounted(async () => {
   if (selectedIndexName.value) {
     await loadFiles()
   }
+})
+
+onActivated(async () => {
+  await fetchIndexes()
 })
 
 onUnmounted(() => {

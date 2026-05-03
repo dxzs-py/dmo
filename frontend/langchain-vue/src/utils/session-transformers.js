@@ -109,6 +109,10 @@ export function transformBackendMessageToFrontend(msg) {
     versions: versions,
     currentVersion: currentVersion,
     timestamp: msgObj.created_at ? new Date(msgObj.created_at).getTime() : Date.now(),
+    model: msgObj.model || null,
+    tokenCount: msgObj.token_count || 0,
+    cost: msgObj.cost || 0,
+    responseTime: msgObj.response_time || 0,
   }
 }
 
@@ -149,5 +153,9 @@ export function transformFrontendMessageToBackend(msg) {
     context: msg.context || null,
     versions: backendVersions,
     current_version: typeof msg.currentVersion === 'number' ? msg.currentVersion : 0,
+    model: msg.model || null,
+    token_count: msg.tokenCount || 0,
+    cost: msg.cost || 0,
+    response_time: msg.responseTime || 0,
   }
 }

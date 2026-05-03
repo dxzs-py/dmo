@@ -1,0 +1,9 @@
+{
+  "name": "user_1_dx",
+  "description": "",
+  "created_at": "2026-05-03T21:47:44.421208",
+  "updated_at": "2026-05-03T21:49:03.941904",
+  "num_documents": 5,
+  "store_type": "faiss",
+  "embedding_model": "text-embedding-3-small"
+}

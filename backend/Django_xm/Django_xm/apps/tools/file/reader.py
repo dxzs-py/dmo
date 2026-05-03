@@ -4,8 +4,9 @@
 """
 
 import os
+import base64
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Tuple, Dict, Any
 
 from langchain_core.tools import tool
 from langchain_core.documents import Document
@@ -22,8 +23,19 @@ SUPPORTED_EXTENSIONS = {
     ".go", ".rs", ".rb", ".php", ".swift", ".kt",
 }
 
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+
 MAX_FILE_SIZE = 10 * 1024 * 1024
 MAX_CONTENT_LENGTH = 50000
+
+IMAGE_MIME_MAP = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+}
 
 
 def _read_text_file(file_path: Path) -> str:
@@ -103,21 +115,13 @@ def _read_pptx_file(file_path: Path) -> str:
 
 def _read_image_file(file_path: Path) -> str:
     try:
-        import base64
         from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
 
         with open(file_path, "rb") as f:
             image_data = base64.b64encode(f.read()).decode("utf-8")
 
         ext = file_path.suffix.lower()
-        mime_map = {
-            ".png": "image/png",
-            ".jpg": "image/jpeg",
-            ".jpeg": "image/jpeg",
-            ".gif": "image/gif",
-            ".webp": "image/webp",
-        }
-        mime_type = mime_map.get(ext, "image/png")
+        mime_type = IMAGE_MIME_MAP.get(ext, "image/png")
 
         model = get_chat_model(model_name="gpt-4o", temperature=0.0)
 
@@ -131,6 +135,14 @@ def _read_image_file(file_path: Path) -> str:
         return getattr(response, "content", "无法识别图片内容")
     except Exception as e:
         raise ValueError(f"图片识别失败: {str(e)}")
+
+
+def is_image_file(file_path: str) -> bool:
+    return Path(file_path).suffix.lower() in IMAGE_EXTENSIONS
+
+
+def is_image_extension(ext: str) -> bool:
+    return f".{ext.lstrip('.')}" in IMAGE_EXTENSIONS
 
 
 def read_file_content(file_path: str) -> str:
@@ -157,7 +169,7 @@ def read_file_content(file_path: str) -> str:
         content = _read_excel_file(path)
     elif ext in (".ppt", ".pptx"):
         content = _read_pptx_file(path)
-    elif ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"):
+    elif ext in IMAGE_EXTENSIONS:
         content = _read_image_file(path)
     else:
         try:
@@ -169,6 +181,120 @@ def read_file_content(file_path: str) -> str:
         content = content[:MAX_CONTENT_LENGTH] + f"\n\n... [文件内容过长，已截断，原始长度: {len(content)} 字符]"
 
     return content
+
+
+def read_file_as_documents(file_path: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> List[Document]:
+    path = Path(file_path)
+
+    if not path.exists():
+        raise FileNotFoundError(f"文件不存在: {file_path}")
+
+    if not path.is_file():
+        raise ValueError(f"路径不是文件: {file_path}")
+
+    if path.stat().st_size > MAX_FILE_SIZE:
+        raise ValueError(f"文件过大（超过 {MAX_FILE_SIZE // (1024*1024)}MB）: {file_path}")
+
+    ext = path.suffix.lower()
+    file_name = path.name
+
+    if ext in IMAGE_EXTENSIONS:
+        text_content = _read_image_file(path)
+        return [Document(page_content=text_content, metadata={"source": file_name, "file_type": "image"})]
+
+    if ext in SUPPORTED_EXTENSIONS:
+        raw_text = _read_text_file(path)
+    elif ext == ".pdf":
+        try:
+            from langchain_community.document_loaders import PyPDFLoader
+            loader = PyPDFLoader(str(path))
+            docs = loader.load()
+            for doc in docs:
+                doc.metadata["source"] = file_name
+            return docs
+        except ImportError:
+            raw_text = _read_pdf_file(path)
+    elif ext in (".doc", ".docx"):
+        raw_text = _read_docx_file(path)
+    elif ext in (".xls", ".xlsx"):
+        raw_text = _read_excel_file(path)
+    elif ext in (".ppt", ".pptx"):
+        raw_text = _read_pptx_file(path)
+    else:
+        try:
+            raw_text = _read_text_file(path)
+        except Exception:
+            raise ValueError(f"不支持的文件类型: {ext}")
+
+    if len(raw_text) <= chunk_size:
+        return [Document(page_content=raw_text, metadata={"source": file_name, "file_type": ext.lstrip(".")})]
+
+    try:
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            separators=["\n\n", "\n", "。", "！", "？", ".", "!", "?", " ", ""],
+        )
+        chunks = splitter.create_documents(
+            texts=[raw_text],
+            metadatas=[{"source": file_name, "file_type": ext.lstrip(".")}],
+        )
+        logger.info(f"文件 {file_name} 分割为 {len(chunks)} 个片段")
+        return chunks
+    except ImportError:
+        logger.warning("langchain_text_splitters 不可用，返回完整文档")
+        return [Document(page_content=raw_text, metadata={"source": file_name, "file_type": ext.lstrip(".")})]
+
+
+def get_attachment_info(attachment_id: int) -> Dict[str, Any]:
+    try:
+        from Django_xm.apps.chat.models import ChatAttachment
+        attachment = ChatAttachment.objects.select_related('session').get(id=attachment_id)
+    except Exception as e:
+        raise ValueError(f"找不到附件 (id={attachment_id}): {str(e)}")
+
+    file_path = attachment.file.path
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"附件文件不存在: {attachment.original_name}")
+
+    ext = Path(file_path).suffix.lower()
+
+    return {
+        "id": attachment.id,
+        "original_name": attachment.original_name,
+        "file_type": attachment.file_type,
+        "mime_type": attachment.mime_type,
+        "file_size": attachment.file_size,
+        "file_path": file_path,
+        "is_image": ext in IMAGE_EXTENSIONS,
+        "ext": ext,
+    }
+
+
+def read_attachment_as_base64(attachment_id: int) -> Tuple[str, str]:
+    info = get_attachment_info(attachment_id)
+    file_path = info["file_path"]
+    ext = info["ext"]
+    mime_type = IMAGE_MIME_MAP.get(ext, "image/png")
+
+    with open(file_path, "rb") as f:
+        image_data = base64.b64encode(f.read()).decode("utf-8")
+
+    return image_data, mime_type
+
+
+def read_attachment_as_documents(attachment_id: int, chunk_size: int = 1000, chunk_overlap: int = 200) -> List[Document]:
+    info = get_attachment_info(attachment_id)
+    file_path = info["file_path"]
+
+    docs = read_file_as_documents(file_path, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+
+    for doc in docs:
+        doc.metadata["attachment_id"] = attachment_id
+        doc.metadata["original_name"] = info["original_name"]
+
+    return docs
 
 
 def read_uploaded_attachment(attachment_id: int) -> str:

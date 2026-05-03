@@ -3,11 +3,17 @@
 将原本的 threading 后台任务迁移到 Celery 任务队列
 """
 import logging
+import time
 from datetime import datetime
+from decimal import Decimal
 from celery import shared_task
+
+from langchain_community.callbacks.manager import get_openai_callback
 
 from Django_xm.apps.research.services.deep_agent import create_deep_research_agent
 from Django_xm.apps.research.services.task_manager import get_task_manager, update_task_status
+from Django_xm.apps.ai_engine.services.cost_tracker import create_cost_tracker
+from Django_xm.apps.ai_engine.services.usage_tracker import create_usage_tracker
 from Django_xm.tasks.base import TrackedTask
 
 logger = logging.getLogger(__name__)
@@ -26,6 +32,7 @@ def run_research_task(self, thread_id: str, query: str,
     tracker.set_task_type('deep_research')
 
     task_manager = get_task_manager()
+    start_time = time.time()
 
     def _mark_failed(error_msg: str, exc: Exception = None):
         update_task_status(thread_id, {
@@ -57,7 +64,27 @@ def run_research_task(self, thread_id: str, query: str,
         )
         tracker.update_progress(30, '智能体初始化完成')
 
-        result = agent.research(query)
+        cost_tracker = create_cost_tracker()
+        usage_tracker = create_usage_tracker()
+
+        with get_openai_callback() as cb:
+            result = agent.research(query)
+
+        usage_tracker.add_input_tokens(cb.prompt_tokens)
+        usage_tracker.add_output_tokens(cb.completion_tokens)
+        cost_tracker.update_from_metadata(
+            {'usage_metadata': {
+                'input_tokens': cb.prompt_tokens,
+                'output_tokens': cb.completion_tokens,
+            }}
+        )
+        cost_tracker.finish_record()
+
+        total_cost = cost_tracker.get_total_cost()
+        total_tokens = usage_tracker.get_total_tokens()
+        response_time = round(time.time() - start_time, 2)
+        model_name = usage_tracker.model_id
+
         tracker.update_progress(90, '研究执行完成')
 
         if not result.get('success', True):
@@ -74,8 +101,22 @@ def run_research_task(self, thread_id: str, query: str,
             'final_report': result.get('final_report', ''),
         })
 
+        try:
+            from Django_xm.apps.research.models import ResearchTask
+            ResearchTask.objects.filter(task_id=thread_id).update(
+                model=model_name,
+                token_count=total_tokens,
+                cost=Decimal(str(round(total_cost, 6))),
+                response_time=response_time,
+            )
+        except Exception as e:
+            logger.warning(f"[Celery] 更新研究任务成本失败: {e}")
+
+        cost_tracker.log_summary()
+        usage_tracker.log_summary()
+
         tracker.mark_success(result={'thread_id': thread_id, 'status': 'completed'})
-        logger.info(f"[Celery] 深度研究任务完成：{thread_id}")
+        logger.info(f"[Celery] 深度研究任务完成：{thread_id}, 成本: ${total_cost:.4f}, Token: {total_tokens}")
         return {'status': 'completed', 'thread_id': thread_id}
 
     except Exception as exc:

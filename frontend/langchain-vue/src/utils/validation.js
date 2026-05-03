@@ -32,6 +32,7 @@ export const ChatRequestSchema = z.object({
   use_tools: z.boolean().optional(),
   use_advanced_tools: z.boolean().optional(),
   selected_knowledge_base: z.string().optional().nullable(),
+  attachment_ids: z.array(z.number().int().positive()).optional().default([]),
 })
 
 export const SettingsSchema = z.object({

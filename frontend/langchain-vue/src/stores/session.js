@@ -367,6 +367,15 @@ export const useSessionStore = defineStore('session', () => {
   const setContextToLastMessage = (sessionId, context) => _setLastField(sessionId, 'context', context)
   const addToolCallToLastMessage = (sessionId, toolCall) => _addLastFieldItem(sessionId, 'toolCalls', toolCall)
 
+  const setUsageToLastMessage = (sessionId, usageData) => {
+    const result = getLastAssistantMessage(sessions.value, sessionId)
+    if (!result) return
+    if (usageData.model !== undefined) result.message.model = usageData.model
+    if (usageData.tokenCount !== undefined) result.message.tokenCount = usageData.tokenCount
+    if (usageData.cost !== undefined) result.message.cost = usageData.cost
+    if (usageData.responseTime !== undefined) result.message.responseTime = usageData.responseTime
+  }
+
   const getSessionMessages = (sessionId) => {
     const session = sessions.value.find(s => s.id === sessionId)
     return session ? session.messages : []
@@ -485,6 +494,7 @@ export const useSessionStore = defineStore('session', () => {
     setSuggestionsToLastMessage,
     setContextToLastMessage,
     addToolCallToLastMessage,
+    setUsageToLastMessage,
     addSourceToMessage,
     setSourcesToMessage,
     setPlanToMessage,
