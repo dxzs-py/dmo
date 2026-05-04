@@ -65,12 +65,18 @@ class DeepResearchStartView(APIView):
                     http_status=status.HTTP_400_BAD_REQUEST
                 )
             
+            knowledge_base_ids = data.get('knowledge_base_ids', [])
+
             task_manager.create_task(
                 thread_id,
                 data['query'],
                 enable_web_search=data.get('enable_web_search', True),
                 enable_doc_analysis=data.get('enable_doc_analysis', False),
                 created_by=request.user
+            )
+
+            ResearchTask.objects.filter(task_id=thread_id).update(
+                knowledge_base_ids=knowledge_base_ids
             )
             
             research_depth = data.get('research_depth', 'standard')
@@ -85,7 +91,9 @@ class DeepResearchStartView(APIView):
                 thread_id=thread_id,
                 query=data['query'],
                 enable_web_search=data.get('enable_web_search', True),
-                enable_doc_analysis=data.get('enable_doc_analysis', False)
+                enable_doc_analysis=data.get('enable_doc_analysis', False),
+                knowledge_base_ids=knowledge_base_ids,
+                user_id=request.user.id,
             )
 
             logger.info(f"研究任务已提交到 Celery 队列：{thread_id} (task_id: {celery_result.id})")
@@ -100,6 +108,7 @@ class DeepResearchStartView(APIView):
                     'updated_at': datetime.now().isoformat(),
                     'enable_web_search': data.get('enable_web_search', True),
                     'enable_doc_analysis': data.get('enable_doc_analysis', False),
+                    'knowledge_base_ids': knowledge_base_ids,
                     'estimated_time': estimated_time,
                 },
                 message='研究任务已创建'
@@ -135,6 +144,7 @@ class DeepResearchStatusView(APIView):
                     'updated_at': task.updated_at.isoformat() if task.updated_at else '',
                     'enable_web_search': task.enable_web_search,
                     'enable_doc_analysis': task.enable_doc_analysis,
+                    'knowledge_base_ids': task.knowledge_base_ids or [],
                     'current_step': cached_status.get('current_step', 'unknown') if cached_status else task.status,
                 }
                 
@@ -196,6 +206,7 @@ class DeepResearchResultView(APIView):
                         'updated_at': task.updated_at.isoformat() if task.updated_at else '',
                         'enable_web_search': task.enable_web_search,
                         'enable_doc_analysis': task.enable_doc_analysis,
+                        'knowledge_base_ids': task.knowledge_base_ids or [],
                     }
                 )
 

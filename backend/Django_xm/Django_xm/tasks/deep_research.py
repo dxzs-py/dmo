@@ -12,6 +12,7 @@ from langchain_community.callbacks.manager import get_openai_callback
 
 from Django_xm.apps.research.services.deep_agent import create_deep_research_agent
 from Django_xm.apps.research.services.task_manager import get_task_manager, update_task_status
+from Django_xm.apps.research.services.multi_kb_retriever import build_retriever_tool_for_research
 from Django_xm.apps.ai_engine.services.cost_tracker import create_cost_tracker
 from Django_xm.apps.ai_engine.services.usage_tracker import create_usage_tracker
 from Django_xm.tasks.base import TrackedTask
@@ -27,7 +28,9 @@ logger = logging.getLogger(__name__)
 )
 def run_research_task(self, thread_id: str, query: str,
                       enable_web_search: bool = True,
-                      enable_doc_analysis: bool = False):
+                      enable_doc_analysis: bool = False,
+                      knowledge_base_ids: list = None,
+                      user_id: int = None):
     tracker = TrackedTask(self)
     tracker.set_task_type('deep_research')
 
@@ -57,10 +60,27 @@ def run_research_task(self, thread_id: str, query: str,
         })
         tracker.update_progress(10, '研究任务启动')
 
+        retriever_tool = None
+        if enable_doc_analysis and knowledge_base_ids and user_id:
+            logger.info(f"[Celery] 构建多知识库检索工具: {knowledge_base_ids}")
+            try:
+                retriever_tool = build_retriever_tool_for_research(
+                    knowledge_base_ids=knowledge_base_ids,
+                    user_id=user_id,
+                )
+                if retriever_tool:
+                    logger.info("[Celery] 知识库检索工具创建成功")
+                else:
+                    logger.warning("[Celery] 知识库检索工具创建失败，文档分析将无法检索")
+            except Exception as e:
+                logger.error(f"[Celery] 构建知识库检索工具异常: {e}")
+
         agent = create_deep_research_agent(
             thread_id=thread_id,
             enable_web_search=enable_web_search,
-            enable_doc_analysis=enable_doc_analysis
+            enable_doc_analysis=enable_doc_analysis,
+            retriever_tool=retriever_tool,
+            user_id=user_id,
         )
         tracker.update_progress(30, '智能体初始化完成')
 

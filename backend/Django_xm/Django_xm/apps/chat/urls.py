@@ -25,4 +25,11 @@ urlpatterns = [
     path('cost/', views.ChatCostView.as_view(), name='chat-cost'),
     path('project-context/', views.ProjectContextView.as_view(), name='chat-project-context'),
     path('suggestions/', SuggestionsView.as_view(), name='chat-suggestions'),
+    path('admin/attachments/', views.AttachmentAdminListView.as_view(), name='admin-attachments-list'),
+    path('admin/attachments/stats/', views.AttachmentAdminStatsView.as_view(), name='admin-attachments-stats'),
+    path('admin/attachments/cleanup/', views.AttachmentAdminCleanupView.as_view(), name='admin-attachments-cleanup'),
+    path('admin/attachments/<int:attachment_id>/', views.AttachmentAdminDetailView.as_view(), name='admin-attachments-detail'),
+    path('admin/attachments/<int:attachment_id>/action/', views.AttachmentAdminActionView.as_view(), name='admin-attachments-action'),
+    path('admin/storage-alerts/', views.StorageAlertView.as_view(), name='admin-storage-alerts'),
+    path('admin/storage-alerts/<int:alert_id>/', views.StorageAlertView.as_view(), name='admin-storage-alert-detail'),
 ]

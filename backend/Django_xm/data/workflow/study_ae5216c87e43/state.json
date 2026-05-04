@@ -1,0 +1,154 @@
+{
+  "thread_id": "study_ae5216c87e43",
+  "user_question": "简单的加法计算",
+  "status": "completed",
+  "current_step": "feedback_completed",
+  "learning_plan": {
+    "topic": "简单的加法计算",
+    "objectives": [
+      "能够正确计算1到10之间的加法题目",
+      "能够在30秒内完成5道简单加法题",
+      "能够理解加法的基本概念和应用"
+    ],
+    "key_points": [
+      "数字的认识（1到10）",
+      "加法的定义和基本概念",
+      "使用符号\"+\"表示加法",
+      "加法的交换律（a + b = b + a）",
+      "简单加法的应用场景（如购物、计数等）"
+    ],
+    "difficulty": "beginner",
+    "estimated_time": 60
+  },
+  "quiz": {
+    "questions": [
+      {
+        "id": "q1",
+        "type": "multiple_choice",
+        "question": "数字 3 加上数字 5 等于多少？",
+        "options": [
+          "8",
+          "9",
+          "7",
+          "6"
+        ],
+        "answer": "8",
+        "explanation": "根据加法的定义，3 + 5 = 8，因此正确答案是8。",
+        "points": 10
+      },
+      {
+        "id": "q2",
+        "type": "multiple_choice",
+        "question": "以下哪个是加法的符号？",
+        "options": [
+          "-",
+          "*",
+          "/",
+          "+"
+        ],
+        "answer": "+",
+        "explanation": "加法的符号是 '＋'，代表将两个或多个数字相加。",
+        "points": 10
+      },
+      {
+        "id": "q3",
+        "type": "multiple_choice",
+        "question": "根据加法的交换律，5 + 2 等于多少？",
+        "options": [
+          "7",
+          "5",
+          "2",
+          "8"
+        ],
+        "answer": "7",
+        "explanation": "根据加法的交换律，5 + 2 = 2 + 5，因此5 + 2 的结果是 7。",
+        "points": 15
+      },
+      {
+        "id": "q4",
+        "type": "fill_blank",
+        "question": "在购物时，如果你买了 2 个苹果和 3 个橙子，水果的总数是 ___ 。",
+        "options": null,
+        "answer": "5",
+        "explanation": "你买了 2 个苹果和 3 个橙子，使用加法计算总数：2 + 3 = 5，因此答案是5。",
+        "points": 15
+      },
+      {
+        "id": "q5",
+        "type": "short_answer",
+        "question": "请简要说明加法的定义并给出一个生活中的例子。",
+        "options": null,
+        "answer": "加法是将两个或多个数字结合在一起形成一个总和的数学运算。生活中的例子可以是：你有3元钱，朋友给了你2元钱，那么你现在有5元钱。",
+        "explanation": "加法的定义是将多个数量结合，得出一个总数。例子说明了加法在日常生活中的应用。",
+        "points": 30
+      }
+    ],
+    "total_points": 80,
+    "time_limit": 30
+  },
+  "user_answers": {
+    "q1": "8",
+    "q2": "*",
+    "q3": "7",
+    "q4": "5",
+    "q5": "加法定义\n把两个或多个数合并成一个总数的运算，结果称为和。\n生活例子\n桌上有 2 个苹果，妈妈又拿来 3 个，一共就有 \\(2+3=5\\) 个苹果。"
+  },
+  "score": 85,
+  "score_details": {
+    "total_count": 5,
+    "correct_count": 4,
+    "question_scores": [
+      {
+        "question_id": "q1",
+        "user_answer": "8",
+        "correct_answer": "8",
+        "is_correct": true,
+        "points_earned": 10,
+        "points_possible": 10,
+        "feedback": "回答正确！"
+      },
+      {
+        "question_id": "q2",
+        "user_answer": "*",
+        "correct_answer": "+",
+        "is_correct": false,
+        "points_earned": 0,
+        "points_possible": 10,
+        "feedback": "回答错误。正确答案是：+"
+      },
+      {
+        "question_id": "q3",
+        "user_answer": "7",
+        "correct_answer": "7",
+        "is_correct": true,
+        "points_earned": 15,
+        "points_possible": 15,
+        "feedback": "回答正确！"
+      },
+      {
+        "question_id": "q4",
+        "user_answer": "5",
+        "correct_answer": "5",
+        "is_correct": true,
+        "points_earned": 15,
+        "points_possible": 15,
+        "feedback": "回答正确！"
+      },
+      {
+        "question_id": "q5",
+        "user_answer": "加法定义\n把两个或多个数合并成一个总数的运算，结果称为和。\n生活例子\n桌上有 2 个苹果，妈妈又拿来 3 个，一共就有 \\(2+3=5\\) 个苹果。",
+        "correct_answer": "加法是将两个或多个数字结合在一起形成一个总和的数学运算。生活中的例子可以是：你有3元钱，朋友给了你2元钱，那么你现在有5元钱。",
+        "is_correct": true,
+        "points_earned": 28,
+        "points_possible": 30,
+        "feedback": "学生的答案准确地定义了加法，并提供了一个生活中的例子，且表达清晰。虽然例子简单明了，但可以稍微增加一些细节，比如解释“合并”这个过程，或是加法的重要性，以提升完整性。"
+      }
+    ]
+  },
+  "feedback": "\n\n💬 **学习反馈**\n\n亲爱的学生，\n\n首先，恭喜你在简单的加法计算中取得了85分的好成绩！你已经掌握了大部分内容，这非常令人鼓舞。通过4道正确的题目，说明你在加法的理解上有了良好的基础。\n\n对于你在第2题上的错误，可能是因为对符号的理解还不够清晰。建议你多练习几道类似的题目，尤其是涉及“+”符号的加法，这样能够帮助你巩固这部分的知识。\n\n接下来，可以尝试一些稍微复杂的加法问题，比如加法与减法结合的题目，来挑战自己，进一步提升能力。\n\n记住，每一次练习都是一次进步的机会！相信自己的能力，你一定会做得更好，加油！你很棒！\n\n🎉 恭喜您通过测验！继续保持这样的学习状态！",
+  "should_retry": false,
+  "retry_count": 0,
+  "created_at": "2026-05-04T10:41:04.968135",
+  "updated_at": "2026-05-04T10:41:50.004245",
+  "message": "恭喜通过测验！"
+}

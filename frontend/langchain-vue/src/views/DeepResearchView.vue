@@ -20,7 +20,54 @@
             <el-switch v-model="researchForm.enable_web_search" />
           </el-form-item>
           <el-form-item label="启用文档分析">
-            <el-switch v-model="researchForm.enable_doc_analysis" />
+            <el-switch v-model="researchForm.enable_doc_analysis" @change="onDocAnalysisChange" />
+          </el-form-item>
+          <el-form-item v-if="researchForm.enable_doc_analysis" label="选择知识库">
+            <div class="kb-selector">
+              <div class="kb-selector-header">
+                <el-input
+                  v-model="kbSearchQuery"
+                  placeholder="搜索知识库..."
+                  clearable
+                  size="small"
+                  class="kb-search-input"
+                  @input="filterKnowledgeBases"
+                />
+                <el-button size="small" @click="refreshKnowledgeBases" :loading="kbLoading">
+                  刷新
+                </el-button>
+              </div>
+              <div v-if="kbLoading" class="kb-loading">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                <span>加载知识库列表...</span>
+              </div>
+              <div v-else-if="filteredKnowledgeBases.length === 0" class="kb-empty">
+                <span v-if="kbSearchQuery">未找到匹配的知识库</span>
+                <span v-else>暂无可用知识库，请先在知识库页面创建并上传文档</span>
+              </div>
+              <div v-else class="kb-list">
+                <el-checkbox-group v-model="researchForm.knowledge_base_ids">
+                  <div
+                    v-for="kb in filteredKnowledgeBases"
+                    :key="kb.id"
+                    class="kb-item"
+                  >
+                    <el-checkbox :label="kb.id" :value="kb.id">
+                      <div class="kb-item-content">
+                        <span class="kb-name">{{ kb.name }}</span>
+                        <span class="kb-meta">
+                          <el-tag size="small" type="info">{{ kb.chunk_count || 0 }} 文档块</el-tag>
+                          <span v-if="kb.description" class="kb-desc">{{ kb.description }}</span>
+                        </span>
+                      </div>
+                    </el-checkbox>
+                  </div>
+                </el-checkbox-group>
+              </div>
+              <div v-if="researchForm.knowledge_base_ids.length > 0" class="kb-selected-summary">
+                已选择 {{ researchForm.knowledge_base_ids.length }} 个知识库
+              </div>
+            </div>
           </el-form-item>
           <el-form-item>
             <el-button type="primary" :loading="isLoading" @click="startResearch">
@@ -62,6 +109,20 @@
               {{ task.enable_doc_analysis ? '已启用' : '未启用' }}
             </el-tag>
           </el-descriptions-item>
+          <el-descriptions-item
+            v-if="task.enable_doc_analysis && task.knowledge_base_ids && task.knowledge_base_ids.length"
+            label="关联知识库"
+            :span="2"
+          >
+            <el-tag
+              v-for="kbId in task.knowledge_base_ids"
+              :key="kbId"
+              size="small"
+              class="kb-tag"
+            >
+              {{ kbId }}
+            </el-tag>
+          </el-descriptions-item>
         </el-descriptions>
 
         <div v-if="task.status === 'running' || task.status === 'pending'" class="progress-section">
@@ -82,6 +143,28 @@
           </div>
           <div class="report-content">
             <MarkdownRenderer :content="task.final_report" />
+          </div>
+
+          <div v-if="docAnalysisFile" class="analysis-section">
+            <el-divider />
+            <div class="analysis-header">
+              <h4>文档分析详情</h4>
+              <el-button
+                v-if="!docAnalysisContent"
+                size="small"
+                @click="loadDocAnalysis"
+                :loading="docAnalysisLoading"
+              >
+                查看分析依据
+              </el-button>
+            </div>
+            <div v-if="docAnalysisLoading" class="analysis-loading">
+              <el-icon class="is-loading"><Loading /></el-icon>
+              <span>加载分析详情...</span>
+            </div>
+            <div v-else-if="docAnalysisContent" class="analysis-content">
+              <MarkdownRenderer :content="docAnalysisContent" />
+            </div>
           </div>
         </div>
 
@@ -153,11 +236,12 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { deepResearchAPI } from '../api'
+import { deepResearchAPI, knowledgeAPI } from '../api'
 import { readSSEStream } from '../utils/sse'
 import { ElMessage } from 'element-plus'
+import { Loading } from '@element-plus/icons-vue'
 import TaskList from '../components/chat/TaskList.vue'
 import FileBrowser from '../components/chat/FileBrowser.vue'
 import MarkdownRenderer from '../components/common/MarkdownRenderer.vue'
@@ -178,6 +262,16 @@ const fileSearchQuery = ref('')
 const fileSearchResults = ref([])
 const fileSearchLoading = ref(false)
 const fileSearchSearched = ref(false)
+
+const knowledgeBases = ref([])
+const kbLoading = ref(false)
+const kbSearchQuery = ref('')
+const filteredKnowledgeBases = ref([])
+
+const docAnalysisContent = ref(null)
+const docAnalysisLoading = ref(false)
+const docAnalysisFile = ref(null)
+
 let pollingTimer = null
 let sseAbortController = null
 let sseReaderActive = false
@@ -206,6 +300,7 @@ const researchForm = reactive({
   query: '',
   enable_web_search: true,
   enable_doc_analysis: false,
+  knowledge_base_ids: [],
 })
 
 const statusOptions = [
@@ -214,6 +309,64 @@ const statusOptions = [
   { value: 'completed', label: '已完成' },
   { value: 'failed', label: '失败' },
 ]
+
+const onDocAnalysisChange = (val) => {
+  if (val && knowledgeBases.value.length === 0) {
+    refreshKnowledgeBases()
+  }
+  if (!val) {
+    researchForm.knowledge_base_ids = []
+  }
+}
+
+const refreshKnowledgeBases = async () => {
+  kbLoading.value = true
+  try {
+    const response = await knowledgeAPI.getKnowledgeBases()
+    const data = response.data?.data || response.data
+    knowledgeBases.value = data?.items || []
+    filterKnowledgeBases()
+  } catch (error) {
+    logger.error('加载知识库列表失败:', error)
+    ElMessage.error('加载知识库列表失败')
+  } finally {
+    kbLoading.value = false
+  }
+}
+
+const filterKnowledgeBases = () => {
+  const query = kbSearchQuery.value.toLowerCase().trim()
+  if (!query) {
+    filteredKnowledgeBases.value = [...knowledgeBases.value]
+  } else {
+    filteredKnowledgeBases.value = knowledgeBases.value.filter(
+      kb => kb.name?.toLowerCase().includes(query) || kb.description?.toLowerCase().includes(query)
+    )
+  }
+}
+
+const loadDocAnalysis = async () => {
+  if (!task.value?.task_id) return
+  docAnalysisLoading.value = true
+  try {
+    const response = await deepResearchAPI.getFileContent(task.value.task_id, 'notes/doc_analysis.md')
+    const data = response.data?.data || response.data
+    docAnalysisContent.value = data?.content || data || ''
+  } catch (error) {
+    logger.warn('加载文档分析详情失败:', error)
+    docAnalysisContent.value = null
+  } finally {
+    docAnalysisLoading.value = false
+  }
+}
+
+const checkDocAnalysisFile = () => {
+  docAnalysisFile.value = null
+  docAnalysisContent.value = null
+  if (task.value?.enable_doc_analysis && task.value?.task_id) {
+    docAnalysisFile.value = 'notes/doc_analysis.md'
+  }
+}
 
 const formatDate = (dateStr) => {
   if (!dateStr) return '-'
@@ -264,6 +417,7 @@ const pollTaskStatus = async () => {
 
     if (task.value.status === 'completed' || task.value.status === 'failed') {
       stopPolling()
+      checkDocAnalysisFile()
       if (fileBrowserRef.value) {
         fileBrowserRef.value.loadFiles()
       }
@@ -304,11 +458,18 @@ const startResearch = async () => {
     return
   }
 
+  if (researchForm.enable_doc_analysis && researchForm.knowledge_base_ids.length === 0) {
+    ElMessage.warning('启用文档分析时，请至少选择一个知识库')
+    return
+  }
+
   isLoading.value = true
   task.value = null
   pollCount = 0
   currentPollInterval = BASE_POLL_INTERVAL
   elapsedSeconds.value = 0
+  docAnalysisContent.value = null
+  docAnalysisFile.value = null
 
   try {
     const response = await deepResearchAPI.start(researchForm)
@@ -321,7 +482,12 @@ const startResearch = async () => {
     connectSSE(task.value.task_id)
   } catch (error) {
     logger.error('启动研究任务失败:', error)
-    ElMessage.error('启动研究任务失败，请稍后重试')
+    const detail = error.response?.data?.details || error.response?.data?.message
+    if (detail) {
+      ElMessage.error(detail)
+    } else {
+      ElMessage.error('启动研究任务失败，请稍后重试')
+    }
   } finally {
     isLoading.value = false
   }
@@ -361,7 +527,7 @@ const connectSSE = async (taskId) => {
           const parsed = JSON.parse(sseMatch[1])
           errorMsg = parsed.message || parsed.error || errorMsg
         }
-      } catch {}
+      } catch { /* ignore parse error */ }
       throw new Error(errorMsg)
     }
 
@@ -403,6 +569,7 @@ const handleSSEEvent = (data) => {
       if (data.status === 'completed' || data.status === 'failed') {
         closeSSE()
         stopElapsedTimer()
+        checkDocAnalysisFile()
         if (fileBrowserRef.value) {
           fileBrowserRef.value.loadFiles()
         }
@@ -443,6 +610,7 @@ const viewTask = async (selectedTask) => {
 
   task.value = selectedTask
   showTaskDetail.value = true
+  checkDocAnalysisFile()
 
   if (selectedTask.status === 'running' || selectedTask.status === 'pending') {
     startElapsedTimer()
@@ -467,6 +635,8 @@ const viewTask = async (selectedTask) => {
 const deleteTask = () => {
   task.value = null
   showTaskDetail.value = false
+  docAnalysisContent.value = null
+  docAnalysisFile.value = null
 }
 
 const openInChat = () => {
@@ -482,7 +652,7 @@ const handleFileSearch = async () => {
   fileSearchLoading.value = true
   fileSearchSearched.value = true
   try {
-    const response = await deepResearchAPI.searchFiles({ query: fileSearchQuery.value })
+    const response = await deepResearchAPI.searchFiles(fileSearchQuery.value)
     if (response.data?.code === 200) {
       fileSearchResults.value = response.data.data?.files || response.data.data?.items || []
     }
@@ -493,6 +663,10 @@ const handleFileSearch = async () => {
     fileSearchLoading.value = false
   }
 }
+
+onMounted(() => {
+  refreshKnowledgeBases()
+})
 
 onUnmounted(() => {
   stopPolling()
@@ -591,6 +765,124 @@ onUnmounted(() => {
   border-radius: 4px;
 }
 
+.kb-selector {
+  width: 100%;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--el-fill-color-lighter);
+}
+
+.kb-selector-header {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.kb-search-input {
+  flex: 1;
+}
+
+.kb-loading,
+.kb-empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.kb-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.kb-item {
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--el-border-color-extra-light);
+}
+
+.kb-item:last-child {
+  border-bottom: none;
+}
+
+.kb-item-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kb-name {
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.kb-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.kb-desc {
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-selected-summary {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--el-border-color-extra-light);
+  font-size: 12px;
+  color: var(--el-color-primary);
+}
+
+.kb-tag {
+  margin-right: 6px;
+  margin-bottom: 4px;
+}
+
+.analysis-section {
+  margin-top: 8px;
+}
+
+.analysis-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.analysis-header h4 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.analysis-loading {
+  padding: 20px;
+  text-align: center;
+  color: var(--el-text-color-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.analysis-content {
+  padding: 16px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 4px;
+  border-left: 3px solid var(--el-color-primary);
+}
+
 .files-section {
   margin-top: 8px;
 }
@@ -635,6 +927,10 @@ onUnmounted(() => {
 
   .progress-section {
     padding: 12px;
+  }
+
+  .kb-desc {
+    max-width: 160px;
   }
 }
 

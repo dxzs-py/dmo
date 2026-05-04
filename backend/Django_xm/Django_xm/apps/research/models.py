@@ -45,6 +45,11 @@ class ResearchTask(AuditModel):
         default=False,
         verbose_name='启用文档分析'
     )
+    knowledge_base_ids = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='关联知识库ID列表'
+    )
     research_depth = models.CharField(
         max_length=20,
         choices=ResearchDepth.choices,
