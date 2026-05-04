@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 from datetime import timedelta
 from dotenv import load_dotenv
+from celery.schedules import crontab
 
 load_dotenv()
 
@@ -326,6 +327,22 @@ CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = app_cfg.celery_task_time_limit
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_RESULT_EXPIRES = 86400
+CELERY_BEAT_SCHEDULE_FILENAME = str(PROJECT_ROOT / 'data' / 'celerybeat' / 'celerybeat-schedule')
+
+CELERY_BEAT_SCHEDULE = {
+    'check-storage-alerts-every-hour': {
+        'task': 'chat.check_storage_alerts',
+        'schedule': crontab(minute=10),
+    },
+    'archive-old-attachments-daily': {
+        'task': 'chat.archive_old_attachments',
+        'schedule': crontab(hour=2, minute=0),
+    },
+    'cleanup-expired-attachments-daily': {
+        'task': 'chat.cleanup_expired_attachments',
+        'schedule': crontab(hour=int(os.environ.get('ATTACHMENT_CLEANUP_HOUR', 3)), minute=0),
+    },
+}
 
 # ==================== 安全配置（开发环境宽松）====================
 SECURE_SSL_REDIRECT = False
@@ -365,6 +382,20 @@ UPLOADS_DIR = PROJECT_ROOT / app_cfg.data_uploads_path
 
 for directory in [DATA_DIR, DOCUMENTS_DIR, INDEXES_DIR, UPLOADS_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
+
+# ==================== 附件生命周期管理配置 ====================
+ATTACHMENT_DEFAULT_RETENTION_DAYS = int(os.environ.get('ATTACHMENT_DEFAULT_RETENTION_DAYS', 30))
+ATTACHMENT_CLEANUP_HOUR = int(os.environ.get('ATTACHMENT_CLEANUP_HOUR', 3))
+ATTACHMENT_ARCHIVE_ENABLED = os.environ.get('ATTACHMENT_ARCHIVE_ENABLED', 'true').lower() == 'true'
+ATTACHMENT_ARCHIVE_DIR = PROJECT_ROOT / os.environ.get('ATTACHMENT_ARCHIVE_DIR', 'data/archives')
+ATTACHMENT_ARCHIVE_AFTER_DAYS = int(os.environ.get('ATTACHMENT_ARCHIVE_AFTER_DAYS', 60))
+ATTACHMENT_STORAGE_WARNING_THRESHOLD = float(os.environ.get('ATTACHMENT_STORAGE_WARNING_THRESHOLD', 80))
+ATTACHMENT_STORAGE_CRITICAL_THRESHOLD = float(os.environ.get('ATTACHMENT_STORAGE_CRITICAL_THRESHOLD', 95))
+ATTACHMENT_DEDUP_ENABLED = os.environ.get('ATTACHMENT_DEDUP_ENABLED', 'true').lower() == 'true'
+ATTACHMENT_MAX_TOTAL_SIZE_MB = int(os.environ.get('ATTACHMENT_MAX_TOTAL_SIZE_MB', 5120))
+
+if ATTACHMENT_ARCHIVE_ENABLED:
+    ATTACHMENT_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
 
 # ==================== 静态文件 ====================
 STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.ManifestStaticFilesStorage'

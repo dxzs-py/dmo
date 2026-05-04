@@ -33,6 +33,20 @@ class ResearchStartSerializer(serializers.Serializer):
         required=False,
         help_text="是否启用文档分析"
     )
+    knowledge_base_ids = serializers.ListField(
+        child=serializers.CharField(),
+        default=list,
+        required=False,
+        allow_empty=True,
+        help_text="关联的知识库 ID 列表"
+    )
+
+    def validate(self, data):
+        if data.get('enable_doc_analysis') and not data.get('knowledge_base_ids'):
+            raise serializers.ValidationError(
+                "启用文档分析时，必须选择至少一个知识库"
+            )
+        return data
 
 
 class ResearchTaskSerializer(serializers.ModelSerializer):
@@ -41,8 +55,8 @@ class ResearchTaskSerializer(serializers.ModelSerializer):
         model = ResearchTask
         fields = [
             'id', 'task_id', 'query', 'status', 'final_report',
-            'enable_web_search', 'enable_doc_analysis', 'research_depth',
-            'error_message', 'celery_task_id',
+            'enable_web_search', 'enable_doc_analysis', 'knowledge_base_ids',
+            'research_depth', 'error_message', 'celery_task_id',
             'created_by', 'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'task_id', 'created_at', 'updated_at',

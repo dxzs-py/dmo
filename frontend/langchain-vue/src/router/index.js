@@ -69,6 +69,12 @@ const routes = [
     meta: { requiresAuth: true, title: '数据分析', keepAlive: true }
   },
   {
+    path: '/attachments',
+    name: 'attachments',
+    component: () => import('../views/AttachmentView.vue'),
+    meta: { requiresAuth: true, title: '附件管理', keepAlive: true }
+  },
+  {
     path: '/:pathMatch(.*)*',
     name: 'not-found',
     component: () => import('../views/NotFoundView.vue'),

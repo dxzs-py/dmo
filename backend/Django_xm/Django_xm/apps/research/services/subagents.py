@@ -3,7 +3,7 @@ SubAgents 子智能体模块
 
 定义专门的子智能体，每个负责特定的研究任务：
 1. WebResearcher: 网络搜索和信息整理
-2. DocAnalyst: 文档分析和知识提取
+2. DocAnalyst: 文档分析和知识提取（支持网络搜索补充）
 3. ReportWriter: 报告撰写和内容组织
 """
 
@@ -36,7 +36,24 @@ DOC_ANALYST_PROMPT = (
     "你是一个专业的文档分析师，负责在知识库中检索并提炼信息。"
     "根据研究问题执行多次检索与评估，直接引用关键段落，"
     "整理为要点与段落混合的分析笔记，列出文档来源与位置，"
-    "并保存到文件系统。"
+    "并保存到文件系统。\n\n"
+    "## 结构化输出要求\n"
+    "你的分析笔记必须包含以下结构：\n\n"
+    "### 分析摘要\n"
+    "简要概述从文档中发现的关键信息。\n\n"
+    "### 关键发现\n"
+    "每个发现按以下格式记录：\n"
+    "- **发现内容**：具体发现描述\n"
+    "  - 来源：文档名称/知识库名称\n"
+    "  - 原文片段：直接引用原文关键段落（用 > 引用格式）\n"
+    "  - 相关性：说明该发现与研究问题的关联\n\n"
+    "### 文档来源列表\n"
+    "列出所有引用的文档及其位置信息。\n\n"
+    "### 知识缺口\n"
+    "指出文档中缺失的信息，哪些方面需要网络搜索补充。\n\n"
+    "## 网络搜索补充\n"
+    "如果你同时拥有搜索工具，当知识库文档无法完全回答研究问题时，"
+    "应主动使用搜索工具补充缺失信息，并在笔记中标注哪些内容来自网络搜索。"
 )
 
 
@@ -44,7 +61,12 @@ REPORT_WRITER_PROMPT = (
     "你是一个专业的研究报告撰写者，负责整合研究材料并产出高质量报告。"
     "列出并阅读研究笔记与分析，识别关键发现与证据，"
     "根据主题与信息密度选择合适结构，提供真实示例或代码片段（技术主题），"
-    "使用内联引用与参考列表，最终保存报告到文件系统。"
+    "使用内联引用与参考列表，最终保存报告到文件系统。\n\n"
+    "## 引用规范\n"
+    "报告中的每个关键论点必须标注来源：\n"
+    "- 知识库来源：[知识库:文档名] 或 [KB:doc_name]\n"
+    "- 网络来源：[URL] 或 [Web:标题]\n"
+    "在报告末尾列出完整的参考来源列表，分为「知识库来源」和「网络来源」两部分。"
 )
 
 
@@ -93,6 +115,7 @@ def create_doc_analyst(
     model: Optional[str] = None,
     tools: Optional[Sequence[BaseTool]] = None,
     retriever_tool: Optional[BaseTool] = None,
+    enable_web_supplement: bool = True,
     user_id: Optional[int] = None,
     session_id: Optional[str] = None,
     **kwargs,
@@ -110,6 +133,14 @@ def create_doc_analyst(
             logger.debug("   添加 RAG 检索工具")
         else:
             logger.warning("⚠️ 未提供 retriever_tool，DocAnalyst 将无法检索文档")
+
+        if enable_web_supplement:
+            try:
+                search_tool = create_tavily_search_tool()
+                agent_tools.append(search_tool)
+                logger.debug("   添加网络搜索工具（用于补充文档分析）")
+            except ValueError:
+                logger.warning("⚠️ 无法创建搜索工具，DocAnalyst 将无法进行网络补充搜索")
 
         agent_tools.extend(FILESYSTEM_TOOLS)
         logger.debug(f"   添加文件系统工具: {len(FILESYSTEM_TOOLS)} 个")
@@ -166,12 +197,6 @@ def create_report_writer(
 
 
 def get_subagent_info() -> dict:
-    """
-    获取所有子智能体的信息
-    
-    Returns:
-        包含子智能体信息的字典
-    """
     return {
         "web_researcher": {
             "name": "WebResearcher",
@@ -180,20 +205,22 @@ def get_subagent_info() -> dict:
                 "网络搜索",
                 "信息筛选",
                 "来源评估",
-                "笔记整理"
+                "笔记整理",
             ],
-            "tools": ["tavily_search", "write_research_file", "read_research_file"]
+            "tools": ["tavily_search", "write_research_file", "read_research_file"],
         },
         "doc_analyst": {
             "name": "DocAnalyst",
-            "description": "文档分析和知识提取专家",
+            "description": "文档分析和知识提取专家（支持网络搜索补充）",
             "capabilities": [
                 "文档检索",
                 "内容分析",
                 "信息提炼",
-                "关联识别"
+                "关联识别",
+                "网络搜索补充",
+                "结构化来源输出",
             ],
-            "tools": ["knowledge_base", "write_research_file", "read_research_file"]
+            "tools": ["knowledge_base", "tavily_search", "write_research_file", "read_research_file"],
         },
         "report_writer": {
             "name": "ReportWriter",
@@ -202,8 +229,8 @@ def get_subagent_info() -> dict:
                 "内容组织",
                 "报告撰写",
                 "引用管理",
-                "质量把控"
+                "质量把控",
             ],
-            "tools": ["write_research_file", "read_research_file", "list_research_files"]
-        }
+            "tools": ["write_research_file", "read_research_file", "list_research_files"],
+        },
     }

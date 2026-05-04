@@ -1,5 +1,5 @@
 - **环境**  
-  后端Python：必须先激活 conda环境 `conda activate Django_xm`，Django最新稳定版；智能体模块使用LangChain。  
+  后端Python：必须先激活 conda环境 `conda activate langchain_xm`，Django最新稳定版；智能体模块使用LangChain。  
   前端：Node v20.19.5，npm管理依赖；Vue 3 + Composition API + Element Plus + Tailwind CSS。
 
 - **后端架构**  

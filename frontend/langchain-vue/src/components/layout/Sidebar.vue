@@ -13,7 +13,8 @@ import {
   Search,
   Calendar,
   DataAnalysis,
-  FolderOpened
+  FolderOpened,
+  Files
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { confirmDelete } from '../../utils/dialog'
@@ -60,6 +61,7 @@ const defaultMenuItems = [
   { index: '/workflows', label: '学习工作流', icon: Management },
   { index: '/deep-research', label: '深度研究', icon: Reading },
   { index: '/dashboard', label: '数据分析', icon: DataAnalysis },
+  { index: '/attachments', label: '附件管理', icon: Files },
   { index: '/settings', label: '设置', icon: Setting },
 ]
 

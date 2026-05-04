@@ -258,6 +258,12 @@ def get_attachment_info(attachment_id: int) -> Dict[str, Any]:
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"附件文件不存在: {attachment.original_name}")
 
+    try:
+        from Django_xm.apps.chat.services.attachment_lifecycle import AttachmentLifecycleService
+        AttachmentLifecycleService().touch_access(attachment_id)
+    except Exception:
+        pass
+
     ext = Path(file_path).suffix.lower()
 
     return {
