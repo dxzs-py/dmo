@@ -64,6 +64,11 @@ def convert_chat_history(messages: List[dict]) -> List:
     for msg in messages:
         role = msg.get('role', '')
         content = msg.get('content', '')
+        attachment_ids = msg.get('attachment_ids') or []
+
+        if role == 'user' and attachment_ids:
+            content = _inject_attachment_content(content, attachment_ids)
+
         if role == 'user':
             langchain_messages.append(HumanMessage(content=content))
         elif role == 'assistant':
@@ -72,6 +77,26 @@ def convert_chat_history(messages: List[dict]) -> List:
             langchain_messages.append(SystemMessage(content=content))
 
     return langchain_messages
+
+
+def _inject_attachment_content(user_message: str, attachment_ids: List[int]) -> str:
+    try:
+        from Django_xm.apps.chat.services.chat_service import AttachmentService
+        att_svc = AttachmentService()
+        result = att_svc.build_user_content(user_message, attachment_ids)
+        if result["type"] == "text":
+            return result["content"]
+        if result["type"] == "multimodal":
+            parts = []
+            for part in result["content"]:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    parts.append(part.get("text", ""))
+                elif isinstance(part, str):
+                    parts.append(part)
+            return "\n".join(parts) if parts else user_message
+        return user_message
+    except Exception:
+        return user_message
 
 
 def extract_suggestions(raw: str) -> List[str]:

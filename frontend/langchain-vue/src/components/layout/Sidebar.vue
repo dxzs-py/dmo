@@ -85,6 +85,13 @@ const handleNewChat = () => {
   }
 }
 
+const handleSessionClick = async (sessionId) => {
+  await sessionStore.switchSession(sessionId)
+  if (route.path !== '/chat') {
+    router.push('/chat')
+  }
+}
+
 const handleDeleteSession = async (sessionId) => {
   try {
     await confirmDelete('确定要删除这个会话吗？')
@@ -172,7 +179,7 @@ const handleToggleSearch = () => {
             v-for="session in sessions"
             :key="session.id"
             :class="['session-item', { active: session.id === sessionStore.currentSessionId }]"
-            @click="sessionStore.switchSession(session.id)"
+            @click="handleSessionClick(session.id)"
           >
             <div class="session-item-content">
               <div class="session-item-title">{{ session.title || '新对话' }}</div>
@@ -462,5 +469,30 @@ const handleToggleSearch = () => {
 .sidebar-collapsed-btn:hover {
   background: var(--el-fill-color-light);
   border-color: var(--el-color-primary-light-5);
+}
+
+@media (max-width: 1024px) {
+  .app-sidebar {
+    width: 220px;
+    min-width: 220px;
+  }
+
+  .app-sidebar.sidebar-collapsed {
+    width: 56px;
+    min-width: 56px;
+  }
+}
+
+@media (max-width: 768px) {
+  .app-sidebar {
+    width: 260px;
+    min-width: 260px;
+  }
+
+  .app-sidebar.sidebar-collapsed {
+    width: 0;
+    min-width: 0;
+    border-right: none;
+  }
 }
 </style>

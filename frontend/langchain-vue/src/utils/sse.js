@@ -6,6 +6,11 @@ const SSE_EVENT_HANDLERS = {
   chunk: (parsed, appendFn) => {
     if (parsed.content) appendFn(parsed.content)
   },
+  attachment_ids: (parsed, _appendFn, sessionOps) => {
+    if (parsed.data && sessionOps.setAttachmentIds) {
+      sessionOps.setAttachmentIds(parsed.data)
+    }
+  },
   source: (parsed, _appendFn, sessionOps) => {
     if (parsed.data) sessionOps.addSource?.(parsed.data)
   },

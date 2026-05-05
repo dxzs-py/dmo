@@ -58,6 +58,7 @@ from .project_context import (
     detect_project_context,
 )
 from .suggestion_service import generate_suggestions
+from .token_counter import TokenUsageCallbackHandler
 
 __all__ = [
     "get_chat_model",
@@ -95,4 +96,5 @@ __all__ = [
     "ProjectContextDetector",
     "detect_project_context",
     "generate_suggestions",
+    "TokenUsageCallbackHandler",
 ]

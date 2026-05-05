@@ -238,6 +238,7 @@ class ChatStreamView(APIView):
         logger.info(f"收到流式聊天请求: {data['message'][:50]}..., attachment_ids={data.get('attachment_ids')}")
 
         attachment_ids = data.get('attachment_ids') or []
+        original_attachment_ids = list(attachment_ids)
         if attachment_ids:
             try:
                 from Django_xm.apps.chat.services.chat_service import AttachmentService
@@ -267,6 +268,9 @@ class ChatStreamView(APIView):
                 except RuntimeError:
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
+
+                if original_attachment_ids:
+                    yield f"data: {json.dumps({'type': 'attachment_ids', 'data': original_attachment_ids}, ensure_ascii=False)}\n\n"
 
                 chat_service = ChatService(user_id=request.user.id if request.user.is_authenticated else None)
                 gen = chat_service.process_stream_chat_request(data).__aiter__()
@@ -459,6 +463,12 @@ class ChatSessionDetailView(BaseChatAPIView):
             )
 
         session.soft_delete()
+
+        ChatAttachment.objects.filter(
+            session=session,
+            is_deleted=False
+        ).update(is_deleted=True, deleted_at=timezone.now(), status=AttachmentStatus.DELETED)
+
         SecureSessionCacheService.invalidate_all_user_sessions(request.user.id)
         CacheService.delete(f"dashboard:user_{request.user.id}")
 
@@ -485,6 +495,11 @@ class ChatMessageCreateView(BaseChatAPIView):
             return validation_error_response(errors=serializer.errors)
 
         message = serializer.save(session=session)
+
+        attachment_ids = request.data.get('attachment_ids') or []
+        if attachment_ids:
+            from .services.chat_service import AttachmentService
+            AttachmentService().link_attachments_to_message(message, attachment_ids)
 
         CacheService.delete(f"dashboard:user_{request.user.id}")
 
@@ -711,16 +726,17 @@ class ChatAttachmentDeleteView(APIView):
                     message='附件不存在',
                     http_status=status.HTTP_404_NOT_FOUND
                 )
-            try:
-                if attachment.file and hasattr(attachment.file, 'path'):
-                    import os
-                    if os.path.isfile(attachment.file.path):
-                        os.remove(attachment.file.path)
-            except Exception as file_err:
-                logger.warning(f"删除附件文件失败: {file_err}")
 
-            attachment.soft_delete()
-            return success_response(message='附件删除成功')
+            from .services.attachment_lifecycle import AttachmentLifecycleService
+            lifecycle = AttachmentLifecycleService()
+            success, message = lifecycle.manual_delete(attachment_id, triggered_by='user')
+            if not success:
+                return error_response(
+                    code=ErrorCode.INVALID_PARAMS,
+                    message=message,
+                    http_status=status.HTTP_400_BAD_REQUEST
+                )
+            return success_response(message=message)
         except Exception as e:
             logger.error(f"删除附件失败: {e}", exc_info=True)
             return error_response(
@@ -992,11 +1008,23 @@ class AttachmentAdminListView(APIView):
         status_filter = request.query_params.get('status', '')
         search = request.query_params.get('search', '')
         sort_by = request.query_params.get('sort_by', '-created_at')
+        trashed = request.query_params.get('trashed', '').lower() in ('1', 'true', 'yes')
 
-        queryset = ChatAttachment.all_objects.select_related('session', 'session__user')
+        if trashed:
+            # 回收站：包含 is_deleted=True OR status=deleted 的记录
+            queryset = ChatAttachment.all_objects.select_related('session', 'session__user').filter(
+                models.Q(is_deleted=True) | models.Q(status=AttachmentStatus.DELETED)
+            )
+        else:
+            # 文件管理：仅包含 is_deleted=False AND status != deleted 的记录
+            queryset = ChatAttachment.all_objects.select_related('session', 'session__user').filter(
+                is_deleted=False
+            ).exclude(
+                status=AttachmentStatus.DELETED
+            )
+            if status_filter:
+                queryset = queryset.filter(status=status_filter)
 
-        if status_filter:
-            queryset = queryset.filter(status=status_filter)
         if search:
             queryset = queryset.filter(
                 models.Q(original_name__icontains=search)
@@ -1014,7 +1042,7 @@ class AttachmentAdminListView(APIView):
 
         items = []
         for att in page_obj:
-            items.append({
+            item = {
                 'id': att.id,
                 'original_name': att.original_name,
                 'file_size': att.file_size,
@@ -1024,15 +1052,18 @@ class AttachmentAdminListView(APIView):
                 'reference_count': att.reference_count,
                 'last_accessed_at': att.last_accessed_at.isoformat() if att.last_accessed_at else None,
                 'retention_days': att.retention_days,
-                'archived_path': att.archived_path,
-                'archived_at': att.archived_at.isoformat() if att.archived_at else None,
                 'file_hash': att.file_hash,
                 'session_id': att.session.session_id if att.session else None,
                 'session_title': att.session.title if att.session else None,
                 'username': att.session.user.username if att.session and att.session.user else None,
                 'created_at': att.created_at.isoformat(),
                 'is_deleted': att.is_deleted,
-            })
+                'deleted_at': att.deleted_at.isoformat() if att.deleted_at else None,
+            }
+            if not trashed:
+                item['indexed_path'] = att.indexed_path
+                item['indexed_at'] = att.indexed_at.isoformat() if att.indexed_at else None
+            items.append(item)
 
         stats = service.get_storage_stats()
         return success_response(data={
@@ -1054,6 +1085,8 @@ class AttachmentAdminDetailView(APIView):
 
         try:
             att = ChatAttachment.all_objects.select_related('session', 'session__user').get(id=attachment_id)
+            if att.is_deleted:
+                return error_response(code=ErrorCode.NOT_FOUND, message='附件不存在', http_status=status.HTTP_404_NOT_FOUND)
         except ChatAttachment.DoesNotExist:
             return error_response(code=ErrorCode.NOT_FOUND, message='附件不存在', http_status=status.HTTP_404_NOT_FOUND)
 
@@ -1067,8 +1100,8 @@ class AttachmentAdminDetailView(APIView):
             'reference_count': att.reference_count,
             'last_accessed_at': att.last_accessed_at.isoformat() if att.last_accessed_at else None,
             'retention_days': att.retention_days,
-            'archived_path': att.archived_path,
-            'archived_at': att.archived_at.isoformat() if att.archived_at else None,
+            'indexed_path': att.indexed_path,
+            'indexed_at': att.indexed_at.isoformat() if att.indexed_at else None,
             'file_hash': att.file_hash,
             'session_id': att.session.session_id if att.session else None,
             'session_title': att.session.title if att.session else None,
@@ -1106,28 +1139,45 @@ class AttachmentAdminActionView(APIView):
         from .services.attachment_lifecycle import AttachmentLifecycleService
         service = AttachmentLifecycleService()
 
-        if action == 'archive':
-            try:
-                att = ChatAttachment.objects.get(id=attachment_id, status=AttachmentStatus.ACTIVE)
-                service._archive_attachment(att)
-                return success_response(message=f'附件已归档: {att.original_name}')
-            except ChatAttachment.DoesNotExist:
-                return error_response(code=ErrorCode.NOT_FOUND, message='附件不存在或非活跃状态')
-            except Exception as e:
-                return error_response(code=ErrorCode.SERVER_ERROR, message=f'归档失败: {str(e)}')
+        try:
+            att = ChatAttachment.all_objects.get(id=attachment_id)
+        except ChatAttachment.DoesNotExist:
+            return error_response(code=ErrorCode.NOT_FOUND, message='附件不存在')
 
-        elif action == 'restore':
-            success = service.restore_attachment(attachment_id)
+        if action in ('index', 'unindex', 'update_retention'):
+            if att.is_deleted or att.status == AttachmentStatus.DELETED:
+                return error_response(code=ErrorCode.NOT_FOUND, message='附件已删除，请在回收站中操作')
+
+        if action == 'index':
+            success, message = service.index_attachment_by_id(attachment_id, triggered_by=f'admin:{request.user.username}')
             if success:
-                return success_response(message='附件已恢复')
-            return error_response(code=ErrorCode.SERVER_ERROR, message='恢复失败')
+                return success_response(message=message)
+            return error_response(code=ErrorCode.INVALID_PARAMS, message=message)
+
+        elif action == 'unindex':
+            success, message = service.unindex_attachment_by_id(attachment_id, triggered_by=f'admin:{request.user.username}')
+            if success:
+                return success_response(message=message)
+            return error_response(code=ErrorCode.INVALID_PARAMS, message=message)
 
         elif action == 'update_retention':
             days = request.data.get('retention_days')
             if days is None or days < 1:
                 return error_response(code=ErrorCode.INVALID_PARAMS, message='保留天数必须大于0')
-            ChatAttachment.objects.filter(pk=attachment_id).update(retention_days=days)
+            ChatAttachment.objects.filter(pk=attachment_id, is_deleted=False).update(retention_days=days)
             return success_response(message=f'保留天数已更新为 {days} 天')
+
+        elif action == 'permanent_delete':
+            success, message = service.permanent_delete(attachment_id, triggered_by=f'admin:{request.user.username}')
+            if success:
+                return success_response(message=message)
+            return error_response(code=ErrorCode.SERVER_ERROR, message=message)
+
+        elif action == 'restore_from_trash':
+            success, message = service.restore_from_trash(attachment_id)
+            if success:
+                return success_response(message=message)
+            return error_response(code=ErrorCode.SERVER_ERROR, message=message)
 
         else:
             return error_response(code=ErrorCode.INVALID_PARAMS, message=f'不支持的操作: {action}')
@@ -1148,8 +1198,8 @@ class AttachmentAdminCleanupView(APIView):
 
         if action == 'cleanup':
             log = service.cleanup_expired(dry_run=dry_run, triggered_by=f'admin:{request.user.username}')
-        elif action == 'archive':
-            log = service.archive_old_attachments(dry_run=dry_run, triggered_by=f'admin:{request.user.username}')
+        elif action == 'index':
+            log = service.index_old_attachments(dry_run=dry_run, triggered_by=f'admin:{request.user.username}')
         else:
             return error_response(code=ErrorCode.INVALID_PARAMS, message=f'不支持的操作: {action}')
 
@@ -1210,6 +1260,34 @@ class AttachmentAdminStatsView(APIView):
             'alert': alert_data,
             'recent_logs': log_data,
         })
+
+
+class AttachmentAdminBatchView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not request.user.is_staff:
+            return error_response(code=ErrorCode.PERMISSION_DENIED, message='无管理员权限', http_status=status.HTTP_403_FORBIDDEN)
+
+        action = request.data.get('action', '')
+        attachment_ids = request.data.get('attachment_ids', [])
+
+        if not attachment_ids or not isinstance(attachment_ids, list):
+            return error_response(code=ErrorCode.INVALID_PARAMS, message='请提供附件ID列表')
+
+        from .services.attachment_lifecycle import AttachmentLifecycleService
+        service = AttachmentLifecycleService()
+
+        if action == 'index':
+            results = service.batch_index(attachment_ids, triggered_by=f'admin:{request.user.username}')
+        elif action == 'unindex':
+            results = service.batch_unindex(attachment_ids, triggered_by=f'admin:{request.user.username}')
+        elif action == 'delete':
+            results = service.batch_delete(attachment_ids, triggered_by=f'admin:{request.user.username}')
+        else:
+            return error_response(code=ErrorCode.INVALID_PARAMS, message=f'不支持的操作: {action}')
+
+        return success_response(data=results, message=f'批量操作完成: 成功 {len(results["success"])} 个, 失败 {len(results["failed"])} 个')
 
 
 class StorageAlertView(APIView):

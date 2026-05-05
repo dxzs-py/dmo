@@ -24,6 +24,13 @@ if str(_project_root) not in sys.path:
 
 from Django_xm.apps.ai_engine.config import settings as app_cfg
 
+# ==================== LangSmith 初始化 ====================
+if app_cfg.langsmith_tracing and app_cfg.langsmith_api_key:
+    os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+    os.environ.setdefault("LANGCHAIN_API_KEY", app_cfg.langsmith_api_key)
+    os.environ.setdefault("LANGCHAIN_PROJECT", app_cfg.langsmith_project)
+    os.environ.setdefault("LANGCHAIN_ENDPOINT", app_cfg.langsmith_endpoint)
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = BASE_DIR.parent
 
@@ -334,8 +341,8 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'chat.check_storage_alerts',
         'schedule': crontab(minute=10),
     },
-    'archive-old-attachments-daily': {
-        'task': 'chat.archive_old_attachments',
+    'index-old-attachments-daily': {
+        'task': 'chat.index_old_attachments',
         'schedule': crontab(hour=2, minute=0),
     },
     'cleanup-expired-attachments-daily': {

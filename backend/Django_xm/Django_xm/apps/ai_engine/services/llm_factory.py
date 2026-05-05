@@ -2,9 +2,9 @@
 LLM 模型封装模块
 提供统一的 LLM 模型接口，支持 OpenAI 等多种提供商
 
-使用 LangChain 1.0.3 的标准接口封装模型
+使用 LangChain v1.2.13 的标准接口封装模型
 
-在 LangChain V1.0.0 中，create_agent 接受字符串格式的模型标识符，
+在 LangChain v1.2.x 中，create_agent 接受字符串格式的模型标识符，
 如 "openai:gpt-4o"，这样可以自动初始化模型并使用环境变量中的 API Key。
 
 参考：

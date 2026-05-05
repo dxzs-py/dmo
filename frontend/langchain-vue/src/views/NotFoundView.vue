@@ -66,6 +66,42 @@
   flex-wrap: wrap;
 }
 
+@media (max-width: 768px) {
+  .not-found-content {
+    padding: 40px 24px;
+  }
+
+  .not-found-code {
+    font-size: 80px;
+  }
+
+  .not-found-title {
+    font-size: 22px;
+  }
+}
+
+@media (max-width: 480px) {
+  .not-found-container {
+    padding: 12px;
+  }
+
+  .not-found-content {
+    padding: 32px 16px;
+    border-radius: 12px;
+  }
+
+  .not-found-code {
+    font-size: 64px;
+  }
+
+  .not-found-title {
+    font-size: 18px;
+  }
+
+  .not-found-description {
+    font-size: 14px;
+  }
+}
 .home-button,
 .chat-button {
   padding: 12px 32px;

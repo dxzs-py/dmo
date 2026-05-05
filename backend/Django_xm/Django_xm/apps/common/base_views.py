@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework.serializers import Serializer
 
 from .responses import success_response, error_response, not_found_response
+from .error_codes import ErrorCode
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +47,10 @@ class BaseAPIView(APIView):
         serializer = self.get_serializer(data=data)
         if not serializer.is_valid():
             return error_response(
-                error="数据验证失败",
-                details=serializer.errors,
-                status_code=status.HTTP_400_BAD_REQUEST
+                code=ErrorCode.VALIDATION_FAILED,
+                message="数据验证失败",
+                data=serializer.errors,
+                http_status=status.HTTP_400_BAD_REQUEST
             )
         return None
     

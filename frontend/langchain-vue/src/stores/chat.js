@@ -66,6 +66,7 @@ export const useChatStore = defineStore('chat', () => {
       role: 'user',
       content: message,
       timestamp: new Date().toISOString(),
+      attachmentIds: options.attachmentIds || [],
     }
     sessionStore.addMessageToSession(sessionId, userMessage)
 
@@ -89,10 +90,16 @@ export const useChatStore = defineStore('chat', () => {
       
       const chatHistory = messages
         .slice(0, -2)
-        .map(m => ({
-          role: m.role || 'user',
-          content: m.content || '',
-        }))
+        .map(m => {
+          const item = {
+            role: m.role || 'user',
+            content: m.content || '',
+          }
+          if (m.role === 'user' && m.attachmentIds && m.attachmentIds.length > 0) {
+            item.attachment_ids = m.attachmentIds
+          }
+          return item
+        })
         .filter(m => m.content && m.content.trim())
 
       logger.log('[ChatStore] streamChat 请求参数, attachment_ids:', options.attachmentIds || [])
@@ -120,6 +127,7 @@ export const useChatStore = defineStore('chat', () => {
           setContext: (data) => sessionStore.setContextToLastMessage(sessionId, data),
           setCost: (data) => { costSummary.value = data },
           setUsage: (data) => sessionStore.setUsageToLastMessage(sessionId, data),
+          setAttachmentIds: (ids) => sessionStore.setAttachmentIdsToLastUserMessage(sessionId, ids),
           requestToolConfirmation: (data) => {
             pendingToolConfirmation.value = {
               confirmId: data.confirm_id,

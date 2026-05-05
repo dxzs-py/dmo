@@ -167,6 +167,7 @@ const loadCurrentSessionDetail = async () => {
 
 onMounted(() => {
   chatStore.fetchModes()
+  sessionStore.loadKnowledgeBases()
   loadCurrentSessionDetail()
 })
 
@@ -337,6 +338,17 @@ const handleToolDenied = () => {
   overflow: hidden;
 }
 
+@media (max-width: 1024px) {
+  .welcome-content {
+    max-width: 480px;
+    padding: 0 16px;
+  }
+
+  .welcome-content h2 {
+    font-size: 20px;
+  }
+}
+
 @media (max-width: 768px) {
   .chat-body {
     flex-direction: column;
@@ -350,6 +362,41 @@ const handleToolDenied = () => {
     max-width: 100%;
     border-left: none;
     box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.1);
+  }
+
+  .chat-welcome {
+    padding: 24px 16px;
+  }
+
+  .welcome-content h2 {
+    font-size: 18px;
+  }
+
+  .welcome-desc {
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 480px) {
+  .chat-welcome {
+    padding: 16px 12px;
+  }
+
+  .welcome-content {
+    max-width: 100%;
+  }
+
+  .welcome-content h2 {
+    font-size: 16px;
+  }
+
+  .welcome-desc {
+    font-size: 12px;
+    margin-bottom: 16px;
+  }
+
+  .welcome-context {
+    border-radius: 8px;
   }
 }
 </style>

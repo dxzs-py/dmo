@@ -396,9 +396,15 @@ async function handleBindPhone() {
   color: var(--el-text-color-secondary);
 }
 
+@media (max-width: 1024px) {
+  .profile-container {
+    padding: 24px 16px;
+  }
+}
+
 @media (max-width: 768px) {
   .profile-container {
-    padding: 16px;
+    padding: 16px 12px;
   }
 
   .profile-header {
@@ -409,6 +415,45 @@ async function handleBindPhone() {
 
   .profile-tabs {
     padding: 16px;
+  }
+
+  .username {
+    font-size: 24px;
+  }
+}
+
+@media (max-width: 480px) {
+  .profile-container {
+    padding: 12px 8px;
+  }
+
+  .profile-header {
+    padding: 16px;
+    gap: 12px;
+  }
+
+  .username {
+    font-size: 20px;
+  }
+
+  .user-email,
+  .user-mobile {
+    font-size: 12px;
+  }
+
+  .profile-tabs {
+    padding: 12px;
+  }
+
+  .security-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .profile-form {
+    max-width: 100%;
   }
 }
 </style>

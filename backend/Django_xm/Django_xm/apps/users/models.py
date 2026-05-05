@@ -29,6 +29,17 @@ class User(AbstractUser):
     is_deleted = models.BooleanField(default=False, db_index=True, verbose_name='是否已删除')
     deleted_at = models.DateTimeField(null=True, blank=True, verbose_name='删除时间')
 
+    theme = models.CharField(max_length=20, default='light', verbose_name='主题')
+    language = models.CharField(max_length=10, default='zh-CN', verbose_name='语言')
+    notifications_enabled = models.BooleanField(default=True, verbose_name='通知开关')
+    auto_save_sessions = models.BooleanField(default=True, verbose_name='自动保存会话')
+
+    total_messages = models.PositiveIntegerField(default=0, verbose_name='总消息数')
+    total_sessions = models.PositiveIntegerField(default=0, verbose_name='总会话数')
+    total_tokens = models.PositiveBigIntegerField(default=0, verbose_name='总Token数')
+    total_cost = models.DecimalField(max_digits=12, decimal_places=6, default=0, verbose_name='总费用')
+    active_days = models.PositiveIntegerField(default=0, verbose_name='活跃天数')
+
     objects = SoftDeleteUserManager()
     all_objects = AllUserManager()
 

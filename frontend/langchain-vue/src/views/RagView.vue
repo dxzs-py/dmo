@@ -287,7 +287,9 @@ import MarkdownRenderer from '../components/common/MarkdownRenderer.vue'
 import { logger } from '../utils/logger'
 import { readSSEStream } from '../utils/sse'
 import { confirmDelete, confirmAction } from '../utils/dialog'
+import { useSessionStore } from '../stores/session'
 
+const sessionStore = useSessionStore()
 const isLoading = ref(false)
 const isLoadingIndexes = ref(false)
 const isUploading = ref(false)
@@ -411,6 +413,7 @@ const handleDeleteIndex = async () => {
     selectedIndexName.value = ''
     files.value = []
     await fetchIndexes()
+    await sessionStore.loadKnowledgeBases()
   } catch (error) {
     if (error !== 'cancel') {
       logger.error('删除索引失败:', error)
@@ -956,6 +959,16 @@ onUnmounted(() => {
   color: var(--el-text-color-secondary);
 }
 
+@media (max-width: 1024px) {
+  .rag-view {
+    padding: 16px;
+  }
+
+  .view-content {
+    max-width: 100%;
+  }
+}
+
 @media (max-width: 768px) {
   .rag-view {
     padding: 12px;
@@ -967,6 +980,36 @@ onUnmounted(() => {
 
   .query-actions {
     flex-wrap: wrap;
+  }
+
+  .page-title {
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .rag-view {
+    padding: 8px;
+  }
+
+  .page-title {
+    font-size: 14px;
+  }
+
+  .index-selector {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .answer-content {
+    padding: 12px;
+    font-size: 13px;
+  }
+
+  .file-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
   }
 }
 </style>

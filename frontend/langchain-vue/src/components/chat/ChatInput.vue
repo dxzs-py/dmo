@@ -593,4 +593,38 @@ watch(() => props.modelValue, adjustTextareaHeight)
 .fade-leave-to {
   opacity: 0;
 }
+
+@media (max-width: 768px) {
+  .chat-input-container {
+    padding: 8px 12px;
+  }
+
+  .input-wrapper {
+    padding: 6px 10px;
+  }
+
+  .toolbar {
+    gap: 4px;
+  }
+}
+
+@media (max-width: 480px) {
+  .chat-input-container {
+    padding: 6px 8px;
+  }
+
+  .input-wrapper {
+    padding: 4px 8px;
+    border-radius: 10px;
+  }
+
+  .toolbar {
+    gap: 2px;
+  }
+
+  .send-btn {
+    width: 32px;
+    height: 32px;
+  }
+}
 </style>

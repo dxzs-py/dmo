@@ -372,6 +372,27 @@ class Settings(BaseSettings):
         description="上传文件内存限制(MB)"
     )
 
+    # ==================== LangSmith 配置 ====================
+    langsmith_api_key: str = Field(
+        default="",
+        description="LangSmith API 密钥"
+    )
+
+    langsmith_project: str = Field(
+        default="langchain_xm",
+        description="LangSmith 项目名称"
+    )
+
+    langsmith_endpoint: str = Field(
+        default="https://api.smith.langchain.com",
+        description="LangSmith API 端点"
+    )
+
+    langsmith_tracing: bool = Field(
+        default=False,
+        description="是否启用 LangSmith 追踪"
+    )
+
     # ---- 校验方法 ----
 
     def validate_required_keys(self) -> None:

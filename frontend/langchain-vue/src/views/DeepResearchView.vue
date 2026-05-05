@@ -876,6 +876,72 @@ onUnmounted(() => {
   gap: 6px;
 }
 
+@media (max-width: 1024px) {
+  .deep-research-view {
+    padding: 16px;
+  }
+
+  .page-title {
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 768px) {
+  .deep-research-view {
+    padding: 12px;
+  }
+
+  .page-title {
+    font-size: 15px;
+  }
+
+  .kb-selector {
+    padding: 8px;
+  }
+
+  .kb-list {
+    max-height: 180px;
+  }
+
+  .report-content {
+    padding: 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .deep-research-view {
+    padding: 8px;
+  }
+
+  .page-title {
+    font-size: 14px;
+  }
+
+  .card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .header-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .kb-selector-header {
+    flex-direction: column;
+  }
+
+  .kb-desc {
+    max-width: 180px;
+  }
+
+  .report-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+}
 .analysis-content {
   padding: 16px;
   background: var(--el-fill-color-lighter);

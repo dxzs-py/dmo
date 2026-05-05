@@ -22,10 +22,9 @@ logger = logging.getLogger(__name__)
 class AttachmentLifecycleService:
     def __init__(self):
         self.media_root = Path(settings.MEDIA_ROOT)
-        self.archive_dir = Path(getattr(settings, 'ATTACHMENT_ARCHIVE_DIR', self.media_root.parent / 'archives'))
         self.default_retention_days = getattr(settings, 'ATTACHMENT_DEFAULT_RETENTION_DAYS', 30)
-        self.archive_after_days = getattr(settings, 'ATTACHMENT_ARCHIVE_AFTER_DAYS', 60)
-        self.archive_enabled = getattr(settings, 'ATTACHMENT_ARCHIVE_ENABLED', True)
+        self.index_after_days = getattr(settings, 'ATTACHMENT_INDEX_AFTER_DAYS', 60)
+        self.auto_index_enabled = getattr(settings, 'ATTACHMENT_AUTO_INDEX_ENABLED', True)
         self.dedup_enabled = getattr(settings, 'ATTACHMENT_DEDUP_ENABLED', True)
         self.warning_threshold = getattr(settings, 'ATTACHMENT_STORAGE_WARNING_THRESHOLD', 80)
         self.critical_threshold = getattr(settings, 'ATTACHMENT_STORAGE_CRITICAL_THRESHOLD', 95)
@@ -39,19 +38,27 @@ class AttachmentLifecycleService:
 
     def get_storage_stats(self) -> Dict:
         attachments = ChatAttachment.objects.filter(
-            status__in=[AttachmentStatus.ACTIVE, AttachmentStatus.ARCHIVED]
+            status__in=[AttachmentStatus.ACTIVE, AttachmentStatus.INDEXED]
         )
         total_size = attachments.aggregate(total=models.Sum('file_size'))['total'] or 0
         total_count = attachments.count()
         active_count = attachments.filter(status=AttachmentStatus.ACTIVE).count()
-        archived_count = attachments.filter(status=AttachmentStatus.ARCHIVED).count()
+        indexed_count = attachments.filter(status=AttachmentStatus.INDEXED).count()
+
+        trashed_count = ChatAttachment.all_objects.filter(is_deleted=True).count()
+        trashed_size = ChatAttachment.all_objects.filter(is_deleted=True).aggregate(
+            total=models.Sum('file_size')
+        )['total'] or 0
 
         disk_usage = self._get_disk_usage()
 
         return {
             'total_files': total_count,
             'active_files': active_count,
-            'archived_files': archived_count,
+            'indexed_files': indexed_count,
+            'trashed_files': trashed_count,
+            'trashed_size_bytes': trashed_size,
+            'trashed_size_mb': round(trashed_size / (1024 * 1024), 2),
             'total_size_bytes': total_size,
             'total_size_mb': round(total_size / (1024 * 1024), 2),
             'disk_total_bytes': disk_usage['total'],
@@ -112,8 +119,8 @@ class AttachmentLifecycleService:
             created_at__lt=cutoff,
         )
 
-    def find_archive_candidates(self) -> models.QuerySet:
-        cutoff = timezone.now() - timedelta(days=self.archive_after_days)
+    def find_index_candidates(self) -> models.QuerySet:
+        cutoff = timezone.now() - timedelta(days=self.index_after_days)
         return ChatAttachment.objects.filter(
             status=AttachmentStatus.ACTIVE,
             created_at__lt=cutoff,
@@ -150,19 +157,22 @@ class AttachmentLifecycleService:
         expired = self.find_expired_attachments()
         files_processed = 0
         files_deleted = 0
-        files_archived = 0
+        files_indexed = 0
         files_skipped = 0
         space_freed = 0
-        space_archived = 0
+        space_indexed = 0
         errors = []
 
         for attachment in expired.iterator():
             files_processed += 1
             try:
-                if self.archive_enabled and not attachment.is_expired():
-                    self._archive_attachment(attachment, dry_run)
-                    files_archived += 1
-                    space_archived += attachment.file_size
+                if self.auto_index_enabled and not attachment.is_expired():
+                    indexed = self._index_attachment(attachment, dry_run)
+                    if indexed:
+                        files_indexed += 1
+                        space_indexed += attachment.file_size
+                    else:
+                        files_skipped += 1
                     continue
 
                 if attachment.reference_count > 0 and not attachment.is_expired():
@@ -170,7 +180,7 @@ class AttachmentLifecycleService:
                     continue
 
                 if not dry_run:
-                    self._delete_attachment(attachment)
+                    self._delete_attachment(attachment, delete_files=True)
                 files_deleted += 1
                 space_freed += attachment.file_size
             except Exception as e:
@@ -181,139 +191,271 @@ class AttachmentLifecycleService:
         log.finished_at = timezone.now()
         log.files_processed = files_processed
         log.files_deleted = files_deleted
-        log.files_archived = files_archived
+        log.files_archived = files_indexed
         log.files_skipped = files_skipped
         log.space_freed = space_freed
-        log.space_archived = space_archived
+        log.space_archived = space_indexed
         log.errors = errors
         log.details = {
             'dry_run': dry_run,
             'retention_days': self.default_retention_days,
-            'archive_enabled': self.archive_enabled,
+            'auto_index_enabled': self.auto_index_enabled,
         }
         log.save()
 
         logger.info(
             f"附件清理完成: 处理={files_processed}, 删除={files_deleted}, "
-            f"归档={files_archived}, 跳过={files_skipped}, "
+            f"入库={files_indexed}, 跳过={files_skipped}, "
             f"释放={space_freed / 1024 / 1024:.2f}MB"
         )
         return log
 
-    def _archive_attachment(self, attachment: ChatAttachment, dry_run: bool = False):
+    def _get_user_index_name(self, user_id) -> str:
+        return f"user_{user_id}_chat_attachments"
+
+    def _index_attachment(self, attachment: ChatAttachment, dry_run: bool = False) -> bool:
         if dry_run:
-            return
+            return False
 
-        source_path = attachment.file.path
-        if not os.path.exists(source_path):
-            return
+        try:
+            from Django_xm.apps.tools.file.reader import read_attachment_as_documents
+            from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
+            from Django_xm.apps.knowledge.services.index_service import IndexManager
 
-        session_id = attachment.session.session_id
-        archive_subdir = self.archive_dir / session_id
-        archive_subdir.mkdir(parents=True, exist_ok=True)
+            docs = read_attachment_as_documents(attachment.id)
+            if not docs:
+                logger.warning(f"附件 {attachment.id} 无法提取文档内容，跳过入库")
+                return False
 
-        dest_path = archive_subdir / os.path.basename(source_path)
-        shutil.move(source_path, dest_path)
+            user_id = attachment.session.user_id
+            index_name = self._get_user_index_name(user_id)
+            embeddings = get_embeddings()
+            manager = IndexManager()
 
-        attachment.status = AttachmentStatus.ARCHIVED
-        attachment.archived_path = str(dest_path)
-        attachment.archived_at = timezone.now()
-        attachment.save(update_fields=['status', 'archived_path', 'archived_at'])
+            if not manager.index_exists(index_name):
+                manager.create_index(
+                    name=index_name,
+                    documents=docs,
+                    embeddings=embeddings,
+                    description='聊天附件自动入库索引',
+                )
+                logger.info(f"创建用户附件索引: {index_name}")
+            else:
+                manager.add_documents(index_name, docs, embeddings)
+                logger.info(f"向用户附件索引添加文档: {index_name}")
 
-        logger.info(f"附件已归档: {attachment.original_name} -> {dest_path}")
+            attachment.status = AttachmentStatus.INDEXED
+            attachment.indexed_path = index_name
+            attachment.indexed_at = timezone.now()
+            attachment.save(update_fields=['status', 'indexed_path', 'indexed_at'])
 
-    def _delete_attachment(self, attachment: ChatAttachment):
-        file_path = attachment.file.path
-        if os.path.exists(file_path):
-            os.remove(file_path)
-            parent = os.path.dirname(file_path)
-            if os.path.isdir(parent) and not os.listdir(parent):
-                os.rmdir(parent)
+            logger.info(f"附件已向量化入库: {attachment.original_name} (id={attachment.id})")
+            return True
+        except Exception as e:
+            logger.error(f"附件向量化入库失败 (id={attachment.id}): {e}", exc_info=True)
+            raise
+
+    def _unindex_attachment(self, attachment: ChatAttachment) -> bool:
+        try:
+            if not attachment.indexed_path:
+                logger.warning(f"附件 {attachment.id} 无入库索引信息")
+                return True
+
+            from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
+            from Django_xm.apps.knowledge.services.index_service import IndexManager
+
+            user_id = attachment.session.user_id
+            index_name = self._get_user_index_name(user_id)
+            manager = IndexManager()
+
+            if not manager.index_exists(index_name):
+                logger.warning(f"索引不存在: {index_name}")
+                return True
+
+            embeddings = get_embeddings()
+            removed = manager.remove_documents_by_filename(
+                index_name, embeddings, attachment.original_name
+            )
+            logger.info(f"从向量索引移除 {removed} 个文档块: {attachment.original_name}")
+            return True
+        except Exception as e:
+            logger.error(f"从向量索引移除失败 (id={attachment.id}): {e}", exc_info=True)
+            return False
+
+    def _delete_attachment(self, attachment: ChatAttachment, delete_files: bool = False):
+        if delete_files:
+            try:
+                file_path = attachment.file.path
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    parent = os.path.dirname(file_path)
+                    if os.path.isdir(parent) and not os.listdir(parent):
+                        os.rmdir(parent)
+                    logger.info(f"磁盘文件已删除: {file_path}")
+            except Exception as e:
+                logger.warning(f"删除磁盘文件失败: {e}")
+
+        if attachment.status == AttachmentStatus.INDEXED:
+            try:
+                self._unindex_attachment(attachment)
+            except Exception as e:
+                logger.warning(f"删除时从向量索引移除失败: {e}")
 
         attachment.status = AttachmentStatus.DELETED
-        attachment.save(update_fields=['status'])
+        attachment.is_deleted = True
+        attachment.deleted_at = timezone.now()
+        attachment.save(update_fields=['status', 'is_deleted', 'deleted_at'])
 
-        logger.info(f"附件已删除: {attachment.original_name} (id={attachment.id})")
+        logger.info(f"附件已软删除: {attachment.original_name} (id={attachment.id})")
 
     @transaction.atomic
-    def archive_old_attachments(self, dry_run: bool = False, triggered_by: str = 'system') -> AttachmentCleanupLog:
+    def index_old_attachments(self, dry_run: bool = False, triggered_by: str = 'system') -> AttachmentCleanupLog:
         started_at = timezone.now()
         log = AttachmentCleanupLog.objects.create(
-            action='archive',
+            action='index',
             started_at=started_at,
             triggered_by=triggered_by,
         )
 
-        candidates = self.find_archive_candidates()
+        candidates = self.find_index_candidates()
         files_processed = 0
-        files_archived = 0
-        space_archived = 0
+        files_indexed = 0
+        files_skipped = 0
+        space_indexed = 0
         errors = []
 
         for attachment in candidates.iterator():
             files_processed += 1
             try:
-                self._archive_attachment(attachment, dry_run)
-                files_archived += 1
-                space_archived += attachment.file_size
+                indexed = self._index_attachment(attachment, dry_run)
+                if indexed:
+                    files_indexed += 1
+                    space_indexed += attachment.file_size
+                else:
+                    files_skipped += 1
             except Exception as e:
-                error_msg = f"附件 {attachment.id} 归档失败: {str(e)}"
+                error_msg = f"附件 {attachment.id} 入库失败: {str(e)}"
                 logger.error(error_msg)
                 errors.append(error_msg)
 
         log.finished_at = timezone.now()
         log.files_processed = files_processed
-        log.files_archived = files_archived
-        log.space_archived = space_archived
+        log.files_archived = files_indexed
+        log.files_skipped = files_skipped
+        log.space_archived = space_indexed
         log.errors = errors
-        log.details = {'dry_run': dry_run, 'archive_after_days': self.archive_after_days}
+        log.details = {'dry_run': dry_run, 'index_after_days': self.index_after_days}
         log.save()
 
-        logger.info(f"附件归档完成: 处理={files_processed}, 归档={files_archived}, 空间={space_archived / 1024 / 1024:.2f}MB")
+        logger.info(f"附件入库完成: 处理={files_processed}, 入库={files_indexed}, 跳过={files_skipped}, 空间={space_indexed / 1024 / 1024:.2f}MB")
         return log
 
     @transaction.atomic
-    def restore_attachment(self, attachment_id: int) -> bool:
+    def index_attachment_by_id(self, attachment_id: int, triggered_by: str = 'user') -> Tuple[bool, str]:
         try:
-            attachment = ChatAttachment.objects.get(id=attachment_id, status=AttachmentStatus.ARCHIVED)
+            attachment = ChatAttachment.objects.get(id=attachment_id, is_deleted=False)
         except ChatAttachment.DoesNotExist:
-            logger.error(f"归档附件不存在: id={attachment_id}")
-            return False
+            return False, f"附件不存在: id={attachment_id}"
 
-        if not attachment.archived_path or not os.path.exists(attachment.archived_path):
-            logger.error(f"归档文件不存在: {attachment.archived_path}")
-            return False
+        if attachment.status == AttachmentStatus.INDEXED:
+            return False, "附件已入库，无需重复操作"
 
-        original_dir = os.path.dirname(attachment.file.path)
-        os.makedirs(original_dir, exist_ok=True)
+        if attachment.status != AttachmentStatus.ACTIVE:
+            return False, f"附件状态为 {attachment.status}，无法入库"
 
-        shutil.move(attachment.archived_path, attachment.file.path)
+        try:
+            self._index_attachment(attachment)
+            AttachmentCleanupLog.objects.create(
+                action='index',
+                started_at=timezone.now(),
+                finished_at=timezone.now(),
+                files_processed=1,
+                files_archived=1,
+                space_archived=attachment.file_size,
+                details={'attachment_id': attachment_id, 'original_name': attachment.original_name},
+                triggered_by=triggered_by,
+            )
+            return True, f"附件已向量化入库: {attachment.original_name}"
+        except Exception as e:
+            return False, f"入库失败: {str(e)}"
 
-        attachment.status = AttachmentStatus.ACTIVE
-        attachment.archived_path = ''
-        attachment.archived_at = None
-        attachment.save(update_fields=['status', 'archived_path', 'archived_at'])
+    @transaction.atomic
+    def unindex_attachment_by_id(self, attachment_id: int, triggered_by: str = 'user') -> Tuple[bool, str]:
+        try:
+            attachment = ChatAttachment.objects.get(id=attachment_id, is_deleted=False)
+        except ChatAttachment.DoesNotExist:
+            return False, f"附件不存在: id={attachment_id}"
 
-        AttachmentCleanupLog.objects.create(
-            action='restore',
-            started_at=timezone.now(),
-            finished_at=timezone.now(),
-            files_processed=1,
-            details={'attachment_id': attachment_id, 'original_name': attachment.original_name},
-            triggered_by='manual',
-        )
+        if attachment.status != AttachmentStatus.INDEXED:
+            return False, "附件未入库，无需移除"
 
-        logger.info(f"附件已恢复: {attachment.original_name}")
-        return True
+        try:
+            self._unindex_attachment(attachment)
+
+            attachment.status = AttachmentStatus.ACTIVE
+            attachment.indexed_path = ''
+            attachment.indexed_at = None
+            attachment.save(update_fields=['status', 'indexed_path', 'indexed_at'])
+
+            AttachmentCleanupLog.objects.create(
+                action='unindex',
+                started_at=timezone.now(),
+                finished_at=timezone.now(),
+                files_processed=1,
+                details={'attachment_id': attachment_id, 'original_name': attachment.original_name},
+                triggered_by=triggered_by,
+            )
+            return True, f"附件已从向量库移除: {attachment.original_name}"
+        except Exception as e:
+            return False, f"移除失败: {str(e)}"
+
+    def batch_index(self, attachment_ids: List[int], triggered_by: str = 'user') -> Dict:
+        results = {'success': [], 'failed': []}
+        for att_id in attachment_ids:
+            try:
+                success, message = self.index_attachment_by_id(att_id, triggered_by)
+                if success:
+                    results['success'].append({'id': att_id, 'message': message})
+                else:
+                    results['failed'].append({'id': att_id, 'message': message})
+            except Exception as e:
+                results['failed'].append({'id': att_id, 'message': str(e)})
+        return results
+
+    def batch_unindex(self, attachment_ids: List[int], triggered_by: str = 'user') -> Dict:
+        results = {'success': [], 'failed': []}
+        for att_id in attachment_ids:
+            try:
+                success, message = self.unindex_attachment_by_id(att_id, triggered_by)
+                if success:
+                    results['success'].append({'id': att_id, 'message': message})
+                else:
+                    results['failed'].append({'id': att_id, 'message': message})
+            except Exception as e:
+                results['failed'].append({'id': att_id, 'message': str(e)})
+        return results
+
+    def batch_delete(self, attachment_ids: List[int], triggered_by: str = 'user') -> Dict:
+        results = {'success': [], 'failed': []}
+        for att_id in attachment_ids:
+            try:
+                success, message = self.manual_delete(att_id, triggered_by)
+                if success:
+                    results['success'].append({'id': att_id, 'message': message})
+                else:
+                    results['failed'].append({'id': att_id, 'message': message})
+            except Exception as e:
+                results['failed'].append({'id': att_id, 'message': str(e)})
+        return results
 
     @transaction.atomic
     def manual_delete(self, attachment_id: int, triggered_by: str = 'admin') -> Tuple[bool, str]:
         try:
-            attachment = ChatAttachment.objects.get(id=attachment_id)
+            attachment = ChatAttachment.all_objects.get(id=attachment_id)
         except ChatAttachment.DoesNotExist:
             return False, f"附件不存在: id={attachment_id}"
 
-        if attachment.status == AttachmentStatus.DELETED:
+        if attachment.is_deleted or attachment.status == AttachmentStatus.DELETED:
             return False, "附件已被删除"
 
         started_at = timezone.now()
@@ -346,3 +488,86 @@ class AttachmentLifecycleService:
 
     def touch_access(self, attachment_id: int):
         ChatAttachment.objects.filter(pk=attachment_id).update(last_accessed_at=timezone.now())
+
+    @transaction.atomic
+    def permanent_delete(self, attachment_id: int, triggered_by: str = 'admin') -> Tuple[bool, str]:
+        try:
+            attachment = ChatAttachment.all_objects.get(id=attachment_id)
+        except ChatAttachment.DoesNotExist:
+            return False, f"附件不存在: id={attachment_id}"
+
+        if not attachment.is_deleted:
+            return False, "附件未在回收站中，无法永久删除"
+
+        file_name = attachment.original_name
+        file_size = attachment.file_size
+
+        if attachment.status == AttachmentStatus.INDEXED:
+            try:
+                self._unindex_attachment(attachment)
+            except Exception as e:
+                logger.warning(f"永久删除时从向量索引移除失败: {e}")
+
+        try:
+            file_path = attachment.file.path
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                parent = os.path.dirname(file_path)
+                if os.path.isdir(parent) and not os.listdir(parent):
+                    os.rmdir(parent)
+        except Exception as e:
+            logger.warning(f"永久删除文件时清理磁盘文件失败: {e}")
+
+        attachment.hard_delete()
+
+        AttachmentCleanupLog.objects.create(
+            action='permanent_delete',
+            started_at=timezone.now(),
+            finished_at=timezone.now(),
+            files_processed=1,
+            files_deleted=1,
+            space_freed=file_size,
+            details={'attachment_id': attachment_id, 'original_name': file_name},
+            triggered_by=triggered_by,
+        )
+
+        logger.info(f"附件已永久删除: {file_name} (id={attachment_id})")
+        return True, f"附件已永久删除: {file_name}"
+
+    @transaction.atomic
+    def restore_from_trash(self, attachment_id: int) -> Tuple[bool, str]:
+        try:
+            attachment = ChatAttachment.all_objects.get(id=attachment_id)
+        except ChatAttachment.DoesNotExist:
+            return False, f"附件不存在: id={attachment_id}"
+
+        if not attachment.is_deleted:
+            return False, "附件未在回收站中"
+
+        try:
+            file_path = attachment.file.path
+            file_exists = os.path.exists(file_path)
+
+            if not file_exists:
+                logger.error(f"恢复失败，磁盘文件不存在: {file_path}")
+                return False, f"恢复失败：磁盘文件已丢失，无法恢复 ({attachment.original_name})"
+        except Exception as e:
+            logger.error(f"恢复失败，无法访问文件路径: {e}")
+            return False, f"恢复失败：无法访问文件 ({attachment.original_name})"
+
+        attachment.is_deleted = False
+        attachment.deleted_at = None
+        attachment.status = AttachmentStatus.ACTIVE
+        attachment.save(update_fields=['is_deleted', 'deleted_at', 'status'])
+
+        AttachmentCleanupLog.objects.create(
+            action='restore_from_trash',
+            started_at=timezone.now(),
+            finished_at=timezone.now(),
+            files_processed=1,
+            details={'attachment_id': attachment_id, 'original_name': attachment.original_name},
+            triggered_by='manual',
+        )
+
+        logger.info(f"附件已从回收站恢复: {attachment.original_name} (id={attachment_id})")
+        return True, f"附件已恢复: {attachment.original_name}"

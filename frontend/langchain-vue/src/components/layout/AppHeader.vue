@@ -172,9 +172,20 @@ const handleCommand = async (command) => {
   font-size: 18px;
 }
 
+@media (max-width: 1024px) {
+  .header-content {
+    padding: 0 16px;
+  }
+
+  .app-subtitle {
+    font-size: 12px;
+  }
+}
+
 @media (max-width: 768px) {
   .header-content {
     padding: 0 12px;
+    height: 48px;
   }
 
   .app-subtitle {
@@ -192,12 +203,34 @@ const handleCommand = async (command) => {
   .header-right {
     gap: 8px;
   }
+
+  .header-left {
+    gap: 8px;
+  }
 }
 
 @media (max-width: 480px) {
+  .header-content {
+    padding: 0 8px;
+    height: 44px;
+  }
+
+  .app-title {
+    font-size: 14px;
+  }
+
   .auth-buttons .el-button {
-    padding: 6px 12px;
-    font-size: 13px;
+    padding: 5px 10px;
+    font-size: 12px;
+  }
+
+  .logo-link {
+    gap: 6px;
+  }
+
+  .menu-toggle-btn {
+    font-size: 18px;
+    padding: 2px;
   }
 }
 </style>

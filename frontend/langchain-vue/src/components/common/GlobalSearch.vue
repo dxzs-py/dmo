@@ -3,6 +3,8 @@ import { ref, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElDialog, ElInput, ElScrollbar } from 'element-plus'
 import { useKeyboardShortcuts, COMMON_SHORTCUTS } from '../../composables/useKeyboardShortcuts'
+import { useSessionStore } from '../../stores/session'
+import { useUserStore } from '../../stores/user'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false }
@@ -11,25 +13,43 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue'])
 
 const router = useRouter()
+const sessionStore = useSessionStore()
+const userStore = useUserStore()
 const searchQuery = ref('')
 const selectedIndex = ref(0)
 const inputRef = ref(null)
 
-const searchItems = [
-  { label: '智能对话', path: '/chat', icon: '💬', keywords: 'chat 对话 聊天' },
-  { label: 'RAG 知识库查询', path: '/rag', icon: '🔍', keywords: 'rag 检索 知识库' },
-  { label: '学习工作流', path: '/workflows', icon: '📚', keywords: 'workflow 工作流 学习' },
-  { label: '深度研究', path: '/deep-research', icon: '🔬', keywords: 'research 研究 深度' },
-  { label: '知识库管理', path: '/knowledge', icon: '📁', keywords: 'knowledge 知识库 管理 文档' },
-  { label: '数据分析', path: '/dashboard', icon: '📊', keywords: 'dashboard 数据 分析 统计' },
-  { label: '个人资料', path: '/profile', icon: '👤', keywords: 'profile 个人 资料' },
-  { label: '设置', path: '/settings', icon: '⚙️', keywords: 'settings 设置 配置' },
+const pageItems = [
+  { label: '智能对话', path: '/chat', icon: '💬', keywords: 'chat 对话 聊天', type: 'page' },
+  { label: 'RAG 知识库查询', path: '/rag', icon: '🔍', keywords: 'rag 检索 知识库', type: 'page' },
+  { label: '学习工作流', path: '/workflows', icon: '📚', keywords: 'workflow 工作流 学习', type: 'page' },
+  { label: '深度研究', path: '/deep-research', icon: '🔬', keywords: 'research 研究 深度', type: 'page' },
+  { label: '知识库管理', path: '/knowledge', icon: '📁', keywords: 'knowledge 知识库 管理 文档', type: 'page' },
+  { label: '数据分析', path: '/dashboard', icon: '📊', keywords: 'dashboard 数据 分析 统计', type: 'page' },
+  { label: '个人资料', path: '/profile', icon: '👤', keywords: 'profile 个人 资料', type: 'page' },
+  { label: '设置', path: '/settings', icon: '⚙️', keywords: 'settings 设置 配置', type: 'page' },
 ]
 
+const sessionItems = computed(() => {
+  if (!userStore.isLoggedIn) return []
+  return sessionStore.sessions.slice(0, 30).map(s => ({
+    label: s.title || '新对话',
+    path: `/chat?session=${s.id}`,
+    sessionId: s.id,
+    icon: '💬',
+    keywords: `聊天 会话 chat session ${s.title || ''}`,
+    type: 'session',
+  }))
+})
+
+const allItems = computed(() => {
+  return [...pageItems, ...sessionItems.value]
+})
+
 const filteredItems = computed(() => {
-  if (!searchQuery.value.trim()) return searchItems
+  if (!searchQuery.value.trim()) return allItems.value
   const q = searchQuery.value.toLowerCase()
-  return searchItems.filter(item =>
+  return allItems.value.filter(item =>
     item.label.toLowerCase().includes(q) ||
     item.keywords.toLowerCase().includes(q) ||
     item.path.toLowerCase().includes(q)
@@ -44,8 +64,15 @@ watch(() => props.modelValue, (val) => {
   }
 })
 
-function selectItem(item) {
-  router.push(item.path)
+async function selectItem(item) {
+  if (item.type === 'session' && item.sessionId) {
+    await sessionStore.switchSession(item.sessionId)
+    if (router.currentRoute.value.path !== '/chat') {
+      router.push('/chat')
+    }
+  } else {
+    router.push(item.path)
+  }
   emit('update:modelValue', false)
 }
 
@@ -90,7 +117,7 @@ useKeyboardShortcuts({
       <ElInput
         ref="inputRef"
         v-model="searchQuery"
-        placeholder="搜索页面、功能..."
+        placeholder="搜索页面、功能、聊天记录..."
         size="large"
         :border="false"
         class="search-input"
@@ -99,19 +126,24 @@ useKeyboardShortcuts({
     </div>
     <ElScrollbar max-height="360px" v-if="filteredItems.length">
       <div class="search-results">
-        <div
-          v-for="(item, index) in filteredItems"
-          :key="item.path"
-          class="search-item"
-          :class="{ selected: index === selectedIndex }"
-          v-memo="[item.label, item.path, index === selectedIndex]"
-          @click="selectItem(item)"
-          @mouseenter="selectedIndex = index"
-        >
-          <span class="search-item-icon">{{ item.icon }}</span>
-          <span class="search-item-label">{{ item.label }}</span>
-          <span class="search-item-path">{{ item.path }}</span>
-        </div>
+        <template v-for="(item, index) in filteredItems" :key="item.type + '-' + (item.sessionId || item.path)">
+          <div
+            v-if="index === 0 && item.type === 'session' || (index > 0 && item.type === 'session' && filteredItems[index - 1].type !== 'session')"
+            class="search-group-label"
+          >聊天记录</div>
+          <div
+            class="search-item"
+            :class="{ selected: index === selectedIndex }"
+            v-memo="[item.label, item.path, index === selectedIndex]"
+            @click="selectItem(item)"
+            @mouseenter="selectedIndex = index"
+          >
+            <span class="search-item-icon">{{ item.icon }}</span>
+            <span class="search-item-label">{{ item.label }}</span>
+            <el-tag v-if="item.type === 'session'" size="small" type="info" class="search-item-tag">会话</el-tag>
+            <span v-else class="search-item-path">{{ item.path }}</span>
+          </div>
+        </template>
       </div>
     </ElScrollbar>
     <div v-else class="search-empty">
@@ -154,6 +186,14 @@ useKeyboardShortcuts({
   padding: 4px 0;
 }
 
+.search-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--el-text-color-secondary);
+  padding: 8px 12px 4px;
+  letter-spacing: 0.3px;
+}
+
 .search-item {
   display: flex;
   align-items: center;
@@ -179,6 +219,13 @@ useKeyboardShortcuts({
   flex: 1;
   font-size: 14px;
   color: var(--el-text-color-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.search-item-tag {
+  flex-shrink: 0;
 }
 
 .search-item-path {

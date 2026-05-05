@@ -217,7 +217,7 @@ class ChatMessage(AuditModel):
 
 class AttachmentStatus(models.TextChoices):
     ACTIVE = 'active', '活跃'
-    ARCHIVED = 'archived', '已归档'
+    INDEXED = 'indexed', '已入库'
     PENDING_DELETE = 'pending_delete', '待删除'
     DELETED = 'deleted', '已删除'
 
@@ -273,16 +273,16 @@ class ChatAttachment(AuditModel):
         default=1,
         verbose_name='引用计数'
     )
-    archived_path = models.CharField(
+    indexed_path = models.CharField(
         max_length=500,
         blank=True,
         default='',
-        verbose_name='归档路径'
+        verbose_name='向量索引路径'
     )
-    archived_at = models.DateTimeField(
+    indexed_at = models.DateTimeField(
         null=True,
         blank=True,
-        verbose_name='归档时间'
+        verbose_name='入库时间'
     )
     retention_days = models.PositiveIntegerField(
         null=True,
@@ -349,9 +349,12 @@ class ChatAttachment(AuditModel):
 class AttachmentCleanupLog(models.Model):
     ACTION_CHOICES = [
         ('cleanup', '定时清理'),
-        ('archive', '归档'),
+        ('index', '入库'),
+        ('unindex', '移除入库'),
         ('manual_delete', '手动删除'),
         ('restore', '恢复'),
+        ('permanent_delete', '永久删除'),
+        ('restore_from_trash', '从回收站恢复'),
     ]
 
     action = models.CharField(
@@ -377,7 +380,7 @@ class AttachmentCleanupLog(models.Model):
     )
     files_archived = models.PositiveIntegerField(
         default=0,
-        verbose_name='归档文件数'
+        verbose_name='入库文件数'
     )
     files_skipped = models.PositiveIntegerField(
         default=0,
@@ -389,7 +392,7 @@ class AttachmentCleanupLog(models.Model):
     )
     space_archived = models.PositiveBigIntegerField(
         default=0,
-        verbose_name='归档空间(字节)'
+        verbose_name='入库空间(字节)'
     )
     errors = models.JSONField(
         default=list,

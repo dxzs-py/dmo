@@ -802,9 +802,23 @@ onUnmounted(() => {
   color: var(--el-text-color-primary);
 }
 
+@media (max-width: 1024px) {
+  .workflow-view {
+    padding: 16px;
+  }
+
+  .page-title {
+    font-size: 16px;
+  }
+}
+
 @media (max-width: 768px) {
   .workflow-view {
     padding: 12px;
+  }
+
+  .page-title {
+    font-size: 15px;
   }
 
   .card-header {
@@ -814,16 +828,7 @@ onUnmounted(() => {
   }
 
   .header-actions {
-    width: 100%;
     flex-wrap: wrap;
-  }
-
-  .plan-card h4 {
-    font-size: 16px;
-  }
-
-  .question-text {
-    font-size: 14px;
   }
 }
 
@@ -833,7 +838,19 @@ onUnmounted(() => {
   }
 
   .page-title {
-    font-size: 16px;
+    font-size: 14px;
+  }
+
+  .workflow-progress {
+    padding: 8px;
+  }
+
+  .question-title {
+    font-size: 14px;
+  }
+
+  .question-text {
+    font-size: 14px;
   }
 }
 </style>
