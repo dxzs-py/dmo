@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import AppHeader from './components/layout/AppHeader.vue'
 import GlobalSearch from './components/common/GlobalSearch.vue'
+import ChatQuickAccess from './components/common/ChatQuickAccess.vue'
 import { useThemeStore } from './stores/theme'
 import { useSessionStore } from './stores/session'
 import { useUserStore } from './stores/user'
@@ -55,6 +56,7 @@ onMounted(async () => {
       </div>
     </div>
     <GlobalSearch v-model="showSearch" />
+    <ChatQuickAccess />
   </ErrorBoundary>
 </template>
 
@@ -99,5 +101,23 @@ html, body, #app {
 .scroll-container {
   height: 100%;
   overflow-y: auto;
+}
+
+@media (max-width: 1024px) {
+  .main-content {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .content-wrapper {
+    position: relative;
+  }
+}
+
+@media (max-width: 480px) {
+  .scroll-container {
+    -webkit-overflow-scrolling: touch;
+  }
 }
 </style>

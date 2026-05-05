@@ -221,7 +221,7 @@ def add_documents_to_index_task(
     default_retry_delay=60,
     soft_time_limit=600,
 )
-def delete_index_task(self, index_name: str, user_id: int = None):
+def delete_index_task(self, index_name: str, user_id: int = None, original_name: str = None):
     tracker = TrackedTask(self)
     tracker.set_task_type('rag_delete_index')
     try:
@@ -235,6 +235,12 @@ def delete_index_task(self, index_name: str, user_id: int = None):
             return {'status': 'not_exists', 'index_name': index_name}
         
         manager.delete_index(index_name)
+
+        if user_id and original_name:
+            from Django_xm.apps.chat.models import ChatSession
+            ChatSession.objects.filter(
+                user_id=user_id, selected_knowledge_base=original_name
+            ).update(selected_knowledge_base='')
         
         logger.info(f"[Celery RAG] 索引删除完成：{index_name}")
         tracker.mark_success(result={'index_name': index_name})

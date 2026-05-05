@@ -6,7 +6,9 @@ import { knowledgeAPI } from '../api'
 import { logger } from '../utils/logger'
 import { formatFileSize } from '../utils/format'
 import { confirmDelete, confirmAction } from '../utils/dialog'
+import { useSessionStore } from '../stores/session'
 
+const sessionStore = useSessionStore()
 const knowledgeBases = ref([])
 const loading = ref(false)
 const searchQuery = ref('')
@@ -109,6 +111,7 @@ async function handleDelete(kb) {
     if (response.data?.code === 200) {
       ElMessage.success('删除成功')
       await loadKnowledgeBases()
+      await sessionStore.loadKnowledgeBases()
     }
   } catch {
     // cancelled
@@ -759,9 +762,23 @@ async function handleClearCache(scope = 'all') {
   font-size: 12px;
 }
 
+@media (max-width: 1024px) {
+  .knowledge-container {
+    padding: 24px 16px;
+  }
+
+  .knowledge-header h1 {
+    font-size: 20px;
+  }
+}
+
 @media (max-width: 768px) {
   .knowledge-container {
-    padding: 16px;
+    padding: 16px 12px;
+  }
+
+  .knowledge-header h1 {
+    font-size: 18px;
   }
 
   .knowledge-toolbar {
@@ -770,6 +787,38 @@ async function handleClearCache(scope = 'all') {
 
   .search-input {
     max-width: 100%;
+  }
+
+  .kb-stats {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  .knowledge-container {
+    padding: 12px 8px;
+  }
+
+  .knowledge-header {
+    margin-bottom: 16px;
+  }
+
+  .knowledge-header h1 {
+    font-size: 16px;
+  }
+
+  .subtitle {
+    font-size: 12px;
+  }
+
+  .kb-desc {
+    font-size: 13px;
+    min-height: auto;
+  }
+
+  .kb-stats {
+    font-size: 12px;
   }
 }
 

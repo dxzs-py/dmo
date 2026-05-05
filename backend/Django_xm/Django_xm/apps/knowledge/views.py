@@ -96,6 +96,12 @@ class KnowledgeBaseListView(APIView):
         try:
             user = request.user
 
+            deleted_index_names = set(
+                DocumentIndex.all_objects.filter(
+                    user=user, is_deleted=True
+                ).values_list('index_name', flat=True)
+            )
+
             manager = IndexManager()
             all_indexes = manager.list_indexes()
             
@@ -104,6 +110,8 @@ class KnowledgeBaseListView(APIView):
                 name = idx_data.get('name', '')
                 if name.startswith(f"user_{user.id}_"):
                     original_name = get_original_index_name(name)
+                    if original_name in deleted_index_names:
+                        continue
                     user_indexes.append({
                         'id': original_name,
                         'name': original_name,
@@ -287,6 +295,11 @@ class KnowledgeBaseDetailView(APIView):
             CacheService.delete(f"doc_list:{user_index_name}")
             QueryCacheService.invalidate_index_queries(user_index_name)
             VectorSearchCacheService.invalidate_index_queries(user_index_name)
+
+            from Django_xm.apps.chat.models import ChatSession
+            ChatSession.objects.filter(
+                user=user, selected_knowledge_base=kb_id
+            ).update(selected_knowledge_base='')
 
             return success_response(message='知识库删除成功')
         except Exception as e:
@@ -553,7 +566,7 @@ class RAGIndexCreateView(APIView):
             return error_response(
                 code=ErrorCode.VALIDATION_FAILED,
                 message='数据验证失败',
-                details=serializer.errors,
+                data=serializer.errors,
                 http_status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -676,7 +689,7 @@ class RAGEmptyIndexCreateView(APIView):
             return error_response(
                 code=ErrorCode.VALIDATION_FAILED,
                 message='数据验证失败',
-                details=serializer.errors,
+                data=serializer.errors,
                 http_status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -757,6 +770,13 @@ class RAGIndexListView(APIView):
     def get(self, request):
         try:
             user = request.user
+
+            deleted_index_names = set(
+                DocumentIndex.all_objects.filter(
+                    user=user, is_deleted=True
+                ).values_list('index_name', flat=True)
+            )
+
             manager = IndexManager()
             all_indexes = manager.list_indexes()
 
@@ -765,6 +785,8 @@ class RAGIndexListView(APIView):
                 name = idx_data.get('name', '')
                 if name.startswith(f"user_{user.id}_"):
                     original_name = get_original_index_name(name)
+                    if original_name in deleted_index_names:
+                        continue
                     user_indexes.append({**idx_data, 'name': original_name})
 
             return success_response(
@@ -832,6 +854,11 @@ class RAGIndexDeleteView(APIView):
                     shutil.rmtree(upload_dir)
                 except Exception as e:
                     logger.warning(f"删除上传文件目录失败: {e}")
+
+            from Django_xm.apps.chat.models import ChatSession
+            ChatSession.objects.filter(
+                user=user, selected_knowledge_base=name
+            ).update(selected_knowledge_base='')
 
             return success_response(
                 data={'message': f'索引已删除: {name}'},

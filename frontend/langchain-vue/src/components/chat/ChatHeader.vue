@@ -214,4 +214,38 @@ function getModeConfig(mode) {
   color: var(--el-text-color-secondary);
   line-height: 1.3;
 }
+
+@media (max-width: 768px) {
+  .chat-header {
+    padding: 8px 12px;
+    gap: 8px;
+  }
+
+  .header-title {
+    font-size: 15px;
+  }
+
+  .header-left {
+    gap: 8px;
+  }
+
+  .header-right {
+    gap: 4px;
+  }
+}
+
+@media (max-width: 480px) {
+  .chat-header {
+    padding: 6px 8px;
+    flex-wrap: wrap;
+  }
+
+  .header-title {
+    font-size: 14px;
+  }
+
+  .mode-selector {
+    max-width: 140px;
+  }
+}
 </style>

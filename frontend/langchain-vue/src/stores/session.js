@@ -330,6 +330,7 @@ export const useSessionStore = defineStore('session', () => {
         message.reasoning = version.reasoning
         message.suggestions = version.suggestions
         message.context = version.context
+        message.attachmentIds = version.attachmentIds || message.attachmentIds
         touchSessionUpdatedAt(sessionId)
 
         if (userStore.isLoggedIn && message.backendId) {
@@ -376,6 +377,19 @@ export const useSessionStore = defineStore('session', () => {
     if (usageData.responseTime !== undefined) result.message.responseTime = usageData.responseTime
   }
 
+  const setAttachmentIdsToLastUserMessage = (sessionId, attachmentIds) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (!session) return
+    for (let i = session.messages.length - 1; i >= 0; i--) {
+      if (session.messages[i].role === 'user') {
+        session.messages[i].attachmentIds = attachmentIds
+        const ver = session.messages[i].versions?.[session.messages[i].currentVersion]
+        if (ver) ver.attachmentIds = attachmentIds
+        break
+      }
+    }
+  }
+
   const getSessionMessages = (sessionId) => {
     const session = sessions.value.find(s => s.id === sessionId)
     return session ? session.messages : []
@@ -419,6 +433,12 @@ export const useSessionStore = defineStore('session', () => {
         knowledgeBases.value = response.data.data
       } else if (response.data?.data?.items) {
         knowledgeBases.value = response.data.data.items
+      }
+      if (selectedKnowledgeBase.value?.id) {
+        const stillExists = knowledgeBases.value.some(kb => kb.id === selectedKnowledgeBase.value.id)
+        if (!stillExists) {
+          selectedKnowledgeBase.value = null
+        }
       }
     } catch (error) {
       logger.error('Failed to load knowledge bases:', error)
@@ -495,6 +515,7 @@ export const useSessionStore = defineStore('session', () => {
     setContextToLastMessage,
     addToolCallToLastMessage,
     setUsageToLastMessage,
+    setAttachmentIdsToLastUserMessage,
     addSourceToMessage,
     setSourcesToMessage,
     setPlanToMessage,

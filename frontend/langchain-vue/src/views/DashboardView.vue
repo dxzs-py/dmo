@@ -723,9 +723,27 @@ function getCategoryColor(name) {
   flex-shrink: 0;
 }
 
+@media (max-width: 1024px) {
+  .dashboard-container {
+    padding: 24px 16px;
+  }
+
+  .dashboard-header h1 {
+    font-size: 20px;
+  }
+
+  .trend-chart {
+    height: 160px;
+  }
+}
+
 @media (max-width: 768px) {
   .dashboard-container {
-    padding: 16px;
+    padding: 16px 12px;
+  }
+
+  .dashboard-header h1 {
+    font-size: 18px;
   }
 
   .stat-card :deep(.el-card__body) {
@@ -743,6 +761,60 @@ function getCategoryColor(name) {
 
   .feature-name {
     width: 70px;
+  }
+
+  .trend-chart {
+    height: 140px;
+  }
+}
+
+@media (max-width: 480px) {
+  .dashboard-container {
+    padding: 12px 8px;
+  }
+
+  .dashboard-header {
+    margin-bottom: 16px;
+  }
+
+  .dashboard-header h1 {
+    font-size: 16px;
+  }
+
+  .subtitle {
+    font-size: 12px;
+  }
+
+  .stat-value {
+    font-size: 14px;
+  }
+
+  .stat-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+  }
+
+  .stat-label {
+    font-size: 11px;
+  }
+
+  .trend-chart {
+    height: 120px;
+    gap: 4px;
+  }
+
+  .trend-label {
+    font-size: 10px;
+  }
+
+  .feature-name {
+    width: 60px;
+    font-size: 12px;
+  }
+
+  .card-title {
+    font-size: 14px;
   }
 }
 </style>

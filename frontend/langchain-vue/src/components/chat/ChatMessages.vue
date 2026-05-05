@@ -557,4 +557,19 @@ const handleSuggestionClick = (suggestion) => {
     padding: 8px 8px;
   }
 }
+
+@media (max-width: 480px) {
+  .messages-container {
+    padding: 12px 8px;
+  }
+
+  .suggestion-card {
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+
+  .message-wrapper {
+    padding: 6px 4px;
+  }
+}
 </style>

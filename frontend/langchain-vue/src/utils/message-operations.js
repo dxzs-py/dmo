@@ -70,5 +70,6 @@ export function createMessageVersion(message) {
     reasoning: message.reasoning || null,
     suggestions: message.suggestions || null,
     context: message.context || null,
+    attachmentIds: message.attachmentIds || [],
   }
 }

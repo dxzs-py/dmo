@@ -30,6 +30,7 @@ urlpatterns = [
     path('admin/attachments/cleanup/', views.AttachmentAdminCleanupView.as_view(), name='admin-attachments-cleanup'),
     path('admin/attachments/<int:attachment_id>/', views.AttachmentAdminDetailView.as_view(), name='admin-attachments-detail'),
     path('admin/attachments/<int:attachment_id>/action/', views.AttachmentAdminActionView.as_view(), name='admin-attachments-action'),
+    path('admin/attachments/batch/', views.AttachmentAdminBatchView.as_view(), name='admin-attachments-batch'),
     path('admin/storage-alerts/', views.StorageAlertView.as_view(), name='admin-storage-alerts'),
     path('admin/storage-alerts/<int:alert_id>/', views.StorageAlertView.as_view(), name='admin-storage-alert-detail'),
 ]

@@ -1,6 +1,6 @@
 """
 基础 Agent 模块
-使用 LangChain 1.0.3 的 create_agent API 实现通用的智能体封装
+使用 LangChain v1.2.13 的 create_agent API 实现通用的智能体封装
 """
 
 from typing import List, Optional, Dict, Any, Iterator, AsyncIterator, Union, Sequence

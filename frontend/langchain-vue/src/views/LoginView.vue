@@ -493,4 +493,63 @@ function getCode() {
 .back-home a:hover {
   color: #667eea;
 }
+
+@media (max-width: 768px) {
+  .login-box {
+    padding: 32px 24px;
+    max-width: 380px;
+  }
+
+  .title {
+    font-size: 28px;
+  }
+}
+
+@media (max-width: 480px) {
+  .login-container {
+    padding: 12px;
+    align-items: flex-start;
+    padding-top: 40px;
+  }
+
+  .login-box {
+    padding: 24px 16px;
+    border-radius: 12px;
+    max-width: 100%;
+  }
+
+  .title {
+    font-size: 24px;
+  }
+
+  .subtitle {
+    font-size: 12px;
+  }
+
+  .login-header {
+    margin-bottom: 20px;
+  }
+
+  .login-tabs {
+    margin-bottom: 16px;
+  }
+
+  .tab {
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+
+  .login-button {
+    height: 44px;
+    font-size: 15px;
+  }
+
+  .captcha-img {
+    height: 36px;
+  }
+
+  .register-link {
+    font-size: 13px;
+  }
+}
 </style>

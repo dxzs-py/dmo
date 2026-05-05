@@ -1,0 +1,154 @@
+{
+  "thread_id": "study_80321c32abc1",
+  "user_question": "简单加法",
+  "status": "completed",
+  "current_step": "feedback_completed",
+  "learning_plan": {
+    "topic": "简单加法",
+    "objectives": [
+      "能正确计算1到10之间的加法题目",
+      "能在5分钟内完成20道简单加法题目",
+      "理解加法的基本概念及其应用"
+    ],
+    "key_points": [
+      "加法的定义和意义",
+      "数字的认识（1-10）",
+      "加法的基本运算规则",
+      "如何进行进位加法",
+      "加法在日常生活中的应用"
+    ],
+    "difficulty": "beginner",
+    "estimated_time": 60
+  },
+  "quiz": {
+    "questions": [
+      {
+        "id": "q1",
+        "type": "multiple_choice",
+        "question": "加法的定义是什么？",
+        "options": [
+          "将两个或多个数字组合在一起的过程",
+          "将数字相减的过程",
+          "将数字相乘的过程",
+          "将数字除的过程"
+        ],
+        "answer": "将两个或多个数字组合在一起的过程",
+        "explanation": "加法是数学中一种基本的运算，表示将两个或多个数字相加以得到一个总和。",
+        "points": 10
+      },
+      {
+        "id": "q2",
+        "type": "multiple_choice",
+        "question": "以下哪个是正确的加法运算？",
+        "options": [
+          "1 + 2 = 3",
+          "2 - 1 = 1",
+          "3 × 2 = 6",
+          "4 ÷ 2 = 2"
+        ],
+        "answer": "1 + 2 = 3",
+        "explanation": "1 + 2 的结果是 3，这个选项展示了加法的基本运算规则。",
+        "points": 15
+      },
+      {
+        "id": "q3",
+        "type": "multiple_choice",
+        "question": "在日常生活中，以下哪个例子涉及到加法的使用？",
+        "options": [
+          "买了3个苹果，又买了2个苹果，总共买了几个？",
+          "从5中减去2，剩下多少？",
+          "把10块钱分给2个人，每人多少？",
+          "把6个糖果分给3个小朋友，每人多少个？"
+        ],
+        "answer": "买了3个苹果，又买了2个苹果，总共买了几个？",
+        "explanation": "这个例子清楚地展示了在购物时如何应用加法来计算总数。",
+        "points": 10
+      },
+      {
+        "id": "q4",
+        "type": "fill_blank",
+        "question": "计算以下加法： 7 + 5 = ____",
+        "options": null,
+        "answer": "12",
+        "explanation": "7 和 5 相加的结果是 12，这是进行基本加法运算的例子。",
+        "points": 15
+      },
+      {
+        "id": "q5",
+        "type": "short_answer",
+        "question": "请简述如何进行进位加法，并给出一个例子。",
+        "options": null,
+        "answer": "进行进位加法时，如果两个数字的和超过了10，就需要将十位的数字进位到下一位上。例如，计算 8 + 7，结果是 15，因此需要将1进位到下一位。",
+        "explanation": "进位加法是处理加法中产生的十位数时的规则，确保每一位的和保持在0到9之间。",
+        "points": 30
+      }
+    ],
+    "total_points": 80,
+    "time_limit": 30
+  },
+  "user_answers": {
+    "q1": "将两个或多个数字组合在一起的过程",
+    "q2": "1 + 2 = 3",
+    "q3": "买了3个苹果，又买了2个苹果，总共买了几个？",
+    "q4": "12",
+    "q5": "是"
+  },
+  "score": 62,
+  "score_details": {
+    "total_count": 5,
+    "correct_count": 4,
+    "question_scores": [
+      {
+        "question_id": "q1",
+        "user_answer": "将两个或多个数字组合在一起的过程",
+        "correct_answer": "将两个或多个数字组合在一起的过程",
+        "is_correct": true,
+        "points_earned": 10,
+        "points_possible": 10,
+        "feedback": "回答正确！"
+      },
+      {
+        "question_id": "q2",
+        "user_answer": "1 + 2 = 3",
+        "correct_answer": "1 + 2 = 3",
+        "is_correct": true,
+        "points_earned": 15,
+        "points_possible": 15,
+        "feedback": "回答正确！"
+      },
+      {
+        "question_id": "q3",
+        "user_answer": "买了3个苹果，又买了2个苹果，总共买了几个？",
+        "correct_answer": "买了3个苹果，又买了2个苹果，总共买了几个？",
+        "is_correct": true,
+        "points_earned": 10,
+        "points_possible": 10,
+        "feedback": "回答正确！"
+      },
+      {
+        "question_id": "q4",
+        "user_answer": "12",
+        "correct_answer": "12",
+        "is_correct": true,
+        "points_earned": 15,
+        "points_possible": 15,
+        "feedback": "回答正确！"
+      },
+      {
+        "question_id": "q5",
+        "user_answer": "是",
+        "correct_answer": "进行进位加法时，如果两个数字的和超过了10，就需要将十位的数字进位到下一位上。例如，计算 8 + 7，结果是 15，因此需要将1进位到下一位。",
+        "is_correct": false,
+        "points_earned": 0,
+        "points_possible": 30,
+        "feedback": "学生答案过于简短，没有提供任何相关信息，未能回答题目要求，缺乏准确性和完整性。"
+      }
+    ]
+  },
+  "feedback": "\n\n💬 **学习反馈**\n\n亲爱的学生，\n\n首先，恭喜你在简单加法的测验中取得了62分！你已成功解答了4道题目，这表明你在这个学习主题上已经有了一定的基础。继续保持这样的努力！\n\n关于你在q5题上的表现，虽然没有完全回答题目要求，但这也是一个很好的学习机会。建议你在今后的解答中，尽量详细表达你的思路和步骤，这样可以帮助你更准确地理解题意。\n\n接下来，我们可以继续深入练习简单加法，尝试一些更具挑战性的题目，同时也可以进行一些应用题练习，帮助你更好地理解加法的实际运用。\n\n相信自己，你已经在这个学习旅程中取得了进步！每一次练习都是向前迈出的一步，继续加油！你一定会越来越出色的！\n\n🎉 恭喜您通过测验！继续保持这样的学习状态！",
+  "should_retry": false,
+  "retry_count": 0,
+  "created_at": "2026-05-05T00:09:08.452077",
+  "updated_at": "2026-05-05T00:10:18.496880",
+  "message": "恭喜通过测验！"
+}

@@ -1,9 +1,0 @@
-{
-  "name": "user_1_a",
-  "description": "测试",
-  "created_at": "2026-05-04T10:39:32.865268",
-  "updated_at": "2026-05-04T11:47:51.786555",
-  "num_documents": 25,
-  "store_type": "faiss",
-  "embedding_model": "text-embedding-3-small"
-}

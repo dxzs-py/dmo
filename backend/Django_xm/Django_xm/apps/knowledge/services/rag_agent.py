@@ -1,6 +1,6 @@
 """
 RAG Agent 模块
-基于 LangChain 1.0.3 实现 RAG Agent
+基于 LangChain v1.2.13 实现 RAG Agent
 """
 
 from typing import List, Optional, Dict, Any

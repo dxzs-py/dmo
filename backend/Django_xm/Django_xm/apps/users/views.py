@@ -431,3 +431,52 @@ class BindPhoneView(APIView):
         user.save()
         serializer = UserInfoSerializer(user)
         return success_response(data=serializer.data, message='手机号绑定成功')
+
+
+class UserPreferencesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        preferences = {
+            'theme': getattr(user, 'theme', 'light'),
+            'language': getattr(user, 'language', 'zh-CN'),
+            'notifications_enabled': getattr(user, 'notifications_enabled', True),
+            'auto_save_sessions': getattr(user, 'auto_save_sessions', True),
+        }
+        return success_response(data=preferences)
+
+    def put(self, request):
+        user = request.user
+        allowed_fields = {'theme', 'language', 'notifications_enabled', 'auto_save_sessions'}
+        for field in allowed_fields:
+            if field in request.data:
+                setattr(user, field, request.data[field])
+        user.save()
+        return success_response(message='偏好设置更新成功')
+
+
+class UserUsageStatsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        stats = {
+            'total_messages': getattr(user, 'total_messages', 0),
+            'total_sessions': getattr(user, 'total_sessions', 0),
+            'total_tokens': getattr(user, 'total_tokens', 0),
+            'total_cost': float(getattr(user, 'total_cost', 0.0)),
+            'active_days': getattr(user, 'active_days', 0),
+        }
+        return success_response(data=stats)
+
+
+class UserAccountDeleteView(APIView):
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [SensitiveOperationRateThrottle]
+
+    def delete(self, request):
+        user = request.user
+        user.is_active = False
+        user.save()
+        return success_response(message='账户已成功注销')

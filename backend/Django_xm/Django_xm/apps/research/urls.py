@@ -46,6 +46,7 @@ urlpatterns = [
     
     # 获取结果
     path('result/<str:task_id>/', DeepResearchResultView.as_view(), name='result'),
+    path('results/<str:task_id>/', DeepResearchResultView.as_view(), name='results'),
     
     # 列出文件（旧版兼容）
     path('files/<str:task_id>/', DeepResearchFilesView.as_view(), name='files'),

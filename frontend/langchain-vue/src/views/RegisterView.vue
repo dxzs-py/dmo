@@ -306,4 +306,55 @@ async function handleRegister() {
 .back-home a:hover {
   color: #667eea;
 }
+
+@media (max-width: 768px) {
+  .register-box {
+    padding: 32px 24px;
+    max-width: 380px;
+  }
+
+  .title {
+    font-size: 24px;
+  }
+}
+
+@media (max-width: 480px) {
+  .register-container {
+    padding: 12px;
+    align-items: flex-start;
+    padding-top: 40px;
+  }
+
+  .register-box {
+    padding: 24px 16px;
+    border-radius: 12px;
+    max-width: 100%;
+  }
+
+  .title {
+    font-size: 22px;
+  }
+
+  .subtitle {
+    font-size: 12px;
+  }
+
+  .register-header {
+    margin-bottom: 20px;
+  }
+
+  .input-field {
+    padding: 10px 14px;
+    font-size: 13px;
+  }
+
+  .register-button {
+    padding: 12px;
+    font-size: 15px;
+  }
+
+  .login-link {
+    font-size: 13px;
+  }
+}
 </style>

@@ -71,6 +71,9 @@ class BaseModel(models.Model):
         self.deleted_at = None
         self.save(using=using)
 
+    def hard_delete(self, using=None):
+        super().delete(using=using)
+
 
 class AuditModel(BaseModel):
     created_by = models.ForeignKey(

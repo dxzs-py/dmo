@@ -48,7 +48,7 @@ class DeepResearchStartView(APIView):
             return error_response(
                 code=ErrorCode.VALIDATION_FAILED,
                 message="数据验证失败",
-                details=serializer.errors,
+                data=serializer.errors,
                 http_status=status.HTTP_400_BAD_REQUEST
             )
 

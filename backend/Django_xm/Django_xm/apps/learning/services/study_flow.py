@@ -13,7 +13,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_community.callbacks.manager import get_openai_callback
+from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
 
 from Django_xm.apps.ai_engine.config import get_logger
 from Django_xm.apps.ai_engine.services.cost_tracker import create_cost_tracker
@@ -189,7 +189,7 @@ def start_study_flow(
 
     logger.info("[Study Flow] 开始执行工作流...")
     start_time = time.time()
-    with get_openai_callback() as cb:
+    with TokenUsageCallbackHandler() as cb:
         result = study_flow.invoke(initial_state, config)
 
     logger.info(f"[Study Flow] 工作流暂停在: {result.get('current_step')}")
@@ -245,7 +245,7 @@ def submit_answers(
 
     logger.info("[Study Flow] 继续执行工作流...")
     start_time = time.time()
-    with get_openai_callback() as cb:
+    with TokenUsageCallbackHandler() as cb:
         study_flow.invoke(None, config=config)
 
     result = get_workflow_state(thread_id)

@@ -1,6 +1,6 @@
 """
 附件生命周期管理 Celery 任务
-定时清理过期附件、归档旧文件、监控存储空间
+定时清理过期附件、入库旧文件、监控存储空间
 """
 import logging
 from celery import shared_task
@@ -21,21 +21,21 @@ def cleanup_expired_attachments(self):
 
     try:
         service = AttachmentLifecycleService()
-        log = service.cleanup_expired(trigger_by='celery_beat')
+        log = service.cleanup_expired(triggered_by='celery_beat')
 
         result = {
             'files_processed': log.files_processed,
             'files_deleted': log.files_deleted,
-            'files_archived': log.files_archived,
+            'files_indexed': log.files_archived,
             'files_skipped': log.files_skipped,
             'space_freed_mb': round(log.space_freed / 1024 / 1024, 2),
-            'space_archived_mb': round(log.space_archived / 1024 / 1024, 2),
+            'space_indexed_mb': round(log.space_archived / 1024 / 1024, 2),
             'errors': log.errors,
         }
 
         logger.info(
             f"附件清理完成: 处理={log.files_processed}, 删除={log.files_deleted}, "
-            f"归档={log.files_archived}, 释放={result['space_freed_mb']}MB"
+            f"入库={log.files_archived}, 释放={result['space_freed_mb']}MB"
         )
         return result
     except Exception as e:
@@ -43,34 +43,34 @@ def cleanup_expired_attachments(self):
         return {'error': str(e)}
 
 
-@shared_task(bind=True, name='chat.archive_old_attachments')
-def archive_old_attachments(self):
+@shared_task(bind=True, name='chat.index_old_attachments')
+def index_old_attachments(self):
     """
-    归档旧附件
+    入库旧附件
 
-    将超过归档天数的活跃附件转移至归档目录
+    将超过入库天数的活跃附件进行向量化入库
     默认每天凌晨2点执行
     """
     from Django_xm.apps.chat.services.attachment_lifecycle import AttachmentLifecycleService
 
     try:
         service = AttachmentLifecycleService()
-        log = service.archive_old_attachments(triggered_by='celery_beat')
+        log = service.index_old_attachments(triggered_by='celery_beat')
 
         result = {
             'files_processed': log.files_processed,
-            'files_archived': log.files_archived,
-            'space_archived_mb': round(log.space_archived / 1024 / 1024, 2),
+            'files_indexed': log.files_archived,
+            'space_indexed_mb': round(log.space_archived / 1024 / 1024, 2),
             'errors': log.errors,
         }
 
         logger.info(
-            f"附件归档完成: 处理={log.files_processed}, 归档={log.files_archived}, "
-            f"空间={result['space_archived_mb']}MB"
+            f"附件入库完成: 处理={log.files_processed}, 入库={log.files_archived}, "
+            f"空间={result['space_indexed_mb']}MB"
         )
         return result
     except Exception as e:
-        logger.error(f"附件归档任务失败: {e}", exc_info=True)
+        logger.error(f"附件入库任务失败: {e}", exc_info=True)
         return {'error': str(e)}
 
 
@@ -115,7 +115,7 @@ def attachment_full_lifecycle(self):
     """
     完整附件生命周期管理流程
 
-    依次执行：存储检查 → 归档 → 清理 → 再次存储检查
+    依次执行：存储检查 → 入库 → 清理 → 再次存储检查
     默认每天凌晨3点执行
     """
     from Django_xm.apps.chat.services.attachment_lifecycle import AttachmentLifecycleService
@@ -124,13 +124,13 @@ def attachment_full_lifecycle(self):
         service = AttachmentLifecycleService()
 
         alert_result = check_storage_alerts()
-        archive_result = archive_old_attachments()
+        index_result = index_old_attachments()
         cleanup_result = cleanup_expired_attachments()
         alert_final = check_storage_alerts()
 
         result = {
             'before': alert_result,
-            'archive': archive_result,
+            'index': index_result,
             'cleanup': cleanup_result,
             'after': alert_final,
         }

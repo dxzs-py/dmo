@@ -11,8 +11,7 @@ from typing import Optional, Dict, Any, List, AsyncGenerator
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
-from langchain_community.callbacks.manager import get_openai_callback
-
+from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
 from Django_xm.apps.ai_engine.services.agent_factory import create_base_agent
 from Django_xm.apps.research.services.deep_agent import create_deep_research_agent
 from Django_xm.apps.research.services.deep_agent import should_use_deep_research
@@ -656,7 +655,7 @@ class ChatService:
             full_response = ""
             sources = []
             
-            with get_openai_callback() as cb:
+            with TokenUsageCallbackHandler() as cb:
                 for chunk in agent.stream({"messages": messages}):
                     if isinstance(chunk, dict) and "messages" in chunk:
                         chunk_messages = chunk["messages"]
@@ -707,7 +706,7 @@ class ChatService:
                 user_id=self.user_id,
                 session_id=session_id,
             )
-            with get_openai_callback() as cb:
+            with TokenUsageCallbackHandler() as cb:
                 result = agent.research(query)
             result['_usage'] = {
                 'prompt_tokens': cb.prompt_tokens,
@@ -774,7 +773,7 @@ class ChatService:
         }
         has_sent_reasoning = True
 
-        with get_openai_callback() as cb:
+        with TokenUsageCallbackHandler() as cb:
             async for chunk in agent.graph.astream(graph_input, config=config, stream_mode="messages"):
                 if isinstance(chunk, tuple) and len(chunk) == 2:
                     message, metadata = chunk
@@ -880,7 +879,7 @@ class ChatService:
 
         config = {"recursion_limit": 50}
 
-        with get_openai_callback() as cb:
+        with TokenUsageCallbackHandler() as cb:
             async for chunk in agent.graph.astream(graph_input, config=config, stream_mode="messages"):
                 if isinstance(chunk, tuple) and len(chunk) == 2:
                     message, metadata = chunk

@@ -12,6 +12,9 @@ from .views import (
     UserAvatarView,
     ChangePasswordView,
     BindPhoneView,
+    UserPreferencesView,
+    UserUsageStatsView,
+    UserAccountDeleteView,
 )
 
 urlpatterns = [
@@ -27,4 +30,7 @@ urlpatterns = [
     path('captcha/', CaptchaView.as_view(), name='captcha'),
     path('captcha/verify/', CaptchaVerifyView.as_view(), name='captcha_verify'),
     path('secure-logout/', SecureLogoutView.as_view(), name='secure_logout'),
+    path('preferences/', UserPreferencesView.as_view(), name='user_preferences'),
+    path('usage-stats/', UserUsageStatsView.as_view(), name='user_usage_stats'),
+    path('account/', UserAccountDeleteView.as_view(), name='user_account_delete'),
 ]

@@ -30,22 +30,37 @@ class ChatAttachmentAdmin(admin.ModelAdmin):
     list_filter = ['file_type', 'status', 'created_at']
     search_fields = ['original_name', 'session__session_id']
     ordering = ['-created_at']
-    readonly_fields = ['created_at', 'updated_at', 'file_hash', 'last_accessed_at']
+    readonly_fields = ['created_at', 'updated_at', 'file_hash', 'last_accessed_at', 'indexed_path', 'indexed_at']
     list_editable = ['status', 'retention_days']
-    actions = ['action_archive', 'action_delete', 'action_restore']
+    actions = ['action_index', 'action_unindex', 'action_delete']
 
-    @admin.action(description='归档选中的附件')
-    def action_archive(self, request, queryset):
+    @admin.action(description='入库选中的附件')
+    def action_index(self, request, queryset):
         from .services.attachment_lifecycle import AttachmentLifecycleService
         service = AttachmentLifecycleService()
         count = 0
         for att in queryset.filter(status='active'):
             try:
-                service._archive_attachment(att)
-                count += 1
+                success, _ = service.index_attachment_by_id(att.id, triggered_by=f'admin:{request.user.username}')
+                if success:
+                    count += 1
             except Exception:
                 pass
-        self.message_user(request, f'成功归档 {count} 个附件')
+        self.message_user(request, f'成功入库 {count} 个附件')
+
+    @admin.action(description='从向量库移除选中的附件')
+    def action_unindex(self, request, queryset):
+        from .services.attachment_lifecycle import AttachmentLifecycleService
+        service = AttachmentLifecycleService()
+        count = 0
+        for att in queryset.filter(status='indexed'):
+            try:
+                success, _ = service.unindex_attachment_by_id(att.id, triggered_by=f'admin:{request.user.username}')
+                if success:
+                    count += 1
+            except Exception:
+                pass
+        self.message_user(request, f'成功移除 {count} 个附件')
 
     @admin.action(description='删除选中的附件')
     def action_delete(self, request, queryset):
@@ -59,16 +74,6 @@ class ChatAttachmentAdmin(admin.ModelAdmin):
             except Exception:
                 pass
         self.message_user(request, f'成功删除 {count} 个附件')
-
-    @admin.action(description='恢复选中的归档附件')
-    def action_restore(self, request, queryset):
-        from .services.attachment_lifecycle import AttachmentLifecycleService
-        service = AttachmentLifecycleService()
-        count = 0
-        for att in queryset.filter(status='archived'):
-            if service.restore_attachment(att.id):
-                count += 1
-        self.message_user(request, f'成功恢复 {count} 个附件')
 
 
 @admin.register(AttachmentCleanupLog)

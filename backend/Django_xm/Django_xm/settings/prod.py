@@ -29,7 +29,14 @@ _project_root = Path(__file__).resolve().parent.parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-from Django_xm.apps.core.config import settings as app_cfg
+from Django_xm.apps.ai_engine.config import settings as app_cfg
+
+# ==================== LangSmith 初始化 ====================
+if app_cfg.langsmith_tracing and app_cfg.langsmith_api_key:
+    os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+    os.environ.setdefault("LANGCHAIN_API_KEY", app_cfg.langsmith_api_key)
+    os.environ.setdefault("LANGCHAIN_PROJECT", app_cfg.langsmith_project)
+    os.environ.setdefault("LANGCHAIN_ENDPOINT", app_cfg.langsmith_endpoint)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = BASE_DIR.parent
@@ -62,11 +69,12 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "Django_xm.apps.users",
     "Django_xm.apps.core",
-    "Django_xm.apps.agents",
+    "Django_xm.apps.ai_engine",
+    "Django_xm.apps.tools",
     "Django_xm.apps.chat",
-    "Django_xm.apps.rag",
-    "Django_xm.apps.workflows",
-    "Django_xm.apps.deep_research",
+    "Django_xm.apps.knowledge",
+    "Django_xm.apps.learning",
+    "Django_xm.apps.research",
     "Django_xm.apps.analytics",
 ]
 

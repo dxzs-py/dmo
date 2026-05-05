@@ -8,7 +8,7 @@ from datetime import datetime
 from decimal import Decimal
 from celery import shared_task
 
-from langchain_community.callbacks.manager import get_openai_callback
+from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
 
 from Django_xm.apps.research.services.deep_agent import create_deep_research_agent
 from Django_xm.apps.research.services.task_manager import get_task_manager, update_task_status
@@ -87,7 +87,7 @@ def run_research_task(self, thread_id: str, query: str,
         cost_tracker = create_cost_tracker()
         usage_tracker = create_usage_tracker()
 
-        with get_openai_callback() as cb:
+        with TokenUsageCallbackHandler() as cb:
             result = agent.research(query)
 
         usage_tracker.add_input_tokens(cb.prompt_tokens)

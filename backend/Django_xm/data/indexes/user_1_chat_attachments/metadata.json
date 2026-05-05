@@ -1,0 +1,9 @@
+{
+  "name": "user_1_chat_attachments",
+  "description": "聊天附件自动入库索引",
+  "created_at": "2026-05-05T00:02:27.248843",
+  "updated_at": "2026-05-05T00:03:48.029015",
+  "num_documents": 0,
+  "store_type": "faiss",
+  "embedding_model": "text-embedding-3-small"
+}

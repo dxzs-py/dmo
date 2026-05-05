@@ -737,4 +737,21 @@ watch(() => props.message, () => {
   overflow-y: auto;
   font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
 }
+
+@media (max-width: 768px) {
+  .right-panel {
+    width: 100%;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .panel-header {
+    padding: 10px 12px;
+  }
+
+  .panel-body {
+    padding: 12px;
+  }
+}
 </style>

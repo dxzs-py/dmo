@@ -26,6 +26,12 @@ class MessageSerializer(serializers.Serializer):
         help_text='消息内容，最大50000字符',
         allow_blank=True
     )
+    attachment_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        allow_null=True,
+        help_text='该消息关联的附件ID列表'
+    )
 
     def validate_role(self, value):
         valid_roles = ['user', 'assistant', 'system']
@@ -163,15 +169,22 @@ class ChatMessageSerializer(serializers.ModelSerializer):
     绑定模型：ChatMessage
     """
     attachments = ChatAttachmentSerializer(many=True, read_only=True)
+    attachment_ids = serializers.SerializerMethodField()
     
     class Meta:
         model = ChatMessage
         fields = ['id', 'session', 'role', 'content', 'sources', 'plan',
                   'chain_of_thought', 'tool_calls', 'reasoning',
                   'suggestions', 'context', 'versions',
-                  'current_version', 'attachments', 'created_at',
+                  'current_version', 'attachments', 'attachment_ids', 'created_at',
                   'model', 'token_count', 'cost', 'response_time']
         read_only_fields = ['id', 'session', 'created_at']
+
+    def get_attachment_ids(self, obj):
+        try:
+            return [att.id for att in obj.attachments.all()]
+        except Exception:
+            return []
 
     def validate_content(self, value):
         if value and len(value) > 50000:
