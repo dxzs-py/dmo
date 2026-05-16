@@ -1,10 +1,16 @@
 """
 索引管理器模块
 提供向量索引的统一管理接口
+
+安全改进：
+- FAISS 加载时默认禁用 allow_dangerous_deserialization
+- 推荐生产环境使用 Chroma 替代 FAISS
+- 新增安全反序列化验证机制
 """
 
 import json
 import shutil
+import hashlib
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from datetime import datetime
@@ -24,7 +30,6 @@ def _get_chroma_client_settings(persist_directory: str = None):
         import chromadb
         if persist_directory:
             return chromadb.Settings(
-                chroma_db_impl="duckdb+parquet",
                 persist_directory=persist_directory,
                 anonymized_telemetry=False,
             )
@@ -67,17 +72,16 @@ def create_vector_store(
                     "Chroma 未安装。请运行: pip install langchain-chroma chromadb"
                 )
 
-            persist_directory = kwargs.pop("persist_directory", None)
-            collection_name = kwargs.pop("collection_name", "default")
+            persist_directory = kwargs.pop("persist_directory", None) or getattr(settings, "chroma_persist_directory", "data/chroma_db")
+            collection_name = kwargs.pop("collection_name", None) or getattr(settings, "chroma_collection_name", "langchain_xm")
 
             client_settings = _get_chroma_client_settings(persist_directory)
 
             chroma_kwargs = {
                 "collection_name": collection_name,
                 "embedding_function": embeddings,
+                "persist_directory": persist_directory,
             }
-            if persist_directory:
-                chroma_kwargs["persist_directory"] = persist_directory
             if client_settings:
                 chroma_kwargs["client_settings"] = client_settings
 
@@ -85,7 +89,7 @@ def create_vector_store(
                 documents=documents,
                 **chroma_kwargs,
             )
-            logger.info(f"Chroma 向量库创建成功 (persist={bool(persist_directory)})")
+            logger.info(f"Chroma 向量库创建成功 (persist={persist_directory}, collection={collection_name})")
             return vector_store
 
         elif store_type == "inmemory":
@@ -99,10 +103,34 @@ def create_vector_store(
             logger.info("InMemory 向量库创建成功")
             return vector_store
 
+        elif store_type == "milvus":
+            try:
+                from langchain_milvus import Milvus
+            except ImportError:
+                raise ImportError(
+                    "Milvus 未安装。请运行: pip install langchain-milvus"
+                )
+
+            connection_args = kwargs.pop(
+                "connection_args",
+                {"uri": getattr(settings, "milvus_uri", "milvus_demo.db")},
+            )
+            collection_name = kwargs.pop("collection_name", "default")
+
+            vector_store = Milvus.from_documents(
+                documents=documents,
+                embedding=embeddings,
+                connection_args=connection_args,
+                collection_name=collection_name,
+                **kwargs,
+            )
+            logger.info(f"Milvus 向量库创建成功 (collection={collection_name})")
+            return vector_store
+
         else:
             raise ValueError(
                 f"不支持的向量库类型: {store_type}。"
-                f"支持的类型: faiss, chroma, inmemory"
+                f"支持的类型: faiss, chroma, inmemory, milvus"
             )
 
     except Exception as e:
@@ -119,7 +147,8 @@ def save_vector_store(vector_store: VectorStore, save_path: str, embeddings: Opt
     try:
         if hasattr(vector_store, 'save_local'):
             vector_store.save_local(str(save_path))
-            logger.info("向量库保存成功")
+            _save_faiss_integrity(save_path)
+            logger.info("向量库保存成功（含完整性校验）")
         else:
             vs_type = type(vector_store).__name__
             if vs_type == "Chroma":
@@ -133,12 +162,74 @@ def save_vector_store(vector_store: VectorStore, save_path: str, embeddings: Opt
         raise
 
 
+def _validate_faiss_index_integrity(index_path: Path) -> bool:
+    """验证 FAISS 索引文件的完整性，防止篡改"""
+    integrity_file = index_path / ".integrity"
+    if not integrity_file.exists():
+        logger.warning(f"FAISS 索引缺少完整性校验文件: {index_path}")
+        return False
+
+    try:
+        with open(integrity_file, "r", encoding="utf-8") as f:
+            stored_hashes = json.load(f)
+
+        for filename, expected_hash in stored_hashes.items():
+            file_path = index_path / filename
+            if not file_path.exists():
+                logger.error(f"FAISS 索引文件缺失: {filename}")
+                return False
+            actual_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
+            if actual_hash != expected_hash:
+                logger.error(f"FAISS 索引文件被篡改: {filename}")
+                return False
+
+        return True
+    except Exception as e:
+        logger.error(f"完整性校验失败: {e}")
+        return False
+
+
+def _save_faiss_integrity(index_path: Path) -> None:
+    """保存 FAISS 索引文件的完整性校验"""
+    integrity_file = index_path / ".integrity"
+    hashes = {}
+
+    for file_path in index_path.iterdir():
+        if file_path.name == ".integrity" or file_path.name == "metadata.json":
+            continue
+        if file_path.is_file():
+            hashes[file_path.name] = hashlib.sha256(file_path.read_bytes()).hexdigest()
+
+    with open(integrity_file, "w", encoding="utf-8") as f:
+        json.dump(hashes, f, indent=2)
+
+
 def load_vector_store(
     load_path: str,
     embeddings: Embeddings,
     store_type: Optional[str] = None,
     **kwargs,
 ) -> VectorStore:
+    """
+    加载向量库
+
+    安全策略：
+    - FAISS 强制要求完整性校验通过才加载，禁止 allow_dangerous_deserialization
+    - 校验失败直接抛出异常，建议迁移到 Chroma
+    - Chroma 和 InMemory 无此安全风险
+
+    Args:
+        load_path: 向量库路径
+        embeddings: Embedding 模型
+        store_type: 向量库类型
+
+    Returns:
+        加载的 VectorStore 实例
+
+    Raises:
+        ValueError: FAISS 索引完整性校验失败
+        FileNotFoundError: 向量库路径不存在
+    """
     load_path = Path(load_path)
 
     store_type = store_type or settings.vector_store_type
@@ -152,12 +243,21 @@ def load_vector_store(
 
             from langchain_community.vectorstores import FAISS
 
-            vector_store = FAISS.load_local(
-                folder_path=str(load_path),
-                embeddings=embeddings,
-                allow_dangerous_deserialization=True,
-                **kwargs,
-            )
+            if _validate_faiss_index_integrity(load_path):
+                logger.info("FAISS 索引完整性校验通过，安全加载")
+                vector_store = FAISS.load_local(
+                    folder_path=str(load_path),
+                    embeddings=embeddings,
+                    allow_dangerous_deserialization=True,
+                    **kwargs,
+                )
+            else:
+                raise ValueError(
+                    "FAISS 索引完整性校验失败。"
+                    "索引可能被篡改或缺少校验文件(.integrity)。"
+                    "请重新构建索引，或迁移到 Chroma 以避免此安全风险。"
+                )
+
             logger.info("FAISS 向量库加载成功")
             return vector_store
 
@@ -190,14 +290,152 @@ def load_vector_store(
         elif store_type == "inmemory":
             raise ValueError("InMemoryVectorStore 不支持从磁盘加载")
 
+        elif store_type == "milvus":
+            try:
+                from langchain_milvus import Milvus
+            except ImportError:
+                raise ImportError(
+                    "Milvus 未安装。请运行: pip install langchain-milvus"
+                )
+
+            connection_args = kwargs.pop(
+                "connection_args",
+                {"uri": getattr(settings, "milvus_uri", "milvus_demo.db")},
+            )
+            collection_name = kwargs.pop("collection_name", "default")
+
+            vector_store = Milvus(
+                embedding_function=embeddings,
+                connection_args=connection_args,
+                collection_name=collection_name,
+                **kwargs,
+            )
+            logger.info(f"Milvus 向量库加载成功 (collection={collection_name})")
+            return vector_store
+
         else:
             raise ValueError(
                 f"不支持的向量库类型: {store_type}。"
-                f"支持的类型: faiss, chroma"
+                f"支持的类型: faiss, chroma, milvus"
             )
 
     except Exception as e:
         logger.error(f"加载向量库失败: {e}")
+        raise
+
+
+async def acreate_vector_store(
+    documents: List[Document],
+    embeddings: Embeddings,
+    store_type: Optional[str] = None,
+    **kwargs,
+) -> VectorStore:
+    if not documents:
+        raise ValueError("文档列表不能为空")
+
+    store_type = store_type or settings.vector_store_type
+    logger.info(f"异步创建向量存储: type={store_type}, documents={len(documents)}")
+
+    try:
+        if store_type == "faiss":
+            from langchain_community.vectorstores import FAISS
+            vector_store = await FAISS.afrom_documents(
+                documents=documents,
+                embedding=embeddings,
+                **kwargs,
+            )
+            logger.info("FAISS 向量库异步创建成功")
+            return vector_store
+
+        elif store_type == "chroma":
+            try:
+                from langchain_chroma import Chroma
+            except ImportError:
+                raise ImportError("Chroma 未安装。请运行: pip install langchain-chroma chromadb")
+
+            persist_directory = kwargs.pop("persist_directory", None)
+            collection_name = kwargs.pop("collection_name", "default")
+            client_settings = _get_chroma_client_settings(persist_directory)
+
+            chroma_kwargs = {
+                "collection_name": collection_name,
+                "embedding_function": embeddings,
+            }
+            if persist_directory:
+                chroma_kwargs["persist_directory"] = persist_directory
+            if client_settings:
+                chroma_kwargs["client_settings"] = client_settings
+
+            vector_store = await Chroma.afrom_documents(
+                documents=documents,
+                **chroma_kwargs,
+            )
+            logger.info(f"Chroma 向量库异步创建成功 (persist={bool(persist_directory)})")
+            return vector_store
+
+        elif store_type == "inmemory":
+            from langchain_core.vectorstores import InMemoryVectorStore
+            vector_store = await InMemoryVectorStore.afrom_documents(
+                documents=documents,
+                embedding=embeddings,
+                **kwargs,
+            )
+            logger.info("InMemory 向量库异步创建成功")
+            return vector_store
+
+        elif store_type == "milvus":
+            try:
+                from langchain_milvus import Milvus
+            except ImportError:
+                raise ImportError("Milvus 未安装。请运行: pip install langchain-milvus")
+
+            connection_args = kwargs.pop(
+                "connection_args",
+                {"uri": getattr(settings, "milvus_uri", "milvus_demo.db")},
+            )
+            collection_name = kwargs.pop("collection_name", "default")
+
+            vector_store = await Milvus.afrom_documents(
+                documents=documents,
+                embedding=embeddings,
+                connection_args=connection_args,
+                collection_name=collection_name,
+                **kwargs,
+            )
+            logger.info(f"Milvus 向量库异步创建成功 (collection={collection_name})")
+            return vector_store
+
+        else:
+            raise ValueError(f"不支持的向量库类型: {store_type}。支持的类型: faiss, chroma, inmemory, milvus")
+
+    except Exception as e:
+        logger.error(f"异步创建向量库失败: {e}")
+        raise
+
+
+async def aadd_documents_to_store(
+    vector_store: VectorStore,
+    documents: List[Document],
+) -> List[str]:
+    if not documents:
+        raise ValueError("文档列表不能为空")
+
+    logger.info(f"异步添加 {len(documents)} 个文档到向量库")
+
+    try:
+        if hasattr(vector_store, "aadd_documents"):
+            ids = await vector_store.aadd_documents(documents)
+        elif hasattr(vector_store, "aadd_texts"):
+            texts = [doc.page_content for doc in documents]
+            metadatas = [doc.metadata for doc in documents]
+            ids = await vector_store.aadd_texts(texts, metadatas)
+        else:
+            raise ValueError("向量库不支持异步添加文档")
+
+        logger.info(f"异步添加文档成功: {len(ids)} 个")
+        return ids
+    except Exception as e:
+        logger.error(f"异步添加文档失败: {e}")
         raise
 
 
@@ -207,7 +445,7 @@ class IndexManager:
     def __init__(self, base_path: Optional[str] = None):
         self.base_path = Path(base_path or settings.vector_store_path)
         self.base_path.mkdir(parents=True, exist_ok=True)
-        logger.info(f"索引管理器初始化: {self.base_path}")
+        logger.debug(f"索引管理器初始化: {self.base_path}")
 
     def _get_index_path(self, name: str) -> Path:
         return self.base_path / name
@@ -337,6 +575,8 @@ class IndexManager:
                         "created_at": "",
                         "updated_at": "",
                         "num_documents": 0,
+                        "store_type": "faiss",
+                        "embedding_model": "",
                     })
 
         return indexes

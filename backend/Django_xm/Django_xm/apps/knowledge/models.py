@@ -44,7 +44,7 @@ class DocumentIndex(AuditModel):
 
     def get_absolute_url(self):
         from django.urls import reverse
-        return reverse('rag:index-detail', kwargs={'name': self.index_name})
+        return reverse('knowledge:index-detail', kwargs={'name': self.index_name})
 
 
 class Document(BaseModel):

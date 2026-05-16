@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from ..services.state import StudyFlowState
 from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
-from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.config_center.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -49,7 +49,11 @@ def quiz_generator_node(state: StudyFlowState) -> Dict[str, Any]:
             raise ValueError("学习计划不存在，无法生成练习题")
 
         model = get_chat_model()
-        structured_model = model.with_structured_output(QuizSchema)
+        if hasattr(model, 'bound'):
+            base_model = model.bound
+        else:
+            base_model = model
+        structured_model = base_model.with_structured_output(QuizSchema)
 
         context_parts = []
         if retrieved_docs:

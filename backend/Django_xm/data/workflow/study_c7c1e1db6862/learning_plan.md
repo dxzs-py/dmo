@@ -1,0 +1,1 @@
+{'topic': 'Python装饰器', 'objectives': ['理解装饰器的基本概念和用法', '能够编写和使用自定义装饰器', '掌握装饰器在实际项目中的应用场景'], 'key_points': ['装饰器的定义和基本原理', '如何创建简单的装饰器', '装饰器的参数传递', '内置装饰器（如@staticmethod, @classmethod）', '装饰器在函数和类中的使用'], 'difficulty': 'intermediate', 'estimated_time': 120}

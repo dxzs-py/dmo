@@ -124,12 +124,12 @@ class EmptyIndexCreateSerializer(serializers.Serializer):
 
 class IndexInfoSerializer(serializers.Serializer):
     name = serializers.CharField()
-    description = serializers.CharField()
-    created_at = serializers.CharField()
-    updated_at = serializers.CharField()
-    num_documents = serializers.IntegerField()
+    description = serializers.CharField(default="")
+    created_at = serializers.CharField(default="")
+    updated_at = serializers.CharField(default="")
+    num_documents = serializers.IntegerField(default=0)
     store_type = serializers.CharField(default="faiss")
-    embedding_model = serializers.CharField()
+    embedding_model = serializers.CharField(default="")
 
 
 class SearchRequestSerializer(serializers.Serializer):

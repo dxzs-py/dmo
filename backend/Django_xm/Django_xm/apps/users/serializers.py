@@ -16,9 +16,6 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
         return token
 
     def validate(self, attrs):
-        """
-        自定义返回的格式
-        """
         old_data = super().validate(attrs)
         refresh = self.get_token(self.user)
         data = {
@@ -32,9 +29,6 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 
 class UserRegisterSerializer(serializers.ModelSerializer):
-    """
-    用户注册序列化器
-    """
     password_confirm = serializers.CharField(write_only=True, label='确认密码')
 
     class Meta:
@@ -59,9 +53,48 @@ class UserRegisterSerializer(serializers.ModelSerializer):
 
 
 class UserInfoSerializer(serializers.ModelSerializer):
-    """
-    用户信息序列化器
-    """
     class Meta:
         model = User
         fields = ['id', 'username', 'email', 'mobile', 'avatar', 'date_joined']
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    old_password = serializers.CharField(required=True, min_length=1)
+    new_password = serializers.CharField(required=True, min_length=8)
+
+    def validate_old_password(self, value):
+        user = self.context.get('request').user
+        if not user.check_password(value):
+            raise serializers.ValidationError('当前密码错误')
+        return value
+
+
+class BindPhoneSerializer(serializers.Serializer):
+    mobile = serializers.CharField(required=True, max_length=11)
+
+    def validate_mobile(self, value):
+        import re
+        if not re.match(r'^1[3-9]\d{9}$', value):
+            raise serializers.ValidationError('请输入有效的手机号')
+        user = self.context.get('request').user
+        if User.objects.filter(mobile=value).exclude(pk=user.pk).exists():
+            raise serializers.ValidationError('该手机号已被其他用户绑定')
+        return value
+
+
+class UserProfileSerializer(serializers.Serializer):
+    username = serializers.CharField(required=False, min_length=1, max_length=150)
+    email = serializers.EmailField(required=False, allow_blank=True)
+
+    def validate_username(self, value):
+        user = self.context.get('request').user
+        if User.objects.filter(username=value).exclude(pk=user.pk).exists():
+            raise serializers.ValidationError('用户名已存在')
+        return value
+
+
+class UserPreferencesSerializer(serializers.Serializer):
+    theme = serializers.CharField(required=False, max_length=20)
+    language = serializers.CharField(required=False, max_length=10)
+    notifications_enabled = serializers.BooleanField(required=False)
+    auto_save_sessions = serializers.BooleanField(required=False)

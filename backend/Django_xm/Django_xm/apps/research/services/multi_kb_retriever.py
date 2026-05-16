@@ -10,14 +10,14 @@ from typing import List, Optional
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.tools import BaseTool
 
-from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.config_center.config import get_logger
 from Django_xm.apps.knowledge.services.index_service import IndexManager
 from Django_xm.apps.knowledge.services.retrieval_service import (
     create_retriever,
     create_retriever_tool,
     create_multi_retriever,
-    get_embeddings,
 )
+from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
 
 logger = get_logger(__name__)
 

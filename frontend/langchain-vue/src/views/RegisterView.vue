@@ -61,6 +61,36 @@
           />
         </div>
 
+        <div class="form-group">
+          <label class="label">验证码</label>
+          <div class="captcha-wrapper">
+            <input 
+              v-model="formData.captcha"
+              type="text"
+              placeholder="请输入验证码"
+              class="input-field captcha-input"
+              required
+              maxlength="6"
+            />
+            <img
+              v-if="captchaSrc"
+              :src="captchaSrc"
+              alt="验证码"
+              class="captcha-img"
+              @click="refreshCaptcha"
+              title="点击刷新"
+            />
+            <el-button
+              v-else
+              size="small"
+              @click="refreshCaptcha"
+              class="captcha-btn"
+            >
+              获取验证码
+            </el-button>
+          </div>
+        </div>
+
         <div class="form-group agree-group">
           <label class="checkbox-label">
             <input v-model="formData.agree" type="checkbox" required />
@@ -93,15 +123,18 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { ElMessage } from 'element-plus'
+import settings from '@/config/settings'
 
 const router = useRouter()
 const userStore = useUserStore()
 
 const loading = ref(false)
+const captchaSrc = ref('')
+const captchaKey = ref('')
 
 const formData = reactive({
   username: '',
@@ -109,7 +142,23 @@ const formData = reactive({
   mobile: '',
   password: '',
   password_confirm: '',
+  captcha: '',
   agree: false
+})
+
+const refreshCaptcha = async () => {
+  try {
+    const response = await fetch(`${settings.API_BASE_URL}/users/captcha/`)
+    const blob = await response.blob()
+    captchaKey.value = response.headers.get('X-Captcha-Key')
+    captchaSrc.value = URL.createObjectURL(blob)
+  } catch {
+    ElMessage.error('获取验证码失败')
+  }
+}
+
+onMounted(() => {
+  refreshCaptcha()
 })
 
 async function handleRegister() {
@@ -128,6 +177,11 @@ async function handleRegister() {
     return
   }
 
+  if (!formData.captcha) {
+    ElMessage.warning('请输入验证码')
+    return
+  }
+
   loading.value = true
   try {
     const result = await userStore.register({
@@ -135,7 +189,9 @@ async function handleRegister() {
       email: formData.email || undefined,
       mobile: formData.mobile || undefined,
       password: formData.password,
-      password_confirm: formData.password_confirm
+      password_confirm: formData.password_confirm,
+      captcha: formData.captcha,
+      captcha_key: captchaKey.value
     })
 
     if (result.success) {
@@ -143,9 +199,11 @@ async function handleRegister() {
       router.push('/login')
     } else {
       ElMessage.error(result.message)
+      refreshCaptcha()
     }
   } catch {
     ElMessage.error('注册失败，请稍后重试')
+    refreshCaptcha()
   } finally {
     loading.value = false
   }
@@ -305,6 +363,32 @@ async function handleRegister() {
 
 .back-home a:hover {
   color: #667eea;
+}
+
+.captcha-wrapper {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.captcha-input {
+  flex: 1;
+}
+
+.captcha-img {
+  height: 42px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 2px solid #e5e7eb;
+  transition: border-color 0.2s;
+}
+
+.captcha-img:hover {
+  border-color: #667eea;
+}
+
+.captcha-btn {
+  height: 42px;
 }
 
 @media (max-width: 768px) {

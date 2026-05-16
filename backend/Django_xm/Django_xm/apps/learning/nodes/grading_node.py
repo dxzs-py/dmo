@@ -9,7 +9,7 @@ from typing import Dict, Any, List
 
 from ..services.state import StudyFlowState, ScoreDetail
 from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
-from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.config_center.config import get_logger
 
 logger = get_logger(__name__)
 

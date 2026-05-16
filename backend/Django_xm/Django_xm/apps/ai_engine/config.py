@@ -1,10 +1,15 @@
 """
-统一配置管理模块（Single Source of Truth）
+AI 引擎配置模块
 
-使用 Pydantic Settings 管理所有配置项，支持从环境变量和 .env 文件加载。
-本模块是项目唯一的配置真相源，Django settings 从此处注入所需值。
+管理所有 AI 相关配置项，包括：
+- LLM 提供商（OpenAI / Anthropic / DeepSeek / Groq / 百度千帆）
+- Agent / RAG / Embedding / Vector Store
+- Guardrails / Checkpointer / Store / Summarization
+- Agent Cache / LangSmith
+- Tavily / 高德地图
 
-优先级：环境变量 > .env 文件 > Pydantic 默认值
+项目级配置（DB/Redis/Celery/安全/日志/服务器等）
+在 Django_xm.apps.config_center.config 中管理。
 
 使用方式:
     from Django_xm.apps.ai_engine.config import settings
@@ -13,29 +18,25 @@
 
 from __future__ import annotations
 
-import os
 import logging
 from pathlib import Path
 from typing import Optional, Any
 
-from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, model_validator
+
+from Django_xm.apps.config_center.config import (
+    ProjectSettings,
+    get_logger as _get_logger,
+    setup_loguru_logging as _setup_loguru_logging,
+)
 
 
-class Settings(BaseSettings):
+class Settings(ProjectSettings):
     """
-    应用配置类 - 项目唯一配置真相源
+    AI 引擎配置类
 
-    所有配置项通过环境变量或 .env 文件设置，
-    Pydantic 自动完成类型校验和转换。
+    继承 ProjectSettings，在项目级配置基础上添加 AI 专属配置项。
     """
-
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore",
-    )
 
     # ==================== OpenAI 配置 ====================
     openai_api_key: str = Field(
@@ -56,7 +57,7 @@ class Settings(BaseSettings):
     openai_temperature: float = Field(
         default=0.7,
         ge=0.0,
-        le=2.0,
+        le=1.0,
         description="模型温度参数"
     )
 
@@ -68,6 +69,60 @@ class Settings(BaseSettings):
     openai_streaming: bool = Field(
         default=True,
         description="是否默认启用流式输出"
+    )
+
+    # ==================== Anthropic 配置 ====================
+    anthropic_api_key: str = Field(
+        default="",
+        description="Anthropic API 密钥"
+    )
+
+    # ==================== DeepSeek 配置 ====================
+    deepseek_api_key: str = Field(
+        default="",
+        description="DeepSeek API 密钥"
+    )
+
+    deepseek_api_base: str = Field(
+        default="https://api.deepseek.com",
+        description="DeepSeek API 基础 URL"
+    )
+
+    deepseek_model: str = Field(
+        default="deepseek-v4-flash",
+        description="DeepSeek 模型名称"
+    )
+
+    # ==================== Groq 配置 ====================
+    groq_api_key: str = Field(
+        default="",
+        description="Groq API 密钥"
+    )
+
+    groq_api_base: str = Field(
+        default="https://api.groq.com",
+        description="Groq API 基础 URL"
+    )
+
+    groq_model: str = Field(
+        default="llama-3.3-70b-versatile",
+        description="Groq 模型名称"
+    )
+
+    # ==================== 百度千帆 配置 ====================
+    baidu_qianfan_api_key: str = Field(
+        default="",
+        description="百度千帆 API 密钥"
+    )
+
+    baidu_qianfan_api_base: str = Field(
+        default="https://qianfan.baidubce.com/v2",
+        description="百度千帆 API 基础 URL"
+    )
+
+    baidu_qianfan_model: str = Field(
+        default="ernie-3.5-8k",
+        description="百度千帆模型名称"
     )
 
     # ==================== Tavily 搜索配置 ====================
@@ -87,77 +142,6 @@ class Settings(BaseSettings):
     amap_key: str = Field(
         default="",
         description="高德地图 API 密钥"
-    )
-
-    # ==================== 服务器配置 ====================
-    server_host: str = Field(
-        default="0.0.0.0",
-        description="服务器监听地址"
-    )
-
-    server_port: int = Field(
-        default=8000,
-        ge=1,
-        le=65535,
-        description="服务器监听端口"
-    )
-
-    server_reload: bool = Field(
-        default=True,
-        description="开发模式热重载"
-    )
-
-    # ==================== 调试 / 环境 ====================
-    debug: bool = Field(
-        default=True,
-        description="调试模式"
-    )
-
-    app_name: str = Field(
-        default="LC-StudyLab",
-        description="应用名称"
-    )
-
-    app_version: str = Field(
-        default="1.0.0",
-        description="应用版本"
-    )
-
-    # ==================== 日志配置 ====================
-    log_level: str = Field(
-        default="INFO",
-        description="日志级别: DEBUG/INFO/WARNING/ERROR/CRITICAL"
-    )
-
-    log_file: str = Field(
-        default="logs/app.log",
-        description="日志文件路径"
-    )
-
-    log_rotation: str = Field(
-        default="100 MB",
-        description="日志轮转大小"
-    )
-
-    log_retention: str = Field(
-        default="30 days",
-        description="日志保留时间"
-    )
-
-    # ==================== 数据目录配置 ====================
-    data_dir: str = Field(
-        default="data",
-        description="数据存储根目录"
-    )
-
-    data_documents_path: str = Field(
-        default="data/documents",
-        description="文档存储路径"
-    )
-
-    data_uploads_path: str = Field(
-        default="data/uploads",
-        description="上传文件路径"
     )
 
     # ==================== Agent 配置 ====================
@@ -201,13 +185,23 @@ class Settings(BaseSettings):
     )
 
     vector_store_type: str = Field(
-        default="faiss",
-        description="向量库类型: faiss/inmemory/chroma"
+        default="chroma",
+        description="向量库类型: chroma/faiss/inmemory/milvus（推荐 chroma，支持持久化和增量更新）"
     )
 
     vector_store_path: str = Field(
         default="data/indexes",
         description="向量库存储路径"
+    )
+
+    chroma_persist_directory: str = Field(
+        default="data/chroma_db",
+        description="Chroma 持久化目录"
+    )
+
+    chroma_collection_name: str = Field(
+        default="langchain_xm",
+        description="Chroma 默认集合名称"
     )
 
     retriever_search_type: str = Field(
@@ -248,128 +242,84 @@ class Settings(BaseSettings):
         description="是否返回来源文档"
     )
 
-    # ==================== Celery 配置 ====================
-    celery_broker_url: str = Field(
-        default="redis://127.0.0.1:6379/3",
-        description="Celery Broker URL"
+    # ==================== Checkpointer 配置 ====================
+    checkpointer_backend: str = Field(
+        default="sqlite",
+        description="Checkpointer 后端: sqlite/memory/postgres"
     )
 
-    celery_result_backend: str = Field(
-        default="redis://127.0.0.1:6379/4",
-        description="Celery Result Backend URL"
+    # ==================== Store 配置 ====================
+    store_enabled: bool = Field(
+        default=False,
+        description="是否自动注入 Store（长期记忆）到 Agent"
     )
 
-    celery_task_time_limit: int = Field(
-        default=1800,
-        ge=60,
-        description="Celery 任务超时(秒)"
+    store_backend: str = Field(
+        default="memory",
+        description="Store 后端: memory/postgres"
     )
 
-    celery_worker_max_tasks_per_child: int = Field(
-        default=1000,
+    # ==================== Summarization 配置 ====================
+    summarization_trigger_tokens: int = Field(
+        default=4000,
+        ge=500,
+        le=100000,
+        description="SummarizationMiddleware 触发摘要的 token 阈值"
+    )
+
+    summarization_keep_messages: int = Field(
+        default=20,
+        ge=2,
+        le=100,
+        description="SummarizationMiddleware 保留的最近消息数"
+    )
+
+    # ==================== Agent Cache 配置 ====================
+    agent_cache_enabled: bool = Field(
+        default=False,
+        description="是否自动注入 Agent 级别缓存（InMemoryCache）"
+    )
+
+    llm_cache_enabled: bool = Field(
+        default=False,
+        description="是否启用全局 LLM Cache（langchain_core.llm_cache）"
+    )
+
+    llm_cache_type: str = Field(
+        default="memory",
+        description="LLM Cache 类型: memory/semantic"
+    )
+
+    # ==================== Guardrails 配置 ====================
+    guardrails_enabled: bool = Field(
+        default=False,
+        description="是否全局启用 Guardrails Middleware"
+    )
+
+    guardrails_strict_mode: bool = Field(
+        default=False,
+        description="Guardrails 严格模式（验证失败直接抛异常）"
+    )
+
+    guardrails_enable_pii: bool = Field(
+        default=False,
+        description="是否启用 PII 检测与脱敏"
+    )
+
+    guardrails_enable_human_in_loop: bool = Field(
+        default=False,
+        description="是否启用人工审核中断"
+    )
+
+    guardrails_max_message_count: int = Field(
+        default=100,
         ge=1,
-        description="Worker 最大任务数后重启"
+        description="Guardrails 最大消息数量限制"
     )
 
-    # ==================== Redis / Cache 配置 ====================
-    redis_url: str = Field(
-        default="redis://127.0.0.1:6379/1",
-        description="默认 Redis URL (default cache)"
-    )
-
-    redis_chat_url: str = Field(
-        default="redis://127.0.0.1:6379/2",
-        description="Chat Session Redis URL"
-    )
-
-    redis_password: str = Field(
+    guardrails_blocked_tools: str = Field(
         default="",
-        description="Redis 密码"
-    )
-
-    redis_default_timeout: int = Field(
-        default=300,
-        description="默认缓存超时(秒)"
-    )
-
-    redis_chat_timeout: int = Field(
-        default=3600,
-        description="Chat 缓存超时(秒)"
-    )
-
-    # ==================== 数据库配置提示 ====================
-    db_host: str = Field(
-        default="127.0.0.1",
-        description="数据库主机"
-    )
-
-    db_port: int = Field(
-        default=3306,
-        description="数据库端口"
-    )
-
-    db_name: str = Field(
-        default="langchain_xm",
-        description="数据库名称"
-    )
-
-    # ==================== 安全配置 ====================
-    secret_key: str = Field(
-        default="",
-        description="Django SECRET_KEY (必须通过环境变量设置)"
-    )
-
-    allowed_hosts: str = Field(
-        default="localhost,127.0.0.1",
-        description="ALLOWED_HOSTS (逗号分隔)"
-    )
-
-    cors_allowed_origins: str = Field(
-        default="http://localhost:3000,http://localhost:8000,http://www.langchain.cn:8080",
-        description="CORS 允许的源 (逗号分隔)"
-    )
-
-    csrf_trusted_origins: str = Field(
-        default="http://localhost:3000,http://localhost:8000,http://www.langchain.cn:8080",
-        description="CSRF TRUSTED_ORIGINS (逗号分隔)"
-    )
-
-    session_cookie_age: int = Field(
-        default=604800,
-        description="Session 过期时间(秒), 默认7天"
-    )
-
-    # ==================== JWT 配置 ====================
-    jwt_access_token_lifetime_days: int = Field(
-        default=3,
-        description="Access Token 有效期(天，开发环境)"
-    )
-
-    jwt_access_token_lifetime_minutes: int = Field(
-        default=30,
-        description="Access Token 有效期(分钟，生产环境)"
-    )
-
-    jwt_refresh_token_lifetime_days: int = Field(
-        default=7,
-        description="Refresh Token 有效期(天)"
-    )
-
-    # ==================== 邮件配置 ====================
-    email_backend: str = Field(
-        default="django.core.mail.backends.console.EmailBackend",
-        description="邮件后端"
-    )
-
-    default_from_email: str = Field(
-        default="noreply@langchain.cn",
-        description="默认发件人"
-    )
-
-    # ==================== 文件上传限制 ====================
-    upload_max_memory_size_mb: int = Field(
-        default=10,
-        description="上传文件内存限制(MB)"
+        description="Guardrails 额外屏蔽的工具名（逗号分隔）"
     )
 
     # ==================== LangSmith 配置 ====================
@@ -396,19 +346,10 @@ class Settings(BaseSettings):
     # ---- 校验方法 ----
 
     def validate_required_keys(self) -> None:
-        """验证必需的配置项"""
         if not self.secret_key:
             raise ValueError("SECRET_KEY 未设置！请通过环境变量或 .env 文件配置。")
         if not self.openai_api_key and not self.debug:
             raise ValueError("OPENAI_API_KEY 未设置！非调试模式下为必需项。")
-
-    @field_validator("log_level")
-    @classmethod
-    def validate_log_level(cls, v: str) -> str:
-        valid = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
-        if v.upper() not in valid:
-            raise ValueError(f"无效的日志级别: {v}，可选: {valid}")
-        return v.upper()
 
     # ---- 便捷属性 ----
 
@@ -424,12 +365,7 @@ class Settings(BaseSettings):
     def uploads_dir(self) -> str:
         return self.data_uploads_path
 
-    @property
-    def is_production(self) -> bool:
-        return not self.debug
-
     def get_openai_config(self) -> dict[str, Any]:
-        """获取 OpenAI 配置字典"""
         config: dict[str, Any] = {
             "api_key": self.openai_api_key,
             "base_url": self.openai_api_base,
@@ -441,29 +377,10 @@ class Settings(BaseSettings):
         return config
 
     def get_tavily_config(self) -> dict[str, Any]:
-        """获取 Tavily 配置字典"""
         return {
             "api_key": self.tavily_api_key,
             "max_results": self.tavily_max_results,
         }
-
-    def ensure_data_dirs(self, base_dir: Path | None = None) -> list[Path]:
-        """
-        确保数据目录存在并返回路径列表
-
-        Args:
-            base_dir: 项目根目录，None 则使用 data_dir 的相对路径解析
-        """
-        root = base_dir or Path(self.data_dir).resolve()
-        dirs = [
-            root,
-            root / "documents",
-            root / "indexes",
-            root / "uploads",
-        ]
-        for d in dirs:
-            d.mkdir(parents=True, exist_ok=True)
-        return dirs
 
 
 # ==================== 单例管理 ====================
@@ -472,7 +389,6 @@ _settings_instance: Settings | None = None
 
 
 def get_settings() -> Settings:
-    """延迟初始化单例，确保只创建一次"""
     global _settings_instance
     if _settings_instance is None:
         _settings_instance = Settings()
@@ -480,7 +396,6 @@ def get_settings() -> Settings:
 
 
 def validate_settings() -> None:
-    """验证必需配置项"""
     s = get_settings()
     try:
         s.validate_required_keys()
@@ -495,68 +410,106 @@ def validate_settings() -> None:
 settings = get_settings()
 
 
-# ==================== 日志工具 ====================
+# ==================== 日志工具（代理到 config_center）====================
 
-def get_logger(name: str) -> logging.Logger:
-    """
-    获取标准 logging.Logger 实例
-
-    Args:
-        name: logger 名称，通常使用 __name__
-    """
-    logger = logging.getLogger(name)
-    if logger.handlers:
-        return logger
-    logger.setLevel(getattr(logging, settings.log_level))
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(getattr(logging, settings.log_level))
-    fmt = logging.Formatter("%(levelname)s %(asctime)s - %(name)s - %(message)s")
-    console_handler.setFormatter(fmt)
-    logger.addHandler(console_handler)
-    logger.propagate = False
-    return logger
+get_logger = _get_logger
+setup_loguru_logging = _setup_loguru_logging
 
 
-def setup_loguru_logging() -> None:
-    """配置 loguru 日志系统（可选依赖）"""
-    try:
-        from loguru import logger as _logger
-        import sys
+# ==================== 模型注册表 ====================
 
-        _logger.remove()
+MODEL_REGISTRY: dict[str, dict[str, Any]] = {
+    "openai": {
+        "provider": "openai",
+        "label": "OpenAI",
+        "icon": "🔵",
+        "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
+        "default_model": "gpt-4o-mini",
+        "api_key_attr": "openai_api_key",
+        "base_url_attr": "openai_api_base",
+        "model_attr": "openai_model",
+        "special_params": {},
+    },
+    "deepseek": {
+        "provider": "deepseek",
+        "label": "DeepSeek",
+        "icon": "🤖",
+        "models": ["deepseek-v4-flash"],
+        "default_model": "deepseek-v4-flash",
+        "api_key_attr": "deepseek_api_key",
+        "base_url_attr": "deepseek_api_base",
+        "model_attr": "deepseek_model",
+        "special_params": {
+            "thinking": {
+                "type": "toggle",
+                "label": "思考模式",
+                "description": "启用 DeepSeek 思考模式（DeepSeek V4 默认启用，关闭后模型将不输出思维链）",
+                "default": True,
+                "model_kwarg": "thinking",
+                "pass_mode": "extra_body",
+                "enabled_value": {"type": "enabled"},
+                "disabled_value": {"type": "disabled"},
+            },
+            "reasoning_effort": {
+                "type": "select",
+                "label": "思考强度",
+                "description": "推理努力程度（high: 适合大多数场景, max: 适合复杂推理任务）",
+                "options": ["high", "max"],
+                "default": "high",
+                "model_kwarg": "reasoning_effort",
+                "pass_mode": "top_level",
+            },
+        },
+    },
+    "groq": {
+        "provider": "groq",
+        "label": "Groq",
+        "icon": "⚡",
+        "models": ["llama-3.3-70b-versatile"],
+        "default_model": "llama-3.3-70b-versatile",
+        "api_key_attr": "groq_api_key",
+        "base_url_attr": None,
+        "model_attr": "groq_model",
+        "special_params": {},
+    },
+    "baidu_qianfan": {
+        "provider": "openai",
+        "label": "百度千帆",
+        "icon": "🟠",
+        "models": ["ernie-3.5-8k"],
+        "default_model": "ernie-3.5-8k",
+        "api_key_attr": "baidu_qianfan_api_key",
+        "base_url_attr": "baidu_qianfan_api_base",
+        "model_attr": "baidu_qianfan_model",
+        "special_params": {},
+    },
+    "anthropic": {
+        "provider": "anthropic",
+        "label": "Anthropic",
+        "icon": "🟣",
+        "models": ["claude-sonnet-4-20250514", "claude-3-5-haiku-20241022"],
+        "default_model": "claude-sonnet-4-20250514",
+        "api_key_attr": "anthropic_api_key",
+        "base_url_attr": None,
+        "model_attr": None,
+        "special_params": {},
+    },
+}
 
-        _logger.add(
-            sys.stderr,
-            format=(
-                "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-                "<level>{level: <8}</level> | "
-                "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
-                "<level>{message}</level>"
-            ),
-            level=settings.log_level,
-            colorize=True,
-            backtrace=True,
-            diagnose=True,
-        )
 
-        log_path = Path(settings.log_file)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-
-        _logger.add(
-            settings.log_file,
-            format=(
-                "{time:YYYY-MM-DD HH:mm:ss.SSS} | "
-                "{level: <8} | "
-                "{name}:{function}:{line} | "
-                "{message}"
-            ),
-            level=settings.log_level,
-            rotation=settings.log_rotation,
-            retention=settings.log_retention,
-            compression="zip",
-            backtrace=True,
-            diagnose=True,
-            enqueue=True,
-        )
-    except ImportError:
-        pass
+def get_available_providers() -> list[dict[str, Any]]:
+    result = []
+    for key, cfg in MODEL_REGISTRY.items():
+        api_key = getattr(settings, cfg["api_key_attr"], "")
+        available = bool(api_key and api_key.strip())
+        result.append({
+            "id": key,
+            "provider": cfg["provider"],
+            "label": cfg["label"],
+            "icon": cfg["icon"],
+            "models": cfg["models"],
+            "default_model": cfg["default_model"],
+            "available": available,
+            "special_params": cfg["special_params"],
+        })
+    return result

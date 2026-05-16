@@ -236,7 +236,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { deepResearchAPI, knowledgeAPI } from '../api'
 import { readSSEStream } from '../utils/sse'
@@ -346,12 +346,18 @@ const filterKnowledgeBases = () => {
 }
 
 const loadDocAnalysis = async () => {
-  if (!task.value?.task_id) return
+  if (!task.value?.task_id || !task.value?.enable_doc_analysis) return
   docAnalysisLoading.value = true
   try {
-    const response = await deepResearchAPI.getFileContent(task.value.task_id, 'notes/doc_analysis.md')
-    const data = response.data?.data || response.data
-    docAnalysisContent.value = data?.content || data || ''
+    const file = await _findDocAnalysisFile()
+    if (file) {
+      const response = await deepResearchAPI.getFileContent(task.value.task_id, file)
+      const data = response.data?.data || response.data
+      docAnalysisContent.value = data?.content || data || ''
+      docAnalysisFile.value = file
+    } else {
+      docAnalysisContent.value = null
+    }
   } catch (error) {
     logger.warn('加载文档分析详情失败:', error)
     docAnalysisContent.value = null
@@ -360,12 +366,37 @@ const loadDocAnalysis = async () => {
   }
 }
 
+const _findDocAnalysisFile = async () => {
+  if (!task.value?.task_id) return null
+  try {
+    const res = await deepResearchAPI.getFiles(task.value.task_id)
+    const data = res.data?.data || res.data
+    const files = data?.files || data || []
+    const notesDir = files.find(f => f.name === 'notes' && f.type === 'directory')
+    if (notesDir && notesDir.children) {
+      const mdFile = notesDir.children.find(f => f.name?.endsWith('.md'))
+      if (mdFile) return `notes/${mdFile.name}`
+      const txtFile = notesDir.children.find(f => f.name?.endsWith('.txt'))
+      if (txtFile) return `notes/${txtFile.name}`
+    }
+    const mdFiles = files.filter(f => f.type === 'file' && f.name?.endsWith('.md') && !f.name?.includes('report'))
+    if (mdFiles.length > 0) return mdFiles[0].relative_path || mdFiles[0].name
+    const rootNotes = files.filter(f => f.type === 'file' && f.name?.endsWith('.txt'))
+    if (rootNotes.length > 0) return rootNotes[0].relative_path || rootNotes[0].name
+  } catch {
+  }
+  return null
+}
+
 const checkDocAnalysisFile = () => {
   docAnalysisFile.value = null
   docAnalysisContent.value = null
-  if (task.value?.enable_doc_analysis && task.value?.task_id) {
-    docAnalysisFile.value = 'notes/doc_analysis.md'
-  }
+}
+
+const autoLoadDocAnalysis = async () => {
+  if (!task.value?.task_id) return
+  if (!task.value?.enable_doc_analysis) return
+  await loadDocAnalysis()
 }
 
 const formatDate = (dateStr) => {
@@ -436,6 +467,12 @@ const pollTaskStatus = async () => {
     pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
   } catch (error) {
     logger.error('获取任务状态失败:', error)
+    if (error?.response?.status === 404) {
+      task.value.status = 'failed'
+      task.value.error_message = '研究任务不存在或已被删除'
+      stopPolling()
+      return
+    }
     currentPollInterval = Math.min(
       Math.floor(currentPollInterval * POLL_BACKOFF_FACTOR),
       MAX_POLL_INTERVAL
@@ -573,6 +610,7 @@ const handleSSEEvent = (data) => {
         if (fileBrowserRef.value) {
           fileBrowserRef.value.loadFiles()
         }
+        autoLoadDocAnalysis()
       }
       break
     case 'step_update':
@@ -624,6 +662,12 @@ const viewTask = async (selectedTask) => {
         if (fresh.status === 'running' || fresh.status === 'pending') {
           startElapsedTimer()
           connectSSE(fresh.task_id)
+        } else if (fresh.status === 'completed') {
+          nextTick(() => {
+            if (fileBrowserRef.value) {
+              fileBrowserRef.value.loadFiles()
+            }
+          })
         }
       }
     } catch (e) {

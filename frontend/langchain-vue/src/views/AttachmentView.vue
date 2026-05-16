@@ -79,6 +79,16 @@ const formatDate = (dateStr) => {
   return new Date(dateStr).toLocaleString('zh-CN')
 }
 
+const formatMB = (bytes) => {
+  if (!bytes || isNaN(bytes)) return '0 MB'
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`
+}
+
+const formatGB = (bytes) => {
+  if (!bytes || isNaN(bytes)) return '0 GB'
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
+}
+
 const diskUsagePercent = computed(() => {
   return stats.value.storage?.disk_usage_percent || 0
 })
@@ -551,7 +561,7 @@ onMounted(() => {
             />
           </div>
           <div class="stat-item">
-            <div class="stat-value">{{ (stats.storage?.disk_free_bytes / 1024 / 1024 / 1024).toFixed(1) }} GB</div>
+            <div class="stat-value">{{ formatGB(stats.storage?.disk_free_bytes) }}</div>
             <div class="stat-label">磁盘剩余</div>
           </div>
         </div>
@@ -898,7 +908,7 @@ onMounted(() => {
           <el-table-column prop="files_deleted" label="删除数" width="80" />
           <el-table-column prop="files_archived" label="入库数" width="80" />
           <el-table-column label="释放空间" width="100">
-            <template #default="{ row }">{{ (row.space_freed / 1024 / 1024).toFixed(2) }} MB</template>
+            <template #default="{ row }">{{ formatMB(row.space_freed) }}</template>
           </el-table-column>
           <el-table-column prop="triggered_by" label="触发方式" width="100" />
           <el-table-column label="执行时间" min-width="160">

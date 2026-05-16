@@ -16,12 +16,12 @@ export const knowledgeAPI = {
   getDocuments(kbId) { return apiClient.get(`/knowledge/knowledge-bases/${kbId}/documents/`) },
   deleteDocument(kbId, filename) { return apiClient.delete(`/knowledge/knowledge-bases/${kbId}/documents/${filename}/`) },
   testSearch(kbId, data) { return apiClient.post(`/knowledge/knowledge-bases/${kbId}/search/`, data) },
-  getCacheHealth() { return apiClient.get('/knowledge/cache/health/') },
-  getCacheStats() { return apiClient.get('/knowledge/cache/stats/') },
-  clearCache(data = {}) { return apiClient.post('/knowledge/cache/clear/', data) },
-  getDatabaseOverview() { return apiClient.get('/knowledge/database/overview/') },
-  getMySQLStatus() { return apiClient.get('/knowledge/database/mysql/status/') },
-  getVectorStoreStatus() { return apiClient.get('/knowledge/database/vector-store/status/') },
+  getCacheHealth() { return apiClient.get('/cache/health/') },
+  getCacheStats() { return apiClient.get('/cache/stats/') },
+  clearCache(data = {}) { return apiClient.post('/cache/clear/', data) },
+  getDatabaseOverview() { return apiClient.get('/cache/database/overview/') },
+  getMySQLStatus() { return apiClient.get('/cache/database/mysql/status/') },
+  getVectorStoreStatus() { return apiClient.get('/cache/database/vector-store/status/') },
 }
 
 export const ragAPI = {

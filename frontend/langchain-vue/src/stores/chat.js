@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
-import { useStreamChat } from '../composables/useStreamChat'
+import { ref, computed } from 'vue'
+import { useStreamChat, CONNECTION_STATUS } from '../composables/useStreamChat'
 import { useSessionStore } from './session'
+import { useModelStore } from './model'
 import { chatAPI } from '../api'
 import { ElMessage } from 'element-plus'
 import { nanoid } from 'nanoid'
@@ -23,13 +24,29 @@ export const useChatStore = defineStore('chat', () => {
   })
   const costSummary = ref({})
   const pendingToolConfirmation = ref(null)
+  const lastStreamError = ref(null)
+  const messageCount = ref(0)
 
-  const { isStreaming, abortController, abort: stopStreaming, streamChat } = useStreamChat()
+  const {
+    isStreaming,
+    abortController,
+    abort: stopStreaming,
+    streamChat,
+    connectionStatus,
+    lastError,
+    retryCount,
+    bytesReceived,
+  } = useStreamChat()
+
+  const isConnected = computed(() => connectionStatus.value === CONNECTION_STATUS.CONNECTED)
+  const isReconnecting = computed(() => connectionStatus.value === CONNECTION_STATUS.RECONNECTING)
+  const isConnecting = computed(() => connectionStatus.value === CONNECTION_STATUS.CONNECTING)
 
   const sendMessage = async (message, options = {}) => {
     logger.log('[ChatStore] sendMessage called')
     
     const sessionStore = useSessionStore()
+    const modelStore = useModelStore()
     let sessionId = sessionStore.currentSessionId
     const selectedKnowledgeBaseId = sessionStore.selectedKnowledgeBase?.id || null
     
@@ -40,6 +57,9 @@ export const useChatStore = defineStore('chat', () => {
       mode: currentMode.value,
       use_tools: options.useTools !== false,
       use_advanced_tools: options.useAdvancedTools || false,
+      use_mcp: options.useMcp || false,
+      selected_mcp_servers: options.selectedMcpServers || null,
+      selected_tools: options.selectedTools || null,
       selected_knowledge_base: selectedKnowledgeBaseId,
       attachment_ids: options.attachmentIds || [],
     })
@@ -60,6 +80,7 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     isLoading.value = true
+    lastStreamError.value = null
 
     const userMessage = {
       id: nanoid(),
@@ -84,6 +105,7 @@ export const useChatStore = defineStore('chat', () => {
       context: null,
     }
     sessionStore.addMessageToSession(sessionId, assistantMessage, false)
+    messageCount.value += 1
 
     try {
       const messages = sessionStore.getSessionMessages(sessionId) || []
@@ -103,6 +125,7 @@ export const useChatStore = defineStore('chat', () => {
         .filter(m => m.content && m.content.trim())
 
       logger.log('[ChatStore] streamChat 请求参数, attachment_ids:', options.attachmentIds || [])
+      const modelConfig = modelStore.getModelConfig()
       const result = await streamChat(
         {
           message,
@@ -110,10 +133,18 @@ export const useChatStore = defineStore('chat', () => {
           mode: currentMode.value,
           use_tools: options.useTools !== false,
           use_advanced_tools: options.useAdvancedTools || false,
+          use_mcp: options.useMcp || false,
+          selected_mcp_servers: options.selectedMcpServers || null,
+          selected_tools: options.selectedTools || null,
           streaming: true,
           session_id: sessionId,
           selected_knowledge_base: selectedKnowledgeBaseId,
           attachment_ids: options.attachmentIds || [],
+          provider_id: modelConfig.provider_id || null,
+          model_name: modelConfig.model_name || null,
+          special_params: modelConfig.special_params || null,
+          temperature: modelConfig.temperature || null,
+          max_tokens: modelConfig.max_tokens || null,
         },
         {
           appendToLastMessage: (content) => sessionStore.appendToLastMessage(sessionId, content),
@@ -122,12 +153,18 @@ export const useChatStore = defineStore('chat', () => {
           setPlan: (data) => sessionStore.setPlanToLastMessage(sessionId, data),
           setChainOfThought: (data) => sessionStore.setChainOfThoughtToLastMessage(sessionId, data),
           addToolCall: (data) => sessionStore.addToolCallToLastMessage(sessionId, data),
+          addOrUpdateToolCall: (data) => sessionStore.addOrUpdateToolCallToLastMessage(sessionId, data),
+          updateOrAddToolResult: (data) => sessionStore.updateOrAddToolResultToLastMessage(sessionId, data),
           setReasoning: (data) => sessionStore.setReasoningToLastMessage(sessionId, data),
           setSuggestions: (data) => sessionStore.setSuggestionsToLastMessage(sessionId, data),
           setContext: (data) => sessionStore.setContextToLastMessage(sessionId, data),
           setCost: (data) => { costSummary.value = data },
           setUsage: (data) => sessionStore.setUsageToLastMessage(sessionId, data),
           setAttachmentIds: (ids) => sessionStore.setAttachmentIdsToLastUserMessage(sessionId, ids),
+          setError: (errorMsg) => {
+            lastStreamError.value = errorMsg
+            logger.error('[ChatStore] 流式错误:', errorMsg)
+          },
           requestToolConfirmation: (data) => {
             pendingToolConfirmation.value = {
               confirmId: data.confirm_id,
@@ -139,6 +176,7 @@ export const useChatStore = defineStore('chat', () => {
       )
 
       if (!result.success && !result.aborted) {
+        lastStreamError.value = result.error?.message || '消息发送失败'
         sessionStore.updateLastMessage(sessionId, '抱歉，消息发送失败，请稍后重试。')
         ElMessage.error('发送消息失败，请稍后重试')
       }
@@ -163,6 +201,7 @@ export const useChatStore = defineStore('chat', () => {
 
   const regenerateMessage = async (messageIndex) => {
     const sessionStore = useSessionStore()
+    const modelStore = useModelStore()
     const sid = sessionStore.currentSessionId
     const selectedKnowledgeBaseId = sessionStore.selectedKnowledgeBase?.id || null
     const messages = sessionStore.getSessionMessages(sid)
@@ -219,6 +258,7 @@ export const useChatStore = defineStore('chat', () => {
     currentMessage.context = null
 
     isLoading.value = true
+    lastStreamError.value = null
 
     try {
       const chatHistory = messages
@@ -229,6 +269,7 @@ export const useChatStore = defineStore('chat', () => {
         }))
         .filter(m => m.content && m.content.trim())
 
+      const modelConfig = modelStore.getModelConfig()
       const result = await streamChat(
         {
           message: userMessage.content || '',
@@ -236,9 +277,15 @@ export const useChatStore = defineStore('chat', () => {
           mode: currentMode.value,
           use_tools: true,
           use_advanced_tools: false,
+          use_mcp: false,
           streaming: true,
           session_id: sid,
           selected_knowledge_base: selectedKnowledgeBaseId,
+          provider_id: modelConfig.provider_id || null,
+          model_name: modelConfig.model_name || null,
+          special_params: modelConfig.special_params || null,
+          temperature: modelConfig.temperature || null,
+          max_tokens: modelConfig.max_tokens || null,
         },
         {
           appendToLastMessage: (content) => sessionStore.appendToMessage(sid, messageIndex, content),
@@ -247,6 +294,8 @@ export const useChatStore = defineStore('chat', () => {
           setPlan: (data) => sessionStore.setPlanToMessage(sid, messageIndex, data),
           setChainOfThought: (data) => sessionStore.setChainOfThoughtToMessage(sid, messageIndex, data),
           addToolCall: (data) => sessionStore.addToolCallToMessage(sid, messageIndex, data),
+          addOrUpdateToolCall: (data) => sessionStore.addOrUpdateToolCallToMessage(sid, messageIndex, data),
+          updateOrAddToolResult: (data) => sessionStore.updateOrAddToolResultToMessage(sid, messageIndex, data),
           setReasoning: (data) => sessionStore.setReasoningToMessage(sid, messageIndex, data),
           setSuggestions: (data) => sessionStore.setSuggestionsToMessage(sid, messageIndex, data),
           setContext: (data) => sessionStore.setContextToMessage(sid, messageIndex, data),
@@ -257,10 +306,15 @@ export const useChatStore = defineStore('chat', () => {
             if (data.cost !== undefined) currentMessage.cost = data.cost
             if (data.responseTime !== undefined) currentMessage.responseTime = data.responseTime
           },
+          setError: (errorMsg) => {
+            lastStreamError.value = errorMsg
+            logger.error('[ChatStore] 重新生成流式错误:', errorMsg)
+          },
         }
       )
 
       if (!result.success && !result.aborted) {
+        lastStreamError.value = result.error?.message || '重新生成失败'
         ElMessage.error('重新生成失败，请稍后重试')
       }
 
@@ -292,6 +346,10 @@ export const useChatStore = defineStore('chat', () => {
     sessionStore.clearCurrentSessionMessages()
   }
 
+  const clearError = () => {
+    lastStreamError.value = null
+  }
+
   return {
     isLoading,
     isStreaming,
@@ -300,10 +358,20 @@ export const useChatStore = defineStore('chat', () => {
     abortController,
     costSummary,
     pendingToolConfirmation,
+    lastStreamError,
+    messageCount,
+    connectionStatus,
+    lastError,
+    retryCount,
+    bytesReceived,
+    isConnected,
+    isReconnecting,
+    isConnecting,
     sendMessage,
     regenerateMessage,
     fetchModes,
     clearCurrentSession,
     stopStreaming,
+    clearError,
   }
 })

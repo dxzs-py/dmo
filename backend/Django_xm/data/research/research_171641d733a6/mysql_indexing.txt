@@ -1,0 +1,69 @@
+# MySQL 索引
+
+## 1. 索引的定义
+索引是数据库表的一种数据结构，它用于加快数据检索的速度。索引可以看作是一本书的目录，可以快速定位到所需信息的位置。
+
+## 2. 创建索引
+创建索引的基本语法为：
+```sql
+CREATE INDEX index_name ON table_name (column1, column2, ...);
+```
+例如：
+```sql
+CREATE INDEX idx_name ON users (name);
+```
+
+## 3. 使用索引
+在执行查询时，数据库会自动使用索引来优化查询性能。可以通过`EXPLAIN`语句检查查询是否使用了索引：
+```sql
+EXPLAIN SELECT * FROM users WHERE name='Alice';
+```
+
+## 4. 删除索引
+删除索引的基本语法为：
+```sql
+DROP INDEX index_name ON table_name;
+```
+例如：
+```sql
+DROP INDEX idx_name ON users;
+```
+
+## 5. 索引的类型
+- **唯一索引（UNIQUE INDEX）**: 确保每个值都是唯一的。
+- **主键索引（PRIMARY KEY INDEX）**: 主键的默认索引。
+- **全文索引（FULLTEXT INDEX）**: 用于全文搜索。
+
+## 1. 索引的定义
+索引是数据库表的一种数据结构，它用于加快数据检索的速度。索引可以看作是一本书的目录，可以快速定位到所需信息的位置。
+
+## 2. 创建索引
+创建索引的基本语法为：
+```sql
+CREATE INDEX index_name ON table_name (column1, column2, ...);
+```
+例如：
+```sql
+CREATE INDEX idx_name ON users (name);
+```
+
+## 3. 使用索引
+在执行查询时，数据库会自动使用索引来优化查询性能。可以通过`EXPLAIN`语句检查查询是否使用了索引：
+```sql
+EXPLAIN SELECT * FROM users WHERE name='Alice';
+```
+
+## 4. 删除索引
+删除索引的基本语法为：
+```sql
+DROP INDEX index_name ON table_name;
+```
+例如：
+```sql
+DROP INDEX idx_name ON users;
+```
+
+## 5. 索引的类型
+- **唯一索引（UNIQUE INDEX）**: 确保每个值都是唯一的。
+- **主键索引（PRIMARY KEY INDEX）**: 主键的默认索引。
+- **全文索引（FULLTEXT INDEX）**: 用于全文搜索。

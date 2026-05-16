@@ -4,7 +4,7 @@ from django.db.models import Count, Sum, Avg, Q
 from django.db.models.functions import TruncDate
 from django.utils import timezone
 
-from Django_xm.apps.ai_engine.services.cache_service import CacheService, CacheTTL
+from Django_xm.apps.cache_manager.services.cache_service import CacheService, CacheTTL
 from Django_xm.apps.analytics.models import UserEvent, DailyAggregation, EventCategory, EventType
 
 logger = logging.getLogger(__name__)

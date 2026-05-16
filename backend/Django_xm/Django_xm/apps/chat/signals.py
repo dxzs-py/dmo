@@ -1,46 +1,52 @@
+"""
+聊天模块信号处理
+
+负责 ChatSession 和 ChatMessage 的所有信号处理，包括:
+- 会话缓存失效 (SecureSessionCacheService + CacheInvalidationStrategy)
+- 日志记录
+"""
+
+import logging
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
-from django.core.cache import cache
 
 from .models import ChatSession, ChatMessage
-from .services.secure_session_cache import SecureSessionCacheService
 
-
-def _invalidate_session_cache(instance):
-    if instance.user_id:
-        sessions_list_key = SecureSessionCacheService._get_user_sessions_key(instance.user_id)
-        cache.delete(sessions_list_key)
-
-    if instance.session_id:
-        cache_key = SecureSessionCacheService._get_cache_key(instance.user_id, instance.session_id)
-        cache.delete(cache_key)
-
-
-def _invalidate_session_detail_cache(instance):
-    if instance.session and instance.session.session_id:
-        cache_key = SecureSessionCacheService._get_cache_key(
-            instance.session.user_id, instance.session.session_id
-        )
-        cache.delete(cache_key)
-        messages_key = f'{cache_key}:messages'
-        cache.delete(messages_key)
+logger = logging.getLogger(__name__)
 
 
 @receiver(post_save, sender=ChatSession)
 def on_session_save(sender, instance, created, **kwargs):
-    _invalidate_session_cache(instance)
+    if created:
+        logger.info(f"新聊天会话创建: {instance.session_id} (user={instance.user_id})")
+    else:
+        logger.debug(f"聊天会话更新: {instance.session_id}")
+
+    try:
+        from Django_xm.apps.chat.services.secure_session_cache import SecureSessionCacheService
+        SecureSessionCacheService.invalidate_all_user_sessions(instance.user_id)
+    except Exception as e:
+        logger.warning(f"会话安全缓存失效失败: {e}")
+
+    try:
+        from Django_xm.apps.cache_manager.services.cache_service import CacheInvalidationStrategy
+        CacheInvalidationStrategy.on_session_updated(str(instance.session_id))
+    except Exception as e:
+        logger.warning(f"会话AI缓存失效失败: {e}")
 
 
 @receiver(post_delete, sender=ChatSession)
 def on_session_delete(sender, instance, **kwargs):
-    _invalidate_session_cache(instance)
+    logger.info(f"聊天会话删除: {instance.session_id}")
 
+    try:
+        from Django_xm.apps.chat.services.secure_session_cache import SecureSessionCacheService
+        SecureSessionCacheService.invalidate_all_user_sessions(instance.user_id)
+    except Exception as e:
+        logger.warning(f"会话安全缓存失效失败: {e}")
 
-@receiver(post_save, sender=ChatMessage)
-def on_message_save(sender, instance, created, **kwargs):
-    _invalidate_session_detail_cache(instance)
-
-
-@receiver(post_delete, sender=ChatMessage)
-def on_message_delete(sender, instance, **kwargs):
-    _invalidate_session_detail_cache(instance)
+    try:
+        from Django_xm.apps.cache_manager.services.cache_service import CacheInvalidationStrategy
+        CacheInvalidationStrategy.on_session_deleted(str(instance.session_id))
+    except Exception as e:
+        logger.warning(f"会话AI缓存失效失败: {e}")

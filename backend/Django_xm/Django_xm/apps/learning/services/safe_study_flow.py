@@ -6,7 +6,7 @@ import logging
 from typing import Literal
 
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
+from Django_xm.apps.ai_engine.services.checkpointer_factory import get_checkpointer
 
 from .state import StudyFlowState
 from .nodes import (
@@ -135,12 +135,11 @@ def create_safe_study_flow_graph(
     logger.info("[Safe Study Flow] 编译工作流...")
 
     if checkpointer_path:
-        from langgraph.checkpoint.sqlite import SqliteSaver
-        checkpointer = SqliteSaver.from_conn_string(checkpointer_path)
-        logger.info(f"[Safe Study Flow] 使用 SQLite 检查点: {checkpointer_path}")
+        checkpointer = get_checkpointer(db_path=checkpointer_path)
+        logger.info(f"[Safe Study Flow] 使用持久化检查点: {checkpointer_path}")
     else:
-        checkpointer = MemorySaver()
-        logger.info("[Safe Study Flow] 使用内存检查点")
+        checkpointer = get_checkpointer()
+        logger.info("[Safe Study Flow] 使用默认检查点")
 
     compiled_graph = workflow.compile(checkpointer=checkpointer)
 

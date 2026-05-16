@@ -65,16 +65,22 @@ class TaskManager:
         except ResearchTask.DoesNotExist:
             return None
 
+    _STATUS_MAP = {
+        'started': 'running',
+        'success': 'completed',
+        'failure': 'failed',
+    }
+
+    def _map_status(self, status: str) -> str:
+        return self._STATUS_MAP.get(status, status)
+
     def update_task_status(self, task_id: str, status_data: Dict[str, Any], user_id: Optional[int] = None) -> None:
-        """
-        更新任务状态
-        同时更新缓存和数据库
-        当 user_id 不为 None 时，强制验证任务归属
-        """
         if task_id not in self._cache:
             self._cache[task_id] = {}
 
         self._cache[task_id].update(status_data)
+
+        final_report = status_data.get('final_report') or (status_data.get('result') or {}).get('final_report', '')
 
         try:
             qs = ResearchTask.objects.filter(task_id=task_id)
@@ -83,9 +89,9 @@ class TaskManager:
             task = qs.get()
 
             if 'status' in status_data:
-                task.status = status_data['status']
-            if 'final_report' in status_data:
-                task.final_report = status_data.get('final_report', '')
+                task.status = self._map_status(status_data['status'])
+            if final_report:
+                task.final_report = final_report
 
             task.save()
 

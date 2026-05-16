@@ -2,6 +2,7 @@ import logging
 import time
 from django.conf import settings
 from Django_xm.apps.analytics.models import UserEvent, EventCategory, EventType
+from Django_xm.apps.common.request_utils import get_client_ip
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,7 @@ class AnalyticsMiddleware:
                 event_type=event_type,
                 event_category=event_category,
                 metadata=metadata,
-                ip_address=self._get_ip(request),
+                ip_address=get_client_ip(request),
                 user_agent=request.META.get('HTTP_USER_AGENT', '')[:500],
                 duration_ms=duration_ms,
                 is_success=is_success,
@@ -89,9 +90,3 @@ class AnalyticsMiddleware:
         if '/users/' in path:
             return EventCategory.AUTH
         return EventCategory.API_CALL
-
-    def _get_ip(self, request):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR')

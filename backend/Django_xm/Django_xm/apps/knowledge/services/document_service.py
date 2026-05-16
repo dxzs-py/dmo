@@ -8,12 +8,8 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any
 
 from langchain_core.documents import Document
-from langchain_community.document_loaders import (
-    PyPDFLoader, TextLoader, UnstructuredMarkdownLoader,
-    UnstructuredHTMLLoader, JSONLoader,
-)
 
-from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.config_center.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -25,16 +21,18 @@ SUPPORTED_EXTENSIONS = {
     ".html": "html",
     ".htm": "html",
     ".json": "json",
+    ".csv": "csv",
+    ".docx": "docx",
+    ".xlsx": "xlsx",
+    ".pptx": "pptx",
 }
 
 
 def get_supported_extensions() -> Dict[str, str]:
-    """获取支持的文件扩展名"""
     return SUPPORTED_EXTENSIONS.copy()
 
 
 def get_document_loader(file_path: str) -> Optional[Any]:
-    """根据文件类型获取合适的文档加载器"""
     file_path = Path(file_path)
     extension = file_path.suffix.lower()
 
@@ -46,15 +44,38 @@ def get_document_loader(file_path: str) -> Optional[Any]:
 
     try:
         if file_type == "pdf":
+            from langchain_community.document_loaders import PyPDFLoader
             return PyPDFLoader(str(file_path))
         elif file_type == "text":
+            from langchain_community.document_loaders import TextLoader
             return TextLoader(str(file_path), encoding="utf-8")
         elif file_type == "markdown":
-            return UnstructuredMarkdownLoader(str(file_path))
+            try:
+                from langchain_unstructured import UnstructuredLoader
+                return UnstructuredLoader(str(file_path), partition_strategy="fast")
+            except ImportError:
+                from langchain_community.document_loaders import UnstructuredMarkdownLoader
+                return UnstructuredMarkdownLoader(str(file_path))
         elif file_type == "html":
-            return UnstructuredHTMLLoader(str(file_path))
+            try:
+                from langchain_unstructured import UnstructuredLoader
+                return UnstructuredLoader(str(file_path), partition_strategy="fast")
+            except ImportError:
+                from langchain_community.document_loaders import UnstructuredHTMLLoader
+                return UnstructuredHTMLLoader(str(file_path))
         elif file_type == "json":
+            from langchain_community.document_loaders import JSONLoader
             return JSONLoader(file_path=str(file_path), jq_schema=".", text_content=False)
+        elif file_type == "csv":
+            from langchain_community.document_loaders import CSVLoader
+            return CSVLoader(str(file_path), encoding="utf-8")
+        elif file_type in ("docx", "xlsx", "pptx"):
+            try:
+                from langchain_unstructured import UnstructuredLoader
+                return UnstructuredLoader(str(file_path), partition_strategy="fast")
+            except ImportError:
+                logger.warning(f"Office 文件 {file_type} 需要 langchain-unstructured，请运行: pip install langchain-unstructured")
+                return None
         else:
             logger.warning(f"未实现的文件类型处理: {file_type}")
             return None

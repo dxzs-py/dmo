@@ -2,58 +2,58 @@ import { apiClient } from './axios'
 
 export const attachmentAPI = {
   getStats() {
-    return apiClient.get('/chat/admin/attachments/stats/')
+    return apiClient.get('/attachments/admin/stats/')
   },
 
   getList(params = {}) {
-    return apiClient.get('/chat/admin/attachments/', { params })
+    return apiClient.get('/attachments/admin/', { params })
   },
 
   getTrashedList(params = {}) {
-    return apiClient.get('/chat/admin/attachments/', { params: { ...params, trashed: true } })
+    return apiClient.get('/attachments/admin/', { params: { ...params, trashed: true } })
   },
 
   getDetail(attachmentId) {
-    return apiClient.get(`/chat/admin/attachments/${attachmentId}/`)
+    return apiClient.get(`/attachments/admin/${attachmentId}/`)
   },
 
   deleteAttachment(attachmentId) {
-    return apiClient.delete(`/chat/admin/attachments/${attachmentId}/`)
+    return apiClient.delete(`/attachments/admin/${attachmentId}/`)
   },
 
   actionAttachment(attachmentId, action, data = {}) {
-    return apiClient.post(`/chat/admin/attachments/${attachmentId}/action/`, {
+    return apiClient.post(`/attachments/admin/${attachmentId}/action/`, {
       action,
       ...data,
     })
   },
 
   indexAttachment(attachmentId) {
-    return apiClient.post(`/chat/admin/attachments/${attachmentId}/action/`, {
+    return apiClient.post(`/attachments/admin/${attachmentId}/action/`, {
       action: 'index',
     })
   },
 
   unindexAttachment(attachmentId) {
-    return apiClient.post(`/chat/admin/attachments/${attachmentId}/action/`, {
+    return apiClient.post(`/attachments/admin/${attachmentId}/action/`, {
       action: 'unindex',
     })
   },
 
   permanentDelete(attachmentId) {
-    return apiClient.post(`/chat/admin/attachments/${attachmentId}/action/`, {
+    return apiClient.post(`/attachments/admin/${attachmentId}/action/`, {
       action: 'permanent_delete',
     })
   },
 
   restoreFromTrash(attachmentId) {
-    return apiClient.post(`/chat/admin/attachments/${attachmentId}/action/`, {
+    return apiClient.post(`/attachments/admin/${attachmentId}/action/`, {
       action: 'restore_from_trash',
     })
   },
 
   batchAction(action, attachmentIds) {
-    return apiClient.post('/chat/admin/attachments/batch/', {
+    return apiClient.post('/attachments/admin/batch/', {
       action,
       attachment_ids: attachmentIds,
     })
@@ -72,17 +72,17 @@ export const attachmentAPI = {
   },
 
   runCleanup(action = 'cleanup', dryRun = false) {
-    return apiClient.post('/chat/admin/attachments/cleanup/', {
+    return apiClient.post('/attachments/admin/cleanup/', {
       action,
       dry_run: dryRun,
     })
   },
 
   getStorageAlerts(params = {}) {
-    return apiClient.get('/chat/admin/storage-alerts/', { params })
+    return apiClient.get('/attachments/admin/storage-alerts/', { params })
   },
 
   handleStorageAlert(alertId, action) {
-    return apiClient.post(`/chat/admin/storage-alerts/${alertId}/`, { action })
+    return apiClient.post(`/attachments/admin/storage-alerts/${alertId}/`, { action })
   },
 }

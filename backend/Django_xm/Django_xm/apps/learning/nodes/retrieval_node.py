@@ -12,7 +12,7 @@ from ..services.state import StudyFlowState, RetrievedDocument
 from Django_xm.apps.knowledge.services.index_service import IndexManager
 from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
 from Django_xm.apps.knowledge.services.retrieval_service import create_retriever
-from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.config_center.config import get_logger
 
 logger = get_logger(__name__)
 

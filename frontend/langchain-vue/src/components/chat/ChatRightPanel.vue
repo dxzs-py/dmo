@@ -330,8 +330,8 @@ watch(() => props.message, () => {
 .chat-right-panel {
   width: 340px;
   min-width: 340px;
-  border-left: 1px solid var(--el-border-color-lighter);
-  background-color: var(--el-bg-color);
+  border-left: 1px solid var(--border);
+  background-color: var(--card);
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -340,7 +340,7 @@ watch(() => props.message, () => {
 
 .slide-right-enter-active,
 .slide-right-leave-active {
-  transition: all 0.3s ease;
+  transition: all var(--transition-slow);
 }
 
 .slide-right-enter-from,
@@ -351,7 +351,7 @@ watch(() => props.message, () => {
 
 .panel-header {
   padding: 16px 20px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  border-bottom: 1px solid var(--border);
   display: flex;
   align-items: baseline;
   gap: 8px;
@@ -361,16 +361,16 @@ watch(() => props.message, () => {
   font-size: 15px;
   font-weight: 600;
   margin: 0;
-  color: var(--el-text-color-primary);
+  color: var(--foreground);
 }
 
 .panel-subtitle {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--muted-foreground);
 }
 
 .panel-tabs {
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  border-bottom: 1px solid var(--border);
   padding: 0 4px;
   position: relative;
 }
@@ -391,11 +391,11 @@ watch(() => props.message, () => {
   flex: 1;
   padding: 10px 4px;
   font-size: 13px;
-  color: var(--el-text-color-secondary);
+  color: var(--muted-foreground);
   background: transparent;
   border: none;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all var(--transition-fast);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -405,13 +405,13 @@ watch(() => props.message, () => {
 }
 
 .tab-trigger:hover {
-  color: var(--el-text-color-primary);
-  background: var(--el-fill-color-lighter);
+  color: var(--foreground);
+  background: var(--accent);
 }
 
 .tab-trigger.active {
-  color: var(--el-color-primary);
-  border-bottom-color: var(--el-color-primary);
+  color: var(--sidebar-primary);
+  border-bottom-color: var(--sidebar-primary);
 }
 
 .tab-icon {
@@ -432,8 +432,8 @@ watch(() => props.message, () => {
   font-size: 11px;
   font-weight: 500;
   border-radius: 9px;
-  background: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
+  background: color-mix(in srgb, var(--sidebar-primary) 10%, transparent);
+  color: var(--sidebar-primary);
 }
 
 .panel-content {
@@ -461,7 +461,7 @@ watch(() => props.message, () => {
   gap: 8px;
   height: 128px;
   font-size: 13px;
-  color: var(--el-text-color-placeholder);
+  color: var(--muted-foreground);
 }
 
 .sources-container,
@@ -477,35 +477,36 @@ watch(() => props.message, () => {
 .artifact-json {
   margin: 0;
   font-size: 13px;
-  font-family: 'Consolas', 'Monaco', monospace;
+  font-family: var(--font-mono);
   white-space: pre-wrap;
   word-break: break-all;
 }
 
 .artifact-json {
-  color: var(--el-text-color-secondary);
+  color: var(--muted-foreground);
 }
 
 .source-item {
   display: flex;
   gap: 10px;
   padding: 12px;
-  background-color: var(--el-fill-color-lighter);
-  border-radius: 8px;
-  border: 1px solid var(--el-border-color-extra-light);
-  transition: border-color 0.2s;
+  background-color: var(--accent);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  transition: all var(--transition-fast);
 }
 
 .source-item:hover {
-  border-color: var(--el-color-primary-light-5);
+  border-color: var(--sidebar-primary);
+  box-shadow: var(--shadow-sm);
 }
 
 .source-index {
   width: 24px;
   height: 24px;
   border-radius: 6px;
-  background: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
+  background: color-mix(in srgb, var(--sidebar-primary) 10%, transparent);
+  color: var(--sidebar-primary);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -529,7 +530,7 @@ watch(() => props.message, () => {
 .source-title {
   font-weight: 500;
   font-size: 13px;
-  color: var(--el-text-color-primary);
+  color: var(--foreground);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -538,10 +539,10 @@ watch(() => props.message, () => {
 .source-link {
   text-decoration: none;
   font-size: 14px;
-  color: var(--el-color-primary);
+  color: var(--sidebar-primary);
   flex-shrink: 0;
   margin-left: 4px;
-  transition: opacity 0.2s;
+  transition: opacity var(--transition-fast);
 }
 
 .source-link:hover {
@@ -550,16 +551,16 @@ watch(() => props.message, () => {
 
 .source-content {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--muted-foreground);
   margin: 0;
   line-height: 1.6;
 }
 
 .tool-item {
   padding: 12px;
-  background-color: var(--el-fill-color-lighter);
-  border-radius: 8px;
-  border: 1px solid var(--el-border-color-extra-light);
+  background-color: var(--accent);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
 }
 
 .tool-header {
@@ -597,7 +598,7 @@ watch(() => props.message, () => {
 .tool-indicator.danger,
 .tool-indicator.error,
 .tool-indicator.output-error {
-  background: var(--el-color-danger);
+  background: var(--destructive);
 }
 
 @keyframes pulse {
@@ -608,7 +609,7 @@ watch(() => props.message, () => {
 .tool-name {
   font-weight: 500;
   font-size: 13px;
-  color: var(--el-text-color-primary);
+  color: var(--foreground);
 }
 
 .tool-section {
@@ -622,51 +623,52 @@ watch(() => props.message, () => {
 .section-title {
   font-size: 11px;
   font-weight: 600;
-  color: var(--el-text-color-secondary);
+  color: var(--muted-foreground);
   margin-bottom: 6px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
 .section-title.error {
-  color: var(--el-color-danger);
+  color: var(--destructive);
 }
 
 .tool-json {
-  background-color: var(--el-bg-color-page);
+  background-color: var(--background);
   padding: 10px;
   border-radius: 6px;
   font-size: 12px;
   overflow-x: auto;
   margin: 0;
   line-height: 1.5;
-  color: var(--el-text-color-primary);
+  color: var(--foreground);
   max-height: 200px;
   overflow-y: auto;
-  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+  font-family: var(--font-mono);
+  border: 1px solid var(--border);
 }
 
 .tool-json.error {
-  color: var(--el-color-danger);
+  color: var(--destructive);
 }
 
 .reasoning-item {
   padding: 12px;
-  background-color: var(--el-fill-color-lighter);
-  border-radius: 8px;
-  border: 1px solid var(--el-border-color-extra-light);
+  background-color: var(--accent);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
 }
 
 .reasoning-title {
   font-weight: 600;
   font-size: 13px;
-  color: var(--el-text-color-primary);
+  color: var(--foreground);
   margin-bottom: 8px;
 }
 
 .reasoning-content {
   font-size: 13px;
-  color: var(--el-text-color-secondary);
+  color: var(--muted-foreground);
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
@@ -674,12 +676,13 @@ watch(() => props.message, () => {
 
 .plan-title {
   font-weight: 500;
-  color: var(--el-text-color-primary);
+  color: var(--foreground);
   margin-bottom: 4px;
 }
 
 .plan-desc {
   font-size: 12px;
+  color: var(--muted-foreground);
   margin-bottom: 8px;
 }
 
@@ -699,8 +702,8 @@ watch(() => props.message, () => {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
+  background: color-mix(in srgb, var(--sidebar-primary) 10%, transparent);
+  color: var(--sidebar-primary);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -712,12 +715,14 @@ watch(() => props.message, () => {
 .step-text {
   font-size: 12px;
   line-height: 20px;
+  color: var(--muted-foreground);
 }
 
 .cot-step {
   padding: 6px 0;
-  border-bottom: 1px dashed var(--el-border-color-lighter);
+  border-bottom: 1px dashed var(--border);
   font-size: 12px;
+  color: var(--muted-foreground);
 }
 
 .cot-step:last-child {
@@ -725,23 +730,24 @@ watch(() => props.message, () => {
 }
 
 .json-display {
-  background-color: var(--el-fill-color-lighter);
+  background-color: var(--accent);
   padding: 14px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   font-size: 12px;
   overflow-x: auto;
   margin: 0;
   line-height: 1.5;
-  color: var(--el-text-color-primary);
+  color: var(--foreground);
   max-height: 500px;
   overflow-y: auto;
-  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+  font-family: var(--font-mono);
+  border: 1px solid var(--border);
 }
 
 @media (max-width: 768px) {
-  .right-panel {
+  .chat-right-panel {
     width: 100%;
-    max-width: 100%;
+    min-width: 100%;
   }
 }
 
@@ -750,7 +756,7 @@ watch(() => props.message, () => {
     padding: 10px 12px;
   }
 
-  .panel-body {
+  .tab-content {
     padding: 12px;
   }
 }

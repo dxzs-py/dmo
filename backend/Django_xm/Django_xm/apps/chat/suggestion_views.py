@@ -11,7 +11,7 @@ from rest_framework.permissions import IsAuthenticated
 from Django_xm.apps.common.responses import success_response, error_response
 from Django_xm.apps.common.error_codes import ErrorCode
 from Django_xm.apps.ai_engine.services.suggestion_service import generate_suggestions
-from Django_xm.apps.ai_engine.services.cache_service import CacheService, CacheTTL
+from Django_xm.apps.cache_manager.services.cache_service import CacheService, CacheTTL
 
 logger = logging.getLogger(__name__)
 

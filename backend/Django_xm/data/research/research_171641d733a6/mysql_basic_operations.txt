@@ -1,0 +1,83 @@
+# MySQL 基本操作
+
+## 1. 插入数据（INSERT）
+插入数据的基本语法为：
+```sql
+INSERT INTO table_name (column1, column2, ...) VALUES (value1, value2, ...);
+```
+例如：
+```sql
+INSERT INTO users (name, age) VALUES ('Alice', 30);
+```
+
+## 2. 删除数据（DELETE）
+删除数据的基本语法为：
+```sql
+DELETE FROM table_name WHERE condition;
+```
+例如：
+```sql
+DELETE FROM users WHERE name='Alice';
+```
+
+## 3. 更新数据（UPDATE）
+更新数据的基本语法为：
+```sql
+UPDATE table_name SET column1 = value1, column2 = value2, ... WHERE condition;
+```
+例如：
+```sql
+UPDATE users SET age = 31 WHERE name='Alice';
+```
+
+## 4. 查询数据（SELECT）
+查询数据的基本语法为：
+```sql
+SELECT column1, column2, ... FROM table_name WHERE condition;
+```
+例如：
+```sql
+SELECT * FROM users;
+```
+可使用`*`选择所有列。可以使用`WHERE`子句来添加过滤条件。
+
+## 1. 插入数据（INSERT）
+插入数据的基本语法为：
+```sql
+INSERT INTO table_name (column1, column2, ...) VALUES (value1, value2, ...);
+```
+例如：
+```sql
+INSERT INTO users (name, age) VALUES ('Alice', 30);
+```
+
+## 2. 删除数据（DELETE）
+删除数据的基本语法为：
+```sql
+DELETE FROM table_name WHERE condition;
+```
+例如：
+```sql
+DELETE FROM users WHERE name='Alice';
+```
+
+## 3. 更新数据（UPDATE）
+更新数据的基本语法为：
+```sql
+UPDATE table_name SET column1 = value1, column2 = value2, ... WHERE condition;
+```
+例如：
+```sql
+UPDATE users SET age = 31 WHERE name='Alice';
+```
+
+## 4. 查询数据（SELECT）
+查询数据的基本语法为：
+```sql
+SELECT column1, column2, ... FROM table_name WHERE condition;
+```
+例如：
+```sql
+SELECT * FROM users;
+```
+可使用`*`选择所有列。可以使用`WHERE`子句来添加过滤条件。

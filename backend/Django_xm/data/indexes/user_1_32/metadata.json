@@ -2,8 +2,8 @@
   "name": "user_1_32",
   "description": "",
   "created_at": "2026-05-05T00:36:05.624721",
-  "updated_at": "2026-05-05T00:36:05.624721",
-  "num_documents": 0,
+  "updated_at": "2026-05-07T23:41:18.803275",
+  "num_documents": 23,
   "store_type": "faiss",
   "embedding_model": "text-embedding-3-small"
 }

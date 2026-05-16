@@ -16,7 +16,7 @@ from .study_flow import (
 )
 from .state import StudyFlowState
 from .persistence_service import get_persistence_service
-from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.config_center.config import get_logger
 
 logger = get_logger(__name__)
 persistence_service = get_persistence_service()

@@ -72,7 +72,11 @@ def convert_chat_history(messages: List[dict]) -> List:
         if role == 'user':
             langchain_messages.append(HumanMessage(content=content))
         elif role == 'assistant':
-            langchain_messages.append(AIMessage(content=content))
+            ai_kwargs = {}
+            reasoning_content = msg.get('reasoning_content')
+            if reasoning_content and isinstance(reasoning_content, str) and reasoning_content.strip():
+                ai_kwargs["additional_kwargs"] = {"reasoning_content": reasoning_content}
+            langchain_messages.append(AIMessage(content=content, **ai_kwargs))
         elif role == 'system':
             langchain_messages.append(SystemMessage(content=content))
 
@@ -81,7 +85,7 @@ def convert_chat_history(messages: List[dict]) -> List:
 
 def _inject_attachment_content(user_message: str, attachment_ids: List[int]) -> str:
     try:
-        from Django_xm.apps.chat.services.chat_service import AttachmentService
+        from Django_xm.apps.attachments.services.attachment_content_service import AttachmentService
         att_svc = AttachmentService()
         result = att_svc.build_user_content(user_message, attachment_ids)
         if result["type"] == "text":

@@ -3,13 +3,14 @@ from django.contrib.auth.models import AbstractUser, UserManager
 from django.core.validators import RegexValidator
 from django.utils import timezone
 
-
-class SoftDeleteUserManager(UserManager):
-    def get_queryset(self):
-        return super().get_queryset().filter(is_deleted=False)
+from Django_xm.apps.core.base_models import SoftDeleteManager, AllObjectsManager
 
 
-class AllUserManager(UserManager):
+class SoftDeleteUserManager(SoftDeleteManager, UserManager):
+    pass
+
+
+class AllUserManager(AllObjectsManager, UserManager):
     pass
 
 
@@ -52,11 +53,9 @@ class User(AbstractUser):
         return self.username
 
     def soft_delete(self, using=None):
-        self.is_deleted = True
-        self.deleted_at = timezone.now()
-        self.save(using=using)
+        from Django_xm.apps.core.base_models import BaseModel
+        BaseModel.soft_delete(self, using=using)
 
     def restore(self, using=None):
-        self.is_deleted = False
-        self.deleted_at = None
-        self.save(using=using)
+        from Django_xm.apps.core.base_models import BaseModel
+        BaseModel.restore(self, using=using)

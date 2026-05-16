@@ -1,0 +1,65 @@
+# MySQL 视图
+
+## 1. 视图的定义
+视图是一个虚拟表，它是基于SQL查询的结果集。视图并不存储数据，而是实时生成数据。
+
+## 2. 创建视图
+创建视图的基本语法为：
+```sql
+CREATE VIEW view_name AS SELECT column1, column2, ... FROM table_name WHERE condition;
+```
+例如：
+```sql
+CREATE VIEW user_view AS SELECT name, age FROM users WHERE age > 18;
+```
+
+## 3. 使用视图
+使用视图与使用表类似，可以通过SELECT语句查询视图：
+```sql
+SELECT * FROM user_view;
+```
+
+## 4. 更新视图
+视图是只读的，但可以通过特定的方式更新基础表的数据。
+
+## 5. 删除视图
+删除视图的基本语法为：
+```sql
+DROP VIEW view_name;
+```
+例如：
+```sql
+DROP VIEW user_view;
+```
+
+## 1. 视图的定义
+视图是一个虚拟表，它是基于SQL查询的结果集。视图并不存储数据，而是实时生成数据。
+
+## 2. 创建视图
+创建视图的基本语法为：
+```sql
+CREATE VIEW view_name AS SELECT column1, column2, ... FROM table_name WHERE condition;
+```
+例如：
+```sql
+CREATE VIEW user_view AS SELECT name, age FROM users WHERE age > 18;
+```
+
+## 3. 使用视图
+使用视图与使用表类似，可以通过SELECT语句查询视图：
+```sql
+SELECT * FROM user_view;
+```
+
+## 4. 更新视图
+视图是只读的，但可以通过特定的方式更新基础表的数据。
+
+## 5. 删除视图
+删除视图的基本语法为：
+```sql
+DROP VIEW view_name;
+```
+例如：
+```sql
+DROP VIEW user_view;
+```

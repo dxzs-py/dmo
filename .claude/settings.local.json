@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C D:/programming/langchain/langchain_xm status --short)",
+      "Bash(git *)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('Django_xm/apps/ai_engine/services/agent_factory.py'\\).read\\(\\)\\); print\\('Syntax OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('Django_xm/apps/ai_engine/services/agent_factory.py', encoding='utf-8'\\).read\\(\\)\\); print\\('Syntax OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('Django_xm/apps/ai_engine/services/llm_factory.py', encoding='utf-8'\\).read\\(\\)\\); print\\('Syntax OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('Django_xm/apps/ai_engine/services/model_cache.py', encoding='utf-8'\\).read\\(\\)\\); print\\('Syntax OK'\\)\")",
+      "Bash(python -c \"import django; import os; os.environ.setdefault\\('DJANGO_SETTINGS_MODULE', 'Django_xm.settings'\\); django.setup\\(\\); from Django_xm.apps.ai_engine.services.model_cache import make_cache_key, get_cached_model, set_cached_model; print\\('model_cache import OK'\\); from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model; print\\('llm_factory import OK'\\)\")",
+      "Bash(find . -name \"activate\" -path \"*/bin/*\")",
+      "Bash(find . -name \"pyvenv.cfg\")",
+      "Bash(pip show *)"
+    ]
+  }
+}

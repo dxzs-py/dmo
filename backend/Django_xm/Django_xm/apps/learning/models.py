@@ -52,7 +52,7 @@ class WorkflowExecution(AuditModel):
 
     def get_absolute_url(self):
         from django.urls import reverse
-        return reverse('workflows:status', kwargs={'thread_id': self.thread_id})
+        return reverse('learning:status', kwargs={'thread_id': self.thread_id})
 
 
 class WorkflowSession(AuditModel):
@@ -118,4 +118,4 @@ class WorkflowSession(AuditModel):
 
     def get_absolute_url(self):
         from django.urls import reverse
-        return reverse('workflows:status', kwargs={'thread_id': self.thread_id})
+        return reverse('learning:status', kwargs={'thread_id': self.thread_id})

@@ -1,25 +1,30 @@
 <template>
-  <div class="ai-reasoning" :class="className" v-bind="$attrs">
-    <el-collapse v-model="activePanels" @change="handleOpenChange">
-      <el-collapse-item name="reasoning">
-        <template #title>
-          <div class="reasoning-trigger" @click.stop>
-            <el-icon class="reasoning-icon"><ChatDotRound /></el-icon>
-            <span class="reasoning-text">{{ thinkingMessage }}</span>
-            <el-icon :class="{ 'rotated': isOpen }" class="reasoning-arrow"><ArrowDown /></el-icon>
-          </div>
-        </template>
+  <div class="ai-reasoning" :class="[className, { 'is-streaming': isStreaming }]">
+    <div class="reasoning-header" @click="toggleOpen">
+      <div class="reasoning-header-left">
+        <div class="reasoning-indicator">
+          <div v-if="isStreaming" class="thinking-dot"></div>
+          <svg v-else class="reasoning-check" viewBox="0 0 16 16" fill="none">
+            <path d="M6.5 12L2.5 8L3.56 6.94L6.5 9.88L12.44 3.94L13.5 5L6.5 12Z" fill="currentColor"/>
+          </svg>
+        </div>
+        <span class="reasoning-label">{{ thinkingMessage }}</span>
+      </div>
+      <el-icon :class="{ 'rotated': isOpen }" class="reasoning-arrow"><ArrowDown /></el-icon>
+    </div>
+    <Transition name="reasoning-expand">
+      <div v-if="isOpen" class="reasoning-body">
         <div class="reasoning-content">
           <MarkdownRenderer :content="content" />
         </div>
-      </el-collapse-item>
-    </el-collapse>
+      </div>
+    </Transition>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { ChatDotRound, ArrowDown } from '@element-plus/icons-vue'
+import { ArrowDown } from '@element-plus/icons-vue'
 import MarkdownRenderer from '../common/MarkdownRenderer.vue'
 
 const props = defineProps({
@@ -47,31 +52,29 @@ const props = defineProps({
 
 const emit = defineEmits(['openChange'])
 
-const activePanels = ref(props.defaultOpen ? ['reasoning'] : [])
+const isOpen = ref(props.defaultOpen)
 const hasAutoClosed = ref(false)
 const startTime = ref(null)
 const duration = ref(props.duration)
 
-const AUTO_CLOSE_DELAY = 1000
+const AUTO_CLOSE_DELAY = 1500
 const MS_IN_S = 1000
-
-const isOpen = computed(() => activePanels.value.includes('reasoning'))
 
 const thinkingMessage = computed(() => {
   if (props.isStreaming || duration.value === 0) {
-    return '正在思考...'
+    return '正在思考'
   }
   if (duration.value === undefined) {
-    return '思考了几秒钟'
+    return '已深度思考'
   }
-  return `思考了 ${duration.value} 秒钟`
+  return `已深度思考（用时 ${duration.value} 秒）`
 })
 
-const handleOpenChange = (value) => {
-  emit('openChange', value.includes('reasoning'))
+function toggleOpen() {
+  isOpen.value = !isOpen.value
+  emit('openChange', isOpen.value)
 }
 
-// 跟踪流式传输时的持续时间
 watch(() => props.isStreaming, (isStreaming) => {
   if (isStreaming) {
     if (startTime.value === null) {
@@ -83,20 +86,16 @@ watch(() => props.isStreaming, (isStreaming) => {
   }
 })
 
-// 流式传输开始时自动打开，结束时自动关闭（仅一次）
 watch([() => props.isStreaming, isOpen, () => props.defaultOpen], ([isStreaming, open, defaultOpen]) => {
   if (defaultOpen && !isStreaming && open && !hasAutoClosed.value) {
-    // 添加小延迟，让用户有时间看到内容
     const timer = setTimeout(() => {
-      activePanels.value = []
+      isOpen.value = false
       hasAutoClosed.value = true
     }, AUTO_CLOSE_DELAY)
-
     return () => clearTimeout(timer)
   }
 }, { flush: 'post' })
 
-// 监听duration属性变化
 watch(() => props.duration, (newDuration) => {
   duration.value = newDuration
 })
@@ -104,43 +103,133 @@ watch(() => props.duration, (newDuration) => {
 
 <style scoped>
 .ai-reasoning {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
+  border-left: 2px solid color-mix(in srgb, var(--sidebar-primary) 30%, transparent);
+  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--sidebar-primary) 4%, transparent);
+  overflow: hidden;
 }
 
-.reasoning-trigger {
+.ai-reasoning.is-streaming {
+  border-left-color: var(--sidebar-primary);
+  background: color-mix(in srgb, var(--sidebar-primary) 6%, transparent);
+}
+
+.reasoning-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease;
+}
+
+.reasoning-header:hover {
+  background: color-mix(in srgb, var(--sidebar-primary) 6%, transparent);
+}
+
+.ai-reasoning.is-streaming .reasoning-header:hover {
+  background: color-mix(in srgb, var(--sidebar-primary) 8%, transparent);
+}
+
+.reasoning-header-left {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 14px;
-  color: var(--el-text-color-secondary);
-  cursor: pointer;
-  transition: color 0.2s;
 }
 
-.reasoning-trigger:hover {
-  color: var(--el-text-color-primary);
+.reasoning-indicator {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
-.reasoning-icon {
-  font-size: 16px;
+.reasoning-check {
+  width: 14px;
+  height: 14px;
+  color: var(--sidebar-primary);
+}
+
+.thinking-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sidebar-primary);
+  animation: thinking-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+.reasoning-label {
+  font-size: 13px;
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+
+.ai-reasoning.is-streaming .reasoning-label {
+  color: var(--sidebar-primary);
 }
 
 .reasoning-arrow {
   font-size: 12px;
-  transition: transform 0.3s;
+  color: var(--muted-foreground);
+  transition: transform 0.25s ease;
+  flex-shrink: 0;
 }
 
 .reasoning-arrow.rotated {
   transform: rotate(180deg);
 }
 
+.reasoning-body {
+  border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+
 .reasoning-content {
-  margin-top: 12px;
-  padding: 12px;
-  background-color: var(--el-fill-color-light);
-  border-radius: 8px;
-  font-size: 14px;
-  line-height: 1.5;
-  color: var(--el-text-color-secondary);
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.reasoning-content :deep(p) {
+  margin: 0 0 6px;
+}
+
+.reasoning-content :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.reasoning-content :deep(code) {
+  font-size: 12px;
+}
+
+.reasoning-expand-enter-active {
+  transition: all 0.25s ease;
+}
+
+.reasoning-expand-leave-active {
+  transition: all 0.2s ease;
+}
+
+.reasoning-expand-enter-from,
+.reasoning-expand-leave-to {
+  opacity: 0;
+  max-height: 0;
+}
+
+.reasoning-expand-enter-to,
+.reasoning-expand-leave-from {
+  opacity: 1;
+  max-height: 500px;
 }
 </style>

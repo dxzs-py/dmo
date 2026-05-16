@@ -249,7 +249,7 @@ def read_file_as_documents(file_path: str, chunk_size: int = 1000, chunk_overlap
 
 def get_attachment_info(attachment_id: int) -> Dict[str, Any]:
     try:
-        from Django_xm.apps.chat.models import ChatAttachment
+        from Django_xm.apps.attachments.models import ChatAttachment
         attachment = ChatAttachment.objects.select_related('session').get(id=attachment_id)
     except Exception as e:
         raise ValueError(f"找不到附件 (id={attachment_id}): {str(e)}")
@@ -259,7 +259,7 @@ def get_attachment_info(attachment_id: int) -> Dict[str, Any]:
         raise FileNotFoundError(f"附件文件不存在: {attachment.original_name}")
 
     try:
-        from Django_xm.apps.chat.services.attachment_lifecycle import AttachmentLifecycleService
+        from Django_xm.apps.attachments.services.attachment_lifecycle import AttachmentLifecycleService
         AttachmentLifecycleService().touch_access(attachment_id)
     except Exception:
         pass
@@ -305,7 +305,7 @@ def read_attachment_as_documents(attachment_id: int, chunk_size: int = 1000, chu
 
 def read_uploaded_attachment(attachment_id: int) -> str:
     try:
-        from Django_xm.apps.chat.models import ChatAttachment
+        from Django_xm.apps.attachments.models import ChatAttachment
         attachment = ChatAttachment.objects.select_related('session').get(id=attachment_id)
     except Exception as e:
         raise ValueError(f"找不到附件 (id={attachment_id}): {str(e)}")

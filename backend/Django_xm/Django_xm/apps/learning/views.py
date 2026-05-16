@@ -8,6 +8,8 @@ from urllib.parse import quote
 from django.http import StreamingHttpResponse, FileResponse, HttpResponse
 from rest_framework.views import APIView
 from rest_framework import status
+
+from Django_xm.apps.common.sse_utils import sse_response
 from rest_framework.permissions import IsAuthenticated
 
 from Django_xm.apps.common.responses import success_response, error_response, not_found_response, validation_error_response
@@ -23,7 +25,7 @@ from .services import WorkflowService
 from .services.study_flow import get_workflow_state, _get_study_flow
 from .models import WorkflowSession
 from Django_xm.apps.core.services.file_manager import get_file_manager
-from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.config_center.config import get_logger
 from Django_xm.apps.core.permissions import IsAuthenticatedOrQueryParam
 
 logger = get_logger(__name__)
@@ -233,16 +235,7 @@ class WorkflowStartStreamView(APIView):
                 logger.error(f"[API] 流式工作流执行失败：{str(e)}", exc_info=True)
                 yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
 
-        return StreamingHttpResponse(
-            event_stream(),
-            content_type='text/event-stream',
-            headers={
-                'Cache-Control': 'no-cache',
-                'X-Accel-Buffering': 'no',
-                'Access-Control-Allow-Origin': request.headers.get('Origin', '*'),
-                'Access-Control-Allow-Credentials': 'true',
-            }
-        )
+        return sse_response(event_stream())
 
 
 class WorkflowSubmitView(APIView):
@@ -481,7 +474,7 @@ class WorkflowFilesListView(APIView):
 
             files = file_manager.list_task_files(thread_id, 'workflow')
             
-            from Django_xm.apps.research.serializers import FileInfoSerializer
+            from Django_xm.apps.common.serializers import FileInfoSerializer
             serializer = FileInfoSerializer([f.to_dict() for f in files], many=True)
 
             return success_response(
@@ -577,7 +570,7 @@ class WorkflowFileContentView(APIView):
 
             content = file_manager.read_file_content(thread_id, filename, 'workflow')
 
-            from Django_xm.apps.research.serializers import FileInfoSerializer
+            from Django_xm.apps.common.serializers import FileInfoSerializer
             return success_response(
                 data={
                     'filename': filename,
@@ -601,12 +594,12 @@ def workflow_stream(request, thread_id):
     使用 LangGraph 的 stream 方法获取真实的事件流
     支持Authorization header和查询参数token认证
     """
-    from Django_xm.apps.research.views import _authenticate_sse_request, _sse_error_response
+    from Django_xm.apps.common.sse_utils import authenticate_sse_request, sse_error_response
 
-    user = _authenticate_sse_request(request)
+    user = authenticate_sse_request(request)
 
     if not user:
-        return _sse_error_response('未登录或登录已过期', 401)
+        return sse_error_response('未登录或登录已过期', 401)
 
     try:
         session = WorkflowSession.objects.filter(
@@ -618,7 +611,7 @@ def workflow_stream(request, thread_id):
         if not session:
             state = get_workflow_state(thread_id)
             if not state:
-                return _sse_error_response('工作流不存在或无权访问', 404)
+                return sse_error_response('工作流不存在或无权访问', 404)
 
             try:
                 from .services.persistence_service import get_persistence_service
@@ -682,14 +675,7 @@ def workflow_stream(request, thread_id):
                 logger.error(f"[API] 流式输出失败：{str(e)}", exc_info=True)
                 yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
 
-        return StreamingHttpResponse(
-            event_stream(),
-            content_type='text/event-stream',
-            headers={
-                'Cache-Control': 'no-cache',
-                'X-Accel-Buffering': 'no',
-            }
-        )
+        return sse_response(event_stream())
 
     except Exception as e:
         logger.error(f"[API] 流式输出失败：{str(e)}", exc_info=True)

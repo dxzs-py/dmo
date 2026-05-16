@@ -1,7 +1,9 @@
 <script setup>
 import { ref, watch, nextTick, computed } from 'vue'
-import { Promotion, Search, Microphone, Document, Close, VideoPause } from '@element-plus/icons-vue'
+import { Promotion, Search, Microphone, Document, Close, VideoPause, Connection, SetUp } from '@element-plus/icons-vue'
 import SlashCommandPanel from '@/components/common/SlashCommandPanel.vue'
+import McpSelector from '@/components/chat/McpSelector.vue'
+import ToolSelector from '@/components/chat/ToolSelector.vue'
 
 const props = defineProps({
   modelValue: {
@@ -21,6 +23,30 @@ const props = defineProps({
     default: false,
   },
   useWebSearch: {
+    type: Boolean,
+    default: false,
+  },
+  useMcp: {
+    type: Boolean,
+    default: false,
+  },
+  selectedMcpServers: {
+    type: Array,
+    default: () => [],
+  },
+  selectedTools: {
+    type: Array,
+    default: () => [],
+  },
+  mcpTools: {
+    type: Array,
+    default: () => [],
+  },
+  mcpServers: {
+    type: Array,
+    default: () => [],
+  },
+  mcpAvailable: {
     type: Boolean,
     default: false,
   },
@@ -54,6 +80,10 @@ const emit = defineEmits({
   removeAttachment: (index) => typeof index === 'number',
   voice: () => true,
   webSearch: () => true,
+  mcp: () => true,
+  'update:useMcp': (val) => typeof val === 'boolean',
+  'update:selectedMcpServers': (val) => Array.isArray(val),
+  'update:selectedTools': (val) => Array.isArray(val),
   microphone: () => true,
   stopStreaming: () => true,
   commandSelect: (cmd) => cmd instanceof Object,
@@ -238,6 +268,17 @@ watch(() => props.modelValue, adjustTextareaHeight)
             >
               <el-icon :size="18"><Search /></el-icon>
             </button>
+            <McpSelector
+              :model-value="selectedMcpServers"
+              :enabled="useMcp"
+              @update:enabled="(val) => emit('update:useMcp', val)"
+              @update:model-value="(val) => emit('update:selectedMcpServers', val)"
+            />
+            <ToolSelector
+              :model-value="selectedTools"
+              :enabled="useWebSearch || useMcp"
+              @update:model-value="(val) => emit('update:selectedTools', val)"
+            />
             <button
               class="toolbar-btn"
               :class="{ active: useMicrophone }"
@@ -308,9 +349,9 @@ watch(() => props.modelValue, adjustTextareaHeight)
 
 <style scoped>
 .chat-footer {
-  background: var(--el-bg-color);
+  background: var(--card);
   padding: 8px 24px 12px;
-  border-top: 1px solid var(--el-border-color-lighter);
+  border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
 
@@ -334,16 +375,17 @@ watch(() => props.modelValue, adjustTextareaHeight)
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
-  border-radius: 12px;
-  background: var(--el-fill-color-light);
-  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--radius);
+  background: var(--accent);
+  border: 1px solid var(--border);
   font-size: 13px;
   max-width: 200px;
-  transition: all 0.2s;
+  transition: all var(--transition-fast);
 }
 
 .attachment-item:hover {
-  border-color: var(--el-color-primary-light-5);
+  border-color: var(--sidebar-primary);
+  box-shadow: var(--shadow-sm);
 }
 
 .attachment-icon {
@@ -362,13 +404,13 @@ watch(() => props.modelValue, adjustTextareaHeight)
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--el-text-color-primary);
+  color: var(--foreground);
   font-size: 12px;
   line-height: 1.3;
 }
 
 .attachment-size {
-  color: var(--el-text-color-secondary);
+  color: var(--muted-foreground);
   font-size: 11px;
 }
 
@@ -381,27 +423,27 @@ watch(() => props.modelValue, adjustTextareaHeight)
   border: none;
   border-radius: 50%;
   background: transparent;
-  color: var(--el-text-color-secondary);
+  color: var(--muted-foreground);
   cursor: pointer;
   flex-shrink: 0;
-  transition: all 0.2s;
+  transition: all var(--transition-fast);
 }
 
 .attachment-remove:hover {
-  background: var(--el-color-danger-light-9);
-  color: var(--el-color-danger);
+  background: color-mix(in srgb, var(--destructive) 10%, transparent);
+  color: var(--destructive);
 }
 
 .input-card {
   display: flex;
   flex-direction: column;
   border-radius: 24px;
-  border: 1.5px solid var(--el-border-color);
-  background: var(--el-bg-color);
+  border: 1.5px solid var(--border);
+  background: var(--card);
   padding: 6px 8px;
-  transition: all 0.25s ease;
+  transition: all var(--transition-normal);
   gap: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--shadow-sm);
   position: relative;
 }
 
@@ -415,13 +457,13 @@ watch(() => props.modelValue, adjustTextareaHeight)
 }
 
 .input-card.is-focused {
-  border-color: var(--el-color-primary);
-  box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.1), 0 2px 8px rgba(0, 0, 0, 0.04);
+  border-color: var(--sidebar-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sidebar-primary) 12%, transparent), var(--shadow-sm);
 }
 
 .input-card.is-streaming {
   border-color: var(--el-color-warning);
-  box-shadow: 0 0 0 3px rgba(230, 162, 60, 0.1);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--el-color-warning) 12%, transparent);
 }
 
 .input-content {
@@ -445,24 +487,40 @@ watch(() => props.modelValue, adjustTextareaHeight)
   border: none;
   border-radius: 50%;
   background: transparent;
-  color: var(--el-text-color-secondary);
+  color: var(--muted-foreground);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all var(--transition-fast);
+  position: relative;
 }
 
 .toolbar-btn:hover:not(:disabled) {
-  background: var(--el-fill-color-light);
-  color: var(--el-text-color-primary);
+  background: var(--accent);
+  color: var(--foreground);
 }
 
 .toolbar-btn.active {
-  color: var(--el-color-primary);
-  background: var(--el-color-primary-light-9);
+  color: var(--sidebar-primary);
+  background: color-mix(in srgb, var(--sidebar-primary) 10%, transparent);
 }
 
 .toolbar-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.mcp-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  background: var(--sidebar-primary);
+  color: white;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  padding: 0 4px;
 }
 
 .input-textarea {
@@ -473,7 +531,7 @@ watch(() => props.modelValue, adjustTextareaHeight)
   background: transparent;
   font-size: 14px;
   line-height: 1.6;
-  color: var(--el-text-color-primary);
+  color: var(--foreground);
   padding: 8px 4px;
   min-height: 24px;
   max-height: 150px;
@@ -482,7 +540,7 @@ watch(() => props.modelValue, adjustTextareaHeight)
 }
 
 .input-textarea::placeholder {
-  color: var(--el-text-color-placeholder);
+  color: var(--muted-foreground);
 }
 
 .input-textarea:disabled {
@@ -498,8 +556,17 @@ watch(() => props.modelValue, adjustTextareaHeight)
 
 .char-count {
   font-size: 12px;
-  color: var(--el-text-color-placeholder);
+  color: var(--muted-foreground);
   white-space: nowrap;
+  transition: color var(--transition-fast);
+}
+
+.char-count.warning {
+  color: var(--el-color-warning);
+}
+
+.char-count.danger {
+  color: var(--destructive);
 }
 
 .send-btn {
@@ -510,23 +577,23 @@ watch(() => props.modelValue, adjustTextareaHeight)
   height: 38px;
   border: none;
   border-radius: 50%;
-  background: var(--el-fill-color);
-  color: var(--el-text-color-disabled);
+  background: var(--accent);
+  color: var(--muted-foreground);
   cursor: not-allowed;
-  transition: all 0.25s;
+  transition: all var(--transition-normal);
 }
 
 .send-btn.active {
-  background: var(--el-color-primary);
+  background: var(--sidebar-primary);
   color: white;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.3);
+  box-shadow: var(--shadow-primary);
 }
 
 .send-btn.active:hover {
-  background: var(--el-color-primary-dark-2);
+  filter: brightness(1.1);
   transform: scale(1.05);
-  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.4);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--sidebar-primary) 35%, transparent);
 }
 
 .send-btn.active:active {
@@ -539,32 +606,33 @@ watch(() => props.modelValue, adjustTextareaHeight)
   justify-content: center;
   gap: 4px;
   padding: 6px 14px;
-  border: 1px solid var(--el-color-danger-light-5);
+  border: 1px solid color-mix(in srgb, var(--destructive) 30%, transparent);
   border-radius: 18px;
-  background: var(--el-color-danger-light-9);
-  color: var(--el-color-danger);
+  background: color-mix(in srgb, var(--destructive) 8%, transparent);
+  color: var(--destructive);
   font-size: 13px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all var(--transition-fast);
   white-space: nowrap;
 }
 
 .stop-btn:hover {
-  background: var(--el-color-danger-light-7);
-  border-color: var(--el-color-danger-light-3);
+  background: color-mix(in srgb, var(--destructive) 15%, transparent);
+  border-color: color-mix(in srgb, var(--destructive) 50%, transparent);
 }
 
 .input-hint {
   text-align: center;
   padding: 6px 0 0;
   font-size: 12px;
-  color: var(--el-text-color-placeholder);
+  color: var(--muted-foreground);
   letter-spacing: 0.3px;
+  opacity: 0.7;
 }
 
 .slide-down-enter-active,
 .slide-down-leave-active {
-  transition: all 0.25s ease;
+  transition: all var(--transition-normal);
 }
 
 .slide-down-enter-from,
@@ -575,7 +643,7 @@ watch(() => props.modelValue, adjustTextareaHeight)
 
 .list-enter-active,
 .list-leave-active {
-  transition: all 0.25s ease;
+  transition: all var(--transition-normal);
 }
 
 .list-enter-from,
@@ -586,7 +654,7 @@ watch(() => props.modelValue, adjustTextareaHeight)
 
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.15s ease;
+  transition: opacity var(--transition-fast);
 }
 
 .fade-enter-from,
@@ -595,31 +663,28 @@ watch(() => props.modelValue, adjustTextareaHeight)
 }
 
 @media (max-width: 768px) {
-  .chat-input-container {
+  .chat-footer {
     padding: 8px 12px;
   }
 
-  .input-wrapper {
-    padding: 6px 10px;
-  }
-
-  .toolbar {
-    gap: 4px;
+  .input-hint {
+    display: none;
   }
 }
 
 @media (max-width: 480px) {
-  .chat-input-container {
+  .chat-footer {
     padding: 6px 8px;
   }
 
-  .input-wrapper {
-    padding: 4px 8px;
-    border-radius: 10px;
+  .input-card {
+    border-radius: 20px;
+    padding: 4px 6px;
   }
 
-  .toolbar {
-    gap: 2px;
+  .toolbar-btn {
+    width: 30px;
+    height: 30px;
   }
 
   .send-btn {

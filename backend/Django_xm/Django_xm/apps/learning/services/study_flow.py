@@ -5,6 +5,7 @@
 
 import logging
 import time
+from collections import OrderedDict
 from datetime import datetime
 from decimal import Decimal
 from typing import Literal, Dict, Any, Optional
@@ -12,10 +13,10 @@ from typing import Literal, Dict, Any, Optional
 from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
-from langgraph.checkpoint.memory import MemorySaver
 from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
+from Django_xm.apps.ai_engine.services.checkpointer_factory import get_checkpointer
 
-from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.config_center.config import get_logger
 from Django_xm.apps.ai_engine.services.cost_tracker import create_cost_tracker
 from Django_xm.apps.ai_engine.services.usage_tracker import create_usage_tracker
 from .state import StudyFlowState
@@ -65,7 +66,7 @@ class StudyFlow:
         logger.info(f"初始化学习工作流: thread_id={thread_id}")
 
         if checkpointer is None:
-            checkpointer = MemorySaver()
+            checkpointer = get_checkpointer()
         self.checkpointer = checkpointer
 
         self.graph = self._build_graph()
@@ -143,13 +144,82 @@ def create_study_flow(thread_id: str = None, checkpointer: Any = None) -> StudyF
     return StudyFlow(thread_id=thread_id, checkpointer=checkpointer)
 
 
-_study_flow_cache: Dict[str, StudyFlow] = {}
+_study_flow_cache: OrderedDict[str, tuple] = OrderedDict()
+_STUDY_FLOW_CACHE_MAXSIZE = 64
+_STUDY_FLOW_CACHE_TTL = 7200
+
+
+def _is_cache_entry_valid(entry: tuple) -> bool:
+    if len(entry) != 2:
+        return False
+    _, created_at = entry
+    return (time.time() - created_at) < _STUDY_FLOW_CACHE_TTL
 
 
 def _get_study_flow(thread_id: str) -> StudyFlow:
-    if thread_id not in _study_flow_cache:
-        _study_flow_cache[thread_id] = StudyFlow(thread_id=thread_id)
-    return _study_flow_cache[thread_id]
+    if thread_id in _study_flow_cache:
+        entry = _study_flow_cache[thread_id]
+        if _is_cache_entry_valid(entry):
+            _study_flow_cache.move_to_end(thread_id)
+            return entry[0]
+        else:
+            _study_flow_cache.pop(thread_id, None)
+            logger.debug(f"StudyFlow 缓存已过期，淘汰: {thread_id}")
+
+    if len(_study_flow_cache) >= _STUDY_FLOW_CACHE_MAXSIZE:
+        evicted_key, _ = _study_flow_cache.popitem(last=False)
+        logger.debug(f"StudyFlow 缓存已满，LRU淘汰: {evicted_key}")
+    study_flow = StudyFlow(thread_id=thread_id)
+    _study_flow_cache[thread_id] = (study_flow, time.time())
+    return study_flow
+
+
+def _get_cached_study_flow(thread_id: str) -> StudyFlow:
+    """
+    获取 StudyFlow 实例，优先从进程内缓存，回退到 Redis 缓存重建
+
+    Redis 缓存仅存储 thread_id -> 存在性标记和配置信息，
+    StudyFlow 对象本身（含编译后的 LangGraph）在进程内缓存。
+
+    进程内缓存带 TTL 过期机制，防止长时间运行导致内存泄漏。
+    """
+    if thread_id in _study_flow_cache:
+        entry = _study_flow_cache[thread_id]
+        if _is_cache_entry_valid(entry):
+            _study_flow_cache.move_to_end(thread_id)
+            return entry[0]
+        else:
+            _study_flow_cache.pop(thread_id, None)
+            logger.debug(f"StudyFlow 缓存已过期，淘汰: {thread_id}")
+
+    from django.core.cache import cache
+
+    cache_key = f"study_flow:active:{thread_id}"
+    cached_meta = cache.get(cache_key)
+
+    if cached_meta is not None:
+        logger.debug(f"从 Redis 恢复 StudyFlow 元数据: {thread_id}")
+
+    study_flow = StudyFlow(thread_id=thread_id)
+
+    if len(_study_flow_cache) >= _STUDY_FLOW_CACHE_MAXSIZE:
+        evicted_key, _ = _study_flow_cache.popitem(last=False)
+        logger.debug(f"StudyFlow 缓存已满，LRU淘汰: {evicted_key}")
+
+    _study_flow_cache[thread_id] = (study_flow, time.time())
+
+    cache.set(cache_key, {"thread_id": thread_id, "created": True}, timeout=_STUDY_FLOW_CACHE_TTL)
+
+    return study_flow
+
+
+def _invalidate_study_flow_cache(thread_id: str) -> None:
+    """清除 StudyFlow 的进程内和 Redis 缓存"""
+    _study_flow_cache.pop(thread_id, None)
+
+    from django.core.cache import cache
+    cache.delete(f"study_flow:active:{thread_id}")
+    logger.debug(f"StudyFlow 缓存已清除: {thread_id}")
 
 
 def start_study_flow(
@@ -159,7 +229,7 @@ def start_study_flow(
 ) -> dict:
     logger.info(f"[Study Flow] 启动新的学习工作流，thread_id={thread_id}")
 
-    study_flow = _get_study_flow(thread_id)
+    study_flow = _get_cached_study_flow(thread_id)
 
     initial_state: StudyFlowState = {
         "messages": [],
@@ -181,16 +251,18 @@ def start_study_flow(
         "error_node": None
     }
 
+    cb = TokenUsageCallbackHandler()
+
     config = {
         "configurable": {
             "thread_id": thread_id
-        }
+        },
+        "callbacks": [cb],
     }
 
     logger.info("[Study Flow] 开始执行工作流...")
     start_time = time.time()
-    with TokenUsageCallbackHandler() as cb:
-        result = study_flow.invoke(initial_state, config)
+    result = study_flow.invoke(initial_state, config)
 
     logger.info(f"[Study Flow] 工作流暂停在: {result.get('current_step')}")
 
@@ -212,7 +284,7 @@ def submit_answers(
 ) -> dict:
     logger.info(f"[Study Flow] 提交答案，thread_id={thread_id}")
 
-    study_flow = _get_study_flow(thread_id)
+    study_flow = _get_cached_study_flow(thread_id)
 
     config = {
         "configurable": {
@@ -245,8 +317,16 @@ def submit_answers(
 
     logger.info("[Study Flow] 继续执行工作流...")
     start_time = time.time()
-    with TokenUsageCallbackHandler() as cb:
-        study_flow.invoke(None, config=config)
+
+    cb = TokenUsageCallbackHandler()
+    invoke_config = {
+        "configurable": {
+            "thread_id": thread_id
+        },
+        "callbacks": [cb],
+    }
+
+    study_flow.invoke(None, config=invoke_config)
 
     result = get_workflow_state(thread_id)
 
@@ -275,7 +355,7 @@ def get_workflow_state(thread_id: str) -> dict:
     """
     logger.info(f"[Study Flow] 获取工作流状态，thread_id={thread_id}")
 
-    study_flow = _get_study_flow(thread_id)
+    study_flow = _get_cached_study_flow(thread_id)
 
     config = {
         "configurable": {
@@ -315,7 +395,7 @@ def get_workflow_history(thread_id: str) -> list:
     """
     logger.info(f"[Study Flow] 获取工作流历史，thread_id={thread_id}")
 
-    study_flow = _get_study_flow(thread_id)
+    study_flow = _get_cached_study_flow(thread_id)
 
     config = {
         "configurable": {
@@ -338,7 +418,7 @@ def get_workflow_history(thread_id: str) -> list:
 
 def get_study_flow_app(thread_id: str = None) -> StudyFlow:
     if thread_id:
-        return _get_study_flow(thread_id)
+        return _get_cached_study_flow(thread_id)
     return StudyFlow()
 
 

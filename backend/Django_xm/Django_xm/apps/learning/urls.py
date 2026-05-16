@@ -1,7 +1,7 @@
 from django.urls import path
 from . import views
 
-app_name = 'workflows'
+app_name = 'learning'
 
 urlpatterns = [
     path('start/', views.WorkflowStartView.as_view(), name='start'),

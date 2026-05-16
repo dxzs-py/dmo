@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage
 
 from ..services.state import StudyFlowState
 from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
-from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.config_center.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -40,7 +40,11 @@ def planner_node(state: StudyFlowState) -> Dict[str, Any]:
 
     try:
         model = get_chat_model()
-        structured_model = model.with_structured_output(LearningPlanSchema)
+        if hasattr(model, 'bound'):
+            base_model = model.bound
+        else:
+            base_model = model
+        structured_model = base_model.with_structured_output(LearningPlanSchema)
 
         system_prompt = """你是一位经验丰富的学习规划专家。
 

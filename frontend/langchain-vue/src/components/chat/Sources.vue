@@ -66,7 +66,7 @@ const toggleExpand = () => {
               :href="source.displayHref"
               target="_blank"
               class="source-title"
-              :underline="false"
+              :underline="'never'"
             >
               <el-icon><Link /></el-icon>
               {{ source.displayTitle }}

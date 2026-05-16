@@ -1,0 +1,26 @@
+### Redis的数据结构
+
+1. **字符串（String）**：
+   - 最基本的数据结构，支持存储任意类型的数据。
+   - 每个字符串的最大长度为 512 MB。
+   - 示例操作：`SET key value`，`GET key`。
+
+2. **哈希（Hash）**：
+   - 键和值的映射，适合存储对象。
+   - 可以使用多个字段来存储相关的信息。
+   - 示例操作：`HSET key field value`，`HGET key field`。
+
+3. **列表（List）**：
+   - 有序的字符串集合，支持从两端添加和删除元素。
+   - 可以用作队列或栈。
+   - 示例操作：`LPUSH key value`（从左侧插入），`RPUSH key value`（从右侧插入），`LRANGE key start stop`（获取范围内的元素）。
+
+4. **集合（Set）**：
+   - 无序的字符串集合，支持唯一性。
+   - 支持集合操作，如交集、并集等。
+   - 示例操作：`SADD key value`，`SMEMBERS key`。
+
+5. **有序集合（Sorted Set）**：
+   - 类似于集合，但每个元素都有一个分数，按照分数进行排序。
+   - 支持按分数范围获取元素。
+   - 示例操作：`ZADD key score value`，`ZRANGE key start stop`。
