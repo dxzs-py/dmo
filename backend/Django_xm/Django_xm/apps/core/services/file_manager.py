@@ -151,6 +151,21 @@ class FileManagerService:
             logger.error(f"读取文件失败: {e}")
             return None
 
+    def write_file_content(
+        self, task_id: str, relative_path: str, content: str, task_type: str = "research"
+    ) -> bool:
+        """写入文件内容"""
+        try:
+            task_dir = self._get_task_dir(task_id, task_type)
+            file_path = task_dir / relative_path
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            return True
+        except Exception as e:
+            logger.error(f"写入文件失败: {e}")
+            return False
+
     def search_files(
         self,
         keyword: str,

@@ -1,16 +1,22 @@
 <template>
   <div class="ai-queue" :class="className">
-    <div class="queue-header">
-      <span class="queue-title">队列</span>
+    <div class="queue-header" @click="isExpanded = !isExpanded">
+      <span class="queue-title">
+        <el-icon :size="14" class="queue-expand-icon"><ArrowDown v-if="isExpanded" /><ArrowRight v-else /></el-icon>
+        队列
+      </span>
       <span class="queue-count">{{ items.length }}</span>
     </div>
-    <div class="queue-items">
+    <div v-if="isExpanded" class="queue-items">
       <slot></slot>
     </div>
   </div>
 </template>
 
 <script setup>
+import { ref } from 'vue'
+import { ArrowDown, ArrowRight } from '@element-plus/icons-vue'
+
 defineProps({
   className: {
     type: String,
@@ -21,6 +27,8 @@ defineProps({
     default: () => []
   }
 })
+
+const isExpanded = ref(true)
 </script>
 
 <style scoped>
@@ -38,9 +46,24 @@ defineProps({
   padding: 12px 16px;
   border-bottom: 1px solid var(--el-border-color);
   background-color: var(--el-fill-color-lighter);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.2s;
+}
+
+.queue-header:hover {
+  background-color: var(--el-fill-color-light);
+}
+
+.queue-expand-icon {
+  color: var(--el-text-color-secondary);
+  transition: transform 0.2s;
+  margin-right: 6px;
 }
 
 .queue-title {
+  display: flex;
+  align-items: center;
   font-weight: 600;
   color: var(--el-text-color-primary);
 }
@@ -54,7 +77,7 @@ defineProps({
 }
 
 .queue-items {
-  max-height: 200px;
+  max-height: 300px;
   overflow-y: auto;
 }
 </style>

@@ -63,6 +63,12 @@ MODEL_PRICING: Dict[str, ModelPricing] = {
         input_price_per_million=3.0,
         output_price_per_million=15.0,
     ),
+    "claude-3-5-haiku-20241022": ModelPricing(
+        input_price_per_million=0.8,
+        output_price_per_million=4.0,
+        cache_creation_price_per_million=1.0,
+        cache_read_price_per_million=0.08,
+    ),
     "deepseek-chat": ModelPricing(
         input_price_per_million=0.14,
         output_price_per_million=0.28,
@@ -74,6 +80,20 @@ MODEL_PRICING: Dict[str, ModelPricing] = {
         output_price_per_million=2.19,
         cache_creation_price_per_million=0.14,
         cache_read_price_per_million=0.14,
+    ),
+    "deepseek-v4-flash": ModelPricing(
+        input_price_per_million=0.14,
+        output_price_per_million=0.28,
+        cache_creation_price_per_million=0.014,
+        cache_read_price_per_million=0.014,
+    ),
+    "llama-3.3-70b-versatile": ModelPricing(
+        input_price_per_million=0.59,
+        output_price_per_million=0.79,
+    ),
+    "ernie-3.5-8k": ModelPricing(
+        input_price_per_million=0.8,
+        output_price_per_million=2.0,
     ),
 }
 

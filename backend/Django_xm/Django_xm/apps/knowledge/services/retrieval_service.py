@@ -3,11 +3,13 @@
 提供统一的检索器接口，支持多种检索策略
 """
 
-from typing import Optional, Literal
+from typing import Optional, Literal, List
 
 from langchain_core.vectorstores import VectorStore
 from langchain_core.retrievers import BaseRetriever
+from langchain_core.tools import BaseTool
 from langchain_core.tools.retriever import create_retriever_tool as lc_create_retriever_tool
+from langchain_core.documents import Document
 
 from Django_xm.apps.ai_engine.config import settings, get_logger
 
@@ -24,7 +26,6 @@ def create_retriever(
     fetch_k: Optional[int] = None,
     **kwargs,
 ) -> BaseRetriever:
-    """从向量库创建检索器"""
     search_type = search_type or settings.retriever_search_type
     k = k or settings.retriever_k
     score_threshold = score_threshold or settings.retriever_score_threshold
@@ -53,11 +54,62 @@ def create_retriever(
         raise
 
 
+def create_parent_document_retriever(
+    vector_store: VectorStore,
+    docstore=None,
+    child_splitter=None,
+    parent_splitter=None,
+    child_k: int = 20,
+    **kwargs,
+) -> BaseRetriever:
+    """
+    创建 ParentDocumentRetriever
+
+    核心思路：小块嵌入检索，返回包含该小块的完整父文档。
+    解决长文档分块后上下文碎片化问题。
+
+    Args:
+        vector_store: 用于存储子文档嵌入的向量库
+        docstore: 存储父文档的 docstore（默认 InMemoryDocstore）
+        child_splitter: 子文档分块器（小块，用于检索）
+        parent_splitter: 父文档分块器（大块，用于返回），None 表示不分块
+        child_k: 检索子文档数量
+
+    Returns:
+        ParentDocumentRetriever 实例
+    """
+    try:
+        from langchain.retrievers import ParentDocumentRetriever
+    except ImportError:
+        logger.error("ParentDocumentRetriever 不可用，请升级 langchain")
+        raise
+
+    if docstore is None:
+        from langchain.storage import InMemoryStore
+        docstore = InMemoryStore()
+
+    if child_splitter is None:
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+        child_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
+
+    retriever = ParentDocumentRetriever(
+        vectorstore=vector_store,
+        docstore=docstore,
+        child_splitter=child_splitter,
+        parent_splitter=parent_splitter,
+        search_kwargs={"k": child_k},
+        **kwargs,
+    )
+
+    logger.info(f"ParentDocumentRetriever 创建成功 (child_k={child_k})")
+    return retriever
+
+
 def create_retriever_tool(
     retriever: BaseRetriever,
     name: str = "knowledge_base",
     description: Optional[str] = None,
-) -> any:
+) -> BaseTool:
     """将检索器封装为 LangChain Tool"""
     if description is None:
         description = (
@@ -79,16 +131,6 @@ def create_retriever_tool(
     except Exception as e:
         logger.error(f"创建检索器工具失败: {e}")
         raise
-
-
-def get_embeddings():
-    """获取 Embeddings 实例"""
-    from langchain_openai import OpenAIEmbeddings
-    return OpenAIEmbeddings(
-        model=settings.embedding_model,
-        api_key=settings.openai_api_key,
-        base_url=settings.openai_api_base,
-    )
 
 
 def test_retriever(
@@ -125,7 +167,7 @@ def create_multi_retriever(
 ) -> BaseRetriever:
     """创建多检索器（ensemble retriever）"""
     try:
-        from langchain.retrievers import EnsembleRetriever
+        from langchain_community.retrievers import EnsembleRetriever
 
         logger.info(f"🔗 创建组合检索器: {len(retrievers)} 个检索器")
 

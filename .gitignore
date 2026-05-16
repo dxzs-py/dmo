@@ -2,7 +2,7 @@
 .idea/*
 git
 backend/db.sqlite3
-backend/.env
+backend/Django_xm/.env
 performance_benchmark.py
 backend/Django_xm/logs/*
 .trae

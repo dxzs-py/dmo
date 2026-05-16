@@ -1,0 +1,29 @@
+### Redis的常用功能
+
+1. **持久化**：
+   - Redis支持两种持久化方式：RDB（快照）和AOF（追加文件）。
+   - RDB：定期将数据快照保存到磁盘，适用于备份。
+   - AOF：每次修改数据时，将命令追加到日志文件中，更适合实时数据恢复。
+
+2. **发布/订阅**：
+   - Redis支持发布/订阅模式，允许客户端订阅特定频道，接收发布到该频道的消息。
+   - 示例命令：`SUBSCRIBE channel`（订阅频道），`PUBLISH channel message`（发布消息）。
+
+3. **事务**：
+   - Redis支持事务，允许将多个命令打包为一个原子操作。
+   - 使用 `MULTI` 开始事务，使用 `EXEC` 提交，使用 `DISCARD` 取消。
+   - 示例：
+     ```
+     MULTI
+     SET key1 value1
+     SET key2 value2
+     EXEC
+     ```
+
+4. **Lua脚本**：
+   - Redis支持使用Lua脚本来执行复杂操作，允许在服务器端执行代码以减少网络往返。
+   - 使用 `EVAL script numkeys key1 key2 ...` 命令执行Lua脚本。
+
+5. **键过期**：
+   - Redis支持为键设置过期时间，过期后自动删除。
+   - 使用 `EXPIRE key seconds` 设置过期时间，使用 `TTL key` 获取剩余时间。

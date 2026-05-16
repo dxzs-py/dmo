@@ -1,0 +1,1 @@
+{'topic': 'Python编程语言基础', 'objectives': ['理解Python的基本概念和特性', '能够编写简单的Python程序', '掌握基本的Python语法和数据类型'], 'key_points': ['Python的历史与发展', 'Python的基本语法结构', '数据类型和变量', '控制结构（条件语句和循环）', '函数的定义与调用'], 'difficulty': 'beginner', 'estimated_time': 120}

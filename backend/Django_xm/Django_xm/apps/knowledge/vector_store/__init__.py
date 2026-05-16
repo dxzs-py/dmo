@@ -2,7 +2,7 @@ from typing import List, Optional
 from langchain_core.documents import Document
 from langchain_core.vectorstores import VectorStore
 
-from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.config_center.config import get_logger
 
 logger = get_logger(__name__)
 

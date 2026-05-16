@@ -1,0 +1,122 @@
+{
+  "messages": [
+    {
+      "type": "ai",
+      "content": "已为您制定学习计划：\n\n📚 **学习主题**: Python编程语言基础\n\n🎯 **学习目标**:\n1. 理解Python的基本概念和特性\n2. 能够编写简单的Python程序\n3. 掌握基本的Python语法和数据类型\n\n💡 **关键知识点**:\n• Python的历史与发展\n• Python的基本语法结构\n• 数据类型和变量\n• 控制结构（条件语句和循环）\n• 函数的定义与调用\n\n📊 **难度级别**: beginner\n⏱️ **预计时间**: 120 分钟\n",
+      "additional_kwargs": {},
+      "response_metadata": {},
+      "id": "c0384457-abbb-44ed-86f1-0e7dd2641748"
+    },
+    {
+      "type": "ai",
+      "content": "\n\n📄 已检索到 0 个相关文档，将用于生成学习内容和练习题。",
+      "additional_kwargs": {},
+      "response_metadata": {},
+      "id": "c52b24a9-445d-4c86-90d4-9f69770b5baf"
+    },
+    {
+      "type": "ai",
+      "content": "\n\n📝 **练习题已生成**（共 5 题，总分 100 分，建议用时 30 分钟）\n\n**第 1 题** (10 分)\nPython 是在哪一年首次发布的？\n  A. 1989\n  B. 1991\n  C. 1995\n  D. 2000\n\n**第 2 题** (15 分)\n在 Python 中，以下哪个是有效的变量名？\n  A. 1variable\n  B. variable-name\n  C. variable_name\n  D. variable name\n\n**第 3 题** (10 分)\n以下哪一项是 Python 中的控制结构？\n  A. for 循环\n  B. define\n  C. return\n  D. print\n\n**第 4 题** (20 分)\n在 Python 中，定义一个函数使用关键字 __________。\n\n**第 5 题** (30 分)\n简要描述 Python 中的数据类型，并举例说明。\n\n",
+      "additional_kwargs": {},
+      "response_metadata": {},
+      "id": "0fc718c9-216e-49d3-a8be-d5aee0481a6d"
+    }
+  ],
+  "user_question": "什么是Python?",
+  "learning_plan": {
+    "topic": "Python编程语言基础",
+    "objectives": [
+      "理解Python的基本概念和特性",
+      "能够编写简单的Python程序",
+      "掌握基本的Python语法和数据类型"
+    ],
+    "key_points": [
+      "Python的历史与发展",
+      "Python的基本语法结构",
+      "数据类型和变量",
+      "控制结构（条件语句和循环）",
+      "函数的定义与调用"
+    ],
+    "difficulty": "beginner",
+    "estimated_time": 120
+  },
+  "retrieved_docs": [],
+  "quiz": {
+    "questions": [
+      {
+        "id": "q1",
+        "type": "multiple_choice",
+        "question": "Python 是在哪一年首次发布的？",
+        "options": [
+          "1989",
+          "1991",
+          "1995",
+          "2000"
+        ],
+        "answer": "1991",
+        "explanation": "Python 由 Guido van Rossum 于 1991 年首次发布，这一版本标志着 Python 语言的正式问世。",
+        "points": 10
+      },
+      {
+        "id": "q2",
+        "type": "multiple_choice",
+        "question": "在 Python 中，以下哪个是有效的变量名？",
+        "options": [
+          "1variable",
+          "variable-name",
+          "variable_name",
+          "variable name"
+        ],
+        "answer": "variable_name",
+        "explanation": "在 Python 中，变量名必须以字母或下划线开头，后续可以包含字母、数字或下划线。选项 'variable_name' 符合这一规则。",
+        "points": 15
+      },
+      {
+        "id": "q3",
+        "type": "multiple_choice",
+        "question": "以下哪一项是 Python 中的控制结构？",
+        "options": [
+          "for 循环",
+          "define",
+          "return",
+          "print"
+        ],
+        "answer": "for 循环",
+        "explanation": "'for 循环' 是 Python 中的控制结构，用于实现循环。其他选项不是控制结构。",
+        "points": 10
+      },
+      {
+        "id": "q4",
+        "type": "fill_blank",
+        "question": "在 Python 中，定义一个函数使用关键字 __________。",
+        "options": null,
+        "answer": "def",
+        "explanation": "在 Python 中，定义一个函数时使用 'def' 关键字，后面跟着函数名和参数。",
+        "points": 20
+      },
+      {
+        "id": "q5",
+        "type": "short_answer",
+        "question": "简要描述 Python 中的数据类型，并举例说明。",
+        "options": null,
+        "answer": "Python 中有多种数据类型，包括整数（int）、浮点数（float）、字符串（str）、布尔值（bool）等。例如，整数可以是 10，浮点数可以是 10.5，字符串可以是 'Hello'，布尔值可以是 True 或 False。",
+        "explanation": "Python 支持多种基本数据类型，其中整数用于表示整数，浮点数用于表示小数，字符串用于表示文本，布尔值用于表示真或假。这些数据类型是编程中常用的基本元素。",
+        "points": 30
+      }
+    ],
+    "total_points": 100,
+    "time_limit": 30
+  },
+  "user_answers": null,
+  "score": null,
+  "score_details": null,
+  "feedback": null,
+  "retry_count": 0,
+  "should_retry": false,
+  "current_step": "waiting_for_answers",
+  "thread_id": "study_48017854763d",
+  "created_at": "2026-05-10T10:20:12.137646",
+  "updated_at": "2026-05-10T10:20:28.463313",
+  "error": null,
+  "error_node": null
+}

@@ -114,8 +114,20 @@ def web_search(query: str) -> str:
         if not results:
             return "未找到相关结果"
 
+        if isinstance(results, str):
+            return results
+
+        if not isinstance(results, list):
+            return str(results)
+
         formatted_results = []
         for i, result in enumerate(results, 1):
+            if isinstance(result, str):
+                formatted_results.append(f"{i}. {result}")
+                continue
+            if not isinstance(result, dict):
+                formatted_results.append(f"{i}. {str(result)}")
+                continue
             title = result.get("title", "无标题")
             url = result.get("url", "")
             content = result.get("content", "")[:300]

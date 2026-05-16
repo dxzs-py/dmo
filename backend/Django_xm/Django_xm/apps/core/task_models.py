@@ -28,8 +28,11 @@ class CeleryTaskRecord(AuditModel):
         RAG_INDEX = 'rag_index', 'RAG索引创建'
         RAG_ADD_DOCS = 'rag_add_docs', 'RAG文档添加'
         RAG_DELETE_INDEX = 'rag_delete_index', 'RAG索引删除'
+        RAG_UPDATE_INDEX = 'rag_update_index', 'RAG索引更新'
         WORKFLOW = 'workflow', '工作流执行'
-        EMBEDDING = 'embedding', '向量化处理'
+        CHAT_CLEANUP = 'chat_cleanup', '附件清理'
+        CHAT_INDEX = 'chat_index', '附件入库'
+        CHAT_STORAGE = 'chat_storage', '存储检查'
         OTHER = 'other', '其他'
 
     celery_task_id = models.CharField(

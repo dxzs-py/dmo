@@ -59,6 +59,10 @@ const props = defineProps({
   isSelected: {
     type: Boolean,
     default: false
+  },
+  showDebug: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -177,6 +181,12 @@ function handleMessageClick() {
         <MarkdownRenderer :content="message.content" />
       </div>
       <div v-else class="message-text assistant-text">
+        <AiReasoning
+          v-if="message.reasoning && message.reasoning.content"
+          :content="message.reasoning.content"
+          :duration="message.reasoning.duration"
+          :is-streaming="isStreaming && isLast"
+        />
         <MessageBranch
           v-if="message.versions && message.versions.length > 1"
           :default-branch="message.currentVersion || 0"
@@ -217,13 +227,6 @@ function handleMessageClick() {
           <span>引用了 {{ sourceCount }} 个来源</span>
         </div>
       </div>
-
-      <AiReasoning
-        v-if="message.reasoning && message.reasoning.content"
-        :content="message.reasoning.content"
-        :duration="message.reasoning.duration"
-        :is-streaming="isStreaming && isLast"
-      />
 
       <Sources
         v-if="message.sources && message.sources.length > 0"
@@ -267,7 +270,7 @@ function handleMessageClick() {
               :tool-name="toolCall.name"
               :input="toolCall.input || toolCall.parameters"
               :output="toolCall.output || toolCall.result"
-              :status="toolCall.status || 'completed'"
+              :status="toolCall.status || (toolCall.state === 'output-error' ? 'failed' : toolCall.state === 'output-available' ? 'completed' : 'running')"
             />
           </AiQueue>
           <ToolCallCard
@@ -275,7 +278,7 @@ function handleMessageClick() {
             :tool-name="message.toolCalls[0].name"
             :input="message.toolCalls[0].input || message.toolCalls[0].parameters"
             :output="message.toolCalls[0].output || message.toolCalls[0].result"
-            :status="message.toolCalls[0].status || 'completed'"
+            :status="message.toolCalls[0].status || (message.toolCalls[0].state === 'output-error' ? 'failed' : message.toolCalls[0].state === 'output-available' ? 'completed' : 'running')"
           />
         </TransitionGroup>
       </div>
@@ -327,6 +330,60 @@ function handleMessageClick() {
         </div>
       </AiContext>
 
+      <div v-if="showDebug && message.role === 'assistant'" class="debug-panel">
+        <div class="debug-panel-header">
+          <span class="debug-panel-title">🐛 调试信息</span>
+        </div>
+        <div class="debug-panel-body">
+          <div class="debug-field">
+            <span class="debug-label">消息 ID:</span>
+            <span class="debug-value">{{ message.id || 'N/A' }}</span>
+          </div>
+          <div class="debug-field">
+            <span class="debug-label">角色:</span>
+            <span class="debug-value">{{ message.role }}</span>
+          </div>
+          <div class="debug-field">
+            <span class="debug-label">时间:</span>
+            <span class="debug-value">{{ message.timestamp || 'N/A' }}</span>
+          </div>
+          <div v-if="message.model" class="debug-field">
+            <span class="debug-label">模型:</span>
+            <span class="debug-value">{{ message.model }}</span>
+          </div>
+          <div v-if="message.tokenUsage" class="debug-field">
+            <span class="debug-label">Token 用量:</span>
+            <span class="debug-value">
+              输入 {{ message.tokenUsage.promptTokens || 0 }} / 输出 {{ message.tokenUsage.completionTokens || 0 }} / 总计 {{ message.tokenUsage.totalTokens || 0 }}
+            </span>
+          </div>
+          <div v-if="message.context" class="debug-field">
+            <span class="debug-label">上下文:</span>
+            <span class="debug-value">{{ message.context.usedTokens || 0 }} / {{ message.context.maxTokens || '128K' }} tokens ({{ ((message.context.percentage || 0) * 100).toFixed(1) }}%)</span>
+          </div>
+          <div v-if="message.toolCalls && message.toolCalls.length > 0" class="debug-field">
+            <span class="debug-label">工具调用:</span>
+            <span class="debug-value">{{ message.toolCalls.length }} 次调用</span>
+          </div>
+          <div v-if="message.sources && message.sources.length > 0" class="debug-field">
+            <span class="debug-label">来源数:</span>
+            <span class="debug-value">{{ message.sources.length }}</span>
+          </div>
+          <div v-if="message.latency" class="debug-field">
+            <span class="debug-label">延迟:</span>
+            <span class="debug-value">{{ message.latency }}ms</span>
+          </div>
+          <details v-if="message.rawResponse" class="debug-details">
+            <summary class="debug-summary">原始响应</summary>
+            <pre class="debug-json">{{ typeof message.rawResponse === 'string' ? message.rawResponse : JSON.stringify(message.rawResponse, null, 2) }}</pre>
+          </details>
+          <details class="debug-details">
+            <summary class="debug-summary">完整消息数据</summary>
+            <pre class="debug-json">{{ JSON.stringify(message, null, 2) }}</pre>
+          </details>
+        </div>
+      </div>
+
       <AiControls v-if="message.role === 'assistant' && !isLoading" class="message-bottom-controls">
         <el-button link size="small" :icon="copied ? Check : CopyDocument" @click.stop="handleCopy">
           {{ copied ? '已复制' : '复制' }}
@@ -344,8 +401,7 @@ function handleMessageClick() {
   display: flex;
   margin-bottom: 24px;
   max-width: 100%;
-  transition: background-color 0.2s ease;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   padding: 4px 0;
 }
 
@@ -357,30 +413,34 @@ function handleMessageClick() {
   cursor: pointer;
 }
 
-.message.assistant.has-metadata:hover {
-  background-color: var(--el-fill-color-lighter);
+.message.assistant:hover {
+  background-color: color-mix(in srgb, var(--foreground) 3%, transparent);
 }
 
 .message.is-selected {
-  background-color: var(--el-color-primary-light-9);
-  outline: 1px solid var(--el-color-primary-light-7);
+  background-color: color-mix(in srgb, var(--sidebar-primary) 5%, transparent);
+}
+
+.message.is-streaming {
+  animation: none;
 }
 
 .message-avatar {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--el-color-primary) 0%, var(--el-color-primary-light-3) 100%);
+  background: var(--gradient-primary);
   display: flex;
   align-items: center;
   justify-content: center;
   color: white;
   flex-shrink: 0;
   margin: 0 12px;
+  box-shadow: var(--shadow-sm);
 }
 
 .message.user .message-avatar {
-  background: linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%);
+  background: var(--gradient-secondary);
 }
 
 .message-content {
@@ -413,7 +473,7 @@ function handleMessageClick() {
   align-items: center;
   gap: 2px;
   opacity: 0;
-  transition: opacity 0.2s;
+  transition: opacity var(--transition-fast);
 }
 
 .message:hover .message-actions {
@@ -421,7 +481,7 @@ function handleMessageClick() {
 }
 
 .message-actions .el-button.is-active {
-  color: var(--el-color-primary);
+  color: var(--sidebar-primary);
 }
 
 .copy-success {
@@ -437,37 +497,39 @@ function handleMessageClick() {
 
 .message-ai-image {
   max-width: 300px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-sm);
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: transform var(--transition-normal), box-shadow var(--transition-normal);
 }
 
 .message-ai-image:hover {
   transform: scale(1.02);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-md);
 }
 
 .message-role {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--muted-foreground);
   padding: 0 4px;
   font-weight: 500;
 }
 
 .message-time {
   font-size: 11px;
-  color: var(--el-text-color-placeholder);
+  color: var(--muted-foreground);
+  opacity: 0.7;
 }
 
 .user-text {
-  background: var(--el-fill-color-light);
-  color: var(--el-text-color-primary);
-  border-radius: 16px 16px 4px 16px;
+  background: color-mix(in srgb, var(--sidebar-primary) 12%, transparent);
+  color: var(--foreground);
+  border-radius: 18px 18px 4px 18px;
   padding: 10px 16px;
   max-width: 85%;
   word-break: break-word;
+  border: 1px solid color-mix(in srgb, var(--sidebar-primary) 15%, transparent);
 }
 
 .assistant-text {
@@ -490,16 +552,17 @@ function handleMessageClick() {
   gap: 4px;
   padding: 3px 10px;
   border-radius: 12px;
-  background: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
+  background: color-mix(in srgb, var(--sidebar-primary) 8%, transparent);
+  color: var(--sidebar-primary);
   font-size: 12px;
   cursor: pointer;
-  transition: all 0.2s;
-  border: 1px solid var(--el-color-primary-light-8);
+  transition: all var(--transition-fast);
+  border: 1px solid color-mix(in srgb, var(--sidebar-primary) 15%, transparent);
 }
 
 .source-badge:hover {
-  background: var(--el-color-primary-light-8);
+  background: color-mix(in srgb, var(--sidebar-primary) 15%, transparent);
+  box-shadow: var(--shadow-sm);
 }
 
 .message-cot,
@@ -519,7 +582,7 @@ function handleMessageClick() {
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--muted-foreground);
   font-weight: 500;
 }
 
@@ -565,7 +628,7 @@ function handleMessageClick() {
 .message-bottom-controls {
   margin-top: 8px;
   opacity: 0;
-  transition: opacity 0.2s;
+  transition: opacity var(--transition-fast);
 }
 
 .message:hover .message-bottom-controls {
@@ -580,13 +643,13 @@ function handleMessageClick() {
 
 .context-tokens {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--muted-foreground);
 }
 
 .context-bar {
   height: 4px;
   border-radius: 2px;
-  background: var(--el-fill-color);
+  background: var(--accent);
   overflow: hidden;
 }
 
@@ -623,5 +686,88 @@ function handleMessageClick() {
     max-width: 92%;
     padding: 8px 12px;
   }
+
+  .message-bottom-controls {
+    opacity: 1;
+  }
+}
+
+.debug-panel {
+  margin-top: 12px;
+  border: 1px solid color-mix(in srgb, #f59e0b 30%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, #f59e0b 4%, var(--card));
+  overflow: hidden;
+}
+
+.debug-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: color-mix(in srgb, #f59e0b 8%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, #f59e0b 15%, transparent);
+}
+
+.debug-panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #f59e0b;
+}
+
+.debug-panel-body {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.debug-field {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.debug-label {
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  min-width: 70px;
+}
+
+.debug-value {
+  color: var(--foreground);
+  word-break: break-all;
+}
+
+.debug-details {
+  margin-top: 4px;
+}
+
+.debug-summary {
+  font-size: 12px;
+  color: #f59e0b;
+  cursor: pointer;
+  padding: 4px 0;
+  user-select: none;
+}
+
+.debug-summary:hover {
+  text-decoration: underline;
+}
+
+.debug-json {
+  margin: 4px 0 0;
+  padding: 8px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--foreground);
 }
 </style>

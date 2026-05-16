@@ -122,14 +122,14 @@ export const chatAPI = {
     if (!file) return Promise.reject(new Error('请选择要上传的文件'))
     const formData = new FormData()
     formData.append('file', file)
-    return apiClient.post(`/chat/sessions/${sessionId}/attachments/`, formData, {
+    return apiClient.post(`/attachments/sessions/${sessionId}/upload/`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
   },
 
   getAttachments(sessionId) {
     if (!sessionId) return Promise.reject(new Error('会话ID不能为空'))
-    return apiClient.get(`/chat/sessions/${sessionId}/attachments/list/`)
+    return apiClient.get(`/attachments/sessions/${sessionId}/list/`)
   },
 
   compactSession(sessionId) {
@@ -146,6 +146,16 @@ export const chatAPI = {
   denyToolConfirmation(confirmId) { return apiClient.post('/chat/tool-confirmation/', { confirm_id: confirmId, action: 'deny' }) },
   getCostInfo() { return apiClient.get('/chat/cost/') },
   getProjectContext(path = null) { return apiClient.get('/chat/project-context/', { params: path ? { path } : {} }) },
+
+  getMcpStatus() { return apiClient.get('/chat/mcp/status/') },
+  getMcpTools(params = {}) { return apiClient.get('/chat/mcp/tools/', { params }) },
+  testMcpServer(serverName) { return apiClient.post('/chat/mcp/test/', { server_name: serverName }) },
+  getMcpCallLog(limit = 50) { return apiClient.get('/chat/mcp/call-log/', { params: { limit } }) },
+  getMcpServers() { return apiClient.get('/chat/mcp/servers/') },
+  addMcpServer(data) { return apiClient.post('/chat/mcp/servers/add/', data) },
+  deleteMcpServer(name) { return apiClient.post('/chat/mcp/servers/delete/', { name }) },
+  getToolList() { return apiClient.get('/chat/tools/') },
+  uploadTool(data) { return apiClient.post('/chat/tools/upload/', data) },
 }
 
 export async function* streamChat(request) {

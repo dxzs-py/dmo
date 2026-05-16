@@ -1,348 +1,525 @@
 <script setup>
-import { ref, computed } from 'vue'
-import { ElSelect, ElOption, ElInput } from 'element-plus'
-import { Loading, Search, Check } from '@element-plus/icons-vue'
+import { ref, computed, onMounted } from 'vue'
+import { ElSelect, ElOption, ElOptionGroup, ElInput, ElSwitch, ElButton, ElTooltip, ElDivider, ElTag, ElSlider, ElInputNumber, ElPopover } from 'element-plus'
+import { Check, Loading, Setting, Connection, Warning, Close } from '@element-plus/icons-vue'
+import { useModelStore } from '../../stores/model'
+import { ElMessage } from 'element-plus'
 
 const props = defineProps({
-  modelValue: {
-    type: String,
-    default: 'deepseek-chat'
-  },
   disabled: {
     type: Boolean,
     default: false
   }
 })
 
-const emit = defineEmits(['update:modelValue', 'change'])
+const emit = defineEmits(['change'])
 
+const modelStore = useModelStore()
 const searchQuery = ref('')
-const isDropdownOpen = ref(false)
+const settingsVisible = ref(false)
 
-const models = [
-  {
-    value: 'deepseek-chat',
-    label: 'DeepSeek Chat',
-    provider: 'DeepSeek',
-    providers: ['deepseek'],
-    icon: '🤖'
-  },
-  {
-    value: 'deepseek-coder',
-    label: 'DeepSeek Coder',
-    provider: 'DeepSeek',
-    providers: ['deepseek'],
-    icon: '🤖'
-  },
-  {
-    value: 'gpt-4o',
-    label: 'GPT-4o',
-    provider: 'OpenAI',
-    providers: ['openai', 'azure'],
-    icon: '🔵'
-  },
-  {
-    value: 'gpt-4o-mini',
-    label: 'GPT-4o Mini',
-    provider: 'OpenAI',
-    providers: ['openai', 'azure'],
-    icon: '🔵'
-  },
-  {
-    value: 'gpt-4-turbo',
-    label: 'GPT-4 Turbo',
-    provider: 'OpenAI',
-    providers: ['openai', 'azure'],
-    icon: '🔵'
-  },
-  {
-    value: 'claude-opus-4',
-    label: 'Claude 4 Opus',
-    provider: 'Anthropic',
-    providers: ['anthropic', 'azure', 'google', 'amazon-bedrock'],
-    icon: '🟣'
-  },
-  {
-    value: 'claude-sonnet-4',
-    label: 'Claude 4 Sonnet',
-    provider: 'Anthropic',
-    providers: ['anthropic', 'azure', 'google', 'amazon-bedrock'],
-    icon: '🟣'
-  },
-  {
-    value: 'claude-3-5-sonnet',
-    label: 'Claude 3.5 Sonnet',
-    provider: 'Anthropic',
-    providers: ['anthropic', 'azure'],
-    icon: '🟣'
-  },
-  {
-    value: 'gemini-2.0-flash',
-    label: 'Gemini 2.0 Flash',
-    provider: 'Google',
-    providers: ['google'],
-    icon: '🟢'
-  },
-  {
-    value: 'gemini-1.5-pro',
-    label: 'Gemini 1.5 Pro',
-    provider: 'Google',
-    providers: ['google'],
-    icon: '🟢'
-  },
-  {
-    value: 'qwen-plus',
-    label: 'Qwen Plus',
-    provider: 'Alibaba',
-    providers: ['alibaba'],
-    icon: '🟠'
-  },
-  {
-    value: 'qwen-turbo',
-    label: 'Qwen Turbo',
-    provider: 'Alibaba',
-    providers: ['alibaba'],
-    icon: '🟠'
-  },
-  {
-    value: 'qwen-max',
-    label: 'Qwen Max',
-    provider: 'Alibaba',
-    providers: ['alibaba'],
-    icon: '🟠'
-  },
-  {
-    value: 'yi-large',
-    label: 'Yi Large',
-    provider: 'ZeroOne',
-    providers: ['zeroone'],
-    icon: '🟡'
-  },
-  {
-    value: 'glm-4',
-    label: 'GLM-4',
-    provider: 'Zhipu',
-    providers: ['zhipu'],
-    icon: '🟢'
-  },
-  {
-    value: 'moonshot-v1-8k',
-    label: 'Moonshot V1 8K',
-    provider: 'Moonshot',
-    providers: ['moonshot'],
-    icon: '🌙'
-  },
-  {
-    value: 'moonshot-v1-32k',
-    label: 'Moonshot V1 32K',
-    provider: 'Moonshot',
-    providers: ['moonshot'],
-    icon: '🌙'
-  },
-]
-
-const providerColors = {
-  'deepseek': '#3B82F6',
-  'openai': '#10A37F',
-  'anthropic': '#CC785C',
-  'google': '#4285F4',
-  'azure': '#0078D4',
-  'alibaba': '#FF6A00',
-  'amazon-bedrock': '#FF9900',
-  'zeroone': '#FFD700',
-  'zhipu': '#00A86B',
-  'moonshot': '#6B5B95',
-}
-
-const filteredModels = computed(() => {
-  if (!searchQuery.value.trim()) {
-    return models
-  }
-  const query = searchQuery.value.toLowerCase()
-  return models.filter(m =>
-    m.label.toLowerCase().includes(query) ||
-    m.provider.toLowerCase().includes(query)
-  )
+const localTemperature = computed({
+  get: () => modelStore.temperature,
+  set: (val) => modelStore.setTemperature(val)
 })
 
-const groupedModels = computed(() => {
+const localMaxTokens = computed({
+  get: () => modelStore.maxTokens,
+  set: (val) => modelStore.setMaxTokens(val)
+})
+
+const selectValue = computed(() => {
+  if (!modelStore.currentProviderId) return ''
+  return `${modelStore.currentProviderId}::${modelStore.currentModelName || ''}`
+})
+
+const handleSelect = (val) => {
+  const [providerId, modelName] = val.split('::')
+  modelStore.selectProvider(providerId, modelName || null)
+  emit('change', {
+    providerId: modelStore.currentProviderId,
+    modelName: modelStore.currentModelName,
+    specialParams: modelStore.specialParams,
+  })
+  ElMessage.success(`已切换到 ${modelStore.currentModelName || providerId}`)
+}
+
+const groupedOptions = computed(() => {
   const groups = {}
-  for (const model of filteredModels.value) {
-    if (!groups[model.provider]) {
-      groups[model.provider] = []
+  for (const provider of modelStore.providers) {
+    const label = provider.label
+    if (!groups[label]) {
+      groups[label] = {
+        label,
+        icon: provider.icon,
+        available: provider.available,
+        options: [],
+      }
     }
-    groups[model.provider].push(model)
-  }
-  return groups
-})
-
-const providerOrder = ['OpenAI', 'Anthropic', 'Google', 'DeepSeek', 'Alibaba', 'ZeroOne', 'Zhipu', 'Moonshot']
-
-const sortedGroups = computed(() => {
-  const result = []
-  for (const provider of providerOrder) {
-    if (groupedModels.value[provider]) {
-      result.push({
-        label: provider,
-        options: groupedModels.value[provider]
+    for (const model of provider.models) {
+      groups[label].options.push({
+        value: `${provider.id}::${model}`,
+        label: model,
+        providerId: provider.id,
+        modelName: model,
+        isDefault: model === provider.default_model,
       })
     }
   }
-  for (const provider of Object.keys(groupedModels.value)) {
-    if (!providerOrder.includes(provider)) {
-      result.push({
-        label: provider,
-        options: groupedModels.value[provider]
-      })
-    }
-  }
-  return result
+  return Object.values(groups)
 })
 
-const currentModel = computed({
-  get() {
-    return props.modelValue
-  },
-  set(value) {
-    emit('update:modelValue', value)
-    emit('change', value)
-  }
+const filteredGroups = computed(() => {
+  if (!searchQuery.value.trim()) return groupedOptions.value
+  const q = searchQuery.value.toLowerCase()
+  return groupedOptions.value
+    .map(group => ({
+      ...group,
+      options: group.options.filter(
+        opt => opt.label.toLowerCase().includes(q) || group.label.toLowerCase().includes(q)
+      ),
+    }))
+    .filter(group => group.options.length > 0)
 })
 
-const handleOpenChange = (open) => {
-  isDropdownOpen.value = open
-  if (!open) {
-    searchQuery.value = ''
+const handleTest = async () => {
+  await modelStore.testConnection()
+}
+
+const handleThinkingToggle = (val) => {
+  const paramCfg = modelStore.currentProviderSpecialParams?.thinking
+  if (!paramCfg) return
+  modelStore.setSpecialParam('thinking', val ? paramCfg.enabled_value : paramCfg.disabled_value)
+  if (val) {
+    ElMessage.info('思考模式已启用，Temperature 参数将被忽略')
+  } else {
+    ElMessage.info('思考模式已关闭')
   }
 }
 
-const getProviderStyle = (provider) => {
-  const color = providerColors[provider] || '#999'
-  return {
-    backgroundColor: color + '20',
-    color: color,
-    borderColor: color + '40',
-  }
+const handleReasoningEffortChange = (val) => {
+  modelStore.setSpecialParam('reasoning_effort', val)
 }
+
+const thinkingEnabled = computed(() => {
+  const paramCfg = modelStore.currentProviderSpecialParams?.thinking
+  if (!paramCfg) return false
+  const current = modelStore.specialParams?.thinking
+  return current?.type === 'enabled'
+})
+
+const reasoningEffort = computed(() => {
+  return modelStore.specialParams?.reasoning_effort ||
+    modelStore.currentProviderSpecialParams?.reasoning_effort?.default ||
+    'high'
+})
+
+const hasSpecialParams = computed(() => {
+  return Object.keys(modelStore.currentProviderSpecialParams).length > 0
+})
+
+onMounted(() => {
+  modelStore.loadProviders()
+})
 </script>
 
 <template>
   <div class="model-selector">
-    <el-select
-      v-model="currentModel"
-      :disabled="disabled"
-      placeholder="选择模型"
-      class="model-select"
-      :suffix-icon="disabled ? Loading : undefined"
-      filterable
-      :filter-method="(val) => { searchQuery = val }"
-      popper-class="model-selector-popper"
-      @visible-change="handleOpenChange"
-    >
-      <template #header>
-        <div class="selector-header">
-          <el-input
-            v-model="searchQuery"
-            placeholder="搜索模型..."
-            size="small"
-            :prefix-icon="Search"
-            clearable
-            @click.stop
-          />
-        </div>
-      </template>
-      <el-option-group
-        v-for="group in sortedGroups"
-        :key="group.label"
-        :label="group.label"
+    <div class="selector-main">
+      <el-select
+        :model-value="selectValue"
+        :disabled="disabled || modelStore.isLoading"
+        placeholder="选择模型"
+        class="model-select"
+        :suffix-icon="modelStore.isLoading ? Loading : undefined"
+        filterable
+        :filter-method="(val) => { searchQuery = val }"
+        popper-class="model-selector-popper"
+        @update:model-value="handleSelect"
       >
-        <el-option
-          v-for="model in group.options"
-          :key="model.value"
-          :label="model.label"
-          :value="model.value"
-          class="model-option"
+        <template #header>
+          <div class="selector-header">
+            <el-input
+              v-model="searchQuery"
+              placeholder="搜索模型..."
+              size="small"
+              clearable
+              @click.stop
+            />
+          </div>
+        </template>
+        <el-option-group
+          v-for="group in filteredGroups"
+          :key="group.label"
+          :label="group.label"
         >
-          <div class="model-option-content">
-            <span class="model-icon">{{ model.icon }}</span>
-            <div class="model-info">
-              <span class="model-name">{{ model.label }}</span>
-              <div class="model-providers">
-                <span
-                  v-for="provider in model.providers"
-                  :key="provider"
-                  class="provider-badge"
-                  :style="getProviderStyle(provider)"
-                >
-                  {{ provider }}
-                </span>
+          <template #label>
+            <span class="group-label">
+              <span class="group-icon">{{ group.icon }}</span>
+              <span>{{ group.label }}</span>
+              <el-tag v-if="!group.available" type="danger" size="small" class="unavailable-tag">未配置</el-tag>
+            </span>
+          </template>
+          <el-option
+            v-for="opt in group.options"
+            :key="opt.value"
+            :label="opt.label"
+            :value="opt.value"
+            :disabled="!group.available"
+          >
+            <div class="model-option-content">
+              <span class="model-name">{{ opt.label }}</span>
+              <el-tag v-if="opt.isDefault" type="success" size="small">默认</el-tag>
+              <el-icon v-if="opt.value === selectValue" class="check-icon" color="#409EFF">
+                <Check />
+              </el-icon>
+            </div>
+          </el-option>
+        </el-option-group>
+      </el-select>
+
+      <el-popover
+        v-model:visible="settingsVisible"
+        placement="bottom-end"
+        :width="340"
+        trigger="click"
+        :show-arrow="true"
+        popper-class="model-settings-popover"
+      >
+        <template #reference>
+          <el-button
+            :class="['settings-trigger', { active: settingsVisible }]"
+            :disabled="!modelStore.currentProviderId"
+            size="small"
+            title="模型参数配置"
+          >
+            <el-icon :size="14"><Setting /></el-icon>
+          </el-button>
+        </template>
+
+        <div class="settings-panel">
+          <div class="settings-header">
+            <span class="settings-title">参数配置</span>
+            <span class="settings-model-name">{{ modelStore.currentModelName }}</span>
+          </div>
+
+          <div class="settings-section">
+            <div class="section-title">通用参数</div>
+
+            <div class="param-row">
+              <span class="param-label">
+                Temperature
+                <el-tooltip content="控制生成随机性，0 更确定，1 更随机。思考模式开启时此参数无效" placement="top">
+                  <el-icon class="param-help"><Warning /></el-icon>
+                </el-tooltip>
+              </span>
+              <div class="param-control">
+                <el-slider
+                  v-model="localTemperature"
+                  :min="0"
+                  :max="1"
+                  :step="0.05"
+                  :disabled="thinkingEnabled"
+                  :show-tooltip="false"
+                  style="flex: 1; min-width: 80px"
+                />
+                <el-input-number
+                  v-model="localTemperature"
+                  :min="0"
+                  :max="1"
+                  :step="0.05"
+                  :precision="2"
+                  :disabled="thinkingEnabled"
+                  size="small"
+                  style="width: 76px"
+                  controls-position="right"
+                />
               </div>
             </div>
-            <el-icon v-if="model.value === currentModel" class="check-icon" color="#409EFF">
-              <Check />
-            </el-icon>
+
+            <div class="param-row">
+              <span class="param-label">
+                Max Tokens
+                <el-tooltip content="模型生成的最大 token 数量" placement="top">
+                  <el-icon class="param-help"><Warning /></el-icon>
+                </el-tooltip>
+              </span>
+              <div class="param-control">
+                <el-input-number
+                  v-model="localMaxTokens"
+                  :min="64"
+                  :max="8192"
+                  :step="256"
+                  size="small"
+                  style="width: 120px"
+                  controls-position="right"
+                />
+              </div>
+            </div>
           </div>
-        </el-option>
-      </el-option-group>
-    </el-select>
+
+          <template v-if="hasSpecialParams">
+            <div class="settings-section">
+              <div class="section-title">{{ modelStore.currentProvider?.label }} 专属</div>
+
+              <template v-if="modelStore.currentProviderSpecialParams?.thinking">
+                <div class="param-row">
+                  <span class="param-label">
+                    {{ modelStore.currentProviderSpecialParams.thinking.label }}
+                    <el-tooltip :content="modelStore.currentProviderSpecialParams.thinking.description" placement="top">
+                      <el-icon class="param-help"><Warning /></el-icon>
+                    </el-tooltip>
+                  </span>
+                  <el-switch
+                    :model-value="thinkingEnabled"
+                    @change="handleThinkingToggle"
+                  />
+                </div>
+              </template>
+
+              <template v-if="modelStore.currentProviderSpecialParams?.reasoning_effort && thinkingEnabled">
+                <div class="param-row">
+                  <span class="param-label">
+                    {{ modelStore.currentProviderSpecialParams.reasoning_effort.label }}
+                    <el-tooltip :content="modelStore.currentProviderSpecialParams.reasoning_effort.description" placement="top">
+                      <el-icon class="param-help"><Warning /></el-icon>
+                    </el-tooltip>
+                  </span>
+                  <el-select
+                    :model-value="reasoningEffort"
+                    size="small"
+                    style="width: 100px"
+                    @update:model-value="handleReasoningEffortChange"
+                  >
+                    <el-option
+                      v-for="opt in modelStore.currentProviderSpecialParams.reasoning_effort.options"
+                      :key="opt"
+                      :label="opt"
+                      :value="opt"
+                    />
+                  </el-select>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <div class="settings-footer">
+            <el-button
+              size="small"
+              :loading="modelStore.isTesting"
+              @click="handleTest"
+            >
+              <el-icon style="margin-right: 4px"><Connection /></el-icon>
+              测试连接
+            </el-button>
+            <div v-if="modelStore.testResult" class="test-result-inline" :class="modelStore.testResult.success ? 'success' : 'error'">
+              <el-icon v-if="modelStore.testResult.success"><Check /></el-icon>
+              <el-icon v-else><Warning /></el-icon>
+              <span>{{ modelStore.testResult.message }}</span>
+            </div>
+          </div>
+        </div>
+      </el-popover>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .model-selector {
-  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+}
+
+.selector-main {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .model-select {
-  width: 220px;
+  width: 200px;
+}
+
+.settings-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--el-border-color) !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  color: var(--el-text-color-secondary) !important;
+  cursor: pointer;
+  transition: all 0.2s;
+  padding: 0 !important;
+  --el-button-size: 28px;
+}
+
+.settings-trigger:hover:not(:disabled):not(.is-disabled) {
+  background: var(--el-fill-color-light) !important;
+  color: var(--el-color-primary) !important;
+  border-color: var(--el-color-primary-light-5) !important;
+}
+
+.settings-trigger.active {
+  background: var(--el-color-primary-light-9) !important;
+  color: var(--el-color-primary) !important;
+  border-color: var(--el-color-primary-light-5) !important;
+}
+
+.settings-trigger:disabled,
+.settings-trigger.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: transparent !important;
+}
+
+.settings-panel {
+  padding: 4px 0;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px 12px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  margin-bottom: 12px;
+}
+
+.settings-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.settings-model-name {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color-light);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.settings-section {
+  margin-bottom: 12px;
+}
+
+.settings-section:last-of-type {
+  margin-bottom: 8px;
+}
+
+.section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--el-text-color-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+  padding: 0 4px;
+}
+
+.param-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 4px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.param-row:hover {
+  background: var(--el-fill-color-lighter);
+}
+
+.param-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+  white-space: nowrap;
+}
+
+.param-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  justify-content: flex-end;
+  margin-left: 12px;
+}
+
+.param-help {
+  color: var(--el-text-color-placeholder);
+  cursor: help;
+  font-size: 12px;
+}
+
+.settings-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.test-result-inline {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.test-result-inline.success {
+  color: var(--el-color-success);
+}
+
+.test-result-inline.error {
+  color: var(--el-color-danger);
 }
 
 .selector-header {
   padding: 4px 0;
 }
 
+.group-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.group-icon {
+  font-size: 16px;
+}
+
+.unavailable-tag {
+  margin-left: 4px;
+}
+
 .model-option-content {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 4px 0;
+  gap: 8px;
+  padding: 2px 0;
   width: 100%;
-}
-
-.model-icon {
-  font-size: 20px;
-  width: 28px;
-  text-align: center;
-}
-
-.model-info {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
 }
 
 .model-name {
   font-weight: 500;
-  font-size: 14px;
-}
-
-.model-providers {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.provider-badge {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  border: 1px solid;
-  text-transform: capitalize;
+  font-size: 13px;
+  flex: 1;
 }
 
 .check-icon {
   margin-left: auto;
+}
+
+@media (max-width: 768px) {
+  .model-select {
+    width: 160px;
+  }
 }
 </style>
 
@@ -364,5 +541,9 @@ const getProviderStyle = (provider) => {
 
 .model-selector-popper .el-select-dropdown__item.selected {
   color: var(--el-color-primary);
+}
+
+.model-settings-popover {
+  padding: 16px !important;
 }
 </style>

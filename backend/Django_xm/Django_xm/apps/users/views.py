@@ -29,6 +29,10 @@ from .serializers import (
     MyTokenObtainPairSerializer,
     UserRegisterSerializer,
     UserInfoSerializer,
+    ChangePasswordSerializer,
+    BindPhoneSerializer,
+    UserProfileSerializer,
+    UserPreferencesSerializer,
 )
 from .captcha import CaptchaGenerator
 
@@ -114,6 +118,25 @@ class UserRegisterView(generics.CreateAPIView):
     throttle_classes = [SensitiveOperationRateThrottle]
 
     def create(self, request, *args, **kwargs):
+        captcha_key = request.data.get('captcha_key')
+        captcha_code = request.data.get('captcha', '').lower()
+
+        if captcha_key and captcha_code:
+            stored_code = cache.get(f'captcha:{captcha_key}')
+            if not stored_code:
+                return error_response(
+                    code=ErrorCode.VALIDATION_FAILED,
+                    message='验证码已过期，请刷新',
+                    http_status=status.HTTP_400_BAD_REQUEST
+                )
+            if not hmac.compare_digest(str(stored_code), str(captcha_code)):
+                return error_response(
+                    code=ErrorCode.VALIDATION_FAILED,
+                    message='验证码错误',
+                    http_status=status.HTTP_400_BAD_REQUEST
+                )
+            cache.delete(f'captcha:{captcha_key}')
+
         serializer = self.get_serializer(data=request.data)
         try:
             serializer.is_valid(raise_exception=True)
@@ -308,25 +331,21 @@ class UserProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
     def put(self, request):
+        serializer = UserProfileSerializer(
+            data=request.data, context={'request': request}
+        )
+        if not serializer.is_valid():
+            return validation_error_response(
+                errors=serializer.errors,
+                message='参数错误'
+            )
+
         user = request.user
-        username = request.data.get('username')
-        email = request.data.get('email')
-
-        if username:
-            if User.objects.filter(username=username).exclude(pk=user.pk).exists():
-                return error_response(
-                    code=ErrorCode.DUPLICATE_RESOURCE,
-                    message='用户名已存在',
-                    http_status=status.HTTP_409_CONFLICT
-                )
-            user.username = username
-
-        if email is not None:
-            user.email = email
-
+        for field, value in serializer.validated_data.items():
+            setattr(user, field, value)
         user.save()
-        serializer = UserInfoSerializer(user)
-        return success_response(data=serializer.data, message='资料更新成功')
+        out = UserInfoSerializer(user)
+        return success_response(data=out.data, message='资料更新成功')
 
 
 class UserAvatarView(APIView):
@@ -375,32 +394,17 @@ class ChangePasswordView(APIView):
     throttle_classes = [SensitiveOperationRateThrottle]
 
     def post(self, request):
+        serializer = ChangePasswordSerializer(
+            data=request.data, context={'request': request}
+        )
+        if not serializer.is_valid():
+            return validation_error_response(
+                errors=serializer.errors,
+                message='参数错误'
+            )
+
         user = request.user
-        old_password = request.data.get('old_password', '')
-        new_password = request.data.get('new_password', '')
-
-        if not old_password or not new_password:
-            return error_response(
-                code=ErrorCode.INVALID_PARAMS,
-                message='请输入当前密码和新密码',
-                http_status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if not user.check_password(old_password):
-            return error_response(
-                code=ErrorCode.LOGIN_FAILED,
-                message='当前密码错误',
-                http_status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if len(new_password) < 8:
-            return error_response(
-                code=ErrorCode.VALIDATION_FAILED,
-                message='新密码至少8个字符',
-                http_status=status.HTTP_400_BAD_REQUEST
-            )
-
-        user.set_password(new_password)
+        user.set_password(serializer.validated_data['new_password'])
         user.save()
         return success_response(message='密码修改成功')
 
@@ -409,28 +413,20 @@ class BindPhoneView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        serializer = BindPhoneSerializer(
+            data=request.data, context={'request': request}
+        )
+        if not serializer.is_valid():
+            return validation_error_response(
+                errors=serializer.errors,
+                message='参数错误'
+            )
+
         user = request.user
-        mobile = request.data.get('mobile', '')
-
-        import re
-        if not re.match(r'^1[3-9]\d{9}$', mobile):
-            return error_response(
-                code=ErrorCode.VALIDATION_FAILED,
-                message='请输入有效的手机号',
-                http_status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if User.objects.filter(mobile=mobile).exclude(pk=user.pk).exists():
-            return error_response(
-                code=ErrorCode.DUPLICATE_RESOURCE,
-                message='该手机号已被其他用户绑定',
-                http_status=status.HTTP_409_CONFLICT
-            )
-
-        user.mobile = mobile
+        user.mobile = serializer.validated_data['mobile']
         user.save()
-        serializer = UserInfoSerializer(user)
-        return success_response(data=serializer.data, message='手机号绑定成功')
+        serializer_out = UserInfoSerializer(user)
+        return success_response(data=serializer_out.data, message='手机号绑定成功')
 
 
 class UserPreferencesView(APIView):
@@ -439,19 +435,24 @@ class UserPreferencesView(APIView):
     def get(self, request):
         user = request.user
         preferences = {
-            'theme': getattr(user, 'theme', 'light'),
-            'language': getattr(user, 'language', 'zh-CN'),
-            'notifications_enabled': getattr(user, 'notifications_enabled', True),
-            'auto_save_sessions': getattr(user, 'auto_save_sessions', True),
+            'theme': user.theme,
+            'language': user.language,
+            'notifications_enabled': user.notifications_enabled,
+            'auto_save_sessions': user.auto_save_sessions,
         }
         return success_response(data=preferences)
 
     def put(self, request):
+        serializer = UserPreferencesSerializer(data=request.data)
+        if not serializer.is_valid():
+            return validation_error_response(
+                errors=serializer.errors,
+                message='参数错误'
+            )
+
         user = request.user
-        allowed_fields = {'theme', 'language', 'notifications_enabled', 'auto_save_sessions'}
-        for field in allowed_fields:
-            if field in request.data:
-                setattr(user, field, request.data[field])
+        for field, value in serializer.validated_data.items():
+            setattr(user, field, value)
         user.save()
         return success_response(message='偏好设置更新成功')
 
@@ -477,6 +478,5 @@ class UserAccountDeleteView(APIView):
 
     def delete(self, request):
         user = request.user
-        user.is_active = False
-        user.save()
+        user.soft_delete()
         return success_response(message='账户已成功注销')

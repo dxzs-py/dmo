@@ -1,0 +1,9 @@
+{
+  "name": "user_3_test-index",
+  "description": "测试索引",
+  "created_at": "2026-05-12T08:07:11.927637",
+  "updated_at": "2026-05-12T08:07:11.927637",
+  "num_documents": 0,
+  "store_type": "faiss",
+  "embedding_model": "text-embedding-3-small"
+}

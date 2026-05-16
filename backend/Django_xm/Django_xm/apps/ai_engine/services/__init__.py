@@ -17,8 +17,10 @@ from .llm_factory import (
     get_structured_output_model,
     get_model_by_preset,
     get_model_string,
+    get_chat_model_by_provider,
+    test_model_connection,
 )
-from .cache_service import (
+from Django_xm.apps.cache_manager.services.cache_service import (
     CacheTTL,
     CacheService,
     QueryCacheService,
@@ -66,6 +68,8 @@ __all__ = [
     "get_structured_output_model",
     "get_model_by_preset",
     "get_model_string",
+    "get_chat_model_by_provider",
+    "test_model_connection",
     "CacheTTL",
     "CacheService",
     "QueryCacheService",

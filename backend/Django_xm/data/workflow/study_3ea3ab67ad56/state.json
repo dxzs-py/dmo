@@ -1,0 +1,149 @@
+{
+  "thread_id": "study_3ea3ab67ad56",
+  "user_question": "简单加法",
+  "status": "completed",
+  "current_step": "feedback_completed",
+  "learning_plan": {
+    "topic": "简单加法",
+    "objectives": [
+      "理解加法的基本概念和意义",
+      "能够进行1到10的简单加法运算",
+      "掌握加法的交换律和结合律"
+    ],
+    "key_points": [
+      "加法的定义和基本概念",
+      "数字的识别与书写",
+      "1到10的加法运算实例",
+      "加法的交换律：a + b = b + a",
+      "加法的结合律：(a + b) + c = a + (b + c)"
+    ],
+    "difficulty": "beginner",
+    "estimated_time": 120
+  },
+  "quiz": {
+    "questions": [
+      {
+        "id": "q1",
+        "type": "multiple_choice",
+        "question": "加法的定义是什么？",
+        "options": [
+          "将两个或更多的数字组合成一个更大的数字",
+          "将数字减去",
+          "将数字排列成序列",
+          "将数字分开"
+        ],
+        "answer": "将两个或更多的数字组合成一个更大的数字",
+        "explanation": "加法是将两个或多个数字组合成一个更大的数字的过程，通常用符号 '+' 表示。",
+        "points": 10
+      },
+      {
+        "id": "q2",
+        "type": "multiple_choice",
+        "question": "下面哪个等式展示了加法的交换律？",
+        "options": [
+          "2 + 3 = 5",
+          "3 + 2 = 5",
+          "1 + 1 + 1 = 3",
+          "5 = 3 + 2"
+        ],
+        "answer": "2 + 3 = 5",
+        "explanation": "加法的交换律表明，a + b = b + a。因此，2 + 3 和 3 + 2 都等于 5，展示了交换律的性质。",
+        "points": 15
+      },
+      {
+        "id": "q3",
+        "type": "fill_blank",
+        "question": "5 + ___ = 10。",
+        "options": null,
+        "answer": "5",
+        "explanation": "在这个加法运算中，5 加上 5 等于 10，所以空白处应填入 5。",
+        "points": 20
+      },
+      {
+        "id": "q4",
+        "type": "short_answer",
+        "question": "请列出 1 到 10 之间的任意三个数字的加法运算，并说明其结果。",
+        "options": null,
+        "answer": "例如：3 + 4 = 7；2 + 5 = 7；1 + 9 = 10。",
+        "explanation": "在这个问题中，学生可以随机选择 1 到 10 之间的数字进行加法运算，展示了他们对加法的理解和应用能力。",
+        "points": 30
+      },
+      {
+        "id": "q5",
+        "type": "fill_blank",
+        "question": "根据加法的结合律，(2 + 3) + 4 = __。",
+        "options": null,
+        "answer": "9",
+        "explanation": "根据加法的结合律，(2 + 3) + 4 可以先计算 2 + 3 = 5，然后 5 + 4 = 9，因此答案是 9。",
+        "points": 20
+      }
+    ],
+    "total_points": 100,
+    "time_limit": 30
+  },
+  "user_answers": {
+    "q1": "将两个或更多的数字组合成一个更大的数字",
+    "q2": "3 + 2 = 5",
+    "q3": "5",
+    "q4": "选取数字：2、5、7三者之和：14",
+    "q5": "9"
+  },
+  "score": 60,
+  "score_details": {
+    "total_count": 5,
+    "correct_count": 3,
+    "question_scores": [
+      {
+        "question_id": "q1",
+        "user_answer": "将两个或更多的数字组合成一个更大的数字",
+        "correct_answer": "将两个或更多的数字组合成一个更大的数字",
+        "is_correct": true,
+        "points_earned": 10,
+        "points_possible": 10,
+        "feedback": "回答正确！"
+      },
+      {
+        "question_id": "q2",
+        "user_answer": "3 + 2 = 5",
+        "correct_answer": "2 + 3 = 5",
+        "is_correct": false,
+        "points_earned": 0,
+        "points_possible": 15,
+        "feedback": "回答错误。正确答案是：2 + 3 = 5"
+      },
+      {
+        "question_id": "q3",
+        "user_answer": "5",
+        "correct_answer": "5",
+        "is_correct": true,
+        "points_earned": 20,
+        "points_possible": 20,
+        "feedback": "回答正确！"
+      },
+      {
+        "question_id": "q4",
+        "user_answer": "选取数字：2、5、7三者之和：14",
+        "correct_answer": "例如：3 + 4 = 7；2 + 5 = 7；1 + 9 = 10。",
+        "is_correct": false,
+        "points_earned": 10,
+        "points_possible": 30,
+        "feedback": "学生答案只提供了三个数字的和，未展示加法运算过程，且未满足题目要求的示例格式，准确性和完整性均较差。"
+      },
+      {
+        "question_id": "q5",
+        "user_answer": "9",
+        "correct_answer": "9",
+        "is_correct": true,
+        "points_earned": 20,
+        "points_possible": 20,
+        "feedback": "回答正确！"
+      }
+    ]
+  },
+  "feedback": "\n\n💬 **学习反馈**\n\n亲爱的学生，\n\n首先，恭喜你完成测验！得分60分，虽然还有提升空间，但你已经在简单加法的学习上迈出了重要的一步。每一次练习都是进步的机会。\n\n对于你的错题，题目q2中，2 + 3 = 5 是正确答案。可以尝试在纸上分步骤写出每一步的加法运算，这样能帮助你更清晰地理解。\n\n在题目q4中，展示加法运算的过程非常重要。建议你在解题时，不仅写出答案，还要展示每一步的计算，这样可以确保准确性。\n\n接下来，可以继续练习更多的简单加法题目，特别是那些需要你逐步展示计算过程的题目。这样会让你更加熟悉加法的规则。\n\n记住，学习是一个逐步积累的过程，保持耐心和信心。你正在进步，加油！每一次尝试都是成功的基础！\n\n🎉 恭喜您通过测验！继续保持这样的学习状态！",
+  "should_retry": false,
+  "retry_count": 1,
+  "created_at": "2026-05-14T21:15:23.522031",
+  "updated_at": "2026-05-14T21:19:27.328307",
+  "message": "恭喜通过测验！"
+}

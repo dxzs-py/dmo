@@ -10,7 +10,7 @@ from typing import Dict, Any, Optional, List, Callable
 from dataclasses import dataclass
 from enum import Enum
 
-from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.config_center.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -99,7 +99,7 @@ def _handle_status(context: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _handle_compact(context: Dict[str, Any]) -> Dict[str, Any]:
-    from Django_xm.apps.chat.services.session_compactor import SessionCompactor, apply_compaction_to_chat_history
+    from Django_xm.apps.context_manager.services.session_compactor import SessionCompactor, apply_compaction_to_chat_history
 
     messages = context.get("messages", [])
     if not messages:

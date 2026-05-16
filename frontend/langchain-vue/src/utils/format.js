@@ -57,12 +57,12 @@ export function truncateMiddle(str, maxLength = 50) {
 
 export function getModeLabel(mode) {
   const labels = {
-    'basic-agent': '基础对话',
+    'basic-agent': '基础代理',
     'deep-thinking': '深度思考',
-    'rag': 'RAG 问答',
+    'rag': 'RAG 检索',
     'workflow': '学习工作流',
     'deep-research': '深度研究',
-    'guarded': '安全模式',
+    'guarded': '安全代理',
   }
   return labels[mode] || mode
 }

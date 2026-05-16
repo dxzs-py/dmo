@@ -1,6 +1,5 @@
 import logging
 import time
-import json
 from django.conf import settings
 from django.contrib.auth import logout
 from django.http import JsonResponse
@@ -97,45 +96,31 @@ class SessionSecurityMiddleware:
         return response
 
 
-class RequestTimeoutMiddleware:
-    def __init__(self, get_response):
-        self.get_response = get_response
-
-    def __call__(self, request):
-        request._start_time = time.time()
-        response = self.get_response(request)
-        return self.process_response(request, response)
-
-    def process_response(self, request, response):
-        if hasattr(request, '_start_time'):
-            duration = time.time() - request._start_time
-            response['X-Request-Duration'] = f'{duration:.3f}'
-            if duration > 30:
-                logger.warning(
-                    'Slow request: %s %s took %.2fs',
-                    request.method,
-                    request.get_full_path(),
-                    duration
-                )
-        return response
-
-
-class RequestLoggingMiddleware:
+class APIRequestMiddleware:
     """
-    请求日志中间件
+    API 请求中间件
 
-    记录 API 请求的方法、路径、状态码、耗时、用户信息
+    合并原 RequestTimeoutMiddleware 和 RequestLoggingMiddleware 的职责：
+    1. 记录请求耗时（X-Request-Duration 头）
+    2. 记录 API 请求日志（方法、路径、状态码、耗时、用户）
+    3. 慢请求告警（>30s）
     """
+
+    SLOW_REQUEST_THRESHOLD = 30
 
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
         if not request.path.startswith('/api/'):
-            return self.get_response(request)
+            request._start_time = time.time()
+            response = self.get_response(request)
+            if hasattr(request, '_start_time'):
+                duration = time.time() - request._start_time
+                response['X-Request-Duration'] = f'{duration:.3f}'
+            return response
 
-        request._log_start_time = time.time()
-        request._log_request_id = id(request)
+        request._start_time = time.time()
 
         user_info = 'anonymous'
         if hasattr(request, 'user') and request.user.is_authenticated:
@@ -147,8 +132,10 @@ class RequestLoggingMiddleware:
 
         response = self.get_response(request)
 
-        duration = time.time() - request._log_start_time
+        duration = time.time() - request._start_time
         status_code = response.status_code
+
+        response['X-Request-Duration'] = f'{duration:.3f}'
 
         log_level = logging.WARNING if status_code >= 400 else logging.INFO
         logger.log(
@@ -156,6 +143,14 @@ class RequestLoggingMiddleware:
             f'[API] <-- {request.method} {request.get_full_path()} '
             f'{status_code} {duration:.3f}s ({user_info})'
         )
+
+        if duration > self.SLOW_REQUEST_THRESHOLD:
+            logger.warning(
+                'Slow request: %s %s took %.2fs',
+                request.method,
+                request.get_full_path(),
+                duration
+            )
 
         return response
 
@@ -199,77 +194,109 @@ class CacheControlMiddleware:
         return response
 
 
-class RateLimitMiddleware:
+class AIExceptionMiddleware:
     """
-    API 限流中间件
+    AI 服务全局异常处理中间件
 
-    基于 Redis 的滑动窗口限流策略
+    捕获 LangChain/OpenAI/Anthropic 等AI服务异常，
+    返回统一格式的 JSON 响应，避免泄露内部错误信息。
     """
 
-    RATE_LIMITS = {
-        '/api/chat/': (30, 60),
-        '/api/research/': (5, 60),
-        '/api/knowledge/': (60, 60),
-        '/api/auth/': (10, 60),
-    }
-
-    DEFAULT_LIMIT = (120, 60)
+    EXCEPTION_MAP = None
 
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
-        if not request.path.startswith('/api/'):
-            return self.get_response(request)
+        return self.get_response(request)
 
-        if request.method == 'OPTIONS':
-            return self.get_response(request)
+    @classmethod
+    def _build_exception_map(cls):
+        if cls.EXCEPTION_MAP is not None:
+            return cls.EXCEPTION_MAP
 
-        limit, window = self._get_limit_for_path(request.path)
-
-        client_id = self._get_client_id(request)
-        if client_id is None:
-            return self.get_response(request)
-
-        cache_key = f'ratelimit:{client_id}:{request.path}'
+        mapping = {}
 
         try:
-            current = cache.get(cache_key, 0)
-            if isinstance(current, int) and current >= limit:
-                logger.warning(
-                    f'Rate limit exceeded: {client_id} -> {request.path} '
-                    f'({current}/{limit} in {window}s)'
+            from openai import (
+                APIError,
+                APIConnectionError,
+                RateLimitError,
+                AuthenticationError,
+                BadRequestError,
+                APITimeoutError,
+            )
+            mapping[RateLimitError] = (429, "AI 服务请求频率超限，请稍后重试", "AI_RATE_LIMIT")
+            mapping[AuthenticationError] = (401, "AI 服务认证失败", "AI_AUTH_ERROR")
+            mapping[BadRequestError] = (400, "AI 请求参数错误", "AI_BAD_REQUEST")
+            mapping[APITimeoutError] = (504, "AI 服务响应超时", "AI_TIMEOUT")
+            mapping[APIConnectionError] = (502, "AI 服务连接失败", "AI_CONNECTION_ERROR")
+            mapping[APIError] = (502, "AI 服务暂时不可用", "AI_SERVICE_ERROR")
+        except ImportError:
+            pass
+
+        try:
+            from langchain_core.exceptions import OutputParserException
+            mapping[OutputParserException] = (422, "AI 输出解析失败", "AI_OUTPUT_PARSE_ERROR")
+        except ImportError:
+            pass
+
+        try:
+            from langgraph.errors import GraphRecursionError
+            mapping[GraphRecursionError] = (422, "Agent 执行超出最大迭代次数", "AI_RECURSION_LIMIT")
+        except ImportError:
+            pass
+
+        try:
+            from httpx import TimeoutException, ConnectError
+            mapping[TimeoutException] = (504, "AI 服务响应超时", "AI_TIMEOUT")
+            mapping[ConnectError] = (502, "AI 服务连接失败", "AI_CONNECTION_ERROR")
+        except ImportError:
+            pass
+
+        cls.EXCEPTION_MAP = mapping
+        return mapping
+
+    def process_exception(self, request, exception):
+        if not request.path.startswith('/api/'):
+            return None
+
+        exception_map = self._build_exception_map()
+
+        for exc_class, (status_code, message, error_code) in exception_map.items():
+            if isinstance(exception, exc_class):
+                logger.error(
+                    f"[AI Exception] {error_code}: {type(exception).__name__} - {exception}",
+                    exc_info=True,
                 )
                 return JsonResponse(
                     {
-                        'code': 429,
-                        'message': '请求过于频繁，请稍后再试',
-                        'error': 'RATE_LIMIT_EXCEEDED',
-                        'retry_after': window,
+                        "code": status_code,
+                        "message": message,
+                        "error": error_code,
                     },
-                    status=429,
+                    status=status_code,
                 )
 
-            cache.set(cache_key, current + 1, timeout=window)
-        except Exception as e:
-            logger.error(f'限流检查失败: {e}')
+        error_name = type(exception).__name__
+        ai_related = any(
+            keyword in error_name.lower()
+            for keyword in ["langchain", "langgraph", "openai", "anthropic", "agent", "llm", "embedding"]
+        )
 
-        return self.get_response(request)
+        if ai_related:
+            logger.error(
+                f"[AI Exception] Unhandled: {error_name} - {exception}",
+                exc_info=True,
+            )
+            return JsonResponse(
+                {
+                    "code": 500,
+                    "message": "AI 服务内部错误，请稍后重试",
+                    "error": "AI_INTERNAL_ERROR",
+                },
+                status=500,
+            )
 
-    def _get_limit_for_path(self, path: str):
-        for prefix, limit_config in self.RATE_LIMITS.items():
-            if path.startswith(prefix):
-                return limit_config
-        return self.DEFAULT_LIMIT
+        return None
 
-    def _get_client_id(self, request):
-        if hasattr(request, 'user') and request.user.is_authenticated:
-            return f'user:{request.user.id}'
-
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            ip = x_forwarded_for.split(',')[0].strip()
-        else:
-            ip = request.META.get('REMOTE_ADDR', '')
-
-        return f'ip:{ip}' if ip else None

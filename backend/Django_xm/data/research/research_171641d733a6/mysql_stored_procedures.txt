@@ -1,0 +1,81 @@
+# MySQL 存储过程
+
+## 1. 存储过程的定义
+存储过程是一组预编译的SQL语句，可以通过调用来执行。存储过程可以接受参数，并可以返回结果。
+
+## 2. 创建存储过程
+创建存储过程的基本语法为：
+```sql
+CREATE PROCEDURE procedure_name (IN param1 datatype, OUT param2 datatype)
+BEGIN
+    -- SQL statements
+END;
+```
+例如：
+```sql
+CREATE PROCEDURE GetUserCount(OUT user_count INT)
+BEGIN
+    SELECT COUNT(*) INTO user_count FROM users;
+END;
+```
+
+## 3. 调用存储过程
+调用存储过程的基本语法为：
+```sql
+CALL procedure_name (param1, param2);
+```
+例如：
+```sql
+CALL GetUserCount(@count);
+SELECT @count;
+```
+
+## 4. 删除存储过程
+删除存储过程的基本语法为：
+```sql
+DROP PROCEDURE procedure_name;
+```
+例如：
+```sql
+DROP PROCEDURE GetUserCount;
+```
+
+## 1. 存储过程的定义
+存储过程是一组预编译的SQL语句，可以通过调用来执行。存储过程可以接受参数，并可以返回结果。
+
+## 2. 创建存储过程
+创建存储过程的基本语法为：
+```sql
+CREATE PROCEDURE procedure_name (IN param1 datatype, OUT param2 datatype)
+BEGIN
+    -- SQL statements
+END;
+```
+例如：
+```sql
+CREATE PROCEDURE GetUserCount(OUT user_count INT)
+BEGIN
+    SELECT COUNT(*) INTO user_count FROM users;
+END;
+```
+
+## 3. 调用存储过程
+调用存储过程的基本语法为：
+```sql
+CALL procedure_name (param1, param2);
+```
+例如：
+```sql
+CALL GetUserCount(@count);
+SELECT @count;
+```
+
+## 4. 删除存储过程
+删除存储过程的基本语法为：
+```sql
+DROP PROCEDURE procedure_name;
+```
+例如：
+```sql
+DROP PROCEDURE GetUserCount;
+```

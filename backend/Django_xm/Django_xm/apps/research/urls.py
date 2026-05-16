@@ -14,7 +14,7 @@ from .views import (
     deep_research_stream,
 )
 
-app_name = 'deep_research'
+app_name = 'research'
 
 urlpatterns = [
     # 启动研究

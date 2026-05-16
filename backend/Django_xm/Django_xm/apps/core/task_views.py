@@ -163,16 +163,29 @@ class TaskCancelView(APIView):
             
             # 尝试撤销Celery任务
             try:
-                current_app.control.revoke(task_id, terminate=True)
+                celery_task_id = task_data.get('celery_task_id', task_id)
+                current_app.control.revoke(celery_task_id, terminate=True)
             except Exception as e:
                 logger.warning(f"[TaskCancelView] 撤销Celery任务失败：{e}")
             
             # 更新任务状态
             manager = get_task_manager()
             manager.update_task_status(task_id, {
-                'status': TaskStatus.CANCELLED.value,
-                'current_step': 'cancelled'
+                'status': TaskStatus.REVOKED.value,
+                'current_step': 'revoked',
+                'error': '用户主动取消',
             })
+
+            # 同步更新数据库记录
+            try:
+                from Django_xm.apps.core.task_models import CeleryTaskRecord
+                celery_task_id = task_data.get('celery_task_id')
+                if celery_task_id:
+                    record = CeleryTaskRecord.objects.filter(celery_task_id=celery_task_id).first()
+                    if record:
+                        record.mark_revoked()
+            except Exception as e:
+                logger.debug(f"[TaskCancelView] 同步数据库记录失败: {e}")
             
             return success_response(message="任务已取消")
             
@@ -190,42 +203,49 @@ class TaskStatsView(APIView):
     任务统计视图（管理员）
     """
     permission_classes = [IsAdminUser]
-    
+
     def get(self, request):
         """
         获取任务统计信息
         """
         try:
-            manager = get_task_manager()
-            
-            # 获取各类状态的任务统计
-            stats = {
-                'pending': 0,
-                'running': 0,
-                'completed': 0,
-                'failed': 0,
-                'cancelled': 0,
-                'total': 0,
-            }
-            
-            # 获取各类任务类型的统计
-            type_stats = {
-                'deep_research': 0,
-                'rag_index': 0,
-                'rag_add_docs': 0,
-                'rag_delete_index': 0,
-                'workflow': 0,
-                'other': 0,
-            }
-            
-            # 注意：这是简化实现
-            # 实际项目应该从数据库聚合查询
-            
+            from django.db.models import Count, Avg
+            from Django_xm.apps.core.task_models import CeleryTaskRecord
+
+            status_stats = dict(
+                CeleryTaskRecord.objects
+                .values_list('status')
+                .annotate(count=Count('id'))
+            )
+            status_stats.setdefault('pending', 0)
+            status_stats.setdefault('started', 0)
+            status_stats.setdefault('progress', 0)
+            status_stats.setdefault('success', 0)
+            status_stats.setdefault('failure', 0)
+            status_stats.setdefault('revoked', 0)
+            status_stats.setdefault('retry', 0)
+
+            type_stats = dict(
+                CeleryTaskRecord.objects
+                .values_list('task_type')
+                .annotate(count=Count('id'))
+            )
+
+            avg_runtime = (
+                CeleryTaskRecord.objects
+                .filter(runtime_seconds__isnull=False)
+                .aggregate(avg=Avg('runtime_seconds'))
+            )['avg'] or 0
+
+            total = sum(status_stats.values())
+
             return success_response(data={
-                'status_stats': stats,
+                'status_stats': status_stats,
                 'type_stats': type_stats,
+                'total': total,
+                'avg_runtime_seconds': round(avg_runtime, 2),
             })
-            
+
         except Exception as e:
             logger.error(f"[TaskStatsView] 获取任务统计失败：{e}", exc_info=True)
             return error_response(

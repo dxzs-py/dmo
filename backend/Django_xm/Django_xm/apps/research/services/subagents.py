@@ -5,19 +5,23 @@ SubAgents 子智能体模块
 1. WebResearcher: 网络搜索和信息整理
 2. DocAnalyst: 文档分析和知识提取（支持网络搜索补充）
 3. ReportWriter: 报告撰写和内容组织
+
+改进：支持 middleware 传入 create_agent，使 Guardrails 在子智能体中生效
 """
 
 from typing import Optional, List, Sequence
 
 from langchain.agents import create_agent
+from langchain.agents.middleware import AgentMiddleware
 from langchain_core.tools import BaseTool
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
 from Django_xm.apps.tools.web.search import create_tavily_search_tool
 from Django_xm.apps.tools.file.filesystem import FILESYSTEM_TOOLS
-from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.config_center.config import get_logger
 from Django_xm.apps.ai_engine.prompts.system_prompts import WRITER_GUIDELINES
+from Django_xm.apps.ai_engine.guardrails import create_guardrails_middleware
 from Django_xm.apps.core.permissions import PermissionService
 
 logger = get_logger(__name__)
@@ -73,6 +77,8 @@ REPORT_WRITER_PROMPT = (
 def create_web_researcher(
     model: Optional[str] = None,
     tools: Optional[Sequence[BaseTool]] = None,
+    middleware: Optional[Sequence[AgentMiddleware]] = None,
+    enable_guardrails: bool = False,
     user_id: Optional[int] = None,
     session_id: Optional[str] = None,
     **kwargs,
@@ -100,12 +106,20 @@ def create_web_researcher(
         )
         logger.info(f"WebResearcher 权限过滤后工具数: {len(tools)}")
 
-    agent = create_agent(
-        model=model,
-        tools=tools,
-        system_prompt=f"{WEB_RESEARCHER_PROMPT}\n\n{WRITER_GUIDELINES}",
-        **kwargs,
-    )
+    middleware_list = list(middleware) if middleware else []
+    if enable_guardrails:
+        middleware_list.append(create_guardrails_middleware(strict_mode=False, raise_on_error=False))
+
+    agent_kwargs: dict = {
+        "model": model,
+        "tools": tools,
+        "system_prompt": f"{WEB_RESEARCHER_PROMPT}\n\n{WRITER_GUIDELINES}",
+    }
+    if middleware_list:
+        agent_kwargs["middleware"] = middleware_list
+    agent_kwargs.update(kwargs)
+
+    agent = create_agent(**agent_kwargs)
 
     logger.info("✅ WebResearcher 子智能体创建成功")
     return agent
@@ -116,6 +130,8 @@ def create_doc_analyst(
     tools: Optional[Sequence[BaseTool]] = None,
     retriever_tool: Optional[BaseTool] = None,
     enable_web_supplement: bool = True,
+    middleware: Optional[Sequence[AgentMiddleware]] = None,
+    enable_guardrails: bool = False,
     user_id: Optional[int] = None,
     session_id: Optional[str] = None,
     **kwargs,
@@ -152,12 +168,20 @@ def create_doc_analyst(
         )
         logger.info(f"DocAnalyst 权限过滤后工具数: {len(tools)}")
 
-    agent = create_agent(
-        model=model,
-        tools=tools,
-        system_prompt=f"{DOC_ANALYST_PROMPT}\n\n{WRITER_GUIDELINES}",
-        **kwargs,
-    )
+    middleware_list = list(middleware) if middleware else []
+    if enable_guardrails:
+        middleware_list.append(create_guardrails_middleware(strict_mode=False, raise_on_error=False))
+
+    agent_kwargs: dict = {
+        "model": model,
+        "tools": tools,
+        "system_prompt": f"{DOC_ANALYST_PROMPT}\n\n{WRITER_GUIDELINES}",
+    }
+    if middleware_list:
+        agent_kwargs["middleware"] = middleware_list
+    agent_kwargs.update(kwargs)
+
+    agent = create_agent(**agent_kwargs)
 
     logger.info("✅ DocAnalyst 子智能体创建成功")
     return agent
@@ -166,6 +190,8 @@ def create_doc_analyst(
 def create_report_writer(
     model: Optional[str] = None,
     tools: Optional[Sequence[BaseTool]] = None,
+    middleware: Optional[Sequence[AgentMiddleware]] = None,
+    enable_guardrails: bool = False,
     user_id: Optional[int] = None,
     session_id: Optional[str] = None,
     **kwargs,
@@ -185,12 +211,20 @@ def create_report_writer(
         )
         logger.info(f"ReportWriter 权限过滤后工具数: {len(tools)}")
 
-    agent = create_agent(
-        model=model,
-        tools=tools,
-        system_prompt=f"{REPORT_WRITER_PROMPT}\n\n{WRITER_GUIDELINES}",
-        **kwargs,
-    )
+    middleware_list = list(middleware) if middleware else []
+    if enable_guardrails:
+        middleware_list.append(create_guardrails_middleware(strict_mode=False, raise_on_error=False))
+
+    agent_kwargs: dict = {
+        "model": model,
+        "tools": tools,
+        "system_prompt": f"{REPORT_WRITER_PROMPT}\n\n{WRITER_GUIDELINES}",
+    }
+    if middleware_list:
+        agent_kwargs["middleware"] = middleware_list
+    agent_kwargs.update(kwargs)
+
+    agent = create_agent(**agent_kwargs)
 
     logger.info("✅ ReportWriter 子智能体创建成功")
     return agent

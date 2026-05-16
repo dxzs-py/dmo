@@ -16,7 +16,10 @@ def extract_reasoning(message: BaseMessage) -> Optional[Dict[str, Any]]:
     """
     提取推理过程
 
-    某些模型（如 OpenAI o1）支持输出推理过程
+    支持多种推理来源：
+    1. DeepSeek 思考模式: additional_kwargs["reasoning_content"]
+    2. OpenAI o1 等: response_metadata["reasoning"]
+    3. <thinking>...</thinking> 标签
 
     Args:
         message: LangChain 消息对象
@@ -27,8 +30,15 @@ def extract_reasoning(message: BaseMessage) -> Optional[Dict[str, Any]]:
     if not isinstance(message, AIMessage):
         return None
 
-    response_metadata = getattr(message, "response_metadata", {})
+    additional_kwargs = getattr(message, "additional_kwargs", {})
+    reasoning_content = additional_kwargs.get("reasoning_content")
+    if reasoning_content and isinstance(reasoning_content, str) and reasoning_content.strip():
+        return {
+            "content": reasoning_content.strip(),
+            "duration": 0,
+        }
 
+    response_metadata = getattr(message, "response_metadata", {})
     if "reasoning" in response_metadata:
         reasoning_data = response_metadata["reasoning"]
         return {

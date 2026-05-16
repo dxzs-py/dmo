@@ -42,10 +42,13 @@ def root_info(request):
         "api_endpoints": {
             "auth": "/api/v1/users/",
             "chat": "/api/v1/chat/",
+            "attachments": "/api/v1/attachments/",
             "knowledge": "/api/v1/knowledge/",
             "learning": "/api/v1/learning/",
             "research": "/api/v1/research/",
             "analytics": "/api/v1/analytics/",
+            "cache": "/api/v1/cache/",
+            "ai-engine": "/api/v1/ai-engine/",
         }
     })
 
@@ -66,11 +69,14 @@ urlpatterns = [
 
             path("users/", include("Django_xm.apps.users.urls")),
             path("chat/", include("Django_xm.apps.chat.urls")),
+            path("attachments/", include("Django_xm.apps.attachments.urls")),
             path("knowledge/", include("Django_xm.apps.knowledge.urls")),
             path("learning/", include("Django_xm.apps.learning.urls")),
             path("research/", include("Django_xm.apps.research.urls")),
             path("analytics/", include("Django_xm.apps.analytics.urls")),
             path("core/", include("Django_xm.apps.core.urls")),
+            path("cache/", include("Django_xm.apps.cache_manager.urls")),
+            path("ai-engine/", include("Django_xm.apps.ai_engine.urls")),
         ])),
     ])),
 

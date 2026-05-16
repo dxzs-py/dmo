@@ -5,7 +5,7 @@
 from typing import Callable, Optional, Any, Dict
 from functools import wraps
 
-from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.config_center.config import get_logger
 from Django_xm.apps.ai_engine.guardrails import (
     InputValidator,
     OutputValidator,

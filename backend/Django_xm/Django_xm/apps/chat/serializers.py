@@ -10,7 +10,7 @@
 from rest_framework import serializers
 from django.core.exceptions import ValidationError
 from django.utils import timezone
-from .models import ChatSession, ChatMessage, ChatAttachment
+from .models import ChatSession, ChatMessage
 
 
 # ==================== 输入验证序列化（Serializer） ====================
@@ -67,6 +67,19 @@ class ChatRequestSerializer(serializers.Serializer):
     use_tools = serializers.BooleanField(default=True, help_text='是否使用工具')
     use_advanced_tools = serializers.BooleanField(default=False, help_text='是否使用高级工具')
     use_web_search = serializers.BooleanField(default=False, help_text='是否启用联网搜索')
+    use_mcp = serializers.BooleanField(default=False, help_text='是否启用 MCP 工具')
+    selected_mcp_servers = serializers.ListField(
+        child=serializers.CharField(max_length=100),
+        required=False,
+        allow_null=True,
+        help_text='选中的 MCP Server 名称列表，为空则使用所有已配置的 Server'
+    )
+    selected_tools = serializers.ListField(
+        child=serializers.CharField(max_length=100),
+        required=False,
+        allow_null=True,
+        help_text='选中的工具名称列表，为空则根据 use_tools/use_advanced_tools 自动选择'
+    )
     streaming = serializers.BooleanField(default=False, help_text='是否流式输出')
     session_id = serializers.CharField(required=False, allow_null=True, max_length=100)
     selected_knowledge_base = serializers.CharField(
@@ -78,6 +91,26 @@ class ChatRequestSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
         help_text='附件ID列表，用于基于文件内容回答问题'
+    )
+    provider_id = serializers.CharField(
+        required=False, allow_null=True, max_length=50,
+        help_text='模型提供商 ID（openai/deepseek/groq/baidu_qianfan/anthropic）'
+    )
+    model_name = serializers.CharField(
+        required=False, allow_null=True, max_length=100,
+        help_text='模型名称，如 gpt-4o-mini、deepseek-v4-flash'
+    )
+    special_params = serializers.DictField(
+        required=False, allow_null=True,
+        help_text='提供商专属参数，如 DeepSeek 的 thinking/reasoning_effort'
+    )
+    temperature = serializers.FloatField(
+        required=False, allow_null=True, min_value=0.0, max_value=2.0,
+        help_text='温度参数，0-2之间'
+    )
+    max_tokens = serializers.IntegerField(
+        required=False, allow_null=True, min_value=1, max_value=32768,
+        help_text='最大生成 token 数'
     )
 
     def validate_message(self, value):
@@ -146,31 +179,10 @@ class ChatResponseSerializer(serializers.Serializer):
 
 # ==================== 模型序列化器（ModelSerializer） ====================
 
-class ChatAttachmentSerializer(serializers.ModelSerializer):
-    """
-    聊天附件序列化器
-    """
-    url = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = ChatAttachment
-        fields = ['id', 'original_name', 'file_size', 'file_type', 'mime_type', 'url', 'created_at']
-        read_only_fields = ['id', 'created_at']
-    
-    def get_url(self, obj):
-        return obj.file.url if hasattr(obj.file, 'url') else ''
-
-
 class ChatMessageSerializer(serializers.ModelSerializer):
-    """
-    聊天消息模型序列化器
-    
-    用途：消息的读取、创建、更新操作
-    绑定模型：ChatMessage
-    """
-    attachments = ChatAttachmentSerializer(many=True, read_only=True)
+    attachments = serializers.SerializerMethodField()
     attachment_ids = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = ChatMessage
         fields = ['id', 'session', 'role', 'content', 'sources', 'plan',
@@ -180,9 +192,22 @@ class ChatMessageSerializer(serializers.ModelSerializer):
                   'model', 'token_count', 'cost', 'response_time']
         read_only_fields = ['id', 'session', 'created_at']
 
+    def get_attachments(self, obj):
+        from Django_xm.apps.attachments.serializers import ChatAttachmentSerializer
+        try:
+            attachments = obj.attachments.all()
+            if not attachments and hasattr(obj, '_prefetched_objects_cache'):
+                attachments = obj._prefetched_objects_cache.get('attachments', [])
+            return ChatAttachmentSerializer(attachments, many=True).data
+        except Exception:
+            return []
+
     def get_attachment_ids(self, obj):
         try:
-            return [att.id for att in obj.attachments.all()]
+            attachments = obj.attachments.all()
+            if not attachments and hasattr(obj, '_prefetched_objects_cache'):
+                attachments = obj._prefetched_objects_cache.get('attachments', [])
+            return [att.id for att in attachments]
         except Exception:
             return []
 
@@ -261,6 +286,9 @@ class ChatSessionDetailSerializer(serializers.ModelSerializer):
     def get_message_count(self, obj):
         if hasattr(obj, '_message_count'):
             return obj._message_count
+        prefetched_cache = getattr(obj, '_prefetched_objects_cache', None)
+        if prefetched_cache and 'messages' in prefetched_cache:
+            return len(prefetched_cache['messages'])
         return obj.messages.count()
 
 

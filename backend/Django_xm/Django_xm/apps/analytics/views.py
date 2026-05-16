@@ -4,6 +4,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from Django_xm.apps.common.responses import success_response, error_response
 from Django_xm.apps.common.error_codes import ErrorCode
+from Django_xm.apps.common.request_utils import get_client_ip, get_user_agent
 
 from .services.analytics_service import AnalyticsService
 from .serializers import PageViewSerializer, FeatureUseSerializer, UserEventWriteSerializer
@@ -37,16 +38,10 @@ class PageViewTrackView(APIView):
             user=request.user,
             page_path=serializer.validated_data['path'],
             page_title=serializer.validated_data.get('title', ''),
-            ip_address=self._get_ip(request),
-            user_agent=request.META.get('HTTP_USER_AGENT', ''),
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request, max_length=None),
         )
         return success_response(message="页面浏览已记录")
-
-    def _get_ip(self, request):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR')
 
 
 class FeatureUseTrackView(APIView):
@@ -60,16 +55,10 @@ class FeatureUseTrackView(APIView):
             user=request.user,
             feature_name=serializer.validated_data['feature'],
             metadata=serializer.validated_data.get('metadata', {}),
-            ip_address=self._get_ip(request),
-            user_agent=request.META.get('HTTP_USER_AGENT', ''),
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request, max_length=None),
         )
         return success_response(message="功能使用已记录")
-
-    def _get_ip(self, request):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR')
 
 
 class EventTrackView(APIView):
@@ -82,15 +71,9 @@ class EventTrackView(APIView):
         from Django_xm.apps.analytics.models import UserEvent
         UserEvent.objects.create(
             user=request.user,
-            ip_address=self._get_ip(request),
-            user_agent=request.META.get('HTTP_USER_AGENT', '')[:500],
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request),
             **serializer.validated_data,
         )
         AnalyticsService.invalidate_user_cache(request.user.id)
         return success_response(message="事件已记录")
-
-    def _get_ip(self, request):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR')

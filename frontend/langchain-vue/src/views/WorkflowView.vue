@@ -245,6 +245,7 @@ const statusOptions = [
   { value: 'waiting_for_answers', label: '等待答题' },
   { value: 'grading', label: '评分中' },
   { value: 'feedback', label: '生成反馈' },
+  { value: 'feedback_completed', label: '反馈完成' },
   { value: 'end', label: '已结束' },
   { value: 'completed', label: '已完成' },
   { value: 'failed', label: '失败' },
@@ -284,6 +285,7 @@ const getStepType = (step) => {
     waiting_for_answers: 'warning',
     grading: 'primary',
     feedback: 'success',
+    feedback_completed: 'success',
     end: 'success',
     completed: 'success',
   }
@@ -299,6 +301,7 @@ const getStepText = (step) => {
     waiting_for_answers: '等待答题',
     grading: '评分中',
     feedback: '生成反馈',
+    feedback_completed: '工作流已完成',
     end: '已结束',
     completed: '已完成',
   }

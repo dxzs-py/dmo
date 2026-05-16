@@ -38,6 +38,10 @@ const props = defineProps({
     type: String,
     default: null,
   },
+  showDebug: {
+    type: Boolean,
+    default: false,
+  },
 })
 
 const emit = defineEmits({
@@ -209,6 +213,7 @@ const handleSuggestionClick = (suggestion) => {
                 :is-loading="isLoading"
                 :is-streaming="isStreaming"
                 :is-selected="selectedMessageId && msg.id === selectedMessageId"
+                :show-debug="showDebug"
                 @regenerate="(idx) => emit('regenerate', idx)"
                 @click="(message) => emit('messageClick', message)"
             />
@@ -230,6 +235,7 @@ const handleSuggestionClick = (suggestion) => {
               :is-loading="isLoading"
               :is-streaming="isStreaming"
               :is-selected="selectedMessageId && msg.id === selectedMessageId"
+              :show-debug="showDebug"
               @regenerate="(idx) => emit('regenerate', idx)"
               @click="(message) => emit('messageClick', message)"
             />
@@ -280,7 +286,7 @@ const handleSuggestionClick = (suggestion) => {
 .chat-main {
   flex: 1;
   overflow: hidden;
-  background-color: var(--el-fill-color-light);
+  background-color: var(--background);
 }
 
 .messages-container {
@@ -289,7 +295,7 @@ const handleSuggestionClick = (suggestion) => {
   overscroll-behavior: contain;
   padding: 24px;
   scrollbar-width: thin;
-  scrollbar-color: var(--el-border-color) transparent;
+  scrollbar-color: var(--border) transparent;
 }
 
 .messages-container::-webkit-scrollbar {
@@ -301,12 +307,12 @@ const handleSuggestionClick = (suggestion) => {
 }
 
 .messages-container::-webkit-scrollbar-thumb {
-  background-color: var(--el-border-color);
+  background-color: var(--border);
   border-radius: 3px;
 }
 
 .messages-container::-webkit-scrollbar-thumb:hover {
-  background-color: var(--el-border-color-darker);
+  background-color: var(--muted-foreground);
 }
 
 .empty-state {
@@ -315,7 +321,7 @@ const handleSuggestionClick = (suggestion) => {
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: var(--el-text-color-secondary);
+  color: var(--muted-foreground);
   padding: 40px 20px;
 }
 
@@ -328,35 +334,34 @@ const handleSuggestionClick = (suggestion) => {
   position: absolute;
   inset: -12px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--el-color-primary-light-8), var(--el-color-primary-light-9));
+  background: var(--gradient-primary);
+  opacity: 0.1;
   animation: pulse-bg 3s ease-in-out infinite;
 }
 
 @keyframes pulse-bg {
-  0%, 100% { transform: scale(1); opacity: 0.6; }
-  50% { transform: scale(1.1); opacity: 0.3; }
+  0%, 100% { transform: scale(1); opacity: 0.1; }
+  50% { transform: scale(1.12); opacity: 0.05; }
 }
 
 .empty-icon {
   position: relative;
-  color: var(--el-color-primary);
+  color: var(--sidebar-primary);
 }
 
 .empty-title {
   font-size: 24px;
-  color: var(--el-text-color-primary);
+  color: var(--foreground);
   margin-bottom: 8px;
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .empty-desc {
   font-size: 14px;
-  color: var(--el-text-color-secondary);
+  color: var(--muted-foreground);
   margin-bottom: 0;
-}
-
-.empty-state p {
-  font-size: 14px;
+  line-height: 1.6;
 }
 
 .suggestions-section {
@@ -368,7 +373,7 @@ const handleSuggestionClick = (suggestion) => {
 .suggestions-title {
   font-size: 14px;
   font-weight: 500;
-  color: var(--el-text-color-secondary);
+  color: var(--muted-foreground);
   margin-bottom: 16px;
   text-align: center;
 }
@@ -388,22 +393,22 @@ const handleSuggestionClick = (suggestion) => {
   align-items: center;
   gap: 10px;
   padding: 12px 16px;
-  border-radius: 12px;
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  border: 1px solid var(--border);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--transition-normal);
   text-align: left;
   font-size: 13px;
-  color: var(--el-text-color-regular);
+  color: var(--foreground);
   line-height: 1.4;
 }
 
 .suggestion-card:hover {
-  border-color: var(--el-color-primary-light-5);
-  background: var(--el-color-primary-light-9);
+  border-color: var(--sidebar-primary);
+  background: color-mix(in srgb, var(--sidebar-primary) 6%, transparent);
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--shadow-sm);
 }
 
 .suggestion-card:active {
@@ -412,7 +417,7 @@ const handleSuggestionClick = (suggestion) => {
 
 .suggestion-card.small {
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius);
 }
 
 .suggestion-icon {
@@ -446,7 +451,11 @@ const handleSuggestionClick = (suggestion) => {
   margin-bottom: 24px;
   will-change: transform;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+.message-wrapper:last-child {
+  border-bottom: none;
 }
 
 .message {
@@ -463,13 +472,14 @@ const handleSuggestionClick = (suggestion) => {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--el-color-primary) 0%, var(--el-color-primary-light-3) 100%);
+  background: var(--gradient-primary);
   display: flex;
   align-items: center;
   justify-content: center;
   color: white;
   flex-shrink: 0;
   margin: 0 12px;
+  box-shadow: var(--shadow-sm);
 }
 
 .message-content {
@@ -479,17 +489,19 @@ const handleSuggestionClick = (suggestion) => {
 
 .message-role {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--muted-foreground);
   padding: 0 4px;
+  font-weight: 500;
 }
 
 .message-text {
-  background: var(--el-bg-color);
-  border-radius: 12px;
+  background: var(--card);
+  border-radius: var(--radius-lg);
   padding: 14px 18px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--shadow-sm);
   max-width: 100%;
   word-break: break-word;
+  border: 1px solid var(--border);
 }
 
 .loading-shimmer {
@@ -505,7 +517,7 @@ const handleSuggestionClick = (suggestion) => {
   padding: 8px 16px;
   max-width: 768px;
   margin: 0 auto;
-  color: var(--el-text-color-secondary);
+  color: var(--muted-foreground);
   font-size: 13px;
 }
 
@@ -518,7 +530,7 @@ const handleSuggestionClick = (suggestion) => {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background-color: var(--el-color-primary);
+  background-color: var(--sidebar-primary);
   animation: typing-bounce 1.4s infinite ease-in-out both;
 }
 
@@ -531,13 +543,22 @@ const handleSuggestionClick = (suggestion) => {
 }
 
 .typing-text {
-  color: var(--el-text-color-placeholder);
+  color: var(--muted-foreground);
 }
 
 .dynamic-suggestions {
   max-width: 768px;
   margin: 0 auto;
   padding: 8px 16px 16px;
+}
+
+.slide-up-enter-active {
+  transition: all var(--transition-normal);
+}
+
+.slide-up-enter-from {
+  opacity: 0;
+  transform: translateY(12px);
 }
 
 @media (max-width: 768px) {

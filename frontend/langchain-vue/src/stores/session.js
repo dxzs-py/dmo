@@ -20,6 +20,10 @@ import {
   addMessageFieldItem,
   appendToMessage,
   createMessageVersion,
+  addOrUpdateToolCallInLastMessage,
+  updateOrAddToolResultInLastMessage,
+  addOrUpdateToolCallInMessageByIdx,
+  updateOrAddToolResultInMessageByIdx,
 } from '../utils/message-operations'
 
 export const useSessionStore = defineStore('session', () => {
@@ -55,6 +59,8 @@ export const useSessionStore = defineStore('session', () => {
   const setSuggestionsToMessage = (sessionId, messageIndex, suggestions) => _setField(sessionId, messageIndex, 'suggestions', suggestions)
   const setContextToMessage = (sessionId, messageIndex, context) => _setField(sessionId, messageIndex, 'context', context)
   const addToolCallToMessage = (sessionId, messageIndex, toolCall) => _addFieldItem(sessionId, messageIndex, 'toolCalls', toolCall)
+  const addOrUpdateToolCallToMessage = (sessionId, messageIndex, data) => addOrUpdateToolCallInMessageByIdx(sessions.value, sessionId, messageIndex, data)
+  const updateOrAddToolResultToMessage = (sessionId, messageIndex, data) => updateOrAddToolResultInMessageByIdx(sessions.value, sessionId, messageIndex, data)
 
   const currentSession = computed(() => {
     return sessions.value.find(s => s.id === currentSessionId.value)
@@ -367,6 +373,8 @@ export const useSessionStore = defineStore('session', () => {
   const setSuggestionsToLastMessage = (sessionId, suggestions) => _setLastField(sessionId, 'suggestions', suggestions)
   const setContextToLastMessage = (sessionId, context) => _setLastField(sessionId, 'context', context)
   const addToolCallToLastMessage = (sessionId, toolCall) => _addLastFieldItem(sessionId, 'toolCalls', toolCall)
+  const addOrUpdateToolCallToLastMessage = (sessionId, data) => addOrUpdateToolCallInLastMessage(sessions.value, sessionId, data)
+  const updateOrAddToolResultToLastMessage = (sessionId, data) => updateOrAddToolResultInLastMessage(sessions.value, sessionId, data)
 
   const setUsageToLastMessage = (sessionId, usageData) => {
     const result = getLastAssistantMessage(sessions.value, sessionId)
@@ -514,6 +522,8 @@ export const useSessionStore = defineStore('session', () => {
     setSuggestionsToLastMessage,
     setContextToLastMessage,
     addToolCallToLastMessage,
+    addOrUpdateToolCallToLastMessage,
+    updateOrAddToolResultToLastMessage,
     setUsageToLastMessage,
     setAttachmentIdsToLastUserMessage,
     addSourceToMessage,
@@ -524,6 +534,8 @@ export const useSessionStore = defineStore('session', () => {
     setSuggestionsToMessage,
     setContextToMessage,
     addToolCallToMessage,
+    addOrUpdateToolCallToMessage,
+    updateOrAddToolResultToMessage,
     getSessionMessages,
     removeMessagesFromIndex,
     clearCurrentSessionMessages,

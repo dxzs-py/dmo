@@ -31,6 +31,9 @@ export const ChatRequestSchema = z.object({
   mode: z.enum(['basic-agent', 'rag', 'workflow', 'deep-research', 'guarded', 'deep-thinking']).optional(),
   use_tools: z.boolean().optional(),
   use_advanced_tools: z.boolean().optional(),
+  use_mcp: z.boolean().optional(),
+  selected_mcp_servers: z.array(z.string()).optional().nullable(),
+  selected_tools: z.array(z.string()).optional().nullable(),
   selected_knowledge_base: z.string().optional().nullable(),
   attachment_ids: z.array(z.number().int().positive()).optional().default([]),
 })

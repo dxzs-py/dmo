@@ -7,7 +7,7 @@ from typing import Dict, Optional
 from datetime import datetime
 
 
-SYSTEM_PROMPTS: Dict[str, str] = {
+SYSTEM_PROMPTS: Dict[str, Optional[str]] = {
     "default": """你是 LC-StudyLab 智能学习助手，一个专业、友好、博学的 AI 助手。
 
 你的核心能力：
@@ -28,25 +28,7 @@ SYSTEM_PROMPTS: Dict[str, str] = {
 
 请根据用户的问题，提供有价值的帮助。如果需要最新信息，请使用搜索工具。""",
 
-    "basic-agent": """你是 LC-StudyLab 智能学习助手，一个专业、友好、博学的 AI 助手。
-
-你的核心能力：
-1. 📚 知识解答：回答各类学习问题，提供清晰、准确的解释
-2. 🔍 信息检索：使用搜索工具查找最新信息
-3. 🧮 问题求解：帮助解决数学、编程等问题
-4. 📝 学习规划：协助制定学习计划和路径
-5. 💡 启发思考：引导用户深入思考，而不是直接给答案
-
-你的行为准则：
-- 始终保持专业、耐心、鼓励的态度
-- 用简洁、易懂的语言解释复杂概念
-- 不确定时承认不知道，并使用工具查找信息
-- 鼓励用户主动思考和探索
-- 提供结构化、有条理的回答
-
-当前时间：{current_time}
-
-请根据用户的问题，提供有价值的帮助。如果需要最新信息，请使用搜索工具。""",
+    "basic-agent": None,
 
     "coding": """你是 LC-StudyLab 编程学习助手，专注于帮助用户学习编程。
 
@@ -166,6 +148,8 @@ def get_system_prompt(
         raise ValueError(f"未知的提示词模式: {mode}. 可用模式: {available_modes}")
 
     prompt = SYSTEM_PROMPTS[mode]
+    if prompt is None:
+        prompt = SYSTEM_PROMPTS["default"]
 
     if include_time:
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -207,19 +191,29 @@ def create_custom_prompt(
 
 
 TOOL_USAGE_INSTRUCTIONS = """
-可用工具说明：
-- 🔍 web_search / duckduckgo_search: 搜索互联网获取最新信息
+可用工具说明（分为两类：内置工具 和 MCP 工具）：
+
+【内置工具】— 本地直接执行的基础工具：
 - 🕐 get_current_time / get_current_date: 获取当前时间和日期
 - 🧮 calculator: 执行数学计算
-- 🌤️ weather_query: 查询城市天气（实时/预报）
 - 🌐 translate_text: 翻译文本到指定语言
 - 🌐 detect_language: 检测文本的语言
+- 🌤️ weather_query: 查询城市天气（实时/预报）
+- 🔍 web_search / duckduckgo_search: 搜索互联网获取最新信息
+- 🌐 web_fetch: 抓取网页内容并转换为纯文本
 - 📄 file_reader: 读取指定路径的文件内容
 - 📎 attachment_reader: 读取用户上传的聊天附件内容
 - 📁 fs_write_file / fs_read_file / fs_list_files / fs_search_files: 文件系统操作
-- 🌐 web_fetch: 抓取网页内容并转换为纯文本
 - ✅ todo_write / todo_read: 任务管理（创建/读取待办事项）
 - 🤖 agent_create / agent_run / agent_list: 子代理管理（创建/执行/列出子代理任务）
+
+【MCP 工具】— 通过 MCP (Model Context Protocol) 协议连接的外部工具服务：
+{mcp_tools_section}
+
+重要区分：
+- "MCP 工具"特指通过 MCP 协议连接的外部服务提供的工具，如 sequentialthinking、resolve-library-id、query-docs 等
+- 其他工具（如 calculator、weather_query、web_search 等）是本地内置工具，不是 MCP 工具
+- 当用户询问"你可以使用什么 MCP 工具"时，只应列出【MCP 工具】分类下的工具
 
 使用工具的时机：
 - 需要最新信息或实时数据时，使用 web_search 或 duckduckgo_search
@@ -233,6 +227,9 @@ TOOL_USAGE_INSTRUCTIONS = """
 - 需要获取网页内容时，使用 web_fetch
 - 需要管理任务列表时，使用 todo_write 和 todo_read
 - 需要委派子任务给独立代理时，使用 agent_create 和 agent_run
+- 需要分步骤深度推理时，使用 sequentialthinking
+- 需要查询编程库/框架的最新文档时，先用 resolve-library-id 解析库 ID，再用 query-docs 查询文档
+- 需要查询项目信息或系统状态时，使用 project_info 或 system_status
 
 重要提示：
 - 优先使用工具获取准确信息
@@ -245,6 +242,57 @@ TOOL_USAGE_INSTRUCTIONS = """
 """
 
 
-def get_prompt_with_tools(mode: str = "default") -> str:
+def get_prompt_with_tools(mode: str = "default", mcp_tools_section: str = "（当前未加载 MCP 工具）") -> str:
     base_prompt = get_system_prompt(mode)
-    return f"{base_prompt}\n\n{TOOL_USAGE_INSTRUCTIONS}"
+    tool_instructions = TOOL_USAGE_INSTRUCTIONS.format(mcp_tools_section=mcp_tools_section)
+    return f"{base_prompt}\n\n{tool_instructions}"
+
+
+def build_dynamic_prompt(
+    mode: str = "default",
+    user_id: Optional[int] = None,
+    session_id: Optional[str] = None,
+    custom_instructions: Optional[str] = None,
+    include_document_context: bool = True,
+    include_knowledge_graph: bool = True,
+    query: Optional[str] = None,
+    store=None,
+) -> str:
+    """
+    构建动态系统提示词
+
+    在静态模板基础上，运行时注入：
+    1. 用户已上传的文档上下文（从 Store 检索）
+    2. 知识图谱上下文（实体关系网络）
+    3. 跨会话上下文
+    4. 用户自定义指令
+    5. 时间戳
+
+    参考：
+    - https://docs.langchain.com/oss/python/langchain/prompts#dynamic-prompts
+    """
+    base_prompt = get_system_prompt(mode, custom_instructions=custom_instructions)
+
+    if include_document_context and user_id:
+        try:
+            from Django_xm.apps.attachments.services.document_memory_service import DocumentMemoryService
+            doc_service = DocumentMemoryService(store=store)
+            doc_context = doc_service.build_document_context(user_id)
+            if doc_context:
+                base_prompt += f"\n\n{doc_context}\n请在回答时优先参考用户已上传的文档内容。"
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).debug(f"动态注入文档上下文失败（不影响主流程）: {e}")
+
+    if include_knowledge_graph and user_id and query:
+        try:
+            from Django_xm.apps.context_manager.services.manager import create_context_manager
+            ctx_mgr = create_context_manager(user_id=user_id, store=store)
+            kg_context = ctx_mgr.get_injection_context(query, session_id=session_id)
+            if kg_context:
+                base_prompt += f"\n\n{kg_context}"
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).debug(f"动态注入知识图谱上下文失败（不影响主流程）: {e}")
+
+    return base_prompt

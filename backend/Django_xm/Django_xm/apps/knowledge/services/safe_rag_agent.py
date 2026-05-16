@@ -1,26 +1,25 @@
 """
-安全 RAG Agent - 集成 Guardrails 和结构化输出
+安全 RAG Agent - 集成 Guardrails Middleware 和结构化输出
 
-这是增强版的 RAG Agent，具有以下特性：
-1. 输入安全检查（防止 prompt injection、敏感信息等）
-2. 输出安全检查和结构化输出
-3. 强制引用来源
-4. 自动格式化为 Pydantic 模型
+架构改进（v2）：
+1. 使用 LangChain AgentMiddleware 替代外部 Runnable 管道验证
+2. Guardrails 通过 create_agent(middleware=[...]) 在 ReAct 循环内生效
+3. 保留结构化输出（RAGResponse）和来源引用
+4. 支持流式输出
 """
 
 from typing import Optional, Dict, Any, List
 from langchain.agents import create_agent
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
-from langchain_core.prompts import ChatPromptTemplate
 
 from Django_xm.apps.ai_engine.config import settings, get_logger
 from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
 from Django_xm.apps.ai_engine.guardrails import (
+    create_standard_guardrails,
     InputValidator,
     OutputValidator,
     RAGResponse,
-    ContentFilter,
 )
 from Django_xm.apps.knowledge.services.retrieval_service import create_retriever_tool
 
@@ -56,25 +55,16 @@ def create_safe_rag_agent(
     strict_mode: bool = False,
     **kwargs,
 ):
-    logger.info("🛡️ 创建安全 RAG Agent（带 Guardrails）")
+    logger.info("创建安全 RAG Agent（带 Guardrails Middleware）")
 
-    content_filter = ContentFilter(
-        enable_pii_detection=True,
-        enable_content_safety=True,
-        enable_injection_detection=True,
-        mask_pii=True,
-    )
-
-    input_validator = InputValidator(
-        content_filter=content_filter,
+    guardrails_stack = create_standard_guardrails(
+        enable_input_validation=enable_input_validation,
+        enable_output_validation=enable_output_validation,
         strict_mode=strict_mode,
-    ) if enable_input_validation else None
-
-    output_validator = OutputValidator(
-        content_filter=content_filter,
         require_sources=True,
-        strict_mode=strict_mode,
-    ) if enable_output_validation else None
+        validate_tool_calls=True,
+        raise_on_error=True,
+    )
 
     if model is None:
         model = get_model_string()
@@ -89,6 +79,7 @@ def create_safe_rag_agent(
         model=model,
         tools=[retriever_tool],
         system_prompt=SAFE_RAG_SYSTEM_PROMPT,
+        middleware=guardrails_stack,
         **kwargs,
     )
 
@@ -97,13 +88,15 @@ def create_safe_rag_agent(
         retriever=retriever,
         input_validator=input_validator,
         output_validator=output_validator,
+        guardrails_middleware=guardrails_middleware,
     )
 
-    logger.info(f"✅ 安全 RAG Agent 创建成功")
+    logger.info(f"安全 RAG Agent 创建成功")
     logger.info(f"   模型: {model}")
     logger.info(f"   输入验证: {enable_input_validation}")
     logger.info(f"   输出验证: {enable_output_validation}")
     logger.info(f"   严格模式: {strict_mode}")
+    logger.info(f"   Middleware: 已集成到 Agent ReAct 循环")
 
     return safe_agent
 
@@ -115,39 +108,24 @@ class SafeRAGAgent:
         retriever: BaseRetriever,
         input_validator: Optional[InputValidator] = None,
         output_validator: Optional[OutputValidator] = None,
+        guardrails_middleware=None,
     ):
         self.agent = agent
         self.retriever = retriever
         self.input_validator = input_validator
         self.output_validator = output_validator
+        self.guardrails_middleware = guardrails_middleware
 
     def query(
         self,
         query: str,
         return_structured: bool = True,
     ):
-        logger.info(f"🔍 安全查询: {query[:50]}...")
-
-        if self.input_validator:
-            validation_result = self.input_validator.validate(query)
-
-            if not validation_result.is_valid:
-                error_msg = "输入验证失败:\n" + "\n".join(
-                    f"- {err}" for err in validation_result.errors
-                )
-                logger.error(f"❌ {error_msg}")
-                raise ValueError(error_msg)
-
-            filtered_query = validation_result.filtered_input
-
-            if validation_result.warnings:
-                logger.warning(f"⚠️ 输入警告: {validation_result.warnings}")
-        else:
-            filtered_query = query
+        logger.info(f"安全查询: {query[:50]}...")
 
         try:
             result = self.agent.invoke({
-                "messages": [{"role": "user", "content": filtered_query}]
+                "messages": [{"role": "user", "content": query}]
             })
 
             if isinstance(result, dict) and "messages" in result:
@@ -160,46 +138,25 @@ class SafeRAGAgent:
                 answer = str(result)
 
         except Exception as e:
-            logger.error(f"❌ Agent 执行失败: {e}")
+            logger.error(f"Agent 执行失败: {e}")
             raise
 
         sources = self._extract_sources(result)
 
-        if self.output_validator:
-            validation_result = self.output_validator.validate(
-                answer,
-                sources=sources,
-            )
-
-            if not validation_result.is_valid:
-                error_msg = "输出验证失败:\n" + "\n".join(
-                    f"- {err}" for err in validation_result.errors
-                )
-                logger.error(f"❌ {error_msg}")
-                raise ValueError(error_msg)
-
-            filtered_answer = validation_result.filtered_output
-
-            if validation_result.warnings:
-                logger.warning(f"⚠️ 输出警告: {validation_result.warnings}")
-        else:
-            filtered_answer = answer
-
-        logger.info("✅ 安全查询完成")
+        logger.info("安全查询完成")
 
         if return_structured:
             return RAGResponse(
-                answer=filtered_answer,
+                answer=answer,
                 sources=sources,
                 confidence=None,
                 metadata={
                     "original_query": query,
-                    "filtered_query": filtered_query,
                 }
             )
         else:
             return {
-                "answer": filtered_answer,
+                "answer": answer,
                 "sources": sources,
             }
 
@@ -208,28 +165,11 @@ class SafeRAGAgent:
         query: str,
         return_structured: bool = True,
     ):
-        logger.info(f"🔍 异步安全查询: {query[:50]}...")
-
-        if self.input_validator:
-            validation_result = self.input_validator.validate(query)
-
-            if not validation_result.is_valid:
-                error_msg = "输入验证失败:\n" + "\n".join(
-                    f"- {err}" for err in validation_result.errors
-                )
-                logger.error(f"❌ {error_msg}")
-                raise ValueError(error_msg)
-
-            filtered_query = validation_result.filtered_input
-
-            if validation_result.warnings:
-                logger.warning(f"⚠️ 输入警告: {validation_result.warnings}")
-        else:
-            filtered_query = query
+        logger.info(f"异步安全查询: {query[:50]}...")
 
         try:
             result = await self.agent.ainvoke({
-                "messages": [{"role": "user", "content": filtered_query}]
+                "messages": [{"role": "user", "content": query}]
             })
 
             if isinstance(result, dict) and "messages" in result:
@@ -242,51 +182,30 @@ class SafeRAGAgent:
                 answer = str(result)
 
         except Exception as e:
-            logger.error(f"❌ Agent 执行失败: {e}")
+            logger.error(f"Agent 执行失败: {e}")
             raise
 
         sources = self._extract_sources(result)
 
-        if self.output_validator:
-            validation_result = self.output_validator.validate(
-                answer,
-                sources=sources,
-            )
-
-            if not validation_result.is_valid:
-                error_msg = "输出验证失败:\n" + "\n".join(
-                    f"- {err}" for err in validation_result.errors
-                )
-                logger.error(f"❌ {error_msg}")
-                raise ValueError(error_msg)
-
-            filtered_answer = validation_result.filtered_output
-
-            if validation_result.warnings:
-                logger.warning(f"⚠️ 输出警告: {validation_result.warnings}")
-        else:
-            filtered_answer = answer
-
-        logger.info("✅ 异步安全查询完成")
+        logger.info("异步安全查询完成")
 
         if return_structured:
             return RAGResponse(
-                answer=filtered_answer,
+                answer=answer,
                 sources=sources,
                 confidence=None,
                 metadata={
                     "original_query": query,
-                    "filtered_query": filtered_query,
                 }
             )
         else:
             return {
-                "answer": filtered_answer,
+                "answer": answer,
                 "sources": sources,
             }
 
     def stream(self, query: str):
-        logger.info(f"🔍 流式安全查询: {query[:50]}...")
+        logger.info(f"流式安全查询: {query[:50]}...")
 
         if self.input_validator:
             validation_result = self.input_validator.validate(query)
@@ -295,7 +214,7 @@ class SafeRAGAgent:
                 error_msg = "输入验证失败:\n" + "\n".join(
                     f"- {err}" for err in validation_result.errors
                 )
-                logger.error(f"❌ {error_msg}")
+                logger.error(f"{error_msg}")
                 raise ValueError(error_msg)
 
             filtered_query = validation_result.filtered_input
@@ -308,8 +227,17 @@ class SafeRAGAgent:
             }):
                 yield chunk
         except Exception as e:
-            logger.error(f"❌ 流式查询失败: {e}")
+            logger.error(f"流式查询失败: {e}")
             raise
+
+    async def astream_query(self, query: str):
+        logger.info(f"流式安全查询: {query[:50]}...")
+
+        async for event in self.agent.astream_events(
+            {"messages": [{"role": "user", "content": query}]},
+            version="v2",
+        ):
+            yield event
 
     def _extract_sources(self, result: Any) -> List[str]:
         sources = []
@@ -357,3 +285,6 @@ class SafeRAGAgent:
                 return result
 
         return await self.agent.ainvoke(input_data)
+
+    def get_middleware(self):
+        return self.guardrails_middleware
