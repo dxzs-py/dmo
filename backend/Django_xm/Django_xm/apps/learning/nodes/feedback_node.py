@@ -8,7 +8,7 @@ from typing import Dict, Any
 
 from ..services.state import StudyFlowState
 from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
-from Django_xm.apps.config_center.config import get_logger
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -93,4 +93,10 @@ def feedback_node(state: StudyFlowState) -> Dict[str, Any]:
 
     except Exception as e:
         logger.error(f"[Feedback Node] 生成反馈失败: {e}", exc_info=True)
-        raise
+        return {
+            "feedback": f"\n\n⚠️ 反馈生成失败: {str(e)}",
+            "should_retry": False,
+            "retry_count": state.get("retry_count", 0),
+            "current_step": "feedback_error",
+            "updated_at": datetime.now().isoformat()
+        }

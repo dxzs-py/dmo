@@ -8,8 +8,8 @@ from typing import Dict, Any, List
 from pydantic import BaseModel, Field
 
 from ..services.state import StudyFlowState
-from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
-from Django_xm.apps.config_center.config import get_logger
+from Django_xm.apps.ai_engine.services.llm_factory import get_structured_model_with_fallback
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -46,14 +46,19 @@ def quiz_generator_node(state: StudyFlowState) -> Dict[str, Any]:
         retrieved_docs = state.get("retrieved_docs", [])
 
         if not learning_plan:
-            raise ValueError("学习计划不存在，无法生成练习题")
+            logger.warning("[Quiz Generator Node] 学习计划不存在，跳过练习题生成")
+            return {
+                "quiz": None,
+                "messages": [{"role": "assistant", "content": "\n\n⚠️ 学习计划生成失败，无法生成练习题。请稍后重试。"}],
+                "current_step": "quiz_error",
+                "updated_at": datetime.now().isoformat()
+            }
 
-        model = get_chat_model()
-        if hasattr(model, 'bound'):
-            base_model = model.bound
-        else:
-            base_model = model
-        structured_model = base_model.with_structured_output(QuizSchema)
+        # 结构化输出必须使用非流式模式（流式 + with_structured_output 嵌套结构会返回 None）
+        structured_model = get_structured_model_with_fallback(
+            QuizSchema,
+            streaming=False,
+        )
 
         context_parts = []
         if retrieved_docs:
@@ -101,6 +106,18 @@ def quiz_generator_node(state: StudyFlowState) -> Dict[str, Any]:
             {"role": "user", "content": user_prompt}
         ])
 
+        # 防御性检查：所有 fallback 模型都返回空时统一报错
+        if quiz_response is None or not hasattr(quiz_response, "questions"):
+            error_msg = "所有结构化输出模型均返回空结果"
+            logger.error(f"[Quiz Generator Node] {error_msg}")
+            return {
+                "quiz": None,
+                "error": error_msg,
+                "messages": [{"role": "assistant", "content": f"\n\n⚠️ {error_msg}，请稍后重试。"}],
+                "current_step": "quiz_error",
+                "updated_at": datetime.now().isoformat()
+            }
+
         questions = []
         for q in quiz_response.questions:
             question = {
@@ -143,4 +160,10 @@ def quiz_generator_node(state: StudyFlowState) -> Dict[str, Any]:
 
     except Exception as e:
         logger.error(f"[Quiz Generator Node] 生成练习题失败: {e}", exc_info=True)
-        raise
+        return {
+            "quiz": None,
+            "error": f"练习题生成失败: {str(e)}",
+            "messages": [{"role": "assistant", "content": f"\n\n⚠️ 练习题生成失败: {str(e)}"}],
+            "current_step": "quiz_error",
+            "updated_at": datetime.now().isoformat()
+        }

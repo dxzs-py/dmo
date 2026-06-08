@@ -5,11 +5,12 @@
 """
 
 import logging
+from datetime import datetime
 from typing import Dict, Any, List
 
 from ..services.state import StudyFlowState, ScoreDetail
 from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
-from Django_xm.apps.config_center.config import get_logger
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -31,7 +32,13 @@ def grading_node(state: StudyFlowState) -> Dict[str, Any]:
         user_answers = state.get("user_answers")
 
         if not quiz or not user_answers:
-            raise ValueError("练习题或用户答案不存在，无法评分")
+            logger.warning("[Grading Node] 练习题或用户答案不存在，跳过评分")
+            return {
+                "score": 0,
+                "score_details": {"total_count": 0, "correct_count": 0, "question_scores": []},
+                "current_step": "grading_error",
+                "updated_at": datetime.now().isoformat()
+            }
 
         questions = quiz["questions"]
         total_points = quiz["total_points"]
@@ -140,4 +147,10 @@ def grading_node(state: StudyFlowState) -> Dict[str, Any]:
 
     except Exception as e:
         logger.error(f"[Grading Node] 评分失败: {e}", exc_info=True)
-        raise
+        return {
+            "score": 0,
+            "score_details": {"total_count": 0, "correct_count": 0, "question_scores": []},
+            "error": f"评分失败: {str(e)}",
+            "current_step": "grading_error",
+            "updated_at": datetime.now().isoformat()
+        }

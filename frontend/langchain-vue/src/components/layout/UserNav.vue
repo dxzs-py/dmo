@@ -50,7 +50,7 @@ async function handleCommand(command) {
       await confirmLogout()
       userStore.logout()
       ElMessage.success('已退出登录')
-      router.push('/')
+      router.push('/chat')
     } catch {
       // User cancelled
     }
@@ -86,7 +86,7 @@ async function handleCommand(command) {
 
 .username {
   font-weight: 500;
-  color: #374151;
+  color: var(--el-text-color-primary, #374151);
 }
 
 .auth-buttons {
@@ -96,7 +96,7 @@ async function handleCommand(command) {
 }
 
 .nav-link {
-  color: #6b7280;
+  color: var(--el-text-color-secondary, #6b7280);
   text-decoration: none;
   font-size: 14px;
   padding: 6px 12px;
@@ -121,6 +121,6 @@ async function handleCommand(command) {
 }
 
 .divider {
-  color: #d1d5db;
+  color: var(--el-border-color, #d1d5db);
 }
 </style>

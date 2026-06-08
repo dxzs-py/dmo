@@ -11,7 +11,7 @@ LangGraph MCP 集成模块
     from Django_xm.apps.tools.mcp.langgraph_integration import create_mcp_langgraph_agent
 
     agent = await create_mcp_langgraph_agent(
-        model="deepseek-chat",
+        model=app_cfg.deepseek_model,
         session_id="user-session-123",
     )
     result = await agent.ainvoke({"messages": [("user", "你好")]})
@@ -21,15 +21,14 @@ from typing import List, Dict, Any, Optional, Sequence
 from langchain_core.tools import BaseTool
 from langchain_core.language_models import BaseChatModel
 
-from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.ai_engine.config import get_logger, settings as app_cfg
 from Django_xm.apps.ai_engine.services.llm_factory import get_llm
-from Django_xm.apps.ai_engine.services.agent_factory import create_base_agent
+from Django_xm.apps.agent_hub import create as agent_hub_create, AgentType, AgentConfig
 
 logger = get_logger(__name__)
 
 
 async def load_mcp_tools_for_langgraph(
-    include_local: bool = True,
     server_names: Optional[List[str]] = None,
 ) -> List[BaseTool]:
     from . import get_all_mcp_tools, get_mcp_tools
@@ -39,11 +38,6 @@ async def load_mcp_tools_for_langgraph(
         for name in server_names:
             server_tools = await get_mcp_tools(server_name=name)
             tools.extend(server_tools)
-
-        if include_local:
-            from .local import get_local_mcp_tools
-            tools.extend(get_local_mcp_tools())
-
         return tools
 
     tools = await get_all_mcp_tools()
@@ -56,9 +50,7 @@ async def create_mcp_langgraph_agent(
     tools: Optional[Sequence[BaseTool]] = None,
     mcp_server_names: Optional[List[str]] = None,
     include_mcp_tools: bool = True,
-    include_local_tools: bool = True,
     include_builtin_tools: bool = False,
-    use_advanced_tools: bool = False,
     use_web_search: bool = False,
     prompt_mode: str = "default",
     session_id: Optional[str] = None,
@@ -73,10 +65,9 @@ async def create_mcp_langgraph_agent(
     all_tools: List[BaseTool] = list(tools) if tools else []
 
     if include_builtin_tools:
-        from Django_xm.apps.tools import get_tools_for_request
-        builtin_tools = get_tools_for_request(
+        from Django_xm.apps.tools import get_tools_for_request_async
+        builtin_tools = await get_tools_for_request_async(
             use_tools=True,
-            use_advanced_tools=use_advanced_tools,
             use_web_search=use_web_search,
             use_mcp=False,
         )
@@ -85,22 +76,21 @@ async def create_mcp_langgraph_agent(
 
     if include_mcp_tools:
         mcp_tools = await load_mcp_tools_for_langgraph(
-            include_local=include_local_tools,
             server_names=mcp_server_names,
         )
         all_tools.extend(mcp_tools)
         logger.info(f"MCP 工具已加载 ({len(mcp_tools)} 个)")
 
-    agent = create_base_agent(
+    config = AgentConfig(
+        agent_type=AgentType.BASE,
         model=llm,
         tools=all_tools,
-        prompt_mode=prompt_mode,
         session_id=session_id,
         user_id=user_id,
         checkpointer=checkpointer,
         enable_human_in_loop=enable_human_in_loop,
-        **kwargs,
     )
+    agent = await agent_hub_create(config)
 
     logger.info(
         f"LangGraph MCP Agent 已创建: "

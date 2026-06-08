@@ -6,7 +6,8 @@ Token 使用追踪器
 from typing import Dict, Optional, Any
 from dataclasses import dataclass, field
 
-from ..config import get_logger
+from django.conf import settings as django_settings
+from ..config import get_logger, settings as app_cfg
 
 logger = get_logger(__name__)
 
@@ -44,8 +45,8 @@ MODEL_LIMITS = {
 
 
 class UsageTracker:
-    def __init__(self, model_id: str = "gpt-4o"):
-        self.model_id = model_id
+    def __init__(self, model_id: Optional[str] = None):
+        self.model_id = model_id or app_cfg.openai_model
         self.usage = TokenUsage()
         logger.debug(f"📊 初始化 UsageTracker: model_id={model_id}")
 
@@ -93,7 +94,7 @@ class UsageTracker:
 
     def get_max_tokens(self) -> int:
         """获取模型的最大 token 限制"""
-        return MODEL_LIMITS.get(self.model_id, 128000)
+        return MODEL_LIMITS.get(self.model_id, getattr(django_settings, 'AI_DEFAULT_MODEL_TOKEN_LIMIT', 128000))
 
     def get_usage_percentage(self) -> float:
         """获取使用百分比"""
@@ -127,9 +128,7 @@ class UsageTracker:
 
 
 def create_usage_tracker(model_id: Optional[str] = None) -> UsageTracker:
-    from Django_xm.apps.ai_engine.config import settings
-
     if model_id is None:
-        model_id = getattr(settings, 'openai_model', 'gpt-4o')
+        model_id = app_cfg.openai_model
 
     return UsageTracker(model_id=model_id)

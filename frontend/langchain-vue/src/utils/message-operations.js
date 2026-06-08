@@ -170,5 +170,6 @@ export function createMessageVersion(message) {
     suggestions: message.suggestions || null,
     context: message.context || null,
     attachmentIds: message.attachmentIds || [],
+    attachments: message.attachments || [],
   }
 }

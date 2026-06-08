@@ -45,6 +45,7 @@ app = Celery('Django_xm', include=[
     'Django_xm.tasks.deep_research',
     'Django_xm.tasks.rag_tasks',
     'Django_xm.tasks.workflow_tasks',
+    'Django_xm.tasks.analytics_tasks',
 ])
 
 app.config_from_object('django.conf:settings', namespace='CELERY')

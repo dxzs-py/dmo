@@ -31,23 +31,28 @@ from langchain_core.tools import ToolException
 class LCAgentException(Exception):
     """项目级 Agent 异常基类"""
 
+    DEFAULT_USER_MESSAGE = "抱歉，处理您的请求时出现错误"
+
     def __init__(
         self,
         message: str,
         error_code: str = "AGENT_ERROR",
         details: Optional[Dict[str, Any]] = None,
         recoverable: bool = True,
+        user_message: Optional[str] = None,
     ):
         super().__init__(message)
         self.message = message
         self.error_code = error_code
         self.details = details or {}
         self.recoverable = recoverable
+        self.user_message = user_message or self.DEFAULT_USER_MESSAGE
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "error_code": self.error_code,
             "message": self.message,
+            "user_message": self.user_message,
             "details": self.details,
             "recoverable": self.recoverable,
         }
@@ -55,6 +60,8 @@ class LCAgentException(Exception):
 
 class ModelCallError(LCAgentException):
     """模型调用失败"""
+
+    DEFAULT_USER_MESSAGE = "模型服务暂时不可用，请稍后重试"
 
     def __init__(self, message: str, model_name: str = "", **kwargs):
         super().__init__(
@@ -68,6 +75,8 @@ class ModelCallError(LCAgentException):
 class AgentExecutionError(LCAgentException):
     """Agent 执行失败"""
 
+    DEFAULT_USER_MESSAGE = "智能体执行失败，请稍后重试"
+
     def __init__(self, message: str, agent_type: str = "", **kwargs):
         super().__init__(
             message,
@@ -79,6 +88,8 @@ class AgentExecutionError(LCAgentException):
 
 class RAGRetrievalError(LCAgentException):
     """RAG 检索失败"""
+
+    DEFAULT_USER_MESSAGE = "知识检索失败，请稍后重试"
 
     def __init__(self, message: str, index_name: str = "", **kwargs):
         super().__init__(
@@ -92,6 +103,8 @@ class RAGRetrievalError(LCAgentException):
 class GuardrailsValidationError(LCAgentException):
     """Guardrails 验证失败"""
 
+    DEFAULT_USER_MESSAGE = "内容验证未通过，请调整后重试"
+
     def __init__(self, message: str, validation_type: str = "", **kwargs):
         super().__init__(
             message,
@@ -104,6 +117,8 @@ class GuardrailsValidationError(LCAgentException):
 class RateLimitExceededError(LCAgentException):
     """速率限制超限"""
 
+    DEFAULT_USER_MESSAGE = "请求频率超限，请稍后再试"
+
     def __init__(self, message: str = "API 速率限制已超限，请稍后重试", **kwargs):
         super().__init__(
             message,
@@ -115,6 +130,8 @@ class RateLimitExceededError(LCAgentException):
 
 class CheckpointError(LCAgentException):
     """状态持久化失败"""
+
+    DEFAULT_USER_MESSAGE = "状态保存失败，请稍后重试"
 
     def __init__(self, message: str, backend: str = "", **kwargs):
         super().__init__(
@@ -130,12 +147,13 @@ def classify_exception(exc: Exception) -> LCAgentException:
     将任意异常分类为项目级异常
 
     将 LangChain 官方异常和通用异常统一映射为 LCAgentException 体系。
+    返回的异常对象包含面向用户的友好消息。
 
     Args:
         exc: 原始异常
 
     Returns:
-        分类后的 LCAgentException
+        分类后的 LCAgentException，包含 user_message 属性
     """
     if isinstance(exc, LCAgentException):
         return exc
@@ -190,16 +208,19 @@ def classify_exception(exc: Exception) -> LCAgentException:
                 message=f"OpenAI 认证失败: {exc}",
                 details={"original_type": type(exc).__name__, "auth_error": True},
                 recoverable=False,
+                user_message="认证失败，请检查配置后重试",
             )
         if isinstance(exc, OpenAIConnectionError):
             return ModelCallError(
                 message=f"OpenAI 连接失败: {exc}",
                 details={"original_type": type(exc).__name__, "connection_error": True},
+                user_message="网络连接失败，请检查网络后重试",
             )
         if isinstance(exc, OpenAITimeoutError):
             return ModelCallError(
                 message=f"OpenAI 请求超时: {exc}",
                 details={"original_type": type(exc).__name__, "timeout": True},
+                user_message="请求超时，请稍后重试",
             )
         if isinstance(exc, OpenAIBadRequestError):
             return ModelCallError(
@@ -221,18 +242,21 @@ def classify_exception(exc: Exception) -> LCAgentException:
         return ModelCallError(
             message=f"模型调用超时: {exc}",
             details={"original_type": type(exc).__name__, "timeout": True},
+            user_message="请求超时，请稍后重试",
         )
 
     if isinstance(exc, (ConnectionError, OSError)):
         return ModelCallError(
             message=f"网络连接失败: {exc}",
             details={"original_type": type(exc).__name__, "connection_error": True},
+            user_message="网络连接失败，请检查网络后重试",
         )
 
     if "timeout" in error_msg or "timed out" in error_msg:
         return ModelCallError(
             message=f"模型调用超时: {exc}",
             details={"original_type": type(exc).__name__, "timeout": True},
+            user_message="请求超时，请稍后重试",
         )
 
     if "auth" in error_msg or "api_key" in error_msg or "unauthorized" in error_msg:
@@ -240,6 +264,7 @@ def classify_exception(exc: Exception) -> LCAgentException:
             message=f"认证失败: {exc}",
             details={"original_type": type(exc).__name__, "auth_error": True},
             recoverable=False,
+            user_message="认证失败，请检查配置后重试",
         )
 
     return LCAgentException(
@@ -247,4 +272,5 @@ def classify_exception(exc: Exception) -> LCAgentException:
         error_code="UNEXPECTED_ERROR",
         details={"original_type": type(exc).__name__},
         recoverable=False,
+        user_message="服务暂时不可用，请稍后重试",
     )

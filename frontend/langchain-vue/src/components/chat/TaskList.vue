@@ -40,6 +40,15 @@
           </el-tag>
         </template>
       </el-table-column>
+      <el-table-column prop="source" label="来源" width="120">
+        <template #default="{ row }">
+          <el-tag v-if="row.source === 'chat'" type="primary" size="small">
+            <el-icon style="vertical-align: middle; margin-right: 2px;"><ChatDotRound /></el-icon>
+            聊天触发
+          </el-tag>
+          <el-tag v-else type="info" size="small">独立研究</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column prop="created_at" label="创建时间" width="180">
         <template #default="{ row }">
           {{ formatDate(row.created_at) }}
@@ -55,6 +64,14 @@
           <el-button link type="primary" size="small" @click="viewTask(row)">
             <el-icon><View /></el-icon>
             查看
+          </el-button>
+          <el-button
+            v-if="row.status === 'completed' && moduleType === 'deep-research'"
+            link type="success" size="small"
+            @click="continueTask(row)"
+          >
+            <el-icon><RefreshRight /></el-icon>
+            续研
           </el-button>
           <el-button link type="danger" size="small" @click="confirmDeleteTask(row)">
             <el-icon><Delete /></el-icon>
@@ -82,10 +99,11 @@
 
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Search, Refresh, View, Delete } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search, Refresh, View, Delete, ChatDotRound, RefreshRight } from '@element-plus/icons-vue'
 import { logger } from '../../utils/logger'
 import { confirmDelete } from '../../utils/dialog'
+import { useSessionStore } from '../../stores/session'
 
 const props = defineProps({
   moduleType: {
@@ -103,7 +121,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['view-task', 'delete-task', 'refresh'])
+const emit = defineEmits(['view-task', 'delete-task', 'refresh', 'continue-task'])
 
 const tasks = ref([])
 const loading = ref(false)
@@ -201,6 +219,10 @@ const viewTask = (task) => {
   emit('view-task', task)
 }
 
+const continueTask = (task) => {
+  emit('continue-task', task)
+}
+
 const confirmDeleteTask = async (task) => {
   const name = task.query || task.user_question || task.task_id || task.thread_id
   try {
@@ -214,11 +236,24 @@ const confirmDeleteTask = async (task) => {
 const deleteTask = async (task) => {
   try {
     const taskId = task.task_id || task.thread_id
-    await props.api.deleteTask(taskId)
+    const response = await props.api.deleteTask(taskId)
+    const resData = response.data?.data || response.data
+    if (resData?.has_linked_data && resData?.linked_session) {
+      const sessionTitle = resData.linked_session.title || '未命名会话'
+      await ElMessageBox.confirm(
+        `该研究任务关联了一个聊天会话（${sessionTitle}），删除后聊天记录也将被删除。是否继续？`,
+        '',
+        { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' }
+      )
+      await props.api.deleteTask(taskId, { confirm_delete_linked: true })
+      const sessionStore = useSessionStore()
+      sessionStore.loadSessionsFromBackend()
+    }
     ElMessage.success('删除成功')
     loadTasks()
     emit('delete-task', task)
   } catch (error) {
+    if (error === 'cancel' || error?.toString?.().includes('cancel')) return
     logger.error('删除任务失败:', error)
     ElMessage.error('删除失败')
   }
@@ -227,6 +262,8 @@ const deleteTask = async (task) => {
 onMounted(() => {
   loadTasks()
 })
+
+defineExpose({ tasks, loading })
 </script>
 
 <style scoped>

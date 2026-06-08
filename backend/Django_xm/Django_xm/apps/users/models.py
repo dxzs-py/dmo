@@ -1,9 +1,14 @@
+import os
 from django.db import models
 from django.contrib.auth.models import AbstractUser, UserManager
 from django.core.validators import RegexValidator
 from django.utils import timezone
 
 from Django_xm.apps.core.base_models import SoftDeleteManager, AllObjectsManager
+
+
+def avatar_upload_path(instance, filename):
+    return f'avatar/{instance.pk}/{filename}'
 
 
 class SoftDeleteUserManager(SoftDeleteManager, UserManager):
@@ -23,7 +28,7 @@ class User(AbstractUser):
         blank=True,
         validators=[RegexValidator(regex=r'^1[3-9]\d{9}$', message='请输入有效的手机号')]
     )
-    avatar = models.ImageField(upload_to='avatar/', null=True, blank=True, verbose_name='头像')
+    avatar = models.ImageField(upload_to=avatar_upload_path, null=True, blank=True, verbose_name='头像')
 
     created_at = models.DateTimeField(auto_now_add=True, db_index=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
@@ -38,7 +43,6 @@ class User(AbstractUser):
     total_messages = models.PositiveIntegerField(default=0, verbose_name='总消息数')
     total_sessions = models.PositiveIntegerField(default=0, verbose_name='总会话数')
     total_tokens = models.PositiveBigIntegerField(default=0, verbose_name='总Token数')
-    total_cost = models.DecimalField(max_digits=12, decimal_places=6, default=0, verbose_name='总费用')
     active_days = models.PositiveIntegerField(default=0, verbose_name='活跃天数')
 
     objects = SoftDeleteUserManager()

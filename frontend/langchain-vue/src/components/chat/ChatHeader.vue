@@ -1,8 +1,9 @@
 <script setup>
-import { computed } from 'vue'
-import { FolderOpened, Hide, View, Cpu } from '@element-plus/icons-vue'
+import { computed, ref } from 'vue'
+import { FolderOpened, Hide, View, Cpu, Search, MagicStick } from '@element-plus/icons-vue'
 import ModelSelector from '../common/ModelSelector.vue'
 import { useSessionStore } from '../../stores/session'
+import { useModelStore } from '../../stores/model'
 import { ElMessage } from 'element-plus'
 
 const props = defineProps({
@@ -31,35 +32,67 @@ const props = defineProps({
     default: 'disconnected',
     validator: (v) => ['connected', 'disconnected', 'reconnecting', 'connecting'].includes(v),
   },
+  useWebSearch: {
+    type: Boolean,
+    default: false,
+  },
+  useDeepThinking: {
+    type: Boolean,
+    default: false,
+  },
 })
 
 const emit = defineEmits({
   'model-change': (data) => true,
   'update:currentMode': (mode) => typeof mode === 'string',
+  'update:useWebSearch': (val) => typeof val === 'boolean',
+  'update:useDeepThinking': (val) => typeof val === 'boolean',
   toggleDebug: () => true,
   toggleRightPanel: () => true,
 })
 
 const sessionStore = useSessionStore()
+const modelStore = useModelStore()
 
-const selectedKnowledgeBaseId = computed({
-  get: () => sessionStore.selectedKnowledgeBase?.id || null,
+const selectedKnowledgeBaseIds = computed({
+  get: () => sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
   set: (val) => {
-    sessionStore.setSelectedKnowledgeBase(val)
-    if (val) {
-      const kb = sessionStore.knowledgeBases.find(k => k.id === val)
-      if (kb) ElMessage.success(`已加载知识库: ${kb.name}`)
+    sessionStore.setSelectedKnowledgeBases(val)
+    if (val && val.length > 0) {
+      const names = val.map(id => {
+        const kb = sessionStore.knowledgeBases.find(k => k.id === id)
+        return kb?.name || id
+      })
+      ElMessage.success(`已加载知识库: ${names.join(', ')}`)
     }
   }
 })
 
+const localUseWebSearch = computed({
+  get: () => props.useWebSearch,
+  set: (val) => emit('update:useWebSearch', val),
+})
+
+const localUseDeepThinking = computed({
+  get: () => props.useDeepThinking,
+  set: (val) => emit('update:useDeepThinking', val),
+})
+
+const modelSupportsDeepThinking = computed(() => {
+  const capabilities = modelStore.currentModelCapabilities || []
+  return capabilities.includes('deep_thinking')
+})
+
 const modeConfig = {
-  'basic-agent': { icon: '🤖', label: '基础代理', desc: '日常问答与任务执行', color: '#3b82f6' },
-  'deep-thinking': { icon: '🧠', label: '深度思考', desc: '深度分析与推理', color: '#8b5cf6' },
-  'rag': { icon: '📚', label: 'RAG 检索', desc: '基于知识库的检索增强', color: '#10b981' },
-  'workflow': { icon: '🔄', label: '学习工作流', desc: '计划-练习-反馈学习', color: '#f59e0b' },
+  'agent': { icon: '⚡', label: '代理', desc: '智能代理，支持工具调用', color: '#f97316' },
   'deep-research': { icon: '🔬', label: '深度研究', desc: '多步骤深度研究分析', color: '#ec4899' },
-  'guarded': { icon: '🛡️', label: '安全代理', desc: '带安全防护的对话', color: '#6366f1' },
+  // 旧模式兼容映射
+  'chat': { icon: '⚡', label: '代理', desc: '智能代理，支持工具调用', color: '#f97316' },
+  'basic-agent': { icon: '⚡', label: '代理', desc: '智能代理，支持工具调用', color: '#f97316' },
+  'advanced-agent': { icon: '⚡', label: '代理', desc: '智能代理，支持工具调用', color: '#f97316' },
+  'research-agent': { icon: '⚡', label: '代理', desc: '智能代理，支持工具调用', color: '#f97316' },
+  'rag-agent': { icon: '⚡', label: '代理', desc: '智能代理，支持工具调用', color: '#f97316' },
+  'deep-thinking': { icon: '⚡', label: '代理', desc: '智能代理，支持工具调用', color: '#f97316' },
 }
 
 const currentModeConfig = computed(() => getModeConfig(props.currentMode))
@@ -112,12 +145,15 @@ function handleModeChange(mode) {
 
       <div class="header-group config-group">
         <el-select
-          :model-value="selectedKnowledgeBaseId"
+          :model-value="selectedKnowledgeBaseIds"
           placeholder="知识库"
           class="knowledge-selector"
           clearable
+          multiple
+          collapse-tags
+          collapse-tags-tooltip
           size="default"
-          @update:model-value="(val) => selectedKnowledgeBaseId = val"
+          @update:model-value="(val) => selectedKnowledgeBaseIds = val"
         >
           <el-option
             v-for="kb in sessionStore.knowledgeBases"
@@ -156,6 +192,20 @@ function handleModeChange(mode) {
         </el-select>
       </div>
 
+      <!-- 能力开关区域 -->
+      <div v-if="currentMode === 'agent' || currentMode === 'deep-research'" class="capability-switches">
+        <el-tooltip v-if="currentMode === 'agent' || currentMode === 'deep-research'" content="联网搜索" :show-after="300">
+          <button :class="['capability-icon-btn', { active: localUseWebSearch }]" @click="localUseWebSearch = !localUseWebSearch">
+            <el-icon :size="14"><Search /></el-icon>
+          </button>
+        </el-tooltip>
+        <el-tooltip v-if="modelSupportsDeepThinking && (currentMode === 'agent' || currentMode === 'deep-research')" content="深度思考" :show-after="300">
+          <button :class="['capability-icon-btn', { active: localUseDeepThinking }]" @click="localUseDeepThinking = !localUseDeepThinking">
+            <el-icon :size="14"><MagicStick /></el-icon>
+          </button>
+        </el-tooltip>
+      </div>
+
       <div class="header-divider"></div>
 
       <div class="header-group action-group">
@@ -187,14 +237,14 @@ function handleModeChange(mode) {
   justify-content: space-between;
   background: var(--card);
   border-bottom: 1px solid var(--border);
-  padding: 8px 20px;
+  padding: 10px 20px;
   flex-shrink: 0;
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .header-right {
@@ -206,14 +256,49 @@ function handleModeChange(mode) {
 .header-group {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+}
+
+.capability-switches {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 6px;
+}
+
+.capability-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: all 0.2s;
+  padding: 0;
+}
+
+.capability-icon-btn:hover {
+  background: var(--accent);
+  color: var(--foreground);
+  border-color: var(--sidebar-primary);
+}
+
+.capability-icon-btn.active {
+  background: color-mix(in srgb, var(--sidebar-primary) 15%, transparent);
+  color: var(--sidebar-primary);
+  border-color: var(--sidebar-primary);
 }
 
 .header-divider {
   width: 1px;
   height: 20px;
   background: var(--border);
-  margin: 0 10px;
+  margin: 0 8px;
+  flex-shrink: 0;
 }
 
 .header-icon-btn {
@@ -330,7 +415,7 @@ function handleModeChange(mode) {
 }
 
 .knowledge-selector {
-  width: 140px;
+  width: 150px;
 }
 
 .knowledge-option {
@@ -344,7 +429,7 @@ function handleModeChange(mode) {
 }
 
 .mode-selector {
-  width: 150px;
+  width: 160px;
 }
 
 .mode-option {
@@ -382,16 +467,38 @@ function handleModeChange(mode) {
 
 @media (max-width: 1200px) {
   .knowledge-selector {
-    width: 120px;
+    width: 130px;
   }
   .mode-selector {
-    width: 130px;
+    width: 140px;
+  }
+}
+
+@media (max-width: 900px) {
+  .chat-header {
+    padding: 8px 14px;
+  }
+
+  .knowledge-selector {
+    width: 115px;
+  }
+
+  .mode-selector {
+    width: 125px;
+  }
+
+  .header-divider {
+    margin: 0 6px;
+  }
+
+  .mode-badge {
+    display: none;
   }
 }
 
 @media (max-width: 768px) {
   .chat-header {
-    padding: 6px 12px;
+    padding: 8px 14px;
   }
 
   .page-title {
@@ -399,19 +506,19 @@ function handleModeChange(mode) {
   }
 
   .header-left {
-    gap: 6px;
+    gap: 8px;
   }
 
   .connection-text {
     display: none;
   }
 
-  .mode-badge {
+  .model-group {
     display: none;
   }
 
   .header-divider {
-    margin: 0 6px;
+    margin: 0 5px;
   }
 
   .knowledge-selector {
@@ -425,9 +532,9 @@ function handleModeChange(mode) {
 
 @media (max-width: 480px) {
   .chat-header {
-    padding: 6px 8px;
+    padding: 8px 10px;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 8px;
   }
 
   .page-title {
@@ -436,7 +543,7 @@ function handleModeChange(mode) {
 
   .header-right {
     flex-wrap: wrap;
-    gap: 4px;
+    gap: 6px;
   }
 
   .header-divider {
@@ -444,7 +551,7 @@ function handleModeChange(mode) {
   }
 
   .header-group {
-    gap: 4px;
+    gap: 6px;
   }
 
   .knowledge-selector {
@@ -454,5 +561,18 @@ function handleModeChange(mode) {
   .mode-selector {
     max-width: 100px;
   }
+}
+</style>
+
+<style>
+.mode-selector-popper .el-select-dropdown__item {
+  padding: 10px 14px;
+  height: auto;
+  min-height: 40px;
+}
+
+.mode-selector-popper .el-select-dropdown__item.hover,
+.mode-selector-popper .el-select-dropdown__item:hover {
+  background-color: var(--el-fill-color-light);
 }
 </style>

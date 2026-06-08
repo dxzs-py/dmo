@@ -1,265 +1,168 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
 import { useModelStore } from '../stores/model'
-import { chatAPI } from '../api'
-import { ElMessage } from 'element-plus'
+import { useChatInput } from '../composables/useChatInput'
+import { useChatUI } from '../composables/useChatUI'
+import { useChatCommands } from '../composables/useChatCommands'
+import { useChatKeyboard } from '../composables/useChatKeyboard'
 import ChatHeader from '../components/chat/ChatHeader.vue'
 import ChatMessages from '../components/chat/ChatMessages.vue'
 import ChatInput from '../components/chat/ChatInput.vue'
 import ChatRightPanel from '../components/chat/ChatRightPanel.vue'
 import ProjectContext from '../components/chat/ProjectContext.vue'
-import ToolConfirmationDialog from '../components/chat/ToolConfirmationDialog.vue'
-import { logger } from '../utils/logger'
 
 const chatStore = useChatStore()
 const sessionStore = useSessionStore()
 const modelStore = useModelStore()
+const route = useRoute()
 
-const inputMessage = ref('')
-const useWebSearch = ref(false)
-const useMcp = ref(false)
-const useMicrophone = ref(false)
-const selectedMcpServers = ref([])
-const selectedTools = ref([])
-const mcpTools = ref([])
-const mcpServers = ref([])
-const mcpAvailable = ref(false)
-const isScrolled = ref(false)
-const pendingAttachments = ref([])
-const showRightPanel = ref(false)
-const showDebug = ref(false)
-const selectedMessage = ref(null)
-const showToolConfirmation = ref(false)
+// --- 输入相关逻辑 ---
+const {
+  inputMessage,
+  useWebSearch,
+  useDeepThinking,
+  selectedMcpServers,
+  selectedTools,
+  pendingAttachments,
+  isUploading,
+  sendMessage,
+  handleSuggestionClick,
+  handleAttach,
+  handleRemoveAttachment,
+  retryUpload,
+  cancelUpload,
+  handleWebSearchToggle,
+  loadSessionAttachments,
+  clearAttachments,
+} = useChatInput()
+
+// --- UI 状态逻辑 ---
+const {
+  showRightPanel,
+  showDebug,
+  selectedMessage,
+  messages,
+  hasMessages,
+  handleScrollChange,
+  handleToggleRightPanel,
+  handleToggleDebug,
+  handleMessageClick,
+  handleRegenerate,
+  handleDelete,
+} = useChatUI()
+
+// --- 命令处理逻辑 ---
+const { handleCommandSelect } = useChatCommands({
+  clearSelectedMessage: () => { selectedMessage.value = null },
+})
+
+// --- 键盘快捷键 ---
+const chatInputRef = ref(null)
+
+useChatKeyboard({
+  onToggleRightPanel: handleToggleRightPanel,
+  onEscape: () => {
+    showRightPanel.value = false
+    selectedMessage.value = null
+  },
+  inputRef: chatInputRef,
+})
 
 const connectionStatus = computed(() => chatStore.connectionStatus)
 
-const messages = computed(() => {
-  return sessionStore.getSessionMessages(sessionStore.currentSessionId)
-})
-
-const hasMessages = computed(() => messages.value && messages.value.length > 0)
-
-const handleScrollChange = (scrolled) => {
-  isScrolled.value = scrolled
-}
-
-const sendMessage = async () => {
-  if ((!inputMessage.value.trim() && pendingAttachments.value.length === 0) || chatStore.isLoading) {
-    return
-  }
-
-  const message = inputMessage.value
-  inputMessage.value = ''
-
-  const attachmentsToUpload = [...pendingAttachments.value]
-  pendingAttachments.value = []
-
-  const uploadedAttachmentIds = []
-
-  try {
-    if (attachmentsToUpload.length > 0) {
-      if (!sessionStore.currentSessionId) {
-        await sessionStore.createNewSession(chatStore.currentMode)
-      }
-
-      for (const att of attachmentsToUpload) {
-        try {
-          const response = await chatAPI.uploadAttachment(sessionStore.currentSessionId, att.file)
-          const data = response.data
-          logger.log('[ChatView] 上传响应:', JSON.stringify(data))
-          if (data?.data?.id) {
-            uploadedAttachmentIds.push(data.data.id)
-          }
-        } catch (err) {
-          logger.error('附件上传失败:', err)
-          ElMessage.warning(`附件 ${att.name} 上传失败`)
-        }
-      }
-    }
-
-    logger.log('[ChatView] 发送消息, attachmentIds:', uploadedAttachmentIds)
-    await chatStore.sendMessage(message, {
-      useTools: true,
-      useAdvancedTools: useWebSearch.value,
-      useMcp: useMcp.value,
-      selectedMcpServers: selectedMcpServers.value.length > 0 ? selectedMcpServers.value : null,
-      selectedTools: selectedTools.value.length > 0 ? selectedTools.value : null,
-      attachmentIds: uploadedAttachmentIds,
-      ...modelStore.getModelConfig(),
-    })
-  } catch (error) {
-    logger.error('发送消息失败:', error)
-    ElMessage.error('发送消息失败，请稍后重试')
-  }
-}
-
-const handleRegenerate = async (index) => {
-  if (chatStore.isLoading) return
-
-  try {
-    await chatStore.regenerateMessage(index)
-    ElMessage.success('正在重新生成回复...')
-  } catch (error) {
-    logger.error('重新生成失败:', error)
-    ElMessage.error('重新生成失败，请稍后重试')
-  }
-}
-
-const handleSuggestionClick = (suggestion) => {
-  if (chatStore.isLoading) return
-  inputMessage.value = suggestion
-  sendMessage()
-}
-
-const handleAttach = async (files) => {
-  for (const file of files) {
-    if (file.size > 10 * 1024 * 1024) {
-      ElMessage.warning(`文件 ${file.name} 超过10MB限制`)
-      continue
-    }
-    pendingAttachments.value.push({
-      name: file.name,
-      size: file.size,
-      fileType: file.name.split('.').pop().toLowerCase(),
-      file: file,
-    })
-  }
-}
-
-const handleRemoveAttachment = (index) => {
-  pendingAttachments.value.splice(index, 1)
-}
-
-const handleVoice = () => {
-  ElMessage.info('语音输入功能正在开发中，敬请期待')
-}
-
-const handleWebSearchToggle = () => {
-  useWebSearch.value = !useWebSearch.value
-  ElMessage.success(useWebSearch.value ? '已开启网络搜索' : '已关闭网络搜索')
-}
-
-const fetchMcpTools = async () => {
-  try {
-    const res = await chatAPI.getMcpTools()
-    const data = res.data?.data || res.data
-    mcpAvailable.value = data.available || false
-    mcpTools.value = data.tools || []
-    mcpServers.value = data.servers || []
-    if (mcpTools.value.length === 0 && !mcpAvailable.value) {
-      ElMessage.warning('MCP 不可用：未安装 langchain-mcp-adapters 或未配置 MCP Server')
-    } else if (mcpTools.value.length === 0) {
-      ElMessage.info('MCP 已启用，但当前无可用工具（请检查 MCP Server 配置）')
-    }
-  } catch (e) {
-    logger.warn('获取 MCP 工具列表失败:', e)
-    mcpAvailable.value = false
-  }
-}
-
-const handleMicrophoneToggle = () => {
-  useMicrophone.value = !useMicrophone.value
-  ElMessage.success(useMicrophone.value ? '已开启语音输入' : '已关闭语音输入')
+const handleModeChange = (newMode) => {
+  chatStore.currentMode = newMode
 }
 
 const handleStopStreaming = () => {
   chatStore.stopStreaming()
 }
 
-const handleToggleRightPanel = () => {
-  showRightPanel.value = !showRightPanel.value
-  if (!showRightPanel.value) {
-    selectedMessage.value = null
-  }
+const handleContinueResearch = (taskId) => {
+  if (chatStore.isLoading) return
+  chatStore.currentMode = 'deep-research'
+  chatStore.sendMessage('请继续深入研究', {
+    useTools: true,
+    continue_task_id: taskId,
+  })
 }
 
-const handleToggleDebug = () => {
-  showDebug.value = !showDebug.value
-  if (showDebug.value) {
-    ElMessage.success('调试模式已开启 - 消息下方将显示调试信息')
+const handleApprove = (payload) => {
+  // payload 可能是 message 对象（CONFIRM 模式）或 { message, user_input }（CONFIRM_WITH_INPUT 模式）
+  if (payload && payload.user_input !== undefined) {
+    chatStore.approveCommand(payload.user_input)
   } else {
-    ElMessage.info('调试模式已关闭')
+    chatStore.approveCommand()
   }
 }
 
-const handleMessageClick = (message) => {
-  if (message.role === 'assistant') {
-    selectedMessage.value = message
-    if (!showRightPanel.value) {
-      showRightPanel.value = true
-    }
-  }
-}
-
-const handleKeyDown = (event) => {
-  if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
-    event.preventDefault()
-    const inputEl = document.querySelector('.input-textarea')
-    inputEl?.focus()
-  }
-  if ((event.ctrlKey || event.metaKey) && event.key === 'b') {
-    event.preventDefault()
-    handleToggleRightPanel()
-  }
-  if (event.key === 'Escape' && showRightPanel.value) {
-    showRightPanel.value = false
-    selectedMessage.value = null
-  }
+const handleReject = (_message) => {
+  chatStore.rejectCommand()
 }
 
 const loadCurrentSessionDetail = async () => {
   const sessionId = sessionStore.currentSessionId
   if (sessionId) {
-    await sessionStore.loadSessionDetail(sessionId)
+    const session = sessionStore.sessions.find(s => s.id === sessionId)
+    if (!session || !session.messages || session.messages.length === 0) {
+      await sessionStore.loadSessionDetail(sessionId)
+    }
+    await loadSessionAttachments(sessionId)
+  } else {
+    clearAttachments()
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   chatStore.fetchModes()
-  sessionStore.loadKnowledgeBases()
-  loadCurrentSessionDetail()
-  document.addEventListener('keydown', handleKeyDown)
+
+  // 如果从深度研究页面跳转过来，且指定了 session_id，先切换到该会话
+  const targetSessionId = route.query.session_id
+  const researchTaskId = route.query.research_task_id
+  const queryMessage = route.query.q
+  if (targetSessionId || researchTaskId) {
+    console.log('[ChatView] 深度研究跳转参数:', {
+      session_id: targetSessionId || '(未传递)',
+      research_task_id: researchTaskId || '(未传递)',
+      q: queryMessage || '(未传递)',
+      currentSessionId: sessionStore.currentSessionId || '(无)',
+      sessionMatch: targetSessionId === sessionStore.currentSessionId,
+    })
+  }
+  if (targetSessionId && targetSessionId !== sessionStore.currentSessionId) {
+    console.log('[ChatView] 切换会话:', sessionStore.currentSessionId, '→', targetSessionId)
+    sessionStore.currentSessionId = targetSessionId
+  } else if (targetSessionId && targetSessionId === sessionStore.currentSessionId) {
+    console.log('[ChatView] session_id 已匹配当前会话，无需切换')
+  }
+
+  // loadKnowledgeBases 已在 main.js sessionStore.initialize() 中调用，此处不再重复
+  await loadCurrentSessionDetail()
+
+  if (researchTaskId) {
+    chatStore.researchTaskId = researchTaskId
+    // 设置持久化研究上下文标识，不随消息发送清空
+    const researchQuery = route.query.research_query || ''
+    chatStore.researchContextInfo = { taskId: researchTaskId, query: researchQuery }
+  }
+  if (queryMessage) {
+    await nextTick()
+    inputMessage.value = queryMessage
+  }
 })
 
-onUnmounted(() => {
-  document.removeEventListener('keydown', handleKeyDown)
-})
-
-watch(
-  () => sessionStore.currentSessionId,
-  (newSessionId) => {
-    if (newSessionId) {
-      selectedMessage.value = null
+watch(() => sessionStore.currentSessionId, async (newId, oldId) => {
+  if (newId !== oldId) {
+    if (newId) {
+      await loadSessionAttachments(newId)
+    } else {
+      clearAttachments()
     }
   }
-)
-
-watch(() => messages.value?.length, (newLen) => {
-  if (newLen > 0) {
-    const lastMsg = messages.value[newLen - 1]
-    if (lastMsg?.role === 'assistant' && (lastMsg.sources?.length || lastMsg.toolCalls?.length || lastMsg.reasoning)) {
-      selectedMessage.value = lastMsg
-    }
-  }
 })
-
-watch(() => chatStore.pendingToolConfirmation, (val) => {
-  if (val) {
-    showToolConfirmation.value = true
-  }
-})
-
-const handleToolApproved = (data) => {
-  showToolConfirmation.value = false
-  chatStore.pendingToolConfirmation = null
-}
-
-const handleToolDenied = () => {
-  showToolConfirmation.value = false
-  chatStore.pendingToolConfirmation = null
-}
 </script>
 
 <template>
@@ -271,8 +174,12 @@ const handleToolDenied = () => {
       :show-right-panel="showRightPanel"
       :show-debug="showDebug"
       :connection-status="connectionStatus"
+      :use-web-search="useWebSearch"
+      :use-deep-thinking="useDeepThinking"
       @model-change="() => {}"
-      @update:current-mode="(val) => chatStore.currentMode = val"
+      @update:current-mode="handleModeChange"
+      @update:use-web-search="(val) => useWebSearch = val"
+      @update:use-deep-thinking="(val) => useDeepThinking = val"
       @toggle-right-panel="handleToggleRightPanel"
       @toggle-debug="handleToggleDebug"
     />
@@ -329,52 +236,49 @@ const handleToolDenied = () => {
             @suggestion-click="handleSuggestionClick"
             @scroll-change="handleScrollChange"
             @message-click="handleMessageClick"
+            @message-delete="handleDelete"
+            @continue-research="handleContinueResearch"
+            @approve="handleApprove"
+            @reject="handleReject"
           />
         </Transition>
 
         <ChatInput
+          ref="chatInputRef"
           v-model="inputMessage"
           :disabled="chatStore.isLoading"
           :loading="chatStore.isLoading"
           :is-streaming="chatStore.isStreaming"
           :use-web-search="useWebSearch"
-          :use-mcp="useMcp"
           :selected-mcp-servers="selectedMcpServers"
           :selected-tools="selectedTools"
-          :mcp-tools="mcpTools"
-          :mcp-servers="mcpServers"
-          :mcp-available="mcpAvailable"
-          :use-microphone="useMicrophone"
           :attachments="pendingAttachments"
+          :current-mode="chatStore.currentMode"
+          :use-deep-thinking="useDeepThinking"
+          :model-supports-deep-thinking="modelStore.currentModelCapabilities.includes('deep_thinking')"
+          :is-uploading="isUploading"
+          :research-context-info="chatStore.researchContextInfo"
           @send="sendMessage"
           @attach="handleAttach"
           @remove-attachment="handleRemoveAttachment"
-          @voice="handleVoice"
           @web-search="handleWebSearchToggle"
-          @update:use-mcp="(val) => useMcp = val"
           @update:selected-mcp-servers="(val) => selectedMcpServers = val"
           @update:selected-tools="(val) => selectedTools = val"
-          @microphone="handleMicrophoneToggle"
+          @update:use-deep-thinking="(val) => useDeepThinking = val"
           @stop-streaming="handleStopStreaming"
+          @command-select="handleCommandSelect"
+          @retry-upload="retryUpload"
+          @cancel-upload="cancelUpload"
+          @dismiss-research-context="chatStore.clearResearchContext()"
         />
       </div>
 
       <ChatRightPanel
         :message="selectedMessage"
         :visible="showRightPanel"
-        :cost-summary="chatStore.costSummary"
         :session-id="sessionStore.currentSessionId"
       />
     </div>
-
-    <ToolConfirmationDialog
-      v-model="showToolConfirmation"
-      :confirm-id="chatStore.pendingToolConfirmation?.confirmId || ''"
-      :tool-name="chatStore.pendingToolConfirmation?.toolName || ''"
-      :tool-args="chatStore.pendingToolConfirmation?.toolArgs || {}"
-      @approved="handleToolApproved"
-      @denied="handleToolDenied"
-    />
   </div>
 </template>
 

@@ -7,4 +7,4 @@ class LearningConfig(AppConfig):
     verbose_name = '学习工作流模块'
 
     def ready(self):
-        import Django_xm.apps.learning.signals  # noqa: F401
+        pass

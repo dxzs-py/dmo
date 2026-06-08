@@ -11,7 +11,10 @@ Checkpointer 工厂模块
 - https://langchain-ai.github.io/langgraph/reference/checkpoints/
 """
 
+import asyncio
+import atexit
 import os
+import threading
 from collections import OrderedDict
 from typing import Optional, Any
 
@@ -21,7 +24,72 @@ logger = get_logger(__name__)
 
 _checkpointer_cache: OrderedDict = OrderedDict()
 _store_cache: OrderedDict = OrderedDict()
-_CACHE_MAXSIZE = 16
+# 保存上下文管理器引用，防止连接池被 GC 回收关闭
+_context_manager_refs: dict = {}
+_CACHE_MAXSIZE = 64
+_cache_lock = threading.Lock()
+
+
+def _close_checkpointer(cache_key: str, checkpointer: Any) -> None:
+    """安全关闭被 LRU 淘汰的 checkpointer，释放数据库连接"""
+    try:
+        # 尝试调用上下文管理器的 __exit__ 关闭连接
+        # 同步实例使用 pg_sync: 前缀
+        cm_ref = _context_manager_refs.pop(f"pg_sync:{id(checkpointer)}", None)
+        if cm_ref is not None:
+            cm_ref.__exit__(None, None, None)
+            logger.debug(f"已关闭同步 checkpointer 上下文管理器: {cache_key}")
+            return
+
+        # 异步实例使用 pg_async: 前缀，需要异步关闭
+        cm_ref = _context_manager_refs.pop(f"pg_async:{id(checkpointer)}", None)
+        if cm_ref is not None:
+            try:
+                # 尝试在已有事件循环中关闭
+                loop = asyncio.get_running_loop()
+                loop.create_task(cm_ref.__aexit__(None, None, None))
+            except RuntimeError:
+                # 没有运行中的事件循环，创建新的来关闭
+                try:
+                    loop = asyncio.new_event_loop()
+                    loop.run_until_complete(cm_ref.__aexit__(None, None, None))
+                    loop.close()
+                except Exception as e:
+                    logger.debug(f"异步关闭 checkpointer 失败 ({cache_key}): {e}")
+            logger.debug(f"已关闭异步 checkpointer 上下文管理器: {cache_key}")
+            return
+
+        # 尝试直接关闭连接
+        if hasattr(checkpointer, 'close'):
+            checkpointer.close()
+            logger.debug(f"已关闭 checkpointer: {cache_key}")
+    except Exception as e:
+        logger.warning(f"关闭 checkpointer 失败 ({cache_key}): {e}")
+
+
+def close_all_checkpointers() -> None:
+    """关闭所有缓存的 checkpointer，释放连接资源（进程退出时调用）"""
+    with _cache_lock:
+        for key, val in _checkpointer_cache.items():
+            _close_checkpointer(key, val)
+        _checkpointer_cache.clear()
+
+        for key, val in _store_cache.items():
+            try:
+                cm_ref = _context_manager_refs.pop(f"pg_store:{id(val)}", None)
+                if cm_ref is not None:
+                    cm_ref.__exit__(None, None, None)
+                elif hasattr(val, 'close'):
+                    val.close()
+            except Exception as e:
+                logger.warning(f"关闭 store 失败 ({key}): {e}")
+        _store_cache.clear()
+        _context_manager_refs.clear()
+
+    logger.info("所有 Checkpointer 和 Store 已关闭")
+
+
+atexit.register(close_all_checkpointers)
 
 
 def get_checkpointer(
@@ -32,25 +100,29 @@ def get_checkpointer(
     backend = backend or getattr(settings, "checkpointer_backend", "sqlite")
     cache_key = f"{backend}:{db_path or ''}:{connection_string or ''}"
 
-    if cache_key in _checkpointer_cache:
+    with _cache_lock:
+        if cache_key in _checkpointer_cache:
+            _checkpointer_cache.move_to_end(cache_key)
+            return _checkpointer_cache[cache_key]
+
+        # 在锁内创建，防止并发 cache miss 导致重复创建和连接泄漏
+        if backend == "postgres":
+            checkpointer = _create_postgres_checkpointer(connection_string)
+        elif backend == "sqlite":
+            checkpointer = _create_sqlite_checkpointer(db_path)
+        elif backend == "memory":
+            checkpointer = _create_memory_checkpointer()
+        else:
+            logger.warning(f"未知的 checkpointer 后端: {backend}，回退到 memory")
+            checkpointer = _create_memory_checkpointer()
+
+        _checkpointer_cache[cache_key] = checkpointer
         _checkpointer_cache.move_to_end(cache_key)
-        return _checkpointer_cache[cache_key]
+        if len(_checkpointer_cache) > _CACHE_MAXSIZE:
+            evicted_key, evicted_val = _checkpointer_cache.popitem(last=False)
+            _close_checkpointer(evicted_key, evicted_val)
+            logger.debug(f"Checkpointer 缓存已满，LRU淘汰: {evicted_key}")
 
-    if backend == "postgres":
-        checkpointer = _create_postgres_checkpointer(connection_string)
-    elif backend == "sqlite":
-        checkpointer = _create_sqlite_checkpointer(db_path)
-    elif backend == "memory":
-        checkpointer = _create_memory_checkpointer()
-    else:
-        logger.warning(f"未知的 checkpointer 后端: {backend}，回退到 memory")
-        checkpointer = _create_memory_checkpointer()
-
-    _checkpointer_cache[cache_key] = checkpointer
-    _checkpointer_cache.move_to_end(cache_key)
-    if len(_checkpointer_cache) > _CACHE_MAXSIZE:
-        evicted_key, _ = _checkpointer_cache.popitem(last=False)
-        logger.debug(f"Checkpointer 缓存已满，LRU淘汰: {evicted_key}")
     return checkpointer
 
 
@@ -108,9 +180,15 @@ def _create_postgres_checkpointer(connection_string: Optional[str] = None) -> An
     logger.info(f"创建 PostgreSQL Checkpointer: {_mask_connection_string(connection_string)}")
 
     try:
-        checkpointer = PostgresSaver.from_conn_string(connection_string)
-        if hasattr(checkpointer, '__enter__'):
-            checkpointer = checkpointer.__enter__()
+        cm = PostgresSaver.from_conn_string(connection_string)
+        # from_conn_string 返回上下文管理器，需要 __enter__ 获取实际实例
+        if hasattr(cm, '__enter__'):
+            checkpointer = cm.__enter__()
+            # 保存上下文管理器引用，防止连接池被 GC 回收关闭
+            _context_manager_refs[f"pg_sync:{id(checkpointer)}"] = cm
+            atexit.register(cm.__exit__, None, None, None)
+        else:
+            checkpointer = cm
         if hasattr(checkpointer, 'setup'):
             checkpointer.setup()
         logger.info("PostgreSQL Checkpointer 创建成功")
@@ -194,29 +272,94 @@ async def get_async_checkpointer(
     db_path: Optional[str] = None,
 ) -> Any:
     backend = backend or getattr(settings, "checkpointer_backend", "sqlite")
-    cache_key = f"async:{backend}:{db_path or ''}:{connection_string or ''}"
 
-    if cache_key in _checkpointer_cache:
-        return _checkpointer_cache[cache_key]
+    # AsyncPostgresSaver 内部的 asyncio.Lock 绑定到创建时的事件循环，
+    # 必须按 loop_id 缓存独立实例，否则 "bound to a different event loop" 报错。
+    # 关键改进：请求结束后必须调用 release_async_checkpointer() 释放旧实例的连接，
+    # 避免连接泄漏。
+    try:
+        loop_id = id(asyncio.get_running_loop())
+    except RuntimeError:
+        loop_id = 0
+
+    cache_key = f"async:{backend}:{db_path or ''}:{connection_string or ''}:loop{loop_id}"
+
+    with _cache_lock:
+        if cache_key in _checkpointer_cache:
+            _checkpointer_cache.move_to_end(cache_key)
+            return _checkpointer_cache[cache_key]
 
     if backend == "postgres":
-        checkpointer = _create_async_postgres_checkpointer(connection_string)
-        if checkpointer is not None:
+        cm = _create_async_postgres_checkpointer(connection_string)
+        if cm is not None:
+            # from_conn_string 返回异步上下文管理器，需要 __aenter__ 获取实际实例
+            if hasattr(cm, '__aenter__'):
+                checkpointer = await cm.__aenter__()
+                # 保存上下文管理器引用，防止连接池被 GC 回收关闭
+                _context_manager_refs[f"pg_async:{id(checkpointer)}"] = cm
+            else:
+                checkpointer = cm
             if hasattr(checkpointer, "setup"):
                 await checkpointer.setup()
-            _checkpointer_cache[cache_key] = checkpointer
+            with _cache_lock:
+                _checkpointer_cache[cache_key] = checkpointer
             return checkpointer
         logger.warning("异步 PostgreSQL Checkpointer 创建失败，回退到异步 SQLite")
         return await get_async_checkpointer(backend="sqlite", db_path=db_path)
     elif backend == "sqlite":
         checkpointer = await _create_async_sqlite_checkpointer(db_path)
         if checkpointer is not None:
-            _checkpointer_cache[cache_key] = checkpointer
+            with _cache_lock:
+                _checkpointer_cache[cache_key] = checkpointer
             return checkpointer
         logger.warning("异步 SQLite Checkpointer 创建失败，回退到同步 SQLite")
         return get_checkpointer(backend="sqlite", db_path=db_path)
     else:
         return get_checkpointer(backend=backend)
+
+
+async def release_async_checkpointer(
+    backend: Optional[str] = None,
+    connection_string: Optional[str] = None,
+    db_path: Optional[str] = None,
+) -> None:
+    """
+    释放当前事件循环对应的异步 Checkpointer，关闭连接池。
+
+    在流式请求结束时调用（loop.close() 之前），防止连接泄漏。
+    由于每个请求创建新的 asyncio.new_event_loop()，请求结束后
+    事件循环关闭，对应的 AsyncPostgresSaver 无法再使用，
+    必须主动关闭其连接池释放 PostgreSQL 连接。
+    """
+    backend = backend or getattr(settings, "checkpointer_backend", "sqlite")
+    if backend != "postgres":
+        return
+
+    try:
+        loop_id = id(asyncio.get_running_loop())
+    except RuntimeError:
+        loop_id = 0
+
+    cache_key = f"async:{backend}:{db_path or ''}:{connection_string or ''}:loop{loop_id}"
+
+    with _cache_lock:
+        checkpointer = _checkpointer_cache.pop(cache_key, None)
+        if checkpointer is None:
+            return
+
+    # 关闭异步上下文管理器，释放连接池
+    cm_ref = _context_manager_refs.pop(f"pg_async:{id(checkpointer)}", None)
+    if cm_ref is not None:
+        try:
+            await cm_ref.__aexit__(None, None, None)
+            logger.debug(f"已释放异步 Checkpointer 连接: {cache_key}")
+        except Exception as e:
+            logger.debug(f"释放异步 Checkpointer 连接失败 ({cache_key}): {e}")
+    elif hasattr(checkpointer, 'close'):
+        try:
+            checkpointer.close()
+        except Exception as e:
+            logger.debug(f"关闭异步 Checkpointer 失败 ({cache_key}): {e}")
 
 
 def _create_sqlite_checkpointer(db_path: Optional[str] = None) -> Any:
@@ -255,6 +398,7 @@ def _create_sqlite_checkpointer(db_path: Optional[str] = None) -> Any:
 
         if hasattr(checkpointer, '__enter__'):
             checkpointer = checkpointer.__enter__()
+            atexit.register(checkpointer.__exit__, None, None, None)
             if hasattr(checkpointer, 'setup'):
                 checkpointer.setup()
             logger.info("SQLite Checkpointer 创建成功（上下文管理器模式）")
@@ -305,8 +449,9 @@ def get_store(backend: Optional[str] = None) -> Any:
     backend = backend or getattr(settings, "store_backend", "memory")
     cache_key = f"store:{backend}"
 
-    if cache_key in _store_cache:
-        return _store_cache[cache_key]
+    with _cache_lock:
+        if cache_key in _store_cache:
+            return _store_cache[cache_key]
 
     if backend == "postgres":
         store = _create_postgres_store()
@@ -317,7 +462,8 @@ def get_store(backend: Optional[str] = None) -> Any:
         store = _create_memory_store()
 
     if store is not None:
-        _store_cache[cache_key] = store
+        with _cache_lock:
+            _store_cache[cache_key] = store
     return store
 
 
@@ -363,8 +509,17 @@ def _create_postgres_store() -> Any:
     logger.info(f"创建 PostgreSQL Store: {_mask_connection_string(connection_string)}")
 
     try:
-        store = PostgresStore.from_conn_string(connection_string)
-        store.setup()
+        cm = PostgresStore.from_conn_string(connection_string)
+        # from_conn_string 返回上下文管理器，需要 __enter__ 获取实际实例
+        if hasattr(cm, '__enter__'):
+            store = cm.__enter__()
+            # 保存上下文管理器引用，防止连接池被 GC 回收关闭
+            _context_manager_refs[f"pg_store:{id(store)}"] = cm
+            atexit.register(cm.__exit__, None, None, None)
+        else:
+            store = cm
+        if hasattr(store, 'setup'):
+            store.setup()
         logger.info("PostgreSQL Store 创建成功")
         return store
     except Exception as e:
@@ -381,3 +536,121 @@ def ensure_store(instance) -> Any:
     except Exception as e:
         logger.warning(f"Store 不可用: {e}")
         return None
+
+
+async def delete_thread_checkpoints(thread_id: str) -> bool:
+    """
+    删除指定 thread_id 的所有 checkpoint 数据
+
+    在用户删除聊天会话时调用，清理 PostgreSQL/SQLite 中的残留数据。
+
+    Args:
+        thread_id: 会话 ID（对应 LangGraph 的 thread_id）
+
+    Returns:
+        True 表示删除成功或无需清理，False 表示删除失败
+    """
+    if not thread_id:
+        return True
+
+    try:
+        # 优先使用异步 checkpointer（流式场景）
+        checkpointer = await get_async_checkpointer()
+        if checkpointer is not None and hasattr(checkpointer, 'adelete_thread'):
+            await checkpointer.adelete_thread(thread_id=thread_id)
+            logger.info(f"异步 Checkpointer 已删除 thread={thread_id} 的 checkpoint 数据")
+            return True
+
+        # 回退到同步 checkpointer
+        checkpointer = get_checkpointer()
+        if checkpointer is not None and hasattr(checkpointer, 'delete_thread'):
+            checkpointer.delete_thread(thread_id=thread_id)
+            logger.info(f"同步 Checkpointer 已删除 thread={thread_id} 的 checkpoint 数据")
+            return True
+
+        logger.warning(f"Checkpointer 不支持 delete_thread，thread={thread_id} 的数据未清理")
+        return False
+    except Exception as e:
+        logger.error(f"删除 thread={thread_id} 的 checkpoint 数据失败: {e}")
+        return False
+
+
+async def delete_thread_store_data(user_id: int, thread_id: Optional[str] = None) -> bool:
+    """
+    删除 Store 中指定会话或用户的所有长期记忆数据
+
+    Store 中的 namespace 结构:
+    - (user_id, "documents"): 附件文档记忆
+    - (user_id, "session_contexts"): 会话上下文摘要
+    - (user_id, "knowledge_graph"): 知识图谱
+    - (user_id, "compression_state"): 压缩状态
+    - (user_id, "mcp_contexts"): MCP 上下文
+
+    Args:
+        user_id: 用户 ID
+        thread_id: 可选，指定会话 ID 时只清理该会话相关数据
+
+    Returns:
+        True 表示删除成功或无需清理
+    """
+    try:
+        store = get_store()
+        if store is None:
+            return True
+
+        namespaces = [
+            (str(user_id), "documents"),
+            (str(user_id), "session_contexts"),
+            (str(user_id), "knowledge_graph"),
+            (str(user_id), "compression_state"),
+            (str(user_id), "mcp_contexts"),
+        ]
+
+        for namespace in namespaces:
+            try:
+                items = store.search(namespace)
+                for item in items:
+                    # 如果指定了 thread_id，只删除该会话的数据
+                    if thread_id and str(thread_id) != str(item.key):
+                        continue
+                    store.delete(namespace, item.key)
+            except Exception as e:
+                logger.debug(f"清理 Store namespace={namespace} 失败: {e}")
+
+        logger.info(f"Store 数据已清理: user_id={user_id}, thread_id={thread_id}")
+        return True
+    except Exception as e:
+        logger.error(f"清理 Store 数据失败: user_id={user_id}, thread_id={thread_id}, error={e}")
+        return False
+
+
+async def delete_user_all_data(user_id: int) -> bool:
+    """
+    删除用户的所有 checkpoint 和 Store 数据（用户注销时调用）
+
+    Args:
+        user_id: 用户 ID
+
+    Returns:
+        True 表示删除成功
+    """
+    try:
+        # 获取用户所有会话的 session_id
+        from django.apps import apps
+        ChatSession = apps.get_model('chat', 'ChatSession')
+        session_ids = list(
+            ChatSession.objects.filter(user_id=user_id).values_list('session_id', flat=True)
+        )
+
+        # 清理每个会话的 checkpoint
+        for session_id in session_ids:
+            await delete_thread_checkpoints(str(session_id))
+
+        # 清理 Store 中用户的所有数据
+        await delete_thread_store_data(user_id)
+
+        logger.info(f"用户 {user_id} 的所有 checkpoint/Store 数据已清理（{len(session_ids)} 个会话）")
+        return True
+    except Exception as e:
+        logger.error(f"清理用户 {user_id} 的所有数据失败: {e}")
+        return False

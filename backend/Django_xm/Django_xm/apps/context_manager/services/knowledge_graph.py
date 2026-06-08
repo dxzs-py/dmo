@@ -23,9 +23,30 @@ from typing import Dict, Any, List, Optional, Set, Tuple
 from dataclasses import dataclass, field
 from collections import defaultdict
 
+from pydantic import BaseModel, Field
+
 from Django_xm.apps.context_manager.config import get_logger
 
 logger = get_logger(__name__)
+
+
+class ExtractedEntity(BaseModel):
+    name: str = Field(description="实体名称")
+    entity_type: str = Field(description="实体类型")
+    attributes: dict = Field(default_factory=dict)
+    confidence: float = Field(default=0.8, ge=0, le=1)
+
+
+class ExtractedRelation(BaseModel):
+    source: str = Field(description="源实体名称")
+    target: str = Field(description="目标实体名称")
+    relation_type: str = Field(description="关系类型")
+    confidence: float = Field(default=0.8, ge=0, le=1)
+
+
+class ExtractionResult(BaseModel):
+    entities: list[ExtractedEntity] = Field(default_factory=list)
+    relations: list[ExtractedRelation] = Field(default_factory=list)
 
 
 @dataclass
@@ -247,6 +268,106 @@ class ConversationGraphExtractor:
                 return entity
         return None
 
+    def extract_with_llm(
+        self,
+        messages: List[Dict[str, Any]],
+        llm: Any = None,
+    ) -> Tuple[List[Entity], List[Relation]]:
+        regex_entities, regex_relations = self.extract(messages)
+
+        if llm is None:
+            try:
+                from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
+                llm = get_chat_model()
+            except Exception as e:
+                logger.warning(f"LLM 实例获取失败，回退正则提取: {e}")
+                return regex_entities, regex_relations
+
+        try:
+            structured_llm = llm.with_structured_output(ExtractionResult)
+        except Exception as e:
+            logger.warning(f"with_structured_output 不支持，回退正则提取: {e}")
+            return regex_entities, regex_relations
+
+        conversation_text = self._format_messages_for_llm(messages)
+        if not conversation_text.strip():
+            return regex_entities, regex_relations
+
+        prompt = (
+            "从以下对话中提取所有实体和关系。\n"
+            "实体类型包括：person, organization, location, technology, concept, document, project, task, preference, event\n"
+            "关系类型包括：related_to, part_of, depends_on, uses, created_by, belongs_to, prefers, mentions, solves, contradicts\n\n"
+            f"对话内容：\n{conversation_text}\n\n"
+            "请提取所有实体和关系，确保源实体和目标实体都在实体列表中。"
+        )
+
+        try:
+            result: ExtractionResult = structured_llm.invoke([{"role": "user", "content": prompt}])
+        except Exception as e:
+            logger.warning(f"LLM 结构化提取失败，回退正则提取: {e}")
+            return regex_entities, regex_relations
+
+        now = time.time()
+        llm_entities: Dict[str, Entity] = {}
+        for ext_e in result.entities:
+            if ext_e.name not in llm_entities:
+                llm_entities[ext_e.name] = Entity(
+                    name=ext_e.name,
+                    entity_type=ext_e.entity_type if ext_e.entity_type in ENTITY_TYPES else "concept",
+                    properties=ext_e.attributes,
+                    confidence=ext_e.confidence,
+                    first_seen=now,
+                    last_seen=now,
+                )
+
+        llm_entity_names = set(llm_entities.keys())
+        llm_relations: Dict[str, Relation] = {}
+        for ext_r in result.relations:
+            if ext_r.source in llm_entity_names and ext_r.target in llm_entity_names:
+                rel = Relation(
+                    source=ext_r.source,
+                    target=ext_r.target,
+                    relation_type=ext_r.relation_type if ext_r.relation_type in RELATION_TYPES else "related_to",
+                    confidence=ext_r.confidence,
+                    created_at=now,
+                )
+                if rel.key not in llm_relations:
+                    llm_relations[rel.key] = rel
+
+        merged_entities: Dict[str, Entity] = {e.name: e for e in regex_entities}
+        for name, entity in llm_entities.items():
+            if name in merged_entities:
+                merged_entities[name].confidence = min(1.0, merged_entities[name].confidence + 0.1)
+                if entity.properties:
+                    merged_entities[name].properties.update(entity.properties)
+            else:
+                merged_entities[name] = entity
+
+        merged_relations: Dict[str, Relation] = {r.key: r for r in regex_relations}
+        for key, rel in llm_relations.items():
+            if key not in merged_relations:
+                merged_relations[key] = rel
+
+        return list(merged_entities.values()), list(merged_relations.values())
+
+    @staticmethod
+    def _format_messages_for_llm(messages: List[Dict[str, Any]]) -> str:
+        lines = []
+        for msg in messages:
+            role = msg.get('role', 'unknown')
+            content = msg.get('content', '')
+            if isinstance(content, list):
+                content = ' '.join(
+                    block.get('text', '') if isinstance(block, dict) else str(block)
+                    for block in content
+                )
+            if not isinstance(content, str) or not content.strip():
+                continue
+            prefix = {"user": "用户", "assistant": "助手", "system": "系统"}.get(role, role)
+            truncated = content[:500] + "..." if len(content) > 500 else content
+            lines.append(f"[{prefix}]: {truncated}")
+        return "\n".join(lines)
+
 
 class KnowledgeGraphStore:
     """知识图谱存储 - 基于 LangGraph Store 持久化"""
@@ -439,6 +560,32 @@ class ContextKnowledgeGraph:
             return merged_entities, merged_relations
         return self._kg_store.load_graph(user_id)
 
+    def update_from_messages(
+        self,
+        user_id: int,
+        messages: List[Dict[str, Any]],
+        use_llm_extraction: bool = True,
+        llm: Any = None,
+    ) -> Tuple[List[Entity], List[Relation]]:
+        if use_llm_extraction:
+            try:
+                entities, relations = self._extractor.extract_with_llm(messages, llm=llm)
+            except Exception as e:
+                logger.warning(f"LLM 提取失败，回退正则提取: {e}")
+                entities, relations = self._extractor.extract(messages)
+        else:
+            entities, relations = self._extractor.extract(messages)
+
+        if entities or relations:
+            merged_entities, merged_relations = self._kg_store.merge_graph(user_id, entities, relations)
+            logger.info(
+                f"知识图谱更新: user={user_id}, use_llm_extraction={use_llm_extraction}, "
+                f"提取 {len(entities)} 实体/{len(relations)} 关系, "
+                f"合并后 {len(merged_entities)} 实体/{len(merged_relations)} 关系"
+            )
+            return merged_entities, merged_relations
+        return self._kg_store.load_graph(user_id)
+
     def get_context_for_query(
         self,
         user_id: int,
@@ -465,3 +612,6 @@ class ContextKnowledgeGraph:
             except Exception as e:
                 logger.error(f"清除知识图谱失败: {e}")
         return True
+
+    def clear_user_graph(self, user_id: int) -> bool:
+        return self.clear_graph(user_id)

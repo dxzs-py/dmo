@@ -1,16 +1,18 @@
 """
-Embeddings 模块
+Embeddings 模块 - 薄壳层（thin wrapper）
 
-提供统一的 Embedding 模型接口，用于将文本转换为向量。
+实际创建逻辑已迁移至 ai_engine.services.embedding_factory，
+本文件仅保留 CachedEmbeddings、get_embedding_dimension、test_embeddings、
+EMBEDDING_CONFIGS、get_embeddings_by_preset 等向后兼容 API。
 
-改进：
-1. 使用 langchain.embeddings.init_embeddings 统一初始化（与 init_chat_model 对齐）
-2. 集成 Redis 缓存，避免重复调用 Embedding API
-3. 回退到 OpenAIEmbeddings 直接实例化
-4. 批量嵌入分批限流，防止超出 API 速率限制
+新的模块应该直接使用：
+    from Django_xm.apps.ai_engine.services.embedding_factory import (
+        get_embeddings_with_fallback,
+        detect_embedding_dimension,
+    )
 """
-
 from typing import Optional, List
+
 from langchain_core.embeddings import Embeddings
 
 import logging
@@ -22,8 +24,15 @@ EMBEDDING_BATCH_SIZE = 100
 EMBEDDING_BATCH_DELAY = 0.5
 
 
+# ============== CachedEmbeddings 保留在本模块（与 cache_manager 耦合） ==============
+
 class CachedEmbeddings(Embeddings):
-    """带 Redis 缓存的 Embeddings 包装器"""
+    """带 Redis 缓存的 Embeddings 包装器
+
+    实现层依赖 Django_xm.apps.cache_manager.services.cache_service.VectorSearchCacheService
+    保留在 knowledge.services.embedding_service 模块以避免循环依赖
+    （embedding_factory 在 ai_engine 中，不能依赖 cache_manager）
+    """
 
     def __init__(self, embeddings: Embeddings, model: str = "default"):
         self._embeddings = embeddings
@@ -87,6 +96,13 @@ class CachedEmbeddings(Embeddings):
         vector = self._embeddings.embed_query(text)
         VectorSearchCacheService.cache_embedding(text, vector, self._model)
         return vector
+
+    # 透传 FallbackEmbedding 的降级检测方法
+    def get_fallback_events(self):
+        return self._embeddings.get_fallback_events() if hasattr(self._embeddings, 'get_fallback_events') else []
+
+    def get_active_provider_id(self):
+        return self._embeddings.get_active_provider_id() if hasattr(self._embeddings, 'get_active_provider_id') else None
 
     async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
         from Django_xm.apps.cache_manager.services.cache_service import (
@@ -155,157 +171,64 @@ class CachedEmbeddings(Embeddings):
         }
 
 
-def get_openai_api_key() -> Optional[str]:
-    try:
-        from Django_xm.apps.ai_engine.config import settings
-        return getattr(settings, 'openai_api_key', None)
-    except ImportError:
-        import os
-        return os.environ.get("OPENAI_API_KEY")
+# ============== 兼容层 API：委托 ai_engine.services.embedding_factory ==============
 
-
-def get_openai_api_base() -> str:
-    try:
-        from Django_xm.apps.ai_engine.config import settings
-        return getattr(settings, 'openai_api_base', "https://api.openai.com/v1")
-    except ImportError:
-        import os
-        return os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1")
-
-
-def get_embedding_model() -> str:
-    try:
-        from Django_xm.apps.ai_engine.config import settings
-        return getattr(settings, 'embedding_model', "text-embedding-3-small")
-    except ImportError:
-        import os
-        return os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
-
-
-def get_embedding_batch_size() -> int:
-    try:
-        from Django_xm.apps.ai_engine.config import settings
-        return getattr(settings, 'embedding_batch_size', 10)
-    except ImportError:
-        import os
-        return int(os.environ.get("EMBEDDING_BATCH_SIZE", "10"))
+from Django_xm.apps.knowledge.config import (
+    get_embeddings_with_fallback,
+    detect_embedding_dimension,
+)
 
 
 def get_embeddings(
     model: Optional[str] = None,
     batch_size: Optional[int] = None,
     use_cache: bool = True,
+    use_fallback: bool = True,
+    preferred_provider: Optional[str] = None,
+    required_dimension: Optional[int] = None,
     **kwargs,
 ) -> Embeddings:
-    model = model or get_embedding_model()
-    batch_size = batch_size or get_embedding_batch_size()
+    """获取 Embeddings 实例（委托 embedding_factory）
 
-    logger.info(f"🔢 创建 Embedding 模型: {model}, batch_size={batch_size}, cache={use_cache}")
-
-    try:
-        embeddings = _init_embeddings(model, batch_size, **kwargs)
-
-        if use_cache:
-            embeddings = CachedEmbeddings(embeddings, model=model)
-
-        logger.debug("✅ Embedding 模型创建成功")
-        return embeddings
-
-    except Exception as e:
-        logger.error(f"❌ Embedding 模型创建失败: {e}")
-        raise
-
-
-def _init_embeddings(model: str, batch_size: int, **kwargs) -> Embeddings:
+    preferred_provider 优先级：
+    1. 调用方显式传入
+    2. SystemConfig 数据库配置
+    3. .env 默认配置
     """
-    使用 init_embeddings 统一初始化 Embedding 模型
+    from Django_xm.apps.knowledge.config import (
+        get_system_embedding_provider,
+    )
+    from Django_xm.apps.knowledge.config import settings
 
-    优先使用 langchain.embeddings.init_embeddings（与 init_chat_model 对齐），
-    回退到 OpenAIEmbeddings 直接实例化。
+    effective_provider = preferred_provider
+    if effective_provider is None:
+        system_provider = get_system_embedding_provider()
+        if system_provider:
+            effective_provider = system_provider
 
-    参考:
-        https://reference.langchain.com/python/langchain/embeddings/#init_embeddings
-    """
-    try:
-        from langchain.embeddings import init_embeddings
-
-        api_key = get_openai_api_key()
-        base_url = get_openai_api_base()
-
-        model_str = model if ':' in model else f"openai:{model}"
-
-        init_kwargs = {
-            "model": model_str,
-            "api_key": api_key,
-            "base_url": base_url,
-            "chunk_size": batch_size,
-            "timeout": 60.0,
-            "max_retries": 3,
-        }
-        init_kwargs.update(kwargs)
-
-        embeddings = init_embeddings(**init_kwargs)
-        logger.debug(f"使用 init_embeddings 创建: {model_str}")
-        return embeddings
-
-    except (ImportError, AttributeError):
-        logger.debug("init_embeddings 不可用，回退到 OpenAIEmbeddings")
-        from langchain_openai import OpenAIEmbeddings
-
-        return OpenAIEmbeddings(
-            model=model,
-            api_key=get_openai_api_key(),
-            base_url=get_openai_api_base(),
-            chunk_size=batch_size,
-            timeout=60.0,
-            max_retries=3,
-            **kwargs,
-        )
+    return get_embeddings_with_fallback(
+        model=model,
+        batch_size=batch_size or settings.embedding_batch_size,
+        use_cache=use_cache,
+        use_fallback=use_fallback,
+        preferred_provider=effective_provider,
+        required_dimension=required_dimension,
+        **kwargs,
+    )
 
 
 def get_embedding_dimension(model: Optional[str] = None) -> int:
-    """获取 Embedding 模型的向量维度"""
-    model = model or get_embedding_model()
+    """获取 Embedding 维度（委托 embedding_factory）
 
-    dimensions = {
-        "text-embedding-3-small": 1536,
-        "text-embedding-3-large": 3072,
-        "text-embedding-ada-002": 1538,
-    }
-
-    if model not in dimensions:
-        logger.warning(f"未知的模型维度: {model}，返回默认值 1536")
+    通过创建 Embeddings 实例并调用 detect_embedding_dimension 探测实际维度，
+    替代原有的硬编码映射表。
+    """
+    try:
+        embeddings = get_embeddings(model=model, use_cache=False)
+        return detect_embedding_dimension(embeddings)
+    except Exception as e:
+        logger.warning(f"探测 Embedding 维度失败: {e}，返回默认值 1536")
         return 1536
-
-    return dimensions[model]
-
-
-def estimate_embedding_cost(
-    num_tokens: int,
-    model: Optional[str] = None,
-) -> float:
-    """估算 Embedding 成本（美元）"""
-    model = model or get_embedding_model()
-
-    pricing = {
-        "text-embedding-3-small": 0.02,
-        "text-embedding-3-large": 0.13,
-        "text-embedding-ada-002": 0.10,
-    }
-
-    if model not in pricing:
-        price_per_million = 0.02
-    else:
-        price_per_million = pricing[model]
-
-    cost = (num_tokens / 1_000_000) * price_per_million
-
-    logger.info(
-        f"💰 Embedding 成本估算: "
-        f"{num_tokens:,} tokens × ${price_per_million}/M = ${cost:.4f}"
-    )
-
-    return cost
 
 
 def test_embeddings(
@@ -314,9 +237,9 @@ def test_embeddings(
 ) -> bool:
     """测试 Embedding 模型是否正常工作"""
     try:
-        logger.info("🧪 测试 Embedding 模型...")
+        logger.info("测试 Embedding 模型...")
 
-        embeddings = get_embeddings(model=model)
+        embeddings = get_embeddings(model=model, use_cache=False)
 
         vector = embeddings.embed_query(test_text)
         logger.info(f"   单文本嵌入: 维度={len(vector)}")
@@ -325,26 +248,30 @@ def test_embeddings(
         vectors = embeddings.embed_documents(texts)
         logger.info(f"   批量嵌入: {len(vectors)} 个向量")
 
-        logger.info("✅ Embedding 模型测试通过")
+        logger.info("Embedding 模型测试通过")
         return True
 
     except Exception as e:
-        logger.error(f"❌ Embedding 模型测试失败: {e}")
+        logger.error(f"Embedding 模型测试失败: {e}")
         return False
 
 
 EMBEDDING_CONFIGS = {
     "fast": {
         "model": "text-embedding-3-small",
-        "description": "快速模型，适合开发和测试",
+        "description": "OpenAI 快速模型",
     },
     "quality": {
         "model": "text-embedding-3-large",
-        "description": "高质量模型，适合生产环境",
+        "description": "OpenAI 高质量模型",
     },
     "legacy": {
         "model": "text-embedding-ada-002",
-        "description": "旧版模型（不推荐）",
+        "description": "OpenAI 旧版模型（不推荐）",
+    },
+    "local": {
+        "model": "BAAI/bge-small-zh-v1.5",
+        "description": "本地模型（兜底，无需 API）",
     },
 }
 
@@ -364,5 +291,10 @@ def get_embeddings_by_preset(
     model_name = config.pop("model")
     config.update(kwargs)
 
+    preferred = "local" if preset == "local" else None
     logger.info(f"使用 Embedding 预设: {preset} (model={model_name})")
-    return get_embeddings(model=model_name, **config)
+    return get_embeddings(
+        model=model_name,
+        preferred_provider=preferred,
+        **config,
+    )

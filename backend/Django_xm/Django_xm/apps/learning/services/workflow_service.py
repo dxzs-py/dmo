@@ -16,7 +16,7 @@ from .study_flow import (
 )
 from .state import StudyFlowState
 from .persistence_service import get_persistence_service
-from Django_xm.apps.config_center.config import get_logger
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 persistence_service = get_persistence_service()
@@ -167,10 +167,25 @@ class WorkflowService:
 
         try:
             from ..models import WorkflowSession
-            session = WorkflowSession.objects.get(thread_id=thread_id, is_deleted=False)
+            qs = WorkflowSession.objects.filter(thread_id=thread_id, is_deleted=False)
+            if user_id:
+                qs = qs.filter(created_by_id=user_id)
+            session = qs.first()
+            if not session:
+                raise ValueError("工作流会话不存在或无权访问")
             session.soft_delete()
-        except WorkflowSession.DoesNotExist:
-            pass
+        except ValueError:
+            raise
+        except Exception as e:
+            logger.warning(f"[Service] 删除工作流会话记录失败: {e}")
+
+        # 清理 LangGraph checkpoint 数据
+        try:
+            import asyncio
+            from Django_xm.apps.ai_engine.services.checkpointer_factory import delete_thread_checkpoints
+            asyncio.run(delete_thread_checkpoints(thread_id))
+        except Exception as e:
+            logger.warning(f"[Service] 清理工作流 checkpoint 数据失败: {e}")
 
         try:
             from Django_xm.apps.core.services.file_manager import get_file_manager

@@ -32,84 +32,349 @@ from langgraph.runtime import Runtime
 from .input_validators import InputValidator
 from .output_validators import OutputValidator
 from .content_filters import ContentFilter
-from Django_xm.apps.core.tool_permissions import READ_ONLY_TOOLS, WRITE_TOOLS, DANGEROUS_TOOLS
 
 import logging
 import time
 import threading
-from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
 
+_LOOP_JUDGE_PROMPT = """你是一个循环检测器。分析以下 AI Agent 最近的工具调用历史，判断它是否陷入了循环。
+
+重要背景信息：
+- Agent 已执行 {total_tool_calls} 次工具调用、{total_model_calls} 次模型调用
+- 研究任务早期阶段（前 15 次工具调用）连续搜索是正常的，不算循环
+- Agent 在执行复杂任务时，可能多次调用同一工具但使用不同参数（如搜索不同关键词），这是正常的
+- 只有当 Agent 重复调用相同工具和参数，或者反复尝试相同策略但没有取得进展时，才是循环
+
+最近的工具调用历史：
+{tool_calls_summary}
+
+请判断：这个 Agent 是陷入了循环（loop），还是在正常推进任务（progress）？
+只回复一个词：loop 或 progress"""
+
+
 class RateLimitMiddleware(AgentMiddleware):
     """
-    速率限制中间件
+    多层智能循环检测中间件
 
-    防止 Agent 陷入无限工具调用循环或过快调用模型。
-    - 限制单次 Agent 运行中模型调用和工具调用的最大次数
-    - 限制调用频率（每秒最大调用数）
-    - 超出限制时抛出异常终止 Agent 运行
+    四层检测架构：
+    - Layer 1: 精确重复检测（零成本，即时终止）
+    - Layer 2: 模式异常检测（零成本，标记疑似）
+    - Layer 3: 进展停滞检测（零成本，标记疑似）
+    - Layer 4: 辅助模型智能判断（低成本，按需触发）
+
+    安全兜底：总调用 > max_total_calls 或频率 > max_calls_per_second 才终止
+
+    graceful_degradation 模式（推荐用于聊天）：
+    检测到循环时不抛异常，而是返回 ToolMessage 告诉 LLM 停下来总结，
+    让 Agent 自然退出循环，保留已收集的上下文。
     """
+
+    PROGRESS_TOOLS = frozenset({
+        "write_file", "write_research_file", "write",
+        "create_file", "save_file",
+    })
+
+    # 循环检测时注入的引导消息，促使 LLM 自然停止工具调用
+    _LOOP_STOP_MESSAGE = (
+        "⚠️ 检测到你可能陷入了重复操作循环（{reason}）。"
+        "请立即停止调用工具，基于已收集的信息整理并输出最终结果。"
+        "如果正在做研究，请立即使用 write_file 写出最终研究报告，不要再搜索或重复操作。"
+    )
 
     def __init__(
         self,
-        max_model_calls: int = 50,
-        max_tool_calls: int = 30,
+        max_total_calls: int = 300,
         max_calls_per_second: float = 5.0,
-        max_total_calls: int = 80,
+        exact_dup_window: int = 5,
+        exact_dup_threshold: int = 3,
+        consecutive_same_tool_limit: int = 10,
+        diversity_window: int = 15,
+        diversity_min_ratio: float = 0.25,
+        progress_window: int = 20,
+        min_calls_before_check: int = 20,
+        llm_judge_max_calls: int = 3,
+        task_id: str = None,
+        graceful_degradation: bool = True,
+        warning_milestones: Optional[List[int]] = None,
     ):
         super().__init__()
-        self.max_model_calls = max_model_calls
-        self.max_tool_calls = max_tool_calls
-        self.max_calls_per_second = max_calls_per_second
         self.max_total_calls = max_total_calls
+        self.max_calls_per_second = max_calls_per_second
+        self.exact_dup_window = exact_dup_window
+        self.exact_dup_threshold = exact_dup_threshold
+        self.consecutive_same_tool_limit = consecutive_same_tool_limit
+        self.diversity_window = diversity_window
+        self.diversity_min_ratio = diversity_min_ratio
+        self.progress_window = progress_window
+        self.min_calls_before_check = min_calls_before_check
+        self.llm_judge_max_calls = llm_judge_max_calls
+        self._task_id = task_id
+        self.graceful_degradation = graceful_degradation
+        self.warning_milestones = warning_milestones or [50, 100, 200]
         self._model_call_count = 0
         self._tool_call_count = 0
         self._call_timestamps: List[float] = []
+        self._recent_tool_calls: List[Dict[str, Any]] = []
+        self._consecutive_same_count = 0
+        self._last_tool_name: Optional[str] = None
+        self._llm_judge_count = 0
+        self._llm_judge_skip_until: float = 0.0
         self._lock = threading.Lock()
+        self._loop_detected_reason: Optional[str] = None
+        self._warned_milestones: set = set()
 
-    def _check_rate_limit(self, call_type: str) -> None:
+    def _check_task_cancelled(self) -> None:
+        if not self._task_id:
+            return
+        try:
+            from Django_xm.apps.research.models import ResearchTask
+            task = ResearchTask.objects.filter(task_id=self._task_id).first()
+            if task is None or task.is_deleted:
+                raise RuntimeError(f"研究任务已被取消: {self._task_id}")
+        except RuntimeError:
+            raise
+        except Exception:
+            pass
+
+    def _check_rate_limit(self, call_type: str) -> Optional[str]:
+        """检查速率和总量限制，返回循环原因字符串或 None"""
         now = time.time()
         with self._lock:
             self._call_timestamps = [t for t in self._call_timestamps if now - t < 1.0]
             if len(self._call_timestamps) >= self.max_calls_per_second:
-                raise RuntimeError(
-                    f"速率限制: {call_type} 调用频率超过 {self.max_calls_per_second}/s，"
-                    f"Agent 可能陷入循环，已终止执行。"
-                )
+                reason = f"{call_type}调用频率超过{self.max_calls_per_second}/s"
+                if not self.graceful_degradation:
+                    raise RuntimeError(
+                        f"速率限制: {reason}，Agent 可能陷入循环，已终止执行。"
+                    )
+                return reason
             self._call_timestamps.append(now)
 
             total = self._model_call_count + self._tool_call_count
             if total >= self.max_total_calls:
-                raise RuntimeError(
-                    f"总量限制: Agent 总调用次数 ({total}) 超过 {self.max_total_calls}，"
-                    f"可能陷入无限循环，已终止执行。"
-                )
+                reason = f"总调用次数({total})超过{self.max_total_calls}"
+                if not self.graceful_degradation:
+                    raise RuntimeError(
+                        f"总量限制: Agent {reason}，可能陷入无限循环，已终止执行。"
+                    )
+                return reason
+        return None
+
+    def _check_exact_duplicate(self, tool_name: str, tool_args: Any) -> Optional[str]:
+        """精确重复检测，返回循环原因或 None"""
+        self._recent_tool_calls.append({
+            "name": tool_name,
+            "args_hash": self._args_fingerprint(tool_args),
+            "args_preview": self._args_preview(tool_args),
+        })
+        if len(self._recent_tool_calls) > max(self.exact_dup_window, self.diversity_window, self.progress_window):
+            self._recent_tool_calls = self._recent_tool_calls[-max(self.exact_dup_window, self.diversity_window, self.progress_window):]
+
+        if len(self._recent_tool_calls) >= self.exact_dup_threshold:
+            recent = self._recent_tool_calls[-self.exact_dup_window:]
+
+            # 参数递进检测：同工具但参数多样性高=合理重复，跳过
+            same_tool_calls = [tc for tc in recent if tc["name"] == tool_name]
+            if len(same_tool_calls) >= 3:
+                unique_args = set(tc["args_hash"] for tc in same_tool_calls)
+                args_diversity = len(unique_args) / len(same_tool_calls)
+                if args_diversity >= 0.5:
+                    return None  # 参数递进模式，跳过精确重复检测
+
+            name_counts: Dict[str, int] = {}
+            for tc in recent:
+                key = f"{tc['name']}:{tc['args_hash']}"
+                name_counts[key] = name_counts.get(key, 0) + 1
+            max_dup = max(name_counts.values())
+            if max_dup >= self.exact_dup_threshold:
+                dup_key = max(name_counts, key=name_counts.get)
+                reason = f"工具{dup_key.split(':')[0]}在最近{self.exact_dup_window}次调用中重复{max_dup}次"
+                if not self.graceful_degradation:
+                    raise RuntimeError(
+                        f"精确重复检测(L1): {reason}，Agent 陷入循环，已终止执行。"
+                    )
+                return reason
+        return None
+
+    def _check_consecutive_same_tool(self, tool_name: str) -> bool:
+        if tool_name == self._last_tool_name:
+            self._consecutive_same_count += 1
+        else:
+            self._consecutive_same_count = 1
+            self._last_tool_name = tool_name
+        return self._consecutive_same_count >= self.consecutive_same_tool_limit
+
+    def _check_diversity_drop(self) -> bool:
+        if len(self._recent_tool_calls) < self.diversity_window:
+            return False
+        recent = self._recent_tool_calls[-self.diversity_window:]
+        unique_tools = len(set(tc["name"] for tc in recent))
+        ratio = unique_tools / len(recent)
+        return ratio < self.diversity_min_ratio
+
+    def _check_progress_stall(self, tool_name: str) -> bool:
+        if tool_name in self.PROGRESS_TOOLS:
+            return False
+        if len(self._recent_tool_calls) < self.progress_window:
+            return False
+        recent = self._recent_tool_calls[-self.progress_window:]
+        return not any(tc["name"] in self.PROGRESS_TOOLS for tc in recent)
+
+    def _check_tool_loop(self, tool_name: str, tool_args: Any) -> Optional[str]:
+        """检测工具调用循环，返回循环原因或 None"""
+        # L1: 精确重复检测
+        dup_reason = self._check_exact_duplicate(tool_name, tool_args)
+        if dup_reason:
+            return dup_reason
+
+        if self._tool_call_count < self.min_calls_before_check:
+            return None
+
+        pattern_suspect = self._check_consecutive_same_tool(tool_name) or self._check_diversity_drop()
+        progress_suspect = self._check_progress_stall(tool_name)
+
+        if not pattern_suspect and not progress_suspect:
+            return None
+
+        now = time.time()
+        if now < self._llm_judge_skip_until:
+            return None
+
+        helper_model = self._get_helper_model()
+        if helper_model is not None:
+            if self._llm_judge_count >= self.llm_judge_max_calls:
+                reason = "辅助模型判断次数耗尽(L4)，疑似循环模式持续存在"
+                if not self.graceful_degradation:
+                    raise RuntimeError(f"{reason}，已终止执行。")
+                return reason
+            is_loop = self._llm_judge_loop(helper_model)
+            self._llm_judge_count += 1
+            if is_loop:
+                reason = "辅助模型判断(L4)确认Agent陷入循环"
+                if not self.graceful_degradation:
+                    raise RuntimeError(f"{reason}，已终止执行。")
+                return reason
+            self._llm_judge_skip_until = now + 10.0
+            logger.info(f"辅助模型判断(L4): Agent 正常推进，继续执行 (判断 {self._llm_judge_count}/{self.llm_judge_max_calls})")
+        else:
+            reason = f"模式异常检测(L2/L3): 连续同工具={pattern_suspect}, 进展停滞={progress_suspect}"
+            if not self.graceful_degradation:
+                raise RuntimeError(f"{reason}，已终止执行。")
+            return reason
+        return None
+
+    def _get_helper_model(self):
+        try:
+            from Django_xm.apps.ai_engine.services.llm_factory import get_helper_model
+            return get_helper_model()
+        except Exception as e:
+            logger.warning(f"获取辅助模型失败: {e}")
+            return None
+
+    def _llm_judge_loop(self, model) -> bool:
+        try:
+            summary = self._build_call_summary()
+            prompt = _LOOP_JUDGE_PROMPT.format(
+                tool_calls_summary=summary,
+                total_tool_calls=self._tool_call_count,
+                total_model_calls=self._model_call_count,
+            )
+            from langchain_core.messages import HumanMessage
+            response = model.invoke([HumanMessage(content=prompt)])
+            answer = response.content.strip().lower()
+            logger.info(f"辅助模型判断结果: {answer} (工具={self._tool_call_count}, 模型={self._model_call_count})")
+            first_word = answer.split()[0] if answer.split() else ""
+            return first_word == "loop"
+        except Exception as e:
+            logger.warning(f"辅助模型判断失败，默认继续: {e}")
+            return False
+
+    def _build_call_summary(self) -> str:
+        recent = self._recent_tool_calls[-10:]
+        lines = []
+        for i, tc in enumerate(recent, 1):
+            lines.append(f"{i}. {tc['name']}({tc['args_preview']})")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _args_fingerprint(args: Any) -> str:
+        if args is None:
+            return ""
+        if isinstance(args, dict):
+            try:
+                import hashlib, json
+                serialized = json.dumps(args, sort_keys=True, ensure_ascii=False, default=str)
+                return hashlib.md5(serialized.encode()).hexdigest()[:12]
+            except (TypeError, ValueError):
+                return str(args)[:64]
+        return str(args)[:64]
+
+    @staticmethod
+    def _args_preview(args: Any) -> str:
+        if args is None:
+            return ""
+        if isinstance(args, dict):
+            parts = []
+            for k, v in list(args.items())[:3]:
+                s = str(v)
+                parts.append(f"{k}={s[:40]}{'...' if len(s) > 40 else ''}")
+            preview = ", ".join(parts)
+            if len(args) > 3:
+                preview += f", ... (+{len(args)-3})"
+            return preview
+        return str(args)[:60]
 
     def before_model(self, state: AgentState, runtime: Runtime) -> None:
         with self._lock:
             self._model_call_count += 1
-        if self._model_call_count > self.max_model_calls:
-            raise RuntimeError(
-                f"模型调用次数 ({self._model_call_count}) 超过限制 ({self.max_model_calls})，"
-                f"Agent 可能陷入循环，已终止执行。"
-            )
-        self._check_rate_limit("model")
+        rate_reason = self._check_rate_limit("model")
+        if rate_reason and self.graceful_degradation:
+            logger.warning(f"模型调用速率/总量限制触发(优雅模式): {rate_reason}")
+
+    def _make_loop_stop_message(self, tool_call_id: str, reason: str) -> ToolMessage:
+        """生成循环停止引导消息，促使 LLM 自然停止工具调用"""
+        self._loop_detected_reason = reason
+        logger.warning(f"循环检测触发(优雅降级): {reason}, 工具调用={self._tool_call_count}, 模型调用={self._model_call_count}")
+        return ToolMessage(
+            content=self._LOOP_STOP_MESSAGE.format(reason=reason),
+            tool_call_id=tool_call_id,
+        )
+
+    def _check_milestone_warnings(self) -> None:
+        """检查是否达到告警里程碑，发出多级告警"""
+        total = self._tool_call_count + self._model_call_count
+        for milestone in self.warning_milestones:
+            if total >= milestone and milestone not in self._warned_milestones:
+                self._warned_milestones.add(milestone)
+                remaining = self.max_total_calls - total
+                pct = total / self.max_total_calls * 100
+                logger.warning(
+                    f"📊 Agent 调用里程碑: 已执行 {total} 次调用 "
+                    f"(工具={self._tool_call_count}, 模型={self._model_call_count}), "
+                    f"预算使用 {pct:.0f}%, 剩余 {remaining} 次"
+                )
 
     def wrap_tool_call(
         self,
         tool_call: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
     ) -> ToolMessage | Command[Any]:
+        tool_name = tool_call.tool_call.get("name", "unknown")
+        tool_args = tool_call.tool_call.get("args", {})
+        tool_call_id = tool_call.tool_call.get("id", "")
         with self._lock:
             self._tool_call_count += 1
-        if self._tool_call_count > self.max_tool_calls:
-            raise RuntimeError(
-                f"工具调用次数 ({self._tool_call_count}) 超过限制 ({self.max_tool_calls})，"
-                f"Agent 可能陷入循环，已终止执行。"
-            )
-        self._check_rate_limit("tool")
+            loop_reason = self._check_tool_loop(tool_name, tool_args)
+        if loop_reason and self.graceful_degradation:
+            return self._make_loop_stop_message(tool_call_id, loop_reason)
+        rate_reason = self._check_rate_limit("tool")
+        if rate_reason and self.graceful_degradation:
+            return self._make_loop_stop_message(tool_call_id, rate_reason)
+        self._check_task_cancelled()
+        self._check_milestone_warnings()
         return handler(tool_call)
 
     async def awrap_tool_call(
@@ -117,34 +382,56 @@ class RateLimitMiddleware(AgentMiddleware):
         tool_call: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
     ) -> ToolMessage | Command[Any]:
+        tool_name = tool_call.tool_call.get("name", "unknown")
+        tool_args = tool_call.tool_call.get("args", {})
+        tool_call_id = tool_call.tool_call.get("id", "")
         with self._lock:
             self._tool_call_count += 1
-        if self._tool_call_count > self.max_tool_calls:
-            raise RuntimeError(
-                f"工具调用次数 ({self._tool_call_count}) 超过限制 ({self.max_tool_calls})，"
-                f"Agent 可能陷入循环，已终止执行。"
-            )
-        self._check_rate_limit("tool")
+            loop_reason = self._check_tool_loop(tool_name, tool_args)
+        if loop_reason and self.graceful_degradation:
+            return self._make_loop_stop_message(tool_call_id, loop_reason)
+        rate_reason = self._check_rate_limit("tool")
+        if rate_reason and self.graceful_degradation:
+            return self._make_loop_stop_message(tool_call_id, rate_reason)
+        self._check_task_cancelled()
+        self._check_milestone_warnings()
         return await handler(tool_call)
 
     def after_agent(self, state: AgentState, runtime: Runtime) -> None:
         logger.info(
             f"Agent 执行完成 - 模型调用: {self._model_call_count}, "
-            f"工具调用: {self._tool_call_count}"
+            f"工具调用: {self._tool_call_count}, "
+            f"辅助模型判断: {self._llm_judge_count}"
         )
 
 
 def create_rate_limit_middleware(
-    max_model_calls: int = 50,
-    max_tool_calls: int = 30,
+    max_total_calls: int = 300,
     max_calls_per_second: float = 5.0,
-    max_total_calls: int = 80,
+    exact_dup_window: int = 5,
+    exact_dup_threshold: int = 3,
+    consecutive_same_tool_limit: int = 8,
+    diversity_window: int = 15,
+    diversity_min_ratio: float = 0.2,
+    progress_window: int = 20,
+    min_calls_before_check: int = 15,
+    llm_judge_max_calls: int = 3,
+    task_id: str = None,
+    graceful_degradation: bool = True,
 ) -> RateLimitMiddleware:
     return RateLimitMiddleware(
-        max_model_calls=max_model_calls,
-        max_tool_calls=max_tool_calls,
-        max_calls_per_second=max_calls_per_second,
         max_total_calls=max_total_calls,
+        max_calls_per_second=max_calls_per_second,
+        exact_dup_window=exact_dup_window,
+        exact_dup_threshold=exact_dup_threshold,
+        consecutive_same_tool_limit=consecutive_same_tool_limit,
+        diversity_window=diversity_window,
+        diversity_min_ratio=diversity_min_ratio,
+        progress_window=progress_window,
+        min_calls_before_check=min_calls_before_check,
+        llm_judge_max_calls=llm_judge_max_calls,
+        task_id=task_id,
+        graceful_degradation=graceful_degradation,
     )
 
 
@@ -187,11 +474,13 @@ class GuardrailsMiddleware(AgentMiddleware):
         self._agent_start_time: Optional[float] = None
         self._tool_call_count: int = 0
         self._model_call_count: int = 0
+        self._count_lock = threading.Lock()
 
     def before_agent(self, state: AgentState, runtime: Runtime) -> Dict[str, Any] | None:
         self._agent_start_time = time.time()
-        self._tool_call_count = 0
-        self._model_call_count = 0
+        with self._count_lock:
+            self._tool_call_count = 0
+            self._model_call_count = 0
         query = ""
         messages = state.get("messages", [])
         for msg in reversed(messages):
@@ -203,9 +492,12 @@ class GuardrailsMiddleware(AgentMiddleware):
 
     def after_agent(self, state: AgentState, runtime: Runtime) -> Dict[str, Any] | None:
         duration = time.time() - self._agent_start_time if self._agent_start_time else 0
+        with self._count_lock:
+            model_calls = self._model_call_count
+            tool_calls = self._tool_call_count
         logger.info(
             f"[Guardrails] Agent 执行完成, 耗时: {duration:.2f}s, "
-            f"模型调用: {self._model_call_count} 次, 工具调用: {self._tool_call_count} 次"
+            f"模型调用: {model_calls} 次, 工具调用: {tool_calls} 次"
         )
         self._agent_start_time = None
         return None
@@ -219,7 +511,8 @@ class GuardrailsMiddleware(AgentMiddleware):
         return None
 
     def after_model(self, state: AgentState, runtime: Runtime) -> Dict[str, Any] | None:
-        self._model_call_count += 1
+        with self._count_lock:
+            self._model_call_count += 1
         messages = state.get("messages", [])
         if messages:
             last_msg = messages[-1]
@@ -303,7 +596,8 @@ class GuardrailsMiddleware(AgentMiddleware):
                     if self.raise_on_error:
                         raise ValueError(f"工具参数验证失败: {', '.join(validation_result.errors)}")
 
-        self._tool_call_count += 1
+        with self._count_lock:
+            self._tool_call_count += 1
         result = handler(tool_call)
 
         output_text = ""
@@ -372,7 +666,8 @@ class GuardrailsMiddleware(AgentMiddleware):
                     if self.raise_on_error:
                         raise ValueError(f"工具参数验证失败: {', '.join(validation_result.errors)}")
 
-        self._tool_call_count += 1
+        with self._count_lock:
+            self._tool_call_count += 1
         result = await handler(tool_call)
 
         output_text = ""
@@ -422,17 +717,17 @@ class PIIMiddleware(AgentMiddleware):
     ) -> ModelResponse | ExtendedModelResponse:
         messages = request.state.get("messages", [])
         if messages:
-            last_user_msg = None
-            for msg in reversed(messages):
+            for i, msg in enumerate(messages):
                 if isinstance(msg, HumanMessage):
-                    last_user_msg = msg.content
-                    break
-            if last_user_msg:
-                filter_result = self._content_filter.filter_input(last_user_msg)
-                if not filter_result.is_safe:
-                    if self.reject_on_pii:
-                        raise ValueError("输入包含个人身份信息(PII)，已被安全策略拒绝")
-                    logger.warning(f"检测到 PII: {filter_result.issues}")
+                    filter_result = self._content_filter.filter_input(msg.content)
+                    if not filter_result.is_safe:
+                        if self.reject_on_pii:
+                            raise ValueError("输入包含个人身份信息(PII)，已被安全策略拒绝")
+                        logger.warning(f"检测到 PII: {filter_result.issues}")
+                        # 实际脱敏：用过滤后的内容替换原始消息
+                        if self.mask_pii and filter_result.filtered_content:
+                            messages[i] = HumanMessage(content=filter_result.filtered_content)
+                            logger.info("已对消息中的 PII 进行脱敏处理")
         return handler(request)
 
     async def awrap_model_call(
@@ -442,17 +737,17 @@ class PIIMiddleware(AgentMiddleware):
     ) -> ModelResponse | ExtendedModelResponse:
         messages = request.state.get("messages", [])
         if messages:
-            last_user_msg = None
-            for msg in reversed(messages):
+            for i, msg in enumerate(messages):
                 if isinstance(msg, HumanMessage):
-                    last_user_msg = msg.content
-                    break
-            if last_user_msg:
-                filter_result = self._content_filter.filter_input(last_user_msg)
-                if not filter_result.is_safe:
-                    if self.reject_on_pii:
-                        raise ValueError("输入包含个人身份信息(PII)，已被安全策略拒绝")
-                    logger.warning(f"检测到 PII: {filter_result.issues}")
+                    filter_result = self._content_filter.filter_input(msg.content)
+                    if not filter_result.is_safe:
+                        if self.reject_on_pii:
+                            raise ValueError("输入包含个人身份信息(PII)，已被安全策略拒绝")
+                        logger.warning(f"检测到 PII: {filter_result.issues}")
+                        # 实际脱敏：用过滤后的内容替换原始消息
+                        if self.mask_pii and filter_result.filtered_content:
+                            messages[i] = HumanMessage(content=filter_result.filtered_content)
+                            logger.info("已对消息中的 PII 进行脱敏处理")
         return await handler(request)
 
 
@@ -483,20 +778,27 @@ class HumanInTheLoopMiddleware(AgentMiddleware):
         tool_call: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
     ) -> ToolMessage | Command[Any]:
-        if tool_call.tool_call.get("name", "") not in self.tools_requiring_approval:
+        tool_name = tool_call.tool_call.get("name", "")
+        if tool_name not in self.tools_requiring_approval:
             return handler(tool_call)
 
-        if self.on_approval_request:
-            approved = self.on_approval_request(
-                tool_call.tool_call.get("name", ""),
-                tool_call.tool_call.get("args", {}),
+        if self.on_approval_request is None:
+            logger.warning("Dangerous tool %s blocked: no approval callback configured", tool_name)
+            return ToolMessage(
+                content=f"工具 {tool_name} 被拒绝：未配置审批回调，危险工具默认被阻止。",
+                tool_call_id=tool_call.tool_call.get("id", ""),
             )
-            if not approved:
-                logger.info(f"工具 {tool_call.tool_call.get('name', '')} 被人工拒绝")
-                return ToolMessage(
-                    content=f"工具 {tool_call.tool_call.get('name', '')} 的执行已被人工拒绝",
-                    tool_call_id=tool_call.tool_call.get("id", ""),
-                )
+
+        approved = self.on_approval_request(
+            tool_name,
+            tool_call.tool_call.get("args", {}),
+        )
+        if not approved:
+            logger.info(f"工具 {tool_name} 被人工拒绝")
+            return ToolMessage(
+                content=f"工具 {tool_name} 的执行已被人工拒绝",
+                tool_call_id=tool_call.tool_call.get("id", ""),
+            )
 
         return handler(tool_call)
 
@@ -505,92 +807,28 @@ class HumanInTheLoopMiddleware(AgentMiddleware):
         tool_call: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
     ) -> ToolMessage | Command[Any]:
-        if tool_call.tool_call.get("name", "") not in self.tools_requiring_approval:
+        tool_name = tool_call.tool_call.get("name", "")
+        if tool_name not in self.tools_requiring_approval:
             return await handler(tool_call)
 
-        if self.on_approval_request:
-            approved = self.on_approval_request(
-                tool_call.tool_call.get("name", ""),
-                tool_call.tool_call.get("args", {}),
+        if self.on_approval_request is None:
+            logger.warning("Dangerous tool %s blocked: no approval callback configured", tool_name)
+            return ToolMessage(
+                content=f"工具 {tool_name} 被拒绝：未配置审批回调，危险工具默认被阻止。",
+                tool_call_id=tool_call.tool_call.get("id", ""),
             )
-            if not approved:
-                logger.info(f"工具 {tool_call.tool_call.get('name', '')} 被人工拒绝(异步)")
-                return ToolMessage(
-                    content=f"工具 {tool_call.tool_call.get('name', '')} 的执行已被人工拒绝",
-                    tool_call_id=tool_call.tool_call.get("id", ""),
-                )
 
-        return await handler(tool_call)
+        approved = self.on_approval_request(
+            tool_name,
+            tool_call.tool_call.get("args", {}),
+        )
+        if not approved:
+            logger.info(f"工具 {tool_name} 被人工拒绝(异步)")
+            return ToolMessage(
+                content=f"工具 {tool_name} 的执行已被人工拒绝",
+                tool_call_id=tool_call.tool_call.get("id", ""),
+            )
 
-
-class SkillsMiddleware(AgentMiddleware):
-    """
-    技能中间件 - 为 Agent 提供可组合的技能注册与调度
-
-    在工具调用前匹配已注册的技能模式，如果匹配则执行技能逻辑，
-    否则传递给原始 handler。
-    """
-
-    def __init__(
-        self,
-        skills: Optional[Dict[str, Callable]] = None,
-        auto_detect: bool = True,
-    ):
-        super().__init__()
-        self.skills = skills or {}
-        self.auto_detect = auto_detect
-
-    def register_skill(self, name: str, handler: Callable) -> None:
-        self.skills[name] = handler
-
-    def wrap_tool_call(
-        self,
-        tool_call: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
-    ) -> ToolMessage | Command[Any]:
-        tool_name = tool_call.tool_call.get("name", "")
-        skill = self.skills.get(tool_name)
-        if skill:
-            logger.info(f"[Skills] 使用技能 {tool_name} 处理工具调用")
-            try:
-                result = skill(tool_call.tool_call.get("args", {}))
-                return ToolMessage(
-                    content=str(result),
-                    tool_call_id=tool_call.tool_call.get("id", ""),
-                )
-            except Exception as e:
-                logger.error(f"[Skills] 技能 {tool_name} 执行失败: {e}")
-                return ToolMessage(
-                    content=f"技能执行失败: {e}",
-                    tool_call_id=tool_call.tool_call.get("id", ""),
-                )
-        return handler(tool_call)
-
-    async def awrap_tool_call(
-        self,
-        tool_call: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
-    ) -> ToolMessage | Command[Any]:
-        tool_name = tool_call.tool_call.get("name", "")
-        skill = self.skills.get(tool_name)
-        if skill:
-            logger.info(f"[Skills] 使用技能 {tool_name} 处理工具调用(异步)")
-            try:
-                import asyncio
-                if asyncio.iscoroutinefunction(skill):
-                    result = await skill(tool_call.tool_call.get("args", {}))
-                else:
-                    result = skill(tool_call.tool_call.get("args", {}))
-                return ToolMessage(
-                    content=str(result),
-                    tool_call_id=tool_call.tool_call.get("id", ""),
-                )
-            except Exception as e:
-                logger.error(f"[Skills] 技能 {tool_name} 执行失败: {e}")
-                return ToolMessage(
-                    content=f"技能执行失败: {e}",
-                    tool_call_id=tool_call.tool_call.get("id", ""),
-                )
         return await handler(tool_call)
 
 
@@ -642,38 +880,25 @@ def create_human_in_the_loop_middleware(
     )
 
 
-def create_skills_middleware(
-    skills: Optional[Dict[str, Callable]] = None,
-) -> SkillsMiddleware:
-    return SkillsMiddleware(skills=skills)
-
-
 def build_middleware_stack(
     enable_guardrails: bool = True,
     enable_pii: bool = False,
     enable_human_in_loop: bool = False,
-    enable_skills: bool = False,
     enable_rate_limit: bool = True,
     guardrails_strict: bool = False,
     pii_reject: bool = False,
-    skills_map: Optional[Dict[str, Callable]] = None,
     approval_tools: Optional[set] = None,
     on_approval_request: Optional[Callable] = None,
     extra_middleware: Optional[List[AgentMiddleware]] = None,
-    max_model_calls: int = 50,
-    max_tool_calls: int = 30,
 ) -> List[AgentMiddleware]:
     """
     构建 Middleware 栈，按优先级排列：
-    RateLimitMiddleware -> PIIMiddleware -> GuardrailsMiddleware -> HumanInTheLoopMiddleware -> SkillsMiddleware
+    RateLimitMiddleware -> PIIMiddleware -> GuardrailsMiddleware -> HumanInTheLoopMiddleware
     """
     stack: List[AgentMiddleware] = []
 
     if enable_rate_limit:
-        stack.append(create_rate_limit_middleware(
-            max_model_calls=max_model_calls,
-            max_tool_calls=max_tool_calls,
-        ))
+        stack.append(create_rate_limit_middleware())
 
     if enable_pii:
         stack.append(create_pii_middleware(reject_on_pii=pii_reject))
@@ -689,9 +914,6 @@ def build_middleware_stack(
             tools_requiring_approval=approval_tools,
             on_approval_request=on_approval_request,
         ))
-
-    if enable_skills and skills_map:
-        stack.append(create_skills_middleware(skills=skills_map))
 
     if extra_middleware:
         stack.extend(extra_middleware)
@@ -803,121 +1025,6 @@ def add_guardrails_to_agent(
     )
 
 
-class PermissionMiddleware(AgentMiddleware):
-    """
-    动态工具权限中间件
-
-    使用官方 wrap_model_call 模式，在运行时根据用户权限动态过滤可用工具集。
-    替代静态的 PermissionService.wrap_tools_with_permission 方式，
-    支持运行时权限变更（如角色切换、权限回收）。
-
-    参考：
-    - https://docs.langchain.com/oss/python/langchain/middleware/custom
-    """
-
-    def __init__(
-        self,
-        user_id: Optional[int] = None,
-        session_id: Optional[str] = None,
-        allowed_tools: Optional[set] = None,
-        blocked_tools: Optional[set] = None,
-    ):
-        super().__init__()
-        self.user_id = user_id
-        self.session_id = session_id
-        self._allowed_tools = allowed_tools
-        self._blocked_tools = blocked_tools or set()
-
-    def _resolve_allowed_tools(self) -> Optional[set]:
-        if self._allowed_tools is not None:
-            return self._allowed_tools
-
-        if self.user_id is None:
-            return None
-
-        try:
-            from Django_xm.apps.core.permissions import PermissionService
-            return PermissionService.get_allowed_tool_names(self.user_id)
-        except Exception as e:
-            logger.warning(f"获取用户权限失败: {e}")
-            return None
-
-    def _filter_tools(self, tools, allowed: set) -> list:
-        KNOWN_TOOLS = READ_ONLY_TOOLS | WRITE_TOOLS | DANGEROUS_TOOLS
-        filtered = []
-        for t in tools:
-            if t.name in self._blocked_tools:
-                continue
-            if t.name in allowed:
-                filtered.append(t)
-            elif t.name not in KNOWN_TOOLS:
-                filtered.append(t)
-        removed = {t.name for t in tools} - {t.name for t in filtered}
-        if removed:
-            logger.info(f"[Permission] 过滤工具: 移除 {removed} (user={self.user_id})")
-        return filtered
-
-    def wrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], ModelResponse],
-    ) -> ModelResponse | ExtendedModelResponse:
-        tools = getattr(request, 'tools', None)
-        if tools is None:
-            return handler(request)
-
-        allowed = self._resolve_allowed_tools()
-        if allowed is not None:
-            filtered = self._filter_tools(tools, allowed)
-            request = request.override(tools=filtered) if hasattr(request, 'override') else request
-
-        return handler(request)
-
-    async def _aresolve_allowed_tools(self) -> Optional[set]:
-        if self._allowed_tools is not None:
-            return self._allowed_tools
-
-        if self.user_id is None:
-            return None
-
-        try:
-            from Django_xm.apps.core.permissions import PermissionService
-            return await PermissionService.aget_allowed_tool_names(self.user_id, self.session_id)
-        except Exception as e:
-            logger.warning(f"异步获取用户权限失败: {e}")
-            return None
-
-    async def awrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], ModelResponse],
-    ) -> ModelResponse | ExtendedModelResponse:
-        tools = getattr(request, 'tools', None)
-        if tools is None:
-            return await handler(request)
-
-        allowed = await self._aresolve_allowed_tools()
-        if allowed is not None:
-            filtered = self._filter_tools(tools, allowed)
-            request = request.override(tools=filtered) if hasattr(request, 'override') else request
-
-        return await handler(request)
-
-
-def create_permission_middleware(
-    user_id: Optional[int] = None,
-    session_id: Optional[str] = None,
-    allowed_tools: Optional[set] = None,
-    blocked_tools: Optional[set] = None,
-) -> PermissionMiddleware:
-    return PermissionMiddleware(
-        user_id=user_id,
-        session_id=session_id,
-        allowed_tools=allowed_tools,
-        blocked_tools=blocked_tools,
-    )
-
-
 class GroqToolCallCompatMiddleware(AgentMiddleware):
     """
     Groq 模型工具调用兼容性中间件
@@ -980,5 +1087,14 @@ class GroqToolCallCompatMiddleware(AgentMiddleware):
                         content=last_msg.content + notice,
                         id=getattr(last_msg, 'id', None),
                     )
-                    response.messages[-1] = patched
+                    new_messages = list(response.messages[:-1]) + [patched]
+                    if hasattr(response, 'model_copy') and callable(response.model_copy):
+                        response = response.model_copy(update={"messages": new_messages})
+                    elif hasattr(response, '__dict__'):
+                        response = type(response)(**{
+                            k: new_messages if k == 'messages' else v
+                            for k, v in response.__dict__.items()
+                        })
+                    else:
+                        response.messages = new_messages
             return response

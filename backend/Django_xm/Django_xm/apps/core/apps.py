@@ -7,5 +7,4 @@ class CoreConfig(AppConfig):
     verbose_name = 'LangChain核心模块'
 
     def ready(self):
-        import Django_xm.apps.core.permission_models
         import Django_xm.apps.core.signals

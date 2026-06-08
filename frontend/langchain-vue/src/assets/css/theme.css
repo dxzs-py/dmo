@@ -105,10 +105,14 @@ html.dark {
 }
 
 .chat-header,
-.chat-topbar,
+.chat-topbar {
+  background-color: var(--card);
+  border-color: var(--border);
+}
+
 .chat-footer,
 .chat-input-area {
-  background-color: var(--sidebar);
+  background-color: var(--card);
   border-color: var(--border);
 }
 
@@ -356,13 +360,150 @@ html.dark .el-card {
   border-color: var(--border);
 }
 
+html.dark .el-dialog {
+  background-color: var(--el-bg-color-overlay);
+}
+
+html.dark .el-dialog__header {
+  border-bottom-color: var(--border);
+}
+
+html.dark .el-dialog__footer {
+  border-top-color: var(--border);
+}
+
 html.dark .el-form-item__label {
   color: var(--muted-foreground);
 }
 
+html.dark .el-select-dropdown {
+  background-color: var(--el-bg-color-overlay);
+  border-color: var(--border);
+}
+
+html.dark .el-select-dropdown__item.is-hovering {
+  background-color: var(--el-fill-color-light);
+}
+
+html.dark .el-dropdown-menu {
+  background-color: var(--el-bg-color-overlay);
+  border-color: var(--border);
+}
+
+html.dark .el-dropdown-menu__item:not(.is-disabled):hover {
+  background-color: var(--el-fill-color-light);
+  color: var(--el-color-primary);
+}
+
+html.dark .el-tabs__item {
+  color: var(--el-text-color-regular);
+}
+
+html.dark .el-tabs__item:hover {
+  color: var(--el-text-color-primary);
+}
+
+html.dark .el-tabs__item.is-active {
+  color: var(--el-color-primary);
+}
+
+html.dark .el-tabs__nav-wrap::after {
+  background-color: var(--border);
+}
+
+html.dark .el-input__wrapper {
+  background-color: var(--el-bg-color);
+  box-shadow: 0 0 0 1px var(--el-border-color) inset;
+}
+
+html.dark .el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px var(--el-border-color-hover) inset;
+}
+
+html.dark .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px var(--el-color-primary) inset;
+}
+
+html.dark .el-textarea__inner {
+  background-color: var(--el-bg-color);
+  color: var(--el-text-color-primary);
+}
+
+html.dark .el-switch.is-checked .el-switch__core {
+  border-color: var(--el-color-primary);
+  background-color: var(--el-color-primary);
+}
+
+html.dark .el-radio__input.is-checked .el-radio__inner {
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary);
+}
+
+html.dark .el-radio__input.is-checked + .el-radio__label {
+  color: var(--el-color-primary);
+}
+
+html.dark .el-checkbox__input.is-checked .el-checkbox__inner {
+  background-color: var(--el-color-primary);
+  border-color: var(--el-color-primary);
+}
+
+html.dark .el-table {
+  background-color: var(--el-bg-color);
+  --el-table-border-color: var(--border);
+  --el-table-header-bg-color: var(--el-fill-color-lighter);
+  --el-table-row-hover-bg-color: var(--el-fill-color-light);
+  --el-table-bg-color: var(--el-bg-color);
+  --el-table-tr-bg-color: var(--el-bg-color);
+  --el-table-header-text-color: var(--el-text-color-regular);
+  --el-table-text-color: var(--el-text-color-regular);
+}
+
+html.dark .el-pagination {
+  --el-pagination-bg-color: var(--el-fill-color-blank);
+  --el-pagination-text-color: var(--el-text-color-regular);
+  --el-pagination-button-disabled-bg-color: var(--el-fill-color-lighter);
+}
+
+html.dark .el-tag {
+  border-color: var(--el-border-color);
+}
+
+html.dark .el-descriptions {
+  --el-descriptions-table-border: var(--border);
+}
+
+html.dark .el-descriptions__label {
+  color: var(--el-text-color-secondary);
+}
+
+html.dark .el-breadcrumb__inner {
+  color: var(--el-text-color-regular);
+}
+
+html.dark .el-breadcrumb__separator {
+  color: var(--el-text-color-placeholder);
+}
+
+html.dark .el-empty__description p {
+  color: var(--el-text-color-secondary);
+}
+
+html.dark .el-tooltip__trigger {
+  outline: none;
+}
+
+html.dark .el-popover.el-popper {
+  background: var(--el-bg-color-overlay);
+  border-color: var(--border);
+}
+
+html.dark .el-loading-mask {
+  background-color: rgba(0, 0, 0, 0.7);
+}
+
 html.dark .message-text {
-  background-color: var(--card);
-  box-shadow: var(--shadow-md);
+  background-color: transparent;
 }
 
 html.dark .message.user .message-text {
@@ -388,6 +529,53 @@ html.dark .message-edit-area .el-textarea__inner {
   background: var(--card);
   border-color: var(--border);
   color: var(--foreground);
+}
+
+html.dark .settings-title {
+  color: var(--foreground);
+}
+
+html.dark .el-avatar {
+  background-color: var(--el-fill-color-light);
+}
+
+html.dark .el-progress-bar__outer {
+  background-color: var(--el-fill-color-lighter);
+}
+
+html.dark .el-collapse {
+  border-color: var(--border);
+}
+
+html.dark .el-collapse-item__header {
+  background-color: transparent;
+  color: var(--el-text-color-primary);
+  border-color: var(--border);
+}
+
+html.dark .el-collapse-item__wrap {
+  background-color: transparent;
+  border-color: var(--border);
+}
+
+html.dark .el-timeline-item__tail {
+  border-left-color: var(--border);
+}
+
+html.dark .el-timeline-item__node {
+  background-color: var(--el-border-color);
+}
+
+html.dark .el-badge__content {
+  border-color: var(--el-bg-color-overlay);
+}
+
+html.dark .el-alert {
+  border-color: var(--border);
+}
+
+html.dark .el-divider {
+  border-color: var(--border);
 }
 
 .el-overlay.is-message-box {

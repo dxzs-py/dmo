@@ -57,12 +57,13 @@ const groupedOptions = computed(() => {
       }
     }
     for (const model of provider.models) {
+      const modelName = typeof model === 'string' ? model : model.name
       groups[label].options.push({
-        value: `${provider.id}::${model}`,
-        label: model,
+        value: `${provider.id}::${modelName}`,
+        label: modelName,
         providerId: provider.id,
-        modelName: model,
-        isDefault: model === provider.default_model,
+        modelName: modelName,
+        isDefault: modelName === provider.default_model,
       })
     }
   }
@@ -91,7 +92,7 @@ const handleThinkingToggle = (val) => {
   if (!paramCfg) return
   modelStore.setSpecialParam('thinking', val ? paramCfg.enabled_value : paramCfg.disabled_value)
   if (val) {
-    ElMessage.info('思考模式已启用，Temperature 参数将被忽略')
+    ElMessage.info('思考模式已启用')
   } else {
     ElMessage.info('思考模式已关闭')
   }
@@ -157,7 +158,6 @@ onMounted(() => {
             <span class="group-label">
               <span class="group-icon">{{ group.icon }}</span>
               <span>{{ group.label }}</span>
-              <el-tag v-if="!group.available" type="danger" size="small" class="unavailable-tag">未配置</el-tag>
             </span>
           </template>
           <el-option
@@ -165,7 +165,6 @@ onMounted(() => {
             :key="opt.value"
             :label="opt.label"
             :value="opt.value"
-            :disabled="!group.available"
           >
             <div class="model-option-content">
               <span class="model-name">{{ opt.label }}</span>
@@ -209,7 +208,7 @@ onMounted(() => {
             <div class="param-row">
               <span class="param-label">
                 Temperature
-                <el-tooltip content="控制生成随机性，0 更确定，1 更随机。思考模式开启时此参数无效" placement="top">
+                <el-tooltip content="控制生成随机性，0 更确定，1 更随机" placement="top">
                   <el-icon class="param-help"><Warning /></el-icon>
                 </el-tooltip>
               </span>
@@ -219,7 +218,6 @@ onMounted(() => {
                   :min="0"
                   :max="1"
                   :step="0.05"
-                  :disabled="thinkingEnabled"
                   :show-tooltip="false"
                   style="flex: 1; min-width: 80px"
                 />
@@ -229,7 +227,6 @@ onMounted(() => {
                   :max="1"
                   :step="0.05"
                   :precision="2"
-                  :disabled="thinkingEnabled"
                   size="small"
                   style="width: 76px"
                   controls-position="right"
@@ -309,7 +306,9 @@ onMounted(() => {
               :loading="modelStore.isTesting"
               @click="handleTest"
             >
-              <el-icon style="margin-right: 4px"><Connection /></el-icon>
+              <template #icon>
+                <el-icon v-if="!modelStore.isTesting"><Connection /></el-icon>
+              </template>
               测试连接
             </el-button>
             <div v-if="modelStore.testResult" class="test-result-inline" :class="modelStore.testResult.success ? 'success' : 'error'">
@@ -337,7 +336,7 @@ onMounted(() => {
 }
 
 .model-select {
-  width: 200px;
+  width: 220px;
 }
 
 .settings-trigger {
@@ -494,22 +493,19 @@ onMounted(() => {
   font-size: 16px;
 }
 
-.unavailable-tag {
-  margin-left: 4px;
-}
-
 .model-option-content {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 2px 0;
+  padding: 4px 0;
   width: 100%;
 }
 
 .model-name {
   font-weight: 500;
-  font-size: 13px;
+  font-size: 13.5px;
   flex: 1;
+  line-height: 1.4;
 }
 
 .check-icon {
@@ -518,20 +514,21 @@ onMounted(() => {
 
 @media (max-width: 768px) {
   .model-select {
-    width: 160px;
+    width: 180px;
   }
 }
 </style>
 
 <style>
 .model-selector-popper .el-select-dropdown__header {
-  padding: 8px 12px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .model-selector-popper .el-select-dropdown__item {
-  padding: 8px 12px;
+  padding: 10px 14px;
   height: auto;
+  min-height: 36px;
 }
 
 .model-selector-popper .el-select-dropdown__item.hover,

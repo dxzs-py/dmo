@@ -2,15 +2,6 @@ export function cn(...classes) {
   return classes.filter(Boolean).join(' ')
 }
 
-export function formatBytes(bytes, decimals = 2) {
-  if (bytes === 0) return '0 Bytes'
-  const k = 1024
-  const dm = decimals < 0 ? 0 : decimals
-  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i]
-}
-
 export function formatFileSize(bytes) {
   if (bytes === 0) return '0 B'
   const k = 1024
@@ -32,6 +23,7 @@ export function formatDuration(seconds) {
 }
 
 export function formatDate(date) {
+  if (!date) return '-'
   if (typeof date === 'string') date = new Date(date)
   return date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
@@ -57,12 +49,15 @@ export function truncateMiddle(str, maxLength = 50) {
 
 export function getModeLabel(mode) {
   const labels = {
-    'basic-agent': '基础代理',
-    'deep-thinking': '深度思考',
-    'rag': 'RAG 检索',
-    'workflow': '学习工作流',
+    'agent': '代理',
     'deep-research': '深度研究',
-    'guarded': '安全代理',
+    // 旧模式兼容映射
+    'chat': '代理',
+    'basic-agent': '代理',
+    'advanced-agent': '代理',
+    'research-agent': '代理',
+    'rag-agent': '代理',
+    'deep-thinking': '代理',
   }
   return labels[mode] || mode
 }

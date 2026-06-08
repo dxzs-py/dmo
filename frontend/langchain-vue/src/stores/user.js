@@ -1,8 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import router from '@/router'
 import { ElMessage } from 'element-plus'
-import { apiClient } from '@/api'
+import { userAPI } from '@/api/user'
 import { logger } from '../utils/logger'
 import { extractErrorMessage } from '../utils/api-error-handler'
 
@@ -42,7 +42,7 @@ export const useUserStore = defineStore('user', () => {
 
   async function login(credentials) {
     try {
-      const response = await apiClient.post('/users/login/', credentials)
+      const response = await userAPI.login(credentials)
       const data = response.data
       if (data.code === 200) {
         const userData = data.data || data
@@ -67,7 +67,7 @@ export const useUserStore = defineStore('user', () => {
 
   async function register(userData) {
     try {
-      const response = await apiClient.post('/users/register/', userData)
+      const response = await userAPI.register(userData)
       const data = response.data
       if (response.status === 201 || data.code === 200) {
         return { success: true, message: data.message || '注册成功' }
@@ -79,9 +79,9 @@ export const useUserStore = defineStore('user', () => {
       if (resolved) return { success: false, message: resolved }
       const errors = error.response?.data
       let message = '注册失败'
-      if (typeof errors === 'object' && errors !== null && errors.details) {
-        const firstField = Object.keys(errors.details)[0]
-        message = Array.isArray(errors.details[firstField]) ? errors.details[firstField][0] : firstField
+      if (typeof errors === 'object' && errors !== null && errors.data) {
+        const firstField = Object.keys(errors.data)[0]
+        message = Array.isArray(errors.data[firstField]) ? errors.data[firstField][0] : firstField
       } else if (typeof errors === 'object' && errors !== null) {
         const firstError = Object.values(errors)[0]
         message = Array.isArray(firstError) ? firstError[0] : firstError
@@ -93,12 +93,12 @@ export const useUserStore = defineStore('user', () => {
   async function refreshAccessToken() {
     if (!refreshToken.value) return false
     try {
-      const response = await apiClient.post('/users/login/refresh/', {
-        refresh: refreshToken.value
-      })
+      const response = await userAPI.refreshToken(refreshToken.value)
       const data = response.data
-      if (data.access) {
-        setToken(data.access)
+      const access = data.data?.access || data.access
+      const newRefresh = data.data?.refresh || data.refresh
+      if (access) {
+        setToken(access, newRefresh || undefined)
         return true
       }
       return false
@@ -112,7 +112,7 @@ export const useUserStore = defineStore('user', () => {
   async function getUserInfo() {
     if (!token.value) return null
     try {
-      const response = await apiClient.get('/users/info/')
+      const response = await userAPI.getUserInfo()
       const data = response.data
       if (data.code === 200) {
         setUserInfo(data.data)
@@ -128,9 +128,7 @@ export const useUserStore = defineStore('user', () => {
   async function logout() {
     try {
       if (refreshToken.value) {
-        await apiClient.post('/users/secure-logout/', {
-          refresh: refreshToken.value
-        })
+        await userAPI.logout(refreshToken.value)
         logger.log('[Security] Secure logout completed, server-side data cleared')
       }
     } catch (error) {
@@ -149,27 +147,17 @@ export const useUserStore = defineStore('user', () => {
     }
     const message = reasonMessages[reason] || '登录已过期，请重新登录'
 
-    try {
-      const router = useRouter()
-      ElMessage.warning({
-        message,
-        duration: 3000,
-        showClose: true,
-      })
-      const currentPath = router.currentRoute.value.fullPath
-      const redirectPath = currentPath && currentPath !== '/login' ? currentPath : '/'
-      router.push({
-        path: '/login',
-        query: { redirect: redirectPath, expired: '1' },
-      })
-    } catch {
-      ElMessage.warning({
-        message,
-        duration: 3000,
-        showClose: true,
-      })
-      window.location.href = '/login?expired=1'
-    }
+    ElMessage.warning({
+      message,
+      duration: 3000,
+      showClose: true,
+    })
+    const currentPath = router.currentRoute.value.fullPath
+    const redirectPath = currentPath && currentPath !== '/login' ? currentPath : '/'
+    router.push({
+      path: '/login',
+      query: { redirect: redirectPath, expired: '1' },
+    })
   }
 
   return {

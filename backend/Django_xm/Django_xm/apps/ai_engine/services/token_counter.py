@@ -6,17 +6,17 @@ Token 使用量回调处理器 - LangChain v1.2.13 兼容
 
 LangChain v1.2.x 中，AIMessage.usage_metadata 包含 token 使用信息，
 本模块通过回调机制在流式和非流式场景下统一收集 token 数据。
-
-成本计算集成 cost_tracker.MODEL_PRICING 定价表，
-在 on_llm_end 中根据模型名和 token 用量自动计算费用。
 """
 
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Union
 from langchain_core.callbacks import BaseCallbackHandler
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage
 from langchain_core.outputs import LLMResult
 
-from Django_xm.apps.ai_engine.services.cost_tracker import MODEL_PRICING, DEFAULT_PRICING, CostRecord
+import threading
+import logging
+
+_logger = logging.getLogger(__name__)
 
 
 def _extract_model_name(serialized: Dict[str, Any], **kwargs: Any) -> str:
@@ -41,10 +41,10 @@ class TokenUsageCallbackHandler(BaseCallbackHandler):
         self.prompt_tokens: int = 0
         self.completion_tokens: int = 0
         self.total_tokens: int = 0
-        self.total_cost: float = 0.0
         self.successful_requests: int = 0
         self._llm_start_times: Dict[str, float] = {}
         self._current_model: str = model_name
+        self._lock = threading.Lock()
 
     def on_llm_start(
         self,
@@ -61,7 +61,6 @@ class TokenUsageCallbackHandler(BaseCallbackHandler):
             self._current_model = model
 
     def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
-        model_name = self._current_model
         prompt = 0
         completion = 0
         total = 0
@@ -71,7 +70,6 @@ class TokenUsageCallbackHandler(BaseCallbackHandler):
             prompt = usage.get("prompt_tokens", 0)
             completion = usage.get("completion_tokens", 0)
             total = usage.get("total_tokens", 0)
-            self.successful_requests += 1
         else:
             for generation in response.generations:
                 for gen in generation:
@@ -85,19 +83,21 @@ class TokenUsageCallbackHandler(BaseCallbackHandler):
                         prompt += um.get("input_tokens", 0)
                         completion += um.get("output_tokens", 0)
                         total += um.get("total_tokens", 0)
-                        self.successful_requests += 1
 
-        self.prompt_tokens += prompt
-        self.completion_tokens += completion
-        self.total_tokens += total
+        with self._lock:
+            self.prompt_tokens += prompt
+            self.completion_tokens += completion
+            self.total_tokens += total
+            if prompt > 0 or completion > 0:
+                self.successful_requests += 1
 
-        if prompt > 0 or completion > 0:
-            record = CostRecord(model=model_name, input_tokens=prompt, output_tokens=completion)
-            cost = record.calculate_cost()
-            self.total_cost += cost
+            run_id = kwargs.get("run_id")
+            if run_id is not None:
+                self._llm_start_times.pop(str(run_id), None)
 
     def on_llm_error(self, error: BaseException, **kwargs: Any) -> None:
-        pass
+        run_id = kwargs.get("run_id")
+        _logger.warning("LLM error occurred for run %s", run_id)
 
     def on_tool_start(
         self,
@@ -147,7 +147,6 @@ class TokenUsageCallbackHandler(BaseCallbackHandler):
         self.prompt_tokens = 0
         self.completion_tokens = 0
         self.total_tokens = 0
-        self.total_cost = 0.0
         self.successful_requests = 0
         self._llm_start_times.clear()
 

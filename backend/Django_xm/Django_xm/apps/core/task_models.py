@@ -1,5 +1,4 @@
 from django.db import models
-from django.conf import settings
 from Django_xm.apps.core.base_models import AuditModel
 
 
@@ -116,6 +115,7 @@ class CeleryTaskRecord(AuditModel):
     )
 
     class Meta:
+        app_label = 'core'
         db_table = 'core_celery_task_record'
         verbose_name = 'Celery 任务记录'
         verbose_name_plural = 'Celery 任务记录'

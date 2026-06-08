@@ -240,7 +240,7 @@ class ContentFilter:
         # IP 地址脱敏
         masked_text = re.sub(
             self.PATTERNS["ip_address"],
-            lambda m: ".".join(m.group().split(".")[:2]) + ".***.***.***",
+            lambda m: ".".join(m.group().split(".")[:2]) + ".***.***",
             masked_text
         )
         

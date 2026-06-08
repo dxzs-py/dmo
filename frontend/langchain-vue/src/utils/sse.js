@@ -11,6 +11,11 @@ const SSE_EVENT_HANDLERS = {
       sessionOps.setAttachmentIds(parsed.data)
     }
   },
+  attachment_processing: (parsed, _appendFn, sessionOps) => {
+    if (parsed.data) {
+      sessionOps.setAttachmentProcessing?.(parsed.data)
+    }
+  },
   source: (parsed, _appendFn, sessionOps) => {
     if (parsed.data) sessionOps.addSource?.(parsed.data)
   },
@@ -33,9 +38,6 @@ const SSE_EVENT_HANDLERS = {
       sessionOps.updateOrAddToolResult?.(parsed.data)
     }
   },
-  tool_confirmation: (parsed, _appendFn, sessionOps) => {
-    if (parsed.data) sessionOps.requestToolConfirmation?.(parsed.data)
-  },
   reasoning: (parsed, _appendFn, sessionOps) => {
     if (parsed.data) sessionOps.setReasoning?.(parsed.data)
   },
@@ -45,13 +47,11 @@ const SSE_EVENT_HANDLERS = {
   context: (parsed, _appendFn, sessionOps) => {
     if (parsed.data) {
       sessionOps.setContext?.(parsed.data)
-      if (parsed.data.cost) {
-        sessionOps.setCost?.(parsed.data.cost)
-      }
       const usageData = {}
       if (parsed.data.model) usageData.model = parsed.data.model
       if (parsed.data.total_tokens) usageData.tokenCount = parsed.data.total_tokens
-      if (parsed.data.cost?.totalCost !== undefined) usageData.cost = parsed.data.cost.totalCost
+      if (parsed.data.tokens) usageData.tokens = parsed.data.tokens
+      if (parsed.data.tokenDetail) usageData.tokenDetail = parsed.data.tokenDetail
       if (parsed.data.response_time) usageData.responseTime = parsed.data.response_time
       if (Object.keys(usageData).length > 0) {
         sessionOps.setUsage?.(usageData)
@@ -79,6 +79,18 @@ const SSE_EVENT_HANDLERS = {
   metadata: (parsed, _appendFn, sessionOps) => {
     if (parsed.data) sessionOps.setMetadata?.(parsed.data)
   },
+  deep_research: (parsed, _appendFn, sessionOps) => {
+    if (parsed.data) sessionOps.setDeepResearchTask?.(parsed.data)
+  },
+  research_task_id: (parsed, _appendFn, sessionOps) => {
+    if (parsed.data) sessionOps.setResearchTaskId?.(parsed.data.research_task_id)
+  },
+  model_fallback: (parsed, _appendFn, sessionOps) => {
+    if (parsed.data) sessionOps.setModelFallback?.(parsed.data)
+  },
+  approval: (parsed, _appendFn, sessionOps) => {
+    if (parsed.data) sessionOps.setApproval?.(parsed.data)
+  },
 }
 
 export function parseSSEEvent(parsed, appendFn, sessionOps) {
@@ -93,8 +105,8 @@ export function parseSSEEvent(parsed, appendFn, sessionOps) {
 const MAX_RETRIES = 3
 const RETRY_BASE_DELAY = 1000
 const RETRY_MAX_DELAY = 10000
-const CONNECTION_TIMEOUT = 30000
-const STREAM_IDLE_TIMEOUT = 60000
+const CONNECTION_TIMEOUT = 60000
+const STREAM_IDLE_TIMEOUT = 180000
 
 function getRetryDelay(attempt) {
   const delay = RETRY_BASE_DELAY * Math.pow(2, attempt)
@@ -107,11 +119,35 @@ export async function fetchSSE(url, options = {}) {
   const buildHeaders = () => {
     const headers = { 'Accept': 'text/event-stream' }
     if (userStore.token) headers['Authorization'] = `Bearer ${userStore.token}`
+    if (options.body) headers['Content-Type'] = 'application/json'
     return headers
   }
 
-  const fullUrl = url.startsWith('http') ? url : `${settings.API_BASE_URL}${url}`
+  const buildUrl = (baseUrl) => {
+    if (!baseUrl.startsWith('http')) {
+      baseUrl = `${settings.API_BASE_URL}${baseUrl}`
+    }
+    if (options.injectTokenQuery && userStore.token) {
+      const separator = baseUrl.includes('?') ? '&' : '?'
+      return `${baseUrl}${separator}token=${encodeURIComponent(userStore.token)}`
+    }
+    return baseUrl
+  }
+
+  const fullUrl = buildUrl(url)
   let lastError = null
+
+  const fetchOptions = {
+    method: options.method || (options.body ? 'POST' : 'GET'),
+    mode: 'cors',
+    credentials: 'include',
+    ...options,
+  }
+  // Remove custom options that are not native fetch options
+  delete fetchOptions.maxRetries
+  delete fetchOptions.onRetry
+  delete fetchOptions.timeout
+  delete fetchOptions.injectTokenQuery
 
   for (let attempt = 0; attempt <= (options.maxRetries ?? MAX_RETRIES); attempt++) {
     try {
@@ -122,33 +158,32 @@ export async function fetchSSE(url, options = {}) {
         options.signal.addEventListener('abort', () => controller.abort(), { once: true })
       }
 
-      let response = await fetch(fullUrl, {
-        method: 'GET',
-        mode: 'cors',
-        credentials: 'include',
-        ...options,
+      const requestOpts = {
+        ...fetchOptions,
         signal: controller.signal,
         headers: {
           ...buildHeaders(),
           ...options.headers,
         },
-      })
+      }
+
+      let response = await fetch(fullUrl, requestOpts)
 
       clearTimeout(timeoutId)
 
       if (response.status === 401 && userStore.refreshToken) {
         const refreshed = await userStore.refreshAccessToken()
         if (refreshed) {
-          response = await fetch(fullUrl, {
-            method: 'GET',
-            mode: 'cors',
-            credentials: 'include',
-            ...options,
+          const retryUrl = buildUrl(url)
+          const retryOpts = {
+            ...fetchOptions,
+            signal: controller.signal,
             headers: {
               ...buildHeaders(),
               ...options.headers,
             },
-          })
+          }
+          response = await fetch(retryUrl, retryOpts)
         }
       }
 
@@ -173,10 +208,22 @@ export async function fetchSSE(url, options = {}) {
               if (done) break
               body += decoder.decode(value, { stream: true })
             }
-            const sseMatch = body.match(/data:\s*(.*)/)
-            if (sseMatch) {
-              const parsed = JSON.parse(sseMatch[1])
-              errorMsg = parsed.message || parsed.error || errorMsg
+            try {
+              const parsed = JSON.parse(body)
+              const parts = [parsed.message || parsed.error || '']
+              if (parsed.data && typeof parsed.data === 'object') {
+                const fieldErrors = Object.entries(parsed.data)
+                  .map(([field, msgs]) => `${field}: ${Array.isArray(msgs) ? msgs.join(', ') : msgs}`)
+                  .join('; ')
+                if (fieldErrors) parts.push(fieldErrors)
+              }
+              errorMsg = parts.filter(Boolean).join(' - ') || errorMsg
+            } catch {
+              const sseMatch = body.match(/data:\s*(.*)/)
+              if (sseMatch) {
+                const parsed = JSON.parse(sseMatch[1])
+                errorMsg = parsed.message || parsed.error || errorMsg
+              }
             }
           }
         } catch {}

@@ -7,16 +7,16 @@ Attachments 子应用 - 附件管理
 
 
 def __getattr__(name):
-    if name in ("AttachmentService", "DocumentMemoryService", "AttachmentLifecycleService"):
-        if name == "AttachmentService":
-            from .services.attachment_content_service import AttachmentService
-            return AttachmentService
-        elif name == "DocumentMemoryService":
-            from .services.document_memory_service import DocumentMemoryService
-            return DocumentMemoryService
-        elif name == "AttachmentLifecycleService":
-            from .services.attachment_lifecycle import AttachmentLifecycleService
-            return AttachmentLifecycleService
+    """延迟导入，避免 Django app registry 未就绪时触发循环导入"""
+    _services = {
+        "AttachmentService": ".services.attachment_content_service",
+        "DocumentMemoryService": ".services.document_memory_service",
+        "AttachmentLifecycleService": ".services.attachment_lifecycle",
+    }
+    if name in _services:
+        import importlib
+        module = importlib.import_module(_services[name], __package__)
+        return getattr(module, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

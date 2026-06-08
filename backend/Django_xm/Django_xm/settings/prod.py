@@ -22,11 +22,14 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "Django_xm.apps.core.middleware.CurrentRequestMiddleware",
     "Django_xm.apps.core.middleware.SessionSecurityMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "Django_xm.apps.core.middleware.RequestTimeoutMiddleware",
+    "Django_xm.apps.core.middleware.APIRequestMiddleware",
+    "Django_xm.apps.core.middleware.CacheControlMiddleware",
     "Django_xm.apps.analytics.middleware.AnalyticsMiddleware",
+    "Django_xm.apps.ai_engine.middleware.AIExceptionMiddleware",
     "Django_xm.apps.core.middleware.SecurityHeadersMiddleware",
 ]
 

@@ -3,31 +3,43 @@
 
 从 chat_service.py 拆分出的深度思考/深度研究相关逻辑：
 - 深度思考流式处理
-- 深度研究任务执行
+- 深度研究任务执行（Celery + Redis 订阅）
 - 无工具回退模式
 """
 import asyncio
+import json
 import time
 import uuid
 import logging
 from typing import Dict, Any, List, Optional, AsyncGenerator
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
-from Django_xm.apps.ai_engine.services.cost_tracker import CostTracker
-from Django_xm.apps.research.services import create_research_agent
-from Django_xm.apps.research.services.deep_agent import should_use_deep_research
+from Django_xm.apps.ai_engine.services.cost_tracker import TokenDetailTracker
+from Django_xm.apps.research.services.research_runner import REDIS_CHANNEL_PREFIX
 from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
 from .stream_helpers import (
     process_stream_chunk,
     build_context_info,
-    update_usage_and_cost,
+    update_usage_and_tokens,
     finalize_tool_calls,
 )
 from ..utils import convert_chat_history, _lcp_len, extract_suggestions
 
 logger = logging.getLogger(__name__)
+
+_RESEARCH_TIMEOUT = 1800
+
+_redis_pool = None
+
+
+def _get_redis_pool(broker_url):
+    global _redis_pool
+    if _redis_pool is None:
+        import redis as redis_lib
+        _redis_pool = redis_lib.ConnectionPool.from_url(broker_url, max_connections=10)
+    return _redis_pool
 
 
 class DeepChatService:
@@ -36,23 +48,68 @@ class DeepChatService:
     def __init__(self, chat_service):
         self._chat_service = chat_service
 
+    @staticmethod
+    def _clean_tool_call_messages(messages: List) -> List:
+        """清理消息历史中未完成的 tool_calls
+
+        当 agent 执行失败回退到无工具模式时，对话历史中可能包含
+        assistant message（含 tool_calls）但没有对应的 ToolMessage 响应。
+        OpenAI API 要求每个 tool_call_id 都必须有对应的 ToolMessage，
+        否则会报 400 错误。此方法移除这些未完成的 tool_calls。
+        """
+        if not messages:
+            return messages
+
+        responded_ids = set()
+        for msg in messages:
+            if isinstance(msg, ToolMessage):
+                responded_ids.add(msg.tool_call_id)
+
+        cleaned = []
+        for msg in messages:
+            if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
+                unresponded = [tc for tc in msg.tool_calls if tc.get('id') not in responded_ids]
+                if unresponded:
+                    if msg.content:
+                        cleaned.append(AIMessage(content=msg.content))
+                    continue
+            if isinstance(msg, ToolMessage):
+                cleaned.append(msg)
+                continue
+            cleaned.append(msg)
+
+        return cleaned
+
     async def process_deep_thinking_stream(
         self,
         data: Dict[str, Any],
         usage_tracker,
-        cost_tracker: Optional[CostTracker] = None,
+        token_detail_tracker: Optional[TokenDetailTracker] = None,
+        tools: Optional[List] = None,
+        model_instance=None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        tools = await self._chat_service._get_tools(data)
-        model_instance = self._chat_service._resolve_model_instance(data)
+        """深度思考流式处理（可作为 chat/agent 模式的叠加能力）"""
+        if tools is None:
+            tools = await self._chat_service._get_tools(data)
+        if model_instance is None:
+            model_instance = self._chat_service._resolve_model_instance(data)
         provider_id = data.get('provider_id')
 
+        prompt_mode = data.get('mode', 'agent')
+        tool_config = self._chat_service._build_tool_config(data)
         agent, thread_config, use_checkpointer = await self._chat_service._create_agent_with_memory(
-            data, tools=tools, prompt_mode='deep-thinking', model_instance=model_instance,
+            data, prompt_mode=prompt_mode, model_instance=model_instance,
+            tool_config=tool_config, tools=tools,
         )
 
-        human_msg = self._chat_service._create_human_message(data)
+        human_msg = await self._chat_service._acreate_human_message(data)
 
         if use_checkpointer:
+            ce_metadata = self._chat_service._apply_context_engineering_for_checkpointer(
+                user_message=data.get('message', ''),
+                model_name=data.get('model_name'),
+                mode=data.get('mode', 'agent'),
+            )
             graph_input = {"messages": [human_msg]}
             config = thread_config
         else:
@@ -61,71 +118,593 @@ class DeepChatService:
             messages = list(langchain_chat_history) if langchain_chat_history else []
             messages.append(human_msg)
             graph_input = {"messages": messages}
-            config = {"recursion_limit": 50}
+            config = {"recursion_limit": 500}
 
         current_message_content = ""
         all_messages = []
         tool_calls_map: Dict[str, Dict] = {}
         tool_call_count: Dict[str, int] = {}
-        accumulated_reasoning: Dict[str, str] = {"content": ""}
+        accumulated_reasoning: Dict[str, str] = {
+            "content": "",
+            "_stream_state": data.get('_stream_state'),  # 共享状态，供 generate() finally 兜底刷新
+        }
         tool_args_accumulator: Dict[str, str] = {}
         thinking_start_time = time.time()
         has_sent_reasoning = False
+        has_model_reasoning = False
 
         yield {
             "type": "reasoning",
             "data": {
-                "content": "正在深度思考中，分析问题的多个维度...",
+                "content": "正在深度思考中...",
                 "duration": 0,
+                "source": "deep_thinking",
             },
         }
         has_sent_reasoning = True
 
         with TokenUsageCallbackHandler() as cb:
-            config["callbacks"] = [cb]
+            from Django_xm.apps.ai_engine.services.llm_factory import FallbackDetectionCallback
+            fb_callback = FallbackDetectionCallback(
+                expected_provider=provider_id or "",
+                expected_model=data.get('model_name', '') or "",
+            )
+            config["callbacks"] = [cb, fb_callback]
+            # 使用多 stream mode：messages 获取消息流，updates 捕获 interrupt 事件
+            interrupt_info = None
             try:
-                async for chunk in agent.graph.astream(graph_input, config=config, stream_mode="messages"):
-                    all_messages.append(chunk if not isinstance(chunk, tuple) else chunk[0])
+                async for chunk in agent.graph.astream(graph_input, config=config, stream_mode=["messages", "updates"]):
+                    # 多 stream mode 下 chunk 是 (mode_name, data) 元组
+                    if isinstance(chunk, tuple) and len(chunk) == 2:
+                        mode_name, mode_data = chunk
+                    else:
+                        mode_name, mode_data = "messages", chunk
+
+                    # 处理 updates stream mode（包含 interrupt 事件）
+                    if mode_name == "updates":
+                        if isinstance(mode_data, dict) and "__interrupt__" in mode_data:
+                            interrupts = mode_data["__interrupt__"]
+                            if interrupts:
+                                from langgraph.types import Interrupt
+                                from Django_xm.apps.tools.base import is_approval_interrupt
+                                for intr in interrupts:
+                                    if isinstance(intr, Interrupt):
+                                        interrupt_value = intr.value
+                                    elif isinstance(intr, dict):
+                                        interrupt_value = intr.get("value", intr)
+                                    else:
+                                        interrupt_value = intr
+
+                                    if is_approval_interrupt(interrupt_value):
+                                        tool_name = interrupt_value.get("tool_name", "unknown")
+                                        action = interrupt_value.get("action", "confirm")
+                                        logger.info(
+                                            f"深度思考 approval interrupt: tool={tool_name}, "
+                                            f"action={action}, danger={interrupt_value.get('danger_level', 'medium')}"
+                                        )
+                                        interrupt_id = intr.id if isinstance(intr, Interrupt) else ""
+                                        interrupt_info = {
+                                            "tool_name": tool_name,
+                                            "interrupt_id": interrupt_id,
+                                        }
+                                        approval_data = {
+                                            'tool_name': tool_name,
+                                            'tool_call_id': interrupt_id,
+                                            'interrupt_id': interrupt_id,
+                                            'title': interrupt_value.get("title", "确认操作"),
+                                            'description': interrupt_value.get("description", ""),
+                                            'action': action,
+                                            'danger_level': interrupt_value.get("danger_level", "medium"),
+                                            'state': 'pending',
+                                        }
+                                        if interrupt_value.get("command"):
+                                            approval_data['command'] = interrupt_value["command"]
+                                        if interrupt_value.get("extra"):
+                                            approval_data['extra'] = interrupt_value["extra"]
+                                        if interrupt_value.get("input_placeholder"):
+                                            approval_data['input_placeholder'] = interrupt_value["input_placeholder"]
+                                        yield {
+                                            'type': 'approval',
+                                            'data': approval_data,
+                                        }
+                        continue  # updates 模式的其他事件跳过
+
+                    # 处理 messages stream mode
+                    all_messages.append(mode_data if not isinstance(mode_data, tuple) else mode_data[0])
 
                     try:
-                        events = process_stream_chunk(
-                            chunk, tool_calls_map, current_message_content,
+                        for event in process_stream_chunk(
+                            mode_data, tool_calls_map, current_message_content,
                             tool_call_count=tool_call_count,
                             lcp_func=_lcp_len,
                             accumulated_reasoning=accumulated_reasoning,
                             tool_args_accumulator=tool_args_accumulator,
-                        )
+                            mode=prompt_mode,
+                            enable_deep_thinking=True,  # 深度思考模式始终启用
+                        ):
+                            if event.get("type") == "chunk":
+                                current_message_content += event.get("content", "")
+                            elif event.get("type") == "reasoning":
+                                if not has_sent_reasoning:
+                                    has_sent_reasoning = True
+                                has_model_reasoning = True
+                            yield event
                     except Exception as chunk_err:
                         logger.warning(f"处理流式 chunk 失败: {chunk_err}")
                         continue
 
-                    for event in events:
-                        if event.get("type") == "chunk":
-                            current_message_content += event.get("content", "")
-                        yield event
-
                     await asyncio.sleep(0.01)
             except Exception as stream_err:
-                if provider_id and model_instance and tools:
+                # 异常路径：先刷新可能残留的缓冲内容，避免前端什么都没看到
+                pending = accumulated_reasoning.get("_pending_content", "") if accumulated_reasoning else ""
+                if pending:
+                    logger.debug(f"深度思考模式异常路径: 刷新缓冲内容 ({len(pending)} 字符)")
+                    yield {"type": "chunk", "content": pending}
+                    current_message_content += pending
+                    accumulated_reasoning["_pending_content"] = ""
+                    # 同步清除 stream_state，避免 generate() finally 重复刷新
+                    from .stream_helpers import _sync_pending_to_stream_state
+                    _sync_pending_to_stream_state(accumulated_reasoning)
+
+                # GraphRecursionError: Agent 步数超限，但已收集了部分结果
+                # 优雅降级：用已收集的内容生成回复，不丢弃上下文
+                from langgraph.errors import GraphRecursionError
+                if isinstance(stream_err, GraphRecursionError):
+                    logger.warning(
+                        f"深度思考模式达到递归上限，优雅降级: 已收集 {len(all_messages)} 条消息, "
+                        f"内容长度={len(current_message_content)}"
+                    )
+                    # 如果已经收集到内容，直接返回已有结果
+                    if current_message_content:
+                        yield {"type": "chunk", "content": ""}
+                    else:
+                        # 没有内容时，从 all_messages 中提取最后的 AI 回复
+                        for msg in reversed(all_messages):
+                            if isinstance(msg, AIMessage) and msg.content:
+                                current_message_content = msg.content
+                                yield {"type": "chunk", "content": msg.content}
+                                break
+                        if not current_message_content:
+                            yield {"type": "chunk", "content": "任务执行步骤较多，已达到单次执行上限。以上是已收集的部分结果。"}
+                    # 跳过 fallback，继续后续的 finalize 和 reasoning 处理
+                elif provider_id and model_instance and tools:
+                    # 其他异常（如 API 连接错误）：回退到无工具纯对话模式
                     logger.warning(
                         f"深度思考模式模型 {provider_id} agent模式执行失败，回退到无工具纯对话模式: {type(stream_err).__name__}: {stream_err}"
                     )
-                    async for fallback_event in self._stream_without_tools(
-                        model_instance, data, usage_tracker, cost_tracker
-                    ):
-                        yield fallback_event
+                    try:
+                        async for fallback_event in self._stream_without_tools(
+                            model_instance, data, usage_tracker, token_detail_tracker
+                        ):
+                            yield fallback_event
+                    except Exception as fallback_err:
+                        logger.error(
+                            f"无工具回退模式也失败: {type(fallback_err).__name__}: {fallback_err}"
+                        )
+                        yield {"type": "error", "content": f"模型服务暂时不可用，请稍后重试（{type(fallback_err).__name__}）"}
                     return
-                logger.error(f"deep-thinking astream 执行异常: {type(stream_err).__name__}: {stream_err}", exc_info=True)
-                raise
+                else:
+                    logger.error(f"deep-thinking astream 执行异常: {type(stream_err).__name__}: {stream_err}", exc_info=True)
+                    raise
 
-        update_usage_and_cost(cb, usage_tracker, cost_tracker)
+        update_usage_and_tokens(cb, usage_tracker, token_detail_tracker)
+
+        # 检测运行时 LLM fallback
+        if fb_callback.fallback_detected:
+            fallback_info = fb_callback.get_fallback_info()
+            if fallback_info:
+                yield {
+                    'type': 'model_fallback',
+                    'data': fallback_info,
+                }
+                try:
+                    from Django_xm.apps.ai_engine.models import SystemConfig
+                    SystemConfig.set_value("default_chat_model", {
+                        "provider_id": fallback_info["actual_provider"],
+                        "model_name": fallback_info["actual_model"],
+                    })
+                except Exception:
+                    pass
 
         for tool_update_event in finalize_tool_calls(all_messages, tool_calls_map, tool_args_accumulator):
             yield tool_update_event
 
+        # Agent 模式：刷新缓冲的 content（最终回答）
+        pending = accumulated_reasoning.get("_pending_content", "") if accumulated_reasoning else ""
+        if pending:
+            logger.debug(f"深度思考模式: 刷新缓冲的最终回答内容 ({len(pending)} 字符)")
+            yield {"type": "chunk", "content": pending}
+            current_message_content += pending
+            accumulated_reasoning["_pending_content"] = ""
+            # 同步清除 stream_state，避免 generate() finally 重复刷新
+            from .stream_helpers import _sync_pending_to_stream_state
+            _sync_pending_to_stream_state(accumulated_reasoning)
+
+        # 深度思考模式兜底：当模型（如 qwen3:8b + reasoning=True）将全部输出
+        # 放入 thinking 字段而 content 为空时，将推理内容作为主内容发送
+        # 但如果有 interrupt（工具审批等待），不应触发兜底
+        if (not current_message_content.strip()
+                and not interrupt_info
+                and accumulated_reasoning
+                and accumulated_reasoning.get("content", "").strip()):
+            reasoning_text = accumulated_reasoning["content"].strip()
+            logger.info(
+                f"深度思考兜底: content 为空，将推理内容 ({len(reasoning_text)} 字符) 作为主内容发送"
+            )
+            yield {"type": "chunk", "content": reasoning_text}
+            current_message_content = reasoning_text
+
         thinking_duration = round(time.time() - thinking_start_time, 1)
 
-        if has_sent_reasoning:
+        final_reasoning = (accumulated_reasoning.get("content") or "").strip()
+        if has_model_reasoning and final_reasoning:
+            yield {
+                "type": "reasoning",
+                "data": {
+                    "content": final_reasoning,
+                    "duration": thinking_duration,
+                    "source": "deep_thinking",
+                },
+            }
+        elif has_sent_reasoning or not has_model_reasoning:
+            yield {
+                "type": "reasoning",
+                "data": {
+                    "content": f"深度思考完成，共思考了 {thinking_duration} 秒",
+                    "duration": thinking_duration,
+                    "source": "deep_thinking",
+                },
+            }
+
+    async def create_deep_research_task(
+        self, query: str, session_id: Optional[str] = None,
+        use_web_search: bool = True,
+        retriever_tool=None,
+    ) -> str:
+        """创建深度研究任务并返回 task_id（不执行研究）"""
+        from Django_xm.apps.research.services.cross_app import get_research_task_manager
+        from django.contrib.auth import get_user_model
+        from asgiref.sync import sync_to_async
+        User = get_user_model()
+
+        thread_id = f"research_{uuid.uuid4().hex[:12]}"
+        task_manager = get_research_task_manager()
+
+        created_by = None
+        if self._chat_service.user_id:
+            try:
+                @sync_to_async(thread_sensitive=True)
+                def _get_user():
+                    return User.objects.get(id=self._chat_service.user_id)
+
+                created_by = await _get_user()
+            except User.DoesNotExist:
+                pass
+
+        @sync_to_async(thread_sensitive=True)
+        def _create_task():
+            task_manager.create_task(
+                thread_id,
+                query,
+                enable_web_search=use_web_search,
+                enable_doc_analysis=retriever_tool is not None,
+                created_by=created_by,
+                session_id=session_id,
+            )
+
+        await _create_task()
+        return thread_id
+
+    async def run_deep_research_task(
+        self, query: str, session_id: Optional[str] = None,
+        usage_tracker=None, token_detail_tracker=None,
+        use_web_search: bool = True,
+        retriever_tool=None,
+        extra_tools: Optional[list] = None,
+        enable_deep_thinking: bool = False,
+        provider_id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        task_id: Optional[str] = None,
+        knowledge_base_ids: Optional[list] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        special_params: Optional[dict] = None,
+        continue_task_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        通过 Celery 执行深度研究，使用 Redis Pub/Sub 等待结果
+
+        流程：
+        1. 创建/复用任务记录
+        2. 触发 Celery 任务（publish_to_redis=True）
+        3. 订阅 Redis channel 等待结果
+        4. 返回标准化结果
+        """
+        from Django_xm.apps.research.services.cross_app import get_research_task_manager
+        from Django_xm.tasks.deep_research import run_research_task
+        from asgiref.sync import sync_to_async
+
+        thread_id = task_id or f"research_{uuid.uuid4().hex[:12]}"
+        task_manager = get_research_task_manager()
+
+        if not task_id:
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+
+            created_by = None
+            if self._chat_service.user_id:
+                try:
+                    @sync_to_async(thread_sensitive=True)
+                    def _get_user():
+                        return User.objects.get(id=self._chat_service.user_id)
+
+                    created_by = await _get_user()
+                except User.DoesNotExist:
+                    pass
+
+            @sync_to_async(thread_sensitive=True)
+            def _create_task():
+                task_manager.create_task(
+                    thread_id,
+                    query,
+                    enable_web_search=use_web_search,
+                    enable_doc_analysis=retriever_tool is not None,
+                    created_by=created_by,
+                    session_id=session_id,
+                )
+
+            await _create_task()
+
+        if knowledge_base_ids:
+            @sync_to_async(thread_sensitive=True)
+            def _update_kb():
+                from Django_xm.apps.research.models import ResearchTask
+                ResearchTask.objects.filter(task_id=thread_id).update(
+                    knowledge_base_ids=knowledge_base_ids,
+                )
+            await _update_kb()
+
+        use_mcp = any(
+            (getattr(t, 'metadata', {}) or {}).get('is_mcp_tool', False)
+            for t in (extra_tools or [])
+        )
+        selected_mcp_servers = []
+        selected_tool_names = []
+        for t in (extra_tools or []):
+            meta = getattr(t, 'metadata', {}) or {}
+            t_name = getattr(t, 'name', '')
+            # 跳过 retriever_tool，它们由 knowledge_base_ids 在 worker 端重建
+            if t_name and t_name not in selected_tool_names and not t_name.startswith('knowledge_base_'):
+                selected_tool_names.append(t_name)
+            server_name = meta.get('mcp_server_name', '')
+            if server_name and server_name not in selected_mcp_servers:
+                selected_mcp_servers.append(server_name)
+
+        celery_result = run_research_task.delay(
+            thread_id=thread_id,
+            query=query,
+            enable_web_search=use_web_search,
+            enable_doc_analysis=retriever_tool is not None,
+            knowledge_base_ids=knowledge_base_ids,
+            user_id=self._chat_service.user_id,
+            use_mcp=use_mcp or bool(selected_mcp_servers),
+            selected_mcp_servers=selected_mcp_servers or None,
+            selected_tools=selected_tool_names or None,
+            provider_id=provider_id,
+            model_name=model_name,
+            enable_deep_thinking=enable_deep_thinking,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            special_params=special_params,
+            continue_task_id=continue_task_id,
+            publish_to_redis=True,
+        )
+
+        from Django_xm.apps.research.models import ResearchTask
+        ResearchTask.objects.filter(task_id=thread_id).update(
+            celery_task_id=celery_result.id,
+        )
+
+        result_data = await self._wait_for_research_result(thread_id)
+
+        if result_data is None:
+            @sync_to_async(thread_sensitive=True)
+            def _mark_timeout():
+                task_manager.update_task_status(thread_id, {
+                    'status': 'failed',
+                    'error_message': f'研究任务超时（{_RESEARCH_TIMEOUT}秒）',
+                })
+            await _mark_timeout()
+            return {
+                'success': False,
+                'final_report': f'深度研究超时，请到深度研究模块查看任务 {thread_id}',
+                'files': None,
+                'task_id': thread_id,
+                'session_id': session_id,
+                'research_summary': '',
+            }
+
+        if usage_tracker and token_detail_tracker and result_data.get('usage_data'):
+            usage_data = result_data['usage_data']
+            usage_tracker.add_input_tokens(usage_data.get('prompt_tokens', 0))
+            usage_tracker.add_output_tokens(usage_data.get('completion_tokens', 0))
+            token_detail_tracker.update_from_metadata(
+                {'usage_metadata': {
+                    'input_tokens': usage_data.get('prompt_tokens', 0),
+                    'output_tokens': usage_data.get('completion_tokens', 0),
+                }}
+            )
+            token_detail_tracker.finish_record()
+
+        @sync_to_async(thread_sensitive=True)
+        def _update_status():
+            task_manager.update_task_status(thread_id, {
+                'status': 'completed',
+                'final_report': result_data.get('final_report', ''),
+            })
+
+        await _update_status()
+
+        final_report = result_data.get('final_report', '')
+        research_summary = final_report[:2000] if final_report else ''
+        return {
+            'success': result_data.get('success', True),
+            'final_report': final_report,
+            'files': result_data.get('files'),
+            'task_id': thread_id,
+            'session_id': session_id,
+            'research_summary': research_summary,
+        }
+
+    async def _wait_for_research_result(self, thread_id: str) -> Optional[Dict[str, Any]]:
+        """订阅 Redis channel 等待 Celery 任务发布研究结果"""
+        import redis as redis_lib
+        from django.conf import settings as django_settings
+
+        channel = f"{REDIS_CHANNEL_PREFIX}{thread_id}"
+        broker_url = getattr(django_settings, 'CELERY_BROKER_URL', '')
+
+        if not broker_url:
+            logger.error("CELERY_BROKER_URL 未配置，无法订阅研究结果")
+            return None
+
+        pubsub = None
+        try:
+            r = redis_lib.Redis(connection_pool=_get_redis_pool(broker_url))
+            pubsub = r.pubsub()
+            pubsub.subscribe(channel)
+
+            logger.info(f"订阅研究结果: {channel}, 超时={_RESEARCH_TIMEOUT}s")
+
+            result = await asyncio.wait_for(
+                self._listen_pubsub(pubsub, channel),
+                timeout=_RESEARCH_TIMEOUT,
+            )
+            return result
+        except asyncio.TimeoutError:
+            logger.warning(f"等待研究结果超时: {channel}")
+            return None
+        except Exception as e:
+            logger.error(f"订阅研究结果异常: {e}", exc_info=True)
+            return None
+        finally:
+            if pubsub:
+                try:
+                    pubsub.unsubscribe(channel)
+                    pubsub.close()
+                except Exception:
+                    pass
+
+    @staticmethod
+    async def _listen_pubsub(pubsub, channel: str) -> Dict[str, Any]:
+        """异步监听 Redis Pub/Sub 消息"""
+        loop = asyncio.get_running_loop()
+
+        def _get_message():
+            while True:
+                msg = pubsub.get_message(timeout=1.0)
+                if msg and msg['type'] == 'message':
+                    return msg
+
+        while True:
+            msg = await loop.run_in_executor(None, _get_message)
+            if msg and msg['type'] == 'message':
+                data = msg['data']
+                if isinstance(data, bytes):
+                    data = data.decode('utf-8')
+                return json.loads(data)
+
+    async def _stream_without_tools(
+        self,
+        model_instance,
+        data: Dict[str, Any],
+        usage_tracker,
+        token_detail_tracker: Optional[TokenDetailTracker] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        chat_history = data.get('chat_history', [])
+        chat_history, _ce_metadata = self._chat_service._apply_context_engineering(
+                chat_history, data.get('message', ''), mode=data.get('mode', 'agent'),
+                model_name=data.get('model_name'),
+            )
+        langchain_chat_history = convert_chat_history(chat_history)
+
+        messages = []
+        if langchain_chat_history:
+            messages.extend(langchain_chat_history)
+
+        messages = self._clean_tool_call_messages(messages)
+
+        human_msg = await self._chat_service._acreate_human_message(data)
+        messages.append(human_msg)
+
+        current_message_content = ""
+        accumulated_reasoning: Dict[str, str] = {"content": ""}
+        thinking_start_time = time.time()
+
+        with TokenUsageCallbackHandler() as cb:
+            from Django_xm.apps.ai_engine.services.llm_factory import FallbackDetectionCallback
+            bound_model = getattr(model_instance, 'bound', model_instance)
+            fb_callback = FallbackDetectionCallback(
+                expected_provider=data.get('provider_id', '') or getattr(bound_model, '_provider_id', '') or '',
+                expected_model=data.get('model_name', '') or getattr(bound_model, 'model_name', '') or getattr(bound_model, 'model', '') or '',
+            )
+            try:
+                async for chunk in model_instance.astream(messages, config={"callbacks": [cb, fb_callback]}):
+                    content = getattr(chunk, "content", "")
+                    if content:
+                        current_message_content += content
+                        yield {"type": "chunk", "content": content}
+
+                    # 统一思考内容提取（兼容 DeepSeek/Ollama/Anthropic）
+                    from Django_xm.apps.chat.services.stream_helpers import extract_thinking_content
+                    _provider_id = data.get('provider_id', '') or getattr(model_instance, '_provider_id', '')
+                    thinking_text = extract_thinking_content(chunk, _provider_id)
+                    if thinking_text:
+                        prev = accumulated_reasoning.get("content", "") or ""
+                        accumulated_reasoning["content"] = prev + thinking_text
+                        yield {
+                            "type": "reasoning",
+                            "data": {
+                                "content": accumulated_reasoning["content"],
+                                "duration": 0,
+                            },
+                        }
+
+                    await asyncio.sleep(0.01)
+            except Exception as e:
+                logger.error(f"无工具模式流式调用失败: {e}", exc_info=True)
+                raise
+
+        update_usage_and_tokens(cb, usage_tracker, token_detail_tracker)
+
+        # 检测运行时 LLM fallback
+        if fb_callback.fallback_detected:
+            fallback_info = fb_callback.get_fallback_info()
+            if fallback_info:
+                yield {
+                    'type': 'model_fallback',
+                    'data': fallback_info,
+                }
+                try:
+                    from Django_xm.apps.ai_engine.models import SystemConfig
+                    SystemConfig.set_value("default_chat_model", {
+                        "provider_id": fallback_info["actual_provider"],
+                        "model_name": fallback_info["actual_model"],
+                    })
+                except Exception:
+                    pass
+
+        thinking_duration = round(time.time() - thinking_start_time, 1)
+        final_reasoning = (accumulated_reasoning.get("content") or "").strip()
+        if final_reasoning:
+            yield {
+                "type": "reasoning",
+                "data": {
+                    "content": final_reasoning,
+                    "duration": thinking_duration,
+                },
+            }
+        else:
             yield {
                 "type": "reasoning",
                 "data": {
@@ -133,77 +712,3 @@ class DeepChatService:
                     "duration": thinking_duration,
                 },
             }
-
-    async def run_deep_research_task(
-        self, query: str, session_id: Optional[str] = None,
-        usage_tracker=None, cost_tracker=None,
-    ) -> Dict[str, Any]:
-        thread_id = f"deep_{uuid.uuid4().hex[:12]}"
-
-        def _task():
-            agent = create_research_agent(
-                thread_id=thread_id,
-                enable_web_search=True,
-                enable_doc_analysis=False,
-                user_id=self._chat_service.user_id,
-                session_id=session_id,
-            )
-            with TokenUsageCallbackHandler() as cb:
-                result = agent.research(query)
-            result['_usage'] = {
-                'prompt_tokens': cb.prompt_tokens,
-                'completion_tokens': cb.completion_tokens,
-                'total_cost': cb.total_cost,
-            }
-            return result
-
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, _task)
-
-        usage_data = result.pop('_usage', {})
-        if usage_data and usage_tracker and cost_tracker:
-            usage_tracker.add_input_tokens(usage_data.get('prompt_tokens', 0))
-            usage_tracker.add_output_tokens(usage_data.get('completion_tokens', 0))
-            cost_tracker.update_from_metadata(
-                {'usage_metadata': {
-                    'input_tokens': usage_data.get('prompt_tokens', 0),
-                    'output_tokens': usage_data.get('completion_tokens', 0),
-                }}
-            )
-            cost_tracker.finish_record()
-
-        return result
-
-    async def _stream_without_tools(
-        self,
-        model_instance,
-        data: Dict[str, Any],
-        usage_tracker,
-        cost_tracker: Optional[CostTracker] = None,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        chat_history = data.get('chat_history', [])
-        chat_history = self._chat_service._apply_compaction(chat_history)
-        langchain_chat_history = convert_chat_history(chat_history)
-
-        messages = []
-        if langchain_chat_history:
-            messages.extend(langchain_chat_history)
-
-        human_msg = self._chat_service._create_human_message(data)
-        messages.append(human_msg)
-
-        current_message_content = ""
-
-        with TokenUsageCallbackHandler() as cb:
-            try:
-                async for chunk in model_instance.astream(messages):
-                    content = getattr(chunk, "content", "")
-                    if content:
-                        current_message_content += content
-                        yield {"type": "chunk", "content": content}
-                    await asyncio.sleep(0.01)
-            except Exception as e:
-                logger.error(f"无工具模式流式调用失败: {e}", exc_info=True)
-                raise
-
-        update_usage_and_cost(cb, usage_tracker, cost_tracker)

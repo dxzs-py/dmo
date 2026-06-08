@@ -9,7 +9,7 @@ AI 引擎配置模块
 - Tavily / 高德地图
 
 项目级配置（DB/Redis/Celery/安全/日志/服务器等）
-在 Django_xm.apps.config_center.config 中管理。
+在 Django_xm.apps.core.config 中管理。
 
 使用方式:
     from Django_xm.apps.ai_engine.config import settings
@@ -18,15 +18,15 @@ AI 引擎配置模块
 
 from __future__ import annotations
 
-import logging
+import threading
 from pathlib import Path
 from typing import Optional, Any
 
 from pydantic import Field, model_validator
 
-from Django_xm.apps.config_center.config import (
+from Django_xm.apps.core.config import (
     ProjectSettings,
-    get_logger as _get_logger,
+    get_logger,  # noqa: F401 - re-export for backward compatibility
     setup_loguru_logging as _setup_loguru_logging,
 )
 
@@ -50,7 +50,7 @@ class Settings(ProjectSettings):
     )
 
     openai_model: str = Field(
-        default="gpt-4o",
+        default="gpt-4o-mini",
         description="默认 OpenAI 模型"
     )
 
@@ -157,6 +157,15 @@ class Settings(ProjectSettings):
         description="Agent 最大执行时间(秒)"
     )
 
+    AGENT_CAPABILITIES_DEFAULT: dict = Field(
+        default={
+            "base": ["context_management", "tool_injection", "guardrails", "rate_limit"],
+            "deep_research": ["context_management", "tool_injection", "rate_limit"],
+            "learning": ["context_management", "rate_limit"],
+        },
+        description="各 Agent 类型的默认能力列表"
+    )
+
     # ==================== RAG / Embedding 配置 ====================
     embedding_model: str = Field(
         default="text-embedding-3-small",
@@ -168,6 +177,27 @@ class Settings(ProjectSettings):
         ge=1,
         le=1000,
         description="Embedding 批处理大小"
+    )
+
+    local_embedding_model: str = Field(
+        default="BAAI/bge-small-zh-v1.5",
+        description="本地兜底 Embedding 模型（HuggingFace，无 API 消耗）"
+    )
+
+    # ==================== Ollama 配置 ====================
+    ollama_base_url: str = Field(
+        default="http://localhost:11435",
+        description="Ollama 服务地址（默认本地 11435）"
+    )
+
+    ollama_model: str = Field(
+        default="qwen3:8b",
+        description="Ollama 默认 chat 模型（需先 ollama pull <model>）"
+    )
+
+    ollama_embedding_model: str = Field(
+        default="bge-m3",
+        description="Ollama 默认 embedding 模型（推荐 bge-m3）"
     )
 
     chunk_size: int = Field(
@@ -185,8 +215,8 @@ class Settings(ProjectSettings):
     )
 
     vector_store_type: str = Field(
-        default="chroma",
-        description="向量库类型: chroma/faiss/inmemory/milvus（推荐 chroma，支持持久化和增量更新）"
+        default="pgvector",
+        description="向量库类型: pgvector/chroma/faiss/inmemory/milvus（推荐 pgvector，支持持久化和增量更新）"
     )
 
     vector_store_path: str = Field(
@@ -230,6 +260,30 @@ class Settings(ProjectSettings):
         description="MMR 候选文档数"
     )
 
+    retriever_comprehensive_k: int = Field(
+        default=6,
+        ge=1,
+        le=30,
+        description="全局分析模式检索文档数"
+    )
+
+    retriever_use_multi_query: bool = Field(
+        default=True,
+        description="全局分析模式是否启用 MultiQuery 扩展召回"
+    )
+
+    retriever_intent_classification_enabled: bool = Field(
+        default=True,
+        description="是否启用查询意图自动分类"
+    )
+
+    retriever_map_reduce_batch_size: int = Field(
+        default=4,
+        ge=2,
+        le=10,
+        description="Map-Reduce 每批文档数"
+    )
+
     rag_agent_max_iterations: int = Field(
         default=10,
         ge=1,
@@ -244,7 +298,7 @@ class Settings(ProjectSettings):
 
     # ==================== Checkpointer 配置 ====================
     checkpointer_backend: str = Field(
-        default="sqlite",
+        default="postgres",
         description="Checkpointer 后端: sqlite/memory/postgres"
     )
 
@@ -255,7 +309,7 @@ class Settings(ProjectSettings):
     )
 
     store_backend: str = Field(
-        default="memory",
+        default="postgres",
         description="Store 后端: memory/postgres"
     )
 
@@ -343,6 +397,79 @@ class Settings(ProjectSettings):
         description="是否启用 LangSmith 追踪"
     )
 
+    # ==================== 工具调用使用防护配置 ====================
+    # 借鉴 Cloud Code / Claude Code 的 PreToolUse 速率限制、PostToolUse
+    # 配额追踪、内容去重冷却等机制；避免粗暴"3 次就强制终止"。
+    tool_usage_dedup_window_seconds: int = Field(
+        default=30,
+        ge=1,
+        le=600,
+        description="文件写入去重窗口（秒）。同一 (thread, path) 在此窗口内若 content_hash 相同，"
+                    "工具返回无变更响应且不计调用次数。"
+    )
+    tool_usage_dedup_cache_size: int = Field(
+        default=1000,
+        ge=10,
+        le=100000,
+        description="文件写入去重 LRU 缓存容量。"
+    )
+    tool_usage_rate_limit_max: int = Field(
+        default=30,
+        ge=1,
+        le=1000,
+        description="单 thread_id 滑动窗口内的最大工具调用次数。"
+    )
+    tool_usage_rate_limit_window: int = Field(
+        default=60,
+        ge=1,
+        le=3600,
+        description="滑动窗口大小（秒）。"
+    )
+    tool_usage_soft_warning_threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="软警告阈值（占 rate_limit_max 的比例）。"
+    )
+    tool_usage_hard_stop_threshold: float = Field(
+        default=0.9,
+        ge=0.0,
+        le=1.0,
+        description="硬阻断阈值（占 rate_limit_max 的比例）。"
+    )
+    tool_usage_same_path_max: int = Field(
+        default=6,
+        ge=1,
+        le=100,
+        description="同一 path 在去重窗口内最多允许的写入次数（含去重命中）。"
+    )
+    tool_usage_same_path_diff_ratio: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=1.0,
+        description="同 path 连续多次写入的实质增量判定阈值：增量占比 < 此值视为"
+                    "无意义重写（被打磨循环）。"
+    )
+    tool_usage_blocked_consecutive_max: int = Field(
+        default=2,
+        ge=1,
+        le=10,
+        description="连续 blocked 多少次后交由 termination_judge 走 LOOP_DETECTED 流程。"
+    )
+    # 通用资源防护配置（适用于所有工具，不仅 fs_write_file）
+    tool_usage_general_dedup_enabled: bool = Field(
+        default=True,
+        description="是否启用通用 dedup + 通用资源循环检测。关闭后仅 fs_write_file "
+                    "和 rate_limit 仍生效。"
+    )
+    tool_usage_same_resource_max: int = Field(
+        default=6,
+        ge=1,
+        le=100,
+        description="同一资源在去重窗口内累计调用次数超过此值且最近 3 次 payload_hash 全部相同，"
+                    "判定为无进展循环并 BLOCK。适用于所有工具（按 tool_fingerprint 注册表）。"
+    )
+
     # ---- 校验方法 ----
 
     def validate_required_keys(self) -> None:
@@ -386,12 +513,15 @@ class Settings(ProjectSettings):
 # ==================== 单例管理 ====================
 
 _settings_instance: Settings | None = None
+_settings_lock = threading.Lock()
 
 
 def get_settings() -> Settings:
     global _settings_instance
     if _settings_instance is None:
-        _settings_instance = Settings()
+        with _settings_lock:
+            if _settings_instance is None:
+                _settings_instance = Settings()
     return _settings_instance
 
 
@@ -410,9 +540,8 @@ def validate_settings() -> None:
 settings = get_settings()
 
 
-# ==================== 日志工具（代理到 config_center）====================
+# ==================== 日志工具（代理到 core.config）====================
 
-get_logger = _get_logger
 setup_loguru_logging = _setup_loguru_logging
 
 
@@ -423,19 +552,54 @@ MODEL_REGISTRY: dict[str, dict[str, Any]] = {
         "provider": "openai",
         "label": "OpenAI",
         "icon": "🔵",
-        "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
+        "models": [
+            {"name": "gpt-4o", "capabilities": ["tool_calling", "streaming"]},
+            {"name": "gpt-4o-mini", "capabilities": ["tool_calling", "streaming"]},
+            {"name": "gpt-4-turbo", "capabilities": ["tool_calling", "streaming"]},
+        ],
         "default_model": "gpt-4o-mini",
+        "api_key_env": "OPENAI_API_KEY",
         "api_key_attr": "openai_api_key",
         "base_url_attr": "openai_api_base",
         "model_attr": "openai_model",
         "special_params": {},
+        "presets": {
+            "default": {
+                "model_name": "gpt-4o",
+                "model_provider": "openai",
+                "temperature": 0.7,
+                "description": "默认模型，平衡性能和成本",
+            },
+            "fast": {
+                "model_name": "gpt-4o-mini",
+                "model_provider": "openai",
+                "temperature": 0.7,
+                "description": "快速模型，适合简单任务",
+            },
+            "precise": {
+                "model_name": "gpt-4o",
+                "model_provider": "openai",
+                "temperature": 0.3,
+                "description": "精确模型，适合需要准确性的任务",
+            },
+            "creative": {
+                "model_name": "gpt-4o",
+                "model_provider": "openai",
+                "temperature": 1.0,
+                "description": "创意模型，适合需要创造性的任务",
+            },
+        },
     },
     "deepseek": {
         "provider": "deepseek",
         "label": "DeepSeek",
         "icon": "🤖",
-        "models": ["deepseek-v4-flash"],
+        "models": [
+            {"name": "deepseek-v4-flash", "capabilities": ["tool_calling", "deep_thinking", "streaming"]},
+            {"name": "deepseek-v4-pro", "capabilities": ["tool_calling", "deep_thinking", "streaming"]},
+        ],
         "default_model": "deepseek-v4-flash",
+        "api_key_env": "DEEPSEEK_API_KEY",
         "api_key_attr": "deepseek_api_key",
         "base_url_attr": "deepseek_api_base",
         "model_attr": "deepseek_model",
@@ -443,8 +607,8 @@ MODEL_REGISTRY: dict[str, dict[str, Any]] = {
             "thinking": {
                 "type": "toggle",
                 "label": "思考模式",
-                "description": "启用 DeepSeek 思考模式（DeepSeek V4 默认启用，关闭后模型将不输出思维链）",
-                "default": True,
+                "description": "启用 DeepSeek 思考模式（深度思考模式下自动启用，其他模式下默认关闭）",
+                "default": False,
                 "model_kwarg": "thinking",
                 "pass_mode": "extra_body",
                 "enabled_value": {"type": "enabled"},
@@ -460,56 +624,155 @@ MODEL_REGISTRY: dict[str, dict[str, Any]] = {
                 "pass_mode": "top_level",
             },
         },
+        "presets": {},
     },
     "groq": {
         "provider": "groq",
         "label": "Groq",
         "icon": "⚡",
-        "models": ["llama-3.3-70b-versatile"],
+        "models": [
+            {"name": "llama-3.3-70b-versatile", "capabilities": ["tool_calling", "streaming"]},
+        ],
         "default_model": "llama-3.3-70b-versatile",
+        "api_key_env": "GROQ_API_KEY",
         "api_key_attr": "groq_api_key",
         "base_url_attr": None,
         "model_attr": "groq_model",
         "special_params": {},
+        "presets": {},
     },
     "baidu_qianfan": {
         "provider": "openai",
         "label": "百度千帆",
         "icon": "🟠",
-        "models": ["ernie-3.5-8k"],
+        "models": [
+            {"name": "ernie-3.5-8k", "capabilities": ["tool_calling", "streaming"]},
+        ],
         "default_model": "ernie-3.5-8k",
+        "api_key_env": "BAIDU_QIANFAN_API_KEY",
         "api_key_attr": "baidu_qianfan_api_key",
         "base_url_attr": "baidu_qianfan_api_base",
         "model_attr": "baidu_qianfan_model",
         "special_params": {},
+        "presets": {},
     },
     "anthropic": {
         "provider": "anthropic",
         "label": "Anthropic",
         "icon": "🟣",
-        "models": ["claude-sonnet-4-20250514", "claude-3-5-haiku-20241022"],
+        "models": [
+            {"name": "claude-sonnet-4-20250514", "capabilities": ["tool_calling", "streaming"]},
+            {"name": "claude-3-5-haiku-20241022", "capabilities": ["tool_calling", "streaming"]},
+        ],
         "default_model": "claude-sonnet-4-20250514",
+        "api_key_env": "ANTHROPIC_API_KEY",
         "api_key_attr": "anthropic_api_key",
         "base_url_attr": None,
         "model_attr": None,
         "special_params": {},
+        "presets": {
+            "anthropic_default": {
+                "model_name": "claude-sonnet-4-20250514",
+                "model_provider": "anthropic",
+                "temperature": 0.7,
+                "description": "Anthropic Claude Sonnet 4，平衡性能和成本",
+            },
+            "anthropic_fast": {
+                "model_name": "claude-3-5-haiku-20241022",
+                "model_provider": "anthropic",
+                "temperature": 0.7,
+                "description": "Anthropic Claude Haiku，快速响应",
+            },
+            "anthropic_precise": {
+                "model_name": "claude-sonnet-4-20250514",
+                "model_provider": "anthropic",
+                "temperature": 0.3,
+                "description": "Anthropic Claude Sonnet 4，精确模式",
+            },
+        },
+    },
+    "ollama": {
+        "provider": "ollama",
+        "label": "Ollama 本地",
+        "icon": "🦙",
+        "models": [
+            {"name": "qwen3:8b", "capabilities": ["tool_calling", "streaming", "deep_thinking"]},
+            {"name": "qwen3.5:9b", "capabilities": ["tool_calling", "streaming"]},
+            {"name": "hermes3:8b", "capabilities": ["tool_calling", "streaming"]},
+        ],
+        "default_model": "qwen3:8b",
+        # Ollama 无 api_key，标记 None 触发"本地可用"分支
+        "api_key_env": None,
+        "api_key_attr": None,
+        "base_url_attr": "ollama_base_url",
+        "model_attr": "ollama_model",
+        "special_params": {},
+        "presets": {
+            "ollama_default": {
+                "model_name": "qwen3:8b",
+                "model_provider": "ollama",
+                "temperature": 0.7,
+                "description": "Ollama 本地 qwen3 8B，无需 API key",
+            },
+            "ollama_qwen35": {
+                "model_name": "qwen3.5:9b",
+                "model_provider": "ollama",
+                "temperature": 0.7,
+                "description": "Ollama 本地 qwen3.5 9B",
+            },
+            "ollama_hermes": {
+                "model_name": "hermes3:8b",
+                "model_provider": "ollama",
+                "temperature": 0.7,
+                "description": "Ollama 本地 hermes3 8B",
+            },
+        },
     },
 }
 
+HELPER_MODEL_PRIORITY: list[dict[str, str]] = [
+    {"provider": "deepseek", "model": "deepseek-v4-flash", "reason": "性价比最高"},
+    {"provider": "groq", "model": "llama-3.3-70b-versatile", "reason": "免费快速"},
+    {"provider": "openai", "model": "gpt-4o-mini", "reason": "OpenAI 便宜模型"},
+    {"provider": "baidu_qianfan", "model": "ernie-3.5-8k", "reason": "百度便宜模型"},
+    {"provider": "ollama", "model": "qwen3:8b", "reason": "本地 Ollama 兜底（无需 API key）"},
+]
+
+
+def get_model_presets() -> dict[str, dict[str, Any]]:
+    """从数据库汇总所有预设配置，返回扁平化的 preset_name -> config 映射"""
+    from Django_xm.apps.ai_engine.services.registry_service import get_model_registry
+    presets: dict[str, dict[str, Any]] = {}
+    for _provider_id, cfg in get_model_registry().items():
+        for preset_name, preset_cfg in cfg.get("presets", {}).items():
+            presets[preset_name] = preset_cfg
+    return presets
+
 
 def get_available_providers() -> list[dict[str, Any]]:
+    """从数据库获取所有 Provider 列表（包含不可用的，available 字段标记可用性）"""
+    from Django_xm.apps.ai_engine.services.registry_service import (
+        get_model_registry, is_provider_available
+    )
     result = []
-    for key, cfg in MODEL_REGISTRY.items():
-        api_key = getattr(settings, cfg["api_key_attr"], "")
-        available = bool(api_key and api_key.strip())
+    for key, cfg in get_model_registry().items():
+        available = is_provider_available(key)
+        models = cfg.get("models", [])
+        # 将模型列表统一为包含 capabilities 的字典列表格式
+        normalized_models = []
+        for model_cfg in models:
+            if isinstance(model_cfg, dict):
+                normalized_models.append(model_cfg)
+            else:
+                normalized_models.append({"name": model_cfg, "capabilities": []})
         result.append({
             "id": key,
             "provider": cfg["provider"],
             "label": cfg["label"],
             "icon": cfg["icon"],
-            "models": cfg["models"],
+            "models": normalized_models,
             "default_model": cfg["default_model"],
             "available": available,
-            "special_params": cfg["special_params"],
+            "special_params": cfg.get("special_params", {}),
         })
     return result

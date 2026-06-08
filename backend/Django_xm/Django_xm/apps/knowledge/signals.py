@@ -23,15 +23,7 @@ def on_index_save(sender, instance, created, **kwargs):
     else:
         logger.debug(f"文档索引更新: {instance.index_name}")
 
-    try:
-        from Django_xm.apps.cache_manager.services.cache_service import CacheInvalidationStrategy
-        if created:
-            CacheInvalidationStrategy.on_index_created(instance.index_name)
-        else:
-            CacheInvalidationStrategy.on_index_updated(instance.index_name)
-    except Exception as e:
-        logger.warning(f"索引缓存失效失败: {e}")
-
+    # 通过自定义信号通知缓存失效，避免硬导入 cache_manager
     from Django_xm.apps.core.signals import index_updated
     index_updated.send(
         sender=sender,
@@ -44,12 +36,7 @@ def on_index_save(sender, instance, created, **kwargs):
 def on_index_delete(sender, instance, **kwargs):
     logger.info(f"文档索引删除: {instance.index_name}")
 
-    try:
-        from Django_xm.apps.cache_manager.services.cache_service import CacheInvalidationStrategy
-        CacheInvalidationStrategy.on_index_deleted(instance.index_name)
-    except Exception as e:
-        logger.warning(f"索引缓存失效失败: {e}")
-
+    # 通过自定义信号通知缓存失效，避免硬导入 cache_manager
     from Django_xm.apps.core.signals import index_updated
     index_updated.send(
         sender=sender,
@@ -63,11 +50,13 @@ def on_document_save(sender, instance, created, **kwargs):
     if created:
         logger.info(f"新文档创建: {instance.filename} (index={instance.index_id})")
 
-        try:
-            from Django_xm.apps.cache_manager.services.cache_service import CacheInvalidationStrategy
-            CacheInvalidationStrategy.on_document_added(instance.index.index_name)
-        except Exception as e:
-            logger.warning(f"文档缓存失效失败: {e}")
+        # 通过自定义信号通知缓存失效
+        from Django_xm.apps.core.signals import index_updated
+        index_updated.send(
+            sender=sender,
+            index_name=instance.index.index_name,
+            action='document_added',
+        )
 
     _update_index_document_count(instance.index_id)
 
@@ -76,11 +65,13 @@ def on_document_save(sender, instance, created, **kwargs):
 def on_document_delete(sender, instance, **kwargs):
     logger.info(f"文档删除: {instance.filename}")
 
-    try:
-        from Django_xm.apps.cache_manager.services.cache_service import CacheInvalidationStrategy
-        CacheInvalidationStrategy.on_document_deleted(instance.index.index_name)
-    except Exception as e:
-        logger.warning(f"文档缓存失效失败: {e}")
+    # 通过自定义信号通知缓存失效
+    from Django_xm.apps.core.signals import index_updated
+    index_updated.send(
+        sender=sender,
+        index_name=instance.index.index_name,
+        action='document_deleted',
+    )
 
     _update_index_document_count(instance.index_id)
 

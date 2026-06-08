@@ -1,10 +1,6 @@
 export const AgentMode = {
-  BASIC_AGENT: 'basic-agent',
-  RAG: 'rag',
-  WORKFLOW: 'workflow',
+  AGENT: 'agent',
   DEEP_RESEARCH: 'deep-research',
-  DEEP_THINKING: 'deep-thinking',
-  GUARDED: 'guarded',
 }
 
 export const MessageRole = {

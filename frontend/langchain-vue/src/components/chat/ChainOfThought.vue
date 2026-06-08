@@ -13,7 +13,8 @@ const props = defineProps({
 const isExpanded = ref(true)
 
 const formattedSteps = computed(() => {
-  return props.steps.map((step, index) => ({
+  const steps = Array.isArray(props.steps) ? props.steps : []
+  return steps.map((step, index) => ({
     ...step,
     index: index + 1
   }))

@@ -3,20 +3,64 @@
 
 从 chat_service.py 拆分出的通用流式处理逻辑：
 - 消息块解析
-- 用量/成本更新
+- 用量/Token 更新
 - 上下文信息构建
+- 深度思考内容提取（兼容 DeepSeek/Ollama/Anthropic）
 """
 import json as _json
 import re as _re
 import time
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import AIMessage, ToolMessage
 
 from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
 
 logger = logging.getLogger(__name__)
+
+
+def _sync_pending_to_stream_state(accumulated_reasoning: Dict[str, str]):
+    """将 _pending_content 同步到 data['_stream_state']，确保 generate() finally 能兜底刷新。
+
+    当 async generator 被强制关闭（aclose/GeneratorExit）时，
+    try/except 之后的代码不会执行，导致 _pending_content 无法通过正常路径刷新。
+    通过共享状态字典，views_chat.py 的 generate() finally 块可以兜底刷新。
+    """
+    stream_state = accumulated_reasoning.get("_stream_state")
+    if stream_state is not None:
+        stream_state["pending_content"] = accumulated_reasoning.get("_pending_content", "")
+
+
+def extract_thinking_content(chunk, provider_id: str = "") -> Optional[str]:
+    """从流式 chunk 中提取思考内容，兼容多种 Provider 格式。
+
+    - DeepSeek: additional_kwargs["reasoning_content"]
+    - Ollama (Qwen3/R1): additional_kwargs["reasoning_content"]（langchain-ollama 自动处理）
+    - Anthropic Claude: content blocks 中 type="thinking" 的块
+    """
+    # 1. DeepSeek / Ollama: additional_kwargs["reasoning_content"]
+    additional_kwargs = getattr(chunk, "additional_kwargs", {})
+    reasoning_content = additional_kwargs.get("reasoning_content")
+    if reasoning_content and isinstance(reasoning_content, str):
+        return reasoning_content
+
+    # 2. Anthropic Claude: thinking content blocks
+    # ChatAnthropic 将思考内容放在 content blocks 中，type="thinking"
+    content = getattr(chunk, "content", None)
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "thinking":
+                text = block.get("text", "")
+                if text:
+                    return text
+            # LangChain ContentBlock 对象
+            if hasattr(block, "type") and block.type == "thinking":
+                text = getattr(block, "text", "")
+                if text:
+                    return text
+
+    return None
 
 _STATE_TO_STATUS = {
     "input-available": "running",
@@ -81,6 +125,33 @@ def _fix_groq_tool_call(tool_call: Dict[str, Any]) -> Dict[str, Any]:
     return fixed
 
 
+def _try_parse_concatenated_json(s: str) -> Optional[dict]:
+    if not s or not s.strip():
+        return None
+    try:
+        result = _json.loads(s)
+        if isinstance(result, dict):
+            return result
+        return None
+    except (_json.JSONDecodeError, ValueError):
+        pass
+    decoder = _json.JSONDecoder()
+    last_valid = None
+    pos = 0
+    while pos < len(s):
+        next_brace = s.find('{', pos)
+        if next_brace == -1:
+            break
+        try:
+            obj, end_pos = decoder.raw_decode(s, next_brace)
+            if isinstance(obj, dict) and obj:
+                last_valid = obj
+            pos = end_pos
+        except (_json.JSONDecodeError, ValueError):
+            pos = next_brace + 1
+    return last_valid
+
+
 def _find_tool_call_key_by_index(tool_calls_map: Dict[str, Dict], index: int) -> Optional[str]:
     for key, tc in tool_calls_map.items():
         if tc.get("_index") == index:
@@ -104,8 +175,330 @@ def _migrate_key_if_needed(tool_calls_map: Dict[str, Dict], old_key: str, new_ke
         if not target.get("parameters") or target["parameters"] == {}:
             if existing.get("parameters") and existing["parameters"] != {}:
                 target["parameters"] = existing["parameters"]
+        if not target.get("_index") and existing.get("_index") is not None:
+            target["_index"] = existing["_index"]
         return new_key
     return old_key
+
+
+def _handle_ai_message_chunk(
+    message: AIMessage,
+    tool_calls_map: Dict[str, Dict],
+    tool_call_count: Dict[str, int],
+    lcp_func,
+    current_message_content: str,
+    accumulated_reasoning: Dict[str, str],
+    tool_args_accumulator: Dict[str, str],
+    mode: str,
+    enable_deep_thinking: bool = False,
+):
+    tool_calls = getattr(message, "tool_calls", [])
+    tool_call_chunks = getattr(message, "tool_call_chunks", None)
+    if tool_calls:
+        for raw_tool_call in tool_calls:
+            tool_call = _fix_groq_tool_call(raw_tool_call)
+            tool_id = tool_call.get("id") or ""
+            tool_name = tool_call.get("name") or ""
+
+            if not tool_name and not tool_id:
+                continue
+
+            if tool_name and tool_id:
+                name_key = tool_name
+                if name_key in tool_calls_map and tool_id not in tool_calls_map:
+                    _migrate_key_if_needed(tool_calls_map, name_key, tool_id)
+                dedup_key = tool_id
+            elif tool_id:
+                dedup_key = tool_id
+            else:
+                dedup_key = tool_name
+
+            if dedup_key in tool_calls_map:
+                if tool_id and not tool_calls_map[dedup_key].get("id"):
+                    tool_calls_map[dedup_key]["id"] = tool_id
+                if tool_name and not tool_calls_map[dedup_key].get("name"):
+                    tool_calls_map[dedup_key]["name"] = tool_name
+                updated_params = _extract_tool_params(tool_call)
+                if updated_params:
+                    tool_calls_map[dedup_key]["parameters"] = updated_params
+                    tool_info = dict(tool_calls_map[dedup_key])
+                    tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
+                    yield {'type': 'tool', 'data': tool_info}
+                continue
+
+            if tool_call_count is not None:
+                if tool_name not in tool_call_count:
+                    tool_call_count[tool_name] = 0
+                tool_call_count[tool_name] += 1
+                if tool_call_count[tool_name] > 8:
+                    logger.info(f"工具 {tool_name} 被调用了 {tool_call_count[tool_name]} 次")
+
+                # ToolUsageGuard 检查：去重 / 软警告 / 渐进式阻断
+                # 不再使用 "≥3 次就 force_terminate" 的硬中断策略
+                # 改为：去重时返回 DEDUP 响应、警告时 yield warning、阻断时 yield blocked
+                # 上层 chat_service 收到这些事件后再决定如何处理 ToolMessage
+                # 新版：所有工具都进入通用 dedup + 通用 loop 流程
+                try:
+                    from Django_xm.apps.ai_engine.services.tool_usage_guard import (
+                        get_tool_usage_guard,
+                        ToolUsageDecision,
+                        ToolUsageStatus,
+                    )
+                    # 拼装参数用于 guard 检查
+                    current_params = (
+                        tool_calls_map[dedup_key].get("parameters", {})
+                        if dedup_key in tool_calls_map
+                        else _extract_tool_params(tool_call)
+                    )
+                    if not current_params:
+                        current_params = _extract_tool_params(tool_call) or {}
+                    # 参数为空时跳过去重检查：流式传输中参数可能尚未解析完成，
+                    # 空参数会导致 resource_key='[]'，所有调用被误判为"同一资源"
+                    if current_params:
+                        decision = get_tool_usage_guard().check(
+                            tool_name=tool_name,
+                            args=current_params,
+                            thread_id="default",  # 流式上下文不直接拿 thread_id，使用 default
+                        )
+                    else:
+                        decision = ToolUsageDecision(status=ToolUsageStatus.ALLOW, reason="params not yet available")
+                    # 抽取通用事件字段（所有工具都有 resource_key / payload_preview）
+                    sse_data = (
+                        decision.sse_event.get("data", {}) if decision.sse_event else {}
+                    )
+                    common_data = {
+                        "tool_name": tool_name,
+                        "tool_id": tool_id,
+                        "resource_key": sse_data.get("resource_key", ""),
+                        "payload_preview": sse_data.get("payload_preview", ""),
+                        "reason": sse_data.get("reason", ""),
+                        "message": sse_data.get("message", ""),
+                    }
+                    if decision.status.value == "dedup" and decision.short_circuit_response:
+                        # 短时相同内容：直接以 DEDUP 状态传递，由 chat_service
+                        # 注入 ToolMessage 让模型知道本次被跳过
+                        common_data["short_circuit_response"] = (
+                            decision.short_circuit_response
+                        )
+                        yield {
+                            "type": "tool_usage_dedup",
+                            "data": common_data,
+                        }
+                        if decision.sse_event:
+                            yield decision.sse_event
+                        # 跳过本工具的后续累积逻辑
+                        continue
+                    if decision.status.value == "block" and decision.short_circuit_response:
+                        # 渐进式阻断：返回阻断原因，仍由模型决定是否继续
+                        common_data["short_circuit_response"] = (
+                            decision.short_circuit_response
+                        )
+                        yield {
+                            "type": "tool_usage_blocked",
+                            "data": common_data,
+                        }
+                        if decision.sse_event:
+                            yield decision.sse_event
+                        # 跳过本工具的后续累积逻辑
+                        continue
+                    if decision.sse_event:
+                        # 软警告
+                        yield decision.sse_event
+                except Exception as guard_err:
+                    logger.debug(f"ToolUsageGuard 检查失败（不影响工具执行）: {guard_err}")
+
+            tool_info = {
+                "id": tool_id,
+                "name": tool_name,
+                "type": f"tool-call-{tool_name}",
+                "state": "input-available",
+                "status": "running",
+                "parameters": _extract_tool_params(tool_call),
+                "result": None,
+                "error": None,
+            }
+            tool_calls_map[dedup_key] = tool_info
+            yield {'type': 'tool', 'data': tool_info}
+
+    if tool_call_chunks and tool_args_accumulator is not None:
+        for tc_chunk in tool_call_chunks:
+            if isinstance(tc_chunk, dict):
+                tc_id = tc_chunk.get("id") or ""
+                tc_name = tc_chunk.get("name") or ""
+                tc_args_str = tc_chunk.get("args") or ""
+                tc_index = tc_chunk.get("index")
+            else:
+                tc_id = getattr(tc_chunk, "id", "") or ""
+                tc_name = getattr(tc_chunk, "name", "") or ""
+                tc_args_str = getattr(tc_chunk, "args", "") or ""
+                tc_index = getattr(tc_chunk, "index", None)
+
+            dedup_key = None
+            if tc_id and tc_id in tool_calls_map:
+                dedup_key = tc_id
+            elif tc_id:
+                if tc_name and tc_name in tool_calls_map and tc_id not in tool_calls_map:
+                    _migrate_key_if_needed(tool_calls_map, tc_name, tc_id)
+                    if tc_name in tool_args_accumulator and tc_id not in tool_args_accumulator:
+                        tool_args_accumulator[tc_id] = tool_args_accumulator.pop(tc_name)
+                dedup_key = tc_id
+            elif tc_index is not None:
+                dedup_key = _find_tool_call_key_by_index(tool_calls_map, tc_index)
+            elif tc_name:
+                same_name_pending = [k for k, tc in tool_calls_map.items()
+                                     if tc.get("name") == tc_name and tc.get("state") == "input-available"]
+                if len(same_name_pending) == 1:
+                    dedup_key = same_name_pending[0]
+                elif not same_name_pending:
+                    dedup_key = tc_name
+                elif tc_index is not None:
+                    dedup_key = f"{tc_name}_idx_{tc_index}"
+
+            if not dedup_key:
+                if tc_index is not None:
+                    dedup_key = f"_auto_idx_{tc_index}"
+                elif tc_args_str and tool_calls_map:
+                    for key in list(tool_calls_map.keys())[::-1]:
+                        if tool_calls_map[key].get("state") == "input-available":
+                            dedup_key = key
+                            break
+                if not dedup_key:
+                    continue
+
+            if tc_index is not None and dedup_key in tool_calls_map:
+                if "_index" not in tool_calls_map[dedup_key]:
+                    tool_calls_map[dedup_key]["_index"] = tc_index
+
+            if not tc_args_str:
+                if dedup_key in tool_calls_map:
+                    if tc_id and not tool_calls_map[dedup_key].get("id"):
+                        tool_calls_map[dedup_key]["id"] = tc_id
+                    if tc_name and not tool_calls_map[dedup_key].get("name"):
+                        tool_calls_map[dedup_key]["name"] = tc_name
+                else:
+                    new_tool_info = {
+                        "id": tc_id,
+                        "name": tc_name,
+                        "type": f"tool-call-{tc_name}",
+                        "state": "input-available",
+                        "status": "running",
+                        "parameters": {},
+                        "result": None,
+                        "error": None,
+                    }
+                    if tc_index is not None:
+                        new_tool_info["_index"] = tc_index
+                    tool_calls_map[dedup_key] = new_tool_info
+                    yield {'type': 'tool', 'data': dict(new_tool_info)}
+                continue
+
+            prev = tool_args_accumulator.get(dedup_key, "")
+            tool_args_accumulator[dedup_key] = prev + tc_args_str
+            accumulated_str = tool_args_accumulator[dedup_key]
+
+            try:
+                parsed_args = _json.loads(accumulated_str)
+                if isinstance(parsed_args, dict):
+                    if dedup_key in tool_calls_map:
+                        tool_calls_map[dedup_key]["parameters"] = parsed_args
+                        tool_info = dict(tool_calls_map[dedup_key])
+                        tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
+                        yield {'type': 'tool', 'data': tool_info}
+                    else:
+                        new_tool_info = {
+                            "id": tc_id,
+                            "name": tc_name,
+                            "type": f"tool-call-{tc_name}",
+                            "state": "input-available",
+                            "status": "running",
+                            "parameters": parsed_args,
+                            "result": None,
+                            "error": None,
+                        }
+                        if tc_index is not None:
+                            new_tool_info["_index"] = tc_index
+                        tool_calls_map[dedup_key] = new_tool_info
+                        yield {'type': 'tool', 'data': dict(new_tool_info)}
+            except (_json.JSONDecodeError, ValueError):
+                pass
+
+    # 统一思考内容提取（兼容 DeepSeek/Ollama/Anthropic）
+    # 仅当深度思考启用时才发送 reasoning 事件，避免关闭思考后仍显示"推理中"
+    thinking_text = extract_thinking_content(message, mode if isinstance(mode, str) else "")
+    if thinking_text:
+        if accumulated_reasoning is not None:
+            prev = accumulated_reasoning.get("content", "") or ""
+            accumulated_reasoning["content"] = prev + thinking_text
+        if mode in ('agent', 'chat') and enable_deep_thinking:
+            reasoning_content = accumulated_reasoning.get("content", "") or ""
+            yield {
+                "type": "reasoning",
+                "data": {
+                    "content": reasoning_content,
+                    "duration": 0,
+                    "source": "model_intrinsic",
+                },
+            }
+
+    # 内容发送策略：
+    # - agent 模式 + 有 tool_calls/tool_call_chunks：缓冲 content（中间文本，不应发送）
+    # - agent 模式 + 无 tool_calls：直接流式发送 content（最终回答）
+    # - 非 agent 模式：直接发送
+    if message.content:
+        has_tool_calls = bool(tool_calls) or bool(getattr(message, "tool_call_chunks", None))
+        if mode == 'agent' and has_tool_calls:
+            # agent 模式 + 有 tool_calls：缓冲 content，不立即发送
+            # 这是模型在决定调用工具前的"自言自语"，不应发送给用户
+            if accumulated_reasoning is not None:
+                prev_pending = accumulated_reasoning.get("_pending_content", "")
+                accumulated_reasoning["_pending_content"] = prev_pending + message.content
+                _sync_pending_to_stream_state(accumulated_reasoning)
+        else:
+            # 非 agent 模式 或 agent 模式无 tool_calls：直接流式发送
+            if lcp_func:
+                lcp = lcp_func(current_message_content, message.content)
+            else:
+                lcp = 0
+            if lcp < len(message.content):
+                new_content = message.content[lcp:]
+                yield {"type": "chunk", "content": new_content}
+
+
+def _handle_tool_message_chunk(
+    message: ToolMessage,
+    tool_calls_map: Dict[str, Dict],
+):
+    tool_call_id = getattr(message, "tool_call_id", "")
+    is_error = getattr(message, "status", None) == "error"
+    tool_info = None
+    if tool_call_id and tool_call_id in tool_calls_map:
+        tool_info = tool_calls_map[tool_call_id]
+    elif tool_call_id:
+        for key, tc in tool_calls_map.items():
+            if tc.get("id") == tool_call_id or (not tc.get("id") and key == tool_call_id):
+                tool_info = tc
+                break
+    if tool_info:
+        content_is_error = _detect_tool_error(message.content) if not is_error else False
+        new_state = "output-error" if (is_error or content_is_error) else "output-available"
+        tool_info["state"] = new_state
+        tool_info["status"] = _map_state_to_status(new_state)
+        if is_error or content_is_error:
+            tool_info["result"] = None
+            tool_info["error"] = message.content
+        else:
+            # 知识库检索工具返回大量原始文档，不应原样推给前端
+            # 只保留摘要信息，避免前端显示海量原始内容
+            tool_name = tool_info.get("name", "")
+            if tool_name.startswith("knowledge_base_") and isinstance(message.content, str) and len(message.content) > 500:
+                # 截取前200字符作为预览，标记为已摘要
+                preview = message.content[:200].rstrip() + "..."
+                tool_info["result"] = preview
+                tool_info["_summarized"] = True
+            else:
+                tool_info["result"] = message.content
+            tool_info["error"] = None
+        yield {'type': 'tool_result', 'data': tool_info}
 
 
 def process_stream_chunk(
@@ -117,11 +510,11 @@ def process_stream_chunk(
     lcp_func=None,
     accumulated_reasoning: Dict[str, str] = None,
     tool_args_accumulator: Dict[str, str] = None,
-) -> List[Dict[str, Any]]:
-    events: List[Dict[str, Any]] = []
-
+    mode: str = "agent",
+    enable_deep_thinking: bool = False,
+):
     if chunk is None:
-        return events
+        return
 
     if isinstance(chunk, tuple) and len(chunk) == 2:
         message, metadata = chunk
@@ -130,183 +523,39 @@ def process_stream_chunk(
         metadata = {}
 
     if message is None:
-        return events
+        return
 
     if isinstance(message, AIMessage):
+        # 过滤终止信号消息（ContextManagerMiddleware 注入的终止消息，不应展示给用户）
+        additional_kwargs = getattr(message, "additional_kwargs", {}) or {}
+        if additional_kwargs.get("_termination_signal"):
+            logger.debug(f"过滤终止信号消息: {message.content[:50]}")
+            return
+
+        # agent 模式下，当检测到 tool_calls 时清除缓冲的中间内容
+        # （这些内容是模型在决定调用工具前的"自言自语"，不应发送给用户）
         tool_calls = getattr(message, "tool_calls", [])
         tool_call_chunks = getattr(message, "tool_call_chunks", None)
-        if tool_calls:
-            logger.info(f"[STREAM-TOOL] tool_calls={tool_calls}")
-        if tool_call_chunks:
-            logger.info(f"[STREAM-TOOL] tool_call_chunks={tool_call_chunks}")
-        if tool_calls:
-            for raw_tool_call in tool_calls:
-                tool_call = _fix_groq_tool_call(raw_tool_call)
-                tool_id = tool_call.get("id") or ""
-                tool_name = tool_call.get("name") or ""
+        if mode == 'agent' and (tool_calls or tool_call_chunks) and accumulated_reasoning is not None:
+            if accumulated_reasoning.get("_pending_content"):
+                logger.debug(f"Agent 模式: 检测到 tool_calls，清除缓冲的中间内容 ({len(accumulated_reasoning['_pending_content'])} 字符)")
+                accumulated_reasoning["_pending_content"] = ""
+                _sync_pending_to_stream_state(accumulated_reasoning)
 
-                if not tool_name and not tool_id:
-                    continue
-
-                if tool_name and tool_id:
-                    name_key = tool_name
-                    if name_key in tool_calls_map and tool_id not in tool_calls_map:
-                        tool_calls_map = _migrate_key_if_needed(tool_calls_map, name_key, tool_id)
-                    dedup_key = tool_id
-                elif tool_id:
-                    dedup_key = tool_id
-                else:
-                    dedup_key = tool_name
-
-                if dedup_key in tool_calls_map:
-                    if tool_id and not tool_calls_map[dedup_key].get("id"):
-                        tool_calls_map[dedup_key]["id"] = tool_id
-                    if tool_name and not tool_calls_map[dedup_key].get("name"):
-                        tool_calls_map[dedup_key]["name"] = tool_name
-                    updated_params = _extract_tool_params(tool_call)
-                    if updated_params:
-                        tool_calls_map[dedup_key]["parameters"] = updated_params
-                        tool_info = dict(tool_calls_map[dedup_key])
-                        tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
-                        events.append({'type': 'tool', 'data': tool_info})
-                    continue
-
-                if tool_call_count is not None:
-                    if tool_name not in tool_call_count:
-                        tool_call_count[tool_name] = 0
-                    tool_call_count[tool_name] += 1
-                    if tool_call_count[tool_name] > 3:
-                        logger.warning(f"工具 {tool_name} 被调用了 {tool_call_count[tool_name]} 次，可能存在循环调用")
-
-                tool_info = {
-                    "id": tool_id,
-                    "name": tool_name,
-                    "type": f"tool-call-{tool_name}",
-                    "state": "input-available",
-                    "status": "running",
-                    "parameters": _extract_tool_params(tool_call),
-                    "result": None,
-                    "error": None,
-                }
-                tool_calls_map[dedup_key] = tool_info
-                events.append({'type': 'tool', 'data': tool_info})
-
-        if tool_call_chunks and tool_args_accumulator is not None:
-            for tc_chunk in tool_call_chunks:
-                if isinstance(tc_chunk, dict):
-                    tc_id = tc_chunk.get("id") or ""
-                    tc_name = tc_chunk.get("name") or ""
-                    tc_args_str = tc_chunk.get("args") or ""
-                    tc_index = tc_chunk.get("index")
-                else:
-                    tc_id = getattr(tc_chunk, "id", "") or ""
-                    tc_name = getattr(tc_chunk, "name", "") or ""
-                    tc_args_str = getattr(tc_chunk, "args", "") or ""
-                    tc_index = getattr(tc_chunk, "index", None)
-
-                dedup_key = None
-                if tc_id and tc_id in tool_calls_map:
-                    dedup_key = tc_id
-                elif tc_name:
-                    for key, tc in tool_calls_map.items():
-                        if tc.get("name") == tc_name and tc.get("state") == "input-available":
-                            dedup_key = key
-                            break
-                    if not dedup_key:
-                        dedup_key = tc_name
-                elif tc_index is not None:
-                    dedup_key = _find_tool_call_key_by_index(tool_calls_map, tc_index)
-
-                if not dedup_key:
-                    if tc_args_str and tool_calls_map:
-                        for key in list(tool_calls_map.keys())[::-1]:
-                            if tool_calls_map[key].get("state") == "input-available":
-                                dedup_key = key
-                                break
-                    if not dedup_key:
-                        continue
-
-                if tc_index is not None and dedup_key in tool_calls_map:
-                    if "_index" not in tool_calls_map[dedup_key]:
-                        tool_calls_map[dedup_key]["_index"] = tc_index
-
-                if not tc_args_str:
-                    if dedup_key in tool_calls_map:
-                        if tc_id and not tool_calls_map[dedup_key].get("id"):
-                            tool_calls_map[dedup_key]["id"] = tc_id
-                        if tc_name and not tool_calls_map[dedup_key].get("name"):
-                            tool_calls_map[dedup_key]["name"] = tc_name
-                    continue
-
-                prev = tool_args_accumulator.get(dedup_key, "")
-                tool_args_accumulator[dedup_key] = prev + tc_args_str
-                accumulated_str = tool_args_accumulator[dedup_key]
-
-                try:
-                    parsed_args = _json.loads(accumulated_str)
-                    if isinstance(parsed_args, dict):
-                        if dedup_key in tool_calls_map:
-                            tool_calls_map[dedup_key]["parameters"] = parsed_args
-                            tool_info = dict(tool_calls_map[dedup_key])
-                            tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
-                            events.append({'type': 'tool', 'data': tool_info})
-                except (_json.JSONDecodeError, ValueError):
-                    pass
-
-        additional_kwargs = getattr(message, "additional_kwargs", {})
-        reasoning_content = additional_kwargs.get("reasoning_content")
-        if reasoning_content and isinstance(reasoning_content, str) and reasoning_content.strip():
-            if accumulated_reasoning is not None:
-                prev = accumulated_reasoning.get("content", "") or ""
-                accumulated_reasoning["content"] = prev + reasoning_content.strip()
-            events.append({
-                "type": "reasoning",
-                "data": {
-                    "content": (accumulated_reasoning.get("content", "") or "").strip(),
-                    "duration": 0,
-                },
-            })
-
-        if message.content and not tool_calls:
-            if lcp_func:
-                lcp = lcp_func(current_message_content, message.content)
-            else:
-                lcp = 0
-            if lcp < len(message.content):
-                new_content = message.content[lcp:]
-                events.append({"type": "chunk", "content": new_content})
-
+        yield from _handle_ai_message_chunk(
+            message, tool_calls_map, tool_call_count, lcp_func,
+            current_message_content, accumulated_reasoning,
+            tool_args_accumulator, mode, enable_deep_thinking,
+        )
     elif isinstance(message, ToolMessage):
-        tool_call_id = getattr(message, "tool_call_id", "")
-        is_error = getattr(message, "status", None) == "error"
-        tool_info = None
-        if tool_call_id and tool_call_id in tool_calls_map:
-            tool_info = tool_calls_map[tool_call_id]
-        elif tool_call_id:
-            for key, tc in tool_calls_map.items():
-                if tc.get("id") == tool_call_id or (not tc.get("id") and key == tool_call_id):
-                    tool_info = tc
-                    break
-        if tool_info:
-            content_is_error = _detect_tool_error(message.content) if not is_error else False
-            new_state = "output-error" if (is_error or content_is_error) else "output-available"
-            tool_info["state"] = new_state
-            tool_info["status"] = _map_state_to_status(new_state)
-            if is_error or content_is_error:
-                tool_info["result"] = None
-                tool_info["error"] = message.content
-            else:
-                tool_info["result"] = message.content
-                tool_info["error"] = None
-            events.append({'type': 'tool_result', 'data': tool_info})
-
-    return events
+        yield from _handle_tool_message_chunk(message, tool_calls_map)
 
 
-def build_context_info(usage_tracker, cost_tracker, stream_start_time=None):
+def build_context_info(usage_tracker, token_detail_tracker, stream_start_time=None):
     context_info = usage_tracker.get_usage_info()
-    cost_info = cost_tracker.get_summary()
-    context_info['cost'] = cost_info
+    token_summary = token_detail_tracker.get_summary()
+    context_info['tokens'] = token_summary['tokens']
+    context_info['tokenDetail'] = token_detail_tracker.get_token_detail()
     context_info['model'] = usage_tracker.model_id
     context_info['total_tokens'] = usage_tracker.get_total_tokens()
     if stream_start_time is not None:
@@ -314,20 +563,20 @@ def build_context_info(usage_tracker, cost_tracker, stream_start_time=None):
     return context_info
 
 
-def update_usage_and_cost(cb, usage_tracker, cost_tracker=None):
+def update_usage_and_tokens(cb, usage_tracker, token_detail_tracker=None):
     usage_tracker.add_input_tokens(cb.prompt_tokens)
     usage_tracker.add_output_tokens(cb.completion_tokens)
-    if cost_tracker:
-        cost_tracker.update_from_metadata(
+    if token_detail_tracker:
+        token_detail_tracker.update_from_metadata(
             {'usage_metadata': {
                 'input_tokens': cb.prompt_tokens,
                 'output_tokens': cb.completion_tokens,
             }}
         )
-        cost_tracker.finish_record()
+        token_detail_tracker.finish_record()
 
 
-def sync_usage_from_messages(all_messages, usage_tracker, cost_tracker=None):
+def sync_usage_from_messages(all_messages, usage_tracker, token_detail_tracker=None):
     seen_ids = set()
     for msg in reversed(all_messages):
         if not isinstance(msg, AIMessage):
@@ -342,8 +591,8 @@ def sync_usage_from_messages(all_messages, usage_tracker, cost_tracker=None):
         if token_usage:
             usage_tracker.add_input_tokens(token_usage.get('prompt_tokens', 0))
             usage_tracker.add_output_tokens(token_usage.get('completion_tokens', 0))
-            if cost_tracker:
-                cost_tracker.update_from_metadata(
+            if token_detail_tracker:
+                token_detail_tracker.update_from_metadata(
                     {'usage_metadata': {
                         'input_tokens': token_usage.get('prompt_tokens', 0),
                         'output_tokens': token_usage.get('completion_tokens', 0),
@@ -352,8 +601,8 @@ def sync_usage_from_messages(all_messages, usage_tracker, cost_tracker=None):
         usage_meta = resp_meta.get('usage_metadata', {})
         if usage_meta:
             usage_tracker.update_from_metadata({'usage_metadata': usage_meta})
-            if cost_tracker:
-                cost_tracker.update_from_metadata({'usage_metadata': usage_meta})
+            if token_detail_tracker:
+                token_detail_tracker.update_from_metadata({'usage_metadata': usage_meta})
 
 
 def finalize_tool_calls(
@@ -382,7 +631,16 @@ def finalize_tool_calls(
                     events.append({'type': 'tool', 'data': tool_info})
                     logger.debug(f"[FINALIZE-TOOL] 从 accumulator 解析参数成功: key={key}, args={parsed_args}")
             except (_json.JSONDecodeError, ValueError):
-                logger.debug(f"[FINALIZE-TOOL] accumulator JSON 解析失败: key={key}, str={accumulated_str!r}")
+                recovered = _try_parse_concatenated_json(accumulated_str)
+                if recovered:
+                    tool_calls_map[key]["parameters"] = recovered
+                    tool_info = dict(tool_calls_map[key])
+                    tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
+                    tool_info.pop("_index", None)
+                    events.append({'type': 'tool', 'data': tool_info})
+                    logger.info(f"[FINALIZE-TOOL] 从拼接 JSON 中恢复参数成功: key={key}")
+                else:
+                    logger.debug(f"[FINALIZE-TOOL] accumulator JSON 解析失败: key={key}, str={accumulated_str!r}")
 
     needs_update = any(
         not tc.get("parameters") or (isinstance(tc.get("parameters"), dict) and tc.get("parameters") == {})

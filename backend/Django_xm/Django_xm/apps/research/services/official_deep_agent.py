@@ -19,17 +19,21 @@
 """
 
 from typing import Optional, Dict, Any, List, Sequence, Type, AsyncIterator
+import asyncio
 import os
+import warnings
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
-from langchain_core.tools import BaseTool
+from langchain_core.tools import BaseTool, StructuredTool
 from langchain.agents.middleware import AgentMiddleware
 
-from Django_xm.apps.config_center.config import get_logger
+from Django_xm.apps.core.config import get_logger
+from Django_xm.async_utils import run_async
 from Django_xm.apps.ai_engine.services.llm_factory import get_model_string, get_chat_model
 from Django_xm.apps.ai_engine.services.checkpointer_factory import get_checkpointer, get_store
 from Django_xm.apps.ai_engine.guardrails import create_guardrails_middleware, create_rate_limit_middleware
-from Django_xm.apps.tools.web.search import create_tavily_search_tool
+from Django_xm.apps.tools.langchain.web_search import create_tavily_search_tool
+from Django_xm.apps.ai_engine.capabilities import registry as capability_registry
 
 logger = get_logger(__name__)
 
@@ -40,12 +44,26 @@ DEEP_RESEARCH_SYSTEM_PROMPT = (
     "1. 使用 write_todos 制定研究计划\n"
     "2. 使用 task 工具调度子智能体执行搜索和分析\n"
     "3. 使用 write_file 保存研究笔记和最终报告\n\n"
+    "## 文件目录规范（必须严格遵守）\n"
+    "所有文件必须写入以下规范目录，禁止写入根目录或其他位置：\n"
+    "- 研究计划必须写入 /plans/ 目录（如 /plans/research_plan.md）\n"
+    "- 研究笔记必须写入 /notes/ 目录（如 /notes/web_research.md、/notes/doc_analysis.md）\n"
+    "- 研究报告必须写入 /reports/ 目录（如 /reports/final_report.md）\n\n"
+    "## 沙箱目录说明\n"
+    "/sandbox/ 目录是 Agent 工具区，用于存放和运行工具资源。\n"
+    "允许写入的 sandbox 子目录：\n"
+    "- /sandbox/skills/ — Skill 工具脚本\n"
+    "- /sandbox/mcp/ — MCP 工具资源\n"
+    "- /sandbox/deps/ — 第三方依赖\n"
+    "- /sandbox/tmp/ — Agent 临时文件\n"
+    "研究产出（笔记、计划、报告）必须写入 /notes/、/plans/、/reports/，不得写入 /sandbox/ 根目录或其他未列出的子目录。\n\n"
     "## 工作流程\n"
     "1. 分析研究问题，使用 write_todos 创建待办事项\n"
     "2. 使用 task 工具调用子智能体执行网络搜索和文档分析\n"
-    "3. 将搜索结果和分析笔记写入文件（notes/目录）\n"
-    "4. 整合所有研究结果，撰写结构化研究报告\n"
-    "5. 使用 write_file 将最终报告保存到 reports/目录\n\n"
+    "3. 将搜索结果和分析笔记写入 /notes/ 目录\n"
+    "4. 将研究计划写入 /plans/ 目录\n"
+    "5. 整合所有研究结果，撰写结构化研究报告\n"
+    "6. 使用 write_file 将最终报告保存到 /reports/ 目录\n\n"
     "## 报告要求\n"
     "- 标题和摘要\n"
     "- 分章节组织内容\n"
@@ -53,6 +71,7 @@ DEEP_RESEARCH_SYSTEM_PROMPT = (
     "- 结论和建议\n"
     "- 参考文献列表\n\n"
     "重要：不要跳过工具使用步骤直接给出答案，必须通过多步骤研究过程完成任务。\n"
+    "重要：所有研究产出必须写入规范目录（/plans/、/notes/、/reports/），不得写入根目录或 /sandbox/ 的非工具子目录。\n"
 )
 
 WEB_RESEARCHER_SUBAGENT_PROMPT = (
@@ -69,10 +88,57 @@ DOC_ANALYST_SUBAGENT_PROMPT = (
 )
 
 
+_SEARCH_TOOL_NAMES = {
+    'web_search', 'tavily_search', 'duckduckgo_search',
+    'bing_search', 'google_search', 'serpapi_search',
+    'searx_search', 'brave_search',
+}
+
+
+def _has_search_tools(extra_tools: Optional[List[BaseTool]] = None) -> bool:
+    if not extra_tools:
+        return False
+    return any(
+        getattr(t, 'name', '') in _SEARCH_TOOL_NAMES
+        for t in extra_tools
+    )
+
+
+def _ensure_sync_tool(tool: BaseTool) -> BaseTool:
+    """确保工具支持同步调用
+
+    langchain-mcp-adapters 生成的 MCP 工具只设置了 coroutine（异步），
+    未设置 func（同步），导致同步 graph.invoke() 调用 tool._run() 时
+    抛出 "StructuredTool does not support sync invocation"。
+    对缺少 func 的 StructuredTool，通过 run_async() 桥接到异步实现。
+    """
+    if not isinstance(tool, StructuredTool):
+        return tool
+    if tool.func is not None:
+        return tool
+    if tool.coroutine is None:
+        return tool
+
+    original_coroutine = tool.coroutine
+
+    def _sync_run(**kwargs):
+        return run_async(original_coroutine(**kwargs))
+
+    return StructuredTool(
+        name=tool.name,
+        description=tool.description or "",
+        args_schema=tool.args_schema,
+        func=_sync_run,
+        coroutine=original_coroutine,
+    )
+
+
 def _build_subagents(
     enable_web_search: bool = True,
     enable_doc_analysis: bool = False,
     retriever_tool: Optional[BaseTool] = None,
+    extra_tools: Optional[List[BaseTool]] = None,
+    subagent_middleware: Optional[Sequence[AgentMiddleware]] = None,
 ) -> List[Any]:
     """
     构建 SubAgent 列表
@@ -87,6 +153,7 @@ def _build_subagents(
         enable_web_search: 是否启用网络搜索子智能体
         enable_doc_analysis: 是否启用文档分析子智能体
         retriever_tool: RAG 检索工具
+        extra_tools: 额外工具列表（MCP/自定义工具）
 
     Returns:
         SubAgent 列表
@@ -94,35 +161,49 @@ def _build_subagents(
     from deepagents import SubAgent
 
     subagents: List[Any] = []
+    # deepagents 内部 spec.get("middleware", []) 在 middleware=None 时返回 None，
+    # 导致 extend 失败，因此必须确保 middleware 不为 None
+    safe_middleware: Sequence[AgentMiddleware] = subagent_middleware or []
 
-    if enable_web_search:
+    need_web_researcher = enable_web_search or _has_search_tools(extra_tools)
+
+    if need_web_researcher:
         try:
             search_tool = create_tavily_search_tool()
+            web_tools: List[BaseTool] = [search_tool]
+            if extra_tools:
+                web_tools.extend(extra_tools)
             web_subagent = SubAgent(
                 name="web-researcher",
                 description="网络搜索和信息整理专家，负责从互联网搜索和整理研究信息",
                 system_prompt=WEB_RESEARCHER_SUBAGENT_PROMPT,
-                tools=[search_tool],
+                tools=web_tools,
+                middleware=safe_middleware,
             )
             subagents.append(web_subagent)
             logger.debug("添加 WebResearcher 子智能体")
         except ValueError:
             logger.warning("Tavily API Key 未配置，web-researcher 子智能体将使用默认工具")
-
+            web_fallback_tools = list(extra_tools) if extra_tools else None
             web_subagent = SubAgent(
                 name="web-researcher",
                 description="网络搜索和信息整理专家",
                 system_prompt=WEB_RESEARCHER_SUBAGENT_PROMPT,
+                tools=web_fallback_tools,
+                middleware=safe_middleware,
             )
             subagents.append(web_subagent)
 
     if enable_doc_analysis:
-        doc_tools = [retriever_tool] if retriever_tool else []
+        doc_tools: List[BaseTool] = [retriever_tool] if retriever_tool else []
+        if extra_tools:
+            doc_tools.extend(extra_tools)
         doc_subagent = SubAgent(
             name="doc-analyst",
             description="文档分析和知识提取专家，负责在知识库中检索和分析文档",
             system_prompt=DOC_ANALYST_SUBAGENT_PROMPT,
             tools=doc_tools if doc_tools else None,
+            middleware=safe_middleware,
         )
         subagents.append(doc_subagent)
         logger.debug("添加 DocAnalyst 子智能体")
@@ -135,14 +216,12 @@ def _build_extra_middleware(
     enable_guardrails: bool = False,
     guardrails_strict_mode: bool = False,
     enable_rate_limit: bool = True,
+    thread_id: str = None,
 ) -> List[AgentMiddleware]:
     middleware_list: List[AgentMiddleware] = []
 
     if enable_rate_limit:
-        rate_limit = create_rate_limit_middleware(
-            max_model_calls=30,
-            max_tool_calls=20,
-        )
+        rate_limit = create_rate_limit_middleware(task_id=thread_id)
         middleware_list.append(rate_limit)
         logger.info("RateLimitMiddleware 已启用")
 
@@ -162,17 +241,141 @@ def _build_extra_middleware(
     return middleware_list
 
 
+async def _fallback_load_tools(enable_web_search=False, retriever_tool=None, extra_tools=None):
+    from Django_xm.apps.tools import get_tools_for_request_async
+    tools = await get_tools_for_request_async(
+        use_tools=True,
+        use_web_search=enable_web_search,
+        tool_tier="extended",
+    )
+    if retriever_tool:
+        existing_names = {t.name for t in tools}
+        if retriever_tool.name not in existing_names:
+            tools.append(retriever_tool)
+    if extra_tools:
+        existing_names = {t.name for t in tools}
+        for t in extra_tools:
+            if t.name not in existing_names:
+                tools.append(t)
+    return tools
+
+
+_SANDBOX_ALLOWED_DIRS = (
+    "/sandbox/skills/",
+    "/sandbox/mcp/",
+    "/sandbox/deps/",
+    "/sandbox/tmp/",
+)
+
+
+class _PatchCompositeBackend:
+    """修复 CompositeBackend 的 files_update 弃用警告 + sandbox 写入守卫
+
+    1. deepagents 0.5.x 的 CompositeBackend.write/edit 使用 dataclasses.replace()
+       重建 WriteResult/EditResult，触发 files_update 参数的弃用警告。
+       绕过方式：直接修改 path 属性。
+
+    2. /sandbox/ 是 Agent 工具区（skills、MCP 工具、第三方依赖等），
+       只允许预定义的工具子目录（_SANDBOX_ALLOWED_DIRS）写入，
+       其他 /sandbox/ 路径一律拒绝，引导 Agent 将研究产出写入 /notes/、/plans/、/reports/。
+    """
+
+    def __init__(self, composite):
+        self._composite = composite
+
+    def __getattr__(self, name):
+        return getattr(self._composite, name)
+
+    @staticmethod
+    def _check_sandbox_path(file_path: str) -> Optional[str]:
+        norm = file_path.replace("\\", "/")
+        if not norm.startswith("/sandbox/"):
+            return None
+        for allowed in _SANDBOX_ALLOWED_DIRS:
+            if norm.startswith(allowed):
+                return None
+        allowed_list = ", ".join(_SANDBOX_ALLOWED_DIRS)
+        return (
+            f"Error: Path {norm} is not allowed in /sandbox/. "
+            f"/sandbox/ is for tool execution only. "
+            f"Research output must be written to /notes/, /plans/, or /reports/. "
+            f"Allowed sandbox paths: {allowed_list}"
+        )
+
+    def _resolve(self, file_path: str):
+        backend, key = self._composite._get_backend_and_key(file_path)
+        return backend, key
+
+    def write(self, file_path, content):
+        err = self._check_sandbox_path(file_path)
+        if err:
+            from deepagents.backends.protocol import WriteResult
+            return WriteResult(error=err, path=None, files_update=None)
+        backend, key = self._resolve(file_path)
+        res = backend.write(key, content)
+        if res.path is not None:
+            object.__setattr__(res, 'path', file_path)
+        return res
+
+    async def awrite(self, file_path, content):
+        err = self._check_sandbox_path(file_path)
+        if err:
+            from deepagents.backends.protocol import WriteResult
+            return WriteResult(error=err, path=None, files_update=None)
+        backend, key = self._resolve(file_path)
+        res = await backend.awrite(key, content)
+        if res.path is not None:
+            object.__setattr__(res, 'path', file_path)
+        return res
+
+    def edit(self, file_path, old_string, new_string, replace_all=False):
+        err = self._check_sandbox_path(file_path)
+        if err:
+            from deepagents.backends.protocol import EditResult
+            return EditResult(error=err, path=None, files_update=None, occurrences=None)
+        backend, key = self._resolve(file_path)
+        res = backend.edit(key, old_string, new_string, replace_all=replace_all)
+        if res.path is not None:
+            object.__setattr__(res, 'path', file_path)
+        return res
+
+    async def aedit(self, file_path, old_string, new_string, replace_all=False):
+        err = self._check_sandbox_path(file_path)
+        if err:
+            from deepagents.backends.protocol import EditResult
+            return EditResult(error=err, path=None, files_update=None, occurrences=None)
+        backend, key = self._resolve(file_path)
+        res = await backend.aedit(key, old_string, new_string, replace_all=replace_all)
+        if res.path is not None:
+            object.__setattr__(res, 'path', file_path)
+        return res
+
+
 def _get_backend(
     backend_type: str = "state",
     work_dir: Optional[str] = None,
+    sandbox_dir: Optional[str] = None,
 ) -> Any:
     try:
         if backend_type == "state":
             from deepagents.backends import StateBackend
             return StateBackend()
         elif backend_type == "filesystem":
-            from deepagents.backends import FilesystemBackend
-            return FilesystemBackend(root_dir=work_dir or ".", virtual_mode=True)
+            from deepagents.backends import FilesystemBackend, CompositeBackend
+
+            fs_backend = FilesystemBackend(root_dir=work_dir or ".", virtual_mode=True)
+
+            if sandbox_dir and os.path.isdir(sandbox_dir):
+                sandbox_backend = FilesystemBackend(root_dir=sandbox_dir, virtual_mode=True)
+                composite = CompositeBackend(
+                    default=fs_backend,
+                    routes={"/sandbox/": sandbox_backend},
+                )
+                patched = _PatchCompositeBackend(composite)
+                logger.info(f"CompositeBackend: default={work_dir}, /sandbox/={sandbox_dir}")
+                return patched
+
+            return fs_backend
         elif backend_type == "local_shell":
             from deepagents.backends import LocalShellBackend
             return LocalShellBackend(workdir=work_dir or ".")
@@ -226,7 +429,7 @@ class OfficialDeepAgentAdapter:
         if "configurable" not in config:
             config["configurable"] = {}
         config["configurable"]["thread_id"] = self.thread_id
-        config.setdefault("recursion_limit", 50)
+        config.setdefault("recursion_limit", 1000)
         if callbacks:
             config["callbacks"] = callbacks
 
@@ -239,6 +442,16 @@ class OfficialDeepAgentAdapter:
             final_report = _extract_ai_response(result)
             files_info = self._extract_files_info(result)
             disk_files = self._scan_disk_files()
+
+            # 当 AI 回复过短时（通常是确认语），从磁盘文件提取完整报告
+            if len(final_report.strip()) < 200 and disk_files:
+                for report_key in ("reports/final_report.md", "final_report.md"):
+                    if report_key in disk_files:
+                        report_content = disk_files[report_key].get("content", "")
+                        if len(report_content.strip()) > len(final_report.strip()):
+                            final_report = report_content
+                            logger.info(f"[OfficialDeepAgent] 使用磁盘报告文件替代短回复 ({len(final_report)} 字符)")
+                        break
 
             return {
                 "success": True,
@@ -268,7 +481,7 @@ class OfficialDeepAgentAdapter:
         if "configurable" not in config:
             config["configurable"] = {}
         config["configurable"]["thread_id"] = self.thread_id
-        config.setdefault("recursion_limit", 50)
+        config.setdefault("recursion_limit", 1000)
         if callbacks:
             config["callbacks"] = callbacks
 
@@ -281,6 +494,16 @@ class OfficialDeepAgentAdapter:
             final_report = _extract_ai_response(result)
             files_info = self._extract_files_info(result)
             disk_files = self._scan_disk_files()
+
+            # 当 AI 回复过短时（通常是确认语），从磁盘文件提取完整报告
+            if len(final_report.strip()) < 200 and disk_files:
+                for report_key in ("reports/final_report.md", "final_report.md"):
+                    if report_key in disk_files:
+                        report_content = disk_files[report_key].get("content", "")
+                        if len(report_content.strip()) > len(final_report.strip()):
+                            final_report = report_content
+                            logger.info(f"[OfficialDeepAgent] 使用磁盘报告文件替代短回复 ({len(final_report)} 字符)")
+                        break
 
             return {
                 "success": True,
@@ -314,7 +537,7 @@ class OfficialDeepAgentAdapter:
         if "configurable" not in config:
             config["configurable"] = {}
         config["configurable"]["thread_id"] = self.thread_id
-        config.setdefault("recursion_limit", 30)
+        config.setdefault("recursion_limit", 1000)
 
         try:
             yield {
@@ -401,19 +624,23 @@ class OfficialDeepAgentAdapter:
         if not self.work_dir or not os.path.isdir(self.work_dir):
             return {}
         files = {}
-        for root, dirs, fnames in os.walk(self.work_dir):
-            for fname in fnames:
-                full_path = os.path.join(root, fname)
-                rel_path = os.path.relpath(full_path, self.work_dir).replace("\\", "/")
-                try:
-                    with open(full_path, "r", encoding="utf-8") as f:
-                        content = f.read()
-                    files[rel_path] = {
-                        "content": content,
-                        "encoding": "utf-8",
-                    }
-                except (UnicodeDecodeError, OSError):
-                    pass
+        for subdir in ("notes", "plans", "reports"):
+            sub_path = os.path.join(self.work_dir, subdir)
+            if not os.path.isdir(sub_path):
+                continue
+            for root, dirs, fnames in os.walk(sub_path):
+                for fname in fnames:
+                    full_path = os.path.join(root, fname)
+                    rel_path = os.path.relpath(full_path, self.work_dir).replace("\\", "/")
+                    try:
+                        with open(full_path, "r", encoding="utf-8") as f:
+                            content = f.read()
+                        files[rel_path] = {
+                            "content": content,
+                            "encoding": "utf-8",
+                        }
+                    except (UnicodeDecodeError, OSError):
+                        pass
         if files:
             logger.info(f"[OfficialDeepAgent] 从磁盘扫描到 {len(files)} 个文件: {list(files.keys())}")
         return files
@@ -459,6 +686,11 @@ def create_official_deep_agent(
     backend_type: str = "filesystem",
     work_dir: Optional[str] = None,
     cache: Optional[Any] = None,
+    extra_tools: Optional[List[BaseTool]] = None,
+    selected_skill_names: Optional[List[str]] = None,
+    research_context: str = "",
+    capabilities: Optional[Sequence[str]] = None,
+    tool_config: Optional[Dict[str, Any]] = None,
     **kwargs,
 ) -> OfficialDeepAgentAdapter:
     """
@@ -507,49 +739,41 @@ def create_official_deep_agent(
         backend_type: 后端类型 ("state"/"filesystem"/"local_shell")
         work_dir: 工作目录
         cache: Agent 级别缓存实例
+        extra_tools: 额外工具列表（MCP 工具、用户自定义 LangChain 工具等）
 
     Returns:
         OfficialDeepAgentAdapter 实例
     """
     from deepagents import create_deep_agent
 
+    warnings.warn("create_official_deep_agent 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2)
     logger.info(f"创建官方 Deep Agent: thread_id={thread_id}")
 
-    from langchain.chat_models import init_chat_model
-    from Django_xm.apps.ai_engine.config import settings as ai_settings
+    from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model_by_provider
 
-    model = init_chat_model(
-        get_model_string(),
-        use_responses_api=False,
-        temperature=0.7,
-        api_key=ai_settings.openai_api_key,
-        base_url=ai_settings.openai_api_base,
-    )
+    _provider_id = kwargs.pop('provider_id', None)
+    _model_name = kwargs.pop('model_name', None)
+    _temperature = kwargs.pop('temperature', None)
+    _max_tokens = kwargs.pop('max_tokens', None)
+    _special_params = kwargs.pop('special_params', None)
 
-    tools: List[BaseTool] = []
-    if enable_web_search:
+    if _provider_id:
         try:
-            search_tool = create_tavily_search_tool()
-            tools.append(search_tool)
-            logger.debug("添加 Tavily 搜索工具到主 Agent")
-        except ValueError:
-            logger.warning("Tavily API Key 未配置，跳过主 Agent 搜索工具")
+            model = get_chat_model_by_provider(
+                provider_id=_provider_id,
+                model_name=_model_name,
+                temperature=_temperature,
+                max_tokens=_max_tokens,
+                special_params=_special_params,
+            )
+            logger.info(f"使用用户指定模型: provider={_provider_id}, model={_model_name}, temp={_temperature}")
+        except Exception as e:
+            logger.warning(f"使用指定模型失败，回退到默认模型字符串: {e}")
+            model = get_model_string()
+    else:
+        model = get_model_string()
 
-    if retriever_tool:
-        tools.append(retriever_tool)
-        logger.debug("添加 RAG 检索工具到主 Agent")
-
-    subagents = _build_subagents(
-        enable_web_search=enable_web_search,
-        enable_doc_analysis=enable_doc_analysis,
-        retriever_tool=retriever_tool,
-    )
-
-    extra_middleware = _build_extra_middleware(
-        extra_middleware=middleware,
-        enable_guardrails=enable_guardrails,
-        guardrails_strict_mode=guardrails_strict_mode,
-    )
+    model_string = _model_name if _provider_id and _model_name else get_model_string()
 
     if checkpointer is None:
         checkpointer = get_checkpointer()
@@ -559,6 +783,99 @@ def create_official_deep_agent(
         if auto_store is not None:
             store = auto_store
             logger.info("自动注入 Store（长期记忆）")
+
+    effective_capabilities = list(capabilities or capability_registry.get_default_capabilities("deep_research"))
+
+    if effective_capabilities:
+        extra_middleware = list(capability_registry.build_middleware_for_agent(
+            "deep_research", effective_capabilities,
+            model=model_string,
+            model_name=model_string,
+            user_id=str(user_id) if user_id else None,
+            store=store,
+            task_id=thread_id,
+            thread_id=thread_id,
+        ))
+        if enable_guardrails:
+            guardrails = create_guardrails_middleware(
+                strict_mode=guardrails_strict_mode,
+                validate_tool_calls=True,
+                raise_on_error=guardrails_strict_mode,
+            )
+            extra_middleware.append(guardrails)
+            logger.info("GuardrailsMiddleware 已启用")
+        if middleware:
+            extra_middleware.extend(middleware)
+            logger.debug(f"追加 {len(middleware)} 个自定义 Middleware")
+    else:
+        extra_middleware = _build_extra_middleware(
+            extra_middleware=middleware,
+            enable_guardrails=enable_guardrails,
+            guardrails_strict_mode=guardrails_strict_mode,
+            thread_id=thread_id,
+        )
+
+    _selected_mcp_servers = kwargs.pop('selected_mcp_servers', None)
+    _selected_tools = kwargs.pop('selected_tools', None)
+
+    effective_tool_config = tool_config or {
+        "use_tools": True,
+        "use_web_search": enable_web_search,
+        "use_mcp": bool(extra_tools),
+        "selected_tools": _selected_tools or [],
+        "selected_mcp_servers": _selected_mcp_servers or [],
+        "user_id": user_id,
+    }
+
+    if "tool_injection" in effective_capabilities:
+        try:
+            tools = run_async(capability_registry.build_tools_for_agent_async(
+                "deep_research", effective_capabilities, tool_config=effective_tool_config,
+            ))
+        except Exception as e:
+            logger.warning(f"CapabilityRegistry 工具加载失败，回退到手动加载: {e}")
+            tools = run_async(_fallback_load_tools(
+                enable_web_search=enable_web_search,
+                retriever_tool=retriever_tool,
+                extra_tools=extra_tools,
+            ))
+    else:
+        tools = run_async(_fallback_load_tools(
+            enable_web_search=enable_web_search,
+            retriever_tool=retriever_tool,
+            extra_tools=extra_tools,
+        ))
+
+    tools = [_ensure_sync_tool(t) for t in tools]
+
+    subagent_middleware_list: Optional[Sequence[AgentMiddleware]] = None
+    if "context_management" in effective_capabilities:
+        try:
+            from Django_xm.apps.context_manager.middleware import ContextManagerMiddleware
+            lightweight_ctx = ContextManagerMiddleware(
+                model_name=model_string,
+                trigger_tokens=60000,
+                strategy="hybrid",
+                user_id=str(user_id) if user_id else None,
+                store=store,
+                thread_id=thread_id,
+            )
+            subagent_middleware_list = [lightweight_ctx]
+            logger.info("为子智能体注入轻量级 ContextManagerMiddleware (trigger_tokens=60000)")
+        except Exception as e:
+            logger.warning(f"子智能体上下文管理 Middleware 创建失败: {e}")
+
+    has_search = _has_search_tools(extra_tools)
+    if has_search and not enable_web_search:
+        logger.info("extra_tools 中包含搜索工具，自动启用 web-researcher 子智能体")
+
+    subagents = _build_subagents(
+        enable_web_search=enable_web_search,
+        enable_doc_analysis=enable_doc_analysis,
+        retriever_tool=retriever_tool,
+        extra_tools=extra_tools,
+        subagent_middleware=subagent_middleware_list,
+    )
 
     backend = _get_backend(backend_type=backend_type, work_dir=work_dir)
 
@@ -570,13 +887,19 @@ def create_official_deep_agent(
         ))
         work_dir = os.path.join(data_dir, "research", thread_id)
         os.makedirs(work_dir, exist_ok=True)
-        backend = _get_backend(backend_type="filesystem", work_dir=work_dir)
-        logger.info(f"FilesystemBackend 工作目录: {work_dir}")
+        sandbox_dir = os.path.join(work_dir, "sandbox")
+        os.makedirs(sandbox_dir, exist_ok=True)
+        backend = _get_backend(backend_type="filesystem", work_dir=work_dir, sandbox_dir=sandbox_dir)
+        logger.info(f"CompositeBackend 工作目录: {work_dir}, sandbox: {sandbox_dir}")
+
+    system_prompt = DEEP_RESEARCH_SYSTEM_PROMPT
+    if research_context:
+        system_prompt = f"{DEEP_RESEARCH_SYSTEM_PROMPT}\n\n---\n\n{research_context}"
 
     agent_kwargs: Dict[str, Any] = {
         "model": model,
         "tools": tools if tools else None,
-        "system_prompt": DEEP_RESEARCH_SYSTEM_PROMPT,
+        "system_prompt": system_prompt,
         "middleware": extra_middleware if extra_middleware else (),
         "subagents": subagents if subagents else None,
         "checkpointer": checkpointer,
@@ -596,6 +919,40 @@ def create_official_deep_agent(
     if memory:
         agent_kwargs["memory"] = memory
 
+    # Skills 集成：按用户选择加载 Skill 目录
+    if skills is None and selected_skill_names:
+        try:
+            from Django_xm.apps.tools.skills.adapter import SkillAdapter
+            adapter = SkillAdapter(user_id=user_id)
+            skill_dirs = adapter.to_deep_agent_skills(selected_skill_names=selected_skill_names)
+            if skill_dirs:
+                skills = skill_dirs
+                logger.info(f"按选择加载 {len(skill_dirs)} 个 Skill: {selected_skill_names}")
+        except Exception as e:
+            logger.warning(f"加载 Skill 目录失败: {e}")
+
+    if skills and backend_type == "filesystem" and work_dir:
+        skills_work_dir = os.path.join(work_dir, "sandbox", "skills")
+        os.makedirs(skills_work_dir, exist_ok=True)
+        sandbox_skills = []
+        for skill_dir in skills:
+            if not os.path.isdir(skill_dir):
+                continue
+            skill_name = os.path.basename(skill_dir)
+            dest = os.path.join(skills_work_dir, skill_name)
+            if not os.path.exists(dest):
+                try:
+                    os.symlink(skill_dir, dest)
+                    logger.debug(f"符号链接 Skill 到沙箱: {skill_dir} -> {dest}")
+                except OSError:
+                    import shutil
+                    shutil.copytree(skill_dir, dest)
+                    logger.debug(f"复制 Skill 目录到沙箱: {skill_dir} -> {dest}")
+            sandbox_skills.append(dest)
+        if sandbox_skills:
+            skills = sandbox_skills
+            logger.info(f"Skill 已链接到沙箱: {skills_work_dir}")
+
     if skills:
         agent_kwargs["skills"] = skills
 
@@ -609,12 +966,19 @@ def create_official_deep_agent(
 
     agent_kwargs.update(kwargs)
 
+    # 过滤掉 create_deep_agent 不支持的参数
+    _unsupported = {'enable_deep_thinking'}
+    for key in _unsupported:
+        agent_kwargs.pop(key, None)
+
     graph = create_deep_agent(**agent_kwargs)
 
     logger.info(
         f"官方 Deep Agent 创建成功 "
-        f"(extra_middleware={len(extra_middleware)}, subagents={len(subagents)}, "
-        f"backend={backend_type}, store={'yes' if store else 'no'})"
+        f"(tools={len(tools)}, extra_middleware={len(extra_middleware)}, subagents={len(subagents)}, "
+        f"backend={backend_type}, store={'yes' if store else 'no'}, "
+        f"extra_tools={len(extra_tools) if extra_tools else 0}, "
+        f"capabilities={effective_capabilities})"
     )
 
     return OfficialDeepAgentAdapter(graph=graph, thread_id=thread_id, work_dir=work_dir)

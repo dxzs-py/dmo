@@ -53,6 +53,24 @@ class SecureSessionCacheService:
             return False
 
     @classmethod
+    def get_cached_sessions_batch(cls, user_id, session_ids):
+        """批量读取缓存，避免逐个读取的 N+1 问题"""
+        if not session_ids:
+            return []
+        try:
+            cache_keys = [cls._get_cache_key(user_id, sid) for sid in session_ids]
+            cached_data = cache.get_many(cache_keys)
+            results = []
+            for key in cache_keys:
+                data = cached_data.get(key)
+                if data is not None:
+                    results.append(data)
+            return results
+        except Exception as e:
+            logger.error(f"Failed to batch get cached sessions: {str(e)}")
+            return []
+
+    @classmethod
     def get_cached_session(cls, user_id, session_id):
         try:
             cache_key = cls._get_cache_key(user_id, session_id)
@@ -104,10 +122,10 @@ class SecureSessionCacheService:
             session_ids = cls.get_user_sessions_list(user_id)
             invalidated_count = 0
 
-            for session_id in session_ids:
-                cache_key = cls._get_cache_key(user_id, session_id)
-                cache.delete(cache_key)
-                invalidated_count += 1
+            if session_ids:
+                cache_keys = [cls._get_cache_key(user_id, sid) for sid in session_ids]
+                cache.delete_many(cache_keys)
+                invalidated_count = len(session_ids)
 
             sessions_list_key = cls._get_user_sessions_key(user_id)
             cache.delete(sessions_list_key)

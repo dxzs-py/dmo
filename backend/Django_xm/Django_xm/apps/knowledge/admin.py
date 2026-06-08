@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import DocumentIndex, Document
+from .models import DocumentIndex, Document, IndexMetadata
 
 
 @admin.register(DocumentIndex)
@@ -32,3 +32,13 @@ class DocumentAdmin(admin.ModelAdmin):
         else:
             return f"{size / (1024 * 1024):.1f} MB"
     file_size_display.short_description = '文件大小'
+
+
+@admin.register(IndexMetadata)
+class IndexMetadataAdmin(admin.ModelAdmin):
+    list_display = ['name', 'user', 'status', 'store_type', 'embedding_model', 'num_documents', 'created_at', 'updated_at']
+    list_filter = ['status', 'store_type', 'created_at']
+    search_fields = ['name', 'description', 'embedding_model']
+    ordering = ['-created_at']
+    raw_id_fields = ['user']
+    readonly_fields = ['created_at', 'updated_at']

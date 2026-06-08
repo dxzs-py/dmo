@@ -18,7 +18,7 @@
 import logging
 from typing import Optional, Dict, Any, List
 
-from Django_xm.apps.config_center.config import get_logger
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 

@@ -1,6 +1,8 @@
 export { apiClient } from './axios'
 export { chatAPI, streamChat } from './chat'
+export { toolsAPI } from './tools'
 export { knowledgeAPI, ragAPI } from './knowledge'
+export { cacheAPI } from './cache'
 export { workflowAPI } from './workflow'
 export { deepResearchAPI } from './research'
 export { userAPI } from './user'

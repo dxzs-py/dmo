@@ -2,8 +2,8 @@
 知识库视图模块
 
 视图已按功能拆分到子模块中:
-- views_kb.py: 知识库管理视图 (KnowledgeBase*)
-- views_rag.py: RAG 索引/文档/查询视图 (RAG*, rag_query_stream)
+- views_kb.py: 知识库管理视图 (KnowledgeBase*) — 主要入口
+- views_rag.py: RAG 查询/检索/流式视图 (RAGQueryView, RAGSearchView, rag_query_stream)
 - views_async.py: 异步 RAG 操作视图 (AsyncRAG*)
 - views_utils.py: 公共工具函数
 
@@ -19,16 +19,6 @@ from .views_kb import (
     KnowledgeBaseSearchView,
 )
 from .views_rag import (
-    RAGIndexCreateView,
-    RAGEmptyIndexCreateView,
-    RAGIndexListView,
-    RAGIndexDetailView,
-    RAGIndexDeleteView,
-    RAGIndexStatsView,
-    RAGDocumentUploadView,
-    RAGDocumentListView,
-    RAGDocumentDeleteView,
-    RAGDocumentAddDirectoryView,
     RAGQueryView,
     RAGSearchView,
     rag_query_stream,
@@ -52,16 +42,6 @@ __all__ = [
     'KnowledgeBaseUploadView',
     'KnowledgeBaseDocumentDeleteView',
     'KnowledgeBaseSearchView',
-    'RAGIndexCreateView',
-    'RAGEmptyIndexCreateView',
-    'RAGIndexListView',
-    'RAGIndexDetailView',
-    'RAGIndexDeleteView',
-    'RAGIndexStatsView',
-    'RAGDocumentUploadView',
-    'RAGDocumentListView',
-    'RAGDocumentDeleteView',
-    'RAGDocumentAddDirectoryView',
     'RAGQueryView',
     'RAGSearchView',
     'rag_query_stream',

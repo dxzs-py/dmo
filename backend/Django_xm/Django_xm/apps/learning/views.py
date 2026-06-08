@@ -8,12 +8,13 @@ from urllib.parse import quote
 from django.http import StreamingHttpResponse, FileResponse, HttpResponse
 from rest_framework.views import APIView
 from rest_framework import status
+from rest_framework.renderers import BaseRenderer
 
-from Django_xm.apps.common.sse_utils import sse_response
+from Django_xm.common.sse_utils import sse_response, sse_error_event
 from rest_framework.permissions import IsAuthenticated
 
-from Django_xm.apps.common.responses import success_response, error_response, not_found_response, validation_error_response
-from Django_xm.apps.common.error_codes import ErrorCode
+from Django_xm.common.responses import success_response, error_response, not_found_response, validation_error_response
+from Django_xm.common.error_codes import ErrorCode
 
 from .serializers import (
     WorkflowStartSerializer,
@@ -25,8 +26,16 @@ from .services import WorkflowService
 from .services.study_flow import get_workflow_state, _get_study_flow
 from .models import WorkflowSession
 from Django_xm.apps.core.services.file_manager import get_file_manager
-from Django_xm.apps.config_center.config import get_logger
-from Django_xm.apps.core.permissions import IsAuthenticatedOrQueryParam
+from Django_xm.apps.core.config import get_logger
+from Django_xm.common.permissions import IsAuthenticatedOrQueryParam
+
+class SSERenderer(BaseRenderer):
+    media_type = 'text/event-stream'
+    format = 'txt'
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        return data
+
 
 logger = get_logger(__name__)
 file_manager = get_file_manager()
@@ -104,6 +113,7 @@ class WorkflowStartView(APIView):
 class WorkflowStartStreamView(APIView):
     """启动学习工作流（SSE流式输出）"""
     permission_classes = [IsAuthenticated]
+    renderer_classes = [SSERenderer]
 
     def options(self, request):
         response = HttpResponse(status=200)
@@ -233,7 +243,7 @@ class WorkflowStartStreamView(APIView):
 
             except Exception as e:
                 logger.error(f"[API] 流式工作流执行失败：{str(e)}", exc_info=True)
-                yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+                yield sse_error_event(code="50001", message=str(e))
 
         return sse_response(event_stream())
 
@@ -321,19 +331,14 @@ class WorkflowStatusView(APIView):
                 is_deleted=False
             ).first()
 
-            state = WorkflowService.get_workflow_status(thread_id)
+            if not session:
+                return error_response(
+                    code=ErrorCode.NOT_FOUND,
+                    message='工作流会话不存在或无权访问',
+                    http_status=status.HTTP_404_NOT_FOUND
+                )
 
-            if not session and state:
-                try:
-                    from .services.persistence_service import get_persistence_service
-                    persistence_service = get_persistence_service()
-                    persistence_service.save_workflow_state(
-                        thread_id=thread_id,
-                        state=state,
-                        user_id=request.user.id
-                    )
-                except Exception:
-                    pass
+            state = WorkflowService.get_workflow_status(thread_id)
 
             if not state:
                 return error_response(
@@ -377,6 +382,18 @@ class WorkflowHistoryView(APIView):
 
     def get(self, request, thread_id):
         try:
+            session = WorkflowSession.objects.filter(
+                thread_id=thread_id,
+                created_by=request.user,
+                is_deleted=False
+            ).first()
+            if not session:
+                return error_response(
+                    code=ErrorCode.NOT_FOUND,
+                    message='工作流会话不存在或无权访问',
+                    http_status=status.HTTP_404_NOT_FOUND
+                )
+
             history = WorkflowService.get_workflow_history(thread_id)
             return success_response(
                 data={"thread_id": thread_id, "history": history}
@@ -474,7 +491,7 @@ class WorkflowFilesListView(APIView):
 
             files = file_manager.list_task_files(thread_id, 'workflow')
             
-            from Django_xm.apps.common.serializers import FileInfoSerializer
+            from Django_xm.common.serializers import FileInfoSerializer
             serializer = FileInfoSerializer([f.to_dict() for f in files], many=True)
 
             return success_response(
@@ -570,7 +587,7 @@ class WorkflowFileContentView(APIView):
 
             content = file_manager.read_file_content(thread_id, filename, 'workflow')
 
-            from Django_xm.apps.common.serializers import FileInfoSerializer
+            from Django_xm.common.serializers import FileInfoSerializer
             return success_response(
                 data={
                     'filename': filename,
@@ -594,12 +611,12 @@ def workflow_stream(request, thread_id):
     使用 LangGraph 的 stream 方法获取真实的事件流
     支持Authorization header和查询参数token认证
     """
-    from Django_xm.apps.common.sse_utils import authenticate_sse_request, sse_error_response
+    from Django_xm.common.sse_utils import authenticate_sse_request, sse_error_response, sse_error_event
 
     user = authenticate_sse_request(request)
 
     if not user:
-        return sse_error_response('未登录或登录已过期', 401)
+        return sse_error_response('未登录或登录已过期', 401, code="40101")
 
     try:
         session = WorkflowSession.objects.filter(
@@ -611,7 +628,7 @@ def workflow_stream(request, thread_id):
         if not session:
             state = get_workflow_state(thread_id)
             if not state:
-                return sse_error_response('工作流不存在或无权访问', 404)
+                return sse_error_response('工作流不存在或无权访问', 404, code="40401")
 
             try:
                 from .services.persistence_service import get_persistence_service
@@ -633,7 +650,7 @@ def workflow_stream(request, thread_id):
                 state = get_workflow_state(thread_id)
 
                 if not state:
-                    yield f"data: {json.dumps({'type': 'error', 'message': '工作流不存在'}, ensure_ascii=False)}\n\n"
+                    yield sse_error_event(code="40401", message='工作流不存在')
                     return
 
                 current_step = state.get('current_step', 'unknown')
@@ -668,19 +685,19 @@ def workflow_stream(request, thread_id):
 
                 except Exception as stream_error:
                     logger.warning(f"[API] 流式执行失败：{stream_error}")
-                    yield f"data: {json.dumps({'type': 'stream_error', 'message': str(stream_error)}, ensure_ascii=False)}\n\n"
+                    yield sse_error_event(code="50001", message=str(stream_error))
                     yield f"data: {json.dumps({'type': 'complete'}, ensure_ascii=False)}\n\n"
 
             except Exception as e:
                 logger.error(f"[API] 流式输出失败：{str(e)}", exc_info=True)
-                yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+                yield sse_error_event(code="50001", message=str(e))
 
         return sse_response(event_stream())
 
     except Exception as e:
         logger.error(f"[API] 流式输出失败：{str(e)}", exc_info=True)
         def error_event():
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            yield sse_error_event(code="50001", message=str(e))
         return StreamingHttpResponse(
             error_event(),
             content_type='text/event-stream',

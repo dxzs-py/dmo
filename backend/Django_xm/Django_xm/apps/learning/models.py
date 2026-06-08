@@ -93,11 +93,10 @@ class WorkflowSession(AuditModel):
         default=0,
         verbose_name='Token 数量'
     )
-    cost = models.DecimalField(
-        max_digits=12,
-        decimal_places=6,
-        default=0,
-        verbose_name='成本(美元)'
+    token_detail = models.JSONField(
+        default=dict,
+        blank=True,
+        verbose_name='Token 明细'
     )
     response_time = models.FloatField(
         default=0,

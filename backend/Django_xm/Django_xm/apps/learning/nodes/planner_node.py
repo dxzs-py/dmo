@@ -11,8 +11,8 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import AIMessage
 
 from ..services.state import StudyFlowState
-from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
-from Django_xm.apps.config_center.config import get_logger
+from Django_xm.apps.ai_engine.services.llm_factory import get_structured_model_with_fallback
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -39,12 +39,11 @@ def planner_node(state: StudyFlowState) -> Dict[str, Any]:
     logger.info(f"[Planner Node] 开始生成学习计划，用户问题: {user_question}")
 
     try:
-        model = get_chat_model()
-        if hasattr(model, 'bound'):
-            base_model = model.bound
-        else:
-            base_model = model
-        structured_model = base_model.with_structured_output(LearningPlanSchema)
+        # 结构化输出必须使用非流式模式（避免返回 None）
+        structured_model = get_structured_model_with_fallback(
+            LearningPlanSchema,
+            streaming=False,
+        )
 
         system_prompt = """你是一位经验丰富的学习规划专家。
 
@@ -66,6 +65,18 @@ def planner_node(state: StudyFlowState) -> Dict[str, Any]:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ])
+
+        # 防御性检查：所有 fallback 模型都返回空时统一报错
+        if plan_response is None or not hasattr(plan_response, "topic"):
+            error_msg = "所有结构化输出模型均返回空结果"
+            logger.error(f"[Planner Node] {error_msg}")
+            return {
+                "error": error_msg,
+                "error_node": "planner",
+                "current_step": "planner_error",
+                "messages": [AIMessage(content=f"\n\n⚠️ {error_msg}，请稍后重试。")],
+                "updated_at": datetime.now().isoformat()
+            }
 
         learning_plan = {
             "topic": plan_response.topic,

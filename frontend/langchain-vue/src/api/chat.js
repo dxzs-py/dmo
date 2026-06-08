@@ -67,7 +67,7 @@ export const chatAPI = {
   createSession(data) {
     const sessionData = { ...data }
     if (sessionData.title && sessionData.title.length > 200) sessionData.title = sessionData.title.slice(0, 200)
-    if (sessionData.mode && !settings.API_VALIDATION.ALLOWED_MODES.includes(sessionData.mode)) sessionData.mode = 'basic-agent'
+    if (sessionData.mode && !settings.API_VALIDATION.ALLOWED_MODES.includes(sessionData.mode)) sessionData.mode = 'agent'
     return apiClient.post('/chat/sessions/create/', sessionData)
   },
 
@@ -85,12 +85,12 @@ export const chatAPI = {
         return Promise.reject(new Error('标题不能为空'))
       updateData.title = data.title.length > 200 ? data.title.slice(0, 200) : data.title.trim()
     }
-    return apiClient.put(`/chat/sessions/${sessionId}/`, updateData)
+    return apiClient.patch(`/chat/sessions/${sessionId}/`, updateData)
   },
 
-  deleteSession(sessionId) {
+  deleteSession(sessionId, params = {}) {
     if (!sessionId) return Promise.reject(new Error('会话ID不能为空'))
-    return apiClient.delete(`/chat/sessions/${sessionId}/`)
+    return apiClient.delete(`/chat/sessions/${sessionId}/`, { params })
   },
 
   addMessage(sessionId, data) {
@@ -114,16 +114,29 @@ export const chatAPI = {
     if (!messageId) return Promise.reject(new Error('消息ID不能为空'))
     const updateData = { ...data }
     if (updateData.content && updateData.content.length > 50000) updateData.content = updateData.content.slice(0, 50000)
-    return apiClient.put(`/chat/messages/${messageId}/`, updateData)
+    return apiClient.patch(`/chat/messages/${messageId}/`, updateData)
   },
 
-  uploadAttachment(sessionId, file) {
+  deleteMessage(messageId) {
+    if (!messageId) return Promise.reject(new Error('消息ID不能为空'))
+    return apiClient.delete(`/chat/messages/${messageId}/delete/`)
+  },
+
+  deleteMessagePair(sessionId, userMessageId) {
+    if (!sessionId) return Promise.reject(new Error('会话ID不能为空'))
+    if (!userMessageId) return Promise.reject(new Error('用户消息ID不能为空'))
+    return apiClient.delete(`/chat/sessions/${sessionId}/messages/pair/delete/`, { data: { user_message_id: userMessageId } })
+  },
+
+  uploadAttachment(sessionId, file, { onUploadProgress, signal } = {}) {
     if (!sessionId) return Promise.reject(new Error('会话ID不能为空'))
     if (!file) return Promise.reject(new Error('请选择要上传的文件'))
     const formData = new FormData()
     formData.append('file', file)
     return apiClient.post(`/attachments/sessions/${sessionId}/upload/`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: onUploadProgress || undefined,
+      signal: signal || undefined,
     })
   },
 
@@ -132,30 +145,24 @@ export const chatAPI = {
     return apiClient.get(`/attachments/sessions/${sessionId}/list/`)
   },
 
+  deleteAttachment(attachmentId) {
+    if (!attachmentId) return Promise.reject(new Error('附件ID不能为空'))
+    return apiClient.delete(`/attachments/${attachmentId}/`)
+  },
+
   compactSession(sessionId) {
     if (!sessionId) return Promise.reject(new Error('会话ID不能为空'))
     return apiClient.post(`/chat/sessions/${sessionId}/compact/`)
   },
 
+  clearSessionMessages(sessionId) {
+    if (!sessionId) return Promise.reject(new Error('会话ID不能为空'))
+    return apiClient.delete(`/chat/sessions/${sessionId}/messages/`)
+  },
+
   getCommands() { return apiClient.get('/chat/commands/') },
   executeCommand(command, sessionId = null) { return apiClient.post('/chat/commands/execute/', { command, session_id: sessionId }) },
-  getPermissions(sessionId = null) { return apiClient.get('/chat/permissions/', { params: sessionId ? { session_id: sessionId } : {} }) },
-  updatePermissions(data) { return apiClient.put('/chat/permissions/', data) },
-  getToolConfirmation(confirmId) { return apiClient.get('/chat/tool-confirmation/', { params: { confirm_id: confirmId } }) },
-  approveToolConfirmation(confirmId) { return apiClient.post('/chat/tool-confirmation/', { confirm_id: confirmId, action: 'approve' }) },
-  denyToolConfirmation(confirmId) { return apiClient.post('/chat/tool-confirmation/', { confirm_id: confirmId, action: 'deny' }) },
-  getCostInfo() { return apiClient.get('/chat/cost/') },
   getProjectContext(path = null) { return apiClient.get('/chat/project-context/', { params: path ? { path } : {} }) },
-
-  getMcpStatus() { return apiClient.get('/chat/mcp/status/') },
-  getMcpTools(params = {}) { return apiClient.get('/chat/mcp/tools/', { params }) },
-  testMcpServer(serverName) { return apiClient.post('/chat/mcp/test/', { server_name: serverName }) },
-  getMcpCallLog(limit = 50) { return apiClient.get('/chat/mcp/call-log/', { params: { limit } }) },
-  getMcpServers() { return apiClient.get('/chat/mcp/servers/') },
-  addMcpServer(data) { return apiClient.post('/chat/mcp/servers/add/', data) },
-  deleteMcpServer(name) { return apiClient.post('/chat/mcp/servers/delete/', { name }) },
-  getToolList() { return apiClient.get('/chat/tools/') },
-  uploadTool(data) { return apiClient.post('/chat/tools/upload/', data) },
 }
 
 export async function* streamChat(request) {

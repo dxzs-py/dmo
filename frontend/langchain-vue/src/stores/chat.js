@@ -4,7 +4,7 @@ import { useStreamChat, CONNECTION_STATUS } from '../composables/useStreamChat'
 import { useSessionStore } from './session'
 import { useModelStore } from './model'
 import { chatAPI } from '../api'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElNotification } from 'element-plus'
 import { nanoid } from 'nanoid'
 import { ChatRequestSchema, validateSchema } from '../utils/validation'
 import { logger } from '../utils/logger'
@@ -13,19 +13,18 @@ import { transformFrontendMessageToBackend } from '../utils/session-transformers
 
 export const useChatStore = defineStore('chat', () => {
   const isLoading = ref(false)
-  const currentMode = ref('basic-agent')
+  const currentMode = ref('agent')
   const availableModes = ref({
-    'basic-agent': '基础代理',
-    'deep-thinking': '深度思考',
-    'rag': 'RAG 检索',
-    'workflow': '学习工作流',
+    'agent': '代理',
     'deep-research': '深度研究',
-    'guarded': '安全代理',
   })
-  const costSummary = ref({})
-  const pendingToolConfirmation = ref(null)
   const lastStreamError = ref(null)
   const messageCount = ref(0)
+  const deepResearchTask = ref(null)
+  const researchTaskId = ref(null)
+  const researchContextInfo = ref(null)  // { taskId, query } 持久化研究上下文标识，不随消息发送清空
+  const attachmentProcessing = ref(null)
+  const pendingApproval = ref(null)  // { tool_name, tool_call_id, title, command, description, state }
 
   const {
     isStreaming,
@@ -56,11 +55,14 @@ export const useChatStore = defineStore('chat', () => {
       message,
       mode: currentMode.value,
       use_tools: options.useTools !== false,
-      use_advanced_tools: options.useAdvancedTools || false,
+      use_web_search: options.use_web_search || false,
+      use_knowledge_base: options.use_knowledge_base || false,
+      use_deep_thinking: options.use_deep_thinking || false,
       use_mcp: options.useMcp || false,
       selected_mcp_servers: options.selectedMcpServers || null,
       selected_tools: options.selectedTools || null,
       selected_knowledge_base: selectedKnowledgeBaseId,
+      selected_knowledge_bases: sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
       attachment_ids: options.attachmentIds || [],
     })
 
@@ -73,6 +75,11 @@ export const useChatStore = defineStore('chat', () => {
       logger.log('[ChatStore] Creating new session...')
       await sessionStore.createNewSession(currentMode.value)
       sessionId = sessionStore.currentSessionId
+      if (!sessionId) {
+        ElMessage.error('创建会话失败，请重试')
+        isLoading.value = false
+        return
+      }
       if (selectedKnowledgeBaseId) {
         await sessionStore.setSelectedKnowledgeBase(selectedKnowledgeBaseId)
       }
@@ -81,6 +88,13 @@ export const useChatStore = defineStore('chat', () => {
 
     isLoading.value = true
     lastStreamError.value = null
+    deepResearchTask.value = null
+    attachmentProcessing.value = null
+    const currentResearchTaskId = researchTaskId.value
+    researchTaskId.value = null
+    const currentResearchContextInfo = researchContextInfo.value
+    researchContextInfo.value = null
+    const continueTaskId = options.continue_task_id || null
 
     const userMessage = {
       id: nanoid(),
@@ -88,6 +102,8 @@ export const useChatStore = defineStore('chat', () => {
       content: message,
       timestamp: new Date().toISOString(),
       attachmentIds: options.attachmentIds || [],
+      attachments: options.attachments || [],
+      researchContext: currentResearchContextInfo || null,
     }
     sessionStore.addMessageToSession(sessionId, userMessage)
 
@@ -126,25 +142,31 @@ export const useChatStore = defineStore('chat', () => {
 
       logger.log('[ChatStore] streamChat 请求参数, attachment_ids:', options.attachmentIds || [])
       const modelConfig = modelStore.getModelConfig()
+      const specialParams = modelConfig.special_params ? { ...modelConfig.special_params } : null
       const result = await streamChat(
         {
           message,
           chat_history: chatHistory,
           mode: currentMode.value,
           use_tools: options.useTools !== false,
-          use_advanced_tools: options.useAdvancedTools || false,
+          use_web_search: options.use_web_search || false,
+          use_knowledge_base: options.use_knowledge_base || false,
+          use_deep_thinking: modelStore.thinkingEnabled,
           use_mcp: options.useMcp || false,
           selected_mcp_servers: options.selectedMcpServers || null,
           selected_tools: options.selectedTools || null,
           streaming: true,
           session_id: sessionId,
           selected_knowledge_base: selectedKnowledgeBaseId,
+          selected_knowledge_bases: sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
           attachment_ids: options.attachmentIds || [],
           provider_id: modelConfig.provider_id || null,
           model_name: modelConfig.model_name || null,
-          special_params: modelConfig.special_params || null,
+          special_params: specialParams,
           temperature: modelConfig.temperature || null,
           max_tokens: modelConfig.max_tokens || null,
+          research_task_id: currentResearchTaskId || null,
+          continue_task_id: continueTaskId,
         },
         {
           appendToLastMessage: (content) => sessionStore.appendToLastMessage(sessionId, content),
@@ -157,20 +179,51 @@ export const useChatStore = defineStore('chat', () => {
           updateOrAddToolResult: (data) => sessionStore.updateOrAddToolResultToLastMessage(sessionId, data),
           setReasoning: (data) => sessionStore.setReasoningToLastMessage(sessionId, data),
           setSuggestions: (data) => sessionStore.setSuggestionsToLastMessage(sessionId, data),
+          setDeepResearchTask: (data) => { deepResearchTask.value = data },
+          setResearchTaskId: (taskId) => {
+            researchTaskId.value = taskId
+            sessionStore.setResearchTaskIdToLastMessage(sessionId, taskId)
+          },
           setContext: (data) => sessionStore.setContextToLastMessage(sessionId, data),
-          setCost: (data) => { costSummary.value = data },
           setUsage: (data) => sessionStore.setUsageToLastMessage(sessionId, data),
           setAttachmentIds: (ids) => sessionStore.setAttachmentIdsToLastUserMessage(sessionId, ids),
+          setAttachmentProcessing: (data) => { attachmentProcessing.value = data },
           setError: (errorMsg) => {
             lastStreamError.value = errorMsg
             logger.error('[ChatStore] 流式错误:', errorMsg)
           },
-          requestToolConfirmation: (data) => {
-            pendingToolConfirmation.value = {
-              confirmId: data.confirm_id,
-              toolName: data.tool_name,
-              toolArgs: data.tool_args,
+          setModelFallback: (data) => {
+            if (data?.message) {
+              ElNotification({
+                title: '模型降级提示',
+                message: data.message,
+                type: 'warning',
+                duration: 8000,
+              })
             }
+            // 同步更新 modelStore 为实际使用的模型
+            if (data?.actual_provider && data?.actual_model) {
+              const mStore = useModelStore()
+              if (mStore.currentProviderId !== data.actual_provider || mStore.currentModelName !== data.actual_model) {
+                mStore.currentProviderId = data.actual_provider
+                mStore.currentModelName = data.actual_model
+              }
+            }
+          },
+          setApproval: (data) => {
+            // 保存审批数据时同时保存当前请求的工具配置，审批恢复时使用
+            pendingApproval.value = {
+              ...data,
+              state: 'pending',
+              use_tools: options.useTools !== false,
+              use_web_search: options.use_web_search || false,
+              use_mcp: options.useMcp || false,
+              selected_mcp_servers: options.selectedMcpServers || null,
+              selected_tools: options.selectedTools || null,
+              use_knowledge_base: options.use_knowledge_base || false,
+              selected_knowledge_bases: sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
+            }
+            sessionStore.setApprovalToLastMessage(sessionId, { ...data, state: 'pending' })
           },
         }
       )
@@ -183,6 +236,24 @@ export const useChatStore = defineStore('chat', () => {
 
       if (result.aborted) return
 
+      // 审批中断时：将工具调用状态标记为 pending_approval，并保存审批数据
+      // 这样刷新后前端能正确显示"等待审批"状态，而非"执行中"
+      if (pendingApproval.value) {
+        const session = sessionStore.sessions.find(s => s.id === sessionId)
+        if (session && session.messages.length > 0) {
+          const lastMsg = session.messages[session.messages.length - 1]
+          if (lastMsg.toolCalls && Array.isArray(lastMsg.toolCalls)) {
+            lastMsg.toolCalls = lastMsg.toolCalls.map(tc => ({
+              ...tc,
+              status: tc.status === 'running' ? 'pending_approval' : tc.status,
+            }))
+          }
+          // 保存审批数据到消息对象，刷新后能恢复审批 UI
+          lastMsg.approval = pendingApproval.value
+          lastMsg.approvalState = 'pending'
+        }
+      }
+
       const finalMessages = sessionStore.getSessionMessages(sessionId) || []
       if (finalMessages.length <= 2) {
         const lastMsg = finalMessages[finalMessages.length - 1]
@@ -192,10 +263,20 @@ export const useChatStore = defineStore('chat', () => {
         }
       }
 
-      sessionStore.syncLastMessageToBackend(sessionId).catch(() => {})
+      sessionStore.syncLastMessageToBackend(sessionId).catch((error) => {
+        logger.error('[ChatStore] 消息同步到后端失败:', error)
+        ElMessage.warning({
+          message: '消息同步失败，请刷新页面重试',
+          duration: 5000,
+          showClose: true,
+        })
+      })
     } finally {
       isLoading.value = false
       sessionStore.touchSessionUpdatedAt(sessionId)
+      if (attachmentProcessing.value && attachmentProcessing.value.stage !== 'complete') {
+        attachmentProcessing.value = null
+      }
     }
   }
 
@@ -262,7 +343,7 @@ export const useChatStore = defineStore('chat', () => {
 
     try {
       const chatHistory = messages
-        .slice(0, messageIndex)
+        .slice(0, messageIndex - 1)
         .map(m => ({
           role: m.role || 'user',
           content: m.content || '',
@@ -270,20 +351,24 @@ export const useChatStore = defineStore('chat', () => {
         .filter(m => m.content && m.content.trim())
 
       const modelConfig = modelStore.getModelConfig()
+      let regenSpecialParams = modelConfig.special_params ? { ...modelConfig.special_params } : null
       const result = await streamChat(
         {
           message: userMessage.content || '',
           chat_history: chatHistory,
           mode: currentMode.value,
           use_tools: true,
-          use_advanced_tools: false,
+          use_web_search: false,
+          use_knowledge_base: !!selectedKnowledgeBaseId,
+          use_deep_thinking: modelStore.thinkingEnabled,
           use_mcp: false,
           streaming: true,
           session_id: sid,
           selected_knowledge_base: selectedKnowledgeBaseId,
+          selected_knowledge_bases: sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
           provider_id: modelConfig.provider_id || null,
           model_name: modelConfig.model_name || null,
-          special_params: modelConfig.special_params || null,
+          special_params: regenSpecialParams,
           temperature: modelConfig.temperature || null,
           max_tokens: modelConfig.max_tokens || null,
         },
@@ -299,11 +384,9 @@ export const useChatStore = defineStore('chat', () => {
           setReasoning: (data) => sessionStore.setReasoningToMessage(sid, messageIndex, data),
           setSuggestions: (data) => sessionStore.setSuggestionsToMessage(sid, messageIndex, data),
           setContext: (data) => sessionStore.setContextToMessage(sid, messageIndex, data),
-          setCost: (data) => { costSummary.value = data },
           setUsage: (data) => {
             if (data.model !== undefined) currentMessage.model = data.model
             if (data.tokenCount !== undefined) currentMessage.tokenCount = data.tokenCount
-            if (data.cost !== undefined) currentMessage.cost = data.cost
             if (data.responseTime !== undefined) currentMessage.responseTime = data.responseTime
           },
           setError: (errorMsg) => {
@@ -334,8 +417,18 @@ export const useChatStore = defineStore('chat', () => {
     try {
       const response = await chatAPI.getModes()
       const data = response.data
-      if (data.code === 200 && data.data?.modes) availableModes.value = data.data.modes
-      if (data.data?.default && !currentMode.value) currentMode.value = data.data.default
+      if (data.code === 200 && data.data?.modes) {
+        const backendModes = data.data.modes
+        // 后端返回数组格式 [{id, label, ...}]，转换为 {id: label} 对象
+        if (Array.isArray(backendModes)) {
+          const modesMap = {}
+          backendModes.forEach(m => { modesMap[m.id] = m.label })
+          availableModes.value = modesMap
+        } else {
+          availableModes.value = backendModes
+        }
+      }
+      if (data.data?.default_mode) currentMode.value = data.data.default_mode
     } catch (error) {
       logger.error('Failed to fetch modes:', error)
     }
@@ -350,14 +443,250 @@ export const useChatStore = defineStore('chat', () => {
     lastStreamError.value = null
   }
 
+  const clearResearchContext = () => {
+    researchContextInfo.value = null
+  }
+
+  const deleteMessage = async (backendId, researchTaskId, frontendId) => {
+    const sessionStore = useSessionStore()
+    const sessionId = sessionStore.currentSessionId
+    await chatAPI.deleteMessage(backendId)
+    sessionStore.removeMessageFromSession(sessionId, frontendId || backendId)
+    ElMessage.success('消息已删除')
+    if (researchTaskId) {
+      ElMessage.info({ message: '关联的深度研究任务已清理', duration: 3000 })
+    }
+  }
+
+  const deleteMessagePair = async (sessionId, backendId, frontendId) => {
+    const sessionStore = useSessionStore()
+    await chatAPI.deleteMessagePair(sessionId, backendId)
+    sessionStore.removeMessagePairFromSession(sessionId, frontendId || backendId)
+    ElMessage.success('消息已删除')
+  }
+
+  const approveCommand = async (userInput = null) => {
+    if (!pendingApproval.value) return
+    const approval = pendingApproval.value
+    pendingApproval.value = { ...approval, state: 'approved' }
+
+    // 同步更新消息的 approvalState
+    const sessionStore = useSessionStore()
+    const sessionId = sessionStore.currentSessionId
+    sessionStore.setApprovalToLastMessage(sessionId, { ...approval, state: 'approved' })
+
+    try {
+      // 调用审批 API，通过 Command(resume=...) 恢复 Agent 执行
+      // CONFIRM 模式：resume=True
+      // CONFIRM_WITH_INPUT 模式：resume=用户输入的值
+      const interruptId = approval.interrupt_id || approval.tool_call_id || ''
+      const modelStore = useModelStore()
+      const modelConfig = modelStore.getModelConfig()
+      const requestBody = {
+        session_id: sessionId,
+        interrupt_id: interruptId,
+        approved: true,
+        // 传递模型配置，确保审批恢复时使用正确的模型
+        provider_id: modelConfig.provider_id || null,
+        model_name: modelConfig.model_name || null,
+        use_deep_thinking: modelStore.thinkingEnabled,
+        special_params: modelConfig.special_params ? { ...modelConfig.special_params } : null,
+        temperature: modelConfig.temperature || null,
+        max_tokens: modelConfig.max_tokens || null,
+        // 传递工具配置，确保审批恢复时使用与原始请求一致的工具集
+        use_tools: approval.use_tools ?? true,
+        use_web_search: approval.use_web_search ?? false,
+        use_mcp: approval.use_mcp ?? false,
+        selected_mcp_servers: approval.selected_mcp_servers ?? null,
+        selected_tools: approval.selected_tools ?? null,
+        use_knowledge_base: approval.use_knowledge_base ?? false,
+        selected_knowledge_bases: approval.selected_knowledge_bases ?? [],
+      }
+      // CONFIRM_WITH_INPUT 模式：传递用户输入值
+      if (approval.action === 'confirm_with_input' && userInput !== null) {
+        requestBody.user_input = userInput
+      }
+
+      const response = await fetch('/api/v1/chat/approval/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('user_token')}`,
+        },
+        body: JSON.stringify(requestBody),
+      })
+
+      if (!response.ok) {
+        throw new Error(`审批请求失败: ${response.status}`)
+      }
+
+      // 处理 SSE 流式响应
+      isStreaming.value = true
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ') || line === 'data: [DONE]') continue
+          try {
+            const parsed = JSON.parse(line.slice(6))
+            if (parsed.type === 'chunk' && parsed.content) {
+              // 将恢复后的内容追加到最后一条消息
+              sessionStore.appendToLastAssistantMessage(sessionId, parsed.content)
+            } else if (parsed.type === 'tool') {
+              // 工具调用事件 - 更新消息中的工具信息
+              sessionStore.addOrUpdateToolCallToLastMessage(sessionId, parsed.data)
+            } else if (parsed.type === 'tool_result') {
+              // 工具结果事件
+              sessionStore.updateOrAddToolResultToLastMessage(sessionId, parsed.data)
+            } else if (parsed.type === 'reasoning' && parsed.data?.content) {
+              // 推理过程事件
+              sessionStore.setReasoningToLastMessage(sessionId, parsed.data)
+            }
+          } catch (e) {
+            // 忽略解析错误
+          }
+        }
+      }
+
+      isStreaming.value = false
+      pendingApproval.value = null
+
+      // 审批完成后更新消息的审批状态
+      const session = sessionStore.sessions.find(s => s.id === sessionId)
+      if (session && session.messages.length > 0) {
+        const lastMsg = session.messages[session.messages.length - 1]
+        lastMsg.approvalState = 'approved'
+        if (lastMsg.approval) {
+          lastMsg.approval = { ...lastMsg.approval, state: 'approved' }
+        }
+        // 将工具调用状态从 pending_approval 更新为 completed
+        if (lastMsg.toolCalls && Array.isArray(lastMsg.toolCalls)) {
+          lastMsg.toolCalls = lastMsg.toolCalls.map(tc => ({
+            ...tc,
+            status: tc.status === 'pending_approval' ? 'completed' : tc.status,
+          }))
+        }
+      }
+
+      // 审批完成后同步消息到后端，确保工具调用结果被持久化
+      try {
+        await sessionStore.syncLastMessageToBackend(sessionId)
+      } catch (syncErr) {
+        console.error('审批后同步消息失败:', syncErr)
+      }
+    } catch (err) {
+      console.error('审批确认失败:', err)
+      isStreaming.value = false
+      pendingApproval.value = { ...approval, state: 'pending' }
+      sessionStore.setApprovalToLastMessage(sessionId, { ...approval, state: 'pending' })
+    }
+  }
+
+  const rejectCommand = async () => {
+    if (!pendingApproval.value) return
+    const approval = pendingApproval.value
+    pendingApproval.value = { ...approval, state: 'rejected' }
+
+    // 同步更新消息的 approvalState
+    const sessionStore = useSessionStore()
+    const sessionId = sessionStore.currentSessionId
+    sessionStore.setApprovalToLastMessage(sessionId, { ...approval, state: 'rejected' })
+
+    try {
+      // 调用审批 API，通过 Command(resume=False) 告知 Agent 用户拒绝
+      const interruptId = approval.interrupt_id || approval.tool_call_id || ''
+      const modelStore = useModelStore()
+      const modelConfig = modelStore.getModelConfig()
+      const response = await fetch('/api/v1/chat/approval/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('user_token')}`,
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+          interrupt_id: interruptId,
+          approved: false,
+          // 传递模型配置，确保审批恢复时使用正确的模型
+          provider_id: modelConfig.provider_id || null,
+          model_name: modelConfig.model_name || null,
+          use_deep_thinking: modelStore.thinkingEnabled,
+          special_params: modelConfig.special_params ? { ...modelConfig.special_params } : null,
+          temperature: modelConfig.temperature || null,
+          max_tokens: modelConfig.max_tokens || null,
+          // 传递工具配置，确保审批恢复时使用与原始请求一致的工具集
+          use_tools: approval.use_tools ?? true,
+          use_web_search: approval.use_web_search ?? false,
+          use_mcp: approval.use_mcp ?? false,
+          selected_mcp_servers: approval.selected_mcp_servers ?? null,
+          selected_tools: approval.selected_tools ?? null,
+          use_knowledge_base: approval.use_knowledge_base ?? false,
+          selected_knowledge_bases: approval.selected_knowledge_bases ?? [],
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error(`审批拒绝请求失败: ${response.status}`)
+      }
+
+      // 处理 SSE 流式响应（拒绝后 Agent 可能会输出"用户已拒绝"的文本）
+      isStreaming.value = true
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ') || line === 'data: [DONE]') continue
+          try {
+            const parsed = JSON.parse(line.slice(6))
+            if (parsed.type === 'chunk' && parsed.content) {
+              sessionStore.appendToLastAssistantMessage(sessionId, parsed.content)
+            } else if (parsed.type === 'reasoning' && parsed.data?.content) {
+              sessionStore.setReasoningToLastMessage(sessionId, parsed.data)
+            }
+          } catch (e) {
+            // 忽略解析错误
+          }
+        }
+      }
+
+      isStreaming.value = false
+    } catch (err) {
+      console.error('审批拒绝失败:', err)
+      isStreaming.value = false
+    }
+
+    // 短暂展示拒绝状态后清除
+    setTimeout(() => {
+      if (pendingApproval.value?.state === 'rejected') {
+        pendingApproval.value = null
+      }
+    }, 3000)
+  }
+
   return {
     isLoading,
     isStreaming,
     currentMode,
     availableModes,
     abortController,
-    costSummary,
-    pendingToolConfirmation,
     lastStreamError,
     messageCount,
     connectionStatus,
@@ -373,5 +702,15 @@ export const useChatStore = defineStore('chat', () => {
     clearCurrentSession,
     stopStreaming,
     clearError,
+    deepResearchTask,
+    researchTaskId,
+    researchContextInfo,
+    attachmentProcessing,
+    deleteMessage,
+    deleteMessagePair,
+    pendingApproval,
+    approveCommand,
+    rejectCommand,
+    clearResearchContext,
   }
 })

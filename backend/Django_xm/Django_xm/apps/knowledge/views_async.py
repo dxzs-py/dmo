@@ -14,17 +14,17 @@ from rest_framework.permissions import IsAuthenticated
 
 from Django_xm.apps.core.throttling import KnowledgeRateThrottle
 
-from Django_xm.apps.common.responses import (
+from Django_xm.common.responses import (
     success_response, error_response, not_found_response,
 )
-from Django_xm.apps.common.error_codes import ErrorCode
-from Django_xm.apps.ai_engine.config import settings as app_cfg
+from Django_xm.common.error_codes import ErrorCode
+from Django_xm.apps.knowledge.config import settings as app_cfg
 from Django_xm.tasks.rag_tasks import (
     create_index_task,
     add_documents_to_index_task,
     delete_index_task,
 )
-from Django_xm.apps.common.task_manager import get_task_manager, TaskType
+from Django_xm.apps.core.task_redis_manager import get_task_manager, TaskType
 
 from .services.index_service import IndexManager
 from .views_utils import get_user_index_name

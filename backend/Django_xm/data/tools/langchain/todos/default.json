@@ -1,0 +1,32 @@
+[
+  {
+    "id": 1,
+    "content": "搜索LangChain官方对MySQL和PostgreSQL的适配文档",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "id": 2,
+    "content": "搜索LangChain Vector Store对PostgreSQL(pgvector)和MySQL的支持",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "id": 3,
+    "content": "搜索LangChain SQL Database集成对比",
+    "status": "completed",
+    "priority": "high"
+  },
+  {
+    "id": 4,
+    "content": "搜索社区实践和Benchmark数据",
+    "status": "completed",
+    "priority": "medium"
+  },
+  {
+    "id": 5,
+    "content": "综合对比并撰写研究报告",
+    "status": "completed",
+    "priority": "high"
+  }
+]

@@ -8,9 +8,11 @@ Django 信号处理模块 - 核心自定义信号定义
   - cache_invalidated: 缓存失效通知
   - task_status_changed: 任务状态变更通知
   - index_updated: 索引更新通知
+  - ai_data_cleanup_needed: AI 数据（checkpoint/Store）清理通知
 """
 
 import logging
+from django.apps import apps
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver, Signal
 
@@ -20,6 +22,7 @@ logger = logging.getLogger(__name__)
 cache_invalidated = Signal()
 task_status_changed = Signal()
 index_updated = Signal()
+ai_data_cleanup_needed = Signal()
 
 
 @receiver(post_save, sender='users.User')
@@ -34,9 +37,16 @@ def user_post_save(sender, instance, created, **kwargs):
 def user_post_delete(sender, instance, **kwargs):
     logger.info(f"用户删除: {instance.username} (id={instance.id})")
 
+    # 通过自定义信号通知 ai_engine 清理用户数据，避免硬导入
+    ai_data_cleanup_needed.send(
+        sender=sender,
+        user_id=instance.id,
+        session_id=None,
+    )
+
 
 try:
-    from Django_xm.apps.core.task_models import CeleryTaskRecord
+    CeleryTaskRecord = apps.get_model('core', 'CeleryTaskRecord')
 
     @receiver(post_save, sender=CeleryTaskRecord)
     def celery_task_record_post_save(sender, instance, created, **kwargs):

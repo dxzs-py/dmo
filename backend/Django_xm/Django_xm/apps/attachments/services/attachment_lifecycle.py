@@ -218,9 +218,9 @@ class AttachmentLifecycleService:
             return False
 
         try:
-            from Django_xm.apps.tools.file.reader import read_attachment_as_documents
+            from Django_xm.apps.tools.langchain.file_reader import read_attachment_as_documents
             from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
-            from Django_xm.apps.knowledge.services.index_service import IndexManager
+            from Django_xm.apps.knowledge.services.cross_app import get_index_manager
 
             docs = read_attachment_as_documents(attachment.id)
             if not docs:
@@ -230,7 +230,7 @@ class AttachmentLifecycleService:
             user_id = attachment.session.user_id
             index_name = self._get_user_index_name(user_id)
             embeddings = get_embeddings()
-            manager = IndexManager()
+            manager = get_index_manager()
 
             if not manager.index_exists(index_name):
                 manager.create_index(
@@ -262,11 +262,11 @@ class AttachmentLifecycleService:
                 return True
 
             from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
-            from Django_xm.apps.knowledge.services.index_service import IndexManager
+            from Django_xm.apps.knowledge.services.cross_app import get_index_manager
 
             user_id = attachment.session.user_id
             index_name = self._get_user_index_name(user_id)
-            manager = IndexManager()
+            manager = get_index_manager()
 
             if not manager.index_exists(index_name):
                 logger.warning(f"索引不存在: {index_name}")

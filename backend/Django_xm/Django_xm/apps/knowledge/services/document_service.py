@@ -9,7 +9,7 @@ from typing import List, Optional, Dict, Any
 
 from langchain_core.documents import Document
 
-from Django_xm.apps.config_center.config import get_logger
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -104,11 +104,15 @@ def load_document(file_path: str, add_metadata: bool = True) -> List[Document]:
         documents = loader.load()
 
         if add_metadata:
+            file_type = file_path.suffix.lower()
+            # 根据扩展名推断文档类型
+            doc_type = SUPPORTED_EXTENSIONS.get(file_type, "unknown")
             for doc in documents:
                 doc.metadata.update({
                     "source": str(file_path),
                     "file_name": file_path.name,
-                    "file_type": file_path.suffix.lower(),
+                    "file_type": file_type,
+                    "doc_type": doc_type,
                 })
 
         logger.info(f"文档加载成功: {file_path.name}, {len(documents)} 个文档块")

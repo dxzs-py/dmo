@@ -17,7 +17,6 @@ Redis 缓存服务 - 通用缓存增强模块
 import json
 import hashlib
 import logging
-import time
 import asyncio
 import threading
 from typing import Any, Optional, Dict, List, Union
@@ -41,6 +40,46 @@ CACHE_PREFIX_INDEX = 'index_meta'
 CACHE_PREFIX_CONFIG = 'app_config'
 CACHE_PREFIX_SESSION = 'chat_session'
 CACHE_PREFIX_AGENT = 'agent_state'
+
+CACHE_PREFIX_LABELS = {
+    CACHE_PREFIX_QUERY: 'RAG 查询缓存',
+    CACHE_PREFIX_MODEL: '模型响应缓存',
+    CACHE_PREFIX_EMBEDDING: 'Embedding 缓存',
+    CACHE_PREFIX_TOOL: '工具结果缓存',
+    CACHE_PREFIX_VECTOR: '向量检索缓存',
+    CACHE_PREFIX_SESSION: '会话缓存',
+    CACHE_PREFIX_AGENT: 'Agent 状态缓存',
+}
+
+
+def get_redis_client():
+    """获取 Redis 客户端（统一入口）
+
+    优先通过 Django cache 框架获取，回退到 RedisDirectClient。
+    """
+    try:
+        from django.core.cache import caches
+        default_cache = caches['default']
+        if hasattr(default_cache, 'client'):
+            client = default_cache.client
+            if hasattr(client, 'get_client'):
+                return client.get_client()
+            return client
+    except Exception as e:
+        logger.warning(f"通过 Django cache 获取 Redis 客户端失败: {e}")
+    return RedisDirectClient.get_client()
+
+
+def get_redis_info():
+    """获取 Redis info 字典"""
+    client = get_redis_client()
+    if client is None:
+        return None
+    try:
+        return client.info()
+    except Exception as e:
+        logger.error(f"获取 Redis info 失败: {e}")
+        return None
 
 
 # ==================== 缓存 TTL 配置 ====================
@@ -106,10 +145,8 @@ class CacheService:
             value = cache.get(key, default)
             if value is not None and value != default:
                 cls._increment_hit()
-                logger.debug(f"缓存命中: {key}")
             else:
                 cls._increment_miss()
-                logger.debug(f"缓存未命中: {key}")
             return value
         except Exception as e:
             logger.error(f"缓存读取失败: {key}, 错误: {e}")
@@ -709,7 +746,7 @@ class RedisDirectClient:
 
     @classmethod
     def _get_redis_config(cls):
-        from Django_xm.apps.config_center.config import settings as project_cfg
+        from Django_xm.apps.core.config import settings as project_cfg
         import os
         redis_url = os.environ.get('REDIS_URL', project_cfg.redis_url)
         redis_password = os.environ.get('REDIS_PASSWORD', project_cfg.redis_password) or None
@@ -731,6 +768,7 @@ class RedisDirectClient:
                 redis_url,
                 decode_responses=True,
                 socket_connect_timeout=3,
+                socket_timeout=3,
                 password=redis_password,
             )
             cls._client.ping()
@@ -970,3 +1008,36 @@ def setup_langchain_cache(enabled: bool = True) -> None:
         )
     except Exception as e:
         logger.warning(f"LangChain Cache 设置失败: {e}")
+
+
+# ==================== 业务级统一缓存失效接口 ====================
+
+def invalidate_chat_cache(user_id=None):
+    """统一聊天缓存失效接口
+
+    在会话创建/更新/删除、消息创建等操作后调用，
+    使 dashboard 缓存失效。
+
+    Args:
+        user_id: 用户 ID
+    """
+    if user_id is not None:
+        CacheService.delete(f"dashboard:user_{user_id}")
+
+
+def invalidate_knowledge_cache(user_id=None, user_index_name=None):
+    """统一知识库缓存失效接口
+
+    在知识库/文档增删改操作后调用，
+    使知识库列表、文档列表、查询缓存、向量搜索缓存失效。
+
+    Args:
+        user_id: 用户 ID，失效 kb_list 缓存
+        user_index_name: 用户索引名（如 user_1_my_kb），失效 doc_list、查询、向量搜索缓存
+    """
+    if user_id is not None:
+        CacheService.delete(f"kb_list:user_{user_id}")
+    if user_index_name is not None:
+        CacheService.delete(f"doc_list:{user_index_name}")
+        QueryCacheService.invalidate_index_queries(user_index_name)
+        VectorSearchCacheService.invalidate_index_queries(user_index_name)

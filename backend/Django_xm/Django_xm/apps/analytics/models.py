@@ -145,7 +145,7 @@ class DailyAggregation(BaseModel):
     chat_sessions = models.PositiveIntegerField(default=0, verbose_name='聊天会话数')
     chat_messages = models.PositiveIntegerField(default=0, verbose_name='聊天消息数')
     chat_tokens = models.PositiveIntegerField(default=0, verbose_name='聊天Token数')
-    chat_cost = models.DecimalField(max_digits=12, decimal_places=6, default=0, verbose_name='聊天成本')
+    chat_token_detail = models.JSONField(default=dict, blank=True, verbose_name='聊天Token明细')
     rag_queries = models.PositiveIntegerField(default=0, verbose_name='RAG查询数')
     documents_uploaded = models.PositiveIntegerField(default=0, verbose_name='上传文档数')
     documents_deleted = models.PositiveIntegerField(default=0, verbose_name='删除文档数')

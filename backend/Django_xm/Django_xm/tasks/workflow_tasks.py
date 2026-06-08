@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
     max_retries=2,
     default_retry_delay=30,
     soft_time_limit=1200,
+    autoretry_for=(ConnectionError, TimeoutError, OSError),
+    retry_backoff=True,
+    retry_backoff_max=60,
 )
 def execute_workflow_task(self, thread_id: str, user_question: str, user_id: int = None):
     tracker = TrackedTask(self)

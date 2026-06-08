@@ -7,7 +7,7 @@ from pathlib import Path
 from celery import shared_task
 from celery.exceptions import Retry
 
-from Django_xm.apps.knowledge.services.index_service import IndexManager
+from Django_xm.apps.knowledge.services.cross_app import get_index_manager
 from Django_xm.apps.knowledge.services.document_service import load_document, load_documents_from_directory
 from Django_xm.apps.knowledge.services.splitters import split_documents
 from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
     max_retries=3,
     default_retry_delay=30,
     soft_time_limit=3600,
+    autoretry_for=(ConnectionError, TimeoutError, OSError),
+    retry_backoff=True,
+    retry_backoff_max=60,
 )
 def create_index_task(
     self,
@@ -46,7 +49,7 @@ def create_index_task(
         logger.info(f"[Celery RAG] 开始创建索引：{index_name}")
         tracker.mark_started()
 
-        manager = IndexManager()
+        manager = get_index_manager()
 
         if manager.index_exists(index_name):
             if overwrite:
@@ -136,6 +139,9 @@ def create_index_task(
     max_retries=3,
     default_retry_delay=30,
     soft_time_limit=1800,
+    autoretry_for=(ConnectionError, TimeoutError, OSError),
+    retry_backoff=True,
+    retry_backoff_max=60,
 )
 def add_documents_to_index_task(
     self,
@@ -156,7 +162,7 @@ def add_documents_to_index_task(
         logger.info(f"[Celery RAG] 向索引添加文档：{index_name}")
         tracker.mark_started()
 
-        manager = IndexManager()
+        manager = get_index_manager()
 
         if not manager.index_exists(index_name):
             logger.error(f"[Celery RAG] 索引不存在：{index_name}")
@@ -184,7 +190,10 @@ def add_documents_to_index_task(
         logger.info(f"[Celery RAG] 文档分块完成：{len(chunks)} 个分块")
         tracker.update_progress(60, f'分块完成：{len(chunks)} 个')
 
-        embeddings = get_embeddings()
+        # 添加文档时使用索引原有维度约束，确保维度一致
+        index_metadata = manager._load_metadata(index_name)
+        required_dim = index_metadata.get('embedding_dimension') if index_metadata else None
+        embeddings = get_embeddings(required_dimension=required_dim)
         count = manager.add_documents(index_name, chunks, embeddings)
 
         logger.info(f"[Celery RAG] 文档添加完成：{count} 个分块")
@@ -218,6 +227,9 @@ def add_documents_to_index_task(
     max_retries=2,
     default_retry_delay=60,
     soft_time_limit=600,
+    autoretry_for=(ConnectionError, TimeoutError, OSError),
+    retry_backoff=True,
+    retry_backoff_max=60,
 )
 def delete_index_task(
     self,
@@ -237,7 +249,7 @@ def delete_index_task(
         logger.info(f"[Celery RAG] 删除索引：{index_name}")
         tracker.mark_started()
 
-        manager = IndexManager()
+        manager = get_index_manager()
 
         if not manager.index_exists(index_name):
             tracker.mark_success(result={'status': 'not_exists'})
@@ -246,10 +258,8 @@ def delete_index_task(
         manager.delete_index(index_name)
 
         if user_id and original_name:
-            from Django_xm.apps.chat.models import ChatSession
-            ChatSession.objects.filter(
-                user_id=user_id, selected_knowledge_base=original_name
-            ).update(selected_knowledge_base='')
+            from Django_xm.apps.chat.services.cross_app import clear_knowledge_base_selection
+            clear_knowledge_base_selection(user_id=user_id, kb_name=original_name)
 
         logger.info(f"[Celery RAG] 索引删除完成：{index_name}")
 
@@ -276,6 +286,9 @@ def delete_index_task(
     max_retries=2,
     default_retry_delay=30,
     soft_time_limit=1200,
+    autoretry_for=(ConnectionError, TimeoutError, OSError),
+    retry_backoff=True,
+    retry_backoff_max=60,
 )
 def update_index_task(self, index_name: str, user_id: int = None, task_id: str = None):
     tracker = TrackedTask(self)
@@ -289,7 +302,7 @@ def update_index_task(self, index_name: str, user_id: int = None, task_id: str =
         logger.info(f"[Celery RAG] 更新索引：{index_name}")
         tracker.mark_started()
 
-        manager = IndexManager()
+        manager = get_index_manager()
 
         if not manager.index_exists(index_name):
             tracker.mark_failure(error_message='索引不存在')

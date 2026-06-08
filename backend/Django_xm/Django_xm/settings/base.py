@@ -5,7 +5,7 @@ dev.py 和 prod.py 的公共配置基类，消除重复代码。
 仅保留环境无关的框架设置，环境差异由子模块覆盖。
 
 配置架构:
-  - 项目级真相源: apps/config_center/config.py (Pydantic ProjectSettings, 读取 .env / 环境变量)
+  - 项目级真相源: apps/core/config.py (Pydantic ProjectSettings, 读取 .env / 环境变量)
   - AI 真相源: apps/ai_engine/config.py (继承 ProjectSettings, 添加 AI 专属配置)
   - base.py: Django 框架公共设置
   - dev.py: 开发环境覆盖
@@ -25,7 +25,7 @@ _project_root = Path(__file__).resolve().parent.parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-from Django_xm.apps.config_center.config import settings as project_cfg
+from Django_xm.apps.core.config import settings as project_cfg
 from Django_xm.apps.ai_engine.config import settings as app_cfg
 
 if app_cfg.langsmith_tracing and app_cfg.langsmith_api_key:
@@ -59,19 +59,19 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
     "drf_spectacular",
-    "Django_xm.apps.config_center",
-    "Django_xm.apps.cache_manager",
-    "Django_xm.apps.attachments",
-    "Django_xm.apps.users",
-    "Django_xm.apps.core",
-    "Django_xm.apps.ai_engine",
-    "Django_xm.apps.context_manager",
-    "Django_xm.apps.tools",
-    "Django_xm.apps.chat",
-    "Django_xm.apps.knowledge",
-    "Django_xm.apps.learning",
-    "Django_xm.apps.research",
-    "Django_xm.apps.analytics",
+    "Django_xm.apps.cache_manager.apps.CacheManagerConfig",
+    "Django_xm.apps.attachments.apps.AttachmentsConfig",
+    "Django_xm.apps.users.apps.UsersConfig",
+    "Django_xm.apps.core.apps.CoreConfig",
+    "Django_xm.apps.ai_engine.apps.AiEngineConfig",
+    "Django_xm.apps.context_manager.apps.ContextManagerConfig",
+    "Django_xm.apps.tools.apps.ToolsConfig",
+    "Django_xm.apps.chat.apps.ChatConfig",
+    "Django_xm.apps.knowledge.apps.KnowledgeConfig",
+    "Django_xm.apps.learning.apps.LearningConfig",
+    "Django_xm.apps.research.apps.ResearchConfig",
+    "Django_xm.apps.analytics.apps.AnalyticsConfig",
+    "Django_xm.apps.agent_hub",
 ]
 
 ROOT_URLCONF = "Django_xm.urls"
@@ -95,20 +95,16 @@ WSGI_APPLICATION = "Django_xm.wsgi.application"
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.mysql",
-        "HOST": os.environ.get("DB_HOST", project_cfg.db_host),
-        "PORT": int(os.environ.get("DB_PORT", str(project_cfg.db_port))),
-        "USER": os.environ.get("DB_USER"),
-        "PASSWORD": os.environ.get("DB_PASSWORD"),
-        "NAME": os.environ.get("DB_NAME", project_cfg.db_name),
+        "ENGINE": "django.db.backends.postgresql",
+        "HOST": os.environ.get("DB_HOST", "127.0.0.1"),
+        "PORT": int(os.environ.get("DB_PORT", "5432")),
+        "USER": os.environ.get("DB_USER", "daixing"),
+        "PASSWORD": os.environ.get("DB_PASSWORD", ""),
+        "NAME": os.environ.get("DB_NAME", "langchain"),
         "CONN_MAX_AGE": 60,
         "CONN_HEALTH_CHECKS": True,
         "OPTIONS": {
-            "charset": "utf8mb4",
-            "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
             "connect_timeout": 10,
-            "read_timeout": 30,
-            "write_timeout": 30,
         },
     }
 }
@@ -141,6 +137,8 @@ CACHES = {
             'CONNECTION_POOL_KWARGS': {
                 'max_connections': 50,
                 'retry_on_timeout': True,
+                'socket_timeout': 3,
+                'socket_connect_timeout': 3,
             },
             'PASSWORD': os.environ.get('REDIS_PASSWORD', project_cfg.redis_password),
         },
@@ -155,6 +153,8 @@ CACHES = {
             'CONNECTION_POOL_KWARGS': {
                 'max_connections': 100,
                 'retry_on_timeout': True,
+                'socket_timeout': 3,
+                'socket_connect_timeout': 3,
             },
             'PASSWORD': os.environ.get('REDIS_PASSWORD', project_cfg.redis_password),
         },
@@ -166,7 +166,6 @@ CACHES = {
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "media/"
-MEDIA_ROOT = PROJECT_ROOT / "data"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -179,11 +178,12 @@ AUTHENTICATION_BACKENDS = [
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'Django_xm.apps.core.authentication.QueryParamTokenAuthentication',
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
-    "EXCEPTION_HANDLER": "Django_xm.apps.common.exceptions.custom_exception_handler",
+    "EXCEPTION_HANDLER": "Django_xm.common.exceptions.custom_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_THROTTLE_CLASSES": [
         "Django_xm.apps.core.throttling.AnonymousRateThrottle",
@@ -265,7 +265,16 @@ DOCUMENTS_DIR = PROJECT_ROOT / project_cfg.data_documents_path
 INDEXES_DIR = PROJECT_ROOT / app_cfg.vector_store_path
 UPLOADS_DIR = PROJECT_ROOT / project_cfg.data_uploads_path
 
-for directory in [DATA_DIR, DOCUMENTS_DIR, INDEXES_DIR, UPLOADS_DIR]:
+MEDIA_ROOT = DATA_DIR / "media"
+
+TOOLS_DIR = DATA_DIR / 'tools'
+TOOLS_SKILLS_DIR = TOOLS_DIR / 'skills'
+TOOLS_LANGCHAIN_DIR = TOOLS_DIR / 'langchain'
+TOOLS_MCP_DIR = TOOLS_DIR / 'mcp'
+
+for directory in [DATA_DIR, DOCUMENTS_DIR, INDEXES_DIR, UPLOADS_DIR,
+                  TOOLS_DIR, TOOLS_SKILLS_DIR, TOOLS_LANGCHAIN_DIR, TOOLS_MCP_DIR,
+                  MEDIA_ROOT]:
     directory.mkdir(parents=True, exist_ok=True)
 
 CELERY_ACCEPT_CONTENT = ['json']
@@ -299,9 +308,11 @@ CELERY_TASK_ROUTES = {
     'chat.index_old_attachments':        {'queue': 'chat'},
     'chat.check_storage_alerts':         {'queue': 'chat'},
     'chat.attachment_full_lifecycle':    {'queue': 'chat'},
+    'chat.cleanup_checkpoints':          {'queue': 'chat'},
     'base.cleanup_old_task_records':     {'queue': 'celery'},
     'base.check_stale_tasks':            {'queue': 'celery'},
     'base.debug_task':                   {'queue': 'celery'},
+    'analytics.track_event':             {'queue': 'default'},
 }
 
 ATTACHMENT_DEFAULT_RETENTION_DAYS = int(os.environ.get('ATTACHMENT_DEFAULT_RETENTION_DAYS', 30))
@@ -341,3 +352,48 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': crontab(minute=30),
     },
 }
+
+# AI Engine Settings
+AI_RATE_LIMIT_MAX_MODEL_CALLS = 50
+AI_RATE_LIMIT_MAX_TOOL_CALLS = 30
+AI_LLM_TIMEOUT = 120.0
+AI_LLM_MAX_RETRIES = 3
+AI_DEFAULT_PROVIDER = 'deepseek'
+AI_MODEL_CACHE_MAXSIZE = 32
+AI_TOOL_PERMISSION_CACHE_TIMEOUT = 3600
+AI_DEFAULT_MODEL_TOKEN_LIMIT = 128000
+
+AI_HELPER_MODEL_PROVIDER = ''
+AI_HELPER_MODEL_NAME = ''
+AI_HELPER_MODEL_TEMPERATURE = 0.0
+AI_HELPER_MODEL_MAX_TOKENS = 256
+
+# ── Shell Exec 安全配置 ──────────────────────────────────────────
+# 白名单命令（这些命令可直接执行，无需用户确认）
+# 匹配规则：单词命令匹配第一个词，多词命令（如 "git status"）需完整前缀匹配
+SHELL_EXEC_WHITELIST = [
+    # 浏览器自动化
+    "agent-browser",
+    # 文档转换
+    "pandoc",
+    # Python（只读/安全操作）
+    "python", "python3",
+    "pip list", "pip show", "pip check",
+    "pip3 list", "pip3 show", "pip3 check",
+    # Node
+    "node",
+    "npm list", "npm view", "npm info",
+    "npx",
+    # 系统信息（只读）
+    "echo", "dir", "ls", "type", "cat",
+    "head", "tail", "wc", "find", "where", "which",
+    "whoami", "hostname",
+    # Git（只读子命令）
+    "git status", "git log", "git diff", "git branch", "git show", "git remote",
+    # 网络（只读）
+    "curl", "ping",
+    # ↓ 在此添加自定义白名单命令
+    "conda info", "conda list", "conda env list",
+]
+# 允许的工作目录（为空则不限制，命令只能在指定目录下执行）
+SHELL_EXEC_ALLOWED_DIRS = None

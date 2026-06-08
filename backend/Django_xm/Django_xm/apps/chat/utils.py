@@ -11,10 +11,10 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 def _needs_completion(text: str) -> bool:
     """
     判断文本是否需要补充完整
-    
+
     Args:
         text: 需要检查的文本
-    
+
     Returns:
         bool: 是否需要补充
     """
@@ -23,9 +23,24 @@ def _needs_completion(text: str) -> bool:
     t = text.strip()
     if len(t) < 30:
         return True
-    if not any(t.endswith(p) for p in ["。", "！", "？", ".", "!", "?"]):
-        return True
-    return False
+    # 检查是否以句子结尾标点结束（包括 emoji、中文标点、英文标点）
+    sentence_endings = [
+        "。", "！", "？", ".", "!", "?",
+        "」", "』", "）", ")", "】", "]",
+        "😊", "👍", "🎉", "✨", "💡", "📝", "🔍", "🧮",  # 常见结尾 emoji
+    ]
+    # 也接受以 emoji 结尾（Unicode emoji 范围）
+    import unicodedata
+    last_char = t[-1]
+    if any(t.endswith(p) for p in sentence_endings):
+        return False
+    # 检查最后一个字符是否是 emoji
+    try:
+        if unicodedata.category(last_char).startswith('So'):  # Symbol, Other (emoji)
+            return False
+    except (ValueError, TypeError):
+        pass
+    return True
 
 
 def _lcp_len(a: str, b: str) -> int:
@@ -85,8 +100,8 @@ def convert_chat_history(messages: List[dict]) -> List:
 
 def _inject_attachment_content(user_message: str, attachment_ids: List[int]) -> str:
     try:
-        from Django_xm.apps.attachments.services.attachment_content_service import AttachmentService
-        att_svc = AttachmentService()
+        from Django_xm.apps.attachments.services.cross_app import get_attachment_service
+        att_svc = get_attachment_service()
         result = att_svc.build_user_content(user_message, attachment_ids)
         if result["type"] == "text":
             return result["content"]

@@ -10,7 +10,7 @@ from typing import Dict, Any, Optional, List, Callable
 from dataclasses import dataclass
 from enum import Enum
 
-from Django_xm.apps.config_center.config import get_logger
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -89,44 +89,52 @@ def _handle_status(context: Dict[str, Any]) -> Dict[str, Any]:
 
     token_info = context.get("token_info")
     if token_info:
-        lines.append(f"- Token使用: {token_info.get('usedTokens', 'N/A')}/{token_info.get('maxTokens', 'N/A')}")
-
-    cost_info = context.get("cost_info")
-    if cost_info:
-        lines.append(f"- 估算成本: {cost_info.get('totalCostFormatted', 'N/A')}")
+        tokens = token_info.get("tokens", {})
+        lines.append(f"- Token: 输入={tokens.get('input', 0)}, 输出={tokens.get('output', 0)}, 总计={tokens.get('total', 0)}")
 
     return {"type": "info", "content": "\n".join(lines)}
 
 
 def _handle_compact(context: Dict[str, Any]) -> Dict[str, Any]:
-    from Django_xm.apps.context_manager.services.session_compactor import SessionCompactor, apply_compaction_to_chat_history
+    from Django_xm.apps.context_manager.services.manager import create_context_manager
+    from Django_xm.apps.context_manager.services.context_pruner import ContextPruner
 
     messages = context.get("messages", [])
     if not messages:
         return {"type": "info", "content": "❌ 当前没有消息可以压缩"}
 
-    compactor = SessionCompactor()
-    if not compactor.should_compact(messages):
+    user_id = context.get("user_id")
+    session_id = context.get("session_id")
+    context_manager = create_context_manager(user_id=user_id, thread_id=session_id)
+
+    pruner = ContextPruner()
+    if not pruner.prune(messages)[1].pruned_count:
         total_tokens = sum(
-            compactor.estimate_tokens(m.get('content', ''))
+            len(m.get('content', '').split())
             for m in messages
         )
         return {
             "type": "info",
-            "content": f"ℹ️ 当前会话无需压缩 (估算 {total_tokens} tokens，阈值 {compactor.token_threshold})"
+            "content": f"ℹ️ 当前会话无需压缩 (估算 {total_tokens} tokens)"
         }
 
-    compacted, result = apply_compaction_to_chat_history(messages)
-    if result.compressed:
+    result = context_manager.build_structured_context(
+        messages=messages,
+        query="",
+        mode="chat",
+    )
+    metadata = result["metadata"]
+    prune_info = metadata["prune_result"]
+
+    if prune_info["pruned_count"] > 0:
         return {
             "type": "success",
             "content": (
                 f"✅ 会话已压缩！\n"
-                f"- 原始消息: {result.original_message_count} 条\n"
-                f"- 保留消息: {result.kept_message_count} 条\n"
-                f"- 摘要估算: {result.summary_token_estimate} tokens"
+                f"- 原始消息: {prune_info['original_count']} 条\n"
+                f"- 保留消息: {prune_info['original_count'] - prune_info['pruned_count']} 条\n"
+                f"- 去重: {prune_info['deduped_count']} 条, 过滤: {prune_info['filtered_count']} 条"
             ),
-            "compacted_messages": compacted,
         }
     else:
         return {"type": "info", "content": "ℹ️ 会话无需压缩"}
@@ -134,26 +142,36 @@ def _handle_compact(context: Dict[str, Any]) -> Dict[str, Any]:
 
 def _handle_model(context: Dict[str, Any]) -> Dict[str, Any]:
     args = context.get("args", "").strip()
-    from Django_xm.apps.ai_engine.config import settings
+    from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
+    from Django_xm.apps.ai_engine.services.registry_service import (
+        get_all_provider_ids,
+        get_provider_models,
+    )
 
-    current_model = getattr(settings, 'openai_model', 'gpt-4o')
+    current_model = get_model_string()
 
     if not args:
         return {
             "type": "info",
-            "content": f"🤖 当前模型: `{current_model}`\n\n使用 `/model <模型名>` 切换模型",
+            "content": f"🤖 当前模型: `{current_model}`\n\n使用 `/model <provider>:<model_name>` 切换模型",
         }
 
-    supported_models = [
-        "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo",
-        "claude-opus-4-20250514", "claude-sonnet-4-20250514",
-        "deepseek-chat", "deepseek-reasoner",
-    ]
+    # 动态从 MODEL_REGISTRY 拉取所有启用的 provider + 模型
+    supported_models: List[str] = []
+    for pid in get_all_provider_ids():
+        for mname in get_provider_models(pid):
+            # 同时支持 "model_name" 与 "provider:model_name" 两种写法
+            supported_models.append(mname)
+            supported_models.append(f"{pid}:{mname}")
 
     if args not in supported_models:
         return {
             "type": "error",
-            "content": f"❌ 不支持的模型: `{args}`\n\n支持的模型: {', '.join(f'`{m}`' for m in supported_models)}",
+            "content": (
+                f"❌ 不支持的模型: `{args}`\n\n"
+                f"支持格式: `model_name` 或 `provider:model_name`\n"
+                f"当前已注册: {', '.join(f'`{m}`' for m in sorted(set(supported_models)))}"
+            ),
         }
 
     return {
@@ -161,63 +179,6 @@ def _handle_model(context: Dict[str, Any]) -> Dict[str, Any]:
         "content": f"✅ 模型已切换为: `{args}` (将在下次对话生效)",
         "model": args,
     }
-
-
-def _handle_cost(context: Dict[str, Any]) -> Dict[str, Any]:
-    cost_info = context.get("cost_info")
-    if not cost_info:
-        return {"type": "info", "content": "📊 暂无成本数据"}
-
-    tokens = cost_info.get("tokens", {})
-    lines = [
-        "💰 **Token 使用与成本统计**\n",
-        f"- 总成本: {cost_info.get('totalCostFormatted', '$0.0000')}",
-        f"- 输入 Token: {tokens.get('input', 0):,}",
-        f"- 输出 Token: {tokens.get('output', 0):,}",
-        f"- 推理 Token: {tokens.get('reasoning', 0):,}",
-        f"- 缓存命中 Token: {tokens.get('cachedInput', 0):,}",
-        f"- 总 Token: {tokens.get('total', 0):,}",
-        f"- API 调用次数: {cost_info.get('recordCount', 0)}",
-    ]
-
-    models = cost_info.get("models", [])
-    if models:
-        lines.append(f"- 使用模型: {', '.join(models)}")
-
-    return {"type": "info", "content": "\n".join(lines)}
-
-
-def _handle_permissions(context: Dict[str, Any]) -> Dict[str, Any]:
-    args = context.get("args", "").strip()
-    user_id = context.get("user_id")
-
-    if not user_id:
-        return {"type": "error", "content": "❌ 需要登录才能查看权限"}
-
-    from Django_xm.apps.core.permissions import PermissionService
-
-    if not args:
-        info = PermissionService.get_permission_info(user_id)
-        policy = info["policy"]
-        lines = [
-            "🔒 **当前权限设置**\n",
-            f"- 会话模式: `{policy['sessionMode']}`",
-            f"- 默认权限: `{policy['defaultMode']}`",
-            f"- 允许的工具数: {len(policy['allowedTools'])}",
-        ]
-        lines.append("\n使用 `/permissions <模式>` 切换模式:")
-        for mode, details in info["sessionModes"].items():
-            lines.append(f"  - `{mode}`: {details['description']}")
-        return {"type": "info", "content": "\n".join(lines)}
-
-    try:
-        policy = PermissionService.update_session_mode(user_id, args)
-        return {
-            "type": "success",
-            "content": f"✅ 权限模式已更新为: `{policy.session_mode.value}`",
-        }
-    except ValueError as e:
-        return {"type": "error", "content": f"❌ {str(e)}"}
 
 
 def _handle_clear(context: Dict[str, Any]) -> Dict[str, Any]:
@@ -292,25 +253,9 @@ COMMANDS: Dict[str, SlashCommand] = {
         name="model",
         description="查看或切换AI模型",
         category=CommandCategory.AI,
-        usage="/model [模型名]",
-        examples=["/model", "/model gpt-4o-mini"],
+        usage="/model [provider:model_name]",
+        examples=["/model", "/model openai:gpt-4o-mini", "/model deepseek:deepseek-v4-flash"],
         handler=_handle_model,
-    ),
-    "cost": SlashCommand(
-        name="cost",
-        description="查看Token使用量和成本",
-        category=CommandCategory.INFO,
-        usage="/cost",
-        examples=["/cost"],
-        handler=_handle_cost,
-    ),
-    "permissions": SlashCommand(
-        name="permissions",
-        description="查看或设置工具权限",
-        category=CommandCategory.SETTINGS,
-        usage="/permissions [模式]",
-        examples=["/permissions", "/permissions read-only"],
-        handler=_handle_permissions,
     ),
     "clear": SlashCommand(
         name="clear",

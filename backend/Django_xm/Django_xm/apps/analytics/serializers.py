@@ -47,4 +47,14 @@ class RecentActivitySerializer(serializers.ModelSerializer):
 class DailyAggregationSerializer(serializers.ModelSerializer):
     class Meta:
         model = DailyAggregation
-        fields = '__all__'
+        fields = [
+            'id', 'user', 'date',
+            'chat_sessions', 'chat_messages', 'chat_tokens', 'chat_token_detail',
+            'rag_queries', 'documents_uploaded', 'documents_deleted',
+            'workflow_started', 'workflow_completed',
+            'research_started', 'research_completed',
+            'file_uploads', 'file_downloads',
+            'page_views', 'api_requests', 'api_errors',
+            'avg_response_time_ms', 'login_count', 'feature_usage',
+            'created_at', 'updated_at',
+        ]

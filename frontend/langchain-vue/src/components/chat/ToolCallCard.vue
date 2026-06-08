@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed } from 'vue'
-import { ArrowDown, ArrowRight, CircleCheck, Close, Loading } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowRight, CircleCheck, Close, Loading, MagicStick } from '@element-plus/icons-vue'
 
 const props = defineProps({
   toolName: {
@@ -12,21 +12,46 @@ const props = defineProps({
     default: ''
   },
   input: {
-    type: [Object, String],
+    type: [Object, String, Array],
     default: null
   },
   output: {
-    type: [Object, String],
+    type: [Object, String, Array],
     default: null
   },
   status: {
     type: String,
     default: 'pending',
-    validator: (value) => ['pending', 'running', 'completed', 'failed'].includes(value)
+    validator: (value) => ['pending', 'running', 'completed', 'failed', 'pending_approval'].includes(value)
   }
 })
 
-const isExpanded = ref(true)
+// 判断是否为 Skill 调用
+const isSkillCall = computed(() => props.toolName.startsWith('skill_'))
+
+// 判断是否为知识库检索工具
+const isKnowledgeBase = computed(() => props.toolName.startsWith('knowledge_base_'))
+
+// 知识库工具默认折叠
+const isExpanded = ref(isKnowledgeBase.value ? false : true)
+
+// Skill 模式标签
+const skillModeLabel = computed(() => {
+  if (!isSkillCall.value) return ''
+  const inputObj = typeof props.input === 'string' ? (() => { try { return JSON.parse(props.input) } catch { return {} } })() : (props.input || {})
+  const mode = inputObj.mode || inputObj._mode
+  if (mode === 'hybrid') return '混合'
+  if (mode === 'advisor') return '顾问'
+  return '管线'
+})
+
+const hybridSections = computed(() => {
+  if (!isSkillCall.value || typeof props.output !== 'string') return null
+  if (skillModeLabel.value !== '混合') return null
+  return {
+    '执行结果': props.output,
+  }
+})
 
 const statusIcon = computed(() => {
   switch (props.status) {
@@ -36,6 +61,8 @@ const statusIcon = computed(() => {
       return Close
     case 'running':
       return Loading
+    case 'pending_approval':
+      return ArrowRight
     default:
       return ArrowRight
   }
@@ -49,6 +76,8 @@ const statusType = computed(() => {
       return 'danger'
     case 'running':
       return 'warning'
+    case 'pending_approval':
+      return 'info'
     default:
       return 'info'
   }
@@ -62,6 +91,8 @@ const statusText = computed(() => {
       return '失败'
     case 'running':
       return '执行中'
+    case 'pending_approval':
+      return '待审批'
     default:
       return '待执行'
   }
@@ -77,14 +108,15 @@ const formatContent = (content) => {
 </script>
 
 <template>
-  <div :class="['tool-call-card', `tool-call-card--${status}`]">
+  <div :class="['tool-call-card', `tool-call-card--${status}`, { 'tool-call-card--skill': isSkillCall }]">
     <div class="tool-call-header" @click="isExpanded = !isExpanded">
       <div class="tool-call-left">
         <el-icon class="status-icon" :class="`status-${status}`">
-          <component :is="statusIcon" :class="{ 'is-loading': status === 'running' }" />
+          <component :is="isSkillCall ? MagicStick : statusIcon" :class="{ 'is-loading': status === 'running' }" />
         </el-icon>
         <div class="tool-info">
           <span class="tool-name">{{ toolName }}</span>
+          <el-tag v-if="isSkillCall && skillModeLabel" size="small" :type="skillModeLabel === '管线' ? 'primary' : skillModeLabel === '顾问' ? 'success' : 'warning'" effect="plain">{{ skillModeLabel }}</el-tag>
           <el-tag :type="statusType" size="small">{{ statusText }}</el-tag>
         </div>
       </div>
@@ -92,7 +124,7 @@ const formatContent = (content) => {
         <ArrowDown />
       </el-icon>
     </div>
-    
+
     <div v-if="description" class="tool-call-description">{{ description }}</div>
 
     <div v-if="isExpanded" class="tool-call-content">
@@ -100,10 +132,27 @@ const formatContent = (content) => {
         <div class="section-title">输入</div>
         <pre class="section-content">{{ formatContent(input) }}</pre>
       </div>
-      <div v-if="output" class="tool-call-section">
-        <div class="section-title">输出</div>
-        <pre class="section-content">{{ formatContent(output) }}</pre>
-      </div>
+      <!-- Skill hybrid 模式分区渲染 -->
+      <template v-if="hybridSections">
+        <div class="tool-call-section">
+          <div class="section-title">执行结果</div>
+          <pre class="section-content">{{ hybridSections['执行结果'] || '' }}</pre>
+        </div>
+      </template>
+      <template v-else-if="isSkillCall && output && skillModeLabel === '顾问'">
+        <div class="tool-call-section">
+          <div class="section-title">技能确认</div>
+          <div class="section-content">{{ formatContent(output) }}</div>
+        </div>
+      </template>
+      <!-- 普通输出 -->
+      <template v-else>
+        <div v-if="output" class="tool-call-section">
+          <div class="section-title">{{ isKnowledgeBase ? '检索摘要' : '输出' }}</div>
+          <pre v-if="isKnowledgeBase" class="section-content section-content--compact">{{ formatContent(output) }}</pre>
+          <pre v-else class="section-content">{{ formatContent(output) }}</pre>
+        </div>
+      </template>
     </div>
   </div>
 </template>
@@ -127,6 +176,10 @@ const formatContent = (content) => {
 
 .tool-call-card--running {
   border-left: 3px solid var(--el-color-warning);
+}
+
+.tool-call-card--skill {
+  border-left: 3px solid var(--el-color-primary);
 }
 
 .tool-call-description {
@@ -239,5 +292,17 @@ const formatContent = (content) => {
   color: var(--el-text-color-primary);
   max-height: 200px;
   overflow-y: auto;
+}
+
+.section-content--markdown {
+  white-space: pre-wrap;
+  font-family: inherit;
+  line-height: 1.7;
+}
+
+.section-content--compact {
+  max-height: 120px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 </style>

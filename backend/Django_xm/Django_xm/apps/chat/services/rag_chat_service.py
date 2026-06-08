@@ -4,37 +4,50 @@ RAG 模式聊天服务
 从 chat_service.py 拆分出的 RAG 查询相关逻辑：
 - RAG 流式查询
 - RAG 检索器获取
+- RAG 评估闭环（检索质量 + 生成质量评估，低分触发重检索）
 """
 import logging
 from typing import Dict, Any, List, Optional
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from langchain_core.documents import Document
 
-from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
-from Django_xm.apps.knowledge.services.rag_agent import create_rag_agent, query_rag_agent
-from Django_xm.apps.knowledge.services.index_service import IndexManager
-from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
-from Django_xm.apps.knowledge.services.retrieval_service import create_retriever
 from ..utils import convert_chat_history
 
 logger = logging.getLogger(__name__)
+
+# RAG 评估阈值配置
+RETRIEVAL_QUALITY_THRESHOLD: float = 0.5
+GENERATION_QUALITY_THRESHOLD: float = 0.6
+MAX_RETRY_COUNT: int = 1
 
 
 class RAGChatService:
     """RAG 模式聊天服务"""
 
-    def __init__(self, user_id: Optional[int] = None):
+    def __init__(self, user_id: Optional[int] = None, chat_service=None):
+        from Django_xm.apps.knowledge.services.rag_evaluation import RAGEvaluator
+
         self.user_id = user_id
+        self._chat_service = chat_service
+        self._evaluator = RAGEvaluator()
 
     def _get_user_index_name(self, index_name: str) -> str:
         return f"user_{self.user_id}_{index_name}" if self.user_id else index_name
 
-    def get_rag_retriever(self, index_name: str):
+    def get_rag_retriever(self, index_name: str, k: int = 4, search_type: str = "similarity", retrieval_mode: str = "precise"):
+        from Django_xm.apps.knowledge.services.cross_app import get_index_manager
+        from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
+        from Django_xm.apps.knowledge.services.retrieval_service import create_retriever, create_multi_query_retriever
+        from Django_xm.apps.ai_engine.config import settings as app_cfg
+
         if not self.user_id:
+            logger.warning(f"get_rag_retriever: user_id 为空，跳过")
             return None
         try:
             user_index_name = self._get_user_index_name(index_name)
-            manager = IndexManager()
+            logger.info(f"get_rag_retriever: index_name={index_name}, user_index_name={user_index_name}, user_id={self.user_id}")
+            manager = get_index_manager()
             if not manager.index_exists(user_index_name):
                 logger.warning(f"索引不存在: {user_index_name}")
                 return None
@@ -45,15 +58,90 @@ class RAGChatService:
                 return None
             embeddings = get_embeddings()
             vector_store = manager.load_index(user_index_name, embeddings)
-            retriever = create_retriever(vector_store, k=4)
+
+            if retrieval_mode == "comprehensive":
+                comp_k = app_cfg.retriever_comprehensive_k
+                comp_fetch_k = max(comp_k * 3, 30)
+                retriever = create_retriever(
+                    vector_store, k=comp_k, search_type="mmr", fetch_k=comp_fetch_k,
+                )
+
+                if app_cfg.retriever_use_multi_query:
+                    try:
+                        from Django_xm.apps.ai_engine.services.llm_factory import get_helper_model, get_chat_model
+                        mq_llm = get_helper_model() or get_chat_model(streaming=False)
+                        retriever = create_multi_query_retriever(retriever, llm=mq_llm, include_original=True)
+                        logger.info(f"comprehensive 检索器已叠加 MultiQuery (k={comp_k})")
+                    except Exception as e:
+                        logger.warning(f"MultiQuery 叠加失败，使用基础 MMR 检索器: {e}")
+
+                logger.info(f"创建 comprehensive 检索器: k={comp_k}, search_type=mmr, fetch_k={comp_fetch_k}")
+                return retriever
+
+            retriever = create_retriever(vector_store, k=k, search_type=search_type)
             return retriever
         except Exception as e:
             logger.error(f"获取 RAG 检索器失败: {e}", exc_info=True)
             return None
 
+    def _compute_retrieval_quality(self, query: str, docs: List[Document]) -> float:
+        """计算检索质量：基于查询与检索文档的关键词重叠度均值"""
+        from Django_xm.apps.knowledge.services.rag_evaluation import _keyword_overlap
+
+        if not docs:
+            return 0.0
+        overlaps = [_keyword_overlap(query, doc.page_content) for doc in docs]
+        return sum(overlaps) / len(overlaps)
+
+    def _compute_generation_quality(self, evaluation_result) -> float:
+        """计算生成质量：faithfulness、relevance、completeness 的加权平均"""
+        gen = evaluation_result.generation
+        return gen.faithfulness * 0.4 + gen.relevance * 0.35 + gen.completeness * 0.25
+
+    def _evaluate_rag_result(
+        self,
+        query: str,
+        answer: str,
+        retrieved_docs: List[Document],
+    ) -> Dict[str, Any]:
+        """
+        评估 RAG 结果质量
+
+        Returns:
+            包含 retrieval_quality、generation_quality、evaluation_result 的字典
+        """
+        # 评估检索质量（关键词重叠度）
+        retrieval_quality = self._compute_retrieval_quality(query, retrieved_docs)
+
+        # 评估生成质量（忠实度、相关性、完整性）
+        evaluation_result = self._evaluator.evaluate(
+            query=query,
+            response=answer,
+            retrieved_docs=retrieved_docs,
+        )
+        generation_quality = self._compute_generation_quality(evaluation_result)
+
+        logger.info(
+            f"RAG 评估结果: 检索质量={retrieval_quality:.4f}, "
+            f"生成质量={generation_quality:.4f}, "
+            f"综合评分={evaluation_result.overall_score:.4f}"
+        )
+        logger.info(
+            f"  生成详情: faithfulness={evaluation_result.generation.faithfulness:.4f}, "
+            f"relevance={evaluation_result.generation.relevance:.4f}, "
+            f"completeness={evaluation_result.generation.completeness:.4f}"
+        )
+
+        return {
+            "retrieval_quality": retrieval_quality,
+            "generation_quality": generation_quality,
+            "evaluation_result": evaluation_result,
+        }
+
     def process_rag_request(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        from Django_xm.apps.knowledge.services.strict_rag_chain import query_strict_rag
+
         selected_kb = data.get('selected_knowledge_base')
-        session_id = data.get('session_id')
         if not selected_kb:
             return None
 
@@ -61,103 +149,127 @@ class RAGChatService:
         if not retriever:
             return None
 
+        query = data['message']
         logger.info(f"使用知识库 {selected_kb} 进行 RAG 查询")
-        agent = create_rag_agent(
-            retriever,
-            user_id=self.user_id,
-            session_id=session_id,
+
+        # Strict Chain 模式：强制检索 -> 注入上下文 -> 生成（防幻觉）
+        result = query_strict_rag(retriever, query, k=4, collection_name=selected_kb)
+        answer = result.get('answer', '')
+
+        # 获取检索文档用于评估
+        try:
+            retrieved_docs = retriever.invoke(query)
+        except Exception as e:
+            logger.warning(f"获取检索文档失败: {e}")
+            retrieved_docs = []
+
+        # 评估 RAG 结果
+        eval_info = self._evaluate_rag_result(query, answer, retrieved_docs)
+        retrieval_quality = eval_info["retrieval_quality"]
+        generation_quality = eval_info["generation_quality"]
+
+        # 低分触发重检索（最多重试 1 次）
+        retry_count = 0
+        final_answer = answer
+        final_eval = eval_info
+
+        if (retrieval_quality < RETRIEVAL_QUALITY_THRESHOLD
+                or generation_quality < GENERATION_QUALITY_THRESHOLD):
+            retry_count += 1
+            logger.info(
+                f"RAG 评估低分，触发重检索 (第{retry_count}次): "
+                f"检索质量={retrieval_quality:.4f}, 生成质量={generation_quality:.4f}"
+            )
+
+            # 根据低分类型调整检索策略
+            new_k = 8 if retrieval_quality < RETRIEVAL_QUALITY_THRESHOLD else 4
+            new_search_type = "mmr" if generation_quality < GENERATION_QUALITY_THRESHOLD else "similarity"
+
+            # 创建新检索器并重新查询
+            new_retriever = self.get_rag_retriever(
+                selected_kb, k=new_k, search_type=new_search_type
+            )
+            if new_retriever:
+                new_result = query_strict_rag(new_retriever, query, k=new_k, collection_name=selected_kb)
+                new_answer = new_result.get('answer', '')
+
+                # 重新评估
+                try:
+                    new_docs = new_retriever.invoke(query)
+                except Exception:
+                    new_docs = []
+
+                new_eval = self._evaluate_rag_result(query, new_answer, new_docs)
+
+                # 使用重检索后的结果
+                final_answer = new_answer
+                final_eval = new_eval
+                result = new_result
+
+                logger.info(
+                    f"重检索评估结果: 检索质量={new_eval['retrieval_quality']:.4f}, "
+                    f"生成质量={new_eval['generation_quality']:.4f}"
+                )
+
+        # 记录最终评估结果到日志和 analytics
+        logger.info(
+            f"RAG 查询最终评估: 检索质量={final_eval['retrieval_quality']:.4f}, "
+            f"生成质量={final_eval['generation_quality']:.4f}, "
+            f"综合评分={final_eval['evaluation_result'].overall_score:.4f}, "
+            f"重试次数={retry_count}"
         )
-        result = query_rag_agent(agent, data['message'], return_sources=True)
 
         return {
-            'message': result.get('answer', ''),
+            'message': final_answer,
             'mode': 'rag',
             'tools_used': ['rag_retrieve'],
             'success': True,
-            'sources': result.get('sources', [])
+            'sources': result.get('sources', []),
+            'evaluation': {
+                'retrieval_quality': round(final_eval['retrieval_quality'], 4),
+                'generation_quality': round(final_eval['generation_quality'], 4),
+                'overall_score': final_eval['evaluation_result'].overall_score,
+                'retry_count': retry_count,
+            },
         }
 
-    async def process_rag_stream(self, data: Dict[str, Any], retriever, usage_tracker, cost_tracker):
-        model_instance = None
-        provider_id = data.get('provider_id')
-        if provider_id:
-            from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model_by_provider
-            try:
-                model_instance = get_chat_model_by_provider(
-                    provider_id=provider_id,
-                    model_name=data.get('model_name') or None,
-                    temperature=float(data['temperature']) if data.get('temperature') is not None else None,
-                    max_tokens=int(data['max_tokens']) if data.get('max_tokens') is not None else None,
-                    special_params=data.get('special_params') or None,
-                    streaming=True,
-                )
-            except Exception:
-                pass
+    async def process_rag_stream(self, data: Dict[str, Any], retriever, usage_tracker, token_detail_tracker):
+        from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
+        from Django_xm.apps.knowledge.services.strict_rag_chain import astream_strict_rag
 
-        agent = create_rag_agent(
-            retriever,
-            model=model_instance,
-            streaming=True,
-            user_id=self.user_id,
-            session_id=data.get('session_id'),
-        )
-
-        messages = []
-        chat_history = data.get('chat_history', [])
-        langchain_chat_history = convert_chat_history(chat_history)
-        if langchain_chat_history:
-            messages.extend(langchain_chat_history)
-
-        human_msg = HumanMessage(content=data['message'])
-        messages.append(human_msg)
-
+        # Strict Chain 模式：强制检索 -> 注入上下文 -> 生成（防幻觉）
+        logger.info("使用 Strict RAG Chain 模式进行流式查询")
         try:
             full_response = ""
             sources = []
-            seen_ai_content = set()
 
             with TokenUsageCallbackHandler() as cb:
-                async for chunk in agent.astream({"messages": messages}, stream_mode="messages"):
-                    if isinstance(chunk, tuple) and len(chunk) == 2:
-                        message, metadata = chunk
-                        if isinstance(message, AIMessage) and message.content:
-                            content_key = message.content
-                            if content_key not in seen_ai_content:
-                                seen_ai_content.add(content_key)
-                            full_response += message.content
-                            yield {"type": "chunk", "content": message.content}
-                    elif isinstance(chunk, AIMessage) and chunk.content:
-                        if chunk.content not in seen_ai_content:
-                            seen_ai_content.add(chunk.content)
-                        full_response += chunk.content
-                        yield {"type": "chunk", "content": chunk.content}
+                async for event in astream_strict_rag(
+                    retriever, data['message'], k=4,
+                    collection_name=data.get('selected_knowledge_base', '')
+                ):
+                    if event["type"] == "chunk":
+                        full_response += event["content"]
+                        yield {"type": "chunk", "content": event["content"]}
+                    elif event["type"] == "sources":
+                        sources = event["data"]
+                    elif event["type"] == "degradation":
+                        yield {"type": "degradation", "message": event["message"]}
+                    elif event["type"] == "error":
+                        yield {"type": "error", "message": event["message"]}
+                        return
 
-                    if isinstance(chunk, tuple) and len(chunk) == 2:
-                        message, metadata = chunk
-                        if isinstance(message, ToolMessage):
-                            try:
-                                tool_content = message.content
-                                if isinstance(tool_content, str):
-                                    import json
-                                    docs = json.loads(tool_content)
-                                    if isinstance(docs, list):
-                                        for doc in docs:
-                                            if isinstance(doc, dict):
-                                                sources.append({
-                                                    'content': doc.get('page_content', doc.get('content', '')),
-                                                    'source': doc.get('metadata', {}).get('source', 'Unknown') if isinstance(doc.get('metadata'), dict) else 'Unknown'
-                                                })
-                            except (json.JSONDecodeError, TypeError):
-                                pass
-
-            from .stream_helpers import update_usage_and_cost
-            update_usage_and_cost(cb, usage_tracker, cost_tracker)
+            from .stream_helpers import update_usage_and_tokens
+            update_usage_and_tokens(cb, usage_tracker, token_detail_tracker)
 
             if sources:
                 yield {'type': 'sources', 'data': sources}
 
+            return
+
         except Exception as e:
-            logger.error(f"RAG 流式查询失败: {e}", exc_info=True)
+            logger.error(f"Strict RAG Chain 流式查询失败: {e}", exc_info=True)
             from Django_xm.apps.ai_engine.services.exceptions import classify_exception
             classified = classify_exception(e)
             yield {"type": "error", "message": classified.user_message}
+            return

@@ -10,21 +10,23 @@ SubAgents 子智能体模块
 """
 
 from typing import Optional, List, Sequence
+import warnings
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.tools import BaseTool
 from langchain_core.language_models.chat_models import BaseChatModel
 
-from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
-from Django_xm.apps.tools.web.search import create_tavily_search_tool
-from Django_xm.apps.tools.file.filesystem import FILESYSTEM_TOOLS
-from Django_xm.apps.config_center.config import get_logger
-from Django_xm.apps.ai_engine.prompts.system_prompts import WRITER_GUIDELINES
-from Django_xm.apps.ai_engine.guardrails import create_guardrails_middleware
-from Django_xm.apps.core.permissions import PermissionService
+from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.tools import get_all_tools
 
 logger = get_logger(__name__)
+
+
+def _get_tools_by_names(names: list[str]) -> list:
+    """从统一工具入口按名称获取工具"""
+    all_tools = get_all_tools()
+    return [t for t in all_tools if t.name in names]
 
 
 WEB_RESEARCHER_PROMPT = (
@@ -32,7 +34,13 @@ WEB_RESEARCHER_PROMPT = (
     "使用搜索工具查找并评估来源，提取关键数据，"
     "按来源类型自适配呈现（官方文档、论文、标准、新闻、博客），"
     "采用要点与段落混合的方式记录，使用内联引用并在结尾列出参考来源，"
-    "将研究笔记保存到文件系统。"
+    "研究笔记必须写入 notes/web_research.md，禁止写入根目录或其他路径。\n\n"
+    "## 文件目录规范\n"
+    "你生成的所有文件必须遵守以下目录规范：\n"
+    "- 研究笔记必须写入 notes/ 目录\n"
+    "- 研究报告必须写入 reports/ 目录\n"
+    "- 研究计划必须写入 plans/ 目录\n"
+    "禁止将文件写入根目录。"
 )
 
 
@@ -40,7 +48,13 @@ DOC_ANALYST_PROMPT = (
     "你是一个专业的文档分析师，负责在知识库中检索并提炼信息。"
     "根据研究问题执行多次检索与评估，直接引用关键段落，"
     "整理为要点与段落混合的分析笔记，列出文档来源与位置，"
-    "并保存到文件系统。\n\n"
+    "分析笔记必须写入 notes/doc_analysis.md，禁止写入根目录或其他路径。\n\n"
+    "## 文件目录规范\n"
+    "你生成的所有文件必须遵守以下目录规范：\n"
+    "- 研究笔记必须写入 notes/ 目录\n"
+    "- 研究报告必须写入 reports/ 目录\n"
+    "- 研究计划必须写入 plans/ 目录\n"
+    "禁止将文件写入根目录。\n\n"
     "## 结构化输出要求\n"
     "你的分析笔记必须包含以下结构：\n\n"
     "### 分析摘要\n"
@@ -65,7 +79,13 @@ REPORT_WRITER_PROMPT = (
     "你是一个专业的研究报告撰写者，负责整合研究材料并产出高质量报告。"
     "列出并阅读研究笔记与分析，识别关键发现与证据，"
     "根据主题与信息密度选择合适结构，提供真实示例或代码片段（技术主题），"
-    "使用内联引用与参考列表，最终保存报告到文件系统。\n\n"
+    "使用内联引用与参考列表，研究报告必须写入 reports/final_report.md，禁止写入根目录或其他路径。\n\n"
+    "## 文件目录规范\n"
+    "你生成的所有文件必须遵守以下目录规范：\n"
+    "- 研究笔记必须写入 notes/ 目录\n"
+    "- 研究报告必须写入 reports/ 目录\n"
+    "- 研究计划必须写入 plans/ 目录\n"
+    "禁止将文件写入根目录。\n\n"
     "## 引用规范\n"
     "报告中的每个关键论点必须标注来源：\n"
     "- 知识库来源：[知识库:文档名] 或 [KB:doc_name]\n"
@@ -81,8 +101,15 @@ def create_web_researcher(
     enable_guardrails: bool = False,
     user_id: Optional[int] = None,
     session_id: Optional[str] = None,
+    extra_tools: Optional[Sequence[BaseTool]] = None,
     **kwargs,
 ):
+    from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
+    from Django_xm.apps.tools.langchain.web_search import create_tavily_search_tool
+    from Django_xm.apps.ai_engine.prompts.system_prompts import WRITER_GUIDELINES
+    from Django_xm.apps.ai_engine.guardrails import create_guardrails_middleware
+
+    warnings.warn("create_web_researcher 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2)
     logger.info("🔍 创建 WebResearcher 子智能体")
 
     if model is None:
@@ -91,20 +118,24 @@ def create_web_researcher(
     if tools is None:
         agent_tools = []
 
-        try:
-            search_tool = create_tavily_search_tool()
-            agent_tools.append(search_tool)
-        except ValueError:
-            logger.warning("⚠️ 无法创建搜索工具，Tavily API Key 未配置")
+        web_researcher_tool_names = [
+            'web_search', 'duckduckgo_search',
+            'fs_write_file', 'fs_read_file', 'fs_list_files', 'fs_search_files',
+        ]
+        agent_tools.extend(_get_tools_by_names(web_researcher_tool_names))
 
-        agent_tools.extend(FILESYSTEM_TOOLS)
+        if not any(t.name in ('web_search', 'duckduckgo_search') for t in agent_tools):
+            try:
+                search_tool = create_tavily_search_tool()
+                agent_tools.append(search_tool)
+                logger.info("   通过 create_tavily_search_tool 降级创建搜索工具")
+            except (ValueError, ImportError) as e:
+                logger.warning(f"⚠️ 无法创建搜索工具（统一入口和降级均失败）: {e}")
+
+        if extra_tools:
+            agent_tools.extend(extra_tools)
+
         tools = agent_tools
-
-    if user_id:
-        tools = PermissionService.wrap_tools_with_permission(
-            tools, user_id=user_id, session_id=session_id
-        )
-        logger.info(f"WebResearcher 权限过滤后工具数: {len(tools)}")
 
     middleware_list = list(middleware) if middleware else []
     if enable_guardrails:
@@ -134,8 +165,15 @@ def create_doc_analyst(
     enable_guardrails: bool = False,
     user_id: Optional[int] = None,
     session_id: Optional[str] = None,
+    extra_tools: Optional[Sequence[BaseTool]] = None,
     **kwargs,
 ):
+    from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
+    from Django_xm.apps.tools.langchain.web_search import create_tavily_search_tool
+    from Django_xm.apps.ai_engine.prompts.system_prompts import WRITER_GUIDELINES
+    from Django_xm.apps.ai_engine.guardrails import create_guardrails_middleware
+
+    warnings.warn("create_doc_analyst 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2)
     logger.info("📚 创建 DocAnalyst 子智能体")
 
     if model is None:
@@ -150,23 +188,24 @@ def create_doc_analyst(
         else:
             logger.warning("⚠️ 未提供 retriever_tool，DocAnalyst 将无法检索文档")
 
-        if enable_web_supplement:
+        doc_analyst_tool_names = [
+            'web_search', 'duckduckgo_search',
+            'fs_write_file', 'fs_read_file', 'fs_list_files', 'fs_search_files',
+        ]
+        agent_tools.extend(_get_tools_by_names(doc_analyst_tool_names))
+
+        if enable_web_supplement and not any(t.name in ('web_search', 'duckduckgo_search') for t in agent_tools):
             try:
                 search_tool = create_tavily_search_tool()
                 agent_tools.append(search_tool)
-                logger.debug("   添加网络搜索工具（用于补充文档分析）")
-            except ValueError:
-                logger.warning("⚠️ 无法创建搜索工具，DocAnalyst 将无法进行网络补充搜索")
+                logger.info("   通过 create_tavily_search_tool 降级创建搜索工具（用于补充文档分析）")
+            except (ValueError, ImportError) as e:
+                logger.warning(f"⚠️ 无法创建搜索工具，DocAnalyst 将无法进行网络补充搜索: {e}")
 
-        agent_tools.extend(FILESYSTEM_TOOLS)
-        logger.debug(f"   添加文件系统工具: {len(FILESYSTEM_TOOLS)} 个")
+        if extra_tools:
+            agent_tools.extend(extra_tools)
+
         tools = agent_tools
-
-    if user_id:
-        tools = PermissionService.wrap_tools_with_permission(
-            tools, user_id=user_id, session_id=session_id
-        )
-        logger.info(f"DocAnalyst 权限过滤后工具数: {len(tools)}")
 
     middleware_list = list(middleware) if middleware else []
     if enable_guardrails:
@@ -196,20 +235,22 @@ def create_report_writer(
     session_id: Optional[str] = None,
     **kwargs,
 ):
+    from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
+    from Django_xm.apps.ai_engine.prompts.system_prompts import WRITER_GUIDELINES
+    from Django_xm.apps.ai_engine.guardrails import create_guardrails_middleware
+
+    warnings.warn("create_report_writer 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2)
     logger.info("✍️ 创建 ReportWriter 子智能体")
 
     if model is None:
         model = get_model_string()
 
     if tools is None:
-        tools = FILESYSTEM_TOOLS
-        logger.debug(f"   添加文件系统工具: {len(FILESYSTEM_TOOLS)} 个")
-
-    if user_id:
-        tools = PermissionService.wrap_tools_with_permission(
-            tools, user_id=user_id, session_id=session_id
-        )
-        logger.info(f"ReportWriter 权限过滤后工具数: {len(tools)}")
+        report_writer_tool_names = [
+            'fs_write_file', 'fs_read_file', 'fs_list_files', 'fs_search_files',
+        ]
+        tools = _get_tools_by_names(report_writer_tool_names)
+        logger.debug(f"   添加文件系统工具: {len(tools)} 个")
 
     middleware_list = list(middleware) if middleware else []
     if enable_guardrails:
@@ -241,7 +282,7 @@ def get_subagent_info() -> dict:
                 "来源评估",
                 "笔记整理",
             ],
-            "tools": ["tavily_search", "write_research_file", "read_research_file"],
+            "tools": ["web_search", "duckduckgo_search", "fs_write_file", "fs_read_file", "fs_list_files", "fs_search_files"],
         },
         "doc_analyst": {
             "name": "DocAnalyst",
@@ -254,7 +295,7 @@ def get_subagent_info() -> dict:
                 "网络搜索补充",
                 "结构化来源输出",
             ],
-            "tools": ["knowledge_base", "tavily_search", "write_research_file", "read_research_file"],
+            "tools": ["knowledge_base", "web_search", "duckduckgo_search", "fs_write_file", "fs_read_file", "fs_list_files", "fs_search_files"],
         },
         "report_writer": {
             "name": "ReportWriter",
@@ -265,6 +306,6 @@ def get_subagent_info() -> dict:
                 "引用管理",
                 "质量把控",
             ],
-            "tools": ["write_research_file", "read_research_file", "list_research_files"],
+            "tools": ["fs_write_file", "fs_read_file", "fs_list_files", "fs_search_files"],
         },
     }

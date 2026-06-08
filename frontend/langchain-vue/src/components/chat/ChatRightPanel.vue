@@ -1,19 +1,9 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { ElTag } from 'element-plus'
-import { Document, Tools, MagicStick, View, Coin, Lock, Files } from '@element-plus/icons-vue'
+import { ElTag, ElMessage } from 'element-plus'
+import { Document, Tools, MagicStick, View, Files, Coin } from '@element-plus/icons-vue'
 import LxScrollArea from '../common/LxScrollArea.vue'
-import CostTracker from './CostTracker.vue'
-import PermissionManager from './PermissionManager.vue'
-import TokenStats from './TokenStats.vue'
 import AiArtifact from '../ai-elements/AiArtifact.vue'
-import AiArtifactHeader from '../ai-elements/AiArtifactHeader.vue'
-import AiArtifactTitle from '../ai-elements/AiArtifactTitle.vue'
-import AiArtifactDescription from '../ai-elements/AiArtifactDescription.vue'
-import AiArtifactActions from '../ai-elements/AiArtifactActions.vue'
-import AiArtifactAction from '../ai-elements/AiArtifactAction.vue'
-import AiArtifactContent from '../ai-elements/AiArtifactContent.vue'
-import AiArtifactClose from '../ai-elements/AiArtifactClose.vue'
 import AiPanel from '../ai-elements/AiPanel.vue'
 import AiToolbar from '../ai-elements/AiToolbar.vue'
 
@@ -25,10 +15,6 @@ const props = defineProps({
   visible: {
     type: Boolean,
     default: false,
-  },
-  costSummary: {
-    type: Object,
-    default: () => ({}),
   },
   sessionId: {
     type: String,
@@ -57,6 +43,26 @@ const metadata = computed(() => {
     context: props.message.context || null,
   }
 })
+
+const copyToClipboard = async (text) => {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      const textarea = document.createElement('textarea')
+      textarea.value = text
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textarea)
+    }
+    ElMessage.success('已复制到剪贴板')
+  } catch (error) {
+    ElMessage.error('复制失败，请手动复制')
+  }
+}
 
 const rawJson = computed(() => {
   if (!props.message) return null
@@ -87,13 +93,22 @@ const artifacts = computed(() => {
 })
 const hasArtifacts = computed(() => artifacts.value.length > 0)
 
+const tokenInfo = computed(() => {
+  if (!props.message) return null
+  return props.message.tokenCount || props.message.tokens || null
+})
+const tokenDetail = computed(() => {
+  if (!props.message) return null
+  return props.message.tokenDetail || null
+})
+const hasTokenInfo = computed(() => !!tokenInfo.value || !!tokenDetail.value)
+
 const tabs = computed(() => [
   { value: 'sources', label: '来源', icon: Document, count: hasSources.value ? metadata.value.sources.length : 0 },
   { value: 'artifacts', label: '产物', icon: Files, count: hasArtifacts.value ? artifacts.value.length : 0 },
   { value: 'tools', label: '工具', icon: Tools, count: hasTools.value ? metadata.value.tools.length : 0 },
   { value: 'reasoning', label: '推理', icon: MagicStick, count: 0 },
-  { value: 'cost', label: '成本', icon: Coin, count: 0 },
-  { value: 'permissions', label: '权限', icon: Lock, count: 0 },
+  { value: 'tokens', label: 'Token', icon: Coin, count: 0 },
   { value: 'json', label: 'JSON', icon: View, count: 0 },
 ])
 
@@ -194,23 +209,25 @@ watch(() => props.message, () => {
         <div v-show="activeTab === 'artifacts'" class="tab-content">
           <div v-if="hasArtifacts" class="artifacts-container">
             <AiArtifact v-for="(artifact, idx) in artifacts" :key="idx">
-              <AiArtifactHeader>
-                <AiArtifactTitle>{{ artifact.title || `产物 ${idx + 1}` }}</AiArtifactTitle>
-                <AiArtifactDescription v-if="artifact.description">{{ artifact.description }}</AiArtifactDescription>
-                <AiArtifactActions>
-                  <AiArtifactAction
+              <div class="artifact-header">
+                <div class="artifact-title">{{ artifact.title || `产物 ${idx + 1}` }}</div>
+                <p v-if="artifact.description" class="artifact-description">{{ artifact.description }}</p>
+                <div class="artifact-actions">
+                  <button
                     v-if="artifact.copyable !== false"
-                    tooltip="复制内容"
-                    label="复制"
-                    @click="navigator.clipboard.writeText(typeof artifact.content === 'string' ? artifact.content : JSON.stringify(artifact.content))"
-                  />
-                  <AiArtifactClose @click="artifacts.splice(idx, 1)" />
-                </AiArtifactActions>
-              </AiArtifactHeader>
-              <AiArtifactContent>
+                    class="artifact-action"
+                    title="复制内容"
+                    @click="copyToClipboard(typeof artifact.content === 'string' ? artifact.content : JSON.stringify(artifact.content))"
+                  >
+                    复制
+                  </button>
+                  <button class="artifact-close" @click="artifacts.splice(idx, 1)">✕</button>
+                </div>
+              </div>
+              <div class="artifact-content">
                 <pre v-if="typeof artifact.content === 'string'" class="artifact-text">{{ artifact.content }}</pre>
                 <pre v-else class="artifact-json">{{ JSON.stringify(artifact.content, null, 2) }}</pre>
-              </AiArtifactContent>
+              </div>
             </AiArtifact>
           </div>
           <div v-else class="empty-state">
@@ -300,6 +317,98 @@ watch(() => props.message, () => {
           </div>
         </div>
 
+        <div v-show="activeTab === 'tokens'" class="tab-content">
+          <div v-if="hasTokenInfo" class="tokens-container">
+            <template v-if="tokenDetail">
+              <div class="token-section-title">LLM 模型</div>
+              <div class="token-grid">
+                <div class="token-item">
+                  <span class="token-label">输入 Token</span>
+                  <span class="token-value">{{ (tokenDetail.llm?.input || 0).toLocaleString() }}</span>
+                </div>
+                <div class="token-item">
+                  <span class="token-label">输出 Token</span>
+                  <span class="token-value">{{ (tokenDetail.llm?.output || 0).toLocaleString() }}</span>
+                </div>
+                <div class="token-item" v-if="tokenDetail.llm?.reasoning">
+                  <span class="token-label">推理 Token</span>
+                  <span class="token-value">{{ tokenDetail.llm.reasoning.toLocaleString() }}</span>
+                </div>
+                <div class="token-item" v-if="tokenDetail.llm?.cachedInput">
+                  <span class="token-label">缓存命中</span>
+                  <span class="token-value">{{ tokenDetail.llm.cachedInput.toLocaleString() }}</span>
+                </div>
+                <div class="token-item total">
+                  <span class="token-label">LLM 总计</span>
+                  <span class="token-value">{{ (tokenDetail.llm?.total || 0).toLocaleString() }}</span>
+                </div>
+              </div>
+
+              <div v-if="tokenDetail.tools?.count > 0" class="token-section-title" style="margin-top: 16px;">工具调用</div>
+              <div v-if="tokenDetail.tools?.count > 0" class="token-grid">
+                <div class="token-item">
+                  <span class="token-label">调用次数</span>
+                  <span class="token-value">{{ tokenDetail.tools.count }}</span>
+                </div>
+                <div class="token-item" v-if="tokenDetail.tools.names?.length">
+                  <span class="token-label">工具列表</span>
+                  <span class="token-value token-names">{{ tokenDetail.tools.names.join(', ') }}</span>
+                </div>
+                <div class="token-item" v-if="tokenDetail.tools.llmTokens?.input || tokenDetail.tools.llmTokens?.output">
+                  <span class="token-label">工具 LLM Token</span>
+                  <span class="token-value">入{{ (tokenDetail.tools.llmTokens.input || 0).toLocaleString() }} / 出{{ (tokenDetail.tools.llmTokens.output || 0).toLocaleString() }}</span>
+                </div>
+              </div>
+
+              <div v-if="tokenDetail.storage?.embeddingTokens > 0" class="token-section-title" style="margin-top: 16px;">存储 / Embedding</div>
+              <div v-if="tokenDetail.storage?.embeddingTokens > 0" class="token-grid">
+                <div class="token-item">
+                  <span class="token-label">Embedding Token</span>
+                  <span class="token-value">{{ tokenDetail.storage.embeddingTokens.toLocaleString() }}</span>
+                </div>
+                <div class="token-item" v-if="tokenDetail.storage.retrievalDocs">
+                  <span class="token-label">检索文档数</span>
+                  <span class="token-value">{{ tokenDetail.storage.retrievalDocs }}</span>
+                </div>
+              </div>
+            </template>
+
+            <template v-else-if="typeof tokenInfo === 'object'">
+              <div class="token-grid">
+                <div class="token-item">
+                  <span class="token-label">输入 Token</span>
+                  <span class="token-value">{{ (tokenInfo.input || 0).toLocaleString() }}</span>
+                </div>
+                <div class="token-item">
+                  <span class="token-label">输出 Token</span>
+                  <span class="token-value">{{ (tokenInfo.output || 0).toLocaleString() }}</span>
+                </div>
+                <div class="token-item" v-if="tokenInfo.reasoning">
+                  <span class="token-label">推理 Token</span>
+                  <span class="token-value">{{ tokenInfo.reasoning.toLocaleString() }}</span>
+                </div>
+                <div class="token-item" v-if="tokenInfo.cachedInput">
+                  <span class="token-label">缓存命中</span>
+                  <span class="token-value">{{ tokenInfo.cachedInput.toLocaleString() }}</span>
+                </div>
+                <div class="token-item total">
+                  <span class="token-label">总计</span>
+                  <span class="token-value">{{ (tokenInfo.total || 0).toLocaleString() }}</span>
+                </div>
+              </div>
+            </template>
+
+            <div v-else class="token-simple">
+              <span class="token-label">Token 总数</span>
+              <span class="token-value">{{ Number(tokenInfo).toLocaleString() }}</span>
+            </div>
+          </div>
+          <div v-else class="empty-state">
+            <el-icon :size="32" color="var(--el-text-color-placeholder)"><Coin /></el-icon>
+            <span>暂无 Token 统计</span>
+          </div>
+        </div>
+
         <div v-show="activeTab === 'json'" class="tab-content">
           <pre v-if="rawJson" class="json-display">{{ JSON.stringify(rawJson, null, 2) }}</pre>
           <div v-else class="empty-state">
@@ -308,18 +417,6 @@ watch(() => props.message, () => {
           </div>
         </div>
 
-        <div v-show="activeTab === 'cost'" class="tab-content">
-          <TokenStats
-            :prompt-tokens="costSummary.promptTokens || 0"
-            :completion-tokens="costSummary.completionTokens || 0"
-            :total-tokens="costSummary.totalTokens || 0"
-          />
-          <CostTracker :cost-summary="costSummary" />
-        </div>
-
-        <div v-show="activeTab === 'permissions'" class="tab-content">
-          <PermissionManager :session-id="sessionId" />
-        </div>
         </AiPanel>
       </LxScrollArea>
     </div>
@@ -480,6 +577,74 @@ watch(() => props.message, () => {
   font-family: var(--font-mono);
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.artifact-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.artifact-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--foreground);
+}
+
+.artifact-description {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  margin: 0;
+}
+
+.artifact-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.artifact-action {
+  padding: 2px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.artifact-action:hover {
+  color: var(--sidebar-primary);
+  border-color: var(--sidebar-primary);
+}
+
+.artifact-close {
+  margin-left: auto;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  transition: all var(--transition-fast);
+}
+
+.artifact-close:hover {
+  background: color-mix(in srgb, var(--destructive) 10%, transparent);
+  color: var(--destructive);
+}
+
+.artifact-content {
+  padding: 12px;
 }
 
 .artifact-json {
@@ -727,6 +892,68 @@ watch(() => props.message, () => {
 
 .cot-step:last-child {
   border-bottom: none;
+}
+
+.token-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.token-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+  margin-top: 4px;
+}
+
+.token-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 4px;
+  border-radius: 4px;
+}
+
+.token-item.total {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 8px;
+  font-weight: 600;
+}
+
+.token-label {
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+
+.token-item.total .token-label {
+  color: var(--foreground);
+}
+
+.token-value {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+}
+
+.token-names {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  text-align: right;
+  max-width: 180px;
+  word-break: break-all;
+}
+
+.token-simple {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 4px;
 }
 
 .json-display {

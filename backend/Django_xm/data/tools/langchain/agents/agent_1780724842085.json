@@ -1,0 +1,41 @@
+{
+  "agent_id": "agent_1780724842085",
+  "type": "research",
+  "description": "访问 https://docs.langchain.com/oss/python/learn 页面，提取完整内容并返回。使用任意可用的方法获取该URL的HTML/文本内容。",
+  "status": "failed",
+  "parent_session_id": "",
+  "created_at": 1780724842.0851054,
+  "result": null,
+  "parent_tool_names": [
+    "fs_write_file",
+    "fs_list_files",
+    "fs_search_files",
+    "file_reader",
+    "attachment_reader",
+    "todo_write",
+    "todo_read",
+    "agent_create",
+    "agent_run",
+    "agent_list",
+    "agent_cleanup",
+    "translate_text",
+    "detect_language",
+    "sequentialthinking",
+    "resolve-library-id",
+    "query-docs",
+    "skill_baidu-search",
+    "skill_agent-browser",
+    "skill_ontology"
+  ],
+  "parent_mcp_servers": [
+    "context7",
+    "sequential-thinking"
+  ],
+  "parent_config": {
+    "use_web_search": true,
+    "use_mcp": true,
+    "user_id": 1
+  },
+  "started_at": 1780724845.2198596,
+  "error": "Pregel.invoke() missing 1 required positional argument: 'input'"
+}

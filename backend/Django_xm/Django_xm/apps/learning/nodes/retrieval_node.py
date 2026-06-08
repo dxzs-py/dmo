@@ -9,10 +9,10 @@ from datetime import datetime
 from typing import Dict, Any, List
 
 from ..services.state import StudyFlowState, RetrievedDocument
-from Django_xm.apps.knowledge.services.index_service import IndexManager
+from Django_xm.apps.knowledge.services.cross_app import get_index_manager
 from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
 from Django_xm.apps.knowledge.services.retrieval_service import create_retriever
-from Django_xm.apps.config_center.config import get_logger
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -31,7 +31,13 @@ def retrieval_node(state: StudyFlowState) -> Dict[str, Any]:
     try:
         learning_plan = state.get("learning_plan")
         if not learning_plan:
-            raise ValueError("学习计划不存在，无法进行文档检索")
+            logger.warning("[Retrieval Node] 学习计划不存在，跳过文档检索")
+            return {
+                "retrieved_docs": [],
+                "messages": [{"role": "assistant", "content": "\n\n⚠️ 学习计划生成失败，跳过文档检索。"}],
+                "current_step": "retrieval",
+                "updated_at": datetime.now().isoformat()
+            }
 
         topic = learning_plan["topic"]
         key_points = learning_plan["key_points"]
@@ -39,7 +45,7 @@ def retrieval_node(state: StudyFlowState) -> Dict[str, Any]:
         main_query = f"{topic}"
         logger.info(f"[Retrieval Node] 主查询: {main_query}")
 
-        index_manager = IndexManager()
+        index_manager = get_index_manager()
         embeddings = get_embeddings()
 
         try:

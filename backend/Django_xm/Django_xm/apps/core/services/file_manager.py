@@ -97,6 +97,8 @@ class FileManagerService:
 
         for file_path in search_dir.rglob("*"):
             if file_path.is_file():
+                if "sandbox" in file_path.relative_to(task_dir).parts:
+                    continue
                 file_type = self._detect_file_type(file_path)
                 files.append(
                     FileInfo(
@@ -114,18 +116,23 @@ class FileManagerService:
     ) -> Optional[FileInfo]:
         """获取文件信息"""
         task_dir = self._get_task_dir(task_id, task_type)
-        
+
         file_path = task_dir / relative_path
         if file_path.exists() and file_path.is_file():
             pass
         elif '/' not in relative_path and '\\' not in relative_path:
             for file_candidate in task_dir.rglob("*"):
                 if file_candidate.is_file() and file_candidate.name == relative_path:
+                    if "sandbox" in file_candidate.relative_to(task_dir).parts:
+                        continue
                     file_path = file_candidate
                     break
             else:
                 return None
         else:
+            return None
+
+        if "sandbox" in file_path.relative_to(task_dir).parts:
             return None
 
         file_type = self._detect_file_type(file_path)
@@ -172,6 +179,7 @@ class FileManagerService:
         task_id: Optional[str] = None,
         task_type: Optional[str] = None,
         file_types: Optional[List[str]] = None,
+        user_id: Optional[int] = None,
     ) -> List[FileInfo]:
         """
         搜索文件
@@ -181,10 +189,16 @@ class FileManagerService:
             task_id: 可选的任务ID筛选
             task_type: 可选的任务类型筛选
             file_types: 可选的文件类型筛选
+            user_id: 可选的用户ID，用于隔离搜索范围
 
         Returns:
             匹配的文件列表
         """
+        user_task_ids = None
+        if user_id is not None:
+            from Django_xm.apps.research.services.cross_app import get_user_research_task_ids
+            user_task_ids = get_user_research_task_ids(user_id)
+
         results = []
         search_dirs = []
 
@@ -200,6 +214,9 @@ class FileManagerService:
                 if dir_path.exists():
                     search_dirs.extend([d for d in dir_path.iterdir() if d.is_dir()])
 
+        if user_task_ids is not None:
+            search_dirs = [d for d in search_dirs if d.name in user_task_ids]
+
         keyword_lower = keyword.lower()
 
         for task_dir in search_dirs:
@@ -208,6 +225,8 @@ class FileManagerService:
 
             for file_path in task_dir.rglob("*"):
                 if not file_path.is_file():
+                    continue
+                if "sandbox" in file_path.relative_to(task_dir).parts:
                     continue
 
                 file_type = self._detect_file_type(file_path)

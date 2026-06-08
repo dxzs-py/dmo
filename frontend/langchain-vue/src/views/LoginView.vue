@@ -135,7 +135,7 @@
       </el-form>
 
       <div class="back-home">
-        <router-link to="/">← 返回首页</router-link>
+        <router-link to="/chat">← 返回</router-link>
       </div>
     </div>
   </div>
@@ -145,8 +145,8 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import { userAPI } from '@/api/user'
 import { ElMessage } from 'element-plus'
-import settings from '@/config/settings'
 import { logger } from '../utils/logger'
 
 const router = useRouter()
@@ -249,16 +249,9 @@ onMounted(() => {
 
 async function refreshCaptcha() {
   try {
-    const response = await fetch(`${settings.API_BASE_URL}/users/captcha/`, {
-      method: 'GET',
-      credentials: 'include'
-    })
-
-    if (response.ok) {
-      captchaKey.value = response.headers.get('X-Captcha-Key')
-      const blob = await response.blob()
-      captchaSrc.value = URL.createObjectURL(blob)
-    }
+    const response = await userAPI.getCaptcha()
+    captchaKey.value = response.headers['x-captcha-key']
+    captchaSrc.value = URL.createObjectURL(response.data)
   } catch (error) {
     logger.error('获取验证码失败:', error)
   }
@@ -308,10 +301,17 @@ async function handleLogin() {
   }
 }
 
-function getCode() {
-  formRef.value?.validateField('mobile', (error) => {
-    if (!error) {
-      ElMessage.success('验证码已发送（演示）')
+async function getCode() {
+  try {
+    await formRef.value?.validateField('mobile')
+  } catch {
+    return
+  }
+
+  try {
+    const response = await userAPI.sendVerifyCode({ mobile: formData.mobile })
+    if (response.data?.code === 200) {
+      ElMessage.success('验证码已发送，请查看手机')
       countdown.value = 60
       const timer = setInterval(() => {
         countdown.value--
@@ -319,8 +319,17 @@ function getCode() {
           clearInterval(timer)
         }
       }, 1000)
+    } else {
+      ElMessage.error(response.data?.message || '验证码发送失败')
     }
-  })
+  } catch (error) {
+    const msg = error.response?.data?.message || '验证码发送失败，请稍后重试'
+    if (error.response?.status === 429) {
+      ElMessage.error('操作过于频繁，请稍后再试')
+    } else {
+      ElMessage.error(msg)
+    }
+  }
 }
 </script>
 
@@ -335,7 +344,7 @@ function getCode() {
 }
 
 .login-box {
-  background: white;
+  background: var(--el-bg-color-overlay, white);
   border-radius: 16px;
   padding: 40px;
   width: 100%;
@@ -363,7 +372,7 @@ function getCode() {
 }
 
 .subtitle {
-  color: #6b7280;
+  color: var(--el-text-color-secondary, #6b7280);
   font-size: 14px;
   margin: 0;
 }
@@ -372,7 +381,7 @@ function getCode() {
   display: flex;
   gap: 8px;
   margin-bottom: 24px;
-  background: #f3f4f6;
+  background: var(--el-fill-color-light, #f3f4f6);
   padding: 4px;
   border-radius: 8px;
 }
@@ -385,16 +394,16 @@ function getCode() {
   cursor: pointer;
   font-size: 14px;
   font-weight: 500;
-  color: #6b7280;
+  color: var(--el-text-color-secondary, #6b7280);
   transition: all 0.2s;
 }
 
 .tab:hover {
-  color: #374151;
+  color: var(--el-text-color-primary, #374151);
 }
 
 .tab.active {
-  background: white;
+  background: var(--el-bg-color, white);
   color: #667eea;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
@@ -464,7 +473,7 @@ function getCode() {
 .register-link {
   text-align: center;
   font-size: 14px;
-  color: #6b7280;
+  color: var(--el-text-color-secondary, #6b7280);
   margin: 16px 0 0 0;
 }
 
@@ -484,7 +493,7 @@ function getCode() {
 }
 
 .back-home a {
-  color: #6b7280;
+  color: var(--el-text-color-secondary, #6b7280);
   text-decoration: none;
   font-size: 14px;
   transition: color 0.2s;

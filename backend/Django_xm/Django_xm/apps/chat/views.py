@@ -12,25 +12,14 @@ from .views_chat import (
     ChatMessageCreateView,
     ChatMessageBatchCreateView,
     ChatMessageUpdateView,
+    ChatMessageDeleteView,
+    ChatMessagePairDeleteView,
+    ChatApprovalView,
 )
 from .views_command import (
     ChatCommandsView,
     ChatCommandExecuteView,
-    ChatPermissionsView,
-    ToolConfirmationView,
-    ChatCostView,
     ProjectContextView,
-)
-from .views_mcp import (
-    McpToolsView,
-    McpStatusView,
-    McpServerTestView,
-    McpToolCallLogView,
-    McpServerListView,
-    McpServerAddView,
-    McpServerDeleteView,
-    ToolListView,
-    ToolUploadView,
 )
 
 __all__ = [
@@ -47,19 +36,10 @@ __all__ = [
     'ChatMessageCreateView',
     'ChatMessageBatchCreateView',
     'ChatMessageUpdateView',
+    'ChatMessageDeleteView',
+    'ChatMessagePairDeleteView',
+    'ChatApprovalView',
     'ChatCommandsView',
     'ChatCommandExecuteView',
-    'ChatPermissionsView',
-    'ToolConfirmationView',
-    'ChatCostView',
     'ProjectContextView',
-    'McpToolsView',
-    'McpStatusView',
-    'McpServerTestView',
-    'McpToolCallLogView',
-    'McpServerListView',
-    'McpServerAddView',
-    'McpServerDeleteView',
-    'ToolListView',
-    'ToolUploadView',
 ]

@@ -2,10 +2,13 @@
 附件生命周期管理 Celery 任务
 定时清理过期附件、入库旧文件、监控存储空间
 """
+import asyncio
 import logging
+import threading
 from celery import shared_task
 from celery.utils.log import get_task_logger
 
+from Django_xm.async_utils import run_async
 from Django_xm.tasks.base import TrackedTask
 
 logger = get_task_logger(__name__)
@@ -16,6 +19,9 @@ logger = get_task_logger(__name__)
     name='chat.cleanup_expired_attachments',
     max_retries=1,
     soft_time_limit=600,
+    autoretry_for=(ConnectionError, TimeoutError, OSError),
+    retry_backoff=True,
+    retry_backoff_max=60,
 )
 def cleanup_expired_attachments(self):
     from Django_xm.apps.attachments.services.attachment_lifecycle import AttachmentLifecycleService
@@ -55,6 +61,9 @@ def cleanup_expired_attachments(self):
     name='chat.index_old_attachments',
     max_retries=1,
     soft_time_limit=600,
+    autoretry_for=(ConnectionError, TimeoutError, OSError),
+    retry_backoff=True,
+    retry_backoff_max=60,
 )
 def index_old_attachments(self):
     from Django_xm.apps.attachments.services.attachment_lifecycle import AttachmentLifecycleService
@@ -91,6 +100,9 @@ def index_old_attachments(self):
     name='chat.check_storage_alerts',
     max_retries=1,
     soft_time_limit=120,
+    autoretry_for=(ConnectionError, TimeoutError, OSError),
+    retry_backoff=True,
+    retry_backoff_max=60,
 )
 def check_storage_alerts(self):
     from Django_xm.apps.attachments.services.attachment_lifecycle import AttachmentLifecycleService
@@ -132,6 +144,9 @@ def check_storage_alerts(self):
     name='chat.attachment_full_lifecycle',
     max_retries=1,
     soft_time_limit=1800,
+    autoretry_for=(ConnectionError, TimeoutError, OSError),
+    retry_backoff=True,
+    retry_backoff_max=60,
 )
 def attachment_full_lifecycle(self):
     tracker = TrackedTask(self)
@@ -149,5 +164,76 @@ def attachment_full_lifecycle(self):
         return {'status': 'success', 'message': '生命周期任务已全部提交'}
     except Exception as e:
         logger.error(f"[Celery Chat] 完整生命周期任务失败: {e}", exc_info=True)
+        tracker.mark_failure(error_message=str(e))
+        return {'status': 'error', 'error': str(e)}
+
+
+@shared_task(
+    bind=True,
+    name='chat.cleanup_checkpoints',
+    max_retries=1,
+    soft_time_limit=300,
+    autoretry_for=(ConnectionError, TimeoutError, OSError),
+    retry_backoff=True,
+    retry_backoff_max=60,
+)
+def cleanup_checkpoints(self, user_id=None, session_id=None):
+    """
+    清理 AI checkpoint 和 Store 数据的 Celery 任务
+
+    根据参数执行不同级别的清理：
+    - session_id 不为 None：清理该 session 的 checkpoint 和 Store 数据
+    - session_id 为 None 且 user_id 不为 None：清理该用户的所有数据
+
+    Args:
+        user_id: 用户 ID（int, 可选）
+        session_id: 会话 ID（str, 可选）
+    """
+    from Django_xm.apps.ai_engine.services.checkpointer_factory import (
+        delete_thread_checkpoints,
+        delete_thread_store_data,
+        delete_user_all_data,
+    )
+
+    tracker = TrackedTask(self)
+    tracker.set_task_type('chat_cleanup')
+
+    try:
+        tracker.mark_started()
+
+        if session_id is not None:
+            # 清理指定 session 的 checkpoint 和 Store 数据
+            try:
+                run_async(delete_thread_checkpoints(str(session_id)))
+                logger.info(f"[Celery Chat] 已清理 session={session_id} 的 checkpoint 数据")
+            except Exception as e:
+                logger.error(f"[Celery Chat] 清理 session={session_id} 的 checkpoint 失败: {e}", exc_info=True)
+
+            if user_id is not None:
+                try:
+                    run_async(delete_thread_store_data(user_id, str(session_id)))
+                    logger.info(f"[Celery Chat] 已清理 user={user_id} session={session_id} 的 Store 数据")
+                except Exception as e:
+                    logger.error(
+                        f"[Celery Chat] 清理 user={user_id} session={session_id} 的 Store 数据失败: {e}",
+                        exc_info=True,
+                    )
+
+        elif user_id is not None:
+            # session_id 为 None，清理该用户的所有数据
+            try:
+                run_async(delete_user_all_data(user_id))
+                logger.info(f"[Celery Chat] 已清理 user={user_id} 的所有数据")
+            except Exception as e:
+                logger.error(f"[Celery Chat] 清理 user={user_id} 的所有数据失败: {e}", exc_info=True)
+
+        else:
+            logger.warning("[Celery Chat] cleanup_checkpoints 未提供 user_id 或 session_id，跳过清理")
+
+        result = {'user_id': user_id, 'session_id': session_id}
+        tracker.mark_success(result=result)
+        return {'status': 'success', **result}
+    except Exception as e:
+        logger.error(f"[Celery Chat] checkpoint 清理任务失败: {e}", exc_info=True)
         tracker.mark_failure(error_message=str(e))
         return {'status': 'error', 'error': str(e)}

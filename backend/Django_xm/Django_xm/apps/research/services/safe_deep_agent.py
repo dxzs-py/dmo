@@ -10,16 +10,18 @@
 """
 
 from typing import Optional, Dict, Any, List, Sequence, Callable
+import warnings
+from datetime import datetime
 
 from langchain_core.tools import BaseTool
 from langchain.agents.middleware import AgentMiddleware
 
-from Django_xm.apps.config_center.config import get_logger
+from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.ai_engine.guardrails import (
     create_standard_guardrails,
     ResearchReport,
 )
-from Django_xm.apps.research.services.deep_agent import DeepResearchAgent, ResearchState
+from Django_xm.apps.research.services.deep_agent import DeepResearchAgent
 
 logger = get_logger(__name__)
 
@@ -40,6 +42,7 @@ class SafeDeepResearchAgent:
         human_review_callback: Optional[Callable[[str, str], bool]] = None,
         **kwargs,
     ):
+        warnings.warn("SafeDeepResearchAgent 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2)
         self.thread_id = thread_id
         self.enable_input_validation = enable_input_validation
         self.enable_output_validation = enable_output_validation

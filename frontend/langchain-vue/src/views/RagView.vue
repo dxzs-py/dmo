@@ -280,7 +280,7 @@
 <script setup>
 import { ref, reactive, onMounted, onActivated, computed, onUnmounted } from 'vue'
 import { ragAPI } from '../api'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElNotification } from 'element-plus'
 import { Upload, Document } from '@element-plus/icons-vue'
 import { formatDate, formatFileSize } from '../utils/format'
 import MarkdownRenderer from '../components/common/MarkdownRenderer.vue'
@@ -318,7 +318,6 @@ const selectedIndex = computed(() => {
 const queryForm = reactive({
   query: '',
   k: 4,
-  use_rag_agent: true,
   streaming: true,
 })
 
@@ -367,9 +366,9 @@ const loadFiles = async () => {
     const data = response.data
     
     if (data.code === 200 && data.data) {
-      files.value = data.data.files || []
-    } else if (data.files) {
-      files.value = data.files
+      files.value = data.data.items || []
+    } else if (data.items) {
+      files.value = data.items
     } else if (Array.isArray(data)) {
       files.value = data
     } else {
@@ -432,7 +431,7 @@ const fetchIndexes = async () => {
     
     let indexes = []
     if (data.code === 200 && data.data) {
-      indexes = Array.isArray(data.data) ? data.data : data.data.indexes || []
+      indexes = Array.isArray(data.data) ? data.data : data.data.items || []
     } else if (data.indexes) {
       indexes = data.indexes
     } else if (Array.isArray(data)) {
@@ -442,7 +441,7 @@ const fetchIndexes = async () => {
     availableIndexes.value = indexes.map(index => ({
       name: index.name,
       description: index.description || '',
-      num_documents: index.num_documents || 0,
+      num_documents: index.num_documents || index.chunk_count || 0,
       created_at: index.created_at,
       updated_at: index.updated_at
     })).filter(index => index.name)
@@ -504,7 +503,6 @@ const executeNormalQuery = async () => {
       index_name: selectedIndexName.value,
       query: queryForm.query,
       k: queryForm.k,
-      use_rag_agent: queryForm.use_rag_agent,
       return_sources: true
     })
     
@@ -550,7 +548,6 @@ const executeStreamQuery = async () => {
       index_name: selectedIndexName.value,
       query: queryForm.query,
       k: queryForm.k,
-      use_rag_agent: queryForm.use_rag_agent,
       return_sources: true
     }, {
       signal: abortController.signal,
@@ -620,6 +617,16 @@ const handleStreamEvent = (data) => {
         result.value.error = errorMessage.value
       }
       break
+    case 'model_fallback':
+      if (data.data?.message) {
+        ElNotification({
+          title: '模型降级提示',
+          message: data.data.message,
+          type: 'warning',
+          duration: 8000,
+        })
+      }
+      break
     default:
       if (data.content) {
         streamingAnswer.value += data.content
@@ -670,8 +677,20 @@ const handleUpload = async () => {
     uploadFiles.value.forEach(file => {
       formData.append('files', file.raw)
     })
-    await ragAPI.uploadDocuments(selectedIndexName.value, formData)
+    const response = await ragAPI.uploadDocuments(selectedIndexName.value, formData)
     ElMessage.success('文件上传并索引成功！')
+    // 检查 Embedding 降级提示
+    const resultData = response.data?.data
+    if (resultData?.fallback_info?.events?.length) {
+      const events = resultData.fallback_info.events
+      const chain = events.map(e => e.from_label).concat([events[events.length - 1].to_label]).join(' → ')
+      ElNotification({
+        title: 'Embedding 模型降级提示',
+        message: `降级链路: ${chain}`,
+        type: 'warning',
+        duration: 8000,
+      })
+    }
     clearUpload()
     await fetchIndexes()
     await loadFiles()

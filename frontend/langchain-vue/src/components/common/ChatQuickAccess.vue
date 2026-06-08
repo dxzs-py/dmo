@@ -73,7 +73,7 @@ const handleSessionClick = async (sessionId) => {
 }
 
 const handleNewChat = async () => {
-  await sessionStore.createNewSession('basic-agent')
+  await sessionStore.createNewSession('agent')
   isOpen.value = false
   if (route.path !== '/chat') {
     router.push('/chat')

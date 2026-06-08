@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -9,6 +9,7 @@ import {
 } from '@element-plus/icons-vue'
 import { dashboardAPI } from '../api'
 import { logger } from '../utils/logger'
+import { formatDuration as _formatDuration } from '../utils/format'
 
 const route = useRoute()
 const loading = ref(false)
@@ -18,7 +19,6 @@ const overview = ref({
   total_sessions: 0,
   total_messages: 0,
   total_tokens: 0,
-  total_cost: 0,
   avg_response_time: 0,
   total_events: 0,
   api_requests: 0,
@@ -26,7 +26,6 @@ const overview = ref({
   total_documents: 0,
   total_workflows: 0,
   total_research: 0,
-  cost_breakdown: { chat: 0, research: 0, workflow: 0 },
   token_breakdown: { chat: 0, research: 0, workflow: 0 },
 })
 
@@ -42,10 +41,6 @@ const performanceMetrics = ref({
 const recentActivities = ref([])
 const isMockData = ref(false)
 
-const costSummary = computed(() => {
-  return overview.value.total_cost.toFixed(4)
-})
-
 const trendMax = computed(() => {
   const events = Math.max(...usageTrend.value.map(t => t.events), 1)
   const tokens = Math.max(...usageTrend.value.map(t => t.tokens), 1)
@@ -57,9 +52,6 @@ let pageViewTracked = false
 onMounted(async () => {
   await loadDashboardData()
   trackPageView()
-})
-
-onBeforeUnmount(() => {
 })
 
 async function trackPageView() {
@@ -102,7 +94,6 @@ function loadMockData() {
     total_sessions: 42,
     total_messages: 356,
     total_tokens: 128450,
-    total_cost: 2.5678,
     avg_response_time: 3.2,
     total_events: 1240,
     api_requests: 890,
@@ -134,10 +125,10 @@ function loadMockData() {
     { name: '页面浏览', value: 28 },
   ]
   modelDistribution.value = [
-    { name: 'GPT-4o', value: 45 },
-    { name: 'GPT-4o-mini', value: 30 },
-    { name: 'DeepSeek', value: 15 },
-    { name: '其他', value: 10 },
+    { name: 'GPT-4o', value: 45, tokens: 68000 },
+    { name: 'GPT-4o-mini', value: 30, tokens: 35000 },
+    { name: 'DeepSeek', value: 15, tokens: 18000 },
+    { name: '其他', value: 10, tokens: 7450 },
   ]
   performanceMetrics.value = {
     avg_response_time_ms: 1850,
@@ -165,8 +156,7 @@ function formatTime(isoStr) {
 
 function formatDuration(ms) {
   if (!ms) return '-'
-  if (ms < 1000) return ms + 'ms'
-  return (ms / 1000).toFixed(1) + 's'
+  return _formatDuration(ms / 1000)
 }
 
 const categoryColors = {
@@ -192,13 +182,27 @@ function getCategoryColor(name) {
     <div class="dashboard-header">
       <h1>数据分析</h1>
       <p class="subtitle">全面追踪系统使用情况、多维度数据统计与趋势分析</p>
-      <el-tag v-if="isMockData" type="warning" size="small" style="margin-left: 12px">演示数据</el-tag>
+      <el-tag v-if="isMockData" type="warning" size="large" effect="dark" style="margin-left: 12px; font-size: 14px; padding: 4px 14px;">
+        ⚠ 演示数据
+      </el-tag>
     </div>
+
+    <el-alert
+      v-if="isMockData"
+      type="warning"
+      show-icon
+      :closable="false"
+      class="mock-data-alert"
+    >
+      <template #title>
+        <span class="mock-alert-title">当前显示的是模拟演示数据，非真实统计信息。请检查后端服务连接是否正常。</span>
+      </template>
+    </el-alert>
 
     <el-tabs v-model="activeTab" class="dashboard-tabs">
       <el-tab-pane label="总览" name="overview">
         <div v-loading="loading">
-          <el-row :gutter="16" class="stats-row">
+          <el-row :gutter="16" class="stats-row" :class="{ 'mock-data-section': isMockData }">
             <el-col :xs="12" :sm="8" :md="4">
               <el-card class="stat-card" shadow="hover">
                 <div class="stat-icon" style="background: #409eff;">
@@ -260,14 +264,14 @@ function getCategoryColor(name) {
                   <el-icon :size="22"><Coin /></el-icon>
                 </div>
                 <div class="stat-info">
-                  <div class="stat-value">${{ costSummary }}</div>
-                  <div class="stat-label">总成本</div>
+                  <div class="stat-value">{{ formatNumber(overview.total_tokens) }}</div>
+                  <div class="stat-label">总 Token</div>
                 </div>
               </el-card>
             </el-col>
           </el-row>
 
-          <el-row :gutter="20" class="chart-row">
+          <el-row :gutter="20" class="chart-row" :class="{ 'mock-data-section': isMockData }">
             <el-col :xs="24" :md="16">
               <el-card shadow="hover">
                 <template #header>
@@ -322,7 +326,7 @@ function getCategoryColor(name) {
             </el-col>
           </el-row>
 
-          <el-row :gutter="20" class="chart-row">
+          <el-row :gutter="20" class="chart-row" :class="{ 'mock-data-section': isMockData }">
             <el-col :xs="24" :md="12">
               <el-card shadow="hover">
                 <template #header>
@@ -349,10 +353,10 @@ function getCategoryColor(name) {
                 </template>
                 <div class="distribution-list">
                   <div v-for="item in modelDistribution" :key="item.name" class="distribution-item"
-                       v-memo="[item.name, item.value]">
+                       v-memo="[item.name, item.value, item.tokens]">
                     <div class="distribution-header">
                       <span class="distribution-name">{{ item.name }}</span>
-                      <span class="distribution-count">{{ item.value }}次</span>
+                      <span class="distribution-count">{{ item.value }}次 · {{ formatNumber(item.tokens || 0) }} Token</span>
                     </div>
                     <el-progress :percentage="item.value" :stroke-width="12" :show-text="true" />
                   </div>
@@ -365,7 +369,7 @@ function getCategoryColor(name) {
 
       <el-tab-pane label="性能指标" name="performance">
         <div v-loading="loading">
-          <el-row :gutter="20" class="stats-row">
+          <el-row :gutter="20" class="stats-row" :class="{ 'mock-data-section': isMockData }">
             <el-col :xs="12" :sm="8">
               <el-card class="stat-card" shadow="hover">
                 <div class="stat-icon" style="background: #409eff;">
@@ -424,23 +428,17 @@ function getCategoryColor(name) {
               <el-descriptions-item label="平均每消息 Token 数">
                 {{ overview.total_messages > 0 ? Math.round(overview.total_tokens / overview.total_messages) : 0 }}
               </el-descriptions-item>
-              <el-descriptions-item label="平均每会话成本">
-                ${{ overview.total_sessions > 0 ? (overview.total_cost / overview.total_sessions).toFixed(4) : '0.0000' }}
-              </el-descriptions-item>
               <el-descriptions-item label="总事件数">
                 {{ formatNumber(overview.total_events) }}
               </el-descriptions-item>
-              <el-descriptions-item label="聊天成本">
-                ${{ (overview.cost_breakdown?.chat || 0).toFixed(4) }}
-              </el-descriptions-item>
-              <el-descriptions-item label="深度研究成本">
-                ${{ (overview.cost_breakdown?.research || 0).toFixed(4) }}
-              </el-descriptions-item>
-              <el-descriptions-item label="工作流成本">
-                ${{ (overview.cost_breakdown?.workflow || 0).toFixed(4) }}
-              </el-descriptions-item>
               <el-descriptions-item label="聊天 Token">
                 {{ formatNumber(overview.token_breakdown?.chat || 0) }}
+              </el-descriptions-item>
+              <el-descriptions-item label="深度研究 Token">
+                {{ formatNumber(overview.token_breakdown?.research || 0) }}
+              </el-descriptions-item>
+              <el-descriptions-item label="工作流 Token">
+                {{ formatNumber(overview.token_breakdown?.workflow || 0) }}
               </el-descriptions-item>
             </el-descriptions>
           </el-card>
@@ -507,6 +505,43 @@ function getCategoryColor(name) {
 .subtitle {
   color: var(--el-text-color-secondary);
   margin: 0;
+}
+
+.mock-data-alert {
+  margin-bottom: 16px;
+}
+
+.mock-alert-title {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.mock-data-section {
+  position: relative;
+  padding: 12px;
+  border: 2px dashed #e6a23c;
+  border-radius: 8px;
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 8px,
+    rgba(230, 162, 60, 0.04) 8px,
+    rgba(230, 162, 60, 0.04) 16px
+  );
+}
+
+.mock-data-section::before {
+  content: '模拟数据';
+  position: absolute;
+  top: -1px;
+  right: 12px;
+  background: #e6a23c;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 0 0 4px 4px;
+  z-index: 1;
 }
 
 .dashboard-tabs :deep(.el-tabs__header) {

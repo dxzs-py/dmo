@@ -18,22 +18,23 @@ defineProps({
 
 <style scoped>
 .ai-context {
-  padding: 12px;
-  border-radius: 8px;
-  background-color: var(--el-fill-color-lighter);
-  border-left: 3px solid var(--el-color-primary);
+  padding: 10px 14px;
+  border-radius: 10px;
+  background-color: color-mix(in srgb, var(--sidebar-primary) 6%, transparent);
 }
 
 .context-label {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  color: var(--el-color-primary);
-  margin-bottom: 8px;
+  color: var(--sidebar-primary);
+  margin-bottom: 6px;
   text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.85;
 }
 
 .context-content {
   font-size: 14px;
-  color: var(--el-text-color-primary);
+  color: var(--foreground);
 }
 </style>

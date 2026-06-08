@@ -1,11 +1,10 @@
 """
-AI Engine 服务层 - 提供模型管理、缓存、用量追踪等核心服务
+AI Engine 服务层 - 提供模型管理、用量追踪等核心服务
 
 包含：
 - LLM 工厂（模型创建、预设、流式）
-- 缓存服务（通用缓存、查询缓存、模型响应缓存、工具结果缓存、向量搜索缓存）
 - 用量追踪（Token 用量统计）
-- 成本追踪（模型调用成本计算）
+- Token 追踪（模型调用 Token 统计）
 - Agent 工厂（基础 Agent 创建）
 - 项目上下文检测
 - 建议生成
@@ -19,23 +18,9 @@ from .llm_factory import (
     get_model_string,
     get_chat_model_by_provider,
     test_model_connection,
-)
-from Django_xm.apps.cache_manager.services.cache_service import (
-    CacheTTL,
-    CacheService,
-    QueryCacheService,
-    ModelResponseCacheService,
-    ToolResultCacheService,
-    VectorSearchCacheService,
-    generate_query_cache_key,
-    generate_model_cache_key,
-    generate_embedding_cache_key,
-    generate_tool_cache_key,
-    generate_vector_search_cache_key,
-    cache_result,
-    invalidate_cache,
-    CacheWarmer,
-    CacheHealthChecker,
+    get_chat_model_with_fallback,
+    get_fallback_candidates,
+    get_structured_model_with_fallback,
 )
 from .usage_tracker import (
     TokenUsage,
@@ -43,16 +28,18 @@ from .usage_tracker import (
     create_usage_tracker,
 )
 from .cost_tracker import (
-    ModelPricing,
-    CostRecord,
-    CostTracker,
-    create_cost_tracker,
-    get_model_pricing,
-    get_all_model_pricing,
+    TokenRecord,
+    TokenDetailTracker,
+    create_token_detail_tracker,
 )
 from .agent_factory import (
     BaseAgent,
-    create_base_agent,
+)
+import warnings
+warnings.warn(
+    "BaseAgent 已废弃，请使用 Django_xm.apps.agent_hub.create()",
+    DeprecationWarning,
+    stacklevel=2,
 )
 from .project_context import (
     ProjectContext,
@@ -61,6 +48,13 @@ from .project_context import (
 )
 from .suggestion_service import generate_suggestions
 from .token_counter import TokenUsageCallbackHandler
+from .tool_usage_guard import (
+    ToolUsageGuard,
+    ToolUsageStatus,
+    ToolUsageDecision,
+    get_tool_usage_guard,
+    reset_tool_usage_guard,
+)
 
 __all__ = [
     "get_chat_model",
@@ -70,35 +64,24 @@ __all__ = [
     "get_model_string",
     "get_chat_model_by_provider",
     "test_model_connection",
-    "CacheTTL",
-    "CacheService",
-    "QueryCacheService",
-    "ModelResponseCacheService",
-    "ToolResultCacheService",
-    "VectorSearchCacheService",
-    "generate_query_cache_key",
-    "generate_model_cache_key",
-    "generate_embedding_cache_key",
-    "generate_tool_cache_key",
-    "generate_vector_search_cache_key",
-    "cache_result",
-    "invalidate_cache",
-    "CacheWarmer",
-    "CacheHealthChecker",
+    "get_chat_model_with_fallback",
+    "get_fallback_candidates",
+    "get_structured_model_with_fallback",
     "TokenUsage",
     "UsageTracker",
     "create_usage_tracker",
-    "ModelPricing",
-    "CostRecord",
-    "CostTracker",
-    "create_cost_tracker",
-    "get_model_pricing",
-    "get_all_model_pricing",
+    "TokenRecord",
+    "TokenDetailTracker",
+    "create_token_detail_tracker",
     "BaseAgent",
-    "create_base_agent",
     "ProjectContext",
     "ProjectContextDetector",
     "detect_project_context",
     "generate_suggestions",
     "TokenUsageCallbackHandler",
+    "ToolUsageGuard",
+    "ToolUsageStatus",
+    "ToolUsageDecision",
+    "get_tool_usage_guard",
+    "reset_tool_usage_guard",
 ]

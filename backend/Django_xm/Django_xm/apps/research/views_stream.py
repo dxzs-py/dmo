@@ -4,12 +4,21 @@ import json
 
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.renderers import BaseRenderer
 
-from Django_xm.apps.common.sse_utils import sse_response, authenticate_sse_request, sse_error_response
-from Django_xm.apps.core.permissions import IsAuthenticatedOrQueryParam
+from Django_xm.common.sse_utils import sse_response, authenticate_sse_request, sse_error_response, sse_error_event
+from Django_xm.common.permissions import IsAuthenticatedOrQueryParam
 
 from .models import ResearchTask
 from .services.task_manager import get_task_status
+
+class SSERenderer(BaseRenderer):
+    media_type = 'text/event-stream'
+    format = 'txt'
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        return data
+
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +27,7 @@ def deep_research_stream(request, task_id):
     user = authenticate_sse_request(request)
 
     if not user:
-        return sse_error_response('未登录或登录已过期', 401)
+        return sse_error_response('未登录或登录已过期', 401, code="40101")
 
     try:
         task = ResearchTask.objects.get(
@@ -27,7 +36,7 @@ def deep_research_stream(request, task_id):
             is_deleted=False,
         )
     except ResearchTask.DoesNotExist:
-        return sse_error_response('研究任务不存在', 404)
+        return sse_error_response('研究任务不存在', 404, code="40401")
 
     logger.info(f"[API] SSE流式监听研究进度，task_id={task_id}, user_id={user.id}")
 
@@ -45,12 +54,11 @@ def deep_research_stream(request, task_id):
                     yield f"data: {json.dumps({'type': 'timeout', 'message': '连接超时'}, ensure_ascii=False)}\n\n"
                     break
 
-                try:
-                    current_task = ResearchTask.objects.get(task_id=task_id, created_by=user)
-                    current_status = current_task.status
-                except ResearchTask.DoesNotExist:
-                    yield f"data: {json.dumps({'type': 'error', 'message': '任务不存在或无权访问'}, ensure_ascii=False)}\n\n"
+                status_data = get_task_status(task_id, user_id=user.id)
+                if not status_data:
+                    yield sse_error_event(code="40401", message='任务不存在或无权访问')
                     break
+                current_status = status_data.get('status')
 
                 if current_status != last_status:
                     last_status = current_status
@@ -69,8 +77,8 @@ def deep_research_stream(request, task_id):
                         'task_id': task_id,
                     }
 
-                    if current_status == 'completed' and current_task.final_report:
-                        event_data['final_report'] = current_task.final_report
+                    if current_status == 'completed' and status_data.get('final_report'):
+                        event_data['final_report'] = status_data['final_report']
 
                     yield f"data: {json.dumps(event_data, ensure_ascii=False, default=str)}\n\n"
 
@@ -91,7 +99,7 @@ def deep_research_stream(request, task_id):
             logger.info(f"[API] SSE连接关闭，task_id={task_id}")
         except Exception as e:
             logger.error(f"[API] SSE流式输出异常：{e}", exc_info=True)
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            yield sse_error_event(code="50001", message=str(e))
 
     response = sse_response(event_stream())
     return response
@@ -99,6 +107,7 @@ def deep_research_stream(request, task_id):
 
 class DeepResearchStreamView(APIView):
     permission_classes = [IsAuthenticatedOrQueryParam]
+    renderer_classes = [SSERenderer]
 
     def get(self, request, task_id):
         return deep_research_stream(request, task_id)

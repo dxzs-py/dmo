@@ -174,6 +174,26 @@
 
         <el-divider />
 
+        <div v-if="autoLoadLoading" class="auto-load-section">
+          <el-card>
+            <div class="auto-load-loading">
+              <el-icon class="is-loading" :size="16"><Loading /></el-icon>
+              <span>正在加载学习资料...</span>
+            </div>
+          </el-card>
+        </div>
+
+        <div v-else-if="autoLoadContent" class="auto-load-section">
+          <el-card>
+            <template #header>
+              <div class="card-header">
+                <span>学习笔记</span>
+              </div>
+            </template>
+            <MarkdownRenderer :content="autoLoadContent" />
+          </el-card>
+        </div>
+
         <div class="files-section">
           <h4>生成的文件</h4>
           <FileBrowser
@@ -204,18 +224,20 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onUnmounted } from 'vue'
+import { ref, reactive, computed, onUnmounted, nextTick } from 'vue'
 import { workflowAPI } from '../api'
 import { readSSEStream } from '../utils/sse'
 import { ElMessage } from 'element-plus'
+import { Loading } from '@element-plus/icons-vue'
 import TaskList from '../components/chat/TaskList.vue'
 import FileBrowser from '../components/chat/FileBrowser.vue'
+import MarkdownRenderer from '../components/common/MarkdownRenderer.vue'
 import AiCheckpoint from '../components/ai-elements/AiCheckpoint.vue'
 import AiNode from '../components/ai-elements/AiNode.vue'
 import AiConnection from '../components/ai-elements/AiConnection.vue'
 import AiEdge from '../components/ai-elements/AiEdge.vue'
 import AiCanvas from '../components/ai-elements/AiCanvas.vue'
-import { formatDate as _formatDate } from '../utils/format'
+import { formatDate } from '../utils/format'
 import { logger } from '../utils/logger'
 
 const isLoading = ref(false)
@@ -224,7 +246,10 @@ const execution = ref(null)
 const showDetail = ref(false)
 const answersForm = reactive({})
 const fileBrowserRef = ref(null)
+const taskListRef = ref(null)
 const currentStepMessage = ref('')
+const autoLoadContent = ref(null)
+const autoLoadLoading = ref(false)
 let pollingTimer = null
 let sseAbortController = null
 let sseReaderActive = false
@@ -238,15 +263,9 @@ const workflowForm = reactive({
 })
 
 const statusOptions = [
-  { value: 'start', label: '准备中' },
-  { value: 'planner', label: '生成学习计划' },
-  { value: 'retrieval', label: '检索资料' },
-  { value: 'quiz_generator', label: '生成练习题' },
+  { value: 'running', label: '执行中' },
   { value: 'waiting_for_answers', label: '等待答题' },
-  { value: 'grading', label: '评分中' },
-  { value: 'feedback', label: '生成反馈' },
-  { value: 'feedback_completed', label: '反馈完成' },
-  { value: 'end', label: '已结束' },
+  { value: 'retry', label: '重试' },
   { value: 'completed', label: '已完成' },
   { value: 'failed', label: '失败' },
 ]
@@ -270,11 +289,6 @@ const completedSteps = computed(() => {
   if (currentIdx < 0) return []
   return stepOrder.slice(0, currentIdx)
 })
-
-const formatDate = (dateStr) => {
-  if (!dateStr) return '-'
-  return _formatDate(dateStr)
-}
 
 const getStepType = (step) => {
   const typeMap = {
@@ -329,6 +343,7 @@ const pollExecutionStatus = async () => {
     stopPolling()
     if (fileBrowserRef.value && currentStep !== 'waiting_for_answers') {
       fileBrowserRef.value.loadFiles()
+      autoLoadKeyFile()
     }
     return
   }
@@ -487,6 +502,7 @@ const handleSSEEvent = (data) => {
       if (fileBrowserRef.value) {
         fileBrowserRef.value.loadFiles()
       }
+      autoLoadKeyFile()
       break
     case 'stream_error':
       logger.warn('工作流流式执行异常:', data.message)
@@ -525,6 +541,13 @@ const submitAnswers = async () => {
       Object.keys(answersForm).forEach(key => delete answersForm[key])
       stopPolling()
       connectSSE(execution.value.thread_id)
+    } else {
+      nextTick(() => {
+        if (fileBrowserRef.value) {
+          fileBrowserRef.value.loadFiles()
+        }
+        autoLoadKeyFile()
+      })
     }
   } catch (error) {
     logger.error('提交答案失败:', error)
@@ -540,13 +563,58 @@ const resetWorkflow = () => {
   Object.keys(answersForm).forEach(key => delete answersForm[key])
   workflowForm.query = ''
   showDetail.value = false
+  autoLoadContent.value = null
   stopPolling()
   closeSSE()
+}
+
+/** 自动查找并加载学习工作流生成的关键文件 */
+const _findKeyFile = async () => {
+  if (!execution.value?.thread_id) return null
+  try {
+    const res = await workflowAPI.getFiles(execution.value.thread_id)
+    const data = res.data?.data || res.data
+    const files = data?.files || data || []
+    // 优先查找 notes/ 目录下的 .md 文件
+    const notesDir = files.find(f => f.name === 'notes' && f.type === 'directory')
+    if (notesDir && notesDir.children) {
+      const mdFile = notesDir.children.find(f => f.name?.endsWith('.md'))
+      if (mdFile) return `notes/${mdFile.name}`
+      const txtFile = notesDir.children.find(f => f.name?.endsWith('.txt'))
+      if (txtFile) return `notes/${txtFile.name}`
+    }
+    // 查找根目录下非 report 的 .md 文件
+    const mdFiles = files.filter(f => f.type === 'file' && f.name?.endsWith('.md') && !f.name?.includes('report'))
+    if (mdFiles.length > 0) return mdFiles[0].relative_path || mdFiles[0].name
+    // 查找根目录下的 .txt 文件
+    const rootNotes = files.filter(f => f.type === 'file' && f.name?.endsWith('.txt'))
+    if (rootNotes.length > 0) return rootNotes[0].relative_path || rootNotes[0].name
+  } catch {}
+  return null
+}
+
+const autoLoadKeyFile = async () => {
+  if (!execution.value?.thread_id) return
+  autoLoadContent.value = null
+  autoLoadLoading.value = true
+  try {
+    const file = await _findKeyFile()
+    if (file) {
+      const response = await workflowAPI.getFileContent(execution.value.thread_id, file)
+      const data = response.data?.data || response.data
+      autoLoadContent.value = data?.content || data || ''
+    }
+  } catch (error) {
+    logger.warn('自动加载学习资料失败:', error)
+  } finally {
+    autoLoadLoading.value = false
+  }
 }
 
 const viewTask = async (selectedTask) => {
   closeSSE()
   stopPolling()
+  autoLoadContent.value = null
 
   execution.value = selectedTask
   showDetail.value = true
@@ -578,6 +646,14 @@ const viewTask = async (selectedTask) => {
           && fresh.current_step !== 'failed'
         if (freshActive) {
           connectSSE(fresh.thread_id)
+        } else {
+          // 已完成任务，自动加载文件和资料
+          nextTick(() => {
+            if (fileBrowserRef.value) {
+              fileBrowserRef.value.loadFiles()
+            }
+            autoLoadKeyFile()
+          })
         }
         if (fresh.quiz && !Object.keys(answersForm).length) {
           fresh.quiz.questions.forEach(q => {
@@ -796,6 +872,19 @@ onUnmounted(() => {
 
 .files-section {
   margin-top: 8px;
+}
+
+.auto-load-section {
+  margin-bottom: 20px;
+}
+
+.auto-load-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px;
+  color: var(--el-text-color-secondary);
 }
 
 .files-section h4 {

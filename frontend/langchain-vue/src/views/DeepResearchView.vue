@@ -7,7 +7,7 @@
             <span class="page-title">深度研究</span>
           </div>
         </template>
-        <el-form :model="researchForm" label-width="120px">
+        <el-form :model="researchForm" label-width="120px" @submit.prevent>
           <el-form-item label="研究主题">
             <el-input
               v-model="researchForm.query"
@@ -19,10 +19,7 @@
           <el-form-item label="启用网络搜索">
             <el-switch v-model="researchForm.enable_web_search" />
           </el-form-item>
-          <el-form-item label="启用文档分析">
-            <el-switch v-model="researchForm.enable_doc_analysis" @change="onDocAnalysisChange" />
-          </el-form-item>
-          <el-form-item v-if="researchForm.enable_doc_analysis" label="选择知识库">
+          <el-form-item label="选择知识库">
             <div class="kb-selector">
               <div class="kb-selector-header">
                 <el-input
@@ -69,6 +66,32 @@
               </div>
             </div>
           </el-form-item>
+          <el-form-item label="选择模型">
+            <ModelSelector @change="onModelChange" />
+          </el-form-item>
+          <el-form-item label="深度思考">
+            <el-switch
+              :model-value="useDeepThinking"
+              :disabled="!modelSupportsDeepThinking"
+              @change="useDeepThinking = $event"
+            />
+            <span v-if="!modelSupportsDeepThinking" class="deep-thinking-hint">
+              当前模型不支持深度思考
+            </span>
+          </el-form-item>
+          <el-form-item label="工具选择">
+            <div class="tool-selector-wrapper">
+              <ToolSelector
+                :model-value="researchForm.selected_tools"
+                @update:model-value="(val) => researchForm.selected_tools = val"
+                @update:selected-mcp-servers="(val) => researchForm.selected_mcp_servers = val"
+                @update:use-mcp="(val) => researchForm.use_mcp = val"
+              />
+              <span v-if="researchForm.selected_tools.length > 0" class="tool-selected-hint">
+                已选择 {{ researchForm.selected_tools.length }} 个工具
+              </span>
+            </div>
+          </el-form-item>
           <el-form-item>
             <el-button type="primary" :loading="isLoading" @click="startResearch">
               开始研究
@@ -109,6 +132,13 @@
               {{ task.enable_doc_analysis ? '已启用' : '未启用' }}
             </el-tag>
           </el-descriptions-item>
+          <el-descriptions-item label="来源">
+            <el-tag v-if="task.source === 'chat'" type="primary">
+              <el-icon style="vertical-align: middle; margin-right: 4px;"><ChatDotRound /></el-icon>
+              聊天触发
+            </el-tag>
+            <el-tag v-else type="info">独立研究</el-tag>
+          </el-descriptions-item>
           <el-descriptions-item
             v-if="task.enable_doc_analysis && task.knowledge_base_ids && task.knowledge_base_ids.length"
             label="关联知识库"
@@ -137,9 +167,33 @@
         </div>
 
         <div v-if="task.final_report" class="report-section">
+          <div v-if="task.version_chain && task.version_chain.length > 1" class="version-chain">
+            <span v-for="(v, idx) in task.version_chain" :key="v.task_id">
+              <el-tag
+                :type="v.task_id === task.task_id ? 'primary' : 'info'"
+                size="small"
+                class="version-tag"
+                @click="v.task_id !== task.task_id && viewTask({ task_id: v.task_id })"
+                :style="v.task_id === task.task_id ? '' : 'cursor: pointer'"
+              >
+                v{{ v.version }}
+              </el-tag>
+              <span v-if="idx < task.version_chain.length - 1" class="version-arrow">→</span>
+            </span>
+          </div>
           <div class="report-header">
             <h4>研究报告</h4>
-            <AiOpenInChat label="在聊天中讨论" @click="openInChat" />
+            <div class="report-header-actions">
+              <el-button
+                v-if="task.status === 'completed'"
+                type="success"
+                size="small"
+                @click="openContinueDialog(task)"
+              >
+                继续研究
+              </el-button>
+              <AiOpenInChat label="在聊天中讨论" @click="openInChat" />
+            </div>
           </div>
           <div class="report-content">
             <MarkdownRenderer :content="task.final_report" />
@@ -229,28 +283,115 @@
           :status-options="statusOptions"
           @view-task="viewTask"
           @delete-task="deleteTask"
+          @continue-task="handleContinueTask"
         />
       </el-card>
     </div>
+
+    <el-dialog v-model="continueDialogVisible" title="继续研究" width="600px" :close-on-click-modal="false">
+      <p style="margin-bottom: 12px; color: var(--el-text-color-secondary)">
+        基于已有研究继续深入探索
+      </p>
+      <el-descriptions :column="1" border size="small" style="margin-bottom: 16px">
+        <el-descriptions-item label="原研究主题">
+          {{ continueParentTask?.query?.substring(0, 100) }}
+        </el-descriptions-item>
+        <el-descriptions-item label="版本">
+          v{{ continueParentTask?.version || 1 }} → v{{ (continueParentTask?.version || 1) + 1 }}
+        </el-descriptions-item>
+      </el-descriptions>
+      <el-form :model="continueForm" label-width="100px" @submit.prevent>
+        <el-form-item label="补充说明">
+          <el-input
+            v-model="continueForm.additional_query"
+            type="textarea"
+            :rows="3"
+            placeholder="描述你想继续探索的方向（可选）..."
+          />
+        </el-form-item>
+        <el-form-item label="选择模型">
+          <ModelSelector @change="onContinueModelChange" />
+        </el-form-item>
+        <el-form-item label="深度思考">
+          <el-switch
+            :model-value="useDeepThinking"
+            :disabled="!modelSupportsDeepThinking"
+            @change="useDeepThinking = $event"
+          />
+          <span v-if="!modelSupportsDeepThinking" class="deep-thinking-hint">
+            当前模型不支持深度思考
+          </span>
+        </el-form-item>
+        <el-form-item label="启用网络搜索">
+          <el-switch v-model="continueForm.enable_web_search" />
+        </el-form-item>
+        <el-form-item label="选择知识库">
+          <div class="kb-selector">
+            <div v-if="filteredKnowledgeBases.length === 0" class="kb-empty">
+              <span>暂无可用知识库</span>
+            </div>
+            <div v-else class="kb-list">
+              <el-checkbox-group v-model="continueForm.knowledge_base_ids">
+                <div v-for="kb in filteredKnowledgeBases" :key="kb.id" class="kb-item">
+                  <el-checkbox :label="kb.name" :value="kb.id">
+                    <div class="kb-item-content">
+                      <span class="kb-name">{{ kb.name }}</span>
+                      <span class="kb-meta">
+                        <el-tag size="small" type="info">{{ kb.chunk_count || 0 }} 文档块</el-tag>
+                      </span>
+                    </div>
+                  </el-checkbox>
+                </div>
+              </el-checkbox-group>
+            </div>
+          </div>
+        </el-form-item>
+        <el-form-item label="工具选择">
+          <div class="tool-selector-wrapper">
+            <ToolSelector
+              :model-value="continueForm.selected_tools"
+              @update:model-value="(val) => continueForm.selected_tools = val"
+              @update:selected-mcp-servers="(val) => continueForm.selected_mcp_servers = val"
+              @update:use-mcp="(val) => continueForm.use_mcp = val"
+            />
+            <span v-if="continueForm.selected_tools.length > 0" class="tool-selected-hint">
+              已选择 {{ continueForm.selected_tools.length }} 个工具
+            </span>
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="continueDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="isLoading" @click="submitContinueResearch">
+          开始续研
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { deepResearchAPI, knowledgeAPI } from '../api'
 import { readSSEStream } from '../utils/sse'
 import { ElMessage } from 'element-plus'
-import { Loading } from '@element-plus/icons-vue'
+import { Loading, ChatDotRound } from '@element-plus/icons-vue'
 import TaskList from '../components/chat/TaskList.vue'
 import FileBrowser from '../components/chat/FileBrowser.vue'
 import MarkdownRenderer from '../components/common/MarkdownRenderer.vue'
 import AiOpenInChat from '../components/ai-elements/AiOpenInChat.vue'
-import { formatDate as _formatDate, formatFileSize } from '../utils/format'
+import ModelSelector from '../components/common/ModelSelector.vue'
+import ToolSelector from '../components/chat/ToolSelector.vue'
+import { useModelStore } from '../stores/model'
+import { formatDate, formatFileSize } from '../utils/format'
 import { logger } from '../utils/logger'
+
+const modelStore = useModelStore()
 
 const isLoading = ref(false)
 const router = useRouter()
+const route = useRoute()
 const task = ref(null)
 const showTaskDetail = ref(false)
 const taskListRef = ref(null)
@@ -271,6 +412,19 @@ const filteredKnowledgeBases = ref([])
 const docAnalysisContent = ref(null)
 const docAnalysisLoading = ref(false)
 const docAnalysisFile = ref(null)
+
+const continueDialogVisible = ref(false)
+const continueParentTask = ref(null)
+const continueForm = reactive({
+  additional_query: '',
+  enable_web_search: true,
+  knowledge_base_ids: [],
+  provider_id: null,
+  model_name: null,
+  use_mcp: false,
+  selected_mcp_servers: [],
+  selected_tools: [],
+})
 
 let pollingTimer = null
 let sseAbortController = null
@@ -299,8 +453,21 @@ const progressPercentage = computed(() => {
 const researchForm = reactive({
   query: '',
   enable_web_search: true,
-  enable_doc_analysis: false,
   knowledge_base_ids: [],
+  provider_id: null,
+  model_name: null,
+  use_mcp: false,
+  selected_mcp_servers: [],
+  selected_tools: [],
+})
+
+const useDeepThinking = computed({
+  get: () => modelStore.thinkingEnabled,
+  set: (val) => {
+    const paramCfg = modelStore.currentProviderSpecialParams?.thinking
+    if (!paramCfg) return
+    modelStore.setSpecialParam('thinking', val ? paramCfg.enabled_value : paramCfg.disabled_value)
+  },
 })
 
 const statusOptions = [
@@ -310,13 +477,13 @@ const statusOptions = [
   { value: 'failed', label: '失败' },
 ]
 
-const onDocAnalysisChange = (val) => {
-  if (val && knowledgeBases.value.length === 0) {
-    refreshKnowledgeBases()
-  }
-  if (!val) {
-    researchForm.knowledge_base_ids = []
-  }
+const modelSupportsDeepThinking = computed(() => {
+  return modelStore.currentModelCapabilities.includes('deep_thinking')
+})
+
+const onModelChange = ({ providerId, modelName }) => {
+  researchForm.provider_id = providerId
+  researchForm.model_name = modelName
 }
 
 const refreshKnowledgeBases = async () => {
@@ -346,7 +513,7 @@ const filterKnowledgeBases = () => {
 }
 
 const loadDocAnalysis = async () => {
-  if (!task.value?.task_id || !task.value?.enable_doc_analysis) return
+  if (!task.value?.task_id || !task.value?.knowledge_base_ids?.length) return
   docAnalysisLoading.value = true
   try {
     const file = await _findDocAnalysisFile()
@@ -397,11 +564,6 @@ const autoLoadDocAnalysis = async () => {
   if (!task.value?.task_id) return
   if (!task.value?.enable_doc_analysis) return
   await loadDocAnalysis()
-}
-
-const formatDate = (dateStr) => {
-  if (!dateStr) return '-'
-  return _formatDate(dateStr)
 }
 
 const getStatusType = (status) => {
@@ -495,11 +657,6 @@ const startResearch = async () => {
     return
   }
 
-  if (researchForm.enable_doc_analysis && researchForm.knowledge_base_ids.length === 0) {
-    ElMessage.warning('启用文档分析时，请至少选择一个知识库')
-    return
-  }
-
   isLoading.value = true
   task.value = null
   pollCount = 0
@@ -509,7 +666,22 @@ const startResearch = async () => {
   docAnalysisFile.value = null
 
   try {
-    const response = await deepResearchAPI.start(researchForm)
+    const modelConfig = modelStore.getModelConfig()
+    const response = await deepResearchAPI.start({
+      query: researchForm.query,
+      enable_web_search: researchForm.enable_web_search,
+      enable_doc_analysis: researchForm.knowledge_base_ids.length > 0,
+      knowledge_base_ids: researchForm.knowledge_base_ids,
+      use_mcp: researchForm.use_mcp,
+      selected_mcp_servers: researchForm.selected_mcp_servers,
+      selected_tools: researchForm.selected_tools,
+      provider_id: researchForm.provider_id || modelConfig.provider_id,
+      model_name: researchForm.model_name || modelConfig.model_name,
+      enable_deep_thinking: modelStore.thinkingEnabled,
+      temperature: modelConfig.temperature,
+      max_tokens: modelConfig.max_tokens,
+      special_params: modelConfig.special_params,
+    })
     task.value = response.data.data || response.data
     showTaskDetail.value = true
     ElMessage.success('研究任务已启动')
@@ -519,7 +691,7 @@ const startResearch = async () => {
     connectSSE(task.value.task_id)
   } catch (error) {
     logger.error('启动研究任务失败:', error)
-    const detail = error.response?.data?.details || error.response?.data?.message
+    const detail = error.response?.data?.data || error.response?.data?.message
     if (detail) {
       ElMessage.error(detail)
     } else {
@@ -683,12 +855,92 @@ const deleteTask = () => {
   docAnalysisFile.value = null
 }
 
+const onContinueModelChange = ({ providerId, modelName }) => {
+  continueForm.provider_id = providerId
+  continueForm.model_name = modelName
+}
+
+const openContinueDialog = (taskData) => {
+  continueParentTask.value = taskData
+  continueForm.additional_query = ''
+  continueForm.enable_web_search = taskData.enable_web_search ?? true
+  continueForm.knowledge_base_ids = taskData.knowledge_base_ids || []
+  continueForm.provider_id = taskData.provider_id || null
+  continueForm.model_name = taskData.model_name || null
+  continueForm.use_mcp = taskData.use_mcp ?? false
+  continueForm.selected_mcp_servers = taskData.selected_mcp_servers || []
+  continueForm.selected_tools = taskData.selected_tools || []
+  if (continueForm.provider_id && continueForm.model_name) {
+    modelStore.selectProvider(continueForm.provider_id, continueForm.model_name)
+  }
+  continueDialogVisible.value = true
+}
+
+watch(continueDialogVisible, (visible) => {
+  if (!visible && researchForm.provider_id && researchForm.model_name) {
+    modelStore.selectProvider(researchForm.provider_id, researchForm.model_name)
+  }
+})
+
+const submitContinueResearch = async () => {
+  if (!continueParentTask.value) return
+  isLoading.value = true
+  try {
+    const modelConfig = modelStore.getModelConfig()
+    const response = await deepResearchAPI.continueResearch(
+      continueParentTask.value.task_id,
+      {
+        additional_query: continueForm.additional_query,
+        enable_web_search: continueForm.enable_web_search,
+        enable_doc_analysis: continueForm.knowledge_base_ids.length > 0,
+        knowledge_base_ids: continueForm.knowledge_base_ids,
+        use_mcp: continueForm.use_mcp,
+        selected_mcp_servers: continueForm.selected_mcp_servers,
+        selected_tools: continueForm.selected_tools,
+        provider_id: continueForm.provider_id || modelConfig.provider_id,
+        model_name: continueForm.model_name || modelConfig.model_name,
+        enable_deep_thinking: modelStore.thinkingEnabled,
+        temperature: modelConfig.temperature,
+        max_tokens: modelConfig.max_tokens,
+        special_params: modelConfig.special_params,
+      }
+    )
+    task.value = response.data.data || response.data
+    showTaskDetail.value = true
+    continueDialogVisible.value = false
+    ElMessage.success('续研任务已启动')
+    stopPolling()
+    startElapsedTimer()
+    connectSSE(task.value.task_id)
+  } catch (error) {
+    logger.error('启动续研任务失败:', error)
+    const detail = error.response?.data?.data || error.response?.data?.message
+    ElMessage.error(detail || '启动续研任务失败')
+  } finally {
+    isLoading.value = false
+  }
+}
+
+const handleContinueTask = (taskData) => {
+  openContinueDialog(taskData)
+}
+
 const openInChat = () => {
   if (!task.value?.query) return
-  router.push({
-    path: '/chat',
-    query: { q: `关于"${task.value.query}"的深度研究，请帮我进一步分析` }
+  const taskId = task.value.task_id
+  const sessionId = task.value.session_id
+  const researchQuery = task.value.query
+  // 如果研究任务关联了聊天会话，跳转到该会话；否则创建新会话
+  const query = taskId
+    ? { research_task_id: taskId, q: `关于"${researchQuery}"的深度研究，请帮我进一步分析`, session_id: sessionId || undefined, research_query: researchQuery }
+    : { q: `关于"${researchQuery}"的深度研究，请帮我进一步分析`, research_query: researchQuery }
+  console.log('[DeepResearch] 跳转聊天:', {
+    task_id: taskId || '(无)',
+    session_id: sessionId || '(未关联)',
+    has_session_id: !!sessionId,
+    research_query: researchQuery,
   })
+  router.push({ path: '/chat', query })
 }
 
 const handleFileSearch = async () => {
@@ -698,7 +950,7 @@ const handleFileSearch = async () => {
   try {
     const response = await deepResearchAPI.searchFiles(fileSearchQuery.value)
     if (response.data?.code === 200) {
-      fileSearchResults.value = response.data.data?.files || response.data.data?.items || []
+      fileSearchResults.value = response.data.data?.items || response.data.data?.files || []
     }
   } catch (error) {
     logger.error('文件搜索失败:', error)
@@ -708,8 +960,21 @@ const handleFileSearch = async () => {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   refreshKnowledgeBases()
+  // 支持从聊天模块跳转，自动选中指定任务
+  const taskId = route.query.task_id
+  if (taskId) {
+    try {
+      const resp = await deepResearchAPI.getStatus(taskId)
+      const taskData = resp.data?.data || resp.data
+      if (taskData) {
+        await viewTask(taskData)
+      }
+    } catch (e) {
+      logger.warn('[DeepResearchView] 自动选中任务失败:', e)
+    }
+  }
 })
 
 onUnmounted(() => {
@@ -892,6 +1157,23 @@ onUnmounted(() => {
   margin-bottom: 4px;
 }
 
+.tool-selector-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tool-selected-hint {
+  font-size: 12px;
+  color: var(--el-color-primary);
+}
+
+.deep-thinking-hint {
+  margin-left: 12px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
 .analysis-section {
   margin-top: 8px;
 }
@@ -1013,6 +1295,29 @@ onUnmounted(() => {
 
 .file-search-results {
   margin-top: 12px;
+}
+
+.version-chain {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.version-tag {
+  cursor: default;
+}
+
+.version-arrow {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.report-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 @media (max-width: 768px) {

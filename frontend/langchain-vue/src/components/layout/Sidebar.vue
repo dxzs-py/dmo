@@ -79,7 +79,7 @@ const handleMenuSelect = (index) => {
 }
 
 const handleNewChat = () => {
-  sessionStore.createNewSession('basic-agent')
+  sessionStore.createNewSession('agent')
   if (route.path !== '/chat') {
     router.push('/chat')
   }
@@ -98,7 +98,6 @@ const handleDeleteSession = async (sessionId) => {
     await sessionStore.deleteSession(sessionId)
     ElMessage.success('会话已删除')
   } catch {
-    // cancelled
   }
 }
 
@@ -134,7 +133,7 @@ const filteredSessions = computed(() => {
 
 const groupedSessions = computed(() => {
   const groups = {}
-  const sessions = filteredSessions.value.slice(0, 30)
+  const sessions = filteredSessions.value
   for (const session of sessions) {
     const group = getTimeGroup(session.updatedAt || session.createdAt)
     if (!groups[group]) groups[group] = []

@@ -6,9 +6,9 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from django.http import FileResponse
 
-from Django_xm.apps.common.responses import success_response, error_response, not_found_response
-from Django_xm.apps.common.error_codes import ErrorCode
-from Django_xm.apps.core.permissions import IsAuthenticatedOrQueryParam
+from Django_xm.common.responses import success_response, error_response, not_found_response
+from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.permissions import IsAuthenticatedOrQueryParam
 from Django_xm.apps.core.services.file_manager import get_file_manager
 
 from .models import ResearchTask
@@ -164,6 +164,7 @@ class DeepResearchGlobalSearchView(APIView):
                 keyword=keyword,
                 task_type=task_type,
                 file_types=file_types if file_types else None,
+                user_id=request.user.id,
             )
 
             serializer = FileInfoSerializer([f.to_dict() for f in files], many=True)

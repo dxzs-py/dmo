@@ -12,6 +12,7 @@
 
 from typing import Optional, Dict, Any, TypedDict, Annotated, List, Literal, Sequence
 import json
+import warnings
 from datetime import datetime
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
@@ -19,13 +20,7 @@ from langchain_core.tools import BaseTool
 from langchain.agents.middleware import AgentMiddleware
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
-from Django_xm.apps.ai_engine.config import settings, get_logger
-from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
-from Django_xm.apps.ai_engine.services.checkpointer_factory import get_checkpointer
-from Django_xm.apps.ai_engine.prompts.system_prompts import WRITER_GUIDELINES
-from Django_xm.apps.tools.file.filesystem import ResearchFileSystem, get_filesystem
-from Django_xm.apps.ai_engine.guardrails import OutputValidator
-from Django_xm.apps.core.permissions import PermissionService
+from Django_xm.apps.ai_engine.config import get_logger
 from .subagents import create_web_researcher, create_doc_analyst, create_report_writer
 
 logger = get_logger(__name__)
@@ -167,8 +162,17 @@ class DeepResearchAgent:
         user_id: Optional[int] = None,
         session_id: Optional[str] = None,
         max_retries: int = 2,
+        extra_tools: Optional[Sequence[BaseTool]] = None,
+        enable_deep_thinking: bool = False,
+        provider_id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        special_params: Optional[dict] = None,
+        research_context: str = "",
         **kwargs,
     ):
+        warnings.warn("DeepResearchAgent 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2)
         self.thread_id = thread_id
         self.enable_web_search = enable_web_search
         self.enable_doc_analysis = enable_doc_analysis
@@ -178,6 +182,14 @@ class DeepResearchAgent:
         self.max_retries = max_retries
         self.middleware = list(middleware) if middleware else []
         self.enable_guardrails = enable_guardrails
+        self.extra_tools = extra_tools or []
+        self.enable_deep_thinking = enable_deep_thinking
+        self.provider_id = provider_id
+        self.model_name = model_name
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.special_params = special_params
+        self.research_context = research_context
 
         logger.info(f"初始化 DeepResearchAgent: {thread_id}")
         logger.info(f"  网络搜索: {enable_web_search}")
@@ -185,7 +197,10 @@ class DeepResearchAgent:
         logger.info(f"  最大重试: {max_retries}")
         logger.info(f"  Guardrails: {enable_guardrails}")
         logger.info(f"  Middleware 数量: {len(self.middleware)}")
+        logger.info(f"  额外工具: {len(self.extra_tools)}")
+        logger.info(f"  深度思考: {enable_deep_thinking}")
 
+        from Django_xm.apps.tools.langchain.filesystem import get_filesystem
         self.filesystem = get_filesystem(thread_id)
 
         self._init_subagents(retriever_tool)
@@ -201,6 +216,7 @@ class DeepResearchAgent:
                 user_id=self.user_id, session_id=self.session_id,
                 middleware=self.middleware if self.middleware else None,
                 enable_guardrails=self.enable_guardrails,
+                extra_tools=self.extra_tools if self.extra_tools else None,
             )
             logger.debug("   WebResearcher 已创建")
         else:
@@ -212,6 +228,7 @@ class DeepResearchAgent:
                 user_id=self.user_id, session_id=self.session_id,
                 middleware=self.middleware if self.middleware else None,
                 enable_guardrails=self.enable_guardrails,
+                extra_tools=self.extra_tools if self.extra_tools else None,
             )
             logger.debug("   DocAnalyst 已创建")
         else:
@@ -224,7 +241,29 @@ class DeepResearchAgent:
         )
         logger.debug("   ReportWriter 已创建")
 
+    def _get_model(self):
+        from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model, get_chat_model_by_provider
+
+        if self.provider_id:
+            merged_special_params = dict(self.special_params) if self.special_params else {}
+            if self.enable_deep_thinking and 'thinking' not in merged_special_params:
+                from Django_xm.apps.ai_engine.services.registry_service import get_provider_config
+                provider_cfg = get_provider_config(self.provider_id)
+                thinking_cfg = provider_cfg.get("special_params", {}).get("thinking")
+                if thinking_cfg:
+                    merged_special_params["thinking"] = thinking_cfg.get("enabled_value", {})
+            return get_chat_model_by_provider(
+                provider_id=self.provider_id,
+                model_name=self.model_name,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                special_params=merged_special_params if merged_special_params else None,
+            )
+        return get_chat_model(temperature=self.temperature, max_tokens=self.max_tokens)
+
     def _build_graph(self, checkpointer: Optional[Any] = None):
+        from Django_xm.apps.ai_engine.services.checkpointer_factory import get_checkpointer
+
         logger.info("构建研究工作流（条件边 + 错误恢复）...")
 
         workflow = StateGraph(ResearchState)
@@ -383,7 +422,7 @@ class DeepResearchAgent:
 """
 
         try:
-            model = get_chat_model()
+            model = self._get_model()
             response = model.invoke([HumanMessage(content=plan_prompt)])
 
             plan_text = response.content
@@ -612,7 +651,167 @@ thread_id: {thread_id}
 
         return state
 
+    def _extract_report_from_fs(self) -> Optional[str]:
+        try:
+            report = self.filesystem.read_file(
+                "final_report.md",
+                subdirectory="reports"
+            )
+            logger.info("从文件系统读取最终报告")
+            return report
+        except Exception as fs_error:
+            logger.debug(f"无法从文件系统读取报告: {fs_error}")
+            return None
+
+    def _extract_report_from_agent_output(self, result: Dict[str, Any]) -> Optional[str]:
+        logger.info("从 Agent 输出中提取报告内容...")
+
+        if not isinstance(result, dict) or "messages" not in result:
+            return None
+
+        messages = result["messages"]
+
+        ai_contents = []
+        for msg in messages:
+            if isinstance(msg, AIMessage) and msg.content:
+                content = msg.content.strip()
+                if content and not content.startswith("找到") and not content.startswith("文件已保存"):
+                    ai_contents.append(content)
+
+        for content in sorted(ai_contents, key=len, reverse=True):
+            is_report = (
+                len(content) > 200 and
+                (content.startswith("#") or
+                 "##" in content or
+                 "执行摘要" in content or
+                 "研究背景" in content or
+                 "主要发现" in content)
+            )
+
+            if is_report:
+                logger.info(f"从 Agent 输出中提取到报告（长度: {len(content)} 字符）")
+                return content
+
+        return None
+
+    def _generate_fallback_report(self, state: ResearchState) -> str:
+        logger.info("Agent 未直接生成报告，使用研究材料生成综合报告")
+
+        query = state["query"]
+        thread_id = state["thread_id"]
+
+        research_materials: List[tuple] = []
+
+        try:
+            plan_content = self.filesystem.read_file(
+                "research_plan.md",
+                subdirectory="plans"
+            )
+            research_materials.append(("研究计划", plan_content))
+            logger.debug("读取研究计划")
+        except Exception:
+            logger.debug("未找到研究计划")
+
+        try:
+            web_notes = self.filesystem.read_file(
+                "web_research.md",
+                subdirectory="notes"
+            )
+            research_materials.append(("网络研究笔记", web_notes))
+            logger.debug("读取网络研究笔记")
+        except Exception:
+            logger.debug("未找到网络研究笔记")
+
+        try:
+            doc_notes = self.filesystem.read_file(
+                "doc_analysis.md",
+                subdirectory="notes"
+            )
+            research_materials.append(("文档分析报告", doc_notes))
+            logger.debug("读取文档分析报告")
+        except Exception:
+            logger.debug("未找到文档分析报告")
+
+        if research_materials:
+            logger.info(f"找到 {len(research_materials)} 个研究材料，生成综合报告")
+
+            materials_section = ""
+            for title, content in research_materials:
+                materials_section += f"\n### {title}\n\n{content}\n\n"
+
+            return f"""# {query}
+
+{materials_section}
+
+结论与建议：基于上述材料给出清晰结论与可执行建议，并在文中保留关键证据的内联引用。
+
+参考来源：请在文末列出来源。
+
+---
+*报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
+*研究任务ID：{thread_id}*
+"""
+        else:
+            logger.warning("未找到任何研究材料")
+            return f"""# {query}
+
+## 执行摘要
+
+本研究针对"{query}"进行了调研。
+
+## 说明
+
+研究过程已完成，但未能找到保存的研究材料。这可能是由于：
+1. 研究任务刚刚启动，材料尚未生成
+2. 文件保存过程中出现问题
+3. 研究工具未能正确调用
+
+建议：
+- 查看日志文件了解详细情况
+- 重新运行研究任务
+- 检查 API 配置和网络连接
+"""
+
+    def _validate_and_revise_report(self, report_content: str) -> tuple:
+        from Django_xm.apps.ai_engine.guardrails import OutputValidator
+
+        validator = OutputValidator()
+        validation_result = validator.validate(report_content)
+
+        if not validation_result.is_valid:
+            logger.warning(f"报告验证失败: {validation_result.errors}")
+
+            revision_prompt = f"""请修订以下研究报告，解决以下问题：
+{', '.join(validation_result.errors)}
+
+原报告：
+{report_content}
+
+请确保修订后的报告：
+1. 包含实际示例或代码片段
+2. 保留原有的研究和引用内容
+3. 提供可操作的建议
+"""
+            try:
+                model = self._get_model()
+                revised = model.invoke([HumanMessage(content=revision_prompt)])
+                revised_text = revised.content or report_content
+
+                revised_validation = validator.validate(revised_text)
+                if revised_validation.is_valid:
+                    logger.info("报告修订成功并通过验证")
+                    return revised_text, revised_validation.is_valid
+                else:
+                    logger.warning(f"修订后仍验证失败: {revised_validation.errors}")
+                    return revised_text, revised_validation.is_valid
+            except Exception as revision_error:
+                logger.error(f"修订报告失败: {revision_error}")
+
+        return report_content, validation_result.is_valid
+
     def _report_writing_node(self, state: ResearchState) -> ResearchState:
+        from Django_xm.apps.ai_engine.prompts.system_prompts import WRITER_GUIDELINES
+
         logger.info("执行报告撰写节点...")
 
         query = state["query"]
@@ -648,151 +847,15 @@ thread_id: {thread_id}
                 "messages": [HumanMessage(content=writing_instruction)]
             })
 
-            final_report = None
-
-            try:
-                final_report = self.filesystem.read_file(
-                    "final_report.md",
-                    subdirectory="reports"
-                )
-                logger.info("从文件系统读取最终报告")
-            except Exception as fs_error:
-                logger.debug(f"无法从文件系统读取报告: {fs_error}")
+            final_report = self._extract_report_from_fs()
 
             if not final_report:
-                logger.info("从 Agent 输出中提取报告内容...")
-
-                if isinstance(result, dict) and "messages" in result:
-                    messages = result["messages"]
-
-                    ai_contents = []
-                    for msg in messages:
-                        if isinstance(msg, AIMessage) and msg.content:
-                            content = msg.content.strip()
-                            if content and not content.startswith("找到") and not content.startswith("文件已保存"):
-                                ai_contents.append(content)
-
-                    for content in sorted(ai_contents, key=len, reverse=True):
-                        is_report = (
-                            len(content) > 200 and
-                            (content.startswith("#") or
-                             "##" in content or
-                             "执行摘要" in content or
-                             "研究背景" in content or
-                             "主要发现" in content)
-                        )
-
-                        if is_report:
-                            final_report = content
-                            logger.info(f"从 Agent 输出中提取到报告（长度: {len(content)} 字符）")
-                            break
+                final_report = self._extract_report_from_agent_output(result)
 
             if not final_report:
-                logger.info("Agent 未直接生成报告，使用研究材料生成综合报告")
+                final_report = self._generate_fallback_report(state)
 
-                research_materials = []
-
-                try:
-                    plan_content = self.filesystem.read_file(
-                        "research_plan.md",
-                        subdirectory="plans"
-                    )
-                    research_materials.append(("研究计划", plan_content))
-                    logger.debug("读取研究计划")
-                except Exception:
-                    logger.debug("未找到研究计划")
-
-                try:
-                    web_notes = self.filesystem.read_file(
-                        "web_research.md",
-                        subdirectory="notes"
-                    )
-                    research_materials.append(("网络研究笔记", web_notes))
-                    logger.debug("读取网络研究笔记")
-                except Exception:
-                    logger.debug("未找到网络研究笔记")
-
-                try:
-                    doc_notes = self.filesystem.read_file(
-                        "doc_analysis.md",
-                        subdirectory="notes"
-                    )
-                    research_materials.append(("文档分析报告", doc_notes))
-                    logger.debug("读取文档分析报告")
-                except Exception:
-                    logger.debug("未找到文档分析报告")
-
-                if research_materials:
-                    logger.info(f"找到 {len(research_materials)} 个研究材料，生成综合报告")
-
-                    materials_section = ""
-                    for title, content in research_materials:
-                        materials_section += f"\n### {title}\n\n{content}\n\n"
-
-                    final_report = f"""# {query}
-
-{materials_section}
-
-结论与建议：基于上述材料给出清晰结论与可执行建议，并在文中保留关键证据的内联引用。
-
-参考来源：请在文末列出来源。
-
----
-*报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
-*研究任务ID：{thread_id}*
-"""
-                else:
-                    logger.warning("未找到任何研究材料")
-                    final_report = f"""# {query}
-
-## 执行摘要
-
-本研究针对"{query}"进行了调研。
-
-## 说明
-
-研究过程已完成，但未能找到保存的研究材料。这可能是由于：
-1. 研究任务刚刚启动，材料尚未生成
-2. 文件保存过程中出现问题
-3. 研究工具未能正确调用
-
-建议：
-- 查看日志文件了解详细情况
-- 重新运行研究任务
-- 检查 API 配置和网络连接
-"""
-
-            validator = OutputValidator()
-            validation_result = validator.validate(final_report)
-
-            if not validation_result.is_valid:
-                logger.warning(f"报告验证失败: {validation_result.errors}")
-
-                revision_prompt = f"""请修订以下研究报告，解决以下问题：
-{', '.join(validation_result.errors)}
-
-原报告：
-{final_report}
-
-请确保修订后的报告：
-1. 包含实际示例或代码片段
-2. 保留原有的研究和引用内容
-3. 提供可操作的建议
-"""
-                try:
-                    model = get_chat_model()
-                    revised = model.invoke([HumanMessage(content=revision_prompt)])
-                    revised_text = revised.content or final_report
-
-                    revised_validation = validator.validate(revised_text)
-                    if revised_validation.is_valid:
-                        final_report = revised_text
-                        logger.info("报告修订成功并通过验证")
-                    else:
-                        logger.warning(f"修订后仍验证失败: {revised_validation.errors}")
-                        final_report = revised_text
-                except Exception as revision_error:
-                    logger.error(f"修订报告失败: {revision_error}")
+            final_report, is_valid = self._validate_and_revise_report(final_report)
 
             try:
                 self.filesystem.write_file(
@@ -802,7 +865,7 @@ thread_id: {thread_id}
                     metadata={
                         "source": "deep_research_agent",
                         "query": query,
-                        "validated": validation_result.is_valid,
+                        "validated": is_valid,
                         "generated_at": datetime.now().isoformat()
                     }
                 )
@@ -835,11 +898,17 @@ thread_id: {thread_id}
             config["configurable"] = {}
 
         config["configurable"]["thread_id"] = self.thread_id
+        config.setdefault("recursion_limit", 1000)
         if callbacks:
             config["callbacks"] = callbacks
 
+        from langchain_core.messages import SystemMessage
+        initial_messages = [HumanMessage(content=query)]
+        if self.research_context:
+            initial_messages.insert(0, SystemMessage(content=self.research_context))
+
         initial_state: ResearchState = {
-            "messages": [HumanMessage(content=query)],
+            "messages": initial_messages,
             "query": query,
             "thread_id": self.thread_id,
             "plan": None,
@@ -893,8 +962,13 @@ thread_id: {thread_id}
         if callbacks:
             config["callbacks"] = callbacks
 
+        from langchain_core.messages import SystemMessage
+        async_initial_messages = [HumanMessage(content=query)]
+        if self.research_context:
+            async_initial_messages.insert(0, SystemMessage(content=self.research_context))
+
         initial_state: ResearchState = {
-            "messages": [HumanMessage(content=query)],
+            "messages": async_initial_messages,
             "query": query,
             "thread_id": self.thread_id,
             "plan": None,
@@ -954,8 +1028,13 @@ thread_id: {thread_id}
 
         config["configurable"]["thread_id"] = self.thread_id
 
+        from langchain_core.messages import SystemMessage
+        stream_initial_messages = [HumanMessage(content=query)]
+        if self.research_context:
+            stream_initial_messages.insert(0, SystemMessage(content=self.research_context))
+
         initial_state: ResearchState = {
-            "messages": [HumanMessage(content=query)],
+            "messages": stream_initial_messages,
             "query": query,
             "thread_id": self.thread_id,
             "plan": None,
@@ -1057,8 +1136,17 @@ def create_deep_research_agent(
     enable_guardrails: bool = False,
     guardrails_strict_mode: bool = False,
     checkpointer: Optional[Any] = None,
+    extra_tools: Optional[Sequence[BaseTool]] = None,
+    enable_deep_thinking: bool = False,
+    provider_id: Optional[str] = None,
+    model_name: Optional[str] = None,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    special_params: Optional[dict] = None,
+    research_context: str = "",
     **kwargs,
 ) -> DeepResearchAgent:
+    warnings.warn("create_deep_research_agent 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2)
     return DeepResearchAgent(
         thread_id=thread_id,
         enable_web_search=enable_web_search,
@@ -1071,5 +1159,13 @@ def create_deep_research_agent(
         enable_guardrails=enable_guardrails,
         guardrails_strict_mode=guardrails_strict_mode,
         checkpointer=checkpointer,
+        extra_tools=extra_tools,
+        enable_deep_thinking=enable_deep_thinking,
+        provider_id=provider_id,
+        model_name=model_name,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        special_params=special_params,
+        research_context=research_context,
         **kwargs,
     )

@@ -4,7 +4,7 @@
 
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field, field_validator
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 
@@ -114,7 +114,7 @@ class StudyPlan(BaseModel):
         description="学习目标",
     )
     created_at: datetime = Field(
-        default_factory=datetime.now,
+        default_factory=lambda: datetime.now(timezone.utc),
         description="创建时间",
     )
     
@@ -194,7 +194,7 @@ class ResearchReport(BaseModel):
         min_length=1,
     )
     created_at: datetime = Field(
-        default_factory=datetime.now,
+        default_factory=lambda: datetime.now(timezone.utc),
         description="创建时间",
     )
     metadata: Optional[Dict[str, Any]] = Field(
@@ -310,7 +310,7 @@ class Quiz(BaseModel):
         ge=1,
     )
     created_at: datetime = Field(
-        default_factory=datetime.now,
+        default_factory=lambda: datetime.now(timezone.utc),
         description="创建时间",
     )
     

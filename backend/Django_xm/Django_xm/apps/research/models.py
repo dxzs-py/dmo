@@ -50,6 +50,13 @@ class ResearchTask(AuditModel):
         blank=True,
         verbose_name='关联知识库ID列表'
     )
+    session_id = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name='关联会话ID',
+        db_index=True,
+    )
     research_depth = models.CharField(
         max_length=20,
         choices=ResearchDepth.choices,
@@ -77,15 +84,40 @@ class ResearchTask(AuditModel):
         default=0,
         verbose_name='Token 数量'
     )
-    cost = models.DecimalField(
-        max_digits=12,
-        decimal_places=6,
-        default=0,
-        verbose_name='成本(美元)'
+    token_detail = models.JSONField(
+        default=dict,
+        blank=True,
+        verbose_name='Token 明细'
     )
     response_time = models.FloatField(
         default=0,
         verbose_name='响应时间(秒)'
+    )
+    parent_task = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='child_tasks',
+        verbose_name='父级研究任务'
+    )
+    version = models.IntegerField(
+        default=1,
+        verbose_name='版本号'
+    )
+    use_mcp = models.BooleanField(
+        default=False,
+        verbose_name='启用MCP'
+    )
+    selected_mcp_servers = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='选中的MCP服务器'
+    )
+    selected_tools = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='选中的工具'
     )
 
     class Meta:
@@ -123,3 +155,18 @@ class ResearchTask(AuditModel):
         if self.query:
             self.query = self.query[:10000]
         super().save(*args, **kwargs)
+
+    @property
+    def version_chain(self):
+        chain = []
+        current = self
+        while current is not None:
+            chain.insert(0, {
+                'task_id': current.task_id,
+                'query': current.query[:80],
+                'version': current.version,
+                'status': current.status,
+                'created_at': current.created_at.isoformat() if current.created_at else None,
+            })
+            current = current.parent_task
+        return chain

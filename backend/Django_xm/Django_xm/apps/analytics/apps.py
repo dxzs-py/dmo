@@ -7,4 +7,5 @@ class AnalyticsConfig(AppConfig):
     verbose_name = '数据分析'
 
     def ready(self):
-        import Django_xm.apps.analytics.signals  # noqa: F401
+        from .signals import register_signals
+        register_signals()

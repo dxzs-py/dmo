@@ -9,6 +9,7 @@ import { logger } from '../utils/logger'
 const userStore = useUserStore()
 const loading = ref(false)
 const editMode = ref(false)
+const activeTab = ref('basic')
 const avatarUploading = ref(false)
 
 const passwordDialog = ref(false)
@@ -31,13 +32,21 @@ const formData = ref({
 })
 
 const avatarUrl = computed(() => {
-  if (formData.value.avatar) {
-    return formData.value.avatar
-  }
-  return ''
+  const avatar = formData.value.avatar
+  if (!avatar) return ''
+  if (avatar.startsWith('http')) return avatar
+  return avatar
 })
 
 onMounted(async () => {
+  if (userStore.userInfo?.username) {
+    formData.value = {
+      username: userStore.userInfo.username || '',
+      email: userStore.userInfo.email || '',
+      mobile: userStore.userInfo.mobile || '',
+      avatar: userStore.userInfo.avatar || ''
+    }
+  }
   await loadUserInfo()
 })
 
@@ -66,6 +75,7 @@ async function handleSave() {
     const response = await userAPI.updateProfile({
       username: formData.value.username,
       email: formData.value.email,
+      mobile: formData.value.mobile,
     })
     if (response.data?.code === 200) {
       ElMessage.success('保存成功')
@@ -192,7 +202,7 @@ async function handleBindPhone() {
         </div>
       </div>
 
-      <el-tabs class="profile-tabs">
+      <el-tabs v-model="activeTab" class="profile-tabs">
         <el-tab-pane label="基本信息" name="basic">
           <el-form :model="formData" label-width="100px" class="profile-form">
             <el-form-item label="用户名">

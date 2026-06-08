@@ -1,0 +1,50 @@
+from __future__ import annotations
+import logging
+from typing import Union, Any, Optional
+from langchain_core.language_models import BaseChatModel
+
+logger = logging.getLogger(__name__)
+
+def resolve_model(config) -> Union[str, BaseChatModel]:
+    """解析模型配置，返回带 fallback 的模型实例
+
+    所有模型创建路径都通过 get_chat_model()，自动获得 fallback 能力。
+    仅当 config.model 是 BaseChatModel 实例时直接返回（用户显式指定）。
+    """
+    if isinstance(config.model, BaseChatModel):
+        logger.info(f"使用自定义模型实例: {config.model.__class__.__name__}")
+        return config.model
+
+    # 统一通过 get_chat_model 创建（默认启用 fallback）
+    try:
+        from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
+
+        model_provider = config.provider_id or None
+        model_name = config.model_name or None
+
+        # 如果 config.model 是字符串（如 "openai:gpt-4o"），解析出 provider 和 name
+        if isinstance(config.model, str) and ":" in config.model:
+            model_provider, model_name = config.model.split(":", 1)
+
+        model = get_chat_model(
+            model_name=model_name,
+            model_provider=model_provider,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+            enable_fallback=True,
+        )
+        if model is not None:
+            logger.info(f"使用模型 (provider={model_provider}, name={model_name}, 带 fallback)")
+            return model
+    except Exception as e:
+        logger.warning(f"get_chat_model 创建失败: {e}")
+
+    # 最终降级：返回模型字符串，让 create_agent 内部处理
+    if isinstance(config.model, str):
+        logger.info(f"降级使用模型标识符: {config.model}")
+        return config.model
+
+    from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
+    model_str = get_model_string()
+    logger.info(f"降级使用默认模型字符串: {model_str}")
+    return model_str

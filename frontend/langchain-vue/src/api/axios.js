@@ -1,6 +1,7 @@
 import axios from 'axios'
 import settings from '../config/settings'
 import { useUserStore } from '@/stores/user'
+import { useLoadingStore } from '@/stores/loading'
 
 let isRefreshing = false
 let refreshSubscribers = []
@@ -17,18 +18,26 @@ apiClient.interceptors.request.use(
     if (userStore.token) {
       config.headers.Authorization = `Bearer ${userStore.token}`
     }
-    // 防止浏览器缓存 GET 请求
+    if (!config.skipLoading) {
+      const loadingStore = useLoadingStore()
+      loadingStore.start()
+    }
     if (config.method === 'get') {
       config.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
       config.headers['Pragma'] = 'no-cache'
       config.headers['Expires'] = '0'
-      // 添加时间戳作为查询参数，强制每次请求都获取新数据
       if (!config.params) config.params = {}
       config.params._t = Date.now()
     }
     return config
   },
-  (error) => Promise.reject(error)
+  (error) => {
+    if (!error.config?.skipLoading) {
+      const loadingStore = useLoadingStore()
+      loadingStore.stop()
+    }
+    return Promise.reject(error)
+  }
 )
 
 function subscribeTokenRefresh(cb) {
@@ -41,13 +50,28 @@ function onTokenRefreshed(token) {
 }
 
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    if (!response.config.skipLoading) {
+      const loadingStore = useLoadingStore()
+      loadingStore.stop()
+    }
+    return response
+  },
   async (error) => {
+    if (!error.config?.skipLoading) {
+      const loadingStore = useLoadingStore()
+      loadingStore.stop()
+    }
     const originalRequest = error.config
     const userStore = useUserStore()
 
     if (error.response?.status === 401 && !originalRequest._retry) {
       if (originalRequest.url && originalRequest.url.includes('/users/login/')) {
+        return Promise.reject(error)
+      }
+
+      // 无 token 时说明用户未登录，不需要刷新 token 或强制登出
+      if (!userStore.token) {
         return Promise.reject(error)
       }
 
@@ -70,12 +94,10 @@ apiClient.interceptors.response.use(
           originalRequest.headers.Authorization = `Bearer ${userStore.token}`
           return apiClient(originalRequest)
         } else {
-          userStore.logout()
-          window.location.href = '/login'
+          userStore.forceLogout('token_expired')
         }
       } catch (refreshError) {
-        userStore.logout()
-        window.location.href = '/login'
+        userStore.forceLogout('token_invalid')
         return Promise.reject(refreshError)
       } finally {
         isRefreshing = false
@@ -88,3 +110,7 @@ apiClient.interceptors.response.use(
 
 export { apiClient }
 export default apiClient
+
+export function updateBaseURL(newURL) {
+  apiClient.defaults.baseURL = newURL
+}

@@ -86,7 +86,7 @@ class TrackedTask:
             logger.debug(f"[TrackedTask] sync_fn 同步失败: {e}")
 
         try:
-            from Django_xm.apps.common.task_manager import (
+            from Django_xm.apps.core.task_redis_manager import (
                 update_task_status as common_update,
                 create_task as common_create,
                 TaskType,
@@ -146,25 +146,25 @@ class TrackedTask:
 
     def set_task_type(self, task_type: str):
         self._pending_type = task_type
-        try:
-            record = self._get_or_create_record()
-            from Django_xm.apps.core.task_models import CeleryTaskRecord
-            task_type_enum = CeleryTaskRecord.TaskType(task_type)
-            record.task_type = task_type_enum
-            record.save(update_fields=['task_type', 'updated_at'])
-        except Exception:
-            pass
+        if self._record is not None:
+            try:
+                from Django_xm.apps.core.task_models import CeleryTaskRecord
+                task_type_enum = CeleryTaskRecord.TaskType(task_type)
+                self._record.task_type = task_type_enum
+                self._record.save(update_fields=['task_type', 'updated_at'])
+            except Exception:
+                pass
 
     def set_created_by(self, user_id: int):
         self._pending_user_id = user_id
-        try:
-            record = self._get_or_create_record()
-            from django.contrib.auth import get_user_model
-            User = get_user_model()
-            record.created_by = User.objects.get(id=user_id)
-            record.save(update_fields=['created_by', 'updated_at'])
-        except Exception:
-            pass
+        if self._record is not None:
+            try:
+                from django.contrib.auth import get_user_model
+                User = get_user_model()
+                self._record.created_by = User.objects.get(id=user_id)
+                self._record.save(update_fields=['created_by', 'updated_at'])
+            except Exception:
+                pass
 
 
 @shared_task(
@@ -235,7 +235,20 @@ def check_stale_tasks(self, timeout_minutes: int = 60):
             task.mark_failure(error_message=f'任务超时（{timeout_minutes}分钟未完成）')
 
         logger.info(f"[Celery Base] 标记了 {count} 个超时任务")
-        return {'status': 'success', 'marked_stale': count}
     except Exception as e:
         logger.error(f"[Celery Base] 检测超时任务失败: {e}")
-        return {'status': 'error', 'error': str(e)}
+
+    try:
+        from Django_xm.apps.research.models import ResearchTask
+        research_cutoff = timezone.now() - timedelta(minutes=timeout_minutes)
+        stale_research = ResearchTask.objects.filter(
+            status__in=['pending', 'progress'],
+            created_at__lt=research_cutoff,
+        )
+        research_count = stale_research.update(status='failed', updated_at=timezone.now())
+        if research_count > 0:
+            logger.info(f"[Celery Base] 标记了 {research_count} 个超时研究任务为 failed")
+    except Exception as e:
+        logger.error(f"[Celery Base] 检测超时研究任务失败: {e}")
+
+    return {'status': 'success', 'marked_stale': count}

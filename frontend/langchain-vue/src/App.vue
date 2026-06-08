@@ -1,6 +1,7 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElLoading } from 'element-plus'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import AppHeader from './components/layout/AppHeader.vue'
 import GlobalSearch from './components/common/GlobalSearch.vue'
@@ -8,15 +9,35 @@ import ChatQuickAccess from './components/common/ChatQuickAccess.vue'
 import { useThemeStore } from './stores/theme'
 import { useSessionStore } from './stores/session'
 import { useUserStore } from './stores/user'
+import { useLoadingStore } from './stores/loading'
 import { useThrottle } from './composables/useDebounce'
 
 const route = useRoute()
 const themeStore = useThemeStore()
 const sessionStore = useSessionStore()
 const userStore = useUserStore()
+const loadingStore = useLoadingStore()
 const isCollapse = ref(false)
 const isScrolled = ref(false)
 const showSearch = ref(false)
+
+let loadingInstance = null
+
+watch(() => loadingStore.isLoading, (newVal) => {
+  if (newVal && !loadingInstance) {
+    loadingInstance = ElLoading.service({ lock: true, text: '加载中...', background: 'rgba(0, 0, 0, 0.7)' })
+  } else if (!newVal && loadingInstance) {
+    loadingInstance.close()
+    loadingInstance = null
+  }
+}, { immediate: true })
+
+onUnmounted(() => {
+  if (loadingInstance) {
+    loadingInstance.close()
+    loadingInstance = null
+  }
+})
 
 const isChatRoute = computed(() => route.path === '/chat')
 

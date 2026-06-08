@@ -3,7 +3,7 @@ import { ref, watch, nextTick, computed, onMounted, onUnmounted } from 'vue'
 import { ChatDotRound } from '@element-plus/icons-vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import ChatMessage from './ChatMessage.vue'
-import { AiSuggestion, AiSuggestions, AiShimmer } from '../ai-elements'
+import { AiSuggestions, AiShimmer } from '../ai-elements'
 import AiLoader from '../ai-elements/AiLoader.vue'
 import { validateMessage } from '../../types'
 
@@ -49,6 +49,10 @@ const emit = defineEmits({
   suggestionClick: (suggestion) => typeof suggestion === 'string',
   scrollChange: (isScrolled) => typeof isScrolled === 'boolean',
   messageClick: (message) => message && typeof message === 'object',
+  messageDelete: (payload) => payload && typeof payload.messageId !== 'undefined',
+  continueResearch: (taskId) => typeof taskId === 'string' && taskId.length > 0,
+  approve: (payload) => payload && typeof payload === 'object',
+  reject: (message) => message && typeof message === 'object',
 })
 
 const messagesContainer = ref(null)
@@ -63,11 +67,19 @@ const estimateItemSize = (msgIndex) => {
   const msg = props.messages[msgIndex]
   if (!msg) return 200
   const contentLen = (msg.content || '').length
-  if (contentLen < 50) return 120
-  if (contentLen < 200) return 180
-  if (contentLen < 500) return 280
-  if (contentLen < 1000) return 400
-  return 500
+
+  // 根据富内容类型调整估算权重
+  let weight = 1
+  if (msg.toolCalls && msg.toolCalls.length > 0) weight = 3
+  else if (msg.sources && msg.sources.length > 0) weight = 2
+  else if (msg.plan) weight = 2
+  else if (msg.chainOfThought) weight = 1.5
+
+  if (contentLen < 50) return Math.round(120 * weight)
+  if (contentLen < 200) return Math.round(180 * weight)
+  if (contentLen < 500) return Math.round(280 * weight)
+  if (contentLen < 1000) return Math.round(400 * weight)
+  return Math.round(500 * weight)
 }
 
 const scrollToBottom = (behavior = 'smooth') => {
@@ -216,15 +228,19 @@ const handleSuggestionClick = (suggestion) => {
                 :show-debug="showDebug"
                 @regenerate="(idx) => emit('regenerate', idx)"
                 @click="(message) => emit('messageClick', message)"
+                @delete="(payload) => emit('messageDelete', payload)"
+                @continue-research="(taskId) => emit('continueResearch', taskId)"
+                @approve="(message) => emit('approve', message)"
+                @reject="(message) => emit('reject', message)"
             />
           </div>
           </template>
         </RecycleScroller>
 
         <TransitionGroup v-else name="slide-up" tag="div" class="messages-list-inner">
-          <div 
-            v-for="(msg, msgIndex) in messages" 
-            :key="msg.id || msgIndex" 
+          <div
+            v-for="(msg, msgIndex) in messages"
+            :key="msg.id || msgIndex"
             class="message-wrapper"
             style="content-visibility: auto; contain-intrinsic-size: auto 200px;"
           >
@@ -238,6 +254,10 @@ const handleSuggestionClick = (suggestion) => {
               :show-debug="showDebug"
               @regenerate="(idx) => emit('regenerate', idx)"
               @click="(message) => emit('messageClick', message)"
+              @delete="(payload) => emit('messageDelete', payload)"
+              @continue-research="(taskId) => emit('continueResearch', taskId)"
+              @approve="(message) => emit('approve', message)"
+              @reject="(message) => emit('reject', message)"
             />
           </div>
         </TransitionGroup>

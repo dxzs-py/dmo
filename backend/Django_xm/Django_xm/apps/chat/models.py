@@ -12,10 +12,8 @@ class MessageRole(models.TextChoices):
 
 
 class ChatMode(models.TextChoices):
-    BASIC_AGENT = 'basic-agent', '基础代理'
+    AGENT = 'agent', '代理'
     DEEP_RESEARCH = 'deep-research', '深度研究'
-    RAG = 'rag', 'RAG检索'
-    WORKFLOW = 'workflow', '工作流'
 
 
 class ChatSession(AuditModel):
@@ -41,7 +39,7 @@ class ChatSession(AuditModel):
     mode = models.CharField(
         max_length=50,
         choices=ChatMode.choices,
-        default=ChatMode.BASIC_AGENT,
+        default=ChatMode.AGENT,
         verbose_name='对话模式'
     )
     selected_knowledge_base = models.CharField(
@@ -49,6 +47,12 @@ class ChatSession(AuditModel):
         blank=True,
         null=True,
         verbose_name='选中的知识库'
+    )
+    selected_knowledge_bases = models.JSONField(
+        default=list,
+        blank=True,
+        null=True,
+        verbose_name='选中的知识库列表'
     )
 
     class Meta:
@@ -115,7 +119,7 @@ class ChatMessage(AuditModel):
         verbose_name='计划'
     )
     chain_of_thought = models.JSONField(
-        default=dict,
+        default=list,
         blank=True,
         null=True,
         verbose_name='思维链'
@@ -125,6 +129,12 @@ class ChatMessage(AuditModel):
         blank=True,
         null=True,
         verbose_name='工具调用'
+    )
+    approval = models.JSONField(
+        default=dict,
+        blank=True,
+        null=True,
+        verbose_name='审批数据'
     )
     reasoning = models.JSONField(
         default=dict,
@@ -137,12 +147,6 @@ class ChatMessage(AuditModel):
         blank=True,
         null=True,
         verbose_name='建议问题'
-    )
-    context = models.JSONField(
-        default=dict,
-        blank=True,
-        null=True,
-        verbose_name='上下文信息'
     )
     versions = models.JSONField(
         default=list,
@@ -164,15 +168,21 @@ class ChatMessage(AuditModel):
         default=0,
         verbose_name='Token 数量'
     )
-    cost = models.DecimalField(
-        max_digits=12,
-        decimal_places=6,
-        default=0,
-        verbose_name='成本(美元)'
+    token_detail = models.JSONField(
+        default=dict,
+        blank=True,
+        verbose_name='Token 明细'
     )
     response_time = models.FloatField(
         default=0,
         verbose_name='响应时间(秒)'
+    )
+    research_task_id = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name='关联深度研究任务ID',
+        db_index=True
     )
 
     class Meta:
@@ -206,12 +216,4 @@ class ChatMessage(AuditModel):
             raise ValidationError({'current_version': '版本索引不能为负数'})
 
     def save(self, *args, **kwargs):
-        self.full_clean()
         super().save(*args, **kwargs)
-
-
-def __getattr__(name):
-    if name in ('ChatAttachment', 'AttachmentStatus', 'AttachmentCleanupLog', 'StorageAlert', 'chat_attachment_upload_path'):
-        from Django_xm.apps.attachments import models as _models
-        return getattr(_models, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

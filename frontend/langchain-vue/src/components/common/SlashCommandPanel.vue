@@ -95,8 +95,6 @@ function getDefaultCommands() {
     { name: 'status', description: '查看当前会话状态', category: 'session', usage: '/status' },
     { name: 'compact', description: '压缩当前会话历史', category: 'session', usage: '/compact' },
     { name: 'model', description: '查看或切换AI模型', category: 'ai', usage: '/model [模型名]' },
-    { name: 'cost', description: '查看Token使用量和成本', category: 'info', usage: '/cost' },
-    { name: 'permissions', description: '查看或设置工具权限', category: 'settings', usage: '/permissions [模式]' },
     { name: 'clear', description: '清除当前会话', category: 'session', usage: '/clear' },
     { name: 'export', description: '导出当前对话', category: 'session', usage: '/export' },
     { name: 'version', description: '查看系统版本信息', category: 'info', usage: '/version' },
@@ -113,6 +111,8 @@ watch(
 onMounted(() => {
   loadCommands()
 })
+
+defineExpose({ filteredCommands })
 </script>
 
 <style scoped>

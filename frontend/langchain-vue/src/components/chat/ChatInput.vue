@@ -1,8 +1,7 @@
 <script setup>
 import { ref, watch, nextTick, computed } from 'vue'
-import { Promotion, Search, Microphone, Document, Close, VideoPause, Connection, SetUp } from '@element-plus/icons-vue'
+import { Promotion, Search, Document, Close, VideoPause, SetUp, Loading, RefreshRight, Check, CircleClose } from '@element-plus/icons-vue'
 import SlashCommandPanel from '@/components/common/SlashCommandPanel.vue'
-import McpSelector from '@/components/chat/McpSelector.vue'
 import ToolSelector from '@/components/chat/ToolSelector.vue'
 
 const props = defineProps({
@@ -26,10 +25,6 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
-  useMcp: {
-    type: Boolean,
-    default: false,
-  },
   selectedMcpServers: {
     type: Array,
     default: () => [],
@@ -37,22 +32,6 @@ const props = defineProps({
   selectedTools: {
     type: Array,
     default: () => [],
-  },
-  mcpTools: {
-    type: Array,
-    default: () => [],
-  },
-  mcpServers: {
-    type: Array,
-    default: () => [],
-  },
-  mcpAvailable: {
-    type: Boolean,
-    default: false,
-  },
-  useMicrophone: {
-    type: Boolean,
-    default: false,
   },
   placeholder: {
     type: String,
@@ -70,6 +49,26 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  currentMode: {
+    type: String,
+    default: 'agent',
+  },
+  useDeepThinking: {
+    type: Boolean,
+    default: false,
+  },
+  modelSupportsDeepThinking: {
+    type: Boolean,
+    default: false,
+  },
+  isUploading: {
+    type: Boolean,
+    default: false,
+  },
+  researchContextInfo: {
+    type: Object,
+    default: null,
+  },
 })
 
 const emit = defineEmits({
@@ -78,15 +77,16 @@ const emit = defineEmits({
   keydown: (event) => event instanceof KeyboardEvent,
   attach: () => true,
   removeAttachment: (index) => typeof index === 'number',
-  voice: () => true,
   webSearch: () => true,
   mcp: () => true,
-  'update:useMcp': (val) => typeof val === 'boolean',
   'update:selectedMcpServers': (val) => Array.isArray(val),
   'update:selectedTools': (val) => Array.isArray(val),
-  microphone: () => true,
+  'update:useDeepThinking': (val) => typeof val === 'boolean',
   stopStreaming: () => true,
   commandSelect: (cmd) => cmd instanceof Object,
+  retryUpload: (index) => typeof index === 'number',
+  cancelUpload: () => true,
+  dismissResearchContext: () => true,
 })
 
 const textareaRef = ref(null)
@@ -95,6 +95,7 @@ const fileInputRef = ref(null)
 const showCommandPanel = ref(false)
 const commandFilter = ref('')
 const selectedCommandIndex = ref(0)
+const slashCommandPanelRef = ref(null)
 
 const computedPlaceholder = computed(() => {
   if (props.isStreaming) return '正在生成回复...'
@@ -104,6 +105,21 @@ const computedPlaceholder = computed(() => {
 const hasAttachments = computed(() => props.attachments.length > 0)
 const canSend = computed(() => (props.modelValue.trim() || hasAttachments.value) && !props.disabled)
 const charCount = computed(() => props.modelValue?.length || 0)
+
+const uploadingCount = computed(() =>
+  props.attachments.filter(a => a.status === 'uploading').length
+)
+const totalCount = computed(() => props.attachments.length)
+const currentUploadingName = computed(() => {
+  const uploading = props.attachments.find(a => a.status === 'uploading')
+  return uploading?.name || ''
+})
+
+const overallProgress = computed(() => {
+  if (props.attachments.length === 0) return 0
+  const totalProgress = props.attachments.reduce((sum, a) => sum + (a.progress || 0), 0)
+  return Math.round(totalProgress / props.attachments.length)
+})
 
 const isSlashCommand = computed(() => {
   return props.modelValue.startsWith('/') && !props.modelValue.includes('\n')
@@ -151,6 +167,29 @@ const handleKeyDown = (event) => {
     }
     if (event.key === 'Tab' || event.key === 'Enter') {
       event.preventDefault()
+      const panel = slashCommandPanelRef.value
+      if (panel?.filteredCommands?.length > 0) {
+        const idx = Math.min(selectedCommandIndex.value, panel.filteredCommands.length - 1)
+        if (idx >= 0) {
+          handleCommandSelect(panel.filteredCommands[idx])
+        }
+      }
+      return
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      if (selectedCommandIndex.value > 0) {
+        selectedCommandIndex.value--
+      }
+      return
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      const panel = slashCommandPanelRef.value
+      const maxIdx = panel?.filteredCommands?.length ? panel.filteredCommands.length - 1 : 0
+      if (selectedCommandIndex.value < maxIdx) {
+        selectedCommandIndex.value++
+      }
       return
     }
   }
@@ -170,7 +209,7 @@ const handleBlur = () => {
   isFocused.value = false
   setTimeout(() => {
     showCommandPanel.value = false
-  }, 200)
+  }, 300)
 }
 
 const handleAttach = () => {
@@ -191,10 +230,6 @@ const handleRemoveAttachment = (index) => {
 
 const handleWebSearch = () => {
   emit('webSearch')
-}
-
-const handleMicrophone = () => {
-  emit('microphone')
 }
 
 const handleCommandSelect = (cmd) => {
@@ -218,29 +253,88 @@ watch(() => props.modelValue, adjustTextareaHeight)
   <div class="chat-footer">
     <div class="input-container">
       <Transition name="slide-down">
-        <div v-if="hasAttachments" class="attachment-preview">
+        <div v-if="researchContextInfo || hasAttachments" class="attachment-preview">
           <TransitionGroup name="list" tag="div" class="attachment-list">
+            <div v-if="researchContextInfo" key="research" class="attachment-item research-attachment-item">
+              <span class="attachment-icon">🔬</span>
+              <div class="attachment-info">
+                <div class="attachment-name-row">
+                  <span class="attachment-name">深度研究</span>
+                  <el-icon class="attachment-status status-success" :size="14"><Check /></el-icon>
+                </div>
+                <span v-if="researchContextInfo.query" class="attachment-size">{{ researchContextInfo.query }}</span>
+              </div>
+              <div class="attachment-actions">
+                <button class="attachment-remove" @click="emit('dismissResearchContext')">
+                  <el-icon :size="12"><Close /></el-icon>
+                </button>
+              </div>
+            </div>
             <div
               v-for="(file, index) in attachments"
               :key="file.name + index"
               class="attachment-item"
+              :class="{ 'is-uploading': file.status === 'uploading', 'is-failed': file.status === 'failed' }"
             >
               <span class="attachment-icon">{{ getFileIcon(file.fileType || file.name?.split('.').pop()) }}</span>
               <div class="attachment-info">
-                <span class="attachment-name">{{ file.name || file.originalName }}</span>
+                <div class="attachment-name-row">
+                  <span class="attachment-name">{{ file.name || file.originalName }}</span>
+                  <span v-if="file.status === 'pending'" class="attachment-status status-pending">🕐</span>
+                  <el-icon v-else-if="file.status === 'uploading'" class="attachment-status status-uploading is-loading" :size="14"><Loading /></el-icon>
+                  <el-icon v-else-if="file.status === 'success'" class="attachment-status status-success" :size="14"><Check /></el-icon>
+                  <el-icon v-else-if="file.status === 'failed'" class="attachment-status status-failed" :size="14"><CircleClose /></el-icon>
+                </div>
                 <span v-if="file.size" class="attachment-size">{{ formatFileSize(file.size) }}</span>
+                <el-progress
+                  v-if="file.status === 'uploading'"
+                  :percentage="file.progress || 0"
+                  :stroke-width="4"
+                  :show-text="false"
+                  class="attachment-progress"
+                />
+                <span v-if="file.status === 'failed' && file.error" class="attachment-error">{{ file.error }}</span>
               </div>
-              <button class="attachment-remove" @click="handleRemoveAttachment(index)">
-                <el-icon :size="12"><Close /></el-icon>
-              </button>
+              <div class="attachment-actions">
+                <el-button
+                  v-if="file.status === 'failed'"
+                  text
+                  size="small"
+                  type="primary"
+                  class="attachment-retry"
+                  @click="emit('retryUpload', index)"
+                >
+                  <el-icon :size="12"><RefreshRight /></el-icon>
+                </el-button>
+                <button
+                  v-if="file.status !== 'uploading'"
+                  class="attachment-remove"
+                  @click="handleRemoveAttachment(index)"
+                >
+                  <el-icon :size="12"><Close /></el-icon>
+                </button>
+              </div>
             </div>
           </TransitionGroup>
         </div>
       </Transition>
 
+      <div v-if="isUploading" class="upload-status-bar">
+        <el-icon class="is-loading"><Loading /></el-icon>
+        <span>正在上传文件 {{ uploadingCount }}/{{ totalCount }}：{{ currentUploadingName }}</span>
+        <el-progress
+          :percentage="overallProgress"
+          :stroke-width="4"
+          :show-text="false"
+          style="flex: 1; max-width: 120px; margin: 0 8px;"
+        />
+        <el-button text size="small" type="danger" @click="emit('cancelUpload')">取消上传</el-button>
+      </div>
+
       <div class="input-card" :class="{ 'is-focused': isFocused, 'is-streaming': isStreaming }">
         <Transition name="slide-down">
           <SlashCommandPanel
+            ref="slashCommandPanelRef"
             v-if="showCommandPanel && isSlashCommand"
             :filter="commandFilter"
             :selected-index="selectedCommandIndex"
@@ -260,6 +354,7 @@ watch(() => props.modelValue, adjustTextareaHeight)
               <el-icon :size="18"><Document /></el-icon>
             </button>
             <button
+              v-if="currentMode === 'agent' || currentMode === 'deep-research'"
               class="toolbar-btn"
               :class="{ active: useWebSearch }"
               :disabled="disabled || loading"
@@ -268,26 +363,22 @@ watch(() => props.modelValue, adjustTextareaHeight)
             >
               <el-icon :size="18"><Search /></el-icon>
             </button>
-            <McpSelector
-              :model-value="selectedMcpServers"
-              :enabled="useMcp"
-              @update:enabled="(val) => emit('update:useMcp', val)"
-              @update:model-value="(val) => emit('update:selectedMcpServers', val)"
-            />
-            <ToolSelector
-              :model-value="selectedTools"
-              :enabled="useWebSearch || useMcp"
-              @update:model-value="(val) => emit('update:selectedTools', val)"
-            />
             <button
+              v-if="modelSupportsDeepThinking && (currentMode === 'agent' || currentMode === 'deep-research')"
               class="toolbar-btn"
-              :class="{ active: useMicrophone }"
+              :class="{ active: useDeepThinking }"
               :disabled="disabled || loading"
-              :title="useMicrophone ? '关闭语音输入' : '开启语音输入'"
-              @click="handleMicrophone"
+              :title="useDeepThinking ? '关闭深度思考' : '开启深度思考'"
+              @click="emit('update:useDeepThinking', !useDeepThinking)"
             >
-              <el-icon :size="18"><Microphone /></el-icon>
+              🧠
             </button>
+            <ToolSelector
+              v-if="currentMode === 'agent' || currentMode === 'deep-research'"
+              :model-value="selectedTools"
+              @update:model-value="(val) => emit('update:selectedTools', val)"
+              @update:selected-mcp-servers="(val) => emit('update:selectedMcpServers', val)"
+            />
           </div>
 
           <textarea
@@ -364,6 +455,46 @@ watch(() => props.modelValue, adjustTextareaHeight)
   margin-bottom: 8px;
 }
 
+.research-attachment-item {
+  max-width: 280px;
+}
+
+.research-attachment-item .attachment-size {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.upload-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  margin-bottom: 8px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--sidebar-primary) 10%, transparent), color-mix(in srgb, var(--sidebar-primary) 5%, transparent));
+  border: 1px solid color-mix(in srgb, var(--sidebar-primary) 20%, transparent);
+  font-size: 13px;
+  color: var(--sidebar-primary);
+  animation: status-bar-pulse 2s ease-in-out infinite;
+}
+
+@keyframes status-bar-pulse {
+  0%, 100% { border-color: color-mix(in srgb, var(--sidebar-primary) 20%, transparent); }
+  50% { border-color: color-mix(in srgb, var(--sidebar-primary) 40%, transparent); }
+}
+
+.upload-status-bar .is-loading {
+  color: var(--sidebar-primary);
+  animation: rotating 1.5s linear infinite;
+}
+
+@keyframes rotating {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .attachment-list {
   display: flex;
   flex-wrap: wrap;
@@ -432,6 +563,80 @@ watch(() => props.modelValue, adjustTextareaHeight)
 .attachment-remove:hover {
   background: color-mix(in srgb, var(--destructive) 10%, transparent);
   color: var(--destructive);
+}
+
+.upload-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--el-color-primary, #409eff);
+  padding: 4px 0 6px;
+}
+
+.attachment-item.is-uploading {
+  border-color: var(--el-color-primary, #409eff);
+  background: color-mix(in srgb, var(--el-color-primary) 4%, transparent);
+}
+
+.attachment-item.is-failed {
+  border-color: var(--destructive);
+  background: color-mix(in srgb, var(--destructive) 4%, transparent);
+}
+
+.attachment-name-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.attachment-status {
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.status-pending {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.status-uploading {
+  color: var(--el-color-primary, #409eff);
+}
+
+.status-success {
+  color: var(--el-color-success, #67c23a);
+}
+
+.status-failed {
+  color: var(--destructive);
+}
+
+.attachment-progress {
+  margin-top: 4px;
+}
+
+.attachment-error {
+  font-size: 11px;
+  color: var(--destructive);
+  margin-top: 2px;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
+
+.attachment-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.attachment-retry {
+  padding: 2px !important;
+  min-height: 20px;
 }
 
 .input-card {

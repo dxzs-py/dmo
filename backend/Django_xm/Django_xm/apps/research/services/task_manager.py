@@ -9,9 +9,13 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 
 from django.conf import settings
+from django.core.cache import cache as redis_cache
 from ..models import ResearchTask
 
 logger = logging.getLogger(__name__)
+
+_REDIS_CACHE_TTL = 5
+_REDIS_CACHE_KEY_PREFIX = "research:task_status"
 
 
 class TaskManager:
@@ -33,12 +37,25 @@ class TaskManager:
                     cls._instance._threads: Dict[str, threading.Thread] = {}
         return cls._instance
 
+    @staticmethod
+    def _redis_cache_key(task_id: str, user_id) -> str:
+        return f"{_REDIS_CACHE_KEY_PREFIX}:{task_id}:{user_id}"
+
+    def _invalidate_redis_cache(self, task_id: str, created_by_id) -> None:
+        redis_cache.delete(self._redis_cache_key(task_id, created_by_id))
+        redis_cache.delete(self._redis_cache_key(task_id, None))
+
     def get_task_status(self, task_id: str, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """
         获取任务状态
-        始终从数据库加载最新状态，确保与 Celery Worker 同步
+        优先查询 Redis 缓存，未命中则查数据库并回写缓存
         当 user_id 不为 None 时，强制验证任务归属
         """
+        cache_key = self._redis_cache_key(task_id, user_id)
+        cached = redis_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         try:
             qs = ResearchTask.objects.filter(task_id=task_id)
             if user_id is not None:
@@ -60,6 +77,7 @@ class TaskManager:
                 status_data['final_report'] = task.final_report
 
             self._cache[task_id] = status_data
+            redis_cache.set(cache_key, status_data, _REDIS_CACHE_TTL)
             return status_data
 
         except ResearchTask.DoesNotExist:
@@ -94,6 +112,7 @@ class TaskManager:
                 task.final_report = final_report
 
             task.save()
+            self._invalidate_redis_cache(task_id, task.created_by_id)
 
         except ResearchTask.DoesNotExist:
             logger.warning(f"Task {task_id} not found in database or user mismatch")
@@ -101,7 +120,8 @@ class TaskManager:
     def create_task(self, task_id: str, query: str,
                    enable_web_search: bool = True,
                    enable_doc_analysis: bool = False,
-                   created_by=None) -> Dict[str, Any]:
+                   created_by=None,
+                   session_id: Optional[str] = None) -> Dict[str, Any]:
         task_data = {
             'task_id': task_id,
             'query': query,
@@ -110,6 +130,7 @@ class TaskManager:
             'created_at': datetime.now().isoformat(),
             'enable_web_search': enable_web_search,
             'enable_doc_analysis': enable_doc_analysis,
+            'session_id': session_id,
         }
 
         self._cache[task_id] = task_data
@@ -120,7 +141,8 @@ class TaskManager:
             status='pending',
             enable_web_search=enable_web_search,
             enable_doc_analysis=enable_doc_analysis,
-            created_by=created_by
+            created_by=created_by,
+            session_id=session_id
         )
 
         return task_data
@@ -133,10 +155,6 @@ class TaskManager:
             del self._threads[task_id]
 
     def delete_task(self, task_id: str, user_id: Optional[int] = None) -> bool:
-        """
-        删除任务
-        当 user_id 不为 None 时，强制验证任务归属
-        """
         if task_id in self._cache:
             del self._cache[task_id]
 
@@ -144,13 +162,30 @@ class TaskManager:
             del self._threads[task_id]
 
         try:
-            qs = ResearchTask.objects.filter(task_id=task_id)
-            if user_id is not None:
-                qs = qs.filter(created_by_id=user_id)
-            task = qs.get()
+            task = ResearchTask.objects.get(task_id=task_id)
+            if user_id is not None and task.created_by_id != user_id:
+                return False
+
+            self._invalidate_redis_cache(task_id, task.created_by_id)
+
+            if task.celery_task_id and task.status in ('pending', 'running'):
+                task.is_deleted = True
+                task.save(update_fields=['is_deleted'])
+
+                try:
+                    from celery import current_app
+                    current_app.control.revoke(
+                        task.celery_task_id,
+                        terminate=True,
+                        signal='SIGTERM',
+                    )
+                    logger.info(f"已撤销 Celery 任务: {task.celery_task_id} (研究任务: {task_id})")
+                except Exception as e:
+                    logger.warning(f"撤销 Celery 任务失败: {e}")
+
             task.delete()
         except ResearchTask.DoesNotExist:
-            pass
+            return False
 
         try:
             from Django_xm.apps.core.services.file_manager import get_file_manager

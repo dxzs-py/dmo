@@ -1,12 +1,16 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { chatAPI } from '../../api'
+import { toolsAPI } from '../../api'
 
 const props = defineProps({
   modelValue: {
     type: Boolean,
     default: false,
+  },
+  editingTool: {
+    type: Object,
+    default: null,
   },
 })
 
@@ -20,12 +24,18 @@ const visible = computed({
   set: (val) => emit('update:modelValue', val),
 })
 
+const isEdit = computed(() => !!props.editingTool)
+
+const dialogTitle = computed(() => isEdit.value ? '编辑自定义工具' : '上传自定义工具')
+
 const form = ref({
   name: '',
   description: '',
   code: '',
+  category: 'general',
 })
 
+const categories = ref([])
 const loading = ref(false)
 
 const codeTemplate = `from langchain_core.tools import tool
@@ -36,8 +46,33 @@ def my_custom_tool(query: str) -> str:
     return f"结果: {query}"
 `
 
+const loadCategories = async () => {
+  try {
+    const res = await toolsAPI.getToolMeta()
+    categories.value = res.data?.data?.categories || []
+  } catch {
+    categories.value = []
+  }
+}
+
+onMounted(loadCategories)
+
+watch(() => props.modelValue, (val) => {
+  if (val && props.editingTool) {
+    const catCode = typeof props.editingTool.category === 'object'
+      ? props.editingTool.category?.code || 'general'
+      : props.editingTool.category || 'general'
+    form.value = {
+      name: props.editingTool.name || '',
+      description: props.editingTool.description || '',
+      code: props.editingTool.code || '',
+      category: catCode,
+    }
+  }
+})
+
 const resetForm = () => {
-  form.value = { name: '', description: '', code: '' }
+  form.value = { name: '', description: '', code: '', category: 'general' }
 }
 
 const handleUseTemplate = () => {
@@ -56,17 +91,28 @@ const handleSubmit = async () => {
 
   loading.value = true
   try {
-    await chatAPI.uploadTool({
-      name: form.value.name.trim(),
-      description: form.value.description.trim(),
-      code: form.value.code,
-    })
-    ElMessage.success(`工具 "${form.value.name}" 上传成功`)
+    if (isEdit.value) {
+      await toolsAPI.updateCustomTool({
+        name: form.value.name.trim(),
+        description: form.value.description.trim(),
+        code: form.value.code,
+        category: form.value.category,
+      })
+      ElMessage.success(`工具 "${form.value.name}" 更新成功`)
+    } else {
+      await toolsAPI.uploadTool({
+        name: form.value.name.trim(),
+        description: form.value.description.trim(),
+        code: form.value.code,
+        category: form.value.category,
+      })
+      ElMessage.success(`工具 "${form.value.name}" 上传成功`)
+    }
     resetForm()
     visible.value = false
     emit('success')
   } catch (e) {
-    ElMessage.error('上传失败: ' + (e.response?.data?.message || e.message))
+    ElMessage.error((isEdit.value ? '更新失败: ' : '上传失败: ') + (e.response?.data?.message || e.message))
   } finally {
     loading.value = false
   }
@@ -81,9 +127,10 @@ const handleClose = () => {
 <template>
   <el-dialog
     v-model="visible"
-    title="上传自定义工具"
+    :title="dialogTitle"
     width="560px"
     :close-on-click-modal="false"
+    append-to-body
     @close="handleClose"
   >
     <el-form label-position="top" class="tool-upload-form">
@@ -91,8 +138,9 @@ const handleClose = () => {
         <el-input
           v-model="form.name"
           placeholder="例如：my_custom_tool"
-          maxlength="50"
+          maxlength="100"
           show-word-limit
+          :disabled="isEdit"
         />
       </el-form-item>
 
@@ -100,9 +148,20 @@ const handleClose = () => {
         <el-input
           v-model="form.description"
           placeholder="简要描述工具的功能"
-          maxlength="200"
+          maxlength="500"
           show-word-limit
         />
+      </el-form-item>
+
+      <el-form-item label="功能分类">
+        <el-select v-model="form.category" placeholder="选择分类" style="width: 100%">
+          <el-option
+            v-for="cat in categories"
+            :key="cat.code"
+            :label="cat.name"
+            :value="cat.code"
+          />
+        </el-select>
       </el-form-item>
 
       <el-form-item required>
@@ -131,7 +190,7 @@ const handleClose = () => {
     <template #footer>
       <el-button @click="handleClose">取消</el-button>
       <el-button type="primary" :loading="loading" @click="handleSubmit">
-        上传
+        {{ isEdit ? '保存' : '上传' }}
       </el-button>
     </template>
   </el-dialog>

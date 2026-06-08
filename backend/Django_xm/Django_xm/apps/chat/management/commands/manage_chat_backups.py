@@ -254,7 +254,7 @@ class Command(BaseCommand):
         ))
         
         try:
-            from Django_xm.apps.chat.services import SecureSessionCacheService
+            from Django_xm.apps.cache_manager.services.secure_session_cache import SecureSessionCacheService
             redis_synced = 0
             
             for session_data in backup_data.get('sessions', []):

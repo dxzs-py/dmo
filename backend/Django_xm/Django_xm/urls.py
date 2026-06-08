@@ -19,6 +19,7 @@ from django.contrib import admin
 from django.urls import path, include
 from django.http import JsonResponse
 from django.conf import settings
+from django.conf.urls.static import static
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 from Django_xm.apps.core.views import health_check as core_health_check, request_monitor
 from Django_xm.apps.ai_engine.config import settings as app_cfg
@@ -42,13 +43,16 @@ def root_info(request):
         "api_endpoints": {
             "auth": "/api/v1/users/",
             "chat": "/api/v1/chat/",
+            "tools": "/api/v1/tools/",
             "attachments": "/api/v1/attachments/",
             "knowledge": "/api/v1/knowledge/",
             "learning": "/api/v1/learning/",
             "research": "/api/v1/research/",
             "analytics": "/api/v1/analytics/",
+            "core": "/api/v1/core/",
             "cache": "/api/v1/cache/",
             "ai-engine": "/api/v1/ai-engine/",
+            "context": "/api/v1/context/",
         }
     })
 
@@ -69,6 +73,7 @@ urlpatterns = [
 
             path("users/", include("Django_xm.apps.users.urls")),
             path("chat/", include("Django_xm.apps.chat.urls")),
+            path("tools/", include("Django_xm.apps.tools.urls")),
             path("attachments/", include("Django_xm.apps.attachments.urls")),
             path("knowledge/", include("Django_xm.apps.knowledge.urls")),
             path("learning/", include("Django_xm.apps.learning.urls")),
@@ -77,12 +82,10 @@ urlpatterns = [
             path("core/", include("Django_xm.apps.core.urls")),
             path("cache/", include("Django_xm.apps.cache_manager.urls")),
             path("ai-engine/", include("Django_xm.apps.ai_engine.urls")),
+            path("context/", include("Django_xm.apps.context_manager.urls")),
         ])),
     ])),
-
-    # # 兼容旧版API（无版本前缀），重定向到v1
-    # path("api/health/", core_health_check),
-    # path("api/schema/", SpectacularAPIView.as_view()),
-    # path("api/docs/swagger/", SpectacularSwaggerView.as_view(url_name="schema")),
-    # path("api/docs/redoc/", SpectacularRedocView.as_view(url_name="schema")),
 ]
+
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

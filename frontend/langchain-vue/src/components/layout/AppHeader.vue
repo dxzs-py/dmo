@@ -6,6 +6,7 @@ import { User, Setting, SwitchButton, Fold, Expand } from '@element-plus/icons-v
 import { ElMessage } from 'element-plus'
 import { confirmLogout } from '../../utils/dialog'
 import ThemeToggle from './ThemeToggle.vue'
+import { computed } from 'vue'
 
 const props = defineProps({
   sidebarCollapsed: {
@@ -20,6 +21,13 @@ const themeStore = useThemeStore()
 const userStore = useUserStore()
 const router = useRouter()
 
+const avatarUrl = computed(() => {
+  const avatar = userStore.userInfo?.avatar
+  if (!avatar) return ''
+  if (avatar.startsWith('http')) return avatar
+  return avatar
+})
+
 const handleCommand = async (command) => {
   if (command === 'profile') {
     router.push('/profile')
@@ -30,7 +38,7 @@ const handleCommand = async (command) => {
       await confirmLogout()
       userStore.logout()
       ElMessage.success('已退出登录')
-      router.push('/')
+      router.push('/chat')
     } catch {
       // User cancelled
     }
@@ -48,7 +56,7 @@ const handleCommand = async (command) => {
           text
           @click="emit('toggle-sidebar')"
         />
-        <router-link to="/" class="logo-link">
+        <router-link to="/chat" class="logo-link">
           <h1 class="app-title">LC-StudyLab</h1>
           <span class="app-subtitle">智能学习 & 研究助手</span>
         </router-link>
@@ -67,7 +75,7 @@ const handleCommand = async (command) => {
 
         <el-dropdown v-else trigger="click" @command="handleCommand">
           <div class="user-info">
-            <el-avatar :size="32" :icon="User" />
+            <el-avatar :size="32" :src="avatarUrl" :icon="User" />
             <span class="username">{{ userStore.username }}</span>
           </div>
           <template #dropdown>

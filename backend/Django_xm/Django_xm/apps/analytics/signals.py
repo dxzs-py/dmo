@@ -3,21 +3,17 @@
 
 仅负责记录分析事件（UserEvent），不处理缓存失效或日志。
 缓存失效逻辑已由各应用自己的 signals.py 处理。
+
+信号注册在 AnalyticsConfig.ready() 中完成，使用 apps.get_model() 延迟获取跨 app 模型类，
+避免模块级跨 app 导入产生的循环依赖。
 """
 
 import logging
 from django.db.models.signals import post_save, post_delete
-from django.dispatch import receiver
 from django.db import transaction
 
-from Django_xm.apps.chat.models import ChatSession, ChatMessage
-from Django_xm.apps.attachments.models import ChatAttachment
-from Django_xm.apps.knowledge.models import Document, DocumentIndex
-from Django_xm.apps.learning.models import WorkflowSession
-from Django_xm.apps.research.models import ResearchTask
-
 from Django_xm.apps.analytics.models import UserEvent, EventCategory, EventType
-from Django_xm.apps.common.request_utils import get_client_ip, get_user_agent
+from Django_xm.common.request_utils import get_client_ip, get_user_agent
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +33,6 @@ def _get_request_info(instance):
     return get_client_ip(request), get_user_agent(request)
 
 
-@receiver(post_save, sender=ChatSession)
 def on_chat_session_created(sender, instance, created, **kwargs):
     if not created:
         return
@@ -55,7 +50,6 @@ def on_chat_session_created(sender, instance, created, **kwargs):
     )
 
 
-@receiver(post_save, sender=ChatMessage)
 def on_chat_message_created(sender, instance, created, **kwargs):
     if not created:
         return
@@ -69,7 +63,7 @@ def on_chat_message_created(sender, instance, created, **kwargs):
     metadata = {
         'model': instance.model or '',
         'token_count': instance.token_count,
-        'cost': str(instance.cost),
+        'token_detail': instance.token_detail,
         'response_time': instance.response_time,
     }
     if instance.session:
@@ -89,7 +83,6 @@ def on_chat_message_created(sender, instance, created, **kwargs):
     )
 
 
-@receiver(post_save, sender=ChatAttachment)
 def on_chat_attachment_created(sender, instance, created, **kwargs):
     if not created:
         return
@@ -111,7 +104,6 @@ def on_chat_attachment_created(sender, instance, created, **kwargs):
     )
 
 
-@receiver(post_save, sender=Document)
 def on_document_created(sender, instance, created, **kwargs):
     if not created:
         return
@@ -133,7 +125,6 @@ def on_document_created(sender, instance, created, **kwargs):
     )
 
 
-@receiver(post_delete, sender=Document)
 def on_document_deleted(sender, instance, **kwargs):
     ip, ua = _get_request_info(instance)
     _safe_record_event(
@@ -151,7 +142,6 @@ def on_document_deleted(sender, instance, **kwargs):
     )
 
 
-@receiver(post_save, sender=DocumentIndex)
 def on_index_created(sender, instance, created, **kwargs):
     if not created:
         return
@@ -168,7 +158,6 @@ def on_index_created(sender, instance, created, **kwargs):
     )
 
 
-@receiver(post_save, sender=WorkflowSession)
 def on_workflow_session_created(sender, instance, created, **kwargs):
     if not created:
         return
@@ -186,7 +175,6 @@ def on_workflow_session_created(sender, instance, created, **kwargs):
     )
 
 
-@receiver(post_save, sender=ResearchTask)
 def on_research_task_created(sender, instance, created, **kwargs):
     if not created:
         return
@@ -206,3 +194,25 @@ def on_research_task_created(sender, instance, created, **kwargs):
         ip_address=ip,
         user_agent=ua,
     )
+
+
+def register_signals():
+    """在 AppConfig.ready() 中调用，使用 apps.get_model() 延迟注册信号"""
+    from django.apps import apps
+
+    ChatSession = apps.get_model('chat', 'ChatSession')
+    ChatMessage = apps.get_model('chat', 'ChatMessage')
+    ChatAttachment = apps.get_model('attachments', 'ChatAttachment')
+    Document = apps.get_model('knowledge', 'Document')
+    DocumentIndex = apps.get_model('knowledge', 'DocumentIndex')
+    WorkflowSession = apps.get_model('learning', 'WorkflowSession')
+    ResearchTask = apps.get_model('research', 'ResearchTask')
+
+    post_save.connect(on_chat_session_created, sender=ChatSession)
+    post_save.connect(on_chat_message_created, sender=ChatMessage)
+    post_save.connect(on_chat_attachment_created, sender=ChatAttachment)
+    post_save.connect(on_document_created, sender=Document)
+    post_delete.connect(on_document_deleted, sender=Document)
+    post_save.connect(on_index_created, sender=DocumentIndex)
+    post_save.connect(on_workflow_session_created, sender=WorkflowSession)
+    post_save.connect(on_research_task_created, sender=ResearchTask)

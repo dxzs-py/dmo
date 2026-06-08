@@ -17,8 +17,34 @@ DRF 自定义速率限制类
     - KnowledgeRateThrottle: 知识库接口，适度限制
     - SensitiveOperationRateThrottle: 敏感操作，最严格
 """
-import time
 from rest_framework.throttling import SimpleRateThrottle
+
+
+def get_client_ip(request):
+    """从请求中提取客户端 IP 地址"""
+    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if x_forwarded_for:
+        return x_forwarded_for.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR', '')
+
+
+class ScopedRateThrottle(SimpleRateThrottle):
+    """
+    限流基类：认证用户按 pk 限流，匿名用户按 IP 限流
+    子类仅需声明 scope 属性
+    """
+    scope = None
+
+    def get_cache_key(self, request, view):
+        if request.user and request.user.is_authenticated:
+            return self.cache_format % {
+                'scope': self.scope,
+                'ident': request.user.pk
+            }
+        return self.cache_format % {
+            'scope': self.scope,
+            'ident': get_client_ip(request)
+        }
 
 
 class AnonymousRateThrottle(SimpleRateThrottle):
@@ -27,14 +53,9 @@ class AnonymousRateThrottle(SimpleRateThrottle):
     def get_cache_key(self, request, view):
         if request.user and request.user.is_authenticated:
             return None
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            ip = x_forwarded_for.split(',')[0].strip()
-        else:
-            ip = request.META.get('REMOTE_ADDR')
         return self.cache_format % {
             'scope': self.scope,
-            'ident': ip
+            'ident': get_client_ip(request)
         }
 
 
@@ -54,80 +75,23 @@ class LoginRateThrottle(SimpleRateThrottle):
     scope = 'login'
 
     def get_cache_key(self, request, view):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            ip = x_forwarded_for.split(',')[0].strip()
-        else:
-            ip = request.META.get('REMOTE_ADDR')
         return self.cache_format % {
             'scope': self.scope,
-            'ident': ip
+            'ident': get_client_ip(request)
         }
 
 
-class ChatStreamRateThrottle(SimpleRateThrottle):
+class ChatStreamRateThrottle(ScopedRateThrottle):
     scope = 'chat_stream'
 
-    def get_cache_key(self, request, view):
-        if request.user and request.user.is_authenticated:
-            ident = f"user:{request.user.pk}"
-        else:
-            x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-            ident = (x_forwarded_for.split(',')[0].strip()
-                     if x_forwarded_for
-                     else request.META.get('REMOTE_ADDR'))
-        return self.cache_format % {
-            'scope': self.scope,
-            'ident': ident
-        }
 
-
-class ResearchRateThrottle(SimpleRateThrottle):
+class ResearchRateThrottle(ScopedRateThrottle):
     scope = 'research'
 
-    def get_cache_key(self, request, view):
-        if request.user and request.user.is_authenticated:
-            ident = f"user:{request.user.pk}"
-        else:
-            x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-            ident = (x_forwarded_for.split(',')[0].strip()
-                     if x_forwarded_for
-                     else request.META.get('REMOTE_ADDR'))
-        return self.cache_format % {
-            'scope': self.scope,
-            'ident': ident
-        }
 
-
-class KnowledgeRateThrottle(SimpleRateThrottle):
+class KnowledgeRateThrottle(ScopedRateThrottle):
     scope = 'knowledge'
 
-    def get_cache_key(self, request, view):
-        if request.user and request.user.is_authenticated:
-            ident = f"user:{request.user.pk}"
-        else:
-            x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-            ident = (x_forwarded_for.split(',')[0].strip()
-                     if x_forwarded_for
-                     else request.META.get('REMOTE_ADDR'))
-        return self.cache_format % {
-            'scope': self.scope,
-            'ident': ident
-        }
 
-
-class SensitiveOperationRateThrottle(SimpleRateThrottle):
+class SensitiveOperationRateThrottle(ScopedRateThrottle):
     scope = 'sensitive'
-
-    def get_cache_key(self, request, view):
-        if request.user and request.user.is_authenticated:
-            ident = f"user:{request.user.pk}"
-        else:
-            x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-            ident = (x_forwarded_for.split(',')[0].strip()
-                     if x_forwarded_for
-                     else request.META.get('REMOTE_ADDR'))
-        return self.cache_format % {
-            'scope': self.scope,
-            'ident': ident
-        }

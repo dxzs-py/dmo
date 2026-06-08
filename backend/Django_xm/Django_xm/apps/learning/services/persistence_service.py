@@ -106,18 +106,19 @@ class WorkflowPersistenceService:
         except ImportError:
             return messages_data
 
-    def load_workflow_state(self, thread_id: str) -> Optional[Dict[str, Any]]:
+    def load_workflow_state(self, thread_id: str, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """
         加载工作流状态
 
         Args:
             thread_id: 线程ID
+            user_id: 用户ID（可选，用于用户隔离校验）
 
         Returns:
             工作流状态字典，如果不存在则返回None
         """
         try:
-            state = self._load_from_database(thread_id)
+            state = self._load_from_database(thread_id, user_id=user_id)
             if state is None:
                 state = self._load_from_file(thread_id)
             if state:
@@ -187,12 +188,17 @@ class WorkflowPersistenceService:
         else:
             logger.info(f"[Persistence] 更新工作流会话: thread_id={thread_id}")
 
-    def _load_from_database(self, thread_id: str) -> Optional[Dict[str, Any]]:
+    def _load_from_database(self, thread_id: str, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """从数据库加载"""
         from Django_xm.apps.learning.models import WorkflowSession
 
         try:
-            session = WorkflowSession.objects.get(thread_id=thread_id, is_deleted=False)
+            qs = WorkflowSession.objects.filter(thread_id=thread_id, is_deleted=False)
+            if user_id:
+                qs = qs.filter(created_by_id=user_id)
+            session = qs.first()
+            if not session:
+                return None
             
             state = {
                 "thread_id": session.thread_id,
@@ -213,7 +219,7 @@ class WorkflowPersistenceService:
             
             return {k: v for k, v in state.items() if v is not None}
             
-        except WorkflowSession.DoesNotExist:
+        except Exception:
             pass
         return None
 

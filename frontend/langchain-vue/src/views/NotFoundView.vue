@@ -5,7 +5,6 @@
       <h1 class="not-found-title">页面未找到</h1>
       <p class="not-found-description">抱歉，您访问的页面不存在或已被移除。</p>
       <div class="not-found-actions">
-        <router-link to="/" class="home-button">返回首页</router-link>
         <router-link to="/chat" class="chat-button">开始对话</router-link>
       </div>
     </div>
@@ -27,7 +26,7 @@
 
 .not-found-content {
   text-align: center;
-  background: white;
+  background: var(--el-bg-color-overlay, white);
   border-radius: 20px;
   padding: 60px 40px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
@@ -49,13 +48,13 @@
 .not-found-title {
   font-size: 28px;
   font-weight: 700;
-  color: #1f2937;
+  color: var(--el-text-color-primary, #1f2937);
   margin: 0 0 12px 0;
 }
 
 .not-found-description {
   font-size: 16px;
-  color: #6b7280;
+  color: var(--el-text-color-secondary, #6b7280);
   margin: 0 0 32px 0;
 }
 
@@ -114,12 +113,12 @@
 }
 
 .home-button {
-  background: #f3f4f6;
-  color: #374151;
+  background: var(--el-fill-color-light, #f3f4f6);
+  color: var(--el-text-color-primary, #374151);
 }
 
 .home-button:hover {
-  background: #e5e7eb;
+  background: var(--el-fill-color, #e5e7eb);
   transform: translateY(-2px);
 }
 

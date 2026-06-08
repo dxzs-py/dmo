@@ -1,15 +1,5 @@
 from django.urls import path
 from .views import (
-    RAGIndexCreateView,
-    RAGEmptyIndexCreateView,
-    RAGIndexListView,
-    RAGIndexDetailView,
-    RAGIndexDeleteView,
-    RAGIndexStatsView,
-    RAGDocumentUploadView,
-    RAGDocumentListView,
-    RAGDocumentDeleteView,
-    RAGDocumentAddDirectoryView,
     RAGQueryView,
     RAGSearchView,
     rag_query_stream,
@@ -27,22 +17,25 @@ from .views import (
 app_name = 'knowledge'
 
 urlpatterns = [
-    path('indices/', RAGIndexListView.as_view(), name='index-list'),
-    path('indices/create/', RAGIndexCreateView.as_view(), name='index-create'),
-    path('indices/create-empty/', RAGEmptyIndexCreateView.as_view(), name='index-create-empty'),
-    path('indices/<str:name>/', RAGIndexDetailView.as_view(), name='index-detail'),
-    path('indices/<str:name>/delete/', RAGIndexDeleteView.as_view(), name='index-delete'),
-    path('indices/<str:name>/stats/', RAGIndexStatsView.as_view(), name='index-stats'),
+    # 索引管理 — 指向 views_kb 知识库视图
+    path('indices/', KnowledgeBaseListView.as_view(), name='index-list'),
+    path('indices/create/', KnowledgeBaseListView.as_view(), name='index-create'),
+    path('indices/create-empty/', KnowledgeBaseListView.as_view(), name='index-create-empty'),
+    path('indices/<str:kb_id>/', KnowledgeBaseDetailView.as_view(), name='index-detail'),
+    path('indices/<str:kb_id>/delete/', KnowledgeBaseDetailView.as_view(), name='index-delete'),
+    path('indices/<str:kb_id>/stats/', KnowledgeBaseDetailView.as_view(), name='index-stats'),
 
-    path('indices/<str:name>/upload/', RAGDocumentUploadView.as_view(), name='document-upload'),
-    path('indices/<str:name>/documents/', RAGDocumentListView.as_view(), name='document-list'),
-    path('indices/<str:name>/documents/<str:filename>/', RAGDocumentDeleteView.as_view(), name='document-delete'),
-    path('indices/<str:name>/add-directory/', RAGDocumentAddDirectoryView.as_view(), name='document-add-directory'),
+    path('indices/<str:kb_id>/upload/', KnowledgeBaseUploadView.as_view(), name='document-upload'),
+    path('indices/<str:kb_id>/documents/', KnowledgeBaseDocumentListView.as_view(), name='document-list'),
+    path('indices/<str:kb_id>/documents/<str:filename>/', KnowledgeBaseDocumentDeleteView.as_view(), name='document-delete'),
+    path('indices/<str:kb_id>/add-directory/', KnowledgeBaseUploadView.as_view(), name='document-add-directory'),
 
+    # RAG 查询/检索/流式
     path('query/', RAGQueryView.as_view(), name='query'),
     path('search/', RAGSearchView.as_view(), name='search'),
     path('query/stream/', rag_query_stream, name='query-stream'),
 
+    # 知识库管理
     path('knowledge-bases/', KnowledgeBaseListView.as_view(), name='knowledge-bases-list'),
     path('knowledge-bases/<str:kb_id>/', KnowledgeBaseDetailView.as_view(), name='knowledge-bases-detail'),
     path('knowledge-bases/<str:kb_id>/documents/', KnowledgeBaseDocumentListView.as_view(), name='knowledge-bases-documents-list'),
@@ -50,7 +43,8 @@ urlpatterns = [
     path('knowledge-bases/<str:kb_id>/documents/<str:filename>/', KnowledgeBaseDocumentDeleteView.as_view(), name='knowledge-bases-document-delete'),
     path('knowledge-bases/<str:kb_id>/search/', KnowledgeBaseSearchView.as_view(), name='knowledge-bases-search'),
 
+    # 异步 RAG 操作
     path('async/indices/', AsyncRAGIndexCreateView.as_view(), name='async-index-create'),
-    path('async/indices/<str:name>/upload/', AsyncRAGDocumentUploadView.as_view(), name='async-document-upload'),
-    path('async/indices/<str:name>/delete/', AsyncRAGIndexDeleteView.as_view(), name='async-index-delete'),
+    path('async/indices/<str:kb_id>/upload/', AsyncRAGDocumentUploadView.as_view(), name='async-document-upload'),
+    path('async/indices/<str:kb_id>/delete/', AsyncRAGIndexDeleteView.as_view(), name='async-index-delete'),
 ]

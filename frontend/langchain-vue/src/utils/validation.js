@@ -14,8 +14,9 @@ export const ChatMessageSchema = z.object({
 export const ChatSessionSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
-  mode: z.enum(['basic-agent', 'rag', 'workflow', 'deep-research', 'guarded', 'deep-thinking']),
+  mode: z.enum(['agent', 'deep-research']),
   selectedKnowledgeBase: z.string().optional().nullable(),
+  selectedKnowledgeBases: z.array(z.string()).optional().nullable(),
   messageCount: z.number().int().nonnegative(),
   messages: z.array(ChatMessageSchema),
   createdAt: z.number().int(),
@@ -28,19 +29,22 @@ export const ChatRequestSchema = z.object({
     role: z.enum(['user', 'assistant', 'system']),
     content: z.string(),
   })).optional(),
-  mode: z.enum(['basic-agent', 'rag', 'workflow', 'deep-research', 'guarded', 'deep-thinking']).optional(),
+  mode: z.enum(['agent', 'deep-research']).optional(),
   use_tools: z.boolean().optional(),
-  use_advanced_tools: z.boolean().optional(),
+  use_web_search: z.boolean().optional(),
+  use_knowledge_base: z.boolean().optional(),
+  use_deep_thinking: z.boolean().optional(),
   use_mcp: z.boolean().optional(),
   selected_mcp_servers: z.array(z.string()).optional().nullable(),
   selected_tools: z.array(z.string()).optional().nullable(),
   selected_knowledge_base: z.string().optional().nullable(),
+  selected_knowledge_bases: z.array(z.string()).optional().nullable(),
   attachment_ids: z.array(z.number().int().positive()).optional().default([]),
 })
 
 export const SettingsSchema = z.object({
   apiUrl: z.string().url('请输入有效的 API 地址'),
-  defaultMode: z.enum(['basic-agent', 'rag', 'workflow', 'deep-research', 'guarded', 'deep-thinking']),
+  defaultMode: z.enum(['agent', 'deep-research']),
   theme: z.enum(['light', 'dark', 'system']),
 })
 

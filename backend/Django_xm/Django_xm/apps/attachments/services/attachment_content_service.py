@@ -18,7 +18,7 @@ class AttachmentService:
 
         for att_id in attachment_ids:
             try:
-                from Django_xm.apps.tools.file.reader import get_attachment_info
+                from Django_xm.apps.tools.langchain.file_reader import get_attachment_info
                 info = get_attachment_info(att_id)
                 if info.get("is_image"):
                     image_ids.append(att_id)
@@ -35,7 +35,7 @@ class AttachmentService:
             return None
 
         try:
-            from Django_xm.apps.tools.file.reader import read_multiple_attachments
+            from Django_xm.apps.tools.langchain.file_reader import read_multiple_attachments
             content = read_multiple_attachments(attachment_ids)
             if content:
                 logger.info(f"成功加载 {len(attachment_ids)} 个文本附件内容，共 {len(content)} 字符")
@@ -64,7 +64,7 @@ class AttachmentService:
         user_message: str,
         attachment_ids: List[int],
     ) -> list:
-        from Django_xm.apps.tools.file.reader import read_attachment_as_base64
+        from Django_xm.apps.tools.langchain.file_reader import read_attachment_as_base64
 
         content_parts = [{"type": "text", "text": user_message}]
 
@@ -104,14 +104,18 @@ class AttachmentService:
         self,
         user_message: str,
         attachment_ids: List[int],
+        progress_callback=None,
     ) -> str:
-        from Django_xm.apps.tools.file.reader import read_attachment_as_documents
+        from Django_xm.apps.tools.langchain.file_reader import read_attachment_as_documents
         from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
 
         all_docs = []
         classified = self.classify_attachments(attachment_ids)
         image_ids = classified["image_ids"]
         text_ids = classified["text_ids"]
+
+        if progress_callback:
+            progress_callback('reading', '正在读取文档内容...')
 
         for att_id in text_ids:
             try:
@@ -127,9 +131,14 @@ class AttachmentService:
             )
 
         try:
+            if progress_callback:
+                progress_callback('indexing', '正在建立向量索引...')
             from langchain_core.vectorstores import InMemoryVectorStore
             embeddings = get_embeddings()
             vector_store = InMemoryVectorStore.from_documents(all_docs, embeddings)
+
+            if progress_callback:
+                progress_callback('searching', '正在进行相关信息检索...')
             retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 6})
             relevant_docs = retriever.invoke(user_message)
 
@@ -143,6 +152,9 @@ class AttachmentService:
             image_note = ""
             if image_ids:
                 image_note = f"\n\n注意：用户还上传了 {len(image_ids)} 张图片，图片内容已作为多模态消息直接传递给模型。"
+
+            if progress_callback:
+                progress_callback('complete', '文档处理完成')
 
             return (
                 f"{user_message}\n\n"
@@ -159,7 +171,7 @@ class AttachmentService:
             )
 
     def should_use_rag(self, attachment_ids: List[int]) -> bool:
-        from Django_xm.apps.tools.file.reader import get_attachment_info
+        from Django_xm.apps.tools.langchain.file_reader import get_attachment_info
 
         total_size = 0
         text_count = 0
@@ -189,6 +201,7 @@ class AttachmentService:
         self,
         user_message: str,
         attachment_ids: List[int],
+        progress_callback=None,
     ) -> Dict[str, Any]:
         if not attachment_ids:
             logger.info("[Attachment] build_user_content: 无附件ID")
@@ -208,9 +221,9 @@ class AttachmentService:
         if has_images and has_text:
             use_rag = self.should_use_rag(attachment_ids)
             if use_rag:
-                rag_text = self.build_rag_enhanced_message(user_message, attachment_ids)
+                rag_text = self.build_rag_enhanced_message(user_message, attachment_ids, progress_callback=progress_callback)
                 image_ids = classified["image_ids"]
-                from Django_xm.apps.tools.file.reader import read_attachment_as_base64
+                from Django_xm.apps.tools.langchain.file_reader import read_attachment_as_base64
 
                 content_parts = [{"type": "text", "text": rag_text}]
                 for img_id in image_ids:
@@ -234,7 +247,7 @@ class AttachmentService:
             if self.should_use_rag(attachment_ids):
                 return {
                     "type": "text",
-                    "content": self.build_rag_enhanced_message(user_message, attachment_ids),
+                    "content": self.build_rag_enhanced_message(user_message, attachment_ids, progress_callback=progress_callback),
                 }
             else:
                 text_content = self.load_text_attachment_contents(attachment_ids)
@@ -272,7 +285,7 @@ class AttachmentService:
 
         for att_id in attachment_ids:
             try:
-                from Django_xm.apps.tools.file.reader import get_attachment_info
+                from Django_xm.apps.tools.langchain.file_reader import get_attachment_info
                 info = get_attachment_info(att_id)
                 if info.get("is_image"):
                     continue

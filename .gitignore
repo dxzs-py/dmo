@@ -1,9 +1,34 @@
+# IDE
 .idea
 .idea/*
-git
+.vscode
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Django
 backend/db.sqlite3
 backend/Django_xm/.env
-performance_benchmark.py
 backend/Django_xm/logs/*
+backend/Django_xm/media/
+backend/Django_xm/data/media/
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project
+performance_benchmark.py
 .trae
 .trae/*

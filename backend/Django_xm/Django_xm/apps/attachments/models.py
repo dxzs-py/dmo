@@ -3,11 +3,13 @@ import os
 from django.db import models
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.utils import timezone as django_timezone
 from Django_xm.apps.core.base_models import AuditModel, BaseModel
 
 
 def chat_attachment_upload_path(instance, filename):
-    return f'chat_attachments/{instance.session.session_id}/{uuid.uuid4().hex[:8]}_{filename}'
+    user_id = instance.created_by_id or (instance.session.created_by_id if instance.session_id else 0)
+    return f'chat_attachments/{user_id}/{instance.session.session_id}/{uuid.uuid4().hex[:8]}_{filename}'
 
 
 class AttachmentStatus(models.TextChoices):
@@ -141,7 +143,7 @@ class ChatAttachment(AuditModel):
             raise ValidationError({'file_size': f'文件大小不能超过{max_size // (1024*1024)}MB'})
 
 
-class AttachmentCleanupLog(models.Model):
+class AttachmentCleanupLog(BaseModel):
     ACTION_CHOICES = [
         ('cleanup', '定时清理'),
         ('index', '入库'),
@@ -155,6 +157,7 @@ class AttachmentCleanupLog(models.Model):
     action = models.CharField(
         max_length=20,
         choices=ACTION_CHOICES,
+        default='cleanup',
         verbose_name='操作类型'
     )
     started_at = models.DateTimeField(
@@ -205,14 +208,6 @@ class AttachmentCleanupLog(models.Model):
         default='system',
         verbose_name='触发来源'
     )
-    created_at = models.DateTimeField(
-        auto_now_add=True,
-        verbose_name='创建时间'
-    )
-    updated_at = models.DateTimeField(
-        auto_now=True,
-        verbose_name='更新时间'
-    )
 
     class Meta:
         db_table = 'chat_attachment_cleanup_log'
@@ -224,7 +219,7 @@ class AttachmentCleanupLog(models.Model):
         return f"CleanupLog {self.action} {self.started_at:%Y-%m-%d %H:%M}"
 
 
-class StorageAlert(models.Model):
+class StorageAlert(BaseModel):
     LEVEL_CHOICES = [
         ('warning', '警告'),
         ('critical', '严重'),
@@ -265,14 +260,6 @@ class StorageAlert(models.Model):
     message = models.TextField(
         blank=True,
         verbose_name='告警消息'
-    )
-    created_at = models.DateTimeField(
-        auto_now_add=True,
-        verbose_name='创建时间'
-    )
-    updated_at = models.DateTimeField(
-        auto_now=True,
-        verbose_name='更新时间'
     )
     acknowledged_at = models.DateTimeField(
         null=True,

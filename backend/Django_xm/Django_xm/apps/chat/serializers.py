@@ -60,13 +60,14 @@ class ChatRequestSerializer(serializers.Serializer):
     )
     chat_history = MessageSerializer(many=True, required=False, allow_null=True)
     mode = serializers.CharField(
-        default='basic-agent',
+        default='agent',
         max_length=50,
         help_text='对话模式标识'
     )
     use_tools = serializers.BooleanField(default=True, help_text='是否使用工具')
-    use_advanced_tools = serializers.BooleanField(default=False, help_text='是否使用高级工具')
     use_web_search = serializers.BooleanField(default=False, help_text='是否启用联网搜索')
+    use_knowledge_base = serializers.BooleanField(default=False, help_text='是否启用知识库检索')
+    use_deep_thinking = serializers.BooleanField(default=False, help_text='是否启用深度思考')
     use_mcp = serializers.BooleanField(default=False, help_text='是否启用 MCP 工具')
     selected_mcp_servers = serializers.ListField(
         child=serializers.CharField(max_length=100),
@@ -78,13 +79,19 @@ class ChatRequestSerializer(serializers.Serializer):
         child=serializers.CharField(max_length=100),
         required=False,
         allow_null=True,
-        help_text='选中的工具名称列表，为空则根据 use_tools/use_advanced_tools 自动选择'
+        help_text='选中的工具名称列表，为空则根据模式自动选择'
     )
     streaming = serializers.BooleanField(default=False, help_text='是否流式输出')
     session_id = serializers.CharField(required=False, allow_null=True, max_length=100)
     selected_knowledge_base = serializers.CharField(
         required=False, allow_null=True, max_length=200,
         help_text='选中的知识库ID'
+    )
+    selected_knowledge_bases = serializers.ListField(
+        child=serializers.CharField(max_length=200),
+        required=False,
+        allow_null=True,
+        help_text='选中的知识库ID列表（多选）'
     )
     attachment_ids = serializers.ListField(
         child=serializers.IntegerField(),
@@ -112,6 +119,14 @@ class ChatRequestSerializer(serializers.Serializer):
         required=False, allow_null=True, min_value=1, max_value=32768,
         help_text='最大生成 token 数'
     )
+    research_task_id = serializers.CharField(
+        required=False, allow_null=True, max_length=100,
+        help_text='关联的深度研究任务ID，用于注入研究上下文'
+    )
+    continue_task_id = serializers.CharField(
+        required=False, allow_null=True, max_length=100,
+        help_text='继续研究的任务ID，用于加载先前研究成果'
+    )
 
     def validate_message(self, value):
         """验证消息内容"""
@@ -123,11 +138,7 @@ class ChatRequestSerializer(serializers.Serializer):
         return value
 
     def validate_mode(self, value):
-        allowed_modes = [
-            'basic-agent', 'advanced-agent', 'research-agent',
-            'rag-agent', 'deep-thinking', 'deep-research',
-            'workflow', 'guarded',
-        ]
+        allowed_modes = ['agent', 'deep-research']
         if value not in allowed_modes:
             raise serializers.ValidationError(f'不支持的模式: {value}')
         return value
@@ -186,10 +197,11 @@ class ChatMessageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ChatMessage
         fields = ['id', 'session', 'role', 'content', 'sources', 'plan',
-                  'chain_of_thought', 'tool_calls', 'reasoning',
-                  'suggestions', 'context', 'versions',
+                  'chain_of_thought', 'tool_calls', 'approval', 'reasoning',
+                  'suggestions', 'versions',
                   'current_version', 'attachments', 'attachment_ids', 'created_at',
-                  'model', 'token_count', 'cost', 'response_time']
+                  'model', 'token_count', 'token_detail', 'response_time',
+                  'research_task_id']
         read_only_fields = ['id', 'session', 'created_at']
 
     def get_attachments(self, obj):
@@ -254,7 +266,7 @@ class ChatSessionListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ChatSession
-        fields = ['id', 'session_id', 'title', 'mode', 'selected_knowledge_base', 'message_count',
+        fields = ['id', 'session_id', 'title', 'mode', 'selected_knowledge_base', 'selected_knowledge_bases', 'message_count',
                   'created_at', 'updated_at']
         read_only_fields = ['session_id', 'created_at', 'updated_at']
 
@@ -264,6 +276,9 @@ class ChatSessionListSerializer(serializers.ModelSerializer):
         if value and len(value) > 200:
             raise serializers.ValidationError('标题不能超过200个字符')
         return value.strip() if value else value
+
+    def to_representation(self, instance):
+        return super().to_representation(instance)
 
 
 class ChatSessionDetailSerializer(serializers.ModelSerializer):
@@ -279,7 +294,7 @@ class ChatSessionDetailSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ChatSession
-        fields = ['id', 'session_id', 'title', 'mode', 'selected_knowledge_base', 'messages',
+        fields = ['id', 'session_id', 'title', 'mode', 'selected_knowledge_base', 'selected_knowledge_bases', 'messages',
                   'message_count', 'created_at', 'updated_at']
         read_only_fields = ['session_id', 'created_at', 'updated_at']
 
@@ -291,6 +306,9 @@ class ChatSessionDetailSerializer(serializers.ModelSerializer):
             return len(prefetched_cache['messages'])
         return obj.messages.count()
 
+    def to_representation(self, instance):
+        return super().to_representation(instance)
+
 
 class ChatSessionCreateSerializer(serializers.ModelSerializer):
     """
@@ -301,7 +319,7 @@ class ChatSessionCreateSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = ChatSession
-        fields = ['title', 'mode', 'selected_knowledge_base']
+        fields = ['title', 'mode', 'selected_knowledge_base', 'selected_knowledge_bases']
 
     def validate_title(self, value):
         if not value:
@@ -313,11 +331,7 @@ class ChatSessionCreateSerializer(serializers.ModelSerializer):
         return value.strip()
 
     def validate_mode(self, value):
-        allowed_modes = [
-            'basic-agent', 'advanced-agent', 'research-agent',
-            'rag-agent', 'deep-thinking', 'deep-research',
-            'workflow', 'guarded',
-        ]
+        allowed_modes = ['agent', 'deep-research']
         if value and value not in allowed_modes:
             raise serializers.ValidationError(f'不支持的模式: {value}')
         if value and len(value) > 50:
@@ -335,7 +349,7 @@ class ChatSessionUpdateSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = ChatSession
-        fields = ['title', 'selected_knowledge_base']
+        fields = ['title', 'selected_knowledge_base', 'selected_knowledge_bases']
 
     def validate_title(self, value):
         if value is not None:

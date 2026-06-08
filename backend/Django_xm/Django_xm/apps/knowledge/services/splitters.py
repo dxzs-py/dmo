@@ -8,8 +8,18 @@
 - CharacterTextSplitter: 简单字符分块
 - MarkdownTextSplitter: Markdown 专用分块
 - TokenTextSplitter: 基于 Token 的分块
+- SemanticChunker: 语义分块（基于嵌入模型相似度）
+
+元数据增强：
+- chunk_index: 当前分块在文档中的序号
+- total_chunks: 文档总分块数
+- source_filename: 源文件名
+- doc_type: 文档类型
+- heading: Markdown 标题层级（h1/h2/h3）
+- page_number: PDF 页码信息
 """
 
+import re
 from typing import List, Optional, Literal
 from langchain_core.documents import Document
 from langchain_text_splitters import (
@@ -19,12 +29,19 @@ from langchain_text_splitters import (
     TokenTextSplitter,
 )
 
-from Django_xm.apps.ai_engine.config import settings, get_logger
+try:
+    from langchain_text_splitters import SemanticChunker
+    SEMANTIC_CHUNKER_AVAILABLE = True
+except ImportError:
+    SEMANTIC_CHUNKER_AVAILABLE = False
+
+from Django_xm.apps.knowledge.config import settings
+from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
 
-SplitterType = Literal["recursive", "character", "markdown", "token"]
+SplitterType = Literal["recursive", "character", "markdown", "token", "semantic"]
 
 
 def get_text_splitter(
@@ -40,6 +57,9 @@ def get_text_splitter(
         f"创建文本分块器: type={splitter_type}, "
         f"chunk_size={chunk_size}, chunk_overlap={chunk_overlap}"
     )
+
+    if splitter_type == "semantic":
+        return _get_semantic_splitter(chunk_size, chunk_overlap, **kwargs)
 
     if splitter_type == "recursive":
         return RecursiveCharacterTextSplitter(
@@ -73,8 +93,154 @@ def get_text_splitter(
     else:
         raise ValueError(
             f"不支持的分块器类型: {splitter_type}。"
-            f"支持的类型: recursive, character, markdown, token"
+            f"支持的类型: recursive, character, markdown, token, semantic"
         )
+
+
+def _get_semantic_splitter(
+    chunk_size: int = 1000,
+    chunk_overlap: int = 200,
+    **kwargs,
+):
+    if not SEMANTIC_CHUNKER_AVAILABLE:
+        logger.warning(
+            "SemanticChunker 不可用，回退到 RecursiveCharacterTextSplitter。"
+            "请安装 langchain_text_splitters 以支持语义分块。"
+        )
+        return RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            length_function=len,
+            is_separator_regex=False,
+        )
+
+    try:
+        from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
+
+        embeddings = get_embeddings()
+    except Exception as e:
+        logger.warning(
+            f"获取嵌入模型失败: {e}，回退到 RecursiveCharacterTextSplitter"
+        )
+        return RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            length_function=len,
+            is_separator_regex=False,
+        )
+
+    breakpoint_threshold_type = kwargs.pop("breakpoint_threshold_type", "percentile")
+    breakpoint_threshold_amount = kwargs.pop("breakpoint_threshold_amount", 75)
+
+    logger.debug(
+        f"创建语义分块器: breakpoint_threshold_type={breakpoint_threshold_type}, "
+        f"breakpoint_threshold_amount={breakpoint_threshold_amount}"
+    )
+
+    return SemanticChunker(
+        embeddings=embeddings,
+        breakpoint_threshold_type=breakpoint_threshold_type,
+        breakpoint_threshold_amount=breakpoint_threshold_amount,
+        **kwargs,
+    )
+
+
+def _extract_markdown_heading(text: str) -> Optional[str]:
+    """
+    从 Markdown 文本中提取最近的标题层级（h1/h2/h3）
+
+    返回文本中最后一个标题行，如 "# 引言" 或 "## 1.1 概述"
+    """
+    heading_pattern = re.compile(r'^(#{1,3})\s+(.+)$', re.MULTILINE)
+    matches = list(heading_pattern.finditer(text))
+    if matches:
+        last_match = matches[-1]
+        return last_match.group(0).strip()
+    return None
+
+
+def _determine_doc_type(doc: Document) -> str:
+    """根据文档元数据和内容判断文档类型"""
+    file_type = doc.metadata.get("file_type", "")
+    if file_type in (".md", ".mdx"):
+        return "markdown"
+    if file_type == ".pdf":
+        return "pdf"
+    if file_type in (".html", ".htm"):
+        return "html"
+    if file_type in (".docx", ".doc"):
+        return "docx"
+    if file_type in (".txt",):
+        return "text"
+    if file_type in (".json",):
+        return "json"
+    if file_type in (".csv",):
+        return "csv"
+    # 根据 source 字段推断
+    source = doc.metadata.get("source", "")
+    if source:
+        ext = "." + source.rsplit(".", 1)[-1].lower() if "." in source else ""
+        ext_map = {
+            ".md": "markdown", ".mdx": "markdown", ".pdf": "pdf",
+            ".html": "html", ".htm": "html", ".txt": "text",
+            ".docx": "docx", ".json": "json", ".csv": "csv",
+        }
+        if ext in ext_map:
+            return ext_map[ext]
+    return "unknown"
+
+
+def enhance_chunk_metadata(chunks: List[Document]) -> List[Document]:
+    """
+    为切分后的文档块增强元数据
+
+    添加字段：
+    - chunk_index: 当前分块在源文档中的序号
+    - total_chunks: 源文档总分块数
+    - source_filename: 源文件名
+    - doc_type: 文档类型
+    - heading: Markdown 文档的最近标题层级
+    - page_number: PDF 文档的页码（如果原始 loader 提供）
+    """
+    if not chunks:
+        return chunks
+
+    # 按源文件分组，同一源文件的分块共享 total_chunks
+    source_groups: dict = {}
+    for chunk in chunks:
+        source_key = chunk.metadata.get("source", "") or chunk.metadata.get("file_name", "")
+        if source_key not in source_groups:
+            source_groups[source_key] = []
+        source_groups[source_key].append(chunk)
+
+    for source_key, group in source_groups.items():
+        total_chunks = len(group)
+        # 提取源文件名
+        source_filename = ""
+        if source_key:
+            source_filename = source_key.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+
+        for idx, chunk in enumerate(group):
+            # 基础元数据
+            chunk.metadata["chunk_index"] = idx
+            chunk.metadata["total_chunks"] = total_chunks
+            chunk.metadata["source_filename"] = source_filename or chunk.metadata.get("file_name", "")
+
+            # 文档类型
+            doc_type = _determine_doc_type(chunk)
+            chunk.metadata["doc_type"] = doc_type
+
+            # Markdown: 提取标题层级
+            if doc_type == "markdown":
+                heading = _extract_markdown_heading(chunk.page_content)
+                if heading:
+                    chunk.metadata["heading"] = heading
+
+            # PDF: 保留 page_number（PyPDFLoader 自动添加 page 字段）
+            if doc_type == "pdf" and "page" in chunk.metadata:
+                chunk.metadata["page_number"] = chunk.metadata["page"] + 1
+
+    return chunks
 
 
 def split_documents(
@@ -99,6 +265,9 @@ def split_documents(
 
     try:
         chunks = splitter.split_documents(documents)
+
+        # 切分后增强元数据
+        chunks = enhance_chunk_metadata(chunks)
 
         logger.info(f"✅ 分块完成: {len(chunks)} 个文本块")
 
@@ -161,6 +330,7 @@ def get_optimal_chunk_size(
         "markdown": (800, 150),
         "academic": (1200, 250),
         "chat": (500, 50),
+        "semantic": (0, 0),
     }
 
     if document_type not in recommendations:

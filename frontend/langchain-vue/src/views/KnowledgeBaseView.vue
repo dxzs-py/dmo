@@ -1,8 +1,8 @@
 <script setup>
 import { ref, onMounted, onActivated, onUnmounted, computed } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElNotification } from 'element-plus'
 import { Plus, Search, Upload, Delete, View, Document, FolderOpened, Edit, Refresh, Download } from '@element-plus/icons-vue'
-import { knowledgeAPI } from '../api'
+import { knowledgeAPI, cacheAPI } from '../api'
 import { logger } from '../utils/logger'
 import { formatFileSize } from '../utils/format'
 import { confirmDelete, confirmAction } from '../utils/dialog'
@@ -34,7 +34,7 @@ const cacheHealth = ref(null)
 const cacheLoading = ref(false)
 const cacheClearLoading = ref(false)
 const cacheAutoRefresh = ref(false)
-const mysqlStatus = ref(null)
+const postgresqlStatus = ref(null)
 const vectorStoreStatus = ref(null)
 let cacheTimer = null
 
@@ -176,7 +176,19 @@ async function handleUpload() {
   try {
     const response = await knowledgeAPI.uploadDocuments(currentKB.value.id, formData)
     if (response.data?.code === 200) {
+      const resultData = response.data.data
       ElMessage.success('文档上传并向量化成功！')
+      // 检查 Embedding 降级提示
+      if (resultData?.fallback_info?.events?.length) {
+        const events = resultData.fallback_info.events
+        const chain = events.map(e => e.from_label).concat([events[events.length - 1].to_label]).join(' → ')
+        ElNotification({
+          title: 'Embedding 模型降级提示',
+          message: `降级链路: ${chain}`,
+          type: 'warning',
+          duration: 8000,
+        })
+      }
       uploadDialog.value = false
       await loadKnowledgeBases()
     }
@@ -195,7 +207,7 @@ async function openDocuments(kb) {
   try {
     const response = await knowledgeAPI.getDocuments(kb.id)
     if (response.data?.code === 200) {
-      documents.value = response.data.data?.files || []
+      documents.value = response.data.data?.items || []
       logger.info('获取文档列表成功:', documents.value)
     } else {
       ElMessage.error('获取文档列表失败: ' + (response.data?.message || '未知错误'))
@@ -276,9 +288,9 @@ async function loadCacheInfo() {
   cacheLoading.value = true
   try {
     const [healthRes, statsRes, dbOverviewRes] = await Promise.allSettled([
-      knowledgeAPI.getCacheHealth(),
-      knowledgeAPI.getCacheStats(),
-      knowledgeAPI.getDatabaseOverview(),
+      cacheAPI.getCacheHealth(),
+      cacheAPI.getCacheStats(),
+      cacheAPI.getDatabaseOverview(),
     ])
     if (healthRes.status === 'fulfilled' && healthRes.value.data?.code === 200) {
       cacheHealth.value = healthRes.value.data.data
@@ -288,7 +300,7 @@ async function loadCacheInfo() {
     }
     if (dbOverviewRes.status === 'fulfilled' && dbOverviewRes.value.data?.code === 200) {
       const overview = dbOverviewRes.value.data.data
-      mysqlStatus.value = overview.mysql
+      postgresqlStatus.value = overview.postgresql
       vectorStoreStatus.value = overview.vector_store
     }
   } catch (error) {
@@ -305,7 +317,7 @@ async function handleClearCache(scope = 'all') {
       { confirmButtonText: '清除', type: 'warning' }
     )
     cacheClearLoading.value = true
-    const response = await knowledgeAPI.clearCache({ scope })
+    const response = await cacheAPI.clearCache({ scope })
     if (response.data?.code === 200) {
       ElMessage.success('缓存清除成功')
       await loadCacheInfo()
@@ -405,29 +417,28 @@ async function handleClearCache(scope = 'all') {
         </div>
       </template>
       <el-row :gutter="20">
-        <!-- MySQL 状态 -->
+        <!-- PostgreSQL 状态 -->
         <el-col :xs="24" :md="8">
-          <el-descriptions title="MySQL 数据库" :column="1" border v-if="mysqlStatus">
-            <el-descriptions-item label="连接状态">
-              <el-tag :type="mysqlStatus.connection === 'healthy' ? 'success' : 'danger'" size="small">
-                {{ mysqlStatus.connection === 'healthy' ? '已连接' : '未连接' }}
+          <el-descriptions title="PostgreSQL 数据库" :column="2" border v-if="postgresqlStatus">
+            <el-descriptions-item label="连接状态" :span="2">
+              <el-tag :type="postgresqlStatus.connection === 'healthy' ? 'success' : 'danger'" size="small">
+                {{ postgresqlStatus.connection === 'healthy' ? '已连接' : '未连接' }}
               </el-tag>
             </el-descriptions-item>
-            <el-descriptions-item label="版本">{{ mysqlStatus.version || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="数据库名">{{ mysqlStatus.database_name || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="表数量">{{ mysqlStatus.table_count ?? '-' }}</el-descriptions-item>
-            <el-descriptions-item label="总大小">{{ mysqlStatus.total_size_mb ? mysqlStatus.total_size_mb + ' MB' : '-' }}</el-descriptions-item>
-            <el-descriptions-item label="当前连接">{{ mysqlStatus.threads_connected ?? '-' }}</el-descriptions-item>
-            <el-descriptions-item label="总查询数">{{ mysqlStatus.questions ?? '-' }}</el-descriptions-item>
-            <el-descriptions-item label="慢查询">{{ mysqlStatus.slow_queries ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item label="版本" :span="2">{{ postgresqlStatus.version ? postgresqlStatus.version.split(' (')[0] : '-' }}</el-descriptions-item>
+            <el-descriptions-item label="数据库名">{{ postgresqlStatus.database_name || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="表数量">{{ postgresqlStatus.table_count ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item label="总大小">{{ postgresqlStatus.total_size_mb ? postgresqlStatus.total_size_mb + ' MB' : '-' }}</el-descriptions-item>
+            <el-descriptions-item label="当前连接">{{ postgresqlStatus.threads_connected ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item label="总查询数">{{ postgresqlStatus.questions ?? '-' }}</el-descriptions-item>
           </el-descriptions>
-          <el-empty v-else description="无法获取 MySQL 状态" :image-size="60" />
+          <el-empty v-else description="无法获取 PostgreSQL 状态" :image-size="60" />
         </el-col>
-        
+
         <!-- 向量存储状态 -->
         <el-col :xs="24" :md="8">
-          <el-descriptions title="向量存储" :column="1" border v-if="vectorStoreStatus">
-            <el-descriptions-item label="连接状态">
+          <el-descriptions title="向量存储" :column="2" border v-if="vectorStoreStatus">
+            <el-descriptions-item label="连接状态" :span="2">
               <el-tag :type="vectorStoreStatus.connection === 'healthy' ? 'success' : 'danger'" size="small">
                 {{ vectorStoreStatus.connection === 'healthy' ? '正常' : '异常' }}
               </el-tag>
@@ -435,7 +446,7 @@ async function handleClearCache(scope = 'all') {
             <el-descriptions-item label="类型">{{ vectorStoreStatus.backend || '-' }}</el-descriptions-item>
             <el-descriptions-item label="索引数量">{{ vectorStoreStatus.index_count ?? '-' }}</el-descriptions-item>
             <el-descriptions-item label="总大小">{{ vectorStoreStatus.total_size_human || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="存储路径" :span="1">
+            <el-descriptions-item label="存储路径" :span="2">
               <el-tooltip :content="vectorStoreStatus.base_path" placement="top">
                 <span class="truncate-text">{{ vectorStoreStatus.base_path || '-' }}</span>
               </el-tooltip>
@@ -443,20 +454,20 @@ async function handleClearCache(scope = 'all') {
           </el-descriptions>
           <el-empty v-else description="无法获取向量存储状态" :image-size="60" />
         </el-col>
-        
+
         <!-- Redis 状态 -->
         <el-col :xs="24" :md="8">
-          <el-descriptions title="Redis 缓存" :column="1" border v-if="cacheHealth">
-            <el-descriptions-item label="连接状态">
+          <el-descriptions title="Redis 缓存" :column="2" border v-if="cacheHealth">
+            <el-descriptions-item label="连接状态" :span="2">
               <el-tag :type="cacheHealth.connection === 'healthy' ? 'success' : 'danger'" size="small">
                 {{ cacheHealth.connection === 'healthy' ? '已连接' : '未连接' }}
               </el-tag>
             </el-descriptions-item>
             <el-descriptions-item label="版本">{{ cacheHealth.version || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="内存使用">{{ cacheHealth.used_memory_human || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="连接客户端">{{ cacheHealth.connected_clients ?? '-' }}</el-descriptions-item>
-            <el-descriptions-item label="总键数">{{ cacheHealth.total_keys ?? '-' }}</el-descriptions-item>
-            <el-descriptions-item label="命中率" v-if="cacheStats">
+            <el-descriptions-item label="内存">{{ cacheHealth.used_memory_human || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="客户端">{{ cacheHealth.connected_clients ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item label="键数">{{ cacheHealth.total_keys ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item label="命中率" :span="2" v-if="cacheStats">
               <el-progress
                 :percentage="cacheStats.redis_hit_rate ?? 0"
                 :stroke-width="10"

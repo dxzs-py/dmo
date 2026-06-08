@@ -39,11 +39,6 @@ class RagQuerySerializer(serializers.Serializer):
         required=False,
         help_text="是否返回来源"
     )
-    use_rag_agent = serializers.BooleanField(
-        default=True,
-        required=False,
-        help_text="是否使用 RAG Agent"
-    )
 
 
 class RagResponseSerializer(serializers.Serializer):
@@ -128,7 +123,7 @@ class IndexInfoSerializer(serializers.Serializer):
     created_at = serializers.CharField(default="")
     updated_at = serializers.CharField(default="")
     num_documents = serializers.IntegerField(default=0)
-    store_type = serializers.CharField(default="faiss")
+    store_type = serializers.CharField(default="pgvector")
     embedding_model = serializers.CharField(default="")
 
 

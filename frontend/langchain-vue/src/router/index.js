@@ -4,9 +4,7 @@ import { useUserStore } from '@/stores/user'
 const routes = [
   {
     path: '/',
-    name: 'home',
-    component: () => import('../views/HomeView.vue'),
-    meta: { requiresAuth: false, title: '首页' }
+    redirect: '/chat'
   },
   {
     path: '/login',
@@ -48,13 +46,13 @@ const routes = [
     path: '/profile',
     name: 'profile',
     component: () => import('../views/ProfileView.vue'),
-    meta: { requiresAuth: true, title: '个人资料', keepAlive: true }
+    meta: { requiresAuth: true, title: '个人资料' }
   },
   {
     path: '/settings',
     name: 'settings',
     component: () => import('../views/SettingsView.vue'),
-    meta: { requiresAuth: true, title: '设置', keepAlive: true }
+    meta: { requiresAuth: true, title: '设置' }
   },
   {
     path: '/knowledge',
@@ -66,13 +64,13 @@ const routes = [
     path: '/dashboard',
     name: 'dashboard',
     component: () => import('../views/DashboardView.vue'),
-    meta: { requiresAuth: true, title: '数据分析', keepAlive: true }
+    meta: { requiresAuth: true, title: '数据分析' }
   },
   {
     path: '/attachments',
     name: 'attachments',
     component: () => import('../views/AttachmentView.vue'),
-    meta: { requiresAuth: true, title: '附件管理', keepAlive: true }
+    meta: { requiresAuth: true, title: '附件管理' }
   },
   {
     path: '/:pathMatch(.*)*',
@@ -95,7 +93,7 @@ router.beforeEach((to, from, next) => {
   if (to.meta.requiresAuth && !userStore.isLoggedIn) {
     next({ path: '/login', query: { redirect: to.fullPath } })
   } else if (to.meta.guestOnly && userStore.isLoggedIn) {
-    next('/')
+    next('/chat')
   } else {
     next()
   }

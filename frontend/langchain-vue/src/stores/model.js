@@ -33,8 +33,23 @@ export const useModelStore = defineStore('model', () => {
   })
 
   const thinkingEnabled = computed(() => {
-    const current = specialParams.value?.thinking
-    return current?.type === 'enabled'
+    const thinking = specialParams.value?.thinking
+    if (!thinking) return false
+    // DeepSeek/Anthropic 格式: { type: "enabled" }
+    if (typeof thinking === 'object' && thinking.type === 'enabled') return true
+    // Ollama 格式: true
+    if (thinking === true) return true
+    return false
+  })
+
+  const currentModelCapabilities = computed(() => {
+    const provider = providers.value.find(p => p.id === currentProviderId.value)
+    if (!provider) return []
+    const model = provider.models?.find(m =>
+      (typeof m === 'string' ? m === currentModelName.value : m.name === currentModelName.value)
+    )
+    if (!model || typeof model === 'string') return ['tool_calling', 'streaming']
+    return model.capabilities || ['tool_calling', 'streaming']
   })
 
   const _initSpecialParams = (provider) => {
@@ -48,6 +63,11 @@ export const useModelStore = defineStore('model', () => {
         init[key] = cfg.default
       }
     }
+    // DeepSeek: reasoning_effort 仅在 thinking 已启用时才生效
+    // 如果 thinking 未启用（default=false），移除 reasoning_effort 避免强制启用 thinking
+    if ('reasoning_effort' in init && 'thinking' in spConfig && !('thinking' in init)) {
+      delete init.reasoning_effort
+    }
     return init
   }
 
@@ -58,7 +78,37 @@ export const useModelStore = defineStore('model', () => {
       const data = res.data
       if (data?.code === 200 && data?.data?.providers) {
         providers.value = data.data.providers
-        if (!currentProviderId.value || !providers.value.find(p => p.id === currentProviderId.value)) {
+
+        // 尝试从数据库读取用户保存的默认模型
+        let savedProvider = null
+        let savedModel = null
+        try {
+          const settingsRes = await modelAPI.getAISettings()
+          const settingsData = settingsRes.data?.data
+          if (settingsData?.current?.default_chat_model?.provider_id) {
+            savedProvider = settingsData.current.default_chat_model.provider_id
+            savedModel = settingsData.current.default_chat_model.model_name
+          }
+        } catch {
+          // 忽略，使用默认逻辑
+        }
+
+        if (savedProvider && providers.value.find(p => p.id === savedProvider && p.available)) {
+          currentProviderId.value = savedProvider
+          currentModelName.value = savedModel || providers.value.find(p => p.id === savedProvider)?.default_model || ''
+          const provider = providers.value.find(p => p.id === savedProvider)
+          if (provider) specialParams.value = _initSpecialParams(provider)
+        } else if (savedProvider && !providers.value.find(p => p.id === savedProvider && p.available)) {
+          // 保存的默认模型已不可用，提示用户并回退到第一个可用 provider
+          const savedLabel = providers.value.find(p => p.id === savedProvider)?.label || savedProvider
+          const firstAvailable = providers.value.find(p => p.available)
+          if (firstAvailable) {
+            currentProviderId.value = firstAvailable.id
+            currentModelName.value = firstAvailable.default_model
+            specialParams.value = _initSpecialParams(firstAvailable)
+            ElMessage.warning(`您配置的默认模型 ${savedLabel} 已不可用，已切换到 ${firstAvailable.label}`)
+          }
+        } else if (!currentProviderId.value || !providers.value.find(p => p.id === currentProviderId.value)) {
           const firstAvailable = providers.value.find(p => p.available)
           if (firstAvailable) {
             currentProviderId.value = firstAvailable.id
@@ -98,7 +148,30 @@ export const useModelStore = defineStore('model', () => {
   }
 
   const setSpecialParam = (key, value) => {
-    specialParams.value = { ...specialParams.value, [key]: value }
+    if (value === undefined || value === null) {
+      const newParams = { ...specialParams.value }
+      delete newParams[key]
+      specialParams.value = newParams
+    } else {
+      specialParams.value = { ...specialParams.value, [key]: value }
+    }
+    // DeepSeek: 关闭 thinking 时同步移除 reasoning_effort（API 约束）
+    const spConfig = currentProviderSpecialParams.value
+    if (key === 'thinking' && spConfig?.reasoning_effort) {
+      const isThinkingOff = !value || (typeof value === 'object' && value.type !== 'enabled') || value === false
+      if (isThinkingOff && 'reasoning_effort' in specialParams.value) {
+        const newParams = { ...specialParams.value }
+        delete newParams.reasoning_effort
+        specialParams.value = newParams
+      }
+    }
+    // DeepSeek: 设置 reasoning_effort 时自动启用 thinking（API 约束）
+    if (key === 'reasoning_effort' && spConfig?.thinking) {
+      const thinkingAlreadyEnabled = specialParams.value.thinking?.type === 'enabled'
+      if (!thinkingAlreadyEnabled) {
+        specialParams.value = { ...specialParams.value, thinking: spConfig.thinking.enabled_value }
+      }
+    }
   }
 
   const setTemperature = (val) => {
@@ -198,6 +271,7 @@ export const useModelStore = defineStore('model', () => {
     currentProviderSpecialParams,
     selectedModelLabel,
     thinkingEnabled,
+    currentModelCapabilities,
     loadProviders,
     selectProvider,
     setSpecialParam,

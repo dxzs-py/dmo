@@ -1,8 +1,8 @@
 import logging
 import time
 from django.conf import settings
-from Django_xm.apps.analytics.models import UserEvent, EventCategory, EventType
-from Django_xm.apps.common.request_utils import get_client_ip
+from Django_xm.apps.analytics.models import EventCategory, EventType
+from Django_xm.common.request_utils import get_client_ip
 
 logger = logging.getLogger(__name__)
 
@@ -64,17 +64,19 @@ class AnalyticsMiddleware:
             if event_category == EventCategory.CHAT and '/stream/' in request.path:
                 metadata['is_stream'] = True
 
-            UserEvent.objects.create(
-                user=user,
-                event_type=event_type,
-                event_category=event_category,
-                metadata=metadata,
-                ip_address=get_client_ip(request),
-                user_agent=request.META.get('HTTP_USER_AGENT', '')[:500],
-                duration_ms=duration_ms,
-                is_success=is_success,
-                error_message='' if is_success else f'HTTP {status_code}',
-            )
+            event_data = {
+                'user_id': user.id,
+                'event_type': event_type,
+                'event_category': event_category,
+                'metadata': metadata,
+                'ip_address': get_client_ip(request),
+                'user_agent': request.META.get('HTTP_USER_AGENT', '')[:500],
+                'duration_ms': duration_ms,
+                'is_success': is_success,
+                'error_message': '' if is_success else f'HTTP {status_code}',
+            }
+            from Django_xm.tasks.analytics_tasks import track_event
+            track_event.delay(event_data)
         except Exception as e:
             logger.warning(f"Analytics中间件记录事件失败: {e}")
 

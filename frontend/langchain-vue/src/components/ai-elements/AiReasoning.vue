@@ -3,7 +3,7 @@
     <div class="reasoning-header" @click="toggleOpen">
       <div class="reasoning-header-left">
         <div class="reasoning-indicator">
-          <div v-if="isStreaming" class="thinking-dot"></div>
+          <div v-if="isStreaming && !isIntrinsic" class="thinking-dot"></div>
           <svg v-else class="reasoning-check" viewBox="0 0 16 16" fill="none">
             <path d="M6.5 12L2.5 8L3.56 6.94L6.5 9.88L12.44 3.94L13.5 5L6.5 12Z" fill="currentColor"/>
           </svg>
@@ -47,12 +47,17 @@ const props = defineProps({
   className: {
     type: String,
     default: ''
+  },
+  source: {
+    type: String,
+    default: 'deep_thinking',
+    validator: (v) => ['deep_thinking', 'model_intrinsic'].includes(v)
   }
 })
 
 const emit = defineEmits(['openChange'])
 
-const isOpen = ref(props.defaultOpen)
+const isOpen = ref(props.source === 'model_intrinsic' ? false : props.defaultOpen)
 const hasAutoClosed = ref(false)
 const startTime = ref(null)
 const duration = ref(props.duration)
@@ -60,7 +65,12 @@ const duration = ref(props.duration)
 const AUTO_CLOSE_DELAY = 1500
 const MS_IN_S = 1000
 
+const isIntrinsic = computed(() => props.source === 'model_intrinsic')
+
 const thinkingMessage = computed(() => {
+  if (isIntrinsic.value) {
+    return props.isStreaming ? '推理中' : '推理过程'
+  }
   if (props.isStreaming || duration.value === 0) {
     return '正在思考'
   }

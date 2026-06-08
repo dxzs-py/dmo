@@ -105,4 +105,12 @@ class AuditModel(BaseModel):
             if not self.pk:
                 self.created_by = request.user
             self.updated_by = request.user
+        elif not self.pk and not self.created_by:
+            from Django_xm.apps.core.task_models import CeleryTaskRecord
+            if not isinstance(self, CeleryTaskRecord):
+                import logging
+                logging.getLogger(__name__).warning(
+                    f"AuditModel.save() called without request context: "
+                    f"model={self.__class__.__name__}, created_by will be None"
+                )
         super().save(*args, **kwargs)

@@ -3,7 +3,7 @@ import { ref, computed, watch } from 'vue'
 import { chatAPI } from '../api'
 import { knowledgeAPI } from '../api'
 import { useUserStore } from './user'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { logger } from '../utils/logger'
 import {
   isApiSuccess,
@@ -30,6 +30,7 @@ export const useSessionStore = defineStore('session', () => {
   const sessions = ref([])
   const currentSessionId = ref(null)
   const selectedKnowledgeBase = ref(null)
+  const selectedKnowledgeBases = ref([])
   const knowledgeBases = ref([])
   const isLoading = ref(false)
   const lastLoadedUserId = ref(null)
@@ -70,14 +71,21 @@ export const useSessionStore = defineStore('session', () => {
     sessions.value = []
     currentSessionId.value = null
     selectedKnowledgeBase.value = null
+    selectedKnowledgeBases.value = []
     lastLoadedUserId.value = null
     logger.log('[Security] Cleared all local session data')
   }
+
+  const _loadingPromise = { sessions: null, knowledgeBases: null }
 
   const loadSessionsFromBackend = async (page = 1) => {
     if (!userStore.isLoggedIn) {
       clearAllLocalData()
       return
+    }
+    // 防止重复并发调用
+    if (page === 1 && _loadingPromise.sessions) {
+      return _loadingPromise.sessions
     }
 
     const currentUserId = userStore.userInfo?.id
@@ -88,14 +96,15 @@ export const useSessionStore = defineStore('session', () => {
     }
 
     isLoading.value = true
+    const promise = (async () => {
     try {
       const response = await chatAPI.getSessions({ page, page_size: paginationMeta.value.pageSize })
-      
+
       if (isApiSuccess(response)) {
         const data = response.data.data
-        
+
         let sessionList = []
-        
+
         if (Array.isArray(data)) {
           sessionList = data
         } else if (data && typeof data === 'object') {
@@ -149,7 +158,11 @@ export const useSessionStore = defineStore('session', () => {
       ElMessage.error('加载会话失败')
     } finally {
       isLoading.value = false
+      if (page === 1) _loadingPromise.sessions = null
     }
+    })()
+    if (page === 1) _loadingPromise.sessions = promise
+    return promise
   }
 
   const loadMoreSessions = async () => {
@@ -157,8 +170,15 @@ export const useSessionStore = defineStore('session', () => {
     await loadSessionsFromBackend(paginationMeta.value.page + 1)
   }
 
-  const loadSessionDetail = async (sessionId) => {
+  const loadSessionDetail = async (sessionId, { forceRefresh = false } = {}) => {
     if (!userStore.isLoggedIn || !sessionId) return null
+
+    if (!forceRefresh) {
+      const existing = sessions.value.find(s => s.id === sessionId)
+      if (existing && existing.messages && existing.messages.length > 0) {
+        return existing
+      }
+    }
 
     try {
       const response = await chatAPI.getSession(sessionId)
@@ -179,7 +199,7 @@ export const useSessionStore = defineStore('session', () => {
     return null
   }
 
-  const createNewSession = async (mode = 'basic-agent', title) => {
+  const createNewSession = async (mode = 'agent', title) => {
     if (!userStore.isLoggedIn) {
       ElMessage.warning('请先登录后再使用对话功能')
       return null
@@ -211,6 +231,17 @@ export const useSessionStore = defineStore('session', () => {
       if (session && (!session.messages || session.messages.length === 0)) {
         await loadSessionDetail(sessionId)
       }
+      // 恢复知识库选择状态
+      if (session?.selectedKnowledgeBase) {
+        selectedKnowledgeBase.value = session.selectedKnowledgeBase
+      } else {
+        selectedKnowledgeBase.value = null
+      }
+      if (session?.selectedKnowledgeBases) {
+        setSelectedKnowledgeBases(session.selectedKnowledgeBases)
+      } else {
+        selectedKnowledgeBases.value = []
+      }
     }
   }
 
@@ -219,10 +250,24 @@ export const useSessionStore = defineStore('session', () => {
     if (index !== -1) {
       if (userStore.isLoggedIn) {
         try {
-          await chatAPI.deleteSession(sessionId)
+          const response = await chatAPI.deleteSession(sessionId)
+          const resData = response.data?.data || response.data
+          if (resData?.has_linked_data) {
+            const linkedTasks = resData.linked_research_tasks || resData.linked_tasks || []
+            const taskList = linkedTasks.map(t => t.query || t.user_question || t.task_id).join('、')
+            const count = linkedTasks.length
+            await ElMessageBox.confirm(
+              `该会话关联了 ${count} 个深度研究任务及文件，删除后将无法恢复。关联任务：[${taskList}]`,
+              '',
+              { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' }
+            )
+            await chatAPI.deleteSession(sessionId, { confirm_delete_linked: 'true' })
+          }
           logger.log(`[Security] Deleted session ${sessionId} for user ${userStore.userInfo?.id}`)
         } catch (error) {
+          if (error === 'cancel' || error?.toString?.().includes('cancel')) return
           logger.error('Failed to delete session from backend:', error)
+          throw error
         }
       }
 
@@ -282,29 +327,48 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  // 防止 syncLastMessageToBackend 并发调用导致创建重复消息
+  const _syncLocks = new Map()
+
   const syncLastMessageToBackend = async (sessionId) => {
     if (!userStore.isLoggedIn) return
-    const session = sessions.value.find(s => s.id === sessionId)
-    if (!session || session.messages.length === 0) return
 
-    const lastMessage = session.messages[session.messages.length - 1]
-    if (!lastMessage.backendId) {
-      const backendMsg = transformFrontendMessageToBackend(lastMessage)
-      try {
-        const res = await chatAPI.addMessage(sessionId, backendMsg)
-        if (isApiSuccess(res) && res.data.data?.id) {
-          lastMessage.backendId = res.data.data.id
+    // 防止并发：如果已有同步操作在进行，等待它完成
+    if (_syncLocks.get(sessionId)) {
+      await _syncLocks.get(sessionId)
+      return
+    }
+
+    const promise = (async () => {
+      const session = sessions.value.find(s => s.id === sessionId)
+      if (!session || session.messages.length === 0) return
+
+      const lastMessage = session.messages[session.messages.length - 1]
+      if (!lastMessage.backendId) {
+        const backendMsg = transformFrontendMessageToBackend(lastMessage)
+        try {
+          const res = await chatAPI.addMessage(sessionId, backendMsg)
+          if (isApiSuccess(res) && res.data.data?.id) {
+            lastMessage.backendId = res.data.data.id
+          }
+        } catch (error) {
+          logger.error('Failed to sync message to backend:', error)
         }
-      } catch (error) {
-        logger.error('Failed to sync message to backend:', error)
+      } else {
+        const backendMsg = transformFrontendMessageToBackend(lastMessage)
+        try {
+          await chatAPI.updateMessage(lastMessage.backendId, backendMsg)
+        } catch (error) {
+          logger.error('Failed to update message in backend:', error)
+        }
       }
-    } else {
-      const backendMsg = transformFrontendMessageToBackend(lastMessage)
-      try {
-        await chatAPI.updateMessage(lastMessage.backendId, backendMsg)
-      } catch (error) {
-        logger.error('Failed to update message in backend:', error)
-      }
+    })()
+
+    _syncLocks.set(sessionId, promise)
+    try {
+      await promise
+    } finally {
+      _syncLocks.delete(sessionId)
     }
   }
 
@@ -372,6 +436,20 @@ export const useSessionStore = defineStore('session', () => {
   const setReasoningToLastMessage = (sessionId, reasoning) => _setLastField(sessionId, 'reasoning', reasoning)
   const setSuggestionsToLastMessage = (sessionId, suggestions) => _setLastField(sessionId, 'suggestions', suggestions)
   const setContextToLastMessage = (sessionId, context) => _setLastField(sessionId, 'context', context)
+  const setResearchTaskIdToLastMessage = (sessionId, researchTaskId) => _setLastField(sessionId, 'researchTaskId', researchTaskId)
+  const setApprovalToLastMessage = (sessionId, approval) => {
+    _setLastField(sessionId, 'approval', approval)
+    _setLastField(sessionId, 'approvalState', approval?.state || 'pending')
+  }
+
+  const appendToLastAssistantMessage = (sessionId, content) => {
+    const result = getLastAssistantMessage(sessions.value, sessionId)
+    if (!result) return
+    result.message.content = (result.message.content || '') + content
+    const ver = result.message.versions?.[result.message.currentVersion]
+    if (ver) ver.content = result.message.content
+  }
+
   const addToolCallToLastMessage = (sessionId, toolCall) => _addLastFieldItem(sessionId, 'toolCalls', toolCall)
   const addOrUpdateToolCallToLastMessage = (sessionId, data) => addOrUpdateToolCallInLastMessage(sessions.value, sessionId, data)
   const updateOrAddToolResultToLastMessage = (sessionId, data) => updateOrAddToolResultInLastMessage(sessions.value, sessionId, data)
@@ -381,7 +459,8 @@ export const useSessionStore = defineStore('session', () => {
     if (!result) return
     if (usageData.model !== undefined) result.message.model = usageData.model
     if (usageData.tokenCount !== undefined) result.message.tokenCount = usageData.tokenCount
-    if (usageData.cost !== undefined) result.message.cost = usageData.cost
+    if (usageData.tokens !== undefined) result.message.tokens = usageData.tokens
+    if (usageData.tokenDetail !== undefined) result.message.tokenDetail = usageData.tokenDetail
     if (usageData.responseTime !== undefined) result.message.responseTime = usageData.responseTime
   }
 
@@ -421,6 +500,27 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  const removeMessageFromSession = (sessionId, messageId) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (!session) return
+    const idx = session.messages.findIndex(m => m.id === messageId)
+    if (idx !== -1) {
+      session.messages.splice(idx, 1)
+      session.messageCount = session.messages.length
+      session.updatedAt = Date.now()
+    }
+  }
+
+  const removeMessagePairFromSession = (sessionId, userMessageId) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (!session) return
+    const userIdx = session.messages.findIndex(m => m.id === userMessageId)
+    if (userIdx === -1) return
+    session.messages.splice(userIdx, 2)
+    session.messageCount = session.messages.length
+    session.updatedAt = Date.now()
+  }
+
   const setSelectedKnowledgeBase = (kbIdOrObj) => {
     if (!kbIdOrObj) {
       selectedKnowledgeBase.value = null
@@ -434,7 +534,25 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  const setSelectedKnowledgeBases = (kbIds) => {
+    if (!kbIds || !Array.isArray(kbIds)) {
+      selectedKnowledgeBases.value = []
+      return
+    }
+    selectedKnowledgeBases.value = kbIds.map(id => {
+      const existing = selectedKnowledgeBases.value.find(kb => kb.id === id)
+      if (existing) return existing
+      const kb = knowledgeBases.value.find(k => k.id === id)
+      return kb ? { id: kb.id, name: kb.name } : { id, name: id }
+    })
+  }
+
   const loadKnowledgeBases = async () => {
+    // 防止重复并发调用
+    if (_loadingPromise.knowledgeBases) {
+      return _loadingPromise.knowledgeBases
+    }
+    const promise = (async () => {
     try {
       const response = await knowledgeAPI.getKnowledgeBases()
       if (response.data?.code === 200 && Array.isArray(response.data.data)) {
@@ -448,9 +566,19 @@ export const useSessionStore = defineStore('session', () => {
           selectedKnowledgeBase.value = null
         }
       }
+      if (selectedKnowledgeBases.value.length > 0) {
+        selectedKnowledgeBases.value = selectedKnowledgeBases.value.filter(
+          kb => knowledgeBases.value.some(k => k.id === (kb.id || kb))
+        )
+      }
     } catch (error) {
       logger.error('Failed to load knowledge bases:', error)
+    } finally {
+      _loadingPromise.knowledgeBases = null
     }
+    })()
+    _loadingPromise.knowledgeBases = promise
+    return promise
   }
 
   const initialize = async () => {
@@ -495,6 +623,7 @@ export const useSessionStore = defineStore('session', () => {
     sessions,
     currentSessionId,
     selectedKnowledgeBase,
+    selectedKnowledgeBases,
     knowledgeBases,
     isLoading,
     paginationMeta,
@@ -521,6 +650,9 @@ export const useSessionStore = defineStore('session', () => {
     setReasoningToLastMessage,
     setSuggestionsToLastMessage,
     setContextToLastMessage,
+    setResearchTaskIdToLastMessage,
+    setApprovalToLastMessage,
+    appendToLastAssistantMessage,
     addToolCallToLastMessage,
     addOrUpdateToolCallToLastMessage,
     updateOrAddToolResultToLastMessage,
@@ -539,7 +671,10 @@ export const useSessionStore = defineStore('session', () => {
     getSessionMessages,
     removeMessagesFromIndex,
     clearCurrentSessionMessages,
+    removeMessageFromSession,
+    removeMessagePairFromSession,
     setSelectedKnowledgeBase,
+    setSelectedKnowledgeBases,
     loadKnowledgeBases,
     initialize,
     clearAllLocalData,

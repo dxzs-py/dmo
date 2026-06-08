@@ -1,5 +1,6 @@
 import logging
 from datetime import timedelta
+from django.apps import apps
 from django.db.models import Count, Sum, Avg, Q
 from django.db.models.functions import TruncDate
 from django.utils import timezone
@@ -11,10 +12,13 @@ logger = logging.getLogger(__name__)
 
 
 def _import_models():
-    from Django_xm.apps.chat.models import ChatSession, ChatMessage
-    from Django_xm.apps.knowledge.models import Document, DocumentIndex
-    from Django_xm.apps.learning.models import WorkflowSession
-    from Django_xm.apps.research.models import ResearchTask
+    """延迟获取跨 app 模型类，避免模块级循环导入"""
+    ChatSession = apps.get_model('chat', 'ChatSession')
+    ChatMessage = apps.get_model('chat', 'ChatMessage')
+    Document = apps.get_model('knowledge', 'Document')
+    DocumentIndex = apps.get_model('knowledge', 'DocumentIndex')
+    WorkflowSession = apps.get_model('learning', 'WorkflowSession')
+    ResearchTask = apps.get_model('research', 'ResearchTask')
     return ChatSession, ChatMessage, Document, DocumentIndex, WorkflowSession, ResearchTask
 
 
@@ -61,38 +65,31 @@ class AnalyticsService:
         msg_agg = chat_messages.aggregate(
             total=Count('id'),
             tokens=Sum('token_count'),
-            cost=Sum('cost'),
             avg_time=Avg('response_time'),
         )
         total_messages = msg_agg['total'] or 0
         total_tokens = msg_agg['tokens'] or 0
-        total_cost = float(msg_agg['cost'] or 0)
         avg_response_time = round(float(msg_agg['avg_time'] or 0), 2)
 
         research_agg = ResearchTask.objects.filter(
             created_by=user, is_deleted=False
         ).aggregate(
             tokens=Sum('token_count'),
-            cost=Sum('cost'),
             avg_time=Avg('response_time'),
         )
         research_tokens = research_agg['tokens'] or 0
-        research_cost = float(research_agg['cost'] or 0)
         research_avg_time = float(research_agg['avg_time'] or 0)
 
         workflow_agg = WorkflowSession.objects.filter(
             created_by=user, is_deleted=False
         ).aggregate(
             tokens=Sum('token_count'),
-            cost=Sum('cost'),
             avg_time=Avg('response_time'),
         )
         workflow_tokens = workflow_agg['tokens'] or 0
-        workflow_cost = float(workflow_agg['cost'] or 0)
         workflow_avg_time = float(workflow_agg['avg_time'] or 0)
 
         all_tokens = total_tokens + research_tokens + workflow_tokens
-        all_cost = total_cost + research_cost + workflow_cost
 
         all_times = []
         if msg_agg['avg_time']:
@@ -124,7 +121,6 @@ class AnalyticsService:
             'total_sessions': chat_sessions,
             'total_messages': total_messages,
             'total_tokens': all_tokens,
-            'total_cost': all_cost,
             'avg_response_time': combined_avg_time,
             'total_events': total_events,
             'api_requests': api_requests,
@@ -132,11 +128,6 @@ class AnalyticsService:
             'total_documents': total_documents,
             'total_workflows': total_workflows,
             'total_research': total_research,
-            'cost_breakdown': {
-                'chat': total_cost,
-                'research': research_cost,
-                'workflow': workflow_cost,
-            },
             'token_breakdown': {
                 'chat': total_tokens,
                 'research': research_tokens,
@@ -300,7 +291,8 @@ class AnalyticsService:
         ).exclude(model='').exclude(model__isnull=True)
 
         dist = messages.values('model').annotate(
-            count=Count('id')
+            count=Count('id'),
+            tokens=Sum('token_count'),
         ).order_by('-count')[:5]
 
         if not dist.exists():
@@ -312,12 +304,12 @@ class AnalyticsService:
             from Django_xm.apps.chat.models import ChatMode
             mode_labels = {m.value: m.label for m in ChatMode}
             return [
-                {'name': mode_labels.get(item['mode'], item['mode']), 'value': item['count']}
+                {'name': mode_labels.get(item['mode'], item['mode']), 'value': item['count'], 'tokens': 0}
                 for item in mode_dist
             ]
 
         return [
-            {'name': item['model'], 'value': item['count']}
+            {'name': item['model'], 'value': item['count'], 'tokens': item['tokens'] or 0}
             for item in dist
         ]
 

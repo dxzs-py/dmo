@@ -84,10 +84,14 @@ export async function extractSSEError(response) {
         errorMsg += ` (${validationDetails})`
       }
     }
-    if (errBody.details && Array.isArray(errBody.details)) {
-      const detailsStr = errBody.details.map(d => d.message || d.msg || JSON.stringify(d)).join(', ')
-      if (detailsStr) {
-        errorMsg += ` [${detailsStr}]`
+    if (errBody.data && typeof errBody.data === 'object' && !Array.isArray(errBody.data)) {
+      const dataStr = Object.values(errBody.data).map(d => {
+        if (typeof d === 'string') return d
+        if (Array.isArray(d)) return d.join(', ')
+        return JSON.stringify(d)
+      }).join(', ')
+      if (dataStr) {
+        errorMsg += ` [${dataStr}]`
       }
     }
   } catch {
@@ -209,93 +213,11 @@ export function withErrorHandling(asyncFn, options = {}) {
   }
 }
 
-export function validateBeforeRequest(data, rules, context = '') {
-  const errors = []
-
-  Object.entries(rules).forEach(([field, rule]) => {
-    const value = data[field]
-
-    if (rule.required && (value === undefined || value === null || value === '')) {
-      errors.push(`${rule.label || field}不能为空`)
-      return
-    }
-
-    if (value !== undefined && value !== null && value !== '') {
-      if (rule.type && typeof value !== rule.type) {
-        errors.push(`${rule.label || field}类型不正确，期望${rule.type}类型`)
-      }
-
-      if (rule.maxLength && String(value).length > rule.maxLength) {
-        errors.push(`${rule.label || field}长度不能超过${rule.maxLength}个字符`)
-      }
-
-      if (rule.minLength && String(value).length < rule.minLength) {
-        errors.push(`${rule.label || field}长度不能少于${rule.minLength}个字符`)
-      }
-
-      if (rule.pattern && !rule.pattern.test(value)) {
-        errors.push(rule.message || `${rule.label || field}格式不正确`)
-      }
-
-      if (rule.enum && !rule.enum.includes(value)) {
-        errors.push(`${rule.label || field}值无效，允许的值: ${rule.enum.join(', ')}`)
-      }
-
-      if (rule.validator) {
-        const result = rule.validator(value, data)
-        if (result !== true) {
-          errors.push(result || `${rule.label || field}验证失败`)
-        }
-      }
-    }
-  })
-
-  if (errors.length > 0) {
-    if (context) {
-      errors.unshift(`[${context}]`)
-    }
-    handleValidationError(errors)
-    return false
-  }
-
-  return true
-}
-
-export function createRetryHandler(maxRetries = 3, delay = 1000) {
-  let retryCount = 0
-
-  return async function retryWrapper(fn, ...args) {
-    try {
-      const result = await fn(...args)
-      retryCount = 0
-      return result
-    } catch (error) {
-      const status = error.response?.status || error.status || 0
-
-      if (
-        retryCount < maxRetries &&
-        [500, 502, 503, 504].includes(status) &&
-        navigator.onLine
-      ) {
-        retryCount++
-        logger.warn(`[Retry] Attempt ${retryCount}/${maxRetries} for ${error.config?.url}`)
-        await new Promise(resolve => setTimeout(resolve, delay * retryCount))
-        return retryWrapper(fn, ...args)
-      }
-
-      retryCount = 0
-      throw error
-    }
-  }
-}
-
 export default {
   handleApiError,
   handleValidationError,
   createErrorHandler,
   withErrorHandling,
-  validateBeforeRequest,
-  createRetryHandler,
   ERROR_MESSAGES,
   BIZ_ERROR_CODES,
 }

@@ -13,10 +13,25 @@ import json
 import traceback
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from functools import wraps
+from datetime import datetime
 
+from pydantic import BaseModel
 from langchain_core.tools import BaseTool
+from langchain_core.messages import ToolMessage
 
 from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.tools.errors import (
+    ToolResult,
+    ToolError,
+    ToolErrorCode,
+    create_tool_result,
+    create_tool_error,
+    exception_to_tool_error,
+)
+from Django_xm.apps.analytics.services.tool_analytics import (
+    ToolUsageRecord,
+    ToolAnalyticsService,
+)
 
 logger = get_logger(__name__)
 
@@ -131,26 +146,44 @@ def create_rate_limit_interceptor(
     return rate_limit_interceptor
 
 
-def normalize_tool_result(result: Any) -> str:
-    if isinstance(result, str):
-        return result
-
-    if isinstance(result, dict):
-        try:
-            return json.dumps(result, ensure_ascii=False, indent=2)
-        except (TypeError, ValueError):
-            return str(result)
-
-    if isinstance(result, list):
-        try:
-            return json.dumps(result, ensure_ascii=False, indent=2)
-        except (TypeError, ValueError):
-            return "\n".join(str(item) for item in result)
-
-    if isinstance(result, (int, float, bool)):
+class ToolResultAdapter:
+    @staticmethod
+    def adapt(result: Any, source: str = "local") -> str:
+        if isinstance(result, str):
+            return result
+        if isinstance(result, dict):
+            return json.dumps(result, ensure_ascii=False)
         return str(result)
 
-    return str(result)
+    @staticmethod
+    def adapt_with_metadata(result: Any, source: str = "local", tool_name: str = "") -> dict:
+        return {
+            "content": ToolResultAdapter.adapt(result, source),
+            "source": source,
+            "tool_name": tool_name,
+            "timestamp": datetime.now().isoformat(),
+        }
+
+
+def normalize_tool_result(result: Any, source: str = "local") -> str:
+    if isinstance(result, ToolResult):
+        return result.to_str()
+    adapted = ToolResultAdapter.adapt(result, source)
+    return adapted
+
+
+def normalize_to_tool_result(result: Any, tool_name: str = "", source: str = "local") -> ToolResult:
+    if isinstance(result, ToolResult):
+        return result
+    if isinstance(result, str) and result.startswith(("错误", "错误：", "错误:")):
+        return create_tool_error(
+            code=ToolErrorCode.EXECUTION_ERROR,
+            message=result,
+            tool_name=tool_name,
+            retryable=False,
+        )
+    adapted = ToolResultAdapter.adapt(result, source)
+    return create_tool_result(content=adapted, metadata={"source": source})
 
 
 def wrap_tool_with_middleware(
@@ -163,6 +196,7 @@ def wrap_tool_with_middleware(
     original_arun = tool._arun if hasattr(tool, '_arun') else None
 
     interceptors = interceptors or []
+    tool_source = (getattr(tool, "metadata", None) or {}).get("source", "local")
 
     @wraps(original_run)
     def wrapped_run(*args, **kwargs):
@@ -177,11 +211,14 @@ def wrap_tool_with_middleware(
             result = original_run(*args, **kwargs)
 
             if normalize_result:
-                result = normalize_tool_result(result)
+                tool_result = normalize_to_tool_result(result, tool_name=tool.name, source=tool_source)
+                result = tool_result.to_str()
 
             return result
         except Exception as e:
             error = str(e)
+            tool_result = exception_to_tool_error(e, tool_name=tool.name)
+            result = tool_result.to_str()
             logger.error(f"MCP 工具执行失败: {tool.name} - {error}")
             raise
         finally:
@@ -194,6 +231,17 @@ def wrap_tool_with_middleware(
                     error=error,
                     duration_ms=duration,
                 )
+                try:
+                    analytics = ToolAnalyticsService()
+                    analytics.record(ToolUsageRecord(
+                        tool_name=tool.name,
+                        timestamp=datetime.now(),
+                        success=error is None,
+                        duration_ms=duration,
+                        error_code=None,
+                    ))
+                except Exception:
+                    pass
 
     tool._run = wrapped_run
 
@@ -211,11 +259,14 @@ def wrap_tool_with_middleware(
                 result = await original_arun(*args, **kwargs)
 
                 if normalize_result:
-                    result = normalize_tool_result(result)
+                    tool_result = normalize_to_tool_result(result, tool_name=tool.name, source=tool_source)
+                    result = tool_result.to_str()
 
                 return result
             except Exception as e:
                 error = str(e)
+                tool_result = exception_to_tool_error(e, tool_name=tool.name)
+                result = tool_result.to_str()
                 logger.error(f"MCP 工具异步执行失败: {tool.name} - {error}")
                 raise
             finally:
@@ -228,15 +279,34 @@ def wrap_tool_with_middleware(
                         error=error,
                         duration_ms=duration,
                     )
+                    try:
+                        analytics = ToolAnalyticsService()
+                        analytics.record(ToolUsageRecord(
+                            tool_name=tool.name,
+                            timestamp=datetime.now(),
+                            success=error is None,
+                            duration_ms=duration,
+                            error_code=None,
+                        ))
+                    except Exception:
+                        pass
 
         tool._arun = wrapped_arun
 
     return tool
 
 
+class ToolVersionInfo(BaseModel):
+    tool_name: str
+    version: str = "1.0.0"
+    last_updated: datetime = datetime.now()
+    changelog: List[str] = []
+
+
 class MCPToolRegistry:
     _instance: Optional["MCPToolRegistry"] = None
     _tools: Dict[str, Dict[str, Any]] = {}
+    _versions: Dict[str, ToolVersionInfo] = {}
 
     def __new__(cls):
         if cls._instance is None:
@@ -248,19 +318,66 @@ class MCPToolRegistry:
         tool: BaseTool,
         source: str = "unknown",
         metadata: Optional[Dict[str, Any]] = None,
+        version: Optional[str] = None,
     ):
+        effective_version = version or "1.0.0"
+        if version is None and metadata:
+            effective_version = metadata.get("version", "1.0.0")
+        if version is None and hasattr(tool, "metadata") and tool.metadata:
+            effective_version = tool.metadata.get("version", effective_version)
+
         self._tools[tool.name] = {
             "tool": tool,
             "source": source,
             "metadata": metadata or {},
             "registered_at": time.time(),
+            "version": effective_version,
         }
-        logger.debug(f"MCP 工具已注册: {tool.name} (来源: {source})")
+
+        existing = self._versions.get(tool.name)
+        if existing:
+            if effective_version != existing.version:
+                existing.version = effective_version
+                existing.last_updated = datetime.now()
+                existing.changelog.append(f"版本更新至 {effective_version}")
+        else:
+            self._versions[tool.name] = ToolVersionInfo(
+                tool_name=tool.name,
+                version=effective_version,
+                last_updated=datetime.now(),
+            )
+
+        logger.debug(f"MCP 工具已注册: {tool.name} (来源: {source}, 版本: {effective_version})")
+
+    def register_tool(self, tool: BaseTool, source: str = "local", version: str = "1.0.0"):
+        self.register(tool, source=source, version=version)
+
+    def get_tool_version(self, tool_name: str) -> Optional[ToolVersionInfo]:
+        return self._versions.get(tool_name)
+
+    def update_tool_version(self, tool_name: str, new_version: str, changelog: str = ""):
+        info = self._versions.get(tool_name)
+        if not info:
+            logger.warning(f"更新版本失败: 工具 '{tool_name}' 未注册")
+            return
+        old_version = info.version
+        info.version = new_version
+        info.last_updated = datetime.now()
+        entry_text = changelog or f"版本从 {old_version} 更新至 {new_version}"
+        info.changelog.append(entry_text)
+        if tool_name in self._tools:
+            self._tools[tool_name]["version"] = new_version
+        logger.debug(f"MCP 工具版本已更新: {tool_name} ({old_version} -> {new_version})")
+
+    def list_versions(self) -> Dict[str, ToolVersionInfo]:
+        return dict(self._versions)
 
     def unregister(self, tool_name: str):
         if tool_name in self._tools:
             del self._tools[tool_name]
-            logger.debug(f"MCP 工具已注销: {tool_name}")
+        if tool_name in self._versions:
+            del self._versions[tool_name]
+        logger.debug(f"MCP 工具已注销: {tool_name}")
 
     def get(self, tool_name: str) -> Optional[BaseTool]:
         entry = self._tools.get(tool_name)
@@ -284,16 +401,40 @@ class MCPToolRegistry:
                 "description": entry["tool"].description[:100] if entry["tool"].description else "",
                 "metadata": entry["metadata"],
                 "registered_at": entry["registered_at"],
+                "version": entry.get("version", "1.0.0"),
             }
             for name, entry in self._tools.items()
         ]
 
     def clear(self):
         self._tools.clear()
+        self._versions.clear()
 
 
 def get_tool_registry() -> MCPToolRegistry:
     return MCPToolRegistry()
+
+
+def create_tool_error_message(
+    tool_call_id: str,
+    error_code: ToolErrorCode,
+    message: str,
+    tool_name: str,
+    retryable: bool = False,
+    suggestion: str = "",
+) -> ToolMessage:
+    tool_result = create_tool_error(
+        code=error_code,
+        message=message,
+        tool_name=tool_name,
+        retryable=retryable,
+        suggestion=suggestion,
+    )
+    return ToolMessage(
+        content=tool_result.to_str(),
+        tool_call_id=tool_call_id,
+        status="error",
+    )
 
 
 __all__ = [
@@ -303,8 +444,12 @@ __all__ = [
     "create_validation_interceptor",
     "create_retry_interceptor",
     "create_rate_limit_interceptor",
+    "ToolResultAdapter",
     "normalize_tool_result",
+    "normalize_to_tool_result",
     "wrap_tool_with_middleware",
+    "ToolVersionInfo",
     "MCPToolRegistry",
     "get_tool_registry",
+    "create_tool_error_message",
 ]

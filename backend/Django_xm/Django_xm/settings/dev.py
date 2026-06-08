@@ -16,7 +16,7 @@ DEBUG = True
 
 try:
     import redis
-    r = redis.from_url(os.environ.get('REDIS_URL', app_cfg.redis_url), socket_connect_timeout=3)
+    r = redis.from_url(os.environ.get('REDIS_URL', app_cfg.redis_url), socket_connect_timeout=3, socket_timeout=3)
     r.ping()
     REDIS_AVAILABLE = True
 except Exception as e:
@@ -38,7 +38,7 @@ MIDDLEWARE = [
     "Django_xm.apps.core.middleware.APIRequestMiddleware",
     "Django_xm.apps.core.middleware.CacheControlMiddleware",
     "Django_xm.apps.analytics.middleware.AnalyticsMiddleware",
-    "Django_xm.apps.core.middleware.AIExceptionMiddleware",
+    "Django_xm.apps.ai_engine.middleware.AIExceptionMiddleware",
     "Django_xm.apps.core.middleware.SecurityHeadersMiddleware",
 ]
 
@@ -134,6 +134,16 @@ LOGGING = {
             "level": "DEBUG",
             "propagate": False,
         },
+        "Django_xm.apps.agent_hub": {
+            "handlers": ["console", "file"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+        "Django_xm.apps.context_manager": {
+            "handlers": ["console", "file"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
         "Django_xm.apps.tools": {
             "handlers": ["console", "file"],
             "level": "DEBUG",
@@ -152,14 +162,13 @@ CELERY_REDIS_BACKEND_HEALTH_CHECK_INTERVAL = 60
 CELERY_TASK_ROUTES = {}
 
 import os as _os
-_npx_path = None
-_node_dir = None
-for _p in [r'D:\Front-end\nvm\v20.19.5\npx.cmd', r'D:\Front-end\npm\npx.cmd', 'npx']:
-    if _os.path.exists(_p) or _p == 'npx':
-        _npx_path = _p
-        break
-if _npx_path and _os.path.exists(r'D:\Front-end\nvm\v20.19.5\node.exe'):
-    _node_dir = r'D:\Front-end\nvm\v20.19.5'
+_npx_path = _os.environ.get('NPM_NPX_PATH', None)
+if not _npx_path or not _os.path.exists(_npx_path):
+    _npx_alt = _os.environ.get('NPM_NPX_ALT_PATH', None)
+    _npx_path = _npx_alt if _npx_alt and _os.path.exists(_npx_alt) else 'npx'
+_node_dir = _os.environ.get('NODE_PATH', None)
+if _node_dir and not _os.path.exists(_node_dir):
+    _node_dir = None
 
 MCP_SERVERS = [
     {
@@ -179,5 +188,3 @@ MCP_SERVERS = [
         "enabled": True,
     },
 ]
-
-MCP_LOCAL_TOOLS_ENABLED = True
