@@ -425,7 +425,32 @@ def search_knowledge_base(user, kb_id: str, query: str, top_k: int = 5) -> List[
         logger.info("向量搜索缓存命中")
         return cached_results
 
-    results = search_vector_store(vector_store, query, k=top_k)
+    try:
+        results = search_vector_store(vector_store, query, k=top_k)
+    except Exception as e:
+        # 维度不匹配时，可能是 SQLAlchemy MetaData 缓存了旧的列定义
+        # 需要清理 MetaData、释放连接后重试
+        err_msg = str(e)
+        if 'different vector dimensions' in err_msg:
+            logger.warning(f"检测到维度不匹配，清理缓存后重试: {err_msg}")
+            # 释放旧 VectorStore 的 SQLAlchemy engine 连接池
+            if hasattr(vector_store, '_engine') and vector_store._engine:
+                vector_store._engine.dispose()
+            # 关闭 Django 数据库连接
+            from django.db import connections
+            connections.close_all()
+            # 清理 SQLAlchemy MetaData 缓存（根因：ALTER TABLE 后列类型缓存未更新）
+            try:
+                from langchain_postgres.vectorstores import Base
+                Base.metadata.clear()
+            except Exception:
+                pass
+            # 清理 IndexManager 缓存
+            IndexManager._cache.clear()
+            vector_store = manager.load_index(user_index_name, embeddings)
+            results = search_vector_store(vector_store, query, k=top_k)
+        else:
+            raise
     search_results = []
     for doc, score in results:
         item = {
@@ -437,3 +462,71 @@ def search_knowledge_base(user, kb_id: str, query: str, top_k: int = 5) -> List[
     VectorSearchCacheService.cache_search_result(query, search_results, user_index_name, top_k)
 
     return search_results
+
+
+def rebuild_index_from_source_files(
+    user,
+    kb_name: str,
+    provider_id: Optional[str] = None,
+    embeddings=None,
+) -> None:
+    """从原始上传文件重建知识库索引
+
+    当向量数据丢失或内存备份恢复失败时，从磁盘上的原始文件重新构建索引。
+    原始文件路径从 Document.file_path 获取。
+
+    Args:
+        user: 用户对象
+        kb_name: 索引全名（如 user_1_test2）
+        provider_id: 可选，指定 embedding provider
+        embeddings: 可选，已创建的 Embeddings 实例
+    """
+    # 从索引全名提取短名（user_1_test2 → test2）
+    original_name = get_original_index_name(kb_name)
+    index_obj = DocumentIndex.objects.filter(
+        user=user, index_name=original_name
+    ).first()
+    if not index_obj:
+        raise FileNotFoundError(f"知识库不存在: {kb_name}")
+
+    docs = Document.objects.filter(index=index_obj, is_deleted=False)
+
+    # 逐个从原始文件加载文档
+    all_documents = []
+    for doc_record in docs:
+        file_path = Path(doc_record.file_path)
+        if not file_path.exists():
+            logger.warning(f"原始文件不存在: {file_path}")
+            continue
+        try:
+            loaded = load_document(str(file_path))
+            all_documents.extend(loaded)
+        except Exception as e:
+            logger.warning(f"加载原始文件失败: {file_path} - {e}")
+
+    if not all_documents:
+        raise ValueError(f"无法从原始文件加载任何文档: {kb_name}")
+
+    # 分块
+    chunks = split_documents(all_documents)
+
+    # 获取 Embeddings
+    if embeddings is None:
+        embeddings = get_embeddings(
+            preferred_provider=provider_id,
+            use_cache=False,
+        )
+
+    # 创建索引（overwrite=True 以防索引残留）
+    manager = IndexManager()
+    manager.create_index(
+        name=kb_name,
+        documents=chunks,
+        embeddings=embeddings,
+        description=index_obj.description or "",
+        store_type="pgvector",
+        overwrite=True,
+    )
+
+    # 清除缓存
+    invalidate_knowledge_cache(user_id=user.id, user_index_name=kb_name)

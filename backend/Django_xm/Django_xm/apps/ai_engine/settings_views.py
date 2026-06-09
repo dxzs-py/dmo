@@ -504,22 +504,87 @@ class RebuildIndexesView(APIView):
             preferred_provider=provider_id,
             use_cache=False,
         )
+
+        # 维度变化时，PGVector 需要先删除所有旧集合数据并调整 embedding 列类型
+        # 因为 PGVector 的 embedding 列维度是表级的，所有集合共享
+        dimension_changed = False
+        if new_dimension:
+            from Django_xm.apps.knowledge.vector_store.pgvector_backend import PGVectorBackend
+            backend = PGVectorBackend()
+            current_dim = backend.get_embedding_column_dimension()
+            if current_dim is not None and current_dim != new_dimension:
+                dimension_changed = True
+                logger.info(
+                    f"检测到维度变化: {current_dim} → {new_dimension}，"
+                    f"先删除所有旧集合数据并调整列类型"
+                )
+                # 先删除所有要重建的集合的旧数据
+                for name in index_docs:
+                    try:
+                        backend.delete(name)
+                        logger.info(f"维度重建：已删除旧集合 {name}")
+                    except Exception as e:
+                        logger.warning(f"维度重建：删除旧集合 {name} 失败: {e}")
+                # 调整 embedding 列维度
+                dim_ok = backend.ensure_embedding_dimension(new_dimension)
+                if not dim_ok:
+                    errors.insert(0, {
+                        "name": "__dimension__",
+                        "error": f"PGVector embedding 列维度无法从 {current_dim} 调整为 {new_dimension}，"
+                                 f"表中仍有其他集合数据。请先删除所有知识库索引后再重建。",
+                    })
+                    return success_response(
+                        data={
+                            "rebuilt_indexes": [],
+                            "errors": errors,
+                            "total": 0,
+                        },
+                        message=f"重建失败: PGVector 维度不兼容",
+                    )
+
         for name, (documents, store_type, description) in index_docs.items():
             try:
-                # overwrite=True 会自动覆盖旧索引，无需先 delete
+                # 维度变化时旧集合已被删除，不需要 overwrite；否则用 overwrite 保留内部备份恢复机制
                 manager.create_index(
                     name=name,
                     documents=documents,
                     embeddings=new_embeddings,
                     description=description,
                     store_type=store_type,
-                    overwrite=True,
+                    overwrite=not dimension_changed,
                 )
                 rebuilt.append(name)
                 logger.info(f"索引重建成功: {name}, {len(documents)} 条文档")
             except Exception as e:
-                logger.error(f"索引重建失败: {name} - {e}")
-                errors.append({"name": name, "error": str(e)})
+                logger.error(f"索引重建失败，尝试重试: {name} - {e}")
+                # 阶段4-1：用内存中的文档重试
+                try:
+                    manager.create_index(
+                        name=name,
+                        documents=documents,
+                        embeddings=new_embeddings,
+                        description=description,
+                        store_type=store_type,
+                        overwrite=False,
+                    )
+                    rebuilt.append(name)
+                    logger.info(f"索引重建重试成功: {name}")
+                except Exception as retry_err:
+                    # 阶段4-2：从原始文件重建
+                    logger.error(f"索引重建重试失败，尝试从原始文件重建: {name}")
+                    try:
+                        from Django_xm.apps.knowledge.services.kb_service import rebuild_index_from_source_files
+                        rebuild_index_from_source_files(
+                            user=user,
+                            kb_name=name,
+                            provider_id=provider_id,
+                            embeddings=new_embeddings,
+                        )
+                        rebuilt.append(name)
+                        logger.info(f"从原始文件重建成功: {name}")
+                    except Exception as src_err:
+                        logger.error(f"从原始文件重建也失败: {name} - {src_err}")
+                        errors.append({"name": name, "error": f"重建失败: {src_err}"})
 
         return success_response(
             data={

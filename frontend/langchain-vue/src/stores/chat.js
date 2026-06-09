@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useStreamChat, CONNECTION_STATUS } from '../composables/useStreamChat'
 import { useSessionStore } from './session'
 import { useModelStore } from './model'
+import { useUserStore } from './user'
 import { chatAPI } from '../api'
 import { ElMessage, ElNotification } from 'element-plus'
 import { nanoid } from 'nanoid'
@@ -446,6 +447,27 @@ export const useChatStore = defineStore('chat', () => {
   const clearResearchContext = () => {
     researchContextInfo.value = null
   }
+
+  const clearAll = () => {
+    isLoading.value = false
+    currentMode.value = 'agent'
+    availableModes.value = { 'agent': '代理', 'deep-research': '深度研究' }
+    lastStreamError.value = null
+    messageCount.value = 0
+    deepResearchTask.value = null
+    researchTaskId.value = null
+    researchContextInfo.value = null
+    attachmentProcessing.value = null
+    pendingApproval.value = null
+  }
+
+  // 登出时清除聊天状态，防止跨用户数据泄露
+  const userStore = useUserStore()
+  watch(() => userStore.isLoggedIn, (newVal) => {
+    if (!newVal) {
+      clearAll()
+    }
+  })
 
   const deleteMessage = async (backendId, researchTaskId, frontendId) => {
     const sessionStore = useSessionStore()

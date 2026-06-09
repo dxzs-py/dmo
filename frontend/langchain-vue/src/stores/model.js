@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { modelAPI } from '../api/model'
+import { useUserStore } from './user'
 import { ElMessage } from 'element-plus'
 import { logger } from '../utils/logger'
 
@@ -13,7 +14,7 @@ export const useModelStore = defineStore('model', () => {
   const currentModelName = ref(null)
   const specialParams = ref({})
   const temperature = ref(0.7)
-  const maxTokens = ref(1024)
+  const maxTokens = ref(10240)
   const testResult = ref(null)
   const switchResult = ref(null)
 
@@ -254,6 +255,25 @@ export const useModelStore = defineStore('model', () => {
     }
     return config
   }
+
+  const clearAll = () => {
+    providers.value = []
+    currentProviderId.value = 'openai'
+    currentModelName.value = null
+    specialParams.value = {}
+    temperature.value = 0.7
+    maxTokens.value = 10240
+    testResult.value = null
+    switchResult.value = null
+  }
+
+  // 登出时清除模型数据，防止跨用户数据泄露
+  const userStore = useUserStore()
+  watch(() => userStore.isLoggedIn, (newVal) => {
+    if (!newVal) {
+      clearAll()
+    }
+  })
 
   return {
     providers,

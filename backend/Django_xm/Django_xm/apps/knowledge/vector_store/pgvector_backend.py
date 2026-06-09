@@ -94,6 +94,110 @@ class PGVectorBackend(VectorStoreBackend):
     def store_type(self) -> str:
         return "pgvector"
 
+    def get_embedding_column_dimension(self) -> Optional[int]:
+        """获取 PGVector embedding 列的当前向量维度"""
+        embedding_table = _get_embedding_table_name()
+        if not _check_table_exists(embedding_table):
+            return None
+        try:
+            with connections["default"].cursor() as cursor:
+                cursor.execute(
+                    f"SELECT vector_dims(embedding) FROM {embedding_table} LIMIT 1"
+                )
+                row = cursor.fetchone()
+                return row[0] if row else None
+        except Exception:
+            return None
+
+    def ensure_embedding_dimension(self, new_dimension: int) -> bool:
+        """确保 PGVector embedding 列维度与新向量兼容
+
+        当 embedding 维度变化时（如从 1024 切换到 1536），
+        需要先清空旧数据并修改列类型。
+
+        注意：embedding 列维度是表级的，所有集合共享。
+        调用方应确保在重建所有索引时协调调用，先删除所有旧集合数据，
+        再调用此方法调整列类型，最后逐个重建。
+
+        Returns:
+            True 表示维度已兼容（无需调整或调整成功），
+            False 表示维度不兼容且无法调整（表中仍有其他集合数据）
+        """
+        embedding_table = _get_embedding_table_name()
+        if not _check_table_exists(embedding_table):
+            return True
+
+        try:
+            with connections["default"].cursor() as cursor:
+                # 检查当前列维度
+                cursor.execute(
+                    f"SELECT vector_dims(embedding) FROM {embedding_table} LIMIT 1"
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    # 表为空，直接 ALTER 列类型
+                    cursor.execute(
+                        f"ALTER TABLE {embedding_table} "
+                        f"ALTER COLUMN embedding TYPE vector({new_dimension})"
+                    )
+                    logger.info(
+                        f"PGVector embedding 列维度已调整为 vector({new_dimension})"
+                    )
+                    return True
+
+                current_dim = row[0]
+                if current_dim == new_dimension:
+                    return True
+
+                # 维度不匹配，检查表中是否还有数据
+                cursor.execute(f"SELECT COUNT(*) FROM {embedding_table}")
+                remaining = cursor.fetchone()[0]
+                if remaining > 0:
+                    logger.warning(
+                        f"PGVector embedding 列维度 {current_dim} 与新维度 {new_dimension} 不匹配，"
+                        f"但表中仍有 {remaining} 条数据，无法调整列类型。"
+                        f"请先删除所有旧集合数据后再重建。"
+                    )
+                    return False
+
+                # 表已空，可以安全 ALTER
+                cursor.execute(
+                    f"ALTER TABLE {embedding_table} "
+                    f"ALTER COLUMN embedding TYPE vector({new_dimension})"
+                )
+                logger.info(
+                    f"PGVector embedding 列维度已从 vector({current_dim}) "
+                    f"调整为 vector({new_dimension})"
+                )
+                # ALTER 后关闭所有数据库连接，让 SQLAlchemy 重新建立连接
+                # 否则已有连接仍缓存旧的列定义，导致维度不匹配错误
+                connections.close_all()
+                # 清理 IndexManager 的 VectorStore 缓存，并释放所有旧 engine 连接池
+                from Django_xm.apps.knowledge.services.index_service import IndexManager
+                for cached_vs in IndexManager._cache.values():
+                    if hasattr(cached_vs, '_engine') and cached_vs._engine:
+                        try:
+                            cached_vs._engine.dispose()
+                        except Exception:
+                            pass
+                IndexManager._cache.clear()
+                # 刷新 LangChain PGVector 的 SQLAlchemy MetaData 缓存
+                # ALTER TABLE 后 MetaData 仍缓存旧的列类型（如 vector(1024)），
+                # 导致后续查询生成的 SQL 与实际列类型不匹配
+                try:
+                    from langchain_postgres.vectorstores import Base
+                    Base.metadata.clear()
+                    logger.info("PGVector SQLAlchemy MetaData 缓存已清理")
+                except Exception as meta_err:
+                    logger.warning(f"清理 MetaData 缓存失败: {meta_err}")
+                logger.info(
+                    "PGVector 维度调整后已关闭所有数据库连接、释放旧 engine 并清理缓存"
+                )
+                return True
+        except Exception as e:
+            logger.warning(f"PGVector 维度调整失败: {e}")
+            return False
+
     def create(
         self,
         documents: List[Document],
@@ -145,11 +249,23 @@ class PGVectorBackend(VectorStoreBackend):
 
     def delete(self, collection_name: str) -> bool:
         collection_table = _get_collection_table_name()
+        embedding_table = _get_embedding_table_name()
         if not _check_table_exists(collection_table):
             logger.warning(f"PGVector 集合表不存在，无需删除: {collection_name}")
             return False
 
         with connections["default"].cursor() as cursor:
+            # 先删除 embedding 表中关联的向量数据
+            cursor.execute(
+                f"DELETE FROM {embedding_table} WHERE collection_id = "
+                f"(SELECT uuid FROM {collection_table} WHERE name = %s)",
+                [collection_name],
+            )
+            emb_deleted = cursor.rowcount
+            if emb_deleted > 0:
+                logger.info(f"PGVector 向量数据已删除: {emb_deleted} 条 (collection={collection_name})")
+
+            # 再删除 collection 记录
             cursor.execute(
                 f"DELETE FROM {collection_table} WHERE name = %s",
                 [collection_name],

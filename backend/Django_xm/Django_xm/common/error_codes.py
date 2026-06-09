@@ -45,6 +45,7 @@ class ErrorCode(IntEnum):
     TOKEN_INVALID = (40103, "Token 无效", 401)
     LOGIN_REQUIRED = (40104, "请先登录", 401)
     AUTH_FAILED = (40105, "认证失败", 401)
+    LOGIN_FAILED = (40106, "登录失败", 401)
 
     FORBIDDEN = (40301, "无权访问", 403)
     PERMISSION_DENIED = (40302, "权限不足", 403)

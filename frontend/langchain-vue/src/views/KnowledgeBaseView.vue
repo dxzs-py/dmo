@@ -603,7 +603,7 @@ async function handleClearCache(scope = 'all') {
       <div class="test-results" v-if="testResults.length">
         <div v-for="(result, idx) in testResults" :key="idx" class="test-result-item">
           <div class="result-header">
-            <el-tag size="small">得分: {{ (result.score * 100).toFixed(1) }}%</el-tag>
+            <el-tag size="small">相似度: {{ ((1 - result.score) * 100).toFixed(1) }}%</el-tag>
             <span class="result-source">{{ result.source || '未知来源' }}</span>
           </div>
           <p class="result-content">{{ result.content }}</p>

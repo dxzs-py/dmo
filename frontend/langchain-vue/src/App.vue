@@ -43,6 +43,13 @@ const isChatRoute = computed(() => route.path === '/chat')
 
 const cachedViews = ref([])
 
+// 登出时清除 keep-alive 缓存，防止跨用户数据残留
+watch(() => userStore.isLoggedIn, (newVal) => {
+  if (!newVal) {
+    cachedViews.value = []
+  }
+})
+
 watch(() => route.name, (name) => {
   if (name && route.meta.keepAlive && !cachedViews.value.includes(name)) {
     cachedViews.value.push(name)

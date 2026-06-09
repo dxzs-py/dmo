@@ -463,6 +463,7 @@ def get_embeddings_with_fallback(
         )
 
     # 当用户明确配置了主/备选时，只保留这两个 provider，不加载无关 provider
+    all_providers = providers  # 保留完整列表，维度不匹配时回退用
     if user_primary_id or user_fallback_id:
         allowed_ids = {pid for pid in (user_primary_id, user_fallback_id) if pid}
         filtered = [p for p in providers if p["id"] in allowed_ids]
@@ -516,15 +517,28 @@ def get_embeddings_with_fallback(
             )
             providers = dim_filtered
         else:
-            # 注册表中无匹配，保留全部 provider，交由运行时维度探测处理
-            dim_info = ", ".join(
-                f"{p['id']}={p.get('dimension', '未知')}/max{p.get('native_max_dimension', 0)}"
-                for p in providers
-            )
-            logger.warning(
-                f"Embedding 维度预过滤: 注册表中无维度={required_dimension} 的 provider，"
-                f"已有: {dim_info}，将交由运行时维度探测"
-            )
+            # 用户配置的 provider 均不满足维度要求，从完整注册表中补充维度兼容的 provider
+            all_dim_matched = [p for p in all_providers if _is_dimension_compatible(p)]
+            if all_dim_matched:
+                # 合并：用户配置的 provider 优先 + 维度兼容的补充 provider
+                existing_ids = {p["id"] for p in providers}
+                extra = [p for p in all_dim_matched if p["id"] not in existing_ids]
+                providers = providers + extra
+                logger.warning(
+                    f"Embedding 维度回退: 用户配置的 provider 无维度={required_dimension} 匹配，"
+                    f"从注册表补充 {len(extra)} 个维度兼容 provider: "
+                    f"{[p['id'] for p in extra]}"
+                )
+            else:
+                # 注册表中也无匹配，保留全部 provider，交由运行时维度探测处理
+                dim_info = ", ".join(
+                    f"{p['id']}={p.get('dimension', '未知')}/max{p.get('native_max_dimension', 0)}"
+                    for p in providers
+                )
+                logger.warning(
+                    f"Embedding 维度预过滤: 注册表中无维度={required_dimension} 的 provider，"
+                    f"已有: {dim_info}，将交由运行时维度探测"
+                )
 
     logger.info(
         f"Embedding 初始化: {len(providers)} 个可用 provider, "

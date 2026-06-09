@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { toolsAPI } from '../api/tools'
+import { useUserStore } from './user'
 import { logger } from '../utils/logger'
 
 export const useToolsStore = defineStore('tools', () => {
@@ -127,6 +128,14 @@ export const useToolsStore = defineStore('tools', () => {
     skillPackageLoaded.value = false
     metaLoaded.value = false
   }
+
+  // 登出时清除所有工具数据，防止跨用户数据泄露
+  const userStore = useUserStore()
+  watch(() => userStore.isLoggedIn, (newVal) => {
+    if (!newVal) {
+      clearAll()
+    }
+  })
 
   return {
     langchainTools,
