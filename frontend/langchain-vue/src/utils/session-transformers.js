@@ -175,7 +175,7 @@ export function transformBackendMessageToFrontend(msg) {
     sources: activeVersion.sources,
     plan: activeVersion.plan,
     chainOfThought: activeVersion.chainOfThought,
-    toolCalls: activeVersion.toolCalls,
+    toolCalls: activeVersion.toolCalls || [],
     approval: msgObj.approval || null,
     approvalState: msgObj.approval?.state || null,
     reasoning: activeVersion.reasoning,

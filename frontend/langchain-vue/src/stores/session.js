@@ -442,6 +442,147 @@ export const useSessionStore = defineStore('session', () => {
     _setLastField(sessionId, 'approvalState', approval?.state || 'pending')
   }
 
+  /**
+   * 将审批数据设置到指定 toolCall（工具调用级审批）
+   * 遍历 sessions 找到对应 session，遍历最后一条消息的 toolCalls 找到匹配 toolCallId 的项
+   */
+  const setApprovalToToolCall = (sessionId, toolCallId, approvalData) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (!session || session.messages.length === 0) return
+    const lastMsg = session.messages[session.messages.length - 1]
+    if (!lastMsg.toolCalls || !Array.isArray(lastMsg.toolCalls)) return
+
+    // 匹配策略（interrupt.id ≠ LLM tool_call.id，需要回退匹配）：
+    //   0. 按 llm_tool_call_id 精确匹配（后端注入的 LLM tool_call.id，最可靠）
+    //   1. 按 id 精确匹配
+    //   2. 按 toolName + command 内容匹配
+    //   3. 按 toolName 匹配（最宽松，取最新未审批的）
+    const _getCmd = (t) => t.parameters?.command || t.args?.command
+    const _getToolName = (t) => t.name || t.tool_name || t.function?.name
+
+    const findToolCall = (toolCalls) => {
+      // 0. 后端注入的 llm_tool_call_id（最精确）
+      if (approvalData?.llm_tool_call_id) {
+        const tc = toolCalls.find(t => t.id === approvalData.llm_tool_call_id)
+        if (tc) return tc
+      }
+      // 1. 按 id 精确匹配（interrupt.id）
+      let tc = toolCalls.find(t => t.id === toolCallId)
+      if (tc) return tc
+      // 2. 按 toolName + operation 内容匹配
+      const _op = approvalData?.operation || approvalData?.command
+      if (approvalData?.tool_name && _op) {
+        tc = toolCalls.find(t =>
+          _getToolName(t) === approvalData.tool_name &&
+          (_getCmd(t) === _op || Object.values(t.parameters || {}).some(v => String(v) === _op)) &&
+          !t.approval
+        )
+        if (tc) return tc
+      }
+      // 3. 按 toolName 匹配（最宽松，取最新未审批的）
+      if (approvalData?.tool_name) {
+        tc = toolCalls.reverse().find(t =>
+          _getToolName(t) === approvalData.tool_name && !t.approval
+        )
+      }
+      return tc
+    }
+
+    const tc = findToolCall(lastMsg.toolCalls)
+    if (tc) {
+      tc.approval = approvalData
+      if (approvalData?.state) {
+        tc.status = approvalData.state === 'pending' ? 'pending_approval' : tc.status
+      }
+    } else {
+      // toolCall 还未到达（messages 模式事件可能在 updates 模式之后），
+      // 将审批数据缓存，等 addOrUpdateToolCallToLastMessage 时再匹配
+      if (!lastMsg._pendingApprovals) {
+        lastMsg._pendingApprovals = []
+      }
+      lastMsg._pendingApprovals.push({ toolCallId, approvalData })
+    }
+    // 同步到 version
+    const ver = lastMsg.versions?.[lastMsg.currentVersion]
+    if (ver) {
+      if (ver.toolCalls && Array.isArray(ver.toolCalls)) {
+        const verTc = findToolCall(ver.toolCalls)
+        if (verTc) {
+          verTc.approval = approvalData
+          if (approvalData?.state) {
+            verTc.status = approvalData.state === 'pending' ? 'pending_approval' : verTc.status
+          }
+        } else {
+          // version 中也找不到 toolCall，同样缓存
+          if (!ver._pendingApprovals) {
+            ver._pendingApprovals = []
+          }
+          ver._pendingApprovals.push({ toolCallId, approvalData })
+        }
+      } else {
+        // version 没有 toolCalls 数组，也缓存
+        if (!ver._pendingApprovals) {
+          ver._pendingApprovals = []
+        }
+        ver._pendingApprovals.push({ toolCallId, approvalData })
+      }
+    }
+  }
+
+  /**
+   * 更新指定 toolCall 的状态
+   */
+  const updateToolCallStatus = (sessionId, toolCallId, status, approvalData) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (!session || session.messages.length === 0) return
+    const lastMsg = session.messages[session.messages.length - 1]
+    if (!lastMsg.toolCalls || !Array.isArray(lastMsg.toolCalls)) return
+
+    // 匹配策略（与 setApprovalToToolCall 保持一致）：
+    const _getCmd = (t) => t.parameters?.command || t.args?.command
+    const _getToolName = (t) => t.name || t.tool_name || t.function?.name
+
+    const findToolCall = (toolCalls) => {
+      // 0. 后端注入的 llm_tool_call_id（最精确）
+      if (approvalData?.llm_tool_call_id) {
+        const tc = toolCalls.find(t => t.id === approvalData.llm_tool_call_id)
+        if (tc) return tc
+      }
+      // 1. 按 id 精确匹配
+      let tc = toolCalls.find(t => t.id === toolCallId)
+      if (tc) return tc
+      // 2. 按 toolName + operation 内容匹配
+      const _op = approvalData?.operation || approvalData?.command
+      if (approvalData?.tool_name && _op) {
+        tc = toolCalls.find(t =>
+          _getToolName(t) === approvalData.tool_name &&
+          (_getCmd(t) === _op || Object.values(t.parameters || {}).some(v => String(v) === _op))
+        )
+        if (tc) return tc
+      }
+      // 3. 按 toolName 匹配
+      if (approvalData?.tool_name) {
+        tc = toolCalls.reverse().find(t =>
+          _getToolName(t) === approvalData.tool_name
+        )
+      }
+      return tc
+    }
+
+    const tc = findToolCall(lastMsg.toolCalls)
+    if (tc) {
+      tc.status = status
+    }
+    // 同步到 version
+    const ver = lastMsg.versions?.[lastMsg.currentVersion]
+    if (ver && ver.toolCalls && Array.isArray(ver.toolCalls)) {
+      const verTc = findToolCall(ver.toolCalls)
+      if (verTc) {
+        verTc.status = status
+      }
+    }
+  }
+
   const appendToLastAssistantMessage = (sessionId, content) => {
     const result = getLastAssistantMessage(sessions.value, sessionId)
     if (!result) return
@@ -652,6 +793,8 @@ export const useSessionStore = defineStore('session', () => {
     setContextToLastMessage,
     setResearchTaskIdToLastMessage,
     setApprovalToLastMessage,
+    setApprovalToToolCall,
+    updateToolCallStatus,
     appendToLastAssistantMessage,
     addToolCallToLastMessage,
     addOrUpdateToolCallToLastMessage,

@@ -3,6 +3,7 @@ import os
 import time
 import signal
 import threading
+import asyncio
 import logging
 from typing import Dict, Any, Optional, List
 from pathlib import Path
@@ -13,6 +14,7 @@ from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 
 from Django_xm.apps.tools.errors import TOOL_VERSION
+from Django_xm.apps.tools.base import AsyncToolMixin, interrupt_for_approval, reject_sync_approval
 
 logger = logging.getLogger(__name__)
 
@@ -421,7 +423,7 @@ class AgentListTool(BaseTool):
         return self._run()
 
 
-class AgentCleanupTool(BaseTool):
+class AgentCleanupTool(AsyncToolMixin, BaseTool):
     name: str = "agent_cleanup"
     version: str = TOOL_VERSION
     metadata: dict = {"tier": "extended", "visibility": "selectable", "category": "agent"}
@@ -439,43 +441,57 @@ class AgentCleanupTool(BaseTool):
         self._active_subagents: Dict[str, Dict[str, Any]] = {}
 
     def _run(self, agent_id: str = "") -> str:
-        cleaned_count = 0
-
-        if agent_id:
-            # 清理指定代理
-            meta = _load_agent_meta(agent_id)
-            if not meta:
-                return f"未找到代理 {agent_id}"
-
-            if meta.get("status") == "running":
-                return f"代理 {agent_id} 正在运行中，无法清理。请等待完成或超时。"
-
-            # 删除磁盘上的元数据文件
-            path = _get_agent_path(agent_id)
-            try:
-                os.remove(path)
-                cleaned_count = 1
-            except OSError as e:
-                logger.error(f"清理代理 {agent_id} 文件失败: {e}")
-                return f"清理代理 {agent_id} 失败: {e}"
-        else:
-            # 清理所有已完成/失败/超时的代理
-            agents = _list_agents()
-            for agent in agents:
-                aid = agent.get("agent_id", "")
-                status = agent.get("status", "")
-                if status in ("completed", "failed", "timeout"):
-                    path = _get_agent_path(aid)
-                    try:
-                        os.remove(path)
-                        cleaned_count += 1
-                    except OSError as e:
-                        logger.error(f"清理代理 {aid} 文件失败: {e}")
-
-        return f"已清理 {cleaned_count} 个子代理资源"
+        # 批量清理需要审批，同步模式下拒绝
+        if not agent_id:
+            return reject_sync_approval("agent_cleanup", "批量清理所有已完成/失败/超时的代理")
+        return self._cleanup_single(agent_id)
 
     async def _arun(self, agent_id: str = "") -> str:
-        return self._run(agent_id=agent_id)
+        # 批量清理需要用户确认
+        if not agent_id:
+            approval = interrupt_for_approval(
+                tool_name="agent_cleanup",
+                title="确认批量清理代理",
+                description="Agent 请求清理所有已完成/失败/超时的代理资源，此操作不可撤销。",
+                operation="cleanup_all_agents",
+                danger_level="medium",
+            )
+            if not approval:
+                return "用户已拒绝批量清理代理"
+            return await asyncio.to_thread(self._cleanup_all)
+        # 单个清理无需审批
+        return await asyncio.to_thread(self._cleanup_single, agent_id)
+
+    def _cleanup_single(self, agent_id: str) -> str:
+        cleaned_count = 0
+        meta = _load_agent_meta(agent_id)
+        if not meta:
+            return f"未找到代理 {agent_id}"
+        if meta.get("status") == "running":
+            return f"代理 {agent_id} 正在运行中，无法清理。请等待完成或超时。"
+        path = _get_agent_path(agent_id)
+        try:
+            os.remove(path)
+            cleaned_count = 1
+        except OSError as e:
+            logger.error(f"清理代理 {agent_id} 文件失败: {e}")
+            return f"清理代理 {agent_id} 失败: {e}"
+        return f"已清理 {cleaned_count} 个子代理资源"
+
+    def _cleanup_all(self) -> str:
+        cleaned_count = 0
+        agents = _list_agents()
+        for agent in agents:
+            aid = agent.get("agent_id", "")
+            status = agent.get("status", "")
+            if status in ("completed", "failed", "timeout"):
+                path = _get_agent_path(aid)
+                try:
+                    os.remove(path)
+                    cleaned_count += 1
+                except OSError as e:
+                    logger.error(f"清理代理 {aid} 文件失败: {e}")
+        return f"已清理 {cleaned_count} 个子代理资源"
 
 
 agent_create = AgentCreateTool()

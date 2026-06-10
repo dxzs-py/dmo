@@ -1019,7 +1019,10 @@ class ChatApprovalView(BaseChatAPIView):
                     resume_value = user_input if user_input is not None else True
                 else:
                     resume_value = False
-                command = Command(resume=resume_value)
+                # 使用 dict 形式指定 interrupt_id，支持多个 pending interrupts 的场景
+                # 当 LLM 一次生成多个 tool_call 且都触发 interrupt 时，
+                # 必须指定具体的 interrupt_id 才能恢复，否则 LangGraph 报错
+                command = Command(resume={interrupt_id: resume_value})
 
                 # 将 agent 创建和流式恢复放在同一个事件循环中，
                 # 避免 checkpointer 的异步连接在事件循环切换时被关闭
@@ -1117,11 +1120,63 @@ class ChatApprovalView(BaseChatAPIView):
                             mode_name, mode_data = "messages", chunk
 
                         # 处理 updates 模式：提取工具执行结果（ToolMessage）推送给前端
-                        # 注意：审批场景下不需要再处理 interrupt 事件，但必须转发工具结果，
-                        # 否则前端的工具调用面板会一直停留在"执行中"状态。
+                        # 同时处理 __interrupt__ 事件（审批恢复后 agent 又触发新审批）
                         if mode_name == "updates":
                             if isinstance(mode_data, dict):
+                                # 处理 __interrupt__ 事件：审批恢复后 agent 又触发新的审批请求
+                                if "__interrupt__" in mode_data:
+                                    from langgraph.types import Interrupt
+                                    from Django_xm.apps.tools.base import is_approval_interrupt
+                                    interrupts = mode_data["__interrupt__"]
+                                    if interrupts:
+                                        for intr in interrupts:
+                                            if isinstance(intr, Interrupt):
+                                                interrupt_value = intr.value
+                                            elif isinstance(intr, dict):
+                                                interrupt_value = intr.get("value", intr)
+                                            else:
+                                                interrupt_value = intr
+
+                                            if is_approval_interrupt(interrupt_value):
+                                                tool_name = interrupt_value.get("tool_name", "unknown")
+                                                new_interrupt_id = intr.id if isinstance(intr, Interrupt) else ""
+                                                approval_data = {
+                                                    'tool_name': tool_name,
+                                                    'tool_call_id': new_interrupt_id,
+                                                    'interrupt_id': new_interrupt_id,
+                                                    'title': interrupt_value.get("title", "确认操作"),
+                                                    'description': interrupt_value.get("description", ""),
+                                                    'action': interrupt_value.get("action", "confirm"),
+                                                    'danger_level': interrupt_value.get("danger_level", "medium"),
+                                                }
+                                                # 透传 operation（统一字段，兼容旧 command）
+                                                op = interrupt_value.get("operation") or interrupt_value.get("command") or ""
+                                                if op:
+                                                    approval_data['operation'] = op
+                                                    # 通用匹配：tool_name 一致 + parameters 中任意字段值等于 operation
+                                                    for tc_key, tc_info in tool_calls_map.items():
+                                                        if tc_info.get("name") != tool_name:
+                                                            continue
+                                                        tc_params = tc_info.get("parameters", {})
+                                                        if any(str(v) == op for v in tc_params.values()):
+                                                            approval_data['llm_tool_call_id'] = tc_info.get("id") or tc_key
+                                                            break
+                                                    # 回退：同名工具中第一个
+                                                    if 'llm_tool_call_id' not in approval_data:
+                                                        for tc_key, tc_info in tool_calls_map.items():
+                                                            if tc_info.get("name") == tool_name:
+                                                                approval_data['llm_tool_call_id'] = tc_info.get("id") or tc_key
+                                                                break
+                                                if interrupt_value.get("extra"):
+                                                    approval_data['extra'] = interrupt_value["extra"]
+                                                if interrupt_value.get("input_placeholder"):
+                                                    approval_data['input_placeholder'] = interrupt_value["input_placeholder"]
+                                                logger.info(f"审批恢复流中检测到新审批: tool={tool_name}, danger={approval_data['danger_level']}")
+                                                yield f"data: {json.dumps({'type': 'approval', 'data': approval_data}, ensure_ascii=False)}\n\n"
+
                                 for node_name, node_output in mode_data.items():
+                                    if node_name == "__interrupt__":
+                                        continue
                                     # tools 节点的输出包含 messages（ToolMessage）
                                     if isinstance(node_output, dict):
                                         node_messages = node_output.get("messages", [])
@@ -1168,9 +1223,38 @@ class ChatApprovalView(BaseChatAPIView):
                         if isinstance(mode_data, tuple) and len(mode_data) == 2:
                             msg_obj = mode_data[0]
 
-                        # 跳过含 tool_calls 的 AIMessage（已在第一次请求中处理）
+                        # 跳过含 tool_calls 的 AIMessage 中已有的 tool_call（已在第一次请求中处理），
+                        # 但不跳过新增的 tool_call（审批恢复后 Agent 可能生成新的工具调用，如 fs_write_file）。
                         if isinstance(msg_obj, LCAIMessage) and (getattr(msg_obj, 'tool_calls', None) or getattr(msg_obj, 'tool_call_chunks', None)):
-                            continue
+                            msg_tool_calls = getattr(msg_obj, 'tool_calls', None) or []
+                            # 检查是否有新增的 tool_call（不在 tool_calls_map 中的）
+                            new_tool_calls = []
+                            for tc in msg_tool_calls:
+                                tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                                if tc_id and tc_id not in tool_calls_map:
+                                    new_tool_calls.append(tc)
+
+                            if not new_tool_calls:
+                                # 全部是已有的 tool_calls，跳过整条 AIMessage
+                                continue
+                            else:
+                                # 有新增的 tool_calls，只处理新增部分
+                                # 将新增的 tool_call 推送给前端
+                                for tc in new_tool_calls:
+                                    tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                                    tc_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+                                    tc_args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
+                                    if tc_id:
+                                        tool_calls_map[tc_id] = {
+                                            "id": tc_id,
+                                            "name": tc_name or "unknown",
+                                            "parameters": tc_args or {},
+                                            "state": "input-available",
+                                            "status": "running",
+                                        }
+                                        yield f"data: {json.dumps({'type': 'tool', 'data': tool_calls_map[tc_id]}, ensure_ascii=False)}\n\n"
+                                # 跳过这条 AIMessage 的文本内容处理（tool_calls 消息通常没有文本内容）
+                                continue
 
                         try:
                             for event in process_stream_chunk(
@@ -1218,5 +1302,19 @@ class ChatApprovalView(BaseChatAPIView):
             except Exception as e:
                 logger.error(f"审批恢复执行失败: {e}", exc_info=True)
                 yield sse_error_event("approval_error", f"审批恢复执行失败: {str(e)}")
+            finally:
+                # 确保事件循环被关闭，防止资源泄漏
+                try:
+                    pending = asyncio.all_tasks(loop)
+                    if pending:
+                        for task in pending:
+                            task.cancel()
+                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                except Exception:
+                    pass
+                try:
+                    loop.close()
+                except Exception:
+                    pass
 
         return sse_response(generate())

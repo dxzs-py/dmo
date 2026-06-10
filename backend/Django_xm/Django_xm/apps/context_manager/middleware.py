@@ -273,6 +273,8 @@ class ContextManagerMiddleware(AgentMiddleware):
             role = role_map.get(type(msg), "unknown")
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
             entry: Dict[str, Any] = {"role": role, "content": content}
+            if hasattr(msg, 'id') and msg.id:
+                entry["id"] = msg.id
             if hasattr(msg, 'tool_calls') and msg.tool_calls:
                 entry["tool_calls"] = msg.tool_calls
             if hasattr(msg, 'additional_kwargs') and 'memory_tier' in msg.additional_kwargs:
@@ -288,6 +290,7 @@ class ContextManagerMiddleware(AgentMiddleware):
         for d in dicts:
             role = d.get("role", "unknown")
             content = d.get("content", "")
+            msg_id = d.get("id")
             memory_tier = d.get("memory_tier")
 
             additional_kwargs = {}
@@ -309,6 +312,10 @@ class ContextManagerMiddleware(AgentMiddleware):
                 msg = ToolMessage(content=content, tool_call_id=tool_call_id, additional_kwargs=additional_kwargs)
             else:
                 msg = HumanMessage(content=content, additional_kwargs=additional_kwargs)
+
+            # 保留消息 id，确保 add_messages reducer 能正确替换而非追加
+            if msg_id:
+                msg.id = msg_id
 
             result.append(msg)
         return result
@@ -450,10 +457,14 @@ class ContextManagerMiddleware(AgentMiddleware):
             # 不合规：有缺失的 ToolMessage 或 ToolMessage 被间隔
             if msg.content and str(msg.content).strip():
                 # 策略a：AIMessage 有文本内容，移除 tool_calls 保留文本
-                result.append(AIMessage(
+                # 保留原始消息 id，确保 add_messages reducer 能正确替换而非追加
+                new_msg = AIMessage(
                     content=msg.content,
                     additional_kwargs={k: v for k, v in msg.additional_kwargs.items() if k != 'tool_calls'},
-                ))
+                )
+                if hasattr(msg, 'id') and msg.id:
+                    new_msg.id = msg.id
+                result.append(new_msg)
                 stripped += 1
                 logger.warning(
                     f"移除 AIMessage 中的 {len(expected_tc_ids)} 个 tool_calls"

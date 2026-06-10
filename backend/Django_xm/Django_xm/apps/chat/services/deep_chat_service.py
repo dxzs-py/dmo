@@ -197,8 +197,24 @@ class DeepChatService:
                                             'danger_level': interrupt_value.get("danger_level", "medium"),
                                             'state': 'pending',
                                         }
-                                        if interrupt_value.get("command"):
-                                            approval_data['command'] = interrupt_value["command"]
+                                        # 透传 operation（统一字段，兼容旧 command）
+                                        op = interrupt_value.get("operation") or interrupt_value.get("command") or ""
+                                        if op:
+                                            approval_data['operation'] = op
+                                            # 通用匹配：tool_name 一致 + parameters 中任意字段值等于 operation
+                                            for tc_key, tc_info in tool_calls_map.items():
+                                                if tc_info.get("name") != tool_name:
+                                                    continue
+                                                tc_params = tc_info.get("parameters", {})
+                                                if any(str(v) == op for v in tc_params.values()):
+                                                    approval_data['llm_tool_call_id'] = tc_info.get("id") or tc_key
+                                                    break
+                                            # 回退：同名工具中第一个
+                                            if 'llm_tool_call_id' not in approval_data:
+                                                for tc_key, tc_info in tool_calls_map.items():
+                                                    if tc_info.get("name") == tool_name:
+                                                        approval_data['llm_tool_call_id'] = tc_info.get("id") or tc_key
+                                                        break
                                         if interrupt_value.get("extra"):
                                             approval_data['extra'] = interrupt_value["extra"]
                                         if interrupt_value.get("input_placeholder"):
@@ -305,6 +321,15 @@ class DeepChatService:
                     })
                 except Exception:
                     pass
+
+        # 审批中断场景：Agent 被 interrupt 暂停，等待用户确认
+        # 跳过 finalize 逻辑（不需要补发 final_ai_message 等），直接结束流
+        if interrupt_info is not None:
+            logger.info(f"深度思考审批中断，跳过 finalize: tool={interrupt_info.get('tool_name')}")
+            from .stream_helpers import finalize_tool_calls
+            for tool_update_event in finalize_tool_calls(all_messages, tool_calls_map, tool_args_accumulator):
+                yield tool_update_event
+            return
 
         for tool_update_event in finalize_tool_calls(all_messages, tool_calls_map, tool_args_accumulator):
             yield tool_update_event

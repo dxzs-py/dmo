@@ -1,5 +1,6 @@
 import os
 import base64
+import asyncio
 from pathlib import Path
 from typing import Optional, List, Tuple, Dict, Any
 
@@ -8,6 +9,7 @@ from langchain_core.documents import Document
 from pydantic import BaseModel, Field
 
 from Django_xm.apps.ai_engine.config import settings as app_cfg
+from Django_xm.apps.tools.base import AsyncToolMixin, interrupt_for_approval, reject_sync_approval
 
 import logging
 
@@ -354,7 +356,7 @@ class AttachmentReaderInput(BaseModel):
     attachment_id: int = Field(description="附件的ID")
 
 
-class FileReaderTool(BaseTool):
+class FileReaderTool(AsyncToolMixin, BaseTool):
     name: str = "file_reader"
     metadata: dict = {"tier": "extended", "visibility": "selectable", "category": "file"}
     description: str = (
@@ -368,7 +370,10 @@ class FileReaderTool(BaseTool):
 
     def _run(self, file_path: str) -> str:
         logger.info(f"📄 读取文件: {file_path}")
-
+        # 绝对路径读取需要审批，同步模式下拒绝
+        if os.path.isabs(file_path):
+            logger.warning(f"file_reader: 绝对路径读取在同步模式下无法请求审批: {file_path}")
+            return reject_sync_approval("file_reader", file_path)
         try:
             content = read_file_content(file_path)
             logger.info(f"📄 文件读取成功: {len(content)} 字符")
@@ -383,7 +388,33 @@ class FileReaderTool(BaseTool):
             return error_msg
 
     async def _arun(self, file_path: str) -> str:
-        return self._run(file_path=file_path)
+        logger.info(f"📄 读取文件: {file_path}")
+        # 绝对路径读取需要用户确认（可能读取敏感文件）
+        if os.path.isabs(file_path):
+            approval = interrupt_for_approval(
+                tool_name="file_reader",
+                title="确认读取文件",
+                description=f"Agent 请求读取绝对路径文件，可能包含敏感信息。文件: {file_path}",
+                operation=file_path,
+                danger_level="medium",
+            )
+            if approval is True:
+                return await asyncio.to_thread(read_file_content, file_path)
+            else:
+                return f"用户已拒绝读取文件: {file_path}"
+        # 相对路径直接读取
+        try:
+            content = await asyncio.to_thread(read_file_content, file_path)
+            logger.info(f"📄 文件读取成功: {len(content)} 字符")
+            return content
+        except FileNotFoundError:
+            return f"错误：文件不存在: {file_path}"
+        except ValueError as e:
+            return f"错误：{str(e)}"
+        except Exception as e:
+            error_msg = f"读取文件失败: {str(e)}"
+            logger.error(error_msg)
+            return error_msg
 
 
 class AttachmentReaderTool(BaseTool):

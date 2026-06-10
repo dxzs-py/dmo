@@ -63,24 +63,79 @@ const props = defineProps({
 const emit = defineEmits({
   regenerate: (index) => typeof index === 'number' && index >= 0,
   click: (message) => message && typeof message === 'object',
-  approve: (payload) => payload && (payload.message || payload.role),
-  reject: (message) => message && typeof message === 'object',
+  approve: (payload) => payload && typeof payload === 'object',
+  reject: (payload) => payload && typeof payload === 'object',
   delete: (payload) => payload && typeof payload.messageId !== 'undefined',
   'continue-research': (taskId) => typeof taskId === 'string' && taskId.length > 0,
 })
 
 const copied = ref(false)
-const approvalInputValue = ref('')
+const approvalInputValues = ref({})  // Map<toolCallId, inputValue> 每个工具调用独立的输入值
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
 const router = useRouter()
 
-// 通用审批确认处理：支持 CONFIRM 和 CONFIRM_WITH_INPUT 两种模式
-function handleApprove() {
-  if (props.message.approval?.action === 'confirm_with_input') {
-    emit('approve', { message: props.message, user_input: approvalInputValue.value })
+// 是否有待审批的操作（审批等待中不应显示上下文统计）
+const hasPendingApprovals = computed(() => chatStore.pendingApprovals.size > 0)
+
+// 收集所有工具调用级的审批数据
+const toolCallApprovals = computed(() => {
+  if (!props.message.toolCalls || !Array.isArray(props.message.toolCalls)) return []
+  return props.message.toolCalls
+    .filter(tc => tc.approval)
+    .map(tc => ({
+      toolCallId: tc.id,
+      approval: tc.approval,
+      status: tc.status,
+    }))
+})
+
+// 是否使用消息级审批（向后兼容：当没有 toolCall 级审批时回退到 message.approval）
+const useMessageLevelApproval = computed(() => {
+  return toolCallApprovals.value.length === 0 && props.message.approval
+})
+
+// ToolCall 级审批确认：从 ToolCallCard 冒泡上来
+function handleToolCallApprove(toolCall) {
+  const approval = toolCall?.approval
+  if (!approval) return
+  // ToolCallCard 在 confirm_with_input 模式下会附加 _user_input 字段
+  const userInput = toolCall._user_input
+  if (userInput !== undefined) {
+    emit('approve', { message: props.message, approval, user_input: userInput })
+  } else if (approval.action === 'confirm_with_input') {
+    emit('approve', { message: props.message, approval, user_input: approvalInputValues.value[toolCall.id] || '' })
   } else {
-    emit('approve', props.message)
+    emit('approve', { message: props.message, approval })
+  }
+}
+
+// ToolCall 级审批拒绝：从 ToolCallCard 冒泡上来
+function handleToolCallReject(toolCall) {
+  const approval = toolCall?.approval
+  if (!approval) return
+  emit('reject', { message: props.message, approval })
+}
+
+// 通用审批确认处理：支持 CONFIRM 和 CONFIRM_WITH_INPUT 两种模式（消息级审批）
+function handleApprove(toolCallId) {
+  if (toolCallId) {
+    // 工具调用级审批（旧逻辑，已被 handleToolCallApprove 替代，保留以防遗漏）
+    const tc = props.message.toolCalls?.find(t => t.id === toolCallId)
+    const approval = tc?.approval
+    if (!approval) return
+    if (approval.action === 'confirm_with_input') {
+      emit('approve', { message: props.message, approval, user_input: approvalInputValues.value[toolCallId] || '' })
+    } else {
+      emit('approve', { message: props.message, approval })
+    }
+  } else if (useMessageLevelApproval.value) {
+    // 向后兼容：消息级审批
+    if (props.message.approval?.action === 'confirm_with_input') {
+      emit('approve', { message: props.message, approval: props.message.approval, user_input: approvalInputValues.value['message'] || '' })
+    } else {
+      emit('approve', { message: props.message, approval: props.message.approval })
+    }
   }
 }
 
@@ -442,6 +497,9 @@ function handleMessageClick() {
               :input="toolCall.input || toolCall.parameters"
               :output="toolCall.output || toolCall.result"
               :status="toolCall.status || (toolCall.state === 'output-error' ? 'failed' : toolCall.state === 'output-available' ? 'completed' : 'running')"
+              :tool-call="toolCall"
+              @approve="(tc) => handleToolCallApprove(tc)"
+              @reject="(tc) => handleToolCallReject(tc)"
             />
           </AiQueue>
           <ToolCallCard
@@ -450,63 +508,75 @@ function handleMessageClick() {
             :input="message.toolCalls[0].input || message.toolCalls[0].parameters"
             :output="message.toolCalls[0].output || message.toolCalls[0].result"
             :status="message.toolCalls[0].status || (message.toolCalls[0].state === 'output-error' ? 'failed' : message.toolCalls[0].state === 'output-available' ? 'completed' : 'running')"
+            :tool-call="message.toolCalls[0]"
+            @approve="(tc) => handleToolCallApprove(tc)"
+            @reject="(tc) => handleToolCallReject(tc)"
           />
         </TransitionGroup>
       </div>
 
+      <!-- 向后兼容：消息级审批（当没有 toolCall 级审批时回退） -->
       <AiConfirmation
-        v-if="message.approval"
+        v-if="useMessageLevelApproval"
         :approval="message.approval"
         :state="message.approvalState || 'pending'"
         class="message-confirmation"
-        :class="'danger-' + (message.approval.danger_level || 'medium')"
+        :class-name="'danger-' + (message.approval.danger_level || 'medium')"
+        :extra-class="{ 'confirmation-collapsed': message.approvalState === 'approved' || message.approvalState === 'rejected' }"
       >
-        <div class="confirmation-request">
-          <div class="confirmation-header">
+        <!-- 已确认/已拒绝：折叠显示，只保留一行状态标签 -->
+        <template v-if="message.approvalState === 'approved' || message.approvalState === 'rejected'">
+          <div class="confirmation-result-inline">
             <span class="confirmation-tool-badge" :class="'badge-' + (message.approval.danger_level || 'medium')">
               {{ message.approval.tool_name || '工具' }}
             </span>
-            <span class="confirmation-title">{{ message.approval.title || '确认操作' }}</span>
+            <el-tag v-if="message.approvalState === 'approved'" type="success" size="small">已确认</el-tag>
+            <el-tag v-else-if="message.approvalState === 'rejected'" type="danger" size="small">已拒绝</el-tag>
           </div>
-          <div v-if="message.approval.command" class="confirmation-command">
-            <code>{{ message.approval.command }}</code>
+        </template>
+        <!-- 待审批：完整展示 -->
+        <template v-else>
+          <div class="confirmation-request">
+            <div class="confirmation-header">
+              <span class="confirmation-tool-badge" :class="'badge-' + (message.approval.danger_level || 'medium')">
+                {{ message.approval.tool_name || '工具' }}
+              </span>
+              <span class="confirmation-title">{{ message.approval.title || '确认操作' }}</span>
+            </div>
+            <div v-if="message.approval.command" class="confirmation-command">
+              <code>{{ message.approval.command }}</code>
+            </div>
+            <div v-if="message.approval.description" class="confirmation-desc">
+              {{ message.approval.description }}
+            </div>
           </div>
-          <div v-if="message.approval.description" class="confirmation-desc">
-            {{ message.approval.description }}
+          <!-- CONFIRM_WITH_INPUT 模式：显示输入框 -->
+          <div v-if="message.approval.action === 'confirm_with_input'" class="confirmation-input-area">
+            <el-input
+              v-model="approvalInputValues['message']"
+              :placeholder="message.approval.input_placeholder || '请输入值...'"
+              size="small"
+              clearable
+              @keyup.enter="handleApprove()"
+            />
           </div>
-        </div>
-        <!-- CONFIRM_WITH_INPUT 模式：显示输入框 -->
-        <div v-if="(message.approvalState || 'pending') === 'pending' && message.approval.action === 'confirm_with_input'" class="confirmation-input-area">
-          <el-input
-            v-model="approvalInputValue"
-            :placeholder="message.approval.input_placeholder || '请输入值...'"
-            size="small"
-            clearable
-            @keyup.enter="handleApprove"
-          />
-        </div>
-        <div v-if="(message.approvalState || 'pending') === 'pending'" class="confirmation-actions">
-          <button class="confirmation-action confirm-reject" @click="emit('reject', message)">
-            拒绝
-          </button>
-          <button
-            class="confirmation-action confirm-approve"
-            :class="'approve-' + (message.approval.danger_level || 'medium')"
-            @click="handleApprove"
-          >
-            {{ message.approval.action === 'confirm_with_input' ? '确认并提交' : '确认执行' }}
-          </button>
-        </div>
-        <div v-else-if="message.approvalState === 'approved'" class="confirmation-result">
-          <el-tag type="success" size="small">已确认，等待执行...</el-tag>
-        </div>
-        <div v-else-if="message.approvalState === 'rejected'" class="confirmation-result">
-          <el-tag type="danger" size="small">已拒绝</el-tag>
-        </div>
+          <div class="confirmation-actions">
+            <button class="confirmation-action confirm-reject" @click="emit('reject', message)">
+              拒绝
+            </button>
+            <button
+              class="confirmation-action confirm-approve"
+              :class="'approve-' + (message.approval.danger_level || 'medium')"
+              @click="handleApprove()"
+            >
+              {{ message.approval.action === 'confirm_with_input' ? '确认并提交' : '确认执行' }}
+            </button>
+          </div>
+        </template>
       </AiConfirmation>
 
       <AiContext
-        v-if="message.context && (message.context.usedTokens || message.context.percentage)"
+        v-if="!isStreaming && !hasPendingApprovals && message.context && (message.context.usedTokens || message.context.percentage)"
         class="message-context"
       >
         <div class="context-info">
@@ -1032,6 +1102,21 @@ function handleMessageClick() {
 
 .message-confirmation {
   margin-top: 12px;
+}
+
+/* 已确认/已拒绝的审批面板折叠为紧凑一行 */
+.message-confirmation.confirmation-collapsed {
+  padding: 4px 10px;
+  gap: 0;
+  border-color: var(--border);
+  background-color: transparent;
+}
+
+.confirmation-result-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
 }
 
 .confirm-reject {

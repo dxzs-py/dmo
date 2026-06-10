@@ -99,10 +99,11 @@ def interrupt_for_approval(
     description: str,
     action: str = ApprovalAction.CONFIRM,
     *,
-    command: str = "",
+    operation: str = "",
     danger_level: str = "medium",
     input_placeholder: str = "",
     extra: Optional[Dict[str, Any]] = None,
+    command: str = "",  # deprecated: 向后兼容，自动赋值给 operation
 ) -> Any:
     """通用人工审批中断函数
 
@@ -124,12 +125,11 @@ def interrupt_for_approval(
             approval = interrupt_for_approval(...)  # ❌ 在 asyncio.to_thread 中调用
 
     使用方式：
-        # 在工具的 _run 方法中调用
         approval = interrupt_for_approval(
             tool_name="shell_exec",
             title="确认执行命令",
             description="Agent 请求执行以下非白名单命令",
-            command="rm -rf /tmp/test",
+            operation="rm -rf /tmp/test",
         )
         if approval is True:
             # 用户确认
@@ -137,20 +137,25 @@ def interrupt_for_approval(
             # 用户拒绝
 
     Args:
-        tool_name: 工具名称（如 "shell_exec", "db_query" 等）
+        tool_name: 工具名称（如 "shell_exec", "fs_write_file" 等）
         title: 审批标题（前端显示）
         description: 审批描述（前端显示）
         action: 审批动作类型，默认 CONFIRM（确认/取消）
-        command: 可选，要执行的命令或操作（前端代码块显示）
+        operation: 待审批的操作描述（前端代码块显示），如 shell 命令、文件路径等
         danger_level: 危险等级 "low"/"medium"/"high"
         input_placeholder: CONFIRM_WITH_INPUT 模式下输入框的占位文本
         extra: 工具自定义数据（随 interrupt 传递，resume 时原样返回）
+        command: deprecated，请使用 operation（自动赋值给 operation）
 
     Returns:
         True: 用户确认
         False/其他: 用户拒绝
         str: 当 action=CONFIRM_WITH_INPUT 时，返回用户输入的值
     """
+    # 向后兼容：command 自动赋值给 operation
+    if command and not operation:
+        operation = command
+
     from langgraph.types import interrupt
 
     context = {
@@ -159,7 +164,7 @@ def interrupt_for_approval(
         "title": title,
         "description": description,
         "action": action,
-        "command": command,
+        "operation": operation,      # 统一字段名（兼容旧 command）
         "danger_level": danger_level,
     }
     if input_placeholder:
@@ -167,7 +172,7 @@ def interrupt_for_approval(
     if extra:
         context["extra"] = extra
 
-    logger.info(f"interrupt_for_approval: tool={tool_name}, title={title}, danger={danger_level}")
+    logger.info(f"interrupt_for_approval: tool={tool_name}, title={title}, danger={danger_level}, operation={operation[:80]}")
 
     result = interrupt(context)
 
@@ -177,6 +182,22 @@ def interrupt_for_approval(
     else:
         # 确认/取消模式：返回 True/False
         return result is True
+
+
+def reject_sync_approval(tool_name: str, detail: str = "") -> str:
+    """同步模式下无法使用 interrupt，返回统一的拒绝消息
+
+    当工具在 _run（同步）模式下需要审批时，应调用此函数返回拒绝消息，
+    而非手写拒绝文本。这样保证所有工具的拒绝消息格式一致。
+
+    Args:
+        tool_name: 工具名称
+        detail: 操作详情（如命令、文件路径等）
+    """
+    msg = f"操作需要用户确认，但当前为同步执行模式，无法请求审批。"
+    if detail:
+        msg += f" 详情: {detail}"
+    return msg
 
 
 def is_approval_interrupt(value: Any) -> bool:

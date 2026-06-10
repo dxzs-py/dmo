@@ -91,16 +91,24 @@ const handleContinueResearch = (taskId) => {
 }
 
 const handleApprove = (payload) => {
-  // payload 可能是 message 对象（CONFIRM 模式）或 { message, user_input }（CONFIRM_WITH_INPUT 模式）
-  if (payload && payload.user_input !== undefined) {
-    chatStore.approveCommand(payload.user_input)
+  // payload 格式：
+  // 1. 消息级审批（旧）: { message, approval, user_input? }
+  // 2. ToolCall 级审批（新）: { message, approval, user_input? }
+  // 3. 纯 message 对象（极旧兼容）
+  const approval = payload?.approval || payload?.message?.approval
+  if (!approval) return
+  const userInput = payload?.user_input
+  if (userInput !== undefined) {
+    chatStore.approveCommand(approval, userInput)
   } else {
-    chatStore.approveCommand()
+    chatStore.approveCommand(approval)
   }
 }
 
-const handleReject = (_message) => {
-  chatStore.rejectCommand()
+const handleReject = (payload) => {
+  const approval = payload?.approval || payload?.message?.approval
+  if (!approval) return
+  chatStore.rejectCommand(approval)
 }
 
 const loadCurrentSessionDetail = async () => {
@@ -111,6 +119,8 @@ const loadCurrentSessionDetail = async () => {
       await sessionStore.loadSessionDetail(sessionId)
     }
     await loadSessionAttachments(sessionId)
+    // 页面刷新后从已加载的 toolCalls 中恢复 pendingApprovals Map
+    chatStore.restorePendingApprovals(sessionId)
   } else {
     clearAttachments()
   }

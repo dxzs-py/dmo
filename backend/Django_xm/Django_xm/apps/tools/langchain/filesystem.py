@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 import logging
 
 from Django_xm.apps.tools.errors import StandardToolResult, ToolStatus, TOOL_VERSION
-from Django_xm.apps.tools.base import AsyncToolMixin, interrupt_for_approval
+from Django_xm.apps.tools.base import AsyncToolMixin, interrupt_for_approval, reject_sync_approval
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,12 @@ class ResearchFileSystem:
         self.thread_id = thread_id
 
         if base_path is None:
-            base_path = os.path.join(get_data_dir(), "research")
+            from django.conf import settings as django_settings
+            data_dir = str(getattr(django_settings, 'DATA_DIR', None) or os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+                "data"
+            ))
+            base_path = os.path.join(data_dir, "research")
 
         self.base_path = Path(base_path)
         self.workspace_path = self.base_path / thread_id
@@ -66,9 +71,19 @@ class ResearchFileSystem:
         """判断是否为绝对路径"""
         return os.path.isabs(path) or Path(path).is_absolute()
 
+    def _is_path_traversal(self, path: str) -> bool:
+        """检查路径是否包含遍历攻击（如 ../ 或 URL 编码的 %2e%2e）"""
+        # 检查 .. 组件
+        resolved = Path(path).resolve()
+        # 如果路径中包含 ..，resolve 后的路径会"跳出"原始路径
+        # 对于相对路径，检查 resolve 后是否还在 workspace 内
+        if ".." in path or "%2e" in path.lower() or "%2E" in path:
+            return True
+        return False
+
     def write_file(self, relative_path: str, content: str, subdirectory: str = "notes", **kwargs) -> str:
-        if ".." in relative_path:
-            return "错误：不允许使用 .. 路径"
+        if self._is_path_traversal(relative_path):
+            return "错误：不允许使用路径遍历（.. 或编码绕过）"
 
         # 绝对路径直接写入，不经过研究文件系统
         if self._is_absolute_path(relative_path):
@@ -106,8 +121,8 @@ class ResearchFileSystem:
             return error_msg
 
     def read_file(self, relative_path: str, subdirectory: str = "notes") -> str:
-        if ".." in relative_path:
-            return "错误：不允许使用 .. 路径"
+        if self._is_path_traversal(relative_path):
+            return "错误：不允许使用路径遍历（.. 或编码绕过）"
 
         # 绝对路径直接读取
         if self._is_absolute_path(relative_path):
@@ -228,23 +243,23 @@ def get_filesystem(thread_id: str) -> ResearchFileSystem:
 class FsWriteFileInput(BaseModel):
     relative_path: str = Field(description="文件路径，支持相对路径（如'plan.md'、'notes/intro.md'）和绝对路径（如'D:\\docs\\report.md'）")
     content: str = Field(description="要写入的内容")
-    thread_id: str = Field(default="default", description="线程ID，用于隔离不同研究任务的文件")
+    thread_id: str = Field(description="线程ID，用于隔离不同研究任务的文件（必填）")
 
 
 class FsReadFileInput(BaseModel):
     relative_path: str = Field(description="文件路径，支持相对路径和绝对路径")
-    thread_id: str = Field(default="default", description="线程ID")
+    thread_id: str = Field(description="线程ID（必填）")
 
 
 class FsListFilesInput(BaseModel):
     subdirectory: str = Field(default="notes", description="子目录名称（plans/notes/reports/temp）")
-    thread_id: str = Field(default="default", description="线程ID")
+    thread_id: str = Field(description="线程ID（必填）")
 
 
 class FsSearchFilesInput(BaseModel):
     keyword: str = Field(description="要搜索的关键词")
+    thread_id: str = Field(description="线程ID（必填）")
     subdirectory: str = Field(default="notes", description="要搜索的子目录")
-    thread_id: str = Field(default="default", description="线程ID")
 
 
 class FsWriteFileTool(AsyncToolMixin, BaseTool):
@@ -256,18 +271,17 @@ class FsWriteFileTool(AsyncToolMixin, BaseTool):
         "适用场景：需要持久化存储中间结果、研究笔记、计划或报告，跨对话保存数据。"
         "不适用：读取文件（应使用 fs_read_file）、搜索文件内容（应使用 fs_search_files）。"
         "参数：relative_path-文件路径（支持相对路径如'plan.md'和绝对路径如'D:\\docs\\report.md'，必填），"
-        "content-要写入的文件内容（必填），thread_id-线程ID（用于隔离不同研究任务，默认'default'）。"
+        "content-要写入的文件内容（必填），thread_id-线程ID（用于隔离不同研究任务，必填）。"
         "边界：禁止使用'..'路径穿越；相对路径自动根据路径匹配子目录（plans/notes/reports/temp）。"
     )
     args_schema: type[BaseModel] = FsWriteFileInput
 
-    def _run(self, relative_path: str, content: str, thread_id: str = "default") -> str:
+    def _run(self, relative_path: str, content: str, thread_id: str) -> str:
         """同步执行入口（绝对路径写入需要审批，同步模式下拒绝）"""
         fs = get_filesystem(thread_id)
         if os.path.isabs(relative_path):
-            # 同步模式无法使用 interrupt，直接拒绝
             logger.warning(f"fs_write_file: 绝对路径写入在同步模式下无法请求审批: {relative_path}")
-            return f"绝对路径写入需要用户确认，但当前为同步执行模式，无法请求审批。路径: {relative_path}"
+            return reject_sync_approval("fs_write_file", relative_path)
         subdirectory = "notes"
         if "plans" in relative_path:
             subdirectory = "plans"
@@ -275,7 +289,7 @@ class FsWriteFileTool(AsyncToolMixin, BaseTool):
             subdirectory = "reports"
         return fs.write_file(relative_path, content, subdirectory)
 
-    async def _arun(self, relative_path: str, content: str, thread_id: str = "default", **kwargs) -> str:
+    async def _arun(self, relative_path: str, content: str, thread_id: str, **kwargs) -> str:
         """异步执行入口：在异步上下文中调用 interrupt()，确保 LangGraph 上下文正确传播"""
         fs = get_filesystem(thread_id)
         # 绝对路径写入需要用户确认（可能覆盖系统文件）
@@ -283,8 +297,8 @@ class FsWriteFileTool(AsyncToolMixin, BaseTool):
             approval = interrupt_for_approval(
                 tool_name="fs_write_file",
                 title="确认写入文件",
-                description=f"Agent 请求写入绝对路径文件，该操作可能覆盖已有文件，是否允许？",
-                command=f"write: {relative_path} ({len(content)} 字符)",
+                description=f"Agent 请求写入绝对路径文件，可能覆盖已有文件。文件: {relative_path}，内容长度: {len(content)} 字符",
+                operation=relative_path,
                 danger_level="high",
                 extra={"relative_path": relative_path, "content_length": len(content)},
             )
@@ -309,12 +323,12 @@ class FsReadFileTool(AsyncToolMixin, BaseTool):
         "读取研究文件系统中指定文件的内容。"
         "适用场景：需要查看之前保存的文件内容、回顾研究笔记或计划。"
         "不适用：写入文件（应使用 fs_write_file）、浏览目录（应使用 fs_list_files）。"
-        "参数：relative_path-相对路径文件名（必填），thread_id-线程ID（默认'default'）。"
+        "参数：relative_path-相对路径文件名（必填），thread_id-线程ID（必填）。"
         "边界：禁止使用'..'路径穿越；文件不存在时返回错误提示。"
     )
     args_schema: type[BaseModel] = FsReadFileInput
 
-    def _run(self, relative_path: str, thread_id: str = "default") -> str:
+    def _run(self, relative_path: str, thread_id: str) -> str:
         fs = get_filesystem(thread_id)
         result = fs.read_file(relative_path)
         # 判断是否为错误结果
@@ -336,12 +350,12 @@ class FsListFilesTool(AsyncToolMixin, BaseTool):
         "适用场景：需要浏览文件系统中的文件列表、确认文件是否已保存、查看目录结构。"
         "不适用：读取文件内容（应使用 fs_read_file）、搜索文件内容（应使用 fs_search_files）。"
         "参数：subdirectory-子目录名称（plans/notes/reports/temp，默认'notes'），"
-        "thread_id-线程ID（默认'default'）。"
+        "thread_id-线程ID（必填）。"
         "边界：目录不存在时返回提示信息。"
     )
     args_schema: type[BaseModel] = FsListFilesInput
 
-    def _run(self, subdirectory: str = "notes", thread_id: str = "default") -> str:
+    def _run(self, thread_id: str, subdirectory: str = "notes") -> str:
         fs = get_filesystem(thread_id)
         return fs.list_files(subdirectory)
 
@@ -355,12 +369,12 @@ class FsSearchFilesTool(AsyncToolMixin, BaseTool):
         "适用场景：需要在文件系统中查找包含特定内容的文件、定位相关笔记或报告。"
         "不适用：列出所有文件（应使用 fs_list_files）、读取文件内容（应使用 fs_read_file）。"
         "参数：keyword-要搜索的关键词（必填，不区分大小写），"
-        "subdirectory-要搜索的子目录（默认'notes'），thread_id-线程ID（默认'default'）。"
+        "subdirectory-要搜索的子目录（默认'notes'），thread_id-线程ID（必填）。"
         "边界：递归搜索子目录，仅匹配文本文件内容。"
     )
     args_schema: type[BaseModel] = FsSearchFilesInput
 
-    def _run(self, keyword: str, subdirectory: str = "notes", thread_id: str = "default") -> str:
+    def _run(self, keyword: str, thread_id: str, subdirectory: str = "notes") -> str:
         fs = get_filesystem(thread_id)
         return fs.search_files(keyword, subdirectory)
 

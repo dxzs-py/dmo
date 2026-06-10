@@ -485,10 +485,6 @@ class Settings(ProjectSettings):
         return self.vector_store_path
 
     @property
-    def documents_dir(self) -> str:
-        return self.data_documents_path
-
-    @property
     def uploads_dir(self) -> str:
         return self.data_uploads_path
 

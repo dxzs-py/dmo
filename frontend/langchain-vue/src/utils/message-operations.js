@@ -1,8 +1,17 @@
 function _findMatchingToolCall(toolCalls, data) {
   if (!toolCalls || toolCalls.length === 0) return -1
   if (data.id) {
+    // 优先按 id 精确匹配
     const idx = toolCalls.findIndex(t => t.id === data.id)
     if (idx >= 0) return idx
+    // id 不匹配时，仅匹配同 name 但尚未拥有 id 的条目
+    // （处理 tool_call_chunks 先到无 id、后到有 id 的场景）
+    // 不会匹配已有不同 id 的条目，避免同名不同 id 的 tool_call 互相覆盖
+    if (data.name) {
+      const nameIdx = toolCalls.findIndex(t => t.name === data.name && !t.id && !t.result)
+      if (nameIdx >= 0) return nameIdx
+    }
+    return -1
   }
   if (data.name) {
     const idx = toolCalls.findIndex(t => t.name === data.name && !t.result)
@@ -65,12 +74,81 @@ function _updateOrAddToolResultInMessage(message, data) {
   }
 }
 
+/**
+ * 匹配缓存的待审批数据到 toolCall（解决审批事件先于 tool 事件到达的时序问题）
+ *
+ * 当 updates 模式的 approval 事件先于 messages 模式的 tool 事件到达时，
+ * setApprovalToToolCall 找不到 toolCall，会将审批数据缓存到 _pendingApprovals。
+ * 本函数在 toolCall 被添加后调用，将缓存的审批数据匹配到对应的 toolCall。
+ */
+function _matchPendingApprovals(message, data) {
+  if (!message._pendingApprovals || message._pendingApprovals.length === 0) return
+  if (!message.toolCalls || message.toolCalls.length === 0) return
+
+  const _getCmd = (t) => t.parameters?.command || t.args?.command
+  const _getToolName = (t) => t.name || t.tool_name || t.function?.name
+
+  const remaining = []
+  for (const { toolCallId, approvalData } of message._pendingApprovals) {
+    let matched = null
+
+    // 0. llm_tool_call_id 精确匹配（后端注入的 LLM tool_call.id，最可靠）
+    if (approvalData?.llm_tool_call_id) {
+      matched = message.toolCalls.find(t => t.id === approvalData.llm_tool_call_id)
+    }
+    // 1. 按 id 精确匹配（interrupt.id）
+    if (!matched) {
+      matched = message.toolCalls.find(t => t.id === toolCallId)
+    }
+    // 2. 按 toolName + operation 内容匹配
+    if (!matched) {
+      const _op = approvalData?.operation || approvalData?.command
+      if (approvalData?.tool_name && _op) {
+        matched = message.toolCalls.find(t =>
+          _getToolName(t) === approvalData.tool_name &&
+          (_getCmd(t) === _op || Object.values(t.parameters || {}).some(v => String(v) === _op)) &&
+          !t.approval
+        )
+      }
+    }
+    // 3. 按 toolName 匹配（最宽松，取最新未审批的）
+    if (!matched && approvalData?.tool_name) {
+      for (let i = message.toolCalls.length - 1; i >= 0; i--) {
+        const t = message.toolCalls[i]
+        if (_getToolName(t) === approvalData.tool_name && !t.approval) {
+          matched = t
+          break
+        }
+      }
+    }
+
+    if (matched) {
+      matched.approval = approvalData
+      if (approvalData?.state) {
+        matched.status = approvalData.state === 'pending' ? 'pending_approval' : matched.status
+      }
+    } else {
+      remaining.push({ toolCallId, approvalData })
+    }
+  }
+
+  if (remaining.length === 0) {
+    delete message._pendingApprovals
+  } else {
+    message._pendingApprovals = remaining
+  }
+}
+
 export function addOrUpdateToolCallInLastMessage(sessions, sessionId, data) {
   const result = getLastAssistantMessage(sessions, sessionId)
   if (!result) return
   _addOrUpdateToolCallInMessage(result.message, data)
   const ver = result.message.versions?.[result.message.currentVersion]
   if (ver) _addOrUpdateToolCallInMessage(ver, data)
+
+  // 检查是否有缓存的待匹配审批数据（时序问题：approval 事件可能先于 tool 事件到达）
+  _matchPendingApprovals(result.message, data)
+  if (ver) _matchPendingApprovals(ver, data)
 }
 
 export function updateOrAddToolResultInLastMessage(sessions, sessionId, data) {

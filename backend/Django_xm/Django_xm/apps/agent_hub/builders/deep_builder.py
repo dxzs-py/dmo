@@ -547,7 +547,9 @@ class DeepAgentBuilder:
                 "..", "..", "..", "..", "data",
             )
         )
-        session_id = getattr(config, 'session_id', 'default') or 'default'
+        session_id = getattr(config, 'session_id', None)
+        if not session_id:
+            raise ValueError("深度研究任务缺少 session_id，无法创建工作目录")
         work_dir = os.path.join(data_dir, "research", session_id)
         os.makedirs(work_dir, exist_ok=True)
         sandbox_dir = os.path.join(work_dir, "sandbox")

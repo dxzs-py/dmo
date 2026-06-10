@@ -106,11 +106,6 @@ class ProjectSettings(BaseSettings):
         description="数据存储根目录"
     )
 
-    data_documents_path: str = Field(
-        default="data/documents",
-        description="文档存储路径"
-    )
-
     data_uploads_path: str = Field(
         default="data/uploads",
         description="上传文件路径"

@@ -25,7 +25,57 @@ export const useChatStore = defineStore('chat', () => {
   const researchTaskId = ref(null)
   const researchContextInfo = ref(null)  // { taskId, query } 持久化研究上下文标识，不随消息发送清空
   const attachmentProcessing = ref(null)
-  const pendingApproval = ref(null)  // { tool_name, tool_call_id, title, command, description, state }
+  const pendingApprovals = ref(new Map())  // Map<toolCallId, approvalData> 跟踪所有待处理审批
+
+  /**
+   * 共用函数：处理 SSE 流中的 approval 事件
+   * 在 sendMessage、approveCommand、rejectCommand 三处复用
+   *
+   * @param {Object} parsedData - SSE 解析后的 approval.data
+   * @param {string} sessionId - 当前会话 ID
+   * @param {Object} baseApproval - 已有审批数据（用于继承工具/模型配置）
+   */
+  const handleApprovalSSEEvent = (parsedData, sessionId, baseApproval = {}) => {
+    const sessionStore = useSessionStore()
+    const toolCallId = parsedData.tool_call_id || parsedData.interrupt_id || ''
+    const approvalData = {
+      ...parsedData,
+      state: 'pending',
+      use_tools: baseApproval.use_tools ?? true,
+      use_web_search: baseApproval.use_web_search ?? false,
+      use_mcp: baseApproval.use_mcp ?? false,
+      selected_mcp_servers: baseApproval.selected_mcp_servers ?? null,
+      selected_tools: baseApproval.selected_tools ?? null,
+      use_knowledge_base: baseApproval.use_knowledge_base ?? false,
+      selected_knowledge_bases: baseApproval.selected_knowledge_bases ?? [],
+    }
+    pendingApprovals.value.set(toolCallId, approvalData)
+    sessionStore.setApprovalToToolCall(sessionId, toolCallId, approvalData)
+    sessionStore.updateToolCallStatus(sessionId, toolCallId, 'pending_approval', approvalData)
+    sessionStore.setApprovalToLastMessage(sessionId, { ...parsedData, state: 'pending' })
+  }
+
+  /**
+   * 从已加载的消息中恢复 pendingApprovals Map
+   * 页面刷新后 toolCalls 已从后端恢复，但 pendingApprovals 是运行时 Map，需要重建
+   */
+  const restorePendingApprovals = (sessionId) => {
+    const sessionStore = useSessionStore()
+    const session = sessionStore.sessions.find(s => s.id === sessionId)
+    if (!session?.messages) return
+    for (const msg of session.messages) {
+      if (!msg.toolCalls || !Array.isArray(msg.toolCalls)) continue
+      for (const tc of msg.toolCalls) {
+        const approval = tc.approval
+        if (approval && approval.state === 'pending') {
+          const toolCallId = approval.tool_call_id || approval.interrupt_id || tc.id || ''
+          if (toolCallId && !pendingApprovals.value.has(toolCallId)) {
+            pendingApprovals.value.set(toolCallId, approval)
+          }
+        }
+      }
+    }
+  }
 
   const {
     isStreaming,
@@ -213,9 +263,7 @@ export const useChatStore = defineStore('chat', () => {
           },
           setApproval: (data) => {
             // 保存审批数据时同时保存当前请求的工具配置，审批恢复时使用
-            pendingApproval.value = {
-              ...data,
-              state: 'pending',
+            handleApprovalSSEEvent(data, sessionId, {
               use_tools: options.useTools !== false,
               use_web_search: options.use_web_search || false,
               use_mcp: options.useMcp || false,
@@ -223,8 +271,7 @@ export const useChatStore = defineStore('chat', () => {
               selected_tools: options.selectedTools || null,
               use_knowledge_base: options.use_knowledge_base || false,
               selected_knowledge_bases: sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
-            }
-            sessionStore.setApprovalToLastMessage(sessionId, { ...data, state: 'pending' })
+            })
           },
         }
       )
@@ -239,7 +286,7 @@ export const useChatStore = defineStore('chat', () => {
 
       // 审批中断时：将工具调用状态标记为 pending_approval，并保存审批数据
       // 这样刷新后前端能正确显示"等待审批"状态，而非"执行中"
-      if (pendingApproval.value) {
+      if (pendingApprovals.value.size > 0) {
         const session = sessionStore.sessions.find(s => s.id === sessionId)
         if (session && session.messages.length > 0) {
           const lastMsg = session.messages[session.messages.length - 1]
@@ -249,9 +296,12 @@ export const useChatStore = defineStore('chat', () => {
               status: tc.status === 'running' ? 'pending_approval' : tc.status,
             }))
           }
-          // 保存审批数据到消息对象，刷新后能恢复审批 UI
-          lastMsg.approval = pendingApproval.value
-          lastMsg.approvalState = 'pending'
+          // 向后兼容：保存审批数据到消息对象
+          const firstApproval = pendingApprovals.value.values().next().value
+          if (firstApproval) {
+            lastMsg.approval = firstApproval
+            lastMsg.approvalState = 'pending'
+          }
         }
       }
 
@@ -458,7 +508,7 @@ export const useChatStore = defineStore('chat', () => {
     researchTaskId.value = null
     researchContextInfo.value = null
     attachmentProcessing.value = null
-    pendingApproval.value = null
+    pendingApprovals.value.clear()
   }
 
   // 登出时清除聊天状态，防止跨用户数据泄露
@@ -487,21 +537,25 @@ export const useChatStore = defineStore('chat', () => {
     ElMessage.success('消息已删除')
   }
 
-  const approveCommand = async (userInput = null) => {
-    if (!pendingApproval.value) return
-    const approval = pendingApproval.value
-    pendingApproval.value = { ...approval, state: 'approved' }
+  const approveCommand = async (approval, userInput = null) => {
+    if (!approval) return
+    const toolCallId = approval.tool_call_id || approval.interrupt_id || ''
+    const approvalData = pendingApprovals.value.get(toolCallId) || approval
+    if (!approvalData) return
 
-    // 同步更新消息的 approvalState
     const sessionStore = useSessionStore()
     const sessionId = sessionStore.currentSessionId
-    sessionStore.setApprovalToLastMessage(sessionId, { ...approval, state: 'approved' })
+
+    // 更新对应 toolCall 状态为 approved
+    sessionStore.updateToolCallStatus(sessionId, toolCallId, 'approved', approval)
+    // 从 pendingApprovals Map 中移除该审批（已处理完成）
+    pendingApprovals.value.delete(toolCallId)
+    // 向后兼容：更新消息级审批状态
+    sessionStore.setApprovalToLastMessage(sessionId, { ...approvalData, state: 'approved' })
 
     try {
       // 调用审批 API，通过 Command(resume=...) 恢复 Agent 执行
-      // CONFIRM 模式：resume=True
-      // CONFIRM_WITH_INPUT 模式：resume=用户输入的值
-      const interruptId = approval.interrupt_id || approval.tool_call_id || ''
+      const interruptId = approvalData.interrupt_id || approvalData.tool_call_id || ''
       const modelStore = useModelStore()
       const modelConfig = modelStore.getModelConfig()
       const requestBody = {
@@ -516,16 +570,16 @@ export const useChatStore = defineStore('chat', () => {
         temperature: modelConfig.temperature || null,
         max_tokens: modelConfig.max_tokens || null,
         // 传递工具配置，确保审批恢复时使用与原始请求一致的工具集
-        use_tools: approval.use_tools ?? true,
-        use_web_search: approval.use_web_search ?? false,
-        use_mcp: approval.use_mcp ?? false,
-        selected_mcp_servers: approval.selected_mcp_servers ?? null,
-        selected_tools: approval.selected_tools ?? null,
-        use_knowledge_base: approval.use_knowledge_base ?? false,
-        selected_knowledge_bases: approval.selected_knowledge_bases ?? [],
+        use_tools: approvalData.use_tools ?? true,
+        use_web_search: approvalData.use_web_search ?? false,
+        use_mcp: approvalData.use_mcp ?? false,
+        selected_mcp_servers: approvalData.selected_mcp_servers ?? null,
+        selected_tools: approvalData.selected_tools ?? null,
+        use_knowledge_base: approvalData.use_knowledge_base ?? false,
+        selected_knowledge_bases: approvalData.selected_knowledge_bases ?? [],
       }
       // CONFIRM_WITH_INPUT 模式：传递用户输入值
-      if (approval.action === 'confirm_with_input' && userInput !== null) {
+      if (approvalData.action === 'confirm_with_input' && userInput !== null) {
         requestBody.user_input = userInput
       }
 
@@ -561,17 +615,16 @@ export const useChatStore = defineStore('chat', () => {
           try {
             const parsed = JSON.parse(line.slice(6))
             if (parsed.type === 'chunk' && parsed.content) {
-              // 将恢复后的内容追加到最后一条消息
               sessionStore.appendToLastAssistantMessage(sessionId, parsed.content)
             } else if (parsed.type === 'tool') {
-              // 工具调用事件 - 更新消息中的工具信息
               sessionStore.addOrUpdateToolCallToLastMessage(sessionId, parsed.data)
             } else if (parsed.type === 'tool_result') {
-              // 工具结果事件
               sessionStore.updateOrAddToolResultToLastMessage(sessionId, parsed.data)
             } else if (parsed.type === 'reasoning' && parsed.data?.content) {
-              // 推理过程事件
               sessionStore.setReasoningToLastMessage(sessionId, parsed.data)
+            } else if (parsed.type === 'approval' && parsed.data) {
+              // 审批恢复后 agent 又触发新的审批请求，复用共用函数
+              handleApprovalSSEEvent(parsed.data, sessionId, approvalData)
             }
           } catch (e) {
             // 忽略解析错误
@@ -580,7 +633,6 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       isStreaming.value = false
-      pendingApproval.value = null
 
       // 审批完成后更新消息的审批状态
       const session = sessionStore.sessions.find(s => s.id === sessionId)
@@ -590,11 +642,11 @@ export const useChatStore = defineStore('chat', () => {
         if (lastMsg.approval) {
           lastMsg.approval = { ...lastMsg.approval, state: 'approved' }
         }
-        // 将工具调用状态从 pending_approval 更新为 completed
+        // 仅将本次审批的 toolCall 状态更新为 completed，不影响其他 pending_approval 的 toolCall
         if (lastMsg.toolCalls && Array.isArray(lastMsg.toolCalls)) {
           lastMsg.toolCalls = lastMsg.toolCalls.map(tc => ({
             ...tc,
-            status: tc.status === 'pending_approval' ? 'completed' : tc.status,
+            status: tc.id === toolCallId && tc.status === 'approved' ? 'completed' : tc.status,
           }))
         }
       }
@@ -608,24 +660,32 @@ export const useChatStore = defineStore('chat', () => {
     } catch (err) {
       console.error('审批确认失败:', err)
       isStreaming.value = false
-      pendingApproval.value = { ...approval, state: 'pending' }
-      sessionStore.setApprovalToLastMessage(sessionId, { ...approval, state: 'pending' })
+      // 恢复审批状态：重新添加到 pendingApprovals，以便用户重试
+      pendingApprovals.value.set(toolCallId, { ...approvalData, state: 'pending' })
+      sessionStore.updateToolCallStatus(sessionId, toolCallId, 'pending_approval', approval)
+      sessionStore.setApprovalToLastMessage(sessionId, { ...approvalData, state: 'pending' })
     }
   }
 
-  const rejectCommand = async () => {
-    if (!pendingApproval.value) return
-    const approval = pendingApproval.value
-    pendingApproval.value = { ...approval, state: 'rejected' }
+  const rejectCommand = async (approval) => {
+    if (!approval) return
+    const toolCallId = approval.tool_call_id || approval.interrupt_id || ''
+    const approvalData = pendingApprovals.value.get(toolCallId) || approval
+    if (!approvalData) return
 
-    // 同步更新消息的 approvalState
     const sessionStore = useSessionStore()
     const sessionId = sessionStore.currentSessionId
-    sessionStore.setApprovalToLastMessage(sessionId, { ...approval, state: 'rejected' })
+
+    // 更新对应 toolCall 状态为 rejected
+    sessionStore.updateToolCallStatus(sessionId, toolCallId, 'rejected', approval)
+    // 从 pendingApprovals Map 中移除该审批（不再待处理）
+    pendingApprovals.value.delete(toolCallId)
+    // 向后兼容：更新消息级审批状态
+    sessionStore.setApprovalToLastMessage(sessionId, { ...approvalData, state: 'rejected' })
 
     try {
       // 调用审批 API，通过 Command(resume=False) 告知 Agent 用户拒绝
-      const interruptId = approval.interrupt_id || approval.tool_call_id || ''
+      const interruptId = approvalData.interrupt_id || approvalData.tool_call_id || ''
       const modelStore = useModelStore()
       const modelConfig = modelStore.getModelConfig()
       const response = await fetch('/api/v1/chat/approval/', {
@@ -638,21 +698,19 @@ export const useChatStore = defineStore('chat', () => {
           session_id: sessionId,
           interrupt_id: interruptId,
           approved: false,
-          // 传递模型配置，确保审批恢复时使用正确的模型
           provider_id: modelConfig.provider_id || null,
           model_name: modelConfig.model_name || null,
           use_deep_thinking: modelStore.thinkingEnabled,
           special_params: modelConfig.special_params ? { ...modelConfig.special_params } : null,
           temperature: modelConfig.temperature || null,
           max_tokens: modelConfig.max_tokens || null,
-          // 传递工具配置，确保审批恢复时使用与原始请求一致的工具集
-          use_tools: approval.use_tools ?? true,
-          use_web_search: approval.use_web_search ?? false,
-          use_mcp: approval.use_mcp ?? false,
-          selected_mcp_servers: approval.selected_mcp_servers ?? null,
-          selected_tools: approval.selected_tools ?? null,
-          use_knowledge_base: approval.use_knowledge_base ?? false,
-          selected_knowledge_bases: approval.selected_knowledge_bases ?? [],
+          use_tools: approvalData.use_tools ?? true,
+          use_web_search: approvalData.use_web_search ?? false,
+          use_mcp: approvalData.use_mcp ?? false,
+          selected_mcp_servers: approvalData.selected_mcp_servers ?? null,
+          selected_tools: approvalData.selected_tools ?? null,
+          use_knowledge_base: approvalData.use_knowledge_base ?? false,
+          selected_knowledge_bases: approvalData.selected_knowledge_bases ?? [],
         }),
       })
 
@@ -661,6 +719,7 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       // 处理 SSE 流式响应（拒绝后 Agent 可能会输出"用户已拒绝"的文本）
+      // 继续读取直到流自然结束
       isStreaming.value = true
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
@@ -680,8 +739,15 @@ export const useChatStore = defineStore('chat', () => {
             const parsed = JSON.parse(line.slice(6))
             if (parsed.type === 'chunk' && parsed.content) {
               sessionStore.appendToLastAssistantMessage(sessionId, parsed.content)
+            } else if (parsed.type === 'tool') {
+              sessionStore.addOrUpdateToolCallToLastMessage(sessionId, parsed.data)
+            } else if (parsed.type === 'tool_result') {
+              sessionStore.updateOrAddToolResultToLastMessage(sessionId, parsed.data)
             } else if (parsed.type === 'reasoning' && parsed.data?.content) {
               sessionStore.setReasoningToLastMessage(sessionId, parsed.data)
+            } else if (parsed.type === 'approval' && parsed.data) {
+              // 拒绝后 agent 又触发新的审批请求，复用共用函数
+              handleApprovalSSEEvent(parsed.data, sessionId, approvalData)
             }
           } catch (e) {
             // 忽略解析错误
@@ -694,13 +760,6 @@ export const useChatStore = defineStore('chat', () => {
       console.error('审批拒绝失败:', err)
       isStreaming.value = false
     }
-
-    // 短暂展示拒绝状态后清除
-    setTimeout(() => {
-      if (pendingApproval.value?.state === 'rejected') {
-        pendingApproval.value = null
-      }
-    }, 3000)
   }
 
   return {
@@ -730,9 +789,10 @@ export const useChatStore = defineStore('chat', () => {
     attachmentProcessing,
     deleteMessage,
     deleteMessagePair,
-    pendingApproval,
+    pendingApprovals,
     approveCommand,
     rejectCommand,
+    restorePendingApprovals,
     clearResearchContext,
   }
 })

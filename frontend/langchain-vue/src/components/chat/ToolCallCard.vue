@@ -22,9 +22,15 @@ const props = defineProps({
   status: {
     type: String,
     default: 'pending',
-    validator: (value) => ['pending', 'running', 'completed', 'failed', 'pending_approval'].includes(value)
+    validator: (value) => ['pending', 'running', 'completed', 'failed', 'pending_approval', 'approved', 'rejected'].includes(value)
+  },
+  toolCall: {
+    type: Object,
+    default: null
   }
 })
+
+const emit = defineEmits(['approve', 'reject'])
 
 // 判断是否为 Skill 调用
 const isSkillCall = computed(() => props.toolName.startsWith('skill_'))
@@ -105,10 +111,56 @@ const formatContent = (content) => {
   }
   return String(content)
 }
+
+// 审批相关
+const approvalData = computed(() => props.toolCall?.approval || null)
+
+const isPendingApproval = computed(() => props.status === 'pending_approval' && approvalData.value)
+
+const dangerLevel = computed(() => approvalData.value?.danger_level || 'low')
+
+const dangerLevelLabel = computed(() => {
+  const map = { low: '低风险', medium: '中风险', high: '高风险' }
+  return map[dangerLevel.value] || '低风险'
+})
+
+const dangerLevelTagType = computed(() => {
+  const map = { low: 'primary', medium: 'warning', high: 'danger' }
+  return map[dangerLevel.value] || 'primary'
+})
+
+const approvalBorderColor = computed(() => {
+  if (props.status !== 'pending_approval') return ''
+  const map = {
+    medium: 'var(--el-color-warning)',
+    high: 'var(--el-color-danger)',
+    low: 'var(--el-color-primary)'
+  }
+  return map[dangerLevel.value] || ''
+})
+
+const approvalInputValue = ref('')
+
+const isConfirmWithInput = computed(() => approvalData.value?.action === 'confirm_with_input')
+
+// 审批操作展示
+const operationText = computed(() => approvalData.value?.operation || approvalData.value?.command || '')
+const operationLabel = computed(() => {
+  const map = {
+    shell_exec: '命令',
+    fs_write_file: '文件路径',
+    file_reader: '文件路径',
+    agent_cleanup: '操作',
+  }
+  return map[approvalData.value?.tool_name] || '操作'
+})
 </script>
 
 <template>
-  <div :class="['tool-call-card', `tool-call-card--${status}`, { 'tool-call-card--skill': isSkillCall }]">
+  <div
+    :class="['tool-call-card', `tool-call-card--${status}`, { 'tool-call-card--skill': isSkillCall }]"
+    :style="approvalBorderColor ? { borderColor: approvalBorderColor } : {}"
+  >
     <div class="tool-call-header" @click="isExpanded = !isExpanded">
       <div class="tool-call-left">
         <el-icon class="status-icon" :class="`status-${status}`">
@@ -117,7 +169,9 @@ const formatContent = (content) => {
         <div class="tool-info">
           <span class="tool-name">{{ toolName }}</span>
           <el-tag v-if="isSkillCall && skillModeLabel" size="small" :type="skillModeLabel === '管线' ? 'primary' : skillModeLabel === '顾问' ? 'success' : 'warning'" effect="plain">{{ skillModeLabel }}</el-tag>
-          <el-tag :type="statusType" size="small">{{ statusText }}</el-tag>
+          <el-tag v-if="status === 'approved'" size="small" type="success">已确认</el-tag>
+          <el-tag v-else-if="status === 'rejected'" size="small" type="danger">已拒绝</el-tag>
+          <el-tag v-else :type="statusType" size="small">{{ statusText }}</el-tag>
         </div>
       </div>
       <el-icon class="expand-icon" :class="{ 'rotated': isExpanded }">
@@ -153,6 +207,39 @@ const formatContent = (content) => {
           <pre v-else class="section-content">{{ formatContent(output) }}</pre>
         </div>
       </template>
+
+      <!-- 审批面板 -->
+      <div v-if="isPendingApproval" class="approval-panel">
+        <div class="approval-panel__header">
+          <span class="approval-panel__title">审批确认</span>
+          <el-tag size="small" :type="dangerLevelTagType" effect="dark">{{ dangerLevelLabel }}</el-tag>
+        </div>
+        <div v-if="approvalData.title" class="approval-panel__title-text">{{ approvalData.title }}</div>
+        <div v-if="approvalData.description" class="approval-panel__desc">{{ approvalData.description }}</div>
+        <div v-if="operationText" class="approval-panel__command">
+          <span class="approval-panel__command-label">{{ operationLabel }}</span>
+          <pre class="approval-panel__code">{{ operationText }}</pre>
+        </div>
+        <div v-if="isConfirmWithInput" class="approval-panel__input">
+          <el-input
+            v-model="approvalInputValue"
+            :placeholder="approvalData.input_placeholder || '请输入值...'"
+            size="small"
+            clearable
+            @keyup.enter="emit('approve', { ...toolCall, _user_input: approvalInputValue })"
+          />
+        </div>
+        <div class="approval-panel__actions">
+          <el-button type="danger" size="small" @click.stop="emit('reject', toolCall)">拒绝</el-button>
+          <el-button
+            type="primary"
+            size="small"
+            @click.stop="emit('approve', isConfirmWithInput ? { ...toolCall, _user_input: approvalInputValue } : toolCall)"
+          >
+            {{ isConfirmWithInput ? '确认并提交' : '确认执行' }}
+          </el-button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -176,6 +263,18 @@ const formatContent = (content) => {
 
 .tool-call-card--running {
   border-left: 3px solid var(--el-color-warning);
+}
+
+.tool-call-card--pending_approval {
+  border-left: 3px solid var(--el-color-info);
+}
+
+.tool-call-card--approved {
+  border-left: 3px solid var(--el-color-success);
+}
+
+.tool-call-card--rejected {
+  border-left: 3px solid var(--el-color-danger);
 }
 
 .tool-call-card--skill {
@@ -304,5 +403,87 @@ const formatContent = (content) => {
   max-height: 120px;
   font-size: 12px;
   color: var(--el-text-color-secondary);
+}
+
+.status-icon.status-pending_approval {
+  color: var(--el-color-info);
+}
+
+.status-icon.status-approved {
+  color: var(--el-color-success);
+}
+
+.status-icon.status-rejected {
+  color: var(--el-color-danger);
+}
+
+/* 审批面板 */
+.approval-panel {
+  margin-top: 12px;
+  padding: 12px;
+  background-color: var(--el-fill-color-lighter);
+  border-radius: 6px;
+  border: 1px solid var(--el-border-color-light);
+}
+
+.approval-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.approval-panel__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.approval-panel__desc {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+.approval-panel__command {
+  margin-bottom: 12px;
+}
+
+.approval-panel__command-label {
+  display: inline-block;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 4px;
+}
+
+.approval-panel__code {
+  background-color: var(--el-bg-color-page);
+  padding: 10px 12px;
+  border-radius: 4px;
+  font-family: 'Courier New', Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+  color: var(--el-text-color-primary);
+}
+
+.approval-panel__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.approval-panel__title-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+  margin-bottom: 6px;
+}
+
+.approval-panel__input {
+  margin-bottom: 10px;
 }
 </style>

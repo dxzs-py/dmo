@@ -1,5 +1,5 @@
 <template>
-  <div v-if="shouldShow" class="ai-confirmation" :class="className">
+  <div v-if="shouldShow" class="ai-confirmation" :class="[className, extraClass]">
     <slot></slot>
   </div>
 </template>
@@ -19,12 +19,16 @@ const props = defineProps({
   className: {
     type: String,
     default: ''
+  },
+  extraClass: {
+    type: [String, Object, Array],
+    default: ''
   }
 })
 
 const shouldShow = computed(() => {
-  return props.approval && 
-         props.state !== 'input-streaming' && 
+  return props.approval &&
+         props.state !== 'input-streaming' &&
          props.state !== 'input-available'
 })
 

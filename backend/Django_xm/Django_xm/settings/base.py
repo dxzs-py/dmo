@@ -261,7 +261,6 @@ APP_NAME = project_cfg.app_name
 APP_VERSION = project_cfg.app_version
 
 DATA_DIR = PROJECT_ROOT / project_cfg.data_dir
-DOCUMENTS_DIR = PROJECT_ROOT / project_cfg.data_documents_path
 INDEXES_DIR = PROJECT_ROOT / app_cfg.vector_store_path
 UPLOADS_DIR = PROJECT_ROOT / project_cfg.data_uploads_path
 
@@ -272,7 +271,7 @@ TOOLS_SKILLS_DIR = TOOLS_DIR / 'skills'
 TOOLS_LANGCHAIN_DIR = TOOLS_DIR / 'langchain'
 TOOLS_MCP_DIR = TOOLS_DIR / 'mcp'
 
-for directory in [DATA_DIR, DOCUMENTS_DIR, INDEXES_DIR, UPLOADS_DIR,
+for directory in [DATA_DIR, UPLOADS_DIR,
                   TOOLS_DIR, TOOLS_SKILLS_DIR, TOOLS_LANGCHAIN_DIR, TOOLS_MCP_DIR,
                   MEDIA_ROOT]:
     directory.mkdir(parents=True, exist_ok=True)
@@ -325,8 +324,9 @@ ATTACHMENT_STORAGE_CRITICAL_THRESHOLD = float(os.environ.get('ATTACHMENT_STORAGE
 ATTACHMENT_DEDUP_ENABLED = os.environ.get('ATTACHMENT_DEDUP_ENABLED', 'true').lower() == 'true'
 ATTACHMENT_MAX_TOTAL_SIZE_MB = int(os.environ.get('ATTACHMENT_MAX_TOTAL_SIZE_MB', 5120))
 
-if ATTACHMENT_ARCHIVE_ENABLED:
-    ATTACHMENT_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+# 归档逻辑未实现，不自动创建空目录；实际实现归档功能时再恢复
+# if ATTACHMENT_ARCHIVE_ENABLED:
+#     ATTACHMENT_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
 
 from celery.schedules import crontab
 

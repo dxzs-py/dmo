@@ -66,6 +66,11 @@ const mergedSelected = computed(() => [
   ...selectedSkills.value,
 ])
 
+// 可选工具总数（用于统计展示）
+const totalSelectable = computed(() =>
+  selectableLangchainTools.value.length + mcpServers.value.length + skills.value.length + skillPackages.value.length,
+)
+
 function splitModelValue(val) {
   const safeVal = Array.isArray(val) ? val : []
   const langchainNames = new Set(langchainTools.value.map(t => t.name))
@@ -175,7 +180,7 @@ const clearLangchain = () => {
   selectedLangChainTools.value = []
 }
 
-const handleDeleteCustomTool = async (tool) => {
+const handleDeleteCustomTool = (tool) => withPopoverLock(async () => {
   try {
     await ElMessageBox.confirm(
       `确定删除自定义工具 "${tool.name}" 吗？`,
@@ -192,9 +197,9 @@ const handleDeleteCustomTool = async (tool) => {
   } catch (e) {
     ElMessage.error('删除失败: ' + (e.response?.data?.message || e.message))
   }
-}
+})
 
-const handleToggleCustomTool = async (tool) => {
+const handleToggleCustomTool = (tool) => withPopoverLock(async () => {
   const newStatus = tool.status === 'active' ? 'disabled' : 'active'
   const label = newStatus === 'active' ? '启用' : '禁用'
   try {
@@ -208,7 +213,7 @@ const handleToggleCustomTool = async (tool) => {
   } catch (e) {
     ElMessage.error(`${label}失败: ` + (e.response?.data?.message || e.message))
   }
-}
+})
 
 // ── MCP Tab 操作 ──
 const systemMcpServers = computed(() => toolsStore.systemMcpServers)
@@ -233,7 +238,7 @@ const clearMcp = () => {
   selectedMcpServers.value = []
 }
 
-const handleDeleteMcpServer = async (name) => {
+const handleDeleteMcpServer = (name) => withPopoverLock(async () => {
   try {
     await ElMessageBox.confirm(
       `确定删除 MCP Server "${name}" 吗？`,
@@ -250,12 +255,12 @@ const handleDeleteMcpServer = async (name) => {
   } catch (e) {
     ElMessage.error('删除失败: ' + (e.response?.data?.message || e.message))
   }
-}
+})
 
 const mcpTestingName = ref(null)
 const mcpTestResult = ref(null)
 
-const handleTestMcpServer = async (name) => {
+const handleTestMcpServer = (name) => withPopoverLock(async () => {
   mcpTestingName.value = name
   mcpTestResult.value = null
   try {
@@ -271,7 +276,7 @@ const handleTestMcpServer = async (name) => {
   } finally {
     mcpTestingName.value = null
   }
-}
+})
 
 const handleEditMcpServer = (srv) => {
   editingMcpServer.value = { ...srv }
@@ -288,7 +293,7 @@ const handleEditSkill = (skill) => {
   showSkillUploadDialog.value = true
 }
 
-const handleToggleMcpServer = async (srv) => {
+const handleToggleMcpServer = (srv) => withPopoverLock(async () => {
   const newStatus = srv.status === 'active' ? 'disabled' : 'active'
   const label = newStatus === 'active' ? '启用' : '禁用'
   try {
@@ -302,7 +307,7 @@ const handleToggleMcpServer = async (srv) => {
   } catch (e) {
     ElMessage.error(`${label}失败: ` + (e.response?.data?.message || e.message))
   }
-}
+})
 
 // ── Skill Tab 操作 ──
 const systemSkills = computed(() => toolsStore.systemSkills)
@@ -330,7 +335,7 @@ const clearSkills = () => {
   selectedSkills.value = []
 }
 
-const handleDeleteSkill = async (skill) => {
+const handleDeleteSkill = (skill) => withPopoverLock(async () => {
   try {
     await ElMessageBox.confirm(
       `确定删除技能 "${skill.name}" 吗？`,
@@ -347,9 +352,9 @@ const handleDeleteSkill = async (skill) => {
   } catch (e) {
     ElMessage.error('删除失败: ' + (e.response?.data?.message || e.message))
   }
-}
+})
 
-const handleToggleSkill = async (skill) => {
+const handleToggleSkill = (skill) => withPopoverLock(async () => {
   const newStatus = skill.status === 'active' ? 'disabled' : 'active'
   const label = newStatus === 'active' ? '启用' : '禁用'
   try {
@@ -363,7 +368,7 @@ const handleToggleSkill = async (skill) => {
   } catch (e) {
     ElMessage.error(`${label}失败: ` + (e.response?.data?.message || e.message))
   }
-}
+})
 
 // ── Skill Packages 操作 ──
 const isSkillPackageSelected = (name) => {
@@ -380,7 +385,7 @@ const toggleSkillPackage = (name) => {
   }
 }
 
-const toggleSkillPackageStatus = async (pkg) => {
+const toggleSkillPackageStatus = (pkg) => withPopoverLock(async () => {
   const newStatus = pkg.status === 'active' ? 'disabled' : 'active'
   try {
     await toolsAPI.toggleSkillPackage({ name: pkg.name, status: newStatus })
@@ -393,9 +398,9 @@ const toggleSkillPackageStatus = async (pkg) => {
   } catch (e) {
     ElMessage.error('操作失败: ' + (e.response?.data?.message || e.message))
   }
-}
+})
 
-const deleteSkillPackage = async (name) => {
+const deleteSkillPackage = (name) => withPopoverLock(async () => {
   try {
     await ElMessageBox.confirm(`确定删除技能包 "${name}"？`, '确认删除', { type: 'warning' })
     await toolsAPI.deleteSkillPackage({ name })
@@ -408,7 +413,7 @@ const deleteSkillPackage = async (name) => {
       ElMessage.error('删除失败: ' + (e.response?.data?.message || e.message))
     }
   }
-}
+})
 
 const viewSkillPackageDetail = async (name) => {
   try {
@@ -490,6 +495,42 @@ const handlePopoverShow = () => {
   else if (activeTab.value === 'skill') { fetchSkills(); fetchSkillPackages() }
 }
 
+// ── Popover 可见性控制 ──
+const popoverVisibleRaw = ref(false)
+const popoverLocked = ref(false)  // 操作期间锁定，防止 popover 被关闭
+
+/** writable computed：锁定时拦截关闭，Element Plus 尝试设 visible=false 时直接拒绝 */
+const popoverVisible = computed({
+  get: () => popoverVisibleRaw.value,
+  set: (val) => {
+    if (!val && popoverLocked.value) return  // 锁定期间拒绝关闭
+    popoverVisibleRaw.value = val
+  },
+})
+
+/** 包裹异步操作（ElMessageBox 等），期间锁定 popover 不关闭 */
+const withPopoverLock = async (fn) => {
+  popoverLocked.value = true
+  try {
+    await fn()
+  } finally {
+    setTimeout(() => { popoverLocked.value = false }, 200)
+  }
+}
+
+// Dialog 打开期间持续锁定 popover（Dialog 关闭时不会误关 popover）
+watch(
+  [showToolUploadDialog, showMcpUploadDialog, showSkillUploadDialog, skillPreviewVisible],
+  ([a, b, c, d]) => {
+    if (a || b || c || d) {
+      popoverLocked.value = true
+    } else {
+      // Dialog 全部关闭后延迟解锁
+      setTimeout(() => { popoverLocked.value = false }, 200)
+    }
+  },
+)
+
 onMounted(() => {
   fetchLangchainTools()
   fetchMcpServers()
@@ -500,11 +541,14 @@ onMounted(() => {
 
 <template>
   <el-popover
+    v-model:visible="popoverVisible"
     placement="top-start"
-    :width="540"
+    :width="560"
     trigger="click"
     :persistent="true"
     :teleported="true"
+    :show-arrow="false"
+    popper-class="tool-selector-popper"
     @show="handlePopoverShow"
   >
     <template #reference>
@@ -543,6 +587,16 @@ onMounted(() => {
             />
           </el-tooltip>
         </div>
+      </div>
+
+      <div v-if="mergedSelected.length > 0" class="selection-summary">
+        <el-icon class="summary-icon"><Check /></el-icon>
+        <span class="summary-text">
+          已选 <strong>{{ mergedSelected.length }}</strong> 个工具
+          <span class="summary-meta">
+            （LangChain {{ selectedLangChainTools.length }} · MCP {{ selectedMcpServers.length }} · Skill {{ selectedSkills.length }}）
+          </span>
+        </span>
       </div>
 
       <el-tabs v-model="activeTab" class="tool-tabs">
@@ -648,9 +702,6 @@ onMounted(() => {
             </el-collapse>
           </div>
 
-          <div v-if="selectedLangChainTools.length > 0" class="tab-footer">
-            已选择 {{ selectedLangChainTools.length }} / {{ selectableLangchainTools.length }} 个工具
-          </div>
         </el-tab-pane>
 
         <!-- ── MCP Tab ── -->
@@ -760,9 +811,6 @@ onMounted(() => {
             </div>
           </div>
 
-          <div v-if="selectedMcpServers.length > 0" class="tab-footer">
-            已选择 {{ selectedMcpServers.length }} / {{ mcpServers.length }} 个服务器
-          </div>
         </el-tab-pane>
 
         <!-- ── Skill Tab ── -->
@@ -879,15 +927,8 @@ onMounted(() => {
             </div>
           </div>
 
-          <div v-if="selectedSkills.length > 0" class="tab-footer">
-            已选择 {{ selectedSkills.length }} / {{ skills.length + skillPackages.length }} 个技能
-          </div>
         </el-tab-pane>
       </el-tabs>
-
-      <div v-if="mergedSelected.length > 0" class="tool-selector-footer">
-        共选择 {{ mergedSelected.length }} 个工具
-      </div>
     </div>
 
     <ToolUploadDialog
@@ -959,16 +1000,18 @@ onMounted(() => {
 }
 
 .tool-selector {
-  max-height: 480px;
   display: flex;
   flex-direction: column;
+  max-height: min(560px, calc(100vh - 120px));
+  overflow: hidden;
 }
 
 .tool-selector-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 4px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
 }
 
 .tool-selector-title {
@@ -989,12 +1032,31 @@ onMounted(() => {
   padding: 0;
 }
 
-.tool-tabs :deep(.el-tabs__header) {
-  margin-bottom: 8px;
+.tool-tabs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
-.tool-tabs :deep(.el-tabs__nav-wrap::after) {
-  height: 1px;
+.tool-tabs :deep(.el-tabs__header) {
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.tool-tabs :deep(.el-tabs__content) {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+}
+
+.tool-tabs :deep(.el-tab-pane) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .tab-label {
@@ -1121,22 +1183,36 @@ onMounted(() => {
   line-height: 1.3;
 }
 
-.tab-footer {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid var(--border);
+.selection-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--sidebar-primary) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sidebar-primary) 25%, transparent);
   font-size: 12px;
-  color: var(--sidebar-primary);
-  text-align: center;
+  color: var(--foreground);
+  line-height: 1.4;
 }
 
-.tool-selector-footer {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-  font-size: 12px;
+.selection-summary .summary-icon {
   color: var(--sidebar-primary);
-  text-align: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.selection-summary .summary-text strong {
+  color: var(--sidebar-primary);
+  font-weight: 600;
+  margin: 0 1px;
+}
+
+.selection-summary .summary-meta {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  margin-left: 4px;
 }
 
 .test-result-inline {
@@ -1156,9 +1232,10 @@ onMounted(() => {
 }
 
 .tool-auto-info {
-  margin-top: 6px;
+  margin-top: 8px;
   border-top: 1px solid var(--border);
   padding-top: 4px;
+  flex-shrink: 0;
 }
 
 .tool-auto-info :deep(.el-collapse) {
@@ -1208,5 +1285,21 @@ onMounted(() => {
 .auto-info-names {
   color: var(--foreground);
   word-break: break-all;
+}
+</style>
+
+<style>
+/* Popper 层级全局样式：避免 scoped 失效 */
+.tool-selector-popper {
+  padding: 12px !important;
+  border-radius: 10px !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
+  max-height: calc(100vh - 80px) !important;
+  overflow: hidden !important;
+}
+
+.tool-selector-popper .el-popper__arrow {
+  display: none !important;
 }
 </style>
