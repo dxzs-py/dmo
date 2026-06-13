@@ -55,6 +55,20 @@ class AgentFactory:
         config.validate()
         config.resolve_defaults()
 
+        # 执行预检（不阻止创建，仅记录问题）
+        try:
+            from .preflight import ExecutionPreflight
+            preflight = ExecutionPreflight()
+            result = await preflight.check(config)
+            if not result.passed:
+                logger.warning(f"[AgentFactory] 预检未通过: {result.issues}")
+                config._preflight_issues = result.issues
+            if result.warnings:
+                for w in result.warnings:
+                    logger.warning(f"[AgentFactory] 预检警告: {w}")
+        except Exception as e:
+            logger.debug(f"[AgentFactory] 预检异常（忽略）: {e}")
+
         builders = cls._get_builders()
         builder = builders.get(config.agent_type)
 

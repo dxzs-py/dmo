@@ -17,7 +17,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
 from Django_xm.apps.ai_engine.services.cost_tracker import TokenDetailTracker
-from Django_xm.apps.research.services.research_runner import REDIS_CHANNEL_PREFIX
+from Django_xm.apps.research.services.research_runner import REDIS_CHANNEL_PREFIX, REDIS_APPROVAL_PREFIX
 from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
 from .stream_helpers import (
     process_stream_chunk,
@@ -385,6 +385,7 @@ class DeepChatService:
         self, query: str, session_id: Optional[str] = None,
         use_web_search: bool = True,
         retriever_tool=None,
+        task_title: Optional[str] = None,
     ) -> str:
         """创建深度研究任务并返回 task_id（不执行研究）"""
         from Django_xm.apps.research.services.cross_app import get_research_task_manager
@@ -410,7 +411,7 @@ class DeepChatService:
         def _create_task():
             task_manager.create_task(
                 thread_id,
-                query,
+                task_title or query,
                 enable_web_search=use_web_search,
                 enable_doc_analysis=retriever_tool is not None,
                 created_by=created_by,
@@ -435,6 +436,7 @@ class DeepChatService:
         max_tokens: Optional[int] = None,
         special_params: Optional[dict] = None,
         continue_task_id: Optional[str] = None,
+        task_title: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         通过 Celery 执行深度研究，使用 Redis Pub/Sub 等待结果
@@ -471,7 +473,7 @@ class DeepChatService:
             def _create_task():
                 task_manager.create_task(
                     thread_id,
-                    query,
+                    task_title or query,
                     enable_web_search=use_web_search,
                     enable_doc_analysis=retriever_tool is not None,
                     created_by=created_by,
@@ -526,9 +528,14 @@ class DeepChatService:
         )
 
         from Django_xm.apps.research.models import ResearchTask
-        ResearchTask.objects.filter(task_id=thread_id).update(
-            celery_task_id=celery_result.id,
-        )
+
+        @sync_to_async(thread_sensitive=True)
+        def _update_celery_task_id():
+            ResearchTask.objects.filter(task_id=thread_id).update(
+                celery_task_id=celery_result.id,
+            )
+
+        await _update_celery_task_id()
 
         result_data = await self._wait_for_research_result(thread_id)
 
@@ -579,6 +586,182 @@ class DeepChatService:
             'task_id': thread_id,
             'session_id': session_id,
             'research_summary': research_summary,
+        }
+
+    async def stream_deep_research_task(
+        self, query: str, session_id: Optional[str] = None,
+        usage_tracker=None, token_detail_tracker=None,
+        use_web_search: bool = True,
+        retriever_tool=None,
+        extra_tools: Optional[list] = None,
+        enable_deep_thinking: bool = False,
+        provider_id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        task_id: Optional[str] = None,
+        knowledge_base_ids: Optional[list] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        special_params: Optional[dict] = None,
+        continue_task_id: Optional[str] = None,
+        task_title: Optional[str] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        通过 Celery 执行深度研究，支持流式审批事件
+
+        与 run_deep_research_task 逻辑一致，但使用 _wait_for_research_result_streaming
+        同时监听研究结果和审批频道。审批事件会以 {"type": "approval", "data": ...}
+        形式 yield，最终研究结果以 {"_is_result": True, ...} 形式 yield。
+        """
+        from Django_xm.apps.research.services.cross_app import get_research_task_manager
+        from Django_xm.tasks.deep_research import run_research_task
+        from asgiref.sync import sync_to_async
+
+        thread_id = task_id or f"research_{uuid.uuid4().hex[:12]}"
+        task_manager = get_research_task_manager()
+
+        if not task_id:
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+
+            created_by = None
+            if self._chat_service.user_id:
+                try:
+                    @sync_to_async(thread_sensitive=True)
+                    def _get_user():
+                        return User.objects.get(id=self._chat_service.user_id)
+
+                    created_by = await _get_user()
+                except User.DoesNotExist:
+                    pass
+
+            @sync_to_async(thread_sensitive=True)
+            def _create_task():
+                task_manager.create_task(
+                    thread_id,
+                    task_title or query,
+                    enable_web_search=use_web_search,
+                    enable_doc_analysis=retriever_tool is not None,
+                    created_by=created_by,
+                    session_id=session_id,
+                )
+
+            await _create_task()
+
+        if knowledge_base_ids:
+            @sync_to_async(thread_sensitive=True)
+            def _update_kb():
+                from Django_xm.apps.research.models import ResearchTask
+                ResearchTask.objects.filter(task_id=thread_id).update(
+                    knowledge_base_ids=knowledge_base_ids,
+                )
+            await _update_kb()
+
+        use_mcp = any(
+            (getattr(t, 'metadata', {}) or {}).get('is_mcp_tool', False)
+            for t in (extra_tools or [])
+        )
+        selected_mcp_servers = []
+        selected_tool_names = []
+        for t in (extra_tools or []):
+            meta = getattr(t, 'metadata', {}) or {}
+            t_name = getattr(t, 'name', '')
+            # 跳过 retriever_tool，它们由 knowledge_base_ids 在 worker 端重建
+            if t_name and t_name not in selected_tool_names and not t_name.startswith('knowledge_base_'):
+                selected_tool_names.append(t_name)
+            server_name = meta.get('mcp_server_name', '')
+            if server_name and server_name not in selected_mcp_servers:
+                selected_mcp_servers.append(server_name)
+
+        celery_result = run_research_task.delay(
+            thread_id=thread_id,
+            query=query,
+            enable_web_search=use_web_search,
+            enable_doc_analysis=retriever_tool is not None,
+            knowledge_base_ids=knowledge_base_ids,
+            user_id=self._chat_service.user_id,
+            use_mcp=use_mcp or bool(selected_mcp_servers),
+            selected_mcp_servers=selected_mcp_servers or None,
+            selected_tools=selected_tool_names or None,
+            provider_id=provider_id,
+            model_name=model_name,
+            enable_deep_thinking=enable_deep_thinking,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            special_params=special_params,
+            continue_task_id=continue_task_id,
+            publish_to_redis=True,
+        )
+
+        from Django_xm.apps.research.models import ResearchTask
+
+        @sync_to_async(thread_sensitive=True)
+        def _update_celery_task_id():
+            ResearchTask.objects.filter(task_id=thread_id).update(
+                celery_task_id=celery_result.id,
+            )
+
+        await _update_celery_task_id()
+
+        # 使用流式等待替代阻塞等待，审批事件直接 yield 给上层
+        result_data = None
+        async for event in self._wait_for_research_result_streaming(thread_id):
+            if event.get('_is_result'):
+                result_data = event
+                break
+            else:
+                # 审批事件，yield 给上层
+                yield event
+
+        if result_data is None:
+            @sync_to_async(thread_sensitive=True)
+            def _mark_timeout():
+                task_manager.update_task_status(thread_id, {
+                    'status': 'failed',
+                    'error_message': f'研究任务超时（{_RESEARCH_TIMEOUT}秒）',
+                })
+            await _mark_timeout()
+            yield {
+                'success': False,
+                'final_report': f'深度研究超时，请到深度研究模块查看任务 {thread_id}',
+                'files': None,
+                'task_id': thread_id,
+                'session_id': session_id,
+                'research_summary': '',
+                '_is_result': True,
+            }
+            return
+
+        if usage_tracker and token_detail_tracker and result_data.get('usage_data'):
+            usage_data = result_data['usage_data']
+            usage_tracker.add_input_tokens(usage_data.get('prompt_tokens', 0))
+            usage_tracker.add_output_tokens(usage_data.get('completion_tokens', 0))
+            token_detail_tracker.update_from_metadata(
+                {'usage_metadata': {
+                    'input_tokens': usage_data.get('prompt_tokens', 0),
+                    'output_tokens': usage_data.get('completion_tokens', 0),
+                }}
+            )
+            token_detail_tracker.finish_record()
+
+        @sync_to_async(thread_sensitive=True)
+        def _update_status():
+            task_manager.update_task_status(thread_id, {
+                'status': 'completed',
+                'final_report': result_data.get('final_report', ''),
+            })
+
+        await _update_status()
+
+        final_report = result_data.get('final_report', '')
+        research_summary = final_report[:2000] if final_report else ''
+        yield {
+            'success': result_data.get('success', True),
+            'final_report': final_report,
+            'files': result_data.get('files'),
+            'task_id': thread_id,
+            'session_id': session_id,
+            'research_summary': research_summary,
+            '_is_result': True,
         }
 
     async def _wait_for_research_result(self, thread_id: str) -> Optional[Dict[str, Any]]:
@@ -638,6 +821,90 @@ class DeepChatService:
                 if isinstance(data, bytes):
                     data = data.decode('utf-8')
                 return json.loads(data)
+
+    async def _wait_for_research_result_streaming(self, thread_id: str) -> AsyncGenerator[Dict[str, Any], None]:
+        """同时监听研究结果和审批事件的 Redis 频道，yield 审批事件，最终研究结果带 _is_result 标记"""
+        import redis as redis_lib
+        from django.conf import settings as django_settings
+
+        result_channel = f"{REDIS_CHANNEL_PREFIX}{thread_id}"
+        approval_channel = f"{REDIS_APPROVAL_PREFIX}{thread_id}"
+        approval_list_key = f"{REDIS_APPROVAL_PREFIX}pending:{thread_id}"
+        broker_url = getattr(django_settings, 'CELERY_BROKER_URL', '')
+
+        if not broker_url:
+            logger.error("CELERY_BROKER_URL 未配置，无法订阅研究结果+审批")
+            return
+
+        pubsub = None
+        try:
+            r = redis_lib.Redis(connection_pool=_get_redis_pool(broker_url))
+
+            # 先读取 Redis List 历史审批并 yield（刷新/重连恢复场景）
+            try:
+                pending_approvals = r.lrange(approval_list_key, 0, -1)
+                for item in pending_approvals:
+                    approval_data = json.loads(item)
+                    interrupt_id = approval_data.get("interrupt_id", "")
+                    if interrupt_id:
+                        processed_key = f"{REDIS_APPROVAL_PREFIX}processed:{thread_id}:{interrupt_id}"
+                        processed_raw = r.get(processed_key)
+                        if processed_raw:
+                            try:
+                                processed_data = json.loads(processed_raw if isinstance(processed_raw, str) else processed_raw.decode('utf-8'))
+                                approval_data = {**approval_data, **processed_data}
+                            except (json.JSONDecodeError, UnicodeDecodeError):
+                                pass
+                    yield {"type": "approval_history", "data": approval_data}
+            except Exception as e:
+                logger.warning(f"读取历史审批失败: {e}")
+
+            pubsub = r.pubsub()
+            pubsub.subscribe(result_channel, approval_channel)
+
+            logger.info(f"订阅研究结果+审批: {result_channel}, {approval_channel}, 超时={_RESEARCH_TIMEOUT}s")
+
+            loop = asyncio.get_running_loop()
+            start_time = time.time()
+
+            while True:
+                elapsed = time.time() - start_time
+                if elapsed > _RESEARCH_TIMEOUT:
+                    logger.warning(f"等待研究结果超时: {thread_id}")
+                    return
+
+                msg = await loop.run_in_executor(None, lambda: pubsub.get_message(timeout=1.0))
+
+                if msg and msg['type'] == 'message':
+                    channel = msg.get('channel', b'')
+                    if isinstance(channel, bytes):
+                        channel = channel.decode('utf-8')
+                    data = msg['data']
+                    if isinstance(data, bytes):
+                        data = data.decode('utf-8')
+                    parsed = json.loads(data)
+
+                    if channel == result_channel:
+                        # 研究结果，标记后 yield
+                        parsed['_is_result'] = True
+                        yield parsed
+                        return
+                    elif channel == approval_channel:
+                        # 审批事件，提取内层 data 避免 double-nesting
+                        msg_type = parsed.get("type", "approval")
+                        inner_data = parsed.get("data", parsed)
+                        yield {"type": msg_type, "data": inner_data}
+
+                await asyncio.sleep(0.1)
+        except Exception as e:
+            logger.error(f"订阅研究结果+审批异常: {e}", exc_info=True)
+        finally:
+            if pubsub:
+                try:
+                    pubsub.unsubscribe()
+                    pubsub.close()
+                except Exception:
+                    pass
 
     async def _stream_without_tools(
         self,

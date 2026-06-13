@@ -14,6 +14,43 @@ export const ToolCallStatus = {
   RUNNING: 'running',
   COMPLETED: 'completed',
   FAILED: 'failed',
+  PENDING_APPROVAL: 'pending_approval',
+  APPROVED: 'approved',
+  REJECTED: 'rejected',
+  TIMEOUT: 'timeout',
+  PROCESSING: 'processing',
+}
+
+/** 受保护的 toolCall status 集合，这些状态不应被 SSE 流中的 status/state 覆盖 */
+export const PROTECTED_STATUSES = [
+  ToolCallStatus.PENDING_APPROVAL,
+  ToolCallStatus.APPROVED,
+  ToolCallStatus.COMPLETED,
+  ToolCallStatus.PROCESSING,
+  ToolCallStatus.REJECTED,
+  ToolCallStatus.TIMEOUT,
+]
+
+/** @deprecated 使用 PROTECTED_STATUSES 代替 */
+export const APPROVAL_STATUSES = PROTECTED_STATUSES
+
+/** 审批 state 常量（approval.state 字段使用，与 toolCall.status 语义不同） */
+export const ApprovalState = {
+  PENDING: 'pending',
+  PROCESSING: 'processing',
+  APPROVED: 'approved',
+  REJECTED: 'rejected',
+  TIMEOUT: 'timeout',
+}
+
+/** 将 approval state 映射到 toolCall status（统一映射函数） */
+export function mapApprovalStateToStatus(state) {
+  if (state === ApprovalState.APPROVED) return ToolCallStatus.APPROVED
+  if (state === ApprovalState.REJECTED) return ToolCallStatus.REJECTED
+  if (state === ApprovalState.TIMEOUT) return ToolCallStatus.TIMEOUT
+  if (state === ApprovalState.PENDING) return ToolCallStatus.PENDING_APPROVAL
+  if (state === ApprovalState.PROCESSING) return ToolCallStatus.PROCESSING
+  return state
 }
 
 export const PlanStepStatus = {

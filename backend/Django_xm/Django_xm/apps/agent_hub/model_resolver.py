@@ -31,6 +31,7 @@ def resolve_model(config) -> Union[str, BaseChatModel]:
             model_provider=model_provider,
             temperature=config.temperature,
             max_tokens=config.max_tokens,
+            special_params=getattr(config, 'special_params', None),
             enable_fallback=True,
         )
         if model is not None:

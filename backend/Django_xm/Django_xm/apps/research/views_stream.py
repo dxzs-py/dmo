@@ -45,6 +45,59 @@ def deep_research_stream(request, task_id):
         start_time = time.time()
         max_duration = 600
 
+        # 订阅 Redis 审批频道
+        approval_pubsub = None
+        redis_client = None
+        try:
+            from django.core.cache import cache
+            from Django_xm.apps.research.services.research_runner import REDIS_APPROVAL_PREFIX
+            redis_client = cache.client.get_client()
+            approval_channel = f"{REDIS_APPROVAL_PREFIX}{task_id}"
+            approval_pubsub = redis_client.pubsub()
+            approval_pubsub.subscribe(approval_channel)
+            logger.info(f"[SSE] 已订阅审批频道: {approval_channel}")
+        except Exception as e:
+            logger.warning(f"[SSE] 订阅审批频道失败: {e}")
+
+        # 读取 Redis List 中的历史审批数据（解决 Pub/Sub 即发即弃导致错过事件的问题）
+        # 同时读取已处理审批的最终状态，确保迟连接的浏览器能看到完整审批状态
+        if redis_client:
+            try:
+                approval_list_key = f"{REDIS_APPROVAL_PREFIX}pending:{task_id}"
+                pending_approvals = redis_client.lrange(approval_list_key, 0, -1)
+                pushed_ids = set()
+                for item in pending_approvals:
+                    try:
+                        approval_data = json.loads(item)
+                        interrupt_id = approval_data.get("interrupt_id", "")
+                        if interrupt_id:
+                            pushed_ids.add(interrupt_id)
+                            # 检查是否已处理：如果有 processed key，用其完整数据覆盖（含最终状态）
+                            processed_key = f"{REDIS_APPROVAL_PREFIX}processed:{task_id}:{interrupt_id}"
+                            processed_raw = redis_client.get(processed_key)
+                            if processed_raw:
+                                try:
+                                    processed_data = json.loads(processed_raw if isinstance(processed_raw, str) else processed_raw.decode('utf-8'))
+                                    # 用已处理数据覆盖原始 pending 数据，保留最终状态
+                                    approval_data = {**approval_data, **processed_data}
+                                except (json.JSONDecodeError, UnicodeDecodeError):
+                                    pass
+                        yield f"data: {json.dumps({'type': 'approval_history', 'data': approval_data, 'task_id': task_id}, ensure_ascii=False)}\n\n"
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+                if pending_approvals:
+                    approval_ids = []
+                    for item in pending_approvals:
+                        try:
+                            approval_ids.append(json.loads(item).get("interrupt_id", "?"))
+                        except Exception:
+                            approval_ids.append("?")
+                    logger.info(f"[SSE] 推送 {len(pending_approvals)} 个历史审批事件, task={task_id}, ids={approval_ids}")
+                else:
+                    logger.info(f"[SSE] 无历史审批事件, task={task_id}")
+            except Exception as e:
+                logger.warning(f"[SSE] 读取历史审批失败: {e}")
+
         try:
             yield f"data: {json.dumps({'type': 'connected', 'task_id': task_id}, ensure_ascii=False)}\n\n"
 
@@ -77,8 +130,8 @@ def deep_research_stream(request, task_id):
                         'task_id': task_id,
                     }
 
-                    if current_status == 'completed' and status_data.get('final_report'):
-                        event_data['final_report'] = status_data['final_report']
+                    if current_status == 'completed':
+                        event_data['final_report'] = status_data.get('final_report', '')
 
                     yield f"data: {json.dumps(event_data, ensure_ascii=False, default=str)}\n\n"
 
@@ -91,7 +144,22 @@ def deep_research_stream(request, task_id):
                     if step != current_status:
                         yield f"data: {json.dumps({'type': 'step_update', 'step': step, 'task_id': task_id}, ensure_ascii=False)}\n\n"
 
-                time.sleep(2)
+                # 分步 sleep，每 0.5 秒检查一次审批频道，减少审批事件推送延迟
+                for _ in range(4):
+                    if approval_pubsub:
+                        try:
+                            msg = approval_pubsub.get_message(timeout=0.1)
+                            if msg and msg['type'] == 'message':
+                                data = msg['data']
+                                if isinstance(data, bytes):
+                                    data = data.decode('utf-8')
+                                approval_data = json.loads(data)
+                                msg_type = approval_data.get('type', 'approval')
+                                yield f"data: {json.dumps({'type': msg_type, 'data': approval_data, 'task_id': task_id}, ensure_ascii=False)}\n\n"
+                                logger.info(f"[SSE] 推送实时审批事件: type={msg_type}, tool={approval_data.get('tool_name')}, id={approval_data.get('interrupt_id')}")
+                        except Exception as e:
+                            logger.warning(f"[SSE] 检查审批频道失败: {e}")
+                    time.sleep(0.5)
 
             yield f"data: {json.dumps({'type': 'done', 'task_id': task_id}, ensure_ascii=False)}\n\n"
 
@@ -100,6 +168,13 @@ def deep_research_stream(request, task_id):
         except Exception as e:
             logger.error(f"[API] SSE流式输出异常：{e}", exc_info=True)
             yield sse_error_event(code="50001", message=str(e))
+        finally:
+            if approval_pubsub:
+                try:
+                    approval_pubsub.unsubscribe()
+                    approval_pubsub.close()
+                except Exception:
+                    pass
 
     response = sse_response(event_stream())
     return response

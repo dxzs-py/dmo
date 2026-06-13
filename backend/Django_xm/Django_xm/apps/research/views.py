@@ -8,6 +8,7 @@ from rest_framework import status
 from Django_xm.apps.core.throttling import ResearchRateThrottle
 from rest_framework.permissions import IsAuthenticated
 from django.db import transaction, IntegrityError
+from django.apps import apps
 
 from Django_xm.common.sse_utils import sse_response
 from Django_xm.common.responses import success_response, error_response, not_found_response
@@ -37,7 +38,7 @@ from .views_stream import (
     DeepResearchStreamView,
     deep_research_stream,
 )
-from Django_xm.apps.chat.services.cross_app import get_chat_session, soft_delete_session
+from Django_xm.apps.chat.models import ChatMessage
 
 logger = logging.getLogger(__name__)
 task_manager = get_task_manager()
@@ -283,16 +284,17 @@ class DeepResearchStatusView(APIView):
                     'task_id': task.task_id,
                     'status': task.status,
                     'query': task.query,
+                    'session_id': task.session_id or '',
                     'created_at': task.created_at.isoformat() if task.created_at else '',
                     'updated_at': task.updated_at.isoformat() if task.updated_at else '',
                     'enable_web_search': task.enable_web_search,
                     'enable_doc_analysis': task.enable_doc_analysis,
                     'knowledge_base_ids': task.knowledge_base_ids or [],
                     'current_step': cached_status.get('current_step', 'unknown') if cached_status else task.status,
+                    'final_report': task.final_report if task.status == 'completed' else '',
                 }
 
                 if task.status == 'completed' and task.final_report:
-                    response_data['final_report'] = task.final_report
                     if cached_status:
                         result = cached_status.get('result', {})
                         response_data['plan'] = result.get('plan')
@@ -388,39 +390,36 @@ class DeepResearchTaskDeleteView(APIView):
                 if not task_obj:
                     return not_found_response(message='研究任务不存在或无权删除')
 
-                linked_session = None
-                if task_obj.session_id:
-                    session = get_chat_session(task_obj.session_id, user=request.user)
-                    if session:
-                        linked_session = {
-                            'session_id': session.session_id,
-                            'title': session.title,
-                        }
-
-                confirm_delete_linked = request.query_params.get('confirm_delete_linked', '').lower() == 'true'
-
-                if linked_session and not confirm_delete_linked:
-                    return success_response(
-                        data={
-                            'has_linked_data': True,
-                            'linked_session': linked_session,
-                            'message': '该研究任务关联了一个聊天会话',
-                        },
-                        message='存在关联的聊天会话，请确认是否一并删除',
-                    )
+                # 保留 ChatMessage.research_task_id 引用，不置空
+                # 原因：置空后删除聊天会话时无法通过 ChatMessage 反查关联的已删除研究任务，
+                # 导致磁盘文件无法清理。前端应通过 research_task_id 对应的 ResearchTask.is_deleted
+                # 判断是否显示"查看研究"按钮。
 
                 result = task_manager.delete_task(task_id, user_id=request.user.id)
 
                 if not result:
                     return not_found_response(message='研究任务不存在或无权删除')
 
-                if linked_session:
-                    soft_delete_session(task_obj.session_id)
+            # 事务提交后检查是否需要清理后端数据
+            # 规则：无活跃聊天关联 → 清理后端数据；有活跃聊天关联 → 保留
+            should_cleanup = True
+            # 统一通过 ChatMessage 反查所有活跃聊天会话（覆盖 session_id 和非 session_id 两种情况）
+            active_session_ids = ChatMessage.all_objects.filter(
+                research_task_id=task_id,
+                session__is_deleted=False,
+            ).values_list('session__session_id', flat=True)
+            if active_session_ids.exists():
+                should_cleanup = False
+                logger.info(f"研究任务 {task_id} 仍有活跃聊天关联 {list(active_session_ids)}，保留后端数据")
+
+            if should_cleanup:
+                self._cleanup_backend_data(task_id, task_obj.created_by_id)
 
             return success_response(
                 data={
                     'status': 'success',
                     'message': f'研究任务 {task_id} 已删除',
+                    'backend_cleaned': should_cleanup,
                 },
                 message='删除成功',
             )
@@ -432,6 +431,53 @@ class DeepResearchTaskDeleteView(APIView):
                 message="删除研究任务失败，请稍后重试",
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+    def _cleanup_backend_data(self, task_id: str, user_id: int):
+        """清理后端数据：checkpoint、store、磁盘文件（复用 cross_app 统一清理函数）"""
+        from Django_xm.apps.research.services.cross_app import _cleanup_research_backend_data
+        _cleanup_research_backend_data(task_id, user_id)
+
+
+class ResearchApprovalView(APIView):
+    """深度研究工具审批 API
+
+    前端点击"确认"或"拒绝"时调用此 API，
+    将审批结果发布到 Redis 响应频道，供 Celery worker 读取。
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        task_id = request.data.get('task_id')
+        interrupt_id = request.data.get('interrupt_id')
+        approved = request.data.get('approved', False)
+        user_input = request.data.get('user_input')
+
+        if not task_id or not interrupt_id:
+            return error_response(code=ErrorCode.INVALID_PARAMS, message='缺少 task_id 或 interrupt_id 参数')
+
+        # 验证任务归属
+        task = ResearchTask.objects.filter(task_id=task_id, created_by=request.user, is_deleted=False).first()
+        if not task:
+            return error_response(code=ErrorCode.NOT_FOUND, message='研究任务不存在', http_status=status.HTTP_404_NOT_FOUND)
+
+        # 发布审批结果到 Redis 响应频道
+        try:
+            from django.core.cache import cache
+            from Django_xm.apps.research.services.research_runner import REDIS_APPROVAL_RESPONSE_PREFIX
+            redis_client = cache.client.get_client()
+            channel = f"{REDIS_APPROVAL_RESPONSE_PREFIX}{task_id}"
+            payload = json.dumps({
+                "interrupt_id": interrupt_id,
+                "approved": bool(approved),
+                "user_input": user_input,
+            }, ensure_ascii=False)
+            redis_client.publish(channel, payload)
+            logger.info(f"研究审批结果已发布: task={task_id}, interrupt_id={interrupt_id}, approved={approved}")
+        except Exception as e:
+            logger.error(f"发布研究审批结果失败: {e}")
+            return error_response(code=ErrorCode.SERVER_ERROR, message="审批结果提交失败")
+
+        return success_response(data={"task_id": task_id, "approved": bool(approved)}, message="审批结果已提交")
 
 
 class DeepResearchTaskListView(APIView):

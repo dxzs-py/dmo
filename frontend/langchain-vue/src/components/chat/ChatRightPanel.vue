@@ -32,7 +32,14 @@ const metadata = computed(() => {
       id: tc.id || `tool-${idx}`,
       name: tc.name || tc.toolName || '未知工具',
       type: `tool-call-${tc.name || 'unknown'}`,
-      state: tc.status === 'completed' ? 'output-available' : tc.status === 'error' ? 'output-error' : 'input-available',
+      state: tc.status === 'completed' ? 'output-available'
+        : tc.status === 'failed' || tc.status === 'error' ? 'output-error'
+        : tc.status === 'pending_approval' ? 'pending-approval'
+        : tc.status === 'approved' ? 'approved'
+        : tc.status === 'rejected' ? 'rejected'
+        : tc.status === 'timeout' ? 'timeout'
+        : tc.status === 'processing' ? 'processing'
+        : 'input-available',
       parameters: tc.input || tc.parameters || tc.args || {},
       result: tc.output || tc.result || null,
       error: tc.error || null,
@@ -122,6 +129,11 @@ const getToolStateType = (state) => {
     'error': 'danger',
     'pending': 'info',
     'completed': 'success',
+    'pending-approval': 'warning',
+    'approved': 'success',
+    'rejected': 'danger',
+    'timeout': 'warning',
+    'processing': 'warning',
   }
   return typeMap[state] || 'info'
 }
@@ -136,6 +148,11 @@ const getToolStateLabel = (state) => {
     'error': '失败',
     'pending': '等待中',
     'completed': '已完成',
+    'pending-approval': '待审批',
+    'approved': '已确认',
+    'rejected': '已拒绝',
+    'timeout': '已超时',
+    'processing': '处理中',
   }
   return labelMap[state] || state
 }

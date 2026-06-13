@@ -415,10 +415,11 @@ class OfficialDeepAgentAdapter:
     使上层调用方无需关心底层实现差异。
     """
 
-    def __init__(self, graph, thread_id: str, work_dir: Optional[str] = None, **kwargs):
+    def __init__(self, graph, thread_id: str, work_dir: Optional[str] = None, model=None, **kwargs):
         self.graph = graph
         self.thread_id = thread_id
         self.work_dir = work_dir
+        self.model = model
         self._kwargs = kwargs
 
     def research(self, query: str, config: Optional[Dict[str, Any]] = None, callbacks: Optional[list] = None) -> Dict[str, Any]:
@@ -523,6 +524,298 @@ class OfficialDeepAgentAdapter:
                 "query": query,
                 "final_report": None,
                 "error": str(e),
+            }
+
+    async def astream_research_with_interrupts(
+        self,
+        query: str,
+        config: Optional[Dict[str, Any]] = None,
+        callbacks: Optional[list] = None,
+        on_interrupt=None,
+    ) -> Dict[str, Any]:
+        """流式研究 + interrupt 审批机制
+
+        使用 graph.astream() + stream_mode=["messages", "updates"] 执行，
+        捕获 __interrupt__ 事件，通过 on_interrupt 回调通知外部，
+        等待回调返回后使用 Command(resume=...) 恢复 agent 继续执行。
+
+        集成韧性模块：重试（指数退避）、降级（减少工具）、回退（无工具直接 LLM 回答）。
+
+        Args:
+            query: 研究查询
+            config: LangGraph 运行配置
+            callbacks: LangChain 回调列表
+            on_interrupt: 审批中断回调，签名 on_interrupt(interrupt_data: dict) -> resume_value
+                          interrupt_data 包含 tool_name, interrupt_id, title, description 等
+                          返回值作为 Command(resume=...) 的 resume_value（True/False/用户输入）
+
+        Returns:
+            与 research() 方法相同格式的结果字典
+        """
+        from langgraph.types import Command, Interrupt
+        from Django_xm.apps.tools.base import is_approval_interrupt
+        from Django_xm.utils.agent_resilience import (
+            classify_and_decide, ErrorAction, DegradationLevel,
+            get_resilience_config, calculate_backoff,
+            ExecutionTimeoutManager,
+        )
+
+        logger.info(f"[OfficialDeepAgent] 流式研究(interrupt): {query[:50]}...")
+
+        if config is None:
+            config = {}
+        if "configurable" not in config:
+            config["configurable"] = {}
+        config["configurable"]["thread_id"] = self.thread_id
+        config.setdefault("recursion_limit", 1000)
+        if callbacks:
+            config["callbacks"] = callbacks
+
+        resilience_config = get_resilience_config()
+        current_degradation = DegradationLevel.FULL
+        timeout_mgr = ExecutionTimeoutManager(
+            soft_timeout=resilience_config.soft_timeout or 900,
+            hard_timeout=resilience_config.hard_timeout or 1800,
+        )
+
+        try:
+            graph_input = {"messages": [HumanMessage(content=query)]}
+            accumulated_result = None
+
+            while True:
+                all_resume_values = {}  # 收集实时回调的审批结果
+                retry_count = 0
+
+                while retry_count <= resilience_config.max_retries:
+                    try:
+                        async for chunk in self.graph.astream(
+                            graph_input,
+                            config=config,
+                            stream_mode=["messages", "updates"],
+                        ):
+                            # 检查 hard timeout
+                            if timeout_mgr.hard_timeout and timeout_mgr.elapsed >= timeout_mgr.hard_timeout:
+                                logger.warning(
+                                    f"[Resilience] 深度研究执行超时 (hard): {timeout_mgr.elapsed:.1f}s"
+                                )
+                                return await self._fallback_direct_answer(query, config)
+
+                            # 检查 soft timeout（仅警告一次）
+                            if timeout_mgr.check_soft_timeout():
+                                logger.warning(
+                                    f"[Resilience] 深度研究执行超时 (soft): {timeout_mgr.elapsed:.1f}s"
+                                )
+
+                            # 多 stream mode 下 chunk 是 (mode_name, data) 元组
+                            if isinstance(chunk, tuple) and len(chunk) == 2:
+                                mode_name, mode_data = chunk
+                            else:
+                                mode_name, mode_data = "messages", chunk
+
+                            # 处理 updates stream mode（包含 interrupt 事件）
+                            if mode_name == "updates":
+                                if isinstance(mode_data, dict) and "__interrupt__" in mode_data:
+                                    interrupts = mode_data["__interrupt__"]
+                                    if interrupts:
+                                        for intr in interrupts:
+                                            if isinstance(intr, Interrupt):
+                                                interrupt_value = intr.value
+                                                interrupt_id = intr.id
+                                            elif isinstance(intr, dict):
+                                                interrupt_value = intr.get("value", intr)
+                                                interrupt_id = intr.get("id", "")
+                                            else:
+                                                interrupt_value = intr
+                                                interrupt_id = ""
+
+                                            if is_approval_interrupt(interrupt_value):
+                                                tool_name = interrupt_value.get("tool_name", "unknown")
+                                                logger.info(
+                                                    f"[OfficialDeepAgent] 审批中断: tool={tool_name}, "
+                                                    f"danger={interrupt_value.get('danger_level', 'medium')}"
+                                                )
+                                                interrupt_data = {
+                                                    "tool_name": tool_name,
+                                                    "interrupt_id": interrupt_id,
+                                                    "title": interrupt_value.get("title", "确认操作"),
+                                                    "description": interrupt_value.get("description", ""),
+                                                    "action": interrupt_value.get("action", "confirm"),
+                                                    "danger_level": interrupt_value.get("danger_level", "medium"),
+                                                    "operation": interrupt_value.get("operation", ""),
+                                                    "state": "pending",
+                                                }
+                                                if interrupt_value.get("extra"):
+                                                    interrupt_data["extra"] = interrupt_value["extra"]
+                                                if interrupt_value.get("input_placeholder"):
+                                                    interrupt_data["input_placeholder"] = interrupt_value["input_placeholder"]
+                                                # 实时回调：立即发布审批请求，不等流结束
+                                                if on_interrupt is not None:
+                                                    logger.info(
+                                                        f"[OfficialDeepAgent] 实时通知审批回调: tool={tool_name}"
+                                                    )
+                                                    single_resume = on_interrupt([interrupt_data])
+                                                    all_resume_values.update(single_resume)
+                                                else:
+                                                    all_resume_values[interrupt_id] = False
+                                continue
+
+                            # messages 模式：收集最终结果
+                            # astream 在 messages 模式下产出 (message, metadata) 元组
+                            # 我们不需要逐步处理，只需等待流结束
+
+                        # 流正常结束，退出 retry 循环
+                        break
+
+                    except Exception as e:
+                        action, classified = classify_and_decide(e, retry_count, resilience_config.max_retries)
+
+                        if action == ErrorAction.RETRY:
+                            retry_count += 1
+                            backoff = calculate_backoff(retry_count, resilience_config)
+                            logger.warning(
+                                f"[Resilience] 深度研究重试 {retry_count}/{resilience_config.max_retries}, "
+                                f"退避 {backoff:.1f}s: {classified.error_code}"
+                            )
+                            await asyncio.sleep(backoff)
+                            continue  # 重试
+
+                        elif action == ErrorAction.DEGRADE:
+                            if current_degradation == DegradationLevel.FULL:
+                                current_degradation = DegradationLevel.REDUCED_TOOLS
+                                logger.warning("[Resilience] 深度研究降级: FULL → REDUCED_TOOLS")
+                                # 工具降级需要重建 graph，此处先重试当前 graph
+                                retry_count += 1
+                                backoff = calculate_backoff(retry_count, resilience_config)
+                                await asyncio.sleep(backoff)
+                                continue
+                            elif current_degradation == DegradationLevel.REDUCED_TOOLS:
+                                current_degradation = DegradationLevel.NO_TOOLS
+                                logger.warning("[Resilience] 深度研究降级: REDUCED_TOOLS → NO_TOOLS，回退到直接回答")
+                                return await self._fallback_direct_answer(query, config)
+                            else:
+                                return await self._fallback_direct_answer(query, config)
+
+                        elif action == ErrorAction.FALLBACK:
+                            return await self._fallback_direct_answer(query, config)
+
+                        else:  # FAIL
+                            error_msg = str(e) or repr(e) or type(e).__name__
+                            logger.error(
+                                f"[Resilience] 深度研究不可恢复错误: {classified.error_code}: {error_msg}",
+                                exc_info=True,
+                            )
+                            return {
+                                "success": False,
+                                "query": query,
+                                "final_report": None,
+                                "error": classified.user_message,
+                                "error_code": classified.error_code,
+                            }
+
+                # 流结束后检查是否有实时回调收集的审批结果
+                if all_resume_values:
+                    # 使用 Command(resume=...) 一次性恢复所有 interrupt
+                    graph_input = Command(resume=all_resume_values)
+                    logger.info(
+                        f"[OfficialDeepAgent] 恢复 agent: {len(all_resume_values)} 个 interrupt, "
+                        f"resume_dict={all_resume_values}"
+                    )
+                    # 重置 all_resume_values，继续循环
+                    all_resume_values = {}
+                    # 继续循环，重新流式执行
+                    continue
+                else:
+                    # 无中断，流已完成，提取最终结果
+                    break
+
+            # 从 checkpointer 获取最终状态
+            final_state = await self.graph.aget_state(config)
+            if final_state and hasattr(final_state, 'values') and final_state.values:
+                accumulated_result = final_state.values
+            else:
+                accumulated_result = {}
+
+            final_report = _extract_ai_response(accumulated_result)
+            files_info = self._extract_files_info(accumulated_result)
+            disk_files = self._scan_disk_files()
+
+            # 当 AI 回复过短时，从磁盘文件提取完整报告
+            if len(final_report.strip()) < 200 and disk_files:
+                for report_key in ("reports/final_report.md", "final_report.md"):
+                    if report_key in disk_files:
+                        report_content = disk_files[report_key].get("content", "")
+                        if len(report_content.strip()) > len(final_report.strip()):
+                            final_report = report_content
+                            logger.info(f"[OfficialDeepAgent] 使用磁盘报告文件替代短回复 ({len(final_report)} 字符)")
+                        break
+
+            result = {
+                "success": True,
+                "query": query,
+                "final_report": final_report,
+                "plan": None,
+                "current_step": "completed",
+                "error": None,
+                "files": files_info if files_info else disk_files,
+                "state_files": disk_files,
+            }
+            if current_degradation != DegradationLevel.FULL:
+                result["degraded"] = True
+                result["degradation_level"] = current_degradation.value
+            return result
+
+        except Exception as e:
+            error_msg = str(e) or repr(e) or type(e).__name__
+            logger.error(f"[OfficialDeepAgent] 流式研究(interrupt)失败: {error_msg}", exc_info=True)
+            return {
+                "success": False,
+                "query": query,
+                "final_report": None,
+                "error": error_msg,
+            }
+
+    async def _fallback_direct_answer(self, query: str, config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """深度研究最终回退：无工具直接 LLM 回答"""
+        logger.warning("[Resilience] 深度研究回退到无工具直接回答")
+        try:
+            messages = [HumanMessage(content=query)]
+            if hasattr(self, 'model') and self.model:
+                # model 可能是 ChatModel 实例或 model string
+                if hasattr(self.model, 'ainvoke'):
+                    response = await self.model.ainvoke(messages)
+                    content = response.content if hasattr(response, 'content') else str(response)
+                else:
+                    # model 是字符串，需要创建 ChatModel 实例
+                    from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
+                    chat_model = get_chat_model()
+                    response = await chat_model.ainvoke(messages)
+                    content = response.content if hasattr(response, 'content') else str(response)
+            else:
+                from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
+                chat_model = get_chat_model()
+                response = await chat_model.ainvoke(messages)
+                content = response.content if hasattr(response, 'content') else str(response)
+
+            return {
+                "success": True,
+                "query": query,
+                "final_report": content,
+                "plan": None,
+                "current_step": "completed",
+                "error": None,
+                "files": [],
+                "state_files": {},
+                "degraded": True,
+                "degradation_level": "no_tools",
+            }
+        except Exception as e:
+            logger.error(f"[Resilience] 深度研究回退回答也失败: {e}")
+            return {
+                "success": False,
+                "query": query,
+                "final_report": None,
+                "error": f"深度研究执行失败: {str(e)}",
+                "error_code": "FALLBACK_FAILED",
             }
 
     async def astream_research(
@@ -749,31 +1042,25 @@ def create_official_deep_agent(
     warnings.warn("create_official_deep_agent 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2)
     logger.info(f"创建官方 Deep Agent: thread_id={thread_id}")
 
-    from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model_by_provider
-
     _provider_id = kwargs.pop('provider_id', None)
     _model_name = kwargs.pop('model_name', None)
     _temperature = kwargs.pop('temperature', None)
     _max_tokens = kwargs.pop('max_tokens', None)
     _special_params = kwargs.pop('special_params', None)
 
-    if _provider_id:
-        try:
-            model = get_chat_model_by_provider(
-                provider_id=_provider_id,
-                model_name=_model_name,
-                temperature=_temperature,
-                max_tokens=_max_tokens,
-                special_params=_special_params,
-            )
-            logger.info(f"使用用户指定模型: provider={_provider_id}, model={_model_name}, temp={_temperature}")
-        except Exception as e:
-            logger.warning(f"使用指定模型失败，回退到默认模型字符串: {e}")
-            model = get_model_string()
-    else:
-        model = get_model_string()
+    # 使用统一模型解析（带自动 fallback）
+    from Django_xm.apps.agent_hub.config import AgentConfig
+    from Django_xm.apps.agent_hub.model_resolver import resolve_model
 
-    model_string = _model_name if _provider_id and _model_name else get_model_string()
+    model_config = AgentConfig(
+        provider_id=_provider_id,
+        model_name=_model_name,
+        temperature=_temperature,
+        max_tokens=_max_tokens,
+        special_params=_special_params,
+    )
+    model = resolve_model(model_config)
+    model_string = _model_name if _provider_id and _model_name else (str(model) if isinstance(model, str) else get_model_string())
 
     if checkpointer is None:
         checkpointer = get_checkpointer()
@@ -981,7 +1268,7 @@ def create_official_deep_agent(
         f"capabilities={effective_capabilities})"
     )
 
-    return OfficialDeepAgentAdapter(graph=graph, thread_id=thread_id, work_dir=work_dir)
+    return OfficialDeepAgentAdapter(graph=graph, thread_id=thread_id, work_dir=work_dir, model=model)
 
 
 def create_official_deep_agent_with_interrupt(

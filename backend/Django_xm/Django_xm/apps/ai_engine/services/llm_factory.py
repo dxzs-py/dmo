@@ -236,6 +236,67 @@ def _cached_model_creation(
         raise
 
 
+def _apply_special_params(
+    init_kwargs: Dict[str, Any],
+    special_params: Dict[str, Any],
+    provider_id: str,
+    provider: str,
+    model_name: str,
+) -> None:
+    """解析 special_params 并应用到 init_kwargs
+
+    将 special_params 按 provider 注册表中的规则拆解为
+    model_kwargs / extra_body / top_level 参数，而非原样透传给 init_chat_model。
+    此函数被 _create_single_chat_model 和 get_chat_model_by_provider 共用。
+    """
+    registry = PROVIDER_REGISTRY.get(provider_id) or get_provider_config(provider_id)
+    if not registry:
+        logger.debug(f"special_params: 未找到 provider {provider_id} 的注册信息，忽略 special_params")
+        return
+
+    model_kwargs: Dict[str, Any] = {}
+    extra_body: Dict[str, Any] = {}
+    for param_key, param_value in special_params.items():
+        if param_key in registry.get("special_params", {}):
+            param_cfg = registry["special_params"][param_key]
+            kwarg_name = param_cfg.get("model_kwarg", param_key)
+            pass_mode = param_cfg.get("pass_mode", "model_kwargs")
+            if pass_mode == "top_level":
+                init_kwargs[kwarg_name] = param_value
+            elif pass_mode == "extra_body":
+                extra_body[kwarg_name] = param_value
+            else:
+                model_kwargs[kwarg_name] = param_value
+
+    # DeepSeek: reasoning_effort 仅在 thinking 已启用时才有意义
+    if "reasoning_effort" in special_params and "thinking" not in special_params:
+        thinking_cfg = registry.get("special_params", {}).get("thinking")
+        if thinking_cfg:
+            # 注意：不修改传入的 special_params 字典，只移除 init_kwargs 中已注入的值
+            init_kwargs.pop("reasoning_effort", None)
+            extra_body.pop("reasoning_effort", None)
+            model_kwargs.pop("reasoning_effort", None)
+            logger.debug("reasoning_effort 已设置但 thinking 未启用，移除 reasoning_effort")
+
+    if model_kwargs:
+        init_kwargs["model_kwargs"] = model_kwargs
+    if extra_body:
+        init_kwargs["extra_body"] = extra_body
+
+    # 深度思考模式：Provider 感知参数注入
+    if model_supports_capability(provider_id, model_name, "deep_thinking") and is_thinking_enabled(special_params, provider_id):
+        if provider_id == "deepseek":
+            init_kwargs.pop("temperature", None)
+            init_kwargs.pop("top_p", None)
+            logger.debug("DeepSeek 深度思考模式已启用，移除 temperature/top_p 参数")
+        if provider == "ollama" and "reasoning" not in init_kwargs:
+            init_kwargs["reasoning"] = True
+            logger.debug("Ollama 深度思考模式已启用，注入 reasoning=True")
+        if provider == "anthropic" and "thinking" not in init_kwargs:
+            init_kwargs["thinking"] = {"type": "enabled", "budget_tokens": 10000}
+            logger.debug("Anthropic 扩展思考模式已启用，注入 thinking 参数")
+
+
 def _create_single_chat_model(
     model_name: Optional[str] = None,
     model_provider: Optional[str] = None,
@@ -284,6 +345,17 @@ def _create_single_chat_model(
     if rate_limiter is not None and "rate_limiter" not in kwargs:
         init_kwargs["rate_limiter"] = rate_limiter
         logger.debug("已附加速率限制器")
+
+    # 从 kwargs 中提取 special_params，使用 provider 感知逻辑解析
+    # 避免原样透传给 init_chat_model 导致 API 报错
+    special_params = kwargs.pop('special_params', None)
+    if special_params:
+        # 确定 provider_id 用于查找注册表
+        provider_id = kwargs.pop('provider_id', None) or provider
+        _apply_special_params(init_kwargs, special_params, provider_id, provider, model_name)
+
+        if model_supports_capability(provider_id, model_name, "deep_thinking"):
+            apply_reasoning_patch_if_needed()
 
     init_kwargs.update(kwargs)
 
@@ -405,20 +477,26 @@ class LazyFallbackChatModel(BaseChatModel):
         )
 
     def _is_permanent_error(self, error: Exception) -> bool:
-        """判断是否为永久性错误（不应重试）"""
-        error_str = str(error).lower()
-        if "401" in error_str or "403" in error_str or "invalid_credentials" in error_str:
-            return True
-        if "authentication" in error_str or "unauthorized" in error_str:
-            return True
-        return False
+        """判断是否为永久性错误（不可恢复，不应重试）"""
+        try:
+            from Django_xm.apps.ai_engine.services.exceptions import classify_exception
+            classified = classify_exception(error)
+            return not classified.recoverable
+        except Exception:
+            # fallback 到字符串匹配（避免循环导入等异常情况）
+            error_str = str(error).lower()
+            return any(kw in error_str for kw in ("401", "403", "invalid_credentials", "authentication", "unauthorized"))
 
     def _is_input_error(self, error: Exception) -> bool:
-        """判断是否为输入错误（fallback 也无法解决）"""
-        error_str = str(error).lower()
-        if "400" in error_str or "invalid_request" in error_str:
-            return True
-        return False
+        """判断是否为输入错误（不应降级到 fallback，应直接抛出）"""
+        try:
+            from Django_xm.apps.ai_engine.services.exceptions import classify_exception
+            classified = classify_exception(error)
+            return classified.error_code in ("GUARDRAILS_VALIDATION_ERROR",)
+        except Exception:
+            # fallback 到字符串匹配（避免循环导入等异常情况）
+            error_str = str(error).lower()
+            return any(kw in error_str for kw in ("400", "invalid_request"))
 
     def _should_try_primary(self) -> bool:
         """判断是否应该尝试主模型（Circuit Breaker 逻辑）"""
@@ -752,20 +830,30 @@ class LazyFallbackChatModel(BaseChatModel):
                         continue
             raise primary_error
 
-    def bind_tools(self, tools: Any, **kwargs: Any) -> Any:
-        """将 bind_tools 代理到主模型
+    def bind_tools(self, tools: Any, *, tool_choice=None, **kwargs: Any) -> Any:
+        """将 bind_tools 代理到自身，保留 fallback 能力
 
-        注意：bind_tools 返回 RunnableBinding 而非 BaseChatModel，
-        因此无法再包装为 LazyFallbackChatModel（Pydantic 验证 primary: BaseChatModel 会失败）。
-        直接返回 RunnableBinding，此时 fallback 机制不再生效，
-        但 LangGraph 的 create_react_agent 内部会调用此方法，且工具绑定后
-        不应再切换模型（工具配置可能不同）。
+        修复：原先返回 self.primary.bind_tools()，导致 RunnableBinding
+        包装主模型，fallback 机制完全失效。改为 self.bind() 使
+        RunnableBinding 包装 LazyFallbackChatModel 自身，_agenerate
+        中的 fallback 逻辑得以保留。
+
+        调用链：RunnableBinding.ainvoke() → LazyFallbackChatModel.ainvoke()
+        → _agenerate(**kwargs含tools) → primary._agenerate / fallback._agenerate
         """
-        return self.primary.bind_tools(tools, **kwargs)
+        from langchain_core.utils.function_calling import convert_to_openai_tool
+        formatted_tools = [convert_to_openai_tool(tool) for tool in tools]
+        kwargs["tools"] = formatted_tools
+        if tool_choice is not None:
+            kwargs["tool_choice"] = tool_choice
+        return self.bind(**kwargs)
 
-    def with_structured_output(self, schema: Any, **kwargs: Any) -> Runnable:
-        """将 with_structured_output 代理到主模型（不支持 fallback）"""
-        return self.primary.with_structured_output(schema, **kwargs)
+    def with_structured_output(self, schema: Any, **kwargs: Any) -> Any:
+        """将 with_structured_output 代理到自身，保留 fallback 能力
+
+        与 bind_tools 同理，使用 self.bind() 包装以保留 fallback 逻辑。
+        """
+        return self.bind(response_format=schema, **kwargs)
 
     @property
     def _provider_id(self) -> Optional[str]:
@@ -1072,52 +1160,7 @@ def get_chat_model_by_provider(
         init_kwargs["rate_limiter"] = rate_limiter
 
     if special_params:
-        model_kwargs: Dict[str, Any] = {}
-        extra_body: Dict[str, Any] = {}
-        for param_key, param_value in special_params.items():
-            if param_key in registry.get("special_params", {}):
-                param_cfg = registry["special_params"][param_key]
-                kwarg_name = param_cfg.get("model_kwarg", param_key)
-                pass_mode = param_cfg.get("pass_mode", "model_kwargs")
-                if pass_mode == "top_level":
-                    init_kwargs[kwarg_name] = param_value
-                elif pass_mode == "extra_body":
-                    extra_body[kwarg_name] = param_value
-                else:
-                    model_kwargs[kwarg_name] = param_value
-
-        # DeepSeek: reasoning_effort 仅在 thinking 已启用时才有意义
-        # 如果 reasoning_effort 存在但 thinking 未启用，移除 reasoning_effort 而非强制启用 thinking
-        if "reasoning_effort" in special_params and "thinking" not in special_params:
-            thinking_cfg = registry.get("special_params", {}).get("thinking")
-            if thinking_cfg:
-                # thinking 未启用，移除 reasoning_effort
-                special_params.pop("reasoning_effort", None)
-                init_kwargs.pop("reasoning_effort", None)
-                extra_body.pop("reasoning_effort", None)
-                model_kwargs.pop("reasoning_effort", None)
-                logger.debug("reasoning_effort 已设置但 thinking 未启用，移除 reasoning_effort")
-
-        if model_kwargs:
-            init_kwargs["model_kwargs"] = model_kwargs
-        if extra_body:
-            init_kwargs["extra_body"] = extra_body
-
-        # 深度思考模式：Provider 感知参数注入
-        if model_supports_capability(provider_id, resolved_model, "deep_thinking") and is_thinking_enabled(special_params, provider_id):
-            # DeepSeek: 思考模式不支持 temperature/top_p
-            if provider_id == "deepseek":
-                init_kwargs.pop("temperature", None)
-                init_kwargs.pop("top_p", None)
-                logger.debug("DeepSeek 深度思考模式已启用，移除 temperature/top_p 参数")
-            # Ollama: 注入 reasoning=True（如果 special_params 机制未传递）
-            if provider == "ollama" and "reasoning" not in init_kwargs:
-                init_kwargs["reasoning"] = True
-                logger.debug("Ollama 深度思考模式已启用，注入 reasoning=True")
-            # Anthropic: 注入 thinking 参数（如果 special_params 机制未传递）
-            if provider == "anthropic" and "thinking" not in init_kwargs:
-                init_kwargs["thinking"] = {"type": "enabled", "budget_tokens": 10000}
-                logger.debug("Anthropic 扩展思考模式已启用，注入 thinking 参数")
+        _apply_special_params(init_kwargs, special_params, provider_id, provider, resolved_model)
 
     if model_supports_capability(provider_id, resolved_model, "deep_thinking"):
         apply_reasoning_patch_if_needed()

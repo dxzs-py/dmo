@@ -59,14 +59,24 @@ marked.use({
       if (lang && !language && EXTRA_LANG_LOADERS[lang]) {
         loadExtraLanguage(lang)
       }
+      // 归一化代码文本：去除首尾的空行（marked 解析 ``` 围栏代码块时
+      // 会在 text 开头插入一个换行符，末尾可能保留也可能不保留换行符），
+      // 保证 lines 数量与代码实际显示行数严格一致。
+      const normalizedText = text.replace(/^\n+/, '').replace(/\n+$/, '')
       const highlighted = language
-        ? hljs.highlight(text, { language }).value
-        : text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        ? hljs.highlight(normalizedText, { language }).value
+        : normalizedText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       const langLabel = language ? `<span class="code-lang">${language}</span>` : ''
-      const lines = text.split('\n')
-      const lineNumbersHtml = lines.map((_, i) => `<span class="line-num${props.highlightLines.includes(i + 1) ? ' is-highlighted' : ''}" data-line="${i + 1}">${i + 1}</span>`).join('')
-      const codeLinesHtml = highlighted.split('\n').map((line, i) => `<span class="code-line${props.highlightLines.includes(i + 1) ? ' is-highlighted' : ''}">${line}</span>`).join('\n')
-      return `<div class="code-block-wrapper">${langLabel}<button class="code-copy-btn" data-code="${encodeURIComponent(text)}" title="复制代码"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button><div class="code-block-body"><div class="line-numbers">${lineNumbersHtml}</div><pre><code class="hljs ${language ? `language-${language}` : ''}">${codeLinesHtml}</code></pre></div></div>`
+      // 每行一个 .code-row（grid 容器），行号与代码是同一行的两个 cell，物理上强制同高
+      const rawLines = normalizedText.split('\n')
+      const highlightedLines = highlighted.split('\n')
+      const rowsHtml = rawLines.map((_, i) => {
+        const lineNo = i + 1
+        const code = highlightedLines[i] || '&#8203;'
+        const isHl = props.highlightLines.includes(lineNo)
+        return `<div class="code-row${isHl ? ' is-highlighted' : ''}"><span class="line-num${isHl ? ' is-highlighted' : ''}" data-line="${lineNo}">${lineNo}</span><span class="code-line">${code}</span></div>`
+      }).join('')
+      return `<div class="code-block-wrapper">${langLabel}<button class="code-copy-btn" data-code="${encodeURIComponent(normalizedText)}" title="复制代码"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button><div class="code-block-body hljs ${language ? `language-${language}` : ''}">${rowsHtml}</div></div>`
     },
     image({ href, title, text }) {
       const alt = text || ''
@@ -252,31 +262,42 @@ function handleClick(e) {
   margin: 12px 0;
   border-radius: 6px;
   overflow: hidden;
+  background-color: var(--el-fill-color-lighter, #f6f8fa);
 }
 
 .markdown-renderer :deep(.code-block-body) {
-  display: flex;
+  /* 顶部留 28px 给 lang 标签，下方 16px 自然留白 */
+  padding: 28px 0 16px;
   overflow-x: auto;
+  font-family: 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--el-text-color-primary, #303133);
 }
 
-.markdown-renderer :deep(.line-numbers) {
-  display: flex;
-  flex-direction: column;
-  padding: 16px 0;
-  min-width: 40px;
-  text-align: right;
-  user-select: none;
-  border-right: 1px solid var(--el-border-color-extra-light, #eaecef);
-  flex-shrink: 0;
+/* 关键：每行一个 grid，行号与代码作为同一行的两个 cell，天然同高 */
+.markdown-renderer :deep(.code-row) {
+  display: grid;
+  grid-template-columns: minmax(40px, max-content) 1fr;
+  align-items: start;
+  min-height: calc(1.8em); /* 1.8 line-height */
+}
+
+.markdown-renderer :deep(.code-row.is-highlighted) {
+  background-color: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 3px 0 0 var(--el-color-warning);
 }
 
 .markdown-renderer :deep(.line-num) {
   display: block;
   padding: 0 8px;
-  font-size: 12px;
-  line-height: 1.5;
+  text-align: right;
   color: var(--el-text-color-placeholder, #c0c4cc);
-  font-family: 'Fira Code', 'Consolas', monospace;
+  user-select: none;
+  border-right: 1px solid var(--el-border-color-extra-light, #eaecef);
+  background-color: transparent;
+  /* 关键：行号与代码在 grid 同一行，align-items: start 已对齐首行 */
+  white-space: nowrap;
 }
 
 .markdown-renderer :deep(.line-num.is-highlighted) {
@@ -284,12 +305,13 @@ function handleClick(e) {
   font-weight: 700;
 }
 
-.markdown-renderer :deep(.code-line.is-highlighted) {
-  background-color: rgba(255, 255, 255, 0.08);
+.markdown-renderer :deep(.code-line) {
   display: block;
-  border-left: 3px solid var(--el-color-warning);
-  padding-left: 8px;
-  margin-left: -11px;
+  padding: 0 16px;
+  white-space: pre;        /* 保留行内空白，不自动换行（过长时由 .code-block-body 横向滚动） */
+  min-height: calc(1.8em);
+  word-break: normal;
+  overflow-wrap: normal;
 }
 
 .markdown-renderer :deep(.code-lang) {
@@ -325,20 +347,6 @@ function handleClick(e) {
 
 .markdown-renderer :deep(.code-copy-btn:hover) {
   background: var(--el-fill-color, #e9e9eb);
-}
-
-.markdown-renderer :deep(pre) {
-  background-color: var(--el-fill-color-lighter, #f6f8fa);
-  border-radius: 6px;
-  padding: 16px;
-  padding-top: 28px;
-  overflow-x: auto;
-  margin: 0;
-}
-
-.markdown-renderer :deep(code) {
-  font-family: 'Fira Code', 'Consolas', monospace;
-  font-size: 13px;
 }
 
 .markdown-renderer :deep(p code),
@@ -469,7 +477,7 @@ function handleClick(e) {
   color: var(--el-text-color-primary, #e5eaf3);
 }
 
-:root.dark .markdown-renderer :deep(pre) {
+:root.dark .markdown-renderer :deep(.code-block-wrapper) {
   background-color: #1b1b1f;
 }
 

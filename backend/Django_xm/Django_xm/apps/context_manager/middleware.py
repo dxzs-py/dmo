@@ -402,7 +402,6 @@ class ContextManagerMiddleware(AgentMiddleware):
 
         # 第三遍：处理含 tool_calls 的 AIMessage，确保每个 tool_call_id 都有紧跟的 ToolMessage
         result = []
-        patched = 0
         stripped = 0
         i = 0
         while i < len(sanitized):
@@ -455,77 +454,40 @@ class ContextManagerMiddleware(AgentMiddleware):
                 continue
 
             # 不合规：有缺失的 ToolMessage 或 ToolMessage 被间隔
-            if msg.content and str(msg.content).strip():
-                # 策略a：AIMessage 有文本内容，移除 tool_calls 保留文本
-                # 保留原始消息 id，确保 add_messages reducer 能正确替换而非追加
-                new_msg = AIMessage(
-                    content=msg.content,
-                    additional_kwargs={k: v for k, v in msg.additional_kwargs.items() if k != 'tool_calls'},
-                )
-                if hasattr(msg, 'id') and msg.id:
-                    new_msg.id = msg.id
-                result.append(new_msg)
-                stripped += 1
-                logger.warning(
-                    f"移除 AIMessage 中的 {len(expected_tc_ids)} 个 tool_calls"
-                    f"（缺失={len(missing_ids)}, 间隔={has_intervening}，保留文本内容）"
-                )
-                # 跳过紧跟的对应 ToolMessage（它们引用了已移除的 tool_call_id）
-                i += 1
-                while i < len(sanitized):
-                    next_msg = sanitized[i]
-                    if isinstance(next_msg, ToolMessage) and next_msg.tool_call_id in expected_tc_ids:
-                        # 不添加到 result，直接跳过
-                        i += 1
-                    else:
-                        break
-                continue
-            else:
-                # 策略b：AIMessage 无文本内容
-                if has_intervening:
-                    # ToolMessage 被间隔，无法修复位置关系
-                    # 补充错误 ToolMessage 让消息序列合规，同时跳过被间隔的 ToolMessage
-                    result.append(msg)
-                    for missing_id in missing_ids:
-                        result.append(ToolMessage(
-                            content="[工具执行失败，请直接回答用户问题]",
-                            tool_call_id=missing_id,
-                        ))
-                        patched += 1
-                    # 跳过紧跟的已响应的 ToolMessage（它们在正确位置）
-                    i += 1
-                    while i < len(sanitized):
-                        next_msg = sanitized[i]
-                        if isinstance(next_msg, ToolMessage) and next_msg.tool_call_id in expected_tc_ids:
-                            # 已在正确位置的 ToolMessage 保留
-                            result.append(next_msg)
-                            i += 1
-                        else:
-                            break
-                    # 标记后续被间隔的 ToolMessage 为需要跳过
-                    # （它们会在后续循环中被跳过，因为 valid_tool_call_ids 仍包含这些 id）
-                    # 但实际上我们需要在这里就处理掉它们
-                    continue
-                else:
-                    # 无间隔，只是缺少 ToolMessage
-                    result.append(msg)
-                    for missing_id in missing_ids:
-                        result.append(ToolMessage(
-                            content="[工具执行失败，请直接回答用户问题]",
-                            tool_call_id=missing_id,
-                        ))
-                        patched += 1
-
+            # 统一使用策略a：移除 tool_calls，保留/补充文本
+            # 不再使用策略b（补充错误 ToolMessage），因为：
+            # 1. interrupt 导致的缺失 ToolMessage 不是"执行失败"，语义错误
+            # 2. 补充的 ToolMessage 可能导致消息序列不合规（400 错误）
+            new_content = msg.content or ''
+            if not new_content.strip():
+                new_content = '[工具调用等待审批中，暂未执行]'
+            new_msg = AIMessage(
+                content=new_content,
+                additional_kwargs={k: v for k, v in msg.additional_kwargs.items() if k != 'tool_calls'},
+            )
+            if hasattr(msg, 'id') and msg.id:
+                new_msg.id = msg.id
+            result.append(new_msg)
+            stripped += 1
+            logger.warning(
+                f"移除 AIMessage 中的 {len(expected_tc_ids)} 个 tool_calls"
+                f"（缺失={len(missing_ids)}, 间隔={has_intervening}，补充文本内容）"
+            )
+            # 跳过紧跟的对应 ToolMessage（它们引用了已移除的 tool_call_id）
             i += 1
+            while i < len(sanitized):
+                next_msg = sanitized[i]
+                if isinstance(next_msg, ToolMessage) and next_msg.tool_call_id in expected_tc_ids:
+                    i += 1
+                else:
+                    break
+            continue
 
-        if patched > 0:
-            logger.warning(f"补充 {patched} 条缺失 ToolMessage（工具执行失败回填）")
         if stripped > 0:
-            logger.warning(f"移除 {stripped} 个 AIMessage 中的孤立 tool_calls（保留文本）")
+            logger.warning(f"移除 {stripped} 个 AIMessage 中的孤立 tool_calls（补充文本）")
 
-        # 第四遍：最终清理——移除策略a/策略b导致的残留孤立 ToolMessage
+        # 第四遍：最终清理——移除策略a导致的残留孤立 ToolMessage
         # 策略a移除 tool_calls 后，对应的 ToolMessage 可能仍在 result 中
-        # 策略b处理间隔情况后，被间隔的 ToolMessage 也可能残留
         final_valid_tc_ids: set[str] = set()
         for msg in result:
             if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:

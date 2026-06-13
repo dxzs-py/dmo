@@ -193,6 +193,7 @@ class ChatResponseSerializer(serializers.Serializer):
 class ChatMessageSerializer(serializers.ModelSerializer):
     attachments = serializers.SerializerMethodField()
     attachment_ids = serializers.SerializerMethodField()
+    research_task_deleted = serializers.SerializerMethodField()
 
     class Meta:
         model = ChatMessage
@@ -201,7 +202,7 @@ class ChatMessageSerializer(serializers.ModelSerializer):
                   'suggestions', 'versions',
                   'current_version', 'attachments', 'attachment_ids', 'created_at',
                   'model', 'token_count', 'token_detail', 'response_time',
-                  'research_task_id']
+                  'research_task_id', 'research_task_deleted']
         read_only_fields = ['id', 'session', 'created_at']
 
     def get_attachments(self, obj):
@@ -222,6 +223,19 @@ class ChatMessageSerializer(serializers.ModelSerializer):
             return [att.id for att in attachments]
         except Exception:
             return []
+
+    def get_research_task_deleted(self, obj):
+        """检查关联的研究任务是否已软删除"""
+        if not obj.research_task_id:
+            return None
+        try:
+            from django.apps import apps
+            ResearchTask = apps.get_model('research', 'ResearchTask')
+            # 必须用 all_objects，默认 objects 过滤了 is_deleted=True
+            task = ResearchTask.all_objects.filter(task_id=obj.research_task_id).first()
+            return task.is_deleted if task else True
+        except Exception:
+            return None
 
     def validate_content(self, value):
         if value and len(value) > 50000:

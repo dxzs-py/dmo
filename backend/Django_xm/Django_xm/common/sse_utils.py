@@ -17,8 +17,9 @@ def sse_error_event(code: str, message: str, data=None) -> str:
     """
     生成统一格式的 SSE 错误事件
 
-    格式: event: error\\ndata: {"code": "5xxxx", "message": "错误描述", "data": null}\\n\\n
-    与 JSON 错误响应 {code, message, data} 结构一致。
+    格式: event: error\\ndata: {"type": "error", "code": "5xxxx", "message": "错误描述", "data": null}\\n\\n
+    data 行包含 type 字段，兼容前端手动 SSE 解析（仅解析 data: 行）和浏览器原生 EventSource。
+    与 JSON 错误响应 {code, message, data} 结构一致（额外增加 type 字段用于前端事件路由）。
 
     Args:
         code: 错误码字符串，如 "50001"、"40101"
@@ -29,7 +30,7 @@ def sse_error_event(code: str, message: str, data=None) -> str:
         SSE 格式字符串
     """
     error_payload = json.dumps(
-        {"code": code, "message": message, "data": data},
+        {"type": "error", "code": code, "message": message, "data": data},
         ensure_ascii=False,
     )
     return f"event: error\ndata: {error_payload}\n\n"

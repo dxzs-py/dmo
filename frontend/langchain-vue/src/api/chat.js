@@ -165,6 +165,24 @@ export const chatAPI = {
   getProjectContext(path = null) { return apiClient.get('/chat/project-context/', { params: path ? { path } : {} }) },
 }
 
+/**
+ * 聊天审批 API（返回 SSE 流式 Response）
+ * 需要获取 ReadableStream，因此使用 fetch 而非 apiClient，但复用其 baseURL 和 token 配置
+ */
+export function chatApprovalStream(requestBody, { signal } = {}) {
+  const baseURL = apiClient.defaults?.baseURL || ''
+  const token = localStorage.getItem('user_token')
+  return fetch(`${baseURL}/chat/approval/`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(requestBody),
+    signal,
+  })
+}
+
 export async function* streamChat(request) {
   const response = await createStreamRequest(request)
   const eventQueue = []

@@ -77,6 +77,7 @@ class AgentConfig:
     interrupt_on: Optional[Dict[str, bool]] = None
     backend_type: str = "filesystem"
     work_dir: Optional[str] = None
+    _preflight_issues: Optional[List[str]] = field(default=None, repr=False)
 
     def validate(self) -> None:
         from Django_xm.apps.agent_hub.exceptions import ConfigValidationError

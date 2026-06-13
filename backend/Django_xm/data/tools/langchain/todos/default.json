@@ -1,32 +1,32 @@
 [
   {
     "id": 1,
-    "content": "搜索LangChain官方对MySQL和PostgreSQL的适配文档",
+    "content": "研究LangChain的定义、核心功能和应用场景",
     "status": "completed",
     "priority": "high"
   },
   {
     "id": 2,
-    "content": "搜索LangChain Vector Store对PostgreSQL(pgvector)和MySQL的支持",
+    "content": "调研LangChain的上下文管理机制（Memory）",
     "status": "completed",
     "priority": "high"
   },
   {
     "id": 3,
-    "content": "搜索LangChain SQL Database集成对比",
-    "status": "completed",
-    "priority": "high"
-  },
-  {
-    "id": 4,
-    "content": "搜索社区实践和Benchmark数据",
+    "content": "编写研究笔记并存档",
     "status": "completed",
     "priority": "medium"
   },
   {
-    "id": 5,
-    "content": "综合对比并撰写研究报告",
+    "id": 4,
+    "content": "实现LangChain上下文管理代码",
     "status": "completed",
     "priority": "high"
+  },
+  {
+    "id": 5,
+    "content": "生成研究报告",
+    "status": "completed",
+    "priority": "medium"
   }
 ]

@@ -8,7 +8,7 @@ import ChainOfThought from './ChainOfThought.vue'
 import ToolCallCard from './ToolCallCard.vue'
 import Sources from './Sources.vue'
 import Plan from './Plan.vue'
-import { AiReasoning, AiContext } from '../ai-elements'
+import { AiReasoning } from '../ai-elements'
 import AiTask from '../ai-elements/AiTask.vue'
 import AiImage from '../ai-elements/AiImage.vue'
 import AiControls from '../ai-elements/AiControls.vue'
@@ -16,6 +16,8 @@ import AiQueue from '../ai-elements/AiQueue.vue'
 import AiConfirmation from '../ai-elements/AiConfirmation.vue'
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
+import { useApprovalStore } from '../../stores/approval'
+import { ToolCallStatus, ApprovalState } from '../../types'
 import { logger } from '../../utils/logger'
 import { formatFileSize } from '../../utils/format'
 
@@ -73,10 +75,11 @@ const copied = ref(false)
 const approvalInputValues = ref({})  // Map<toolCallId, inputValue> 每个工具调用独立的输入值
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
+const approvalStore = useApprovalStore()
 const router = useRouter()
 
 // 是否有待审批的操作（审批等待中不应显示上下文统计）
-const hasPendingApprovals = computed(() => chatStore.pendingApprovals.size > 0)
+const hasPendingApprovals = computed(() => approvalStore.pendingApprovals.size > 0)
 
 // 收集所有工具调用级的审批数据
 const toolCallApprovals = computed(() => {
@@ -139,7 +142,6 @@ function handleApprove(toolCallId) {
   }
 }
 
-const deepResearchTask = computed(() => chatStore.deepResearchTask)
 const attachmentProcessing = computed(() => chatStore.attachmentProcessing)
 const showAttachmentProcessing = computed(() => {
   if (props.message.role !== 'assistant' || !props.isLast) return false
@@ -149,11 +151,11 @@ const showAttachmentProcessing = computed(() => {
   return false
 })
 const showDeepResearchCard = computed(() => {
-  return props.message.role === 'assistant' && deepResearchTask.value && props.isLast
+  return props.message.role === 'assistant' && !!props.message.research_task_id && !props.message.research_task_deleted
 })
 
 function navigateToDeepResearch() {
-  const taskId = deepResearchTask.value?.task_id
+  const taskId = props.message.research_task_id
   if (taskId) {
     router.push({ path: '/deep-research', query: { task_id: taskId } })
   } else {
@@ -223,7 +225,7 @@ function handleRegenerate() {
   emit('regenerate', props.index)
 }
 
-const hasResearchTask = computed(() => !!props.message.research_task_id)
+const hasResearchTask = computed(() => !!props.message.research_task_id && !props.message.research_task_deleted)
 
 const showContinueResearch = computed(() => {
   return props.message.role === 'assistant' && hasResearchTask.value && !props.isStreaming
@@ -238,7 +240,7 @@ function handleContinueResearch() {
 async function handleDelete() {
   let confirmMsg = '确定删除这条消息吗？'
   if (hasResearchTask.value) {
-    confirmMsg += '该消息关联了深度研究任务，删除后将同时清理相关研究数据。'
+    confirmMsg += '该消息关联了深度研究任务，删除后研究任务仍可在深度研究模块查看。'
   }
   try {
     await ElMessageBox.confirm(confirmMsg, '删除确认', {
@@ -496,7 +498,7 @@ function handleMessageClick() {
               :tool-name="toolCall.name"
               :input="toolCall.input || toolCall.parameters"
               :output="toolCall.output || toolCall.result"
-              :status="toolCall.status || (toolCall.state === 'output-error' ? 'failed' : toolCall.state === 'output-available' ? 'completed' : 'running')"
+              :status="toolCall.status || (toolCall.state === 'output-error' ? ToolCallStatus.FAILED : toolCall.state === 'output-available' ? ToolCallStatus.COMPLETED : ToolCallStatus.RUNNING)"
               :tool-call="toolCall"
               @approve="(tc) => handleToolCallApprove(tc)"
               @reject="(tc) => handleToolCallReject(tc)"
@@ -507,7 +509,7 @@ function handleMessageClick() {
             :tool-name="message.toolCalls[0].name"
             :input="message.toolCalls[0].input || message.toolCalls[0].parameters"
             :output="message.toolCalls[0].output || message.toolCalls[0].result"
-            :status="message.toolCalls[0].status || (message.toolCalls[0].state === 'output-error' ? 'failed' : message.toolCalls[0].state === 'output-available' ? 'completed' : 'running')"
+            :status="message.toolCalls[0].status || (message.toolCalls[0].state === 'output-error' ? ToolCallStatus.FAILED : message.toolCalls[0].state === 'output-available' ? ToolCallStatus.COMPLETED : ToolCallStatus.RUNNING)"
             :tool-call="message.toolCalls[0]"
             @approve="(tc) => handleToolCallApprove(tc)"
             @reject="(tc) => handleToolCallReject(tc)"
@@ -522,16 +524,17 @@ function handleMessageClick() {
         :state="message.approvalState || 'pending'"
         class="message-confirmation"
         :class-name="'danger-' + (message.approval.danger_level || 'medium')"
-        :extra-class="{ 'confirmation-collapsed': message.approvalState === 'approved' || message.approvalState === 'rejected' }"
+        :extra-class="{ 'confirmation-collapsed': [ApprovalState.APPROVED, ApprovalState.REJECTED, ApprovalState.TIMEOUT].includes(message.approvalState) }"
       >
-        <!-- 已确认/已拒绝：折叠显示，只保留一行状态标签 -->
-        <template v-if="message.approvalState === 'approved' || message.approvalState === 'rejected'">
+        <!-- 已确认/已拒绝/已超时：折叠显示，只保留一行状态标签 -->
+        <template v-if="[ApprovalState.APPROVED, ApprovalState.REJECTED, ApprovalState.TIMEOUT].includes(message.approvalState)">
           <div class="confirmation-result-inline">
             <span class="confirmation-tool-badge" :class="'badge-' + (message.approval.danger_level || 'medium')">
               {{ message.approval.tool_name || '工具' }}
             </span>
-            <el-tag v-if="message.approvalState === 'approved'" type="success" size="small">已确认</el-tag>
-            <el-tag v-else-if="message.approvalState === 'rejected'" type="danger" size="small">已拒绝</el-tag>
+            <el-tag v-if="message.approvalState === ApprovalState.APPROVED" type="success" size="small">已确认</el-tag>
+            <el-tag v-else-if="message.approvalState === ApprovalState.REJECTED" type="danger" size="small">已拒绝</el-tag>
+            <el-tag v-else-if="message.approvalState === ApprovalState.TIMEOUT" type="warning" size="small">已超时</el-tag>
           </div>
         </template>
         <!-- 待审批：完整展示 -->
@@ -561,7 +564,7 @@ function handleMessageClick() {
             />
           </div>
           <div class="confirmation-actions">
-            <button class="confirmation-action confirm-reject" @click="emit('reject', message)">
+            <button class="confirmation-action confirm-reject" @click="emit('reject', { message, approval: message.approval })">
               拒绝
             </button>
             <button
@@ -575,27 +578,7 @@ function handleMessageClick() {
         </template>
       </AiConfirmation>
 
-      <AiContext
-        v-if="!isStreaming && !hasPendingApprovals && message.context && (message.context.usedTokens || message.context.percentage)"
-        class="message-context"
-      >
-        <div class="context-info">
-          <span class="context-tokens">
-            {{ message.context.usedTokens?.toLocaleString() || 0 }} / {{ message.context.maxTokens?.toLocaleString() || '128,000' }} tokens
-          </span>
-          <div v-if="message.context.percentage" class="context-bar">
-            <div
-              class="context-bar-fill"
-              :style="{ width: Math.min(message.context.percentage * 100, 100) + '%' }"
-              :class="{
-                'bar-low': message.context.percentage < 0.5,
-                'bar-medium': message.context.percentage >= 0.5 && message.context.percentage < 0.8,
-                'bar-high': message.context.percentage >= 0.8
-              }"
-            ></div>
-          </div>
-        </div>
-      </AiContext>
+
 
       <div v-if="showDebug && message.role === 'assistant'" class="debug-panel">
         <div class="debug-panel-header">
@@ -1333,42 +1316,6 @@ function handleMessageClick() {
 
 .message:hover .message-bottom-controls {
   opacity: 1;
-}
-
-.context-info {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.context-tokens {
-  font-size: 12px;
-  color: var(--muted-foreground);
-}
-
-.context-bar {
-  height: 4px;
-  border-radius: 2px;
-  background: var(--accent);
-  overflow: hidden;
-}
-
-.context-bar-fill {
-  height: 100%;
-  border-radius: 2px;
-  transition: width 0.3s ease;
-}
-
-.bar-low {
-  background: var(--el-color-success);
-}
-
-.bar-medium {
-  background: var(--el-color-warning);
-}
-
-.bar-high {
-  background: var(--el-color-danger);
 }
 
 @media (max-width: 768px) {

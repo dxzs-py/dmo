@@ -24,7 +24,10 @@ import {
   updateOrAddToolResultInLastMessage,
   addOrUpdateToolCallInMessageByIdx,
   updateOrAddToolResultInMessageByIdx,
+  findToolCallById,
+  getInterruptId,
 } from '../utils/message-operations'
+import { ToolCallStatus, mapApprovalStateToStatus } from '../types'
 
 export const useSessionStore = defineStore('session', () => {
   const sessions = ref([])
@@ -252,16 +255,8 @@ export const useSessionStore = defineStore('session', () => {
         try {
           const response = await chatAPI.deleteSession(sessionId)
           const resData = response.data?.data || response.data
-          if (resData?.has_linked_data) {
-            const linkedTasks = resData.linked_research_tasks || resData.linked_tasks || []
-            const taskList = linkedTasks.map(t => t.query || t.user_question || t.task_id).join('、')
-            const count = linkedTasks.length
-            await ElMessageBox.confirm(
-              `该会话关联了 ${count} 个深度研究任务及文件，删除后将无法恢复。关联任务：[${taskList}]`,
-              '',
-              { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' }
-            )
-            await chatAPI.deleteSession(sessionId, { confirm_delete_linked: 'true' })
+          if (resData?.linked_research_preserved) {
+            ElMessage.info(`关联的深度研究将保留在独立模块中（${resData.linked_research_count || ''}个任务）`)
           }
           logger.log(`[Security] Deleted session ${sessionId} for user ${userStore.userInfo?.id}`)
         } catch (error) {
@@ -272,6 +267,16 @@ export const useSessionStore = defineStore('session', () => {
       }
 
       sessions.value.splice(index, 1)
+      // 清理该会话关联的审批条目（延迟导入避免循环依赖）
+      try {
+        const { useApprovalStore } = await import('./approval')
+        const approvalStore = useApprovalStore()
+        for (const [key, entry] of approvalStore.pendingApprovals) {
+          if (entry.sessionId === sessionId) {
+            approvalStore.pendingApprovals.delete(key)
+          }
+        }
+      } catch { /* 忽略 */ }
       if (currentSessionId.value === sessionId) {
         if (sessions.value.length > 0) {
           currentSessionId.value = sessions.value[0].id
@@ -329,6 +334,8 @@ export const useSessionStore = defineStore('session', () => {
 
   // 防止 syncLastMessageToBackend 并发调用导致创建重复消息
   const _syncLocks = new Map()
+  // 记录上次同步的消息签名，避免重复 PATCH 相同内容
+  const _lastSyncSignatures = new Map()
 
   const syncLastMessageToBackend = async (sessionId) => {
     if (!userStore.isLoggedIn) return
@@ -356,6 +363,10 @@ export const useSessionStore = defineStore('session', () => {
         }
       } else {
         const backendMsg = transformFrontendMessageToBackend(lastMessage)
+        // 签名检测：内容未变化则跳过 PATCH，避免流结束后重复请求
+        const signature = `${lastMessage.backendId}:${lastMessage.content?.length}:${lastMessage.tool_calls?.length}:${lastMessage.sources?.length}`
+        if (_lastSyncSignatures.get(sessionId) === signature) return
+        _lastSyncSignatures.set(sessionId, signature)
         try {
           await chatAPI.updateMessage(lastMessage.backendId, backendMsg)
         } catch (error) {
@@ -369,6 +380,24 @@ export const useSessionStore = defineStore('session', () => {
       await promise
     } finally {
       _syncLocks.delete(sessionId)
+    }
+  }
+
+  /** debounced 工具调用同步 — 工具调用/结果到达后立即同步到后端 */
+  const _toolSyncTimers = {}
+  const _debouncedToolSync = (sessionId) => {
+    if (_toolSyncTimers[sessionId]) clearTimeout(_toolSyncTimers[sessionId])
+    _toolSyncTimers[sessionId] = setTimeout(() => {
+      syncLastMessageToBackend(sessionId).catch(() => {})
+      delete _toolSyncTimers[sessionId]
+    }, 300)
+  }
+
+  /** 清理指定会话的工具同步定时器，流结束时调用 */
+  const clearToolSyncTimer = (sessionId) => {
+    if (_toolSyncTimers[sessionId]) {
+      clearTimeout(_toolSyncTimers[sessionId])
+      delete _toolSyncTimers[sessionId]
     }
   }
 
@@ -450,53 +479,37 @@ export const useSessionStore = defineStore('session', () => {
     const session = sessions.value.find(s => s.id === sessionId)
     if (!session || session.messages.length === 0) return
     const lastMsg = session.messages[session.messages.length - 1]
-    if (!lastMsg.toolCalls || !Array.isArray(lastMsg.toolCalls)) return
-
-    // 匹配策略（interrupt.id ≠ LLM tool_call.id，需要回退匹配）：
-    //   0. 按 llm_tool_call_id 精确匹配（后端注入的 LLM tool_call.id，最可靠）
-    //   1. 按 id 精确匹配
-    //   2. 按 toolName + command 内容匹配
-    //   3. 按 toolName 匹配（最宽松，取最新未审批的）
-    const _getCmd = (t) => t.parameters?.command || t.args?.command
-    const _getToolName = (t) => t.name || t.tool_name || t.function?.name
-
-    const findToolCall = (toolCalls) => {
-      // 0. 后端注入的 llm_tool_call_id（最精确）
-      if (approvalData?.llm_tool_call_id) {
-        const tc = toolCalls.find(t => t.id === approvalData.llm_tool_call_id)
-        if (tc) return tc
-      }
-      // 1. 按 id 精确匹配（interrupt.id）
-      let tc = toolCalls.find(t => t.id === toolCallId)
-      if (tc) return tc
-      // 2. 按 toolName + operation 内容匹配
-      const _op = approvalData?.operation || approvalData?.command
-      if (approvalData?.tool_name && _op) {
-        tc = toolCalls.find(t =>
-          _getToolName(t) === approvalData.tool_name &&
-          (_getCmd(t) === _op || Object.values(t.parameters || {}).some(v => String(v) === _op)) &&
-          !t.approval
-        )
-        if (tc) return tc
-      }
-      // 3. 按 toolName 匹配（最宽松，取最新未审批的）
-      if (approvalData?.tool_name) {
-        tc = toolCalls.reverse().find(t =>
-          _getToolName(t) === approvalData.tool_name && !t.approval
-        )
-      }
-      return tc
+    if (!lastMsg.toolCalls || !Array.isArray(lastMsg.toolCalls)) {
+      lastMsg.toolCalls = []
     }
 
-    const tc = findToolCall(lastMsg.toolCalls)
+    const tc = findToolCallById(lastMsg.toolCalls, toolCallId, { approvalData, skipApproved: true })
     if (tc) {
       tc.approval = approvalData
       if (approvalData?.state) {
-        tc.status = approvalData.state === 'pending' ? 'pending_approval' : tc.status
+        tc.status = mapApprovalStateToStatus(approvalData.state)
       }
     } else {
       // toolCall 还未到达（messages 模式事件可能在 updates 模式之后），
-      // 将审批数据缓存，等 addOrUpdateToolCallToLastMessage 时再匹配
+      // 创建合成 toolCall 条目，使 ToolCallCard 能立即渲染审批面板
+      const syntheticToolCall = {
+        id: toolCallId,
+        name: approvalData?.tool_name || 'unknown',
+        tool_name: approvalData?.tool_name || 'unknown',
+        parameters: {},
+        args: {},
+        status: ToolCallStatus.PENDING_APPROVAL,
+        approval: approvalData,
+        _synthetic: true,
+      }
+      const op = approvalData?.operation || approvalData?.command
+      if (op) {
+        syntheticToolCall.parameters.command = op
+        syntheticToolCall.args.command = op
+      }
+      lastMsg.toolCalls.push(syntheticToolCall)
+
+      // 同时缓存，等真实 toolCall 到达时可能替换
       if (!lastMsg._pendingApprovals) {
         lastMsg._pendingApprovals = []
       }
@@ -506,21 +519,60 @@ export const useSessionStore = defineStore('session', () => {
     const ver = lastMsg.versions?.[lastMsg.currentVersion]
     if (ver) {
       if (ver.toolCalls && Array.isArray(ver.toolCalls)) {
-        const verTc = findToolCall(ver.toolCalls)
+        const verTc = findToolCallById(ver.toolCalls, toolCallId, { approvalData, skipApproved: true })
         if (verTc) {
           verTc.approval = approvalData
           if (approvalData?.state) {
-            verTc.status = approvalData.state === 'pending' ? 'pending_approval' : verTc.status
+            verTc.status = mapApprovalStateToStatus(approvalData.state)
           }
         } else {
-          // version 中也找不到 toolCall，同样缓存
+          // version 中也找不到 toolCall，创建合成 toolCall
+          const syntheticToolCall = {
+            id: toolCallId,
+            name: approvalData?.tool_name || 'unknown',
+            tool_name: approvalData?.tool_name || 'unknown',
+            parameters: {},
+            args: {},
+            status: ToolCallStatus.PENDING_APPROVAL,
+            approval: approvalData,
+            _synthetic: true,
+          }
+          const op = approvalData?.operation || approvalData?.command
+          if (op) {
+            syntheticToolCall.parameters.command = op
+            syntheticToolCall.args.command = op
+          }
+          if (!ver.toolCalls) {
+            ver.toolCalls = []
+          }
+          ver.toolCalls.push(syntheticToolCall)
+
+          // 同时缓存
           if (!ver._pendingApprovals) {
             ver._pendingApprovals = []
           }
           ver._pendingApprovals.push({ toolCallId, approvalData })
         }
       } else {
-        // version 没有 toolCalls 数组，也缓存
+        // version 没有 toolCalls 数组，创建并添加合成 toolCall
+        const syntheticToolCall = {
+          id: toolCallId,
+          name: approvalData?.tool_name || 'unknown',
+          tool_name: approvalData?.tool_name || 'unknown',
+          parameters: {},
+          args: {},
+          status: ToolCallStatus.PENDING_APPROVAL,
+          approval: approvalData,
+          _synthetic: true,
+        }
+        const op = approvalData?.operation || approvalData?.command
+        if (op) {
+          syntheticToolCall.parameters.command = op
+          syntheticToolCall.args.command = op
+        }
+        ver.toolCalls = [syntheticToolCall]
+
+        // 同时缓存
         if (!ver._pendingApprovals) {
           ver._pendingApprovals = []
         }
@@ -529,56 +581,25 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  /**
-   * 更新指定 toolCall 的状态
-   */
-  const updateToolCallStatus = (sessionId, toolCallId, status, approvalData) => {
+  /** 更新 toolCall 的审批状态（approval.state），用于审批成功/失败/超时后同步消息中的审批数据 */
+  const updateToolCallApprovalState = (sessionId, toolCallId, state) => {
     const session = sessions.value.find(s => s.id === sessionId)
-    if (!session || session.messages.length === 0) return
-    const lastMsg = session.messages[session.messages.length - 1]
-    if (!lastMsg.toolCalls || !Array.isArray(lastMsg.toolCalls)) return
-
-    // 匹配策略（与 setApprovalToToolCall 保持一致）：
-    const _getCmd = (t) => t.parameters?.command || t.args?.command
-    const _getToolName = (t) => t.name || t.tool_name || t.function?.name
-
-    const findToolCall = (toolCalls) => {
-      // 0. 后端注入的 llm_tool_call_id（最精确）
-      if (approvalData?.llm_tool_call_id) {
-        const tc = toolCalls.find(t => t.id === approvalData.llm_tool_call_id)
-        if (tc) return tc
+    if (!session?.messages) return
+    for (const msg of session.messages) {
+      if (!msg.toolCalls || !Array.isArray(msg.toolCalls)) continue
+      const tc = findToolCallById(msg.toolCalls, toolCallId, { skipApproved: false })
+      if (tc?.approval) {
+        tc.approval.state = state
+        tc.status = mapApprovalStateToStatus(state)
       }
-      // 1. 按 id 精确匹配
-      let tc = toolCalls.find(t => t.id === toolCallId)
-      if (tc) return tc
-      // 2. 按 toolName + operation 内容匹配
-      const _op = approvalData?.operation || approvalData?.command
-      if (approvalData?.tool_name && _op) {
-        tc = toolCalls.find(t =>
-          _getToolName(t) === approvalData.tool_name &&
-          (_getCmd(t) === _op || Object.values(t.parameters || {}).some(v => String(v) === _op))
-        )
-        if (tc) return tc
-      }
-      // 3. 按 toolName 匹配
-      if (approvalData?.tool_name) {
-        tc = toolCalls.reverse().find(t =>
-          _getToolName(t) === approvalData.tool_name
-        )
-      }
-      return tc
-    }
-
-    const tc = findToolCall(lastMsg.toolCalls)
-    if (tc) {
-      tc.status = status
-    }
-    // 同步到 version
-    const ver = lastMsg.versions?.[lastMsg.currentVersion]
-    if (ver && ver.toolCalls && Array.isArray(ver.toolCalls)) {
-      const verTc = findToolCall(ver.toolCalls)
-      if (verTc) {
-        verTc.status = status
+      // 同步到 version
+      const ver = msg.versions?.[msg.currentVersion]
+      if (ver?.toolCalls) {
+        const verTc = findToolCallById(ver.toolCalls, toolCallId, { skipApproved: false })
+        if (verTc?.approval) {
+          verTc.approval.state = state
+          verTc.status = mapApprovalStateToStatus(state)
+        }
       }
     }
   }
@@ -592,8 +613,14 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   const addToolCallToLastMessage = (sessionId, toolCall) => _addLastFieldItem(sessionId, 'toolCalls', toolCall)
-  const addOrUpdateToolCallToLastMessage = (sessionId, data) => addOrUpdateToolCallInLastMessage(sessions.value, sessionId, data)
-  const updateOrAddToolResultToLastMessage = (sessionId, data) => updateOrAddToolResultInLastMessage(sessions.value, sessionId, data)
+  const addOrUpdateToolCallToLastMessage = (sessionId, data) => {
+    addOrUpdateToolCallInLastMessage(sessions.value, sessionId, data)
+    _debouncedToolSync(sessionId)
+  }
+  const updateOrAddToolResultToLastMessage = (sessionId, data) => {
+    updateOrAddToolResultInLastMessage(sessions.value, sessionId, data)
+    _debouncedToolSync(sessionId)
+  }
 
   const setUsageToLastMessage = (sessionId, usageData) => {
     const result = getLastAssistantMessage(sessions.value, sessionId)
@@ -603,6 +630,15 @@ export const useSessionStore = defineStore('session', () => {
     if (usageData.tokens !== undefined) result.message.tokens = usageData.tokens
     if (usageData.tokenDetail !== undefined) result.message.tokenDetail = usageData.tokenDetail
     if (usageData.responseTime !== undefined) result.message.responseTime = usageData.responseTime
+    // 同步到 version，避免切换版本后 usage 数据丢失
+    const ver = result.message.versions?.[result.message.currentVersion]
+    if (ver) {
+      if (usageData.model !== undefined) ver.model = usageData.model
+      if (usageData.tokenCount !== undefined) ver.tokenCount = usageData.tokenCount
+      if (usageData.tokens !== undefined) ver.tokens = usageData.tokens
+      if (usageData.tokenDetail !== undefined) ver.tokenDetail = usageData.tokenDetail
+      if (usageData.responseTime !== undefined) ver.responseTime = usageData.responseTime
+    }
   }
 
   const setAttachmentIdsToLastUserMessage = (sessionId, attachmentIds) => {
@@ -794,7 +830,7 @@ export const useSessionStore = defineStore('session', () => {
     setResearchTaskIdToLastMessage,
     setApprovalToLastMessage,
     setApprovalToToolCall,
-    updateToolCallStatus,
+    updateToolCallApprovalState,
     appendToLastAssistantMessage,
     addToolCallToLastMessage,
     addOrUpdateToolCallToLastMessage,
@@ -822,5 +858,6 @@ export const useSessionStore = defineStore('session', () => {
     initialize,
     clearAllLocalData,
     touchSessionUpdatedAt,
+    clearToolSyncTimer,
   }
 })

@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { ArrowDown, ArrowRight, CircleCheck, Close, Loading, MagicStick } from '@element-plus/icons-vue'
+import { ToolCallStatus } from '../../types'
 
 const props = defineProps({
   toolName: {
@@ -22,7 +23,7 @@ const props = defineProps({
   status: {
     type: String,
     default: 'pending',
-    validator: (value) => ['pending', 'running', 'completed', 'failed', 'pending_approval', 'approved', 'rejected'].includes(value)
+    validator: (value) => Object.values(ToolCallStatus).includes(value)
   },
   toolCall: {
     type: Object,
@@ -62,13 +63,18 @@ const hybridSections = computed(() => {
 const statusIcon = computed(() => {
   switch (props.status) {
     case 'completed':
+    case 'approved':
       return CircleCheck
     case 'failed':
+    case 'rejected':
       return Close
     case 'running':
+    case 'processing':
       return Loading
     case 'pending_approval':
       return ArrowRight
+    case 'timeout':
+      return Close
     default:
       return ArrowRight
   }
@@ -77,13 +83,18 @@ const statusIcon = computed(() => {
 const statusType = computed(() => {
   switch (props.status) {
     case 'completed':
+    case 'approved':
       return 'success'
     case 'failed':
+    case 'rejected':
       return 'danger'
     case 'running':
+    case 'processing':
       return 'warning'
     case 'pending_approval':
       return 'info'
+    case 'timeout':
+      return 'danger'
     default:
       return 'info'
   }
@@ -93,12 +104,20 @@ const statusText = computed(() => {
   switch (props.status) {
     case 'completed':
       return '已完成'
+    case 'approved':
+      return '已确认'
     case 'failed':
       return '失败'
+    case 'rejected':
+      return '已拒绝'
     case 'running':
       return '执行中'
+    case 'processing':
+      return '处理中'
     case 'pending_approval':
       return '待审批'
+    case 'timeout':
+      return '已超时'
     default:
       return '待执行'
   }
@@ -115,7 +134,7 @@ const formatContent = (content) => {
 // 审批相关
 const approvalData = computed(() => props.toolCall?.approval || null)
 
-const isPendingApproval = computed(() => props.status === 'pending_approval' && approvalData.value)
+const isPendingApproval = computed(() => props.status === ToolCallStatus.PENDING_APPROVAL && approvalData.value)
 
 const dangerLevel = computed(() => approvalData.value?.danger_level || 'low')
 
@@ -164,13 +183,13 @@ const operationLabel = computed(() => {
     <div class="tool-call-header" @click="isExpanded = !isExpanded">
       <div class="tool-call-left">
         <el-icon class="status-icon" :class="`status-${status}`">
-          <component :is="isSkillCall ? MagicStick : statusIcon" :class="{ 'is-loading': status === 'running' }" />
+          <component :is="isSkillCall ? MagicStick : statusIcon" :class="{ 'is-loading': status === ToolCallStatus.RUNNING || status === ToolCallStatus.PROCESSING }" />
         </el-icon>
         <div class="tool-info">
           <span class="tool-name">{{ toolName }}</span>
           <el-tag v-if="isSkillCall && skillModeLabel" size="small" :type="skillModeLabel === '管线' ? 'primary' : skillModeLabel === '顾问' ? 'success' : 'warning'" effect="plain">{{ skillModeLabel }}</el-tag>
-          <el-tag v-if="status === 'approved'" size="small" type="success">已确认</el-tag>
-          <el-tag v-else-if="status === 'rejected'" size="small" type="danger">已拒绝</el-tag>
+          <el-tag v-if="status === ToolCallStatus.APPROVED" size="small" type="success">已确认</el-tag>
+          <el-tag v-else-if="status === ToolCallStatus.REJECTED" size="small" type="danger">已拒绝</el-tag>
           <el-tag v-else :type="statusType" size="small">{{ statusText }}</el-tag>
         </div>
       </div>
@@ -275,6 +294,14 @@ const operationLabel = computed(() => {
 
 .tool-call-card--rejected {
   border-left: 3px solid var(--el-color-danger);
+}
+
+.tool-call-card--timeout {
+  border-left: 3px solid var(--el-color-danger);
+}
+
+.tool-call-card--processing {
+  border-left: 3px solid var(--el-color-warning);
 }
 
 .tool-call-card--skill {

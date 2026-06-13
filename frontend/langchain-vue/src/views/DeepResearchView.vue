@@ -166,6 +166,20 @@
           <p class="progress-hint">深度研究通常需要 5-10 分钟，请耐心等待...</p>
         </div>
 
+        <!-- 审批面板 -->
+        <div v-if="taskPendingApprovals.size > 0" class="approval-section">
+          <ToolCallCard
+            v-for="[id, entry] in taskPendingApprovals"
+            :key="id"
+            :tool-name="entry.approvalData?.tool_name || 'unknown'"
+            :description="entry.approvalData?.description || ''"
+            :status="mapApprovalStateToStatus(entry.approvalData?.state) || 'pending_approval'"
+            :tool-call="{ approval: entry.approvalData, id: entry.approvalData?.interrupt_id || entry.approvalData?.tool_call_id || id }"
+            @approve="handleApprove"
+            @reject="handleReject"
+          />
+        </div>
+
         <div v-if="task.final_report" class="report-section">
           <div v-if="task.version_chain && task.version_chain.length > 1" class="version-chain">
             <span v-for="(v, idx) in task.version_chain" :key="v.task_id">
@@ -371,7 +385,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { deepResearchAPI, knowledgeAPI } from '../api'
 import { readSSEStream } from '../utils/sse'
@@ -383,16 +397,35 @@ import MarkdownRenderer from '../components/common/MarkdownRenderer.vue'
 import AiOpenInChat from '../components/ai-elements/AiOpenInChat.vue'
 import ModelSelector from '../components/common/ModelSelector.vue'
 import ToolSelector from '../components/chat/ToolSelector.vue'
+import ToolCallCard from '../components/chat/ToolCallCard.vue'
 import { useModelStore } from '../stores/model'
+import { useSessionStore } from '../stores/session'
+import { useApprovalStore } from '../stores/approval'
 import { formatDate, formatFileSize } from '../utils/format'
 import { logger } from '../utils/logger'
+import { getInterruptId } from '../utils/message-operations'
+import { ToolCallStatus, mapApprovalStateToStatus } from '../types'
 
 const modelStore = useModelStore()
+const approvalStore = useApprovalStore()
 
 const isLoading = ref(false)
 const router = useRouter()
 const route = useRoute()
 const task = ref(null)
+
+/** 当前任务的待审批列表（过滤出 source=deep_research 且 taskId 匹配的审批） */
+const taskPendingApprovals = computed(() => {
+  const result = new Map()
+  const currentTaskId = task.value?.task_id
+  if (!currentTaskId) return result
+  for (const [id, entry] of approvalStore.pendingApprovals) {
+    if (entry.source === 'deep_research' && entry.taskId === currentTaskId) {
+      result.set(id, entry)
+    }
+  }
+  return result
+})
 const showTaskDetail = ref(false)
 const taskListRef = ref(null)
 const fileBrowserRef = ref(null)
@@ -569,6 +602,7 @@ const autoLoadDocAnalysis = async () => {
 const getStatusType = (status) => {
   const typeMap = {
     pending: 'info',
+    progress: 'warning',
     running: 'warning',
     completed: 'success',
     failed: 'danger',
@@ -579,11 +613,75 @@ const getStatusType = (status) => {
 const getStatusText = (status) => {
   const textMap = {
     pending: '待执行',
+    progress: '执行中',
     running: '执行中',
     completed: '已完成',
     failed: '失败',
   }
   return textMap[status] || status
+}
+
+// 处理 SSE 审批事件 — 统一委托给 approval store
+const handleApprovalEvent = (approvalData) => {
+  const sessionStore = useSessionStore()
+  approvalStore.handleApprovalEvent(approvalData, {
+    source: 'deep_research',
+    taskId: task.value?.task_id,
+    sessionId: sessionStore.currentSessionId,
+  })
+}
+
+// 确认审批（ToolCallCard emit 的参数是 toolCall 对象）
+const handleApprove = async (toolCallData) => {
+  const approval = toolCallData.approval || toolCallData
+  const interruptId = getInterruptId(approval) || toolCallData.id
+  const userInput = toolCallData._user_input
+
+  // 防重复：如果正在处理中，忽略（executeApproval 内部也有防重复，此处提前拦截避免无效调用）
+  const entry = approvalStore.pendingApprovals.get(interruptId)
+  if (entry?.approvalData?.state === 'processing') return
+
+  try {
+    await approvalStore.executeApproval(approval, true, userInput, {
+      taskId: task.value?.task_id,
+    })
+    ElMessage.success('已确认操作')
+  } catch (e) {
+    // 恢复审批状态（executeApproval 内部 catch 已恢复 pendingApprovals，此处同步 session store）
+    const sessionStore = useSessionStore()
+    const sid = sessionStore.currentSessionId
+    if (sid) {
+      sessionStore.updateToolCallApprovalState(sid, interruptId, 'pending')
+      sessionStore.setApprovalToLastMessage(sid, { ...approval, state: 'pending' })
+    }
+    ElMessage.error('确认操作失败')
+  }
+}
+
+// 拒绝审批（ToolCallCard emit 的参数是 toolCall 对象）
+const handleReject = async (toolCallData) => {
+  const approval = toolCallData.approval || toolCallData
+  const interruptId = getInterruptId(approval) || toolCallData.id
+
+  // 防重复：如果正在处理中，忽略
+  const entry = approvalStore.pendingApprovals.get(interruptId)
+  if (entry?.approvalData?.state === 'processing') return
+
+  try {
+    await approvalStore.executeApproval(approval, false, null, {
+      taskId: task.value?.task_id,
+    })
+    ElMessage.info('已拒绝操作')
+  } catch (e) {
+    // 恢复审批状态（executeApproval 内部 catch 已恢复 pendingApprovals，此处同步 session store）
+    const sessionStore = useSessionStore()
+    const sid = sessionStore.currentSessionId
+    if (sid) {
+      sessionStore.updateToolCallApprovalState(sid, interruptId, 'pending')
+      sessionStore.setApprovalToLastMessage(sid, { ...approval, state: 'pending' })
+    }
+    ElMessage.error('拒绝操作失败')
+  }
 }
 
 const pollTaskStatus = async () => {
@@ -610,10 +708,12 @@ const pollTaskStatus = async () => {
 
     if (task.value.status === 'completed' || task.value.status === 'failed') {
       stopPolling()
+      stopElapsedTimer()
       checkDocAnalysisFile()
       if (fileBrowserRef.value) {
         fileBrowserRef.value.loadFiles()
       }
+      autoLoadDocAnalysis()
       return
     }
 
@@ -778,6 +878,15 @@ const handleSSEEvent = (data) => {
       if (data.status === 'completed' || data.status === 'failed') {
         closeSSE()
         stopElapsedTimer()
+        // 主动获取完整任务数据，确保 final_report、files 等字段不丢失
+        if (data.status === 'completed' && task.value?.task_id) {
+          deepResearchAPI.getStatus(task.value.task_id).then(resp => {
+            const fresh = resp.data?.data || resp.data
+            if (fresh) {
+              task.value = { ...task.value, ...fresh }
+            }
+          }).catch(() => {})
+        }
         checkDocAnalysisFile()
         if (fileBrowserRef.value) {
           fileBrowserRef.value.loadFiles()
@@ -791,6 +900,10 @@ const handleSSEEvent = (data) => {
     case 'done':
       closeSSE()
       stopElapsedTimer()
+      // SSE 流结束但任务可能尚未完成（如连接超时），启动轮询检查
+      if (task.value && task.value.status !== 'completed' && task.value.status !== 'failed') {
+        pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
+      }
       break
     case 'timeout':
       progressMessage.value = '连接超时，正在回退到轮询模式...'
@@ -801,6 +914,24 @@ const handleSSEEvent = (data) => {
       ElMessage.error(data.message || '研究执行出错')
       closeSSE()
       stopElapsedTimer()
+      break
+    case 'approval':
+      handleApprovalEvent(data.data || data)
+      break
+    case 'approval_timeout':
+      handleApprovalEvent(data.data || data)
+      break
+    case 'approval_processed':
+      handleApprovalEvent(data.data || data)
+      break
+    case 'approval_history':
+      // 优先使用 SSE 事件自带的 task_id，避免 task.value 竞态
+      if (data.data) {
+        const effectiveTaskId = data.task_id || task.value?.task_id
+        if (effectiveTaskId) {
+          approvalStore.restoreFromSSEHistory(data.data, effectiveTaskId)
+        }
+      }
       break
   }
 }
@@ -849,6 +980,14 @@ const viewTask = async (selectedTask) => {
 }
 
 const deleteTask = () => {
+  // 停止轮询，避免对已删除任务持续请求
+  stopPolling()
+  // 断开 SSE 连接
+  closeSSE()
+  // 清理该任务关联的审批条目
+  if (task.value?.task_id) {
+    approvalStore.clearByTaskId(task.value.task_id)
+  }
   task.value = null
   showTaskDetail.value = false
   docAnalysisContent.value = null
@@ -926,16 +1065,22 @@ const handleContinueTask = (taskData) => {
 }
 
 const openInChat = () => {
-  if (!task.value?.query) return
+  if (!task.value?.query || !task.value?.task_id) {
+    ElMessage.warning('研究任务信息不完整，无法在聊天中讨论')
+    return
+  }
   const taskId = task.value.task_id
   const sessionId = task.value.session_id
   const researchQuery = task.value.query
   // 如果研究任务关联了聊天会话，跳转到该会话；否则创建新会话
-  const query = taskId
-    ? { research_task_id: taskId, q: `关于"${researchQuery}"的深度研究，请帮我进一步分析`, session_id: sessionId || undefined, research_query: researchQuery }
-    : { q: `关于"${researchQuery}"的深度研究，请帮我进一步分析`, research_query: researchQuery }
+  const query = {
+    research_task_id: taskId,
+    q: `关于"${researchQuery}"的深度研究，请帮我进一步分析`,
+    session_id: sessionId || undefined,
+    research_query: researchQuery,
+  }
   console.log('[DeepResearch] 跳转聊天:', {
-    task_id: taskId || '(无)',
+    task_id: taskId,
     session_id: sessionId || '(未关联)',
     has_session_id: !!sessionId,
     research_query: researchQuery,
@@ -974,6 +1119,75 @@ onMounted(async () => {
     } catch (e) {
       logger.warn('[DeepResearchView] 自动选中任务失败:', e)
     }
+  }
+})
+
+// keep-alive 激活时：检查当前任务状态，必要时重连 SSE 或刷新结果
+onActivated(async () => {
+  const taskId = route.query.task_id
+  // 如果 URL 带有 task_id 且当前没有查看任务，自动加载
+  if (taskId && (!task.value || task.value.task_id !== taskId)) {
+    try {
+      const resp = await deepResearchAPI.getStatus(taskId)
+      const taskData = resp.data?.data || resp.data
+      if (taskData) {
+        await viewTask(taskData)
+      }
+    } catch (e) {
+      logger.warn('[DeepResearchView] onActivated 加载任务失败:', e)
+    }
+    return
+  }
+
+  // 如果正在查看任务，根据状态决定是否重连/刷新
+  if (task.value && task.value.task_id) {
+    if (task.value.status === 'running' || task.value.status === 'pending') {
+      // 任务还在运行，重连 SSE 或启动轮询
+      startElapsedTimer()
+      connectSSE(task.value.task_id)
+    } else {
+      // 任务已完成，刷新最新数据
+      try {
+        const resp = await deepResearchAPI.getStatus(task.value.task_id)
+        const fresh = resp.data?.data || resp.data
+        if (fresh) {
+          task.value = { ...task.value, ...fresh }
+          // 如果状态变为已完成，加载文件列表
+          if (fresh.status === 'completed') {
+            nextTick(() => {
+              if (fileBrowserRef.value) {
+                fileBrowserRef.value.loadFiles()
+              }
+            })
+            autoLoadDocAnalysis()
+          }
+        }
+      } catch (e) {
+        logger.warn('[DeepResearchView] onActivated 刷新任务状态失败:', e)
+      }
+    }
+  }
+})
+
+// keep-alive 停用时：清理 SSE 和轮询，避免后台资源浪费
+onDeactivated(() => {
+  stopPolling()
+  closeSSE()
+  stopElapsedTimer()
+})
+
+// 监听路由参数变化，支持从聊天页面多次跳转到不同任务
+watch(() => route.query.task_id, async (newTaskId) => {
+  if (!newTaskId) return
+  if (task.value && task.value.task_id === newTaskId) return
+  try {
+    const resp = await deepResearchAPI.getStatus(newTaskId)
+    const taskData = resp.data?.data || resp.data
+    if (taskData) {
+      await viewTask(taskData)
+    }
+  } catch (e) {
+    logger.warn('[DeepResearchView] 路由参数变化加载任务失败:', e)
   }
 })
 
@@ -1357,5 +1571,9 @@ onUnmounted(() => {
   .page-title {
     font-size: 16px;
   }
+}
+
+.approval-section {
+  margin: 16px 0;
 }
 </style>

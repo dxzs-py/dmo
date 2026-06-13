@@ -1,0 +1,14 @@
+{
+  "agent_id": "agent_1781170883913",
+  "type": "research",
+  "description": "搜索并整理关于大语言模型微调核心框架的信息，包括：Hugging Face Transformers + PEFT + TRL、Unsloth、Axolotl、LLaMA-Factory、Lit-GPT、Firefly、Swift（魔搭ModelScope）。需要每个框架的功能定位、核心特性、适用场景、与竞争工具的对比等信息。用中文输出。",
+  "status": "failed",
+  "parent_session_id": "",
+  "created_at": 1781170883.9138985,
+  "result": null,
+  "parent_tool_names": [],
+  "parent_mcp_servers": [],
+  "parent_config": {},
+  "started_at": 1781170892.3602176,
+  "error": "Pregel.invoke() missing 1 required positional argument: 'input'"
+}

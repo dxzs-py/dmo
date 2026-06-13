@@ -16,15 +16,14 @@ const SSE_EVENT_HANDLERS = {
       sessionOps.setAttachmentProcessing?.(parsed.data)
     }
   },
-  source: (parsed, _appendFn, sessionOps) => {
-    if (parsed.data) sessionOps.addSource?.(parsed.data)
-  },
   sources: (parsed, _appendFn, sessionOps) => {
     if (parsed.data) sessionOps.setSources?.(parsed.data)
   },
+  /** 预留接口：计划展示（后端当前未发送，深度研究等场景可能使用） */
   plan: (parsed, _appendFn, sessionOps) => {
     if (parsed.data) sessionOps.setPlan?.(parsed.data)
   },
+  /** 预留接口：思维链展示（后端当前发送 reasoning，此接口预留未来扩展） */
   chainOfThought: (parsed, _appendFn, sessionOps) => {
     if (parsed.data) sessionOps.setChainOfThought?.(parsed.data)
   },
@@ -64,14 +63,42 @@ const SSE_EVENT_HANDLERS = {
     }
   },
   error: (parsed, _appendFn, sessionOps) => {
+    const errorCode = parsed.code || ''
     const errorMsg = parsed.message || parsed.error || '未知错误'
-    logger.error('[SSE] 服务端错误事件:', errorMsg)
-    sessionOps.setError?.(errorMsg)
+    // 后端 sse_error_event 统一发送 type:"error"，通过 code 区分审批错误
+    if (errorCode === 'approval_error') {
+      logger.error('[SSE] 审批错误事件:', errorMsg)
+      sessionOps.onApprovalError?.({ message: errorMsg, data: parsed.data || {}, code: errorCode })
+    } else {
+      logger.error('[SSE] 服务端错误事件:', errorMsg)
+      sessionOps.setError?.(errorMsg)
+    }
   },
   retry: (parsed, _appendFn, sessionOps) => {
-    const retryMs = parsed.retry_after || 1000
-    logger.info(`[SSE] 服务端建议重试, ${retryMs}ms 后`)
-    sessionOps.scheduleRetry?.(retryMs)
+    const data = parsed.data || {}
+    const retryMs = parsed.retry_after || (data.backoff ? data.backoff * 1000 : 1000)
+    logger.info(`[SSE] 服务端重试通知: ${data.attempt}/${data.max}, ${retryMs}ms 后, 错误: ${data.error_code}`)
+    sessionOps.onRetry?.({
+      attempt: data.attempt,
+      max: data.max,
+      backoff: data.backoff,
+      errorCode: data.error_code,
+    })
+  },
+  timeout_warning: (parsed, _appendFn, sessionOps) => {
+    const data = parsed.data || {}
+    const elapsed = data.elapsed || '?'
+    const limit = data.limit || '?'
+    logger.info(`[SSE] 执行超时警告: 已执行 ${elapsed}s, 阈值 ${limit}s`)
+    sessionOps.onTimeoutWarning?.({ elapsed, limit })
+  },
+  approval_timeout: (parsed, _appendFn, sessionOps) => {
+    // 兼容两种数据结构：
+    // 1. 嵌套：{ type: "approval_timeout", data: { tool_name, interrupt_id, ... } }
+    // 2. 扁平：{ type: "approval_timeout", tool_name, interrupt_id, ... }（后端统一事件结构后）
+    const data = parsed.data || parsed
+    logger.info(`[SSE] 深度研究审批超时: tool=${data.tool_name}, interrupt_id=${data.interrupt_id}`)
+    sessionOps.onApprovalTimeout?.(data)
   },
   heartbeat: (_parsed, _appendFn, _sessionOps) => {
     logger.debug('[SSE] 收到心跳')
@@ -89,7 +116,37 @@ const SSE_EVENT_HANDLERS = {
     if (parsed.data) sessionOps.setModelFallback?.(parsed.data)
   },
   approval: (parsed, _appendFn, sessionOps) => {
-    if (parsed.data) sessionOps.setApproval?.(parsed.data)
+    // 兼容嵌套 { type: "approval", data: {...} } 和扁平 { type: "approval", ... } 结构
+    const data = parsed.data || parsed
+    if (data && Object.keys(data).length > 1) sessionOps.setApproval?.(data)
+  },
+  /** 审批已处理通知：一端审批后通知另一端更新 UI */
+  approval_processed: (parsed, _appendFn, sessionOps) => {
+    const data = parsed.data || parsed
+    if (data?.interrupt_id) {
+      sessionOps.onApprovalProcessed?.(data)
+    }
+  },
+  /** 历史审批补偿：SSE 重连时后端推送 Redis List 中的历史审批 */
+  approval_history: (parsed, _appendFn, sessionOps) => {
+    // 传递完整 parsed 对象（含 task_id），而非仅 parsed.data
+    // chat.js onApprovalHistory 回调需要 parsed.task_id
+    if (parsed.data) sessionOps.onApprovalHistory?.(parsed)
+  },
+  /** 工具调用去重：短时相同内容自动跳过 */
+  tool_usage_dedup: (parsed, _appendFn, sessionOps) => {
+    logger.info('[SSE] 工具调用去重:', parsed.data?.message || '')
+    sessionOps.onToolUsageDedup?.(parsed.data)
+  },
+  /** 工具调用阻断：打磨循环/速率超限等被系统阻断 */
+  tool_usage_blocked: (parsed, _appendFn, sessionOps) => {
+    logger.warn('[SSE] 工具调用阻断:', parsed.data?.message || '')
+    sessionOps.onToolUsageBlocked?.(parsed.data)
+  },
+  /** 工具使用警告：频率接近阈值等 */
+  tool_usage_warning: (parsed, _appendFn, sessionOps) => {
+    logger.info('[SSE] 工具使用警告:', parsed.data?.message || '')
+    sessionOps.onToolUsageWarning?.(parsed.data)
   },
 }
 
@@ -98,7 +155,11 @@ export function parseSSEEvent(parsed, appendFn, sessionOps) {
   if (handler) {
     handler(parsed, appendFn, sessionOps)
   } else if (parsed.content) {
+    // 未注册的事件类型携带 content，安全追加但记录警告
+    logger.warn(`[SSE] 未注册事件类型 "${parsed.type}" 携带 content，已作为文本追加`)
     appendFn(parsed.content)
+  } else if (parsed.type && parsed.type !== 'heartbeat') {
+    logger.debug(`[SSE] 未注册事件类型 "${parsed.type}" 被忽略`)
   }
 }
 

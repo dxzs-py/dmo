@@ -131,7 +131,8 @@ class RateLimitMiddleware(AgentMiddleware):
             return
         try:
             from Django_xm.apps.research.models import ResearchTask
-            task = ResearchTask.objects.filter(task_id=self._task_id).first()
+            # 用 all_objects，默认 objects 过滤了 is_deleted=True，导致 is_deleted 检查成为死代码
+            task = ResearchTask.all_objects.filter(task_id=self._task_id).first()
             if task is None or task.is_deleted:
                 raise RuntimeError(f"研究任务已被取消: {self._task_id}")
         except RuntimeError:

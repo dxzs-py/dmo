@@ -177,7 +177,9 @@ export function transformBackendMessageToFrontend(msg) {
     chainOfThought: activeVersion.chainOfThought,
     toolCalls: activeVersion.toolCalls || [],
     approval: msgObj.approval || null,
-    approvalState: msgObj.approval?.state || null,
+    approvalState: msgObj.approval?.state
+      || (activeVersion.toolCalls || []).find(tc => tc.approval)?.approval?.state
+      || null,
     reasoning: activeVersion.reasoning,
     suggestions: activeVersion.suggestions,
     context: activeVersion.context,
@@ -192,6 +194,7 @@ export function transformBackendMessageToFrontend(msg) {
     tokenDetail: msgObj.token_detail || null,
     responseTime: msgObj.response_time || 0,
     researchTaskId: msgObj.research_task_id || null,
+    researchTaskDeleted: msgObj.research_task_deleted || null,
   }
 }
 

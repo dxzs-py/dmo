@@ -1,0 +1,42 @@
+{
+  "agent_id": "agent_1781145566286",
+  "type": "research",
+  "description": "Extract content from the Langchain reference documentation at https://reference.langchain.com/python/langchain and convert it to Markdown format, then save it to D:\\programming\\langchain\\langchain_xm\\.trae\\specs.",
+  "status": "failed",
+  "parent_session_id": "",
+  "created_at": 1781145566.2867572,
+  "result": null,
+  "parent_tool_names": [
+    "fs_write_file",
+    "fs_list_files",
+    "fs_search_files",
+    "file_reader",
+    "attachment_reader",
+    "todo_write",
+    "todo_read",
+    "agent_create",
+    "agent_run",
+    "agent_list",
+    "agent_cleanup",
+    "translate_text",
+    "detect_language",
+    "shell_exec",
+    "sequentialthinking",
+    "skill_baidu-search",
+    "skill_agent-browser",
+    "skill_ontology"
+  ],
+  "parent_mcp_servers": [
+    "sequential-thinking"
+  ],
+  "parent_config": {
+    "use_web_search": false,
+    "use_mcp": true,
+    "user_id": 1,
+    "session_id": "042f57eb-80e2-4fd4-a3f8-054842677cee",
+    "model_name": null,
+    "store": null
+  },
+  "started_at": 1781145571.978399,
+  "error": "Pregel.invoke() missing 1 required positional argument: 'input'"
+}

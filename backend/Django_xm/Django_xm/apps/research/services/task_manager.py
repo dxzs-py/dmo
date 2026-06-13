@@ -71,10 +71,8 @@ class TaskManager:
                 'updated_at': task.updated_at.isoformat() if task.updated_at else None,
                 'enable_web_search': task.enable_web_search,
                 'enable_doc_analysis': task.enable_doc_analysis,
+                'final_report': task.final_report if task.status == 'completed' else '',
             }
-
-            if task.status == 'completed' and task.final_report:
-                status_data['final_report'] = task.final_report
 
             self._cache[task_id] = status_data
             redis_cache.set(cache_key, status_data, _REDIS_CACHE_TTL)
@@ -85,6 +83,7 @@ class TaskManager:
 
     _STATUS_MAP = {
         'started': 'running',
+        'progress': 'running',
         'success': 'completed',
         'failure': 'failed',
     }
@@ -155,6 +154,13 @@ class TaskManager:
             del self._threads[task_id]
 
     def delete_task(self, task_id: str, user_id: Optional[int] = None) -> bool:
+        """
+        软删除研究任务
+        - 设置 is_deleted=True, deleted_at=now
+        - 如果任务仍在运行，撤销 Celery 任务
+        - 磁盘文件/Checkpoint/Store 的清理由调用方通过 cross_app 统一守卫逻辑处理
+          （需确认关联聊天也已删除才清理，避免数据不一致）
+        """
         if task_id in self._cache:
             del self._cache[task_id]
 
@@ -168,10 +174,8 @@ class TaskManager:
 
             self._invalidate_redis_cache(task_id, task.created_by_id)
 
+            # 如果任务仍在运行，先撤销 Celery 任务
             if task.celery_task_id and task.status in ('pending', 'running'):
-                task.is_deleted = True
-                task.save(update_fields=['is_deleted'])
-
                 try:
                     from celery import current_app
                     current_app.control.revoke(
@@ -183,16 +187,12 @@ class TaskManager:
                 except Exception as e:
                     logger.warning(f"撤销 Celery 任务失败: {e}")
 
-            task.delete()
+            # 软删除：设置 is_deleted=True, deleted_at=now
+            task.soft_delete()
+            logger.info(f"研究任务已软删除: {task_id}")
+
         except ResearchTask.DoesNotExist:
             return False
-
-        try:
-            from Django_xm.apps.core.services.file_manager import get_file_manager
-            file_manager = get_file_manager()
-            file_manager.delete_task_files(task_id, "research")
-        except Exception as e:
-            logger.warning(f"[TaskManager] 删除研究任务文件失败: {e}")
 
         return True
 

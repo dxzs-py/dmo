@@ -628,6 +628,10 @@ async def delete_user_all_data(user_id: int) -> bool:
     """
     删除用户的所有 checkpoint 和 Store 数据（用户注销时调用）
 
+    注意：此操作不经过 cross_app 的"双方都删才清理"守卫，因为用户注销时
+    所有数据都应被清理。如果未来支持"用户恢复"功能，需在此路径中增加
+    research guard 检查以避免误删研究任务的 Store 数据。
+
     Args:
         user_id: 用户 ID
 

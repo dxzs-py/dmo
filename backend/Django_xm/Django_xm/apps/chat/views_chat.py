@@ -317,6 +317,8 @@ class ChatStreamView(BaseChatAPIView):
 
         attachment_ids = data.get('attachment_ids') or []
         original_attachment_ids = list(attachment_ids)
+        original_message = data['message']  # 保存原始消息，用于深度研究任务名等场景
+        data['_original_message'] = original_message
         pending_progress = []
         if attachment_ids:
             try:
@@ -608,17 +610,9 @@ class ChatSessionDetailView(BaseChatAPIView):
 
         linked_tasks = get_linked_research_tasks(session.session_id)
 
-        confirm_delete_linked = request.query_params.get('confirm_delete_linked', '').lower() in ('1', 'true', 'yes')
-
-        if linked_tasks and not confirm_delete_linked:
-            return success_response(
-                data={
-                    'has_linked_data': True,
-                    'linked_research_tasks': linked_tasks,
-                    'message': f'该会话关联了 {len(linked_tasks)} 个深度研究任务',
-                },
-                message='存在关联的深度研究任务，请确认是否一并删除',
-            )
+        # 弱关联模式：保留 ResearchTask 的 session_id 作为历史元数据，
+        # 即使对话被删除，深度研究的"在聊天中讨论"仍可通过 session_id 尝试跳转，
+        # 前端做容错处理（会话不存在时降级到当前/新会话）。
 
         session.soft_delete()
 
@@ -640,16 +634,47 @@ class ChatSessionDetailView(BaseChatAPIView):
             import logging
             logging.getLogger(__name__).warning(f"清理 checkpoint/Store 数据失败: {e}")
 
-        if linked_tasks:
-            from Django_xm.apps.research.services.cross_app import get_research_task_manager
-            task_manager = get_research_task_manager()
-            for task in linked_tasks:
-                task_manager.delete_task(task['task_id'], user_id=request.user.id)
+        # 检查关联的深度研究是否已删除（包括已软删除的），如果都已删除则清理后端数据
+        try:
+            from Django_xm.apps.research.services.cross_app import (
+                get_linked_research_tasks_including_deleted,
+                cleanup_research_if_both_deleted,
+            )
+            from django.apps import apps as django_apps
+
+            # 通过 ResearchTask.session_id 查找
+            all_linked = get_linked_research_tasks_including_deleted(session.session_id)
+
+            # 通过 ChatMessage.research_task_id 补充查找（深度研究模块创建的任务可能没有 session_id）
+            ChatMessage = django_apps.get_model('chat', 'ChatMessage')
+            ResearchTask = django_apps.get_model('research', 'ResearchTask')
+            # 用 all_objects，默认 objects 过滤了 is_deleted=True 的消息
+            msg_task_ids = set(ChatMessage.all_objects.filter(
+                session__session_id=session.session_id, research_task_id__isnull=False,
+            ).exclude(research_task_id='').values_list('research_task_id', flat=True))
+            linked_task_ids = {t['task_id'] for t in all_linked}
+            for tid in msg_task_ids - linked_task_ids:
+                # 必须用 all_objects，默认 objects 过滤了 is_deleted=True
+                task = ResearchTask.all_objects.filter(task_id=tid).values('task_id', 'is_deleted').first()
+                if task:
+                    all_linked.append(task)
+
+            for task_info in all_linked:
+                if task_info.get('is_deleted'):
+                    cleanup_research_if_both_deleted(task_info['task_id'], request.user.id)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"检查关联研究任务清理失败: {e}")
 
         SecureSessionCacheService.invalidate_all_user_sessions(request.user.id)
         invalidate_chat_cache(user_id=request.user.id)
 
-        return success_response(message='会话删除成功')
+        response_data = {'message': '会话删除成功'}
+        if linked_tasks:
+            response_data['linked_research_preserved'] = True
+            response_data['linked_research_count'] = len(linked_tasks)
+
+        return success_response(data=response_data, message='会话删除成功')
 
 
 class ChatSessionCompactView(BaseChatAPIView):
@@ -784,18 +809,6 @@ class ChatMessageDeleteView(BaseChatAPIView):
                 http_status=status.HTTP_404_NOT_FOUND
             )
 
-        research_task_deleted = False
-        research_task_id = message.research_task_id
-
-        if research_task_id:
-            try:
-                from Django_xm.apps.research.services.cross_app import get_research_task_manager
-                task_manager = get_research_task_manager()
-                task_manager.delete_task(research_task_id, user_id=request.user.id)
-                research_task_deleted = True
-            except Exception as e:
-                logger.error(f"删除关联研究任务失败: task_id={research_task_id}, error={e}")
-
         message.soft_delete()
 
         # 事务提交后再重建 checkpoint，否则新线程的数据库连接看不到未提交的 soft_delete
@@ -807,8 +820,6 @@ class ChatMessageDeleteView(BaseChatAPIView):
         return success_response(
             data={
                 'message_id': message_id,
-                'research_task_deleted': research_task_deleted,
-                'research_task_id': research_task_id if research_task_deleted else None,
             },
             message='消息删除成功'
         )
@@ -861,20 +872,9 @@ class ChatMessagePairDeleteView(BaseChatAPIView):
         ).order_by('created_at').first()
 
         deleted_messages = [user_message]
-        research_task_deleted = False
-        research_task_id = None
 
         if assistant_message:
             deleted_messages.append(assistant_message)
-            if assistant_message.research_task_id:
-                research_task_id = assistant_message.research_task_id
-                try:
-                    from Django_xm.apps.research.services.cross_app import get_research_task_manager
-                    task_manager = get_research_task_manager()
-                    task_manager.delete_task(research_task_id, user_id=request.user.id)
-                    research_task_deleted = True
-                except Exception as e:
-                    logger.error(f"删除关联研究任务失败: task_id={research_task_id}, error={e}")
 
         for msg in deleted_messages:
             msg.soft_delete()
@@ -889,8 +889,6 @@ class ChatMessagePairDeleteView(BaseChatAPIView):
         return success_response(
             data={
                 'deleted_message_ids': [m.id for m in deleted_messages],
-                'research_task_deleted': research_task_deleted,
-                'research_task_id': research_task_id if research_task_deleted else None,
             },
             message='消息对删除成功'
         )
@@ -1062,6 +1060,36 @@ class ChatApprovalView(BaseChatAPIView):
                         yield sse_error_event("approval_error", "无法恢复会话状态：checkpointer 不可用")
                         return
 
+                    # 校验 interrupt 归属：检查 Agent 的 checkpoint 中是否有该 interrupt_id 的 pending interrupt
+                    # 如果没有，说明该 interrupt 属于其他 Agent（如深度研究），不应由聊天审批 API 处理
+                    try:
+                        graph = agent.graph if hasattr(agent, 'graph') else agent
+                        if hasattr(graph, 'aget_state'):
+                            check_state = loop.run_until_complete(graph.aget_state(thread_config))
+                            if check_state and hasattr(check_state, 'tasks') and check_state.tasks:
+                                found_interrupt = False
+                                for task in check_state.tasks:
+                                    if hasattr(task, 'interrupts') and task.interrupts:
+                                        for intr in task.interrupts:
+                                            intr_id = intr.id if hasattr(intr, 'id') else ''
+                                            if intr_id == interrupt_id:
+                                                found_interrupt = True
+                                                break
+                                    if found_interrupt:
+                                        break
+                                if not found_interrupt:
+                                    logger.warning(
+                                        f"审批校验失败: interrupt_id={interrupt_id} 不属于会话 {session_id} 的 Agent，"
+                                        f"可能属于深度研究或其他 Agent"
+                                    )
+                                    yield sse_error_event("approval_error", "该审批请求不属于当前会话，可能属于深度研究任务")
+                                    return
+                    except Exception as check_err:
+                        # 校验异常时也终止，不再放行 — 防止深度研究 interrupt 被错误处理
+                        logger.error(f"审批归属校验异常: {check_err}", exc_info=True)
+                        yield sse_error_event("approval_error", f"审批校验异常，可能属于深度研究任务: {str(check_err)}")
+                        return
+
                     # 从 checkpoint 加载历史消息，提取已有的 tool_call 信息，
                     # 初始化 tool_calls_map，这样 ToolMessage 到达时能找到对应的 tool_info 并推送给前端
                     try:
@@ -1148,6 +1176,7 @@ class ChatApprovalView(BaseChatAPIView):
                                                     'description': interrupt_value.get("description", ""),
                                                     'action': interrupt_value.get("action", "confirm"),
                                                     'danger_level': interrupt_value.get("danger_level", "medium"),
+                                                    'state': 'pending',
                                                 }
                                                 # 透传 operation（统一字段，兼容旧 command）
                                                 op = interrupt_value.get("operation") or interrupt_value.get("command") or ""

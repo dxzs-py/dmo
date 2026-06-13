@@ -12,12 +12,27 @@ from celery.exceptions import Retry
 
 from Django_xm.apps.agent_hub import create as agent_hub_create, AgentType, AgentConfig
 from Django_xm.apps.research.services.official_deep_agent import OfficialDeepAgentAdapter
-from Django_xm.apps.research.services.research_runner import execute_research, finalize_research
+from Django_xm.apps.research.services.research_runner import execute_research, execute_research_async, finalize_research
 from Django_xm.apps.research.services.task_manager import update_task_status
 from Django_xm.apps.knowledge.services.multi_kb_retriever import build_retriever_tool_for_research
 from Django_xm.tasks.base import TrackedTask
 
 logger = logging.getLogger(__name__)
+
+# 动态构建可自动重试的异常列表
+_RETRYABLE_EXCEPTIONS = [ConnectionError, TimeoutError, OSError]
+try:
+    from openai import RateLimitError as _OpenAIRateLimitError
+    from openai import APITimeoutError as _OpenAIAPITimeoutError
+    _RETRYABLE_EXCEPTIONS.extend([_OpenAIRateLimitError, _OpenAIAPITimeoutError])
+except ImportError:
+    pass
+try:
+    from httpx import ConnectTimeout as _HttpxConnectTimeout
+    from httpx import ReadTimeout as _HttpxReadTimeout
+    _RETRYABLE_EXCEPTIONS.extend([_HttpxConnectTimeout, _HttpxReadTimeout])
+except ImportError:
+    pass
 
 
 @shared_task(
@@ -26,7 +41,7 @@ logger = logging.getLogger(__name__)
     max_retries=2,
     default_retry_delay=60,
     soft_time_limit=1800,
-    autoretry_for=(ConnectionError, TimeoutError, OSError),
+    autoretry_for=tuple(_RETRYABLE_EXCEPTIONS),
     retry_backoff=True,
     retry_backoff_max=60,
 )
@@ -63,6 +78,15 @@ def run_research_task(self, thread_id: str, query: str,
         logger.info(f"[Celery] 深度研究任务开始：{thread_id}")
         tracker.mark_started()
         tracker.update_progress(10, '研究任务启动')
+
+        # 预热缓存，避免异步上下文中反复回退到 config.py 默认值
+        try:
+            from Django_xm.apps.ai_engine.services.registry_service import warmup_cache
+            from Django_xm.apps.ai_engine.models import warmup_system_config_cache
+            warmup_cache()
+            warmup_system_config_cache()
+        except Exception as e:
+            logger.debug(f"缓存预热失败（非致命）: {e}")
 
         retriever_tool = None
         if enable_doc_analysis and knowledge_base_ids and user_id:
@@ -219,14 +243,35 @@ def run_research_task(self, thread_id: str, query: str,
             debug=False,
         )
 
-        agent = asyncio.run(agent_hub_create(config))
+        # 在同一个事件循环中创建 agent 和执行研究，
+        # 避免 asyncio.run() 关闭事件循环后 checkpointer 连接失效
+        async def _create_and_run():
+            # 深度研究使用 astream()，需要异步 Checkpointer
+            from Django_xm.apps.ai_engine.services.checkpointer_factory import get_async_checkpointer
+            async_cp = await get_async_checkpointer()
+            if async_cp is not None:
+                config.checkpointer = async_cp
+                logger.info("[Celery] 深度研究使用异步 Checkpointer")
 
-        from Django_xm.apps.agent_hub.factory import AgentWrapper
-        if isinstance(agent, AgentWrapper):
-            agent = OfficialDeepAgentAdapter(graph=agent.graph, thread_id=thread_id, work_dir=agent.work_dir)
+            agent = await agent_hub_create(config)
+
+            from Django_xm.apps.agent_hub.factory import AgentWrapper
+            if isinstance(agent, AgentWrapper):
+                agent = OfficialDeepAgentAdapter(graph=agent.graph, thread_id=thread_id, work_dir=agent.work_dir)
+
+            result = await execute_research_async(agent, query, thread_id, disable_llm_cache=True)
+
+            # 释放异步 Checkpointer 连接
+            try:
+                from Django_xm.apps.ai_engine.services.checkpointer_factory import release_async_checkpointer
+                await release_async_checkpointer()
+            except Exception:
+                pass
+
+            return result
+
+        result = asyncio.run(_create_and_run())
         tracker.update_progress(30, '智能体初始化完成')
-
-        result = execute_research(agent, query, disable_llm_cache=True)
 
         response_time = round(time.time() - start_time, 2)
         tracker.update_progress(90, '研究执行完成')
@@ -260,11 +305,18 @@ def run_research_task(self, thread_id: str, query: str,
     name='research.cleanup_sandbox',
     max_retries=1,
     soft_time_limit=60,
-    autoretry_for=(ConnectionError, TimeoutError, OSError),
+    autoretry_for=tuple(_RETRYABLE_EXCEPTIONS),
     retry_backoff=True,
     retry_backoff_max=60,
 )
 def cleanup_research_sandbox(thread_id: str):
+    """研究完成后直接删除 sandbox 目录（含 skill 工具等临时资源）
+
+    注意：此操作不经过 cross_app 的"双方都删才清理"守卫，因为：
+    - sandbox 仅含临时工具文件（如 skill 脚本），不含用户可见的研究产出
+    - 研究产出（notes/plans/reports）存储在 research/{thread_id}/ 根目录，由守卫保护
+    - 研究完成后 sandbox 已无用途，延迟 120 秒清理是预期行为
+    """
     try:
         from django.conf import settings as django_settings
         data_dir = str(getattr(django_settings, "DATA_DIR", None) or os.path.join(
@@ -272,40 +324,13 @@ def cleanup_research_sandbox(thread_id: str):
             "data"
         ))
         sandbox_dir = os.path.join(data_dir, "research", thread_id, "sandbox")
-        work_dir = os.path.join(data_dir, "research", thread_id)
 
         if not os.path.isdir(sandbox_dir):
             return {'status': 'skipped', 'reason': 'sandbox not found'}
 
-        moved = 0
-        for root, dirs, fnames in os.walk(sandbox_dir):
-            for fname in fnames:
-                if not fname.endswith('.md'):
-                    continue
-                src = os.path.join(root, fname)
-                rel = os.path.relpath(src, sandbox_dir).replace("\\", "/")
-                if rel.startswith("skills/") or rel.startswith("mcp/") or rel.startswith("deps/") or rel.startswith("tmp/") or rel.startswith("inherited/"):
-                    continue
-                if "notes" in rel.lower():
-                    target_subdir = "notes"
-                elif "plan" in rel.lower():
-                    target_subdir = "plans"
-                elif "report" in rel.lower():
-                    target_subdir = "reports"
-                else:
-                    target_subdir = "notes"
-                target_dir = os.path.join(work_dir, target_subdir)
-                os.makedirs(target_dir, exist_ok=True)
-                dst = os.path.join(target_dir, fname)
-                if os.path.exists(dst):
-                    os.remove(dst)
-                shutil.move(src, dst)
-                moved += 1
-                logger.info(f"[Celery] 安全兜底：移动 {rel} -> {target_subdir}/{fname}")
-
         shutil.rmtree(sandbox_dir, ignore_errors=True)
-        logger.info(f"[Celery] 已清理 sandbox 目录: {sandbox_dir}, 移动 {moved} 个残留文件")
-        return {'status': 'success', 'cleaned': sandbox_dir, 'moved': moved}
+        logger.info(f"[Celery] 已清理 sandbox 目录: {sandbox_dir}")
+        return {'status': 'success', 'cleaned': sandbox_dir}
     except Exception as e:
         logger.error(f"[Celery] 清理 sandbox 失败: {e}")
         return {'status': 'error', 'error': str(e)}

@@ -103,7 +103,6 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh, View, Delete, ChatDotRound, RefreshRight } from '@element-plus/icons-vue'
 import { logger } from '../../utils/logger'
 import { confirmDelete } from '../../utils/dialog'
-import { useSessionStore } from '../../stores/session'
 
 const props = defineProps({
   moduleType: {
@@ -236,19 +235,7 @@ const confirmDeleteTask = async (task) => {
 const deleteTask = async (task) => {
   try {
     const taskId = task.task_id || task.thread_id
-    const response = await props.api.deleteTask(taskId)
-    const resData = response.data?.data || response.data
-    if (resData?.has_linked_data && resData?.linked_session) {
-      const sessionTitle = resData.linked_session.title || '未命名会话'
-      await ElMessageBox.confirm(
-        `该研究任务关联了一个聊天会话（${sessionTitle}），删除后聊天记录也将被删除。是否继续？`,
-        '',
-        { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' }
-      )
-      await props.api.deleteTask(taskId, { confirm_delete_linked: true })
-      const sessionStore = useSessionStore()
-      sessionStore.loadSessionsFromBackend()
-    }
+    await props.api.deleteTask(taskId)
     ElMessage.success('删除成功')
     loadTasks()
     emit('delete-task', task)

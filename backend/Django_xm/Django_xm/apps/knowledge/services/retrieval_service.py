@@ -796,7 +796,8 @@ _MAP_PROMPT_TEMPLATE = """从以下文档内容中提取与问题相关的核心
 - 必须忠实于文档原文，只提取文档中实际出现的信息，绝不允许编造或推断
 - 提取的每个要点必须保留其领域上下文（如文档讲的是 Redis，要点中必须体现 Redis 而非泛化为"管理"或"技术"）
 - 只提取关键信息和数据，不要保留详细示例、代码片段或配置细节
-- 如果文档内容确实与问题完全无关，仅回复 [NO_RELEVANT_INFO]
+- 如果问题是概览性的（如"写了什么"、"有哪些内容"、"总结一下"等），应提取文档的核心主题和要点，不要返回 [NO_RELEVANT_INFO]
+- 只有当文档内容与问题明确无关（如问的是 Redis，文档讲的是完全不同的领域）时，才回复 [NO_RELEVANT_INFO]
 
 文档内容: {doc}
 问题: {question}
@@ -931,8 +932,9 @@ class MapReduceDocCombiner:
             logger.debug(f"Map 批次 {i+1}/{len(batches)}: {len(valid)} 个有效摘要")
 
         if not all_summaries:
-            logger.warning(f"Map-Reduce 全部摘要被过滤，知识库中无与问题相关的内容 (docs={len(docs)})")
-            return "未找到与问题相关的内容。"
+            logger.warning(f"Map-Reduce 全部摘要被过滤，回退到原始文档 (docs={len(docs)})")
+            context = SyncSafeRetrieverTool._format_docs(docs)
+            return context[:3000]
 
         combined = "\n\n---\n\n".join(all_summaries)
         reduce_prompt = _REDUCE_PROMPT_TEMPLATE.format(summaries=combined, question=query)
@@ -986,8 +988,9 @@ class MapReduceDocCombiner:
             logger.debug(f"Map 批次 {i+1}/{len(batches)}: {len(valid)} 个有效摘要")
 
         if not all_summaries:
-            logger.warning(f"Map-Reduce 全部摘要被过滤，知识库中无与问题相关的内容 (docs={len(docs)})")
-            return "未找到与问题相关的内容。"
+            logger.warning(f"Map-Reduce 全部摘要被过滤，回退到原始文档 (docs={len(docs)})")
+            context = SyncSafeRetrieverTool._format_docs(docs)
+            return context[:1000]
 
         combined = "\n\n---\n\n".join(all_summaries)
         reduce_prompt = _REDUCE_PROMPT_TEMPLATE.format(summaries=combined, question=query)

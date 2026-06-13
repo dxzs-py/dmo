@@ -125,14 +125,22 @@ class ContextService:
             return False
         return self._context_manager.check_injection(user_message)
 
-    def load_research_context(self, research_task_id: str, user_id: Optional[int] = None) -> Optional[str]:
+    def load_research_context(self, research_task_id: str, user_id: Optional[int] = None,
+                              session_id: Optional[str] = None) -> Optional[str]:
+        # 前端未传 research_task_id 时，尝试从 session 历史消息中推断
+        if not research_task_id and session_id:
+            research_task_id = self._find_research_task_from_session(session_id, user_id)
+            if research_task_id:
+                logger.info(f"从 session 历史消息推断出 research_task_id: {research_task_id}")
+
         if not research_task_id:
             logger.debug(f"load_research_context: research_task_id 为空，跳过")
             return None
 
         try:
             from Django_xm.apps.research.models import ResearchTask
-            qs = ResearchTask.objects.filter(task_id=research_task_id, is_deleted=False)
+            # 用 all_objects 查询，已软删除的研究任务仍可被聊天引用（只要聊天会话还在）
+            qs = ResearchTask.all_objects.filter(task_id=research_task_id)
             if user_id:
                 qs = qs.filter(created_by_id=user_id)
             task = qs.first()
@@ -188,3 +196,22 @@ class ContextService:
         except Exception as e:
             logger.error(f"加载研究上下文失败: {e}", exc_info=True)
             return None
+
+    def _find_research_task_from_session(self, session_id: str, user_id: Optional[int] = None) -> Optional[str]:
+        """从 session 的历史消息中查找关联的 research_task_id（兜底逻辑）"""
+        try:
+            from Django_xm.apps.chat.models import ChatMessage
+            # 用 all_objects，默认 objects 过滤了 is_deleted=True 的消息
+            qs = ChatMessage.all_objects.filter(
+                session__session_id=session_id,
+                role='assistant',
+                research_task_id__isnull=False,
+            ).exclude(research_task_id='')
+            if user_id:
+                qs = qs.filter(session__user_id=user_id)
+            msg = qs.order_by('-created_at').first()
+            if msg and msg.research_task_id:
+                return msg.research_task_id
+        except Exception as e:
+            logger.warning(f"从 session 历史消息推断 research_task_id 失败: {e}")
+        return None

@@ -10,6 +10,7 @@ from .views import (
     DeepResearchFileDownloadView,
     DeepResearchFileContentView,
     DeepResearchGlobalSearchView,
+    ResearchApprovalView,
 )
 from .views_stream import (
     DeepResearchStreamView,
@@ -20,6 +21,7 @@ app_name = 'research'
 
 urlpatterns = [
     path('start/', DeepResearchStartView.as_view(), name='start'),
+    path('approval/', ResearchApprovalView.as_view(), name='approval'),
     path('tasks/', DeepResearchTaskListView.as_view(), name='tasks'),
     path('search/', DeepResearchGlobalSearchView.as_view(), name='search'),
     path('<str:task_id>/continue/', DeepResearchContinueView.as_view(), name='continue'),

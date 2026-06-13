@@ -442,7 +442,8 @@ class AttachmentReaderTool(BaseTool):
             return error_msg
 
     async def _arun(self, attachment_id: int) -> str:
-        return self._run(attachment_id=attachment_id)
+        from asgiref.sync import sync_to_async
+        return await sync_to_async(self._run)(attachment_id=attachment_id)
 
 
 file_reader = FileReaderTool()

@@ -1,13 +1,16 @@
 <script setup>
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
 import { useModelStore } from '../stores/model'
+import { useApprovalStore } from '../stores/approval'
 import { useChatInput } from '../composables/useChatInput'
 import { useChatUI } from '../composables/useChatUI'
 import { useChatCommands } from '../composables/useChatCommands'
 import { useChatKeyboard } from '../composables/useChatKeyboard'
+import { deepResearchAPI } from '../api/research'
+import { readSSEStream } from '../utils/sse'
 import ChatHeader from '../components/chat/ChatHeader.vue'
 import ChatMessages from '../components/chat/ChatMessages.vue'
 import ChatInput from '../components/chat/ChatInput.vue'
@@ -17,6 +20,7 @@ import ProjectContext from '../components/chat/ProjectContext.vue'
 const chatStore = useChatStore()
 const sessionStore = useSessionStore()
 const modelStore = useModelStore()
+const approvalStore = useApprovalStore()
 const route = useRoute()
 
 // --- 输入相关逻辑 ---
@@ -73,6 +77,112 @@ useChatKeyboard({
 
 const connectionStatus = computed(() => chatStore.connectionStatus)
 
+// --- 深度研究 SSE 重连（刷新/新浏览器恢复审批监听） ---
+let researchSSEAbortController = null
+let researchSSERetryCount = 0
+const MAX_SSE_RETRY = 3
+const SSE_RETRY_BASE_DELAY = 2000 // 2s, 4s, 8s
+
+const connectResearchSSE = async (taskId) => {
+  if (!taskId) return
+  // 先检查任务状态，只有 running 才连接
+  try {
+    const resp = await deepResearchAPI.getStatus(taskId)
+    const taskData = resp.data?.data || resp.data
+    if (!taskData || taskData.status !== 'running') return
+  } catch (error) {
+    // 任务不存在（404）时清空 researchTaskId，避免后续重复请求已删除任务
+    if (error?.response?.status === 404 && chatStore.researchTaskId === taskId) {
+      chatStore.researchTaskId = null
+    }
+    return // 查询失败则不连接
+  }
+
+  researchSSEAbortController = new AbortController()
+  try {
+    const response = await deepResearchAPI.streamFetch(taskId, {
+      signal: researchSSEAbortController.signal,
+    })
+    if (!response.ok) return
+
+    // 连接成功，重置重连计数
+    researchSSERetryCount = 0
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    const processChunk = async () => {
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
+          for (const line of lines) {
+            if (!line.startsWith('data: ') || line === 'data: [DONE]') continue
+            try {
+              const parsed = JSON.parse(line.slice(6))
+              if (parsed.type === 'approval' || parsed.type === 'approval_timeout' || parsed.type === 'approval_processed') {
+                approvalStore.handleApprovalEvent(parsed.data || parsed, {
+                  source: 'deep_research',
+                  taskId,
+                  sessionId: sessionStore.currentSessionId,
+                })
+              } else if (parsed.type === 'approval_history') {
+                const effectiveTaskId = parsed.task_id || taskId
+                if (parsed.data) {
+                  approvalStore.restoreFromSSEHistory(parsed.data, effectiveTaskId, sessionStore.currentSessionId)
+                }
+              } else if (parsed.type === 'status_change') {
+                const status = parsed.status
+                if (status === 'completed' || status === 'failed') {
+                  researchSSEAbortController?.abort()
+                  return
+                }
+              }
+            } catch { /* 忽略 JSON 解析错误 */ }
+          }
+        }
+      } catch (e) {
+        if (e.name !== 'AbortError') {
+          console.warn('[ChatView] 深度研究 SSE 连接异常:', e)
+          // 指数退避重连
+          if (researchSSERetryCount < MAX_SSE_RETRY) {
+            researchSSERetryCount++
+            const delay = SSE_RETRY_BASE_DELAY * Math.pow(2, researchSSERetryCount - 1)
+            console.log(`[ChatView] ${delay}ms 后重连深度研究 SSE (第${researchSSERetryCount}次)`)
+            setTimeout(() => connectResearchSSE(taskId), delay)
+          }
+        }
+      } finally {
+        reader.releaseLock()
+      }
+    }
+    processChunk() // 不 await，后台运行
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      console.warn('[ChatView] 深度研究 SSE 连接失败:', e)
+      // 连接失败也尝试重连
+      if (researchSSERetryCount < MAX_SSE_RETRY) {
+        researchSSERetryCount++
+        const delay = SSE_RETRY_BASE_DELAY * Math.pow(2, researchSSERetryCount - 1)
+        console.log(`[ChatView] ${delay}ms 后重连深度研究 SSE (第${researchSSERetryCount}次)`)
+        setTimeout(() => connectResearchSSE(taskId), delay)
+      }
+    }
+  }
+}
+
+const disconnectResearchSSE = () => {
+  if (researchSSEAbortController) {
+    researchSSEAbortController.abort()
+    researchSSEAbortController = null
+  }
+  researchSSERetryCount = 0
+}
+
 const handleModeChange = (newMode) => {
   chatStore.currentMode = newMode
 }
@@ -120,7 +230,9 @@ const loadCurrentSessionDetail = async () => {
     }
     await loadSessionAttachments(sessionId)
     // 页面刷新后从已加载的 toolCalls 中恢复 pendingApprovals Map
-    chatStore.restorePendingApprovals(sessionId)
+    approvalStore.restoreFromSession(sessionId)
+    // 页面刷新后从消息历史恢复 researchTaskId
+    chatStore.restoreResearchContextFromMessages(sessionId)
   } else {
     clearAttachments()
   }
@@ -142,9 +254,20 @@ onMounted(async () => {
       sessionMatch: targetSessionId === sessionStore.currentSessionId,
     })
   }
+
+  // 尝试切换到目标会话（容错：会话可能已被删除）
   if (targetSessionId && targetSessionId !== sessionStore.currentSessionId) {
-    console.log('[ChatView] 切换会话:', sessionStore.currentSessionId, '→', targetSessionId)
-    sessionStore.currentSessionId = targetSessionId
+    const sessionExists = sessionStore.sessions.some(s => s.id === targetSessionId)
+    if (sessionExists) {
+      console.log('[ChatView] 切换会话:', sessionStore.currentSessionId, '→', targetSessionId)
+      sessionStore.currentSessionId = targetSessionId
+    } else {
+      // 会话已被删除，降级使用当前会话或新建会话
+      console.log('[ChatView] 目标会话已不存在，降级到当前会话:', sessionStore.currentSessionId || '(新建)')
+      if (!sessionStore.currentSessionId) {
+        await sessionStore.createNewSession()
+      }
+    }
   } else if (targetSessionId && targetSessionId === sessionStore.currentSessionId) {
     console.log('[ChatView] session_id 已匹配当前会话，无需切换')
   }
@@ -158,16 +281,35 @@ onMounted(async () => {
     const researchQuery = route.query.research_query || ''
     chatStore.researchContextInfo = { taskId: researchTaskId, query: researchQuery }
   }
+  // 非 URL 跳转（如页面刷新）时，restoreResearchContextFromMessages 已在 loadCurrentSessionDetail 中调用
   if (queryMessage) {
     await nextTick()
     inputMessage.value = queryMessage
   }
+
+  // 深度研究 SSE 重连：如果当前会话有进行中的深度研究任务，自动建立 SSE 连接恢复审批监听
+  if (chatStore.researchTaskId) {
+    connectResearchSSE(chatStore.researchTaskId)
+  }
+})
+
+onUnmounted(() => {
+  disconnectResearchSSE()
 })
 
 watch(() => sessionStore.currentSessionId, async (newId, oldId) => {
   if (newId !== oldId) {
+    // 切换会话时断开旧的深度研究 SSE 连接
+    disconnectResearchSSE()
     if (newId) {
       await loadSessionAttachments(newId)
+      // 切换会话时恢复该会话的待审批状态
+      approvalStore.restoreFromSession(newId)
+      // 如果新会话有进行中的深度研究任务，自动建立 SSE 连接
+      chatStore.restoreResearchContextFromMessages(newId)
+      if (chatStore.researchTaskId) {
+        connectResearchSSE(chatStore.researchTaskId)
+      }
     } else {
       clearAttachments()
     }

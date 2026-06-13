@@ -1,0 +1,42 @@
+{
+  "agent_id": "agent_1781140187172",
+  "type": "general-purpose",
+  "description": "从https://reference.langchain.com/python/langchain提取内容并格式化为Markdown形式，存储到D:\\programming\\langchain\\langchain_xm.trae。",
+  "status": "failed",
+  "parent_session_id": "",
+  "created_at": 1781140187.1727316,
+  "result": null,
+  "parent_tool_names": [
+    "fs_write_file",
+    "fs_list_files",
+    "fs_search_files",
+    "file_reader",
+    "attachment_reader",
+    "todo_write",
+    "todo_read",
+    "agent_create",
+    "agent_run",
+    "agent_list",
+    "agent_cleanup",
+    "translate_text",
+    "detect_language",
+    "shell_exec",
+    "sequentialthinking",
+    "skill_baidu-search",
+    "skill_agent-browser",
+    "skill_ontology"
+  ],
+  "parent_mcp_servers": [
+    "sequential-thinking"
+  ],
+  "parent_config": {
+    "use_web_search": false,
+    "use_mcp": true,
+    "user_id": 1,
+    "session_id": "a2666914-14a6-4ff7-acf2-3fe6d50d0d9b",
+    "model_name": null,
+    "store": null
+  },
+  "started_at": 1781140188.9735987,
+  "error": "Pregel.invoke() missing 1 required positional argument: 'input'"
+}

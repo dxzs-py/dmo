@@ -627,6 +627,16 @@ const handleStreamEvent = (data) => {
         })
       }
       break
+    case 'sources':
+      if (data.data && result.value) {
+        result.value.sources = data.data
+      }
+      break
+    case 'degradation':
+      if (data.message) {
+        ElMessage.warning({ message: data.message, duration: 5000 })
+      }
+      break
     default:
       if (data.content) {
         streamingAnswer.value += data.content
