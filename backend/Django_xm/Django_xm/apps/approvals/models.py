@@ -1,0 +1,94 @@
+"""统一审批数据模型。
+
+持久化工具审批的完整生命周期，替代散落在 ChatMessage.approval JSON 字段
+和 Redis List 中的数据。按 interrupt_id 唯一索引。
+"""
+
+from django.conf import settings
+from django.db import models
+
+
+class Approval(models.Model):
+    """统一审批记录模型。
+
+    持久化工具审批的完整生命周期，替代散落在 ChatMessage.approval JSON 字段
+    和 Redis List 中的数据。按 interrupt_id 唯一索引。
+    """
+
+    # 审批来源
+    SOURCE_CHAT = 'chat'
+    SOURCE_DEEP_RESEARCH = 'deep_research'
+    SOURCE_LEARNING = 'learning'
+    SOURCE_CHOICES = [
+        (SOURCE_CHAT, 'Chat'),
+        (SOURCE_DEEP_RESEARCH, 'Deep Research'),
+        (SOURCE_LEARNING, 'Learning'),
+    ]
+
+    # 审批状态
+    STATE_PENDING = 'pending'
+    STATE_PROCESSING = 'processing'
+    STATE_WAITING = 'waiting'  # 已审批但同批次还有其他 pending（批量审批场景）
+    STATE_APPROVED = 'approved'
+    STATE_REJECTED = 'rejected'
+    STATE_TIMEOUT = 'timeout'
+    STATE_CHOICES = [
+        (STATE_PENDING, 'Pending'),
+        (STATE_PROCESSING, 'Processing'),
+        (STATE_WAITING, 'Waiting'),
+        (STATE_APPROVED, 'Approved'),
+        (STATE_REJECTED, 'Rejected'),
+        (STATE_TIMEOUT, 'Timeout'),
+    ]
+
+    # 审批动作
+    ACTION_CONFIRM = 'confirm'
+    ACTION_CONFIRM_WITH_INPUT = 'confirm_with_input'
+
+    interrupt_id = models.CharField(max_length=128, unique=True, db_index=True)
+    source = models.CharField(max_length=32, choices=SOURCE_CHOICES)
+    source_id = models.CharField(max_length=128, db_index=True)  # session_id 或 task_id
+    chat_session_id = models.CharField(max_length=128, null=True, blank=True, db_index=True)
+    tool_name = models.CharField(max_length=128)
+    title = models.CharField(max_length=256, default='')
+    description = models.TextField(default='')
+    action = models.CharField(max_length=32, default=ACTION_CONFIRM)
+    operation = models.TextField(blank=True, default='')
+    danger_level = models.CharField(max_length=32, default='medium')
+    parameters = models.JSONField(default=dict, blank=True)
+    state = models.CharField(max_length=32, choices=STATE_CHOICES, default=STATE_PENDING)
+    user_input = models.TextField(null=True, blank=True)
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='approvals',
+        verbose_name='审批人',
+    )
+    extra = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(
+        null=True, blank=True, db_index=True,
+        verbose_name='审批过期时间',
+        help_text='创建时设置为 created_at + APPROVAL_TIMEOUT_SECONDS，供 Celery 任务判断',
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['source', 'source_id']),
+            models.Index(fields=['chat_session_id', 'state']),
+            models.Index(fields=['state', 'created_at']),
+            models.Index(fields=['state', 'expires_at']),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.parameters is None:
+            self.parameters = {}
+        if self.extra is None:
+            self.extra = {}
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"[{self.source}] {self.tool_name} ({self.interrupt_id[:8]}) - {self.state}"

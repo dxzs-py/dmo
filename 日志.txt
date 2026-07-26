@@ -1,0 +1,940 @@
+client:733 [vite] connecting...
+client:827 [vite] connected.
+logger.js:6 [Security] Initializing session store...
+logger.js:19 [Realtime] 已从 localStorage 恢复 lastSeq: 204 条通道
+logger.js:6 [Sync] 实时同步 store 已初始化
+logger.js:19 [Realtime] WebSocket 已连接
+logger.js:24 [Realtime] replay barrier 设置 pending: user
+logger.js:19 [Realtime] 收到 replay 回包: channel=user:1, count=1, chunk=1/1
+logger.js:19 [Sync] 会话更新: 53c340a0-8e36-4e94-8531-27b51346ff13
+logger.js:24 [Realtime] replay barrier flush 无缓冲事件: user
+pinia.js?v=cf81f609:4622 🍍 "chat" store installed 🆕
+pinia.js?v=cf81f609:4622 🍍 "model" store installed 🆕
+pinia.js?v=cf81f609:4622 🍍 "tools" store installed 🆕
+logger.js:6 [Security] Loaded 3 sessions (page 1/1) for user 1
+logger.js:6 [Session] Loaded detail for session 53c340a0-8e36-4e94-8531-27b51346ff13 with 2 messages (merged local=0, backend=2)
+logger.js:6 [ChatStore] 从消息历史恢复 researchTaskId: research_8b26b94d15ff
+logger.js:24 [Realtime] replay barrier 设置 pending: session_53c340a0-8e36-4e94-8531-27b51346ff13
+logger.js:19 [ChatView] WebSocket 订阅会话事件（按 lastSeq 增量回放）: sessionId=53c340a0-8e36-4e94-8531-27b51346ff13
+logger.js:19 [ChatView] 深度研究状态轮询启动: taskId=research_8b26b94d15ff
+logger.js:19 [Realtime] 收到 replay 回包: channel=session:53c340a0-8e36-4e94-8531-27b51346ff13, count=89, chunk=1/2
+logger.js:19 [Sync] handleMessageAdded 诊断: session=53c340a0-8e36-4e94-8531-27b51346ff13, incoming.role=user, incoming.backendId=2766, messagesCount=2, placeholderCount=0, exactMatch=true
+logger.js:19 [Sync] 消息已存在，合并更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2766
+logger.js:19 [Sync] handleMessageAdded 诊断: session=53c340a0-8e36-4e94-8531-27b51346ff13, incoming.role=assistant, incoming.backendId=2767, messagesCount=2, placeholderCount=0, exactMatch=true
+logger.js:19 [Sync] 消息已存在，合并更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767
+logger.js:19 [Sync] stream_interrupted 消息进入 INTERRUPTED 状态: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, task=research_8b26b94d15ff
+logger.js:19 [Sync] stream_event 处理: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, type=stream_context
+logger.js:19 [Sync] stream_started 非触发浏览器标记正在思考: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, source=deep_research
+logger.js:19 [ApprovalStore] _handleNewApproval: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, data keys=interrupt_id,tool_call_id,source,source_id,state,message_id,parameters,tool_name,graph_interrupt_id,cross_module_id,title,description,operation,danger_level,action,event_type,type, interrupt_id=call_00_IVy6uaAyAXjS0jCrBlZC7728, tool_call_id=call_00_IVy6uaAyAXjS0jCrBlZC7728, graph_interrupt_id=9ac9873a4fc944cf82cd550d5c576a59
+logger.js:19 [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+logger.js:24 [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+logger.js:19 [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+logger.js:19 [Sync] approval_pending completed → INTERRUPTED: session=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, graphInterruptId=9ac9873a4fc944cf82cd550d5c576a59, message=2767
+logger.js:19 [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=9ac9873a4fc944cf82cd550d5c576a59
+logger.js:19 [Sync] 收到 tool_call_waiting 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, mappedStatus=waiting, isResult=false, message_id=2767, source=deep_research
+logger.js:24 [Session] applyToolCallEvent: eventType=tool_call_waiting, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+logger.js:19 [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+logger.js:24 [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+logger.js:19 [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+logger.js:19 [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_IVy6uaAyAXjS0jCrBlZC7728, eventType=tool_call_waiting
+logger.js:24 [Session] applyToolCallEvent: eventType=approval_processing, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+logger.js:24 [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=processing, messageBackendId=2767
+logger.js:19 [ApprovalStore] 审批处理中（保留面板，仅禁用按钮）: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, source=deep_research
+logger.js:19 [Sync] 批量审批 sibling approved/processing，INTERRUPTED → STREAMING: session=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, graphInterruptId=9ac9873a4fc944cf82cd550d5c576a59, message=2767, siblings=1
+logger.js:19 [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_processing, mappedState=processing, graphInterruptId=9ac9873a4fc944cf82cd550d5c576a59
+logger.js:19 [Sync] 收到 tool_call_running 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, mappedStatus=running, isResult=false, message_id=2767, source=deep_research
+logger.js:24 [Session] applyToolCallEvent: eventType=tool_call_running, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+logger.js:19 [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+logger.js:24 [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+logger.js:19 [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+logger.js:19 [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_IVy6uaAyAXjS0jCrBlZC7728, eventType=tool_call_running
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_IVy6uaAyAXjS0jCrBlZC7728, idx=0, toolName=shell_exec
+logger.js:19 [Sync] 消息更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_IVy6uaAyAXjS0jCrBlZC7728, idx=0, toolName=shell_exec
+logger.js:19 [Sync] 消息更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_IVy6uaAyAXjS0jCrBlZC7728, idx=0, toolName=shell_exec
+logger.js:19 [Sync] 消息更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767
+logger.js:24 [Session] applyToolCallEvent: eventType=approval_approved, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+logger.js:24 [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=approved, messageBackendId=2767
+logger.js:19 [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_approved, mappedState=approved, graphInterruptId=9ac9873a4fc944cf82cd550d5c576a59
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_IVy6uaAyAXjS0jCrBlZC7728, idx=0, toolName=shell_exec
+logger.js:19 [Sync] 消息更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767
+logger.js:19 [Sync] 收到 tool_call_input_ready 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, mappedStatus=pending, isResult=false, message_id=2767, source=deep_research
+logger.js:24 [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+logger.js:19 [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+logger.js:24 [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+logger.js:19 [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+logger.js:19 [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_IVy6uaAyAXjS0jCrBlZC7728, eventType=tool_call_input_ready
+logger.js:19 [Sync] 收到 tool_call_completed 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, mappedStatus=completed, isResult=true, message_id=2767, source=deep_research
+logger.js:24 [Session] applyToolCallEvent: eventType=tool_call_completed, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+logger.js:19 [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_IVy6uaAyAXjS0jCrBlZC7728, eventType=tool_call_completed
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_IVy6uaAyAXjS0jCrBlZC7728, idx=0, toolName=shell_exec
+logger.js:19 [Sync] 消息更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767
+logger.js:19 [ApprovalStore] _handleNewApproval: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, data keys=interrupt_id,tool_call_id,source,source_id,state,message_id,parameters,tool_name,graph_interrupt_id,cross_module_id,title,description,operation,danger_level,action,event_type,type, interrupt_id=call_00_2RRCb65DYazUR8mRdU9f5462, tool_call_id=call_00_2RRCb65DYazUR8mRdU9f5462, graph_interrupt_id=6c68adbcc72c405fb101cd22fdc7801a
+logger.js:19 [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+logger.js:24 [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+logger.js:19 [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+logger.js:19 [Sync] approval_pending streaming → INTERRUPTED: session=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, graphInterruptId=6c68adbcc72c405fb101cd22fdc7801a, message=2767
+logger.js:19 [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=6c68adbcc72c405fb101cd22fdc7801a
+logger.js:19 [Sync] 收到 tool_call_waiting 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, mappedStatus=waiting, isResult=false, message_id=2767, source=deep_research
+logger.js:24 [Session] applyToolCallEvent: eventType=tool_call_waiting, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+logger.js:19 [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+logger.js:24 [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+logger.js:19 [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+logger.js:19 [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+logger.js:24 [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+logger.js:19 [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+logger.js:19 [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_2RRCb65DYazUR8mRdU9f5462, eventType=tool_call_waiting
+logger.js:24 [Session] applyToolCallEvent: eventType=approval_processing, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+logger.js:24 [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=processing, messageBackendId=2767
+logger.js:19 [ApprovalStore] 审批处理中（保留面板，仅禁用按钮）: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, source=deep_research
+logger.js:19 [Sync] 批量审批 sibling approved/processing，INTERRUPTED → STREAMING: session=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, graphInterruptId=6c68adbcc72c405fb101cd22fdc7801a, message=2767, siblings=1
+logger.js:19 [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_processing, mappedState=processing, graphInterruptId=6c68adbcc72c405fb101cd22fdc7801a
+logger.js:19 [Sync] 收到 tool_call_running 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, mappedStatus=running, isResult=false, message_id=2767, source=deep_research
+logger.js:24 [Session] applyToolCallEvent: eventType=tool_call_running, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+logger.js:19 [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+logger.js:24 [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+logger.js:19 [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+logger.js:19 [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+logger.js:24 [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+logger.js:19 [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+logger.js:19 [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_2RRCb65DYazUR8mRdU9f5462, eventType=tool_call_running
+logger.js:24 [Session] applyToolCallEvent: eventType=approval_approved, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=approved, messageBackendId=2767
+ [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_approved, mappedState=approved, graphInterruptId=6c68adbcc72c405fb101cd22fdc7801a
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, mappedStatus=pending, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_2RRCb65DYazUR8mRdU9f5462, eventType=tool_call_input_ready
+ [Sync] 收到 tool_call_completed 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, mappedStatus=completed, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_completed, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_2RRCb65DYazUR8mRdU9f5462, eventType=tool_call_completed
+ [ApprovalStore] _handleNewApproval: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, data keys=interrupt_id,tool_call_id,source,source_id,state,message_id,parameters,tool_name,graph_interrupt_id,cross_module_id,title,description,operation,danger_level,action,event_type,type, interrupt_id=call_00_hTxds1RbLq1FLb5XRwwe6817, tool_call_id=call_00_hTxds1RbLq1FLb5XRwwe6817, graph_interrupt_id=abf4b5b22ede4e6b94109b82682e464c
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [Sync] approval_pending streaming → INTERRUPTED: session=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, graphInterruptId=abf4b5b22ede4e6b94109b82682e464c, message=2767
+ [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=abf4b5b22ede4e6b94109b82682e464c
+ [Sync] 收到 tool_call_waiting 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, mappedStatus=waiting, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_waiting, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_hTxds1RbLq1FLb5XRwwe6817, eventType=tool_call_waiting
+ [Session] applyToolCallEvent: eventType=approval_timeout, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=timeout, messageBackendId=2767
+ [Session] 消息处于 interrupted，跳过同步: session=53c340a0-8e36-4e94-8531-27b51346ff13
+ [Sync] 批量审批全部 rejected/timeout，标记消息 failed: session=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, graphInterruptId=abf4b5b22ede4e6b94109b82682e464c, message=2767, siblings=1
+ [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_timeout, mappedState=timeout, graphInterruptId=abf4b5b22ede4e6b94109b82682e464c
+ [Sync] 收到 tool_call_timeout 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, mappedStatus=timeout, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_timeout, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_hTxds1RbLq1FLb5XRwwe6817, eventType=tool_call_timeout
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, mappedStatus=pending, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_hTxds1RbLq1FLb5XRwwe6817, eventType=tool_call_input_ready
+ [Sync] 收到 tool_call_failed 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, mappedStatus=failed, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_failed, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_hTxds1RbLq1FLb5XRwwe6817, eventType=tool_call_failed
+ [ApprovalStore] _handleNewApproval: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, data keys=interrupt_id,tool_call_id,source,source_id,state,message_id,parameters,tool_name,graph_interrupt_id,cross_module_id,title,description,operation,danger_level,action,event_type,type, interrupt_id=call_00_UJ2LUD56VNvFaiG5bVC28702, tool_call_id=call_00_UJ2LUD56VNvFaiG5bVC28702, graph_interrupt_id=4bd9b8154c2647b4887ae4eb9a4948b1
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=4bd9b8154c2647b4887ae4eb9a4948b1
+ [Sync] 收到 tool_call_waiting 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, mappedStatus=waiting, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_waiting, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_UJ2LUD56VNvFaiG5bVC28702, eventType=tool_call_waiting
+ [Session] applyToolCallEvent: eventType=approval_timeout, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=timeout, messageBackendId=2767
+ [Session] 消息处于 interrupted，跳过同步: session=53c340a0-8e36-4e94-8531-27b51346ff13
+ [Sync] 批量审批全部 rejected/timeout，标记消息 failed: session=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, graphInterruptId=4bd9b8154c2647b4887ae4eb9a4948b1, message=2767, siblings=1
+ [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_timeout, mappedState=timeout, graphInterruptId=4bd9b8154c2647b4887ae4eb9a4948b1
+ [Sync] 收到 tool_call_timeout 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, mappedStatus=timeout, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_timeout, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_UJ2LUD56VNvFaiG5bVC28702, eventType=tool_call_timeout
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, mappedStatus=pending, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_UJ2LUD56VNvFaiG5bVC28702, eventType=tool_call_input_ready
+ [Sync] 收到 tool_call_failed 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, mappedStatus=failed, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_failed, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_UJ2LUD56VNvFaiG5bVC28702, eventType=tool_call_failed
+ [ApprovalStore] _handleNewApproval: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, data keys=interrupt_id,tool_call_id,source,source_id,state,message_id,parameters,tool_name,graph_interrupt_id,cross_module_id,title,description,operation,danger_level,action,event_type,type, interrupt_id=call_00_nU6eTDVbchR1NbZLTsEq3296, tool_call_id=call_00_nU6eTDVbchR1NbZLTsEq3296, graph_interrupt_id=247ef1e3358e4aae9b2fc1107d08f8ba
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=write_file, eventType=approval_pending, mappedState=pending, graphInterruptId=247ef1e3358e4aae9b2fc1107d08f8ba
+ [Sync] 收到 tool_call_waiting 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=write_file, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, mappedStatus=waiting, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_waiting, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=write_file, id=call_00_nU6eTDVbchR1NbZLTsEq3296, eventType=tool_call_waiting
+ [Session] applyToolCallEvent: eventType=approval_timeout, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=timeout, messageBackendId=2767
+ [Session] 消息处于 interrupted，跳过同步: session=53c340a0-8e36-4e94-8531-27b51346ff13
+ [Sync] 批量审批全部 rejected/timeout，标记消息 failed: session=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, graphInterruptId=247ef1e3358e4aae9b2fc1107d08f8ba, message=2767, siblings=1
+ [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=write_file, eventType=approval_timeout, mappedState=timeout, graphInterruptId=247ef1e3358e4aae9b2fc1107d08f8ba
+ [Sync] 收到 tool_call_timeout 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=write_file, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, mappedStatus=timeout, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_timeout, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=write_file, id=call_00_nU6eTDVbchR1NbZLTsEq3296, eventType=tool_call_timeout
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=write_file, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, mappedStatus=pending, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=write_file, id=call_00_nU6eTDVbchR1NbZLTsEq3296, eventType=tool_call_input_ready
+ [Sync] 收到 tool_call_failed 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=write_file, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, mappedStatus=failed, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_failed, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=write_file, id=call_00_nU6eTDVbchR1NbZLTsEq3296, eventType=tool_call_failed
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_iekK4VODmqaJjY2hDQEb1960, mappedStatus=pending, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_iekK4VODmqaJjY2hDQEb1960, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_iekK4VODmqaJjY2hDQEb1960, eventType=tool_call_input_ready
+ [Sync] 收到 tool_call_completed 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_iekK4VODmqaJjY2hDQEb1960, mappedStatus=completed, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_completed, toolCallId=call_00_iekK4VODmqaJjY2hDQEb1960, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_iekK4VODmqaJjY2hDQEb1960, eventType=tool_call_completed
+ [ApprovalStore] _handleNewApproval: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, data keys=interrupt_id,tool_call_id,source,source_id,state,message_id,parameters,tool_name,graph_interrupt_id,cross_module_id,title,description,operation,danger_level,action,event_type,type, interrupt_id=call_00_kfq8Jb7jEtEih9yM1oPZ1985, tool_call_id=call_00_kfq8Jb7jEtEih9yM1oPZ1985, graph_interrupt_id=dcc4eab8e5bd4d83af242537bb536380
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, isSynthetic=false, messageBackendId=2767
+ [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=dcc4eab8e5bd4d83af242537bb536380
+ [Sync] 收到 tool_call_waiting 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, mappedStatus=waiting, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_waiting, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_kfq8Jb7jEtEih9yM1oPZ1985, eventType=tool_call_waiting
+ [Session] applyToolCallEvent: eventType=approval_timeout, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=timeout, messageBackendId=2767
+ [Session] 消息处于 interrupted，跳过同步: session=53c340a0-8e36-4e94-8531-27b51346ff13
+ [Sync] 批量审批全部 rejected/timeout，标记消息 failed: session=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, graphInterruptId=dcc4eab8e5bd4d83af242537bb536380, message=2767, siblings=1
+ [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_timeout, mappedState=timeout, graphInterruptId=dcc4eab8e5bd4d83af242537bb536380
+ [Sync] 收到 tool_call_timeout 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, mappedStatus=timeout, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_timeout, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_kfq8Jb7jEtEih9yM1oPZ1985, eventType=tool_call_timeout
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, mappedStatus=pending, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_kfq8Jb7jEtEih9yM1oPZ1985, eventType=tool_call_input_ready
+ [Sync] 收到 tool_call_failed 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, mappedStatus=failed, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_failed, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_kfq8Jb7jEtEih9yM1oPZ1985, eventType=tool_call_failed
+ [Realtime] 收到 replay 回包: channel=session:53c340a0-8e36-4e94-8531-27b51346ff13, count=89, chunk=2/2
+ [ApprovalStore] _handleNewApproval: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, data keys=interrupt_id,tool_call_id,source,source_id,state,message_id,parameters,tool_name,graph_interrupt_id,cross_module_id,title,description,operation,danger_level,action,event_type,type, interrupt_id=call_00_lu5oJZN33x8Lv7wr0Y6O4527, tool_call_id=call_00_lu5oJZN33x8Lv7wr0Y6O4527, graph_interrupt_id=37210ef735724ddd8c634cbc4185be29
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, isSynthetic=false, messageBackendId=2767
+ [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=37210ef735724ddd8c634cbc4185be29
+ [Sync] 收到 tool_call_waiting 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, mappedStatus=waiting, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_waiting, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_lu5oJZN33x8Lv7wr0Y6O4527, eventType=tool_call_waiting
+ [Session] applyToolCallEvent: eventType=approval_processing, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, state=processing, messageBackendId=2767
+ [ApprovalStore] 审批处理中（保留面板，仅禁用按钮）: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, source=deep_research
+ [Sync] 批量审批 sibling approved/processing，INTERRUPTED → STREAMING: session=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, graphInterruptId=37210ef735724ddd8c634cbc4185be29, message=2767, siblings=1
+ [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_processing, mappedState=processing, graphInterruptId=37210ef735724ddd8c634cbc4185be29
+ [Sync] 收到 tool_call_running 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, mappedStatus=running, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_running, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_lu5oJZN33x8Lv7wr0Y6O4527, eventType=tool_call_running
+ [Session] applyToolCallEvent: eventType=approval_approved, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, state=approved, messageBackendId=2767
+ [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_approved, mappedState=approved, graphInterruptId=37210ef735724ddd8c634cbc4185be29
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, mappedStatus=pending, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_lu5oJZN33x8Lv7wr0Y6O4527, eventType=tool_call_input_ready
+ [Sync] 收到 tool_call_completed 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, mappedStatus=completed, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_completed, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_lu5oJZN33x8Lv7wr0Y6O4527, eventType=tool_call_completed
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_iY5heuA5g4qCPB9DdbAv6073, mappedStatus=pending, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_iY5heuA5g4qCPB9DdbAv6073, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_iY5heuA5g4qCPB9DdbAv6073, eventType=tool_call_input_ready
+ [Sync] 收到 tool_call_completed 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_iY5heuA5g4qCPB9DdbAv6073, mappedStatus=completed, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_completed, toolCallId=call_00_iY5heuA5g4qCPB9DdbAv6073, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_iY5heuA5g4qCPB9DdbAv6073, eventType=tool_call_completed
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_6U8nUskkwnq3ItKXLLGN7493, mappedStatus=pending, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_6U8nUskkwnq3ItKXLLGN7493, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_6U8nUskkwnq3ItKXLLGN7493, eventType=tool_call_input_ready
+ [Sync] 收到 tool_call_completed 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_6U8nUskkwnq3ItKXLLGN7493, mappedStatus=completed, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_completed, toolCallId=call_00_6U8nUskkwnq3ItKXLLGN7493, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_6U8nUskkwnq3ItKXLLGN7493, eventType=tool_call_completed
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_ET_ROCUJHGuFljrkwCQPYU46088, mappedStatus=pending, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_ET_ROCUJHGuFljrkwCQPYU46088, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_ET_ROCUJHGuFljrkwCQPYU46088, eventType=tool_call_input_ready
+ [Sync] 收到 tool_call_completed 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_ET_ROCUJHGuFljrkwCQPYU46088, mappedStatus=completed, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_completed, toolCallId=call_00_ET_ROCUJHGuFljrkwCQPYU46088, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_ET_ROCUJHGuFljrkwCQPYU46088, eventType=tool_call_completed
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_ET_W1KsRivpeNwwvr3VF3QI4233, mappedStatus=pending, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_ET_W1KsRivpeNwwvr3VF3QI4233, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_ET_W1KsRivpeNwwvr3VF3QI4233, eventType=tool_call_input_ready
+ [Sync] 收到 tool_call_completed 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_ET_W1KsRivpeNwwvr3VF3QI4233, mappedStatus=completed, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_completed, toolCallId=call_00_ET_W1KsRivpeNwwvr3VF3QI4233, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_ET_W1KsRivpeNwwvr3VF3QI4233, eventType=tool_call_completed
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_ET_JEZK3XlOcDADt6v37DgQ7551, mappedStatus=pending, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_ET_JEZK3XlOcDADt6v37DgQ7551, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_ET_JEZK3XlOcDADt6v37DgQ7551, eventType=tool_call_input_ready
+ [Sync] 收到 tool_call_completed 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_ET_JEZK3XlOcDADt6v37DgQ7551, mappedStatus=completed, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_completed, toolCallId=call_00_ET_JEZK3XlOcDADt6v37DgQ7551, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_ET_JEZK3XlOcDADt6v37DgQ7551, eventType=tool_call_completed
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_ET_Q24RMXtQ3UZXubHg2ehr9271, mappedStatus=pending, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_ET_Q24RMXtQ3UZXubHg2ehr9271, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_ET_Q24RMXtQ3UZXubHg2ehr9271, eventType=tool_call_input_ready
+ [Sync] 收到 tool_call_completed 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_ET_Q24RMXtQ3UZXubHg2ehr9271, mappedStatus=completed, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_completed, toolCallId=call_00_ET_Q24RMXtQ3UZXubHg2ehr9271, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_ET_Q24RMXtQ3UZXubHg2ehr9271, eventType=tool_call_completed
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_ET_BefFwPhhGtIbn6NkLIdV9267, mappedStatus=pending, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_ET_BefFwPhhGtIbn6NkLIdV9267, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_ET_BefFwPhhGtIbn6NkLIdV9267, eventType=tool_call_input_ready
+ [Sync] 收到 tool_call_completed 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_ET_BefFwPhhGtIbn6NkLIdV9267, mappedStatus=completed, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_completed, toolCallId=call_00_ET_BefFwPhhGtIbn6NkLIdV9267, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_ET_BefFwPhhGtIbn6NkLIdV9267, eventType=tool_call_completed
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_ET_QVo1kFXY41KGGKPhjuYs9806, mappedStatus=pending, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_ET_QVo1kFXY41KGGKPhjuYs9806, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_ET_QVo1kFXY41KGGKPhjuYs9806, eventType=tool_call_input_ready
+ [Sync] 收到 tool_call_completed 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_ET_QVo1kFXY41KGGKPhjuYs9806, mappedStatus=completed, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_completed, toolCallId=call_00_ET_QVo1kFXY41KGGKPhjuYs9806, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_ET_QVo1kFXY41KGGKPhjuYs9806, eventType=tool_call_completed
+ [ApprovalStore] _handleNewApproval: toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, data keys=interrupt_id,tool_call_id,source,source_id,state,message_id,parameters,tool_name,graph_interrupt_id,cross_module_id,title,description,operation,danger_level,action,event_type,type, interrupt_id=call_00_jN6VqVEoVPgVQXCkGFtT2921, tool_call_id=call_00_jN6VqVEoVPgVQXCkGFtT2921, graph_interrupt_id=64e0d27d74074072a33eb18bb75d9fd3
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, isSynthetic=false, messageBackendId=2767
+ [Sync] approval_pending streaming → INTERRUPTED: session=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, graphInterruptId=64e0d27d74074072a33eb18bb75d9fd3, message=2767
+ [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=64e0d27d74074072a33eb18bb75d9fd3
+ [Sync] 收到 tool_call_waiting 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, mappedStatus=waiting, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_waiting, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_jN6VqVEoVPgVQXCkGFtT2921, eventType=tool_call_waiting
+ [Session] applyToolCallEvent: eventType=approval_processing, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, messageBackendId=2767, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, state=processing, messageBackendId=2767
+ [ApprovalStore] 审批处理中（保留面板，仅禁用按钮）: toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, source=deep_research
+ [Sync] 批量审批 sibling approved/processing，INTERRUPTED → STREAMING: session=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, graphInterruptId=64e0d27d74074072a33eb18bb75d9fd3, message=2767, siblings=1
+ [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_processing, mappedState=processing, graphInterruptId=64e0d27d74074072a33eb18bb75d9fd3
+ [Sync] 收到 tool_call_running 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, mappedStatus=running, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_running, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_jN6VqVEoVPgVQXCkGFtT2921, eventType=tool_call_running
+ [Session] applyToolCallEvent: eventType=approval_rejected, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, messageBackendId=2767, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, state=rejected, messageBackendId=2767
+ [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_rejected, mappedState=rejected, graphInterruptId=64e0d27d74074072a33eb18bb75d9fd3
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, mappedStatus=pending, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_jN6VqVEoVPgVQXCkGFtT2921, eventType=tool_call_input_ready
+ [Sync] 收到 tool_call_failed 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, mappedStatus=failed, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_failed, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_jN6VqVEoVPgVQXCkGFtT2921, eventType=tool_call_failed
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_V6fCbn6ewUrktN0tURdj1040, mappedStatus=pending, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_V6fCbn6ewUrktN0tURdj1040, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_V6fCbn6ewUrktN0tURdj1040, eventType=tool_call_input_ready
+ [Sync] 收到 tool_call_completed 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_V6fCbn6ewUrktN0tURdj1040, mappedStatus=completed, isResult=true, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_completed, toolCallId=call_00_V6fCbn6ewUrktN0tURdj1040, messageBackendId=2767, isSynthetic=false
+ [Sync] 工具调用结果: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_V6fCbn6ewUrktN0tURdj1040, eventType=tool_call_completed
+ [ApprovalStore] _handleNewApproval: toolCallId=call_00_t5E6hdjChMz2EPu5vYb54098, data keys=interrupt_id,tool_call_id,source,source_id,state,message_id,parameters,tool_name,graph_interrupt_id,cross_module_id,title,description,operation,danger_level,action,event_type,type, interrupt_id=call_00_t5E6hdjChMz2EPu5vYb54098, tool_call_id=call_00_t5E6hdjChMz2EPu5vYb54098, graph_interrupt_id=889f57b6f8f545afbe41f6b613006171
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_t5E6hdjChMz2EPu5vYb54098, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_t5E6hdjChMz2EPu5vYb54098, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_t5E6hdjChMz2EPu5vYb54098, isSynthetic=false, messageBackendId=2767
+ [Sync] approval_pending streaming → INTERRUPTED: session=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, graphInterruptId=889f57b6f8f545afbe41f6b613006171, message=2767
+ [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=889f57b6f8f545afbe41f6b613006171
+ [Sync] 收到 tool_call_waiting 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_t5E6hdjChMz2EPu5vYb54098, mappedStatus=waiting, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_waiting, toolCallId=call_00_t5E6hdjChMz2EPu5vYb54098, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_t5E6hdjChMz2EPu5vYb54098, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_t5E6hdjChMz2EPu5vYb54098, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_t5E6hdjChMz2EPu5vYb54098, isSynthetic=false, messageBackendId=2767
+ [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_t5E6hdjChMz2EPu5vYb54098, eventType=tool_call_waiting
+ [Session] applyToolCallEvent: eventType=approval_processing, toolCallId=call_00_t5E6hdjChMz2EPu5vYb54098, messageBackendId=2767, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_t5E6hdjChMz2EPu5vYb54098, state=processing, messageBackendId=2767
+ [ApprovalStore] 审批处理中（保留面板，仅禁用按钮）: toolCallId=call_00_t5E6hdjChMz2EPu5vYb54098, source=deep_research
+ [Sync] 批量审批 sibling approved/processing，INTERRUPTED → STREAMING: session=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, graphInterruptId=889f57b6f8f545afbe41f6b613006171, message=2767, siblings=1
+ [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_processing, mappedState=processing, graphInterruptId=889f57b6f8f545afbe41f6b613006171
+ [Sync] 收到 tool_call_running 事件: sessionStore=53c340a0-8e36-4e94-8531-27b51346ff13, tool=shell_exec, toolCallId=call_00_t5E6hdjChMz2EPu5vYb54098, mappedStatus=running, isResult=false, message_id=2767, source=deep_research
+ [Session] applyToolCallEvent: eventType=tool_call_running, toolCallId=call_00_t5E6hdjChMz2EPu5vYb54098, messageBackendId=2767, isSynthetic=false
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_IVy6uaAyAXjS0jCrBlZC7728, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_2RRCb65DYazUR8mRdU9f5462, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_hTxds1RbLq1FLb5XRwwe6817, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_UJ2LUD56VNvFaiG5bVC28702, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_nU6eTDVbchR1NbZLTsEq3296, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, state=pending, messageBackendId=2767
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, messageBackendId=2767, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_kfq8Jb7jEtEih9yM1oPZ1985, isSynthetic=false, messageBackendId=2767
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, state=pending, messageBackendId=2767
+logger.js:24 [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, messageBackendId=2767, isSynthetic=false
+logger.js:19 [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_lu5oJZN33x8Lv7wr0Y6O4527, isSynthetic=false, messageBackendId=2767
+logger.js:19 [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, state=pending, messageBackendId=2767
+logger.js:24 [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, messageBackendId=2767, isSynthetic=false
+logger.js:19 [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_jN6VqVEoVPgVQXCkGFtT2921, isSynthetic=false, messageBackendId=2767
+logger.js:19 [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_t5E6hdjChMz2EPu5vYb54098, state=pending, messageBackendId=2767
+logger.js:24 [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_t5E6hdjChMz2EPu5vYb54098, messageBackendId=2767, isSynthetic=false
+logger.js:19 [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=53c340a0-8e36-4e94-8531-27b51346ff13, toolCallId=call_00_t5E6hdjChMz2EPu5vYb54098, isSynthetic=false, messageBackendId=2767
+logger.js:19 [Sync] 工具调用更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767, tool=shell_exec, id=call_00_t5E6hdjChMz2EPu5vYb54098, eventType=tool_call_running
+logger.js:24 [Session] applyToolCallEvent: eventType=approval_approved, toolCallId=call_00_t5E6hdjChMz2EPu5vYb54098, messageBackendId=2767, isSynthetic=false
+logger.js:24 [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_t5E6hdjChMz2EPu5vYb54098, state=approved, messageBackendId=2767
+logger.js:19 [Sync] 审批变更: session=53c340a0-8e36-4e94-8531-27b51346ff13, chatSession=53c340a0-8e36-4e94-8531-27b51346ff13, source=deep_research, tool=shell_exec, eventType=approval_approved, mappedState=approved, graphInterruptId=889f57b6f8f545afbe41f6b613006171
+logger.js:19 [Sync] 消息更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767
+logger.js:19 [Sync] 深度研究结果回写 - 审批状态清理: session=53c340a0-8e36-4e94-8531-27b51346ff13, task=research_8b26b94d15ff, success=true, toolCalls总数=19, 清理前pending审批数=8, 清理前运行中工具数=0, clearByTaskId清除数=0
+logger.js:19 [Sync] 深度研究结果回写: session=53c340a0-8e36-4e94-8531-27b51346ff13, task=research_8b26b94d15ff, success=true
+logger.js:19 [Research] updateTaskFromEvent stream_completed: taskId=research_8b26b94d15ff, success=true, hasReport=true, error=
+logger.js:19 [Research] setTaskStatus 首次设置: taskId=research_8b26b94d15ff, status=completed
+logger.js:19 [Sync] handleStreamCompleted 委托更新 taskInfo: taskId=research_8b26b94d15ff, success=true
+logger.js:24 [Realtime] replay barrier flush 无缓冲事件: session_53c340a0-8e36-4e94-8531-27b51346ff13
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_IVy6uaAyAXjS0jCrBlZC7728, idx=0, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_2RRCb65DYazUR8mRdU9f5462, idx=1, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_hTxds1RbLq1FLb5XRwwe6817, idx=2, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_UJ2LUD56VNvFaiG5bVC28702, idx=3, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_nU6eTDVbchR1NbZLTsEq3296, idx=4, toolName=write_file
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_iekK4VODmqaJjY2hDQEb1960, idx=5, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_kfq8Jb7jEtEih9yM1oPZ1985, idx=6, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_lu5oJZN33x8Lv7wr0Y6O4527, idx=7, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_iY5heuA5g4qCPB9DdbAv6073, idx=8, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_6U8nUskkwnq3ItKXLLGN7493, idx=9, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_ET_ROCUJHGuFljrkwCQPYU46088, idx=10, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_ET_W1KsRivpeNwwvr3VF3QI4233, idx=11, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_ET_JEZK3XlOcDADt6v37DgQ7551, idx=12, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_ET_Q24RMXtQ3UZXubHg2ehr9271, idx=13, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_ET_BefFwPhhGtIbn6NkLIdV9267, idx=14, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_ET_QVo1kFXY41KGGKPhjuYs9806, idx=15, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_jN6VqVEoVPgVQXCkGFtT2921, idx=16, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_V6fCbn6ewUrktN0tURdj1040, idx=17, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_t5E6hdjChMz2EPu5vYb54098, idx=18, toolName=shell_exec
+logger.js:19 [Sync] 消息更新: session=53c340a0-8e36-4e94-8531-27b51346ff13, message=2767
+logger.js:19 [ChatView] 深度研究状态轮询启动: taskId=research_8b26b94d15ff
+logger.js:19 [ChatView] 深度研究任务已结束: taskId=research_8b26b94d15ff, status=completed
+logger.js:6 [Session] Loaded detail for session 53c340a0-8e36-4e94-8531-27b51346ff13 with 2 messages (merged local=2, backend=2)
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_IVy6uaAyAXjS0jCrBlZC7728, idx=0, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_2RRCb65DYazUR8mRdU9f5462, idx=1, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_hTxds1RbLq1FLb5XRwwe6817, idx=2, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_UJ2LUD56VNvFaiG5bVC28702, idx=3, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_nU6eTDVbchR1NbZLTsEq3296, idx=4, toolName=write_file
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_iekK4VODmqaJjY2hDQEb1960, idx=5, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_kfq8Jb7jEtEih9yM1oPZ1985, idx=6, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_lu5oJZN33x8Lv7wr0Y6O4527, idx=7, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_iY5heuA5g4qCPB9DdbAv6073, idx=8, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_6U8nUskkwnq3ItKXLLGN7493, idx=9, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_ET_ROCUJHGuFljrkwCQPYU46088, idx=10, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_ET_W1KsRivpeNwwvr3VF3QI4233, idx=11, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_ET_JEZK3XlOcDADt6v37DgQ7551, idx=12, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_ET_Q24RMXtQ3UZXubHg2ehr9271, idx=13, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_ET_BefFwPhhGtIbn6NkLIdV9267, idx=14, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_ET_QVo1kFXY41KGGKPhjuYs9806, idx=15, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_jN6VqVEoVPgVQXCkGFtT2921, idx=16, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_V6fCbn6ewUrktN0tURdj1040, idx=17, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_t5E6hdjChMz2EPu5vYb54098, idx=18, toolName=shell_exec
+logger.js:19 [Sync] 全量同步完成: session=53c340a0-8e36-4e94-8531-27b51346ff13, messages=2, allowContentMerge=false
+logger.js:19 [ChatView] 深度研究任务已结束: taskId=research_8b26b94d15ff, status=completed
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_IVy6uaAyAXjS0jCrBlZC7728, idx=0, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_2RRCb65DYazUR8mRdU9f5462, idx=1, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_hTxds1RbLq1FLb5XRwwe6817, idx=2, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_UJ2LUD56VNvFaiG5bVC28702, idx=3, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_nU6eTDVbchR1NbZLTsEq3296, idx=4, toolName=write_file
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_iekK4VODmqaJjY2hDQEb1960, idx=5, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_kfq8Jb7jEtEih9yM1oPZ1985, idx=6, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_lu5oJZN33x8Lv7wr0Y6O4527, idx=7, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_iY5heuA5g4qCPB9DdbAv6073, idx=8, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_6U8nUskkwnq3ItKXLLGN7493, idx=9, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_ET_ROCUJHGuFljrkwCQPYU46088, idx=10, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_ET_W1KsRivpeNwwvr3VF3QI4233, idx=11, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_ET_JEZK3XlOcDADt6v37DgQ7551, idx=12, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_ET_Q24RMXtQ3UZXubHg2ehr9271, idx=13, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_ET_BefFwPhhGtIbn6NkLIdV9267, idx=14, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_ET_QVo1kFXY41KGGKPhjuYs9806, idx=15, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_jN6VqVEoVPgVQXCkGFtT2921, idx=16, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_V6fCbn6ewUrktN0tURdj1040, idx=17, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_t5E6hdjChMz2EPu5vYb54098, idx=18, toolName=shell_exec
+logger.js:19 [SnapshotSync] 消息校对完成: session=53c340a0-8e36-4e94-8531-27b51346ff13, count=2
+logger.js:19 [SnapshotSync] 快照校对成功: session=53c340a0-8e36-4e94-8531-27b51346ff13
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:6 [Session] removeSession: 53c340a0-8e36-4e94-8531-27b51346ff13, removed 1 item(s)
+logger.js:19 [Sync] 会话删除: 53c340a0-8e36-4e94-8531-27b51346ff13
+logger.js:6 [Security] Deleted session 53c340a0-8e36-4e94-8531-27b51346ff13 for user 1
+logger.js:19 [ChatView] WebSocket 取消订阅会话事件: sessionId=53c340a0-8e36-4e94-8531-27b51346ff13
+logger.js:24 [Realtime] replay barrier 设置 pending: session_b7ed55ee-ea97-43b4-86f1-495015c6bee2
+logger.js:19 [ChatView] WebSocket 订阅会话事件（按 lastSeq 增量回放）: sessionId=b7ed55ee-ea97-43b4-86f1-495015c6bee2
+logger.js:19 [ChatView] 深度研究状态轮询启动: taskId=research_8b26b94d15ff
+logger.js:19 [Realtime] 收到 replay 回包: channel=session:b7ed55ee-ea97-43b4-86f1-495015c6bee2, count=0, chunk=1/1
+logger.js:24 [Realtime] replay barrier flush 无缓冲事件: session_b7ed55ee-ea97-43b4-86f1-495015c6bee2
+logger.js:6 [Session] Loaded detail for session b7ed55ee-ea97-43b4-86f1-495015c6bee2 with 4 messages (merged local=0, backend=4)
+logger.js:19 [ChatView] 深度研究任务已结束: taskId=research_8b26b94d15ff, status=completed
+logger.js:19 [ChatView] WebSocket 取消订阅会话事件: sessionId=b7ed55ee-ea97-43b4-86f1-495015c6bee2
+logger.js:24 [Realtime] 收到 pong
+logger.js:19 [ChatView] 深度研究状态轮询启动: taskId=research_8b26b94d15ff
+logger.js:24 [Realtime] replay barrier 设置 pending: session_b7ed55ee-ea97-43b4-86f1-495015c6bee2
+logger.js:19 [ChatView] WebSocket 订阅会话事件（按 lastSeq 增量回放）: sessionId=b7ed55ee-ea97-43b4-86f1-495015c6bee2
+logger.js:19 [Realtime] 收到 replay 回包: channel=session:b7ed55ee-ea97-43b4-86f1-495015c6bee2, count=0, chunk=1/1
+logger.js:24 [Realtime] replay barrier flush 无缓冲事件: session_b7ed55ee-ea97-43b4-86f1-495015c6bee2
+logger.js:19 [ChatView] 深度研究任务不存在(404)，清空researchTaskId: taskId=research_8b26b94d15ff
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong

@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1,
+    "content": "使用 agent-browser 或 web fetch 阅读文章",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "id": 2,
+    "content": "提取核心技术内容并整理为结构化笔记",
+    "status": "pending",
+    "priority": "high"
+  }
+]

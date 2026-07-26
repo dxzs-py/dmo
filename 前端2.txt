@@ -1,0 +1,747 @@
+ [vite] connecting...
+ [vite] connected.
+ [Security] Initializing session store...
+ [Realtime] 已从 localStorage 恢复 lastSeq: 198 条通道
+ [Sync] 实时同步 store 已初始化
+ [Realtime] WebSocket 已连接
+ [Realtime] replay barrier 设置 pending: user
+ [Realtime] 收到 replay 回包: channel=user:1, count=0, chunk=1/1
+ [Realtime] replay barrier flush 无缓冲事件: user
+ 🍍 "chat" store installed 🆕
+ 🍍 "model" store installed 🆕
+ 🍍 "tools" store installed 🆕
+ [Security] Loaded 3 sessions (page 1/1) for user 1
+ [Realtime] replay barrier 设置 pending: session_af7aa1be-69cd-4b9d-9f22-e005d31e265a
+ [ChatView] WebSocket 订阅会话事件（按 lastSeq 增量回放）: sessionId=af7aa1be-69cd-4b9d-9f22-e005d31e265a
+ [Realtime] 收到 replay 回包: channel=session:af7aa1be-69cd-4b9d-9f22-e005d31e265a, count=10, chunk=1/1
+ [Sync] handleMessageAdded 诊断: session=af7aa1be-69cd-4b9d-9f22-e005d31e265a, incoming.role=user, incoming.backendId=2746, messagesCount=0, placeholderCount=0, exactMatch=false
+ [Sync] 占位合并失败(非触发浏览器正常): session=af7aa1be-69cd-4b9d-9f22-e005d31e265a, role=user, incomingContent=什么是 Vue 3, placeholderCount=0
+ [Sync] 消息新增: session=af7aa1be-69cd-4b9d-9f22-e005d31e265a, message=2746
+ [Sync] handleMessageAdded 诊断: session=af7aa1be-69cd-4b9d-9f22-e005d31e265a, incoming.role=assistant, incoming.backendId=2747, messagesCount=1, placeholderCount=0, exactMatch=false
+ [Sync] 占位合并失败(非触发浏览器正常): session=af7aa1be-69cd-4b9d-9f22-e005d31e265a, role=assistant, incomingContent=, placeholderCount=0
+ [Sync] 消息新增: session=af7aa1be-69cd-4b9d-9f22-e005d31e265a, message=2747
+ [Sync] stream_event 处理: session=af7aa1be-69cd-4b9d-9f22-e005d31e265a, message=2747, type=stream_reasoning
+ [Sync] stream_interrupted 消息进入 INTERRUPTED 状态: session=af7aa1be-69cd-4b9d-9f22-e005d31e265a, message=2747, task=research_d0a59bb06fb2
+ [Sync] stream_event 处理: session=af7aa1be-69cd-4b9d-9f22-e005d31e265a, message=2747, type=stream_context
+ [Sync] stream_started 非触发浏览器标记正在进行深度研究: session=af7aa1be-69cd-4b9d-9f22-e005d31e265a, message=2747
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_completed
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_completed
+ [Sync] 事件跳号: session=af7aa1be-69cd-4b9d-9f22-e005d31e265a, expected=7, got=9
+ [Sync] 消息更新: session=af7aa1be-69cd-4b9d-9f22-e005d31e265a, message=2747
+ [Research] updateTaskFromEvent stream_completed: taskId=research_d0a59bb06fb2, success=false, hasReport=false, error=服务暂时不可用，请稍后重试
+ [Research] setTaskStatus 首次设置: taskId=research_d0a59bb06fb2, status=failed
+ [Sync] task stream_completed: taskId=research_d0a59bb06fb2, success=false, source=deep_research
+ [Realtime] replay barrier flush 无缓冲事件: session_af7aa1be-69cd-4b9d-9f22-e005d31e265a
+ [Session] Loaded detail for session af7aa1be-69cd-4b9d-9f22-e005d31e265a with 2 messages (merged local=2, backend=2)
+ [Sync] 全量同步完成: session=af7aa1be-69cd-4b9d-9f22-e005d31e265a, messages=2, allowContentMerge=false
+ [SnapshotSync] 消息校对完成: session=af7aa1be-69cd-4b9d-9f22-e005d31e265a, count=2
+ [SnapshotSync] 快照校对成功: session=af7aa1be-69cd-4b9d-9f22-e005d31e265a
+ [Realtime] 收到 pong
+ [Session] removeSession: af7aa1be-69cd-4b9d-9f22-e005d31e265a, removed 1 item(s)
+ [Sync] 会话删除: af7aa1be-69cd-4b9d-9f22-e005d31e265a
+ [Security] Deleted session af7aa1be-69cd-4b9d-9f22-e005d31e265a for user 1
+ [ChatView] WebSocket 取消订阅会话事件: sessionId=af7aa1be-69cd-4b9d-9f22-e005d31e265a
+ [Realtime] replay barrier 设置 pending: session_7c042b2d-b041-457d-8258-22387daa7f49
+ [ChatView] WebSocket 订阅会话事件（按 lastSeq 增量回放）: sessionId=7c042b2d-b041-457d-8258-22387daa7f49
+ [Realtime] 收到 replay 回包: channel=session:7c042b2d-b041-457d-8258-22387daa7f49, count=0, chunk=1/1
+ [Realtime] replay barrier flush 无缓冲事件: session_7c042b2d-b041-457d-8258-22387daa7f49
+ [ChatView] WebSocket 取消订阅会话事件: sessionId=7c042b2d-b041-457d-8258-22387daa7f49
+ [Realtime] 收到 pong
+ [Sync] session_created 自动切换会话: 7c042b2d-b041-457d-8258-22387daa7f49 -> 282e5792-3f94-4276-84d3-fed2f5ecd012
+ [Realtime] replay barrier 设置 pending: session_282e5792-3f94-4276-84d3-fed2f5ecd012
+ [Sync] 会话创建并自动订阅: 282e5792-3f94-4276-84d3-fed2f5ecd012
+ [Realtime] 收到 replay 回包: channel=session:282e5792-3f94-4276-84d3-fed2f5ecd012, count=0, chunk=1/1
+ [Realtime] replay barrier flush 无缓冲事件: session_282e5792-3f94-4276-84d3-fed2f5ecd012
+ [Sync] handleMessageAdded 诊断: session=282e5792-3f94-4276-84d3-fed2f5ecd012, incoming.role=user, incoming.backendId=2748, messagesCount=0, placeholderCount=0, exactMatch=false
+ [Sync] 占位合并失败(非触发浏览器正常): session=282e5792-3f94-4276-84d3-fed2f5ecd012, role=user, incomingContent=运行 ollama lis 和 ollama pst 并把结保存到D:\programming\la, placeholderCount=0
+ [Sync] 消息新增: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2748
+ [Sync] handleMessageAdded 诊断: session=282e5792-3f94-4276-84d3-fed2f5ecd012, incoming.role=assistant, incoming.backendId=2749, messagesCount=1, placeholderCount=0, exactMatch=false
+ [Sync] 占位合并失败(非触发浏览器正常): session=282e5792-3f94-4276-84d3-fed2f5ecd012, role=assistant, incomingContent=, placeholderCount=0
+ [Sync] 消息新增: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749
+ [Realtime] 收到 pong
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Session] Loaded detail (preserveMessages) for session 282e5792-3f94-4276-84d3-fed2f5ecd012, mode=agent
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [ChatView] WebSocket 订阅会话事件（按 lastSeq 增量回放）: sessionId=282e5792-3f94-4276-84d3-fed2f5ecd012
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=56, expected=57
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=57, expected=58
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=58, expected=59
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=59, expected=60
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=60, expected=61
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=61, expected=62
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=62, expected=63
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=63, expected=64
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=64, expected=65
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=65, expected=66
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=66, expected=67
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=67, expected=68
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=68, expected=69
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=69, expected=70
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=70, expected=71
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=71, expected=72
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=72, expected=73
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=73, expected=74
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=74, expected=75
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=75, expected=76
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=76, expected=77
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=77, expected=78
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=78, expected=79
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=79, expected=80
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=80, expected=81
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=81, expected=82
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=82, expected=83
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=83, expected=84
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=84, expected=85
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=85, expected=86
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=86, expected=87
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=87, expected=88
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=88, expected=89
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=89, expected=90
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=90, expected=91
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=91, expected=92
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=92, expected=93
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=93, expected=94
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=94, expected=95
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=95, expected=96
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=96, expected=97
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=97, expected=98
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=98, expected=99
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=99, expected=100
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=100, expected=101
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=101, expected=102
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=102, expected=103
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=103, expected=104
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=104, expected=105
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=105, expected=106
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=106, expected=107
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=107, expected=108
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=108, expected=109
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=109, expected=110
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=110, expected=111
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=111, expected=112
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=112, expected=113
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=113, expected=114
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=114, expected=115
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=115, expected=116
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=116, expected=117
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=117, expected=118
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=118, expected=119
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=119, expected=120
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=120, expected=121
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=121, expected=122
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=122, expected=123
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=123, expected=124
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=124, expected=125
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=125, expected=126
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=126, expected=127
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=127, expected=128
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=128, expected=129
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=129, expected=130
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=130, expected=131
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=131, expected=132
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=132, expected=133
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=133, expected=134
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=134, expected=135
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=135, expected=136
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=136, expected=137
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=137, expected=138
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=138, expected=139
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=139, expected=140
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=140, expected=141
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=141, expected=142
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=142, expected=143
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=143, expected=144
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=144, expected=145
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=145, expected=146
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=146, expected=147
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=147, expected=148
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=148, expected=149
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=149, expected=150
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=150, expected=151
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=151, expected=152
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=152, expected=153
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=153, expected=154
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=154, expected=155
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=155, expected=156
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=156, expected=157
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=157, expected=158
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=158, expected=159
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=159, expected=160
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=160, expected=161
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=161, expected=162
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_reasoning
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=162, expected=163
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=shell_exec, toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, mappedStatus=pending, isResult=false, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=shell_exec, id=call_00_GZ3oWSdfPTpGDvXmBXL90796, eventType=tool_call_input_ready
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_input_ready
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=shell_exec, toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, mappedStatus=pending, isResult=false, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=shell_exec, id=call_00_GZ3oWSdfPTpGDvXmBXL90796, eventType=tool_call_input_ready
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_input_ready
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=shell_exec, toolCallId=call_01_iYb3z13U4JTrk2KpxduA0254, mappedStatus=pending, isResult=false, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_01_iYb3z13U4JTrk2KpxduA0254, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=shell_exec, id=call_01_iYb3z13U4JTrk2KpxduA0254, eventType=tool_call_input_ready
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_input_ready
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=shell_exec, toolCallId=call_01_iYb3z13U4JTrk2KpxduA0254, mappedStatus=pending, isResult=false, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_01_iYb3z13U4JTrk2KpxduA0254, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=shell_exec, id=call_01_iYb3z13U4JTrk2KpxduA0254, eventType=tool_call_input_ready
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_input_ready
+ [ApprovalStore] _handleNewApproval: toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, data keys=interrupt_id,tool_call_id,source,source_id,state,message_id,parameters,tool_name,graph_interrupt_id,title,description,operation,danger_level,action,selected_tools,tool_tier,event_type,type, interrupt_id=call_00_GZ3oWSdfPTpGDvXmBXL90796, tool_call_id=call_00_GZ3oWSdfPTpGDvXmBXL90796, graph_interrupt_id=dd151c116e6c426fb6f79a3c35427289
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, state=pending, messageBackendId=2749
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, messageBackendId=2749, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=282e5792-3f94-4276-84d3-fed2f5ecd012, toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, isSynthetic=false, messageBackendId=2749
+ [Sync] approval_pending streaming → INTERRUPTED: session=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, graphInterruptId=dd151c116e6c426fb6f79a3c35427289, message=2749
+ [Sync] 审批变更: session=282e5792-3f94-4276-84d3-fed2f5ecd012, chatSession=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=dd151c116e6c426fb6f79a3c35427289
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=approval_pending
+ [Sync] 收到 tool_call_waiting 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=shell_exec, toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, mappedStatus=waiting, isResult=false, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_waiting, toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=shell_exec, id=call_00_GZ3oWSdfPTpGDvXmBXL90796, eventType=tool_call_waiting
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_waiting
+ [ApprovalStore] _handleNewApproval: toolCallId=call_01_iYb3z13U4JTrk2KpxduA0254, data keys=interrupt_id,tool_call_id,source,source_id,state,message_id,parameters,tool_name,graph_interrupt_id,title,description,operation,danger_level,action,selected_tools,tool_tier,event_type,type, interrupt_id=call_01_iYb3z13U4JTrk2KpxduA0254, tool_call_id=call_01_iYb3z13U4JTrk2KpxduA0254, graph_interrupt_id=dd151c116e6c426fb6f79a3c35427289
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_01_iYb3z13U4JTrk2KpxduA0254, state=pending, messageBackendId=2749
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_01_iYb3z13U4JTrk2KpxduA0254, messageBackendId=2749, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=282e5792-3f94-4276-84d3-fed2f5ecd012, toolCallId=call_01_iYb3z13U4JTrk2KpxduA0254, isSynthetic=false, messageBackendId=2749
+ [Sync] 审批变更: session=282e5792-3f94-4276-84d3-fed2f5ecd012, chatSession=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=dd151c116e6c426fb6f79a3c35427289
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=approval_pending
+ [Sync] 收到 tool_call_waiting 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=shell_exec, toolCallId=call_01_iYb3z13U4JTrk2KpxduA0254, mappedStatus=waiting, isResult=false, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_waiting, toolCallId=call_01_iYb3z13U4JTrk2KpxduA0254, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=shell_exec, id=call_01_iYb3z13U4JTrk2KpxduA0254, eventType=tool_call_waiting
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_waiting
+ [Sync] stream_event 处理: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, type=stream_context
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=171, expected=172
+ [Sync] 非请求浏览器 INTERRUPTED 态，跳过 WS message_updated: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=172, expected=173
+ [Session] 消息处于 interrupted，跳过同步: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+ [Session] 消息处于 interrupted，跳过同步: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+ [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+ [SnapshotSync] 消息校对完成: session=282e5792-3f94-4276-84d3-fed2f5ecd012, count=2
+ [SnapshotSync] 快照校对成功: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+ [Session] applyToolCallEvent: eventType=approval_waiting, toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, messageBackendId=2749, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, state=waiting, messageBackendId=2749
+ [ApprovalStore] 审批等待中（同批次还有其他 pending）: toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, source=chat
+ [Sync] 审批变更: session=282e5792-3f94-4276-84d3-fed2f5ecd012, chatSession=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, tool=shell_exec, eventType=approval_waiting, mappedState=waiting, graphInterruptId=dd151c116e6c426fb6f79a3c35427289
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=approval_waiting
+ [Sync] 收到 tool_call_waiting 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=shell_exec, toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, mappedStatus=waiting, isResult=false, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_waiting, toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=shell_exec, id=call_00_GZ3oWSdfPTpGDvXmBXL90796, eventType=tool_call_waiting
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_waiting
+ [Session] 消息处于 interrupted，跳过同步: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+ [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+ [SnapshotSync] 消息校对完成: session=282e5792-3f94-4276-84d3-fed2f5ecd012, count=2
+ [SnapshotSync] 快照校对成功: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+ [Sync] 非请求浏览器 INTERRUPTED 态，跳过 WS message_updated: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=175, expected=176
+ [Realtime] 收到 pong
+ [Session] applyToolCallEvent: eventType=approval_processing, toolCallId=call_01_iYb3z13U4JTrk2KpxduA0254, messageBackendId=2749, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_01_iYb3z13U4JTrk2KpxduA0254, state=processing, messageBackendId=2749
+ [ApprovalStore] 审批处理中（保留面板，仅禁用按钮）: toolCallId=call_01_iYb3z13U4JTrk2KpxduA0254, source=chat
+ [Sync] 批量审批 sibling approved/processing，INTERRUPTED → STREAMING: session=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, graphInterruptId=dd151c116e6c426fb6f79a3c35427289, message=2749, siblings=2
+ [Sync] 审批变更: session=282e5792-3f94-4276-84d3-fed2f5ecd012, chatSession=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, tool=shell_exec, eventType=approval_processing, mappedState=processing, graphInterruptId=dd151c116e6c426fb6f79a3c35427289
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=approval_processing
+ [Sync] 收到 tool_call_running 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=shell_exec, toolCallId=call_01_iYb3z13U4JTrk2KpxduA0254, mappedStatus=running, isResult=false, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_running, toolCallId=call_01_iYb3z13U4JTrk2KpxduA0254, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=shell_exec, id=call_01_iYb3z13U4JTrk2KpxduA0254, eventType=tool_call_running
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_running
+ [Sync] 收到 tool_call_completed 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=shell_exec, toolCallId=call_01_iYb3z13U4JTrk2KpxduA0254, mappedStatus=completed, isResult=true, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_completed, toolCallId=call_01_iYb3z13U4JTrk2KpxduA0254, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用结果: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=shell_exec, id=call_01_iYb3z13U4JTrk2KpxduA0254, eventType=tool_call_completed
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_completed
+ [Sync] 收到 tool_call_completed 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=shell_exec, toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, mappedStatus=completed, isResult=true, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_completed, toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用结果: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=shell_exec, id=call_00_GZ3oWSdfPTpGDvXmBXL90796, eventType=tool_call_completed
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_completed
+ [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+ [SnapshotSync] 消息校对完成: session=282e5792-3f94-4276-84d3-fed2f5ecd012, count=2
+ [SnapshotSync] 快照校对成功: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=shell_exec, toolCallId=call_00_VMMnhMLYmNsRHbyH6ePC2440, mappedStatus=pending, isResult=false, message_id=(none), source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_VMMnhMLYmNsRHbyH6ePC2440, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=(兜底), tool=shell_exec, id=call_00_VMMnhMLYmNsRHbyH6ePC2440, eventType=tool_call_input_ready
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_input_ready
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=shell_exec, toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, mappedStatus=pending, isResult=false, message_id=(none), source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=(兜底), tool=shell_exec, id=call_01_Xw4Co1g9aLSIPKEG4glI2952, eventType=tool_call_input_ready
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_input_ready
+ [ApprovalStore] _handleNewApproval: toolCallId=call_00_VMMnhMLYmNsRHbyH6ePC2440, data keys=interrupt_id,tool_call_id,source,source_id,state,message_id,parameters,tool_name,graph_interrupt_id,title,description,operation,danger_level,action,selected_tools,tool_tier,event_type,type, interrupt_id=call_00_VMMnhMLYmNsRHbyH6ePC2440, tool_call_id=call_00_VMMnhMLYmNsRHbyH6ePC2440, graph_interrupt_id=5df32e49274b4a009b1b4642ac9c6bfa
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_VMMnhMLYmNsRHbyH6ePC2440, state=pending, messageBackendId=2749
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_VMMnhMLYmNsRHbyH6ePC2440, messageBackendId=2749, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=282e5792-3f94-4276-84d3-fed2f5ecd012, toolCallId=call_00_VMMnhMLYmNsRHbyH6ePC2440, isSynthetic=false, messageBackendId=2749
+ [Sync] approval_pending streaming → INTERRUPTED: session=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, graphInterruptId=5df32e49274b4a009b1b4642ac9c6bfa, message=2749
+ [Sync] 审批变更: session=282e5792-3f94-4276-84d3-fed2f5ecd012, chatSession=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=5df32e49274b4a009b1b4642ac9c6bfa
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=approval_pending
+ [Sync] 收到 tool_call_waiting 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=shell_exec, toolCallId=call_00_VMMnhMLYmNsRHbyH6ePC2440, mappedStatus=waiting, isResult=false, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_waiting, toolCallId=call_00_VMMnhMLYmNsRHbyH6ePC2440, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=shell_exec, id=call_00_VMMnhMLYmNsRHbyH6ePC2440, eventType=tool_call_waiting
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_waiting
+ [ApprovalStore] _handleNewApproval: toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, data keys=interrupt_id,tool_call_id,source,source_id,state,message_id,parameters,tool_name,graph_interrupt_id,title,description,operation,danger_level,action,selected_tools,tool_tier,event_type,type, interrupt_id=call_01_Xw4Co1g9aLSIPKEG4glI2952, tool_call_id=call_01_Xw4Co1g9aLSIPKEG4glI2952, graph_interrupt_id=5df32e49274b4a009b1b4642ac9c6bfa
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, state=pending, messageBackendId=2749
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, messageBackendId=2749, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=282e5792-3f94-4276-84d3-fed2f5ecd012, toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, isSynthetic=false, messageBackendId=2749
+ [Sync] 审批变更: session=282e5792-3f94-4276-84d3-fed2f5ecd012, chatSession=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=5df32e49274b4a009b1b4642ac9c6bfa
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=approval_pending
+ [Sync] 收到 tool_call_waiting 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=shell_exec, toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, mappedStatus=waiting, isResult=false, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_waiting, toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=shell_exec, id=call_01_Xw4Co1g9aLSIPKEG4glI2952, eventType=tool_call_waiting
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_waiting
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=shell_exec, toolCallId=call_00_VMMnhMLYmNsRHbyH6ePC2440, mappedStatus=pending, isResult=false, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_VMMnhMLYmNsRHbyH6ePC2440, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=shell_exec, id=call_00_VMMnhMLYmNsRHbyH6ePC2440, eventType=tool_call_input_ready
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_input_ready
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=shell_exec, toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, mappedStatus=pending, isResult=false, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=shell_exec, id=call_01_Xw4Co1g9aLSIPKEG4glI2952, eventType=tool_call_input_ready
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_input_ready
+ [Session] 消息处于 interrupted，跳过同步: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+ [Session] applyToolCallEvent: eventType=approval_approved, toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, messageBackendId=2749, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, state=approved, messageBackendId=2749
+ [ApprovalStore] _clearWaitingSiblingsInSession: 清理 1 个 waiting sibling: session=282e5792-3f94-4276-84d3-fed2f5ecd012, gid=dd151c116e6c426fb6f79a3c35427289, finalState=approved
+ [Session] applyToolCallEvent: eventType=approval_approved, toolCallId=call_01_iYb3z13U4JTrk2KpxduA0254, messageBackendId=2749, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_01_iYb3z13U4JTrk2KpxduA0254, state=approved, messageBackendId=2749
+ [Session] 消息处于 interrupted，跳过同步: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+ [Sync] 批量审批 sibling approved/processing，INTERRUPTED → STREAMING: session=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, graphInterruptId=dd151c116e6c426fb6f79a3c35427289, message=2749, siblings=2
+ [Sync] 审批变更: session=282e5792-3f94-4276-84d3-fed2f5ecd012, chatSession=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, tool=shell_exec, eventType=approval_approved, mappedState=approved, graphInterruptId=dd151c116e6c426fb6f79a3c35427289
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=approval_approved
+ [Session] applyToolCallEvent: eventType=approval_approved, toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, messageBackendId=2749, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_GZ3oWSdfPTpGDvXmBXL90796, state=approved, messageBackendId=2749
+ [Sync] 审批变更: session=282e5792-3f94-4276-84d3-fed2f5ecd012, chatSession=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, tool=shell_exec, eventType=approval_approved, mappedState=approved, graphInterruptId=dd151c116e6c426fb6f79a3c35427289
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=approval_approved
+ [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+ [Sync] 消息更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=190, expected=191
+ [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+ [Sync] 消息更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=191, expected=192
+ [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+ [SnapshotSync] 消息校对完成: session=282e5792-3f94-4276-84d3-fed2f5ecd012, count=2
+ [SnapshotSync] 快照校对成功: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+ [Session] applyToolCallEvent: eventType=approval_waiting, toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, messageBackendId=2749, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, state=waiting, messageBackendId=2749
+ [ApprovalStore] 审批等待中（同批次还有其他 pending）: toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, source=chat
+ [Sync] 审批变更: session=282e5792-3f94-4276-84d3-fed2f5ecd012, chatSession=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, tool=shell_exec, eventType=approval_waiting, mappedState=waiting, graphInterruptId=5df32e49274b4a009b1b4642ac9c6bfa
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=approval_waiting
+ [Sync] 收到 tool_call_waiting 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=shell_exec, toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, mappedStatus=waiting, isResult=false, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_waiting, toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=shell_exec, id=call_01_Xw4Co1g9aLSIPKEG4glI2952, eventType=tool_call_waiting
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_waiting
+ [Session] applyToolCallEvent: eventType=approval_processing, toolCallId=call_00_VMMnhMLYmNsRHbyH6ePC2440, messageBackendId=2749, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_VMMnhMLYmNsRHbyH6ePC2440, state=processing, messageBackendId=2749
+ [ApprovalStore] 审批处理中（保留面板，仅禁用按钮）: toolCallId=call_00_VMMnhMLYmNsRHbyH6ePC2440, source=chat
+ [Sync] 审批变更: session=282e5792-3f94-4276-84d3-fed2f5ecd012, chatSession=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, tool=shell_exec, eventType=approval_processing, mappedState=processing, graphInterruptId=5df32e49274b4a009b1b4642ac9c6bfa
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=approval_processing
+ [Sync] 收到 tool_call_running 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=shell_exec, toolCallId=call_00_VMMnhMLYmNsRHbyH6ePC2440, mappedStatus=running, isResult=false, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_running, toolCallId=call_00_VMMnhMLYmNsRHbyH6ePC2440, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=shell_exec, id=call_00_VMMnhMLYmNsRHbyH6ePC2440, eventType=tool_call_running
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_running
+ [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+ [SnapshotSync] 消息校对完成: session=282e5792-3f94-4276-84d3-fed2f5ecd012, count=2
+ [SnapshotSync] 快照校对成功: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+ [Sync] 收到 tool_call_completed 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=shell_exec, toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, mappedStatus=completed, isResult=true, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_completed, toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用结果: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=shell_exec, id=call_01_Xw4Co1g9aLSIPKEG4glI2952, eventType=tool_call_completed
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_completed
+ [Sync] 收到 tool_call_completed 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=shell_exec, toolCallId=call_00_VMMnhMLYmNsRHbyH6ePC2440, mappedStatus=completed, isResult=true, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_completed, toolCallId=call_00_VMMnhMLYmNsRHbyH6ePC2440, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用结果: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=shell_exec, id=call_00_VMMnhMLYmNsRHbyH6ePC2440, eventType=tool_call_completed
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_completed
+ [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+ [SnapshotSync] 消息校对完成: session=282e5792-3f94-4276-84d3-fed2f5ecd012, count=2
+ [SnapshotSync] 快照校对成功: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=file_reader, toolCallId=call_00_He1TeFu7TTJUNWgFulba6383, mappedStatus=pending, isResult=false, message_id=(none), source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_He1TeFu7TTJUNWgFulba6383, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=(兜底), tool=file_reader, id=call_00_He1TeFu7TTJUNWgFulba6383, eventType=tool_call_input_ready
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_input_ready
+ [ApprovalStore] _handleNewApproval: toolCallId=call_00_He1TeFu7TTJUNWgFulba6383, data keys=interrupt_id,tool_call_id,source,source_id,state,message_id,parameters,tool_name,graph_interrupt_id,title,description,operation,danger_level,action,selected_tools,tool_tier,event_type,type, interrupt_id=call_00_He1TeFu7TTJUNWgFulba6383, tool_call_id=call_00_He1TeFu7TTJUNWgFulba6383, graph_interrupt_id=4c85a78f71a947a88ff69b0ef2165f63
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_He1TeFu7TTJUNWgFulba6383, state=pending, messageBackendId=2749
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_He1TeFu7TTJUNWgFulba6383, messageBackendId=2749, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=282e5792-3f94-4276-84d3-fed2f5ecd012, toolCallId=call_00_He1TeFu7TTJUNWgFulba6383, isSynthetic=false, messageBackendId=2749
+ [Sync] approval_pending streaming → INTERRUPTED: session=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, graphInterruptId=4c85a78f71a947a88ff69b0ef2165f63, message=2749
+ [Sync] 审批变更: session=282e5792-3f94-4276-84d3-fed2f5ecd012, chatSession=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, tool=file_reader, eventType=approval_pending, mappedState=pending, graphInterruptId=4c85a78f71a947a88ff69b0ef2165f63
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=approval_pending
+ [Sync] 收到 tool_call_waiting 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=file_reader, toolCallId=call_00_He1TeFu7TTJUNWgFulba6383, mappedStatus=waiting, isResult=false, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_waiting, toolCallId=call_00_He1TeFu7TTJUNWgFulba6383, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=file_reader, id=call_00_He1TeFu7TTJUNWgFulba6383, eventType=tool_call_waiting
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_waiting
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=file_reader, toolCallId=call_00_He1TeFu7TTJUNWgFulba6383, mappedStatus=pending, isResult=false, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_He1TeFu7TTJUNWgFulba6383, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=file_reader, id=call_00_He1TeFu7TTJUNWgFulba6383, eventType=tool_call_input_ready
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_input_ready
+ [Session] applyToolCallEvent: eventType=approval_approved, toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, messageBackendId=2749, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, state=approved, messageBackendId=2749
+ [ApprovalStore] _clearWaitingSiblingsInSession: 清理 1 个 waiting sibling: session=282e5792-3f94-4276-84d3-fed2f5ecd012, gid=5df32e49274b4a009b1b4642ac9c6bfa, finalState=approved
+ [Session] applyToolCallEvent: eventType=approval_approved, toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, messageBackendId=2749, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_01_Xw4Co1g9aLSIPKEG4glI2952, state=approved, messageBackendId=2749
+ [Session] 消息处于 interrupted，跳过同步: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+ [Sync] 批量审批 sibling approved/processing，INTERRUPTED → STREAMING: session=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, graphInterruptId=5df32e49274b4a009b1b4642ac9c6bfa, message=2749, siblings=2
+ [Sync] 审批变更: session=282e5792-3f94-4276-84d3-fed2f5ecd012, chatSession=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, tool=shell_exec, eventType=approval_approved, mappedState=approved, graphInterruptId=5df32e49274b4a009b1b4642ac9c6bfa
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=approval_approved
+ [Session] applyToolCallEvent: eventType=approval_approved, toolCallId=call_00_VMMnhMLYmNsRHbyH6ePC2440, messageBackendId=2749, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_VMMnhMLYmNsRHbyH6ePC2440, state=approved, messageBackendId=2749
+ [Sync] 审批变更: session=282e5792-3f94-4276-84d3-fed2f5ecd012, chatSession=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, tool=shell_exec, eventType=approval_approved, mappedState=approved, graphInterruptId=5df32e49274b4a009b1b4642ac9c6bfa
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=approval_approved
+ [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_He1TeFu7TTJUNWgFulba6383, idx=4, toolName=file_reader
+ [Sync] 消息更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=204, expected=205
+ [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_He1TeFu7TTJUNWgFulba6383, idx=4, toolName=file_reader
+ [Sync] 消息更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=205, expected=206
+ [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_He1TeFu7TTJUNWgFulba6383, idx=4, toolName=file_reader
+ [Sync] 消息更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=206, expected=207
+ [Realtime] 收到 pong
+ [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_He1TeFu7TTJUNWgFulba6383, idx=4, toolName=file_reader
+ [SnapshotSync] 消息校对完成: session=282e5792-3f94-4276-84d3-fed2f5ecd012, count=2
+ [SnapshotSync] 快照校对成功: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+ [Session] applyToolCallEvent: eventType=approval_processing, toolCallId=call_00_He1TeFu7TTJUNWgFulba6383, messageBackendId=2749, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_He1TeFu7TTJUNWgFulba6383, state=processing, messageBackendId=2749
+ [ApprovalStore] 审批处理中（保留面板，仅禁用按钮）: toolCallId=call_00_He1TeFu7TTJUNWgFulba6383, source=chat
+ [Sync] 审批变更: session=282e5792-3f94-4276-84d3-fed2f5ecd012, chatSession=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, tool=file_reader, eventType=approval_processing, mappedState=processing, graphInterruptId=4c85a78f71a947a88ff69b0ef2165f63
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=approval_processing
+ [Sync] 收到 tool_call_running 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=file_reader, toolCallId=call_00_He1TeFu7TTJUNWgFulba6383, mappedStatus=running, isResult=false, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_running, toolCallId=call_00_He1TeFu7TTJUNWgFulba6383, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=file_reader, id=call_00_He1TeFu7TTJUNWgFulba6383, eventType=tool_call_running
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_running
+ [Sync] 收到 tool_call_completed 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=file_reader, toolCallId=call_00_He1TeFu7TTJUNWgFulba6383, mappedStatus=completed, isResult=true, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_completed, toolCallId=call_00_He1TeFu7TTJUNWgFulba6383, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用结果: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=file_reader, id=call_00_He1TeFu7TTJUNWgFulba6383, eventType=tool_call_completed
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_completed
+ [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_He1TeFu7TTJUNWgFulba6383, idx=4, toolName=file_reader
+ [SnapshotSync] 消息校对完成: session=282e5792-3f94-4276-84d3-fed2f5ecd012, count=2
+ [SnapshotSync] 快照校对成功: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=fs_write_file, toolCallId=call_00_b6xU9DYP2L08Y0m7BQcN5729, mappedStatus=pending, isResult=false, message_id=(none), source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_b6xU9DYP2L08Y0m7BQcN5729, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=(兜底), tool=fs_write_file, id=call_00_b6xU9DYP2L08Y0m7BQcN5729, eventType=tool_call_input_ready
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_input_ready
+ [ApprovalStore] _handleNewApproval: toolCallId=call_00_b6xU9DYP2L08Y0m7BQcN5729, data keys=interrupt_id,tool_call_id,source,source_id,state,message_id,parameters,tool_name,graph_interrupt_id,title,description,operation,danger_level,action,selected_tools,tool_tier,event_type,type, interrupt_id=call_00_b6xU9DYP2L08Y0m7BQcN5729, tool_call_id=call_00_b6xU9DYP2L08Y0m7BQcN5729, graph_interrupt_id=da8c47bca0234a1ebc07cb17282c06c1
+ [setApprovalToToolCallInMap] 审批数据已附加到 toolCall: toolCallId=call_00_b6xU9DYP2L08Y0m7BQcN5729, state=pending, messageBackendId=2749
+ [Session] applyToolCallEvent: eventType=approval_pending, toolCallId=call_00_b6xU9DYP2L08Y0m7BQcN5729, messageBackendId=2749, isSynthetic=false
+ [Session] setApprovalToToolCall 委托 applyToolCallEvent: session=282e5792-3f94-4276-84d3-fed2f5ecd012, toolCallId=call_00_b6xU9DYP2L08Y0m7BQcN5729, isSynthetic=false, messageBackendId=2749
+ [Sync] approval_pending streaming → INTERRUPTED: session=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, graphInterruptId=da8c47bca0234a1ebc07cb17282c06c1, message=2749
+ [Sync] 审批变更: session=282e5792-3f94-4276-84d3-fed2f5ecd012, chatSession=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, tool=fs_write_file, eventType=approval_pending, mappedState=pending, graphInterruptId=da8c47bca0234a1ebc07cb17282c06c1
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=approval_pending
+ [Sync] 收到 tool_call_waiting 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=fs_write_file, toolCallId=call_00_b6xU9DYP2L08Y0m7BQcN5729, mappedStatus=waiting, isResult=false, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_waiting, toolCallId=call_00_b6xU9DYP2L08Y0m7BQcN5729, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=fs_write_file, id=call_00_b6xU9DYP2L08Y0m7BQcN5729, eventType=tool_call_waiting
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_waiting
+ [Sync] 收到 tool_call_input_ready 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=fs_write_file, toolCallId=call_00_b6xU9DYP2L08Y0m7BQcN5729, mappedStatus=pending, isResult=false, message_id=2749, source=chat
+ [Session] applyToolCallEvent: eventType=tool_call_pending, toolCallId=call_00_b6xU9DYP2L08Y0m7BQcN5729, messageBackendId=2749, isSynthetic=false
+ [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=fs_write_file, id=call_00_b6xU9DYP2L08Y0m7BQcN5729, eventType=tool_call_input_ready
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_input_ready
+ [Session] applyToolCallEvent: eventType=approval_approved, toolCallId=call_00_He1TeFu7TTJUNWgFulba6383, messageBackendId=2749, isSynthetic=false
+ [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_He1TeFu7TTJUNWgFulba6383, state=approved, messageBackendId=2749
+ [Session] 消息处于 interrupted，跳过同步: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+ [Sync] 批量审批 sibling approved/processing，INTERRUPTED → STREAMING: session=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, graphInterruptId=4c85a78f71a947a88ff69b0ef2165f63, message=2749, siblings=1
+ [Sync] 审批变更: session=282e5792-3f94-4276-84d3-fed2f5ecd012, chatSession=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, tool=file_reader, eventType=approval_approved, mappedState=approved, graphInterruptId=4c85a78f71a947a88ff69b0ef2165f63
+ [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=approval_approved
+ [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_He1TeFu7TTJUNWgFulba6383, idx=4, toolName=file_reader
+ [ToolMatch] id 精确匹配成功: id=call_00_b6xU9DYP2L08Y0m7BQcN5729, idx=5, toolName=fs_write_file
+ [Sync] 消息更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=215, expected=216
+ [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_He1TeFu7TTJUNWgFulba6383, idx=4, toolName=file_reader
+ [ToolMatch] id 精确匹配成功: id=call_00_b6xU9DYP2L08Y0m7BQcN5729, idx=5, toolName=fs_write_file
+ [Sync] 消息更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=216, expected=217
+ [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_He1TeFu7TTJUNWgFulba6383, idx=4, toolName=file_reader
+ [ToolMatch] id 精确匹配成功: id=call_00_b6xU9DYP2L08Y0m7BQcN5729, idx=5, toolName=fs_write_file
+ [Sync] 消息更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749
+ [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=217, expected=218
+ [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+ [ToolMatch] id 精确匹配成功: id=call_00_He1TeFu7TTJUNWgFulba6383, idx=4, toolName=file_reader
+ [ToolMatch] id 精确匹配成功: id=call_00_b6xU9DYP2L08Y0m7BQcN5729, idx=5, toolName=fs_write_file
+ [SnapshotSync] 消息校对完成: session=282e5792-3f94-4276-84d3-fed2f5ecd012, count=2
+ [SnapshotSync] 快照校对成功: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Session] applyToolCallEvent: eventType=approval_processing, toolCallId=call_00_b6xU9DYP2L08Y0m7BQcN5729, messageBackendId=2749, isSynthetic=false
+logger.js:24 [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_b6xU9DYP2L08Y0m7BQcN5729, state=processing, messageBackendId=2749
+logger.js:19 [ApprovalStore] 审批处理中（保留面板，仅禁用按钮）: toolCallId=call_00_b6xU9DYP2L08Y0m7BQcN5729, source=chat
+logger.js:19 [Sync] 审批变更: session=282e5792-3f94-4276-84d3-fed2f5ecd012, chatSession=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, tool=fs_write_file, eventType=approval_processing, mappedState=processing, graphInterruptId=da8c47bca0234a1ebc07cb17282c06c1
+logger.js:24 [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=approval_processing
+logger.js:19 [Sync] 收到 tool_call_running 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=fs_write_file, toolCallId=call_00_b6xU9DYP2L08Y0m7BQcN5729, mappedStatus=running, isResult=false, message_id=2749, source=chat
+logger.js:24 [Session] applyToolCallEvent: eventType=tool_call_running, toolCallId=call_00_b6xU9DYP2L08Y0m7BQcN5729, messageBackendId=2749, isSynthetic=false
+logger.js:19 [Sync] 工具调用更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=fs_write_file, id=call_00_b6xU9DYP2L08Y0m7BQcN5729, eventType=tool_call_running
+logger.js:24 [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_running
+logger.js:19 [Sync] 收到 tool_call_completed 事件: sessionStore=282e5792-3f94-4276-84d3-fed2f5ecd012, tool=fs_write_file, toolCallId=call_00_b6xU9DYP2L08Y0m7BQcN5729, mappedStatus=completed, isResult=true, message_id=2749, source=chat
+logger.js:24 [Session] applyToolCallEvent: eventType=tool_call_completed, toolCallId=call_00_b6xU9DYP2L08Y0m7BQcN5729, messageBackendId=2749, isSynthetic=false
+logger.js:19 [Sync] 工具调用结果: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, tool=fs_write_file, id=call_00_b6xU9DYP2L08Y0m7BQcN5729, eventType=tool_call_completed
+logger.js:24 [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=tool_call_completed
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_He1TeFu7TTJUNWgFulba6383, idx=4, toolName=file_reader
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_b6xU9DYP2L08Y0m7BQcN5729, idx=5, toolName=fs_write_file
+logger.js:19 [SnapshotSync] 消息校对完成: session=282e5792-3f94-4276-84d3-fed2f5ecd012, count=2
+logger.js:19 [SnapshotSync] 快照校对成功: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+logger.js:24 [Session] applyToolCallEvent: eventType=approval_approved, toolCallId=call_00_b6xU9DYP2L08Y0m7BQcN5729, messageBackendId=2749, isSynthetic=false
+logger.js:24 [Session] updateToolCallApprovalStateOnly 委托 applyToolCallEvent: toolCallId=call_00_b6xU9DYP2L08Y0m7BQcN5729, state=approved, messageBackendId=2749
+logger.js:19 [Sync] 审批变更: session=282e5792-3f94-4276-84d3-fed2f5ecd012, chatSession=282e5792-3f94-4276-84d3-fed2f5ecd012, source=chat, tool=fs_write_file, eventType=approval_approved, mappedState=approved, graphInterruptId=da8c47bca0234a1ebc07cb17282c06c1
+logger.js:24 [Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=approval_approved
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_He1TeFu7TTJUNWgFulba6383, idx=4, toolName=file_reader
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_b6xU9DYP2L08Y0m7BQcN5729, idx=5, toolName=fs_write_file
+logger.js:19 [Sync] 消息更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749
+logger.js:24 [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=222, expected=223
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_He1TeFu7TTJUNWgFulba6383, idx=4, toolName=file_reader
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_b6xU9DYP2L08Y0m7BQcN5729, idx=5, toolName=fs_write_file
+logger.js:19 [Sync] 消息更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749
+logger.js:24 [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=223, expected=224
+logger.js:19 [Sync] stream_completed(finalized=false) 标记 finalizing，不触发全量同步: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+logger.js:24 [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=224, expected=225
+logger.js:19 [Sync] stream_finalized 非请求浏览器触发全量同步: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749, prevState=finalizing
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_He1TeFu7TTJUNWgFulba6383, idx=4, toolName=file_reader
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_b6xU9DYP2L08Y0m7BQcN5729, idx=5, toolName=fs_write_file
+logger.js:19 [SnapshotSync] 消息校对完成: session=282e5792-3f94-4276-84d3-fed2f5ecd012, count=2
+logger.js:19 [SnapshotSync] 快照校对成功: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+logger.js:6 [Session] Loaded detail for session 282e5792-3f94-4276-84d3-fed2f5ecd012 with 2 messages (merged local=2, backend=2)
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_He1TeFu7TTJUNWgFulba6383, idx=4, toolName=file_reader
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_b6xU9DYP2L08Y0m7BQcN5729, idx=5, toolName=fs_write_file
+logger.js:19 [Sync] 全量同步完成: session=282e5792-3f94-4276-84d3-fed2f5ecd012, messages=2, allowContentMerge=true
+logger.js:19 [Sync] stream_finalized 非请求浏览器同步后标记 completed: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749
+logger.js:24 [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=225, expected=226
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_He1TeFu7TTJUNWgFulba6383, idx=4, toolName=file_reader
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_b6xU9DYP2L08Y0m7BQcN5729, idx=5, toolName=fs_write_file
+logger.js:19 [Sync] 消息更新: session=282e5792-3f94-4276-84d3-fed2f5ecd012, message=2749
+logger.js:24 [Sync] 丢弃过期事件: session=282e5792-3f94-4276-84d3-fed2f5ecd012, seq=226, expected=227
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_GZ3oWSdfPTpGDvXmBXL90796, idx=0, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_01_iYb3z13U4JTrk2KpxduA0254, idx=1, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_VMMnhMLYmNsRHbyH6ePC2440, idx=2, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_01_Xw4Co1g9aLSIPKEG4glI2952, idx=3, toolName=shell_exec
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_He1TeFu7TTJUNWgFulba6383, idx=4, toolName=file_reader
+logger.js:24 [ToolMatch] id 精确匹配成功: id=call_00_b6xU9DYP2L08Y0m7BQcN5729, idx=5, toolName=fs_write_file
+logger.js:19 [SnapshotSync] 消息校对完成: session=282e5792-3f94-4276-84d3-fed2f5ecd012, count=2
+logger.js:19 [SnapshotSync] 快照校对成功: session=282e5792-3f94-4276-84d3-fed2f5ecd012
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
