@@ -19,25 +19,25 @@ import unittest
 
 # Django 环境初始化（兼容 pytest 和 unittest 直接运行）
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.dev")
-import django  # noqa: E402
-import django.apps  # noqa: E402,F401
+import django
+import django.apps
 
 if not django.apps.apps.ready:
     django.setup()
 
-from Django_xm.apps.agent_hub.config import AgentType  # noqa: E402
-from Django_xm.apps.agent_hub.builders._registry import (  # noqa: E402
+from Django_xm.apps.agent_hub.builders._registry import (
     _builder_registry,
     clear_registry,
     get_registered_builders,
     register_builder,
 )
-# 导入 builder 模块以触发 @register_builder 装饰器
-from Django_xm.apps.agent_hub.builders.base_builder import BaseAgentBuilder  # noqa: E402,F401
-from Django_xm.apps.agent_hub.builders.deep_builder import DeepAgentBuilder  # noqa: E402,F401
-from Django_xm.apps.agent_hub.builders.custom_builder import CustomWorkflowBuilder  # noqa: E402,F401
-from Django_xm.apps.agent_hub.builders.subagent_builder import SubAgentBuilder  # noqa: E402,F401
 
+# 导入 builder 模块以触发 @register_builder 装饰器
+from Django_xm.apps.agent_hub.builders.base_builder import BaseAgentBuilder
+from Django_xm.apps.agent_hub.builders.custom_builder import CustomWorkflowBuilder
+from Django_xm.apps.agent_hub.builders.deep_builder import DeepAgentBuilder
+from Django_xm.apps.agent_hub.builders.subagent_builder import SubAgentBuilder
+from Django_xm.apps.agent_hub.config import AgentType
 
 # 期望的 AgentType -> Builder 类映射
 _EXPECTED_MAPPING = {

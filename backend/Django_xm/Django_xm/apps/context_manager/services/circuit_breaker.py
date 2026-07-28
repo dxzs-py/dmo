@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional
+from typing import Any
 
-from Django_xm.apps.context_manager.config import get_logger
 from Django_xm.apps.context_manager.config import context_settings
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -39,12 +39,12 @@ _LOOP_THRESHOLD = context_settings.loop_same_call_terminate_threshold
 @dataclass
 class CircuitBreakerState:
     tripped: bool = False
-    trip_reason: Optional[str] = None
-    tool_call_history: List[Dict[str, Any]] = field(default_factory=list)
+    trip_reason: str | None = None
+    tool_call_history: list[dict[str, Any]] = field(default_factory=list)
     consecutive_same_calls: int = 0
-    last_tool_name: Optional[str] = None
-    last_tool_args: Optional[str] = None
-    checkpoint_stack: List[List[Dict[str, Any]]] = field(default_factory=list)
+    last_tool_name: str | None = None
+    last_tool_args: str | None = None
+    checkpoint_stack: list[list[dict[str, Any]]] = field(default_factory=list)
     injection_detected: bool = False
 
 
@@ -108,12 +108,12 @@ class ContextCircuitBreaker:
 
         return True
 
-    def save_checkpoint(self, messages: List[Dict[str, Any]]) -> None:
+    def save_checkpoint(self, messages: list[dict[str, Any]]) -> None:
         import copy
         self._state.checkpoint_stack.append(copy.deepcopy(messages))
         logger.debug(f"安全检查点已保存, 栈深度={len(self._state.checkpoint_stack)}")
 
-    def rollback(self) -> List[Dict[str, Any]]:
+    def rollback(self) -> list[dict[str, Any]]:
         if not self._state.checkpoint_stack:
             logger.warning("无可用检查点，回滚返回空列表")
             return []

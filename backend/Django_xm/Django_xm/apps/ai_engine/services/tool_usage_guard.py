@@ -34,9 +34,10 @@ import json
 import threading
 import time
 from collections import OrderedDict, deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
+from typing import Any
 
 from Django_xm.apps.core.config import get_logger
 
@@ -52,7 +53,7 @@ logger = get_logger(__name__)
 #   - loop_strategy: payload_hash（同工具同参数循环）/ content_diff（仅 fs_write_file 用增量）
 
 
-def _f_str(args: Dict[str, Any], key: str, default: str = "") -> str:
+def _f_str(args: dict[str, Any], key: str, default: str = "") -> str:
     """从 args 安全取字符串字段"""
     val = args.get(key, default)
     return str(val) if val is not None else default
@@ -63,23 +64,23 @@ def _f_combine(*parts: Any, sep: str = "|") -> str:
     return sep.join(str(p) if p is not None else "" for p in parts)
 
 
-def _f_text_hash(args: Dict[str, Any], key: str) -> str:
+def _f_text_hash(args: dict[str, Any], key: str) -> str:
     """对长文本字段做 hash 截断（避免 payload 过长）"""
     import hashlib as _hl
 
     text = args.get(key, "")
     if not isinstance(text, str):
         text = str(text)
-    return _hl.sha1(text.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    return _hl.sha1(text.encode("utf-8", errors="ignore"), usedforsecurity=False).hexdigest()[:16]
 
 
 # 默认 fingerprint 函数：序列化整个 args
-def _default_resource_extractor(args: Dict[str, Any]) -> str:
+def _default_resource_extractor(args: dict[str, Any]) -> str:
     sorted_items = sorted((str(k), str(v)) for k, v in args.items() if k not in ("thread_id",))
     return json.dumps(sorted_items, ensure_ascii=False, sort_keys=True)[:500]
 
 
-def _default_payload_extractor(args: Dict[str, Any]) -> str:
+def _default_payload_extractor(args: dict[str, Any]) -> str:
     return _default_resource_extractor(args)
 
 
@@ -87,15 +88,15 @@ def _default_payload_extractor(args: Dict[str, Any]) -> str:
 class ToolFingerprint:
     """工具指纹配置"""
 
-    tool_names: Tuple[str, ...]
-    resource_extractor: Callable[[Dict[str, Any]], str]
-    payload_extractor: Callable[[Dict[str, Any]], str] = _default_payload_extractor
+    tool_names: tuple[str, ...]
+    resource_extractor: Callable[[dict[str, Any]], str]
+    payload_extractor: Callable[[dict[str, Any]], str] = _default_payload_extractor
     loop_strategy: str = "payload_hash"  # payload_hash / content_diff / none
     description: str = ""
 
 
 # 工具指纹注册表
-TOOL_FINGERPRINTS: List[ToolFingerprint] = [
+TOOL_FINGERPRINTS: list[ToolFingerprint] = [
     # 文件系统
     ToolFingerprint(
         tool_names=("fs_write_file",),
@@ -242,7 +243,7 @@ TOOL_FINGERPRINTS: List[ToolFingerprint] = [
 
 
 # 工具白名单：始终 ALLOW，不做任何去重或循环检测
-TOOL_NO_DEDUP: Tuple[str, ...] = (
+TOOL_NO_DEDUP: tuple[str, ...] = (
     "get_current_time",
     "get_current_date",
     "project_info",
@@ -284,9 +285,9 @@ class ToolUsageDecision:
 
     status: ToolUsageStatus
     reason: str = ""
-    sse_event: Optional[Dict[str, Any]] = None
-    short_circuit_response: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    sse_event: dict[str, Any] | None = None
+    short_circuit_response: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class _ThreadSafeLRU:
@@ -294,10 +295,10 @@ class _ThreadSafeLRU:
 
     def __init__(self, max_size: int):
         self._max_size = max_size
-        self._data: "OrderedDict[Any, Any]" = OrderedDict()
+        self._data: OrderedDict[Any, Any] = OrderedDict()
         self._lock = threading.Lock()
 
-    def get(self, key: Any) -> Optional[Any]:
+    def get(self, key: Any) -> Any | None:
         with self._lock:
             if key not in self._data:
                 return None
@@ -342,7 +343,7 @@ class ToolUsageGuard:
         blocked_consecutive_max: int = 2,
         same_resource_max: int = 6,
         general_dedup_enabled: bool = True,
-        no_dedup_tools: Optional[Tuple[str, ...]] = None,
+        no_dedup_tools: tuple[str, ...] | None = None,
     ):
         self.dedup_window_seconds = dedup_window_seconds
         self.dedup_cache_size = dedup_cache_size
@@ -361,11 +362,11 @@ class ToolUsageGuard:
         # 通用资源级缓存：(thread, tool, resource_key) -> (payload_hash, timestamp)
         self._resource_cache: _ThreadSafeLRU = _ThreadSafeLRU(dedup_cache_size)
         # 通用资源循环历史：(thread, tool, resource_key) -> Deque[(ts, payload_hash)]
-        self._resource_recent: Dict[Tuple[str, str, str], Deque[Tuple[float, str]]] = {}
+        self._resource_recent: dict[tuple[str, str, str], deque[tuple[float, str]]] = {}
         # 保留最近 N 次同 path 的 content 用于 diff 检测（仅 fs_write_file）
-        self._path_recent_contents: Dict[Tuple[str, str], Deque[Tuple[float, str]]] = {}
-        self._rate_windows: Dict[str, Deque[float]] = {}
-        self._consecutive_blocked: Dict[str, int] = {}
+        self._path_recent_contents: dict[tuple[str, str], deque[tuple[float, str]]] = {}
+        self._rate_windows: dict[str, deque[float]] = {}
+        self._consecutive_blocked: dict[str, int] = {}
         self._lock = threading.Lock()
 
     # ============== 公开接口 ==============
@@ -373,7 +374,7 @@ class ToolUsageGuard:
     def check(
         self,
         tool_name: str,
-        args: Dict[str, Any],
+        args: dict[str, Any],
         thread_id: str,
     ) -> ToolUsageDecision:
         """同步检查工具调用使用情况
@@ -464,7 +465,7 @@ class ToolUsageGuard:
     async def acheck(
         self,
         tool_name: str,
-        args: Dict[str, Any],
+        args: dict[str, Any],
         thread_id: str,
     ) -> ToolUsageDecision:
         """异步检查（与 sync 版语义一致）"""
@@ -498,7 +499,7 @@ class ToolUsageGuard:
         resource_key: str,
         payload: str,
         now: float,
-    ) -> Optional[ToolUsageDecision]:
+    ) -> ToolUsageDecision | None:
         """通用资源级去重：相同 (tool, resource_key) + 相同 payload_hash 命中 → DEDUP"""
         cache_key = (thread_id, tool_name, resource_key)
         entry = self._resource_cache.get(cache_key)
@@ -548,7 +549,7 @@ class ToolUsageGuard:
         resource_key: str,
         payload: str,
         now: float,
-    ) -> Optional[ToolUsageDecision]:
+    ) -> ToolUsageDecision | None:
         """通用资源循环检测：同 resource_key 累计调用 ≥ same_resource_max
         且最近 3 次 payload_hash 全部相同 → BLOCK（"无进展"循环）
         """
@@ -613,9 +614,9 @@ class ToolUsageGuard:
     def _check_fs_write_file_loop(
         self,
         thread_id: str,
-        args: Dict[str, Any],
+        args: dict[str, Any],
         now: float,
-    ) -> Optional[ToolUsageDecision]:
+    ) -> ToolUsageDecision | None:
         """fs_write_file 专用 diff 循环检测
 
         在通用 fingerprint dedup 之外，fs_write_file 仍做更严格的
@@ -691,37 +692,7 @@ class ToolUsageGuard:
             )
         return None
 
-    # ============== 内部方法（兼容保留，旧 API 仍可用） ==============
-
-    def _check_dedup(
-        self,
-        thread_id: str,
-        path: str,
-        content: str,
-        now: float,
-    ) -> Optional[ToolUsageDecision]:
-        """【已废弃 - 旧 fs_write_file 专用 dedup 入口】
-
-        新版指纹机制下，fs_write_file 走通用 dedup 路径（_check_general_dedup）。
-        此方法保留以兼容任何外部旧调用，但不再被 check() 主流程使用。
-        """
-        return self._check_general_dedup(
-            thread_id, "fs_write_file", path, content, now
-        )
-
-    def _extract_file_context(
-        self, tool_name: str, args: Dict[str, Any]
-    ) -> Tuple[Optional[str], Optional[str]]:
-        """【已废弃】- 旧版 path/content 提取，由 fingerprint 取代"""
-        if tool_name in ("fs_write_file", "fs_read_file", "fs_search_files", "fs_list_files"):
-            path = args.get("relative_path") or args.get("path")
-        else:
-            path = None
-        if tool_name == "fs_write_file":
-            content = args.get("content")
-        else:
-            content = None
-        return path, content
+    # ============== 内部方法 ==============
 
     def _record_call(
         self,
@@ -730,8 +701,8 @@ class ToolUsageGuard:
         now: float,
         resource_key: str = "",
         payload: str = "",
-        path: Optional[str] = None,  # 兼容旧调用
-        content: Optional[str] = None,  # 兼容旧调用
+        path: str | None = None,  # 兼容旧调用
+        content: str | None = None,  # 兼容旧调用
     ) -> None:
         """记录一次成功调用（写入速率窗口 + 通用资源缓存 + 文件缓存）
 
@@ -808,7 +779,7 @@ class ToolUsageGuard:
                     },
                 )
 
-            warn_event: Optional[Dict[str, Any]] = None
+            warn_event: dict[str, Any] | None = None
             if current_count >= int(self.rate_limit_max * self.soft_warning_threshold):
                 warn_event = {
                     "type": "tool_usage_warning",
@@ -862,7 +833,7 @@ class ToolUsageGuard:
 
 # ============== 全局单例 ==============
 
-_guard_instance: Optional[ToolUsageGuard] = None
+_guard_instance: ToolUsageGuard | None = None
 _guard_lock = threading.Lock()
 
 

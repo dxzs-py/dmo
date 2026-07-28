@@ -14,12 +14,12 @@ load_context 只返回 L1+L2+L3+L6 的拼接结果，L4/L5 由中间件独立管
 """
 
 import asyncio
-import sys
+from typing import ClassVar
 
 from asgiref.sync import sync_to_async
 
-from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.context_manager.config import context_settings
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -179,7 +179,7 @@ class HierarchicalMemory:
     """
 
     # 各层 Token 预算默认值
-    _DEFAULT_BUDGETS = {
+    _DEFAULT_BUDGETS: ClassVar[dict[str, int]] = {
         "memory_l1_budget": 500,
         "memory_l2_budget": 800,
         "memory_l3_budget": 800,

@@ -1,17 +1,15 @@
-import os
 import base64
-import asyncio
+import logging
+import os
 from pathlib import Path
-from typing import Optional, List, Tuple, Dict, Any
+from typing import Any
 
-from langchain_core.tools import BaseTool
 from langchain_core.documents import Document
+from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
 from Django_xm.apps.ai_engine.config import settings as app_cfg
-from Django_xm.apps.tools.base import AsyncToolMixin, interrupt_for_approval, reject_sync_approval
-
-import logging
+from Django_xm.apps.tools.base import AsyncToolMixin
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +40,7 @@ def _read_text_file(file_path: Path) -> str:
     encodings = ["utf-8", "gbk", "gb2312", "latin-1"]
     for encoding in encodings:
         try:
-            with open(file_path, "r", encoding=encoding) as f:
+            with open(file_path, encoding=encoding) as f:
                 return f.read()
         except (UnicodeDecodeError, UnicodeError):
             continue
@@ -67,7 +65,7 @@ def _read_pdf_file(file_path: Path) -> str:
             finally:
                 doc.close()
         except ImportError:
-            raise ValueError("PDF 解析需要安装 PyPDF2 或 PyMuPDF: pip install pypdf 或 pip install PyMuPDF")
+            raise ValueError("PDF 解析需要安装 PyPDF2 或 PyMuPDF: pip install pypdf 或 pip install PyMuPDF") from None
 
 
 def _read_docx_file(file_path: Path) -> str:
@@ -82,7 +80,7 @@ def _read_docx_file(file_path: Path) -> str:
             doc = docx.Document(str(file_path))
             return "\n".join(para.text for para in doc.paragraphs)
         except ImportError:
-            raise ValueError("DOCX 解析需要安装 python-docx: pip install python-docx")
+            raise ValueError("DOCX 解析需要安装 python-docx: pip install python-docx") from None
 
 
 def _read_excel_file(file_path: Path) -> str:
@@ -95,7 +93,7 @@ def _read_excel_file(file_path: Path) -> str:
             df = pd.read_excel(str(file_path))
         return df.to_string(index=False)
     except ImportError:
-        raise ValueError("Excel 解析需要安装 pandas 和 openpyxl: pip install pandas openpyxl")
+        raise ValueError("Excel 解析需要安装 pandas 和 openpyxl: pip install pandas openpyxl") from None
 
 
 def _read_pptx_file(file_path: Path) -> str:
@@ -112,7 +110,7 @@ def _read_pptx_file(file_path: Path) -> str:
                 text_parts.append("\n".join(slide_text))
         return "\n\n".join(text_parts)
     except ImportError:
-        raise ValueError("PPTX 解析需要安装 python-pptx: pip install python-pptx")
+        raise ValueError("PPTX 解析需要安装 python-pptx: pip install python-pptx") from None
 
 
 def _read_image_file(file_path: Path) -> str:
@@ -136,7 +134,7 @@ def _read_image_file(file_path: Path) -> str:
         response = model.invoke([message])
         return getattr(response, "content", "无法识别图片内容")
     except Exception as e:
-        raise ValueError(f"图片识别失败: {str(e)}")
+        raise ValueError(f"图片识别失败: {e!s}") from e
 
 
 def is_image_file(file_path: str) -> bool:
@@ -177,7 +175,7 @@ def read_file_content(file_path: str) -> str:
         try:
             content = _read_text_file(path)
         except Exception:
-            raise ValueError(f"不支持的文件类型: {ext}")
+            raise ValueError(f"不支持的文件类型: {ext}") from None
 
     if len(content) > MAX_CONTENT_LENGTH:
         content = content[:MAX_CONTENT_LENGTH] + f"\n\n... [文件内容过长，已截断，原始长度: {len(content)} 字符]"
@@ -185,7 +183,7 @@ def read_file_content(file_path: str) -> str:
     return content
 
 
-def read_file_as_documents(file_path: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> List[Document]:
+def read_file_as_documents(file_path: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> list[Document]:
     path = Path(file_path)
 
     if not path.exists():
@@ -226,7 +224,7 @@ def read_file_as_documents(file_path: str, chunk_size: int = 1000, chunk_overlap
         try:
             raw_text = _read_text_file(path)
         except Exception:
-            raise ValueError(f"不支持的文件类型: {ext}")
+            raise ValueError(f"不支持的文件类型: {ext}") from None
 
     if len(raw_text) <= chunk_size:
         return [Document(page_content=raw_text, metadata={"source": file_name, "file_type": ext.lstrip(".")})]
@@ -249,7 +247,7 @@ def read_file_as_documents(file_path: str, chunk_size: int = 1000, chunk_overlap
         return [Document(page_content=raw_text, metadata={"source": file_name, "file_type": ext.lstrip(".")})]
 
 
-def get_attachment_info(attachment_id: int) -> Dict[str, Any]:
+def get_attachment_info(attachment_id: int) -> dict[str, Any]:
     try:
         from Django_xm.apps.attachments.services.cross_app import get_attachment_by_id
         attachment = get_attachment_by_id(attachment_id)
@@ -258,7 +256,7 @@ def get_attachment_info(attachment_id: int) -> Dict[str, Any]:
     except ValueError:
         raise
     except Exception as e:
-        raise ValueError(f"找不到附件 (id={attachment_id}): {str(e)}")
+        raise ValueError(f"找不到附件 (id={attachment_id}): {e!s}") from e
 
     file_path = attachment.file.path
     if not os.path.exists(file_path):
@@ -284,7 +282,7 @@ def get_attachment_info(attachment_id: int) -> Dict[str, Any]:
     }
 
 
-def read_attachment_as_base64(attachment_id: int) -> Tuple[str, str]:
+def read_attachment_as_base64(attachment_id: int) -> tuple[str, str]:
     info = get_attachment_info(attachment_id)
     file_path = info["file_path"]
     ext = info["ext"]
@@ -296,7 +294,7 @@ def read_attachment_as_base64(attachment_id: int) -> Tuple[str, str]:
     return image_data, mime_type
 
 
-def read_attachment_as_documents(attachment_id: int, chunk_size: int = 1000, chunk_overlap: int = 200) -> List[Document]:
+def read_attachment_as_documents(attachment_id: int, chunk_size: int = 1000, chunk_overlap: int = 200) -> list[Document]:
     info = get_attachment_info(attachment_id)
     file_path = info["file_path"]
 
@@ -318,7 +316,7 @@ def read_uploaded_attachment(attachment_id: int) -> str:
     except ValueError:
         raise
     except Exception as e:
-        raise ValueError(f"找不到附件 (id={attachment_id}): {str(e)}")
+        raise ValueError(f"找不到附件 (id={attachment_id}): {e!s}") from e
 
     file_path = attachment.file.path
     if not os.path.exists(file_path):
@@ -336,14 +334,14 @@ def read_uploaded_attachment(attachment_id: int) -> str:
     return header + content
 
 
-def read_multiple_attachments(attachment_ids: List[int]) -> str:
+def read_multiple_attachments(attachment_ids: list[int]) -> str:
     parts = []
     for att_id in attachment_ids:
         try:
             content = read_uploaded_attachment(att_id)
             parts.append(content)
         except Exception as e:
-            parts.append(f"❌ 读取附件 (id={att_id}) 失败: {str(e)}")
+            parts.append(f"❌ 读取附件 (id={att_id}) 失败: {e!s}")
 
     return "\n\n" + ("=" * 60 + "\n\n").join(parts)
 
@@ -357,8 +355,15 @@ class AttachmentReaderInput(BaseModel):
 
 
 class FileReaderTool(AsyncToolMixin, BaseTool):
+    """文件读取工具
+
+    审批由 ApprovalMiddleware 统一处理：
+    - 绝对路径读取触发审批（FileReaderApprovalPolicy）
+    - 相对路径读取无需审批
+    工具层不参与审批判断。
+    """
     name: str = "file_reader"
-    metadata: dict = {"tier": "extended", "visibility": "selectable", "category": "file"}
+    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "file"})
     description: str = (
         "读取指定路径的文件内容，支持多种格式：文本文件(.txt/.md/.py/.js等)、PDF、Word(.docx)、Excel(.xlsx)、PPT(.pptx)、图片（需视觉模型支持）。"
         "适用场景：用户要求阅读、分析或总结某个本地文件时使用。"
@@ -369,11 +374,12 @@ class FileReaderTool(AsyncToolMixin, BaseTool):
     args_schema: type[BaseModel] = FileReaderInput
 
     def _run(self, file_path: str) -> str:
+        """读取文件内容
+
+        审批由 ApprovalMiddleware 统一处理，工具层不参与审批判断。
+        绝对路径读取到达此方法时已通过审批。
+        """
         logger.info(f"📄 读取文件: {file_path}")
-        # 绝对路径读取需要审批，同步模式下拒绝
-        if os.path.isabs(file_path):
-            logger.warning(f"file_reader: 绝对路径读取在同步模式下无法请求审批: {file_path}")
-            return reject_sync_approval("file_reader", file_path)
         try:
             content = read_file_content(file_path)
             logger.info(f"📄 文件读取成功: {len(content)} 字符")
@@ -381,45 +387,16 @@ class FileReaderTool(AsyncToolMixin, BaseTool):
         except FileNotFoundError:
             return f"错误：文件不存在: {file_path}"
         except ValueError as e:
-            return f"错误：{str(e)}"
+            return f"错误：{e!s}"
         except Exception as e:
-            error_msg = f"读取文件失败: {str(e)}"
-            logger.error(error_msg)
-            return error_msg
-
-    async def _arun(self, file_path: str) -> str:
-        logger.info(f"📄 读取文件: {file_path}")
-        # 绝对路径读取需要用户确认（可能读取敏感文件）
-        if os.path.isabs(file_path):
-            approval = interrupt_for_approval(
-                tool_name="file_reader",
-                title="确认读取文件",
-                description=f"Agent 请求读取绝对路径文件，可能包含敏感信息。文件: {file_path}",
-                operation=file_path,
-                danger_level="medium",
-            )
-            if approval is True:
-                return await asyncio.to_thread(read_file_content, file_path)
-            else:
-                return f"用户已拒绝读取文件: {file_path}"
-        # 相对路径直接读取
-        try:
-            content = await asyncio.to_thread(read_file_content, file_path)
-            logger.info(f"📄 文件读取成功: {len(content)} 字符")
-            return content
-        except FileNotFoundError:
-            return f"错误：文件不存在: {file_path}"
-        except ValueError as e:
-            return f"错误：{str(e)}"
-        except Exception as e:
-            error_msg = f"读取文件失败: {str(e)}"
+            error_msg = f"读取文件失败: {e!s}"
             logger.error(error_msg)
             return error_msg
 
 
 class AttachmentReaderTool(BaseTool):
     name: str = "attachment_reader"
-    metadata: dict = {"tier": "extended", "visibility": "selectable", "category": "file"}
+    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "file"})
     description: str = (
         "读取用户上传的聊天附件内容，支持多种文件格式（文本、PDF、Word、Excel、PPT、图片等）。"
         "适用场景：用户上传了文件并基于文件内容提问时使用，attachment_id 可从前端消息的 attachments 字段获取。"
@@ -437,7 +414,7 @@ class AttachmentReaderTool(BaseTool):
             logger.info(f"📎 附件读取成功: {len(content)} 字符")
             return content
         except Exception as e:
-            error_msg = f"读取附件失败: {str(e)}"
+            error_msg = f"读取附件失败: {e!s}"
             logger.error(error_msg)
             return error_msg
 

@@ -9,13 +9,15 @@
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware, AgentState
-from langchain.agents.middleware.types import ModelRequest, ModelResponse
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
+from langchain.agents.middleware.types import ModelRequest
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.runtime import Runtime
 
+from Django_xm.apps.context_manager.config import context_settings
 from Django_xm.apps.context_manager.services.compression import (
     TokenEstimator,
 )
@@ -25,10 +27,9 @@ from Django_xm.apps.context_manager.services.progressive_compressor import (
 )
 from Django_xm.apps.context_manager.services.termination_judge import (
     ContextTerminationJudge,
-    TerminationSignal,
     TerminationAction,
+    TerminationSignal,
 )
-from Django_xm.apps.context_manager.config import context_settings
 
 logger = logging.getLogger(__name__)
 
@@ -45,13 +46,13 @@ class ContextManagerMiddleware(AgentMiddleware):
 
     def __init__(
         self,
-        model_name: Optional[str] = None,
-        trigger_tokens: Optional[int] = None,
-        keep_messages: Optional[int] = None,
+        model_name: str | None = None,
+        trigger_tokens: int | None = None,
+        keep_messages: int | None = None,
         strategy: str = "hybrid",
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
         store=None,
-        thread_id: Optional[str] = None,
+        thread_id: str | None = None,
     ):
         super().__init__()
         self._model_name = model_name or ""
@@ -88,7 +89,7 @@ class ContextManagerMiddleware(AgentMiddleware):
             f"thread_id={thread_id}"
         )
 
-    def before_model(self, state: AgentState, runtime: Runtime) -> Dict[str, Any] | None:
+    def before_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         """模型调用前检测 Token 用量，根据压缩级别触发渐进式压缩，并清理孤立 ToolMessage"""
         messages = state.get("messages", [])
         if not messages:
@@ -167,7 +168,7 @@ class ContextManagerMiddleware(AgentMiddleware):
 
         return await handler(request)
 
-    def after_model(self, state: AgentState, runtime: Runtime) -> Dict[str, Any] | None:
+    def after_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         """模型调用后检测是否应该终止（渐进式：WARN → THROTTLE → TERMINATE）"""
         messages = state.get("messages", [])
         if messages:
@@ -260,7 +261,7 @@ class ContextManagerMiddleware(AgentMiddleware):
 
         return total
 
-    def _messages_to_dicts(self, messages: Sequence[BaseMessage]) -> List[Dict[str, Any]]:
+    def _messages_to_dicts(self, messages: Sequence[BaseMessage]) -> list[dict[str, Any]]:
         """将 BaseMessage 列表转换为 Dict 列表"""
         result = []
         for msg in messages:
@@ -272,7 +273,7 @@ class ContextManagerMiddleware(AgentMiddleware):
             }
             role = role_map.get(type(msg), "unknown")
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
-            entry: Dict[str, Any] = {"role": role, "content": content}
+            entry: dict[str, Any] = {"role": role, "content": content}
             if hasattr(msg, 'id') and msg.id:
                 entry["id"] = msg.id
             if hasattr(msg, 'tool_calls') and msg.tool_calls:
@@ -284,7 +285,7 @@ class ContextManagerMiddleware(AgentMiddleware):
             result.append(entry)
         return result
 
-    def _dicts_to_messages(self, dicts: List[Dict[str, Any]]) -> List[BaseMessage]:
+    def _dicts_to_messages(self, dicts: list[dict[str, Any]]) -> list[BaseMessage]:
         """将 Dict 列表转换回 BaseMessage 列表"""
         result = []
         for d in dicts:
@@ -323,7 +324,7 @@ class ContextManagerMiddleware(AgentMiddleware):
     def process_messages(
         self,
         messages: Sequence[BaseMessage],
-    ) -> List[BaseMessage]:
+    ) -> list[BaseMessage]:
         """
         处理消息列表：检测 Token 用量，使用渐进式压缩
 
@@ -348,7 +349,7 @@ class ContextManagerMiddleware(AgentMiddleware):
         return self._sanitize_tool_messages(list(messages))
 
     @staticmethod
-    def _extract_latest_query(messages: List[Dict[str, Any]]) -> Optional[str]:
+    def _extract_latest_query(messages: list[dict[str, Any]]) -> str | None:
         for msg in reversed(messages):
             if msg.get("role") == "user":
                 content = msg.get("content", "")
@@ -364,7 +365,7 @@ class ContextManagerMiddleware(AgentMiddleware):
         return None
 
     @staticmethod
-    def _sanitize_tool_messages(messages: List[BaseMessage]) -> List[BaseMessage]:
+    def _sanitize_tool_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
         """移除孤立 ToolMessage 和缺少 ToolMessage 的 tool_calls
 
         处理三种不合规情况：

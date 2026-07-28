@@ -20,12 +20,12 @@ mock 策略:
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from django.test import SimpleTestCase
 
-from Django_xm.common.event_schema import EventType, EventSource, PayloadValidationError
 from Django_xm.common import realtime_events
+from Django_xm.common.event_schema import EventSource, EventType, PayloadValidationError
 from Django_xm.common.realtime_events import _group_name
 
 
@@ -43,13 +43,14 @@ def _valid_tool_call_payload(**overrides):
 
 
 def _valid_approval_payload(**overrides):
-    """构造合法的审批 payload。"""
+    """构造合法的审批 payload（含 6 个必填字段）。"""
     defaults = {
         'interrupt_id': 'intr-1',
         'tool_call_id': 'tc-1',
         'source': EventSource.DEEP_RESEARCH,
         'source_id': 'task-1',
         'state': 'pending',
+        'parameters': {'command': 'test'},
     }
     defaults.update(overrides)
     return defaults
@@ -334,13 +335,12 @@ class PublishEventPayloadValidationTests(unittest.IsolatedAsyncioTestCase):
         # TOOL_CALL_INPUT_READY：4 个核心字段 + parameters
         validate_payload(EventType.TOOL_CALL_INPUT_READY, _valid_tool_call_payload())
 
-        # TOOL_CALL_FAILED：4 个核心字段 + error
+        # TOOL_CALL_FAILED：4 个核心字段 + parameters + error
         failed_payload = _valid_tool_call_payload()
-        failed_payload.pop('parameters')
         failed_payload['error'] = 'boom'
         validate_payload(EventType.TOOL_CALL_FAILED, failed_payload)
 
-        # APPROVAL_PENDING：6 个核心字段
+        # APPROVAL_PENDING：6 个核心字段（含 parameters）
         validate_payload(EventType.APPROVAL_PENDING, _valid_approval_payload())
 
         # STREAM_REASONING：source + source_id + data
@@ -530,13 +530,12 @@ class PublishEventSyncTests(SimpleTestCase):
         """
         mock_async.side_effect = PayloadValidationError('validation failed')
 
-        with patch('Django_xm.common.realtime_events.logger'):
-            with self.assertRaises(PayloadValidationError):
-                realtime_events.publish_event_sync(
-                    EventType.SESSION_CREATED,
-                    {},
-                    session_id='session-1',
-                )
+        with patch('Django_xm.common.realtime_events.logger'), self.assertRaises(PayloadValidationError):
+            realtime_events.publish_event_sync(
+                EventType.SESSION_CREATED,
+                {},
+                session_id='session-1',
+            )
 
     @patch('Django_xm.common.realtime_events.publish_event', new_callable=AsyncMock)
     def test_sync_swallows_other_exceptions(self, mock_async):

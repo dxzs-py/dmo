@@ -23,7 +23,7 @@
 
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ def extract_tool_events_from_message(
     message: Any,
     seen_tool_call_ids: set,
     accumulated_messages: list,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """从单条流式消息中提取工具事件。
 
     处理逻辑（与 subagent_patch.py L394-575 一致，并补全 FAILED 分支）：
@@ -89,12 +89,12 @@ def extract_tool_events_from_message(
                 )
     """
     # 懒加载：避免模块导入时触发 Django 运行时初始化，保证模块可独立测试
-    from langchain_core.messages import AIMessage, ToolMessage
-    from Django_xm.apps.tools.param_extractor import extract_tool_params
-    from Django_xm.apps.chat.services.stream_helpers import strip_internal_fields
+    from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
+
+    from Django_xm.apps.tools.param_extractor import extract_tool_params, strip_internal_fields
     from Django_xm.common.event_schema import EventType
 
-    events: List[Dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
 
     # ---- 分支 1：AIMessage / AIMessageChunk ----
     # 注意：AIMessageChunk 是 AIMessage 的子类，isinstance(msg, AIMessage) 对两者均成立。
@@ -106,9 +106,62 @@ def extract_tool_events_from_message(
     # tool_calls 返回空列表，但 tool_call_chunks 仍携带 args 分片，ToolMessage
     # 阶段需要从累积的 tool_call_chunks 聚合完整参数。若不加入累积列表，会导致
     # 聚合丢失分片，参数解析失败，前端显示为 {}。
+    #
+    # ⚠️ 关键 bug 修复（Task 6.8）：
+    # AIMessageChunk.tool_calls 属性内部使用 parse_partial_json 解析 args 字符串，
+    # 对不完整的 JSON 可能返回非空但残缺的 dict（如 '{"file_path": "/san' 被解析为
+    # {"file_path": "/san"}）。若直接使用 .tool_calls 发射 INPUT_READY，会携带
+    # 不完整参数过早发射，前端展示残缺参数。
+    # 修复：对 AIMessageChunk，直接从 tool_call_chunks 读取原始 args 字符串，
+    # 用严格 json.loads 解析（仅完整 JSON 才成功），避免 parse_partial_json 的
+    # 宽容解析。完整 AIMessage 的 .tool_calls 的 args 已是 dict，可直接使用。
     if isinstance(message, AIMessage):
         accumulated_messages.append(message)
-        if getattr(message, "tool_calls", None):
+        if isinstance(message, AIMessageChunk):
+            # AIMessageChunk：从 tool_call_chunks 用严格 JSON 解析 args
+            tccs = getattr(message, "tool_call_chunks", None) or []
+            for tcc in tccs:
+                if isinstance(tcc, dict):
+                    tc_id = tcc.get("id") or ""
+                    tc_name = tcc.get("name") or ""
+                    tc_args_str = tcc.get("args") or ""
+                else:
+                    tc_id = getattr(tcc, "id", "") or ""
+                    tc_name = getattr(tcc, "name", "") or ""
+                    tc_args_str = getattr(tcc, "args", "") or ""
+                # 去重：同一 tool_call_id 只发射一次
+                if not tc_id or tc_id in seen_tool_call_ids:
+                    continue
+                # 严格 JSON 解析：仅完整 JSON 才发射 INPUT_READY。
+                # args 为空或不完整时跳过，等后续 chunk 或 ToolMessage 阶段聚合补发。
+                if not tc_args_str or not tc_args_str.strip():
+                    continue
+                try:
+                    parsed_args = json.loads(tc_args_str)
+                except (json.JSONDecodeError, ValueError):
+                    continue  # args 不完整，等后续 chunk 或 ToolMessage 阶段补发
+                # 解析为 dict / list 时才发射
+                if isinstance(parsed_args, dict) and parsed_args:
+                    tc_args = strip_internal_fields(parsed_args)
+                    if not tc_args:
+                        continue
+                    seen_tool_call_ids.add(tc_id)
+                    events.append({
+                        'event_type': EventType.TOOL_CALL_INPUT_READY,
+                        'tool_call_id': tc_id,
+                        'tool_name': tc_name or "unknown",
+                        'parameters': tc_args,
+                    })
+                elif isinstance(parsed_args, list) and parsed_args:
+                    seen_tool_call_ids.add(tc_id)
+                    events.append({
+                        'event_type': EventType.TOOL_CALL_INPUT_READY,
+                        'tool_call_id': tc_id,
+                        'tool_name': tc_name or "unknown",
+                        'parameters': {"items": parsed_args},
+                    })
+        # 完整 AIMessage（非 chunk）：tool_calls 的 args 已是完整 dict，直接使用
+        elif getattr(message, "tool_calls", None):
             for tc in message.tool_calls:
                 tc_id = (
                     tc.get("id")
@@ -124,8 +177,7 @@ def extract_tool_events_from_message(
                 if not tc_id or tc_id in seen_tool_call_ids:
                     continue
                 tc_args = strip_internal_fields(extract_tool_params(tc))
-                # 流式 AIMessageChunk 的 tool_calls args 可能不完整
-                # （parse_partial_json 返回 {}），args 为空时不发射、不去重，
+                # args 为空时不发射、不去重，
                 # 等后续 chunk 或 ToolMessage 阶段补发。
                 if not tc_args:
                     continue

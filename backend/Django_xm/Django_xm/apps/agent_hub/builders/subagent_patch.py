@@ -26,11 +26,10 @@ Issue 2: 子智能体工具事件未转发到父 SSE 流
       子 graph 有独立 namespace，不会与父 graph 冲突
 """
 
-import asyncio
 import contextvars
 import json
 import logging
-from typing import Any, Sequence
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -94,14 +93,15 @@ def patch_subagent_middleware() -> None:
             return _original_get_subagents(self)
 
         specs: list = []
+        from deepagents._models import resolve_model
         from langchain.agents import create_agent
         from langchain.agents.middleware import HumanInTheLoopMiddleware
-        from deepagents._models import resolve_model
 
         for spec in self._subagents:
             if "runnable" in spec:
                 # CompiledSubAgent - use as-is（已预编译，不重新创建）
                 from typing import cast
+
                 from deepagents.middleware.subagents import CompiledSubAgent
                 compiled = cast(CompiledSubAgent, spec)
                 runnable = compiled["runnable"].with_config({
@@ -171,15 +171,15 @@ def patch_subagent_middleware() -> None:
 
         其他逻辑与原版完全一致，仅 atask 的 subagent_config 不同。
         """
+        from deepagents.middleware.subagents import (
+            _EXCLUDED_STATE_KEYS,
+            TaskToolSchema,
+        )
         from langchain.tools import ToolRuntime
         from langchain_core.messages import HumanMessage, ToolMessage
         from langchain_core.runnables import Runnable, RunnableConfig
         from langchain_core.tools import StructuredTool
         from langgraph.types import Command
-        from deepagents.middleware.subagents import (
-            TaskToolSchema,
-            _EXCLUDED_STATE_KEYS,
-        )
 
         # Build the graphs dict and descriptions from the unified spec list
         subagent_graphs: dict[str, Runnable] = {
@@ -347,14 +347,29 @@ def patch_subagent_middleware() -> None:
             - AIMessage/AIMessageChunk(含 tool_calls) → TOOL_CALL_INPUT_READY
             - ToolMessage → TOOL_CALL_COMPLETED / TOOL_CALL_FAILED
 
-            事件提取逻辑统一复用 tool_event_extractor.extract_tool_events_from_message，
+            事件提取逻辑统一复用 tool_event_extractor.extract_tool_events_from_message,
             支持 AIMessageChunk 参数聚合与 ToolMessage 阶段补发，确保前端工具参数
-            不再显示为 {}。
+            不再显示为 {}.
+
+            回调签名（固定为 async）:
+                async def on_tool_event(
+                    event_type: EventType,
+                    tool_call_id: str,
+                    tool_name: str,
+                    **kwargs,  # parameters / result / error
+                ) -> None
+
+            实现由 adapter.py 的 ``_on_tool_event`` 提供，通过
+            ``config["configurable"]["_on_tool_event"]`` 注入。
 
             Returns:
                 子智能体最终状态字典（与 ainvoke 返回值格式一致）
             """
+            from langchain_core.messages import SystemMessage
+
+            from Django_xm.apps.agent_hub.services.agent_resilience import DuplicateToolCallDetector
             from Django_xm.apps.tools.tool_event_extractor import extract_tool_events_from_message
+            from Django_xm.common.event_schema import EventType
 
             final_state: dict = {}
             accumulated_messages: list = []
@@ -362,60 +377,99 @@ def patch_subagent_middleware() -> None:
             # 根因：与 official_deep_agent.py 一致，deepagents astream(messages)
             # 只产出 AIMessageChunk，不产出完整 AIMessage，需去重。
             seen_tool_call_ids: set = set()
+            # 重复工具调用检测器：子智能体内部的工具调用不冒泡到父 graph，
+            # 需在子智能体层面独立检测，防止子智能体陷入重试循环。
+            duplicate_detector = DuplicateToolCallDetector()
+            pending_duplicate_warnings: list = []
 
-            async for chunk in subagent.astream(
-                subagent_state,
-                config=subagent_config,
-                stream_mode=["messages", "values"],
-            ):
-                if not isinstance(chunk, tuple) or len(chunk) != 2:
-                    continue
-                mode_name, mode_data = chunk
+            # while True 用于检测到重复调用时中断流、注入警告后重入
+            while True:
+                async for chunk in subagent.astream(
+                    subagent_state,
+                    config=subagent_config,
+                    stream_mode=["messages", "values"],
+                ):
+                    if not isinstance(chunk, tuple) or len(chunk) != 2:
+                        continue
+                    mode_name, mode_data = chunk
 
-                if mode_name == "values":
-                    if isinstance(mode_data, dict):
-                        final_state = mode_data
-                    continue
+                    if mode_name == "values":
+                        if isinstance(mode_data, dict):
+                            final_state = mode_data
+                        continue
 
-                if mode_name != "messages":
-                    continue
+                    if mode_name != "messages":
+                        continue
 
-                # messages 模式：(message, metadata) 元组
-                msg_obj = (
-                    mode_data[0]
-                    if isinstance(mode_data, tuple) and len(mode_data) == 2
-                    else mode_data
-                )
+                    # messages 模式：(message, metadata) 元组
+                    msg_obj = (
+                        mode_data[0]
+                        if isinstance(mode_data, tuple) and len(mode_data) == 2
+                        else mode_data
+                    )
 
-                # 工具事件检测：复用公共模块 extract_tool_events_from_message
-                # 关键修复：deepagents astream(messages) 只产出 AIMessageChunk，
-                # 原条件 `not isinstance(msg_obj, AIMessageChunk)` 排除了所有 chunk，
-                # 导致子智能体 tool (input) 事件从未转发，前端参数显示为 {}。
-                # 公共模块接受 AIMessage/AIMessageChunk，用 seen_tool_call_ids 去重，
-                # 并在 ToolMessage 阶段从累积 chunk 聚合完整参数后补发。
-                tool_events = extract_tool_events_from_message(
-                    msg_obj, seen_tool_call_ids, accumulated_messages,
-                )
-                for evt in tool_events:
-                    evt_kwargs = {'parameters': evt.get('parameters', {})}
-                    if 'result' in evt:
-                        evt_kwargs['result'] = evt['result']
-                    if 'error' in evt:
-                        evt_kwargs['error'] = evt['error']
+                    # 工具事件检测：复用公共模块 extract_tool_events_from_message
+                    # 关键修复：deepagents astream(messages) 只产出 AIMessageChunk，
+                    # 原条件 `not isinstance(msg_obj, AIMessageChunk)` 排除了所有 chunk，
+                    # 导致子智能体 tool (input) 事件从未转发，前端参数显示为 {}。
+                    # 公共模块接受 AIMessage/AIMessageChunk，用 seen_tool_call_ids 去重，
+                    # 并在 ToolMessage 阶段从累积 chunk 聚合完整参数后补发。
+                    tool_events = extract_tool_events_from_message(
+                        msg_obj, seen_tool_call_ids, accumulated_messages,
+                    )
+                    for evt in tool_events:
+                        # 重复工具调用检测：仅对 INPUT_READY 记录
+                        if evt.get('event_type') == EventType.TOOL_CALL_INPUT_READY:
+                            warning = duplicate_detector.record(
+                                evt.get('tool_name') or 'unknown',
+                                evt.get('parameters') or {},
+                            )
+                            if warning is not None:
+                                pending_duplicate_warnings.append(
+                                    SystemMessage(content=warning.to_prompt())
+                                )
+                        evt_kwargs = {'parameters': evt.get('parameters', {})}
+                        if 'result' in evt:
+                            evt_kwargs['result'] = evt['result']
+                        if 'error' in evt:
+                            evt_kwargs['error'] = evt['error']
+                        try:
+                            # on_tool_event 签名固定为 async（adapter.py 的 _on_tool_event）
+                            # 统一 await 调用，移除 iscoroutine 双模式判断
+                            await on_tool_event(
+                                evt['event_type'],
+                                evt['tool_call_id'],
+                                evt['tool_name'] or "unknown",
+                                **evt_kwargs,
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"[SubAgentPatch] 子智能体 tool 事件转发失败 "
+                                f"(subagent={subagent_type}, event={evt['event_type']}): {e}"
+                            )
+                    # 检测到重复调用：中断流以注入警告
+                    if pending_duplicate_warnings:
+                        break
+
+                # 注入重复调用警告到子智能体状态，重入 astream 续流
+                if pending_duplicate_warnings:
+                    logger.info(
+                        f"[SubAgentPatch] 注入 {len(pending_duplicate_warnings)} 条"
+                        f"重复调用警告到子智能体 {subagent_type} 状态"
+                    )
                     try:
-                        evt_result = on_tool_event(
-                            evt['event_type'],
-                            evt['tool_call_id'],
-                            evt['tool_name'] or "unknown",
-                            **evt_kwargs,
+                        await subagent.aupdate_state(
+                            subagent_config, {"messages": pending_duplicate_warnings},
                         )
-                        if asyncio.iscoroutine(evt_result):
-                            await evt_result
                     except Exception as e:
                         logger.warning(
-                            f"[SubAgentPatch] 子智能体 tool 事件转发失败 "
-                            f"(subagent={subagent_type}, event={evt['event_type']}): {e}"
+                            f"[SubAgentPatch] 注入重复调用警告失败 "
+                            f"(subagent={subagent_type}): {e}"
                         )
+                    pending_duplicate_warnings.clear()
+                    subagent_state = None  # 从当前 checkpoint 续流
+                    continue
+                break  # 流正常结束
 
             # values 模式未产出时，从累积消息构建
             if not final_state:

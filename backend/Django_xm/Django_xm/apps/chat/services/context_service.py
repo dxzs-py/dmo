@@ -8,7 +8,7 @@
 - 研究上下文加载与压缩
 """
 import logging
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Any
 
 from Django_xm.apps.context_manager.services.manager import ContextManager
 
@@ -19,10 +19,10 @@ class ContextService:
 
     CHECKPOINTER_ENABLED = True
 
-    def __init__(self, user_id: Optional[int] = None, thread_id: Optional[str] = None):
+    def __init__(self, user_id: int | None = None, thread_id: str | None = None):
         self.user_id = user_id
         self._thread_id = thread_id
-        self._context_manager: Optional[ContextManager] = None
+        self._context_manager: ContextManager | None = None
         self._store = None
 
         if self.CHECKPOINTER_ENABLED:
@@ -43,7 +43,7 @@ class ContextService:
         except Exception as e:
             logger.warning(f"ContextService: ContextManager 初始化失败: {e}")
 
-    def apply_compaction(self, chat_history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def apply_compaction(self, chat_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if self._context_manager is not None:
             try:
                 processed, metadata = self._context_manager.process_messages(chat_history)
@@ -61,11 +61,11 @@ class ContextService:
 
     def apply_context_engineering(
         self,
-        chat_history: List[Dict[str, Any]],
+        chat_history: list[dict[str, Any]],
         query: str,
         mode: str = "agent",
-        model_name: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        model_name: str | None = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         if self._context_manager is None:
             return chat_history, {"injection_detected": False, "pruned": False, "budget_over": []}
 
@@ -96,10 +96,9 @@ class ContextService:
     def apply_context_engineering_for_checkpointer(
         self,
         user_message: str,
-        model_name: Optional[str] = None,
+        model_name: str | None = None,
         mode: str = "agent",
-    ) -> Dict[str, Any]:
-        from Django_xm.apps.context_manager.services.compression import TokenEstimator
+    ) -> dict[str, Any]:
 
         metadata = {
             "injection_detected": False,
@@ -125,8 +124,8 @@ class ContextService:
             return False
         return self._context_manager.check_injection(user_message)
 
-    def load_research_context(self, research_task_id: str, user_id: Optional[int] = None,
-                              session_id: Optional[str] = None) -> Optional[str]:
+    def load_research_context(self, research_task_id: str, user_id: int | None = None,
+                              session_id: str | None = None) -> str | None:
         # 前端未传 research_task_id 时，尝试从 session 历史消息中推断
         if not research_task_id and session_id:
             research_task_id = self._find_research_task_from_session(session_id, user_id)
@@ -134,21 +133,19 @@ class ContextService:
                 logger.info(f"从 session 历史消息推断出 research_task_id: {research_task_id}")
 
         if not research_task_id:
-            logger.debug(f"load_research_context: research_task_id 为空，跳过")
+            logger.debug("load_research_context: research_task_id 为空，跳过")
             return None
 
         try:
-            from Django_xm.apps.research.models import ResearchTask
+            from Django_xm.apps.research.services.cross_app import get_research_task_for_context
             # 用 all_objects 查询，已软删除的研究任务仍可被聊天引用（只要聊天会话还在）
-            qs = ResearchTask.all_objects.filter(task_id=research_task_id)
-            if user_id:
-                qs = qs.filter(created_by_id=user_id)
-            task = qs.first()
+            task = get_research_task_for_context(research_task_id, user_id=user_id)
             if not task:
                 logger.warning(f"研究任务不存在或无权访问: {research_task_id}")
                 return None
 
-            logger.info(f"加载研究上下文: task_id={research_task_id}, query={task.query[:50] if task.query else '(无)'}")
+            task_query = task.get('query', '')
+            logger.info(f"加载研究上下文: task_id={research_task_id}, query={task_query[:50] if task_query else '(无)'}")
 
             from Django_xm.apps.core.services.file_manager import get_file_manager
             file_manager = get_file_manager()
@@ -163,8 +160,9 @@ class ContextService:
                     file_contents.append(f"### {relative_path}\n{content.strip()}")
 
             if not file_contents:
-                if task.final_report:
-                    file_contents.append(f"### 最终报告\n{task.final_report.strip()}")
+                final_report = task.get('final_report', '')
+                if final_report:
+                    file_contents.append(f"### 最终报告\n{final_report.strip()}")
                 else:
                     return None
 
@@ -197,7 +195,7 @@ class ContextService:
             logger.error(f"加载研究上下文失败: {e}", exc_info=True)
             return None
 
-    def _find_research_task_from_session(self, session_id: str, user_id: Optional[int] = None) -> Optional[str]:
+    def _find_research_task_from_session(self, session_id: str, user_id: int | None = None) -> str | None:
         """从 session 的历史消息中查找关联的 research_task_id（兜底逻辑）"""
         try:
             from Django_xm.apps.chat.models import ChatMessage

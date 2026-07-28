@@ -1,20 +1,23 @@
 from typing import Any, Dict
 
-from .openai import get_provider_config as get_openai_config
-from .deepseek import get_provider_config as get_deepseek_config, apply_reasoning_patch, apply_reasoning_patch_if_needed, is_thinking_enabled
 from .anthropic import get_provider_config as get_anthropic_config
-from .groq import get_provider_config as get_groq_config, patch_groq_model, is_groq_model
-from .qianfan import get_provider_config as get_qianfan_config
-from .ollama import create_chat_model as create_ollama_chat_model, get_provider_config as get_ollama_config
+from .deepseek import apply_reasoning_patch, apply_reasoning_patch_if_needed, is_thinking_enabled
+from .deepseek import get_provider_config as get_deepseek_config
+from .groq import get_provider_config as get_groq_config
+from .groq import is_groq_model, patch_groq_model
+from .local_embedding import create_embedding as create_local_embedding
+from .ollama import create_chat_model as create_ollama_chat_model
+from .ollama import get_provider_config as get_ollama_config
+from .ollama_embedding import create_embedding as create_ollama_embedding
+from .openai import get_provider_config as get_openai_config
 
 # Embedding providers
 from .openai_embedding import create_embedding as create_openai_embedding
+from .qianfan import get_provider_config as get_qianfan_config
 from .qianfan_embedding import create_embedding as create_qianfan_embedding
-from .local_embedding import create_embedding as create_local_embedding
-from .ollama_embedding import create_embedding as create_ollama_embedding
 
 
-def get_all_provider_configs() -> Dict[str, Dict[str, Any]]:
+def get_all_provider_configs() -> dict[str, dict[str, Any]]:
     """每次调用都从数据库读取最新配置（通过 registry_service 缓存机制）"""
     from Django_xm.apps.ai_engine.services.registry_service import get_model_registry
     return {k: v.copy() for k, v in get_model_registry().items()}

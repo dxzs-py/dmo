@@ -1,7 +1,7 @@
 import logging
 import time
 
-from Django_xm.apps.core.base_models import set_current_request, clear_current_request
+from Django_xm.apps.core.base_models import clear_current_request, set_current_request
 
 logger = logging.getLogger(__name__)
 

@@ -1,10 +1,10 @@
 from __future__ import annotations
+
 import logging
-from typing import List, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-def build_middleware(config) -> List:
+def build_middleware(config) -> list:
     middleware_stack = []
 
     if config.middleware is not None and len(config.middleware) > 0:

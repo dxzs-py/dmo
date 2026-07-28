@@ -50,19 +50,18 @@
 
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from asgiref.sync import async_to_sync
 
 from Django_xm.common.event_schema import (
-    EventType,
     EventSource,
+    EventType,
     PayloadValidationError,
 )
 from Django_xm.common.realtime_events import (
-    publish_event,
-    publish_event_sync,
     _pending_publish_tasks,
+    publish_event,
 )
 
 logger = logging.getLogger(__name__)
@@ -71,8 +70,8 @@ logger = logging.getLogger(__name__)
 def _resolve_channels(
     module: EventSource,
     module_id: str,
-    cross_module_id: Optional[str],
-) -> tuple[Optional[str], Optional[str]]:
+    cross_module_id: str | None,
+) -> tuple[str | None, str | None]:
     """解析频道路由（三模块统一）。
 
     Args:
@@ -92,9 +91,7 @@ def _resolve_channels(
         - DEEP_RESEARCH + cross_module_id: (cross_module_id, module_id) → 双频道
         - DEEP_RESEARCH 无 cross_module_id: (None, module_id) → 仅 task 频道
     """
-    if module == EventSource.CHAT:
-        return module_id, None
-    elif module == EventSource.LEARNING:
+    if module == EventSource.CHAT or module == EventSource.LEARNING:
         return module_id, None
     elif module == EventSource.DEEP_RESEARCH:
         if cross_module_id:
@@ -121,11 +118,11 @@ async def publish_tool_call(
     module: EventSource,
     module_id: str,
     message_id: str = '',
-    parameters: Optional[dict] = None,
-    cross_module_id: Optional[str] = None,
-    graph_interrupt_id: Optional[str] = None,
+    parameters: dict | None = None,
+    cross_module_id: str | None = None,
+    graph_interrupt_id: str | None = None,
     result: Any = None,
-    error: Optional[str] = None,
+    error: str | None = None,
 ) -> None:
     """工具调用生命周期事件发布（三模块统一入口）。
 
@@ -230,10 +227,10 @@ async def publish_approval(
     state: str,
     tool_name: str = '',
     message_id: str = '',
-    parameters: Optional[dict] = None,
-    cross_module_id: Optional[str] = None,
-    graph_interrupt_id: Optional[str] = None,
-    extra_fields: Optional[dict] = None,
+    parameters: dict | None = None,
+    cross_module_id: str | None = None,
+    graph_interrupt_id: str | None = None,
+    extra_fields: dict | None = None,
 ) -> None:
     """审批事件发布（三模块统一入口）。
 

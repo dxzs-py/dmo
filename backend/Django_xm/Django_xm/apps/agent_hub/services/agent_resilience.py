@@ -10,10 +10,14 @@
 """
 
 import asyncio
+import hashlib
+import json
 import logging
-from dataclasses import dataclass, field
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +39,15 @@ class ResilienceConfig:
     initial_retry_interval: float = 2.0
     max_retry_interval: float = 30.0
     retry_backoff_factor: float = 2.0
+    # 重复工具调用检测：相同 tool_name + 相同 parameters 在窗口内超过阈值时注入提示
+    duplicate_tool_call_threshold: int = 3   # 触发阈值（窗口内相同调用次数）
+    duplicate_tool_call_window: int = 300    # 检测窗口（秒，默认 5 分钟）
     # 执行超时
-    soft_timeout: Optional[float] = None   # 警告阈值（秒），None 表示不限制
-    hard_timeout: Optional[float] = None   # 强制终止阈值（秒），None 表示不限制
+    soft_timeout: float | None = None   # 警告阈值（秒），None 表示不限制
+    hard_timeout: float | None = None   # 强制终止阈值（秒），None 表示不限制
 
     # ===== 模型调用层配置 =====
-    backoff_seconds: Tuple[float, ...] = (0.5, 1.0, 2.0)
+    backoff_seconds: tuple[float, ...] = (0.5, 1.0, 2.0)
     circuit_breaker_threshold: int = 3
     circuit_breaker_cooldown: float = 30.0
 
@@ -62,6 +69,8 @@ def get_resilience_config(**overrides) -> ResilienceConfig:
             'initial_retry_interval': getattr(settings, 'AGENT_INITIAL_RETRY_INTERVAL', 2.0),
             'max_retry_interval': getattr(settings, 'AGENT_MAX_RETRY_INTERVAL', 30.0),
             'retry_backoff_factor': getattr(settings, 'AGENT_RETRY_BACKOFF_FACTOR', 2.0),
+            'duplicate_tool_call_threshold': getattr(settings, 'AGENT_DUPLICATE_TOOL_CALL_THRESHOLD', 3),
+            'duplicate_tool_call_window': getattr(settings, 'AGENT_DUPLICATE_TOOL_CALL_WINDOW', 300),
             'soft_timeout': getattr(settings, 'AGENT_SOFT_TIMEOUT', None),
             'hard_timeout': getattr(settings, 'AGENT_HARD_TIMEOUT', None),
             # ===== 模型调用层 =====
@@ -91,7 +100,7 @@ def classify_and_decide(
     error: Exception,
     attempt: int,
     max_retries: int,
-) -> Tuple[ErrorAction, Any]:
+) -> tuple[ErrorAction, Any]:
     """统一异常分类 + 决策
 
     Args:
@@ -175,10 +184,10 @@ _REMOVABLE_TOOL_CATEGORIES = {
 
 
 def get_degraded_tools(
-    tools: List[Any],
+    tools: list[Any],
     level: DegradationLevel,
-    critical_tool_names: Optional[set] = None,
-) -> List[Any]:
+    critical_tool_names: set | None = None,
+) -> list[Any]:
     """根据降级等级返回工具子集
 
     Args:
@@ -239,8 +248,8 @@ def calculate_backoff(attempt: int, config: ResilienceConfig) -> float:
 async def retry_with_backoff(
     fn: Callable,
     config: ResilienceConfig,
-    on_retry: Optional[Callable] = None,
-    context: Optional[Dict[str, Any]] = None,
+    on_retry: Callable | None = None,
+    context: dict[str, Any] | None = None,
 ) -> Any:
     """带指数退避的异步重试
 
@@ -257,7 +266,6 @@ async def retry_with_backoff(
         最后一次异常（如果所有重试都失败）
     """
     last_error = None
-    ctx = context or {}
 
     for attempt in range(config.max_retries + 1):
         try:
@@ -294,25 +302,45 @@ async def retry_with_backoff(
 class ExecutionTimeoutManager:
     """统一执行超时管理
 
-    提供 soft_timeout（警告）和 hard_timeout（强制终止）两级超时控制。
+    提供 soft_timeout（警告）和 hard_timeout 两级超时控制。
+    hard_timeout 默认 None（不限制），仅作为可选兜底；
+    审批等待期间应调用 pause()/resume() 暂停计时，避免用户思考时间计入 elapsed。
     """
 
     def __init__(
         self,
-        soft_timeout: Optional[float] = None,
-        hard_timeout: Optional[float] = None,
+        soft_timeout: float | None = None,
+        hard_timeout: float | None = None,
     ):
         self.soft_timeout = soft_timeout
         self.hard_timeout = hard_timeout
         import time
         self._start_time: float = time.monotonic()
         self._soft_timeout_triggered = False
+        # 暂停计时支持：审批等待时不计入 elapsed
+        self._paused_total: float = 0.0  # 累计暂停时长
+        self._pause_start: float | None = None  # 当前暂停开始时间，None 表示未暂停
 
     @property
     def elapsed(self) -> float:
-        """已执行时间（秒）"""
+        """已执行时间（秒），排除暂停期间"""
         import time
-        return time.monotonic() - self._start_time
+        now = time.monotonic()
+        current_pause = (now - self._pause_start) if self._pause_start is not None else 0.0
+        return now - self._start_time - self._paused_total - current_pause
+
+    def pause(self) -> None:
+        """暂停计时（审批等待时调用）"""
+        import time
+        if self._pause_start is None:
+            self._pause_start = time.monotonic()
+
+    def resume(self) -> None:
+        """恢复计时（审批完成后调用）"""
+        import time
+        if self._pause_start is not None:
+            self._paused_total += time.monotonic() - self._pause_start
+            self._pause_start = None
 
     @property
     def soft_timeout_triggered(self) -> bool:
@@ -330,7 +358,7 @@ class ExecutionTimeoutManager:
     async def execute_with_timeout(
         self,
         coro,
-        on_soft_timeout: Optional[Callable] = None,
+        on_soft_timeout: Callable | None = None,
     ) -> Any:
         """带超时的执行
 
@@ -347,6 +375,8 @@ class ExecutionTimeoutManager:
         import time
         self._start_time = time.monotonic()
         self._soft_timeout_triggered = False
+        self._paused_total = 0.0
+        self._pause_start = None
 
         if self.hard_timeout is None and self.soft_timeout is None:
             return await coro
@@ -364,10 +394,185 @@ class ExecutionTimeoutManager:
                     pass
 
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             elapsed = self.elapsed
             logger.warning(
                 f"[Resilience] 执行超时: elapsed={elapsed:.1f}s, "
                 f"soft={self.soft_timeout}, hard={self.hard_timeout}"
             )
             raise
+
+
+# ============================================================================
+# 重复工具调用检测
+# ============================================================================
+
+@dataclass
+class DuplicateToolCallWarning:
+    """重复工具调用警告
+
+    当 DuplicateToolCallDetector 检测到短时间内相同 tool_name + 相同 parameters
+    被反复调用时生成，调用方应将 to_prompt() 的返回值注入 agent 消息流，
+    引导 agent 调整策略而非继续重试。
+    """
+
+    tool_name: str
+    parameters: dict[str, Any]
+    count: int
+    window_seconds: int
+
+    def to_prompt(self) -> str:
+        """生成注入 agent 的提示文本
+
+        Returns:
+            引导 agent 调整策略的中文提示
+        """
+        return (
+            f'工具 "{self.tool_name}" 在最近 {self.window_seconds} 秒内已被调用 '
+            f'{self.count} 次（参数相同）。这可能是重试循环。'
+            f'请调整策略：换用其他工具、修改参数，或直接基于已有信息回答。'
+        )
+
+
+class DuplicateToolCallDetector:
+    """检测短期内的重复工具调用
+
+    维护 tool_call_history，记录每个 (tool_name, parameters) 组合在时间窗口内的
+    调用次数。当窗口内相同调用次数超过阈值时，返回 DuplicateToolCallWarning
+    供调用方注入 agent 消息流。
+
+    设计原则：
+    - 通用工具，不依赖具体 agent 框架或消息类型
+    - parameters 哈希稳定（sort_keys=True + MD5）
+    - 自动清理过期记录，避免内存泄漏
+    - 每个 key 在一个窗口内只警告一次，避免重复注入
+    - 单次 agent 执行周期内有效，不跨执行复用
+
+    使用示例：
+        detector = DuplicateToolCallDetector(window_seconds=300, threshold=3)
+        warning = detector.record("web_search", {"query": "python"})
+        if warning is not None:
+            # 将 warning.to_prompt() 注入 agent 消息流
+            ...
+
+    集成说明：
+        - official_deep_agent.py: 在 astream_research_with_interrupts 中，
+          对每个 TOOL_CALL_INPUT_READY 事件调用 record()，检测到警告时
+          通过 graph.aupdate_state 注入 SystemMessage。
+        - subagent_patch.py: 在 _astream_with_tool_events 中同样集成，
+          覆盖子智能体内部的重复调用（子智能体工具调用不冒泡到父 graph）。
+    """
+
+    def __init__(
+        self,
+        window_seconds: int = 300,
+        threshold: int = 3,
+    ):
+        self.window_seconds = window_seconds
+        self.threshold = threshold
+        # key = f"{tool_name}:{md5(parameters)}"
+        # value = {"count": int, "first_time": float, "last_time": float, "warned": bool}
+        self._history: dict[str, dict[str, Any]] = {}
+
+    def record(
+        self,
+        tool_name: str,
+        parameters: Any,
+    ) -> DuplicateToolCallWarning | None:
+        """记录一次工具调用，返回警告对象（若触发阈值）或 None
+
+        Args:
+            tool_name: 工具名称
+            parameters: 工具调用参数（通常为 dict，非 dict 会先归一化）
+
+        Returns:
+            DuplicateToolCallWarning 当窗口内相同调用次数首次超过阈值时返回；
+            否则返回 None（包括已警告过的 key，直到窗口过期后重置）。
+        """
+        self._cleanup_expired()
+
+        key = self._make_key(tool_name, parameters)
+        now = time.monotonic()
+
+        if key not in self._history:
+            self._history[key] = {
+                "count": 1,
+                "first_time": now,
+                "last_time": now,
+                "warned": False,
+                "tool_name": tool_name,
+                "parameters": parameters if isinstance(parameters, dict) else {},
+            }
+            return None
+
+        record = self._history[key]
+        record["count"] += 1
+        record["last_time"] = now
+
+        # 仅在首次超过阈值时返回警告，避免重复注入
+        if not record["warned"] and record["count"] > self.threshold:
+            record["warned"] = True
+            logger.warning(
+                f"[Resilience] 检测到重复工具调用: tool={tool_name}, "
+                f"count={record['count']}, threshold={self.threshold}, "
+                f"window={self.window_seconds}s"
+            )
+            return DuplicateToolCallWarning(
+                tool_name=tool_name,
+                parameters=record["parameters"],
+                count=record["count"],
+                window_seconds=self.window_seconds,
+            )
+
+        return None
+
+    def _make_key(self, tool_name: str, parameters: Any) -> str:
+        """生成 (tool_name, parameters) 的稳定哈希 key
+
+        使用 json.dumps(sort_keys=True) 保证参数顺序不影响哈希，
+        不可序列化对象通过 default=str fallback，最终 try/except 兜底。
+
+        Args:
+            tool_name: 工具名称
+            parameters: 工具参数
+
+        Returns:
+            f"{tool_name}:{md5_hex}" 格式的 key
+        """
+        if not isinstance(parameters, dict):
+            # 非 dict 参数归一化为 dict，保证哈希逻辑统一
+            params_for_hash: dict[str, Any] = {"_raw": str(parameters)}
+        else:
+            params_for_hash = parameters
+
+        try:
+            params_str = json.dumps(
+                params_for_hash,
+                sort_keys=True,
+                ensure_ascii=False,
+                default=str,
+            )
+        except (TypeError, ValueError):
+            # 极端情况：default=str 仍无法序列化（如含循环引用）
+            params_str = str(params_for_hash)
+
+        digest = hashlib.md5(params_str.encode("utf-8"), usedforsecurity=False).hexdigest()
+        return f"{tool_name}:{digest}"
+
+    def _cleanup_expired(self) -> None:
+        """清理超过时间窗口的记录
+
+        以 last_time 为基准，若 now - last_time > window_seconds 则删除。
+        使用 last_time（而非 first_time）确保持续调用的 key 不会被误删。
+        """
+        now = time.monotonic()
+        expired_keys = [
+            key for key, record in self._history.items()
+            if now - record["last_time"] > self.window_seconds
+        ]
+        for key in expired_keys:
+            del self._history[key]
+
+    def reset(self) -> None:
+        """重置检测器（用于 agent 重试时复用同一 detector）"""
+        self._history.clear()

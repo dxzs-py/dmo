@@ -1,15 +1,13 @@
+import logging
 import os
-import json
-import asyncio
-from pathlib import Path
-from typing import Optional, List, Dict, Any
 from datetime import datetime
+from pathlib import Path
+
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
-import logging
 
-from Django_xm.apps.tools.errors import StandardToolResult, ToolStatus, TOOL_VERSION
-from Django_xm.apps.tools.base import AsyncToolMixin, interrupt_for_approval, reject_sync_approval
+from Django_xm.apps.tools.base import AsyncToolMixin
+from Django_xm.apps.tools.errors import TOOL_VERSION, StandardToolResult, ToolStatus
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +21,6 @@ def get_data_dir() -> str:
             from Django_xm.apps.ai_engine.config import settings
             return str(getattr(settings, 'TOOLS_LANGCHAIN_DIR', getattr(settings, 'DATA_DIR', settings.DATA_DIR) / 'tools' / 'langchain'))
         except (ImportError, AttributeError):
-            import os
             from pathlib import Path
             base_dir = Path(__file__).resolve().parent.parent.parent.parent.parent
             data_dir = base_dir / "data" / "tools" / "langchain"
@@ -35,7 +32,7 @@ class ResearchFileSystem:
     def __init__(
         self,
         thread_id: str,
-        base_path: Optional[str] = None,
+        base_path: str | None = None,
     ):
         self.thread_id = thread_id
 
@@ -74,7 +71,6 @@ class ResearchFileSystem:
     def _is_path_traversal(self, path: str) -> bool:
         """检查路径是否包含遍历攻击（如 ../ 或 URL 编码的 %2e%2e）"""
         # 检查 .. 组件
-        resolved = Path(path).resolve()
         # 如果路径中包含 ..，resolve 后的路径会"跳出"原始路径
         # 对于相对路径，检查 resolve 后是否还在 workspace 内
         if ".." in path or "%2e" in path.lower() or "%2E" in path:
@@ -95,7 +91,7 @@ class ResearchFileSystem:
                 logger.info(f"✅ 写入文件: {file_path}")
                 return f"成功写入文件: {relative_path}"
             except Exception as e:
-                error_msg = f"写入文件失败: {str(e)}"
+                error_msg = f"写入文件失败: {e!s}"
                 logger.error(error_msg)
                 return error_msg
 
@@ -116,7 +112,7 @@ class ResearchFileSystem:
             logger.info(f"✅ 写入文件: {file_path}")
             return f"成功写入文件: {relative_path}"
         except Exception as e:
-            error_msg = f"写入文件失败: {str(e)}"
+            error_msg = f"写入文件失败: {e!s}"
             logger.error(error_msg)
             return error_msg
 
@@ -128,14 +124,14 @@ class ResearchFileSystem:
         if self._is_absolute_path(relative_path):
             file_path = Path(relative_path)
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
+                with open(file_path, encoding="utf-8") as f:
                     content = f.read()
                 logger.info(f"📖 读取文件: {file_path}")
                 return content
             except FileNotFoundError:
                 return f"错误：文件不存在: {relative_path}"
             except Exception as e:
-                return f"读取文件失败: {str(e)}"
+                return f"读取文件失败: {e!s}"
 
         # 相对路径使用研究文件系统
         self._ensure_workspace()
@@ -146,14 +142,14 @@ class ResearchFileSystem:
             file_path = self.workspace_path / subdirectory / rel.name
 
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 content = f.read()
             logger.info(f"📖 读取文件: {file_path}")
             return content
         except FileNotFoundError:
             return f"错误：文件不存在: {Path(relative_path).name}"
         except Exception as e:
-            error_msg = f"读取文件失败: {str(e)}"
+            error_msg = f"读取文件失败: {e!s}"
             logger.error(error_msg)
             return error_msg
 
@@ -178,7 +174,7 @@ class ResearchFileSystem:
 
             return "文件列表:\n" + "\n".join(file_list)
         except Exception as e:
-            return f"列出文件失败: {str(e)}"
+            return f"列出文件失败: {e!s}"
 
     def delete_file(self, relative_path: str, subdirectory: str = "notes") -> str:
         if ".." in relative_path:
@@ -198,7 +194,7 @@ class ResearchFileSystem:
             else:
                 return f"文件不存在: {Path(relative_path).name}"
         except Exception as e:
-            error_msg = f"删除文件失败: {str(e)}"
+            error_msg = f"删除文件失败: {e!s}"
             logger.error(error_msg)
             return error_msg
 
@@ -214,7 +210,7 @@ class ResearchFileSystem:
             for file_path in search_dir.rglob("*"):
                 if file_path.is_file():
                     try:
-                        with open(file_path, "r", encoding="utf-8") as f:
+                        with open(file_path, encoding="utf-8") as f:
                             content = f.read()
                             if keyword.lower() in content.lower():
                                 rel_path = file_path.relative_to(self.workspace_path)
@@ -228,10 +224,10 @@ class ResearchFileSystem:
                 return f"在 {subdirectory} 目录中没有找到包含 '{keyword}' 的文件"
 
         except Exception as e:
-            return f"搜索文件失败: {str(e)}"
+            return f"搜索文件失败: {e!s}"
 
 
-_filesystem_instances: Dict[str, ResearchFileSystem] = {}
+_filesystem_instances: dict[str, ResearchFileSystem] = {}
 
 
 def get_filesystem(thread_id: str) -> ResearchFileSystem:
@@ -263,9 +259,16 @@ class FsSearchFilesInput(BaseModel):
 
 
 class FsWriteFileTool(AsyncToolMixin, BaseTool):
+    """文件写入工具
+
+    审批由 ApprovalMiddleware 统一处理：
+    - 绝对路径写入触发审批（FsWriteFileApprovalPolicy）
+    - 相对路径写入无需审批
+    工具层不参与审批判断。
+    """
     name: str = "fs_write_file"
     version: str = TOOL_VERSION
-    metadata: dict = {"tier": "extended", "visibility": "selectable", "category": "file"}
+    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "file"})
     description: str = (
         "写入内容到文件系统中的文件，用于保存研究笔记、计划、报告等。"
         "适用场景：需要持久化存储中间结果、研究笔记、计划或报告，跨对话保存数据。"
@@ -277,11 +280,13 @@ class FsWriteFileTool(AsyncToolMixin, BaseTool):
     args_schema: type[BaseModel] = FsWriteFileInput
 
     def _run(self, relative_path: str, content: str, thread_id: str) -> str:
-        """同步执行入口（绝对路径写入需要审批，同步模式下拒绝）"""
+        """写入文件
+
+        审批由 ApprovalMiddleware 统一处理，工具层不参与审批判断。
+        绝对路径写入到达此方法时已通过审批。
+        """
         fs = get_filesystem(thread_id)
-        if os.path.isabs(relative_path):
-            logger.warning(f"fs_write_file: 绝对路径写入在同步模式下无法请求审批: {relative_path}")
-            return reject_sync_approval("fs_write_file", relative_path)
+        # 相对路径根据文件名匹配子目录（研究文件系统内）
         subdirectory = "notes"
         if "plans" in relative_path:
             subdirectory = "plans"
@@ -289,36 +294,11 @@ class FsWriteFileTool(AsyncToolMixin, BaseTool):
             subdirectory = "reports"
         return fs.write_file(relative_path, content, subdirectory)
 
-    async def _arun(self, relative_path: str, content: str, thread_id: str, **kwargs) -> str:
-        """异步执行入口：在异步上下文中调用 interrupt()，确保 LangGraph 上下文正确传播"""
-        fs = get_filesystem(thread_id)
-        # 绝对路径写入需要用户确认（可能覆盖系统文件）
-        if os.path.isabs(relative_path):
-            approval = interrupt_for_approval(
-                tool_name="fs_write_file",
-                title="确认写入文件",
-                description=f"Agent 请求写入绝对路径文件，可能覆盖已有文件。文件: {relative_path}，内容长度: {len(content)} 字符",
-                operation=relative_path,
-                danger_level="high",
-                extra={"relative_path": relative_path, "content_length": len(content)},
-            )
-            if approval is True:
-                return await asyncio.to_thread(fs.write_file, relative_path, content)
-            else:
-                return f"用户已拒绝写入文件: {relative_path}"
-        # 相对路径根据文件名匹配子目录（研究文件系统内，风险较低）
-        subdirectory = "notes"
-        if "plans" in relative_path:
-            subdirectory = "plans"
-        elif "reports" in relative_path:
-            subdirectory = "reports"
-        return await asyncio.to_thread(fs.write_file, relative_path, content, subdirectory)
-
 
 class FsReadFileTool(AsyncToolMixin, BaseTool):
     name: str = "fs_read_file"
     version: str = TOOL_VERSION
-    metadata: dict = {"tier": "standard", "visibility": "core", "category": "file"}
+    metadata: dict = Field(default_factory=lambda: {"tier": "standard", "visibility": "core", "category": "file"})
     description: str = (
         "读取研究文件系统中指定文件的内容。"
         "适用场景：需要查看之前保存的文件内容、回顾研究笔记或计划。"
@@ -344,7 +324,7 @@ class FsReadFileTool(AsyncToolMixin, BaseTool):
 class FsListFilesTool(AsyncToolMixin, BaseTool):
     name: str = "fs_list_files"
     version: str = TOOL_VERSION
-    metadata: dict = {"tier": "extended", "visibility": "selectable", "category": "file"}
+    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "file"})
     description: str = (
         "列出研究文件系统中指定子目录下的所有文件，显示文件名、大小和修改时间。"
         "适用场景：需要浏览文件系统中的文件列表、确认文件是否已保存、查看目录结构。"
@@ -363,7 +343,7 @@ class FsListFilesTool(AsyncToolMixin, BaseTool):
 class FsSearchFilesTool(AsyncToolMixin, BaseTool):
     name: str = "fs_search_files"
     version: str = TOOL_VERSION
-    metadata: dict = {"tier": "extended", "visibility": "selectable", "category": "file"}
+    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "file"})
     description: str = (
         "在研究文件系统中搜索包含指定关键词的文件，返回匹配文件列表。"
         "适用场景：需要在文件系统中查找包含特定内容的文件、定位相关笔记或报告。"

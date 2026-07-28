@@ -8,10 +8,8 @@
 """
 
 from rest_framework import serializers
-from django.core.exceptions import ValidationError
-from django.utils import timezone
-from .models import ChatSession, ChatMessage
 
+from .models import ChatMessage, ChatSession
 
 # ==================== 输入验证序列化（Serializer） ====================
 
@@ -70,16 +68,16 @@ class ChatRequestSerializer(serializers.Serializer):
     use_deep_thinking = serializers.BooleanField(default=False, help_text='是否启用深度思考')
     use_mcp = serializers.BooleanField(default=False, help_text='是否启用 MCP 工具')
     selected_mcp_servers = serializers.ListField(
-        child=serializers.CharField(max_length=100),
+        child=serializers.CharField(max_length=50),
         required=False,
         allow_null=True,
-        help_text='选中的 MCP Server 名称列表，为空则使用所有已配置的 Server'
+        help_text='选中的 MCP Server 名称列表（每个名称最长 50 字符），为空则使用所有已配置的 Server'
     )
     selected_tools = serializers.ListField(
-        child=serializers.CharField(max_length=100),
+        child=serializers.CharField(max_length=50),
         required=False,
         allow_null=True,
-        help_text='选中的工具名称列表，为空则根据模式自动选择'
+        help_text='选中的工具名称列表（每个名称最长 50 字符），为空则根据模式自动选择'
     )
     streaming = serializers.BooleanField(default=False, help_text='是否流式输出')
     session_id = serializers.CharField(required=False, allow_null=True, max_length=100)

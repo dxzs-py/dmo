@@ -3,30 +3,23 @@
 基于 LangGraph 实现完整的学习流程，包含人机交互和条件分支
 """
 
-import logging
 import time
 from collections import OrderedDict
 from datetime import datetime
-from typing import Literal, Dict, Any, Optional
+from typing import Any, Literal
 
-from langchain_core.messages import HumanMessage, AIMessage
-from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages
-from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
+from langgraph.graph import END, StateGraph
+
 from Django_xm.apps.ai_engine.services.checkpointer_factory import get_checkpointer
-
+from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
 from Django_xm.apps.core.config import get_logger
-from Django_xm.apps.ai_engine.services.cost_tracker import create_token_detail_tracker
-from Django_xm.apps.ai_engine.services.usage_tracker import create_usage_tracker
-from .state import StudyFlowState
-from ..nodes import (
-    planner_node,
-    retrieval_node,
-    quiz_generator_node,
-    grading_node,
-    feedback_node
-)
+from Django_xm.common.event_schema import EventSource, EventType
+from Django_xm.common.realtime_events import publish_event_sync
+
+from ..nodes import feedback_node, grading_node, planner_node, quiz_generator_node, retrieval_node
 from .persistence_service import get_persistence_service
+from .resilience import ainvoke_with_resilience, invoke_with_resilience, stream_with_resilience
+from .state import StudyFlowState
 
 logger = get_logger(__name__)
 persistence_service = get_persistence_service()
@@ -46,7 +39,7 @@ def should_continue(state: StudyFlowState) -> Literal["retry", "end"]:
         return "end"
 
 
-def human_review_node(state: StudyFlowState) -> Dict[str, Any]:
+def human_review_node(state: StudyFlowState) -> dict[str, Any]:
     logger.info("[Human Review Node] 等待用户提交答案...")
     return {
         "current_step": "waiting_for_answers",
@@ -99,29 +92,29 @@ class StudyFlow:
 
         return workflow.compile(checkpointer=self.checkpointer, interrupt_before=["human_review"])
 
-    def invoke(self, inputs: Dict[str, Any], config: Dict[str, Any] = None):
+    def invoke(self, inputs: dict[str, Any], config: dict[str, Any] = None):
         if self.thread_id:
             if config is None:
                 config = {}
             config["configurable"] = {"thread_id": self.thread_id}
 
-        return self.graph.invoke(inputs, config=config)
+        return invoke_with_resilience(self.graph, inputs, config)
 
-    async def ainvoke(self, inputs: Dict[str, Any], config: Dict[str, Any] = None):
+    async def ainvoke(self, inputs: dict[str, Any], config: dict[str, Any] = None):
         if self.thread_id:
             if config is None:
                 config = {}
             config["configurable"] = {"thread_id": self.thread_id}
 
-        return await self.graph.ainvoke(inputs, config=config)
+        return await ainvoke_with_resilience(self.graph, inputs, config)
 
-    def stream(self, inputs: Dict[str, Any], config: Dict[str, Any] = None):
+    def stream(self, inputs: dict[str, Any], config: dict[str, Any] = None, stream_mode: str = "values"):
         if self.thread_id:
             if config is None:
                 config = {}
             config["configurable"] = {"thread_id": self.thread_id}
 
-        return self.graph.stream(inputs, config=config)
+        return stream_with_resilience(self.graph, inputs, config, stream_mode=stream_mode)
 
     def get_state(self, thread_id: str = None):
         tid = thread_id or self.thread_id
@@ -129,7 +122,7 @@ class StudyFlow:
             raise ValueError("thread_id is required")
         return self.graph.get_state(config={"configurable": {"thread_id": tid}})
 
-    def update_state(self, thread_id: str, new_state: Dict[str, Any]):
+    def update_state(self, thread_id: str, new_state: dict[str, Any]):
         tid = thread_id or self.thread_id
         if not tid:
             raise ValueError("thread_id is required")
@@ -221,10 +214,25 @@ def _invalidate_study_flow_cache(thread_id: str) -> None:
     logger.debug(f"StudyFlow 缓存已清除: {thread_id}")
 
 
+def _safe_publish(event_type: EventType, payload: dict, task_id: str | None = None,
+                  session_id: str | None = None, user_id: str | None = None) -> None:
+    """安全发布事件，吞掉异常以避免影响主流程。"""
+    try:
+        publish_event_sync(
+            event_type, payload,
+            task_id=task_id,
+            session_id=session_id,
+            user_id=user_id,
+        )
+    except Exception as e:
+        logger.warning(f"[Study Flow] publish_event_sync 失败: {event_type}, {e}")
+
+
 def start_study_flow(
-    user_question: str, 
-    thread_id: str, 
-    user_id: Optional[int] = None
+    user_question: str,
+    thread_id: str,
+    user_id: int | None = None,
+    knowledge_base_ids: list | None = None,
 ) -> dict:
     logger.info(f"[Study Flow] 启动新的学习工作流，thread_id={thread_id}")
 
@@ -233,6 +241,8 @@ def start_study_flow(
     initial_state: StudyFlowState = {
         "messages": [],
         "user_question": user_question,
+        "user_id": user_id,
+        "knowledge_base_ids": list(knowledge_base_ids) if knowledge_base_ids else [],
         "learning_plan": None,
         "retrieved_docs": None,
         "quiz": None,
@@ -259,11 +269,70 @@ def start_study_flow(
         "callbacks": [cb],
     }
 
+    # 工作流开始：发布 planner 步骤事件到 task 频道
+    _safe_publish(
+        EventType.WORKFLOW_STEP,
+        {
+            'source': EventSource.LEARNING.value,
+            'source_id': thread_id,
+            'step': 'planner',
+            'message': '正在生成学习计划...',
+            'thread_id': thread_id,
+        },
+        task_id=thread_id,
+        user_id=str(user_id) if user_id is not None else None,
+    )
+
     logger.info("[Study Flow] 开始执行工作流...")
     start_time = time.time()
-    result = study_flow.invoke(initial_state, config)
+    try:
+        result = study_flow.invoke(initial_state, config)
+    except Exception as e:
+        # 工作流失败：发布失败事件
+        _safe_publish(
+            EventType.WORKFLOW_FAILED,
+            {
+                'source': EventSource.LEARNING.value,
+                'source_id': thread_id,
+                'step': 'planner',
+                'error': str(e),
+                'thread_id': thread_id,
+            },
+            task_id=thread_id,
+            user_id=str(user_id) if user_id is not None else None,
+        )
+        raise
 
-    logger.info(f"[Study Flow] 工作流暂停在: {result.get('current_step')}")
+    current_step = result.get('current_step')
+    logger.info(f"[Study Flow] 工作流暂停在: {current_step}")
+
+    # 工作流暂停/完成事件
+    if current_step == 'waiting_for_answers':
+        _safe_publish(
+            EventType.WORKFLOW_STATE_UPDATE,
+            {
+                'source': EventSource.LEARNING.value,
+                'source_id': thread_id,
+                'step': current_step,
+                'state': 'waiting_for_answers',
+                'message': '等待用户提交答案',
+                'thread_id': thread_id,
+            },
+            task_id=thread_id,
+            user_id=str(user_id) if user_id is not None else None,
+        )
+    else:
+        _safe_publish(
+            EventType.WORKFLOW_COMPLETED,
+            {
+                'source': EventSource.LEARNING.value,
+                'source_id': thread_id,
+                'step': current_step,
+                'thread_id': thread_id,
+            },
+            task_id=thread_id,
+            user_id=str(user_id) if user_id is not None else None,
+        )
 
     total_tokens = cb.prompt_tokens + cb.completion_tokens
     response_time = round(time.time() - start_time, 2)
@@ -276,19 +345,13 @@ def start_study_flow(
 
 
 def submit_answers(
-    thread_id: str, 
+    thread_id: str,
     user_answers: dict,
-    user_id: Optional[int] = None
+    user_id: int | None = None
 ) -> dict:
     logger.info(f"[Study Flow] 提交答案，thread_id={thread_id}")
 
     study_flow = _get_cached_study_flow(thread_id)
-
-    config = {
-        "configurable": {
-            "thread_id": thread_id
-        }
-    }
 
     current_state = study_flow.get_state(thread_id)
     if not current_state or not current_state.values or not current_state.values.get('current_step'):
@@ -304,13 +367,27 @@ def submit_answers(
             raise ValueError(f"工作流状态不存在: {thread_id}")
 
     logger.info(f"[Study Flow] 当前状态: {current_state.values.get('current_step')}")
-    
+
     study_flow.update_state(
         thread_id,
         {
             "user_answers": user_answers,
             "updated_at": datetime.now().isoformat()
         }
+    )
+
+    # 答案已提交，继续执行 grading → feedback 步骤
+    _safe_publish(
+        EventType.WORKFLOW_STEP,
+        {
+            'source': EventSource.LEARNING.value,
+            'source_id': thread_id,
+            'step': 'grading',
+            'message': '正在评分...',
+            'thread_id': thread_id,
+        },
+        task_id=thread_id,
+        user_id=str(user_id) if user_id is not None else None,
     )
 
     logger.info("[Study Flow] 继续执行工作流...")
@@ -324,11 +401,41 @@ def submit_answers(
         "callbacks": [cb],
     }
 
-    study_flow.invoke(None, config=invoke_config)
+    try:
+        study_flow.invoke(None, config=invoke_config)
+    except Exception as e:
+        # 工作流失败：发布失败事件
+        _safe_publish(
+            EventType.WORKFLOW_FAILED,
+            {
+                'source': EventSource.LEARNING.value,
+                'source_id': thread_id,
+                'step': 'grading',
+                'error': str(e),
+                'thread_id': thread_id,
+            },
+            task_id=thread_id,
+            user_id=str(user_id) if user_id is not None else None,
+        )
+        raise
 
     result = get_workflow_state(thread_id)
 
-    logger.info(f"[Study Flow] 工作流执行完成，最终状态: {result.get('current_step') if result else 'unknown'}")
+    final_step = result.get('current_step') if result else 'unknown'
+    logger.info(f"[Study Flow] 工作流执行完成，最终状态: {final_step}")
+
+    # 工作流完成事件
+    _safe_publish(
+        EventType.WORKFLOW_COMPLETED,
+        {
+            'source': EventSource.LEARNING.value,
+            'source_id': thread_id,
+            'step': final_step,
+            'thread_id': thread_id,
+        },
+        task_id=thread_id,
+        user_id=str(user_id) if user_id is not None else None,
+    )
 
     if result:
         total_tokens = cb.prompt_tokens + cb.completion_tokens
@@ -353,12 +460,6 @@ def get_workflow_state(thread_id: str) -> dict:
     logger.info(f"[Study Flow] 获取工作流状态，thread_id={thread_id}")
 
     study_flow = _get_cached_study_flow(thread_id)
-
-    config = {
-        "configurable": {
-            "thread_id": thread_id
-        }
-    }
 
     try:
         state = study_flow.get_state(thread_id)

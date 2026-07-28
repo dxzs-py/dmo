@@ -405,9 +405,13 @@ import { formatDate, formatFileSize } from '../utils/format'
 import { logger } from '../utils/logger'
 import { getInterruptId } from '../utils/message-operations'
 import { ToolCallStatus, mapApprovalStateToStatus } from '../types'
+import { useRealtimeSync } from '@/composables/useRealtimeSync'
+import { useSyncStore } from '@/stores/sync'
 
 const modelStore = useModelStore()
 const approvalStore = useApprovalStore()
+const realtime = useRealtimeSync()
+const syncStore = useSyncStore()
 
 const isLoading = ref(false)
 const router = useRouter()
@@ -621,15 +625,8 @@ const getStatusText = (status) => {
   return textMap[status] || status
 }
 
-// 处理 SSE 审批事件 — 统一委托给 approval store
-const handleApprovalEvent = (approvalData) => {
-  const sessionStore = useSessionStore()
-  approvalStore.handleApprovalEvent(approvalData, {
-    source: 'deep_research',
-    taskId: task.value?.task_id,
-    sessionId: sessionStore.currentSessionId,
-  })
-}
+// 实时审批事件由 WebSocket 处理（syncStore.handleRealtimeEvent），
+// SSE 仅处理 approval_history（初始历史加载），故不再需要本地 handleApprovalEvent 桥接。
 
 // 确认审批（ToolCallCard emit 的参数是 toolCall 对象）
 const handleApprove = async (toolCallData) => {
@@ -788,6 +785,8 @@ const startResearch = async () => {
 
     stopPolling()
     startElapsedTimer()
+    // 启动新任务后立即订阅 WebSocket 实时事件，避免在用户切走再回来前丢失事件
+    subscribeRealtimeForTask(task.value)
     connectSSE(task.value.task_id)
   } catch (error) {
     logger.error('启动研究任务失败:', error)
@@ -915,15 +914,9 @@ const handleSSEEvent = (data) => {
       closeSSE()
       stopElapsedTimer()
       break
-    case 'approval':
-      handleApprovalEvent(data.data || data)
-      break
-    case 'approval_timeout':
-      handleApprovalEvent(data.data || data)
-      break
-    case 'approval_processed':
-      handleApprovalEvent(data.data || data)
-      break
+    // 实时 approval / approval_timeout / approval_processed 事件由 WebSocket 处理
+    // （syncStore.handleRealtimeEvent，于 subscribeRealtimeForTask 中订阅 task 频道），
+    // SSE 仅处理 approval_history（初始历史审批加载，SSE 专属）。
     case 'approval_history':
       // 优先使用 SSE 事件自带的 task_id，避免 task.value 竞态
       if (data.data) {
@@ -944,6 +937,60 @@ const closeSSE = () => {
   }
 }
 
+// ============================================================================
+// 实时同步（WebSocket）：接入统一订阅入口
+// - task 频道：工具调用 / 审批 / stream_completed 等事件
+// - session 频道：关联 chat 场景下的跨模块同步
+// - 订阅在 viewTask 入口与 onActivated 中触发；在 onDeactivated/onUnmounted/deleteTask 中清理
+// - SSE 仍保留用于当前请求的流式输出，轮询作为 WS 断连兜底，二者互不干扰
+// ============================================================================
+/** @type {import('vue').Ref<Array<() => void>>} */
+const realtimeUnsubscribers = ref([])
+let subscribedTaskId = null
+let subscribedSessionId = null
+
+const clearRealtimeSubscriptions = () => {
+  realtimeUnsubscribers.value.forEach(fn => {
+    try { fn() } catch (e) { logger.warn('[DeepResearchView] 取消订阅失败', e) }
+  })
+  realtimeUnsubscribers.value = []
+  subscribedTaskId = null
+  subscribedSessionId = null
+}
+
+/**
+ * 为指定任务订阅 WebSocket 实时事件
+ * 幂等：若 task_id 与 session_id 均与当前已订阅一致，则跳过
+ * @param {{ task_id?: string, chat_session_id?: string, session_id?: string } | null} taskObj
+ */
+const subscribeRealtimeForTask = (taskObj) => {
+  if (!taskObj) return
+  const taskId = taskObj.task_id
+  const chatSessionId = taskObj.chat_session_id || taskObj.session_id
+
+  // 幂等判断：task 和 session 均已订阅则跳过（fresh 刷新后重复调用场景）
+  if (taskId && taskId === subscribedTaskId && chatSessionId === subscribedSessionId) {
+    return
+  }
+
+  // 清理上一任务的订阅，避免泄漏
+  clearRealtimeSubscriptions()
+  subscribedTaskId = taskId || null
+  subscribedSessionId = chatSessionId || null
+
+  if (taskId) {
+    const unsubTask = realtime.subscribeTask(taskId, syncStore.handleRealtimeEvent, { replayFromSeq: 0 })
+    realtimeUnsubscribers.value.push(unsubTask)
+    if (chatSessionId) {
+      const unsubSession = realtime.subscribeSession(chatSessionId, syncStore.handleRealtimeEvent, { replayFromSeq: 0 })
+      realtimeUnsubscribers.value.push(unsubSession)
+      logger.info(`[DeepResearchView] 订阅 task=${taskId} + session=${chatSessionId}`)
+    } else {
+      logger.info(`[DeepResearchView] 订阅 task=${taskId}（无关联 chat session）`)
+    }
+  }
+}
+
 const viewTask = async (selectedTask) => {
   closeSSE()
   stopPolling()
@@ -952,6 +999,8 @@ const viewTask = async (selectedTask) => {
   task.value = selectedTask
   showTaskDetail.value = true
   checkDocAnalysisFile()
+  // 接入统一 WebSocket 实时同步：入口先订阅一次（基于 selectedTask 当前已知字段）
+  subscribeRealtimeForTask(selectedTask)
 
   if (selectedTask.status === 'running' || selectedTask.status === 'pending') {
     startElapsedTimer()
@@ -962,6 +1011,8 @@ const viewTask = async (selectedTask) => {
       const fresh = resp.data?.data || resp.data
       if (fresh) {
         task.value = { ...selectedTask, ...fresh }
+        // fresh 可能补充 chat_session_id 字段，重新订阅（幂等：若已订阅同 task+session 则跳过）
+        subscribeRealtimeForTask(task.value)
         if (fresh.status === 'running' || fresh.status === 'pending') {
           startElapsedTimer()
           connectSSE(fresh.task_id)
@@ -984,6 +1035,8 @@ const deleteTask = () => {
   stopPolling()
   // 断开 SSE 连接
   closeSSE()
+  // 取消 WebSocket 实时订阅，避免对已删除任务继续接收事件
+  clearRealtimeSubscriptions()
   // 清理该任务关联的审批条目
   if (task.value?.task_id) {
     approvalStore.clearByTaskId(task.value.task_id)
@@ -1050,6 +1103,8 @@ const submitContinueResearch = async () => {
     ElMessage.success('续研任务已启动')
     stopPolling()
     startElapsedTimer()
+    // 续研任务同样作为新任务启动，立即订阅 WebSocket 实时事件
+    subscribeRealtimeForTask(task.value)
     connectSSE(task.value.task_id)
   } catch (error) {
     logger.error('启动续研任务失败:', error)
@@ -1141,6 +1196,8 @@ onActivated(async () => {
 
   // 如果正在查看任务，根据状态决定是否重连/刷新
   if (task.value && task.value.task_id) {
+    // 重新订阅 WebSocket（onDeactivated 时已清理，此处恢复）
+    subscribeRealtimeForTask(task.value)
     if (task.value.status === 'running' || task.value.status === 'pending') {
       // 任务还在运行，重连 SSE 或启动轮询
       startElapsedTimer()
@@ -1152,6 +1209,8 @@ onActivated(async () => {
         const fresh = resp.data?.data || resp.data
         if (fresh) {
           task.value = { ...task.value, ...fresh }
+          // fresh 可能补充 chat_session_id，重新订阅（幂等）
+          subscribeRealtimeForTask(task.value)
           // 如果状态变为已完成，加载文件列表
           if (fresh.status === 'completed') {
             nextTick(() => {
@@ -1169,11 +1228,12 @@ onActivated(async () => {
   }
 })
 
-// keep-alive 停用时：清理 SSE 和轮询，避免后台资源浪费
+// keep-alive 停用时：清理 SSE、轮询与 WebSocket 订阅，避免后台资源浪费
 onDeactivated(() => {
   stopPolling()
   closeSSE()
   stopElapsedTimer()
+  clearRealtimeSubscriptions()
 })
 
 // 监听路由参数变化，支持从聊天页面多次跳转到不同任务
@@ -1195,6 +1255,7 @@ onUnmounted(() => {
   stopPolling()
   closeSSE()
   stopElapsedTimer()
+  clearRealtimeSubscriptions()
 })
 </script>
 

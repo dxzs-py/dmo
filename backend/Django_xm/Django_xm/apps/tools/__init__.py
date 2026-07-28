@@ -1,30 +1,48 @@
-from .langchain.time import get_current_time, get_current_date, get_time_tools
-from .langchain.calc import calculator, get_calculator_tools
-from .langchain.web_search import web_search, create_tavily_search_tool, get_web_search_tools
-from .langchain.web_duckduckgo import duckduckgo_search, get_duckduckgo_tools, DUCKDUCKGO_TOOLS, has_duckduckgo_available
-from .langchain.web_fetch import web_fetch, get_web_fetch_tools
-from .langchain.weather import weather_query, get_weather_tools, WEATHER_TOOLS
-from .langchain.filesystem import (
-    fs_write_file, fs_read_file, fs_list_files, fs_search_files,
-    FILESYSTEM_TOOLS, get_filesystem_tools, ResearchFileSystem,
-)
-from .langchain.file_reader import file_reader, attachment_reader, get_file_reader_tools, FILE_READER_TOOLS
-from .langchain.translation import translate_text, detect_language, get_translation_tools, TRANSLATION_TOOLS
-from .langchain.todo import todo_write, todo_read, get_todo_tools
-from .langchain.agent import agent_create, agent_run, agent_list, agent_cleanup, get_agent_tools
-from .langchain.shell import shell_exec, get_shell_exec_tools
-from .errors import (
-    ToolErrorCode, ToolError, ToolResult, ToolStatus, StandardToolResult,
-    create_tool_result, create_tool_error, exception_to_tool_error, TOOL_VERSION,
-)
-
-from typing import Any, List, Optional, Dict
-from langchain_core.tools import BaseTool
 import logging
+from typing import Any, Dict, List, Optional
+
+from langchain_core.tools import BaseTool
+
+from .errors import (
+    TOOL_VERSION,
+    StandardToolResult,
+    ToolError,
+    ToolErrorCode,
+    ToolResult,
+    ToolStatus,
+    create_tool_error,
+    create_tool_result,
+    exception_to_tool_error,
+)
+from .langchain.calc import calculator, get_calculator_tools
+from .langchain.file_reader import FILE_READER_TOOLS, attachment_reader, file_reader, get_file_reader_tools
+from .langchain.filesystem import (
+    FILESYSTEM_TOOLS,
+    ResearchFileSystem,
+    fs_list_files,
+    fs_read_file,
+    fs_search_files,
+    fs_write_file,
+    get_filesystem_tools,
+)
+from .langchain.shell import get_shell_exec_tools, shell_exec
+from .langchain.time import get_current_date, get_current_time, get_time_tools
+from .langchain.todo import get_todo_tools, todo_read, todo_write
+from .langchain.translation import TRANSLATION_TOOLS, detect_language, get_translation_tools, translate_text
+from .langchain.weather import WEATHER_TOOLS, get_weather_tools, weather_query
+from .langchain.web_duckduckgo import (
+    DUCKDUCKGO_TOOLS,
+    duckduckgo_search,
+    get_duckduckgo_tools,
+    has_duckduckgo_available,
+)
+from .langchain.web_fetch import get_web_fetch_tools, web_fetch
+from .langchain.web_search import create_tavily_search_tool, get_web_search_tools, web_search
+from .registry import clear_extension_tools, get_extension_tools, register_extension_tools
 
 logger = logging.getLogger(__name__)
 
-def _deduplicate_tools(tools: List[BaseTool]) -> List[BaseTool]:
+def _deduplicate_tools(tools: list[BaseTool]) -> list[BaseTool]:
     seen = set()
     result = []
     for tool in tools:
@@ -40,25 +58,25 @@ TOOL_TIER_CORE = "core"
 TOOL_TIER_STANDARD = "standard"
 TOOL_TIER_EXTENDED = "extended"
 
-def get_core_tools() -> List[BaseTool]:
+def get_core_tools() -> list[BaseTool]:
     return [t for t in get_all_tools() if (t.metadata or {}).get("tier") == "core"]
 
-def get_standard_tools() -> List[BaseTool]:
+def get_standard_tools() -> list[BaseTool]:
     return [t for t in get_all_tools() if (t.metadata or {}).get("tier") in ("core", "standard")]
 
-def _get_extended_tools() -> List[BaseTool]:
+def _get_extended_tools() -> list[BaseTool]:
     return get_all_tools()
 
 
-def get_all_basic_tools() -> List[BaseTool]:
+def get_all_basic_tools() -> list[BaseTool]:
     return get_core_tools()
 
 
-def _get_advanced_tools() -> List[BaseTool]:
+def _get_advanced_tools() -> list[BaseTool]:
     return _get_extended_tools()
 
 
-def _get_web_search_tools() -> List[BaseTool]:
+def _get_web_search_tools() -> list[BaseTool]:
     """联网搜索工具（仅由 use_web_search 控制）"""
     from Django_xm.apps.ai_engine.config import settings
     tools = []
@@ -79,7 +97,7 @@ def _get_web_search_tools() -> List[BaseTool]:
     return tools
 
 
-def _get_attachment_tools(attachment_ids: Optional[List[int]] = None) -> List[BaseTool]:
+def _get_attachment_tools(attachment_ids: list[int] | None = None) -> list[BaseTool]:
     """附件工具"""
     if not attachment_ids:
         return []
@@ -90,13 +108,13 @@ def _get_attachment_tools(attachment_ids: Optional[List[int]] = None) -> List[Ba
     return tools
 
 
-def _filter_tools_by_names(tools: List[BaseTool], selected_tools: List[str]) -> List[BaseTool]:
+def _filter_tools_by_names(tools: list[BaseTool], selected_tools: list[str]) -> list[BaseTool]:
     """按名称过滤工具"""
     selected_set = set(selected_tools)
     return [t for t in tools if t.name in selected_set]
 
 
-def get_all_advanced_tools() -> List[BaseTool]:
+def get_all_advanced_tools() -> list[BaseTool]:
     tools = []
     tools.extend(get_time_tools())
     tools.extend(get_calculator_tools())
@@ -106,13 +124,14 @@ def get_all_advanced_tools() -> List[BaseTool]:
     tools.extend(get_file_reader_tools())
     tools.extend(get_web_fetch_tools())
     tools.extend(get_todo_tools())
-    tools.extend(get_agent_tools())
+    # 扩展工具由高层 app（如 agent_hub）通过注册表注入（Task 15.1）
+    tools.extend(get_extension_tools())
     tools.extend(get_translation_tools())
     tools.extend(get_shell_exec_tools())
     return tools
 
 
-def get_all_tools() -> List[BaseTool]:
+def get_all_tools() -> list[BaseTool]:
     return get_all_advanced_tools()
 
 
@@ -134,9 +153,9 @@ def __getattr__(name):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-async def _load_mcp_tools_async(selected_servers: Optional[List[str]] = None, user_id: Optional[int] = None, selected_tools: Optional[List[str]] = None) -> List[BaseTool]:
+async def _load_mcp_tools_async(selected_servers: list[str] | None = None, user_id: int | None = None, selected_tools: list[str] | None = None) -> list[BaseTool]:
     try:
-        from Django_xm.apps.tools.mcp import is_mcp_available, get_mcp_tools, _get_mcp_servers_config
+        from Django_xm.apps.tools.mcp import _get_mcp_servers_config, get_mcp_tools, is_mcp_available
         if not is_mcp_available():
             logger.warning("MCP 不可用: langchain-mcp-adapters 未安装")
             return []
@@ -145,6 +164,7 @@ async def _load_mcp_tools_async(selected_servers: Optional[List[str]] = None, us
         if user_id:
             try:
                 from asgiref.sync import sync_to_async
+
                 from Django_xm.apps.tools.models import McpServerConfig
 
                 @sync_to_async
@@ -167,7 +187,7 @@ async def _load_mcp_tools_async(selected_servers: Optional[List[str]] = None, us
         if selected_servers:
             servers = [s for s in servers if s.get("name") in selected_servers]
             logger.info(f"MCP 过滤: 选中 {len(servers)} 个服务器: {selected_servers}")
-        all_mcp_tools: List[BaseTool] = []
+        all_mcp_tools: list[BaseTool] = []
         for srv in servers:
             transport = srv.get("transport", "sse")
             try:
@@ -210,7 +230,7 @@ async def _load_mcp_tools_async(selected_servers: Optional[List[str]] = None, us
         return []
 
 
-def get_all_available_tool_info() -> List[Dict[str, Any]]:
+def get_all_available_tool_info() -> list[dict[str, Any]]:
     tools = get_all_tools()
     result = []
     seen = set()
@@ -234,16 +254,16 @@ async def get_tools_for_request_async(
     use_tools: bool = True,
     use_web_search: bool = False,
     use_mcp: bool = False,
-    selected_mcp_servers: Optional[List[str]] = None,
-    selected_tools: Optional[List[str]] = None,
-    attachment_ids: Optional[List[int]] = None,
-    user_id: Optional[int] = None,
+    selected_mcp_servers: list[str] | None = None,
+    selected_tools: list[str] | None = None,
+    attachment_ids: list[int] | None = None,
+    user_id: int | None = None,
     tool_tier: str = TOOL_TIER_STANDARD,
-) -> List:
+) -> list:
     if not use_tools:
         return []
 
-    mcp_tools: List[BaseTool] = []
+    mcp_tools: list[BaseTool] = []
     should_load_mcp = use_mcp
 
     if selected_tools:
@@ -257,6 +277,7 @@ async def get_tools_for_request_async(
         if user_id:
             try:
                 from asgiref.sync import sync_to_async
+
                 from Django_xm.apps.tools.models import CustomTool, SkillConfig
 
                 @sync_to_async
@@ -274,6 +295,7 @@ async def get_tools_for_request_async(
         if user_id:
             try:
                 from asgiref.sync import sync_to_async
+
                 from Django_xm.apps.tools.models import SkillPackage
 
                 @sync_to_async
@@ -365,18 +387,30 @@ async def get_tools_for_request_async(
 
 
 from .skills import (
-    SkillStep, SkillSpec, SkillRegistryService, PRESET_SKILLS,
-    SkillBaseTool, create_skill_base_tools,
-    SkillAdapter, SkillProvider,
+    PRESET_SKILLS,
+    SkillAdapter,
+    SkillBaseTool,
     SkillLoader,
+    SkillProvider,
+    SkillRegistryService,
+    SkillSpec,
+    SkillStep,
+    create_skill_base_tools,
 )
 
 
-def _load_custom_tools_for_user(user_id: int, selected_names: Optional[List[str]] = None) -> List[BaseTool]:
-    """从数据库加载用户自定义工具，动态实例化为 BaseTool"""
+def _load_custom_tools_for_user(user_id: int, selected_names: list[str] | None = None) -> list[BaseTool]:
+    """从数据库加载用户自定义工具，动态实例化为 BaseTool
+
+    仅加载 approval_status='approved' 的工具：pending/rejected 工具不生效。
+    """
     try:
         from Django_xm.apps.tools.models import CustomTool
-        qs = CustomTool.objects.filter(user_id=user_id, status='active')
+        qs = CustomTool.objects.filter(
+            user_id=user_id,
+            status='active',
+            approval_status=CustomTool.ApprovalStatus.APPROVED,
+        )
         if selected_names:
             qs = qs.filter(name__in=selected_names)
         tools = []
@@ -436,7 +470,7 @@ def _validate_tool_code_safety(code: str) -> tuple[bool, str]:
     return True, ""
 
 
-def _instantiate_custom_tool(tool_obj) -> Optional[BaseTool]:
+def _instantiate_custom_tool(tool_obj) -> BaseTool | None:
     """将数据库中的自定义工具代码动态实例化为 BaseTool
 
     安全策略：
@@ -520,7 +554,8 @@ __all__ = [
     "file_reader", "attachment_reader", "get_file_reader_tools", "FILE_READER_TOOLS",
     "translate_text", "detect_language", "get_translation_tools", "TRANSLATION_TOOLS",
     "todo_write", "todo_read", "get_todo_tools",
-    "agent_create", "agent_run", "agent_list", "agent_cleanup", "get_agent_tools",
+    # 扩展工具注册表（Task 15.1：高层 app 通过注册表注入工具）
+    "register_extension_tools", "get_extension_tools", "clear_extension_tools",
     "shell_exec", "get_shell_exec_tools",
     "ToolErrorCode", "ToolError", "ToolResult",
     "create_tool_result", "create_tool_error", "exception_to_tool_error",

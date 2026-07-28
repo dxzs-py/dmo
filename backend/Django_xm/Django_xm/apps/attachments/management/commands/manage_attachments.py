@@ -1,4 +1,5 @@
 import logging
+
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
@@ -84,7 +85,7 @@ class Command(BaseCommand):
 
     def _run_storage_check(self, service: AttachmentLifecycleService):
         stats = service.get_storage_stats()
-        self.stdout.write(f"存储统计:")
+        self.stdout.write("存储统计:")
         self.stdout.write(f"  总文件数: {stats['total_files']}")
         self.stdout.write(f"  活跃文件: {stats['active_files']}")
         self.stdout.write(f"  已入库: {stats['indexed_files']}")
@@ -100,7 +101,7 @@ class Command(BaseCommand):
 
     def _run_stats(self, service: AttachmentLifecycleService):
         stats = service.get_storage_stats()
-        self.stdout.write(f"附件存储统计:")
+        self.stdout.write("附件存储统计:")
         self.stdout.write(f"  总文件数: {stats['total_files']}")
         self.stdout.write(f"  活跃文件: {stats['active_files']}")
         self.stdout.write(f"  已入库: {stats['indexed_files']}")
@@ -130,8 +131,9 @@ class Command(BaseCommand):
         self._run_storage_check(service)
 
     def _run_fix_data(self, service: AttachmentLifecycleService, dry_run: bool):
-        from Django_xm.apps.attachments.models import ChatAttachment, AttachmentStatus
         from django.utils import timezone
+
+        from Django_xm.apps.attachments.models import AttachmentStatus, ChatAttachment
 
         self.stdout.write("=== 修复附件数据一致性 ===")
 

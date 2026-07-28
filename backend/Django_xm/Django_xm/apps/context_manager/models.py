@@ -5,14 +5,16 @@
 - AutoMemory: 自动记忆（Agent 自动写入的工作笔记）
 - PromptCache: 提示缓存（前缀缓存 + 用户模板库）
 
-所有模型均包含 user 外键，确保用户隔离。
+所有模型均继承 BaseModel，统一软删除行为；并包含 user 外键，确保用户隔离。
 """
 
-from django.db import models
 from django.conf import settings
+from django.db import models
+
+from Django_xm.apps.core.base_models import BaseModel
 
 
-class ContextRule(models.Model):
+class ContextRule(BaseModel):
     """上下文规则（对应 Claude Code 的 CLAUDE.md 层级）
 
     支持 4 个作用域层级：
@@ -23,6 +25,9 @@ class ContextRule(models.Model):
 
     路径作用域：path_patterns 字段支持 glob 模式，
     仅在读取匹配文件时加载对应规则（延迟加载）。
+
+    继承 BaseModel 获得 created_at/updated_at/is_deleted/deleted_at 字段
+    及软删除管理器（objects 过滤 is_deleted=False，all_objects 返回全部）。
     """
     SCOPE_CHOICES = [
         ('organization', '组织策略'),
@@ -49,8 +54,6 @@ class ContextRule(models.Model):
         help_text="同层级内优先级，数值越大越优先",
     )
     is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = 'context_rule'
@@ -69,13 +72,16 @@ class ContextRule(models.Model):
         super().save(*args, **kwargs)
 
 
-class AutoMemory(models.Model):
+class AutoMemory(BaseModel):
     """自动记忆（Agent 自动写入的工作笔记）
 
     Agent 在研究过程中自动记录的关键信息：
     - 构建命令、调试洞察、用户偏好、使用模式等
     - 限制前 200 行 / 25KB，与 Claude Code 的 MEMORY.md 对齐
     - 按 last_accessed_at 排序，支持 LRU 淘汰
+
+    继承 BaseModel 获得 created_at/updated_at/is_deleted/deleted_at 字段
+    及软删除管理器（objects 过滤 is_deleted=False，all_objects 返回全部）。
     """
     SOURCE_CHOICES = [
         ('build_command', '构建命令'),
@@ -95,7 +101,6 @@ class AutoMemory(models.Model):
     relevance_tags = models.JSONField(default=list, blank=True)
     access_count = models.IntegerField(default=0)
     last_accessed_at = models.DateTimeField(auto_now=True)
-    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = 'auto_memory'
@@ -114,7 +119,7 @@ class AutoMemory(models.Model):
         super().save(*args, **kwargs)
 
 
-class PromptCache(models.Model):
+class PromptCache(BaseModel):
     """提示缓存（前缀缓存 + 用户模板库）
 
     三种缓存类型：
@@ -123,6 +128,9 @@ class PromptCache(models.Model):
     - user_template: 用户模板（用户自定义的提示模板）
 
     变量定义格式：[{name, description, default}]
+
+    继承 BaseModel 获得 created_at/updated_at/is_deleted/deleted_at 字段
+    及软删除管理器（objects 过滤 is_deleted=False，all_objects 返回全部）。
     """
     CACHE_TYPE_CHOICES = [
         ('system_prefix', '系统前缀缓存'),
@@ -147,8 +155,6 @@ class PromptCache(models.Model):
     sort_order = models.IntegerField(default=0)
     token_count = models.IntegerField(default=0)
     usage_count = models.IntegerField(default=0)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = 'prompt_cache'

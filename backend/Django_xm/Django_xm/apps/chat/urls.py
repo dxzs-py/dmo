@@ -1,4 +1,5 @@
 from django.urls import path
+
 from . import views
 from .suggestion_views import SuggestionsView
 
@@ -19,7 +20,7 @@ urlpatterns = [
     path('sessions/<str:session_id>/messages/pair/delete/', views.ChatMessagePairDeleteView.as_view(), name='message-pair-delete'),
     path('commands/', views.ChatCommandsView.as_view(), name='chat-commands'),
     path('commands/execute/', views.ChatCommandExecuteView.as_view(), name='chat-commands-execute'),
+    path('finalize/', views.ChatFinalizeView.as_view(), name='chat-finalize'),
     path('project-context/', views.ProjectContextView.as_view(), name='chat-project-context'),
     path('suggestions/', SuggestionsView.as_view(), name='chat-suggestions'),
-    path('approval/', views.ChatApprovalView.as_view(), name='chat-approval'),
 ]

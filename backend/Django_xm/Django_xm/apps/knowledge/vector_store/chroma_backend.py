@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
@@ -13,7 +13,7 @@ from .base import VectorStoreBackend
 logger = logging.getLogger(__name__)
 
 
-def _get_chroma_client_settings(persist_directory: Optional[str] = None):
+def _get_chroma_client_settings(persist_directory: str | None = None):
     """获取 Chroma 客户端配置"""
     try:
         import chromadb
@@ -47,7 +47,7 @@ class ChromaBackend(VectorStoreBackend):
         except ImportError:
             raise ImportError(
                 "Chroma 未安装。请运行: pip install langchain-chroma chromadb"
-            )
+            ) from None
 
     @property
     def store_type(self) -> str:
@@ -55,7 +55,7 @@ class ChromaBackend(VectorStoreBackend):
 
     def create(
         self,
-        documents: List[Document],
+        documents: list[Document],
         embeddings: Embeddings,
         collection_name: str,
         **kwargs: Any,
@@ -65,7 +65,7 @@ class ChromaBackend(VectorStoreBackend):
         persist_directory = kwargs.pop("persist_directory", self.persist_directory)
         client_settings = _get_chroma_client_settings(persist_directory)
 
-        chroma_kwargs: Dict[str, Any] = {
+        chroma_kwargs: dict[str, Any] = {
             "collection_name": collection_name,
             "embedding_function": embeddings,
             "persist_directory": persist_directory,
@@ -99,7 +99,7 @@ class ChromaBackend(VectorStoreBackend):
 
         client_settings = _get_chroma_client_settings(str(load_path))
 
-        chroma_kwargs: Dict[str, Any] = {
+        chroma_kwargs: dict[str, Any] = {
             "collection_name": collection_name,
             "embedding_function": embeddings,
             "persist_directory": str(load_path),
@@ -133,7 +133,7 @@ class ChromaBackend(VectorStoreBackend):
             logger.error(f"Chroma 集合删除失败: {e}")
             return False
 
-    def list_collections(self, prefix: str = "") -> List[str]:
+    def list_collections(self, prefix: str = "") -> list[str]:
         try:
             import chromadb
 
@@ -163,8 +163,8 @@ class ChromaBackend(VectorStoreBackend):
     def add_documents(
         self,
         vector_store: VectorStore,
-        documents: List[Document],
-    ) -> List[str]:
+        documents: list[Document],
+    ) -> list[str]:
         if hasattr(vector_store, "add_documents"):
             ids = vector_store.add_documents(documents)
         elif hasattr(vector_store, "add_texts"):
@@ -179,7 +179,7 @@ class ChromaBackend(VectorStoreBackend):
     def remove_documents(
         self,
         collection_name: str,
-        document_ids: List[str],
+        document_ids: list[str],
     ) -> bool:
         try:
             import chromadb
@@ -224,14 +224,14 @@ class ChromaBackend(VectorStoreBackend):
         vector_store: VectorStore,
         query: str,
         k: int = 4,
-        filter: Optional[Dict] = None,
-    ) -> List[Tuple[Document, float]]:
-        kwargs: Dict[str, Any] = {"k": k}
+        filter: dict | None = None,
+    ) -> list[tuple[Document, float]]:
+        kwargs: dict[str, Any] = {"k": k}
         if filter:
             kwargs["filter"] = filter
         return vector_store.similarity_search_with_score(query=query, **kwargs)
 
-    def get_stats(self, collection_name: str) -> Dict[str, Any]:
+    def get_stats(self, collection_name: str) -> dict[str, Any]:
         try:
             import chromadb
 

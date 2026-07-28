@@ -16,16 +16,13 @@
 - https://docs.langchain.com/oss/python/langgraph/persistence#memory-store
 """
 
-import json
 import time
-import logging
-from typing import Dict, Any, List, Optional, Set, Tuple
 from dataclasses import dataclass, field
-from collections import defaultdict
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 
-from Django_xm.apps.context_manager.config import get_logger
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -53,13 +50,13 @@ class ExtractionResult(BaseModel):
 class Entity:
     name: str
     entity_type: str = "concept"
-    properties: Dict[str, Any] = field(default_factory=dict)
+    properties: dict[str, Any] = field(default_factory=dict)
     confidence: float = 1.0
     first_seen: float = 0.0
     last_seen: float = 0.0
     mention_count: int = 1
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "entity_type": self.entity_type,
@@ -71,7 +68,7 @@ class Entity:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Entity":
+    def from_dict(cls, data: dict[str, Any]) -> "Entity":
         return cls(
             name=data["name"],
             entity_type=data.get("entity_type", "concept"),
@@ -88,7 +85,7 @@ class Relation:
     source: str
     target: str
     relation_type: str = "related_to"
-    properties: Dict[str, Any] = field(default_factory=dict)
+    properties: dict[str, Any] = field(default_factory=dict)
     confidence: float = 1.0
     created_at: float = 0.0
 
@@ -96,7 +93,7 @@ class Relation:
     def key(self) -> str:
         return f"{self.source}|{self.relation_type}|{self.target}"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "source": self.source,
             "target": self.target,
@@ -107,7 +104,7 @@ class Relation:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Relation":
+    def from_dict(cls, data: dict[str, Any]) -> "Relation":
         return cls(
             source=data["source"],
             target=data["target"],
@@ -139,7 +136,7 @@ class ConversationGraphExtractor:
         "gpt", "llm", "agent", "rag", "embedding", "vector",
     })
 
-    _ACTION_PATTERNS = [
+    _ACTION_PATTERNS: ClassVar[list[tuple[str, list[str]]]] = [
         ("prefers", ["喜欢", "偏好", "倾向于", "prefer", "like", "want"]),
         ("uses", ["使用", "用", "采用", "use", "using", "with"]),
         ("depends_on", ["依赖", "需要", "取决于", "depend", "require", "need"]),
@@ -147,10 +144,10 @@ class ConversationGraphExtractor:
         ("solves", ["解决", "修复", "处理", "solve", "fix", "handle"]),
     ]
 
-    def extract(self, messages: List[Dict[str, Any]]) -> Tuple[List[Entity], List[Relation]]:
+    def extract(self, messages: list[dict[str, Any]]) -> tuple[list[Entity], list[Relation]]:
         now = time.time()
-        entities: Dict[str, Entity] = {}
-        relations: Dict[str, Relation] = {}
+        entities: dict[str, Entity] = {}
+        relations: dict[str, Relation] = {}
 
         for msg in messages:
             role = msg.get('role', '')
@@ -180,7 +177,7 @@ class ConversationGraphExtractor:
 
         return list(entities.values()), list(relations.values())
 
-    def _extract_entities(self, text: str, role: str, timestamp: float) -> List[Entity]:
+    def _extract_entities(self, text: str, role: str, timestamp: float) -> list[Entity]:
         import re
         entities = []
 
@@ -236,7 +233,7 @@ class ConversationGraphExtractor:
 
         return entities
 
-    def _extract_relations(self, text: str, known_entities: List[str]) -> List[Relation]:
+    def _extract_relations(self, text: str, known_entities: list[str]) -> list[Relation]:
         relations = []
         text_lower = text.lower()
 
@@ -259,7 +256,7 @@ class ConversationGraphExtractor:
         return relations
 
     @staticmethod
-    def _find_nearest_entity(text_fragment: str, entities: List[str]) -> Optional[str]:
+    def _find_nearest_entity(text_fragment: str, entities: list[str]) -> str | None:
         if not entities:
             return None
         fragment = text_fragment.lower().strip()
@@ -270,9 +267,9 @@ class ConversationGraphExtractor:
 
     def extract_with_llm(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         llm: Any = None,
-    ) -> Tuple[List[Entity], List[Relation]]:
+    ) -> tuple[list[Entity], list[Relation]]:
         regex_entities, regex_relations = self.extract(messages)
 
         if llm is None:
@@ -308,7 +305,7 @@ class ConversationGraphExtractor:
             return regex_entities, regex_relations
 
         now = time.time()
-        llm_entities: Dict[str, Entity] = {}
+        llm_entities: dict[str, Entity] = {}
         for ext_e in result.entities:
             if ext_e.name not in llm_entities:
                 llm_entities[ext_e.name] = Entity(
@@ -321,7 +318,7 @@ class ConversationGraphExtractor:
                 )
 
         llm_entity_names = set(llm_entities.keys())
-        llm_relations: Dict[str, Relation] = {}
+        llm_relations: dict[str, Relation] = {}
         for ext_r in result.relations:
             if ext_r.source in llm_entity_names and ext_r.target in llm_entity_names:
                 rel = Relation(
@@ -334,7 +331,7 @@ class ConversationGraphExtractor:
                 if rel.key not in llm_relations:
                     llm_relations[rel.key] = rel
 
-        merged_entities: Dict[str, Entity] = {e.name: e for e in regex_entities}
+        merged_entities: dict[str, Entity] = {e.name: e for e in regex_entities}
         for name, entity in llm_entities.items():
             if name in merged_entities:
                 merged_entities[name].confidence = min(1.0, merged_entities[name].confidence + 0.1)
@@ -343,7 +340,7 @@ class ConversationGraphExtractor:
             else:
                 merged_entities[name] = entity
 
-        merged_relations: Dict[str, Relation] = {r.key: r for r in regex_relations}
+        merged_relations: dict[str, Relation] = {r.key: r for r in regex_relations}
         for key, rel in llm_relations.items():
             if key not in merged_relations:
                 merged_relations[key] = rel
@@ -351,7 +348,7 @@ class ConversationGraphExtractor:
         return list(merged_entities.values()), list(merged_relations.values())
 
     @staticmethod
-    def _format_messages_for_llm(messages: List[Dict[str, Any]]) -> str:
+    def _format_messages_for_llm(messages: list[dict[str, Any]]) -> str:
         lines = []
         for msg in messages:
             role = msg.get('role', 'unknown')
@@ -374,7 +371,7 @@ class KnowledgeGraphStore:
 
     def __init__(self, store=None):
         self._store = store
-        self._local_graph: Dict[str, Dict[str, Any]] = {}
+        self._local_graph: dict[str, dict[str, Any]] = {}
 
     def _ensure_store(self):
         from Django_xm.apps.ai_engine.services.checkpointer_factory import ensure_store
@@ -387,8 +384,8 @@ class KnowledgeGraphStore:
     def save_graph(
         self,
         user_id: int,
-        entities: List[Entity],
-        relations: List[Relation],
+        entities: list[Entity],
+        relations: list[Relation],
     ) -> bool:
         graph_data = {
             "entities": {e.name: e.to_dict() for e in entities},
@@ -412,7 +409,7 @@ class KnowledgeGraphStore:
             logger.error(f"知识图谱保存到 Store 失败: {e}")
             return False
 
-    def load_graph(self, user_id: int) -> Tuple[List[Entity], List[Relation]]:
+    def load_graph(self, user_id: int) -> tuple[list[Entity], list[Relation]]:
         cache_key = f"kg:{user_id}"
         if cache_key in self._local_graph:
             data = self._local_graph[cache_key]
@@ -435,12 +432,12 @@ class KnowledgeGraphStore:
     def merge_graph(
         self,
         user_id: int,
-        new_entities: List[Entity],
-        new_relations: List[Relation],
-    ) -> Tuple[List[Entity], List[Relation]]:
+        new_entities: list[Entity],
+        new_relations: list[Relation],
+    ) -> tuple[list[Entity], list[Relation]]:
         existing_entities, existing_relations = self.load_graph(user_id)
 
-        entity_map: Dict[str, Entity] = {e.name: e for e in existing_entities}
+        entity_map: dict[str, Entity] = {e.name: e for e in existing_entities}
         for e in new_entities:
             if e.name in entity_map:
                 entity_map[e.name].mention_count += e.mention_count
@@ -451,7 +448,7 @@ class KnowledgeGraphStore:
             else:
                 entity_map[e.name] = e
 
-        relation_map: Dict[str, Relation] = {r.key: r for r in existing_relations}
+        relation_map: dict[str, Relation] = {r.key: r for r in existing_relations}
         for r in new_relations:
             if r.key not in relation_map:
                 relation_map[r.key] = r
@@ -463,7 +460,7 @@ class KnowledgeGraphStore:
         return merged_entities, merged_relations
 
     @staticmethod
-    def _deserialize_graph(data: Dict[str, Any]) -> Tuple[List[Entity], List[Relation]]:
+    def _deserialize_graph(data: dict[str, Any]) -> tuple[list[Entity], list[Relation]]:
         entities = [Entity.from_dict(e) for e in data.get("entities", {}).values()]
         relations = [Relation.from_dict(r) for r in data.get("relations", {}).values()]
         return entities, relations
@@ -500,7 +497,7 @@ class KnowledgeGraphStore:
         return self._format_context(relevant_entities, relevant_relations)
 
     @staticmethod
-    def _expand_entities(seed: Set[str], relations: List[Relation], max_hops: int) -> Set[str]:
+    def _expand_entities(seed: set[str], relations: list[Relation], max_hops: int) -> set[str]:
         expanded = set(seed)
         frontier = set(seed)
         for _ in range(max_hops):
@@ -517,7 +514,7 @@ class KnowledgeGraphStore:
         return expanded
 
     @staticmethod
-    def _format_context(entities: List[Entity], relations: List[Relation]) -> str:
+    def _format_context(entities: list[Entity], relations: list[Relation]) -> str:
         if not entities and not relations:
             return ""
 
@@ -547,8 +544,8 @@ class ContextKnowledgeGraph:
     def process_conversation(
         self,
         user_id: int,
-        messages: List[Dict[str, Any]],
-    ) -> Tuple[List[Entity], List[Relation]]:
+        messages: list[dict[str, Any]],
+    ) -> tuple[list[Entity], list[Relation]]:
         entities, relations = self._extractor.extract(messages)
         if entities or relations:
             merged_entities, merged_relations = self._kg_store.merge_graph(user_id, entities, relations)
@@ -563,10 +560,10 @@ class ContextKnowledgeGraph:
     def update_from_messages(
         self,
         user_id: int,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         use_llm_extraction: bool = True,
         llm: Any = None,
-    ) -> Tuple[List[Entity], List[Relation]]:
+    ) -> tuple[list[Entity], list[Relation]]:
         if use_llm_extraction:
             try:
                 entities, relations = self._extractor.extract_with_llm(messages, llm=llm)
@@ -595,7 +592,7 @@ class ContextKnowledgeGraph:
     ) -> str:
         return self._kg_store.get_related_context(user_id, query, max_hops, max_entities)
 
-    def get_full_graph(self, user_id: int) -> Tuple[List[Entity], List[Relation]]:
+    def get_full_graph(self, user_id: int) -> tuple[list[Entity], list[Relation]]:
         return self._kg_store.load_graph(user_id)
 
     def clear_graph(self, user_id: int) -> bool:

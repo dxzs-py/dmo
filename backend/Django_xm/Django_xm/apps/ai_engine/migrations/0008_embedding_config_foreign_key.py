@@ -7,7 +7,6 @@
 2. 新增 name、default_model 字段
 3. 给已有 4 条记录补 name='bge-m3/text-embedding-3-small/...'、default_model=对应模型名
 """
-import json as _json
 from django.db import migrations, models
 import django.db.models.deletion
 
@@ -100,27 +99,9 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        # 1. Django state 同步：删除 0004 之前 state 中残留的字段
-        # 0004 用 SQL 把 provider_id/label/key_attr 重命名/删除，但 Django state 不知道。
-        # 这里用 SeparateDatabaseAndState：只更新 state，不执行任何 SQL（DB 中已无旧列，
-        # 或新 FK 列同名 provider_id 不能删）。
-        migrations.SeparateDatabaseAndState(
-            state_operations=[
-                migrations.RemoveField(
-                    model_name="embeddingproviderconfig",
-                    name="key_attr",
-                ),
-                migrations.RemoveField(
-                    model_name="embeddingproviderconfig",
-                    name="label",
-                ),
-                migrations.RemoveField(
-                    model_name="embeddingproviderconfig",
-                    name="provider_id",
-                ),
-            ],
-            database_operations=[],  # DB 中已没有这些旧列（key_attr/label），provider_id 已重命名为 FK
-        ),
+        # 注：原 0008 的 SeparateDatabaseAndState（删除 key_attr/label/provider_id）已移除，
+        # 因为 0004 现在用 SeparateDatabaseAndState 正确同步了 state（删除旧字段 + 添加 provider）。
+        # 此处重复删除会导致 FieldDoesNotExist 错误。
         # 2. SQL 层：先删除 unique 索引（让后续 AddField 不冲突）
         migrations.RunPython(drop_unique_and_add_columns, restore_unique_constraint),
         migrations.AddField(

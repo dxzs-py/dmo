@@ -1,12 +1,11 @@
-import os
-import sys
+import hashlib
 import json
 import logging
-import hashlib
-from datetime import datetime
-from django.conf import settings
-from django.core.management.base import BaseCommand
+import os
+from datetime import datetime, timezone
+
 from django.contrib.auth import get_user_model
+from django.core.management.base import BaseCommand
 from django.utils.timezone import now
 
 logger = logging.getLogger(__name__)
@@ -56,7 +55,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         action = options['action']
-        
+
         if action == 'backup':
             self.backup_data(options)
         elif action == 'restore':
@@ -69,26 +68,25 @@ class Command(BaseCommand):
             self.verify_backup(options)
 
     def backup_data(self, options):
-        from Django_xm.apps.chat.models import ChatSession, ChatMessage
-        
+        from Django_xm.apps.chat.models import ChatSession
+
         output_dir = options['output_dir']
         user_filter = options.get('user')
-        encrypt = options.get('encrypt', False)
-        
+
         os.makedirs(output_dir, exist_ok=True)
-        
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+        timestamp = now().strftime('%Y%m%d_%H%M%S')
         backup_filename = f'chat_backup_{timestamp}.json'
         backup_path = os.path.join(output_dir, backup_filename)
-        
+
         queryset = ChatSession.objects.all().select_related('user').prefetch_related('messages')
-        
+
         if user_filter:
             if user_filter.isdigit():
                 queryset = queryset.filter(user_id=user_filter)
             else:
                 queryset = queryset.filter(user__username=user_filter)
-        
+
         backup_data = {
             'version': '2.0',
             'backup_time': now().isoformat(),
@@ -98,7 +96,7 @@ class Command(BaseCommand):
             },
             'sessions': [],
         }
-        
+
         for session in queryset:
             session_data = {
                 'session_id': session.session_id,
@@ -110,7 +108,7 @@ class Command(BaseCommand):
                 'updated_at': session.updated_at.isoformat(),
                 'messages': [],
             }
-            
+
             for message in session.messages.all():
                 message_data = {
                     'role': message.role,
@@ -125,16 +123,16 @@ class Command(BaseCommand):
                     'created_at': message.created_at.isoformat(),
                 }
                 session_data['messages'].append(message_data)
-            
+
             backup_data['sessions'].append(session_data)
-        
+
         backup_data['checksum'] = generate_backup_checksum(backup_data['sessions'])
-        
+
         with open(backup_path, 'w', encoding='utf-8') as f:
             json.dump(backup_data, f, ensure_ascii=False, indent=2)
-        
+
         os.chmod(backup_path, 0o600)
-        
+
         self.stdout.write(self.style.SUCCESS(
             f'Backup completed successfully! File: {backup_path}'
         ))
@@ -145,27 +143,27 @@ class Command(BaseCommand):
     def verify_backup(self, options):
         """验证备份文件的完整性"""
         backup_file = options.get('file')
-        
+
         if not backup_file:
             self.stdout.write(self.style.ERROR('Please specify --file for verify action'))
             return
-        
+
         if not os.path.exists(backup_file):
             self.stdout.write(self.style.ERROR(f'Backup file not found: {backup_file}'))
             return
-        
+
         try:
-            with open(backup_file, 'r', encoding='utf-8') as f:
+            with open(backup_file, encoding='utf-8') as f:
                 backup_data = json.load(f)
-            
+
             self.stdout.write(f'Verifying backup: {backup_file}')
             self.stdout.write(f'  - Version: {backup_data.get("version")}')
             self.stdout.write(f'  - Backup time: {backup_data.get("backup_time")}')
             self.stdout.write(f'  - Sessions: {len(backup_data.get("sessions", []))}')
-            
+
             stored_checksum = backup_data.get('checksum')
             calculated_checksum = generate_backup_checksum(backup_data['sessions'])
-            
+
             if stored_checksum == calculated_checksum:
                 self.stdout.write(self.style.SUCCESS('  - Checksum verification: PASSED'))
                 return True
@@ -174,39 +172,39 @@ class Command(BaseCommand):
                 self.stdout.write(f'    Expected: {stored_checksum[:16]}...')
                 self.stdout.write(f'    Got:      {calculated_checksum[:16]}...')
                 return False
-                
+
         except Exception as e:
-            self.stdout.write(self.style.ERROR(f'  - Verification failed: {str(e)}'))
+            self.stdout.write(self.style.ERROR(f'  - Verification failed: {e!s}'))
             return False
 
     def restore_data(self, options):
-        from Django_xm.apps.chat.models import ChatSession, ChatMessage
-        
+        from Django_xm.apps.chat.models import ChatMessage, ChatSession
+
         backup_file = options.get('file')
-        
+
         if not backup_file:
             self.stdout.write(self.style.ERROR('Please specify --file for restore action'))
             return
-        
+
         if not os.path.exists(backup_file):
             self.stdout.write(self.style.ERROR(f'Backup file not found: {backup_file}'))
             return
-        
+
         if not self.verify_backup(options):
             self.stdout.write(self.style.ERROR('Backup verification failed, aborting restore'))
             return
-        
-        with open(backup_file, 'r', encoding='utf-8') as f:
+
+        with open(backup_file, encoding='utf-8') as f:
             backup_data = json.load(f)
-        
+
         self.stdout.write(f'Reading backup from: {backup_file}')
         self.stdout.write(f'  - Backup version: {backup_data.get("version")}')
         self.stdout.write(f'  - Backup time: {backup_data.get("backup_time")}')
         self.stdout.write(f'  - Sessions to restore: {len(backup_data.get("sessions", []))}')
-        
+
         restored_count = 0
         skipped_count = 0
-        
+
         for session_data in backup_data.get('sessions', []):
             user = None
             if session_data.get('user_id'):
@@ -218,7 +216,7 @@ class Command(BaseCommand):
                     )
                     skipped_count += 1
                     continue
-            
+
             session, created = ChatSession.objects.get_or_create(
                 session_id=session_data['session_id'],
                 defaults={
@@ -227,7 +225,7 @@ class Command(BaseCommand):
                     'mode': session_data['mode'],
                 }
             )
-            
+
             if created:
                 for message_data in session_data.get('messages', []):
                     ChatMessage.objects.create(
@@ -248,19 +246,19 @@ class Command(BaseCommand):
                 self.stdout.write(
                     self.style.WARNING(f'  - Session {session_data["session_id"]} already exists, skipped')
                 )
-        
+
         self.stdout.write(self.style.SUCCESS(
             f'Restore completed! Restored: {restored_count}, Skipped: {skipped_count}'
         ))
-        
+
         try:
             from Django_xm.apps.cache_manager.services.secure_session_cache import SecureSessionCacheService
             redis_synced = 0
-            
+
             for session_data in backup_data.get('sessions', []):
                 user_id = session_data.get('user_id')
                 session_id = session_data.get('session_id')
-                
+
                 if user_id and session_id:
                     SecureSessionCacheService.cache_session(user_id, {
                         'session_id': session_id,
@@ -270,25 +268,25 @@ class Command(BaseCommand):
                         'messages': session_data.get('messages', []),
                     })
                     redis_synced += 1
-            
+
             self.stdout.write(self.style.SUCCESS(
                 f'  - Redis cache synchronized for {redis_synced} sessions'
             ))
-            
+
         except Exception as e:
             self.stdout.write(self.style.WARNING(
-                f'  - Redis cache synchronization failed (non-critical): {str(e)}'
+                f'  - Redis cache synchronization failed (non-critical): {e!s}'
             ))
-        
+
         logger.info(f'Restore completed: {backup_file}, restored: {restored_count}, skipped: {skipped_count}')
 
     def list_backups(self, options):
         output_dir = options['output_dir']
-        
+
         if not os.path.exists(output_dir):
             self.stdout.write(self.style.WARNING(f'Backup directory not found: {output_dir}'))
             return
-        
+
         backups = []
         for filename in os.listdir(output_dir):
             if filename.startswith('chat_backup_') and filename.endswith('.json'):
@@ -297,19 +295,19 @@ class Command(BaseCommand):
                 backups.append({
                     'filename': filename,
                     'size': stat.st_size,
-                    'modified': datetime.fromtimestamp(stat.st_mtime),
+                    'modified': datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
                     'path': filepath,
                 })
-        
+
         if not backups:
             self.stdout.write(self.style.WARNING('No backups found'))
             return
-        
+
         backups.sort(key=lambda x: x['modified'], reverse=True)
-        
+
         self.stdout.write(self.style.SUCCESS(f'Found {len(backups)} backups:'))
         self.stdout.write('')
-        
+
         for i, backup in enumerate(backups, 1):
             size_mb = backup['size'] / (1024 * 1024)
             self.stdout.write(f'{i}. {backup["filename"]}')
@@ -321,28 +319,28 @@ class Command(BaseCommand):
     def cleanup_backups(self, options):
         output_dir = options['output_dir']
         keep_days = options['keep_days']
-        
+
         if not os.path.exists(output_dir):
             self.stdout.write(self.style.WARNING(f'Backup directory not found: {output_dir}'))
             return
-        
-        cutoff = datetime.now() - datetime.timedelta(days=keep_days)
+
+        cutoff = now() - datetime.timedelta(days=keep_days)
         deleted_count = 0
         deleted_size = 0
-        
+
         for filename in os.listdir(output_dir):
             if filename.startswith('chat_backup_') and filename.endswith('.json'):
                 filepath = os.path.join(output_dir, filename)
                 stat = os.stat(filepath)
-                modified = datetime.fromtimestamp(stat.st_mtime)
-                
+                modified = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+
                 if modified < cutoff:
                     file_size = stat.st_size
                     os.remove(filepath)
                     deleted_count += 1
                     deleted_size += file_size
                     self.stdout.write(f'Deleted: {filename}')
-        
+
         size_mb = deleted_size / (1024 * 1024)
         self.stdout.write(self.style.SUCCESS(
             f'Cleanup completed! Deleted {deleted_count} files ({size_mb:.2f} MB)'

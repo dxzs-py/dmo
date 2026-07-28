@@ -163,24 +163,23 @@ export const chatAPI = {
   getCommands() { return apiClient.get('/chat/commands/') },
   executeCommand(command, sessionId = null) { return apiClient.post('/chat/commands/execute/', { command, session_id: sessionId }) },
   getProjectContext(path = null) { return apiClient.get('/chat/project-context/', { params: path ? { path } : {} }) },
+  finalizeStream: (sessionId, messageId) => chatFinalize(sessionId, messageId),
 }
 
 /**
- * 聊天审批 API（返回 SSE 流式 Response）
- * 需要获取 ReadableStream，因此使用 fetch 而非 apiClient，但复用其 baseURL 和 token 配置
+ * 通知后端流式输出已最终化
+ *
+ * 前端 useStreamFinalizer 在本地完成 FINALIZING → SYNCING → COMPLETED 后调用，
+ * 后端发布 STREAM_FINALIZED 事件到 session 频道，通知非请求浏览器可安全拉取后端数据。
+ *
+ * @param {string} sessionId - 会话 ID
+ * @param {string|number} messageId - 消息 ID
+ * @returns {Promise} apiClient POST 响应
  */
-export function chatApprovalStream(requestBody, { signal } = {}) {
-  const baseURL = apiClient.defaults?.baseURL || ''
-  const token = localStorage.getItem('user_token')
-  return fetch(`${baseURL}/chat/approval/`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(requestBody),
-    signal,
-  })
+export function chatFinalize(sessionId, messageId) {
+  if (!sessionId) return Promise.reject(new Error('会话ID不能为空'))
+  if (!messageId) return Promise.reject(new Error('消息ID不能为空'))
+  return apiClient.post('/chat/finalize/', { session_id: sessionId, message_id: messageId })
 }
 
 export async function* streamChat(request) {

@@ -1,40 +1,40 @@
-"""
-LangGraph MCP 集成模块
+"""MCP 工具加载器（供 LangGraph Agent 使用）
 
-将 MCP 工具无缝集成到 LangGraph Agent 中，支持:
-1. 自动加载 MCP 工具到 LangGraph ReAct Agent
-2. MCP 工具与内置工具混合使用
-3. 流式输出支持
-4. Checkpointer 持久化
+本模块仅负责加载 MCP 工具为 LangChain BaseTool 列表。
 
-使用方式:
-    from Django_xm.apps.tools.mcp.langgraph_integration import create_mcp_langgraph_agent
+归属说明（Task 15.2）：
+    原 ``langgraph_integration.py`` 还包含 ``create_mcp_langgraph_agent`` 与
+    ``create_langgraph_with_mcp_checkpointer``，它们调用 ``agent_hub.create``
+    创建 Agent，违反 ``tools → agent_hub`` 分层。这两个函数已迁至
+    ``agent_hub/mcp_integration.py``。
 
-    agent = await create_mcp_langgraph_agent(
-        model=app_cfg.deepseek_model,
-        session_id="user-session-123",
-    )
-    result = await agent.ainvoke({"messages": [("user", "你好")]})
+    本模块保留 ``load_mcp_tools_for_langgraph``（仅加载工具，不创建 Agent），
+    供 ``agent_hub.mcp_integration`` 与其他调用方使用。
 """
 
-from typing import List, Dict, Any, Optional, Sequence
+
 from langchain_core.tools import BaseTool
-from langchain_core.language_models import BaseChatModel
 
-from Django_xm.apps.ai_engine.config import get_logger, settings as app_cfg
-from Django_xm.apps.ai_engine.services.llm_factory import get_llm
-from Django_xm.apps.agent_hub import create as agent_hub_create, AgentType, AgentConfig
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
 
 async def load_mcp_tools_for_langgraph(
-    server_names: Optional[List[str]] = None,
-) -> List[BaseTool]:
+    server_names: list[str] | None = None,
+) -> list[BaseTool]:
+    """加载 MCP 工具为 LangChain BaseTool 列表。
+
+    Args:
+        server_names: 指定加载的 MCP Server 名称列表；为 None 时加载全部
+
+    Returns:
+        MCP 工具列表
+    """
     from . import get_all_mcp_tools, get_mcp_tools
 
     if server_names:
-        tools: List[BaseTool] = []
+        tools: list[BaseTool] = []
         for name in server_names:
             server_tools = await get_mcp_tools(server_name=name)
             tools.extend(server_tools)
@@ -44,85 +44,6 @@ async def load_mcp_tools_for_langgraph(
     return tools
 
 
-async def create_mcp_langgraph_agent(
-    model: Optional[str] = None,
-    llm: Optional[BaseChatModel] = None,
-    tools: Optional[Sequence[BaseTool]] = None,
-    mcp_server_names: Optional[List[str]] = None,
-    include_mcp_tools: bool = True,
-    include_builtin_tools: bool = False,
-    use_web_search: bool = False,
-    prompt_mode: str = "default",
-    session_id: Optional[str] = None,
-    user_id: Optional[int] = None,
-    checkpointer: Optional[Any] = None,
-    enable_human_in_loop: bool = False,
-    **kwargs: Any,
-):
-    if llm is None:
-        llm = get_llm(model)
-
-    all_tools: List[BaseTool] = list(tools) if tools else []
-
-    if include_builtin_tools:
-        from Django_xm.apps.tools import get_tools_for_request_async
-        builtin_tools = await get_tools_for_request_async(
-            use_tools=True,
-            use_web_search=use_web_search,
-            use_mcp=False,
-        )
-        all_tools.extend(builtin_tools)
-        logger.info(f"内置工具已加载 ({len(builtin_tools)} 个)")
-
-    if include_mcp_tools:
-        mcp_tools = await load_mcp_tools_for_langgraph(
-            server_names=mcp_server_names,
-        )
-        all_tools.extend(mcp_tools)
-        logger.info(f"MCP 工具已加载 ({len(mcp_tools)} 个)")
-
-    config = AgentConfig(
-        agent_type=AgentType.BASE,
-        model=llm,
-        tools=all_tools,
-        session_id=session_id,
-        user_id=user_id,
-        checkpointer=checkpointer,
-        enable_human_in_loop=enable_human_in_loop,
-    )
-    agent = await agent_hub_create(config)
-
-    logger.info(
-        f"LangGraph MCP Agent 已创建: "
-        f"tools={len(all_tools)}, "
-        f"mcp_servers={mcp_server_names or 'all'}, "
-        f"session={session_id}"
-    )
-
-    return agent
-
-
-async def create_langgraph_with_mcp_checkpointer(
-    model: Optional[str] = None,
-    session_id: Optional[str] = None,
-    user_id: Optional[int] = None,
-    **kwargs: Any,
-):
-    from Django_xm.apps.ai_engine.services.checkpoint_factory import get_checkpointer
-
-    checkpointer = get_checkpointer(session_id=session_id)
-
-    return await create_mcp_langgraph_agent(
-        model=model,
-        session_id=session_id,
-        user_id=user_id,
-        checkpointer=checkpointer,
-        **kwargs,
-    )
-
-
 __all__ = [
     "load_mcp_tools_for_langgraph",
-    "create_mcp_langgraph_agent",
-    "create_langgraph_with_mcp_checkpointer",
 ]

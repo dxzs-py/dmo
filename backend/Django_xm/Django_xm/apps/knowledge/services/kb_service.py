@@ -7,27 +7,27 @@
 
 import logging
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Any
 
-from Django_xm.apps.knowledge.config import settings as app_cfg
 from Django_xm.apps.cache_manager.services.cache_service import (
-    QueryCacheService, VectorSearchCacheService, CacheService,
+    VectorSearchCacheService,
     invalidate_knowledge_cache,
 )
+from Django_xm.apps.knowledge.config import settings as app_cfg
 
-from ..models import DocumentIndex, Document, DocumentFileType
-from ..views_utils import get_user_index_name, get_original_index_name, get_file_extension, get_document_type
-from .index_service import IndexManager
-from .embedding_service import get_embeddings
+from ..models import Document, DocumentIndex
+from ..views_utils import get_document_type, get_file_extension, get_original_index_name, get_user_index_name
 from .document_service import load_document
+from .embedding_service import get_embeddings
+from .index_service import IndexManager
 from .splitters import split_documents
 
 logger = logging.getLogger(__name__)
 
 
-def list_knowledge_bases(user) -> List[Dict[str, Any]]:
+def list_knowledge_bases(user) -> list[dict[str, Any]]:
     """获取用户的知识库列表，过滤已删除的索引"""
     deleted_index_names = set(
         DocumentIndex.all_objects.filter(
@@ -58,7 +58,7 @@ def list_knowledge_bases(user) -> List[Dict[str, Any]]:
     return user_indexes
 
 
-def create_knowledge_base(user, name: str, description: str = '') -> Dict[str, Any]:
+def create_knowledge_base(user, name: str, description: str = '') -> dict[str, Any]:
     """
     创建知识库
 
@@ -117,7 +117,7 @@ def create_knowledge_base(user, name: str, description: str = '') -> Dict[str, A
     }
 
 
-def get_knowledge_base_detail(user, kb_id: str) -> Dict[str, Any]:
+def get_knowledge_base_detail(user, kb_id: str) -> dict[str, Any]:
     """
     获取知识库详情
 
@@ -145,7 +145,7 @@ def get_knowledge_base_detail(user, kb_id: str) -> Dict[str, Any]:
     }
 
 
-def update_knowledge_base(user, kb_id: str, description: str) -> Dict[str, Any]:
+def update_knowledge_base(user, kb_id: str, description: str) -> dict[str, Any]:
     """
     更新知识库描述
 
@@ -160,7 +160,7 @@ def update_knowledge_base(user, kb_id: str, description: str) -> Dict[str, Any]:
 
     metadata = manager._load_metadata(user_index_name) or {}
     metadata['description'] = description
-    metadata['updated_at'] = datetime.now().isoformat()
+    metadata['updated_at'] = datetime.now(UTC).isoformat()
     manager._save_metadata(user_index_name, metadata)
 
     index_obj = DocumentIndex.objects.filter(user=user, index_name=kb_id).first()
@@ -210,7 +210,7 @@ def delete_knowledge_base(user, kb_id: str) -> None:
     clear_knowledge_base_selection(user_id=user.id, kb_name=kb_id)
 
 
-def list_documents(user, kb_id: str) -> List[Dict[str, Any]]:
+def list_documents(user, kb_id: str) -> list[dict[str, Any]]:
     """
     获取知识库下的文档列表
 
@@ -240,7 +240,7 @@ def list_documents(user, kb_id: str) -> List[Dict[str, Any]]:
     return files
 
 
-def upload_documents(user, kb_id: str, uploaded_files: list) -> Dict[str, Any]:
+def upload_documents(user, kb_id: str, uploaded_files: list) -> dict[str, Any]:
     """
     上传文档到知识库：保存文件、加载文档、分块、向量化、更新索引
 
@@ -344,7 +344,7 @@ def upload_documents(user, kb_id: str, uploaded_files: list) -> Dict[str, Any]:
     }
 
 
-def delete_document(user, kb_id: str, filename: str) -> Dict[str, Any]:
+def delete_document(user, kb_id: str, filename: str) -> dict[str, Any]:
     """
     从知识库删除文档：移除向量索引、删除文件、更新数据库记录
 
@@ -386,7 +386,7 @@ def delete_document(user, kb_id: str, filename: str) -> Dict[str, Any]:
     logger.info(f"文件已从磁盘删除: {file_path}")
 
     metadata = manager._load_metadata(user_index_name) or {}
-    metadata['updated_at'] = datetime.now().isoformat()
+    metadata['updated_at'] = datetime.now(UTC).isoformat()
     if 'num_documents' in metadata:
         metadata['num_documents'] = max(0, metadata['num_documents'] - 1)
     manager._save_metadata(user_index_name, metadata)
@@ -396,7 +396,7 @@ def delete_document(user, kb_id: str, filename: str) -> Dict[str, Any]:
     return {'message': f'文件已删除: {filename}'}
 
 
-def search_knowledge_base(user, kb_id: str, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+def search_knowledge_base(user, kb_id: str, query: str, top_k: int = 5) -> list[dict[str, Any]]:
     """
     在知识库中搜索
 
@@ -467,7 +467,7 @@ def search_knowledge_base(user, kb_id: str, query: str, top_k: int = 5) -> List[
 def rebuild_index_from_source_files(
     user,
     kb_name: str,
-    provider_id: Optional[str] = None,
+    provider_id: str | None = None,
     embeddings=None,
 ) -> None:
     """从原始上传文件重建知识库索引

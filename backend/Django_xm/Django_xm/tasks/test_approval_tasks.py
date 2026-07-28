@@ -11,28 +11,27 @@ mock 策略:
 - mock complete_approval 验证终态化调用
 
 运行方式:
-    cd d:\programming\langchain\langchain_xm\backend\Django_xm
+    cd d:\\programming\\langchain\\langchain_xm\backend\\Django_xm
     conda activate langchain_xm
     python manage.py test Django_xm.tasks.test_approval_tasks --verbosity=2
 """
 
 from __future__ import annotations
 
-import logging
 import os
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 # Django 环境初始化
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.dev")
-import django  # noqa: E402
-import django.apps  # noqa: E402,F401
+import django
+import django.apps
 
 if not django.apps.apps.ready:
     django.setup()
 
-from Django_xm.apps.approvals.models import Approval  # noqa: E402
-from Django_xm.tasks.approval_tasks import resume_chat_after_timeout  # noqa: E402
+from Django_xm.apps.approvals.models import Approval
+from Django_xm.tasks.approval_tasks import resume_chat_after_timeout
 
 
 def _make_approval_mock(**overrides):
@@ -189,11 +188,10 @@ class ResumeChatAfterTimeoutRecoverFromSiblingTests(unittest.TestCase):
             with patch(
                 'Django_xm.apps.chat.views_chat._stream_chat_resume_generator',
                 side_effect=_fake_gen,
-            ):
-                with self.assertLogs(
-                    'Django_xm.tasks.approval_tasks', level='INFO'
-                ) as cm:
-                    resume_chat_after_timeout.apply(args=['recover-1']).get()
+            ), self.assertLogs(
+                'Django_xm.tasks.approval_tasks', level='INFO'
+            ) as cm:
+                resume_chat_after_timeout.apply(args=['recover-1']).get()
 
         # 验证从 sibling 恢复 chat_session_id
         self.assertEqual(approval.chat_session_id, 'session-from-sibling')

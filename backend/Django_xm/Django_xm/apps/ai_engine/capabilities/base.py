@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.tools import BaseTool
@@ -24,7 +25,7 @@ class AgentCapability(ABC):
         return self.build_tools(**kwargs)
 
     @abstractmethod
-    def build_config(self, **kwargs) -> Dict[str, Any]:
+    def build_config(self, **kwargs) -> dict[str, Any]:
         ...
 
     @abstractmethod

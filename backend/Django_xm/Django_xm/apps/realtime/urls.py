@@ -4,7 +4,6 @@ from django.urls import path
 
 from .views import SnapshotView
 
-
 app_name = 'realtime'
 
 urlpatterns = [

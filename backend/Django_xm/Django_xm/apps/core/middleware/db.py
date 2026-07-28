@@ -14,9 +14,10 @@
   - 心跳：时间粒度（SSE 流期间每 N 秒）
 """
 
-import time
 import logging
 import threading
+import time
+
 from Django_xm.apps.core.services.db_connection_manager import DatabaseConnectionManager
 
 logger = logging.getLogger(__name__)

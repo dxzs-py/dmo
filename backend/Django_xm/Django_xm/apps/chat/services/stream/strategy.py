@@ -16,7 +16,7 @@ handle_special_event（tool_usage_dedup/blocked）两种模式行为一致，
 
 import logging
 import time
-from typing import AsyncGenerator, Dict, List, Optional
+from collections.abc import AsyncGenerator
 
 from .context import StreamContext
 
@@ -29,12 +29,12 @@ class BaseStreamStrategy:
     enable_deep_thinking: bool = False
     reasoning_source: str = "model_intrinsic"
 
-    async def on_loop_start(self, ctx: StreamContext, data: Dict) -> AsyncGenerator[Dict, None]:
+    async def on_loop_start(self, ctx: StreamContext, data: dict) -> AsyncGenerator[dict, None]:
         """循环开始前的事件流（普通模式为空，深度思考模式发送初始 reasoning）"""
         return
-        yield  # noqa: 使函数成为 async generator
+        yield  # 使函数成为 async generator
 
-    def handle_special_event(self, event: Dict, ctx: StreamContext) -> Optional[List[Dict]]:
+    def handle_special_event(self, event: dict, ctx: StreamContext) -> list[dict] | None:
         """处理 tool_usage_dedup / tool_usage_blocked / reasoning 等特殊事件
 
         Returns:
@@ -73,10 +73,10 @@ class BaseStreamStrategy:
 
         return None  # 其他事件透传
 
-    async def on_loop_success(self, ctx: StreamContext, data: Dict) -> AsyncGenerator[Dict, None]:
+    async def on_loop_success(self, ctx: StreamContext, data: dict) -> AsyncGenerator[dict, None]:
         """循环成功后的预处理事件（reasoning 完成事件）"""
         return
-        yield  # noqa: 使函数成为 async generator
+        yield  # 使函数成为 async generator
 
 
 class NormalStreamStrategy(BaseStreamStrategy):
@@ -85,7 +85,7 @@ class NormalStreamStrategy(BaseStreamStrategy):
     enable_deep_thinking = False
     reasoning_source = "model_intrinsic"
 
-    async def on_loop_success(self, ctx: StreamContext, data: Dict) -> AsyncGenerator[Dict, None]:
+    async def on_loop_success(self, ctx: StreamContext, data: dict) -> AsyncGenerator[dict, None]:
         """普通模式：仅当 _enable_deep_thinking 且有模型自带推理内容时发送 reasoning 完成事件"""
         if (ctx.accumulated_reasoning
                 and ctx.accumulated_reasoning.get("content", "").strip()
@@ -107,7 +107,7 @@ class DeepThinkingStreamStrategy(BaseStreamStrategy):
     enable_deep_thinking = True
     reasoning_source = "deep_thinking"
 
-    async def on_loop_start(self, ctx: StreamContext, data: Dict) -> AsyncGenerator[Dict, None]:
+    async def on_loop_start(self, ctx: StreamContext, data: dict) -> AsyncGenerator[dict, None]:
         """深度思考模式：发送初始 reasoning 事件"""
         ctx.has_sent_reasoning = True
         ctx.thinking_start_time = time.time()
@@ -120,7 +120,7 @@ class DeepThinkingStreamStrategy(BaseStreamStrategy):
             },
         }
 
-    async def on_loop_success(self, ctx: StreamContext, data: Dict) -> AsyncGenerator[Dict, None]:
+    async def on_loop_success(self, ctx: StreamContext, data: dict) -> AsyncGenerator[dict, None]:
         """深度思考模式：总是发送 reasoning 完成事件（内容或完成提示）"""
         thinking_duration = round(time.time() - ctx.thinking_start_time, 1) if ctx.thinking_start_time else 0
         final_reasoning = (ctx.accumulated_reasoning.get("content") or "").strip()

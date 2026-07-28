@@ -13,11 +13,10 @@
 """
 
 import re
-from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from enum import Enum
 
-from Django_xm.apps.context_manager.config import get_logger
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -33,7 +32,7 @@ class SectionPriority(Enum):
 class AgentState:
     current_goal: str = ""
     progress: str = ""
-    todos: List[str] = field(default_factory=list)
+    todos: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -49,15 +48,15 @@ _CRITICAL_KEYWORDS = re.compile(r"(?:必须|禁止|不要|务必|严禁|绝不�
 
 class AttentionGuide:
 
-    def __init__(self, state: Optional[AgentState] = None):
+    def __init__(self, state: AgentState | None = None):
         self._state = state or AgentState()
-        self._sections: Dict[str, Section] = {}
+        self._sections: dict[str, Section] = {}
 
     def update_state(
         self,
-        goal: Optional[str] = None,
-        progress: Optional[str] = None,
-        todos: Optional[List[str]] = None,
+        goal: str | None = None,
+        progress: str | None = None,
+        todos: list[str] | None = None,
     ) -> AgentState:
         if goal is not None:
             self._state.current_goal = goal
@@ -104,11 +103,11 @@ class AttentionGuide:
                 result.append(sentence)
         return "".join(result)
 
-    def reorder_sections(self, sections_dict: Dict[str, str]) -> str:
+    def reorder_sections(self, sections_dict: dict[str, str]) -> str:
         if not sections_dict:
             return ""
 
-        parsed: List[Section] = []
+        parsed: list[Section] = []
         for name, content in sections_dict.items():
             has_critical = bool(_CRITICAL_KEYWORDS.search(content))
             if has_critical:
@@ -123,22 +122,20 @@ class AttentionGuide:
                 priority = SectionPriority.NORMAL
             parsed.append(Section(name=name, content=content, priority=priority, has_critical=has_critical))
 
-        head_sections: List[Section] = []
-        middle_sections: List[Section] = []
-        tail_sections: List[Section] = []
+        head_sections: list[Section] = []
+        middle_sections: list[Section] = []
+        tail_sections: list[Section] = []
 
         for sec in parsed:
-            if sec.priority == SectionPriority.CRITICAL or sec.has_critical:
-                head_sections.append(sec)
-            elif sec.priority == SectionPriority.HIGH:
+            if sec.priority == SectionPriority.CRITICAL or sec.has_critical or sec.priority == SectionPriority.HIGH:
                 head_sections.append(sec)
             elif sec.priority == SectionPriority.LOW:
                 tail_sections.append(sec)
             else:
                 middle_sections.append(sec)
 
-        constraint_sections: List[Section] = []
-        remaining_middle: List[Section] = []
+        constraint_sections: list[Section] = []
+        remaining_middle: list[Section] = []
         for sec in middle_sections:
             if sec.has_critical or _CRITICAL_KEYWORDS.search(sec.content):
                 constraint_sections.append(sec)
@@ -147,7 +144,7 @@ class AttentionGuide:
 
         ordered = head_sections + remaining_middle + constraint_sections + tail_sections
 
-        parts: List[str] = []
+        parts: list[str] = []
         state_block = self.get_state_block()
 
         if state_block:

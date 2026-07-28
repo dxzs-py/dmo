@@ -3,7 +3,6 @@
 
 所有响应格式统一为 {code, message, data}。
 """
-from typing import Any, Dict, Optional
 
 from rest_framework.response import Response
 
@@ -15,7 +14,7 @@ def api_response(
     message=None,
     data=None,
     http_status=None,
-    headers: Optional[Dict[str, str]] = None,
+    headers: dict[str, str] | None = None,
 ):
     """统一 API 响应构建
 
@@ -47,7 +46,7 @@ def api_response(
     return response
 
 
-def success_response(data=None, message="操作成功", http_status=None, headers: Optional[Dict[str, str]] = None):
+def success_response(data=None, message="操作成功", http_status=None, headers: dict[str, str] | None = None):
     """成功响应 (200)"""
     return api_response(
         code=ErrorCode.SUCCESS,
@@ -58,7 +57,7 @@ def success_response(data=None, message="操作成功", http_status=None, header
     )
 
 
-def error_response(code=ErrorCode.SERVER_ERROR, message=None, data=None, http_status=None, headers: Optional[Dict[str, str]] = None):
+def error_response(code=ErrorCode.SERVER_ERROR, message=None, data=None, http_status=None, headers: dict[str, str] | None = None):
     """错误响应"""
     return api_response(code=code, message=message, data=data, http_status=http_status, headers=headers)
 

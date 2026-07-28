@@ -16,7 +16,8 @@
 """
 
 import logging
-from typing import Any, AsyncGenerator, Dict, List
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from langchain_core.messages import AIMessage
 
@@ -38,15 +39,15 @@ logger = logging.getLogger(__name__)
 
 async def finalize_stream(
     ctx: StreamContext,
-    data: Dict,
-    tools: List,
+    data: dict,
+    tools: list,
     model_instance: Any,
     strategy: BaseStreamStrategy,
     cb,
     fb_callback,
     usage_tracker,
     token_detail_tracker,
-) -> AsyncGenerator[Dict, None]:
+) -> AsyncGenerator[dict, None]:
     """循环成功后的统一收尾
 
     Args:
@@ -87,7 +88,21 @@ async def finalize_stream(
             yield event
         return  # 审批中断时跳过后续 finalize
 
-    # 5. finalize_tool_calls（正常路径）
+    # 5. Agent 模式：刷新缓冲的 _pending_content（最终回答）
+    # 在流式传输中，AIMessage 的 content 先于 tool_calls 到达，
+    # 所以 content 被缓冲（_pending_content）而非立即发送。
+    # 当流结束时，缓冲区中的 content 就是最终回答（无 tool_calls 的最后一条 AIMessage）
+    pending = ctx.accumulated_reasoning.get("_pending_content", "") if ctx.accumulated_reasoning else ""
+    if pending and data.get('mode') == 'agent':
+        logger.debug(f"Agent 模式: 刷新缓冲的最终回答内容 ({len(pending)} 字符)")
+        yield {"type": "chunk", "content": pending}
+        ctx.current_message_content += pending
+        ctx.accumulated_reasoning["_pending_content"] = ""
+        # 同步清除 stream_state，避免 generate() finally 重复刷新
+        from Django_xm.apps.chat.services.stream_helpers import _sync_pending_to_stream_state
+        _sync_pending_to_stream_state(ctx.accumulated_reasoning)
+
+    # 6. finalize_tool_calls（正常路径）
     for tool_update_event in finalize_tool_calls(
         ctx.all_messages, ctx.tool_calls_map, ctx.tool_args_accumulator,
         session_id=data.get('session_id'),
@@ -95,7 +110,7 @@ async def finalize_stream(
     ):
         yield tool_update_event
 
-    # 6. 深度思考兜底：content 为空时用推理内容作为主内容（仅深度思考模式）
+    # 7. 深度思考兜底：content 为空时用推理内容作为主内容（仅深度思考模式）
     if (strategy.enable_deep_thinking
             and not ctx.current_message_content.strip()
             and not ctx.interrupt_info
@@ -108,11 +123,11 @@ async def finalize_stream(
         yield {"type": "chunk", "content": reasoning_text}
         ctx.current_message_content = reasoning_text
 
-    # 7. strategy.on_loop_success（reasoning 完成事件）
+    # 8. strategy.on_loop_success（reasoning 完成事件）
     async for event in strategy.on_loop_success(ctx, data):
         yield event
 
-    # 8. _finalize_stream_response（补发 + 补全检查 + 建议生成）
+    # 9. _finalize_stream_response（补发 + 补全检查 + 建议生成）
     async for event in _finalize_stream_response(
         ctx, data, tools, model_instance,
     ):
@@ -121,10 +136,10 @@ async def finalize_stream(
 
 async def _finalize_stream_response(
     ctx: StreamContext,
-    data: Dict,
-    tools: List,
+    data: dict,
+    tools: list,
     model_instance: Any,
-) -> AsyncGenerator[Dict, None]:
+) -> AsyncGenerator[dict, None]:
     """流式响应收尾：补发剩余内容 + 工具结果补发 + 补全检查 + 建议生成
 
     工具结果补发使用元数据驱动（output_to_chat / raw_content），

@@ -1,10 +1,8 @@
-import os
-from django.db import models
 from django.contrib.auth.models import AbstractUser, UserManager
 from django.core.validators import RegexValidator
-from django.utils import timezone
+from django.db import models
 
-from Django_xm.apps.core.base_models import SoftDeleteManager, AllObjectsManager
+from Django_xm.apps.core.base_models import AllObjectsManager, SoftDeleteManager
 
 
 def avatar_upload_path(instance, filename):

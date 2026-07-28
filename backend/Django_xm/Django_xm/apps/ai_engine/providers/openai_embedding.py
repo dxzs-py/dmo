@@ -4,14 +4,14 @@ OpenAI Embedding Provider
 使用 langchain_openai.OpenAIEmbeddings 初始化
 文档：https://docs.langchain.com/oss/python/integrations/embeddings/openai
 """
-from typing import Any, Dict, Optional
+from typing import Any
 
 from langchain_core.embeddings import Embeddings
 
 from Django_xm.apps.ai_engine.config import settings
 
 
-def get_provider_config() -> Dict[str, Any]:
+def get_provider_config() -> dict[str, Any]:
     return {
         "api_key": settings.openai_api_key,
         "base_url": settings.openai_api_base,
@@ -20,9 +20,9 @@ def get_provider_config() -> Dict[str, Any]:
 
 
 def create_embedding(
-    model: Optional[str] = None,
+    model: str | None = None,
     batch_size: int = 100,
-    dimensions: Optional[int] = None,
+    dimensions: int | None = None,
     **kwargs: Any,
 ) -> Embeddings:
     """使用 OpenAI 官方 SDK 创建 Embeddings 实例
@@ -38,7 +38,7 @@ def create_embedding(
     from langchain_openai import OpenAIEmbeddings
 
     cfg = get_provider_config()
-    init_kwargs: Dict[str, Any] = {
+    init_kwargs: dict[str, Any] = {
         "model": model or cfg["model"],
         "api_key": cfg["api_key"],
         "base_url": cfg["base_url"],

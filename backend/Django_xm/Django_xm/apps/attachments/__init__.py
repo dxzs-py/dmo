@@ -21,7 +21,7 @@ def __getattr__(name):
 
 
 __all__ = [
+    "AttachmentLifecycleService",
     "AttachmentService",
     "DocumentMemoryService",
-    "AttachmentLifecycleService",
 ]

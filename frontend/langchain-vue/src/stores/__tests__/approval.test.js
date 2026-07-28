@@ -3,18 +3,18 @@ import { setActivePinia, createPinia } from 'pinia'
 import { StreamState } from '@/types'
 
 // Mock session store
-// 统一方法：syncMessageByBackendIdToBackend / updateToolCallStatus / findToolCallInSession /
-//          setStreamStateToMessageByIdx / appendToMessage / addOrUpdateToolCall /
-//          updateOrAddToolResult / setReasoningToMessage
+// 方法名与 stores/session.js 导出保持一致（approval store 调用的实际方法名）
 const mockSessionStore = {
   currentSessionId: 'session-1',
   sessions: [],
   setStreamStateToLastMessage: vi.fn(),
-  updateToolCallApprovalStateOnly: vi.fn(),
+  updateToolCallApprovalState: vi.fn(),
   setApprovalToToolCall: vi.fn(),
+  setApprovalToLastMessage: vi.fn(),
   appendToLastAssistantMessage: vi.fn(),
-  addOrUpdateToolCall: vi.fn(),
-  updateOrAddToolResult: vi.fn(),
+  appendToLastMessage: vi.fn(),
+  addOrUpdateToolCallToLastMessage: vi.fn(),
+  updateOrAddToolResultToLastMessage: vi.fn(),
   setReasoningToLastMessage: vi.fn(),
   syncLastMessageToBackend: vi.fn().mockResolvedValue(undefined),
   syncMessageByBackendIdToBackend: vi.fn().mockResolvedValue(undefined),
@@ -49,25 +49,21 @@ vi.mock('@/stores/model', () => ({
 }))
 
 // Mock approval API
-const mockResumeApproval = vi.fn().mockResolvedValue({})
-const mockRejectApproval = vi.fn().mockResolvedValue({})
 // chat 审批 SSE 流响应需提供 headers.get，否则 _executeChatApproval 解析 content-type 时抛错
 const mockResumeApprovalStream = vi.fn().mockResolvedValue({
   headers: { get: () => 'text/event-stream' },
 })
 vi.mock('@/api/approval', () => ({
-  resumeApproval: (...args) => mockResumeApproval(...args),
-  rejectApproval: (...args) => mockRejectApproval(...args),
   resumeApprovalStream: (...args) => mockResumeApprovalStream(...args),
 }))
 
 // Mock research API
-// deep_research 审批通过 deepResearchAPI.approveResearch（非 resumeApproval/rejectApproval）
+// deep_research 审批通过 approveResearchCommand / rejectResearchCommand（@/api/research 命名导出）
 const mockApproveResearch = vi.fn().mockResolvedValue({})
+const mockRejectResearch = vi.fn().mockResolvedValue({})
 vi.mock('@/api/research', () => ({
-  deepResearchAPI: {
-    approveResearch: (...args) => mockApproveResearch(...args),
-  },
+  approveResearchCommand: (...args) => mockApproveResearch(...args),
+  rejectResearchCommand: (...args) => mockRejectResearch(...args),
 }))
 
 // Mock useStreamFinalizer
@@ -125,13 +121,12 @@ describe('useApprovalStore', () => {
     mockSessionStore.findToolCallInSession.mockReturnValue(null)
     mockModelStore.ensureProvidersLoaded.mockResolvedValue(undefined)
     mockModelStore.getModelConfig.mockReturnValue({ provider_id: 'p1', model_name: 'm1' })
-    mockResumeApproval.mockResolvedValue({})
-    mockRejectApproval.mockResolvedValue({})
     // 需提供 headers.get 方法，避免 _executeChatApproval 解析 content-type 抛错
     mockResumeApprovalStream.mockResolvedValue({
       headers: { get: () => 'text/event-stream' },
     })
     mockApproveResearch.mockResolvedValue({})
+    mockRejectResearch.mockResolvedValue({})
     mockReadSSEStream.mockResolvedValue(undefined)
     mockFinalizeStream.mockResolvedValue(true)
     mockSessionStore.sessions = []
@@ -173,10 +168,9 @@ describe('useApprovalStore', () => {
       expect(store.pendingApprovals.has('int-2')).toBe(true)
       const entry = store.pendingApprovals.get('int-2')
       expect(entry.approvalData.state).toBe('processing')
-      // updateToolCallApprovalStateOnly 调用 5 参数（含 messageBackendId、data）
-      expect(mockSessionStore.updateToolCallApprovalStateOnly).toHaveBeenCalledWith(
-        'session-1', 'int-2', 'processing', null,
-        expect.objectContaining({ interrupt_id: 'int-2', type: 'approval_processing' })
+      // updateToolCallApprovalState 调用 3 参数（sessionId, toolCallId, state）
+      expect(mockSessionStore.updateToolCallApprovalState).toHaveBeenCalledWith(
+        'session-1', 'int-2', 'processing'
       )
     })
 
@@ -193,10 +187,9 @@ describe('useApprovalStore', () => {
       )
 
       expect(store.pendingApprovals.has('int-3')).toBe(false)
-      // updateToolCallApprovalStateOnly 调用 5 参数（含 messageBackendId、data）
-      expect(mockSessionStore.updateToolCallApprovalStateOnly).toHaveBeenCalledWith(
-        'session-1', 'int-3', 'approved', null,
-        expect.objectContaining({ interrupt_id: 'int-3', type: 'approval_approved', state: 'approved' })
+      // updateToolCallApprovalState 调用 3 参数（sessionId, toolCallId, state）
+      expect(mockSessionStore.updateToolCallApprovalState).toHaveBeenCalledWith(
+        'session-1', 'int-3', 'approved'
       )
     })
 
@@ -212,10 +205,9 @@ describe('useApprovalStore', () => {
       )
 
       expect(store.pendingApprovals.has('int-4')).toBe(false)
-      // updateToolCallApprovalStateOnly 调用 5 参数（含 messageBackendId、data）
-      expect(mockSessionStore.updateToolCallApprovalStateOnly).toHaveBeenCalledWith(
-        'session-1', 'int-4', 'rejected', null,
-        expect.objectContaining({ interrupt_id: 'int-4', type: 'approval_rejected', state: 'rejected' })
+      // updateToolCallApprovalState 调用 3 参数（sessionId, toolCallId, state）
+      expect(mockSessionStore.updateToolCallApprovalState).toHaveBeenCalledWith(
+        'session-1', 'int-4', 'rejected'
       )
     })
 
@@ -231,17 +223,16 @@ describe('useApprovalStore', () => {
       )
 
       expect(store.pendingApprovals.has('int-5')).toBe(false)
-      // timeout 统一使用 updateToolCallApprovalStateOnly（不覆盖 toolCall.status）
-      // 调用 5 参数（含 messageBackendId、data）
-      expect(mockSessionStore.updateToolCallApprovalStateOnly).toHaveBeenCalledWith(
-        'session-1', 'int-5', 'timeout', null,
-        expect.objectContaining({ interrupt_id: 'int-5', type: 'approval_timeout' })
+      // timeout 统一使用 updateToolCallApprovalState（不覆盖 toolCall.status）
+      // 调用 3 参数（sessionId, toolCallId, state）
+      expect(mockSessionStore.updateToolCallApprovalState).toHaveBeenCalledWith(
+        'session-1', 'int-5', 'timeout'
       )
     })
   })
 
   describe('executeApproval 路由', () => {
-    it('source=deep_research approved=true 调用 approveResearch', async () => {
+    it('source=deep_research approved=true 调用 approveResearchCommand', async () => {
       store.handleApprovalEvent(
         { interrupt_id: 'int-dr', tool_name: 'shell', state: 'pending', source: 'deep_research' },
         { source: 'deep_research', taskId: 'task-dr', sessionId: 'session-1' }
@@ -250,12 +241,14 @@ describe('useApprovalStore', () => {
       const approval = { interrupt_id: 'int-dr' }
       await store.executeApproval(approval, true, null, { taskId: 'task-dr' })
 
-      // deep_research 通过 deepResearchAPI.approveResearch(taskId, interruptId, approved, userInput)
-      expect(mockApproveResearch).toHaveBeenCalledWith('task-dr', 'int-dr', true, null)
+      // deep_research 通过 approveResearchCommand(taskId, interruptId, userInput)
+      // action 非 confirm_with_input 时 userInput 传 undefined
+      expect(mockApproveResearch).toHaveBeenCalledWith('task-dr', 'int-dr', undefined)
+      expect(mockRejectResearch).not.toHaveBeenCalled()
       expect(mockResumeApprovalStream).not.toHaveBeenCalled()
     })
 
-    it('source=deep_research approved=false 调用 approveResearch', async () => {
+    it('source=deep_research approved=false 调用 rejectResearchCommand', async () => {
       store.handleApprovalEvent(
         { interrupt_id: 'int-dr2', tool_name: 'shell', state: 'pending', source: 'deep_research' },
         { source: 'deep_research', taskId: 'task-dr', sessionId: 'session-1' }
@@ -264,9 +257,10 @@ describe('useApprovalStore', () => {
       const approval = { interrupt_id: 'int-dr2' }
       await store.executeApproval(approval, false, null, { taskId: 'task-dr' })
 
-      // deep_research 拒绝也通过 approveResearch（approved=false）
-      expect(mockApproveResearch).toHaveBeenCalledWith('task-dr', 'int-dr2', false, null)
-      expect(mockResumeApproval).not.toHaveBeenCalled()
+      // deep_research 拒绝通过 rejectResearchCommand(taskId, interruptId)
+      expect(mockRejectResearch).toHaveBeenCalledWith('task-dr', 'int-dr2')
+      expect(mockApproveResearch).not.toHaveBeenCalled()
+      expect(mockResumeApprovalStream).not.toHaveBeenCalled()
     })
 
     it('source=chat 调用 resumeApprovalStream（SSE 流）', async () => {

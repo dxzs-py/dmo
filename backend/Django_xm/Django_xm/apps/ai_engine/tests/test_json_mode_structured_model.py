@@ -11,10 +11,11 @@
 """
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from django.test import SimpleTestCase
-from pydantic import BaseModel as PydanticBaseModel, Field
+from pydantic import BaseModel as PydanticBaseModel
+from pydantic import Field
 
 from Django_xm.apps.ai_engine.services.llm_factory import JsonModeStructuredModel
 
@@ -100,23 +101,33 @@ class JsonModeStructuredModelTestCase(SimpleTestCase):
 
         self.assertIsNone(result)
 
-    @patch("Django_xm.apps.ai_engine.services.llm_factory.asyncio")
-    def test_ainvoke_works(self, _mock_asyncio):
-        """ainvoke 异步调用能正确解析"""
-        json_content = json.dumps({"name": "赵六", "age": 40}, ensure_ascii=False)
-        model, mock_chat_model = self._make_model(json_content)
+    def test_ainvoke_works(self):
+        """ainvoke 异步调用能正确解析
 
-        # ainvoke 返回的是 MagicMock（因为 mock_chat_model.ainvoke 是同步的 MagicMock）
-        # 这里只验证 ainvoke 被调用且 _parse_result 能处理返回值
+        JsonModeStructuredModel.ainvoke 内部仅 await self._model.ainvoke，
+        不直接使用 asyncio 模块。这里用 asyncio.run + AsyncMock 验证完整异步路径。
+        """
         import asyncio
+        from unittest.mock import AsyncMock
 
-        async def _run():
-            return await model.ainvoke([{"role": "user", "content": "test"}])
+        json_content = json.dumps({"name": "赵六", "age": 40}, ensure_ascii=False)
+        mock_chat_model = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = json_content
+        mock_chat_model.ainvoke = AsyncMock(return_value=mock_response)
 
-        # 由于 mock 的 ainvoke 返回同步值，直接调用 _parse_result 验证
-        result = model._parse_result(json_content)
+        model = JsonModeStructuredModel(
+            model=mock_chat_model,
+            schema=TestSchema,
+            provider="deepseek",
+            model_name="deepseek-v4-flash",
+        )
+
+        result = asyncio.run(model.ainvoke([{"role": "user", "content": "test"}]))
+
         self.assertIsNotNone(result)
         self.assertEqual(result.name, "赵六")
+        self.assertEqual(result.age, 40)
 
     def test_single_message_input(self):
         """非 list 输入（单条消息）能正确处理

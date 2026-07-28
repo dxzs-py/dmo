@@ -4,18 +4,18 @@
 本节点负责对用户提交的答案进行自动评分。
 """
 
-import logging
-from datetime import datetime
-from typing import Dict, Any, List
+from datetime import UTC, datetime
+from typing import Any
 
-from ..services.state import StudyFlowState, ScoreDetail
 from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
 from Django_xm.apps.core.config import get_logger
+
+from ..services.state import ScoreDetail, StudyFlowState
 
 logger = get_logger(__name__)
 
 
-def grading_node(state: StudyFlowState) -> Dict[str, Any]:
+def grading_node(state: StudyFlowState) -> dict[str, Any]:
     """
     自动评分节点
 
@@ -37,13 +37,13 @@ def grading_node(state: StudyFlowState) -> Dict[str, Any]:
                 "score": 0,
                 "score_details": {"total_count": 0, "correct_count": 0, "question_scores": []},
                 "current_step": "grading_error",
-                "updated_at": datetime.now().isoformat()
+                "updated_at": datetime.now(UTC).isoformat()
             }
 
         questions = quiz["questions"]
         total_points = quiz["total_points"]
 
-        score_details: List[ScoreDetail] = []
+        score_details: list[ScoreDetail] = []
         total_earned = 0
         correct_count = 0
 
@@ -150,7 +150,7 @@ def grading_node(state: StudyFlowState) -> Dict[str, Any]:
         return {
             "score": 0,
             "score_details": {"total_count": 0, "correct_count": 0, "question_scores": []},
-            "error": f"评分失败: {str(e)}",
+            "error": f"评分失败: {e!s}",
             "current_step": "grading_error",
-            "updated_at": datetime.now().isoformat()
+            "updated_at": datetime.now(UTC).isoformat()
         }

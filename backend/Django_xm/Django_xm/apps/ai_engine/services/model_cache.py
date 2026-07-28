@@ -4,13 +4,11 @@ Model instance cache - thread-safe LRU cache for LLM model instances.
 Eliminates duplicated cache logic across model factory functions.
 """
 
+import logging
 import threading
 from collections import OrderedDict
-from typing import Optional
 
 from langchain_core.language_models.chat_models import BaseChatModel
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +26,11 @@ def make_cache_key(
     provider: str,
     temperature: float,
     streaming: bool,
-    max_tokens: Optional[int],
+    max_tokens: int | None,
     special_suffix: str = "",
-    api_key: Optional[str] = None,
-    base_url: Optional[str] = None,
-    max_retries: Optional[int] = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    max_retries: int | None = None,
 ) -> str:
     """生成模型缓存 key，包含认证信息以区分不同 API 配置的同名模型"""
     key = f"{provider}:{model_name}:t{temperature}:s{streaming}:mt{max_tokens}"
@@ -49,7 +47,7 @@ def make_cache_key(
     return key
 
 
-def get_cached_model(cache_key: str) -> Optional[BaseChatModel]:
+def get_cached_model(cache_key: str) -> BaseChatModel | None:
     """Thread-safe LRU cache lookup. Returns None on miss."""
     with _model_cache_lock:
         if cache_key in _model_instance_cache:

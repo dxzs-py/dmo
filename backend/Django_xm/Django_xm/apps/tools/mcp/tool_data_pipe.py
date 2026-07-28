@@ -19,9 +19,9 @@
 """
 
 import json
-from typing import Any, List, Optional
+from typing import Any
 
-from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -55,7 +55,7 @@ class ToolDataPipe:
         except Exception as e:
             logger.error(f"工具数据写入失败: tool={tool_name}, key={key}, error={e}")
 
-    async def read(self, tool_name: str, key: str) -> Optional[Any]:
+    async def read(self, tool_name: str, key: str) -> Any | None:
         """工具读取中间结果
 
         Args:
@@ -75,7 +75,7 @@ class ToolDataPipe:
             logger.error(f"工具数据读取失败: tool={tool_name}, key={key}, error={e}")
             return None
 
-    async def list_keys(self, tool_name: str) -> List[str]:
+    async def list_keys(self, tool_name: str) -> list[str]:
         """列出工具的所有数据键
 
         Args:
@@ -92,7 +92,7 @@ class ToolDataPipe:
             logger.error(f"列出工具数据键失败: tool={tool_name}, error={e}")
             return []
 
-    async def clear(self, tool_name: Optional[str] = None) -> None:
+    async def clear(self, tool_name: str | None = None) -> None:
         """清除工具数据
 
         Args:

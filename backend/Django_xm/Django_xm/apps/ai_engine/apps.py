@@ -20,13 +20,18 @@ class AiEngineConfig(AppConfig):
     verbose_name = 'AI引擎模块'
 
     def ready(self):
-        import Django_xm.apps.ai_engine.signals
+
+        # LangSmith 追踪配置统一入口（Task 14.1 / 16.3 / 15.6a）
+        # 抽取自 agent_factory.py 与 base_builder.py 的重复实现
+        # 归属 ai_engine（LangSmith 追踪是 AI 引擎职责，不应放在 core）
+        from Django_xm.apps.ai_engine.services.langsmith_setup import configure_langsmith
+        configure_langsmith()
 
         # allowed_objects 已在 checkpointer_factory.py 模块级别设置，
         # 此处仅做兜底确保 Reviver 已初始化
         try:
-            from langgraph.checkpoint.serde import jsonplus as _jsonplus
             from langchain_core.load.load import Reviver
+            from langgraph.checkpoint.serde import jsonplus as _jsonplus
             if not isinstance(getattr(_jsonplus, 'LC_REVIVER', None), Reviver):
                 _jsonplus.LC_REVIVER = Reviver(allowed_objects="messages")
         except Exception:

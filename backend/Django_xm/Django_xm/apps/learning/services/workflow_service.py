@@ -3,20 +3,12 @@
 封装工作流相关的业务逻辑
 """
 import uuid
-from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Any
 
-from .study_flow import (
-    _get_study_flow,
-    submit_answers,
-    get_workflow_state,
-    get_workflow_history,
-    _study_flow_cache,
-    start_study_flow
-)
-from .state import StudyFlowState
-from .persistence_service import get_persistence_service
 from Django_xm.apps.core.config import get_logger
+
+from .persistence_service import get_persistence_service
+from .study_flow import _study_flow_cache, get_workflow_history, get_workflow_state, start_study_flow, submit_answers
 
 logger = get_logger(__name__)
 persistence_service = get_persistence_service()
@@ -27,10 +19,11 @@ class WorkflowService:
 
     @staticmethod
     def start_workflow(
-        user_question: str, 
-        thread_id: Optional[str] = None,
-        user_id: Optional[int] = None
-    ) -> Dict[str, Any]:
+        user_question: str,
+        thread_id: str | None = None,
+        user_id: int | None = None,
+        knowledge_base_ids: list | None = None,
+    ) -> dict[str, Any]:
         """
         启动新的学习工作流
 
@@ -38,6 +31,7 @@ class WorkflowService:
             user_question: 用户的学习问题
             thread_id: 可选的线程ID
             user_id: 可选的用户ID
+            knowledge_base_ids: 可选的知识库名称列表（用户选择用于 RAG 检索的学习资料）
 
         Returns:
             工作流执行结果
@@ -46,7 +40,7 @@ class WorkflowService:
 
         logger.info(f"[Service] 启动工作流，thread_id={thread_id}")
 
-        result = start_study_flow(user_question, thread_id, user_id)
+        result = start_study_flow(user_question, thread_id, user_id, knowledge_base_ids)
 
         logger.info(f"[Service] 工作流启动成功，thread_id={thread_id}")
 
@@ -71,10 +65,10 @@ class WorkflowService:
 
     @staticmethod
     def submit_user_answers(
-        thread_id: str, 
-        answers: Dict[str, str],
-        user_id: Optional[int] = None
-    ) -> Dict[str, Any]:
+        thread_id: str,
+        answers: dict[str, str],
+        user_id: int | None = None
+    ) -> dict[str, Any]:
         """
         提交用户答案，继续执行工作流
 
@@ -121,7 +115,7 @@ class WorkflowService:
         }
 
     @staticmethod
-    def get_workflow_status(thread_id: str) -> Optional[Dict[str, Any]]:
+    def get_workflow_status(thread_id: str) -> dict[str, Any] | None:
         """
         获取工作流的当前状态
 
@@ -149,7 +143,7 @@ class WorkflowService:
         return get_workflow_history(thread_id)
 
     @staticmethod
-    def delete_workflow(thread_id: str, user_id: Optional[int] = None) -> Dict[str, Any]:
+    def delete_workflow(thread_id: str, user_id: int | None = None) -> dict[str, Any]:
         """
         删除工作流
 
@@ -182,6 +176,7 @@ class WorkflowService:
         # 清理 LangGraph checkpoint 数据
         try:
             import asyncio
+
             from Django_xm.apps.ai_engine.services.checkpointer_factory import delete_thread_checkpoints
             asyncio.run(delete_thread_checkpoints(thread_id))
         except Exception as e:
@@ -203,8 +198,8 @@ class WorkflowService:
     @staticmethod
     def list_user_workflows(
         user_id: int,
-        status: Optional[str] = None,
-        search: Optional[str] = None,
+        status: str | None = None,
+        search: str | None = None,
     ):
         """
         列出用户的所有工作流

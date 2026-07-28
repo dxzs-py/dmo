@@ -2,11 +2,11 @@
 通用异步任务管理模块
 基于 Redis 缓存提供任务状态跟踪、查询和管理功能
 """
-import uuid
 import logging
-from datetime import datetime
-from typing import Dict, Any, Optional, List
+import uuid
+from datetime import UTC, datetime
 from enum import Enum
+from typing import Any
 
 from django.core.cache import cache
 
@@ -56,16 +56,16 @@ class TaskManager:
     def create_task(
         self,
         task_type: TaskType,
-        user_id: Optional[int] = None,
-        task_name: Optional[str] = None,
-        task_params: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        task_id: Optional[str] = None,
+        user_id: int | None = None,
+        task_name: str | None = None,
+        task_params: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        task_id: str | None = None,
     ) -> str:
         if not task_id:
             task_id = str(uuid.uuid4())
 
-        now = datetime.now().isoformat()
+        now = datetime.now(UTC).isoformat()
 
         metadata = metadata or {}
         if task_name:
@@ -106,8 +106,8 @@ class TaskManager:
     def update_task_status(
         self,
         task_id: str,
-        status_updates: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
+        status_updates: dict[str, Any],
+    ) -> dict[str, Any] | None:
         cache_key = self._get_cache_key(task_id)
         task_data = self.cache.get(cache_key)
 
@@ -116,14 +116,14 @@ class TaskManager:
             return None
 
         task_data.update(status_updates)
-        task_data['updated_at'] = datetime.now().isoformat()
+        task_data['updated_at'] = datetime.now(UTC).isoformat()
 
         new_status = task_data.get('status')
         if new_status in (TaskStatus.STARTED.value, TaskStatus.PROGRESS.value) and not task_data.get('start_time'):
-            task_data['start_time'] = datetime.now().isoformat()
+            task_data['start_time'] = datetime.now(UTC).isoformat()
 
         if new_status in _TERMINAL_STATES and not task_data.get('end_time'):
-            task_data['end_time'] = datetime.now().isoformat()
+            task_data['end_time'] = datetime.now(UTC).isoformat()
 
         self.cache.set(cache_key, task_data, self.CACHE_TIMEOUT)
 
@@ -131,17 +131,17 @@ class TaskManager:
 
         return task_data
 
-    def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
+    def get_task_status(self, task_id: str) -> dict[str, Any] | None:
         cache_key = self._get_cache_key(task_id)
         return self.cache.get(cache_key)
 
     def get_user_tasks(
         self,
         user_id: int,
-        task_type: Optional[TaskType] = None,
-        status: Optional[TaskStatus] = None,
+        task_type: TaskType | None = None,
+        status: TaskStatus | None = None,
         limit: int = 50,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         logger.debug(f"[TaskManager] 查询用户任务：user={user_id}")
 
         user_tasks_key = self._get_user_tasks_key(user_id)
@@ -182,7 +182,7 @@ class TaskManager:
         return bool(deleted)
 
 
-_task_manager: Optional[TaskManager] = None
+_task_manager: TaskManager | None = None
 
 
 def get_task_manager() -> TaskManager:
@@ -194,11 +194,11 @@ def get_task_manager() -> TaskManager:
 
 def create_task(
     task_type: TaskType,
-    user_id: Optional[int] = None,
-    task_name: Optional[str] = None,
-    task_params: Optional[Dict[str, Any]] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-    task_id: Optional[str] = None,
+    user_id: int | None = None,
+    task_name: str | None = None,
+    task_params: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+    task_id: str | None = None,
 ) -> str:
     manager = get_task_manager()
     return manager.create_task(
@@ -211,17 +211,17 @@ def create_task(
     )
 
 
-def update_task_status(task_id: str, status_updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def update_task_status(task_id: str, status_updates: dict[str, Any]) -> dict[str, Any] | None:
     manager = get_task_manager()
     return manager.update_task_status(task_id, status_updates)
 
 
-def get_task_status(task_id: str) -> Optional[Dict[str, Any]]:
+def get_task_status(task_id: str) -> dict[str, Any] | None:
     manager = get_task_manager()
     return manager.get_task_status(task_id)
 
 
-def format_task_duration(task_data: Dict[str, Any]) -> Optional[str]:
+def format_task_duration(task_data: dict[str, Any]) -> str | None:
     if not task_data.get('start_time'):
         return None
 
@@ -231,7 +231,7 @@ def format_task_duration(task_data: Dict[str, Any]) -> Optional[str]:
     if end_time:
         end_time = datetime.fromisoformat(end_time)
     else:
-        end_time = datetime.now()
+        end_time = datetime.now(UTC)
 
     duration = end_time - start_time
 

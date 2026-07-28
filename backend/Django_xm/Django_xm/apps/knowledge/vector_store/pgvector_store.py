@@ -3,7 +3,6 @@
 使用 PostgreSQL + pgvector 扩展存储和检索向量数据。
 """
 import logging
-from typing import List, Optional, Dict, Any
 
 from django.conf import settings
 
@@ -28,7 +27,7 @@ def create_pgvector_store(
     collection_name: str,
     embedding=None,
     pre_collection_name: str = "",
-    user_id: Optional[int] = None,
+    user_id: int | None = None,
 ):
     """创建 PGVector 向量存储
 
@@ -74,7 +73,7 @@ def load_pgvector_store(
     try:
         from langchain_postgres.vectorstores import PGVector as LangChainPGVector
     except ImportError:
-        raise ImportError("langchain-postgres 未安装")
+        raise ImportError("langchain-postgres 未安装") from None
 
     if embedding is None:
         from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
@@ -130,7 +129,7 @@ def delete_pgvector_store(
         return False
 
 
-def list_pgvector_stores(user_id: Optional[int] = None):
+def list_pgvector_stores(user_id: int | None = None):
     """列出所有 PGVector 集合"""
     try:
         from django.db import connections

@@ -5,9 +5,8 @@
 """
 
 import logging
-from asgiref.sync import sync_to_async
-from typing import Optional, List
 
+from asgiref.sync import sync_to_async
 from langchain_core.tools import BaseTool
 
 logger = logging.getLogger(__name__)
@@ -22,10 +21,10 @@ class SkillProvider:
 
     @staticmethod
     async def get_skill_tools(
-        user_id: Optional[int] = None,
-        available_tools: Optional[List[BaseTool]] = None,
-        selected_tools: Optional[List[str]] = None,
-    ) -> List[BaseTool]:
+        user_id: int | None = None,
+        available_tools: list[BaseTool] | None = None,
+        selected_tools: list[str] | None = None,
+    ) -> list[BaseTool]:
         """获取所有活跃技能对应的 BaseTool 列表
 
         Args:
@@ -56,8 +55,8 @@ class SkillProvider:
 
     @staticmethod
     def _inject_dependencies(
-        skill_tools: List[BaseTool],
-        available_tools: List[BaseTool],
+        skill_tools: list[BaseTool],
+        available_tools: list[BaseTool],
     ) -> None:
         """自动注入 Skill 步骤引用的子工具
 

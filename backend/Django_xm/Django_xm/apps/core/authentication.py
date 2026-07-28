@@ -26,9 +26,9 @@ class QueryParamTokenAuthentication(BaseAuthentication):
             return None
 
         try:
+            from rest_framework import HTTP_HEADER_ENCODING
             from rest_framework_simplejwt.authentication import JWTAuthentication
             from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
-            from rest_framework import HTTP_HEADER_ENCODING
 
             auth = JWTAuthentication()
             # 将查询参数 token 构造为 Bearer header 格式，复用 simplejwt 验证流程

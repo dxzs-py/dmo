@@ -17,18 +17,17 @@
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, Tuple
+from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
-from Django_xm.apps.ai_engine.config import get_logger
-from .llm_factory import (
-    _create_single_chat_model,
-    get_chat_model_by_provider,
-    get_system_default_chat_model,
-)
 # resilient_invoker 已从 ai_engine/services 迁移至 agent_hub/services，使用绝对路径导入
 from Django_xm.apps.agent_hub.services.resilient_invoker import ResilientModel
+from Django_xm.apps.core.config import get_logger
+
+from .llm_factory import (
+    get_chat_model_by_provider,
+)
 
 logger = get_logger(__name__)
 
@@ -38,7 +37,7 @@ logger = get_logger(__name__)
 # ============================================================================
 
 
-def _read_model_config(config_key: str) -> Tuple[str, str]:
+def _read_model_config(config_key: str) -> tuple[str, str]:
     """从 SystemConfig 读取模型配置
 
     Args:
@@ -62,9 +61,9 @@ def _read_model_config(config_key: str) -> Tuple[str, str]:
 def _create_model_from_candidate(
     provider_id: str,
     model_name: str,
-    temperature: Optional[float] = None,
-    max_tokens: Optional[int] = None,
-    streaming: Optional[bool] = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    streaming: bool | None = None,
     use_cache: bool = True,
     **kwargs: Any,
 ) -> BaseChatModel:
@@ -109,13 +108,13 @@ def _create_model_from_candidate(
 def _build_resilient_chain(
     primary_config_key: str,
     role_label: str,
-    temperature: Optional[float] = None,
-    max_tokens: Optional[int] = None,
-    streaming: Optional[bool] = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    streaming: bool | None = None,
     use_cache: bool = True,
     enable_fallback: bool = True,
-    model_name: Optional[str] = None,
-    model_provider: Optional[str] = None,
+    model_name: str | None = None,
+    model_provider: str | None = None,
     **kwargs: Any,
 ) -> BaseChatModel:
     """统一降级链构建：主模型 + 降级模型
@@ -198,11 +197,11 @@ def _build_resilient_chain(
 
 
 def get_default_model(
-    model_name: Optional[str] = None,
-    model_provider: Optional[str] = None,
-    temperature: Optional[float] = None,
-    max_tokens: Optional[int] = None,
-    streaming: Optional[bool] = None,
+    model_name: str | None = None,
+    model_provider: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    streaming: bool | None = None,
     use_cache: bool = True,
     enable_fallback: bool = True,
     **kwargs: Any,
@@ -244,8 +243,8 @@ def get_default_model(
 
 
 def get_helper_model(
-    temperature: Optional[float] = None,
-    max_tokens: Optional[int] = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
     streaming: bool = False,
     use_cache: bool = True,
     **kwargs: Any,
@@ -320,7 +319,7 @@ def get_structured_model(
         return _apply_structured_output(base_model, response_format)
 
     # 3. 对降级链中的每个模型应用结构化输出
-    structured_runnables: List[Any] = []
+    structured_runnables: list[Any] = []
     for model in base_model.models:
         try:
             structured = _apply_structured_output(model, response_format)
@@ -366,10 +365,10 @@ def _apply_structured_output(model: Any, schema: Any) -> Any:
 
 
 def get_streaming_model(
-    model_name: Optional[str] = None,
-    model_provider: Optional[str] = None,
-    temperature: Optional[float] = None,
-    max_tokens: Optional[int] = None,
+    model_name: str | None = None,
+    model_provider: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
     use_cache: bool = True,
     **kwargs: Any,
 ) -> BaseChatModel:

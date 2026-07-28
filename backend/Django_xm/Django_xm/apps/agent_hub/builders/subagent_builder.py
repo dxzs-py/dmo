@@ -1,16 +1,28 @@
 from __future__ import annotations
+
 import logging
-from typing import Any, List
+from typing import Any
+
+from Django_xm.apps.agent_hub.builders._registry import register_builder
+from Django_xm.apps.agent_hub.config import AgentType
 
 logger = logging.getLogger(__name__)
 
 
+@register_builder(AgentType.WEB_RESEARCHER, AgentType.DOC_ANALYST, AgentType.REPORT_WRITER)
 class SubAgentBuilder:
     async def build(self, config) -> Any:
+        from Django_xm.apps.agent_hub.builders._common import build_with_timeout
+        return await build_with_timeout(
+            self._build_internal, config, "SubAgentBuilder.build",
+        )
+
+    async def _build_internal(self, config) -> Any:
+        from langchain.agents import create_agent
+
+        from Django_xm.apps.agent_hub.middleware import build_middleware
         from Django_xm.apps.agent_hub.model_resolver import resolve_model
         from Django_xm.apps.agent_hub.tool_resolver import resolve_tools
-        from Django_xm.apps.agent_hub.middleware import build_middleware
-        from langchain.agents import create_agent
 
         model = resolve_model(config)
         tools = await resolve_tools(config)

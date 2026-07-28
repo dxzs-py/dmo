@@ -5,7 +5,9 @@ AI 引擎信号处理模块
 """
 
 import logging
+
 from django.dispatch import receiver
+
 from Django_xm.apps.core.signals import ai_data_cleanup_needed
 
 logger = logging.getLogger(__name__)

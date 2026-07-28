@@ -31,17 +31,17 @@ def __getattr__(name):
 
 
 __all__ = [
-    'debug_task',
-    'cleanup_old_task_records',
-    'check_stale_tasks',
-    'run_research_task',
-    'create_index_task',
     'add_documents_to_index_task',
-    'delete_index_task',
-    'update_index_task',
-    'execute_workflow_task',
-    'cleanup_expired_attachments',
-    'index_old_attachments',
-    'check_storage_alerts',
     'attachment_full_lifecycle',
+    'check_stale_tasks',
+    'check_storage_alerts',
+    'cleanup_expired_attachments',
+    'cleanup_old_task_records',
+    'create_index_task',
+    'debug_task',
+    'delete_index_task',
+    'execute_workflow_task',
+    'index_old_attachments',
+    'run_research_task',
+    'update_index_task',
 ]

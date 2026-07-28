@@ -6,9 +6,9 @@ Agent 管理服务
 - 模型实例解析
 - 线程配置构建
 """
-import uuid
 import logging
-from typing import Optional, Dict, Any
+import uuid
+from typing import Any
 
 from .models_context import ChatContext
 
@@ -19,7 +19,7 @@ class AgentService:
 
     CHECKPOINTER_ENABLED = True
 
-    def __init__(self, user_id: Optional[int] = None):
+    def __init__(self, user_id: int | None = None):
         self.user_id = user_id
         self._checkpointer = None
         self._store = None
@@ -34,9 +34,9 @@ class AgentService:
             except Exception as e:
                 logger.warning(f"AgentService: Store 初始化失败: {e}")
 
-    def build_thread_config(self, session_id: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+    def build_thread_config(self, session_id: str | None = None, **kwargs) -> dict[str, Any]:
         thread_id = session_id or str(uuid.uuid4())
-        config: Dict[str, Any] = {
+        config: dict[str, Any] = {
             "configurable": {"thread_id": thread_id, "checkpoint_ns": ""},
             "recursion_limit": kwargs.pop("recursion_limit", 500),
         }
@@ -45,13 +45,14 @@ class AgentService:
 
     async def create_agent_with_memory(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         prompt_mode: str = "default",
         model_instance=None,
-        tool_config: Optional[Dict[str, Any]] = None,
-        tools: Optional[list] = None,
+        tool_config: dict[str, Any] | None = None,
+        tools: list | None = None,
     ) -> tuple:
-        from Django_xm.apps.agent_hub import create as agent_hub_create, AgentType, AgentConfig
+        from Django_xm.apps.agent_hub import AgentConfig, AgentType
+        from Django_xm.apps.agent_hub import create as agent_hub_create
         from Django_xm.apps.ai_engine.services.checkpointer_factory import get_async_checkpointer
 
         session_id = data.get('session_id')
@@ -107,7 +108,7 @@ class AgentService:
         return agent, thread_config, use_checkpointer
 
     @staticmethod
-    def resolve_model_instance(data: Dict[str, Any], streaming: bool = True):
+    def resolve_model_instance(data: dict[str, Any], streaming: bool = True):
         from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model_by_provider
 
         provider_id = data.get('provider_id')

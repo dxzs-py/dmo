@@ -15,28 +15,28 @@
   以支持审批中断后的 LangGraph 状态恢复
 """
 
-import json
-import time
 import asyncio
+import json
 import logging
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any
 
 from asgiref.sync import sync_to_async
 from django.utils import timezone
 
+from Django_xm.apps.approvals.models import Approval
+from Django_xm.apps.approvals.services import approval_service
 from Django_xm.apps.chat.models import ChatMessage, MessageRole
 from Django_xm.apps.chat.services.chat_service import ChatService
 from Django_xm.apps.chat.services.stream_helpers import (
-    process_stream_chunk,
     build_context_info,
-    update_usage_and_tokens,
     finalize_tool_calls,
+    process_stream_chunk,
+    update_usage_and_tokens,
 )
-from Django_xm.apps.chat.utils import convert_chat_history, _lcp_len
-from Django_xm.apps.approvals.models import Approval
-from Django_xm.apps.approvals.services import approval_service
+from Django_xm.apps.chat.utils import _lcp_len, convert_chat_history
+from Django_xm.common.event_schema import EventSource, EventType, PayloadValidationError
 from Django_xm.common.realtime_events import publish_event
-from Django_xm.common.event_schema import EventType, EventSource, PayloadValidationError
 from Django_xm.common.sse_utils import sse_error_event
 
 logger = logging.getLogger(__name__)
@@ -48,11 +48,11 @@ def _make_regen_thread_id(session_id: str, message_id: int) -> str:
     return f"{_REGEN_THREAD_PREFIX}{session_id}_{message_id}"
 
 
-def is_regen_thread_id(thread_id: Optional[str]) -> bool:
+def is_regen_thread_id(thread_id: str | None) -> bool:
     return bool(thread_id and thread_id.startswith(_REGEN_THREAD_PREFIX))
 
 
-def prepare_context(session, message_id: int) -> Dict[str, Any]:
+def prepare_context(session, message_id: int) -> dict[str, Any]:
     """构建重新生成的对话上下文。
 
     流程：
@@ -97,8 +97,8 @@ def prepare_context(session, message_id: int) -> Dict[str, Any]:
     # 查询前一条 user 消息关联的附件，重新构建含附件全文的 user_content
     # 与 ChatStreamView.post 的附件预处理逻辑（views_chat.py:370-387）完全对齐
     user_content = prev_user_msg.content or ''
-    preloaded_attachment_content: Optional[Any] = None
-    preloaded_attachment_type: Optional[str] = None
+    preloaded_attachment_content: Any | None = None
+    preloaded_attachment_type: str | None = None
     try:
         attachment_ids = list(prev_user_msg.attachments.values_list('id', flat=True))
         if attachment_ids:
@@ -133,7 +133,7 @@ def prepare_context(session, message_id: int) -> Dict[str, Any]:
         role__in=[MessageRole.USER, MessageRole.ASSISTANT],
     ).order_by('created_at')
 
-    context: List[Dict[str, Any]] = []
+    context: list[dict[str, Any]] = []
     for msg in history_msgs:
         context.append({
             'role': msg.role,
@@ -150,7 +150,7 @@ def prepare_context(session, message_id: int) -> Dict[str, Any]:
     }
 
 
-def resolve_tool_config(session, original_message) -> Dict[str, Any]:
+def resolve_tool_config(session, original_message) -> dict[str, Any]:
     """解析重新生成所需的工具配置。
 
     配置来源（与 ChatStreamView.post 持久化的字段一致）：
@@ -171,7 +171,7 @@ def resolve_tool_config(session, original_message) -> Dict[str, Any]:
     use_tools = True
     use_web_search = False
     use_mcp = False
-    selected_mcp_servers: Optional[List[str]] = None
+    selected_mcp_servers: list[str] | None = None
     agent_type = getattr(session, 'mode', None) or 'agent'
 
     # 直接从 session 字段读取（ChatSession 无 metadata 字段）
@@ -251,14 +251,13 @@ async def stream_regenerate(session, message, context, tool_config,
     _preloaded_attachment_type 语义完全一致，确保重新生成时 agent 看到的
     附件内容结构与原始对话相同。
     """
-    from Django_xm.apps.chat.services.stream_helpers import _publish_tool_lifecycle_event
 
     session_id = session.session_id
     user_id = session.user_id
     regen_thread_id = _make_regen_thread_id(session_id, message.id)
 
     user_content = ''
-    history: List[Dict[str, Any]] = list(context or [])
+    history: list[dict[str, Any]] = list(context or [])
     if history:
         last = history[-1]
         if last.get('role') == MessageRole.USER:
@@ -271,11 +270,11 @@ async def stream_regenerate(session, message, context, tool_config,
                     break
 
     current_message_content = ""
-    tool_calls_map: Dict[str, Dict] = {}
-    tool_args_accumulator: Dict[str, str] = {}
-    accumulated_reasoning: Dict[str, str] = {}
-    all_messages: List = []
-    interrupt_info: Optional[Dict[str, Any]] = None
+    tool_calls_map: dict[str, dict] = {}
+    tool_args_accumulator: dict[str, str] = {}
+    accumulated_reasoning: dict[str, str] = {}
+    all_messages: list = []
+    interrupt_info: dict[str, Any] | None = None
     # BUG N 修复：parse_approval_interrupt 需要用来跟踪已匹配的 tool_call_id
     used_tool_call_ids: set = set()
     usage_tracker = None
@@ -301,7 +300,7 @@ async def stream_regenerate(session, message, context, tool_config,
     elif original_model:
         model_name = original_model
 
-    data: Dict[str, Any] = {
+    data: dict[str, Any] = {
         'session_id': regen_thread_id,
         'message': user_content,
         'mode': mode,
@@ -329,11 +328,12 @@ async def stream_regenerate(session, message, context, tool_config,
     yield f"data: {json.dumps({'type': 'start', 'message': '重新生成中...'}, ensure_ascii=False)}\n\n"
 
     try:
+        from langchain_core.messages import HumanMessage
+
+        from Django_xm.apps.ai_engine.config import settings as ai_settings
+        from Django_xm.apps.ai_engine.services.cost_tracker import create_token_detail_tracker
         from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
         from Django_xm.apps.ai_engine.services.usage_tracker import create_usage_tracker
-        from Django_xm.apps.ai_engine.services.cost_tracker import create_token_detail_tracker
-        from Django_xm.apps.ai_engine.config import settings as ai_settings
-        from langchain_core.messages import HumanMessage
 
         tracker_model_id = data.get('model_name') or ai_settings.openai_model
         usage_tracker = create_usage_tracker(model_id=tracker_model_id)
@@ -359,11 +359,11 @@ async def stream_regenerate(session, message, context, tool_config,
         messages.append(human_msg)
         graph_input = {"messages": messages}
 
-        stream_config: Dict[str, Any] = {"recursion_limit": 500}
+        stream_config: dict[str, Any] = {"recursion_limit": 500}
         if thread_config:
             stream_config = {**stream_config, **thread_config}
 
-        tool_call_count: Dict[str, int] = {}
+        tool_call_count: dict[str, int] = {}
 
         with TokenUsageCallbackHandler() as cb:
             stream_config["callbacks"] = [cb]
@@ -377,9 +377,8 @@ async def stream_regenerate(session, message, context, tool_config,
 
                 if mode_name == "updates":
                     if isinstance(mode_data, dict) and "__interrupt__" in mode_data:
-                        from langgraph.types import Interrupt
-                        from Django_xm.apps.tools.base import is_approval_interrupt
                         from Django_xm.apps.chat.services.stream_helpers import parse_approval_interrupt
+                        from Django_xm.apps.tools.base import is_approval_interrupt
                         interrupts = mode_data["__interrupt__"]
                         if interrupts:
                             # BUG N 修复：使用 parse_approval_interrupt 解析批量 interrupt
@@ -507,7 +506,7 @@ async def stream_regenerate(session, message, context, tool_config,
         raise
     except Exception as e:
         logger.error(f"[Regenerate] 重新生成失败: {e}", exc_info=True)
-        yield sse_error_event("regenerate_error", f"重新生成失败: {str(e)}")
+        yield sse_error_event("regenerate_error", f"重新生成失败: {e!s}")
     finally:
         has_content = bool(current_message_content and current_message_content.strip())
         has_tool_calls = bool(tool_calls_map)
@@ -666,7 +665,7 @@ async def stream_regenerate_resume(request, approval, resume_value, session_id, 
     try:
         from langgraph.types import Command
 
-        data: Dict[str, Any] = {
+        data: dict[str, Any] = {
             'session_id': regen_thread_id,
             'mode': 'agent',
             'use_tools': use_tools,
@@ -720,27 +719,27 @@ async def stream_regenerate_resume(request, approval, resume_value, session_id, 
             yield sse_error_event("approval_error", "无法恢复重新生成状态：checkpointer 不可用")
             return
 
-        logger.info(f"[RegenerateResume] Agent 创建成功，开始流式恢复...")
+        logger.info("[RegenerateResume] Agent 创建成功，开始流式恢复...")
 
-        tool_calls_map: Dict[str, Dict] = {}
+        tool_calls_map: dict[str, dict] = {}
         used_tool_call_ids = set()
-        tool_call_count: Dict[str, int] = {}
-        accumulated_reasoning: Dict[str, str] = {}
-        tool_args_accumulator: Dict[str, str] = {}
-        all_messages: List = []
+        tool_call_count: dict[str, int] = {}
+        accumulated_reasoning: dict[str, str] = {}
+        tool_args_accumulator: dict[str, str] = {}
+        all_messages: list = []
 
         yield f"data: {json.dumps({'type': 'start', 'message': '审批恢复，继续生成...'}, ensure_ascii=False)}\n\n"
 
         stream_config = thread_config
+        from langchain_core.messages import AIMessage as LCAIMessage
+
+        from Django_xm.apps.ai_engine.config import settings as ai_settings
+        from Django_xm.apps.ai_engine.services.cost_tracker import create_token_detail_tracker
         from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
         from Django_xm.apps.ai_engine.services.usage_tracker import create_usage_tracker
-        from Django_xm.apps.ai_engine.services.cost_tracker import create_token_detail_tracker
-        from Django_xm.apps.ai_engine.config import settings as ai_settings
-        from langchain_core.messages import AIMessage as LCAIMessage, ToolMessage as LCToolMessage
 
         usage_tracker = create_usage_tracker(model_id=model_name or ai_settings.openai_model)
         token_detail_tracker = create_token_detail_tracker()
-        cb = None
 
         with TokenUsageCallbackHandler() as cb:
             async for chunk in agent.graph.astream(
@@ -756,12 +755,11 @@ async def stream_regenerate_resume(request, approval, resume_value, session_id, 
                 if mode_name == "updates":
                     if isinstance(mode_data, dict):
                         if "__interrupt__" in mode_data:
-                            from langgraph.types import Interrupt
-                            from Django_xm.apps.tools.base import is_approval_interrupt
                             from Django_xm.apps.chat.services.stream_helpers import (
-                                parse_approval_interrupt,
                                 extract_interrupt_ids,
+                                parse_approval_interrupt,
                             )
+                            from Django_xm.apps.tools.base import is_approval_interrupt
                             interrupts = mode_data["__interrupt__"]
                             if interrupts:
                                 # 使用 parse_approval_interrupt 解析批量 interrupt，并通过
@@ -932,7 +930,7 @@ async def stream_regenerate_resume(request, approval, resume_value, session_id, 
             yield f"data: {json.dumps({'type': 'context', 'data': context_info}, ensure_ascii=False)}\n\n"
 
         yield f"data: {json.dumps({'type': 'end', 'message': '生成完成'}, ensure_ascii=False)}\n\n"
-        yield f"data: [DONE]\n\n"
+        yield "data: [DONE]\n\n"
 
     except asyncio.CancelledError:
         logger.info(f"[RegenerateResume] 客户端断开: session={session_id}, interrupt={interrupt_id}")
@@ -962,7 +960,7 @@ async def stream_regenerate_resume(request, approval, resume_value, session_id, 
         raise
     except Exception as e:
         logger.error(f"[RegenerateResume] 审批恢复执行失败: {e}", exc_info=True)
-        yield sse_error_event("approval_error", f"审批恢复执行失败: {str(e)}")
+        yield sse_error_event("approval_error", f"审批恢复执行失败: {e!s}")
         yield "data: [DONE]\n\n"
     finally:
         try:
@@ -1065,8 +1063,8 @@ async def _request_approval(
     interrupt_id: str,
     session_id: str,
     message_id: int,
-    approval_data: Dict[str, Any],
-    data: Dict[str, Any],
+    approval_data: dict[str, Any],
+    data: dict[str, Any],
     regen_thread_id: str,
 ) -> None:
     """委托 approval_service 发起审批请求，保存 regenerate 完整配置到 extra。"""
@@ -1139,8 +1137,8 @@ async def _request_approval(
 async def _save_regenerated_message(
     message_id: int,
     content: str,
-    tool_calls_map: Dict[str, Dict],
-    accumulated_reasoning: Dict[str, str],
+    tool_calls_map: dict[str, dict],
+    accumulated_reasoning: dict[str, str],
     usage_tracker,
 ) -> None:
     """将流式生成的 content/tool_calls 保存到 message 顶层和 versions[current_version]。"""
@@ -1219,8 +1217,8 @@ async def _save_regenerated_message(
 async def _save_partial_regen_content(
     message_id: int,
     content: str,
-    tool_calls_map: Dict[str, Dict],
-    accumulated_reasoning: Dict[str, str],
+    tool_calls_map: dict[str, dict],
+    accumulated_reasoning: dict[str, str],
 ) -> None:
     """审批中断时保存部分已生成内容，保持 is_streaming=False 但不清空版本。"""
     clean_tool_calls = []

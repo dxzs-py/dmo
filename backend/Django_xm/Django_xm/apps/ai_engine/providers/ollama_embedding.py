@@ -15,14 +15,14 @@ Ollama Embedding Provider
     ollama pull bge-m3
     ollama pull nomic-embed-text
 """
-from typing import Any, Dict, Optional
+from typing import Any
 
 from langchain_core.embeddings import Embeddings
 
 from Django_xm.apps.ai_engine.config import settings
 
 
-def get_provider_config() -> Dict[str, Any]:
+def get_provider_config() -> dict[str, Any]:
     return {
         "base_url": getattr(settings, "ollama_base_url", "http://localhost:11435"),
         "model": getattr(settings, "ollama_embedding_model", "bge-m3"),
@@ -30,8 +30,8 @@ def get_provider_config() -> Dict[str, Any]:
 
 
 def create_embedding(
-    model: Optional[str] = None,
-    dimensions: Optional[int] = None,
+    model: str | None = None,
+    dimensions: int | None = None,
     **kwargs: Any,
 ) -> Embeddings:
     """使用 Ollama 本地服务创建 Embeddings 实例
@@ -46,7 +46,7 @@ def create_embedding(
     from langchain_ollama import OllamaEmbeddings
 
     cfg = get_provider_config()
-    init_kwargs: Dict[str, Any] = {
+    init_kwargs: dict[str, Any] = {
         "model": model or cfg["model"],
         "base_url": cfg["base_url"],
     }

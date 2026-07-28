@@ -1,0 +1,97 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+extend-exclude = [
+    "*/migrations/*",
+    "*/__pycache__/*",
+    ".venv",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+# Select pragmatic rule sets aligned with project standards:
+# - E/F/W = pyflakes/pycodable bugs (errors/unused/warnings)
+# - I = import sorting
+# - UP = pyupgrade (modern Python syntax)
+# - B = flake8-bugbear (likely bugs)
+# - SIM = flake8-simplify
+# - RUF = ruff-specific
+# - G = flake8-logging-format
+# - PIE = flake8-pie
+# - C4 = comprehensions
+# - DTZ = datetime timezone safety
+# - S = bandit (security)
+# - TRY = tryceratops (exception handling)
+# - PL = pylint (subset)
+select = [
+    "E", "F", "W",
+    "I",
+    "UP",
+    "B",
+    "SIM",
+    "RUF",
+    "G",
+    "PIE",
+    "C4",
+    "DTZ",
+    "S",
+    "TRY",
+    "PL",
+]
+ignore = [
+    # Chinese text in docstrings/comments/strings is intentional, not ambiguous
+    "RUF001", "RUF002", "RUF003",
+    # Lazy imports are intentional (circular import avoidance in Django apps)
+    "PLC0415",
+    # Complexity metrics (too many args/branches/statements) — noise for large codebase
+    "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917",
+    # f-string logging is acceptable in this codebase (G004 is style preference)
+    "G004",
+    # raise-vanilla-args: long raise messages are fine for user-facing errors
+    "TRY003",
+    # try-consider-else: style preference, not a bug
+    "TRY300",
+    # suppressible-exception: contextlib.suppress is not always clearer
+    "SIM105",
+    # if-else-block-instead-of-if-exp: readability over brevity
+    "SIM108",
+    # collapsible-if: style preference
+    "SIM102",
+    # magic-value-comparison: too noisy for business logic with constants
+    "PLR2004",
+    # module-import-not-at-top: Django settings pattern uses conditional imports
+    "E402",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Django_xm package uses underscore in module name (intentional, cannot change)
+"__init__.py" = ["N999"]
+"*/apps/*/__init__.py" = ["N999"]
+"manage.py" = ["N999"]
+# Tests may use broad except for simplicity; migrations are auto-generated
+"*/tests/*" = ["S101", "BLE001", "PLR2004", "S106"]
+"*/migrations/*" = ["E501", "N999"]
+# Settings files legitimately expose unused names for Django config
+# F401: names imported in base.py may be used in dev/prod.py via `from .base import *`
+"*/settings/*" = ["F403", "F405", "F401"]
+# Django admin/serializers: mutable class defaults (RUF012) are framework patterns
+# (Meta classes, serializer field defaults, admin list_display etc.) — not real bugs
+"*/admin.py" = ["RUF012"]
+"*/serializers.py" = ["RUF012"]
+# Django models: model field defaults are deep-copied by ORM
+"*/models.py" = ["RUF012"]
+# DRF APIView class attributes (permission_classes, pagination_class, etc.) — read-only config
+"*/views.py" = ["RUF012"]
+"*/views_*.py" = ["RUF012"]
+"*/model_views.py" = ["RUF012"]
+"*/settings_views.py" = ["RUF012"]
+"*/suggestion_views.py" = ["RUF012"]
+
+[tool.ruff.lint.pep8-naming]
+# Django_xm is the project root module name (cannot rename)
+extend-ignore-names = ["Django_xm"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

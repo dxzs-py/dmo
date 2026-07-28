@@ -5,16 +5,16 @@ import { ToolCallStatus, ApprovalState } from '@/types'
 // ==================== Mock 依赖（使用 vi.hoisted 避免 hoisting 问题） ====================
 
 const {
-  mockResearchAPI,
+  mockApprovalAPI,
 } = vi.hoisted(() => {
-  const mockResearchAPI = {
-    getResearchToolCalls: vi.fn(),
+  const mockApprovalAPI = {
+    getApprovalHistory: vi.fn(),
   }
-  return { mockResearchAPI }
+  return { mockApprovalAPI }
 })
 
-vi.mock('@/api/research', () => ({
-  getResearchToolCalls: (...args) => mockResearchAPI.getResearchToolCalls(...args),
+vi.mock('@/api/approval', () => ({
+  getApprovalHistory: (...args) => mockApprovalAPI.getApprovalHistory(...args),
 }))
 
 vi.mock('element-plus', () => {
@@ -405,30 +405,78 @@ describe('useResearchStore - Map 操作一致性（SubTask 9.5）', () => {
   // ==================== 7. loadHistory ====================
 
   describe('loadHistory', () => {
-    it('成功加载历史 → toolCallMap + toolCalls 同步', async () => {
+    it('成功加载历史（Approval 记录） → toolCallMap + toolCalls 同步', async () => {
       const taskId = 'task-history-1'
+      // 后端返回 Approval 记录数组（ApprovalReadSerializer 格式）
       const mockResponse = {
         data: {
-          data: {
-            tool_calls: {
-              'tc-h1': { id: 'tc-h1', name: 'execute', status: 'completed', result: 'ok' },
-              'tc-h2': { id: 'tc-h2', name: 'ls', status: 'completed', result: 'file1' },
+          data: [
+            {
+              interrupt_id: 'int-h1',
+              source: 'deep_research',
+              source_id: taskId,
+              tool_name: 'execute',
+              title: '执行命令',
+              description: '执行 shell 命令',
+              action: 'confirm',
+              operation: 'ls -la',
+              danger_level: 'medium',
+              parameters: { command: 'ls -la' },
+              state: 'approved',
+              user_input: null,
+              approved_by: null,
+              extra: { tool_call_id: 'tc-h1' },
+              created_at: '2026-01-01T00:00:00Z',
+              resolved_at: '2026-01-01T00:01:00Z',
             },
-          },
+            {
+              interrupt_id: 'int-h2',
+              source: 'deep_research',
+              source_id: taskId,
+              tool_name: 'read_file',
+              title: '读取文件',
+              description: '',
+              action: 'confirm',
+              operation: 'cat file.txt',
+              danger_level: 'low',
+              parameters: { path: 'file.txt' },
+              state: 'rejected',
+              user_input: null,
+              approved_by: null,
+              extra: { tool_call_id: 'tc-h2' },
+              created_at: '2026-01-01T00:02:00Z',
+              resolved_at: '2026-01-01T00:03:00Z',
+            },
+          ],
         },
       }
-      mockResearchAPI.getResearchToolCalls.mockResolvedValue(mockResponse)
+      mockApprovalAPI.getApprovalHistory.mockResolvedValue(mockResponse)
 
       await store.loadHistory(taskId)
 
       const toolCalls = store.getToolCalls(taskId)
       expect(toolCalls).toHaveLength(2)
-      expect(mockResearchAPI.getResearchToolCalls).toHaveBeenCalledWith(taskId)
+      // 验证 Approval → toolCall 转换
+      const tc1 = toolCalls.find(tc => tc.id === 'tc-h1')
+      expect(tc1).toBeDefined()
+      expect(tc1.name).toBe('execute')
+      expect(tc1.status).toBe(ToolCallStatus.APPROVED)
+      expect(tc1.parameters).toEqual({ command: 'ls -la' })
+      expect(tc1.approval).toBeDefined()
+      expect(tc1.approval.interrupt_id).toBe('int-h1')
+      expect(tc1.approval.state).toBe('approved')
+
+      const tc2 = toolCalls.find(tc => tc.id === 'tc-h2')
+      expect(tc2).toBeDefined()
+      expect(tc2.status).toBe(ToolCallStatus.REJECTED)
+
+      // 验证调用参数：source_id + source 过滤
+      expect(mockApprovalAPI.getApprovalHistory).toHaveBeenCalledWith(taskId, { source: 'deep_research' })
     })
 
     it('API 失败 → 清空数据，不抛错', async () => {
       const taskId = 'task-history-2'
-      mockResearchAPI.getResearchToolCalls.mockRejectedValue(new Error('network error'))
+      mockApprovalAPI.getApprovalHistory.mockRejectedValue(new Error('network error'))
 
       await store.loadHistory(taskId)
 
@@ -437,7 +485,7 @@ describe('useResearchStore - Map 操作一致性（SubTask 9.5）', () => {
 
     it('无 taskId → 直接返回', async () => {
       await store.loadHistory('')
-      expect(mockResearchAPI.getResearchToolCalls).not.toHaveBeenCalled()
+      expect(mockApprovalAPI.getApprovalHistory).not.toHaveBeenCalled()
     })
   })
 

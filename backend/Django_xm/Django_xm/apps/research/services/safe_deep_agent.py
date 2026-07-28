@@ -9,18 +9,19 @@
 5. 输出验证在 after_model 钩子中执行
 """
 
-from typing import Optional, Dict, Any, List, Sequence, Callable
 import warnings
+from collections.abc import Callable, Sequence
 from datetime import datetime
+from typing import Any
 
-from langchain_core.tools import BaseTool
 from langchain.agents.middleware import AgentMiddleware
+from langchain_core.tools import BaseTool
 
-from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.ai_engine.guardrails import (
-    create_standard_guardrails,
     ResearchReport,
+    create_standard_guardrails,
 )
+from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.research.services.deep_agent import DeepResearchAgent
 
 logger = get_logger(__name__)
@@ -32,14 +33,14 @@ class SafeDeepResearchAgent:
         thread_id: str,
         enable_web_search: bool = True,
         enable_doc_analysis: bool = False,
-        retriever_tool: Optional[BaseTool] = None,
-        middleware: Optional[Sequence[AgentMiddleware]] = None,
+        retriever_tool: BaseTool | None = None,
+        middleware: Sequence[AgentMiddleware] | None = None,
         enable_input_validation: bool = True,
         enable_output_validation: bool = True,
         enable_human_review: bool = False,
         strict_mode: bool = False,
-        checkpointer: Optional[Any] = None,
-        human_review_callback: Optional[Callable[[str, str], bool]] = None,
+        checkpointer: Any | None = None,
+        human_review_callback: Callable[[str, str], bool] | None = None,
         **kwargs,
     ):
         warnings.warn("SafeDeepResearchAgent 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2)
@@ -77,7 +78,7 @@ class SafeDeepResearchAgent:
             **kwargs,
         )
 
-        self.tool_calls_log: List[Dict[str, Any]] = []
+        self.tool_calls_log: list[dict[str, Any]] = []
 
         logger.info("SafeDeepResearchAgent 初始化完成")
 
@@ -85,7 +86,7 @@ class SafeDeepResearchAgent:
         self,
         query: str,
         return_structured: bool = True,
-        callbacks: Optional[list] = None,
+        callbacks: list | None = None,
     ):
         logger.info(f"开始安全深度研究: {query[:50]}...")
 
@@ -195,7 +196,7 @@ class SafeDeepResearchAgent:
         logger.info("   [自动批准 - 演示模式]")
         return True
 
-    def _extract_sources(self, result: Dict[str, Any]) -> List[str]:
+    def _extract_sources(self, result: dict[str, Any]) -> list[str]:
         sources = []
 
         if hasattr(self.agent, "filesystem"):
@@ -219,7 +220,7 @@ class SafeDeepResearchAgent:
         self,
         report_text: str,
         query: str,
-        sources: List[str],
+        sources: list[str],
     ):
         from Django_xm.apps.ai_engine.guardrails import ResearchSection
 
@@ -259,7 +260,7 @@ class SafeDeepResearchAgent:
             }
         )
 
-    def get_tool_calls_log(self) -> List[Dict[str, Any]]:
+    def get_tool_calls_log(self) -> list[dict[str, Any]]:
         return self.tool_calls_log
 
     def get_middleware(self):

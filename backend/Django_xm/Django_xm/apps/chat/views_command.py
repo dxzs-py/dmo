@@ -6,13 +6,14 @@
 
 import logging
 
-from rest_framework.views import APIView
+from drf_spectacular.utils import extend_schema
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 
-from Django_xm.common.responses import success_response, error_response
 from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.responses import error_response, success_response
 
-from .models import ChatSession, ChatMessage
+from .models import ChatMessage
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 class ChatCommandsView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(view=False)
     def get(self, request):
         from Django_xm.apps.cache_manager.services.cache_service import CacheService, CacheTTL
 
@@ -38,11 +40,12 @@ class ChatCommandsView(APIView):
 class ChatCommandExecuteView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(view=False)
     def post(self, request):
         command = request.data.get('command', '')
         session_id = request.data.get('session_id')
 
-        from .services.slash_commands import parse_command, execute_command
+        from .services.slash_commands import execute_command, parse_command
 
         parsed = parse_command(command)
         if not parsed:
@@ -80,6 +83,7 @@ class ChatCommandExecuteView(APIView):
 class ProjectContextView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(view=False)
     def get(self, request):
         from Django_xm.apps.cache_manager.services.cache_service import CacheService, CacheTTL
 

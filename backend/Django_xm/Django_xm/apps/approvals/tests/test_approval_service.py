@@ -6,14 +6,13 @@ complete_approval / timeout_approval / _resume_research / 历史别名。
 
 import os
 import unittest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from django.core.management import call_command
 from django.test import TestCase, TransactionTestCase
 
 from Django_xm.apps.approvals.models import Approval
 from Django_xm.apps.approvals.services import approval_service
-
 
 # 测试用审批数据
 APPROVAL_DATA = {
@@ -464,33 +463,39 @@ class ApprovalHistoryAliasTests(TestCase):
 
 
 # ====================================================================
-# Task 14.4 补充：_finalize_waiting_siblings_sync / complete_approval sibling cleanup
+# Task 14.4 补充：ApprovalLifecycleService.complete_batch / complete_approval sibling cleanup
+# 原实现 approval_service._finalize_waiting_siblings_sync 已重构为
+# ApprovalLifecycleService.complete_batch（三模块共享入口，根因 C 修复）。
 # 详见 test_approval_service_sibling_cleanup.py（独立文件）。
 # 以下用例为 spec 验证要求保留在 test_approval_service.py 中。
 # ====================================================================
 
 
-class FinalizeWaitingSiblingsTask14Tests(TestCase):
-    """Task 14.4: _finalize_waiting_siblings_sync 在 sibling 终态为 timeout 时发布 TOOL_CALL_TIMEOUT 事件。"""
+class CompleteBatchTask14Tests(TestCase):
+    """Task 14.4: ApprovalLifecycleService.complete_batch 在 sibling 终态为 timeout 时发布 TOOL_CALL_TIMEOUT 事件。
+
+    原测试直接调用 approval_service._finalize_waiting_siblings_sync，
+    重构后改为调用 approval_lifecycle_service.complete_batch（三模块共享入口）。
+    """
 
     def setUp(self):
         Approval.objects.all().delete()
 
-    @patch('Django_xm.apps.approvals.services.approval_service.sync_approval_state_to_chat_message')
-    @patch('Django_xm.apps.approvals.services.approval_service._publish_tool_call_timeout_event')
-    @patch('Django_xm.apps.approvals.services.approval_service._broadcast_approval_changed')
-    @patch('Django_xm.apps.approvals.services.approval_service.persist_approval_processed')
-    @patch('Django_xm.apps.approvals.services.approval_service._get_redis_client')
-    def test_finalize_waiting_siblings_timeout_publishes_event(
+    @patch('Django_xm.common.approval_lifecycle._persist_and_broadcast')
+    @patch('Django_xm.common.approval_lifecycle._publish_tool_call_timeout_event')
+    @patch('Django_xm.common.approval_lifecycle.sync_approval_state_to_chat_message')
+    @patch('Django_xm.common.approval_lifecycle._release_lock')
+    def test_complete_batch_timeout_publishes_event(
         self,
-        mock_get_redis,
-        mock_persist,
-        mock_publish,
-        mock_publish_timeout,
+        mock_release_lock,
         mock_sync_chat,
+        mock_publish_timeout,
+        mock_persist,
     ):
         """sibling 终态为 timeout 时调用 _publish_tool_call_timeout_event。"""
-        trigger = _make_approval(
+        from Django_xm.common.approval_lifecycle import service as approval_lifecycle_service
+
+        _make_approval(
             interrupt_id='trigger-task14',
             state=Approval.STATE_TIMEOUT,
             extra={'graph_interrupt_id': 'gid-task14-1'},
@@ -502,46 +507,57 @@ class FinalizeWaitingSiblingsTask14Tests(TestCase):
             extra={'graph_interrupt_id': 'gid-task14-1'},
         )
 
-        cleaned = approval_service._finalize_waiting_siblings_sync(
-            trigger, 'gid-task14-1'
+        result = approval_lifecycle_service.complete_batch(
+            'gid-task14-1', 'trigger-task14', Approval.STATE_TIMEOUT,
         )
 
-        self.assertEqual(cleaned, 1)
+        # trigger 已终态 → skipped；sibling waiting → success
+        self.assertEqual(result['success'], 1)
+        self.assertEqual(result['skipped'], 1)
         mock_publish_timeout.assert_called_once()
         call_args = mock_publish_timeout.call_args
         self.assertEqual(call_args.args[0].interrupt_id, 'sibling-task14')
 
-    @patch('Django_xm.apps.approvals.services.approval_service.sync_approval_state_to_chat_message')
-    @patch('Django_xm.apps.approvals.services.approval_service._publish_tool_call_timeout_event')
-    @patch('Django_xm.apps.approvals.services.approval_service._broadcast_approval_changed')
-    @patch('Django_xm.apps.approvals.services.approval_service.persist_approval_processed')
     @patch('Django_xm.apps.approvals.services.approval_service._get_redis_client')
+    @patch('Django_xm.apps.approvals.services.approval_service.persist_approval_processed')
+    @patch('Django_xm.apps.approvals.services.approval_service._broadcast_approval_changed')
+    @patch('Django_xm.apps.approvals.services.approval_service._publish_tool_call_timeout_event')
+    @patch('Django_xm.apps.approvals.services.approval_service.sync_approval_state_to_chat_message')
     def test_complete_approval_triggers_sibling_cleanup(
         self,
-        mock_get_redis,
-        mock_persist,
-        mock_publish,
-        mock_publish_timeout,
         mock_sync_chat,
+        mock_publish_timeout,
+        mock_broadcast,
+        mock_persist,
+        mock_get_redis,
     ):
-        """complete_approval 调用时会清理同批次 waiting siblings（验证 _finalize_waiting_siblings_sync 被调用）。"""
-        with patch(
-            'Django_xm.apps.approvals.services.approval_service._finalize_waiting_siblings_sync'
-        ) as mock_finalize:
-            approval = _make_approval(
-                interrupt_id='complete-task14',
-                state=Approval.STATE_PROCESSING,
-                extra={
-                    'graph_interrupt_id': 'gid-task14-2',
-                    '_resume_value': True,
-                    '_approved': True,
-                },
-            )
-            approval_service.complete_approval(
-                interrupt_id='complete-task14',
-                state=Approval.STATE_APPROVED,
-            )
-            mock_finalize.assert_called_once()
-            call_args = mock_finalize.call_args
-            self.assertEqual(call_args.args[0].interrupt_id, 'complete-task14')
-            self.assertEqual(call_args.args[1], 'gid-task14-2')
+        """complete_approval 调用时委托 complete_batch 清理同批次 waiting siblings。
+
+        集成测试：不 mock complete_batch，验证完整端到端行为。
+        trigger 终态为 approved，sibling _approved=True → 终态 approved。
+        """
+        approval = _make_approval(
+            interrupt_id='complete-task14',
+            state=Approval.STATE_PROCESSING,
+            extra={
+                'graph_interrupt_id': 'gid-task14-2',
+                '_resume_value': True,
+                '_approved': True,
+            },
+        )
+        sibling = _make_approval(
+            interrupt_id='sibling-task14-2',
+            state=Approval.STATE_WAITING,
+            extra={'graph_interrupt_id': 'gid-task14-2', '_approved': True},
+        )
+        approval_service.complete_approval(
+            interrupt_id='complete-task14',
+            state=Approval.STATE_APPROVED,
+        )
+        # 验证 trigger 已终态化
+        approval.refresh_from_db()
+        self.assertEqual(approval.state, Approval.STATE_APPROVED)
+        self.assertIsNotNone(approval.resolved_at)
+        # 验证 sibling 也被终态化（approved）
+        sibling.refresh_from_db()
+        self.assertEqual(sibling.state, Approval.STATE_APPROVED)

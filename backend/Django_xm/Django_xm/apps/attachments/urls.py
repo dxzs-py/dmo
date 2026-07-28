@@ -1,4 +1,5 @@
 from django.urls import path
+
 from . import views
 
 app_name = 'attachments'
@@ -14,6 +15,6 @@ urlpatterns = [
     path('admin/<int:attachment_id>/', views.AttachmentAdminDetailView.as_view(), name='admin-detail'),
     path('admin/<int:attachment_id>/action/', views.AttachmentAdminActionView.as_view(), name='admin-action'),
     path('admin/batch/', views.AttachmentAdminBatchView.as_view(), name='admin-batch'),
-    path('admin/storage-alerts/', views.StorageAlertView.as_view(), name='admin-storage-alerts'),
-    path('admin/storage-alerts/<int:alert_id>/', views.StorageAlertView.as_view(), name='admin-storage-alert-detail'),
+    path('admin/storage-alerts/', views.StorageAlertListView.as_view(), name='admin-storage-alerts'),
+    path('admin/storage-alerts/<int:alert_id>/', views.StorageAlertDetailView.as_view(), name='admin-storage-alert-detail'),
 ]

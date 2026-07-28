@@ -5,23 +5,22 @@
 """
 
 import logging
-from typing import Optional
 
 from django.utils import timezone
 
+from Django_xm.common.event_schema import EventSource, EventType, PayloadValidationError
 from Django_xm.common.realtime_events import publish_event_sync
-from Django_xm.common.event_schema import EventType, EventSource, PayloadValidationError
 
 logger = logging.getLogger(__name__)
 
 
 def broadcast_stream_completed(
-    chat_session_id: Optional[str],
+    chat_session_id: str | None,
     task_id: str,
     success: bool,
     final_report: str = '',
     error: str = '',
-    message_id: Optional[str] = None,
+    message_id: str | None = None,
 ):
     """广播 stream_completed 事件到 session + task 双频道。
 
@@ -84,26 +83,30 @@ def writeback_to_chat_message(
     task_id: str,
     content: str,
     success: bool,
-    chat_session_id: Optional[str] = None,
-) -> Optional[str]:
+    chat_session_id: str | None = None,
+) -> str | None:
     """将深度研究结果回写到关联的 ChatMessage 并广播 WebSocket 事件。
 
     Args:
         task_id: 深度研究任务 ID
         content: 最终报告内容或错误信息
         success: 是否成功
-        chat_session_id: 关联的聊天会话 ID（可选，若为 None 则从 ChatMessage 反查）
+        chat_session_id: 关联的聊天会话 ID（可选，若为 None 则从 ResearchTask/ChatMessage 反查）
 
     Returns:
         回写的 ChatMessage ID（字符串），失败时返回 None
     """
     try:
-        from Django_xm.apps.chat.models import ChatMessage
+        # 通过 chat cross_app 门面访问 ChatMessage，消除 research → chat.models 直接依赖
+        from Django_xm.apps.chat.services.cross_app import (
+            get_chat_message_for_writeback,
+            update_chat_message_fields,
+        )
         from Django_xm.apps.research.models import ResearchTask
 
         # 优先通过 ResearchTask.chat_message_id 查找关联的 ChatMessage（稳定正向关联，前端无法触及）
         # 回退到 ChatMessage.research_task_id 查询（向后兼容旧数据）
-        chat_msg = None
+        chat_msg_data = None
         chat_session_id_from_task = None
 
         research_task = None
@@ -111,12 +114,10 @@ def writeback_to_chat_message(
             research_task = ResearchTask.objects.get(task_id=task_id)
             chat_session_id_from_task = research_task.session_id
             if research_task.chat_message_id:
-                chat_msg = ChatMessage.objects.filter(
-                    id=research_task.chat_message_id,
-                    role='assistant',
-                    is_deleted=False,
-                ).select_related('session').first()
-                if chat_msg is None:
+                chat_msg_data = get_chat_message_for_writeback(
+                    message_id=research_task.chat_message_id
+                )
+                if chat_msg_data is None:
                     logger.warning(
                         f"[Writeback] chat_message_id={research_task.chat_message_id} 存在但 ChatMessage 未找到,"
                         f"回退到 research_task_id 查询: task_id={task_id}"
@@ -125,25 +126,24 @@ def writeback_to_chat_message(
             logger.warning(f"[Writeback] ResearchTask 不存在: task_id={task_id}")
 
         # 回退：通过 research_task_id 查询（向后兼容旧数据，记录 warning）
-        if chat_msg is None:
-            chat_msg = ChatMessage.objects.filter(
-                research_task_id=task_id,
-                role='assistant',
-                is_deleted=False,
-            ).select_related('session').order_by('-created_at').first()
-            if chat_msg is not None:
+        if chat_msg_data is None:
+            chat_msg_data = get_chat_message_for_writeback(research_task_id=task_id)
+            if chat_msg_data is not None:
                 logger.info(
                     f"[Writeback] 通过 research_task_id 回退查询成功(旧数据): task_id={task_id}, "
                     f"建议迁移设置 chat_message_id"
                 )
 
-        if chat_msg is None:
+        if chat_msg_data is None:
             logger.warning(f"[Writeback] 未找到关联 ChatMessage: task_id={task_id}")
             return None
 
+        chat_msg_id = chat_msg_data['id']
+        current_content = chat_msg_data['content']
+
         # chat_session_id 优先使用传入参数，其次从 ResearchTask.session_id 获取，最后从 ChatMessage.session 获取
         if chat_session_id is None:
-            chat_session_id = chat_session_id_from_task or chat_msg.session.session_id
+            chat_session_id = chat_session_id_from_task or chat_msg_data['session_id']
 
         # 更新 ChatMessage 内容
         # 只在 new_content 比当前 content 更长时覆盖，避免用短的 final_report
@@ -154,8 +154,12 @@ def writeback_to_chat_message(
             # 失败时显示友好错误提示
             new_content = f"深度研究执行失败：{content}"
 
-        if len(new_content) > len(chat_msg.content or ''):
-            chat_msg.content = new_content
+        updated_content = None
+        if len(new_content) > len(current_content or ''):
+            updated_content = new_content
+            final_content = new_content
+        else:
+            final_content = current_content
 
         # 计算深度研究耗时（秒，至少 1 秒；research_task 不存在时用 0 兜底）
         # created_at 是 aware datetime，用 timezone.now() 比较
@@ -166,12 +170,17 @@ def writeback_to_chat_message(
 
         # 更新 reasoning 字段为完成态（与前端 AiReasoning 期望格式一致：{content, duration}）
         if success:
-            chat_msg.reasoning = {"content": "深度研究已完成", "duration": research_duration}
+            reasoning = {"content": "深度研究已完成", "duration": research_duration}
         else:
-            chat_msg.reasoning = {"content": f"深度研究执行失败：{content}", "duration": research_duration}
+            reasoning = {"content": f"深度研究执行失败：{content}", "duration": research_duration}
 
-        chat_msg.is_streaming = False
-        chat_msg.save(update_fields=['content', 'is_streaming', 'reasoning'])
+        # 通过门面更新 ChatMessage 字段（content 仅在变更时更新）
+        update_chat_message_fields(
+            chat_msg_id,
+            content=updated_content,
+            is_streaming=False,
+            reasoning=reasoning,
+        )
 
         # 广播 message_updated 事件到 chat session 频道
         # 注意：writeback 只修改 content/is_streaming，不广播 tool_calls
@@ -185,9 +194,9 @@ def writeback_to_chat_message(
             publish_event_sync(
                 EventType.MESSAGE_UPDATED,
                 {
-                    'message_id': str(chat_msg.id),
+                    'message_id': chat_msg_id,
                     'session_id': chat_session_id,
-                    'content': chat_msg.content,
+                    'content': final_content,
                     'is_streaming': False,
                     'research_task_id': task_id,
                 },
@@ -196,7 +205,7 @@ def writeback_to_chat_message(
         except PayloadValidationError:
             logger.error(
                 f"[Writeback] MESSAGE_UPDATED payload 校验失败，跳过广播（回写仍生效）: "
-                f"task_id={task_id}, chat_session_id={chat_session_id}, message_id={chat_msg.id}",
+                f"task_id={task_id}, chat_session_id={chat_session_id}, message_id={chat_msg_id}",
                 exc_info=True
             )
 
@@ -204,7 +213,7 @@ def writeback_to_chat_message(
             f"[Writeback] ChatMessage 回写成功: task_id={task_id}, "
             f"session={chat_session_id}, success={success}"
         )
-        return str(chat_msg.id)
+        return chat_msg_id
 
     except Exception as e:
         logger.error(f"[Writeback] 回写 ChatMessage 失败: task_id={task_id}, error={e}", exc_info=True)

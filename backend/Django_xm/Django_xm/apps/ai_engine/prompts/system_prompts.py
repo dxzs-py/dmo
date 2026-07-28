@@ -5,26 +5,24 @@
 提示词内容存储在 prompts.yaml 中，本模块负责加载和格式化。
 """
 
-from typing import Dict, Optional
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
 
-
 _PROMPTS_FILE = Path(__file__).parent / "prompts.yaml"
 
 
-def _load_prompts() -> Dict[str, Optional[str]]:
+def _load_prompts() -> dict[str, str | None]:
     """从 YAML 文件加载提示词"""
     if _PROMPTS_FILE.exists():
-        with open(_PROMPTS_FILE, "r", encoding="utf-8") as f:
+        with open(_PROMPTS_FILE, encoding="utf-8") as f:
             data = yaml.safe_load(f)
             return data if isinstance(data, dict) else {}
     return {}
 
 
-SYSTEM_PROMPTS: Dict[str, Optional[str]] = _load_prompts()
+SYSTEM_PROMPTS: dict[str, str | None] = _load_prompts()
 
 
 WRITER_GUIDELINES = (
@@ -39,7 +37,7 @@ WRITER_GUIDELINES = (
 
 def get_system_prompt(
     mode: str = "default",
-    custom_instructions: Optional[str] = None,
+    custom_instructions: str | None = None,
     include_time: bool = True,
 ) -> str:
     if mode not in SYSTEM_PROMPTS:
@@ -51,7 +49,7 @@ def get_system_prompt(
         prompt = SYSTEM_PROMPTS["default"]
 
     if include_time:
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        current_time = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
         prompt = prompt.format(current_time=current_time)
     else:
         prompt = prompt.replace("当前时间：{current_time}\n\n", "")
@@ -66,7 +64,7 @@ def create_custom_prompt(
     role: str,
     capabilities: list,
     principles: list,
-    additional_context: Optional[str] = None,
+    additional_context: str | None = None,
 ) -> str:
     prompt_parts = [f"你是 {role}。"]
 
@@ -83,7 +81,7 @@ def create_custom_prompt(
     if additional_context:
         prompt_parts.append(f"\n{additional_context}")
 
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    current_time = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
     prompt_parts.append(f"\n当前时间：{current_time}")
 
     return "\n".join(prompt_parts)
@@ -187,8 +185,8 @@ def get_prompt_with_tools(mode: str = "default", mcp_tools_section: str = "（�
 
 def build_dynamic_prompt(
     mode: str = "default",
-    context: Optional[str] = None,
-    custom_instructions: Optional[str] = None,
+    context: str | None = None,
+    custom_instructions: str | None = None,
 ) -> str:
     prompt = get_system_prompt(mode, custom_instructions=custom_instructions)
     if context:

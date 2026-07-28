@@ -3,33 +3,110 @@
 每个策略封装一个工具的审批条件判断逻辑。
 策略只负责"是否需要审批"和"审批元数据构建"，
 不负责实际执行拦截（拦截由 ApprovalMiddleware 统一处理）。
+
+风险分级（RiskLevel）：
+    - SAFE: 自动通过，不 interrupt，仅审计（auto_approved=True）
+    - CONTROLLED: 需用户审批，常规 UI
+    - HIGH: 需用户审批，红名高亮 + 强制 Docker 沙箱执行
+
+子 agent 风险加权（assess_risk 的 subagent_context 参数）：
+    - 纯只读工具（搜索、读文件相对路径）：不加权
+    - 写操作/命令执行类工具：在子 agent 中上调一级（CONTROLLED → HIGH）
+    - 但不超过 subagent_risk_ceiling（角色风险上限）
 """
 
 import os
+
+from Django_xm.common.risk_levels import RiskLevel, from_danger_level
 
 
 class ApprovalPolicy:
     """审批策略基类
 
     子类需实现：
-        - should_approve: 判断是否需要审批
+        - should_approve: 判断是否需要审批（默认基于 assess_risk != SAFE）
         - build_operation_desc: 构建操作描述（前端展示）
 
     可选重写：
-        - assess_danger: 评估危险等级（默认 medium）
+        - assess_danger: 评估旧格式危险等级（默认 medium）
+        - assess_risk: 评估新 RiskLevel 等级（默认从 assess_danger 转换）
         - build_title: 构建审批标题
         - build_description: 构建审批描述
     """
 
     tool_name: str = ""
+    # 是否写操作/命令执行类（子 agent 中上调一级），只读工具设为 False
+    is_write_operation: bool = False
 
     def should_approve(self, args: dict) -> bool:
-        """返回 True 表示需要审批，False 表示自动通过"""
-        raise NotImplementedError
+        """返回 True 表示需要审批，False 表示自动通过。
+
+        默认实现：基于 assess_risk 判断，SAFE 级自动通过，其他需审批。
+        子类可重写以实现更复杂逻辑（如黑白名单）。
+        """
+        return self.assess_risk(args) != RiskLevel.SAFE
 
     def assess_danger(self, args: dict) -> str:
-        """评估危险等级：low/medium/high"""
+        """评估旧格式危险等级：low/medium/high。
+
+        保留以兼容 DB 字段 danger_level。
+        新代码应使用 assess_risk()。
+        """
         return "medium"
+
+    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
+        """评估风险等级：SAFE/CONTROLLED/HIGH。
+
+        默认实现：从 assess_danger 转换。
+        子类应重写以实现精确的风险评估。
+
+        Args:
+            args: 工具调用参数
+            subagent_context: 子 agent 上下文（None=主 agent）：
+                - risk_ceiling: RiskLevel，子 agent 角色风险上限
+                - depth: int，嵌套层级（0=主 agent）
+                - agent_name: str，子 agent 名称
+        """
+        return self._apply_subagent_weighting(
+            from_danger_level(self.assess_danger(args)),
+            subagent_context,
+        )
+
+    def _apply_subagent_weighting(
+        self,
+        risk: RiskLevel,
+        subagent_context: dict | None,
+    ) -> RiskLevel:
+        """子 agent 风险加权。
+
+        - 纯只读工具（is_write_operation=False）：不加权
+        - 写操作/命令执行类（is_write_operation=True）：在子 agent 中上调一级
+          （CONTROLLED → HIGH；SAFE 保持 SAFE）
+        - 不超过 risk_ceiling（角色风险上限）
+
+        Args:
+            risk: 原始风险等级
+            subagent_context: 子 agent 上下文（None=主 agent，不加权）
+
+        Returns:
+            加权后的风险等级
+        """
+        if subagent_context is None:
+            return risk  # 主 agent，不加权
+
+        # 写操作/命令执行类：子 agent 中上调一级
+        if self.is_write_operation and risk == RiskLevel.CONTROLLED:
+            risk = RiskLevel.HIGH
+
+        # 应用角色风险上限
+        risk_ceiling = subagent_context.get('risk_ceiling')
+        if risk_ceiling is not None:
+            if risk_ceiling == RiskLevel.SAFE:
+                return RiskLevel.SAFE
+            if risk_ceiling == RiskLevel.CONTROLLED and risk == RiskLevel.HIGH:
+                return RiskLevel.CONTROLLED
+
+        return risk
 
     def build_operation_desc(self, args: dict) -> str:
         """构建 operation 描述（前端展示）"""
@@ -47,20 +124,24 @@ class ApprovalPolicy:
 class ShellExecApprovalPolicy(ApprovalPolicy):
     """shell_exec 工具审批策略
 
-    - 黑名单命令：不需审批（由工具内部直接拒绝）
-    - 白名单命令：不需审批
-    - 其他命令：需要审批
+    风险分级（RiskLevel）：
+        - 黑名单命令 → SAFE（工具内部直接拒绝，不需审批）
+        - 白名单命令 → SAFE（安全命令，自动通过）
+        - HIGH_RISK_KEYWORDS 命中 → HIGH（install/remove/delete/format/write）
+        - 其他命令 → CONTROLLED
     """
 
     tool_name = "shell_exec"
+    is_write_operation = True  # 命令执行类，子 agent 中上调一级
 
     # 触发 high 危险等级的关键字
     _HIGH_RISK_KEYWORDS = ("install", "remove", "delete", "format", "write")
 
-    def should_approve(self, args: dict) -> bool:
+    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
+        """评估 shell_exec 风险等级。"""
         command = args.get("command", "")
         if not command:
-            return False
+            return RiskLevel.SAFE  # 空命令，不执行
 
         # 延迟导入避免循环依赖
         from Django_xm.apps.tools.langchain.shell import (
@@ -68,22 +149,29 @@ class ShellExecApprovalPolicy(ApprovalPolicy):
             _is_command_whitelisted,
         )
 
-        # 黑名单命令：工具内部会直接拒绝，无需审批
+        # 黑名单命令：工具内部直接拒绝，不需审批
         if _is_command_blocked(command):
-            return False
+            return RiskLevel.SAFE
 
-        # 白名单命令：自动通过
+        # 白名单命令：安全命令，自动通过
         if _is_command_whitelisted(command):
-            return False
+            return RiskLevel.SAFE
 
-        # 其他命令：需要审批
-        return True
+        # 检查 HIGH_RISK_KEYWORDS
+        command_lower = command.lower()
+        for keyword in self._HIGH_RISK_KEYWORDS:
+            if keyword in command_lower:
+                return self._apply_subagent_weighting(RiskLevel.HIGH, subagent_context)
+
+        return self._apply_subagent_weighting(RiskLevel.CONTROLLED, subagent_context)
 
     def assess_danger(self, args: dict) -> str:
-        command = args.get("command", "").lower()
-        for keyword in self._HIGH_RISK_KEYWORDS:
-            if keyword in command:
-                return "high"
+        """旧格式危险等级（兼容 DB 字段 danger_level）。"""
+        risk = self.assess_risk(args)
+        if risk == RiskLevel.HIGH:
+            return "high"
+        elif risk == RiskLevel.SAFE:
+            return "low"
         return "medium"
 
     def build_operation_desc(self, args: dict) -> str:

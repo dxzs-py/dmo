@@ -11,36 +11,36 @@ Chat 服务层 - 提供对话管理的所有服务接口
 - 工具管理服务
 """
 
-from .chat_service import (
-    ChatService,
-    ChatModeService,
-)
-from .message_service import MessagePersistenceService
 from .agent_service import AgentService
 from .chat_message_builder import ChatMessageBuilder
+from .chat_service import (
+    ChatModeService,
+    ChatService,
+)
 from .context_service import ContextService
-from .tool_service import ToolService
+from .message_service import MessagePersistenceService
 from .slash_commands import (
     CommandCategory,
     SlashCommand,
-    parse_command,
     execute_command,
     get_all_commands,
     get_commands_by_category,
+    parse_command,
 )
+from .tool_service import ToolService
 
 __all__ = [
-    "MessagePersistenceService",
-    "ChatService",
-    "ChatModeService",
     "AgentService",
     "ChatMessageBuilder",
-    "ContextService",
-    "ToolService",
+    "ChatModeService",
+    "ChatService",
     "CommandCategory",
+    "ContextService",
+    "MessagePersistenceService",
     "SlashCommand",
-    "parse_command",
+    "ToolService",
     "execute_command",
     "get_all_commands",
     "get_commands_by_category",
+    "parse_command",
 ]

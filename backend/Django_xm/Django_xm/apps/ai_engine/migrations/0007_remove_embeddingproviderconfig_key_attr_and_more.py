@@ -3,8 +3,7 @@
 把 provider 字段显式化，并删除 state 中残留的 key_attr/label/provider_id，
 Django state 与 DB schema 重新一致。
 """
-import django.db.models.deletion
-from django.db import migrations, models
+from django.db import migrations
 
 
 def noop(apps, schema_editor):

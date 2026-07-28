@@ -26,18 +26,17 @@ from unittest.mock import AsyncMock, patch
 
 # Django 环境初始化（兼容 pytest 和 unittest 直接运行）
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.dev")
-import django  # noqa: E402
-import django.apps  # noqa: E402,F401
+import django
+import django.apps
 
 if not django.apps.apps.ready:
     django.setup()
 
-from Django_xm.apps.agent_hub.config import AgentConfig, AgentType  # noqa: E402
-from Django_xm.apps.agent_hub.builders.base_builder import BaseAgentBuilder  # noqa: E402
-from Django_xm.apps.agent_hub.builders.deep_builder import DeepAgentBuilder  # noqa: E402
-from Django_xm.apps.agent_hub.builders.custom_builder import CustomWorkflowBuilder  # noqa: E402
-from Django_xm.apps.agent_hub.builders.subagent_builder import SubAgentBuilder  # noqa: E402
-
+from Django_xm.apps.agent_hub.builders.base_builder import BaseAgentBuilder
+from Django_xm.apps.agent_hub.builders.custom_builder import CustomWorkflowBuilder
+from Django_xm.apps.agent_hub.builders.deep_builder import DeepAgentBuilder
+from Django_xm.apps.agent_hub.builders.subagent_builder import SubAgentBuilder
+from Django_xm.apps.agent_hub.config import AgentConfig, AgentType
 
 # 4 个 builder 类及其 operation_name 期望
 _BUILDERS = [
@@ -95,9 +94,8 @@ class TestBuilderTimeout(unittest.IsolatedAsyncioTestCase):
                     "_build_internal",
                     new_callable=AsyncMock,
                     side_effect=_slow_build,
-                ):
-                    with self.assertRaises(asyncio.TimeoutError):
-                        await builder.build(config)
+                ), self.assertRaises(asyncio.TimeoutError):
+                    await builder.build(config)
 
     async def test_build_timeout_none_no_limit(self):
         """build_timeout=None 时不限制：_build_internal sleep 0.1s 后正常返回"""
@@ -219,9 +217,8 @@ class TestBuilderTimeout(unittest.IsolatedAsyncioTestCase):
                 ), self.assertLogs(
                     "Django_xm.apps.agent_hub.builders._common",
                     level="ERROR",
-                ) as cm:
-                    with self.assertRaises(asyncio.TimeoutError):
-                        await builder.build(config)
+                ) as cm, self.assertRaises(asyncio.TimeoutError):
+                    await builder.build(config)
 
                 # 至少一条日志包含 operation_name
                 self.assertTrue(

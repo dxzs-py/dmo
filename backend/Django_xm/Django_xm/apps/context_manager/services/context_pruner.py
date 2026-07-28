@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-from Django_xm.apps.context_manager.config import get_logger
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -26,7 +26,7 @@ class PruneResult:
 
 class ContextPruner:
 
-    def prune(self, messages: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], PruneResult]:
+    def prune(self, messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], PruneResult]:
         result = PruneResult(original_count=len(messages))
 
         deduped, deduped_count = self.dedup_tool_outputs(messages)
@@ -38,11 +38,11 @@ class ContextPruner:
         result.pruned_count = deduped_count + filtered_count
         return filtered, result
 
-    def dedup_tool_outputs(self, messages: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], int]:
+    def dedup_tool_outputs(self, messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
         if not messages:
             return [], 0
 
-        deduped: List[Dict[str, Any]] = [messages[0]]
+        deduped: list[dict[str, Any]] = [messages[0]]
         removed_count = 0
 
         for i in range(1, len(messages)):
@@ -68,11 +68,11 @@ class ContextPruner:
 
         return deduped, removed_count
 
-    def filter_trivial(self, messages: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], int]:
+    def filter_trivial(self, messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
         if not messages:
             return [], 0
 
-        filtered: List[Dict[str, Any]] = []
+        filtered: list[dict[str, Any]] = []
         removed_count = 0
 
         for msg in messages:
@@ -87,7 +87,7 @@ class ContextPruner:
         return filtered, removed_count
 
     @staticmethod
-    def _is_trivial(msg: Dict[str, Any]) -> bool:
+    def _is_trivial(msg: dict[str, Any]) -> bool:
         if msg.get("pinned") is True:
             return False
 
@@ -103,10 +103,10 @@ class ContextPruner:
 
     def prune_by_relevance(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         query: str,
         keep_count: int,
-    ) -> Tuple[List[Dict[str, Any]], int]:
+    ) -> tuple[list[dict[str, Any]], int]:
         """基于语义相关性筛选历史消息，保留与当前查询最相关的 top-k 条
 
         Args:
@@ -121,8 +121,8 @@ class ContextPruner:
             return messages, 0
 
         # 分离 pinned 消息和普通消息
-        pinned: List[Dict[str, Any]] = []
-        unpinned: List[Dict[str, Any]] = []
+        pinned: list[dict[str, Any]] = []
+        unpinned: list[dict[str, Any]] = []
         for msg in messages:
             if msg.get("pinned") is True:
                 pinned.append(msg)
@@ -135,7 +135,7 @@ class ContextPruner:
             return messages, 0
 
         # 计算每条消息与查询的语义相似度
-        scored: List[Tuple[float, Dict[str, Any]]] = []
+        scored: list[tuple[float, dict[str, Any]]] = []
         for msg in unpinned:
             score = self._compute_message_relevance(msg, query)
             scored.append((score, msg))
@@ -156,7 +156,7 @@ class ContextPruner:
 
         return result, removed_count
 
-    def _compute_message_relevance(self, msg: Dict[str, Any], query: str) -> float:
+    def _compute_message_relevance(self, msg: dict[str, Any], query: str) -> float:
         """计算单条消息与查询的语义相关性分数"""
         content = msg.get("content", "")
         if isinstance(content, list):
@@ -181,11 +181,12 @@ class ContextPruner:
         return len(overlap) / len(query_words)
 
     @staticmethod
-    def _embedding_similarity(text_a: str, text_b: str) -> Optional[float]:
+    def _embedding_similarity(text_a: str, text_b: str) -> float | None:
         """使用 Embedding 计算余弦相似度，不可用时返回 None"""
         try:
-            from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
             import numpy as np
+
+            from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
 
             embeddings = get_embeddings()
             vec_a = embeddings.embed_query(text_a[:500])

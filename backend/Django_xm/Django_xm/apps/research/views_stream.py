@@ -1,16 +1,16 @@
+import json
 import logging
 import time
-import json
 
-from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import BaseRenderer
+from rest_framework.views import APIView
 
-from Django_xm.common.sse_utils import sse_response, authenticate_sse_request, sse_error_response, sse_error_event
 from Django_xm.common.permissions import IsAuthenticatedOrQueryParam
+from Django_xm.common.sse_utils import authenticate_sse_request, sse_error_event, sse_error_response, sse_response
 
 from .models import ResearchTask
 from .services.task_manager import get_task_status
+
 
 class SSERenderer(BaseRenderer):
     media_type = 'text/event-stream'
@@ -30,7 +30,7 @@ def deep_research_stream(request, task_id):
         return sse_error_response('未登录或登录已过期', 401, code="40101")
 
     try:
-        task = ResearchTask.objects.get(
+        ResearchTask.objects.get(
             task_id=task_id,
             created_by=user,
             is_deleted=False,
@@ -45,19 +45,17 @@ def deep_research_stream(request, task_id):
         start_time = time.time()
         max_duration = 600
 
-        # 订阅 Redis 审批频道
-        approval_pubsub = None
+        # 初始化 Redis 客户端（用于读取历史审批数据 approval_history）
+        # 实时 approval 事件统一通过 WebSocket 推送（与 tool 事件一致），
+        # SSE 仅负责初始 approval_history 加载，不再订阅审批 Pub/Sub 频道。
         redis_client = None
         try:
             from django.core.cache import cache
+
             from Django_xm.apps.research.services.research_runner import REDIS_APPROVAL_PREFIX
             redis_client = cache.client.get_client()
-            approval_channel = f"{REDIS_APPROVAL_PREFIX}{task_id}"
-            approval_pubsub = redis_client.pubsub()
-            approval_pubsub.subscribe(approval_channel)
-            logger.info(f"[SSE] 已订阅审批频道: {approval_channel}")
         except Exception as e:
-            logger.warning(f"[SSE] 订阅审批频道失败: {e}")
+            logger.warning(f"[SSE] 初始化 Redis 客户端失败: {e}")
 
         # 读取 Redis List 中的历史审批数据（解决 Pub/Sub 即发即弃导致错过事件的问题）
         # 同时读取已处理审批的最终状态，确保迟连接的浏览器能看到完整审批状态
@@ -144,21 +142,10 @@ def deep_research_stream(request, task_id):
                     if step != current_status:
                         yield f"data: {json.dumps({'type': 'step_update', 'step': step, 'task_id': task_id}, ensure_ascii=False)}\n\n"
 
-                # 分步 sleep，每 0.5 秒检查一次审批频道，减少审批事件推送延迟
+                # 分步 sleep 控制 while 循环频率（每 0.5s 让出一次，总 2s 间隔）
+                # 实时 approval 事件统一通过 WebSocket 推送（与 tool 事件一致），
+                # SSE 仅负责初始 approval_history 加载，此处不再读取审批 Pub/Sub 频道。
                 for _ in range(4):
-                    if approval_pubsub:
-                        try:
-                            msg = approval_pubsub.get_message(timeout=0.1)
-                            if msg and msg['type'] == 'message':
-                                data = msg['data']
-                                if isinstance(data, bytes):
-                                    data = data.decode('utf-8')
-                                approval_data = json.loads(data)
-                                msg_type = approval_data.get('type', 'approval')
-                                yield f"data: {json.dumps({'type': msg_type, 'data': approval_data, 'task_id': task_id}, ensure_ascii=False)}\n\n"
-                                logger.info(f"[SSE] 推送实时审批事件: type={msg_type}, tool={approval_data.get('tool_name')}, id={approval_data.get('interrupt_id')}")
-                        except Exception as e:
-                            logger.warning(f"[SSE] 检查审批频道失败: {e}")
                     time.sleep(0.5)
 
             yield f"data: {json.dumps({'type': 'done', 'task_id': task_id}, ensure_ascii=False)}\n\n"
@@ -168,13 +155,6 @@ def deep_research_stream(request, task_id):
         except Exception as e:
             logger.error(f"[API] SSE流式输出异常：{e}", exc_info=True)
             yield sse_error_event(code="50001", message=str(e))
-        finally:
-            if approval_pubsub:
-                try:
-                    approval_pubsub.unsubscribe()
-                    approval_pubsub.close()
-                except Exception:
-                    pass
 
     response = sse_response(event_stream())
     return response

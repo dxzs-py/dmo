@@ -6,17 +6,17 @@
 - 深度研究模式额外工具获取（MCP + 用户选择）
 """
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 class ToolService:
 
-    def __init__(self, user_id: Optional[int] = None):
+    def __init__(self, user_id: int | None = None):
         self.user_id = user_id
 
-    async def get_tools(self, data: Dict[str, Any]) -> List:
+    async def get_tools(self, data: dict[str, Any]) -> list:
         from Django_xm.apps.ai_engine.capabilities import registry
         from Django_xm.apps.tools import TOOL_TIER_STANDARD
 

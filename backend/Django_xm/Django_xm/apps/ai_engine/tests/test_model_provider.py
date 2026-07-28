@@ -36,13 +36,16 @@ from unittest.mock import MagicMock, patch
 
 # Django 环境初始化（兼容 pytest 和 unittest 直接运行）
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.dev")
-import django  # noqa: E402
-import django.apps  # noqa: E402,F401
+import django
+import django.apps
 
 if not django.apps.apps.ready:
     django.setup()
 
-from Django_xm.apps.ai_engine.services.model_provider import (  # noqa: E402
+from Django_xm.apps.agent_hub.services.resilient_invoker import (
+    ResilientModel,
+)
+from Django_xm.apps.ai_engine.services.model_provider import (
     _create_model_from_candidate,
     _read_model_config,
     get_default_model,
@@ -50,10 +53,6 @@ from Django_xm.apps.ai_engine.services.model_provider import (  # noqa: E402
     get_streaming_model,
     get_structured_model,
 )
-from Django_xm.apps.agent_hub.services.resilient_invoker import (  # noqa: E402
-    ResilientModel,
-)
-
 
 # ============================================================================
 # Mock 工厂

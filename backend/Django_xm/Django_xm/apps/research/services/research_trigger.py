@@ -5,9 +5,8 @@
 - 创建深度研究任务记录
 - 启动 Celery 异步任务
 """
-import uuid
 import logging
-from typing import Dict, Any, Optional
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -23,16 +22,17 @@ class ResearchTriggerService:
         self._chat_service = chat_service
 
     async def create_task(
-        self, query: str, session_id: Optional[str] = None,
+        self, query: str, session_id: str | None = None,
         use_web_search: bool = True,
         retriever_tool=None,
-        task_title: Optional[str] = None,
-        chat_message_id: Optional[str] = None,
+        task_title: str | None = None,
+        chat_message_id: str | None = None,
     ) -> str:
         """创建深度研究任务并返回 task_id（不执行研究）"""
-        from Django_xm.apps.research.services.task_manager import get_task_manager
-        from django.contrib.auth import get_user_model
         from asgiref.sync import sync_to_async
+        from django.contrib.auth import get_user_model
+
+        from Django_xm.apps.research.services.task_manager import get_task_manager
         User = get_user_model()
 
         thread_id = f"research_{uuid.uuid4().hex[:12]}"
@@ -65,20 +65,20 @@ class ResearchTriggerService:
         return thread_id
 
     async def start_celery(
-        self, query: str, session_id: Optional[str] = None,
+        self, query: str, session_id: str | None = None,
         use_web_search: bool = True,
         retriever_tool=None,
-        extra_tools: Optional[list] = None,
+        extra_tools: list | None = None,
         enable_deep_thinking: bool = False,
-        provider_id: Optional[str] = None,
-        model_name: Optional[str] = None,
-        task_id: Optional[str] = None,
-        knowledge_base_ids: Optional[list] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        special_params: Optional[dict] = None,
-        continue_task_id: Optional[str] = None,
-        task_title: Optional[str] = None,
+        provider_id: str | None = None,
+        model_name: str | None = None,
+        task_id: str | None = None,
+        knowledge_base_ids: list | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        special_params: dict | None = None,
+        continue_task_id: str | None = None,
+        task_title: str | None = None,
     ) -> str:
         """启动深度研究 Celery 任务并返回 thread_id（不订阅 Redis 频道）
 
@@ -118,8 +118,9 @@ class ResearchTriggerService:
         Returns:
             thread_id: 深度研究任务 ID
         """
-        from Django_xm.tasks.deep_research import run_research_task
         from asgiref.sync import sync_to_async
+
+        from Django_xm.tasks.deep_research import run_research_task
 
         thread_id = task_id
 

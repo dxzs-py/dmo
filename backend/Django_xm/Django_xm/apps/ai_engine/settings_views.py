@@ -5,21 +5,27 @@ AI 设置 API
 配置持久化到 SystemConfig 数据库表，服务重启后不丢失。
 """
 import logging
+from typing import Any
 
-from rest_framework.views import APIView
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 
-from Django_xm.apps.ai_engine.config import get_available_providers, HELPER_MODEL_PRIORITY
-from Django_xm.apps.ai_engine.services.registry_service import get_model_registry, is_provider_valid, get_embedding_registry, get_embedding_provider_ids
+from Django_xm.apps.ai_engine.config import HELPER_MODEL_PRIORITY, get_available_providers
+from Django_xm.apps.ai_engine.models import SystemConfig
 from Django_xm.apps.ai_engine.services.embedding_factory import (
     get_embedding_fallback_chain,
-    detect_embedding_dimension,
 )
-from Django_xm.apps.ai_engine.models import SystemConfig
+from Django_xm.apps.ai_engine.services.registry_service import (
+    get_embedding_provider_ids,
+    get_embedding_registry,
+    get_model_registry,
+    is_provider_valid,
+)
 from Django_xm.apps.knowledge.services.index_service import IndexManager
-from Django_xm.common.responses import success_response, error_response
 from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.permissions import IsAdmin
+from Django_xm.common.responses import error_response, success_response
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +79,14 @@ def _get_affected_indexes(user, new_dimension: int) -> list:
 
 
 class AISettingsView(APIView):
-    permission_classes = [IsAuthenticated]
+    """全局 AI 设置视图
 
+    仅管理员可访问（IsAdmin），普通用户访问返回 403。
+    涉及系统级 LLM/Embedding 配置，属于敏感操作。
+    """
+    permission_classes = [IsAdmin]
+
+    @extend_schema(view=False)
     def get(self, request):
         """获取全部 AI 设置"""
         # 可用 LLM provider 列表
@@ -166,6 +178,7 @@ class AISettingsView(APIView):
             })
         return result
 
+    @extend_schema(view=False)
     def put(self, request):
         """更新 AI 设置
 
@@ -267,7 +280,7 @@ class AISettingsView(APIView):
             old_dimension = old_config.get("dimension", None)
 
             # 校验 dimension（MRL 模型允许在前端调整）
-            new_cfg: Dict[str, Any] = {"provider_id": new_provider_id} if new_provider_id else {}
+            new_cfg: dict[str, Any] = {"provider_id": new_provider_id} if new_provider_id else {}
             if new_provider_id and new_dimension is not None:
                 try:
                     new_dimension = int(new_dimension)
@@ -378,8 +391,14 @@ class AISettingsView(APIView):
 
 
 class RebuildIndexesView(APIView):
-    permission_classes = [IsAuthenticated]
+    """触发索引重建视图
 
+    仅管理员可访问（IsAdmin），普通用户访问返回 403。
+    重建索引会调整 PGVector 维度，属于高风险操作。
+    """
+    permission_classes = [IsAdmin]
+
+    @extend_schema(view=False)
     def post(self, request):
         """触发索引重建
 
@@ -421,17 +440,16 @@ class RebuildIndexesView(APIView):
         if index_names:
             # 用户指定了索引
             targets = [idx for idx in all_indexes if idx.get("name") in index_names]
+        # 重建所有维度不匹配的索引
+        elif new_dimension:
+            targets = [
+                idx for idx in all_indexes
+                if idx.get("num_documents", 0) > 0
+                and idx.get("embedding_dimension") is not None
+                and idx.get("embedding_dimension") != new_dimension
+            ]
         else:
-            # 重建所有维度不匹配的索引
-            if new_dimension:
-                targets = [
-                    idx for idx in all_indexes
-                    if idx.get("num_documents", 0) > 0
-                    and idx.get("embedding_dimension") is not None
-                    and idx.get("embedding_dimension") != new_dimension
-                ]
-            else:
-                targets = []
+            targets = []
 
         if not targets:
             return success_response(
@@ -456,24 +474,9 @@ class RebuildIndexesView(APIView):
                 store_type = idx.get("store_type") or manager._get_store_type(name) or "pgvector"
 
                 if store_type == "pgvector":
-                    from django.db import connections
-                    with connections["default"].cursor() as cursor:
-                        cursor.execute(
-                            """SELECT document, cmetadata FROM langchain_pg_embedding
-                               WHERE collection_id = (
-                                   SELECT uuid FROM langchain_pg_collection WHERE name = %s
-                               )""",
-                            [name],
-                        )
-                        rows = cursor.fetchall()
-                    for row in rows:
-                        doc_content = row[0]
-                        doc_metadata = row[1] or {}
-                        if doc_content:
-                            documents.append(Document(
-                                page_content=doc_content,
-                                metadata=doc_metadata if isinstance(doc_metadata, dict) else {},
-                            ))
+                    # 通过 PGVectorBackend 封装层读取文档，避免直接写原生 SQL（Task 20.1）
+                    backend = manager._get_backend("pgvector")
+                    documents = backend.read_all_documents(name)
                 else:
                     old_dim = idx.get("embedding_dimension")
                     old_embeddings = get_embeddings(
@@ -539,7 +542,7 @@ class RebuildIndexesView(APIView):
                             "errors": errors,
                             "total": 0,
                         },
-                        message=f"重建失败: PGVector 维度不兼容",
+                        message="重建失败: PGVector 维度不兼容",
                     )
 
         for name, (documents, store_type, description) in index_docs.items():
@@ -569,7 +572,7 @@ class RebuildIndexesView(APIView):
                     )
                     rebuilt.append(name)
                     logger.info(f"索引重建重试成功: {name}")
-                except Exception as retry_err:
+                except Exception:
                     # 阶段4-2：从原始文件重建
                     logger.error(f"索引重建重试失败，尝试从原始文件重建: {name}")
                     try:

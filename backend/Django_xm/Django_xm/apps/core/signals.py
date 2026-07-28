@@ -12,9 +12,10 @@ Django 信号处理模块 - 核心自定义信号定义
 """
 
 import logging
+
 from django.apps import apps
-from django.db.models.signals import post_save, post_delete
-from django.dispatch import receiver, Signal
+from django.db.models.signals import post_delete, post_save
+from django.dispatch import Signal, receiver
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +53,11 @@ try:
     def celery_task_record_post_save(sender, instance, created, **kwargs):
         if created:
             logger.info(f"Celery 任务记录创建: {instance.celery_task_id} ({instance.task_name})")
-        else:
-            if instance.status in ('success', 'failure', 'revoked'):
-                logger.info(
-                    f"Celery 任务完成: {instance.celery_task_id} "
-                    f"status={instance.status} runtime={instance.runtime_seconds}s"
-                )
+        elif instance.status in ('success', 'failure', 'revoked'):
+            logger.info(
+                f"Celery 任务完成: {instance.celery_task_id} "
+                f"status={instance.status} runtime={instance.runtime_seconds}s"
+            )
 
         task_status_changed.send(
             sender=sender,

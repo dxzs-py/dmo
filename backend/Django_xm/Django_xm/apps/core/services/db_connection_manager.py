@@ -31,7 +31,8 @@ import logging
 import threading
 import time
 from contextlib import contextmanager
-from django.db import connections, close_old_connections
+
+from django.db import close_old_connections, connections
 
 logger = logging.getLogger(__name__)
 

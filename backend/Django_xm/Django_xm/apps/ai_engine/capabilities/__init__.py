@@ -1,24 +1,24 @@
 from .base import AgentCapability
-from .registry import CapabilityRegistry, registry
 from .builtin import (
     BUILTIN_CAPABILITIES,
     ContextManagementCapability,
-    ToolInjectionCapability,
+    GroqCompatCapability,
     GuardrailsCapability,
     RateLimitCapability,
-    GroqCompatCapability,
+    ToolInjectionCapability,
 )
+from .registry import CapabilityRegistry, registry
 from .setup import setup_default_capabilities
 
 __all__ = [
+    "BUILTIN_CAPABILITIES",
     "AgentCapability",
     "CapabilityRegistry",
-    "registry",
-    "BUILTIN_CAPABILITIES",
     "ContextManagementCapability",
-    "ToolInjectionCapability",
+    "GroqCompatCapability",
     "GuardrailsCapability",
     "RateLimitCapability",
-    "GroqCompatCapability",
+    "ToolInjectionCapability",
+    "registry",
     "setup_default_capabilities",
 ]

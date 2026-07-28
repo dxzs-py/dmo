@@ -9,16 +9,18 @@ Embedding 模型工厂
 
 参考：
 - https://docs.langchain.com/oss/python/integrations/embeddings/index
-- 与 llm_factory.get_chat_model_with_fallback 对齐
+- 与 llm_factory.get_chat_model 对齐（默认启用 fallback）
 """
 from __future__ import annotations
 
 import threading
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from langchain_core.embeddings import Embeddings
 
-from ..config import settings, get_logger
+from Django_xm.apps.core.config import get_logger
+
+from ..config import settings
 
 logger = get_logger(__name__)
 
@@ -31,7 +33,7 @@ logger = get_logger(__name__)
 # - requires_key: 必需的属性（从 settings 读 key 是否已配置）
 # - enabled: 总开关
 
-EMBEDDING_PROVIDER_REGISTRY: List[dict] = [
+EMBEDDING_PROVIDER_REGISTRY: list[dict] = [
     {
         "id": "openai",
         "label": "OpenAI(text-embedding-3-small)",
@@ -77,7 +79,7 @@ EMBEDDING_PROVIDER_REGISTRY: List[dict] = [
 
 from collections import OrderedDict
 
-_embedding_instance_cache: "OrderedDict[str, Embeddings]" = OrderedDict()
+_embedding_instance_cache: OrderedDict[str, Embeddings] = OrderedDict()
 _embedding_cache_lock = threading.Lock()
 _EMBEDDING_CACHE_MAXSIZE = 8
 
@@ -121,7 +123,7 @@ def _provider_available(provider_cfg: dict) -> bool:
     return bool(key_value and key_value.strip())
 
 
-def get_embedding_fallback_chain() -> List[dict]:
+def get_embedding_fallback_chain() -> list[dict]:
     """获取可用的 embedding provider 列表（按注册表顺序）"""
     from Django_xm.apps.ai_engine.services.registry_service import get_embedding_registry
     available = []
@@ -134,7 +136,7 @@ def get_embedding_fallback_chain() -> List[dict]:
 def _create_single_embedding(
     provider_cfg: dict,
     batch_size: int,
-    dimension: Optional[int] = None,
+    dimension: int | None = None,
     **kwargs: Any,
 ) -> Embeddings:
     """创建单个 embedding 实例（带缓存）
@@ -157,7 +159,7 @@ def _create_single_embedding(
         return cached
 
     supported = provider_cfg.get("supported_params", set())
-    init_kwargs: Dict[str, Any] = {}
+    init_kwargs: dict[str, Any] = {}
     if "batch_size" in supported and batch_size:
         init_kwargs["batch_size"] = batch_size
     if "model" in supported and model:
@@ -177,7 +179,7 @@ def _create_single_embedding(
     factory = _import_factory(provider_cfg["factory_path"])
     try:
         embedding = factory(**init_kwargs)
-    except Exception as e:
+    except Exception:
         # 初始化失败抛出，让上层 try/except 排除此 provider
         raise
 
@@ -190,15 +192,15 @@ class FallbackEmbedding(Embeddings):
 
     主提供商失败时（403/余额不足/超时等），自动切换到下一个可用提供商。
     支持维度感知：当 required_dimension 不为 None 时，只在维度兼容的 provider 之间 fallback。
-    设计参考 llm_factory.get_chat_model_with_fallback。
+    设计参考 llm_factory.get_chat_model（默认启用 fallback）。
     """
 
     def __init__(
         self,
-        embeddings_list: List[Embeddings],
-        labels: List[str],
-        required_dimension: Optional[int] = None,
-        provider_ids: Optional[List[str]] = None,
+        embeddings_list: list[Embeddings],
+        labels: list[str],
+        required_dimension: int | None = None,
+        provider_ids: list[str] | None = None,
     ):
         self._embeddings_list = embeddings_list
         self._labels = labels
@@ -206,11 +208,11 @@ class FallbackEmbedding(Embeddings):
         self._active_index = 0
         self._required_dimension = required_dimension
         # 维度探测缓存：{provider 索引: 维度}
-        self._dimension_cache: Dict[int, int] = {}
+        self._dimension_cache: dict[int, int] = {}
         # 是否已完成维度探测
         self._dimensions_probed = False
         # 降级事件记录
-        self._fallback_events: List[Dict[str, str]] = []
+        self._fallback_events: list[dict[str, str]] = []
 
     def _probe_dimensions(self) -> None:
         """懒加载：对每个 provider 调用 embed_query("test") 获取输出维度
@@ -236,7 +238,7 @@ class FallbackEmbedding(Embeddings):
                     f"Embedding 维度探测失败: {self._labels[idx]} -> {e}"
                 )
 
-    def _get_compatible_providers(self) -> List[int]:
+    def _get_compatible_providers(self) -> list[int]:
         """返回维度匹配的 provider 索引列表
 
         如果 required_dimension 为 None，返回所有 provider 索引（不限制维度）。
@@ -283,11 +285,11 @@ class FallbackEmbedding(Embeddings):
             "reason": reason,
         })
 
-    def get_fallback_events(self) -> List[Dict[str, str]]:
+    def get_fallback_events(self) -> list[dict[str, str]]:
         """获取所有降级事件"""
         return list(self._fallback_events)
 
-    def get_active_provider_id(self) -> Optional[str]:
+    def get_active_provider_id(self) -> str | None:
         """获取当前活跃的 provider ID"""
         if self._provider_ids and self._active_index < len(self._provider_ids):
             return self._provider_ids[self._active_index]
@@ -296,7 +298,7 @@ class FallbackEmbedding(Embeddings):
     def _call_with_fallback(self, method_name: str, *args, **kwargs):
         # 每次调用前清空降级事件，避免缓存实例导致误报
         self._fallback_events = []
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
 
         # 获取候选 provider 索引列表
         try:
@@ -334,7 +336,7 @@ class FallbackEmbedding(Embeddings):
     async def _acall_with_fallback(self, method_name: str, *args, **kwargs):
         # 每次调用前清空降级事件，避免缓存实例导致误报
         self._fallback_events = []
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
 
         # 获取候选 provider 索引列表
         try:
@@ -389,13 +391,13 @@ _embedding_fallback_lock = threading.Lock()
 
 
 def get_embeddings_with_fallback(
-    model: Optional[str] = None,
+    model: str | None = None,
     batch_size: int = 100,
     use_cache: bool = True,
     use_fallback: bool = True,
-    preferred_provider: Optional[str] = None,
-    required_dimension: Optional[int] = None,
-    dimension: Optional[int] = None,
+    preferred_provider: str | None = None,
+    required_dimension: int | None = None,
+    dimension: int | None = None,
     **kwargs: Any,
 ) -> Embeddings:
     """获取带 fallback 的 Embeddings 实例
@@ -420,7 +422,7 @@ def get_embeddings_with_fallback(
     """
     # ===== 提前构建 cache_key 并检查缓存，避免重复 DB 查询和日志输出 =====
     user_primary_id = preferred_provider
-    user_fallback_id: Optional[str] = None
+    user_fallback_id: str | None = None
     try:
         from Django_xm.apps.ai_engine.models import SystemConfig
         if not user_primary_id:
@@ -548,9 +550,9 @@ def get_embeddings_with_fallback(
 
     # 缓存 key 已在函数入口提前构建并检查
 
-    embeddings_list: List[Embeddings] = []
-    labels: List[str] = []
-    errors: List[str] = []
+    embeddings_list: list[Embeddings] = []
+    labels: list[str] = []
+    errors: list[str] = []
 
     for provider_cfg in providers:
         try:
@@ -607,7 +609,7 @@ def reset_embedding_factory() -> None:
 
 # ============== 数据库配置读取 ==============
 
-def get_system_embedding_provider() -> Optional[str]:
+def get_system_embedding_provider() -> str | None:
     """从 SystemConfig 数据库读取用户偏好的 Embedding provider
 
     优先级：SystemConfig 数据库 > .env 配置 > None
@@ -625,7 +627,7 @@ def get_system_embedding_provider() -> Optional[str]:
 
 # ============== 维度探测工具 ==============
 
-_dimension_detect_cache: Dict[int, int] = {}
+_dimension_detect_cache: dict[int, int] = {}
 _dimension_detect_lock = threading.Lock()
 
 

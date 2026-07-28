@@ -3,12 +3,17 @@
 提供：
 - AsyncToolMixin: 自动将同步 _run 包装为异步 _arun（使用 asyncio.to_thread）
 - SafeConfigMixin: 安全获取 AI 引擎配置（降级到环境变量）
-- interrupt_for_approval: 通用人工审批中断机制（任何工具可调用）
+- is_approval_interrupt: 判断 interrupt 值是否为审批类型（供流处理检测用）
+
+审批机制说明：
+    工具层不参与审批判断。所有审批由 ApprovalMiddleware 在 after_model 钩子
+    统一处理（批量拦截 AIMessage.tool_calls 中需要审批的工具调用）。
+    到达工具 _run/_arun 的命令已通过审批或无需审批。
 """
 import asyncio
-import os
 import logging
-from typing import Any, Optional, Dict
+import os
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -85,124 +90,72 @@ def validate_tool_metadata(metadata: dict) -> dict:
     return merged
 
 
-# ── 通用人工审批中断机制 ──────────────────────────────────────────
-
-class ApprovalAction:
-    """审批动作类型"""
-    CONFIRM = "confirm"           # 确认/取消（二元选择）
-    CONFIRM_WITH_INPUT = "confirm_with_input"  # 确认 + 用户输入值
-
-
-def interrupt_for_approval(
-    tool_name: str,
-    title: str,
-    description: str,
-    action: str = ApprovalAction.CONFIRM,
-    *,
-    operation: str = "",
-    danger_level: str = "medium",
-    input_placeholder: str = "",
-    extra: Optional[Dict[str, Any]] = None,
-    command: str = "",  # deprecated: 向后兼容，自动赋值给 operation
-) -> Any:
-    """通用人工审批中断函数
-
-    任何 LangChain 工具、MCP 工具、Skill 工具都可以调用此函数，
-    暂停 Agent 执行并等待用户确认。
-
-    ⚠️ 重要：此函数必须在异步上下文（_arun）中调用，不能在 asyncio.to_thread
-    的线程池中调用。原因是 LangGraph 的 interrupt() 依赖 ContextVar 传播上下文，
-    而 asyncio.to_thread 会创建新的线程上下文，导致 interrupt 值丢失。
-
-    正确用法：
-        async def _arun(self, ...):
-            approval = interrupt_for_approval(...)
-            if approval is True:
-                result = await asyncio.to_thread(实际执行函数, ...)
-
-    错误用法：
-        def _run(self, ...):
-            approval = interrupt_for_approval(...)  # ❌ 在 asyncio.to_thread 中调用
-
-    使用方式：
-        approval = interrupt_for_approval(
-            tool_name="shell_exec",
-            title="确认执行命令",
-            description="Agent 请求执行以下非白名单命令",
-            operation="rm -rf /tmp/test",
-        )
-        if approval is True:
-            # 用户确认
-        else:
-            # 用户拒绝
-
-    Args:
-        tool_name: 工具名称（如 "shell_exec", "fs_write_file" 等）
-        title: 审批标题（前端显示）
-        description: 审批描述（前端显示）
-        action: 审批动作类型，默认 CONFIRM（确认/取消）
-        operation: 待审批的操作描述（前端代码块显示），如 shell 命令、文件路径等
-        danger_level: 危险等级 "low"/"medium"/"high"
-        input_placeholder: CONFIRM_WITH_INPUT 模式下输入框的占位文本
-        extra: 工具自定义数据（随 interrupt 传递，resume 时原样返回）
-        command: deprecated，请使用 operation（自动赋值给 operation）
-
-    Returns:
-        True: 用户确认
-        False/其他: 用户拒绝
-        str: 当 action=CONFIRM_WITH_INPUT 时，返回用户输入的值
-    """
-    # 向后兼容：command 自动赋值给 operation
-    if command and not operation:
-        operation = command
-
-    from langgraph.types import interrupt
-
-    context = {
-        "_approval": True,           # 标识这是一个审批中断（区别于其他类型的 interrupt）
-        "tool_name": tool_name,
-        "title": title,
-        "description": description,
-        "action": action,
-        "operation": operation,      # 统一字段名（兼容旧 command）
-        "danger_level": danger_level,
-    }
-    if input_placeholder:
-        context["input_placeholder"] = input_placeholder
-    if extra:
-        context["extra"] = extra
-
-    logger.info(f"interrupt_for_approval: tool={tool_name}, title={title}, danger={danger_level}, operation={operation[:80]}")
-
-    result = interrupt(context)
-
-    if action == ApprovalAction.CONFIRM_WITH_INPUT:
-        # 用户输入模式：返回用户输入的值或 None（取消）
-        return result
-    else:
-        # 确认/取消模式：返回 True/False
-        return result is True
-
-
-def reject_sync_approval(tool_name: str, detail: str = "") -> str:
-    """同步模式下无法使用 interrupt，返回统一的拒绝消息
-
-    当工具在 _run（同步）模式下需要审批时，应调用此函数返回拒绝消息，
-    而非手写拒绝文本。这样保证所有工具的拒绝消息格式一致。
-
-    Args:
-        tool_name: 工具名称
-        detail: 操作详情（如命令、文件路径等）
-    """
-    msg = f"操作需要用户确认，但当前为同步执行模式，无法请求审批。"
-    if detail:
-        msg += f" 详情: {detail}"
-    return msg
+# ── 审批中断检测 ──────────────────────────────────────────────────
+# 工具层审批已统一收敛到 ApprovalMiddleware（apps/agent_hub/approval/middleware.py），
+# 此处仅保留 is_approval_interrupt 供流处理（stream_helpers / adapter / deep_chat_service
+# / regenerate_service / views_chat）检测 interrupt 值是否为审批类型。
 
 
 def is_approval_interrupt(value: Any) -> bool:
     """判断 interrupt 值是否为审批类型
 
-    用于 chat_service.py 中过滤审批中断事件。
+    用于流处理中过滤审批中断事件。ApprovalMiddleware 的 interrupt 值格式为：
+        {"_approval": True, "requests": [...], "_meta": {...}}
     """
     return isinstance(value, dict) and value.get("_approval") is True
+
+
+# 工具元数据默认规则（替代原 chat_service.py 中硬编码的 weather_tools / raw_content_tools / knowledge_base_ 前缀）
+_RAW_CONTENT_TOOL_NAMES = frozenset({
+    "web_fetch",
+    "web_search",
+    "skill_web_research",
+})
+_RAW_CONTENT_TOOL_PREFIXES = (
+    "knowledge_base_",
+)
+
+_DEFAULT_TOOL_META: dict[str, Any] = {
+    "output_to_chat": True,
+    "raw_content": False,
+}
+
+
+def get_tool_metadata(tool_name: str, tools: list | None = None) -> dict[str, Any]:
+    """获取工具元数据，驱动工具结果补发与聊天输出行为
+
+    返回字段：
+    - output_to_chat: bool — 工具结果是否适合作为聊天文本补发（默认 True）
+    - raw_content: bool — 工具是否返回大量原始内容（默认 False），
+      此类结果不应直接作为聊天文本输出
+
+    优先级：
+    1. 工具实例的 metadata 属性（若包含 output_to_chat / raw_content）
+    2. 工具名匹配的默认规则（raw_content_tools / knowledge_base_ 前缀）
+    3. 默认值 {output_to_chat: True, raw_content: False}
+
+    替代原 chat_service.py 中硬编码的：
+    - weather_tools = ["get_daily_weather", "get_weather_forecast", "get_weather"]
+    - raw_content_tools = {"web_fetch", "web_search", "skill_web_research"}
+    - tool_name.startswith("knowledge_base_")
+    """
+    meta = dict(_DEFAULT_TOOL_META)
+
+    # 1. 工具实例 metadata 属性覆盖
+    if tools:
+        for tool in tools:
+            tool_obj_name = getattr(tool, "name", None) or getattr(tool, "__name__", None)
+            if tool_obj_name == tool_name:
+                instance_meta = getattr(tool, "metadata", None) or {}
+                if isinstance(instance_meta, dict):
+                    if "output_to_chat" in instance_meta:
+                        meta["output_to_chat"] = bool(instance_meta["output_to_chat"])
+                    if "raw_content" in instance_meta:
+                        meta["raw_content"] = bool(instance_meta["raw_content"])
+                break
+
+    # 2. 工具名匹配的默认规则
+    if tool_name in _RAW_CONTENT_TOOL_NAMES or any(tool_name.startswith(prefix) for prefix in _RAW_CONTENT_TOOL_PREFIXES):
+        meta["raw_content"] = True
+
+    return meta

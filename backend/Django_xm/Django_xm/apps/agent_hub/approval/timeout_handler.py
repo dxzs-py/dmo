@@ -30,8 +30,8 @@
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_APPROVAL_TIMEOUT = timedelta(minutes=5)
 
 # 超时决策标记：定义已迁移至 common.constants，此处保留重导出
-from Django_xm.common.constants import TIMEOUT_DECISION  # noqa: F401
+from Django_xm.common.constants import TIMEOUT_DECISION
 
 
 def build_timeout_tool_message(tool_call_id: str, tool_name: str = ""):
@@ -74,7 +74,7 @@ def build_timeout_tool_message(tool_call_id: str, tool_name: str = ""):
     )
 
 
-def build_timeout_resume_value(approval_requests: List[dict]):
+def build_timeout_resume_value(approval_requests: list[dict]):
     """构建超时恢复值（用于 Command(resume=...)）
 
     批量审批场景下，所有审批请求统一标记为超时；
@@ -125,13 +125,13 @@ class ApprovalTimeoutHandler:
     def __init__(self, timeout: timedelta = DEFAULT_APPROVAL_TIMEOUT):
         self.timeout = timeout
         # {interrupt_id: {"timestamp": datetime, "tool_call_id": str, "graph_state": ...}}
-        self._pending_approvals: Dict[str, Dict[str, Any]] = {}
+        self._pending_approvals: dict[str, dict[str, Any]] = {}
 
     async def register_approval(
         self,
         interrupt_id: str,
         tool_call_id: str,
-        graph_state: Optional[Dict[str, Any]] = None,
+        graph_state: dict[str, Any] | None = None,
     ) -> None:
         """注册新的审批请求
 
@@ -141,7 +141,7 @@ class ApprovalTimeoutHandler:
             graph_state: 可选的 graph 状态快照（调试用）
         """
         self._pending_approvals[interrupt_id] = {
-            "timestamp": datetime.now(timezone.utc),
+            "timestamp": datetime.now(UTC),
             "tool_call_id": tool_call_id,
             "graph_state": graph_state,
         }
@@ -159,7 +159,7 @@ class ApprovalTimeoutHandler:
         if not self._pending_approvals:
             return
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         timed_out_ids = [
             interrupt_id
             for interrupt_id, info in self._pending_approvals.items()
@@ -253,7 +253,7 @@ class ApprovalTimeoutHandler:
 
 
 # 全局单例（进程内超时监控，可选使用）
-_global_handler: Optional[ApprovalTimeoutHandler] = None
+_global_handler: ApprovalTimeoutHandler | None = None
 
 
 def get_timeout_handler() -> ApprovalTimeoutHandler:

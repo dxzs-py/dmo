@@ -10,7 +10,8 @@
 import asyncio
 import logging
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from langchain_core.messages import AIMessage, ToolMessage
 
@@ -36,7 +37,7 @@ class FallbackStreamService:
         self._chat_service = chat_service
 
     @staticmethod
-    def clean_tool_call_messages(messages: List) -> List:
+    def clean_tool_call_messages(messages: list) -> list:
         """清理消息历史中未完成的 tool_calls
 
         当 agent 执行失败回退到无工具模式时，对话历史中可能包含
@@ -70,10 +71,10 @@ class FallbackStreamService:
     async def stream_without_tools(
         self,
         model_instance,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         usage_tracker,
-        token_detail_tracker: Optional[TokenDetailTracker] = None,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+        token_detail_tracker: TokenDetailTracker | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """无工具纯对话流式
 
         Args:
@@ -101,7 +102,7 @@ class FallbackStreamService:
         messages.append(human_msg)
 
         current_message_content = ""
-        accumulated_reasoning: Dict[str, str] = {"content": ""}
+        accumulated_reasoning: dict[str, str] = {"content": ""}
         thinking_start_time = time.time()
 
         with TokenUsageCallbackHandler() as cb:

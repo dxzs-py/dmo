@@ -4,9 +4,9 @@ Django settings for Django_xm project - 开发环境配置
 继承 base.py 公共配置，仅覆盖开发环境差异项。
 """
 
-from .base import *  # noqa: F401,F403
-
 import sys
+
+from .base import *
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -50,16 +50,16 @@ CSRF_TRUSTED_ORIGINS = [
     o.strip() for o in app_cfg.csrf_trusted_origins.split(",") if o.strip()
 ] or CORS_ALLOWED_ORIGINS
 
-REST_FRAMEWORK["DEFAULT_AUTHENTICATION_CLASSES"] = [  # noqa: F405
+REST_FRAMEWORK["DEFAULT_AUTHENTICATION_CLASSES"] = [
     'rest_framework_simplejwt.authentication.JWTAuthentication',
     'rest_framework.authentication.SessionAuthentication',
     'rest_framework.authentication.BasicAuthentication',
 ]
-REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"] = [  # noqa: F405
+REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"] = [
     "rest_framework.renderers.JSONRenderer",
     "rest_framework.renderers.BrowsableAPIRenderer",
 ]
-REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {  # noqa: F405
+REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "anonymous": "100/min",
     "user": "200/min",
     "login": "5/min",
@@ -69,8 +69,8 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {  # noqa: F405
     "sensitive": "10/min",
 }
 
-SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"] = timedelta(days=app_cfg.jwt_access_token_lifetime_days)  # noqa: F405
-SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"] = timedelta(days=app_cfg.jwt_refresh_token_lifetime_days)  # noqa: F405
+SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"] = timedelta(days=app_cfg.jwt_access_token_lifetime_days)
+SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"] = timedelta(days=app_cfg.jwt_refresh_token_lifetime_days)
 
 SECURE_SSL_REDIRECT = False
 SESSION_COOKIE_SECURE = False
@@ -107,7 +107,7 @@ LOGGING = {
         "file": {
             "level": "INFO",
             "class": "logging.handlers.RotatingFileHandler",
-            "filename": str(BASE_DIR.parent / "logs" / "django.log"),  # noqa: F405
+            "filename": str(BASE_DIR.parent / "logs" / "django.log"),
             "maxBytes": 300 * 1024 * 1024,
             "backupCount": 10,
             "formatter": "verbose",
@@ -159,32 +159,10 @@ CELERY_BROKER_TRANSPORT_OPTIONS = {
 CELERY_BROKER_CONNECTION_MAX_RETRIES = 10
 CELERY_BROKER_POOL_LIMIT = 10
 CELERY_REDIS_BACKEND_HEALTH_CHECK_INTERVAL = 60
-CELERY_TASK_ROUTES = {}
+# dev 环境保留 base.py 的 CELERY_TASK_ROUTES（与生产一致），不再清空。
+# 清空会导致 analytics.track_event / approvals.cleanup_expired_approvals 等路由丢失，
+# 任务被发送到默认队列而非预期的 celery 队列。
 
-import os as _os
-_npx_path = _os.environ.get('NPM_NPX_PATH', None)
-if not _npx_path or not _os.path.exists(_npx_path):
-    _npx_alt = _os.environ.get('NPM_NPX_ALT_PATH', None)
-    _npx_path = _npx_alt if _npx_alt and _os.path.exists(_npx_alt) else 'npx'
-_node_dir = _os.environ.get('NODE_PATH', None)
-if _node_dir and not _os.path.exists(_node_dir):
-    _node_dir = None
-
-MCP_SERVERS = [
-    {
-        "name": "sequential-thinking",
-        "transport": "stdio",
-        "command": _npx_path,
-        "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
-        "env": {"PATH": f"{_node_dir};{_os.environ.get('PATH', '')}"} if _node_dir else None,
-        "description": "结构化渐进式思维工具 - 将复杂问题分解为可管理的步骤，支持修正和分支推理",
-        "enabled": True,
-    },
-    {
-        "name": "context7",
-        "url": "https://mcp.context7.com/mcp",
-        "transport": "http",
-        "description": "实时库文档查询 - 获取最新的、版本特定的库文档和代码示例",
-        "enabled": True,
-    },
-]
+# MCP_SERVERS 配置已迁移到 apps/tools/mcp/config.py（Task 27.3），
+# 由 discovery.py 直接 import get_system_mcp_servers() 调用，
+# 不再走 Django settings 间接访问。

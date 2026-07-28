@@ -5,7 +5,6 @@
 """
 
 import logging
-from typing import List, Tuple
 
 from Django_xm.apps.agent_hub.config import AgentType
 
@@ -15,7 +14,7 @@ logger = logging.getLogger(__name__)
 class PreflightResult:
     """预检结果"""
 
-    def __init__(self, passed: bool, issues: List[str], warnings: List[str]):
+    def __init__(self, passed: bool, issues: list[str], warnings: list[str]):
         self.passed = passed
         self.issues = issues        # 严重问题（阻止正常执行）
         self.warnings = warnings    # 警告（可能影响功能）
@@ -73,7 +72,7 @@ class ExecutionPreflight:
             warnings=warnings,
         )
 
-    async def _check_llm_reachable(self, config) -> Tuple[bool, str]:
+    async def _check_llm_reachable(self, config) -> tuple[bool, str]:
         """检查 LLM 服务可达性
 
         轻量级检查：尝试通过 model_resolver 创建模型实例。
@@ -88,7 +87,7 @@ class ExecutionPreflight:
         except Exception as e:
             return (False, str(e)[:200])
 
-    async def _check_redis_connected(self) -> Tuple[bool, str]:
+    async def _check_redis_connected(self) -> tuple[bool, str]:
         """检查 Redis 连接"""
         try:
             from django.core.cache import cache
@@ -100,14 +99,14 @@ class ExecutionPreflight:
         except Exception as e:
             return (False, str(e)[:200])
 
-    def _check_checkpointer(self, config) -> Tuple[bool, str]:
+    def _check_checkpointer(self, config) -> tuple[bool, str]:
         """检查 Checkpointer 可用性"""
         if config.checkpointer is not None:
             return (True, "")
         # 未配置 checkpointer，深度研究需要但可降级
         return (False, "未配置 checkpointer")
 
-    def _check_tools(self, config) -> List[str]:
+    def _check_tools(self, config) -> list[str]:
         """检查工具可用性（仅警告）"""
         warnings = []
         if config.tools is not None and len(config.tools) == 0:

@@ -20,12 +20,13 @@
 """
 
 import re
-from typing import List, Optional, Literal
+from typing import Literal
+
 from langchain_core.documents import Document
 from langchain_text_splitters import (
-    RecursiveCharacterTextSplitter,
     CharacterTextSplitter,
     MarkdownTextSplitter,
+    RecursiveCharacterTextSplitter,
     TokenTextSplitter,
 )
 
@@ -35,8 +36,8 @@ try:
 except ImportError:
     SEMANTIC_CHUNKER_AVAILABLE = False
 
-from Django_xm.apps.knowledge.config import settings
 from Django_xm.apps.core.logging_utils import get_logger
+from Django_xm.apps.knowledge.config import settings
 
 logger = get_logger(__name__)
 
@@ -46,8 +47,8 @@ SplitterType = Literal["recursive", "character", "markdown", "token", "semantic"
 
 def get_text_splitter(
     splitter_type: SplitterType = "recursive",
-    chunk_size: Optional[int] = None,
-    chunk_overlap: Optional[int] = None,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
     **kwargs,
 ):
     chunk_size = chunk_size or getattr(settings, 'chunk_size', 1000)
@@ -145,7 +146,7 @@ def _get_semantic_splitter(
     )
 
 
-def _extract_markdown_heading(text: str) -> Optional[str]:
+def _extract_markdown_heading(text: str) -> str | None:
     """
     从 Markdown 文本中提取最近的标题层级（h1/h2/h3）
 
@@ -190,7 +191,7 @@ def _determine_doc_type(doc: Document) -> str:
     return "unknown"
 
 
-def enhance_chunk_metadata(chunks: List[Document]) -> List[Document]:
+def enhance_chunk_metadata(chunks: list[Document]) -> list[Document]:
     """
     为切分后的文档块增强元数据
 
@@ -244,12 +245,12 @@ def enhance_chunk_metadata(chunks: List[Document]) -> List[Document]:
 
 
 def split_documents(
-    documents: List[Document],
+    documents: list[Document],
     splitter_type: SplitterType = "recursive",
-    chunk_size: Optional[int] = None,
-    chunk_overlap: Optional[int] = None,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
     **kwargs,
-) -> List[Document]:
+) -> list[Document]:
     if not documents:
         logger.warning("文档列表为空，无需分块")
         return []
@@ -287,11 +288,11 @@ def split_documents(
 def split_text(
     text: str,
     splitter_type: SplitterType = "recursive",
-    chunk_size: Optional[int] = None,
-    chunk_overlap: Optional[int] = None,
-    metadata: Optional[dict] = None,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+    metadata: dict | None = None,
     **kwargs,
-) -> List[Document]:
+) -> list[Document]:
     if not text:
         logger.warning("文本为空，无需分块")
         return []
@@ -348,7 +349,7 @@ def get_optimal_chunk_size(
     return chunk_size, overlap
 
 
-def analyze_chunks(chunks: List[Document]) -> dict:
+def analyze_chunks(chunks: list[Document]) -> dict:
     """分析分块结果的统计信息"""
     if not chunks:
         return {

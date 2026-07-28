@@ -362,9 +362,44 @@ export async function readSSEStream(response, onEvent, signal) {
   }
 }
 
+/**
+ * 与 WebSocket 通道重叠的 SSE 事件类型集合
+ *
+ * 这些事件后端同时通过 WebSocket 广播给所有浏览器（含触发浏览器），
+ * SSE 通道是冗余的实时推送。若在 SSE for 循环中同步处理，会与
+ * WebSocket onmessage 竞争修改同一 store 状态，且高频 chunk 流持续
+ * 占据主线程 microtask 队列时，WebSocket message（macrotask）被推迟，
+ * 导致触发浏览器工具调用计数滞后于非触发浏览器。
+ *
+ * 改为 setTimeout(fn, 0) 让出主线程，允许 WebSocket 事件优先处理。
+ *
+ * 注意：
+ * - approval / approval_processed / approval_timeout 已从 SSE 移除，
+ *   实时审批事件统一由 WebSocket 推送，不再需要在此延迟处理。
+ * - approval_history / error / retry / timeout_warning 等 SSE 专属
+ *   或顺序敏感事件保持同步处理，不在此集合中。
+ */
+const SSE_DEFERRED_EVENT_TYPES = new Set([
+  'tool',
+  'tool_result',
+  'tool_usage_dedup',
+  'tool_usage_blocked',
+  'tool_usage_warning',
+])
+
 export async function readSSEStreamWithEvents(response, isStreamingRef, appendFn, sessionOps) {
   await readSSEStream(response, (parsed) => {
     if (isStreamingRef && !isStreamingRef.value) return
+
+    // 与 WebSocket 重叠的事件让出主线程，允许 WS onmessage 优先处理
+    if (parsed.type && SSE_DEFERRED_EVENT_TYPES.has(parsed.type)) {
+      setTimeout(() => {
+        if (isStreamingRef && !isStreamingRef.value) return
+        parseSSEEvent(parsed, appendFn, sessionOps)
+      }, 0)
+      return
+    }
+
     parseSSEEvent(parsed, appendFn, sessionOps)
   })
 }

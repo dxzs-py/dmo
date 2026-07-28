@@ -8,31 +8,46 @@
 import logging
 import os
 
-from rest_framework.views import APIView
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 
-from Django_xm.common.permissions import IsAdmin
-from Django_xm.common.responses import success_response, error_response
+from Django_xm.apps.core.throttling import KnowledgeRateThrottle
 from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.permissions import IsAdmin
+from Django_xm.common.responses import error_response, success_response
 
-from .models import ChatAttachment, AttachmentStatus, StorageAlert
+from .models import AttachmentStatus, ChatAttachment, StorageAlert
 from .services.attachment_validation import (
-    validate_upload_file,
+    build_admin_list,
+    check_user_storage_quota,
+    get_admin_stats,
+    handle_alert_action,
     serialize_attachment,
     serialize_attachment_detail,
-    build_admin_list,
-    get_admin_stats,
     serialize_storage_alert,
-    handle_alert_action,
+    validate_upload_file,
 )
 
 logger = logging.getLogger(__name__)
 
 
 class ChatAttachmentUploadView(APIView):
-    permission_classes = [IsAuthenticated]
+    """聊天附件上传视图
 
+    校验链：
+        1. 会话归属
+        2. 文件大小 / 扩展名 / magic bytes
+        3. 用户存储配额（settings.ATTACHMENT_MAX_TOTAL_SIZE_MB）
+
+    限流：附件上传涉及文件 IO 与存储配额校验，按用户限流（KnowledgeRateThrottle, 60/min），
+    防止单用户高频上传耗尽存储与 IO。
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [KnowledgeRateThrottle]
+
+    @extend_schema(view=False)
     def post(self, request, session_id):
         try:
             from Django_xm.apps.chat.services.cross_app import get_chat_session_strict
@@ -50,6 +65,21 @@ class ChatAttachmentUploadView(APIView):
                 return error_response(
                     code=ErrorCode.INVALID_PARAMS,
                     message='请选择要上传的文件'
+                )
+
+            # 用户存储配额校验（先于文件内容校验，提前拦截超额上传）
+            is_ok, quota_message, current_total = check_user_storage_quota(
+                request.user, uploaded_file.size,
+            )
+            if not is_ok:
+                logger.info(
+                    f"用户 {request.user.id} 上传超额: "
+                    f"current={current_total}B, file={uploaded_file.size}B"
+                )
+                return error_response(
+                    code=ErrorCode.PERMISSION_DENIED,
+                    message=quota_message,
+                    http_status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 )
 
             is_valid, error_message, mime_type = validate_upload_file(uploaded_file)
@@ -85,7 +115,7 @@ class ChatAttachmentUploadView(APIView):
                 message='文件上传成功',
                 http_status=status.HTTP_201_CREATED
             )
-        except Exception as e:
+        except Exception:
             logger.exception("上传附件失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -93,6 +123,7 @@ class ChatAttachmentUploadView(APIView):
 class ChatAttachmentListView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(view=False)
     def get(self, request, session_id):
         try:
             from Django_xm.apps.chat.services.cross_app import get_chat_session_strict
@@ -111,7 +142,7 @@ class ChatAttachmentListView(APIView):
 
             data = [serialize_attachment(att) for att in attachments]
             return success_response(data=data)
-        except Exception as e:
+        except Exception:
             logger.exception("获取附件列表失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -119,6 +150,7 @@ class ChatAttachmentListView(APIView):
 class ChatAttachmentDeleteView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(view=False)
     def delete(self, request, attachment_id):
         try:
             attachment = ChatAttachment.objects.filter(
@@ -155,6 +187,7 @@ class ChatAttachmentDeleteView(APIView):
 class AttachmentAdminListView(APIView):
     permission_classes = [IsAdmin]
 
+    @extend_schema(operation_id="attachments_admin_list", responses={200: None})
     def get(self, request):
         try:
             params = {
@@ -168,7 +201,7 @@ class AttachmentAdminListView(APIView):
 
             result = build_admin_list(params)
             return success_response(data=result)
-        except Exception as e:
+        except Exception:
             logger.exception("获取附件管理列表失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -176,6 +209,7 @@ class AttachmentAdminListView(APIView):
 class AttachmentAdminDetailView(APIView):
     permission_classes = [IsAdmin]
 
+    @extend_schema(view=False)
     def get(self, request, attachment_id):
         try:
             try:
@@ -187,10 +221,11 @@ class AttachmentAdminDetailView(APIView):
 
             data = serialize_attachment_detail(att)
             return success_response(data=data)
-        except Exception as e:
+        except Exception:
             logger.exception("获取附件详情失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
+    @extend_schema(view=False)
     def delete(self, request, attachment_id):
         try:
             from Django_xm.apps.attachments.services.attachment_lifecycle import AttachmentLifecycleService
@@ -201,7 +236,7 @@ class AttachmentAdminDetailView(APIView):
             if '不存在' in message or '已删除' in message:
                 return error_response(code=ErrorCode.NOT_FOUND, message=message)
             return error_response(code=ErrorCode.SERVER_ERROR, message=message)
-        except Exception as e:
+        except Exception:
             logger.exception("删除附件失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -209,6 +244,7 @@ class AttachmentAdminDetailView(APIView):
 class AttachmentAdminActionView(APIView):
     permission_classes = [IsAdmin]
 
+    @extend_schema(view=False)
     def post(self, request, attachment_id):
         try:
             action = request.data.get('action', '')
@@ -258,7 +294,7 @@ class AttachmentAdminActionView(APIView):
 
             else:
                 return error_response(code=ErrorCode.INVALID_PARAMS, message=f'不支持的操作: {action}')
-        except Exception as e:
+        except Exception:
             logger.exception("附件管理操作失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -266,6 +302,7 @@ class AttachmentAdminActionView(APIView):
 class AttachmentAdminCleanupView(APIView):
     permission_classes = [IsAdmin]
 
+    @extend_schema(view=False)
     def post(self, request):
         try:
             action = request.data.get('action', 'cleanup')
@@ -292,7 +329,7 @@ class AttachmentAdminCleanupView(APIView):
                 'errors': log.errors,
                 'dry_run': dry_run,
             })
-        except Exception as e:
+        except Exception:
             logger.exception("附件清理操作失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -300,11 +337,12 @@ class AttachmentAdminCleanupView(APIView):
 class AttachmentAdminStatsView(APIView):
     permission_classes = [IsAdmin]
 
+    @extend_schema(view=False)
     def get(self, request):
         try:
             data = get_admin_stats()
             return success_response(data=data)
-        except Exception as e:
+        except Exception:
             logger.exception("获取附件统计失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -312,6 +350,7 @@ class AttachmentAdminStatsView(APIView):
 class AttachmentAdminBatchView(APIView):
     permission_classes = [IsAdmin]
 
+    @extend_schema(view=False)
     def post(self, request):
         try:
             action = request.data.get('action', '')
@@ -333,12 +372,20 @@ class AttachmentAdminBatchView(APIView):
                 return error_response(code=ErrorCode.INVALID_PARAMS, message=f'不支持的操作: {action}')
 
             return success_response(data=results)
-        except Exception as e:
+        except Exception:
             logger.exception("附件批量操作失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
 
 class StorageAlertView(APIView):
+    """存储告警视图基类。
+
+    历史上同时承载 list / detail / action 三类语义（通过 ``alert_id`` 区分）。
+    为修复 drf_spectacular W001 operationId 冲突，拆分为 ``StorageAlertListView``
+    与 ``StorageAlertDetailView`` 两个子类，分别挂载到不同 URL。本基类保留所有逻辑，
+    子类只覆盖 ``@extend_schema`` 装饰器，不改变任何运行时行为。
+    """
+
     permission_classes = [IsAdmin]
 
     def get(self, request, alert_id=None):
@@ -354,7 +401,7 @@ class StorageAlertView(APIView):
             alerts = StorageAlert.objects.all().order_by('-created_at')
             data = [serialize_storage_alert(a) for a in alerts]
             return success_response(data=data)
-        except Exception as e:
+        except Exception:
             logger.exception("获取存储告警失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -372,6 +419,31 @@ class StorageAlertView(APIView):
                 return error_response(code=ErrorCode.INVALID_PARAMS, message=message)
 
             return success_response(message=message)
-        except Exception as e:
+        except Exception:
             logger.exception("处理存储告警失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
+
+
+class StorageAlertListView(StorageAlertView):
+    """存储告警列表端点：GET /api/v1/attachments/admin/storage-alerts/"""
+
+    @extend_schema(operation_id="attachments_admin_storage_alerts_list", responses={200: None})
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
+    @extend_schema(view=False)
+    def post(self, request, *args, **kwargs):
+        # POST 在 list 端点无意义（无 alert_id），保留以维持向后兼容
+        return super().post(request, *args, **kwargs)
+
+
+class StorageAlertDetailView(StorageAlertView):
+    """存储告警详情/操作端点：GET/POST /api/v1/attachments/admin/storage-alerts/{alert_id}/"""
+
+    @extend_schema(operation_id="attachments_admin_storage_alerts_retrieve", responses={200: None})
+    def get(self, request, alert_id, *args, **kwargs):
+        return super().get(request, alert_id=alert_id, *args, **kwargs)
+
+    @extend_schema(operation_id="attachments_admin_storage_alerts_action", responses={200: None})
+    def post(self, request, alert_id, *args, **kwargs):
+        return super().post(request, alert_id=alert_id, *args, **kwargs)

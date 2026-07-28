@@ -18,20 +18,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Django 环境初始化（兼容 pytest 和 unittest 直接运行）
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.dev")
-import django  # noqa: E402
-import django.apps  # noqa: E402,F401
+import django
+import django.apps
 
 if not django.apps.apps.ready:
     django.setup()
 
-from Django_xm.apps.agent_hub.services.agent_resilience import (  # noqa: E402
+from Django_xm.apps.agent_hub.services.agent_resilience import (
     DegradationLevel,
     ErrorAction,
 )
-from Django_xm.apps.research.services.official_deep_agent import (  # noqa: E402
+from Django_xm.apps.research.services.adapter import (
     OfficialDeepAgentAdapter,
 )
-
 
 # ============================================================================
 # 辅助函数

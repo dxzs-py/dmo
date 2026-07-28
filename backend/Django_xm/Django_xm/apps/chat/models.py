@@ -1,7 +1,9 @@
 import uuid
-from django.db import models
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.db import models
+
 from Django_xm.apps.core.base_models import AuditModel
 
 
@@ -154,8 +156,9 @@ class ChatMessage(AuditModel):
         null=True,
         verbose_name='消息版本'
     )
-    current_version = models.IntegerField(
+    current_version = models.PositiveIntegerField(
         default=0,
+        help_text='当前展示的版本索引，指向 versions 数组的位置',
         verbose_name='当前版本索引'
     )
     model = models.CharField(
@@ -164,7 +167,7 @@ class ChatMessage(AuditModel):
         null=True,
         verbose_name='使用的模型'
     )
-    token_count = models.IntegerField(
+    token_count = models.PositiveIntegerField(
         default=0,
         verbose_name='Token 数量'
     )

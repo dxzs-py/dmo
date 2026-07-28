@@ -1,26 +1,16 @@
-from typing import Optional, List
-from langchain_core.tools import BaseTool
-from pydantic import BaseModel, Field
 import logging
 
-from Django_xm.apps.tools.errors import StandardToolResult, ToolStatus, TOOL_VERSION
+from langchain_core.tools import BaseTool
+from langchain_tavily import TavilySearch
+from pydantic import BaseModel, Field
+
 from Django_xm.apps.tools.base import AsyncToolMixin, SafeConfigMixin
+from Django_xm.apps.tools.errors import TOOL_VERSION, StandardToolResult, ToolStatus
 
 logger = logging.getLogger(__name__)
 
-try:
-    from langchain_tavily import TavilySearch
-    USING_NEW_TAVILY = True
-except ImportError:
-    try:
-        from langchain_community.tools.tavily_search import TavilySearchResults as TavilySearch
-        USING_NEW_TAVILY = False
-    except ImportError:
-        TavilySearch = None
-        USING_NEW_TAVILY = False
 
-
-def get_tavily_api_key() -> Optional[str]:
+def get_tavily_api_key() -> str | None:
     return SafeConfigMixin.get_config('tavily_api_key', env_key='TAVILY_API_KEY')
 
 
@@ -30,14 +20,15 @@ def get_tavily_max_results() -> int:
 
 
 def create_tavily_search_tool(
-    max_results: Optional[int] = None,
+    max_results: int | None = None,
     search_depth: str = "advanced",
-    include_domains: Optional[List[str]] = None,
-    exclude_domains: Optional[List[str]] = None,
+    include_domains: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
 ):
-    if TavilySearch is None:
-        raise ValueError("Tavily 搜索工具未安装！请安装: pip install langchain-tavily")
+    """创建 Tavily 搜索工具实例
 
+    依赖 langchain-tavily（已写入 requirements.txt），不再兼容 langchain_community 路径。
+    """
     tavily_api_key = get_tavily_api_key()
     if not tavily_api_key:
         raise ValueError("Tavily API Key 未设置！请在环境变量或 .env 文件中设置 TAVILY_API_KEY")
@@ -46,27 +37,15 @@ def create_tavily_search_tool(
 
     logger.info(f"🔍 创建 Tavily 搜索工具 (max_results={max_results}, depth={search_depth})")
 
-    tool_kwargs = {
+    tool_kwargs: dict = {
         "max_results": max_results,
         "api_key": tavily_api_key,
+        "search_depth": search_depth,
     }
-
-    if USING_NEW_TAVILY:
-        tool_kwargs["search_depth"] = search_depth
-        if include_domains is not None:
-            tool_kwargs["include_domains"] = include_domains
-        if exclude_domains is not None:
-            tool_kwargs["exclude_domains"] = exclude_domains
-    else:
-        tool_kwargs["search_depth"] = search_depth
-        if include_domains is not None:
-            tool_kwargs["include_domains"] = include_domains
-        else:
-            tool_kwargs["include_domains"] = []
-        if exclude_domains is not None:
-            tool_kwargs["exclude_domains"] = exclude_domains
-        else:
-            tool_kwargs["exclude_domains"] = []
+    if include_domains is not None:
+        tool_kwargs["include_domains"] = include_domains
+    if exclude_domains is not None:
+        tool_kwargs["exclude_domains"] = exclude_domains
 
     try:
         tool_instance = TavilySearch(**tool_kwargs)
@@ -83,7 +62,7 @@ class WebSearchInput(BaseModel):
 class WebSearchTool(AsyncToolMixin, BaseTool):
     name: str = "web_search"
     version: str = TOOL_VERSION
-    metadata: dict = {"tier": "extended", "visibility": "switch", "category": "web_search"}
+    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "switch", "category": "web_search"})
     description: str = (
         "使用 Tavily 搜索引擎进行网络搜索，获取最新网络信息和事实性答案。"
         "适用场景：需要获取实时信息、查找新闻、验证事实、了解最新动态、搜索技术文档。"
@@ -123,7 +102,7 @@ class WebSearchTool(AsyncToolMixin, BaseTool):
                     formatted_results.append(f"{i}. {result}")
                     continue
                 if not isinstance(result, dict):
-                    formatted_results.append(f"{i}. {str(result)}")
+                    formatted_results.append(f"{i}. {result!s}")
                     continue
                 title = result.get("title", "无标题")
                 url = result.get("url", "")
@@ -142,7 +121,7 @@ class WebSearchTool(AsyncToolMixin, BaseTool):
             ).to_tool_message()
 
         except Exception as e:
-            error_msg = f"搜索失败: {str(e)}"
+            error_msg = f"搜索失败: {e!s}"
             logger.error(error_msg)
             return StandardToolResult(
                 content=error_msg,

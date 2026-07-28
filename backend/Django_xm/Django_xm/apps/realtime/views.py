@@ -11,17 +11,16 @@ GET /api/v1/realtime/snapshot/{session_id}/
 
 import logging
 
-from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
-
 from django.apps import apps
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 
-from Django_xm.common.responses import error_response, success_response
-from Django_xm.common.error_codes import ErrorCode
 from Django_xm.apps.approvals.services.approval_helpers import (
     build_approval_index_item,
     enrich_tool_calls_with_approvals,
 )
+from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.responses import error_response, success_response
 
 logger = logging.getLogger(__name__)
 

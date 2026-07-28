@@ -5,7 +5,6 @@
 
 import logging
 import os
-from typing import Optional, List, Dict, Any
 
 from langchain_core.tools import BaseTool
 
@@ -22,13 +21,13 @@ class SkillAdapter:
     - to_discovery_metadata() → List[Dict]   (Level 1 元数据，供 API 展示)
     """
 
-    def __init__(self, user_id: Optional[int] = None):
+    def __init__(self, user_id: int | None = None):
         self.user_id = user_id
 
     def to_langchain_tools(
         self,
-        available_tools: Optional[List[BaseTool]] = None,
-    ) -> List[BaseTool]:
+        available_tools: list[BaseTool] | None = None,
+    ) -> list[BaseTool]:
         """转换为 LangChain Agent 可用的 BaseTool 列表
 
         Args:
@@ -53,8 +52,8 @@ class SkillAdapter:
 
     def to_langgraph_tools(
         self,
-        available_tools: Optional[List[BaseTool]] = None,
-    ) -> List[BaseTool]:
+        available_tools: list[BaseTool] | None = None,
+    ) -> list[BaseTool]:
         """转换为 LangGraph ToolNode 兼容的 BaseTool 列表
 
         LangGraph ToolNode 与 LangChain BaseTool 完全兼容，
@@ -68,7 +67,7 @@ class SkillAdapter:
         """
         return self.to_langchain_tools(available_tools)
 
-    def to_deep_agent_skills(self, selected_skill_names: Optional[List[str]] = None) -> List[str]:
+    def to_deep_agent_skills(self, selected_skill_names: list[str] | None = None) -> list[str]:
         from Django_xm.apps.tools.models import SkillPackage
 
         if not selected_skill_names:
@@ -87,11 +86,11 @@ class SkillAdapter:
 
     def _load_skill_package_tools(
         self,
-        available_tools: Optional[List[BaseTool]] = None,
-    ) -> List[BaseTool]:
+        available_tools: list[BaseTool] | None = None,
+    ) -> list[BaseTool]:
         """从 SkillPackage 数据库加载 advisor 模式的 SkillBaseTool"""
-        from Django_xm.apps.tools.skills.tool import SkillBaseTool
         from Django_xm.apps.tools.skills.registry import SkillSpec
+        from Django_xm.apps.tools.skills.tool import SkillBaseTool
 
         try:
             from Django_xm.apps.tools.models import SkillPackage

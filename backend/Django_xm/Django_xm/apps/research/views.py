@@ -1,44 +1,27 @@
+import json
 import logging
 import uuid
-import json
 from datetime import datetime
 
-from rest_framework.views import APIView
+from django.db import IntegrityError, transaction
 from rest_framework import status
-from Django_xm.apps.core.throttling import ResearchRateThrottle
 from rest_framework.permissions import IsAuthenticated
-from django.db import transaction, IntegrityError
-from django.apps import apps
+from rest_framework.views import APIView
 
-from Django_xm.common.sse_utils import sse_response
-from Django_xm.common.responses import success_response, error_response, not_found_response
-from Django_xm.common.error_codes import ErrorCode
-from Django_xm.common.sse_utils import authenticate_sse_request, sse_error_response
-
-from .serializers import (
-    ResearchStartSerializer,
-    ResearchContinueSerializer,
-    ResearchTaskSerializer,
-    ResearchResultSerializer,
-    FileInfoSerializer,
-)
-from .models import ResearchTask, ResearchTaskStatus
-from Django_xm.tasks.deep_research import run_research_task
-from .services.task_manager import get_task_manager, get_task_status, update_task_status
+from Django_xm.apps.chat.services.cross_app import get_active_session_ids_for_research_task
 from Django_xm.apps.core.services.file_manager import get_file_manager
-from Django_xm.common.permissions import IsAuthenticatedOrQueryParam
+from Django_xm.apps.core.throttling import ResearchRateThrottle
+from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.responses import error_response, not_found_response, success_response
+from Django_xm.tasks.deep_research import run_research_task
 
-from .views_files import (
-    DeepResearchFilesListView,
-    DeepResearchFileDownloadView,
-    DeepResearchFileContentView,
-    DeepResearchGlobalSearchView,
+from .models import ResearchTask, ResearchTaskStatus
+from .serializers import (
+    ResearchContinueSerializer,
+    ResearchStartSerializer,
+    ResearchTaskSerializer,
 )
-from .views_stream import (
-    DeepResearchStreamView,
-    deep_research_stream,
-)
-from Django_xm.apps.chat.models import ChatMessage
+from .services.task_manager import get_task_manager, get_task_status
 
 logger = logging.getLogger(__name__)
 task_manager = get_task_manager()
@@ -197,7 +180,7 @@ class DeepResearchContinueView(APIView):
                 if additional_query:
                     new_query = additional_query
                 else:
-                    new_query = f"请在之前研究的基础上继续深入，探索未覆盖的方面，补充更多细节和证据"
+                    new_query = "请在之前研究的基础上继续深入，探索未覆盖的方面，补充更多细节和证据"
 
                 new_thread_id = f"research_{uuid.uuid4().hex[:12]}"
                 new_version = parent_task.version + 1
@@ -403,14 +386,12 @@ class DeepResearchTaskDeleteView(APIView):
             # 事务提交后检查是否需要清理后端数据
             # 规则：无活跃聊天关联 → 清理后端数据；有活跃聊天关联 → 保留
             should_cleanup = True
-            # 统一通过 ChatMessage 反查所有活跃聊天会话（覆盖 session_id 和非 session_id 两种情况）
-            active_session_ids = ChatMessage.all_objects.filter(
-                research_task_id=task_id,
-                session__is_deleted=False,
-            ).values_list('session__session_id', flat=True)
-            if active_session_ids.exists():
+            # 统一通过 chat cross_app 门面反查所有活跃聊天会话
+            # （覆盖 session_id 和非 session_id 两种情况）
+            active_session_ids = get_active_session_ids_for_research_task(task_id)
+            if active_session_ids:
                 should_cleanup = False
-                logger.info(f"研究任务 {task_id} 仍有活跃聊天关联 {list(active_session_ids)}，保留后端数据")
+                logger.info(f"研究任务 {task_id} 仍有活跃聊天关联 {active_session_ids}，保留后端数据")
 
             if should_cleanup:
                 self._cleanup_backend_data(task_id, task_obj.created_by_id)
@@ -463,6 +444,7 @@ class ResearchApprovalView(APIView):
         # 发布审批结果到 Redis 响应频道
         try:
             from django.core.cache import cache
+
             from Django_xm.apps.research.services.research_runner import REDIS_APPROVAL_RESPONSE_PREFIX
             redis_client = cache.client.get_client()
             channel = f"{REDIS_APPROVAL_RESPONSE_PREFIX}{task_id}"

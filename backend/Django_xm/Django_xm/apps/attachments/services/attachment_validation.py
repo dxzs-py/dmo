@@ -5,16 +5,18 @@
 视图层只负责请求解析和响应构建。
 """
 
-import os
 import logging
 import mimetypes
-from typing import Dict, List, Optional, Any, Tuple
+import os
+from typing import Any
 
-from django.db import models
+import filetype
+from django.conf import settings
 from django.core.paginator import Paginator
+from django.db import models
 from django.utils import timezone
 
-from ..models import ChatAttachment, AttachmentStatus, StorageAlert, AttachmentCleanupLog
+from ..models import AttachmentCleanupLog, AttachmentStatus, ChatAttachment, StorageAlert
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +25,6 @@ ALLOWED_EXTENSIONS = {
     'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg',
     'csv', 'json', 'xml', 'md', 'py', 'js', 'ts', 'html', 'css',
 }
-
-MAX_FILE_SIZE = 10 * 1024 * 1024
 
 VALIDATED_MIME_MAP = {
     'pdf': {'application/pdf'},
@@ -47,15 +47,73 @@ VALIDATED_MIME_MAP = {
 }
 
 
-def validate_upload_file(uploaded_file) -> Tuple[bool, str, Optional[str]]:
+def get_max_upload_size() -> int:
+    """获取上传文件大小上限（字节）
+
+    统一从 Django settings 读取，避免硬编码。
+    优先使用 DATA_UPLOAD_MAX_MEMORY_SIZE，回退到 FILE_UPLOAD_MAX_MEMORY_SIZE。
     """
-    验证上传文件的大小、扩展名和 MIME 类型
+    return getattr(settings, 'DATA_UPLOAD_MAX_MEMORY_SIZE', None) \
+        or getattr(settings, 'FILE_UPLOAD_MAX_MEMORY_SIZE', 10 * 1024 * 1024)
+
+
+def _verify_magic_bytes(uploaded_file, ext: str) -> tuple[bool, str]:
+    """通过 magic bytes 校验文件真实类型
+
+    使用 filetype 库读取文件头，与扩展名声明的 MIME 类型比对。
+    覆盖图片与非图片类型，防止伪装扩展名攻击。
+
+    Args:
+        uploaded_file: Django UploadedFile 实例
+        ext: 文件扩展名（小写，无点）
+
+    Returns:
+        (is_valid, error_message)
+    """
+    if ext not in VALIDATED_MIME_MAP:
+        return True, ''
+
+    expected_mime_set = VALIDATED_MIME_MAP[ext]
+    try:
+        header = uploaded_file.read(1024)
+        uploaded_file.seek(0)
+    except Exception as e:
+        logger.warning(f"读取文件头失败: {e}")
+        return False, '文件读取失败，无法校验类型'
+
+    kind = filetype.guess(header)
+    if kind is None:
+        # filetype 无法识别（如纯文本 txt/md/csv/json/py/js 等）：
+        # 这些类型本身缺少稳定的 magic bytes，仅在扩展名声明的 MIME 集合中
+        # 已通过扩展名白名单校验，放行；图片/二进制类型必须有 magic bytes
+        if ext in ('png', 'jpg', 'jpeg', 'gif', 'webp', 'svg',
+                   'pdf', 'docx', 'xlsx'):
+            return False, f'文件内容与扩展名 .{ext} 不匹配，可能存在安全风险'
+        return True, ''
+
+    if kind.mime not in expected_mime_set and kind.extension != ext:
+        return False, f'文件内容与扩展名 .{ext} 不匹配，可能存在安全风险'
+
+    return True, ''
+
+
+def validate_upload_file(uploaded_file) -> tuple[bool, str, str | None]:
+    """验证上传文件的大小、扩展名和 MIME 类型
+
+    校验顺序：
+        1. 大小（来自 settings.DATA_UPLOAD_MAX_MEMORY_SIZE）
+        2. 扩展名白名单
+        3. magic bytes（防伪装扩展名）
+
+    Args:
+        uploaded_file: Django UploadedFile 实例
 
     Returns:
         (is_valid, error_message, mime_type)
     """
-    if uploaded_file.size > MAX_FILE_SIZE:
-        return False, f'文件大小不能超过{MAX_FILE_SIZE // (1024*1024)}MB', None
+    max_size = get_max_upload_size()
+    if uploaded_file.size > max_size:
+        return False, f'文件大小不能超过{max_size // (1024 * 1024)}MB', None
 
     ext = os.path.splitext(uploaded_file.name)[1].lower().lstrip('.')
     if ext not in ALLOWED_EXTENSIONS:
@@ -63,19 +121,56 @@ def validate_upload_file(uploaded_file) -> Tuple[bool, str, Optional[str]]:
 
     mime_type, _ = mimetypes.guess_type(uploaded_file.name)
 
-    if ext in VALIDATED_MIME_MAP:
-        header = uploaded_file.read(512)
-        uploaded_file.seek(0)
-        if ext in ('png', 'jpg', 'jpeg', 'gif', 'webp'):
-            import filetype
-            kind = filetype.guess(header)
-            if kind is None or kind.mime not in VALIDATED_MIME_MAP[ext]:
-                return False, f'文件内容与扩展名 .{ext} 不匹配，可能存在安全风险', None
+    is_valid, magic_error = _verify_magic_bytes(uploaded_file, ext)
+    if not is_valid:
+        return False, magic_error, None
 
     return True, '', mime_type or 'application/octet-stream'
 
 
-def serialize_attachment(att: ChatAttachment, include_index_info: bool = True) -> Dict[str, Any]:
+def get_user_total_attachment_size(user) -> int:
+    """获取用户当前附件总占用字节数
+
+    Args:
+        user: 用户实例
+
+    Returns:
+        int: 总字节数（仅统计未删除的附件）
+    """
+    if user is None or not getattr(user, 'is_authenticated', False):
+        return 0
+    total = ChatAttachment.objects.filter(
+        session__user=user,
+        is_deleted=False,
+    ).exclude(
+        status=AttachmentStatus.DELETED,
+    ).aggregate(total=models.Sum('file_size'))['total']
+    return total or 0
+
+
+def check_user_storage_quota(user, additional_size: int) -> tuple[bool, str, int | None]:
+    """检查用户上传后是否会超过总存储配额
+
+    Args:
+        user: 用户实例
+        additional_size: 本次即将上传的文件大小（字节）
+
+    Returns:
+        (is_ok, error_message, current_total_bytes)
+    """
+    max_total_mb = getattr(settings, 'ATTACHMENT_MAX_TOTAL_SIZE_MB', 5120)
+    max_total_bytes = max_total_mb * 1024 * 1024
+    current_total = get_user_total_attachment_size(user)
+    if current_total + additional_size > max_total_bytes:
+        used_mb = round(current_total / (1024 * 1024), 2)
+        return False, (
+            f'存储空间不足：已使用 {used_mb}MB / 上限 {max_total_mb}MB，'
+            f'无法上传 {round(additional_size / (1024 * 1024), 2)}MB 文件'
+        ), current_total
+    return True, '', current_total
+
+
+def serialize_attachment(att: ChatAttachment, include_index_info: bool = True) -> dict[str, Any]:
     """将附件对象序列化为 API 响应字典"""
     file_url = att.file.url if hasattr(att.file, 'url') else ''
     data = {
@@ -91,7 +186,7 @@ def serialize_attachment(att: ChatAttachment, include_index_info: bool = True) -
     return data
 
 
-def serialize_attachment_detail(att: ChatAttachment) -> Dict[str, Any]:
+def serialize_attachment_detail(att: ChatAttachment) -> dict[str, Any]:
     """将附件对象序列化为管理员详情响应字典"""
     data = {
         'id': att.id,
@@ -118,7 +213,7 @@ def serialize_attachment_detail(att: ChatAttachment) -> Dict[str, Any]:
     return data
 
 
-def build_admin_list(params: Dict[str, Any]) -> Dict[str, Any]:
+def build_admin_list(params: dict[str, Any]) -> dict[str, Any]:
     """
     构建管理员附件列表，包含查询、过滤、分页和统计
 
@@ -203,7 +298,7 @@ def build_admin_list(params: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def get_admin_stats() -> Dict[str, Any]:
+def get_admin_stats() -> dict[str, Any]:
     """
     获取管理员统计信息，包含存储统计、告警和最近日志
 
@@ -214,7 +309,7 @@ def get_admin_stats() -> Dict[str, Any]:
 
     service = AttachmentLifecycleService()
     stats = service.get_storage_stats()
-    alert = service.check_storage_alerts()
+    service.check_storage_alerts()
 
     recent_logs = AttachmentCleanupLog.objects.all()[:10]
     log_data = []
@@ -249,7 +344,7 @@ def get_admin_stats() -> Dict[str, Any]:
     }
 
 
-def serialize_storage_alert(alert: StorageAlert) -> Dict[str, Any]:
+def serialize_storage_alert(alert: StorageAlert) -> dict[str, Any]:
     """将存储告警对象序列化为 API 响应字典"""
     return {
         'id': alert.id,
@@ -265,7 +360,7 @@ def serialize_storage_alert(alert: StorageAlert) -> Dict[str, Any]:
     }
 
 
-def handle_alert_action(alert_id: int, action: str) -> Tuple[bool, str]:
+def handle_alert_action(alert_id: int, action: str) -> tuple[bool, str]:
     """
     处理存储告警操作（确认/解决）
 

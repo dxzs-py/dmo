@@ -2,36 +2,37 @@
 Guardrails 模块 - 提供输入输出安全检查和结构化输出功能
 """
 
-from typing import Optional, Sequence
+from collections.abc import Sequence
+from typing import Optional
 
 from langchain.agents.middleware import AgentMiddleware
 
 from .content_filters import ContentFilter, ContentSafetyLevel, FilterResult
-from .input_validators import InputValidator, InputValidationResult
-from .output_validators import OutputValidator, OutputValidationResult
-from .schemas import (
-    RAGResponse,
-    StudyPlan,
-    StudyPlanStep,
-    DifficultyLevel,
-    ResearchReport,
-    ResearchSection,
-    Quiz,
-    QuizQuestion,
-    QuizAnswer,
-    QuestionType,
-)
+from .input_validators import InputValidationResult, InputValidator
 from .middleware import (
     GuardrailsMiddleware,
-    PIIMiddleware,
     HumanInTheLoopMiddleware,
+    PIIMiddleware,
     RateLimitMiddleware,
-    create_guardrails_runnable,
-    create_guardrails_middleware,
-    create_pii_middleware,
-    create_human_in_the_loop_middleware,
-    create_rate_limit_middleware,
     build_middleware_stack,
+    create_guardrails_middleware,
+    create_guardrails_runnable,
+    create_human_in_the_loop_middleware,
+    create_pii_middleware,
+    create_rate_limit_middleware,
+)
+from .output_validators import OutputValidationResult, OutputValidator
+from .schemas import (
+    DifficultyLevel,
+    QuestionType,
+    Quiz,
+    QuizAnswer,
+    QuizQuestion,
+    RAGResponse,
+    ResearchReport,
+    ResearchSection,
+    StudyPlan,
+    StudyPlanStep,
 )
 
 
@@ -42,7 +43,7 @@ def create_standard_guardrails(
     require_sources: bool = False,
     validate_tool_calls: bool = True,
     raise_on_error: bool = True,
-    extra_middleware: Optional[Sequence[AgentMiddleware]] = None,
+    extra_middleware: Sequence[AgentMiddleware] | None = None,
 ) -> list:
     """
     创建标准 Guardrails 中间件栈
@@ -97,30 +98,30 @@ def create_standard_guardrails(
 __all__ = [
     "ContentFilter",
     "ContentSafetyLevel",
-    "FilterResult",
-    "InputValidator",
-    "InputValidationResult",
-    "OutputValidator",
-    "OutputValidationResult",
-    "RAGResponse",
-    "StudyPlan",
-    "StudyPlanStep",
     "DifficultyLevel",
+    "FilterResult",
+    "GuardrailsMiddleware",
+    "HumanInTheLoopMiddleware",
+    "InputValidationResult",
+    "InputValidator",
+    "OutputValidationResult",
+    "OutputValidator",
+    "PIIMiddleware",
+    "QuestionType",
+    "Quiz",
+    "QuizAnswer",
+    "QuizQuestion",
+    "RAGResponse",
+    "RateLimitMiddleware",
     "ResearchReport",
     "ResearchSection",
-    "Quiz",
-    "QuizQuestion",
-    "QuizAnswer",
-    "QuestionType",
-    "GuardrailsMiddleware",
-    "PIIMiddleware",
-    "HumanInTheLoopMiddleware",
-    "RateLimitMiddleware",
-    "create_guardrails_runnable",
-    "create_guardrails_middleware",
-    "create_pii_middleware",
-    "create_human_in_the_loop_middleware",
-    "create_rate_limit_middleware",
+    "StudyPlan",
+    "StudyPlanStep",
     "build_middleware_stack",
+    "create_guardrails_middleware",
+    "create_guardrails_runnable",
+    "create_human_in_the_loop_middleware",
+    "create_pii_middleware",
+    "create_rate_limit_middleware",
     "create_standard_guardrails",
 ]

@@ -8,24 +8,23 @@
 """
 import asyncio
 import json
+import logging
 import time
 import uuid
-import logging
-from typing import Dict, Any, List, Optional, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
-from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
 from Django_xm.apps.ai_engine.services.cost_tracker import TokenDetailTracker
-from Django_xm.apps.research.services.research_runner import REDIS_CHANNEL_PREFIX, REDIS_APPROVAL_PREFIX
-from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
+from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
+from Django_xm.apps.research.services.cross_app import REDIS_APPROVAL_PREFIX, REDIS_CHANNEL_PREFIX
+
+from ..utils import _lcp_len, convert_chat_history
 from .stream_helpers import (
     process_stream_chunk,
-    build_context_info,
     update_usage_and_tokens,
-    finalize_tool_calls,
 )
-from ..utils import convert_chat_history, _lcp_len, extract_suggestions
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +48,7 @@ class DeepChatService:
         self._chat_service = chat_service
 
     @staticmethod
-    def _clean_tool_call_messages(messages: List) -> List:
+    def _clean_tool_call_messages(messages: list) -> list:
         """清理消息历史中未完成的 tool_calls
 
         当 agent 执行失败回退到无工具模式时，对话历史中可能包含
@@ -82,12 +81,12 @@ class DeepChatService:
 
     async def process_deep_thinking_stream(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         usage_tracker,
-        token_detail_tracker: Optional[TokenDetailTracker] = None,
-        tools: Optional[List] = None,
+        token_detail_tracker: TokenDetailTracker | None = None,
+        tools: list | None = None,
         model_instance=None,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """深度思考流式处理（可作为 chat/agent 模式的叠加能力）"""
         if tools is None:
             tools = await self._chat_service._get_tools(data)
@@ -105,7 +104,7 @@ class DeepChatService:
         human_msg = await self._chat_service._acreate_human_message(data)
 
         if use_checkpointer:
-            ce_metadata = self._chat_service._apply_context_engineering_for_checkpointer(
+            self._chat_service._apply_context_engineering_for_checkpointer(
                 user_message=data.get('message', ''),
                 model_name=data.get('model_name'),
                 mode=data.get('mode', 'agent'),
@@ -122,13 +121,13 @@ class DeepChatService:
 
         current_message_content = ""
         all_messages = []
-        tool_calls_map: Dict[str, Dict] = {}
-        tool_call_count: Dict[str, int] = {}
-        accumulated_reasoning: Dict[str, str] = {
+        tool_calls_map: dict[str, dict] = {}
+        tool_call_count: dict[str, int] = {}
+        accumulated_reasoning: dict[str, str] = {
             "content": "",
             "_stream_state": data.get('_stream_state'),  # 共享状态，供 generate() finally 兜底刷新
         }
-        tool_args_accumulator: Dict[str, str] = {}
+        tool_args_accumulator: dict[str, str] = {}
         thinking_start_time = time.time()
         has_sent_reasoning = False
         has_model_reasoning = False
@@ -166,6 +165,7 @@ class DeepChatService:
                             interrupts = mode_data["__interrupt__"]
                             if interrupts:
                                 from langgraph.types import Interrupt
+
                                 from Django_xm.apps.tools.base import is_approval_interrupt
                                 for intr in interrupts:
                                     if isinstance(intr, Interrupt):
@@ -382,15 +382,16 @@ class DeepChatService:
             }
 
     async def create_deep_research_task(
-        self, query: str, session_id: Optional[str] = None,
+        self, query: str, session_id: str | None = None,
         use_web_search: bool = True,
         retriever_tool=None,
-        task_title: Optional[str] = None,
+        task_title: str | None = None,
     ) -> str:
         """创建深度研究任务并返回 task_id（不执行研究）"""
-        from Django_xm.apps.research.services.cross_app import get_research_task_manager
-        from django.contrib.auth import get_user_model
         from asgiref.sync import sync_to_async
+        from django.contrib.auth import get_user_model
+
+        from Django_xm.apps.research.services.cross_app import get_research_task_manager
         User = get_user_model()
 
         thread_id = f"research_{uuid.uuid4().hex[:12]}"
@@ -422,22 +423,22 @@ class DeepChatService:
         return thread_id
 
     async def run_deep_research_task(
-        self, query: str, session_id: Optional[str] = None,
+        self, query: str, session_id: str | None = None,
         usage_tracker=None, token_detail_tracker=None,
         use_web_search: bool = True,
         retriever_tool=None,
-        extra_tools: Optional[list] = None,
+        extra_tools: list | None = None,
         enable_deep_thinking: bool = False,
-        provider_id: Optional[str] = None,
-        model_name: Optional[str] = None,
-        task_id: Optional[str] = None,
-        knowledge_base_ids: Optional[list] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        special_params: Optional[dict] = None,
-        continue_task_id: Optional[str] = None,
-        task_title: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        provider_id: str | None = None,
+        model_name: str | None = None,
+        task_id: str | None = None,
+        knowledge_base_ids: list | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        special_params: dict | None = None,
+        continue_task_id: str | None = None,
+        task_title: str | None = None,
+    ) -> dict[str, Any]:
         """
         通过 Celery 执行深度研究，使用 Redis Pub/Sub 等待结果
 
@@ -447,9 +448,10 @@ class DeepChatService:
         3. 订阅 Redis channel 等待结果
         4. 返回标准化结果
         """
-        from Django_xm.apps.research.services.cross_app import get_research_task_manager
-        from Django_xm.tasks.deep_research import run_research_task
         from asgiref.sync import sync_to_async
+
+        from Django_xm.apps.research.services.cross_app import get_research_task_manager, update_research_task_fields
+        from Django_xm.tasks.deep_research import run_research_task
 
         thread_id = task_id or f"research_{uuid.uuid4().hex[:12]}"
         task_manager = get_research_task_manager()
@@ -485,10 +487,7 @@ class DeepChatService:
         if knowledge_base_ids:
             @sync_to_async(thread_sensitive=True)
             def _update_kb():
-                from Django_xm.apps.research.models import ResearchTask
-                ResearchTask.objects.filter(task_id=thread_id).update(
-                    knowledge_base_ids=knowledge_base_ids,
-                )
+                update_research_task_fields(thread_id, knowledge_base_ids=knowledge_base_ids)
             await _update_kb()
 
         use_mcp = any(
@@ -527,13 +526,9 @@ class DeepChatService:
             publish_to_redis=True,
         )
 
-        from Django_xm.apps.research.models import ResearchTask
-
         @sync_to_async(thread_sensitive=True)
         def _update_celery_task_id():
-            ResearchTask.objects.filter(task_id=thread_id).update(
-                celery_task_id=celery_result.id,
-            )
+            update_research_task_fields(thread_id, celery_task_id=celery_result.id)
 
         await _update_celery_task_id()
 
@@ -589,22 +584,22 @@ class DeepChatService:
         }
 
     async def stream_deep_research_task(
-        self, query: str, session_id: Optional[str] = None,
+        self, query: str, session_id: str | None = None,
         usage_tracker=None, token_detail_tracker=None,
         use_web_search: bool = True,
         retriever_tool=None,
-        extra_tools: Optional[list] = None,
+        extra_tools: list | None = None,
         enable_deep_thinking: bool = False,
-        provider_id: Optional[str] = None,
-        model_name: Optional[str] = None,
-        task_id: Optional[str] = None,
-        knowledge_base_ids: Optional[list] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        special_params: Optional[dict] = None,
-        continue_task_id: Optional[str] = None,
-        task_title: Optional[str] = None,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+        provider_id: str | None = None,
+        model_name: str | None = None,
+        task_id: str | None = None,
+        knowledge_base_ids: list | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        special_params: dict | None = None,
+        continue_task_id: str | None = None,
+        task_title: str | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """
         通过 Celery 执行深度研究，支持流式审批事件
 
@@ -612,9 +607,10 @@ class DeepChatService:
         同时监听研究结果和审批频道。审批事件会以 {"type": "approval", "data": ...}
         形式 yield，最终研究结果以 {"_is_result": True, ...} 形式 yield。
         """
-        from Django_xm.apps.research.services.cross_app import get_research_task_manager
-        from Django_xm.tasks.deep_research import run_research_task
         from asgiref.sync import sync_to_async
+
+        from Django_xm.apps.research.services.cross_app import get_research_task_manager, update_research_task_fields
+        from Django_xm.tasks.deep_research import run_research_task
 
         thread_id = task_id or f"research_{uuid.uuid4().hex[:12]}"
         task_manager = get_research_task_manager()
@@ -650,10 +646,7 @@ class DeepChatService:
         if knowledge_base_ids:
             @sync_to_async(thread_sensitive=True)
             def _update_kb():
-                from Django_xm.apps.research.models import ResearchTask
-                ResearchTask.objects.filter(task_id=thread_id).update(
-                    knowledge_base_ids=knowledge_base_ids,
-                )
+                update_research_task_fields(thread_id, knowledge_base_ids=knowledge_base_ids)
             await _update_kb()
 
         use_mcp = any(
@@ -692,13 +685,9 @@ class DeepChatService:
             publish_to_redis=True,
         )
 
-        from Django_xm.apps.research.models import ResearchTask
-
         @sync_to_async(thread_sensitive=True)
         def _update_celery_task_id():
-            ResearchTask.objects.filter(task_id=thread_id).update(
-                celery_task_id=celery_result.id,
-            )
+            update_research_task_fields(thread_id, celery_task_id=celery_result.id)
 
         await _update_celery_task_id()
 
@@ -764,7 +753,7 @@ class DeepChatService:
             '_is_result': True,
         }
 
-    async def _wait_for_research_result(self, thread_id: str) -> Optional[Dict[str, Any]]:
+    async def _wait_for_research_result(self, thread_id: str) -> dict[str, Any] | None:
         """订阅 Redis channel 等待 Celery 任务发布研究结果"""
         import redis as redis_lib
         from django.conf import settings as django_settings
@@ -789,7 +778,7 @@ class DeepChatService:
                 timeout=_RESEARCH_TIMEOUT,
             )
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"等待研究结果超时: {channel}")
             return None
         except Exception as e:
@@ -804,7 +793,7 @@ class DeepChatService:
                     pass
 
     @staticmethod
-    async def _listen_pubsub(pubsub, channel: str) -> Dict[str, Any]:
+    async def _listen_pubsub(pubsub, channel: str) -> dict[str, Any]:
         """异步监听 Redis Pub/Sub 消息"""
         loop = asyncio.get_running_loop()
 
@@ -822,7 +811,7 @@ class DeepChatService:
                     data = data.decode('utf-8')
                 return json.loads(data)
 
-    async def _wait_for_research_result_streaming(self, thread_id: str) -> AsyncGenerator[Dict[str, Any], None]:
+    async def _wait_for_research_result_streaming(self, thread_id: str) -> AsyncGenerator[dict[str, Any], None]:
         """同时监听研究结果和审批事件的 Redis 频道，yield 审批事件，最终研究结果带 _is_result 标记"""
         import redis as redis_lib
         from django.conf import settings as django_settings
@@ -841,14 +830,18 @@ class DeepChatService:
             r = redis_lib.Redis(connection_pool=_get_redis_pool(broker_url))
 
             # 先读取 Redis List 历史审批并 yield（刷新/重连恢复场景）
+            # 关键设计（实时同步统一性）：
+            # 所有同步 Redis 调用通过 asyncio.to_thread 卸载到线程池，避免阻塞事件循环，
+            # 确保审批等待期间其他 SSE 流的心跳与跨浏览器同步事件正常处理。
+            # 与 research_runner.py._handle_interrupt 的实现保持统一。
             try:
-                pending_approvals = r.lrange(approval_list_key, 0, -1)
+                pending_approvals = await asyncio.to_thread(r.lrange, approval_list_key, 0, -1)
                 for item in pending_approvals:
                     approval_data = json.loads(item)
                     interrupt_id = approval_data.get("interrupt_id", "")
                     if interrupt_id:
                         processed_key = f"{REDIS_APPROVAL_PREFIX}processed:{thread_id}:{interrupt_id}"
-                        processed_raw = r.get(processed_key)
+                        processed_raw = await asyncio.to_thread(r.get, processed_key)
                         if processed_raw:
                             try:
                                 processed_data = json.loads(processed_raw if isinstance(processed_raw, str) else processed_raw.decode('utf-8'))
@@ -859,12 +852,11 @@ class DeepChatService:
             except Exception as e:
                 logger.warning(f"读取历史审批失败: {e}")
 
-            pubsub = r.pubsub()
-            pubsub.subscribe(result_channel, approval_channel)
+            pubsub = await asyncio.to_thread(r.pubsub)
+            await asyncio.to_thread(pubsub.subscribe, result_channel, approval_channel)
 
             logger.info(f"订阅研究结果+审批: {result_channel}, {approval_channel}, 超时={_RESEARCH_TIMEOUT}s")
 
-            loop = asyncio.get_running_loop()
             start_time = time.time()
 
             while True:
@@ -873,7 +865,10 @@ class DeepChatService:
                     logger.warning(f"等待研究结果超时: {thread_id}")
                     return
 
-                msg = await loop.run_in_executor(None, lambda: pubsub.get_message(timeout=1.0))
+                # pubsub.get_message 是同步阻塞调用（timeout=1.0 最多阻塞 1s），
+                # 必须通过 asyncio.to_thread 卸载到线程池，避免冻结事件循环导致
+                # 其他 SSE 客户端断连（与 research_runner.py._handle_interrupt 实现保持统一）
+                msg = await asyncio.to_thread(pubsub.get_message, timeout=1.0)
 
                 if msg and msg['type'] == 'message':
                     channel = msg.get('channel', b'')
@@ -901,18 +896,18 @@ class DeepChatService:
         finally:
             if pubsub:
                 try:
-                    pubsub.unsubscribe()
-                    pubsub.close()
+                    await asyncio.to_thread(pubsub.unsubscribe)
+                    await asyncio.to_thread(pubsub.close)
                 except Exception:
                     pass
 
     async def _stream_without_tools(
         self,
         model_instance,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         usage_tracker,
-        token_detail_tracker: Optional[TokenDetailTracker] = None,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+        token_detail_tracker: TokenDetailTracker | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         chat_history = data.get('chat_history', [])
         chat_history, _ce_metadata = self._chat_service._apply_context_engineering(
                 chat_history, data.get('message', ''), mode=data.get('mode', 'agent'),
@@ -930,7 +925,7 @@ class DeepChatService:
         messages.append(human_msg)
 
         current_message_content = ""
-        accumulated_reasoning: Dict[str, str] = {"content": ""}
+        accumulated_reasoning: dict[str, str] = {"content": ""}
         thinking_start_time = time.time()
 
         with TokenUsageCallbackHandler() as cb:

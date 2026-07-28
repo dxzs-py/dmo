@@ -1,5 +1,7 @@
-from django.db import models
 from django.conf import settings
+from django.db import models
+
+from Django_xm.apps.tools.fields import EncryptedCharField
 
 
 class ToolCategory(models.Model):
@@ -86,15 +88,42 @@ class UserToolResource(models.Model):
 
 
 class CustomTool(UserToolResource):
-    """用户自定义工具模型"""
+    """用户自定义工具模型
+
+    用户上传的代码需经管理员审核（approval_status）通过后才生效：
+        - pending: 新上传，等待审核（不会加载为可执行工具）
+        - approved: 管理员通过，可加载为 BaseTool
+        - rejected: 管理员拒绝，不会加载
+
+    审核状态与 status 字段独立：
+        - status: 运行时启用/禁用（用户自行切换）
+        - approval_status: 管理员审核结果（决定是否加载）
+    """
+
+    class ApprovalStatus(models.TextChoices):
+        PENDING = 'pending', '待审核'
+        APPROVED = 'approved', '已通过'
+        REJECTED = 'rejected', '已拒绝'
 
     code = models.TextField(verbose_name='工具代码')
+    approval_status = models.CharField(
+        max_length=20,
+        choices=ApprovalStatus.choices,
+        default=ApprovalStatus.PENDING,
+        db_index=True,
+        verbose_name='审核状态',
+    )
 
     class Meta(UserToolResource.Meta):
         db_table = 'tools_custom_tool'
         verbose_name = '自定义工具'
         verbose_name_plural = '自定义工具'
         unique_together = [('user', 'name')]
+
+    @property
+    def is_effective(self) -> bool:
+        """工具是否实际生效（已审核通过且处于 active 状态）"""
+        return self.approval_status == self.ApprovalStatus.APPROVED and self.status == 'active'
 
 
 class McpServerConfig(UserToolResource):
@@ -118,7 +147,7 @@ class McpServerConfig(UserToolResource):
     args = models.JSONField(default=list, blank=True, verbose_name='命令参数')
     env = models.JSONField(default=dict, blank=True, verbose_name='环境变量')
     headers = models.JSONField(default=dict, blank=True, verbose_name='请求头')
-    auth_token = models.CharField(max_length=500, blank=True, default='', verbose_name='认证 Token')
+    auth_token = EncryptedCharField(max_length=500, blank=True, default='', verbose_name='认证 Token')
 
     class Meta(UserToolResource.Meta):
         db_table = 'tools_mcp_server_config'

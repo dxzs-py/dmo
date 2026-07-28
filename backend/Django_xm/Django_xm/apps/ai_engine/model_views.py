@@ -1,20 +1,26 @@
-from rest_framework.views import APIView
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 
-from Django_xm.apps.ai_engine.config import get_available_providers, HELPER_MODEL_PRIORITY
-from Django_xm.apps.ai_engine.services.registry_service import get_model_registry, get_provider_config, is_provider_valid, get_provider_default_model
+from Django_xm.apps.ai_engine.config import HELPER_MODEL_PRIORITY, get_available_providers
 from Django_xm.apps.ai_engine.services.llm_factory import (
     get_chat_model_by_provider,
     test_model_connection,
 )
-from Django_xm.common.responses import success_response, error_response
+from Django_xm.apps.ai_engine.services.registry_service import (
+    get_provider_config,
+    get_provider_default_model,
+    is_provider_valid,
+)
 from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.responses import error_response, success_response
 
 
 class ModelListView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(view=False)
     def get(self, request):
         providers = get_available_providers()
         return success_response(data={
@@ -26,6 +32,7 @@ class ModelListView(APIView):
 class ModelTestView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(view=False)
     def post(self, request):
         provider_id = request.data.get("provider_id")
         model_name = request.data.get("model_name")
@@ -62,6 +69,7 @@ class ModelTestView(APIView):
 class ModelSwitchView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(view=False)
     def post(self, request):
         provider_id = request.data.get("provider_id")
         model_name = request.data.get("model_name")
@@ -109,7 +117,7 @@ class ModelSwitchView(APIView):
         except Exception as e:
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
-                message=f"模型切换失败: {str(e)}",
+                message=f"模型切换失败: {e!s}",
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -117,6 +125,7 @@ class ModelSwitchView(APIView):
 class HelperModelView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(view=False)
     def get(self, request):
         # 优先从 SystemConfig 数据库读取
         current_provider = ""
@@ -157,6 +166,7 @@ class HelperModelView(APIView):
             "providers": providers,
         })
 
+    @extend_schema(view=False)
     def put(self, request):
         from django.conf import settings as django_settings
         provider_id = request.data.get("provider_id") or ""

@@ -11,27 +11,32 @@
 - 保留 acreate_vector_store / aadd_documents_to_store 模块级函数
 """
 
+import hashlib
 import json
 import shutil
-import hashlib
 import threading
 import time
-import warnings
+import uuid
 from collections import OrderedDict
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import List, Optional, Dict, Any
-from datetime import datetime
+from typing import Any
 
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore
 
-from Django_xm.apps.knowledge.config import settings
 from Django_xm.apps.core.logging_utils import get_logger
-from Django_xm.apps.knowledge.vector_store.registry import VectorStoreRegistry
+from Django_xm.apps.knowledge.config import settings
 from Django_xm.apps.knowledge.vector_store.base import VectorStoreBackend
+from Django_xm.apps.knowledge.vector_store.registry import VectorStoreRegistry
 
 logger = get_logger(__name__)
+
+
+# 稳定文档 ID 生成的固定 namespace（uuid5 保证相同输入产生相同 ID）
+# 跨环境/跨进程一致，重试场景下相同 source+content 必然产生相同 ID
+_DOC_ID_NAMESPACE = uuid.UUID('a3e5b8c1-2d4f-4e6b-9c8d-7a1b2c3d4e5f')
 
 
 # ==================== TTL 缓存 ====================
@@ -41,7 +46,7 @@ class _TTLCache:
 
     def __init__(self, maxsize=32, ttl=1800):
         self._cache: OrderedDict = OrderedDict()
-        self._timestamps: Dict[str, float] = {}
+        self._timestamps: dict[str, float] = {}
         self._maxsize = maxsize
         self._ttl = ttl
         self._lock = threading.Lock()
@@ -80,7 +85,7 @@ class _TTLCache:
 
 # ==================== Backend 工厂辅助 ====================
 
-def _get_backend_kwargs(store_type: str) -> Dict[str, Any]:
+def _get_backend_kwargs(store_type: str) -> dict[str, Any]:
     """根据 store_type 获取 Backend 构造参数"""
     if store_type == "pgvector":
         return {}
@@ -106,511 +111,6 @@ def _create_backend(store_type: str) -> VectorStoreBackend:
     return backend_cls(**kwargs)
 
 
-# ==================== 向后兼容的模块级函数（已废弃）====================
-
-def _get_chroma_client_settings(persist_directory: str = None):
-    """获取 Chroma 客户端配置，支持持久化"""
-    try:
-        import chromadb
-        if persist_directory:
-            return chromadb.Settings(
-                persist_directory=persist_directory,
-                anonymized_telemetry=False,
-            )
-        return chromadb.Settings(anonymized_telemetry=False)
-    except ImportError:
-        return None
-
-
-def create_vector_store(
-    documents: List[Document],
-    embeddings: Embeddings,
-    store_type: Optional[str] = None,
-    **kwargs,
-) -> VectorStore:
-    """
-    创建向量存储
-
-    .. deprecated::
-        请使用 VectorStoreRegistry.get(store_type)(**kwargs).create() 替代
-    """
-    warnings.warn(
-        "create_vector_store() 已废弃，请使用 VectorStoreBackend.create()",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    if not documents:
-        raise ValueError("文档列表不能为空")
-
-    store_type = store_type or settings.vector_store_type
-    collection_name = kwargs.pop("collection_name", "default")
-
-    logger.info(f"创建向量存储: type={store_type}, documents={len(documents)}")
-
-    try:
-        if store_type == "faiss":
-            from langchain_community.vectorstores import FAISS
-
-            vector_store = FAISS.from_documents(
-                documents=documents,
-                embedding=embeddings,
-                **kwargs,
-            )
-            logger.info("FAISS 向量库创建成功")
-            return vector_store
-
-        elif store_type == "chroma":
-            try:
-                import chromadb
-                from langchain_chroma import Chroma
-            except ImportError:
-                raise ImportError(
-                    "Chroma 未安装。请运行: pip install langchain-chroma chromadb"
-                )
-
-            persist_directory = kwargs.pop("persist_directory", None) or getattr(settings, "chroma_persist_directory", "data/chroma_db")
-            collection_name = kwargs.pop("collection_name", None) or getattr(settings, "chroma_collection_name", "langchain_xm")
-
-            client_settings = _get_chroma_client_settings(persist_directory)
-
-            chroma_kwargs = {
-                "collection_name": collection_name,
-                "embedding_function": embeddings,
-                "persist_directory": persist_directory,
-            }
-            if client_settings:
-                chroma_kwargs["client_settings"] = client_settings
-
-            vector_store = Chroma.from_documents(
-                documents=documents,
-                **chroma_kwargs,
-            )
-            logger.info(f"Chroma 向量库创建成功 (persist={persist_directory}, collection={collection_name})")
-            return vector_store
-
-        elif store_type == "inmemory":
-            from langchain_core.vectorstores import InMemoryVectorStore
-
-            vector_store = InMemoryVectorStore.from_documents(
-                documents=documents,
-                embedding=embeddings,
-                **kwargs,
-            )
-            logger.info("InMemory 向量库创建成功")
-            return vector_store
-
-        elif store_type == "pgvector":
-            try:
-                from langchain_postgres.vectorstores import PGVector as LangChainPGVector
-            except ImportError:
-                raise ImportError(
-                    "PGVector 未安装。请运行: pip install langchain-postgres"
-                )
-
-            from Django_xm.apps.knowledge.vector_store.pgvector_store import get_pgvector_connection_string
-
-            connection_string = get_pgvector_connection_string(async_mode=False)
-
-            vector_store = LangChainPGVector.from_documents(
-                documents=documents,
-                embedding=embeddings,
-                collection_name=collection_name,
-                connection=connection_string,
-                use_jsonb=True,
-                create_extension=False,
-                **kwargs,
-            )
-            logger.info(f"PGVector 向量库创建成功 (collection={collection_name})")
-            return vector_store
-
-        elif store_type == "milvus":
-            try:
-                from langchain_milvus import Milvus
-            except ImportError:
-                raise ImportError(
-                    "Milvus 未安装。请运行: pip install langchain-milvus"
-                )
-
-            connection_args = kwargs.pop(
-                "connection_args",
-                {"uri": getattr(settings, "milvus_uri", "milvus_demo.db")},
-            )
-
-            vector_store = Milvus.from_documents(
-                documents=documents,
-                embedding=embeddings,
-                connection_args=connection_args,
-                collection_name=collection_name,
-                **kwargs,
-            )
-            logger.info(f"Milvus 向量库创建成功 (collection={collection_name})")
-            return vector_store
-
-        else:
-            raise ValueError(
-                f"不支持的向量库类型: {store_type}。"
-                f"支持的类型: faiss, chroma, inmemory, milvus, pgvector"
-            )
-
-    except Exception as e:
-        logger.error(f"创建向量库失败: {e}")
-        raise
-
-
-def save_vector_store(vector_store: VectorStore, save_path: str, embeddings: Optional[Embeddings] = None) -> None:
-    """
-    保存向量库
-
-    .. deprecated::
-        请使用 VectorStoreBackend.save() 替代
-    """
-    warnings.warn(
-        "save_vector_store() 已废弃，请使用 VectorStoreBackend.save()",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    save_path = Path(save_path)
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-
-    logger.info(f"保存向量库: {save_path}")
-
-    try:
-        if hasattr(vector_store, 'save_local'):
-            vector_store.save_local(str(save_path))
-            _save_faiss_integrity(save_path)
-            logger.info("向量库保存成功（含完整性校验）")
-        else:
-            vs_type = type(vector_store).__name__
-            if vs_type == "Chroma":
-                if hasattr(vector_store, '_persist'):
-                    vector_store._persist()
-                logger.info("Chroma 向量库已自动持久化")
-            elif vs_type == "PGVector":
-                logger.info("PGVector 向量库已自动持久化到 PostgreSQL")
-            else:
-                logger.warning(f"向量库类型 {vs_type} 不支持手动保存")
-    except Exception as e:
-        logger.error(f"保存向量库失败: {e}")
-        raise
-
-
-def _validate_faiss_index_integrity(index_path: Path) -> bool:
-    """验证 FAISS 索引文件的完整性，防止篡改"""
-    integrity_file = index_path / ".integrity"
-    if not integrity_file.exists():
-        logger.warning(f"FAISS 索引缺少完整性校验文件: {index_path}")
-        return False
-
-    try:
-        with open(integrity_file, "r", encoding="utf-8") as f:
-            stored_hashes = json.load(f)
-
-        for filename, expected_hash in stored_hashes.items():
-            file_path = index_path / filename
-            if not file_path.exists():
-                logger.error(f"FAISS 索引文件缺失: {filename}")
-                return False
-            actual_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
-            if actual_hash != expected_hash:
-                logger.error(f"FAISS 索引文件被篡改: {filename}")
-                return False
-
-        return True
-    except Exception as e:
-        logger.error(f"完整性校验失败: {e}")
-        return False
-
-
-def _save_faiss_integrity(index_path: Path) -> None:
-    """保存 FAISS 索引文件的完整性校验"""
-    integrity_file = index_path / ".integrity"
-    hashes = {}
-
-    for file_path in index_path.iterdir():
-        if file_path.name == ".integrity" or file_path.name == "metadata.json":
-            continue
-        if file_path.is_file():
-            hashes[file_path.name] = hashlib.sha256(file_path.read_bytes()).hexdigest()
-
-    with open(integrity_file, "w", encoding="utf-8") as f:
-        json.dump(hashes, f, indent=2)
-
-
-def load_vector_store(
-    load_path: str,
-    embeddings: Embeddings,
-    store_type: Optional[str] = None,
-    **kwargs,
-) -> VectorStore:
-    """
-    加载向量库
-
-    .. deprecated::
-        请使用 VectorStoreBackend.load() 替代
-    """
-    warnings.warn(
-        "load_vector_store() 已废弃，请使用 VectorStoreBackend.load()",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    load_path = Path(load_path)
-
-    store_type = store_type or settings.vector_store_type
-
-    logger.info(f"加载向量库: {load_path}, type={store_type}")
-
-    try:
-        if store_type == "faiss":
-            if not load_path.exists():
-                raise FileNotFoundError(f"向量库路径不存在: {load_path}")
-
-            from langchain_community.vectorstores import FAISS
-
-            if _validate_faiss_index_integrity(load_path):
-                logger.info("FAISS 索引完整性校验通过，安全加载")
-                vector_store = FAISS.load_local(
-                    folder_path=str(load_path),
-                    embeddings=embeddings,
-                    allow_dangerous_deserialization=True,
-                    **kwargs,
-                )
-            else:
-                raise ValueError(
-                    "FAISS 索引完整性校验失败。"
-                    "索引可能被篡改或缺少校验文件(.integrity)。"
-                    "请重新构建索引，或迁移到 Chroma 以避免此安全风险。"
-                )
-
-            logger.info("FAISS 向量库加载成功")
-            return vector_store
-
-        elif store_type == "chroma":
-            try:
-                from langchain_chroma import Chroma
-            except ImportError:
-                raise ImportError(
-                    "Chroma 未安装。请运行: pip install langchain-chroma chromadb"
-                )
-
-            if not load_path.exists():
-                raise FileNotFoundError(f"向量库路径不存在: {load_path}")
-
-            collection_name = kwargs.pop("collection_name", "default")
-            client_settings = _get_chroma_client_settings(str(load_path))
-
-            chroma_kwargs = {
-                "collection_name": collection_name,
-                "embedding_function": embeddings,
-                "persist_directory": str(load_path),
-            }
-            if client_settings:
-                chroma_kwargs["client_settings"] = client_settings
-
-            vector_store = Chroma(**chroma_kwargs)
-            logger.info("Chroma 向量库加载成功")
-            return vector_store
-
-        elif store_type == "inmemory":
-            raise ValueError("InMemoryVectorStore 不支持从磁盘加载")
-
-        elif store_type == "pgvector":
-            try:
-                from langchain_postgres.vectorstores import PGVector as LangChainPGVector
-            except ImportError:
-                raise ImportError(
-                    "PGVector 未安装。请运行: pip install langchain-postgres"
-                )
-
-            from Django_xm.apps.knowledge.vector_store.pgvector_store import get_pgvector_connection_string
-
-            collection_name = kwargs.pop("collection_name", "default")
-            connection_string = get_pgvector_connection_string(async_mode=False)
-
-            vector_store = LangChainPGVector(
-                embeddings=embeddings,
-                collection_name=collection_name,
-                connection=connection_string,
-                use_jsonb=True,
-                create_extension=False,
-                **kwargs,
-            )
-            logger.info(f"PGVector 向量库加载成功 (collection={collection_name})")
-            return vector_store
-
-        elif store_type == "milvus":
-            try:
-                from langchain_milvus import Milvus
-            except ImportError:
-                raise ImportError(
-                    "Milvus 未安装。请运行: pip install langchain-milvus"
-                )
-
-            connection_args = kwargs.pop(
-                "connection_args",
-                {"uri": getattr(settings, "milvus_uri", "milvus_demo.db")},
-            )
-            collection_name = kwargs.pop("collection_name", "default")
-
-            vector_store = Milvus(
-                embedding_function=embeddings,
-                connection_args=connection_args,
-                collection_name=collection_name,
-                **kwargs,
-            )
-            logger.info(f"Milvus 向量库加载成功 (collection={collection_name})")
-            return vector_store
-
-        else:
-            raise ValueError(
-                f"不支持的向量库类型: {store_type}。"
-                f"支持的类型: faiss, chroma, inmemory, pgvector, milvus"
-            )
-
-    except Exception as e:
-        logger.error(f"加载向量库失败: {e}")
-        raise
-
-
-async def acreate_vector_store(
-    documents: List[Document],
-    embeddings: Embeddings,
-    store_type: Optional[str] = None,
-    **kwargs,
-) -> VectorStore:
-    """异步创建向量存储"""
-    if not documents:
-        raise ValueError("文档列表不能为空")
-
-    store_type = store_type or settings.vector_store_type
-    logger.info(f"异步创建向量存储: type={store_type}, documents={len(documents)}")
-
-    try:
-        if store_type == "faiss":
-            from langchain_community.vectorstores import FAISS
-            vector_store = await FAISS.afrom_documents(
-                documents=documents,
-                embedding=embeddings,
-                **kwargs,
-            )
-            logger.info("FAISS 向量库异步创建成功")
-            return vector_store
-
-        elif store_type == "chroma":
-            try:
-                from langchain_chroma import Chroma
-            except ImportError:
-                raise ImportError("Chroma 未安装。请运行: pip install langchain-chroma chromadb")
-
-            persist_directory = kwargs.pop("persist_directory", None)
-            collection_name = kwargs.pop("collection_name", "default")
-            client_settings = _get_chroma_client_settings(persist_directory)
-
-            chroma_kwargs = {
-                "collection_name": collection_name,
-                "embedding_function": embeddings,
-            }
-            if persist_directory:
-                chroma_kwargs["persist_directory"] = persist_directory
-            if client_settings:
-                chroma_kwargs["client_settings"] = client_settings
-
-            vector_store = await Chroma.afrom_documents(
-                documents=documents,
-                **chroma_kwargs,
-            )
-            logger.info(f"Chroma 向量库异步创建成功 (persist={bool(persist_directory)})")
-            return vector_store
-
-        elif store_type == "inmemory":
-            from langchain_core.vectorstores import InMemoryVectorStore
-            vector_store = await InMemoryVectorStore.afrom_documents(
-                documents=documents,
-                embedding=embeddings,
-                **kwargs,
-            )
-            logger.info("InMemory 向量库异步创建成功")
-            return vector_store
-
-        elif store_type == "pgvector":
-            try:
-                from langchain_postgres.vectorstores import PGVector as LangChainPGVector
-            except ImportError:
-                raise ImportError("PGVector 未安装。请运行: pip install langchain-postgres")
-
-            from Django_xm.apps.knowledge.vector_store.pgvector_store import get_pgvector_connection_string
-
-            collection_name = kwargs.pop("collection_name", "default")
-            connection_string = get_pgvector_connection_string(async_mode=False)
-
-            vector_store = await LangChainPGVector.afrom_documents(
-                documents=documents,
-                embedding=embeddings,
-                collection_name=collection_name,
-                connection=connection_string,
-                use_jsonb=True,
-                create_extension=False,
-                **kwargs,
-            )
-            logger.info(f"PGVector 向量库异步创建成功 (collection={collection_name})")
-            return vector_store
-
-        elif store_type == "milvus":
-            try:
-                from langchain_milvus import Milvus
-            except ImportError:
-                raise ImportError("Milvus 未安装。请运行: pip install langchain-milvus")
-
-            connection_args = kwargs.pop(
-                "connection_args",
-                {"uri": getattr(settings, "milvus_uri", "milvus_demo.db")},
-            )
-            collection_name = kwargs.pop("collection_name", "default")
-
-            vector_store = await Milvus.afrom_documents(
-                documents=documents,
-                embedding=embeddings,
-                connection_args=connection_args,
-                collection_name=collection_name,
-                **kwargs,
-            )
-            logger.info(f"Milvus 向量库异步创建成功 (collection={collection_name})")
-            return vector_store
-
-        else:
-            raise ValueError(f"不支持的向量库类型: {store_type}。支持的类型: faiss, chroma, inmemory, pgvector, milvus")
-
-    except Exception as e:
-        logger.error(f"异步创建向量库失败: {e}")
-        raise
-
-
-async def aadd_documents_to_store(
-    vector_store: VectorStore,
-    documents: List[Document],
-) -> List[str]:
-    """异步添加文档到向量库"""
-    if not documents:
-        raise ValueError("文档列表不能为空")
-
-    logger.info(f"异步添加 {len(documents)} 个文档到向量库")
-
-    try:
-        if hasattr(vector_store, "aadd_documents"):
-            ids = await vector_store.aadd_documents(documents)
-        elif hasattr(vector_store, "aadd_texts"):
-            texts = [doc.page_content for doc in documents]
-            metadatas = [doc.metadata for doc in documents]
-            ids = await vector_store.aadd_texts(texts, metadatas)
-        else:
-            raise ValueError("向量库不支持异步添加文档")
-
-        logger.info(f"异步添加文档成功: {len(ids)} 个")
-        return ids
-    except Exception as e:
-        logger.error(f"异步添加文档失败: {e}")
-        raise
-
-
 # ==================== IndexManager (Facade) ====================
 
 class IndexManager:
@@ -624,10 +124,10 @@ class IndexManager:
 
     _cache = _TTLCache(maxsize=32, ttl=1800)
 
-    def __init__(self, base_path: Optional[str] = None):
+    def __init__(self, base_path: str | None = None):
         self.base_path = Path(base_path or settings.vector_store_path)
         self.base_path.mkdir(parents=True, exist_ok=True)
-        self._backends: Dict[str, VectorStoreBackend] = {}
+        self._backends: dict[str, VectorStoreBackend] = {}
         logger.debug(f"索引管理器初始化: {self.base_path}")
 
     def _get_backend(self, store_type: str) -> VectorStoreBackend:
@@ -644,7 +144,7 @@ class IndexManager:
 
     # ==================== 元数据管理 ====================
 
-    def _save_metadata(self, name: str, metadata: Dict[str, Any], store_type: Optional[str] = None) -> None:
+    def _save_metadata(self, name: str, metadata: dict[str, Any], store_type: str | None = None) -> None:
         """保存元数据
 
         PGVector 模式：仅写数据库（IndexMetadata）
@@ -662,7 +162,7 @@ class IndexManager:
             with open(metadata_path, "w", encoding="utf-8") as f:
                 json.dump(metadata, f, ensure_ascii=False, indent=2)
 
-    def _save_metadata_to_db(self, name: str, metadata: Dict[str, Any]) -> None:
+    def _save_metadata_to_db(self, name: str, metadata: dict[str, Any]) -> None:
         """将元数据写入 IndexMetadata 数据库模型"""
         try:
             from Django_xm.apps.knowledge.models import IndexMetadata
@@ -681,7 +181,7 @@ class IndexManager:
         except Exception as e:
             logger.warning(f"元数据写入数据库失败（不影响主流程）: {e}")
 
-    def _load_metadata(self, name: str) -> Optional[Dict[str, Any]]:
+    def _load_metadata(self, name: str) -> dict[str, Any] | None:
         """加载元数据
 
         PGVector 模式：仅从数据库读取（IndexMetadata）
@@ -718,7 +218,7 @@ class IndexManager:
             if not metadata_path.exists():
                 return None
             try:
-                with open(metadata_path, "r", encoding="utf-8") as f:
+                with open(metadata_path, encoding="utf-8") as f:
                     return json.load(f)
             except Exception as e:
                 logger.error(f"加载元数据失败: {e}")
@@ -739,7 +239,7 @@ class IndexManager:
         metadata_path = self._get_metadata_path(name)
         if metadata_path.exists():
             try:
-                with open(metadata_path, "r", encoding="utf-8") as f:
+                with open(metadata_path, encoding="utf-8") as f:
                     data = json.load(f)
                 if data.get("store_type"):
                     return data["store_type"]
@@ -750,7 +250,7 @@ class IndexManager:
         return settings.vector_store_type
 
     @staticmethod
-    def _detect_embedding_dimension(embeddings: Optional[Embeddings]) -> Optional[int]:
+    def _detect_embedding_dimension(embeddings: Embeddings | None) -> int | None:
         """探测 Embedding 模型的输出维度"""
         if embeddings is None:
             return None
@@ -813,10 +313,10 @@ class IndexManager:
     def create_index(
         self,
         name: str,
-        documents: Optional[List[Document]] = None,
-        embeddings: Optional[Embeddings] = None,
+        documents: list[Document] | None = None,
+        embeddings: Embeddings | None = None,
         description: str = "",
-        store_type: Optional[str] = None,
+        store_type: str | None = None,
         overwrite: bool = False,
         **kwargs,
     ):
@@ -833,7 +333,7 @@ class IndexManager:
         backend = self._get_backend(effective_store_type)
 
         # 备份旧索引文档（用于 overwrite 失败时恢复）
-        backup_documents: List[Document] = []
+        backup_documents: list[Document] = []
         is_overwrite = False
 
         # 检查索引是否已存在
@@ -875,8 +375,8 @@ class IndexManager:
             metadata = {
                 "name": name,
                 "description": description,
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
                 "num_documents": len(documents) if documents else 0,
                 "store_type": effective_store_type,
                 "embedding_model": settings.embedding_model,
@@ -903,8 +403,8 @@ class IndexManager:
                     backup_metadata = {
                         "name": name,
                         "description": description,
-                        "created_at": datetime.now().isoformat(),
-                        "updated_at": datetime.now().isoformat(),
+                        "created_at": datetime.now(UTC).isoformat(),
+                        "updated_at": datetime.now(UTC).isoformat(),
                         "num_documents": len(backup_documents),
                         "store_type": effective_store_type,
                         "embedding_model": settings.embedding_model,
@@ -933,7 +433,7 @@ class IndexManager:
         self,
         name: str,
         description: str = "",
-        store_type: Optional[str] = None,
+        store_type: str | None = None,
         overwrite: bool = False,
     ):
         """创建空索引（无需指定文档）"""
@@ -974,7 +474,7 @@ class IndexManager:
             logger.error(f"加载索引失败: {e}")
             raise
 
-    def list_indexes(self) -> List[Dict[str, Any]]:
+    def list_indexes(self) -> list[dict[str, Any]]:
         """列出所有索引"""
         indexes = []
         seen_names = set()
@@ -1094,7 +594,7 @@ class IndexManager:
             logger.warning(f"index_exists Backend 检查异常: name={name}, store_type={store_type}, error={e}")
             return False
 
-    def get_index_stats(self, name: str, embeddings: Embeddings = None) -> Dict[str, Any]:
+    def get_index_stats(self, name: str, embeddings: Embeddings = None) -> dict[str, Any]:
         """获取索引统计信息"""
         store_type = self._get_store_type(name)
 
@@ -1140,14 +640,14 @@ class IndexManager:
 
         return stats
 
-    def get_index_embedding_dimension(self, name: str) -> Optional[int]:
+    def get_index_embedding_dimension(self, name: str) -> int | None:
         """获取索引的 Embedding 维度"""
         metadata = self._load_metadata(name)
         if metadata and metadata.get("embedding_dimension"):
             return metadata["embedding_dimension"]
         return None
 
-    def _read_all_documents(self, name: str, embeddings: Embeddings, store_type: str) -> List[Document]:
+    def _read_all_documents(self, name: str, embeddings: Embeddings, store_type: str) -> list[Document]:
         """从索引中读取所有文档（用于 overwrite 备份）"""
         backend = self._get_backend(store_type)
 
@@ -1174,13 +674,74 @@ class IndexManager:
 
     # ==================== 文档操作 ====================
 
+    @staticmethod
+    def _generate_stable_ids(documents: list[Document]) -> list[str]:
+        """为文档列表生成稳定 ID
+
+        基于 metadata.source（文件路径）+ page_content SHA256 生成 uuid5，
+        相同文件相同内容的 chunk 在重试场景下产生相同 ID，
+        配合 PGVector ON CONFLICT DO NOTHING 实现幂等写入。
+
+        Args:
+            documents: 文档列表
+
+        Returns:
+            与 documents 等长的稳定 ID 列表
+        """
+        ids: list[str] = []
+        for doc in documents:
+            source = ''
+            if isinstance(doc.metadata, dict):
+                source = doc.metadata.get('source', '') or ''
+            content_hash = hashlib.sha256(doc.page_content.encode('utf-8')).hexdigest()
+            stable_id = str(uuid.uuid5(_DOC_ID_NAMESPACE, f"{source}:{content_hash}"))
+            ids.append(stable_id)
+        return ids
+
+    def _add_documents_with_stable_ids(
+        self,
+        vector_store: VectorStore,
+        documents: list[Document],
+        stable_ids: list[str],
+        store_type: str,
+    ) -> None:
+        """携带稳定 ID 添加文档到向量库
+
+        PGVector: 通过 ids 参数触发 ON CONFLICT DO NOTHING，主键冲突时跳过
+        其他后端: 尝试携带 ids 添加，失败则回退到无 ID 模式（仅 dev/test 使用）
+
+        Args:
+            vector_store: 已加载的向量库实例
+            documents: 待添加文档列表
+            stable_ids: 与 documents 等长的稳定 ID 列表
+            store_type: 向量库类型，用于决定冲突处理策略
+        """
+        try:
+            vector_store.add_documents(documents, ids=stable_ids)
+        except Exception as e:
+            if store_type == "pgvector":
+                # 生产后端不应失败，向上抛出便于排查
+                raise
+            # 非 PGVector 后端（faiss/chroma/milvus/inmemory）可能不支持 ids 或冲突报错
+            # 回退到无 ID 模式，这些后端仅用于 dev/test，不保证严格幂等
+            logger.warning(
+                f"向量库 {store_type} 携带 ID 添加文档失败，回退到无 ID 模式（非幂等）: {e}"
+            )
+            vector_store.add_documents(documents)
+
     def add_documents(
         self,
         name: str,
-        documents: List[Document],
+        documents: list[Document],
         embeddings: Embeddings,
     ) -> int:
-        """向现有索引添加文档"""
+        """向现有索引添加文档
+
+        幂等保障（方案 A：业务层 content hash 去重）：
+        - 基于 metadata.source + page_content SHA256 生成稳定 ID（uuid5）
+        - PGVector 通过 ON CONFLICT DO NOTHING 跳过已存在 ID
+        - Celery 任务重试场景下相同文档不会产生重复向量记录
+        """
         store_type = self._get_store_type(name)
         backend = self._get_backend(store_type)
         self._cache.remove(name)
@@ -1191,25 +752,34 @@ class IndexManager:
         if not documents:
             raise ValueError("文档列表不能为空")
 
-        logger.info(f"向索引 {name} 添加 {len(documents)} 个文档")
+        # 生成稳定 ID：基于 source + content SHA256，保证重试场景幂等
+        stable_ids = self._generate_stable_ids(documents)
+
+        logger.info(f"向索引 {name} 添加 {len(documents)} 个文档（携带稳定 ID）")
 
         try:
             metadata = self._load_metadata(name)
             is_empty_index = metadata and metadata.get("num_documents", 0) == 0
 
             if is_empty_index:
-                # 空索引：创建新的向量库
+                # 空索引：创建新的向量库（携带稳定 ID）
                 logger.info(f"索引 {name} 为空，创建新的向量库")
-                vector_store = backend.create(documents, embeddings, collection_name=name)
+                vector_store = backend.create(
+                    documents, embeddings,
+                    collection_name=name,
+                    ids=stable_ids,
+                )
 
                 # 非 PGVector 需要手动保存
                 if store_type != "pgvector":
                     index_path = self._get_index_path(name)
                     backend.save(vector_store, str(index_path))
             else:
-                # 加载现有向量库并添加文档
+                # 加载现有向量库并添加文档（携带稳定 ID）
                 vector_store = self.load_index(name, embeddings)
-                backend.add_documents(vector_store, documents)
+                self._add_documents_with_stable_ids(
+                    vector_store, documents, stable_ids, store_type,
+                )
 
                 # 非 PGVector 需要手动保存
                 if store_type != "pgvector":
@@ -1220,7 +790,7 @@ class IndexManager:
             if metadata:
                 old_count = metadata.get("num_documents", 0)
                 metadata["num_documents"] = old_count + len(documents)
-                metadata["updated_at"] = datetime.now().isoformat()
+                metadata["updated_at"] = datetime.now(UTC).isoformat()
                 # 补充维度信息（旧索引可能没有此字段）
                 if not metadata.get("embedding_dimension") and embeddings:
                     metadata["embedding_dimension"] = self._detect_embedding_dimension(embeddings)
@@ -1240,7 +810,7 @@ class IndexManager:
         self,
         name: str,
         embeddings: Embeddings,
-        document_ids: Optional[List[str]] = None,
+        document_ids: list[str] | None = None,
     ) -> int:
         """从索引中删除文档"""
         store_type = self._get_store_type(name)
@@ -1332,7 +902,7 @@ class IndexManager:
             if metadata:
                 old_count = metadata.get("num_documents", 0)
                 metadata["num_documents"] = max(0, old_count - deleted_count)
-                metadata["updated_at"] = datetime.now().isoformat()
+                metadata["updated_at"] = datetime.now(UTC).isoformat()
                 self._save_metadata(name, metadata, store_type=store_type)
 
             # 更新 IndexMetadata 文档数
@@ -1349,7 +919,7 @@ class IndexManager:
         self,
         vector_store: VectorStore,
         filename: str,
-    ) -> List[str]:
+    ) -> list[str]:
         """在向量库中查找匹配文件名的文档 ID"""
         ids_to_delete = []
 

@@ -3,7 +3,7 @@
 支持多模态消息和 RAG 检索增强
 """
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +12,7 @@ class AttachmentService:
 
     RAG_CONTENT_THRESHOLD = 30000
 
-    def classify_attachments(self, attachment_ids: List[int]) -> Dict[str, List[int]]:
+    def classify_attachments(self, attachment_ids: list[int]) -> dict[str, list[int]]:
         image_ids = []
         text_ids = []
 
@@ -30,7 +30,7 @@ class AttachmentService:
 
         return {"image_ids": image_ids, "text_ids": text_ids}
 
-    def load_text_attachment_contents(self, attachment_ids: List[int]) -> Optional[str]:
+    def load_text_attachment_contents(self, attachment_ids: list[int]) -> str | None:
         if not attachment_ids:
             return None
 
@@ -44,10 +44,10 @@ class AttachmentService:
             logger.error(f"加载文本附件内容失败: {e}")
             return None
 
-    def load_attachment_contents(self, attachment_ids: List[int]) -> Optional[str]:
+    def load_attachment_contents(self, attachment_ids: list[int]) -> str | None:
         return self.load_text_attachment_contents(attachment_ids)
 
-    def build_message_with_attachments(self, user_message: str, attachment_content: Optional[str]) -> str:
+    def build_message_with_attachments(self, user_message: str, attachment_content: str | None) -> str:
         if not attachment_content:
             return user_message
 
@@ -62,7 +62,7 @@ class AttachmentService:
     def build_multimodal_message_content(
         self,
         user_message: str,
-        attachment_ids: List[int],
+        attachment_ids: list[int],
     ) -> list:
         from Django_xm.apps.tools.langchain.file_reader import read_attachment_as_base64
 
@@ -95,7 +95,7 @@ class AttachmentService:
                 logger.error(f"构造图片多模态消息失败 (id={img_id}): {e}")
                 content_parts.append({
                     "type": "text",
-                    "text": f"\n[图片附件 (id={img_id}) 加载失败: {str(e)}]",
+                    "text": f"\n[图片附件 (id={img_id}) 加载失败: {e!s}]",
                 })
 
         return content_parts
@@ -103,11 +103,11 @@ class AttachmentService:
     def build_rag_enhanced_message(
         self,
         user_message: str,
-        attachment_ids: List[int],
+        attachment_ids: list[int],
         progress_callback=None,
     ) -> str:
-        from Django_xm.apps.tools.langchain.file_reader import read_attachment_as_documents
         from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
+        from Django_xm.apps.tools.langchain.file_reader import read_attachment_as_documents
 
         all_docs = []
         classified = self.classify_attachments(attachment_ids)
@@ -170,7 +170,7 @@ class AttachmentService:
                 user_message, self.load_text_attachment_contents(text_ids)
             )
 
-    def should_use_rag(self, attachment_ids: List[int]) -> bool:
+    def should_use_rag(self, attachment_ids: list[int]) -> bool:
         from Django_xm.apps.tools.langchain.file_reader import get_attachment_info
 
         total_size = 0
@@ -193,16 +193,16 @@ class AttachmentService:
 
         return False
 
-    def has_images(self, attachment_ids: List[int]) -> bool:
+    def has_images(self, attachment_ids: list[int]) -> bool:
         classified = self.classify_attachments(attachment_ids)
         return len(classified["image_ids"]) > 0
 
     def build_user_content(
         self,
         user_message: str,
-        attachment_ids: List[int],
+        attachment_ids: list[int],
         progress_callback=None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         if not attachment_ids:
             logger.info("[Attachment] build_user_content: 无附件ID")
             return {"type": "text", "content": user_message}
@@ -258,7 +258,7 @@ class AttachmentService:
 
         return {"type": "text", "content": user_message}
 
-    def link_attachments_to_message(self, message, attachment_ids: Optional[List[int]]):
+    def link_attachments_to_message(self, message, attachment_ids: list[int] | None):
         if not attachment_ids:
             return
 
@@ -273,7 +273,7 @@ class AttachmentService:
     def persist_attachments_to_store(
         self,
         user_id: int,
-        attachment_ids: List[int],
+        attachment_ids: list[int],
         store=None,
     ) -> int:
         if not attachment_ids or not user_id:

@@ -4,6 +4,7 @@
 """
 
 from rest_framework import serializers
+
 from .models import WorkflowExecution, WorkflowSession
 
 
@@ -29,6 +30,12 @@ class WorkflowStartSerializer(serializers.Serializer):
         allow_null=True,
         allow_blank=True,
         help_text="可选的线程ID"
+    )
+    knowledge_base_ids = serializers.ListField(
+        child=serializers.CharField(max_length=100),
+        required=False,
+        default=list,
+        help_text="用户选择的知识库名称列表（原始名称，对应 KnowledgeBaseSelector 的 v-model）"
     )
 
     def validate(self, data):

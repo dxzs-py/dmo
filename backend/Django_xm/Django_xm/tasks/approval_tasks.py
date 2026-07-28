@@ -7,7 +7,7 @@ timeout_approval 内部会通过 check_and_trigger_research_resume 触发批量�
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from celery import shared_task
 from django.db import transaction
@@ -21,21 +21,36 @@ logger = logging.getLogger(__name__)
 APPROVAL_TIMEOUT_SECONDS = 300
 
 
-@shared_task(bind=True, name='approvals.cleanup_expired_approvals')
+@shared_task(
+    bind=True,
+    name='approvals.cleanup_expired_approvals',
+    soft_time_limit=120,
+    autoretry_for=(ConnectionError, TimeoutError, OSError),
+    max_retries=3,
+    default_retry_delay=10,
+    retry_backoff=True,
+    retry_backoff_max=60,
+)
 def cleanup_expired_approvals(self):
     """扫描 pending 超时审批并处理。每 60 秒由 Celery beat 调度执行。
 
     M5: 使用 expires_at 判断过期（替代 created_at + APPROVAL_TIMEOUT_SECONDS）。
     expires_at 在审批创建时设置为 now + APPROVAL_TIMEOUT_SECONDS（M4），
     复用 interrupt_id 时同步重置（M16）。历史数据在 M3 迁移时已回填。
+
+    幂等性保障：
+    - 通过 select_for_update + state 二次校验，避免并发 beat 触发重复处理
+    - timeout_approval 内部对终态审批直接 return，重试场景不会产生副作用
+    - soft_time_limit=120 防止大批量审批卡死 worker
+    - autoretry_for 覆盖网络/Redis 异常，配合 backoff 避免雪崩
     """
     logger.info("[ApprovalCleanup] 任务被调用: 扫描超时审批")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # M5: 使用 expires_at 判断过期；同时兜底处理未回填 expires_at 的历史数据
     expired_qs = Approval.objects.filter(
         state=Approval.STATE_PENDING,
     ).filter(
-        (Q(expires_at__lt=now) | Q(expires_at__isnull=True, created_at__lt=now - timedelta(seconds=APPROVAL_TIMEOUT_SECONDS)))
+        Q(expires_at__lt=now) | Q(expires_at__isnull=True, created_at__lt=now - timedelta(seconds=APPROVAL_TIMEOUT_SECONDS))
     )
 
     count = expired_qs.count()

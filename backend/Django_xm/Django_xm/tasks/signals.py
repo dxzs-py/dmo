@@ -5,13 +5,13 @@ Celery 信号处理模块
 import logging
 
 from celery.signals import (
-    task_prerun,
-    task_postrun,
     task_failure,
+    task_postrun,
+    task_prerun,
+    task_rejected,
     task_retry,
     task_revoked,
     task_unknown,
-    task_rejected,
     worker_ready,
     worker_shutting_down,
 )
@@ -43,11 +43,16 @@ def on_task_failure(sender=None, task_id=None, exception=None, traceback_str=Non
     try:
         from Django_xm.apps.core.task_models import CeleryTaskRecord
         record = CeleryTaskRecord.objects.filter(celery_task_id=task_id).first()
-        if record and record.status not in (
+        if record is None:
+            return
+        # 幂等保护：已处于 FAILURE/REVOKED 终态的记录不再重复标记，
+        # 避免 autoretry 场景下 mark_failure 反复触发 save 与状态机校验异常
+        if record.status in (
             CeleryTaskRecord.TaskStatus.FAILURE,
             CeleryTaskRecord.TaskStatus.REVOKED,
         ):
-            record.mark_failure(error_message=str(exception))
+            return
+        record.mark_failure(error_message=str(exception))
     except Exception as e:
         logger.debug(f"[Celery Signal] 同步失败状态到数据库异常: {e}")
 

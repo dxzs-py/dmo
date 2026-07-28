@@ -1,11 +1,11 @@
-import sys
 import json
-import requests
 import os
 import re
+import sys
 from datetime import datetime, timedelta
-from typing import Tuple, Dict
 from urllib.parse import urlparse
+
+import requests
 
 
 def baidu_search(requestBody: dict):
@@ -26,7 +26,7 @@ def baidu_search(requestBody: dict):
     return datas
 
 
-def resolve_sandbox_url(original_url: str) -> Tuple[str, Dict[str, str]]:
+def resolve_sandbox_url(original_url: str) -> tuple[str, dict[str, str]]:
     """若当前在沙盒环境中，将目标 URL 替换为代理 URL，并返回需要附加的 headers。"""
     session_id = os.environ.get("DUMATE_SESSION_ID")
     scheduler_url = os.environ.get("DUMATE_SCHEDULER_URL")
@@ -119,5 +119,5 @@ if __name__ == "__main__":
         results = baidu_search(request_body)
         print(json.dumps(results, indent=2, ensure_ascii=False))
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"Error: {e!s}")
         sys.exit(1)

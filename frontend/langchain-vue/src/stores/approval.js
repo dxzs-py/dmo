@@ -2,10 +2,13 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useSessionStore } from './session'
 import { useModelStore } from './model'
-import { chatApprovalStream } from '../api/chat'
+import { useSyncStore } from './sync'
+import { useStreamFinalizer } from '../composables/useStreamFinalizer'
+import { resumeApprovalStream } from '../api/approval'
 import { approveResearchCommand, rejectResearchCommand } from '../api/research'
 import { getInterruptId } from '../utils/message-operations'
-import { ToolCallStatus } from '../types'
+import { readSSEStream } from '../utils/sse'
+import { StreamState } from '../types'
 import { logger } from '../utils/logger'
 import { ElMessage, ElNotification } from 'element-plus'
 
@@ -37,6 +40,36 @@ export const useApprovalStore = defineStore('approval', () => {
 
   let cleanupTimer = null
 
+  /**
+   * 聊天审批串行执行队列（按 sessionId 隔离）
+   *
+   * 同一会话的审批恢复流必须串行执行，避免多个 SSE 流并发写入同一会话
+   * 的最后一条消息（content/toolCalls 竞态）。不同会话可并行。
+   *
+   * 结构：Map<sessionId, Promise>
+   */
+  const _chatApprovalQueues = new Map()
+
+  /**
+   * 将聊天审批执行入队（同一 session 串行）
+   * @param {string} sessionId
+   * @param {() => Promise} fn - 审批执行函数
+   * @returns {Promise} fn 的返回值
+   */
+  const _enqueueChatApproval = (sessionId, fn) => {
+    if (!sessionId) return fn()
+    const prev = _chatApprovalQueues.get(sessionId) || Promise.resolve()
+    // then(onFulfilled, onRejected)：前一个无论成功/失败都继续执行下一个
+    const next = prev.then(fn, fn)
+    _chatApprovalQueues.set(sessionId, next)
+    next.finally(() => {
+      if (_chatApprovalQueues.get(sessionId) === next) {
+        _chatApprovalQueues.delete(sessionId)
+      }
+    })
+    return next
+  }
+
   // ==================== 事件处理 ====================
 
   /**
@@ -58,8 +91,16 @@ export const useApprovalStore = defineStore('approval', () => {
       return
     }
 
-    // 审批已处理通知（另一端已操作）
-    if (eventType === 'approval_processed') {
+    // 审批正在处理（另一端已点击确认/拒绝，后端处理中）
+    if (eventType === 'approval_processing') {
+      _handleProcessing(data, source, sessionId)
+      return
+    }
+
+    // 审批已处理（另一端已操作完成：approval_processed / approval_approved / approval_rejected）
+    if (eventType === 'approval_processed'
+        || eventType === 'approval_approved'
+        || eventType === 'approval_rejected') {
       _handleProcessed(data, source, sessionId)
       return
     }
@@ -154,7 +195,44 @@ export const useApprovalStore = defineStore('approval', () => {
   }
 
   /**
-   * 审批已处理通知（另一端已操作）
+   * 审批正在处理（另一端已点击确认/拒绝，后端处理中）
+   *
+   * 收到 approval_processing 事件时，更新本地审批状态为 processing，
+   * 但保留在 pendingApprovals 中（审批面板保持显示，按钮禁用）。
+   * 工具结果到达后（approval_processed / tool_result），审批条目才会被移除。
+   *
+   * @param {Object} data - SSE 事件数据
+   * @param {string} source - 事件来源
+   * @param {string} [sessionId] - 聊天会话 ID
+   */
+  const _handleProcessing = (data, source, sessionId) => {
+    const sessionStore = useSessionStore()
+    const toolCallId = getInterruptId(data)
+    if (!toolCallId) return
+
+    const existingEntry = pendingApprovals.value.get(toolCallId)
+    if (!existingEntry) return
+
+    // 仅更新 state，保留在 pendingApprovals（审批面板保持显示，按钮禁用）
+    existingEntry.approvalData = { ...existingEntry.approvalData, ...data, state: 'processing' }
+
+    const effectiveSessionId = sessionId || existingEntry?.sessionId || sessionStore.currentSessionId
+    if (effectiveSessionId) {
+      sessionStore.updateToolCallApprovalState(effectiveSessionId, toolCallId, 'processing')
+      sessionStore.setApprovalToLastMessage(effectiveSessionId, { ...data, state: 'processing' })
+      sessionStore.syncLastMessageToBackend(effectiveSessionId).catch(() => {})
+    }
+  }
+
+  /**
+   * 审批已处理通知（另一端已操作完成）
+   *
+   * 处理三种事件类型：
+   * - approval_processed：通用处理完成事件，通过 data.approved 判断最终状态
+   * - approval_approved：明确批准事件，finalState='approved'
+   * - approval_rejected：明确拒绝事件，finalState='rejected'
+   *
+   * 从 pendingApprovals 移除条目，更新 session store 中的审批状态。
    */
   const _handleProcessed = (data, source, sessionId) => {
     const sessionStore = useSessionStore()
@@ -166,7 +244,11 @@ export const useApprovalStore = defineStore('approval', () => {
     const effectiveSessionId = sessionId || existingEntry?.sessionId || sessionStore.currentSessionId
 
     pendingApprovals.value.delete(toolCallId)
-    const finalState = data.approved ? 'approved' : 'rejected'
+
+    // 确定最终状态：优先使用 data.state，其次 data.approved，默认 rejected
+    const finalState = data.state === 'approved' ? 'approved'
+      : data.state === 'rejected' ? 'rejected'
+      : data.approved ? 'approved' : 'rejected'
 
     // 更新 session store 中的审批状态
     if (effectiveSessionId) {
@@ -232,8 +314,10 @@ export const useApprovalStore = defineStore('approval', () => {
         }
         await _executeResearchApproval(taskId, interruptId, approved, userInput, approvalData)
       } else {
-        // 聊天审批路径
-        await _executeChatApproval(approvalData, approved, userInput, sessionId, toolCallId, options)
+        // 聊天审批路径：同一 session 串行执行，避免多个 SSE 流并发写入同一消息
+        await _enqueueChatApproval(sessionId, () =>
+          _executeChatApproval(approvalData, approved, userInput, sessionId, toolCallId, options)
+        )
       }
 
       // 更新最终状态
@@ -251,6 +335,12 @@ export const useApprovalStore = defineStore('approval', () => {
         }
       }
     } catch (err) {
+      // waiting_for_others / idempotent / interrupted：
+      // 状态已在 _executeChatApproval 内部处理（processing / 实际状态 / timeout 等），
+      // 不应回退为 pending，也不需要再次同步消息
+      if (err?.__approvalWaiting || err?.__approvalIdempotent || err?.__approvalInterrupted) {
+        return
+      }
       logger.error(`[ApprovalStore] 审批${approved ? '确认' : '拒绝'}失败:`, err)
       // 恢复审批状态
       pendingApprovals.value.set(toolCallId, {
@@ -286,14 +376,37 @@ export const useApprovalStore = defineStore('approval', () => {
   }
 
   /**
-   * 聊天审批执行（SSE 流式响应）
+   * 聊天审批执行（统一调用 /approvals/{interrupt_id}/resume/ SSE 流式端点）
+   *
+   * 后端响应类型由 content-type 区分：
+   * - `text/event-stream`：正常 SSE 流（agent 恢复执行）
+   * - `application/json`：批量审批等待（waiting_for_others）/ 幂等响应（已处理审批）/ 错误响应
+   *
+   * 状态语义：
+   * - waiting_for_others：本工具已审批，等待同批次其他工具审批完成后开始执行。
+   *   UI 应保留为 `processing` 状态（不切到 approved/rejected），并通过 message 提示用户。
+   *   通过抛出带 `__approvalWaiting` 标记的错误，让外层 `executeApproval` 跳过最终状态更新。
+   * - idempotent：审批已被另一端处理。UI 直接更新为最终状态，外层跳过最终状态更新。
+   * - interrupted：SSE 流中收到 approval_timeout / approval_processed 事件，流被中断。
+   *   审批状态已在事件处理器中更新（timeout/approved/rejected），通过 `markInterrupted`
+   *   保持消息为 INTERRUPTED 状态。抛出带 `__approvalInterrupted` 标记的错误，外层跳过最终状态更新。
+   *
+   * 流式生命周期复用 useStreamFinalizer（与 chat.js sendMessage 一致）：
+   * - startStreaming → STREAMING → readSSEStream → finalizeStream (COMPLETED) / markInterrupted / ERROR
+   *
+   * @returns {Promise<void>}
+   * @throws {Error} 审批失败时抛出；带 `__approvalWaiting` / `__approvalIdempotent` /
+   *                 `__approvalInterrupted` 标记的错误表示状态已在内部处理，外层应跳过最终状态更新。
    */
   const _executeChatApproval = async (approvalData, approved, userInput, sessionId, toolCallId, options) => {
+    const interruptId = getInterruptId(approvalData)
     const modelStore = useModelStore()
     const modelConfig = modelStore.getModelConfig()
+    const syncStore = useSyncStore()
+    const { finalizeStream, markInterrupted } = useStreamFinalizer()
+    const sessionStore = useSessionStore()
+    // interrupt_id 由 URL path 传递；session_id 由后端从 Approval.chat_session_id / source_id 读取
     const requestBody = {
-      session_id: sessionId,
-      interrupt_id: getInterruptId(approvalData),
       approved,
       provider_id: modelConfig.provider_id || null,
       model_name: modelConfig.model_name || null,
@@ -313,11 +426,13 @@ export const useApprovalStore = defineStore('approval', () => {
       requestBody.user_input = userInput
     }
 
-    const sessionStore = useSessionStore()
     const approvalAbortController = new AbortController()
-    const response = await chatApprovalStream(requestBody, { signal: approvalAbortController.signal })
+    const response = await resumeApprovalStream(interruptId, requestBody, {
+      signal: approvalAbortController.signal,
+    })
 
-    if (!response.ok) {
+    // 1. 非 2xx 错误：解析 JSON 错误信息后抛出
+    if (response.ok === false) {
       let errorMsg = `审批请求失败: ${response.status}`
       try {
         const errorData = await response.json()
@@ -326,105 +441,177 @@ export const useApprovalStore = defineStore('approval', () => {
       throw new Error(errorMsg)
     }
 
-    // 处理 SSE 流式响应
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let lastEventTime = Date.now()
-    const IDLE_TIMEOUT = 180_000
+    // 2. 区分 SSE 流 / JSON 响应（waiting / idempotent / 其他 JSON 场景）
+    const contentType = response.headers.get('content-type') || ''
+    if (contentType.includes('application/json')) {
+      const jsonData = await response.json()
+      const data = jsonData.data || {}
 
-    try {
-      while (true) {
-        if (Date.now() - lastEventTime > IDLE_TIMEOUT) {
-          logger.warn('[ApprovalStore] 审批SSE流空闲超时')
+      // 批量审批等待：本工具已审批，等待同批次其他工具
+      if (data.status === 'waiting_for_others' || data.state === 'waiting') {
+        if (sessionId) {
+          sessionStore.updateToolCallApprovalState(sessionId, toolCallId, 'processing')
+          sessionStore.setApprovalToLastMessage(sessionId, { ...data, state: 'processing' })
+          sessionStore.syncLastMessageToBackend(sessionId).catch(() => {})
+        }
+        ElMessage.info(data.message || '本工具已审批，等待同批次其他工具审批完成后开始执行...')
+        const err = new Error('waiting_for_others')
+        err.__approvalWaiting = true
+        throw err
+      }
+
+      // 幂等响应：审批已被另一端处理，按返回的实际状态更新 UI
+      if (data.idempotent) {
+        const idempotentState = data.state === 'approved' ? 'approved'
+          : data.state === 'rejected' ? 'rejected'
+          : data.state === 'waiting' ? 'processing'
+          : 'processing'
+        if (sessionId) {
+          pendingApprovals.value.delete(toolCallId)
+          sessionStore.updateToolCallApprovalState(sessionId, toolCallId, idempotentState)
+          sessionStore.setApprovalToLastMessage(sessionId, { ...data, state: idempotentState })
+          sessionStore.syncLastMessageToBackend(sessionId).catch(() => {})
+        }
+        logger.info(`[ApprovalStore] 审批幂等响应：${toolCallId} 状态=${idempotentState}`)
+        const err = new Error('idempotent')
+        err.__approvalIdempotent = true
+        throw err
+      }
+
+      // 其他未知 JSON 响应：作为错误抛出
+      throw new Error(jsonData.message || '审批处理失败')
+    }
+
+    // 3. 处理 SSE 流式响应（统一委托 readSSEStream 消费）
+    //
+    // 通过 onEvent 回调处理各事件类型：
+    // - heartbeat：保持连接（readSSEStream 内部已更新 lastEventTime）
+    // - chunk：流式追加消息内容
+    // - tool / tool_result：工具调用与结果
+    // - reasoning：推理过程
+    // - approval：流中出现新审批
+    // - error：流错误（设置 streamError 变量 + abort，外层抛出）
+    // - approval_timeout / approval_processed：终止流（abort，标记 interrupted）
+    //
+    // 流式生命周期（与 chat.js sendMessage 一致，复用 useStreamFinalizer）：
+    // - 进入前：startStreaming + INTERRUPTED → STREAMING（恢复中断的流）
+    // - 正常结束：finalizeStream（FINALIZING → SYNCING → COMPLETED + stopStreaming）
+    // - 审批中断：markInterrupted（INTERRUPTED + clearTimers + stopStreaming）
+    // - 错误：ERROR + stopStreaming
+    syncStore.startStreaming(sessionId)
+    // 恢复中断的流：INTERRUPTED → STREAMING，让 finalizeStream 状态守卫通过
+    sessionStore.setStreamStateToLastMessage(sessionId, StreamState.STREAMING)
+
+    let streamError = null
+    /** 审批事件中断流（approval_timeout / approval_processed）标记 */
+    let interrupted = false
+    const onEvent = (parsed) => {
+      if (!parsed || !parsed.type) return
+      switch (parsed.type) {
+        case 'heartbeat':
+          // readSSEStream 内部已通过 lastEventTime 维持心跳检测
+          break
+        case 'chunk':
+          if (parsed.content) {
+            options.onChatStreamChunk?.(parsed.content)
+            sessionStore.appendToLastAssistantMessage(sessionId, parsed.content)
+          }
+          break
+        case 'tool':
+          options.onChatStreamTool?.(parsed.data)
+          sessionStore.addOrUpdateToolCallToLastMessage(sessionId, parsed.data)
+          break
+        case 'tool_result':
+          options.onChatStreamToolResult?.(parsed.data)
+          sessionStore.updateOrAddToolResultToLastMessage(sessionId, parsed.data)
+          break
+        case 'reasoning':
+          if (parsed.data?.content) {
+            options.onChatStreamReasoning?.(parsed.data)
+            sessionStore.setReasoningToLastMessage(sessionId, parsed.data)
+          }
+          break
+        case 'approval':
+          if (parsed.data) {
+            // 审批流中又出现新审批
+            handleApprovalEvent(parsed.data, {
+              source: 'chat',
+              sessionId,
+              baseApproval: approvalData,
+            })
+          }
+          break
+        case 'error': {
+          const errorMsg = parsed.message || parsed.data?.message || ''
+          streamError = new Error(errorMsg || '审批处理失败')
+          approvalAbortController.abort()
           break
         }
-        const { done, value } = await reader.read()
-        if (done) break
-        lastEventTime = Date.now()
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ') || line === 'data: [DONE]') continue
-          try {
-            const parsed = JSON.parse(line.slice(6))
-            if (parsed.type === 'heartbeat') {
-              lastEventTime = Date.now()
-            } else if (parsed.type === 'chunk' && parsed.content) {
-              options.onChatStreamChunk?.(parsed.content)
-              sessionStore.appendToLastAssistantMessage(sessionId, parsed.content)
-            } else if (parsed.type === 'tool') {
-              options.onChatStreamTool?.(parsed.data)
-              sessionStore.addOrUpdateToolCallToLastMessage(sessionId, parsed.data)
-            } else if (parsed.type === 'tool_result') {
-              options.onChatStreamToolResult?.(parsed.data)
-              sessionStore.updateOrAddToolResultToLastMessage(sessionId, parsed.data)
-            } else if (parsed.type === 'reasoning' && parsed.data?.content) {
-              options.onChatStreamReasoning?.(parsed.data)
-              sessionStore.setReasoningToLastMessage(sessionId, parsed.data)
-            } else if (parsed.type === 'approval' && parsed.data) {
-              // 审批流中又出现新审批
-              handleApprovalEvent(parsed.data, {
-                source: 'chat',
-                sessionId,
-                baseApproval: approvalData,
-              })
-            } else if (parsed.type === 'error') {
-              const errorCode = parsed.code || ''
-              const errorMsg = parsed.message || parsed.data?.message || ''
-              // 审批错误：尝试回退到研究审批 API
-              if (errorCode === 'approval_error' || approvalData.source === 'deep_research' || errorMsg.includes('深度研究')) {
-                logger.warn(`[ApprovalStore] Chat approval 失败(code=${errorCode})，尝试回退到研究审批 API`)
-                try {
-                  const entry2 = pendingApprovals.value.get(toolCallId)
-                  const fallbackTaskId = entry2?.taskId || options.taskId
-                  if (fallbackTaskId) {
-                    await _executeResearchApproval(
-                      fallbackTaskId,
-                      getInterruptId(approvalData),
-                      approved,
-                      userInput,
-                      approvalData,
-                    )
-                    return
-                  }
-                } catch (fallbackErr) {
-                  logger.error('[ApprovalStore] 研究审批 API 回退也失败:', fallbackErr)
-                }
-              }
-              throw new Error(errorMsg || '审批处理失败')
-            } else if (parsed.type === 'approval_timeout') {
-              const timeoutToolCallId = getInterruptId(parsed.data || parsed)
-              if (timeoutToolCallId) {
-                pendingApprovals.value.delete(timeoutToolCallId)
-                sessionStore.updateToolCallApprovalState(sessionId, timeoutToolCallId, 'timeout')
-                sessionStore.setApprovalToLastMessage(sessionId, { ...(parsed.data || parsed), state: 'timeout' })
-                sessionStore.syncLastMessageToBackend(sessionId).catch(() => {})
-              }
-              return
-            } else if (parsed.type === 'approval_processed') {
-              // 审批已在另一端处理
-              const processedToolCallId = getInterruptId(parsed.data || parsed)
-              if (processedToolCallId) {
-                pendingApprovals.value.delete(processedToolCallId)
-                const processedData = parsed.data || parsed
-                const finalState = processedData.approved ? 'approved' : 'rejected'
-                sessionStore.updateToolCallApprovalState(sessionId, processedToolCallId, finalState)
-                sessionStore.setApprovalToLastMessage(sessionId, { ...processedData, state: finalState })
-                sessionStore.syncLastMessageToBackend(sessionId).catch(() => {})
-              }
-              return
-            }
-          } catch (e) {
-            if (e.message && !e.message.includes('JSON')) throw e
+        case 'approval_timeout': {
+          // 审批超时：终止当前流，标记 interrupted 由 finally 调用 markInterrupted
+          interrupted = true
+          const timeoutToolCallId = getInterruptId(parsed.data || parsed)
+          if (timeoutToolCallId) {
+            pendingApprovals.value.delete(timeoutToolCallId)
+            sessionStore.updateToolCallApprovalState(sessionId, timeoutToolCallId, 'timeout')
+            sessionStore.setApprovalToLastMessage(sessionId, { ...(parsed.data || parsed), state: 'timeout' })
+            sessionStore.syncLastMessageToBackend(sessionId).catch(() => {})
           }
+          approvalAbortController.abort()
+          break
+        }
+        case 'approval_processed': {
+          // 审批已在另一端处理：终止当前流，标记 interrupted 由 finally 调用 markInterrupted
+          interrupted = true
+          const processedToolCallId = getInterruptId(parsed.data || parsed)
+          if (processedToolCallId) {
+            pendingApprovals.value.delete(processedToolCallId)
+            const processedData = parsed.data || parsed
+            const finalState = processedData.approved ? 'approved' : 'rejected'
+            sessionStore.updateToolCallApprovalState(sessionId, processedToolCallId, finalState)
+            sessionStore.setApprovalToLastMessage(sessionId, { ...processedData, state: finalState })
+            sessionStore.syncLastMessageToBackend(sessionId).catch(() => {})
+          }
+          approvalAbortController.abort()
+          break
+        }
+        default:
+          // 未知事件类型：忽略（保持向前兼容）
+          break
+      }
+    }
+
+    try {
+      await readSSEStream(response, onEvent, approvalAbortController.signal)
+      if (streamError) throw streamError
+    } catch (err) {
+      // approval_timeout / approval_processed 中断流产生的 AbortError：预期行为，
+      // 转换为 __approvalInterrupted 标记错误，让 executeApproval 跳过最终状态更新
+      // （审批状态已在事件处理器中更新为 timeout/approved/rejected）
+      if (interrupted && err?.name === 'AbortError') {
+        const interruptErr = new Error('approval_interrupted')
+        interruptErr.__approvalInterrupted = true
+        throw interruptErr
+      }
+      throw err
+    } finally {
+      if (interrupted) {
+        // 审批事件中断流：保持 INTERRUPTED 状态，等待后续审批恢复或用户操作
+        markInterrupted(sessionId)
+      } else if (streamError) {
+        // 流错误：标记 ERROR 并停止流式（审批状态由 executeApproval catch 恢复为 pending）
+        sessionStore.setStreamStateToLastMessage(sessionId, StreamState.ERROR)
+        syncStore.stopStreaming(sessionId)
+      } else {
+        // 正常完成：最终化流（FINALIZING → SYNCING → COMPLETED + stopStreaming）
+        const session = sessionStore.sessions.find(s => s.id === sessionId)
+        const lastMsg = session?.messages?.[session.messages.length - 1]
+        if (lastMsg) {
+          await finalizeStream(sessionId, lastMsg)
+        } else {
+          syncStore.stopStreaming(sessionId)
         }
       }
-    } finally {
-      reader.releaseLock()
     }
   }
 

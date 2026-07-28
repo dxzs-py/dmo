@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import re
-from enum import Enum
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any
 
-from langchain_core.messages import BaseMessage, AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
-from Django_xm.apps.context_manager.config import get_logger
 from Django_xm.apps.context_manager.config import context_settings
-from Django_xm.apps.context_manager.services.compression import TokenEstimator
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -51,17 +50,17 @@ class TerminationVerdict:
     should_terminate: bool = False
     should_compress: bool = False
     warning_message: str = ""
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class ContextTerminationJudge:
 
     def __init__(
         self,
-        goal_complete_window: Optional[int] = None,
-        info_gain_threshold: Optional[float] = None,
-        info_gain_window: Optional[int] = None,
-        token_budget_limit: Optional[int] = None,
+        goal_complete_window: int | None = None,
+        info_gain_threshold: float | None = None,
+        info_gain_window: int | None = None,
+        token_budget_limit: int | None = None,
         model_name: str = "",
     ) -> None:
         self._goal_complete_window = goal_complete_window or context_settings.termination_goal_complete_window
@@ -84,11 +83,11 @@ class ContextTerminationJudge:
         }
 
         self._cumulative_tokens: int = 0
-        self._recent_tool_calls: List[Dict[str, Any]] = []
-        self._recent_info_gains: List[float] = []
+        self._recent_tool_calls: list[dict[str, Any]] = []
+        self._recent_info_gains: list[float] = []
         self._last_compressed_index: int = 0
 
-    def judge(self, state: Dict[str, Any]) -> TerminationVerdict:
+    def judge(self, state: dict[str, Any]) -> TerminationVerdict:
         try:
             budget_verdict = self._check_budget_exhausted(state)
             if budget_verdict is not None:
@@ -134,7 +133,7 @@ class ContextTerminationJudge:
         self._recent_info_gains = []
         self._last_compressed_index = 0
 
-    def _check_budget_exhausted(self, state: Dict[str, Any]) -> Optional[TerminationVerdict]:
+    def _check_budget_exhausted(self, state: dict[str, Any]) -> TerminationVerdict | None:
         if self._cumulative_tokens >= self._token_budget_limit:
             reason = (
                 f"Token 预算耗尽: 累计 {self._cumulative_tokens} >= 上限 {self._token_budget_limit}"
@@ -154,14 +153,14 @@ class ContextTerminationJudge:
             )
         return None
 
-    def _check_loop_detected(self, state: Dict[str, Any]) -> Optional[TerminationVerdict]:
+    def _check_loop_detected(self, state: dict[str, Any]) -> TerminationVerdict | None:
         messages = state.get("messages", [])
         if not messages:
             return None
 
         recent_msgs = messages[-self._window_size * 2:] if len(messages) > self._window_size * 2 else messages
 
-        tool_calls_in_window: List[Dict[str, Any]] = []
+        tool_calls_in_window: list[dict[str, Any]] = []
         for msg in recent_msgs:
             if isinstance(msg, AIMessage) and hasattr(msg, "tool_calls") and msg.tool_calls:
                 for tc in msg.tool_calls:
@@ -370,7 +369,7 @@ class ContextTerminationJudge:
         return None
 
     @staticmethod
-    def _detect_progressive_pattern(tool_calls: List[Dict[str, Any]]) -> bool:
+    def _detect_progressive_pattern(tool_calls: list[dict[str, Any]]) -> bool:
         """检测工具调用参数中是否存在递增/递减/遍历模式
 
         核心思想：同工具不同参数=合理重复（浏览器自动化、多文件编辑等）
@@ -399,7 +398,7 @@ class ContextTerminationJudge:
         args_diversity = len(unique_args) / len(same_tool_calls)
         return args_diversity >= context_settings.loop_args_progressive_threshold
 
-    def _check_goal_completed(self, state: Dict[str, Any]) -> Optional[TerminationVerdict]:
+    def _check_goal_completed(self, state: dict[str, Any]) -> TerminationVerdict | None:
         messages = state.get("messages", [])
         if not messages:
             return None
@@ -441,7 +440,7 @@ class ContextTerminationJudge:
 
         return None
 
-    def _check_info_gain_decay(self, state: Dict[str, Any]) -> Optional[TerminationVerdict]:
+    def _check_info_gain_decay(self, state: dict[str, Any]) -> TerminationVerdict | None:
         messages = state.get("messages", [])
         if not messages:
             return None
@@ -452,11 +451,7 @@ class ContextTerminationJudge:
 
         recent_ai = ai_messages[-(self._info_gain_window + 1):]
 
-        existing_text = " ".join(
-            msg.content[:500] for msg in recent_ai[:-1] if isinstance(msg.content, str)
-        )
-
-        novelties: List[float] = []
+        novelties: list[float] = []
         for i in range(max(1, len(recent_ai) - self._info_gain_window), len(recent_ai)):
             new_text = recent_ai[i].content if isinstance(recent_ai[i].content, str) else str(recent_ai[i].content)
             context_text = " ".join(
@@ -517,7 +512,7 @@ class ContextTerminationJudge:
         return max(0.0, min(1.0, novelty))
 
     @staticmethod
-    def _extract_recent_messages(state: Dict[str, Any], n_rounds: int) -> List[Any]:
+    def _extract_recent_messages(state: dict[str, Any], n_rounds: int) -> list[Any]:
         messages = state.get("messages", [])
         if not messages:
             return []
@@ -537,7 +532,7 @@ class ContextTerminationJudge:
         return messages[start_index:]
 
     @staticmethod
-    def _has_tool_calls_in_messages(messages: List[Any]) -> bool:
+    def _has_tool_calls_in_messages(messages: list[Any]) -> bool:
         for msg in messages:
             if isinstance(msg, AIMessage) and hasattr(msg, "tool_calls") and msg.tool_calls:
                 return True
@@ -555,10 +550,11 @@ class ContextTerminationJudge:
         return False
 
     @staticmethod
-    def _embedding_similarity(text_a: str, text_b: str) -> Optional[float]:
+    def _embedding_similarity(text_a: str, text_b: str) -> float | None:
         try:
-            from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
             import numpy as np
+
+            from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
             embeddings = get_embeddings()
             vec_a = embeddings.embed_query(text_a[:500])
             vec_b = embeddings.embed_query(text_b[:500])

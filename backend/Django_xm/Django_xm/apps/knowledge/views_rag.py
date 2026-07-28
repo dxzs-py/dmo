@@ -8,22 +8,25 @@ RAG 查询/检索视图
 import json
 import logging
 
-from rest_framework.views import APIView
-from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.decorators import api_view, renderer_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import BaseRenderer
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from Django_xm.common.sse_utils import sse_response, sse_error_event
-
-from Django_xm.common.responses import (
-    success_response, error_response, not_found_response, validation_error_response,
+from Django_xm.apps.cache_manager.services.cache_service import (
+    QueryCacheService,
+    VectorSearchCacheService,
 )
 from Django_xm.common.error_codes import ErrorCode
-from Django_xm.apps.cache_manager.services.cache_service import (
-    QueryCacheService, VectorSearchCacheService,
+from Django_xm.common.responses import (
+    error_response,
+    not_found_response,
+    success_response,
+    validation_error_response,
 )
+from Django_xm.common.sse_utils import sse_error_event, sse_response
 
 from .serializers import (
     RagQuerySerializer,
@@ -31,10 +34,10 @@ from .serializers import (
     SearchRequestSerializer,
     SearchResultSerializer,
 )
-from .services.strict_rag_chain import query_strict_rag, stream_strict_rag
-from .services.index_service import IndexManager
 from .services.embedding_service import get_embeddings
+from .services.index_service import IndexManager
 from .services.retrieval_service import create_retriever
+from .services.strict_rag_chain import query_strict_rag, stream_strict_rag
 from .vector_store import search_vector_store
 from .views_utils import get_user_index_name
 

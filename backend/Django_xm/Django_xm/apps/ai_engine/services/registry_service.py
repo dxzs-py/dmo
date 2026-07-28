@@ -8,14 +8,14 @@
 应用启动时预加载缓存，后续调用优先走缓存。
 """
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 # ─── 缓存 ───────────────────────────────────────────────────────────
-_registry_cache: Optional[Dict[str, Dict[str, Any]]] = None
-_embedding_registry_cache: Optional[List[Dict[str, Any]]] = None
+_registry_cache: dict[str, dict[str, Any]] | None = None
+_embedding_registry_cache: list[dict[str, Any]] | None = None
 
 
 def invalidate_cache():
@@ -51,7 +51,7 @@ def _is_async_context() -> bool:
 
 # ─── MODEL_REGISTRY 兼容接口 ────────────────────────────────────────
 
-def get_model_registry() -> Dict[str, Dict[str, Any]]:
+def get_model_registry() -> dict[str, dict[str, Any]]:
     """
     从数据库构建与 config.MODEL_REGISTRY 格式兼容的字典。
 
@@ -70,7 +70,7 @@ def get_model_registry() -> Dict[str, Dict[str, Any]]:
 
     from Django_xm.apps.ai_engine.models import AIProvider
 
-    registry: Dict[str, Dict[str, Any]] = {}
+    registry: dict[str, dict[str, Any]] = {}
     try:
         providers = AIProvider.objects.filter(is_enabled=True).select_related().prefetch_related('models')
         for p in providers:
@@ -110,17 +110,17 @@ def get_model_registry() -> Dict[str, Dict[str, Any]]:
     return registry
 
 
-def get_provider_config(provider_id: str) -> Dict[str, Any]:
+def get_provider_config(provider_id: str) -> dict[str, Any]:
     """获取单个 provider 的配置，等价于 MODEL_REGISTRY.get(provider_id, {})"""
     return get_model_registry().get(provider_id, {})
 
 
-def get_all_provider_ids() -> List[str]:
+def get_all_provider_ids() -> list[str]:
     """获取所有已启用的 provider_id 列表"""
     return list(get_model_registry().keys())
 
 
-def get_provider_models(provider_id: str) -> List[str]:
+def get_provider_models(provider_id: str) -> list[str]:
     """获取某个 provider 下所有已启用的模型名列表"""
     cfg = get_provider_config(provider_id)
     # 优先用 model_names（纯名称列表），回退到 models 字段提取
@@ -142,7 +142,7 @@ def is_provider_valid(provider_id: str) -> bool:
 
 # ─── EMBEDDING_PROVIDER_REGISTRY 兼容接口 ───────────────────────────
 
-def get_embedding_registry() -> List[Dict[str, Any]]:
+def get_embedding_registry() -> list[dict[str, Any]]:
     """
     从数据库构建与 embedding_factory.EMBEDDING_PROVIDER_REGISTRY 格式兼容的列表。
 
@@ -160,7 +160,7 @@ def get_embedding_registry() -> List[Dict[str, Any]]:
 
     from Django_xm.apps.ai_engine.models import EmbeddingProviderConfig
 
-    registry: List[Dict[str, Any]] = []
+    registry: list[dict[str, Any]] = []
     try:
         providers = EmbeddingProviderConfig.objects.filter(is_enabled=True).select_related('provider').order_by('sort_order', 'id')
         for p in providers:
@@ -195,7 +195,7 @@ def get_embedding_registry() -> List[Dict[str, Any]]:
     return registry
 
 
-def get_embedding_provider_config(provider_id: str) -> Optional[Dict[str, Any]]:
+def get_embedding_provider_config(provider_id: str) -> dict[str, Any] | None:
     """获取单个 embedding provider 的配置"""
     for p in get_embedding_registry():
         if p["id"] == provider_id:
@@ -203,7 +203,7 @@ def get_embedding_provider_config(provider_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def get_embedding_provider_ids() -> List[str]:
+def get_embedding_provider_ids() -> list[str]:
     """获取所有已启用的 embedding provider_id 列表"""
     return [p["id"] for p in get_embedding_registry()]
 
@@ -231,6 +231,6 @@ def is_provider_available(provider_id: str) -> bool:
     return bool(api_key and api_key.strip())
 
 
-def get_available_providers() -> List[str]:
+def get_available_providers() -> list[str]:
     """获取所有可用的 provider_id 列表（API key 已配置）"""
     return [pid for pid in get_all_provider_ids() if is_provider_available(pid)]

@@ -1,7 +1,7 @@
 """向量存储后端抽象基类"""
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
@@ -17,7 +17,7 @@ class VectorStoreBackend(ABC):
     @abstractmethod
     def create(
         self,
-        documents: List[Document],
+        documents: list[Document],
         embeddings: Embeddings,
         collection_name: str,
         **kwargs: Any,
@@ -47,7 +47,7 @@ class VectorStoreBackend(ABC):
         """删除向量存储"""
 
     @abstractmethod
-    def list_collections(self, prefix: str = "") -> List[str]:
+    def list_collections(self, prefix: str = "") -> list[str]:
         """列出所有集合名"""
 
     @abstractmethod
@@ -58,15 +58,15 @@ class VectorStoreBackend(ABC):
     def add_documents(
         self,
         vector_store: VectorStore,
-        documents: List[Document],
-    ) -> List[str]:
+        documents: list[Document],
+    ) -> list[str]:
         """向向量存储添加文档"""
 
     @abstractmethod
     def remove_documents(
         self,
         collection_name: str,
-        document_ids: List[str],
+        document_ids: list[str],
     ) -> bool:
         """按 ID 删除文档"""
 
@@ -94,7 +94,7 @@ class VectorStoreBackend(ABC):
     def read_all_documents(
         self,
         collection_name: str,
-    ) -> List[Document]:
+    ) -> list[Document]:
         """读取集合中所有文档
 
         默认实现返回空列表，由具体后端覆盖。
@@ -107,12 +107,12 @@ class VectorStoreBackend(ABC):
         vector_store: VectorStore,
         query: str,
         k: int = 4,
-        filter: Optional[Dict] = None,
-    ) -> List[Tuple[Document, float]]:
+        filter: dict | None = None,
+    ) -> list[tuple[Document, float]]:
         """相似度搜索"""
 
     @abstractmethod
-    def get_stats(self, collection_name: str) -> Dict[str, Any]:
+    def get_stats(self, collection_name: str) -> dict[str, Any]:
         """获取存储统计信息"""
 
     @property

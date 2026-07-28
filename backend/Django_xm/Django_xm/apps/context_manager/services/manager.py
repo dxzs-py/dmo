@@ -17,33 +17,30 @@
 """
 
 import time
-import logging
-from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
+from typing import Any
 
-from Django_xm.apps.context_manager.config import context_settings, get_logger
+from Django_xm.apps.context_manager.config import context_settings
+from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.context_manager.services.attention_guide import AttentionGuide
+from Django_xm.apps.context_manager.services.circuit_breaker import ContextCircuitBreaker
 from Django_xm.apps.context_manager.services.compression import (
-    ContextCompressionEngine,
     CompressionConfig,
-    CompressionResult,
     CompressionStrategy,
-    TokenEstimator,
+    ContextCompressionEngine,
     MemoryTier,
-)
-from Django_xm.apps.context_manager.services.knowledge_graph import (
-    ContextKnowledgeGraph,
-    Entity,
-    Relation,
+    TokenEstimator,
 )
 from Django_xm.apps.context_manager.services.context_builder import (
-    ContextBuilder,
     BuildMode,
+    ContextBuilder,
     create_context_builder,
 )
-from Django_xm.apps.context_manager.services.token_budget import TokenBudgetManager, ContextEfficiencyMetrics
-from Django_xm.apps.context_manager.services.attention_guide import AttentionGuide
 from Django_xm.apps.context_manager.services.context_pruner import ContextPruner
-from Django_xm.apps.context_manager.services.circuit_breaker import ContextCircuitBreaker
+from Django_xm.apps.context_manager.services.knowledge_graph import (
+    ContextKnowledgeGraph,
+)
+from Django_xm.apps.context_manager.services.token_budget import ContextEfficiencyMetrics, TokenBudgetManager
 
 logger = get_logger(__name__)
 
@@ -63,7 +60,7 @@ class ContextManagementConfig:
     cross_session_enabled: bool = True
     cross_session_max_context_length: int = 2000
 
-    model_name: Optional[str] = None
+    model_name: str | None = None
 
     @classmethod
     def from_settings(cls) -> "ContextManagementConfig":
@@ -86,18 +83,18 @@ class ContextManager:
 
     def __init__(
         self,
-        user_id: Optional[int] = None,
-        config: Optional[ContextManagementConfig] = None,
+        user_id: int | None = None,
+        config: ContextManagementConfig | None = None,
         store=None,
-        thread_id: Optional[str] = None,
+        thread_id: str | None = None,
     ):
         self.user_id = user_id
         self.config = config or ContextManagementConfig.from_settings()
         self._store = store
         self._thread_id = thread_id
 
-        self._compression_engine: Optional[ContextCompressionEngine] = None
-        self._knowledge_graph: Optional[ContextKnowledgeGraph] = None
+        self._compression_engine: ContextCompressionEngine | None = None
+        self._knowledge_graph: ContextKnowledgeGraph | None = None
 
         self._token_budget_manager = TokenBudgetManager()
         self._attention_guide = AttentionGuide()
@@ -122,7 +119,7 @@ class ContextManager:
         if self.config.knowledge_graph_enabled:
             self._knowledge_graph = ContextKnowledgeGraph(store=store)
 
-    def prune_messages(self, messages: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Any]:
+    def prune_messages(self, messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], Any]:
         return self._context_pruner.prune(messages)
 
     def check_injection(self, text: str) -> bool:
@@ -134,17 +131,17 @@ class ContextManager:
     def record_budget_usage(self, section: str, tokens: int) -> Any:
         return self._token_budget_manager.record_usage(section, tokens)
 
-    def get_budget_usage(self) -> Dict[str, Any]:
+    def get_budget_usage(self) -> dict[str, Any]:
         return self._token_budget_manager.get_usage()
 
-    def serialize_messages(self, messages: List[Dict[str, Any]]) -> str:
+    def serialize_messages(self, messages: list[dict[str, Any]]) -> str:
         return self._serialize_messages(messages)
 
     def mark_long_term(
         self,
-        messages: List[Dict[str, Any]],
-        tags: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
+        messages: list[dict[str, Any]],
+        tags: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """根据 role/content 自动标记长期记忆"""
         effective_tags = tags or [
             t.strip() for t in context_settings.long_term_tags.split(",") if t.strip()
@@ -176,9 +173,9 @@ class ContextManager:
 
     @staticmethod
     def mark_long_term_static(
-        messages: List[Dict[str, Any]],
-        tags: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
+        messages: list[dict[str, Any]],
+        tags: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """静态方法：根据 role/content 自动标记长期记忆（供中间件调用）"""
         if tags is None:
             tags = (
@@ -217,10 +214,10 @@ class ContextManager:
 
     def process_messages(
         self,
-        messages: List[Dict[str, Any]],
-        session_id: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-        metadata: Dict[str, Any] = {
+        messages: list[dict[str, Any]],
+        session_id: str | None = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        metadata: dict[str, Any] = {
             "compression": None,
             "knowledge_graph": None,
             "cross_session_context": None,
@@ -258,7 +255,7 @@ class ContextManager:
     def get_injection_context(
         self,
         query: str,
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
     ) -> str:
         parts = []
 
@@ -288,12 +285,12 @@ class ContextManager:
     def build_prompt_context(
         self,
         mode: str = "default",
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
         include_document_context: bool = True,
         include_knowledge_graph: bool = True,
-        query: Optional[str] = None,
-        model_name: Optional[str] = None,
-        tools_description: Optional[str] = None,
+        query: str | None = None,
+        model_name: str | None = None,
+        tools_description: str | None = None,
     ) -> str:
         _AGENT_MODES = {"agent"}
         _FULL_MODES = {"deep-research"}
@@ -310,7 +307,7 @@ class ContextManager:
         if tools_description:
             builder.add_tools(tools_description)
 
-        memory_parts: List[str] = []
+        memory_parts: list[str] = []
 
         if include_document_context and self.user_id:
             try:
@@ -364,20 +361,18 @@ class ContextManager:
 
     def build_structured_context(
         self,
-        messages: List[Any],
+        messages: list[Any],
         query: str,
         mode: str = "full",
-        model_name: Optional[str] = None,
-        tools_description: Optional[str] = None,
+        model_name: str | None = None,
+        tools_description: str | None = None,
         llm=None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """构建结构化上下文，包含基础上下文、压缩和预算检查"""
         # 支持 BaseMessage 列表输入（自动转换为 Dict 列表）
         from langchain_core.messages import BaseMessage
-        converted = False
         if messages and isinstance(messages[0], BaseMessage):
             messages = self._messages_to_dicts(messages)
-            converted = True
 
         injection_detected = self._circuit_breaker.detect_injection(query)
         self._circuit_breaker.save_checkpoint(messages)
@@ -457,12 +452,12 @@ class ContextManager:
 
     def _build_base_context(
         self,
-        pruned_messages: List[Dict[str, Any]],
+        pruned_messages: list[dict[str, Any]],
         query: str,
         mode: str,
-        tools_description: Optional[str],
+        tools_description: str | None,
         llm,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """构建基础上下文：系统内容、工具描述、历史、记忆、查询"""
         build_mode = BuildMode(mode)
         builder = create_context_builder(mode=mode)
@@ -528,9 +523,9 @@ class ContextManager:
 
     def _apply_compression_if_needed(
         self,
-        ctx: Dict[str, Any],
-        pruned_messages: List[Dict[str, Any]],
-        budget_over_sections: List[str],
+        ctx: dict[str, Any],
+        pruned_messages: list[dict[str, Any]],
+        budget_over_sections: list[str],
     ) -> None:
         """当 Token 预算超限时，压缩历史消息并重建上下文"""
         if self._compression_engine is None:
@@ -575,18 +570,18 @@ class ContextManager:
 
         ctx["history_text"] = history_text
 
-    def _check_token_budget(self) -> List[str]:
+    def _check_token_budget(self) -> list[str]:
         """检查各分区 Token 预算，返回超限分区列表"""
-        budget_over_sections: List[str] = []
+        budget_over_sections: list[str] = []
         usage = self._token_budget_manager.get_usage()
         for section_name, info in usage.items():
             if info["used"] > info["budget"]:
                 budget_over_sections.append(section_name)
         return budget_over_sections
 
-    def _build_sections_dict(self, ctx: Dict[str, Any]) -> Dict[str, str]:
+    def _build_sections_dict(self, ctx: dict[str, Any]) -> dict[str, str]:
         """从上下文信息构建分区字典"""
-        sections_dict: Dict[str, str] = {}
+        sections_dict: dict[str, str] = {}
         if ctx["system_content"]:
             sections_dict["system"] = ctx["system_content"]
         if ctx["tools_description"] and ctx["build_mode"] in (BuildMode.FULL, BuildMode.AGENT):
@@ -598,7 +593,7 @@ class ContextManager:
         sections_dict["user_query"] = ctx["sanitized_query"]
         return sections_dict
 
-    def _rollback_context(self, ctx: Dict[str, Any], query: str) -> str:
+    def _rollback_context(self, ctx: dict[str, Any], query: str) -> str:
         """熔断器触发时回滚到安全检查点重建上下文"""
         rollback_messages = self._circuit_breaker.rollback()
         if not rollback_messages:
@@ -618,9 +613,9 @@ class ContextManager:
         return builder.build()
 
     @staticmethod
-    def _messages_to_dicts(messages: List[Any]) -> List[Dict[str, Any]]:
+    def _messages_to_dicts(messages: list[Any]) -> list[dict[str, Any]]:
         """将 BaseMessage 列表转换为 Dict 列表"""
-        from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage, BaseMessage
+        from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
         result = []
         for msg in messages:
@@ -636,7 +631,7 @@ class ContextManager:
             }
             role = role_map.get(type(msg), "unknown")
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
-            entry: Dict[str, Any] = {"role": role, "content": content}
+            entry: dict[str, Any] = {"role": role, "content": content}
             if hasattr(msg, 'tool_calls') and msg.tool_calls:
                 entry["tool_calls"] = msg.tool_calls
             if hasattr(msg, 'additional_kwargs') and 'memory_tier' in msg.additional_kwargs:
@@ -645,8 +640,8 @@ class ContextManager:
         return result
 
     @staticmethod
-    def _serialize_messages(messages: List[Dict[str, Any]]) -> str:
-        parts: List[str] = []
+    def _serialize_messages(messages: list[dict[str, Any]]) -> str:
+        parts: list[str] = []
         for msg in messages:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
@@ -662,8 +657,8 @@ class ContextManager:
         self,
         session_id: str,
         summary: str,
-        key_entities: List[str],
-        key_decisions: List[str],
+        key_entities: list[str],
+        key_decisions: list[str],
     ) -> bool:
         if not self.config.cross_session_enabled or not self.user_id:
             return False
@@ -747,7 +742,7 @@ class ContextManager:
         return ""
 
     @staticmethod
-    def _compute_relevance(query: str, summary: str, entities: List[str]) -> float:
+    def _compute_relevance(query: str, summary: str, entities: list[str]) -> float:
         """综合评分：0.3 * 词重叠分 + 0.3 * 实体匹配分 + 0.4 * Embedding相似度"""
         query_lower = query.lower()
 
@@ -781,11 +776,12 @@ class ContextManager:
             return min(1.0, score)
 
     @staticmethod
-    def _compute_embedding_similarity(text_a: str, text_b: str) -> Optional[float]:
+    def _compute_embedding_similarity(text_a: str, text_b: str) -> float | None:
         """使用 Embedding 计算两段文本的余弦相似度，不可用时返回 None"""
         try:
-            from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
             import numpy as np
+
+            from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
 
             embeddings = get_embeddings()
             vec_a = embeddings.embed_query(text_a)
@@ -806,7 +802,7 @@ class ContextManager:
         from Django_xm.apps.ai_engine.services.checkpointer_factory import ensure_store
         return ensure_store(self)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         stats = {
             "user_id": self.user_id,
             "compression_enabled": self.config.compression_enabled,
@@ -825,10 +821,10 @@ class ContextManager:
 
 
 def create_context_manager(
-    user_id: Optional[int] = None,
+    user_id: int | None = None,
     store=None,
-    model_name: Optional[str] = None,
-    thread_id: Optional[str] = None,
+    model_name: str | None = None,
+    thread_id: str | None = None,
 ) -> ContextManager:
     config = ContextManagementConfig.from_settings()
     config.model_name = model_name

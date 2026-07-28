@@ -122,17 +122,36 @@ class Migration(migrations.Migration):
             },
         ),
         # 同步 Django state：实际 DB schema 在 forward_link 中已通过 SQL 创建了 provider_id FK 列
-        # 并删除了 provider_id/label/key_attr 独立字段
-        # 注：0006 之前的版本没同步 Django state，导致 makemigrations 把这些字段误认为
-        # 需要删除。这里我们用 AlterField 把 provider 字段显式写明，Django state 会从
-        # 0002 的初始定义和这里的 AlterField 综合推断出最终模型。
-        migrations.AlterField(
-            model_name='embeddingproviderconfig',
-            name='provider',
-            field=models.OneToOneField(
-                on_delete=django.db.models.deletion.CASCADE,
-                related_name='embedding_config',
-                to='ai_engine.aiprovider',
-            ),
+        # 并删除了 provider_id/label/key_attr 独立字段。
+        # 注：不能用 AlterField(name='provider')，因为 0002_initial 中 EmbeddingProviderConfig
+        # 没有 'provider' 字段（只有 'provider_id' CharField），AlterField 会抛
+        # FieldDoesNotExist。用 SeparateDatabaseAndState 只更新 state（DB 已在 forward_link 处理）：
+        #   1. 删除 state 中残留的 provider_id/label/key_attr（0002 创建的 CharField）
+        #   2. 添加 provider OneToOneField（与 DB 中 forward_link 创建的 FK 列对齐）
+        migrations.SeparateDatabaseAndState(
+            database_operations=[],  # DB 已在 forward_link 中通过 SQL 处理
+            state_operations=[
+                migrations.RemoveField(
+                    model_name='embeddingproviderconfig',
+                    name='provider_id',
+                ),
+                migrations.RemoveField(
+                    model_name='embeddingproviderconfig',
+                    name='label',
+                ),
+                migrations.RemoveField(
+                    model_name='embeddingproviderconfig',
+                    name='key_attr',
+                ),
+                migrations.AddField(
+                    model_name='embeddingproviderconfig',
+                    name='provider',
+                    field=models.OneToOneField(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name='embedding_config',
+                        to='ai_engine.aiprovider',
+                    ),
+                ),
+            ],
         ),
     ]

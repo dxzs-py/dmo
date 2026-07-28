@@ -4,11 +4,10 @@
 支持在聊天中通过 /command 执行特殊操作
 """
 
-import json
-import logging
-from typing import Dict, Any, Optional, List, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 from Django_xm.apps.core.config import get_logger
 
@@ -29,12 +28,12 @@ class SlashCommand:
     description: str
     category: CommandCategory
     usage: str
-    examples: List[str]
-    handler: Optional[Callable] = None
+    examples: list[str]
+    handler: Callable | None = None
     requires_session: bool = False
     supports_resume: bool = True
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "description": self.description,
@@ -45,7 +44,7 @@ class SlashCommand:
         }
 
 
-def _handle_help(context: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_help(context: dict[str, Any]) -> dict[str, Any]:
     commands = context.get("all_commands", {})
     lines = ["📋 **可用命令列表**\n"]
     current_category = None
@@ -70,7 +69,7 @@ def _handle_help(context: Dict[str, Any]) -> Dict[str, Any]:
     return {"type": "info", "content": "\n".join(lines)}
 
 
-def _handle_status(context: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_status(context: dict[str, Any]) -> dict[str, Any]:
     session = context.get("session")
     if not session:
         return {"type": "info", "content": "❌ 当前没有活跃的会话"}
@@ -95,9 +94,9 @@ def _handle_status(context: Dict[str, Any]) -> Dict[str, Any]:
     return {"type": "info", "content": "\n".join(lines)}
 
 
-def _handle_compact(context: Dict[str, Any]) -> Dict[str, Any]:
-    from Django_xm.apps.context_manager.services.manager import create_context_manager
+def _handle_compact(context: dict[str, Any]) -> dict[str, Any]:
     from Django_xm.apps.context_manager.services.context_pruner import ContextPruner
+    from Django_xm.apps.context_manager.services.manager import create_context_manager
 
     messages = context.get("messages", [])
     if not messages:
@@ -140,7 +139,7 @@ def _handle_compact(context: Dict[str, Any]) -> Dict[str, Any]:
         return {"type": "info", "content": "ℹ️ 会话无需压缩"}
 
 
-def _handle_model(context: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_model(context: dict[str, Any]) -> dict[str, Any]:
     args = context.get("args", "").strip()
     from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
     from Django_xm.apps.ai_engine.services.registry_service import (
@@ -157,7 +156,7 @@ def _handle_model(context: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     # 动态从 MODEL_REGISTRY 拉取所有启用的 provider + 模型
-    supported_models: List[str] = []
+    supported_models: list[str] = []
     for pid in get_all_provider_ids():
         for mname in get_provider_models(pid):
             # 同时支持 "model_name" 与 "provider:model_name" 两种写法
@@ -181,7 +180,7 @@ def _handle_model(context: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _handle_clear(context: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_clear(context: dict[str, Any]) -> dict[str, Any]:
     return {
         "type": "action",
         "action": "clear_session",
@@ -189,7 +188,7 @@ def _handle_clear(context: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _handle_export(context: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_export(context: dict[str, Any]) -> dict[str, Any]:
     messages = context.get("messages", [])
     session = context.get("session", {})
 
@@ -209,7 +208,7 @@ def _handle_export(context: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _handle_version(context: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_version(context: dict[str, Any]) -> dict[str, Any]:
     from Django_xm.apps.ai_engine.config import settings
     return {
         "type": "info",
@@ -222,7 +221,7 @@ def _handle_version(context: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-COMMANDS: Dict[str, SlashCommand] = {
+COMMANDS: dict[str, SlashCommand] = {
     "help": SlashCommand(
         name="help",
         description="显示可用命令列表",
@@ -286,7 +285,7 @@ COMMANDS: Dict[str, SlashCommand] = {
 }
 
 
-def parse_command(text: str) -> Optional[tuple]:
+def parse_command(text: str) -> tuple | None:
     text = text.strip()
     if not text.startswith("/"):
         return None
@@ -303,8 +302,8 @@ def parse_command(text: str) -> Optional[tuple]:
 
 def execute_command(
     command_name: str,
-    context: Dict[str, Any],
-) -> Dict[str, Any]:
+    context: dict[str, Any],
+) -> dict[str, Any]:
     command = COMMANDS.get(command_name)
     if not command:
         available = ", ".join(f"`/{name}`" for name in sorted(COMMANDS.keys()))
@@ -322,12 +321,12 @@ def execute_command(
         return result
     except Exception as e:
         logger.error(f"执行命令 /{command_name} 失败: {e}")
-        return {"type": "error", "content": f"❌ 命令执行失败: {str(e)}"}
+        return {"type": "error", "content": f"❌ 命令执行失败: {e!s}"}
 
 
-def get_all_commands() -> List[Dict[str, Any]]:
+def get_all_commands() -> list[dict[str, Any]]:
     return [cmd.to_dict() for cmd in COMMANDS.values()]
 
 
-def get_commands_by_category(category: CommandCategory) -> List[Dict[str, Any]]:
+def get_commands_by_category(category: CommandCategory) -> list[dict[str, Any]]:
     return [cmd.to_dict() for cmd in COMMANDS.values() if cmd.category == category]

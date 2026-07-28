@@ -1,17 +1,18 @@
 from django.urls import path
+
 from .views import (
+    AsyncRAGDocumentUploadView,
+    AsyncRAGIndexCreateView,
+    AsyncRAGIndexDeleteView,
+    KnowledgeBaseDetailView,
+    KnowledgeBaseDocumentDeleteView,
+    KnowledgeBaseDocumentListView,
+    KnowledgeBaseListView,
+    KnowledgeBaseSearchView,
+    KnowledgeBaseUploadView,
     RAGQueryView,
     RAGSearchView,
     rag_query_stream,
-    KnowledgeBaseListView,
-    KnowledgeBaseDetailView,
-    KnowledgeBaseUploadView,
-    KnowledgeBaseDocumentListView,
-    KnowledgeBaseDocumentDeleteView,
-    KnowledgeBaseSearchView,
-    AsyncRAGIndexCreateView,
-    AsyncRAGDocumentUploadView,
-    AsyncRAGIndexDeleteView,
 )
 
 app_name = 'knowledge'

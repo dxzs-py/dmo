@@ -3,12 +3,10 @@ RAG 评估框架
 提供检索质量和生成质量的评估能力
 """
 
-from typing import List, Optional
-
-from pydantic import BaseModel, Field
 
 from langchain_core.documents import Document
 from langchain_core.language_models.chat_models import BaseChatModel
+from pydantic import BaseModel, Field
 
 from Django_xm.apps.core.logging_utils import get_logger
 
@@ -62,7 +60,7 @@ def _keyword_overlap(query: str, text: str) -> float:
     return len(overlap) / len(query_tokens)
 
 
-def _compute_mrr(retrieved_ids: List[str], relevant_ids: set) -> float:
+def _compute_mrr(retrieved_ids: list[str], relevant_ids: set) -> float:
     for i, doc_id in enumerate(retrieved_ids):
         if doc_id in relevant_ids:
             return 1.0 / (i + 1)
@@ -71,14 +69,14 @@ def _compute_mrr(retrieved_ids: List[str], relevant_ids: set) -> float:
 
 class RAGEvaluator:
 
-    def __init__(self, llm: Optional[BaseChatModel] = None):
+    def __init__(self, llm: BaseChatModel | None = None):
         self.llm = llm
 
     def evaluate_retrieval(
         self,
         query: str,
-        retrieved_docs: List[Document],
-        relevant_doc_ids: List[str],
+        retrieved_docs: list[Document],
+        relevant_doc_ids: list[str],
     ) -> RetrievalMetrics:
         if not retrieved_docs or not relevant_doc_ids:
             return RetrievalMetrics()
@@ -107,7 +105,7 @@ class RAGEvaluator:
         self,
         query: str,
         response: str,
-        source_docs: List[Document],
+        source_docs: list[Document],
     ) -> GenerationMetrics:
         if self.llm is not None:
             return self._llm_evaluate_generation(query, response, source_docs)
@@ -117,7 +115,7 @@ class RAGEvaluator:
         self,
         query: str,
         response: str,
-        source_docs: List[Document],
+        source_docs: list[Document],
     ) -> GenerationMetrics:
         source_text = "\n---\n".join(
             doc.page_content for doc in source_docs
@@ -153,7 +151,7 @@ class RAGEvaluator:
         self,
         query: str,
         response: str,
-        source_docs: List[Document],
+        source_docs: list[Document],
     ) -> GenerationMetrics:
         relevance = _keyword_overlap(query, response)
 
@@ -182,8 +180,8 @@ class RAGEvaluator:
         self,
         query: str,
         response: str,
-        retrieved_docs: List[Document],
-        relevant_doc_ids: Optional[List[str]] = None,
+        retrieved_docs: list[Document],
+        relevant_doc_ids: list[str] | None = None,
     ) -> RAGEvaluationResult:
         retrieval_metrics = RetrievalMetrics()
         if relevant_doc_ids is not None:

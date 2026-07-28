@@ -1,10 +1,10 @@
-import httpx
+import logging
 import re
-from datetime import datetime, timedelta
-from typing import Optional, Literal
+from typing import Literal
+
+import httpx
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
-import logging
 
 from Django_xm.apps.tools.base import AsyncToolMixin, SafeConfigMixin
 
@@ -71,7 +71,6 @@ _CITY_COORDS = {
 def _normalize_city_name(city: str) -> tuple:
     if not city:
         return (city, city)
-    original = city
     city = city.strip()
     city = re.sub(r'(今天|明天|后天|现在|当前|的|天气|情况|预报|查询|请问|帮我|查一下)', '', city)
     city = city.strip()
@@ -92,7 +91,7 @@ def _normalize_city_name(city: str) -> tuple:
     return (city, city)
 
 
-def get_amap_key() -> Optional[str]:
+def get_amap_key() -> str | None:
     return SafeConfigMixin.get_config('amap_key', env_key='AMAP_KEY')
 
 
@@ -149,7 +148,7 @@ def _query_amap(amap_key: str, normalized_city: str, original_city: str, extensi
         except httpx.HTTPStatusError as e:
             return f"错误：HTTP 请求失败: {e.response.status_code}"
         except Exception as e:
-            return f"错误：天气查询异常: {str(e)}"
+            return f"错误：天气查询异常: {e!s}"
 
     return f"错误：无法查询 {original_city} 的天气信息"
 
@@ -181,7 +180,7 @@ def _query_open_meteo(city_name: str, extensions: str) -> str:
     except httpx.TimeoutException:
         return "错误：天气查询超时，请稍后重试"
     except Exception as e:
-        return f"错误：天气查询异常: {str(e)}"
+        return f"错误：天气查询异常: {e!s}"
 
 
 _WMO_CODES = {
@@ -311,7 +310,7 @@ class WeatherQueryInput(BaseModel):
 
 class WeatherQueryTool(AsyncToolMixin, BaseTool):
     name: str = "weather_query"
-    metadata: dict = {"tier": "extended", "visibility": "switch", "category": "weather"}
+    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "switch", "category": "weather"})
     description: str = (
         "查询指定城市的天气信息，支持实时天气和未来天气预报。"
         "适用场景：用户询问某地天气、气温、风力、湿度等天气相关信息，出行前查看天气。"

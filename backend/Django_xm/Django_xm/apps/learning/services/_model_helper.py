@@ -10,7 +10,7 @@
   后端不再单独处理，与 research_resume_task.py 行为一致。
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from Django_xm.apps.ai_engine.services.llm_factory import (
     get_chat_model,
@@ -21,12 +21,12 @@ from Django_xm.apps.core.config import get_logger
 logger = get_logger(__name__)
 
 
-def _extract_model_kwargs(state: Dict[str, Any]) -> Dict[str, Any]:
+def _extract_model_kwargs(state: dict[str, Any]) -> dict[str, Any]:
     """从 StudyFlowState 提取用户运行时模型配置
 
     仅返回非空字段，避免覆盖 get_chat_model 内部的默认值。
     """
-    kwargs: Dict[str, Any] = {}
+    kwargs: dict[str, Any] = {}
 
     provider_id = state.get("provider_id")
     if provider_id:
@@ -51,7 +51,7 @@ def _extract_model_kwargs(state: Dict[str, Any]) -> Dict[str, Any]:
     return kwargs
 
 
-def get_chat_model_from_state(state: Dict[str, Any], **extra: Any):
+def get_chat_model_from_state(state: dict[str, Any], **extra: Any):
     """根据 state 中的用户配置构建聊天模型
 
     调用 get_chat_model，自动具备三层级 fallback（默认 → 辅助 → 降级）能力。
@@ -61,7 +61,7 @@ def get_chat_model_from_state(state: Dict[str, Any], **extra: Any):
     return get_chat_model(**kwargs)
 
 
-def get_structured_model_from_state(state: Dict[str, Any], schema: Any, **extra: Any):
+def get_structured_model_from_state(state: dict[str, Any], schema: Any, **extra: Any):
     """根据 state 中的用户配置构建结构化输出模型
 
     调用 get_structured_model_with_fallback，自动具备 fallback + 重试能力。

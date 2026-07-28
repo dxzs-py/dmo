@@ -7,14 +7,15 @@ import logging
 import os
 import shutil
 import time
+
 from celery import shared_task
 from celery.exceptions import Retry
 
-from Django_xm.apps.agent_hub import create as agent_hub_create, AgentType, AgentConfig
-from Django_xm.apps.research.services.official_deep_agent import OfficialDeepAgentAdapter
-from Django_xm.apps.research.services.research_runner import execute_research, execute_research_async, finalize_research
-from Django_xm.apps.research.services.task_manager import update_task_status
+from Django_xm.apps.agent_hub import AgentConfig, AgentType
+from Django_xm.apps.agent_hub import create as agent_hub_create
 from Django_xm.apps.knowledge.services.multi_kb_retriever import build_retriever_tool_for_research
+from Django_xm.apps.research.services.research_runner import execute_research_async, finalize_research
+from Django_xm.apps.research.services.task_manager import update_task_status
 from Django_xm.tasks.base import TrackedTask
 
 logger = logging.getLogger(__name__)
@@ -22,8 +23,8 @@ logger = logging.getLogger(__name__)
 # 动态构建可自动重试的异常列表
 _RETRYABLE_EXCEPTIONS = [ConnectionError, TimeoutError, OSError]
 try:
-    from openai import RateLimitError as _OpenAIRateLimitError
     from openai import APITimeoutError as _OpenAIAPITimeoutError
+    from openai import RateLimitError as _OpenAIRateLimitError
     _RETRYABLE_EXCEPTIONS.extend([_OpenAIRateLimitError, _OpenAIAPITimeoutError])
 except ImportError:
     pass
@@ -81,8 +82,8 @@ def run_research_task(self, thread_id: str, query: str,
 
         # 预热缓存，避免异步上下文中反复回退到 config.py 默认值
         try:
-            from Django_xm.apps.ai_engine.services.registry_service import warmup_cache
             from Django_xm.apps.ai_engine.models import warmup_system_config_cache
+            from Django_xm.apps.ai_engine.services.registry_service import warmup_cache
             warmup_cache()
             warmup_system_config_cache()
         except Exception as e:
@@ -253,11 +254,10 @@ def run_research_task(self, thread_id: str, query: str,
                 config.checkpointer = async_cp
                 logger.info("[Celery] 深度研究使用异步 Checkpointer")
 
+            # agent_hub_create 对 DEEP_RESEARCH 类型返回 OfficialDeepAgentAdapter
+            # （DeepAgentBuilder.build() 直接构造 adapter，注入 original_tools / original_config / model，
+            #  韧性降级 _rebuild_with_degraded_tools 可用）
             agent = await agent_hub_create(config)
-
-            from Django_xm.apps.agent_hub.factory import AgentWrapper
-            if isinstance(agent, AgentWrapper):
-                agent = OfficialDeepAgentAdapter(graph=agent.graph, thread_id=thread_id, work_dir=agent.work_dir)
 
             result = await execute_research_async(agent, query, thread_id, disable_llm_cache=True)
 

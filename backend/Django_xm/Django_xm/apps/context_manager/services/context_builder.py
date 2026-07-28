@@ -10,11 +10,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional
 
-from Django_xm.apps.context_manager.config import get_logger
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -29,7 +28,7 @@ class BuildMode(Enum):
 @dataclass(frozen=True)
 class ContextSection:
     tag: str
-    required_modes: Optional[tuple[BuildMode, ...]] = None
+    required_modes: tuple[BuildMode, ...] | None = None
 
     @property
     def is_conditional(self) -> bool:
@@ -41,7 +40,7 @@ class ContextSection:
         return mode in self.required_modes
 
 
-SECTIONS: Dict[str, ContextSection] = {
+SECTIONS: dict[str, ContextSection] = {
     "system": ContextSection(tag="system"),
     "memory": ContextSection(tag="memory", required_modes=(BuildMode.FULL, BuildMode.AGENT)),
     "tools": ContextSection(tag="tools", required_modes=(BuildMode.FULL, BuildMode.AGENT)),
@@ -57,32 +56,32 @@ class ContextBuilder:
 
     def __init__(self, mode: BuildMode = BuildMode.FULL):
         self._mode = mode
-        self._parts: Dict[str, List[str]] = {key: [] for key in _SECTION_ORDER}
+        self._parts: dict[str, list[str]] = {key: [] for key in _SECTION_ORDER}
 
     @property
     def mode(self) -> BuildMode:
         return self._mode
 
-    def add_system(self, content: str) -> "ContextBuilder":
+    def add_system(self, content: str) -> ContextBuilder:
         return self._append("system", content)
 
-    def add_memory(self, content: str) -> "ContextBuilder":
+    def add_memory(self, content: str) -> ContextBuilder:
         return self._append("memory", content)
 
-    def add_tools(self, content: str) -> "ContextBuilder":
+    def add_tools(self, content: str) -> ContextBuilder:
         return self._append("tools", content)
 
-    def add_history(self, content: str) -> "ContextBuilder":
+    def add_history(self, content: str) -> ContextBuilder:
         return self._append("history", content)
 
-    def add_state(self, content: str) -> "ContextBuilder":
+    def add_state(self, content: str) -> ContextBuilder:
         return self._append("state", content)
 
-    def add_query(self, content: str) -> "ContextBuilder":
+    def add_query(self, content: str) -> ContextBuilder:
         return self._append("user_query", content)
 
     def build(self) -> str:
-        blocks: List[str] = []
+        blocks: list[str] = []
         for key in _SECTION_ORDER:
             section = SECTIONS[key]
             if section.is_conditional and not section.allowed_in(self._mode):
@@ -101,11 +100,11 @@ class ContextBuilder:
         )
         return result
 
-    def reset(self) -> "ContextBuilder":
+    def reset(self) -> ContextBuilder:
         self._parts = {key: [] for key in _SECTION_ORDER}
         return self
 
-    def _append(self, key: str, content: str) -> "ContextBuilder":
+    def _append(self, key: str, content: str) -> ContextBuilder:
         if content and content.strip():
             self._parts[key].append(content.strip())
         return self

@@ -15,11 +15,10 @@
 import asyncio
 import json
 import re
-from typing import List, Optional
 
-from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import Document
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.retrievers import BaseRetriever
 
 from Django_xm.apps.core.logging_utils import get_logger
 
@@ -40,7 +39,7 @@ class RetrievalPipeline:
         retriever: BaseRetriever,
         collection_name: str = "",
         use_hyde: bool = False,
-        llm: Optional[BaseChatModel] = None,
+        llm: BaseChatModel | None = None,
     ):
         from Django_xm.apps.knowledge.services.retrieval_service import wrap_with_degradation
 
@@ -49,7 +48,7 @@ class RetrievalPipeline:
         self.use_hyde = use_hyde
         self.llm = llm
 
-    def retrieve(self, query: str) -> List[Document]:
+    def retrieve(self, query: str) -> list[Document]:
         """同步检索：HyDE → 向量/降级 → 清洗"""
         retrieval_query = self._maybe_rewrite(query)
         docs = self.retriever.invoke(retrieval_query)
@@ -60,7 +59,7 @@ class RetrievalPipeline:
         )
         return cleaned
 
-    async def aretrieve(self, query: str) -> List[Document]:
+    async def aretrieve(self, query: str) -> list[Document]:
         """异步检索：HyDE → 向量/降级 → 清洗"""
         retrieval_query = await self._maybe_rewrite_async(query)
         try:
@@ -111,7 +110,7 @@ class RetrievalPipeline:
     # ── 文档清洗 ────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _clean_docs(docs: List[Document]) -> List[Document]:
+    def _clean_docs(docs: list[Document]) -> list[Document]:
         """清理检索结果中的非文档内容，并去重
 
         过滤两类不应出现在检索结果中的内容：

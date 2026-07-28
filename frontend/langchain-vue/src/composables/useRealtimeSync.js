@@ -3,6 +3,7 @@ import { useUserStore } from '@/stores/user'
 import settings from '@/config/settings'
 import { logger } from '@/utils/logger'
 import { useSnapshotSync, useSnapshotSyncByTask } from '@/composables/useSnapshotSync'
+import { useSyncStore } from '@/stores/sync'
 import {
   SNAPSHOT_TRIGGER_EVENTS,
   RealtimeConnectionStatus,
@@ -296,6 +297,21 @@ function createRealtimeSync() {
       // options.replayFromSeq 优先（新会话创建场景显式传 0），否则用持久化的 lastSeq
       const storedSeq = lastSeq.has(key) ? lastSeq.get(key) : 0
       const seq = options.replayFromSeq !== undefined ? options.replayFromSeq : storedSeq
+
+      // replayFromSeq=0 表示全量回放（新会话创建 / 任务切换等场景）。
+      // syncStore 的 lastSeenSeq 和 _sessionEventQueue.expectedSeq 不会因 replayFromSeq=0 自动重置，
+      // 导致回放的低 seq 事件被 applySessionEvent 的去重逻辑跳过（event.seq <= prevSeq），
+      // 或被 _processSessionEventOrdered 当作"过期事件"丢弃（event.seq < expectedSeq）。
+      // 必须在发送 subscribe 请求之前重置，确保回放事件到达时去重基线已清零。
+      // 注意：仅重置该 session 的状态，不影响其他会话；不清理 streamingSessions/thinkingSessions。
+      if (options.replayFromSeq === 0) {
+        try {
+          useSyncStore().resetSessionSeq(sessionId)
+        } catch (err) {
+          logger.warn(`[Realtime] resetSessionSeq 失败: session=${sessionId}`, err)
+        }
+      }
+
       // Replay barrier：replay 期间缓冲实时事件，避免污染 lastSeq
       _setReplayPending(key)
       send({ action: 'subscribe_session', payload: { session_id: sessionId, last_seq: seq } })

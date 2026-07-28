@@ -1,7 +1,6 @@
-import json
 import logging
+
 from django.core.cache import cache
-from django.conf import settings
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -49,7 +48,7 @@ class SecureSessionCacheService:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to cache session for user {user_id}: {str(e)}")
+            logger.error(f"Failed to cache session for user {user_id}: {e!s}")
             return False
 
     @classmethod
@@ -67,7 +66,7 @@ class SecureSessionCacheService:
                     results.append(data)
             return results
         except Exception as e:
-            logger.error(f"Failed to batch get cached sessions: {str(e)}")
+            logger.error(f"Failed to batch get cached sessions: {e!s}")
             return []
 
     @classmethod
@@ -84,7 +83,7 @@ class SecureSessionCacheService:
             return None
 
         except Exception as e:
-            logger.error(f"Failed to get cached session: {str(e)}")
+            logger.error(f"Failed to get cached session: {e!s}")
             return None
 
     @classmethod
@@ -93,7 +92,7 @@ class SecureSessionCacheService:
             sessions_list_key = cls._get_user_sessions_key(user_id)
             return cache.get(sessions_list_key, [])
         except Exception as e:
-            logger.error(f"Failed to get user sessions list: {str(e)}")
+            logger.error(f"Failed to get user sessions list: {e!s}")
             return []
 
     @classmethod
@@ -113,7 +112,7 @@ class SecureSessionCacheService:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to invalidate session: {str(e)}")
+            logger.error(f"Failed to invalidate session: {e!s}")
             return False
 
     @classmethod
@@ -134,7 +133,7 @@ class SecureSessionCacheService:
             return invalidated_count
 
         except Exception as e:
-            logger.error(f"Failed to invalidate all sessions for user {user_id}: {str(e)}")
+            logger.error(f"Failed to invalidate all sessions for user {user_id}: {e!s}")
             return 0
 
     @classmethod
@@ -144,7 +143,7 @@ class SecureSessionCacheService:
             cache.set(messages_key, messages, timeout=cls.TIMEOUT // 2)
             return True
         except Exception as e:
-            logger.error(f"Failed to cache messages: {str(e)}")
+            logger.error(f"Failed to cache messages: {e!s}")
             return False
 
     @classmethod
@@ -153,7 +152,7 @@ class SecureSessionCacheService:
             messages_key = f'{cls._get_cache_key(user_id, session_id)}:messages'
             return cache.get(messages_key)
         except Exception as e:
-            logger.error(f"Failed to get cached messages: {str(e)}")
+            logger.error(f"Failed to get cached messages: {e!s}")
             return None
 
     @classmethod
@@ -167,4 +166,4 @@ class SecureSessionCacheService:
                 cache.set(cache_key, session_data, timeout=cls.TIMEOUT)
 
         except Exception as e:
-            logger.error(f"Failed to update access time: {str(e)}")
+            logger.error(f"Failed to update access time: {e!s}")

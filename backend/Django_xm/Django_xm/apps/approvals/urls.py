@@ -5,10 +5,10 @@ from django.urls import path
 app_name = 'approvals'
 
 from Django_xm.apps.approvals.views import (
-    ApprovalListView,
     ApprovalDetailView,
-    ApprovalResumeView,
+    ApprovalListView,
     ApprovalRejectView,
+    ApprovalResumeView,
     ApprovalStateView,
 )
 

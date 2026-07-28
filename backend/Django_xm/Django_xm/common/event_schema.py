@@ -25,8 +25,7 @@ from __future__ import annotations
 
 import logging
 from enum import Enum
-from typing import Any, Optional, TypedDict
-
+from typing import Any, TypedDict
 
 logger = logging.getLogger(__name__)
 
@@ -83,11 +82,17 @@ class EventType(str, Enum):
     MESSAGE_UPDATED = 'message_updated'               # 消息内容更新
     MESSAGE_DELETED = 'message_deleted'               # 单条消息删除
     MESSAGES_DELETED = 'messages_deleted'             # 批量消息删除
-    MESSAGE_REGENERATED = 'message_regenerated'       # 消息重新生成（版本归档 + 新版本切换）
+    MESSAGE_REGENERATED = 'message_regenerated'               # 消息重新生成（版本归档 + 新版本切换）
     MESSAGE_REGENERATE_REVERTED = 'message_regenerate_reverted'  # 重新生成回滚
 
+    # === 学习工作流事件（WebSocket 推送）===
+    WORKFLOW_STEP = 'workflow_step'                     # 工作流节点执行进度
+    WORKFLOW_STATE_UPDATE = 'workflow_state_update'     # 工作流状态变更
+    WORKFLOW_COMPLETED = 'workflow_completed'           # 工作流完成
+    WORKFLOW_FAILED = 'workflow_failed'                 # 工作流失败
+
     @classmethod
-    def from_value(cls, value: str) -> Optional['EventType']:
+    def from_value(cls, value: str) -> EventType | None:
         """从字符串值构造 EventType，无效时返回 None（不抛异常）。"""
         try:
             return cls(value)
@@ -110,7 +115,7 @@ class EventSource(str, Enum):
     AGENT = 'agent'
 
     @classmethod
-    def from_value(cls, value: str) -> Optional['EventSource']:
+    def from_value(cls, value: str) -> EventSource | None:
         """从字符串值构造 EventSource，无效时返回 None。"""
         try:
             return cls(value)
@@ -142,14 +147,14 @@ class ToolCallLifecyclePayload(TypedDict, total=False):
     tool_name: str                  # 工具名称（必填）
     source: EventSource             # 事件来源（必填，= 业务模块）
     source_id: str                  # 模块实例 ID（= session_id 或 task_id，必填）
-    session_id: Optional[str]       # 路由字段：chat/learning 场景的会话 ID
-    task_id: Optional[str]          # 路由字段：独立深度研究场景的任务 ID
+    session_id: str | None       # 路由字段：chat/learning 场景的会话 ID
+    task_id: str | None          # 路由字段：独立深度研究场景的任务 ID
     message_id: str                 # 关联的消息 ID（必填，未知时传 ''）
     parameters: dict                # 工具输入参数（必填，空参数传 {}）
-    result: Optional[Any]           # 工具执行结果（COMPLETED 事件必填）
-    error: Optional[str]            # 错误信息（FAILED 事件必填）
-    graph_interrupt_id: Optional[str]  # 批量审批批次 ID（同批次审批共享）
-    cross_module_id: Optional[str]     # 跨模块同步目标 ID（DEEP_RESEARCH 关联 chat 时为 chat_session_id）
+    result: Any | None           # 工具执行结果（COMPLETED 事件必填）
+    error: str | None            # 错误信息（FAILED 事件必填）
+    graph_interrupt_id: str | None  # 批量审批批次 ID（同批次审批共享）
+    cross_module_id: str | None     # 跨模块同步目标 ID（DEEP_RESEARCH 关联 chat 时为 chat_session_id）
 
 
 class ApprovalPayload(TypedDict, total=False):
@@ -175,18 +180,18 @@ class ApprovalPayload(TypedDict, total=False):
     tool_name: str                  # 工具名称
     source: EventSource             # 事件来源（必填，= 业务模块）
     source_id: str                  # 模块实例 ID（= session_id 或 task_id，必填）
-    session_id: Optional[str]       # 路由字段：chat/learning/关联研究场景的会话 ID
-    task_id: Optional[str]          # 路由字段：独立深度研究场景的任务 ID
+    session_id: str | None       # 路由字段：chat/learning/关联研究场景的会话 ID
+    task_id: str | None          # 路由字段：独立深度研究场景的任务 ID
     state: str                      # 审批状态（pending/processing/approved/rejected/timeout，必填）
     parameters: dict                # 工具输入参数（必填，审批面板展示用，空参数传 {}）
     message_id: str                 # 关联的消息 ID（必填，未知时传 ''）
-    graph_interrupt_id: Optional[str]  # 批量审批批次 ID（同批次审批共享）
-    cross_module_id: Optional[str]     # 跨模块同步目标 ID（DEEP_RESEARCH 关联 chat 时为 chat_session_id）
-    operation: Optional[str]        # 审批操作描述
-    title: Optional[str]            # 审批标题
-    description: Optional[str]      # 审批描述
-    action: Optional[str]           # 审批动作（execute/write 等）
-    danger_level: Optional[str]     # 危险等级（low/medium/high）
+    graph_interrupt_id: str | None  # 批量审批批次 ID（同批次审批共享）
+    cross_module_id: str | None     # 跨模块同步目标 ID（DEEP_RESEARCH 关联 chat 时为 chat_session_id）
+    operation: str | None        # 审批操作描述
+    title: str | None            # 审批标题
+    description: str | None      # 审批描述
+    action: str | None           # 审批动作（execute/write 等）
+    danger_level: str | None     # 危险等级（low/medium/high）
 
 
 
@@ -205,12 +210,12 @@ class ToolCallRejectedPayload(TypedDict, total=False):
     tool_name: str                  # 工具名称（必填）
     source: EventSource             # 事件来源（必填，= 业务模块）
     source_id: str                  # 模块实例 ID（= session_id 或 task_id，必填）
-    session_id: Optional[str]       # 路由字段：chat/learning 场景的会话 ID
-    task_id: Optional[str]          # 路由字段：独立深度研究场景的任务 ID
+    session_id: str | None       # 路由字段：chat/learning 场景的会话 ID
+    task_id: str | None          # 路由字段：独立深度研究场景的任务 ID
     message_id: str                 # 关联的消息 ID（必填，未知时传 ''）
     parameters: dict                # 工具输入参数（必填，空参数传 {}）
-    graph_interrupt_id: Optional[str]  # 批量审批批次 ID（同批次审批共享）
-    cross_module_id: Optional[str]     # 跨模块同步目标 ID（DEEP_RESEARCH 关联 chat 时为 chat_session_id）
+    graph_interrupt_id: str | None  # 批量审批批次 ID（同批次审批共享）
+    cross_module_id: str | None     # 跨模块同步目标 ID（DEEP_RESEARCH 关联 chat 时为 chat_session_id）
 
 
 class StreamPayload(TypedDict, total=False):
@@ -219,13 +224,13 @@ class StreamPayload(TypedDict, total=False):
     session_id / task_id 为路由字段，二选一
     """
 
-    message_id: Optional[str]       # 关联的消息 ID
+    message_id: str | None       # 关联的消息 ID
     source: EventSource             # 事件来源（必填）
     source_id: str                  # 源实体 ID（必填）
-    session_id: Optional[str]       # 聊天会话 ID（chat/learning 场景路由用）
-    task_id: Optional[str]          # 研究任务 ID（独立深度研究场景路由用）
+    session_id: str | None       # 聊天会话 ID（chat/learning 场景路由用）
+    task_id: str | None          # 研究任务 ID（独立深度研究场景路由用）
     data: dict                      # 流式数据（reasoning/sources/suggestions/context/content）
-    seq: Optional[int]              # 业务序列号（幂等保护，可选）
+    seq: int | None              # 业务序列号（幂等保护，可选）
 
 
 # === 事件类型到 payload 类型的映射 ===
@@ -285,9 +290,10 @@ _REQUIRED_FIELDS: dict[EventType, tuple[str, ...]] = {
     EventType.STREAM_CONTEXT: ('source', 'source_id', 'data'),
     EventType.STREAM_CONTENT_UPDATE: ('source', 'source_id', 'data'),
     EventType.STREAM_INTERRUPTED: ('source', 'source_id', 'data'),
-    # STREAM_STARTED / STREAM_COMPLETED：source + source_id 必填（无 data 字段）
+    # STREAM_STARTED / STREAM_COMPLETED / STREAM_FINALIZED：source + source_id 必填（无 data 字段）
     EventType.STREAM_STARTED: ('source', 'source_id'),
     EventType.STREAM_COMPLETED: ('source', 'source_id'),
+    EventType.STREAM_FINALIZED: ('source', 'source_id'),
     # SESSION_* / MESSAGE_* 无必填字段
 }
 
@@ -336,6 +342,11 @@ _WS_EVENT_NAME_MAP: dict[EventType, str] = {
     EventType.MESSAGES_DELETED: 'messages_deleted',
     EventType.MESSAGE_REGENERATED: 'message_regenerated',
     EventType.MESSAGE_REGENERATE_REVERTED: 'message_regenerate_reverted',
+
+    EventType.WORKFLOW_STEP: 'workflow_step',
+    EventType.WORKFLOW_STATE_UPDATE: 'workflow_state_update',
+    EventType.WORKFLOW_COMPLETED: 'workflow_completed',
+    EventType.WORKFLOW_FAILED: 'workflow_failed',
 }
 
 

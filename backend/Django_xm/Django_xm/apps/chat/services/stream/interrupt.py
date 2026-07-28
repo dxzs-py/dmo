@@ -12,7 +12,7 @@
 """
 
 import logging
-from typing import AsyncGenerator, Dict
+from collections.abc import AsyncGenerator
 
 from Django_xm.apps.chat.services.stream_helpers import finalize_tool_calls
 
@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 
 async def finalize_interrupt(
     ctx: StreamContext,
-    data: Dict,
-) -> AsyncGenerator[Dict, None]:
+    data: dict,
+) -> AsyncGenerator[dict, None]:
     """审批中断统一收尾
 
     当 ctx.interrupt_info 非空时执行：

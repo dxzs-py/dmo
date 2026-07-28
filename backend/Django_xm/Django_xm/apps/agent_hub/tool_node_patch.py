@@ -90,7 +90,7 @@ def patch_tool_node():
         results = await asyncio.gather(*coros, return_exceptions=True)
 
         # ---- Post-process: collect interrupts, re-raise other exceptions ----
-        from langgraph.errors import GraphInterrupt, GraphBubbleUp
+        from langgraph.errors import GraphBubbleUp, GraphInterrupt
 
         all_interrupts = []
         successful_outputs = []

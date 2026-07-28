@@ -2,6 +2,7 @@
 分析模块 Celery 任务
 """
 import logging
+
 from celery import shared_task
 
 logger = logging.getLogger(__name__)
@@ -23,4 +24,4 @@ def track_event(self, event_data):
         UserEvent.objects.create(**event_data)
     except Exception as e:
         logger.error(f"异步记录用户事件失败: {e}")
-        raise self.retry(exc=e, countdown=5)
+        raise self.retry(exc=e, countdown=5) from e

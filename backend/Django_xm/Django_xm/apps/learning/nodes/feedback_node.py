@@ -2,18 +2,18 @@
 反馈生成节点 (Feedback Node)
 """
 
-import logging
-from datetime import datetime
-from typing import Dict, Any
+from datetime import UTC, datetime
+from typing import Any
 
-from ..services.state import StudyFlowState
 from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
 from Django_xm.apps.core.config import get_logger
+
+from ..services.state import StudyFlowState
 
 logger = get_logger(__name__)
 
 
-def feedback_node(state: StudyFlowState) -> Dict[str, Any]:
+def feedback_node(state: StudyFlowState) -> dict[str, Any]:
     """
     反馈生成节点
 
@@ -65,7 +65,7 @@ def feedback_node(state: StudyFlowState) -> Dict[str, Any]:
         response = model.invoke([{"role": "user", "content": feedback_prompt}])
         feedback = response.content
 
-        logger.info(f"[Feedback Node] 反馈生成完成")
+        logger.info("[Feedback Node] 反馈生成完成")
 
         should_retry = score < 60 and retry_count < 3
 
@@ -88,15 +88,15 @@ def feedback_node(state: StudyFlowState) -> Dict[str, Any]:
             "should_retry": should_retry,
             "retry_count": new_retry_count,
             "current_step": "feedback_completed",
-            "updated_at": datetime.now().isoformat()
+            "updated_at": datetime.now(UTC).isoformat()
         }
 
     except Exception as e:
         logger.error(f"[Feedback Node] 生成反馈失败: {e}", exc_info=True)
         return {
-            "feedback": f"\n\n⚠️ 反馈生成失败: {str(e)}",
+            "feedback": f"\n\n⚠️ 反馈生成失败: {e!s}",
             "should_retry": False,
             "retry_count": state.get("retry_count", 0),
             "current_step": "feedback_error",
-            "updated_at": datetime.now().isoformat()
+            "updated_at": datetime.now(UTC).isoformat()
         }

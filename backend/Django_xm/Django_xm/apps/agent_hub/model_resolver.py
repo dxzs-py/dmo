@@ -1,11 +1,12 @@
 from __future__ import annotations
+
 import logging
-from typing import Union, Any, Optional
+
 from langchain_core.language_models import BaseChatModel
 
 logger = logging.getLogger(__name__)
 
-def resolve_model(config) -> Union[str, BaseChatModel]:
+def resolve_model(config) -> str | BaseChatModel:
     """解析模型配置，返回带 fallback 的模型实例
 
     所有模型创建路径都通过 get_chat_model()，自动获得 fallback 能力。

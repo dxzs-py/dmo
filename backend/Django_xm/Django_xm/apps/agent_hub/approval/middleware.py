@@ -26,10 +26,14 @@ AIMessage.tool_calls 中需要审批的工具调用。
 
 import logging
 import uuid
-from typing import Any, List, Optional
+from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, ToolMessage
+
+# 模块级导入 interrupt：测试通过 patch("...middleware.interrupt") 拦截调用，
+# 局部导入会导致 patch 失败（AttributeError: module has no attribute 'interrupt'）
+from langgraph.types import interrupt
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +46,7 @@ class ApprovalMiddleware(AgentMiddleware):
     确保 __interrupt__ 事件包含所有审批请求。
     """
 
-    def __init__(self, policies: Optional[List[Any]] = None):
+    def __init__(self, policies: list[Any] | None = None):
         super().__init__()
         if policies is None:
             policies = self._default_policies()
@@ -50,19 +54,19 @@ class ApprovalMiddleware(AgentMiddleware):
         logger.info(f"ApprovalMiddleware 初始化: 注册策略 {list(self.policies.keys())}")
 
     @staticmethod
-    def _default_policies() -> List[Any]:
+    def _default_policies() -> list[Any]:
         from .policies import (
             AgentCleanupApprovalPolicy,
-            FileReaderApprovalPolicy,
-            FsWriteFileApprovalPolicy,
-            ShellExecApprovalPolicy,
+            EditFileApprovalPolicy,
             # deepagents 框架工具审批策略
             # deepagents FilesystemMiddleware 提供的工具名称与项目自定义工具不同，
             # 需要独立注册策略，否则 write_file/edit_file/execute 等工具会绕过审批
             ExecuteApprovalPolicy,
-            WriteFileApprovalPolicy,
-            EditFileApprovalPolicy,
+            FileReaderApprovalPolicy,
+            FsWriteFileApprovalPolicy,
             ReadFileApprovalPolicy,
+            ShellExecApprovalPolicy,
+            WriteFileApprovalPolicy,
         )
 
         return [
@@ -126,7 +130,7 @@ class ApprovalMiddleware(AgentMiddleware):
             return None
 
         # 收集需要审批的 tool_calls
-        approval_requests: List[dict] = []
+        approval_requests: list[dict] = []
 
         # 生成批次 ID（graph_interrupt_id）：同批次审批共享，下游统一从 _meta 读取
         # 用于前端 grouping 和 DB 查询（Approval.objects.filter(extra__graph_interrupt_id=...)）
@@ -179,8 +183,6 @@ class ApprovalMiddleware(AgentMiddleware):
 
         # 一次 interrupt 携带所有审批请求
         # _meta.graph_interrupt_id 为批次 ID 单一来源，下游统一从 _meta 读取
-        from langgraph.types import interrupt
-
         decisions = interrupt({
             "_approval": True,
             "requests": approval_requests,
@@ -212,8 +214,8 @@ class ApprovalMiddleware(AgentMiddleware):
         #   但在 artificial_messages 中添加 error ToolMessage，
         #   ToolNode 会检测到已有 ToolMessage 跳过执行，
         #   流程回到 call_model 让 LLM 收到拒绝反馈后自行决定下一步
-        revised_tool_calls: List[dict] = []
-        artificial_messages: List[ToolMessage] = []
+        revised_tool_calls: list[dict] = []
+        artificial_messages: list[ToolMessage] = []
         rejected_count = 0
 
         from .timeout_handler import TIMEOUT_DECISION, build_timeout_tool_message

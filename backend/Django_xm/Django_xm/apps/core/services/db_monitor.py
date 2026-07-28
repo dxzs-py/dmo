@@ -1,20 +1,28 @@
-"""
-数据库监控服务
+"""数据库监控服务
 
-提供 PostgreSQL、VectorStore、Redis 状态查询功能。
+提供 PostgreSQL 状态查询功能。
+
+归属说明（Task 15.3）：
+    原模块还包含 ``get_vector_store_status()``（依赖 knowledge）和
+    ``get_redis_info()``（依赖 cache_manager），违反 ``core`` 不依赖
+    业务 app 的分层约束。这两个方法已迁入对应 app 的 ``status_provider.py``，
+    通过 ``status_registry`` 注册供 ``get_database_overview()`` 聚合调用。
+
+    ``ai_engine.config`` 的导入也已移除（原用于读取 vector_store_type），
+    由各业务 app 的 status_provider 自行处理。
 """
 
 import logging
-import os
-from pathlib import Path
 
 from django.db import connections
+
+from .status_registry import get_all_status_providers
 
 logger = logging.getLogger(__name__)
 
 
 class DatabaseMonitor:
-    """数据库监控类，封装各数据源状态查询逻辑"""
+    """数据库监控类，封装 PostgreSQL 状态查询与多源状态聚合。"""
 
     @staticmethod
     def format_size(size_bytes):
@@ -113,126 +121,28 @@ class DatabaseMonitor:
         return status
 
     @staticmethod
-    def get_vector_store_status():
-        """获取向量存储状态"""
-        try:
-            from Django_xm.apps.knowledge.services.cross_app import get_index_manager
-            from Django_xm.apps.ai_engine.config import settings as app_cfg
-
-            manager = get_index_manager()
-            base_path = manager.base_path
-
-            if not base_path.exists():
-                base_path.mkdir(parents=True, exist_ok=True)
-
-            all_indices = manager.list_indexes()
-            index_count = len(all_indices)
-
-            total_size = 0
-            index_info = []
-
-            for idx in all_indices:
-                try:
-                    idx_name = idx.get('name')
-                    if not idx_name:
-                        continue
-
-                    idx_path = base_path / idx_name
-                    idx_size = 0
-
-                    if idx_path.exists():
-                        for root, dirs, files in os.walk(idx_path):
-                            for file in files:
-                                try:
-                                    file_path = Path(root) / file
-                                    idx_size += file_path.stat().st_size
-                                except (OSError, Exception):
-                                    pass
-
-                    total_size += idx_size
-
-                    index_info.append({
-                        'name': idx_name,
-                        'original_name': idx.get('name', idx_name),
-                        'size': idx_size,
-                        'size_human': DatabaseMonitor.format_size(idx_size),
-                        'created_at': idx.get('created_at', ''),
-                        'updated_at': idx.get('updated_at', ''),
-                        'num_documents': idx.get('num_documents', 0),
-                    })
-                except Exception as idx_err:
-                    logger.warning(f"处理索引 {idx.get('name')} 时出错: {idx_err}")
-                    continue
-
-            return {
-                'backend': app_cfg.vector_store_type,
-                'base_path': str(base_path),
-                'connection': 'healthy',
-                'index_count': index_count,
-                'total_size': total_size,
-                'total_size_human': DatabaseMonitor.format_size(total_size),
-                'indices': index_info,
-            }
-        except Exception as e:
-            logger.error(f"获取向量存储状态失败: {e}", exc_info=True)
-            backend_type = 'unknown'
-            try:
-                from Django_xm.apps.ai_engine.config import settings as app_cfg
-                backend_type = app_cfg.vector_store_type
-            except (AttributeError, Exception):
-                pass
-
-            base_path_str = ''
-            try:
-                from Django_xm.apps.ai_engine.config import settings as app_cfg
-                base_path_str = str(Path(app_cfg.vector_store_path))
-            except (AttributeError, Exception):
-                pass
-
-            return {
-                'backend': backend_type,
-                'base_path': base_path_str,
-                'connection': 'unhealthy',
-                'index_count': 0,
-                'total_size': 0,
-                'total_size_human': '0 B',
-                'indices': [],
-                'error': str(e),
-            }
-
-    @staticmethod
-    def get_redis_info():
-        """获取 Redis 信息"""
-        from Django_xm.apps.cache_manager.services.cache_service import get_redis_info as _get_redis_info
-        return _get_redis_info()
-
-    @staticmethod
-    def _get_redis_client():
-        """获取 Redis 客户端"""
-        from Django_xm.apps.cache_manager.services.cache_service import get_redis_client as _get_redis_client
-        return _get_redis_client()
-
-    @staticmethod
     def get_database_overview():
-        """获取数据库总览（PostgreSQL + VectorStore + Redis）"""
-        postgresql_status = DatabaseMonitor.get_postgresql_status()
-        vector_status = DatabaseMonitor.get_vector_store_status()
-        redis_info = DatabaseMonitor.get_redis_info()
+        """获取数据库总览（PostgreSQL + 所有已注册状态提供者）
 
-        redis_status = {
-            'backend': 'Redis',
-            'connection': 'healthy' if redis_info else 'unhealthy',
+        状态提供者通过 ``status_registry`` 注册（Task 15.3）：
+        - ``knowledge`` 注册 ``VectorStoreStatusProvider``
+        - ``cache_manager`` 注册 ``RedisStatusProvider``
+        """
+        overview = {
+            'postgresql': DatabaseMonitor.get_postgresql_status(),
         }
-        if redis_info:
-            redis_status['version'] = redis_info.get('redis_version', '-')
-            redis_status['used_memory_human'] = redis_info.get('used_memory_human', '-')
-            redis_status['connected_clients'] = redis_info.get('connected_clients', 0)
-            db_info = redis_info.get('db0', {})
-            if isinstance(db_info, dict):
-                redis_status['total_keys'] = db_info.get('keys', 0)
 
-        return {
-            'postgresql': postgresql_status,
-            'vector_store': vector_status,
-            'redis': redis_status,
-        }
+        for provider in get_all_status_providers():
+            try:
+                overview[provider.get_name()] = provider.get_status()
+            except Exception as e:
+                overview[provider.get_name()] = {
+                    'connection': 'unhealthy',
+                    'error': str(e),
+                }
+                logger.warning(
+                    f"状态提供者 {provider.get_name()} 查询失败: {e}",
+                    exc_info=True,
+                )
+
+        return overview

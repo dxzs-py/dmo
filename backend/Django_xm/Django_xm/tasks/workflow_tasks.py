@@ -4,11 +4,12 @@
 """
 import logging
 from datetime import datetime
+
 from celery import shared_task
 from celery.exceptions import Retry
 
-from Django_xm.apps.learning.services.study_flow import _get_study_flow
 from Django_xm.apps.learning.models import WorkflowSession, WorkflowSessionStatus
+from Django_xm.apps.learning.services.study_flow import _get_study_flow
 from Django_xm.tasks.base import TrackedTask
 
 logger = logging.getLogger(__name__)
@@ -91,5 +92,5 @@ def execute_workflow_task(self, thread_id: str, user_question: str, user_id: int
             pass
 
         if self.request.retries < self.max_retries:
-            raise self.retry(exc=exc)
+            raise self.retry(exc=exc) from exc
         return {'status': 'error', 'thread_id': thread_id, 'error': str(exc)}

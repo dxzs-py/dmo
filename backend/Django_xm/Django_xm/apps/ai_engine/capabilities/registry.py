@@ -1,6 +1,7 @@
 import logging
 import threading
-from typing import Any, Dict, List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.tools import BaseTool
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 class CapabilityRegistry:
 
     def __init__(self) -> None:
-        self._capabilities: Dict[str, AgentCapability] = {}
+        self._capabilities: dict[str, AgentCapability] = {}
         self._lock = threading.Lock()
 
     def register(self, name: str, capability: AgentCapability) -> None:
@@ -32,11 +33,11 @@ class CapabilityRegistry:
             else:
                 logger.warning("Capability '%s' not found, cannot unregister", name)
 
-    def get(self, name: str) -> Optional[AgentCapability]:
+    def get(self, name: str) -> AgentCapability | None:
         with self._lock:
             return self._capabilities.get(name)
 
-    def list_capabilities(self) -> List[str]:
+    def list_capabilities(self) -> list[str]:
         with self._lock:
             return list(self._capabilities.keys())
 
@@ -45,8 +46,8 @@ class CapabilityRegistry:
         agent_type: str,
         capabilities: Sequence[str],
         **kwargs,
-    ) -> List[AgentMiddleware]:
-        result: List[AgentMiddleware] = []
+    ) -> list[AgentMiddleware]:
+        result: list[AgentMiddleware] = []
         for cap_name in capabilities:
             cap = self.get(cap_name)
             if cap is None:
@@ -74,10 +75,10 @@ class CapabilityRegistry:
         self,
         agent_type: str,
         capabilities: Sequence[str],
-        tool_config: Optional[Dict] = None,
+        tool_config: dict | None = None,
         **kwargs,
-    ) -> List[BaseTool]:
-        result: List[BaseTool] = []
+    ) -> list[BaseTool]:
+        result: list[BaseTool] = []
         for cap_name in capabilities:
             cap = self.get(cap_name)
             if cap is None:
@@ -103,7 +104,7 @@ class CapabilityRegistry:
                     e,
                 )
         seen = set()
-        deduped: List[BaseTool] = []
+        deduped: list[BaseTool] = []
         for tool in result:
             if tool.name not in seen:
                 seen.add(tool.name)
@@ -115,8 +116,8 @@ class CapabilityRegistry:
         agent_type: str,
         capabilities: Sequence[str],
         **kwargs,
-    ) -> Dict[str, Any]:
-        result: Dict[str, Any] = {}
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {}
         for cap_name in capabilities:
             cap = self.get(cap_name)
             if cap is None:
@@ -140,10 +141,10 @@ class CapabilityRegistry:
                 )
         return result
 
-    def get_default_capabilities(self, agent_type: str) -> List[str]:
+    def get_default_capabilities(self, agent_type: str) -> list[str]:
         try:
             from Django_xm.apps.ai_engine.config import settings as ai_settings
-            defaults: Dict[str, List[str]] = getattr(
+            defaults: dict[str, list[str]] = getattr(
                 ai_settings, "AGENT_CAPABILITIES_DEFAULT", {}
             )
             return list(defaults.get(agent_type, []))

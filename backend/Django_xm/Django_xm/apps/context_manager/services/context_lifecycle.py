@@ -18,7 +18,6 @@ class ContextLifecycleManager:
     def on_session_start(self, user_id: int, session_id: str):
         """会话开始：预加载用户规则和自动记忆"""
         # 无需特别操作，HierarchicalMemory.load_context() 会按需加载
-        pass
 
     def on_session_end(self, user_id: int, session_id: str, summary: str = ""):
         """会话结束：保存摘要到 AutoMemory
@@ -43,6 +42,7 @@ class ContextLifecycleManager:
             return
         try:
             from django.utils import timezone
+
             from Django_xm.apps.context_manager.models import AutoMemory
             AutoMemory.objects.filter(id__in=memory_ids, user_id=user_id).update(
                 access_count=models.F('access_count') + 1,
@@ -54,9 +54,11 @@ class ContextLifecycleManager:
     def cleanup_expired(self, user_id: int = None, days: int = 30):
         """清理超过 N 天未访问的上下文"""
         try:
-            from Django_xm.apps.context_manager.models import AutoMemory
-            from django.utils import timezone
             from datetime import timedelta
+
+            from django.utils import timezone
+
+            from Django_xm.apps.context_manager.models import AutoMemory
 
             cutoff = timezone.now() - timedelta(days=days)
             qs = AutoMemory.objects.filter(last_accessed_at__lt=cutoff)
@@ -72,7 +74,7 @@ class ContextLifecycleManager:
     def on_user_delete(self, user_id: int):
         """用户删除时级联清理（Django FK CASCADE 会自动处理，此方法作为兜底）"""
         try:
-            from Django_xm.apps.context_manager.models import ContextRule, AutoMemory, PromptCache
+            from Django_xm.apps.context_manager.models import AutoMemory, ContextRule, PromptCache
             ContextRule.objects.filter(user_id=user_id).delete()
             AutoMemory.objects.filter(user_id=user_id).delete()
             PromptCache.objects.filter(user_id=user_id).delete()

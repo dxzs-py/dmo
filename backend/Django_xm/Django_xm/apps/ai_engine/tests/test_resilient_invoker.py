@@ -24,32 +24,30 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sys
 import unittest
-from typing import Any, List
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Django 环境初始化（兼容 pytest 和 unittest 直接运行）
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.dev")
-import django  # noqa: E402
-import django.apps  # noqa: E402,F401
+import django
+import django.apps
 
 if not django.apps.apps.ready:
     django.setup()
 
-from Django_xm.apps.agent_hub.services.agent_resilience import (  # noqa: E402
+from Django_xm.apps.agent_hub.services.agent_resilience import (
     ResilienceConfig,
 )
-from Django_xm.apps.ai_engine.services.exceptions import (  # noqa: E402
-    GuardrailsValidationError,
-)
-from Django_xm.apps.agent_hub.services.resilient_invoker import (  # noqa: E402
+from Django_xm.apps.agent_hub.services.resilient_invoker import (
     CircuitBreaker,
     CircuitState,
     ResilientInvoker,
     ResilientModel,
 )
-
+from Django_xm.apps.ai_engine.services.exceptions import (
+    GuardrailsValidationError,
+)
 
 # ============================================================================
 # 测试用异常类
@@ -150,7 +148,7 @@ def make_mock_model(
 
             async def _astream_fail(*args, **kwargs):
                 raise astream_chunks
-                yield  # noqa: E701 - 使其成为异步生成器
+                yield
 
             model.astream = MagicMock(side_effect=_astream_fail)
         else:
@@ -615,9 +613,7 @@ class ResilientInvokerAsyncTestCase(unittest.TestCase):
         )
 
         invoker = ResilientInvoker(models=[model], config=make_fast_config())
-        result = asyncio.get_event_loop().run_until_complete(
-            invoker.ainvoke("test input")
-        )
+        result = asyncio.run(invoker.ainvoke("test input"))
 
         self.assertEqual(result.content, "async success")
         self.assertEqual(model.ainvoke.call_count, 3)
@@ -642,9 +638,7 @@ class ResilientInvokerAsyncTestCase(unittest.TestCase):
         invoker = ResilientInvoker(
             models=[model_a, model_b], config=make_fast_config()
         )
-        result = asyncio.get_event_loop().run_until_complete(
-            invoker.ainvoke("test input")
-        )
+        result = asyncio.run(invoker.ainvoke("test input"))
 
         self.assertEqual(result.content, "async from b")
         self.assertEqual(model_a.ainvoke.call_count, 3)
@@ -665,9 +659,7 @@ class ResilientInvokerAsyncTestCase(unittest.TestCase):
         invoker = ResilientInvoker(
             models=[model_a, model_b], config=make_fast_config()
         )
-        result = asyncio.get_event_loop().run_until_complete(
-            invoker.ainvoke("test input")
-        )
+        result = asyncio.run(invoker.ainvoke("test input"))
 
         self.assertEqual(result.content, "async from b")
         self.assertEqual(model_a.ainvoke.call_count, 1)
@@ -689,9 +681,7 @@ class ResilientInvokerAsyncTestCase(unittest.TestCase):
         )
 
         with self.assertRaises(GuardrailsValidationError):
-            asyncio.get_event_loop().run_until_complete(
-                invoker.ainvoke("test input")
-            )
+            asyncio.run(invoker.ainvoke("test input"))
 
         self.assertEqual(model_a.ainvoke.call_count, 1)
         self.assertEqual(model_b.ainvoke.call_count, 0)
@@ -721,9 +711,7 @@ class ResilientInvokerAsyncTestCase(unittest.TestCase):
         )
 
         with self.assertRaises(RuntimeError):
-            asyncio.get_event_loop().run_until_complete(
-                invoker.ainvoke("test input")
-            )
+            asyncio.run(invoker.ainvoke("test input"))
 
     @patch("Django_xm.apps.agent_hub.services.resilient_invoker.asyncio.sleep")
     def test_async_agenerate_with_fallback(self, mock_sleep):
@@ -748,7 +736,7 @@ class ResilientInvokerAsyncTestCase(unittest.TestCase):
         invoker = ResilientInvoker(
             models=[model_a, model_b], config=make_fast_config()
         )
-        result = asyncio.get_event_loop().run_until_complete(invoker.agenerate([]))
+        result = asyncio.run(invoker.agenerate([]))
 
         self.assertEqual(model_a._agenerate.call_count, 3)
         self.assertEqual(model_b._agenerate.call_count, 1)
@@ -760,7 +748,7 @@ class ResilientInvokerAsyncTestCase(unittest.TestCase):
 
         async def _a_fail(*args, **kwargs):
             raise MockRateLimitError()
-            yield  # noqa: E701 - 使其成为异步生成器
+            yield
 
         model_a = MagicMock(name="model-a")
         model_a._llm_type = "model-a"
@@ -786,7 +774,7 @@ class ResilientInvokerAsyncTestCase(unittest.TestCase):
                 chunks.append(chunk)
             return chunks
 
-        chunks = asyncio.get_event_loop().run_until_complete(_collect())
+        chunks = asyncio.run(_collect())
         self.assertEqual(chunks, ["chunk-b-1", "chunk-b-2"])
         self.assertEqual(model_a.astream.call_count, 3)
         self.assertEqual(model_b.astream.call_count, 1)

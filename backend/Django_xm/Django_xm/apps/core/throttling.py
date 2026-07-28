@@ -16,16 +16,25 @@ DRF 自定义速率限制类
     - ResearchRateThrottle: 深度研究接口，较严格
     - KnowledgeRateThrottle: 知识库接口，适度限制
     - SensitiveOperationRateThrottle: 敏感操作，最严格
+
+IP 解析：
+    ``get_client_ip`` 统一从 ``Django_xm.common.request_utils`` 导入，
+    配合 ``settings.NUM_PROXIES`` 防 X-Forwarded-For 伪造（详见该函数 docstring）。
 """
 from rest_framework.throttling import SimpleRateThrottle
 
+from Django_xm.common.request_utils import get_client_ip
 
-def get_client_ip(request):
-    """从请求中提取客户端 IP 地址"""
-    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-    if x_forwarded_for:
-        return x_forwarded_for.split(',')[0].strip()
-    return request.META.get('REMOTE_ADDR', '')
+__all__ = [
+    "AnonymousRateThrottle",
+    "ChatStreamRateThrottle",
+    "KnowledgeRateThrottle",
+    "LoginRateThrottle",
+    "ResearchRateThrottle",
+    "ScopedRateThrottle",
+    "SensitiveOperationRateThrottle",
+    "UserRateThrottle",
+]
 
 
 class ScopedRateThrottle(SimpleRateThrottle):

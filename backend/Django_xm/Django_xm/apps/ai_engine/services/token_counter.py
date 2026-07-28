@@ -8,18 +8,18 @@ LangChain v1.2.x 中，AIMessage.usage_metadata 包含 token 使用信息，
 本模块通过回调机制在流式和非流式场景下统一收集 token 数据。
 """
 
-from typing import Any, Dict, List, Optional, Union
+import logging
+import threading
+from typing import Any
+
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import LLMResult
 
-import threading
-import logging
-
 _logger = logging.getLogger(__name__)
 
 
-def _extract_model_name(serialized: Dict[str, Any], **kwargs: Any) -> str:
+def _extract_model_name(serialized: dict[str, Any], **kwargs: Any) -> str:
     if "kwargs" in serialized:
         kw = serialized["kwargs"]
         for key in ("model", "model_name"):
@@ -42,14 +42,14 @@ class TokenUsageCallbackHandler(BaseCallbackHandler):
         self.completion_tokens: int = 0
         self.total_tokens: int = 0
         self.successful_requests: int = 0
-        self._llm_start_times: Dict[str, float] = {}
+        self._llm_start_times: dict[str, float] = {}
         self._current_model: str = model_name
         self._lock = threading.Lock()
 
     def on_llm_start(
         self,
-        serialized: Dict[str, Any],
-        prompts: List[str],
+        serialized: dict[str, Any],
+        prompts: list[str],
         *,
         run_id: Any = None,
         **kwargs: Any,
@@ -101,7 +101,7 @@ class TokenUsageCallbackHandler(BaseCallbackHandler):
 
     def on_tool_start(
         self,
-        serialized: Dict[str, Any],
+        serialized: dict[str, Any],
         input_str: str,
         *,
         run_id: Any = None,
@@ -123,8 +123,8 @@ class TokenUsageCallbackHandler(BaseCallbackHandler):
 
     def on_chain_start(
         self,
-        serialized: Dict[str, Any],
-        inputs: Dict[str, Any],
+        serialized: dict[str, Any],
+        inputs: dict[str, Any],
         *,
         run_id: Any = None,
         **kwargs: Any,
@@ -133,7 +133,7 @@ class TokenUsageCallbackHandler(BaseCallbackHandler):
 
     def on_chain_end(
         self,
-        outputs: Dict[str, Any],
+        outputs: dict[str, Any],
         *,
         run_id: Any = None,
         **kwargs: Any,

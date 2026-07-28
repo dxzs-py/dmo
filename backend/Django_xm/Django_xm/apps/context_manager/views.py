@@ -1,22 +1,23 @@
 import logging
 
-from rest_framework.views import APIView
+from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework import status
+from rest_framework.views import APIView
 
-from Django_xm.common.responses import success_response, error_response
-from Django_xm.common.error_codes import ErrorCode
-from Django_xm.apps.context_manager.services.manager import create_context_manager
 from Django_xm.apps.ai_engine.services.checkpointer_factory import get_store
+from Django_xm.apps.context_manager.services.manager import create_context_manager
+from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.responses import error_response, success_response
+
 from .serializers import (
-    ContextStatsSerializer,
-    TokenBudgetRequestSerializer,
-    TokenBudgetResponseSerializer,
     ContextCompressRequestSerializer,
     ContextCompressResponseSerializer,
+    ContextStatsSerializer,
     KnowledgeGraphDetailRequestSerializer,
     KnowledgeGraphDetailResponseSerializer,
+    TokenBudgetRequestSerializer,
+    TokenBudgetResponseSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ class ContextStatsView(APIView):
             stats = ctx_mgr.get_stats()
             serializer = ContextStatsSerializer(stats)
             return success_response(data=serializer.data)
-        except Exception as e:
+        except Exception:
             logger.exception("获取上下文统计失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -60,7 +61,7 @@ class KnowledgeGraphView(APIView):
                 ctx_mgr._knowledge_graph.clear_user_graph(user_id)
                 return success_response(message="知识图谱数据已清除")
             return success_response(message="知识图谱未启用，无需清除")
-        except Exception as e:
+        except Exception:
             logger.exception("清除知识图谱失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -84,7 +85,7 @@ class TokenBudgetView(APIView):
             session_id = req_serializer.validated_data.get('session_id')
             store = get_store()
             ctx_mgr = create_context_manager(user_id=user_id, store=store, thread_id=session_id)
-            usage = ctx_mgr.get_budget_usage()
+            ctx_mgr.get_budget_usage()
 
             total_budget = ctx_mgr._token_budget_manager.total_budget
             total_used = ctx_mgr._token_budget_manager.total_used
@@ -102,7 +103,7 @@ class TokenBudgetView(APIView):
         except Exception as e:
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
-                message=f"获取 Token 预算失败: {str(e)}",
+                message=f"获取 Token 预算失败: {e!s}",
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -166,7 +167,7 @@ class ContextCompressView(APIView):
         except Exception as e:
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
-                message=f"上下文压缩失败: {str(e)}",
+                message=f"上下文压缩失败: {e!s}",
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -211,7 +212,7 @@ class KnowledgeGraphDetailView(APIView):
         except Exception as e:
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
-                message=f"获取知识图谱详情失败: {str(e)}",
+                message=f"获取知识图谱详情失败: {e!s}",
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -231,6 +232,6 @@ def capability_config_view(request):
         }
 
         return success_response(data=data)
-    except Exception as e:
+    except Exception:
         logger.exception("获取能力配置失败")
         return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')

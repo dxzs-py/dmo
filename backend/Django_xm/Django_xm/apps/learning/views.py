@@ -5,29 +5,33 @@
 import json
 import uuid
 from urllib.parse import quote
-from django.http import StreamingHttpResponse, FileResponse, HttpResponse
-from rest_framework.views import APIView
+
+from django.http import FileResponse, HttpResponse, StreamingHttpResponse
 from rest_framework import status
-from rest_framework.renderers import BaseRenderer
-
-from Django_xm.common.sse_utils import sse_response, sse_error_event
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.renderers import BaseRenderer
+from rest_framework.views import APIView
 
-from Django_xm.common.responses import success_response, error_response, not_found_response, validation_error_response
+from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.services.file_manager import get_file_manager
 from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.event_schema import EventSource, EventType
+from Django_xm.common.permissions import IsAuthenticatedOrQueryParam
+from Django_xm.common.realtime_events import publish_event_sync
+from Django_xm.common.responses import error_response, not_found_response, success_response, validation_error_response
+from Django_xm.common.sse_utils import sse_error_event, sse_response
 
+from .models import WorkflowSession
 from .serializers import (
+    WorkflowResponseSerializer,
+    WorkflowSessionSerializer,
     WorkflowStartSerializer,
     WorkflowSubmitSerializer,
-    WorkflowResponseSerializer,
-    WorkflowSessionSerializer
 )
 from .services import WorkflowService
-from .services.study_flow import get_workflow_state, _get_study_flow
-from .models import WorkflowSession
-from Django_xm.apps.core.services.file_manager import get_file_manager
-from Django_xm.apps.core.config import get_logger
-from Django_xm.common.permissions import IsAuthenticatedOrQueryParam
+from .services.resilience import stream_with_resilience
+from .services.study_flow import _get_study_flow, get_workflow_state
+
 
 class SSERenderer(BaseRenderer):
     media_type = 'text/event-stream'
@@ -39,6 +43,32 @@ class SSERenderer(BaseRenderer):
 
 logger = get_logger(__name__)
 file_manager = get_file_manager()
+
+
+def _safe_publish_workflow_event(
+    event_type: EventType,
+    thread_id: str,
+    data: dict,
+    user_id=None,
+) -> None:
+    """安全发布工作流事件到 task 频道，吞掉异常以避免影响 SSE 主流程。
+
+    用于在 SSE 流式输出时同步推送 WebSocket 事件，使其他浏览器也能收到进度。
+    """
+    try:
+        payload = {
+            'source': EventSource.LEARNING.value,
+            'source_id': thread_id,
+            'thread_id': thread_id,
+            **data,
+        }
+        publish_event_sync(
+            event_type, payload,
+            task_id=thread_id,
+            user_id=str(user_id) if user_id is not None else None,
+        )
+    except Exception as e:
+        logger.warning(f"[API] publish_event_sync 失败: {event_type}, {e}")
 
 
 class _WorkflowJSONEncoder(json.JSONEncoder):
@@ -81,7 +111,8 @@ class WorkflowStartView(APIView):
             result = WorkflowService.start_workflow(
                 user_question=user_question,
                 thread_id=serializer.validated_data.get('thread_id'),
-                user_id=request.user.id
+                user_id=request.user.id,
+                knowledge_base_ids=serializer.validated_data.get('knowledge_base_ids'),
             )
 
             try:
@@ -102,7 +133,7 @@ class WorkflowStartView(APIView):
             )
 
         except Exception as e:
-            logger.error(f"[API] 启动工作流失败：{str(e)}", exc_info=True)
+            logger.error(f"[API] 启动工作流失败：{e!s}", exc_info=True)
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
                 message=str(e),
@@ -129,13 +160,12 @@ class WorkflowStartStreamView(APIView):
         """
         启动工作流并以SSE流式返回执行进度
 
-        SSE事件类型：
-        - start: 工作流开始
-        - step: 步骤更新
-        - state_update: 状态更新（含完整数据）
-        - waiting: 等待用户输入
-        - complete: 工作流完成
-        - error: 错误
+        SSE事件类型（统一为 workflow_* 格式，与 EventType 枚举对齐）：
+        - workflow_step: 工作流步骤更新（含 step / message）
+        - workflow_state_update: 状态更新（含完整数据，如 learning_plan / quiz 等）
+        - workflow_completed: 工作流完成
+        - workflow_failed: 工作流失败
+        - error: 旧版兼容错误事件
         """
         serializer = WorkflowStartSerializer(data=request.data)
         if not serializer.is_valid():
@@ -147,21 +177,32 @@ class WorkflowStartStreamView(APIView):
         user_question = serializer.validated_data.get('user_question') or serializer.validated_data.get('query')
         thread_id = serializer.validated_data.get('thread_id') or f"study_{uuid.uuid4().hex[:12]}"
         user_id = request.user.id
+        knowledge_base_ids = serializer.validated_data.get('knowledge_base_ids') or []
 
         logger.info(f"[API] 流式启动工作流，thread_id={thread_id}")
 
         def event_stream():
             try:
-                yield f"data: {json.dumps({'type': 'start', 'thread_id': thread_id, 'message': '工作流启动中...'}, ensure_ascii=False)}\n\n"
+                # 工作流开始事件（统一格式 + 同步推送 WS）
+                start_event = {'type': 'workflow_step', 'data': {'step': 'start', 'message': '工作流启动中...', 'thread_id': thread_id}}
+                yield f"data: {json.dumps(start_event, ensure_ascii=False)}\n\n"
+                _safe_publish_workflow_event(
+                    EventType.WORKFLOW_STEP, thread_id,
+                    {'step': 'start', 'message': '工作流启动中...'},
+                    user_id=user_id,
+                )
 
-                from .study_flow import _get_study_flow, StudyFlowState
                 from datetime import datetime
+
+                from .study_flow import _get_study_flow
 
                 study_flow = _get_study_flow(thread_id)
 
                 initial_state = {
                     "messages": [],
                     "user_question": user_question,
+                    "user_id": user_id,
+                    "knowledge_base_ids": list(knowledge_base_ids),
                     "learning_plan": None,
                     "retrieved_docs": None,
                     "quiz": None,
@@ -181,9 +222,17 @@ class WorkflowStartStreamView(APIView):
 
                 config = {"configurable": {"thread_id": thread_id}}
 
-                yield f"data: {json.dumps({'type': 'step', 'step': 'planner', 'message': '正在生成学习计划...'}, ensure_ascii=False)}\n\n"
+                # planner 步骤事件
+                planner_event = {'type': 'workflow_step', 'data': {'step': 'planner', 'message': '正在生成学习计划...'}}
+                yield f"data: {json.dumps(planner_event, ensure_ascii=False)}\n\n"
+                _safe_publish_workflow_event(
+                    EventType.WORKFLOW_STEP, thread_id,
+                    {'step': 'planner', 'message': '正在生成学习计划...'},
+                    user_id=user_id,
+                )
 
-                for event in study_flow.graph.stream(initial_state, config, stream_mode="values"):
+                # 使用 stream_with_resilience 替代直接 graph.stream
+                for event in stream_with_resilience(study_flow.graph, initial_state, config, stream_mode="values"):
                     if not event:
                         continue
 
@@ -201,13 +250,20 @@ class WorkflowStartStreamView(APIView):
 
                     step_message = step_messages.get(current_step, f'当前步骤: {current_step}')
 
-                    yield f"data: {json.dumps({'type': 'step', 'step': current_step, 'message': step_message}, ensure_ascii=False)}\n\n"
+                    step_evt = {'type': 'workflow_step', 'data': {'step': current_step, 'message': step_message}}
+                    yield f"data: {json.dumps(step_evt, ensure_ascii=False)}\n\n"
+                    _safe_publish_workflow_event(
+                        EventType.WORKFLOW_STEP, thread_id,
+                        {'step': current_step, 'message': step_message},
+                        user_id=user_id,
+                    )
 
                     if current_step == 'waiting_for_answers':
                         waiting_data = {
-                            'type': 'waiting',
-                            'step': current_step,
+                            'type': 'workflow_state_update',
                             'data': {
+                                'step': current_step,
+                                'state': 'waiting_for_answers',
                                 'thread_id': thread_id,
                                 'learning_plan': event.get('learning_plan'),
                                 'quiz': event.get('quiz'),
@@ -215,20 +271,48 @@ class WorkflowStartStreamView(APIView):
                             }
                         }
                         yield f"data: {json.dumps(waiting_data, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
+                        _safe_publish_workflow_event(
+                            EventType.WORKFLOW_STATE_UPDATE, thread_id,
+                            {
+                                'step': current_step,
+                                'state': 'waiting_for_answers',
+                                'message': '等待用户提交答案',
+                                'learning_plan': event.get('learning_plan'),
+                                'quiz': event.get('quiz'),
+                            },
+                            user_id=user_id,
+                        )
                         break
 
                     state_data = {
-                        'type': 'state_update',
-                        'step': current_step,
+                        'type': 'workflow_state_update',
                         'data': {
+                            'step': current_step,
                             'learning_plan': event.get('learning_plan'),
                             'retrieved_docs': event.get('retrieved_docs'),
                             'quiz': event.get('quiz'),
                         }
                     }
                     yield f"data: {json.dumps(state_data, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
+                    _safe_publish_workflow_event(
+                        EventType.WORKFLOW_STATE_UPDATE, thread_id,
+                        {
+                            'step': current_step,
+                            'learning_plan': event.get('learning_plan'),
+                            'retrieved_docs': event.get('retrieved_docs'),
+                            'quiz': event.get('quiz'),
+                        },
+                        user_id=user_id,
+                    )
 
-                yield f"data: {json.dumps({'type': 'complete', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
+                # 工作流完成事件
+                complete_evt = {'type': 'workflow_completed', 'data': {'thread_id': thread_id}}
+                yield f"data: {json.dumps(complete_evt, ensure_ascii=False)}\n\n"
+                _safe_publish_workflow_event(
+                    EventType.WORKFLOW_COMPLETED, thread_id,
+                    {'step': 'completed'},
+                    user_id=user_id,
+                )
 
                 try:
                     from .services.persistence_service import get_persistence_service
@@ -242,7 +326,13 @@ class WorkflowStartStreamView(APIView):
                     logger.warning(f"持久化工作流会话失败: {persist_err}")
 
             except Exception as e:
-                logger.error(f"[API] 流式工作流执行失败：{str(e)}", exc_info=True)
+                logger.error(f"[API] 流式工作流执行失败：{e!s}", exc_info=True)
+                # 工作流失败事件
+                _safe_publish_workflow_event(
+                    EventType.WORKFLOW_FAILED, thread_id,
+                    {'step': 'planner', 'error': str(e)},
+                    user_id=user_id,
+                )
                 yield sse_error_event(code="50001", message=str(e))
 
         return sse_response(event_stream())
@@ -311,7 +401,7 @@ class WorkflowSubmitView(APIView):
             )
 
         except Exception as e:
-            logger.error(f"[API] 提交答案失败：{str(e)}", exc_info=True)
+            logger.error(f"[API] 提交答案失败：{e!s}", exc_info=True)
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
                 message=str(e),
@@ -368,7 +458,7 @@ class WorkflowStatusView(APIView):
             )
 
         except Exception as e:
-            logger.error(f"[API] 查询状态失败：{str(e)}", exc_info=True)
+            logger.error(f"[API] 查询状态失败：{e!s}", exc_info=True)
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
                 message=str(e),
@@ -400,7 +490,7 @@ class WorkflowHistoryView(APIView):
             )
 
         except Exception as e:
-            logger.error(f"[API] 查询历史失败：{str(e)}", exc_info=True)
+            logger.error(f"[API] 查询历史失败：{e!s}", exc_info=True)
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
                 message=str(e),
@@ -421,7 +511,7 @@ class WorkflowDeleteView(APIView):
             )
 
         except Exception as e:
-            logger.error(f"[API] 删除工作流失败：{str(e)}", exc_info=True)
+            logger.error(f"[API] 删除工作流失败：{e!s}", exc_info=True)
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
                 message=str(e),
@@ -464,7 +554,7 @@ class WorkflowListView(APIView):
             )
 
         except Exception as e:
-            logger.error(f"[API] 获取工作流列表失败：{str(e)}", exc_info=True)
+            logger.error(f"[API] 获取工作流列表失败：{e!s}", exc_info=True)
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
                 message=str(e),
@@ -490,7 +580,7 @@ class WorkflowFilesListView(APIView):
                 )
 
             files = file_manager.list_task_files(thread_id, 'workflow')
-            
+
             from Django_xm.common.serializers import FileInfoSerializer
             serializer = FileInfoSerializer([f.to_dict() for f in files], many=True)
 
@@ -611,7 +701,7 @@ def workflow_stream(request, thread_id):
     使用 LangGraph 的 stream 方法获取真实的事件流
     支持Authorization header和查询参数token认证
     """
-    from Django_xm.common.sse_utils import authenticate_sse_request, sse_error_response, sse_error_event
+    from Django_xm.common.sse_utils import authenticate_sse_request, sse_error_event, sse_error_response
 
     user = authenticate_sse_request(request)
 
@@ -645,7 +735,7 @@ def workflow_stream(request, thread_id):
         logger.info(f"[API] 流式获取工作流，thread_id={thread_id}, user_id={user.id}")
 
         def event_stream():
-            """生成 SSE 事件流"""
+            """生成 SSE 事件流（统一 workflow_* 事件格式，与 EventType 枚举对齐）"""
             try:
                 state = get_workflow_state(thread_id)
 
@@ -654,50 +744,161 @@ def workflow_stream(request, thread_id):
                     return
 
                 current_step = state.get('current_step', 'unknown')
-                yield f"data: {json.dumps({'type': 'start', 'state': current_step}, ensure_ascii=False)}\n\n"
+                # 工作流开始事件
+                yield f"data: {json.dumps({'type': 'workflow_step', 'data': {'step': 'start', 'message': '工作流启动中...', 'state': current_step}}, ensure_ascii=False)}\n\n"
+                _safe_publish_workflow_event(
+                    EventType.WORKFLOW_STEP, thread_id,
+                    {'step': 'start', 'message': '工作流启动中...', 'state': current_step},
+                    user_id=user.id,
+                )
 
                 if current_step == 'waiting_for_answers':
-                    yield f"data: {json.dumps({'type': 'state_update', 'step': current_step, 'data': {'learning_plan': state.get('learning_plan'), 'quiz': state.get('quiz'), 'current_step': current_step, 'thread_id': thread_id}}, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
-                    yield f"data: {json.dumps({'type': 'waiting', 'step': current_step, 'message': '等待用户提交答案'}, ensure_ascii=False)}\n\n"
-                    yield f"data: {json.dumps({'type': 'complete'}, ensure_ascii=False)}\n\n"
+                    waiting_state_evt = {
+                        'type': 'workflow_state_update',
+                        'data': {
+                            'step': current_step,
+                            'state': 'waiting_for_answers',
+                            'learning_plan': state.get('learning_plan'),
+                            'quiz': state.get('quiz'),
+                            'current_step': current_step,
+                            'thread_id': thread_id,
+                        }
+                    }
+                    yield f"data: {json.dumps(waiting_state_evt, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
+                    _safe_publish_workflow_event(
+                        EventType.WORKFLOW_STATE_UPDATE, thread_id,
+                        {
+                            'step': current_step,
+                            'state': 'waiting_for_answers',
+                            'message': '等待用户提交答案',
+                        },
+                        user_id=user.id,
+                    )
+                    complete_evt = {'type': 'workflow_completed', 'data': {'thread_id': thread_id}}
+                    yield f"data: {json.dumps(complete_evt, ensure_ascii=False)}\n\n"
+                    _safe_publish_workflow_event(
+                        EventType.WORKFLOW_COMPLETED, thread_id,
+                        {'step': current_step},
+                        user_id=user.id,
+                    )
                     return
 
                 if current_step in ('completed', 'end', 'feedback_completed'):
-                    yield f"data: {json.dumps({'type': 'state_update', 'step': current_step, 'data': {'score': state.get('score'), 'feedback': state.get('feedback'), 'score_details': state.get('score_details')}}, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
-                    yield f"data: {json.dumps({'type': 'complete'}, ensure_ascii=False)}\n\n"
+                    completed_state_evt = {
+                        'type': 'workflow_state_update',
+                        'data': {
+                            'step': current_step,
+                            'score': state.get('score'),
+                            'feedback': state.get('feedback'),
+                            'score_details': state.get('score_details'),
+                        }
+                    }
+                    yield f"data: {json.dumps(completed_state_evt, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
+                    _safe_publish_workflow_event(
+                        EventType.WORKFLOW_STATE_UPDATE, thread_id,
+                        {
+                            'step': current_step,
+                            'score': state.get('score'),
+                            'feedback': state.get('feedback'),
+                            'score_details': state.get('score_details'),
+                        },
+                        user_id=user.id,
+                    )
+                    complete_evt = {'type': 'workflow_completed', 'data': {'thread_id': thread_id}}
+                    yield f"data: {json.dumps(complete_evt, ensure_ascii=False)}\n\n"
+                    _safe_publish_workflow_event(
+                        EventType.WORKFLOW_COMPLETED, thread_id,
+                        {'step': current_step},
+                        user_id=user.id,
+                    )
                     return
 
                 study_flow = _get_study_flow(thread_id)
                 config = {"configurable": {"thread_id": thread_id}}
 
                 try:
-                    for event in study_flow.graph.stream(None, config, stream_mode="values"):
+                    # 使用 stream_with_resilience 替代直接 graph.stream
+                    for event in stream_with_resilience(study_flow.graph, None, config, stream_mode="values"):
                         if event:
                             step = event.get('current_step', 'unknown')
-                            yield f"data: {json.dumps({'type': 'state_update', 'step': step, 'data': event}, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
+                            state_update_evt = {
+                                'type': 'workflow_state_update',
+                                'data': {
+                                    'step': step,
+                                    'state': step,
+                                    'payload': event,
+                                }
+                            }
+                            yield f"data: {json.dumps(state_update_evt, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
+                            _safe_publish_workflow_event(
+                                EventType.WORKFLOW_STATE_UPDATE, thread_id,
+                                {'step': step, 'state': step},
+                                user_id=user.id,
+                            )
 
                             if step == 'waiting_for_answers':
-                                yield f"data: {json.dumps({'type': 'waiting', 'step': step, 'message': '等待用户提交答案'}, ensure_ascii=False)}\n\n"
-                                yield f"data: {json.dumps({'type': 'complete'}, ensure_ascii=False)}\n\n"
+                                waiting_evt = {
+                                    'type': 'workflow_state_update',
+                                    'data': {
+                                        'step': step,
+                                        'state': 'waiting_for_answers',
+                                        'message': '等待用户提交答案',
+                                    }
+                                }
+                                yield f"data: {json.dumps(waiting_evt, ensure_ascii=False)}\n\n"
+                                _safe_publish_workflow_event(
+                                    EventType.WORKFLOW_STATE_UPDATE, thread_id,
+                                    {
+                                        'step': step,
+                                        'state': 'waiting_for_answers',
+                                        'message': '等待用户提交答案',
+                                    },
+                                    user_id=user.id,
+                                )
+                                complete_evt = {'type': 'workflow_completed', 'data': {'thread_id': thread_id}}
+                                yield f"data: {json.dumps(complete_evt, ensure_ascii=False)}\n\n"
+                                _safe_publish_workflow_event(
+                                    EventType.WORKFLOW_COMPLETED, thread_id,
+                                    {'step': step},
+                                    user_id=user.id,
+                                )
                                 return
 
-                    yield f"data: {json.dumps({'type': 'complete'}, ensure_ascii=False)}\n\n"
+                    complete_evt = {'type': 'workflow_completed', 'data': {'thread_id': thread_id}}
+                    yield f"data: {json.dumps(complete_evt, ensure_ascii=False)}\n\n"
+                    _safe_publish_workflow_event(
+                        EventType.WORKFLOW_COMPLETED, thread_id,
+                        {'step': 'completed'},
+                        user_id=user.id,
+                    )
 
                 except Exception as stream_error:
                     logger.warning(f"[API] 流式执行失败：{stream_error}")
+                    _safe_publish_workflow_event(
+                        EventType.WORKFLOW_FAILED, thread_id,
+                        {'step': 'stream', 'error': str(stream_error)},
+                        user_id=user.id,
+                    )
                     yield sse_error_event(code="50001", message=str(stream_error))
-                    yield f"data: {json.dumps({'type': 'complete'}, ensure_ascii=False)}\n\n"
+                    complete_evt = {'type': 'workflow_completed', 'data': {'thread_id': thread_id}}
+                    yield f"data: {json.dumps(complete_evt, ensure_ascii=False)}\n\n"
 
             except Exception as e:
-                logger.error(f"[API] 流式输出失败：{str(e)}", exc_info=True)
+                logger.error(f"[API] 流式输出失败：{e!s}", exc_info=True)
+                _safe_publish_workflow_event(
+                    EventType.WORKFLOW_FAILED, thread_id,
+                    {'step': 'stream', 'error': str(e)},
+                    user_id=user.id if user else None,
+                )
                 yield sse_error_event(code="50001", message=str(e))
 
         return sse_response(event_stream())
 
     except Exception as e:
-        logger.error(f"[API] 流式输出失败：{str(e)}", exc_info=True)
+        error_msg = str(e)
+        logger.error(f"[API] 流式输出失败：{error_msg}", exc_info=True)
         def error_event():
-            yield sse_error_event(code="50001", message=str(e))
+            yield sse_error_event(code="50001", message=error_msg)
         return StreamingHttpResponse(
             error_event(),
             content_type='text/event-stream',

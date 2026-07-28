@@ -11,16 +11,17 @@ Ollama Chat Provider
     ollama pull qwen3:8b
     ollama serve
 """
-from typing import Any, Dict, Optional
+from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
-from Django_xm.apps.ai_engine.config import settings, get_logger
+from Django_xm.apps.ai_engine.config import settings
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
 
-def get_provider_config() -> Dict[str, Any]:
+def get_provider_config() -> dict[str, Any]:
     return {
         "base_url": getattr(settings, "ollama_base_url", "http://localhost:11435"),
         "model": getattr(settings, "ollama_model", "qwen3:8b"),
@@ -28,7 +29,7 @@ def get_provider_config() -> Dict[str, Any]:
 
 
 def create_chat_model(
-    model: Optional[str] = None,
+    model: str | None = None,
     temperature: float = 0.7,
     streaming: bool = False,
     **kwargs: Any,

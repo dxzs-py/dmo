@@ -1,11 +1,12 @@
 from __future__ import annotations
+
 import logging
-from typing import List, Any, Optional
+
 from langchain_core.tools import BaseTool
 
 logger = logging.getLogger(__name__)
 
-async def resolve_tools(config) -> List[BaseTool]:
+async def resolve_tools(config) -> list[BaseTool]:
     if config.tools is not None and len(config.tools) > 0:
         logger.info(f"使用显式工具集 ({len(config.tools)} 个)")
         return list(config.tools)

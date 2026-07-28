@@ -10,33 +10,34 @@ import uuid
 
 from django.core.cache import cache
 from django.http import HttpResponse
-from rest_framework import generics, status, serializers
+from rest_framework import generics, serializers, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView as _TokenRefreshView
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.views import TokenRefreshView as _TokenRefreshView
 
 from Django_xm.apps.core.throttling import LoginRateThrottle, SensitiveOperationRateThrottle
+from Django_xm.common.captcha_mixin import CaptchaMixin
+from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.responses import (
-    success_response,
     error_response,
+    success_response,
     validation_error_response,
 )
-from Django_xm.common.error_codes import ErrorCode
-from Django_xm.common.captcha_mixin import CaptchaMixin
 
+from .captcha import CaptchaGenerator
 from .models import User
 from .serializers import (
-    MyTokenObtainPairSerializer,
-    UserRegisterSerializer,
-    UserInfoSerializer,
-    ChangePasswordSerializer,
     BindPhoneSerializer,
-    UserProfileSerializer,
+    ChangePasswordSerializer,
+    MyTokenObtainPairSerializer,
+    UserInfoSerializer,
     UserPreferencesSerializer,
+    UserProfileSerializer,
+    UserRegisterSerializer,
 )
-from .captcha import CaptchaGenerator
+from .services import LoginSecurityService
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,19 @@ class MyObtainTokenPairView(CaptchaMixin, TokenObtainPairView):
         if captcha_result is not None:
             return captcha_result
 
+        # 提取 username 用于登录失败锁定（按账号维度，防暴力破解）
+        username = (request.data.get('username') or '').strip()
+
+        # 账号锁定检查：即使密码正确也拒绝，必须等待锁定期过
+        if LoginSecurityService.is_locked(username):
+            remaining = LoginSecurityService.get_remaining_lock_seconds(username)
+            minutes = max(1, remaining // 60)
+            return error_response(
+                code=ErrorCode.ACCOUNT_LOCKED,
+                message=f'账号已锁定，请 {minutes} 分钟后重试',
+                http_status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
         serializer = self.get_serializer(data=request.data)
         try:
             serializer.is_valid(raise_exception=True)
@@ -62,18 +76,27 @@ class MyObtainTokenPairView(CaptchaMixin, TokenObtainPairView):
             from rest_framework.exceptions import AuthenticationFailed as DRFAuthFailed
             from rest_framework.exceptions import NotAuthenticated as DRFNotAuthenticated
             if isinstance(e, (DRFAuthFailed, DRFNotAuthenticated)):
+                # 真正的认证失败（用户名不存在/密码错误）：记录失败次数（可能触发锁定）
+                fail_count = LoginSecurityService.record_failure(username)
+                remaining_attempts = max(0, LoginSecurityService.MAX_FAIL_COUNT - fail_count)
+                message = '用户名或密码错误，请重新输入'
+                if remaining_attempts > 0:
+                    message += f'，剩余尝试次数 {remaining_attempts} 次'
+                else:
+                    message += '，账号已锁定'
                 return error_response(
                     code=ErrorCode.LOGIN_FAILED,
-                    message='用户名或密码错误，请重新输入',
+                    message=message,
                     http_status=status.HTTP_401_UNAUTHORIZED
                 )
             if isinstance(e, serializers.ValidationError):
+                # 字段校验失败（如字段缺失/格式错误）：不计入失败次数
                 return error_response(
                     code=ErrorCode.LOGIN_FAILED,
                     message='用户名或密码错误，请重新输入',
                     http_status=status.HTTP_401_UNAUTHORIZED
                 )
-            logger.error(f"登录异常: {type(e).__name__}: {str(e)}", exc_info=True)
+            logger.error(f"登录异常: {type(e).__name__}: {e!s}", exc_info=True)
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
                 message='服务器错误，请稍后重试',
@@ -81,6 +104,8 @@ class MyObtainTokenPairView(CaptchaMixin, TokenObtainPairView):
             )
 
         user = serializer.user
+        # 登录成功：清除失败计数（避免历史失败影响）
+        LoginSecurityService.record_success(username)
         return success_response(
             data={
                 'id': user.id,
@@ -104,7 +129,7 @@ class MyTokenRefreshView(_TokenRefreshView):
         try:
             serializer.is_valid(raise_exception=True)
         except TokenError as e:
-            raise InvalidToken(e.args[0])
+            raise InvalidToken(e.args[0]) from e
         except User.DoesNotExist:
             return error_response(
                 code=ErrorCode.TOKEN_INVALID,
@@ -112,7 +137,7 @@ class MyTokenRefreshView(_TokenRefreshView):
                 http_status=status.HTTP_401_UNAUTHORIZED
             )
         except Exception as e:
-            logger.error(f"Token刷新异常: {type(e).__name__}: {str(e)}", exc_info=True)
+            logger.error(f"Token刷新异常: {type(e).__name__}: {e!s}", exc_info=True)
             return error_response(
                 code=ErrorCode.TOKEN_INVALID,
                 message='Token刷新失败，请重新登录',
@@ -136,29 +161,33 @@ class UserRegisterView(CaptchaMixin, generics.CreateAPIView):
     throttle_classes = [SensitiveOperationRateThrottle]
 
     def create(self, request, *args, **kwargs):
-        try:
-            captcha_result = self.verify_captcha(request.data)
-            if captcha_result is not None:
-                return captcha_result
+        """用户注册
 
-            serializer = self.get_serializer(data=request.data)
-            try:
-                serializer.is_valid(raise_exception=True)
-            except serializers.ValidationError as e:
-                logger.warning(f"注册验证失败: {str(e)}")
-                return validation_error_response(
-                    errors=serializer.errors,
-                    message='注册失败，请检查输入'
-                )
-            self.perform_create(serializer)
-            return success_response(
-                data=serializer.data,
-                message='注册成功',
-                http_status=status.HTTP_201_CREATED,
+        异常处理策略（与全局 custom_exception_handler 协同）：
+        - CaptchaMixin.verify_captcha 内部已返回结构化错误响应，不抛异常
+        - serializer.is_valid 抛 ValidationError → 本地捕获返回 400 + 字段错误
+        - 其他未预期异常（IntegrityError / 数据库故障等）不本地吞没，
+          冒泡到全局 custom_exception_handler 返回标准 500 响应
+        """
+        captcha_result = self.verify_captcha(request.data)
+        if captcha_result is not None:
+            return captcha_result
+
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except serializers.ValidationError as e:
+            logger.warning(f"注册验证失败: {e!s}")
+            return validation_error_response(
+                errors=serializer.errors,
+                message='注册失败，请检查输入'
             )
-        except Exception as e:
-            logger.exception("用户注册失败")
-            return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
+        self.perform_create(serializer)
+        return success_response(
+            data=serializer.data,
+            message='注册成功',
+            http_status=status.HTTP_201_CREATED,
+        )
 
 
 class UserInfoView(APIView):
@@ -174,7 +203,7 @@ class UserInfoView(APIView):
                 data=serializer.data,
                 message='获取成功'
             )
-        except Exception as e:
+        except Exception:
             logger.exception("获取用户信息失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -191,7 +220,7 @@ class UserInfoView(APIView):
                 errors=serializer.errors,
                 message='参数错误'
             )
-        except Exception as e:
+        except Exception:
             logger.exception("更新用户信息失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -211,7 +240,7 @@ class CaptchaView(APIView):
             return HttpResponse(image_buf, content_type='image/png', headers={
                 'X-Captcha-Key': captcha_key
             })
-        except Exception as e:
+        except Exception:
             logger.exception("获取验证码失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -255,7 +284,7 @@ class CaptchaVerifyView(APIView):
             return success_response(
                 message='验证成功'
             )
-        except Exception as e:
+        except Exception:
             logger.exception("验证验证码失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -273,81 +302,88 @@ class SecureLogoutView(APIView):
     支持两种认证方式：
     - access token（通过 request.user）
     - refresh token（即使 access token 已过期）
+
+    限流：登出为公开接口（permission_classes=[]），与登录接口访问模式类似，
+    采用 LoginRateThrottle（按 IP，5/min）防止滥用导致 token 黑名单膨胀。
     """
     permission_classes = []
+    throttle_classes = [LoginRateThrottle]
 
     def post(self, request):
-        try:
-            from rest_framework_simplejwt.tokens import RefreshToken
-            from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
-            from Django_xm.apps.cache_manager.services.secure_session_cache import SecureSessionCacheService
+        """安全登出
 
-            user_id = None
-            username = None
+        异常处理策略（与全局 custom_exception_handler 协同）：
+        - RefreshToken 解码失败：本地捕获（InvalidToken/TokenError），降级为"无有效会话"返回成功
+        - token.blacklist() 失败：本地捕获（黑名单基础设施故障不阻塞登出流程），日志记录后继续
+        - 其他未预期异常（Redis 不可达 / 数据库故障等）冒泡到全局 custom_exception_handler
+          返回标准 500 响应，避免"清理失败仍返回成功"造成前端误判
+        """
+        from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+        from rest_framework_simplejwt.tokens import RefreshToken
 
-            if request.user and request.user.is_authenticated:
-                user_id = request.user.id
-                username = request.user.username
-            else:
-                refresh_token = request.data.get('refresh')
-                if refresh_token:
-                    try:
-                        token = RefreshToken(refresh_token)
-                        user_id = token['user_id']
-                        user = User.objects.filter(id=user_id).first()
-                        if user:
-                            username = user.username
-                    except (InvalidToken, TokenError, Exception) as e:
-                        logger.warning(f"Failed to decode refresh token for logout: {str(e)}")
+        from Django_xm.apps.cache_manager.services.secure_session_cache import SecureSessionCacheService
 
-            if not user_id:
-                return success_response(
-                    data={
-                        'sessions_cleared': 0,
-                        'token_blacklisted': False
-                    },
-                    message='登出成功（无有效会话）'
-                )
+        user_id = None
+        username = None
 
+        if request.user and request.user.is_authenticated:
+            user_id = request.user.id
+            username = request.user.username
+        else:
             refresh_token = request.data.get('refresh')
-            token_blacklisted = False
-
             if refresh_token:
                 try:
                     token = RefreshToken(refresh_token)
-                    token.blacklist()
-                    token_blacklisted = True
-                    logger.info(f"Blacklisted refresh token for user {username}")
-                except Exception as e:
-                    logger.warning(f"Failed to blacklist token: {str(e)}")
+                    user_id = token['user_id']
+                    user = User.objects.filter(id=user_id).first()
+                    if user:
+                        username = user.username
+                except (InvalidToken, TokenError) as e:
+                    logger.warning(f"Failed to decode refresh token for logout: {e!s}")
 
-            invalidated_count = SecureSessionCacheService.invalidate_all_user_sessions(user_id)
-
-            if hasattr(request, 'session'):
-                request.session.flush()
-
-            logger.info(
-                f"User {username} (ID: {user_id}) logged out securely. "
-                f"Invalidated {invalidated_count} cached sessions."
-            )
-
-            return success_response(
-                data={
-                    'sessions_cleared': invalidated_count,
-                    'token_blacklisted': token_blacklisted
-                },
-                message='安全登出成功'
-            )
-
-        except Exception as e:
-            logger.error(f"Secure logout failed: {str(e)}")
+        if not user_id:
             return success_response(
                 data={
                     'sessions_cleared': 0,
                     'token_blacklisted': False
                 },
-                message='登出成功（清理完成）'
+                message='登出成功（无有效会话）'
             )
+
+        refresh_token = request.data.get('refresh')
+        token_blacklisted = False
+
+        if refresh_token:
+            try:
+                token = RefreshToken(refresh_token)
+                token.blacklist()
+                token_blacklisted = True
+                logger.info(f"Blacklisted refresh token for user {username}")
+            except (InvalidToken, TokenError) as e:
+                # Token 无效/已过期不阻塞登出（用户本就要求登出）
+                logger.warning(f"Failed to blacklist token (invalid): {e!s}")
+            except Exception as e:
+                # 黑名单基础设施故障（Redis 不可达等）不阻塞登出流程，
+                # 但记录 warning 便于运维定位
+                logger.warning(f"Failed to blacklist token: {e!s}")
+
+        invalidated_count = SecureSessionCacheService.invalidate_all_user_sessions(user_id)
+
+        if hasattr(request, 'session'):
+            request.session.flush()
+
+        logger.info(
+            f"User {username} (ID: {user_id}) logged out securely. "
+            f"Invalidated {invalidated_count} cached sessions."
+        )
+
+        return success_response(
+            data={
+                'sessions_cleared': invalidated_count,
+                'token_blacklisted': token_blacklisted
+            },
+            message='安全登出成功'
+        )
 
 
 class UserProfileView(APIView):
@@ -370,7 +406,7 @@ class UserProfileView(APIView):
             user.save()
             out = UserInfoSerializer(user)
             return success_response(data=out.data, message='资料更新成功')
-        except Exception as e:
+        except Exception:
             logger.exception("更新用户资料失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -415,7 +451,7 @@ class UserAvatarView(APIView):
             user.save()
             serializer = UserInfoSerializer(user)
             return success_response(data=serializer.data, message='头像更新成功')
-        except Exception as e:
+        except Exception:
             logger.exception("上传头像失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -439,7 +475,7 @@ class ChangePasswordView(APIView):
             user.set_password(serializer.validated_data['new_password'])
             user.save()
             return success_response(message='密码修改成功')
-        except Exception as e:
+        except Exception:
             logger.exception("修改密码失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -463,7 +499,7 @@ class BindPhoneView(APIView):
             user.save()
             serializer_out = UserInfoSerializer(user)
             return success_response(data=serializer_out.data, message='手机号绑定成功')
-        except Exception as e:
+        except Exception:
             logger.exception("绑定手机号失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -481,7 +517,7 @@ class UserPreferencesView(APIView):
                 'auto_save_sessions': user.auto_save_sessions,
             }
             return success_response(data=preferences)
-        except Exception as e:
+        except Exception:
             logger.exception("获取用户偏好设置失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -499,7 +535,7 @@ class UserPreferencesView(APIView):
                 setattr(user, field, value)
             user.save()
             return success_response(message='偏好设置更新成功')
-        except Exception as e:
+        except Exception:
             logger.exception("更新用户偏好设置失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -517,7 +553,7 @@ class UserUsageStatsView(APIView):
                 'active_days': getattr(user, 'active_days', 0),
             }
             return success_response(data=stats)
-        except Exception as e:
+        except Exception:
             logger.exception("获取用户使用统计失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
 
@@ -540,6 +576,6 @@ class UserAccountDeleteView(APIView):
             )
 
             return success_response(message='账户已成功注销')
-        except Exception as e:
+        except Exception:
             logger.exception("注销账户失败")
             return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')

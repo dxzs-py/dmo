@@ -1,14 +1,21 @@
+"""深度研究模块序列化器。"""
+from __future__ import annotations
+
 from rest_framework import serializers
+
 from .models import ResearchTask
-from Django_xm.common.serializers import FileInfoSerializer
+
+# 允许的研究深度枚举
+RESEARCH_DEPTH_CHOICES: tuple[str, ...] = ('basic', 'standard', 'comprehensive')
 
 
 class ResearchStartSerializer(serializers.Serializer):
-    """深度研究启动请求序列化器"""
+    """深度研究启动请求序列化器。"""
     query = serializers.CharField(
         min_length=1,
+        max_length=10000,
         required=True,
-        help_text="研究问题"
+        help_text="研究问题（最长 10000 字符）"
     )
     thread_id = serializers.CharField(
         required=False,
@@ -22,7 +29,7 @@ class ResearchStartSerializer(serializers.Serializer):
     )
     research_depth = serializers.CharField(
         default='standard',
-        help_text="研究深度：basic, standard, comprehensive"
+        help_text="研究深度：basic / standard / comprehensive"
     )
     enable_web_search = serializers.BooleanField(
         default=True,
@@ -93,6 +100,25 @@ class ResearchStartSerializer(serializers.Serializer):
         allow_null=True,
         help_text="模型专属参数（如 thinking、reasoning_effort）"
     )
+
+    def validate_research_depth(self, value: str) -> str:
+        """校验研究深度枚举值。
+
+        Args:
+            value: 待校验的研究深度字符串。
+
+        Returns:
+            校验通过后的研究深度字符串。
+
+        Raises:
+            serializers.ValidationError: 值不在允许枚举内时抛出。
+        """
+        if value not in RESEARCH_DEPTH_CHOICES:
+            raise serializers.ValidationError(
+                f"不支持的研究深度: {value}，必须是 "
+                f"{', '.join(RESEARCH_DEPTH_CHOICES)} 之一"
+            )
+        return value
 
     def validate(self, data):
         if data.get('enable_doc_analysis') and not data.get('knowledge_base_ids'):

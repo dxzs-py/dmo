@@ -8,14 +8,14 @@
 注意：当前 settings 中只有 baidu_qianfan_api_key（作为 qianfan_ak 使用）。
 qianfan_sk 通过环境变量 QIANFAN_SK 注入，避免 settings 字段膨胀。
 """
-from typing import Any, Dict, Optional
+from typing import Any
 
 from langchain_core.embeddings import Embeddings
 
 from Django_xm.apps.ai_engine.config import settings
 
 
-def get_provider_config() -> Dict[str, Any]:
+def get_provider_config() -> dict[str, Any]:
     return {
         "qianfan_ak": settings.baidu_qianfan_api_key,
         "endpoint": settings.baidu_qianfan_api_base,
@@ -23,8 +23,8 @@ def get_provider_config() -> Dict[str, Any]:
 
 
 def create_embedding(
-    model: Optional[str] = None,
-    dimensions: Optional[int] = None,
+    model: str | None = None,
+    dimensions: int | None = None,
     **kwargs: Any,
 ) -> Embeddings:
     """使用百度千帆官方 SDK 创建 Embeddings 实例
@@ -41,7 +41,7 @@ def create_embedding(
     from langchain_community.embeddings import QianfanEmbeddingsEndpoint
 
     cfg = get_provider_config()
-    init_kwargs: Dict[str, Any] = {
+    init_kwargs: dict[str, Any] = {
         "qianfan_ak": cfg["qianfan_ak"],
     }
     if model:

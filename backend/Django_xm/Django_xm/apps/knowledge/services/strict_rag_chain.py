@@ -11,16 +11,15 @@
 """
 
 import asyncio
-import logging
-from typing import Dict, Any, List, Optional
+from typing import Any
 
-from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import Document
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from langchain_core.messages import HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough, RunnableParallel
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.runnables import RunnablePassthrough
 
 from Django_xm.apps.core.logging_utils import get_logger
 
@@ -39,7 +38,7 @@ def _resolve_chat_model(model, streaming: bool = False) -> BaseChatModel:
     Returns:
         BaseChatModel 实例（可能带 fallback）
     """
-    from Django_xm.apps.knowledge.config import get_chat_model, get_model_string
+    from Django_xm.apps.knowledge.config import get_chat_model
 
     if model is None:
         return get_chat_model(streaming=streaming)
@@ -82,7 +81,7 @@ STRICT_RAG_QA_PROMPT = """基于以下参考资料回答用户问题。如果参
 回答（仅基于上述参考资料，不得使用自身知识）："""
 
 
-def _format_docs(docs: List[Document]) -> str:
+def _format_docs(docs: list[Document]) -> str:
     """将检索到的文档格式化为上下文字符串"""
     if not docs:
         return "（未检索到任何相关文档）"
@@ -108,7 +107,7 @@ def _format_docs(docs: List[Document]) -> str:
     return result
 
 
-def _extract_sources(docs: List[Document]) -> List[Dict[str, Any]]:
+def _extract_sources(docs: list[Document]) -> list[dict[str, Any]]:
     """从检索文档中提取来源信息"""
     sources = []
     seen_sources = set()
@@ -127,7 +126,7 @@ def _extract_sources(docs: List[Document]) -> List[Dict[str, Any]]:
     return sources
 
 
-async def _hyde_rewrite_query(query: str, llm: Optional[BaseChatModel] = None) -> str:
+async def _hyde_rewrite_query(query: str, llm: BaseChatModel | None = None) -> str:
     """HyDE 查询改写，失败时回退到原始查询
 
     Args:
@@ -160,7 +159,7 @@ async def _hyde_rewrite_query(query: str, llm: Optional[BaseChatModel] = None) -
         return query
 
 
-def _hyde_rewrite_query_sync(query: str, llm: Optional[BaseChatModel] = None) -> str:
+def _hyde_rewrite_query_sync(query: str, llm: BaseChatModel | None = None) -> str:
     """HyDE 查询改写（同步版本），失败时回退到原始查询
 
     Args:
@@ -195,9 +194,9 @@ def _hyde_rewrite_query_sync(query: str, llm: Optional[BaseChatModel] = None) ->
 
 def create_strict_rag_chain(
     retriever: BaseRetriever,
-    model: Optional[Any] = None,
+    model: Any | None = None,
     streaming: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     创建严格 RAG Chain
 
@@ -223,7 +222,7 @@ def create_strict_rag_chain(
 
     prompt = ChatPromptTemplate.from_template(STRICT_RAG_QA_PROMPT)
 
-    def retrieve_and_format(query: str) -> Dict[str, Any]:
+    def retrieve_and_format(query: str) -> dict[str, Any]:
         """检索并格式化文档"""
         docs = retriever.invoke(query)
         context = _format_docs(docs)
@@ -265,11 +264,11 @@ def _get_chat_model(model_string: str):
 def query_strict_rag(
     retriever: BaseRetriever,
     query: str,
-    model: Optional[Any] = None,
+    model: Any | None = None,
     k: int = 4,
     use_hyde: bool = True,
     collection_name: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     严格 RAG 查询（同步）
 
@@ -285,8 +284,6 @@ def query_strict_rag(
         包含 answer、sources、retrieved_docs 的字典
     """
     from Django_xm.apps.knowledge.services.retrieval_service import (
-        DegradableRetriever,
-        wrap_with_degradation,
         _is_embedding_error,
         _keyword_search_fallback,
         _record_degradation_metric,
@@ -361,11 +358,11 @@ def query_strict_rag(
 async def aquery_strict_rag(
     retriever: BaseRetriever,
     query: str,
-    model: Optional[Any] = None,
+    model: Any | None = None,
     k: int = 4,
     use_hyde: bool = True,
     collection_name: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     严格 RAG 查询（异步）
 
@@ -455,7 +452,7 @@ async def aquery_strict_rag(
 async def astream_strict_rag(
     retriever: BaseRetriever,
     query: str,
-    model: Optional[Any] = None,
+    model: Any | None = None,
     k: int = 4,
     use_hyde: bool = True,
     collection_name: str = "",
@@ -557,7 +554,7 @@ async def astream_strict_rag(
 def stream_strict_rag(
     retriever: BaseRetriever,
     query: str,
-    model: Optional[Any] = None,
+    model: Any | None = None,
     k: int = 4,
     use_hyde: bool = True,
     collection_name: str = "",

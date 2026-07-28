@@ -21,6 +21,11 @@ backend/Django_xm/logs/*
 backend/Django_xm/media/
 backend/Django_xm/data/media/
 
+# 运行时生成的数据目录与文件
+backend/Django_xm/data/celerybeat/
+**/snapshot.json
+*.pid
+
 # Node
 node_modules/
 

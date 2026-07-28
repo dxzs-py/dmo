@@ -5,13 +5,14 @@ Suggestion API Views
 """
 import logging
 
-from rest_framework.views import APIView
+from drf_spectacular.utils import extend_schema
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 
-from Django_xm.common.responses import success_response, error_response
-from Django_xm.common.error_codes import ErrorCode
 from Django_xm.apps.ai_engine.services.suggestion_service import generate_suggestions
 from Django_xm.apps.cache_manager.services.cache_service import CacheService, CacheTTL
+from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.responses import error_response, success_response
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class SuggestionsView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(view=False)
     def post(self, request):
         try:
             query = request.data.get('query', '').strip()
@@ -62,7 +64,7 @@ class SuggestionsView(APIView):
             CacheService.set(cache_key, suggestions, CacheTTL.QUERY_LONG)
 
             return success_response(data={'suggestions': suggestions})
-            
+
         except Exception as e:
             logger.error(f"生成建议失败: {e}", exc_info=True)
             return error_response(

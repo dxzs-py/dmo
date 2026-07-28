@@ -1,7 +1,8 @@
 """上下文管理 Admin 注册"""
 
 from django.contrib import admin
-from Django_xm.apps.context_manager.models import ContextRule, AutoMemory, PromptCache
+
+from Django_xm.apps.context_manager.models import AutoMemory, ContextRule, PromptCache
 
 
 @admin.register(ContextRule)

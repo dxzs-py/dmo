@@ -14,7 +14,6 @@ from __future__ import annotations
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from Django_xm.apps.core.config import get_logger  # noqa: F401 - re-export for backward compatibility
 
 
 class ContextManagerSettings(BaseSettings):

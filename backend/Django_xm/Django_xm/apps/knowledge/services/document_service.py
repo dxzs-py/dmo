@@ -5,7 +5,7 @@
 
 import os
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import Any
 
 from langchain_core.documents import Document
 
@@ -28,11 +28,11 @@ SUPPORTED_EXTENSIONS = {
 }
 
 
-def get_supported_extensions() -> Dict[str, str]:
+def get_supported_extensions() -> dict[str, str]:
     return SUPPORTED_EXTENSIONS.copy()
 
 
-def get_document_loader(file_path: str) -> Optional[Any]:
+def get_document_loader(file_path: str) -> Any | None:
     file_path = Path(file_path)
     extension = file_path.suffix.lower()
 
@@ -84,7 +84,7 @@ def get_document_loader(file_path: str) -> Optional[Any]:
         return None
 
 
-def load_document(file_path: str, add_metadata: bool = True) -> List[Document]:
+def load_document(file_path: str, add_metadata: bool = True) -> list[Document]:
     """加载单个文档"""
     file_path = Path(file_path)
 
@@ -126,9 +126,9 @@ def load_document(file_path: str, add_metadata: bool = True) -> List[Document]:
 def load_documents_from_directory(
     directory_path: str,
     recursive: bool = True,
-    extensions: Optional[List[str]] = None,
+    extensions: list[str] | None = None,
     add_metadata: bool = True,
-) -> List[Document]:
+) -> list[Document]:
     """从目录加载所有支持的文档"""
     directory_path = Path(directory_path)
 
@@ -138,7 +138,7 @@ def load_documents_from_directory(
     if not directory_path.is_dir():
         raise ValueError(f"不是目录: {directory_path}")
 
-    all_documents: List[Document] = []
+    all_documents: list[Document] = []
     loaded_count = 0
     failed_count = 0
 
@@ -179,13 +179,13 @@ def load_documents_from_directory(
 
 
 def load_documents_from_paths(
-    file_paths: List[str],
+    file_paths: list[str],
     show_progress: bool = True,
-) -> List[Document]:
+) -> list[Document]:
     """从文件路径列表加载文档"""
     logger.info(f"📚 开始加载 {len(file_paths)} 个文件")
 
-    all_documents: List[Document] = []
+    all_documents: list[Document] = []
     success_count = 0
     error_count = 0
 
@@ -203,7 +203,7 @@ def load_documents_from_paths(
             error_count += 1
             continue
 
-    logger.info(f"✅ 批量加载完成:")
+    logger.info("✅ 批量加载完成:")
     logger.info(f"   成功: {success_count} 个文件")
     logger.info(f"   失败: {error_count} 个文件")
     logger.info(f"   总计: {len(all_documents)} 个文档块")
@@ -214,11 +214,11 @@ def load_documents_from_paths(
 def load_directory(
     directory_path: str,
     glob_pattern: str = "**/*",
-    exclude_patterns: Optional[List[str]] = None,
+    exclude_patterns: list[str] | None = None,
     recursive: bool = True,
     show_progress: bool = True,
-    max_files: Optional[int] = None,
-) -> List[Document]:
+    max_files: int | None = None,
+) -> list[Document]:
     """
     批量加载目录中的文档（兼容源项目API）
     

@@ -54,11 +54,11 @@ def _normalize_tool_call(tool_call):
         "arguments": getattr(tool_call, "arguments", None),
     }
     if hasattr(tool_call, "function"):
-        normalized["function"] = {"arguments": getattr(tool_call, "function")}
+        normalized["function"] = {"arguments": tool_call.function}
     if hasattr(tool_call, "parameters"):
-        normalized["parameters"] = getattr(tool_call, "parameters")
+        normalized["parameters"] = tool_call.parameters
     if hasattr(tool_call, "input"):
-        normalized["input"] = getattr(tool_call, "input")
+        normalized["input"] = tool_call.input
     return normalized
 
 
@@ -132,3 +132,35 @@ def extract_tool_params(tool_call) -> dict:
         list(tool_call.keys()) if isinstance(tool_call, dict) else "non-dict",
     )
     return {}
+
+
+# 内部字段前缀：以 `_` 开头的键为流式累积器内部状态（如 `_index`、`_stream_state`），
+# 不应泄漏到工具参数 / 前端事件中。
+_INTERNAL_FIELD_PREFIX = "_"
+
+
+def strip_internal_fields(params):
+    """递归剔除参数字典中以 `_` 开头的内部字段。
+
+    用于在将工具参数发布到 SSE 事件 / 前端 approval 数据前，清理流式累积过程中
+    注入的内部状态字段（如 `_index`），避免内部状态污染外部契约。
+
+    - dict：递归剔除所有以 `_` 开头的键，返回新字典（不修改原字典）
+    - list：递归处理每个元素，返回新列表
+    - 其他类型：原样返回
+
+    Args:
+        params: 任意值，通常是 extract_tool_params 返回的 dict
+
+    Returns:
+        与输入同类型的清理后值
+    """
+    if isinstance(params, dict):
+        return {
+            k: strip_internal_fields(v)
+            for k, v in params.items()
+            if not (isinstance(k, str) and k.startswith(_INTERNAL_FIELD_PREFIX))
+        }
+    if isinstance(params, list):
+        return [strip_internal_fields(item) for item in params]
+    return params

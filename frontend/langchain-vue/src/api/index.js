@@ -1,5 +1,5 @@
 export { apiClient } from './axios'
-export { chatAPI, streamChat, chatApprovalStream } from './chat'
+export { chatAPI, streamChat } from './chat'
 export { toolsAPI } from './tools'
 export { knowledgeAPI, ragAPI } from './knowledge'
 export { cacheAPI } from './cache'

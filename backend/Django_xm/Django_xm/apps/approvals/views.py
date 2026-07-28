@@ -10,36 +10,77 @@
 
 import logging
 
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
+from drf_spectacular.utils import extend_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import JSONRenderer
-from django.http import JsonResponse
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
+from Django_xm.apps.approvals.mixins import BaseApprovalAccessMixin
 from Django_xm.apps.approvals.models import Approval
-from Django_xm.apps.approvals.serializers import ApprovalSerializer
+from Django_xm.apps.approvals.serializers import (
+    ApprovalReadSerializer,
+    ApprovalWriteSerializer,
+)
 from Django_xm.apps.approvals.services import approval_service
-from Django_xm.common.responses import success_response, error_response
+from Django_xm.apps.core.throttling import SensitiveOperationRateThrottle
 from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.responses import error_response, success_response
 from Django_xm.common.sse_utils import SSERenderer
 
 logger = logging.getLogger(__name__)
 
 
-def _waiting_json_response(interrupt_id, approval, approved, message=None):
-    """构建 waiting_for_others 的 JsonResponse。
+def _json_response(data, status_code=200):
+    """构造 DRF Response 并显式选择 JSONRenderer。
 
-    绕过 DRF Renderer（SSERenderer 会强制 content-type 为 text/event-stream），
-    确保前端 _executeChatApproval 能通过 content-type=application/json 识别
-    waiting_for_others 响应，正确设置 WAITING 状态显示"等待同批次"提示。
+    解决 ApprovalResumeView/ApprovalRejectView 的混合响应场景：
+    - ``renderer_classes = [JSONRenderer, SSERenderer]`` 允许两种 renderer
+    - 前端调用审批端点使用 fetchSSE，发送 ``Accept: text/event-stream``
+    - DRF 默认按 Accept 头选择 SSERenderer，导致 ``success_response``/``error_response``
+      返回的 JSON 数据被错误渲染为 ``text/event-stream`` content-type
 
-    与 ChatApprovalView 的 BUG H 修复保持一致。
+    本函数通过显式设置 ``accepted_renderer``/``accepted_media_type`` 强制使用 JSONRenderer，
+    实现"renderer 切换"：waiting/idempotent/error/success 走 JSONRenderer，
+    SSE 流式响应走 SSERenderer（通过 ``sse_response`` 返回 ``StreamingHttpResponse``）。
+
+    相比 ``JsonResponse`` 直接绕过 DRF，本方式保留 DRF Response 的中间件链路、
+    异常处理与协商上下文，符合 DRF 设计理念。
+
+    Args:
+        data: 响应数据（dict）
+        status_code: HTTP 状态码，默认 200
+
+    Returns:
+        配置好 JSONRenderer 的 DRF Response 对象
+    """
+    response = Response(data, status=status_code)
+    response.accepted_renderer = JSONRenderer()
+    response.accepted_media_type = 'application/json'
+    response.renderer_context = {}
+    return response
+
+
+def _build_waiting_data(interrupt_id, approval, approved, message=None):
+    """构建 waiting_for_others 响应数据。
+
+    返回数据结构统一为 {code, message, data}，与 ``success_response`` 一致。
+    前端通过 ``response.ok`` + ``response.json()`` 解析，识别 ``status='waiting_for_others'``
+    触发"等待同批次"提示。
+
+    Args:
+        interrupt_id: 审批中断 ID
+        approval: Approval 模型实例
+        approved: 用户实际决策（True=确认, False=拒绝）
+        message: 自定义提示消息（可选）
+
+    Returns:
+        dict: ``{code, message, data}`` 结构，可直接传给 ``_json_response``
     """
     approval_extra = getattr(approval, 'extra', None) or {}
     if not isinstance(approval_extra, dict):
         approval_extra = {}
-    return JsonResponse({
+    return {
         'code': 0,
         'message': message or '审批已记录，等待其他工具审批完成',
         'data': {
@@ -52,7 +93,7 @@ def _waiting_json_response(interrupt_id, approval, approved, message=None):
             'approved': approved,
             'message': message or '本工具已审批，等待同批次其他工具审批完成后开始执行...',
         }
-    })
+    }
 
 
 def _build_idempotent_data(interrupt_id):
@@ -105,118 +146,29 @@ def _build_idempotent_data(interrupt_id):
 
 
 async def _stream_learning_resume_generator(request, approval, resume_value):
-    """Learning 工作流审批恢复的异步 SSE 生成器。
+    """[已废弃] Learning 工作流审批恢复的异步 SSE 生成器。
 
-    通过 StudyFlow 重建 graph，使用 Command(resume=...) 恢复 LangGraph 执行，
-    并以 SSE 事件流推送后续输出。
+    learning 模块是纯学习评测工作流（StateGraph），无工具调用、无 agent、
+    不接入 ApprovalMiddleware（架构不匹配：ApprovalMiddleware 需挂载在
+    create_react_agent 的 after_model 钩子，learning 无此机制）。
 
-    流程：
-    1. 从 approval.extra 读取 graph_interrupt_id 与 langgraph_resume_id
-    2. 构造 Command(resume={langgraph_resume_id: resume_value})
-    3. 创建 StudyFlow（async checkpointer）
-    4. 流式恢复执行，推送工具事件和状态更新
-    5. 流结束后检测新的审批中断（批量审批场景）
+    原实现引用了 learning 模块中不存在的
+    `_publish_learning_tool_events` / `_detect_and_handle_learning_approval_interrupt`
+    函数，一旦 source='learning' 的 Approval 触发恢复流程会立即 ImportError。
+
+    此函数保留为占位，仅用于在 ApprovalResumeView/ApprovalRejectView 中
+    提供清晰的错误提示。若未来 learning 模块引入 agent 化改造并需要审批，
+    应重新实现此函数及 learning 侧的辅助函数。
     """
-    import json
-    import asyncio
-    from django.db import close_old_connections
-    from langgraph.types import Command
-
-    from Django_xm.common.sse_utils import sse_data_event, sse_error_event
-    from Django_xm.common.json_utils import WorkflowJSONEncoder
-    from Django_xm.apps.ai_engine.services.checkpointer_factory import get_async_checkpointer
-    from Django_xm.apps.learning.services.study_flow import StudyFlow
-    from Django_xm.apps.learning.views import (
-        _publish_learning_tool_events,
-        _detect_and_handle_learning_approval_interrupt,
+    from Django_xm.common.sse_utils import sse_error_event
+    yield sse_error_event(
+        code="50001",
+        message=(
+            "Learning 模块当前不接入 ApprovalMiddleware 审批机制"
+            "（learning 是纯学习评测工作流，无工具调用）。"
+            "若需启用，需先将 learning 改造为 agent 形态。"
+        ),
     )
-
-
-
-    thread_id = approval.source_id or approval.chat_session_id
-    if not thread_id:
-        yield sse_error_event(code="50001", message="审批缺少 source_id/chat_session_id，无法恢复工作流")
-        return
-
-    approval_extra = getattr(approval, 'extra', None) or {}
-    if not isinstance(approval_extra, dict):
-        approval_extra = {}
-    graph_interrupt_id = approval_extra.get('graph_interrupt_id')
-    langgraph_resume_id = approval_extra.get('langgraph_resume_id')
-
-    # 构造 Command(resume=...)
-    # Command(resume=...) 的 KEY 必须是 LangGraph 真正的 intr.id（langgraph_resume_id），
-    # 而非批次 UUID（graph_interrupt_id）或 tool_call_id（approval.interrupt_id）。
-    # langgraph_resume_id 由 _detect_and_handle_learning_approval_interrupt 存入 approval.extra，
-    # 缺失时回退到 approval.interrupt_id（单条格式场景下两者相同）。
-    effective_resume_key = langgraph_resume_id or approval.interrupt_id
-    command = Command(resume={effective_resume_key: resume_value})
-
-    logger.info(
-        f"[LearningResume] 恢复工作流: thread_id={thread_id}, "
-        f"interrupt_id={approval.interrupt_id}, graph_interrupt_id={graph_interrupt_id}, "
-        f"langgraph_resume_id={langgraph_resume_id}, "
-        f"effective_resume_key={effective_resume_key}, "
-        f"resume_value={resume_value!r}"
-    )
-
-    try:
-        yield sse_data_event({'type': 'start', 'message': '审批恢复，继续执行工作流...'})
-
-        async_cp = await get_async_checkpointer()
-        if async_cp is None:
-            yield sse_error_event(code="50001", message="异步 Checkpointer 不可用，无法恢复工作流")
-            return
-
-        study_flow = StudyFlow(thread_id=thread_id, checkpointer=async_cp)
-        config = {"configurable": {"thread_id": thread_id}}
-
-        published_tool_starts = set()
-        published_tool_results = set()
-
-        async for event in study_flow.graph.astream(command, config, stream_mode="values"):
-            if not event:
-                continue
-
-            # 检测 AIMessage tool_calls 和 ToolMessage，通过统一接口发布工具事件
-            await _publish_learning_tool_events(
-                event, thread_id, published_tool_starts, published_tool_results
-            )
-
-            current_step = event.get('current_step', 'unknown')
-            yield f"data: {json.dumps({'type': 'state_update', 'step': current_step, 'data': event}, ensure_ascii=False, cls=WorkflowJSONEncoder)}\n\n"
-
-            if current_step == 'waiting_for_answers':
-                yield sse_data_event({'type': 'waiting', 'step': current_step, 'message': '等待用户提交答案'})
-                yield sse_data_event({'type': 'complete'})
-                return
-
-        # 审批中断检测：恢复流可能触发新的审批中断（批量审批场景）
-        approval_data_list = await _detect_and_handle_learning_approval_interrupt(
-            study_flow, config, thread_id, request.user.id
-        )
-        if approval_data_list:
-            for approval_data in approval_data_list:
-                yield f"data: {json.dumps({'type': 'approval', 'data': approval_data}, ensure_ascii=False, cls=WorkflowJSONEncoder)}\n\n"
-            yield sse_data_event({
-                'type': 'interrupted',
-                'data': {'reason': 'approval_required'},
-            })
-            logger.info(
-                f"[LearningResume] 恢复流因审批中断暂停: thread_id={thread_id}, "
-                f"审批数={len(approval_data_list)}"
-            )
-        else:
-            yield sse_data_event({'type': 'complete'})
-
-    except asyncio.CancelledError:
-        logger.info(f"[LearningResume] 客户端断开: thread_id={thread_id}")
-        raise
-    except Exception as e:
-        logger.error(f"[LearningResume] 恢复失败: thread_id={thread_id}, error={str(e)}", exc_info=True)
-        yield sse_error_event(code="50001", message=str(e))
-    finally:
-        close_old_connections()
 
 
 def _stream_chat_resume_sse(request, approval, resume_value, session_id, approved,
@@ -293,7 +245,7 @@ def _aggregate_batch_resume(request, approval, resume_value, session_id, approve
                             interrupt_id, log_prefix):
     """批量审批聚合恢复检查（chat / deep_research 共用）。
 
-    参考 ChatApprovalView.post 的聚合恢复逻辑：
+    聚合恢复逻辑：
     1. 从 approval.extra 读取 graph_interrupt_id 与 langgraph_resume_id
     2. 若 graph_interrupt_id 存在且不等于当前 interrupt_id，说明是批量审批场景
     3. 检查同一 graph_interrupt_id 下是否还有 pending siblings
@@ -331,7 +283,7 @@ def _aggregate_batch_resume(request, approval, resume_value, session_id, approve
 
         if pending_siblings.exists():
             # 还有未审批的工具，返回等待状态（不触发 LangGraph 恢复）
-            # 使用 JsonResponse 绕过 SSERenderer，确保 content-type=application/json，
+            # 通过 _json_response 显式选择 JSONRenderer，确保 content-type=application/json，
             # 前端 _executeChatApproval 能正确识别 waiting_for_others 响应
             logger.info(
                 f"{log_prefix} 聚合恢复等待: graph_interrupt_id={graph_interrupt_id}, "
@@ -339,7 +291,7 @@ def _aggregate_batch_resume(request, approval, resume_value, session_id, approve
                 f"interrupt_id={interrupt_id}, approved={approved}, "
                 f"pending={pending_siblings.count()}"
             )
-            return _waiting_json_response(interrupt_id, approval, approved)
+            return _json_response(_build_waiting_data(interrupt_id, approval, approved))
 
         # 所有审批都完成，触发聚合恢复流
         # 构建 resume_value = {tool_call_id: bool, ...} 字典
@@ -379,45 +331,78 @@ def _aggregate_batch_resume(request, approval, resume_value, session_id, approve
 class ApprovalListView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        operation_id="approvals_list",
+        responses={200: ApprovalReadSerializer(many=True)},
+    )
     def get(self, request):
         source_id = request.query_params.get('source_id')
+        source = request.query_params.get('source')
         chat_session_id = request.query_params.get('chat_session_id')
         state = request.query_params.get('state')
 
-        qs = Approval.objects.all()
+        # 越权修复：直接按 user 字段过滤，无需跨表 JOIN
+        qs = Approval.objects.filter(user=request.user)
         if source_id:
             qs = qs.filter(source_id=source_id)
+        if source:
+            qs = qs.filter(source=source)
         if chat_session_id:
             qs = qs.filter(chat_session_id=chat_session_id)
         if state:
             qs = qs.filter(state=state)
 
         qs = qs.order_by('-created_at')[:100]
-        serializer = ApprovalSerializer(qs, many=True)
+        serializer = ApprovalReadSerializer(qs, many=True)
         return success_response(data=serializer.data)
 
 
-class ApprovalDetailView(APIView):
+class ApprovalDetailView(BaseApprovalAccessMixin, APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses={200: ApprovalReadSerializer})
     def get(self, request, interrupt_id):
         try:
             approval = Approval.objects.get(interrupt_id=interrupt_id)
         except Approval.DoesNotExist:
             return error_response(code=ErrorCode.NOT_FOUND, message='审批不存在')
-        serializer = ApprovalSerializer(approval)
+        self._assert_ownership(approval, request.user)
+        serializer = ApprovalReadSerializer(approval)
         return success_response(data=serializer.data)
 
 
-class ApprovalResumeView(APIView):
+class ApprovalResumeView(BaseApprovalAccessMixin, APIView):
     """恢复审批：chat/deep_research 均返回 SSE 流式响应。"""
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [SensitiveOperationRateThrottle]
     renderer_classes = [JSONRenderer, SSERenderer]
 
+    @extend_schema(
+        request=ApprovalWriteSerializer,
+        responses={(200, 'application/json'): ApprovalReadSerializer, (200, 'text/event-stream'): None},
+    )
     def post(self, request, interrupt_id):
-        approved = request.data.get('approved', True)
-        user_input = request.data.get('user_input')
+        # 请求体校验：白名单 serializer，拒绝客户端设置 state/parameters 等字段
+        write_serializer = ApprovalWriteSerializer(data=request.data)
+        if not write_serializer.is_valid():
+            return error_response(
+                code=ErrorCode.VALIDATION_FAILED,
+                message='请求参数校验失败',
+                data={'details': write_serializer.errors},
+            )
+        validated = write_serializer.validated_data
+
+        # 越权校验：审批存在时断言归属；不存在则跳过，交由 service 走 not_found 流程
+        try:
+            approval = Approval.objects.get(interrupt_id=interrupt_id)
+        except Approval.DoesNotExist:
+            approval = None
+        else:
+            self._assert_ownership(approval, request.user)
+
+        approved = validated.get('approved', True)
+        user_input = validated.get('user_input')
 
         try:
             result = approval_service.resume_approval(
@@ -440,10 +425,10 @@ class ApprovalResumeView(APIView):
         # chat 和 deep_research 均走 SSE 流式恢复
         if approval.source in (Approval.SOURCE_CHAT, Approval.SOURCE_DEEP_RESEARCH):
             if is_idempotent:
-                # 幂等响应：waiting 状态需绕过 SSERenderer，确保前端识别 application/json
+                # 幂等响应：waiting 状态需显式选择 JSONRenderer，确保前端识别 application/json
                 idempotent_data = _build_idempotent_data(interrupt_id)
                 if idempotent_data.get('state') == 'waiting':
-                    return JsonResponse({
+                    return _json_response({
                         'code': 0,
                         'message': '审批已处理（幂等）',
                         'data': idempotent_data,
@@ -451,9 +436,9 @@ class ApprovalResumeView(APIView):
                 return success_response(data=idempotent_data)
 
             # 批量审批场景：service 层已检测到同批次还有其他 pending，返回 waiting 状态
-            # 使用 JsonResponse 绕过 SSERenderer，确保前端识别 application/json
+            # 通过 _json_response 显式选择 JSONRenderer，确保前端识别 application/json
             if result.get('state') == 'waiting':
-                return _waiting_json_response(interrupt_id, approval, approved)
+                return _json_response(_build_waiting_data(interrupt_id, approval, approved))
 
             session_id = approval.chat_session_id or approval.source_id
             # 聚合恢复检查（含 graph_interrupt_id 提取、sibling 检查、批量 resume_value 构建）
@@ -465,19 +450,19 @@ class ApprovalResumeView(APIView):
         # learning 工作流审批恢复
         if approval.source == Approval.SOURCE_LEARNING:
             if is_idempotent:
-                # 幂等响应：waiting 状态需绕过 SSERenderer，确保前端识别 application/json
+                # 幂等响应：waiting 状态需显式选择 JSONRenderer，确保前端识别 application/json
                 idempotent_data = _build_idempotent_data(interrupt_id)
                 if idempotent_data.get('state') == 'waiting':
-                    return JsonResponse({
+                    return _json_response({
                         'code': 0,
                         'message': '审批已处理（幂等）',
                         'data': idempotent_data,
                     })
                 return success_response(data=idempotent_data)
             # 批量审批场景：同批次还有其他 pending，不触发恢复，返回 waiting 状态
-            # 使用 JsonResponse 绕过 SSERenderer，确保前端识别 application/json
+            # 通过 _json_response 显式选择 JSONRenderer，确保前端识别 application/json
             if result.get('state') == 'waiting':
-                return _waiting_json_response(interrupt_id, approval, approved)
+                return _json_response(_build_waiting_data(interrupt_id, approval, approved))
             from Django_xm.common.sse_utils import sse_async_heartbeat_generator, sse_response
             return sse_response(
                 sse_async_heartbeat_generator(
@@ -499,13 +484,36 @@ class ApprovalResumeView(APIView):
         )
 
 
-class ApprovalRejectView(APIView):
+class ApprovalRejectView(BaseApprovalAccessMixin, APIView):
     """拒绝审批：chat/deep_research 均走 SSE 流式恢复。"""
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [SensitiveOperationRateThrottle]
     renderer_classes = [JSONRenderer, SSERenderer]
 
+    @extend_schema(
+        request=ApprovalWriteSerializer,
+        responses={(200, 'application/json'): ApprovalReadSerializer, (200, 'text/event-stream'): None},
+    )
     def post(self, request, interrupt_id):
+        # 请求体校验：白名单 serializer，拒绝客户端设置 state/parameters 等字段
+        # 即使 reject 接口忽略 approved 字段（强制 False），仍校验请求体防御性深度
+        write_serializer = ApprovalWriteSerializer(data=request.data)
+        if not write_serializer.is_valid():
+            return error_response(
+                code=ErrorCode.VALIDATION_FAILED,
+                message='请求参数校验失败',
+                data={'details': write_serializer.errors},
+            )
+
+        # 越权校验：审批存在时断言归属；不存在则跳过，交由 service 走 not_found 流程
+        try:
+            approval = Approval.objects.get(interrupt_id=interrupt_id)
+        except Approval.DoesNotExist:
+            approval = None
+        else:
+            self._assert_ownership(approval, request.user)
+
         try:
             result = approval_service.resume_approval(
                 interrupt_id=interrupt_id,
@@ -526,10 +534,10 @@ class ApprovalRejectView(APIView):
         # chat 和 deep_research 均走 SSE 流式恢复
         if approval.source in (Approval.SOURCE_CHAT, Approval.SOURCE_DEEP_RESEARCH):
             if is_idempotent:
-                # 幂等响应：waiting 状态需绕过 SSERenderer，确保前端识别 application/json
+                # 幂等响应：waiting 状态需显式选择 JSONRenderer，确保前端识别 application/json
                 idempotent_data = _build_idempotent_data(interrupt_id)
                 if idempotent_data.get('state') == 'waiting':
-                    return JsonResponse({
+                    return _json_response({
                         'code': 0,
                         'message': '审批已处理（幂等）',
                         'data': idempotent_data,
@@ -537,12 +545,12 @@ class ApprovalRejectView(APIView):
                 return success_response(data=idempotent_data)
 
             # 批量审批场景：service 层已检测到同批次还有其他 pending，返回 waiting 状态
-            # 使用 JsonResponse 绕过 SSERenderer，确保前端识别 application/json
+            # 通过 _json_response 显式选择 JSONRenderer，确保前端识别 application/json
             if result.get('state') == 'waiting':
-                return _waiting_json_response(
+                return _json_response(_build_waiting_data(
                     interrupt_id, approval, False,
                     message='本工具已拒绝，等待同批次其他工具审批完成后开始执行...',
-                )
+                ))
 
             session_id = approval.chat_session_id or approval.source_id
             # 聚合恢复检查（含 graph_interrupt_id 提取、sibling 检查、批量 resume_value 构建）
@@ -555,22 +563,22 @@ class ApprovalRejectView(APIView):
         # learning 工作流审批拒绝
         if approval.source == Approval.SOURCE_LEARNING:
             if is_idempotent:
-                # 幂等响应：waiting 状态需绕过 SSERenderer，确保前端识别 application/json
+                # 幂等响应：waiting 状态需显式选择 JSONRenderer，确保前端识别 application/json
                 idempotent_data = _build_idempotent_data(interrupt_id)
                 if idempotent_data.get('state') == 'waiting':
-                    return JsonResponse({
+                    return _json_response({
                         'code': 0,
                         'message': '审批已处理（幂等）',
                         'data': idempotent_data,
                     })
                 return success_response(data=idempotent_data)
             # 批量审批场景：同批次还有其他 pending，不触发恢复，返回 waiting 状态
-            # 使用 JsonResponse 绕过 SSERenderer，确保前端识别 application/json
+            # 通过 _json_response 显式选择 JSONRenderer，确保前端识别 application/json
             if result.get('state') == 'waiting':
-                return _waiting_json_response(
+                return _json_response(_build_waiting_data(
                     interrupt_id, approval, False,
                     message='本工具已拒绝，等待同批次其他工具审批完成后开始执行...',
-                )
+                ))
             from Django_xm.common.sse_utils import sse_async_heartbeat_generator, sse_response
             return sse_response(
                 sse_async_heartbeat_generator(
@@ -592,7 +600,7 @@ class ApprovalRejectView(APIView):
         )
 
 
-class ApprovalStateView(APIView):
+class ApprovalStateView(BaseApprovalAccessMixin, APIView):
     """查询审批当前状态。
 
     GET /api/v1/approvals/{interrupt_id}/state/
@@ -602,6 +610,7 @@ class ApprovalStateView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(view=False)
     def get(self, request, interrupt_id):
         try:
             approval = Approval.objects.select_related('approved_by').get(interrupt_id=interrupt_id)
@@ -642,36 +651,3 @@ class ApprovalStateView(APIView):
         }
         return success_response(data=data)
 
-    @staticmethod
-    def _user_owns_approval(user, approval):
-        """检查用户是否拥有该审批关联的会话或任务。"""
-        from django.apps import apps as _apps
-
-        if approval.chat_session_id:
-            ChatSession = _apps.get_model('chat', 'ChatSession')
-            if ChatSession.objects.filter(
-                session_id=approval.chat_session_id,
-                user=user,
-                is_deleted=False,
-            ).exists():
-                return True
-
-        if approval.source == Approval.SOURCE_DEEP_RESEARCH:
-            ResearchTask = _apps.get_model('research', 'ResearchTask')
-            if ResearchTask.objects.filter(
-                task_id=approval.source_id,
-                created_by=user,
-                is_deleted=False,
-            ).exists():
-                return True
-
-        if approval.source == Approval.SOURCE_LEARNING:
-            WorkflowSession = _apps.get_model('learning', 'WorkflowSession')
-            if WorkflowSession.objects.filter(
-                thread_id=approval.source_id,
-                created_by=user,
-                is_deleted=False,
-            ).exists():
-                return True
-
-        return False

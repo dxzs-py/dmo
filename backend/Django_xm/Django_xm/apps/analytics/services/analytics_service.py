@@ -1,12 +1,13 @@
 import logging
 from datetime import timedelta
+
 from django.apps import apps
-from django.db.models import Count, Sum, Avg, Q
+from django.db.models import Avg, Count, Q, Sum
 from django.db.models.functions import TruncDate
 from django.utils import timezone
 
+from Django_xm.apps.analytics.models import EventCategory, EventType, UserEvent
 from Django_xm.apps.cache_manager.services.cache_service import CacheService, CacheTTL
-from Django_xm.apps.analytics.models import UserEvent, DailyAggregation, EventCategory, EventType
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,6 @@ class AnalyticsService:
         )
         total_messages = msg_agg['total'] or 0
         total_tokens = msg_agg['tokens'] or 0
-        avg_response_time = round(float(msg_agg['avg_time'] or 0), 2)
 
         research_agg = ResearchTask.objects.filter(
             created_by=user, is_deleted=False

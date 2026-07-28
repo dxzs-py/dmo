@@ -7,12 +7,9 @@ RAG 模式聊天服务
 - RAG 评估闭环（检索质量 + 生成质量评估，低分触发重检索）
 """
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Any
 
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langchain_core.documents import Document
-
-from ..utils import convert_chat_history
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +22,7 @@ MAX_RETRY_COUNT: int = 1
 class RAGChatService:
     """RAG 模式聊天服务"""
 
-    def __init__(self, user_id: Optional[int] = None, chat_service=None):
+    def __init__(self, user_id: int | None = None, chat_service=None):
         from Django_xm.apps.knowledge.services.rag_evaluation import RAGEvaluator
 
         self.user_id = user_id
@@ -36,13 +33,13 @@ class RAGChatService:
         return f"user_{self.user_id}_{index_name}" if self.user_id else index_name
 
     def get_rag_retriever(self, index_name: str, k: int = 4, search_type: str = "similarity", retrieval_mode: str = "precise"):
+        from Django_xm.apps.ai_engine.config import settings as app_cfg
         from Django_xm.apps.knowledge.services.cross_app import get_index_manager
         from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
-        from Django_xm.apps.knowledge.services.retrieval_service import create_retriever, create_multi_query_retriever
-        from Django_xm.apps.ai_engine.config import settings as app_cfg
+        from Django_xm.apps.knowledge.services.retrieval_service import create_multi_query_retriever, create_retriever
 
         if not self.user_id:
-            logger.warning(f"get_rag_retriever: user_id 为空，跳过")
+            logger.warning("get_rag_retriever: user_id 为空，跳过")
             return None
         try:
             user_index_name = self._get_user_index_name(index_name)
@@ -68,7 +65,7 @@ class RAGChatService:
 
                 if app_cfg.retriever_use_multi_query:
                     try:
-                        from Django_xm.apps.ai_engine.services.llm_factory import get_helper_model, get_chat_model
+                        from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model, get_helper_model
                         mq_llm = get_helper_model() or get_chat_model(streaming=False)
                         retriever = create_multi_query_retriever(retriever, llm=mq_llm, include_original=True)
                         logger.info(f"comprehensive 检索器已叠加 MultiQuery (k={comp_k})")
@@ -84,7 +81,7 @@ class RAGChatService:
             logger.error(f"获取 RAG 检索器失败: {e}", exc_info=True)
             return None
 
-    def _compute_retrieval_quality(self, query: str, docs: List[Document]) -> float:
+    def _compute_retrieval_quality(self, query: str, docs: list[Document]) -> float:
         """计算检索质量：基于查询与检索文档的关键词重叠度均值"""
         from Django_xm.apps.knowledge.services.rag_evaluation import _keyword_overlap
 
@@ -102,8 +99,8 @@ class RAGChatService:
         self,
         query: str,
         answer: str,
-        retrieved_docs: List[Document],
-    ) -> Dict[str, Any]:
+        retrieved_docs: list[Document],
+    ) -> dict[str, Any]:
         """
         评估 RAG 结果质量
 
@@ -138,7 +135,7 @@ class RAGChatService:
             "evaluation_result": evaluation_result,
         }
 
-    def process_rag_request(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def process_rag_request(self, data: dict[str, Any]) -> dict[str, Any]:
         from Django_xm.apps.knowledge.services.strict_rag_chain import query_strict_rag
 
         selected_kb = data.get('selected_knowledge_base')
@@ -233,7 +230,7 @@ class RAGChatService:
             },
         }
 
-    async def process_rag_stream(self, data: Dict[str, Any], retriever, usage_tracker, token_detail_tracker):
+    async def process_rag_stream(self, data: dict[str, Any], retriever, usage_tracker, token_detail_tracker):
         from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
         from Django_xm.apps.knowledge.services.strict_rag_chain import astream_strict_rag
 

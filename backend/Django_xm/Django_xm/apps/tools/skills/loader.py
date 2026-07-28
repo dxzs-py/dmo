@@ -9,12 +9,12 @@
 DeepAgent skills 参数适配已移至 SkillAdapter.to_deep_agent_skills()。
 """
 
+import logging
 import os
 import re
 import shutil
 import zipfile
-import logging
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Any
 
 import yaml
 
@@ -27,7 +27,7 @@ SKILL_NAME_PATTERN = re.compile(r'^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$')
 class SkillLoader:
     """Agent Skills 规范的渐进式披露加载器"""
 
-    def __init__(self, skills_base_dir: Optional[str] = None):
+    def __init__(self, skills_base_dir: str | None = None):
         """初始化 SkillLoader
 
         Args:
@@ -42,7 +42,7 @@ class SkillLoader:
 
     # ---- Level 1: Discovery ----
 
-    def discover_skills(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    def discover_skills(self, user_id: int | None = None) -> list[dict[str, Any]]:
         """扫描数据库和文件系统，返回 Level 1 元数据列表
 
         Args:
@@ -70,7 +70,7 @@ class SkillLoader:
 
     # ---- Level 2: Activation ----
 
-    def activate_skill(self, name: str, user_id: Optional[int] = None) -> Optional[str]:
+    def activate_skill(self, name: str, user_id: int | None = None) -> str | None:
         """加载 SKILL.md 完整指令内容（Level 2 Activation）
 
         Args:
@@ -98,7 +98,7 @@ class SkillLoader:
 
     # ---- Level 3: Execution ----
 
-    def load_resource(self, name: str, resource_path: str, user_id: Optional[int] = None) -> Optional[str]:
+    def load_resource(self, name: str, resource_path: str, user_id: int | None = None) -> str | None:
         """按需加载 Skill 资源文件（Level 3 Execution）
 
         Args:
@@ -125,7 +125,7 @@ class SkillLoader:
 
         try:
             # 尝试文本读取
-            with open(full_path, 'r', encoding='utf-8') as f:
+            with open(full_path, encoding='utf-8') as f:
                 return f.read()
         except UnicodeDecodeError:
             # 二进制文件返回 base64
@@ -135,7 +135,7 @@ class SkillLoader:
 
     # ---- 包管理 ----
 
-    def validate_skill_package(self, zip_path: str) -> Tuple[bool, str, Optional[Dict]]:
+    def validate_skill_package(self, zip_path: str) -> tuple[bool, str, dict | None]:
         """验证压缩包是否符合 Agent Skills 规范
 
         Args:
@@ -204,7 +204,7 @@ class SkillLoader:
         except Exception as e:
             return False, f"验证失败: {e}", None
 
-    def install_skill_package(self, zip_path: str, user, source: str = 'user') -> Tuple[bool, str, Optional[Dict]]:
+    def install_skill_package(self, zip_path: str, user, source: str = 'user') -> tuple[bool, str, dict | None]:
         from Django_xm.apps.tools.models import SkillPackage, ToolCategory
 
         is_valid, msg, frontmatter = self.validate_skill_package(zip_path)
@@ -291,7 +291,7 @@ class SkillLoader:
             logger.error(f"安装 Skill 失败: {e}")
             return False, f"安装失败: {e}", None
 
-    def uninstall_skill_package(self, name: str, user) -> Tuple[bool, str]:
+    def uninstall_skill_package(self, name: str, user) -> tuple[bool, str]:
         """卸载 Skill 包：删除数据库记录和文件目录
 
         Args:
@@ -321,7 +321,7 @@ class SkillLoader:
 
     # ---- 内部方法 ----
 
-    def _get_skill_dir(self, name: str, user_id: Optional[int] = None) -> Optional[str]:
+    def _get_skill_dir(self, name: str, user_id: int | None = None) -> str | None:
         """获取 Skill 的文件系统目录路径"""
         from Django_xm.apps.tools.models import SkillPackage
         qs = SkillPackage.objects.filter(name=name, status='active')
@@ -334,13 +334,13 @@ class SkillLoader:
 
     def _read_skill_md(self, path: str) -> str:
         """读取 SKILL.md 并返回 body 部分（指令内容，不含 frontmatter）"""
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, encoding='utf-8') as f:
             content = f.read()
         _, body = self._parse_frontmatter(content)
         return body or ''
 
     @staticmethod
-    def _parse_frontmatter(content: str) -> Tuple[Optional[Dict], str]:
+    def _parse_frontmatter(content: str) -> tuple[dict | None, str]:
         """解析 SKILL.md 的 YAML frontmatter 和 Markdown body
 
         Returns:

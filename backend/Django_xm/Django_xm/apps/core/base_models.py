@@ -4,8 +4,9 @@
 所有业务模型应继承此类
 """
 import threading
-from django.db import models
+
 from django.conf import settings
+from django.db import models
 
 _thread_locals = threading.local()
 

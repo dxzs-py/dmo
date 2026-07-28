@@ -1,12 +1,23 @@
 from __future__ import annotations
+
 import logging
 from typing import Any
+
+from Django_xm.apps.agent_hub.builders._registry import register_builder
+from Django_xm.apps.agent_hub.config import AgentType
 
 logger = logging.getLogger(__name__)
 
 
+@register_builder(AgentType.DEEP_RESEARCH_CUSTOM)
 class CustomWorkflowBuilder:
     async def build(self, config) -> Any:
+        from Django_xm.apps.agent_hub.builders._common import build_with_timeout
+        return await build_with_timeout(
+            self._build_internal, config, "CustomWorkflowBuilder.build",
+        )
+
+    async def _build_internal(self, config) -> Any:
         from Django_xm.apps.research.services.deep_agent import DeepResearchAgent
 
         agent = DeepResearchAgent(

@@ -10,7 +10,7 @@
 - 百度千帆 embedding 走独立 QianfanEmbeddingsEndpoint
 - 本地 embedding 作为最终兜底，确保 RAG 不完全中断
 """
-from typing import Any, Optional
+from typing import Any
 
 from langchain_core.embeddings import Embeddings
 
@@ -18,8 +18,8 @@ from Django_xm.apps.ai_engine.config import settings
 
 
 def create_embedding(
-    model_name: Optional[str] = None,
-    dimensions: Optional[int] = None,
+    model_name: str | None = None,
+    dimensions: int | None = None,
     **kwargs: Any,
 ) -> Embeddings:
     """使用 HuggingFace 本地模型创建 Embeddings 实例

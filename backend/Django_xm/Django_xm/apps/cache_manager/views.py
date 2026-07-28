@@ -1,29 +1,22 @@
 import logging
 
-from rest_framework.views import APIView
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.permissions import IsAdminUser, IsAuthenticated
+from rest_framework.views import APIView
 
-from Django_xm.common.responses import success_response, error_response
-from Django_xm.common.error_codes import ErrorCode
+from Django_xm.apps.ai_engine.config import settings as app_cfg
 from Django_xm.apps.cache_manager.services.cache_service import (
-    CacheService,
+    CACHE_PREFIX_LABELS,
     CacheHealthChecker,
     CacheInvalidationStrategy,
-    RedisDirectClient,
+    CacheService,
     ModelResponseCacheService,
-    CACHE_PREFIX_QUERY,
-    CACHE_PREFIX_MODEL,
-    CACHE_PREFIX_EMBEDDING,
-    CACHE_PREFIX_TOOL,
-    CACHE_PREFIX_VECTOR,
-    CACHE_PREFIX_SESSION,
-    CACHE_PREFIX_AGENT,
-    CACHE_PREFIX_LABELS,
+    RedisDirectClient,
     get_redis_client,
     get_redis_info,
 )
-from Django_xm.apps.ai_engine.config import settings as app_cfg
+from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.responses import error_response, success_response
 
 logger = logging.getLogger(__name__)
 

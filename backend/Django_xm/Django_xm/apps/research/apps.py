@@ -7,4 +7,4 @@ class ResearchConfig(AppConfig):
     verbose_name = '深度研究模块'
 
     def ready(self):
-        import Django_xm.apps.research.signals  # noqa: F401
+        pass

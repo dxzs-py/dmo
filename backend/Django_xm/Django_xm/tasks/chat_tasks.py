@@ -2,9 +2,6 @@
 附件生命周期管理 Celery 任务
 定时清理过期附件、入库旧文件、监控存储空间
 """
-import asyncio
-import logging
-import threading
 from celery import shared_task
 from celery.utils.log import get_task_logger
 

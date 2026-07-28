@@ -6,8 +6,8 @@
 
 from fnmatch import fnmatch
 
-from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.context_manager.models import ContextRule
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 

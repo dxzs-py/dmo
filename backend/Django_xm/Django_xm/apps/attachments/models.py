@@ -1,9 +1,9 @@
 import uuid
-import os
-from django.db import models
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.utils import timezone as django_timezone
+from django.db import models
+
 from Django_xm.apps.core.base_models import AuditModel, BaseModel
 
 
@@ -125,8 +125,8 @@ class ChatAttachment(AuditModel):
             self.refresh_from_db()
 
     def is_expired(self):
-        from django.utils import timezone
         from django.conf import settings as django_settings
+        from django.utils import timezone
         retention = self.retention_days or getattr(
             django_settings, 'ATTACHMENT_DEFAULT_RETENTION_DAYS', 30
         )

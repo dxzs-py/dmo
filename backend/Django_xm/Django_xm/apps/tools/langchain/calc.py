@@ -1,15 +1,15 @@
+import logging
 import re
-from typing import Union
+
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
-import logging
 
 from Django_xm.apps.tools.errors import TOOL_VERSION
 
 logger = logging.getLogger(__name__)
 
 
-def _safe_eval(expression: str) -> Union[float, int, str]:
+def _safe_eval(expression: str) -> float | int | str:
     expression = expression.replace(" ", "")
     if not re.match(r'^[\d+\-*/().]+$', expression):
         return "错误：表达式包含不允许的字符。只支持数字和基本运算符 (+, -, *, /, ())"
@@ -25,7 +25,7 @@ def _safe_eval(expression: str) -> Union[float, int, str]:
     except ZeroDivisionError:
         return "错误：除数不能为零"
     except Exception as e:
-        return f"错误：计算失败 - {str(e)}"
+        return f"错误：计算失败 - {e!s}"
 
 
 class CalculatorInput(BaseModel):
@@ -35,7 +35,7 @@ class CalculatorInput(BaseModel):
 class CalculatorTool(BaseTool):
     name: str = "calculator"
     version: str = TOOL_VERSION
-    metadata: dict = {"tier": "core", "visibility": "core", "category": "basic"}
+    metadata: dict = Field(default_factory=lambda: {"tier": "core", "visibility": "core", "category": "basic"})
     description: str = (
         "计算数学表达式，支持加法(+)、减法(-)、乘法(*)、除法(/)和括号运算。"
         "适用场景：需要进行基本四则运算、快速计算数值结果、单位换算。"

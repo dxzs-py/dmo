@@ -4,8 +4,8 @@
 """
 import json
 import re
-from typing import List, Optional
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 
 def _needs_completion(text: str) -> bool:
@@ -62,7 +62,7 @@ def _lcp_len(a: str, b: str) -> int:
     return i
 
 
-def convert_chat_history(messages: List[dict]) -> List:
+def convert_chat_history(messages: list[dict]) -> list:
     """
     将 API 的消息格式转换为 LangChain 的消息格式
 
@@ -98,7 +98,7 @@ def convert_chat_history(messages: List[dict]) -> List:
     return langchain_messages
 
 
-def _inject_attachment_content(user_message: str, attachment_ids: List[int]) -> str:
+def _inject_attachment_content(user_message: str, attachment_ids: list[int]) -> str:
     try:
         from Django_xm.apps.attachments.services.cross_app import get_attachment_service
         att_svc = get_attachment_service()
@@ -118,7 +118,7 @@ def _inject_attachment_content(user_message: str, attachment_ids: List[int]) -> 
         return user_message
 
 
-def extract_suggestions(raw: str) -> List[str]:
+def extract_suggestions(raw: str) -> list[str]:
     """
     从原始文本中提取建议问题列表
     
@@ -128,7 +128,7 @@ def extract_suggestions(raw: str) -> List[str]:
     Returns:
         List[str]: 提取的建议问题列表
     """
-    suggestions: List[str] = []
+    suggestions: list[str] = []
     try:
         parsed = json.loads(raw)
         if isinstance(parsed, list):

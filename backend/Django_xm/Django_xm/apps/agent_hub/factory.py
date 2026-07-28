@@ -5,7 +5,7 @@ from typing import Any
 
 from langgraph.graph.state import CompiledStateGraph
 
-from Django_xm.apps.agent_hub.config import AgentType, AgentConfig
+from Django_xm.apps.agent_hub.config import AgentConfig, AgentType
 from Django_xm.apps.agent_hub.exceptions import AgentCreationError, FrameworkNotAvailableError
 
 logger = logging.getLogger(__name__)
@@ -27,27 +27,29 @@ class AgentFactory:
 
     @classmethod
     def _get_builders(cls):
+        """基于 builder 注册表构建 AgentType -> builder 实例映射。
+
+        单一真相源：通过 @register_builder 装饰器自动注册到
+        ``_builder_registry``，本方法仅消费注册表，不再硬编码 builder 类。
+
+        共享实例策略：同一 builder 类对应多个 AgentType 时共享同一实例
+        （例如 BASE/RAG/SAFE_RAG 共享 BaseAgentBuilder 实例），
+        与原硬编码实现的语义一致。
+        """
         if cls._builders is None:
-            from Django_xm.apps.agent_hub.builders.base_builder import BaseAgentBuilder
-            from Django_xm.apps.agent_hub.builders.deep_builder import DeepAgentBuilder
-            from Django_xm.apps.agent_hub.builders.custom_builder import CustomWorkflowBuilder
-            from Django_xm.apps.agent_hub.builders.subagent_builder import SubAgentBuilder
+            # 导入 builder 模块以触发 @register_builder 装饰器注册
+            from Django_xm.apps.agent_hub.builders._registry import get_registered_builders
 
-            base = BaseAgentBuilder()
-            deep = DeepAgentBuilder()
-            custom = CustomWorkflowBuilder()
-            subagent = SubAgentBuilder()
+            registry = get_registered_builders()
+            builders: dict = {}
+            # 同一 builder 类的多个 AgentType 共享同一实例
+            instance_cache: dict = {}
+            for agent_type, builder_cls in registry.items():
+                if builder_cls not in instance_cache:
+                    instance_cache[builder_cls] = builder_cls()
+                builders[agent_type] = instance_cache[builder_cls]
 
-            cls._builders = {
-                AgentType.BASE: base,
-                AgentType.RAG: base,
-                AgentType.SAFE_RAG: base,
-                AgentType.DEEP_RESEARCH: deep,
-                AgentType.DEEP_RESEARCH_CUSTOM: custom,
-                AgentType.WEB_RESEARCHER: subagent,
-                AgentType.DOC_ANALYST: subagent,
-                AgentType.REPORT_WRITER: subagent,
-            }
+            cls._builders = builders
         return cls._builders
 
     @classmethod
@@ -55,18 +57,31 @@ class AgentFactory:
         config.validate()
         config.resolve_defaults()
 
-        # 执行预检（不阻止创建，仅记录问题）
+        # 执行预检（默认不阻止创建，仅记录问题；fail_fast_on_preflight=True 时抛出 PreflightCheckError）
+        # 注意：PreflightCheckError 必须冒泡（不被 except 捕获），其他异常忽略保持向后兼容
+        from .exceptions import PreflightCheckError
         try:
             from .preflight import ExecutionPreflight
             preflight = ExecutionPreflight()
             result = await preflight.check(config)
             if not result.passed:
-                logger.warning(f"[AgentFactory] 预检未通过: {result.issues}")
                 config._preflight_issues = result.issues
+                if getattr(config, 'fail_fast_on_preflight', False):
+                    # 快速失败模式：抛出携带 issues 的 PreflightCheckError，不调用 builder.build
+                    raise PreflightCheckError(
+                        f"预检未通过，已阻止 agent 创建: {result.issues}",
+                        issues=result.issues,
+                    )
+                logger.warning(f"[AgentFactory] 预检未通过: {result.issues}")
             if result.warnings:
                 for w in result.warnings:
                     logger.warning(f"[AgentFactory] 预检警告: {w}")
+        except PreflightCheckError:
+            # 快速失败模式：让 PreflightCheckError 冒泡到调用方
+            raise
         except Exception as e:
+            # 预检本身抛异常（如网络错误）：保持向后兼容，仅 debug 日志，不阻止创建
+            # 即使 fail_fast_on_preflight=True，预检内部异常也不阻止（仅预检结果未通过才阻止）
             logger.debug(f"[AgentFactory] 预检异常（忽略）: {e}")
 
         builders = cls._get_builders()

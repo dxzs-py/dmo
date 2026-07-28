@@ -1,18 +1,18 @@
 import logging
 from urllib.parse import quote
 
-from rest_framework.views import APIView
+from django.http import FileResponse
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from django.http import FileResponse
+from rest_framework.views import APIView
 
-from Django_xm.common.responses import success_response, error_response, not_found_response
+from Django_xm.apps.core.services.file_manager import get_file_manager
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.permissions import IsAuthenticatedOrQueryParam
-from Django_xm.apps.core.services.file_manager import get_file_manager
+from Django_xm.common.responses import error_response, not_found_response, success_response
+from Django_xm.common.serializers import FileInfoSerializer
 
 from .models import ResearchTask
-from .serializers import FileInfoSerializer
 
 logger = logging.getLogger(__name__)
 file_manager = get_file_manager()
@@ -160,11 +160,16 @@ class DeepResearchGlobalSearchView(APIView):
             task_type = request.query_params.get('task_type')
             file_types = request.query_params.getlist('file_type')
 
+            # Task 15.4: 调用方负责解析 user_id → task_ids
+            # （file_manager 不再直接依赖 research app）
+            from Django_xm.apps.research.services.cross_app import get_user_research_task_ids
+            user_task_ids = get_user_research_task_ids(request.user.id)
+
             files = file_manager.search_files(
                 keyword=keyword,
                 task_type=task_type,
                 file_types=file_types if file_types else None,
-                user_id=request.user.id,
+                task_ids=user_task_ids,
             )
 
             serializer = FileInfoSerializer([f.to_dict() for f in files], many=True)

@@ -2,10 +2,26 @@
 
 测试 astream_research_with_interrupts 的中断检测与审批发起，
 以及 resume_research_task 的恢复逻辑（thread_id 与 Command 构造）。
+
+运行方式:
+    cd d:\\programming\\langchain\\langchain_xm\\backend\\Django_xm
+    conda activate langchain_xm
+    python -m pytest Django_xm/apps/research/tests/test_research_runner.py -v
 """
 
+import os
 import unittest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
+# Django 环境初始化（兼容 pytest 和 unittest 直接运行）
+# 必须 before `from django.test import TestCase`，否则触发
+# AppRegistryNotReady: Apps aren't loaded yet.
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.dev")
+import django
+import django.apps
+
+if not django.apps.apps.ready:
+    django.setup()
 
 from django.test import TestCase
 
@@ -50,7 +66,7 @@ class AstreamResearchWithInterruptsTests(TestCase):
         mock_graph = MagicMock()
         mock_graph.astream = mock_astream
         mock_graph.aget_state = mock_aget_state
-        from Django_xm.apps.research.services.official_deep_agent import (
+        from Django_xm.apps.research.services.adapter import (
             OfficialDeepAgentAdapter,
         )
         return OfficialDeepAgentAdapter(
@@ -142,11 +158,12 @@ class ResumeResearchTaskTests(TestCase):
         mock_broadcast,
     ):
         """使用 thread_id=task_id 恢复 agent，并构造 Command(resume=...)。"""
-        from Django_xm.tasks.research_resume_task import resume_research_task  # noqa: F401,E401
-        from Django_xm.apps.research.services.official_deep_agent import (  # noqa: F401,E401
+        from langgraph.types import Command
+
+        from Django_xm.apps.research.services.adapter import (
             OfficialDeepAgentAdapter,
         )
-        from langgraph.types import Command  # noqa: F401,E401
+        from Django_xm.tasks.research_resume_task import resume_research_task
 
         task_id = "test-task-id"
         interrupt_id = "test-interrupt-id"

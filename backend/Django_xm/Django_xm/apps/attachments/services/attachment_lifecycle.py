@@ -1,18 +1,18 @@
-import os
-import shutil
 import hashlib
 import logging
-from pathlib import Path
+import os
+import shutil
 from datetime import timedelta
-from typing import Dict, List, Optional, Tuple
-from django.db import transaction, models
+from pathlib import Path
+
 from django.conf import settings
+from django.db import models, transaction
 from django.utils import timezone
 
 from Django_xm.apps.attachments.models import (
-    ChatAttachment,
-    AttachmentStatus,
     AttachmentCleanupLog,
+    AttachmentStatus,
+    ChatAttachment,
     StorageAlert,
 )
 
@@ -36,7 +36,7 @@ class AttachmentLifecycleService:
                 h.update(chunk)
         return h.hexdigest()
 
-    def get_storage_stats(self) -> Dict:
+    def get_storage_stats(self) -> dict:
         attachments = ChatAttachment.objects.filter(
             status__in=[AttachmentStatus.ACTIVE, AttachmentStatus.INDEXED]
         )
@@ -67,7 +67,7 @@ class AttachmentLifecycleService:
             'disk_usage_percent': disk_usage['percent'],
         }
 
-    def _get_disk_usage(self) -> Dict:
+    def _get_disk_usage(self) -> dict:
         try:
             disk_usage = shutil.disk_usage(str(self.media_root))
             percent = (disk_usage.used / disk_usage.total * 100) if disk_usage.total > 0 else 0
@@ -81,7 +81,7 @@ class AttachmentLifecycleService:
             logger.error(f"获取磁盘使用信息失败: {e}")
             return {'total': 0, 'used': 0, 'free': 0, 'percent': 0}
 
-    def check_storage_alerts(self) -> Optional[StorageAlert]:
+    def check_storage_alerts(self) -> StorageAlert | None:
         disk_usage = self._get_disk_usage()
         usage_percent = disk_usage['percent']
 
@@ -127,7 +127,7 @@ class AttachmentLifecycleService:
             reference_count__gt=0,
         )
 
-    def find_duplicates(self) -> Dict[str, List[int]]:
+    def find_duplicates(self) -> dict[str, list[int]]:
         if not self.dedup_enabled:
             return {}
 
@@ -184,7 +184,7 @@ class AttachmentLifecycleService:
                 files_deleted += 1
                 space_freed += attachment.file_size
             except Exception as e:
-                error_msg = f"附件 {attachment.id} ({attachment.original_name}) 处理失败: {str(e)}"
+                error_msg = f"附件 {attachment.id} ({attachment.original_name}) 处理失败: {e!s}"
                 logger.error(error_msg)
                 errors.append(error_msg)
 
@@ -218,9 +218,9 @@ class AttachmentLifecycleService:
             return False
 
         try:
-            from Django_xm.apps.tools.langchain.file_reader import read_attachment_as_documents
-            from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
             from Django_xm.apps.knowledge.services.cross_app import get_index_manager
+            from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
+            from Django_xm.apps.tools.langchain.file_reader import read_attachment_as_documents
 
             docs = read_attachment_as_documents(attachment.id)
             if not docs:
@@ -261,8 +261,8 @@ class AttachmentLifecycleService:
                 logger.warning(f"附件 {attachment.id} 无入库索引信息")
                 return True
 
-            from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
             from Django_xm.apps.knowledge.services.cross_app import get_index_manager
+            from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
 
             user_id = attachment.session.user_id
             index_name = self._get_user_index_name(user_id)
@@ -334,7 +334,7 @@ class AttachmentLifecycleService:
                 else:
                     files_skipped += 1
             except Exception as e:
-                error_msg = f"附件 {attachment.id} 入库失败: {str(e)}"
+                error_msg = f"附件 {attachment.id} 入库失败: {e!s}"
                 logger.error(error_msg)
                 errors.append(error_msg)
 
@@ -351,7 +351,7 @@ class AttachmentLifecycleService:
         return log
 
     @transaction.atomic
-    def index_attachment_by_id(self, attachment_id: int, triggered_by: str = 'user') -> Tuple[bool, str]:
+    def index_attachment_by_id(self, attachment_id: int, triggered_by: str = 'user') -> tuple[bool, str]:
         try:
             attachment = ChatAttachment.objects.get(id=attachment_id, is_deleted=False)
         except ChatAttachment.DoesNotExist:
@@ -377,10 +377,10 @@ class AttachmentLifecycleService:
             )
             return True, f"附件已向量化入库: {attachment.original_name}"
         except Exception as e:
-            return False, f"入库失败: {str(e)}"
+            return False, f"入库失败: {e!s}"
 
     @transaction.atomic
-    def unindex_attachment_by_id(self, attachment_id: int, triggered_by: str = 'user') -> Tuple[bool, str]:
+    def unindex_attachment_by_id(self, attachment_id: int, triggered_by: str = 'user') -> tuple[bool, str]:
         try:
             attachment = ChatAttachment.objects.get(id=attachment_id, is_deleted=False)
         except ChatAttachment.DoesNotExist:
@@ -407,9 +407,9 @@ class AttachmentLifecycleService:
             )
             return True, f"附件已从向量库移除: {attachment.original_name}"
         except Exception as e:
-            return False, f"移除失败: {str(e)}"
+            return False, f"移除失败: {e!s}"
 
-    def batch_index(self, attachment_ids: List[int], triggered_by: str = 'user') -> Dict:
+    def batch_index(self, attachment_ids: list[int], triggered_by: str = 'user') -> dict:
         results = {'success': [], 'failed': []}
         for att_id in attachment_ids:
             try:
@@ -422,7 +422,7 @@ class AttachmentLifecycleService:
                 results['failed'].append({'id': att_id, 'message': str(e)})
         return results
 
-    def batch_unindex(self, attachment_ids: List[int], triggered_by: str = 'user') -> Dict:
+    def batch_unindex(self, attachment_ids: list[int], triggered_by: str = 'user') -> dict:
         results = {'success': [], 'failed': []}
         for att_id in attachment_ids:
             try:
@@ -435,7 +435,7 @@ class AttachmentLifecycleService:
                 results['failed'].append({'id': att_id, 'message': str(e)})
         return results
 
-    def batch_delete(self, attachment_ids: List[int], triggered_by: str = 'user') -> Dict:
+    def batch_delete(self, attachment_ids: list[int], triggered_by: str = 'user') -> dict:
         results = {'success': [], 'failed': []}
         for att_id in attachment_ids:
             try:
@@ -449,7 +449,7 @@ class AttachmentLifecycleService:
         return results
 
     @transaction.atomic
-    def manual_delete(self, attachment_id: int, triggered_by: str = 'admin') -> Tuple[bool, str]:
+    def manual_delete(self, attachment_id: int, triggered_by: str = 'admin') -> tuple[bool, str]:
         try:
             attachment = ChatAttachment.all_objects.get(id=attachment_id)
         except ChatAttachment.DoesNotExist:
@@ -473,7 +473,7 @@ class AttachmentLifecycleService:
             )
             return True, f"附件已删除: {attachment.original_name}"
         except Exception as e:
-            return False, f"删除失败: {str(e)}"
+            return False, f"删除失败: {e!s}"
 
     def record_file_hash(self, attachment: ChatAttachment):
         if not self.dedup_enabled:
@@ -490,7 +490,7 @@ class AttachmentLifecycleService:
         ChatAttachment.objects.filter(pk=attachment_id).update(last_accessed_at=timezone.now())
 
     @transaction.atomic
-    def permanent_delete(self, attachment_id: int, triggered_by: str = 'admin') -> Tuple[bool, str]:
+    def permanent_delete(self, attachment_id: int, triggered_by: str = 'admin') -> tuple[bool, str]:
         try:
             attachment = ChatAttachment.all_objects.get(id=attachment_id)
         except ChatAttachment.DoesNotExist:
@@ -535,7 +535,7 @@ class AttachmentLifecycleService:
         return True, f"附件已永久删除: {file_name}"
 
     @transaction.atomic
-    def restore_from_trash(self, attachment_id: int) -> Tuple[bool, str]:
+    def restore_from_trash(self, attachment_id: int) -> tuple[bool, str]:
         try:
             attachment = ChatAttachment.all_objects.get(id=attachment_id)
         except ChatAttachment.DoesNotExist:

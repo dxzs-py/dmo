@@ -7,4 +7,4 @@ class ChatConfig(AppConfig):
     verbose_name = '聊天模块'
 
     def ready(self):
-        import Django_xm.apps.chat.signals
+        pass

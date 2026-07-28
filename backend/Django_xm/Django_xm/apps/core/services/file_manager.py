@@ -2,15 +2,12 @@
 通用文件管理服务
 提供统一的文件列表、下载、搜索功能
 """
-import os
-import json
-from pathlib import Path
-from typing import List, Dict, Any, Optional
-from datetime import datetime
-from django.conf import settings
-from django.core.exceptions import PermissionDenied
-
 import logging
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
@@ -29,14 +26,14 @@ class FileInfo:
         path: Path,
         base_dir: Path,
         file_type: str = FileType.OTHER,
-        task_id: Optional[str] = None,
+        task_id: str | None = None,
     ):
         self.path = path
         self.base_dir = base_dir
         self.file_type = file_type
         self.task_id = task_id
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         stat = self.path.stat()
         return {
             "name": self.path.name,
@@ -62,7 +59,7 @@ class FileInfo:
 class FileManagerService:
     """文件管理服务"""
 
-    def __init__(self, base_dir: Optional[Path] = None):
+    def __init__(self, base_dir: Path | None = None):
         if base_dir is None:
             base_dir = Path(settings.DATA_DIR)
         self.base_dir = base_dir
@@ -72,8 +69,8 @@ class FileManagerService:
         self,
         task_id: str,
         task_type: str = "research",
-        subdirectory: Optional[str] = None,
-    ) -> List[FileInfo]:
+        subdirectory: str | None = None,
+    ) -> list[FileInfo]:
         """
         列出指定任务的所有文件
 
@@ -113,7 +110,7 @@ class FileManagerService:
 
     def get_file_info(
         self, task_id: str, relative_path: str, task_type: str = "research"
-    ) -> Optional[FileInfo]:
+    ) -> FileInfo | None:
         """获取文件信息"""
         task_dir = self._get_task_dir(task_id, task_type)
 
@@ -145,14 +142,14 @@ class FileManagerService:
 
     def read_file_content(
         self, task_id: str, relative_path: str, task_type: str = "research"
-    ) -> Optional[str]:
+    ) -> str | None:
         """读取文件内容"""
         file_info = self.get_file_info(task_id, relative_path, task_type)
         if not file_info:
             return None
 
         try:
-            with open(file_info.path, "r", encoding="utf-8") as f:
+            with open(file_info.path, encoding="utf-8") as f:
                 return f.read()
         except Exception as e:
             logger.error(f"读取文件失败: {e}")
@@ -176,11 +173,11 @@ class FileManagerService:
     def search_files(
         self,
         keyword: str,
-        task_id: Optional[str] = None,
-        task_type: Optional[str] = None,
-        file_types: Optional[List[str]] = None,
-        user_id: Optional[int] = None,
-    ) -> List[FileInfo]:
+        task_id: str | None = None,
+        task_type: str | None = None,
+        file_types: list[str] | None = None,
+        task_ids: set | None = None,
+    ) -> list[FileInfo]:
         """
         搜索文件
 
@@ -189,15 +186,14 @@ class FileManagerService:
             task_id: 可选的任务ID筛选
             task_type: 可选的任务类型筛选
             file_types: 可选的文件类型筛选
-            user_id: 可选的用户ID，用于隔离搜索范围
+            task_ids: 可选的任务ID集合，用于隔离搜索范围。
+                调用方负责解析 user_id → task_ids（Task 15.4：
+                移除了 core→research 的直接依赖，由调用方注入）
 
         Returns:
             匹配的文件列表
         """
-        user_task_ids = None
-        if user_id is not None:
-            from Django_xm.apps.research.services.cross_app import get_user_research_task_ids
-            user_task_ids = get_user_research_task_ids(user_id)
+        user_task_ids = task_ids
 
         results = []
         search_dirs = []
@@ -221,7 +217,6 @@ class FileManagerService:
 
         for task_dir in search_dirs:
             current_task_id = task_dir.name
-            current_task_type = task_dir.parent.name
 
             for file_path in task_dir.rglob("*"):
                 if not file_path.is_file():
@@ -245,7 +240,7 @@ class FileManagerService:
                     continue
 
                 try:
-                    with open(file_path, "r", encoding="utf-8") as f:
+                    with open(file_path, encoding="utf-8") as f:
                         content = f.read()
                         if keyword_lower in content.lower():
                             results.append(
@@ -312,7 +307,7 @@ class FileManagerService:
         return FileType.OTHER
 
 
-_file_manager_instance: Optional[FileManagerService] = None
+_file_manager_instance: FileManagerService | None = None
 
 
 def get_file_manager() -> FileManagerService:

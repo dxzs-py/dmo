@@ -5,8 +5,7 @@
 import json
 import logging
 from pathlib import Path
-from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Any
 
 from django.conf import settings
 
@@ -26,8 +25,8 @@ class WorkflowPersistenceService:
     def save_workflow_state(
         self,
         thread_id: str,
-        state: Dict[str, Any],
-        user_id: Optional[int] = None,
+        state: dict[str, Any],
+        user_id: int | None = None,
     ) -> None:
         """
         保存工作流状态
@@ -45,7 +44,7 @@ class WorkflowPersistenceService:
         except Exception as e:
             logger.error(f"[Persistence] 保存工作流状态失败: {e}", exc_info=True)
 
-    def _make_serializable(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    def _make_serializable(self, state: dict[str, Any]) -> dict[str, Any]:
         """将状态转换为可JSON序列化的格式"""
         serializable = {}
         for key, value in state.items():
@@ -61,7 +60,7 @@ class WorkflowPersistenceService:
                 serializable[key] = value
         return serializable
 
-    def _serialize_message(self, msg: Any) -> Dict[str, Any]:
+    def _serialize_message(self, msg: Any) -> dict[str, Any]:
         """序列化LangChain消息对象"""
         try:
             from langchain_core.messages import BaseMessage
@@ -75,23 +74,23 @@ class WorkflowPersistenceService:
                 }
         except ImportError:
             pass
-        
+
         if hasattr(msg, '__dict__'):
             return {"type": type(msg).__name__, "data": str(msg)}
-        
+
         return msg
 
     def _deserialize_messages(self, messages_data: list) -> list:
         """反序列化消息列表"""
         try:
             from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-            
+
             messages = []
             for msg_data in messages_data:
                 if isinstance(msg_data, dict):
                     msg_type = msg_data.get("type", "")
                     content = msg_data.get("content", "")
-                    
+
                     if msg_type == "ai":
                         messages.append(AIMessage(content=content))
                     elif msg_type == "human":
@@ -106,7 +105,7 @@ class WorkflowPersistenceService:
         except ImportError:
             return messages_data
 
-    def load_workflow_state(self, thread_id: str, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    def load_workflow_state(self, thread_id: str, user_id: int | None = None) -> dict[str, Any] | None:
         """
         加载工作流状态
 
@@ -129,7 +128,7 @@ class WorkflowPersistenceService:
             logger.error(f"[Persistence] 加载工作流状态失败: {e}", exc_info=True)
             return None
 
-    def _deserialize_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    def _deserialize_state(self, state: dict[str, Any]) -> dict[str, Any]:
         """反序列化状态，恢复消息对象"""
         if "messages" in state and isinstance(state["messages"], list):
             state["messages"] = self._deserialize_messages(state["messages"])
@@ -138,11 +137,12 @@ class WorkflowPersistenceService:
     def _save_to_database(
         self,
         thread_id: str,
-        state: Dict[str, Any],
-        user_id: Optional[int] = None,
+        state: dict[str, Any],
+        user_id: int | None = None,
     ) -> None:
         """保存到数据库"""
         from django.contrib.auth import get_user_model
+
         from Django_xm.apps.learning.models import WorkflowSession
 
         User = get_user_model()
@@ -155,7 +155,7 @@ class WorkflowPersistenceService:
                 pass
 
         current_step = state.get("current_step", "start")
-        
+
         if current_step in ["completed", "failed", "end", "feedback_completed"]:
             status = "completed" if current_step in ["completed", "end", "feedback_completed"] else "failed"
         elif current_step == "waiting_for_answers":
@@ -188,7 +188,7 @@ class WorkflowPersistenceService:
         else:
             logger.info(f"[Persistence] 更新工作流会话: thread_id={thread_id}")
 
-    def _load_from_database(self, thread_id: str, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    def _load_from_database(self, thread_id: str, user_id: int | None = None) -> dict[str, Any] | None:
         """从数据库加载"""
         from Django_xm.apps.learning.models import WorkflowSession
 
@@ -199,7 +199,7 @@ class WorkflowPersistenceService:
             session = qs.first()
             if not session:
                 return None
-            
+
             state = {
                 "thread_id": session.thread_id,
                 "user_question": session.user_question,
@@ -216,14 +216,14 @@ class WorkflowPersistenceService:
                 "created_at": session.created_at.isoformat() if session.created_at else "",
                 "updated_at": session.updated_at.isoformat() if session.updated_at else "",
             }
-            
+
             return {k: v for k, v in state.items() if v is not None}
-            
+
         except Exception:
             pass
         return None
 
-    def _save_to_file(self, thread_id: str, state: Dict[str, Any]) -> None:
+    def _save_to_file(self, thread_id: str, state: dict[str, Any]) -> None:
         """保存到文件系统"""
         thread_dir = self.workflow_data_dir / thread_id
         thread_dir.mkdir(parents=True, exist_ok=True)
@@ -249,19 +249,19 @@ class WorkflowPersistenceService:
             with open(report_file, "w", encoding="utf-8") as f:
                 f.write("".join(content))
 
-    def _load_from_file(self, thread_id: str) -> Optional[Dict[str, Any]]:
+    def _load_from_file(self, thread_id: str) -> dict[str, Any] | None:
         """从文件系统加载"""
         state_file = self.workflow_data_dir / thread_id / "state.json"
         if state_file.exists():
-            with open(state_file, "r", encoding="utf-8") as f:
+            with open(state_file, encoding="utf-8") as f:
                 return json.load(f)
         return None
 
     def list_user_sessions(
         self,
         user_id: int,
-        status: Optional[str] = None,
-        search: Optional[str] = None,
+        status: str | None = None,
+        search: str | None = None,
     ):
         """列出用户的所有工作流会话"""
         from Django_xm.apps.learning.models import WorkflowSession
@@ -282,7 +282,7 @@ class WorkflowPersistenceService:
         return queryset.order_by("-created_at")
 
 
-_persistence_instance: Optional[WorkflowPersistenceService] = None
+_persistence_instance: WorkflowPersistenceService | None = None
 
 
 def get_persistence_service() -> WorkflowPersistenceService:

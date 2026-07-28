@@ -11,14 +11,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Type
+from typing import Any
 
 from Django_xm.apps.agent_hub.config import AgentType
 
 logger = logging.getLogger(__name__)
 
 # 全局注册表：AgentType -> Builder 类
-_builder_registry: Dict[AgentType, Type[Any]] = {}
+_builder_registry: dict[AgentType, type[Any]] = {}
 
 
 def register_builder(*agent_types: AgentType):
@@ -38,7 +38,7 @@ def register_builder(*agent_types: AgentType):
     if not agent_types:
         raise ValueError("register_builder 至少需要传入一个 AgentType")
 
-    def decorator(cls: Type[Any]) -> Type[Any]:
+    def decorator(cls: type[Any]) -> type[Any]:
         for agent_type in agent_types:
             if not isinstance(agent_type, AgentType):
                 raise TypeError(
@@ -61,7 +61,7 @@ def register_builder(*agent_types: AgentType):
     return decorator
 
 
-def get_registered_builders() -> Dict[AgentType, Type[Any]]:
+def get_registered_builders() -> dict[AgentType, type[Any]]:
     """返回注册表副本。
 
     修改返回的字典不会影响全局注册表。

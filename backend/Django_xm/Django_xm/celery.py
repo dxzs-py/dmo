@@ -35,6 +35,7 @@ Celery 配置模块
 
 import os
 import sys
+
 from celery import Celery
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'Django_xm.settings')
@@ -46,6 +47,7 @@ app = Celery('Django_xm', include=[
     'Django_xm.tasks.rag_tasks',
     'Django_xm.tasks.workflow_tasks',
     'Django_xm.tasks.analytics_tasks',
+    'Django_xm.tasks.approval_tasks',
 ])
 
 app.config_from_object('django.conf:settings', namespace='CELERY')
@@ -53,4 +55,4 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 if sys.platform == 'win32':
     app.conf.worker_pool = 'solo'
 
-import Django_xm.tasks.signals  # noqa: E402, F401 — 注册 Celery 信号钩子（直接导入模块，绕过 __init__.py 避免循环依赖）
+import Django_xm.tasks.signals

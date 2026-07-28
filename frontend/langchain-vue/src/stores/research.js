@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, markRaw, triggerRef } from 'vue'
-import { getResearchToolCalls } from '@/api/research'
+import { getApprovalHistory } from '@/api/approval'
 import { logger } from '@/utils/logger'
+import { mapApprovalStateToStatus } from '@/types'
 import {
   addOrUpdateToolCallInMap,
   updateOrAddToolResultInMap,
@@ -12,6 +13,57 @@ import {
   updateToolCallStatusInMap,
   _mergeToolCalls,
 } from '@/utils/message-operations'
+
+/**
+ * 将 Approval 记录转换为 toolCall 对象
+ *
+ * 工具调用数据的唯一持久化来源是 Approval 模型（原 ResearchTask.tool_calls 字段已在
+ * migration 0009 中移除）。本函数将后端 ApprovalReadSerializer 返回的审批记录
+ * 转换为前端 toolCall 结构，供 loadHistory 合并使用。
+ *
+ * 字段映射：
+ * - extra.tool_call_id / interrupt_id → toolCall.id / tool_call_id
+ * - tool_name → toolCall.name
+ * - parameters → toolCall.parameters
+ * - state → toolCall.status（通过 mapApprovalStateToStatus 映射）
+ * - 完整审批记录 → toolCall.approval（含 interrupt_id / state / operation 等）
+ *
+ * 注意：toolCall.result（工具执行输出）不在 Approval 中持久化，仅通过 SSE 流实时推送。
+ * 刷新页面后 result 不可恢复，loadHistory 不填充此字段。
+ *
+ * @param {Object} approval - ApprovalReadSerializer 返回的审批记录
+ * @returns {Object} toolCall 对象
+ */
+function _approvalToToolCall(approval) {
+  if (!approval) return null
+  const extra = (approval.extra && typeof approval.extra === 'object') ? approval.extra : {}
+  const toolCallId = extra.tool_call_id || approval.interrupt_id
+  return {
+    id: toolCallId,
+    tool_call_id: toolCallId,
+    name: approval.tool_name,
+    tool_name: approval.tool_name,
+    parameters: approval.parameters || {},
+    status: mapApprovalStateToStatus(approval.state),
+    approval: {
+      interrupt_id: approval.interrupt_id,
+      source: approval.source,
+      source_id: approval.source_id,
+      state: approval.state,
+      tool_name: approval.tool_name,
+      title: approval.title,
+      description: approval.description,
+      action: approval.action,
+      operation: approval.operation,
+      danger_level: approval.danger_level,
+      parameters: approval.parameters,
+      user_input: approval.user_input,
+      created_at: approval.created_at,
+      resolved_at: approval.resolved_at,
+      ...extra,
+    },
+  }
+}
 
 /**
  * 任务状态终态集合（不可被非终态覆盖）。
@@ -453,8 +505,12 @@ export const useResearchStore = defineStore('research', () => {
   /**
    * 从后端拉取工具调用历史
    *
-   * 调用 getResearchToolCalls API，初始化 task 数据结构，
-   * 将历史数据（对象结构）转换为 toolCallMap + toolCalls 数组
+   * 工具调用数据的唯一持久化来源是 Approval 模型（source='deep_research', source_id=taskId）。
+   * 调用统一审批 API getApprovalHistory 查询，通过 _approvalToToolCall 转换为 toolCall 结构，
+   * 再与本地实时同步数据增量合并。
+   *
+   * 合并策略与 sessionStore.loadSessionDetail 一致：使用 _mergeToolCalls 增量合并，
+   * 保留本地审批中间状态（pending/processing/waiting）和 tool status，避免刷新时丢失实时同步数据。
    *
    * @param {string} taskId - 研究任务 ID
    */
@@ -465,11 +521,12 @@ export const useResearchStore = defineStore('research', () => {
     }
     const task = _ensureTask(taskId)
     try {
-      const response = await getResearchToolCalls(taskId)
-      const data = response.data?.data || response.data
-      const toolCallsObj = data?.tool_calls || {}
-      // 后端返回对象结构（key=tool_call_id），转换为数组
-      const backendList = Object.values(toolCallsObj)
+      const response = await getApprovalHistory(taskId, { source: 'deep_research' })
+      const approvalList = response.data?.data || []
+      // Approval 记录转换为 toolCall 对象
+      const backendList = approvalList
+        .map(_approvalToToolCall)
+        .filter(Boolean)
 
       // 合并策略：使用 _mergeToolCalls 增量合并（而非全量替换），保留本地审批中间状态
       // （pending/processing/waiting）和 tool status，避免刷新时丢失实时同步数据。

@@ -1,19 +1,21 @@
 from django.urls import path
+
 from .views import (
-    DeepResearchStartView,
     DeepResearchContinueView,
-    DeepResearchStatusView,
     DeepResearchResultView,
+    DeepResearchStartView,
+    DeepResearchStatusView,
     DeepResearchTaskDeleteView,
     DeepResearchTaskListView,
-    DeepResearchFilesListView,
-    DeepResearchFileDownloadView,
-    DeepResearchFileContentView,
-    DeepResearchGlobalSearchView,
     ResearchApprovalView,
 )
+from .views_files import (
+    DeepResearchFileContentView,
+    DeepResearchFileDownloadView,
+    DeepResearchFilesListView,
+    DeepResearchGlobalSearchView,
+)
 from .views_stream import (
-    DeepResearchStreamView,
     deep_research_stream,
 )
 

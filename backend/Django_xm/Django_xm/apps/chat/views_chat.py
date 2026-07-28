@@ -5,41 +5,39 @@
 """
 
 import json
+import logging
 import time
-import asyncio
 from functools import wraps
-from asgiref.sync import sync_to_async
 
-from django.db import models, transaction
-from django.core.paginator import Paginator
+from asgiref.sync import sync_to_async
 from django.core.exceptions import ObjectDoesNotExist
-from rest_framework.views import APIView
-from rest_framework.response import Response
+from django.core.paginator import Paginator
+from django.db import models, transaction
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import BaseRenderer
+from rest_framework.views import APIView
 
-from Django_xm.async_utils import run_async
-from Django_xm.apps.core.throttling import ChatStreamRateThrottle
-from Django_xm.common.responses import success_response, error_response, validation_error_response
-from Django_xm.common.error_codes import ErrorCode
-from Django_xm.common.sse_utils import sse_response, sse_error_response, sse_error_event
-
-from .serializers import (
-    ChatRequestSerializer,
-    ChatResponseSerializer,
-    ChatSessionListSerializer,
-    ChatSessionDetailSerializer,
-    ChatSessionCreateSerializer,
-    ChatSessionUpdateSerializer,
-    ChatMessageSerializer,
-)
-from .models import ChatSession, ChatMessage, MessageRole
 from Django_xm.apps.attachments.services.cross_app import soft_delete_session_attachments
 from Django_xm.apps.cache_manager.services.secure_session_cache import SecureSessionCacheService
-from .services.chat_service import ChatService, ChatModeService
+from Django_xm.apps.core.throttling import ChatStreamRateThrottle
+from Django_xm.async_utils import run_async
+from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.responses import error_response, success_response, validation_error_response
+from Django_xm.common.sse_utils import sse_error_event, sse_error_response, sse_response
 
-import logging
+from .models import ChatMessage, ChatSession, MessageRole
+from .serializers import (
+    ChatMessageSerializer,
+    ChatRequestSerializer,
+    ChatResponseSerializer,
+    ChatSessionCreateSerializer,
+    ChatSessionDetailSerializer,
+    ChatSessionListSerializer,
+    ChatSessionUpdateSerializer,
+)
+from .services.chat_service import ChatService
 
 logger = logging.getLogger(__name__)
 
@@ -56,9 +54,10 @@ async def _cleanup_checkpoint_messages_async_by_id(session_id, deleted_message_i
     通过 session_id 查询而非传入 model 实例，确保在事务提交后能读到最新数据。
     """
     try:
-        from Django_xm.apps.ai_engine.services.checkpointer_factory import get_async_checkpointer
-        from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolCall
+        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolCall
         from langgraph.checkpoint.base import empty_checkpoint
+
+        from Django_xm.apps.ai_engine.services.checkpointer_factory import get_async_checkpointer
 
         checkpointer = await get_async_checkpointer()
         if checkpointer is None:
@@ -151,7 +150,7 @@ def log_view_action(view_func):
             return result
         except Exception as e:
             duration = time.time() - start_time
-            logger.error(f"请求失败: 耗时 {duration:.3f}s - 错误: {str(e)}", exc_info=True)
+            logger.error(f"请求失败: 耗时 {duration:.3f}s - 错误: {e!s}", exc_info=True)
             raise
     return wrapper
 
@@ -187,6 +186,7 @@ class BaseChatAPIView(APIView):
 
 
 class ChatView(BaseChatAPIView):
+    @extend_schema(request=ChatRequestSerializer, responses=ChatResponseSerializer)
     def post(self, request):
         serializer = ChatRequestSerializer(data=request.data)
         if not serializer.is_valid():
@@ -250,7 +250,7 @@ class ChatView(BaseChatAPIView):
             )
 
         except Exception as e:
-            error_msg = f"处理聊天请求时出错: {str(e)}"
+            error_msg = f"处理聊天请求时出错: {e!s}"
             logger.error(error_msg)
 
             return error_response(
@@ -280,6 +280,7 @@ class ChatStreamView(BaseChatAPIView):
     renderer_classes = [SSERenderer]
     throttle_classes = [ChatStreamRateThrottle]
 
+    @extend_schema(view=False)
     def post(self, request):
         serializer = ChatRequestSerializer(data=request.data)
         if not serializer.is_valid():
@@ -343,106 +344,21 @@ class ChatStreamView(BaseChatAPIView):
             except Exception as e:
                 logger.error(f"预加载附件内容失败: {e}", exc_info=True)
 
-        def generate():
-            gen = None
-            loop = asyncio.new_event_loop()
-            # 共享状态：async generator 被强制关闭时（aclose/GeneratorExit），
-            # try/except 之后的代码不会执行，导致 _pending_content 无法刷新。
-            # 通过共享状态字典，在 finally 块中兜底刷新。
-            stream_state = {"pending_content": ""}
-            data['_stream_state'] = stream_state
-            try:
-                if original_attachment_ids:
-                    yield f"data: {json.dumps({'type': 'attachment_ids', 'data': original_attachment_ids}, ensure_ascii=False)}\n\n"
-
-                for evt in pending_progress:
-                    yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
-                pending_progress.clear()
-
-                chat_service = ChatService(
-                    user_id=request.user.id if request.user.is_authenticated else None,
-                    thread_id=data.get('session_id'),
-                )
-                gen = chat_service.process_stream_chat_request(data).__aiter__()
-                pending_task = None
-
-                while True:
-                    try:
-                        # 使用 asyncio.wait 而非 wait_for，超时不取消底层任务
-                        if pending_task is None:
-                            pending_task = loop.create_task(gen.__anext__())
-
-                        done, _ = loop.run_until_complete(
-                            asyncio.wait({pending_task}, timeout=30.0)
-                        )
-
-                        if not done:
-                            # 超时但任务仍在运行，发送心跳保活，不取消任务
-                            yield f"data: {json.dumps({'type': 'heartbeat'}, ensure_ascii=False)}\n\n"
-                            continue
-
-                        # 任务完成
-                        event = pending_task.result()
-                        pending_task = None
-
-                        if isinstance(event, dict) and event.get('type') == 'error':
-                            yield sse_error_event(
-                                code=str(int(ErrorCode.SERVER_ERROR)),
-                                message=event.get('message', '处理出错'),
-                            )
-                        else:
-                            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                    except StopAsyncIteration:
-                        pending_task = None
-                        logger.debug("generate(): StopAsyncIteration, 流式处理完成")
-                        break
-            except Exception as e:
-                logger.error(f"流式处理出错: {str(e)}", exc_info=True)
-                from Django_xm.apps.ai_engine.services.exceptions import classify_exception
-                classified = classify_exception(e)
-                yield sse_error_event(
-                    code=str(int(ErrorCode.SERVER_ERROR)),
-                    message=classified.user_message,
-                )
-            finally:
-                if pending_task is not None:
-                    pending_task.cancel()
-                if gen is not None:
-                    try:
-                        loop.run_until_complete(gen.aclose())
-                    except Exception:
-                        pass
-                # 释放当前事件循环的异步 Checkpointer 连接池，防止 PostgreSQL 连接泄漏
-                try:
-                    from Django_xm.apps.ai_engine.services.checkpointer_factory import release_async_checkpointer
-                    loop.run_until_complete(release_async_checkpointer())
-                except Exception:
-                    pass
-                # 兜底刷新：async generator 被强制关闭时，_pending_content 可能未被刷新
-                pending_content = stream_state.get("pending_content", "")
-                if pending_content:
-                    logger.debug(f"generate() finally: 兜底刷新 _pending_content ({len(pending_content)} 字符)")
-                    yield f"data: {json.dumps({'type': 'chunk', 'content': pending_content}, ensure_ascii=False)}\n\n"
-                # 取消所有残留 Task，避免 "Task was destroyed but it is pending!" 警告
-                try:
-                    # 先让事件循环运行一小段时间，让 aclose 产生的清理任务有机会完成
-                    loop.run_until_complete(asyncio.sleep(0.05))
-                    pending = asyncio.all_tasks(loop)
-                    for task in pending:
-                        task.cancel()
-                    if pending:
-                        loop.run_until_complete(
-                            asyncio.gather(*pending, return_exceptions=True)
-                        )
-                except Exception:
-                    pass
-                loop.close()
-                yield "data: [DONE]\n\n"
-
-        return sse_response(generate())
+        # Task 23.1：generate() 闭包拆分为 _init_stream / _process_chunks / _cleanup_stream
+        # 三个职责单一的子函数，共享状态通过 ChatStreamContext dataclass 传递。
+        # 详见 chat/services/sse_generator.py
+        from .services.sse_generator import ChatStreamContext, generate_chat_stream
+        ctx = ChatStreamContext(
+            request=request,
+            data=data,
+            original_attachment_ids=original_attachment_ids,
+            pending_progress=pending_progress,
+        )
+        return sse_response(generate_chat_stream(ctx))
 
 
 class ChatModesView(BaseChatAPIView):
+    @extend_schema(view=False)
     def get(self, request):
         from Django_xm.apps.cache_manager.services.cache_service import CacheService, CacheTTL
 
@@ -470,7 +386,77 @@ class ChatModesView(BaseChatAPIView):
         return success_response(data=result, message='操作成功')
 
 
+class ChatFinalizeView(BaseChatAPIView):
+    """通知后端流式输出已最终化（前端已完成本地 FINALIZING → SYNCING → COMPLETED）。
+
+    前端 ``useStreamFinalizer.finalizeStream`` 在本地同步完成后调用此端点，
+    后端发布 ``STREAM_FINALIZED`` 事件到 session 频道，通知非请求浏览器
+    可安全拉取后端数据（此时后端已持久化前端同步的 content）。
+
+    请求体：
+        - session_id: 会话 ID（必填）
+        - message_id: 消息 ID（必填，用于 payload 携带）
+    """
+
+    @extend_schema(view=False)
+    @log_view_action
+    def post(self, request):
+        session_id = request.data.get('session_id')
+        message_id = request.data.get('message_id')
+
+        if not session_id:
+            return validation_error_response(message='session_id 不能为空')
+        if not message_id:
+            return validation_error_response(message='message_id 不能为空')
+
+        # 校验会话归属权
+        session = self.get_session_or_404(session_id, request.user)
+        if session is None:
+            return error_response(
+                message='会话不存在或无权访问',
+                code=ErrorCode.NOT_FOUND,
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        # 发布 STREAM_FINALIZED 事件到 session 频道
+        from Django_xm.common.event_schema import EventSource, EventType, PayloadValidationError
+        from Django_xm.common.realtime_events import publish_event_sync
+
+        payload = {
+            'source': EventSource.CHAT,
+            'source_id': str(session_id),
+            'message_id': str(message_id),
+        }
+        try:
+            publish_event_sync(
+                EventType.STREAM_FINALIZED,
+                payload,
+                session_id=str(session_id),
+            )
+        except PayloadValidationError:
+            logger.error(
+                f"[ChatFinalize] STREAM_FINALIZED payload 校验失败: "
+                f"session_id={session_id}, message_id={message_id}",
+                exc_info=True,
+            )
+            return error_response(
+                message='事件 payload 校验失败',
+                code=ErrorCode.SERVER_ERROR,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        except Exception as e:
+            logger.warning(f'[ChatFinalize] 广播 STREAM_FINALIZED 失败: {e}')
+            return error_response(
+                message='通知流式完成失败',
+                code=ErrorCode.SERVER_ERROR,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return success_response(message='流式完成通知已发送')
+
+
 class ChatSessionListView(BaseChatAPIView):
+    @extend_schema(operation_id="chat_sessions_list", responses=ChatSessionListSerializer(many=True))
     @log_view_action
     def get(self, request):
         user_id = request.user.id
@@ -501,7 +487,7 @@ class ChatSessionListView(BaseChatAPIView):
                         'total_pages': (total + page_size - 1) // page_size,
                     })
             except Exception as e:
-                logger.warning(f"Cache read failed, falling back to DB: {str(e)}")
+                logger.warning(f"Cache read failed, falling back to DB: {e!s}")
 
         sessions = ChatSession.objects.filter(
             user=request.user,
@@ -526,6 +512,7 @@ class ChatSessionListView(BaseChatAPIView):
 
 
 class ChatSessionCreateView(BaseChatAPIView):
+    @extend_schema(request=ChatSessionCreateSerializer, responses=ChatSessionDetailSerializer)
     @log_view_action
     @transaction.atomic
     def post(self, request):
@@ -553,6 +540,7 @@ class ChatSessionCreateView(BaseChatAPIView):
 
 
 class ChatSessionDetailView(BaseChatAPIView):
+    @extend_schema(operation_id="chat_sessions_detail", responses=ChatSessionDetailSerializer)
     @log_view_action
     def get(self, request, session_id):
         session = self.get_session_or_404(session_id, request.user, prefetch_attachments=True)
@@ -566,6 +554,7 @@ class ChatSessionDetailView(BaseChatAPIView):
         serializer = ChatSessionDetailSerializer(session)
         return success_response(data=serializer.data)
 
+    @extend_schema(request=ChatSessionUpdateSerializer, responses=ChatSessionDetailSerializer)
     @log_view_action
     @transaction.atomic
     def patch(self, request, session_id):
@@ -594,6 +583,7 @@ class ChatSessionDetailView(BaseChatAPIView):
             message='会话更新成功'
         )
 
+    @extend_schema(view=False)
     @log_view_action
     @transaction.atomic
     def delete(self, request, session_id):
@@ -620,9 +610,9 @@ class ChatSessionDetailView(BaseChatAPIView):
 
         # 清理 LangGraph checkpoint 和 Store 数据（PostgreSQL/SQLite 中的对话状态）
         try:
-            import asyncio
             from Django_xm.apps.ai_engine.services.checkpointer_factory import (
-                delete_thread_checkpoints, delete_thread_store_data,
+                delete_thread_checkpoints,
+                delete_thread_store_data,
             )
 
             async def _cleanup():
@@ -636,11 +626,12 @@ class ChatSessionDetailView(BaseChatAPIView):
 
         # 检查关联的深度研究是否已删除（包括已软删除的），如果都已删除则清理后端数据
         try:
-            from Django_xm.apps.research.services.cross_app import (
-                get_linked_research_tasks_including_deleted,
-                cleanup_research_if_both_deleted,
-            )
             from django.apps import apps as django_apps
+
+            from Django_xm.apps.research.services.cross_app import (
+                cleanup_research_if_both_deleted,
+                get_linked_research_tasks_including_deleted,
+            )
 
             # 通过 ResearchTask.session_id 查找
             all_linked = get_linked_research_tasks_including_deleted(session.session_id)
@@ -678,6 +669,7 @@ class ChatSessionDetailView(BaseChatAPIView):
 
 
 class ChatSessionCompactView(BaseChatAPIView):
+    @extend_schema(view=False)
     @log_view_action
     def post(self, request, session_id):
         session = self.get_session_or_404(session_id, request.user, prefetch_attachments=True)
@@ -716,6 +708,7 @@ class ChatSessionCompactView(BaseChatAPIView):
 
 
 class ChatMessageCreateView(BaseChatAPIView):
+    @extend_schema(request=ChatMessageSerializer, responses=ChatMessageSerializer)
     @log_view_action
     @transaction.atomic
     def post(self, request, session_id):
@@ -751,6 +744,7 @@ class ChatMessageCreateView(BaseChatAPIView):
 
 
 class ChatMessageBatchCreateView(BaseChatAPIView):
+    @extend_schema(request=ChatMessageSerializer, responses=ChatMessageSerializer)
     @log_view_action
     def post(self, request, session_id):
         session = self.get_session_or_404(session_id, request.user)
@@ -798,6 +792,7 @@ class ChatMessageBatchCreateView(BaseChatAPIView):
 
 
 class ChatMessageDeleteView(BaseChatAPIView):
+    @extend_schema(view=False)
     @log_view_action
     @transaction.atomic
     def delete(self, request, message_id):
@@ -826,6 +821,7 @@ class ChatMessageDeleteView(BaseChatAPIView):
 
 
 class ChatMessagePairDeleteView(BaseChatAPIView):
+    @extend_schema(view=False)
     @log_view_action
     @transaction.atomic
     def delete(self, request, session_id):
@@ -895,6 +891,7 @@ class ChatMessagePairDeleteView(BaseChatAPIView):
 
 
 class ChatMessageUpdateView(BaseChatAPIView):
+    @extend_schema(request=ChatMessageSerializer, responses=ChatMessageSerializer)
     @log_view_action
     @transaction.atomic
     def patch(self, request, message_id):
@@ -919,431 +916,394 @@ class ChatMessageUpdateView(BaseChatAPIView):
         )
 
 
-class ChatApprovalView(BaseChatAPIView):
-    """通用工具审批 API - 恢复被 interrupt 暂停的 Agent 执行
+async def _stream_chat_resume_generator(
+    request,
+    approval,
+    resume_value,
+    session_id,
+    request_data=None,
+    graph_interrupt_id=None,
+    langgraph_resume_id=None,
+):
+    """聊天审批恢复的异步 SSE 生成器。
 
-    任何工具通过 interrupt_for_approval() 触发的审批中断，
-    前端点击"确认"或"拒绝"时调用此 API，
-    通过 LangGraph Command(resume=...) 恢复 Agent 执行。
+    通过 ChatService 重建 agent，使用 ``Command(resume=...)`` 恢复 LangGraph 执行，
+    并以 SSE 事件流推送后续输出。
 
-    支持：
-    - CONFIRM 模式：resume=True/False
-    - CONFIRM_WITH_INPUT 模式：resume=用户输入的值（字符串）或 None（取消）
+    流程：
+    1. 从 ``request_data`` 与 ``approval.extra`` 读取模型/工具配置
+    2. 构造 ``Command(resume={langgraph_resume_id or approval.interrupt_id: resume_value})``
+    3. 创建 ChatService 并构建 agent（含 checkpointer）
+    4. 校验 interrupt 归属（防止深度研究 interrupt 被错误处理）
+    5. 从 checkpoint 加载历史 tool_call 信息
+    6. 流式恢复执行，处理 messages/updates 两种 stream_mode
+    7. 检测新的审批中断（批量审批场景）并推送 approval 事件
+    8. 流结束后发送 ``[DONE]``
+
+    心跳保活由调用方通过 ``sse_async_heartbeat_generator`` 包装实现，
+    本生成器只负责产出业务事件。
+
+    Args:
+        request: HTTP 请求对象（用到 ``request.user.id``）
+        approval: Approval 模型实例
+        resume_value: 恢复值（True/False/user_input，或批量场景的 {tool_call_id: bool}）
+        session_id: 会话 ID（用作 thread_id）
+        request_data: 预提取的 ``request.data`` 字典；为 None 时尝试从 request 读取。
+        graph_interrupt_id: 批次 UUID（仅用于日志）；为 None 时回退到 ``approval.interrupt_id``
+        langgraph_resume_id: LangGraph 恢复 ID（= ``intr.id``，作为 Command resume KEY）；
+                             为 None 时回退到 ``approval.interrupt_id``
+
+    Yields:
+        SSE 格式字符串（``"data: ...\\n\\n"``）
     """
-    renderer_classes = [SSERenderer]
-    throttle_classes = [ChatStreamRateThrottle]
+    from langgraph.types import Command
 
-    def post(self, request):
-        session_id = request.data.get('session_id')
-        interrupt_id = request.data.get('interrupt_id')
-        approved = request.data.get('approved', False)
-        # CONFIRM_WITH_INPUT 模式：用户输入的值
-        user_input = request.data.get('user_input')
+    from Django_xm.apps.ai_engine.services.checkpointer_factory import release_async_checkpointer
+    from Django_xm.apps.chat.services.chat_service import ChatService
 
-        if not session_id or not interrupt_id:
-            return error_response(
-                code=ErrorCode.INVALID_PARAMS,
-                message='缺少 session_id 或 interrupt_id 参数'
+    if request_data is None:
+        try:
+            request_data = dict(request.data) if hasattr(request, 'data') else {}
+        except Exception as req_err:
+            logger.warning(f"[ChatApprovalResume] 读取 request.data 失败: {req_err}")
+            request_data = {}
+
+    # 兼容历史 approval：extra 中持久化的 model_config / tool_config 优先级低于 request_data
+    approval_extra = getattr(approval, 'extra', None) or {}
+    if not isinstance(approval_extra, dict):
+        approval_extra = {}
+    persisted_tool_config = approval_extra.get('tool_config', {}) if isinstance(approval_extra.get('tool_config', {}), dict) else {}
+    persisted_model_config = approval_extra.get('model_config', {}) if isinstance(approval_extra.get('model_config', {}), dict) else {}
+
+    provider_id = request_data.get('provider_id') or persisted_model_config.get('provider_id')
+    model_name = request_data.get('model_name') or persisted_model_config.get('model_name')
+    use_deep_thinking = request_data.get('use_deep_thinking', persisted_model_config.get('use_deep_thinking', False))
+    special_params = request_data.get('special_params') or persisted_model_config.get('special_params')
+    temperature = request_data.get('temperature') or persisted_model_config.get('temperature')
+    max_tokens = request_data.get('max_tokens') or persisted_model_config.get('max_tokens')
+
+    use_tools = request_data.get('use_tools', persisted_tool_config.get('use_tools', True))
+    use_web_search = request_data.get('use_web_search', persisted_tool_config.get('use_web_search', False))
+    use_mcp = request_data.get('use_mcp', persisted_tool_config.get('use_mcp', False))
+    selected_mcp_servers = request_data.get('selected_mcp_servers') or persisted_tool_config.get('selected_mcp_servers')
+    selected_tools = request_data.get('selected_tools') or persisted_tool_config.get('selected_tools')
+    use_knowledge_base = request_data.get('use_knowledge_base', persisted_tool_config.get('use_knowledge_base', False))
+    selected_knowledge_bases = request_data.get('selected_knowledge_bases') or persisted_tool_config.get('selected_knowledge_bases', [])
+
+    interrupt_id = approval.interrupt_id
+    effective_resume_key = langgraph_resume_id or interrupt_id
+
+    logger.info(
+        f"[ChatApprovalResume] 恢复: session={session_id}, "
+        f"interrupt_id={interrupt_id}, graph_interrupt_id={graph_interrupt_id}, "
+        f"langgraph_resume_id={langgraph_resume_id}, "
+        f"effective_resume_key={effective_resume_key}, "
+        f"resume_value_type={type(resume_value).__name__}"
+    )
+
+    current_message_content = ""
+    tool_calls_map = {}
+    tool_call_count = {}
+    accumulated_reasoning = {}
+    tool_args_accumulator = {}
+
+    try:
+        chat_service = ChatService(user_id=request.user.id, thread_id=session_id)
+        data = {
+            'session_id': session_id,
+            'mode': 'agent',
+            'use_tools': use_tools,
+            'use_web_search': use_web_search,
+            'use_mcp': use_mcp,
+            'selected_mcp_servers': selected_mcp_servers,
+            'selected_tools': selected_tools,
+            'use_knowledge_base': use_knowledge_base,
+            'selected_knowledge_bases': selected_knowledge_bases,
+            'provider_id': provider_id,
+            'model_name': model_name,
+            'use_deep_thinking': use_deep_thinking,
+            'special_params': special_params,
+            'temperature': temperature,
+            'max_tokens': max_tokens,
+        }
+        # 深度思考模式标记
+        enable_deep_thinking = bool(use_deep_thinking) and bool(provider_id) and bool(model_name)
+        if enable_deep_thinking:
+            from Django_xm.apps.ai_engine.services.llm_factory import model_supports_capability
+            enable_deep_thinking = model_supports_capability(
+                provider_id, model_name, 'deep_thinking'
             )
+        if enable_deep_thinking:
+            data['_enable_deep_thinking'] = True
 
-        # 验证会话归属
-        session = ChatSession.objects.filter(
-            session_id=session_id,
-            user=request.user,
-            is_deleted=False,
-        ).first()
-        if not session:
-            return error_response(
-                code=ErrorCode.NOT_FOUND,
-                message='会话不存在',
-                http_status=status.HTTP_404_NOT_FOUND
-            )
+        # 使用 dict 形式指定 interrupt_id，支持多个 pending interrupts 的场景
+        command = Command(resume={effective_resume_key: resume_value})
 
-        logger.info(f"审批请求: session={session_id}, interrupt_id={interrupt_id}, approved={approved}, has_input={user_input is not None}")
+        # 解析模型实例（与初始聊天请求一致，避免 model_resolver 创建 LazyFallbackChatModel）
+        model_instance = ChatService._resolve_model_instance(data)
+        tools = await chat_service._get_tools(data)
+        agent, thread_config, use_checkpointer = await chat_service._create_agent_with_memory(
+            data, prompt_mode='agent',
+            model_instance=model_instance,
+            tool_config=chat_service._build_tool_config(data),
+            tools=tools,
+        )
 
-        # 从请求中读取模型配置
-        provider_id = request.data.get('provider_id')
-        model_name = request.data.get('model_name')
-        use_deep_thinking = request.data.get('use_deep_thinking', False)
-        special_params = request.data.get('special_params')
-        temperature = request.data.get('temperature')
-        max_tokens = request.data.get('max_tokens')
-        # 从请求中读取工具配置，确保审批恢复时使用与原始请求一致的工具集
-        use_tools = request.data.get('use_tools', True)
-        use_web_search = request.data.get('use_web_search', False)
-        use_mcp = request.data.get('use_mcp', False)
-        selected_mcp_servers = request.data.get('selected_mcp_servers')
-        selected_tools = request.data.get('selected_tools')
-        use_knowledge_base = request.data.get('use_knowledge_base', False)
-        selected_knowledge_bases = request.data.get('selected_knowledge_bases', [])
+        if not use_checkpointer or not thread_config:
+            yield sse_error_event("approval_error", "无法恢复会话状态：checkpointer 不可用")
+            return
 
-        def generate():
-            try:
-                from langgraph.types import Command
-                from Django_xm.apps.chat.services.chat_service import ChatService
-
-                # 构建 Agent（复用 ChatService 的逻辑，使用 checkpointer 恢复状态）
-                chat_service = ChatService(user_id=request.user.id, thread_id=session_id)
-                data = {
-                    'session_id': session_id,
-                    'mode': 'agent',
-                    'use_tools': use_tools,
-                    'use_web_search': use_web_search,
-                    'use_mcp': use_mcp,
-                    'selected_mcp_servers': selected_mcp_servers,
-                    'selected_tools': selected_tools,
-                    'use_knowledge_base': use_knowledge_base,
-                    'selected_knowledge_bases': selected_knowledge_bases,
-                    # 传递模型配置，确保审批恢复时使用正确的模型
-                    'provider_id': provider_id,
-                    'model_name': model_name,
-                    'use_deep_thinking': use_deep_thinking,
-                    'special_params': special_params,
-                    'temperature': temperature,
-                    'max_tokens': max_tokens,
-                }
-                # 深度思考模式标记
-                enable_deep_thinking = use_deep_thinking and provider_id and model_name
-                if enable_deep_thinking:
-                    from Django_xm.apps.ai_engine.services.llm_factory import model_supports_capability
-                    enable_deep_thinking = model_supports_capability(
-                        provider_id, model_name, 'deep_thinking'
-                    )
-                if enable_deep_thinking:
-                    data['_enable_deep_thinking'] = True
-
-                # resume 值：根据审批结果决定
-                if approved:
-                    resume_value = user_input if user_input is not None else True
-                else:
-                    resume_value = False
-                # 使用 dict 形式指定 interrupt_id，支持多个 pending interrupts 的场景
-                # 当 LLM 一次生成多个 tool_call 且都触发 interrupt 时，
-                # 必须指定具体的 interrupt_id 才能恢复，否则 LangGraph 报错
-                command = Command(resume={interrupt_id: resume_value})
-
-                # 将 agent 创建和流式恢复放在同一个事件循环中，
-                # 避免 checkpointer 的异步连接在事件循环切换时被关闭
-                async def _create_agent():
-                    # 解析模型实例（与初始聊天请求一致，避免 model_resolver 创建 LazyFallbackChatModel）
-                    model_instance = ChatService._resolve_model_instance(data)
-                    # 获取工具列表
-                    tools = await chat_service._get_tools(data)
-                    return await chat_service._create_agent_with_memory(
-                        data, prompt_mode='agent',
-                        model_instance=model_instance,
-                        tool_config=chat_service._build_tool_config(data),
-                        tools=tools,
-                    )
-
-                async def _stream_resume(agent, thread_config):
-                    async for chunk in agent.graph.astream(
-                        command,
-                        config=thread_config,
-                        stream_mode=["messages", "updates"],
-                    ):
-                        yield chunk
-
-                # 流式恢复 Agent 执行
-                current_message_content = ""
-                tool_calls_map = {}
-                tool_call_count = {}
-                accumulated_reasoning = {}
-                tool_args_accumulator = {}
-
-                loop = asyncio.new_event_loop()
-                try:
-                    # 在同一个事件循环中创建 agent
-                    agent, thread_config, use_checkpointer = loop.run_until_complete(_create_agent())
-
-                    if not use_checkpointer or not thread_config:
-                        yield sse_error_event("approval_error", "无法恢复会话状态：checkpointer 不可用")
-                        return
-
-                    # 校验 interrupt 归属：检查 Agent 的 checkpoint 中是否有该 interrupt_id 的 pending interrupt
-                    # 如果没有，说明该 interrupt 属于其他 Agent（如深度研究），不应由聊天审批 API 处理
-                    try:
-                        graph = agent.graph if hasattr(agent, 'graph') else agent
-                        if hasattr(graph, 'aget_state'):
-                            check_state = loop.run_until_complete(graph.aget_state(thread_config))
-                            if check_state and hasattr(check_state, 'tasks') and check_state.tasks:
-                                found_interrupt = False
-                                for task in check_state.tasks:
-                                    if hasattr(task, 'interrupts') and task.interrupts:
-                                        for intr in task.interrupts:
-                                            intr_id = intr.id if hasattr(intr, 'id') else ''
-                                            if intr_id == interrupt_id:
-                                                found_interrupt = True
-                                                break
-                                    if found_interrupt:
-                                        break
-                                if not found_interrupt:
-                                    logger.warning(
-                                        f"审批校验失败: interrupt_id={interrupt_id} 不属于会话 {session_id} 的 Agent，"
-                                        f"可能属于深度研究或其他 Agent"
-                                    )
-                                    yield sse_error_event("approval_error", "该审批请求不属于当前会话，可能属于深度研究任务")
-                                    return
-                    except Exception as check_err:
-                        # 校验异常时也终止，不再放行 — 防止深度研究 interrupt 被错误处理
-                        logger.error(f"审批归属校验异常: {check_err}", exc_info=True)
-                        yield sse_error_event("approval_error", f"审批校验异常，可能属于深度研究任务: {str(check_err)}")
-                        return
-
-                    # 从 checkpoint 加载历史消息，提取已有的 tool_call 信息，
-                    # 初始化 tool_calls_map，这样 ToolMessage 到达时能找到对应的 tool_info 并推送给前端
-                    try:
-                        graph = agent.graph if hasattr(agent, 'graph') else agent
-                        if hasattr(graph, 'aget_state'):
-                            history_state = loop.run_until_complete(
-                                graph.aget_state(thread_config)
-                            )
-                            if history_state and hasattr(history_state, 'values'):
-                                history_messages = history_state.values.get("messages", []) or []
-                                for msg in history_messages:
-                                    msg_tool_calls = getattr(msg, "tool_calls", None) or []
-                                    for tc in msg_tool_calls:
-                                        tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
-                                        tc_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
-                                        tc_args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
-                                        if tc_id:
-                                            tool_calls_map[tc_id] = {
-                                                "id": tc_id,
-                                                "name": tc_name or "unknown",
-                                                "parameters": tc_args or {},
-                                                "state": "input-available",
-                                                "status": "running",
-                                            }
-                    except Exception as hist_err:
-                        logger.warning(f"审批恢复加载历史 tool_call 失败（非致命）: {hist_err}")
-
-                    # 在同一个事件循环中流式恢复
-                    async_gen = _stream_resume(agent, thread_config)
-                    pending_task = None
-
-                    while True:
-                        try:
-                            if pending_task is None:
-                                pending_task = loop.create_task(async_gen.__anext__())
-
-                            done, _ = loop.run_until_complete(
-                                asyncio.wait({pending_task}, timeout=30.0)
-                            )
-
-                            if not done:
-                                # 超时但任务仍在运行，发送心跳保活，不取消任务
-                                yield f"data: {json.dumps({'type': 'heartbeat'}, ensure_ascii=False)}\n\n"
-                                continue
-
-                            chunk = pending_task.result()
-                            pending_task = None
-                        except StopAsyncIteration:
-                            pending_task = None
+        # 校验 interrupt 归属：检查 Agent 的 checkpoint 中是否有该 interrupt_id 的 pending interrupt
+        # 如果没有，说明该 interrupt 属于其他 Agent（如深度研究），不应由聊天审批 API 处理
+        try:
+            graph = agent.graph if hasattr(agent, 'graph') else agent
+            if hasattr(graph, 'aget_state'):
+                check_state = await graph.aget_state(thread_config)
+                if check_state and hasattr(check_state, 'tasks') and check_state.tasks:
+                    found_interrupt = False
+                    for task in check_state.tasks:
+                        if hasattr(task, 'interrupts') and task.interrupts:
+                            for intr in task.interrupts:
+                                intr_id = intr.id if hasattr(intr, 'id') else ''
+                                if intr_id == effective_resume_key:
+                                    found_interrupt = True
+                                    break
+                        if found_interrupt:
                             break
+                    if not found_interrupt:
+                        logger.warning(
+                            f"[ChatApprovalResume] 校验失败: interrupt_id={interrupt_id} "
+                            f"(effective_key={effective_resume_key}) 不属于会话 {session_id} 的 Agent，"
+                            f"可能属于深度研究或其他 Agent"
+                        )
+                        yield sse_error_event("approval_error", "该审批请求不属于当前会话，可能属于深度研究任务")
+                        return
+        except Exception as check_err:
+            # 校验异常时也终止，不再放行 — 防止深度研究 interrupt 被错误处理
+            logger.error(f"[ChatApprovalResume] 归属校验异常: {check_err}", exc_info=True)
+            yield sse_error_event("approval_error", f"审批校验异常，可能属于深度研究任务: {check_err!s}")
+            return
 
-                        # 处理多 stream mode
-                        if isinstance(chunk, tuple) and len(chunk) == 2:
-                            mode_name, mode_data = chunk
-                        else:
-                            mode_name, mode_data = "messages", chunk
+        # 从 checkpoint 加载历史消息，提取已有的 tool_call 信息，
+        # 初始化 tool_calls_map，这样 ToolMessage 到达时能找到对应的 tool_info 并推送给前端
+        try:
+            graph = agent.graph if hasattr(agent, 'graph') else agent
+            if hasattr(graph, 'aget_state'):
+                history_state = await graph.aget_state(thread_config)
+                if history_state and hasattr(history_state, 'values'):
+                    history_messages = history_state.values.get("messages", []) or []
+                    for msg in history_messages:
+                        msg_tool_calls = getattr(msg, "tool_calls", None) or []
+                        for tc in msg_tool_calls:
+                            tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                            tc_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+                            tc_args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
+                            if tc_id:
+                                tool_calls_map[tc_id] = {
+                                    "id": tc_id,
+                                    "name": tc_name or "unknown",
+                                    "parameters": tc_args or {},
+                                    "state": "input-available",
+                                    "status": "running",
+                                }
+        except Exception as hist_err:
+            logger.warning(f"[ChatApprovalResume] 加载历史 tool_call 失败（非致命）: {hist_err}")
 
-                        # 处理 updates 模式：提取工具执行结果（ToolMessage）推送给前端
-                        # 同时处理 __interrupt__ 事件（审批恢复后 agent 又触发新审批）
-                        if mode_name == "updates":
-                            if isinstance(mode_data, dict):
-                                # 处理 __interrupt__ 事件：审批恢复后 agent 又触发新的审批请求
-                                if "__interrupt__" in mode_data:
-                                    from langgraph.types import Interrupt
-                                    from Django_xm.apps.tools.base import is_approval_interrupt
-                                    interrupts = mode_data["__interrupt__"]
-                                    if interrupts:
-                                        for intr in interrupts:
-                                            if isinstance(intr, Interrupt):
-                                                interrupt_value = intr.value
-                                            elif isinstance(intr, dict):
-                                                interrupt_value = intr.get("value", intr)
-                                            else:
-                                                interrupt_value = intr
+        # 流式恢复 Agent 执行
+        from langchain_core.messages import AIMessage as LCAIMessage
 
-                                            if is_approval_interrupt(interrupt_value):
-                                                tool_name = interrupt_value.get("tool_name", "unknown")
-                                                new_interrupt_id = intr.id if isinstance(intr, Interrupt) else ""
-                                                approval_data = {
-                                                    'tool_name': tool_name,
-                                                    'tool_call_id': new_interrupt_id,
-                                                    'interrupt_id': new_interrupt_id,
-                                                    'title': interrupt_value.get("title", "确认操作"),
-                                                    'description': interrupt_value.get("description", ""),
-                                                    'action': interrupt_value.get("action", "confirm"),
-                                                    'danger_level': interrupt_value.get("danger_level", "medium"),
-                                                    'state': 'pending',
-                                                }
-                                                # 透传 operation（统一字段，兼容旧 command）
-                                                op = interrupt_value.get("operation") or interrupt_value.get("command") or ""
-                                                if op:
-                                                    approval_data['operation'] = op
-                                                    # 通用匹配：tool_name 一致 + parameters 中任意字段值等于 operation
-                                                    for tc_key, tc_info in tool_calls_map.items():
-                                                        if tc_info.get("name") != tool_name:
-                                                            continue
-                                                        tc_params = tc_info.get("parameters", {})
-                                                        if any(str(v) == op for v in tc_params.values()):
-                                                            approval_data['llm_tool_call_id'] = tc_info.get("id") or tc_key
-                                                            break
-                                                    # 回退：同名工具中第一个
-                                                    if 'llm_tool_call_id' not in approval_data:
-                                                        for tc_key, tc_info in tool_calls_map.items():
-                                                            if tc_info.get("name") == tool_name:
-                                                                approval_data['llm_tool_call_id'] = tc_info.get("id") or tc_key
-                                                                break
-                                                if interrupt_value.get("extra"):
-                                                    approval_data['extra'] = interrupt_value["extra"]
-                                                if interrupt_value.get("input_placeholder"):
-                                                    approval_data['input_placeholder'] = interrupt_value["input_placeholder"]
-                                                logger.info(f"审批恢复流中检测到新审批: tool={tool_name}, danger={approval_data['danger_level']}")
-                                                yield f"data: {json.dumps({'type': 'approval', 'data': approval_data}, ensure_ascii=False)}\n\n"
+        from Django_xm.apps.chat.services.stream_helpers import process_stream_chunk
 
-                                for node_name, node_output in mode_data.items():
-                                    if node_name == "__interrupt__":
-                                        continue
-                                    # tools 节点的输出包含 messages（ToolMessage）
-                                    if isinstance(node_output, dict):
-                                        node_messages = node_output.get("messages", [])
-                                        if isinstance(node_messages, list):
-                                            for msg in node_messages:
-                                                # 提取 ToolMessage 的内容
-                                                tool_content = None
-                                                tool_call_id = None
-                                                tool_name_from_msg = None
-                                                if hasattr(msg, "content"):
-                                                    tool_content = msg.content
-                                                    tool_call_id = getattr(msg, "tool_call_id", None)
-                                                    tool_name_from_msg = getattr(msg, "name", None) or node_name
-                                                elif isinstance(msg, dict):
-                                                    tool_content = msg.get("content")
-                                                    tool_call_id = msg.get("tool_call_id")
-                                                    tool_name_from_msg = msg.get("name") or node_name
+        async for chunk in agent.graph.astream(
+            command,
+            config=thread_config,
+            stream_mode=["messages", "updates"],
+        ):
+            # 处理多 stream mode
+            if isinstance(chunk, tuple) and len(chunk) == 2:
+                mode_name, mode_data = chunk
+            else:
+                mode_name, mode_data = "messages", chunk
 
-                                                if tool_content is not None and tool_call_id:
-                                                    # 查找对应的工具调用名称
-                                                    tool_name = tool_name_from_msg
-                                                    tc_info = tool_calls_map.get(tool_call_id)
-                                                    if tc_info:
-                                                        tool_name = tc_info.get("name", tool_name)
-                                                        # 同步更新 tool_calls_map 中的状态和结果
-                                                        tc_info["status"] = "completed"
-                                                        tc_info["result"] = tool_content
-                                                    # 写入 tool result，供前端展示
-                                                    # 必须包含 id 字段（值等于 tool_call_id），否则前端
-                                                    # _findMatchingToolCall 无法匹配，会新增而非更新
-                                                    yield f"data: {json.dumps({'type': 'tool_result', 'data': {'id': tool_call_id, 'tool_call_id': tool_call_id, 'name': tool_name, 'content': tool_content, 'state': 'output-available', 'status': 'completed'}}, ensure_ascii=False)}\n\n"
+            # 处理 updates 模式：提取工具执行结果（ToolMessage）推送给前端
+            # 同时处理 __interrupt__ 事件（审批恢复后 agent 又触发新审批）
+            if mode_name == "updates":
+                if isinstance(mode_data, dict):
+                    # 处理 __interrupt__ 事件：审批恢复后 agent 又触发新的审批请求
+                    if "__interrupt__" in mode_data:
+                        from langgraph.types import Interrupt
+
+                        from Django_xm.apps.tools.base import is_approval_interrupt
+                        interrupts = mode_data["__interrupt__"]
+                        if interrupts:
+                            for intr in interrupts:
+                                if isinstance(intr, Interrupt):
+                                    interrupt_value = intr.value
+                                elif isinstance(intr, dict):
+                                    interrupt_value = intr.get("value", intr)
+                                else:
+                                    interrupt_value = intr
+
+                                if is_approval_interrupt(interrupt_value):
+                                    tool_name = interrupt_value.get("tool_name", "unknown")
+                                    new_interrupt_id = intr.id if isinstance(intr, Interrupt) else ""
+                                    approval_data = {
+                                        'tool_name': tool_name,
+                                        'tool_call_id': new_interrupt_id,
+                                        'interrupt_id': new_interrupt_id,
+                                        'title': interrupt_value.get("title", "确认操作"),
+                                        'description': interrupt_value.get("description", ""),
+                                        'action': interrupt_value.get("action", "confirm"),
+                                        'danger_level': interrupt_value.get("danger_level", "medium"),
+                                        'state': 'pending',
+                                    }
+                                    # 透传 operation（统一字段，兼容旧 command）
+                                    op = interrupt_value.get("operation") or interrupt_value.get("command") or ""
+                                    if op:
+                                        approval_data['operation'] = op
+                                        # 通用匹配：tool_name 一致 + parameters 中任意字段值等于 operation
+                                        for tc_key, tc_info in tool_calls_map.items():
+                                            if tc_info.get("name") != tool_name:
+                                                continue
+                                            tc_params = tc_info.get("parameters", {})
+                                            if any(str(v) == op for v in tc_params.values()):
+                                                approval_data['llm_tool_call_id'] = tc_info.get("id") or tc_key
+                                                break
+                                        # 回退：同名工具中第一个
+                                        if 'llm_tool_call_id' not in approval_data:
+                                            for tc_key, tc_info in tool_calls_map.items():
+                                                if tc_info.get("name") == tool_name:
+                                                    approval_data['llm_tool_call_id'] = tc_info.get("id") or tc_key
+                                                    break
+                                    if interrupt_value.get("extra"):
+                                        approval_data['extra'] = interrupt_value["extra"]
+                                    if interrupt_value.get("input_placeholder"):
+                                        approval_data['input_placeholder'] = interrupt_value["input_placeholder"]
+                                    logger.info(
+                                        f"[ChatApprovalResume] 检测到新审批: tool={tool_name}, "
+                                        f"danger={approval_data['danger_level']}"
+                                    )
+                                    yield f"data: {json.dumps({'type': 'approval', 'data': approval_data}, ensure_ascii=False)}\n\n"
+
+                    for node_name, node_output in mode_data.items():
+                        if node_name == "__interrupt__":
                             continue
+                        # tools 节点的输出包含 messages（ToolMessage）
+                        if isinstance(node_output, dict):
+                            node_messages = node_output.get("messages", [])
+                            if isinstance(node_messages, list):
+                                for msg in node_messages:
+                                    # 提取 ToolMessage 的内容
+                                    tool_content = None
+                                    tool_call_id = None
+                                    tool_name_from_msg = None
+                                    if hasattr(msg, "content"):
+                                        tool_content = msg.content
+                                        tool_call_id = getattr(msg, "tool_call_id", None)
+                                        tool_name_from_msg = getattr(msg, "name", None) or node_name
+                                    elif isinstance(msg, dict):
+                                        tool_content = msg.get("content")
+                                        tool_call_id = msg.get("tool_call_id")
+                                        tool_name_from_msg = msg.get("name") or node_name
 
-                        # 处理 messages 模式
-                        # 审批恢复时，LangGraph 会重新执行 tools 节点（从头开始），
-                        # messages 模式可能重新发送 AIMessage（含 tool_calls）和 ToolMessage。
-                        # AIMessage 已在第一次请求中处理过，跳过以避免前端显示重复的工具调用。
-                        # 只处理 ToolMessage（工具结果）和最终的文本回复。
-                        from langchain_core.messages import AIMessage as LCAIMessage, ToolMessage as LCToolMessage
-                        from Django_xm.apps.chat.services.stream_helpers import process_stream_chunk
+                                    if tool_content is not None and tool_call_id:
+                                        # 查找对应的工具调用名称
+                                        tool_name = tool_name_from_msg
+                                        tc_info = tool_calls_map.get(tool_call_id)
+                                        if tc_info:
+                                            tool_name = tc_info.get("name", tool_name)
+                                            # 同步更新 tool_calls_map 中的状态和结果
+                                            tc_info["status"] = "completed"
+                                            tc_info["result"] = tool_content
+                                        # 写入 tool result，供前端展示
+                                        # 必须包含 id 字段（值等于 tool_call_id），否则前端
+                                        # _findMatchingToolCall 无法匹配，会新增而非更新
+                                        yield f"data: {json.dumps({'type': 'tool_result', 'data': {'id': tool_call_id, 'tool_call_id': tool_call_id, 'name': tool_name, 'content': tool_content, 'state': 'output-available', 'status': 'completed'}}, ensure_ascii=False)}\n\n"
+                continue
 
-                        # 解析 message 对象
-                        msg_obj = mode_data
-                        if isinstance(mode_data, tuple) and len(mode_data) == 2:
-                            msg_obj = mode_data[0]
+            # 处理 messages 模式
+            # 审批恢复时，LangGraph 会重新执行 tools 节点（从头开始），
+            # messages 模式可能重新发送 AIMessage（含 tool_calls）和 ToolMessage。
+            # AIMessage 已在第一次请求中处理过，跳过以避免前端显示重复的工具调用。
+            # 只处理 ToolMessage（工具结果）和最终的文本回复。
+            # 解析 message 对象
+            msg_obj = mode_data
+            if isinstance(mode_data, tuple) and len(mode_data) == 2:
+                msg_obj = mode_data[0]
 
-                        # 跳过含 tool_calls 的 AIMessage 中已有的 tool_call（已在第一次请求中处理），
-                        # 但不跳过新增的 tool_call（审批恢复后 Agent 可能生成新的工具调用，如 fs_write_file）。
-                        if isinstance(msg_obj, LCAIMessage) and (getattr(msg_obj, 'tool_calls', None) or getattr(msg_obj, 'tool_call_chunks', None)):
-                            msg_tool_calls = getattr(msg_obj, 'tool_calls', None) or []
-                            # 检查是否有新增的 tool_call（不在 tool_calls_map 中的）
-                            new_tool_calls = []
-                            for tc in msg_tool_calls:
-                                tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
-                                if tc_id and tc_id not in tool_calls_map:
-                                    new_tool_calls.append(tc)
+            # 跳过含 tool_calls 的 AIMessage 中已有的 tool_call（已在第一次请求中处理），
+            # 但不跳过新增的 tool_call（审批恢复后 Agent 可能生成新的工具调用，如 fs_write_file）。
+            if isinstance(msg_obj, LCAIMessage) and (getattr(msg_obj, 'tool_calls', None) or getattr(msg_obj, 'tool_call_chunks', None)):
+                msg_tool_calls = getattr(msg_obj, 'tool_calls', None) or []
+                # 检查是否有新增的 tool_call（不在 tool_calls_map 中的）
+                new_tool_calls = []
+                for tc in msg_tool_calls:
+                    tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                    if tc_id and tc_id not in tool_calls_map:
+                        new_tool_calls.append(tc)
 
-                            if not new_tool_calls:
-                                # 全部是已有的 tool_calls，跳过整条 AIMessage
-                                continue
-                            else:
-                                # 有新增的 tool_calls，只处理新增部分
-                                # 将新增的 tool_call 推送给前端
-                                for tc in new_tool_calls:
-                                    tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
-                                    tc_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
-                                    tc_args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
-                                    if tc_id:
-                                        tool_calls_map[tc_id] = {
-                                            "id": tc_id,
-                                            "name": tc_name or "unknown",
-                                            "parameters": tc_args or {},
-                                            "state": "input-available",
-                                            "status": "running",
-                                        }
-                                        yield f"data: {json.dumps({'type': 'tool', 'data': tool_calls_map[tc_id]}, ensure_ascii=False)}\n\n"
-                                # 跳过这条 AIMessage 的文本内容处理（tool_calls 消息通常没有文本内容）
-                                continue
+                if not new_tool_calls:
+                    # 全部是已有的 tool_calls，跳过整条 AIMessage
+                    continue
+                else:
+                    # 有新增的 tool_calls，只处理新增部分
+                    # 将新增的 tool_call 推送给前端
+                    for tc in new_tool_calls:
+                        tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                        tc_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+                        tc_args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
+                        if tc_id:
+                            tool_calls_map[tc_id] = {
+                                "id": tc_id,
+                                "name": tc_name or "unknown",
+                                "parameters": tc_args or {},
+                                "state": "input-available",
+                                "status": "running",
+                            }
+                            yield f"data: {json.dumps({'type': 'tool', 'data': tool_calls_map[tc_id]}, ensure_ascii=False)}\n\n"
+                    # 跳过这条 AIMessage 的文本内容处理（tool_calls 消息通常没有文本内容）
+                    continue
 
-                        try:
-                            for event in process_stream_chunk(
-                                mode_data, tool_calls_map, current_message_content,
-                                tool_call_count=tool_call_count,
-                                lcp_func=lambda a, b: 0,
-                                accumulated_reasoning=accumulated_reasoning,
-                                tool_args_accumulator=tool_args_accumulator,
-                                mode='agent',
-                            ):
-                                if event.get("type") == "chunk":
-                                    current_message_content += event.get("content", "")
-                                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                        except Exception as chunk_err:
-                            logger.warning(f"审批恢复流式 chunk 处理失败: {chunk_err}")
-                            continue
+            try:
+                for event in process_stream_chunk(
+                    mode_data, tool_calls_map, current_message_content,
+                    tool_call_count=tool_call_count,
+                    lcp_func=lambda a, b: 0,
+                    accumulated_reasoning=accumulated_reasoning,
+                    tool_args_accumulator=tool_args_accumulator,
+                    mode='agent',
+                ):
+                    if event.get("type") == "chunk":
+                        current_message_content += event.get("content", "")
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            except Exception as chunk_err:
+                logger.warning(f"[ChatApprovalResume] 流式 chunk 处理失败: {chunk_err}")
+                continue
 
-                finally:
-                    # 释放当前事件循环的异步 Checkpointer 连接池，防止 PostgreSQL 连接泄漏
-                    try:
-                        from Django_xm.apps.ai_engine.services.checkpointer_factory import release_async_checkpointer
-                        loop.run_until_complete(release_async_checkpointer())
-                    except Exception:
-                        pass
-                    loop.close()
+        # 深度思考模式兜底：当模型将全部输出放入 thinking 字段而 content 为空时，
+        # 将推理内容作为主内容发送
+        if (not current_message_content.strip()
+                and accumulated_reasoning
+                and accumulated_reasoning.get("content", "").strip()):
+            reasoning_text = accumulated_reasoning["content"].strip()
+            logger.info(
+                f"[ChatApprovalResume] 深度思考兜底: content 为空，将推理内容 ({len(reasoning_text)} 字符) 作为主内容发送"
+            )
+            yield f"data: {json.dumps({'type': 'chunk', 'content': reasoning_text}, ensure_ascii=False)}\n\n"
+            current_message_content = reasoning_text
 
-                # 深度思考模式兜底：当模型将全部输出放入 thinking 字段而 content 为空时，
-                # 将推理内容作为主内容发送
-                if (not current_message_content.strip()
-                        and accumulated_reasoning
-                        and accumulated_reasoning.get("content", "").strip()):
-                    reasoning_text = accumulated_reasoning["content"].strip()
-                    logger.info(
-                        f"审批恢复深度思考兜底: content 为空，将推理内容 ({len(reasoning_text)} 字符) 作为主内容发送"
-                    )
-                    yield f"data: {json.dumps({'type': 'chunk', 'content': reasoning_text}, ensure_ascii=False)}\n\n"
-                    current_message_content = reasoning_text
+        # 注意：审批恢复后的消息由前端 syncLastMessageToBackend 统一保存到数据库，
+        # 后端不再重复保存，避免创建重复消息。
+        # 后端只在流式完成后发送 [DONE]，前端收到后触发同步。
 
-                # 注意：审批恢复后的消息由前端 syncLastMessageToBackend 统一保存到数据库，
-                # 后端不再重复保存，避免创建重复消息。
-                # 后端只在流式完成后发送 [DONE]，前端收到后触发同步。
+        yield "data: [DONE]\n\n"
 
-                yield f"data: [DONE]\n\n"
-
-            except Exception as e:
-                logger.error(f"审批恢复执行失败: {e}", exc_info=True)
-                yield sse_error_event("approval_error", f"审批恢复执行失败: {str(e)}")
-            finally:
-                # 确保事件循环被关闭，防止资源泄漏
-                try:
-                    pending = asyncio.all_tasks(loop)
-                    if pending:
-                        for task in pending:
-                            task.cancel()
-                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-                except Exception:
-                    pass
-                try:
-                    loop.close()
-                except Exception:
-                    pass
-
-        return sse_response(generate())
+    except Exception as e:
+        logger.error(f"[ChatApprovalResume] 审批恢复执行失败: {e}", exc_info=True)
+        yield sse_error_event("approval_error", f"审批恢复执行失败: {e!s}")
+    finally:
+        # 释放异步 Checkpointer 连接池，防止 PostgreSQL 连接泄漏
+        try:
+            await release_async_checkpointer()
+        except Exception:
+            pass

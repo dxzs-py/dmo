@@ -3,11 +3,14 @@ Token 使用追踪器
 用于追踪 LLM 的 token 使用情况,为前端 Context 组件提供数据
 """
 
-from typing import Dict, Optional, Any
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import Any
 
 from django.conf import settings as django_settings
-from ..config import get_logger, settings as app_cfg
+
+from Django_xm.apps.core.config import get_logger
+
+from ..config import settings as app_cfg
 
 logger = get_logger(__name__)
 
@@ -20,7 +23,7 @@ class TokenUsage:
     reasoning_tokens: int = 0
     cached_input_tokens: int = 0
 
-    def to_dict(self) -> Dict[str, int]:
+    def to_dict(self) -> dict[str, int]:
         """转换为字典格式"""
         return {
             "inputTokens": self.input_tokens,
@@ -45,7 +48,7 @@ MODEL_LIMITS = {
 
 
 class UsageTracker:
-    def __init__(self, model_id: Optional[str] = None):
+    def __init__(self, model_id: str | None = None):
         self.model_id = model_id or app_cfg.openai_model
         self.usage = TokenUsage()
         logger.debug(f"📊 初始化 UsageTracker: model_id={model_id}")
@@ -66,7 +69,7 @@ class UsageTracker:
         """添加缓存命中的 token 数量"""
         self.usage.cached_input_tokens += count
 
-    def update_from_metadata(self, metadata: Dict[str, Any]):
+    def update_from_metadata(self, metadata: dict[str, Any]):
         if not metadata:
             return
 
@@ -103,7 +106,7 @@ class UsageTracker:
             return 0.0
         return self.get_total_tokens() / max_tokens
 
-    def get_usage_info(self) -> Dict[str, Any]:
+    def get_usage_info(self) -> dict[str, Any]:
         total_tokens = self.get_total_tokens()
         max_tokens = self.get_max_tokens()
 
@@ -127,7 +130,7 @@ class UsageTracker:
         )
 
 
-def create_usage_tracker(model_id: Optional[str] = None) -> UsageTracker:
+def create_usage_tracker(model_id: str | None = None) -> UsageTracker:
     if model_id is None:
         model_id = app_cfg.openai_model
 

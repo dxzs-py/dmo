@@ -8,19 +8,20 @@
 - 深度思考内容提取（兼容 DeepSeek/Ollama/Anthropic）
 """
 import json as _json
+import logging
 import re as _re
 import time
-import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
-from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
+from Django_xm.common.event_schema import EventSource, EventType
+from Django_xm.common.tool_call_lifecycle import ToolCallContext, service
 
 logger = logging.getLogger(__name__)
 
 
-def _sync_pending_to_stream_state(accumulated_reasoning: Dict[str, str]):
+def _sync_pending_to_stream_state(accumulated_reasoning: dict[str, str]):
     """将 _pending_content 同步到 data['_stream_state']，确保 generate() finally 能兜底刷新。
 
     当 async generator 被强制关闭（aclose/GeneratorExit）时，
@@ -32,7 +33,7 @@ def _sync_pending_to_stream_state(accumulated_reasoning: Dict[str, str]):
         stream_state["pending_content"] = accumulated_reasoning.get("_pending_content", "")
 
 
-def extract_thinking_content(chunk, provider_id: str = "") -> Optional[str]:
+def extract_thinking_content(chunk, provider_id: str = "") -> str | None:
     """从流式 chunk 中提取思考内容，兼容多种 Provider 格式。
 
     - DeepSeek: additional_kwargs["reasoning_content"]
@@ -102,7 +103,7 @@ def _extract_tool_params(tool_call: dict) -> dict:
     return {}
 
 
-def _fix_groq_tool_call(tool_call: Dict[str, Any]) -> Dict[str, Any]:
+def _fix_groq_tool_call(tool_call: dict[str, Any]) -> dict[str, Any]:
     raw_name = tool_call.get("name", "")
     if " " not in raw_name and "{" not in raw_name:
         return tool_call
@@ -125,7 +126,7 @@ def _fix_groq_tool_call(tool_call: Dict[str, Any]) -> Dict[str, Any]:
     return fixed
 
 
-def _try_parse_concatenated_json(s: str) -> Optional[dict]:
+def _try_parse_concatenated_json(s: str) -> dict | None:
     if not s or not s.strip():
         return None
     try:
@@ -152,14 +153,14 @@ def _try_parse_concatenated_json(s: str) -> Optional[dict]:
     return last_valid
 
 
-def _find_tool_call_key_by_index(tool_calls_map: Dict[str, Dict], index: int) -> Optional[str]:
+def _find_tool_call_key_by_index(tool_calls_map: dict[str, dict], index: int) -> str | None:
     for key, tc in tool_calls_map.items():
         if tc.get("_index") == index:
             return key
     return None
 
 
-def _migrate_key_if_needed(tool_calls_map: Dict[str, Dict], old_key: str, new_key: str) -> str:
+def _migrate_key_if_needed(tool_calls_map: dict[str, dict], old_key: str, new_key: str) -> str:
     if old_key == new_key or new_key not in tool_calls_map:
         if old_key in tool_calls_map and old_key != new_key:
             tool_calls_map[new_key] = tool_calls_map.pop(old_key)
@@ -183,15 +184,26 @@ def _migrate_key_if_needed(tool_calls_map: Dict[str, Dict], old_key: str, new_ke
 
 def _handle_ai_message_chunk(
     message: AIMessage,
-    tool_calls_map: Dict[str, Dict],
-    tool_call_count: Dict[str, int],
+    tool_calls_map: dict[str, dict],
+    tool_call_count: dict[str, int],
     lcp_func,
     current_message_content: str,
-    accumulated_reasoning: Dict[str, str],
-    tool_args_accumulator: Dict[str, str],
+    accumulated_reasoning: dict[str, str],
+    tool_args_accumulator: dict[str, str],
     mode: str,
     enable_deep_thinking: bool = False,
 ):
+    # ⚠️ 关键修复（与 tool_event_extractor.py / loop.py 一致）：
+    # AIMessageChunk 是 AIMessage 的子类，其 ``.tool_calls`` 属性内部使用
+    # ``parse_partial_json`` 解析 args，对不完整 JSON 可能返回非空但残缺的 dict
+    # （如 ``'{"file_path": "/san'`` 被解析为 ``{"file_path": "/san"}``）。
+    # 对 chunk，``.tool_calls`` 路径的参数不完整，不应直接 yield ``tool`` 事件
+    # 或更新 ``tool_calls_map`` 的 parameters 字段。
+    # 修复：对 AIMessageChunk，``.tool_calls`` 路径仅用于 dedup key 追踪 / guard
+    # 检查 / counting（这些不依赖参数完整性），但不 yield ``tool`` 事件和不更新
+    # parameters。参数提取与 ``tool`` 事件由 ``tool_call_chunks`` 路径处理（累积 +
+    # 严格 ``json.loads``）。
+    is_chunk = isinstance(message, AIMessageChunk)
     tool_calls = getattr(message, "tool_calls", [])
     tool_call_chunks = getattr(message, "tool_call_chunks", None)
     if tool_calls:
@@ -218,12 +230,15 @@ def _handle_ai_message_chunk(
                     tool_calls_map[dedup_key]["id"] = tool_id
                 if tool_name and not tool_calls_map[dedup_key].get("name"):
                     tool_calls_map[dedup_key]["name"] = tool_name
-                updated_params = _extract_tool_params(tool_call)
-                if updated_params:
-                    tool_calls_map[dedup_key]["parameters"] = updated_params
-                    tool_info = dict(tool_calls_map[dedup_key])
-                    tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
-                    yield {'type': 'tool', 'data': tool_info}
+                # 对 AIMessageChunk：不更新 parameters（args 可能不完整），
+                # 不 yield tool 事件（由 tool_call_chunks 路径在参数完整时 yield）
+                if not is_chunk:
+                    updated_params = _extract_tool_params(tool_call)
+                    if updated_params:
+                        tool_calls_map[dedup_key]["parameters"] = updated_params
+                        tool_info = dict(tool_calls_map[dedup_key])
+                        tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
+                        yield {'type': 'tool', 'data': tool_info}
                 continue
 
             if tool_call_count is not None:
@@ -240,17 +255,19 @@ def _handle_ai_message_chunk(
                 # 新版：所有工具都进入通用 dedup + 通用 loop 流程
                 try:
                     from Django_xm.apps.ai_engine.services.tool_usage_guard import (
-                        get_tool_usage_guard,
                         ToolUsageDecision,
                         ToolUsageStatus,
+                        get_tool_usage_guard,
                     )
                     # 拼装参数用于 guard 检查
+                    # 对 AIMessageChunk：参数可能不完整（parse_partial_json 返回部分 dict），
+                    # guard 检查基于不完整参数可能误判，因此 chunk 场景下参数为空时跳过
                     current_params = (
                         tool_calls_map[dedup_key].get("parameters", {})
                         if dedup_key in tool_calls_map
-                        else _extract_tool_params(tool_call)
+                        else (_extract_tool_params(tool_call) if not is_chunk else {})
                     )
-                    if not current_params:
+                    if not current_params and not is_chunk:
                         current_params = _extract_tool_params(tool_call) or {}
                     # 参数为空时跳过去重检查：流式传输中参数可能尚未解析完成，
                     # 空参数会导致 resource_key='[]'，所有调用被误判为"同一资源"
@@ -307,18 +324,21 @@ def _handle_ai_message_chunk(
                 except Exception as guard_err:
                     logger.debug(f"ToolUsageGuard 检查失败（不影响工具执行）: {guard_err}")
 
+            # 对 AIMessageChunk：创建 tool_calls_map 条目（空 parameters），
+            # 但不 yield tool 事件（由 tool_call_chunks 路径在参数完整时 yield）
             tool_info = {
                 "id": tool_id,
                 "name": tool_name,
                 "type": f"tool-call-{tool_name}",
                 "state": "input-available",
                 "status": "running",
-                "parameters": _extract_tool_params(tool_call),
+                "parameters": {} if is_chunk else _extract_tool_params(tool_call),
                 "result": None,
                 "error": None,
             }
             tool_calls_map[dedup_key] = tool_info
-            yield {'type': 'tool', 'data': tool_info}
+            if not is_chunk:
+                yield {'type': 'tool', 'data': tool_info}
 
     if tool_call_chunks and tool_args_accumulator is not None:
         for tc_chunk in tool_call_chunks:
@@ -466,8 +486,23 @@ def _handle_ai_message_chunk(
 
 def _handle_tool_message_chunk(
     message: ToolMessage,
-    tool_calls_map: Dict[str, Dict],
+    tool_calls_map: dict[str, dict],
+    *,
+    session_id: str = "",
+    message_id: str = "",
 ):
+    """处理 ToolMessage chunk：更新 tool_info 状态并发布生命周期事件。
+
+    在 yield SSE 事件之前，根据 ToolMessage 的 status 和 content 调用
+    ``service.transition`` 发布工具调用生命周期事件。事件优先级：
+    超时 > 拒绝 > 失败 > 完成。
+
+    Args:
+        message: ToolMessage 实例
+        tool_calls_map: 工具调用映射（key=tool_call_id，value=tool_info dict）
+        session_id: 会话 ID（保留参数，用于上下文定位）
+        message_id: 消息 ID（保留参数，用于上下文定位）
+    """
     tool_call_id = getattr(message, "tool_call_id", "")
     is_error = getattr(message, "status", None) == "error"
     tool_info = None
@@ -479,6 +514,9 @@ def _handle_tool_message_chunk(
                 tool_info = tc
                 break
     if tool_info:
+        # 事件优先级判定：超时 > 拒绝 > 失败 > 完成
+        is_timeout = _detect_tool_timeout(message)
+        is_rejected = _detect_tool_rejected(message)
         content_is_error = _detect_tool_error(message.content) if not is_error else False
         new_state = "output-error" if (is_error or content_is_error) else "output-available"
         tool_info["state"] = new_state
@@ -498,18 +536,49 @@ def _handle_tool_message_chunk(
             else:
                 tool_info["result"] = message.content
             tool_info["error"] = None
-        yield {'type': 'tool_result', 'data': tool_info}
+
+        # 发布工具调用生命周期事件（仅在能定位到上下文时调用）
+        # 事件优先级：超时 > 拒绝 > 失败 > 完成（与 test_stream_helpers.py 一致）
+        # 注意：函数返回 list（而非 generator）以确保 transition 在调用时立即执行，
+        # 调用方 ``yield from _handle_tool_message_chunk(...)`` 语义不变（list 可迭代）。
+        if tool_call_id:
+            if is_timeout:
+                service.transition(
+                    tool_call_id,
+                    EventType.TOOL_CALL_TIMEOUT,
+                )
+            elif is_rejected:
+                service.transition(
+                    tool_call_id,
+                    EventType.TOOL_CALL_REJECTED,
+                )
+            elif is_error:
+                service.transition(
+                    tool_call_id,
+                    EventType.TOOL_CALL_FAILED,
+                    error=message.content,
+                )
+            else:
+                service.transition(
+                    tool_call_id,
+                    EventType.TOOL_CALL_COMPLETED,
+                    result=message.content,
+                )
+
+        return [{'type': 'tool_result', 'data': tool_info}]
+
+    return []
 
 
 def process_stream_chunk(
     chunk,
-    tool_calls_map: Dict[str, Dict],
+    tool_calls_map: dict[str, dict],
     current_message_content: str,
     weather_tool_names: set = None,
-    tool_call_count: Dict[str, int] = None,
+    tool_call_count: dict[str, int] = None,
     lcp_func=None,
-    accumulated_reasoning: Dict[str, str] = None,
-    tool_args_accumulator: Dict[str, str] = None,
+    accumulated_reasoning: dict[str, str] = None,
+    tool_args_accumulator: dict[str, str] = None,
     mode: str = "agent",
     enable_deep_thinking: bool = False,
 ):
@@ -517,10 +586,9 @@ def process_stream_chunk(
         return
 
     if isinstance(chunk, tuple) and len(chunk) == 2:
-        message, metadata = chunk
+        message, _ = chunk
     else:
         message = chunk
-        metadata = {}
 
     if message is None:
         return
@@ -606,11 +674,11 @@ def sync_usage_from_messages(all_messages, usage_tracker, token_detail_tracker=N
 
 
 def finalize_tool_calls(
-    all_messages: List,
-    tool_calls_map: Dict[str, Dict],
-    tool_args_accumulator: Optional[Dict[str, str]] = None,
-) -> List[Dict[str, Any]]:
-    events: List[Dict[str, Any]] = []
+    all_messages: list,
+    tool_calls_map: dict[str, dict],
+    tool_args_accumulator: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
 
     if tool_args_accumulator:
         for key, accumulated_str in tool_args_accumulator.items():
@@ -650,7 +718,7 @@ def finalize_tool_calls(
     if needs_update:
         ai_chunks = [msg for msg in all_messages if isinstance(msg, AIMessage)]
         if ai_chunks:
-            chunks_by_id: Dict[str, Any] = {}
+            chunks_by_id: dict[str, Any] = {}
             chunks_no_id = None
             for chunk in ai_chunks:
                 msg_id = getattr(chunk, 'id', None) or ''
@@ -659,11 +727,10 @@ def finalize_tool_calls(
                         chunks_by_id[msg_id] = chunks_by_id[msg_id] + chunk
                     else:
                         chunks_by_id[msg_id] = chunk
+                elif chunks_no_id is not None:
+                    chunks_no_id = chunks_no_id + chunk
                 else:
-                    if chunks_no_id is not None:
-                        chunks_no_id = chunks_no_id + chunk
-                    else:
-                        chunks_no_id = chunk
+                    chunks_no_id = chunk
 
             complete_messages = list(chunks_by_id.values())
             if chunks_no_id is not None:
@@ -703,6 +770,42 @@ def _detect_tool_error(result_content: str) -> bool:
     return any(result_content.strip().startswith(prefix) for prefix in error_prefixes)
 
 
+def _detect_tool_timeout(message: ToolMessage) -> bool:
+    """检测 ToolMessage 是否表示审批超时。
+
+    通过 content 中包含 "审批超时" 关键字判断，用于触发 TOOL_CALL_TIMEOUT 终态事件。
+    content 非 str 时返回 False（健壮性，兼容 list/None 等异常 content 类型）。
+
+    Args:
+        message: ToolMessage 实例（langchain_core.messages.ToolMessage）
+
+    Returns:
+        bool: True 表示工具因审批超时失败
+    """
+    content = getattr(message, "content", None)
+    if not isinstance(content, str):
+        return False
+    return "审批超时" in content
+
+
+def _detect_tool_rejected(message: ToolMessage) -> bool:
+    """检测 ToolMessage 是否表示用户已拒绝。
+
+    通过 content 中包含 "用户已拒绝" 关键字判断，用于触发 TOOL_CALL_REJECTED 终态事件。
+    content 非 str 时返回 False（健壮性，兼容 list/None 等异常 content 类型）。
+
+    Args:
+        message: ToolMessage 实例（langchain_core.messages.ToolMessage）
+
+    Returns:
+        bool: True 表示工具被用户拒绝
+    """
+    content = getattr(message, "content", None)
+    if not isinstance(content, str):
+        return False
+    return "用户已拒绝" in content
+
+
 def is_tool_call_failure(exc: Exception) -> bool:
     error_msg = str(exc).lower()
     tool_call_failure_patterns = [
@@ -715,8 +818,10 @@ def is_tool_call_failure(exc: Exception) -> bool:
         return True
     try:
         from openai import (
-            PermissionDeniedError as OpenAIPermissionDenied,
             BadRequestError as OpenAIBadRequest,
+        )
+        from openai import (
+            PermissionDeniedError as OpenAIPermissionDenied,
         )
         if isinstance(exc, OpenAIPermissionDenied):
             return True
@@ -733,3 +838,288 @@ def is_tool_call_failure(exc: Exception) -> bool:
     if "403" in error_msg and "forbidden" in error_msg:
         return True
     return False
+
+
+def extract_interrupt_ids(intr: Any) -> tuple:
+    """从 LangGraph interrupt 对象提取 (value, graph_interrupt_id, langgraph_resume_id)
+
+    兼容三种形态：
+    - langgraph.types.Interrupt 实例（取 .value 和 .id）
+    - dict（取 "value" 和 "id" 键）
+    - 其他原始值（value=intr 本身，id 为空串）
+
+    返回的 langgraph_resume_id 当前与 graph_interrupt_id 相同，
+    保留独立字段以便未来支持 resume 协议的扩展。
+    """
+    try:
+        from langgraph.types import Interrupt
+    except ImportError:
+        Interrupt = None
+
+    if Interrupt is not None and isinstance(intr, Interrupt):
+        interrupt_value = intr.value
+        graph_interrupt_id = getattr(intr, "id", "") or ""
+    elif isinstance(intr, dict):
+        interrupt_value = intr.get("value", intr)
+        graph_interrupt_id = intr.get("id", "") or ""
+    else:
+        interrupt_value = intr
+        graph_interrupt_id = ""
+
+    langgraph_resume_id = graph_interrupt_id
+    return interrupt_value, graph_interrupt_id, langgraph_resume_id
+
+
+def parse_approval_interrupt(
+    interrupt_value: Any,
+    graph_interrupt_id: str = "",
+    langgraph_resume_id: str = "",
+    tool_calls_map: dict[str, dict] | None = None,
+    tool_args_accumulator: dict[str, str] | None = None,
+    used_tool_call_ids: set | None = None,
+) -> list[dict[str, Any]]:
+    """解析审批中断值为前端 approval 事件数据列表
+
+    将 ApprovalMiddleware 产生的 interrupt_value 转换为前端可渲染的 approval_data。
+    ApprovalMiddleware 在 after_model 钩子批量拦截需要审批的 tool_calls，
+    一次 interrupt 携带所有审批请求（批量格式）。
+    若 interrupt_value 中携带 operation，则尝试匹配 tool_calls_map /
+    tool_args_accumulator 中的 llm_tool_call_id，便于前端关联工具调用卡片。
+
+    Args:
+        interrupt_value: interrupt 的值（dict，包含 _approval/requests/_meta 等）
+        graph_interrupt_id: graph 节点的 interrupt id
+        langgraph_resume_id: resume 协议使用的 id（当前与 graph_interrupt_id 相同）
+        tool_calls_map: 工具调用映射（用于匹配 llm_tool_call_id）
+        tool_args_accumulator: 工具参数累积器（流式参数更完整）
+        used_tool_call_ids: 已使用的 tool_call_id 集合（用于去重，避免重复审批）
+
+    Returns:
+        approval_data 列表（批量格式下为多个元素，每个对应一个 tool_call 的审批请求）
+    """
+    if not isinstance(interrupt_value, dict):
+        return []
+
+    tool_calls_map = tool_calls_map or {}
+    tool_args_accumulator = tool_args_accumulator or {}
+    used_tool_call_ids = used_tool_call_ids or set()
+
+    tool_name = interrupt_value.get("tool_name", "unknown")
+    action = interrupt_value.get("action", "confirm")
+    interrupt_id = graph_interrupt_id or interrupt_value.get("interrupt_id", "")
+
+    approval_data = {
+        "tool_name": tool_name,
+        "tool_call_id": interrupt_id,
+        "interrupt_id": interrupt_id,
+        "graph_interrupt_id": graph_interrupt_id,
+        "langgraph_resume_id": langgraph_resume_id,
+        "title": interrupt_value.get("title", "确认操作"),
+        "description": interrupt_value.get("description", ""),
+        "action": action,
+        "danger_level": interrupt_value.get("danger_level", "medium"),
+        "state": "pending",
+    }
+
+    # 透传 operation（统一字段，兼容旧 command）
+    op = interrupt_value.get("operation") or interrupt_value.get("command") or ""
+    if op:
+        approval_data["operation"] = op
+        # 匹配 llm_tool_call_id：同时检查 tool_args_accumulator（累积的完整参数）
+        # 和 tool_calls_map（可能不完整），避免流式传输中参数未累积完导致匹配失败
+        matched = False
+        for tc_key, tc_info in tool_calls_map.items():
+            if tc_info.get("name") != tool_name:
+                continue
+            # 跳过已审批的工具调用
+            if tc_key in used_tool_call_ids or tc_info.get("id") in used_tool_call_ids:
+                continue
+            # 先检查 tool_args_accumulator 中的累积参数（更完整）
+            accumulated_args = tool_args_accumulator.get(tc_key, "")
+            if accumulated_args:
+                try:
+                    parsed_args = (
+                        _json.loads(accumulated_args)
+                        if isinstance(accumulated_args, str)
+                        else accumulated_args
+                    )
+                    if any(str(v) == op for v in (parsed_args or {}).values()):
+                        approval_data["llm_tool_call_id"] = tc_info.get("id") or tc_key
+                        matched = True
+                        break
+                except (_json.JSONDecodeError, TypeError):
+                    pass
+            # 再检查 tool_calls_map 中的 parameters
+            tc_params = tc_info.get("parameters", {})
+            if any(str(v) == op for v in tc_params.values()):
+                approval_data["llm_tool_call_id"] = tc_info.get("id") or tc_key
+                matched = True
+                break
+        # 回退：同名工具中最后一个（interrupt 总是最新的调用）
+        if not matched:
+            for tc_key, tc_info in reversed(list(tool_calls_map.items())):
+                if tc_info.get("name") == tool_name:
+                    if tc_key in used_tool_call_ids or tc_info.get("id") in used_tool_call_ids:
+                        continue
+                    approval_data["llm_tool_call_id"] = tc_info.get("id") or tc_key
+                    break
+
+    # 透传 extra（工具自定义数据）
+    if interrupt_value.get("extra"):
+        approval_data["extra"] = interrupt_value["extra"]
+    # 透传 input_placeholder（CONFIRM_WITH_INPUT 模式）
+    if interrupt_value.get("input_placeholder"):
+        approval_data["input_placeholder"] = interrupt_value["input_placeholder"]
+
+    return [approval_data]
+
+
+def _publish_tool_lifecycle_event(
+    event_type: EventType,
+    tool_info: dict[str, Any],
+    session_id: str | None,
+    message_id: str | None,
+) -> None:
+    """发布工具调用生命周期事件到统一 tool_call_lifecycle.service。
+
+    封装 ``service.register`` + ``service.transition`` 调用，提供单一入口
+    供 chat 模块（stream 流式 / regenerate 重新生成）发布工具调用事件。
+
+    跳过逻辑（任一缺失即跳过，不调用 register/transition）：
+        - ``session_id`` 为 None / 空串
+        - ``tool_info['id']`` 为 None / 空串（tool_call_id）
+        - ``tool_info['name']`` 为 None / 空串（tool_name）
+
+    register 行为（始终调用，幂等）：
+        - ``ToolCallContext.tool_call_id`` = ``tool_info['id']``
+        - ``ToolCallContext.tool_name`` = ``tool_info['name']``
+        - ``ToolCallContext.module`` = ``EventSource.CHAT``
+        - ``ToolCallContext.module_id`` = ``session_id``
+        - ``ToolCallContext.message_id`` = ``str(message_id) if message_id is not None else ''``
+        - ``ToolCallContext.parameters`` = ``tool_info.get('parameters') or {}``（始终为 dict）
+
+    bind_message_id 行为：
+        - 仅当 ``message_id`` 非 None 时调用（补全 message_id）
+        - ``message_id`` 为 None 时跳过（register 已设为空串，无需补全）
+
+    transition 行为：
+        - ``parameters``：空 dict / None → None（falsy 判断）；非空 dict → 原样透传
+        - ``result``：仅 ``EventType.TOOL_CALL_COMPLETED`` 传 ``tool_info.get('result')``
+        - ``error``：仅 ``EventType.TOOL_CALL_FAILED`` 传 ``tool_info.get('error')``
+
+    Args:
+        event_type: ``EventType`` 枚举成员（如 ``TOOL_CALL_INPUT_READY``）
+        tool_info: 工具调用信息 dict，必须包含 ``id`` / ``name``，
+            可选包含 ``parameters`` / ``result`` / ``error``
+        session_id: 会话 ID（用于 ``ToolCallContext.module_id``）
+        message_id: 消息 ID（用于 ``ToolCallContext.message_id`` 与 ``bind_message_id``）
+
+    契约对齐：``apps/chat/tests/test_stream_helpers_tool_events.py``
+    """
+    # 跳过逻辑：session_id / tool_call_id / tool_name 任一缺失即跳过
+    if not session_id:
+        return
+    tool_call_id = tool_info.get('id') if isinstance(tool_info, dict) else None
+    tool_name = tool_info.get('name') if isinstance(tool_info, dict) else None
+    if not tool_call_id or not tool_name:
+        return
+
+    # message_id 处理：None → 空串（register），不调用 bind_message_id
+    # 非 None → str 化后传给 register，并调用 bind_message_id 补全
+    resolved_message_id = '' if message_id is None else str(message_id)
+
+    # register：始终调用，parameters 始终为 dict（空时为 {}）
+    parameters = tool_info.get('parameters') or {}
+    ctx = ToolCallContext(
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
+        module=EventSource.CHAT,
+        module_id=session_id,
+        message_id=resolved_message_id,
+        parameters=parameters,
+    )
+    service.register(ctx)
+
+    # bind_message_id：仅当 message_id 非 None 时调用（补全 message_id）
+    if message_id is not None:
+        service.bind_message_id(tool_call_id, resolved_message_id)
+
+    # transition：parameters 始终作为 kwarg 传递
+    # 空 dict / None → None（falsy 判断）；非空 dict → 原样透传
+    # 契约：测试断言 kwargs['parameters'] is None（需显式传 None，不能省略）
+    transition_parameters = parameters if parameters else None
+
+    # result 仅 COMPLETED 事件透传（None 时也省略，与 _handle_tool_message_chunk 一致）
+    result = tool_info.get('result') if event_type == EventType.TOOL_CALL_COMPLETED else None
+
+    # error 仅 FAILED 事件透传
+    error = tool_info.get('error') if event_type == EventType.TOOL_CALL_FAILED else None
+
+    service.transition(
+        tool_call_id,
+        event_type,
+        parameters=transition_parameters,
+        result=result,
+        error=error,
+    )
+
+
+def merge_existing_approval_fields(
+    persisted_tool_calls: list[dict[str, Any]],
+    existing_tool_calls: list[dict[str, Any]],
+) -> None:
+    """按 tool_call_id 索引合并旧 approval 字段到新 tool_calls 列表。
+
+    用于 ``_save_resume_content`` / ``ChatMessageUpdateView.patch`` 等场景：
+    持久化的 tool_calls 来自 LLM 输出（无 approval 字段），
+    existing tool_calls 来自数据库（保留审批终态），
+    需要将 existing 的 approval 字段合并回 persisted，避免数据丢失。
+
+    匹配策略（按优先级）：
+        1. ``tool_call_id`` 字段（与 build_persisted_tool_calls / approval payload 一致）
+        2. ``id`` 字段（降级，兼容仅含 id 的旧数据）
+
+    合并规则：
+        - 仅当 persisted 条目**缺少** approval 字段时，从 existing 补充
+        - persisted 已有 approval 不被覆盖
+        - existing 无 approval 字段的不进入索引
+        - existing 中多余的条目（无 persisted 对应）被丢弃
+        - 长度不等时不跳过，仅合并索引中存在的条目
+
+    Args:
+        persisted_tool_calls: 新 tool_calls 列表（将被原地修改）
+        existing_tool_calls: 旧 tool_calls 列表（只读，提供 approval 字段）
+
+    契约对齐：``apps/chat/tests/test_stream_helpers_tool_events.py::MergeExistingApprovalFieldsTests``
+    """
+    # 非 list 直接返回（健壮性，不抛异常）
+    if not isinstance(persisted_tool_calls, list) or not isinstance(existing_tool_calls, list):
+        return
+    # 空列表直接返回
+    if not persisted_tool_calls or not existing_tool_calls:
+        return
+
+    # 构建 existing 索引：tool_call_id（优先）或 id（降级）→ approval
+    existing_index: dict[str, dict[str, Any]] = {}
+    for existing_tc in existing_tool_calls:
+        if not isinstance(existing_tc, dict):
+            continue
+        # 仅当 existing 有 approval 字段时才进入索引
+        if 'approval' not in existing_tc:
+            continue
+        # tool_call_id 优先，id 降级
+        key = existing_tc.get('tool_call_id') or existing_tc.get('id')
+        if key:
+            existing_index[key] = existing_tc['approval']
+
+    # 遍历 persisted，按 tool_call_id / id 在 existing_index 中查找匹配
+    for persisted_tc in persisted_tool_calls:
+        if not isinstance(persisted_tc, dict):
+            continue
+        # persisted 已有 approval → 不覆盖
+        if 'approval' in persisted_tc:
+            continue
+        # tool_call_id 优先，id 降级
+        key = persisted_tc.get('tool_call_id') or persisted_tc.get('id')
+        if key and key in existing_index:
+            persisted_tc['approval'] = existing_index[key]

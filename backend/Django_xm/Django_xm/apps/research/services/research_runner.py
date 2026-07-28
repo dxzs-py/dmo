@@ -11,7 +11,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
 
@@ -27,14 +27,14 @@ APPROVAL_TIMEOUT_SECONDS = 300
 class ResearchResult:
     success: bool
     final_report: str = ""
-    files: Optional[Dict[str, Any]] = None
-    state_files: Optional[Dict[str, Any]] = None
-    usage_data: Optional[Dict[str, int]] = None
+    files: dict[str, Any] | None = None
+    state_files: dict[str, Any] | None = None
+    usage_data: dict[str, int] | None = None
     model_name: str = ""
     error_message: str = ""
-    raw_result: Optional[Dict[str, Any]] = None
+    raw_result: dict[str, Any] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "success": self.success,
             "final_report": self.final_report,
@@ -51,8 +51,8 @@ def load_research_context(task_id: str, max_content_length: int = 12000) -> str:
 
     续研时注入到 system_prompt，提供先前研究的结构化摘要。
     """
-    from Django_xm.apps.research.models import ResearchTask
     from Django_xm.apps.core.services.file_manager import get_file_manager
+    from Django_xm.apps.research.models import ResearchTask
 
     try:
         task = ResearchTask.objects.filter(task_id=task_id, is_deleted=False).first()
@@ -173,11 +173,18 @@ async def execute_research_async(
     try:
         with TokenUsageCallbackHandler() as cb:
 
-            def _handle_interrupt(interrupts_data):
-                """审批中断回调：通过 Redis 通知前端并等待所有响应
+            async def _handle_interrupt(interrupts_data):
+                """审批中断回调：通过 Redis 通知前端并等待所有响应（async）
 
                 支持批量处理：当 LLM 一次返回多个 tool_call 导致多个 interrupt 时，
                 全部发布给前端，等待用户逐一审批后，返回 {interrupt_id: resume_value} dict。
+
+                关键设计（实时同步统一性）：
+                - 全部 Redis 阻塞调用通过 ``asyncio.to_thread`` 卸载到线程池，
+                  避免阻塞事件循环，确保审批等待期间其他 SSE 流的心跳与
+                  跨浏览器同步事件正常处理。
+                - ``pubsub.get_message(timeout=1.0)`` 是主阻塞点（每次最多 1s），
+                  必须在线程中执行，否则会冻结事件循环导致所有 SSE 客户端断连。
 
                 Args:
                     interrupts_data: 单个 interrupt dict（兼容旧调用）或 interrupt dict list
@@ -199,7 +206,7 @@ async def execute_research_async(
 
                 try:
                     from django.core.cache import cache
-                    redis_client = cache.client.get_client()
+                    redis_client = await asyncio.to_thread(cache.client.get_client)
                 except Exception as e:
                     logger.error(f"[ResearchApproval] 获取 Redis 客户端失败: {e}")
                     return {i["interrupt_id"]: False for i in interrupts_data}
@@ -230,11 +237,16 @@ async def execute_research_async(
                         "source": "deep_research",
                         "task_id": thread_id,
                     }, ensure_ascii=False)
+                    # 透传 parameters（工具输入参数，前端展示用，非空时才显示输入区）
+                    if interrupt_data.get("parameters"):
+                        approval_payload_obj = json.loads(approval_payload)
+                        approval_payload_obj["parameters"] = interrupt_data["parameters"]
+                        approval_payload = json.dumps(approval_payload_obj, ensure_ascii=False)
                     try:
-                        redis_client.publish(approval_channel, approval_payload)
+                        await asyncio.to_thread(redis_client.publish, approval_channel, approval_payload)
                         # 缓存到 Redis List，供后续订阅者（如 DeepResearchView SSE 流）读取历史审批
-                        redis_client.rpush(approval_list_key, approval_payload)
-                        redis_client.expire(approval_list_key, 3600)  # 1小时，覆盖审批等待+页面刷新场景
+                        await asyncio.to_thread(redis_client.rpush, approval_list_key, approval_payload)
+                        await asyncio.to_thread(redis_client.expire, approval_list_key, 3600)  # 1小时，覆盖审批等待+页面刷新场景
                     except Exception as e:
                         logger.error(f"[ResearchApproval] 发布审批请求失败(id={interrupt_id}): {e}")
 
@@ -246,14 +258,16 @@ async def execute_research_async(
                 # 2. 订阅审批响应频道，等待所有审批响应
                 resume_dict = {}
                 timed_out_ids = set()
-                pubsub = redis_client.pubsub()
+                pubsub = await asyncio.to_thread(redis_client.pubsub)
                 try:
-                    pubsub.subscribe(response_channel)
+                    await asyncio.to_thread(pubsub.subscribe, response_channel)
                     logger.info(f"[ResearchApproval] 等待 {len(pending_ids)} 个审批响应: {response_channel}")
 
                     deadline = time.time() + APPROVAL_TIMEOUT_SECONDS
                     while pending_ids and time.time() < deadline:
-                        message = pubsub.get_message(timeout=1.0)
+                        # 关键：pubsub.get_message 是阻塞调用（最多 1s），
+                        # 必须在线程中执行，否则冻结事件循环导致其他 SSE 流断连
+                        message = await asyncio.to_thread(pubsub.get_message, timeout=1.0)
                         if message and message["type"] == "message":
                             try:
                                 response_data = json.loads(message["data"])
@@ -283,12 +297,16 @@ async def execute_research_async(
 
                                 # 从 Redis List 中移除已处理的审批
                                 try:
-                                    pending_list = redis_client.lrange(approval_list_key, 0, -1)
+                                    pending_list = await asyncio.to_thread(
+                                        redis_client.lrange, approval_list_key, 0, -1
+                                    )
                                     for item in pending_list:
                                         try:
                                             item_data = json.loads(item)
                                             if item_data.get("interrupt_id") == resp_interrupt_id:
-                                                redis_client.lrem(approval_list_key, 1, item)
+                                                await asyncio.to_thread(
+                                                    redis_client.lrem, approval_list_key, 1, item
+                                                )
                                                 break
                                         except (json.JSONDecodeError, KeyError):
                                             continue
@@ -306,22 +324,26 @@ async def execute_research_async(
                                         "source": "deep_research",
                                         "task_id": thread_id,
                                     }, ensure_ascii=False)
-                                    redis_client.setex(processed_key, 3600, processed_data)
+                                    await asyncio.to_thread(
+                                        redis_client.setex, processed_key, 3600, processed_data
+                                    )
                                 except Exception:
                                     pass
 
                                 # 发布"审批已处理"通知到审批频道，让双端 SSE 流同步更新 UI
                                 try:
                                     processed_payload = json.dumps({
-                                    "type": "approval_processed",
-                                    "interrupt_id": resp_interrupt_id,
-                                    "tool_name": id_to_tool.get(resp_interrupt_id, "unknown"),
-                                    "approved": approved,
-                                    "state": "approved" if approved else "rejected",
-                                    "source": "deep_research",
-                                    "task_id": thread_id,
-                                }, ensure_ascii=False)
-                                    redis_client.publish(approval_channel, processed_payload)
+                                        "type": "approval_processed",
+                                        "interrupt_id": resp_interrupt_id,
+                                        "tool_name": id_to_tool.get(resp_interrupt_id, "unknown"),
+                                        "approved": approved,
+                                        "state": "approved" if approved else "rejected",
+                                        "source": "deep_research",
+                                        "task_id": thread_id,
+                                    }, ensure_ascii=False)
+                                    await asyncio.to_thread(
+                                        redis_client.publish, approval_channel, processed_payload
+                                    )
                                 except Exception:
                                     pass
 
@@ -350,7 +372,9 @@ async def execute_research_async(
                                     "state": "timeout",
                                     "task_id": thread_id,
                                 }, ensure_ascii=False)
-                                redis_client.publish(approval_channel, timeout_payload)
+                                await asyncio.to_thread(
+                                    redis_client.publish, approval_channel, timeout_payload
+                                )
                                 # 写入超时标记（含完整数据），供 SSE 历史补偿推送
                                 processed_key = f"{REDIS_APPROVAL_PREFIX}processed:{thread_id}:{tid}"
                                 timeout_data = json.dumps({
@@ -361,14 +385,16 @@ async def execute_research_async(
                                     "source": "deep_research",
                                     "task_id": thread_id,
                                 }, ensure_ascii=False)
-                                redis_client.setex(processed_key, 3600, timeout_data)
+                                await asyncio.to_thread(
+                                    redis_client.setex, processed_key, 3600, timeout_data
+                                )
                             except Exception as pub_err:
                                 logger.warning(f"[ResearchApproval] 发布超时通知失败: {pub_err}")
 
                 finally:
                     try:
-                        pubsub.unsubscribe(response_channel)
-                        pubsub.close()
+                        await asyncio.to_thread(pubsub.unsubscribe, response_channel)
+                        await asyncio.to_thread(pubsub.close)
                     except Exception:
                         pass
 

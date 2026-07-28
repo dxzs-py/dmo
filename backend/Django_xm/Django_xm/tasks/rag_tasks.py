@@ -4,16 +4,60 @@ RAG 相关的 Celery 异步任务
 """
 import logging
 from pathlib import Path
+
 from celery import shared_task
 from celery.exceptions import Retry
 
 from Django_xm.apps.knowledge.services.cross_app import get_index_manager
 from Django_xm.apps.knowledge.services.document_service import load_document, load_documents_from_directory
-from Django_xm.apps.knowledge.services.splitters import split_documents
 from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
+from Django_xm.apps.knowledge.services.splitters import split_documents
 from Django_xm.tasks.base import TrackedTask
 
 logger = logging.getLogger(__name__)
+
+
+# Redis 锁配置：防止相同 task_id 的 add_documents 任务并发执行
+# 锁 TTL 3600s 覆盖任务最大执行时长（soft_time_limit=1800s）的两倍
+_RAG_ADD_DOCS_LOCK_TTL = 3600
+
+
+def _acquire_rag_add_docs_lock(task_id: str) -> bool:
+    """获取 RAG add_documents 任务的 Redis 分布式锁
+
+    使用 SET NX EX 原子操作，防止相同 task_id 的任务在重试/并发场景下
+    同时执行导致重复写入（与业务层稳定 ID 共同构成幂等保障）。
+
+    Args:
+        task_id: Celery 任务 ID
+
+    Returns:
+        True 表示获锁成功，False 表示已有其他 worker 在执行
+    """
+    if not task_id:
+        return True  # 无 task_id 时无法加锁，放行由业务层 ID 兜底
+    try:
+        from django_redis import get_redis_connection
+        client = get_redis_connection('default')
+        lock_key = f"lock:rag_add_docs:{task_id}"
+        return bool(client.set(lock_key, '1', nx=True, ex=_RAG_ADD_DOCS_LOCK_TTL))
+    except Exception as e:
+        # Redis 不可用时不阻塞任务执行，由业务层稳定 ID 兜底幂等
+        logger.warning(f"[Celery RAG] 获取 Redis 锁失败（放行由业务层兜底）: {e}")
+        return True
+
+
+def _release_rag_add_docs_lock(task_id: str) -> None:
+    """释放 RAG add_documents 任务的 Redis 锁"""
+    if not task_id:
+        return
+    try:
+        from django_redis import get_redis_connection
+        client = get_redis_connection('default')
+        lock_key = f"lock:rag_add_docs:{task_id}"
+        client.delete(lock_key)
+    except Exception as e:
+        logger.debug(f"[Celery RAG] 释放 Redis 锁失败（TTL 会自动过期）: {e}")
 
 
 @shared_task(
@@ -129,7 +173,7 @@ def create_index_task(
         except Exception:
             pass
         if self.request.retries < self.max_retries:
-            raise self.retry(exc=exc)
+            raise self.retry(exc=exc) from exc
         return {'status': 'error', 'error': str(exc)}
 
 
@@ -157,6 +201,22 @@ def add_documents_to_index_task(
         tracker.set_created_by(user_id)
     if task_id:
         tracker.set_task_manager_id(task_id)
+
+    # Redis 锁：基于 celery task_id 防止同任务并发执行
+    # 与业务层稳定 ID（uuid5）共同构成幂等保障：
+    #   - 锁防止并发 worker 同时写入
+    #   - 稳定 ID 防止重试场景下重复写入
+    celery_task_id = self.request.id
+    if not _acquire_rag_add_docs_lock(celery_task_id):
+        logger.warning(
+            f"[Celery RAG] add_documents 任务 {celery_task_id} 已有其他 worker 在执行，跳过本次执行"
+        )
+        tracker.mark_success(result={'skipped': True, 'reason': 'locked_by_another_worker'})
+        return {
+            'status': 'skipped',
+            'reason': 'another_worker_holding_lock',
+            'index_name': index_name,
+        }
 
     try:
         logger.info(f"[Celery RAG] 向索引添加文档：{index_name}")
@@ -217,8 +277,11 @@ def add_documents_to_index_task(
         except Exception:
             pass
         if self.request.retries < self.max_retries:
-            raise self.retry(exc=exc)
+            raise self.retry(exc=exc) from exc
         return {'status': 'error', 'error': str(exc)}
+    finally:
+        # 无论成功/失败/重试，都释放锁（重试时新 task_id 会重新获锁）
+        _release_rag_add_docs_lock(celery_task_id)
 
 
 @shared_task(
@@ -276,7 +339,7 @@ def delete_index_task(
         except Exception:
             pass
         if self.request.retries < self.max_retries:
-            raise self.retry(exc=exc)
+            raise self.retry(exc=exc) from exc
         return {'status': 'error', 'error': str(exc)}
 
 
@@ -326,5 +389,5 @@ def update_index_task(self, index_name: str, user_id: int = None, task_id: str =
         except Exception:
             pass
         if self.request.retries < self.max_retries:
-            raise self.retry(exc=exc)
+            raise self.retry(exc=exc) from exc
         return {'status': 'error', 'error': str(exc)}

@@ -6,24 +6,23 @@
 为深度研究的文档分析节点提供 retriever_tool。
 """
 
-from typing import Dict, List, Optional
 
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.tools import BaseTool
 
 from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
 from Django_xm.apps.knowledge.services.index_service import IndexManager
 from Django_xm.apps.knowledge.services.retrieval_service import (
+    create_multi_retriever,
     create_retriever,
     create_retriever_tool,
-    create_multi_retriever,
 )
-from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
 
 logger = get_logger(__name__)
 
 
-def _normalize_weights(weights: List[float], count: int) -> List[float]:
+def _normalize_weights(weights: list[float], count: int) -> list[float]:
     total = sum(weights)
     if total <= 0:
         logger.warning(f"权重总和 {total} <= 0，回退到等权分配")
@@ -32,9 +31,9 @@ def _normalize_weights(weights: List[float], count: int) -> List[float]:
 
 
 def suggest_weights(
-    knowledge_base_ids: List[str],
+    knowledge_base_ids: list[str],
     user_id: int,
-) -> List[float]:
+) -> list[float]:
     """
     根据知识库元数据（文档数量、索引大小）自动推荐权重。
     文档数量越多权重越高。
@@ -53,7 +52,7 @@ def suggest_weights(
         return [1.0]
 
     manager = IndexManager()
-    doc_counts: List[float] = []
+    doc_counts: list[float] = []
 
     for kb_id in knowledge_base_ids:
         user_index_name = f"user_{user_id}_{kb_id}"
@@ -78,12 +77,12 @@ def suggest_weights(
 
 
 def build_multi_kb_retriever(
-    knowledge_base_ids: List[str],
+    knowledge_base_ids: list[str],
     user_id: int,
     k: int = 4,
     search_type: str = "mmr",
-    weights: Optional[List[float]] = None,
-) -> Optional[BaseRetriever]:
+    weights: list[float] | None = None,
+) -> BaseRetriever | None:
     """
     根据知识库 ID 列表构建联合检索器
 
@@ -164,11 +163,11 @@ def build_multi_kb_retriever(
 
 
 def build_retriever_tool_for_research(
-    knowledge_base_ids: List[str],
+    knowledge_base_ids: list[str],
     user_id: int,
     k: int = 4,
-    weights: Optional[List[float]] = None,
-) -> Optional[BaseTool]:
+    weights: list[float] | None = None,
+) -> BaseTool | None:
     """
     为深度研究构建 retriever_tool
 

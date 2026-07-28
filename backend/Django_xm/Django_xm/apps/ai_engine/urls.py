@@ -1,5 +1,6 @@
 from django.urls import path
-from .model_views import ModelListView, ModelTestView, ModelSwitchView, HelperModelView
+
+from .model_views import HelperModelView, ModelListView, ModelSwitchView, ModelTestView
 from .settings_views import AISettingsView, RebuildIndexesView
 
 app_name = 'ai_engine'

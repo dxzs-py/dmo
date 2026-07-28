@@ -4,7 +4,7 @@
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
@@ -19,7 +19,7 @@ class InMemoryBackend(VectorStoreBackend):
     """InMemory 向量存储后端"""
 
     def __init__(self):
-        self._stores: Dict[str, VectorStore] = {}
+        self._stores: dict[str, VectorStore] = {}
 
     @property
     def store_type(self) -> str:
@@ -32,7 +32,7 @@ class InMemoryBackend(VectorStoreBackend):
 
     def create(
         self,
-        documents: List[Document],
+        documents: list[Document],
         embeddings: Embeddings,
         collection_name: str,
         **kwargs: Any,
@@ -78,7 +78,7 @@ class InMemoryBackend(VectorStoreBackend):
         logger.warning(f"InMemory 向量库不存在: {collection_name}")
         return False
 
-    def list_collections(self, prefix: str = "") -> List[str]:
+    def list_collections(self, prefix: str = "") -> list[str]:
         names = list(self._stores.keys())
         if prefix:
             names = [n for n in names if n.startswith(prefix)]
@@ -90,8 +90,8 @@ class InMemoryBackend(VectorStoreBackend):
     def add_documents(
         self,
         vector_store: VectorStore,
-        documents: List[Document],
-    ) -> List[str]:
+        documents: list[Document],
+    ) -> list[str]:
         if hasattr(vector_store, "add_documents"):
             ids = vector_store.add_documents(documents)
         elif hasattr(vector_store, "add_texts"):
@@ -106,7 +106,7 @@ class InMemoryBackend(VectorStoreBackend):
     def remove_documents(
         self,
         collection_name: str,
-        document_ids: List[str],
+        document_ids: list[str],
     ) -> bool:
         """InMemory 不支持按 ID 删除"""
         logger.warning("InMemory 向量库不支持按 ID 删除文档")
@@ -127,14 +127,14 @@ class InMemoryBackend(VectorStoreBackend):
         vector_store: VectorStore,
         query: str,
         k: int = 4,
-        filter: Optional[Dict] = None,
-    ) -> List[Tuple[Document, float]]:
-        kwargs: Dict[str, Any] = {"k": k}
+        filter: dict | None = None,
+    ) -> list[tuple[Document, float]]:
+        kwargs: dict[str, Any] = {"k": k}
         if filter:
             kwargs["filter"] = filter
         return vector_store.similarity_search_with_score(query=query, **kwargs)
 
-    def get_stats(self, collection_name: str) -> Dict[str, Any]:
+    def get_stats(self, collection_name: str) -> dict[str, Any]:
         if collection_name in self._stores:
             return {
                 "name": collection_name,

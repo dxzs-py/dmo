@@ -13,17 +13,16 @@
 """
 
 import logging
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from asgiref.sync import sync_to_async
 from django.db import transaction
 
 from Django_xm.apps.approvals.models import Approval
 from Django_xm.apps.approvals.services.approval_service import (
+    _clean_extra_temp_keys,
     _persist_and_broadcast,
     _publish_tool_call_timeout_event,
-    _clean_extra_temp_keys,
     _release_lock,
     sync_approval_state_to_chat_message,
 )
@@ -38,7 +37,7 @@ _TERMINAL_STATES = {
 
 
 def _now():
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class ApprovalLifecycleService:

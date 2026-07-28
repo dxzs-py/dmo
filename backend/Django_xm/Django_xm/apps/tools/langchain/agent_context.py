@@ -16,20 +16,20 @@
 - 超过最大深度时 agent_create 返回错误，阻止无限嵌套
 """
 import threading
-from typing import Dict, Any, Optional, List
+from typing import Any
 
 from langchain_core.tools import BaseTool
 
 _context_lock = threading.Lock()
-_context_storage: Dict[str, Any] = {}
+_context_storage: dict[str, Any] = {}
 
 # 默认最大子代理嵌套深度（0=主代理, 1=子代理, 2=孙代理, 3=曾孙代理）
 MAX_AGENT_DEPTH: int = 3
 
 
 def set_parent_tool_context(
-    tools: List[BaseTool],
-    config: Optional[Dict[str, Any]] = None,
+    tools: list[BaseTool],
+    config: dict[str, Any] | None = None,
 ) -> None:
     tool_names = [t.name for t in tools]
     mcp_servers = set()
@@ -48,7 +48,7 @@ def set_parent_tool_context(
             _context_storage['agent_depth'] = 0
 
 
-def get_parent_tool_context() -> Dict[str, Any]:
+def get_parent_tool_context() -> dict[str, Any]:
     with _context_lock:
         return {
             'tool_names': list(_context_storage.get('tool_names', [])),

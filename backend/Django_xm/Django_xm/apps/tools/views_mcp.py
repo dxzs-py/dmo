@@ -1,39 +1,20 @@
 import logging
 
 from asgiref.sync import sync_to_async
-from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.pagination import PageNumberPagination
+from rest_framework.views import APIView
 
-from Django_xm.common.responses import success_response, error_response
-from Django_xm.common.error_codes import ErrorCode
-from Django_xm.async_utils import run_async
+from Django_xm.apps.core.throttling import SensitiveOperationRateThrottle
 from Django_xm.apps.tools.managers import _build_user_tool_category_info
-
-
-class StandardPagination(PageNumberPagination):
-    page_size = 20
-    page_size_query_param = 'page_size'
-    max_page_size = 100
-
-    def paginate_queryset(self, queryset, request, view=None):
-        if 'page' not in request.query_params:
-            return None
-        return super().paginate_queryset(queryset, request, view)
+from Django_xm.apps.tools.views_common import (
+    StandardPagination,
+    _handle_crud_result,
+)
+from Django_xm.async_utils import run_async
+from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.responses import error_response, success_response
 
 logger = logging.getLogger(__name__)
-
-ERROR_CODE_TO_STATUS = {'FORBIDDEN': 403, 'NOT_FOUND': 404, 'VALIDATION': 400}
-
-
-def _handle_crud_result(result, success_msg="操作成功", data=None):
-    """统一处理 Manager 返回结果"""
-    if result.get('success'):
-        response_data = data if data is not None else result.get('data')
-        return success_response(message=success_msg, data=response_data)
-    error_code = result.get('error_code', 'UNKNOWN')
-    http_status = ERROR_CODE_TO_STATUS.get(error_code, 400)
-    return error_response(message=result.get('message', '操作失败'), http_status=http_status)
 
 
 def _get_merged_mcp_servers(user=None):
@@ -43,6 +24,7 @@ def _get_merged_mcp_servers(user=None):
     用户级：数据库 McpServerConfig（仅当前用户可见）
     """
     from django.conf import settings as django_settings
+
     from Django_xm.apps.tools.models import McpServerConfig
 
     base_servers = list(getattr(django_settings, "MCP_SERVERS", []))
@@ -60,9 +42,9 @@ def _get_merged_mcp_servers(user=None):
 
 async def _fetch_mcp_tools(selected_servers=None, user=None):
     from Django_xm.apps.tools.mcp import (
-        is_mcp_available,
         get_mcp_tools,
         get_server_info_list,
+        is_mcp_available,
     )
 
     if not is_mcp_available():
@@ -152,9 +134,9 @@ class McpStatusView(APIView):
     def get(self, request):
         try:
             from Django_xm.apps.tools.mcp import (
-                is_mcp_available,
-                get_server_info_list,
                 get_pooled_client_count,
+                get_server_info_list,
+                is_mcp_available,
             )
             available = is_mcp_available()
             servers = _get_merged_mcp_servers(user=request.user) if available else []
@@ -203,11 +185,12 @@ class McpServerTestView(APIView):
             return success_response(data=data)
         except Exception as e:
             logger.error(f"MCP Server 连接测试失败 ({server_name}): {e}")
-            return error_response(message=f"连接失败: {str(e)}")
+            return error_response(message=f"连接失败: {e!s}")
 
 
 async def _test_mcp_server(server_name, target):
     import asyncio
+
     from Django_xm.apps.tools.mcp import get_mcp_tools
 
     transport = target.get("transport", "sse")
@@ -238,7 +221,7 @@ async def _test_mcp_server(server_name, target):
                 ),
                 timeout=timeout,
             )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {
             "server": server_name,
             "transport": transport,
@@ -309,7 +292,7 @@ class McpServerListView(APIView):
             return success_response(data={"servers": tools, "total": len(tools)})
         except Exception as e:
             logger.error(f"获取 MCP Server 列表失败: {e}")
-            return error_response(message=f"获取 MCP Server 列表失败: {str(e)}")
+            return error_response(message=f"获取 MCP Server 列表失败: {e!s}")
 
 
 class McpServerAddView(APIView):
@@ -317,8 +300,8 @@ class McpServerAddView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        from Django_xm.apps.tools.serializers import McpServerAddSerializer
         from Django_xm.apps.tools.managers import McpToolManager
+        from Django_xm.apps.tools.serializers import McpServerAddSerializer
 
         serializer = McpServerAddSerializer(data=request.data)
         if not serializer.is_valid():
@@ -337,8 +320,8 @@ class McpServerUpdateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        from Django_xm.apps.tools.serializers import McpServerAddSerializer
         from Django_xm.apps.tools.managers import McpToolManager
+        from Django_xm.apps.tools.serializers import McpServerAddSerializer
 
         serializer = McpServerAddSerializer(data=request.data)
         if not serializer.is_valid():
@@ -358,8 +341,8 @@ class McpServerDeleteView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        from Django_xm.apps.tools.serializers import McpServerDeleteSerializer
         from Django_xm.apps.tools.managers import McpToolManager
+        from Django_xm.apps.tools.serializers import McpServerDeleteSerializer
 
         serializer = McpServerDeleteSerializer(data=request.data)
         if not serializer.is_valid():
@@ -380,8 +363,8 @@ class McpServerToggleView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        from Django_xm.apps.tools.serializers import McpServerDeleteSerializer
         from Django_xm.apps.tools.managers import McpToolManager
+        from Django_xm.apps.tools.serializers import McpServerDeleteSerializer
 
         serializer = McpServerDeleteSerializer(data=request.data)
         if not serializer.is_valid():
@@ -406,7 +389,9 @@ class ToolListView(APIView):
 
     def get(self, request):
         from Django_xm.apps.tools.managers import (
-            LangChainToolManager, McpToolManager, SkillToolManager,
+            LangChainToolManager,
+            McpToolManager,
+            SkillToolManager,
         )
 
         tool_type = request.query_params.get('type', '').strip()
@@ -433,7 +418,7 @@ class ToolListView(APIView):
                 return success_response(data={tool_type: tools, 'total': len(tools)})
             except Exception as e:
                 logger.error(f"获取 {tool_type} 工具列表失败: {e}")
-                return error_response(message=f"获取工具列表失败: {str(e)}")
+                return error_response(message=f"获取工具列表失败: {e!s}")
 
         result = {}
         total = 0
@@ -460,14 +445,18 @@ class ToolListView(APIView):
 class ToolUploadView(APIView):
     """自定义工具上传视图
 
-    用户上传的 @tool 装饰器代码保存到数据库，默认激活。
+    用户上传的 @tool 装饰器代码保存到数据库，默认审核状态为 pending
+    （等待管理员审核通过后才生效，approval_status='approved'）。
     运行时通过受限沙箱动态加载为 BaseTool 实例。
+
+    限流：SensitiveOperationRateThrottle（scope='sensitive'）防止恶意刷上传。
     """
     permission_classes = [IsAuthenticated]
+    throttle_classes = [SensitiveOperationRateThrottle]
 
     def post(self, request):
-        from Django_xm.apps.tools.serializers import McpToolUploadSerializer
         from Django_xm.apps.tools.models import CustomTool, ToolCategory
+        from Django_xm.apps.tools.serializers import McpToolUploadSerializer
 
         serializer = McpToolUploadSerializer(data=request.data)
         if not serializer.is_valid():
@@ -508,17 +497,22 @@ class ToolUploadView(APIView):
                 category=category,
                 source='user',
                 status='active',
+                # 默认 approval_status='pending'，需管理员审核通过后才生效
             )
-            logger.info(f"用户上传自定义工具: {tool_name} (user={request.user.id})")
+            logger.info(
+                f"用户上传自定义工具: {tool_name} (user={request.user.id}, "
+                f"approval_status={tool_obj.approval_status})"
+            )
             return success_response(data={
                 "id": tool_obj.id,
                 "name": tool_obj.name,
                 "description": tool_obj.description,
                 "status": tool_obj.status,
-            }, message=f"工具 '{tool_name}' 上传成功")
+                "approval_status": tool_obj.approval_status,
+            }, message=f"工具 '{tool_name}' 上传成功，等待管理员审核")
         except Exception as e:
             logger.error(f"工具上传失败: {e}")
-            return error_response(message=f"工具上传失败: {str(e)}")
+            return error_response(message=f"工具上传失败: {e!s}")
 
 
 class CustomToolListView(APIView):
@@ -653,7 +647,7 @@ class McpServerDiscoverView(APIView):
             })
         except Exception as e:
             logger.error(f"MCP Server 发现失败 ({registry_url}): {e}")
-            return error_response(message=f"发现失败: {str(e)}")
+            return error_response(message=f"发现失败: {e!s}")
 
 
 # ---------------------------------------------------------------------------
@@ -673,7 +667,7 @@ class SkillListView(APIView):
             return success_response(data={'skills': skills, 'total': len(skills)})
         except Exception as e:
             logger.error(f"获取 Skill 列表失败: {e}")
-            return error_response(message=f"获取 Skill 列表失败: {str(e)}")
+            return error_response(message=f"获取 Skill 列表失败: {e!s}")
 
 
 class SkillCreateView(APIView):
@@ -681,8 +675,8 @@ class SkillCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        from Django_xm.apps.tools.serializers import SkillCreateSerializer
         from Django_xm.apps.tools.managers import SkillToolManager
+        from Django_xm.apps.tools.serializers import SkillCreateSerializer
 
         serializer = SkillCreateSerializer(data=request.data)
         if not serializer.is_valid():
@@ -702,8 +696,8 @@ class SkillDeleteView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        from Django_xm.apps.tools.serializers import SkillDeleteSerializer
         from Django_xm.apps.tools.managers import SkillToolManager
+        from Django_xm.apps.tools.serializers import SkillDeleteSerializer
 
         serializer = SkillDeleteSerializer(data=request.data)
         if not serializer.is_valid():
@@ -724,8 +718,8 @@ class SkillUpdateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        from Django_xm.apps.tools.serializers import SkillCreateSerializer
         from Django_xm.apps.tools.managers import SkillToolManager
+        from Django_xm.apps.tools.serializers import SkillCreateSerializer
 
         serializer = SkillCreateSerializer(data=request.data)
         if not serializer.is_valid():
@@ -745,8 +739,8 @@ class SkillToggleView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        from Django_xm.apps.tools.serializers import SkillToggleSerializer
         from Django_xm.apps.tools.managers import SkillToolManager
+        from Django_xm.apps.tools.serializers import SkillToggleSerializer
 
         serializer = SkillToggleSerializer(data=request.data)
         if not serializer.is_valid():

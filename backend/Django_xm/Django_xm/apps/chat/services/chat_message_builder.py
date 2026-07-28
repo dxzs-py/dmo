@@ -8,7 +8,7 @@
 - Token 统计更新
 """
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Any
 
 from asgiref.sync import sync_to_async
 from langchain_core.messages import HumanMessage
@@ -20,26 +20,26 @@ logger = logging.getLogger(__name__)
 
 class ChatMessageBuilder:
 
-    def __init__(self, user_id: Optional[int] = None):
+    def __init__(self, user_id: int | None = None):
         self.user_id = user_id
         from Django_xm.apps.attachments.services.cross_app import get_attachment_service
         self._attachment_service = get_attachment_service()
 
-    async def abuild_user_content(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def abuild_user_content(self, data: dict[str, Any]) -> dict[str, Any]:
         user_message = data['message']
         attachment_ids = data.get('attachment_ids')
         if not attachment_ids:
             return {"type": "text", "content": user_message}
         return await sync_to_async(self._attachment_service.build_user_content)(user_message, attachment_ids)
 
-    def build_user_content(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def build_user_content(self, data: dict[str, Any]) -> dict[str, Any]:
         user_message = data['message']
         attachment_ids = data.get('attachment_ids')
         if not attachment_ids:
             return {"type": "text", "content": user_message}
         return self._attachment_service.build_user_content(user_message, attachment_ids)
 
-    async def acreate_human_message(self, data: Dict[str, Any]) -> HumanMessage:
+    async def acreate_human_message(self, data: dict[str, Any]) -> HumanMessage:
         preloaded_type = data.get('_preloaded_attachment_type')
         if preloaded_type == 'multimodal':
             content = data.get('_preloaded_attachment_content', data['message'])
@@ -52,7 +52,7 @@ class ChatMessageBuilder:
             return HumanMessage(content=user_content["content"])
         return HumanMessage(content=user_content["content"])
 
-    def create_human_message(self, data: Dict[str, Any]) -> HumanMessage:
+    def create_human_message(self, data: dict[str, Any]) -> HumanMessage:
         preloaded_type = data.get('_preloaded_attachment_type')
         if preloaded_type == 'multimodal':
             content = data.get('_preloaded_attachment_content', data['message'])
@@ -66,7 +66,7 @@ class ChatMessageBuilder:
         return HumanMessage(content=user_content["content"])
 
     @staticmethod
-    def convert_chat_history(chat_history: List[Dict[str, Any]]) -> List:
+    def convert_chat_history(chat_history: list[dict[str, Any]]) -> list:
         return convert_chat_history(chat_history)
 
     @staticmethod

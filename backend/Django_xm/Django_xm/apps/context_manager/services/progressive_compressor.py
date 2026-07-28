@@ -1,8 +1,9 @@
 import logging
-from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, ClassVar
 
+from Django_xm.apps.context_manager.config import context_settings
 from Django_xm.apps.context_manager.services.compression import (
     CompressionConfig,
     CompressionStrategy,
@@ -12,7 +13,6 @@ from Django_xm.apps.context_manager.services.compression import (
     TokenEstimator,
 )
 from Django_xm.apps.context_manager.services.context_pruner import ContextPruner
-from Django_xm.apps.context_manager.config import context_settings
 
 logger = logging.getLogger(__name__)
 
@@ -30,16 +30,16 @@ class ProgressiveCompressionResult:
     original_tokens: int
     compressed_tokens: int
     compression_ratio: float
-    messages: List[Dict[str, Any]]
-    summary: Optional[str] = None
-    key_entities: List[str] = field(default_factory=list)
-    key_decisions: List[str] = field(default_factory=list)
-    strategy_used: Optional[str] = None
+    messages: list[dict[str, Any]]
+    summary: str | None = None
+    key_entities: list[str] = field(default_factory=list)
+    key_decisions: list[str] = field(default_factory=list)
+    strategy_used: str | None = None
 
 
 class ProgressiveCompressor:
 
-    _DEFAULT_THRESHOLDS: Dict[CompressionLevel, float] = {
+    _DEFAULT_THRESHOLDS: ClassVar[dict[CompressionLevel, float]] = {
         CompressionLevel.LEVEL_1_BASELINE: 0.0,
         CompressionLevel.LEVEL_2_SUMMARY: 0.5,
         CompressionLevel.LEVEL_3_RELEVANCE: 0.75,
@@ -49,10 +49,10 @@ class ProgressiveCompressor:
     def __init__(
         self,
         model_name: str = "",
-        store: Optional[Any] = None,
-        user_id: Optional[str] = None,
-        level_thresholds: Optional[Dict[CompressionLevel, float]] = None,
-        thread_id: Optional[str] = None,
+        store: Any | None = None,
+        user_id: str | None = None,
+        level_thresholds: dict[CompressionLevel, float] | None = None,
+        thread_id: str | None = None,
     ):
         self._model_name = model_name
         self._store = store
@@ -91,9 +91,9 @@ class ProgressiveCompressor:
 
     def compress(
         self,
-        messages: List[Dict[str, Any]],
-        query: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], ProgressiveCompressionResult]:
+        messages: list[dict[str, Any]],
+        query: str | None = None,
+    ) -> tuple[list[dict[str, Any]], ProgressiveCompressionResult]:
         try:
             total_tokens = TokenEstimator.estimate_dict_messages(messages)
             max_tokens = TokenEstimator.get_model_limit(self._model_name)
@@ -140,8 +140,8 @@ class ProgressiveCompressor:
 
     def _compress_level_1(
         self,
-        messages: List[Dict[str, Any]],
-    ) -> Tuple[List[Dict[str, Any]], ProgressiveCompressionResult]:
+        messages: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], ProgressiveCompressionResult]:
         total_tokens = TokenEstimator.estimate_dict_messages(messages)
         try:
             compressed_msgs, _ = self._pruner.prune(messages)
@@ -166,8 +166,8 @@ class ProgressiveCompressor:
 
     def _compress_level_2(
         self,
-        messages: List[Dict[str, Any]],
-    ) -> Tuple[List[Dict[str, Any]], ProgressiveCompressionResult]:
+        messages: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], ProgressiveCompressionResult]:
         total_tokens = TokenEstimator.estimate_dict_messages(messages)
         try:
             marked = self._mark_long_term(messages)
@@ -196,9 +196,9 @@ class ProgressiveCompressor:
 
     def _compress_level_3(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         query: str,
-    ) -> Tuple[List[Dict[str, Any]], ProgressiveCompressionResult]:
+    ) -> tuple[list[dict[str, Any]], ProgressiveCompressionResult]:
         total_tokens = TokenEstimator.estimate_dict_messages(messages)
         try:
             level2_msgs, level2_result = self._compress_level_2(messages)
@@ -248,9 +248,9 @@ class ProgressiveCompressor:
 
     def _compress_level_4(
         self,
-        messages: List[Dict[str, Any]],
-        query: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], ProgressiveCompressionResult]:
+        messages: list[dict[str, Any]],
+        query: str | None = None,
+    ) -> tuple[list[dict[str, Any]], ProgressiveCompressionResult]:
         total_tokens = TokenEstimator.estimate_dict_messages(messages)
         try:
             marked = self._mark_long_term(messages)
@@ -288,7 +288,7 @@ class ProgressiveCompressor:
                         decisions.extend(matches)
             decisions = decisions[:10]
             if decisions:
-                entity_parts.append(f"【关键决策】\n" + "\n".join(f"- {d}" for d in decisions[:8]))
+                entity_parts.append("【关键决策】\n" + "\n".join(f"- {d}" for d in decisions[:8]))
 
             if entity_parts:
                 compressed.append({
@@ -329,7 +329,7 @@ class ProgressiveCompressor:
             )
 
     @staticmethod
-    def _mark_long_term(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _mark_long_term(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         from Django_xm.apps.context_manager.services.manager import ContextManager
         tags = (
             context_settings.long_term_tags.split(",")

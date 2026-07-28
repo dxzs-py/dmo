@@ -1,23 +1,29 @@
 """
 核心视图模块
 
-提供健康检查、请求监控、数据库监控等基础设施视图。
+提供健康检查、数据库监控等基础设施视图。
 异常处理器已迁移至 Django_xm.common.exceptions。
+
+依赖说明（Task 15.3 / 15.5）：
+    本视图原导入 ``cache_manager.services.cache_service.CacheService`` 用于缓存，
+    违反 ``core → cache_manager`` 分层。现改用 Django 内置 ``django.core.cache``，
+    缓存配置由 ``settings.CACHES`` 统一管理，无需依赖 ``cache_manager`` app。
+
+    向量存储状态原调用 ``DatabaseMonitor.get_vector_store_status()``（依赖 knowledge），
+    现通过 ``status_registry`` 按名查询，由 ``knowledge`` 注册的提供者实现。
 """
 
 import logging
-import time
 
+from django.core.cache import cache
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
-from rest_framework import status as drf_status
 
-from Django_xm.common.permissions import IsAdmin
-from Django_xm.common.responses import success_response, error_response
-from Django_xm.common.error_codes import ErrorCode
 from Django_xm.apps.core.services.db_monitor import DatabaseMonitor
-from Django_xm.apps.cache_manager.services.cache_service import CacheService
+from Django_xm.apps.core.services.status_registry import get_status_by_name
+from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.responses import error_response, success_response
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +33,6 @@ logger = logging.getLogger(__name__)
 def health_check(request):
     """健康检查端点"""
     from django.db import connection
-    from django.core.cache import cache
 
     checks = {}
     # 数据库检查
@@ -47,17 +52,6 @@ def health_check(request):
     return success_response(data=checks)
 
 
-@api_view(['GET'])
-@permission_classes([IsAdmin])
-def request_monitor(request):
-    """请求监控端点（仅管理员）"""
-    monitor_data = {
-        'message': 'request_monitor',
-        'timestamp': time.time(),
-    }
-    return success_response(data=monitor_data)
-
-
 class PostgreSQLStatusView(APIView):
     """PostgreSQL 数据库状态视图"""
     permission_classes = [IsAuthenticated]
@@ -65,12 +59,12 @@ class PostgreSQLStatusView(APIView):
     def get(self, request):
         try:
             cache_key = "status:postgresql"
-            cached = CacheService.get(cache_key)
+            cached = cache.get(cache_key)
             if cached is not None:
                 return success_response(data=cached)
 
             status_info = DatabaseMonitor.get_postgresql_status()
-            CacheService.set(cache_key, status_info, ttl=30)
+            cache.set(cache_key, status_info, 30)
             return success_response(data=status_info)
         except Exception as e:
             logger.error(f"获取 PostgreSQL 状态失败: {e}", exc_info=True)
@@ -78,18 +72,22 @@ class PostgreSQLStatusView(APIView):
 
 
 class VectorStoreStatusView(APIView):
-    """向量存储状态视图"""
+    """向量存储状态视图
+
+    通过 ``status_registry`` 查询 ``knowledge`` 注册的 ``VectorStoreStatusProvider``。
+    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         try:
             cache_key = "status:vector_store"
-            cached = CacheService.get(cache_key)
+            cached = cache.get(cache_key)
             if cached is not None:
                 return success_response(data=cached)
 
-            status_info = DatabaseMonitor.get_vector_store_status()
-            CacheService.set(cache_key, status_info, ttl=30)
+            # 通过注册表查询向量存储状态（Task 15.3）
+            status_info = get_status_by_name('vector_store')
+            cache.set(cache_key, status_info, 30)
             return success_response(data=status_info)
         except Exception as e:
             logger.error(f"获取向量存储状态失败: {e}", exc_info=True)
@@ -97,18 +95,21 @@ class VectorStoreStatusView(APIView):
 
 
 class DatabaseOverviewView(APIView):
-    """数据库总览视图（PostgreSQL + VectorStore + Redis）"""
+    """数据库总览视图（PostgreSQL + VectorStore + Redis）
+
+    通过 ``DatabaseMonitor.get_database_overview()`` 聚合所有已注册状态提供者。
+    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         try:
             cache_key = "status:database_overview"
-            cached = CacheService.get(cache_key)
+            cached = cache.get(cache_key)
             if cached is not None:
                 return success_response(data=cached)
 
             overview = DatabaseMonitor.get_database_overview()
-            CacheService.set(cache_key, overview, ttl=30)
+            cache.set(cache_key, overview, 30)
             return success_response(data=overview)
         except Exception as e:
             logger.error(f"获取数据库总览失败: {e}", exc_info=True)

@@ -6,7 +6,9 @@
 """
 
 import logging
+
 from django.dispatch import receiver
+
 from Django_xm.apps.core.signals import index_updated
 
 logger = logging.getLogger(__name__)

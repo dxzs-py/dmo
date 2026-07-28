@@ -15,14 +15,15 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 
-from django.contrib import admin
-from django.urls import path, include
-from django.http import JsonResponse
 from django.conf import settings
 from django.conf.urls.static import static
+from django.contrib import admin
+from django.http import JsonResponse
+from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
-from Django_xm.apps.core.views import health_check as core_health_check, request_monitor
+
 from Django_xm.apps.ai_engine.config import settings as app_cfg
+from Django_xm.apps.core.views import health_check as core_health_check
 
 
 def root_info(request):
@@ -53,6 +54,7 @@ def root_info(request):
             "cache": "/api/v1/cache/",
             "ai-engine": "/api/v1/ai-engine/",
             "context": "/api/v1/context/",
+            "approvals": "/api/v1/approvals/",
         }
     })
 
@@ -65,7 +67,6 @@ urlpatterns = [
     path("api/v1/", include([
         path("", include([
             path("health/", core_health_check, name="health"),
-            path("monitor/", request_monitor, name="monitor"),
 
             path("schema/", SpectacularAPIView.as_view(), name="schema"),
             path("docs/swagger/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
@@ -83,6 +84,8 @@ urlpatterns = [
             path("cache/", include("Django_xm.apps.cache_manager.urls")),
             path("ai-engine/", include("Django_xm.apps.ai_engine.urls")),
             path("context/", include("Django_xm.apps.context_manager.urls")),
+            path("approvals/", include("Django_xm.apps.approvals.urls")),
+            path("realtime/", include("Django_xm.apps.realtime.urls")),
         ])),
     ])),
 ]

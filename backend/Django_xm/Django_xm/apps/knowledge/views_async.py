@@ -7,24 +7,25 @@
 import logging
 from pathlib import Path
 
-from rest_framework.views import APIView
 from rest_framework import status
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 
+from Django_xm.apps.core.task_redis_manager import TaskType, get_task_manager
 from Django_xm.apps.core.throttling import KnowledgeRateThrottle
-
-from Django_xm.common.responses import (
-    success_response, error_response, not_found_response,
-)
-from Django_xm.common.error_codes import ErrorCode
 from Django_xm.apps.knowledge.config import settings as app_cfg
+from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.responses import (
+    error_response,
+    not_found_response,
+    success_response,
+)
 from Django_xm.tasks.rag_tasks import (
-    create_index_task,
     add_documents_to_index_task,
+    create_index_task,
     delete_index_task,
 )
-from Django_xm.apps.core.task_redis_manager import get_task_manager, TaskType
 
 from .services.index_service import IndexManager
 from .views_utils import get_user_index_name

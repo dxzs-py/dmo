@@ -13,7 +13,7 @@ import logging
 import os
 import re
 import time
-from typing import Any, Optional
+from typing import Any
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
@@ -308,7 +308,7 @@ class SkillBaseTool(AsyncToolMixin, BaseTool):
             return f"[错误] Skill '{self.spec.name}' 的 SKILL.md 文件不存在"
 
         try:
-            with open(skill_md_path, 'r', encoding='utf-8') as f:
+            with open(skill_md_path, encoding='utf-8') as f:
                 content = f.read()
 
             body = self._extract_body(content)

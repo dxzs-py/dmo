@@ -50,6 +50,7 @@ class SystemConfig(models.Model):
     """
     key = models.CharField(max_length=100, unique=True, db_index=True, verbose_name="配置键")
     value = models.JSONField(default=dict, verbose_name="配置值")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
     class Meta:

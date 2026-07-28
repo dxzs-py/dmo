@@ -11,12 +11,10 @@ EMBEDDING_CONFIGS、get_embeddings_by_preset 等向后兼容 API。
         detect_embedding_dimension,
     )
 """
-from typing import Optional, List
+import asyncio
+import logging
 
 from langchain_core.embeddings import Embeddings
-
-import logging
-import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -40,14 +38,12 @@ class CachedEmbeddings(Embeddings):
         self._hit = 0
         self._miss = 0
 
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        from Django_xm.apps.cache_manager.services.cache_service import (
-            VectorSearchCacheService
-        )
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        from Django_xm.apps.cache_manager.services.cache_service import VectorSearchCacheService
 
-        results: List[Optional[List[float]]] = [None] * len(texts)
-        uncached_texts: List[str] = []
-        uncached_indices: List[int] = []
+        results: list[list[float] | None] = [None] * len(texts)
+        uncached_texts: list[str] = []
+        uncached_indices: list[int] = []
 
         for i, text in enumerate(texts):
             cached = VectorSearchCacheService.get_cached_embedding(text, self._model)
@@ -60,7 +56,7 @@ class CachedEmbeddings(Embeddings):
                 self._miss += 1
 
         if uncached_texts:
-            all_new_vectors: List[List[float]] = []
+            all_new_vectors: list[list[float]] = []
             for batch_start in range(0, len(uncached_texts), EMBEDDING_BATCH_SIZE):
                 batch = uncached_texts[batch_start:batch_start + EMBEDDING_BATCH_SIZE]
                 batch_vectors = self._embeddings.embed_documents(batch)
@@ -82,10 +78,8 @@ class CachedEmbeddings(Embeddings):
 
         return results
 
-    def embed_query(self, text: str) -> List[float]:
-        from Django_xm.apps.cache_manager.services.cache_service import (
-            VectorSearchCacheService
-        )
+    def embed_query(self, text: str) -> list[float]:
+        from Django_xm.apps.cache_manager.services.cache_service import VectorSearchCacheService
 
         cached = VectorSearchCacheService.get_cached_embedding(text, self._model)
         if cached is not None:
@@ -104,14 +98,12 @@ class CachedEmbeddings(Embeddings):
     def get_active_provider_id(self):
         return self._embeddings.get_active_provider_id() if hasattr(self._embeddings, 'get_active_provider_id') else None
 
-    async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
-        from Django_xm.apps.cache_manager.services.cache_service import (
-            VectorSearchCacheService
-        )
+    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
+        from Django_xm.apps.cache_manager.services.cache_service import VectorSearchCacheService
 
-        results: List[Optional[List[float]]] = [None] * len(texts)
-        uncached_texts: List[str] = []
-        uncached_indices: List[int] = []
+        results: list[list[float] | None] = [None] * len(texts)
+        uncached_texts: list[str] = []
+        uncached_indices: list[int] = []
 
         for i, text in enumerate(texts):
             cached = VectorSearchCacheService.get_cached_embedding(text, self._model)
@@ -124,7 +116,7 @@ class CachedEmbeddings(Embeddings):
                 self._miss += 1
 
         if uncached_texts:
-            all_new_vectors: List[List[float]] = []
+            all_new_vectors: list[list[float]] = []
             for batch_start in range(0, len(uncached_texts), EMBEDDING_BATCH_SIZE):
                 batch = uncached_texts[batch_start:batch_start + EMBEDDING_BATCH_SIZE]
                 batch_vectors = await self._embeddings.aembed_documents(batch)
@@ -145,10 +137,8 @@ class CachedEmbeddings(Embeddings):
 
         return results
 
-    async def aembed_query(self, text: str) -> List[float]:
-        from Django_xm.apps.cache_manager.services.cache_service import (
-            VectorSearchCacheService
-        )
+    async def aembed_query(self, text: str) -> list[float]:
+        from Django_xm.apps.cache_manager.services.cache_service import VectorSearchCacheService
 
         cached = VectorSearchCacheService.get_cached_embedding(text, self._model)
         if cached is not None:
@@ -174,18 +164,18 @@ class CachedEmbeddings(Embeddings):
 # ============== 兼容层 API：委托 ai_engine.services.embedding_factory ==============
 
 from Django_xm.apps.knowledge.config import (
-    get_embeddings_with_fallback,
     detect_embedding_dimension,
+    get_embeddings_with_fallback,
 )
 
 
 def get_embeddings(
-    model: Optional[str] = None,
-    batch_size: Optional[int] = None,
+    model: str | None = None,
+    batch_size: int | None = None,
     use_cache: bool = True,
     use_fallback: bool = True,
-    preferred_provider: Optional[str] = None,
-    required_dimension: Optional[int] = None,
+    preferred_provider: str | None = None,
+    required_dimension: int | None = None,
     **kwargs,
 ) -> Embeddings:
     """获取 Embeddings 实例（委托 embedding_factory）
@@ -197,8 +187,8 @@ def get_embeddings(
     """
     from Django_xm.apps.knowledge.config import (
         get_system_embedding_provider,
+        settings,
     )
-    from Django_xm.apps.knowledge.config import settings
 
     effective_provider = preferred_provider
     if effective_provider is None:
@@ -217,7 +207,7 @@ def get_embeddings(
     )
 
 
-def get_embedding_dimension(model: Optional[str] = None) -> int:
+def get_embedding_dimension(model: str | None = None) -> int:
     """获取 Embedding 维度（委托 embedding_factory）
 
     通过创建 Embeddings 实例并调用 detect_embedding_dimension 探测实际维度，
@@ -232,7 +222,7 @@ def get_embedding_dimension(model: Optional[str] = None) -> int:
 
 
 def test_embeddings(
-    model: Optional[str] = None,
+    model: str | None = None,
     test_text: str = "这是一个测试文本",
 ) -> bool:
     """测试 Embedding 模型是否正常工作"""

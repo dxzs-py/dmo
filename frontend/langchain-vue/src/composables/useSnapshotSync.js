@@ -1,10 +1,11 @@
 import { ref } from 'vue'
 import { getSessionSnapshot } from '@/api/realtime'
+import { getApprovalHistory } from '@/api/approval'
 import { useSessionStore } from '@/stores/session'
 import { logger } from '@/utils/logger'
 import { transformBackendMessageToFrontend } from '@/utils/session-transformers'
 import { mergeMessageFromBackend } from '@/utils/message-operations'
-import { ToolCallStatus } from '@/types'
+import { ToolCallStatus, mapApprovalStateToStatus } from '@/types'
 
 /**
  * 快照校对 debounce 时间（ms）
@@ -340,7 +341,6 @@ export function clearSnapshotSyncInstance(sessionId) {
 
 // ==================== M19-c: 深度研究任务快照校对（按 taskId） ====================
 
-import { getResearchSnapshot } from '@/api/research'
 import { useResearchStore } from '@/stores/research'
 import { useApprovalStore } from '@/stores/approval'
 
@@ -354,16 +354,15 @@ const taskInstanceCache = new Map()
 /**
  * 创建指定任务的快照校对实例（深度研究模块专用）
  *
- * 统一底层修复（实时同步根因）：
- * 与 createSnapshotSyncInstance 保持一致的优先级保护策略，
- * 防止快照中滞后的状态覆盖本地已通过实时事件更新的高优先级状态。
+ * 数据源：工具调用数据的唯一持久化来源是 Approval 模型
+ * （source='deep_research', source_id=taskId）。
+ * 通过统一审批 API getApprovalHistory 查询审批记录，
+ * 从 approval.state 推导 toolCall status（mapApprovalStateToStatus），
+ * 替代原 getResearchSnapshot（后端无对应端点）。
  *
- * 原实现直接调用 setApprovalToToolCall / updateOrAddToolResult 无条件覆盖，
- * 导致深度研究模块的 WAITING 状态可能被快照中的 PENDING 覆盖。
- *
- * 修复后：
- *   - tool_call：仅当快照 status 优先级 > 本地时才更新
- *   - approval：仅当快照 state 优先级 > 本地时才更新
+ * 优先级保护策略（与 createSnapshotSyncInstance 一致）：
+ *   - tool_call：仅当后端 status 优先级 > 本地时才更新
+ *   - approval：仅当后端 state 优先级 > 本地时才更新
  *   优先级函数复用模块级 _toolCallStatusPriority / _approvalStatePriority
  *
  * @param {string} taskId - 深度研究任务 ID
@@ -391,8 +390,10 @@ function createTaskSnapshotSyncInstance(taskId) {
         isSyncing.value = true
         inflightPromise = (async () => {
           try {
-            const response = await getResearchSnapshot(taskId)
-            const snapshot = response?.data?.data || response?.data || {}
+            // 工具调用数据的唯一持久化来源是 Approval 模型（source='deep_research'）
+            // 通过统一审批 API 查询，替代原 getResearchSnapshot
+            const response = await getApprovalHistory(taskId, { source: 'deep_research' })
+            const approvalList = response?.data?.data || []
             const researchStore = useResearchStore()
             const approvalStore = useApprovalStore()
 
@@ -405,88 +406,70 @@ function createTaskSnapshotSyncInstance(taskId) {
               ])
             )
 
-            // 1. 更新 tool_calls（对象结构，key=tool_call_id）
-            // 统一优先级保护：仅当快照 status 优先级 > 本地时才更新
-            const toolCalls = snapshot.tool_calls || {}
-            for (const [toolCallId, tc] of Object.entries(toolCalls)) {
-              if (!toolCallId || !tc) continue
-              const state = tc.state || ''
-              const isResultAvailable = state in {
-                'output-available': true,
-                'output-error': true,
-              }
-              const backendStatus = tc.status || (isResultAvailable ? 'completed' : 'running')
+            // 遍历审批记录，更新 toolCall 与 approval 状态
+            for (const approval of approvalList) {
+              if (!approval) continue
+              const interruptId = approval.interrupt_id
+              if (!interruptId) continue
+              const extra = (approval.extra && typeof approval.extra === 'object') ? approval.extra : {}
+              const toolCallId = extra.tool_call_id || interruptId
 
-              // 优先级比较：本地非终态、快照为更高优先级时才更新
+              // 从 approval.state 推导 toolCall status
+              const backendStatus = mapApprovalStateToStatus(approval.state)
+
+              // 1. toolCall 状态更新（优先级保护：仅当后端优先级 > 本地时才更新）
               const localTc = localToolCallMap.get(toolCallId)
               if (localTc) {
                 const localPriority = _toolCallStatusPriority(localTc.status)
                 const backendPriority = _toolCallStatusPriority(backendStatus)
-                if (backendPriority <= localPriority) {
-                  // 快照优先级不超过本地，跳过状态更新（保护 WAITING/RUNNING 等中间态）
-                  // 但仍需检查 approval 字段完整性：本地 approval 为空但快照有 approval 数据时合并
-                  // 解决刷新后 API 返回的 tool_calls 不含 approval 字段的问题
-                  if (
-                    (!localTc.approval || Object.keys(localTc.approval).length === 0) &&
-                    tc.approval && Object.keys(tc.approval).length > 0
-                  ) {
-                    researchStore.setApprovalToToolCall(taskId, toolCallId, tc.approval)
+                if (backendPriority > localPriority) {
+                  const isResultAvailable = backendStatus === ToolCallStatus.COMPLETED
+                    || backendStatus === ToolCallStatus.FAILED
+                  const data = {
+                    id: toolCallId,
+                    tool_call_id: toolCallId,
+                    name: approval.tool_name,
+                    tool_name: approval.tool_name,
+                    parameters: approval.parameters || {},
+                    args: approval.parameters || {},
+                    status: backendStatus,
+                    result: extra.result,
+                    error: extra.error,
+                    is_internal: extra.is_internal || false,
                   }
-                  continue
+                  if (isResultAvailable || extra.result != null || extra.error) {
+                    researchStore.updateOrAddToolResult(taskId, data)
+                  } else {
+                    researchStore.addOrUpdateToolCall(taskId, data)
+                  }
+                } else if (
+                  // approval 字段完整性检查：本地 approval 为空但后端有 approval 数据时合并
+                  // 解决刷新后 API 返回的 tool_calls 不含 approval 字段的问题
+                  (!localTc.approval || Object.keys(localTc.approval).length === 0) &&
+                  approval && Object.keys(approval).length > 0
+                ) {
+                  researchStore.setApprovalToToolCall(taskId, toolCallId, approval)
                 }
               }
 
-              const data = {
-                id: toolCallId,
-                tool_call_id: toolCallId,
-                name: tc.name,
-                tool_name: tc.name,
-                parameters: tc.parameters,
-                args: tc.parameters,
-                state: state,
-                status: backendStatus,
-                result: tc.result,
-                error: tc.error,
-                is_internal: tc.is_internal || false,
-              }
-              if (isResultAvailable || tc.result != null || tc.error) {
-                researchStore.updateOrAddToolResult(taskId, data)
-              } else {
-                researchStore.addOrUpdateToolCall(taskId, data)
-              }
-            }
-
-            // 2. 更新 approvals（对象结构，key=interrupt_id）
-            // 统一优先级保护：仅当快照 state 优先级 > 本地时才更新
-            const approvals = snapshot.approvals || {}
-            for (const [interruptId, approval] of Object.entries(approvals)) {
-              if (!interruptId || !approval) continue
-              const toolCallId = approval.tool_call_id || interruptId
-
-              // 优先级比较：本地非终态、快照为更高优先级时才更新
+              // 2. approval 状态更新（优先级保护：仅当后端优先级 > 本地时才更新）
               // 注意：本地 approval 为空时（_approvalStatePriority(undefined) = -1），
-              // 任何快照状态都会 > -1，从而合并缺失的 approval 数据
-              const localTc = localToolCallMap.get(toolCallId)
+              // 任何后端状态都会 > -1，从而合并缺失的 approval 数据
               const localApprovalState = localTc?.approval?.state
               const localPriority = _approvalStatePriority(localApprovalState)
               const backendPriority = _approvalStatePriority(approval.state)
-              if (backendPriority <= localPriority) {
-                // 快照优先级不超过本地，跳过（保护 waiting/processing 等中间态）
-                continue
+              if (backendPriority > localPriority) {
+                researchStore.setApprovalToToolCall(taskId, toolCallId, approval)
+                // 同步到 approvalStore（跨模块统一审批状态）
+                approvalStore.updateApprovalState(interruptId, approval.state, {
+                  sessionId: approval.chat_session_id,
+                  taskId,
+                })
               }
-
-              researchStore.setApprovalToToolCall(taskId, toolCallId, approval)
-              // 同步到 approvalStore（跨模块统一审批状态）
-              approvalStore.updateApprovalState(interruptId, approval.state, {
-                sessionId: snapshot.chat_session_id,
-                taskId,
-              })
             }
 
-            // 3. 更新任务状态（current_step / final_report 由轮询/SSE 处理，此处不覆盖）
             logger.info(
-              `[SnapshotSync] task=${taskId} 快照校对完成: ` +
-              `${Object.keys(toolCalls).length} 个工具, ${Object.keys(approvals).length} 个审批`
+              `[SnapshotSync] task=${taskId} 快照校对完成: ${approvalList.length} 个审批记录`
             )
           } catch (err) {
             logger.warn(

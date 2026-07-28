@@ -2,10 +2,9 @@
 消息持久化服务
 """
 import logging
-from typing import Optional, List, Dict
 
-from django.db import transaction
 from django.core.exceptions import ObjectDoesNotExist
+from django.db import transaction
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +20,7 @@ def get_user_session(user, session_id, prefetch_attachments=False):
     Returns:
         ChatSession 对象或 None
     """
-    from Django_xm.apps.chat.models import ChatSession, ChatMessage
+    from Django_xm.apps.chat.models import ChatMessage, ChatSession
 
     try:
         queryset = ChatSession.objects
@@ -52,14 +51,14 @@ class MessagePersistenceService:
         ai_content: str,
         user_role: str = 'user',
         ai_role: str = 'assistant',
-        attachment_ids: Optional[List[int]] = None,
+        attachment_ids: list[int] | None = None,
         token_count: int = 0,
-        token_detail: Optional[Dict] = None,
-        model: Optional[str] = None,
+        token_detail: dict | None = None,
+        model: str | None = None,
         response_time: float = 0,
     ):
-        from Django_xm.apps.chat.models import ChatMessage
         from Django_xm.apps.attachments.services.cross_app import get_attachment_service
+        from Django_xm.apps.chat.models import ChatMessage
 
         user_message = ChatMessage.objects.create(
             session=session,
@@ -68,7 +67,7 @@ class MessagePersistenceService:
         )
 
         if attachment_ids:
-            AttachmentService().link_attachments_to_message(user_message, attachment_ids)
+            get_attachment_service().link_attachments_to_message(user_message, attachment_ids)
 
         ai_message = ChatMessage.objects.create(
             session=session,
@@ -89,10 +88,10 @@ class MessagePersistenceService:
         ai_content: str,
         user_role: str = 'user',
         ai_role: str = 'assistant',
-        attachment_ids: Optional[List[int]] = None,
+        attachment_ids: list[int] | None = None,
         token_count: int = 0,
-        token_detail: Optional[Dict] = None,
-        model: Optional[str] = None,
+        token_detail: dict | None = None,
+        model: str | None = None,
         response_time: float = 0,
     ):
         from asgiref.sync import sync_to_async

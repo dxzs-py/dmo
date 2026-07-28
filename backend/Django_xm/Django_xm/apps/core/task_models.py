@@ -1,4 +1,5 @@
 from django.db import models
+
 from Django_xm.apps.core.base_models import AuditModel
 
 
@@ -119,12 +120,12 @@ class CeleryTaskRecord(AuditModel):
         db_table = 'core_celery_task_record'
         verbose_name = 'Celery 任务记录'
         verbose_name_plural = 'Celery 任务记录'
-        ordering = ['-created_at']
-        indexes = [
+        ordering = ('-created_at',)
+        indexes = (
             models.Index(fields=['status', 'task_type']),
             models.Index(fields=['created_by', 'status']),
             models.Index(fields=['-created_at']),
-        ]
+        )
 
     def __str__(self):
         return f"CeleryTask({self.task_name}, {self.status})"

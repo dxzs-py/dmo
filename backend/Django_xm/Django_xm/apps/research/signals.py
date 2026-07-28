@@ -7,7 +7,8 @@
 """
 
 import logging
-from django.db.models.signals import post_save, post_delete
+
+from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
 from .models import ResearchTask
@@ -19,16 +20,15 @@ logger = logging.getLogger(__name__)
 def on_research_task_save(sender, instance, created, **kwargs):
     if created:
         logger.info(f"新研究任务创建: {instance.task_id} (query={instance.query[:50]}...)")
-    else:
-        if instance.status == 'completed':
-            logger.info(f"研究任务完成: {instance.task_id}")
-            try:
-                from Django_xm.apps.cache_manager.services.cache_service import CacheInvalidationStrategy
-                CacheInvalidationStrategy.on_research_completed(instance.task_id)
-            except Exception as e:
-                logger.warning(f"研究缓存失效失败: {e}")
-        elif instance.status == 'failed':
-            logger.warning(f"研究任务失败: {instance.task_id}, 错误: {instance.error_message}")
+    elif instance.status == 'completed':
+        logger.info(f"研究任务完成: {instance.task_id}")
+        try:
+            from Django_xm.apps.cache_manager.services.cache_service import CacheInvalidationStrategy
+            CacheInvalidationStrategy.on_research_completed(instance.task_id)
+        except Exception as e:
+            logger.warning(f"研究缓存失效失败: {e}")
+    elif instance.status == 'failed':
+        logger.warning(f"研究任务失败: {instance.task_id}, 错误: {instance.error_message}")
 
     from Django_xm.apps.core.signals import task_status_changed
     task_status_changed.send(

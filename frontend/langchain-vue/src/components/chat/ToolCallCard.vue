@@ -2,6 +2,11 @@
 import { ref, computed } from 'vue'
 import { ArrowDown, ArrowRight, CircleCheck, Close, Loading, MagicStick } from '@element-plus/icons-vue'
 import { ToolCallStatus } from '../../types'
+import {
+  formatToolParameters,
+  formatToolResult,
+  isReadonlyTool,
+} from '../../utils/tool-adapters'
 
 const props = defineProps({
   toolName: {
@@ -39,8 +44,11 @@ const isSkillCall = computed(() => props.toolName.startsWith('skill_'))
 // 判断是否为知识库检索工具
 const isKnowledgeBase = computed(() => props.toolName.startsWith('knowledge_base_'))
 
-// 知识库工具默认折叠
-const isExpanded = ref(isKnowledgeBase.value ? false : true)
+// 判断是否为只读工具（ls/glob/grep 等）：只读工具默认折叠
+const isReadonly = computed(() => isReadonlyTool(props.toolName))
+
+// 知识库工具与只读工具默认折叠；其他默认展开
+const isExpanded = ref((isKnowledgeBase.value || isReadonly.value) ? false : true)
 
 // Skill 模式标签
 const skillModeLabel = computed(() => {
@@ -123,13 +131,70 @@ const statusText = computed(() => {
   }
 })
 
-const formatContent = (content) => {
-  if (!content) return ''
-  if (typeof content === 'object') {
-    return JSON.stringify(content, null, 2)
+// ============================================================
+// 工具参数 / 结果格式化（接入 utils/tool-adapters.js）
+// ============================================================
+// 设计说明：
+// ToolCallCard 原先用简陋的 formatContent(content) = JSON.stringify(content, null, 2)
+// 统一序列化所有工具的输入/输出，导致 deepagents 原生工具（write_file/read_file/
+// edit_file/execute/grep/glob/ls/task 等）缺乏语义化展示：
+//   - read_file 结果不按扩展名高亮
+//   - edit_file 不以 diff 形式展示
+//   - execute 不以命令行 monospace 展示
+//   - write_file 不截断 content 预览
+//
+// 修复：通过 formatToolParameters/formatToolResult 调用 utils/tool-adapters.js 中
+// 注册的专用格式化器，按工具名返回 { label, formatted, displayMode } 三元组。
+// 非内置工具回退到通用 JSON 序列化（与原 formatContent 行为一致）。
+//
+// 关键不变量：
+//   - displayMode 由格式化器决定，模板按 displayMode 渲染（inline 单行 / pre JSON / pre command）
+//   - label 由格式化器决定，覆盖原硬编码 operationLabel map（已含 deepagents 工具名）
+//   - props 接口不变，4 个调用方（ChatMessage/AiMessage/ChainOfThought/DeepResearchView）无需修改
+
+const inputDisplay = computed(() => {
+  // Skill hybrid 模式保留原 input 直传（hybridSections 分支处理输出）
+  if (isSkillCall.value && skillModeLabel.value === '混合') {
+    return { label: '输入', formatted: '', displayMode: 'skip' }
   }
-  return String(content)
-}
+  const result = formatToolParameters(props.toolName, props.input)
+  // input 为空时 displayMode 设为 skip，模板不渲染输入区
+  if (!result.formatted) {
+    return { ...result, displayMode: 'skip' }
+  }
+  return result
+})
+
+const outputDisplay = computed(() => {
+  // Skill hybrid/advisor 模式由 hybridSections 分支处理
+  if (isSkillCall.value && skillModeLabel.value !== '管线') {
+    return { label: '输出', formatted: '', displayMode: 'skip', language: 'text' }
+  }
+  const result = formatToolResult(props.toolName, props.output)
+  // output 为空时 displayMode 设为 skip，模板不渲染输出区
+  if (!result.formatted) {
+    return { ...result, displayMode: 'skip' }
+  }
+  return result
+})
+
+// 输入区 class 计算（移到 computed 避免模板内复杂表达式导致 Vue parser 报错）
+const inputContentClass = computed(() => [
+  'section-content',
+  `display-mode--${inputDisplay.value.displayMode}`,
+  { 'section-content--inline': inputDisplay.value.displayMode === 'inline' },
+])
+
+// 输出区 class 计算
+const outputContentClass = computed(() => [
+  'section-content',
+  `display-mode--${outputDisplay.value.displayMode}`,
+  {
+    'section-content--compact': isKnowledgeBase.value,
+    'section-content--inline': outputDisplay.value.displayMode === 'inline',
+    'section-content--monospace': outputDisplay.value.displayMode === 'monospace' || outputDisplay.value.displayMode === 'command',
+  },
+])
 
 // 审批相关
 const approvalData = computed(() => props.toolCall?.approval || null)
@@ -163,15 +228,38 @@ const approvalInputValue = ref('')
 const isConfirmWithInput = computed(() => approvalData.value?.action === 'confirm_with_input')
 
 // 审批操作展示
+// operationText：优先 approval.operation，回退 approval.command
 const operationText = computed(() => approvalData.value?.operation || approvalData.value?.command || '')
+
+// operationLabel：由 formatToolParameters 返回的 label 决定（覆盖 deepagents 工具名）
+// 原硬编码 map 仅覆盖 shell_exec/fs_write_file/file_reader/agent_cleanup，
+// 现通过 formatToolParameters(approvalData.tool_name, approvalData.args) 获取 label：
+//   - shell_exec/execute → '命令'
+//   - write_file/fs_write_file → '写入文件'（fs_write_file 走通用分支，label='输入'）
+//   - read_file/file_reader → '文件路径'
+//   - edit_file → '编辑文件'
+//   - glob → '匹配模式'
+//   - grep → '搜索模式'
+//   - ls → '目录'
+//   - task → '任务描述'
+//   - 其他 → '操作'
+// 注意：fs_write_file/file_reader/agent_cleanup 是项目自定义工具名，不在 adapter 注册表中，
+// formatToolParameters 返回 label='输入'。为保留原 UX，对这些工具名做显式回退映射。
 const operationLabel = computed(() => {
-  const map = {
-    shell_exec: '命令',
+  const toolName = approvalData.value?.tool_name
+  if (!toolName) return '操作'
+  // 先尝试 formatToolParameters（覆盖 deepagents 工具）
+  const result = formatToolParameters(toolName, approvalData.value?.args)
+  if (result.label && result.label !== '输入') {
+    return result.label
+  }
+  // 项目自定义工具回退映射（与原硬编码 map 一致）
+  const fallbackMap = {
     fs_write_file: '文件路径',
     file_reader: '文件路径',
     agent_cleanup: '操作',
   }
-  return map[approvalData.value?.tool_name] || '操作'
+  return fallbackMap[toolName] || '操作'
 })
 </script>
 
@@ -201,9 +289,10 @@ const operationLabel = computed(() => {
     <div v-if="description" class="tool-call-description">{{ description }}</div>
 
     <div v-if="isExpanded" class="tool-call-content">
-      <div v-if="input" class="tool-call-section">
-        <div class="section-title">输入</div>
-        <pre class="section-content">{{ formatContent(input) }}</pre>
+      <!-- 输入区：按 inputDisplay.displayMode 差异化渲染 -->
+      <div v-if="inputDisplay.displayMode !== 'skip'" class="tool-call-section">
+        <div class="section-title">{{ inputDisplay.label }}</div>
+        <pre :class="inputContentClass">{{ inputDisplay.formatted }}</pre>
       </div>
       <!-- Skill hybrid 模式分区渲染 -->
       <template v-if="hybridSections">
@@ -215,15 +304,14 @@ const operationLabel = computed(() => {
       <template v-else-if="isSkillCall && output && skillModeLabel === '顾问'">
         <div class="tool-call-section">
           <div class="section-title">技能确认</div>
-          <div class="section-content">{{ formatContent(output) }}</div>
+          <div class="section-content">{{ output }}</div>
         </div>
       </template>
-      <!-- 普通输出 -->
+      <!-- 普通输出：按 outputDisplay.displayMode 差异化渲染 -->
       <template v-else>
-        <div v-if="output" class="tool-call-section">
-          <div class="section-title">{{ isKnowledgeBase ? '检索摘要' : '输出' }}</div>
-          <pre v-if="isKnowledgeBase" class="section-content section-content--compact">{{ formatContent(output) }}</pre>
-          <pre v-else class="section-content">{{ formatContent(output) }}</pre>
+        <div v-if="outputDisplay.displayMode !== 'skip'" class="tool-call-section">
+          <div class="section-title">{{ isKnowledgeBase ? '检索摘要' : outputDisplay.label }}</div>
+          <pre :class="outputContentClass">{{ outputDisplay.formatted }}</pre>
         </div>
       </template>
 
@@ -430,6 +518,46 @@ const operationLabel = computed(() => {
   max-height: 120px;
   font-size: 12px;
   color: var(--el-text-color-secondary);
+}
+
+/* displayMode 差异化渲染样式（由 tool-adapters.js formatToolParameters/formatToolResult 返回值驱动） */
+/* inline: 单行展示（如 read_file 的 file_path、grep 的 pattern），无背景框 */
+.section-content--inline {
+  display: inline-block;
+  padding: 4px 8px;
+  background-color: var(--el-fill-color-light);
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  max-height: none;
+  white-space: pre-wrap;
+}
+
+/* monospace / command: 等宽字体展示（如 execute 的 shell 输出），保留 monospace 背景 */
+.section-content--monospace {
+  font-family: 'Courier New', 'Consolas', monospace;
+  background-color: var(--el-fill-color-darker);
+  color: var(--el-text-color-primary);
+}
+
+/* command: shell 命令展示（input 区，与 monospace 区分：保留 default 背景，仅设字体） */
+.display-mode--command {
+  font-family: 'Courier New', 'Consolas', monospace;
+  font-weight: 500;
+}
+
+/* diff: 差异展示（edit_file 的 old_string/new_string），保留 pre 默认样式 */
+.display-mode--diff {
+  border-left: 3px solid var(--el-color-warning);
+}
+
+/* list: 列表展示（如 glob 的匹配文件列表），保留 pre 默认样式 */
+.display-mode--list {
+  white-space: pre;
+}
+
+/* code: 代码展示（如 read_file 结果），保留 pre 默认样式（language 字段供后续接入 highlight.js） */
+.display-mode--code {
+  font-family: 'Courier New', 'Consolas', monospace;
 }
 
 .status-icon.status-pending_approval {

@@ -1,4 +1,5 @@
 from django.db import models
+
 from Django_xm.apps.core.base_models import AuditModel
 
 
@@ -89,7 +90,7 @@ class WorkflowSession(AuditModel):
         null=True,
         verbose_name='使用的模型'
     )
-    token_count = models.IntegerField(
+    token_count = models.PositiveIntegerField(
         default=0,
         verbose_name='Token 数量'
     )

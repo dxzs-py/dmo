@@ -11,16 +11,16 @@ MCP Server 工具、Skill 技能工具的查询、删除、状态切换等操作
 """
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from Django_xm.async_utils import run_async
 
 logger = logging.getLogger(__name__)
 
-_category_cache: Dict[str, Dict[str, str]] = {}
+_category_cache: dict[str, dict[str, str]] = {}
 
 
-def _get_category_info(category_code: str) -> Dict[str, str]:
+def _get_category_info(category_code: str) -> dict[str, str]:
     if category_code in _category_cache:
         return _category_cache[category_code]
     from Django_xm.apps.tools.models import ToolCategory
@@ -33,7 +33,7 @@ def _get_category_info(category_code: str) -> Dict[str, str]:
     return info
 
 
-def _build_user_tool_category_info(tool_obj) -> Dict[str, str]:
+def _build_user_tool_category_info(tool_obj) -> dict[str, str]:
     if tool_obj.category:
         return {"code": tool_obj.category.code, "name": tool_obj.category.name}
     return {"code": "general", "name": "通用"}
@@ -65,29 +65,25 @@ class BaseToolManager(ABC):
     @abstractmethod
     def get_available_tools(self, user) -> list:
         """获取用户可用的工具实例列表（BaseTool 列表）"""
-        pass
 
     @abstractmethod
-    def get_tool_info_list(self, user) -> List[Dict[str, Any]]:
+    def get_tool_info_list(self, user) -> list[dict[str, Any]]:
         """获取工具信息列表
 
         每项包含: name, description, category, source, deletable, status
         """
-        pass
 
     @abstractmethod
     def is_system_tool(self, tool_name: str) -> bool:
         """判断是否为系统内置工具"""
-        pass
 
     @abstractmethod
     def is_user_tool(self, tool_name: str, user) -> bool:
         """判断是否为用户自定义工具"""
-        pass
 
     # ---- 通用删除逻辑 ----
 
-    def delete_user_tool(self, tool_name: str, user) -> Dict[str, Any]:
+    def delete_user_tool(self, tool_name: str, user) -> dict[str, Any]:
         """删除用户自定义工具，系统工具不可删除
 
         Returns:
@@ -99,13 +95,13 @@ class BaseToolManager(ABC):
             return {"success": False, "error_code": "NOT_FOUND", "message": f"未找到用户自定义工具 '{tool_name}'，无权操作"}
         return self._do_delete_user_tool(tool_name, user)
 
-    def _do_delete_user_tool(self, tool_name: str, user) -> Dict[str, Any]:
+    def _do_delete_user_tool(self, tool_name: str, user) -> dict[str, Any]:
         """子类覆盖实现具体删除逻辑"""
         raise NotImplementedError
 
     # ---- 通用状态切换逻辑 ----
 
-    def toggle_user_tool(self, tool_name: str, user, status: str = None) -> Dict[str, Any]:
+    def toggle_user_tool(self, tool_name: str, user, status: str = None) -> dict[str, Any]:
         """切换用户自定义工具状态
 
         Args:
@@ -122,7 +118,7 @@ class BaseToolManager(ABC):
             return {"success": False, "error_code": "NOT_FOUND", "message": f"未找到用户自定义工具 '{tool_name}'"}
         return self._do_toggle_user_tool(tool_name, user, status)
 
-    def _do_toggle_user_tool(self, tool_name: str, user, status: str = None) -> Dict[str, Any]:
+    def _do_toggle_user_tool(self, tool_name: str, user, status: str = None) -> dict[str, Any]:
         """子类覆盖实现具体切换逻辑"""
         raise NotImplementedError
 
@@ -140,7 +136,7 @@ class LangChainToolManager(BaseToolManager):
 
     def get_available_tools(self, user) -> list:
         """获取内置工具 + 用户自定义工具（动态实例化），合并返回"""
-        from Django_xm.apps.tools import get_all_tools, _load_custom_tools_for_user
+        from Django_xm.apps.tools import _load_custom_tools_for_user, get_all_tools
 
         tools = get_all_tools()
         custom_tools = _load_custom_tools_for_user(user.id)
@@ -151,11 +147,11 @@ class LangChainToolManager(BaseToolManager):
         )
         return tools
 
-    def get_tool_info_list(self, user) -> List[Dict[str, Any]]:
+    def get_tool_info_list(self, user) -> list[dict[str, Any]]:
         from Django_xm.apps.tools import get_all_tools
         from Django_xm.apps.tools.models import CustomTool
 
-        result: List[Dict[str, Any]] = []
+        result: list[dict[str, Any]] = []
 
         for tool in get_all_tools():
             meta = getattr(tool, 'metadata', None) or {}
@@ -201,7 +197,7 @@ class LangChainToolManager(BaseToolManager):
         from Django_xm.apps.tools.models import CustomTool
         return CustomTool.objects.filter(user=user, name=tool_name).exists()
 
-    def _do_delete_user_tool(self, tool_name: str, user) -> Dict[str, Any]:
+    def _do_delete_user_tool(self, tool_name: str, user) -> dict[str, Any]:
         """删除用户自定义工具"""
         from Django_xm.apps.tools.models import CustomTool
 
@@ -211,7 +207,7 @@ class LangChainToolManager(BaseToolManager):
             return {"success": True, "message": f"工具 '{tool_name}' 已删除"}
         return {"success": False, "error_code": "UNKNOWN", "message": f"工具 '{tool_name}' 删除失败"}
 
-    def _do_toggle_user_tool(self, tool_name: str, user, status: str = None) -> Dict[str, Any]:
+    def _do_toggle_user_tool(self, tool_name: str, user, status: str = None) -> dict[str, Any]:
         """切换用户自定义工具状态"""
         from Django_xm.apps.tools.models import CustomTool
 
@@ -256,15 +252,15 @@ class McpToolManager(BaseToolManager):
         logger.debug("McpToolManager: 获取到 %d 个 MCP 工具 (user=%s)", len(tools), user.id)
         return tools
 
-    def get_tool_info_list(self, user) -> List[Dict[str, Any]]:
+    def get_tool_info_list(self, user) -> list[dict[str, Any]]:
         from Django_xm.apps.tools.mcp import _get_mcp_servers_config
         from Django_xm.apps.tools.models import McpServerConfig
 
-        result: List[Dict[str, Any]] = []
+        result: list[dict[str, Any]] = []
         general_cat = _get_category_info('general')
 
         for srv in _get_mcp_servers_config():
-            entry: Dict[str, Any] = {
+            entry: dict[str, Any] = {
                 "name": srv.get("name", ""),
                 "description": srv.get("description", ""),
                 "tool_type": "mcp",
@@ -321,7 +317,7 @@ class McpToolManager(BaseToolManager):
         from Django_xm.apps.tools.models import McpServerConfig
         return McpServerConfig.objects.filter(user=user, name=tool_name).exists()
 
-    def _do_delete_user_tool(self, tool_name: str, user) -> Dict[str, Any]:
+    def _do_delete_user_tool(self, tool_name: str, user) -> dict[str, Any]:
         """删除用户自定义 MCP Server 配置"""
         from Django_xm.apps.tools.models import McpServerConfig
 
@@ -331,7 +327,7 @@ class McpToolManager(BaseToolManager):
             return {"success": True, "message": f"MCP Server '{tool_name}' 已删除"}
         return {"success": False, "error_code": "UNKNOWN", "message": f"MCP Server '{tool_name}' 删除失败"}
 
-    def _do_toggle_user_tool(self, tool_name: str, user, status: str = None) -> Dict[str, Any]:
+    def _do_toggle_user_tool(self, tool_name: str, user, status: str = None) -> dict[str, Any]:
         """切换用户 MCP Server 状态"""
         from Django_xm.apps.tools.models import McpServerConfig
 
@@ -357,7 +353,7 @@ class McpToolManager(BaseToolManager):
 
     # ---- MCP 专属方法 ----
 
-    def add_server(self, user, config_dict: Dict[str, Any]) -> Dict[str, Any]:
+    def add_server(self, user, config_dict: dict[str, Any]) -> dict[str, Any]:
         from Django_xm.apps.tools.models import McpServerConfig, ToolCategory
 
         name = config_dict.get("name", "")
@@ -405,7 +401,7 @@ class McpToolManager(BaseToolManager):
             logger.error("MCP Server 添加失败: %s", e)
             return {"success": False, "error_code": "UNKNOWN", "message": f"添加失败: {e}"}
 
-    def update_server(self, user, config_dict: Dict[str, Any]) -> Dict[str, Any]:
+    def update_server(self, user, config_dict: dict[str, Any]) -> dict[str, Any]:
         from Django_xm.apps.tools.models import McpServerConfig, ToolCategory
 
         name = config_dict.get("name", "")
@@ -453,7 +449,7 @@ class McpToolManager(BaseToolManager):
             logger.error("MCP Server 更新失败: %s", e)
             return {"success": False, "error_code": "UNKNOWN", "message": f"更新失败: {e}"}
 
-    def test_server(self, user, server_name: str) -> Dict[str, Any]:
+    def test_server(self, user, server_name: str) -> dict[str, Any]:
         """测试 MCP Server 连接
 
         Args:
@@ -489,7 +485,7 @@ class McpToolManager(BaseToolManager):
         system_servers = getattr(django_settings, "MCP_SERVERS", [])
         return any(s.get("name") == name for s in system_servers)
 
-    def _find_server_config(self, server_name: str, user) -> Optional[Dict[str, Any]]:
+    def _find_server_config(self, server_name: str, user) -> dict[str, Any] | None:
         """在系统级 + 用户级配置中查找指定名称的 Server"""
         from Django_xm.apps.tools.mcp import _get_mcp_servers_config
         from Django_xm.apps.tools.models import McpServerConfig
@@ -507,7 +503,7 @@ class McpToolManager(BaseToolManager):
         return None
 
     @staticmethod
-    async def _test_mcp_server_async(server_name: str, target: Dict[str, Any]) -> Dict[str, Any]:
+    async def _test_mcp_server_async(server_name: str, target: dict[str, Any]) -> dict[str, Any]:
         """异步测试 MCP Server 连接"""
         from Django_xm.apps.tools.mcp import get_mcp_tools
 
@@ -573,7 +569,7 @@ class SkillToolManager(BaseToolManager):
 
     def get_available_tools(self, user) -> list:
         """获取预置 Skill + 用户自定义 Skill 的 SkillBaseTool 实例"""
-        from Django_xm.apps.tools.skills import SkillRegistryService, SkillBaseTool
+        from Django_xm.apps.tools.skills import SkillBaseTool, SkillRegistryService
 
         tools: list = []
 
@@ -585,10 +581,10 @@ class SkillToolManager(BaseToolManager):
         logger.debug("SkillToolManager: 预置 + 自定义 = %d 个 Skill (user=%s)", len(tools), user.id)
         return tools
 
-    def get_tool_info_list(self, user) -> List[Dict[str, Any]]:
+    def get_tool_info_list(self, user) -> list[dict[str, Any]]:
         from Django_xm.apps.tools.skills import SkillRegistryService
 
-        result: List[Dict[str, Any]] = []
+        result: list[dict[str, Any]] = []
         general_cat = _get_category_info('general')
 
         for spec in SkillRegistryService.get_presets():
@@ -646,7 +642,7 @@ class SkillToolManager(BaseToolManager):
         raw_name = self._strip_skill_prefix(tool_name)
         return SkillConfig.objects.filter(user=user, name=raw_name).exists()
 
-    def _do_delete_user_tool(self, tool_name: str, user) -> Dict[str, Any]:
+    def _do_delete_user_tool(self, tool_name: str, user) -> dict[str, Any]:
         """删除用户自定义 Skill"""
         SkillConfig = self._get_skill_config_model()
         if SkillConfig is None:
@@ -659,7 +655,7 @@ class SkillToolManager(BaseToolManager):
             return {"success": True, "message": f"Skill '{raw_name}' 已删除"}
         return {"success": False, "error_code": "UNKNOWN", "message": f"Skill '{raw_name}' 删除失败"}
 
-    def _do_toggle_user_tool(self, tool_name: str, user, status: str = None) -> Dict[str, Any]:
+    def _do_toggle_user_tool(self, tool_name: str, user, status: str = None) -> dict[str, Any]:
         """切换用户自定义 Skill 状态"""
         SkillConfig = self._get_skill_config_model()
         if SkillConfig is None:
@@ -688,7 +684,7 @@ class SkillToolManager(BaseToolManager):
 
     # ---- Skill 专属方法 ----
 
-    def update_skill(self, user, skill_data: Dict[str, Any]) -> Dict[str, Any]:
+    def update_skill(self, user, skill_data: dict[str, Any]) -> dict[str, Any]:
         """更新用户自定义 Skill
 
         Args:
@@ -749,7 +745,7 @@ class SkillToolManager(BaseToolManager):
             logger.error("Skill 更新失败: %s", e)
             return {"success": False, "error_code": "UNKNOWN", "message": f"更新失败: {e}"}
 
-    def create_skill(self, user, skill_data: Dict[str, Any]) -> Dict[str, Any]:
+    def create_skill(self, user, skill_data: dict[str, Any]) -> dict[str, Any]:
         from Django_xm.apps.tools.models import ToolCategory
 
         SkillConfig = self._get_skill_config_model()
@@ -819,7 +815,7 @@ class SkillToolManager(BaseToolManager):
         from Django_xm.apps.tools import get_all_tools
         return get_all_tools()
 
-    def _validate_skill_steps(self, steps: list) -> Dict[str, Any]:
+    def _validate_skill_steps(self, steps: list) -> dict[str, Any]:
         """验证 Skill 步骤中引用的工具名是否合法
 
         Returns:

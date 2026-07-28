@@ -4,13 +4,11 @@
 自动检测项目结构和上下文信息
 """
 
-import os
-import logging
-from typing import Dict, Any, Optional, List
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
-from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -43,15 +41,15 @@ IMPORTANT_DIRS = ["src", "lib", "app", "apps", "components", "pages", "api", "mo
 class ProjectContext:
     project_name: str = ""
     project_root: str = ""
-    languages: List[str] = field(default_factory=list)
-    frameworks: List[str] = field(default_factory=list)
+    languages: list[str] = field(default_factory=list)
+    frameworks: list[str] = field(default_factory=list)
     has_git: bool = False
     git_branch: str = ""
     instruction_content: str = ""
     directory_structure: str = ""
-    key_files: List[str] = field(default_factory=list)
+    key_files: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "projectName": self.project_name,
             "projectRoot": self.project_root,
@@ -89,10 +87,10 @@ class ProjectContext:
 class ProjectContextDetector:
     """项目上下文检测器"""
 
-    def __init__(self, project_root: Optional[str] = None):
+    def __init__(self, project_root: str | None = None):
         self.project_root = Path(project_root) if project_root else None
 
-    def detect(self, search_path: Optional[str] = None) -> ProjectContext:
+    def detect(self, search_path: str | None = None) -> ProjectContext:
         root = Path(search_path) if search_path else self.project_root
         if not root or not root.exists():
             return ProjectContext()
@@ -119,7 +117,7 @@ class ProjectContextDetector:
                 content = head_file.read_text().strip()
                 if content.startswith("ref: refs/heads/"):
                     return content.replace("ref: refs/heads/", "")
-            except IOError:
+            except OSError:
                 pass
         return "unknown"
 
@@ -150,7 +148,7 @@ class ProjectContextDetector:
                     frameworks.add("django")
                 if "fastapi" in content.lower():
                     frameworks.add("fastapi")
-            except IOError:
+            except OSError:
                 pass
 
         if (root / "package.json").exists():
@@ -164,7 +162,7 @@ class ProjectContextDetector:
                     frameworks.add("next.js")
                 if '"nuxt"' in content:
                     frameworks.add("nuxt")
-            except IOError:
+            except OSError:
                 pass
 
         context.languages = sorted(languages)
@@ -188,7 +186,7 @@ class ProjectContextDetector:
                             break
                         instructions.append(f"### {filename}\n{content}")
                         total_chars += len(content)
-                except IOError:
+                except OSError:
                     pass
 
         for subdir in root.iterdir():
@@ -203,7 +201,7 @@ class ProjectContextDetector:
                                     break
                                 instructions.append(f"### {subdir.name}/{filename}\n{content}")
                                 total_chars += len(content)
-                        except IOError:
+                        except OSError:
                             pass
 
         return "\n\n".join(instructions)
@@ -236,9 +234,8 @@ class ProjectContextDetector:
                 if entry.is_dir():
                     if entry.name not in ignore_dirs:
                         dirs.append(entry)
-                else:
-                    if entry.name not in ignore_files:
-                        files.append(entry)
+                elif entry.name not in ignore_files:
+                    files.append(entry)
 
             for d in dirs[:10]:
                 lines.append(f"{prefix}📁 {d.name}/")
@@ -253,7 +250,7 @@ class ProjectContextDetector:
         return "\n".join(lines[:100])
 
     @staticmethod
-    def _find_key_files(root: Path) -> List[str]:
+    def _find_key_files(root: Path) -> list[str]:
         key_filenames = {
             "README.md", "README.rst", "README.txt",
             "requirements.txt", "setup.py", "pyproject.toml",
@@ -272,6 +269,6 @@ class ProjectContextDetector:
         return sorted(found)
 
 
-def detect_project_context(search_path: Optional[str] = None) -> ProjectContext:
+def detect_project_context(search_path: str | None = None) -> ProjectContext:
     detector = ProjectContextDetector()
     return detector.detect(search_path)

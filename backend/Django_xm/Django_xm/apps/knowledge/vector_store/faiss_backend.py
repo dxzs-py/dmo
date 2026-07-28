@@ -8,7 +8,7 @@ import json
 import logging
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
@@ -27,7 +27,7 @@ def _validate_faiss_index_integrity(index_path: Path) -> bool:
         return False
 
     try:
-        with open(integrity_file, "r", encoding="utf-8") as f:
+        with open(integrity_file, encoding="utf-8") as f:
             stored_hashes = json.load(f)
 
         for filename, expected_hash in stored_hashes.items():
@@ -49,7 +49,7 @@ def _validate_faiss_index_integrity(index_path: Path) -> bool:
 def _save_faiss_integrity(index_path: Path) -> None:
     """保存 FAISS 索引文件的完整性校验"""
     integrity_file = index_path / ".integrity"
-    hashes: Dict[str, str] = {}
+    hashes: dict[str, str] = {}
 
     for file_path in index_path.iterdir():
         if file_path.name == ".integrity" or file_path.name == "metadata.json":
@@ -79,7 +79,7 @@ class FAISSBackend(VectorStoreBackend):
 
     def create(
         self,
-        documents: List[Document],
+        documents: list[Document],
         embeddings: Embeddings,
         collection_name: str,
         **kwargs: Any,
@@ -163,11 +163,11 @@ class FAISSBackend(VectorStoreBackend):
             logger.error(f"FAISS 向量库删除失败: {e}")
             return False
 
-    def list_collections(self, prefix: str = "") -> List[str]:
+    def list_collections(self, prefix: str = "") -> list[str]:
         if not self.base_path.exists():
             return []
 
-        collections: List[str] = []
+        collections: list[str] = []
         for item in self.base_path.iterdir():
             if item.is_dir() and (item / ".integrity").exists():
                 name = item.name
@@ -182,8 +182,8 @@ class FAISSBackend(VectorStoreBackend):
     def add_documents(
         self,
         vector_store: VectorStore,
-        documents: List[Document],
-    ) -> List[str]:
+        documents: list[Document],
+    ) -> list[str]:
         if hasattr(vector_store, "add_documents"):
             ids = vector_store.add_documents(documents)
         elif hasattr(vector_store, "add_texts"):
@@ -198,7 +198,7 @@ class FAISSBackend(VectorStoreBackend):
     def remove_documents(
         self,
         collection_name: str,
-        document_ids: List[str],
+        document_ids: list[str],
     ) -> bool:
         """FAISS 不支持按 ID 直接删除，需要重建索引"""
         logger.warning("FAISS 不支持按 ID 直接删除文档，请使用 remove_documents_by_metadata")
@@ -228,14 +228,14 @@ class FAISSBackend(VectorStoreBackend):
         vector_store: VectorStore,
         query: str,
         k: int = 4,
-        filter: Optional[Dict] = None,
-    ) -> List[Tuple[Document, float]]:
-        kwargs: Dict[str, Any] = {"k": k}
+        filter: dict | None = None,
+    ) -> list[tuple[Document, float]]:
+        kwargs: dict[str, Any] = {"k": k}
         if filter:
             kwargs["filter"] = filter
         return vector_store.similarity_search_with_score(query=query, **kwargs)
 
-    def get_stats(self, collection_name: str) -> Dict[str, Any]:
+    def get_stats(self, collection_name: str) -> dict[str, Any]:
         collection_path = self._get_collection_path(collection_name)
         if not collection_path.exists():
             return {
@@ -246,10 +246,10 @@ class FAISSBackend(VectorStoreBackend):
 
         # 尝试读取元数据文件
         metadata_path = collection_path / "metadata.json"
-        metadata: Dict[str, Any] = {}
+        metadata: dict[str, Any] = {}
         if metadata_path.exists():
             try:
-                with open(metadata_path, "r", encoding="utf-8") as f:
+                with open(metadata_path, encoding="utf-8") as f:
                     metadata = json.load(f)
             except Exception:
                 pass

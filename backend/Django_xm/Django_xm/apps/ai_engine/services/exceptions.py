@@ -19,7 +19,7 @@ LangChain 官方异常层次：
   - CheckpointError: 状态持久化失败
 """
 
-from typing import Optional, Any, Dict
+from typing import Any
 
 from langchain_core.exceptions import (
     LangChainException,
@@ -37,9 +37,9 @@ class LCAgentException(Exception):
         self,
         message: str,
         error_code: str = "AGENT_ERROR",
-        details: Optional[Dict[str, Any]] = None,
+        details: dict[str, Any] | None = None,
         recoverable: bool = True,
-        user_message: Optional[str] = None,
+        user_message: str | None = None,
     ):
         super().__init__(message)
         self.message = message
@@ -48,7 +48,7 @@ class LCAgentException(Exception):
         self.recoverable = recoverable
         self.user_message = user_message or self.DEFAULT_USER_MESSAGE
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "error_code": self.error_code,
             "message": self.message,
@@ -192,11 +192,19 @@ def classify_exception(exc: Exception) -> LCAgentException:
 
     try:
         from openai import (
-            RateLimitError as OpenAIRateLimitError,
-            AuthenticationError as OpenAIAuthError,
             APIConnectionError as OpenAIConnectionError,
+        )
+        from openai import (
             APITimeoutError as OpenAITimeoutError,
+        )
+        from openai import (
+            AuthenticationError as OpenAIAuthError,
+        )
+        from openai import (
             BadRequestError as OpenAIBadRequestError,
+        )
+        from openai import (
+            RateLimitError as OpenAIRateLimitError,
         )
         if isinstance(exc, OpenAIRateLimitError):
             return RateLimitExceededError(

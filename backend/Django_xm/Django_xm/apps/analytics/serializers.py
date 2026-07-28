@@ -1,5 +1,6 @@
 from rest_framework import serializers
-from Django_xm.apps.analytics.models import UserEvent, DailyAggregation, EventType, EventCategory
+
+from Django_xm.apps.analytics.models import DailyAggregation, EventCategory, EventType, UserEvent
 
 
 class UserEventWriteSerializer(serializers.Serializer):

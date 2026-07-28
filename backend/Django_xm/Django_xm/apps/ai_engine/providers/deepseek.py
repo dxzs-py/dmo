@@ -1,6 +1,6 @@
-from typing import Any, Dict
+from typing import Any
 
-from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -8,12 +8,12 @@ _patch_applied: bool = False
 
 
 # 延迟导入，避免循环依赖
-def _get_registry_config() -> Dict[str, Any]:
+def _get_registry_config() -> dict[str, Any]:
     from Django_xm.apps.ai_engine.services.registry_service import get_provider_config
     return get_provider_config("deepseek")
 
 
-def get_provider_config() -> Dict[str, Any]:
+def get_provider_config() -> dict[str, Any]:
     return _get_registry_config().copy()
 
 
@@ -32,10 +32,14 @@ def apply_reasoning_patch() -> None:
 
     try:
         from langchain_openai.chat_models.base import (
-            _convert_delta_to_message_chunk as _original_chunk_convert,
-            _convert_message_to_dict as _original_msg_convert,
-            AIMessageChunk,
             AIMessage,
+            AIMessageChunk,
+        )
+        from langchain_openai.chat_models.base import (
+            _convert_delta_to_message_chunk as _original_chunk_convert,
+        )
+        from langchain_openai.chat_models.base import (
+            _convert_message_to_dict as _original_msg_convert,
         )
 
         _chunk_ref = _original_chunk_convert
@@ -68,7 +72,7 @@ def apply_reasoning_patch() -> None:
         logger.warning(f"DeepSeek reasoning_content patch 应用失败: {e}")
 
 
-def is_thinking_enabled(special_params: Dict[str, Any], provider_id: str = "") -> bool:
+def is_thinking_enabled(special_params: dict[str, Any], provider_id: str = "") -> bool:
     """通用判断深度思考是否启用，兼容 DeepSeek/Ollama/Anthropic 等多 Provider。
 
     - DeepSeek: thinking={"type": "enabled"} 或 reasoning_effort 存在

@@ -1,7 +1,7 @@
-from typing import Optional
+import logging
+
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ def _normalize_language(lang: str) -> str:
 class TranslateTextInput(BaseModel):
     text: str = Field(description="要翻译的文本内容")
     target_language: str = Field(description="目标语言，如'英语'、'中文'、'日语'、'法语'等")
-    source_language: Optional[str] = Field(default=None, description="源语言（可选，不指定则自动检测）")
+    source_language: str | None = Field(default=None, description="源语言（可选，不指定则自动检测）")
 
 
 class DetectLanguageInput(BaseModel):
@@ -45,7 +45,7 @@ class DetectLanguageInput(BaseModel):
 
 class TranslateTextTool(BaseTool):
     name: str = "translate_text"
-    metadata: dict = {"tier": "extended", "visibility": "selectable", "category": "translation"}
+    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "translation"})
     description: str = (
         "将文本翻译为指定语言，支持中英日韩法德西葡俄等20+种语言互译。"
         "适用场景：用户需要翻译文本、切换对话语言、或用不同语言交流时使用。"
@@ -56,7 +56,7 @@ class TranslateTextTool(BaseTool):
     )
     args_schema: type[BaseModel] = TranslateTextInput
 
-    def _run(self, text: str, target_language: str, source_language: Optional[str] = None) -> str:
+    def _run(self, text: str, target_language: str, source_language: str | None = None) -> str:
         logger.info(f"🌐 翻译请求: target={target_language}, source={source_language or 'auto'}")
 
         target = _normalize_language(target_language)
@@ -90,17 +90,17 @@ class TranslateTextTool(BaseTool):
             return translated.strip()
 
         except Exception as e:
-            error_msg = f"翻译失败: {str(e)}"
+            error_msg = f"翻译失败: {e!s}"
             logger.error(error_msg)
             return error_msg
 
-    async def _arun(self, text: str, target_language: str, source_language: Optional[str] = None) -> str:
+    async def _arun(self, text: str, target_language: str, source_language: str | None = None) -> str:
         return self._run(text=text, target_language=target_language, source_language=source_language)
 
 
 class DetectLanguageTool(BaseTool):
     name: str = "detect_language"
-    metadata: dict = {"tier": "extended", "visibility": "selectable", "category": "translation"}
+    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "translation"})
     description: str = (
         "检测文本使用的语言，返回语言的中文名称（如'中文'、'英语'、'日语'）。"
         "适用场景：需要识别文本使用的是什么语言、在翻译前确定源语言时使用。"
@@ -111,7 +111,7 @@ class DetectLanguageTool(BaseTool):
     args_schema: type[BaseModel] = DetectLanguageInput
 
     def _run(self, text: str) -> str:
-        logger.info(f"🌐 语言检测请求")
+        logger.info("🌐 语言检测请求")
 
         try:
             from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
@@ -131,7 +131,7 @@ class DetectLanguageTool(BaseTool):
             return result if result else "无法检测"
 
         except Exception as e:
-            error_msg = f"语言检测失败: {str(e)}"
+            error_msg = f"语言检测失败: {e!s}"
             logger.error(error_msg)
             return error_msg
 

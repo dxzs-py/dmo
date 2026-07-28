@@ -50,10 +50,9 @@ task 频道，无需依赖额外的双频道广播机制。
 
 import asyncio
 import json
-import time
 import logging
 import threading
-from typing import Optional
+import time
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
@@ -61,15 +60,10 @@ from django.core.cache import cache
 
 from Django_xm.common.event_schema import (
     EventType,
-    EventSource,
     PayloadValidationError,
-    validate_payload,
     get_ws_event_name,
-    is_tool_lifecycle_event,
-    is_approval_event,
-    is_stream_event,
+    validate_payload,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -336,9 +330,9 @@ async def _publish_to_user_async(user_id, event_type, payload):
 async def publish_event(
     event_type: EventType,
     payload: dict,
-    session_id: Optional[str] = None,
-    task_id: Optional[str] = None,
-    user_id: Optional[str] = None,
+    session_id: str | None = None,
+    task_id: str | None = None,
+    user_id: str | None = None,
 ) -> None:
     """统一事件发布接口（唯一入口）。
 
@@ -549,9 +543,9 @@ def _ordered_ensure_future(coro, channel_key):
 def publish_event_sync(
     event_type: EventType,
     payload: dict,
-    session_id: Optional[str] = None,
-    task_id: Optional[str] = None,
-    user_id: Optional[str] = None,
+    session_id: str | None = None,
+    task_id: str | None = None,
+    user_id: str | None = None,
 ) -> None:
     """publish_event 的同步版本（智能适配同步/async 上下文）。
 

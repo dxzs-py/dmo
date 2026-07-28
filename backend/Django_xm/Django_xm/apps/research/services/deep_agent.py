@@ -10,33 +10,36 @@
 5. Middleware 传递：GuardrailsMiddleware 正确传入子智能体 create_agent
 """
 
-from typing import Optional, Dict, Any, TypedDict, Annotated, List, Literal, Sequence
 import json
 import warnings
+from collections.abc import Sequence
 from datetime import datetime
+from typing import Annotated, Any, Literal, TypedDict
 
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
-from langchain_core.tools import BaseTool
 from langchain.agents.middleware import AgentMiddleware
-from langgraph.graph import StateGraph, END
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.tools import BaseTool
+from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
-from Django_xm.apps.ai_engine.config import get_logger
-from .subagents import create_web_researcher, create_doc_analyst, create_report_writer
+
+from Django_xm.apps.core.config import get_logger
+
+from .subagents import create_doc_analyst, create_report_writer, create_web_researcher
 
 logger = get_logger(__name__)
 
 
 class ResearchState(TypedDict):
-    messages: Annotated[List[BaseMessage], add_messages]
+    messages: Annotated[list[BaseMessage], add_messages]
     query: str
     thread_id: str
-    plan: Optional[Dict[str, Any]]
+    plan: dict[str, Any] | None
     web_research_done: bool
     doc_analysis_done: bool
     report_done: bool
     current_step: str
-    error: Optional[str]
-    final_report: Optional[str]
+    error: str | None
+    final_report: str | None
     retry_count: int
     max_retries: int
 
@@ -155,20 +158,20 @@ class DeepResearchAgent:
         thread_id: str,
         enable_web_search: bool = True,
         enable_doc_analysis: bool = False,
-        retriever_tool: Optional[BaseTool] = None,
-        middleware: Optional[Sequence[AgentMiddleware]] = None,
+        retriever_tool: BaseTool | None = None,
+        middleware: Sequence[AgentMiddleware] | None = None,
         enable_guardrails: bool = False,
-        checkpointer: Optional[Any] = None,
-        user_id: Optional[int] = None,
-        session_id: Optional[str] = None,
+        checkpointer: Any | None = None,
+        user_id: int | None = None,
+        session_id: str | None = None,
         max_retries: int = 2,
-        extra_tools: Optional[Sequence[BaseTool]] = None,
+        extra_tools: Sequence[BaseTool] | None = None,
         enable_deep_thinking: bool = False,
-        provider_id: Optional[str] = None,
-        model_name: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        special_params: Optional[dict] = None,
+        provider_id: str | None = None,
+        model_name: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        special_params: dict | None = None,
         research_context: str = "",
         **kwargs,
     ):
@@ -208,7 +211,7 @@ class DeepResearchAgent:
         self.graph = self._build_graph(checkpointer)
         logger.info("DeepResearchAgent 初始化完成")
 
-    def _init_subagents(self, retriever_tool: Optional[BaseTool] = None) -> None:
+    def _init_subagents(self, retriever_tool: BaseTool | None = None) -> None:
         logger.info("初始化子智能体...")
 
         if self.enable_web_search:
@@ -261,7 +264,7 @@ class DeepResearchAgent:
             )
         return get_chat_model(temperature=self.temperature, max_tokens=self.max_tokens)
 
-    def _build_graph(self, checkpointer: Optional[Any] = None):
+    def _build_graph(self, checkpointer: Any | None = None):
         from Django_xm.apps.ai_engine.services.checkpointer_factory import get_checkpointer
 
         logger.info("构建研究工作流（条件边 + 错误恢复）...")
@@ -388,7 +391,7 @@ class DeepResearchAgent:
         state["error"] = None
 
         if retry_count >= state.get("max_retries", self.max_retries):
-            logger.error(f"已达最大重试次数，生成降级报告")
+            logger.error("已达最大重试次数，生成降级报告")
             state["final_report"] = (
                 f"# 研究报告（降级模式）\n\n"
                 f"## 说明\n\n"
@@ -651,7 +654,7 @@ thread_id: {thread_id}
 
         return state
 
-    def _extract_report_from_fs(self) -> Optional[str]:
+    def _extract_report_from_fs(self) -> str | None:
         try:
             report = self.filesystem.read_file(
                 "final_report.md",
@@ -663,7 +666,7 @@ thread_id: {thread_id}
             logger.debug(f"无法从文件系统读取报告: {fs_error}")
             return None
 
-    def _extract_report_from_agent_output(self, result: Dict[str, Any]) -> Optional[str]:
+    def _extract_report_from_agent_output(self, result: dict[str, Any]) -> str | None:
         logger.info("从 Agent 输出中提取报告内容...")
 
         if not isinstance(result, dict) or "messages" not in result:
@@ -700,7 +703,7 @@ thread_id: {thread_id}
         query = state["query"]
         thread_id = state["thread_id"]
 
-        research_materials: List[tuple] = []
+        research_materials: list[tuple] = []
 
         try:
             plan_content = self.filesystem.read_file(
@@ -884,11 +887,11 @@ thread_id: {thread_id}
             logger.error(f"撰写报告失败: {e}")
             state["error"] = str(e)
             state["current_step"] = "report_writing"
-            state["final_report"] = f"报告生成过程中遇到错误: {str(e)}"
+            state["final_report"] = f"报告生成过程中遇到错误: {e!s}"
 
         return state
 
-    def research(self, query: str, config: Optional[Dict[str, Any]] = None, callbacks: Optional[list] = None) -> Dict[str, Any]:
+    def research(self, query: str, config: dict[str, Any] | None = None, callbacks: list | None = None) -> dict[str, Any]:
         logger.info(f"开始深度研究: {query[:50]}...")
 
         if config is None:
@@ -947,9 +950,9 @@ thread_id: {thread_id}
     async def aresearch(
         self,
         query: str,
-        config: Optional[Dict[str, Any]] = None,
-        callbacks: Optional[list] = None,
-    ) -> Dict[str, Any]:
+        config: dict[str, Any] | None = None,
+        callbacks: list | None = None,
+    ) -> dict[str, Any]:
         logger.info(f"异步开始深度研究: {query[:50]}...")
 
         if config is None:
@@ -1007,7 +1010,7 @@ thread_id: {thread_id}
     async def astream_research(
         self,
         query: str,
-        config: Optional[Dict[str, Any]] = None,
+        config: dict[str, Any] | None = None,
     ):
         """
         流式执行深度研究，逐节点返回事件
@@ -1112,7 +1115,7 @@ thread_id: {thread_id}
                 "data": {"error": str(e)},
             }
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         files = self.filesystem.list_files()
 
         return {
@@ -1128,21 +1131,21 @@ def create_deep_research_agent(
     thread_id: str,
     enable_web_search: bool = True,
     enable_doc_analysis: bool = False,
-    retriever_tool: Optional[BaseTool] = None,
-    user_id: Optional[int] = None,
-    session_id: Optional[str] = None,
+    retriever_tool: BaseTool | None = None,
+    user_id: int | None = None,
+    session_id: str | None = None,
     max_retries: int = 2,
-    middleware: Optional[Sequence[AgentMiddleware]] = None,
+    middleware: Sequence[AgentMiddleware] | None = None,
     enable_guardrails: bool = False,
     guardrails_strict_mode: bool = False,
-    checkpointer: Optional[Any] = None,
-    extra_tools: Optional[Sequence[BaseTool]] = None,
+    checkpointer: Any | None = None,
+    extra_tools: Sequence[BaseTool] | None = None,
     enable_deep_thinking: bool = False,
-    provider_id: Optional[str] = None,
-    model_name: Optional[str] = None,
-    temperature: Optional[float] = None,
-    max_tokens: Optional[int] = None,
-    special_params: Optional[dict] = None,
+    provider_id: str | None = None,
+    model_name: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    special_params: dict | None = None,
     research_context: str = "",
     **kwargs,
 ) -> DeepResearchAgent:

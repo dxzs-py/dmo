@@ -4,9 +4,10 @@ LangGraph 工作流状态模型定义
 本模块定义了学习工作流的全局状态结构，用于在各个节点之间传递和维护数据。
 """
 
-from typing import TypedDict, Optional, Annotated, List, Dict, Any
-from langgraph.graph.message import add_messages
+from typing import Annotated, Any, TypedDict
+
 from langchain_core.messages import BaseMessage
+from langgraph.graph.message import add_messages
 
 
 class StudyFlowState(TypedDict):
@@ -16,13 +17,20 @@ class StudyFlowState(TypedDict):
     该状态在整个工作流执行过程中被传递和更新，包含了从用户输入到最终反馈的所有信息。
     """
 
-    messages: Annotated[List[BaseMessage], add_messages]
+    messages: Annotated[list[BaseMessage], add_messages]
     """对话历史消息列表，使用 add_messages 注解，LangGraph 会自动合并新旧消息"""
 
     user_question: str
     """用户提出的学习问题"""
 
-    learning_plan: Optional[Dict[str, Any]]
+    user_id: int | None
+    """用户 ID，用于检索用户私有的知识库（retrieval_node 据此构造 user_{id}_{kb_name} 索引名）"""
+
+    knowledge_base_ids: list[str] | None
+    """用户选择的知识库名称列表（原始名称，与 KnowledgeBaseSelector 的 v-model 一致）。
+    为空列表或 None 时表示未选择知识库，retrieval_node 跳过 RAG 检索。"""
+
+    learning_plan: dict[str, Any] | None
     """
     学习计划，包含：
     - topic: 学习主题
@@ -32,7 +40,7 @@ class StudyFlowState(TypedDict):
     - estimated_time: 预计学习时间（分钟）
     """
 
-    retrieved_docs: Optional[List[Dict[str, Any]]]
+    retrieved_docs: list[dict[str, Any]] | None
     """
     检索到的文档列表，每个文档包含：
     - content: 文档内容
@@ -40,7 +48,7 @@ class StudyFlowState(TypedDict):
     - relevance_score: 相关性分数
     """
 
-    quiz: Optional[Dict[str, Any]]
+    quiz: dict[str, Any] | None
     """
     生成的练习题，包含：
     - questions: 题目列表
@@ -55,7 +63,7 @@ class StudyFlowState(TypedDict):
     - time_limit: 答题时间限制（分钟）
     """
 
-    user_answers: Optional[Dict[str, Any]]
+    user_answers: dict[str, Any] | None
     """
     用户提交的答案，格式：
     {
@@ -64,10 +72,10 @@ class StudyFlowState(TypedDict):
     }
     """
 
-    score: Optional[int]
+    score: int | None
     """用户得分（0-100）"""
 
-    score_details: Optional[Dict[str, Any]]
+    score_details: dict[str, Any] | None
     """
     详细评分信息：
     - correct_count: 答对题数
@@ -75,7 +83,7 @@ class StudyFlowState(TypedDict):
     - question_scores: 每题得分详情
     """
 
-    feedback: Optional[str]
+    feedback: str | None
     """个性化反馈信息"""
 
     retry_count: int
@@ -90,16 +98,16 @@ class StudyFlowState(TypedDict):
     thread_id: str
     """会话线程 ID，用于标识唯一的工作流实例"""
 
-    created_at: Optional[str]
+    created_at: str | None
     """创建时间戳"""
 
-    updated_at: Optional[str]
+    updated_at: str | None
     """最后更新时间戳"""
 
-    error: Optional[str]
+    error: str | None
     """错误信息（如果有）"""
 
-    error_node: Optional[str]
+    error_node: str | None
     """发生错误的节点名称"""
 
 
@@ -108,7 +116,7 @@ class QuizQuestion(TypedDict):
     id: str
     type: str
     question: str
-    options: Optional[List[str]]
+    options: list[str] | None
     answer: str
     explanation: str
     points: int
@@ -117,7 +125,7 @@ class QuizQuestion(TypedDict):
 class RetrievedDocument(TypedDict):
     """检索文档结构"""
     content: str
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     relevance_score: float
 
 

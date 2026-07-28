@@ -2,14 +2,15 @@
 练习题生成节点 (Quiz Generator Node)
 """
 
-import logging
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Any
+
 from pydantic import BaseModel, Field
 
-from ..services.state import StudyFlowState
 from Django_xm.apps.ai_engine.services.llm_factory import get_structured_model_with_fallback
 from Django_xm.apps.core.config import get_logger
+
+from ..services.state import StudyFlowState
 
 logger = get_logger(__name__)
 
@@ -18,19 +19,19 @@ class QuizQuestionSchema(BaseModel):
     id: str = Field(description="题目唯一标识，如 q1, q2")
     type: str = Field(description="题型：multiple_choice（选择题）、fill_blank（填空题）、short_answer（简答题）")
     question: str = Field(description="题目内容")
-    options: List[str] | None = Field(default=None, description="选择题的选项列表")
+    options: list[str] | None = Field(default=None, description="选择题的选项列表")
     answer: str = Field(description="标准答案")
     explanation: str = Field(description="答案解析")
     points: int = Field(description="题目分值")
 
 
 class QuizSchema(BaseModel):
-    questions: List[QuizQuestionSchema] = Field(description="题目列表，至少5题")
+    questions: list[QuizQuestionSchema] = Field(description="题目列表，至少5题")
     total_points: int = Field(description="总分")
     time_limit: int = Field(description="建议答题时间（分钟）")
 
 
-def quiz_generator_node(state: StudyFlowState) -> Dict[str, Any]:
+def quiz_generator_node(state: StudyFlowState) -> dict[str, Any]:
     """
     练习题生成节点
 
@@ -162,8 +163,8 @@ def quiz_generator_node(state: StudyFlowState) -> Dict[str, Any]:
         logger.error(f"[Quiz Generator Node] 生成练习题失败: {e}", exc_info=True)
         return {
             "quiz": None,
-            "error": f"练习题生成失败: {str(e)}",
-            "messages": [{"role": "assistant", "content": f"\n\n⚠️ 练习题生成失败: {str(e)}"}],
+            "error": f"练习题生成失败: {e!s}",
+            "messages": [{"role": "assistant", "content": f"\n\n⚠️ 练习题生成失败: {e!s}"}],
             "current_step": "quiz_error",
             "updated_at": datetime.now().isoformat()
         }

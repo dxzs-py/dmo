@@ -11,7 +11,7 @@ mock 策略:
 - 不依赖真实 Redis / Channels / Django ORM
 
 运行方式:
-    cd d:\programming\langchain\langchain_xm\backend\Django_xm
+    cd d:\\programming\\langchain\\langchain_xm\backend\\Django_xm
     conda activate langchain_xm
     python manage.py test Django_xm.apps.chat.services.test_stream_helpers --verbosity=2
 """
@@ -20,24 +20,24 @@ from __future__ import annotations
 
 import os
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 # Django 环境初始化
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.dev")
-import django  # noqa: E402
-import django.apps  # noqa: E402,F401
+import django
+import django.apps
 
 if not django.apps.apps.ready:
     django.setup()
 
-from langchain_core.messages import ToolMessage  # noqa: E402
+from langchain_core.messages import ToolMessage
 
-from Django_xm.apps.chat.services.stream_helpers import (  # noqa: E402
-    _detect_tool_timeout,
+from Django_xm.apps.chat.services.stream_helpers import (
     _detect_tool_rejected,
+    _detect_tool_timeout,
     _handle_tool_message_chunk,
 )
-from Django_xm.common.event_schema import EventType  # noqa: E402
+from Django_xm.common.event_schema import EventType
 
 
 def _make_tool_message(content, tool_call_id="tc-1", name="shell_exec", status=None):

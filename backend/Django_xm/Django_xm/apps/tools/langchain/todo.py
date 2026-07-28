@@ -1,8 +1,7 @@
 import json
-import os
 import logging
-from typing import List, Dict, Any
-from pathlib import Path
+import os
+from typing import Any
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
@@ -35,29 +34,29 @@ def _get_todo_path(session_id: str) -> str:
     return os.path.join(TODO_DIR, f"{safe_id}.json")
 
 
-def _load_todos(session_id: str) -> List[Dict[str, Any]]:
+def _load_todos(session_id: str) -> list[dict[str, Any]]:
     path = _get_todo_path(session_id)
     if not os.path.exists(path):
         return []
     try:
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, encoding='utf-8') as f:
             return json.load(f)
-    except (json.JSONDecodeError, IOError) as e:
+    except (OSError, json.JSONDecodeError) as e:
         logger.error(f"加载待办事项失败: {e}")
         return []
 
 
-def _save_todos(session_id: str, todos: List[Dict[str, Any]]):
+def _save_todos(session_id: str, todos: list[dict[str, Any]]):
     path = _get_todo_path(session_id)
     _ensure_todo_dir()
     try:
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(todos, f, ensure_ascii=False, indent=2)
-    except IOError as e:
+    except OSError as e:
         logger.error(f"保存待办事项失败: {e}")
 
 
-def _validate_todos(todos: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _validate_todos(todos: list[dict[str, Any]]) -> list[dict[str, Any]]:
     valid = []
     for i, todo in enumerate(todos):
         if not isinstance(todo, dict):
@@ -90,7 +89,7 @@ class TodoReadInput(BaseModel):
 
 class TodoWriteTool(BaseTool):
     name: str = "todo_write"
-    metadata: dict = {"tier": "extended", "visibility": "selectable", "category": "todo"}
+    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "todo"})
     description: str = (
         "管理任务列表，创建或更新待办事项，支持任务状态和优先级管理。"
         "适用场景：需要跟踪任务进度、管理待办事项列表、规划工作步骤。"
@@ -134,7 +133,7 @@ class TodoWriteTool(BaseTool):
 
 class TodoReadTool(BaseTool):
     name: str = "todo_read"
-    metadata: dict = {"tier": "extended", "visibility": "selectable", "category": "todo"}
+    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "todo"})
     description: str = (
         "读取当前会话的任务列表，显示所有待办事项及其状态、优先级。"
         "适用场景：需要查看当前任务列表、了解任务进度、确认任务完成情况。"

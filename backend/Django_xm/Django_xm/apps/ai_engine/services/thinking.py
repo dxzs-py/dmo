@@ -8,12 +8,12 @@
 - is_thinking_enabled: 判断深度思考是否启用
 """
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def extract_thinking_content(chunk) -> Optional[str]:
+def extract_thinking_content(chunk) -> str | None:
     """从流式 chunk 中提取思考内容，兼容多种 Provider 格式。
 
     - DeepSeek: additional_kwargs["reasoning_content"]
@@ -45,10 +45,10 @@ def extract_thinking_content(chunk) -> Optional[str]:
 
 
 def inject_thinking_params(
-    init_kwargs: Dict[str, Any],
+    init_kwargs: dict[str, Any],
     provider_id: str,
     provider: str,
-    special_params: Optional[Dict[str, Any]] = None,
+    special_params: dict[str, Any] | None = None,
 ) -> None:
     """为指定 provider 注入正确格式的深度思考参数
 
@@ -88,7 +88,7 @@ def inject_thinking_params(
         logger.debug(f"Provider {provider_id} 支持 deep_thinking 但无特殊参数注入")
 
 
-def clean_thinking_params(init_kwargs: Dict[str, Any]) -> None:
+def clean_thinking_params(init_kwargs: dict[str, Any]) -> None:
     """清理 init_kwargs 中所有深度思考相关参数，避免跨 provider 残留"""
     # 顶层参数
     for key in ("thinking", "reasoning", "reasoning_effort"):
@@ -103,7 +103,7 @@ def clean_thinking_params(init_kwargs: Dict[str, Any]) -> None:
             init_kwargs["extra_body"].pop(key, None)
 
 
-def is_thinking_enabled(special_params: Dict[str, Any], provider_id: str = "") -> bool:
+def is_thinking_enabled(special_params: dict[str, Any], provider_id: str = "") -> bool:
     """通用判断深度思考是否启用，兼容 DeepSeek/Ollama/Anthropic 等多 Provider。
 
     - DeepSeek: thinking={"type": "enabled"} 或 reasoning_effort 存在

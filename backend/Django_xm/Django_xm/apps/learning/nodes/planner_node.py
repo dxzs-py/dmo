@@ -4,15 +4,16 @@
 本节点负责分析用户问题，生成个性化的学习计划。
 """
 
-import logging
-from datetime import datetime
-from typing import Dict, Any
-from pydantic import BaseModel, Field
-from langchain_core.messages import AIMessage
+from datetime import UTC, datetime
+from typing import Any
 
-from ..services.state import StudyFlowState
+from langchain_core.messages import AIMessage
+from pydantic import BaseModel, Field
+
 from Django_xm.apps.ai_engine.services.llm_factory import get_structured_model_with_fallback
 from Django_xm.apps.core.config import get_logger
+
+from ..services.state import StudyFlowState
 
 logger = get_logger(__name__)
 
@@ -26,7 +27,7 @@ class LearningPlanSchema(BaseModel):
     estimated_time: int = Field(description="预计学习时间（分钟）")
 
 
-def planner_node(state: StudyFlowState) -> Dict[str, Any]:
+def planner_node(state: StudyFlowState) -> dict[str, Any]:
     """
     学习规划节点
 
@@ -110,9 +111,9 @@ def planner_node(state: StudyFlowState) -> Dict[str, Any]:
         }
 
     except Exception as e:
-        logger.error(f"[Planner Node] 生成学习计划失败: {str(e)}", exc_info=True)
+        logger.error(f"[Planner Node] 生成学习计划失败: {e!s}", exc_info=True)
         return {
-            "error": f"学习计划生成失败: {str(e)}",
+            "error": f"学习计划生成失败: {e!s}",
             "error_node": "planner",
             "current_step": "planner_error",
             "updated_at": datetime.now().isoformat()

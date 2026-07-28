@@ -8,29 +8,28 @@ MCP 接口适配层与数据转换中间件
 4. 服务注册 - MCP 工具动态注册与发现
 """
 
-import time
 import json
-import traceback
-from typing import Any, Callable, Dict, List, Optional, Tuple
-from functools import wraps
+import time
+from collections.abc import Callable
 from datetime import datetime
+from functools import wraps
+from typing import Any, ClassVar, Optional
 
-from pydantic import BaseModel
-from langchain_core.tools import BaseTool
 from langchain_core.messages import ToolMessage
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel
 
-from Django_xm.apps.ai_engine.config import get_logger
-from Django_xm.apps.tools.errors import (
-    ToolResult,
-    ToolError,
-    ToolErrorCode,
-    create_tool_result,
-    create_tool_error,
-    exception_to_tool_error,
-)
+from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.analytics.services.tool_analytics import (
-    ToolUsageRecord,
     ToolAnalyticsService,
+    ToolUsageRecord,
+)
+from Django_xm.apps.tools.errors import (
+    ToolErrorCode,
+    ToolResult,
+    create_tool_error,
+    create_tool_result,
+    exception_to_tool_error,
 )
 
 logger = get_logger(__name__)
@@ -38,14 +37,14 @@ logger = get_logger(__name__)
 
 class ToolCallLog:
     def __init__(self):
-        self.records: List[Dict[str, Any]] = []
+        self.records: list[dict[str, Any]] = []
 
     def record(
         self,
         tool_name: str,
-        args: Dict[str, Any],
+        args: dict[str, Any],
         result: Any = None,
-        error: Optional[str] = None,
+        error: str | None = None,
         duration_ms: float = 0,
     ):
         entry = {
@@ -60,10 +59,10 @@ class ToolCallLog:
         if len(self.records) > 1000:
             self.records = self.records[-500:]
 
-    def get_recent(self, limit: int = 50) -> List[Dict[str, Any]]:
+    def get_recent(self, limit: int = 50) -> list[dict[str, Any]]:
         return self.records[-limit:]
 
-    def get_by_tool(self, tool_name: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def get_by_tool(self, tool_name: str, limit: int = 20) -> list[dict[str, Any]]:
         filtered = [r for r in self.records if r["tool_name"] == tool_name]
         return filtered[-limit:]
 
@@ -75,16 +74,16 @@ def get_tool_call_log() -> ToolCallLog:
     return _tool_call_log
 
 
-def logging_interceptor(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+def logging_interceptor(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     logger.debug(f"MCP 工具调用: {tool_name}, 参数: {json.dumps(args, ensure_ascii=False)[:200]}")
     return args
 
 
 def create_validation_interceptor(
-    required_params: Optional[Dict[str, type]] = None,
+    required_params: dict[str, type] | None = None,
     max_arg_length: int = 10000,
 ) -> Callable:
-    def validation_interceptor(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    def validation_interceptor(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         if required_params:
             for param, expected_type in required_params.items():
                 if param not in args:
@@ -96,7 +95,7 @@ def create_validation_interceptor(
                         raise TypeError(
                             f"工具 '{tool_name}' 参数 '{param}' 类型错误: "
                             f"期望 {expected_type.__name__}, 实际 {type(args[param]).__name__}"
-                        )
+                        ) from None
 
         for key, value in args.items():
             if isinstance(value, str) and len(value) > max_arg_length:
@@ -111,9 +110,9 @@ def create_validation_interceptor(
 def create_retry_interceptor(
     max_retries: int = 2,
     retry_delay: float = 1.0,
-    retryable_exceptions: Tuple = (ConnectionError, TimeoutError),
+    retryable_exceptions: tuple = (ConnectionError, TimeoutError),
 ) -> Callable:
-    def retry_interceptor(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    def retry_interceptor(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         args["_max_retries"] = max_retries
         args["_retry_delay"] = retry_delay
         args["_retryable_exceptions"] = retryable_exceptions
@@ -125,9 +124,9 @@ def create_retry_interceptor(
 def create_rate_limit_interceptor(
     calls_per_minute: int = 30,
 ) -> Callable:
-    _call_times: List[float] = []
+    _call_times: list[float] = []
 
-    def rate_limit_interceptor(tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    def rate_limit_interceptor(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         now = time.time()
         _call_times.append(now)
 
@@ -188,7 +187,7 @@ def normalize_to_tool_result(result: Any, tool_name: str = "", source: str = "lo
 
 def wrap_tool_with_middleware(
     tool: BaseTool,
-    interceptors: Optional[List[Callable]] = None,
+    interceptors: list[Callable] | None = None,
     normalize_result: bool = True,
     log_calls: bool = True,
 ) -> BaseTool:
@@ -300,13 +299,13 @@ class ToolVersionInfo(BaseModel):
     tool_name: str
     version: str = "1.0.0"
     last_updated: datetime = datetime.now()
-    changelog: List[str] = []
+    changelog: list[str] = []
 
 
 class MCPToolRegistry:
     _instance: Optional["MCPToolRegistry"] = None
-    _tools: Dict[str, Dict[str, Any]] = {}
-    _versions: Dict[str, ToolVersionInfo] = {}
+    _tools: ClassVar[dict[str, dict[str, Any]]] = {}
+    _versions: ClassVar[dict[str, ToolVersionInfo]] = {}
 
     def __new__(cls):
         if cls._instance is None:
@@ -317,8 +316,8 @@ class MCPToolRegistry:
         self,
         tool: BaseTool,
         source: str = "unknown",
-        metadata: Optional[Dict[str, Any]] = None,
-        version: Optional[str] = None,
+        metadata: dict[str, Any] | None = None,
+        version: str | None = None,
     ):
         effective_version = version or "1.0.0"
         if version is None and metadata:
@@ -352,7 +351,7 @@ class MCPToolRegistry:
     def register_tool(self, tool: BaseTool, source: str = "local", version: str = "1.0.0"):
         self.register(tool, source=source, version=version)
 
-    def get_tool_version(self, tool_name: str) -> Optional[ToolVersionInfo]:
+    def get_tool_version(self, tool_name: str) -> ToolVersionInfo | None:
         return self._versions.get(tool_name)
 
     def update_tool_version(self, tool_name: str, new_version: str, changelog: str = ""):
@@ -369,7 +368,7 @@ class MCPToolRegistry:
             self._tools[tool_name]["version"] = new_version
         logger.debug(f"MCP 工具版本已更新: {tool_name} ({old_version} -> {new_version})")
 
-    def list_versions(self) -> Dict[str, ToolVersionInfo]:
+    def list_versions(self) -> dict[str, ToolVersionInfo]:
         return dict(self._versions)
 
     def unregister(self, tool_name: str):
@@ -379,21 +378,21 @@ class MCPToolRegistry:
             del self._versions[tool_name]
         logger.debug(f"MCP 工具已注销: {tool_name}")
 
-    def get(self, tool_name: str) -> Optional[BaseTool]:
+    def get(self, tool_name: str) -> BaseTool | None:
         entry = self._tools.get(tool_name)
         return entry["tool"] if entry else None
 
-    def get_all(self) -> List[BaseTool]:
+    def get_all(self) -> list[BaseTool]:
         return [entry["tool"] for entry in self._tools.values()]
 
-    def get_by_source(self, source: str) -> List[BaseTool]:
+    def get_by_source(self, source: str) -> list[BaseTool]:
         return [
             entry["tool"]
             for entry in self._tools.values()
             if entry["source"] == source
         ]
 
-    def list_tools(self) -> List[Dict[str, Any]]:
+    def list_tools(self) -> list[dict[str, Any]]:
         return [
             {
                 "name": name,
@@ -438,18 +437,18 @@ def create_tool_error_message(
 
 
 __all__ = [
-    "ToolCallLog",
-    "get_tool_call_log",
-    "logging_interceptor",
-    "create_validation_interceptor",
-    "create_retry_interceptor",
-    "create_rate_limit_interceptor",
-    "ToolResultAdapter",
-    "normalize_tool_result",
-    "normalize_to_tool_result",
-    "wrap_tool_with_middleware",
-    "ToolVersionInfo",
     "MCPToolRegistry",
-    "get_tool_registry",
+    "ToolCallLog",
+    "ToolResultAdapter",
+    "ToolVersionInfo",
+    "create_rate_limit_interceptor",
+    "create_retry_interceptor",
     "create_tool_error_message",
+    "create_validation_interceptor",
+    "get_tool_call_log",
+    "get_tool_registry",
+    "logging_interceptor",
+    "normalize_to_tool_result",
+    "normalize_tool_result",
+    "wrap_tool_with_middleware",
 ]

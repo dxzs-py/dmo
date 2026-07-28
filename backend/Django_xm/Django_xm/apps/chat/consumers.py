@@ -8,19 +8,17 @@
 - 接收来自 channel layer 的广播事件并透传给客户端
 """
 
-import json
-import time
 import asyncio
+import json
 import logging
+import time
 
 from asgiref.sync import sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
-from channels.layers import get_channel_layer
 from django.db import close_old_connections
 
+from Django_xm.common.realtime_events import EVENT_HISTORY_LIMIT, get_event_history
 from Django_xm.common.sse_utils import authenticate_websocket_scope
-from Django_xm.common.realtime_events import get_event_history, EVENT_HISTORY_LIMIT
-
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +211,7 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json({
                 "type": "error",
                 "code": "50001",
-                "message": f"处理 {action} 失败: {str(e)}",
+                "message": f"处理 {action} 失败: {e!s}",
                 "timestamp": time.time(),
             })
 
@@ -447,7 +445,7 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json({
                 "type": "error",
                 "code": "50002",
-                "message": f"replay 失败: {str(e)}",
+                "message": f"replay 失败: {e!s}",
                 "timestamp": time.time(),
             })
         finally:
@@ -498,11 +496,9 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
         用于 task 通道订阅/回放权限校验，独立深度研究场景下
         确保用户只能订阅自己的任务事件。
         """
-        from Django_xm.apps.research.models import ResearchTask
+        from Django_xm.apps.research.services.cross_app import user_owns_research_task
         try:
-            return ResearchTask.objects.filter(
-                task_id=task_id, created_by=self.user, is_deleted=False
-            ).exists()
+            return user_owns_research_task(task_id, self.user)
         except Exception as e:
             logger.warning(f"[RealtimeSync] _user_owns_task 校验失败: task_id={task_id}, {e}")
             return False

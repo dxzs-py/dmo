@@ -1,9 +1,9 @@
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from langchain_core.messages import SystemMessage
 
-from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -12,10 +12,10 @@ class MCPResourceInjector:
 
     async def get_resources_for_context(
         self,
-        server_names: Optional[List[str]] = None,
+        server_names: list[str] | None = None,
         max_resources: int = 5,
         max_content_length: int = 2000,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         from Django_xm.apps.tools.mcp import (
             get_all_mcp_resources,
             get_mcp_resources,
@@ -26,7 +26,7 @@ class MCPResourceInjector:
             return []
 
         if server_names:
-            all_resources: List[Dict[str, Any]] = []
+            all_resources: list[dict[str, Any]] = []
             for name in server_names:
                 try:
                     resources = await get_mcp_resources(server_name=name)
@@ -60,7 +60,7 @@ class MCPResourceInjector:
 
         return filtered
 
-    def _normalize_resource(self, resource: Any, server_name: str) -> Optional[Dict[str, Any]]:
+    def _normalize_resource(self, resource: Any, server_name: str) -> dict[str, Any] | None:
         if isinstance(resource, dict):
             return {
                 "uri": resource.get("uri", ""),
@@ -91,11 +91,11 @@ class MCPResourceInjector:
         except Exception:
             return None
 
-    def format_resources_as_context(self, resources: List[Dict[str, Any]]) -> str:
+    def format_resources_as_context(self, resources: list[dict[str, Any]]) -> str:
         if not resources:
             return ""
 
-        parts: List[str] = ["<mcp-resources>"]
+        parts: list[str] = ["<mcp-resources>"]
         for res in resources:
             uri = res.get("uri", "")
             name = res.get("name", "")
@@ -126,11 +126,11 @@ class MCPResourceInjector:
 
     async def inject_resources_to_messages(
         self,
-        messages: List[Any],
-        server_names: Optional[List[str]] = None,
+        messages: list[Any],
+        server_names: list[str] | None = None,
         max_resources: int = 5,
         max_content_length: int = 2000,
-    ) -> List[Any]:
+    ) -> list[Any]:
         resources = await self.get_resources_for_context(
             server_names=server_names,
             max_resources=max_resources,
@@ -162,7 +162,7 @@ class MCPResourceInjector:
         return result
 
 
-_resource_injector: Optional[MCPResourceInjector] = None
+_resource_injector: MCPResourceInjector | None = None
 
 
 def get_resource_injector() -> MCPResourceInjector:

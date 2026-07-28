@@ -1,0 +1,18 @@
+{
+  "messages": [],
+  "user_question": "学习 Python",
+  "learning_plan": {
+    "topic": "Python"
+  },
+  "quiz": {
+    "questions": [],
+    "total_points": 0
+  },
+  "user_answers": null,
+  "score": 50,
+  "score_details": null,
+  "feedback": "需加强",
+  "should_retry": false,
+  "current_step": "feedback_completed",
+  "thread_id": "test_persistence_001"
+}

@@ -1,6 +1,6 @@
 import logging
 import time
-from django.conf import settings
+
 from Django_xm.apps.analytics.models import EventCategory, EventType
 from Django_xm.common.request_utils import get_client_ip
 

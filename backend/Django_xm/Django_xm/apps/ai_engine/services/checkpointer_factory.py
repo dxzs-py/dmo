@@ -16,9 +16,10 @@ import atexit
 import os
 import threading
 from collections import OrderedDict
-from typing import Optional, Any
+from typing import Any
 
-from Django_xm.apps.ai_engine.config import settings, get_logger
+from Django_xm.apps.ai_engine.config import settings
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -93,9 +94,9 @@ atexit.register(close_all_checkpointers)
 
 
 def get_checkpointer(
-    backend: Optional[str] = None,
-    db_path: Optional[str] = None,
-    connection_string: Optional[str] = None,
+    backend: str | None = None,
+    db_path: str | None = None,
+    connection_string: str | None = None,
 ) -> Any:
     backend = backend or getattr(settings, "checkpointer_backend", "sqlite")
     cache_key = f"{backend}:{db_path or ''}:{connection_string or ''}"
@@ -153,7 +154,7 @@ def _build_connection_string() -> str:
     return f"postgresql://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}"
 
 
-def _create_postgres_checkpointer(connection_string: Optional[str] = None) -> Any:
+def _create_postgres_checkpointer(connection_string: str | None = None) -> Any:
     """
     创建 PostgreSQL 持久化 Checkpointer
 
@@ -198,7 +199,7 @@ def _create_postgres_checkpointer(connection_string: Optional[str] = None) -> An
         return _create_sqlite_checkpointer()
 
 
-async def _create_async_sqlite_checkpointer(db_path: Optional[str] = None) -> Any:
+async def _create_async_sqlite_checkpointer(db_path: str | None = None) -> Any:
     """创建异步 SQLite Checkpointer"""
     try:
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
@@ -242,7 +243,7 @@ async def _create_async_sqlite_checkpointer(db_path: Optional[str] = None) -> An
         return None
 
 
-def _create_async_postgres_checkpointer(connection_string: Optional[str] = None) -> Any:
+def _create_async_postgres_checkpointer(connection_string: str | None = None) -> Any:
     try:
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
     except ImportError:
@@ -267,9 +268,9 @@ def _create_async_postgres_checkpointer(connection_string: Optional[str] = None)
 
 
 async def get_async_checkpointer(
-    backend: Optional[str] = None,
-    connection_string: Optional[str] = None,
-    db_path: Optional[str] = None,
+    backend: str | None = None,
+    connection_string: str | None = None,
+    db_path: str | None = None,
 ) -> Any:
     backend = backend or getattr(settings, "checkpointer_backend", "sqlite")
 
@@ -319,9 +320,9 @@ async def get_async_checkpointer(
 
 
 async def release_async_checkpointer(
-    backend: Optional[str] = None,
-    connection_string: Optional[str] = None,
-    db_path: Optional[str] = None,
+    backend: str | None = None,
+    connection_string: str | None = None,
+    db_path: str | None = None,
 ) -> None:
     """
     释放当前事件循环对应的异步 Checkpointer，关闭连接池。
@@ -362,7 +363,7 @@ async def release_async_checkpointer(
             logger.debug(f"关闭异步 Checkpointer 失败 ({cache_key}): {e}")
 
 
-def _create_sqlite_checkpointer(db_path: Optional[str] = None) -> Any:
+def _create_sqlite_checkpointer(db_path: str | None = None) -> Any:
     try:
         from langgraph.checkpoint.sqlite import SqliteSaver
 
@@ -434,7 +435,7 @@ def _mask_connection_string(conn_str: str) -> str:
     """隐藏连接字符串中的密码"""
     if "://" in conn_str and "@" in conn_str:
         try:
-            prefix = conn_str.split("://")[0] + "://"
+            prefix = conn_str.split("://", maxsplit=1)[0] + "://"
             rest = conn_str.split("://")[1]
             if ":" in rest.split("@")[0]:
                 user = rest.split(":")[0]
@@ -445,7 +446,7 @@ def _mask_connection_string(conn_str: str) -> str:
     return "***"
 
 
-def get_store(backend: Optional[str] = None) -> Any:
+def get_store(backend: str | None = None) -> Any:
     backend = backend or getattr(settings, "store_backend", "memory")
     cache_key = f"store:{backend}"
 
@@ -575,7 +576,7 @@ async def delete_thread_checkpoints(thread_id: str) -> bool:
         return False
 
 
-async def delete_thread_store_data(user_id: int, thread_id: Optional[str] = None) -> bool:
+async def delete_thread_store_data(user_id: int, thread_id: str | None = None) -> bool:
     """
     删除 Store 中指定会话或用户的所有长期记忆数据
 

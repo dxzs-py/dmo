@@ -5,9 +5,9 @@ Django settings for Django_xm project - 生产环境配置
 重要: 本文件为生产环境专用，请勿在开发环境使用!
 """
 
-from .base import *  # noqa: F401,F403
-
 import sys
+
+from .base import *
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -47,13 +47,13 @@ CSRF_TRUSTED_ORIGINS = (
 
 CORS_EXPOSE_HEADERS = ["content-disposition", "X-Captcha-Key"]
 
-REST_FRAMEWORK["DEFAULT_AUTHENTICATION_CLASSES"] = [  # noqa: F405
+REST_FRAMEWORK["DEFAULT_AUTHENTICATION_CLASSES"] = [
     'rest_framework_simplejwt.authentication.JWTAuthentication',
 ]
-REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"] = [  # noqa: F405
+REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"] = [
     "rest_framework.renderers.JSONRenderer",
 ]
-REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {  # noqa: F405
+REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "anonymous": "60/min",
     "user": "120/min",
     "login": "5/min",
@@ -63,8 +63,8 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {  # noqa: F405
     "sensitive": "5/min",
 }
 
-SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"] = timedelta(minutes=app_cfg.jwt_access_token_lifetime_minutes)  # noqa: F405
-SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"] = timedelta(days=app_cfg.jwt_refresh_token_lifetime_days)  # noqa: F405
+SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"] = timedelta(minutes=app_cfg.jwt_access_token_lifetime_minutes)
+SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"] = timedelta(days=app_cfg.jwt_refresh_token_lifetime_days)
 
 SECURE_SSL_REDIRECT = True
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
@@ -86,7 +86,7 @@ LOGGING = {
         "file": {
             "level": "WARNING",
             "class": "logging.handlers.RotatingFileHandler",
-            "filename": str(BASE_DIR.parent / "logs" / "django_prod.log"),  # noqa: F405
+            "filename": str(BASE_DIR.parent / "logs" / "django_prod.log"),
             "maxBytes": 100 * 1024 * 1024,
             "backupCount": 14,
             "formatter": "verbose",

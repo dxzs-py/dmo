@@ -7,16 +7,17 @@
 """
 
 import json
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional
 import threading
+from dataclasses import dataclass
+from typing import ClassVar
 
+from Django_xm.apps.context_manager.config import context_settings
+from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.context_manager.services.compression import TokenEstimator
-from Django_xm.apps.context_manager.config import context_settings, get_logger
 
 logger = get_logger(__name__)
 
-BUDGET_TEMPLATES: Dict[str, Dict[str, float]] = {
+BUDGET_TEMPLATES: dict[str, dict[str, float]] = {
     "default": {"system": 0.15, "memory": 0.10, "tools": 0.10, "history": 0.50, "state": 0.05, "query": 0.10},
     "rag": {"system": 0.10, "memory": 0.15, "tools": 0.05, "history": 0.40, "state": 0.05, "query": 0.25},
     "coding": {"system": 0.20, "memory": 0.05, "tools": 0.15, "history": 0.45, "state": 0.05, "query": 0.10},
@@ -25,9 +26,9 @@ BUDGET_TEMPLATES: Dict[str, Dict[str, float]] = {
 }
 
 
-def _load_custom_templates() -> Dict[str, Dict[str, float]]:
+def _load_custom_templates() -> dict[str, dict[str, float]]:
     """从配置加载自定义预算模板"""
-    custom: Dict[str, Dict[str, float]] = {}
+    custom: dict[str, dict[str, float]] = {}
     try:
         templates_json = context_settings.budget_templates
         if templates_json and templates_json.strip():
@@ -52,7 +53,7 @@ def _load_custom_templates() -> Dict[str, Dict[str, float]]:
 # 合并内置模板和自定义模板
 _CUSTOM_TEMPLATES = _load_custom_templates()
 
-SECTION_RATIOS: Dict[str, float] = BUDGET_TEMPLATES["default"]
+SECTION_RATIOS: dict[str, float] = BUDGET_TEMPLATES["default"]
 
 VALID_SECTIONS = frozenset(SECTION_RATIOS.keys())
 
@@ -160,13 +161,13 @@ class BudgetCheckResult:
 
 class TokenBudgetManager:
 
-    _custom_templates: Dict[str, Dict[str, float]] = {}
+    _custom_templates: ClassVar[dict[str, dict[str, float]]] = {}
 
     def __init__(self) -> None:
-        self._model_name: Optional[str] = None
+        self._model_name: str | None = None
         self._model_limit: int = 0
         self._total_budget: int = 0
-        self._allocations: Dict[str, BudgetAllocation] = {}
+        self._allocations: dict[str, BudgetAllocation] = {}
         self._current_template: str = "default"
         self._lock = threading.Lock()
 
@@ -192,7 +193,7 @@ class TokenBudgetManager:
             )
 
     @classmethod
-    def _resolve_template(cls, template: str) -> Dict[str, float]:
+    def _resolve_template(cls, template: str) -> dict[str, float]:
         merged = {**BUDGET_TEMPLATES, **_CUSTOM_TEMPLATES, **cls._custom_templates}
         if template not in merged:
             logger.warning(f"未知预算模板 '{template}'，回退到 'default'")
@@ -200,12 +201,12 @@ class TokenBudgetManager:
         return merged[template]
 
     @classmethod
-    def list_templates(cls) -> List[str]:
+    def list_templates(cls) -> list[str]:
         merged = {**BUDGET_TEMPLATES, **_CUSTOM_TEMPLATES, **cls._custom_templates}
         return sorted(merged.keys())
 
     @classmethod
-    def register_template(cls, name: str, ratios: Dict[str, float]) -> None:
+    def register_template(cls, name: str, ratios: dict[str, float]) -> None:
         total = sum(ratios.values())
         if abs(total - 1.0) > 0.01:
             raise ValueError(f"预算模板 '{name}' 比例总和为 {total:.4f}，必须等于 1.0")
@@ -242,9 +243,9 @@ class TokenBudgetManager:
             allocation = self._allocations.get(section_name)
             return allocation.budget if allocation else 0
 
-    def get_usage(self) -> Dict[str, Dict[str, int]]:
+    def get_usage(self) -> dict[str, dict[str, int]]:
         with self._lock:
-            result: Dict[str, Dict[str, int]] = {}
+            result: dict[str, dict[str, int]] = {}
             for section, allocation in self._allocations.items():
                 result[section] = {
                     "budget": allocation.budget,
@@ -261,7 +262,7 @@ class TokenBudgetManager:
                 allocation.used += token_count
             return check_result
 
-    def reset_usage(self, section_name: Optional[str] = None) -> None:
+    def reset_usage(self, section_name: str | None = None) -> None:
         with self._lock:
             if section_name is not None:
                 allocation = self._allocations.get(section_name)
@@ -272,7 +273,7 @@ class TokenBudgetManager:
                     allocation.used = 0
 
     @property
-    def model_name(self) -> Optional[str]:
+    def model_name(self) -> str | None:
         return self._model_name
 
     @property

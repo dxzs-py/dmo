@@ -1,5 +1,6 @@
 from django.contrib import admin
-from .models import ChatAttachment, AttachmentStatus, AttachmentCleanupLog, StorageAlert
+
+from .models import AttachmentCleanupLog, ChatAttachment, StorageAlert
 
 
 @admin.register(ChatAttachment)

@@ -1,8 +1,7 @@
-import json
-from typing import Optional, List
+import logging
+
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +18,6 @@ def _search_via_ddgs(query: str, max_results: int = 5) -> str:
     try:
         from duckduckgo_search import DDGS
 
-        results = []
         with DDGS() as ddgs:
             search_results = list(ddgs.text(query, max_results=max_results))
 
@@ -38,9 +36,9 @@ def _search_via_ddgs(query: str, max_results: int = 5) -> str:
         return output
 
     except ImportError:
-        raise ValueError("DuckDuckGo 搜索需要安装: pip install duckduckgo-search")
+        raise ValueError("DuckDuckGo 搜索需要安装: pip install duckduckgo-search") from None
     except Exception as e:
-        raise RuntimeError(f"DuckDuckGo 搜索失败: {str(e)}")
+        raise RuntimeError(f"DuckDuckGo 搜索失败: {e!s}") from e
 
 
 def _search_via_langchain(query: str, max_results: int = 5) -> str:
@@ -75,7 +73,7 @@ class DuckDuckGoSearchInput(BaseModel):
 
 class DuckDuckGoSearchTool(BaseTool):
     name: str = "duckduckgo_search"
-    metadata: dict = {"tier": "extended", "visibility": "switch", "category": "web_search"}
+    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "switch", "category": "web_search"})
     description: str = (
         "使用 DuckDuckGo 搜索互联网获取信息（无需 API Key）。"
         "适用场景：需要搜索最新信息、新闻、技术更新，且未配置 Tavily API Key 时使用。"
@@ -98,7 +96,7 @@ class DuckDuckGoSearchTool(BaseTool):
         try:
             return _search_via_langchain(query, max_results)
         except Exception as e:
-            error_msg = f"搜索失败: {str(e)}。请安装 duckduckgo-search: pip install duckduckgo-search"
+            error_msg = f"搜索失败: {e!s}。请安装 duckduckgo-search: pip install duckduckgo-search"
             logger.error(error_msg)
             return error_msg
 

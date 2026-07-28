@@ -11,6 +11,7 @@ export const MessageRole = {
 
 export const ToolCallStatus = {
   PENDING: 'pending',
+  WAITING: 'waiting',
   RUNNING: 'running',
   COMPLETED: 'completed',
   FAILED: 'failed',
@@ -34,14 +35,70 @@ export const PROTECTED_STATUSES = [
 /** @deprecated 使用 PROTECTED_STATUSES 代替 */
 export const APPROVAL_STATUSES = PROTECTED_STATUSES
 
+/**
+ * 只读工具名称集合
+ *
+ * 这些工具无副作用（不修改文件系统、不执行命令），后端不发起审批，
+ * 前端使用 INTERNAL_DISPLAY_CONFIG 简化折叠样式渲染。
+ *
+ * 注意：read_file 虽然是读操作，但可能返回大量/敏感内容，
+ * 仍走完整显示流程，不纳入只读集合。
+ *
+ * 有副作用工具（write_file/edit_file/execute/write_todos/task 等）
+ * 不在此集合中，其审批面板的显示由 approvalData 驱动。
+ */
+export const READONLY_TOOL_NAMES = new Set([
+  'glob',
+  'grep',
+  'ls',
+])
+
 /** 审批 state 常量（approval.state 字段使用，与 toolCall.status 语义不同） */
 export const ApprovalState = {
   PENDING: 'pending',
   PROCESSING: 'processing',
+  WAITING: 'waiting',
   APPROVED: 'approved',
   REJECTED: 'rejected',
   TIMEOUT: 'timeout',
 }
+
+/**
+ * 消息流式状态（流式生命周期的状态机）
+ *
+ * 状态流转：
+ *   falsy → STREAMING → FINALIZING → SYNCING → COMPLETED
+ *   STREAMING → INTERRUPTED → STREAMING（恢复）
+ *   任意 → ERROR
+ *
+ * streamState 是消息的流式状态字段，用于控制流式期间的合并保护与 UI 状态显示。
+ */
+export const StreamState = {
+  STREAMING: 'streaming',
+  INTERRUPTED: 'interrupted',
+  FINALIZING: 'finalizing',
+  SYNCING: 'syncing',
+  COMPLETED: 'completed',
+  ERROR: 'error',
+}
+
+/**
+ * 受保护的流式状态集合
+ *
+ * 本地已进入流式流程的消息，其 content/toolCalls 等字段不应被后端快照粗暴覆盖，
+ * 因为本地流式数据可能比快照更新、更完整。
+ *
+ * - STREAMING/INTERRUPTED/FINALIZING/SYNCING：流式中间态，本地数据领先
+ * - COMPLETED/ERROR：流式终态，本地已完成，后端快照仅用于补全非内容字段
+ */
+export const PROTECTED_STREAM_STATES = new Set([
+  StreamState.STREAMING,
+  StreamState.INTERRUPTED,
+  StreamState.FINALIZING,
+  StreamState.SYNCING,
+  StreamState.COMPLETED,
+  StreamState.ERROR,
+])
 
 /** 将 approval state 映射到 toolCall status（统一映射函数） */
 export function mapApprovalStateToStatus(state) {

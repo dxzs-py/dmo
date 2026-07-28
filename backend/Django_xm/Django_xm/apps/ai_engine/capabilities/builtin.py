@@ -1,9 +1,11 @@
 import logging
-from typing import Any, Dict, List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
-from Django_xm.async_utils import run_async
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.tools import BaseTool
+
+from Django_xm.async_utils import run_async
 
 from .base import AgentCapability
 
@@ -39,7 +41,7 @@ class ContextManagementCapability(AgentCapability):
     def build_tools(self, **kwargs) -> Sequence[BaseTool]:
         return []
 
-    def build_config(self, **kwargs) -> Dict[str, Any]:
+    def build_config(self, **kwargs) -> dict[str, Any]:
         try:
             from Django_xm.apps.context_manager.config import context_settings
 
@@ -73,7 +75,7 @@ class ToolInjectionCapability(AgentCapability):
         return []
 
     def build_tools(self, **kwargs) -> Sequence[BaseTool]:
-        tool_config: Optional[Dict] = kwargs.get("tool_config")
+        tool_config: dict | None = kwargs.get("tool_config")
         if tool_config is None or not tool_config.get("use_tools"):
             return []
         try:
@@ -83,11 +85,11 @@ class ToolInjectionCapability(AgentCapability):
             return []
 
     async def build_tools_async(self, **kwargs) -> Sequence[BaseTool]:
-        tool_config: Optional[Dict] = kwargs.get("tool_config")
+        tool_config: dict | None = kwargs.get("tool_config")
         if tool_config is None or not tool_config.get("use_tools"):
             return []
         try:
-            from Django_xm.apps.tools import get_tools_for_request_async, TOOL_TIER_STANDARD
+            from Django_xm.apps.tools import TOOL_TIER_STANDARD, get_tools_for_request_async
 
             tools = await get_tools_for_request_async(
                 use_tools=tool_config.get("use_tools", True),
@@ -103,7 +105,7 @@ class ToolInjectionCapability(AgentCapability):
             logger.error("Failed to build tools (async): %s", e)
             return []
 
-    def _apply_tool_budget(self, tools: List[BaseTool], tool_config: Dict) -> List[BaseTool]:
+    def _apply_tool_budget(self, tools: list[BaseTool], tool_config: dict) -> list[BaseTool]:
         budget = tool_config.get("tool_token_budget")
         if not budget or not tools:
             return tools
@@ -114,14 +116,12 @@ class ToolInjectionCapability(AgentCapability):
             selected_names = set(tool_config.get("selected_tools") or [])
             selected_mcp = set(tool_config.get("selected_mcp_servers") or [])
 
-            scored: List[tuple] = []
+            scored: list[tuple] = []
             for tool in tools:
                 desc = (tool.description or "")[:500]
                 tokens = TokenEstimator.estimate_tokens(desc)
                 is_mcp = hasattr(tool, 'metadata') and (tool.metadata or {}).get('is_mcp_tool', False)
-                if tool.name in selected_names:
-                    priority = 3
-                elif is_mcp and tool.name in selected_mcp:
+                if tool.name in selected_names or (is_mcp and tool.name in selected_mcp):
                     priority = 3
                 elif is_mcp:
                     priority = 1
@@ -131,13 +131,10 @@ class ToolInjectionCapability(AgentCapability):
 
             scored.sort(key=lambda x: (-x[0], x[1]))
 
-            result: List[BaseTool] = []
+            result: list[BaseTool] = []
             used = 0
             for priority, tokens, tool in scored:
-                if used + tokens <= budget:
-                    result.append(tool)
-                    used += tokens
-                elif priority == 3:
+                if used + tokens <= budget or priority == 3:
                     result.append(tool)
                     used += tokens
                 else:
@@ -156,8 +153,8 @@ class ToolInjectionCapability(AgentCapability):
             logger.error("Tool token budget check failed: %s", e)
             return tools
 
-    def build_config(self, **kwargs) -> Dict[str, Any]:
-        tool_config: Optional[Dict] = kwargs.get("tool_config")
+    def build_config(self, **kwargs) -> dict[str, Any]:
+        tool_config: dict | None = kwargs.get("tool_config")
         if tool_config:
             return {
                 "use_tools": tool_config.get("use_tools", False),
@@ -206,7 +203,7 @@ class GuardrailsCapability(AgentCapability):
     def build_tools(self, **kwargs) -> Sequence[BaseTool]:
         return []
 
-    def build_config(self, **kwargs) -> Dict[str, Any]:
+    def build_config(self, **kwargs) -> dict[str, Any]:
         try:
             from Django_xm.apps.ai_engine.config import settings
 
@@ -265,7 +262,7 @@ class RateLimitCapability(AgentCapability):
     def build_tools(self, **kwargs) -> Sequence[BaseTool]:
         return []
 
-    def build_config(self, **kwargs) -> Dict[str, Any]:
+    def build_config(self, **kwargs) -> dict[str, Any]:
         return {
             "max_total_calls": kwargs.get("max_total_calls", 300),
             "max_calls_per_second": kwargs.get("max_calls_per_second", 5.0),
@@ -298,14 +295,14 @@ class GroqCompatCapability(AgentCapability):
     def build_tools(self, **kwargs) -> Sequence[BaseTool]:
         return []
 
-    def build_config(self, **kwargs) -> Dict[str, Any]:
+    def build_config(self, **kwargs) -> dict[str, Any]:
         return {}
 
     def is_compatible(self, agent_type: str) -> bool:
         return True
 
 
-BUILTIN_CAPABILITIES: List[AgentCapability] = [
+BUILTIN_CAPABILITIES: list[AgentCapability] = [
     ContextManagementCapability(),
     ToolInjectionCapability(),
     GuardrailsCapability(),

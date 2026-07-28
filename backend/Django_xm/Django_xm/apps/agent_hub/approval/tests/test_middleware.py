@@ -1,4 +1,4 @@
-"""ApprovalMiddleware 单元测试（Task 14.2）。
+r"""ApprovalMiddleware 单元测试（Task 14.2）。
 
 覆盖 spec `unify-approval-and-timeout-recovery` 阶段二变更：
 1. middleware 不再注入 approved_by_middleware 字段到 tool_call args
@@ -15,20 +15,21 @@ from __future__ import annotations
 
 import os
 import unittest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import MagicMock, patch
 
 # Django 环境初始化
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.dev")
-import django  # noqa: E402
-import django.apps  # noqa: E402,F401
+import django
+import django.apps
 
 if not django.apps.apps.ready:
     django.setup()
 
-from langchain_core.messages import AIMessage, ToolMessage  # noqa: E402
+from langchain_core.messages import AIMessage, ToolMessage
 
-from Django_xm.apps.agent_hub.approval.middleware import ApprovalMiddleware  # noqa: E402
-from Django_xm.apps.agent_hub.approval.timeout_handler import TIMEOUT_DECISION  # noqa: E402
+from Django_xm.apps.agent_hub.approval.middleware import ApprovalMiddleware
+from Django_xm.apps.agent_hub.approval.policies import ShellExecApprovalPolicy
+from Django_xm.apps.agent_hub.approval.timeout_handler import TIMEOUT_DECISION
 
 
 def _make_ai_message(tool_calls):
@@ -44,6 +45,14 @@ def _make_state(messages):
 def _make_runtime():
     """构造最小化 runtime（middleware 未使用 runtime 字段）。"""
     return MagicMock()
+
+
+# 所有审批流程测试统一 mock should_approve 返回 True，
+# 隔离 should_approve 的白名单/黑名单逻辑（该逻辑由 policies 单独测试）。
+# 不 mock 会导致 ls/rm -rf 等命令被白名单/黑名单跳过，middleware 返回 None。
+_APPROVAL_FLOW_PATCH = patch.object(
+    ShellExecApprovalPolicy, "should_approve", return_value=True
+)
 
 
 class ApprovalMiddlewareApprovedTests(unittest.IsolatedAsyncioTestCase):
@@ -63,8 +72,8 @@ class ApprovalMiddlewareApprovedTests(unittest.IsolatedAsyncioTestCase):
         }
         ai_msg = _make_ai_message([tc])
 
-        # mock interrupt 返回 approved 决策
-        with patch(
+        # mock should_approve 返回 True（隔离白名单逻辑）+ interrupt 返回 approved
+        with _APPROVAL_FLOW_PATCH, patch(
             "Django_xm.apps.agent_hub.approval.middleware.interrupt",
             return_value={"tc-001": True},
         ):
@@ -97,7 +106,7 @@ class ApprovalMiddlewareApprovedTests(unittest.IsolatedAsyncioTestCase):
         }
         ai_msg = _make_ai_message([tc])
 
-        with patch(
+        with _APPROVAL_FLOW_PATCH, patch(
             "Django_xm.apps.agent_hub.approval.middleware.interrupt",
             return_value={"tc-002": True},
         ):
@@ -123,7 +132,7 @@ class ApprovalMiddlewareApprovedTests(unittest.IsolatedAsyncioTestCase):
         ]
         ai_msg = _make_ai_message(tcs)
 
-        with patch(
+        with _APPROVAL_FLOW_PATCH, patch(
             "Django_xm.apps.agent_hub.approval.middleware.interrupt",
             return_value={"tc-a": True, "tc-b": True},
         ):
@@ -150,7 +159,7 @@ class ApprovalMiddlewareRejectedTests(unittest.IsolatedAsyncioTestCase):
         }
         ai_msg = _make_ai_message([tc])
 
-        with patch(
+        with _APPROVAL_FLOW_PATCH, patch(
             "Django_xm.apps.agent_hub.approval.middleware.interrupt",
             return_value={"tc-rej-1": False},
         ):
@@ -179,7 +188,7 @@ class ApprovalMiddlewareRejectedTests(unittest.IsolatedAsyncioTestCase):
         }
         ai_msg = _make_ai_message([tc])
 
-        with patch(
+        with _APPROVAL_FLOW_PATCH, patch(
             "Django_xm.apps.agent_hub.approval.middleware.interrupt",
             return_value={"tc-rej-2": False},
         ):
@@ -210,7 +219,7 @@ class ApprovalMiddlewareTimeoutTests(unittest.IsolatedAsyncioTestCase):
         }
         ai_msg = _make_ai_message([tc])
 
-        with patch(
+        with _APPROVAL_FLOW_PATCH, patch(
             "Django_xm.apps.agent_hub.approval.middleware.interrupt",
             return_value={"tc-timeout-1": TIMEOUT_DECISION},
         ):

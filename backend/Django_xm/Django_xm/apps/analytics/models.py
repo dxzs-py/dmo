@@ -1,5 +1,6 @@
-from django.db import models
 from django.conf import settings
+from django.db import models
+
 from Django_xm.apps.core.base_models import BaseModel
 
 

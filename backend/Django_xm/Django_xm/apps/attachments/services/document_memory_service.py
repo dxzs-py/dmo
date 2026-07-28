@@ -15,8 +15,7 @@
 - https://docs.langchain.com/oss/python/langgraph/persistence#memory-store
 """
 
-import logging
-from typing import Optional, Dict, Any, List
+from typing import Any
 
 from Django_xm.apps.core.config import get_logger
 
@@ -43,8 +42,8 @@ class DocumentMemoryService:
         attachment_id: int,
         doc_name: str,
         content: str,
-        metadata: Optional[Dict[str, Any]] = None,
-        summary: Optional[str] = None,
+        metadata: dict[str, Any] | None = None,
+        summary: str | None = None,
     ) -> bool:
         store = self._ensure_store()
         if store is None:
@@ -73,7 +72,7 @@ class DocumentMemoryService:
             logger.error(f"文档存储到 Store 失败: {e}")
             return False
 
-    def get_document(self, user_id: int, attachment_id: int) -> Optional[Dict[str, Any]]:
+    def get_document(self, user_id: int, attachment_id: int) -> dict[str, Any] | None:
         store = self._ensure_store()
         if store is None:
             return None
@@ -86,7 +85,7 @@ class DocumentMemoryService:
             logger.error(f"从 Store 获取文档失败: {e}")
             return None
 
-    def list_documents(self, user_id: int) -> List[Dict[str, Any]]:
+    def list_documents(self, user_id: int) -> list[dict[str, Any]]:
         store = self._ensure_store()
         if store is None:
             return []

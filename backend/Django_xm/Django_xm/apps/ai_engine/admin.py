@@ -1,5 +1,6 @@
 from django.contrib import admin
-from .models import SystemConfig, AIProvider, AIModel, EmbeddingProviderConfig
+
+from .models import AIModel, AIProvider, EmbeddingProviderConfig, SystemConfig
 
 
 @admin.register(SystemConfig)

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, triggerRef } from 'vue'
 import { chatAPI } from '../api'
 import { knowledgeAPI } from '../api'
 import { useUserStore } from './user'
@@ -26,6 +26,13 @@ import {
   updateOrAddToolResultInMessageByIdx,
   findToolCallById,
   getInterruptId,
+  // Map 版本工具函数（与 researchStore 共用，toolCallMap 作为唯一真相源）
+  addOrUpdateToolCallInMap,
+  updateOrAddToolResultInMap,
+  setApprovalToToolCallInMap,
+  updateApprovalStateInMap,
+  updateToolCallStatusInMap,
+  findToolCallInMap,
 } from '../utils/message-operations'
 import { ToolCallStatus, mapApprovalStateToStatus } from '../types'
 
@@ -45,6 +52,24 @@ export const useSessionStore = defineStore('session', () => {
     hasMore: false,
   })
 
+  // ==================== 工具调用状态（Map 为唯一真相源） ====================
+  //
+  // 设计与 researchStore 对齐：toolCallMap 作为唯一真相源，message.toolCalls
+  // 数组通过 _syncMessageToolCalls 派生（单向数据流：Map → message.toolCalls）。
+  //
+  // 数据结构：
+  //   toolCallsMap: Map<sessionId, Map<toolCallId, toolCall>>
+  //   pendingApprovals: Map<sessionId, Map<toolCallId, {approvalData, toolCallId}>>
+  //
+  // 时序保护：审批事件先于 tool 事件到达时，setApprovalToToolCall 创建 _synthetic
+  // 占位条目并加入 pendingApprovals 队列；后续 tool 事件到达时通过
+  // flushPendingApprovals 绑定审批数据到真实 toolCall。
+
+  /** @type {import('vue').Ref<Map<string, Map<string, Object>>>} */
+  const toolCallsMap = ref(new Map())
+  /** @type {import('vue').Ref<Map<string, Map<string, {approvalData: Object, toolCallId: string}>>>} */
+  const pendingApprovals = ref(new Map())
+
   const userStore = useUserStore()
 
   const _getLast = (sessionId) => getLastAssistantMessage(sessions.value, sessionId)
@@ -54,6 +79,58 @@ export const useSessionStore = defineStore('session', () => {
   const _setField = (sessionId, idx, field, value) => setMessageField(sessions.value, sessionId, idx, field, value)
   const _addFieldItem = (sessionId, idx, field, item) => addMessageFieldItem(sessions.value, sessionId, idx, field, item)
   const _append = (sessionId, idx, content) => appendToMessage(sessions.value, sessionId, idx, content)
+
+  /**
+   * 获取或创建指定 session 的 toolCallMap
+   * @param {string} sessionId - 会话 ID
+   * @returns {Map<string, Object>} toolCallMap
+   */
+  const _ensureToolCallsMap = (sessionId) => {
+    if (!sessionId) return null
+    if (!toolCallsMap.value.has(sessionId)) {
+      toolCallsMap.value.set(sessionId, new Map())
+      triggerRef(toolCallsMap)
+    }
+    return toolCallsMap.value.get(sessionId)
+  }
+
+  /**
+   * 获取或创建指定 session 的 pendingApprovalsMap
+   * @param {string} sessionId - 会话 ID
+   * @returns {Map<string, {approvalData: Object, toolCallId: string}>} pendingApprovalsMap
+   */
+  const _ensurePendingApprovalsMap = (sessionId) => {
+    if (!sessionId) return null
+    if (!pendingApprovals.value.has(sessionId)) {
+      pendingApprovals.value.set(sessionId, new Map())
+      triggerRef(pendingApprovals)
+    }
+    return pendingApprovals.value.get(sessionId)
+  }
+
+  /**
+   * 将 toolCallMap 同步到 messages 数组（最后一条 assistant 消息的 toolCalls）
+   *
+   * 单向数据流：Map → message.toolCalls（派生）。
+   * 修改 toolCallMap 内对象属性后必须调用，确保 UI 刷新。
+   *
+   * 同步范围：
+   * - 最后一条 assistant 消息的 toolCalls
+   * - 当前 version（versions[currentVersion]）的 toolCalls
+   *
+   * @param {string} sessionId - 会话 ID
+   */
+  const _syncMessageToolCalls = (sessionId) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (!session || session.messages.length === 0) return
+    const lastMsg = session.messages[session.messages.length - 1]
+    if (!lastMsg || lastMsg.role !== 'assistant') return
+    const toolCallMap = toolCallsMap.value.get(sessionId)
+    const toolCalls = toolCallMap ? Array.from(toolCallMap.values()) : []
+    lastMsg.toolCalls = toolCalls
+    const ver = lastMsg.versions?.[lastMsg.currentVersion]
+    if (ver) ver.toolCalls = toolCalls
+  }
 
   const addSourceToMessage = (sessionId, messageIndex, source) => _addFieldItem(sessionId, messageIndex, 'sources', source)
   const setSourcesToMessage = (sessionId, messageIndex, sources) => _setField(sessionId, messageIndex, 'sources', sources)
@@ -76,6 +153,9 @@ export const useSessionStore = defineStore('session', () => {
     selectedKnowledgeBase.value = null
     selectedKnowledgeBases.value = []
     lastLoadedUserId.value = null
+    // 同步清理工具调用与待绑定审批数据（Map 为唯一真相源）
+    toolCallsMap.value = new Map()
+    pendingApprovals.value = new Map()
     logger.log('[Security] Cleared all local session data')
   }
 
@@ -267,6 +347,15 @@ export const useSessionStore = defineStore('session', () => {
       }
 
       sessions.value.splice(index, 1)
+      // 清理该会话关联的工具调用与待绑定审批数据（Map 为唯一真相源）
+      if (toolCallsMap.value.has(sessionId)) {
+        toolCallsMap.value.delete(sessionId)
+        triggerRef(toolCallsMap)
+      }
+      if (pendingApprovals.value.has(sessionId)) {
+        pendingApprovals.value.delete(sessionId)
+        triggerRef(pendingApprovals)
+      }
       // 清理该会话关联的审批条目（延迟导入避免循环依赖）
       try {
         const { useApprovalStore } = await import('./approval')
@@ -473,135 +562,122 @@ export const useSessionStore = defineStore('session', () => {
 
   /**
    * 将审批数据设置到指定 toolCall（工具调用级审批）
-   * 遍历 sessions 找到对应 session，遍历最后一条消息的 toolCalls 找到匹配 toolCallId 的项
+   *
+   * 统一通过 toolCallMap 作为唯一真相源操作（与 researchStore 对齐）。
+   * _synthetic 占位机制：审批先于真实 tool 事件到达时，创建占位条目使 ToolCallCard
+   * 立即渲染审批面板，并加入 pendingApprovals 队列（兜底机制）。
+   *
+   * @param {string} sessionId - 会话 ID
+   * @param {string} toolCallId - 工具调用 ID（interrupt_id 或 tool_call_id）
+   * @param {Object} approvalData - 审批事件数据
    */
   const setApprovalToToolCall = (sessionId, toolCallId, approvalData) => {
-    const session = sessions.value.find(s => s.id === sessionId)
-    if (!session || session.messages.length === 0) return
-    const lastMsg = session.messages[session.messages.length - 1]
-    if (!lastMsg.toolCalls || !Array.isArray(lastMsg.toolCalls)) {
-      lastMsg.toolCalls = []
-    }
+    if (!sessionId || !toolCallId || !approvalData) return
+    const toolCallMap = _ensureToolCallsMap(sessionId)
+    if (!toolCallMap) return
 
-    const tc = findToolCallById(lastMsg.toolCalls, toolCallId, { approvalData, skipApproved: true })
-    if (tc) {
-      tc.approval = approvalData
-      if (approvalData?.state) {
-        tc.status = mapApprovalStateToStatus(approvalData.state)
-      }
-    } else {
-      // toolCall 还未到达（messages 模式事件可能在 updates 模式之后），
-      // 创建合成 toolCall 条目，使 ToolCallCard 能立即渲染审批面板
-      const syntheticToolCall = {
-        id: toolCallId,
-        name: approvalData?.tool_name || 'unknown',
-        tool_name: approvalData?.tool_name || 'unknown',
-        parameters: {},
-        args: {},
-        status: ToolCallStatus.PENDING_APPROVAL,
-        approval: approvalData,
-        _synthetic: true,
-      }
-      const op = approvalData?.operation || approvalData?.command
-      if (op) {
-        syntheticToolCall.parameters.command = op
-        syntheticToolCall.args.command = op
-      }
-      lastMsg.toolCalls.push(syntheticToolCall)
+    const isSynthetic = setApprovalToToolCallInMap(toolCallMap, toolCallId, approvalData)
+    triggerRef(toolCallsMap)
+    _syncMessageToolCalls(sessionId)
 
-      // 同时缓存，等真实 toolCall 到达时可能替换
-      if (!lastMsg._pendingApprovals) {
-        lastMsg._pendingApprovals = []
-      }
-      lastMsg._pendingApprovals.push({ toolCallId, approvalData })
-    }
-    // 同步到 version
-    const ver = lastMsg.versions?.[lastMsg.currentVersion]
-    if (ver) {
-      if (ver.toolCalls && Array.isArray(ver.toolCalls)) {
-        const verTc = findToolCallById(ver.toolCalls, toolCallId, { approvalData, skipApproved: true })
-        if (verTc) {
-          verTc.approval = approvalData
-          if (approvalData?.state) {
-            verTc.status = mapApprovalStateToStatus(approvalData.state)
-          }
-        } else {
-          // version 中也找不到 toolCall，创建合成 toolCall
-          const syntheticToolCall = {
-            id: toolCallId,
-            name: approvalData?.tool_name || 'unknown',
-            tool_name: approvalData?.tool_name || 'unknown',
-            parameters: {},
-            args: {},
-            status: ToolCallStatus.PENDING_APPROVAL,
-            approval: approvalData,
-            _synthetic: true,
-          }
-          const op = approvalData?.operation || approvalData?.command
-          if (op) {
-            syntheticToolCall.parameters.command = op
-            syntheticToolCall.args.command = op
-          }
-          if (!ver.toolCalls) {
-            ver.toolCalls = []
-          }
-          ver.toolCalls.push(syntheticToolCall)
-
-          // 同时缓存
-          if (!ver._pendingApprovals) {
-            ver._pendingApprovals = []
-          }
-          ver._pendingApprovals.push({ toolCallId, approvalData })
+    // 如果创建了占位条目，同时存入 pendingApprovals 队列（兜底机制，确保后续 tool 事件能正确合并）
+    if (isSynthetic) {
+      const pendingMap = _ensurePendingApprovalsMap(sessionId)
+      if (pendingMap) {
+        const pendingIds = [toolCallId, approvalData.tool_call_id].filter(Boolean)
+        for (const pid of pendingIds) {
+          pendingMap.set(pid, { approvalData, toolCallId })
         }
-      } else {
-        // version 没有 toolCalls 数组，创建并添加合成 toolCall
-        const syntheticToolCall = {
-          id: toolCallId,
-          name: approvalData?.tool_name || 'unknown',
-          tool_name: approvalData?.tool_name || 'unknown',
-          parameters: {},
-          args: {},
-          status: ToolCallStatus.PENDING_APPROVAL,
-          approval: approvalData,
-          _synthetic: true,
-        }
-        const op = approvalData?.operation || approvalData?.command
-        if (op) {
-          syntheticToolCall.parameters.command = op
-          syntheticToolCall.args.command = op
-        }
-        ver.toolCalls = [syntheticToolCall]
-
-        // 同时缓存
-        if (!ver._pendingApprovals) {
-          ver._pendingApprovals = []
-        }
-        ver._pendingApprovals.push({ toolCallId, approvalData })
+        triggerRef(pendingApprovals)
+        logger.info(
+          `[Session] 占位 toolCall 已加入 pendingApprovals 队列: sessionId=${sessionId}, toolCallId=${toolCallId}, pendingIds=${pendingIds}`
+        )
       }
     }
   }
 
-  /** 更新 toolCall 的审批状态（approval.state），用于审批成功/失败/超时后同步消息中的审批数据 */
-  const updateToolCallApprovalState = (sessionId, toolCallId, state) => {
-    const session = sessions.value.find(s => s.id === sessionId)
-    if (!session?.messages) return
-    for (const msg of session.messages) {
-      if (!msg.toolCalls || !Array.isArray(msg.toolCalls)) continue
-      const tc = findToolCallById(msg.toolCalls, toolCallId, { skipApproved: false })
-      if (tc?.approval) {
-        tc.approval.state = state
-        tc.status = mapApprovalStateToStatus(state)
-      }
-      // 同步到 version
-      const ver = msg.versions?.[msg.currentVersion]
-      if (ver?.toolCalls) {
-        const verTc = findToolCallById(ver.toolCalls, toolCallId, { skipApproved: false })
-        if (verTc?.approval) {
-          verTc.approval.state = state
-          verTc.status = mapApprovalStateToStatus(state)
-        }
-      }
+  /**
+   * 刷新待绑定的审批数据，将其附加到对应 toolCall
+   *
+   * 在 addOrUpdateToolCall / updateOrAddToolResult 创建/更新 toolCall 后调用，
+   * 处理审批事件先于 tool 事件到达的时序场景：
+   * 1. 从 pendingApprovals Map 中查找匹配的审批
+   * 2. 从队列移除后调用 setApprovalToToolCall 绑定（此时 toolCallMap 中已有目标条目）
+   *
+   * @param {string} sessionId - 会话 ID
+   * @param {string} toolCallId - 工具调用 ID
+   */
+  const flushPendingApprovals = (sessionId, toolCallId) => {
+    if (!sessionId || !toolCallId) return
+    const pendingMap = pendingApprovals.value.get(sessionId)
+    if (!pendingMap) return
+    const pending = pendingMap.get(toolCallId)
+    if (!pending) return
+    // 从队列移除后递归调用 setApprovalToToolCall，此时 toolCallMap 中已有目标条目
+    pendingMap.delete(toolCallId)
+    // 同时移除 altId（如 approvalData.tool_call_id）对应的条目
+    if (pending.approvalData?.tool_call_id && pending.approvalData.tool_call_id !== toolCallId) {
+      pendingMap.delete(pending.approvalData.tool_call_id)
     }
+    triggerRef(pendingApprovals)
+    setApprovalToToolCall(sessionId, toolCallId, pending.approvalData)
+    logger.info(`[Session] pending 审批已绑定: sessionId=${sessionId}, toolCallId=${toolCallId}`)
+  }
+
+  /**
+   * 更新 toolCall 的审批状态（approval.state），同时同步 toolCall.status
+   *
+   * 用于审批成功/失败/超时后同步消息中的审批数据。
+   * 与 updateToolCallApprovalStateOnly 的区别：此方法同时更新 toolCall.status
+   * （通过 mapApprovalStateToStatus 将 state 映射为对应的 status）。
+   *
+   * @param {string} sessionId - 会话 ID
+   * @param {string} toolCallId - 工具调用 ID
+   * @param {string} state - 新的 approval.state（如 'processing' / 'approved' / 'rejected' / 'timeout'）
+   */
+  const updateToolCallApprovalState = (sessionId, toolCallId, state) => {
+    if (!sessionId || !toolCallId) return
+    const toolCallMap = toolCallsMap.value.get(sessionId)
+    if (!toolCallMap) return
+    // 1. 更新 approval.state（不修改 status，由 updateApprovalStateInMap 保证）
+    const stateUpdated = updateApprovalStateInMap(toolCallMap, toolCallId, state)
+    if (!stateUpdated) return
+    // 2. 显式同步 toolCall.status（审批通过/拒绝/超时需要流转 status）
+    updateToolCallStatusInMap(toolCallMap, toolCallId, mapApprovalStateToStatus(state))
+    triggerRef(toolCallsMap)
+    _syncMessageToolCalls(sessionId)
+  }
+
+  /**
+   * 仅更新 approval.state，不改变 toolCall.status
+   *
+   * 审批态与工具执行态解耦：
+   * - approval.state 驱动审批面板显示/按钮禁用
+   * - toolCall.status 由 tool_result 事件驱动（completed/failed）
+   *
+   * @param {string} sessionId - 会话 ID
+   * @param {string} toolCallId - 工具调用 ID
+   * @param {string} state - 新的 approval.state（如 'processing'）
+   * @returns {boolean} 是否成功更新
+   */
+  const updateToolCallApprovalStateOnly = (sessionId, toolCallId, state) => {
+    if (!sessionId || !toolCallId) return false
+    const toolCallMap = toolCallsMap.value.get(sessionId)
+    if (!toolCallMap) {
+      logger.warn(`[Session] updateToolCallApprovalStateOnly: toolCallMap 不存在, sessionId=${sessionId}`)
+      return false
+    }
+    const updated = updateApprovalStateInMap(toolCallMap, toolCallId, state)
+    if (!updated) {
+      logger.warn(
+        `[Session] updateToolCallApprovalStateOnly: 未找到 toolCall, sessionId=${sessionId}, ` +
+        `toolCallId=${toolCallId}, state=${state}`
+      )
+      return false
+    }
+    triggerRef(toolCallsMap)
+    _syncMessageToolCalls(sessionId)
+    return true
   }
 
   const appendToLastAssistantMessage = (sessionId, content) => {
@@ -612,14 +688,199 @@ export const useSessionStore = defineStore('session', () => {
     if (ver) ver.content = result.message.content
   }
 
-  const addToolCallToLastMessage = (sessionId, toolCall) => _addLastFieldItem(sessionId, 'toolCalls', toolCall)
-  const addOrUpdateToolCallToLastMessage = (sessionId, data) => {
-    addOrUpdateToolCallInLastMessage(sessions.value, sessionId, data)
+  /**
+   * 添加 toolCall 到最后一条 assistant 消息（同步写入 toolCallMap）
+   *
+   * 与 addOrUpdateToolCall 不同，此方法直接将 toolCall 对象写入 Map（不做合并），
+   * 用于初始化场景（如后端历史加载）。
+   *
+   * @param {string} sessionId - 会话 ID
+   * @param {Object} toolCall - 工具调用对象
+   */
+  const addToolCallToLastMessage = (sessionId, toolCall) => {
+    if (!sessionId || !toolCall) return
+    const toolCallMap = _ensureToolCallsMap(sessionId)
+    if (!toolCallMap) return
+    const key = toolCall.id || toolCall.tool_call_id
+    if (!key) return
+    toolCallMap.set(key, toolCall)
+    triggerRef(toolCallsMap)
+    _syncMessageToolCalls(sessionId)
+  }
+
+  /**
+   * 创建/更新 toolCall（对应 SSE tool 事件）
+   *
+   * 委托通用函数 addOrUpdateToolCallInMap 处理 toolCallMap 操作（含 _synthetic 占位机制、
+   * parameters 参数回查），保留 store 特定的 _syncMessageToolCalls 和 flushPendingApprovals 调用。
+   *
+   * @param {string} sessionId - 会话 ID
+   * @param {Object} data - 工具事件数据
+   */
+  const addOrUpdateToolCall = (sessionId, data) => {
+    if (!sessionId || !data) return
+    const toolCallMap = _ensureToolCallsMap(sessionId)
+    if (!toolCallMap) return
+
+    const toolCallId = addOrUpdateToolCallInMap(toolCallMap, data)
+    if (!toolCallId) return
+
+    triggerRef(toolCallsMap)
+    _syncMessageToolCalls(sessionId)
+    // toolCall 创建后，检查是否有待绑定的审批（时序保护：审批事件先到达）
+    flushPendingApprovals(sessionId, toolCallId)
     _debouncedToolSync(sessionId)
   }
-  const updateOrAddToolResultToLastMessage = (sessionId, data) => {
-    updateOrAddToolResultInLastMessage(sessions.value, sessionId, data)
+
+  /**
+   * 添加/更新 toolCall 到最后一条 assistant 消息（兼容旧接口，委托给 addOrUpdateToolCall）
+   *
+   * @param {string} sessionId - 会话 ID
+   * @param {Object} data - 工具事件数据
+   */
+  const addOrUpdateToolCallToLastMessage = (sessionId, data) => {
+    addOrUpdateToolCall(sessionId, data)
+  }
+
+  /**
+   * 更新/添加工具结果（对应 SSE tool_result 事件）
+   *
+   * 委托通用函数 updateOrAddToolResultInMap 处理 toolCallMap 操作（含结果更新、parameters 补充），
+   * 保留 store 特定的 _syncMessageToolCalls 和 flushPendingApprovals 调用。
+   *
+   * @param {string} sessionId - 会话 ID
+   * @param {Object} data - 工具结果事件数据
+   */
+  const updateOrAddToolResult = (sessionId, data) => {
+    if (!sessionId || !data) return
+    const toolCallMap = _ensureToolCallsMap(sessionId)
+    if (!toolCallMap) return
+
+    const toolCallId = updateOrAddToolResultInMap(toolCallMap, data)
+    if (!toolCallId) return
+
+    // toolCall 创建后（容错场景：tool_result 先于 tool 到达），检查是否有待绑定的审批
+    // flushPendingApprovals 内部会检查 pending 队列，无匹配时直接返回，调用安全
+    flushPendingApprovals(sessionId, toolCallId)
+    triggerRef(toolCallsMap)
+    _syncMessageToolCalls(sessionId)
     _debouncedToolSync(sessionId)
+  }
+
+  /**
+   * 更新/添加工具结果到最后一条 assistant 消息（兼容旧接口，委托给 updateOrAddToolResult）
+   *
+   * @param {string} sessionId - 会话 ID
+   * @param {Object} data - 工具结果事件数据
+   */
+  const updateOrAddToolResultToLastMessage = (sessionId, data) => {
+    updateOrAddToolResult(sessionId, data)
+  }
+
+  /**
+   * 获取指定 session 的 toolCall（通过 toolCallId）
+   *
+   * @param {string} sessionId - 会话 ID
+   * @param {string} toolCallId - 工具调用 ID
+   * @returns {Object|null} toolCall 对象（不存在时返回 null）
+   */
+  const getToolCallById = (sessionId, toolCallId) => {
+    if (!sessionId || !toolCallId) return null
+    const toolCallMap = toolCallsMap.value.get(sessionId)
+    if (!toolCallMap) return null
+    const { toolCall } = findToolCallInMap(toolCallMap, toolCallId)
+    return toolCall || null
+  }
+
+  /**
+   * 获取指定 session 的所有工具调用
+   *
+   * @param {string} sessionId - 会话 ID
+   * @returns {Array} 工具调用数组（session 不存在时返回空数组）
+   */
+  const getToolCallsBySession = (sessionId) => {
+    if (!sessionId) return []
+    const toolCallMap = toolCallsMap.value.get(sessionId)
+    if (!toolCallMap) return []
+    return Array.from(toolCallMap.values())
+  }
+
+  /**
+   * 按 messageBackendId 过滤 toolCall
+   *
+   * 用于按消息分组显示工具调用（与 chat 模块的 messages 数组对齐）。
+   *
+   * @param {string} sessionId - 会话 ID
+   * @param {number|string} messageBackendId - 消息后端 ID
+   * @returns {Array} 匹配的 toolCall 数组
+   */
+  const getToolCallsByMessage = (sessionId, messageBackendId) => {
+    if (!sessionId || messageBackendId === undefined || messageBackendId === null) return []
+    const toolCallMap = toolCallsMap.value.get(sessionId)
+    if (!toolCallMap) return []
+    const target = String(messageBackendId)
+    return Array.from(toolCallMap.values()).filter(
+      tc => tc.messageBackendId !== undefined && String(tc.messageBackendId) === target
+    )
+  }
+
+  /**
+   * 在 session 中查找 toolCall
+   *
+   * @param {string} sessionId - 会话 ID
+   * @param {string} toolCallId - 工具调用 ID
+   * @returns {Object|null} toolCall 对象（不存在时返回 null）
+   */
+  const findToolCallInSession = (sessionId, toolCallId) => {
+    return getToolCallById(sessionId, toolCallId)
+  }
+
+  /**
+   * 更新 toolCall 的 status（用于审批通过后设置 running 状态等场景）
+   *
+   * 通过 Map 函数更新 toolCall.status，同步派生 message.toolCalls。
+   *
+   * @param {string} sessionId - 会话 ID
+   * @param {string} toolCallId - 工具调用 ID
+   * @param {string} status - 新的 toolCall.status
+   * @returns {boolean} 是否成功更新
+   */
+  const updateToolCallStatus = (sessionId, toolCallId, status) => {
+    if (!sessionId || !toolCallId) return false
+    const toolCallMap = toolCallsMap.value.get(sessionId)
+    if (!toolCallMap) return false
+    const updated = updateToolCallStatusInMap(toolCallMap, toolCallId, status)
+    if (!updated) return false
+    triggerRef(toolCallsMap)
+    _syncMessageToolCalls(sessionId)
+    return true
+  }
+
+  /**
+   * 从 store 中移除指定 session（同步清理 toolCallsMap / pendingApprovals）
+   *
+   * 与 deleteSession 不同：deleteSession 是异步方法（含后端调用 + UI 提示），
+   * removeSession 是纯前端清理，用于测试场景与本地状态重置。
+   *
+   * @param {string} sessionId - 会话 ID
+   */
+  const removeSession = (sessionId) => {
+    if (!sessionId) return
+    const idx = sessions.value.findIndex(s => s.id === sessionId)
+    if (idx !== -1) {
+      sessions.value.splice(idx, 1)
+    }
+    if (toolCallsMap.value.has(sessionId)) {
+      toolCallsMap.value.delete(sessionId)
+      triggerRef(toolCallsMap)
+    }
+    if (pendingApprovals.value.has(sessionId)) {
+      pendingApprovals.value.delete(sessionId)
+      triggerRef(pendingApprovals)
+    }
+    if (currentSessionId.value === sessionId) {
+      currentSessionId.value = sessions.value.length > 0 ? sessions.value[0].id : null
+    }
   }
 
   const setUsageToLastMessage = (sessionId, usageData) => {
@@ -674,6 +935,18 @@ export const useSessionStore = defineStore('session', () => {
       session.messages = []
       session.messageCount = 0
       session.updatedAt = Date.now()
+    }
+    // 同步清理当前会话的工具调用与待绑定审批数据
+    const sessionId = currentSessionId.value
+    if (sessionId) {
+      if (toolCallsMap.value.has(sessionId)) {
+        toolCallsMap.value.delete(sessionId)
+        triggerRef(toolCallsMap)
+      }
+      if (pendingApprovals.value.has(sessionId)) {
+        pendingApprovals.value.delete(sessionId)
+        triggerRef(pendingApprovals)
+      }
     }
   }
 
@@ -804,6 +1077,9 @@ export const useSessionStore = defineStore('session', () => {
     knowledgeBases,
     isLoading,
     paginationMeta,
+    // 工具调用状态（Map 为唯一真相源，按 sessionId 索引）
+    toolCallsMap,
+    pendingApprovals,
     currentSession,
     loadSessionsFromBackend,
     loadMoreSessions,
@@ -811,6 +1087,7 @@ export const useSessionStore = defineStore('session', () => {
     createNewSession,
     switchSession,
     deleteSession,
+    removeSession,
     updateSession,
     updateSessionTitle,
     addMessageToSession,
@@ -831,10 +1108,19 @@ export const useSessionStore = defineStore('session', () => {
     setApprovalToLastMessage,
     setApprovalToToolCall,
     updateToolCallApprovalState,
+    updateToolCallApprovalStateOnly,
     appendToLastAssistantMessage,
     addToolCallToLastMessage,
+    addOrUpdateToolCall,
     addOrUpdateToolCallToLastMessage,
+    updateOrAddToolResult,
     updateOrAddToolResultToLastMessage,
+    getToolCallById,
+    getToolCallsBySession,
+    getToolCallsByMessage,
+    findToolCallInSession,
+    updateToolCallStatus,
+    flushPendingApprovals,
     setUsageToLastMessage,
     setAttachmentIdsToLastUserMessage,
     addSourceToMessage,

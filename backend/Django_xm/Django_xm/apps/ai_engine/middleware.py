@@ -1,4 +1,5 @@
 import logging
+
 from django.http import JsonResponse
 
 logger = logging.getLogger(__name__)
@@ -29,12 +30,12 @@ class AIExceptionMiddleware:
 
         try:
             from openai import (
-                APIError,
                 APIConnectionError,
-                RateLimitError,
+                APIError,
+                APITimeoutError,
                 AuthenticationError,
                 BadRequestError,
-                APITimeoutError,
+                RateLimitError,
             )
             mapping[RateLimitError] = (429, "AI 服务请求频率超限，请稍后重试", "AI_RATE_LIMIT")
             mapping[AuthenticationError] = (401, "AI 服务认证失败", "AI_AUTH_ERROR")
@@ -58,7 +59,7 @@ class AIExceptionMiddleware:
             pass
 
         try:
-            from httpx import TimeoutException, ConnectError
+            from httpx import ConnectError, TimeoutException
             mapping[TimeoutException] = (504, "AI 服务响应超时", "AI_TIMEOUT")
             mapping[ConnectError] = (502, "AI 服务连接失败", "AI_CONNECTION_ERROR")
         except ImportError:

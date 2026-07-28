@@ -1,5 +1,41 @@
+"""知识库模块序列化器。"""
+from __future__ import annotations
+
+import re
+
 from rest_framework import serializers
-from .models import DocumentIndex, Document
+
+from .models import Document, DocumentIndex
+
+# 索引名称校验正则：字母、数字、下划线、连字符、中文
+INDEX_NAME_PATTERN = re.compile(r'^[a-zA-Z0-9_\-\u4e00-\u9fa5]+$')
+
+
+class IndexNameValidationMixin:
+    """索引名称共享校验逻辑。
+
+    规则：
+        - 仅允许字母、数字、下划线、连字符、中文
+        - 长度上限 100
+    """
+
+    def validate_name(self, value: str) -> str:
+        """校验索引名称格式。
+
+        Args:
+            value: 待校验的索引名称。
+
+        Returns:
+            校验通过后的索引名称。
+
+        Raises:
+            serializers.ValidationError: 名称格式非法时抛出。
+        """
+        if not INDEX_NAME_PATTERN.match(value):
+            raise serializers.ValidationError(
+                "索引名称只能包含字母、数字、下划线、连字符和中文"
+            )
+        return value
 
 
 class DocumentIndexSerializer(serializers.ModelSerializer):
@@ -19,7 +55,7 @@ class DocumentSerializer(serializers.ModelSerializer):
 
 
 class RagQuerySerializer(serializers.Serializer):
-    """RAG 查询请求序列化器"""
+    """RAG 查询请求序列化器。"""
     index_name = serializers.CharField(
         required=True,
         help_text="索引名称"
@@ -32,7 +68,8 @@ class RagQuerySerializer(serializers.Serializer):
     k = serializers.IntegerField(
         default=4,
         required=False,
-        help_text="返回文档数量"
+        max_value=20,
+        help_text="返回文档数量（最大 20）"
     )
     return_sources = serializers.BooleanField(
         default=True,
@@ -42,7 +79,7 @@ class RagQuerySerializer(serializers.Serializer):
 
 
 class RagResponseSerializer(serializers.Serializer):
-    """RAG 查询响应序列化器"""
+    """RAG 查询响应序列化器。"""
     answer = serializers.CharField()
     sources = serializers.ListField(
         child=serializers.CharField(),
@@ -53,12 +90,13 @@ class RagResponseSerializer(serializers.Serializer):
     error = serializers.CharField(required=False, allow_null=True)
 
 
-class IndexCreateSerializer(serializers.Serializer):
-    """创建索引请求序列化器"""
+class IndexCreateSerializer(IndexNameValidationMixin, serializers.Serializer):
+    """创建索引请求序列化器。"""
     name = serializers.CharField(
         min_length=1,
+        max_length=100,
         required=True,
-        help_text="索引名称"
+        help_text="索引名称（仅允许字母、数字、下划线、连字符、中文，最长 100）"
     )
     directory_path = serializers.CharField(
         required=False,
@@ -88,13 +126,13 @@ class IndexCreateSerializer(serializers.Serializer):
     )
 
 
-class EmptyIndexCreateSerializer(serializers.Serializer):
-    """创建空索引请求序列化器"""
+class EmptyIndexCreateSerializer(IndexNameValidationMixin, serializers.Serializer):
+    """创建空索引请求序列化器。"""
     name = serializers.CharField(
         min_length=1,
         max_length=100,
         required=True,
-        help_text="索引名称（只能包含字母、数字、下划线和连字符）"
+        help_text="索引名称（仅允许字母、数字、下划线、连字符、中文，最长 100）"
     )
     description = serializers.CharField(
         default="",
@@ -108,13 +146,6 @@ class EmptyIndexCreateSerializer(serializers.Serializer):
         required=False,
         help_text="是否覆盖已存在的索引"
     )
-    
-    def validate_name(self, value):
-        """验证索引名称格式"""
-        import re
-        if not re.match(r'^[a-zA-Z0-9_-]+$', value):
-            raise serializers.ValidationError("索引名称只能包含字母、数字、下划线和连字符")
-        return value
 
 
 class IndexInfoSerializer(serializers.Serializer):
@@ -128,7 +159,7 @@ class IndexInfoSerializer(serializers.Serializer):
 
 
 class SearchRequestSerializer(serializers.Serializer):
-    """检索请求序列化器"""
+    """检索请求序列化器。"""
     index_name = serializers.CharField(
         required=True,
         help_text="索引名称"
@@ -141,7 +172,8 @@ class SearchRequestSerializer(serializers.Serializer):
     k = serializers.IntegerField(
         default=4,
         required=False,
-        help_text="返回文档数量"
+        max_value=20,
+        help_text="返回文档数量（最大 20）"
     )
     score_threshold = serializers.FloatField(
         required=False,
@@ -151,7 +183,7 @@ class SearchRequestSerializer(serializers.Serializer):
 
 
 class SearchResultSerializer(serializers.Serializer):
-    """检索结果序列化器"""
+    """检索结果序列化器。"""
     content = serializers.CharField()
     metadata = serializers.DictField()
     score = serializers.FloatField(required=False, allow_null=True)

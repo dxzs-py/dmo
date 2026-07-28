@@ -23,12 +23,10 @@ mock 策略:
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from django.test import SimpleTestCase
-
-from Django_xm.common.realtime_events import _group_name
 from Django_xm.apps.chat.consumers import RealtimeSyncConsumer
+from Django_xm.common.realtime_events import _group_name
 
 
 def _make_consumer(user_id=1):
@@ -546,7 +544,12 @@ class SubscribeWithReplayTests(unittest.IsolatedAsyncioTestCase):
 
     @patch('Django_xm.apps.chat.consumers.get_event_history')
     async def test_subscribe_session_with_last_seq_replays(self, mock_history):
-        """handle_subscribe_session 携带 last_seq → 回放历史事件。"""
+        """handle_subscribe_session 携带 last_seq → 回放历史事件。
+
+        历史事件通过 ``_send_replay_chunked`` 统一包装为 ``type='replay'`` 消息发送，
+        与 ``handle_replay`` 行为一致（避免 500 条事件超过 WebSocket 1MB payload 限制）。
+        前端 ``useRealtimeSync`` barrier 机制负责解包 ``events`` 数组并按 seq 排序处理。
+        """
         consumer = _make_consumer(user_id=1)
         consumer._user_owns_session = AsyncMock(return_value=True)
         mock_history.return_value = [
@@ -558,12 +561,18 @@ class SubscribeWithReplayTests(unittest.IsolatedAsyncioTestCase):
             "last_seq": 4,
         })
 
-        # 第一次 send_json 是 subscribed 响应，第二次是历史事件
+        # 第一次 send_json 是 subscribed 响应，第二次是 replay 包装的历史事件
         self.assertEqual(consumer.send_json.call_count, 2)
-        # 第二次发送的是历史事件
+        # 第二次发送的是 replay 包装消息
         second_call = consumer.send_json.call_args_list[1].args[0]
-        self.assertEqual(second_call["type"], "message_added")
-        self.assertEqual(second_call["seq"], 5)
+        self.assertEqual(second_call["type"], "replay")
+        self.assertEqual(second_call["channel_type"], "session")
+        self.assertEqual(second_call["channel_id"], "session-1")
+        self.assertEqual(second_call["count"], 1)
+        self.assertEqual(len(second_call["events"]), 1)
+        # 原始历史事件在 events 数组中
+        self.assertEqual(second_call["events"][0]["type"], "message_added")
+        self.assertEqual(second_call["events"][0]["seq"], 5)
 
     @patch('Django_xm.apps.chat.consumers.get_event_history')
     async def test_subscribe_session_no_last_seq_no_replay(self, mock_history):
@@ -579,7 +588,11 @@ class SubscribeWithReplayTests(unittest.IsolatedAsyncioTestCase):
 
     @patch('Django_xm.apps.chat.consumers.get_event_history')
     async def test_subscribe_task_with_last_seq_replays(self, mock_history):
-        """handle_subscribe_task 携带 last_seq → 回放历史事件。"""
+        """handle_subscribe_task 携带 last_seq → 回放历史事件。
+
+        与 ``handle_subscribe_session`` 一致，历史事件通过 ``_send_replay_chunked``
+        包装为 ``type='replay'`` 消息发送。
+        """
         consumer = _make_consumer(user_id=1)
         consumer._user_owns_task = AsyncMock(return_value=True)
         mock_history.return_value = [
@@ -591,10 +604,16 @@ class SubscribeWithReplayTests(unittest.IsolatedAsyncioTestCase):
             "last_seq": 2,
         })
 
-        # 第二次发送历史事件
+        # 第二次发送 replay 包装消息
         self.assertEqual(consumer.send_json.call_count, 2)
         second_call = consumer.send_json.call_args_list[1].args[0]
-        self.assertEqual(second_call["type"], "tool_call_running")
+        self.assertEqual(second_call["type"], "replay")
+        self.assertEqual(second_call["channel_type"], "task")
+        self.assertEqual(second_call["channel_id"], "task-1")
+        self.assertEqual(second_call["count"], 1)
+        # 原始历史事件在 events 数组中
+        self.assertEqual(second_call["events"][0]["type"], "tool_call_running")
+        self.assertEqual(second_call["events"][0]["seq"], 3)
 
 
 if __name__ == '__main__':

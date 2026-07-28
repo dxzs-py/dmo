@@ -21,14 +21,13 @@ mock 策略:
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-from Django_xm.apps.chat.services import stream_helpers
 from Django_xm.apps.chat.services.stream_helpers import (
     _publish_tool_lifecycle_event,
     merge_existing_approval_fields,
 )
-from Django_xm.common.event_schema import EventType, EventSource
+from Django_xm.common.event_schema import EventSource, EventType
 
 
 def _build_tool_info(**overrides):

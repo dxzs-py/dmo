@@ -2,15 +2,17 @@
 安全节点包装器 - 为 LangGraph 节点添加 Guardrails
 """
 
-from typing import Callable, Optional, Any, Dict
+from collections.abc import Callable
 from functools import wraps
+from typing import Any
 
-from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.ai_engine.guardrails import (
+    ContentFilter,
     InputValidator,
     OutputValidator,
-    ContentFilter,
 )
+from Django_xm.apps.core.config import get_logger
+
 from .state import StudyFlowState
 
 logger = get_logger(__name__)
@@ -18,7 +20,7 @@ logger = get_logger(__name__)
 
 def with_input_guardrails(
     node_func: Callable,
-    validator: Optional[InputValidator] = None,
+    validator: InputValidator | None = None,
     input_field: str = "question",
     strict_mode: bool = False,
 ):
@@ -50,7 +52,7 @@ def with_input_guardrails(
                 state["warnings"] = state.get("warnings", []) + result.warnings
 
             state[input_field] = result.filtered_input
-            logger.info(f"[Guardrails] ✅ 输入验证通过")
+            logger.info("[Guardrails] ✅ 输入验证通过")
 
         return node_func(state)
 
@@ -59,7 +61,7 @@ def with_input_guardrails(
 
 def with_output_guardrails(
     node_func: Callable,
-    validator: Optional[OutputValidator] = None,
+    validator: OutputValidator | None = None,
     output_field: str = "plan",
     require_sources: bool = False,
     strict_mode: bool = False,
@@ -108,7 +110,7 @@ def with_output_guardrails(
                 result_state["warnings"] = result_state.get("warnings", []) + validation_result.warnings
 
             result_state[output_field] = validation_result.filtered_output
-            logger.info(f"[Guardrails] ✅ 输出验证通过")
+            logger.info("[Guardrails] ✅ 输出验证通过")
 
         return result_state
 
@@ -116,8 +118,8 @@ def with_output_guardrails(
 
 
 def with_guardrails(
-    input_field: Optional[str] = None,
-    output_field: Optional[str] = None,
+    input_field: str | None = None,
+    output_field: str | None = None,
     require_sources: bool = False,
     strict_mode: bool = False,
 ):
@@ -174,9 +176,9 @@ def create_safe_node(
 
 
 def add_guardrails_to_nodes(
-    nodes_dict: Dict[str, Callable],
-    config: Optional[Dict[str, Dict[str, Any]]] = None,
-) -> Dict[str, Callable]:
+    nodes_dict: dict[str, Callable],
+    config: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Callable]:
     config = config or {}
     safe_nodes = {}
 

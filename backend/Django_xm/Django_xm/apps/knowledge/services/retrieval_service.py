@@ -5,22 +5,20 @@
 """
 
 import asyncio
-import time
 import json
 import re
-from functools import lru_cache
-from typing import Any, Optional, Literal, List, Type, Dict
+import time
+from typing import Any, ClassVar, Literal
 
-from langchain_core.vectorstores import VectorStore
-from langchain_core.retrievers import BaseRetriever
-from langchain_core.tools import BaseTool
-from langchain_core.tools.retriever import create_retriever_tool as lc_create_retriever_tool
 from langchain_core.documents import Document
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.tools import BaseTool
+from langchain_core.vectorstores import VectorStore
 from pydantic import BaseModel, Field
 
-from Django_xm.apps.knowledge.config import settings
 from Django_xm.apps.core.logging_utils import get_logger
+from Django_xm.apps.knowledge.config import settings
 
 logger = get_logger(__name__)
 
@@ -50,7 +48,7 @@ def _is_embedding_error(exc: Exception) -> bool:
     return any(pat.lower() in exc_name.lower() or pat.lower() in exc_msg for pat in _EMBEDDING_ERROR_PATTERNS)
 
 
-def _keyword_search_fallback(query: str, collection_name: str, k: int = 4) -> List[Document]:
+def _keyword_search_fallback(query: str, collection_name: str, k: int = 4) -> list[Document]:
     """PostgreSQL 全文检索降级方案
 
     当 Embedding 服务不可用时，使用 PostgreSQL 的 to_tsvector + to_tsquery
@@ -65,10 +63,11 @@ def _keyword_search_fallback(query: str, collection_name: str, k: int = 4) -> Li
         Document 列表，metadata 中包含 degraded=True 标记和 score
     """
     from django.db import connections
+
     from Django_xm.apps.knowledge.vector_store.pgvector_backend import (
+        _check_table_exists,
         _get_collection_table_name,
         _get_embedding_table_name,
-        _check_table_exists,
     )
 
     collection_table = _get_collection_table_name()
@@ -150,7 +149,7 @@ class DegradableRetriever(BaseRetriever):
     class Config:
         arbitrary_types_allowed = True
 
-    def _get_relevant_documents(self, query: str) -> List[Document]:
+    def _get_relevant_documents(self, query: str) -> list[Document]:
         try:
             docs = self.base_retriever.invoke(query)
             return docs
@@ -164,7 +163,7 @@ class DegradableRetriever(BaseRetriever):
                 return _keyword_search_fallback(query, self.collection_name, k=self.fallback_k)
             raise
 
-    async def _aget_relevant_documents(self, query: str) -> List[Document]:
+    async def _aget_relevant_documents(self, query: str) -> list[Document]:
         try:
             docs = await self.base_retriever.ainvoke(query)
             return docs
@@ -226,10 +225,10 @@ except ImportError:
 
 def create_retriever(
     vector_store: VectorStore,
-    search_type: Optional[SearchType] = None,
-    k: Optional[int] = None,
-    score_threshold: Optional[float] = None,
-    fetch_k: Optional[int] = None,
+    search_type: SearchType | None = None,
+    k: int | None = None,
+    score_threshold: float | None = None,
+    fetch_k: int | None = None,
     use_reranker: bool = False,
     **kwargs,
 ) -> BaseRetriever:
@@ -324,7 +323,7 @@ except ImportError:
 
 def create_multi_query_retriever(
     base_retriever: BaseRetriever,
-    llm: Optional[BaseChatModel] = None,
+    llm: BaseChatModel | None = None,
     include_original: bool = True,
 ) -> BaseRetriever:
     if not ADVANCED_RETRIEVERS_AVAILABLE:
@@ -339,8 +338,8 @@ def create_multi_query_retriever(
         # 使用 RunnableLambda 包装 LLM，强制将 callbacks 设为空列表，
         # 防止 MultiQuery 内部 LLM 调用的输出被父级 callback 捕获
         # 并流式传输到前端（表现为 reasoning_content 或 content 泄漏）
-        from langchain_core.runnables import RunnableLambda
         from langchain_core.output_parsers import BaseOutputParser
+        from langchain_core.runnables import RunnableLambda
 
         class _LineListParser(BaseOutputParser[list[str]]):
             """将 LLM 输出按换行拆分为字符串列表，替代 langchain_classic 的 LineListOutputParser"""
@@ -382,7 +381,7 @@ def create_multi_query_retriever(
 
 def create_advanced_retriever(
     base_retriever: BaseRetriever,
-    llm: Optional[BaseChatModel] = None,
+    llm: BaseChatModel | None = None,
     use_reranker: bool = False,
     use_multi_query: bool = False,
     include_original: bool = True,
@@ -456,7 +455,7 @@ def create_parent_document_retriever(
 
 class _RetrieverToolInput(BaseModel):
     query: str = Field(description="搜索查询")
-    retrieval_mode: Optional[str] = Field(default=None, description="检索模式: auto/precise/comprehensive")
+    retrieval_mode: str | None = Field(default=None, description="检索模式: auto/precise/comprehensive")
 
 
 # 模块级常量：避免 Pydantic BaseModel 将 _ 前缀属性转为 ModelPrivateAttr
@@ -480,11 +479,11 @@ MAX_DOC_CONTENT_LENGTH = 800
 class SyncSafeRetrieverTool(BaseTool):
     name: str = "knowledge_base"
     description: str = "搜索知识库中的相关信息。当需要回答关于文档内容的问题时使用此工具。输入应该是一个搜索查询。"
-    args_schema: Type[BaseModel] = _RetrieverToolInput
+    args_schema: type[BaseModel] = _RetrieverToolInput
     retriever: BaseRetriever = None
-    comprehensive_retriever: Optional[BaseRetriever] = None
+    comprehensive_retriever: BaseRetriever | None = None
     retrieval_mode: str = "auto"
-    llm: Optional[Any] = None
+    llm: Any | None = None
     kb_name: str = ""
     kb_description: str = ""
 
@@ -499,7 +498,7 @@ class SyncSafeRetrieverTool(BaseTool):
             return "【知识库信息】\n" + "\n".join(parts) + "\n\n"
         return ""
 
-    def _run(self, query: str, retrieval_mode: Optional[str] = None) -> str:
+    def _run(self, query: str, retrieval_mode: str | None = None) -> str:
         mode = retrieval_mode or self.retrieval_mode
 
         if mode == "auto":
@@ -509,7 +508,7 @@ class SyncSafeRetrieverTool(BaseTool):
             return self._run_comprehensive(query)
         return self._run_precise(query)
 
-    async def _arun(self, query: str, retrieval_mode: Optional[str] = None) -> str:
+    async def _arun(self, query: str, retrieval_mode: str | None = None) -> str:
         mode = retrieval_mode or self.retrieval_mode
 
         if mode == "auto":
@@ -562,7 +561,7 @@ class SyncSafeRetrieverTool(BaseTool):
         return self._build_kb_context() + KB_RESULT_INSTRUCTION + result
 
     @staticmethod
-    def _clean_docs(docs: List[Document]) -> List[Document]:
+    def _clean_docs(docs: list[Document]) -> list[Document]:
         """清理检索结果中的非文档内容
 
         过滤两类不应出现在检索结果中的内容：
@@ -593,7 +592,7 @@ class SyncSafeRetrieverTool(BaseTool):
         return cleaned
 
     @classmethod
-    def _format_docs(cls, docs: List[Document]) -> str:
+    def _format_docs(cls, docs: list[Document]) -> str:
         if not docs:
             return "未找到相关文档。"
         # 限制文档数量和单文档长度，避免上下文过长导致 LLM 原文复述
@@ -613,10 +612,10 @@ class SyncSafeRetrieverTool(BaseTool):
 def create_retriever_tool(
     retriever: BaseRetriever,
     name: str = "knowledge_base",
-    description: Optional[str] = None,
+    description: str | None = None,
     retrieval_mode: str = "auto",
-    comprehensive_retriever: Optional[BaseRetriever] = None,
-    llm: Optional[Any] = None,
+    comprehensive_retriever: BaseRetriever | None = None,
+    llm: Any | None = None,
     kb_name: str = "",
     kb_description: str = "",
 ) -> BaseTool:
@@ -685,13 +684,13 @@ _INTENT_CLASSIFICATION_PROMPT = """分析用户查询的意图类型：
 
 
 class QueryIntentClassifier:
-    _cache: dict = {}
+    _cache: ClassVar[dict] = {}
     _cache_ttl: int = 60
 
-    def __init__(self, llm: Optional[BaseChatModel] = None):
+    def __init__(self, llm: BaseChatModel | None = None):
         self._llm = llm
 
-    def _get_llm(self) -> Optional[BaseChatModel]:
+    def _get_llm(self) -> BaseChatModel | None:
         if self._llm is not None:
             return self._llm
         try:
@@ -716,7 +715,7 @@ class QueryIntentClassifier:
                 pass
         return "precise"
 
-    def _check_cache(self, query: str) -> Optional[str]:
+    def _check_cache(self, query: str) -> str | None:
         now = time.time()
         cached = self._cache.get(query)
         if cached and (now - cached["ts"]) < self._cache_ttl:
@@ -772,6 +771,7 @@ class QueryIntentClassifier:
 
         try:
             import asyncio
+
             from langchain_core.messages import HumanMessage
             prompt = _INTENT_CLASSIFICATION_PROMPT.format(query=query)
             response = await asyncio.wait_for(
@@ -782,7 +782,7 @@ class QueryIntentClassifier:
             self._set_cache(query, intent)
             logger.info(f"意图分类: query='{query[:50]}...' -> {intent}")
             return intent
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("意图分类超时(3s)，回退到 precise")
             return "precise"
         except Exception as e:
@@ -836,11 +836,11 @@ _STUFF_PROMPT_TEMPLATE = """以下是从知识库中检索到的参考资料。�
 
 
 class MapReduceDocCombiner:
-    def __init__(self, llm: Optional[BaseChatModel] = None, batch_size: Optional[int] = None):
+    def __init__(self, llm: BaseChatModel | None = None, batch_size: int | None = None):
         self._llm = llm
         self._batch_size = batch_size
 
-    def _get_llm(self) -> Optional[BaseChatModel]:
+    def _get_llm(self) -> BaseChatModel | None:
         if self._llm is not None:
             return self._llm
         try:
@@ -862,7 +862,7 @@ class MapReduceDocCombiner:
     def _should_use_map_reduce(self, doc_count: int) -> bool:
         return doc_count > self._get_batch_size() * 1.5
 
-    def _map_batch_sync(self, docs: List[Document], query: str, llm: BaseChatModel) -> List[str]:
+    def _map_batch_sync(self, docs: list[Document], query: str, llm: BaseChatModel) -> list[str]:
         from langchain_core.messages import HumanMessage
         results = []
         for doc in docs:
@@ -876,9 +876,10 @@ class MapReduceDocCombiner:
                 results.append("")
         return results
 
-    async def _map_batch_async(self, docs: List[Document], query: str, llm: BaseChatModel) -> List[str]:
-        from langchain_core.messages import HumanMessage
+    async def _map_batch_async(self, docs: list[Document], query: str, llm: BaseChatModel) -> list[str]:
         import asyncio
+
+        from langchain_core.messages import HumanMessage
         tasks = []
         for doc in docs:
             prompt = _MAP_PROMPT_TEMPLATE.format(doc=doc.page_content, question=query)
@@ -894,7 +895,7 @@ class MapReduceDocCombiner:
                 results.append(content)
         return results
 
-    def combine_sync(self, docs: List[Document], query: str, llm: Optional[BaseChatModel] = None) -> str:
+    def combine_sync(self, docs: list[Document], query: str, llm: BaseChatModel | None = None) -> str:
         from langchain_core.messages import HumanMessage
 
         if not docs:
@@ -950,7 +951,7 @@ class MapReduceDocCombiner:
             logger.warning(f"Reduce 阶段失败，返回合并摘要: {e}")
             return combined
 
-    async def combine(self, docs: List[Document], query: str, llm: Optional[BaseChatModel] = None) -> str:
+    async def combine(self, docs: list[Document], query: str, llm: BaseChatModel | None = None) -> str:
         from langchain_core.messages import HumanMessage
 
         if not docs:
@@ -1014,15 +1015,15 @@ class _RRFEnsembleRetriever(BaseRetriever):
     使用加权 RRF 算法合并多个检索器的结果。
     """
 
-    retrievers: List[BaseRetriever] = Field(default_factory=list)
-    weights: List[float] = Field(default_factory=list)
+    retrievers: list[BaseRetriever] = Field(default_factory=list)
+    weights: list[float] = Field(default_factory=list)
     c: int = Field(default=60, description="RRF 常数，通常为 60")
     k: int = Field(default=4, description="最终返回的文档数")
 
     class Config:
         arbitrary_types_allowed = True
 
-    def _get_relevant_documents(self, query: str) -> List[Document]:
+    def _get_relevant_documents(self, query: str) -> list[Document]:
         doc_scores: dict = {}
         doc_map: dict = {}
 
@@ -1043,7 +1044,7 @@ class _RRFEnsembleRetriever(BaseRetriever):
         sorted_items = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)
         return [doc_map[k] for k, _ in sorted_items[: self.k]]
 
-    async def _aget_relevant_documents(self, query: str) -> List[Document]:
+    async def _aget_relevant_documents(self, query: str) -> list[Document]:
         doc_scores: dict = {}
         doc_map: dict = {}
 
@@ -1070,7 +1071,7 @@ class _RRFEnsembleRetriever(BaseRetriever):
 
 def create_multi_retriever(
     retrievers: list,
-    weights: Optional[list] = None,
+    weights: list | None = None,
     **kwargs,
 ) -> BaseRetriever:
     """创建多检索器（基于 RRF 的组合检索器）"""

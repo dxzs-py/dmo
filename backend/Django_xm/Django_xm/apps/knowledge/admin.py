@@ -1,5 +1,6 @@
 from django.contrib import admin
-from .models import DocumentIndex, Document, IndexMetadata
+
+from .models import Document, DocumentIndex, IndexMetadata
 
 
 @admin.register(DocumentIndex)

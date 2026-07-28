@@ -25,10 +25,10 @@ mock 策略:
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from Django_xm.common.realtime_events import _group_name
 from Django_xm.apps.chat.consumers import RealtimeSyncConsumer
+from Django_xm.common.realtime_events import _group_name
 
 
 def _make_consumer(user_id=1):
@@ -199,9 +199,13 @@ class ReplayAndResumeSubscriptionTests(unittest.IsolatedAsyncioTestCase):
         """SubTask 8.9：session 订阅 + 历史回放 + 回放完成后订阅仍有效。
 
         - 订阅 session-1 携带 last_seq=4
-        - 回放 seq=5 的历史事件
+        - 回放 seq=5 的历史事件（通过 ``_send_replay_chunked`` 包装为 ``type='replay'``）
         - 验证 session_groups 仍包含 session_session-1 分组
         - 模拟后续 group_send 的新事件（seq=6），broadcast_event 能透传
+
+        历史事件通过 ``_send_replay_chunked`` 统一包装为 ``type='replay'`` 消息发送
+        （避免 500 条事件超过 WebSocket 1MB payload 限制）。前端 ``useRealtimeSync``
+        barrier 机制负责解包 ``events`` 数组并按 seq 排序处理。
         """
         consumer = _make_consumer(user_id=1)
         consumer._user_owns_session = AsyncMock(return_value=True)
@@ -215,17 +219,23 @@ class ReplayAndResumeSubscriptionTests(unittest.IsolatedAsyncioTestCase):
             "last_seq": 4,
         })
 
-        # 2. send_json 调用次数：subscribed + 1 个历史事件 = 2 次
+        # 2. send_json 调用次数：subscribed + 1 个 replay 包装 = 2 次
         self.assertEqual(consumer.send_json.call_count, 2)
 
         # 3. 第一次：subscribed 响应
         subscribed_msg = consumer.send_json.call_args_list[0].args[0]
         self.assertEqual(subscribed_msg["type"], "subscribed")
 
-        # 4. 第二次：历史事件
-        history_event = consumer.send_json.call_args_list[1].args[0]
-        self.assertEqual(history_event["type"], "message_added")
-        self.assertEqual(history_event["seq"], 5)
+        # 4. 第二次：replay 包装消息（历史事件在 events 数组中）
+        replay_msg = consumer.send_json.call_args_list[1].args[0]
+        self.assertEqual(replay_msg["type"], "replay")
+        self.assertEqual(replay_msg["channel_type"], "session")
+        self.assertEqual(replay_msg["channel_id"], "session-1")
+        self.assertEqual(replay_msg["count"], 1)
+        self.assertEqual(len(replay_msg["events"]), 1)
+        # 原始历史事件在 events 数组中
+        self.assertEqual(replay_msg["events"][0]["type"], "message_added")
+        self.assertEqual(replay_msg["events"][0]["seq"], 5)
 
         # 5. 回放完成后 session_groups 仍包含目标 group（恢复正常订阅）
         expected_group = _group_name("session", "session-1")
@@ -250,8 +260,11 @@ class ReplayAndResumeSubscriptionTests(unittest.IsolatedAsyncioTestCase):
         """SubTask 8.9：task 订阅 + 历史回放 + 回放完成后订阅仍有效。
 
         - 订阅 task-1 携带 last_seq=2
-        - 回放 seq=3 的历史事件
+        - 回放 seq=3 的历史事件（通过 ``_send_replay_chunked`` 包装为 ``type='replay'``）
         - 验证 task_groups 仍包含 task_task-1 分组
+
+        与 ``handle_subscribe_session`` 一致，历史事件通过 ``_send_replay_chunked``
+        包装为 ``type='replay'`` 消息发送。
         """
         consumer = _make_consumer(user_id=1)
         consumer._user_owns_task = AsyncMock(return_value=True)
@@ -265,13 +278,18 @@ class ReplayAndResumeSubscriptionTests(unittest.IsolatedAsyncioTestCase):
             "last_seq": 2,
         })
 
-        # 2. send_json 调用次数：subscribed + 1 个历史事件 = 2 次
+        # 2. send_json 调用次数：subscribed + 1 个 replay 包装 = 2 次
         self.assertEqual(consumer.send_json.call_count, 2)
 
-        # 3. 第二次：历史事件
-        history_event = consumer.send_json.call_args_list[1].args[0]
-        self.assertEqual(history_event["type"], "tool_call_running")
-        self.assertEqual(history_event["seq"], 3)
+        # 3. 第二次：replay 包装消息（历史事件在 events 数组中）
+        replay_msg = consumer.send_json.call_args_list[1].args[0]
+        self.assertEqual(replay_msg["type"], "replay")
+        self.assertEqual(replay_msg["channel_type"], "task")
+        self.assertEqual(replay_msg["channel_id"], "task-1")
+        self.assertEqual(replay_msg["count"], 1)
+        # 原始历史事件在 events 数组中
+        self.assertEqual(replay_msg["events"][0]["type"], "tool_call_running")
+        self.assertEqual(replay_msg["events"][0]["seq"], 3)
 
         # 4. 回放完成后 task_groups 仍包含目标 group（恢复正常订阅）
         expected_group = _group_name("task", "task-1")
@@ -297,6 +315,9 @@ class ReplayAndResumeSubscriptionTests(unittest.IsolatedAsyncioTestCase):
 
         边界场景：客户端 last_seq 已是最新，回放 0 条事件，
         但订阅状态仍正常（session_groups 包含目标 group）。
+
+        ``_send_replay_chunked`` 对空历史仍发送 ``type='replay'`` 消息
+        （``count=0, events=[]``），前端 barrier 机制据此完成 replay 阶段。
         """
         consumer = _make_consumer(user_id=1)
         consumer._user_owns_session = AsyncMock(return_value=True)
@@ -307,10 +328,14 @@ class ReplayAndResumeSubscriptionTests(unittest.IsolatedAsyncioTestCase):
             "last_seq": 100,
         })
 
-        # 仅 subscribed 响应，无历史回放
-        self.assertEqual(consumer.send_json.call_count, 1)
-        sent = consumer.send_json.call_args.args[0]
-        self.assertEqual(sent["type"], "subscribed")
+        # subscribed + replay(count=0) = 2 次
+        self.assertEqual(consumer.send_json.call_count, 2)
+        first = consumer.send_json.call_args_list[0].args[0]
+        self.assertEqual(first["type"], "subscribed")
+        second = consumer.send_json.call_args_list[1].args[0]
+        self.assertEqual(second["type"], "replay")
+        self.assertEqual(second["count"], 0)
+        self.assertEqual(second["events"], [])
 
         # 订阅状态仍正常
         expected_group = _group_name("session", "session-1")

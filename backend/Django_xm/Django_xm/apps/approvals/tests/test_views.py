@@ -2,10 +2,17 @@
 
 测试 ApprovalListView、ApprovalDetailView、ApprovalResumeView、ApprovalRejectView
 四个视图的请求与响应行为，mock 掉 Redis/Celery/SSE 等外部依赖。
+
+覆盖端到端审批恢复流程：
+- POST /api/v1/approvals/{interrupt_id}/resume/ chat source 返回 SSE 流
+- POST /api/v1/approvals/{interrupt_id}/resume/ deep_research source 返回 SSE 流
+- waiting 状态返回 JSON（content-type: application/json）
+- 不存在的审批返回 404
+- 非法 source 返回 400
+- 幂等响应（已处理审批）返回 JSON
 """
 
-from unittest.mock import patch
-import unittest
+from unittest.mock import MagicMock, patch
 
 from django.http import StreamingHttpResponse
 from rest_framework.test import APITestCase
@@ -28,9 +35,12 @@ class ApprovalViewTestBase(APITestCase):
         super().setUp()
         self.client.force_authenticate(user=self.user)
 
-    @staticmethod
-    def _make_approval(**kwargs):
-        """创建一条 Approval 记录，提供合理默认值。"""
+    def _make_approval(self, **kwargs):
+        """创建一条 Approval 记录，提供合理默认值。
+
+        默认归属当前测试用户（user=self.user），适配 Task 1 引入的 user 字段越权修复。
+        调用方传 user=None 可显式模拟历史无归属数据。
+        """
         defaults = {
             'interrupt_id': 'test-interrupt-001',
             'source': Approval.SOURCE_CHAT,
@@ -44,6 +54,7 @@ class ApprovalViewTestBase(APITestCase):
             'danger_level': 'high',
             'parameters': {'command': 'rm -rf /tmp/test'},
             'state': Approval.STATE_PENDING,
+            'user': self.user,
         }
         defaults.update(kwargs)
         return Approval.objects.create(**defaults)
@@ -136,8 +147,31 @@ class ApprovalDetailViewTests(ApprovalViewTestBase):
         self.assertEqual(body['code'], 40401)
 
 
+# ==================== ApprovalResumeView 端到端测试 ====================
+
+def _make_fake_sse_streaming_response():
+    """构造一个最小的 SSE StreamingHttpResponse，用于 mock 流式恢复返回值。"""
+    return StreamingHttpResponse(
+        streaming_content=iter([
+            'data: {"type": "start", "message": "审批恢复"}\n\n',
+            'data: {"type": "chunk", "content": "已恢复"}\n\n',
+            'data: [DONE]\n\n',
+        ]),
+        content_type='text/event-stream',
+    )
+
+
 class ApprovalResumeViewTests(ApprovalViewTestBase):
-    """ApprovalResumeView 测试：POST /api/v1/approvals/{interrupt_id}/resume/。"""
+    """ApprovalResumeView 测试：POST /api/v1/approvals/{interrupt_id}/resume/。
+
+    覆盖 SubTask 17.5 要求的场景：
+    - chat source 返回 SSE 流（content-type: text/event-stream）
+    - deep_research source 返回 SSE 流
+    - waiting 状态返回 JSON（content-type: application/json）
+    - 不存在的审批返回 404
+    - 非法 source 返回 400
+    - 幂等响应返回 JSON
+    """
 
     def setUp(self):
         super().setUp()
@@ -154,20 +188,15 @@ class ApprovalResumeViewTests(ApprovalViewTestBase):
             chat_session_id='chat-session-001',
         )
 
-    @unittest.skip('chat_resume_service 已在 Phase 1 移除，相关测试待后续 Phase 重建')
-    @patch('Django_xm.apps.chat.services.chat_resume_service.stream_chat_resume_response')
     @patch('Django_xm.apps.approvals.views.approval_service.resume_approval')
-    def test_resume_chat_source_returns_sse_stream(self, mock_resume, mock_stream):
-        """chat source 返回 SSE 流。"""
+    @patch('Django_xm.apps.approvals.views._stream_chat_resume_sse')
+    def test_resume_chat_source_returns_sse_stream(self, mock_stream_sse, mock_resume):
+        """chat source 审批恢复返回 SSE 流（content-type: text/event-stream）。"""
         mock_resume.return_value = {
             'approval': self.chat_approval,
             'resume_value': True,
         }
-        fake_response = StreamingHttpResponse(
-            streaming_content=iter(['data: test\n\n']),
-            content_type='text/event-stream',
-        )
-        mock_stream.return_value = fake_response
+        mock_stream_sse.return_value = _make_fake_sse_streaming_response()
 
         resp = self.client.post(
             f'/api/v1/approvals/{self.chat_approval.interrupt_id}/resume/',
@@ -177,26 +206,28 @@ class ApprovalResumeViewTests(ApprovalViewTestBase):
 
         self.assertEqual(resp.status_code, 200)
         self.assertIn('text/event-stream', resp['Content-Type'])
-        mock_resume.assert_called_once_with(
-            interrupt_id='resume-chat-001',
-            approved=True,
-            user_input=None,
-        )
-        mock_stream.assert_called_once()
-        # 校验 session_id 取自 chat_session_id，approved=True
-        call_args = mock_stream.call_args
-        self.assertEqual(call_args.args[3], 'chat-session-001')
-        self.assertTrue(call_args.kwargs.get('approved', False))
+        # 消费流式响应内容
+        events = b''.join(resp.streaming_content)
+        self.assertIn(b'"type": "start"', events)
+        self.assertIn(b'"type": "chunk"', events)
+        self.assertIn(b'[DONE]', events)
+        # 验证 resume_approval 调用参数
+        mock_resume.assert_called_once()
+        kwargs = mock_resume.call_args.kwargs
+        self.assertEqual(kwargs['interrupt_id'], 'resume-chat-001')
+        self.assertTrue(kwargs['approved'])
+        # 验证路由到 chat 恢复流
+        mock_stream_sse.assert_called_once()
 
-    @unittest.skip('_resume_research 已在 Phase 1 移除，相关测试待后续 Phase 重建')
-    @patch('Django_xm.apps.approvals.views.approval_service._resume_research')
     @patch('Django_xm.apps.approvals.views.approval_service.resume_approval')
-    def test_resume_deep_research_source_returns_202(self, mock_resume, mock_resume_research):
-        """deep_research source 返回 202。"""
+    @patch('Django_xm.apps.approvals.views._stream_chat_resume_sse')
+    def test_resume_deep_research_source_returns_sse_stream(self, mock_stream_sse, mock_resume):
+        """deep_research source 审批恢复返回 SSE 流（与 chat 共用 in-process SSE 恢复）。"""
         mock_resume.return_value = {
             'approval': self.research_approval,
             'resume_value': True,
         }
+        mock_stream_sse.return_value = _make_fake_sse_streaming_response()
 
         resp = self.client.post(
             f'/api/v1/approvals/{self.research_approval.interrupt_id}/resume/',
@@ -204,42 +235,148 @@ class ApprovalResumeViewTests(ApprovalViewTestBase):
             format='json',
         )
 
-        self.assertEqual(resp.status_code, 202)
-        body = resp.json()
-        self.assertEqual(body['code'], 0)
-        self.assertEqual(body['data']['state'], 'processing')
-        self.assertEqual(body['data']['interrupt_id'], 'resume-research-001')
-        mock_resume_research.assert_called_once_with(
-            task_id='research-task-001',
-            interrupt_id='resume-research-001',
-            resume_value=True,
-        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('text/event-stream', resp['Content-Type'])
+        # 消费流式响应内容
+        events = b''.join(resp.streaming_content)
+        self.assertIn(b'"type": "start"', events)
+        self.assertIn(b'[DONE]', events)
+        # 验证路由到 chat 恢复流（deep_research 与 chat 共用 _stream_chat_resume_sse）
+        mock_stream_sse.assert_called_once()
 
     @patch('Django_xm.apps.approvals.views.approval_service.resume_approval')
-    def test_resume_not_found_returns_error(self, mock_resume):
-        """审批不存在时返回错误。"""
-        mock_resume.side_effect = ValueError('审批记录不存在: interrupt_id=nonexistent')
+    def test_resume_waiting_state_returns_json(self, mock_resume):
+        """waiting 状态（同批次还有 pending）返回 JSON，content-type 为 application/json。
 
-        resp = self.client.post('/api/v1/approvals/nonexistent/resume/')
+        前端 _executeChatApproval 通过 content-type 区分 SSE 流与 waiting JSON 响应。
+        """
+        mock_resume.return_value = {
+            'approval': self.chat_approval,
+            'resume_value': True,
+            'state': 'waiting',
+        }
+
+        resp = self.client.post(
+            f'/api/v1/approvals/{self.chat_approval.interrupt_id}/resume/',
+            {'approved': True},
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        content_type = resp['Content-Type']
+        self.assertIn('application/json', content_type,
+                      f'waiting 响应必须返回 application/json，实际: {content_type}')
+        body = resp.json()
+        self.assertEqual(body['code'], 0)
+        self.assertEqual(body['data']['state'], 'waiting')
+        self.assertEqual(body['data']['status'], 'waiting_for_others')
+        self.assertEqual(body['data']['interrupt_id'], 'resume-chat-001')
+
+    @patch('Django_xm.apps.approvals.views.approval_service.resume_approval')
+    def test_resume_not_found_returns_404(self, mock_resume):
+        """审批不存在时返回 404。"""
+        mock_resume.return_value = {
+            'approval': None,
+            'resume_value': None,
+            'not_found': True,
+        }
+
+        resp = self.client.post(
+            '/api/v1/approvals/nonexistent-interrupt/resume/',
+            {'approved': True},
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, 404)
+        body = resp.json()
+        self.assertEqual(body['code'], 40401)
+        self.assertIn('不存在', body['message'])
+
+    @patch('Django_xm.apps.approvals.views.approval_service.resume_approval')
+    @patch('Django_xm.apps.approvals.views.approval_service.complete_approval')
+    def test_resume_unknown_source_returns_400(self, mock_complete, mock_resume):
+        """非法 source 返回 400，并将审批标记为 rejected 释放锁。"""
+        unknown_approval = self._make_approval(
+            interrupt_id='resume-unknown-001',
+            source='unknown_source',
+            source_id='unknown-src-001',
+        )
+        mock_resume.return_value = {
+            'approval': unknown_approval,
+            'resume_value': True,
+        }
+
+        resp = self.client.post(
+            f'/api/v1/approvals/{unknown_approval.interrupt_id}/resume/',
+            {'approved': True},
+            format='json',
+        )
 
         self.assertEqual(resp.status_code, 400)
         body = resp.json()
         self.assertEqual(body['code'], 40002)
-        self.assertIn('审批记录不存在', body['message'])
+        self.assertIn('不支持的审批来源', body['message'])
+        # 验证释放锁
+        mock_complete.assert_called_once()
+        complete_args = mock_complete.call_args.args
+        self.assertEqual(complete_args[0], 'resume-unknown-001')
+        self.assertEqual(complete_args[1], Approval.STATE_REJECTED)
 
     @patch('Django_xm.apps.approvals.views.approval_service.resume_approval')
-    def test_resume_non_pending_returns_error(self, mock_resume):
-        """审批状态非 pending 时返回错误。"""
+    def test_resume_idempotent_returns_json(self, mock_resume):
+        """已处理审批（幂等）返回 JSON，包含完整审批状态。"""
+        # 模拟已 approved 的审批再次 resume
+        self.chat_approval.state = Approval.STATE_APPROVED
+        self.chat_approval.save(update_fields=['state'])
+        mock_resume.return_value = {
+            'approval': self.chat_approval,
+            'resume_value': True,
+            'idempotent': True,
+        }
+
+        resp = self.client.post(
+            f'/api/v1/approvals/{self.chat_approval.interrupt_id}/resume/',
+            {'approved': True},
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        content_type = resp['Content-Type']
+        self.assertIn('application/json', content_type,
+                      f'幂等响应必须返回 application/json，实际: {content_type}')
+        body = resp.json()
+        # 幂等响应走 success_response，code=200（非 waiting 状态分支）
+        self.assertEqual(body['code'], 200)
+        self.assertEqual(body['data']['interrupt_id'], 'resume-chat-001')
+        self.assertTrue(body['data']['idempotent'])
+
+    @patch('Django_xm.apps.approvals.views.approval_service.resume_approval')
+    def test_resume_validation_error_returns_400(self, mock_resume):
+        """resume_approval 抛出 ValueError 时返回 400。"""
         mock_resume.side_effect = ValueError('审批状态非 pending，无法恢复: state=approved')
 
         resp = self.client.post(
-            f'/api/v1/approvals/{self.chat_approval.interrupt_id}/resume/'
+            f'/api/v1/approvals/{self.chat_approval.interrupt_id}/resume/',
+            {'approved': True},
+            format='json',
         )
 
         self.assertEqual(resp.status_code, 400)
         body = resp.json()
         self.assertEqual(body['code'], 40002)
         self.assertIn('审批状态非 pending', body['message'])
+
+    def test_resume_invalid_body_returns_400(self):
+        """请求体校验失败（approved 字段类型错误）返回 400。"""
+        resp = self.client.post(
+            f'/api/v1/approvals/{self.chat_approval.interrupt_id}/resume/',
+            {'approved': 'not_a_boolean'},
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, 400)
+        body = resp.json()
+        self.assertEqual(body['code'], 40002)
 
 
 class ApprovalRejectViewTests(ApprovalViewTestBase):
@@ -260,60 +397,27 @@ class ApprovalRejectViewTests(ApprovalViewTestBase):
             chat_session_id='chat-session-002',
         )
 
-    @unittest.skip('chat_resume_service 已在 Phase 1 移除，相关测试待后续 Phase 重建')
-    @patch('Django_xm.apps.chat.services.chat_resume_service.stream_chat_resume_response')
     @patch('Django_xm.apps.approvals.views.approval_service.resume_approval')
-    def test_reject_chat_source_returns_sse_stream(self, mock_resume, mock_stream):
-        """chat source 返回 SSE 流。"""
+    @patch('Django_xm.apps.approvals.views._stream_chat_resume_sse')
+    def test_reject_chat_source_returns_sse_stream(self, mock_stream_sse, mock_resume):
+        """chat source 拒绝审批返回 SSE 流。"""
         mock_resume.return_value = {
             'approval': self.chat_approval,
             'resume_value': False,
         }
-        fake_response = StreamingHttpResponse(
-            streaming_content=iter(['data: test\n\n']),
-            content_type='text/event-stream',
-        )
-        mock_stream.return_value = fake_response
+        mock_stream_sse.return_value = _make_fake_sse_streaming_response()
 
         resp = self.client.post(
-            f'/api/v1/approvals/{self.chat_approval.interrupt_id}/reject/'
+            f'/api/v1/approvals/{self.chat_approval.interrupt_id}/reject/',
+            format='json',
         )
 
         self.assertEqual(resp.status_code, 200)
         self.assertIn('text/event-stream', resp['Content-Type'])
-        mock_resume.assert_called_once_with(
-            interrupt_id='reject-chat-001',
-            approved=False,
-        )
-        mock_stream.assert_called_once()
-        # 拒绝时 approved=False
-        call_args = mock_stream.call_args
-        self.assertFalse(call_args.kwargs.get('approved', True))
-
-    @unittest.skip('_resume_research 已在 Phase 1 移除，相关测试待后续 Phase 重建')
-    @patch('Django_xm.apps.approvals.views.approval_service._resume_research')
-    @patch('Django_xm.apps.approvals.views.approval_service.resume_approval')
-    def test_reject_deep_research_source_returns_202(self, mock_resume, mock_resume_research):
-        """deep_research source 返回 202。"""
-        mock_resume.return_value = {
-            'approval': self.research_approval,
-            'resume_value': False,
-        }
-
-        resp = self.client.post(
-            f'/api/v1/approvals/{self.research_approval.interrupt_id}/reject/'
-        )
-
-        self.assertEqual(resp.status_code, 202)
-        body = resp.json()
-        self.assertEqual(body['code'], 0)
-        self.assertEqual(body['data']['state'], 'processing')
-        self.assertEqual(body['data']['interrupt_id'], 'reject-research-001')
-        mock_resume_research.assert_called_once_with(
-            task_id='research-task-002',
-            interrupt_id='reject-research-001',
-            resume_value=False,
-        )
+        # 验证拒绝时 approved=False
+        mock_resume.assert_called_once()
+        kwargs = mock_resume.call_args.kwargs
+        self.assertFalse(kwargs['approved'])
 
     @patch('Django_xm.apps.approvals.views.approval_service.resume_approval')
     def test_reject_not_found_returns_error(self, mock_resume):
@@ -326,3 +430,184 @@ class ApprovalRejectViewTests(ApprovalViewTestBase):
         body = resp.json()
         self.assertEqual(body['code'], 40002)
         self.assertIn('审批记录不存在', body['message'])
+
+    @patch('Django_xm.apps.approvals.views.approval_service.resume_approval')
+    def test_reject_waiting_state_returns_json(self, mock_resume):
+        """拒绝时同批次还有 pending 也返回 JSON waiting 响应。"""
+        mock_resume.return_value = {
+            'approval': self.chat_approval,
+            'resume_value': False,
+            'state': 'waiting',
+        }
+
+        resp = self.client.post(
+            f'/api/v1/approvals/{self.chat_approval.interrupt_id}/reject/',
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        content_type = resp['Content-Type']
+        self.assertIn('application/json', content_type)
+        body = resp.json()
+        self.assertEqual(body['data']['state'], 'waiting')
+        self.assertEqual(body['data']['status'], 'waiting_for_others')
+
+
+# ==================== ApprovalResumeView 直接调用生成器单元测试 ====================
+
+class StreamChatResumeGeneratorTests(ApprovalViewTestBase):
+    """_stream_chat_resume_generator 单元测试。
+
+    直接调用生成器，验证基本行为：
+    - 产出 SSE 事件流
+    - 异常时产出 error 事件
+    - finally 块释放 checkpointer
+    """
+
+    def _make_mock_request(self, data=None):
+        """构造 mock request，用于直接调用生成器。"""
+        mock_request = MagicMock()
+        mock_request.user.id = self.user.id
+        mock_request.data = data or {
+            'use_tools': True,
+            'use_web_search': False,
+            'use_mcp': False,
+            'selected_mcp_servers': None,
+            'selected_tools': None,
+            'use_knowledge_base': False,
+            'selected_knowledge_bases': [],
+            'provider_id': None,
+            'model_name': None,
+            'use_deep_thinking': False,
+            'special_params': None,
+            'temperature': None,
+            'max_tokens': None,
+        }
+        return mock_request
+
+    def _setup_mock_chat_service(self, mock_chat_service_class, mock_agent=None):
+        """配置 ChatService mock，返回 mock_service。"""
+        mock_service = MagicMock()
+        mock_chat_service_class.return_value = mock_service
+        mock_chat_service_class._resolve_model_instance.return_value = MagicMock()
+        mock_service._build_tool_config.return_value = {'use_tools': True}
+
+        async def mock_get_tools(data):
+            return []
+
+        mock_service._get_tools = mock_get_tools
+
+        if mock_agent is None:
+            mock_agent = MagicMock()
+            mock_graph = MagicMock()
+
+            async def mock_aget_state(config):
+                mock_state = MagicMock()
+                mock_state.tasks = []
+                mock_state.values = {"messages": []}
+                return mock_state
+
+            mock_graph.aget_state = mock_aget_state
+            mock_agent.graph = mock_graph
+
+        async def mock_create_agent(data, prompt_mode='agent', model_instance=None,
+                                    tool_config=None, tools=None):
+            return (mock_agent, {"configurable": {"thread_id": "test-session"}}, True)
+
+        mock_service._create_agent_with_memory = mock_create_agent
+
+        return mock_service, mock_agent
+
+    @patch('Django_xm.apps.ai_engine.services.checkpointer_factory.release_async_checkpointer',
+           new_callable=MagicMock)
+    @patch('Django_xm.apps.chat.services.stream_helpers.process_stream_chunk')
+    @patch('Django_xm.apps.chat.services.chat_service.ChatService')
+    def test_generator_produces_done_event(
+        self,
+        mock_chat_service_class,
+        mock_process_chunk,
+        mock_release,
+    ):
+        """生成器正常结束时产出 [DONE] 事件。"""
+        from asgiref.sync import async_to_sync
+
+        from Django_xm.apps.chat.views_chat import _stream_chat_resume_generator
+
+        # 构造 mock agent，astream 产出一个 messages 模式 chunk
+        mock_agent = MagicMock()
+        mock_graph = MagicMock()
+
+        async def mock_astream(command, config=None, stream_mode=None, **kwargs):
+            yield ("messages", (MagicMock(content="Hello"), {"langgraph_node": "agent"}))
+
+        mock_graph.astream = mock_astream
+
+        async def mock_aget_state(config):
+            mock_state = MagicMock()
+            mock_state.tasks = []
+            mock_state.values = {"messages": []}
+            return mock_state
+
+        mock_graph.aget_state = mock_aget_state
+        mock_agent.graph = mock_graph
+
+        self._setup_mock_chat_service(mock_chat_service_class, mock_agent=mock_agent)
+
+        # mock process_stream_chunk 返回 chunk 事件
+        mock_process_chunk.return_value = [{'type': 'chunk', 'content': 'Hello'}]
+
+        mock_approval = self._make_approval(interrupt_id='gen-test-001')
+        mock_request = self._make_mock_request()
+
+        async def _collect():
+            events = []
+            async for event in _stream_chat_resume_generator(
+                mock_request, mock_approval, True, 'test-session-id',
+                request_data=mock_request.data,
+            ):
+                events.append(event)
+            return events
+
+        events = async_to_sync(_collect)()
+
+        # 验证 SSE 事件格式
+        event_text = ''.join(events)
+        self.assertIn('"type": "chunk"', event_text)
+        self.assertIn('[DONE]', event_text)
+
+    @patch('Django_xm.apps.ai_engine.services.checkpointer_factory.release_async_checkpointer',
+           new_callable=MagicMock)
+    @patch('Django_xm.apps.chat.services.chat_service.ChatService')
+    def test_generator_emits_error_on_exception(
+        self,
+        mock_chat_service_class,
+        mock_release,
+    ):
+        """生成器内部异常时产出 error SSE 事件，并在 finally 释放 checkpointer。"""
+        from asgiref.sync import async_to_sync
+
+        from Django_xm.apps.chat.views_chat import _stream_chat_resume_generator
+
+        # ChatService 构造时抛异常
+        mock_chat_service_class.side_effect = RuntimeError('agent build failed')
+
+        mock_approval = self._make_approval(interrupt_id='gen-error-001')
+        mock_request = self._make_mock_request()
+
+        async def _collect():
+            events = []
+            async for event in _stream_chat_resume_generator(
+                mock_request, mock_approval, True, 'test-session-id',
+                request_data=mock_request.data,
+            ):
+                events.append(event)
+            return events
+
+        events = async_to_sync(_collect)()
+
+        event_text = ''.join(events)
+        self.assertIn('event: error', event_text)
+        self.assertIn('approval_error', event_text)
+        self.assertIn('agent build failed', event_text)
+        # 验证 finally 释放 checkpointer
+        mock_release.assert_called_once()

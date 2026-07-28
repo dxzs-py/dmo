@@ -1,11 +1,11 @@
-import re
 import logging
-from typing import Optional
+import re
+
 import requests
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from Django_xm.apps.tools.errors import StandardToolResult, ToolStatus, TOOL_VERSION
+from Django_xm.apps.tools.errors import TOOL_VERSION, StandardToolResult, ToolStatus
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ def _html_to_text(html: str) -> str:
     return text.strip()
 
 
-def _fetch_url(url: str, prompt: Optional[str] = None) -> str:
+def _fetch_url(url: str, prompt: str | None = None) -> str:
     if not url.startswith(('http://', 'https://')):
         url = 'https://' + url
 
@@ -94,7 +94,7 @@ def _fetch_url(url: str, prompt: Optional[str] = None) -> str:
     except requests.HTTPError as e:
         return f"错误: HTTP {e.response.status_code}"
     except Exception as e:
-        return f"错误: {str(e)}"
+        return f"错误: {e!s}"
 
 
 class WebFetchInput(BaseModel):
@@ -105,7 +105,7 @@ class WebFetchInput(BaseModel):
 class WebFetchTool(BaseTool):
     name: str = "web_fetch"
     version: str = TOOL_VERSION
-    metadata: dict = {"tier": "standard", "visibility": "core", "category": "web_fetch"}
+    metadata: dict = Field(default_factory=lambda: {"tier": "standard", "visibility": "core", "category": "web_fetch"})
     description: str = (
         "抓取指定 URL 的网页内容，将 HTML 转换为纯文本返回，支持 JSON API 响应。"
         "适用场景：需要获取指定网页的详细内容、提取网页信息、读取 API 返回的 JSON 数据。"

@@ -1,5 +1,6 @@
 from django.contrib import admin
-from Django_xm.apps.tools.models import ToolCategory, CustomTool, McpServerConfig, SkillConfig, SkillPackage
+
+from Django_xm.apps.tools.models import CustomTool, McpServerConfig, SkillConfig, SkillPackage, ToolCategory
 
 
 @admin.register(ToolCategory)

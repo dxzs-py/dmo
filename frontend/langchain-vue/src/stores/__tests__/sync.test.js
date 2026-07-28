@@ -41,6 +41,17 @@ vi.mock('@/stores/approval', () => ({
   }),
 }))
 
+// Mock research / workflow store：避免加载真实模块拉入 api/axios → user → router → createWebHistory（需要 window）
+vi.mock('@/stores/research', () => ({
+  useResearchStore: () => ({}),
+}))
+
+vi.mock('@/stores/workflow', () => ({
+  useWorkflowStore: () => ({
+    updateWorkflowFromEvent: vi.fn(),
+  }),
+}))
+
 vi.mock('@/utils/logger', () => ({
   logger: {
     log: () => {},

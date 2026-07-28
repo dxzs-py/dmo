@@ -19,14 +19,14 @@ AI 引擎配置模块
 from __future__ import annotations
 
 import threading
-from pathlib import Path
-from typing import Optional, Any
+from typing import Any
 
-from pydantic import Field, model_validator
+from pydantic import Field
 
 from Django_xm.apps.core.config import (
     ProjectSettings,
-    get_logger,  # noqa: F401 - re-export for backward compatibility
+)
+from Django_xm.apps.core.config import (
     setup_loguru_logging as _setup_loguru_logging,
 )
 
@@ -61,7 +61,7 @@ class Settings(ProjectSettings):
         description="模型温度参数"
     )
 
-    openai_max_tokens: Optional[int] = Field(
+    openai_max_tokens: int | None = Field(
         default=None,
         description="最大生成 token 数"
     )
@@ -152,7 +152,7 @@ class Settings(ProjectSettings):
         description="Agent 最大迭代次数"
     )
 
-    agent_max_execution_time: Optional[float] = Field(
+    agent_max_execution_time: float | None = Field(
         default=None,
         description="Agent 最大执行时间(秒)"
     )
@@ -747,9 +747,7 @@ def get_model_presets() -> dict[str, dict[str, Any]]:
 
 def get_available_providers() -> list[dict[str, Any]]:
     """从数据库获取所有 Provider 列表（包含不可用的，available 字段标记可用性）"""
-    from Django_xm.apps.ai_engine.services.registry_service import (
-        get_model_registry, is_provider_available
-    )
+    from Django_xm.apps.ai_engine.services.registry_service import get_model_registry, is_provider_available
     result = []
     for key, cfg in get_model_registry().items():
         available = is_provider_available(key)

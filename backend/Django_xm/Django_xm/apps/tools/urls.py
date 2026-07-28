@@ -1,4 +1,5 @@
 from django.urls import path
+
 from . import views_mcp
 
 app_name = 'tools'

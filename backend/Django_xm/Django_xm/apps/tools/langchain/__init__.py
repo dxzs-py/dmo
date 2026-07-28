@@ -5,54 +5,63 @@
 """
 
 # 时间工具
-from .time import get_current_time, get_current_date, get_time_tools
-
 # 计算器工具
 from .calc import calculator, get_calculator_tools
+from .time import get_current_date, get_current_time, get_time_tools
+
+# 天气工具
+from .weather import WEATHER_TOOLS, get_weather_tools, weather_query
+from .web_duckduckgo import (
+    DUCKDUCKGO_TOOLS,
+    duckduckgo_search,
+    get_duckduckgo_tools,
+    has_duckduckgo_available,
+)
+from .web_fetch import get_web_fetch_tools, web_fetch
 
 # 网络搜索工具
 from .web_search import (
-    web_search, create_tavily_search_tool,
-    get_web_search_tools, get_tavily_api_key, get_tavily_max_results,
+    create_tavily_search_tool,
+    get_tavily_api_key,
+    get_tavily_max_results,
+    get_web_search_tools,
+    web_search,
 )
-from .web_duckduckgo import (
-    duckduckgo_search, get_duckduckgo_tools, DUCKDUCKGO_TOOLS,
-    has_duckduckgo_available,
-)
-from .web_fetch import web_fetch, get_web_fetch_tools
 
-# 天气工具
-from .weather import weather_query, get_weather_tools, WEATHER_TOOLS
 get_daily_weather = weather_query  # 别名，与 tools/__init__.py 保持一致
 
 # 文件系统工具
-from .filesystem import (
-    fs_write_file, fs_read_file, fs_list_files, fs_search_files,
-    FILESYSTEM_TOOLS, get_filesystem_tools, ResearchFileSystem,
-)
-
 # 文件读取工具
 from .file_reader import (
-    file_reader, attachment_reader, get_file_reader_tools, FILE_READER_TOOLS,
-    read_file_content, read_file_as_documents,
-    read_attachment_as_base64, read_attachment_as_documents,
-    get_attachment_info, read_multiple_attachments,
+    FILE_READER_TOOLS,
+    attachment_reader,
+    file_reader,
+    get_attachment_info,
+    get_file_reader_tools,
+    read_attachment_as_base64,
+    read_attachment_as_documents,
+    read_file_as_documents,
+    read_file_content,
+    read_multiple_attachments,
 )
-
-# 翻译工具
-from .translation import translate_text, detect_language, get_translation_tools, TRANSLATION_TOOLS
-
-# 待办工具
-from .todo import todo_write, todo_read, get_todo_tools
-
-# 子代理工具
-from .agent import (
-    agent_create, agent_run, agent_list, agent_cleanup,
-    get_agent_tools, AGENT_TYPES,
+from .filesystem import (
+    FILESYSTEM_TOOLS,
+    ResearchFileSystem,
+    fs_list_files,
+    fs_read_file,
+    fs_search_files,
+    fs_write_file,
+    get_filesystem_tools,
 )
 
 # Shell 执行工具
-from .shell import shell_exec, get_shell_exec_tools
+from .shell import get_shell_exec_tools, shell_exec
+
+# 待办工具
+from .todo import get_todo_tools, todo_read, todo_write
+
+# 翻译工具
+from .translation import TRANSLATION_TOOLS, detect_language, get_translation_tools, translate_text
 
 __all__ = [
     # 时间
@@ -74,9 +83,6 @@ __all__ = [
     "translate_text", "detect_language", "get_translation_tools", "TRANSLATION_TOOLS",
     # 待办
     "todo_write", "todo_read", "get_todo_tools",
-    # 子代理
-  "agent_create", "agent_run", "agent_list", "agent_cleanup",
-  "get_agent_tools", "AGENT_TYPES",
   # Shell 执行
   "shell_exec", "get_shell_exec_tools",
 ]

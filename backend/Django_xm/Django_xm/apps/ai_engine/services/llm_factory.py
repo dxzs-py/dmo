@@ -1,50 +1,36 @@
-"""
-LLM 模型封装模块
-提供统一的 LLM 模型接口，支持 OpenAI 等多种提供商
+"""LLM 模型工厂（公开 API 层）
+
+提供统一的 LLM 模型创建接口，支持 OpenAI / Anthropic / Ollama / DeepSeek 等多种 provider。
 
 使用 LangChain v1.2+ 的 init_chat_model 统一模型初始化，
 替代手动 ChatOpenAI 实例化，实现单一真相源。
 
-改进：
-1. 集成 InMemoryRateLimiter 防止 API 过载
-2. 支持多模型提供商（OpenAI/Anthropic 等）
-3. 提供商配置拆分至 providers 模块，单一真相源
+模块拆分（Task 19）：
+- **llm_cache.py**: 缓存与速率限制基础设施（InMemoryCache / RedisSemanticCache / RateLimiter）
+- **llm_fallback.py**: Fallback 机制（LazyFallbackChatModel / StructuredModelWithFallback /
+  FallbackDetectionCallback / get_fallback_candidates）
+- **llm_factory.py**（本文件）: 公开 API 层（get_chat_model / get_chat_model_by_provider /
+  get_helper_model / get_structured_model_with_fallback / JsonModeStructuredModel 等）
+
+依赖关系（DAG，无循环）：
+  llm_cache ← llm_fallback ← llm_factory
 
 参考：
 - https://docs.langchain.com/oss/python/langchain/models
 - https://reference.langchain.com/python/langchain/chat_models/#init_chat_model
 """
 
-from typing import Optional, Dict, Any, Union, List, Tuple, AsyncIterator, Iterator, Callable
-import threading
-import time
-import warnings
-from functools import wraps
-
-# 抑制 OpenAI SDK 与 Pydantic v2 的兼容性警告：
-# OpenAI SDK 的 ParsedChatCompletionMessage.parsed 字段类型为 Optional[ContentType]，
-# 解析后实际为 Optional[None]，但 with_structured_output 会将 Pydantic BaseModel 实例
-# 填入 additional_kwargs["parsed"]。LangChain tracer 在 on_llm_end 回调中调用
-# LLMResult.model_dump() 时，Pydantic 发现类型不匹配，触发警告。
-# 警告消息是多行格式：第一行 "Pydantic serializer warnings:"，第二行才是具体类型，
-# 因此用 [\s\S]* 匹配跨行内容（.* 不匹配换行符）。
-warnings.filterwarnings(
-    "ignore",
-    message=r"Pydantic serializer warnings[\s\S]*PydanticSerializationUnexpectedValue",
-    category=UserWarning,
-)
+from typing import Any
 
 from django.conf import settings as django_settings
 from langchain.chat_models import init_chat_model
-from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import BaseMessage
-from langchain_core.runnables import Runnable, RunnableConfig
-from langchain_core.outputs import ChatGenerationChunk, ChatResult
+from langchain_core.messages import SystemMessage
+from langchain_core.runnables import RunnableConfig
 
-from ..config import settings, get_logger, get_model_presets, HELPER_MODEL_PRIORITY
-from .model_cache import make_cache_key, get_cached_model, set_cached_model
-from .registry_service import get_model_registry, get_provider_config, is_provider_valid, is_provider_available as registry_is_provider_available
+from Django_xm.apps.core.config import get_logger
+
+from ..config import HELPER_MODEL_PRIORITY, get_model_presets, settings
 from ..providers import (
     PROVIDER_REGISTRY,
     apply_reasoning_patch_if_needed,
@@ -52,11 +38,32 @@ from ..providers import (
     patch_groq_model,
 )
 
+# 从拆分后的模块导入（Task 19）
+from .llm_cache import (
+    cached_model_creation,
+    get_rate_limiter,
+)
+from .llm_fallback import (
+    LazyFallbackChatModel,
+    StructuredModelWithFallback,
+    get_fallback_candidates,
+)
+from .model_cache import make_cache_key
+from .registry_service import (
+    get_model_registry,
+    get_provider_config,
+)
+from .registry_service import (
+    is_provider_available as registry_is_provider_available,
+)
+
 logger = get_logger(__name__)
 
 
+# ============== 模型能力查询 ==============
+
 def model_supports_capability(provider_id: str, model_name: str, capability: str) -> bool:
-    """检查模型是否支持指定能力"""
+    """检查模型是否支持指定能力（如 deep_thinking / vision / tool_calling）"""
     provider_cfg = get_provider_config(provider_id)
     for model_cfg in provider_cfg.get("models", []):
         if isinstance(model_cfg, dict) and model_cfg.get("name") == model_name:
@@ -66,179 +73,11 @@ def model_supports_capability(provider_id: str, model_name: str, capability: str
     return False
 
 
-_rate_limiter_lock = threading.Lock()
-_rate_limiter: Optional[Any] = None
-_llm_cache_lock = threading.Lock()
-_llm_cache: Optional[Any] = None
-
-
-def get_llm_cache() -> Any:
-    global _llm_cache
-    if _llm_cache is not None:
-        return _llm_cache
-
-    with _llm_cache_lock:
-        if _llm_cache is not None:
-            return _llm_cache
-
-        try:
-            from langchain_core.caches import InMemoryCache
-
-            _llm_cache = InMemoryCache()
-            logger.info("LLM InMemoryCache 已创建")
-            return _llm_cache
-        except ImportError:
-            logger.warning("langchain_core.caches.InMemoryCache 不可用")
-            return None
-        except Exception as e:
-            logger.warning(f"LLM Cache 创建失败: {e}")
-            return None
-
-
-def setup_llm_cache() -> None:
-    try:
-        from langchain_core.globals import set_llm_cache
-
-        cache = get_llm_cache()
-        if cache is not None:
-            set_llm_cache(cache)
-            logger.info("全局 LLM Cache 已设置 (via langchain_core.globals)")
-    except ImportError:
-        try:
-            import langchain_core
-            cache = get_llm_cache()
-            if cache is not None:
-                langchain_core.llm_cache = cache
-                logger.info("全局 LLM Cache 已设置 (via langchain_core.llm_cache, 兼容模式)")
-        except Exception as e:
-            logger.warning(f"设置全局 LLM Cache 失败: {e}")
-    except Exception as e:
-        logger.warning(f"设置全局 LLM Cache 失败: {e}")
-
-
-def setup_semantic_cache(
-    redis_url: Optional[str] = None,
-    embedding_model: Optional[str] = None,
-) -> None:
-    try:
-        from langchain_community.cache import RedisSemanticCache
-        from langchain_core.globals import set_llm_cache
-        from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
-
-        redis = redis_url or getattr(settings, "redis_url", "redis://127.0.0.1:6379/5")
-        model_name = embedding_model or getattr(settings, "embedding_model", "text-embedding-3-small")
-        embeddings = get_embeddings(model=model_name, use_cache=False)
-
-        semantic_cache = RedisSemanticCache(
-            redis_url=redis,
-            embedding=embeddings,
-        )
-        set_llm_cache(semantic_cache)
-        logger.info(f"语义缓存已设置 (redis={redis}, model={model_name})")
-    except ImportError:
-        try:
-            from langchain_community.cache import RedisSemanticCache
-            import langchain_core
-            from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
-
-            redis = redis_url or getattr(settings, "redis_url", "redis://127.0.0.1:6379/5")
-            model_name = embedding_model or getattr(settings, "embedding_model", "text-embedding-3-small")
-            embeddings = get_embeddings(model=model_name, use_cache=False)
-
-            langchain_core.llm_cache = RedisSemanticCache(
-                redis_url=redis,
-                embedding=embeddings,
-            )
-            logger.info(f"语义缓存已设置 (兼容模式, redis={redis}, model={model_name})")
-        except ImportError:
-            logger.warning(
-                "langchain_community.cache.RedisSemanticCache 不可用，"
-                "请安装: pip install langchain-community redis"
-            )
-        except Exception as e:
-            logger.warning(f"设置语义缓存失败: {e}，回退到 InMemoryCache")
-            setup_llm_cache()
-
-
-def get_rate_limiter() -> Any:
-    global _rate_limiter
-    if _rate_limiter is not None:
-        return _rate_limiter
-
-    with _rate_limiter_lock:
-        if _rate_limiter is not None:
-            return _rate_limiter
-
-        try:
-            from langchain_core.rate_limiters import InMemoryRateLimiter
-
-            requests_per_minute = getattr(settings, "rate_limit_rpm", 60) or 60
-            requests_per_second = getattr(settings, "rate_limit_rps", 1) or 1
-            max_concurrency = getattr(settings, "rate_limit_max_concurrency", 10) or 10
-
-            _rate_limiter = InMemoryRateLimiter(
-                requests_per_second=requests_per_second,
-                check_every_n_seconds=0.1,
-                max_bucket_size=requests_per_minute,
-            )
-
-            logger.info(
-                f"速率限制器已创建: {requests_per_second} req/s, "
-                f"bucket={requests_per_minute}, max_concurrency={max_concurrency}"
-            )
-            return _rate_limiter
-        except ImportError:
-            logger.warning(
-                "langchain_core.rate_limiters.InMemoryRateLimiter 不可用，"
-                "请升级 langchain-core>=0.3.0"
-            )
-            return None
-        except Exception as e:
-            logger.warning(f"速率限制器创建失败: {e}，将不使用速率限制")
-            return None
-
-
-def _cached_model_creation(
-    cache_key: str,
-    use_cache: bool,
-    creation_func: Callable[[], BaseChatModel],
-    error_context: str = "",
-) -> BaseChatModel:
-    """统一的模型缓存逻辑封装
-
-    将缓存查找 → 模型创建 → 缓存写入的通用流程抽取为单一函数，
-    消除 _create_single_chat_model 和 get_chat_model_by_provider 中的重复代码。
-
-    Args:
-        cache_key: 缓存键
-        use_cache: 是否启用缓存
-        creation_func: 模型创建函数，返回 BaseChatModel 实例
-        error_context: 错误日志的上下文信息（如 provider_id）
-
-    Returns:
-        缓存的或新创建的模型实例
-    """
-    if use_cache:
-        cached = get_cached_model(cache_key)
-        if cached is not None:
-            return cached
-
-    try:
-        model = creation_func()
-
-        if use_cache:
-            set_cached_model(cache_key, model)
-
-        return model
-    except Exception as e:
-        ctx = f" ({error_context})" if error_context else ""
-        logger.error(f"模型创建失败{ctx}: {e}")
-        raise
-
+# ============== 内部辅助：special_params 解析 ==============
 
 def _apply_special_params(
-    init_kwargs: Dict[str, Any],
-    special_params: Dict[str, Any],
+    init_kwargs: dict[str, Any],
+    special_params: dict[str, Any],
     provider_id: str,
     provider: str,
     model_name: str,
@@ -254,8 +93,8 @@ def _apply_special_params(
         logger.debug(f"special_params: 未找到 provider {provider_id} 的注册信息，忽略 special_params")
         return
 
-    model_kwargs: Dict[str, Any] = {}
-    extra_body: Dict[str, Any] = {}
+    model_kwargs: dict[str, Any] = {}
+    extra_body: dict[str, Any] = {}
     for param_key, param_value in special_params.items():
         if param_key in registry.get("special_params", {}):
             param_cfg = registry["special_params"][param_key]
@@ -297,18 +136,20 @@ def _apply_special_params(
             logger.debug("Anthropic 扩展思考模式已启用，注入 thinking 参数")
 
 
+# ============== 单模型创建 ==============
+
 def _create_single_chat_model(
-    model_name: Optional[str] = None,
-    model_provider: Optional[str] = None,
-    temperature: Optional[float] = None,
-    max_tokens: Optional[int] = None,
-    streaming: Optional[bool] = None,
+    model_name: str | None = None,
+    model_provider: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    streaming: bool | None = None,
     use_cache: bool = True,
     **kwargs: Any,
 ) -> BaseChatModel:
     """创建单个聊天模型（无 fallback）
 
-    内部函数，供 get_chat_model() 和 get_chat_model_with_fallback() 共用。
+    内部函数，供 get_chat_model() 共用。
     """
     # 优先从 SystemConfig 数据库读取用户保存的默认模型
     if not model_provider or not model_name:
@@ -324,7 +165,7 @@ def _create_single_chat_model(
     temperature = temperature if temperature is not None else settings.openai_temperature
     streaming = streaming if streaming is not None else settings.openai_streaming
 
-    init_kwargs: Dict[str, Any] = {
+    init_kwargs: dict[str, Any] = {
         "model": model_name,
         "model_provider": provider,
         "temperature": temperature,
@@ -379,493 +220,17 @@ def _create_single_chat_model(
         logger.debug(f"模型创建成功: {model_name}")
         return model
 
-    return _cached_model_creation(cache_key, use_cache, _create)
+    return cached_model_creation(cache_key, use_cache, _create)
 
 
-class LazyFallbackChatModel(BaseChatModel):
-    """懒加载 Fallback 模型包装
-
-    不预实例化 fallback 模型，仅在主模型实际失败时按需创建。
-    代理主模型的所有方法，失败时自动切换到候选模型。
-
-    兼容性：
-    - 提供 .bound 属性（等同于 .primary），兼容旧代码 getattr(model, 'bound', model)
-    - 内置 fallback 状态追踪，通过 fallback_detected / actual_provider / actual_model 属性
-      替代 FallbackDetectionCallback 的回调检测机制
-
-    Args:
-        primary: 主模型实例
-        fallback_candidates: 候选列表 [(provider_id, model_name), ...]
-        factory: 创建模型的工厂函数
-        temperature: 传递给工厂的温度参数
-        max_tokens: 传递给工厂的最大 token 参数
-        streaming: 传递给工厂的流式参数
-    """
-
-    primary: BaseChatModel
-    fallback_candidates: List[Tuple[str, str]]
-    factory: Callable
-    temperature: Optional[float] = None
-    max_tokens: Optional[int] = None
-    streaming: Optional[bool] = None
-    circuit_breaker_cooldown: float = 30.0
-
-    class Config:
-        arbitrary_types_allowed = True
-
-    def __init__(self, **data: Any) -> None:
-        super().__init__(**data)
-        self._fallback_detected: bool = False
-        self._actual_provider: Optional[str] = None
-        self._actual_model: Optional[str] = None
-        # Fallback 模型缓存（同一对话内复用）
-        self._active_fallback_model: Optional[BaseChatModel] = None
-        self._fallback_provider_id: Optional[str] = None
-        self._fallback_model_name: Optional[str] = None
-        # Circuit Breaker 状态
-        self._circuit_state: str = "closed"  # closed / open / half_open
-        self._circuit_opened_at: float = 0.0
-        self._consecutive_failures: int = 0
-
-    @property
-    def _llm_type(self) -> str:
-        return f"lazy-fallback({self.primary._llm_type})"
-
-    @property
-    def bound(self) -> BaseChatModel:
-        """兼容 RunnableWithFallbacks.bound 属性，返回底层主模型"""
-        return self.primary
-
-    @property
-    def fallback_detected(self) -> bool:
-        """是否发生了 fallback（与 FallbackDetectionCallback 接口一致）"""
-        return self._fallback_detected
-
-    @property
-    def actual_provider(self) -> Optional[str]:
-        """实际使用的模型 provider（与 FallbackDetectionCallback 接口一致）"""
-        return self._actual_provider
-
-    @property
-    def actual_model(self) -> Optional[str]:
-        """实际使用的模型名称（与 FallbackDetectionCallback 接口一致）"""
-        return self._actual_model
-
-    def get_fallback_info(self) -> Optional[Dict[str, str]]:
-        """如果检测到降级，返回降级信息；否则返回 None（与 FallbackDetectionCallback 接口一致）"""
-        if not self._fallback_detected:
-            return None
-        return {
-            "original_provider": getattr(self.primary, '_provider_id', '') or '',
-            "original_model": getattr(self.primary, 'model_name', '') or getattr(self.primary, 'model', '') or '',
-            "actual_provider": self._actual_provider or '',
-            "actual_model": self._actual_model or '',
-            "message": (
-                f"模型 {getattr(self.primary, '_provider_id', '')}/{getattr(self.primary, 'model', '')} 运行时失败，"
-                f"已自动切换到 {self._actual_provider}/{self._actual_model}"
-            ),
-        }
-
-    def _mark_fallback(self, provider_id: str, model_name: str) -> None:
-        """记录 fallback 发生"""
-        self._fallback_detected = True
-        self._actual_provider = provider_id
-        self._actual_model = model_name
-        logger.info(
-            f"LazyFallback 降级: {getattr(self.primary, '_provider_id', '')}/{getattr(self.primary, 'model', '')} "
-            f"-> {provider_id}/{model_name}"
-        )
-
-    def _is_permanent_error(self, error: Exception) -> bool:
-        """判断是否为永久性错误（不可恢复，不应重试）"""
-        try:
-            from Django_xm.apps.ai_engine.services.exceptions import classify_exception
-            classified = classify_exception(error)
-            return not classified.recoverable
-        except Exception:
-            # fallback 到字符串匹配（避免循环导入等异常情况）
-            error_str = str(error).lower()
-            return any(kw in error_str for kw in ("401", "403", "invalid_credentials", "authentication", "unauthorized"))
-
-    def _is_input_error(self, error: Exception) -> bool:
-        """判断是否为输入错误（不应降级到 fallback，应直接抛出）"""
-        try:
-            from Django_xm.apps.ai_engine.services.exceptions import classify_exception
-            classified = classify_exception(error)
-            return classified.error_code in ("GUARDRAILS_VALIDATION_ERROR",)
-        except Exception:
-            # fallback 到字符串匹配（避免循环导入等异常情况）
-            error_str = str(error).lower()
-            return any(kw in error_str for kw in ("400", "invalid_request"))
-
-    def _should_try_primary(self) -> bool:
-        """判断是否应该尝试主模型（Circuit Breaker 逻辑）"""
-        if self._circuit_state == "closed":
-            return True
-        if self._circuit_state == "open":
-            if time.monotonic() - self._circuit_opened_at >= self.circuit_breaker_cooldown:
-                self._circuit_state = "half_open"
-                logger.info("Circuit Breaker: OPEN -> HALF_OPEN，试探主模型")
-                return True
-            return False
-        if self._circuit_state == "half_open":
-            return True
-        return False
-
-    def _on_primary_success(self):
-        """主模型调用成功"""
-        if self._circuit_state != "closed":
-            logger.info("Circuit Breaker: -> CLOSED，主模型恢复")
-        self._circuit_state = "closed"
-        self._consecutive_failures = 0
-
-    def _on_primary_failure(self, error: Exception):
-        """主模型调用失败"""
-        self._consecutive_failures += 1
-        if self._is_permanent_error(error) or self._consecutive_failures >= 2:
-            self._circuit_state = "open"
-            self._circuit_opened_at = time.monotonic()
-            logger.info(
-                f"Circuit Breaker: -> OPEN（连续失败 {self._consecutive_failures} 次，"
-                f"冷却 {self.circuit_breaker_cooldown}s）"
-            )
-        elif self._circuit_state == "half_open":
-            self._circuit_state = "open"
-            self._circuit_opened_at = time.monotonic()
-            logger.info("Circuit Breaker: HALF_OPEN -> OPEN，主模型仍不可用")
-
-    def _get_or_create_fallback(self, provider_id: str, model_name: str) -> Optional[BaseChatModel]:
-        """获取或创建 fallback 模型（带缓存，同一对话内复用）"""
-        if (self._active_fallback_model is not None
-            and self._fallback_provider_id == provider_id
-            and self._fallback_model_name == model_name):
-            return self._active_fallback_model
-        fb_model = self._resolve_fallback_model(provider_id, model_name)
-        if fb_model is not None:
-            self._active_fallback_model = fb_model
-            self._fallback_provider_id = provider_id
-            self._fallback_model_name = model_name
-        return fb_model
-
-    def _resolve_fallback_model(self, provider_id: str, model_name: str) -> Optional[BaseChatModel]:
-        """按需创建 fallback 模型实例"""
-        try:
-            model = self.factory(
-                provider_id=provider_id,
-                model_name=model_name,
-                temperature=self.temperature if self.temperature is not None else settings.openai_temperature,
-                max_tokens=self.max_tokens,
-                streaming=self.streaming if self.streaming is not None else settings.openai_streaming,
-                max_retries=0,
-            )
-            logger.info(f"懒加载 Fallback 模型已创建: {provider_id}/{model_name}")
-            return model
-        except Exception as e:
-            logger.warning(f"懒加载 Fallback 模型创建失败 {provider_id}/{model_name}: {e}")
-            return None
-
-    def _generate(self, messages: List[BaseMessage], stop: Optional[List[str]] = None, **kwargs: Any) -> ChatResult:
-        # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
-        if not self._should_try_primary():
-            for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
-                    return fb_model._generate(messages, stop=stop, **kwargs)
-            raise RuntimeError("主模型不可用且无可用 fallback 模型")
-
-        try:
-            result = self.primary._generate(messages, stop=stop, **kwargs)
-            self._on_primary_success()
-            return result
-        except Exception as primary_error:
-            if self._is_input_error(primary_error):
-                raise primary_error
-            self._on_primary_failure(primary_error)
-            logger.warning(f"主模型生成失败，尝试 fallback: {primary_error}")
-            for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
-                    try:
-                        self._mark_fallback(pid, mname)
-                        return fb_model._generate(messages, stop=stop, **kwargs)
-                    except Exception as fb_error:
-                        self._fallback_detected = False
-                        logger.warning(f"Fallback 模型 {pid}/{mname} 也失败: {fb_error}")
-                        continue
-            raise primary_error
-
-    async def _agenerate(self, messages: List[BaseMessage], stop: Optional[List[str]] = None, **kwargs: Any) -> ChatResult:
-        # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
-        if not self._should_try_primary():
-            for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
-                    return await fb_model._agenerate(messages, stop=stop, **kwargs)
-            raise RuntimeError("主模型不可用且无可用 fallback 模型")
-
-        try:
-            result = await self.primary._agenerate(messages, stop=stop, **kwargs)
-            self._on_primary_success()
-            return result
-        except Exception as primary_error:
-            if self._is_input_error(primary_error):
-                raise primary_error
-            self._on_primary_failure(primary_error)
-            logger.warning(f"主模型异步生成失败，尝试 fallback: {primary_error}")
-            for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
-                    try:
-                        self._mark_fallback(pid, mname)
-                        return await fb_model._agenerate(messages, stop=stop, **kwargs)
-                    except Exception as fb_error:
-                        self._fallback_detected = False
-                        logger.warning(f"Fallback 模型 {pid}/{mname} 异步也失败: {fb_error}")
-                        continue
-            raise primary_error
-
-    def _stream(self, messages: List[BaseMessage], stop: Optional[List[str]] = None, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
-        # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
-        if not self._should_try_primary():
-            for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
-                    yield from fb_model._stream(messages, stop=stop, **kwargs)
-                    return
-            raise RuntimeError("主模型不可用且无可用 fallback 模型")
-
-        try:
-            chunks = 0
-            for chunk in self.primary._stream(messages, stop=stop, **kwargs):
-                chunks += 1
-                yield chunk
-            self._on_primary_success()
-            if chunks:
-                logger.debug(f"主模型流式返回 {chunks} 个 chunk")
-        except Exception as primary_error:
-            if self._is_input_error(primary_error):
-                raise primary_error
-            self._on_primary_failure(primary_error)
-            logger.warning(f"主模型流式失败，尝试 fallback: {primary_error}")
-            for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
-                    try:
-                        self._mark_fallback(pid, mname)
-                        chunks = 0
-                        for chunk in fb_model._stream(messages, stop=stop, **kwargs):
-                            chunks += 1
-                            yield chunk
-                        logger.info(f"Fallback 流式返回 {chunks} 个 chunk: {pid}/{mname}")
-                        return
-                    except Exception as fb_error:
-                        self._fallback_detected = False
-                        logger.warning(f"Fallback 模型 {pid}/{mname} 流式也失败: {fb_error}")
-                        continue
-            raise primary_error
-
-    async def _astream(self, messages: List[BaseMessage], stop: Optional[List[str]] = None, **kwargs: Any) -> AsyncIterator[ChatGenerationChunk]:
-        # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
-        if not self._should_try_primary():
-            for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
-                    async for chunk in fb_model._astream(messages, stop=stop, **kwargs):
-                        yield chunk
-                    return
-            raise RuntimeError("主模型不可用且无可用 fallback 模型")
-
-        try:
-            chunks = 0
-            async for chunk in self.primary._astream(messages, stop=stop, **kwargs):
-                chunks += 1
-                yield chunk
-            self._on_primary_success()
-            if chunks:
-                logger.debug(f"主模型异步流式返回 {chunks} 个 chunk")
-        except Exception as primary_error:
-            if self._is_input_error(primary_error):
-                raise primary_error
-            self._on_primary_failure(primary_error)
-            logger.warning(f"主模型异步流式失败，尝试 fallback: {primary_error}")
-            for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
-                    try:
-                        self._mark_fallback(pid, mname)
-                        chunks = 0
-                        async for chunk in fb_model._astream(messages, stop=stop, **kwargs):
-                            chunks += 1
-                            yield chunk
-                        logger.info(f"Fallback 异步流式返回 {chunks} 个 chunk: {pid}/{mname}")
-                        return
-                    except Exception as fb_error:
-                        self._fallback_detected = False
-                        logger.warning(f"Fallback 模型 {pid}/{mname} 异步流式也失败: {fb_error}")
-                        continue
-            raise primary_error
-
-    def invoke(self, input: Any, config: Optional[RunnableConfig] = None, **kwargs: Any) -> Any:
-        # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
-        if not self._should_try_primary():
-            for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
-                    return fb_model.invoke(input, config=config, **kwargs)
-            raise RuntimeError("主模型不可用且无可用 fallback 模型")
-
-        try:
-            result = self.primary.invoke(input, config=config, **kwargs)
-            self._on_primary_success()
-            return result
-        except Exception as primary_error:
-            if self._is_input_error(primary_error):
-                raise primary_error
-            self._on_primary_failure(primary_error)
-            logger.warning(f"主模型 invoke 失败，尝试 fallback: {primary_error}")
-            for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
-                    try:
-                        self._mark_fallback(pid, mname)
-                        return fb_model.invoke(input, config=config, **kwargs)
-                    except Exception as fb_error:
-                        self._fallback_detected = False
-                        logger.warning(f"Fallback 模型 {pid}/{mname} invoke 也失败: {fb_error}")
-                        continue
-            raise primary_error
-
-    async def ainvoke(self, input: Any, config: Optional[RunnableConfig] = None, **kwargs: Any) -> Any:
-        # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
-        if not self._should_try_primary():
-            for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
-                    return await fb_model.ainvoke(input, config=config, **kwargs)
-            raise RuntimeError("主模型不可用且无可用 fallback 模型")
-
-        try:
-            result = await self.primary.ainvoke(input, config=config, **kwargs)
-            self._on_primary_success()
-            return result
-        except Exception as primary_error:
-            if self._is_input_error(primary_error):
-                raise primary_error
-            self._on_primary_failure(primary_error)
-            logger.warning(f"主模型 ainvoke 失败，尝试 fallback: {primary_error}")
-            for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
-                    try:
-                        self._mark_fallback(pid, mname)
-                        return await fb_model.ainvoke(input, config=config, **kwargs)
-                    except Exception as fb_error:
-                        self._fallback_detected = False
-                        logger.warning(f"Fallback 模型 {pid}/{mname} ainvoke 也失败: {fb_error}")
-                        continue
-            raise primary_error
-
-    def stream(self, input: Any, config: Optional[RunnableConfig] = None, **kwargs: Any) -> Iterator[Any]:
-        # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
-        if not self._should_try_primary():
-            for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
-                    yield from fb_model.stream(input, config=config, **kwargs)
-                    return
-            raise RuntimeError("主模型不可用且无可用 fallback 模型")
-
-        try:
-            yield from self.primary.stream(input, config=config, **kwargs)
-            self._on_primary_success()
-        except Exception as primary_error:
-            if self._is_input_error(primary_error):
-                raise primary_error
-            self._on_primary_failure(primary_error)
-            logger.warning(f"主模型 stream 失败，尝试 fallback: {primary_error}")
-            for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
-                    try:
-                        self._mark_fallback(pid, mname)
-                        yield from fb_model.stream(input, config=config, **kwargs)
-                        return
-                    except Exception as fb_error:
-                        self._fallback_detected = False
-                        logger.warning(f"Fallback 模型 {pid}/{mname} stream 也失败: {fb_error}")
-                        continue
-            raise primary_error
-
-    async def astream(self, input: Any, config: Optional[RunnableConfig] = None, **kwargs: Any) -> AsyncIterator[Any]:
-        # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
-        if not self._should_try_primary():
-            for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
-                    async for chunk in fb_model.astream(input, config=config, **kwargs):
-                        yield chunk
-                    return
-            raise RuntimeError("主模型不可用且无可用 fallback 模型")
-
-        try:
-            async for chunk in self.primary.astream(input, config=config, **kwargs):
-                yield chunk
-            self._on_primary_success()
-        except Exception as primary_error:
-            if self._is_input_error(primary_error):
-                raise primary_error
-            self._on_primary_failure(primary_error)
-            logger.warning(f"主模型 astream 失败，尝试 fallback: {primary_error}")
-            for pid, mname in self.fallback_candidates:
-                fb_model = self._get_or_create_fallback(pid, mname)
-                if fb_model is not None:
-                    try:
-                        self._mark_fallback(pid, mname)
-                        async for chunk in fb_model.astream(input, config=config, **kwargs):
-                            yield chunk
-                        return
-                    except Exception as fb_error:
-                        self._fallback_detected = False
-                        logger.warning(f"Fallback 模型 {pid}/{mname} astream 也失败: {fb_error}")
-                        continue
-            raise primary_error
-
-    def bind_tools(self, tools: Any, *, tool_choice=None, **kwargs: Any) -> Any:
-        """将 bind_tools 代理到自身，保留 fallback 能力
-
-        修复：原先返回 self.primary.bind_tools()，导致 RunnableBinding
-        包装主模型，fallback 机制完全失效。改为 self.bind() 使
-        RunnableBinding 包装 LazyFallbackChatModel 自身，_agenerate
-        中的 fallback 逻辑得以保留。
-
-        调用链：RunnableBinding.ainvoke() → LazyFallbackChatModel.ainvoke()
-        → _agenerate(**kwargs含tools) → primary._agenerate / fallback._agenerate
-        """
-        from langchain_core.utils.function_calling import convert_to_openai_tool
-        formatted_tools = [convert_to_openai_tool(tool) for tool in tools]
-        kwargs["tools"] = formatted_tools
-        if tool_choice is not None:
-            kwargs["tool_choice"] = tool_choice
-        return self.bind(**kwargs)
-
-    def with_structured_output(self, schema: Any, **kwargs: Any) -> Any:
-        """将 with_structured_output 代理到自身，保留 fallback 能力
-
-        与 bind_tools 同理，使用 self.bind() 包装以保留 fallback 逻辑。
-        """
-        return self.bind(response_format=schema, **kwargs)
-
-    @property
-    def _provider_id(self) -> Optional[str]:
-        return getattr(self.primary, '_provider_id', None)
-
+# ============== 公开 API：模型创建 ==============
 
 def get_chat_model(
-    model_name: Optional[str] = None,
-    model_provider: Optional[str] = None,
-    temperature: Optional[float] = None,
-    max_tokens: Optional[int] = None,
-    streaming: Optional[bool] = None,
+    model_name: str | None = None,
+    model_provider: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    streaming: bool | None = None,
     enable_fallback: bool = True,
     **kwargs: Any,
 ) -> BaseChatModel:
@@ -917,7 +282,7 @@ def get_chat_model(
 
     # 1. 尝试创建主模型（max_retries=0 快速失败，由 fallback 接管）
     primary_model = None
-    creation_errors: List[str] = []
+    creation_errors: list[str] = []
 
     try:
         primary_model = _create_single_chat_model(
@@ -970,6 +335,7 @@ def get_chat_model(
             )
 
     # 4. 使用 LazyFallbackChatModel 包装（fallback 模型延迟到运行时按需创建）
+    #    factory=get_chat_model_by_provider 通过依赖注入避免循环导入
     if candidates:
         lazy_model = LazyFallbackChatModel(
             primary=primary_model,
@@ -989,11 +355,12 @@ def get_chat_model(
 
 
 def get_streaming_model(
-    model_name: Optional[str] = None,
-    model_provider: Optional[str] = None,
-    temperature: Optional[float] = None,
+    model_name: str | None = None,
+    model_provider: str | None = None,
+    temperature: float | None = None,
     **kwargs: Any,
 ) -> BaseChatModel:
+    """创建流式模型（便捷封装，streaming=True）"""
     return get_chat_model(
         model_name=model_name,
         model_provider=model_provider,
@@ -1004,12 +371,13 @@ def get_streaming_model(
 
 
 def get_structured_output_model(
-    model_name: Optional[str] = None,
-    model_provider: Optional[str] = None,
+    model_name: str | None = None,
+    model_provider: str | None = None,
     temperature: float = 0.0,
-    response_format: Optional[Any] = None,
+    response_format: Any | None = None,
     **kwargs: Any,
 ) -> BaseChatModel:
+    """创建结构化输出模型（with_structured_output 封装）"""
     model = get_chat_model(
         model_name=model_name,
         model_provider=model_provider,
@@ -1035,11 +403,11 @@ def get_model_config(preset: str) -> dict:
     return presets.get(preset, {})
 
 
-def _get_provider_config(provider: str) -> Dict[str, Any]:
+def _get_provider_config(provider: str) -> dict[str, Any]:
     """从数据库获取 provider 的 API 配置（api_key, base_url）"""
     for provider_id, cfg in get_model_registry().items():
         if cfg["provider"] == provider or provider_id == provider:
-            result: Dict[str, Any] = {}
+            result: dict[str, Any] = {}
             key_attr = cfg.get("api_key_attr")
             if key_attr:
                 api_key = getattr(settings, key_attr, "")
@@ -1066,6 +434,7 @@ def _get_provider_config(provider: str) -> Dict[str, Any]:
 
 
 def get_model_by_preset(preset: str = "default", **kwargs: Any) -> BaseChatModel:
+    """按预设创建模型（preset 来自 settings.MODEL_PRESETS）"""
     presets = get_model_presets()
     if preset not in presets:
         available = ", ".join(presets.keys())
@@ -1081,8 +450,8 @@ def get_model_by_preset(preset: str = "default", **kwargs: Any) -> BaseChatModel
 
 
 def get_model_string(
-    model_name: Optional[str] = None,
-    provider: Optional[str] = None,
+    model_name: str | None = None,
+    provider: str | None = None,
 ) -> str:
     """生成 ``"<provider>:<model_name>"`` 字符串。
 
@@ -1099,7 +468,7 @@ def get_model_string(
             provider = provider or system_default.get("provider_id")
             model_name = model_name or system_default.get("model_name")
 
-    # 2. 回退到 settings（保持向后兼容）
+    # 2. 回退到 settings
     provider = provider or getattr(django_settings, 'AI_DEFAULT_PROVIDER', 'openai')
     model_name = model_name or settings.openai_model
 
@@ -1108,15 +477,22 @@ def get_model_string(
     return model_string
 
 
+# ============== 按 provider_id 创建模型 ==============
+
 def get_chat_model_by_provider(
     provider_id: str,
-    model_name: Optional[str] = None,
-    temperature: Optional[float] = None,
-    max_tokens: Optional[int] = None,
-    streaming: Optional[bool] = None,
-    special_params: Optional[Dict[str, Any]] = None,
+    model_name: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    streaming: bool | None = None,
+    special_params: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> BaseChatModel:
+    """按 provider_id 创建聊天模型
+
+    与 get_chat_model 的差异：本函数不启用 fallback，直接按指定 provider 创建。
+    用于 LazyFallbackChatModel 的 factory 参数（依赖注入）。
+    """
     registry = PROVIDER_REGISTRY.get(provider_id) or get_provider_config(provider_id)
     if registry is None or not registry:
         available = ", ".join(set(list(PROVIDER_REGISTRY.keys()) + list(get_model_registry().keys())))
@@ -1135,7 +511,7 @@ def get_chat_model_by_provider(
     resolved_temp = temperature if temperature is not None else settings.openai_temperature
     resolved_streaming = streaming if streaming is not None else settings.openai_streaming
 
-    init_kwargs: Dict[str, Any] = {
+    init_kwargs: dict[str, Any] = {
         "model": resolved_model,
         "model_provider": provider,
         "temperature": resolved_temp,
@@ -1223,8 +599,10 @@ def get_chat_model_by_provider(
 
         return model
 
-    return _cached_model_creation(cache_key, use_cache, _create, error_context=f"provider_id={provider_id}")
+    return cached_model_creation(cache_key, use_cache, _create, error_context=f"provider_id={provider_id}")
 
+
+# ============== Groq bind_tools 兼容补丁 ==============
 
 _groq_field_patched = False
 
@@ -1256,10 +634,6 @@ def _ensure_groq_bind_tools_field() -> None:
         return
 
     try:
-        # 方案：将 bind_tools 注册为类的 __getattribute__ 处理项
-        # 由于 Pydantic v2 BaseModel 的字段优先于 __dict__，
-        # 我们需要让类层面同时存在字段（避免 init_chat_model 报错）
-        # 和方法（避免调用 None 报错）
         from pydantic import Field
 
         if "bind_tools" not in ChatGroq.model_fields:
@@ -1268,8 +642,6 @@ def _ensure_groq_bind_tools_field() -> None:
             ChatGroq.model_fields["bind_tools"] = Field(default=None)  # type: ignore[assignment]
 
         # 同时给类添加一个真正的 bind_tools 方法实现
-        # 这个方法在实例访问 bind_tools 时优先于字段（因为 Pydantic v2
-        # 的字段访问通过 __class_getitem__ 等机制，方法直接定义在类上）
         if not hasattr(ChatGroq, "bind_tools") or ChatGroq.__dict__.get("bind_tools") is None:
             def _bind_tools_default(self, tools, *, tool_choice=None, **kwargs):
                 """Groq 模型 bind_tools 默认实现：委托给 bind()"""
@@ -1288,11 +660,14 @@ def _ensure_groq_bind_tools_field() -> None:
         _groq_field_patched = True
 
 
+# ============== 模型连接测试 ==============
+
 def test_model_connection(
     provider_id: str,
-    model_name: Optional[str] = None,
+    model_name: str | None = None,
     **kwargs: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
+    """测试模型连接（发送 "Hi" 消息验证可用性）"""
     try:
         model = get_chat_model_by_provider(
             provider_id=provider_id,
@@ -1303,9 +678,8 @@ def test_model_connection(
             use_cache=False,
             **kwargs,
         )
-        from langchain_core.messages import HumanMessage
-
         from langchain_core.globals import get_llm_cache, set_llm_cache
+        from langchain_core.messages import HumanMessage
         original_cache = get_llm_cache()
         try:
             set_llm_cache(None)
@@ -1316,7 +690,7 @@ def test_model_connection(
         registry = PROVIDER_REGISTRY.get(provider_id) or get_provider_config(provider_id)
         return {
             "success": True,
-            "message": f"模型连接成功",
+            "message": "模型连接成功",
             "model_info": {
                 "provider_id": provider_id,
                 "model_name": model_name or registry.get("default_model", ""),
@@ -1327,7 +701,7 @@ def test_model_connection(
         registry = PROVIDER_REGISTRY.get(provider_id) or get_provider_config(provider_id)
         return {
             "success": False,
-            "message": f"模型连接失败: {str(e)}",
+            "message": f"模型连接失败: {e!s}",
             "model_info": {
                 "provider_id": provider_id,
                 "model_name": model_name or registry.get("default_model", ""),
@@ -1335,10 +709,12 @@ def test_model_connection(
         }
 
 
-_helper_model_cache: Optional[BaseChatModel] = None
+# ============== 辅助模型 ==============
+
+_helper_model_cache: BaseChatModel | None = None
 
 
-def get_helper_model() -> Optional[BaseChatModel]:
+def get_helper_model() -> BaseChatModel | None:
     """获取辅助模型（带 fallback 包装）
 
     辅助模型用于非主要 Agent 场景（MultiQuery、Map-Reduce、意图分类、压缩等）。
@@ -1425,9 +801,9 @@ def get_helper_model() -> Optional[BaseChatModel]:
     return None
 
 
-# ==================== 数据库配置读取 ====================
+# ============== 数据库配置读取 ==============
 
-def get_system_default_chat_model() -> Optional[Dict[str, str]]:
+def get_system_default_chat_model() -> dict[str, str] | None:
     """从 SystemConfig 数据库读取用户偏好的默认聊天模型
 
     Returns:
@@ -1443,135 +819,15 @@ def get_system_default_chat_model() -> Optional[Dict[str, str]]:
     return None
 
 
-# ==================== 模型 Fallback 机制 ====================
-# 使用 LangChain 原生 with_fallbacks() 实现模型自动切换
-# 参考: https://python.langchain.com/api_reference/core/runnables/langchain_core.runnables.fallbacks.RunnableWithFallbacks.html
-
-
-def _is_connection_error(exc: Exception) -> bool:
-    """判断异常是否为可触发 fallback 的连接/认证类错误
-
-    仅对以下错误触发 fallback，其他错误（如参数错误）不触发：
-    - 401/403 认证/权限错误（余额不足、Key 无效等）
-    - 429 速率限制
-    - 连接超时 / 网络不可达
-    """
-    error_type = type(exc).__name__
-    error_module = type(exc).__module__
-
-    # OpenAI SDK 错误
-    if "openai" in error_module:
-        if error_type in (
-            "AuthenticationError",
-            "PermissionDeniedError",
-            "RateLimitError",
-            "APIConnectionError",
-            "APITimeoutError",
-        ):
-            return True
-
-    # Anthropic SDK 错误
-    if "anthropic" in error_module:
-        if error_type in (
-            "AuthenticationError",
-            "PermissionDeniedError",
-            "RateLimitError",
-            "APIConnectionError",
-            "APITimeoutError",
-        ):
-            return True
-
-    # 通用网络错误
-    if error_type in (
-        "ConnectionError",
-        "TimeoutError",
-        "ConnectTimeoutError",
-        "SSLError",
-    ):
-        return True
-
-    # httpx / urllib3 连接错误
-    if "ConnectTimeout" in error_type or "ConnectionError" in error_type:
-        return True
-
-    # HTTP 状态码判断
-    status_code = getattr(exc, "status_code", None) or getattr(exc, "http_status", None)
-    if status_code in (401, 403, 429, 502, 503):
-        return True
-
-    return False
-
-
-def get_fallback_candidates(
-    exclude_provider: Optional[str] = None,
-    exclude_model: Optional[str] = None,
-) -> List[Tuple[str, str]]:
-    """获取可用的 fallback 模型候选列表
-
-    优先级：用户配置的降级模型 > HELPER_MODEL_PRIORITY 中第一个可用的（兜底）
-    不再自动拉取所有 HELPER_MODEL_PRIORITY 和 MODEL_REGISTRY 中的模型，
-    避免创建用户未配置的模型实例。
-    """
-    candidates: List[Tuple[str, str]] = []
-
-    # 0. 最高优先级：用户配置的降级模型
-    try:
-        from Django_xm.apps.ai_engine.models import SystemConfig
-        fb_config = SystemConfig.get_value("fallback_chat_model", {})
-        fb_provider = fb_config.get("provider_id", "")
-        fb_model = fb_config.get("model_name", "")
-        if fb_provider and fb_model:
-            if not (fb_provider == exclude_provider and fb_model == exclude_model):
-                if registry_is_provider_available(fb_provider):
-                    candidates.append((fb_provider, fb_model))
-    except Exception:
-        pass
-
-    # 1. 兜底：若用户未配置降级模型，从 HELPER_MODEL_PRIORITY 中取第一个可用的
-    if not candidates:
-        for item in HELPER_MODEL_PRIORITY:
-            pid = item["provider"]
-            mname = item["model"]
-            if pid == exclude_provider and mname == exclude_model:
-                continue
-            if registry_is_provider_available(pid):
-                candidates.append((pid, mname))
-                break  # 只取一个兜底
-
-    return candidates
-
-
-def get_chat_model_with_fallback(
-    model_name: Optional[str] = None,
-    model_provider: Optional[str] = None,
-    temperature: Optional[float] = None,
-    max_tokens: Optional[int] = None,
-    streaming: Optional[bool] = None,
-    **kwargs: Any,
-) -> BaseChatModel:
-    """创建带自动 fallback 的聊天模型（兼容接口）
-
-    已废弃：get_chat_model() 默认已启用 fallback，直接使用 get_chat_model() 即可。
-    此函数保留仅为向后兼容。
-    """
-    return get_chat_model(
-        model_name=model_name,
-        model_provider=model_provider,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        streaming=streaming,
-        enable_fallback=True,
-        **kwargs,
-    )
-
+# ============== 结构化输出 + Fallback ==============
 
 def get_structured_model_with_fallback(
     schema: Any,
-    model_name: Optional[str] = None,
-    model_provider: Optional[str] = None,
-    temperature: Optional[float] = None,
-    max_tokens: Optional[int] = None,
-    streaming: Optional[bool] = False,  # 结构化输出默认禁用流式
+    model_name: str | None = None,
+    model_provider: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    streaming: bool | None = False,  # 结构化输出默认禁用流式
     **kwargs: Any,
 ) -> Any:
     """创建带 fallback 的结构化输出模型
@@ -1614,8 +870,8 @@ def get_structured_model_with_fallback(
     resolved_provider = model_provider or getattr(django_settings, 'AI_DEFAULT_PROVIDER', 'openai')
     resolved_model_name = model_name or settings.openai_model
 
-    structured_models: List[Tuple[str, str, Any]] = []
-    creation_errors: List[str] = []
+    structured_models: list[tuple[str, str, Any]] = []
+    creation_errors: list[str] = []
 
     # 1. 创建主模型
     try:
@@ -1667,346 +923,120 @@ def get_structured_model_with_fallback(
         raise RuntimeError(
             f"模型连接超时，所有已配置的模型均不可用。"
             f"已尝试: {error_detail}。请检查 API Key 配置和网络连接。"
-            )
+        )
 
     logger.info(f"已配置结构化模型 fallback（懒加载）: 主模型 + {len(candidates)} 个候选")
-    return StructuredModelWithFallback(structured_models, creation_errors, lazy_candidates=candidates, schema=schema)
+    # factory=get_chat_model_by_provider 通过依赖注入避免 llm_fallback → llm_factory 循环导入
+    return StructuredModelWithFallback(
+        structured_models,
+        creation_errors,
+        lazy_candidates=candidates,
+        schema=schema,
+        factory=get_chat_model_by_provider,
+    )
 
 
-class StructuredModelWithFallback:
-    """结构化输出模型 + 手动 fallback（支持懒加载）
+# ============== JSON Mode 结构化输出（DeepSeek 专用） ==============
 
-    不使用 LangChain 的 with_fallbacks()，因为 with_structured_output
-    会包装异常导致 with_fallbacks 无法正确触发 fallback。
-    手动遍历模型列表，连接/认证错误时切换下一个模型。
-    懒加载候选在运行时按需创建。
+class JsonModeStructuredModel:
+    """JSON mode 结构化输出模型（DeepSeek 专用）
+
+    DeepSeek thinking mode 与 tool_choice 冲突，无法使用 with_structured_output。
+    本类通过 response_format={"type": "json_object"} + 手动注入 JSON Schema 提示词
+    实现等效的结构化输出：
+
+    1. 构造时接收已 bind(response_format={"type": "json_object"}) 的 model
+    2. invoke/ainvoke 时在 messages 首位注入 SystemMessage（含 schema 提示词）
+    3. 调用模型获取 JSON 字符串响应
+    4. 解析 JSON 并用 Pydantic schema 校验，返回 BaseModel 实例
+    5. 无效 JSON / 空内容 / schema 校验失败 → 返回 None（触发上层重试）
+    6. 模型调用异常向上传播（由 ResilientModel + ResilientInvoker 统一处理）
     """
 
     def __init__(
         self,
-        structured_models: List[Tuple[str, str, Any]],
-        creation_errors: List[str],
-        lazy_candidates: Optional[List[Tuple[str, str]]] = None,
-        schema: Any = None,
+        model: BaseChatModel,
+        schema: Any,
+        provider: str,
+        model_name: str,
     ):
-        self._models = structured_models  # [(provider, model_name, structured_runnable), ...]
-        self._creation_errors = creation_errors
-        self._lazy_candidates = lazy_candidates or []  # [(provider_id, model_name), ...]
+        self._model = model
         self._schema = schema
+        self._provider = provider
+        self._model_name = model_name
 
-    def _resolve_lazy_candidate(self, provider_id: str, model_name: str) -> Optional[Tuple[str, str, Any]]:
-        """按需创建懒加载候选的结构化模型"""
+    def _build_schema_prompt(self) -> str:
+        """构造 JSON Schema 提示词"""
+        import json as _json
         try:
-            fb_special_params = None
-            if provider_id == "deepseek":
-                fb_special_params = {"thinking": {"type": "disabled"}}
-
-            fb_model = get_chat_model_by_provider(
-                provider_id=provider_id,
-                model_name=model_name,
-                temperature=settings.openai_temperature,
-                max_tokens=None,
-                streaming=False,
-                max_retries=0,
-                special_params=fb_special_params,
-            )
-            fb_structured = fb_model.with_structured_output(self._schema)
-            logger.info(f"懒加载 Fallback 结构化模型已创建: {provider_id}/{model_name}")
-            return (provider_id, model_name, fb_structured)
-        except Exception as e:
-            logger.warning(f"懒加载 Fallback 结构化模型创建失败 {provider_id}/{model_name}: {e}")
-            return None
-
-    @staticmethod
-    def _is_valid_result(result: Any) -> bool:
-        """判断结构化输出是否有效
-
-        防御性检查：流式 + with_structured_output 可能返回 None
-        或者返回空对象（没有 Pydantic 字段填充）
-        """
-        if result is None:
-            return False
-        # Pydantic BaseModel 实例：检查是否有任何字段被填充
-        if hasattr(result, "model_dump") and callable(result.model_dump):
-            try:
-                dumped = result.model_dump(exclude_none=False)
-                if not dumped:
-                    return False
-                # 至少有一个字段包含"实质内容"：
-                # - 非 None
-                # - 非空字符串
-                # - 非空列表/字典
-                # - 非零数值
-                def _has_meaningful_value(v: Any) -> bool:
-                    if v is None:
-                        return False
-                    if isinstance(v, str):
-                        return bool(v.strip())
-                    if isinstance(v, (list, dict, tuple, set)):
-                        return len(v) > 0
-                    if isinstance(v, bool):
-                        return v  # True 才算有意义
-                    if isinstance(v, (int, float)):
-                        return v != 0
-                    # 其他类型：非空即可
-                    return True
-
-                has_value = any(_has_meaningful_value(v) for v in dumped.values())
-                return has_value
-            except Exception:
-                return True  # 检查失败时保守认为有效
-        # 字典/列表
-        if isinstance(result, (dict, list)):
-            return bool(result)
-        # 字符串
-        if isinstance(result, str):
-            return bool(result.strip())
-        return True
-
-    @staticmethod
-    def _sanitize_parsed_kwargs(result: Any) -> None:
-        """将 AIMessage.additional_kwargs["parsed"] 中的 Pydantic 对象转为 dict
-
-        langchain_openai 在解析 OpenAI structured output 响应时，会将
-        Pydantic BaseModel 实例存入 ChatGeneration.message.additional_kwargs["parsed"]。
-        LangChain tracer 在 on_llm_end 回调中调用 LLMResult.model_dump() 时，
-        Pydantic v2 发现该字段类型推断为 None 但实际是 BaseModel 实例，
-        触发 PydanticSerializationUnexpectedValue 警告。
-
-        由于 with_structured_output 的 invoke 返回的是解析后的 Pydantic 对象
-        （非 ChatGeneration），无法直接修改 tracer 处理的中间对象。
-        因此在 invoke 期间抑制此特定警告，这是 LangChain 与 Pydantic v2
-        的已知兼容性问题，不影响功能。
-        """
-        pass
-
-    def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
-        """调用结构化模型，失败时自动切换（含懒加载候选）"""
-        errors: List[str] = list(self._creation_errors)
-
-        for provider, model_name, structured in self._models:
-            try:
-                result = structured.invoke(input, config=config, **kwargs)
-                if not self._is_valid_result(result):
-                    error_msg = f"{provider}/{model_name}: 返回空结果(None/空对象)"
-                    errors.append(error_msg)
-                    logger.warning(f"结构化模型返回空结果 {provider}/{model_name}，尝试下一个模型")
-                    continue
-                logger.info(f"结构化模型调用成功: {provider}/{model_name}")
-                return result
-            except Exception as e:
-                errors.append(f"{provider}/{model_name}: {type(e).__name__}: {e}")
-                logger.warning(f"结构化模型调用失败 {provider}/{model_name}: {type(e).__name__}: {e}")
-                continue
-
-        # 预实例化模型都失败，尝试懒加载候选
-        for pid, mname in self._lazy_candidates:
-            lazy_result = self._resolve_lazy_candidate(pid, mname)
-            if lazy_result is not None:
-                provider, model_name, structured = lazy_result
-                try:
-                    result = structured.invoke(input, config=config, **kwargs)
-                    if not self._is_valid_result(result):
-                        errors.append(f"{provider}/{model_name}: 返回空结果(None/空对象)")
-                        logger.warning(f"懒加载结构化模型返回空结果 {provider}/{model_name}，尝试下一个")
-                        continue
-                    logger.info(f"懒加载结构化模型调用成功: {provider}/{model_name}")
-                    return result
-                except Exception as e:
-                    errors.append(f"{provider}/{model_name}: {type(e).__name__}: {e}")
-                    logger.warning(f"懒加载结构化模型调用失败 {provider}/{model_name}: {type(e).__name__}: {e}")
-                    continue
-
-        error_detail = "; ".join(errors)
-        logger.error(f"所有结构化模型调用均失败: {error_detail}")
-        raise RuntimeError(
-            f"模型连接超时，所有已配置的模型均不可用。"
-            f"已尝试: {error_detail}。请检查 API Key 配置和网络连接。"
+            schema_json = self._schema.model_json_schema()
+        except Exception:
+            schema_json = {}
+        return (
+            "请严格按照以下 JSON Schema 输出 JSON，不要输出任何其他内容。\n"
+            f"JSON Schema:\n{_json.dumps(schema_json, ensure_ascii=False, indent=2)}"
         )
 
-    async def ainvoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
-        """异步调用结构化模型，失败时自动切换（含懒加载候选）"""
-        errors: List[str] = list(self._creation_errors)
+    def _build_messages(self, input_data: Any) -> list:
+        """在输入消息前注入 JSON Schema SystemMessage"""
+        if isinstance(input_data, list):
+            messages = list(input_data)
+        else:
+            messages = [input_data]
+        # schema 提示词注入到首位
+        messages.insert(0, SystemMessage(content=self._build_schema_prompt()))
+        return messages
 
-        for provider, model_name, structured in self._models:
-            try:
-                result = await structured.ainvoke(input, config=config, **kwargs)
-                if not self._is_valid_result(result):
-                    error_msg = f"{provider}/{model_name}: 返回空结果(None/空对象)"
-                    errors.append(error_msg)
-                    logger.warning(f"结构化模型异步返回空结果 {provider}/{model_name}，尝试下一个模型")
-                    continue
-                logger.info(f"结构化模型异步调用成功: {provider}/{model_name}")
-                return result
-            except Exception as e:
-                errors.append(f"{provider}/{model_name}: {type(e).__name__}: {e}")
-                logger.warning(f"结构化模型异步调用失败 {provider}/{model_name}: {type(e).__name__}: {e}")
-                continue
+    def _parse_result(self, content: str) -> Any | None:
+        """解析模型返回的 JSON 内容为 Pydantic 实例
 
-        # 预实例化模型都失败，尝试懒加载候选
-        for pid, mname in self._lazy_candidates:
-            lazy_result = self._resolve_lazy_candidate(pid, mname)
-            if lazy_result is not None:
-                provider, model_name, structured = lazy_result
-                try:
-                    result = await structured.ainvoke(input, config=config, **kwargs)
-                    if not self._is_valid_result(result):
-                        errors.append(f"{provider}/{model_name}: 返回空结果(None/空对象)")
-                        logger.warning(f"懒加载结构化模型异步返回空结果 {provider}/{model_name}，尝试下一个")
-                        continue
-                    logger.info(f"懒加载结构化模型异步调用成功: {provider}/{model_name}")
-                    return result
-                except Exception as e:
-                    errors.append(f"{provider}/{model_name}: {type(e).__name__}: {e}")
-                    logger.warning(f"懒加载结构化模型异步调用失败 {provider}/{model_name}: {type(e).__name__}: {e}")
-                    continue
+        Args:
+            content: 模型返回的文本内容
 
-        error_detail = "; ".join(errors)
-        logger.error(f"所有结构化模型异步调用均失败: {error_detail}")
-        raise RuntimeError(
-            f"模型连接超时，所有已配置的模型均不可用。"
-            f"已尝试: {error_detail}。请检查 API Key 配置和网络连接。"
-        )
+        Returns:
+            Pydantic BaseModel 实例，解析/校验失败返回 None
+        """
+        import json as _json
+        import re as _re
 
-
-# ==================== 运行时 Fallback 检测 ====================
-
-class FallbackDetectionCallback(BaseCallbackHandler):
-    """检测 LLM 运行时 fallback 的回调处理器
-
-    当 LangChain 的 with_fallbacks() 在运行时切换到备选模型时，
-    通过 on_llm_start/on_llm_end 回调检测实际使用的模型。
-
-    继承 BaseCallbackHandler 以确保与 LangChain 回调管理器兼容
-    （需要 run_inline 等属性）。
-
-    用法:
-        with FallbackDetectionCallback(expected_provider="ollama", expected_model="qwen3:8b") as fb:
-            config["callbacks"] = [fb]
-            # ... 执行 agent ...
-        if fb.fallback_detected:
-            # 发送降级提示
-    """
-
-    def __init__(self, expected_provider: str = "", expected_model: str = ""):
-        super().__init__()
-        self.expected_provider = expected_provider
-        self.expected_model = expected_model
-        self._llm_attempts: List[Dict[str, Any]] = []
-        self._successful_model: Optional[str] = None
-        self._successful_provider: Optional[str] = None
-        self._fallback_detected = False
-        self._first_success = True
-
-    @property
-    def fallback_detected(self) -> bool:
-        return self._fallback_detected
-
-    @property
-    def actual_provider(self) -> Optional[str]:
-        return self._successful_provider
-
-    @property
-    def actual_model(self) -> Optional[str]:
-        return self._successful_model
-
-    def get_fallback_info(self) -> Optional[Dict[str, str]]:
-        """如果检测到降级，返回降级信息；否则返回 None"""
-        if not self._fallback_detected:
+        if not content or not content.strip():
             return None
-        return {
-            "original_provider": self.expected_provider,
-            "original_model": self.expected_model,
-            "actual_provider": self._successful_provider or "",
-            "actual_model": self._successful_model or "",
-            "message": (
-                f"模型 {self.expected_provider}/{self.expected_model} 运行时失败，"
-                f"已自动切换到 {self._successful_provider}/{self._successful_model}"
-            ),
-        }
 
-    def on_llm_start(
-        self,
-        serialized: Dict[str, Any],
-        prompts: List[str],
-        *,
-        run_id: Any = None,
-        **kwargs: Any,
-    ) -> None:
-        model_name = self._extract_model(serialized, **kwargs)
-        self._llm_attempts.append({
-            "run_id": str(run_id),
-            "model": model_name,
-            "success": False,
-        })
+        text = content.strip()
 
-    def on_llm_end(self, response: Any, *, run_id: Any = None, **kwargs: Any) -> None:
-        rid = str(run_id)
-        for attempt in self._llm_attempts:
-            if attempt["run_id"] == rid:
-                attempt["success"] = True
-                break
+        # 去除 markdown 代码块包裹
+        md_match = _re.match(r'^```(?:json)?\s*(.*?)\s*```$', text, _re.DOTALL)
+        if md_match:
+            text = md_match.group(1).strip()
 
-        # 第一次成功的 LLM 调用就是实际使用的模型
-        if self._first_success:
-            for attempt in self._llm_attempts:
-                if attempt["run_id"] == rid and attempt["success"]:
-                    actual_model = attempt["model"]
-                    # 从模型名推断 provider
-                    actual_provider = self._infer_provider(actual_model)
-                    self._successful_model = actual_model
-                    self._successful_provider = actual_provider
+        # 尝试解析 JSON
+        try:
+            data = _json.loads(text)
+        except (_json.JSONDecodeError, ValueError):
+            return None
 
-                    # 检测是否降级
-                    if (self.expected_provider and actual_provider and
-                            actual_provider != self.expected_provider):
-                        self._fallback_detected = True
-                        logger.info(
-                            f"LLM 运行时 fallback 检测: "
-                            f"{self.expected_provider}/{self.expected_model} -> "
-                            f"{actual_provider}/{actual_model}"
-                        )
-                    self._first_success = False
-                    break
+        if not isinstance(data, dict):
+            return None
 
-    def on_llm_error(self, error: Any, *, run_id: Any = None, **kwargs: Any) -> None:
-        rid = str(run_id)
-        for attempt in self._llm_attempts:
-            if attempt["run_id"] == rid:
-                attempt["success"] = False
-                attempt["error"] = str(error)
-                break
+        # Pydantic schema 校验
+        try:
+            return self._schema(**data)
+        except Exception:
+            return None
 
-    def _extract_model(self, serialized: Dict[str, Any], **kwargs: Any) -> str:
-        if "kwargs" in serialized:
-            kw = serialized["kwargs"]
-            for key in ("model", "model_name"):
-                if key in kw:
-                    return kw[key]
-        if "name" in serialized:
-            return serialized["name"]
-        invocation_params = kwargs.get("invocation_params", {})
-        for key in ("model_name", "model"):
-            if key in invocation_params:
-                return invocation_params[key]
-        return ""
+    def invoke(self, input_data: Any, config: RunnableConfig | None = None) -> Any | None:
+        """同步调用模型并解析 JSON 输出
 
-    def _infer_provider(self, model_name: str) -> str:
-        """从模型名推断 provider"""
-        if not model_name:
-            return ""
-        for pid, cfg in get_model_registry().items():
-            for m in cfg.get("models", []):
-                if isinstance(m, dict) and m.get("name") == model_name:
-                    return pid
-                elif isinstance(m, str) and m == model_name:
-                    return pid
-            if cfg.get("default_model") == model_name:
-                return pid
-        return ""
+        模型调用异常向上传播（不吞没），由 ResilientModel/ResilientInvoker 统一处理重试/降级。
+        """
+        messages = self._build_messages(input_data)
+        response = self._model.invoke(messages, config=config)
+        content = getattr(response, "content", "") or ""
+        return self._parse_result(content)
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        return False
+    async def ainvoke(self, input_data: Any, config: RunnableConfig | None = None) -> Any | None:
+        """异步调用模型并解析 JSON 输出"""
+        messages = self._build_messages(input_data)
+        response = await self._model.ainvoke(messages, config=config)
+        content = getattr(response, "content", "") or ""
+        return self._parse_result(content)

@@ -5,10 +5,9 @@
 """
 
 from rest_framework import status
-from rest_framework.views import APIView
-from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from django.db.models import F
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from Django_xm.apps.context_manager.models import PromptCache
 from Django_xm.apps.context_manager.serializers import PromptCacheSerializer

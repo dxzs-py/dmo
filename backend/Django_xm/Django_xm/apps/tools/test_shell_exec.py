@@ -1,13 +1,13 @@
-"""ShellExecTool 单元测试（Task 14.1）。
+"""ShellExecTool 单元测试。
 
-覆盖 spec `unify-approval-and-timeout-recovery` 阶段一变更：
+覆盖审批统一后 ShellExecTool 的行为：
 1. _arun 方法签名不包含 approved_by_middleware 参数
 2. 白名单命令直接执行（无需审批）
-3. 非白名单命令也直接执行（不再有兜底 interrupt_for_approval 调用）
+3. 非白名单命令也直接执行（审批由 ApprovalMiddleware 统一处理，工具层不参与）
 4. ShellExecInput 模型不含 approved_by_middleware 字段
 
 运行方式:
-    cd d:\programming\langchain\langchain_xm\backend\Django_xm
+    cd d:\\programming\\langchain\\langchain_xm\backend\\Django_xm
     conda activate langchain_xm
     python manage.py test Django_xm.apps.tools.test_shell_exec --verbosity=2
 """
@@ -17,22 +17,21 @@ from __future__ import annotations
 import inspect
 import os
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 # Django 环境初始化（兼容 unittest 直接运行）
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.dev")
-import django  # noqa: E402
-import django.apps  # noqa: E402,F401
+import django
+import django.apps
 
 if not django.apps.apps.ready:
     django.setup()
 
-from Django_xm.apps.tools.langchain.shell import (  # noqa: E402
-    ShellExecTool,
+from Django_xm.apps.tools.errors import StandardToolResult, ToolStatus
+from Django_xm.apps.tools.langchain.shell import (
     ShellExecInput,
-    _execute_command,
+    ShellExecTool,
 )
-from Django_xm.apps.tools.errors import StandardToolResult, ToolStatus  # noqa: E402
 
 
 class ShellExecSignatureTests(unittest.TestCase):
@@ -119,7 +118,7 @@ class ShellExecArunExecutionTests(unittest.IsolatedAsyncioTestCase):
             "Django_xm.apps.tools.langchain.shell._is_command_whitelisted",
             return_value=False,
         ):
-            ret = await tool._arun(command="rm /tmp/x")
+            await tool._arun(command="rm /tmp/x")
             mock_exec.assert_called_once()
             args, kwargs = mock_exec.call_args
             self.assertEqual(args[0], "rm /tmp/x")
@@ -143,34 +142,6 @@ class ShellExecArunExecutionTests(unittest.IsolatedAsyncioTestCase):
             ret = await tool._arun(command="")
             mock_exec.assert_not_called()
             self.assertIn("不能为空", str(ret))
-
-    async def test_arun_does_not_call_interrupt_for_approval(self):
-        """_arun 不应再调用 interrupt_for_approval 兜底（已移除）。"""
-        tool = ShellExecTool()
-        fake_result = StandardToolResult(
-            content="x",
-            status=ToolStatus.SUCCESS,
-            source="shell_exec",
-            metadata={"command": "nonexistent-cmd"},
-        )
-        # patch shell 模块中所有可能的 interrupt 入口
-        with patch(
-            "Django_xm.apps.tools.langchain.shell._execute_command",
-            return_value=fake_result,
-        ), patch(
-            "Django_xm.apps.tools.langchain.shell._is_command_blocked",
-            return_value=None,
-        ), patch(
-            "Django_xm.apps.tools.langchain.shell._is_command_whitelisted",
-            return_value=False,
-        ), patch(
-            "Django_xm.apps.tools.base.reject_sync_approval",
-            return_value="sync-mode-rejected",
-        ) as mock_reject:
-            # 非白名单命令在 _arun 中应直接执行，不应调用 reject_sync_approval
-            # （reject_sync_approval 仅在 _run 同步模式中调用）
-            await tool._arun(command="nonexistent-cmd")
-            mock_reject.assert_not_called()
 
 
 if __name__ == "__main__":

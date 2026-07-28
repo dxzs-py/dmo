@@ -13,9 +13,9 @@
     await switcher.switch_to("session-123", user_id="user_1")
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Any
 
-from Django_xm.apps.ai_engine.config import get_logger
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -25,11 +25,11 @@ class ContextSwitcher:
 
     def __init__(self, store: Any):
         self._store = store
-        self._current_context: Optional[str] = None
-        self._context_cache: Dict[str, Dict] = {}
+        self._current_context: str | None = None
+        self._context_cache: dict[str, dict] = {}
 
     @property
-    def current_context_id(self) -> Optional[str]:
+    def current_context_id(self) -> str | None:
         """当前活跃上下文 ID"""
         return self._current_context
 
@@ -37,7 +37,7 @@ class ContextSwitcher:
         """构建 Store namespace"""
         return (str(user_id), "mcp_contexts")
 
-    async def switch_to(self, context_id: str, user_id: str) -> Dict:
+    async def switch_to(self, context_id: str, user_id: str) -> dict:
         """切换到指定上下文
 
         1. 保存当前上下文状态到 Store
@@ -76,7 +76,7 @@ class ContextSwitcher:
         logger.info(f"上下文已切换: context_id={context_id}, user_id={user_id}")
         return context_data
 
-    async def save_current(self, user_id: str, state: Dict) -> None:
+    async def save_current(self, user_id: str, state: dict) -> None:
         """保存当前上下文状态
 
         Args:
@@ -101,7 +101,7 @@ class ContextSwitcher:
         except Exception as e:
             logger.error(f"保存上下文失败: context_id={self._current_context}, error={e}")
 
-    async def load_context(self, context_id: str, user_id: str) -> Optional[Dict]:
+    async def load_context(self, context_id: str, user_id: str) -> dict | None:
         """加载指定上下文
 
         Args:
@@ -127,7 +127,7 @@ class ContextSwitcher:
             logger.error(f"加载上下文失败: context_id={context_id}, error={e}")
             return None
 
-    async def list_contexts(self, user_id: str) -> List[str]:
+    async def list_contexts(self, user_id: str) -> list[str]:
         """列出用户所有可用上下文
 
         Args:

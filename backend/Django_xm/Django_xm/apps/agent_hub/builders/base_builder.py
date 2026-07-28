@@ -1,54 +1,26 @@
 from __future__ import annotations
-import os
-import logging
-from typing import Any, Optional
 
-from Django_xm.apps.ai_engine.config import settings
+import logging
+from typing import Any
+
+from Django_xm.apps.agent_hub.builders._registry import register_builder
+from Django_xm.apps.agent_hub.config import AgentType
 
 logger = logging.getLogger(__name__)
 
 
-def _configure_langsmith() -> None:
-    env_api_key = os.environ.get("LANGCHAIN_API_KEY", "")
-    env_tracing = os.environ.get("LANGCHAIN_TRACING_V2", "").lower() in ("true", "1", "yes")
-
-    if settings.langsmith_tracing or (env_api_key and env_tracing):
-        os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
-        if settings.langsmith_api_key:
-            os.environ.setdefault("LANGCHAIN_API_KEY", settings.langsmith_api_key)
-        elif env_api_key:
-            os.environ.setdefault("LANGCHAIN_API_KEY", env_api_key)
-        if settings.langsmith_project:
-            os.environ.setdefault("LANGSMITH_PROJECT", settings.langsmith_project)
-        if settings.langsmith_endpoint:
-            os.environ.setdefault("LANGSMITH_ENDPOINT", settings.langsmith_endpoint)
-
-        try:
-            from langchain_core.globals import set_debug, set_verbose
-            set_debug(False)
-            set_verbose(False)
-            logger.info(f"LangSmith 追踪已启用, 项目: {settings.langsmith_project}")
-        except ImportError:
-            logger.info(f"LangSmith 追踪已启用 (环境变量模式), 项目: {settings.langsmith_project}")
-    elif settings.langsmith_tracing:
-        os.environ.setdefault("LANGSMITH_TRACING", "true")
-        if settings.langsmith_api_key:
-            os.environ.setdefault("LANGSMITH_API_KEY", settings.langsmith_api_key)
-        if settings.langsmith_project:
-            os.environ.setdefault("LANGSMITH_PROJECT", settings.langsmith_project)
-        if settings.langsmith_endpoint:
-            os.environ.setdefault("LANGSMITH_ENDPOINT", settings.langsmith_endpoint)
-        logger.info(f"LangSmith 追踪已启用 (settings 模式), 项目: {settings.langsmith_project}")
-
-
-_configure_langsmith()
-
-
+@register_builder(AgentType.BASE, AgentType.RAG, AgentType.SAFE_RAG)
 class BaseAgentBuilder:
     async def build(self, config) -> Any:
+        from Django_xm.apps.agent_hub.builders._common import build_with_timeout
+        return await build_with_timeout(
+            self._build_internal, config, "BaseAgentBuilder.build",
+        )
+
+    async def _build_internal(self, config) -> Any:
+        from Django_xm.apps.agent_hub.middleware import build_middleware
         from Django_xm.apps.agent_hub.model_resolver import resolve_model
         from Django_xm.apps.agent_hub.tool_resolver import resolve_tools
-        from Django_xm.apps.agent_hub.middleware import build_middleware
 
         model = resolve_model(config)
         tools = await resolve_tools(config)
@@ -145,7 +117,7 @@ class BaseAgentBuilder:
             lines.append(f"- {tool.name}: {short_desc}")
         return "\n".join(lines)
 
-    def _build_skill_instructions(self, tools) -> Optional[str]:
+    def _build_skill_instructions(self, tools) -> str | None:
         if not tools:
             return None
 

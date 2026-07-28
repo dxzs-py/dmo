@@ -2,6 +2,10 @@
 
 收敛对 ai_engine 的直接导入，knowledge 模块内其他文件应从此处导入，
 不再直接 from Django_xm.apps.ai_engine import ...
+
+这些 re-export 是 knowledge 模块的稳定门面：当 ai_engine 内部模块拆分
+（如 llm_factory.py 拆分为 llm_cache/llm_fallback/llm_factory）时，
+knowledge 模块的导入路径不需要同步修改，降低耦合。
 """
 
 # 配置对象

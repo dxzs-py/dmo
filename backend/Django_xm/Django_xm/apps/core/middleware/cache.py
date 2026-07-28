@@ -4,6 +4,8 @@
 为 API 响应添加缓存控制头
 """
 
+from typing import ClassVar
+
 
 class CacheControlMiddleware:
     """缓存控制中间件
@@ -14,7 +16,7 @@ class CacheControlMiddleware:
     - 其他 API 接口：默认私有缓存
     """
 
-    CACHE_POLICIES = {
+    CACHE_POLICIES: ClassVar[dict[str, str]] = {
         '/api/chat/': 'no-store, no-cache, must-revalidate',
         '/api/research/': 'no-store, no-cache, must-revalidate',
         '/api/knowledge/': 'private, max-age=300',

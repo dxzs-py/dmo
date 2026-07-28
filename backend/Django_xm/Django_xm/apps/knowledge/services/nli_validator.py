@@ -17,7 +17,6 @@ NLI 忠实度验证模型封装
 
 import re
 import threading
-from typing import Optional
 
 from Django_xm.apps.core.logging_utils import get_logger
 
@@ -63,8 +62,8 @@ class HHEMValidator:
         if self._load_failed:
             return False
         try:
-            import transformers  # noqa: F401
-            import torch  # noqa: F401
+            import torch
+            import transformers
             return True
         except ImportError:
             return False
@@ -160,8 +159,8 @@ class ChineseNLIValidator:
         if self._load_failed:
             return False
         try:
-            import transformers  # noqa: F401
-            import torch  # noqa: F401
+            import torch
+            import transformers
             return True
         except ImportError:
             return False
@@ -269,6 +268,7 @@ class EmbeddingSimilarityValidator:
         """
         try:
             import numpy as np
+
             from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
 
             embed = get_embeddings()
@@ -369,7 +369,7 @@ class CompositeNLIValidator:
 
 # ── 模块级单例 ──────────────────────────────────────────────────────────────
 
-_nli_instance: Optional[CompositeNLIValidator] = None
+_nli_instance: CompositeNLIValidator | None = None
 _nli_lock = threading.Lock()
 
 

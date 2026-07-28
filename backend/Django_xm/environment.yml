@@ -1,0 +1,21 @@
+# Conda 环境定义文件 — 复现 langchain_xm Python 环境
+#
+# 用途：
+#   conda env create -f environment.yml
+#   conda activate langchain_xm
+#
+# 说明：
+#   - Python 3.12 是本项目的运行时基线（与 LangChain 1.2+ / Django 5.2+ 兼容）
+#   - 依赖列表由 requirements.txt 统一管理，本文件仅声明 Python 解释器与 pip
+#     这样可避免在两处维护同一份依赖版本，遵循"单一真相源"原则
+#   - Node.js 不在此环境内（前端使用 nvm 单独管理，见 frontend/langchain-vue/.nvmrc）
+
+name: langchain_xm
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pip>=25.0
+  - pip:
+      - -r requirements.txt

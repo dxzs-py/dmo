@@ -1,81 +1,11 @@
-import json
 from unittest.mock import patch
 
-from django.test import TestCase, TransactionTestCase
-from django.urls import reverse
-from rest_framework.test import APIClient
+from django.test import TestCase
 
-from Django_xm.apps.users.models import User
-from Django_xm.apps.chat.models import ChatSession, ChatMessage, MessageRole
-from Django_xm.common.event_schema import EventType
-
-
-class ChatMessageUpdateViewStreamStateTests(TransactionTestCase):
-    """测试 ChatMessageUpdateView 对 is_streaming 的广播抑制行为。"""
-
-    def setUp(self):
-        self.client = APIClient()
-        self.user = User.objects.create_user(
-            username='testuser',
-            password='testpass123',
-        )
-        self.client.force_authenticate(user=self.user)
-        self.session = ChatSession.objects.create(
-            user=self.user,
-            title='Test Session',
-        )
-        self.message = ChatMessage.objects.create(
-            session=self.session,
-            role=MessageRole.ASSISTANT,
-            content='',
-            is_streaming=True,
-        )
-        self.url = reverse('chat:chat-messages-update', kwargs={'message_id': self.message.id})
-
-    @patch('Django_xm.apps.chat.views_chat.publish_event_sync')
-    def test_patch_with_is_streaming_true_does_not_broadcast_message_updated(self, mock_publish):
-        """流式期间 PATCH is_streaming=True 不应广播 message_updated 事件。"""
-        response = self.client.patch(
-            self.url,
-            data={'content': 'partial content', 'is_streaming': True},
-            format='json',
-        )
-        self.assertEqual(response.status_code, 200)
-
-        self.message.refresh_from_db()
-        self.assertTrue(self.message.is_streaming)
-        mock_publish.assert_not_called()
-
-    @patch('Django_xm.apps.chat.views_chat.publish_event_sync')
-    def test_patch_ending_streaming_broadcasts_message_updated(self, mock_publish):
-        """is_streaming 从 True 变为 False 时应广播 message_updated 事件。"""
-        response = self.client.patch(
-            self.url,
-            data={'content': 'final content', 'is_streaming': False},
-            format='json',
-        )
-        self.assertEqual(response.status_code, 200)
-
-        self.message.refresh_from_db()
-        self.assertFalse(self.message.is_streaming)
-        mock_publish.assert_called_once()
-        call_args = mock_publish.call_args[0]
-        self.assertEqual(call_args[0], EventType.MESSAGE_UPDATED)
-        self.assertEqual(call_args[1]['session_id'], self.session.session_id)
-
-    @patch('Django_xm.apps.chat.views_chat.publish_event_sync')
-    def test_patch_without_streaming_flag_broadcasts_message_updated(self, mock_publish):
-        """非流式消息的普通 PATCH 应广播 message_updated 事件。"""
-        self.message.is_streaming = False
-        self.message.save()
-
-        response = self.client.patch(
-            self.url,
-            data={'content': 'edited content'},
-            format='json',
-        )
-        self.assertEqual(response.status_code, 200)
-        mock_publish.assert_called_once()
+# 注意：原 ChatMessageUpdateViewStreamStateTests 已删除。
+# is_streaming 字段已在 migration 0014 中从 ChatMessage 模型删除，
+# 流式状态改由 views_chat.py 内存中的 _stream_state 字典管理（不持久化到 DB）。
+# 原 3 个测试（is_streaming 广播抑制行为）测试的场景已不适用。
 
 
 class ChatServiceInterruptedEventTests(TestCase):
@@ -94,9 +24,6 @@ class ChatServiceInterruptedEventTests(TestCase):
             'tool_name': 'shell_exec',
             'interrupt_id': 'interrupt-123',
         }
-
-        # 构造一个最小化的 ChatService 实例，避免依赖真实数据库/模型
-        service = ChatService.__new__(ChatService)
 
         # 通过直接调用产生中断事件分支的内部辅助逻辑来验证事件格式
         # 这里模拟 _process_stream_chat 的 yield 序列末尾

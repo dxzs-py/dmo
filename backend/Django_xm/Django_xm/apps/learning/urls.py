@@ -1,4 +1,5 @@
 from django.urls import path
+
 from . import views
 
 app_name = 'learning'
@@ -11,7 +12,7 @@ urlpatterns = [
     path('history/<str:thread_id>/', views.WorkflowHistoryView.as_view(), name='history'),
     path('stream/<str:thread_id>/', views.workflow_stream, name='stream'),
     path('task/<str:thread_id>/', views.WorkflowDeleteView.as_view(), name='delete'),
-    
+
     # 新增API
     path('tasks/', views.WorkflowListView.as_view(), name='tasks'),
     path('<str:thread_id>/files/', views.WorkflowFilesListView.as_view(), name='task-files'),

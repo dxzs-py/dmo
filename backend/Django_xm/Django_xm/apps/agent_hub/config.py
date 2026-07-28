@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ class AgentType(str, Enum):
     REPORT_WRITER = "report_writer"
 
 
-AGENT_CAPABILITIES_DEFAULT: Dict[AgentType, List[str]] = {
+AGENT_CAPABILITIES_DEFAULT: dict[AgentType, list[str]] = {
     AgentType.BASE: ["context_management", "tool_injection", "guardrails", "rate_limit"],
     AgentType.DEEP_RESEARCH: ["context_management", "tool_injection", "rate_limit"],
     AgentType.DEEP_RESEARCH_CUSTOM: ["context_management", "tool_injection", "rate_limit"],
@@ -38,46 +38,51 @@ _RAG_TYPES = {AgentType.RAG, AgentType.SAFE_RAG}
 @dataclass
 class AgentConfig:
     agent_type: AgentType = AgentType.BASE
-    model: Optional[Union[str, Any]] = None
-    provider_id: Optional[str] = None
-    model_name: Optional[str] = None
-    temperature: Optional[float] = None
-    max_tokens: Optional[int] = None
-    special_params: Optional[Dict] = None
-    tools: Optional[List] = None
-    tool_config: Optional[Dict] = None
-    system_prompt: Optional[str] = None
+    model: str | Any | None = None
+    provider_id: str | None = None
+    model_name: str | None = None
+    temperature: float | None = None
+    max_tokens: int | None = None
+    special_params: dict | None = None
+    tools: list | None = None
+    tool_config: dict | None = None
+    system_prompt: str | None = None
     prompt_mode: str = "default"
-    middleware: Optional[List] = None
-    capabilities: Optional[List[str]] = None
-    checkpointer: Optional[Any] = None
-    store: Optional[Any] = None
-    context_schema: Optional[Any] = None
-    response_format: Optional[Any] = None
-    cache: Optional[Any] = None
+    middleware: list | None = None
+    capabilities: list[str] | None = None
+    checkpointer: Any | None = None
+    store: Any | None = None
+    context_schema: Any | None = None
+    response_format: Any | None = None
+    cache: Any | None = None
     debug: bool = False
-    state_schema: Optional[Any] = None
-    interrupt_before: Optional[List[str]] = None
-    interrupt_after: Optional[List[str]] = None
-    user_id: Optional[int] = None
-    session_id: Optional[str] = None
-    subagents: Optional[List] = None
-    skills: Optional[List[str]] = None
-    memory: Optional[List[str]] = None
-    permissions: Optional[Any] = None
-    backend: Optional[Any] = None
-    name: Optional[str] = None
-    retriever: Optional[Any] = None
+    state_schema: Any | None = None
+    interrupt_before: list[str] | None = None
+    interrupt_after: list[str] | None = None
+    user_id: int | None = None
+    session_id: str | None = None
+    subagents: list | None = None
+    skills: list[str] | None = None
+    memory: list[str] | None = None
+    permissions: Any | None = None
+    backend: Any | None = None
+    name: str | None = None
+    retriever: Any | None = None
     enable_guardrails: bool = False
     guardrails_strict_mode: bool = False
     enable_pii: bool = False
     enable_human_in_loop: bool = False
     enable_input_validation: bool = False
     enable_output_validation: bool = False
-    interrupt_on: Optional[Dict[str, bool]] = None
+    interrupt_on: dict[str, bool] | None = None
     backend_type: str = "filesystem"
-    work_dir: Optional[str] = None
-    _preflight_issues: Optional[List[str]] = field(default=None, repr=False)
+    work_dir: str | None = None
+    # 预检快速失败模式：True 时预检未通过抛出 PreflightCheckError，False 时仅 warning 并继续
+    fail_fast_on_preflight: bool = False
+    # builder.build() 超时（秒）：None 表示不限制（仅推荐调试用），默认 30s
+    # 超时后抛出 asyncio.TimeoutError，由调用方决定降级策略
+    build_timeout: float | None = 30.0
+    _preflight_issues: list[str] | None = field(default=None, repr=False)
 
     def validate(self) -> None:
         from Django_xm.apps.agent_hub.exceptions import ConfigValidationError
@@ -115,7 +120,7 @@ class AgentConfig:
 
         if self.tool_config is not None and not isinstance(self.tool_config, dict):
             raise ConfigValidationError(
-                f"AgentConfig: tool_config 必须为 dict 类型"
+                "AgentConfig: tool_config 必须为 dict 类型"
             )
 
     def resolve_defaults(self) -> None:

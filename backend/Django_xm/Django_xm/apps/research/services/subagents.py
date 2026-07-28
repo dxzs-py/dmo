@@ -9,13 +9,12 @@ SubAgents 子智能体模块
 改进：支持 middleware 传入 create_agent，使 Guardrails 在子智能体中生效
 """
 
-from typing import Optional, List, Sequence
 import warnings
+from collections.abc import Sequence
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.tools import BaseTool
-from langchain_core.language_models.chat_models import BaseChatModel
 
 from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.tools import get_all_tools
@@ -95,19 +94,19 @@ REPORT_WRITER_PROMPT = (
 
 
 def create_web_researcher(
-    model: Optional[str] = None,
-    tools: Optional[Sequence[BaseTool]] = None,
-    middleware: Optional[Sequence[AgentMiddleware]] = None,
+    model: str | None = None,
+    tools: Sequence[BaseTool] | None = None,
+    middleware: Sequence[AgentMiddleware] | None = None,
     enable_guardrails: bool = False,
-    user_id: Optional[int] = None,
-    session_id: Optional[str] = None,
-    extra_tools: Optional[Sequence[BaseTool]] = None,
+    user_id: int | None = None,
+    session_id: str | None = None,
+    extra_tools: Sequence[BaseTool] | None = None,
     **kwargs,
 ):
+    from Django_xm.apps.ai_engine.guardrails import create_guardrails_middleware
+    from Django_xm.apps.ai_engine.prompts.system_prompts import WRITER_GUIDELINES
     from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
     from Django_xm.apps.tools.langchain.web_search import create_tavily_search_tool
-    from Django_xm.apps.ai_engine.prompts.system_prompts import WRITER_GUIDELINES
-    from Django_xm.apps.ai_engine.guardrails import create_guardrails_middleware
 
     warnings.warn("create_web_researcher 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2)
     logger.info("🔍 创建 WebResearcher 子智能体")
@@ -157,21 +156,21 @@ def create_web_researcher(
 
 
 def create_doc_analyst(
-    model: Optional[str] = None,
-    tools: Optional[Sequence[BaseTool]] = None,
-    retriever_tool: Optional[BaseTool] = None,
+    model: str | None = None,
+    tools: Sequence[BaseTool] | None = None,
+    retriever_tool: BaseTool | None = None,
     enable_web_supplement: bool = True,
-    middleware: Optional[Sequence[AgentMiddleware]] = None,
+    middleware: Sequence[AgentMiddleware] | None = None,
     enable_guardrails: bool = False,
-    user_id: Optional[int] = None,
-    session_id: Optional[str] = None,
-    extra_tools: Optional[Sequence[BaseTool]] = None,
+    user_id: int | None = None,
+    session_id: str | None = None,
+    extra_tools: Sequence[BaseTool] | None = None,
     **kwargs,
 ):
+    from Django_xm.apps.ai_engine.guardrails import create_guardrails_middleware
+    from Django_xm.apps.ai_engine.prompts.system_prompts import WRITER_GUIDELINES
     from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
     from Django_xm.apps.tools.langchain.web_search import create_tavily_search_tool
-    from Django_xm.apps.ai_engine.prompts.system_prompts import WRITER_GUIDELINES
-    from Django_xm.apps.ai_engine.guardrails import create_guardrails_middleware
 
     warnings.warn("create_doc_analyst 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2)
     logger.info("📚 创建 DocAnalyst 子智能体")
@@ -227,17 +226,17 @@ def create_doc_analyst(
 
 
 def create_report_writer(
-    model: Optional[str] = None,
-    tools: Optional[Sequence[BaseTool]] = None,
-    middleware: Optional[Sequence[AgentMiddleware]] = None,
+    model: str | None = None,
+    tools: Sequence[BaseTool] | None = None,
+    middleware: Sequence[AgentMiddleware] | None = None,
     enable_guardrails: bool = False,
-    user_id: Optional[int] = None,
-    session_id: Optional[str] = None,
+    user_id: int | None = None,
+    session_id: str | None = None,
     **kwargs,
 ):
-    from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
-    from Django_xm.apps.ai_engine.prompts.system_prompts import WRITER_GUIDELINES
     from Django_xm.apps.ai_engine.guardrails import create_guardrails_middleware
+    from Django_xm.apps.ai_engine.prompts.system_prompts import WRITER_GUIDELINES
+    from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
 
     warnings.warn("create_report_writer 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2)
     logger.info("✍️ 创建 ReportWriter 子智能体")

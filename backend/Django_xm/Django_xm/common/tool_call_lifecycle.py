@@ -37,12 +37,12 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Set
+from typing import Any
 
 from django.core.cache import cache
 
-from Django_xm.common.event_schema import EventType, EventSource
-from Django_xm.common.realtime_sync import publish_tool_call_sync, publish_tool_call
+from Django_xm.common.event_schema import EventSource, EventType
+from Django_xm.common.realtime_sync import publish_tool_call, publish_tool_call_sync
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ _PUBLISHED_KEY_PREFIX = "tool_call:published"
 # WAITING 允许从 None 转换：ApprovalMiddleware 创建审批时直接发布 WAITING（无需先 INPUT_READY）
 # RUNNING 允许自循环：审批通过（PROCESSING）时由 approval_service 发布 RUNNING，stream_helpers 可能因并发再次发布
 # FAILED 允许从 WAITING 转换：审批通过前工具可能因前置依赖失败
-_VALID_TRANSITIONS: Dict[EventType, Set[Optional[EventType]]] = {
+_VALID_TRANSITIONS: dict[EventType, set[EventType | None]] = {
     EventType.TOOL_CALL_PENDING:     {None},
     EventType.TOOL_CALL_INPUT_READY: {None, EventType.TOOL_CALL_PENDING, EventType.TOOL_CALL_INPUT_READY},
     EventType.TOOL_CALL_WAITING:     {None, EventType.TOOL_CALL_INPUT_READY, EventType.TOOL_CALL_WAITING},
@@ -108,11 +108,11 @@ class ToolCallContext:
     tool_name: str
     module: EventSource
     module_id: str
-    cross_module_id: Optional[str] = None
+    cross_module_id: str | None = None
     message_id: str = ''
     parameters: dict = field(default_factory=dict)
-    graph_interrupt_id: Optional[str] = None
-    last_event_type: Optional[str] = None  # 最后一次发布的 event_type.value
+    graph_interrupt_id: str | None = None
+    last_event_type: str | None = None  # 最后一次发布的 event_type.value
 
 
 class ToolCallLifecycleService:
@@ -178,8 +178,8 @@ class ToolCallLifecycleService:
         self,
         tool_call_id: str,
         event_type: EventType,
-        parameters: Optional[dict],
-    ) -> Optional[Dict[str, Any]]:
+        parameters: dict | None,
+    ) -> dict[str, Any] | None:
         """状态机转换的公共预处理逻辑（sync/async 共享）。
 
         流程：
@@ -232,7 +232,7 @@ class ToolCallLifecycleService:
         self,
         tool_call_id: str,
         event_type: EventType,
-        ctx_dict: Dict[str, Any],
+        ctx_dict: dict[str, Any],
     ) -> None:
         """状态机转换的公共后处理逻辑（sync/async 共享）。
 
@@ -251,8 +251,8 @@ class ToolCallLifecycleService:
         event_type: EventType,
         *,
         result: Any = None,
-        error: Optional[str] = None,
-        parameters: Optional[dict] = None,
+        error: str | None = None,
+        parameters: dict | None = None,
     ) -> None:
         """状态机转换并发布事件（同步版，适配 sync 上下文：chat 模块 stream_helpers）。
 
@@ -304,8 +304,8 @@ class ToolCallLifecycleService:
         event_type: EventType,
         *,
         result: Any = None,
-        error: Optional[str] = None,
-        parameters: Optional[dict] = None,
+        error: str | None = None,
+        parameters: dict | None = None,
     ) -> None:
         """状态机转换并发布事件（异步版，适配 async 上下文：research/learning 模块）。
 
@@ -348,7 +348,7 @@ class ToolCallLifecycleService:
 
         self._finalize_transition(tool_call_id, event_type, ctx_dict)
 
-    def get_context(self, tool_call_id: str) -> Optional[dict]:
+    def get_context(self, tool_call_id: str) -> dict | None:
         """获取工具调用上下文（调试/测试用）。"""
         return cache.get(f"{_TC_CTX_PREFIX}:{tool_call_id}")
 

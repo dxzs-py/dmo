@@ -2,25 +2,21 @@
 安全学习工作流 - 集成 Guardrails 的学习工作流
 """
 
-import logging
 from typing import Literal
 
-from langgraph.graph import StateGraph, END
+from langgraph.graph import END, StateGraph
+
+from Django_xm.apps.ai_engine.config import settings
+from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.ai_engine.services.checkpointer_factory import get_checkpointer
 
-from .state import StudyFlowState
-from .nodes import (
-    planner_node,
-    retrieval_node,
-    quiz_generator_node,
-    grading_node,
-    feedback_node
-)
+from ..nodes import feedback_node, grading_node, planner_node, quiz_generator_node, retrieval_node
+from .resilience import astream_with_resilience, invoke_with_resilience
 from .safe_nodes import (
-    create_safe_node,
     create_human_review_node,
+    create_safe_node,
 )
-from Django_xm.apps.ai_engine.config import settings, get_logger
+from .state import StudyFlowState
 
 logger = get_logger(__name__)
 
@@ -197,7 +193,7 @@ def run_safe_study_flow(
     }
 
     try:
-        result = graph.invoke(initial_state, config)
+        result = invoke_with_resilience(graph, initial_state, config)
         logger.info("[Safe Study Flow] ✅ 工作流执行完成")
         return result
     except Exception as e:
@@ -240,7 +236,7 @@ async def stream_safe_study_flow(
     }
 
     try:
-        async for chunk in graph.astream(initial_state, config):
+        async for chunk in astream_with_resilience(graph, initial_state, config):
             yield chunk
 
         logger.info("[Safe Study Flow] ✅ 流式执行完成")

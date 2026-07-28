@@ -15,27 +15,31 @@ Guardrails 中间件 - 基于 LangChain AgentMiddleware 实现
 - https://docs.langchain.com/oss/python/langchain/middleware/custom
 """
 
-from typing import Optional, Any, Dict, Callable, List
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from langchain_core.runnables import RunnableLambda
+
+import logging
+import threading
+import time
 
 from langchain.agents.middleware import (
     AgentMiddleware,
     AgentState,
+    ExtendedModelResponse,
     ModelRequest,
     ModelResponse,
-    ExtendedModelResponse,
     ToolCallRequest,
 )
-from langchain_core.messages import AIMessage, HumanMessage, BaseMessage, ToolMessage
-from langgraph.types import Command
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.runtime import Runtime
+from langgraph.types import Command
 
+from .content_filters import ContentFilter
 from .input_validators import InputValidator
 from .output_validators import OutputValidator
-from .content_filters import ContentFilter
-
-import logging
-import time
-import threading
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +102,7 @@ class RateLimitMiddleware(AgentMiddleware):
         llm_judge_max_calls: int = 3,
         task_id: str = None,
         graceful_degradation: bool = True,
-        warning_milestones: Optional[List[int]] = None,
+        warning_milestones: list[int] | None = None,
     ):
         super().__init__()
         self.max_total_calls = max_total_calls
@@ -116,14 +120,14 @@ class RateLimitMiddleware(AgentMiddleware):
         self.warning_milestones = warning_milestones or [50, 100, 200]
         self._model_call_count = 0
         self._tool_call_count = 0
-        self._call_timestamps: List[float] = []
-        self._recent_tool_calls: List[Dict[str, Any]] = []
+        self._call_timestamps: list[float] = []
+        self._recent_tool_calls: list[dict[str, Any]] = []
         self._consecutive_same_count = 0
-        self._last_tool_name: Optional[str] = None
+        self._last_tool_name: str | None = None
         self._llm_judge_count = 0
         self._llm_judge_skip_until: float = 0.0
         self._lock = threading.Lock()
-        self._loop_detected_reason: Optional[str] = None
+        self._loop_detected_reason: str | None = None
         self._warned_milestones: set = set()
 
     def _check_task_cancelled(self) -> None:
@@ -140,7 +144,7 @@ class RateLimitMiddleware(AgentMiddleware):
         except Exception:
             pass
 
-    def _check_rate_limit(self, call_type: str) -> Optional[str]:
+    def _check_rate_limit(self, call_type: str) -> str | None:
         """检查速率和总量限制，返回循环原因字符串或 None"""
         now = time.time()
         with self._lock:
@@ -164,7 +168,7 @@ class RateLimitMiddleware(AgentMiddleware):
                 return reason
         return None
 
-    def _check_exact_duplicate(self, tool_name: str, tool_args: Any) -> Optional[str]:
+    def _check_exact_duplicate(self, tool_name: str, tool_args: Any) -> str | None:
         """精确重复检测，返回循环原因或 None"""
         self._recent_tool_calls.append({
             "name": tool_name,
@@ -185,7 +189,7 @@ class RateLimitMiddleware(AgentMiddleware):
                 if args_diversity >= 0.5:
                     return None  # 参数递进模式，跳过精确重复检测
 
-            name_counts: Dict[str, int] = {}
+            name_counts: dict[str, int] = {}
             for tc in recent:
                 key = f"{tc['name']}:{tc['args_hash']}"
                 name_counts[key] = name_counts.get(key, 0) + 1
@@ -224,7 +228,7 @@ class RateLimitMiddleware(AgentMiddleware):
         recent = self._recent_tool_calls[-self.progress_window:]
         return not any(tc["name"] in self.PROGRESS_TOOLS for tc in recent)
 
-    def _check_tool_loop(self, tool_name: str, tool_args: Any) -> Optional[str]:
+    def _check_tool_loop(self, tool_name: str, tool_args: Any) -> str | None:
         """检测工具调用循环，返回循环原因或 None"""
         # L1: 精确重复检测
         dup_reason = self._check_exact_duplicate(tool_name, tool_args)
@@ -306,9 +310,10 @@ class RateLimitMiddleware(AgentMiddleware):
             return ""
         if isinstance(args, dict):
             try:
-                import hashlib, json
+                import hashlib
+                import json
                 serialized = json.dumps(args, sort_keys=True, ensure_ascii=False, default=str)
-                return hashlib.md5(serialized.encode()).hexdigest()[:12]
+                return hashlib.md5(serialized.encode(), usedforsecurity=False).hexdigest()[:12]
             except (TypeError, ValueError):
                 return str(args)[:64]
         return str(args)[:64]
@@ -454,14 +459,14 @@ class GuardrailsMiddleware(AgentMiddleware):
 
     def __init__(
         self,
-        input_validator: Optional[InputValidator] = None,
-        output_validator: Optional[OutputValidator] = None,
-        on_input_error: Optional[Callable] = None,
-        on_output_error: Optional[Callable] = None,
+        input_validator: InputValidator | None = None,
+        output_validator: OutputValidator | None = None,
+        on_input_error: Callable | None = None,
+        on_output_error: Callable | None = None,
         raise_on_error: bool = True,
         validate_tool_calls: bool = True,
         max_message_count: int = 100,
-        blocked_tools: Optional[set] = None,
+        blocked_tools: set | None = None,
     ):
         super().__init__()
         self.input_validator = input_validator or InputValidator()
@@ -472,12 +477,12 @@ class GuardrailsMiddleware(AgentMiddleware):
         self.validate_tool_calls = validate_tool_calls
         self.max_message_count = max_message_count
         self.blocked_tools = self.DANGEROUS_TOOLS | (blocked_tools or set())
-        self._agent_start_time: Optional[float] = None
+        self._agent_start_time: float | None = None
         self._tool_call_count: int = 0
         self._model_call_count: int = 0
         self._count_lock = threading.Lock()
 
-    def before_agent(self, state: AgentState, runtime: Runtime) -> Dict[str, Any] | None:
+    def before_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         self._agent_start_time = time.time()
         with self._count_lock:
             self._tool_call_count = 0
@@ -491,7 +496,7 @@ class GuardrailsMiddleware(AgentMiddleware):
         logger.info(f"[Guardrails] Agent 开始执行, 查询: {query}...")
         return None
 
-    def after_agent(self, state: AgentState, runtime: Runtime) -> Dict[str, Any] | None:
+    def after_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         duration = time.time() - self._agent_start_time if self._agent_start_time else 0
         with self._count_lock:
             model_calls = self._model_call_count
@@ -503,7 +508,7 @@ class GuardrailsMiddleware(AgentMiddleware):
         self._agent_start_time = None
         return None
 
-    def before_model(self, state: AgentState, runtime: Runtime) -> Dict[str, Any] | None:
+    def before_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         messages = state.get("messages", [])
         if len(messages) > self.max_message_count:
             logger.warning(
@@ -511,7 +516,7 @@ class GuardrailsMiddleware(AgentMiddleware):
             )
         return None
 
-    def after_model(self, state: AgentState, runtime: Runtime) -> Dict[str, Any] | None:
+    def after_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         with self._count_lock:
             self._model_call_count += 1
         messages = state.get("messages", [])
@@ -698,7 +703,7 @@ class PIIMiddleware(AgentMiddleware):
         self,
         mask_pii: bool = True,
         reject_on_pii: bool = False,
-        pii_patterns: Optional[Dict[str, str]] = None,
+        pii_patterns: dict[str, str] | None = None,
     ):
         super().__init__()
         self.mask_pii = mask_pii
@@ -762,9 +767,9 @@ class HumanInTheLoopMiddleware(AgentMiddleware):
 
     def __init__(
         self,
-        tools_requiring_approval: Optional[set] = None,
+        tools_requiring_approval: set | None = None,
         auto_approve_timeout: float = 300.0,
-        on_approval_request: Optional[Callable] = None,
+        on_approval_request: Callable | None = None,
     ):
         super().__init__()
         self.tools_requiring_approval = tools_requiring_approval or {
@@ -834,12 +839,12 @@ class HumanInTheLoopMiddleware(AgentMiddleware):
 
 
 def create_guardrails_middleware(
-    input_validator: Optional[InputValidator] = None,
-    output_validator: Optional[OutputValidator] = None,
+    input_validator: InputValidator | None = None,
+    output_validator: OutputValidator | None = None,
     strict_mode: bool = False,
     validate_tool_calls: bool = True,
     raise_on_error: bool = True,
-    blocked_tools: Optional[set] = None,
+    blocked_tools: set | None = None,
 ) -> GuardrailsMiddleware:
     content_filter = ContentFilter(
         enable_pii_detection=True,
@@ -872,8 +877,8 @@ def create_pii_middleware(
 
 
 def create_human_in_the_loop_middleware(
-    tools_requiring_approval: Optional[set] = None,
-    on_approval_request: Optional[Callable] = None,
+    tools_requiring_approval: set | None = None,
+    on_approval_request: Callable | None = None,
 ) -> HumanInTheLoopMiddleware:
     return HumanInTheLoopMiddleware(
         tools_requiring_approval=tools_requiring_approval,
@@ -888,15 +893,15 @@ def build_middleware_stack(
     enable_rate_limit: bool = True,
     guardrails_strict: bool = False,
     pii_reject: bool = False,
-    approval_tools: Optional[set] = None,
-    on_approval_request: Optional[Callable] = None,
-    extra_middleware: Optional[List[AgentMiddleware]] = None,
-) -> List[AgentMiddleware]:
+    approval_tools: set | None = None,
+    on_approval_request: Callable | None = None,
+    extra_middleware: list[AgentMiddleware] | None = None,
+) -> list[AgentMiddleware]:
     """
     构建 Middleware 栈，按优先级排列：
     RateLimitMiddleware -> PIIMiddleware -> GuardrailsMiddleware -> HumanInTheLoopMiddleware
     """
-    stack: List[AgentMiddleware] = []
+    stack: list[AgentMiddleware] = []
 
     if enable_rate_limit:
         stack.append(create_rate_limit_middleware())
@@ -924,8 +929,8 @@ def build_middleware_stack(
 
 def create_guardrails_runnable(
     runnable,
-    input_validator: Optional[InputValidator] = None,
-    output_validator: Optional[OutputValidator] = None,
+    input_validator: InputValidator | None = None,
+    output_validator: OutputValidator | None = None,
     validate_input: bool = True,
     validate_output: bool = True,
     raise_on_error: bool = True,
@@ -967,7 +972,7 @@ def create_guardrails_runnable(
 
 
 def create_input_filter(
-    content_filter: Optional[ContentFilter] = None,
+    content_filter: ContentFilter | None = None,
     strict_mode: bool = False,
 ) -> "RunnableLambda":
     from langchain_core.runnables import RunnableLambda
@@ -988,7 +993,7 @@ def create_input_filter(
 
 
 def create_output_filter(
-    content_filter: Optional[ContentFilter] = None,
+    content_filter: ContentFilter | None = None,
     require_sources: bool = False,
     strict_mode: bool = False,
 ) -> "RunnableLambda":

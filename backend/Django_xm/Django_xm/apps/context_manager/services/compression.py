@@ -13,15 +13,14 @@
 """
 
 import time
-import logging
-from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, ClassVar
 
+from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 
-from Django_xm.apps.context_manager.config import get_logger
+from Django_xm.apps.core.config import get_logger
 
 try:
     import tiktoken as _tiktoken
@@ -71,7 +70,7 @@ class CompressionConfig:
     preserve_system_messages: bool = True
     preserve_tool_results: bool = True
     entity_aware: bool = True
-    long_term_tags: List[str] = field(default_factory=lambda: ["system", "preference", "decision"])
+    long_term_tags: list[str] = field(default_factory=lambda: ["system", "preference", "decision"])
 
     @property
     def trigger_threshold(self) -> int:
@@ -84,18 +83,18 @@ class CompressionResult:
     original_message_count: int = 0
     original_token_estimate: int = 0
     compressed_token_estimate: int = 0
-    summary: Optional[str] = None
-    key_entities: List[str] = field(default_factory=list)
-    key_decisions: List[str] = field(default_factory=list)
+    summary: str | None = None
+    key_entities: list[str] = field(default_factory=list)
+    key_decisions: list[str] = field(default_factory=list)
     compression_ratio: float = 0.0
-    strategy_used: Optional[CompressionStrategy] = None
+    strategy_used: CompressionStrategy | None = None
     duration_ms: float = 0.0
-    quality: Optional[SummaryQuality] = None
+    quality: SummaryQuality | None = None
     is_incremental: bool = False
 
 
 class TokenEstimator:
-    _MODEL_LIMITS: Dict[str, int] = {
+    _MODEL_LIMITS: ClassVar[dict[str, int]] = {
         "gpt-4o": 128000,
         "gpt-4o-mini": 128000,
         "gpt-4-turbo": 128000,
@@ -108,7 +107,7 @@ class TokenEstimator:
         "deepseek-reasoner": 128000,
     }
 
-    _MODEL_ENCODING_MAP: Dict[str, str] = {
+    _MODEL_ENCODING_MAP: ClassVar[dict[str, str]] = {
         "gpt-4o": "o200k_base",
         "gpt-4o-mini": "o200k_base",
         "gpt-4-turbo": "cl100k_base",
@@ -118,10 +117,10 @@ class TokenEstimator:
 
     _DEFAULT_ENCODING: str = "cl100k_base"
 
-    _encoding_cache: Dict[str, Any] = {}
+    _encoding_cache: ClassVar[dict[str, Any]] = {}
 
     # transformers tokenizer 缓存
-    _transformers_tokenizer_cache: Dict[str, Any] = {}
+    _transformers_tokenizer_cache: ClassVar[dict[str, Any]] = {}
 
     @classmethod
     def _get_encoding(cls, model_name: str = "") -> Any:
@@ -248,7 +247,7 @@ class TokenEstimator:
         return cls.estimate_tokens(text, model_name)
 
     @classmethod
-    def estimate_messages(cls, messages: List[BaseMessage], model_name: str = "") -> int:
+    def estimate_messages(cls, messages: list[BaseMessage], model_name: str = "") -> int:
         total = 0
         for msg in messages:
             total += cls.estimate_tokens(msg.content if isinstance(msg.content, str) else str(msg.content), model_name)
@@ -258,7 +257,7 @@ class TokenEstimator:
         return total
 
     @classmethod
-    def estimate_dict_messages(cls, messages: List[Dict[str, Any]], model_name: str = "") -> int:
+    def estimate_dict_messages(cls, messages: list[dict[str, Any]], model_name: str = "") -> int:
         total = 0
         for msg in messages:
             content = msg.get('content', '')
@@ -296,7 +295,7 @@ class EntityExtractor:
     })
 
     @staticmethod
-    def extract_from_messages(messages: List[Dict[str, Any]]) -> List[str]:
+    def extract_from_messages(messages: list[dict[str, Any]]) -> list[str]:
         entities = []
         for msg in messages:
             role = msg.get('role', '')
@@ -324,7 +323,7 @@ class EntityExtractor:
         return unique[:30]
 
     @staticmethod
-    def _extract_user_entities(text: str) -> List[str]:
+    def _extract_user_entities(text: str) -> list[str]:
         import re
         entities = []
 
@@ -347,7 +346,7 @@ class EntityExtractor:
         return entities
 
     @staticmethod
-    def _extract_assistant_entities(text: str) -> List[str]:
+    def _extract_assistant_entities(text: str) -> list[str]:
         import re
         entities = []
 
@@ -364,18 +363,18 @@ class EntityExtractor:
 
 class ContextCompressionEngine:
 
-    _embedding_cache: Dict[str, List[float]] = {}
+    _embedding_cache: ClassVar[dict[str, list[float]]] = {}
 
     def __init__(
         self,
-        config: Optional[CompressionConfig] = None,
-        store: Optional[Any] = None,
-        user_id: Optional[str] = None,
-        thread_id: Optional[str] = None,
+        config: CompressionConfig | None = None,
+        store: Any | None = None,
+        user_id: str | None = None,
+        thread_id: str | None = None,
     ):
         self.config = config or CompressionConfig()
         self._entity_extractor = EntityExtractor()
-        self._rolling_summary: Optional[str] = None
+        self._rolling_summary: str | None = None
         self._last_compressed_index: int = 0
         self._store = store
         self._user_id = user_id
@@ -393,13 +392,13 @@ class ContextCompressionEngine:
         3. SystemConfig 默认模型
         4. 回退到 ``get_chat_model()`` 默认值
         """
-        from Django_xm.apps.context_manager.config import context_settings
         from Django_xm.apps.ai_engine.services.llm_factory import (
             get_chat_model,
             get_helper_model,
             get_model_string,
             get_system_default_chat_model,
         )
+        from Django_xm.apps.context_manager.config import context_settings
 
         # 1. 用户显式指定的轻量模型（如 "deepseek:deepseek-chat"）
         lightweight_model = context_settings.compression_lightweight_model
@@ -431,7 +430,7 @@ class ContextCompressionEngine:
         # 4. 最终兜底：默认 provider/model
         return get_chat_model(get_model_string())
 
-    def _classify_memory_tier(self, msg: Dict[str, Any]) -> "MemoryTier":
+    def _classify_memory_tier(self, msg: dict[str, Any]) -> "MemoryTier":
         """分类消息的记忆层级"""
         # role == "system" → LONG_TERM
         if msg.get('role') == 'system':
@@ -454,7 +453,7 @@ class ContextCompressionEngine:
         # 其他 → SHORT_TERM
         return MemoryTier.SHORT_TERM
 
-    def should_compress(self, messages: List[Dict[str, Any]]) -> bool:
+    def should_compress(self, messages: list[dict[str, Any]]) -> bool:
         # 用全部消息计算 token，判断是否超限
         total_tokens = TokenEstimator.estimate_dict_messages(messages)
         if total_tokens <= self.config.trigger_threshold:
@@ -466,7 +465,7 @@ class ContextCompressionEngine:
         )
         return short_term_count >= self.config.keep_recent_messages
 
-    def compress(self, messages: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], CompressionResult]:
+    def compress(self, messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], CompressionResult]:
         start_time = time.time()
         total_tokens = TokenEstimator.estimate_dict_messages(messages)
 
@@ -538,8 +537,8 @@ class ContextCompressionEngine:
 
     def _compress_summary(
         self,
-        messages: List[Dict[str, Any]],
-        long_term_messages: Optional[List[Dict[str, Any]]] = None,
+        messages: list[dict[str, Any]],
+        long_term_messages: list[dict[str, Any]] | None = None,
     ) -> CompressionResult:
         old_messages = messages[:-self.config.keep_recent_messages]
         entities = self._entity_extractor.extract_from_messages(old_messages) if self.config.entity_aware else []
@@ -556,8 +555,8 @@ class ContextCompressionEngine:
 
     def _compress_sliding_window(
         self,
-        messages: List[Dict[str, Any]],
-        long_term_messages: Optional[List[Dict[str, Any]]] = None,
+        messages: list[dict[str, Any]],
+        long_term_messages: list[dict[str, Any]] | None = None,
     ) -> CompressionResult:
         return CompressionResult(
             compressed=True,
@@ -567,8 +566,8 @@ class ContextCompressionEngine:
 
     def _compress_hybrid(
         self,
-        messages: List[Dict[str, Any]],
-        long_term_messages: Optional[List[Dict[str, Any]]] = None,
+        messages: list[dict[str, Any]],
+        long_term_messages: list[dict[str, Any]] | None = None,
     ) -> CompressionResult:
         old_messages = messages[:-self.config.keep_recent_messages]
         entities = self._entity_extractor.extract_from_messages(old_messages) if self.config.entity_aware else []
@@ -583,7 +582,7 @@ class ContextCompressionEngine:
             strategy_used=CompressionStrategy.HYBRID,
         )
 
-    def _generate_summary(self, messages: List[Dict[str, Any]], entities: List[str]) -> str:
+    def _generate_summary(self, messages: list[dict[str, Any]], entities: list[str]) -> str:
         if not messages:
             return ""
 
@@ -617,7 +616,7 @@ class ContextCompressionEngine:
             logger.error(f"LLM 生成摘要失败: {e}")
             return self._fallback_summary(messages)
 
-    def _extract_decisions(self, messages: List[Dict[str, Any]]) -> List[str]:
+    def _extract_decisions(self, messages: list[dict[str, Any]]) -> list[str]:
         import re
         decisions = []
         for msg in messages:
@@ -638,7 +637,7 @@ class ContextCompressionEngine:
         return decisions[:10]
 
     @staticmethod
-    def _format_messages(messages: List[Dict[str, Any]]) -> str:
+    def _format_messages(messages: list[dict[str, Any]]) -> str:
         lines = []
         for msg in messages:
             role = msg.get('role', 'unknown')
@@ -665,7 +664,7 @@ class ContextCompressionEngine:
         return "\n".join(lines)
 
     @staticmethod
-    def _fallback_summary(messages: List[Dict[str, Any]]) -> str:
+    def _fallback_summary(messages: list[dict[str, Any]]) -> str:
         topics = []
         for msg in messages:
             if msg.get('role') == 'user':
@@ -678,7 +677,7 @@ class ContextCompressionEngine:
 
     def evaluate_summary_quality(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         summary: str,
     ) -> SummaryQuality:
         if not summary or not summary.strip():
@@ -692,7 +691,7 @@ class ContextCompressionEngine:
             conversation_text = conversation_text[:10000] + "\n...(内容过长已截断)"
 
         try:
-            from Django_xm.apps.ai_engine.services.llm_factory import get_helper_model, get_chat_model
+            from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model, get_helper_model
             model = get_helper_model() or get_chat_model()
             structured_model = model.with_structured_output(SummaryQuality)
         except Exception as e:
@@ -717,7 +716,7 @@ class ContextCompressionEngine:
             logger.warning(f"LLM 质量评估失败，返回默认评分: {e}")
             return SummaryQuality(completeness=0.7, accuracy=0.7, conciseness=0.7, overall=0.7, passed=True)
 
-    def get_rolling_summary(self) -> Optional[str]:
+    def get_rolling_summary(self) -> str | None:
         return self._rolling_summary
 
     def reset_rolling_summary(self) -> None:
@@ -767,9 +766,9 @@ class ContextCompressionEngine:
 
     def compress_incremental(
         self,
-        messages: List[Dict[str, Any]],
-        keep_recent: Optional[int] = None,
-    ) -> Tuple[List[Dict[str, Any]], CompressionResult]:
+        messages: list[dict[str, Any]],
+        keep_recent: int | None = None,
+    ) -> tuple[list[dict[str, Any]], CompressionResult]:
         start_time = time.time()
         total_tokens = TokenEstimator.estimate_dict_messages(messages)
         n_keep = keep_recent if keep_recent is not None else self.config.keep_recent_messages
@@ -864,9 +863,9 @@ class ContextCompressionEngine:
 
     def _generate_incremental_summary(
         self,
-        new_messages: List[Dict[str, Any]],
-        entities: List[str],
-        existing_summary: Optional[str],
+        new_messages: list[dict[str, Any]],
+        entities: list[str],
+        existing_summary: str | None,
     ) -> str:
         if not new_messages:
             return existing_summary or ""
@@ -954,7 +953,7 @@ class ContextCompressionEngine:
 
         return merged
 
-    def _get_embedding(self, text: str) -> Optional[List[float]]:
+    def _get_embedding(self, text: str) -> list[float] | None:
         cache_key = text[:200]
         if cache_key in self._embedding_cache:
             return self._embedding_cache[cache_key]
@@ -971,10 +970,10 @@ class ContextCompressionEngine:
 
     def _build_compressed_messages(
         self,
-        original: List[Dict[str, Any]],
+        original: list[dict[str, Any]],
         result: CompressionResult,
-        long_term_messages: Optional[List[Dict[str, Any]]] = None,
-    ) -> List[Dict[str, Any]]:
+        long_term_messages: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
         if not result.compressed:
             return original
 
@@ -996,7 +995,7 @@ class ContextCompressionEngine:
         if result.key_entities:
             context_parts.append(f"【关键实体】{', '.join(result.key_entities[:15])}")
         if result.key_decisions:
-            context_parts.append(f"【关键决策】\n" + "\n".join(f"- {d}" for d in result.key_decisions[:8]))
+            context_parts.append("【关键决策】\n" + "\n".join(f"- {d}" for d in result.key_decisions[:8]))
 
         if context_parts:
             compressed.append({
@@ -1023,13 +1022,13 @@ class ContextCompressionEngine:
 
 
 def create_compression_engine(
-    model_name: Optional[str] = None,
+    model_name: str | None = None,
     strategy: str = "hybrid",
     threshold_ratio: float = 0.8,
     keep_recent: int = 6,
-    store: Optional[Any] = None,
-    user_id: Optional[str] = None,
-    thread_id: Optional[str] = None,
+    store: Any | None = None,
+    user_id: str | None = None,
+    thread_id: str | None = None,
 ) -> ContextCompressionEngine:
     model_limit = TokenEstimator.get_model_limit(model_name or "")
     config = CompressionConfig(

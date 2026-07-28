@@ -10,11 +10,10 @@ RAG 检索增强与工具结果后处理
 """
 
 import json
-from typing import Any, Dict, List, Optional
 
 from langchain_core.language_models import BaseChatModel
 
-from Django_xm.apps.context_manager.config import get_logger
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -54,7 +53,7 @@ class RetrievalAugmenter:
     @staticmethod
     def process_tool_result(
         result_str: str,
-        llm: Optional[BaseChatModel] = None,
+        llm: BaseChatModel | None = None,
         max_length: int = 2000,
     ) -> str:
         if len(result_str) <= max_length:
@@ -89,7 +88,7 @@ class RetrievalAugmenter:
             return False
 
     @staticmethod
-    def extract_json_keys(text: str) -> List[str]:
+    def extract_json_keys(text: str) -> list[str]:
         try:
             data = json.loads(text.strip())
         except (json.JSONDecodeError, ValueError):
@@ -135,7 +134,7 @@ class RetrievalAugmenter:
                     lines.append(f"  ... 还有 {len(data) - 5} 条记录")
                 return "\n".join(lines)
             items = [str(item)[:200] for item in data[:10]]
-            result = "共 {} 项:\n".format(len(data)) + "\n".join(items)
+            result = f"共 {len(data)} 项:\n" + "\n".join(items)
             if len(data) > 10:
                 result += f"\n... 还有 {len(data) - 10} 项"
             return result
@@ -143,7 +142,7 @@ class RetrievalAugmenter:
         return text
 
     @staticmethod
-    def _summarize_with_llm(text: str, llm: BaseChatModel, max_length: int) -> Optional[str]:
+    def _summarize_with_llm(text: str, llm: BaseChatModel, max_length: int) -> str | None:
         truncated_input = text[:8000] if len(text) > 8000 else text
         prompt = (
             f"请将以下工具返回结果总结为简洁的自然语言，"

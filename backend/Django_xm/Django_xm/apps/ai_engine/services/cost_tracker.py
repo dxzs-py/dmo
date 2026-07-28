@@ -4,12 +4,13 @@ Token 使用量追踪系统
 """
 
 import threading
-from typing import Dict, Any, Optional, List
-from dataclasses import dataclass, field
-from datetime import datetime
 from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
 
-from Django_xm.apps.ai_engine.config import get_logger, settings as app_cfg
+from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.ai_engine.config import settings as app_cfg
 
 logger = get_logger(__name__)
 
@@ -27,9 +28,9 @@ class TokenRecord:
 
     def __post_init__(self):
         if not self.timestamp:
-            self.timestamp = datetime.now().isoformat()
+            self.timestamp = datetime.now(UTC).isoformat()
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "model": self.model,
             "inputTokens": self.input_tokens,
@@ -58,20 +59,20 @@ class StorageUsage:
 class TokenDetailTracker:
     """Token 追踪器 - 分层追踪 LLM / 工具 / 存储 Token 使用量"""
 
-    def __init__(self, default_model: Optional[str] = None):
+    def __init__(self, default_model: str | None = None):
         self.default_model = default_model or app_cfg.openai_model
-        self.records: List[TokenRecord] = []
-        self.tool_usages: Dict[str, ToolUsage] = {}
+        self.records: list[TokenRecord] = []
+        self.tool_usages: dict[str, ToolUsage] = {}
         self.storage_usage = StorageUsage()
-        self._current_record: Optional[TokenRecord] = None
+        self._current_record: TokenRecord | None = None
         self._lock = threading.Lock()
 
-    def start_record(self, model: Optional[str] = None, category: str = "llm") -> TokenRecord:
+    def start_record(self, model: str | None = None, category: str = "llm") -> TokenRecord:
         model = model or self.default_model
         self._current_record = TokenRecord(model=model, category=category)
         return self._current_record
 
-    def finish_record(self) -> Optional[TokenRecord]:
+    def finish_record(self) -> TokenRecord | None:
         if self._current_record is None:
             return None
         record = self._current_record
@@ -88,7 +89,7 @@ class TokenDetailTracker:
         finally:
             self.finish_record()
 
-    def update_from_metadata(self, metadata: Dict[str, Any], model: Optional[str] = None):
+    def update_from_metadata(self, metadata: dict[str, Any], model: str | None = None):
         if not metadata:
             return
 
@@ -124,7 +125,7 @@ class TokenDetailTracker:
             self.storage_usage.embedding_tokens += tokens
             self.storage_usage.retrieval_docs += docs
 
-    def get_total_tokens(self) -> Dict[str, int]:
+    def get_total_tokens(self) -> dict[str, int]:
         totals = {
             "input_tokens": 0,
             "output_tokens": 0,
@@ -140,7 +141,7 @@ class TokenDetailTracker:
             totals["cache_creation_tokens"] += record.cache_creation_tokens
         return totals
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         totals = self.get_total_tokens()
         return {
             "tokens": {
@@ -160,7 +161,7 @@ class TokenDetailTracker:
             "records": [r.to_dict() for r in self.records[-10:]],
         }
 
-    def get_token_detail(self) -> Dict[str, Any]:
+    def get_token_detail(self) -> dict[str, Any]:
         llm_totals = {"input": 0, "output": 0, "reasoning": 0, "cachedInput": 0, "cacheCreation": 0}
         tool_llm_totals = {"input": 0, "output": 0}
 
@@ -202,7 +203,7 @@ class TokenDetailTracker:
         summary = self.get_summary()
         detail = self.get_token_detail()
         parts = [
-            f"📊 Token统计:",
+            "📊 Token统计:",
             f"LLM 输入={detail['llm']['input']}, 输出={detail['llm']['output']}, 推理={detail['llm']['reasoning']}",
         ]
         if detail["tools"]["count"] > 0:
@@ -213,6 +214,6 @@ class TokenDetailTracker:
         logger.info(" | ".join(parts))
 
 
-def create_token_detail_tracker(model: Optional[str] = None) -> TokenDetailTracker:
+def create_token_detail_tracker(model: str | None = None) -> TokenDetailTracker:
     model = model or app_cfg.openai_model
     return TokenDetailTracker(default_model=model)

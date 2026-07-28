@@ -6,10 +6,10 @@
 import logging
 import threading
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Any, ClassVar
 
-from django.conf import settings
 from django.core.cache import cache as redis_cache
+
 from ..models import ResearchTask
 
 logger = logging.getLogger(__name__)
@@ -33,8 +33,8 @@ class TaskManager:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._cache: Dict[str, Dict[str, Any]] = {}
-                    cls._instance._threads: Dict[str, threading.Thread] = {}
+                    cls._instance._cache: dict[str, dict[str, Any]] = {}
+                    cls._instance._threads: dict[str, threading.Thread] = {}
         return cls._instance
 
     @staticmethod
@@ -45,7 +45,7 @@ class TaskManager:
         redis_cache.delete(self._redis_cache_key(task_id, created_by_id))
         redis_cache.delete(self._redis_cache_key(task_id, None))
 
-    def get_task_status(self, task_id: str, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    def get_task_status(self, task_id: str, user_id: int | None = None) -> dict[str, Any] | None:
         """
         获取任务状态
         优先查询 Redis 缓存，未命中则查数据库并回写缓存
@@ -81,7 +81,7 @@ class TaskManager:
         except ResearchTask.DoesNotExist:
             return None
 
-    _STATUS_MAP = {
+    _STATUS_MAP: ClassVar[dict[str, str]] = {
         'started': 'running',
         'progress': 'running',
         'success': 'completed',
@@ -91,7 +91,7 @@ class TaskManager:
     def _map_status(self, status: str) -> str:
         return self._STATUS_MAP.get(status, status)
 
-    def update_task_status(self, task_id: str, status_data: Dict[str, Any], user_id: Optional[int] = None) -> None:
+    def update_task_status(self, task_id: str, status_data: dict[str, Any], user_id: int | None = None) -> None:
         if task_id not in self._cache:
             self._cache[task_id] = {}
 
@@ -120,7 +120,7 @@ class TaskManager:
                    enable_web_search: bool = True,
                    enable_doc_analysis: bool = False,
                    created_by=None,
-                   session_id: Optional[str] = None) -> Dict[str, Any]:
+                   session_id: str | None = None) -> dict[str, Any]:
         task_data = {
             'task_id': task_id,
             'query': query,
@@ -153,7 +153,7 @@ class TaskManager:
         if task_id in self._threads:
             del self._threads[task_id]
 
-    def delete_task(self, task_id: str, user_id: Optional[int] = None) -> bool:
+    def delete_task(self, task_id: str, user_id: int | None = None) -> bool:
         """
         软删除研究任务
         - 设置 is_deleted=True, deleted_at=now
@@ -196,7 +196,7 @@ class TaskManager:
 
         return True
 
-    def task_exists(self, task_id: str, user_id: Optional[int] = None) -> bool:
+    def task_exists(self, task_id: str, user_id: int | None = None) -> bool:
         """
         检查任务是否存在
         当 user_id 不为 None 时，强制验证任务归属
@@ -220,9 +220,9 @@ def get_task_manager() -> TaskManager:
     return _task_manager
 
 
-def get_task_status(task_id: str, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+def get_task_status(task_id: str, user_id: int | None = None) -> dict[str, Any] | None:
     return get_task_manager().get_task_status(task_id, user_id=user_id)
 
 
-def update_task_status(task_id: str, status: Dict[str, Any], user_id: Optional[int] = None) -> None:
+def update_task_status(task_id: str, status: dict[str, Any], user_id: int | None = None) -> None:
     get_task_manager().update_task_status(task_id, status, user_id=user_id)

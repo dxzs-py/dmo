@@ -6,8 +6,9 @@
 - ToolError / ToolErrorCode: 结构化错误
 """
 from enum import Enum
+from typing import Any
+
 from pydantic import BaseModel
-from typing import Any, Optional
 
 # 工具版本常量
 TOOL_VERSION = "1.0.0"
@@ -65,7 +66,7 @@ class StandardToolResult(BaseModel):
     content: str
     status: ToolStatus = ToolStatus.SUCCESS
     metadata: dict[str, Any] = {}
-    source: Optional[str] = None
+    source: str | None = None
 
     def to_tool_message(self) -> str:
         """转换为工具消息字符串"""

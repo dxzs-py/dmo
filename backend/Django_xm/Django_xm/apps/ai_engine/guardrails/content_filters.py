@@ -3,9 +3,9 @@
 """
 
 import re
-from enum import Enum
-from typing import List, Dict, Any, Tuple
 from dataclasses import dataclass
+from enum import Enum
+from typing import Any, ClassVar
 
 
 class ContentSafetyLevel(Enum):
@@ -20,31 +20,31 @@ class FilterResult:
     """过滤结果"""
     is_safe: bool
     safety_level: ContentSafetyLevel
-    issues: List[str]
+    issues: list[str]
     filtered_content: str
-    details: Dict[str, Any]
+    details: dict[str, Any]
 
 
 class ContentFilter:
     """内容安全过滤器"""
-    
+
     # 敏感信息正则模式
-    PATTERNS = {
+    PATTERNS: ClassVar[dict[str, str]] = {
         "phone": r"1[3-9]\d{9}",
         "email": r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
         "id_card": r"\d{17}[\dXx]",
         "credit_card": r"\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}",
         "ip_address": r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}",
     }
-    
+
     # 不安全关键词（示例，实际应该更完善）
-    UNSAFE_KEYWORDS = [
+    UNSAFE_KEYWORDS: ClassVar[list[str]] = [
         "暴力", "色情", "赌博", "毒品", "恐怖", "诈骗",
         "hack", "crack", "exploit", "malware", "virus",
     ]
-    
+
     # Prompt Injection 检测模式
-    INJECTION_PATTERNS = [
+    INJECTION_PATTERNS: ClassVar[list[str]] = [
         r"ignore\s+previous\s+instructions",
         r"ignore\s+all\s+previous",
         r"disregard\s+previous",
@@ -57,7 +57,7 @@ class ContentFilter:
         r"\[INST\]",
         r"<\|im_start\|>",
     ]
-    
+
     def __init__(
         self,
         enable_pii_detection: bool = True,
@@ -78,7 +78,7 @@ class ContentFilter:
         self.enable_content_safety = enable_content_safety
         self.enable_injection_detection = enable_injection_detection
         self.mask_pii = mask_pii
-    
+
     def filter_input(self, text: str) -> FilterResult:
         """
         过滤输入内容
@@ -93,7 +93,7 @@ class ContentFilter:
         details = {}
         filtered_text = text
         safety_level = ContentSafetyLevel.SAFE
-        
+
         # 1. 检测 Prompt Injection
         if self.enable_injection_detection:
             injection_detected, injection_patterns = self._detect_injection(text)
@@ -101,7 +101,7 @@ class ContentFilter:
                 issues.append("检测到可能的 Prompt Injection 攻击")
                 details["injection_patterns"] = injection_patterns
                 safety_level = ContentSafetyLevel.UNSAFE
-        
+
         # 2. 检测个人敏感信息
         if self.enable_pii_detection:
             pii_found, pii_types = self._detect_pii(text)
@@ -110,11 +110,11 @@ class ContentFilter:
                 details["pii_types"] = pii_types
                 if safety_level == ContentSafetyLevel.SAFE:
                     safety_level = ContentSafetyLevel.WARNING
-                
+
                 # 脱敏处理
                 if self.mask_pii:
                     filtered_text = self._mask_pii(filtered_text)
-        
+
         # 3. 检测不安全内容
         if self.enable_content_safety:
             unsafe_detected, unsafe_keywords = self._detect_unsafe_content(text)
@@ -122,15 +122,15 @@ class ContentFilter:
                 issues.append(f"检测到不安全内容: {', '.join(unsafe_keywords)}")
                 details["unsafe_keywords"] = unsafe_keywords
                 safety_level = ContentSafetyLevel.UNSAFE
-        
+
         # 4. 检查长度
         if len(text) > 50000:
             issues.append("输入文本过长（超过 50000 字符）")
             if safety_level == ContentSafetyLevel.SAFE:
                 safety_level = ContentSafetyLevel.WARNING
-        
+
         is_safe = safety_level != ContentSafetyLevel.UNSAFE
-        
+
         return FilterResult(
             is_safe=is_safe,
             safety_level=safety_level,
@@ -138,7 +138,7 @@ class ContentFilter:
             filtered_content=filtered_text,
             details=details,
         )
-    
+
     def filter_output(self, text: str) -> FilterResult:
         """
         过滤输出内容
@@ -153,7 +153,7 @@ class ContentFilter:
         details = {}
         filtered_text = text
         safety_level = ContentSafetyLevel.SAFE
-        
+
         # 1. 检测个人敏感信息泄露
         if self.enable_pii_detection:
             pii_found, pii_types = self._detect_pii(text)
@@ -161,11 +161,11 @@ class ContentFilter:
                 issues.append(f"输出包含敏感信息: {', '.join(pii_types)}")
                 details["pii_types"] = pii_types
                 safety_level = ContentSafetyLevel.WARNING
-                
+
                 # 脱敏处理
                 if self.mask_pii:
                     filtered_text = self._mask_pii(filtered_text)
-        
+
         # 2. 检测不安全内容
         if self.enable_content_safety:
             unsafe_detected, unsafe_keywords = self._detect_unsafe_content(text)
@@ -173,9 +173,9 @@ class ContentFilter:
                 issues.append(f"输出包含不安全内容: {', '.join(unsafe_keywords)}")
                 details["unsafe_keywords"] = unsafe_keywords
                 safety_level = ContentSafetyLevel.UNSAFE
-        
+
         is_safe = safety_level != ContentSafetyLevel.UNSAFE
-        
+
         return FilterResult(
             is_safe=is_safe,
             safety_level=safety_level,
@@ -183,78 +183,78 @@ class ContentFilter:
             filtered_content=filtered_text,
             details=details,
         )
-    
-    def _detect_injection(self, text: str) -> Tuple[bool, List[str]]:
+
+    def _detect_injection(self, text: str) -> tuple[bool, list[str]]:
         """检测 Prompt Injection"""
         detected_patterns = []
         text_lower = text.lower()
-        
+
         for pattern in self.INJECTION_PATTERNS:
             if re.search(pattern, text_lower, re.IGNORECASE):
                 detected_patterns.append(pattern)
-        
+
         return len(detected_patterns) > 0, detected_patterns
-    
-    def _detect_pii(self, text: str) -> Tuple[bool, List[str]]:
+
+    def _detect_pii(self, text: str) -> tuple[bool, list[str]]:
         """检测个人敏感信息"""
         found_types = []
-        
+
         for pii_type, pattern in self.PATTERNS.items():
             if re.search(pattern, text):
                 found_types.append(pii_type)
-        
+
         return len(found_types) > 0, found_types
-    
+
     def _mask_pii(self, text: str) -> str:
         """脱敏个人信息"""
         masked_text = text
-        
+
         # 手机号脱敏
         masked_text = re.sub(
             self.PATTERNS["phone"],
             lambda m: m.group()[:3] + "****" + m.group()[-4:],
             masked_text
         )
-        
+
         # 邮箱脱敏
         masked_text = re.sub(
             self.PATTERNS["email"],
             lambda m: m.group().split("@")[0][:2] + "***@" + m.group().split("@")[1],
             masked_text
         )
-        
+
         # 身份证脱敏
         masked_text = re.sub(
             self.PATTERNS["id_card"],
             lambda m: m.group()[:6] + "********" + m.group()[-4:],
             masked_text
         )
-        
+
         # 信用卡脱敏
         masked_text = re.sub(
             self.PATTERNS["credit_card"],
             lambda m: "****-****-****-" + re.sub(r"[\s-]", "", m.group())[-4:],
             masked_text
         )
-        
+
         # IP 地址脱敏
         masked_text = re.sub(
             self.PATTERNS["ip_address"],
             lambda m: ".".join(m.group().split(".")[:2]) + ".***.***",
             masked_text
         )
-        
+
         return masked_text
-    
-    def _detect_unsafe_content(self, text: str) -> Tuple[bool, List[str]]:
+
+    def _detect_unsafe_content(self, text: str) -> tuple[bool, list[str]]:
         """检测不安全内容"""
         found_keywords = []
         text_lower = text.lower()
-        
+
         for keyword in self.UNSAFE_KEYWORDS:
             if keyword.lower() in text_lower:
                 found_keywords.append(keyword)
-        
+
         return len(found_keywords) > 0, found_keywords
 
 

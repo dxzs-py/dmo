@@ -24,7 +24,7 @@ import uuid
 from rest_framework.test import APITestCase
 
 from Django_xm.apps.approvals.models import Approval
-from Django_xm.apps.chat.models import ChatSession, ChatMessage, MessageRole
+from Django_xm.apps.chat.models import ChatMessage, ChatSession, MessageRole
 from Django_xm.apps.users.models import User
 
 

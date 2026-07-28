@@ -18,15 +18,14 @@
 """
 
 import time
-from typing import Optional
 
 from django.core.management.base import BaseCommand, CommandError
 
-from Django_xm.apps.knowledge.services.index_service import IndexManager
-from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
 from Django_xm.apps.knowledge.config import (
     detect_embedding_dimension,
 )
+from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
+from Django_xm.apps.knowledge.services.index_service import IndexManager
 
 
 class Command(BaseCommand):
@@ -71,8 +70,8 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        index_name: Optional[str] = options.get("index_name")
-        provider: Optional[str] = options.get("provider")
+        index_name: str | None = options.get("index_name")
+        provider: str | None = options.get("provider")
         rebuild_all: bool = options.get("rebuild_all", False)
         list_indexes: bool = options.get("list_indexes", False)
         dry_run: bool = options.get("dry_run", False)
@@ -115,7 +114,7 @@ class Command(BaseCommand):
     def _rebuild_single(
         self,
         index_name: str,
-        provider: Optional[str],
+        provider: str | None,
         dry_run: bool,
         batch_size: int,
     ):
@@ -173,7 +172,7 @@ class Command(BaseCommand):
 
     def _rebuild_all(
         self,
-        provider: Optional[str],
+        provider: str | None,
         dry_run: bool,
         batch_size: int,
     ):
@@ -287,7 +286,7 @@ class Command(BaseCommand):
         description = (manager._load_metadata(index_name) or {}).get("description", "")
 
         start_time = time.time()
-        new_store = manager.create_index(
+        manager.create_index(
             name=index_name,
             documents=documents,
             embeddings=embeddings,

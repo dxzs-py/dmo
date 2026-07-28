@@ -21,10 +21,8 @@ AI 相关配置（LLM/Agent/RAG/Embedding/Guardrails/LangSmith 等）
 
 from __future__ import annotations
 
-import os
 import logging
 from pathlib import Path
-from typing import Optional, Any
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -65,8 +63,10 @@ class ProjectSettings(BaseSettings):
 
     # ==================== 调试 / 环境 ====================
     debug: bool = Field(
-        default=True,
-        description="调试模式"
+        default=False,
+        description=(
+            "调试模式，默认关闭。开发环境需在 .env 中显式设置 DEBUG=True"
+        )
     )
 
     app_name: str = Field(
@@ -188,8 +188,11 @@ class ProjectSettings(BaseSettings):
     )
 
     cors_allowed_origins: str = Field(
-        default="http://localhost:3000,http://localhost:8000,http://www.langchain.cn:8080",
-        description="CORS 允许的源 (逗号分隔)"
+        default="",
+        description=(
+            "CORS 允许的源 (逗号分隔)。默认空字符串，dev/prod 必须显式配置。"
+            "生产环境若未配置则启动失败。"
+        )
     )
 
     csrf_trusted_origins: str = Field(
@@ -319,8 +322,9 @@ def get_logger(name: str) -> logging.Logger:
 
 def setup_loguru_logging() -> None:
     try:
-        from loguru import logger as _logger
         import sys
+
+        from loguru import logger as _logger
 
         _logger.remove()
 

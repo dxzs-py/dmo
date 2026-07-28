@@ -9,10 +9,11 @@
 """
 
 import logging
-from django.db.models.signals import post_save, post_delete
-from django.db import transaction
 
-from Django_xm.apps.analytics.models import UserEvent, EventCategory, EventType
+from django.db import transaction
+from django.db.models.signals import post_delete, post_save
+
+from Django_xm.apps.analytics.models import EventCategory, EventType, UserEvent
 from Django_xm.common.request_utils import get_client_ip, get_user_agent
 
 logger = logging.getLogger(__name__)

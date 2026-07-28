@@ -12,16 +12,17 @@ Plan-Execute 和 Research 工作流由各自模块独立编译：
 - research/services/research_workflow.py -> compile_research_workflow()
 """
 
-from typing import Literal, Optional
+from typing import Literal
 
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import Document
-from langgraph.graph import StateGraph, END, START
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.retrievers import BaseRetriever
+from langgraph.graph import END, START, StateGraph
 
-from Django_xm.apps.ai_engine.config import get_logger
-from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
+from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.ai_engine.prompts.system_prompts import get_system_prompt
+from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
+
 from .state import WorkflowState
 
 logger = get_logger(__name__)
@@ -65,7 +66,7 @@ async def preprocess(state: WorkflowState) -> dict:
     return {"messages": messages}
 
 
-async def retrieve(state: WorkflowState, retriever: Optional[BaseRetriever] = None) -> dict:
+async def retrieve(state: WorkflowState, retriever: BaseRetriever | None = None) -> dict:
     """RAG 检索节点
 
     当提供了 retriever 时，执行向量检索并将结果写入 tool_results；
@@ -195,7 +196,7 @@ def _route_after_generate(state: WorkflowState) -> Literal["postprocess", "error
     return "postprocess"
 
 
-def build_base_workflow(retriever: Optional[BaseRetriever] = None) -> StateGraph:
+def build_base_workflow(retriever: BaseRetriever | None = None) -> StateGraph:
     """构建基础对话工作流
 
     流程：
@@ -247,7 +248,7 @@ def build_base_workflow(retriever: Optional[BaseRetriever] = None) -> StateGraph
 
 
 def compile_base_workflow(
-    retriever: Optional[BaseRetriever] = None,
+    retriever: BaseRetriever | None = None,
     checkpointer=None,
 ):
     """编译基础对话工作流

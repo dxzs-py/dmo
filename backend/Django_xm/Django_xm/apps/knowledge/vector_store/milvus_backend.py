@@ -1,7 +1,7 @@
 """Milvus 向量存储后端实现"""
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
@@ -26,7 +26,7 @@ class MilvusBackend(VectorStoreBackend):
         except ImportError:
             raise ImportError(
                 "Milvus 未安装。请运行: pip install langchain-milvus"
-            )
+            ) from None
 
     @property
     def store_type(self) -> str:
@@ -34,7 +34,7 @@ class MilvusBackend(VectorStoreBackend):
 
     def create(
         self,
-        documents: List[Document],
+        documents: list[Document],
         embeddings: Embeddings,
         collection_name: str,
         **kwargs: Any,
@@ -100,7 +100,7 @@ class MilvusBackend(VectorStoreBackend):
             logger.error(f"Milvus 集合删除失败: {e}")
             return False
 
-    def list_collections(self, prefix: str = "") -> List[str]:
+    def list_collections(self, prefix: str = "") -> list[str]:
         try:
             from pymilvus import connections, utility
 
@@ -125,8 +125,8 @@ class MilvusBackend(VectorStoreBackend):
     def add_documents(
         self,
         vector_store: VectorStore,
-        documents: List[Document],
-    ) -> List[str]:
+        documents: list[Document],
+    ) -> list[str]:
         if hasattr(vector_store, "add_documents"):
             ids = vector_store.add_documents(documents)
         elif hasattr(vector_store, "add_texts"):
@@ -141,7 +141,7 @@ class MilvusBackend(VectorStoreBackend):
     def remove_documents(
         self,
         collection_name: str,
-        document_ids: List[str],
+        document_ids: list[str],
     ) -> bool:
         try:
             from pymilvus import Collection, connections
@@ -185,14 +185,14 @@ class MilvusBackend(VectorStoreBackend):
         vector_store: VectorStore,
         query: str,
         k: int = 4,
-        filter: Optional[Dict] = None,
-    ) -> List[Tuple[Document, float]]:
-        kwargs: Dict[str, Any] = {"k": k}
+        filter: dict | None = None,
+    ) -> list[tuple[Document, float]]:
+        kwargs: dict[str, Any] = {"k": k}
         if filter:
             kwargs["filter"] = filter
         return vector_store.similarity_search_with_score(query=query, **kwargs)
 
-    def get_stats(self, collection_name: str) -> Dict[str, Any]:
+    def get_stats(self, collection_name: str) -> dict[str, Any]:
         try:
             from pymilvus import Collection, connections, utility
 

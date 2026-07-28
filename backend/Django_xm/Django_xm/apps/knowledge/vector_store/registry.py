@@ -4,7 +4,7 @@
 """
 
 import logging
-from typing import Dict, List, Type
+from typing import ClassVar
 
 from .base import VectorStoreBackend
 
@@ -18,10 +18,10 @@ class VectorStoreRegistry:
     支持动态注册新的后端，以及查询已注册的后端列表。
     """
 
-    _backends: Dict[str, Type[VectorStoreBackend]] = {}
+    _backends: ClassVar[dict[str, type[VectorStoreBackend]]] = {}
 
     @classmethod
-    def register(cls, name: str, backend_class: Type[VectorStoreBackend]) -> None:
+    def register(cls, name: str, backend_class: type[VectorStoreBackend]) -> None:
         """注册向量存储后端
 
         Args:
@@ -34,7 +34,7 @@ class VectorStoreRegistry:
         logger.debug(f"注册向量存储后端: {name} -> {backend_class.__name__}")
 
     @classmethod
-    def get(cls, name: str) -> Type[VectorStoreBackend]:
+    def get(cls, name: str) -> type[VectorStoreBackend]:
         """获取已注册的向量存储后端类
 
         Args:
@@ -53,7 +53,7 @@ class VectorStoreRegistry:
         return cls._backends[name]
 
     @classmethod
-    def list_backends(cls) -> List[str]:
+    def list_backends(cls) -> list[str]:
         """列出所有已注册的后端名称"""
         return list(cls._backends.keys())
 
@@ -67,11 +67,11 @@ class VectorStoreRegistry:
 
 # 自动注册内置后端
 def _register_builtin_backends() -> None:
-    from .pgvector_backend import PGVectorBackend
-    from .faiss_backend import FAISSBackend
     from .chroma_backend import ChromaBackend
-    from .milvus_backend import MilvusBackend
+    from .faiss_backend import FAISSBackend
     from .inmemory_backend import InMemoryBackend
+    from .milvus_backend import MilvusBackend
+    from .pgvector_backend import PGVectorBackend
 
     VectorStoreRegistry.register("pgvector", PGVectorBackend)
     VectorStoreRegistry.register("faiss", FAISSBackend)

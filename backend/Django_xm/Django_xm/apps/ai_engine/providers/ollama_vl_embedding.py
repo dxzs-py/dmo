@@ -23,8 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import requests
 from langchain_core.embeddings import Embeddings
@@ -34,7 +33,7 @@ from Django_xm.apps.ai_engine.config import settings
 logger = logging.getLogger(__name__)
 
 
-def get_provider_config() -> Dict[str, Any]:
+def get_provider_config() -> dict[str, Any]:
     return {
         "base_url": getattr(settings, "ollama_base_url", "http://localhost:11435"),
         "model": "MedAIBase/Qwen3-VL-Embedding:2b",
@@ -52,7 +51,7 @@ class OllamaVLEmbeddings(Embeddings):
         self,
         model: str,
         base_url: str = "http://localhost:11434",
-        dimensions: Optional[int] = None,
+        dimensions: int | None = None,
         keep_alive: str = "5m",
         timeout: int = 180,
         max_retries: int = 2,
@@ -64,7 +63,7 @@ class OllamaVLEmbeddings(Embeddings):
         self.timeout = timeout
         self.max_retries = max_retries
         self._model_loaded = False
-        self._embed_method: Optional[str] = None  # 缓存可用的 embed 方法
+        self._embed_method: str | None = None  # 缓存可用的 embed 方法
 
     def _ensure_model_loaded(self) -> None:
         """确保模型已加载到 Ollama 内存中（预热）"""
@@ -94,10 +93,10 @@ class OllamaVLEmbeddings(Embeddings):
         except Exception as e:
             logger.warning(f"VL Embedding 模型预热异常: {e}")
 
-    def _embed_via_api_embed(self, text: str) -> Optional[List[float]]:
+    def _embed_via_api_embed(self, text: str) -> list[float] | None:
         """通过 /api/embed 端点获取 embedding（Ollama 0.5+ 原生支持）"""
         try:
-            payload: Dict[str, Any] = {
+            payload: dict[str, Any] = {
                 "model": self.model,
                 "input": text,
                 "keep_alive": self.keep_alive,
@@ -122,7 +121,7 @@ class OllamaVLEmbeddings(Embeddings):
             logger.debug(f"/api/embed 异常: {e}")
         return None
 
-    def _embed_via_api_generate(self, text: str) -> Optional[List[float]]:
+    def _embed_via_api_generate(self, text: str) -> list[float] | None:
         """通过 /api/generate 端点获取 embedding
 
         对于 qwen3vl 架构的 embedding 模型，Ollama 可能不支持 /api/embed。
@@ -131,7 +130,7 @@ class OllamaVLEmbeddings(Embeddings):
         Qwen3-VL-Embedding 模型在 generate 模式下会输出 JSON 格式的 embedding 向量。
         """
         try:
-            payload: Dict[str, Any] = {
+            payload: dict[str, Any] = {
                 "model": self.model,
                 "prompt": text,
                 "keep_alive": self.keep_alive,
@@ -170,10 +169,10 @@ class OllamaVLEmbeddings(Embeddings):
             logger.debug(f"/api/generate 异常: {e}")
         return None
 
-    def _embed_via_api_embeddings(self, text: str) -> Optional[List[float]]:
+    def _embed_via_api_embeddings(self, text: str) -> list[float] | None:
         """通过 /api/embeddings 端点获取 embedding（旧版 Ollama 兼容）"""
         try:
-            payload: Dict[str, Any] = {
+            payload: dict[str, Any] = {
                 "model": self.model,
                 "prompt": text,
                 "keep_alive": self.keep_alive,
@@ -199,7 +198,7 @@ class OllamaVLEmbeddings(Embeddings):
         return None
 
     @staticmethod
-    def _parse_embedding_from_response(text: str) -> Optional[List[float]]:
+    def _parse_embedding_from_response(text: str) -> list[float] | None:
         """从模型输出文本中解析 embedding 向量
 
         VL Embedding 模型可能输出以下格式：
@@ -246,7 +245,7 @@ class OllamaVLEmbeddings(Embeddings):
 
         return None
 
-    def _embed_single(self, text: str) -> List[float]:
+    def _embed_single(self, text: str) -> list[float]:
         """获取单条文本的 embedding 向量（带重试和方法探测）"""
         # 如果已知可用方法，直接使用
         if self._embed_method == "api_embed":
@@ -317,28 +316,28 @@ class OllamaVLEmbeddings(Embeddings):
             f"  如果问题持续，建议使用纯文本版本: ollama pull qwen3-embedding:0.6b"
         )
 
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """批量获取文本 embedding"""
         return [self._embed_single(text) for text in texts]
 
-    def embed_query(self, text: str) -> List[float]:
+    def embed_query(self, text: str) -> list[float]:
         """获取查询文本 embedding"""
         return self._embed_single(text)
 
-    async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
+    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
         """异步批量获取文本 embedding"""
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self.embed_documents, texts)
 
-    async def aembed_query(self, text: str) -> List[float]:
+    async def aembed_query(self, text: str) -> list[float]:
         """异步获取查询文本 embedding"""
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self.embed_query, text)
 
 
 def create_embedding(
-    model: Optional[str] = None,
-    dimensions: Optional[int] = None,
+    model: str | None = None,
+    dimensions: int | None = None,
     **kwargs: Any,
 ) -> Embeddings:
     """创建 Ollama VL Embedding 实例

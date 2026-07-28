@@ -7,7 +7,6 @@
     CELERY_TASK_REJECT_ON_WORKER_LOST = True
     无需在每个 @shared_task 中重复声明
 """
-import logging
 from celery import shared_task
 from celery.utils.log import get_task_logger
 
@@ -43,6 +42,15 @@ class TrackedTask:
         self._sync_fn = None
 
     def _get_or_create_record(self):
+        """原子获取或创建任务记录
+
+        使用 get_or_create 替代 get + create 两步操作，避免 Celery 重试场景下
+        两个并发 worker 同时进入 DoesNotExist 分支导致 unique constraint 冲突
+        （celery_task_id 为 unique 索引，重复 create 会抛 IntegrityError）。
+
+        get_or_create 在数据库层通过事务保证原子性：若记录已存在则直接返回，
+        不存在则插入。重试场景下第一次执行已写入记录，重试时直接复用。
+        """
         if self._record is not None:
             return self._record
 
@@ -51,29 +59,28 @@ class TrackedTask:
         task_id = self.celery_task.request.id
         task_name = self.celery_task.name
 
-        try:
-            self._record = CeleryTaskRecord.objects.get(celery_task_id=task_id)
-        except CeleryTaskRecord.DoesNotExist:
-            create_kwargs = {
-                'celery_task_id': task_id,
-                'task_name': task_name,
-                'task_kwargs': self.celery_task.request.kwargs or {},
-            }
-            if self._pending_type:
-                try:
-                    create_kwargs['task_type'] = CeleryTaskRecord.TaskType(self._pending_type)
-                except ValueError:
-                    pass
-            if self._pending_user_id:
-                from django.contrib.auth import get_user_model
-                User = get_user_model()
-                try:
-                    create_kwargs['created_by'] = User.objects.get(id=self._pending_user_id)
-                except User.DoesNotExist:
-                    pass
+        # 构造 defaults：仅在新创建时写入，已存在记录不覆盖
+        defaults = {
+            'task_name': task_name,
+            'task_kwargs': self.celery_task.request.kwargs or {},
+        }
+        if self._pending_type:
+            try:
+                defaults['task_type'] = CeleryTaskRecord.TaskType(self._pending_type)
+            except ValueError:
+                pass
+        if self._pending_user_id:
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            try:
+                defaults['created_by'] = User.objects.get(id=self._pending_user_id)
+            except User.DoesNotExist:
+                pass
 
-            self._record = CeleryTaskRecord.objects.create(**create_kwargs)
-
+        self._record, _created = CeleryTaskRecord.objects.get_or_create(
+            celery_task_id=task_id,
+            defaults=defaults,
+        )
         return self._record
 
     def _sync_to_task_manager(self, status_updates: dict):
@@ -87,9 +94,13 @@ class TrackedTask:
 
         try:
             from Django_xm.apps.core.task_redis_manager import (
-                update_task_status as common_update,
-                create_task as common_create,
                 TaskType,
+            )
+            from Django_xm.apps.core.task_redis_manager import (
+                create_task as common_create,
+            )
+            from Django_xm.apps.core.task_redis_manager import (
+                update_task_status as common_update,
             )
             result = common_update(self._task_manager_id, status_updates)
             if result is None:
@@ -184,8 +195,10 @@ def debug_task(self):
     soft_time_limit=300,
 )
 def cleanup_old_task_records(self, days: int = 30):
-    from django.utils import timezone
     from datetime import timedelta
+
+    from django.utils import timezone
+
     from Django_xm.apps.core.task_models import CeleryTaskRecord
 
     cutoff = timezone.now() - timedelta(days=days)
@@ -214,8 +227,10 @@ def cleanup_old_task_records(self, days: int = 30):
     soft_time_limit=120,
 )
 def check_stale_tasks(self, timeout_minutes: int = 60):
-    from django.utils import timezone
     from datetime import timedelta
+
+    from django.utils import timezone
+
     from Django_xm.apps.core.task_models import CeleryTaskRecord
 
     cutoff = timezone.now() - timedelta(minutes=timeout_minutes)

@@ -10,7 +10,6 @@
 """
 
 import logging
-from typing import Optional, List
 
 from pydantic import BaseModel, Field
 
@@ -25,8 +24,8 @@ class SkillStep(BaseModel):
     """技能步骤定义"""
     tool_name: str = Field(description="工具名称")
     args_template: dict = Field(default_factory=dict, description="参数模板，支持 {prev_result} 引用上一步结果")
-    condition: Optional[str] = Field(default=None, description="执行条件表达式")
-    resource_path: Optional[str] = Field(default=None, description="Level 3 资源文件路径（相对于 Skill 根目录）")
+    condition: str | None = Field(default=None, description="执行条件表达式")
+    resource_path: str | None = Field(default=None, description="Level 3 资源文件路径（相对于 Skill 根目录）")
 
 
 class SkillSpec(BaseModel):
@@ -34,9 +33,9 @@ class SkillSpec(BaseModel):
     name: str = Field(description="技能名称")
     description: str = Field(description="技能描述")
     mode: str = Field(default="pipeline", description="执行模式: pipeline/advisor/hybrid")
-    steps: List[SkillStep] = Field(default_factory=list, description="执行步骤（pipeline/hybrid 模式）")
-    skill_dir: Optional[str] = Field(default=None, description="Skill 包文件系统路径（advisor 模式）")
-    allowed_tools: Optional[str] = Field(default=None, description="预批准工具列表")
+    steps: list[SkillStep] = Field(default_factory=list, description="执行步骤（pipeline/hybrid 模式）")
+    skill_dir: str | None = Field(default=None, description="Skill 包文件系统路径（advisor 模式）")
+    allowed_tools: str | None = Field(default=None, description="预批准工具列表")
     version: str = Field(default="1.0.0")
     source: str = Field(default="user", description="来源: system/user")
 

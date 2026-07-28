@@ -17,14 +17,14 @@ from __future__ import annotations
 import unittest
 
 from Django_xm.common.event_schema import (
-    EventType,
     EventSource,
+    EventType,
     PayloadValidationError,
-    validate_payload,
     get_ws_event_name,
-    is_tool_lifecycle_event,
     is_approval_event,
     is_stream_event,
+    is_tool_lifecycle_event,
+    validate_payload,
 )
 
 
@@ -42,13 +42,14 @@ def _tool_call_payload(**overrides):
 
 
 def _approval_payload(**overrides):
-    """构造审批 payload，默认包含 5 个必填字段。"""
+    """构造审批 payload，默认包含 6 个必填字段（含 parameters）。"""
     defaults = {
         'interrupt_id': 'intr-1',
         'tool_call_id': 'tc-1',
         'source': EventSource.DEEP_RESEARCH,
         'source_id': 'task-1',
         'state': 'pending',
+        'parameters': {'command': 'test'},
     }
     defaults.update(overrides)
     return defaults
@@ -77,7 +78,6 @@ class ValidatePayloadTests(unittest.TestCase):
     def test_tool_call_completed_valid(self):
         """TOOL_CALL_COMPLETED 合法 payload 通过校验。"""
         payload = _tool_call_payload()
-        payload.pop('parameters', None)
         payload['result'] = {'output': 'ok'}
         validate_payload(EventType.TOOL_CALL_COMPLETED, payload)
 
@@ -148,7 +148,6 @@ class ValidatePayloadTests(unittest.TestCase):
     def test_tool_call_failed_missing_error(self):
         """TOOL_CALL_FAILED 缺少 error 抛 PayloadValidationError。"""
         payload = _tool_call_payload()
-        payload.pop('parameters')
         with self.assertRaises(PayloadValidationError) as ctx:
             validate_payload(EventType.TOOL_CALL_FAILED, payload)
         self.assertIn('error', str(ctx.exception))

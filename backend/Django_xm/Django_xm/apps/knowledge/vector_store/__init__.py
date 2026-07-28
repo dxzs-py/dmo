@@ -1,4 +1,5 @@
 from typing import List, Optional
+
 from langchain_core.documents import Document
 from langchain_core.vectorstores import VectorStore
 
@@ -11,8 +12,8 @@ def search_vector_store(
     vector_store: VectorStore,
     query: str,
     k: int = 4,
-    score_threshold: Optional[float] = None,
-) -> List[tuple]:
+    score_threshold: float | None = None,
+) -> list[tuple]:
     logger.info(f"搜索向量库: query='{query[:50]}...', k={k}")
 
     try:
@@ -36,22 +37,21 @@ def search_vector_store(
 
 
 # PGVector 向量存储支持（向后兼容）
-from .pgvector_store import (
-    create_pgvector_store,
-    load_pgvector_store,
-    delete_pgvector_store,
-    list_pgvector_stores,
-    get_pgvector_connection_string,
-)
-
 # 新抽象层导出
 from .base import VectorStoreBackend
-from .registry import VectorStoreRegistry
-from .pgvector_backend import PGVectorBackend
-from .faiss_backend import FAISSBackend
 from .chroma_backend import ChromaBackend
-from .milvus_backend import MilvusBackend
+from .faiss_backend import FAISSBackend
 from .inmemory_backend import InMemoryBackend
+from .milvus_backend import MilvusBackend
+from .pgvector_backend import PGVectorBackend
+from .pgvector_store import (
+    create_pgvector_store,
+    delete_pgvector_store,
+    get_pgvector_connection_string,
+    list_pgvector_stores,
+    load_pgvector_store,
+)
+from .registry import VectorStoreRegistry
 
 __all__ = [
     # 向后兼容

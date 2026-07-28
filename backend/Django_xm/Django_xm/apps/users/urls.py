@@ -2,20 +2,20 @@ from django.urls import path
 from rest_framework_simplejwt.views import TokenVerifyView
 
 from .views import (
+    BindPhoneView,
+    CaptchaVerifyView,
+    CaptchaView,
+    ChangePasswordView,
     MyObtainTokenPairView,
     MyTokenRefreshView,
-    UserRegisterView,
-    UserInfoView,
-    CaptchaView,
-    CaptchaVerifyView,
     SecureLogoutView,
-    UserProfileView,
-    UserAvatarView,
-    ChangePasswordView,
-    BindPhoneView,
-    UserPreferencesView,
-    UserUsageStatsView,
     UserAccountDeleteView,
+    UserAvatarView,
+    UserInfoView,
+    UserPreferencesView,
+    UserProfileView,
+    UserRegisterView,
+    UserUsageStatsView,
 )
 
 app_name = 'users'

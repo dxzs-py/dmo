@@ -10,41 +10,42 @@
 - ContextService：上下文压缩、注入检测和预算管理
 - ToolService：工具获取、过滤和协调
 """
-import asyncio
-import time
 import logging
+import time
+from collections.abc import AsyncGenerator
+from typing import Any
+
 from asgiref.sync import sync_to_async
-from typing import Optional, Dict, Any, List, AsyncGenerator, Tuple
+from langchain_core.messages import AIMessage, HumanMessage
 
-from langchain_core.messages import HumanMessage, AIMessage
-
+from Django_xm.apps.agent_hub.services.agent_executor import AgentExecutor
+from Django_xm.apps.agent_hub.services.agent_resilience import (
+    DegradationLevel,
+    get_degraded_tools,
+)
 from Django_xm.apps.ai_engine.services.cost_tracker import TokenDetailTracker
-from Django_xm.apps.chat.services.slash_commands import parse_command, execute_command
+from Django_xm.apps.chat.services.slash_commands import execute_command, parse_command
+from Django_xm.apps.chat.services.stream import (
+    FallbackStreamService,
+    NormalStreamStrategy,
+    StreamContext,
+    finalize_stream,
+    run_stream_loop,
+)
+
+from ..utils import _needs_completion, convert_chat_history, extract_suggestions
 from .agent_service import AgentService
 from .chat_message_builder import ChatMessageBuilder
 from .context_service import ContextService
-from .tool_service import ToolService
-from .rag_chat_service import RAGChatService
 from .deep_chat_service import DeepChatService
+from .rag_chat_service import RAGChatService
 from .stream_helpers import (
-    process_stream_chunk,
     build_context_info,
-    update_usage_and_tokens,
-    finalize_tool_calls,
 )
-from ..utils import _needs_completion, _lcp_len, convert_chat_history, extract_suggestions
-from Django_xm.utils.agent_resilience import (
-    classify_and_decide,
-    ErrorAction,
-    ResilienceConfig,
-    get_resilience_config,
-    calculate_backoff,
-    ExecutionTimeoutManager,
-)
+from .tool_service import ToolService
 
 logger = logging.getLogger(__name__)
 
-from .models_context import ChatContext
 
 
 class ChatService:
@@ -59,7 +60,7 @@ class ChatService:
 
     CHECKPOINTER_ENABLED = True
 
-    def __init__(self, user_id: Optional[int] = None, thread_id: Optional[str] = None):
+    def __init__(self, user_id: int | None = None, thread_id: str | None = None):
         self.user_id = user_id
 
         self._agent_service = AgentService(user_id)
@@ -82,27 +83,27 @@ class ChatService:
             self.user_id, session_id, token_count, token_detail, model, response_time,
         )
 
-    def _build_thread_config(self, session_id: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+    def _build_thread_config(self, session_id: str | None = None, **kwargs) -> dict[str, Any]:
         return self._agent_service.build_thread_config(session_id, **kwargs)
 
     async def _create_agent_with_memory(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         prompt_mode: str = "default",
         model_instance=None,
-        tool_config: Optional[Dict[str, Any]] = None,
-        tools: Optional[list] = None,
+        tool_config: dict[str, Any] | None = None,
+        tools: list | None = None,
     ) -> tuple:
         return await self._agent_service.create_agent_with_memory(
             data, prompt_mode, model_instance, tool_config=tool_config, tools=tools,
         )
 
     @staticmethod
-    def _resolve_model_instance(data: Dict[str, Any], streaming: bool = True):
+    def _resolve_model_instance(data: dict[str, Any], streaming: bool = True):
         return AgentService.resolve_model_instance(data, streaming)
 
     @staticmethod
-    def _resolve_kb_ids(data: Dict[str, Any]) -> Optional[List[str]]:
+    def _resolve_kb_ids(data: dict[str, Any]) -> list[str] | None:
         if not data.get('use_knowledge_base'):
             return None
         kb_ids = list(data.get('selected_knowledge_bases') or [])
@@ -111,10 +112,10 @@ class ChatService:
             kb_ids.append(single_kb)
         return kb_ids if kb_ids else None
 
-    async def _get_tools(self, data: Dict[str, Any]) -> List:
+    async def _get_tools(self, data: dict[str, Any]) -> list:
         return await self._tool_service.get_tools(data)
 
-    def _build_tool_config(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _build_tool_config(self, data: dict[str, Any]) -> dict[str, Any]:
         from Django_xm.apps.tools import TOOL_TIER_STANDARD
         use_web_search = data.get('use_web_search', False)
         use_mcp = data.get('use_mcp', False)
@@ -139,32 +140,32 @@ class ChatService:
             "tool_tier": data.get('tool_tier', TOOL_TIER_STANDARD),
         }
 
-    async def _abuild_user_content(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def _abuild_user_content(self, data: dict[str, Any]) -> dict[str, Any]:
         return await self._message_builder.abuild_user_content(data)
 
-    def _build_user_content(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _build_user_content(self, data: dict[str, Any]) -> dict[str, Any]:
         return self._message_builder.build_user_content(data)
 
-    async def _acreate_human_message(self, data: Dict[str, Any]) -> HumanMessage:
+    async def _acreate_human_message(self, data: dict[str, Any]) -> HumanMessage:
         return await self._message_builder.acreate_human_message(data)
 
-    def _create_human_message(self, data: Dict[str, Any]) -> HumanMessage:
+    def _create_human_message(self, data: dict[str, Any]) -> HumanMessage:
         return self._message_builder.create_human_message(data)
 
-    def _load_research_context(self, research_task_id: str, user_id: Optional[int] = None,
-                               session_id: Optional[str] = None) -> Optional[str]:
+    def _load_research_context(self, research_task_id: str, user_id: int | None = None,
+                               session_id: str | None = None) -> str | None:
         return self._context_service.load_research_context(research_task_id, user_id, session_id)
 
-    def _apply_compaction(self, chat_history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _apply_compaction(self, chat_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return self._context_service.apply_compaction(chat_history)
 
     def _apply_context_engineering(
         self,
-        chat_history: List[Dict[str, Any]],
+        chat_history: list[dict[str, Any]],
         query: str,
         mode: str = "agent",
-        model_name: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        model_name: str | None = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         return self._context_service.apply_context_engineering(
             chat_history, query, mode, model_name,
         )
@@ -172,16 +173,16 @@ class ChatService:
     def _apply_context_engineering_for_checkpointer(
         self,
         user_message: str,
-        model_name: Optional[str] = None,
+        model_name: str | None = None,
         mode: str = "agent",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         return self._context_service.apply_context_engineering_for_checkpointer(
             user_message, model_name, mode,
         )
 
-    async def process_chat_request(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
+    async def process_chat_request(self, data: dict[str, Any]) -> dict[str, Any]:
         from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model, get_model_string
+        from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
         from Django_xm.apps.cache_manager.services.cache_service import ModelResponseCacheService
 
         parsed = parse_command(data.get('message', ''))
@@ -240,7 +241,7 @@ class ChatService:
         human_msg = HumanMessage(content=user_content["content"])
 
         if use_checkpointer:
-            ce_metadata = self._apply_context_engineering_for_checkpointer(
+            _ce_metadata = self._apply_context_engineering_for_checkpointer(
                 user_message=data.get('message', ''),
                 model_name=data.get('model_name'),
                 mode=data.get('mode', 'agent'),
@@ -312,12 +313,11 @@ class ChatService:
 
         return result
 
-    async def process_stream_chat_request(self, data: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
+    async def process_stream_chat_request(self, data: dict[str, Any]) -> AsyncGenerator[dict[str, Any], None]:
         """流式聊天请求入口：初始化追踪器，分发模式，处理响应"""
-        from Django_xm.apps.ai_engine.services.usage_tracker import create_usage_tracker
         from Django_xm.apps.ai_engine.services.cost_tracker import create_token_detail_tracker
+        from Django_xm.apps.ai_engine.services.usage_tracker import create_usage_tracker
 
-        provider_id = data.get('provider_id')
         model_name = data.get('model_name')
         from Django_xm.apps.ai_engine.config import settings as ai_settings
         tracker_model_id = model_name or ai_settings.openai_model
@@ -355,10 +355,10 @@ class ChatService:
 
     async def _dispatch_by_mode(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         usage_tracker,
         token_detail_tracker,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """按模式分发请求：slash 命令 / deep-research / agent"""
         mode = data.get('mode', 'agent')
 
@@ -391,8 +391,8 @@ class ChatService:
                     kb_ids.append(single_kb)
 
                 if kb_ids:
-                    from Django_xm.apps.knowledge.services.retrieval_service import create_retriever_tool
                     from Django_xm.apps.knowledge.services.kb_service import list_knowledge_bases
+                    from Django_xm.apps.knowledge.services.retrieval_service import create_retriever_tool
 
                     kb_info_map = {}
                     try:
@@ -432,8 +432,8 @@ class ChatService:
                     single_kb_id = data['selected_knowledge_base']
                     retriever = await sync_to_async(self._rag_service.get_rag_retriever)(single_kb_id, retrieval_mode="comprehensive")
                     if retriever:
-                        from Django_xm.apps.knowledge.services.retrieval_service import create_retriever_tool
                         from Django_xm.apps.knowledge.services.kb_service import list_knowledge_bases
+                        from Django_xm.apps.knowledge.services.retrieval_service import create_retriever_tool
 
                         single_kb_name = single_kb_id
                         single_kb_desc = ""
@@ -478,9 +478,9 @@ class ChatService:
                             logger.warning(f"创建 comprehensive 检索器失败: {e}")
                             comprehensive_retriever = None
 
-                        from Django_xm.apps.knowledge.services.retrieval_service import create_retriever_tool
-                        from Django_xm.apps.knowledge.services.kb_service import list_knowledge_bases
                         from Django_xm.apps.ai_engine.services.llm_factory import get_helper_model
+                        from Django_xm.apps.knowledge.services.kb_service import list_knowledge_bases
+                        from Django_xm.apps.knowledge.services.retrieval_service import create_retriever_tool
 
                         kb_info = None
                         try:
@@ -547,10 +547,10 @@ class ChatService:
     async def _create_agent_for_mode(
         self,
         mode: str,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         usage_tracker,
         token_detail_tracker,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """为特定模式创建并执行 Agent 流，返回事件流"""
         if mode == 'deep-research':
             yield {
@@ -610,15 +610,13 @@ class ChatService:
 
     async def _process_normal_stream_chat(
         self,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         usage_tracker,
-        token_detail_tracker: Optional[TokenDetailTracker] = None,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+        token_detail_tracker: TokenDetailTracker | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
-        from Django_xm.apps.tools import WEATHER_TOOLS
 
         tools = await self._get_tools(data)
-        weather_tool_names = {tool.name for tool in WEATHER_TOOLS}
         model_instance = self._resolve_model_instance(data)
         provider_id = data.get('provider_id')
         model_name = data.get('model_name')
@@ -655,7 +653,7 @@ class ChatService:
             except Exception:
                 pass
 
-        from Django_xm.apps.tools.langchain.agent_context import set_parent_tool_context, clear_parent_tool_context
+        from Django_xm.apps.tools.langchain.agent_context import clear_parent_tool_context, set_parent_tool_context
         set_parent_tool_context(tools, {
             "use_web_search": data.get('use_web_search', False),
             "use_mcp": data.get('use_mcp', False),
@@ -738,7 +736,7 @@ class ChatService:
             model_name_for_budget = data.get('model_name')
 
             if self._context_service.check_injection(user_message):
-                logger.warning(f"检测到指令注入尝试，用户输入将被隔离")
+                logger.warning("检测到指令注入尝试，用户输入将被隔离")
 
             chat_history, ce_metadata = self._apply_context_engineering(
                 chat_history, user_message, mode=data.get('mode', 'agent'),
@@ -755,16 +753,57 @@ class ChatService:
             graph_input = {"messages": messages}
             config = {"recursion_limit": 500}
 
-        tool_calls_map: Dict[str, Dict] = {}
-        current_message_content = ""
-        all_messages = []
-        tool_call_count: Dict[str, int] = {}
-        prefer_tool_result = False
-        accumulated_reasoning: Dict[str, str] = {
-            "content": "",
-            "_stream_state": data.get('_stream_state'),  # 共享状态，供 generate() finally 兜底刷新
-        }
-        tool_args_accumulator: Dict[str, str] = {}
+        # 创建 StreamContext（流式可变状态封装，替代散布的局部变量）
+        ctx = StreamContext()
+        ctx.init_stream_state(data.get('_stream_state'))
+
+        # 创建普通 agent 模式策略（注入差异点）
+        strategy = NormalStreamStrategy()
+
+        # 预创建降级 agent（用于 AgentExecutor 的 DEGRADE 分支）
+        # AgentExecutor.rebuild_agent_fn 是同步回调，无法 await 异步 create_agent_with_memory，
+        # 因此在主事件循环中预创建降级 agent（使用相同的降级工具集），
+        # rebuild_agent_fn 仅返回预创建的实例。若预创建失败，DEGRADE 将落入 FALLBACK。
+        degraded_tools_preview = get_degraded_tools(tools, DegradationLevel.REDUCED_TOOLS)
+        degraded_agent_holder: dict[str, Any] = {}
+        if tools and degraded_tools_preview and len(degraded_tools_preview) < len(tools):
+            try:
+                deg_agent, deg_config, _ = await self._create_agent_with_memory(
+                    data, prompt_mode=data['mode'], model_instance=model_instance,
+                    tool_config=tool_config, tools=degraded_tools_preview,
+                )
+                if deg_config is None:
+                    deg_config = {"recursion_limit": 500}
+                degraded_agent_holder["agent"] = deg_agent
+                degraded_agent_holder["config"] = deg_config
+            except Exception as e:
+                logger.warning(f"预创建降级 agent 失败（DEGRADE 将落入 FALLBACK）: {e}")
+
+        def rebuild_agent_fn(_degraded_tools: list) -> tuple[Any, dict]:
+            """AgentExecutor 降级回调：返回预创建的降级 agent
+
+            AgentExecutor 内部已通过 get_degraded_tools 计算降级工具集，
+            并将其传入此回调。我们使用预创建的降级 agent（基于相同的降级工具集）。
+            若预创建失败，抛异常使 AgentExecutor 落入 FALLBACK。
+            """
+            if "agent" not in degraded_agent_holder:
+                raise RuntimeError("降级 agent 预创建失败或未创建")
+            return degraded_agent_holder["agent"], degraded_agent_holder["config"]
+
+        # 创建无工具回退服务（AgentExecutor 的 FALLBACK 分支使用）
+        fallback_service = FallbackStreamService(self)
+
+        # 创建 AgentExecutor（公共执行器，提供重试/降级/超时/回退）
+        # 替代原内联的 retry/timeout/degrade 循环
+        executor = AgentExecutor(
+            fallback_service=fallback_service,
+            rebuild_agent_fn=rebuild_agent_fn,
+            tools=tools,
+            model_instance=model_instance,
+            data=data,
+            usage_tracker=usage_tracker,
+            token_detail_tracker=token_detail_tracker,
+        )
 
         with TokenUsageCallbackHandler() as cb:
             from Django_xm.apps.ai_engine.services.llm_factory import FallbackDetectionCallback
@@ -773,400 +812,42 @@ class ChatService:
                 expected_model=model_name or "",
             )
             config["callbacks"] = [cb, fb_callback]
-            # 使用多 stream mode：messages 获取消息流，updates 捕获 interrupt 事件
-            interrupt_info = None
-            resilience_config = get_resilience_config()
-            timeout_mgr = ExecutionTimeoutManager(
-                soft_timeout=resilience_config.soft_timeout,
-                hard_timeout=resilience_config.hard_timeout,
-            )
-            retry_count = 0
-            while retry_count <= resilience_config.max_retries:
-                try:
-                    async for chunk in agent.graph.astream(graph_input, config=config, stream_mode=["messages", "updates"]):
-                        # 检查 hard timeout
-                        if timeout_mgr.hard_timeout and timeout_mgr.elapsed >= timeout_mgr.hard_timeout:
-                            logger.warning(
-                                f"[Resilience] Agent 模式执行超时 (hard): {timeout_mgr.elapsed:.1f}s"
-                            )
-                            yield {"type": "chunk", "content": "\n\n[系统提示] 执行时间过长，正在切换到简化模式...\n"}
-                            # 回退到无工具模式
-                            if provider_id and model_instance and tools:
-                                try:
-                                    async for fallback_event in self._deep_service._stream_without_tools(
-                                        model_instance, data, usage_tracker, token_detail_tracker
-                                    ):
-                                        yield fallback_event
-                                except Exception as fallback_err:
-                                    logger.error(f"超时降级无工具模式也失败: {fallback_err}")
-                                    yield {"type": "error", "content": f"执行超时，请稍后重试"}
-                            else:
-                                yield {"type": "error", "content": "执行超时，请稍后重试"}
-                            clear_parent_tool_context()
-                            return
 
-                        # 检查 soft timeout（仅警告一次）
-                        if timeout_mgr.check_soft_timeout():
-                            logger.warning(
-                                f"[Resilience] Agent 模式执行超时 (soft): {timeout_mgr.elapsed:.1f}s"
-                            )
-                            yield {
-                                "type": "timeout_warning",
-                                "data": {
-                                    "elapsed": round(timeout_mgr.elapsed),
-                                    "limit": timeout_mgr.soft_timeout,
-                                },
-                            }
+            # 执行 AgentExecutor（带韧性的流式执行）
+            # 替代原内联的 retry/timeout/degrade 循环：
+            # - GraphRecursionError → 优雅降级（用已收集内容），不重试
+            # - 可恢复异常 → RETRY + 退避
+            # - 不可恢复但可降级 → DEGRADE（用减少的工具重试，由 rebuild_agent_fn 重建）
+            # - 不可恢复 → FALLBACK（无工具纯对话，由 fallback_service 处理）
+            # - soft timeout → 警告一次
+            # - hard timeout → FALLBACK
+            async for event in executor.run(
+                run_stream_loop, agent, graph_input, config, ctx, strategy, data,
+            ):
+                yield event
 
-                        # 多 stream mode 下 chunk 是 (mode_name, data) 元组
-                        if isinstance(chunk, tuple) and len(chunk) == 2:
-                            mode_name, mode_data = chunk
-                        else:
-                            mode_name, mode_data = "messages", chunk
-
-                        # 处理 updates stream mode（包含 interrupt 事件）
-                        if mode_name == "updates":
-                            if isinstance(mode_data, dict) and "__interrupt__" in mode_data:
-                                interrupts = mode_data["__interrupt__"]
-                                if interrupts:
-                                    from langgraph.types import Interrupt
-                                    from Django_xm.apps.tools.base import is_approval_interrupt
-                                    for intr in interrupts:
-                                        if isinstance(intr, Interrupt):
-                                            interrupt_value = intr.value
-                                        elif isinstance(intr, dict):
-                                            interrupt_value = intr.get("value", intr)
-                                        else:
-                                            interrupt_value = intr
-
-                                        # 通用审批中断检测：任何工具都可以通过 interrupt_for_approval 触发
-                                        if is_approval_interrupt(interrupt_value):
-                                            tool_name = interrupt_value.get("tool_name", "unknown")
-                                            action = interrupt_value.get("action", "confirm")
-                                            logger.info(
-                                                f"approval interrupt: tool={tool_name}, "
-                                                f"action={action}, danger={interrupt_value.get('danger_level', 'medium')}"
-                                            )
-                                            interrupt_id = intr.id if isinstance(intr, Interrupt) else ""
-                                            # 标记发生了审批中断，finalize 阶段需要跳过部分逻辑
-                                            interrupt_info = {
-                                                "tool_name": tool_name,
-                                                "interrupt_id": interrupt_id,
-                                            }
-                                            # 构建通用审批数据，透传所有字段给前端
-                                            approval_data = {
-                                                'tool_name': tool_name,
-                                                'tool_call_id': interrupt_id,
-                                                'interrupt_id': interrupt_id,
-                                                'title': interrupt_value.get("title", "确认操作"),
-                                                'description': interrupt_value.get("description", ""),
-                                                'action': action,
-                                                'danger_level': interrupt_value.get("danger_level", "medium"),
-                                                'state': 'pending',
-                                            }
-                                            # 透传 operation（统一字段，兼容旧 command）
-                                            op = interrupt_value.get("operation") or interrupt_value.get("command") or ""
-                                            if op:
-                                                approval_data['operation'] = op
-                                                # 匹配 llm_tool_call_id：同时检查 tool_args_accumulator（累积的完整参数）
-                                                # 和 tool_calls_map（可能不完整），避免流式传输中参数未累积完导致匹配失败
-                                                import json as _json
-                                                matched = False
-                                                for tc_key, tc_info in tool_calls_map.items():
-                                                    if tc_info.get("name") != tool_name:
-                                                        continue
-                                                    # 先检查 tool_args_accumulator 中的累积参数（更完整）
-                                                    accumulated_args = tool_args_accumulator.get(tc_key, '')
-                                                    if accumulated_args:
-                                                        try:
-                                                            parsed_args = _json.loads(accumulated_args) if isinstance(accumulated_args, str) else accumulated_args
-                                                            if any(str(v) == op for v in (parsed_args or {}).values()):
-                                                                approval_data['llm_tool_call_id'] = tc_info.get("id") or tc_key
-                                                                matched = True
-                                                                break
-                                                        except (_json.JSONDecodeError, TypeError):
-                                                            pass
-                                                    # 再检查 tool_calls_map 中的 parameters
-                                                    tc_params = tc_info.get("parameters", {})
-                                                    if any(str(v) == op for v in tc_params.values()):
-                                                        approval_data['llm_tool_call_id'] = tc_info.get("id") or tc_key
-                                                        matched = True
-                                                        break
-                                                # 回退：同名工具中最后一个（interrupt 总是最新的调用）
-                                                if not matched:
-                                                    for tc_key, tc_info in reversed(list(tool_calls_map.items())):
-                                                        if tc_info.get("name") == tool_name:
-                                                            approval_data['llm_tool_call_id'] = tc_info.get("id") or tc_key
-                                                            break
-                                            # 透传 extra（工具自定义数据）
-                                            if interrupt_value.get("extra"):
-                                                approval_data['extra'] = interrupt_value["extra"]
-                                            # 透传 input_placeholder（CONFIRM_WITH_INPUT 模式）
-                                            if interrupt_value.get("input_placeholder"):
-                                                approval_data['input_placeholder'] = interrupt_value["input_placeholder"]
-                                            yield {
-                                                'type': 'approval',
-                                                'data': approval_data,
-                                            }
-                            continue  # updates 模式的其他事件跳过
-
-                        # 处理 messages stream mode（原有逻辑）
-                        all_messages.append(mode_data if not isinstance(mode_data, tuple) else mode_data[0])
-
-                        try:
-                            for event in process_stream_chunk(
-                                mode_data, tool_calls_map, current_message_content,
-                                weather_tool_names=weather_tool_names,
-                                tool_call_count=tool_call_count,
-                                lcp_func=_lcp_len,
-                                accumulated_reasoning=accumulated_reasoning,
-                                tool_args_accumulator=tool_args_accumulator,
-                                mode=data.get('mode', 'agent'),
-                                enable_deep_thinking=data.get('_enable_deep_thinking', False),
-                            ):
-                                if event.get("type") == "chunk":
-                                    current_message_content += event.get("content", "")
-                                yield event
-
-                                # ToolUsageGuard 事件处理（已不再使用 force_terminate 硬中断）
-                                if event.get("type") == "tool_usage_dedup":
-                                    # 短时相同内容：将阻断原因注入下一条 ToolMessage
-                                    # 让模型看到"本次被系统跳过"且不重复写入
-                                    tool_info = event.get("data", {})
-                                    short_msg = tool_info.get("short_circuit_response", "")
-                                    # 仅记录到 current_message_content，前端不直接展示
-                                    logger.info(
-                                        f"[Chat Service] 工具 {tool_info.get('tool_name')} "
-                                        f"被去重: {short_msg}"
-                                    )
-                                    continue
-
-                                if event.get("type") == "tool_usage_blocked":
-                                    # 渐进式阻断：记录警告，不中断流式
-                                    # 由模型基于 short_circuit_response 自我调整行为
-                                    tool_info = event.get("data", {})
-                                    short_msg = tool_info.get("short_circuit_response", "")
-                                    logger.warning(
-                                        f"[Chat Service] 工具 {tool_info.get('tool_name')} "
-                                        f"被阻断: {short_msg}"
-                                    )
-                                    # 把阻断提示以 chunk 形式通知前端（可见的）
-                                    yield {
-                                        "type": "chunk",
-                                        "content": f"\n\n[系统提示] {short_msg}\n",
-                                    }
-                                    current_message_content += f"\n\n[系统提示] {short_msg}\n"
-                                    continue
-
-                                if event.get("type") == "tool_result":
-                                    tool_info = event.get("data", {})
-                                    if (tool_info.get("state") == "output-available"
-                                            and tool_info.get("name") in weather_tool_names
-                                            and tool_info.get("result")
-                                            and not tool_info.get("delivered")):
-                                        weather_result = tool_info["result"]
-                                        yield {"type": "chunk", "content": weather_result}
-                                        current_message_content += weather_result
-                                        ai_message = AIMessage(content=weather_result)
-                                        all_messages.append(ai_message)
-                                        tool_info["delivered"] = True
-                                        prefer_tool_result = True
-                        except Exception as chunk_err:
-                            logger.warning(f"处理流式 chunk 失败: {chunk_err}")
-                            continue
-
-                        await asyncio.sleep(0.01)
-                    break  # 成功，退出重试循环
-                except Exception as stream_err:
-                    # 异常路径：先刷新可能残留的缓冲内容，避免前端什么都没看到
-                    pending = accumulated_reasoning.get("_pending_content", "") if accumulated_reasoning else ""
-                    if pending:
-                        logger.debug(f"Agent 模式异常路径: 刷新缓冲内容 ({len(pending)} 字符)")
-                        yield {"type": "chunk", "content": pending}
-                        current_message_content += pending
-                        accumulated_reasoning["_pending_content"] = ""
-                        # 同步清除 stream_state，避免 generate() finally 重复刷新
-                        from .stream_helpers import _sync_pending_to_stream_state
-                        _sync_pending_to_stream_state(accumulated_reasoning)
-
-                    # GraphRecursionError: Agent 步数超限，优雅降级
-                    from langgraph.errors import GraphRecursionError
-                    if isinstance(stream_err, GraphRecursionError):
-                        logger.warning(
-                            f"Agent达到递归上限，优雅降级: 已收集 {len(all_messages)} 条消息, "
-                            f"内容长度={len(current_message_content)}"
-                        )
-                        if current_message_content:
-                            yield {"type": "chunk", "content": ""}
-                        else:
-                            for msg in reversed(all_messages):
-                                if isinstance(msg, AIMessage) and msg.content:
-                                    current_message_content = msg.content
-                                    yield {"type": "chunk", "content": msg.content}
-                                    break
-                            if not current_message_content:
-                                yield {"type": "chunk", "content": "任务执行步骤较多，已达到单次执行上限。以上是已收集的部分结果。"}
-                        break  # 跳出重试循环，继续后续处理
-
-                    # 使用韧性模块分类异常并决策
-                    action, classified = classify_and_decide(stream_err, retry_count, resilience_config.max_retries)
-
-                    if action == ErrorAction.RETRY:
-                        retry_count += 1
-                        backoff = calculate_backoff(retry_count, resilience_config)
-                        logger.warning(
-                            f"[Resilience] Agent 模式重试 {retry_count}/{resilience_config.max_retries}, "
-                            f"退避 {backoff:.1f}s: {classified.error_code}"
-                        )
-                        yield {
-                            "type": "retry",
-                            "data": {
-                                "attempt": retry_count,
-                                "max": resilience_config.max_retries,
-                                "backoff": backoff,
-                                "error_code": classified.error_code,
-                            },
-                        }
-                        await asyncio.sleep(backoff)
-                        continue  # 从 checkpoint 恢复重试
-
-                    elif action == ErrorAction.DEGRADE:
-                        logger.warning(f"[Resilience] Agent 模式降级: {classified.error_code}")
-
-                    elif action == ErrorAction.FALLBACK:
-                        logger.warning(f"[Resilience] Agent 模式回退: {classified.error_code}")
-
-                    else:  # FAIL
-                        logger.error(
-                            f"[Resilience] Agent 模式不可恢复错误: {classified.error_code}: {classified.message}"
-                        )
-                        clear_parent_tool_context()
-                        raise
-
-                    # DEGRADE / FALLBACK: 回退到无工具纯对话模式
-                    if provider_id and model_instance and tools:
-                        logger.warning(
-                            f"模型 {provider_id} agent模式执行失败，回退到无工具纯对话模式: {type(stream_err).__name__}: {stream_err}"
-                        )
-                        yield {"type": "chunk", "content": ""}
-                        try:
-                            async for fallback_event in self._deep_service._stream_without_tools(
-                                model_instance, data, usage_tracker, token_detail_tracker
-                            ):
-                                yield fallback_event
-                        except Exception as fallback_err:
-                            logger.error(
-                                f"无工具回退模式也失败: {type(fallback_err).__name__}: {fallback_err}"
-                            )
-                            yield {"type": "error", "content": f"模型服务暂时不可用，请稍后重试（{type(fallback_err).__name__}）"}
-                        clear_parent_tool_context()
-                        return
-                    else:
-                        logger.error(f"agent.graph.astream 执行异常: {type(stream_err).__name__}: {stream_err}", exc_info=True)
-                        clear_parent_tool_context()
-                        raise
-
-        update_usage_and_tokens(cb, usage_tracker, token_detail_tracker)
-
-        # 检测运行时 LLM fallback
-        if fb_callback.fallback_detected:
-            fallback_info = fb_callback.get_fallback_info()
-            if fallback_info:
-                yield {
-                    'type': 'model_fallback',
-                    'data': fallback_info,
-                }
-                # 自动更新 SystemConfig
-                try:
-                    from Django_xm.apps.ai_engine.models import SystemConfig
-                    SystemConfig.set_value("default_chat_model", {
-                        "provider_id": fallback_info["actual_provider"],
-                        "model_name": fallback_info["actual_model"],
-                    })
-                except Exception:
-                    pass
-
-        for tc_info in tool_calls_map.values():
-            tool_name = tc_info.get("name", "unknown")
-            token_detail_tracker.track_tool_usage(tool_name)
-
-        # 审批中断场景：Agent 被 interrupt 暂停，等待用户确认
-        # 跳过 finalize 逻辑（不需要补发 final_ai_message 等），直接结束流
-        if interrupt_info is not None:
-            logger.info(f"审批中断，跳过 finalize: tool={interrupt_info.get('tool_name')}")
-            from .stream_helpers import finalize_tool_calls
-            for tool_update_event in finalize_tool_calls(all_messages, tool_calls_map, tool_args_accumulator):
-                yield tool_update_event
-            return
-
-        # Agent 模式：刷新缓冲的 content（最终回答）
-        # 在流式传输中，AIMessage 的 content 先于 tool_calls 到达，
-        # 所以 content 被缓冲而非立即发送。当流结束时，缓冲区中的
-        # content 就是最终回答（无 tool_calls 的最后一条 AIMessage）
-        pending = accumulated_reasoning.get("_pending_content", "") if accumulated_reasoning else ""
-        if pending and data.get('mode') == 'agent':
-            logger.debug(f"Agent 模式: 刷新缓冲的最终回答内容 ({len(pending)} 字符)")
-            yield {"type": "chunk", "content": pending}
-            current_message_content += pending
-            accumulated_reasoning["_pending_content"] = ""
-            # 同步清除 stream_state，避免 generate() finally 重复刷新
-            from .stream_helpers import _sync_pending_to_stream_state
-            _sync_pending_to_stream_state(accumulated_reasoning)
-
-        # 深度思考模式兜底：当模型（如 qwen3:8b + reasoning=True）将全部输出
-        # 放入 thinking 字段而 content 为空时，将推理内容作为主内容发送，
-        # 避免前端只显示"已深度思考"而无任何文本
-        # 但如果有 interrupt（工具审批等待），不应触发兜底
-        if (not current_message_content.strip()
-                and not interrupt_info
-                and accumulated_reasoning
-                and accumulated_reasoning.get("content", "").strip()
-                and data.get('_enable_deep_thinking')):
-            reasoning_text = accumulated_reasoning["content"].strip()
-            logger.info(
-                f"深度思考兜底: content 为空，将推理内容 ({len(reasoning_text)} 字符) 作为主内容发送"
-            )
-            yield {"type": "chunk", "content": reasoning_text}
-            current_message_content = reasoning_text
-
-        # 普通模式下，若模型自带推理内容（如 DeepSeek reasoning_content），
-        # 发送 reasoning 完成事件，让前端能正确切换显示状态
-        # 仅当深度思考启用时才发送
-        if (accumulated_reasoning and accumulated_reasoning.get("content", "").strip()
-                and data.get('_enable_deep_thinking')):
-            yield {
-                "type": "reasoning",
-                "data": {
-                    "content": accumulated_reasoning["content"].strip(),
-                    "duration": 0,
-                    "source": "model_intrinsic",
-                    "finished": True,
-                },
-            }
-
-        from .stream_helpers import finalize_tool_calls
-        for tool_update_event in finalize_tool_calls(all_messages, tool_calls_map, tool_args_accumulator):
-            yield tool_update_event
-
-        async for final_event in self._finalize_stream_response(
-            all_messages, current_message_content, tool_calls_map,
-            prefer_tool_result, data, weather_tool_names,
-            model_instance=model_instance,
+        # finalize 阶段：循环后统一处理（由 stream 子包统一实现）
+        # 包括：update_usage / LLM fallback 检测 / tool_usage 统计 /
+        #       审批中断收尾 / _pending_content 刷新 / 深度思考兜底 /
+        #       reasoning 完成事件 / finalize_tool_calls / 补发 + 补全检查 + 建议生成
+        async for event in finalize_stream(
+            ctx, data, tools, model_instance, strategy,
+            cb, fb_callback, usage_tracker, token_detail_tracker,
         ):
-            yield final_event
+            yield event
 
         clear_parent_tool_context()
 
     async def _finalize_stream_response(
         self,
-        all_messages: List,
+        all_messages: list,
         current_message_content: str,
-        tool_calls_map: Dict[str, Dict],
+        tool_calls_map: dict[str, dict],
         prefer_tool_result: bool,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         weather_tool_names: set,
         model_instance=None,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+    ) -> AsyncGenerator[dict[str, Any], None]:
         from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
 
         final_ai_message = None
@@ -1262,11 +943,11 @@ class ChatService:
 class ChatModeService:
     """聊天模式服务类"""
 
-    FRONTEND_SUPPORTED_MODES = ['agent', 'deep-research']
+    FRONTEND_SUPPORTED_MODES = ('agent', 'deep-research')
     DEFAULT_MODE = 'agent'
 
     @classmethod
-    def get_supported_modes(cls) -> Dict[str, str]:
+    def get_supported_modes(cls) -> dict[str, str]:
         from Django_xm.apps.ai_engine.prompts.system_prompts import SYSTEM_PROMPTS
 
         modes = {}

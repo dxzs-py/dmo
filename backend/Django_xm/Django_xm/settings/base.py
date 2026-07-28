@@ -14,8 +14,8 @@ dev.py 和 prod.py 的公共配置基类，消除重复代码。
 
 import os
 import sys
-from pathlib import Path
 from datetime import timedelta
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -25,8 +25,8 @@ _project_root = Path(__file__).resolve().parent.parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-from Django_xm.apps.core.config import settings as project_cfg
 from Django_xm.apps.ai_engine.config import settings as app_cfg
+from Django_xm.apps.core.config import settings as project_cfg
 
 if app_cfg.langsmith_tracing and app_cfg.langsmith_api_key:
     os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
@@ -66,6 +66,7 @@ INSTALLED_APPS = [
     "Django_xm.apps.ai_engine.apps.AiEngineConfig",
     "Django_xm.apps.context_manager.apps.ContextManagerConfig",
     "Django_xm.apps.tools.apps.ToolsConfig",
+    "Django_xm.apps.approvals.apps.ApprovalsConfig",
     "Django_xm.apps.chat.apps.ChatConfig",
     "Django_xm.apps.knowledge.apps.KnowledgeConfig",
     "Django_xm.apps.learning.apps.LearningConfig",
@@ -311,7 +312,8 @@ CELERY_TASK_ROUTES = {
     'base.cleanup_old_task_records':     {'queue': 'celery'},
     'base.check_stale_tasks':            {'queue': 'celery'},
     'base.debug_task':                   {'queue': 'celery'},
-    'analytics.track_event':             {'queue': 'default'},
+    'analytics.track_event':             {'queue': 'celery'},
+    'approvals.cleanup_expired_approvals': {'queue': 'celery'},
 }
 
 ATTACHMENT_DEFAULT_RETENTION_DAYS = int(os.environ.get('ATTACHMENT_DEFAULT_RETENTION_DAYS', 30))
@@ -351,6 +353,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'base.check_stale_tasks',
         'schedule': crontab(minute=30),
     },
+    'cleanup-expired-approvals-every-minute': {
+        'task': 'approvals.cleanup_expired_approvals',
+        'schedule': 60.0,
+    },
 }
 
 # AI Engine Settings
@@ -369,31 +375,9 @@ AI_HELPER_MODEL_TEMPERATURE = 0.0
 AI_HELPER_MODEL_MAX_TOKENS = 256
 
 # ── Shell Exec 安全配置 ──────────────────────────────────────────
-# 白名单命令（这些命令可直接执行，无需用户确认）
-# 匹配规则：单词命令匹配第一个词，多词命令（如 "git status"）需完整前缀匹配
-SHELL_EXEC_WHITELIST = [
-    # 浏览器自动化
-    "agent-browser",
-    # 文档转换
-    "pandoc",
-    # Python（只读/安全操作）
-    "python", "python3",
-    "pip list", "pip show", "pip check",
-    "pip3 list", "pip3 show", "pip3 check",
-    # Node
-    "node",
-    "npm list", "npm view", "npm info",
-    "npx",
-    # 系统信息（只读）
-    "echo", "dir", "ls", "type", "cat",
-    "head", "tail", "wc", "find", "where", "which",
-    "whoami", "hostname",
-    # Git（只读子命令）
-    "git status", "git log", "git diff", "git branch", "git show", "git remote",
-    # 网络（只读）
-    "curl", "ping",
-    # ↓ 在此添加自定义白名单命令
-    "conda info", "conda list", "conda env list",
-]
-# 允许的工作目录（为空则不限制，命令只能在指定目录下执行）
-SHELL_EXEC_ALLOWED_DIRS = None
+# 白名单命令：单一真相源在 Django_xm.apps.tools.langchain.shell.DEFAULT_WHITELIST_COMMANDS，
+# 此处置为 None 使用代码级默认值（含平台过滤）。
+# 如需部署级覆盖，设为列表将完全替换默认白名单（不会合并）。
+SHELL_EXEC_WHITELIST = None
+# 允许的工作目录（限制命令执行目录范围，None 表示不限制——生产环境必须配置）
+SHELL_EXEC_ALLOWED_DIRS = [DATA_DIR, MEDIA_ROOT]

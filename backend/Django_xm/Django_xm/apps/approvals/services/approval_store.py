@@ -58,7 +58,7 @@ def persist_approval_processed(interrupt_id, processed_data):
     """
     try:
         if not interrupt_id:
-            logger.warning(f"[ApprovalStore] 持久化 processed 跳过: 缺少 interrupt_id")
+            logger.warning("[ApprovalStore] 持久化 processed 跳过: 缺少 interrupt_id")
             return
         redis_client = _get_redis_client()
         key = f"{APPROVAL_PROCESSED_PREFIX}{interrupt_id}"

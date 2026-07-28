@@ -10,8 +10,9 @@ import asyncio
 import logging
 import threading
 import time
+from collections.abc import AsyncIterator, Iterator
 from enum import Enum
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple
+from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel, ChatResult
 from langchain_core.messages import BaseMessage
@@ -22,6 +23,7 @@ from Django_xm.apps.ai_engine.services.exceptions import (
     LCAgentException,
     classify_exception,
 )
+
 from .agent_resilience import (
     ResilienceConfig,
     get_resilience_config,
@@ -146,7 +148,7 @@ _ERROR_ACTION_INPUT = "input"  # 输入错误：不降级，直接抛出
 _ERROR_ACTION_TEMPORARY = "temporary"  # 临时性错误：正常重试
 
 
-def _classify_error(error: Exception) -> Tuple[str, LCAgentException]:
+def _classify_error(error: Exception) -> tuple[str, LCAgentException]:
     """分类错误，返回 (action, classified_exception)
 
     Args:
@@ -211,15 +213,15 @@ class ResilientInvoker:
 
     def __init__(
         self,
-        models: List[BaseChatModel],
-        config: Optional[ResilienceConfig] = None,
+        models: list[BaseChatModel],
+        config: ResilienceConfig | None = None,
     ) -> None:
         if not models:
             raise ValueError("ResilientInvoker 至少需要一个模型")
-        self._models: List[BaseChatModel] = list(models)
+        self._models: list[BaseChatModel] = list(models)
         self._config: ResilienceConfig = config or get_resilience_config()
         # 为每个模型维护独立的 CircuitBreaker
-        self._breakers: Dict[int, CircuitBreaker] = {
+        self._breakers: dict[int, CircuitBreaker] = {
             i: CircuitBreaker(
                 threshold=self._config.circuit_breaker_threshold,
                 cooldown=self._config.circuit_breaker_cooldown,
@@ -228,7 +230,7 @@ class ResilientInvoker:
         }
 
     @property
-    def models(self) -> List[BaseChatModel]:
+    def models(self) -> list[BaseChatModel]:
         """降级链中的模型列表（只读副本）"""
         return list(self._models)
 
@@ -288,7 +290,7 @@ class ResilientInvoker:
     def invoke(
         self,
         input: Any,
-        config: Optional[RunnableConfig] = None,
+        config: RunnableConfig | None = None,
         *,
         method: str = "invoke",
         **kwargs: Any,
@@ -308,7 +310,7 @@ class ResilientInvoker:
             RuntimeError: 所有模型都失败
             LCAgentException: 输入错误时直接抛出
         """
-        errors: List[str] = []
+        errors: list[str] = []
 
         for idx, model in enumerate(self._models):
             breaker = self._breakers[idx]
@@ -320,7 +322,7 @@ class ResilientInvoker:
                 continue
 
             max_attempts = self._max_attempts_for(breaker)
-            last_error: Optional[Exception] = None
+            last_error: Exception | None = None
 
             for attempt in range(1, max_attempts + 1):
                 try:
@@ -381,7 +383,7 @@ class ResilientInvoker:
     def stream(
         self,
         input: Any,
-        config: Optional[RunnableConfig] = None,
+        config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> Iterator[Any]:
         """同步流式调用，带重试 + 降级
@@ -400,7 +402,7 @@ class ResilientInvoker:
             RuntimeError: 所有模型都失败
             LCAgentException: 输入错误时直接抛出
         """
-        errors: List[str] = []
+        errors: list[str] = []
 
         for idx, model in enumerate(self._models):
             breaker = self._breakers[idx]
@@ -412,7 +414,7 @@ class ResilientInvoker:
                 continue
 
             max_attempts = self._max_attempts_for(breaker)
-            last_error: Optional[Exception] = None
+            last_error: Exception | None = None
 
             for attempt in range(1, max_attempts + 1):
                 try:
@@ -479,10 +481,10 @@ class ResilientInvoker:
 
     def generate(
         self,
-        messages: List[BaseMessage],
-        config: Optional[RunnableConfig] = None,
+        messages: list[BaseMessage],
+        config: RunnableConfig | None = None,
         *,
-        stop: Optional[List[str]] = None,
+        stop: list[str] | None = None,
         **kwargs: Any,
     ) -> ChatResult:
         """同步生成，带重试 + 降级
@@ -500,7 +502,7 @@ class ResilientInvoker:
             RuntimeError: 所有模型都失败
             LCAgentException: 输入错误时直接抛出
         """
-        errors: List[str] = []
+        errors: list[str] = []
 
         for idx, model in enumerate(self._models):
             breaker = self._breakers[idx]
@@ -512,7 +514,7 @@ class ResilientInvoker:
                 continue
 
             max_attempts = self._max_attempts_for(breaker)
-            last_error: Optional[Exception] = None
+            last_error: Exception | None = None
 
             for attempt in range(1, max_attempts + 1):
                 try:
@@ -571,7 +573,7 @@ class ResilientInvoker:
     async def ainvoke(
         self,
         input: Any,
-        config: Optional[RunnableConfig] = None,
+        config: RunnableConfig | None = None,
         *,
         method: str = "ainvoke",
         **kwargs: Any,
@@ -591,7 +593,7 @@ class ResilientInvoker:
             RuntimeError: 所有模型都失败
             LCAgentException: 输入错误时直接抛出
         """
-        errors: List[str] = []
+        errors: list[str] = []
 
         for idx, model in enumerate(self._models):
             breaker = self._breakers[idx]
@@ -603,7 +605,7 @@ class ResilientInvoker:
                 continue
 
             max_attempts = self._max_attempts_for(breaker)
-            last_error: Optional[Exception] = None
+            last_error: Exception | None = None
 
             for attempt in range(1, max_attempts + 1):
                 try:
@@ -661,7 +663,7 @@ class ResilientInvoker:
     async def astream(
         self,
         input: Any,
-        config: Optional[RunnableConfig] = None,
+        config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[Any]:
         """异步流式调用，带重试 + 降级
@@ -680,7 +682,7 @@ class ResilientInvoker:
             RuntimeError: 所有模型都失败
             LCAgentException: 输入错误时直接抛出
         """
-        errors: List[str] = []
+        errors: list[str] = []
 
         for idx, model in enumerate(self._models):
             breaker = self._breakers[idx]
@@ -692,7 +694,7 @@ class ResilientInvoker:
                 continue
 
             max_attempts = self._max_attempts_for(breaker)
-            last_error: Optional[Exception] = None
+            last_error: Exception | None = None
 
             for attempt in range(1, max_attempts + 1):
                 try:
@@ -757,10 +759,10 @@ class ResilientInvoker:
 
     async def agenerate(
         self,
-        messages: List[BaseMessage],
-        config: Optional[RunnableConfig] = None,
+        messages: list[BaseMessage],
+        config: RunnableConfig | None = None,
         *,
-        stop: Optional[List[str]] = None,
+        stop: list[str] | None = None,
         **kwargs: Any,
     ) -> ChatResult:
         """异步生成，带重试 + 降级
@@ -778,7 +780,7 @@ class ResilientInvoker:
             RuntimeError: 所有模型都失败
             LCAgentException: 输入错误时直接抛出
         """
-        errors: List[str] = []
+        errors: list[str] = []
 
         for idx, model in enumerate(self._models):
             breaker = self._breakers[idx]
@@ -790,7 +792,7 @@ class ResilientInvoker:
                 continue
 
             max_attempts = self._max_attempts_for(breaker)
-            last_error: Optional[Exception] = None
+            last_error: Exception | None = None
 
             for attempt in range(1, max_attempts + 1):
                 try:
@@ -864,8 +866,8 @@ class ResilientModel(BaseChatModel):
     # Pydantic 字段声明
     # 注：使用 List[Any] 而非 List[BaseChatModel] 以兼容 MagicMock 等测试替身，
     # 实际运行时模型应为 BaseChatModel 实例
-    models: List[Any] = Field(default_factory=list)
-    config: Optional[Any] = None
+    models: list[Any] = Field(default_factory=list)
+    config: Any | None = None
 
     # Pydantic v2 配置：允许任意类型（BaseChatModel、ResilienceConfig 等）
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -875,8 +877,8 @@ class ResilientModel(BaseChatModel):
 
     def __init__(
         self,
-        models: List[BaseChatModel],
-        config: Optional[ResilienceConfig] = None,
+        models: list[BaseChatModel],
+        config: ResilienceConfig | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(models=models, config=config, **kwargs)
@@ -890,7 +892,7 @@ class ResilientModel(BaseChatModel):
         return "resilient"
 
     @property
-    def _identifying_params(self) -> Dict[str, Any]:
+    def _identifying_params(self) -> dict[str, Any]:
         """用于缓存键的标识参数"""
         return {
             "models": [
@@ -906,8 +908,8 @@ class ResilientModel(BaseChatModel):
 
     def _generate(
         self,
-        messages: List[BaseMessage],
-        stop: Optional[List[str]] = None,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
         **kwargs: Any,
     ) -> ChatResult:
         """同步生成（委托给 ResilientInvoker）"""
@@ -915,8 +917,8 @@ class ResilientModel(BaseChatModel):
 
     async def _agenerate(
         self,
-        messages: List[BaseMessage],
-        stop: Optional[List[str]] = None,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
         **kwargs: Any,
     ) -> ChatResult:
         """异步生成（委托给 ResilientInvoker）"""
@@ -924,8 +926,8 @@ class ResilientModel(BaseChatModel):
 
     def _stream(
         self,
-        messages: List[BaseMessage],
-        stop: Optional[List[str]] = None,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
         **kwargs: Any,
     ) -> Iterator[Any]:
         """同步流式（委托给 ResilientInvoker）"""
@@ -933,8 +935,8 @@ class ResilientModel(BaseChatModel):
 
     async def _astream(
         self,
-        messages: List[BaseMessage],
-        stop: Optional[List[str]] = None,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[Any]:
         """异步流式（委托给 ResilientInvoker）"""
@@ -946,7 +948,7 @@ class ResilientModel(BaseChatModel):
     def invoke(
         self,
         input: Any,
-        config: Optional[RunnableConfig] = None,
+        config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> Any:
         """同步调用（委托给 ResilientInvoker）"""
@@ -955,7 +957,7 @@ class ResilientModel(BaseChatModel):
     async def ainvoke(
         self,
         input: Any,
-        config: Optional[RunnableConfig] = None,
+        config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> Any:
         """异步调用（委托给 ResilientInvoker）"""
@@ -964,7 +966,7 @@ class ResilientModel(BaseChatModel):
     def stream(
         self,
         input: Any,
-        config: Optional[RunnableConfig] = None,
+        config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> Iterator[Any]:
         """同步流式（委托给 ResilientInvoker）"""
@@ -973,7 +975,7 @@ class ResilientModel(BaseChatModel):
     async def astream(
         self,
         input: Any,
-        config: Optional[RunnableConfig] = None,
+        config: RunnableConfig | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[Any]:
         """异步流式（委托给 ResilientInvoker）"""
@@ -1032,7 +1034,7 @@ class ResilientModel(BaseChatModel):
     # ----- 调试辅助 -----
 
     @property
-    def fallback_models(self) -> List[BaseChatModel]:
+    def fallback_models(self) -> list[BaseChatModel]:
         """降级链中除第一个模型外的所有模型（供调试使用）"""
         return list(self._invoker.models[1:])
 

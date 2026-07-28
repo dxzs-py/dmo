@@ -39,16 +39,19 @@ MCP (Model Context Protocol) 工具集成模块
 """
 
 import asyncio
-import sys
 import os
+import sys
+from collections.abc import Callable
 from contextlib import contextmanager
-from typing import List, Dict, Any, Optional, Callable
+from typing import Any, Dict, List, Optional
+
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
-from Django_xm.apps.ai_engine.config import settings, get_logger
+from Django_xm.apps.ai_engine.config import settings
+from Django_xm.apps.core.config import get_logger
 
-_devnull_handles: List[Any] = []
+_devnull_handles: list[Any] = []
 
 
 def _open_devnull():
@@ -78,7 +81,7 @@ logger = get_logger(__name__)
 def _celery_stdio_fix():
     _orig_stdout = sys.stdout
     _orig_stderr = sys.stderr
-    _opened: Dict[str, Any] = {}
+    _opened: dict[str, Any] = {}
     try:
         if not hasattr(sys.stdout, 'fileno'):
             f = open(os.devnull, 'w')
@@ -102,17 +105,17 @@ def _celery_stdio_fix():
 def _nullcontext():
     yield
 
-_mcp_client_pool: Dict[str, Any] = {}
-_mcp_client_timestamps: Dict[str, float] = {}
-_mcp_pool_lock: Optional[Any] = None
+_mcp_client_pool: dict[str, Any] = {}
+_mcp_client_timestamps: dict[str, float] = {}
+_mcp_pool_lock: Any | None = None
 _MCP_CLIENT_CONFIGS_CACHE_KEY = "mcp_client_configs"
 _MCP_CLIENT_TTL_SECONDS = 600
 
 
 class MCPClientConfig(BaseModel):
     server_key: str
-    transport_config: Dict[str, Any]
-    server_name: Optional[str] = None
+    transport_config: dict[str, Any]
+    server_name: str | None = None
 
 
 import threading
@@ -141,11 +144,12 @@ def _sync_cleanup_on_exit():
 
 
 import atexit
+
 atexit.register(_sync_cleanup_on_exit)
 atexit.register(_close_devnull_handles)
 
 
-def _get_mcp_servers_config() -> List[Dict[str, Any]]:
+def _get_mcp_servers_config() -> list[dict[str, Any]]:
     from django.conf import settings as django_settings
     all_servers = getattr(django_settings, "MCP_SERVERS", [])
     return [s for s in all_servers if s.get("enabled", True)]
@@ -153,17 +157,17 @@ def _get_mcp_servers_config() -> List[Dict[str, Any]]:
 
 def is_mcp_available() -> bool:
     try:
-        import langchain_mcp_adapters  # noqa: F401
+        import langchain_mcp_adapters
         return True
     except ImportError:
         return False
 
 
-def _build_transport_config(server_config: Dict[str, Any]) -> Dict[str, Any]:
+def _build_transport_config(server_config: dict[str, Any]) -> dict[str, Any]:
     transport = server_config.get("transport", "sse")
 
     if transport == "stdio":
-        config: Dict[str, Any] = {
+        config: dict[str, Any] = {
             "command": server_config.get("command", ""),
             "args": server_config.get("args", []),
             "transport": "stdio",
@@ -201,10 +205,11 @@ def _build_transport_config(server_config: Dict[str, Any]) -> Dict[str, Any]:
 
 async def _get_or_create_client(
     server_key: str,
-    transport_config: Dict[str, Any],
-    server_name: Optional[str] = None,
+    transport_config: dict[str, Any],
+    server_name: str | None = None,
 ) -> Any:
     import time
+
     from langchain_mcp_adapters.client import MultiServerMCPClient
 
     with _get_pool_lock():
@@ -261,16 +266,16 @@ def get_pooled_client_count() -> int:
 
 
 async def get_mcp_tools(
-    server_url: Optional[str] = None,
-    server_name: Optional[str] = None,
+    server_url: str | None = None,
+    server_name: str | None = None,
     transport: str = "sse",
-    headers: Optional[Dict[str, str]] = None,
-    auth_token: Optional[str] = None,
-    command: Optional[str] = None,
-    args: Optional[List[str]] = None,
-    env: Optional[Dict[str, str]] = None,
-    interceptors: Optional[List[Callable]] = None,
-) -> List[BaseTool]:
+    headers: dict[str, str] | None = None,
+    auth_token: str | None = None,
+    command: str | None = None,
+    args: list[str] | None = None,
+    env: dict[str, str] | None = None,
+    interceptors: list[Callable] | None = None,
+) -> list[BaseTool]:
     if not is_mcp_available():
         logger.warning("langchain-mcp-adapters 未安装，无法获取 MCP 工具")
         return []
@@ -303,7 +308,7 @@ async def get_mcp_tools(
         from langchain_mcp_adapters.client import MultiServerMCPClient
 
         if transport == "stdio":
-            transport_config: Dict[str, Any] = {
+            transport_config: dict[str, Any] = {
                 "command": command or "npx",
                 "args": args or [],
                 "transport": "stdio",
@@ -335,7 +340,7 @@ async def get_mcp_tools(
         try:
             with _celery_stdio_fix() if _need_stdio_fix else _nullcontext():
                 tools = await asyncio.wait_for(client.get_tools(), timeout=_timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"MCP 客户端 get_tools 超时 ({_timeout}s)，尝试重建连接: {server_key}")
             await _remove_stale_client(server_key)
             client = await _get_or_create_client(server_key, transport_config, server_name=server_name)
@@ -377,14 +382,14 @@ async def get_mcp_tools(
 
 
 async def _resolve_mcp_client(
-    server_url: Optional[str] = None,
-    server_name: Optional[str] = None,
+    server_url: str | None = None,
+    server_name: str | None = None,
     transport: str = "sse",
-    headers: Optional[Dict[str, str]] = None,
-    auth_token: Optional[str] = None,
-    command: Optional[str] = None,
-    args: Optional[List[str]] = None,
-    env: Optional[Dict[str, str]] = None,
+    headers: dict[str, str] | None = None,
+    auth_token: str | None = None,
+    command: str | None = None,
+    args: list[str] | None = None,
+    env: dict[str, str] | None = None,
 ):
     """解析 MCP Server 配置并获取客户端
 
@@ -420,7 +425,7 @@ async def _resolve_mcp_client(
         return None, None
 
     try:
-        server_config: Dict[str, Any] = {"transport": transport}
+        server_config: dict[str, Any] = {"transport": transport}
         if transport == "stdio":
             server_config["command"] = command or ""
             server_config["args"] = args or []
@@ -446,15 +451,15 @@ async def _resolve_mcp_client(
 
 
 async def get_mcp_resources(
-    server_url: Optional[str] = None,
-    server_name: Optional[str] = None,
+    server_url: str | None = None,
+    server_name: str | None = None,
     transport: str = "sse",
-    headers: Optional[Dict[str, str]] = None,
-    auth_token: Optional[str] = None,
-    command: Optional[str] = None,
-    args: Optional[List[str]] = None,
-    env: Optional[Dict[str, str]] = None,
-) -> List[Dict[str, Any]]:
+    headers: dict[str, str] | None = None,
+    auth_token: str | None = None,
+    command: str | None = None,
+    args: list[str] | None = None,
+    env: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     client, server_key = await _resolve_mcp_client(
         server_url=server_url, server_name=server_name, transport=transport,
         headers=headers, auth_token=auth_token, command=command, args=args, env=env,
@@ -474,15 +479,15 @@ async def get_mcp_resources(
 
 
 async def get_mcp_prompts(
-    server_url: Optional[str] = None,
-    server_name: Optional[str] = None,
+    server_url: str | None = None,
+    server_name: str | None = None,
     transport: str = "sse",
-    headers: Optional[Dict[str, str]] = None,
-    auth_token: Optional[str] = None,
-    command: Optional[str] = None,
-    args: Optional[List[str]] = None,
-    env: Optional[Dict[str, str]] = None,
-) -> List[Dict[str, Any]]:
+    headers: dict[str, str] | None = None,
+    auth_token: str | None = None,
+    command: str | None = None,
+    args: list[str] | None = None,
+    env: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     client, server_key = await _resolve_mcp_client(
         server_url=server_url, server_name=server_name, transport=transport,
         headers=headers, auth_token=auth_token, command=command, args=args, env=env,
@@ -502,9 +507,9 @@ async def get_mcp_prompts(
 
 
 def _apply_interceptors(
-    tools: List[BaseTool],
-    interceptors: List[Callable],
-) -> List[BaseTool]:
+    tools: list[BaseTool],
+    interceptors: list[Callable],
+) -> list[BaseTool]:
     from langchain_core.tools import tool as lc_tool
 
     wrapped_tools = []
@@ -526,7 +531,7 @@ def _apply_interceptors(
     return wrapped_tools
 
 
-async def get_all_mcp_tools() -> List[BaseTool]:
+async def get_all_mcp_tools() -> list[BaseTool]:
     if not is_mcp_available():
         return []
 
@@ -535,7 +540,7 @@ async def get_all_mcp_tools() -> List[BaseTool]:
         logger.debug("未配置 MCP Server")
         return []
 
-    all_tools: List[BaseTool] = []
+    all_tools: list[BaseTool] = []
 
     for srv in servers:
         name = srv.get("name", "unknown")
@@ -567,12 +572,12 @@ async def get_all_mcp_tools() -> List[BaseTool]:
     return all_tools
 
 
-async def get_all_mcp_resources() -> List[Dict[str, Any]]:
+async def get_all_mcp_resources() -> list[dict[str, Any]]:
     if not is_mcp_available():
         return []
 
     servers = _get_mcp_servers_config()
-    all_resources: List[Dict[str, Any]] = []
+    all_resources: list[dict[str, Any]] = []
 
     for srv in servers:
         name = srv.get("name", "unknown")
@@ -602,12 +607,12 @@ async def get_all_mcp_resources() -> List[Dict[str, Any]]:
     return all_resources
 
 
-async def get_all_mcp_prompts() -> List[Dict[str, Any]]:
+async def get_all_mcp_prompts() -> list[dict[str, Any]]:
     if not is_mcp_available():
         return []
 
     servers = _get_mcp_servers_config()
-    all_prompts: List[Dict[str, Any]] = []
+    all_prompts: list[dict[str, Any]] = []
 
     for srv in servers:
         name = srv.get("name", "unknown")
@@ -637,7 +642,7 @@ async def get_all_mcp_prompts() -> List[Dict[str, Any]]:
     return all_prompts
 
 
-def get_server_info_list() -> List[Dict[str, Any]]:
+def get_server_info_list() -> list[dict[str, Any]]:
     servers = _get_mcp_servers_config()
     info = []
     for srv in servers:
@@ -655,8 +660,8 @@ def get_server_info_list() -> List[Dict[str, Any]]:
     return info
 
 
-async def health_check_mcp_servers() -> Dict[str, Dict[str, Any]]:
-    results: Dict[str, Dict[str, Any]] = {}
+async def health_check_mcp_servers() -> dict[str, dict[str, Any]]:
+    results: dict[str, dict[str, Any]] = {}
     servers = _get_mcp_servers_config()
     for srv in servers:
         name = srv.get("name", "unknown")
@@ -670,8 +675,8 @@ async def health_check_mcp_servers() -> Dict[str, Dict[str, Any]]:
 
 def _persist_client_config(
     server_key: str,
-    transport_config: Dict[str, Any],
-    server_name: Optional[str] = None,
+    transport_config: dict[str, Any],
+    server_name: str | None = None,
 ) -> None:
     try:
         from Django_xm.apps.cache_manager.services.cache_service import CacheService
@@ -691,10 +696,10 @@ def _persist_client_config(
         logger.warning(f"持久化 MCP 客户端配置失败: {e}")
 
 
-def save_client_configs() -> List[MCPClientConfig]:
-    configs: List[MCPClientConfig] = []
+def save_client_configs() -> list[MCPClientConfig]:
+    configs: list[MCPClientConfig] = []
     for server_key, client in _mcp_client_pool.items():
-        transport_config: Dict[str, Any] = {}
+        transport_config: dict[str, Any] = {}
         if hasattr(client, "_transport_configs"):
             transport_config = client._transport_configs
         configs.append(MCPClientConfig(
@@ -714,7 +719,7 @@ def save_client_configs() -> List[MCPClientConfig]:
     return configs
 
 
-def load_client_configs() -> List[MCPClientConfig]:
+def load_client_configs() -> list[MCPClientConfig]:
     try:
         from Django_xm.apps.cache_manager.services.cache_service import CacheService
         raw = CacheService.get(_MCP_CLIENT_CONFIGS_CACHE_KEY) or []
@@ -749,24 +754,24 @@ async def restore_mcp_clients_from_cache() -> int:
 
 
 __all__ = [
-    "is_mcp_available",
-    "get_mcp_tools",
-    "get_mcp_resources",
-    "get_mcp_prompts",
-    "get_all_mcp_tools",
-    "get_all_mcp_resources",
-    "get_all_mcp_prompts",
+    "ContextSwitcher",
+    "MCPClientConfig",
+    "ToolDataPipe",
+    "_get_mcp_servers_config",
     "cleanup_mcp_clients",
+    "get_all_mcp_prompts",
+    "get_all_mcp_resources",
+    "get_all_mcp_tools",
+    "get_mcp_prompts",
+    "get_mcp_resources",
+    "get_mcp_tools",
     "get_pooled_client_count",
     "get_server_info_list",
-    "_get_mcp_servers_config",
-    "MCPClientConfig",
     "health_check_mcp_servers",
-    "save_client_configs",
+    "is_mcp_available",
     "load_client_configs",
     "restore_mcp_clients_from_cache",
-    "ContextSwitcher",
-    "ToolDataPipe",
+    "save_client_configs",
 ]
 
 

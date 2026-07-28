@@ -1,108 +1,155 @@
 """
 文档检索节点 (Retrieval Node)
 
-本节点负责根据学习计划检索相关文档。
+本节点根据用户选择的知识库（DocumentIndex）检索学习资料。
+- 从 state 读取 user_id 与 knowledge_base_ids（前端 KnowledgeBaseSelector 的 v-model）
+- 每个知识库名称按 `user_{id}_{name}` 规则还原为完整索引名（与 kb_service.get_user_index_name 一致）
+- 对每个知识库独立加载向量库并检索，合并去重后返回
+- 未选择知识库时跳过检索，仅以 LLM 内置知识继续生成（与原硬编码 test_index 的开发模式解耦）
 """
 
-import logging
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Any
 
-from ..services.state import StudyFlowState, RetrievedDocument
+from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.knowledge.services.cross_app import get_index_manager
 from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
 from Django_xm.apps.knowledge.services.retrieval_service import create_retriever
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.knowledge.views_utils import get_original_index_name
+
+from ..services.state import RetrievedDocument, StudyFlowState
 
 logger = get_logger(__name__)
 
 
-def retrieval_node(state: StudyFlowState) -> Dict[str, Any]:
+def _compose_user_index_name(user_id: int, kb_name: str) -> str:
+    """与 knowledge.views_utils.get_user_index_name 保持一致的索引命名规则。
+
+    不直接调用 get_user_index_name(user, name) 是因为 retrieval_node 仅持有 user_id
+    （LangGraph 节点不接触 request 对象）。命名规则单一真相源在 views_utils，本函数
+    通过构造等价字符串复用规则。
     """
-    文档检索节点
+    return f"user_{user_id}_{kb_name}"
+
+
+def _load_and_retrieve(user_index_name: str, query: str, k: int = 5) -> list[Any]:
+    """加载单个知识库的向量库并执行检索，失败时记录日志返回空列表。"""
+    manager = get_index_manager()
+    embeddings = get_embeddings()
+    try:
+        vector_store = manager.load_index(user_index_name, embeddings)
+        retriever = create_retriever(vector_store, k=k)
+        return retriever.invoke(query)
+    except FileNotFoundError:
+        logger.warning(f"[Retrieval Node] 索引不存在: {user_index_name}")
+        return []
+    except Exception as e:
+        logger.warning(f"[Retrieval Node] 加载索引 {user_index_name} 失败: {e}")
+        return []
+
+
+def _dedup_by_content(docs: list[Any]) -> list[Any]:
+    """按 page_content 去重，保留首次出现的文档。"""
+    seen = set()
+    result = []
+    for doc in docs:
+        content = getattr(doc, "page_content", None)
+        if content is None:
+            continue
+        if content in seen:
+            continue
+        seen.add(content)
+        result.append(doc)
+    return result
+
+
+def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
+    """文档检索节点
 
     功能：
-    1. 根据学习计划的主题和关键点检索相关文档
-    2. 对检索结果进行排序和过滤
-    3. 返回最相关的文档列表
+    1. 从 state 读取 user_id 与 knowledge_base_ids
+    2. 对每个知识库构造完整索引名并加载向量库
+    3. 合并检索结果并去重
+    4. 返回最相关的文档列表（未选择知识库时返回空列表）
     """
     logger.info("[Retrieval Node] 开始检索相关文档")
 
-    try:
-        learning_plan = state.get("learning_plan")
-        if not learning_plan:
-            logger.warning("[Retrieval Node] 学习计划不存在，跳过文档检索")
-            return {
-                "retrieved_docs": [],
-                "messages": [{"role": "assistant", "content": "\n\n⚠️ 学习计划生成失败，跳过文档检索。"}],
-                "current_step": "retrieval",
-                "updated_at": datetime.now().isoformat()
-            }
+    learning_plan = state.get("learning_plan")
+    user_id = state.get("user_id")
+    knowledge_base_ids = state.get("knowledge_base_ids") or []
 
-        topic = learning_plan["topic"]
-        key_points = learning_plan["key_points"]
-
-        main_query = f"{topic}"
-        logger.info(f"[Retrieval Node] 主查询: {main_query}")
-
-        index_manager = get_index_manager()
-        embeddings = get_embeddings()
-
-        try:
-            vector_store = index_manager.load_index("test_index", embeddings)
-            retriever = create_retriever(vector_store, k=5)
-
-            logger.info("[Retrieval Node] 执行文档检索...")
-            docs = retriever.invoke(main_query)
-        except FileNotFoundError:
-            logger.warning("[Retrieval Node] 索引不存在，返回空结果")
-            docs = []
-
-        retrieved_docs: List[RetrievedDocument] = []
-        for i, doc in enumerate(docs):
-            retrieved_doc: RetrievedDocument = {
-                "content": doc.page_content,
-                "metadata": doc.metadata,
-                "relevance_score": 1.0 - (i * 0.1)
-            }
-            retrieved_docs.append(retrieved_doc)
-
-        logger.info(f"[Retrieval Node] 检索到 {len(retrieved_docs)} 个相关文档")
-
-        if len(retrieved_docs) < 3 and key_points and docs:
-            logger.info("[Retrieval Node] 文档较少，使用关键点补充检索...")
-            try:
-                for point in key_points[:2]:
-                    additional_docs = retriever.invoke(point)
-                    for doc in additional_docs[:2]:
-                        if doc.page_content not in [d["content"] for d in retrieved_docs]:
-                            retrieved_doc: RetrievedDocument = {
-                                "content": doc.page_content,
-                                "metadata": doc.metadata,
-                                "relevance_score": 0.7
-                            }
-                            retrieved_docs.append(retrieved_doc)
-            except Exception as e:
-                logger.warning(f"[Retrieval Node] 补充检索失败: {e}")
-
-        logger.info(f"[Retrieval Node] 最终检索到 {len(retrieved_docs)} 个文档")
-
-        retrieval_summary = f"\n\n📄 已检索到 {len(retrieved_docs)} 个相关文档，将用于生成学习内容和练习题。"
-
-        return {
-            "retrieved_docs": retrieved_docs,
-            "messages": [{"role": "assistant", "content": retrieval_summary}],
-            "current_step": "retrieval",
-            "updated_at": datetime.now().isoformat()
-        }
-
-    except Exception as e:
-        logger.error(f"[Retrieval Node] 文档检索失败: {str(e)}", exc_info=True)
-
-        logger.warning("[Retrieval Node] 检索失败，将继续使用 LLM 内置知识")
+    if not learning_plan:
+        logger.warning("[Retrieval Node] 学习计划不存在，跳过文档检索")
         return {
             "retrieved_docs": [],
-            "messages": [{"role": "assistant", "content": "\n\n⚠️ 文档检索遇到问题，将使用 AI 内置知识继续生成内容。"}],
+            "messages": [{"role": "assistant", "content": "\n\n⚠️ 学习计划生成失败，跳过文档检索。"}],
             "current_step": "retrieval",
             "updated_at": datetime.now().isoformat()
         }
+
+    # 未选择知识库：明确跳过 RAG，与"硬编码 test_index"的开发模式彻底解耦
+    if not user_id or not knowledge_base_ids:
+        logger.info(
+            f"[Retrieval Node] 未选择知识库 (user_id={user_id}, kb_count={len(knowledge_base_ids)})，"
+            "跳过 RAG 检索，使用 LLM 内置知识生成内容"
+        )
+        return {
+            "retrieved_docs": [],
+            "messages": [{
+                "role": "assistant",
+                "content": "\n\nℹ️ 未选择知识库，将使用 AI 内置知识生成学习内容。如需基于专属资料学习，请在启动工作流前选择知识库。"
+            }],
+            "current_step": "retrieval",
+            "updated_at": datetime.now().isoformat()
+        }
+
+    topic = learning_plan["topic"]
+    key_points = learning_plan["key_points"]
+
+    main_query = f"{topic}"
+    logger.info(f"[Retrieval Node] 主查询: {main_query}, 知识库数量: {len(knowledge_base_ids)}")
+
+    # 对每个知识库独立检索后合并去重
+    all_docs: list[Any] = []
+    for kb_name in knowledge_base_ids:
+        user_index_name = _compose_user_index_name(user_id, kb_name)
+        original_name = get_original_index_name(user_index_name)
+        logger.info(f"[Retrieval Node] 检索知识库: {original_name} (full_index={user_index_name})")
+        docs = _load_and_retrieve(user_index_name, main_query, k=5)
+        all_docs.extend(docs)
+
+    all_docs = _dedup_by_content(all_docs)
+    logger.info(f"[Retrieval Node] 主查询检索到 {len(all_docs)} 个去重文档")
+
+    # 文档较少时使用关键点补充检索
+    if len(all_docs) < 3 and key_points:
+        logger.info("[Retrieval Node] 文档较少，使用关键点补充检索...")
+        for point in key_points[:2]:
+            for kb_name in knowledge_base_ids:
+                user_index_name = _compose_user_index_name(user_id, kb_name)
+                additional_docs = _load_and_retrieve(user_index_name, point, k=2)
+                for doc in additional_docs[:2]:
+                    if getattr(doc, "page_content", None) and doc.page_content not in {
+                        getattr(d, "page_content", None) for d in all_docs
+                    }:
+                        all_docs.append(doc)
+
+    logger.info(f"[Retrieval Node] 最终检索到 {len(all_docs)} 个文档")
+
+    retrieved_docs: list[RetrievedDocument] = []
+    for i, doc in enumerate(all_docs):
+        retrieved_doc: RetrievedDocument = {
+            "content": doc.page_content,
+            "metadata": doc.metadata,
+            "relevance_score": 1.0 - (i * 0.1)
+        }
+        retrieved_docs.append(retrieved_doc)
+
+    retrieval_summary = f"\n\n📄 已从 {len(knowledge_base_ids)} 个知识库检索到 {len(retrieved_docs)} 个相关文档，将用于生成学习内容和练习题。"
+
+    return {
+        "retrieved_docs": retrieved_docs,
+        "messages": [{"role": "assistant", "content": retrieval_summary}],
+        "current_step": "retrieval",
+        "updated_at": datetime.now().isoformat()
+    }

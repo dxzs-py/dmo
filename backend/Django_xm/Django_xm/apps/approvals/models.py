@@ -18,6 +18,9 @@ class Approval(models.Model):
     # 审批来源
     SOURCE_CHAT = 'chat'
     SOURCE_DEEP_RESEARCH = 'deep_research'
+    # SOURCE_LEARNING 当前未启用：learning 模块是纯学习评测工作流（StateGraph），
+    # 无工具调用、无 agent，不接入 ApprovalMiddleware（架构不匹配）。
+    # 枚举值保留以避免数据库迁移，若未来 learning 引入 agent 化改造可启用。
     SOURCE_LEARNING = 'learning'
     SOURCE_CHOICES = [
         (SOURCE_CHAT, 'Chat'),
@@ -58,6 +61,15 @@ class Approval(models.Model):
     parameters = models.JSONField(default=dict, blank=True)
     state = models.CharField(max_length=32, choices=STATE_CHOICES, default=STATE_PENDING)
     user_input = models.TextField(null=True, blank=True)
+    # 审批归属用户（根本性越权修复：替代通过 chat_session/source_id 跨表反查）
+    # 历史数据通过 00XX_add_user_field 迁移回填；剩余 NULL 数据走 _user_owns_approval 三路 fallback
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='owned_approvals',
+        verbose_name='审批归属用户',
+    )
     approved_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True, blank=True,
@@ -81,6 +93,13 @@ class Approval(models.Model):
             models.Index(fields=['chat_session_id', 'state']),
             models.Index(fields=['state', 'created_at']),
             models.Index(fields=['state', 'expires_at']),
+            # 越权修复：列表查询常按 (user, state) 过滤并按 created_at 倒序
+            models.Index(fields=['user', 'state', 'created_at']),
+            # 按来源筛选待处理审批的复合索引（覆盖 source+state+created_at 查询路径）
+            models.Index(
+                fields=['source', 'state', 'created_at'],
+                name='approval_src_state_created_idx',
+            ),
         ]
 
     def save(self, *args, **kwargs):

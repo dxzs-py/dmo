@@ -19,16 +19,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Django 环境初始化（兼容 pytest 和 unittest 直接运行）
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "Django_xm.settings.dev")
-import django  # noqa: E402
-import django.apps  # noqa: E402,F401
+import django
+import django.apps
 
 if not django.apps.apps.ready:
     django.setup()
 
-from Django_xm.apps.agent_hub.config import AgentConfig, AgentType  # noqa: E402
-from Django_xm.apps.agent_hub.exceptions import PreflightCheckError  # noqa: E402
-from Django_xm.apps.agent_hub.factory import AgentFactory  # noqa: E402
-from Django_xm.apps.agent_hub.preflight import (  # noqa: E402
+from Django_xm.apps.agent_hub.config import AgentConfig, AgentType
+from Django_xm.apps.agent_hub.exceptions import PreflightCheckError
+from Django_xm.apps.agent_hub.factory import AgentFactory
+from Django_xm.apps.agent_hub.preflight import (
     ExecutionPreflight,
     PreflightResult,
 )
@@ -87,9 +87,8 @@ class TestPreflightFailFast(unittest.IsolatedAsyncioTestCase):
             ExecutionPreflight, "check", new_callable=AsyncMock, return_value=fake_result
         ), patch.object(
             AgentFactory, "_get_builders", return_value={AgentType.BASE: mock_builder}
-        ):
-            with self.assertRaises(PreflightCheckError) as ctx:
-                await AgentFactory.create(config)
+        ), self.assertRaises(PreflightCheckError) as ctx:
+            await AgentFactory.create(config)
 
         # 异常应携带 issues 列表
         self.assertEqual(ctx.exception.issues, ["LLM 服务不可用", "Redis 连接失败"])

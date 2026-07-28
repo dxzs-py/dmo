@@ -26,26 +26,25 @@
 from __future__ import annotations
 
 import os
-import sys
 import unittest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 # 确保 Django settings 可加载
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'Django_xm.settings.dev')
 
 import django
+
 django.setup()
 
+from Django_xm.apps.core.middleware.db import DatabaseConnectionMiddleware
 from Django_xm.apps.core.services.db_connection_manager import (
     DatabaseConnectionManager,
-    db_cleanup,
-    db_force_close_all,
     db_check_and_alert,
-    db_get_stats,
+    db_cleanup,
     db_connection_guard,
+    db_force_close_all,
     db_task,
 )
-from Django_xm.apps.core.middleware.db import DatabaseConnectionMiddleware
 
 
 class TestDatabaseConnectionManagerCleanup(unittest.TestCase):
@@ -143,6 +142,7 @@ class TestDatabaseConnectionManagerGetCount(unittest.TestCase):
     def test_get_connection_count_uses_cache(self, mock_connections):
         """缓存未过期时应返回缓存值"""
         import time
+
         import Django_xm.apps.core.services.db_connection_manager as mod
         mod._last_count_check.update(time=time.time(), active=30, max_conn=100)
 
@@ -225,9 +225,8 @@ class TestDbConnectionGuard(unittest.TestCase):
     @patch.object(DatabaseConnectionManager, 'cleanup')
     def test_guard_cleanup_on_exception(self, mock_cleanup):
         """with 块异常退出时也应清理连接"""
-        with self.assertRaises(ValueError):
-            with db_connection_guard(source="test_guard_exc"):
-                raise ValueError("test error")
+        with self.assertRaises(ValueError), db_connection_guard(source="test_guard_exc"):
+            raise ValueError("test error")
         mock_cleanup.assert_called_once_with("test_guard_exc")
 
 
@@ -330,7 +329,7 @@ class TestDatabaseConnectionMiddleware(unittest.TestCase):
         mock_request.method = "GET"
         mock_request.path = "/api/v1/test/"
 
-        response = middleware(mock_request)
+        middleware(mock_request)
 
         mock_cleanup.assert_called_once()
         call_args = mock_cleanup.call_args

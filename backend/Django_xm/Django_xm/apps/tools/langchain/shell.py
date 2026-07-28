@@ -9,21 +9,19 @@
 - 工作目录限制：限制命令执行范围
 """
 
-import os
-import re
-import subprocess
-import platform
 import logging
-import asyncio
+import os
+import platform
+import re
 import signal
-from typing import Optional, List,Dict
+import subprocess
 from pathlib import Path
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from Django_xm.apps.tools.errors import StandardToolResult, ToolStatus, TOOL_VERSION
-from Django_xm.apps.tools.base import AsyncToolMixin, interrupt_for_approval, reject_sync_approval
+from Django_xm.apps.tools.base import AsyncToolMixin
+from Django_xm.apps.tools.errors import TOOL_VERSION, StandardToolResult, ToolStatus
 
 logger = logging.getLogger(__name__)
 
@@ -35,26 +33,27 @@ logger = logging.getLogger(__name__)
 _UNIX_ONLY_COMMANDS = {"ls", "cat", "head", "tail", "wc", "find", "which"}
 _WINDOWS_ONLY_COMMANDS = {"dir", "type", "where"}
 
-DEFAULT_WHITELIST_COMMANDS: List[str] = [
+DEFAULT_WHITELIST_COMMANDS: list[str] = [
     # 浏览器自动化
     "agent-browser",
     # 文档转换
     "pandoc",
-    # Python（只读/安全操作）
-    "python",
-    "python3",
+    # Python 高频安全脚本（仅限 manage.py / pytest，其他 python 调用需审批）
+    "python manage.py", "python manage.py help",
+    "python -m pytest", "python -m unittest",
+    "python3 manage.py", "python3 manage.py help",
+    "python3 -m pytest", "python3 -m unittest",
+    # pip 只读子命令
     "pip list",
     "pip show",
     "pip check",
     "pip3 list",
     "pip3 show",
     "pip3 check",
-    # Node
-    "node",
+    # Node 包管理只读子命令（node/npx 本体已移除，需审批）
     "npm list",
     "npm view",
     "npm info",
-    "npx",
     # 系统信息（只读）— 跨平台
     "echo",
     "whoami",
@@ -84,7 +83,7 @@ DEFAULT_WHITELIST_COMMANDS: List[str] = [
 ]
 
 # 严格禁止的命令模式（无论是否在白名单中都不允许）
-BLOCKED_PATTERNS: List[str] = [
+BLOCKED_PATTERNS: list[str] = [
     # 删除
     r"\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|.*--no-preserve-root)",
     r"\brmdir\s+/s",
@@ -135,7 +134,7 @@ MAX_TIMEOUT = 300
 INTERACTIVE_COMMAND_TIMEOUT = 30
 
 # 交互式命令前缀（启动后不自动退出的 CLI 工具）
-INTERACTIVE_COMMAND_PREFIXES: List[str] = [
+INTERACTIVE_COMMAND_PREFIXES: list[str] = [
     "agent-browser",  # 浏览器自动化，open/snapshot 等子命令启动后进程不退出
 ]
 
@@ -185,7 +184,7 @@ def _kill_process_tree(process: subprocess.Popen, is_windows: bool) -> None:
             pass
 
 
-def _get_whitelist_commands() -> List[str]:
+def _get_whitelist_commands() -> list[str]:
     """获取白名单命令列表（支持 Django settings 覆盖，根据平台过滤）"""
     try:
         from django.conf import settings as django_settings
@@ -208,41 +207,83 @@ def _get_whitelist_commands() -> List[str]:
     return filtered
 
 
-def _is_command_blocked(command: str) -> Optional[str]:
-    """检查命令是否匹配禁止模式，返回匹配的模式描述或 None"""
+def _is_command_blocked(command: str) -> str | None:
+    """检查命令是否匹配禁止模式，返回匹配的模式描述或 None
+
+    使用 re.DOTALL 标志使 '.' 匹配换行符，覆盖跨行命令拼接攻击
+    （如 "echo ok\\nrm -rf /" 通过换行符绕过单行正则匹配）。
+    """
     cmd_lower = command.lower().strip()
     for pattern in BLOCKED_PATTERNS:
-        if re.search(pattern, cmd_lower, re.IGNORECASE):
+        # re.DOTALL: 使 . 匹配换行符，防止跨行命令拼接绕过
+        if re.search(pattern, cmd_lower, re.IGNORECASE | re.DOTALL):
             return f"匹配禁止模式: {pattern}"
     return None
 
 
+# 重定向/管道操作符检测模式：单词白名单命令携带这些操作符时需走审批
+# 防止 "echo bad > /etc/passwd" / "cat file | rm -rf /" 等绕过攻击
+_REDIRECT_PIPE_PATTERN = re.compile(
+    r'(?<!\w)(?:'
+    r'>{1,2}|<{1,2}|'  # 重定向: > >> < <<
+    r'\|'              # 管道: |
+    r')(?:\s|$)',
+    re.DOTALL,
+)
+
+
+def _has_redirect_or_pipe(command: str) -> bool:
+    """检测命令是否包含重定向或管道操作符
+
+    单词白名单命令（如 echo/pandoc）携带重定向/管道时可执行任意后续命令，
+    必须强制走审批流程，不允许直接执行。
+
+    Returns:
+        True 表示命令包含重定向/管道操作符
+    """
+    return bool(_REDIRECT_PIPE_PATTERN.search(command))
+
+
 def _is_command_whitelisted(command: str) -> bool:
-    """检查命令是否在白名单中"""
+    """检查命令是否在白名单中
+
+    匹配规则：
+    - 多词白名单命令（如 "git status"）：完整前缀匹配
+    - 单词白名单命令（如 "pandoc"）：分词后第一个词匹配，且命令不含重定向/管道
+      操作符（携带 > >> < << | 时强制走审批，防止 "echo bad > /etc/passwd" 等
+      绕过攻击）
+    """
     whitelist = _get_whitelist_commands()
     cmd_stripped = command.strip()
+
+    if not cmd_stripped:
+        return False
 
     # 精确匹配
     for wl_cmd in whitelist:
         if cmd_stripped == wl_cmd:
+            # 单词命令精确匹配时仍需检查重定向/管道
+            # （虽无参数，但保持一致性）
+            if " " not in wl_cmd and _has_redirect_or_pipe(cmd_stripped):
+                return False
             return True
 
-    # 前缀匹配：命令以白名单命令开头，且紧跟空格或参数
     cmd_first_word = cmd_stripped.split()[0] if cmd_stripped.split() else ""
     for wl_cmd in whitelist:
         wl_first_word = wl_cmd.split()[0]
         # 白名单命令本身包含空格（如 "git status"），需要完整前缀匹配
         if " " in wl_cmd:
             if cmd_stripped.startswith(wl_cmd + " ") or cmd_stripped == wl_cmd:
-                return True
-        # 单词白名单命令，匹配第一个词
-        elif cmd_first_word == wl_first_word:
-            # 内联代码执行模式需要审批：python -c / node -e / python3 -c 等
-            # 这些模式可以执行任意代码，绕过白名单安全限制
-            if cmd_first_word in ("python", "python3", "node"):
-                cmd_lower = cmd_stripped.lower()
-                if re.match(r'\b(python3?|node)\s+(-c|-e|--eval)\b', cmd_lower):
+                # 多词白名单命令也检查重定向/管道，防止
+                # "git status > /etc/passwd" 等绕过
+                if _has_redirect_or_pipe(cmd_stripped):
                     return False
+                return True
+        # 单词白名单命令：仅当第一个词匹配且无重定向/管道时放行
+        elif cmd_first_word == wl_first_word:
+            # 携带重定向/管道的单词命令必须走审批
+            if _has_redirect_or_pipe(cmd_stripped):
+                return False
             return True
 
     return False
@@ -381,7 +422,7 @@ def _execute_command(
         if len(stdout) > MAX_OUTPUT_LENGTH:
             stdout = stdout[:MAX_OUTPUT_LENGTH] + f"\n... [输出已截断，共 {len(stdout)} 字符]"
         if len(stderr) > MAX_OUTPUT_LENGTH // 4:
-            stderr = stderr[:MAX_OUTPUT_LENGTH // 4] + f"\n... [错误输出已截断]"
+            stderr = stderr[:MAX_OUTPUT_LENGTH // 4] + "\n... [错误输出已截断]"
 
         output_parts = []
         if stdout.strip():
@@ -451,22 +492,25 @@ class ShellExecTool(AsyncToolMixin, BaseTool):
     """Shell 命令执行工具
 
     安全策略：
-    1. 白名单命令：直接执行，无需确认
-    2. 非白名单命令：通过 LangGraph interrupt 暂停执行，等待用户确认后 resume 继续执行
-    3. 禁止命令：始终拒绝执行
-    4. 超时控制：防止命令挂起
-    5. 输出截断：防止返回内容过大
+    1. 禁止命令：始终拒绝执行（由 _is_command_blocked 检查）
+    2. 审批：由 ApprovalMiddleware 在 after_model 钩子统一处理
+       （非白名单命令触发审批，白名单/黑名单命令不拦截）
+    3. 超时控制：防止命令挂起
+    4. 输出截断：防止返回内容过大
+
+    工具层不参与审批判断，到达 _run 的命令已通过审批（或无需审批）。
     """
     name: str = "shell_exec"
     version: str = TOOL_VERSION
-    metadata: dict = {"tier": "extended", "visibility": "selectable", "category": "system"}
+    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "system"})
     description: str = (
         "执行 Shell 命令并返回输出结果。"
-        "适用场景：需要运行命令行工具（如 agent-browser、pandoc、python 脚本等）、查看系统信息、执行自动化任务。"
+        "适用场景：需要运行命令行工具（如 agent-browser、pandoc、python manage.py 等）、查看系统信息、执行自动化任务。"
         "不适用：文件读写（应使用 fs_read_file/fs_write_file）、网络搜索（应使用 web_search）。"
         "参数：command-要执行的命令（必填），timeout-超时秒数（默认60），working_dir-工作目录（默认当前目录）。"
-        "安全策略：白名单命令（agent-browser、pandoc、python、node、git 等）直接执行；"
-        "非白名单命令会暂停等待用户确认，用户确认后自动继续执行；"
+        "安全策略：白名单命令（agent-browser、pandoc、python manage.py、git status 等）直接执行；"
+        "非白名单命令（含 python/node/npx 等可执行任意代码的解释器）需走审批流程；"
+        "携带重定向/管道的命令强制走审批（防止 echo bad > /etc/passwd 等绕过）；"
         "危险命令（rm -rf、shutdown 等）始终拒绝。"
     )
     args_schema: type[BaseModel] = ShellExecInput
@@ -477,7 +521,11 @@ class ShellExecTool(AsyncToolMixin, BaseTool):
         timeout: int = DEFAULT_TIMEOUT,
         working_dir: str = "",
     ) -> str:
-        """同步执行入口（由 _arun 调用，不直接使用 interrupt）"""
+        """执行 Shell 命令
+
+        审批由 ApprovalMiddleware 在 after_model 钩子统一处理，
+        工具层不参与审批判断。到达此方法的命令已通过审批或无需审批。
+        """
         # 参数校验：防止 LLM 传入空参数导致不可预期的行为
         if not command or not command.strip():
             logger.warning("shell_exec: 收到空命令，拒绝执行")
@@ -490,7 +538,7 @@ class ShellExecTool(AsyncToolMixin, BaseTool):
 
         logger.info(f"shell_exec: 收到命令请求: {command[:200]}")
 
-        # 1. 检查禁止命令
+        # 检查禁止命令（黑名单命令始终拒绝，不由审批处理）
         blocked_reason = _is_command_blocked(command)
         if blocked_reason:
             logger.warning(f"shell_exec: 命令被禁止: {command[:100]} ({blocked_reason})")
@@ -501,88 +549,10 @@ class ShellExecTool(AsyncToolMixin, BaseTool):
                 metadata={"command": command, "blocked": True, "reason": blocked_reason},
             ).to_tool_message()
 
-        # 2. 白名单命令直接执行
-        if _is_command_whitelisted(command):
-            logger.info(f"shell_exec: 白名单命令，直接执行: {command[:100]}")
-            result = _execute_command(command, timeout, working_dir)
-            return result.to_tool_message()
-
-        # 3. 非白名单命令：不应在 _run 中直接处理，由 _arun 处理
-        # 如果走到这里，说明是同步调用，直接拒绝
-        logger.warning(f"shell_exec: 非白名单命令在同步模式下无法请求审批，拒绝执行: {command[:100]}")
-        return StandardToolResult(
-            content=reject_sync_approval("shell_exec", command),
-            status=ToolStatus.ERROR,
-            source="shell_exec",
-            metadata={"command": command, "sync_mode": True},
-        ).to_tool_message()
-
-    async def _arun(
-        self,
-        command: str,
-        timeout: int = DEFAULT_TIMEOUT,
-        working_dir: str = "",
-        run_manager=None,
-        config=None,
-    ) -> str:
-        """异步执行入口：在异步上下文中调用 interrupt()，确保 LangGraph 上下文正确传播
-
-        关键：interrupt() 必须在异步上下文中调用，不能通过 asyncio.to_thread，
-        否则 LangGraph 的 ContextVar 无法正确传播，导致 interrupt 值丢失。
-        """
-        # 参数校验：防止 LLM 传入空参数导致不可预期的行为
-        if not command or not command.strip():
-            logger.warning("shell_exec: 收到空命令(async)，拒绝执行")
-            return StandardToolResult(
-                content="命令不能为空，请提供要执行的 Shell 命令。",
-                status=ToolStatus.ERROR,
-                source="shell_exec",
-                metadata={"command": command, "empty_command": True},
-            ).to_tool_message()
-
-        logger.info(f"shell_exec: 收到命令请求(async): {command[:200]}")
-
-        # 1. 检查禁止命令
-        blocked_reason = _is_command_blocked(command)
-        if blocked_reason:
-            logger.warning(f"shell_exec: 命令被禁止: {command[:100]} ({blocked_reason})")
-            return StandardToolResult(
-                content=f"命令已被安全策略拦截: {blocked_reason}\n命令: {command}\n此命令属于危险操作，不允许执行。",
-                status=ToolStatus.ERROR,
-                source="shell_exec",
-                metadata={"command": command, "blocked": True, "reason": blocked_reason},
-            ).to_tool_message()
-
-        # 2. 白名单命令：在线程池中执行（不涉及 interrupt）
-        if _is_command_whitelisted(command):
-            logger.info(f"shell_exec: 白名单命令，直接执行: {command[:100]}")
-            result = await asyncio.to_thread(_execute_command, command, timeout, working_dir)
-            return result.to_tool_message()
-
-        # 3. 非白名单命令：在异步上下文中调用 interrupt_for_approval
-        logger.info(f"shell_exec: 非白名单命令，interrupt 等待用户确认: {command[:100]}")
-        approval = interrupt_for_approval(
-            tool_name="shell_exec",
-            title="确认执行命令",
-            description=f"Agent 请求执行以下非白名单命令，是否允许？",
-            operation=command,
-            danger_level="high" if any(kw in command.lower() for kw in ["install", "remove", "delete", "format", "write"]) else "medium",
-            extra={"timeout": timeout, "working_dir": working_dir},
-        )
-
-        # 4. 用户确认后 resume
-        if approval is True:
-            logger.info(f"shell_exec: 用户已确认，执行非白名单命令: {command[:100]}")
-            result = await asyncio.to_thread(_execute_command, command, timeout, working_dir)
-            return result.to_tool_message()
-        else:
-            logger.info(f"shell_exec: 用户已拒绝，不执行命令: {command[:100]}")
-            return StandardToolResult(
-                content=f"用户已拒绝执行此命令，命令未执行: {command}",
-                status=ToolStatus.ERROR,
-                source="shell_exec",
-                metadata={"command": command, "rejected": True},
-            ).to_tool_message()
+        # 执行命令（审批已由 ApprovalMiddleware 统一处理）
+        logger.info(f"shell_exec: 执行命令: {command[:100]}")
+        result = _execute_command(command, timeout, working_dir)
+        return result.to_tool_message()
 
 
 # ── 工厂函数 ──────────────────────────────────────────────────────

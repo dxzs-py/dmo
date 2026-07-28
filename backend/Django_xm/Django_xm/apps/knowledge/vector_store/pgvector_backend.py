@@ -2,13 +2,15 @@
 
 使用 PostgreSQL + pgvector 扩展存储和检索向量数据。
 通过 Django ORM 操作数据库，避免硬编码表名。
+
+所有原生 SQL 中的表名均通过 ``connections["default"].ops.quote_name()``
+包装（Task 20.2），防止 SQL 注入并兼容大小写敏感的标识符。
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from django.db import connections
-
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore
@@ -16,6 +18,15 @@ from langchain_core.vectorstores import VectorStore
 from .base import VectorStoreBackend
 
 logger = logging.getLogger(__name__)
+
+
+def _quote_identifier(name: str) -> str:
+    """使用 Django ORM 的 quote_name 包装 SQL 标识符（表名/列名）。
+
+    确保表名被正确引用（如 ``"langchain_pg_collection"``），
+    防止 SQL 注入与保留字冲突（Task 20.2）。
+    """
+    return connections["default"].ops.quote_name(name)
 
 
 def _get_pgvector_connection_string(async_mode: bool = False) -> str:
@@ -71,7 +82,7 @@ def _check_table_exists(table_name: str) -> bool:
 class PGVectorBackend(VectorStoreBackend):
     """PGVector 向量存储后端"""
 
-    def __init__(self, connection_string: Optional[str] = None):
+    def __init__(self, connection_string: str | None = None):
         self._connection_string = connection_string
 
     @property
@@ -88,13 +99,13 @@ class PGVectorBackend(VectorStoreBackend):
         except ImportError:
             raise ImportError(
                 "PGVector 未安装。请运行: pip install langchain-postgres"
-            )
+            ) from None
 
     @property
     def store_type(self) -> str:
         return "pgvector"
 
-    def get_embedding_column_dimension(self) -> Optional[int]:
+    def get_embedding_column_dimension(self) -> int | None:
         """获取 PGVector embedding 列的当前向量维度"""
         embedding_table = _get_embedding_table_name()
         if not _check_table_exists(embedding_table):
@@ -102,7 +113,7 @@ class PGVectorBackend(VectorStoreBackend):
         try:
             with connections["default"].cursor() as cursor:
                 cursor.execute(
-                    f"SELECT vector_dims(embedding) FROM {embedding_table} LIMIT 1"
+                    f"SELECT vector_dims(embedding) FROM {_quote_identifier(embedding_table)} LIMIT 1"
                 )
                 row = cursor.fetchone()
                 return row[0] if row else None
@@ -131,13 +142,13 @@ class PGVectorBackend(VectorStoreBackend):
             with connections["default"].cursor() as cursor:
                 # 检查当前列维度
                 cursor.execute(
-                    f"SELECT vector_dims(embedding) FROM {embedding_table} LIMIT 1"
+                    f"SELECT vector_dims(embedding) FROM {_quote_identifier(embedding_table)} LIMIT 1"
                 )
                 row = cursor.fetchone()
                 if row is None:
                     # 表为空，直接 ALTER 列类型
                     cursor.execute(
-                        f"ALTER TABLE {embedding_table} "
+                        f"ALTER TABLE {_quote_identifier(embedding_table)} "
                         f"ALTER COLUMN embedding TYPE vector({new_dimension})"
                     )
                     logger.info(
@@ -150,7 +161,7 @@ class PGVectorBackend(VectorStoreBackend):
                     return True
 
                 # 维度不匹配，检查表中是否还有数据
-                cursor.execute(f"SELECT COUNT(*) FROM {embedding_table}")
+                cursor.execute(f"SELECT COUNT(*) FROM {_quote_identifier(embedding_table)}")
                 remaining = cursor.fetchone()[0]
                 if remaining > 0:
                     logger.warning(
@@ -162,7 +173,7 @@ class PGVectorBackend(VectorStoreBackend):
 
                 # 表已空，可以安全 ALTER
                 cursor.execute(
-                    f"ALTER TABLE {embedding_table} "
+                    f"ALTER TABLE {_quote_identifier(embedding_table)} "
                     f"ALTER COLUMN embedding TYPE vector({new_dimension})"
                 )
                 logger.info(
@@ -200,7 +211,7 @@ class PGVectorBackend(VectorStoreBackend):
 
     def create(
         self,
-        documents: List[Document],
+        documents: list[Document],
         embeddings: Embeddings,
         collection_name: str,
         **kwargs: Any,
@@ -257,8 +268,8 @@ class PGVectorBackend(VectorStoreBackend):
         with connections["default"].cursor() as cursor:
             # 先删除 embedding 表中关联的向量数据
             cursor.execute(
-                f"DELETE FROM {embedding_table} WHERE collection_id = "
-                f"(SELECT uuid FROM {collection_table} WHERE name = %s)",
+                f"DELETE FROM {_quote_identifier(embedding_table)} WHERE collection_id = "
+                f"(SELECT uuid FROM {_quote_identifier(collection_table)} WHERE name = %s)",
                 [collection_name],
             )
             emb_deleted = cursor.rowcount
@@ -267,7 +278,7 @@ class PGVectorBackend(VectorStoreBackend):
 
             # 再删除 collection 记录
             cursor.execute(
-                f"DELETE FROM {collection_table} WHERE name = %s",
+                f"DELETE FROM {_quote_identifier(collection_table)} WHERE name = %s",
                 [collection_name],
             )
             deleted = cursor.rowcount
@@ -277,7 +288,7 @@ class PGVectorBackend(VectorStoreBackend):
                 logger.warning(f"PGVector 集合不存在: {collection_name}")
             return deleted > 0
 
-    def list_collections(self, prefix: str = "") -> List[str]:
+    def list_collections(self, prefix: str = "") -> list[str]:
         collection_table = _get_collection_table_name()
         if not _check_table_exists(collection_table):
             return []
@@ -285,11 +296,11 @@ class PGVectorBackend(VectorStoreBackend):
         with connections["default"].cursor() as cursor:
             if prefix:
                 cursor.execute(
-                    f"SELECT name FROM {collection_table} WHERE name LIKE %s",
+                    f"SELECT name FROM {_quote_identifier(collection_table)} WHERE name LIKE %s",
                     [f"{prefix}%"],
                 )
             else:
-                cursor.execute(f"SELECT name FROM {collection_table}")
+                cursor.execute(f"SELECT name FROM {_quote_identifier(collection_table)}")
             return [row[0] for row in cursor.fetchall()]
 
     def exists(self, collection_name: str) -> bool:
@@ -299,7 +310,7 @@ class PGVectorBackend(VectorStoreBackend):
 
         with connections["default"].cursor() as cursor:
             cursor.execute(
-                f"SELECT EXISTS(SELECT 1 FROM {collection_table} WHERE name = %s)",
+                f"SELECT EXISTS(SELECT 1 FROM {_quote_identifier(collection_table)} WHERE name = %s)",
                 [collection_name],
             )
             return cursor.fetchone()[0]
@@ -307,8 +318,8 @@ class PGVectorBackend(VectorStoreBackend):
     def add_documents(
         self,
         vector_store: VectorStore,
-        documents: List[Document],
-    ) -> List[str]:
+        documents: list[Document],
+    ) -> list[str]:
         if hasattr(vector_store, "add_documents"):
             ids = vector_store.add_documents(documents)
         elif hasattr(vector_store, "add_texts"):
@@ -323,7 +334,7 @@ class PGVectorBackend(VectorStoreBackend):
     def remove_documents(
         self,
         collection_name: str,
-        document_ids: List[str],
+        document_ids: list[str],
     ) -> bool:
         if not document_ids:
             return True
@@ -337,7 +348,7 @@ class PGVectorBackend(VectorStoreBackend):
         with connections["default"].cursor() as cursor:
             # 通过 collection_name 找到 collection_id，再删除对应文档
             cursor.execute(
-                f"SELECT uuid FROM {collection_table} WHERE name = %s",
+                f"SELECT uuid FROM {_quote_identifier(collection_table)} WHERE name = %s",
                 [collection_name],
             )
             row = cursor.fetchone()
@@ -348,7 +359,7 @@ class PGVectorBackend(VectorStoreBackend):
             collection_id = row[0]
             placeholders = ", ".join(["%s"] * len(document_ids))
             cursor.execute(
-                f"DELETE FROM {embedding_table} "
+                f"DELETE FROM {_quote_identifier(embedding_table)} "
                 f"WHERE collection_id = %s AND id::text IN ({placeholders})",
                 [collection_id] + document_ids,
             )
@@ -376,9 +387,9 @@ class PGVectorBackend(VectorStoreBackend):
         with connections["default"].cursor() as cursor:
             # 查找匹配的文档 ID
             cursor.execute(
-                f"SELECT id FROM {embedding_table} "
+                f"SELECT id FROM {_quote_identifier(embedding_table)} "
                 f"WHERE collection_id = "
-                f"(SELECT uuid FROM {collection_table} WHERE name = %s) "
+                f"(SELECT uuid FROM {_quote_identifier(collection_table)} WHERE name = %s) "
                 f"AND cmetadata->>%s = %s",
                 [collection_name, key, value],
             )
@@ -394,7 +405,7 @@ class PGVectorBackend(VectorStoreBackend):
             # 删除匹配的文档
             placeholders = ", ".join(["%s"] * len(ids_to_delete))
             cursor.execute(
-                f"DELETE FROM {embedding_table} WHERE id::text IN ({placeholders})",
+                f"DELETE FROM {_quote_identifier(embedding_table)} WHERE id::text IN ({placeholders})",
                 ids_to_delete,
             )
             deleted_count = cursor.rowcount
@@ -407,7 +418,7 @@ class PGVectorBackend(VectorStoreBackend):
     def read_all_documents(
         self,
         collection_name: str,
-    ) -> List[Document]:
+    ) -> list[Document]:
         """读取集合中所有文档"""
         embedding_table = _get_embedding_table_name()
         collection_table = _get_collection_table_name()
@@ -419,9 +430,9 @@ class PGVectorBackend(VectorStoreBackend):
 
         with connections["default"].cursor() as cursor:
             cursor.execute(
-                f"SELECT document, cmetadata FROM {embedding_table} "
+                f"SELECT document, cmetadata FROM {_quote_identifier(embedding_table)} "
                 f"WHERE collection_id = "
-                f"(SELECT uuid FROM {collection_table} WHERE name = %s)",
+                f"(SELECT uuid FROM {_quote_identifier(collection_table)} WHERE name = %s)",
                 [collection_name],
             )
             documents = []
@@ -453,9 +464,9 @@ class PGVectorBackend(VectorStoreBackend):
 
         with connections["default"].cursor() as cursor:
             cursor.execute(
-                f"SELECT id FROM {embedding_table} "
+                f"SELECT id FROM {_quote_identifier(embedding_table)} "
                 f"WHERE collection_id = "
-                f"(SELECT uuid FROM {collection_table} WHERE name = %s) "
+                f"(SELECT uuid FROM {_quote_identifier(collection_table)} WHERE name = %s) "
                 f"AND cmetadata->>%s LIKE %s",
                 [collection_name, key, pattern],
             )
@@ -470,7 +481,7 @@ class PGVectorBackend(VectorStoreBackend):
 
             placeholders = ", ".join(["%s"] * len(ids_to_delete))
             cursor.execute(
-                f"DELETE FROM {embedding_table} WHERE id::text IN ({placeholders})",
+                f"DELETE FROM {_quote_identifier(embedding_table)} WHERE id::text IN ({placeholders})",
                 ids_to_delete,
             )
             deleted_count = cursor.rowcount
@@ -485,14 +496,14 @@ class PGVectorBackend(VectorStoreBackend):
         vector_store: VectorStore,
         query: str,
         k: int = 4,
-        filter: Optional[Dict] = None,
-    ) -> List[Tuple[Document, float]]:
-        kwargs: Dict[str, Any] = {"k": k}
+        filter: dict | None = None,
+    ) -> list[tuple[Document, float]]:
+        kwargs: dict[str, Any] = {"k": k}
         if filter:
             kwargs["filter"] = filter
         return vector_store.similarity_search_with_score(query=query, **kwargs)
 
-    def get_stats(self, collection_name: str) -> Dict[str, Any]:
+    def get_stats(self, collection_name: str) -> dict[str, Any]:
         collection_table = _get_collection_table_name()
         embedding_table = _get_embedding_table_name()
 
@@ -506,7 +517,7 @@ class PGVectorBackend(VectorStoreBackend):
         with connections["default"].cursor() as cursor:
             # 检查集合是否存在
             cursor.execute(
-                f"SELECT uuid FROM {collection_table} WHERE name = %s",
+                f"SELECT uuid FROM {_quote_identifier(collection_table)} WHERE name = %s",
                 [collection_name],
             )
             row = cursor.fetchone()
@@ -523,7 +534,7 @@ class PGVectorBackend(VectorStoreBackend):
             doc_count = 0
             if _check_table_exists(embedding_table):
                 cursor.execute(
-                    f"SELECT COUNT(*) FROM {embedding_table} WHERE collection_id = %s",
+                    f"SELECT COUNT(*) FROM {_quote_identifier(embedding_table)} WHERE collection_id = %s",
                     [collection_id],
                 )
                 doc_count = cursor.fetchone()[0]
