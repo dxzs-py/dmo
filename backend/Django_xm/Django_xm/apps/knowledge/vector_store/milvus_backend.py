@@ -24,9 +24,7 @@ class MilvusBackend(VectorStoreBackend):
 
             return Milvus
         except ImportError:
-            raise ImportError(
-                "Milvus 未安装。请运行: pip install langchain-milvus"
-            ) from None
+            raise ImportError("Milvus 未安装。请运行: pip install langchain-milvus") from None
 
     @property
     def store_type(self) -> str:
@@ -41,9 +39,7 @@ class MilvusBackend(VectorStoreBackend):
     ) -> VectorStore:
         Milvus = self._get_milvus_class()
 
-        connection_args = kwargs.pop(
-            "connection_args", {"uri": self.uri}
-        )
+        connection_args = kwargs.pop("connection_args", {"uri": self.uri})
 
         vector_store = Milvus.from_documents(
             documents=documents,
@@ -63,9 +59,7 @@ class MilvusBackend(VectorStoreBackend):
     ) -> VectorStore:
         Milvus = self._get_milvus_class()
 
-        connection_args = kwargs.pop(
-            "connection_args", {"uri": self.uri}
-        )
+        connection_args = kwargs.pop("connection_args", {"uri": self.uri})
 
         vector_store = Milvus(
             embedding_function=embeddings,
@@ -96,8 +90,8 @@ class MilvusBackend(VectorStoreBackend):
                 return True
             logger.warning(f"Milvus 集合不存在: {collection_name}")
             return False
-        except Exception as e:
-            logger.error(f"Milvus 集合删除失败: {e}")
+        except Exception:
+            logger.exception("Milvus 集合删除失败")
             return False
 
     def list_collections(self, prefix: str = "") -> list[str]:
@@ -148,14 +142,12 @@ class MilvusBackend(VectorStoreBackend):
 
             connections.connect(uri=self.uri)
             collection = Collection(collection_name)
-            expr = f'id in {document_ids}'
+            expr = f"id in {document_ids}"
             collection.delete(expr)
-            logger.info(
-                f"Milvus 从集合 {collection_name} 删除 {len(document_ids)} 个文档"
-            )
+            logger.info(f"Milvus 从集合 {collection_name} 删除 {len(document_ids)} 个文档")
             return True
-        except Exception as e:
-            logger.error(f"Milvus 删除文档失败: {e}")
+        except Exception:
+            logger.exception("Milvus 删除文档失败")
             return False
 
     def remove_documents_by_metadata(
@@ -171,13 +163,10 @@ class MilvusBackend(VectorStoreBackend):
             collection = Collection(collection_name)
             expr = f'{key} == "{value}"'
             collection.delete(expr)
-            logger.info(
-                f"Milvus 按元数据删除文档 "
-                f"(collection={collection_name}, {key}={value})"
-            )
+            logger.info(f"Milvus 按元数据删除文档 (collection={collection_name}, {key}={value})")
             return 1
-        except Exception as e:
-            logger.error(f"Milvus 按元数据删除失败: {e}")
+        except Exception:
+            logger.exception("Milvus 按元数据删除失败")
             return 0
 
     def search(

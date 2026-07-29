@@ -2,6 +2,7 @@
 工作流服务层
 封装工作流相关的业务逻辑
 """
+
 import uuid
 from typing import Any
 
@@ -60,15 +61,11 @@ class WorkflowService:
             "retry_count": result.get("retry_count", 0),
             "created_at": result.get("created_at", ""),
             "updated_at": result.get("updated_at", ""),
-            "message": "学习计划和练习题已生成"
+            "message": "学习计划和练习题已生成",
         }
 
     @staticmethod
-    def submit_user_answers(
-        thread_id: str,
-        answers: dict[str, str],
-        user_id: int | None = None
-    ) -> dict[str, Any]:
+    def submit_user_answers(thread_id: str, answers: dict[str, str], user_id: int | None = None) -> dict[str, Any]:
         """
         提交用户答案，继续执行工作流
 
@@ -111,7 +108,7 @@ class WorkflowService:
             "retry_count": result.get("retry_count", 0),
             "created_at": result.get("created_at", ""),
             "updated_at": result.get("updated_at", ""),
-            "message": message
+            "message": message,
         }
 
     @staticmethod
@@ -161,6 +158,7 @@ class WorkflowService:
 
         try:
             from ..models import WorkflowSession
+
             qs = WorkflowSession.objects.filter(thread_id=thread_id, is_deleted=False)
             if user_id:
                 qs = qs.filter(created_by_id=user_id)
@@ -178,22 +176,20 @@ class WorkflowService:
             import asyncio
 
             from Django_xm.apps.ai_engine.services.checkpointer_factory import delete_thread_checkpoints
+
             asyncio.run(delete_thread_checkpoints(thread_id))
         except Exception as e:
             logger.warning(f"[Service] 清理工作流 checkpoint 数据失败: {e}")
 
         try:
             from Django_xm.apps.core.services.file_manager import get_file_manager
+
             file_manager = get_file_manager()
             file_manager.delete_task_files(thread_id, "workflow")
         except Exception as e:
             logger.warning(f"[Service] 删除工作流文件失败: {e}")
 
-        return {
-            "thread_id": thread_id,
-            "status": "deleted",
-            "message": "工作流已删除"
-        }
+        return {"thread_id": thread_id, "status": "deleted", "message": "工作流已删除"}
 
     @staticmethod
     def list_user_workflows(

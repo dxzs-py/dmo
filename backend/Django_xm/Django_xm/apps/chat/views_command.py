@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class ChatCommandsView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(view=False)
+    @extend_schema(exclude=True)
     def get(self, request):
         from Django_xm.apps.cache_manager.services.cache_service import CacheService, CacheTTL
 
@@ -31,8 +31,9 @@ class ChatCommandsView(APIView):
             return success_response(data=cached)
 
         from .services.slash_commands import get_all_commands
+
         commands = get_all_commands()
-        result = {'commands': commands}
+        result = {"commands": commands}
         CacheService.set(cache_key, result, CacheTTL.TOOL_LONG)
         return success_response(data=result)
 
@@ -40,10 +41,10 @@ class ChatCommandsView(APIView):
 class ChatCommandExecuteView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(view=False)
+    @extend_schema(exclude=True)
     def post(self, request):
-        command = request.data.get('command', '')
-        session_id = request.data.get('session_id')
+        command = request.data.get("command", "")
+        session_id = request.data.get("session_id")
 
         from .services.slash_commands import execute_command, parse_command
 
@@ -51,7 +52,7 @@ class ChatCommandExecuteView(APIView):
         if not parsed:
             return error_response(
                 code=ErrorCode.INVALID_PARAMS,
-                message='无效的命令格式',
+                message="无效的命令格式",
             )
 
         command_name, args = parsed
@@ -63,18 +64,16 @@ class ChatCommandExecuteView(APIView):
 
         if session_id:
             from Django_xm.apps.chat.services.message_service import get_user_session
+
             session = get_user_session(request.user, session_id)
             if session:
-                messages = ChatMessage.objects.filter(session=session).order_by('created_at')
+                messages = ChatMessage.objects.filter(session=session).order_by("created_at")
                 context["session"] = {
                     "session_id": session.session_id,
                     "title": session.title,
                     "mode": session.mode,
                 }
-                context["messages"] = [
-                    {"role": m.role, "content": m.content}
-                    for m in messages
-                ]
+                context["messages"] = [{"role": m.role, "content": m.content} for m in messages]
 
         result = execute_command(command_name, context)
         return success_response(data=result)
@@ -83,7 +82,7 @@ class ChatCommandExecuteView(APIView):
 class ProjectContextView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(view=False)
+    @extend_schema(exclude=True)
     def get(self, request):
         from Django_xm.apps.cache_manager.services.cache_service import CacheService, CacheTTL
 
@@ -96,7 +95,8 @@ class ProjectContextView(APIView):
 
         try:
             from Django_xm.apps.ai_engine.services.project_context import detect_project_context
-            search_path = request.query_params.get('path')
+
+            search_path = request.query_params.get("path")
             context = detect_project_context(search_path)
             result = context.to_dict()
             CacheService.set(cache_key, result, CacheTTL.QUERY_LONG)

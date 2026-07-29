@@ -1,6 +1,6 @@
 import logging
-from datetime import datetime
 
+from django.utils import timezone
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
@@ -30,7 +30,7 @@ class GetCurrentTimeTool(BaseTool):
     args_schema: type[BaseModel] = GetCurrentTimeInput
 
     def _run(self) -> str:
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        current_time = timezone.localtime(timezone.now()).strftime("%Y-%m-%d %H:%M:%S")
         logger.debug(f"🕐 获取当前时间: {current_time}")
         return f"当前时间是：{current_time}"
 
@@ -51,7 +51,7 @@ class GetCurrentDateTool(BaseTool):
     args_schema: type[BaseModel] = GetCurrentDateInput
 
     def _run(self) -> str:
-        now = datetime.now()
+        now = timezone.localtime(timezone.now())
         date_str = now.strftime("%Y-%m-%d")
         weekday = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"][now.weekday()]
         logger.debug(f"📅 获取当前日期: {date_str} {weekday}")

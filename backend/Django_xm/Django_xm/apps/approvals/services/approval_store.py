@@ -33,7 +33,7 @@ def persist_approval_pending(source_id, approval_data):
         approval_data: 审批数据 dict，必须包含 interrupt_id
     """
     try:
-        if not approval_data.get('interrupt_id'):
+        if not approval_data.get("interrupt_id"):
             logger.warning(f"[ApprovalStore] 持久化 pending 跳过: 缺少 interrupt_id, source_id={source_id}")
             return
         redis_client = _get_redis_client()
@@ -45,8 +45,8 @@ def persist_approval_pending(source_id, approval_data):
             f"interrupt_id={approval_data.get('interrupt_id')}, "
             f"tool={approval_data.get('tool_name')}"
         )
-    except Exception as e:
-        logger.error(f"[ApprovalStore] 持久化 pending 失败: {e}")
+    except Exception:
+        logger.exception("[ApprovalStore] 持久化 pending 失败")
 
 
 def persist_approval_processed(interrupt_id, processed_data):
@@ -64,11 +64,10 @@ def persist_approval_processed(interrupt_id, processed_data):
         key = f"{APPROVAL_PROCESSED_PREFIX}{interrupt_id}"
         redis_client.setex(key, APPROVAL_TTL, json.dumps(processed_data, ensure_ascii=False))
         logger.info(
-            f"[ApprovalStore] 持久化 processed: interrupt_id={interrupt_id}, "
-            f"state={processed_data.get('state')}"
+            f"[ApprovalStore] 持久化 processed: interrupt_id={interrupt_id}, state={processed_data.get('state')}"
         )
-    except Exception as e:
-        logger.error(f"[ApprovalStore] 持久化 processed 失败: {e}")
+    except Exception:
+        logger.exception("[ApprovalStore] 持久化 processed 失败")
 
 
 def persist_approval_state(interrupt_id, state, extra=None):
@@ -85,12 +84,12 @@ def persist_approval_state(interrupt_id, state, extra=None):
     try:
         if not interrupt_id:
             return
-        processed_data = {'state': state}
+        processed_data = {"state": state}
         if extra:
             processed_data.update(extra)
         persist_approval_processed(interrupt_id, processed_data)
-    except Exception as e:
-        logger.error(f"[ApprovalStore] persist_approval_state 失败: {e}")
+    except Exception:
+        logger.exception("[ApprovalStore] persist_approval_state 失败")
 
 
 def get_approval_processed(interrupt_id):
@@ -109,10 +108,10 @@ def get_approval_processed(interrupt_id):
         if not raw:
             return None
         if isinstance(raw, bytes):
-            raw = raw.decode('utf-8')
+            raw = raw.decode("utf-8")
         return json.loads(raw)
-    except Exception as e:
-        logger.error(f"[ApprovalStore] 获取 processed 失败: {e}")
+    except Exception:
+        logger.exception("[ApprovalStore] 获取 processed 失败")
         return None
 
 
@@ -140,9 +139,9 @@ def get_approval_history(source_id):
         for item in pending_items:
             try:
                 if isinstance(item, bytes):
-                    item = item.decode('utf-8')
+                    item = item.decode("utf-8")
                 approval_data = json.loads(item)
-                interrupt_id = approval_data.get('interrupt_id')
+                interrupt_id = approval_data.get("interrupt_id")
                 if interrupt_id:
                     processed_data = get_approval_processed(interrupt_id)
                     if processed_data:
@@ -154,6 +153,6 @@ def get_approval_history(source_id):
         if result:
             logger.info(f"[ApprovalStore] 读取历史审批: source_id={source_id}, count={len(result)}")
         return result
-    except Exception as e:
-        logger.error(f"[ApprovalStore] 获取审批历史失败: {e}")
+    except Exception:
+        logger.exception("[ApprovalStore] 获取审批历史失败")
         return []

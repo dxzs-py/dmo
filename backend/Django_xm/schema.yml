@@ -1,0 +1,3183 @@
+openapi: 3.0.3
+info:
+  title: langchain_xm API
+  version: 1.0.0
+  description: langchain_xm 智能学习 & 研究助手 API
+  contact:
+    name: API Support
+  license:
+    name: MIT License
+paths:
+  /api/v1/analytics/track/event/:
+    post:
+      operationId: analytics_track_event_create
+      description: |-
+        记录用户事件
+
+        - ValidationError → 全局 handler 返回 400
+        - UserEvent.objects.create / cache invalidate 失败 → 冒泡到全局 handler
+      tags:
+      - analytics
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserEventWrite'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/UserEventWrite'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/UserEventWrite'
+        required: true
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: 事件已记录
+  /api/v1/analytics/track/feature-use/:
+    post:
+      operationId: analytics_track_feature_use_create
+      description: |-
+        记录功能使用事件
+
+        - ValidationError → 全局 handler 返回 400
+        - AnalyticsService.record_feature_usage 内部失败 → 冒泡到全局 handler
+      tags:
+      - analytics
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeatureUse'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/FeatureUse'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/FeatureUse'
+        required: true
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: 功能使用已记录
+  /api/v1/analytics/track/page-view/:
+    post:
+      operationId: analytics_track_page_view_create
+      description: |-
+        记录页面浏览事件
+
+        - ValidationError → 全局 handler 返回 400
+        - AnalyticsService.record_page_view 内部失败 → 冒泡到全局 handler
+      tags:
+      - analytics
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PageView'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PageView'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PageView'
+        required: true
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: 页面浏览已记录
+  /api/v1/approvals/:
+    get:
+      operationId: approvals_list
+      tags:
+      - approvals
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ApprovalRead'
+          description: ''
+  /api/v1/approvals/{interrupt_id}/:
+    get:
+      operationId: approvals_retrieve
+      description: |-
+        审批归属校验 Mixin。
+
+        使用方式::
+
+            class ApprovalDetailView(BaseApprovalAccessMixin, APIView):
+                def get(self, request, interrupt_id):
+                    approval = Approval.objects.get(interrupt_id=interrupt_id)
+                    self._assert_ownership(approval, request.user)
+                    # ...
+
+        或直接通过 `_get_owned_approval` 查询并校验::
+
+            approval = self._get_owned_approval(interrupt_id, request.user)
+            self._assert_ownership(approval, request.user)
+      parameters:
+      - in: path
+        name: interrupt_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - approvals
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalRead'
+          description: ''
+  /api/v1/approvals/{interrupt_id}/reject/:
+    post:
+      operationId: approvals_reject_create
+      description: |-
+        拒绝审批：通过 ApprovalGateway 统一路由（Path D）。
+
+        chat → SSE 流式恢复，deep_research → Celery 任务恢复。
+      parameters:
+      - in: query
+        name: format
+        schema:
+          type: string
+          enum:
+          - json
+          - txt
+      - in: path
+        name: interrupt_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - approvals
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalWrite'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ApprovalWrite'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ApprovalWrite'
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalRead'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/SSEEvent'
+          description: ''
+  /api/v1/approvals/{interrupt_id}/resume/:
+    post:
+      operationId: approvals_resume_create
+      description: |-
+        恢复审批：通过 ApprovalGateway 统一路由（Path D）。
+
+        chat → SSE 流式恢复，deep_research → Celery 任务恢复。
+        前端无需判断 source，统一调用此端点。
+      parameters:
+      - in: query
+        name: format
+        schema:
+          type: string
+          enum:
+          - json
+          - txt
+      - in: path
+        name: interrupt_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - approvals
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalWrite'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ApprovalWrite'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ApprovalWrite'
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalRead'
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/SSEEvent'
+          description: ''
+  /api/v1/attachments/admin/:
+    get:
+      operationId: attachments_admin_list
+      tags:
+      - attachments
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/attachments/admin/storage-alerts/:
+    get:
+      operationId: attachments_admin_storage_alerts_list
+      description: 存储告警列表端点：GET /api/v1/attachments/admin/storage-alerts/
+      tags:
+      - attachments
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/attachments/admin/storage-alerts/{alert_id}/:
+    get:
+      operationId: attachments_admin_storage_alerts_retrieve
+      description: 存储告警详情/操作端点：GET/POST /api/v1/attachments/admin/storage-alerts/{alert_id}/
+      parameters:
+      - in: path
+        name: alert_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - attachments
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: attachments_admin_storage_alerts_action
+      description: 存储告警详情/操作端点：GET/POST /api/v1/attachments/admin/storage-alerts/{alert_id}/
+      parameters:
+      - in: path
+        name: alert_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - attachments
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/cache/clear/:
+    post:
+      operationId: cache_clear_create
+      tags:
+      - cache
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/cache/health/:
+    get:
+      operationId: cache_health_retrieve
+      tags:
+      - cache
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/cache/invalidate/:
+    post:
+      operationId: cache_invalidate_create
+      tags:
+      - cache
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/cache/reset-stats/:
+    post:
+      operationId: cache_reset_stats_create
+      tags:
+      - cache
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/cache/stats/:
+    get:
+      operationId: cache_stats_retrieve
+      tags:
+      - cache
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/chat/:
+    post:
+      operationId: chat_create
+      tags:
+      - chat
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ChatRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+          description: ''
+  /api/v1/chat/messages/{message_id}/:
+    patch:
+      operationId: chat_messages_partial_update
+      parameters:
+      - in: path
+        name: message_id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - chat
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedChatMessage'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedChatMessage'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedChatMessage'
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatMessage'
+          description: ''
+  /api/v1/chat/sessions/:
+    get:
+      operationId: chat_sessions_list
+      tags:
+      - chat
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ChatSessionList'
+          description: ''
+  /api/v1/chat/sessions/{session_id}/:
+    get:
+      operationId: chat_sessions_detail
+      parameters:
+      - in: path
+        name: session_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - chat
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatSessionDetail'
+          description: ''
+    patch:
+      operationId: chat_sessions_partial_update
+      parameters:
+      - in: path
+        name: session_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - chat
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedChatSessionUpdate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedChatSessionUpdate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedChatSessionUpdate'
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatSessionDetail'
+          description: ''
+  /api/v1/chat/sessions/{session_id}/messages/:
+    post:
+      operationId: chat_sessions_messages_create
+      parameters:
+      - in: path
+        name: session_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - chat
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatMessage'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ChatMessage'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ChatMessage'
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatMessage'
+          description: ''
+  /api/v1/chat/sessions/{session_id}/messages/batch/:
+    post:
+      operationId: chat_sessions_messages_batch_create
+      parameters:
+      - in: path
+        name: session_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - chat
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatMessage'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ChatMessage'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ChatMessage'
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatMessage'
+          description: ''
+  /api/v1/chat/sessions/create/:
+    post:
+      operationId: chat_sessions_create_create
+      tags:
+      - chat
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatSessionCreate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ChatSessionCreate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ChatSessionCreate'
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatSessionDetail'
+          description: ''
+  /api/v1/context/capability-config/:
+    get:
+      operationId: context_capability_config_retrieve
+      tags:
+      - context
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/v1/context/compress/:
+    post:
+      operationId: context_compress_create
+      description: 手动触发上下文压缩
+      tags:
+      - context
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/context/knowledge-graph/:
+    delete:
+      operationId: context_knowledge_graph_destroy
+      tags:
+      - context
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/v1/context/knowledge-graph/detail/:
+    get:
+      operationId: context_knowledge_graph_detail_retrieve
+      description: 获取知识图谱实体和关系详情
+      tags:
+      - context
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/context/stats/:
+    get:
+      operationId: context_stats_retrieve
+      tags:
+      - context
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/context/token-budget/:
+    get:
+      operationId: context_token_budget_retrieve
+      description: 获取 Token 预算使用情况
+      tags:
+      - context
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/core/:
+    get:
+      operationId: core_retrieve
+      description: 健康检查端点
+      tags:
+      - core
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/v1/core/database/overview/:
+    get:
+      operationId: core_database_overview_retrieve
+      description: |-
+        数据库总览视图（PostgreSQL + VectorStore + Redis）
+
+        通过 ``DatabaseMonitor.get_database_overview()`` 聚合所有已注册状态提供者。
+      tags:
+      - core
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/core/database/postgresql/status/:
+    get:
+      operationId: core_database_postgresql_status_retrieve
+      description: PostgreSQL 数据库状态视图
+      tags:
+      - core
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/core/database/vector-store/status/:
+    get:
+      operationId: core_database_vector_store_status_retrieve
+      description: |-
+        向量存储状态视图
+
+        通过 ``status_registry`` 查询 ``knowledge`` 注册的 ``VectorStoreStatusProvider``。
+      tags:
+      - core
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/health/:
+    get:
+      operationId: health_retrieve
+      description: 健康检查端点
+      tags:
+      - health
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/v1/knowledge/async/indices/:
+    post:
+      operationId: knowledge_async_indices_create
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/knowledge/async/indices/{kb_id}/delete/:
+    delete:
+      operationId: knowledge_async_indices_delete_destroy
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/v1/knowledge/async/indices/{kb_id}/upload/:
+    post:
+      operationId: knowledge_async_indices_upload_create
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/knowledge/indices/:
+    get:
+      operationId: knowledge_indices_retrieve
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: knowledge_indices_create
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/knowledge/indices/{kb_id}/:
+    get:
+      operationId: knowledge_indices_retrieve_2
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+    patch:
+      operationId: knowledge_indices_partial_update
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: knowledge_indices_destroy
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/v1/knowledge/indices/{kb_id}/add-directory/:
+    post:
+      operationId: knowledge_indices_add_directory_create
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/knowledge/indices/{kb_id}/delete/:
+    get:
+      operationId: knowledge_indices_delete_retrieve
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+    patch:
+      operationId: knowledge_indices_delete_partial_update
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: knowledge_indices_delete_destroy
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/v1/knowledge/indices/{kb_id}/documents/:
+    get:
+      operationId: knowledge_indices_documents_retrieve
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/knowledge/indices/{kb_id}/documents/{filename}/:
+    delete:
+      operationId: knowledge_indices_documents_destroy
+      parameters:
+      - in: path
+        name: filename
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/v1/knowledge/indices/{kb_id}/stats/:
+    get:
+      operationId: knowledge_indices_stats_retrieve
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+    patch:
+      operationId: knowledge_indices_stats_partial_update
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: knowledge_indices_stats_destroy
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/v1/knowledge/indices/{kb_id}/upload/:
+    post:
+      operationId: knowledge_indices_upload_create
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/knowledge/indices/create/:
+    get:
+      operationId: knowledge_indices_create_retrieve
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: knowledge_indices_create_create
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/knowledge/indices/create-empty/:
+    get:
+      operationId: knowledge_indices_create_empty_retrieve
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: knowledge_indices_create_empty_create
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/knowledge/knowledge-bases/:
+    get:
+      operationId: knowledge_knowledge_bases_retrieve
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: knowledge_knowledge_bases_create
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/knowledge/knowledge-bases/{kb_id}/:
+    get:
+      operationId: knowledge_knowledge_bases_retrieve_2
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+    patch:
+      operationId: knowledge_knowledge_bases_partial_update
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: knowledge_knowledge_bases_destroy
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/v1/knowledge/knowledge-bases/{kb_id}/documents/:
+    get:
+      operationId: knowledge_knowledge_bases_documents_retrieve
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/knowledge/knowledge-bases/{kb_id}/documents/{filename}/:
+    delete:
+      operationId: knowledge_knowledge_bases_documents_destroy
+      parameters:
+      - in: path
+        name: filename
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/v1/knowledge/knowledge-bases/{kb_id}/search/:
+    post:
+      operationId: knowledge_knowledge_bases_search_create
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/knowledge/knowledge-bases/{kb_id}/upload/:
+    post:
+      operationId: knowledge_knowledge_bases_upload_create
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/knowledge/query/:
+    post:
+      operationId: knowledge_query_create
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/knowledge/query/stream/:
+    post:
+      operationId: knowledge_query_stream_create
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/knowledge/search/:
+    post:
+      operationId: knowledge_search_create
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/learning/{thread_id}/file/content/{filename}/:
+    get:
+      operationId: learning_file_content_retrieve
+      parameters:
+      - in: path
+        name: filename
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: thread_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - learning
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/learning/{thread_id}/file/download/{filename}/:
+    get:
+      operationId: learning_file_download_retrieve
+      parameters:
+      - in: path
+        name: filename
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: thread_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - learning
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/learning/{thread_id}/files/:
+    get:
+      operationId: learning_files_retrieve
+      parameters:
+      - in: path
+        name: thread_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - learning
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/learning/history/{thread_id}/:
+    get:
+      operationId: learning_history_retrieve
+      description: 获取工作流历史视图
+      parameters:
+      - in: path
+        name: thread_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - learning
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/learning/start/:
+    post:
+      operationId: learning_start_create
+      description: |-
+        启动学习工作流
+
+        工作流会自动执行以下步骤：
+        1. 分析用户问题，生成学习计划
+        2. 检索相关文档
+        3. 生成练习题
+        4. 暂停，等待用户提交答案
+      tags:
+      - learning
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/learning/start/stream/:
+    post:
+      operationId: learning_start_stream_create
+      description: |-
+        启动工作流并以SSE流式返回执行进度
+
+        SSE事件类型（统一为 workflow_* 格式，与 EventType 枚举对齐）：
+        - workflow_step: 工作流步骤更新（含 step / message）
+        - workflow_state_update: 状态更新（含完整数据，如 learning_plan / quiz 等）
+        - workflow_completed: 工作流完成
+        - workflow_failed: 工作流失败
+        - error: 旧版兼容错误事件
+      tags:
+      - learning
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/learning/status/{thread_id}/:
+    get:
+      operationId: learning_status_retrieve
+      description: 获取工作流状态视图
+      parameters:
+      - in: path
+        name: thread_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - learning
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/learning/submit/:
+    post:
+      operationId: learning_submit_create
+      description: 提交用户答案，继续执行工作流
+      tags:
+      - learning
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/learning/task/{thread_id}/:
+    delete:
+      operationId: learning_task_destroy
+      description: 删除工作流视图
+      parameters:
+      - in: path
+        name: thread_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - learning
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/v1/learning/tasks/:
+    get:
+      operationId: learning_tasks_retrieve
+      description: 获取工作流列表视图
+      tags:
+      - learning
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/realtime/snapshot/{session_id}/:
+    get:
+      operationId: realtime_snapshot_retrieve
+      description: |-
+        会话全量状态快照接口。
+
+        返回指定会话的完整状态（消息列表、工具调用、审批状态），
+        供前端在 stream_finalized / tool_call_completed / approval_approved 事件后校对本地状态。
+
+        GET /api/v1/realtime/snapshot/{session_id}/
+
+        响应格式：
+        {
+            "code": 0,
+            "data": {
+                "session_id": "xxx",
+                "session_title": "xxx",
+                "messages": [
+                    {
+                        "id": "1",
+                        "session_id": "xxx",
+                        "role": "user",
+                        "content": "...",
+                        "created_at": "2026-07-18T...",
+                        "tool_calls": []
+                    }
+                ],
+                "tool_calls": [
+                    {
+                        "id": "call_xxx",
+                        "tool_call_id": "call_xxx",
+                        "name": "shell_exec",
+                        "status": "completed",
+                        "message_id": "1",
+                        "approval": {"state": "approved", "approval_id": "call_xxx"}
+                    }
+                ],
+                "approvals": [
+                    {
+                        "id": "1",
+                        "interrupt_id": "call_xxx",
+                        "tool_call_id": "call_xxx",
+                        "state": "approved",
+                        "created_at": "2026-07-18T...",
+                        "resolved_at": "2026-07-18T..."
+                    }
+                ]
+            }
+        }
+      parameters:
+      - in: path
+        name: session_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - realtime
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/research/{task_id}/continue/:
+    post:
+      operationId: research_continue_create
+      parameters:
+      - in: path
+        name: task_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - research
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/research/{task_id}/file/content/{filename}/:
+    get:
+      operationId: research_file_content_retrieve
+      parameters:
+      - in: path
+        name: filename
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: task_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - research
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/research/{task_id}/file/download/{filename}/:
+    get:
+      operationId: research_file_download_retrieve
+      parameters:
+      - in: path
+        name: filename
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: task_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - research
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/research/{task_id}/files/:
+    get:
+      operationId: research_files_retrieve
+      parameters:
+      - in: path
+        name: task_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - research
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/research/result/{task_id}/:
+    get:
+      operationId: research_result_retrieve
+      parameters:
+      - in: path
+        name: task_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - research
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/research/results/{task_id}/:
+    get:
+      operationId: research_results_retrieve
+      parameters:
+      - in: path
+        name: task_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - research
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/research/search/:
+    get:
+      operationId: research_search_retrieve
+      tags:
+      - research
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/research/start/:
+    post:
+      operationId: research_start_create
+      tags:
+      - research
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/research/status/{task_id}/:
+    get:
+      operationId: research_status_retrieve
+      parameters:
+      - in: path
+        name: task_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - research
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/research/task/{task_id}/:
+    delete:
+      operationId: research_task_destroy
+      parameters:
+      - in: path
+        name: task_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - research
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/v1/research/tasks/:
+    get:
+      operationId: research_tasks_retrieve
+      tags:
+      - research
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/custom/:
+    get:
+      operationId: tools_custom_retrieve
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/custom/delete/:
+    post:
+      operationId: tools_custom_delete_create
+      description: 删除自定义工具
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/custom/toggle/:
+    post:
+      operationId: tools_custom_toggle_create
+      description: 启用/禁用自定义工具
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/custom/update/:
+    post:
+      operationId: tools_custom_update_create
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/list/:
+    get:
+      operationId: tools_list_retrieve
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/mcp/call-log/:
+    get:
+      operationId: tools_mcp_call_log_retrieve
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/mcp/servers/:
+    get:
+      operationId: tools_mcp_servers_retrieve
+      description: MCP Server 列表视图
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/mcp/servers/add/:
+    post:
+      operationId: tools_mcp_servers_add_create
+      description: 添加用户级 MCP Server 视图
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/mcp/servers/delete/:
+    post:
+      operationId: tools_mcp_servers_delete_create
+      description: 删除用户级 MCP Server 视图
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/mcp/servers/discover/:
+    post:
+      operationId: tools_mcp_servers_discover_create
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/mcp/servers/toggle/:
+    post:
+      operationId: tools_mcp_servers_toggle_create
+      description: 启用/禁用用户级 MCP Server 视图
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/mcp/servers/update/:
+    post:
+      operationId: tools_mcp_servers_update_create
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/mcp/status/:
+    get:
+      operationId: tools_mcp_status_retrieve
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/mcp/test/:
+    post:
+      operationId: tools_mcp_test_create
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/mcp/tools/:
+    get:
+      operationId: tools_mcp_tools_retrieve
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/meta/:
+    get:
+      operationId: tools_meta_retrieve
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/skills/:
+    get:
+      operationId: tools_skills_retrieve
+      description: Skill 列表视图
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/skills/create/:
+    post:
+      operationId: tools_skills_create_create
+      description: 创建自定义 Skill 视图
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/skills/delete/:
+    post:
+      operationId: tools_skills_delete_create
+      description: 删除自定义 Skill 视图
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/skills/packages/:
+    get:
+      operationId: tools_skills_packages_retrieve
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/skills/packages/delete/:
+    post:
+      operationId: tools_skills_packages_delete_create
+      description: 删除 Skill 包
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/skills/packages/detail/:
+    get:
+      operationId: tools_skills_packages_detail_retrieve
+      description: 查看 Skill 包 SKILL.md 内容
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/skills/packages/toggle/:
+    post:
+      operationId: tools_skills_packages_toggle_create
+      description: 启用/禁用 Skill 包
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/skills/toggle/:
+    post:
+      operationId: tools_skills_toggle_create
+      description: 切换自定义 Skill 状态视图
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/skills/update/:
+    post:
+      operationId: tools_skills_update_create
+      description: 更新自定义 Skill 视图
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/skills/upload/:
+    post:
+      operationId: tools_skills_upload_create
+      description: 上传 Skill 包（ZIP 压缩包）
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/upload/:
+    post:
+      operationId: tools_upload_create
+      description: |-
+        自定义工具上传视图
+
+        用户上传的 @tool 装饰器代码保存到数据库，默认审核状态为 pending
+        （等待管理员审核通过后才生效，approval_status='approved'）。
+        运行时通过受限沙箱动态加载为 BaseTool 实例。
+
+        限流：SensitiveOperationRateThrottle（scope='sensitive'）防止恶意刷上传。
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/users/account/:
+    delete:
+      operationId: users_account_destroy
+      tags:
+      - users
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/v1/users/avatar/:
+    post:
+      operationId: users_avatar_create
+      tags:
+      - users
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/users/bind-phone/:
+    post:
+      operationId: users_bind_phone_create
+      tags:
+      - users
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/users/captcha/:
+    get:
+      operationId: users_captcha_retrieve
+      description: 获取图形验证码
+      tags:
+      - users
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/v1/users/captcha/verify/:
+    post:
+      operationId: users_captcha_verify_create
+      description: 验证图形验证码
+      tags:
+      - users
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/v1/users/change-password/:
+    post:
+      operationId: users_change_password_create
+      tags:
+      - users
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/users/info/:
+    get:
+      operationId: users_info_retrieve
+      description: 获取/更新当前登录用户信息
+      tags:
+      - users
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+    put:
+      operationId: users_info_update
+      description: 获取/更新当前登录用户信息
+      tags:
+      - users
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/users/login/:
+    post:
+      operationId: users_login_create
+      description: 自定义登录视图，返回自定义的用户信息
+      tags:
+      - users
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MyTokenObtainPair'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MyTokenObtainPair'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/MyTokenObtainPair'
+        required: true
+      security:
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyTokenObtainPair'
+          description: ''
+  /api/v1/users/login/refresh/:
+    post:
+      operationId: users_login_refresh_create
+      description: 自定义Token刷新视图，捕获用户不存在等异常，返回统一格式响应
+      tags:
+      - users
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRefresh'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenRefresh'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TokenRefresh'
+        required: true
+      security:
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenRefresh'
+          description: ''
+  /api/v1/users/login/verify/:
+    post:
+      operationId: users_login_verify_create
+      description: |-
+        Takes a token and indicates if it is valid.  This view provides no
+        information about a token's fitness for a particular use.
+      tags:
+      - users
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenVerify'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenVerify'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TokenVerify'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenVerify'
+          description: ''
+  /api/v1/users/preferences/:
+    get:
+      operationId: users_preferences_retrieve
+      tags:
+      - users
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+    put:
+      operationId: users_preferences_update
+      tags:
+      - users
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/users/profile/:
+    put:
+      operationId: users_profile_update
+      tags:
+      - users
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/users/register/:
+    post:
+      operationId: users_register_create
+      description: 用户注册视图
+      tags:
+      - users
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserRegister'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/UserRegister'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/UserRegister'
+        required: true
+      security:
+      - {}
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserRegister'
+          description: ''
+  /api/v1/users/secure-logout/:
+    post:
+      operationId: users_secure_logout_create
+      description: |-
+        安全登出
+
+        异常处理策略（与全局 custom_exception_handler 协同）：
+        - RefreshToken 解码失败：本地捕获（InvalidToken/TokenError），降级为"无有效会话"返回成功
+        - token.blacklist() 失败：本地捕获（黑名单基础设施故障不阻塞登出流程），日志记录后继续
+        - 其他未预期异常（Redis 不可达 / 数据库故障等）冒泡到全局 custom_exception_handler
+          返回标准 500 响应，避免"清理失败仍返回成功"造成前端误判
+      tags:
+      - users
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/users/usage-stats/:
+    get:
+      operationId: users_usage_stats_retrieve
+      tags:
+      - users
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+components:
+  schemas:
+    ApprovalRead:
+      type: object
+      description: |-
+        审批读序列化器。
+
+        用于所有 GET 端点（list/detail/state），暴露全部展示字段。
+        全部字段标记 read_only，客户端无法通过任何端点修改审批字段。
+      properties:
+        interrupt_id:
+          type: string
+          readOnly: true
+        source:
+          allOf:
+          - $ref: '#/components/schemas/SourceEnum'
+          readOnly: true
+        source_id:
+          type: string
+          readOnly: true
+        chat_session_id:
+          type: string
+          readOnly: true
+          nullable: true
+        tool_name:
+          type: string
+          readOnly: true
+        title:
+          type: string
+          readOnly: true
+        description:
+          type: string
+          readOnly: true
+        action:
+          type: string
+          readOnly: true
+        operation:
+          type: string
+          readOnly: true
+        danger_level:
+          type: string
+          readOnly: true
+        parameters:
+          readOnly: true
+        state:
+          allOf:
+          - $ref: '#/components/schemas/StateEnum'
+          readOnly: true
+        user_input:
+          type: string
+          readOnly: true
+          nullable: true
+        approved_by:
+          allOf:
+          - $ref: '#/components/schemas/ApprovedBy'
+          readOnly: true
+        extra:
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        resolved_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+      required:
+      - action
+      - approved_by
+      - chat_session_id
+      - created_at
+      - danger_level
+      - description
+      - extra
+      - interrupt_id
+      - operation
+      - parameters
+      - resolved_at
+      - source
+      - source_id
+      - state
+      - title
+      - tool_name
+      - user_input
+    ApprovalWrite:
+      type: object
+      description: |-
+        审批写序列化器。
+
+        白名单设计：客户端仅可提交 ``approved`` 与 ``user_input`` 两个字段。
+
+        - ``approved``：是否批准（仅 resume 接口读取；reject 接口忽略并强制 False）
+        - ``user_input``：用户输入文本（仅当 approval.action == confirm_with_input 时使用）
+
+        其他审批字段（state、parameters、approved_by、source 等）由服务端控制，
+        客户端尝试提交 protected 字段会触发 ``to_internal_value`` 显式拒绝（返回 400），
+        而非静默忽略——便于日志审计与暴露潜在恶意行为。
+      properties:
+        approved:
+          type: boolean
+          default: true
+        user_input:
+          type: string
+          nullable: true
+          maxLength: 10000
+    ApprovedBy:
+      type: object
+      description: 审批人简要信息。
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+      required:
+      - id
+      - username
+    ChatMessage:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        session:
+          type: integer
+          readOnly: true
+          title: 会话
+        role:
+          allOf:
+          - $ref: '#/components/schemas/ChatMessageRoleEnum'
+          title: 角色
+        content:
+          type: string
+          title: 内容
+          maxLength: 50000
+        sources:
+          nullable: true
+          title: 来源
+        plan:
+          nullable: true
+          title: 计划
+        chain_of_thought:
+          nullable: true
+          title: 思维链
+        tool_calls:
+          nullable: true
+          title: 工具调用
+        approval:
+          nullable: true
+          title: 审批数据
+        reasoning:
+          nullable: true
+          title: 推理
+        suggestions:
+          nullable: true
+          title: 建议问题
+        versions:
+          nullable: true
+          title: 消息版本
+        current_version:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+          title: 当前版本索引
+          description: 当前展示的版本索引，指向 versions 数组的位置
+        attachments:
+          type: string
+          readOnly: true
+        attachment_ids:
+          type: string
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+          title: 创建时间
+        model:
+          type: string
+          nullable: true
+          title: 使用的模型
+          maxLength: 100
+        token_count:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+          title: Token 数量
+        token_detail:
+          title: Token 明细
+        response_time:
+          type: number
+          format: double
+          title: 响应时间(秒)
+        research_task_id:
+          type: string
+          nullable: true
+          title: 关联深度研究任务ID
+          maxLength: 100
+        research_task_deleted:
+          type: string
+          readOnly: true
+      required:
+      - attachment_ids
+      - attachments
+      - created_at
+      - id
+      - research_task_deleted
+      - session
+    ChatMessageRoleEnum:
+      enum:
+      - user
+      - assistant
+      - system
+      type: string
+      description: |-
+        * `user` - 用户
+        * `assistant` - 助手
+        * `system` - 系统
+    ChatRequest:
+      type: object
+      description: |-
+        聊天请求输入验证
+
+        用途：验证前端发送的聊天请求数据
+        使用 Serializer 原因：输入数据不直接对应单一模型字段，
+        需要灵活组合 message/chat_history/mode 等字段
+      properties:
+        message:
+          type: string
+          description: 用户消息内容，1-10000字符
+          maxLength: 10000
+          minLength: 1
+        chat_history:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+          nullable: true
+        mode:
+          type: string
+          default: agent
+          description: 对话模式标识
+          maxLength: 50
+        use_tools:
+          type: boolean
+          default: true
+          description: 是否使用工具
+        use_web_search:
+          type: boolean
+          default: false
+          description: 是否启用联网搜索
+        use_knowledge_base:
+          type: boolean
+          default: false
+          description: 是否启用知识库检索
+        use_deep_thinking:
+          type: boolean
+          default: false
+          description: 是否启用深度思考
+        use_mcp:
+          type: boolean
+          default: false
+          description: 是否启用 MCP 工具
+        selected_mcp_servers:
+          type: array
+          items:
+            type: string
+            maxLength: 50
+          nullable: true
+          description: 选中的 MCP Server 名称列表（每个名称最长 50 字符），为空则使用所有已配置的 Server
+        selected_tools:
+          type: array
+          items:
+            type: string
+            maxLength: 50
+          nullable: true
+          description: 选中的工具名称列表（每个名称最长 50 字符），为空则根据模式自动选择
+        streaming:
+          type: boolean
+          default: false
+          description: 是否流式输出
+        session_id:
+          type: string
+          nullable: true
+          maxLength: 100
+        selected_knowledge_base:
+          type: string
+          nullable: true
+          description: 选中的知识库ID
+          maxLength: 200
+        selected_knowledge_bases:
+          type: array
+          items:
+            type: string
+            maxLength: 200
+          nullable: true
+          description: 选中的知识库ID列表（多选）
+        attachment_ids:
+          type: array
+          items:
+            type: integer
+          nullable: true
+          description: 附件ID列表，用于基于文件内容回答问题
+        provider_id:
+          type: string
+          nullable: true
+          description: 模型提供商 ID（openai/deepseek/groq/baidu_qianfan/anthropic）
+          maxLength: 50
+        model_name:
+          type: string
+          nullable: true
+          description: 模型名称，如 gpt-4o-mini、deepseek-v4-flash
+          maxLength: 100
+        special_params:
+          type: object
+          additionalProperties: {}
+          nullable: true
+          description: 提供商专属参数，如 DeepSeek 的 thinking/reasoning_effort
+        temperature:
+          type: number
+          format: double
+          maximum: 2.0
+          minimum: 0.0
+          nullable: true
+          description: 温度参数，0-2之间
+        max_tokens:
+          type: integer
+          maximum: 32768
+          minimum: 1
+          nullable: true
+          description: 最大生成 token 数
+        research_task_id:
+          type: string
+          nullable: true
+          description: 关联的深度研究任务ID，用于注入研究上下文
+          maxLength: 100
+        continue_task_id:
+          type: string
+          nullable: true
+          description: 继续研究的任务ID，用于加载先前研究成果
+          maxLength: 100
+      required:
+      - message
+    ChatResponse:
+      type: object
+      description: |-
+        聊天响应输出格式
+
+        用途：统一非流式聊天的响应结构
+        使用 Serializer 原因：响应数据是聚合结果（含 tools_used/success 等），
+        不直接对应数据库模型
+      properties:
+        message:
+          type: string
+        mode:
+          type: string
+        tools_used:
+          type: array
+          items:
+            type: string
+        success:
+          type: boolean
+        error:
+          type: string
+          nullable: true
+        session_id:
+          type: string
+          nullable: true
+      required:
+      - message
+      - mode
+      - success
+      - tools_used
+    ChatSessionCreate:
+      type: object
+      description: |-
+        会话创建序列化器
+
+        用途：创建新会话时验证输入并生成实例
+        绑定模型：ChatSession
+      properties:
+        title:
+          type: string
+          title: 会话标题
+          maxLength: 200
+        mode:
+          allOf:
+          - $ref: '#/components/schemas/ModeEnum'
+          title: 对话模式
+        selected_knowledge_base:
+          type: string
+          nullable: true
+          title: 选中的知识库
+          maxLength: 200
+        selected_knowledge_bases:
+          nullable: true
+          title: 选中的知识库列表
+    ChatSessionDetail:
+      type: object
+      description: |-
+        会话详情序列化器（完整）
+
+        用途：会话详情页展示，包含完整消息列表
+        绑定模型：ChatSession
+        注意：messages 字段会触发额外查询，建议配合 prefetch_related('messages') 使用
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        session_id:
+          type: string
+          readOnly: true
+          title: 会话ID
+        title:
+          type: string
+          title: 会话标题
+          maxLength: 200
+        mode:
+          allOf:
+          - $ref: '#/components/schemas/ModeEnum'
+          title: 对话模式
+        selected_knowledge_base:
+          type: string
+          nullable: true
+          title: 选中的知识库
+          maxLength: 200
+        selected_knowledge_bases:
+          nullable: true
+          title: 选中的知识库列表
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+          readOnly: true
+        message_count:
+          type: string
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+          title: 创建时间
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+          title: 更新时间
+      required:
+      - created_at
+      - id
+      - message_count
+      - messages
+      - session_id
+      - updated_at
+    ChatSessionList:
+      type: object
+      description: |-
+        会话列表序列化器（轻量）
+
+        用途：会话列表页展示，仅包含摘要信息
+        绑定模型：ChatSession
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        session_id:
+          type: string
+          readOnly: true
+          title: 会话ID
+        title:
+          type: string
+          title: 会话标题
+          maxLength: 200
+        mode:
+          allOf:
+          - $ref: '#/components/schemas/ModeEnum'
+          title: 对话模式
+        selected_knowledge_base:
+          type: string
+          nullable: true
+          title: 选中的知识库
+          maxLength: 200
+        selected_knowledge_bases:
+          nullable: true
+          title: 选中的知识库列表
+        message_count:
+          type: integer
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+          title: 创建时间
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+          title: 更新时间
+      required:
+      - created_at
+      - id
+      - message_count
+      - session_id
+      - updated_at
+    FeatureUse:
+      type: object
+      properties:
+        feature:
+          type: string
+          maxLength: 100
+        metadata:
+          type: object
+          additionalProperties: {}
+      required:
+      - feature
+    Message:
+      type: object
+      description: 聊天历史消息项 - 用于请求输入中的 chat_history 字段验证
+      properties:
+        role:
+          allOf:
+          - $ref: '#/components/schemas/MessageRoleEnum'
+          description: |-
+            消息角色：user/assistant/system
+
+            * `user` - user
+            * `assistant` - assistant
+            * `system` - system
+        content:
+          type: string
+          description: 消息内容，最大50000字符
+          maxLength: 50000
+        attachment_ids:
+          type: array
+          items:
+            type: integer
+          nullable: true
+          description: 该消息关联的附件ID列表
+      required:
+      - content
+      - role
+    MessageRoleEnum:
+      enum:
+      - user
+      - assistant
+      - system
+      type: string
+      description: |-
+        * `user` - user
+        * `assistant` - assistant
+        * `system` - system
+    ModeEnum:
+      enum:
+      - agent
+      - deep-research
+      type: string
+      description: |-
+        * `agent` - 代理
+        * `deep-research` - 深度研究
+    MyTokenObtainPair:
+      type: object
+      description: 自定义 JWT 序列化器，返回额外的用户信息。
+      properties:
+        username:
+          type: string
+          writeOnly: true
+        password:
+          type: string
+          writeOnly: true
+      required:
+      - password
+      - username
+    PageView:
+      type: object
+      properties:
+        path:
+          type: string
+          maxLength: 500
+        title:
+          type: string
+          default: ''
+          maxLength: 200
+      required:
+      - path
+    PatchedChatMessage:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        session:
+          type: integer
+          readOnly: true
+          title: 会话
+        role:
+          allOf:
+          - $ref: '#/components/schemas/ChatMessageRoleEnum'
+          title: 角色
+        content:
+          type: string
+          title: 内容
+          maxLength: 50000
+        sources:
+          nullable: true
+          title: 来源
+        plan:
+          nullable: true
+          title: 计划
+        chain_of_thought:
+          nullable: true
+          title: 思维链
+        tool_calls:
+          nullable: true
+          title: 工具调用
+        approval:
+          nullable: true
+          title: 审批数据
+        reasoning:
+          nullable: true
+          title: 推理
+        suggestions:
+          nullable: true
+          title: 建议问题
+        versions:
+          nullable: true
+          title: 消息版本
+        current_version:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+          title: 当前版本索引
+          description: 当前展示的版本索引，指向 versions 数组的位置
+        attachments:
+          type: string
+          readOnly: true
+        attachment_ids:
+          type: string
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+          title: 创建时间
+        model:
+          type: string
+          nullable: true
+          title: 使用的模型
+          maxLength: 100
+        token_count:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+          title: Token 数量
+        token_detail:
+          title: Token 明细
+        response_time:
+          type: number
+          format: double
+          title: 响应时间(秒)
+        research_task_id:
+          type: string
+          nullable: true
+          title: 关联深度研究任务ID
+          maxLength: 100
+        research_task_deleted:
+          type: string
+          readOnly: true
+    PatchedChatSessionUpdate:
+      type: object
+      description: |-
+        会话更新序列化器
+
+        用途：更新会话标题等字段
+        绑定模型：ChatSession
+        允许修改 title 和 selected_knowledge_base 字段
+      properties:
+        title:
+          type: string
+          title: 会话标题
+          maxLength: 200
+        selected_knowledge_base:
+          type: string
+          nullable: true
+          title: 选中的知识库
+          maxLength: 200
+        selected_knowledge_bases:
+          nullable: true
+          title: 选中的知识库列表
+    SSEEvent:
+      type: object
+      description: |-
+        SSE 事件流帧的简化 schema（仅用于 OpenAPI 文档描述）。
+
+        SSE 帧的协议字段（``event``/``data``），``data`` 为 JSON 字符串。
+        OpenAPI 3.0 无法精确表达流式响应，此处以近似结构描述单帧，
+        供前端了解事件载荷字段，实际帧格式以 ``text/event-stream`` 协议为准。
+      properties:
+        event:
+          type: string
+          description: 事件类型（如 message、error、done）
+        data:
+          type: string
+          description: 事件数据（JSON 字符串）
+      required:
+      - data
+    SourceEnum:
+      enum:
+      - chat
+      - deep_research
+      - learning
+      type: string
+      description: |-
+        * `chat` - Chat
+        * `deep_research` - Deep Research
+        * `learning` - Learning
+    StateEnum:
+      enum:
+      - pending
+      - processing
+      - waiting
+      - approved
+      - rejected
+      - timeout
+      type: string
+      description: |-
+        * `pending` - Pending
+        * `processing` - Processing
+        * `waiting` - Waiting
+        * `approved` - Approved
+        * `rejected` - Rejected
+        * `timeout` - Timeout
+    TokenRefresh:
+      type: object
+      properties:
+        access:
+          type: string
+          readOnly: true
+        refresh:
+          type: string
+      required:
+      - access
+      - refresh
+    TokenVerify:
+      type: object
+      properties:
+        token:
+          type: string
+          writeOnly: true
+      required:
+      - token
+    UserEventWrite:
+      type: object
+      properties:
+        event_type:
+          type: string
+          maxLength: 50
+        event_category:
+          type: string
+          maxLength: 20
+        session_id:
+          type: string
+          default: ''
+          maxLength: 100
+        resource_id:
+          type: string
+          default: ''
+          maxLength: 100
+        resource_type:
+          type: string
+          default: ''
+          maxLength: 50
+        metadata:
+          type: object
+          additionalProperties: {}
+        duration_ms:
+          type: integer
+          nullable: true
+        is_success:
+          type: boolean
+          default: true
+        error_message:
+          type: string
+          default: ''
+      required:
+      - event_category
+      - event_type
+    UserRegister:
+      type: object
+      description: |-
+        用户注册序列化器。
+
+        校验规则：
+            - password 与 password_confirm 必须一致（基于 validated_data 比较）
+            - password 至少 8 位，必须同时包含大写字母、小写字母、数字、特殊字符
+      properties:
+        username:
+          type: string
+          title: 用户名
+          description: 必填；长度为150个字符或以下；只能包含字母、数字、特殊字符“@”、“.”、“-”和“_”。
+          pattern: ^[\w.@+-]+$
+          maxLength: 150
+        password:
+          type: string
+          writeOnly: true
+          title: 密码
+          maxLength: 128
+          minLength: 8
+        password_confirm:
+          type: string
+          writeOnly: true
+          title: 确认密码
+        email:
+          type: string
+          format: email
+          title: 电子邮件地址
+          maxLength: 254
+        mobile:
+          type: string
+          nullable: true
+          title: 手机号
+          pattern: ^1[3-9]\d{9}$
+          maxLength: 11
+      required:
+      - password
+      - password_confirm
+      - username
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sessionid
+    jwtAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

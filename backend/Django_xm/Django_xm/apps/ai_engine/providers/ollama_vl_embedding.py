@@ -18,6 +18,7 @@ Ollama VL Embedding Provider
 下载：
     ollama pull MedAIBase/Qwen3-VL-Embedding:2b
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -85,9 +86,7 @@ class OllamaVLEmbeddings(Embeddings):
                 self._model_loaded = True
                 logger.info(f"VL Embedding 模型预热成功: {self.model}")
             else:
-                logger.warning(
-                    f"VL Embedding 模型预热失败: {resp.status_code} {resp.text[:200]}"
-                )
+                logger.warning(f"VL Embedding 模型预热失败: {resp.status_code} {resp.text[:200]}")
         except requests.exceptions.Timeout:
             logger.warning(f"VL Embedding 模型预热超时: {self.model}")
         except Exception as e:
@@ -114,9 +113,7 @@ class OllamaVLEmbeddings(Embeddings):
                 embeddings = data.get("embeddings", [])
                 if embeddings and embeddings[0]:
                     return embeddings[0]
-            logger.debug(
-                f"/api/embed 失败: status={resp.status_code}, body={resp.text[:200]}"
-            )
+            logger.debug(f"/api/embed 失败: status={resp.status_code}, body={resp.text[:200]}")
         except Exception as e:
             logger.debug(f"/api/embed 异常: {e}")
         return None
@@ -158,13 +155,9 @@ class OllamaVLEmbeddings(Embeddings):
 
                 # 如果响应为空或无法解析，检查 context 字段
                 # Ollama 的 context 包含 token IDs，不是 embedding 向量
-                logger.debug(
-                    f"/api/generate 返回非向量响应: {response_text[:200] if response_text else 'empty'}"
-                )
+                logger.debug(f"/api/generate 返回非向量响应: {response_text[:200] if response_text else 'empty'}")
             else:
-                logger.debug(
-                    f"/api/generate 失败: status={resp.status_code}, body={resp.text[:200]}"
-                )
+                logger.debug(f"/api/generate 失败: status={resp.status_code}, body={resp.text[:200]}")
         except Exception as e:
             logger.debug(f"/api/generate 异常: {e}")
         return None
@@ -190,9 +183,7 @@ class OllamaVLEmbeddings(Embeddings):
                 embedding = data.get("embedding")
                 if embedding:
                     return embedding
-            logger.debug(
-                f"/api/embeddings 失败: status={resp.status_code}, body={resp.text[:200]}"
-            )
+            logger.debug(f"/api/embeddings 失败: status={resp.status_code}, body={resp.text[:200]}")
         except Exception as e:
             logger.debug(f"/api/embeddings 异常: {e}")
         return None
@@ -233,9 +224,7 @@ class OllamaVLEmbeddings(Embeddings):
                 pass
 
         # 格式 2: 逗号分隔数值
-        if "," in text and all(
-            c in "0123456789.,-+eE \t\n" for c in text
-        ):
+        if "," in text and all(c in "0123456789.,-+eE \t\n" for c in text):
             try:
                 values = [float(x.strip()) for x in text.split(",") if x.strip()]
                 if len(values) > 10:  # embedding 向量至少几十维

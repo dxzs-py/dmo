@@ -51,6 +51,7 @@ def custom_exception_handler(exc, context):
     """
     try:
         from Django_xm.apps.ai_engine.services.exceptions import LCAgentException
+
         if isinstance(exc, LCAgentException):
             return _handle_agent_error(exc)
     except ImportError:
@@ -62,57 +63,78 @@ def custom_exception_handler(exc, context):
     # MethodNotAllowed 必须在 APIException 通用分支前显式捕获，
     # 否则会被通用 APIException 分支以 500 返回，丢失 405 语义
     if isinstance(exc, MethodNotAllowed):
-        return Response({
-            'code': int(ErrorCode.METHOD_NOT_ALLOWED),
-            'message': str(exc.detail) if hasattr(exc, 'detail') else "请求方法不允许",
-        }, status=http_status.HTTP_405_METHOD_NOT_ALLOWED)
+        return Response(
+            {
+                "code": int(ErrorCode.METHOD_NOT_ALLOWED),
+                "message": str(exc.detail) if hasattr(exc, "detail") else "请求方法不允许",
+            },
+            status=http_status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
 
     if isinstance(exc, (AuthenticationFailed, NotAuthenticated)):
         return _handle_auth_error(exc)
 
     # DRF PermissionDenied 是 APIException 子类，先于 Django PermissionDenied 匹配
     if isinstance(exc, PermissionDenied):
-        return Response({
-            'code': int(ErrorCode.PERMISSION_DENIED),
-            'message': str(exc.detail) if hasattr(exc, 'detail') else "权限不足",
-        }, status=http_status.HTTP_403_FORBIDDEN)
+        return Response(
+            {
+                "code": int(ErrorCode.PERMISSION_DENIED),
+                "message": str(exc.detail) if hasattr(exc, "detail") else "权限不足",
+            },
+            status=http_status.HTTP_403_FORBIDDEN,
+        )
 
     # Django 核心 PermissionDenied（视图中 raise PermissionDenied 时抛出），
     # 非 APIException 子类，需显式捕获避免落到通用 500 分支
     if isinstance(exc, DjangoPermissionDenied):
-        return Response({
-            'code': int(ErrorCode.PERMISSION_DENIED),
-            'message': str(exc) or "权限不足",
-        }, status=http_status.HTTP_403_FORBIDDEN)
+        return Response(
+            {
+                "code": int(ErrorCode.PERMISSION_DENIED),
+                "message": str(exc) or "权限不足",
+            },
+            status=http_status.HTTP_403_FORBIDDEN,
+        )
 
     if isinstance(exc, Throttled):
-        return Response({
-            'code': int(ErrorCode.RATE_LIMITED),
-            'message': f"请求过于频繁，请{exc.wait}秒后再试",
-        }, status=http_status.HTTP_429_TOO_MANY_REQUESTS)
+        return Response(
+            {
+                "code": int(ErrorCode.RATE_LIMITED),
+                "message": f"请求过于频繁，请{exc.wait}秒后再试",
+            },
+            status=http_status.HTTP_429_TOO_MANY_REQUESTS,
+        )
 
     if isinstance(exc, Http404):
-        return Response({
-            'code': int(ErrorCode.NOT_FOUND),
-            'message': "请求的资源不存在",
-        }, status=http_status.HTTP_404_NOT_FOUND)
+        return Response(
+            {
+                "code": int(ErrorCode.NOT_FOUND),
+                "message": "请求的资源不存在",
+            },
+            status=http_status.HTTP_404_NOT_FOUND,
+        )
 
     if isinstance(exc, APIException):
         logger.warning(f"未处理的API异常: {type(exc).__name__}: {exc!s}")
-        return Response({
-            'code': int(ErrorCode.SERVER_ERROR),
-            'message': str(exc.detail) if hasattr(exc, 'detail') else "服务器内部错误",
-        }, status=exc.status_code)
+        return Response(
+            {
+                "code": int(ErrorCode.SERVER_ERROR),
+                "message": str(exc.detail) if hasattr(exc, "detail") else "服务器内部错误",
+            },
+            status=exc.status_code,
+        )
 
     logger.error(f"未预期的异常: {type(exc).__name__}: {exc!s}", exc_info=True)
-    return Response({
-        'code': int(ErrorCode.INTERNAL_ERROR),
-        'message': "服务器内部错误，请稍后重试",
-    }, status=http_status.HTTP_500_INTERNAL_SERVER_ERROR)
+    return Response(
+        {
+            "code": int(ErrorCode.INTERNAL_ERROR),
+            "message": "服务器内部错误，请稍后重试",
+        },
+        status=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+    )
 
 
 def _handle_validation_error(exc: ValidationError) -> Response:
-    if hasattr(exc, 'detail'):
+    if hasattr(exc, "detail"):
         detail = exc.detail
         if isinstance(detail, dict):
             errors = {}
@@ -122,11 +144,14 @@ def _handle_validation_error(exc: ValidationError) -> Response:
                 else:
                     errors[field] = str(messages)
 
-            return Response({
-                'code': int(ErrorCode.VALIDATION_FAILED),
-                'message': "数据验证失败",
-                'data': errors,
-            }, status=http_status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {
+                    "code": int(ErrorCode.VALIDATION_FAILED),
+                    "message": "数据验证失败",
+                    "data": errors,
+                },
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
         elif isinstance(detail, (list, tuple)):
             message = str(detail[0]) if detail else "数据验证失败"
         else:
@@ -134,10 +159,13 @@ def _handle_validation_error(exc: ValidationError) -> Response:
     else:
         message = str(exc)
 
-    return Response({
-        'code': int(ErrorCode.VALIDATION_FAILED),
-        'message': message,
-    }, status=http_status.HTTP_400_BAD_REQUEST)
+    return Response(
+        {
+            "code": int(ErrorCode.VALIDATION_FAILED),
+            "message": message,
+        },
+        status=http_status.HTTP_400_BAD_REQUEST,
+    )
 
 
 def _handle_auth_error(exc) -> Response:
@@ -152,9 +180,9 @@ def _handle_auth_error(exc) -> Response:
     需从 ``detail['detail']`` 提取实际错误消息再判断是否为过期。
     """
     # 提取错误消息：InvalidToken.detail 为 dict，需取 'detail' 子键
-    raw_detail = getattr(exc, 'detail', None)
-    if isinstance(raw_detail, dict) and 'detail' in raw_detail:
-        error_message = str(raw_detail['detail'])
+    raw_detail = getattr(exc, "detail", None)
+    if isinstance(raw_detail, dict) and "detail" in raw_detail:
+        error_message = str(raw_detail["detail"])
     elif raw_detail is not None:
         error_message = str(raw_detail)
     else:
@@ -174,10 +202,13 @@ def _handle_auth_error(exc) -> Response:
         code = ErrorCode.UNAUTHORIZED
         message = error_message or "未登录或登录已过期"
 
-    return Response({
-        'code': int(code),
-        'message': message,
-    }, status=http_status.HTTP_401_UNAUTHORIZED)
+    return Response(
+        {
+            "code": int(code),
+            "message": message,
+        },
+        status=http_status.HTTP_401_UNAUTHORIZED,
+    )
 
 
 def _handle_agent_error(exc) -> Response:
@@ -206,12 +237,15 @@ def _handle_agent_error(exc) -> Response:
     else:
         status_code = http_status.HTTP_500_INTERNAL_SERVER_ERROR
 
-    return Response({
-        'code': int(business_code),
-        'message': exc.user_message or error_data.get("message", "服务器内部错误"),
-        'data': {
-            'error_code': error_data.get("error_code"),
-            'recoverable': error_data.get("recoverable", True),
-            **error_data.get("details", {}),
+    return Response(
+        {
+            "code": int(business_code),
+            "message": exc.user_message or error_data.get("message", "服务器内部错误"),
+            "data": {
+                "error_code": error_data.get("error_code"),
+                "recoverable": error_data.get("recoverable", True),
+                **error_data.get("details", {}),
+            },
         },
-    }, status=status_code)
+        status=status_code,
+    )

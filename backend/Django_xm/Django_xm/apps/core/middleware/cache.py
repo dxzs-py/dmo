@@ -17,13 +17,13 @@ class CacheControlMiddleware:
     """
 
     CACHE_POLICIES: ClassVar[dict[str, str]] = {
-        '/api/chat/': 'no-store, no-cache, must-revalidate',
-        '/api/research/': 'no-store, no-cache, must-revalidate',
-        '/api/knowledge/': 'private, max-age=300',
-        '/api/core/cache/': 'no-store, no-cache, must-revalidate',
+        "/api/chat/": "no-store, no-cache, must-revalidate",
+        "/api/research/": "no-store, no-cache, must-revalidate",
+        "/api/knowledge/": "private, max-age=300",
+        "/api/core/cache/": "no-store, no-cache, must-revalidate",
     }
 
-    DEFAULT_POLICY = 'private, max-age=60'
+    DEFAULT_POLICY = "private, max-age=60"
 
     def __init__(self, get_response):
         self.get_response = get_response
@@ -31,10 +31,10 @@ class CacheControlMiddleware:
     def __call__(self, request):
         response = self.get_response(request)
 
-        if not request.path.startswith('/api/'):
+        if not request.path.startswith("/api/"):
             return response
 
-        if 'Cache-Control' in response:
+        if "Cache-Control" in response:
             return response
 
         policy = self.DEFAULT_POLICY
@@ -43,6 +43,6 @@ class CacheControlMiddleware:
                 policy = cache_policy
                 break
 
-        response['Cache-Control'] = policy
-        response['X-Cache-Policy'] = 'middleware'
+        response["Cache-Control"] = policy
+        response["X-Cache-Policy"] = "middleware"
         return response

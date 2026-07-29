@@ -17,6 +17,7 @@ from Django_xm.apps.approvals.models import Approval
 
 class ApprovedBySerializer(serializers.Serializer):
     """审批人简要信息。"""
+
     id = serializers.IntegerField()
     username = serializers.CharField()
 
@@ -27,15 +28,29 @@ class ApprovalReadSerializer(serializers.ModelSerializer):
     用于所有 GET 端点（list/detail/state），暴露全部展示字段。
     全部字段标记 read_only，客户端无法通过任何端点修改审批字段。
     """
+
     approved_by = ApprovedBySerializer(read_only=True)
 
     class Meta:
         model = Approval
         fields = [
-            'interrupt_id', 'source', 'source_id', 'chat_session_id',
-            'tool_name', 'title', 'description', 'action', 'operation',
-            'danger_level', 'parameters', 'state',
-            'user_input', 'approved_by', 'extra', 'created_at', 'resolved_at',
+            "interrupt_id",
+            "source",
+            "source_id",
+            "chat_session_id",
+            "tool_name",
+            "title",
+            "description",
+            "action",
+            "operation",
+            "danger_level",
+            "parameters",
+            "state",
+            "user_input",
+            "approved_by",
+            "extra",
+            "created_at",
+            "resolved_at",
         ]
         # 全部 read_only：list/detail 视图仅用于读取，禁止任何写入
         read_only_fields = fields
@@ -44,14 +59,30 @@ class ApprovalReadSerializer(serializers.ModelSerializer):
 # 客户端不允许通过 API 设置的审批字段（白名单之外的 protected 字段）
 # 任一字段被客户端提交时，ApprovalWriteSerializer.to_internal_value 显式拒绝
 # 注意：approved 与 user_input 是客户端可提交字段，故不在本集合中
-_PROTECTED_APPROVAL_FIELDS = frozenset({
-    'interrupt_id', 'source', 'source_id', 'chat_session_id',
-    'tool_name', 'title', 'description', 'action', 'operation',
-    'danger_level', 'parameters', 'state',
-    'approved_by', 'approved_by_id',
-    'user', 'user_id',
-    'extra', 'created_at', 'resolved_at', 'expires_at',
-})
+_PROTECTED_APPROVAL_FIELDS = frozenset(
+    {
+        "interrupt_id",
+        "source",
+        "source_id",
+        "chat_session_id",
+        "tool_name",
+        "title",
+        "description",
+        "action",
+        "operation",
+        "danger_level",
+        "parameters",
+        "state",
+        "approved_by",
+        "approved_by_id",
+        "user",
+        "user_id",
+        "extra",
+        "created_at",
+        "resolved_at",
+        "expires_at",
+    }
+)
 
 
 class ApprovalWriteSerializer(serializers.Serializer):
@@ -85,10 +116,9 @@ class ApprovalWriteSerializer(serializers.Serializer):
         if isinstance(data, dict):
             attempted = _PROTECTED_APPROVAL_FIELDS & set(data.keys())
             if attempted:
-                raise serializers.ValidationError({
-                    field: f"{field} 字段不允许客户端设置"
-                    for field in sorted(attempted)
-                })
+                raise serializers.ValidationError(
+                    {field: f"{field} 字段不允许客户端设置" for field in sorted(attempted)}
+                )
         return super().to_internal_value(data)
 
     def validate_user_input(self, value):
@@ -110,8 +140,20 @@ class ApprovalWriteSerializer(serializers.Serializer):
         }
         valid_actions = {Approval.ACTION_CONFIRM, Approval.ACTION_CONFIRM_WITH_INPUT}
 
-        if 'source' in attrs and attrs['source'] not in valid_sources:
+        if "source" in attrs and attrs["source"] not in valid_sources:
             raise serializers.ValidationError({"source": "非法的审批来源"})
-        if 'action' in attrs and attrs['action'] not in valid_actions:
+        if "action" in attrs and attrs["action"] not in valid_actions:
             raise serializers.ValidationError({"action": "非法的审批动作"})
         return attrs
+
+
+class SSEEventSerializer(serializers.Serializer):
+    """SSE 事件流帧的简化 schema（仅用于 OpenAPI 文档描述）。
+
+    SSE 帧的协议字段（``event``/``data``），``data`` 为 JSON 字符串。
+    OpenAPI 3.0 无法精确表达流式响应，此处以近似结构描述单帧，
+    供前端了解事件载荷字段，实际帧格式以 ``text/event-stream`` 协议为准。
+    """
+
+    event = serializers.CharField(required=False, help_text="事件类型（如 message、error、done）")
+    data = serializers.CharField(help_text="事件数据（JSON 字符串）")

@@ -10,55 +10,38 @@ from .models import WorkflowExecution, WorkflowSession
 
 class WorkflowStartSerializer(serializers.Serializer):
     """启动工作流请求"""
-    user_question = serializers.CharField(
-        min_length=1,
-        required=False,
-        help_text="用户的学习问题"
-    )
-    query = serializers.CharField(
-        min_length=1,
-        required=False,
-        help_text="用户的学习问题 (别名)"
-    )
-    workflow_type = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        help_text="工作流类型"
-    )
-    thread_id = serializers.CharField(
-        required=False,
-        allow_null=True,
-        allow_blank=True,
-        help_text="可选的线程ID"
-    )
+
+    user_question = serializers.CharField(min_length=1, required=False, help_text="用户的学习问题")
+    query = serializers.CharField(min_length=1, required=False, help_text="用户的学习问题 (别名)")
+    workflow_type = serializers.CharField(required=False, allow_blank=True, help_text="工作流类型")
+    thread_id = serializers.CharField(required=False, allow_null=True, allow_blank=True, help_text="可选的线程ID")
     knowledge_base_ids = serializers.ListField(
         child=serializers.CharField(max_length=100),
         required=False,
         default=list,
-        help_text="用户选择的知识库名称列表（原始名称，对应 KnowledgeBaseSelector 的 v-model）"
+        help_text="用户选择的知识库名称列表（原始名称，对应 KnowledgeBaseSelector 的 v-model）",
     )
 
     def validate(self, data):
-        if not data.get('user_question') and not data.get('query'):
-            raise serializers.ValidationError({
-                'user_question': '必须提供 user_question 或 query',
-                'query': '必须提供 user_question 或 query'
-            })
+        if not data.get("user_question") and not data.get("query"):
+            raise serializers.ValidationError(
+                {"user_question": "必须提供 user_question 或 query", "query": "必须提供 user_question 或 query"}
+            )
         return data
 
 
 class WorkflowSubmitSerializer(serializers.Serializer):
     """提交答案请求"""
+
     thread_id = serializers.CharField(required=True)
     answers = serializers.DictField(
-        child=serializers.CharField(allow_blank=True),
-        required=True,
-        help_text="用户答案，格式：{question_id: answer}"
+        child=serializers.CharField(allow_blank=True), required=True, help_text="用户答案，格式：{question_id: answer}"
     )
 
 
 class WorkflowStatusSerializer(serializers.Serializer):
     """工作流状态"""
+
     thread_id = serializers.CharField()
     current_step = serializers.CharField()
     status = serializers.CharField()
@@ -75,6 +58,7 @@ class WorkflowStatusSerializer(serializers.Serializer):
 
 class WorkflowResponseSerializer(serializers.Serializer):
     """工作流通用响应"""
+
     thread_id = serializers.CharField()
     status = serializers.CharField()
     message = serializers.CharField(required=False, allow_blank=True)
@@ -90,6 +74,7 @@ class WorkflowResponseSerializer(serializers.Serializer):
 
 class LearningPlanSerializer(serializers.Serializer):
     """学习计划序列化器"""
+
     topic = serializers.CharField()
     objectives = serializers.ListField(child=serializers.CharField())
     key_points = serializers.ListField(child=serializers.CharField())
@@ -99,6 +84,7 @@ class LearningPlanSerializer(serializers.Serializer):
 
 class QuizQuestionSerializer(serializers.Serializer):
     """练习题题目序列化器"""
+
     id = serializers.CharField()
     type = serializers.CharField()
     question = serializers.CharField()
@@ -110,6 +96,7 @@ class QuizQuestionSerializer(serializers.Serializer):
 
 class QuizSerializer(serializers.Serializer):
     """练习题序列化器"""
+
     questions = QuizQuestionSerializer(many=True)
     total_points = serializers.IntegerField()
     time_limit = serializers.IntegerField(required=False)
@@ -117,6 +104,7 @@ class QuizSerializer(serializers.Serializer):
 
 class ScoreDetailSerializer(serializers.Serializer):
     """评分详情序列化器"""
+
     question_id = serializers.CharField()
     is_correct = serializers.BooleanField()
     points_earned = serializers.IntegerField()
@@ -126,6 +114,7 @@ class ScoreDetailSerializer(serializers.Serializer):
 
 class RetrievedDocumentSerializer(serializers.Serializer):
     """检索文档序列化器"""
+
     content = serializers.CharField()
     metadata = serializers.DictField(required=False)
     relevance_score = serializers.FloatField(required=False)
@@ -133,35 +122,52 @@ class RetrievedDocumentSerializer(serializers.Serializer):
 
 class WorkflowExecutionSerializer(serializers.ModelSerializer):
     """工作流执行记录序列化器"""
+
     class Meta:
         model = WorkflowExecution
         fields = [
-            'id', 'thread_id', 'workflow_type', 'status',
-            'query', 'result',
-            'created_by', 'created_at', 'updated_at',
+            "id",
+            "thread_id",
+            "workflow_type",
+            "status",
+            "query",
+            "result",
+            "created_by",
+            "created_at",
+            "updated_at",
         ]
-        read_only_fields = ['id', 'thread_id', 'created_at', 'updated_at']
+        read_only_fields = ["id", "thread_id", "created_at", "updated_at"]
 
 
 class WorkflowSessionSerializer(serializers.ModelSerializer):
     """工作流会话序列化器"""
+
     class Meta:
         model = WorkflowSession
         fields = [
-            'id', 'thread_id', 'current_step', 'status',
-            'user_question', 'learning_plan', 'quiz', 'user_answers',
-            'score', 'score_details', 'feedback', 'should_retry',
-            'error_message',
-            'created_by', 'created_at', 'updated_at',
+            "id",
+            "thread_id",
+            "current_step",
+            "status",
+            "user_question",
+            "learning_plan",
+            "quiz",
+            "user_answers",
+            "score",
+            "score_details",
+            "feedback",
+            "should_retry",
+            "error_message",
+            "created_by",
+            "created_at",
+            "updated_at",
         ]
-        read_only_fields = ['id', 'thread_id', 'created_at', 'updated_at']
+        read_only_fields = ["id", "thread_id", "created_at", "updated_at"]
 
 
 class WorkflowSessionStatusSerializer(serializers.ModelSerializer):
     """工作流状态序列化器（简化版）"""
+
     class Meta:
         model = WorkflowSession
-        fields = [
-            'thread_id', 'current_step', 'created_at', 'updated_at',
-            'status'
-        ]
+        fields = ["thread_id", "current_step", "created_at", "updated_at", "status"]

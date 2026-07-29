@@ -21,6 +21,7 @@ IP 解析：
     ``get_client_ip`` 统一从 ``Django_xm.common.request_utils`` 导入，
     配合 ``settings.NUM_PROXIES`` 防 X-Forwarded-For 伪造（详见该函数 docstring）。
 """
+
 from rest_framework.throttling import SimpleRateThrottle
 
 from Django_xm.common.request_utils import get_client_ip
@@ -42,65 +43,51 @@ class ScopedRateThrottle(SimpleRateThrottle):
     限流基类：认证用户按 pk 限流，匿名用户按 IP 限流
     子类仅需声明 scope 属性
     """
+
     scope = None
 
     def get_cache_key(self, request, view):
         if request.user and request.user.is_authenticated:
-            return self.cache_format % {
-                'scope': self.scope,
-                'ident': request.user.pk
-            }
-        return self.cache_format % {
-            'scope': self.scope,
-            'ident': get_client_ip(request)
-        }
+            return self.cache_format % {"scope": self.scope, "ident": request.user.pk}
+        return self.cache_format % {"scope": self.scope, "ident": get_client_ip(request)}
 
 
 class AnonymousRateThrottle(SimpleRateThrottle):
-    scope = 'anonymous'
+    scope = "anonymous"
 
     def get_cache_key(self, request, view):
         if request.user and request.user.is_authenticated:
             return None
-        return self.cache_format % {
-            'scope': self.scope,
-            'ident': get_client_ip(request)
-        }
+        return self.cache_format % {"scope": self.scope, "ident": get_client_ip(request)}
 
 
 class UserRateThrottle(SimpleRateThrottle):
-    scope = 'user'
+    scope = "user"
 
     def get_cache_key(self, request, view):
         if request.user and request.user.is_authenticated:
-            return self.cache_format % {
-                'scope': self.scope,
-                'ident': request.user.pk
-            }
+            return self.cache_format % {"scope": self.scope, "ident": request.user.pk}
         return None
 
 
 class LoginRateThrottle(SimpleRateThrottle):
-    scope = 'login'
+    scope = "login"
 
     def get_cache_key(self, request, view):
-        return self.cache_format % {
-            'scope': self.scope,
-            'ident': get_client_ip(request)
-        }
+        return self.cache_format % {"scope": self.scope, "ident": get_client_ip(request)}
 
 
 class ChatStreamRateThrottle(ScopedRateThrottle):
-    scope = 'chat_stream'
+    scope: str = "chat_stream"  # type: ignore[assignment]  # django-stubs types scope as None
 
 
 class ResearchRateThrottle(ScopedRateThrottle):
-    scope = 'research'
+    scope: str = "research"  # type: ignore[assignment]  # django-stubs types scope as None
 
 
 class KnowledgeRateThrottle(ScopedRateThrottle):
-    scope = 'knowledge'
+    scope: str = "knowledge"  # type: ignore[assignment]  # django-stubs types scope as None
 
 
 class SensitiveOperationRateThrottle(ScopedRateThrottle):
-    scope = 'sensitive'
+    scope: str = "sensitive"  # type: ignore[assignment]  # django-stubs types scope as None

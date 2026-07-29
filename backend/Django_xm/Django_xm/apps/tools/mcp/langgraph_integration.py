@@ -12,7 +12,6 @@
     供 ``agent_hub.mcp_integration`` 与其他调用方使用。
 """
 
-
 from langchain_core.tools import BaseTool
 
 from Django_xm.apps.core.config import get_logger

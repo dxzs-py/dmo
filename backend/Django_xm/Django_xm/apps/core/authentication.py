@@ -21,7 +21,7 @@ class QueryParamTokenAuthentication(BaseAuthentication):
 
     def authenticate(self, request):
         """认证请求，从查询参数 token 中提取并验证 JWT"""
-        token = request.GET.get('token')
+        token = request.GET.get("token")
         if not token or len(token) >= 2048:
             return None
 
@@ -32,7 +32,7 @@ class QueryParamTokenAuthentication(BaseAuthentication):
 
             auth = JWTAuthentication()
             # 将查询参数 token 构造为 Bearer header 格式，复用 simplejwt 验证流程
-            header_bytes = f'Bearer {token}'.encode(HTTP_HEADER_ENCODING)
+            header_bytes = f"Bearer {token}".encode(HTTP_HEADER_ENCODING)
             raw_token = auth.get_raw_token(header_bytes)
             if raw_token:
                 validated_token = auth.get_validated_token(raw_token)
@@ -48,7 +48,7 @@ class QueryParamTokenAuthentication(BaseAuthentication):
 
     def authenticate_header(self, request):
         """返回 WWW-Authenticate header 值"""
-        return 'Bearer'
+        return "Bearer"
 
 
-__all__ = ['QueryParamTokenAuthentication']
+__all__ = ["QueryParamTokenAuthentication"]

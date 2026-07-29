@@ -26,10 +26,11 @@ def on_index_save(sender, instance, created, **kwargs):
 
     # 通过自定义信号通知缓存失效，避免硬导入 cache_manager
     from Django_xm.apps.core.signals import index_updated
+
     index_updated.send(
         sender=sender,
         index_name=instance.index_name,
-        action='created' if created else 'updated',
+        action="created" if created else "updated",
     )
 
 
@@ -39,10 +40,11 @@ def on_index_delete(sender, instance, **kwargs):
 
     # 通过自定义信号通知缓存失效，避免硬导入 cache_manager
     from Django_xm.apps.core.signals import index_updated
+
     index_updated.send(
         sender=sender,
         index_name=instance.index_name,
-        action='deleted',
+        action="deleted",
     )
 
 
@@ -53,10 +55,11 @@ def on_document_save(sender, instance, created, **kwargs):
 
         # 通过自定义信号通知缓存失效
         from Django_xm.apps.core.signals import index_updated
+
         index_updated.send(
             sender=sender,
             index_name=instance.index.index_name,
-            action='document_added',
+            action="document_added",
         )
 
     _update_index_document_count(instance.index_id)
@@ -68,10 +71,11 @@ def on_document_delete(sender, instance, **kwargs):
 
     # 通过自定义信号通知缓存失效
     from Django_xm.apps.core.signals import index_updated
+
     index_updated.send(
         sender=sender,
         index_name=instance.index.index_name,
-        action='document_deleted',
+        action="document_deleted",
     )
 
     _update_index_document_count(instance.index_id)

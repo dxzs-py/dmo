@@ -10,6 +10,7 @@ from typing import Any, ClassVar
 
 class ContentSafetyLevel(Enum):
     """内容安全级别"""
+
     SAFE = "safe"
     WARNING = "warning"
     UNSAFE = "unsafe"
@@ -18,6 +19,7 @@ class ContentSafetyLevel(Enum):
 @dataclass
 class FilterResult:
     """过滤结果"""
+
     is_safe: bool
     safety_level: ContentSafetyLevel
     issues: list[str]
@@ -39,8 +41,17 @@ class ContentFilter:
 
     # 不安全关键词（示例，实际应该更完善）
     UNSAFE_KEYWORDS: ClassVar[list[str]] = [
-        "暴力", "色情", "赌博", "毒品", "恐怖", "诈骗",
-        "hack", "crack", "exploit", "malware", "virus",
+        "暴力",
+        "色情",
+        "赌博",
+        "毒品",
+        "恐怖",
+        "诈骗",
+        "hack",
+        "crack",
+        "exploit",
+        "malware",
+        "virus",
     ]
 
     # Prompt Injection 检测模式
@@ -67,7 +78,7 @@ class ContentFilter:
     ):
         """
         初始化内容过滤器
-        
+
         Args:
             enable_pii_detection: 是否启用个人信息检测
             enable_content_safety: 是否启用内容安全检查
@@ -82,10 +93,10 @@ class ContentFilter:
     def filter_input(self, text: str) -> FilterResult:
         """
         过滤输入内容
-        
+
         Args:
             text: 输入文本
-            
+
         Returns:
             FilterResult: 过滤结果
         """
@@ -142,10 +153,10 @@ class ContentFilter:
     def filter_output(self, text: str) -> FilterResult:
         """
         过滤输出内容
-        
+
         Args:
             text: 输出文本
-            
+
         Returns:
             FilterResult: 过滤结果
         """
@@ -210,38 +221,30 @@ class ContentFilter:
         masked_text = text
 
         # 手机号脱敏
-        masked_text = re.sub(
-            self.PATTERNS["phone"],
-            lambda m: m.group()[:3] + "****" + m.group()[-4:],
-            masked_text
-        )
+        masked_text = re.sub(self.PATTERNS["phone"], lambda m: m.group()[:3] + "****" + m.group()[-4:], masked_text)
 
         # 邮箱脱敏
         masked_text = re.sub(
             self.PATTERNS["email"],
             lambda m: m.group().split("@")[0][:2] + "***@" + m.group().split("@")[1],
-            masked_text
+            masked_text,
         )
 
         # 身份证脱敏
         masked_text = re.sub(
-            self.PATTERNS["id_card"],
-            lambda m: m.group()[:6] + "********" + m.group()[-4:],
-            masked_text
+            self.PATTERNS["id_card"], lambda m: m.group()[:6] + "********" + m.group()[-4:], masked_text
         )
 
         # 信用卡脱敏
         masked_text = re.sub(
             self.PATTERNS["credit_card"],
             lambda m: "****-****-****-" + re.sub(r"[\s-]", "", m.group())[-4:],
-            masked_text
+            masked_text,
         )
 
         # IP 地址脱敏
         masked_text = re.sub(
-            self.PATTERNS["ip_address"],
-            lambda m: ".".join(m.group().split(".")[:2]) + ".***.***",
-            masked_text
+            self.PATTERNS["ip_address"], lambda m: ".".join(m.group().split(".")[:2]) + ".***.***", masked_text
         )
 
         return masked_text

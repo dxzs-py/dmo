@@ -11,6 +11,7 @@ from .content_filters import ContentFilter, ContentSafetyLevel
 @dataclass
 class InputValidationResult:
     """输入验证结果"""
+
     is_valid: bool
     filtered_input: str
     errors: list[str]
@@ -31,7 +32,7 @@ class InputValidator:
     ):
         """
         初始化输入验证器
-        
+
         Args:
             content_filter: 内容过滤器实例
             min_length: 最小长度
@@ -48,16 +49,16 @@ class InputValidator:
     def validate(self, user_input: str) -> InputValidationResult:
         """
         验证用户输入
-        
+
         Args:
             user_input: 用户输入文本
-            
+
         Returns:
             InputValidationResult: 验证结果
         """
-        errors = []
-        warnings = []
-        metadata = {}
+        errors: list[str] = []
+        warnings: list[str] = []
+        metadata: dict[str, Any] = {}
 
         # 1. 检查空输入
         if not user_input or not user_input.strip():
@@ -116,13 +117,13 @@ class InputValidator:
     def validate_or_raise(self, user_input: str) -> str:
         """
         验证输入，如果失败则抛出异常
-        
+
         Args:
             user_input: 用户输入
-            
+
         Returns:
             str: 过滤后的输入
-            
+
         Raises:
             ValueError: 验证失败时抛出
         """

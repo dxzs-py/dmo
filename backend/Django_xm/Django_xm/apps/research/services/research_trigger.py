@@ -5,8 +5,10 @@
 - 创建深度研究任务记录
 - 启动 Celery 异步任务
 """
+
 import logging
 import uuid
+from typing import cast
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +24,9 @@ class ResearchTriggerService:
         self._chat_service = chat_service
 
     async def create_task(
-        self, query: str, session_id: str | None = None,
+        self,
+        query: str,
+        session_id: str | None = None,
         use_web_search: bool = True,
         retriever_tool=None,
         task_title: str | None = None,
@@ -33,6 +37,7 @@ class ResearchTriggerService:
         from django.contrib.auth import get_user_model
 
         from Django_xm.apps.research.services.task_manager import get_task_manager
+
         User = get_user_model()
 
         thread_id = f"research_{uuid.uuid4().hex[:12]}"
@@ -41,6 +46,7 @@ class ResearchTriggerService:
         created_by = None
         if self._chat_service.user_id:
             try:
+
                 @sync_to_async(thread_sensitive=True)
                 def _get_user():
                     return User.objects.get(id=self._chat_service.user_id)
@@ -65,7 +71,9 @@ class ResearchTriggerService:
         return thread_id
 
     async def start_celery(
-        self, query: str, session_id: str | None = None,
+        self,
+        query: str,
+        session_id: str | None = None,
         use_web_search: bool = True,
         retriever_tool=None,
         extra_tools: list | None = None,
@@ -125,47 +133,53 @@ class ResearchTriggerService:
         thread_id = task_id
 
         if knowledge_base_ids:
+
             @sync_to_async(thread_sensitive=True)
             def _update_kb():
                 from Django_xm.apps.research.models import ResearchTask
+
                 ResearchTask.objects.filter(task_id=thread_id).update(
                     knowledge_base_ids=knowledge_base_ids,
                 )
+
             await _update_kb()
 
-        use_mcp = any(
-            (getattr(t, 'metadata', {}) or {}).get('is_mcp_tool', False)
-            for t in (extra_tools or [])
-        )
+        use_mcp = any((getattr(t, "metadata", {}) or {}).get("is_mcp_tool", False) for t in (extra_tools or []))
         selected_mcp_servers = []
         selected_tool_names = []
-        for t in (extra_tools or []):
-            meta = getattr(t, 'metadata', {}) or {}
-            t_name = getattr(t, 'name', '')
+        for t in extra_tools or []:
+            meta = getattr(t, "metadata", {}) or {}
+            t_name = getattr(t, "name", "")
             # 跳过 retriever_tool，它们由 knowledge_base_ids 在 worker 端重建
-            if t_name and t_name not in selected_tool_names and not t_name.startswith('knowledge_base_'):
+            if t_name and t_name not in selected_tool_names and not t_name.startswith("knowledge_base_"):
                 selected_tool_names.append(t_name)
-            server_name = meta.get('mcp_server_name', '')
+            server_name = meta.get("mcp_server_name", "")
             if server_name and server_name not in selected_mcp_servers:
                 selected_mcp_servers.append(server_name)
 
+        # thread_id 是研究任务必需参数，缺失则无法派发 Celery 任务
+        if not thread_id:
+            raise ValueError("thread_id is required for research task")
+
+        # run_research_task 签名使用隐式 Optional（param: T = None），mypy 推断为非 Optional。
+        # 此处用 cast 对齐签名类型，不改运行时行为（None 仍会传入，任务端兼容）。
         celery_result = run_research_task.delay(
             thread_id=thread_id,
             query=query,
             enable_web_search=use_web_search,
             enable_doc_analysis=retriever_tool is not None,
-            knowledge_base_ids=knowledge_base_ids,
+            knowledge_base_ids=cast(list, knowledge_base_ids),
             user_id=self._chat_service.user_id,
             use_mcp=use_mcp or bool(selected_mcp_servers),
-            selected_mcp_servers=selected_mcp_servers or None,
-            selected_tools=selected_tool_names or None,
-            provider_id=provider_id,
-            model_name=model_name,
+            selected_mcp_servers=cast(list, selected_mcp_servers or None),
+            selected_tools=cast(list, selected_tool_names or None),
+            provider_id=cast(str, provider_id),
+            model_name=cast(str, model_name),
             enable_deep_thinking=enable_deep_thinking,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            special_params=special_params,
-            continue_task_id=continue_task_id,
+            temperature=cast(float, temperature),
+            max_tokens=cast(int, max_tokens),
+            special_params=cast(dict, special_params),
+            continue_task_id=cast(str, continue_task_id),
         )
 
         from Django_xm.apps.research.models import ResearchTask

@@ -42,6 +42,7 @@ from .registry import clear_extension_tools, get_extension_tools, register_exten
 
 logger = logging.getLogger(__name__)
 
+
 def _deduplicate_tools(tools: list[BaseTool]) -> list[BaseTool]:
     seen = set()
     result = []
@@ -51,6 +52,7 @@ def _deduplicate_tools(tools: list[BaseTool]) -> list[BaseTool]:
             result.append(tool)
     return result
 
+
 get_daily_weather = weather_query
 
 
@@ -58,11 +60,14 @@ TOOL_TIER_CORE = "core"
 TOOL_TIER_STANDARD = "standard"
 TOOL_TIER_EXTENDED = "extended"
 
+
 def get_core_tools() -> list[BaseTool]:
     return [t for t in get_all_tools() if (t.metadata or {}).get("tier") == "core"]
 
+
 def get_standard_tools() -> list[BaseTool]:
     return [t for t in get_all_tools() if (t.metadata or {}).get("tier") in ("core", "standard")]
+
 
 def _get_extended_tools() -> list[BaseTool]:
     return get_all_tools()
@@ -79,8 +84,9 @@ def _get_advanced_tools() -> list[BaseTool]:
 def _get_web_search_tools() -> list[BaseTool]:
     """联网搜索工具（仅由 use_web_search 控制）"""
     from Django_xm.apps.ai_engine.config import settings
-    tools = []
-    has_tavily = bool(getattr(settings, 'tavily_api_key', None))
+
+    tools: list[BaseTool] = []
+    has_tavily = bool(getattr(settings, "tavily_api_key", None))
     has_ddg = has_duckduckgo_available()
 
     if has_tavily:
@@ -140,22 +146,26 @@ get_basic_tools = get_all_basic_tools
 # 懒加载常量：避免模块级实例化所有工具导致的循环依赖和启动开销
 _TOOLS_CACHE: dict = {}
 
+
 def __getattr__(name):
-    if name in ('BASIC_TOOLS', 'ADVANCED_TOOLS', 'ALL_TOOLS'):
+    if name in ("BASIC_TOOLS", "ADVANCED_TOOLS", "ALL_TOOLS"):
         if name not in _TOOLS_CACHE:
-            if name == 'BASIC_TOOLS':
+            if name == "BASIC_TOOLS":
                 _TOOLS_CACHE[name] = get_all_basic_tools()
-            elif name == 'ADVANCED_TOOLS':
+            elif name == "ADVANCED_TOOLS":
                 _TOOLS_CACHE[name] = get_all_advanced_tools()
-            elif name == 'ALL_TOOLS':
+            elif name == "ALL_TOOLS":
                 _TOOLS_CACHE[name] = get_all_tools()
         return _TOOLS_CACHE[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-async def _load_mcp_tools_async(selected_servers: list[str] | None = None, user_id: int | None = None, selected_tools: list[str] | None = None) -> list[BaseTool]:
+async def _load_mcp_tools_async(
+    selected_servers: list[str] | None = None, user_id: int | None = None, selected_tools: list[str] | None = None
+) -> list[BaseTool]:
     try:
         from Django_xm.apps.tools.mcp import _get_mcp_servers_config, get_mcp_tools, is_mcp_available
+
         if not is_mcp_available():
             logger.warning("MCP 不可用: langchain-mcp-adapters 未安装")
             return []
@@ -169,7 +179,7 @@ async def _load_mcp_tools_async(selected_servers: list[str] | None = None, user_
 
                 @sync_to_async
                 def _get_user_servers():
-                    return list(McpServerConfig.objects.filter(user_id=user_id, status='active'))
+                    return list(McpServerConfig.objects.filter(user_id=user_id, status="active"))
 
                 user_servers = await _get_user_servers()
                 seen = {s.get("name") for s in servers}
@@ -238,15 +248,17 @@ def get_all_available_tool_info() -> list[dict[str, Any]]:
         if tool.name in seen:
             continue
         seen.add(tool.name)
-        meta = getattr(tool, 'metadata', None) or {}
-        result.append({
-            "name": tool.name,
-            "description": tool.description or "",
-            "tier": meta.get("tier", "extended"),
-            "visibility": meta.get("visibility", "selectable"),
-            "category": meta.get("category", "other"),
-            "source": "system",
-        })
+        meta = getattr(tool, "metadata", None) or {}
+        result.append(
+            {
+                "name": tool.name,
+                "description": tool.description or "",
+                "tier": meta.get("tier", "extended"),
+                "visibility": meta.get("visibility", "selectable"),
+                "category": meta.get("category", "other"),
+                "source": "system",
+            }
+        )
     return result
 
 
@@ -282,13 +294,14 @@ async def get_tools_for_request_async(
 
                 @sync_to_async
                 def _get_custom_and_skill_names():
-                    cn = set(CustomTool.objects.filter(user_id=user_id).values_list('name', flat=True))
-                    sn = set(SkillConfig.objects.filter(user_id=user_id).values_list('name', flat=True))
+                    cn = set(CustomTool.objects.filter(user_id=user_id).values_list("name", flat=True))
+                    sn = set(SkillConfig.objects.filter(user_id=user_id).values_list("name", flat=True))
                     return cn, sn
 
                 custom_names, user_skill_config_names = await _get_custom_and_skill_names()
             except Exception:
-                pass
+                # 数据库查询失败时回退到空集合，不影响工具加载
+                logger.debug("查询用户自定义工具名失败，回退到空集合")
 
         # SkillPackage 名称
         skill_package_names = set()
@@ -300,12 +313,13 @@ async def get_tools_for_request_async(
 
                 @sync_to_async
                 def _get_skill_package_names():
-                    return set(SkillPackage.objects.filter(user_id=user_id).values_list('name', flat=True))
+                    return set(SkillPackage.objects.filter(user_id=user_id).values_list("name", flat=True))
 
                 pkg_names = await _get_skill_package_names()
                 skill_package_names = {f"skill_{n}" for n in pkg_names}
             except Exception:
-                pass
+                # 数据库查询失败时回退到空集合，不影响工具加载
+                logger.debug("查询用户 SkillPackage 名失败，回退到空集合")
 
         # 用户自定义 SkillConfig 名称也加 skill_ 前缀
         user_skill_names = {f"skill_{n}" for n in user_skill_config_names}
@@ -320,20 +334,24 @@ async def get_tools_for_request_async(
             selected_custom = selected_set & custom_names
             if selected_custom:
                 from asgiref.sync import sync_to_async
-                custom_tools = await sync_to_async(_load_custom_tools_for_user, thread_sensitive=True)(user_id, selected_names=list(selected_custom))
+
+                custom_tools = await sync_to_async(_load_custom_tools_for_user, thread_sensitive=True)(
+                    user_id, selected_names=list(selected_custom)
+                )
                 if custom_tools:
                     tools.extend(custom_tools)
 
         if mcp_selected:
             should_load_mcp = True
-            all_mcp = await _load_mcp_tools_async(selected_servers=selected_mcp_servers, user_id=user_id, selected_tools=selected_tools)
+            all_mcp = await _load_mcp_tools_async(
+                selected_servers=selected_mcp_servers, user_id=user_id, selected_tools=selected_tools
+            )
             mcp_tools = [t for t in all_mcp if t.name in mcp_selected]
             if mcp_tools:
                 logger.info(f"选中 MCP 工具 ({len(mcp_tools)} 个): {mcp_selected}")
             else:
                 server_matched_tools = [
-                    t for t in all_mcp
-                    if (t.metadata or {}).get('mcp_server_name', '') in mcp_selected
+                    t for t in all_mcp if (t.metadata or {}).get("mcp_server_name", "") in mcp_selected
                 ]
                 if server_matched_tools:
                     mcp_tools = server_matched_tools
@@ -360,7 +378,9 @@ async def get_tools_for_request_async(
             tools.extend(_get_web_search_tools())
 
     if should_load_mcp and not mcp_tools:
-        mcp_tools = await _load_mcp_tools_async(selected_servers=selected_mcp_servers, user_id=user_id, selected_tools=selected_tools)
+        mcp_tools = await _load_mcp_tools_async(
+            selected_servers=selected_mcp_servers, user_id=user_id, selected_tools=selected_tools
+        )
         if mcp_tools:
             logger.info(f"MCP 工具已加载 ({len(mcp_tools)} 个)")
         else:
@@ -406,9 +426,10 @@ def _load_custom_tools_for_user(user_id: int, selected_names: list[str] | None =
     """
     try:
         from Django_xm.apps.tools.models import CustomTool
+
         qs = CustomTool.objects.filter(
             user_id=user_id,
-            status='active',
+            status="active",
             approval_status=CustomTool.ApprovalStatus.APPROVED,
         )
         if selected_names:
@@ -428,25 +449,56 @@ def _load_custom_tools_for_user(user_id: int, selected_names: list[str] | None =
 
 
 _ALLOWED_IMPORTS = {
-    'json', 'math', 're', 'textwrap',
-    'datetime', 'time', 'calendar', 'collections', 'itertools',
-    'functools', 'copy', 'hashlib', 'base64',
-    'typing', 'pathlib', 'urllib.parse', 'uuid', 'decimal',
-    'string', 'random', 'statistics',
-    'fractions', 'dataclasses', 'enum', 'abc', 'html',
-    'langchain_core.tools',
+    "json",
+    "math",
+    "re",
+    "textwrap",
+    "datetime",
+    "time",
+    "calendar",
+    "collections",
+    "itertools",
+    "functools",
+    "copy",
+    "hashlib",
+    "base64",
+    "typing",
+    "pathlib",
+    "urllib.parse",
+    "uuid",
+    "decimal",
+    "string",
+    "random",
+    "statistics",
+    "fractions",
+    "dataclasses",
+    "enum",
+    "abc",
+    "html",
+    "langchain_core.tools",
 }
-_ALLOWED_IMPORT_ROOTS = {m.split('.')[0] for m in _ALLOWED_IMPORTS}
+_ALLOWED_IMPORT_ROOTS = {m.split(".")[0] for m in _ALLOWED_IMPORTS}
 
 
 def _validate_tool_code_safety(code: str) -> tuple[bool, str]:
     """AST 静态检查用户工具代码安全性"""
     import ast
+
     FORBIDDEN_NAMES = {
-        '__import__', '__builtins__', 'exec', 'eval',
-        'compile', 'input', '__class__', '__subclasses__',
-        '__bases__', '__mro__',
-        'getattr', 'hasattr', 'setattr', 'delattr',
+        "__import__",
+        "__builtins__",
+        "exec",
+        "eval",
+        "compile",
+        "input",
+        "__class__",
+        "__subclasses__",
+        "__bases__",
+        "__mro__",
+        "getattr",
+        "hasattr",
+        "setattr",
+        "delattr",
     }
     try:
         tree = ast.parse(code)
@@ -455,17 +507,17 @@ def _validate_tool_code_safety(code: str) -> tuple[bool, str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                root_mod = alias.name.split('.')[0]
+                root_mod = alias.name.split(".")[0]
                 if root_mod not in _ALLOWED_IMPORT_ROOTS:
                     return False, f"禁止导入模块 '{alias.name}': 第{node.lineno}行"
         if isinstance(node, ast.ImportFrom):
             if node.module:
-                root_mod = node.module.split('.')[0]
+                root_mod = node.module.split(".")[0]
                 if root_mod not in _ALLOWED_IMPORT_ROOTS:
                     return False, f"禁止导入模块 '{node.module}': 第{node.lineno}行"
         if isinstance(node, ast.Name) and node.id in FORBIDDEN_NAMES:
             return False, f"禁止使用 {node.id}: 第{node.lineno}行"
-        if isinstance(node, ast.Attribute) and node.attr.startswith('__') and node.attr.endswith('__'):
+        if isinstance(node, ast.Attribute) and node.attr.startswith("__") and node.attr.endswith("__"):
             return False, f"禁止访问双下划线属性 {node.attr}: 第{node.lineno}行"
     return True, ""
 
@@ -488,47 +540,136 @@ def _instantiate_custom_tool(tool_obj) -> BaseTool | None:
         return None
 
     safe_builtins = {
-            k: __builtins__[k] if isinstance(__builtins__, dict) else getattr(__builtins__, k)
-            for k in ('print', 'len', 'str', 'int', 'float', 'bool', 'list', 'dict', 'tuple', 'set',
-                       'range', 'enumerate', 'zip', 'map', 'filter', 'sorted', 'reversed',
-                       'isinstance', 'issubclass', 'type', 'abs', 'min', 'max', 'sum', 'round',
-                       'any', 'all', 'chr', 'ord', 'hex', 'oct', 'bin', 'pow', 'divmod',
-                       'id', 'hash', 'repr', 'format', 'bytes', 'bytearray', 'frozenset', 'slice',
-                       'object', 'super', 'property', 'staticmethod', 'classmethod', 'complex',
-                       'ValueError', 'TypeError', 'KeyError', 'IndexError', 'AttributeError',
-                       'NameError', 'RuntimeError', 'Exception', 'StopIteration',
-                       'NotImplementedError', 'OverflowError', 'ZeroDivisionError',
-                       'FileNotFoundError', 'PermissionError', 'OSError', 'IOError',
-                       'AssertionError', 'ImportError', 'ModuleNotFoundError', 'LookupError',
-                       'UnicodeError', 'ArithmeticError', 'BufferError',
-                       'Warning', 'UserWarning', 'DeprecationWarning',
-                       'None', 'True', 'False')
-        }
+        k: __builtins__[k] if isinstance(__builtins__, dict) else getattr(__builtins__, k)
+        for k in (
+            "print",
+            "len",
+            "str",
+            "int",
+            "float",
+            "bool",
+            "list",
+            "dict",
+            "tuple",
+            "set",
+            "range",
+            "enumerate",
+            "zip",
+            "map",
+            "filter",
+            "sorted",
+            "reversed",
+            "isinstance",
+            "issubclass",
+            "type",
+            "abs",
+            "min",
+            "max",
+            "sum",
+            "round",
+            "any",
+            "all",
+            "chr",
+            "ord",
+            "hex",
+            "oct",
+            "bin",
+            "pow",
+            "divmod",
+            "id",
+            "hash",
+            "repr",
+            "format",
+            "bytes",
+            "bytearray",
+            "frozenset",
+            "slice",
+            "object",
+            "super",
+            "property",
+            "staticmethod",
+            "classmethod",
+            "complex",
+            "ValueError",
+            "TypeError",
+            "KeyError",
+            "IndexError",
+            "AttributeError",
+            "NameError",
+            "RuntimeError",
+            "Exception",
+            "StopIteration",
+            "NotImplementedError",
+            "OverflowError",
+            "ZeroDivisionError",
+            "FileNotFoundError",
+            "PermissionError",
+            "OSError",
+            "IOError",
+            "AssertionError",
+            "ImportError",
+            "ModuleNotFoundError",
+            "LookupError",
+            "UnicodeError",
+            "ArithmeticError",
+            "BufferError",
+            "Warning",
+            "UserWarning",
+            "DeprecationWarning",
+            "None",
+            "True",
+            "False",
+        )
+    }
     _real_import = __import__ if isinstance(__builtins__, dict) else __builtins__.__import__
+
     def _restricted_import(name, *args, **kwargs):
-        root = name.split('.')[0]
+        root = name.split(".")[0]
         if root not in _ALLOWED_IMPORT_ROOTS:
             raise ImportError(f"禁止导入模块 '{name}'")
         return _real_import(name, *args, **kwargs)
-    safe_builtins['__import__'] = _restricted_import
+
+    safe_builtins["__import__"] = _restricted_import
 
     safe_globals = {
         "__builtins__": safe_builtins,
-        "tool": __import__('langchain_core.tools', fromlist=['tool']).tool,
+        "tool": __import__("langchain_core.tools", fromlist=["tool"]).tool,
         "BaseTool": BaseTool,
     }
-    for mod_name in ('json', 'math', 're', 'textwrap',
-                      'datetime', 'time', 'calendar', 'collections', 'itertools',
-                      'functools', 'copy', 'hashlib', 'base64',
-                      'typing', 'pathlib', 'urllib.parse', 'uuid', 'decimal',
-                      'string', 'random', 'statistics',
-                      'fractions', 'dataclasses', 'enum', 'abc', 'html'):
+    for mod_name in (
+        "json",
+        "math",
+        "re",
+        "textwrap",
+        "datetime",
+        "time",
+        "calendar",
+        "collections",
+        "itertools",
+        "functools",
+        "copy",
+        "hashlib",
+        "base64",
+        "typing",
+        "pathlib",
+        "urllib.parse",
+        "uuid",
+        "decimal",
+        "string",
+        "random",
+        "statistics",
+        "fractions",
+        "dataclasses",
+        "enum",
+        "abc",
+        "html",
+    ):
         try:
             safe_globals[mod_name] = __import__(mod_name)
         except ImportError:
             pass
 
-    namespace = {}
+    namespace: dict[str, Any] = {}
     try:
         exec(compile(code, f"<custom_tool:{tool_obj.name}>", "exec"), safe_globals, namespace)
     except Exception as e:
@@ -542,30 +683,76 @@ def _instantiate_custom_tool(tool_obj) -> BaseTool | None:
     logger.warning(f"自定义工具 '{tool_obj.name}' 未找到 BaseTool 实例")
     return None
 
+
 __all__ = [
-    "get_current_time", "get_current_date", "get_time_tools",
-    "calculator", "get_calculator_tools",
-    "web_search", "create_tavily_search_tool", "get_web_search_tools",
-    "duckduckgo_search", "get_duckduckgo_tools", "DUCKDUCKGO_TOOLS", "has_duckduckgo_available",
-    "web_fetch", "get_web_fetch_tools",
-    "weather_query", "get_daily_weather", "get_weather_tools", "WEATHER_TOOLS",
-    "fs_write_file", "fs_read_file", "fs_list_files", "fs_search_files",
-    "FILESYSTEM_TOOLS", "get_filesystem_tools", "ResearchFileSystem",
-    "file_reader", "attachment_reader", "get_file_reader_tools", "FILE_READER_TOOLS",
-    "translate_text", "detect_language", "get_translation_tools", "TRANSLATION_TOOLS",
-    "todo_write", "todo_read", "get_todo_tools",
-    # 扩展工具注册表（Task 15.1：高层 app 通过注册表注入工具）
-    "register_extension_tools", "get_extension_tools", "clear_extension_tools",
-    "shell_exec", "get_shell_exec_tools",
-    "ToolErrorCode", "ToolError", "ToolResult",
-    "create_tool_result", "create_tool_error", "exception_to_tool_error",
-    "BASIC_TOOLS", "ADVANCED_TOOLS", "ALL_TOOLS",
-    "get_all_basic_tools", "get_all_advanced_tools", "get_all_tools",
-    "get_tools_for_request_async",
+    "ADVANCED_TOOLS",
+    "ALL_TOOLS",
+    "BASIC_TOOLS",
+    "DUCKDUCKGO_TOOLS",
+    "FILESYSTEM_TOOLS",
+    "FILE_READER_TOOLS",
+    "PRESET_SKILLS",
+    "TOOL_TIER_CORE",
+    "TOOL_TIER_EXTENDED",
+    "TOOL_TIER_STANDARD",
+    "TRANSLATION_TOOLS",
+    "WEATHER_TOOLS",
+    "ResearchFileSystem",
+    "SkillAdapter",
+    "SkillBaseTool",
+    "SkillLoader",
+    "SkillProvider",
+    "SkillRegistryService",
+    "SkillSpec",
+    "SkillStep",
+    "ToolError",
+    "ToolErrorCode",
+    "ToolResult",
+    "attachment_reader",
+    "calculator",
+    "clear_extension_tools",
+    "create_skill_base_tools",
+    "create_tavily_search_tool",
+    "create_tool_error",
+    "create_tool_result",
+    "detect_language",
+    "duckduckgo_search",
+    "exception_to_tool_error",
+    "file_reader",
+    "fs_list_files",
+    "fs_read_file",
+    "fs_search_files",
+    "fs_write_file",
+    "get_all_advanced_tools",
     "get_all_available_tool_info",
-    "TOOL_TIER_CORE", "TOOL_TIER_STANDARD", "TOOL_TIER_EXTENDED",
-    "get_core_tools", "get_standard_tools",
-    "SkillStep", "SkillSpec", "SkillRegistryService", "PRESET_SKILLS",
-    "SkillBaseTool", "create_skill_base_tools",
-    "SkillAdapter", "SkillProvider", "SkillLoader",
+    "get_all_basic_tools",
+    "get_all_tools",
+    "get_calculator_tools",
+    "get_core_tools",
+    "get_current_date",
+    "get_current_time",
+    "get_daily_weather",
+    "get_duckduckgo_tools",
+    "get_extension_tools",
+    "get_file_reader_tools",
+    "get_filesystem_tools",
+    "get_shell_exec_tools",
+    "get_standard_tools",
+    "get_time_tools",
+    "get_todo_tools",
+    "get_tools_for_request_async",
+    "get_translation_tools",
+    "get_weather_tools",
+    "get_web_fetch_tools",
+    "get_web_search_tools",
+    "has_duckduckgo_available",
+    # 扩展工具注册表（Task 15.1：高层 app 通过注册表注入工具）
+    "register_extension_tools",
+    "shell_exec",
+    "todo_read",
+    "todo_write",
+    "translate_text",
+    "weather_query",
+    "web_fetch",
+    "web_search",
 ]

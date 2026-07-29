@@ -7,6 +7,7 @@ logger = logging.getLogger(__name__)
 
 try:
     from langchain_community.tools import DuckDuckGoSearchResults as DuckDuckGoSearch
+
     HAS_DUCKDUCKGO_TOOL = True
     logger.info("✅ langchain-community DuckDuckGo 搜索工具可用")
 except ImportError:
@@ -73,7 +74,9 @@ class DuckDuckGoSearchInput(BaseModel):
 
 class DuckDuckGoSearchTool(BaseTool):
     name: str = "duckduckgo_search"
-    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "switch", "category": "web_search"})
+    metadata: dict = Field(
+        default_factory=lambda: {"tier": "extended", "visibility": "switch", "category": "web_search"}
+    )
     description: str = (
         "使用 DuckDuckGo 搜索互联网获取信息（无需 API Key）。"
         "适用场景：需要搜索最新信息、新闻、技术更新，且未配置 Tavily API Key 时使用。"
@@ -97,7 +100,7 @@ class DuckDuckGoSearchTool(BaseTool):
             return _search_via_langchain(query, max_results)
         except Exception as e:
             error_msg = f"搜索失败: {e!s}。请安装 duckduckgo-search: pip install duckduckgo-search"
-            logger.error(error_msg)
+            logger.exception(error_msg)
             return error_msg
 
     async def _arun(self, query: str, max_results: int = 5) -> str:
@@ -110,6 +113,7 @@ duckduckgo_search = DuckDuckGoSearchTool()
 def has_duckduckgo_available() -> bool:
     try:
         from duckduckgo_search import DDGS
+
         return True
     except ImportError:
         return HAS_DUCKDUCKGO_TOOL

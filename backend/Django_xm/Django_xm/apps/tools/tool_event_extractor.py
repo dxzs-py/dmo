@@ -146,33 +146,29 @@ def extract_tool_events_from_message(
                     if not tc_args:
                         continue
                     seen_tool_call_ids.add(tc_id)
-                    events.append({
-                        'event_type': EventType.TOOL_CALL_INPUT_READY,
-                        'tool_call_id': tc_id,
-                        'tool_name': tc_name or "unknown",
-                        'parameters': tc_args,
-                    })
+                    events.append(
+                        {
+                            "event_type": EventType.TOOL_CALL_INPUT_READY,
+                            "tool_call_id": tc_id,
+                            "tool_name": tc_name or "unknown",
+                            "parameters": tc_args,
+                        }
+                    )
                 elif isinstance(parsed_args, list) and parsed_args:
                     seen_tool_call_ids.add(tc_id)
-                    events.append({
-                        'event_type': EventType.TOOL_CALL_INPUT_READY,
-                        'tool_call_id': tc_id,
-                        'tool_name': tc_name or "unknown",
-                        'parameters': {"items": parsed_args},
-                    })
+                    events.append(
+                        {
+                            "event_type": EventType.TOOL_CALL_INPUT_READY,
+                            "tool_call_id": tc_id,
+                            "tool_name": tc_name or "unknown",
+                            "parameters": {"items": parsed_args},
+                        }
+                    )
         # 完整 AIMessage（非 chunk）：tool_calls 的 args 已是完整 dict，直接使用
         elif getattr(message, "tool_calls", None):
             for tc in message.tool_calls:
-                tc_id = (
-                    tc.get("id")
-                    if isinstance(tc, dict)
-                    else getattr(tc, "id", None)
-                )
-                tc_name = (
-                    tc.get("name")
-                    if isinstance(tc, dict)
-                    else getattr(tc, "name", None)
-                )
+                tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                tc_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
                 # 去重：同一 tool_call_id 只发射一次
                 if not tc_id or tc_id in seen_tool_call_ids:
                     continue
@@ -182,12 +178,14 @@ def extract_tool_events_from_message(
                 if not tc_args:
                     continue
                 seen_tool_call_ids.add(tc_id)
-                events.append({
-                    'event_type': EventType.TOOL_CALL_INPUT_READY,
-                    'tool_call_id': tc_id,
-                    'tool_name': tc_name or "unknown",
-                    'parameters': tc_args,
-                })
+                events.append(
+                    {
+                        "event_type": EventType.TOOL_CALL_INPUT_READY,
+                        "tool_call_id": tc_id,
+                        "tool_name": tc_name or "unknown",
+                        "parameters": tc_args,
+                    }
+                )
 
     # ---- 分支 2：ToolMessage ----
     elif isinstance(message, ToolMessage):
@@ -231,9 +229,7 @@ def extract_tool_events_from_message(
                     if not cc_id:
                         continue  # 跳过无 id 的 chunk（无法归属）
                     if cc_args:
-                        chunk_args_by_id[cc_id] = (
-                            chunk_args_by_id.get(cc_id, "") + cc_args
-                        )
+                        chunk_args_by_id[cc_id] = chunk_args_by_id.get(cc_id, "") + cc_args
             # 直接按 tc_id 取累积的 args
             agg_args_str = chunk_args_by_id.get(tc_id, "")
             if agg_args_str and agg_args_str.strip():
@@ -246,33 +242,28 @@ def extract_tool_events_from_message(
                 except (json.JSONDecodeError, ValueError):
                     try:
                         from langchain_core.utils.json import parse_partial_json
+
                         parsed = parse_partial_json(agg_args_str)
                         if isinstance(parsed, dict) and parsed:
                             tool_parameters = parsed
                     except Exception:
-                        pass
+                        # 部分JSON解析失败时回退到从单个 AIMessage 提取
+                        logger.debug("parse_partial_json 解析失败，回退到 AIMessage 提取")
             # 从单个 AIMessage.tool_calls 提取（聚合未命中时的 fallback）
             if not tool_parameters:
                 for prev_msg in accumulated_messages:
                     if not getattr(prev_msg, "tool_calls", None):
                         continue
                     for tc in prev_msg.tool_calls:
-                        prev_id = (
-                            tc.get("id", "")
-                            if isinstance(tc, dict)
-                            else getattr(tc, "id", "")
-                        )
+                        prev_id = tc.get("id", "") if isinstance(tc, dict) else getattr(tc, "id", "")
                         if str(prev_id) == str(tc_id):
-                            tool_parameters = strip_internal_fields(
-                                extract_tool_params(tc)
-                            )
+                            tool_parameters = strip_internal_fields(extract_tool_params(tc))
                             break
                     if tool_parameters:
                         break
         except Exception as e:
             logger.debug(
-                f"[ToolEventExtractor] 聚合 tool_call_chunks 参数失败: "
-                f"tc_id={tc_id}, tool={tool_name}, err={e}"
+                f"[ToolEventExtractor] 聚合 tool_call_chunks 参数失败: tc_id={tc_id}, tool={tool_name}, err={e}"
             )
 
         # 补发 tool 事件：若 AIMessageChunk 阶段因 args 不完整未发射，
@@ -280,34 +271,39 @@ def extract_tool_events_from_message(
         # 完整 parameters 的 tool (input) 事件，再转发 tool_result。
         if tc_id not in seen_tool_call_ids:
             seen_tool_call_ids.add(tc_id)
-            events.append({
-                'event_type': EventType.TOOL_CALL_INPUT_READY,
-                'tool_call_id': tc_id,
-                'tool_name': tool_name,
-                'parameters': tool_parameters,
-            })
+            events.append(
+                {
+                    "event_type": EventType.TOOL_CALL_INPUT_READY,
+                    "tool_call_id": tc_id,
+                    "tool_name": tool_name,
+                    "parameters": tool_parameters,
+                }
+            )
 
         # 检测工具执行状态：status=='error' 或 content 以 'Error' 开头
         # （来源：official_deep_agent.py L753-756）
-        is_error = (
-            getattr(message, "status", None) == "error"
-            or (isinstance(content, str) and content.startswith("Error"))
+        is_error = getattr(message, "status", None) == "error" or (
+            isinstance(content, str) and content.startswith("Error")
         )
         if is_error:
-            events.append({
-                'event_type': EventType.TOOL_CALL_FAILED,
-                'tool_call_id': tc_id,
-                'tool_name': tool_name,
-                'parameters': tool_parameters,
-                'error': content if isinstance(content, str) else str(content),
-            })
+            events.append(
+                {
+                    "event_type": EventType.TOOL_CALL_FAILED,
+                    "tool_call_id": tc_id,
+                    "tool_name": tool_name,
+                    "parameters": tool_parameters,
+                    "error": content if isinstance(content, str) else str(content),
+                }
+            )
         else:
-            events.append({
-                'event_type': EventType.TOOL_CALL_COMPLETED,
-                'tool_call_id': tc_id,
-                'tool_name': tool_name,
-                'parameters': tool_parameters,
-                'result': content_str,
-            })
+            events.append(
+                {
+                    "event_type": EventType.TOOL_CALL_COMPLETED,
+                    "tool_call_id": tc_id,
+                    "tool_name": tool_name,
+                    "parameters": tool_parameters,
+                    "result": content_str,
+                }
+            )
 
     return events

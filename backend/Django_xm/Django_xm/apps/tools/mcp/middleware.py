@@ -15,15 +15,16 @@ from datetime import datetime
 from functools import wraps
 from typing import Any, ClassVar, Optional
 
+from django.utils import timezone
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
-from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.analytics.services.tool_analytics import (
     ToolAnalyticsService,
     ToolUsageRecord,
 )
+from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.tools.errors import (
     ToolErrorCode,
     ToolResult,
@@ -136,8 +137,7 @@ def create_rate_limit_interceptor(
 
         if len(recent) >= calls_per_minute:
             raise RuntimeError(
-                f"MCP 工具调用频率超限: {tool_name} "
-                f"(限制: {calls_per_minute}/分钟, 当前: {len(recent)}/分钟)"
+                f"MCP 工具调用频率超限: {tool_name} (限制: {calls_per_minute}/分钟, 当前: {len(recent)}/分钟)"
             )
 
         return args
@@ -160,7 +160,7 @@ class ToolResultAdapter:
             "content": ToolResultAdapter.adapt(result, source),
             "source": source,
             "tool_name": tool_name,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": timezone.now().isoformat(),
         }
 
 
@@ -192,7 +192,7 @@ def wrap_tool_with_middleware(
     log_calls: bool = True,
 ) -> BaseTool:
     original_run = tool._run
-    original_arun = tool._arun if hasattr(tool, '_arun') else None
+    original_arun = tool._arun if hasattr(tool, "_arun") else None
 
     interceptors = interceptors or []
     tool_source = (getattr(tool, "metadata", None) or {}).get("source", "local")
@@ -218,7 +218,7 @@ def wrap_tool_with_middleware(
             error = str(e)
             tool_result = exception_to_tool_error(e, tool_name=tool.name)
             result = tool_result.to_str()
-            logger.error(f"MCP 工具执行失败: {tool.name} - {error}")
+            logger.exception(f"MCP 工具执行失败: {tool.name} - {error}")
             raise
         finally:
             if log_calls:
@@ -232,19 +232,23 @@ def wrap_tool_with_middleware(
                 )
                 try:
                     analytics = ToolAnalyticsService()
-                    analytics.record(ToolUsageRecord(
-                        tool_name=tool.name,
-                        timestamp=datetime.now(),
-                        success=error is None,
-                        duration_ms=duration,
-                        error_code=None,
-                    ))
+                    analytics.record(
+                        ToolUsageRecord(
+                            tool_name=tool.name,
+                            timestamp=timezone.now(),
+                            success=error is None,
+                            duration_ms=duration,
+                            error_code=None,
+                        )
+                    )
                 except Exception:
-                    pass
+                    # 分析记录失败不影响工具执行主流程
+                    logger.debug("记录工具 %s 使用分析失败（同步）", tool.name)
 
     tool._run = wrapped_run
 
     if original_arun:
+
         @wraps(original_arun)
         async def wrapped_arun(*args, **kwargs):
             start_time = time.time()
@@ -266,7 +270,7 @@ def wrap_tool_with_middleware(
                 error = str(e)
                 tool_result = exception_to_tool_error(e, tool_name=tool.name)
                 result = tool_result.to_str()
-                logger.error(f"MCP 工具异步执行失败: {tool.name} - {error}")
+                logger.exception(f"MCP 工具异步执行失败: {tool.name} - {error}")
                 raise
             finally:
                 if log_calls:
@@ -280,15 +284,18 @@ def wrap_tool_with_middleware(
                     )
                     try:
                         analytics = ToolAnalyticsService()
-                        analytics.record(ToolUsageRecord(
-                            tool_name=tool.name,
-                            timestamp=datetime.now(),
-                            success=error is None,
-                            duration_ms=duration,
-                            error_code=None,
-                        ))
+                        analytics.record(
+                            ToolUsageRecord(
+                                tool_name=tool.name,
+                                timestamp=timezone.now(),
+                                success=error is None,
+                                duration_ms=duration,
+                                error_code=None,
+                            )
+                        )
                     except Exception:
-                        pass
+                        # 分析记录失败不影响工具执行主流程
+                        logger.debug("记录工具 %s 使用分析失败（异步）", tool.name)
 
         tool._arun = wrapped_arun
 
@@ -298,7 +305,7 @@ def wrap_tool_with_middleware(
 class ToolVersionInfo(BaseModel):
     tool_name: str
     version: str = "1.0.0"
-    last_updated: datetime = datetime.now()
+    last_updated: datetime = timezone.now()
     changelog: list[str] = []
 
 
@@ -337,13 +344,13 @@ class MCPToolRegistry:
         if existing:
             if effective_version != existing.version:
                 existing.version = effective_version
-                existing.last_updated = datetime.now()
+                existing.last_updated = timezone.now()
                 existing.changelog.append(f"版本更新至 {effective_version}")
         else:
             self._versions[tool.name] = ToolVersionInfo(
                 tool_name=tool.name,
                 version=effective_version,
-                last_updated=datetime.now(),
+                last_updated=timezone.now(),
             )
 
         logger.debug(f"MCP 工具已注册: {tool.name} (来源: {source}, 版本: {effective_version})")
@@ -361,7 +368,7 @@ class MCPToolRegistry:
             return
         old_version = info.version
         info.version = new_version
-        info.last_updated = datetime.now()
+        info.last_updated = timezone.now()
         entry_text = changelog or f"版本从 {old_version} 更新至 {new_version}"
         info.changelog.append(entry_text)
         if tool_name in self._tools:
@@ -386,11 +393,7 @@ class MCPToolRegistry:
         return [entry["tool"] for entry in self._tools.values()]
 
     def get_by_source(self, source: str) -> list[BaseTool]:
-        return [
-            entry["tool"]
-            for entry in self._tools.values()
-            if entry["source"] == source
-        ]
+        return [entry["tool"] for entry in self._tools.values() if entry["source"] == source]
 
     def list_tools(self) -> list[dict[str, Any]]:
         return [

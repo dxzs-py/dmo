@@ -95,3 +95,35 @@ extend-ignore-names = ["Django_xm"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["mypy_django_plugin.main"]
+follow_imports = "silent"
+ignore_missing_imports = true
+show_error_codes = true
+exclude = [
+    "/migrations/",
+    "/__pycache__/",
+    "\\.venv",
+    "/build/",
+    "/dist/",
+]
+
+[tool.django-stubs]
+django_settings_module = "Django_xm.settings.dev"
+strict_settings = false
+
+# Third-party packages that trigger mypy internal errors during import following
+# are skipped to keep type checking of first-party code stable.
+# (Not a type:ignore workaround — this only affects how mypy follows imports
+# into these installed packages, treating them as untyped/Any.)
+[[tool.mypy.overrides]]
+module = "deepagents.*"
+follow_imports = "skip"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "langchain.agents.middleware.*"
+follow_imports = "skip"
+ignore_missing_imports = true

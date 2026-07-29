@@ -16,14 +16,11 @@ class PreflightResult:
 
     def __init__(self, passed: bool, issues: list[str], warnings: list[str]):
         self.passed = passed
-        self.issues = issues        # 严重问题（阻止正常执行）
-        self.warnings = warnings    # 警告（可能影响功能）
+        self.issues = issues  # 严重问题（阻止正常执行）
+        self.warnings = warnings  # 警告（可能影响功能）
 
     def __repr__(self):
-        return (
-            f"PreflightResult(passed={self.passed}, "
-            f"issues={self.issues}, warnings={self.warnings})"
-        )
+        return f"PreflightResult(passed={self.passed}, issues={self.issues}, warnings={self.warnings})"
 
 
 class ExecutionPreflight:
@@ -80,6 +77,7 @@ class ExecutionPreflight:
         """
         try:
             from Django_xm.apps.agent_hub.model_resolver import resolve_model
+
             model = resolve_model(config)
             if model is not None:
                 return (True, "")
@@ -91,6 +89,7 @@ class ExecutionPreflight:
         """检查 Redis 连接"""
         try:
             from django.core.cache import cache
+
             cache.set("_preflight_check", "1", timeout=5)
             result = cache.get("_preflight_check")
             if result == "1":

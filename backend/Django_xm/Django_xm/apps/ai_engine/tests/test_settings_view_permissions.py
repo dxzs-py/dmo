@@ -58,6 +58,7 @@ def _make_user(user_id: int = 1, is_staff: bool = False, is_authenticated: bool 
 # Task 3.1：permission_classes 配置验证
 # ============================================================================
 
+
 class PermissionClassesConfigTests(unittest.TestCase):
     """验证 AISettingsView / RebuildIndexesView 的 permission_classes 配置"""
 
@@ -73,7 +74,8 @@ class PermissionClassesConfigTests(unittest.TestCase):
         """AISettingsView 不应使用 IsAuthenticated（应使用更严格的 IsAdmin）"""
         for perm in AISettingsView.permission_classes:
             self.assertIsNot(
-                perm, IsAuthenticated,
+                perm,
+                IsAuthenticated,
                 "AISettingsView 不应使用 IsAuthenticated，应使用 IsAdmin",
             )
 
@@ -81,7 +83,8 @@ class PermissionClassesConfigTests(unittest.TestCase):
         """RebuildIndexesView 不应使用 IsAuthenticated"""
         for perm in RebuildIndexesView.permission_classes:
             self.assertIsNot(
-                perm, IsAuthenticated,
+                perm,
+                IsAuthenticated,
                 "RebuildIndexesView 不应使用 IsAuthenticated，应使用 IsAdmin",
             )
 
@@ -89,6 +92,7 @@ class PermissionClassesConfigTests(unittest.TestCase):
 # ============================================================================
 # Task 3.3：端到端权限测试（普通用户 403，管理员可访问）
 # ============================================================================
+
 
 class AISettingsViewAccessTests(unittest.TestCase):
     """AISettingsView 端到端权限测试
@@ -114,7 +118,8 @@ class AISettingsViewAccessTests(unittest.TestCase):
         response = AISettingsView.as_view()(request)
         response.render()
         self.assertEqual(
-            response.status_code, 403,
+            response.status_code,
+            403,
             f"普通用户访问应返回 403, actual={response.status_code}, body={response.content[:300]}",
         )
 
@@ -123,25 +128,34 @@ class AISettingsViewAccessTests(unittest.TestCase):
         user = _make_user(is_staff=True)
         request = self._make_get_request(user)
         # Mock 视图内部依赖（避免真实 DB / 网络）
-        with patch(
-            "Django_xm.apps.ai_engine.settings_views.get_available_providers",
-            return_value=[],
-        ), patch(
-            "Django_xm.apps.ai_engine.settings_views._get_embedding_providers",
-            return_value=[],
-        ), patch(
-            "Django_xm.apps.ai_engine.models.SystemConfig.get_value",
-            return_value={},
-        ), patch.object(
-            AISettingsView, "_get_index_dimensions", return_value=[],
-        ), patch(
-            "Django_xm.apps.ai_engine.settings_views.HELPER_MODEL_PRIORITY",
-            [],
+        with (
+            patch(
+                "Django_xm.apps.ai_engine.settings_views.get_available_providers",
+                return_value=[],
+            ),
+            patch(
+                "Django_xm.apps.ai_engine.settings_views._get_embedding_providers",
+                return_value=[],
+            ),
+            patch(
+                "Django_xm.apps.ai_engine.models.SystemConfig.get_value",
+                return_value={},
+            ),
+            patch.object(
+                AISettingsView,
+                "_get_index_dimensions",
+                return_value=[],
+            ),
+            patch(
+                "Django_xm.apps.ai_engine.settings_views.HELPER_MODEL_PRIORITY",
+                [],
+            ),
         ):
             response = AISettingsView.as_view()(request)
             response.render()
         self.assertEqual(
-            response.status_code, 200,
+            response.status_code,
+            200,
             f"管理员访问应返回 200, actual={response.status_code}, body={response.content[:300]}",
         )
 
@@ -168,7 +182,8 @@ class RebuildIndexesViewAccessTests(unittest.TestCase):
         response = RebuildIndexesView.as_view()(request)
         response.render()
         self.assertEqual(
-            response.status_code, 403,
+            response.status_code,
+            403,
             f"普通用户 POST 应返回 403, actual={response.status_code}, body={response.content[:300]}",
         )
 
@@ -179,22 +194,25 @@ class RebuildIndexesViewAccessTests(unittest.TestCase):
         # 即使后续因 mock 失败抛异常，权限检查应已通过（不会返回 403）
         # 用 mock 防止真实调用：直接让 get_embedding_provider_ids 返回空，
         # 视图会在 provider_id 校验处返回 400，但权限已通过
-        with patch(
-            "Django_xm.apps.ai_engine.settings_views.get_embedding_provider_ids",
-            return_value=["openai"],
-        ), patch(
-            "Django_xm.apps.ai_engine.settings_views.get_embedding_registry",
-            return_value=[{"id": "openai", "dimension": 1536}],
-        ), patch(
-            "Django_xm.apps.ai_engine.settings_views.IndexManager"
-        ) as mock_mgr_cls:
+        with (
+            patch(
+                "Django_xm.apps.ai_engine.settings_views.get_embedding_provider_ids",
+                return_value=["openai"],
+            ),
+            patch(
+                "Django_xm.apps.ai_engine.settings_views.get_embedding_registry",
+                return_value=[{"id": "openai", "dimension": 1536}],
+            ),
+            patch("Django_xm.apps.ai_engine.settings_views.IndexManager") as mock_mgr_cls,
+        ):
             mock_mgr = MagicMock()
             mock_mgr.list_indexes.return_value = []
             mock_mgr_cls.return_value = mock_mgr
             response = RebuildIndexesView.as_view()(request)
             response.render()
         self.assertNotEqual(
-            response.status_code, 403,
+            response.status_code,
+            403,
             f"管理员不应返回 403, actual={response.status_code}, body={response.content[:300]}",
         )
 

@@ -98,8 +98,8 @@ class ContextSwitcher:
             self._store.put(namespace, self._current_context, context_data)
             self._context_cache[self._current_context] = context_data
             logger.debug(f"上下文已保存: context_id={self._current_context}")
-        except Exception as e:
-            logger.error(f"保存上下文失败: context_id={self._current_context}, error={e}")
+        except Exception:
+            logger.exception(f"保存上下文失败: context_id={self._current_context}")
 
     async def load_context(self, context_id: str, user_id: str) -> dict | None:
         """加载指定上下文
@@ -119,12 +119,12 @@ class ContextSwitcher:
         try:
             item = self._store.get(namespace, context_id)
             if item is not None:
-                context_data = item.value if hasattr(item, 'value') else item
+                context_data = item.value if hasattr(item, "value") else item
                 self._context_cache[context_id] = context_data
                 return context_data
             return None
-        except Exception as e:
-            logger.error(f"加载上下文失败: context_id={context_id}, error={e}")
+        except Exception:
+            logger.exception(f"加载上下文失败: context_id={context_id}")
             return None
 
     async def list_contexts(self, user_id: str) -> list[str]:
@@ -142,11 +142,11 @@ class ContextSwitcher:
             context_ids = []
             for item in items:
                 # item.key 即为 context_id
-                key = item.key if hasattr(item, 'key') else str(item)
+                key = item.key if hasattr(item, "key") else str(item)
                 context_ids.append(key)
             return context_ids
-        except Exception as e:
-            logger.error(f"列出上下文失败: user_id={user_id}, error={e}")
+        except Exception:
+            logger.exception(f"列出上下文失败: user_id={user_id}")
             return []
 
     async def delete_context(self, context_id: str, user_id: str) -> bool:
@@ -167,8 +167,8 @@ class ContextSwitcher:
                 self._current_context = None
             logger.info(f"上下文已删除: context_id={context_id}")
             return True
-        except Exception as e:
-            logger.error(f"删除上下文失败: context_id={context_id}, error={e}")
+        except Exception:
+            logger.exception(f"删除上下文失败: context_id={context_id}")
             return False
 
     def clear_cache(self) -> None:

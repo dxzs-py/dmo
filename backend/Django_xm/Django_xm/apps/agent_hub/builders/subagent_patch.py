@@ -37,9 +37,7 @@ logger = logging.getLogger(__name__)
 assert json is not None, "json 模块未正确导入，请检查 import 语句"
 
 # 协程隔离的 checkpointer 上下文变量
-_CURRENT_CHECKPOINTER: contextvars.ContextVar[Any] = contextvars.ContextVar(
-    'subagent_checkpointer', default=None
-)
+_CURRENT_CHECKPOINTER: contextvars.ContextVar[Any] = contextvars.ContextVar("subagent_checkpointer", default=None)
 
 _patched = False
 
@@ -103,16 +101,21 @@ def patch_subagent_middleware() -> None:
                 from typing import cast
 
                 from deepagents.middleware.subagents import CompiledSubAgent
+
                 compiled = cast(CompiledSubAgent, spec)
-                runnable = compiled["runnable"].with_config({
-                    "metadata": {"lc_agent_name": compiled["name"]},
-                    "run_name": compiled["name"],
-                })
-                specs.append({
-                    "name": compiled["name"],
-                    "description": compiled["description"],
-                    "runnable": runnable,
-                })
+                runnable = compiled["runnable"].with_config(
+                    {
+                        "metadata": {"lc_agent_name": compiled["name"]},
+                        "run_name": compiled["name"],
+                    }
+                )
+                specs.append(
+                    {
+                        "name": compiled["name"],
+                        "description": compiled["description"],
+                        "runnable": runnable,
+                    }
+                )
                 continue
 
             # SubAgent - validate required fields
@@ -129,30 +132,30 @@ def patch_subagent_middleware() -> None:
 
             # Use middleware as provided (caller is responsible for building full stack)
             from langchain.agents.middleware.types import AgentMiddleware
+
             middleware: list[AgentMiddleware] = list(spec.get("middleware", []))
 
             interrupt_on = spec.get("interrupt_on")
             if interrupt_on:
                 middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
 
-            specs.append({
-                "name": spec["name"],
-                "description": spec["description"],
-                "runnable": create_agent(
-                    model,
-                    system_prompt=spec["system_prompt"],
-                    tools=spec["tools"],
-                    middleware=middleware,
-                    name=spec["name"],
-                    response_format=spec.get("response_format"),
-                    checkpointer=checkpointer,  # 关键：注入 checkpointer
-                ),
-            })
+            specs.append(
+                {
+                    "name": spec["name"],
+                    "description": spec["description"],
+                    "runnable": create_agent(
+                        model,
+                        system_prompt=spec["system_prompt"],
+                        tools=spec["tools"],
+                        middleware=middleware,
+                        name=spec["name"],
+                        response_format=spec.get("response_format"),
+                        checkpointer=checkpointer,  # 关键：注入 checkpointer
+                    ),
+                }
+            )
 
-        logger.info(
-            f"[SubAgentPatch] _get_subagents 已注入 checkpointer: "
-            f"{len(specs)} 个子智能体"
-        )
+        logger.info(f"[SubAgentPatch] _get_subagents 已注入 checkpointer: {len(specs)} 个子智能体")
         return specs
 
     _subagents_module.SubAgentMiddleware._get_subagents = _patched_get_subagents
@@ -182,23 +185,16 @@ def patch_subagent_middleware() -> None:
         from langgraph.types import Command
 
         # Build the graphs dict and descriptions from the unified spec list
-        subagent_graphs: dict[str, Runnable] = {
-            spec["name"]: spec["runnable"] for spec in subagents
-        }
-        subagent_description_str = "\n".join(
-            f"- {s['name']}: {s['description']}" for s in subagents
-        )
+        subagent_graphs: dict[str, Runnable] = {spec["name"]: spec["runnable"] for spec in subagents}
+        subagent_description_str = "\n".join(f"- {s['name']}: {s['description']}" for s in subagents)
 
         # Use custom description if provided, otherwise use default template
         if task_description is None:
             from deepagents.middleware.subagents import TASK_TOOL_DESCRIPTION
-            description = TASK_TOOL_DESCRIPTION.format(
-                available_agents=subagent_description_str
-            )
+
+            description = TASK_TOOL_DESCRIPTION.format(available_agents=subagent_description_str)
         elif "{available_agents}" in task_description:
-            description = task_description.format(
-                available_agents=subagent_description_str
-            )
+            description = task_description.format(available_agents=subagent_description_str)
         else:
             description = task_description
 
@@ -212,6 +208,7 @@ def patch_subagent_middleware() -> None:
                 raise ValueError(error_msg)
 
             import dataclasses
+
             state_update = {k: v for k, v in result.items() if k not in _EXCLUDED_STATE_KEYS}
 
             structured = result.get("structured_response")
@@ -220,9 +217,11 @@ def patch_subagent_middleware() -> None:
                     content: str = structured.model_dump_json()
                 elif dataclasses.is_dataclass(structured) and not isinstance(structured, type):
                     import json
+
                     content = json.dumps(dataclasses.asdict(structured))
                 else:
                     import json
+
                     content = json.dumps(structured)
             else:
                 content = result["messages"][-1].text.rstrip() if result["messages"][-1].text else ""
@@ -240,10 +239,7 @@ def patch_subagent_middleware() -> None:
             runtime: ToolRuntime,
         ) -> tuple[Runnable, dict]:
             subagent = subagent_graphs[subagent_type]
-            subagent_state = {
-                k: v for k, v in runtime.state.items()
-                if k not in _EXCLUDED_STATE_KEYS
-            }
+            subagent_state = {k: v for k, v in runtime.state.items() if k not in _EXCLUDED_STATE_KEYS}
             subagent_state["messages"] = [HumanMessage(content=description)]
             return subagent, subagent_state
 
@@ -261,9 +257,7 @@ def patch_subagent_middleware() -> None:
             if not runtime.tool_call_id:
                 value_error_msg = "Tool call ID is required for subagent invocation"
                 raise ValueError(value_error_msg)
-            subagent, subagent_state = _validate_and_prepare_state(
-                subagent_type, description, runtime
-            )
+            subagent, subagent_state = _validate_and_prepare_state(subagent_type, description, runtime)
             subagent_config: RunnableConfig = {
                 "configurable": {
                     **runtime.config.get("configurable", {}),
@@ -287,9 +281,7 @@ def patch_subagent_middleware() -> None:
             if not runtime.tool_call_id:
                 value_error_msg = "Tool call ID is required for subagent invocation"
                 raise ValueError(value_error_msg)
-            subagent, subagent_state = _validate_and_prepare_state(
-                subagent_type, description, runtime
-            )
+            subagent, subagent_state = _validate_and_prepare_state(subagent_type, description, runtime)
 
             # 关键修复（Issue 2）：继承父 graph 的 callbacks + 转发工具事件
             # 原版只继承 configurable，导致子智能体内部的工具调用事件
@@ -301,10 +293,61 @@ def patch_subagent_middleware() -> None:
             parent_configurable = runtime.config.get("configurable", {}) or {}
             on_tool_event = parent_configurable.get("_on_tool_event")
 
+            # 嵌套层级字段注入（Phase E1 + E3）：
+            # 参考 Claude Code Task 工具设计，子 agent 需携带嵌套层级信息，
+            # 供 ApprovalMiddleware 评估子 agent 风险加权 + 透传到 Approval.extra。
+            #
+            # 字段说明：
+            # - parent_tool_call_id: 主 agent 调用 task 工具的 tool_call_id
+            #   （用于审批卡片展示调用链路）
+            # - depth: 嵌套层级（0=主 agent，1=一级子 agent，2=二级子 agent）
+            #   （用于风险加权和深度限制）
+            # - agent_name: 子 agent 名称（如 "web-researcher"）
+            #   （供 ApprovalMiddleware._extract_subagent_context 读取）
+            # - agent_path: 完整调用链路（如 ["main", "general-purpose", "web-researcher"]）
+            #   （用于审计日志和前端展示完整调用路径）
+            # - risk_ceiling: 子 agent 角色风险上限（RiskLevel 枚举值）
+            #   （供 policies.assess_risk 的 subagent_context 参数使用）
+            parent_depth = parent_configurable.get("depth", 0)
+            if not isinstance(parent_depth, int) or parent_depth < 0:
+                parent_depth = 0
+            child_depth = parent_depth + 1
+
+            # 深度上限保护：防止无限嵌套（默认 3 层）
+            _MAX_DEPTH = 3
+            if child_depth > _MAX_DEPTH:
+                raise ValueError(
+                    f"子 agent 嵌套深度超过上限 ({_MAX_DEPTH}): "
+                    f"current_depth={child_depth}, agent_path="
+                    f"{parent_configurable.get('agent_path', ['main'])}"
+                )
+
+            # 构造 agent_path：从父 configurable 继承并追加当前子 agent
+            parent_agent_path = parent_configurable.get("agent_path")
+            if isinstance(parent_agent_path, list) and parent_agent_path:
+                child_agent_path = [*list(parent_agent_path), subagent_type]
+            else:
+                child_agent_path = ["main", subagent_type]
+
+            # 查找子 agent 角色风险上限
+            # 从 deep_builder._SUBAGENT_RISK_CEILINGS 读取，未注册的子 agent 默认 HIGH（不限制）
+            from Django_xm.apps.agent_hub.builders.deep_builder import _SUBAGENT_RISK_CEILINGS
+            from Django_xm.common.risk_levels import RiskLevel
+
+            risk_ceiling = _SUBAGENT_RISK_CEILINGS.get(subagent_type, RiskLevel.HIGH)
+
+            parent_tool_call_id = runtime.tool_call_id or ""
+
             subagent_config: RunnableConfig = {
                 "configurable": {
                     **parent_configurable,
                     "ls_agent_type": "subagent",
+                    # 嵌套层级字段（Phase E1 + E3）
+                    "parent_tool_call_id": parent_tool_call_id,
+                    "depth": child_depth,
+                    "agent_name": subagent_type,
+                    "agent_path": child_agent_path,
+                    "risk_ceiling": risk_ceiling,
                 }
             }
             # 移除 _on_tool_event，避免向更深层子智能体递归传递
@@ -313,7 +356,8 @@ def patch_subagent_middleware() -> None:
                 subagent_config["callbacks"] = parent_callbacks
                 logger.debug(
                     f"[SubAgentPatch] atask 继承父 callbacks: "
-                    f"subagent={subagent_type}, callbacks_count={len(parent_callbacks) if isinstance(parent_callbacks, list) else 1}"
+                    f"subagent={subagent_type}, depth={child_depth}, "
+                    f"callbacks_count={len(parent_callbacks) if isinstance(parent_callbacks, list) else 1}"
                 )
 
             if on_tool_event is not None:
@@ -325,10 +369,7 @@ def patch_subagent_middleware() -> None:
                     on_tool_event,
                     subagent_type=subagent_type,
                 )
-                logger.debug(
-                    f"[SubAgentPatch] atask astream 转发完成: "
-                    f"subagent={subagent_type}"
-                )
+                logger.debug(f"[SubAgentPatch] atask astream 转发完成: subagent={subagent_type}")
             else:
                 result = await subagent.ainvoke(subagent_state, subagent_config)
             return _return_command_with_state_update(result, runtime.tool_call_id)
@@ -351,12 +392,19 @@ def patch_subagent_middleware() -> None:
             支持 AIMessageChunk 参数聚合与 ToolMessage 阶段补发，确保前端工具参数
             不再显示为 {}.
 
+            子 agent 嵌套层级字段透传（Phase E3）：
+            atask 在构造 subagent_config 时已注入 parent_tool_call_id / depth /
+            agent_name / agent_path / risk_ceiling 到 configurable。本函数从
+            subagent_config["configurable"] 读取这些字段，随每个 tool 事件一起
+            传递给 on_tool_event 回调，最终到达前端 ToolCallCard。
+
             回调签名（固定为 async）:
                 async def on_tool_event(
                     event_type: EventType,
                     tool_call_id: str,
                     tool_name: str,
-                    **kwargs,  # parameters / result / error
+                    **kwargs,  # parameters / result / error /
+                               # parent_tool_call_id / depth / agent_name / agent_path / risk_ceiling
                 ) -> None
 
             实现由 adapter.py 的 ``_on_tool_event`` 提供，通过
@@ -370,6 +418,25 @@ def patch_subagent_middleware() -> None:
             from Django_xm.apps.agent_hub.services.agent_resilience import DuplicateToolCallDetector
             from Django_xm.apps.tools.tool_event_extractor import extract_tool_events_from_message
             from Django_xm.common.event_schema import EventType
+
+            # 提取子 agent 嵌套层级字段（Phase E3）：
+            # atask 已将这些字段注入到 subagent_config["configurable"]，
+            # 此处一次性提取，随每个 tool 事件传递给 on_tool_event 回调。
+            # 主 agent 直接调用的工具不经过本函数（无 subagent_config），
+            # 故这些字段仅子 agent 工具事件携带。
+            sub_configurable = (
+                subagent_config.get("configurable", {}) or {} if isinstance(subagent_config, dict) else {}
+            )
+            sub_parent_tool_call_id = sub_configurable.get("parent_tool_call_id") or ""
+            sub_depth = sub_configurable.get("depth", 0)
+            if not isinstance(sub_depth, int) or sub_depth < 0:
+                sub_depth = 0
+            sub_agent_name = sub_configurable.get("agent_name") or ""
+            sub_agent_path = sub_configurable.get("agent_path")
+            if not isinstance(sub_agent_path, list):
+                sub_agent_path = None
+            sub_risk_ceiling = sub_configurable.get("risk_ceiling")
+            # risk_ceiling 可能是 RiskLevel 枚举，回调端会统一处理
 
             final_state: dict = {}
             accumulated_messages: list = []
@@ -402,11 +469,7 @@ def patch_subagent_middleware() -> None:
                         continue
 
                     # messages 模式：(message, metadata) 元组
-                    msg_obj = (
-                        mode_data[0]
-                        if isinstance(mode_data, tuple) and len(mode_data) == 2
-                        else mode_data
-                    )
+                    msg_obj = mode_data[0] if isinstance(mode_data, tuple) and len(mode_data) == 2 else mode_data
 
                     # 工具事件检测：复用公共模块 extract_tool_events_from_message
                     # 关键修复：deepagents astream(messages) 只产出 AIMessageChunk，
@@ -415,31 +478,43 @@ def patch_subagent_middleware() -> None:
                     # 公共模块接受 AIMessage/AIMessageChunk，用 seen_tool_call_ids 去重，
                     # 并在 ToolMessage 阶段从累积 chunk 聚合完整参数后补发。
                     tool_events = extract_tool_events_from_message(
-                        msg_obj, seen_tool_call_ids, accumulated_messages,
+                        msg_obj,
+                        seen_tool_call_ids,
+                        accumulated_messages,
                     )
                     for evt in tool_events:
                         # 重复工具调用检测：仅对 INPUT_READY 记录
-                        if evt.get('event_type') == EventType.TOOL_CALL_INPUT_READY:
+                        if evt.get("event_type") == EventType.TOOL_CALL_INPUT_READY:
                             warning = duplicate_detector.record(
-                                evt.get('tool_name') or 'unknown',
-                                evt.get('parameters') or {},
+                                evt.get("tool_name") or "unknown",
+                                evt.get("parameters") or {},
                             )
                             if warning is not None:
-                                pending_duplicate_warnings.append(
-                                    SystemMessage(content=warning.to_prompt())
-                                )
-                        evt_kwargs = {'parameters': evt.get('parameters', {})}
-                        if 'result' in evt:
-                            evt_kwargs['result'] = evt['result']
-                        if 'error' in evt:
-                            evt_kwargs['error'] = evt['error']
+                                pending_duplicate_warnings.append(SystemMessage(content=warning.to_prompt()))
+                        evt_kwargs = {"parameters": evt.get("parameters", {})}
+                        if "result" in evt:
+                            evt_kwargs["result"] = evt["result"]
+                        if "error" in evt:
+                            evt_kwargs["error"] = evt["error"]
+                        # 子 agent 嵌套层级字段（Phase E3）：随事件一起传递
+                        # depth>0 才传递（主 agent depth=0 不传，避免污染 payload）
+                        if sub_depth > 0:
+                            evt_kwargs["depth"] = sub_depth
+                        if sub_parent_tool_call_id:
+                            evt_kwargs["parent_tool_call_id"] = sub_parent_tool_call_id
+                        if sub_agent_name:
+                            evt_kwargs["agent_name"] = sub_agent_name
+                        if sub_agent_path:
+                            evt_kwargs["agent_path"] = sub_agent_path
+                        if sub_risk_ceiling is not None:
+                            evt_kwargs["risk_ceiling"] = sub_risk_ceiling
                         try:
                             # on_tool_event 签名固定为 async（adapter.py 的 _on_tool_event）
                             # 统一 await 调用，移除 iscoroutine 双模式判断
                             await on_tool_event(
-                                evt['event_type'],
-                                evt['tool_call_id'],
-                                evt['tool_name'] or "unknown",
+                                evt["event_type"],
+                                evt["tool_call_id"],
+                                evt["tool_name"] or "unknown",
                                 **evt_kwargs,
                             )
                         except Exception as e:
@@ -458,14 +533,12 @@ def patch_subagent_middleware() -> None:
                         f"重复调用警告到子智能体 {subagent_type} 状态"
                     )
                     try:
-                        await subagent.aupdate_state(
-                            subagent_config, {"messages": pending_duplicate_warnings},
+                        await subagent.aupdate_state(  # type: ignore[attr-defined]  # langgraph CompiledGraph extension on Runnable
+                            subagent_config,
+                            {"messages": pending_duplicate_warnings},
                         )
                     except Exception as e:
-                        logger.warning(
-                            f"[SubAgentPatch] 注入重复调用警告失败 "
-                            f"(subagent={subagent_type}): {e}"
-                        )
+                        logger.warning(f"[SubAgentPatch] 注入重复调用警告失败 (subagent={subagent_type}): {e}")
                     pending_duplicate_warnings.clear()
                     subagent_state = None  # 从当前 checkpoint 续流
                     continue

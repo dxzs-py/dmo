@@ -33,6 +33,7 @@ logger = get_logger(__name__)
 
 # ============== 开发环境路径解析 ==============
 
+
 def _resolve_npx_path() -> str:
     """解析 npx 可执行文件路径（开发环境专用）。
 
@@ -41,10 +42,10 @@ def _resolve_npx_path() -> str:
         2. ``NPM_NPX_ALT_PATH`` 环境变量（备选路径，存在则使用）
         3. ``'npx'`` 字面量（依赖系统 PATH 解析）
     """
-    npx_path = os.environ.get('NPM_NPX_PATH')
+    npx_path = os.environ.get("NPM_NPX_PATH")
     if not npx_path or not os.path.exists(npx_path):
-        npx_alt = os.environ.get('NPM_NPX_ALT_PATH')
-        npx_path = npx_alt if npx_alt and os.path.exists(npx_alt) else 'npx'
+        npx_alt = os.environ.get("NPM_NPX_ALT_PATH")
+        npx_path = npx_alt if npx_alt and os.path.exists(npx_alt) else "npx"
     return npx_path
 
 
@@ -54,7 +55,7 @@ def _resolve_node_dir() -> str | None:
     Returns:
         node 安装目录路径，或 None（未配置或路径不存在）。
     """
-    node_dir = os.environ.get('NODE_PATH')
+    node_dir = os.environ.get("NODE_PATH")
     if node_dir and not os.path.exists(node_dir):
         return None
     return node_dir
@@ -69,7 +70,7 @@ def _build_default_servers() -> list[dict[str, Any]]:
     """
     npx_path = _resolve_npx_path()
     node_dir = _resolve_node_dir()
-    env_path = os.environ.get('PATH', '')
+    env_path = os.environ.get("PATH", "")
     path_env = f"{node_dir};{env_path}" if node_dir else None
 
     return [
@@ -113,7 +114,7 @@ def get_system_mcp_servers() -> list[dict[str, Any]]:
         本函数取代原 ``getattr(django_settings, 'MCP_SERVERS', [])`` 的间接访问，
         配置归属业务模块而非 Django settings，符合"是什么就是什么"原则。
     """
-    env_json = os.environ.get('MCP_SYSTEM_SERVERS_JSON')
+    env_json = os.environ.get("MCP_SYSTEM_SERVERS_JSON")
     if env_json:
         try:
             servers = json.loads(env_json)

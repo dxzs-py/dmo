@@ -45,7 +45,9 @@ class DetectLanguageInput(BaseModel):
 
 class TranslateTextTool(BaseTool):
     name: str = "translate_text"
-    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "translation"})
+    metadata: dict = Field(
+        default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "translation"}
+    )
     description: str = (
         "将文本翻译为指定语言，支持中英日韩法德西葡俄等20+种语言互译。"
         "适用场景：用户需要翻译文本、切换对话语言、或用不同语言交流时使用。"
@@ -68,11 +70,7 @@ class TranslateTextTool(BaseTool):
 
             if source_language:
                 source = _normalize_language(source_language)
-                prompt = (
-                    f"请将以下{source}文本翻译为{target}。"
-                    f"只返回翻译结果，不要添加解释或注释。\n\n"
-                    f"原文：{text}"
-                )
+                prompt = f"请将以下{source}文本翻译为{target}。只返回翻译结果，不要添加解释或注释。\n\n原文：{text}"
             else:
                 prompt = (
                     f"请将以下文本翻译为{target}。"
@@ -91,7 +89,7 @@ class TranslateTextTool(BaseTool):
 
         except Exception as e:
             error_msg = f"翻译失败: {e!s}"
-            logger.error(error_msg)
+            logger.exception(error_msg)
             return error_msg
 
     async def _arun(self, text: str, target_language: str, source_language: str | None = None) -> str:
@@ -100,7 +98,9 @@ class TranslateTextTool(BaseTool):
 
 class DetectLanguageTool(BaseTool):
     name: str = "detect_language"
-    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "translation"})
+    metadata: dict = Field(
+        default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "translation"}
+    )
     description: str = (
         "检测文本使用的语言，返回语言的中文名称（如'中文'、'英语'、'日语'）。"
         "适用场景：需要识别文本使用的是什么语言、在翻译前确定源语言时使用。"
@@ -132,7 +132,7 @@ class DetectLanguageTool(BaseTool):
 
         except Exception as e:
             error_msg = f"语言检测失败: {e!s}"
-            logger.error(error_msg)
+            logger.exception(error_msg)
             return error_msg
 
     async def _arun(self, text: str) -> str:

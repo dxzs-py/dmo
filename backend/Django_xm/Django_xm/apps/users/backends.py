@@ -2,6 +2,7 @@
 自定义认证后端
 支持用户名或手机号码登录，遵循 Django 认证后端协议
 """
+
 import re
 
 from django.contrib.auth.backends import ModelBackend
@@ -18,7 +19,7 @@ def get_account_by_mobile(account):
     如果查询不到对应的用户信息，则返回None。
     """
     try:
-        if re.match(r'^1[3-9]\d{9}$', account):
+        if re.match(r"^1[3-9]\d{9}$", account):
             user = User.objects.get(mobile=account)
         else:
             user = User.objects.get(username=account)
@@ -33,6 +34,7 @@ class UsernameMobileAuthBackend(ModelBackend):
     自定义用户认证后端，支持用户名或手机号码登录
     继承自Django的ModelBackend，重写了authenticate方法
     """
+
     def authenticate(self, request, username=None, password=None, **kwargs):
         """
         用户认证方法

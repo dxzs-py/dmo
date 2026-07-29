@@ -57,8 +57,7 @@ class InMemoryBackend(VectorStoreBackend):
         if collection_name in self._stores:
             return self._stores[collection_name]
         raise ValueError(
-            f"InMemory 向量库 '{collection_name}' 不存在或已被清除。"
-            "InMemoryVectorStore 不支持从磁盘加载。"
+            f"InMemory 向量库 '{collection_name}' 不存在或已被清除。InMemoryVectorStore 不支持从磁盘加载。"
         )
 
     def save(

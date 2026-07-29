@@ -35,9 +35,9 @@ def api_response(
         code_value = code
 
     response_data = {
-        'code': code_value,
-        'message': resolved_message,
-        'data': data,
+        "code": code_value,
+        "message": resolved_message,
+        "data": data,
     }
     response = Response(response_data, status=resolved_status)
     if headers:
@@ -57,7 +57,9 @@ def success_response(data=None, message="操作成功", http_status=None, header
     )
 
 
-def error_response(code=ErrorCode.SERVER_ERROR, message=None, data=None, http_status=None, headers: dict[str, str] | None = None):
+def error_response(
+    code=ErrorCode.SERVER_ERROR, message=None, data=None, http_status=None, headers: dict[str, str] | None = None
+):
     """错误响应"""
     return api_response(code=code, message=message, data=data, http_status=http_status, headers=headers)
 

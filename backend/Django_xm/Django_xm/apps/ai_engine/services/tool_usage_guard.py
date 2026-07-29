@@ -36,7 +36,7 @@ import time
 from collections import OrderedDict, deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from Django_xm.apps.core.config import get_logger
@@ -108,14 +108,14 @@ TOOL_FINGERPRINTS: list[ToolFingerprint] = [
     ToolFingerprint(
         tool_names=("fs_read_file",),
         resource_extractor=lambda a: _f_str(a, "relative_path") or _f_str(a, "path"),
-        payload_extractor=lambda a: _default_resource_extractor(a),
+        payload_extractor=_default_resource_extractor,
         loop_strategy="payload_hash",
         description="读文件 - 同 path 重复读视为冗余",
     ),
     ToolFingerprint(
         tool_names=("fs_list_files",),
         resource_extractor=lambda a: _f_str(a, "subdirectory", "notes"),
-        payload_extractor=lambda a: _default_resource_extractor(a),
+        payload_extractor=_default_resource_extractor,
         loop_strategy="payload_hash",
         description="列文件 - 同子目录+pattern 视为同资源",
     ),
@@ -125,7 +125,7 @@ TOOL_FINGERPRINTS: list[ToolFingerprint] = [
             _f_str(a, "subdirectory", "notes"),
             _f_text_hash(a, "keyword"),
         ),
-        payload_extractor=lambda a: _default_resource_extractor(a),
+        payload_extractor=_default_resource_extractor,
         loop_strategy="payload_hash",
         description="搜文件 - keyword 决定资源维度",
     ),
@@ -133,32 +133,30 @@ TOOL_FINGERPRINTS: list[ToolFingerprint] = [
     ToolFingerprint(
         tool_names=("calculator",),
         resource_extractor=lambda a: _f_str(a, "expression"),
-        payload_extractor=lambda a: _default_resource_extractor(a),
+        payload_extractor=_default_resource_extractor,
         loop_strategy="payload_hash",
         description="计算 - 同表达式重复调用直接去重",
     ),
     ToolFingerprint(
         tool_names=("translate_text",),
         resource_extractor=lambda a: _f_combine(_f_str(a, "target_lang"), _f_text_hash(a, "text")),
-        payload_extractor=lambda a: _default_resource_extractor(a),
+        payload_extractor=_default_resource_extractor,
         loop_strategy="payload_hash",
         description="翻译 - 同文本+目标语言视为同资源",
     ),
     ToolFingerprint(
         tool_names=("detect_language",),
         resource_extractor=lambda a: _f_text_hash(a, "text"),
-        payload_extractor=lambda a: _default_resource_extractor(a),
+        payload_extractor=_default_resource_extractor,
         loop_strategy="payload_hash",
         description="语言检测 - 同文本重复检测视为冗余",
     ),
     # 搜索
     ToolFingerprint(
         tool_names=("web_search", "duckduckgo_search", "tavily_search"),
-        resource_extractor=lambda a: _f_combine(
-            _f_str(a, "query"), _f_str(a, "max_results", "5")
-        ),
+        resource_extractor=lambda a: _f_combine(_f_str(a, "query"), _f_str(a, "max_results", "5")),
         # 包含整个 args 作为 payload（参数变化时 payload 也变化，dedup 不命中 → 触发 loop）
-        payload_extractor=lambda a: _default_resource_extractor(a),
+        payload_extractor=_default_resource_extractor,
         loop_strategy="payload_hash",
         description="网络搜索 - 同 query 视为同资源，参数变化时去重不命中",
     ),
@@ -166,7 +164,7 @@ TOOL_FINGERPRINTS: list[ToolFingerprint] = [
         tool_names=("web_fetch",),
         resource_extractor=lambda a: _f_str(a, "url"),
         # 包含整个 args（如果调用方传 cache_buster 之类的，会影响 payload）
-        payload_extractor=lambda a: _default_resource_extractor(a),
+        payload_extractor=_default_resource_extractor,
         loop_strategy="payload_hash",
         description="网页抓取 - 同 URL 反复拉取视为循环",
     ),
@@ -174,7 +172,7 @@ TOOL_FINGERPRINTS: list[ToolFingerprint] = [
     ToolFingerprint(
         tool_names=("weather_query",),
         resource_extractor=lambda a: _f_combine(_f_str(a, "city"), _f_str(a, "date", "today")),
-        payload_extractor=lambda a: _default_resource_extractor(a),
+        payload_extractor=_default_resource_extractor,
         loop_strategy="payload_hash",
         description="天气 - 同城市+日期视为同资源",
     ),
@@ -186,10 +184,8 @@ TOOL_FINGERPRINTS: list[ToolFingerprint] = [
             "knowledge_base_list",
             "knowledge_base_get",
         ),
-        resource_extractor=lambda a: _f_combine(
-            _f_str(a, "query"), _f_str(a, "knowledge_base_id", "default")
-        ),
-        payload_extractor=lambda a: _default_resource_extractor(a),
+        resource_extractor=lambda a: _f_combine(_f_str(a, "query"), _f_str(a, "knowledge_base_id", "default")),
+        payload_extractor=_default_resource_extractor,
         loop_strategy="payload_hash",
         description="知识库 - 同 query 视为同资源，参数变化时去重不命中",
     ),
@@ -205,14 +201,14 @@ TOOL_FINGERPRINTS: list[ToolFingerprint] = [
     ToolFingerprint(
         tool_names=("attachment_reader",),
         resource_extractor=lambda a: _f_str(a, "attachment_id") or _f_str(a, "filename"),
-        payload_extractor=lambda a: _default_resource_extractor(a),
+        payload_extractor=_default_resource_extractor,
         loop_strategy="payload_hash",
         description="附件读取 - 同 ID 重复读视为冗余",
     ),
     ToolFingerprint(
         tool_names=("file_reader",),
         resource_extractor=lambda a: _f_str(a, "path") or _f_str(a, "file_path"),
-        payload_extractor=lambda a: _default_resource_extractor(a),
+        payload_extractor=_default_resource_extractor,
         loop_strategy="payload_hash",
         description="文件读取 - 同 path 重复读视为冗余",
     ),
@@ -270,7 +266,7 @@ def _get_fingerprint(tool_name: str) -> ToolFingerprint:
     )
 
 
-class ToolUsageStatus(str, Enum):
+class ToolUsageStatus(StrEnum):
     """工具调用使用决策状态"""
 
     ALLOW = "allow"  # 允许执行
@@ -422,37 +418,30 @@ class ToolUsageGuard:
 
         # 3. 通用资源循环检测（在 dedup 之前，让循环计数先累加）
         # fs_write_file 跳过通用 loop，自己有更严格的 content_diff 检测
-        if (
-            self.general_dedup_enabled
-            and resource_key
-            and tool_name != "fs_write_file"
-        ):
-            loop_decision = self._check_general_resource_loop(
-                thread_id, tool_name, resource_key, payload, now
-            )
+        if self.general_dedup_enabled and resource_key and tool_name != "fs_write_file":
+            loop_decision = self._check_general_resource_loop(thread_id, tool_name, resource_key, payload, now)
             if loop_decision is not None:
                 return loop_decision
 
         # 4. 通用 dedup（resource_key + payload_hash）
         if self.general_dedup_enabled and resource_key:
-            dedup = self._check_general_dedup(
-                thread_id, tool_name, resource_key, payload, now
-            )
+            dedup = self._check_general_dedup(thread_id, tool_name, resource_key, payload, now)
             if dedup is not None:
                 return dedup
 
         # 4. fs_write_file 专用 diff 循环（严格增量检测）
         if tool_name == "fs_write_file":
-            fs_loop = self._check_fs_write_file_loop(
-                thread_id, args, now
-            )
+            fs_loop = self._check_fs_write_file_loop(thread_id, args, now)
             if fs_loop is not None:
                 return fs_loop
 
         # 5. 通过：记录调用 + 附加软警告
         self._record_call(
-            thread_id, tool_name, now,
-            resource_key=resource_key, payload=payload,
+            thread_id,
+            tool_name,
+            now,
+            resource_key=resource_key,
+            payload=payload,
         )
         if soft_warning_event is not None:
             return ToolUsageDecision(
@@ -485,8 +474,9 @@ class ToolUsageGuard:
             for k in [k for k in self._path_recent_contents if k[0] == thread_id]:
                 self._path_recent_contents.pop(k, None)
             # 清理 _resource_recent
-            for k in [k for k in self._resource_recent if k[0] == thread_id]:
-                self._resource_recent.pop(k, None)
+            for key in list(self._resource_recent):
+                if key[0] == thread_id:
+                    self._resource_recent.pop(key, None)
             # 清理 _resource_cache（注意 LRU 是 thread 隔离困难，简单重建）
             self._resource_cache.clear()
 
@@ -576,9 +566,7 @@ class ToolUsageGuard:
 
         # 全部相同 → 阻断
         with self._lock:
-            self._consecutive_blocked[thread_id] = (
-                self._consecutive_blocked.get(thread_id, 0) + 1
-            )
+            self._consecutive_blocked[thread_id] = self._consecutive_blocked.get(thread_id, 0) + 1
             consecutive = self._consecutive_blocked[thread_id]
         sse_event = {
             "type": "tool_usage_blocked",
@@ -651,9 +639,7 @@ class ToolUsageGuard:
         avg_diff = sum(diffs) / len(diffs)
         if avg_diff < self.same_path_diff_ratio:
             with self._lock:
-                self._consecutive_blocked[thread_id] = (
-                    self._consecutive_blocked.get(thread_id, 0) + 1
-                )
+                self._consecutive_blocked[thread_id] = self._consecutive_blocked.get(thread_id, 0) + 1
                 consecutive = self._consecutive_blocked[thread_id]
             sse_event = {
                 "type": "tool_usage_blocked",
@@ -719,18 +705,14 @@ class ToolUsageGuard:
         # fs_write_file 同时写入两份：_resource_cache（让通用 dedup 工作）+ _file_cache（让 diff_ratio 工作）
         if resource_key:
             cache_key = (thread_id, tool_name, resource_key)
-            self._resource_cache.set(
-                cache_key, (self._content_hash(payload or ""), now)
-            )
+            self._resource_cache.set(cache_key, (self._content_hash(payload or ""), now))
         # 兼容：fs_write_file 专用文件缓存（额外一份，用于 _check_fs_write_file_loop 的 content_diff）
         if tool_name == "fs_write_file":
             p = path or resource_key
             c = content or payload
             if p is not None and c is not None:
                 file_cache_key = (thread_id, p)
-                self._file_cache.set(
-                    file_cache_key, (self._content_hash(c), now)
-                )
+                self._file_cache.set(file_cache_key, (self._content_hash(c), now))
 
     def _check_rate_limit(
         self,
@@ -749,9 +731,7 @@ class ToolUsageGuard:
 
             if current_count >= int(self.rate_limit_max * self.hard_stop_threshold):
                 # 硬阻断
-                self._consecutive_blocked[thread_id] = (
-                    self._consecutive_blocked.get(thread_id, 0) + 1
-                )
+                self._consecutive_blocked[thread_id] = self._consecutive_blocked.get(thread_id, 0) + 1
                 sse_event = {
                     "type": "tool_usage_blocked",
                     "data": {
@@ -851,23 +831,13 @@ def get_tool_usage_guard() -> ToolUsageGuard:
                 dedup_cache_size=int(getattr(settings, "tool_usage_dedup_cache_size", 1000)),
                 rate_limit_max=int(getattr(settings, "tool_usage_rate_limit_max", 30)),
                 rate_limit_window=int(getattr(settings, "tool_usage_rate_limit_window", 60)),
-                soft_warning_threshold=float(
-                    getattr(settings, "tool_usage_soft_warning_threshold", 0.5)
-                ),
-                hard_stop_threshold=float(
-                    getattr(settings, "tool_usage_hard_stop_threshold", 0.9)
-                ),
+                soft_warning_threshold=float(getattr(settings, "tool_usage_soft_warning_threshold", 0.5)),
+                hard_stop_threshold=float(getattr(settings, "tool_usage_hard_stop_threshold", 0.9)),
                 same_path_max=int(getattr(settings, "tool_usage_same_path_max", 6)),
-                same_path_diff_ratio=float(
-                    getattr(settings, "tool_usage_same_path_diff_ratio", 0.05)
-                ),
-                blocked_consecutive_max=int(
-                    getattr(settings, "tool_usage_blocked_consecutive_max", 2)
-                ),
+                same_path_diff_ratio=float(getattr(settings, "tool_usage_same_path_diff_ratio", 0.05)),
+                blocked_consecutive_max=int(getattr(settings, "tool_usage_blocked_consecutive_max", 2)),
                 same_resource_max=int(getattr(settings, "tool_usage_same_resource_max", 6)),
-                general_dedup_enabled=bool(
-                    getattr(settings, "tool_usage_general_dedup_enabled", True)
-                ),
+                general_dedup_enabled=bool(getattr(settings, "tool_usage_general_dedup_enabled", True)),
             )
         except Exception as e:
             logger.warning(f"ToolUsageGuard 初始化失败，使用默认配置: {e}")

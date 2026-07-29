@@ -84,9 +84,7 @@ class SecureLogoutViewExceptionHandlingTests(APITestCase):
 
     def setUp(self):
         super().setUp()
-        self.user = User.objects.create_user(
-            username="logout_user", password="Complex@123", email="logout@example.com"
-        )
+        self.user = User.objects.create_user(username="logout_user", password="Complex@123", email="logout@example.com")
         self.client.force_authenticate(user=self.user)
 
     def test_logout_no_active_session(self):

@@ -90,7 +90,7 @@ class ShellExecArunExecutionTests(unittest.IsolatedAsyncioTestCase):
             ret = await tool._arun(command="echo hello")
             mock_exec.assert_called_once()
             # 验证传入的 command 不含 approved_by_middleware
-            args, kwargs = mock_exec.call_args
+            args, _kwargs = mock_exec.call_args
             self.assertEqual(args[0], "echo hello")
             # 返回值为 ToolMessage 字符串
             self.assertIn("ok", str(ret))
@@ -108,27 +108,29 @@ class ShellExecArunExecutionTests(unittest.IsolatedAsyncioTestCase):
             source="shell_exec",
             metadata={"command": "rm /tmp/x", "return_code": 0},
         )
-        with patch(
-            "Django_xm.apps.tools.langchain.shell._execute_command",
-            return_value=fake_result,
-        ) as mock_exec, patch(
-            "Django_xm.apps.tools.langchain.shell._is_command_blocked",
-            return_value=None,
-        ), patch(
-            "Django_xm.apps.tools.langchain.shell._is_command_whitelisted",
-            return_value=False,
+        with (
+            patch(
+                "Django_xm.apps.tools.langchain.shell._execute_command",
+                return_value=fake_result,
+            ) as mock_exec,
+            patch(
+                "Django_xm.apps.tools.langchain.shell._is_command_blocked",
+                return_value=None,
+            ),
+            patch(
+                "Django_xm.apps.tools.langchain.shell._is_command_whitelisted",
+                return_value=False,
+            ),
         ):
             await tool._arun(command="rm /tmp/x")
             mock_exec.assert_called_once()
-            args, kwargs = mock_exec.call_args
+            args, _kwargs = mock_exec.call_args
             self.assertEqual(args[0], "rm /tmp/x")
 
     async def test_arun_blocked_command_returns_error_without_execution(self):
         """危险命令（rm -rf /）被 BLOCKED_PATTERNS 拦截，不调用 _execute_command。"""
         tool = ShellExecTool()
-        with patch(
-            "Django_xm.apps.tools.langchain.shell._execute_command"
-        ) as mock_exec:
+        with patch("Django_xm.apps.tools.langchain.shell._execute_command") as mock_exec:
             ret = await tool._arun(command="rm -rf /")
             mock_exec.assert_not_called()
             self.assertIn("拦截", str(ret))
@@ -136,9 +138,7 @@ class ShellExecArunExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_arun_empty_command_returns_error_without_execution(self):
         """空命令直接返回错误，不调用 _execute_command。"""
         tool = ShellExecTool()
-        with patch(
-            "Django_xm.apps.tools.langchain.shell._execute_command"
-        ) as mock_exec:
+        with patch("Django_xm.apps.tools.langchain.shell._execute_command") as mock_exec:
             ret = await tool._arun(command="")
             mock_exec.assert_not_called()
             self.assertIn("不能为空", str(ret))

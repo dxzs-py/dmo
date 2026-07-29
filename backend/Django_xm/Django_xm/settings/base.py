@@ -43,9 +43,11 @@ if not SECRET_KEY:
 
 DEBUG = project_cfg.debug
 
-ALLOWED_HOSTS = [
-    h.strip() for h in project_cfg.allowed_hosts.split(",") if h.strip()
-] if project_cfg.allowed_hosts else ["localhost", "127.0.0.1"]
+ALLOWED_HOSTS = (
+    [h.strip() for h in project_cfg.allowed_hosts.split(",") if h.strip()]
+    if project_cfg.allowed_hosts
+    else ["localhost", "127.0.0.1"]
+)
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -130,38 +132,38 @@ USE_I18N = True
 USE_TZ = True
 
 CACHES = {
-    'default': {
-        'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': os.environ.get('REDIS_URL', project_cfg.redis_url),
-        'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-            'CONNECTION_POOL_KWARGS': {
-                'max_connections': 50,
-                'retry_on_timeout': True,
-                'socket_timeout': 3,
-                'socket_connect_timeout': 3,
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": os.environ.get("REDIS_URL", project_cfg.redis_url),
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            "CONNECTION_POOL_KWARGS": {
+                "max_connections": 50,
+                "retry_on_timeout": True,
+                "socket_timeout": 3,
+                "socket_connect_timeout": 3,
             },
-            'PASSWORD': os.environ.get('REDIS_PASSWORD', project_cfg.redis_password),
+            "PASSWORD": os.environ.get("REDIS_PASSWORD", project_cfg.redis_password),
         },
-        'TIMEOUT': project_cfg.redis_default_timeout,
-        'KEY_PREFIX': 'langchain_xm',
+        "TIMEOUT": project_cfg.redis_default_timeout,
+        "KEY_PREFIX": "langchain_xm",
     },
-    'chat_sessions': {
-        'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': os.environ.get('REDIS_CHAT_URL', project_cfg.redis_chat_url),
-        'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-            'CONNECTION_POOL_KWARGS': {
-                'max_connections': 100,
-                'retry_on_timeout': True,
-                'socket_timeout': 3,
-                'socket_connect_timeout': 3,
+    "chat_sessions": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": os.environ.get("REDIS_CHAT_URL", project_cfg.redis_chat_url),
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            "CONNECTION_POOL_KWARGS": {
+                "max_connections": 100,
+                "retry_on_timeout": True,
+                "socket_timeout": 3,
+                "socket_connect_timeout": 3,
             },
-            'PASSWORD': os.environ.get('REDIS_PASSWORD', project_cfg.redis_password),
+            "PASSWORD": os.environ.get("REDIS_PASSWORD", project_cfg.redis_password),
         },
-        'TIMEOUT': project_cfg.redis_chat_timeout,
-        'KEY_PREFIX': 'chat_session',
-    }
+        "TIMEOUT": project_cfg.redis_chat_timeout,
+        "KEY_PREFIX": "chat_session",
+    },
 }
 
 STATIC_URL = "static/"
@@ -170,16 +172,16 @@ MEDIA_URL = "media/"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-AUTH_USER_MODEL = 'users.User'
+AUTH_USER_MODEL = "users.User"
 AUTHENTICATION_BACKENDS = [
-    'Django_xm.apps.users.backends.UsernameMobileAuthBackend',
-    'django.contrib.auth.backends.ModelBackend',
+    "Django_xm.apps.users.backends.UsernameMobileAuthBackend",
+    "django.contrib.auth.backends.ModelBackend",
 ]
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
-        'Django_xm.apps.core.authentication.QueryParamTokenAuthentication',
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "Django_xm.apps.core.authentication.QueryParamTokenAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
@@ -216,12 +218,12 @@ REST_FRAMEWORK = {
 }
 
 SIMPLE_JWT = {
-    'ROTATE_REFRESH_TOKENS': True,
-    'BLACKLIST_AFTER_ROTATION': True,
-    'ALGORITHM': 'HS256',
-    'SIGNING_KEY': SECRET_KEY,
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "ALGORITHM": "HS256",
+    "SIGNING_KEY": SECRET_KEY,
     "TOKEN_OBTAIN_SERIALIZER": "Django_xm.apps.users.serializers.MyTokenObtainPairSerializer",
-    'UPDATE_LAST_LOGIN': True,
+    "UPDATE_LAST_LOGIN": True,
 }
 
 SPECTACULAR_SETTINGS = {
@@ -236,15 +238,22 @@ SPECTACULAR_SETTINGS = {
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 CORS_ALLOW_HEADERS = [
-    "accept", "accept-encoding", "authorization", "content-type",
-    "dnt", "origin", "user-agent", "x-csrftoken", "x-requested-with",
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
 ]
 CORS_EXPOSE_HEADERS = ["content-disposition", "X-Captcha-Key", "X-Request-Duration"]
 
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
-SESSION_COOKIE_SAMESITE = 'Lax'
-CSRF_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
 
 _upload_limit = project_cfg.upload_max_memory_size_mb * 1024 * 1024
 DATA_UPLOAD_MAX_MEMORY_SIZE = _upload_limit
@@ -256,7 +265,7 @@ EMAIL_BACKEND = project_cfg.email_backend
 DEFAULT_FROM_EMAIL = project_cfg.default_from_email
 SERVER_EMAIL = project_cfg.default_from_email
 
-LOCALE_PATHS = [BASE_DIR / 'locale']
+LOCALE_PATHS = [BASE_DIR / "locale"]
 
 APP_NAME = project_cfg.app_name
 APP_VERSION = project_cfg.app_version
@@ -267,19 +276,17 @@ UPLOADS_DIR = PROJECT_ROOT / project_cfg.data_uploads_path
 
 MEDIA_ROOT = DATA_DIR / "media"
 
-TOOLS_DIR = DATA_DIR / 'tools'
-TOOLS_SKILLS_DIR = TOOLS_DIR / 'skills'
-TOOLS_LANGCHAIN_DIR = TOOLS_DIR / 'langchain'
-TOOLS_MCP_DIR = TOOLS_DIR / 'mcp'
+TOOLS_DIR = DATA_DIR / "tools"
+TOOLS_SKILLS_DIR = TOOLS_DIR / "skills"
+TOOLS_LANGCHAIN_DIR = TOOLS_DIR / "langchain"
+TOOLS_MCP_DIR = TOOLS_DIR / "mcp"
 
-for directory in [DATA_DIR, UPLOADS_DIR,
-                  TOOLS_DIR, TOOLS_SKILLS_DIR, TOOLS_LANGCHAIN_DIR, TOOLS_MCP_DIR,
-                  MEDIA_ROOT]:
+for directory in [DATA_DIR, UPLOADS_DIR, TOOLS_DIR, TOOLS_SKILLS_DIR, TOOLS_LANGCHAIN_DIR, TOOLS_MCP_DIR, MEDIA_ROOT]:
     directory.mkdir(parents=True, exist_ok=True)
 
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
-CELERY_RESULT_SERIALIZER = 'json'
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = project_cfg.celery_task_time_limit
@@ -287,44 +294,46 @@ CELERY_TASK_SOFT_TIME_LIMIT = project_cfg.celery_task_time_limit - 60
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_WORKER_MAX_TASKS_PER_CHILD = project_cfg.celery_worker_max_tasks_per_child
 CELERY_RESULT_EXPIRES = 86400
-CELERY_BEAT_SCHEDULE_FILENAME = str(PROJECT_ROOT / 'data' / 'celerybeat' / 'celerybeat-schedule')
-CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', project_cfg.celery_broker_url)
-CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', project_cfg.celery_result_backend)
+CELERY_BEAT_SCHEDULE_FILENAME = str(PROJECT_ROOT / "data" / "celerybeat" / "celerybeat-schedule")
+CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", project_cfg.celery_broker_url)
+CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", project_cfg.celery_result_backend)
 CELERY_WORKER_HIJACK_ROOT_LOGGER = False
 CELERY_WORKER_MAX_MEMORY_PER_CHILD = 512000
 CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
-CELERY_TASK_DEFAULT_QUEUE = 'celery'
+CELERY_TASK_DEFAULT_QUEUE = "celery"
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
 CELERY_TASK_ROUTES = {
-    'rag.create_index':        {'queue': 'rag'},
-    'rag.add_documents':       {'queue': 'rag'},
-    'rag.delete_index':        {'queue': 'rag'},
-    'rag.update_index':        {'queue': 'rag'},
-    'research.run_research':   {'queue': 'research'},
-    'workflow.execute':        {'queue': 'workflow'},
-    'chat.cleanup_expired_attachments':  {'queue': 'chat'},
-    'chat.index_old_attachments':        {'queue': 'chat'},
-    'chat.check_storage_alerts':         {'queue': 'chat'},
-    'chat.attachment_full_lifecycle':    {'queue': 'chat'},
-    'chat.cleanup_checkpoints':          {'queue': 'chat'},
-    'base.cleanup_old_task_records':     {'queue': 'celery'},
-    'base.check_stale_tasks':            {'queue': 'celery'},
-    'base.debug_task':                   {'queue': 'celery'},
-    'analytics.track_event':             {'queue': 'celery'},
-    'approvals.cleanup_expired_approvals': {'queue': 'celery'},
+    "rag.create_index": {"queue": "rag"},
+    "rag.add_documents": {"queue": "rag"},
+    "rag.delete_index": {"queue": "rag"},
+    "rag.update_index": {"queue": "rag"},
+    "research.run_research": {"queue": "research"},
+    "workflow.execute": {"queue": "workflow"},
+    "chat.cleanup_expired_attachments": {"queue": "chat"},
+    "chat.index_old_attachments": {"queue": "chat"},
+    "chat.check_storage_alerts": {"queue": "chat"},
+    "chat.attachment_full_lifecycle": {"queue": "chat"},
+    "chat.cleanup_checkpoints": {"queue": "chat"},
+    "base.cleanup_old_task_records": {"queue": "celery"},
+    "base.check_stale_tasks": {"queue": "celery"},
+    "base.debug_task": {"queue": "celery"},
+    "analytics.track_event": {"queue": "celery"},
+    "approvals.cleanup_expired_approvals": {"queue": "celery"},
+    "approvals.process_outbox": {"queue": "celery"},
+    "approvals.resume_chat_after_timeout": {"queue": "celery"},
 }
 
-ATTACHMENT_DEFAULT_RETENTION_DAYS = int(os.environ.get('ATTACHMENT_DEFAULT_RETENTION_DAYS', 30))
-ATTACHMENT_CLEANUP_HOUR = int(os.environ.get('ATTACHMENT_CLEANUP_HOUR', 3))
-ATTACHMENT_ARCHIVE_ENABLED = os.environ.get('ATTACHMENT_ARCHIVE_ENABLED', 'true').lower() == 'true'
-ATTACHMENT_ARCHIVE_DIR = PROJECT_ROOT / os.environ.get('ATTACHMENT_ARCHIVE_DIR', 'data/archives')
-ATTACHMENT_ARCHIVE_AFTER_DAYS = int(os.environ.get('ATTACHMENT_ARCHIVE_AFTER_DAYS', 60))
-ATTACHMENT_STORAGE_WARNING_THRESHOLD = float(os.environ.get('ATTACHMENT_STORAGE_WARNING_THRESHOLD', 80))
-ATTACHMENT_STORAGE_CRITICAL_THRESHOLD = float(os.environ.get('ATTACHMENT_STORAGE_CRITICAL_THRESHOLD', 95))
-ATTACHMENT_DEDUP_ENABLED = os.environ.get('ATTACHMENT_DEDUP_ENABLED', 'true').lower() == 'true'
-ATTACHMENT_MAX_TOTAL_SIZE_MB = int(os.environ.get('ATTACHMENT_MAX_TOTAL_SIZE_MB', 5120))
+ATTACHMENT_DEFAULT_RETENTION_DAYS = int(os.environ.get("ATTACHMENT_DEFAULT_RETENTION_DAYS", 30))
+ATTACHMENT_CLEANUP_HOUR = int(os.environ.get("ATTACHMENT_CLEANUP_HOUR", 3))
+ATTACHMENT_ARCHIVE_ENABLED = os.environ.get("ATTACHMENT_ARCHIVE_ENABLED", "true").lower() == "true"
+ATTACHMENT_ARCHIVE_DIR = PROJECT_ROOT / os.environ.get("ATTACHMENT_ARCHIVE_DIR", "data/archives")
+ATTACHMENT_ARCHIVE_AFTER_DAYS = int(os.environ.get("ATTACHMENT_ARCHIVE_AFTER_DAYS", 60))
+ATTACHMENT_STORAGE_WARNING_THRESHOLD = float(os.environ.get("ATTACHMENT_STORAGE_WARNING_THRESHOLD", 80))
+ATTACHMENT_STORAGE_CRITICAL_THRESHOLD = float(os.environ.get("ATTACHMENT_STORAGE_CRITICAL_THRESHOLD", 95))
+ATTACHMENT_DEDUP_ENABLED = os.environ.get("ATTACHMENT_DEDUP_ENABLED", "true").lower() == "true"
+ATTACHMENT_MAX_TOTAL_SIZE_MB = int(os.environ.get("ATTACHMENT_MAX_TOTAL_SIZE_MB", 5120))
 
 # 归档逻辑未实现，不自动创建空目录；实际实现归档功能时再恢复
 # if ATTACHMENT_ARCHIVE_ENABLED:
@@ -333,44 +342,61 @@ ATTACHMENT_MAX_TOTAL_SIZE_MB = int(os.environ.get('ATTACHMENT_MAX_TOTAL_SIZE_MB'
 from celery.schedules import crontab
 
 CELERY_BEAT_SCHEDULE = {
-    'check-storage-alerts-every-hour': {
-        'task': 'chat.check_storage_alerts',
-        'schedule': crontab(minute=10),
+    "check-storage-alerts-every-hour": {
+        "task": "chat.check_storage_alerts",
+        "schedule": crontab(minute=10),
     },
-    'index-old-attachments-daily': {
-        'task': 'chat.index_old_attachments',
-        'schedule': crontab(hour=2, minute=0),
+    "index-old-attachments-daily": {
+        "task": "chat.index_old_attachments",
+        "schedule": crontab(hour=2, minute=0),
     },
-    'cleanup-expired-attachments-daily': {
-        'task': 'chat.cleanup_expired_attachments',
-        'schedule': crontab(hour=int(os.environ.get('ATTACHMENT_CLEANUP_HOUR', '3')), minute=0),
+    "cleanup-expired-attachments-daily": {
+        "task": "chat.cleanup_expired_attachments",
+        "schedule": crontab(hour=int(os.environ.get("ATTACHMENT_CLEANUP_HOUR", "3")), minute=0),
     },
-    'cleanup-old-task-records-daily': {
-        'task': 'base.cleanup_old_task_records',
-        'schedule': crontab(hour=4, minute=0),
+    "cleanup-old-task-records-daily": {
+        "task": "base.cleanup_old_task_records",
+        "schedule": crontab(hour=4, minute=0),
     },
-    'check-stale-tasks-hourly': {
-        'task': 'base.check_stale_tasks',
-        'schedule': crontab(minute=30),
+    "check-stale-tasks-hourly": {
+        "task": "base.check_stale_tasks",
+        "schedule": crontab(minute=30),
     },
-    'cleanup-expired-approvals-every-minute': {
-        'task': 'approvals.cleanup_expired_approvals',
-        'schedule': 60.0,
+    "cleanup-expired-approvals-every-minute": {
+        "task": "approvals.cleanup_expired_approvals",
+        "schedule": 60.0,
+    },
+    "process-approval-outbox-every-5s": {
+        "task": "approvals.process_outbox",
+        "schedule": 5.0,
     },
 }
 
 # AI Engine Settings
 AI_RATE_LIMIT_MAX_MODEL_CALLS = 50
+
+# Phase D: Docker 沙箱执行层配置
+# HIGH 级工具调用在 Docker 容器内执行，防止不可逆变更影响宿主系统。
+# 开发环境默认关闭（ENABLED=False），生产环境通过环境变量启用。
+SANDBOX_CONFIG = {
+    "ENABLED": os.environ.get("SANDBOX_ENABLED", "false").lower() == "true",
+    "DOCKER_IMAGE": os.environ.get("SANDBOX_IMAGE", "python:3.11-slim"),
+    "MEMORY_LIMIT": os.environ.get("SANDBOX_MEMORY", "512m"),
+    "CPU_LIMIT": int(os.environ.get("SANDBOX_CPUS", "1")),
+    "NETWORK_MODE": os.environ.get("SANDBOX_NETWORK", "none"),
+    "SESSION_TIMEOUT": int(os.environ.get("SANDBOX_SESSION_TIMEOUT", "3600")),
+    "WORK_DIR_MOUNT": str(PROJECT_ROOT),
+}
 AI_RATE_LIMIT_MAX_TOOL_CALLS = 30
 AI_LLM_TIMEOUT = 120.0
 AI_LLM_MAX_RETRIES = 3
-AI_DEFAULT_PROVIDER = 'deepseek'
+AI_DEFAULT_PROVIDER = "deepseek"
 AI_MODEL_CACHE_MAXSIZE = 32
 AI_TOOL_PERMISSION_CACHE_TIMEOUT = 3600
 AI_DEFAULT_MODEL_TOKEN_LIMIT = 128000
 
-AI_HELPER_MODEL_PROVIDER = ''
-AI_HELPER_MODEL_NAME = ''
+AI_HELPER_MODEL_PROVIDER = ""
+AI_HELPER_MODEL_NAME = ""
 AI_HELPER_MODEL_TEMPERATURE = 0.0
 AI_HELPER_MODEL_MAX_TOKENS = 256
 

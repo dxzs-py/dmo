@@ -18,6 +18,7 @@ logger = get_logger(__name__)
 @dataclass
 class TokenUsage:
     """Token 使用统计"""
+
     input_tokens: int = 0
     output_tokens: int = 0
     reasoning_tokens: int = 0
@@ -89,15 +90,11 @@ class UsageTracker:
 
     def get_total_tokens(self) -> int:
         """获取总 token 数"""
-        return (
-            self.usage.input_tokens
-            + self.usage.output_tokens
-            + self.usage.reasoning_tokens
-        )
+        return self.usage.input_tokens + self.usage.output_tokens + self.usage.reasoning_tokens
 
     def get_max_tokens(self) -> int:
         """获取模型的最大 token 限制"""
-        return MODEL_LIMITS.get(self.model_id, getattr(django_settings, 'AI_DEFAULT_MODEL_TOKEN_LIMIT', 128000))
+        return MODEL_LIMITS.get(self.model_id, getattr(django_settings, "AI_DEFAULT_MODEL_TOKEN_LIMIT", 128000))
 
     def get_usage_percentage(self) -> float:
         """获取使用百分比"""

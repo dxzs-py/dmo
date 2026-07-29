@@ -1,5 +1,6 @@
 import logging
 
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -9,6 +10,7 @@ from Django_xm.apps.ai_engine.services.checkpointer_factory import get_store
 from Django_xm.apps.context_manager.services.manager import create_context_manager
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.responses import error_response, success_response
+from Django_xm.common.serializers import EmptySerializer
 
 from .serializers import (
     ContextCompressRequestSerializer,
@@ -26,10 +28,11 @@ logger = logging.getLogger(__name__)
 class ContextStatsView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses={200: ContextStatsSerializer})
     def get(self, request):
         try:
             user_id = request.user.id
-            session_id = request.query_params.get('session_id')
+            session_id = request.query_params.get("session_id")
             store = get_store()
             ctx_mgr = create_context_manager(user_id=user_id, store=store, thread_id=session_id)
             stats = ctx_mgr.get_stats()
@@ -37,15 +40,16 @@ class ContextStatsView(APIView):
             return success_response(data=serializer.data)
         except Exception:
             logger.exception("获取上下文统计失败")
-            return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
+            return error_response(ErrorCode.SERVER_ERROR, message="操作失败，请稍后重试")
 
 
 class KnowledgeGraphView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses={200: EmptySerializer})
     def delete(self, request):
         try:
-            confirm = request.query_params.get('confirm', '').lower() in ('1', 'true', 'yes')
+            confirm = request.query_params.get("confirm", "").lower() in ("1", "true", "yes")
             if not confirm:
                 return error_response(
                     code=ErrorCode.VALIDATION_FAILED,
@@ -54,7 +58,7 @@ class KnowledgeGraphView(APIView):
                 )
 
             user_id = request.user.id
-            session_id = request.query_params.get('session_id')
+            session_id = request.query_params.get("session_id")
             store = get_store()
             ctx_mgr = create_context_manager(user_id=user_id, store=store, thread_id=session_id)
             if ctx_mgr._knowledge_graph:
@@ -63,13 +67,15 @@ class KnowledgeGraphView(APIView):
             return success_response(message="知识图谱未启用，无需清除")
         except Exception:
             logger.exception("清除知识图谱失败")
-            return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
+            return error_response(ErrorCode.SERVER_ERROR, message="操作失败，请稍后重试")
 
 
 class TokenBudgetView(APIView):
     """获取 Token 预算使用情况"""
+
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(parameters=[TokenBudgetRequestSerializer], responses={200: TokenBudgetResponseSerializer})
     def get(self, request):
         req_serializer = TokenBudgetRequestSerializer(data=request.query_params)
         if not req_serializer.is_valid():
@@ -82,7 +88,7 @@ class TokenBudgetView(APIView):
 
         try:
             user_id = request.user.id
-            session_id = req_serializer.validated_data.get('session_id')
+            session_id = req_serializer.validated_data.get("session_id")
             store = get_store()
             ctx_mgr = create_context_manager(user_id=user_id, store=store, thread_id=session_id)
             ctx_mgr.get_budget_usage()
@@ -110,8 +116,10 @@ class TokenBudgetView(APIView):
 
 class ContextCompressView(APIView):
     """手动触发上下文压缩"""
+
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(request=ContextCompressRequestSerializer, responses={200: ContextCompressResponseSerializer})
     def post(self, request):
         req_serializer = ContextCompressRequestSerializer(data=request.data)
         if not req_serializer.is_valid():
@@ -141,10 +149,11 @@ class ContextCompressView(APIView):
             messages = []
             try:
                 item = store.get(namespace, "messages")
-                if item and hasattr(item, 'value'):
+                if item and hasattr(item, "value"):
                     messages = item.value if isinstance(item.value, list) else []
             except Exception:
-                pass
+                # Store 读取失败时回退到空列表，后续返回 404
+                logger.debug("从 Store 加载会话消息失败，回退到空列表")
 
             if not messages:
                 return error_response(
@@ -174,8 +183,10 @@ class ContextCompressView(APIView):
 
 class KnowledgeGraphDetailView(APIView):
     """获取知识图谱实体和关系详情"""
+
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(parameters=[KnowledgeGraphDetailRequestSerializer], responses={200: KnowledgeGraphDetailResponseSerializer})
     def get(self, request):
         req_serializer = KnowledgeGraphDetailRequestSerializer(data=request.query_params)
         if not req_serializer.is_valid():
@@ -188,7 +199,7 @@ class KnowledgeGraphDetailView(APIView):
 
         try:
             user_id = request.user.id
-            session_id = req_serializer.validated_data.get('session_id')
+            session_id = req_serializer.validated_data.get("session_id")
             store = get_store()
             ctx_mgr = create_context_manager(user_id=user_id, store=store, thread_id=session_id)
 
@@ -217,21 +228,22 @@ class KnowledgeGraphDetailView(APIView):
             )
 
 
-@api_view(['GET'])
+@extend_schema(responses={200: EmptySerializer})
+@api_view(["GET"])
 @permission_classes([AllowAny])
 def capability_config_view(request):
     try:
         from Django_xm.apps.ai_engine.capabilities import registry
 
-        agent_type = request.query_params.get('agent_type', 'base')
+        agent_type = request.query_params.get("agent_type", "base")
 
         data = {
-            'available_capabilities': registry.list_capabilities(),
-            'default_capabilities': registry.get_default_capabilities(agent_type),
-            'agent_type': agent_type,
+            "available_capabilities": registry.list_capabilities(),
+            "default_capabilities": registry.get_default_capabilities(agent_type),
+            "agent_type": agent_type,
         }
 
         return success_response(data=data)
     except Exception:
         logger.exception("获取能力配置失败")
-        return error_response(ErrorCode.SERVER_ERROR, message='操作失败，请稍后重试')
+        return error_response(ErrorCode.SERVER_ERROR, message="操作失败，请稍后重试")

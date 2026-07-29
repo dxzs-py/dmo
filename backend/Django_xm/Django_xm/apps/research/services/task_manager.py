@@ -3,12 +3,13 @@
 使用数据库存储任务状态，替代全局变量
 所有查询操作强制按用户隔离，防止数据越权访问
 """
+
 import logging
 import threading
-from datetime import datetime
 from typing import Any, ClassVar
 
 from django.core.cache import cache as redis_cache
+from django.utils import timezone
 
 from ..models import ResearchTask
 
@@ -25,8 +26,10 @@ class TaskManager:
     所有涉及任务查询/修改/删除的操作均需验证用户归属
     """
 
-    _instance = None
-    _lock = threading.Lock()
+    _instance: ClassVar["TaskManager | None"] = None
+    _lock: ClassVar[threading.Lock] = threading.Lock()
+    _cache: dict[str, dict[str, Any]] = {}
+    _threads: dict[str, threading.Thread] = {}
 
     def __new__(cls):
         if cls._instance is None:
@@ -63,15 +66,15 @@ class TaskManager:
             task = qs.get()
 
             status_data = {
-                'task_id': task.task_id,
-                'query': task.query,
-                'status': task.status,
-                'current_step': task.status,
-                'created_at': task.created_at.isoformat() if task.created_at else None,
-                'updated_at': task.updated_at.isoformat() if task.updated_at else None,
-                'enable_web_search': task.enable_web_search,
-                'enable_doc_analysis': task.enable_doc_analysis,
-                'final_report': task.final_report if task.status == 'completed' else '',
+                "task_id": task.task_id,
+                "query": task.query,
+                "status": task.status,
+                "current_step": task.status,
+                "created_at": task.created_at.isoformat() if task.created_at else None,
+                "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+                "enable_web_search": task.enable_web_search,
+                "enable_doc_analysis": task.enable_doc_analysis,
+                "final_report": task.final_report if task.status == "completed" else "",
             }
 
             self._cache[task_id] = status_data
@@ -82,10 +85,10 @@ class TaskManager:
             return None
 
     _STATUS_MAP: ClassVar[dict[str, str]] = {
-        'started': 'running',
-        'progress': 'running',
-        'success': 'completed',
-        'failure': 'failed',
+        "started": "running",
+        "progress": "running",
+        "success": "completed",
+        "failure": "failed",
     }
 
     def _map_status(self, status: str) -> str:
@@ -97,7 +100,7 @@ class TaskManager:
 
         self._cache[task_id].update(status_data)
 
-        final_report = status_data.get('final_report') or (status_data.get('result') or {}).get('final_report', '')
+        final_report = status_data.get("final_report") or (status_data.get("result") or {}).get("final_report", "")
 
         try:
             qs = ResearchTask.objects.filter(task_id=task_id)
@@ -105,8 +108,8 @@ class TaskManager:
                 qs = qs.filter(created_by_id=user_id)
             task = qs.get()
 
-            if 'status' in status_data:
-                task.status = self._map_status(status_data['status'])
+            if "status" in status_data:
+                task.status = self._map_status(status_data["status"])
             if final_report:
                 task.final_report = final_report
 
@@ -116,20 +119,24 @@ class TaskManager:
         except ResearchTask.DoesNotExist:
             logger.warning(f"Task {task_id} not found in database or user mismatch")
 
-    def create_task(self, task_id: str, query: str,
-                   enable_web_search: bool = True,
-                   enable_doc_analysis: bool = False,
-                   created_by=None,
-                   session_id: str | None = None) -> dict[str, Any]:
+    def create_task(
+        self,
+        task_id: str,
+        query: str,
+        enable_web_search: bool = True,
+        enable_doc_analysis: bool = False,
+        created_by=None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
         task_data = {
-            'task_id': task_id,
-            'query': query,
-            'status': 'pending',
-            'current_step': 'pending',
-            'created_at': datetime.now().isoformat(),
-            'enable_web_search': enable_web_search,
-            'enable_doc_analysis': enable_doc_analysis,
-            'session_id': session_id,
+            "task_id": task_id,
+            "query": query,
+            "status": "pending",
+            "current_step": "pending",
+            "created_at": timezone.now().isoformat(),
+            "enable_web_search": enable_web_search,
+            "enable_doc_analysis": enable_doc_analysis,
+            "session_id": session_id,
         }
 
         self._cache[task_id] = task_data
@@ -137,11 +144,11 @@ class TaskManager:
         ResearchTask.objects.create(
             task_id=task_id,
             query=query,
-            status='pending',
+            status="pending",
             enable_web_search=enable_web_search,
             enable_doc_analysis=enable_doc_analysis,
             created_by=created_by,
-            session_id=session_id
+            session_id=session_id,
         )
 
         return task_data
@@ -175,13 +182,14 @@ class TaskManager:
             self._invalidate_redis_cache(task_id, task.created_by_id)
 
             # 如果任务仍在运行，先撤销 Celery 任务
-            if task.celery_task_id and task.status in ('pending', 'running'):
+            if task.celery_task_id and task.status in ("pending", "running"):
                 try:
                     from celery import current_app
+
                     current_app.control.revoke(
                         task.celery_task_id,
                         terminate=True,
-                        signal='SIGTERM',
+                        signal="SIGTERM",
                     )
                     logger.info(f"已撤销 Celery 任务: {task.celery_task_id} (研究任务: {task_id})")
                 except Exception as e:

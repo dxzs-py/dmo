@@ -39,6 +39,7 @@ def __getattr__(name):
     }
     if name in _MODULE_MAP:
         import importlib
+
         module = importlib.import_module(_MODULE_MAP[name], __package__)
         return getattr(module, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

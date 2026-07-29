@@ -46,6 +46,7 @@ from Django_xm.common.event_schema import EventType
 # 测试 1: 完整 AIMessage（含 tool_calls）
 # ============================================================================
 
+
 class CompleteAIMessageTests(unittest.TestCase):
     """完整 AIMessage 含 tool_calls 的事件提取。"""
 
@@ -53,11 +54,13 @@ class CompleteAIMessageTests(unittest.TestCase):
         """AIMessage 含 read_file tool_calls → INPUT_READY 携带完整 parameters。"""
         msg = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "read_file",
-                "args": {"file_path": "/sandbox/notes/test.md"},
-                "id": "tc-read-1",
-            }],
+            tool_calls=[
+                {
+                    "name": "read_file",
+                    "args": {"file_path": "/sandbox/notes/test.md"},
+                    "id": "tc-read-1",
+                }
+            ],
         )
         seen = set()
         accumulated = []
@@ -78,14 +81,16 @@ class CompleteAIMessageTests(unittest.TestCase):
         """AIMessage 含 write_file tool_calls → INPUT_READY 携带 content 参数。"""
         msg = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "write_file",
-                "args": {
-                    "file_path": "/sandbox/reports/output.md",
-                    "content": "# Report\n\nThis is a test report.",
-                },
-                "id": "tc-write-1",
-            }],
+            tool_calls=[
+                {
+                    "name": "write_file",
+                    "args": {
+                        "file_path": "/sandbox/reports/output.md",
+                        "content": "# Report\n\nThis is a test report.",
+                    },
+                    "id": "tc-write-1",
+                }
+            ],
         )
         events = extract_tool_events_from_message(msg, set(), [])
         self.assertEqual(len(events), 1)
@@ -96,11 +101,13 @@ class CompleteAIMessageTests(unittest.TestCase):
         """AIMessage 含 bash tool_calls → INPUT_READY 携带 command 参数。"""
         msg = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "bash",
-                "args": {"command": "ls -la /sandbox/"},
-                "id": "tc-bash-1",
-            }],
+            tool_calls=[
+                {
+                    "name": "bash",
+                    "args": {"command": "ls -la /sandbox/"},
+                    "id": "tc-bash-1",
+                }
+            ],
         )
         events = extract_tool_events_from_message(msg, set(), [])
         self.assertEqual(len(events), 1)
@@ -115,11 +122,13 @@ class CompleteAIMessageTests(unittest.TestCase):
         """
         msg = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "read_file",
-                "args": {},
-                "id": "tc-empty-1",
-            }],
+            tool_calls=[
+                {
+                    "name": "read_file",
+                    "args": {},
+                    "id": "tc-empty-1",
+                }
+            ],
         )
         seen = set()
         events = extract_tool_events_from_message(msg, seen, [])
@@ -137,19 +146,23 @@ class CompleteAIMessageTests(unittest.TestCase):
         """同一 tool_call_id 在多次 AIMessage 中只发射一次 INPUT_READY。"""
         msg1 = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "read_file",
-                "args": {"file_path": "/a.txt"},
-                "id": "tc-dedup-1",
-            }],
+            tool_calls=[
+                {
+                    "name": "read_file",
+                    "args": {"file_path": "/a.txt"},
+                    "id": "tc-dedup-1",
+                }
+            ],
         )
         msg2 = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "read_file",
-                "args": {"file_path": "/a.txt"},
-                "id": "tc-dedup-1",  # 同一 ID
-            }],
+            tool_calls=[
+                {
+                    "name": "read_file",
+                    "args": {"file_path": "/a.txt"},
+                    "id": "tc-dedup-1",  # 同一 ID
+                }
+            ],
         )
         seen = set()
         accumulated = []
@@ -163,6 +176,7 @@ class CompleteAIMessageTests(unittest.TestCase):
 # ============================================================================
 # 测试 2: 流式 AIMessageChunk（args 分片聚合）
 # ============================================================================
+
 
 class StreamedAIMessageChunkTests(unittest.TestCase):
     """流式 AIMessageChunk 的 args 分片聚合测试。
@@ -189,30 +203,36 @@ class StreamedAIMessageChunkTests(unittest.TestCase):
         chunks = [
             AIMessageChunk(
                 content="",
-                tool_call_chunks=[{
-                    "name": "read_file",
-                    "args": '{"file_path":',
-                    "id": "tc-chunk-1",
-                    "index": 0,
-                }],
+                tool_call_chunks=[
+                    {
+                        "name": "read_file",
+                        "args": '{"file_path":',
+                        "id": "tc-chunk-1",
+                        "index": 0,
+                    }
+                ],
             ),
             AIMessageChunk(
                 content="",
-                tool_call_chunks=[{
-                    "name": "read_file",
-                    "args": ' "/san',
-                    "id": "tc-chunk-1",
-                    "index": 0,
-                }],
+                tool_call_chunks=[
+                    {
+                        "name": "read_file",
+                        "args": ' "/san',
+                        "id": "tc-chunk-1",
+                        "index": 0,
+                    }
+                ],
             ),
             AIMessageChunk(
                 content="",
-                tool_call_chunks=[{
-                    "name": "read_file",
-                    "args": 'dbox/notes/test.md"}',
-                    "id": "tc-chunk-1",
-                    "index": 0,
-                }],
+                tool_call_chunks=[
+                    {
+                        "name": "read_file",
+                        "args": 'dbox/notes/test.md"}',
+                        "id": "tc-chunk-1",
+                        "index": 0,
+                    }
+                ],
             ),
         ]
         seen = set()
@@ -249,12 +269,14 @@ class StreamedAIMessageChunkTests(unittest.TestCase):
         """单个 chunk 含完整 args → 立即发射 INPUT_READY。"""
         chunk = AIMessageChunk(
             content="",
-            tool_call_chunks=[{
-                "name": "bash",
-                "args": '{"command": "ls -la"}',
-                "id": "tc-complete-1",
-                "index": 0,
-            }],
+            tool_call_chunks=[
+                {
+                    "name": "bash",
+                    "args": '{"command": "ls -la"}',
+                    "id": "tc-complete-1",
+                    "index": 0,
+                }
+            ],
         )
         seen = set()
         events = extract_tool_events_from_message(chunk, seen, [])
@@ -278,12 +300,14 @@ class StreamedAIMessageChunkTests(unittest.TestCase):
         """
         chunk = AIMessageChunk(
             content="",
-            tool_call_chunks=[{
-                "name": "read_file",
-                "args": '{"file_path": "/san',
-                "id": "tc-partial-1",
-                "index": 0,
-            }],
+            tool_call_chunks=[
+                {
+                    "name": "read_file",
+                    "args": '{"file_path": "/san',
+                    "id": "tc-partial-1",
+                    "index": 0,
+                }
+            ],
         )
         seen = set()
         accumulated = []
@@ -305,21 +329,25 @@ class StreamedAIMessageChunkTests(unittest.TestCase):
         chunks = [
             AIMessageChunk(
                 content="",
-                tool_call_chunks=[{
-                    "name": "read_file",
-                    "args": '{"file_path": "/san',
-                    "id": "tc-partial-2",
-                    "index": 0,
-                }],
+                tool_call_chunks=[
+                    {
+                        "name": "read_file",
+                        "args": '{"file_path": "/san',
+                        "id": "tc-partial-2",
+                        "index": 0,
+                    }
+                ],
             ),
             AIMessageChunk(
                 content="",
-                tool_call_chunks=[{
-                    "name": "read_file",
-                    "args": 'dbox/notes/test.md"}',
-                    "id": "tc-partial-2",
-                    "index": 0,
-                }],
+                tool_call_chunks=[
+                    {
+                        "name": "read_file",
+                        "args": 'dbox/notes/test.md"}',
+                        "id": "tc-partial-2",
+                        "index": 0,
+                    }
+                ],
             ),
         ]
         seen = set()
@@ -347,6 +375,7 @@ class StreamedAIMessageChunkTests(unittest.TestCase):
 # 测试 3: ToolMessage 成功结果
 # ============================================================================
 
+
 class ToolMessageCompletedTests(unittest.TestCase):
     """ToolMessage 成功结果 → COMPLETED 事件。"""
 
@@ -355,11 +384,13 @@ class ToolMessageCompletedTests(unittest.TestCase):
         # 先发 INPUT_READY
         ai_msg = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "read_file",
-                "args": {"file_path": "/a.txt"},
-                "id": "tc-comp-1",
-            }],
+            tool_calls=[
+                {
+                    "name": "read_file",
+                    "args": {"file_path": "/a.txt"},
+                    "id": "tc-comp-1",
+                }
+            ],
         )
         seen = set()
         accumulated = []
@@ -384,11 +415,13 @@ class ToolMessageCompletedTests(unittest.TestCase):
         """ToolMessage content 为 list → 序列化为 JSON 字符串。"""
         ai_msg = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "ls",
-                "args": {"path": "/sandbox/"},
-                "id": "tc-list-1",
-            }],
+            tool_calls=[
+                {
+                    "name": "ls",
+                    "args": {"path": "/sandbox/"},
+                    "id": "tc-list-1",
+                }
+            ],
         )
         seen = set()
         accumulated = []
@@ -413,6 +446,7 @@ class ToolMessageCompletedTests(unittest.TestCase):
 # 测试 4: ToolMessage 失败结果
 # ============================================================================
 
+
 class ToolMessageFailedTests(unittest.TestCase):
     """ToolMessage 失败结果 → FAILED 事件。"""
 
@@ -420,11 +454,13 @@ class ToolMessageFailedTests(unittest.TestCase):
         """ToolMessage status='error' → FAILED 事件携带 error。"""
         ai_msg = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "write_file",
-                "args": {"file_path": "/forbidden/path", "content": "x"},
-                "id": "tc-fail-1",
-            }],
+            tool_calls=[
+                {
+                    "name": "write_file",
+                    "args": {"file_path": "/forbidden/path", "content": "x"},
+                    "id": "tc-fail-1",
+                }
+            ],
         )
         seen = set()
         accumulated = []
@@ -447,11 +483,13 @@ class ToolMessageFailedTests(unittest.TestCase):
         """ToolMessage content 以 'Error' 开头 → FAILED 事件。"""
         ai_msg = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "bash",
-                "args": {"command": "invalid_cmd"},
-                "id": "tc-fail-2",
-            }],
+            tool_calls=[
+                {
+                    "name": "bash",
+                    "args": {"command": "invalid_cmd"},
+                    "id": "tc-fail-2",
+                }
+            ],
         )
         seen = set()
         accumulated = []
@@ -471,6 +509,7 @@ class ToolMessageFailedTests(unittest.TestCase):
 # ============================================================================
 # 测试 5: 多工具并行调用
 # ============================================================================
+
 
 class ParallelToolCallsTests(unittest.TestCase):
     """多工具并行调用的事件提取。"""
@@ -522,7 +561,9 @@ class ParallelToolCallsTests(unittest.TestCase):
 
         # 第一个工具结果
         tool_msg_1 = ToolMessage(
-            content="content-a", tool_call_id="tc-r-1", name="read_file",
+            content="content-a",
+            tool_call_id="tc-r-1",
+            name="read_file",
         )
         events_1 = extract_tool_events_from_message(tool_msg_1, seen, accumulated)
         self.assertEqual(len(events_1), 1)
@@ -531,7 +572,9 @@ class ParallelToolCallsTests(unittest.TestCase):
 
         # 第二个工具结果
         tool_msg_2 = ToolMessage(
-            content="content-b", tool_call_id="tc-r-2", name="read_file",
+            content="content-b",
+            tool_call_id="tc-r-2",
+            name="read_file",
         )
         events_2 = extract_tool_events_from_message(tool_msg_2, seen, accumulated)
         self.assertEqual(len(events_2), 1)
@@ -543,12 +586,14 @@ class ParallelToolCallsTests(unittest.TestCase):
 # 测试 6: 非工具消息类型
 # ============================================================================
 
+
 class NonToolMessageTests(unittest.TestCase):
     """非工具消息类型应被忽略。"""
 
     def test_human_message_ignored(self):
         """HumanMessage 不应触发任何工具事件。"""
         from langchain_core.messages import HumanMessage
+
         msg = HumanMessage(content="hello")
         events = extract_tool_events_from_message(msg, set(), [])
         self.assertEqual(len(events), 0)
@@ -556,6 +601,7 @@ class NonToolMessageTests(unittest.TestCase):
     def test_system_message_ignored(self):
         """SystemMessage 不应触发任何工具事件。"""
         from langchain_core.messages import SystemMessage
+
         msg = SystemMessage(content="system prompt")
         events = extract_tool_events_from_message(msg, set(), [])
         self.assertEqual(len(events), 0)
@@ -570,6 +616,7 @@ class NonToolMessageTests(unittest.TestCase):
 # 测试 7: deepagents 原生工具 I/O 完整性（端到端验证）
 # ============================================================================
 
+
 class DeepAgentsNativeToolIOTests(unittest.TestCase):
     """deepagents 原生工具 I/O 完整性验证。
 
@@ -581,11 +628,13 @@ class DeepAgentsNativeToolIOTests(unittest.TestCase):
         """read_file: 输入 file_path，输出文件内容。"""
         ai_msg = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "read_file",
-                "args": {"file_path": "/reports/final.md"},
-                "id": "tc-io-read",
-            }],
+            tool_calls=[
+                {
+                    "name": "read_file",
+                    "args": {"file_path": "/reports/final.md"},
+                    "id": "tc-io-read",
+                }
+            ],
         )
         seen = set()
         accumulated = []
@@ -604,14 +653,16 @@ class DeepAgentsNativeToolIOTests(unittest.TestCase):
         """write_file: 输入 file_path + content，输出写入确认。"""
         ai_msg = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "write_file",
-                "args": {
-                    "file_path": "/sandbox/notes/note.md",
-                    "content": "# Note\n\n- item 1\n- item 2",
-                },
-                "id": "tc-io-write",
-            }],
+            tool_calls=[
+                {
+                    "name": "write_file",
+                    "args": {
+                        "file_path": "/sandbox/notes/note.md",
+                        "content": "# Note\n\n- item 1\n- item 2",
+                    },
+                    "id": "tc-io-write",
+                }
+            ],
         )
         events = extract_tool_events_from_message(ai_msg, set(), [])
         self.assertEqual(events[0]["parameters"]["file_path"], "/sandbox/notes/note.md")
@@ -621,16 +672,18 @@ class DeepAgentsNativeToolIOTests(unittest.TestCase):
         """edit_file: 输入 file_path + old_string + new_string。"""
         ai_msg = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "edit_file",
-                "args": {
-                    "file_path": "/reports/draft.md",
-                    "old_string": "TODO",
-                    "new_string": "Done",
-                    "replace_all": False,
-                },
-                "id": "tc-io-edit",
-            }],
+            tool_calls=[
+                {
+                    "name": "edit_file",
+                    "args": {
+                        "file_path": "/reports/draft.md",
+                        "old_string": "TODO",
+                        "new_string": "Done",
+                        "replace_all": False,
+                    },
+                    "id": "tc-io-edit",
+                }
+            ],
         )
         events = extract_tool_events_from_message(ai_msg, set(), [])
         self.assertEqual(events[0]["parameters"]["old_string"], "TODO")
@@ -641,11 +694,13 @@ class DeepAgentsNativeToolIOTests(unittest.TestCase):
         """bash: 输入 command，输出命令执行结果。"""
         ai_msg = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "bash",
-                "args": {"command": "echo 'hello' && ls -la"},
-                "id": "tc-io-bash",
-            }],
+            tool_calls=[
+                {
+                    "name": "bash",
+                    "args": {"command": "echo 'hello' && ls -la"},
+                    "id": "tc-io-bash",
+                }
+            ],
         )
         seen = set()
         accumulated = []
@@ -664,11 +719,13 @@ class DeepAgentsNativeToolIOTests(unittest.TestCase):
         """ls: 输入 path，输出目录列表。"""
         ai_msg = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "ls",
-                "args": {"path": "/sandbox/"},
-                "id": "tc-io-ls",
-            }],
+            tool_calls=[
+                {
+                    "name": "ls",
+                    "args": {"path": "/sandbox/"},
+                    "id": "tc-io-ls",
+                }
+            ],
         )
         events = extract_tool_events_from_message(ai_msg, set(), [])
         self.assertEqual(events[0]["parameters"]["path"], "/sandbox/")
@@ -677,11 +734,13 @@ class DeepAgentsNativeToolIOTests(unittest.TestCase):
         """glob: 输入 pattern + path，输出匹配文件列表。"""
         ai_msg = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "glob",
-                "args": {"pattern": "**/*.md", "path": "/reports/"},
-                "id": "tc-io-glob",
-            }],
+            tool_calls=[
+                {
+                    "name": "glob",
+                    "args": {"pattern": "**/*.md", "path": "/reports/"},
+                    "id": "tc-io-glob",
+                }
+            ],
         )
         events = extract_tool_events_from_message(ai_msg, set(), [])
         self.assertEqual(events[0]["parameters"]["pattern"], "**/*.md")
@@ -691,15 +750,17 @@ class DeepAgentsNativeToolIOTests(unittest.TestCase):
         """grep: 输入 pattern + path + include，输出匹配行。"""
         ai_msg = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "grep",
-                "args": {
-                    "pattern": "TODO",
-                    "path": "/reports/",
-                    "include": "*.md",
-                },
-                "id": "tc-io-grep",
-            }],
+            tool_calls=[
+                {
+                    "name": "grep",
+                    "args": {
+                        "pattern": "TODO",
+                        "path": "/reports/",
+                        "include": "*.md",
+                    },
+                    "id": "tc-io-grep",
+                }
+            ],
         )
         events = extract_tool_events_from_message(ai_msg, set(), [])
         self.assertEqual(events[0]["parameters"]["pattern"], "TODO")
@@ -709,14 +770,16 @@ class DeepAgentsNativeToolIOTests(unittest.TestCase):
         """task: 子智能体调用工具，输入 description + subagent_type。"""
         ai_msg = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "task",
-                "args": {
-                    "description": "search the web for latest news",
-                    "subagent_type": "web-researcher",
-                },
-                "id": "tc-io-task",
-            }],
+            tool_calls=[
+                {
+                    "name": "task",
+                    "args": {
+                        "description": "search the web for latest news",
+                        "subagent_type": "web-researcher",
+                    },
+                    "id": "tc-io-task",
+                }
+            ],
         )
         events = extract_tool_events_from_message(ai_msg, set(), [])
         self.assertEqual(events[0]["parameters"]["subagent_type"], "web-researcher")
@@ -730,14 +793,16 @@ class DeepAgentsNativeToolIOTests(unittest.TestCase):
         long_content = "# Report\n\n" + "line\n" * 1000
         ai_msg = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "write_file",
-                "args": {
-                    "file_path": "/reports/long.md",
-                    "content": long_content,
-                },
-                "id": "tc-io-long",
-            }],
+            tool_calls=[
+                {
+                    "name": "write_file",
+                    "args": {
+                        "file_path": "/reports/long.md",
+                        "content": long_content,
+                    },
+                    "id": "tc-io-long",
+                }
+            ],
         )
         events = extract_tool_events_from_message(ai_msg, set(), [])
         self.assertEqual(events[0]["parameters"]["content"], long_content)
@@ -747,6 +812,7 @@ class DeepAgentsNativeToolIOTests(unittest.TestCase):
 # ============================================================================
 # 测试 8: 端到端流程模拟（chunk → tool_message）
 # ============================================================================
+
 
 class EndToEndFlowTests(unittest.TestCase):
     """端到端流程：模拟 deepagents LLM 流式输出 + 工具执行。"""
@@ -763,21 +829,25 @@ class EndToEndFlowTests(unittest.TestCase):
         chunks = [
             AIMessageChunk(
                 content="",
-                tool_call_chunks=[{
-                    "name": "read_file",
-                    "args": '{"file_path":',
-                    "id": "tc-e2e-1",
-                    "index": 0,
-                }],
+                tool_call_chunks=[
+                    {
+                        "name": "read_file",
+                        "args": '{"file_path":',
+                        "id": "tc-e2e-1",
+                        "index": 0,
+                    }
+                ],
             ),
             AIMessageChunk(
                 content="",
-                tool_call_chunks=[{
-                    "name": "read_file",
-                    "args": ' "/reports/final.md"}',
-                    "id": "tc-e2e-1",
-                    "index": 0,
-                }],
+                tool_call_chunks=[
+                    {
+                        "name": "read_file",
+                        "args": ' "/reports/final.md"}',
+                        "id": "tc-e2e-1",
+                        "index": 0,
+                    }
+                ],
             ),
         ]
         seen = set()
@@ -817,11 +887,13 @@ class EndToEndFlowTests(unittest.TestCase):
         """完整流程：完整 args 的 AIMessage → ToolMessage → COMPLETED。"""
         ai_msg = AIMessage(
             content="",
-            tool_calls=[{
-                "name": "bash",
-                "args": {"command": "echo hello"},
-                "id": "tc-e2e-2",
-            }],
+            tool_calls=[
+                {
+                    "name": "bash",
+                    "args": {"command": "echo hello"},
+                    "id": "tc-e2e-2",
+                }
+            ],
         )
         seen = set()
         accumulated = []

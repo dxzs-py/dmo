@@ -40,10 +40,12 @@ def _make_consumer(user_id=1):
     注：channels 4.x 中 scope 通过 ``__call__`` 在运行时设置，
     ``__init__`` 不接受 scope 参数。测试中显式赋值 ``consumer.scope``。
     """
-    consumer = RealtimeSyncConsumer(scope={
-        "type": "websocket",
-        "query_string": b"token=fake-token",
-    })
+    consumer = RealtimeSyncConsumer(
+        scope={
+            "type": "websocket",
+            "query_string": b"token=fake-token",
+        }
+    )
     # channels 4.x: scope 通过 __call__ 在运行时设置，测试中显式赋值
     consumer.scope = {
         "type": "websocket",
@@ -112,10 +114,12 @@ class BroadcastFromSessionChannelTests(unittest.IsolatedAsyncioTestCase):
             },
         }
 
-        await consumer.broadcast_event({
-            "type": "broadcast_event",
-            "event": wrapped_event,
-        })
+        await consumer.broadcast_event(
+            {
+                "type": "broadcast_event",
+                "event": wrapped_event,
+            }
+        )
 
         consumer.send_json.assert_called_once_with(wrapped_event)
 
@@ -175,10 +179,12 @@ class BroadcastFromTaskChannelTests(unittest.IsolatedAsyncioTestCase):
             },
         }
 
-        await consumer.broadcast_event({
-            "type": "broadcast_event",
-            "event": wrapped_event,
-        })
+        await consumer.broadcast_event(
+            {
+                "type": "broadcast_event",
+                "event": wrapped_event,
+            }
+        )
 
         consumer.send_json.assert_called_once_with(wrapped_event)
 
@@ -194,7 +200,7 @@ class ReplayAndResumeSubscriptionTests(unittest.IsolatedAsyncioTestCase):
        → 后续 group_send 的新事件能正常透传
     """
 
-    @patch('Django_xm.apps.chat.consumers.get_event_history')
+    @patch("Django_xm.apps.chat.consumers.get_event_history")
     async def test_replay_session_then_resume_subscription(self, mock_history):
         """SubTask 8.9：session 订阅 + 历史回放 + 回放完成后订阅仍有效。
 
@@ -214,10 +220,12 @@ class ReplayAndResumeSubscriptionTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         # 1. 订阅并触发回放
-        await consumer.handle_subscribe_session({
-            "session_id": "session-1",
-            "last_seq": 4,
-        })
+        await consumer.handle_subscribe_session(
+            {
+                "session_id": "session-1",
+                "last_seq": 4,
+            }
+        )
 
         # 2. send_json 调用次数：subscribed + 1 个 replay 包装 = 2 次
         self.assertEqual(consumer.send_json.call_count, 2)
@@ -249,13 +257,15 @@ class ReplayAndResumeSubscriptionTests(unittest.IsolatedAsyncioTestCase):
             "timestamp": 1234567890.0,
             "payload": {"content": "new message after replay"},
         }
-        await consumer.broadcast_event({
-            "type": "broadcast_event",
-            "event": new_event,
-        })
+        await consumer.broadcast_event(
+            {
+                "type": "broadcast_event",
+                "event": new_event,
+            }
+        )
         consumer.send_json.assert_called_once_with(new_event)
 
-    @patch('Django_xm.apps.chat.consumers.get_event_history')
+    @patch("Django_xm.apps.chat.consumers.get_event_history")
     async def test_replay_task_then_resume_subscription(self, mock_history):
         """SubTask 8.9：task 订阅 + 历史回放 + 回放完成后订阅仍有效。
 
@@ -273,10 +283,12 @@ class ReplayAndResumeSubscriptionTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         # 1. 订阅并触发回放
-        await consumer.handle_subscribe_task({
-            "task_id": "task-1",
-            "last_seq": 2,
-        })
+        await consumer.handle_subscribe_task(
+            {
+                "task_id": "task-1",
+                "last_seq": 2,
+            }
+        )
 
         # 2. send_json 调用次数：subscribed + 1 个 replay 包装 = 2 次
         self.assertEqual(consumer.send_json.call_count, 2)
@@ -303,13 +315,15 @@ class ReplayAndResumeSubscriptionTests(unittest.IsolatedAsyncioTestCase):
             "timestamp": 1234567890.0,
             "payload": {"tool_call_id": "tc-1"},
         }
-        await consumer.broadcast_event({
-            "type": "broadcast_event",
-            "event": new_event,
-        })
+        await consumer.broadcast_event(
+            {
+                "type": "broadcast_event",
+                "event": new_event,
+            }
+        )
         consumer.send_json.assert_called_once_with(new_event)
 
-    @patch('Django_xm.apps.chat.consumers.get_event_history')
+    @patch("Django_xm.apps.chat.consumers.get_event_history")
     async def test_replay_empty_history_subscription_still_active(self, mock_history):
         """SubTask 8.9：last_seq 等于当前最大 seq 时回放空列表，订阅仍有效。
 
@@ -323,10 +337,12 @@ class ReplayAndResumeSubscriptionTests(unittest.IsolatedAsyncioTestCase):
         consumer._user_owns_session = AsyncMock(return_value=True)
         mock_history.return_value = []  # 无新事件
 
-        await consumer.handle_subscribe_session({
-            "session_id": "session-1",
-            "last_seq": 100,
-        })
+        await consumer.handle_subscribe_session(
+            {
+                "session_id": "session-1",
+                "last_seq": 100,
+            }
+        )
 
         # subscribed + replay(count=0) = 2 次
         self.assertEqual(consumer.send_json.call_count, 2)
@@ -341,7 +357,7 @@ class ReplayAndResumeSubscriptionTests(unittest.IsolatedAsyncioTestCase):
         expected_group = _group_name("session", "session-1")
         self.assertIn(expected_group, consumer.session_groups)
 
-    @patch('Django_xm.apps.chat.consumers.get_event_history')
+    @patch("Django_xm.apps.chat.consumers.get_event_history")
     async def test_replay_history_failure_does_not_break_subscription(self, mock_history):
         """SubTask 8.9：回放过程异常时订阅仍有效（不破坏订阅状态）。
 
@@ -353,10 +369,12 @@ class ReplayAndResumeSubscriptionTests(unittest.IsolatedAsyncioTestCase):
         mock_history.side_effect = RuntimeError("redis error")
 
         # 不应抛出异常
-        await consumer.handle_subscribe_session({
-            "session_id": "session-1",
-            "last_seq": 4,
-        })
+        await consumer.handle_subscribe_session(
+            {
+                "session_id": "session-1",
+                "last_seq": 4,
+            }
+        )
 
         # 仅 subscribed 响应，无历史事件（回放失败）
         self.assertEqual(consumer.send_json.call_count, 1)
@@ -368,5 +386,5 @@ class ReplayAndResumeSubscriptionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(expected_group, consumer.session_groups)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

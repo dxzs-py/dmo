@@ -48,18 +48,14 @@ class BaseStreamStrategy:
         if event_type == "tool_usage_dedup":
             tool_info = event.get("data", {})
             short_msg = tool_info.get("short_circuit_response", "")
-            logger.info(
-                f"[Stream] 工具 {tool_info.get('tool_name')} 被去重: {short_msg}"
-            )
+            logger.info(f"[Stream] 工具 {tool_info.get('tool_name')} 被去重: {short_msg}")
             return []
 
         # tool_usage_blocked：渐进式阻断，记录警告，以 chunk 形式通知前端
         if event_type == "tool_usage_blocked":
             tool_info = event.get("data", {})
             short_msg = tool_info.get("short_circuit_response", "")
-            logger.warning(
-                f"[Stream] 工具 {tool_info.get('tool_name')} 被阻断: {short_msg}"
-            )
+            logger.warning(f"[Stream] 工具 {tool_info.get('tool_name')} 被阻断: {short_msg}")
             chunk_content = f"\n\n[系统提示] {short_msg}\n"
             ctx.current_message_content += chunk_content
             return [{"type": "chunk", "content": chunk_content}]
@@ -87,9 +83,11 @@ class NormalStreamStrategy(BaseStreamStrategy):
 
     async def on_loop_success(self, ctx: StreamContext, data: dict) -> AsyncGenerator[dict, None]:
         """普通模式：仅当 _enable_deep_thinking 且有模型自带推理内容时发送 reasoning 完成事件"""
-        if (ctx.accumulated_reasoning
-                and ctx.accumulated_reasoning.get("content", "").strip()
-                and data.get('_enable_deep_thinking')):
+        if (
+            ctx.accumulated_reasoning
+            and ctx.accumulated_reasoning.get("content", "").strip()
+            and data.get("_enable_deep_thinking")
+        ):
             yield {
                 "type": "reasoning",
                 "data": {

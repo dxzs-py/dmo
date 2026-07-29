@@ -55,7 +55,7 @@ _devnull_handles: list[Any] = []
 
 
 def _open_devnull():
-    f = open(os.devnull, 'w')
+    f = open(os.devnull, "w")
     _devnull_handles.append(f)
     return f
 
@@ -64,14 +64,14 @@ def _close_devnull_handles():
     for f in _devnull_handles:
         try:
             f.close()
-        except Exception:
+        except Exception:  # noqa: S110  # cleanup, devnull 句柄关闭失败可忽略
             pass
     _devnull_handles.clear()
 
 
-if not hasattr(sys.stderr, 'fileno'):
+if not hasattr(sys.stderr, "fileno"):
     sys.stderr = sys.__stderr__ or _open_devnull()
-if not hasattr(sys.stdout, 'fileno'):
+if not hasattr(sys.stdout, "fileno"):
     sys.stdout = sys.__stdout__ or _open_devnull()
 
 logger = get_logger(__name__)
@@ -83,27 +83,28 @@ def _celery_stdio_fix():
     _orig_stderr = sys.stderr
     _opened: dict[str, Any] = {}
     try:
-        if not hasattr(sys.stdout, 'fileno'):
-            f = open(os.devnull, 'w')
+        if not hasattr(sys.stdout, "fileno"):
+            f = open(os.devnull, "w")
             sys.stdout = f
-            _opened['stdout'] = f
-        if not hasattr(sys.stderr, 'fileno'):
-            f = open(os.devnull, 'w')
+            _opened["stdout"] = f
+        if not hasattr(sys.stderr, "fileno"):
+            f = open(os.devnull, "w")
             sys.stderr = f
-            _opened['stderr'] = f
+            _opened["stderr"] = f
         yield
     finally:
-        if 'stdout' in _opened:
+        if "stdout" in _opened:
             sys.stdout = _orig_stdout
-            _opened['stdout'].close()
-        if 'stderr' in _opened:
+            _opened["stdout"].close()
+        if "stderr" in _opened:
             sys.stderr = _orig_stderr
-            _opened['stderr'].close()
+            _opened["stderr"].close()
 
 
 @contextmanager
 def _nullcontext():
     yield
+
 
 _mcp_client_pool: dict[str, Any] = {}
 _mcp_client_timestamps: dict[str, float] = {}
@@ -129,6 +130,7 @@ def _get_pool_lock():
 
 def _sync_cleanup_on_exit():
     import asyncio
+
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
@@ -137,9 +139,9 @@ def _sync_cleanup_on_exit():
     except RuntimeError:
         try:
             asyncio.run(cleanup_mcp_clients())
-        except Exception:
+        except Exception:  # noqa: S110  # cleanup, atexit 时 MCP 客户端清理失败可忽略
             pass
-    except Exception:
+    except Exception:  # noqa: S110  # cleanup, atexit 时事件循环清理失败可忽略
         pass
 
 
@@ -151,6 +153,7 @@ atexit.register(_close_devnull_handles)
 
 def _get_mcp_servers_config() -> list[dict[str, Any]]:
     from django.conf import settings as django_settings
+
     all_servers = getattr(django_settings, "MCP_SERVERS", [])
     return [s for s in all_servers if s.get("enabled", True)]
 
@@ -158,6 +161,7 @@ def _get_mcp_servers_config() -> list[dict[str, Any]]:
 def is_mcp_available() -> bool:
     try:
         import langchain_mcp_adapters
+
         return True
     except ImportError:
         return False
@@ -219,9 +223,9 @@ async def _get_or_create_client(
                 old_client = _mcp_client_pool.pop(server_key)
                 _mcp_client_timestamps.pop(server_key, None)
                 try:
-                    if hasattr(old_client, 'close'):
+                    if hasattr(old_client, "close"):
                         await old_client.close()
-                except Exception:
+                except Exception:  # noqa: S110  # cleanup, 过期 MCP 客户端关闭失败可忽略
                     pass
                 logger.info(f"MCP 过期客户端已移除 (TTL={_MCP_CLIENT_TTL_SECONDS}s): {server_key}")
             else:
@@ -241,9 +245,9 @@ async def _remove_stale_client(server_key: str) -> None:
             old_client = _mcp_client_pool.pop(server_key)
             _mcp_client_timestamps.pop(server_key, None)
             try:
-                if hasattr(old_client, 'close'):
+                if hasattr(old_client, "close"):
                     await old_client.close()
-            except Exception:
+            except Exception:  # noqa: S110  # cleanup, 失效 MCP 客户端关闭失败可忽略
                 pass
             logger.info(f"MCP 过期客户端已移除: {server_key}")
 
@@ -252,7 +256,7 @@ async def cleanup_mcp_clients() -> None:
     with _get_pool_lock():
         for key, client in list(_mcp_client_pool.items()):
             try:
-                if hasattr(client, 'close'):
+                if hasattr(client, "close"):
                     await client.close()
             except Exception as e:
                 logger.warning(f"关闭 MCP 客户端 {key} 失败: {e}")
@@ -353,8 +357,8 @@ async def get_mcp_tools(
                 client = await _get_or_create_client(server_key, transport_config, server_name=server_name)
                 with _celery_stdio_fix() if _need_stdio_fix else _nullcontext():
                     tools = await asyncio.wait_for(client.get_tools(), timeout=_timeout)
-            except BaseException as retry_err:
-                logger.error(f"MCP 客户端重建后 get_tools 仍失败: {retry_err}")
+            except BaseException:
+                logger.exception("MCP 客户端重建后 get_tools 仍失败")
                 raise
 
         if interceptors:
@@ -374,10 +378,10 @@ async def get_mcp_tools(
 
         return tools
 
-    except Exception as e:
-        if 'server_key' in dir() and server_key in _mcp_client_pool:
+    except Exception:
+        if "server_key" in dir() and server_key in _mcp_client_pool:
             await _remove_stale_client(server_key)
-        logger.error(f"从 MCP Server 获取工具失败: {e}")
+        logger.exception("从 MCP Server 获取工具失败")
         return []
 
 
@@ -443,10 +447,10 @@ async def _resolve_mcp_client(
         transport_config = _build_transport_config(server_config)
         client = await _get_or_create_client(server_key, transport_config)
         return client, server_key
-    except Exception as e:
-        if 'server_key' in dir() and server_key in _mcp_client_pool:
+    except Exception:
+        if "server_key" in dir() and server_key in _mcp_client_pool:
             await _remove_stale_client(server_key)
-        logger.error(f"解析 MCP 客户端失败: {e}")
+        logger.exception("解析 MCP 客户端失败")
         return None, None
 
 
@@ -460,15 +464,21 @@ async def get_mcp_resources(
     args: list[str] | None = None,
     env: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
-    client, server_key = await _resolve_mcp_client(
-        server_url=server_url, server_name=server_name, transport=transport,
-        headers=headers, auth_token=auth_token, command=command, args=args, env=env,
+    client, _server_key = await _resolve_mcp_client(
+        server_url=server_url,
+        server_name=server_name,
+        transport=transport,
+        headers=headers,
+        auth_token=auth_token,
+        command=command,
+        args=args,
+        env=env,
     )
     if client is None:
         return []
 
     resources = []
-    if hasattr(client, 'list_resources'):
+    if hasattr(client, "list_resources"):
         try:
             resources = await client.list_resources()
             logger.info(f"从 MCP Server 获取到 {len(resources)} 个 Resources (transport={transport})")
@@ -488,15 +498,21 @@ async def get_mcp_prompts(
     args: list[str] | None = None,
     env: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
-    client, server_key = await _resolve_mcp_client(
-        server_url=server_url, server_name=server_name, transport=transport,
-        headers=headers, auth_token=auth_token, command=command, args=args, env=env,
+    client, _server_key = await _resolve_mcp_client(
+        server_url=server_url,
+        server_name=server_name,
+        transport=transport,
+        headers=headers,
+        auth_token=auth_token,
+        command=command,
+        args=args,
+        env=env,
     )
     if client is None:
         return []
 
     prompts = []
-    if hasattr(client, 'list_prompts'):
+    if hasattr(client, "list_prompts"):
         try:
             prompts = await client.list_prompts()
             logger.info(f"从 MCP Server 获取到 {len(prompts)} 个 Prompts (transport={transport})")
@@ -680,6 +696,7 @@ def _persist_client_config(
 ) -> None:
     try:
         from Django_xm.apps.cache_manager.services.cache_service import CacheService
+
         configs = CacheService.get(_MCP_CLIENT_CONFIGS_CACHE_KEY) or []
         if not isinstance(configs, list):
             configs = []
@@ -702,12 +719,15 @@ def save_client_configs() -> list[MCPClientConfig]:
         transport_config: dict[str, Any] = {}
         if hasattr(client, "_transport_configs"):
             transport_config = client._transport_configs
-        configs.append(MCPClientConfig(
-            server_key=server_key,
-            transport_config=transport_config,
-        ))
+        configs.append(
+            MCPClientConfig(
+                server_key=server_key,
+                transport_config=transport_config,
+            )
+        )
     try:
         from Django_xm.apps.cache_manager.services.cache_service import CacheService
+
         CacheService.set(
             _MCP_CLIENT_CONFIGS_CACHE_KEY,
             [c.model_dump() for c in configs],
@@ -722,6 +742,7 @@ def save_client_configs() -> list[MCPClientConfig]:
 def load_client_configs() -> list[MCPClientConfig]:
     try:
         from Django_xm.apps.cache_manager.services.cache_service import CacheService
+
         raw = CacheService.get(_MCP_CLIENT_CONFIGS_CACHE_KEY) or []
         if not isinstance(raw, list):
             return []
@@ -779,8 +800,10 @@ __all__ = [
 def __getattr__(name: str):
     if name == "ContextSwitcher":
         from .context_switcher import ContextSwitcher
+
         return ContextSwitcher
     if name == "ToolDataPipe":
         from .tool_data_pipe import ToolDataPipe
+
         return ToolDataPipe
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

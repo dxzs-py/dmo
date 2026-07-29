@@ -15,7 +15,7 @@
 - Mock ``release_async_checkpointer`` 测试释放失败日志
 - 使用 ``SimpleTestCase`` 避免数据库依赖（SSE 生成器纯逻辑）
 """
-import asyncio
+
 import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -38,15 +38,14 @@ def _parse_sse_data(sse_str: str) -> dict | None:
         sse_str = "data: " + parts[1]
     if not sse_str.startswith("data: "):
         return None
-    payload = sse_str[len("data: "):].rstrip("\n").rstrip()
+    payload = sse_str[len("data: ") :].rstrip("\n").rstrip()
     try:
         return json.loads(payload)
     except json.JSONDecodeError:
         return None
 
 
-def _make_ctx(request=None, data=None, original_attachment_ids=None,
-              pending_progress=None):
+def _make_ctx(request=None, data=None, original_attachment_ids=None, pending_progress=None):
     """构造 ChatStreamContext 测试实例。"""
     from Django_xm.apps.chat.services.sse_generator import ChatStreamContext
 
@@ -82,7 +81,6 @@ class _AsyncGenWrapper:
 
     async def aclose(self):
         """Mock aclose for cleanup path."""
-        pass
 
 
 def _patch_chat_service(events: list):
@@ -99,6 +97,7 @@ def _patch_chat_service(events: list):
 
 
 # ============== _init_stream 测试 ==============
+
 
 class InitStreamTestCase(SimpleTestCase):
     """``_init_stream``：附件 ID 与预处理进度事件。"""
@@ -151,6 +150,7 @@ class InitStreamTestCase(SimpleTestCase):
 
 
 # ============== _process_chunks 测试 ==============
+
 
 class ProcessChunksTestCase(SimpleTestCase):
     """``_process_chunks``：内容 chunk、error、心跳、StopAsyncIteration。"""
@@ -230,6 +230,7 @@ class ProcessChunksTestCase(SimpleTestCase):
 
 # ============== _cleanup_stream 测试 ==============
 
+
 class CleanupStreamTestCase(SimpleTestCase):
     """``_cleanup_stream``：checkpointer 释放、pending_content、loop 关闭。"""
 
@@ -237,9 +238,7 @@ class CleanupStreamTestCase(SimpleTestCase):
         """构造 mock event loop，``run_until_complete`` 默认返回 None。"""
         mock_loop = MagicMock()
         if run_until_complete_side_effect is not None:
-            mock_loop.run_until_complete = MagicMock(
-                side_effect=run_until_complete_side_effect
-            )
+            mock_loop.run_until_complete = MagicMock(side_effect=run_until_complete_side_effect)
         else:
             mock_loop.run_until_complete = MagicMock(return_value=None)
         return mock_loop
@@ -260,8 +259,7 @@ class CleanupStreamTestCase(SimpleTestCase):
         ):
             results = list(_cleanup_stream(ctx))
 
-        chunk_events = [r for r in results if _parse_sse_data(r)
-                        and _parse_sse_data(r).get("type") == "chunk"]
+        chunk_events = [r for r in results if _parse_sse_data(r) and _parse_sse_data(r).get("type") == "chunk"]
         self.assertEqual(len(chunk_events), 1)
         payload = _parse_sse_data(chunk_events[0])
         self.assertEqual(payload["content"], "未刷新的内容")
@@ -273,9 +271,7 @@ class CleanupStreamTestCase(SimpleTestCase):
 
         ctx = _make_ctx()
         # release_async_checkpointer 在 loop.run_until_complete 中会抛异常
-        ctx.loop = self._make_mocked_loop(
-            run_until_complete_side_effect=Exception("连接池关闭失败")
-        )
+        ctx.loop = self._make_mocked_loop(run_until_complete_side_effect=Exception("连接池关闭失败"))
         ctx.gen = None
         ctx.pending_task = None
         ctx.stream_state["pending_content"] = ""
@@ -345,12 +341,12 @@ class CleanupStreamTestCase(SimpleTestCase):
         ):
             results = list(_cleanup_stream(ctx))
 
-        chunk_events = [r for r in results if _parse_sse_data(r)
-                        and _parse_sse_data(r).get("type") == "chunk"]
+        chunk_events = [r for r in results if _parse_sse_data(r) and _parse_sse_data(r).get("type") == "chunk"]
         self.assertEqual(chunk_events, [])
 
 
 # ============== generate_chat_stream 测试 ==============
+
 
 class GenerateChatStreamTestCase(SimpleTestCase):
     """``generate_chat_stream``：主生成器组合 + [DONE] 事件。"""
@@ -374,16 +370,17 @@ class GenerateChatStreamTestCase(SimpleTestCase):
         ctx = _make_ctx()
         # mock ChatService.process_stream_chat_request 抛异常
         mock_service = MagicMock()
-        mock_service.process_stream_chat_request = MagicMock(
-            side_effect=RuntimeError("ChatService 内部错误")
-        )
+        mock_service.process_stream_chat_request = MagicMock(side_effect=RuntimeError("ChatService 内部错误"))
 
-        with patch(
-            "Django_xm.apps.chat.services.chat_service.ChatService",
-            return_value=mock_service,
-        ), patch(
-            "Django_xm.apps.ai_engine.services.checkpointer_factory.release_async_checkpointer",
-            new_callable=AsyncMock,
+        with (
+            patch(
+                "Django_xm.apps.chat.services.chat_service.ChatService",
+                return_value=mock_service,
+            ),
+            patch(
+                "Django_xm.apps.ai_engine.services.checkpointer_factory.release_async_checkpointer",
+                new_callable=AsyncMock,
+            ),
         ):
             results = list(generate_chat_stream(ctx))
 
@@ -413,22 +410,24 @@ class GenerateChatStreamTestCase(SimpleTestCase):
 
         ctx = _make_ctx()
         mock_service = MagicMock()
-        mock_service.process_stream_chat_request = MagicMock(
-            side_effect=RuntimeError("连接超时")
-        )
+        mock_service.process_stream_chat_request = MagicMock(side_effect=RuntimeError("连接超时"))
 
         classified = MagicMock()
         classified.user_message = "服务暂不可用，请稍后重试"
 
-        with patch(
-            "Django_xm.apps.chat.services.chat_service.ChatService",
-            return_value=mock_service,
-        ), patch(
-            "Django_xm.apps.ai_engine.services.exceptions.classify_exception",
-            return_value=classified,
-        ), patch(
-            "Django_xm.apps.ai_engine.services.checkpointer_factory.release_async_checkpointer",
-            new_callable=AsyncMock,
+        with (
+            patch(
+                "Django_xm.apps.chat.services.chat_service.ChatService",
+                return_value=mock_service,
+            ),
+            patch(
+                "Django_xm.apps.ai_engine.services.exceptions.classify_exception",
+                return_value=classified,
+            ),
+            patch(
+                "Django_xm.apps.ai_engine.services.checkpointer_factory.release_async_checkpointer",
+                new_callable=AsyncMock,
+            ),
         ):
             results = list(generate_chat_stream(ctx))
 

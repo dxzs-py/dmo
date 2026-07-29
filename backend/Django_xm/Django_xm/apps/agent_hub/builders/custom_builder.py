@@ -13,8 +13,11 @@ logger = logging.getLogger(__name__)
 class CustomWorkflowBuilder:
     async def build(self, config) -> Any:
         from Django_xm.apps.agent_hub.builders._common import build_with_timeout
+
         return await build_with_timeout(
-            self._build_internal, config, "CustomWorkflowBuilder.build",
+            self._build_internal,
+            config,
+            "CustomWorkflowBuilder.build",
         )
 
     async def _build_internal(self, config) -> Any:

@@ -13,8 +13,11 @@ logger = logging.getLogger(__name__)
 class SubAgentBuilder:
     async def build(self, config) -> Any:
         from Django_xm.apps.agent_hub.builders._common import build_with_timeout
+
         return await build_with_timeout(
-            self._build_internal, config, "SubAgentBuilder.build",
+            self._build_internal,
+            config,
+            "SubAgentBuilder.build",
         )
 
     async def _build_internal(self, config) -> Any:
@@ -30,7 +33,7 @@ class SubAgentBuilder:
 
         system_prompt = config.system_prompt or self._get_default_prompt(config)
 
-        agent_kwargs = {
+        agent_kwargs: dict[str, Any] = {
             "model": model,
             "tools": tools,
             "system_prompt": system_prompt,
@@ -39,6 +42,7 @@ class SubAgentBuilder:
             agent_kwargs["middleware"] = middleware_stack
 
         from Django_xm.apps.agent_hub.builders._common import _build_common_agent_kwargs
+
         _build_common_agent_kwargs(config, agent_kwargs)
 
         graph = create_agent(**agent_kwargs)

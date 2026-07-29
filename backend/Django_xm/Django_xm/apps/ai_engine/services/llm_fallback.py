@@ -21,6 +21,7 @@
 - https://docs.langchain.com/oss/python/langchain/fallbacks
 - Claude Code Task 工具的子 agent 设计（主 agent 处理审批，子 agent 专注只读研究）
 """
+
 from __future__ import annotations
 
 import time
@@ -60,9 +61,7 @@ logger = get_logger(__name__)
 # 处理策略：仅在结构化输出 invoke 调用期间局部抑制该特定警告，
 # 而非全局抑制（避免遮蔽其他真实警告）。
 
-_PYDANTIC_SERIALIZATION_WARNING_PATTERN = (
-    r"Pydantic serializer warnings[\s\S]*PydanticSerializationUnexpectedValue"
-)
+_PYDANTIC_SERIALIZATION_WARNING_PATTERN = r"Pydantic serializer warnings[\s\S]*PydanticSerializationUnexpectedValue"
 
 
 @contextmanager
@@ -83,6 +82,7 @@ def suppress_pydantic_serialization_warning():
 
 
 # ============== 连接错误判定 ==============
+
 
 def is_connection_error(exc: Exception) -> bool:
     """判断异常是否为可触发 fallback 的连接/认证类错误
@@ -133,13 +133,11 @@ def is_connection_error(exc: Exception) -> bool:
 
     # HTTP 状态码判断
     status_code = getattr(exc, "status_code", None) or getattr(exc, "http_status", None)
-    if status_code in (401, 403, 429, 502, 503):
-        return True
-
-    return False
+    return status_code in (401, 403, 429, 502, 503)
 
 
 # ============== Fallback 候选列表 ==============
+
 
 def get_fallback_candidates(
     exclude_provider: str | None = None,
@@ -168,6 +166,7 @@ def get_fallback_candidates(
     # 1. 最高优先级：用户配置的降级模型
     try:
         from Django_xm.apps.ai_engine.models import SystemConfig
+
         fb_config = SystemConfig.get_value("fallback_chat_model", {})
         fb_provider = fb_config.get("provider_id", "")
         fb_model = fb_config.get("model_name", "")
@@ -176,7 +175,8 @@ def get_fallback_candidates(
                 if registry_is_provider_available(fb_provider):
                     candidates.append((fb_provider, fb_model))
     except Exception:
-        pass
+        # 配置读取失败时回退到 HELPER_MODEL_PRIORITY 兜底
+        logger.debug("读取 fallback_chat_model 配置失败，回退到优先级列表")
 
     # 2. 兜底：若用户未配置降级模型，从 HELPER_MODEL_PRIORITY 中取第一个可用的
     if not candidates:
@@ -193,6 +193,7 @@ def get_fallback_candidates(
 
 
 # ============== 懒加载 Fallback 模型包装 ==============
+
 
 class LazyFallbackChatModel(BaseChatModel):
     """懒加载 Fallback 模型包装
@@ -273,10 +274,10 @@ class LazyFallbackChatModel(BaseChatModel):
         if not self._fallback_detected:
             return None
         return {
-            "original_provider": getattr(self.primary, '_provider_id', '') or '',
-            "original_model": getattr(self.primary, 'model_name', '') or getattr(self.primary, 'model', '') or '',
-            "actual_provider": self._actual_provider or '',
-            "actual_model": self._actual_model or '',
+            "original_provider": getattr(self.primary, "_provider_id", "") or "",
+            "original_model": getattr(self.primary, "model_name", "") or getattr(self.primary, "model", "") or "",
+            "actual_provider": self._actual_provider or "",
+            "actual_model": self._actual_model or "",
             "message": (
                 f"模型 {getattr(self.primary, '_provider_id', '')}/{getattr(self.primary, 'model', '')} 运行时失败，"
                 f"已自动切换到 {self._actual_provider}/{self._actual_model}"
@@ -297,17 +298,21 @@ class LazyFallbackChatModel(BaseChatModel):
         """判断是否为永久性错误（不可恢复，不应重试）"""
         try:
             from Django_xm.apps.ai_engine.services.exceptions import classify_exception
+
             classified = classify_exception(error)
             return not classified.recoverable
         except Exception:
             # fallback 到字符串匹配（避免循环导入等异常情况）
             error_str = str(error).lower()
-            return any(kw in error_str for kw in ("401", "403", "invalid_credentials", "authentication", "unauthorized"))
+            return any(
+                kw in error_str for kw in ("401", "403", "invalid_credentials", "authentication", "unauthorized")
+            )
 
     def _is_input_error(self, error: Exception) -> bool:
         """判断是否为输入错误（不应降级到 fallback，应直接抛出）"""
         try:
             from Django_xm.apps.ai_engine.services.exceptions import classify_exception
+
             classified = classify_exception(error)
             return classified.error_code in ("GUARDRAILS_VALIDATION_ERROR",)
         except Exception:
@@ -325,9 +330,7 @@ class LazyFallbackChatModel(BaseChatModel):
                 logger.info("Circuit Breaker: OPEN -> HALF_OPEN，试探主模型")
                 return True
             return False
-        if self._circuit_state == "half_open":
-            return True
-        return False
+        return self._circuit_state == "half_open"
 
     def _on_primary_success(self):
         """主模型调用成功"""
@@ -353,9 +356,11 @@ class LazyFallbackChatModel(BaseChatModel):
 
     def _get_or_create_fallback(self, provider_id: str, model_name: str) -> BaseChatModel | None:
         """获取或创建 fallback 模型（带缓存，同一对话内复用）"""
-        if (self._active_fallback_model is not None
+        if (
+            self._active_fallback_model is not None
             and self._fallback_provider_id == provider_id
-            and self._fallback_model_name == model_name):
+            and self._fallback_model_name == model_name
+        ):
             return self._active_fallback_model
         fb_model = self._resolve_fallback_model(provider_id, model_name)
         if fb_model is not None:
@@ -396,7 +401,7 @@ class LazyFallbackChatModel(BaseChatModel):
             return result
         except Exception as primary_error:
             if self._is_input_error(primary_error):
-                raise primary_error
+                raise
             self._on_primary_failure(primary_error)
             logger.warning(f"主模型生成失败，尝试 fallback: {primary_error}")
             for pid, mname in self.fallback_candidates:
@@ -409,7 +414,7 @@ class LazyFallbackChatModel(BaseChatModel):
                         self._fallback_detected = False
                         logger.warning(f"Fallback 模型 {pid}/{mname} 也失败: {fb_error}")
                         continue
-            raise primary_error
+            raise
 
     async def _agenerate(self, messages: list[BaseMessage], stop: list[str] | None = None, **kwargs: Any) -> ChatResult:
         # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
@@ -426,7 +431,7 @@ class LazyFallbackChatModel(BaseChatModel):
             return result
         except Exception as primary_error:
             if self._is_input_error(primary_error):
-                raise primary_error
+                raise
             self._on_primary_failure(primary_error)
             logger.warning(f"主模型异步生成失败，尝试 fallback: {primary_error}")
             for pid, mname in self.fallback_candidates:
@@ -439,9 +444,11 @@ class LazyFallbackChatModel(BaseChatModel):
                         self._fallback_detected = False
                         logger.warning(f"Fallback 模型 {pid}/{mname} 异步也失败: {fb_error}")
                         continue
-            raise primary_error
+            raise
 
-    def _stream(self, messages: list[BaseMessage], stop: list[str] | None = None, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
+    def _stream(
+        self, messages: list[BaseMessage], stop: list[str] | None = None, **kwargs: Any
+    ) -> Iterator[ChatGenerationChunk]:
         # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
         if not self._should_try_primary():
             for pid, mname in self.fallback_candidates:
@@ -461,7 +468,7 @@ class LazyFallbackChatModel(BaseChatModel):
                 logger.debug(f"主模型流式返回 {chunks} 个 chunk")
         except Exception as primary_error:
             if self._is_input_error(primary_error):
-                raise primary_error
+                raise
             self._on_primary_failure(primary_error)
             logger.warning(f"主模型流式失败，尝试 fallback: {primary_error}")
             for pid, mname in self.fallback_candidates:
@@ -479,9 +486,11 @@ class LazyFallbackChatModel(BaseChatModel):
                         self._fallback_detected = False
                         logger.warning(f"Fallback 模型 {pid}/{mname} 流式也失败: {fb_error}")
                         continue
-            raise primary_error
+            raise
 
-    async def _astream(self, messages: list[BaseMessage], stop: list[str] | None = None, **kwargs: Any) -> AsyncIterator[ChatGenerationChunk]:
+    async def _astream(
+        self, messages: list[BaseMessage], stop: list[str] | None = None, **kwargs: Any
+    ) -> AsyncIterator[ChatGenerationChunk]:
         # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
         if not self._should_try_primary():
             for pid, mname in self.fallback_candidates:
@@ -502,7 +511,7 @@ class LazyFallbackChatModel(BaseChatModel):
                 logger.debug(f"主模型异步流式返回 {chunks} 个 chunk")
         except Exception as primary_error:
             if self._is_input_error(primary_error):
-                raise primary_error
+                raise
             self._on_primary_failure(primary_error)
             logger.warning(f"主模型异步流式失败，尝试 fallback: {primary_error}")
             for pid, mname in self.fallback_candidates:
@@ -520,7 +529,7 @@ class LazyFallbackChatModel(BaseChatModel):
                         self._fallback_detected = False
                         logger.warning(f"Fallback 模型 {pid}/{mname} 异步流式也失败: {fb_error}")
                         continue
-            raise primary_error
+            raise
 
     def invoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
         # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
@@ -537,7 +546,7 @@ class LazyFallbackChatModel(BaseChatModel):
             return result
         except Exception as primary_error:
             if self._is_input_error(primary_error):
-                raise primary_error
+                raise
             self._on_primary_failure(primary_error)
             logger.warning(f"主模型 invoke 失败，尝试 fallback: {primary_error}")
             for pid, mname in self.fallback_candidates:
@@ -550,7 +559,7 @@ class LazyFallbackChatModel(BaseChatModel):
                         self._fallback_detected = False
                         logger.warning(f"Fallback 模型 {pid}/{mname} invoke 也失败: {fb_error}")
                         continue
-            raise primary_error
+            raise
 
     async def ainvoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
         # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
@@ -567,7 +576,7 @@ class LazyFallbackChatModel(BaseChatModel):
             return result
         except Exception as primary_error:
             if self._is_input_error(primary_error):
-                raise primary_error
+                raise
             self._on_primary_failure(primary_error)
             logger.warning(f"主模型 ainvoke 失败，尝试 fallback: {primary_error}")
             for pid, mname in self.fallback_candidates:
@@ -580,7 +589,7 @@ class LazyFallbackChatModel(BaseChatModel):
                         self._fallback_detected = False
                         logger.warning(f"Fallback 模型 {pid}/{mname} ainvoke 也失败: {fb_error}")
                         continue
-            raise primary_error
+            raise
 
     def stream(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Iterator[Any]:
         # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
@@ -597,7 +606,7 @@ class LazyFallbackChatModel(BaseChatModel):
             self._on_primary_success()
         except Exception as primary_error:
             if self._is_input_error(primary_error):
-                raise primary_error
+                raise
             self._on_primary_failure(primary_error)
             logger.warning(f"主模型 stream 失败，尝试 fallback: {primary_error}")
             for pid, mname in self.fallback_candidates:
@@ -611,7 +620,7 @@ class LazyFallbackChatModel(BaseChatModel):
                         self._fallback_detected = False
                         logger.warning(f"Fallback 模型 {pid}/{mname} stream 也失败: {fb_error}")
                         continue
-            raise primary_error
+            raise
 
     async def astream(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> AsyncIterator[Any]:
         # Circuit Breaker: 主模型处于 OPEN 状态时直接使用 fallback
@@ -630,7 +639,7 @@ class LazyFallbackChatModel(BaseChatModel):
             self._on_primary_success()
         except Exception as primary_error:
             if self._is_input_error(primary_error):
-                raise primary_error
+                raise
             self._on_primary_failure(primary_error)
             logger.warning(f"主模型 astream 失败，尝试 fallback: {primary_error}")
             for pid, mname in self.fallback_candidates:
@@ -645,7 +654,7 @@ class LazyFallbackChatModel(BaseChatModel):
                         self._fallback_detected = False
                         logger.warning(f"Fallback 模型 {pid}/{mname} astream 也失败: {fb_error}")
                         continue
-            raise primary_error
+            raise
 
     def bind_tools(self, tools: Any, *, tool_choice=None, **kwargs: Any) -> Any:
         """将 bind_tools 代理到自身，保留 fallback 能力
@@ -659,6 +668,7 @@ class LazyFallbackChatModel(BaseChatModel):
         → _agenerate(**kwargs含tools) → primary._agenerate / fallback._agenerate
         """
         from langchain_core.utils.function_calling import convert_to_openai_tool
+
         formatted_tools = [convert_to_openai_tool(tool) for tool in tools]
         kwargs["tools"] = formatted_tools
         if tool_choice is not None:
@@ -674,10 +684,11 @@ class LazyFallbackChatModel(BaseChatModel):
 
     @property
     def _provider_id(self) -> str | None:
-        return getattr(self.primary, '_provider_id', None)
+        return getattr(self.primary, "_provider_id", None)
 
 
 # ============== 结构化输出 Fallback（手动实现） ==============
+
 
 class StructuredModelWithFallback:
     """结构化输出模型 + 手动 fallback（支持懒加载）
@@ -754,6 +765,7 @@ class StructuredModelWithFallback:
                 dumped = result.model_dump(exclude_none=False)
                 if not dumped:
                     return False
+
                 # 至少有一个字段包含"实质内容"：
                 # - 非 None
                 # - 非空字符串
@@ -832,8 +844,7 @@ class StructuredModelWithFallback:
         error_detail = "; ".join(errors)
         logger.error(f"所有结构化模型调用均失败: {error_detail}")
         raise RuntimeError(
-            f"模型连接超时，所有已配置的模型均不可用。"
-            f"已尝试: {error_detail}。请检查 API Key 配置和网络连接。"
+            f"模型连接超时，所有已配置的模型均不可用。已尝试: {error_detail}。请检查 API Key 配置和网络连接。"
         )
 
     async def ainvoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
@@ -882,12 +893,12 @@ class StructuredModelWithFallback:
         error_detail = "; ".join(errors)
         logger.error(f"所有结构化模型异步调用均失败: {error_detail}")
         raise RuntimeError(
-            f"模型连接超时，所有已配置的模型均不可用。"
-            f"已尝试: {error_detail}。请检查 API Key 配置和网络连接。"
+            f"模型连接超时，所有已配置的模型均不可用。已尝试: {error_detail}。请检查 API Key 配置和网络连接。"
         )
 
 
 # ============== 运行时 Fallback 检测回调 ==============
+
 
 class FallbackDetectionCallback(BaseCallbackHandler):
     """检测 LLM 运行时 fallback 的回调处理器
@@ -952,11 +963,13 @@ class FallbackDetectionCallback(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         model_name = self._extract_model(serialized, **kwargs)
-        self._llm_attempts.append({
-            "run_id": str(run_id),
-            "model": model_name,
-            "success": False,
-        })
+        self._llm_attempts.append(
+            {
+                "run_id": str(run_id),
+                "model": model_name,
+                "success": False,
+            }
+        )
 
     def on_llm_end(self, response: Any, *, run_id: Any = None, **kwargs: Any) -> None:
         rid = str(run_id)
@@ -976,8 +989,7 @@ class FallbackDetectionCallback(BaseCallbackHandler):
                     self._successful_provider = actual_provider
 
                     # 检测是否降级
-                    if (self.expected_provider and actual_provider and
-                            actual_provider != self.expected_provider):
+                    if self.expected_provider and actual_provider and actual_provider != self.expected_provider:
                         self._fallback_detected = True
                         logger.info(
                             f"LLM 运行时 fallback 检测: "

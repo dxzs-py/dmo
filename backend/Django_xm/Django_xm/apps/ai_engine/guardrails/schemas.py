@@ -3,12 +3,13 @@
 """
 
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
 # ============= RAG 相关 Schema =============
+
 
 class RAGResponse(BaseModel):
     """RAG 回答的结构化输出"""
@@ -47,7 +48,7 @@ class RAGResponse(BaseModel):
                     "answer": "LangChain 是一个用于开发大语言模型应用的框架...",
                     "sources": ["langchain_docs.md", "tutorial.pdf"],
                     "confidence": 0.95,
-                    "metadata": {"retrieved_chunks": 3}
+                    "metadata": {"retrieved_chunks": 3},
                 }
             ]
         }
@@ -56,8 +57,10 @@ class RAGResponse(BaseModel):
 
 # ============= 学习计划相关 Schema =============
 
-class DifficultyLevel(str, Enum):
+
+class DifficultyLevel(StrEnum):
     """难度级别"""
+
     BEGINNER = "beginner"
     INTERMEDIATE = "intermediate"
     ADVANCED = "advanced"
@@ -88,7 +91,7 @@ class StudyPlanStep(BaseModel):
                     "description": "学习 LangChain 的核心概念和基本用法",
                     "estimated_hours": 4.0,
                     "resources": ["官方文档", "入门教程"],
-                    "key_concepts": ["Agents", "Chains", "Models"]
+                    "key_concepts": ["Agents", "Chains", "Models"],
                 }
             ]
         }
@@ -146,11 +149,11 @@ class StudyPlan(BaseModel):
                             "description": "学习核心概念",
                             "estimated_hours": 8.0,
                             "resources": ["文档"],
-                            "key_concepts": ["Agents"]
+                            "key_concepts": ["Agents"],
                         }
                     ],
                     "prerequisites": ["Python 基础", "机器学习基础"],
-                    "learning_objectives": ["掌握 LangChain 开发"]
+                    "learning_objectives": ["掌握 LangChain 开发"],
                 }
             ]
         }
@@ -158,6 +161,7 @@ class StudyPlan(BaseModel):
 
 
 # ============= 研究报告相关 Schema =============
+
 
 class ResearchSection(BaseModel):
     """研究报告章节"""
@@ -229,11 +233,11 @@ class ResearchReport(BaseModel):
                             "title": "引言",
                             "content": "LangChain 是...",
                             "sources": ["doc1.pdf"],
-                            "key_findings": ["发现1"]
+                            "key_findings": ["发现1"],
                         }
                     ],
                     "conclusions": ["结论1", "结论2"],
-                    "references": ["参考文献1"]
+                    "references": ["参考文献1"],
                 }
             ]
         }
@@ -242,8 +246,10 @@ class ResearchReport(BaseModel):
 
 # ============= 测验相关 Schema =============
 
-class QuestionType(str, Enum):
+
+class QuestionType(StrEnum):
     """题目类型"""
+
     SINGLE_CHOICE = "single_choice"
     MULTIPLE_CHOICE = "multiple_choice"
     TRUE_FALSE = "true_false"
@@ -362,12 +368,12 @@ class Quiz(BaseModel):
                             "options": ["A. 框架", "B. 库", "C. 工具"],
                             "correct_answer": "A",
                             "explanation": "LangChain 是一个框架",
-                            "points": 1
+                            "points": 1,
                         }
                     ],
                     "total_points": 1,
                     "passing_score": 1,
-                    "time_limit_minutes": 30
+                    "time_limit_minutes": 30,
                 }
             ]
         }

@@ -115,9 +115,7 @@ class ContextManagerMiddleware(AgentMiddleware):
                 # 粗略估算：每条消息至少 50 token
                 hard_limit_msgs = int(max_tokens / 50) if max_tokens > 0 else 2000
                 if len(sanitized) > hard_limit_msgs:
-                    logger.warning(
-                        f"消息数 {len(sanitized)} 超过硬限制 {hard_limit_msgs}，强制触发压缩"
-                    )
+                    logger.warning(f"消息数 {len(sanitized)} 超过硬限制 {hard_limit_msgs}，强制触发压缩")
                     level = CompressionLevel.LEVEL_2_SUMMARY
                 else:
                     if sanitized is not messages and sanitized != messages:
@@ -196,18 +194,19 @@ class ContextManagerMiddleware(AgentMiddleware):
                 f"confidence={verdict.confidence:.2f}, reason={verdict.reason}"
             )
             return {
-                "messages": [AIMessage(
-                    content=termination_msg,
-                    additional_kwargs={"_termination_signal": True},
-                )],
+                "messages": [
+                    AIMessage(
+                        content=termination_msg,
+                        additional_kwargs={"_termination_signal": True},
+                    )
+                ],
                 "jump_to": "end",
             }
 
         # ── WARN: 注入警告消息，让 Agent 自我纠正（Claude Code 思想） ──
         if verdict.action == TerminationAction.WARN:
             warn_msg = verdict.warning_message or (
-                "⚠️ 检测到可能的重复操作模式，请检查是否陷入循环。"
-                "如果任务仍在正常推进，请继续；否则请总结当前进展。"
+                "⚠️ 检测到可能的重复操作模式，请检查是否陷入循环。如果任务仍在正常推进，请继续；否则请总结当前进展。"
             )
             logger.info(f"循环警告注入: {verdict.reason}")
             return {"messages": [HumanMessage(content=warn_msg)]}
@@ -240,15 +239,11 @@ class ContextManagerMiddleware(AgentMiddleware):
             total += TokenEstimator.estimate_tokens(content, self._model_name)
 
             # 2. 工具调用：name + args + id
-            if hasattr(msg, 'tool_calls') and msg.tool_calls:
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
                 for tc in msg.tool_calls:
-                    total += TokenEstimator.estimate_tokens(
-                        tc.get('name', ''), self._model_name
-                    )
-                    total += TokenEstimator.estimate_tokens(
-                        str(tc.get('args', {})), self._model_name
-                    )
-                    tc_id = tc.get('id', '')
+                    total += TokenEstimator.estimate_tokens(tc.get("name", ""), self._model_name)
+                    total += TokenEstimator.estimate_tokens(str(tc.get("args", {})), self._model_name)
+                    tc_id = tc.get("id", "")
                     if tc_id:
                         total += TokenEstimator.estimate_tokens(tc_id, self._model_name)
 
@@ -274,12 +269,12 @@ class ContextManagerMiddleware(AgentMiddleware):
             role = role_map.get(type(msg), "unknown")
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
             entry: dict[str, Any] = {"role": role, "content": content}
-            if hasattr(msg, 'id') and msg.id:
+            if hasattr(msg, "id") and msg.id:
                 entry["id"] = msg.id
-            if hasattr(msg, 'tool_calls') and msg.tool_calls:
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
                 entry["tool_calls"] = msg.tool_calls
-            if hasattr(msg, 'additional_kwargs') and 'memory_tier' in msg.additional_kwargs:
-                entry["memory_tier"] = msg.additional_kwargs['memory_tier']
+            if hasattr(msg, "additional_kwargs") and "memory_tier" in msg.additional_kwargs:
+                entry["memory_tier"] = msg.additional_kwargs["memory_tier"]
             if isinstance(msg, ToolMessage):
                 entry["tool_call_id"] = msg.tool_call_id
             result.append(entry)
@@ -357,8 +352,7 @@ class ContextManagerMiddleware(AgentMiddleware):
                     return content.strip()[:500]
                 elif isinstance(content, list):
                     text = " ".join(
-                        block.get("text", "") if isinstance(block, dict) else str(block)
-                        for block in content
+                        block.get("text", "") if isinstance(block, dict) else str(block) for block in content
                     )
                     if text.strip():
                         return text.strip()[:500]
@@ -380,14 +374,14 @@ class ContextManagerMiddleware(AgentMiddleware):
         # 第一遍：收集所有有效的 tool_call_id
         valid_tool_call_ids: set[str] = set()
         for msg in messages:
-            if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
+            if isinstance(msg, AIMessage) and hasattr(msg, "tool_calls") and msg.tool_calls:
                 for tc in msg.tool_calls:
-                    tc_id = tc.get('id', '') if isinstance(tc, dict) else getattr(tc, 'id', '')
+                    tc_id = tc.get("id", "") if isinstance(tc, dict) else getattr(tc, "id", "")
                     if tc_id:
                         valid_tool_call_ids.add(tc_id)
 
         # 第二遍：移除孤立的 ToolMessage
-        sanitized = []
+        sanitized: list[BaseMessage] = []
         removed_tools = 0
         for msg in messages:
             if isinstance(msg, ToolMessage):
@@ -408,7 +402,7 @@ class ContextManagerMiddleware(AgentMiddleware):
         while i < len(sanitized):
             msg = sanitized[i]
 
-            if not (isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls):
+            if not (isinstance(msg, AIMessage) and hasattr(msg, "tool_calls") and msg.tool_calls):
                 result.append(msg)
                 i += 1
                 continue
@@ -416,7 +410,7 @@ class ContextManagerMiddleware(AgentMiddleware):
             # 收集该 AIMessage 的所有 tool_call_id
             msg_tc_ids = []
             for tc in msg.tool_calls:
-                tc_id = tc.get('id', '') if isinstance(tc, dict) else getattr(tc, 'id', '')
+                tc_id = tc.get("id", "") if isinstance(tc, dict) else getattr(tc, "id", "")
                 if tc_id:
                     msg_tc_ids.append(tc_id)
             if not msg_tc_ids:
@@ -459,14 +453,14 @@ class ContextManagerMiddleware(AgentMiddleware):
             # 不再使用策略b（补充错误 ToolMessage），因为：
             # 1. interrupt 导致的缺失 ToolMessage 不是"执行失败"，语义错误
             # 2. 补充的 ToolMessage 可能导致消息序列不合规（400 错误）
-            new_content = msg.content or ''
+            new_content = msg.content or ""
             if not new_content.strip():
-                new_content = '[工具调用等待审批中，暂未执行]'
+                new_content = "[工具调用等待审批中，暂未执行]"
             new_msg = AIMessage(
                 content=new_content,
-                additional_kwargs={k: v for k, v in msg.additional_kwargs.items() if k != 'tool_calls'},
+                additional_kwargs={k: v for k, v in msg.additional_kwargs.items() if k != "tool_calls"},
             )
-            if hasattr(msg, 'id') and msg.id:
+            if hasattr(msg, "id") and msg.id:
                 new_msg.id = msg.id
             result.append(new_msg)
             stripped += 1
@@ -491,9 +485,9 @@ class ContextManagerMiddleware(AgentMiddleware):
         # 策略a移除 tool_calls 后，对应的 ToolMessage 可能仍在 result 中
         final_valid_tc_ids: set[str] = set()
         for msg in result:
-            if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
+            if isinstance(msg, AIMessage) and hasattr(msg, "tool_calls") and msg.tool_calls:
                 for tc in msg.tool_calls:
-                    tc_id = tc.get('id', '') if isinstance(tc, dict) else getattr(tc, 'id', '')
+                    tc_id = tc.get("id", "") if isinstance(tc, dict) else getattr(tc, "id", "")
                     if tc_id:
                         final_valid_tc_ids.add(tc_id)
 

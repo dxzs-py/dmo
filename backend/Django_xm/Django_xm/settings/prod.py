@@ -48,7 +48,7 @@ CSRF_TRUSTED_ORIGINS = (
 CORS_EXPOSE_HEADERS = ["content-disposition", "X-Captcha-Key"]
 
 REST_FRAMEWORK["DEFAULT_AUTHENTICATION_CLASSES"] = [
-    'rest_framework_simplejwt.authentication.JWTAuthentication',
+    "rest_framework_simplejwt.authentication.JWTAuthentication",
 ]
 REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"] = [
     "rest_framework.renderers.JSONRenderer",
@@ -67,7 +67,7 @@ SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"] = timedelta(minutes=app_cfg.jwt_access_token
 SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"] = timedelta(days=app_cfg.jwt_refresh_token_lifetime_days)
 
 SECURE_SSL_REDIRECT = True
-SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 
@@ -75,12 +75,8 @@ LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        "verbose": {
-            "format": "%(levelname)s %(asctime)s %(module)s %(lineno)d %(message)s"
-        },
-        "simple": {
-            "format": "%(levelname)s %(module)s %(lineno)d %(message)s"
-        },
+        "verbose": {"format": "%(levelname)s %(asctime)s %(module)s %(lineno)d %(message)s"},
+        "simple": {"format": "%(levelname)s %(module)s %(lineno)d %(message)s"},
     },
     "handlers": {
         "file": {
@@ -113,11 +109,9 @@ LOGGING = {
 }
 
 CELERY_BROKER_TRANSPORT_OPTIONS = {
-    'max_connections': 20,
-    'visibility_timeout': 43200,
+    "max_connections": 20,
+    "visibility_timeout": 43200,
 }
 CELERY_BROKER_CONNECTION_MAX_RETRIES = 20
 CELERY_BROKER_POOL_LIMIT = 20
 CELERY_REDIS_BACKEND_HEALTH_CHECK_INTERVAL = 30
-
-

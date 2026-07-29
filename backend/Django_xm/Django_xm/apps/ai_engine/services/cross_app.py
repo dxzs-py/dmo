@@ -23,7 +23,8 @@ def schedule_ai_data_cleanup(user_id=None, session_id=None):
     """
     try:
         from Django_xm.tasks.chat_tasks import cleanup_checkpoints
+
         cleanup_checkpoints.delay(user_id=user_id, session_id=session_id)
         logger.info(f"已调度 AI 数据清理任务: user_id={user_id}, session_id={session_id}")
-    except Exception as e:
-        logger.error(f"调度 AI 数据清理任务失败: user_id={user_id}, session_id={session_id}, error={e}")
+    except Exception:
+        logger.exception(f"调度 AI 数据清理任务失败: user_id={user_id}, session_id={session_id}")

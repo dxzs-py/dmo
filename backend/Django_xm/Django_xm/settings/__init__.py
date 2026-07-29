@@ -5,6 +5,7 @@ Django settings module initialization
 - production / prod → prod.py (生产环境)
 - 其他(默认) → dev.py (开发环境)
 """
+
 import os
 
 ENV = os.environ.get("DJANGO_ENV", "development").lower().strip()

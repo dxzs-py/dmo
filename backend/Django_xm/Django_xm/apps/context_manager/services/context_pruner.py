@@ -7,11 +7,28 @@ from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
-_TRIVIAL_PATTERNS = frozenset({
-    "好的", "收到", "明白了", "了解了", "谢谢", "感谢",
-    "嗯", "哦", "好", "是", "对", "行", "ok", "OK",
-    "好的。", "收到。", "谢谢！", "感谢！",
-})
+_TRIVIAL_PATTERNS = frozenset(
+    {
+        "好的",
+        "收到",
+        "明白了",
+        "了解了",
+        "谢谢",
+        "感谢",
+        "嗯",
+        "哦",
+        "好",
+        "是",
+        "对",
+        "行",
+        "ok",
+        "OK",
+        "好的。",
+        "收到。",
+        "谢谢！",
+        "感谢！",
+    }
+)
 
 _TRIVIAL_MAX_LENGTH = 10
 
@@ -25,7 +42,6 @@ class PruneResult:
 
 
 class ContextPruner:
-
     def prune(self, messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], PruneResult]:
         result = PruneResult(original_count=len(messages))
 
@@ -149,10 +165,7 @@ class ContextPruner:
         result = pinned + kept
 
         if removed_count > 0:
-            logger.info(
-                f"语义相关性筛选: 保留 {len(result)} 条消息, "
-                f"移除 {removed_count} 条低相关消息"
-            )
+            logger.info(f"语义相关性筛选: 保留 {len(result)} 条消息, 移除 {removed_count} 条低相关消息")
 
         return result, removed_count
 
@@ -160,10 +173,7 @@ class ContextPruner:
         """计算单条消息与查询的语义相关性分数"""
         content = msg.get("content", "")
         if isinstance(content, list):
-            content = " ".join(
-                block.get("text", "") if isinstance(block, dict) else str(block)
-                for block in content
-            )
+            content = " ".join(block.get("text", "") if isinstance(block, dict) else str(block) for block in content)
         if not isinstance(content, str) or not content.strip():
             return 0.0
 

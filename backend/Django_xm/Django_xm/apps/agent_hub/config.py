@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-class AgentType(str, Enum):
+class AgentType(StrEnum):
     BASE = "base"
     RAG = "rag"
     SAFE_RAG = "safe_rag"
@@ -99,39 +99,30 @@ class AgentConfig:
                     object.__setattr__(self, field_name, None)
 
         if self.agent_type in _RAG_TYPES and self.retriever is None:
-            raise ConfigValidationError(
-                f"AgentConfig: agent_type={self.agent_type.value} 必须提供 retriever"
-            )
+            raise ConfigValidationError(f"AgentConfig: agent_type={self.agent_type.value} 必须提供 retriever")
 
         if self.agent_type == AgentType.SAFE_RAG:
             self.enable_guardrails = True
 
         if self.temperature is not None:
             if not isinstance(self.temperature, (int, float)) or self.temperature < 0 or self.temperature > 2:
-                raise ConfigValidationError(
-                    f"AgentConfig: temperature 必须在 0~2 之间，当前值: {self.temperature}"
-                )
+                raise ConfigValidationError(f"AgentConfig: temperature 必须在 0~2 之间，当前值: {self.temperature}")
 
         if self.max_tokens is not None:
             if not isinstance(self.max_tokens, int) or self.max_tokens < 1:
-                raise ConfigValidationError(
-                    f"AgentConfig: max_tokens 必须为正整数，当前值: {self.max_tokens}"
-                )
+                raise ConfigValidationError(f"AgentConfig: max_tokens 必须为正整数，当前值: {self.max_tokens}")
 
         if self.tool_config is not None and not isinstance(self.tool_config, dict):
-            raise ConfigValidationError(
-                "AgentConfig: tool_config 必须为 dict 类型"
-            )
+            raise ConfigValidationError("AgentConfig: tool_config 必须为 dict 类型")
 
     def resolve_defaults(self) -> None:
         if self.capabilities is None:
-            self.capabilities = list(
-                AGENT_CAPABILITIES_DEFAULT.get(self.agent_type, [])
-            )
+            self.capabilities = list(AGENT_CAPABILITIES_DEFAULT.get(self.agent_type, []))
 
         if self.store is None:
             try:
                 from Django_xm.apps.ai_engine.services.checkpointer_factory import get_store
+
                 auto_store = get_store()
                 if auto_store is not None:
                     self.store = auto_store
@@ -142,6 +133,7 @@ class AgentConfig:
         if self.checkpointer is None:
             try:
                 from Django_xm.apps.ai_engine.services.checkpointer_factory import get_checkpointer
+
                 auto_cp = get_checkpointer()
                 if auto_cp is not None:
                     self.checkpointer = auto_cp

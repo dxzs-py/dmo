@@ -33,11 +33,11 @@ def get_supported_extensions() -> dict[str, str]:
 
 
 def get_document_loader(file_path: str) -> Any | None:
-    file_path = Path(file_path)
-    extension = file_path.suffix.lower()
+    path = Path(file_path)
+    extension = path.suffix.lower()
 
     if extension not in SUPPORTED_EXTENSIONS:
-        logger.warning(f"不支持的文件类型: {extension}, 文件: {file_path}")
+        logger.warning(f"不支持的文件类型: {extension}, 文件: {path}")
         return None
 
     file_type = SUPPORTED_EXTENSIONS[extension]
@@ -45,58 +45,69 @@ def get_document_loader(file_path: str) -> Any | None:
     try:
         if file_type == "pdf":
             from langchain_community.document_loaders import PyPDFLoader
-            return PyPDFLoader(str(file_path))
+
+            return PyPDFLoader(str(path))
         elif file_type == "text":
             from langchain_community.document_loaders import TextLoader
-            return TextLoader(str(file_path), encoding="utf-8")
+
+            return TextLoader(str(path), encoding="utf-8")
         elif file_type == "markdown":
             try:
                 from langchain_unstructured import UnstructuredLoader
-                return UnstructuredLoader(str(file_path), partition_strategy="fast")
+
+                return UnstructuredLoader(str(path), partition_strategy="fast")
             except ImportError:
                 from langchain_community.document_loaders import UnstructuredMarkdownLoader
-                return UnstructuredMarkdownLoader(str(file_path))
+
+                return UnstructuredMarkdownLoader(str(path))
         elif file_type == "html":
             try:
                 from langchain_unstructured import UnstructuredLoader
-                return UnstructuredLoader(str(file_path), partition_strategy="fast")
+
+                return UnstructuredLoader(str(path), partition_strategy="fast")
             except ImportError:
                 from langchain_community.document_loaders import UnstructuredHTMLLoader
-                return UnstructuredHTMLLoader(str(file_path))
+
+                return UnstructuredHTMLLoader(str(path))
         elif file_type == "json":
             from langchain_community.document_loaders import JSONLoader
-            return JSONLoader(file_path=str(file_path), jq_schema=".", text_content=False)
+
+            return JSONLoader(file_path=str(path), jq_schema=".", text_content=False)
         elif file_type == "csv":
             from langchain_community.document_loaders import CSVLoader
-            return CSVLoader(str(file_path), encoding="utf-8")
+
+            return CSVLoader(str(path), encoding="utf-8")
         elif file_type in ("docx", "xlsx", "pptx"):
             try:
                 from langchain_unstructured import UnstructuredLoader
-                return UnstructuredLoader(str(file_path), partition_strategy="fast")
+
+                return UnstructuredLoader(str(path), partition_strategy="fast")
             except ImportError:
-                logger.warning(f"Office 文件 {file_type} 需要 langchain-unstructured，请运行: pip install langchain-unstructured")
+                logger.warning(
+                    f"Office 文件 {file_type} 需要 langchain-unstructured，请运行: pip install langchain-unstructured"
+                )
                 return None
         else:
             logger.warning(f"未实现的文件类型处理: {file_type}")
             return None
-    except Exception as e:
-        logger.error(f"创建加载器失败: {file_path}, 错误: {e}")
+    except Exception:
+        logger.exception(f"创建加载器失败: {path}, 错误")
         return None
 
 
 def load_document(file_path: str, add_metadata: bool = True) -> list[Document]:
     """加载单个文档"""
-    file_path = Path(file_path)
+    path = Path(file_path)
 
-    if not file_path.exists():
-        raise FileNotFoundError(f"文件不存在: {file_path}")
+    if not path.exists():
+        raise FileNotFoundError(f"文件不存在: {path}")
 
-    if not file_path.is_file():
-        raise ValueError(f"不是文件: {file_path}")
+    if not path.is_file():
+        raise ValueError(f"不是文件: {path}")
 
-    loader = get_document_loader(str(file_path))
+    loader = get_document_loader(str(path))
     if loader is None:
-        extension = file_path.suffix.lower()
+        extension = path.suffix.lower()
         supported = ", ".join(SUPPORTED_EXTENSIONS.keys())
         raise ValueError(f"不支持的文件类型: {extension}。支持的类型: {supported}")
 
@@ -104,22 +115,24 @@ def load_document(file_path: str, add_metadata: bool = True) -> list[Document]:
         documents = loader.load()
 
         if add_metadata:
-            file_type = file_path.suffix.lower()
+            file_type = path.suffix.lower()
             # 根据扩展名推断文档类型
             doc_type = SUPPORTED_EXTENSIONS.get(file_type, "unknown")
             for doc in documents:
-                doc.metadata.update({
-                    "source": str(file_path),
-                    "file_name": file_path.name,
-                    "file_type": file_type,
-                    "doc_type": doc_type,
-                })
+                doc.metadata.update(
+                    {
+                        "source": str(path),
+                        "file_name": path.name,
+                        "file_type": file_type,
+                        "doc_type": doc_type,
+                    }
+                )
 
-        logger.info(f"文档加载成功: {file_path.name}, {len(documents)} 个文档块")
+        logger.info(f"文档加载成功: {path.name}, {len(documents)} 个文档块")
         return documents
 
-    except Exception as e:
-        logger.error(f"文档加载失败: {file_path}, 错误: {e}")
+    except Exception:
+        logger.exception(f"文档加载失败: {path}, 错误")
         raise
 
 
@@ -130,13 +143,13 @@ def load_documents_from_directory(
     add_metadata: bool = True,
 ) -> list[Document]:
     """从目录加载所有支持的文档"""
-    directory_path = Path(directory_path)
+    dir_path = Path(directory_path)
 
-    if not directory_path.exists():
-        raise FileNotFoundError(f"目录不存在: {directory_path}")
+    if not dir_path.exists():
+        raise FileNotFoundError(f"目录不存在: {dir_path}")
 
-    if not directory_path.is_dir():
-        raise ValueError(f"不是目录: {directory_path}")
+    if not dir_path.is_dir():
+        raise ValueError(f"不是目录: {dir_path}")
 
     all_documents: list[Document] = []
     loaded_count = 0
@@ -150,8 +163,8 @@ def load_documents_from_directory(
     logger.info(f"开始扫描目录: {directory_path}")
 
     try:
-        for root, dirs, files in os.walk(directory_path):
-            if not recursive and root != str(directory_path):
+        for root, _dirs, files in os.walk(directory_path):
+            if not recursive and root != str(dir_path):
                 break
 
             for file_name in files:
@@ -173,8 +186,8 @@ def load_documents_from_directory(
 
         return all_documents
 
-    except Exception as e:
-        logger.error(f"目录加载失败: {directory_path}, 错误: {e}")
+    except Exception:
+        logger.exception(f"目录加载失败: {directory_path}, 错误")
         raise
 
 
@@ -198,8 +211,8 @@ def load_documents_from_paths(
             all_documents.extend(documents)
             success_count += 1
 
-        except Exception as e:
-            logger.error(f"   ❌ 加载失败: {file_path}, 错误: {e}")
+        except Exception:
+            logger.exception(f"   ❌ 加载失败: {file_path}, 错误")
             error_count += 1
             continue
 
@@ -221,7 +234,7 @@ def load_directory(
 ) -> list[Document]:
     """
     批量加载目录中的文档（兼容源项目API）
-    
+
     Args:
         directory_path: 目录路径
         glob_pattern: 文件匹配模式
@@ -229,7 +242,7 @@ def load_directory(
         recursive: 是否递归加载子目录
         show_progress: 是否显示加载进度
         max_files: 最大加载文件数
-        
+
     Returns:
         Document 对象列表
     """

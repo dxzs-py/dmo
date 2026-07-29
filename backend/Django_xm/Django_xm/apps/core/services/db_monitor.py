@@ -40,38 +40,35 @@ class DatabaseMonitor:
     def get_postgresql_status():
         """获取 PostgreSQL 数据库状态"""
         status = {
-            'connected': False,
-            'connection': 'disconnected',
-            'backend': 'PostgreSQL',
-            'error': None,
+            "connected": False,
+            "connection": "disconnected",
+            "backend": "PostgreSQL",
+            "error": None,
         }
 
         try:
-            with connections['default'].cursor() as cursor:
+            with connections["default"].cursor() as cursor:
                 # 版本
                 cursor.execute("SELECT version()")
                 row = cursor.fetchone()
-                status['version'] = row[0] if row else 'unknown'
+                status["version"] = row[0] if row else "unknown"
 
                 # 数据库名称
                 cursor.execute("SELECT current_database()")
                 row = cursor.fetchone()
-                status['database_name'] = row[0] if row else 'unknown'
+                status["database_name"] = row[0] if row else "unknown"
 
                 # 活跃连接数
-                cursor.execute(
-                    "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()"
-                )
+                cursor.execute("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()")
                 row = cursor.fetchone()
-                status['threads_connected'] = row[0] if row else 0
+                status["threads_connected"] = row[0] if row else 0
 
                 # 总查询数
                 cursor.execute(
-                    "SELECT sum(xact_commit + xact_rollback) "
-                    "FROM pg_stat_database WHERE datname = current_database()"
+                    "SELECT sum(xact_commit + xact_rollback) FROM pg_stat_database WHERE datname = current_database()"
                 )
                 row = cursor.fetchone()
-                status['questions'] = int(row[0]) if row and row[0] else 0
+                status["questions"] = int(row[0]) if row and row[0] else 0
 
                 # 数据库大小
                 cursor.execute("SELECT pg_database_size(current_database())")
@@ -99,24 +96,26 @@ class DatabaseMonitor:
                     row_count = row[4] or 0
                     total_data_size += data_size
                     total_index_size += index_size
-                    tables.append({
-                        'name': row[0],
-                        'data_size': data_size,
-                        'index_size': index_size,
-                        'total_size': total_size,
-                        'rows': row_count,
-                    })
+                    tables.append(
+                        {
+                            "name": row[0],
+                            "data_size": data_size,
+                            "index_size": index_size,
+                            "total_size": total_size,
+                            "rows": row_count,
+                        }
+                    )
 
-                status['connected'] = True
-                status['connection'] = 'healthy'
-                status['database_size'] = db_size
-                status['total_size_mb'] = round(db_size / (1024 * 1024), 2)
-                status['data_size'] = total_data_size
-                status['index_size'] = total_index_size
-                status['tables'] = tables
-                status['table_count'] = len(tables)
+                status["connected"] = True
+                status["connection"] = "healthy"
+                status["database_size"] = db_size
+                status["total_size_mb"] = round(db_size / (1024 * 1024), 2)
+                status["data_size"] = total_data_size
+                status["index_size"] = total_index_size
+                status["tables"] = tables
+                status["table_count"] = len(tables)
         except Exception as e:
-            status['error'] = str(e)
+            status["error"] = str(e)
 
         return status
 
@@ -129,7 +128,7 @@ class DatabaseMonitor:
         - ``cache_manager`` 注册 ``RedisStatusProvider``
         """
         overview = {
-            'postgresql': DatabaseMonitor.get_postgresql_status(),
+            "postgresql": DatabaseMonitor.get_postgresql_status(),
         }
 
         for provider in get_all_status_providers():
@@ -137,8 +136,8 @@ class DatabaseMonitor:
                 overview[provider.get_name()] = provider.get_status()
             except Exception as e:
                 overview[provider.get_name()] = {
-                    'connection': 'unhealthy',
-                    'error': str(e),
+                    "connection": "unhealthy",
+                    "error": str(e),
                 }
                 logger.warning(
                     f"状态提供者 {provider.get_name()} 查询失败: {e}",

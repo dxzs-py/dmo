@@ -30,6 +30,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from Django_xm.apps.agent_hub.approval.middleware import ApprovalMiddleware
 from Django_xm.apps.agent_hub.approval.policies import ShellExecApprovalPolicy
 from Django_xm.apps.agent_hub.approval.timeout_handler import TIMEOUT_DECISION
+from Django_xm.common.risk_levels import RiskLevel
 
 
 def _make_ai_message(tool_calls):
@@ -47,12 +48,11 @@ def _make_runtime():
     return MagicMock()
 
 
-# 所有审批流程测试统一 mock should_approve 返回 True，
-# 隔离 should_approve 的白名单/黑名单逻辑（该逻辑由 policies 单独测试）。
-# 不 mock 会导致 ls/rm -rf 等命令被白名单/黑名单跳过，middleware 返回 None。
-_APPROVAL_FLOW_PATCH = patch.object(
-    ShellExecApprovalPolicy, "should_approve", return_value=True
-)
+# 所有审批流程测试统一 mock assess_risk 返回 CONTROLLED，
+# 隔离 assess_risk 的白名单/黑名单逻辑（该逻辑由 policies 单独测试）。
+# 不 mock 会导致 ls/rm -rf 等命令被白名单/黑名单跳过（SAFE 自动通过），
+# middleware 返回 None，无法测试 rejected/timeout 流程。
+_APPROVAL_FLOW_PATCH = patch.object(ShellExecApprovalPolicy, "assess_risk", return_value=RiskLevel.CONTROLLED)
 
 
 class ApprovalMiddlewareApprovedTests(unittest.IsolatedAsyncioTestCase):
@@ -73,13 +73,14 @@ class ApprovalMiddlewareApprovedTests(unittest.IsolatedAsyncioTestCase):
         ai_msg = _make_ai_message([tc])
 
         # mock should_approve 返回 True（隔离白名单逻辑）+ interrupt 返回 approved
-        with _APPROVAL_FLOW_PATCH, patch(
-            "Django_xm.apps.agent_hub.approval.middleware.interrupt",
-            return_value={"tc-001": True},
+        with (
+            _APPROVAL_FLOW_PATCH,
+            patch(
+                "Django_xm.apps.agent_hub.approval.middleware.interrupt",
+                return_value={"tc-001": True},
+            ),
         ):
-            result = await middleware.aafter_model(
-                _make_state([ai_msg]), _make_runtime()
-            )
+            result = await middleware.aafter_model(_make_state([ai_msg]), _make_runtime())
 
         self.assertIsNotNone(result)
         self.assertIn("messages", result)
@@ -106,21 +107,20 @@ class ApprovalMiddlewareApprovedTests(unittest.IsolatedAsyncioTestCase):
         }
         ai_msg = _make_ai_message([tc])
 
-        with _APPROVAL_FLOW_PATCH, patch(
-            "Django_xm.apps.agent_hub.approval.middleware.interrupt",
-            return_value={"tc-002": True},
+        with (
+            _APPROVAL_FLOW_PATCH,
+            patch(
+                "Django_xm.apps.agent_hub.approval.middleware.interrupt",
+                return_value={"tc-002": True},
+            ),
         ):
-            result = await middleware.aafter_model(
-                _make_state([ai_msg]), _make_runtime()
-            )
+            result = await middleware.aafter_model(_make_state([ai_msg]), _make_runtime())
 
         returned_ai_msg = result["messages"][0]
         self.assertEqual(len(returned_ai_msg.tool_calls), 1)
         # 验证原始参数完全保留（未被添加/删除/修改任何字段）
         self.assertEqual(returned_ai_msg.tool_calls[0]["args"], original_args)
-        self.assertEqual(
-            returned_ai_msg.tool_calls[0]["args"]["command"], "rm -rf /tmp/x"
-        )
+        self.assertEqual(returned_ai_msg.tool_calls[0]["args"]["command"], "rm -rf /tmp/x")
         self.assertEqual(returned_ai_msg.tool_calls[0]["args"]["timeout"], 30)
 
     async def test_middleware_approved_preserves_multiple_tool_calls(self):
@@ -132,13 +132,14 @@ class ApprovalMiddlewareApprovedTests(unittest.IsolatedAsyncioTestCase):
         ]
         ai_msg = _make_ai_message(tcs)
 
-        with _APPROVAL_FLOW_PATCH, patch(
-            "Django_xm.apps.agent_hub.approval.middleware.interrupt",
-            return_value={"tc-a": True, "tc-b": True},
+        with (
+            _APPROVAL_FLOW_PATCH,
+            patch(
+                "Django_xm.apps.agent_hub.approval.middleware.interrupt",
+                return_value={"tc-a": True, "tc-b": True},
+            ),
         ):
-            result = await middleware.aafter_model(
-                _make_state([ai_msg]), _make_runtime()
-            )
+            result = await middleware.aafter_model(_make_state([ai_msg]), _make_runtime())
 
         returned_ai_msg = result["messages"][0]
         self.assertEqual(len(returned_ai_msg.tool_calls), 2)
@@ -159,13 +160,14 @@ class ApprovalMiddlewareRejectedTests(unittest.IsolatedAsyncioTestCase):
         }
         ai_msg = _make_ai_message([tc])
 
-        with _APPROVAL_FLOW_PATCH, patch(
-            "Django_xm.apps.agent_hub.approval.middleware.interrupt",
-            return_value={"tc-rej-1": False},
+        with (
+            _APPROVAL_FLOW_PATCH,
+            patch(
+                "Django_xm.apps.agent_hub.approval.middleware.interrupt",
+                return_value={"tc-rej-1": False},
+            ),
         ):
-            result = await middleware.aafter_model(
-                _make_state([ai_msg]), _make_runtime()
-            )
+            result = await middleware.aafter_model(_make_state([ai_msg]), _make_runtime())
 
         self.assertIsNotNone(result)
         messages = result["messages"]
@@ -188,22 +190,21 @@ class ApprovalMiddlewareRejectedTests(unittest.IsolatedAsyncioTestCase):
         }
         ai_msg = _make_ai_message([tc])
 
-        with _APPROVAL_FLOW_PATCH, patch(
-            "Django_xm.apps.agent_hub.approval.middleware.interrupt",
-            return_value={"tc-rej-2": False},
+        with (
+            _APPROVAL_FLOW_PATCH,
+            patch(
+                "Django_xm.apps.agent_hub.approval.middleware.interrupt",
+                return_value={"tc-rej-2": False},
+            ),
         ):
-            result = await middleware.aafter_model(
-                _make_state([ai_msg]), _make_runtime()
-            )
+            result = await middleware.aafter_model(_make_state([ai_msg]), _make_runtime())
 
         returned_ai_msg = result["messages"][0]
         # tool_call 仍保留（让 ToolNode 检测到已有 ToolMessage 跳过执行）
         self.assertEqual(len(returned_ai_msg.tool_calls), 1)
         self.assertEqual(returned_ai_msg.tool_calls[0]["id"], "tc-rej-2")
         # args 不应被修改
-        self.assertEqual(
-            returned_ai_msg.tool_calls[0]["args"], {"command": "rm -rf /"}
-        )
+        self.assertEqual(returned_ai_msg.tool_calls[0]["args"], {"command": "rm -rf /"})
 
 
 class ApprovalMiddlewareTimeoutTests(unittest.IsolatedAsyncioTestCase):
@@ -219,13 +220,14 @@ class ApprovalMiddlewareTimeoutTests(unittest.IsolatedAsyncioTestCase):
         }
         ai_msg = _make_ai_message([tc])
 
-        with _APPROVAL_FLOW_PATCH, patch(
-            "Django_xm.apps.agent_hub.approval.middleware.interrupt",
-            return_value={"tc-timeout-1": TIMEOUT_DECISION},
+        with (
+            _APPROVAL_FLOW_PATCH,
+            patch(
+                "Django_xm.apps.agent_hub.approval.middleware.interrupt",
+                return_value={"tc-timeout-1": TIMEOUT_DECISION},
+            ),
         ):
-            result = await middleware.aafter_model(
-                _make_state([ai_msg]), _make_runtime()
-            )
+            result = await middleware.aafter_model(_make_state([ai_msg]), _make_runtime())
 
         self.assertIsNotNone(result)
         messages = result["messages"]

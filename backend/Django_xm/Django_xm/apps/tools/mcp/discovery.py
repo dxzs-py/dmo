@@ -13,7 +13,6 @@ _USER_MCP_CONFIG_KEY = "user_mcp_servers"
 
 
 class MCPServerDiscovery:
-
     def discover_from_config(self) -> list[dict[str, Any]]:
         servers = get_system_mcp_servers()
         result = []
@@ -73,13 +72,13 @@ class MCPServerDiscovery:
                 return servers
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"注册中心请求失败 ({registry_url}): HTTP {e.response.status_code}")
+            logger.exception(f"注册中心请求失败 ({registry_url}): HTTP {e.response.status_code}")
             return []
-        except httpx.RequestError as e:
-            logger.error(f"注册中心连接失败 ({registry_url}): {e}")
+        except httpx.RequestError:
+            logger.exception(f"注册中心连接失败 ({registry_url})")
             return []
-        except Exception as e:
-            logger.error(f"从注册中心发现 MCP Server 失败 ({registry_url}): {e}")
+        except Exception:
+            logger.exception(f"从注册中心发现 MCP Server 失败 ({registry_url})")
             return []
 
     def register_server(self, server_config: dict[str, Any], user_id: int | None = None) -> bool:
@@ -95,6 +94,7 @@ class MCPServerDiscovery:
 
         try:
             from Django_xm.apps.cache_manager.services.cache_service import CacheService
+
             user_servers = CacheService.get(_USER_MCP_CONFIG_KEY) or []
             if not isinstance(user_servers, list):
                 user_servers = []
@@ -133,8 +133,8 @@ class MCPServerDiscovery:
             logger.info(f"MCP Server 已注册: {name} (transport={transport})")
             return True
 
-        except Exception as e:
-            logger.error(f"注册 MCP Server 失败: {e}")
+        except Exception:
+            logger.exception("注册 MCP Server 失败")
             return False
 
     def unregister_server(self, server_name: str, user_id: int | None = None) -> bool:
@@ -145,6 +145,7 @@ class MCPServerDiscovery:
 
         try:
             from Django_xm.apps.cache_manager.services.cache_service import CacheService
+
             user_servers = CacheService.get(_USER_MCP_CONFIG_KEY) or []
             if not isinstance(user_servers, list):
                 user_servers = []
@@ -159,8 +160,8 @@ class MCPServerDiscovery:
             logger.info(f"MCP Server 已注销: {server_name}")
             return True
 
-        except Exception as e:
-            logger.error(f"注销 MCP Server 失败: {e}")
+        except Exception:
+            logger.exception("注销 MCP Server 失败")
             return False
 
     def list_available_servers(self) -> list[dict[str, Any]]:
@@ -184,6 +185,7 @@ class MCPServerDiscovery:
 
         try:
             from Django_xm.apps.cache_manager.services.cache_service import CacheService
+
             user_servers = CacheService.get(_USER_MCP_CONFIG_KEY) or []
             if not isinstance(user_servers, list):
                 user_servers = []

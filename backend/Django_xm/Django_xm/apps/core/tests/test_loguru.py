@@ -85,8 +85,7 @@ class LoguruConfigurationTests(unittest.TestCase):
         setup_loguru_logging()
         sinks = loguru_logger._core.handlers
         has_stderr = any(
-            getattr(h._sink, "_stream", None) is sys.stderr
-            or getattr(h._sink, "_stream", None) == sys.stderr
+            getattr(h._sink, "_stream", None) is sys.stderr or getattr(h._sink, "_stream", None) == sys.stderr
             for h in sinks.values()
         )
         # 不同 loguru 版本内部结构可能不同，做兜底检查
@@ -103,9 +102,7 @@ class LoguruConfigurationTests(unittest.TestCase):
         setup_loguru_logging()
         sinks = loguru_logger._core.handlers
         # 至少有一个 sink 的 level 不低于 INFO（默认配置）
-        levels = [
-            h._levelno for h in sinks.values() if hasattr(h, "_levelno")
-        ]
+        levels = [h._levelno for h in sinks.values() if hasattr(h, "_levelno")]
         self.assertTrue(
             any(lvl <= 20 for lvl in levels),  # INFO = 20
             "应存在 INFO 或更宽松级别的 sink",
@@ -132,6 +129,7 @@ class CoreConfigReadyTriggersLoguruTests(unittest.TestCase):
             # ready 通过 from ... import setup_loguru_logging 导入
             with patch.dict(os.environ, {"DISABLE_LOGURU": ""}, clear=False):
                 from django.apps import apps
+
                 core_config = apps.get_app_config("core")
                 core_config.ready()
                 mock_setup.assert_called_once()
@@ -141,6 +139,7 @@ class CoreConfigReadyTriggersLoguruTests(unittest.TestCase):
         with patch("Django_xm.apps.core.config.setup_loguru_logging") as mock_setup:
             with patch.dict(os.environ, {"DISABLE_LOGURU": "1"}, clear=False):
                 from django.apps import apps
+
                 core_config = apps.get_app_config("core")
                 core_config.ready()
                 mock_setup.assert_not_called()

@@ -109,9 +109,7 @@ class PersistenceStatusStepTestCase(TestCase):
     def test_save_quiz_and_score_fields(self):
         """save_workflow_state 正确保存 quiz、score、score_details"""
         quiz = {
-            "questions": [
-                {"id": "q1", "type": "multiple_choice", "answer": "A", "points": 10}
-            ],
+            "questions": [{"id": "q1", "type": "multiple_choice", "answer": "A", "points": 10}],
             "total_points": 10,
         }
         score_details = {"correct_count": 1, "total_count": 1}

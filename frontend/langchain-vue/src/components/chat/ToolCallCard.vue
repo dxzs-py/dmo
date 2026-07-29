@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed } from 'vue'
-import { ArrowDown, ArrowRight, CircleCheck, Close, Loading, MagicStick } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowRight, CircleCheck, Close, Connection, Loading, MagicStick } from '@element-plus/icons-vue'
 import { ToolCallStatus } from '../../types'
 import {
   formatToolParameters,
@@ -203,6 +203,63 @@ const isPendingApproval = computed(() => props.status === ToolCallStatus.PENDING
 
 const dangerLevel = computed(() => approvalData.value?.danger_level || 'low')
 
+// 风险等级（新标准：safe/controlled/high，优先于 danger_level）
+// risk_level 来自 Approval.extra，由 ApprovalMiddleware 透传到事件 payload 和快照 API
+const riskLevel = computed(() => {
+  const rl = approvalData.value?.risk_level
+  if (rl) return rl
+  // 回退：从 danger_level 映射（legacy 兼容）
+  const map = { low: 'safe', medium: 'controlled', high: 'high' }
+  return map[dangerLevel.value] || 'controlled'
+})
+
+const isHighRisk = computed(() => riskLevel.value === 'high')
+
+const riskLevelLabel = computed(() => {
+  const map = { safe: '安全', controlled: '需审批', high: '高危' }
+  return map[riskLevel.value] || '需审批'
+})
+
+const riskLevelTagType = computed(() => {
+  const map = { safe: 'success', controlled: 'warning', high: 'danger' }
+  return map[riskLevel.value] || 'warning'
+})
+
+// SAFE 级自动通过标记（来自 tool_call 事件 payload 的 auto_approved 字段）
+// SAFE 级工具不创建 Approval 记录，由 ApprovalMiddleware._audit_auto_approved_tools
+// 注册 auto_approved=True 到 tool_call_lifecycle context 并透传到事件 payload
+const isAutoApproved = computed(() => props.toolCall?.auto_approved === true)
+
+// 子 agent 嵌套层级（Phase E3）
+// 双数据源：toolCall（工具事件路径，覆盖 SAFE 自动通过/子 agent 内部工具调用）
+//          + approvalData（审批事件路径，CONTROLLED/HIGH 级审批）
+// 优先从 toolCall 读取（工具事件先于审批事件到达，且覆盖非审批场景），
+// 回退到 approvalData（审批事件携带的嵌套字段，与 toolCall 一致）
+// depth: 0=主 agent, 1=一级子 agent, 2=二级子 agent
+const nestingDepth = computed(() => {
+  const depth = props.toolCall?.depth ?? approvalData.value?.depth
+  return typeof depth === 'number' && depth > 0 ? depth : 0
+})
+
+// 完整调用链路（如 ["main", "web-researcher"]）
+const agentPath = computed(() => {
+  const path = props.toolCall?.agent_path ?? approvalData.value?.agent_path
+  return Array.isArray(path) && path.length > 0 ? path : null
+})
+
+const agentName = computed(() => props.toolCall?.agent_name || approvalData.value?.agent_name || '')
+
+// 是否为子 agent 调用（有嵌套层级信息）
+const isSubagentCall = computed(() => nestingDepth.value > 0 || !!agentName.value)
+
+// 子 agent 调用链路展示文本（如 "main → web-researcher"）
+const agentPathText = computed(() => {
+  if (agentPath.value && agentPath.value.length > 0) {
+    return agentPath.value.join(' → ')
+  }
+  return agentName.value || ''
+})
+
 const dangerLevelLabel = computed(() => {
   const map = { low: '低风险', medium: '中风险', high: '高风险' }
   return map[dangerLevel.value] || '低风险'
@@ -215,6 +272,8 @@ const dangerLevelTagType = computed(() => {
 
 const approvalBorderColor = computed(() => {
   if (props.status !== 'pending_approval') return ''
+  // 高危红名边框，中风险橙色，安全/低风险蓝色
+  if (isHighRisk.value) return 'var(--el-color-danger)'
   const map = {
     medium: 'var(--el-color-warning)',
     high: 'var(--el-color-danger)',
@@ -265,7 +324,7 @@ const operationLabel = computed(() => {
 
 <template>
   <div
-    :class="['tool-call-card', `tool-call-card--${status}`, { 'tool-call-card--skill': isSkillCall }]"
+    :class="['tool-call-card', `tool-call-card--${status}`, { 'tool-call-card--skill': isSkillCall, 'tool-call-card--high-risk': isHighRisk, 'tool-call-card--subagent': isSubagentCall }]"
     :style="approvalBorderColor ? { borderColor: approvalBorderColor } : {}"
   >
     <div class="tool-call-header" @click="isExpanded = !isExpanded">
@@ -274,7 +333,17 @@ const operationLabel = computed(() => {
           <component :is="isSkillCall ? MagicStick : statusIcon" :class="{ 'is-loading': status === ToolCallStatus.RUNNING || status === ToolCallStatus.PROCESSING }" />
         </el-icon>
         <div class="tool-info">
-          <span class="tool-name">{{ toolName }}</span>
+          <span :class="['tool-name', { 'tool-name--high-risk': isHighRisk }]">{{ toolName }}</span>
+          <!-- 子 agent 嵌套链路展示（Phase E3） -->
+          <el-tag v-if="isSubagentCall" size="small" type="info" effect="plain" class="agent-path-tag">
+            <el-icon class="agent-path-icon"><Connection /></el-icon>
+            {{ agentPathText }}
+            <span v-if="nestingDepth > 0" class="depth-badge">L{{ nestingDepth }}</span>
+          </el-tag>
+          <!-- SAFE 级自动通过徽章（Phase F1） -->
+          <el-tag v-if="isAutoApproved" size="small" type="success" effect="plain">自动通过</el-tag>
+          <!-- 高危风险等级徽章（Phase G2） -->
+          <el-tag v-if="isHighRisk" size="small" type="danger" effect="dark">高危</el-tag>
           <el-tag v-if="isSkillCall && skillModeLabel" size="small" :type="skillModeLabel === '管线' ? 'primary' : skillModeLabel === '顾问' ? 'success' : 'warning'" effect="plain">{{ skillModeLabel }}</el-tag>
           <el-tag v-if="status === ToolCallStatus.APPROVED" size="small" type="success">已确认</el-tag>
           <el-tag v-else-if="status === ToolCallStatus.REJECTED" size="small" type="danger">已拒绝</el-tag>
@@ -316,10 +385,10 @@ const operationLabel = computed(() => {
       </template>
 
       <!-- 审批面板 -->
-      <div v-if="isPendingApproval" class="approval-panel">
+      <div v-if="isPendingApproval" class="approval-panel" :class="{ 'approval-panel--high-risk': isHighRisk }">
         <div class="approval-panel__header">
           <span class="approval-panel__title">审批确认</span>
-          <el-tag size="small" :type="dangerLevelTagType" effect="dark">{{ dangerLevelLabel }}</el-tag>
+          <el-tag size="small" :type="riskLevelTagType" effect="dark">{{ riskLevelLabel }}</el-tag>
         </div>
         <div v-if="approvalData.title" class="approval-panel__title-text">{{ approvalData.title }}</div>
         <div v-if="approvalData.description" class="approval-panel__desc">{{ approvalData.description }}</div>
@@ -640,5 +709,50 @@ const operationLabel = computed(() => {
 
 .approval-panel__input {
   margin-bottom: 10px;
+}
+
+/* ===== Phase G2: HIGH 级高危红名高亮 ===== */
+.tool-call-card--high-risk {
+  border-color: var(--el-color-danger) !important;
+  border-width: 2px;
+  background-color: var(--el-color-danger-light-9);
+}
+
+.tool-name--high-risk {
+  color: var(--el-color-danger);
+  font-weight: 700;
+}
+
+.approval-panel--high-risk {
+  border-color: var(--el-color-danger) !important;
+  border-width: 2px;
+  background-color: var(--el-color-danger-light-9);
+}
+
+/* ===== Phase G3: 子 agent 嵌套链路展示 ===== */
+.agent-path-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.agent-path-icon {
+  font-size: 12px;
+  margin-right: 2px;
+}
+
+.depth-badge {
+  display: inline-block;
+  padding: 0 4px;
+  background-color: var(--el-color-info-light-7);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  margin-left: 2px;
+}
+
+.tool-call-card--subagent {
+  border-left-style: dashed;
 }
 </style>

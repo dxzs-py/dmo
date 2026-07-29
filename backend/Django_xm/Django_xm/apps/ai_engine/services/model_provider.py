@@ -144,9 +144,7 @@ def _build_resilient_chain(
         model_name = model_name or cfg_model
 
     if not model_provider or not model_name:
-        raise RuntimeError(
-            f"未配置{role_label}模型，请在系统设置中配置 {primary_config_key}"
-        )
+        raise RuntimeError(f"未配置{role_label}模型，请在系统设置中配置 {primary_config_key}")
 
     # 2. 创建主模型（失败包装为 RuntimeError 快速抛出，与"未配置"分支保持一致）
     try:
@@ -160,9 +158,7 @@ def _build_resilient_chain(
             **kwargs,
         )
     except Exception as e:
-        raise RuntimeError(
-            f"{role_label}模型创建失败 ({model_provider}/{model_name}): {e}"
-        ) from e
+        raise RuntimeError(f"{role_label}模型创建失败 ({model_provider}/{model_name}): {e}") from e
     logger.info(f"{role_label}模型(用户配置): {model_provider}/{model_name}")
 
     # 3. 不启用降级链时直接返回主模型
@@ -186,9 +182,7 @@ def _build_resilient_chain(
             **kwargs,
         )
     except Exception as e:
-        logger.warning(
-            f"降级模型创建失败: {fb_provider}/{fb_model}: {e}，仅使用{role_label}模型"
-        )
+        logger.warning(f"降级模型创建失败: {fb_provider}/{fb_model}: {e}，仅使用{role_label}模型")
         return primary_model
 
     # 5. ResilientModel 包装（运行时重试3次 + 切换降级模型 由 ResilientInvoker 保证）
@@ -325,19 +319,13 @@ def get_structured_model(
             structured = _apply_structured_output(model, response_format)
             structured_runnables.append(structured)
         except Exception as e:
-            logger.warning(
-                f"模型应用结构化输出失败: {e}"
-            )
+            logger.warning(f"模型应用结构化输出失败: {e}")
 
     if not structured_runnables:
-        raise RuntimeError(
-            "所有模型应用结构化输出均失败"
-        )
+        raise RuntimeError("所有模型应用结构化输出均失败")
 
     # 4. 返回新的 ResilientModel 实例
-    logger.info(
-        f"已配置结构化输出模型 + 降级链: {len(structured_runnables)} 个模型"
-    )
+    logger.info(f"已配置结构化输出模型 + 降级链: {len(structured_runnables)} 个模型")
     return ResilientModel(models=structured_runnables)
 
 
@@ -358,6 +346,7 @@ def _apply_structured_output(model: Any, schema: Any) -> Any:
     if provider_id == "deepseek":
         # DeepSeek thinking mode 与 tool_choice 冲突，使用 JSON mode
         from .llm_factory import JsonModeStructuredModel
+
         model_name = getattr(model, "model", "") or getattr(model, "model_name", "")
         json_model = model.bind(response_format={"type": "json_object"})
         return JsonModeStructuredModel(json_model, schema, provider_id, model_name)

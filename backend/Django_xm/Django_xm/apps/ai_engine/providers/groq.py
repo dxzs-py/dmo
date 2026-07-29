@@ -10,6 +10,7 @@ logger = get_logger(__name__)
 # 延迟导入，避免循环依赖
 def _get_registry_config() -> dict[str, Any]:
     from Django_xm.apps.ai_engine.services.registry_service import get_provider_config
+
     return get_provider_config("groq")
 
 
@@ -27,6 +28,7 @@ def patch_groq_model(model: BaseChatModel) -> BaseChatModel:
         # 新版 ChatGroq 可能没有 bind_tools，添加空实现
         def _noop_bind_tools(tools, *, tool_choice=None, **kw):
             return model.bind(tools=tools, tool_choice=tool_choice, **kw)
+
         try:
             model.bind_tools = _noop_bind_tools
             logger.debug("Groq 模型已注入 bind_tools 空实现")
@@ -58,6 +60,7 @@ def patch_groq_model(model: BaseChatModel) -> BaseChatModel:
             kw.setdefault("parallel_tool_calls", False)
             return model.bind(tools=tools, tool_choice=tool_choice, **kw)
     else:
+
         def _groq_bind_tools(tools, *, tool_choice=None, **kw):
             kw.setdefault("parallel_tool_calls", False)
             return original_bind(model, tools, tool_choice=tool_choice, **kw)

@@ -10,6 +10,7 @@
 - ContextService：上下文压缩、注入检测和预算管理
 - ToolService：工具获取、过滤和协调
 """
+
 import logging
 import time
 from collections.abc import AsyncGenerator
@@ -47,7 +48,6 @@ from .tool_service import ToolService
 logger = logging.getLogger(__name__)
 
 
-
 class ChatService:
     """聊天服务类 - 处理聊天相关的业务逻辑
 
@@ -80,7 +80,12 @@ class ChatService:
         response_time: float,
     ):
         await ChatMessageBuilder.update_last_message_tokens(
-            self.user_id, session_id, token_count, token_detail, model, response_time,
+            self.user_id,
+            session_id,
+            token_count,
+            token_detail,
+            model,
+            response_time,
         )
 
     def _build_thread_config(self, session_id: str | None = None, **kwargs) -> dict[str, Any]:
@@ -95,7 +100,11 @@ class ChatService:
         tools: list | None = None,
     ) -> tuple:
         return await self._agent_service.create_agent_with_memory(
-            data, prompt_mode, model_instance, tool_config=tool_config, tools=tools,
+            data,
+            prompt_mode,
+            model_instance,
+            tool_config=tool_config,
+            tools=tools,
         )
 
     @staticmethod
@@ -104,10 +113,10 @@ class ChatService:
 
     @staticmethod
     def _resolve_kb_ids(data: dict[str, Any]) -> list[str] | None:
-        if not data.get('use_knowledge_base'):
+        if not data.get("use_knowledge_base"):
             return None
-        kb_ids = list(data.get('selected_knowledge_bases') or [])
-        single_kb = data.get('selected_knowledge_base')
+        kb_ids = list(data.get("selected_knowledge_bases") or [])
+        single_kb = data.get("selected_knowledge_base")
         if single_kb and single_kb not in kb_ids:
             kb_ids.append(single_kb)
         return kb_ids if kb_ids else None
@@ -117,19 +126,18 @@ class ChatService:
 
     def _build_tool_config(self, data: dict[str, Any]) -> dict[str, Any]:
         from Django_xm.apps.tools import TOOL_TIER_STANDARD
-        use_web_search = data.get('use_web_search', False)
-        use_mcp = data.get('use_mcp', False)
-        selected_tools = data.get('selected_tools')
-        selected_mcp_servers = data.get('selected_mcp_servers')
-        use_knowledge_base = data.get('use_knowledge_base', False)
+
+        use_web_search = data.get("use_web_search", False)
+        use_mcp = data.get("use_mcp", False)
+        selected_tools = data.get("selected_tools")
+        selected_mcp_servers = data.get("selected_mcp_servers")
+        use_knowledge_base = data.get("use_knowledge_base", False)
         # 尊重前端显式传递的 use_tools 参数
-        explicit_use_tools = data.get('use_tools')
+        explicit_use_tools = data.get("use_tools")
         if explicit_use_tools is not None:
             has_any_tool_enabled = bool(explicit_use_tools)
         else:
-            has_any_tool_enabled = bool(
-                use_web_search or use_mcp or use_knowledge_base or selected_tools
-            )
+            has_any_tool_enabled = bool(use_web_search or use_mcp or use_knowledge_base or selected_tools)
         return {
             "use_tools": has_any_tool_enabled,
             "use_web_search": use_web_search,
@@ -137,7 +145,7 @@ class ChatService:
             "selected_tools": selected_tools,
             "selected_mcp_servers": selected_mcp_servers,
             "user_id": self.user_id,
-            "tool_tier": data.get('tool_tier', TOOL_TIER_STANDARD),
+            "tool_tier": data.get("tool_tier", TOOL_TIER_STANDARD),
         }
 
     async def _abuild_user_content(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -152,8 +160,9 @@ class ChatService:
     def _create_human_message(self, data: dict[str, Any]) -> HumanMessage:
         return self._message_builder.create_human_message(data)
 
-    def _load_research_context(self, research_task_id: str, user_id: int | None = None,
-                               session_id: str | None = None) -> str | None:
+    def _load_research_context(
+        self, research_task_id: str, user_id: int | None = None, session_id: str | None = None
+    ) -> str | None:
         return self._context_service.load_research_context(research_task_id, user_id, session_id)
 
     def _apply_compaction(self, chat_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -167,7 +176,10 @@ class ChatService:
         model_name: str | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         return self._context_service.apply_context_engineering(
-            chat_history, query, mode, model_name,
+            chat_history,
+            query,
+            mode,
+            model_name,
         )
 
     def _apply_context_engineering_for_checkpointer(
@@ -177,7 +189,9 @@ class ChatService:
         mode: str = "agent",
     ) -> dict[str, Any]:
         return self._context_service.apply_context_engineering_for_checkpointer(
-            user_message, model_name, mode,
+            user_message,
+            model_name,
+            mode,
         )
 
     async def process_chat_request(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -185,33 +199,31 @@ class ChatService:
         from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
         from Django_xm.apps.cache_manager.services.cache_service import ModelResponseCacheService
 
-        parsed = parse_command(data.get('message', ''))
+        parsed = parse_command(data.get("message", ""))
         if parsed:
             command_name, args = parsed
             context = {
                 "args": args,
                 "user_id": self.user_id,
-                "session_id": data.get('session_id'),
-                "messages": data.get('chat_history', []),
+                "session_id": data.get("session_id"),
+                "messages": data.get("chat_history", []),
             }
             cmd_result = execute_command(command_name, context)
             return {
-                'message': cmd_result.get('content', ''),
-                'mode': data.get('mode', 'agent'),
-                'tools_used': [],
-                'success': True,
-                'is_command': True,
-                'command_type': cmd_result.get('type', 'info'),
+                "message": cmd_result.get("content", ""),
+                "mode": data.get("mode", "agent"),
+                "tools_used": [],
+                "success": True,
+                "is_command": True,
+                "command_type": cmd_result.get("type", "info"),
             }
 
-        mode = data.get('mode', 'agent')
+        mode = data.get("mode", "agent")
 
-        cached_response = ModelResponseCacheService.get_cached_response(
-            data['message'], get_model_string(), mode
-        )
+        cached_response = ModelResponseCacheService.get_cached_response(data["message"], get_model_string(), mode)
         if cached_response is not None:
             logger.info("模型响应缓存命中")
-            return cached_response['response']
+            return cached_response["response"]
 
         rag_result = self._rag_service.process_rag_request(data)
         if rag_result is not None:
@@ -222,19 +234,21 @@ class ChatService:
 
         # 在创建 agent 之前加载研究上下文，以便注入到 system_prompt
         research_context = await sync_to_async(self._load_research_context)(
-            data.get('research_task_id', ''), user_id=self.user_id,
-            session_id=data.get('session_id')
+            data.get("research_task_id", ""), user_id=self.user_id, session_id=data.get("session_id")
         )
         if research_context:
-            data['_research_system_prompt'] = (
+            data["_research_system_prompt"] = (
                 "## 深度研究参考内容\n\n"
                 "以下是用户之前完成的深度研究报告，请在回答时参考这些信息：\n\n"
                 f"{research_context}"
             )
-            data['_has_research_context'] = True
+            data["_has_research_context"] = True
 
         agent, thread_config, use_checkpointer = await self._create_agent_with_memory(
-            data, prompt_mode=data['mode'], tool_config=tool_config, tools=tools,
+            data,
+            prompt_mode=data["mode"],
+            tool_config=tool_config,
+            tools=tools,
         )
 
         user_content = self._build_user_content(data)
@@ -242,30 +256,34 @@ class ChatService:
 
         if use_checkpointer:
             _ce_metadata = self._apply_context_engineering_for_checkpointer(
-                user_message=data.get('message', ''),
-                model_name=data.get('model_name'),
-                mode=data.get('mode', 'agent'),
+                user_message=data.get("message", ""),
+                model_name=data.get("model_name"),
+                mode=data.get("mode", "agent"),
             )
             # Checkpointer 模式：将研究上下文作为 SystemMessage 注入到 human_msg 之前
             if research_context:
                 from langchain_core.messages import SystemMessage
-                research_system_msg = SystemMessage(content=data['_research_system_prompt'])
+
+                research_system_msg = SystemMessage(content=data["_research_system_prompt"])
                 graph_input = {"messages": [research_system_msg, human_msg]}
             else:
                 graph_input = {"messages": [human_msg]}
             invoke_config = thread_config
         else:
-            chat_history = data.get('chat_history', [])
+            chat_history = data.get("chat_history", [])
             chat_history, _ce_metadata = self._apply_context_engineering(
-                chat_history, data.get('message', ''), mode=data.get('mode', 'agent'),
-                model_name=data.get('model_name'),
+                chat_history,
+                data.get("message", ""),
+                mode=data.get("mode", "agent"),
+                model_name=data.get("model_name"),
             )
             langchain_chat_history = convert_chat_history(chat_history)
             messages = list(langchain_chat_history) if langchain_chat_history else []
             # 非 Checkpointer 模式：将研究上下文作为 SystemMessage 注入到对话历史最前面
             if research_context:
                 from langchain_core.messages import SystemMessage
-                research_system_msg = SystemMessage(content=data['_research_system_prompt'])
+
+                research_system_msg = SystemMessage(content=data["_research_system_prompt"])
                 messages.insert(0, research_system_msg)
             messages.append(human_msg)
             graph_input = {"messages": messages}
@@ -300,16 +318,9 @@ class ChatService:
         tool_names = [tool.name for tool in tools]
         logger.info(f"聊天请求处理完成，响应长度: {len(response)} 字符")
 
-        result = {
-            'message': response,
-            'mode': data['mode'],
-            'tools_used': tool_names,
-            'success': True
-        }
+        result = {"message": response, "mode": data["mode"], "tools_used": tool_names, "success": True}
 
-        ModelResponseCacheService.cache_model_response(
-            data['message'], result, get_model_string(), mode
-        )
+        ModelResponseCacheService.cache_model_response(data["message"], result, get_model_string(), mode)
 
         return result
 
@@ -318,34 +329,42 @@ class ChatService:
         from Django_xm.apps.ai_engine.services.cost_tracker import create_token_detail_tracker
         from Django_xm.apps.ai_engine.services.usage_tracker import create_usage_tracker
 
-        model_name = data.get('model_name')
+        model_name = data.get("model_name")
         from Django_xm.apps.ai_engine.config import settings as ai_settings
+
         tracker_model_id = model_name or ai_settings.openai_model
         usage_tracker = create_usage_tracker(model_id=tracker_model_id)
         token_detail_tracker = create_token_detail_tracker()
         stream_start_time = time.time()
 
-        mode = data.get('mode', 'agent')
-        session_id = data.get('session_id', 'N/A')
-        msg_preview = data.get('message', '')[:80]
-        research_task_id = data.get('research_task_id', '')
-        logger.info(f"[StreamChat] 开始处理: mode={mode}, session={session_id}, msg={msg_preview}..., research_task_id={research_task_id or '(无)'}")
+        mode = data.get("mode", "agent")
+        session_id = data.get("session_id", "N/A")
+        msg_preview = data.get("message", "")[:80]
+        research_task_id = data.get("research_task_id", "")
+        logger.info(
+            f"[StreamChat] 开始处理: mode={mode}, session={session_id}, msg={msg_preview}..., research_task_id={research_task_id or '(无)'}"
+        )
 
-        yield {'type': 'start', 'message': '开始生成...'}
+        yield {"type": "start", "message": "开始生成..."}
 
         async for event in self._dispatch_by_mode(
-            data, usage_tracker, token_detail_tracker,
+            data,
+            usage_tracker,
+            token_detail_tracker,
         ):
             yield event
 
         context_info = build_context_info(usage_tracker, token_detail_tracker, stream_start_time)
-        yield {'type': 'context', 'data': context_info}
-        yield {'type': 'end', 'message': '生成完成'}
+        yield {"type": "context", "data": context_info}
+        yield {"type": "end", "message": "生成完成"}
         usage_tracker.log_summary()
         token_detail_tracker.log_summary()
 
+        session_id_for_update = data.get("session_id")
+        if session_id_for_update is None:
+            raise ValueError("session_id is required for streaming chat")
         await self._update_last_message_tokens(
-            session_id=data.get('session_id'),
+            session_id=session_id_for_update,
             token_count=usage_tracker.get_total_tokens(),
             token_detail=token_detail_tracker.get_token_detail(),
             model=usage_tracker.model_id,
@@ -360,33 +379,33 @@ class ChatService:
         token_detail_tracker,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """按模式分发请求：slash 命令 / deep-research / agent"""
-        mode = data.get('mode', 'agent')
+        mode = data.get("mode", "agent")
 
         # 1. 解析 slash 命令
-        parsed = parse_command(data.get('message', ''))
+        parsed = parse_command(data.get("message", ""))
         if parsed:
             command_name, args = parsed
             context = {
                 "args": args,
                 "user_id": self.user_id,
-                "session_id": data.get('session_id'),
-                "messages": data.get('chat_history', []),
+                "session_id": data.get("session_id"),
+                "messages": data.get("chat_history", []),
                 "token_info": token_detail_tracker.get_summary(),
             }
             cmd_result = execute_command(command_name, context)
             yield {
-                'type': 'command',
-                'data': cmd_result,
-                'content': cmd_result.get('content', ''),
+                "type": "command",
+                "data": cmd_result,
+                "content": cmd_result.get("content", ""),
             }
-            yield {'type': 'end', 'message': '命令执行完成'}
+            yield {"type": "end", "message": "命令执行完成"}
             return
 
         # 2. deep-research 模式 → 多步骤工作流
-        if mode == 'deep-research':
-            if data.get('use_knowledge_base'):
-                kb_ids = data.get('selected_knowledge_bases') or []
-                single_kb = data.get('selected_knowledge_base')
+        if mode == "deep-research":
+            if data.get("use_knowledge_base"):
+                kb_ids = data.get("selected_knowledge_bases") or []
+                single_kb = data.get("selected_knowledge_base")
                 if single_kb and single_kb not in kb_ids:
                     kb_ids.append(single_kb)
 
@@ -397,19 +416,22 @@ class ChatService:
                     kb_info_map = {}
                     try:
                         kbs = await sync_to_async(list_knowledge_bases)(self._rag_service.user_id)
-                        kb_info_map = {kb.get('id'): kb for kb in kbs}
+                        kb_info_map = {kb.get("id"): kb for kb in kbs}
                     except Exception:
-                        pass
+                        # 知识库列表读取失败时回退到使用 kb_id 作为名称
+                        logger.debug("读取知识库列表失败，使用 kb_id 作为名称")
 
                     for kb_id in kb_ids:
-                        retriever = await sync_to_async(self._rag_service.get_rag_retriever)(kb_id, retrieval_mode="comprehensive")
+                        retriever = await sync_to_async(self._rag_service.get_rag_retriever)(
+                            kb_id, retrieval_mode="comprehensive"
+                        )
                         if retriever:
                             kb_info = kb_info_map.get(kb_id)
                             kb_name = kb_id
                             kb_desc = ""
                             if kb_info:
-                                kb_name = kb_info.get('name', kb_id)
-                                kb_desc = kb_info.get('description', '')
+                                kb_name = kb_info.get("name", kb_id)
+                                kb_desc = kb_info.get("description", "")
 
                             tool_name = f"knowledge_base_{kb_id}".replace("-", "_").replace(" ", "_")
                             tool_desc = f"搜索知识库「{kb_name}」中的相关信息。"
@@ -424,13 +446,15 @@ class ChatService:
                                 kb_name=kb_name,
                                 kb_description=kb_desc,
                             )
-                            data.setdefault('_retriever_tool_list', []).append(retriever_tool)
+                            data.setdefault("_retriever_tool_list", []).append(retriever_tool)
 
-                    if data.get('_retriever_tool_list'):
-                        data['_retriever_tool'] = data['_retriever_tool_list'][0]
-                elif data.get('selected_knowledge_base'):
-                    single_kb_id = data['selected_knowledge_base']
-                    retriever = await sync_to_async(self._rag_service.get_rag_retriever)(single_kb_id, retrieval_mode="comprehensive")
+                    if data.get("_retriever_tool_list"):
+                        data["_retriever_tool"] = data["_retriever_tool_list"][0]
+                elif data.get("selected_knowledge_base"):
+                    single_kb_id = data["selected_knowledge_base"]
+                    retriever = await sync_to_async(self._rag_service.get_rag_retriever)(
+                        single_kb_id, retrieval_mode="comprehensive"
+                    )
                     if retriever:
                         from Django_xm.apps.knowledge.services.kb_service import list_knowledge_bases
                         from Django_xm.apps.knowledge.services.retrieval_service import create_retriever_tool
@@ -439,12 +463,13 @@ class ChatService:
                         single_kb_desc = ""
                         try:
                             kbs = await sync_to_async(list_knowledge_bases)(self._rag_service.user_id)
-                            kb_info = next((kb for kb in kbs if kb.get('id') == single_kb_id), None)
+                            kb_info = next((kb for kb in kbs if kb.get("id") == single_kb_id), None)
                             if kb_info:
-                                single_kb_name = kb_info.get('name', single_kb_id)
-                                single_kb_desc = kb_info.get('description', '')
+                                single_kb_name = kb_info.get("name", single_kb_id)
+                                single_kb_desc = kb_info.get("description", "")
                         except Exception:
-                            pass
+                            # 知识库信息读取失败时回退到使用 kb_id 作为名称
+                            logger.debug("读取知识库 %s 信息失败", single_kb_id)
 
                         retriever_tool = create_retriever_tool(
                             retriever,
@@ -452,28 +477,32 @@ class ChatService:
                             kb_name=single_kb_name,
                             kb_description=single_kb_desc,
                         )
-                        data['_retriever_tool'] = retriever_tool
+                        data["_retriever_tool"] = retriever_tool
             # MCP 工具和用户选择工具
-            data['_deep_extra_tools'] = await self._tool_service.get_deep_research_tools(data)
-            if data.get('_retriever_tool_list') and len(data['_retriever_tool_list']) > 1:
-                data.setdefault('_deep_extra_tools', []).extend(data['_retriever_tool_list'][1:])
-            async for event in self._create_agent_for_mode('deep-research', data, usage_tracker, token_detail_tracker):
+            data["_deep_extra_tools"] = await self._tool_service.get_deep_research_tools(data)
+            if data.get("_retriever_tool_list") and len(data["_retriever_tool_list"]) > 1:
+                data.setdefault("_deep_extra_tools", []).extend(data["_retriever_tool_list"][1:])
+            async for event in self._create_agent_for_mode("deep-research", data, usage_tracker, token_detail_tracker):
                 yield event
             return
 
         # 3. agent 模式 → Agent（动态判断是否使用工具）
-        if mode == 'agent':
-            if data.get('use_knowledge_base'):
-                kb_ids = data.get('selected_knowledge_bases') or []
-                single_kb = data.get('selected_knowledge_base')
+        if mode == "agent":
+            if data.get("use_knowledge_base"):
+                kb_ids = data.get("selected_knowledge_bases") or []
+                single_kb = data.get("selected_knowledge_base")
                 if single_kb and single_kb not in kb_ids:
                     kb_ids.append(single_kb)
 
                 for kb_id in kb_ids:
-                    retriever = await sync_to_async(self._rag_service.get_rag_retriever)(kb_id, retrieval_mode="precise")
+                    retriever = await sync_to_async(self._rag_service.get_rag_retriever)(
+                        kb_id, retrieval_mode="precise"
+                    )
                     if retriever:
                         try:
-                            comprehensive_retriever = await sync_to_async(self._rag_service.get_rag_retriever)(kb_id, retrieval_mode="comprehensive")
+                            comprehensive_retriever = await sync_to_async(self._rag_service.get_rag_retriever)(
+                                kb_id, retrieval_mode="comprehensive"
+                            )
                         except Exception as e:
                             logger.warning(f"创建 comprehensive 检索器失败: {e}")
                             comprehensive_retriever = None
@@ -485,15 +514,16 @@ class ChatService:
                         kb_info = None
                         try:
                             kbs = await sync_to_async(list_knowledge_bases)(self._rag_service.user_id)
-                            kb_info = next((kb for kb in kbs if kb.get('id') == kb_id), None)
+                            kb_info = next((kb for kb in kbs if kb.get("id") == kb_id), None)
                         except Exception:
-                            pass
+                            # 知识库信息读取失败时回退到使用 kb_id 作为名称
+                            logger.debug("读取知识库 %s 信息失败", kb_id)
 
                         kb_name = kb_id
                         kb_desc = ""
                         if kb_info:
-                            kb_name = kb_info.get('name', kb_id)
-                            kb_desc = kb_info.get('description', '')
+                            kb_name = kb_info.get("name", kb_id)
+                            kb_desc = kb_info.get("description", "")
 
                         tool_name = f"knowledge_base_{kb_id}".replace("-", "_").replace(" ", "_")
                         tool_desc = f"搜索知识库「{kb_name}」中的相关信息。"
@@ -510,31 +540,31 @@ class ChatService:
                             kb_name=kb_name,
                             kb_description=kb_desc,
                         )
-                        data.setdefault('_extra_tools', []).append(retriever_tool)
+                        data.setdefault("_extra_tools", []).append(retriever_tool)
 
             # 深度思考叠加
-            if data.get('use_deep_thinking'):
+            if data.get("use_deep_thinking"):
                 from Django_xm.apps.ai_engine.services.llm_factory import model_supports_capability
-                provider_id = data.get('provider_id', '')
-                model_name = data.get('model_name', '')
-                if model_supports_capability(provider_id, model_name, 'deep_thinking'):
-                    data['_enable_deep_thinking'] = True
+
+                provider_id = data.get("provider_id", "")
+                model_name = data.get("model_name", "")
+                if model_supports_capability(provider_id, model_name, "deep_thinking"):
+                    data["_enable_deep_thinking"] = True
 
             # 动态判断 use_tools：如果用户没有开启任何工具/能力，则不使用工具
             # 尊重前端显式传递的 use_tools 参数
-            explicit_use_tools = data.get('use_tools')
+            explicit_use_tools = data.get("use_tools")
             if explicit_use_tools is not None:
-                data['use_tools'] = bool(explicit_use_tools)
+                data["use_tools"] = bool(explicit_use_tools)
             else:
-                use_web_search = data.get('use_web_search', False)
-                use_mcp = data.get('use_mcp', False)
-                use_knowledge_base = data.get('use_knowledge_base', False)
-                selected_tools = data.get('selected_tools')
+                use_web_search = data.get("use_web_search", False)
+                use_mcp = data.get("use_mcp", False)
+                use_knowledge_base = data.get("use_knowledge_base", False)
+                selected_tools = data.get("selected_tools")
                 has_any_tool_enabled = bool(
-                    use_web_search or use_mcp or use_knowledge_base or selected_tools
-                    or data.get('_extra_tools')
+                    use_web_search or use_mcp or use_knowledge_base or selected_tools or data.get("_extra_tools")
                 )
-                data['use_tools'] = has_any_tool_enabled
+                data["use_tools"] = has_any_tool_enabled
 
             async for event in self._process_normal_stream_chat(data, usage_tracker, token_detail_tracker):
                 yield event
@@ -552,50 +582,53 @@ class ChatService:
         token_detail_tracker,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """为特定模式创建并执行 Agent 流，返回事件流"""
-        if mode == 'deep-research':
+        if mode == "deep-research":
             yield {
                 "type": "reasoning",
                 "data": {"content": "正在调度深度研究工作流并执行网络搜索...", "duration": 0},
             }
             # 先创建任务获取 task_id，以便前端尽早展示跳转链接
             task_id = await self._deep_service.create_deep_research_task(
-                data['message'], session_id=data.get('session_id'),
-                use_web_search=data.get('use_web_search', True),
-                retriever_tool=data.get('_retriever_tool'),
-                task_title=data.get('_original_message'),
+                data["message"],
+                session_id=data.get("session_id"),
+                use_web_search=data.get("use_web_search", True),
+                retriever_tool=data.get("_retriever_tool"),
+                task_title=data.get("_original_message"),
             )
             # 立即发送 deep_research 事件，让用户可以跳转到深度研究模块查看实时进度
             yield {
                 "type": "deep_research",
                 "data": {
                     "task_id": task_id,
-                    "session_id": data.get('session_id', ''),
+                    "session_id": data.get("session_id", ""),
                 },
             }
             from Django_xm.apps.ai_engine.services.llm_factory import model_supports_capability
+
             deep_result = None
             async for event in self._deep_service.stream_deep_research_task(
-                data['message'], session_id=data.get('session_id'),
-                usage_tracker=usage_tracker, token_detail_tracker=token_detail_tracker,
-                use_web_search=data.get('use_web_search', True),
-                retriever_tool=data.get('_retriever_tool'),
-                extra_tools=data.get('_deep_extra_tools', []),
-                enable_deep_thinking=data.get('use_deep_thinking', False) and model_supports_capability(
-                    data.get('provider_id', ''), data.get('model_name', ''), 'deep_thinking'
-                ),
-                provider_id=data.get('provider_id'),
-                model_name=data.get('model_name'),
+                data["message"],
+                session_id=data.get("session_id"),
+                usage_tracker=usage_tracker,
+                token_detail_tracker=token_detail_tracker,
+                use_web_search=data.get("use_web_search", True),
+                retriever_tool=data.get("_retriever_tool"),
+                extra_tools=data.get("_deep_extra_tools", []),
+                enable_deep_thinking=data.get("use_deep_thinking", False)
+                and model_supports_capability(data.get("provider_id", ""), data.get("model_name", ""), "deep_thinking"),
+                provider_id=data.get("provider_id"),
+                model_name=data.get("model_name"),
                 task_id=task_id,
                 knowledge_base_ids=self._resolve_kb_ids(data),
-                temperature=data.get('temperature'),
-                max_tokens=data.get('max_tokens'),
-                special_params=data.get('special_params'),
-                continue_task_id=data.get('continue_task_id'),
-                task_title=data.get('_original_message'),
+                temperature=data.get("temperature"),
+                max_tokens=data.get("max_tokens"),
+                special_params=data.get("special_params"),
+                continue_task_id=data.get("continue_task_id"),
+                task_title=data.get("_original_message"),
             ):
-                if event.get('type') in ('approval', 'approval_timeout', 'approval_processed', 'approval_history'):
+                if event.get("type") in ("approval", "approval_timeout", "approval_processed", "approval_history"):
                     yield event  # 审批事件/超时通知/审批处理通知/历史审批补偿直接传递给前端 SSE
-                elif event.get('_is_result'):
+                elif event.get("_is_result"):
                     deep_result = event  # 最终研究结果
             final_report = deep_result.get("final_report") or deep_result.get("error") if deep_result else None
             if not final_report:
@@ -618,55 +651,70 @@ class ChatService:
 
         tools = await self._get_tools(data)
         model_instance = self._resolve_model_instance(data)
-        provider_id = data.get('provider_id')
-        model_name = data.get('model_name')
+        provider_id = data.get("provider_id")
+        model_name = data.get("model_name")
 
         # 检测 LLM 降级：用户选择的模型创建失败，回退到默认模型
         if model_instance is None and provider_id:
             from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
+
             try:
                 model_instance = get_chat_model(streaming=True)
                 # LazyFallbackChatModel / RunnableWithFallbacks 包装了底层模型，需要从 .bound 获取
-                bound_model = getattr(model_instance, 'bound', model_instance)
-                actual_provider = getattr(bound_model, '_provider_id', None)
-                actual_model = getattr(bound_model, 'model_name', None) or getattr(bound_model, 'model', None)
+                bound_model = getattr(model_instance, "bound", model_instance)
+                actual_provider = getattr(bound_model, "_provider_id", None)
+                actual_model = getattr(bound_model, "model_name", None) or getattr(bound_model, "model", None)
                 if actual_provider and actual_provider != provider_id:
                     yield {
-                        'type': 'model_fallback',
-                        'data': {
-                            'original_provider': provider_id,
-                            'original_model': model_name,
-                            'actual_provider': actual_provider,
-                            'actual_model': actual_model,
-                            'message': f'模型 {provider_id}/{model_name} 不可用，已自动切换到 {actual_provider}/{actual_model}',
-                        }
+                        "type": "model_fallback",
+                        "data": {
+                            "original_provider": provider_id,
+                            "original_model": model_name,
+                            "actual_provider": actual_provider,
+                            "actual_model": actual_model,
+                            "message": f"模型 {provider_id}/{model_name} 不可用，已自动切换到 {actual_provider}/{actual_model}",
+                        },
                     }
                     # 自动更新 SystemConfig
                     try:
                         from Django_xm.apps.ai_engine.models import SystemConfig
-                        SystemConfig.set_value("default_chat_model", {
-                            "provider_id": actual_provider,
-                            "model_name": actual_model,
-                        })
+
+                        SystemConfig.set_value(
+                            "default_chat_model",
+                            {
+                                "provider_id": actual_provider,
+                                "model_name": actual_model,
+                            },
+                        )
                     except Exception:
-                        pass
+                        # 持久化 fallback 配置失败不影响当前会话，运行时已切换
+                        logger.debug("持久化模型 fallback 配置到 SystemConfig 失败")
             except Exception:
-                pass
+                # fallback 检测失败不影响主流程，继续使用原模型
+                logger.debug("检测 LLM 降级失败", exc_info=True)
 
         from Django_xm.apps.tools.langchain.agent_context import clear_parent_tool_context, set_parent_tool_context
-        set_parent_tool_context(tools, {
-            "use_web_search": data.get('use_web_search', False),
-            "use_mcp": data.get('use_mcp', False),
-            "user_id": self.user_id,
-            "session_id": data.get('session_id'),
-            "model_name": data.get('model'),
-            "store": data.get('store'),
-        })
+
+        set_parent_tool_context(
+            tools,
+            {
+                "use_web_search": data.get("use_web_search", False),
+                "use_mcp": data.get("use_mcp", False),
+                "user_id": self.user_id,
+                "session_id": data.get("session_id"),
+                "model_name": data.get("model"),
+                "store": data.get("store"),
+            },
+        )
 
         # 深度思考叠加：调用 DeepChatService 处理流式输出
-        if data.get('_enable_deep_thinking'):
+        if data.get("_enable_deep_thinking"):
             async for event in self._deep_service.process_deep_thinking_stream(
-                data, usage_tracker, token_detail_tracker, tools=tools, model_instance=model_instance,
+                data,
+                usage_tracker,
+                token_detail_tracker,
+                tools=tools,
+                model_instance=model_instance,
             ):
                 yield event
             clear_parent_tool_context()
@@ -676,31 +724,33 @@ class ChatService:
 
         # 在创建 agent 之前加载研究上下文，以便注入到 system_prompt
         research_context = await sync_to_async(self._load_research_context)(
-            data.get('research_task_id', ''), user_id=self.user_id,
-            session_id=data.get('session_id')
+            data.get("research_task_id", ""), user_id=self.user_id, session_id=data.get("session_id")
         )
         if research_context:
             # 将研究上下文注入到 system_prompt，确保每次对话都能看到
-            data['_research_system_prompt'] = (
+            data["_research_system_prompt"] = (
                 "## 深度研究参考内容\n\n"
                 "以下是用户之前完成的深度研究报告，请在回答时参考这些信息：\n\n"
                 f"{research_context}"
             )
-            data['_has_research_context'] = True
+            data["_has_research_context"] = True
 
         agent, thread_config, use_checkpointer = await self._create_agent_with_memory(
-            data, prompt_mode=data['mode'], model_instance=model_instance,
-            tool_config=tool_config, tools=tools,
+            data,
+            prompt_mode=data["mode"],
+            model_instance=model_instance,
+            tool_config=tool_config,
+            tools=tools,
         )
 
         human_msg = await self._acreate_human_message(data)
 
         if use_checkpointer:
             # Checkpointer 模式下仍执行注入检测和预算分配
-            ce_metadata = self._apply_context_engineering_for_checkpointer(
-                user_message=data.get('message', ''),
-                model_name=data.get('model_name'),
-                mode=data.get('mode', 'agent'),
+            self._apply_context_engineering_for_checkpointer(
+                user_message=data.get("message", ""),
+                model_name=data.get("model_name"),
+                mode=data.get("mode", "agent"),
             )
 
             # 检查 checkpoint 中是否有 pending interrupt，如果有则自动拒绝
@@ -709,10 +759,11 @@ class ChatService:
                 state = await agent.graph.aget_state(thread_config)
                 if state and state.tasks:
                     from langgraph.types import Command as LgCommand
+
                     for task in state.tasks:
-                        if hasattr(task, 'interrupts') and task.interrupts:
+                        if hasattr(task, "interrupts") and task.interrupts:
                             for intr in task.interrupts:
-                                intr_id = intr.id if hasattr(intr, 'id') else ''
+                                intr_id = intr.id if hasattr(intr, "id") else ""
                                 if intr_id:
                                     await agent.graph.ainvoke(
                                         LgCommand(resume={intr_id: False}),
@@ -725,21 +776,24 @@ class ChatService:
             # Checkpointer 模式：将研究上下文作为 SystemMessage 注入到 human_msg 之前
             if research_context:
                 from langchain_core.messages import SystemMessage
-                research_system_msg = SystemMessage(content=data['_research_system_prompt'])
+
+                research_system_msg = SystemMessage(content=data["_research_system_prompt"])
                 graph_input = {"messages": [research_system_msg, human_msg]}
             else:
                 graph_input = {"messages": [human_msg]}
             config = thread_config
         else:
-            chat_history = data.get('chat_history', [])
-            user_message = data.get('message', '')
-            model_name_for_budget = data.get('model_name')
+            chat_history = data.get("chat_history", [])
+            user_message = data.get("message", "")
+            model_name_for_budget = data.get("model_name")
 
             if self._context_service.check_injection(user_message):
                 logger.warning("检测到指令注入尝试，用户输入将被隔离")
 
-            chat_history, ce_metadata = self._apply_context_engineering(
-                chat_history, user_message, mode=data.get('mode', 'agent'),
+            chat_history, _ce_metadata = self._apply_context_engineering(
+                chat_history,
+                user_message,
+                mode=data.get("mode", "agent"),
                 model_name=model_name_for_budget,
             )
             langchain_chat_history = convert_chat_history(chat_history)
@@ -747,7 +801,8 @@ class ChatService:
             # 非 Checkpointer 模式：将研究上下文作为 SystemMessage 注入到对话历史最前面
             if research_context:
                 from langchain_core.messages import SystemMessage
-                research_system_msg = SystemMessage(content=data['_research_system_prompt'])
+
+                research_system_msg = SystemMessage(content=data["_research_system_prompt"])
                 messages.insert(0, research_system_msg)
             messages.append(human_msg)
             graph_input = {"messages": messages}
@@ -755,7 +810,7 @@ class ChatService:
 
         # 创建 StreamContext（流式可变状态封装，替代散布的局部变量）
         ctx = StreamContext()
-        ctx.init_stream_state(data.get('_stream_state'))
+        ctx.init_stream_state(data.get("_stream_state"))
 
         # 创建普通 agent 模式策略（注入差异点）
         strategy = NormalStreamStrategy()
@@ -769,8 +824,11 @@ class ChatService:
         if tools and degraded_tools_preview and len(degraded_tools_preview) < len(tools):
             try:
                 deg_agent, deg_config, _ = await self._create_agent_with_memory(
-                    data, prompt_mode=data['mode'], model_instance=model_instance,
-                    tool_config=tool_config, tools=degraded_tools_preview,
+                    data,
+                    prompt_mode=data["mode"],
+                    model_instance=model_instance,
+                    tool_config=tool_config,
+                    tools=degraded_tools_preview,
                 )
                 if deg_config is None:
                     deg_config = {"recursion_limit": 500}
@@ -806,7 +864,8 @@ class ChatService:
         )
 
         with TokenUsageCallbackHandler() as cb:
-            from Django_xm.apps.ai_engine.services.llm_factory import FallbackDetectionCallback
+            from Django_xm.apps.ai_engine.services.llm_fallback import FallbackDetectionCallback
+
             fb_callback = FallbackDetectionCallback(
                 expected_provider=provider_id or "",
                 expected_model=model_name or "",
@@ -822,7 +881,13 @@ class ChatService:
             # - soft timeout → 警告一次
             # - hard timeout → FALLBACK
             async for event in executor.run(
-                run_stream_loop, agent, graph_input, config, ctx, strategy, data,
+                run_stream_loop,
+                agent,
+                graph_input,
+                config,
+                ctx,
+                strategy,
+                data,
             ):
                 yield event
 
@@ -831,8 +896,15 @@ class ChatService:
         #       审批中断收尾 / _pending_content 刷新 / 深度思考兜底 /
         #       reasoning 完成事件 / finalize_tool_calls / 补发 + 补全检查 + 建议生成
         async for event in finalize_stream(
-            ctx, data, tools, model_instance, strategy,
-            cb, fb_callback, usage_tracker, token_detail_tracker,
+            ctx,
+            data,
+            tools,
+            model_instance,
+            strategy,
+            cb,
+            fb_callback,
+            usage_tracker,
+            token_detail_tracker,
         ):
             yield event
 
@@ -852,28 +924,34 @@ class ChatService:
 
         final_ai_message = None
         for msg in reversed(all_messages):
-            if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
+            if isinstance(msg, AIMessage) and isinstance(msg.content, str) and msg.content.strip():
                 final_ai_message = msg
                 break
 
         # Agent 模式下，_pending_content 已刷新完整内容，跳过 final_ai_message 补发
         # 避免 current_message_content 与 final_ai_message.content 不完全一致时重复发送
-        mode = data.get('mode', 'agent')
-        if final_ai_message and final_ai_message.content and mode != 'agent':
+        mode = data.get("mode", "agent")
+        if final_ai_message and isinstance(final_ai_message.content, str) and mode != "agent":
             final_content = final_ai_message.content
             if len(final_content) > len(current_message_content):
-                remaining_content = final_content[len(current_message_content):]
+                remaining_content = final_content[len(current_message_content) :]
                 if remaining_content:
                     yield {"type": "chunk", "content": remaining_content}
                     current_message_content = final_content
 
-        if (not final_ai_message or not final_ai_message.content or len(final_ai_message.content.strip()) < 10) and tool_calls_map:
+        # 计算 final_ai_message 内容的 strip 长度（用于判断是否需要兜底）
+        # msg.content 类型为 str | list[str | dict]，仅 str 可调用 .strip()
+        final_ai_content = final_ai_message.content if final_ai_message else None
+        final_ai_strip_len = len(final_ai_content.strip()) if isinstance(final_ai_content, str) else 0
+        if (not final_ai_message or not final_ai_content or final_ai_strip_len < 10) and tool_calls_map:
             weather_tools = ["get_daily_weather", "get_weather_forecast", "get_weather"]
             for tool_name in weather_tools:
                 for tool_info in tool_calls_map.values():
-                    if (tool_info.get("name") == tool_name and
-                        tool_info.get("state") == "output-available" and
-                        tool_info.get("result")):
+                    if (
+                        tool_info.get("name") == tool_name
+                        and tool_info.get("state") == "output-available"
+                        and tool_info.get("result")
+                    ):
                         result_content = tool_info.get("result", "")
                         if isinstance(result_content, list):
                             result_content = str(result_content)
@@ -891,14 +969,16 @@ class ChatService:
                     tool_name = tool_info.get("name", "")
                     # 知识库检索工具和原始内容工具的结果不应作为聊天文本
                     is_raw_content = (
-                        tool_name in raw_content_tools or
-                        tool_name.startswith("knowledge_base_") or
-                        tool_info.get("_summarized")
+                        tool_name in raw_content_tools
+                        or tool_name.startswith("knowledge_base_")
+                        or tool_info.get("_summarized")
                     )
-                    if (tool_info.get("state") == "output-available" and
-                            result and
-                            not is_raw_content and
-                            (isinstance(result, str) and result not in current_message_content)):
+                    if (
+                        tool_info.get("state") == "output-available"
+                        and result
+                        and not is_raw_content
+                        and (isinstance(result, str) and result not in current_message_content)
+                    ):
                         result_content = result if isinstance(result, str) else str(result)
                         if result_content:
                             yield {"type": "chunk", "content": result_content}
@@ -906,8 +986,8 @@ class ChatService:
 
         # Agent 模式下跳过补全检查：Agent 已生成完整回答，
         # _needs_completion 的"补全"会触发模型重新生成完整回答，导致内容重复
-        mode = data.get('mode', 'agent')
-        if mode != 'agent' and not prefer_tool_result and _needs_completion(current_message_content):
+        mode = data.get("mode", "agent")
+        if mode != "agent" and not prefer_tool_result and _needs_completion(current_message_content):
             model = model_instance or get_chat_model()
             prompt = (
                 f"用户问题：{data['message']}\n\n"
@@ -921,7 +1001,8 @@ class ChatService:
                     yield {"type": "chunk", "content": extra}
                     current_message_content += extra
             except Exception:
-                pass
+                # 补充回复失败不影响主流程，已有不完整回复
+                logger.debug("生成补充回复失败")
 
         try:
             model = model_instance or get_chat_model()
@@ -935,16 +1016,17 @@ class ChatService:
             raw = getattr(completion, "content", "")
             suggestions = extract_suggestions(raw)
             if suggestions:
-                yield {'type': 'suggestions', 'data': suggestions}
+                yield {"type": "suggestions", "data": suggestions}
         except Exception:
-            pass
+            # 建议生成失败不影响主流程
+            logger.debug("生成后续问题建议失败")
 
 
 class ChatModeService:
     """聊天模式服务类"""
 
-    FRONTEND_SUPPORTED_MODES = ('agent', 'deep-research')
-    DEFAULT_MODE = 'agent'
+    FRONTEND_SUPPORTED_MODES = ("agent", "deep-research")
+    DEFAULT_MODE = "agent"
 
     @classmethod
     def get_supported_modes(cls) -> dict[str, str]:
@@ -956,5 +1038,5 @@ class ChatModeService:
             if prompt is None:
                 prompt = SYSTEM_PROMPTS.get("default")
             if prompt:
-                modes[mode_name] = prompt.split('\n')[0]
+                modes[mode_name] = prompt.split("\n")[0]
         return modes

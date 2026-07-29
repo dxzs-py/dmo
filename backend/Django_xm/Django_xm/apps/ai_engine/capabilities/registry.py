@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 
 class CapabilityRegistry:
-
     def __init__(self) -> None:
         self._capabilities: dict[str, AgentCapability] = {}
         self._lock = threading.Lock()
@@ -63,11 +62,10 @@ class CapabilityRegistry:
             try:
                 middleware = cap.build_middleware(**kwargs)
                 result.extend(middleware)
-            except Exception as e:
-                logger.error(
-                    "Failed to build middleware for capability '%s': %s",
+            except Exception:
+                logger.exception(
+                    "Failed to build middleware for capability '%s'",
                     cap_name,
-                    e,
                 )
         return result
 
@@ -97,11 +95,10 @@ class CapabilityRegistry:
                     merged_kwargs["tool_config"] = tool_config
                 tools = await cap.build_tools_async(**merged_kwargs)
                 result.extend(tools)
-            except Exception as e:
-                logger.error(
-                    "Failed to build tools for capability '%s': %s",
+            except Exception:
+                logger.exception(
+                    "Failed to build tools for capability '%s'",
                     cap_name,
-                    e,
                 )
         seen = set()
         deduped: list[BaseTool] = []
@@ -133,20 +130,18 @@ class CapabilityRegistry:
             try:
                 config = cap.build_config(**kwargs)
                 result[cap_name] = config
-            except Exception as e:
-                logger.error(
-                    "Failed to build config for capability '%s': %s",
+            except Exception:
+                logger.exception(
+                    "Failed to build config for capability '%s'",
                     cap_name,
-                    e,
                 )
         return result
 
     def get_default_capabilities(self, agent_type: str) -> list[str]:
         try:
             from Django_xm.apps.ai_engine.config import settings as ai_settings
-            defaults: dict[str, list[str]] = getattr(
-                ai_settings, "AGENT_CAPABILITIES_DEFAULT", {}
-            )
+
+            defaults: dict[str, list[str]] = getattr(ai_settings, "AGENT_CAPABILITIES_DEFAULT", {})
             return list(defaults.get(agent_type, []))
         except Exception:
             return []

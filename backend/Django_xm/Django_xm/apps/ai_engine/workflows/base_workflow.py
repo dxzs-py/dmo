@@ -19,9 +19,9 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.retrievers import BaseRetriever
 from langgraph.graph import END, START, StateGraph
 
-from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.ai_engine.prompts.system_prompts import get_system_prompt
 from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
+from Django_xm.apps.core.config import get_logger
 
 from .state import WorkflowState
 
@@ -57,9 +57,7 @@ async def preprocess(state: WorkflowState) -> dict:
 
     mode = state.get("mode", "default")
     system_prompt = get_system_prompt(mode=mode)
-    if system_prompt and not any(
-        isinstance(m, SystemMessage) for m in messages
-    ):
+    if system_prompt and not any(isinstance(m, SystemMessage) for m in messages):
         messages.insert(0, SystemMessage(content=system_prompt))
 
     logger.info(f"[BaseWorkflow] preprocess: {len(messages)} messages")
@@ -104,8 +102,8 @@ async def retrieve(state: WorkflowState, retriever: BaseRetriever | None = None)
             tool_results.append({"source": source_name, "content": doc.page_content[:200]})
 
         return {"tool_results": tool_results}
-    except Exception as e:
-        logger.error(f"[BaseWorkflow] retrieve: 检索失败 - {e}")
+    except Exception:
+        logger.exception("[BaseWorkflow] retrieve: 检索失败 -")
         return {"tool_results": []}
 
 
@@ -140,7 +138,7 @@ async def generate(state: WorkflowState) -> dict:
             "final_response": response.content,
         }
     except Exception as e:
-        logger.error(f"[BaseWorkflow] generate error: {e}")
+        logger.exception("[BaseWorkflow] generate error")
         return {"error": str(e)}
 
 
@@ -172,7 +170,7 @@ async def respond(state: WorkflowState) -> dict:
         messages = state.get("messages", [])
         for msg in reversed(messages):
             if isinstance(msg, AIMessage) and msg.content:
-                final_response = msg.content
+                final_response = msg.content if isinstance(msg.content, str) else str(msg.content)
                 break
 
     logger.info(f"[BaseWorkflow] respond: {len(final_response)} chars")

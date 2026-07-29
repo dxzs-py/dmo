@@ -15,6 +15,7 @@ Ollama Embedding Provider
     ollama pull bge-m3
     ollama pull nomic-embed-text
 """
+
 from typing import Any
 
 from langchain_core.embeddings import Embeddings

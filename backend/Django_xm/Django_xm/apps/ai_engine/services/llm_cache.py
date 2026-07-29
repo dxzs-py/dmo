@@ -13,6 +13,7 @@
 - https://docs.langchain.com/oss/python/langchain/caching
 - https://reference.langchain.com/python/langchain/rate_limiters
 """
+
 from __future__ import annotations
 
 import threading
@@ -38,6 +39,7 @@ _llm_cache: Any | None = None
 
 
 # ============== LLM 缓存 ==============
+
 
 def get_llm_cache() -> Any:
     """获取全局 LLM InMemoryCache 单例
@@ -83,9 +85,10 @@ def setup_llm_cache() -> None:
     except ImportError:
         try:
             import langchain_core
+
             cache = get_llm_cache()
             if cache is not None:
-                langchain_core.llm_cache = cache
+                langchain_core.llm_cache = cache  # type: ignore[attr-defined]  # langchain compat: llm_cache module attr not in stubs
                 logger.info("全局 LLM Cache 已设置 (via langchain_core.llm_cache, 兼容模式)")
         except Exception as e:
             logger.warning(f"设置全局 LLM Cache 失败: {e}")
@@ -112,7 +115,7 @@ def setup_semantic_cache(
 
         from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
 
-        redis = redis_url or getattr(settings, "redis_url", "redis://127.0.0.1:6379/5")
+        redis: str = redis_url or getattr(settings, "redis_url", "redis://127.0.0.1:6379/5")
         model_name = embedding_model or getattr(settings, "embedding_model", "text-embedding-3-small")
         embeddings = get_embeddings(model=model_name, use_cache=False)
 
@@ -129,19 +132,18 @@ def setup_semantic_cache(
 
             from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
 
-            redis = redis_url or getattr(settings, "redis_url", "redis://127.0.0.1:6379/5")
+            redis: str = redis_url or getattr(settings, "redis_url", "redis://127.0.0.1:6379/5")
             model_name = embedding_model or getattr(settings, "embedding_model", "text-embedding-3-small")
             embeddings = get_embeddings(model=model_name, use_cache=False)
 
-            langchain_core.llm_cache = RedisSemanticCache(
+            langchain_core.llm_cache = RedisSemanticCache(  # type: ignore[attr-defined]  # langchain compat: llm_cache module attr not in stubs
                 redis_url=redis,
                 embedding=embeddings,
             )
             logger.info(f"语义缓存已设置 (兼容模式, redis={redis}, model={model_name})")
         except ImportError:
             logger.warning(
-                "langchain_community.cache.RedisSemanticCache 不可用，"
-                "请安装: pip install langchain-community redis"
+                "langchain_community.cache.RedisSemanticCache 不可用，请安装: pip install langchain-community redis"
             )
         except Exception as e:
             logger.warning(f"设置语义缓存失败: {e}，回退到 InMemoryCache")
@@ -152,6 +154,7 @@ def setup_semantic_cache(
 
 
 # ============== 速率限制器 ==============
+
 
 def get_rate_limiter() -> Any:
     """获取全局 InMemoryRateLimiter 单例
@@ -190,10 +193,7 @@ def get_rate_limiter() -> Any:
             )
             return _rate_limiter
         except ImportError:
-            logger.warning(
-                "langchain_core.rate_limiters.InMemoryRateLimiter 不可用，"
-                "请升级 langchain-core>=0.3.0"
-            )
+            logger.warning("langchain_core.rate_limiters.InMemoryRateLimiter 不可用，请升级 langchain-core>=0.3.0")
             return None
         except Exception as e:
             logger.warning(f"速率限制器创建失败: {e}，将不使用速率限制")
@@ -201,6 +201,7 @@ def get_rate_limiter() -> Any:
 
 
 # ============== 统一缓存封装 ==============
+
 
 def cached_model_creation(
     cache_key: str,
@@ -237,7 +238,7 @@ def cached_model_creation(
             set_cached_model(cache_key, model)
 
         return model
-    except Exception as e:
+    except Exception:
         ctx = f" ({error_context})" if error_context else ""
-        logger.error(f"模型创建失败{ctx}: {e}")
+        logger.exception(f"模型创建失败{ctx}")
         raise

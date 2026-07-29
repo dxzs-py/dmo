@@ -7,6 +7,7 @@
 - 上下文信息构建
 - 深度思考内容提取（兼容 DeepSeek/Ollama/Anthropic）
 """
+
 import json as _json
 import logging
 import re as _re
@@ -63,6 +64,7 @@ def extract_thinking_content(chunk, provider_id: str = "") -> str | None:
 
     return None
 
+
 _STATE_TO_STATUS = {
     "input-available": "running",
     "output-available": "completed",
@@ -109,7 +111,7 @@ def _fix_groq_tool_call(tool_call: dict[str, Any]) -> dict[str, Any]:
         return tool_call
 
     fixed = dict(tool_call)
-    match = _re.match(r'^(\w+)\s*(\{.*\})?\s*$', raw_name, _re.DOTALL)
+    match = _re.match(r"^(\w+)\s*(\{.*\})?\s*$", raw_name, _re.DOTALL)
     if match:
         actual_name = match.group(1)
         inline_args_str = match.group(2)
@@ -140,7 +142,7 @@ def _try_parse_concatenated_json(s: str) -> dict | None:
     last_valid = None
     pos = 0
     while pos < len(s):
-        next_brace = s.find('{', pos)
+        next_brace = s.find("{", pos)
         if next_brace == -1:
             break
         try:
@@ -238,7 +240,7 @@ def _handle_ai_message_chunk(
                         tool_calls_map[dedup_key]["parameters"] = updated_params
                         tool_info = dict(tool_calls_map[dedup_key])
                         tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
-                        yield {'type': 'tool', 'data': tool_info}
+                        yield {"type": "tool", "data": tool_info}
                 continue
 
             if tool_call_count is not None:
@@ -259,6 +261,7 @@ def _handle_ai_message_chunk(
                         ToolUsageStatus,
                         get_tool_usage_guard,
                     )
+
                     # 拼装参数用于 guard 检查
                     # 对 AIMessageChunk：参数可能不完整（parse_partial_json 返回部分 dict），
                     # guard 检查基于不完整参数可能误判，因此 chunk 场景下参数为空时跳过
@@ -280,9 +283,7 @@ def _handle_ai_message_chunk(
                     else:
                         decision = ToolUsageDecision(status=ToolUsageStatus.ALLOW, reason="params not yet available")
                     # 抽取通用事件字段（所有工具都有 resource_key / payload_preview）
-                    sse_data = (
-                        decision.sse_event.get("data", {}) if decision.sse_event else {}
-                    )
+                    sse_data = decision.sse_event.get("data", {}) if decision.sse_event else {}
                     common_data = {
                         "tool_name": tool_name,
                         "tool_id": tool_id,
@@ -294,9 +295,7 @@ def _handle_ai_message_chunk(
                     if decision.status.value == "dedup" and decision.short_circuit_response:
                         # 短时相同内容：直接以 DEDUP 状态传递，由 chat_service
                         # 注入 ToolMessage 让模型知道本次被跳过
-                        common_data["short_circuit_response"] = (
-                            decision.short_circuit_response
-                        )
+                        common_data["short_circuit_response"] = decision.short_circuit_response
                         yield {
                             "type": "tool_usage_dedup",
                             "data": common_data,
@@ -307,9 +306,7 @@ def _handle_ai_message_chunk(
                         continue
                     if decision.status.value == "block" and decision.short_circuit_response:
                         # 渐进式阻断：返回阻断原因，仍由模型决定是否继续
-                        common_data["short_circuit_response"] = (
-                            decision.short_circuit_response
-                        )
+                        common_data["short_circuit_response"] = decision.short_circuit_response
                         yield {
                             "type": "tool_usage_blocked",
                             "data": common_data,
@@ -338,7 +335,7 @@ def _handle_ai_message_chunk(
             }
             tool_calls_map[dedup_key] = tool_info
             if not is_chunk:
-                yield {'type': 'tool', 'data': tool_info}
+                yield {"type": "tool", "data": tool_info}
 
     if tool_call_chunks and tool_args_accumulator is not None:
         for tc_chunk in tool_call_chunks:
@@ -365,8 +362,11 @@ def _handle_ai_message_chunk(
             elif tc_index is not None:
                 dedup_key = _find_tool_call_key_by_index(tool_calls_map, tc_index)
             elif tc_name:
-                same_name_pending = [k for k, tc in tool_calls_map.items()
-                                     if tc.get("name") == tc_name and tc.get("state") == "input-available"]
+                same_name_pending = [
+                    k
+                    for k, tc in tool_calls_map.items()
+                    if tc.get("name") == tc_name and tc.get("state") == "input-available"
+                ]
                 if len(same_name_pending) == 1:
                     dedup_key = same_name_pending[0]
                 elif not same_name_pending:
@@ -396,7 +396,7 @@ def _handle_ai_message_chunk(
                     if tc_name and not tool_calls_map[dedup_key].get("name"):
                         tool_calls_map[dedup_key]["name"] = tc_name
                 else:
-                    new_tool_info = {
+                    new_tool_info: dict[str, Any] = {
                         "id": tc_id,
                         "name": tc_name,
                         "type": f"tool-call-{tc_name}",
@@ -409,7 +409,7 @@ def _handle_ai_message_chunk(
                     if tc_index is not None:
                         new_tool_info["_index"] = tc_index
                     tool_calls_map[dedup_key] = new_tool_info
-                    yield {'type': 'tool', 'data': dict(new_tool_info)}
+                    yield {"type": "tool", "data": dict(new_tool_info)}
                 continue
 
             prev = tool_args_accumulator.get(dedup_key, "")
@@ -423,7 +423,7 @@ def _handle_ai_message_chunk(
                         tool_calls_map[dedup_key]["parameters"] = parsed_args
                         tool_info = dict(tool_calls_map[dedup_key])
                         tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
-                        yield {'type': 'tool', 'data': tool_info}
+                        yield {"type": "tool", "data": tool_info}
                     else:
                         new_tool_info = {
                             "id": tc_id,
@@ -438,7 +438,7 @@ def _handle_ai_message_chunk(
                         if tc_index is not None:
                             new_tool_info["_index"] = tc_index
                         tool_calls_map[dedup_key] = new_tool_info
-                        yield {'type': 'tool', 'data': dict(new_tool_info)}
+                        yield {"type": "tool", "data": dict(new_tool_info)}
             except (_json.JSONDecodeError, ValueError):
                 pass
 
@@ -449,7 +449,7 @@ def _handle_ai_message_chunk(
         if accumulated_reasoning is not None:
             prev = accumulated_reasoning.get("content", "") or ""
             accumulated_reasoning["content"] = prev + thinking_text
-        if mode in ('agent', 'chat') and enable_deep_thinking:
+        if mode in ("agent", "chat") and enable_deep_thinking:
             reasoning_content = accumulated_reasoning.get("content", "") or ""
             yield {
                 "type": "reasoning",
@@ -466,7 +466,7 @@ def _handle_ai_message_chunk(
     # - 非 agent 模式：直接发送
     if message.content:
         has_tool_calls = bool(tool_calls) or bool(getattr(message, "tool_call_chunks", None))
-        if mode == 'agent' and has_tool_calls:
+        if mode == "agent" and has_tool_calls:
             # agent 模式 + 有 tool_calls：缓冲 content，不立即发送
             # 这是模型在决定调用工具前的"自言自语"，不应发送给用户
             if accumulated_reasoning is not None:
@@ -528,7 +528,11 @@ def _handle_tool_message_chunk(
             # 知识库检索工具返回大量原始文档，不应原样推给前端
             # 只保留摘要信息，避免前端显示海量原始内容
             tool_name = tool_info.get("name", "")
-            if tool_name.startswith("knowledge_base_") and isinstance(message.content, str) and len(message.content) > 500:
+            if (
+                tool_name.startswith("knowledge_base_")
+                and isinstance(message.content, str)
+                and len(message.content) > 500
+            ):
                 # 截取前200字符作为预览，标记为已摘要
                 preview = message.content[:200].rstrip() + "..."
                 tool_info["result"] = preview
@@ -556,7 +560,7 @@ def _handle_tool_message_chunk(
                 service.transition(
                     tool_call_id,
                     EventType.TOOL_CALL_FAILED,
-                    error=message.content,
+                    error=str(message.content) if message.content else None,
                 )
             else:
                 service.transition(
@@ -565,7 +569,7 @@ def _handle_tool_message_chunk(
                     result=message.content,
                 )
 
-        return [{'type': 'tool_result', 'data': tool_info}]
+        return [{"type": "tool_result", "data": tool_info}]
 
     return []
 
@@ -574,14 +578,18 @@ def process_stream_chunk(
     chunk,
     tool_calls_map: dict[str, dict],
     current_message_content: str,
-    weather_tool_names: set = None,
-    tool_call_count: dict[str, int] = None,
+    weather_tool_names: set | None = None,
+    tool_call_count: dict[str, int] | None = None,
     lcp_func=None,
-    accumulated_reasoning: dict[str, str] = None,
-    tool_args_accumulator: dict[str, str] = None,
+    accumulated_reasoning: dict[str, str] | None = None,
+    tool_args_accumulator: dict[str, str] | None = None,
     mode: str = "agent",
     enable_deep_thinking: bool = False,
 ):
+    # 调用方保证以下容器参数非 None（StreamContext 字段有 default_factory）
+    assert tool_call_count is not None
+    assert accumulated_reasoning is not None
+    assert tool_args_accumulator is not None
     if chunk is None:
         return
 
@@ -604,16 +612,24 @@ def process_stream_chunk(
         # （这些内容是模型在决定调用工具前的"自言自语"，不应发送给用户）
         tool_calls = getattr(message, "tool_calls", [])
         tool_call_chunks = getattr(message, "tool_call_chunks", None)
-        if mode == 'agent' and (tool_calls or tool_call_chunks) and accumulated_reasoning is not None:
+        if mode == "agent" and (tool_calls or tool_call_chunks) and accumulated_reasoning is not None:
             if accumulated_reasoning.get("_pending_content"):
-                logger.debug(f"Agent 模式: 检测到 tool_calls，清除缓冲的中间内容 ({len(accumulated_reasoning['_pending_content'])} 字符)")
+                logger.debug(
+                    f"Agent 模式: 检测到 tool_calls，清除缓冲的中间内容 ({len(accumulated_reasoning['_pending_content'])} 字符)"
+                )
                 accumulated_reasoning["_pending_content"] = ""
                 _sync_pending_to_stream_state(accumulated_reasoning)
 
         yield from _handle_ai_message_chunk(
-            message, tool_calls_map, tool_call_count, lcp_func,
-            current_message_content, accumulated_reasoning,
-            tool_args_accumulator, mode, enable_deep_thinking,
+            message,
+            tool_calls_map,
+            tool_call_count,
+            lcp_func,
+            current_message_content,
+            accumulated_reasoning,
+            tool_args_accumulator,
+            mode,
+            enable_deep_thinking,
         )
     elif isinstance(message, ToolMessage):
         yield from _handle_tool_message_chunk(message, tool_calls_map)
@@ -622,12 +638,12 @@ def process_stream_chunk(
 def build_context_info(usage_tracker, token_detail_tracker, stream_start_time=None):
     context_info = usage_tracker.get_usage_info()
     token_summary = token_detail_tracker.get_summary()
-    context_info['tokens'] = token_summary['tokens']
-    context_info['tokenDetail'] = token_detail_tracker.get_token_detail()
-    context_info['model'] = usage_tracker.model_id
-    context_info['total_tokens'] = usage_tracker.get_total_tokens()
+    context_info["tokens"] = token_summary["tokens"]
+    context_info["tokenDetail"] = token_detail_tracker.get_token_detail()
+    context_info["model"] = usage_tracker.model_id
+    context_info["total_tokens"] = usage_tracker.get_total_tokens()
     if stream_start_time is not None:
-        context_info['response_time'] = round(time.time() - stream_start_time, 2)
+        context_info["response_time"] = round(time.time() - stream_start_time, 2)
     return context_info
 
 
@@ -636,10 +652,12 @@ def update_usage_and_tokens(cb, usage_tracker, token_detail_tracker=None):
     usage_tracker.add_output_tokens(cb.completion_tokens)
     if token_detail_tracker:
         token_detail_tracker.update_from_metadata(
-            {'usage_metadata': {
-                'input_tokens': cb.prompt_tokens,
-                'output_tokens': cb.completion_tokens,
-            }}
+            {
+                "usage_metadata": {
+                    "input_tokens": cb.prompt_tokens,
+                    "output_tokens": cb.completion_tokens,
+                }
+            }
         )
         token_detail_tracker.finish_record()
 
@@ -649,28 +667,30 @@ def sync_usage_from_messages(all_messages, usage_tracker, token_detail_tracker=N
     for msg in reversed(all_messages):
         if not isinstance(msg, AIMessage):
             continue
-        msg_id = getattr(msg, 'id', None)
+        msg_id = getattr(msg, "id", None)
         if msg_id and msg_id in seen_ids:
             continue
         if msg_id:
             seen_ids.add(msg_id)
-        resp_meta = getattr(msg, 'response_metadata', {}) or {}
-        token_usage = resp_meta.get('token_usage', {})
+        resp_meta = getattr(msg, "response_metadata", {}) or {}
+        token_usage = resp_meta.get("token_usage", {})
         if token_usage:
-            usage_tracker.add_input_tokens(token_usage.get('prompt_tokens', 0))
-            usage_tracker.add_output_tokens(token_usage.get('completion_tokens', 0))
+            usage_tracker.add_input_tokens(token_usage.get("prompt_tokens", 0))
+            usage_tracker.add_output_tokens(token_usage.get("completion_tokens", 0))
             if token_detail_tracker:
                 token_detail_tracker.update_from_metadata(
-                    {'usage_metadata': {
-                        'input_tokens': token_usage.get('prompt_tokens', 0),
-                        'output_tokens': token_usage.get('completion_tokens', 0),
-                    }}
+                    {
+                        "usage_metadata": {
+                            "input_tokens": token_usage.get("prompt_tokens", 0),
+                            "output_tokens": token_usage.get("completion_tokens", 0),
+                        }
+                    }
                 )
-        usage_meta = resp_meta.get('usage_metadata', {})
+        usage_meta = resp_meta.get("usage_metadata", {})
         if usage_meta:
-            usage_tracker.update_from_metadata({'usage_metadata': usage_meta})
+            usage_tracker.update_from_metadata({"usage_metadata": usage_meta})
             if token_detail_tracker:
-                token_detail_tracker.update_from_metadata({'usage_metadata': usage_meta})
+                token_detail_tracker.update_from_metadata({"usage_metadata": usage_meta})
 
 
 def finalize_tool_calls(
@@ -696,7 +716,7 @@ def finalize_tool_calls(
                     tool_info = dict(tool_calls_map[key])
                     tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
                     tool_info.pop("_index", None)
-                    events.append({'type': 'tool', 'data': tool_info})
+                    events.append({"type": "tool", "data": tool_info})
                     logger.debug(f"[FINALIZE-TOOL] 从 accumulator 解析参数成功: key={key}, args={parsed_args}")
             except (_json.JSONDecodeError, ValueError):
                 recovered = _try_parse_concatenated_json(accumulated_str)
@@ -705,7 +725,7 @@ def finalize_tool_calls(
                     tool_info = dict(tool_calls_map[key])
                     tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
                     tool_info.pop("_index", None)
-                    events.append({'type': 'tool', 'data': tool_info})
+                    events.append({"type": "tool", "data": tool_info})
                     logger.info(f"[FINALIZE-TOOL] 从拼接 JSON 中恢复参数成功: key={key}")
                 else:
                     logger.debug(f"[FINALIZE-TOOL] accumulator JSON 解析失败: key={key}, str={accumulated_str!r}")
@@ -721,7 +741,7 @@ def finalize_tool_calls(
             chunks_by_id: dict[str, Any] = {}
             chunks_no_id = None
             for chunk in ai_chunks:
-                msg_id = getattr(chunk, 'id', None) or ''
+                msg_id = getattr(chunk, "id", None) or ""
                 if msg_id:
                     if msg_id in chunks_by_id:
                         chunks_by_id[msg_id] = chunks_by_id[msg_id] + chunk
@@ -737,33 +757,34 @@ def finalize_tool_calls(
                 complete_messages.append(chunks_no_id)
 
             for complete_msg in complete_messages:
-                tool_calls = getattr(complete_msg, 'tool_calls', [])
+                tool_calls = getattr(complete_msg, "tool_calls", [])
                 for tool_call in tool_calls:
-                    args = tool_call.get('args', {})
+                    args = tool_call.get("args", {})
                     if not args or not isinstance(args, dict) or args == {}:
                         continue
 
-                    tool_id = tool_call.get('id', '')
-                    tool_name = tool_call.get('name', '')
+                    tool_id = tool_call.get("id", "")
+                    tool_name = tool_call.get("name", "")
 
                     for key, tc in tool_calls_map.items():
-                        existing_params = tc.get('parameters', {})
+                        existing_params = tc.get("parameters", {})
                         if isinstance(existing_params, dict) and existing_params and existing_params != {}:
                             continue
-                        if (tc.get('id') == tool_id and tool_id) or \
-                           (tc.get('name') == tool_name and tool_name and not tc.get('id')):
-                            tc['parameters'] = args
+                        if (tc.get("id") == tool_id and tool_id) or (
+                            tc.get("name") == tool_name and tool_name and not tc.get("id")
+                        ):
+                            tc["parameters"] = args
                             tool_info = dict(tc)
                             tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
                             tool_info.pop("_index", None)
-                            events.append({'type': 'tool', 'data': tool_info})
+                            events.append({"type": "tool", "data": tool_info})
                             logger.info(f"[FINALIZE-TOOL] 从累积消息提取参数成功: name={tool_name}, args={args}")
                             break
 
     return events
 
 
-def _detect_tool_error(result_content: str) -> bool:
+def _detect_tool_error(result_content: str | list[Any]) -> bool:
     if not result_content or not isinstance(result_content, str):
         return False
     error_prefixes = ["错误：", "Error:", "ERROR:", "FAILED", "失败:", "异常:", "Exception:"]
@@ -823,6 +844,7 @@ def is_tool_call_failure(exc: Exception) -> bool:
         from openai import (
             PermissionDeniedError as OpenAIPermissionDenied,
         )
+
         if isinstance(exc, OpenAIPermissionDenied):
             return True
         if isinstance(exc, OpenAIBadRequest):
@@ -831,13 +853,12 @@ def is_tool_call_failure(exc: Exception) -> bool:
         pass
     try:
         from groq import PermissionDeniedError as GroqPermissionDenied
+
         if isinstance(exc, GroqPermissionDenied):
             return True
     except ImportError:
         pass
-    if "403" in error_msg and "forbidden" in error_msg:
-        return True
-    return False
+    return bool("403" in error_msg and "forbidden" in error_msg)
 
 
 def extract_interrupt_ids(intr: Any) -> tuple:
@@ -939,9 +960,7 @@ def parse_approval_interrupt(
             if accumulated_args:
                 try:
                     parsed_args = (
-                        _json.loads(accumulated_args)
-                        if isinstance(accumulated_args, str)
-                        else accumulated_args
+                        _json.loads(accumulated_args) if isinstance(accumulated_args, str) else accumulated_args
                     )
                     if any(str(v) == op for v in (parsed_args or {}).values()):
                         approval_data["llm_tool_call_id"] = tc_info.get("id") or tc_key
@@ -1019,17 +1038,17 @@ def _publish_tool_lifecycle_event(
     # 跳过逻辑：session_id / tool_call_id / tool_name 任一缺失即跳过
     if not session_id:
         return
-    tool_call_id = tool_info.get('id') if isinstance(tool_info, dict) else None
-    tool_name = tool_info.get('name') if isinstance(tool_info, dict) else None
+    tool_call_id = tool_info.get("id") if isinstance(tool_info, dict) else None
+    tool_name = tool_info.get("name") if isinstance(tool_info, dict) else None
     if not tool_call_id or not tool_name:
         return
 
     # message_id 处理：None → 空串（register），不调用 bind_message_id
     # 非 None → str 化后传给 register，并调用 bind_message_id 补全
-    resolved_message_id = '' if message_id is None else str(message_id)
+    resolved_message_id = "" if message_id is None else str(message_id)
 
     # register：始终调用，parameters 始终为 dict（空时为 {}）
-    parameters = tool_info.get('parameters') or {}
+    parameters = tool_info.get("parameters") or {}
     ctx = ToolCallContext(
         tool_call_id=tool_call_id,
         tool_name=tool_name,
@@ -1050,10 +1069,10 @@ def _publish_tool_lifecycle_event(
     transition_parameters = parameters if parameters else None
 
     # result 仅 COMPLETED 事件透传（None 时也省略，与 _handle_tool_message_chunk 一致）
-    result = tool_info.get('result') if event_type == EventType.TOOL_CALL_COMPLETED else None
+    result = tool_info.get("result") if event_type == EventType.TOOL_CALL_COMPLETED else None
 
     # error 仅 FAILED 事件透传
-    error = tool_info.get('error') if event_type == EventType.TOOL_CALL_FAILED else None
+    error = tool_info.get("error") if event_type == EventType.TOOL_CALL_FAILED else None
 
     service.transition(
         tool_call_id,
@@ -1105,21 +1124,21 @@ def merge_existing_approval_fields(
         if not isinstance(existing_tc, dict):
             continue
         # 仅当 existing 有 approval 字段时才进入索引
-        if 'approval' not in existing_tc:
+        if "approval" not in existing_tc:
             continue
         # tool_call_id 优先，id 降级
-        key = existing_tc.get('tool_call_id') or existing_tc.get('id')
+        key = existing_tc.get("tool_call_id") or existing_tc.get("id")
         if key:
-            existing_index[key] = existing_tc['approval']
+            existing_index[key] = existing_tc["approval"]
 
     # 遍历 persisted，按 tool_call_id / id 在 existing_index 中查找匹配
     for persisted_tc in persisted_tool_calls:
         if not isinstance(persisted_tc, dict):
             continue
         # persisted 已有 approval → 不覆盖
-        if 'approval' in persisted_tc:
+        if "approval" in persisted_tc:
             continue
         # tool_call_id 优先，id 降级
-        key = persisted_tc.get('tool_call_id') or persisted_tc.get('id')
+        key = persisted_tc.get("tool_call_id") or persisted_tc.get("id")
         if key and key in existing_index:
-            persisted_tc['approval'] = existing_index[key]
+            persisted_tc["approval"] = existing_index[key]

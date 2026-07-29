@@ -26,8 +26,8 @@ def feedback_node(state: StudyFlowState) -> dict[str, Any]:
 
     try:
         score = state.get("score", 0)
-        score_details = state.get("score_details", {})
-        learning_plan = state.get("learning_plan", {})
+        score_details = state.get("score_details") or {}
+        learning_plan = state.get("learning_plan") or {}
         retry_count = state.get("retry_count", 0)
 
         logger.info(f"[Feedback Node] 当前得分: {score}, 重试次数: {retry_count}")
@@ -45,12 +45,12 @@ def feedback_node(state: StudyFlowState) -> dict[str, Any]:
 
         feedback_prompt = f"""作为一位耐心的学习导师，请根据学生的测验结果提供个性化反馈。
 
-学习主题: {learning_plan.get('topic', '未知')}
-难度级别: {learning_plan.get('difficulty', '未知')}
+学习主题: {learning_plan.get("topic", "未知")}
+难度级别: {learning_plan.get("difficulty", "未知")}
 
 测验结果:
 - 得分: {score} 分
-- 答对题数: {score_details.get('correct_count', 0)}/{score_details.get('total_count', 0)}
+- 答对题数: {score_details.get("correct_count", 0)}/{score_details.get("total_count", 0)}
 {wrong_analysis}
 
 请提供:
@@ -88,15 +88,15 @@ def feedback_node(state: StudyFlowState) -> dict[str, Any]:
             "should_retry": should_retry,
             "retry_count": new_retry_count,
             "current_step": "feedback_completed",
-            "updated_at": datetime.now(UTC).isoformat()
+            "updated_at": datetime.now(UTC).isoformat(),
         }
 
     except Exception as e:
-        logger.error(f"[Feedback Node] 生成反馈失败: {e}", exc_info=True)
+        logger.exception("[Feedback Node] 生成反馈失败")
         return {
             "feedback": f"\n\n⚠️ 反馈生成失败: {e!s}",
             "should_retry": False,
             "retry_count": state.get("retry_count", 0),
             "current_step": "feedback_error",
-            "updated_at": datetime.now(UTC).isoformat()
+            "updated_at": datetime.now(UTC).isoformat(),
         }

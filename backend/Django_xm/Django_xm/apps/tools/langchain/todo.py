@@ -12,16 +12,30 @@ logger = logging.getLogger(__name__)
 def _get_data_dir() -> str:
     try:
         from django.conf import settings as django_settings
-        return str(getattr(django_settings, 'TOOLS_LANGCHAIN_DIR', os.path.join(str(django_settings.DATA_DIR), 'tools', 'langchain')))
+
+        return str(
+            getattr(
+                django_settings,
+                "TOOLS_LANGCHAIN_DIR",
+                os.path.join(str(django_settings.DATA_DIR), "tools", "langchain"),
+            )
+        )
     except (ImportError, AttributeError):
         try:
             from Django_xm.apps.ai_engine.config import settings
-            return str(getattr(settings, 'TOOLS_LANGCHAIN_DIR', os.path.join(str(getattr(settings, 'data_dir', 'data')), 'tools', 'langchain')))
+
+            return str(
+                getattr(
+                    settings,
+                    "TOOLS_LANGCHAIN_DIR",
+                    os.path.join(str(getattr(settings, "data_dir", "data")), "tools", "langchain"),
+                )
+            )
         except (ImportError, AttributeError):
-            return os.path.join('data', 'tools', 'langchain')
+            return os.path.join("data", "tools", "langchain")
 
 
-TODO_DIR = os.path.join(_get_data_dir(), 'todos')
+TODO_DIR = os.path.join(_get_data_dir(), "todos")
 
 
 def _ensure_todo_dir():
@@ -30,7 +44,7 @@ def _ensure_todo_dir():
 
 def _get_todo_path(session_id: str) -> str:
     _ensure_todo_dir()
-    safe_id = session_id.replace('/', '_').replace('\\', '_')
+    safe_id = session_id.replace("/", "_").replace("\\", "_")
     return os.path.join(TODO_DIR, f"{safe_id}.json")
 
 
@@ -39,10 +53,10 @@ def _load_todos(session_id: str) -> list[dict[str, Any]]:
     if not os.path.exists(path):
         return []
     try:
-        with open(path, encoding='utf-8') as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        logger.error(f"加载待办事项失败: {e}")
+    except (OSError, json.JSONDecodeError):
+        logger.exception("加载待办事项失败")
         return []
 
 
@@ -50,10 +64,10 @@ def _save_todos(session_id: str, todos: list[dict[str, Any]]):
     path = _get_todo_path(session_id)
     _ensure_todo_dir()
     try:
-        with open(path, 'w', encoding='utf-8') as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(todos, f, ensure_ascii=False, indent=2)
-    except OSError as e:
-        logger.error(f"保存待办事项失败: {e}")
+    except OSError:
+        logger.exception("保存待办事项失败")
 
 
 def _validate_todos(todos: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -78,7 +92,7 @@ def _validate_todos(todos: list[dict[str, Any]]) -> list[dict[str, Any]]:
 class TodoWriteInput(BaseModel):
     todos: str = Field(
         description="JSON格式的任务列表，每个任务包含id/content/status/priority字段，"
-        "例如:[{\"id\":1,\"content\":\"完成任务1\",\"status\":\"pending\",\"priority\":\"high\"}]"
+        '例如:[{"id":1,"content":"完成任务1","status":"pending","priority":"high"}]'
     )
     session_id: str = Field(default="default", description="会话ID，用于隔离不同会话的任务")
 

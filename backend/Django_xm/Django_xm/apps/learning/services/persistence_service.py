@@ -2,6 +2,7 @@
 工作流状态持久化服务
 确保工作流状态在重启后能够恢复
 """
+
 import json
 import logging
 from pathlib import Path
@@ -41,8 +42,8 @@ class WorkflowPersistenceService:
             self._save_to_database(thread_id, serializable_state, user_id)
             self._save_to_file(thread_id, serializable_state)
             logger.info(f"[Persistence] 工作流状态已保存: thread_id={thread_id}")
-        except Exception as e:
-            logger.error(f"[Persistence] 保存工作流状态失败: {e}", exc_info=True)
+        except Exception:
+            logger.exception("[Persistence] 保存工作流状态失败")
 
     def _make_serializable(self, state: dict[str, Any]) -> dict[str, Any]:
         """将状态转换为可JSON序列化的格式"""
@@ -52,9 +53,9 @@ class WorkflowPersistenceService:
                 serializable[key] = [self._serialize_message(msg) for msg in value]
             elif isinstance(value, dict):
                 serializable[key] = self._make_serializable(value)
-            elif hasattr(value, 'model_dump'):
+            elif hasattr(value, "model_dump"):
                 serializable[key] = value.model_dump()
-            elif hasattr(value, 'dict') and callable(value.dict):
+            elif hasattr(value, "dict") and callable(value.dict):
                 serializable[key] = value.dict()
             else:
                 serializable[key] = value
@@ -64,18 +65,19 @@ class WorkflowPersistenceService:
         """序列化LangChain消息对象"""
         try:
             from langchain_core.messages import BaseMessage
+
             if isinstance(msg, BaseMessage):
                 return {
                     "type": msg.type,
                     "content": msg.content,
-                    "additional_kwargs": getattr(msg, 'additional_kwargs', {}),
-                    "response_metadata": getattr(msg, 'response_metadata', {}),
-                    "id": getattr(msg, 'id', None),
+                    "additional_kwargs": getattr(msg, "additional_kwargs", {}),
+                    "response_metadata": getattr(msg, "response_metadata", {}),
+                    "id": getattr(msg, "id", None),
                 }
         except ImportError:
             pass
 
-        if hasattr(msg, '__dict__'):
+        if hasattr(msg, "__dict__"):
             return {"type": type(msg).__name__, "data": str(msg)}
 
         return msg
@@ -85,7 +87,7 @@ class WorkflowPersistenceService:
         try:
             from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-            messages = []
+            messages: list[Any] = []
             for msg_data in messages_data:
                 if isinstance(msg_data, dict):
                     msg_type = msg_data.get("type", "")
@@ -124,8 +126,8 @@ class WorkflowPersistenceService:
                 state = self._deserialize_state(state)
                 logger.info(f"[Persistence] 工作流状态已加载: thread_id={thread_id}")
             return state
-        except Exception as e:
-            logger.error(f"[Persistence] 加载工作流状态失败: {e}", exc_info=True)
+        except Exception:
+            logger.exception("[Persistence] 加载工作流状态失败")
             return None
 
     def _deserialize_state(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -165,7 +167,7 @@ class WorkflowPersistenceService:
         else:
             status = "running"
 
-        session, created = WorkflowSession.objects.update_or_create(
+        _session, created = WorkflowSession.objects.update_or_create(
             thread_id=thread_id,
             defaults={
                 "created_by": user,
@@ -220,7 +222,8 @@ class WorkflowPersistenceService:
             return {k: v for k, v in state.items() if v is not None}
 
         except Exception:
-            pass
+            # 数据库读取失败时返回 None，调用方回退到文件系统
+            logger.debug("从数据库加载学习会话状态失败，回退到文件系统")
         return None
 
     def _save_to_file(self, thread_id: str, state: dict[str, Any]) -> None:
@@ -266,14 +269,12 @@ class WorkflowPersistenceService:
         """列出用户的所有工作流会话"""
         from Django_xm.apps.learning.models import WorkflowSession
 
-        queryset = WorkflowSession.objects.filter(
-            created_by_id=user_id,
-            is_deleted=False
-        ).select_related("created_by")
+        queryset = WorkflowSession.objects.filter(created_by_id=user_id, is_deleted=False).select_related("created_by")
 
         if status:
             # 支持按 status 或 current_step 筛选
             from django.db.models import Q
+
             queryset = queryset.filter(Q(status=status) | Q(current_step=status))
 
         if search:

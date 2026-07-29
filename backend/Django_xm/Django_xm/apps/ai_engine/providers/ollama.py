@@ -11,6 +11,7 @@ Ollama Chat Provider
     ollama pull qwen3:8b
     ollama serve
 """
+
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel

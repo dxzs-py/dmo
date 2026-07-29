@@ -9,46 +9,46 @@ logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
-    help = '附件生命周期管理：清理过期文件、入库旧文件、监控存储空间'
+    help = "附件生命周期管理：清理过期文件、入库旧文件、监控存储空间"
 
     def add_arguments(self, parser):
         parser.add_argument(
-            'action',
-            choices=['cleanup', 'index', 'check-storage', 'stats', 'full', 'fix-data'],
-            help='操作: cleanup=清理过期, index=入库旧文件, check-storage=检查存储空间, stats=统计信息, full=完整流程, fix-data=修复数据一致性',
+            "action",
+            choices=["cleanup", "index", "check-storage", "stats", "full", "fix-data"],
+            help="操作: cleanup=清理过期, index=入库旧文件, check-storage=检查存储空间, stats=统计信息, full=完整流程, fix-data=修复数据一致性",
         )
         parser.add_argument(
-            '--dry-run',
-            action='store_true',
-            help='仅模拟运行，不实际删除或入库文件',
+            "--dry-run",
+            action="store_true",
+            help="仅模拟运行，不实际删除或入库文件",
         )
         parser.add_argument(
-            '--retention-days',
+            "--retention-days",
             type=int,
-            help='覆盖默认保留天数',
+            help="覆盖默认保留天数",
         )
 
     def handle(self, *args, **options):
-        action = options['action']
-        dry_run = options['dry_run']
+        action = options["action"]
+        dry_run = options["dry_run"]
         service = AttachmentLifecycleService()
 
-        if options['retention_days']:
-            service.default_retention_days = options['retention_days']
+        if options["retention_days"]:
+            service.default_retention_days = options["retention_days"]
 
         self.stdout.write(f"[{timezone.now():%Y-%m-%d %H:%M:%S}] 开始执行: {action}")
 
-        if action == 'cleanup':
+        if action == "cleanup":
             self._run_cleanup(service, dry_run)
-        elif action == 'index':
+        elif action == "index":
             self._run_index(service, dry_run)
-        elif action == 'check-storage':
+        elif action == "check-storage":
             self._run_storage_check(service)
-        elif action == 'stats':
+        elif action == "stats":
             self._run_stats(service)
-        elif action == 'full':
+        elif action == "full":
             self._run_full(service, dry_run)
-        elif action == 'fix-data':
+        elif action == "fix-data":
             self._run_fix_data(service, dry_run)
 
     def _run_cleanup(self, service: AttachmentLifecycleService, dry_run: bool):
@@ -59,12 +59,14 @@ class Command(BaseCommand):
             self.stdout.write(f"[DRY RUN] 将清理 {count} 个过期附件，释放 {total_size / 1024 / 1024:.2f} MB")
             return
 
-        log = service.cleanup_expired(triggered_by='cron')
-        self.stdout.write(self.style.SUCCESS(
-            f"清理完成: 处理={log.files_processed}, 删除={log.files_deleted}, "
-            f"入库={log.files_archived}, 跳过={log.files_skipped}, "
-            f"释放={log.space_freed / 1024 / 1024:.2f}MB"
-        ))
+        log = service.cleanup_expired(triggered_by="cron")
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"清理完成: 处理={log.files_processed}, 删除={log.files_deleted}, "
+                f"入库={log.files_archived}, 跳过={log.files_skipped}, "
+                f"释放={log.space_freed / 1024 / 1024:.2f}MB"
+            )
+        )
         if log.errors:
             for err in log.errors:
                 self.stdout.write(self.style.ERROR(f"  错误: {err}"))
@@ -77,11 +79,13 @@ class Command(BaseCommand):
             self.stdout.write(f"[DRY RUN] 将入库 {count} 个附件，空间 {total_size / 1024 / 1024:.2f} MB")
             return
 
-        log = service.index_old_attachments(triggered_by='cron')
-        self.stdout.write(self.style.SUCCESS(
-            f"入库完成: 处理={log.files_processed}, 入库={log.files_archived}, "
-            f"空间={log.space_archived / 1024 / 1024:.2f}MB"
-        ))
+        log = service.index_old_attachments(triggered_by="cron")
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"入库完成: 处理={log.files_processed}, 入库={log.files_archived}, "
+                f"空间={log.space_archived / 1024 / 1024:.2f}MB"
+            )
+        )
 
     def _run_storage_check(self, service: AttachmentLifecycleService):
         stats = service.get_storage_stats()
@@ -137,23 +141,15 @@ class Command(BaseCommand):
 
         self.stdout.write("=== 修复附件数据一致性 ===")
 
-        inconsistent_1 = ChatAttachment.all_objects.filter(
-            status=AttachmentStatus.DELETED,
-            is_deleted=False
-        )
+        inconsistent_1 = ChatAttachment.all_objects.filter(status=AttachmentStatus.DELETED, is_deleted=False)
         count_1 = inconsistent_1.count()
         self.stdout.write(f"1. status=deleted 但 is_deleted=False: {count_1} 条")
 
-        inconsistent_2 = ChatAttachment.all_objects.filter(
-            is_deleted=True
-        ).exclude(status=AttachmentStatus.DELETED)
+        inconsistent_2 = ChatAttachment.all_objects.filter(is_deleted=True).exclude(status=AttachmentStatus.DELETED)
         count_2 = inconsistent_2.count()
         self.stdout.write(f"2. is_deleted=True 但 status != deleted: {count_2} 条")
 
-        inconsistent_3 = ChatAttachment.all_objects.filter(
-            is_deleted=True,
-            deleted_at__isnull=True
-        )
+        inconsistent_3 = ChatAttachment.all_objects.filter(is_deleted=True, deleted_at__isnull=True)
         count_3 = inconsistent_3.count()
         self.stdout.write(f"3. is_deleted=True 但 deleted_at=None: {count_3} 条")
 
@@ -168,7 +164,7 @@ class Command(BaseCommand):
                 att.is_deleted = True
                 if not att.deleted_at:
                     att.deleted_at = att.updated_at or att.created_at or timezone.now()
-                att.save(update_fields=['is_deleted', 'deleted_at'])
+                att.save(update_fields=["is_deleted", "deleted_at"])
                 fixed_count += 1
             self.stdout.write(self.style.SUCCESS(f"✓ 已修复 {count_1} 条第 1 类记录"))
 
@@ -177,7 +173,7 @@ class Command(BaseCommand):
                 att.status = AttachmentStatus.DELETED
                 if not att.deleted_at:
                     att.deleted_at = att.updated_at or att.created_at or timezone.now()
-                att.save(update_fields=['status', 'deleted_at'])
+                att.save(update_fields=["status", "deleted_at"])
                 fixed_count += 1
             self.stdout.write(self.style.SUCCESS(f"✓ 已修复 {count_2} 条第 2 类记录"))
 
@@ -185,7 +181,7 @@ class Command(BaseCommand):
             for att in inconsistent_3:
                 if not att.deleted_at:
                     att.deleted_at = att.updated_at or att.created_at or timezone.now()
-                att.save(update_fields=['deleted_at'])
+                att.save(update_fields=["deleted_at"])
                 fixed_count += 1
             self.stdout.write(self.style.SUCCESS(f"✓ 已修复 {count_3} 条第 3 类记录"))
 

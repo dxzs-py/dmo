@@ -39,9 +39,11 @@ def _is_async_context() -> bool:
 
 # ── 同步数据库查询（供 sync_to_async 包装） ───────────────────────────
 
+
 def _fetch_organization_policy() -> str:
     """L1: 从 SystemConfig 读取 key=organization_policy"""
     from Django_xm.apps.ai_engine.models import SystemConfig
+
     value = SystemConfig.get_value("organization_policy", default=None)
     if value is None:
         return ""
@@ -49,6 +51,7 @@ def _fetch_organization_policy() -> str:
         return value
     # JSONField 可能存为 dict/list，序列化为字符串
     import json
+
     try:
         return json.dumps(value, ensure_ascii=False, indent=2)
     except (TypeError, ValueError):
@@ -58,6 +61,7 @@ def _fetch_organization_policy() -> str:
 def _fetch_user_global_rules(user_id) -> str:
     """L2: 读取用户全局规则（scope=user_global）"""
     from Django_xm.apps.context_manager.models import ContextRule
+
     rules = list(
         ContextRule.objects.filter(
             user_id=user_id,
@@ -78,6 +82,7 @@ def _fetch_project_rules(user_id, project_id) -> str:
     if not project_id:
         return ""
     from Django_xm.apps.context_manager.models import ContextRule
+
     rules = list(
         ContextRule.objects.filter(
             user_id=user_id,
@@ -97,6 +102,7 @@ def _fetch_project_rules(user_id, project_id) -> str:
 def _fetch_auto_memory(user_id, project_id) -> str:
     """L6: 读取自动记忆（前 200 行，总计不超过 25KB）"""
     from Django_xm.apps.context_manager.models import AutoMemory
+
     qs = AutoMemory.objects.filter(user_id=user_id)
     if project_id:
         qs = qs.filter(project_id=project_id)
@@ -122,6 +128,7 @@ def _fetch_auto_memory(user_id, project_id) -> str:
 def _save_auto_memory_sync(user_id, project_id, content, source, tags) -> bool:
     """同步保存自动记忆"""
     from Django_xm.apps.context_manager.models import AutoMemory
+
     try:
         AutoMemory.objects.create(
             user_id=user_id,
@@ -139,6 +146,7 @@ def _save_auto_memory_sync(user_id, project_id, content, source, tags) -> bool:
 def _trim_auto_memory_sync(user_id, project_id) -> None:
     """清理超出限制的自动记忆（LRU 淘汰）"""
     from Django_xm.apps.context_manager.models import AutoMemory
+
     try:
         qs = AutoMemory.objects.filter(user_id=user_id)
         if project_id:
@@ -159,16 +167,14 @@ def _trim_auto_memory_sync(user_id, project_id) -> None:
                     break
         else:
             # 按行数淘汰
-            keep_ids = list(
-                qs.order_by("-last_accessed_at")
-                .values_list("id", flat=True)[:_AUTO_MEMORY_MAX_ROWS]
-            )
+            keep_ids = list(qs.order_by("-last_accessed_at").values_list("id", flat=True)[:_AUTO_MEMORY_MAX_ROWS])
             qs.exclude(id__in=keep_ids).delete()
     except Exception:
         logger.exception("清理自动记忆失败: user=%s, project=%s", user_id, project_id)
 
 
 # ── 主类 ──────────────────────────────────────────────────────────────
+
 
 class HierarchicalMemory:
     """分层记忆系统
@@ -221,6 +227,7 @@ class HierarchicalMemory:
             from Django_xm.apps.context_manager.services.progressive_compressor import (
                 ProgressiveCompressor,
             )
+
             self._compressor = ProgressiveCompressor(
                 model_name=self._model_name,
                 store=self._store,
@@ -236,6 +243,7 @@ class HierarchicalMemory:
             from Django_xm.apps.context_manager.services.knowledge_graph import (
                 ContextKnowledgeGraph,
             )
+
             self._knowledge_graph = ContextKnowledgeGraph(store=self._store)
         return self._knowledge_graph
 
@@ -385,7 +393,10 @@ class HierarchicalMemory:
         l6_task = self._aload_l6_auto_memory()
 
         l1_content, l2_content, l3_content, l6_content = await _asyncio.gather(
-            l1_task, l2_task, l3_task, l6_task,
+            l1_task,
+            l2_task,
+            l3_task,
+            l6_task,
         )
 
         # L1
@@ -424,7 +435,7 @@ class HierarchicalMemory:
 
     # ── 保存自动记忆 ──────────────────────────────────────────────
 
-    def save_auto_memory(self, content: str, source: str = "other", tags: list = None) -> bool:
+    def save_auto_memory(self, content: str, source: str = "other", tags: list | None = None) -> bool:
         """保存自动记忆
 
         Args:
@@ -444,7 +455,11 @@ class HierarchicalMemory:
 
         try:
             success = _save_auto_memory_sync(
-                self._user_id, self._project_id, content.strip(), source, tags or [],
+                self._user_id,
+                self._project_id,
+                content.strip(),
+                source,
+                tags or [],
             )
             if success:
                 _trim_auto_memory_sync(self._user_id, self._project_id)
@@ -453,14 +468,18 @@ class HierarchicalMemory:
             logger.exception("保存自动记忆失败: user=%s", self._user_id)
             return False
 
-    async def asave_auto_memory(self, content: str, source: str = "other", tags: list = None) -> bool:
+    async def asave_auto_memory(self, content: str, source: str = "other", tags: list | None = None) -> bool:
         """异步保存自动记忆"""
         if not content or not content.strip():
             return False
 
         try:
             success = await sync_to_async(_save_auto_memory_sync)(
-                self._user_id, self._project_id, content.strip(), source, tags or [],
+                self._user_id,
+                self._project_id,
+                content.strip(),
+                source,
+                tags or [],
             )
             if success:
                 await sync_to_async(_trim_auto_memory_sync)(self._user_id, self._project_id)

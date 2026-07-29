@@ -11,7 +11,7 @@
 
 import os
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 # Django 环境初始化（兼容 pytest 和 unittest 直接运行）
 # 必须 before `from django.test import TestCase`，否则触发
@@ -69,8 +69,11 @@ class AstreamResearchWithInterruptsTests(TestCase):
         from Django_xm.apps.research.services.adapter import (
             OfficialDeepAgentAdapter,
         )
+
         return OfficialDeepAgentAdapter(
-            graph=mock_graph, thread_id="test-task-id", work_dir=None,
+            graph=mock_graph,
+            thread_id="test-task-id",
+            work_dir=None,
         )
 
     async def test_astream_interrupt_detection(self):
@@ -83,9 +86,7 @@ class AstreamResearchWithInterruptsTests(TestCase):
             captured_interrupts.extend(interrupts_data)
             return {item["interrupt_id"]: True for item in interrupts_data}
 
-        with patch(
-            "Django_xm.apps.tools.base.is_approval_interrupt", return_value=True
-        ):
+        with patch("Django_xm.apps.tools.base.is_approval_interrupt", return_value=True):
             result = await adapter.astream_research_with_interrupts(
                 query="测试查询",
                 on_interrupt=on_interrupt,
@@ -111,9 +112,7 @@ class AstreamResearchWithInterruptsTests(TestCase):
             captured_interrupts.extend(interrupts_data)
             return {item["interrupt_id"]: True for item in interrupts_data}
 
-        with patch(
-            "Django_xm.apps.tools.base.is_approval_interrupt", return_value=True
-        ):
+        with patch("Django_xm.apps.tools.base.is_approval_interrupt", return_value=True):
             await adapter.astream_research_with_interrupts(
                 query="测试查询",
                 on_interrupt=on_interrupt,
@@ -138,100 +137,18 @@ class AstreamResearchWithInterruptsTests(TestCase):
         self.assertEqual(interrupt_data["description"], "执行 shell 命令")
 
 
-@unittest.skip('research_resume_task 已在 Phase 1 移除，相关测试待后续 Phase 重建')
+@unittest.skip("research_resume_task 已在 Phase 1 移除，相关测试待后续 Phase 重建")
 class ResumeResearchTaskTests(TestCase):
     """测试 resume_research_task 使用正确的 thread_id 恢复 agent。"""
 
-    @patch("Django_xm.tasks.research_resume_task._broadcast_stream_completed")
-    @patch("Django_xm.tasks.research_resume_task.finalize_research")
-    @patch("Django_xm.tasks.research_resume_task.TrackedTask")
-    @patch("Django_xm.tasks.research_resume_task.approval_service")
-    @patch("Django_xm.apps.research.models.ResearchTask.objects")
-    @patch("Django_xm.apps.approvals.models.Approval.objects")
-    def test_resume_research_task_thread_id(
-        self,
-        mock_approval_objects,
-        mock_research_task_objects,
-        mock_approval_service,
-        mock_tracked_task,
-        mock_finalize,
-        mock_broadcast,
-    ):
-        """使用 thread_id=task_id 恢复 agent，并构造 Command(resume=...)。"""
-        from langgraph.types import Command
+    # TODO(future-phase): research_resume_task 模块尚未建立独立文件。
+    # 现有实现位于 Django_xm.tasks.deep_research.research_resume_task（Celery 任务），
+    # 但其函数签名（8 参数：thread_id/interrupt_id/langgraph_resume_id/
+    # graph_interrupt_id/resume_value/user_id/message_id/chat_session_id）
+    # 与本测试期望的接口（resume_research_task，3 参数：task_id/interrupt_id/resume_value）
+    # 不一致。待 Path D 统一审批方案落地后，按最终接口重建本测试类。
+    # 参见 spec: .trae/specs/fix-backend-audit-findings/task17-api-changes.md
 
-        from Django_xm.apps.research.services.adapter import (
-            OfficialDeepAgentAdapter,
-        )
-        from Django_xm.tasks.research_resume_task import resume_research_task
-
-        task_id = "test-task-id"
-        interrupt_id = "test-interrupt-id"
-        resume_value = True
-        chat_session_id = "test-chat-session-id"
-
-        # Mock Approval.objects.get
-        mock_approval = MagicMock()
-        mock_approval.chat_session_id = chat_session_id
-        mock_approval_objects.get.return_value = mock_approval
-
-        # Mock ResearchTask.objects.get
-        mock_research_task = MagicMock()
-        mock_research_task.enable_doc_analysis = False
-        mock_research_task.use_mcp = False
-        mock_research_task.selected_tools = []
-        mock_research_task.selected_mcp_servers = []
-        mock_research_task.knowledge_base_ids = []
-        mock_research_task.created_by_id = 1
-        mock_research_task.enable_web_search = False
-        mock_research_task_objects.get.return_value = mock_research_task
-
-        # 捕获 astream 调用参数
-        captured = {}
-
-        async def mock_astream(graph_input, config=None, stream_mode=None, **kwargs):
-            captured["graph_input"] = graph_input
-            captured["config"] = config
-            captured["stream_mode"] = stream_mode
-            return
-            yield  # 使函数成为 async generator
-
-        async def mock_aget_state(config):
-            mock_state = MagicMock()
-            mock_state.values = {"messages": []}
-            return mock_state
-
-        mock_graph = MagicMock()
-        mock_graph.astream = mock_astream
-        mock_graph.aget_state = mock_aget_state
-
-        mock_adapter = OfficialDeepAgentAdapter(
-            graph=mock_graph, thread_id=task_id, work_dir=None,
-        )
-
-        with patch(
-            "Django_xm.apps.agent_hub.create",
-            new=AsyncMock(return_value=mock_adapter),
-        ), patch(
-            "Django_xm.apps.ai_engine.services.checkpointer_factory.get_async_checkpointer",
-            new=AsyncMock(return_value=None),
-        ), patch(
-            "Django_xm.apps.ai_engine.services.checkpointer_factory.release_async_checkpointer",
-            new=AsyncMock(),
-        ):
-            resume_research_task.apply(args=(task_id, interrupt_id, resume_value))
-
-        # 验证 astream 被调用
-        self.assertIn("graph_input", captured)
-        self.assertIn("config", captured)
-
-        # 验证 thread_id
-        self.assertEqual(
-            captured["config"]["configurable"]["thread_id"], task_id
-        )
-
-        # 验证 Command(resume={interrupt_id: resume_value})
-        self.assertIsInstance(captured["graph_input"], Command)
-        self.assertEqual(
-            captured["graph_input"].resume, {interrupt_id: resume_value}
-        )
+    def test_resume_research_task_thread_id(self):
+        """占位：待 research_resume_task 模块重建后实现。"""
+        self.skipTest("research_resume_task 模块未实现，待 Path D 统一审批方案落地后重建")

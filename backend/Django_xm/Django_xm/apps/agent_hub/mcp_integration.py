@@ -26,8 +26,8 @@ from langchain_core.tools import BaseTool
 
 from Django_xm.apps.agent_hub import AgentConfig, AgentType
 from Django_xm.apps.agent_hub import create as agent_hub_create
+from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
 from Django_xm.apps.core.config import get_logger
-from Django_xm.apps.ai_engine.services.llm_factory import get_llm
 
 logger = get_logger(__name__)
 
@@ -64,12 +64,13 @@ async def create_mcp_langgraph_agent(
         enable_human_in_loop: 是否启用人工介入
     """
     if llm is None:
-        llm = get_llm(model)
+        llm = get_chat_model(model)
 
     all_tools: list[BaseTool] = list(tools) if tools else []
 
     if include_builtin_tools:
         from Django_xm.apps.tools import get_tools_for_request_async
+
         builtin_tools = await get_tools_for_request_async(
             use_tools=True,
             use_web_search=use_web_search,
@@ -81,6 +82,7 @@ async def create_mcp_langgraph_agent(
     if include_mcp_tools:
         # 从 tools/mcp 加载 MCP 工具（agent_hub → tools，正确方向）
         from Django_xm.apps.tools.mcp.langgraph_integration import load_mcp_tools_for_langgraph
+
         mcp_tools = await load_mcp_tools_for_langgraph(
             server_names=mcp_server_names,
         )

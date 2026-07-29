@@ -6,7 +6,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from Django_xm.apps.core.config import get_logger
@@ -14,7 +14,7 @@ from Django_xm.apps.core.config import get_logger
 logger = get_logger(__name__)
 
 
-class CommandCategory(str, Enum):
+class CommandCategory(StrEnum):
     SESSION = "session"
     TOOLS = "tools"
     INFO = "info"
@@ -89,7 +89,9 @@ def _handle_status(context: dict[str, Any]) -> dict[str, Any]:
     token_info = context.get("token_info")
     if token_info:
         tokens = token_info.get("tokens", {})
-        lines.append(f"- Token: 输入={tokens.get('input', 0)}, 输出={tokens.get('output', 0)}, 总计={tokens.get('total', 0)}")
+        lines.append(
+            f"- Token: 输入={tokens.get('input', 0)}, 输出={tokens.get('output', 0)}, 总计={tokens.get('total', 0)}"
+        )
 
     return {"type": "info", "content": "\n".join(lines)}
 
@@ -108,14 +110,8 @@ def _handle_compact(context: dict[str, Any]) -> dict[str, Any]:
 
     pruner = ContextPruner()
     if not pruner.prune(messages)[1].pruned_count:
-        total_tokens = sum(
-            len(m.get('content', '').split())
-            for m in messages
-        )
-        return {
-            "type": "info",
-            "content": f"ℹ️ 当前会话无需压缩 (估算 {total_tokens} tokens)"
-        }
+        total_tokens = sum(len(m.get("content", "").split()) for m in messages)
+        return {"type": "info", "content": f"ℹ️ 当前会话无需压缩 (估算 {total_tokens} tokens)"}
 
     result = context_manager.build_structured_context(
         messages=messages,
@@ -210,6 +206,7 @@ def _handle_export(context: dict[str, Any]) -> dict[str, Any]:
 
 def _handle_version(context: dict[str, Any]) -> dict[str, Any]:
     from Django_xm.apps.ai_engine.config import settings
+
     return {
         "type": "info",
         "content": (
@@ -320,7 +317,7 @@ def execute_command(
         result = command.handler(context)
         return result
     except Exception as e:
-        logger.error(f"执行命令 /{command_name} 失败: {e}")
+        logger.exception(f"执行命令 /{command_name} 失败")
         return {"type": "error", "content": f"❌ 命令执行失败: {e!s}"}
 
 

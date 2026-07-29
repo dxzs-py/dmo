@@ -22,4 +22,5 @@ def on_ai_data_cleanup_needed(sender, user_id=None, session_id=None, **kwargs):
     避免核心模块直接依赖 ai_engine 的实现细节。
     """
     from Django_xm.apps.ai_engine.services.cross_app import schedule_ai_data_cleanup
+
     schedule_ai_data_cleanup(user_id=user_id, session_id=session_id)

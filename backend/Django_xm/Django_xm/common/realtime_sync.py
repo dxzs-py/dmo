@@ -91,7 +91,7 @@ def _resolve_channels(
         - DEEP_RESEARCH + cross_module_id: (cross_module_id, module_id) → 双频道
         - DEEP_RESEARCH 无 cross_module_id: (None, module_id) → 仅 task 频道
     """
-    if module == EventSource.CHAT or module == EventSource.LEARNING:
+    if module in (EventSource.CHAT, EventSource.LEARNING):
         return module_id, None
     elif module == EventSource.DEEP_RESEARCH:
         if cross_module_id:
@@ -117,12 +117,18 @@ async def publish_tool_call(
     tool_name: str,
     module: EventSource,
     module_id: str,
-    message_id: str = '',
+    message_id: str = "",
     parameters: dict | None = None,
     cross_module_id: str | None = None,
     graph_interrupt_id: str | None = None,
     result: Any = None,
     error: str | None = None,
+    auto_approved: bool = False,
+    parent_tool_call_id: str | None = None,
+    depth: int | None = None,
+    agent_name: str | None = None,
+    agent_path: list | None = None,
+    risk_ceiling: str | None = None,
 ) -> None:
     """工具调用生命周期事件发布（三模块统一入口）。
 
@@ -141,44 +147,64 @@ async def publish_tool_call(
         graph_interrupt_id: 批量审批批次 ID（同批次审批共享）
         result: 工具执行结果（仅 COMPLETED 事件）
         error: 错误信息（仅 FAILED 事件）
+        auto_approved: SAFE 级自动通过标记（True=无需用户审批，仅审计，前端可显示徽章）
+        parent_tool_call_id: 父工具调用 ID（主 agent 调用 task 工具的 tool_call_id）
+        depth: 嵌套层级（0=主 agent，1=一级子 agent）
+        agent_name: 子 agent 名称（如 web-researcher）
+        agent_path: 完整调用链路（如 ["main", "web-researcher"]）
+        risk_ceiling: 子 agent 角色风险上限（safe/controlled/high）
 
     Raises:
         PayloadValidationError: payload 校验失败时抛出
     """
     # 构造符合 schema 的 payload（parameters/message_id 必填）
     payload = {
-        'tool_call_id': tool_call_id,
-        'tool_name': tool_name,
-        'source': module,
-        'source_id': module_id,
-        'message_id': message_id or '',
-        'parameters': parameters if isinstance(parameters, dict) else {},
+        "tool_call_id": tool_call_id,
+        "tool_name": tool_name,
+        "source": module,
+        "source_id": module_id,
+        "message_id": message_id or "",
+        "parameters": parameters if isinstance(parameters, dict) else {},
     }
     if graph_interrupt_id:
-        payload['graph_interrupt_id'] = graph_interrupt_id
+        payload["graph_interrupt_id"] = graph_interrupt_id
     if cross_module_id:
-        payload['cross_module_id'] = cross_module_id
+        payload["cross_module_id"] = cross_module_id
     if result is not None:
-        payload['result'] = result
+        payload["result"] = result
     if error is not None:
-        payload['error'] = error
+        payload["error"] = error
+    if auto_approved:
+        payload["auto_approved"] = True
+    # 子 agent 嵌套层级字段（Phase E3）：仅非空时加入 payload，
+    # 主 agent 不传这些字段，payload 保持简洁
+    if parent_tool_call_id:
+        payload["parent_tool_call_id"] = parent_tool_call_id
+    if depth is not None and depth > 0:
+        payload["depth"] = depth
+    if agent_name:
+        payload["agent_name"] = agent_name
+    if agent_path:
+        payload["agent_path"] = agent_path
+    if risk_ceiling:
+        payload["risk_ceiling"] = risk_ceiling
 
     # 解析频道路由（三模块统一）
     session_id, task_id = _resolve_channels(module, module_id, cross_module_id)
 
     try:
         await publish_event(
-            event_type, payload,
+            event_type,
+            payload,
             session_id=session_id,
             task_id=task_id,
         )
     except PayloadValidationError:
-        logger.error(
+        logger.exception(
             f"[RealtimeSync] publish_tool_call payload 校验失败: "
             f"event_type={event_type.value}, module={module.value}, "
             f"module_id={module_id}, cross_module_id={cross_module_id}, "
             f"tool_call_id={tool_call_id}",
-            exc_info=True
         )
         raise
 
@@ -209,11 +235,11 @@ def publish_tool_call_sync(**kwargs) -> None:
         except PayloadValidationError:
             # payload 校验失败：已由 publish_tool_call 内部记录 ERROR，这里仅重抛
             raise
-        except Exception as e:
-            logger.error(
+        except Exception:
+            logger.exception(
                 f"[RealtimeSync] publish_tool_call_sync 失败: "
                 f"event_type={kwargs.get('event_type')}, "
-                f"tool_call_id={kwargs.get('tool_call_id')}, {e}"
+                f"tool_call_id={kwargs.get('tool_call_id')}"
             )
 
 
@@ -225,8 +251,8 @@ async def publish_approval(
     module: EventSource,
     module_id: str,
     state: str,
-    tool_name: str = '',
-    message_id: str = '',
+    tool_name: str = "",
+    message_id: str = "",
     parameters: dict | None = None,
     cross_module_id: str | None = None,
     graph_interrupt_id: str | None = None,
@@ -255,20 +281,20 @@ async def publish_approval(
         PayloadValidationError: payload 校验失败时抛出
     """
     payload = {
-        'interrupt_id': interrupt_id,
-        'tool_call_id': tool_call_id,
-        'source': module,
-        'source_id': module_id,
-        'state': state,
-        'message_id': message_id or '',
-        'parameters': parameters if isinstance(parameters, dict) else {},
+        "interrupt_id": interrupt_id,
+        "tool_call_id": tool_call_id,
+        "source": module,
+        "source_id": module_id,
+        "state": state,
+        "message_id": message_id or "",
+        "parameters": parameters if isinstance(parameters, dict) else {},
     }
     if tool_name:
-        payload['tool_name'] = tool_name
+        payload["tool_name"] = tool_name
     if graph_interrupt_id:
-        payload['graph_interrupt_id'] = graph_interrupt_id
+        payload["graph_interrupt_id"] = graph_interrupt_id
     if cross_module_id:
-        payload['cross_module_id'] = cross_module_id
+        payload["cross_module_id"] = cross_module_id
     if extra_fields:
         payload.update(extra_fields)
 
@@ -277,16 +303,16 @@ async def publish_approval(
 
     try:
         await publish_event(
-            event_type, payload,
+            event_type,
+            payload,
             session_id=session_id,
             task_id=task_id,
         )
     except PayloadValidationError:
-        logger.error(
+        logger.exception(
             f"[RealtimeSync] publish_approval payload 校验失败: "
             f"event_type={event_type.value}, module={module.value}, "
             f"module_id={module_id}, interrupt_id={interrupt_id}",
-            exc_info=True
         )
         raise
 
@@ -315,9 +341,9 @@ def publish_approval_sync(**kwargs) -> None:
             async_to_sync(publish_approval)(**kwargs)
         except PayloadValidationError:
             raise
-        except Exception as e:
-            logger.error(
+        except Exception:
+            logger.exception(
                 f"[RealtimeSync] publish_approval_sync 失败: "
                 f"event_type={kwargs.get('event_type')}, "
-                f"interrupt_id={kwargs.get('interrupt_id')}, {e}"
+                f"interrupt_id={kwargs.get('interrupt_id')}"
             )

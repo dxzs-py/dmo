@@ -6,6 +6,7 @@ Agent 管理服务
 - 模型实例解析
 - 线程配置构建
 """
+
 import logging
 import uuid
 from typing import Any
@@ -16,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 
 class AgentService:
-
     CHECKPOINTER_ENABLED = True
 
     def __init__(self, user_id: int | None = None):
@@ -27,6 +27,7 @@ class AgentService:
         if self.CHECKPOINTER_ENABLED:
             try:
                 from Django_xm.apps.ai_engine.services.checkpointer_factory import get_store
+
                 # 只初始化 Store（同步，全局缓存），不再创建同步 Checkpointer。
                 # 流式聊天使用异步 Checkpointer，同步实例浪费连接且从不使用。
                 self._store = get_store()
@@ -55,7 +56,7 @@ class AgentService:
         from Django_xm.apps.agent_hub import create as agent_hub_create
         from Django_xm.apps.ai_engine.services.checkpointer_factory import get_async_checkpointer
 
-        session_id = data.get('session_id')
+        session_id = data.get("session_id")
         use_checkpointer = self.CHECKPOINTER_ENABLED and session_id
 
         checkpointer = None
@@ -84,23 +85,23 @@ class AgentService:
         config = AgentConfig(
             agent_type=AgentType.BASE,
             model=model_instance,
-            provider_id=data.get('provider_id'),
-            model_name=data.get('model_name'),
-            temperature=data.get('temperature'),
-            max_tokens=data.get('max_tokens'),
-            special_params=data.get('special_params'),
+            provider_id=data.get("provider_id"),
+            model_name=data.get("model_name"),
+            temperature=data.get("temperature"),
+            max_tokens=data.get("max_tokens"),
+            special_params=data.get("special_params"),
             tools=tools,
             tool_config=tool_config,
-            system_prompt=data.get('_research_system_prompt'),
+            system_prompt=data.get("_research_system_prompt"),
             checkpointer=checkpointer,
             store=store,
             context_schema=context_schema,
             user_id=self.user_id,
             session_id=session_id,
-            enable_guardrails=data.get('enable_guardrails', False),
-            guardrails_strict_mode=data.get('guardrails_strict_mode', False),
-            enable_pii=data.get('enable_pii', False),
-            enable_human_in_loop=data.get('enable_human_in_loop', False),
+            enable_guardrails=data.get("enable_guardrails", False),
+            guardrails_strict_mode=data.get("guardrails_strict_mode", False),
+            enable_pii=data.get("enable_pii", False),
+            enable_human_in_loop=data.get("enable_human_in_loop", False),
         )
 
         agent = await agent_hub_create(config)
@@ -111,27 +112,29 @@ class AgentService:
     def resolve_model_instance(data: dict[str, Any], streaming: bool = True):
         from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model_by_provider
 
-        provider_id = data.get('provider_id')
-        model_name = data.get('model_name')
+        provider_id = data.get("provider_id")
+        model_name = data.get("model_name")
 
         # 如果前端未传 provider_id，从 SystemConfig 读取默认模型
         if not provider_id:
             try:
                 from Django_xm.apps.ai_engine.models import SystemConfig
+
                 default_config = SystemConfig.get_value("default_chat_model", {})
                 if default_config.get("provider_id"):
                     provider_id = default_config["provider_id"]
                     if not model_name:
                         model_name = default_config.get("model_name")
             except Exception:
-                pass
+                # 配置读取失败时回退到 None，使用默认 provider
+                logger.debug("读取 default_chat_model 配置失败")
 
         if not provider_id:
             return None
 
-        special_params = data.get('special_params')
-        model_temperature = data.get('temperature')
-        model_max_tokens = data.get('max_tokens')
+        special_params = data.get("special_params")
+        model_temperature = data.get("temperature")
+        model_max_tokens = data.get("max_tokens")
         try:
             return get_chat_model_by_provider(
                 provider_id=provider_id,

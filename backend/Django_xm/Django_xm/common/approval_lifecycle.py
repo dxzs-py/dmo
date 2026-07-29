@@ -78,29 +78,25 @@ class ApprovalLifecycleService:
             )
         )
         if not siblings:
-            logger.warning(
-                f"[ApprovalLifecycle] 未找到同批次审批: "
-                f"graph_interrupt_id={graph_interrupt_id}"
-            )
+            logger.warning(f"[ApprovalLifecycle] 未找到同批次审批: graph_interrupt_id={graph_interrupt_id}")
             return self._complete_single(trigger_interrupt_id, trigger_final_state)
 
-        result = {'total': len(siblings), 'success': 0, 'skipped': 0, 'failed': 0}
+        result = {"total": len(siblings), "success": 0, "skipped": 0, "failed": 0}
         for sibling in siblings:
             # 已终态的跳过（包括触发审批自身，避免重复广播）
             if sibling.state in _TERMINAL_STATES:
-                result['skipped'] += 1
+                result["skipped"] += 1
                 continue
             sib_final_state = self._compute_final_state(sibling, trigger_final_state)
             try:
                 self._finalize_one(sibling, sib_final_state)
-                result['success'] += 1
-            except Exception as e:
-                result['failed'] += 1
-                logger.error(
+                result["success"] += 1
+            except Exception:
+                result["failed"] += 1
+                logger.exception(
                     f"[ApprovalLifecycle] 终态化失败: "
                     f"interrupt_id={sibling.interrupt_id}, "
-                    f"graph_interrupt_id={graph_interrupt_id}, err={e}",
-                    exc_info=True,
+                    f"graph_interrupt_id={graph_interrupt_id}, err=",
                 )
         logger.info(
             f"[ApprovalLifecycle] 批量终态化完成: "
@@ -120,15 +116,21 @@ class ApprovalLifecycleService:
 
         保持与同步版本完全一致的事务语义（select_for_update + atomic）。
         """
+
         @sync_to_async
         def _do():
             return self.complete_batch(
-                graph_interrupt_id, trigger_interrupt_id, trigger_final_state,
+                graph_interrupt_id,
+                trigger_interrupt_id,
+                trigger_final_state,
             )
+
         return await _do()
 
     def _compute_final_state(
-        self, approval: Approval, trigger_final_state: str,
+        self,
+        approval: Approval,
+        trigger_final_state: str,
     ) -> str:
         """根据 approval.extra 中的标记计算终态。
 
@@ -139,13 +141,10 @@ class ApprovalLifecycleService:
         - 缺失字段       → 与 trigger 终态一致（兜底，用于 pending 孤儿审批）
         """
         sib_extra = approval.extra if isinstance(approval.extra, dict) else {}
-        if sib_extra.get('_timeout'):
+        if sib_extra.get("_timeout"):
             return Approval.STATE_TIMEOUT
-        if '_approved' in sib_extra:
-            return (
-                Approval.STATE_APPROVED if sib_extra['_approved']
-                else Approval.STATE_REJECTED
-            )
+        if "_approved" in sib_extra:
+            return Approval.STATE_APPROVED if sib_extra["_approved"] else Approval.STATE_REJECTED
         return trigger_final_state
 
     def _finalize_one(self, approval: Approval, final_state: str) -> None:
@@ -157,7 +156,7 @@ class ApprovalLifecycleService:
         approval.state = final_state
         approval.resolved_at = _now()
         approval.extra = _clean_extra_temp_keys(approval)
-        approval.save(update_fields=['state', 'resolved_at', 'extra'])
+        approval.save(update_fields=["state", "resolved_at", "extra"])
 
         _persist_and_broadcast(approval, final_state)
         # 终态为 timeout 时，额外发布 TOOL_CALL_TIMEOUT 事件
@@ -172,34 +171,31 @@ class ApprovalLifecycleService:
             sync_approval_state_to_chat_message(approval, final_state)
         except Exception as e:
             logger.warning(
-                f"[ApprovalLifecycle] 同步 ChatMessage 失败(非致命): "
-                f"interrupt_id={approval.interrupt_id}, err={e}"
+                f"[ApprovalLifecycle] 同步 ChatMessage 失败(非致命): interrupt_id={approval.interrupt_id}, err={e}"
             )
 
     def _complete_single(
-        self, interrupt_id: str, final_state: str,
+        self,
+        interrupt_id: str,
+        final_state: str,
     ) -> dict:
         """单审批场景（无 graph_interrupt_id）的兜底处理。"""
         try:
             approval = Approval.objects.get(interrupt_id=interrupt_id)
         except Approval.DoesNotExist:
-            logger.warning(
-                f"[ApprovalLifecycle] 审批记录不存在: {interrupt_id}"
-            )
-            return {'total': 0, 'success': 0, 'skipped': 0, 'failed': 0}
+            logger.warning(f"[ApprovalLifecycle] 审批记录不存在: {interrupt_id}")
+            return {"total": 0, "success": 0, "skipped": 0, "failed": 0}
 
         if approval.state in _TERMINAL_STATES:
-            return {'total': 1, 'success': 0, 'skipped': 1, 'failed': 0}
+            return {"total": 1, "success": 0, "skipped": 1, "failed": 0}
         try:
             self._finalize_one(approval, final_state)
-            return {'total': 1, 'success': 1, 'skipped': 0, 'failed': 0}
-        except Exception as e:
-            logger.error(
-                f"[ApprovalLifecycle] 单审批终态化失败: "
-                f"interrupt_id={interrupt_id}, err={e}",
-                exc_info=True,
+            return {"total": 1, "success": 1, "skipped": 0, "failed": 0}
+        except Exception:
+            logger.exception(
+                f"[ApprovalLifecycle] 单审批终态化失败: interrupt_id={interrupt_id}, err=",
             )
-            return {'total': 1, 'success': 0, 'skipped': 0, 'failed': 1}
+            return {"total": 1, "success": 0, "skipped": 0, "failed": 1}
 
 
 # 模块级单例

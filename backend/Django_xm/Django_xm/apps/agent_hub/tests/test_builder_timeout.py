@@ -17,6 +17,7 @@
     conda activate langchain_xm
     python -m pytest Django_xm/apps/agent_hub/tests/test_builder_timeout.py -v
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -62,7 +63,7 @@ class TestBuilderTimeout(unittest.IsolatedAsyncioTestCase):
         """正常创建：_build_internal 立即返回，build 应正确返回结果"""
         expected_agent = object()  # 哨兵对象，用于验证返回值一致性
 
-        for builder_cls, op_name in _BUILDERS:
+        for builder_cls, _op_name in _BUILDERS:
             with self.subTest(builder=builder_cls.__name__):
                 builder = builder_cls()
                 config = _make_config(build_timeout=30.0)
@@ -80,7 +81,7 @@ class TestBuilderTimeout(unittest.IsolatedAsyncioTestCase):
 
     async def test_timeout_raises_asyncio_timeout_error(self):
         """超时：_build_internal sleep 10s，build_timeout=0.1，应抛出 asyncio.TimeoutError"""
-        for builder_cls, op_name in _BUILDERS:
+        for builder_cls, _op_name in _BUILDERS:
             with self.subTest(builder=builder_cls.__name__):
                 builder = builder_cls()
                 config = _make_config(build_timeout=0.1)
@@ -89,19 +90,22 @@ class TestBuilderTimeout(unittest.IsolatedAsyncioTestCase):
                     await asyncio.sleep(10)
                     return object()
 
-                with patch.object(
-                    builder,
-                    "_build_internal",
-                    new_callable=AsyncMock,
-                    side_effect=_slow_build,
-                ), self.assertRaises(asyncio.TimeoutError):
+                with (
+                    patch.object(
+                        builder,
+                        "_build_internal",
+                        new_callable=AsyncMock,
+                        side_effect=_slow_build,
+                    ),
+                    self.assertRaises(asyncio.TimeoutError),
+                ):
                     await builder.build(config)
 
     async def test_build_timeout_none_no_limit(self):
         """build_timeout=None 时不限制：_build_internal sleep 0.1s 后正常返回"""
         expected_agent = object()
 
-        for builder_cls, op_name in _BUILDERS:
+        for builder_cls, _op_name in _BUILDERS:
             with self.subTest(builder=builder_cls.__name__):
                 builder = builder_cls()
                 config = _make_config(build_timeout=None)
@@ -125,7 +129,7 @@ class TestBuilderTimeout(unittest.IsolatedAsyncioTestCase):
         """自定义超时：build_timeout=60 时 asyncio.wait_for 接收 timeout=60"""
         expected_agent = object()
 
-        for builder_cls, op_name in _BUILDERS:
+        for builder_cls, _op_name in _BUILDERS:
             with self.subTest(builder=builder_cls.__name__):
                 builder = builder_cls()
                 config = _make_config(build_timeout=60.0)
@@ -139,14 +143,17 @@ class TestBuilderTimeout(unittest.IsolatedAsyncioTestCase):
                     captured_kwargs.update(kwargs)
                     return await real_wait_for(coro, **kwargs)
 
-                with patch.object(
-                    builder,
-                    "_build_internal",
-                    new_callable=AsyncMock,
-                    return_value=expected_agent,
-                ), patch(
-                    "Django_xm.apps.agent_hub.builders._common.asyncio.wait_for",
-                    side_effect=_spy_wait_for,
+                with (
+                    patch.object(
+                        builder,
+                        "_build_internal",
+                        new_callable=AsyncMock,
+                        return_value=expected_agent,
+                    ),
+                    patch(
+                        "Django_xm.apps.agent_hub.builders._common.asyncio.wait_for",
+                        side_effect=_spy_wait_for,
+                    ),
                 ):
                     result = await builder.build(config)
 
@@ -171,7 +178,7 @@ class TestBuilderTimeout(unittest.IsolatedAsyncioTestCase):
             def resolve_defaults(self):
                 pass
 
-        for builder_cls, op_name in _BUILDERS:
+        for builder_cls, _op_name in _BUILDERS:
             with self.subTest(builder=builder_cls.__name__):
                 builder = builder_cls()
                 config = _BareConfig()
@@ -183,14 +190,17 @@ class TestBuilderTimeout(unittest.IsolatedAsyncioTestCase):
                     captured_kwargs.update(kwargs)
                     return await real_wait_for(coro, **kwargs)
 
-                with patch.object(
-                    builder,
-                    "_build_internal",
-                    new_callable=AsyncMock,
-                    return_value=expected_agent,
-                ), patch(
-                    "Django_xm.apps.agent_hub.builders._common.asyncio.wait_for",
-                    side_effect=_spy_wait_for,
+                with (
+                    patch.object(
+                        builder,
+                        "_build_internal",
+                        new_callable=AsyncMock,
+                        return_value=expected_agent,
+                    ),
+                    patch(
+                        "Django_xm.apps.agent_hub.builders._common.asyncio.wait_for",
+                        side_effect=_spy_wait_for,
+                    ),
                 ):
                     result = await builder.build(config)
 
@@ -209,15 +219,19 @@ class TestBuilderTimeout(unittest.IsolatedAsyncioTestCase):
                     await asyncio.sleep(10)
                     return object()
 
-                with patch.object(
-                    builder,
-                    "_build_internal",
-                    new_callable=AsyncMock,
-                    side_effect=_slow_build,
-                ), self.assertLogs(
-                    "Django_xm.apps.agent_hub.builders._common",
-                    level="ERROR",
-                ) as cm, self.assertRaises(asyncio.TimeoutError):
+                with (
+                    patch.object(
+                        builder,
+                        "_build_internal",
+                        new_callable=AsyncMock,
+                        side_effect=_slow_build,
+                    ),
+                    self.assertLogs(
+                        "Django_xm.apps.agent_hub.builders._common",
+                        level="ERROR",
+                    ) as cm,
+                    self.assertRaises(asyncio.TimeoutError),
+                ):
                     await builder.build(config)
 
                 # 至少一条日志包含 operation_name

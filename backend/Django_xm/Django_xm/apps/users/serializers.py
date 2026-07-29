@@ -1,4 +1,5 @@
 """用户模块序列化器。"""
+
 from __future__ import annotations
 
 import re
@@ -9,12 +10,10 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import User
 
 # 密码复杂度校验正则：至少 8 位，包含大写字母+小写字母+数字+特殊字符
-PASSWORD_COMPLEXITY_PATTERN = re.compile(
-    r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]).{8,}$'
-)
+PASSWORD_COMPLEXITY_PATTERN = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]).{8,}$")
 
 # 特殊字符集（用于错误提示）
-PASSWORD_SPECIAL_CHARS = '!@#$%^&*()_+-=[]{}|;:,.<>?'
+PASSWORD_SPECIAL_CHARS = "!@#$%^&*()_+-=[]{}|;:,.<>?"
 
 
 class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -23,19 +22,19 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
     @classmethod
     def get_token(cls, user):
         token = super().get_token(user)
-        token['username'] = user.username
-        token['email'] = user.email if user.email else ''
+        token["username"] = user.username
+        token["email"] = user.email if user.email else ""
         return token
 
     def validate(self, attrs):
         super().validate(attrs)
         refresh = self.get_token(self.user)
         data = {
-            'id': self.user.id,
-            'username': self.user.username,
-            'email': self.user.email if self.user.email else '',
-            'refresh': str(refresh),
-            'access': str(refresh.access_token)
+            "id": self.user.id,
+            "username": self.user.username,
+            "email": self.user.email if self.user.email else "",
+            "refresh": str(refresh),
+            "access": str(refresh.access_token),
         }
         return data
 
@@ -48,15 +47,15 @@ class UserRegisterSerializer(serializers.ModelSerializer):
         - password 至少 8 位，必须同时包含大写字母、小写字母、数字、特殊字符
     """
 
-    password_confirm = serializers.CharField(write_only=True, label='确认密码')
+    password_confirm = serializers.CharField(write_only=True, label="确认密码")
 
     class Meta:
         model = User
-        fields = ['username', 'password', 'password_confirm', 'email', 'mobile']
+        fields = ["username", "password", "password_confirm", "email", "mobile"]
         extra_kwargs = {
-            'password': {'write_only': True, 'min_length': 8},
-            'email': {'required': False},
-            'mobile': {'required': False}
+            "password": {"write_only": True, "min_length": 8},
+            "email": {"required": False},
+            "mobile": {"required": False},
         }
 
     def validate_password(self, value: str) -> str:
@@ -73,8 +72,7 @@ class UserRegisterSerializer(serializers.ModelSerializer):
         """
         if not PASSWORD_COMPLEXITY_PATTERN.match(value):
             raise serializers.ValidationError(
-                "密码至少 8 位，必须同时包含大写字母、小写字母、数字和特殊字符"
-                f"（特殊字符集：{PASSWORD_SPECIAL_CHARS}）"
+                f"密码至少 8 位，必须同时包含大写字母、小写字母、数字和特殊字符（特殊字符集：{PASSWORD_SPECIAL_CHARS}）"
             )
         return value
 
@@ -90,16 +88,14 @@ class UserRegisterSerializer(serializers.ModelSerializer):
         Raises:
             serializers.ValidationError: 两次密码不一致时抛出。
         """
-        password = attrs.get('password')
-        password_confirm = attrs.get('password_confirm')
+        password = attrs.get("password")
+        password_confirm = attrs.get("password_confirm")
         if password and password_confirm and password != password_confirm:
-            raise serializers.ValidationError(
-                {'password_confirm': '两次输入的密码不一致'}
-            )
+            raise serializers.ValidationError({"password_confirm": "两次输入的密码不一致"})
         return attrs
 
     def create(self, validated_data):
-        validated_data.pop('password_confirm')
+        validated_data.pop("password_confirm")
         user = User.objects.create_user(**validated_data)
         return user
 
@@ -107,7 +103,7 @@ class UserRegisterSerializer(serializers.ModelSerializer):
 class UserInfoSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'mobile', 'avatar', 'date_joined']
+        fields = ["id", "username", "email", "mobile", "avatar", "date_joined"]
 
 
 class ChangePasswordSerializer(serializers.Serializer):
@@ -115,9 +111,9 @@ class ChangePasswordSerializer(serializers.Serializer):
     new_password = serializers.CharField(required=True, min_length=8)
 
     def validate_old_password(self, value):
-        user = self.context.get('request').user
+        user = self.context.get("request").user
         if not user.check_password(value):
-            raise serializers.ValidationError('当前密码错误')
+            raise serializers.ValidationError("当前密码错误")
         return value
 
 
@@ -125,11 +121,11 @@ class BindPhoneSerializer(serializers.Serializer):
     mobile = serializers.CharField(required=True, max_length=11)
 
     def validate_mobile(self, value):
-        if not re.match(r'^1[3-9]\d{9}$', value):
-            raise serializers.ValidationError('请输入有效的手机号')
-        user = self.context.get('request').user
+        if not re.match(r"^1[3-9]\d{9}$", value):
+            raise serializers.ValidationError("请输入有效的手机号")
+        user = self.context.get("request").user
         if User.objects.filter(mobile=value).exclude(pk=user.pk).exists():
-            raise serializers.ValidationError('该手机号已被其他用户绑定')
+            raise serializers.ValidationError("该手机号已被其他用户绑定")
         return value
 
 
@@ -138,9 +134,9 @@ class UserProfileSerializer(serializers.Serializer):
     email = serializers.EmailField(required=False, allow_blank=True)
 
     def validate_username(self, value):
-        user = self.context.get('request').user
+        user = self.context.get("request").user
         if User.objects.filter(username=value).exclude(pk=user.pk).exists():
-            raise serializers.ValidationError('用户名已存在')
+            raise serializers.ValidationError("用户名已存在")
         return value
 
 

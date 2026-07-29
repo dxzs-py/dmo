@@ -6,6 +6,7 @@ from langchain_core.language_models import BaseChatModel
 
 logger = logging.getLogger(__name__)
 
+
 def resolve_model(config) -> str | BaseChatModel:
     """解析模型配置，返回带 fallback 的模型实例
 
@@ -32,7 +33,7 @@ def resolve_model(config) -> str | BaseChatModel:
             model_provider=model_provider,
             temperature=config.temperature,
             max_tokens=config.max_tokens,
-            special_params=getattr(config, 'special_params', None),
+            special_params=getattr(config, "special_params", None),
             enable_fallback=True,
         )
         if model is not None:
@@ -47,6 +48,7 @@ def resolve_model(config) -> str | BaseChatModel:
         return config.model
 
     from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
+
     model_str = get_model_string()
     logger.info(f"降级使用默认模型字符串: {model_str}")
     return model_str

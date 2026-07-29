@@ -20,6 +20,8 @@ class ToolUsageRecord(BaseModel):
 class ToolAnalyticsService:
     _instance: Optional["ToolAnalyticsService"] = None
     _lock = threading.Lock()
+    _records: list[ToolUsageRecord] = []
+    _max_records: int = 10000
 
     def __new__(cls):
         with cls._lock:
@@ -33,7 +35,7 @@ class ToolAnalyticsService:
         with self._lock:
             self._records.append(record)
             if len(self._records) > self._max_records:
-                self._records = self._records[-(self._max_records // 2):]
+                self._records = self._records[-(self._max_records // 2) :]
 
     def get_tool_stats(self, tool_name: str = "") -> dict:
         with self._lock:
@@ -85,13 +87,15 @@ class ToolAnalyticsService:
             tool_records = [r for r in records if r.tool_name == name]
             success = sum(1 for r in tool_records if r.success)
             avg_dur = sum(r.duration_ms for r in tool_records) / len(tool_records) if tool_records else 0.0
-            result.append({
-                "tool_name": name,
-                "call_count": count,
-                "success_count": success,
-                "error_count": count - success,
-                "avg_duration_ms": round(avg_dur, 2),
-            })
+            result.append(
+                {
+                    "tool_name": name,
+                    "call_count": count,
+                    "success_count": success,
+                    "error_count": count - success,
+                    "avg_duration_ms": round(avg_dur, 2),
+                }
+            )
 
         return result
 

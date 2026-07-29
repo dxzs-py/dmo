@@ -37,7 +37,7 @@ def grading_node(state: StudyFlowState) -> dict[str, Any]:
                 "score": 0,
                 "score_details": {"total_count": 0, "correct_count": 0, "question_scores": []},
                 "current_step": "grading_error",
-                "updated_at": datetime.now(UTC).isoformat()
+                "updated_at": datetime.now(UTC).isoformat(),
             }
 
         questions = quiz["questions"]
@@ -72,7 +72,7 @@ def grading_node(state: StudyFlowState) -> dict[str, Any]:
 
                 grading_prompt = f"""请评估以下简答题的答案质量。
 
-题目：{question['question']}
+题目：{question["question"]}
 
 标准答案：{correct_answer}
 
@@ -91,15 +91,17 @@ def grading_node(state: StudyFlowState) -> dict[str, Any]:
 
                 response = model.invoke([{"role": "user", "content": grading_prompt}])
                 response_text = response.content
+                if not isinstance(response_text, str):
+                    response_text = str(response_text)
 
                 try:
-                    lines = response_text.strip().split('\n')
-                    score_line = [l for l in lines if '得分' in l or 'score' in l.lower()][0]
-                    points_earned = int(''.join(filter(str.isdigit, score_line)))
+                    lines = response_text.strip().split("\n")
+                    score_line = next(l for l in lines if "得分" in l or "score" in l.lower())
+                    points_earned = int("".join(filter(str.isdigit, score_line)))
                     points_earned = min(max(points_earned, 0), points_possible)
 
-                    feedback_line = [l for l in lines if '评语' in l or 'feedback' in l.lower()]
-                    feedback = feedback_line[0].split(':', 1)[1].strip() if feedback_line else response_text
+                    feedback_line = [l for l in lines if "评语" in l or "feedback" in l.lower()]
+                    feedback = feedback_line[0].split(":", 1)[1].strip() if feedback_line else response_text
 
                 except Exception as parse_error:
                     logger.warning(f"[Grading Node] 解析 LLM 评分失败: {parse_error}，使用默认评分")
@@ -123,7 +125,7 @@ def grading_node(state: StudyFlowState) -> dict[str, Any]:
                 "is_correct": is_correct,
                 "points_earned": points_earned,
                 "points_possible": points_possible,
-                "feedback": feedback
+                "feedback": feedback,
             }
             score_details.append(detail)
 
@@ -140,17 +142,17 @@ def grading_node(state: StudyFlowState) -> dict[str, Any]:
             "score_details": {
                 "total_count": len(questions),
                 "correct_count": correct_count,
-                "question_scores": score_details
+                "question_scores": score_details,
             },
-            "current_step": "grading_completed"
+            "current_step": "grading_completed",
         }
 
     except Exception as e:
-        logger.error(f"[Grading Node] 评分失败: {e}", exc_info=True)
+        logger.exception("[Grading Node] 评分失败")
         return {
             "score": 0,
             "score_details": {"total_count": 0, "correct_count": 0, "question_scores": []},
             "error": f"评分失败: {e!s}",
             "current_step": "grading_error",
-            "updated_at": datetime.now(UTC).isoformat()
+            "updated_at": datetime.now(UTC).isoformat(),
         }

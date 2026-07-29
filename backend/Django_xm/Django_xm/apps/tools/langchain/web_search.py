@@ -11,11 +11,11 @@ logger = logging.getLogger(__name__)
 
 
 def get_tavily_api_key() -> str | None:
-    return SafeConfigMixin.get_config('tavily_api_key', env_key='TAVILY_API_KEY')
+    return SafeConfigMixin.get_config("tavily_api_key", env_key="TAVILY_API_KEY")
 
 
 def get_tavily_max_results() -> int:
-    val = SafeConfigMixin.get_config('tavily_max_results', default=5, env_key='TAVILY_MAX_RESULTS')
+    val = SafeConfigMixin.get_config("tavily_max_results", default=5, env_key="TAVILY_MAX_RESULTS")
     return int(val)
 
 
@@ -50,8 +50,8 @@ def create_tavily_search_tool(
     try:
         tool_instance = TavilySearch(**tool_kwargs)
         return tool_instance
-    except Exception as e:
-        logger.error(f"❌ 创建 Tavily 搜索工具失败: {e}")
+    except Exception:
+        logger.exception("❌ 创建 Tavily 搜索工具失败")
         raise
 
 
@@ -62,7 +62,9 @@ class WebSearchInput(BaseModel):
 class WebSearchTool(AsyncToolMixin, BaseTool):
     name: str = "web_search"
     version: str = TOOL_VERSION
-    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "switch", "category": "web_search"})
+    metadata: dict = Field(
+        default_factory=lambda: {"tier": "extended", "visibility": "switch", "category": "web_search"}
+    )
     description: str = (
         "使用 Tavily 搜索引擎进行网络搜索，获取最新网络信息和事实性答案。"
         "适用场景：需要获取实时信息、查找新闻、验证事实、了解最新动态、搜索技术文档。"
@@ -108,9 +110,7 @@ class WebSearchTool(AsyncToolMixin, BaseTool):
                 url = result.get("url", "")
                 content = result.get("content", "")[:300]
 
-                formatted_results.append(
-                    f"{i}. {title}\n   URL: {url}\n   摘要: {content}..."
-                )
+                formatted_results.append(f"{i}. {title}\n   URL: {url}\n   摘要: {content}...")
 
             output = "搜索结果：\n\n" + "\n\n".join(formatted_results)
             logger.info(f"🔍 搜索完成，返回 {len(results)} 条结果")
@@ -122,7 +122,7 @@ class WebSearchTool(AsyncToolMixin, BaseTool):
 
         except Exception as e:
             error_msg = f"搜索失败: {e!s}"
-            logger.error(error_msg)
+            logger.exception(error_msg)
             return StandardToolResult(
                 content=error_msg,
                 status=ToolStatus.ERROR,

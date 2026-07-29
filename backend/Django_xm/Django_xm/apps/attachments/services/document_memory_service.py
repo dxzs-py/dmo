@@ -30,6 +30,7 @@ class DocumentMemoryService:
 
     def _ensure_store(self):
         from Django_xm.apps.ai_engine.services.checkpointer_factory import ensure_store
+
         return ensure_store(self)
 
     @staticmethod
@@ -51,7 +52,7 @@ class DocumentMemoryService:
             return False
 
         namespace = self._build_namespace(user_id)
-        doc_data = {
+        doc_data: dict[str, Any] = {
             "name": doc_name,
             "content_length": len(content) if content else 0,
             "summary": summary or "",
@@ -68,8 +69,8 @@ class DocumentMemoryService:
                 f"name={doc_name}, summary_len={len(doc_data['summary'])}"
             )
             return True
-        except Exception as e:
-            logger.error(f"文档存储到 Store 失败: {e}")
+        except Exception:
+            logger.exception("文档存储到 Store 失败")
             return False
 
     def get_document(self, user_id: int, attachment_id: int) -> dict[str, Any] | None:
@@ -81,8 +82,8 @@ class DocumentMemoryService:
         try:
             item = store.get(namespace, str(attachment_id))
             return item.value if item else None
-        except Exception as e:
-            logger.error(f"从 Store 获取文档失败: {e}")
+        except Exception:
+            logger.exception("从 Store 获取文档失败")
             return None
 
     def list_documents(self, user_id: int) -> list[dict[str, Any]]:
@@ -95,12 +96,12 @@ class DocumentMemoryService:
             items = store.search(namespace)
             docs = []
             for item in items:
-                doc = item.value if hasattr(item, 'value') else item
-                doc["store_key"] = item.key if hasattr(item, 'key') else None
+                doc = item.value if hasattr(item, "value") else item
+                doc["store_key"] = item.key if hasattr(item, "key") else None
                 docs.append(doc)
             return docs
-        except Exception as e:
-            logger.error(f"从 Store 搜索文档失败: {e}")
+        except Exception:
+            logger.exception("从 Store 搜索文档失败")
             return []
 
     def delete_document(self, user_id: int, attachment_id: int) -> bool:
@@ -113,8 +114,8 @@ class DocumentMemoryService:
             store.delete(namespace, str(attachment_id))
             logger.info(f"文档已从 Store 删除: user={user_id}, attachment={attachment_id}")
             return True
-        except Exception as e:
-            logger.error(f"从 Store 删除文档失败: {e}")
+        except Exception:
+            logger.exception("从 Store 删除文档失败")
             return False
 
     def build_document_context(self, user_id: int) -> str:
@@ -140,6 +141,7 @@ class DocumentMemoryService:
 
         try:
             from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
+
             model = get_chat_model()
             prompt = (
                 f"请为以下文档内容生成一段简洁的摘要（不超过200字），"
@@ -152,8 +154,8 @@ class DocumentMemoryService:
             if summary and len(summary) > 500:
                 summary = summary[:500]
             return summary or ""
-        except Exception as e:
-            logger.error(f"生成文档摘要失败: {e}")
+        except Exception:
+            logger.exception("生成文档摘要失败")
             fallback = truncated[:200].replace("\n", " ").strip()
             return f"[自动截取] {fallback}..."
 

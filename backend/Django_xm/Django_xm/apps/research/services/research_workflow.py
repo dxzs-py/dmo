@@ -51,6 +51,7 @@ SYNTHESIZE_PROMPT = """你是一个研究综合专家。请将以下多个子查
 
 class SubQueryState(TypedDict):
     """子查询并行搜索的状态"""
+
     sub_query: str
     query: str
     error: NotRequired[str | None]
@@ -83,12 +84,10 @@ async def decompose(state: WorkflowState) -> dict:
 
         sub_queries = sub_queries[:5]
 
-        logger.info(
-            f"[ResearchWorkflow] decomposed into {len(sub_queries)} sub-queries"
-        )
+        logger.info(f"[ResearchWorkflow] decomposed into {len(sub_queries)} sub-queries")
         return {"research_queries": sub_queries}
     except Exception as e:
-        logger.error(f"[ResearchWorkflow] decompose error: {e}")
+        logger.exception("[ResearchWorkflow] decompose error")
         return {"research_queries": [query], "error": str(e)}
 
 
@@ -99,9 +98,7 @@ def search_dispatcher(state: WorkflowState) -> list[Send]:
 
     sends = []
     for sub_query in sub_queries:
-        sends.append(
-            Send("search", {"sub_query": sub_query, "query": query})
-        )
+        sends.append(Send("search", {"sub_query": sub_query, "query": query}))
 
     logger.info(f"[ResearchWorkflow] dispatching {len(sends)} parallel searches")
     return sends
@@ -120,12 +117,14 @@ def _create_search_node(search_tool_node: ToolNode | None):
             tool_name = next(iter(search_tool_node.tools_by_name))
             ai_message = AIMessage(
                 content="",
-                tool_calls=[{
-                    "name": tool_name,
-                    "args": {"query": sub_query},
-                    "id": f"search_{uuid.uuid4().hex[:8]}",
-                    "type": "tool_call",
-                }],
+                tool_calls=[
+                    {
+                        "name": tool_name,
+                        "args": {"query": sub_query},
+                        "id": f"search_{uuid.uuid4().hex[:8]}",
+                        "type": "tool_call",
+                    }
+                ],
             )
 
             # ToolNode 自动处理工具调用和异常
@@ -137,9 +136,7 @@ def _create_search_node(search_tool_node: ToolNode | None):
                 if isinstance(msg, ToolMessage):
                     tool_result = msg.content
                     if msg.status == "error":
-                        logger.warning(
-                            f"[ResearchWorkflow] search tool error: {tool_result}"
-                        )
+                        logger.warning(f"[ResearchWorkflow] search tool error: {tool_result}")
                     break
 
             if not tool_result:
@@ -147,7 +144,7 @@ def _create_search_node(search_tool_node: ToolNode | None):
 
             return {"research_results": [tool_result]}
         except Exception as e:
-            logger.error(f"[ResearchWorkflow] search error: {e}")
+            logger.exception("[ResearchWorkflow] search error")
             return {
                 "research_results": [f"子查询 '{sub_query}' 检索失败: {e}"],
                 "search_errors": [str(e)],
@@ -165,7 +162,7 @@ def _create_search_node(search_tool_node: ToolNode | None):
             response = await model.ainvoke([HumanMessage(content=prompt)])
             return {"research_results": [response.content]}
         except Exception as e:
-            logger.error(f"[ResearchWorkflow] search (LLM) error: {e}")
+            logger.exception("[ResearchWorkflow] search (LLM) error")
             return {
                 "research_results": [f"子查询 '{sub_query}' 检索失败: {e}"],
                 "search_errors": [str(e)],
@@ -193,12 +190,14 @@ def _create_retrieve_node(retrieval_tool_node: ToolNode):
             try:
                 ai_message = AIMessage(
                     content="",
-                    tool_calls=[{
-                        "name": tool_name,
-                        "args": {"query": query},
-                        "id": f"retrieve_{uuid.uuid4().hex[:8]}",
-                        "type": "tool_call",
-                    }],
+                    tool_calls=[
+                        {
+                            "name": tool_name,
+                            "args": {"query": query},
+                            "id": f"retrieve_{uuid.uuid4().hex[:8]}",
+                            "type": "tool_call",
+                        }
+                    ],
                 )
 
                 result = await retrieval_tool_node.ainvoke({"messages": [ai_message]})
@@ -239,6 +238,7 @@ def _make_route_after_search(has_retrieval: bool):
     Args:
         has_retrieval: 是否启用了知识库检索节点
     """
+
     def route_after_search(
         state: WorkflowState,
     ) -> Literal["error_handler", "retrieve", "synthesize"]:
@@ -264,14 +264,10 @@ async def synthesize(state: WorkflowState) -> dict:
     research_queries = state.get("research_queries", [])
     research_results = state.get("research_results", [])
 
-    logger.info(
-        f"[ResearchWorkflow] synthesize: {len(research_results)} results"
-    )
+    logger.info(f"[ResearchWorkflow] synthesize: {len(research_results)} results")
 
     results_text = ""
-    for i, (q, r) in enumerate(
-        zip(research_queries, research_results), 1
-    ):
+    for i, (q, r) in enumerate(zip(research_queries, research_results, strict=False), 1):
         results_text += f"\n### 子查询 {i}: {q}\n{r}\n"
 
     if not results_text:
@@ -282,15 +278,13 @@ async def synthesize(state: WorkflowState) -> dict:
         prompt = SYNTHESIZE_PROMPT.format(query=query, results=results_text)
         response = await model.ainvoke([HumanMessage(content=prompt)])
 
-        logger.info(
-            f"[ResearchWorkflow] synthesize: {len(response.content)} chars"
-        )
+        logger.info(f"[ResearchWorkflow] synthesize: {len(response.content)} chars")
         return {
             "messages": [response],
             "final_response": response.content,
         }
     except Exception as e:
-        logger.error(f"[ResearchWorkflow] synthesize error: {e}")
+        logger.exception("[ResearchWorkflow] synthesize error")
         return {"error": str(e), "final_response": f"综合研究时出错: {e}"}
 
 
@@ -306,7 +300,7 @@ async def respond(state: WorkflowState) -> dict:
         messages = state.get("messages", [])
         for msg in reversed(messages):
             if isinstance(msg, AIMessage) and msg.content:
-                final_response = msg.content
+                final_response = msg.content if isinstance(msg.content, str) else str(msg.content)
                 break
 
     logger.info(f"[ResearchWorkflow] respond: {len(final_response)} chars")
@@ -338,7 +332,7 @@ def build_research_workflow(
     graph.add_node("error_handler", error_handler)
 
     # 仅在提供检索工具时添加 retrieve 节点
-    if has_retrieval:
+    if retrieval_tools:
         retrieval_tool_node = ToolNode(retrieval_tools)
         retrieve_node = _create_retrieve_node(retrieval_tool_node)
         graph.add_node("retrieve", retrieve_node)
@@ -352,17 +346,25 @@ def build_research_workflow(
     route_after_search = _make_route_after_search(has_retrieval)
 
     if has_retrieval:
-        graph.add_conditional_edges("search", route_after_search, {
-            "error_handler": "error_handler",
-            "retrieve": "retrieve",
-            "synthesize": "synthesize",
-        })
+        graph.add_conditional_edges(
+            "search",
+            route_after_search,
+            {
+                "error_handler": "error_handler",
+                "retrieve": "retrieve",
+                "synthesize": "synthesize",
+            },
+        )
         graph.add_edge("retrieve", "synthesize")
     else:
-        graph.add_conditional_edges("search", route_after_search, {
-            "error_handler": "error_handler",
-            "synthesize": "synthesize",
-        })
+        graph.add_conditional_edges(
+            "search",
+            route_after_search,
+            {
+                "error_handler": "error_handler",
+                "synthesize": "synthesize",
+            },
+        )
 
     graph.add_edge("synthesize", "respond")
     graph.add_edge("error_handler", "respond")

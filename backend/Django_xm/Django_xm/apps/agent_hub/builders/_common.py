@@ -44,12 +44,14 @@ async def build_with_timeout(
     try:
         return await asyncio.wait_for(build_fn(config), timeout=timeout)
     except TimeoutError:
-        logger.error(
-            "%s 超时 (timeout=%ss)", operation_name, timeout,
+        logger.exception(
+            "%s 超时 (timeout=%ss)",
+            operation_name,
+            timeout,
         )
         raise
-    except Exception as e:
-        logger.error("%s 失败: %s", operation_name, e)
+    except Exception:
+        logger.exception("%s 失败", operation_name)
         raise
 
 
@@ -71,6 +73,7 @@ def _build_common_agent_kwargs(config, agent_kwargs: dict[str, Any]) -> dict[str
     elif getattr(settings, "agent_cache_enabled", False):
         try:
             from langgraph.cache.memory import InMemoryCache
+
             agent_kwargs["cache"] = InMemoryCache()
             logger.info("自动注入 InMemoryCache（Agent 级别缓存）")
         except ImportError:

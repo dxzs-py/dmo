@@ -101,7 +101,7 @@ class DatabaseConnectionManager:
             for conn in connections.all():
                 try:
                     conn.close()
-                except Exception:
+                except Exception:  # noqa: S110  # cleanup, 单个连接关闭失败不影响其他连接
                     pass
             logger.info("[DBConn] force_close_all from=%s", source)
         except Exception as e:
@@ -180,14 +180,18 @@ class DatabaseConnectionManager:
         if usage_pct >= CRITICAL_THRESHOLD_PCT:
             logger.critical(
                 "[DBConn] 连接池即将耗尽! active=%d/%d usage=%.1f%%",
-                stats["active"], stats["max_connections"], stats["usage_pct"],
+                stats["active"],
+                stats["max_connections"],
+                stats["usage_pct"],
             )
             return "critical"
 
         if usage_pct >= WARNING_THRESHOLD_PCT:
             logger.warning(
                 "[DBConn] 连接池使用率偏高 active=%d/%d usage=%.1f%%",
-                stats["active"], stats["max_connections"], stats["usage_pct"],
+                stats["active"],
+                stats["max_connections"],
+                stats["usage_pct"],
             )
             return "warning"
 
@@ -210,6 +214,7 @@ class DatabaseConnectionManager:
 # ---------------------------------------------------------------------------
 # 便捷模块级函数（统一接口入口）
 # ---------------------------------------------------------------------------
+
 
 def db_cleanup(source: str = "unknown"):
     """清理过期连接 - 统一入口函数"""
@@ -234,6 +239,7 @@ def db_get_stats() -> dict:
 # ---------------------------------------------------------------------------
 # 上下文管理器
 # ---------------------------------------------------------------------------
+
 
 @contextmanager
 def db_connection_guard(source: str = "context"):
@@ -260,6 +266,7 @@ def db_connection_guard(source: str = "context"):
 # ---------------------------------------------------------------------------
 # Celery 任务装饰器
 # ---------------------------------------------------------------------------
+
 
 def db_task(func=None, *, cleanup_on_start=True, cleanup_on_end=True):
     """
@@ -292,12 +299,13 @@ def db_task(func=None, *, cleanup_on_start=True, cleanup_on_end=True):
         cleanup_on_start: 任务开始前是否清理连接（默认 True）
         cleanup_on_end: 任务结束后是否清理连接（默认 True）
     """
+
     def decorator(fn):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
             # 优先使用 Celery 设置的 task name（可能在外部赋值给 wrapper）
             # 其次使用原函数的 name 属性，最后 fallback 到 __name__
-            task_name = getattr(wrapper, 'name', None) or getattr(fn, 'name', None) or fn.__name__
+            task_name = getattr(wrapper, "name", None) or getattr(fn, "name", None) or fn.__name__
 
             if cleanup_on_start:
                 DatabaseConnectionManager.cleanup(source=f"celery_start:{task_name}")

@@ -12,6 +12,7 @@ GET /api/v1/realtime/snapshot/{session_id}/
 import logging
 
 from django.apps import apps
+from drf_spectacular.utils import extend_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -21,6 +22,7 @@ from Django_xm.apps.approvals.services.approval_helpers import (
 )
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.responses import error_response, success_response
+from Django_xm.common.serializers import EmptySerializer
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +77,11 @@ class SnapshotView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses={200: EmptySerializer})
     def get(self, request, session_id: str):
-        ChatSession = apps.get_model('chat', 'ChatSession')
-        ChatMessage = apps.get_model('chat', 'ChatMessage')
-        Approval = apps.get_model('approvals', 'Approval')
+        ChatSession = apps.get_model("chat", "ChatSession")
+        ChatMessage = apps.get_model("chat", "ChatMessage")
+        Approval = apps.get_model("approvals", "Approval")
 
         # 1. 权限校验：用户会话归属
         # 注意：ChatSession 的公开标识为 session_id（UUID 字符串），非自增 id。
@@ -94,24 +97,24 @@ class SnapshotView(APIView):
 
         # 2. 聚合消息列表（含 tool_calls JSON）
         # ChatMessage.objects 默认使用 SoftDeleteManager，已排除 is_deleted=True。
-        messages = ChatMessage.objects.filter(session=session).order_by('created_at')
+        messages = ChatMessage.objects.filter(session=session).order_by("created_at")
         messages_data = []
         all_tool_calls = []
         for msg in messages:
             msg_tool_calls = msg.tool_calls if isinstance(msg.tool_calls, list) else []
             msg_data = {
-                'id': str(msg.id),
-                'session_id': session.session_id,
-                'role': msg.role,
-                'content': msg.content or '',
-                'created_at': msg.created_at.isoformat() if msg.created_at else None,
-                'tool_calls': msg_tool_calls,
+                "id": str(msg.id),
+                "session_id": session.session_id,
+                "role": msg.role,
+                "content": msg.content or "",
+                "created_at": msg.created_at.isoformat() if msg.created_at else None,
+                "tool_calls": msg_tool_calls,
             }
             messages_data.append(msg_data)
             # 收集所有 tool_calls（含 approval 状态），并标注 message_id 便于前端回溯
             for tc in msg_tool_calls:
                 if isinstance(tc, dict):
-                    tc['message_id'] = str(msg.id)
+                    tc["message_id"] = str(msg.id)
                     all_tool_calls.append(tc)
 
         # 3. 聚合审批状态（保留 approvals 列表供前端独立消费 + 构建索引供 tool_calls 注入复用）
@@ -126,15 +129,17 @@ class SnapshotView(APIView):
         approval_index = {}
         for apv in approvals_qs:
             extra = apv.extra if isinstance(apv.extra, dict) else {}
-            apv_tc_id = extra.get('tool_call_id') or apv.interrupt_id
-            approvals_data.append({
-                'id': str(apv.id),
-                'interrupt_id': apv.interrupt_id,
-                'tool_call_id': apv_tc_id,
-                'state': apv.state,
-                'created_at': apv.created_at.isoformat() if apv.created_at else None,
-                'resolved_at': apv.resolved_at.isoformat() if apv.resolved_at else None,
-            })
+            apv_tc_id = extra.get("tool_call_id") or apv.interrupt_id
+            approvals_data.append(
+                {
+                    "id": str(apv.id),
+                    "interrupt_id": apv.interrupt_id,
+                    "tool_call_id": apv_tc_id,
+                    "state": apv.state,
+                    "created_at": apv.created_at.isoformat() if apv.created_at else None,
+                    "resolved_at": apv.resolved_at.isoformat() if apv.resolved_at else None,
+                }
+            )
             if apv_tc_id:
                 approval_index[str(apv_tc_id)] = build_approval_index_item(apv)
 
@@ -144,10 +149,12 @@ class SnapshotView(APIView):
         enrich_tool_calls_with_approvals(all_tool_calls, session_id, approval_index=approval_index)
 
         # 5. 返回标准化 JSON
-        return success_response({
-            'session_id': session.session_id,
-            'session_title': session.title or '',
-            'messages': messages_data,
-            'tool_calls': all_tool_calls,
-            'approvals': approvals_data,
-        })
+        return success_response(
+            {
+                "session_id": session.session_id,
+                "session_title": session.title or "",
+                "messages": messages_data,
+                "tool_calls": all_tool_calls,
+                "approvals": approvals_data,
+            }
+        )

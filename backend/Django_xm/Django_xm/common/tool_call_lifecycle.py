@@ -60,37 +60,65 @@ _PUBLISHED_KEY_PREFIX = "tool_call:published"
 # RUNNING 允许自循环：审批通过（PROCESSING）时由 approval_service 发布 RUNNING，stream_helpers 可能因并发再次发布
 # FAILED 允许从 WAITING 转换：审批通过前工具可能因前置依赖失败
 _VALID_TRANSITIONS: dict[EventType, set[EventType | None]] = {
-    EventType.TOOL_CALL_PENDING:     {None},
+    EventType.TOOL_CALL_PENDING: {None},
     EventType.TOOL_CALL_INPUT_READY: {None, EventType.TOOL_CALL_PENDING, EventType.TOOL_CALL_INPUT_READY},
-    EventType.TOOL_CALL_WAITING:     {None, EventType.TOOL_CALL_INPUT_READY, EventType.TOOL_CALL_WAITING},
-    EventType.TOOL_CALL_RUNNING:     {
+    EventType.TOOL_CALL_WAITING: {None, EventType.TOOL_CALL_INPUT_READY, EventType.TOOL_CALL_WAITING},
+    EventType.TOOL_CALL_RUNNING: {
         EventType.TOOL_CALL_INPUT_READY,
         EventType.TOOL_CALL_WAITING,
         EventType.TOOL_CALL_RUNNING,
     },
-    EventType.TOOL_CALL_COMPLETED:   {
-        EventType.TOOL_CALL_RUNNING,
-        EventType.TOOL_CALL_INPUT_READY,
-        EventType.TOOL_CALL_WAITING,
-        None,
-    },
-    EventType.TOOL_CALL_FAILED:      {
+    EventType.TOOL_CALL_COMPLETED: {
         EventType.TOOL_CALL_RUNNING,
         EventType.TOOL_CALL_INPUT_READY,
         EventType.TOOL_CALL_WAITING,
         None,
     },
-    EventType.TOOL_CALL_TIMEOUT:     {
+    EventType.TOOL_CALL_FAILED: {
+        EventType.TOOL_CALL_RUNNING,
         EventType.TOOL_CALL_INPUT_READY,
         EventType.TOOL_CALL_WAITING,
         None,
     },
-    EventType.TOOL_CALL_REJECTED:    {
+    EventType.TOOL_CALL_TIMEOUT: {
+        EventType.TOOL_CALL_INPUT_READY,
+        EventType.TOOL_CALL_WAITING,
+        None,
+    },
+    EventType.TOOL_CALL_REJECTED: {
         EventType.TOOL_CALL_INPUT_READY,
         EventType.TOOL_CALL_WAITING,
         None,
     },
 }
+
+
+def _normalize_risk_ceiling(risk_ceiling: Any) -> str | None:
+    """将 risk_ceiling 统一为字符串（供 publish_tool_call payload 使用）。
+
+    Args:
+        risk_ceiling: RiskLevel 枚举值 / 枚举字符串 / None
+
+    Returns:
+        RiskLevel 枚举的 .value 字符串（如 'safe'/'controlled'/'high'），
+        或 None（None/空值/未知值，不写入 payload）
+    """
+    if risk_ceiling is None:
+        return None
+    # RiskLevel 枚举（继承 str，但 .value 显式取字符串更安全）
+    if hasattr(risk_ceiling, "value"):
+        return str(risk_ceiling.value)
+    if isinstance(risk_ceiling, str) and risk_ceiling:
+        # 已是字符串，校验是否合法 RiskLevel（非法值返回 None，避免前端误解）
+        from Django_xm.common.risk_levels import RiskLevel
+
+        try:
+            RiskLevel(risk_ceiling)
+            return risk_ceiling
+        except ValueError:
+            logger.warning(f"[ToolCallLifecycle] 非法 risk_ceiling 值: {risk_ceiling!r}, 忽略")
+            return None
+    return None
 
 
 @dataclass
@@ -101,18 +129,36 @@ class ToolCallContext:
         module: 业务模块（CHAT / DEEP_RESEARCH / LEARNING）
         module_id: 模块实例 ID（chat=session_id, deep_research=task_id, learning=thread_id）
         cross_module_id: 跨模块同步目标（仅 DEEP_RESEARCH 关联 chat 时为 chat_session_id）
+        auto_approved: SAFE 级自动通过标记（True=无需用户审批，仅审计）
+
+    子 agent 嵌套层级字段（Phase E3，由 subagent_patch 注入到 configurable，
+    ApprovalMiddleware._audit_auto_approved_tools / adapter._publish_tool_event
+    从 configurable 提取后传入 register）：
+        parent_tool_call_id: 主 agent 调用 task 工具的 tool_call_id
+        depth: 嵌套层级（0=主 agent，1=一级子 agent）
+        agent_name: 子 agent 名称（如 web-researcher）
+        agent_path: 完整调用链路（如 ["main", "general-purpose", "web-researcher"]）
+        risk_ceiling: 子 agent 角色风险上限（RiskLevel 枚举值字符串）
 
     所有字段在 register 时确定，后续可通过 bind_parameters / bind_message_id 补全。
     """
+
     tool_call_id: str
     tool_name: str
     module: EventSource
     module_id: str
     cross_module_id: str | None = None
-    message_id: str = ''
+    message_id: str = ""
     parameters: dict = field(default_factory=dict)
     graph_interrupt_id: str | None = None
     last_event_type: str | None = None  # 最后一次发布的 event_type.value
+    auto_approved: bool = False  # SAFE 级自动通过标记（审计用）
+    # 子 agent 嵌套层级字段（Phase E3）
+    parent_tool_call_id: str = ""
+    depth: int = 0
+    agent_name: str = ""
+    agent_path: list = field(default_factory=list)
+    risk_ceiling: str = ""
 
 
 class ToolCallLifecycleService:
@@ -128,19 +174,36 @@ class ToolCallLifecycleService:
         """注册工具调用上下文（首次发现 tool_call 时调用）。幂等。
 
         已存在时不覆盖非空字段（保留先注册的值），仅补全空字段。
+        auto_approved 一旦为 True 就保持 True（不会被覆盖回 False）。
+        子 agent 嵌套层级字段（parent_tool_call_id/depth/agent_name/agent_path/risk_ceiling）
+        一旦写入非空值就保持（不被覆盖回空），确保主 agent 与子 agent 场景的字段不互斥。
         """
         key = f"{_TC_CTX_PREFIX}:{ctx.tool_call_id}"
         existing = cache.get(key)
         if existing:
             # 合并：仅补全空字段，不覆盖已有非空值
-            if not existing.get('parameters') and ctx.parameters:
-                existing['parameters'] = ctx.parameters
-            if not existing.get('message_id') and ctx.message_id:
-                existing['message_id'] = ctx.message_id
-            if not existing.get('graph_interrupt_id') and ctx.graph_interrupt_id:
-                existing['graph_interrupt_id'] = ctx.graph_interrupt_id
-            if not existing.get('cross_module_id') and ctx.cross_module_id:
-                existing['cross_module_id'] = ctx.cross_module_id
+            if not existing.get("parameters") and ctx.parameters:
+                existing["parameters"] = ctx.parameters
+            if not existing.get("message_id") and ctx.message_id:
+                existing["message_id"] = ctx.message_id
+            if not existing.get("graph_interrupt_id") and ctx.graph_interrupt_id:
+                existing["graph_interrupt_id"] = ctx.graph_interrupt_id
+            if not existing.get("cross_module_id") and ctx.cross_module_id:
+                existing["cross_module_id"] = ctx.cross_module_id
+            # auto_approved：一旦为 True 就保持（不被覆盖回 False）
+            if ctx.auto_approved and not existing.get("auto_approved"):
+                existing["auto_approved"] = True
+            # 子 agent 嵌套层级字段：仅补全空字段（主 agent 不传，子 agent 传入非空值）
+            if not existing.get("parent_tool_call_id") and ctx.parent_tool_call_id:
+                existing["parent_tool_call_id"] = ctx.parent_tool_call_id
+            if not existing.get("depth") and ctx.depth:
+                existing["depth"] = ctx.depth
+            if not existing.get("agent_name") and ctx.agent_name:
+                existing["agent_name"] = ctx.agent_name
+            if not existing.get("agent_path") and ctx.agent_path:
+                existing["agent_path"] = ctx.agent_path
+            if not existing.get("risk_ceiling") and ctx.risk_ceiling:
+                existing["risk_ceiling"] = ctx.risk_ceiling
             cache.set(key, existing, _TC_CTX_TTL)
         else:
             cache.set(key, ctx.__dict__, _TC_CTX_TTL)
@@ -151,7 +214,7 @@ class ToolCallLifecycleService:
             return
         key = f"{_TC_CTX_PREFIX}:{tool_call_id}"
         ctx = cache.get(key) or {}
-        ctx['parameters'] = parameters
+        ctx["parameters"] = parameters
         cache.set(key, ctx, _TC_CTX_TTL)
 
     def bind_message_id(self, tool_call_id: str, message_id: str) -> None:
@@ -160,8 +223,8 @@ class ToolCallLifecycleService:
             return
         key = f"{_TC_CTX_PREFIX}:{tool_call_id}"
         ctx = cache.get(key) or {}
-        if not ctx.get('message_id'):
-            ctx['message_id'] = str(message_id)
+        if not ctx.get("message_id"):
+            ctx["message_id"] = str(message_id)
             cache.set(key, ctx, _TC_CTX_TTL)
 
     def bind_graph_interrupt_id(self, tool_call_id: str, graph_interrupt_id: str) -> None:
@@ -170,8 +233,8 @@ class ToolCallLifecycleService:
             return
         key = f"{_TC_CTX_PREFIX}:{tool_call_id}"
         ctx = cache.get(key) or {}
-        if not ctx.get('graph_interrupt_id'):
-            ctx['graph_interrupt_id'] = graph_interrupt_id
+        if not ctx.get("graph_interrupt_id"):
+            ctx["graph_interrupt_id"] = graph_interrupt_id
             cache.set(key, ctx, _TC_CTX_TTL)
 
     def _prepare_transition(
@@ -201,7 +264,7 @@ class ToolCallLifecycleService:
             return None
 
         # 状态机校验（仅 warning，容错优先）
-        last_event = ctx_dict.get('last_event_type')
+        last_event = ctx_dict.get("last_event_type")
         last_event_enum = EventType.from_value(last_event) if last_event else None
         valid_prev = _VALID_TRANSITIONS.get(event_type, set())
         if last_event_enum not in valid_prev:
@@ -216,8 +279,7 @@ class ToolCallLifecycleService:
             dedup_key = f"{_PUBLISHED_KEY_PREFIX}:{tool_call_id}:{event_type.value}"
             if cache.get(dedup_key):
                 logger.info(
-                    f"[ToolCallLifecycle] 事件已发布，跳过: "
-                    f"tool_call_id={tool_call_id}, event_type={event_type.value}"
+                    f"[ToolCallLifecycle] 事件已发布，跳过: tool_call_id={tool_call_id}, event_type={event_type.value}"
                 )
                 return None
 
@@ -239,7 +301,7 @@ class ToolCallLifecycleService:
         标记已发布，更新 last_event_type。
         """
         key = f"{_TC_CTX_PREFIX}:{tool_call_id}"
-        ctx_dict['last_event_type'] = event_type.value
+        ctx_dict["last_event_type"] = event_type.value
         cache.set(key, ctx_dict, _TC_CTX_TTL)
         if event_type != EventType.TOOL_CALL_INPUT_READY:
             dedup_key = f"{_PUBLISHED_KEY_PREFIX}:{tool_call_id}:{event_type.value}"
@@ -272,27 +334,39 @@ class ToolCallLifecycleService:
             return
 
         # 从 context 透传所有字段（三模块共享逻辑）
-        module_value = ctx_dict.get('module', 'chat')
+        module_value = ctx_dict.get("module", "chat")
         module_enum = EventSource.from_value(module_value) or EventSource.CHAT
 
         try:
             publish_tool_call_sync(
                 event_type=event_type,
                 tool_call_id=tool_call_id,
-                tool_name=ctx_dict.get('tool_name', 'unknown'),
+                tool_name=ctx_dict.get("tool_name", "unknown"),
                 module=module_enum,
-                module_id=ctx_dict.get('module_id', ''),
-                message_id=ctx_dict.get('message_id', ''),
-                parameters=ctx_dict.get('parameters', {}),
-                cross_module_id=ctx_dict.get('cross_module_id'),
-                graph_interrupt_id=ctx_dict.get('graph_interrupt_id'),
+                module_id=ctx_dict.get("module_id", ""),
+                message_id=ctx_dict.get("message_id", ""),
+                parameters=ctx_dict.get("parameters", {}),
+                cross_module_id=ctx_dict.get("cross_module_id"),
+                graph_interrupt_id=ctx_dict.get("graph_interrupt_id"),
                 result=result,
                 error=error,
+                auto_approved=ctx_dict.get("auto_approved", False),
+                # 子 agent 嵌套层级字段（Phase E3）：从 context 透传到事件 payload
+                # 主 agent 字段为空/0 时统一规范化为 None，保持 publish_tool_call
+                # 签名语义一致（主 agent 不携带嵌套字段），payload 仅含非空字段
+                parent_tool_call_id=ctx_dict.get("parent_tool_call_id") or None,
+                depth=(
+                    ctx_dict.get("depth")
+                    if isinstance(ctx_dict.get("depth"), int) and ctx_dict.get("depth") > 0
+                    else None
+                ),
+                agent_name=ctx_dict.get("agent_name") or None,
+                agent_path=ctx_dict.get("agent_path") or None,
+                risk_ceiling=_normalize_risk_ceiling(ctx_dict.get("risk_ceiling")),
             )
-        except Exception as e:
-            logger.error(
-                f"[ToolCallLifecycle] 发布事件失败: "
-                f"tool_call_id={tool_call_id}, event_type={event_type.value}, err={e}"
+        except Exception:
+            logger.exception(
+                f"[ToolCallLifecycle] 发布事件失败: tool_call_id={tool_call_id}, event_type={event_type.value}, err="
             )
             return
 
@@ -322,27 +396,40 @@ class ToolCallLifecycleService:
         if ctx_dict is None:
             return
 
-        module_value = ctx_dict.get('module', 'chat')
+        module_value = ctx_dict.get("module", "chat")
         module_enum = EventSource.from_value(module_value) or EventSource.CHAT
 
         try:
             await publish_tool_call(
                 event_type,
                 tool_call_id=tool_call_id,
-                tool_name=ctx_dict.get('tool_name', 'unknown'),
+                tool_name=ctx_dict.get("tool_name", "unknown"),
                 module=module_enum,
-                module_id=ctx_dict.get('module_id', ''),
-                message_id=ctx_dict.get('message_id', ''),
-                parameters=ctx_dict.get('parameters', {}),
-                cross_module_id=ctx_dict.get('cross_module_id'),
-                graph_interrupt_id=ctx_dict.get('graph_interrupt_id'),
+                module_id=ctx_dict.get("module_id", ""),
+                message_id=ctx_dict.get("message_id", ""),
+                parameters=ctx_dict.get("parameters", {}),
+                cross_module_id=ctx_dict.get("cross_module_id"),
+                graph_interrupt_id=ctx_dict.get("graph_interrupt_id"),
                 result=result,
                 error=error,
+                auto_approved=ctx_dict.get("auto_approved", False),
+                # 子 agent 嵌套层级字段（Phase E3）：从 context 透传到事件 payload
+                # 主 agent 字段为空/0 时统一规范化为 None，保持 publish_tool_call
+                # 签名语义一致（主 agent 不携带嵌套字段），payload 仅含非空字段
+                parent_tool_call_id=ctx_dict.get("parent_tool_call_id") or None,
+                depth=(
+                    ctx_dict.get("depth")
+                    if isinstance(ctx_dict.get("depth"), int) and ctx_dict.get("depth") > 0
+                    else None
+                ),
+                agent_name=ctx_dict.get("agent_name") or None,
+                agent_path=ctx_dict.get("agent_path") or None,
+                risk_ceiling=_normalize_risk_ceiling(ctx_dict.get("risk_ceiling")),
             )
-        except Exception as e:
-            logger.error(
+        except Exception:
+            logger.exception(
                 f"[ToolCallLifecycle] 发布事件失败(async): "
-                f"tool_call_id={tool_call_id}, event_type={event_type.value}, err={e}"
+                f"tool_call_id={tool_call_id}, event_type={event_type.value}, err="
             )
             return
 
@@ -357,7 +444,7 @@ class ToolCallLifecycleService:
         cache.delete(f"{_TC_CTX_PREFIX}:{tool_call_id}")
         # 清除所有 event_type 的去重 key
         for event_type in EventType:
-            if event_type.value.startswith('tool_call_'):
+            if event_type.value.startswith("tool_call_"):
                 cache.delete(f"{_PUBLISHED_KEY_PREFIX}:{tool_call_id}:{event_type.value}")
 
 

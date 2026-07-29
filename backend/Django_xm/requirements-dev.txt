@@ -1,0 +1,11 @@
+# Development dependencies for type checking (mypy) and linting
+# Install: pip install -r requirements-dev.txt
+
+# Type stubs for mypy
+django-stubs>=6.0.1
+django-stubs-ext>=6.0.1
+djangorestframework-stubs>=3.16.8
+celery-types>=0.26.0
+types-PyYAML>=6.0.12.20250915
+types-channels
+# NOTE: types-celery does not exist on PyPI; celery stubs are provided by celery-types (above).

@@ -8,6 +8,7 @@
     class BaseAgentBuilder:
         ...
 """
+
 from __future__ import annotations
 
 import logging
@@ -41,9 +42,7 @@ def register_builder(*agent_types: AgentType):
     def decorator(cls: type[Any]) -> type[Any]:
         for agent_type in agent_types:
             if not isinstance(agent_type, AgentType):
-                raise TypeError(
-                    f"register_builder 仅接受 AgentType 枚举值，收到: {agent_type!r}"
-                )
+                raise TypeError(f"register_builder 仅接受 AgentType 枚举值，收到: {agent_type!r}")
             if agent_type in _builder_registry:
                 existing = _builder_registry[agent_type]
                 raise ValueError(
@@ -54,7 +53,9 @@ def register_builder(*agent_types: AgentType):
             _builder_registry[agent_type] = cls
             logger.debug(
                 "注册 Builder: %s -> %s.%s",
-                agent_type, cls.__module__, cls.__name__,
+                agent_type,
+                cls.__module__,
+                cls.__name__,
             )
         return cls
 

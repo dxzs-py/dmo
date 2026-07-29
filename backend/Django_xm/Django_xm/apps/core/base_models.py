@@ -3,6 +3,7 @@
 提供软删除、审计字段等通用功能
 所有业务模型应继承此类
 """
+
 import threading
 
 from django.conf import settings
@@ -16,11 +17,11 @@ def set_current_request(request):
 
 
 def get_current_request():
-    return getattr(_thread_locals, 'request', None)
+    return getattr(_thread_locals, "request", None)
 
 
 def clear_current_request():
-    if hasattr(_thread_locals, 'request'):
+    if hasattr(_thread_locals, "request"):
         del _thread_locals.request
 
 
@@ -35,25 +36,10 @@ class AllObjectsManager(models.Manager):
 
 
 class BaseModel(models.Model):
-    created_at = models.DateTimeField(
-        auto_now_add=True,
-        db_index=True,
-        verbose_name='创建时间'
-    )
-    updated_at = models.DateTimeField(
-        auto_now=True,
-        verbose_name='更新时间'
-    )
-    is_deleted = models.BooleanField(
-        default=False,
-        db_index=True,
-        verbose_name='是否已删除'
-    )
-    deleted_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        verbose_name='删除时间'
-    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True, verbose_name="创建时间")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
+    is_deleted = models.BooleanField(default=False, db_index=True, verbose_name="是否已删除")
+    deleted_at = models.DateTimeField(null=True, blank=True, verbose_name="删除时间")
 
     objects = SoftDeleteManager()
     all_objects = AllObjectsManager()
@@ -64,6 +50,7 @@ class BaseModel(models.Model):
     def soft_delete(self, using=None):
         self.is_deleted = True
         from django.utils import timezone
+
         self.deleted_at = timezone.now()
         self.save(using=using)
 
@@ -82,34 +69,36 @@ class AuditModel(BaseModel):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='created_%(class)ss',
-        verbose_name='创建人'
+        related_name="created_%(class)ss",
+        verbose_name="创建人",
     )
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='updated_%(class)ss',
-        verbose_name='更新人'
+        related_name="updated_%(class)ss",
+        verbose_name="更新人",
     )
 
     class Meta(BaseModel.Meta):
         abstract = True
 
     def save(self, *args, **kwargs):
-        request = kwargs.pop('request', None)
+        request = kwargs.pop("request", None)
         if request is None:
             request = get_current_request()
 
-        if request and hasattr(request, 'user') and request.user and request.user.is_authenticated:
+        if request and hasattr(request, "user") and request.user and request.user.is_authenticated:
             if not self.pk:
                 self.created_by = request.user
             self.updated_by = request.user
         elif not self.pk and not self.created_by:
             from Django_xm.apps.core.task_models import CeleryTaskRecord
+
             if not isinstance(self, CeleryTaskRecord):
                 import logging
+
                 logging.getLogger(__name__).warning(
                     f"AuditModel.save() called without request context: "
                     f"model={self.__class__.__name__}, created_by will be None"

@@ -400,9 +400,7 @@ class GetStreamingModelTestCase(unittest.TestCase):
         mock_get_default,
     ):
         """get_streaming_model() 返回 ResilientModel 并传递 streaming=True"""
-        mock_resilient = ResilientModel(
-            models=[make_mock_model("model", "openai")]
-        )
+        mock_resilient = ResilientModel(models=[make_mock_model("model", "openai")])
         mock_get_default.return_value = mock_resilient
 
         result = get_streaming_model(

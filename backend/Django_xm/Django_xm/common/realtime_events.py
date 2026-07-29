@@ -98,11 +98,12 @@ def _group_name(channel_type, channel_id):
     """生成符合 Channels 规范的 group name（只含 ASCII 字母数字、连字符、下划线、句点，<100 字符）。"""
     base = f"{channel_type}_{channel_id}"
     # 替换冒号、空格等非规范字符为下划线
-    safe = ''.join(c if c.isalnum() or c in '-_.' else '_' for c in base)
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in base)
     # 超长时截断并用 hash 保证唯一性
     if len(safe) >= 100:
         import hashlib
-        suffix = hashlib.md5(safe.encode('utf-8')).hexdigest()[:16]
+
+        suffix = hashlib.md5(safe.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
         safe = f"{safe[:80]}_{suffix}"
     return safe
 
@@ -166,10 +167,14 @@ def _atomic_publish_event(redis_client, channel_type, channel_id, event):
         )
     else:
         seq = redis_client.eval(
-            _PUBLISH_EVENT_LUA, 2,
-            seq_key, history_key,
-            event_json, str(HISTORY_TTL_SECONDS),
-            str(SEQ_TTL_SECONDS), str(EVENT_HISTORY_LIMIT),
+            _PUBLISH_EVENT_LUA,
+            2,
+            seq_key,
+            history_key,
+            event_json,
+            str(HISTORY_TTL_SECONDS),
+            str(SEQ_TTL_SECONDS),
+            str(EVENT_HISTORY_LIMIT),
         )
     return int(seq)
 
@@ -211,17 +216,13 @@ async def _publish_to_session_async(session_id, event_type, payload):
                 _group_name("session", session_id),
                 {"type": "broadcast_event", "event": event},
             )
-        except Exception as e:
-            logger.error(f"[RealtimeEvents] group_send 失败: session={session_id}, {e}")
+        except Exception:
+            logger.exception(f"[RealtimeEvents] group_send 失败: session={session_id}")
 
-        logger.info(
-            f"[RealtimeEvents] 异步发布会话事件: session={session_id}, "
-            f"type={event_type}, seq={seq}"
-        )
-    except Exception as e:
-        logger.error(
-            f"[RealtimeEvents] _publish_to_session_async 失败: session={session_id}, "
-            f"type={event_type}, {e}"
+        logger.info(f"[RealtimeEvents] 异步发布会话事件: session={session_id}, type={event_type}, seq={seq}")
+    except Exception:
+        logger.exception(
+            f"[RealtimeEvents] _publish_to_session_async 失败: session={session_id}, type={event_type}"
         )
 
 
@@ -264,18 +265,12 @@ async def _publish_to_task_async(task_id, event_type, payload):
                 _group_name("task", task_id),
                 {"type": "broadcast_event", "event": event},
             )
-        except Exception as e:
-            logger.error(f"[RealtimeEvents] group_send 失败: task={task_id}, {e}")
+        except Exception:
+            logger.exception(f"[RealtimeEvents] group_send 失败: task={task_id}")
 
-        logger.info(
-            f"[RealtimeEvents] 异步发布任务事件: task={task_id}, "
-            f"type={event_type}, seq={seq}"
-        )
-    except Exception as e:
-        logger.error(
-            f"[RealtimeEvents] _publish_to_task_async 失败: task={task_id}, "
-            f"type={event_type}, {e}"
-        )
+        logger.info(f"[RealtimeEvents] 异步发布任务事件: task={task_id}, type={event_type}, seq={seq}")
+    except Exception:
+        logger.exception(f"[RealtimeEvents] _publish_to_task_async 失败: task={task_id}, type={event_type}")
 
 
 async def _publish_to_user_async(user_id, event_type, payload):
@@ -313,18 +308,12 @@ async def _publish_to_user_async(user_id, event_type, payload):
                 _group_name("user", user_id),
                 {"type": "broadcast_event", "event": event},
             )
-        except Exception as e:
-            logger.error(f"[RealtimeEvents] group_send 失败: user={user_id}, {e}")
+        except Exception:
+            logger.exception(f"[RealtimeEvents] group_send 失败: user={user_id}")
 
-        logger.info(
-            f"[RealtimeEvents] 异步发布用户事件: user={user_id}, "
-            f"type={event_type}, seq={seq}"
-        )
-    except Exception as e:
-        logger.error(
-            f"[RealtimeEvents] _publish_to_user_async 失败: user={user_id}, "
-            f"type={event_type}, {e}"
-        )
+        logger.info(f"[RealtimeEvents] 异步发布用户事件: user={user_id}, type={event_type}, seq={seq}")
+    except Exception:
+        logger.exception(f"[RealtimeEvents] _publish_to_user_async 失败: user={user_id}, type={event_type}")
 
 
 async def publish_event(
@@ -400,18 +389,17 @@ async def publish_event(
     try:
         validate_payload(event_type, payload)
     except PayloadValidationError:
-        logger.error(
+        logger.exception(
             f"[RealtimeEvents] publish_event payload 校验失败，事件未发布: "
             f"event_type={event_type}, session_id={session_id}, task_id={task_id}, "
             f"payload_keys={list(payload.keys()) if isinstance(payload, dict) else type(payload).__name__}",
-            exc_info=True
         )
         raise  # 抛给调用方，由调用方决定降级策略
 
     # 注入 event_type 字段到 payload，供前端区分 stream_event 子类型
     # （stream_reasoning / stream_sources / stream_suggestions / stream_context / stream_content_update）
     # tool_call_* 和 approval_* 事件通过 event.type 区分，event_type 字段为冗余信息但不影响处理
-    payload = {**payload, 'event_type': event_type.value}
+    payload = {**payload, "event_type": event_type.value}
 
     # 2. 获取 WebSocket 频道事件名（每个 EventType 使用其 value 作为独立 ws_event_name）
     ws_event_name = get_ws_event_name(event_type)
@@ -470,15 +458,15 @@ async def publish_event(
         # 不同 channel 并行执行，同一 channel 内部由 _ordered_ensure_future 串行化
         if channel_tasks:
             await asyncio.gather(*channel_tasks, return_exceptions=True)
-    except Exception as e:
-        logger.error(
+    except Exception:
+        logger.exception(
             f"[RealtimeEvents] publish_event 失败: event_type={event_type}, "
-            f"session={session_id}, task={task_id}, user={user_id}, {e}"
+            f"session={session_id}, task={task_id}, user={user_id}"
         )
 
 
 # 持有 fire-and-forget 发布任务引用，防止 GC 回收未完成的任务
-_pending_publish_tasks = set()
+_pending_publish_tasks: set[asyncio.Task[None]] = set()
 
 
 # 按 channel 维护有序 task 链，保证同一 channel 的事件按调用顺序发布
@@ -486,7 +474,7 @@ _pending_publish_tasks = set()
 # _publish_to_*_async 协程包装进 task 链，确保 Redis Lua 脚本生成 seq 的顺序
 # 与 group_send 广播顺序一致。同一 channel 严格串行（seq 严格单调递增），
 # 不同 channel 并行。前端按 seq 处理事件时不会出现状态覆盖。
-_publish_chains = {}  # key: channel_key, value: asyncio.Task
+_publish_chains: dict[str, asyncio.Task[None]] = {}  # key: channel_key, value: asyncio.Task
 _publish_chains_lock = threading.Lock()
 
 
@@ -515,7 +503,7 @@ def _ordered_ensure_future(coro, channel_key):
         if prev_task is not None:
             try:
                 await prev_task
-            except Exception:
+            except Exception:  # noqa: S110  # 链式执行中前一个 task 失败不影响当前 task，仅保证顺序
                 # 前一个 task 失败不影响当前 task，仅保证顺序
                 pass
         # 执行当前协程
@@ -567,18 +555,22 @@ def publish_event_sync(
             # 在 async 事件循环中，fire-and-forget publish_event
             # 串行化由 publish_event 内部的 _ordered_ensure_future 按 channel 保证，
             # 确保 seq 顺序与调用顺序一致
-            task = asyncio.ensure_future(publish_event(
-                event_type, payload,
-                session_id=session_id,
-                task_id=task_id,
-                user_id=user_id,
-            ))
+            task = asyncio.ensure_future(
+                publish_event(
+                    event_type,
+                    payload,
+                    session_id=session_id,
+                    task_id=task_id,
+                    user_id=user_id,
+                )
+            )
             _pending_publish_tasks.add(task)
             task.add_done_callback(_pending_publish_tasks.discard)
         except RuntimeError:
             # 不在 async 事件循环中，使用 async_to_sync 同步调用
             async_to_sync(publish_event)(
-                event_type, payload,
+                event_type,
+                payload,
                 session_id=session_id,
                 task_id=task_id,
                 user_id=user_id,
@@ -588,17 +580,16 @@ def publish_event_sync(
         # 必须在 except Exception 之前捕获，避免被吞掉导致调用方无感知
         # 注意：仅 async_to_sync 同步路径会触发；fire-and-forget
         # 路径下异常存储于 task，需通过 done_callback 单独处理
-        logger.error(
+        logger.exception(
             f"[RealtimeEvents] publish_event_sync payload 校验失败，事件未发布: "
             f"event_type={event_type}, session={session_id}, task={task_id}, "
             f"user={user_id}, payload_keys={list(payload.keys()) if isinstance(payload, dict) else type(payload).__name__}",
-            exc_info=True
         )
         raise
-    except Exception as e:
-        logger.error(
+    except Exception:
+        logger.exception(
             f"[RealtimeEvents] publish_event_sync 失败: event_type={event_type}, "
-            f"session={session_id}, task={task_id}, user={user_id}, {e}"
+            f"session={session_id}, task={task_id}, user={user_id}"
         )
 
 
@@ -634,8 +625,8 @@ def get_event_history(channel_type, channel_id, last_seq=None, limit=100):
 
         events.sort(key=lambda e: e.get("seq", 0))
         return events[:limit]
-    except Exception as e:
-        logger.error(f"[RealtimeEvents] 读取历史事件失败: {channel_type}:{channel_id}, {e}")
+    except Exception:
+        logger.exception(f"[RealtimeEvents] 读取历史事件失败: {channel_type}:{channel_id}")
         return []
 
 
@@ -660,6 +651,6 @@ def get_channel_seq(channel_type, channel_id):
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8")
         return int(raw)
-    except Exception as e:
-        logger.error(f"[RealtimeEvents] 读取 seq 失败: {channel_type}:{channel_id}, {e}")
+    except Exception:
+        logger.exception(f"[RealtimeEvents] 读取 seq 失败: {channel_type}:{channel_id}")
         return 0

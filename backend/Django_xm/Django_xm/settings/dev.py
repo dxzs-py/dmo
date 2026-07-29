@@ -16,12 +16,14 @@ DEBUG = True
 
 try:
     import redis
-    r = redis.from_url(os.environ.get('REDIS_URL', app_cfg.redis_url), socket_connect_timeout=3, socket_timeout=3)
+
+    r = redis.from_url(os.environ.get("REDIS_URL", app_cfg.redis_url), socket_connect_timeout=3, socket_timeout=3)
     r.ping()
     REDIS_AVAILABLE = True
 except Exception as e:
     REDIS_AVAILABLE = False
     import logging
+
     logging.getLogger(__name__).warning(f"Redis 启动检测失败: {e} (django_redis 将在请求时自动重连)")
 
 MIDDLEWARE = [
@@ -42,18 +44,17 @@ MIDDLEWARE = [
     "Django_xm.apps.core.middleware.SecurityHeadersMiddleware",
 ]
 
-CORS_ALLOWED_ORIGINS = [
-    o.strip() for o in app_cfg.cors_allowed_origins.split(",") if o.strip()
-] or ["http://localhost:3000", "http://localhost:8000"]
+CORS_ALLOWED_ORIGINS = [o.strip() for o in app_cfg.cors_allowed_origins.split(",") if o.strip()] or [
+    "http://localhost:3000",
+    "http://localhost:8000",
+]
 
-CSRF_TRUSTED_ORIGINS = [
-    o.strip() for o in app_cfg.csrf_trusted_origins.split(",") if o.strip()
-] or CORS_ALLOWED_ORIGINS
+CSRF_TRUSTED_ORIGINS = [o.strip() for o in app_cfg.csrf_trusted_origins.split(",") if o.strip()] or CORS_ALLOWED_ORIGINS
 
 REST_FRAMEWORK["DEFAULT_AUTHENTICATION_CLASSES"] = [
-    'rest_framework_simplejwt.authentication.JWTAuthentication',
-    'rest_framework.authentication.SessionAuthentication',
-    'rest_framework.authentication.BasicAuthentication',
+    "rest_framework_simplejwt.authentication.JWTAuthentication",
+    "rest_framework.authentication.SessionAuthentication",
+    "rest_framework.authentication.BasicAuthentication",
 ]
 REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"] = [
     "rest_framework.renderers.JSONRenderer",
@@ -84,12 +85,8 @@ LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        "verbose": {
-            "format": "%(levelname)s %(asctime)s %(module)s %(lineno)d %(message)s"
-        },
-        "simple": {
-            "format": "%(levelname)s %(module)s %(lineno)d %(message)s"
-        },
+        "verbose": {"format": "%(levelname)s %(asctime)s %(module)s %(lineno)d %(message)s"},
+        "simple": {"format": "%(levelname)s %(module)s %(lineno)d %(message)s"},
     },
     "filters": {
         "require_debug_true": {
@@ -153,8 +150,8 @@ LOGGING = {
 }
 
 CELERY_BROKER_TRANSPORT_OPTIONS = {
-    'max_connections': 10,
-    'visibility_timeout': 43200,
+    "max_connections": 10,
+    "visibility_timeout": 43200,
 }
 CELERY_BROKER_CONNECTION_MAX_RETRIES = 10
 CELERY_BROKER_POOL_LIMIT = 10

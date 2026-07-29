@@ -2,7 +2,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import requests
@@ -82,7 +82,7 @@ if __name__ == "__main__":
             count = 10
         elif count > 50:
             count = 50
-    current_time = datetime.now()
+    current_time = datetime.now(UTC)
     end_date = (current_time + timedelta(days=1)).strftime("%Y-%m-%d")
     pattern = r'\d{4}-\d{2}-\d{2}to\d{4}-\d{2}-\d{2}'
     if "freshness" in parse_data:

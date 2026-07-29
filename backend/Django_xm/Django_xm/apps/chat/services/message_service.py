@@ -1,6 +1,7 @@
 """
 消息持久化服务
 """
+
 import logging
 
 from django.core.exceptions import ObjectDoesNotExist
@@ -26,31 +27,27 @@ def get_user_session(user, session_id, prefetch_attachments=False):
         queryset = ChatSession.objects
         if prefetch_attachments:
             from django.db.models import Prefetch
+
             queryset = queryset.prefetch_related(
-                Prefetch('messages', queryset=ChatMessage.objects.prefetch_related('attachments'))
+                Prefetch("messages", queryset=ChatMessage.objects.prefetch_related("attachments"))
             )
         else:
-            queryset = queryset.prefetch_related('messages')
+            queryset = queryset.prefetch_related("messages")
 
-        return queryset.get(
-            session_id=session_id,
-            user=user,
-            is_deleted=False
-        )
+        return queryset.get(session_id=session_id, user=user, is_deleted=False)
     except ObjectDoesNotExist:
         return None
 
 
 class MessagePersistenceService:
-
     @transaction.atomic
     def save_message_pair(
         self,
         session,
         user_content: str,
         ai_content: str,
-        user_role: str = 'user',
-        ai_role: str = 'assistant',
+        user_role: str = "user",
+        ai_role: str = "assistant",
         attachment_ids: list[int] | None = None,
         token_count: int = 0,
         token_detail: dict | None = None,
@@ -60,11 +57,7 @@ class MessagePersistenceService:
         from Django_xm.apps.attachments.services.cross_app import get_attachment_service
         from Django_xm.apps.chat.models import ChatMessage
 
-        user_message = ChatMessage.objects.create(
-            session=session,
-            role=user_role,
-            content=user_content
-        )
+        user_message = ChatMessage.objects.create(session=session, role=user_role, content=user_content)
 
         if attachment_ids:
             get_attachment_service().link_attachments_to_message(user_message, attachment_ids)
@@ -86,8 +79,8 @@ class MessagePersistenceService:
         session,
         user_content: str,
         ai_content: str,
-        user_role: str = 'user',
-        ai_role: str = 'assistant',
+        user_role: str = "user",
+        ai_role: str = "assistant",
         attachment_ids: list[int] | None = None,
         token_count: int = 0,
         token_detail: dict | None = None,

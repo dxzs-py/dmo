@@ -24,6 +24,7 @@ from Django_xm.apps.core.config import get_logger
 
 try:
     import tiktoken as _tiktoken
+
     _TIKTOKEN_AVAILABLE = True
 except ImportError:
     _tiktoken = None
@@ -31,6 +32,7 @@ except ImportError:
 
 try:
     from transformers import AutoTokenizer as _AutoTokenizer
+
     _TRANSFORMERS_AVAILABLE = True
 except ImportError:
     _AutoTokenizer = None
@@ -49,6 +51,7 @@ class SummaryQuality(BaseModel):
 
 class MemoryTier(Enum):
     """记忆层级：LONG_TERM 永不压缩，SHORT_TERM 可压缩"""
+
     LONG_TERM = "long_term"
     SHORT_TERM = "short_term"
 
@@ -145,7 +148,7 @@ class TokenEstimator:
         """原始粗略估算（保留向后兼容）"""
         if not text:
             return 0
-        chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+        chinese_chars = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
         other_chars = len(text) - chinese_chars
         return int(chinese_chars * 1.5 + other_chars * 0.25)
 
@@ -193,16 +196,17 @@ class TokenEstimator:
         import re
 
         # 中文字符
-        chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+        chinese_chars = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
         chinese_tokens = chinese_chars * 1.5
 
         # 英文单词（按词计算，每个词约 1.3 token）
-        english_words = re.findall(r'[a-zA-Z]+', text)
+        english_words = re.findall(r"[a-zA-Z]+", text)
         english_tokens = len(english_words) * 1.3
 
         # 标点符号
-        punctuation_chars = sum(1 for c in text if not c.isalnum() and not c.isspace()
-                                and not ('\u4e00' <= c <= '\u9fff'))
+        punctuation_chars = sum(
+            1 for c in text if not c.isalnum() and not c.isspace() and not ("\u4e00" <= c <= "\u9fff")
+        )
         punctuation_tokens = punctuation_chars * 0.5
 
         # 数字（按字符计算，每个字符约 0.25 token）
@@ -251,28 +255,28 @@ class TokenEstimator:
         total = 0
         for msg in messages:
             total += cls.estimate_tokens(msg.content if isinstance(msg.content, str) else str(msg.content), model_name)
-            if hasattr(msg, 'tool_calls') and msg.tool_calls:
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
                 for tc in msg.tool_calls:
-                    total += cls.estimate_tokens(str(tc.get('args', {})), model_name)
+                    total += cls.estimate_tokens(str(tc.get("args", {})), model_name)
         return total
 
     @classmethod
     def estimate_dict_messages(cls, messages: list[dict[str, Any]], model_name: str = "") -> int:
         total = 0
         for msg in messages:
-            content = msg.get('content', '')
+            content = msg.get("content", "")
             if isinstance(content, str):
                 total += cls.estimate_tokens(content, model_name)
             elif isinstance(content, list):
                 for block in content:
                     if isinstance(block, dict):
-                        total += cls.estimate_tokens(block.get('text', ''), model_name)
+                        total += cls.estimate_tokens(block.get("text", ""), model_name)
                     elif isinstance(block, str):
                         total += cls.estimate_tokens(block, model_name)
-            tool_calls = msg.get('tool_calls', [])
+            tool_calls = msg.get("tool_calls", [])
             if tool_calls:
                 for tc in tool_calls:
-                    total += cls.estimate_tokens(str(tc.get('args', tc.get('function', {}))), model_name)
+                    total += cls.estimate_tokens(str(tc.get("args", tc.get("function", {}))), model_name)
         return total
 
     @classmethod
@@ -286,31 +290,74 @@ class TokenEstimator:
 
 
 class EntityExtractor:
-    _STOP_WORDS = frozenset({
-        "的", "了", "是", "在", "我", "你", "他", "她", "它", "们",
-        "这", "那", "有", "和", "与", "或", "不", "也", "都", "就",
-        "the", "a", "an", "is", "are", "was", "were", "be", "been",
-        "i", "you", "he", "she", "it", "we", "they", "me", "him",
-        "and", "or", "but", "in", "on", "at", "to", "for", "of",
-    })
+    _STOP_WORDS = frozenset(
+        {
+            "的",
+            "了",
+            "是",
+            "在",
+            "我",
+            "你",
+            "他",
+            "她",
+            "它",
+            "们",
+            "这",
+            "那",
+            "有",
+            "和",
+            "与",
+            "或",
+            "不",
+            "也",
+            "都",
+            "就",
+            "the",
+            "a",
+            "an",
+            "is",
+            "are",
+            "was",
+            "were",
+            "be",
+            "been",
+            "i",
+            "you",
+            "he",
+            "she",
+            "it",
+            "we",
+            "they",
+            "me",
+            "him",
+            "and",
+            "or",
+            "but",
+            "in",
+            "on",
+            "at",
+            "to",
+            "for",
+            "of",
+        }
+    )
 
     @staticmethod
     def extract_from_messages(messages: list[dict[str, Any]]) -> list[str]:
         entities = []
         for msg in messages:
-            role = msg.get('role', '')
-            content = msg.get('content', '')
+            role = msg.get("role", "")
+            content = msg.get("content", "")
             if isinstance(content, list):
-                content = ' '.join(
-                    block.get('text', '') if isinstance(block, dict) else str(block)
-                    for block in content
+                content = " ".join(
+                    block.get("text", "") if isinstance(block, dict) else str(block) for block in content
                 )
             if not isinstance(content, str) or not content.strip():
                 continue
 
-            if role == 'user':
+            if role == "user":
                 entities.extend(EntityExtractor._extract_user_entities(content))
-            elif role == 'assistant':
+            elif role == "assistant":
                 entities.extend(EntityExtractor._extract_assistant_entities(content))
 
         seen = set()
@@ -325,22 +372,23 @@ class EntityExtractor:
     @staticmethod
     def _extract_user_entities(text: str) -> list[str]:
         import re
+
         entities = []
 
         patterns = [
             r'[""「」]([^""「」]{2,50})[""「」]',
-            r'(?:叫做?|名为|称为|是)([^\s，。！？,.!?]{2,20})',
-            r'(\d+(?:\.\d+)?)\s*(?:元|万|亿|%|度|米|千克|GB|MB|KB|小时|分钟|天|周|月|年)',
-            r'(?:使用|用|选择|配置|设置)([^\s，。！？,.!?]{2,30})',
+            r"(?:叫做?|名为|称为|是)([^\s，。！？,.!?]{2,20})",
+            r"(\d+(?:\.\d+)?)\s*(?:元|万|亿|%|度|米|千克|GB|MB|KB|小时|分钟|天|周|月|年)",
+            r"(?:使用|用|选择|配置|设置)([^\s，。！？,.!?]{2,30})",
         ]
         for pattern in patterns:
             matches = re.findall(pattern, text)
             entities.extend(matches)
 
-        sentences = re.split(r'[。！？.!?]', text)
+        sentences = re.split(r"[。！？.!?]", text)
         for s in sentences:
             s = s.strip()
-            if 4 <= len(s) <= 40 and not any(w in s for w in ['怎么', '什么', '如何', '为什么']):
+            if 4 <= len(s) <= 40 and not any(w in s for w in ["怎么", "什么", "如何", "为什么"]):
                 entities.append(s)
 
         return entities
@@ -348,11 +396,12 @@ class EntityExtractor:
     @staticmethod
     def _extract_assistant_entities(text: str) -> list[str]:
         import re
+
         entities = []
 
         patterns = [
-            r'(?:建议|推荐|应该|需要|必须)([^\s，。！？,.!?]{2,30})',
-            r'(?:步骤|方法|方案|策略)(?:[一二三四五12345])[:：]?\s*([^\n，。]{2,40})',
+            r"(?:建议|推荐|应该|需要|必须)([^\s，。！？,.!?]{2,30})",
+            r"(?:步骤|方法|方案|策略)(?:[一二三四五12345])[:：]?\s*([^\n，。]{2,40})",
         ]
         for pattern in patterns:
             matches = re.findall(pattern, text)
@@ -362,7 +411,6 @@ class EntityExtractor:
 
 
 class ContextCompressionEngine:
-
     _embedding_cache: ClassVar[dict[str, list[float]]] = {}
 
     def __init__(
@@ -406,7 +454,8 @@ class ContextCompressionEngine:
             try:
                 return get_chat_model(lightweight_model)
             except Exception:
-                pass
+                # 轻量模型创建失败时回退到下一个选项
+                logger.debug("轻量模型 %s 创建失败，回退到辅助模型", lightweight_model)
 
         # 2. 辅助模型（带 fallback 包装，轻量任务优先）
         try:
@@ -414,7 +463,8 @@ class ContextCompressionEngine:
             if helper is not None:
                 return helper
         except Exception:
-            pass
+            # 辅助模型获取失败时回退到 SystemConfig 默认模型
+            logger.debug("获取辅助模型失败，回退到 SystemConfig 默认模型")
 
         # 3. SystemConfig 默认模型
         try:
@@ -425,7 +475,8 @@ class ContextCompressionEngine:
                     model_name=system_default.get("model_name"),
                 )
         except Exception:
-            pass
+            # SystemConfig 默认模型获取失败时回退到最终兜底
+            logger.debug("获取 SystemConfig 默认模型失败，回退到最终兜底")
 
         # 4. 最终兜底：默认 provider/model
         return get_chat_model(get_model_string())
@@ -433,18 +484,15 @@ class ContextCompressionEngine:
     def _classify_memory_tier(self, msg: dict[str, Any]) -> "MemoryTier":
         """分类消息的记忆层级"""
         # role == "system" → LONG_TERM
-        if msg.get('role') == 'system':
+        if msg.get("role") == "system":
             return MemoryTier.LONG_TERM
         # msg 中有 memory_tier 键且值为 "long_term" → LONG_TERM
-        if msg.get('memory_tier') == 'long_term':
+        if msg.get("memory_tier") == "long_term":
             return MemoryTier.LONG_TERM
         # msg 的 content 中包含 long_term_tags 中的关键词 → LONG_TERM
-        content = msg.get('content', '')
+        content = msg.get("content", "")
         if isinstance(content, list):
-            content = ' '.join(
-                block.get('text', '') if isinstance(block, dict) else str(block)
-                for block in content
-            )
+            content = " ".join(block.get("text", "") if isinstance(block, dict) else str(block) for block in content)
         if isinstance(content, str):
             content_lower = content.lower()
             for tag in self.config.long_term_tags:
@@ -459,10 +507,7 @@ class ContextCompressionEngine:
         if total_tokens <= self.config.trigger_threshold:
             return False
         # 但仍要求有足够的 SHORT_TERM 消息可供压缩
-        short_term_count = sum(
-            1 for msg in messages
-            if self._classify_memory_tier(msg) == MemoryTier.SHORT_TERM
-        )
+        short_term_count = sum(1 for msg in messages if self._classify_memory_tier(msg) == MemoryTier.SHORT_TERM)
         return short_term_count >= self.config.keep_recent_messages
 
     def compress(self, messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], CompressionResult]:
@@ -495,14 +540,20 @@ class ContextCompressionEngine:
         result.original_message_count = len(messages)
         result.original_token_estimate = total_tokens
         compressed_messages = self._build_compressed_messages(messages, result, long_term_messages)
-        result.compressed_token_estimate = TokenEstimator.estimate_dict_messages(compressed_messages) if result.compressed else total_tokens
+        result.compressed_token_estimate = (
+            TokenEstimator.estimate_dict_messages(compressed_messages) if result.compressed else total_tokens
+        )
         result.duration_ms = (time.time() - start_time) * 1000
 
         if result.original_token_estimate > 0:
             result.compression_ratio = 1.0 - (result.compressed_token_estimate / result.original_token_estimate)
 
         if result.compressed and result.summary:
-            old_messages = short_term_messages[:-self.config.keep_recent_messages] if len(short_term_messages) > self.config.keep_recent_messages else short_term_messages
+            old_messages = (
+                short_term_messages[: -self.config.keep_recent_messages]
+                if len(short_term_messages) > self.config.keep_recent_messages
+                else short_term_messages
+            )
             result.quality = self.evaluate_summary_quality(old_messages, result.summary)
             if result.quality.overall < 0.6:
                 logger.warning(
@@ -513,7 +564,7 @@ class ContextCompressionEngine:
                 )
                 key_fragments = []
                 for msg in old_messages:
-                    content = msg.get('content', '')
+                    content = msg.get("content", "")
                     if isinstance(content, str) and content.strip():
                         fragment = content.strip()[:100]
                         if fragment:
@@ -540,7 +591,7 @@ class ContextCompressionEngine:
         messages: list[dict[str, Any]],
         long_term_messages: list[dict[str, Any]] | None = None,
     ) -> CompressionResult:
-        old_messages = messages[:-self.config.keep_recent_messages]
+        old_messages = messages[: -self.config.keep_recent_messages]
         entities = self._entity_extractor.extract_from_messages(old_messages) if self.config.entity_aware else []
         summary = self._generate_summary(old_messages, entities)
         decisions = self._extract_decisions(old_messages)
@@ -569,7 +620,7 @@ class ContextCompressionEngine:
         messages: list[dict[str, Any]],
         long_term_messages: list[dict[str, Any]] | None = None,
     ) -> CompressionResult:
-        old_messages = messages[:-self.config.keep_recent_messages]
+        old_messages = messages[: -self.config.keep_recent_messages]
         entities = self._entity_extractor.extract_from_messages(old_messages) if self.config.entity_aware else []
         summary = self._generate_summary(old_messages, entities)
         decisions = self._extract_decisions(old_messages)
@@ -610,25 +661,26 @@ class ContextCompressionEngine:
             response = model.invoke([{"role": "user", "content": prompt}])
             summary = getattr(response, "content", "")
             if summary and len(summary) > self.config.summary_max_length:
-                summary = summary[:self.config.summary_max_length]
+                summary = summary[: self.config.summary_max_length]
             return summary or self._fallback_summary(messages)
-        except Exception as e:
-            logger.error(f"LLM 生成摘要失败: {e}")
+        except Exception:
+            logger.exception("LLM 生成摘要失败")
             return self._fallback_summary(messages)
 
     def _extract_decisions(self, messages: list[dict[str, Any]]) -> list[str]:
         import re
+
         decisions = []
         for msg in messages:
-            if msg.get('role') != 'assistant':
+            if msg.get("role") != "assistant":
                 continue
-            content = msg.get('content', '')
+            content = msg.get("content", "")
             if not isinstance(content, str):
                 continue
 
             patterns = [
-                r'(?:建议|推荐|应该|决定|确认|选择)\s*[：:]\s*([^\n，。]{4,60})',
-                r'(?:结论|结果|答案)\s*[是为]\s*([^\n，。]{4,60})',
+                r"(?:建议|推荐|应该|决定|确认|选择)\s*[：:]\s*([^\n，。]{4,60})",
+                r"(?:结论|结果|答案)\s*[是为]\s*([^\n，。]{4,60})",
             ]
             for pattern in patterns:
                 matches = re.findall(pattern, content)
@@ -640,12 +692,11 @@ class ContextCompressionEngine:
     def _format_messages(messages: list[dict[str, Any]]) -> str:
         lines = []
         for msg in messages:
-            role = msg.get('role', 'unknown')
-            content = msg.get('content', '')
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
             if isinstance(content, list):
-                content = ' '.join(
-                    block.get('text', '') if isinstance(block, dict) else str(block)
-                    for block in content
+                content = " ".join(
+                    block.get("text", "") if isinstance(block, dict) else str(block) for block in content
                 )
             if not isinstance(content, str) or not content.strip():
                 continue
@@ -654,11 +705,11 @@ class ContextCompressionEngine:
             truncated = content[:400] + "..." if len(content) > 400 else content
             lines.append(f"[{prefix}]: {truncated}")
 
-            tool_calls = msg.get('tool_calls', [])
+            tool_calls = msg.get("tool_calls", [])
             if tool_calls:
                 for tc in tool_calls:
                     if isinstance(tc, dict):
-                        tool_name = tc.get('name', tc.get('function', {}).get('name', 'unknown'))
+                        tool_name = tc.get("name", tc.get("function", {}).get("name", "unknown"))
                         lines.append(f"  [工具调用]: {tool_name}")
 
         return "\n".join(lines)
@@ -667,10 +718,10 @@ class ContextCompressionEngine:
     def _fallback_summary(messages: list[dict[str, Any]]) -> str:
         topics = []
         for msg in messages:
-            if msg.get('role') == 'user':
-                content = msg.get('content', '')
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
                 if isinstance(content, str) and content.strip():
-                    topics.append(content.strip().split('\n')[0][:80])
+                    topics.append(content.strip().split("\n")[0][:80])
 
         unique_topics = list(dict.fromkeys(topics))[:5]
         return "对话摘要：讨论了 " + "；".join(unique_topics) if unique_topics else ""
@@ -692,6 +743,7 @@ class ContextCompressionEngine:
 
         try:
             from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model, get_helper_model
+
             model = get_helper_model() or get_chat_model()
             structured_model = model.with_structured_output(SummaryQuality)
         except Exception as e:
@@ -752,7 +804,7 @@ class ContextCompressionEngine:
         namespace = (str(self._user_id), "compression_state")
         try:
             item = self._store.get(namespace, state_key)
-            if item and hasattr(item, 'value'):
+            if item and hasattr(item, "value"):
                 data = item.value
                 self._rolling_summary = data.get("rolling_summary")
                 self._last_compressed_index = data.get("last_compressed_index", 0)
@@ -795,10 +847,7 @@ class ContextCompressionEngine:
 
         # last_index 超出当前消息范围时重置
         if new_start > len(short_term_messages):
-            logger.warning(
-                f"last_compressed_index={new_start} 超出消息范围 "
-                f"({len(short_term_messages)})，重置为 0"
-            )
+            logger.warning(f"last_compressed_index={new_start} 超出消息范围 ({len(short_term_messages)})，重置为 0")
             self._last_compressed_index = 0
             new_start = 0
 
@@ -820,11 +869,7 @@ class ContextCompressionEngine:
                 )
 
         new_messages = short_term_messages[new_start:split_point]
-        entities = (
-            self._entity_extractor.extract_from_messages(new_messages)
-            if self.config.entity_aware
-            else []
-        )
+        entities = self._entity_extractor.extract_from_messages(new_messages) if self.config.entity_aware else []
         summary = self._generate_incremental_summary(new_messages, entities, self._rolling_summary)
         decisions = self._extract_decisions(new_messages)
 
@@ -899,7 +944,7 @@ class ContextCompressionEngine:
                 if new_summary:
                     merged = self._merge_incremental_summary(existing_summary, new_summary)
                     if len(merged) > self.config.summary_max_length:
-                        merged = merged[:self.config.summary_max_length]
+                        merged = merged[: self.config.summary_max_length]
                     return merged
                 return existing_summary
             else:
@@ -917,10 +962,10 @@ class ContextCompressionEngine:
                 response = model.invoke([{"role": "user", "content": prompt}])
                 summary = getattr(response, "content", "")
                 if summary and len(summary) > self.config.summary_max_length:
-                    summary = summary[:self.config.summary_max_length]
+                    summary = summary[: self.config.summary_max_length]
                 return summary or self._fallback_summary(new_messages)
-        except Exception as e:
-            logger.error(f"LLM 增量摘要生成失败: {e}")
+        except Exception:
+            logger.exception("LLM 增量摘要生成失败")
             fallback = self._fallback_summary(new_messages)
             if existing_summary:
                 return existing_summary + "\n" + fallback if fallback else existing_summary
@@ -946,7 +991,7 @@ class ContextCompressionEngine:
                         existing.rfind("\n"),
                     )
                     if last_period > max_existing_len // 2:
-                        existing = existing[:last_period + 1]
+                        existing = existing[: last_period + 1]
                 merged = f"{existing}\n\n【后续更新】\n{new_part}"
             else:
                 merged = new_part
@@ -960,6 +1005,7 @@ class ContextCompressionEngine:
 
         try:
             from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
+
             embeddings = get_embeddings()
             vec = embeddings.embed_query(text[:500])
             if len(self._embedding_cache) < 1000:
@@ -986,7 +1032,7 @@ class ContextCompressionEngine:
 
         if self.config.preserve_system_messages:
             for msg in original:
-                if msg.get('role') == 'system' and msg not in long_term:
+                if msg.get("role") == "system" and msg not in long_term:
                     compressed.append(msg)
 
         context_parts = []
@@ -998,25 +1044,27 @@ class ContextCompressionEngine:
             context_parts.append("【关键决策】\n" + "\n".join(f"- {d}" for d in result.key_decisions[:8]))
 
         if context_parts:
-            compressed.append({
-                'role': 'system',
-                'content': '\n\n'.join(context_parts),
-            })
+            compressed.append(
+                {
+                    "role": "system",
+                    "content": "\n\n".join(context_parts),
+                }
+            )
 
-        recent = original[-self.config.keep_recent_messages:]
+        recent = original[-self.config.keep_recent_messages :]
         # 去重：跳过已在 long_term 或 compressed 中存在的消息
-        existing_contents = {m.get('content') for m in compressed if m.get('role') == 'system'}
+        existing_contents = {m.get("content") for m in compressed if m.get("role") == "system"}
         for msg in recent:
-            if msg.get('role') != 'system' or not self.config.preserve_system_messages:
+            if msg.get("role") != "system" or not self.config.preserve_system_messages:
                 # 跳过已在 long_term 中的消息
                 if self._classify_memory_tier(msg) == MemoryTier.LONG_TERM and any(
-                    m.get('content') == msg.get('content') for m in compressed
+                    m.get("content") == msg.get("content") for m in compressed
                 ):
                     continue
                 compressed.append(msg)
-            elif msg.get('role') == 'system' and msg.get('content') not in existing_contents:
+            elif msg.get("role") == "system" and msg.get("content") not in existing_contents:
                 compressed.append(msg)
-                existing_contents.add(msg.get('content'))
+                existing_contents.add(msg.get("content"))
 
         return compressed
 

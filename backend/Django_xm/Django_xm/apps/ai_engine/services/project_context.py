@@ -143,7 +143,7 @@ class ProjectContextDetector:
         if (root / "pyproject.toml").exists():
             languages.add("python")
             try:
-                content = (root / "pyproject.toml").read_text(encoding='utf-8')
+                content = (root / "pyproject.toml").read_text(encoding="utf-8")
                 if "django" in content.lower():
                     frameworks.add("django")
                 if "fastapi" in content.lower():
@@ -153,7 +153,7 @@ class ProjectContextDetector:
 
         if (root / "package.json").exists():
             try:
-                content = (root / "package.json").read_text(encoding='utf-8')
+                content = (root / "package.json").read_text(encoding="utf-8")
                 if '"vue"' in content:
                     frameworks.add("vue")
                 if '"react"' in content:
@@ -177,7 +177,7 @@ class ProjectContextDetector:
             filepath = root / filename
             if filepath.exists():
                 try:
-                    content = filepath.read_text(encoding='utf-8').strip()
+                    content = filepath.read_text(encoding="utf-8").strip()
                     if content:
                         if total_chars + len(content) > MAX_TOTAL_INSTRUCTION_CHARS:
                             remaining = MAX_TOTAL_INSTRUCTION_CHARS - total_chars
@@ -190,12 +190,12 @@ class ProjectContextDetector:
                     pass
 
         for subdir in root.iterdir():
-            if subdir.is_dir() and not subdir.name.startswith('.'):
+            if subdir.is_dir() and not subdir.name.startswith("."):
                 for filename in INSTRUCTION_FILES:
                     filepath = subdir / filename
                     if filepath.exists():
                         try:
-                            content = filepath.read_text(encoding='utf-8').strip()
+                            content = filepath.read_text(encoding="utf-8").strip()
                             if content:
                                 if total_chars + len(content) > MAX_TOTAL_INSTRUCTION_CHARS:
                                     break
@@ -210,12 +210,28 @@ class ProjectContextDetector:
     def _build_directory_structure(root: Path, max_depth: int = 2) -> str:
         lines = []
         ignore_dirs = {
-            '.git', 'node_modules', '__pycache__', '.venv', 'venv',
-            'dist', 'build', '.next', '.nuxt', 'target', '.idea',
-            '.vscode', 'env', '.env', 'static', 'media',
+            ".git",
+            "node_modules",
+            "__pycache__",
+            ".venv",
+            "venv",
+            "dist",
+            "build",
+            ".next",
+            ".nuxt",
+            "target",
+            ".idea",
+            ".vscode",
+            "env",
+            ".env",
+            "static",
+            "media",
         }
         ignore_files = {
-            '.DS_Store', 'Thumbs.db', '*.pyc', '*.pyo',
+            ".DS_Store",
+            "Thumbs.db",
+            "*.pyc",
+            "*.pyo",
         }
 
         def _walk(path: Path, prefix: str = "", depth: int = 0):
@@ -229,7 +245,7 @@ class ProjectContextDetector:
             dirs = []
             files = []
             for entry in entries:
-                if entry.name.startswith('.') and entry.name not in ('.env.example',):
+                if entry.name.startswith(".") and entry.name not in (".env.example",):
                     continue
                 if entry.is_dir():
                     if entry.name not in ignore_dirs:
@@ -252,13 +268,24 @@ class ProjectContextDetector:
     @staticmethod
     def _find_key_files(root: Path) -> list[str]:
         key_filenames = {
-            "README.md", "README.rst", "README.txt",
-            "requirements.txt", "setup.py", "pyproject.toml",
-            "package.json", "Cargo.toml", "go.mod",
-            "Dockerfile", "docker-compose.yml",
-            ".env.example", "Makefile",
-            "manage.py", "wsgi.py", "asgi.py",
-            "vite.config.js", "vue.config.js",
+            "README.md",
+            "README.rst",
+            "README.txt",
+            "requirements.txt",
+            "setup.py",
+            "pyproject.toml",
+            "package.json",
+            "Cargo.toml",
+            "go.mod",
+            "Dockerfile",
+            "docker-compose.yml",
+            ".env.example",
+            "Makefile",
+            "manage.py",
+            "wsgi.py",
+            "asgi.py",
+            "vite.config.js",
+            "vue.config.js",
         }
 
         found = []

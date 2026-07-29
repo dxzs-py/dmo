@@ -4,6 +4,7 @@ OpenAI Embedding Provider
 使用 langchain_openai.OpenAIEmbeddings 初始化
 文档：https://docs.langchain.com/oss/python/integrations/embeddings/openai
 """
+
 from typing import Any
 
 from langchain_core.embeddings import Embeddings

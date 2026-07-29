@@ -5,7 +5,8 @@
 - StandardToolResult: 轻量结果格式（状态枚举 + 来源标记）
 - ToolError / ToolErrorCode: 结构化错误
 """
-from enum import Enum
+
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel
@@ -14,7 +15,7 @@ from pydantic import BaseModel
 TOOL_VERSION = "1.0.0"
 
 
-class ToolErrorCode(str, Enum):
+class ToolErrorCode(StrEnum):
     TIMEOUT = "TIMEOUT"
     RATE_LIMIT = "RATE_LIMIT"
     INVALID_INPUT = "INVALID_INPUT"
@@ -24,7 +25,7 @@ class ToolErrorCode(str, Enum):
     NETWORK_ERROR = "NETWORK_ERROR"
 
 
-class ToolStatus(str, Enum):
+class ToolStatus(StrEnum):
     SUCCESS = "success"
     ERROR = "error"
     PARTIAL = "partial"
@@ -40,6 +41,7 @@ class ToolError(BaseModel):
 
 class ToolResult(BaseModel):
     """统一工具返回格式（含错误详情）"""
+
     success: bool
     content: str | None = None
     error: ToolError | None = None
@@ -63,6 +65,7 @@ class StandardToolResult(BaseModel):
 
     适用于工具内部使用，可转换为 ToolResult 或直接输出字符串。
     """
+
     content: str
     status: ToolStatus = ToolStatus.SUCCESS
     metadata: dict[str, Any] = {}
@@ -103,8 +106,11 @@ def create_tool_error(
     return ToolResult(
         success=False,
         error=ToolError(
-            code=code, message=message, tool_name=tool_name,
-            retryable=retryable, suggestion=suggestion,
+            code=code,
+            message=message,
+            tool_name=tool_name,
+            retryable=retryable,
+            suggestion=suggestion,
         ),
     )
 
@@ -113,7 +119,9 @@ def exception_to_tool_error(exc: Exception, tool_name: str) -> ToolResult:
     if isinstance(exc, TimeoutError):
         return create_tool_error(ToolErrorCode.TIMEOUT, str(exc), tool_name, retryable=True, suggestion="请稍后重试")
     if isinstance(exc, ConnectionError):
-        return create_tool_error(ToolErrorCode.NETWORK_ERROR, str(exc), tool_name, retryable=True, suggestion="请检查网络连接后重试")
+        return create_tool_error(
+            ToolErrorCode.NETWORK_ERROR, str(exc), tool_name, retryable=True, suggestion="请检查网络连接后重试"
+        )
     if isinstance(exc, (ValueError, TypeError)):
         return create_tool_error(ToolErrorCode.INVALID_INPUT, str(exc), tool_name, suggestion="请检查输入参数")
     if isinstance(exc, FileNotFoundError):
@@ -121,5 +129,7 @@ def exception_to_tool_error(exc: Exception, tool_name: str) -> ToolResult:
     if isinstance(exc, PermissionError):
         return create_tool_error(ToolErrorCode.PERMISSION_DENIED, str(exc), tool_name, suggestion="请检查权限配置")
     if isinstance(exc, RuntimeError) and "频率超限" in str(exc):
-        return create_tool_error(ToolErrorCode.RATE_LIMIT, str(exc), tool_name, retryable=True, suggestion="请降低调用频率后重试")
+        return create_tool_error(
+            ToolErrorCode.RATE_LIMIT, str(exc), tool_name, retryable=True, suggestion="请降低调用频率后重试"
+        )
     return create_tool_error(ToolErrorCode.EXECUTION_ERROR, str(exc), tool_name, suggestion="请检查工具配置和参数")

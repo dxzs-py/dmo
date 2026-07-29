@@ -61,7 +61,7 @@ def _close_checkpointer(cache_key: str, checkpointer: Any) -> None:
             return
 
         # 尝试直接关闭连接
-        if hasattr(checkpointer, 'close'):
+        if hasattr(checkpointer, "close"):
             checkpointer.close()
             logger.debug(f"已关闭 checkpointer: {cache_key}")
     except Exception as e:
@@ -80,7 +80,7 @@ def close_all_checkpointers() -> None:
                 cm_ref = _context_manager_refs.pop(f"pg_store:{id(val)}", None)
                 if cm_ref is not None:
                     cm_ref.__exit__(None, None, None)
-                elif hasattr(val, 'close'):
+                elif hasattr(val, "close"):
                     val.close()
             except Exception as e:
                 logger.warning(f"关闭 store 失败 ({key}): {e}")
@@ -170,8 +170,7 @@ def _create_postgres_checkpointer(connection_string: str | None = None) -> Any:
         from langgraph.checkpoint.postgres import PostgresSaver
     except ImportError:
         logger.warning(
-            "langgraph-checkpoint-postgres 未安装，回退到 SQLite。"
-            "安装命令: pip install langgraph-checkpoint-postgres"
+            "langgraph-checkpoint-postgres 未安装，回退到 SQLite。安装命令: pip install langgraph-checkpoint-postgres"
         )
         return _create_sqlite_checkpointer()
 
@@ -183,19 +182,19 @@ def _create_postgres_checkpointer(connection_string: str | None = None) -> Any:
     try:
         cm = PostgresSaver.from_conn_string(connection_string)
         # from_conn_string 返回上下文管理器，需要 __enter__ 获取实际实例
-        if hasattr(cm, '__enter__'):
+        if hasattr(cm, "__enter__"):
             checkpointer = cm.__enter__()
             # 保存上下文管理器引用，防止连接池被 GC 回收关闭
             _context_manager_refs[f"pg_sync:{id(checkpointer)}"] = cm
             atexit.register(cm.__exit__, None, None, None)
         else:
             checkpointer = cm
-        if hasattr(checkpointer, 'setup'):
+        if hasattr(checkpointer, "setup"):
             checkpointer.setup()
         logger.info("PostgreSQL Checkpointer 创建成功")
         return checkpointer
-    except Exception as e:
-        logger.error(f"创建 PostgreSQL Checkpointer 失败: {e}，回退到 SQLite")
+    except Exception:
+        logger.exception("创建 PostgreSQL Checkpointer 失败，回退到 SQLite")
         return _create_sqlite_checkpointer()
 
 
@@ -213,16 +212,12 @@ async def _create_async_sqlite_checkpointer(db_path: str | None = None) -> Any:
     try:
         import aiosqlite
     except ImportError:
-        logger.warning(
-            "aiosqlite 未安装，无法创建异步 SQLite Checkpointer。"
-            "安装命令: pip install aiosqlite"
-        )
+        logger.warning("aiosqlite 未安装，无法创建异步 SQLite Checkpointer。安装命令: pip install aiosqlite")
         return None
 
     if db_path is None:
         data_dir = getattr(settings, "data_dir", None) or os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
-            "data"
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "data"
         )
         os.makedirs(data_dir, exist_ok=True)
         db_path = os.path.join(data_dir, "checkpoints.db")
@@ -234,12 +229,12 @@ async def _create_async_sqlite_checkpointer(db_path: str | None = None) -> Any:
         await conn.execute("PRAGMA journal_mode=WAL")
         await conn.execute("PRAGMA busy_timeout=5000")
         checkpointer = AsyncSqliteSaver(conn)
-        if hasattr(checkpointer, 'setup'):
+        if hasattr(checkpointer, "setup"):
             await checkpointer.setup()
         logger.info("异步 SQLite Checkpointer 创建成功")
         return checkpointer
-    except Exception as e:
-        logger.error(f"创建异步 SQLite Checkpointer 失败: {e}")
+    except Exception:
+        logger.exception("创建异步 SQLite Checkpointer 失败")
         return None
 
 
@@ -262,8 +257,8 @@ def _create_async_postgres_checkpointer(connection_string: str | None = None) ->
         checkpointer = AsyncPostgresSaver.from_conn_string(connection_string)
         logger.info("异步 PostgreSQL Checkpointer 创建成功（需 await setup()）")
         return checkpointer
-    except Exception as e:
-        logger.error(f"创建异步 PostgreSQL Checkpointer 失败: {e}")
+    except Exception:
+        logger.exception("创建异步 PostgreSQL Checkpointer 失败")
         return None
 
 
@@ -294,7 +289,7 @@ async def get_async_checkpointer(
         cm = _create_async_postgres_checkpointer(connection_string)
         if cm is not None:
             # from_conn_string 返回异步上下文管理器，需要 __aenter__ 获取实际实例
-            if hasattr(cm, '__aenter__'):
+            if hasattr(cm, "__aenter__"):
                 checkpointer = await cm.__aenter__()
                 # 保存上下文管理器引用，防止连接池被 GC 回收关闭
                 _context_manager_refs[f"pg_async:{id(checkpointer)}"] = cm
@@ -356,7 +351,7 @@ async def release_async_checkpointer(
             logger.debug(f"已释放异步 Checkpointer 连接: {cache_key}")
         except Exception as e:
             logger.debug(f"释放异步 Checkpointer 连接失败 ({cache_key}): {e}")
-    elif hasattr(checkpointer, 'close'):
+    elif hasattr(checkpointer, "close"):
         try:
             checkpointer.close()
         except Exception as e:
@@ -369,8 +364,7 @@ def _create_sqlite_checkpointer(db_path: str | None = None) -> Any:
 
         if db_path is None:
             data_dir = getattr(settings, "data_dir", None) or os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
-                "data"
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "data"
             )
             os.makedirs(data_dir, exist_ok=True)
             db_path = os.path.join(data_dir, "checkpoints.db")
@@ -379,11 +373,12 @@ def _create_sqlite_checkpointer(db_path: str | None = None) -> Any:
 
         try:
             import sqlite3
+
             conn = sqlite3.connect(db_path, check_same_thread=False)
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA busy_timeout=5000")
             checkpointer = SqliteSaver(conn)
-            if hasattr(checkpointer, 'setup'):
+            if hasattr(checkpointer, "setup"):
                 checkpointer.setup()
             logger.info("SQLite Checkpointer 创建成功（独立连接）")
             return checkpointer
@@ -392,15 +387,15 @@ def _create_sqlite_checkpointer(db_path: str | None = None) -> Any:
 
         checkpointer = SqliteSaver.from_conn_string(db_path)
 
-        if hasattr(checkpointer, 'setup'):
+        if hasattr(checkpointer, "setup"):
             checkpointer.setup()
             logger.info("SQLite Checkpointer 创建成功（直接 setup）")
             return checkpointer
 
-        if hasattr(checkpointer, '__enter__'):
+        if hasattr(checkpointer, "__enter__"):
             checkpointer = checkpointer.__enter__()
             atexit.register(checkpointer.__exit__, None, None, None)
-            if hasattr(checkpointer, 'setup'):
+            if hasattr(checkpointer, "setup"):
                 checkpointer.setup()
             logger.info("SQLite Checkpointer 创建成功（上下文管理器模式）")
             return checkpointer
@@ -410,12 +405,11 @@ def _create_sqlite_checkpointer(db_path: str | None = None) -> Any:
 
     except ImportError:
         logger.warning(
-            "langgraph-checkpoint-sqlite 未安装，回退到 MemorySaver。"
-            "安装命令: pip install langgraph-checkpoint-sqlite"
+            "langgraph-checkpoint-sqlite 未安装，回退到 MemorySaver。安装命令: pip install langgraph-checkpoint-sqlite"
         )
         return _create_memory_checkpointer()
-    except Exception as e:
-        logger.error(f"创建 SQLite Checkpointer 失败: {e}，回退到 MemorySaver")
+    except Exception:
+        logger.exception("创建 SQLite Checkpointer 失败，回退到 MemorySaver")
         return _create_memory_checkpointer()
 
 
@@ -482,10 +476,7 @@ def _create_memory_store() -> Any:
         logger.info("InMemoryStore 创建成功")
         return store
     except ImportError:
-        logger.warning(
-            "langgraph.store.memory.InMemoryStore 不可用，"
-            "请升级 langgraph>=0.2.0"
-        )
+        logger.warning("langgraph.store.memory.InMemoryStore 不可用，请升级 langgraph>=0.2.0")
         return None
 
 
@@ -500,8 +491,7 @@ def _create_postgres_store() -> Any:
         from langgraph.store.postgres import PostgresStore
     except ImportError:
         logger.warning(
-            "langgraph-store-postgres 未安装，回退到 InMemoryStore。"
-            "安装命令: pip install langgraph-store-postgres"
+            "langgraph-store-postgres 未安装，回退到 InMemoryStore。安装命令: pip install langgraph-store-postgres"
         )
         return _create_memory_store()
 
@@ -512,24 +502,24 @@ def _create_postgres_store() -> Any:
     try:
         cm = PostgresStore.from_conn_string(connection_string)
         # from_conn_string 返回上下文管理器，需要 __enter__ 获取实际实例
-        if hasattr(cm, '__enter__'):
+        if hasattr(cm, "__enter__"):
             store = cm.__enter__()
             # 保存上下文管理器引用，防止连接池被 GC 回收关闭
             _context_manager_refs[f"pg_store:{id(store)}"] = cm
             atexit.register(cm.__exit__, None, None, None)
         else:
             store = cm
-        if hasattr(store, 'setup'):
+        if hasattr(store, "setup"):
             store.setup()
         logger.info("PostgreSQL Store 创建成功")
         return store
-    except Exception as e:
-        logger.error(f"创建 PostgreSQL Store 失败: {e}，回退到 InMemoryStore")
+    except Exception:
+        logger.exception("创建 PostgreSQL Store 失败，回退到 InMemoryStore")
         return _create_memory_store()
 
 
 def ensure_store(instance) -> Any:
-    if getattr(instance, '_store', None) is not None:
+    if getattr(instance, "_store", None) is not None:
         return instance._store
     try:
         instance._store = get_store()
@@ -557,22 +547,22 @@ async def delete_thread_checkpoints(thread_id: str) -> bool:
     try:
         # 优先使用异步 checkpointer（流式场景）
         checkpointer = await get_async_checkpointer()
-        if checkpointer is not None and hasattr(checkpointer, 'adelete_thread'):
+        if checkpointer is not None and hasattr(checkpointer, "adelete_thread"):
             await checkpointer.adelete_thread(thread_id=thread_id)
             logger.info(f"异步 Checkpointer 已删除 thread={thread_id} 的 checkpoint 数据")
             return True
 
         # 回退到同步 checkpointer
         checkpointer = get_checkpointer()
-        if checkpointer is not None and hasattr(checkpointer, 'delete_thread'):
+        if checkpointer is not None and hasattr(checkpointer, "delete_thread"):
             checkpointer.delete_thread(thread_id=thread_id)
             logger.info(f"同步 Checkpointer 已删除 thread={thread_id} 的 checkpoint 数据")
             return True
 
         logger.warning(f"Checkpointer 不支持 delete_thread，thread={thread_id} 的数据未清理")
         return False
-    except Exception as e:
-        logger.error(f"删除 thread={thread_id} 的 checkpoint 数据失败: {e}")
+    except Exception:
+        logger.exception(f"删除 thread={thread_id} 的 checkpoint 数据失败")
         return False
 
 
@@ -620,8 +610,8 @@ async def delete_thread_store_data(user_id: int, thread_id: str | None = None) -
 
         logger.info(f"Store 数据已清理: user_id={user_id}, thread_id={thread_id}")
         return True
-    except Exception as e:
-        logger.error(f"清理 Store 数据失败: user_id={user_id}, thread_id={thread_id}, error={e}")
+    except Exception:
+        logger.exception(f"清理 Store 数据失败: user_id={user_id}, thread_id={thread_id}")
         return False
 
 
@@ -642,10 +632,9 @@ async def delete_user_all_data(user_id: int) -> bool:
     try:
         # 获取用户所有会话的 session_id
         from django.apps import apps
-        ChatSession = apps.get_model('chat', 'ChatSession')
-        session_ids = list(
-            ChatSession.objects.filter(user_id=user_id).values_list('session_id', flat=True)
-        )
+
+        ChatSession = apps.get_model("chat", "ChatSession")
+        session_ids = list(ChatSession.objects.filter(user_id=user_id).values_list("session_id", flat=True))
 
         # 清理每个会话的 checkpoint
         for session_id in session_ids:
@@ -656,6 +645,6 @@ async def delete_user_all_data(user_id: int) -> bool:
 
         logger.info(f"用户 {user_id} 的所有 checkpoint/Store 数据已清理（{len(session_ids)} 个会话）")
         return True
-    except Exception as e:
-        logger.error(f"清理用户 {user_id} 的所有数据失败: {e}")
+    except Exception:
+        logger.exception(f"清理用户 {user_id} 的所有数据失败")
         return False

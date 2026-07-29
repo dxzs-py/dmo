@@ -5,21 +5,22 @@ from .models import ChatMessage, ChatSession
 
 @admin.register(ChatSession)
 class ChatSessionAdmin(admin.ModelAdmin):
-    list_display = ['session_id', 'user', 'title', 'mode', 'created_at', 'updated_at']
-    list_filter = ['mode', 'created_at']
-    search_fields = ['session_id', 'title', 'user__username']
-    ordering = ['-created_at']
-    readonly_fields = ['session_id', 'created_at', 'updated_at']
+    list_display = ["session_id", "user", "title", "mode", "created_at", "updated_at"]
+    list_filter = ["mode", "created_at"]
+    search_fields = ["session_id", "title", "user__username"]
+    ordering = ["-created_at"]
+    readonly_fields = ["session_id", "created_at", "updated_at"]
 
 
 @admin.register(ChatMessage)
 class ChatMessageAdmin(admin.ModelAdmin):
-    list_display = ['id', 'session', 'role', 'content_preview', 'created_at']
-    list_filter = ['role', 'created_at']
-    search_fields = ['content', 'session__session_id']
-    ordering = ['-created_at']
-    readonly_fields = ['created_at']
+    list_display = ["id", "session", "role", "content_preview", "created_at"]
+    list_filter = ["role", "created_at"]
+    search_fields = ["content", "session__session_id"]
+    ordering = ["-created_at"]
+    readonly_fields = ["created_at"]
 
+    @admin.display(description="内容预览")
     def content_preview(self, obj):
-        return obj.content[:50] + '...' if len(obj.content) > 50 else obj.content
-    content_preview.short_description = '内容预览'
+        return obj.content[:50] + "..." if len(obj.content) > 50 else obj.content
+

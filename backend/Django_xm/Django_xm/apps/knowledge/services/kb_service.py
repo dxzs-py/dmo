@@ -7,7 +7,7 @@
 
 import logging
 import shutil
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -30,9 +30,7 @@ logger = logging.getLogger(__name__)
 def list_knowledge_bases(user) -> list[dict[str, Any]]:
     """获取用户的知识库列表，过滤已删除的索引"""
     deleted_index_names = set(
-        DocumentIndex.all_objects.filter(
-            user=user, is_deleted=True
-        ).values_list('index_name', flat=True)
+        DocumentIndex.all_objects.filter(user=user, is_deleted=True).values_list("index_name", flat=True)
     )
 
     manager = IndexManager()
@@ -40,25 +38,27 @@ def list_knowledge_bases(user) -> list[dict[str, Any]]:
 
     user_indexes = []
     for idx_data in all_indexes:
-        name = idx_data.get('name', '')
+        name = idx_data.get("name", "")
         if name.startswith(f"user_{user.id}_"):
             original_name = get_original_index_name(name)
             if original_name in deleted_index_names:
                 continue
-            user_indexes.append({
-                'id': original_name,
-                'name': original_name,
-                'description': idx_data.get('description', ''),
-                'num_documents': idx_data.get('num_documents', 0),
-                'chunk_count': idx_data.get('num_documents', 0),
-                'created_at': idx_data.get('created_at', ''),
-                'updated_at': idx_data.get('updated_at', ''),
-            })
+            user_indexes.append(
+                {
+                    "id": original_name,
+                    "name": original_name,
+                    "description": idx_data.get("description", ""),
+                    "num_documents": idx_data.get("num_documents", 0),
+                    "chunk_count": idx_data.get("num_documents", 0),
+                    "created_at": idx_data.get("created_at", ""),
+                    "updated_at": idx_data.get("updated_at", ""),
+                }
+            )
 
     return user_indexes
 
 
-def create_knowledge_base(user, name: str, description: str = '') -> dict[str, Any]:
+def create_knowledge_base(user, name: str, description: str = "") -> dict[str, Any]:
     """
     创建知识库
 
@@ -69,13 +69,13 @@ def create_knowledge_base(user, name: str, description: str = '') -> dict[str, A
         ValueError: 知识库名称为空或已存在
     """
     if not name:
-        raise ValueError('知识库名称不能为空')
+        raise ValueError("知识库名称不能为空")
 
     user_index_name = get_user_index_name(user, name)
     manager = IndexManager()
 
     if manager.index_exists(user_index_name):
-        raise ValueError(f'知识库已存在: {name}')
+        raise ValueError(f"知识库已存在: {name}")
 
     manager.create_empty_index(name=user_index_name, description=description)
 
@@ -90,30 +90,26 @@ def create_knowledge_base(user, name: str, description: str = '') -> dict[str, A
         else:
             invalidate_knowledge_cache(user_id=user.id)
             return {
-                'id': name,
-                'name': name,
-                'description': existing.description,
-                'document_count': existing.document_count,
-                'chunk_count': 0,
-                'existing': True,
+                "id": name,
+                "name": name,
+                "description": existing.description,
+                "document_count": existing.document_count,
+                "chunk_count": 0,
+                "existing": True,
             }
     else:
-        index_obj = DocumentIndex(
-            user=user,
-            index_name=name,
-            description=description
-        )
+        index_obj = DocumentIndex(user=user, index_name=name, description=description)
         index_obj.save()
 
     invalidate_knowledge_cache(user_id=user.id)
 
     return {
-        'id': name,
-        'name': name,
-        'description': description,
-        'document_count': 0,
-        'chunk_count': 0,
-        'existing': False,
+        "id": name,
+        "name": name,
+        "description": description,
+        "document_count": 0,
+        "chunk_count": 0,
+        "existing": False,
     }
 
 
@@ -128,20 +124,20 @@ def get_knowledge_base_detail(user, kb_id: str) -> dict[str, Any]:
     manager = IndexManager()
 
     if not manager.index_exists(user_index_name):
-        raise FileNotFoundError(f'知识库不存在: {kb_id}')
+        raise FileNotFoundError(f"知识库不存在: {kb_id}")
 
     stats = manager.get_index_stats(user_index_name)
     metadata = manager._load_metadata(user_index_name) or {}
 
     return {
-        'id': kb_id,
-        'name': kb_id,
-        'description': metadata.get('description', ''),
-        'chunk_count': stats.get('num_documents', 0),
-        'store_type': stats.get('store_type', ''),
-        'embedding_model': stats.get('embedding_model', ''),
-        'created_at': metadata.get('created_at', ''),
-        'updated_at': metadata.get('updated_at', ''),
+        "id": kb_id,
+        "name": kb_id,
+        "description": metadata.get("description", ""),
+        "chunk_count": stats.get("num_documents", 0),
+        "store_type": stats.get("store_type", ""),
+        "embedding_model": stats.get("embedding_model", ""),
+        "created_at": metadata.get("created_at", ""),
+        "updated_at": metadata.get("updated_at", ""),
     }
 
 
@@ -156,11 +152,11 @@ def update_knowledge_base(user, kb_id: str, description: str) -> dict[str, Any]:
     manager = IndexManager()
 
     if not manager.index_exists(user_index_name):
-        raise FileNotFoundError(f'知识库不存在: {kb_id}')
+        raise FileNotFoundError(f"知识库不存在: {kb_id}")
 
     metadata = manager._load_metadata(user_index_name) or {}
-    metadata['description'] = description
-    metadata['updated_at'] = datetime.now(UTC).isoformat()
+    metadata["description"] = description
+    metadata["updated_at"] = datetime.now(UTC).isoformat()
     manager._save_metadata(user_index_name, metadata)
 
     index_obj = DocumentIndex.objects.filter(user=user, index_name=kb_id).first()
@@ -171,9 +167,9 @@ def update_knowledge_base(user, kb_id: str, description: str) -> dict[str, Any]:
     invalidate_knowledge_cache(user_id=user.id)
 
     return {
-        'id': kb_id,
-        'name': kb_id,
-        'description': description,
+        "id": kb_id,
+        "name": kb_id,
+        "description": description,
     }
 
 
@@ -188,7 +184,7 @@ def delete_knowledge_base(user, kb_id: str) -> None:
     manager = IndexManager()
 
     if not manager.index_exists(user_index_name):
-        raise FileNotFoundError(f'知识库不存在: {kb_id}')
+        raise FileNotFoundError(f"知识库不存在: {kb_id}")
 
     manager.delete_index(user_index_name)
 
@@ -207,6 +203,7 @@ def delete_knowledge_base(user, kb_id: str) -> None:
     invalidate_knowledge_cache(user_id=user.id, user_index_name=user_index_name)
 
     from Django_xm.apps.chat.services.cross_app import clear_knowledge_base_selection
+
     clear_knowledge_base_selection(user_id=user.id, kb_name=kb_id)
 
 
@@ -221,7 +218,7 @@ def list_documents(user, kb_id: str) -> list[dict[str, Any]]:
     manager = IndexManager()
 
     if not manager.index_exists(user_index_name):
-        raise FileNotFoundError(f'知识库不存在: {kb_id}')
+        raise FileNotFoundError(f"知识库不存在: {kb_id}")
 
     upload_dir = Path(app_cfg.data_uploads_path) / user_index_name
     files = []
@@ -230,11 +227,13 @@ def list_documents(user, kb_id: str) -> list[dict[str, Any]]:
         for item in upload_dir.iterdir():
             if item.is_file():
                 stat = item.stat()
-                files.append({
-                    'name': item.name,
-                    'size': stat.st_size,
-                    'uploaded_at': datetime.fromtimestamp(stat.st_ctime).isoformat(),
-                })
+                files.append(
+                    {
+                        "name": item.name,
+                        "size": stat.st_size,
+                        "uploaded_at": datetime.fromtimestamp(stat.st_ctime, tz=UTC).isoformat(),
+                    }
+                )
 
     logger.info(f"返回 {len(files)} 个文档给用户 {user.username}")
     return files
@@ -260,10 +259,10 @@ def upload_documents(user, kb_id: str, uploaded_files: list) -> dict[str, Any]:
     manager = IndexManager()
 
     if not manager.index_exists(user_index_name):
-        raise FileNotFoundError(f'知识库不存在: {kb_id}')
+        raise FileNotFoundError(f"知识库不存在: {kb_id}")
 
     if not uploaded_files:
-        raise ValueError('请选择要上传的文件')
+        raise ValueError("请选择要上传的文件")
 
     upload_dir = Path(app_cfg.data_uploads_path) / user_index_name
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -273,31 +272,33 @@ def upload_documents(user, kb_id: str, uploaded_files: list) -> dict[str, Any]:
 
     for uploaded_file in uploaded_files:
         file_path = upload_dir / uploaded_file.name
-        with open(file_path, 'wb') as f:
+        with open(file_path, "wb") as f:
             for chunk in uploaded_file.chunks():
                 f.write(chunk)
 
         docs = load_document(str(file_path))
         all_documents.extend(docs)
-        saved_files.append({
-            'name': uploaded_file.name,
-            'size': file_path.stat().st_size,
-        })
+        saved_files.append(
+            {
+                "name": uploaded_file.name,
+                "size": file_path.stat().st_size,
+            }
+        )
 
     if not all_documents:
-        raise ValueError('未能从上传文件中提取内容')
+        raise ValueError("未能从上传文件中提取内容")
 
     chunks = split_documents(all_documents)
     # 上传文档时使用索引原有维度约束（如有），确保维度一致
     index_metadata = manager._load_metadata(user_index_name)
-    required_dim = index_metadata.get('embedding_dimension') if index_metadata else None
+    required_dim = index_metadata.get("embedding_dimension") if index_metadata else None
     embeddings = get_embeddings(required_dimension=required_dim)
 
     count = manager.add_documents(user_index_name, chunks, embeddings)
 
     # 检查 Embedding 降级事件
     fallback_info = None
-    if hasattr(embeddings, 'get_fallback_events') and hasattr(embeddings, 'get_active_provider_id'):
+    if hasattr(embeddings, "get_fallback_events") and hasattr(embeddings, "get_active_provider_id"):
         events = embeddings.get_fallback_events()
         if events:
             actual_provider = embeddings.get_active_provider_id()
@@ -309,6 +310,7 @@ def upload_documents(user, kb_id: str, uploaded_files: list) -> dict[str, Any]:
             if actual_provider:
                 try:
                     from Django_xm.apps.knowledge.config import SystemConfig
+
                     current_config = SystemConfig.get_value("embedding_provider", {})
                     if current_config.get("provider_id") != actual_provider:
                         current_config["provider_id"] = actual_provider
@@ -320,15 +322,15 @@ def upload_documents(user, kb_id: str, uploaded_files: list) -> dict[str, Any]:
     index_obj = DocumentIndex.objects.filter(user=user, index_name=kb_id).first()
     if index_obj:
         for file_info in saved_files:
-            ext = get_file_extension(file_info['name'])
+            ext = get_file_extension(file_info["name"])
             doc_type = get_document_type(ext)
             doc = Document(
                 index=index_obj,
-                filename=file_info['name'],
-                file_path=str(upload_dir / file_info['name']),
+                filename=file_info["name"],
+                file_path=str(upload_dir / file_info["name"]),
                 file_type=doc_type,
-                file_size=file_info['size'],
-                chunk_count=len(chunks) // len(saved_files) if saved_files else 0
+                file_size=file_info["size"],
+                chunk_count=len(chunks) // len(saved_files) if saved_files else 0,
             )
             doc.save()
         index_obj.document_count += len(saved_files)
@@ -337,10 +339,10 @@ def upload_documents(user, kb_id: str, uploaded_files: list) -> dict[str, Any]:
     invalidate_knowledge_cache(user_id=user.id, user_index_name=user_index_name)
 
     return {
-        'documents_uploaded': len(saved_files),
-        'chunks_created': count,
-        'files': saved_files,
-        'fallback_info': fallback_info,
+        "documents_uploaded": len(saved_files),
+        "chunks_created": count,
+        "files": saved_files,
+        "fallback_info": fallback_info,
     }
 
 
@@ -355,19 +357,19 @@ def delete_document(user, kb_id: str, filename: str) -> dict[str, Any]:
     manager = IndexManager()
 
     if not manager.index_exists(user_index_name):
-        raise FileNotFoundError(f'知识库不存在: {kb_id}')
+        raise FileNotFoundError(f"知识库不存在: {kb_id}")
 
     upload_dir = Path(app_cfg.data_uploads_path) / user_index_name
     file_path = upload_dir / filename
 
     if not file_path.exists() or not file_path.is_file():
-        raise FileNotFoundError(f'文件不存在: {filename}')
+        raise FileNotFoundError(f"文件不存在: {filename}")
 
     logger.info(f"删除文档: {filename} 从 {user_index_name}")
 
     try:
         index_metadata = manager._load_metadata(user_index_name)
-        required_dim = index_metadata.get('embedding_dimension') if index_metadata else None
+        required_dim = index_metadata.get("embedding_dimension") if index_metadata else None
         embeddings = get_embeddings(required_dimension=required_dim)
         removed = manager.remove_documents_by_filename(user_index_name, embeddings, filename)
         logger.info(f"从向量索引中删除 {removed} 个文档块")
@@ -386,14 +388,14 @@ def delete_document(user, kb_id: str, filename: str) -> dict[str, Any]:
     logger.info(f"文件已从磁盘删除: {file_path}")
 
     metadata = manager._load_metadata(user_index_name) or {}
-    metadata['updated_at'] = datetime.now(UTC).isoformat()
-    if 'num_documents' in metadata:
-        metadata['num_documents'] = max(0, metadata['num_documents'] - 1)
+    metadata["updated_at"] = datetime.now(UTC).isoformat()
+    if "num_documents" in metadata:
+        metadata["num_documents"] = max(0, metadata["num_documents"] - 1)
     manager._save_metadata(user_index_name, metadata)
 
     invalidate_knowledge_cache(user_id=user.id, user_index_name=user_index_name)
 
-    return {'message': f'文件已删除: {filename}'}
+    return {"message": f"文件已删除: {filename}"}
 
 
 def search_knowledge_base(user, kb_id: str, query: str, top_k: int = 5) -> list[dict[str, Any]]:
@@ -405,18 +407,18 @@ def search_knowledge_base(user, kb_id: str, query: str, top_k: int = 5) -> list[
         FileNotFoundError: 知识库不存在
     """
     if not query:
-        raise ValueError('查询内容不能为空')
+        raise ValueError("查询内容不能为空")
 
     user_index_name = get_user_index_name(user, kb_id)
     manager = IndexManager()
 
     if not manager.index_exists(user_index_name):
-        raise FileNotFoundError(f'知识库不存在: {kb_id}')
+        raise FileNotFoundError(f"知识库不存在: {kb_id}")
 
     from ..vector_store import search_vector_store
 
     index_metadata = manager._load_metadata(user_index_name)
-    required_dim = index_metadata.get('embedding_dimension') if index_metadata else None
+    required_dim = index_metadata.get("embedding_dimension") if index_metadata else None
     embeddings = get_embeddings(required_dimension=required_dim)
     vector_store = manager.load_index(user_index_name, embeddings)
 
@@ -431,19 +433,21 @@ def search_knowledge_base(user, kb_id: str, query: str, top_k: int = 5) -> list[
         # 维度不匹配时，可能是 SQLAlchemy MetaData 缓存了旧的列定义
         # 需要清理 MetaData、释放连接后重试
         err_msg = str(e)
-        if 'different vector dimensions' in err_msg:
+        if "different vector dimensions" in err_msg:
             logger.warning(f"检测到维度不匹配，清理缓存后重试: {err_msg}")
             # 释放旧 VectorStore 的 SQLAlchemy engine 连接池
-            if hasattr(vector_store, '_engine') and vector_store._engine:
+            if hasattr(vector_store, "_engine") and vector_store._engine:
                 vector_store._engine.dispose()
             # 关闭 Django 数据库连接
             from django.db import connections
+
             connections.close_all()
             # 清理 SQLAlchemy MetaData 缓存（根因：ALTER TABLE 后列类型缓存未更新）
             try:
                 from langchain_postgres.vectorstores import Base
+
                 Base.metadata.clear()
-            except Exception:
+            except Exception:  # noqa: S110  # cleanup, 缓存清理失败不影响重试主流程
                 pass
             # 清理 IndexManager 缓存
             IndexManager._cache.clear()
@@ -454,9 +458,9 @@ def search_knowledge_base(user, kb_id: str, query: str, top_k: int = 5) -> list[
     search_results = []
     for doc, score in results:
         item = {
-            'content': doc.page_content,
-            'source': doc.metadata.get('source', ''),
-            'score': float(score) if score is not None else 0,
+            "content": doc.page_content,
+            "source": doc.metadata.get("source", ""),
+            "score": float(score) if score is not None else 0,
         }
         search_results.append(item)
     VectorSearchCacheService.cache_search_result(query, search_results, user_index_name, top_k)
@@ -483,9 +487,7 @@ def rebuild_index_from_source_files(
     """
     # 从索引全名提取短名（user_1_test2 → test2）
     original_name = get_original_index_name(kb_name)
-    index_obj = DocumentIndex.objects.filter(
-        user=user, index_name=original_name
-    ).first()
+    index_obj = DocumentIndex.objects.filter(user=user, index_name=original_name).first()
     if not index_obj:
         raise FileNotFoundError(f"知识库不存在: {kb_name}")
 

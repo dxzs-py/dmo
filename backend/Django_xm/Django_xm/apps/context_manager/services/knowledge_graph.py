@@ -116,25 +116,63 @@ class Relation:
 
 
 ENTITY_TYPES = {
-    "person", "organization", "location", "technology",
-    "concept", "document", "project", "task", "preference", "event",
+    "person",
+    "organization",
+    "location",
+    "technology",
+    "concept",
+    "document",
+    "project",
+    "task",
+    "preference",
+    "event",
 }
 
 RELATION_TYPES = {
-    "related_to", "part_of", "depends_on", "uses", "created_by",
-    "belongs_to", "prefers", "mentions", "solves", "contradicts",
+    "related_to",
+    "part_of",
+    "depends_on",
+    "uses",
+    "created_by",
+    "belongs_to",
+    "prefers",
+    "mentions",
+    "solves",
+    "contradicts",
 }
 
 
 class ConversationGraphExtractor:
     """从对话中提取实体和关系"""
 
-    _TECH_KEYWORDS = frozenset({
-        "python", "django", "vue", "react", "langchain", "langgraph",
-        "docker", "kubernetes", "api", "rest", "graphql", "sql",
-        "postgresql", "redis", "chroma", "faiss", "openai", "claude",
-        "gpt", "llm", "agent", "rag", "embedding", "vector",
-    })
+    _TECH_KEYWORDS = frozenset(
+        {
+            "python",
+            "django",
+            "vue",
+            "react",
+            "langchain",
+            "langgraph",
+            "docker",
+            "kubernetes",
+            "api",
+            "rest",
+            "graphql",
+            "sql",
+            "postgresql",
+            "redis",
+            "chroma",
+            "faiss",
+            "openai",
+            "claude",
+            "gpt",
+            "llm",
+            "agent",
+            "rag",
+            "embedding",
+            "vector",
+        }
+    )
 
     _ACTION_PATTERNS: ClassVar[list[tuple[str, list[str]]]] = [
         ("prefers", ["喜欢", "偏好", "倾向于", "prefer", "like", "want"]),
@@ -150,12 +188,11 @@ class ConversationGraphExtractor:
         relations: dict[str, Relation] = {}
 
         for msg in messages:
-            role = msg.get('role', '')
-            content = msg.get('content', '')
+            role = msg.get("role", "")
+            content = msg.get("content", "")
             if isinstance(content, list):
-                content = ' '.join(
-                    block.get('text', '') if isinstance(block, dict) else str(block)
-                    for block in content
+                content = " ".join(
+                    block.get("text", "") if isinstance(block, dict) else str(block) for block in content
                 )
             if not isinstance(content, str) or not content.strip():
                 continue
@@ -179,57 +216,66 @@ class ConversationGraphExtractor:
 
     def _extract_entities(self, text: str, role: str, timestamp: float) -> list[Entity]:
         import re
+
         entities = []
 
         for tech in self._TECH_KEYWORDS:
             if tech.lower() in text.lower():
-                entities.append(Entity(
-                    name=tech,
-                    entity_type="technology",
-                    confidence=0.9 if role == "user" else 0.7,
-                    first_seen=timestamp,
-                    last_seen=timestamp,
-                ))
+                entities.append(
+                    Entity(
+                        name=tech,
+                        entity_type="technology",
+                        confidence=0.9 if role == "user" else 0.7,
+                        first_seen=timestamp,
+                        last_seen=timestamp,
+                    )
+                )
 
         quoted = re.findall(r'[""「」『』]([^""「」『』]{2,40})[""「」『』]', text)
         for q in quoted:
-            entities.append(Entity(
-                name=q,
-                entity_type="concept",
-                confidence=0.8,
-                first_seen=timestamp,
-                last_seen=timestamp,
-            ))
+            entities.append(
+                Entity(
+                    name=q,
+                    entity_type="concept",
+                    confidence=0.8,
+                    first_seen=timestamp,
+                    last_seen=timestamp,
+                )
+            )
 
         name_patterns = [
-            r'(?:叫做?|名为|称为|名字是)\s*([^\s，。！？,.!?]{2,20})',
+            r"(?:叫做?|名为|称为|名字是)\s*([^\s，。！？,.!?]{2,20})",
             r'(?:项目|任务|文档|文件)\s*[""「」]([^""「」]{2,30})[""「」]',
         ]
         for pattern in name_patterns:
             matches = re.findall(pattern, text)
             for m in matches:
-                entities.append(Entity(
-                    name=m,
-                    entity_type="concept",
-                    confidence=0.85,
-                    first_seen=timestamp,
-                    last_seen=timestamp,
-                ))
+                entities.append(
+                    Entity(
+                        name=m,
+                        entity_type="concept",
+                        confidence=0.85,
+                        first_seen=timestamp,
+                        last_seen=timestamp,
+                    )
+                )
 
         if role == "user":
             pref_patterns = [
-                r'(?:我喜欢|我偏好|我想要|我需要)\s*([^\s，。！？,.!?]{2,30})',
+                r"(?:我喜欢|我偏好|我想要|我需要)\s*([^\s，。！？,.!?]{2,30})",
             ]
             for pattern in pref_patterns:
                 matches = re.findall(pattern, text)
                 for m in matches:
-                    entities.append(Entity(
-                        name=m,
-                        entity_type="preference",
-                        confidence=0.9,
-                        first_seen=timestamp,
-                        last_seen=timestamp,
-                    ))
+                    entities.append(
+                        Entity(
+                            name=m,
+                            entity_type="preference",
+                            confidence=0.9,
+                            first_seen=timestamp,
+                            last_seen=timestamp,
+                        )
+                    )
 
         return entities
 
@@ -245,12 +291,14 @@ class ConversationGraphExtractor:
                         source = self._find_nearest_entity(parts[0], known_entities)
                         target = self._find_nearest_entity(parts[1], known_entities)
                         if source and target and source != target:
-                            relations.append(Relation(
-                                source=source,
-                                target=target,
-                                relation_type=rel_type,
-                                confidence=0.7,
-                            ))
+                            relations.append(
+                                Relation(
+                                    source=source,
+                                    target=target,
+                                    relation_type=rel_type,
+                                    confidence=0.7,
+                                )
+                            )
                     break
 
         return relations
@@ -275,6 +323,7 @@ class ConversationGraphExtractor:
         if llm is None:
             try:
                 from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
+
                 llm = get_chat_model()
             except Exception as e:
                 logger.warning(f"LLM 实例获取失败，回退正则提取: {e}")
@@ -351,12 +400,11 @@ class ConversationGraphExtractor:
     def _format_messages_for_llm(messages: list[dict[str, Any]]) -> str:
         lines = []
         for msg in messages:
-            role = msg.get('role', 'unknown')
-            content = msg.get('content', '')
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
             if isinstance(content, list):
-                content = ' '.join(
-                    block.get('text', '') if isinstance(block, dict) else str(block)
-                    for block in content
+                content = " ".join(
+                    block.get("text", "") if isinstance(block, dict) else str(block) for block in content
                 )
             if not isinstance(content, str) or not content.strip():
                 continue
@@ -375,6 +423,7 @@ class KnowledgeGraphStore:
 
     def _ensure_store(self):
         from Django_xm.apps.ai_engine.services.checkpointer_factory import ensure_store
+
         return ensure_store(self)
 
     @staticmethod
@@ -405,8 +454,8 @@ class KnowledgeGraphStore:
             store.put(namespace, "graph", graph_data)
             logger.debug(f"知识图谱已保存: user={user_id}, entities={len(entities)}, relations={len(relations)}")
             return True
-        except Exception as e:
-            logger.error(f"知识图谱保存到 Store 失败: {e}")
+        except Exception:
+            logger.exception("知识图谱保存到 Store 失败")
             return False
 
     def load_graph(self, user_id: int) -> tuple[list[Entity], list[Relation]]:
@@ -420,12 +469,12 @@ class KnowledgeGraphStore:
             namespace = self._namespace(user_id)
             try:
                 item = store.get(namespace, "graph")
-                if item and hasattr(item, 'value'):
+                if item and hasattr(item, "value"):
                     data = item.value
                     self._local_graph[cache_key] = data
                     return self._deserialize_graph(data)
-            except Exception as e:
-                logger.error(f"从 Store 加载知识图谱失败: {e}")
+            except Exception:
+                logger.exception("从 Store 加载知识图谱失败")
 
         return [], []
 
@@ -489,10 +538,7 @@ class KnowledgeGraphStore:
 
         expanded = self._expand_entities(matched, relations, max_hops)
         relevant_entities = [e for e in entities if e.name in expanded][:max_entities]
-        relevant_relations = [
-            r for r in relations
-            if r.source in expanded or r.target in expanded
-        ][:max_entities]
+        relevant_relations = [r for r in relations if r.source in expanded or r.target in expanded][:max_entities]
 
         return self._format_context(relevant_entities, relevant_relations)
 
@@ -606,8 +652,8 @@ class ContextKnowledgeGraph:
             try:
                 store.delete(namespace, "graph")
                 return True
-            except Exception as e:
-                logger.error(f"清除知识图谱失败: {e}")
+            except Exception:
+                logger.exception("清除知识图谱失败")
         return True
 
     def clear_user_graph(self, user_id: int) -> bool:

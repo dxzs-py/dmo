@@ -12,6 +12,7 @@
     conda activate langchain_xm
     python -m pytest Django_xm/apps/agent_hub/tests/test_builder_registry.py -v
 """
+
 from __future__ import annotations
 
 import os
@@ -60,7 +61,8 @@ class TestBuilderRegistry(unittest.TestCase):
         registry = get_registered_builders()
         for agent_type in AgentType:
             self.assertIn(
-                agent_type, registry,
+                agent_type,
+                registry,
                 f"AgentType.{agent_type.name} 未注册",
             )
         self.assertEqual(len(registry), len(AgentType))
@@ -70,7 +72,8 @@ class TestBuilderRegistry(unittest.TestCase):
         registry = get_registered_builders()
         for agent_type, expected_cls in _EXPECTED_MAPPING.items():
             self.assertIs(
-                registry[agent_type], expected_cls,
+                registry[agent_type],
+                expected_cls,
                 f"AgentType.{agent_type.name} 应注册到 "
                 f"{expected_cls.__name__}，实际注册到 "
                 f"{registry[agent_type].__name__}",
@@ -100,6 +103,7 @@ class TestBuilderRegistry(unittest.TestCase):
         再用新类注册应抛出 ValueError。
         """
         with self.assertRaises(ValueError) as ctx:
+
             @register_builder(AgentType.BASE)
             class _DuplicateBuilder:
                 pass
@@ -145,6 +149,7 @@ class TestBuilderRegistry(unittest.TestCase):
     def test_register_builder_rejects_non_agent_type(self):
         """测试 register_builder 拒绝非 AgentType 值"""
         with self.assertRaises(TypeError):
+
             @register_builder("not_an_agent_type")  # type: ignore[arg-type]
             class _BadBuilder:
                 pass
@@ -152,6 +157,7 @@ class TestBuilderRegistry(unittest.TestCase):
     def test_register_builder_requires_at_least_one_type(self):
         """测试 register_builder 无参数时抛出 ValueError"""
         with self.assertRaises(ValueError):
+
             @register_builder()  # type: ignore[call-arg]
             class _NoTypeBuilder:
                 pass

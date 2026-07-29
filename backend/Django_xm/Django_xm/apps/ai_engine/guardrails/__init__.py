@@ -70,16 +70,24 @@ def create_standard_guardrails(
         mask_pii=True,
     )
 
-    input_validator = InputValidator(
-        content_filter=content_filter,
-        strict_mode=strict_mode,
-    ) if enable_input_validation else None
+    input_validator = (
+        InputValidator(
+            content_filter=content_filter,
+            strict_mode=strict_mode,
+        )
+        if enable_input_validation
+        else None
+    )
 
-    output_validator = OutputValidator(
-        content_filter=content_filter,
-        require_sources=require_sources,
-        strict_mode=strict_mode,
-    ) if enable_output_validation else None
+    output_validator = (
+        OutputValidator(
+            content_filter=content_filter,
+            require_sources=require_sources,
+            strict_mode=strict_mode,
+        )
+        if enable_output_validation
+        else None
+    )
 
     guardrails_middleware = create_guardrails_middleware(
         input_validator=input_validator,
@@ -94,6 +102,7 @@ def create_standard_guardrails(
         middleware_list.extend(extra_middleware)
 
     return middleware_list
+
 
 __all__ = [
     "ContentFilter",

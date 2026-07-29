@@ -21,7 +21,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from Django_xm.apps.context_manager.config import context_settings
-from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.context_manager.services.attention_guide import AttentionGuide
 from Django_xm.apps.context_manager.services.circuit_breaker import ContextCircuitBreaker
 from Django_xm.apps.context_manager.services.compression import (
@@ -41,6 +40,7 @@ from Django_xm.apps.context_manager.services.knowledge_graph import (
     ContextKnowledgeGraph,
 )
 from Django_xm.apps.context_manager.services.token_budget import ContextEfficiencyMetrics, TokenBudgetManager
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -112,7 +112,9 @@ class ContextManager:
                 strategy=CompressionStrategy(self.config.compression_strategy),
             )
             self._compression_engine = ContextCompressionEngine(
-                comp_config, store=store, user_id=str(user_id) if user_id else None,
+                comp_config,
+                store=store,
+                user_id=str(user_id) if user_id else None,
                 thread_id=thread_id,
             )
 
@@ -143,30 +145,27 @@ class ContextManager:
         tags: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """根据 role/content 自动标记长期记忆"""
-        effective_tags = tags or [
-            t.strip() for t in context_settings.long_term_tags.split(",") if t.strip()
-        ]
+        effective_tags = tags or [t.strip() for t in context_settings.long_term_tags.split(",") if t.strip()]
         marked = []
         for msg in messages:
             # role == "system" 的消息标记为 long_term
-            if msg.get('role') == 'system':
-                marked.append({**msg, 'memory_tier': 'long_term'})
+            if msg.get("role") == "system":
+                marked.append({**msg, "memory_tier": "long_term"})
                 continue
             # content 中包含 tags 中关键词的消息标记为 long_term
-            content = msg.get('content', '')
+            content = msg.get("content", "")
             if isinstance(content, list):
-                content = ' '.join(
-                    block.get('text', '') if isinstance(block, dict) else str(block)
-                    for block in content
+                content = " ".join(
+                    block.get("text", "") if isinstance(block, dict) else str(block) for block in content
                 )
             if isinstance(content, str):
                 content_lower = content.lower()
                 if any(tag.lower() in content_lower for tag in effective_tags):
-                    marked.append({**msg, 'memory_tier': 'long_term'})
+                    marked.append({**msg, "memory_tier": "long_term"})
                     continue
             # 已标记的保留
-            if msg.get('memory_tier') == 'long_term':
-                marked.append({**msg, 'memory_tier': 'long_term'})
+            if msg.get("memory_tier") == "long_term":
+                marked.append({**msg, "memory_tier": "long_term"})
                 continue
             marked.append(msg)
         return marked
@@ -189,8 +188,7 @@ class ContextManager:
             content = msg.get("content", "")
             if isinstance(content, list):
                 content = " ".join(
-                    block.get("text", "") if isinstance(block, dict) else str(block)
-                    for block in content
+                    block.get("text", "") if isinstance(block, dict) else str(block) for block in content
                 )
 
             # 已标记的跳过
@@ -228,9 +226,7 @@ class ContextManager:
 
         if self._knowledge_graph and self.user_id:
             try:
-                entities, relations = self._knowledge_graph.process_conversation(
-                    self.user_id, messages
-                )
+                entities, relations = self._knowledge_graph.process_conversation(self.user_id, messages)
                 metadata["knowledge_graph"] = {
                     "entity_count": len(entities),
                     "relation_count": len(relations),
@@ -312,6 +308,7 @@ class ContextManager:
         if include_document_context and self.user_id:
             try:
                 from Django_xm.apps.attachments.services.document_memory_service import DocumentMemoryService
+
                 doc_service = DocumentMemoryService(store=self._store)
                 doc_context = doc_service.build_document_context(self.user_id)
                 if doc_context:
@@ -342,7 +339,10 @@ class ContextManager:
                     if not check.within_budget:
                         logger.warning(
                             "上下文分区 'tools' 超出 Token 预算: "
-                            "used=%d, budget=%d, over_by=%d" % (check.used, check.budget, check.over_by)
+                            "used=%d, budget=%d, over_by=%d",
+                            check.used,
+                            check.budget,
+                            check.over_by,
                         )
 
                 memory_content = "\n".join(memory_parts)
@@ -371,6 +371,7 @@ class ContextManager:
         """构建结构化上下文，包含基础上下文、压缩和预算检查"""
         # 支持 BaseMessage 列表输入（自动转换为 Dict 列表）
         from langchain_core.messages import BaseMessage
+
         if messages and isinstance(messages[0], BaseMessage):
             messages = self._messages_to_dicts(messages)
 
@@ -385,13 +386,19 @@ class ContextManager:
         self._token_budget_manager.allocate(resolved_model)
 
         ctx = self._build_base_context(
-            pruned_messages, query, mode, tools_description, llm,
+            pruned_messages,
+            query,
+            mode,
+            tools_description,
+            llm,
         )
 
         budget_over_sections = self._check_token_budget()
         if budget_over_sections:
             self._apply_compression_if_needed(
-                ctx, pruned_messages, budget_over_sections,
+                ctx,
+                pruned_messages,
+                budget_over_sections,
             )
             # 记录压缩效率
             if self._compression_engine is not None:
@@ -405,12 +412,17 @@ class ContextManager:
             # 压缩后仍超预算，使用语义相关性进一步筛选历史消息
             if budget_over_sections and "history" in budget_over_sections:
                 pruned_messages, relevance_removed = self._context_pruner.prune_by_relevance(
-                    pruned_messages, query,
+                    pruned_messages,
+                    query,
                     keep_count=self.config.compression_keep_recent,
                 )
                 if relevance_removed > 0:
                     ctx = self._build_base_context(
-                        pruned_messages, query, mode, tools_description, llm,
+                        pruned_messages,
+                        query,
+                        mode,
+                        tools_description,
+                        llm,
                     )
                     self._token_budget_manager.reset_usage()
                     budget_over_sections = self._check_token_budget()
@@ -474,11 +486,11 @@ class ContextManager:
         # 将知识图谱上下文中的关键实体标记为 LONG_TERM
         kg_marked_messages = []
         for msg in pruned_messages:
-            if msg.get('memory_tier') == 'long_term':
+            if msg.get("memory_tier") == "long_term":
                 kg_marked_messages.append(msg)
-            elif system_content and msg.get('role') == 'system':
+            elif system_content and msg.get("role") == "system":
                 # system prompt 标记为 LONG_TERM
-                kg_marked_messages.append({**msg, 'memory_tier': 'long_term'})
+                kg_marked_messages.append({**msg, "memory_tier": "long_term"})
             else:
                 kg_marked_messages.append(msg)
         pruned_messages = kg_marked_messages
@@ -495,6 +507,7 @@ class ContextManager:
         if llm is not None and build_mode in (BuildMode.FULL, BuildMode.AGENT):
             try:
                 from Django_xm.apps.context_manager.services.retrieval_augmenter import RetrievalAugmenter
+
                 rewritten = RetrievalAugmenter.hyde_rewrite_sync(query, llm)
                 if rewritten and rewritten != query:
                     memory_content = f"[HyDE 改写查询]\n{rewritten}"
@@ -632,10 +645,10 @@ class ContextManager:
             role = role_map.get(type(msg), "unknown")
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
             entry: dict[str, Any] = {"role": role, "content": content}
-            if hasattr(msg, 'tool_calls') and msg.tool_calls:
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
                 entry["tool_calls"] = msg.tool_calls
-            if hasattr(msg, 'additional_kwargs') and 'memory_tier' in msg.additional_kwargs:
-                entry["memory_tier"] = msg.additional_kwargs['memory_tier']
+            if hasattr(msg, "additional_kwargs") and "memory_tier" in msg.additional_kwargs:
+                entry["memory_tier"] = msg.additional_kwargs["memory_tier"]
             result.append(entry)
         return result
 
@@ -646,10 +659,7 @@ class ContextManager:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
             if isinstance(content, list):
-                content = " ".join(
-                    c.get("text", str(c)) if isinstance(c, dict) else str(c)
-                    for c in content
-                )
+                content = " ".join(c.get("text", str(c)) if isinstance(c, dict) else str(c) for c in content)
             parts.append(f"[{role}]: {content}")
         return "\n".join(parts)
 
@@ -684,16 +694,16 @@ class ContextManager:
                     # 按 saved_at 排序，淘汰最旧的
                     sorted_items = sorted(
                         existing_items,
-                        key=lambda item: (item.value if hasattr(item, 'value') else item).get("saved_at", 0)
+                        key=lambda item: (item.value if hasattr(item, "value") else item).get("saved_at", 0),
                     )
                     evict_count = len(existing_items) - max_entries + 1
                     for item in sorted_items[:evict_count]:
-                        item_key = item.key if hasattr(item, 'key') else str(item.value.get("session_id", ""))
+                        item_key = item.key if hasattr(item, "key") else str(item.value.get("session_id", ""))
                         if item_key and item_key != session_id:  # 不淘汰当前要保存的
                             try:
                                 store.delete(namespace, item_key)
                                 logger.debug(f"淘汰旧会话记忆: key={item_key}")
-                            except Exception:
+                            except Exception:  # noqa: S110  # cleanup, 单个旧记忆删除失败不影响整体淘汰
                                 pass
             except Exception as e:
                 logger.debug(f"跨会话记忆淘汰检查失败（不影响保存）: {e}")
@@ -701,8 +711,8 @@ class ContextManager:
             store.put(namespace, session_id, data)
             logger.debug(f"会话上下文已保存: session={session_id}")
             return True
-        except Exception as e:
-            logger.error(f"保存会话上下文失败: {e}")
+        except Exception:
+            logger.exception("保存会话上下文失败")
             return False
 
     def _load_cross_session_context(self, query: str) -> str:
@@ -718,7 +728,7 @@ class ContextManager:
 
             contexts = []
             for item in items[:5]:
-                data = item.value if hasattr(item, 'value') else item
+                data = item.value if hasattr(item, "value") else item
                 summary = data.get("summary", "")
                 entities = data.get("key_entities", [])
                 if summary:
@@ -800,6 +810,7 @@ class ContextManager:
 
     def _ensure_store(self):
         from Django_xm.apps.ai_engine.services.checkpointer_factory import ensure_store
+
         return ensure_store(self)
 
     def get_stats(self) -> dict[str, Any]:

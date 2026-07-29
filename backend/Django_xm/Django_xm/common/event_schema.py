@@ -24,7 +24,7 @@
 from __future__ import annotations
 
 import logging
-from enum import Enum
+from enum import StrEnum
 from typing import Any, TypedDict
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ class PayloadValidationError(Exception):
     """
 
 
-class EventType(str, Enum):
+class EventType(StrEnum):
     """统一事件类型枚举。
 
     继承 str + Enum 使其可直接 JSON 序列化为字符串，
@@ -46,50 +46,50 @@ class EventType(str, Enum):
     """
 
     # === 工具调用生命周期事件（WebSocket 推送）===
-    TOOL_CALL_PENDING = 'tool_call_pending'           # 工具调用已创建，参数未就绪
-    TOOL_CALL_INPUT_READY = 'tool_call_input_ready'   # 工具调用参数已就绪（待审批或待执行）
-    TOOL_CALL_WAITING = 'tool_call_waiting'           # 同批次其他工具待审批，本工具等待中
-    TOOL_CALL_RUNNING = 'tool_call_running'           # 工具开始执行
-    TOOL_CALL_COMPLETED = 'tool_call_completed'       # 工具执行完成（成功）
-    TOOL_CALL_FAILED = 'tool_call_failed'             # 工具执行失败
-    TOOL_CALL_TIMEOUT = 'tool_call_timeout'           # 审批超时（终态）
-    TOOL_CALL_REJECTED = 'tool_call_rejected'         # 工具被用户拒绝（终态）
+    TOOL_CALL_PENDING = "tool_call_pending"  # 工具调用已创建，参数未就绪
+    TOOL_CALL_INPUT_READY = "tool_call_input_ready"  # 工具调用参数已就绪（待审批或待执行）
+    TOOL_CALL_WAITING = "tool_call_waiting"  # 同批次其他工具待审批，本工具等待中
+    TOOL_CALL_RUNNING = "tool_call_running"  # 工具开始执行
+    TOOL_CALL_COMPLETED = "tool_call_completed"  # 工具执行完成（成功）
+    TOOL_CALL_FAILED = "tool_call_failed"  # 工具执行失败
+    TOOL_CALL_TIMEOUT = "tool_call_timeout"  # 审批超时（终态）
+    TOOL_CALL_REJECTED = "tool_call_rejected"  # 工具被用户拒绝（终态）
 
     # === 审批事件（WebSocket 推送）===
-    APPROVAL_PENDING = 'approval_pending'             # 审批请求已创建
-    APPROVAL_PROCESSING = 'approval_processing'       # 审批正在处理（用户已点击，后端处理中）
-    APPROVAL_WAITING = 'approval_waiting'             # 本审批已通过但同批次还有其他 pending（批量审批场景）
-    APPROVAL_APPROVED = 'approval_approved'           # 审批已通过
-    APPROVAL_REJECTED = 'approval_rejected'           # 审批已拒绝
-    APPROVAL_TIMEOUT = 'approval_timeout'             # 审批已超时
+    APPROVAL_PENDING = "approval_pending"  # 审批请求已创建
+    APPROVAL_PROCESSING = "approval_processing"  # 审批正在处理（用户已点击，后端处理中）
+    APPROVAL_WAITING = "approval_waiting"  # 本审批已通过但同批次还有其他 pending（批量审批场景）
+    APPROVAL_APPROVED = "approval_approved"  # 审批已通过
+    APPROVAL_REJECTED = "approval_rejected"  # 审批已拒绝
+    APPROVAL_TIMEOUT = "approval_timeout"  # 审批已超时
 
     # === 流式事件（SSE + WebSocket）===
-    STREAM_STARTED = 'stream_started'                 # 流式会话已开始（通知非触发浏览器显示"正在思考"）
-    STREAM_COMPLETED = 'stream_completed'             # 流式会话已完成（通知所有浏览器更新终态）
-    STREAM_FINALIZED = 'stream_finalized'             # 流式输出已持久化（非请求浏览器可安全拉取后端数据）
-    STREAM_INTERRUPTED = 'stream_interrupted'         # 流被中断（深度研究模式：chat SSE 结束，Celery worker 仍在运行）
-    STREAM_REASONING = 'stream_reasoning'             # 推理过程
-    STREAM_SOURCES = 'stream_sources'                 # 来源引用
-    STREAM_SUGGESTIONS = 'stream_suggestions'         # 建议
-    STREAM_CONTEXT = 'stream_context'                 # 上下文
-    STREAM_CONTENT_UPDATE = 'stream_content_update'   # 内容更新（节流后的 chunk）
+    STREAM_STARTED = "stream_started"  # 流式会话已开始（通知非触发浏览器显示"正在思考"）
+    STREAM_COMPLETED = "stream_completed"  # 流式会话已完成（通知所有浏览器更新终态）
+    STREAM_FINALIZED = "stream_finalized"  # 流式输出已持久化（非请求浏览器可安全拉取后端数据）
+    STREAM_INTERRUPTED = "stream_interrupted"  # 流被中断（深度研究模式：chat SSE 结束，Celery worker 仍在运行）
+    STREAM_REASONING = "stream_reasoning"  # 推理过程
+    STREAM_SOURCES = "stream_sources"  # 来源引用
+    STREAM_SUGGESTIONS = "stream_suggestions"  # 建议
+    STREAM_CONTEXT = "stream_context"  # 上下文
+    STREAM_CONTENT_UPDATE = "stream_content_update"  # 内容更新（节流后的 chunk）
 
     # === 会话/消息事件（WebSocket 推送）===
-    SESSION_CREATED = 'session_created'
-    SESSION_UPDATED = 'session_updated'
-    SESSION_DELETED = 'session_deleted'
-    MESSAGE_ADDED = 'message_added'                   # 新消息创建
-    MESSAGE_UPDATED = 'message_updated'               # 消息内容更新
-    MESSAGE_DELETED = 'message_deleted'               # 单条消息删除
-    MESSAGES_DELETED = 'messages_deleted'             # 批量消息删除
-    MESSAGE_REGENERATED = 'message_regenerated'               # 消息重新生成（版本归档 + 新版本切换）
-    MESSAGE_REGENERATE_REVERTED = 'message_regenerate_reverted'  # 重新生成回滚
+    SESSION_CREATED = "session_created"
+    SESSION_UPDATED = "session_updated"
+    SESSION_DELETED = "session_deleted"
+    MESSAGE_ADDED = "message_added"  # 新消息创建
+    MESSAGE_UPDATED = "message_updated"  # 消息内容更新
+    MESSAGE_DELETED = "message_deleted"  # 单条消息删除
+    MESSAGES_DELETED = "messages_deleted"  # 批量消息删除
+    MESSAGE_REGENERATED = "message_regenerated"  # 消息重新生成（版本归档 + 新版本切换）
+    MESSAGE_REGENERATE_REVERTED = "message_regenerate_reverted"  # 重新生成回滚
 
     # === 学习工作流事件（WebSocket 推送）===
-    WORKFLOW_STEP = 'workflow_step'                     # 工作流节点执行进度
-    WORKFLOW_STATE_UPDATE = 'workflow_state_update'     # 工作流状态变更
-    WORKFLOW_COMPLETED = 'workflow_completed'           # 工作流完成
-    WORKFLOW_FAILED = 'workflow_failed'                 # 工作流失败
+    WORKFLOW_STEP = "workflow_step"  # 工作流节点执行进度
+    WORKFLOW_STATE_UPDATE = "workflow_state_update"  # 工作流状态变更
+    WORKFLOW_COMPLETED = "workflow_completed"  # 工作流完成
+    WORKFLOW_FAILED = "workflow_failed"  # 工作流失败
 
     @classmethod
     def from_value(cls, value: str) -> EventType | None:
@@ -100,19 +100,19 @@ class EventType(str, Enum):
             return None
 
 
-class EventSource(str, Enum):
+class EventSource(StrEnum):
     """事件来源枚举。
 
     用于前端区分事件来源模块，路由到对应的 Store。
     v5 预留 WORKFLOW / AGENT，为未来新增模块零侵入支持。
     """
 
-    CHAT = 'chat'
-    DEEP_RESEARCH = 'deep_research'
-    LEARNING = 'learning'
+    CHAT = "chat"
+    DEEP_RESEARCH = "deep_research"
+    LEARNING = "learning"
     # 预留：未来新增模块（_resolve_channels 默认路由到 session 频道）
-    WORKFLOW = 'workflow'
-    AGENT = 'agent'
+    WORKFLOW = "workflow"
+    AGENT = "agent"
 
     @classmethod
     def from_value(cls, value: str) -> EventSource | None:
@@ -141,20 +141,34 @@ class ToolCallLifecyclePayload(TypedDict, total=False):
     - cross_module_id 为跨模块同步目标 ID（仅 DEEP_RESEARCH 关联 chat 时为 chat_session_id）
     - parameters 必填（空参数必须传 {}），message_id 必填（未知时传 ''）
     - graph_interrupt_id 为批量审批批次 ID（同批次审批共享）
+
+    子 agent 嵌套层级字段（Phase E3，与 ApprovalPayload 对齐）：
+    工具调用生命周期事件也携带这些字段，确保非审批路径（SAFE 自动通过、
+    子 agent 内部工具调用）的前端 ToolCallCard 也能展示完整调用链路。
+    这些字段由 subagent_patch.py 注入到 configurable，经 ToolCallContext
+    透传到 publish_tool_call，最终到达前端 toolCall 对象。
     """
 
-    tool_call_id: str               # 工具调用 ID（= LLM tool_call.id，唯一主键，必填）
-    tool_name: str                  # 工具名称（必填）
-    source: EventSource             # 事件来源（必填，= 业务模块）
-    source_id: str                  # 模块实例 ID（= session_id 或 task_id，必填）
-    session_id: str | None       # 路由字段：chat/learning 场景的会话 ID
-    task_id: str | None          # 路由字段：独立深度研究场景的任务 ID
-    message_id: str                 # 关联的消息 ID（必填，未知时传 ''）
-    parameters: dict                # 工具输入参数（必填，空参数传 {}）
-    result: Any | None           # 工具执行结果（COMPLETED 事件必填）
-    error: str | None            # 错误信息（FAILED 事件必填）
+    tool_call_id: str  # 工具调用 ID（= LLM tool_call.id，唯一主键，必填）
+    tool_name: str  # 工具名称（必填）
+    source: EventSource  # 事件来源（必填，= 业务模块）
+    source_id: str  # 模块实例 ID（= session_id 或 task_id，必填）
+    session_id: str | None  # 路由字段：chat/learning 场景的会话 ID
+    task_id: str | None  # 路由字段：独立深度研究场景的任务 ID
+    message_id: str  # 关联的消息 ID（必填，未知时传 ''）
+    parameters: dict  # 工具输入参数（必填，空参数传 {}）
+    result: Any | None  # 工具执行结果（COMPLETED 事件必填）
+    error: str | None  # 错误信息（FAILED 事件必填）
     graph_interrupt_id: str | None  # 批量审批批次 ID（同批次审批共享）
-    cross_module_id: str | None     # 跨模块同步目标 ID（DEEP_RESEARCH 关联 chat 时为 chat_session_id）
+    cross_module_id: str | None  # 跨模块同步目标 ID（DEEP_RESEARCH 关联 chat 时为 chat_session_id）
+    auto_approved: bool | None  # SAFE 级自动通过标记（True=无需用户审批，仅审计）
+    # 子 agent 嵌套层级字段（Phase E3，由 subagent_patch 注入到 configurable，
+    # 经 ToolCallContext 透传到事件 payload，前端 ToolCallCard 展示完整调用链路）
+    parent_tool_call_id: str | None  # 父工具调用 ID（主 agent 调用 task 工具的 tool_call_id）
+    depth: int | None  # 嵌套层级（0=主 agent，1=一级子 agent）
+    agent_name: str | None  # 子 agent 名称（如 web-researcher）
+    agent_path: list | None  # 完整调用链路（如 ["main", "web-researcher"]）
+    risk_ceiling: str | None  # 子 agent 角色风险上限（safe/controlled/high）
 
 
 class ApprovalPayload(TypedDict, total=False):
@@ -175,24 +189,30 @@ class ApprovalPayload(TypedDict, total=False):
     - graph_interrupt_id 为批量审批批次 ID（同批次审批共享）
     """
 
-    interrupt_id: str               # 中断 ID（= tool_call_id，必填）
-    tool_call_id: str               # 工具调用 ID（= LLM tool_call.id，唯一主键，必填）
-    tool_name: str                  # 工具名称
-    source: EventSource             # 事件来源（必填，= 业务模块）
-    source_id: str                  # 模块实例 ID（= session_id 或 task_id，必填）
-    session_id: str | None       # 路由字段：chat/learning/关联研究场景的会话 ID
-    task_id: str | None          # 路由字段：独立深度研究场景的任务 ID
-    state: str                      # 审批状态（pending/processing/approved/rejected/timeout，必填）
-    parameters: dict                # 工具输入参数（必填，审批面板展示用，空参数传 {}）
-    message_id: str                 # 关联的消息 ID（必填，未知时传 ''）
+    interrupt_id: str  # 中断 ID（= tool_call_id，必填）
+    tool_call_id: str  # 工具调用 ID（= LLM tool_call.id，唯一主键，必填）
+    tool_name: str  # 工具名称
+    source: EventSource  # 事件来源（必填，= 业务模块）
+    source_id: str  # 模块实例 ID（= session_id 或 task_id，必填）
+    session_id: str | None  # 路由字段：chat/learning/关联研究场景的会话 ID
+    task_id: str | None  # 路由字段：独立深度研究场景的任务 ID
+    state: str  # 审批状态（pending/processing/approved/rejected/timeout，必填）
+    parameters: dict  # 工具输入参数（必填，审批面板展示用，空参数传 {}）
+    message_id: str  # 关联的消息 ID（必填，未知时传 ''）
     graph_interrupt_id: str | None  # 批量审批批次 ID（同批次审批共享）
-    cross_module_id: str | None     # 跨模块同步目标 ID（DEEP_RESEARCH 关联 chat 时为 chat_session_id）
-    operation: str | None        # 审批操作描述
-    title: str | None            # 审批标题
-    description: str | None      # 审批描述
-    action: str | None           # 审批动作（execute/write 等）
-    danger_level: str | None     # 危险等级（low/medium/high）
-
+    cross_module_id: str | None  # 跨模块同步目标 ID（DEEP_RESEARCH 关联 chat 时为 chat_session_id）
+    operation: str | None  # 审批操作描述
+    title: str | None  # 审批标题
+    description: str | None  # 审批描述
+    action: str | None  # 审批动作（execute/write 等）
+    danger_level: str | None  # 危险等级（legacy: low/medium/high）
+    risk_level: str | None  # 风险等级（新标准: safe/controlled/high，优先于 danger_level）
+    # 子 agent 嵌套层级字段（Phase E3，由 ApprovalMiddleware 透传到 Approval.extra，
+    # 审批事件 payload 也携带这些字段供前端展示完整调用链路）
+    parent_tool_call_id: str | None  # 父工具调用 ID（主 agent 调用 task 工具的 tool_call_id）
+    depth: int | None  # 嵌套层级（0=主 agent，1=一级子 agent）
+    agent_name: str | None  # 子 agent 名称（如 web-researcher）
+    agent_path: list | None  # 完整调用链路（如 ["main", "web-researcher"]）
 
 
 class ToolCallRejectedPayload(TypedDict, total=False):
@@ -206,16 +226,16 @@ class ToolCallRejectedPayload(TypedDict, total=False):
     - cross_module_id 为跨模块同步目标 ID（DEEP_RESEARCH 关联 chat 时为 chat_session_id）
     """
 
-    tool_call_id: str               # 工具调用 ID（= LLM tool_call.id，唯一主键，必填）
-    tool_name: str                  # 工具名称（必填）
-    source: EventSource             # 事件来源（必填，= 业务模块）
-    source_id: str                  # 模块实例 ID（= session_id 或 task_id，必填）
-    session_id: str | None       # 路由字段：chat/learning 场景的会话 ID
-    task_id: str | None          # 路由字段：独立深度研究场景的任务 ID
-    message_id: str                 # 关联的消息 ID（必填，未知时传 ''）
-    parameters: dict                # 工具输入参数（必填，空参数传 {}）
+    tool_call_id: str  # 工具调用 ID（= LLM tool_call.id，唯一主键，必填）
+    tool_name: str  # 工具名称（必填）
+    source: EventSource  # 事件来源（必填，= 业务模块）
+    source_id: str  # 模块实例 ID（= session_id 或 task_id，必填）
+    session_id: str | None  # 路由字段：chat/learning 场景的会话 ID
+    task_id: str | None  # 路由字段：独立深度研究场景的任务 ID
+    message_id: str  # 关联的消息 ID（必填，未知时传 ''）
+    parameters: dict  # 工具输入参数（必填，空参数传 {}）
     graph_interrupt_id: str | None  # 批量审批批次 ID（同批次审批共享）
-    cross_module_id: str | None     # 跨模块同步目标 ID（DEEP_RESEARCH 关联 chat 时为 chat_session_id）
+    cross_module_id: str | None  # 跨模块同步目标 ID（DEEP_RESEARCH 关联 chat 时为 chat_session_id）
 
 
 class StreamPayload(TypedDict, total=False):
@@ -224,13 +244,13 @@ class StreamPayload(TypedDict, total=False):
     session_id / task_id 为路由字段，二选一
     """
 
-    message_id: str | None       # 关联的消息 ID
-    source: EventSource             # 事件来源（必填）
-    source_id: str                  # 源实体 ID（必填）
-    session_id: str | None       # 聊天会话 ID（chat/learning 场景路由用）
-    task_id: str | None          # 研究任务 ID（独立深度研究场景路由用）
-    data: dict                      # 流式数据（reasoning/sources/suggestions/context/content）
-    seq: int | None              # 业务序列号（幂等保护，可选）
+    message_id: str | None  # 关联的消息 ID
+    source: EventSource  # 事件来源（必填）
+    source_id: str  # 源实体 ID（必填）
+    session_id: str | None  # 聊天会话 ID（chat/learning 场景路由用）
+    task_id: str | None  # 研究任务 ID（独立深度研究场景路由用）
+    data: dict  # 流式数据（reasoning/sources/suggestions/context/content）
+    seq: int | None  # 业务序列号（幂等保护，可选）
 
 
 # === 事件类型到 payload 类型的映射 ===
@@ -265,35 +285,33 @@ _REQUIRED_FIELDS: dict[EventType, tuple[str, ...]] = {
     # 工具调用生命周期事件：5 个核心字段必填（三模块共享）
     # parameters 必填（空参数传 {}），message_id 可选（learning 模块无 chat message）
     # session_id/task_id 二选一路由，由 RealtimeSyncService._resolve_channels 自动填充，不在必填校验中
-    EventType.TOOL_CALL_PENDING: ('tool_call_id', 'tool_name', 'source', 'source_id', 'parameters'),
-    EventType.TOOL_CALL_INPUT_READY: ('tool_call_id', 'tool_name', 'source', 'source_id', 'parameters'),
-    EventType.TOOL_CALL_WAITING: ('tool_call_id', 'tool_name', 'source', 'source_id', 'parameters'),
-    EventType.TOOL_CALL_RUNNING: ('tool_call_id', 'tool_name', 'source', 'source_id', 'parameters'),
-    EventType.TOOL_CALL_COMPLETED: ('tool_call_id', 'tool_name', 'source', 'source_id', 'parameters'),
-    EventType.TOOL_CALL_FAILED: ('tool_call_id', 'tool_name', 'source', 'source_id', 'parameters', 'error'),
-    EventType.TOOL_CALL_TIMEOUT: ('tool_call_id', 'tool_name', 'source', 'source_id', 'parameters'),
-    EventType.TOOL_CALL_REJECTED: ('tool_call_id', 'tool_name', 'source', 'source_id', 'parameters'),
-
+    EventType.TOOL_CALL_PENDING: ("tool_call_id", "tool_name", "source", "source_id", "parameters"),
+    EventType.TOOL_CALL_INPUT_READY: ("tool_call_id", "tool_name", "source", "source_id", "parameters"),
+    EventType.TOOL_CALL_WAITING: ("tool_call_id", "tool_name", "source", "source_id", "parameters"),
+    EventType.TOOL_CALL_RUNNING: ("tool_call_id", "tool_name", "source", "source_id", "parameters"),
+    EventType.TOOL_CALL_COMPLETED: ("tool_call_id", "tool_name", "source", "source_id", "parameters"),
+    EventType.TOOL_CALL_FAILED: ("tool_call_id", "tool_name", "source", "source_id", "parameters", "error"),
+    EventType.TOOL_CALL_TIMEOUT: ("tool_call_id", "tool_name", "source", "source_id", "parameters"),
+    EventType.TOOL_CALL_REJECTED: ("tool_call_id", "tool_name", "source", "source_id", "parameters"),
     # 审批事件：6 个核心字段必填（三模块共享）
     # parameters 必填（审批面板展示用），message_id 可选（learning 模块无 chat message）
-    EventType.APPROVAL_PENDING: ('interrupt_id', 'tool_call_id', 'source', 'source_id', 'state', 'parameters'),
-    EventType.APPROVAL_PROCESSING: ('interrupt_id', 'tool_call_id', 'source', 'source_id', 'state', 'parameters'),
-    EventType.APPROVAL_WAITING: ('interrupt_id', 'tool_call_id', 'source', 'source_id', 'state', 'parameters'),
-    EventType.APPROVAL_APPROVED: ('interrupt_id', 'tool_call_id', 'source', 'source_id', 'state', 'parameters'),
-    EventType.APPROVAL_REJECTED: ('interrupt_id', 'tool_call_id', 'source', 'source_id', 'state', 'parameters'),
-    EventType.APPROVAL_TIMEOUT: ('interrupt_id', 'tool_call_id', 'source', 'source_id', 'state', 'parameters'),
-
+    EventType.APPROVAL_PENDING: ("interrupt_id", "tool_call_id", "source", "source_id", "state", "parameters"),
+    EventType.APPROVAL_PROCESSING: ("interrupt_id", "tool_call_id", "source", "source_id", "state", "parameters"),
+    EventType.APPROVAL_WAITING: ("interrupt_id", "tool_call_id", "source", "source_id", "state", "parameters"),
+    EventType.APPROVAL_APPROVED: ("interrupt_id", "tool_call_id", "source", "source_id", "state", "parameters"),
+    EventType.APPROVAL_REJECTED: ("interrupt_id", "tool_call_id", "source", "source_id", "state", "parameters"),
+    EventType.APPROVAL_TIMEOUT: ("interrupt_id", "tool_call_id", "source", "source_id", "state", "parameters"),
     # 流式事件：source + source_id 必填，data 必填（session_id/task_id 二选一路由）
-    EventType.STREAM_REASONING: ('source', 'source_id', 'data'),
-    EventType.STREAM_SOURCES: ('source', 'source_id', 'data'),
-    EventType.STREAM_SUGGESTIONS: ('source', 'source_id', 'data'),
-    EventType.STREAM_CONTEXT: ('source', 'source_id', 'data'),
-    EventType.STREAM_CONTENT_UPDATE: ('source', 'source_id', 'data'),
-    EventType.STREAM_INTERRUPTED: ('source', 'source_id', 'data'),
+    EventType.STREAM_REASONING: ("source", "source_id", "data"),
+    EventType.STREAM_SOURCES: ("source", "source_id", "data"),
+    EventType.STREAM_SUGGESTIONS: ("source", "source_id", "data"),
+    EventType.STREAM_CONTEXT: ("source", "source_id", "data"),
+    EventType.STREAM_CONTENT_UPDATE: ("source", "source_id", "data"),
+    EventType.STREAM_INTERRUPTED: ("source", "source_id", "data"),
     # STREAM_STARTED / STREAM_COMPLETED / STREAM_FINALIZED：source + source_id 必填（无 data 字段）
-    EventType.STREAM_STARTED: ('source', 'source_id'),
-    EventType.STREAM_COMPLETED: ('source', 'source_id'),
-    EventType.STREAM_FINALIZED: ('source', 'source_id'),
+    EventType.STREAM_STARTED: ("source", "source_id"),
+    EventType.STREAM_COMPLETED: ("source", "source_id"),
+    EventType.STREAM_FINALIZED: ("source", "source_id"),
     # SESSION_* / MESSAGE_* 无必填字段
 }
 
@@ -307,46 +325,42 @@ _REQUIRED_FIELDS: dict[EventType, tuple[str, ...]] = {
 # - 会话/消息事件保持原名
 
 _WS_EVENT_NAME_MAP: dict[EventType, str] = {
-    EventType.TOOL_CALL_PENDING: 'tool_call_pending',
-    EventType.TOOL_CALL_INPUT_READY: 'tool_call_input_ready',
-    EventType.TOOL_CALL_WAITING: 'tool_call_waiting',
-    EventType.TOOL_CALL_RUNNING: 'tool_call_running',
-    EventType.TOOL_CALL_COMPLETED: 'tool_call_completed',
-    EventType.TOOL_CALL_FAILED: 'tool_call_failed',
-    EventType.TOOL_CALL_TIMEOUT: 'tool_call_timeout',
-    EventType.TOOL_CALL_REJECTED: 'tool_call_rejected',
-
-    EventType.APPROVAL_PENDING: 'approval_pending',
-    EventType.APPROVAL_PROCESSING: 'approval_processing',
-    EventType.APPROVAL_WAITING: 'approval_waiting',
-    EventType.APPROVAL_APPROVED: 'approval_approved',
-    EventType.APPROVAL_REJECTED: 'approval_rejected',
-    EventType.APPROVAL_TIMEOUT: 'approval_timeout',
-
-    EventType.STREAM_REASONING: 'stream_event',
-    EventType.STREAM_SOURCES: 'stream_event',
-    EventType.STREAM_SUGGESTIONS: 'stream_event',
-    EventType.STREAM_CONTEXT: 'stream_event',
-    EventType.STREAM_CONTENT_UPDATE: 'stream_event',
-    EventType.STREAM_STARTED: 'stream_started',
-    EventType.STREAM_COMPLETED: 'stream_completed',
-    EventType.STREAM_FINALIZED: 'stream_finalized',
-    EventType.STREAM_INTERRUPTED: 'stream_interrupted',
-
-    EventType.SESSION_CREATED: 'session_created',
-    EventType.SESSION_UPDATED: 'session_updated',
-    EventType.SESSION_DELETED: 'session_deleted',
-    EventType.MESSAGE_ADDED: 'message_added',
-    EventType.MESSAGE_UPDATED: 'message_updated',
-    EventType.MESSAGE_DELETED: 'message_deleted',
-    EventType.MESSAGES_DELETED: 'messages_deleted',
-    EventType.MESSAGE_REGENERATED: 'message_regenerated',
-    EventType.MESSAGE_REGENERATE_REVERTED: 'message_regenerate_reverted',
-
-    EventType.WORKFLOW_STEP: 'workflow_step',
-    EventType.WORKFLOW_STATE_UPDATE: 'workflow_state_update',
-    EventType.WORKFLOW_COMPLETED: 'workflow_completed',
-    EventType.WORKFLOW_FAILED: 'workflow_failed',
+    EventType.TOOL_CALL_PENDING: "tool_call_pending",
+    EventType.TOOL_CALL_INPUT_READY: "tool_call_input_ready",
+    EventType.TOOL_CALL_WAITING: "tool_call_waiting",
+    EventType.TOOL_CALL_RUNNING: "tool_call_running",
+    EventType.TOOL_CALL_COMPLETED: "tool_call_completed",
+    EventType.TOOL_CALL_FAILED: "tool_call_failed",
+    EventType.TOOL_CALL_TIMEOUT: "tool_call_timeout",
+    EventType.TOOL_CALL_REJECTED: "tool_call_rejected",
+    EventType.APPROVAL_PENDING: "approval_pending",
+    EventType.APPROVAL_PROCESSING: "approval_processing",
+    EventType.APPROVAL_WAITING: "approval_waiting",
+    EventType.APPROVAL_APPROVED: "approval_approved",
+    EventType.APPROVAL_REJECTED: "approval_rejected",
+    EventType.APPROVAL_TIMEOUT: "approval_timeout",
+    EventType.STREAM_REASONING: "stream_event",
+    EventType.STREAM_SOURCES: "stream_event",
+    EventType.STREAM_SUGGESTIONS: "stream_event",
+    EventType.STREAM_CONTEXT: "stream_event",
+    EventType.STREAM_CONTENT_UPDATE: "stream_event",
+    EventType.STREAM_STARTED: "stream_started",
+    EventType.STREAM_COMPLETED: "stream_completed",
+    EventType.STREAM_FINALIZED: "stream_finalized",
+    EventType.STREAM_INTERRUPTED: "stream_interrupted",
+    EventType.SESSION_CREATED: "session_created",
+    EventType.SESSION_UPDATED: "session_updated",
+    EventType.SESSION_DELETED: "session_deleted",
+    EventType.MESSAGE_ADDED: "message_added",
+    EventType.MESSAGE_UPDATED: "message_updated",
+    EventType.MESSAGE_DELETED: "message_deleted",
+    EventType.MESSAGES_DELETED: "messages_deleted",
+    EventType.MESSAGE_REGENERATED: "message_regenerated",
+    EventType.MESSAGE_REGENERATE_REVERTED: "message_regenerate_reverted",
+    EventType.WORKFLOW_STEP: "workflow_step",
+    EventType.WORKFLOW_STATE_UPDATE: "workflow_state_update",
+    EventType.WORKFLOW_COMPLETED: "workflow_completed",
+    EventType.WORKFLOW_FAILED: "workflow_failed",
 }
 
 
@@ -389,27 +403,21 @@ def validate_payload(event_type: EventType, payload: dict) -> None:
         )
 
     if not isinstance(payload, dict):
-        raise PayloadValidationError(
-            f"payload 必须是 dict，收到: {type(payload).__name__}"
-        )
+        raise PayloadValidationError(f"payload 必须是 dict，收到: {type(payload).__name__}")
 
     required = _REQUIRED_FIELDS.get(event_type)
     if not required:
         # SESSION_* / MESSAGE_* 事件无必填字段，跳过校验
         return
 
-    missing = [
-        field for field in required
-        if field not in payload or payload[field] is None
-    ]
+    missing = [field for field in required if field not in payload or payload[field] is None]
     if missing:
         raise PayloadValidationError(
-            f"事件 {event_type.value} payload 缺少必填字段: {missing}, "
-            f"实际 payload keys: {list(payload.keys())}"
+            f"事件 {event_type.value} payload 缺少必填字段: {missing}, 实际 payload keys: {list(payload.keys())}"
         )
 
     # source 字段必须是合法的 EventSource
-    source_value = payload.get('source')
+    source_value = payload.get("source")
     if source_value is not None and not isinstance(source_value, EventSource):
         if EventSource.from_value(str(source_value)) is None:
             raise PayloadValidationError(
@@ -418,14 +426,14 @@ def validate_payload(event_type: EventType, payload: dict) -> None:
             )
 
     # parameters 字段必须是 dict（工具/审批事件必填）
-    parameters_value = payload.get('parameters')
+    parameters_value = payload.get("parameters")
     if parameters_value is not None and not isinstance(parameters_value, dict):
         raise PayloadValidationError(
             f"parameters 字段必须是 dict，收到: {type(parameters_value).__name__}={parameters_value!r}"
         )
 
     # graph_interrupt_id / cross_module_id 可选，但非空时必须是字符串
-    for optional_str_field in ('graph_interrupt_id', 'cross_module_id'):
+    for optional_str_field in ("graph_interrupt_id", "cross_module_id"):
         val = payload.get(optional_str_field)
         if val is not None and not isinstance(val, str):
             raise PayloadValidationError(

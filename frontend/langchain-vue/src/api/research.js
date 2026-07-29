@@ -23,25 +23,3 @@ export const deepResearchAPI = {
   },
 }
 
-/**
- * 确认深度研究工具审批
- */
-export function approveResearchCommand(taskId, interruptId, userInput = undefined) {
-  return apiClient.post('/research/approval/', {
-    task_id: taskId,
-    interrupt_id: interruptId,
-    approved: true,
-    user_input: userInput,
-  })
-}
-
-/**
- * 拒绝深度研究工具审批
- */
-export function rejectResearchCommand(taskId, interruptId) {
-  return apiClient.post('/research/approval/', {
-    task_id: taskId,
-    interrupt_id: interruptId,
-    approved: false,
-  })
-}

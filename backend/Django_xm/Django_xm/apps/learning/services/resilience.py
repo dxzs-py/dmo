@@ -59,14 +59,8 @@ def _check_timeouts(tm: ExecutionTimeoutManager) -> None:
     - soft_timeout 触发：仅记录日志警告一次
     """
     if tm.hard_timeout is not None and tm.elapsed >= tm.hard_timeout:
-        logger.error(
-            f"[Learning Resilience] hard_timeout 触发: "
-            f"elapsed={tm.elapsed:.1f}s, hard={tm.hard_timeout}s"
-        )
-        raise TimeoutError(
-            f"学习工作流执行超过 hard_timeout: elapsed={tm.elapsed:.1f}s, "
-            f"hard={tm.hard_timeout}s"
-        )
+        logger.error(f"[Learning Resilience] hard_timeout 触发: elapsed={tm.elapsed:.1f}s, hard={tm.hard_timeout}s")
+        raise TimeoutError(f"学习工作流执行超过 hard_timeout: elapsed={tm.elapsed:.1f}s, hard={tm.hard_timeout}s")
 
     if tm.check_soft_timeout():
         logger.warning(
@@ -79,6 +73,7 @@ def _get_graph_recursion_error():
     """安全导入 GraphRecursionError，不可用时返回 None"""
     try:
         from langgraph.errors import GraphRecursionError
+
         return GraphRecursionError
     except ImportError:
         return None
@@ -123,16 +118,12 @@ def invoke_with_resilience(
         except Exception as error:
             # GraphRecursionError：不重试，直接 raise
             if GraphRecursionError is not None and isinstance(error, GraphRecursionError):
-                logger.error(
-                    f"[Learning Resilience] GraphRecursionError 触发，不重试: {error}"
-                )
+                logger.exception("[Learning Resilience] GraphRecursionError 触发，不重试")
                 raise
 
             # TimeoutError：不重试，直接 raise
             if isinstance(error, TimeoutError):
-                logger.error(
-                    f"[Learning Resilience] TimeoutError 触发，不重试: {error}"
-                )
+                logger.exception("[Learning Resilience] TimeoutError 触发，不重试")
                 raise
 
             last_error = error
@@ -140,9 +131,8 @@ def invoke_with_resilience(
 
             # FAIL：直接 raise
             if action == ErrorAction.FAIL:
-                logger.error(
-                    f"[Learning Resilience] 不可恢复错误（FAIL）: "
-                    f"{classified.error_code}: {classified.message}"
+                logger.exception(
+                    f"[Learning Resilience] 不可恢复错误（FAIL）: {classified.error_code}: {classified.message}"
                 )
                 raise
 
@@ -156,7 +146,7 @@ def invoke_with_resilience(
                 time.sleep(backoff)
                 continue
             else:
-                logger.error(
+                logger.exception(
                     f"[Learning Resilience] 重试耗尽（attempt={attempt}, "
                     f"max_retries={cfg.max_retries}）: {classified.error_code}: {classified.message}"
                 )
@@ -207,16 +197,12 @@ async def ainvoke_with_resilience(
         except Exception as error:
             # GraphRecursionError：不重试，直接 raise
             if GraphRecursionError is not None and isinstance(error, GraphRecursionError):
-                logger.error(
-                    f"[Learning Resilience] GraphRecursionError 触发，不重试: {error}"
-                )
+                logger.exception("[Learning Resilience] GraphRecursionError 触发，不重试")
                 raise
 
             # TimeoutError：不重试，直接 raise
             if isinstance(error, TimeoutError):
-                logger.error(
-                    f"[Learning Resilience] TimeoutError 触发，不重试: {error}"
-                )
+                logger.exception("[Learning Resilience] TimeoutError 触发，不重试")
                 raise
 
             last_error = error
@@ -224,9 +210,8 @@ async def ainvoke_with_resilience(
 
             # FAIL：直接 raise
             if action == ErrorAction.FAIL:
-                logger.error(
-                    f"[Learning Resilience] 不可恢复错误（FAIL）: "
-                    f"{classified.error_code}: {classified.message}"
+                logger.exception(
+                    f"[Learning Resilience] 不可恢复错误（FAIL）: {classified.error_code}: {classified.message}"
                 )
                 raise
 
@@ -240,7 +225,7 @@ async def ainvoke_with_resilience(
                 await asyncio.sleep(backoff)
                 continue
             else:
-                logger.error(
+                logger.exception(
                     f"[Learning Resilience] 重试耗尽（attempt={attempt}, "
                     f"max_retries={cfg.max_retries}）: {classified.error_code}: {classified.message}"
                 )

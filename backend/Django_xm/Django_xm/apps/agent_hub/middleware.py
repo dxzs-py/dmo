@@ -4,6 +4,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 def build_middleware(config) -> list:
     middleware_stack = []
 
@@ -13,6 +14,7 @@ def build_middleware(config) -> list:
 
     try:
         from Django_xm.apps.ai_engine.capabilities import registry
+
         capabilities = config.capabilities
         if capabilities is None:
             capabilities = registry.get_default_capabilities(_get_agent_type_str(config))
@@ -41,7 +43,8 @@ def build_middleware(config) -> list:
 
     if config.agent_type.value == "safe_rag":
         try:
-            from Django_xm.apps.ai_engine.guardrails.middleware import create_standard_guardrails
+            from Django_xm.apps.ai_engine.guardrails import create_standard_guardrails
+
             guardrails = create_standard_guardrails(
                 enable_input_validation=config.enable_input_validation,
                 enable_output_validation=config.enable_output_validation,
@@ -59,6 +62,7 @@ def build_middleware(config) -> list:
 
     logger.info(f"最终中间件栈: {len(middleware_stack)} 个")
     return middleware_stack
+
 
 def _get_agent_type_str(config) -> str:
     type_map = {

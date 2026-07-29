@@ -41,8 +41,8 @@ def _validate_faiss_index_integrity(index_path: Path) -> bool:
                 return False
 
         return True
-    except Exception as e:
-        logger.error(f"完整性校验失败: {e}")
+    except Exception:
+        logger.exception("完整性校验失败")
         return False
 
 
@@ -52,12 +52,10 @@ def _save_faiss_integrity(index_path: Path) -> None:
     hashes: dict[str, str] = {}
 
     for file_path in index_path.iterdir():
-        if file_path.name == ".integrity" or file_path.name == "metadata.json":
+        if file_path.name in {".integrity", "metadata.json"}:
             continue
         if file_path.is_file():
-            hashes[file_path.name] = hashlib.sha256(
-                file_path.read_bytes()
-            ).hexdigest()
+            hashes[file_path.name] = hashlib.sha256(file_path.read_bytes()).hexdigest()
 
     with open(integrity_file, "w", encoding="utf-8") as f:
         json.dump(hashes, f, indent=2)
@@ -111,9 +109,7 @@ class FAISSBackend(VectorStoreBackend):
 
         collection_path = self._get_collection_path(collection_name)
         if not collection_path.exists():
-            raise FileNotFoundError(
-                f"FAISS 向量库路径不存在: {collection_path}"
-            )
+            raise FileNotFoundError(f"FAISS 向量库路径不存在: {collection_path}")
 
         if _validate_faiss_index_integrity(collection_path):
             logger.info("FAISS 索引完整性校验通过，安全加载")
@@ -159,8 +155,8 @@ class FAISSBackend(VectorStoreBackend):
             shutil.rmtree(collection_path)
             logger.info(f"FAISS 向量库删除成功: {collection_name}")
             return True
-        except Exception as e:
-            logger.error(f"FAISS 向量库删除失败: {e}")
+        except Exception:
+            logger.exception("FAISS 向量库删除失败")
             return False
 
     def list_collections(self, prefix: str = "") -> list[str]:
@@ -217,10 +213,7 @@ class FAISSBackend(VectorStoreBackend):
             return 0
 
         # FAISS 的删除需要加载后操作，此处返回 0 提示调用方使用 load + delete 流程
-        logger.warning(
-            "FAISS 按元数据删除需要加载向量库后操作，"
-            "建议通过 load -> 遍历 docstore -> delete 流程处理"
-        )
+        logger.warning("FAISS 按元数据删除需要加载向量库后操作，建议通过 load -> 遍历 docstore -> delete 流程处理")
         return 0
 
     def search(
@@ -252,7 +245,8 @@ class FAISSBackend(VectorStoreBackend):
                 with open(metadata_path, encoding="utf-8") as f:
                     metadata = json.load(f)
             except Exception:
-                pass
+                # metadata.json 解析失败时回退到空字典，使用默认值
+                logger.debug("metadata.json 解析失败，回退到空字典")
 
         return {
             "name": collection_name,

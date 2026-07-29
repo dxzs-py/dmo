@@ -6,7 +6,6 @@
 为深度研究的文档分析节点提供 retriever_tool。
 """
 
-
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.tools import BaseTool
 
@@ -14,6 +13,7 @@ from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
 from Django_xm.apps.knowledge.services.index_service import IndexManager
 from Django_xm.apps.knowledge.services.retrieval_service import (
+    SearchType,
     create_multi_retriever,
     create_retriever,
     create_retriever_tool,
@@ -63,8 +63,8 @@ def suggest_weights(
             metadata = manager._load_metadata(user_index_name) or {}
             num_docs = metadata.get("num_documents", 0)
             doc_counts.append(float(max(num_docs, 0)))
-        except Exception as e:
-            logger.error(f"获取知识库 {kb_id} 元数据失败: {e}")
+        except Exception:
+            logger.exception(f"获取知识库 {kb_id} 元数据失败")
             doc_counts.append(0.0)
 
     total_docs = sum(doc_counts)
@@ -72,7 +72,7 @@ def suggest_weights(
         return [1.0 / len(knowledge_base_ids)] * len(knowledge_base_ids)
 
     weights = [c / total_docs for c in doc_counts]
-    logger.info(f"推荐权重: {list(zip(knowledge_base_ids, [round(w, 4) for w in weights]))}")
+    logger.info(f"推荐权重: {list(zip(knowledge_base_ids, [round(w, 4) for w in weights], strict=False))}")
     return weights
 
 
@@ -80,7 +80,7 @@ def build_multi_kb_retriever(
     knowledge_base_ids: list[str],
     user_id: int,
     k: int = 4,
-    search_type: str = "mmr",
+    search_type: SearchType = "mmr",
     weights: list[float] | None = None,
 ) -> BaseRetriever | None:
     """
@@ -131,8 +131,8 @@ def build_multi_kb_retriever(
             retrievers.append(retriever)
             loaded_names.append(kb_id)
             logger.info(f"已加载知识库: {kb_id} (文档块: {num_docs})")
-        except Exception as e:
-            logger.error(f"加载知识库 {kb_id} 失败: {e}")
+        except Exception:
+            logger.exception(f"加载知识库 {kb_id} 失败")
             continue
 
     if not retrievers:
@@ -145,9 +145,7 @@ def build_multi_kb_retriever(
 
     if weights is not None:
         if len(weights) != len(retrievers):
-            logger.warning(
-                f"权重数量 ({len(weights)}) 与成功加载的知识库数量 ({len(retrievers)}) 不匹配，回退到等权"
-            )
+            logger.warning(f"权重数量 ({len(weights)}) 与成功加载的知识库数量 ({len(retrievers)}) 不匹配，回退到等权")
             final_weights = [1.0 / len(retrievers)] * len(retrievers)
         else:
             final_weights = _normalize_weights(weights, len(retrievers))
@@ -180,9 +178,7 @@ def build_retriever_tool_for_research(
     Returns:
         LangChain Tool 实例，失败返回 None
     """
-    retriever = build_multi_kb_retriever(
-        knowledge_base_ids, user_id, k=k, weights=weights
-    )
+    retriever = build_multi_kb_retriever(knowledge_base_ids, user_id, k=k, weights=weights)
     if retriever is None:
         return None
 

@@ -2,6 +2,7 @@
 
 使用 PostgreSQL + pgvector 扩展存储和检索向量数据。
 """
+
 import logging
 
 from django.conf import settings
@@ -15,7 +16,7 @@ def get_pgvector_connection_string(async_mode: bool = False):
     Args:
         async_mode: 是否使用异步驱动（asyncpg）
     """
-    db_settings = settings.DATABASES['default']
+    db_settings = settings.DATABASES["default"]
     driver = "+asyncpg" if async_mode else ""
     return (
         f"postgresql{driver}://{db_settings['USER']}:{db_settings['PASSWORD']}"
@@ -40,11 +41,12 @@ def create_pgvector_store(
     try:
         from langchain_postgres.vectorstores import PGVector as LangChainPGVector
     except ImportError:
-        logger.error("langchain-postgres 未安装，请运行: pip install langchain-postgres")
+        logger.exception("langchain-postgres 未安装，请运行: pip install langchain-postgres")
         raise
 
     if embedding is None:
         from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
+
         embedding = get_embeddings()
 
     # 使用带用户前缀的集合名
@@ -77,6 +79,7 @@ def load_pgvector_store(
 
     if embedding is None:
         from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
+
         embedding = get_embeddings()
 
     table_name = pre_collection_name if pre_collection_name else collection_name
@@ -104,7 +107,7 @@ def delete_pgvector_store(
 
         table_name = pre_collection_name if pre_collection_name else collection_name
 
-        with connections['default'].cursor() as cursor:
+        with connections["default"].cursor() as cursor:
             # 先检查表是否存在
             cursor.execute(
                 "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = 'langchain_pg_collection')"
@@ -114,18 +117,15 @@ def delete_pgvector_store(
                 return False
 
             # 删除 langchain_pg_collection 中的记录（会级联删除向量数据）
-            cursor.execute(
-                "DELETE FROM langchain_pg_collection WHERE name = %s",
-                [table_name]
-            )
+            cursor.execute("DELETE FROM langchain_pg_collection WHERE name = %s", [table_name])
             deleted = cursor.rowcount
             if deleted > 0:
                 logger.info(f"PGVector 集合已删除: {table_name}")
             else:
                 logger.warning(f"PGVector 集合不存在: {table_name}")
             return deleted > 0
-    except Exception as e:
-        logger.error(f"删除 PGVector 集合失败: {e}")
+    except Exception:
+        logger.exception("删除 PGVector 集合失败")
         return False
 
 
@@ -134,7 +134,7 @@ def list_pgvector_stores(user_id: int | None = None):
     try:
         from django.db import connections
 
-        with connections['default'].cursor() as cursor:
+        with connections["default"].cursor() as cursor:
             # 先检查表是否存在（PGVector 表在首次使用时才创建）
             cursor.execute(
                 "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = 'langchain_pg_collection')"
@@ -143,10 +143,7 @@ def list_pgvector_stores(user_id: int | None = None):
                 return []
 
             if user_id:
-                cursor.execute(
-                    "SELECT name FROM langchain_pg_collection WHERE name LIKE %s",
-                    [f"user_{user_id}_%"]
-                )
+                cursor.execute("SELECT name FROM langchain_pg_collection WHERE name LIKE %s", [f"user_{user_id}_%"])
             else:
                 cursor.execute("SELECT name FROM langchain_pg_collection")
             return [row[0] for row in cursor.fetchall()]

@@ -9,7 +9,6 @@ logger = get_logger(__name__)
 
 
 class MCPResourceInjector:
-
     async def get_resources_for_context(
         self,
         server_names: list[str] | None = None,

@@ -141,16 +141,20 @@ class AgentExecutor:
         while ctx.retry_count <= self.config.max_retries:
             try:
                 async for event in self._iter_with_timeout(
-                    loop_fn, agent, graph_input, config, ctx, strategy, data,
+                    loop_fn,
+                    agent,
+                    graph_input,
+                    config,
+                    ctx,
+                    strategy,
+                    data,
                 ):
                     yield event
                 return  # 成功
 
             except _HardTimeoutSignaled:
                 # Hard timeout → fallback
-                logger.warning(
-                    f"[AgentExecutor] 执行超时 (hard): {self.timeout_mgr.elapsed:.1f}s"
-                )
+                logger.warning(f"[AgentExecutor] 执行超时 (hard): {self.timeout_mgr.elapsed:.1f}s")
                 yield {
                     "type": "chunk",
                     "content": "\n\n[系统提示] 执行时间过长，正在切换到简化模式...\n",
@@ -167,7 +171,9 @@ class AgentExecutor:
 
             except Exception as stream_err:
                 action, classified = classify_and_decide(
-                    stream_err, ctx.retry_count, self.config.max_retries,
+                    stream_err,
+                    ctx.retry_count,
+                    self.config.max_retries,
                 )
 
                 if action == ErrorAction.RETRY:
@@ -192,15 +198,17 @@ class AgentExecutor:
                 elif action == ErrorAction.DEGRADE:
                     logger.warning(f"[AgentExecutor] 降级: {classified.error_code}")
                     async for event in self._run_degrade(
-                        loop_fn, graph_input, ctx, strategy, data,
+                        loop_fn,
+                        graph_input,
+                        ctx,
+                        strategy,
+                        data,
                     ):
                         yield event
                     return
 
                 elif action == ErrorAction.FAIL:
-                    logger.error(
-                        f"[AgentExecutor] 不可恢复错误: {classified.error_code}: {classified.message}"
-                    )
+                    logger.exception(f"[AgentExecutor] 不可恢复错误: {classified.error_code}: {classified.message}")
                     raise
 
                 else:  # FALLBACK
@@ -231,17 +239,12 @@ class AgentExecutor:
         """
         async for event in loop_fn(agent, graph_input, config, ctx, strategy, data):
             # Hard timeout 检查（优先）
-            if (
-                self.timeout_mgr.hard_timeout
-                and self.timeout_mgr.elapsed >= self.timeout_mgr.hard_timeout
-            ):
+            if self.timeout_mgr.hard_timeout and self.timeout_mgr.elapsed >= self.timeout_mgr.hard_timeout:
                 raise _HardTimeoutSignaled()
 
             # Soft timeout（仅警告一次）
             if self.timeout_mgr.check_soft_timeout():
-                logger.warning(
-                    f"[AgentExecutor] 执行超时 (soft): {self.timeout_mgr.elapsed:.1f}s"
-                )
+                logger.warning(f"[AgentExecutor] 执行超时 (soft): {self.timeout_mgr.elapsed:.1f}s")
                 yield {
                     "type": "timeout_warning",
                     "data": {
@@ -282,8 +285,7 @@ class AgentExecutor:
             return
 
         logger.info(
-            f"[AgentExecutor] 工具降级: {len(self.tools)} → {len(degraded_tools)} 个工具，"
-            f"尝试用降级工具重建 Agent 重试"
+            f"[AgentExecutor] 工具降级: {len(self.tools)} → {len(degraded_tools)} 个工具，尝试用降级工具重建 Agent 重试"
         )
         yield {
             "type": "chunk",
@@ -295,20 +297,21 @@ class AgentExecutor:
             # 重置重复调用检测器，避免降级后的新 agent 受历史记录影响
             self.duplicate_detector.reset()
             async for event in self._iter_with_timeout(
-                loop_fn, degraded_agent, graph_input, degraded_config,
-                ctx, strategy, data,
+                loop_fn,
+                degraded_agent,
+                graph_input,
+                degraded_config,
+                ctx,
+                strategy,
+                data,
             ):
                 yield event
             # 降级成功
             return
         except (_HardTimeoutSignaled, GraphRecursionError) as e:
-            logger.warning(
-                f"[AgentExecutor] 降级工具重试也失败（{type(e).__name__}），回退到无工具模式"
-            )
+            logger.warning(f"[AgentExecutor] 降级工具重试也失败（{type(e).__name__}），回退到无工具模式")
         except Exception as degrade_err:
-            logger.warning(
-                f"[AgentExecutor] 降级工具重试也失败: {degrade_err}，回退到无工具模式"
-            )
+            logger.warning(f"[AgentExecutor] 降级工具重试也失败: {degrade_err}，回退到无工具模式")
 
         # 降级失败，落入 FALLBACK
         async for fb_event in self._run_fallback():
@@ -345,13 +348,14 @@ class AgentExecutor:
         yield {"type": "chunk", "content": ""}
         try:
             async for fb_event in self.fallback_service.stream_without_tools(
-                self.model_instance, self.data, self.usage_tracker, self.token_detail_tracker,
+                self.model_instance,
+                self.data,
+                self.usage_tracker,
+                self.token_detail_tracker,
             ):
                 yield fb_event
         except Exception as fallback_err:
-            logger.error(
-                f"无工具回退模式也失败: {type(fallback_err).__name__}: {fallback_err}"
-            )
+            logger.exception(f"无工具回退模式也失败: {type(fallback_err).__name__}")
             yield {
                 "type": "error",
                 "content": f"模型服务暂时不可用，请稍后重试（{type(fallback_err).__name__}）",
@@ -400,9 +404,7 @@ class AgentExecutor:
             except Exception as e:
                 logger.warning(f"[AgentExecutor] 注入重复调用警告失败: {e}")
         else:
-            logger.warning(
-                f"[AgentExecutor] 检测到重复工具调用，但未提供 inject_warning_fn: {prompt[:100]}"
-            )
+            logger.warning(f"[AgentExecutor] 检测到重复工具调用，但未提供 inject_warning_fn: {prompt[:100]}")
 
     def reset_duplicate_detector(self) -> None:
         """重置重复工具调用检测器

@@ -11,6 +11,7 @@
     conda activate langchain_xm
     python -m pytest Django_xm/apps/agent_hub/tests/test_preflight_fail_fast.py -v
 """
+
 from __future__ import annotations
 
 import os
@@ -59,14 +60,11 @@ class TestPreflightFailFast(unittest.IsolatedAsyncioTestCase):
         """fail_fast_on_preflight=False 时预检失败仅 warning，继续创建 agent"""
         config = _make_config(fail_fast=False)
         mock_builder = _make_mock_builder()
-        fake_result = PreflightResult(
-            passed=False, issues=["LLM 服务不可用"], warnings=[]
-        )
+        fake_result = PreflightResult(passed=False, issues=["LLM 服务不可用"], warnings=[])
 
-        with patch.object(
-            ExecutionPreflight, "check", new_callable=AsyncMock, return_value=fake_result
-        ), patch.object(
-            AgentFactory, "_get_builders", return_value={AgentType.BASE: mock_builder}
+        with (
+            patch.object(ExecutionPreflight, "check", new_callable=AsyncMock, return_value=fake_result),
+            patch.object(AgentFactory, "_get_builders", return_value={AgentType.BASE: mock_builder}),
         ):
             await AgentFactory.create(config)
 
@@ -79,15 +77,13 @@ class TestPreflightFailFast(unittest.IsolatedAsyncioTestCase):
         """fail_fast_on_preflight=True 时预检失败抛出 PreflightCheckError，不调用 builder.build"""
         config = _make_config(fail_fast=True)
         mock_builder = _make_mock_builder()
-        fake_result = PreflightResult(
-            passed=False, issues=["LLM 服务不可用", "Redis 连接失败"], warnings=[]
-        )
+        fake_result = PreflightResult(passed=False, issues=["LLM 服务不可用", "Redis 连接失败"], warnings=[])
 
-        with patch.object(
-            ExecutionPreflight, "check", new_callable=AsyncMock, return_value=fake_result
-        ), patch.object(
-            AgentFactory, "_get_builders", return_value={AgentType.BASE: mock_builder}
-        ), self.assertRaises(PreflightCheckError) as ctx:
+        with (
+            patch.object(ExecutionPreflight, "check", new_callable=AsyncMock, return_value=fake_result),
+            patch.object(AgentFactory, "_get_builders", return_value={AgentType.BASE: mock_builder}),
+            self.assertRaises(PreflightCheckError) as ctx,
+        ):
             await AgentFactory.create(config)
 
         # 异常应携带 issues 列表
@@ -104,13 +100,14 @@ class TestPreflightFailFast(unittest.IsolatedAsyncioTestCase):
         config = _make_config(fail_fast=True)
         mock_builder = _make_mock_builder()
 
-        with patch.object(
-            ExecutionPreflight,
-            "check",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("预检内部异常"),
-        ), patch.object(
-            AgentFactory, "_get_builders", return_value={AgentType.BASE: mock_builder}
+        with (
+            patch.object(
+                ExecutionPreflight,
+                "check",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("预检内部异常"),
+            ),
+            patch.object(AgentFactory, "_get_builders", return_value={AgentType.BASE: mock_builder}),
         ):
             # 不应抛出
             await AgentFactory.create(config)
@@ -125,15 +122,18 @@ class TestPreflightFailFast(unittest.IsolatedAsyncioTestCase):
                 mock_builder = _make_mock_builder()
                 fake_result = PreflightResult(passed=True, issues=[], warnings=[])
 
-                with patch.object(
-                    ExecutionPreflight,
-                    "check",
-                    new_callable=AsyncMock,
-                    return_value=fake_result,
-                ), patch.object(
-                    AgentFactory,
-                    "_get_builders",
-                    return_value={AgentType.BASE: mock_builder},
+                with (
+                    patch.object(
+                        ExecutionPreflight,
+                        "check",
+                        new_callable=AsyncMock,
+                        return_value=fake_result,
+                    ),
+                    patch.object(
+                        AgentFactory,
+                        "_get_builders",
+                        return_value={AgentType.BASE: mock_builder},
+                    ),
                 ):
                     await AgentFactory.create(config)
 

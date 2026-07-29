@@ -7,6 +7,7 @@
     CELERY_TASK_REJECT_ON_WORKER_LOST = True
     无需在每个 @shared_task 中重复声明
 """
+
 from celery import shared_task
 from celery.utils.log import get_task_logger
 
@@ -61,19 +62,20 @@ class TrackedTask:
 
         # 构造 defaults：仅在新创建时写入，已存在记录不覆盖
         defaults = {
-            'task_name': task_name,
-            'task_kwargs': self.celery_task.request.kwargs or {},
+            "task_name": task_name,
+            "task_kwargs": self.celery_task.request.kwargs or {},
         }
         if self._pending_type:
             try:
-                defaults['task_type'] = CeleryTaskRecord.TaskType(self._pending_type)
+                defaults["task_type"] = CeleryTaskRecord.TaskType(self._pending_type)
             except ValueError:
                 pass
         if self._pending_user_id:
             from django.contrib.auth import get_user_model
+
             User = get_user_model()
             try:
-                defaults['created_by'] = User.objects.get(id=self._pending_user_id)
+                defaults["created_by"] = User.objects.get(id=self._pending_user_id)
             except User.DoesNotExist:
                 pass
 
@@ -102,6 +104,7 @@ class TrackedTask:
             from Django_xm.apps.core.task_redis_manager import (
                 update_task_status as common_update,
             )
+
             result = common_update(self._task_manager_id, status_updates)
             if result is None:
                 common_create(
@@ -119,78 +122,90 @@ class TrackedTask:
         if sync_fn:
             self._sync_fn = sync_fn
 
-    def mark_started(self, worker_name: str = ''):
+    def mark_started(self, worker_name: str = ""):
         record = self._get_or_create_record()
         record.mark_started(worker_name=worker_name)
-        self._sync_to_task_manager({
-            'status': 'started',
-            'start_time': record.started_at.isoformat() if record.started_at else None,
-        })
+        self._sync_to_task_manager(
+            {
+                "status": "started",
+                "start_time": record.started_at.isoformat() if record.started_at else None,
+            }
+        )
 
-    def update_progress(self, progress: int, message: str = ''):
+    def update_progress(self, progress: int, message: str = ""):
         record = self._get_or_create_record()
         record.mark_progress(progress, message)
-        self._sync_to_task_manager({
-            'status': 'progress',
-            'progress': progress,
-            'current_step': message,
-        })
+        self._sync_to_task_manager(
+            {
+                "status": "progress",
+                "progress": progress,
+                "current_step": message,
+            }
+        )
 
     def mark_success(self, result=None):
         record = self._get_or_create_record()
         record.mark_success(result=result)
-        self._sync_to_task_manager({
-            'status': 'success',
-            'progress': 100,
-            'end_time': record.completed_at.isoformat() if record.completed_at else None,
-            'result': result,
-        })
+        self._sync_to_task_manager(
+            {
+                "status": "success",
+                "progress": 100,
+                "end_time": record.completed_at.isoformat() if record.completed_at else None,
+                "result": result,
+            }
+        )
 
-    def mark_failure(self, error_message: str = ''):
+    def mark_failure(self, error_message: str = ""):
         record = self._get_or_create_record()
         record.mark_failure(error_message=error_message)
-        self._sync_to_task_manager({
-            'status': 'failure',
-            'error': error_message,
-            'end_time': record.completed_at.isoformat() if record.completed_at else None,
-        })
+        self._sync_to_task_manager(
+            {
+                "status": "failure",
+                "error": error_message,
+                "end_time": record.completed_at.isoformat() if record.completed_at else None,
+            }
+        )
 
     def set_task_type(self, task_type: str):
         self._pending_type = task_type
         if self._record is not None:
             try:
                 from Django_xm.apps.core.task_models import CeleryTaskRecord
+
                 task_type_enum = CeleryTaskRecord.TaskType(task_type)
                 self._record.task_type = task_type_enum
-                self._record.save(update_fields=['task_type', 'updated_at'])
+                self._record.save(update_fields=["task_type", "updated_at"])
             except Exception:
-                pass
+                # 记录更新失败不影响任务执行主流程
+                logger.debug("更新 CeleryTaskRecord.task_type 失败")
 
     def set_created_by(self, user_id: int):
         self._pending_user_id = user_id
         if self._record is not None:
             try:
                 from django.contrib.auth import get_user_model
+
                 User = get_user_model()
                 self._record.created_by = User.objects.get(id=user_id)
-                self._record.save(update_fields=['created_by', 'updated_at'])
+                self._record.save(update_fields=["created_by", "updated_at"])
             except Exception:
-                pass
+                # 记录更新失败不影响任务执行主流程
+                logger.debug("更新 CeleryTaskRecord.created_by 失败")
 
 
 @shared_task(
     bind=True,
-    name='base.debug_task',
+    name="base.debug_task",
     soft_time_limit=60,
 )
 def debug_task(self):
     logger.info(f"[Celery] 调试任务执行，请求：{self.request!r}")
-    return {'status': 'success', 'request': repr(self.request)}
+    return {"status": "success", "request": repr(self.request)}
 
 
 @shared_task(
     bind=True,
-    name='base.cleanup_old_task_records',
+    name="base.cleanup_old_task_records",
     max_retries=1,
     soft_time_limit=300,
 )
@@ -210,19 +225,19 @@ def cleanup_old_task_records(self, days: int = 30):
                 CeleryTaskRecord.TaskStatus.SUCCESS,
                 CeleryTaskRecord.TaskStatus.FAILURE,
                 CeleryTaskRecord.TaskStatus.REVOKED,
-            ]
+            ],
         ).delete()
 
         logger.info(f"[Celery Base] 清理了 {deleted_count} 条过期任务记录（{days}天前）")
-        return {'status': 'success', 'deleted': deleted_count}
+        return {"status": "success", "deleted": deleted_count}
     except Exception as e:
-        logger.error(f"[Celery Base] 清理任务记录失败: {e}")
-        return {'status': 'error', 'error': str(e)}
+        logger.exception("[Celery Base] 清理任务记录失败")
+        return {"status": "error", "error": str(e)}
 
 
 @shared_task(
     bind=True,
-    name='base.check_stale_tasks',
+    name="base.check_stale_tasks",
     max_retries=1,
     soft_time_limit=120,
 )
@@ -247,23 +262,24 @@ def check_stale_tasks(self, timeout_minutes: int = 60):
 
         count = stale_tasks.count()
         for task in stale_tasks:
-            task.mark_failure(error_message=f'任务超时（{timeout_minutes}分钟未完成）')
+            task.mark_failure(error_message=f"任务超时（{timeout_minutes}分钟未完成）")
 
         logger.info(f"[Celery Base] 标记了 {count} 个超时任务")
-    except Exception as e:
-        logger.error(f"[Celery Base] 检测超时任务失败: {e}")
+    except Exception:
+        logger.exception("[Celery Base] 检测超时任务失败")
 
     try:
         from Django_xm.apps.research.models import ResearchTask
+
         research_cutoff = timezone.now() - timedelta(minutes=timeout_minutes)
         stale_research = ResearchTask.objects.filter(
-            status__in=['pending', 'progress'],
+            status__in=["pending", "progress"],
             created_at__lt=research_cutoff,
         )
-        research_count = stale_research.update(status='failed', updated_at=timezone.now())
+        research_count = stale_research.update(status="failed", updated_at=timezone.now())
         if research_count > 0:
             logger.info(f"[Celery Base] 标记了 {research_count} 个超时研究任务为 failed")
-    except Exception as e:
-        logger.error(f"[Celery Base] 检测超时研究任务失败: {e}")
+    except Exception:
+        logger.exception("[Celery Base] 检测超时研究任务失败")
 
-    return {'status': 'success', 'marked_stale': count}
+    return {"status": "success", "marked_stale": count}

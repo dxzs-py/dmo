@@ -35,10 +35,11 @@ class TerminationSignal(Enum):
 
 class TerminationAction(Enum):
     """循环检测渐进式动作（Claude Code 信任模型 + Trae 动态轮次）"""
-    CONTINUE = "continue"      # 正常继续
-    WARN = "warn"              # 注入警告消息，让 Agent 自我纠正
-    THROTTLE = "throttle"      # 注入强警告，引导 Agent 停止重复操作
-    TERMINATE = "terminate"    # 强制终止（安全网兜底）
+
+    CONTINUE = "continue"  # 正常继续
+    WARN = "warn"  # 注入警告消息，让 Agent 自我纠正
+    THROTTLE = "throttle"  # 注入强警告，引导 Agent 停止重复操作
+    TERMINATE = "terminate"  # 强制终止（安全网兜底）
 
 
 @dataclass
@@ -54,7 +55,6 @@ class TerminationVerdict:
 
 
 class ContextTerminationJudge:
-
     def __init__(
         self,
         goal_complete_window: int | None = None,
@@ -78,9 +78,7 @@ class ContextTerminationJudge:
         self._diversity_terminate_threshold: float = context_settings.loop_diversity_terminate_threshold
         self._args_diversity_threshold: float = context_settings.loop_args_diversity_threshold
         self._args_progressive_threshold: float = context_settings.loop_args_progressive_threshold
-        self._safe_tools: set = {
-            t.strip() for t in context_settings.loop_multi_call_safe_tools.split(",") if t.strip()
-        }
+        self._safe_tools: set = {t.strip() for t in context_settings.loop_multi_call_safe_tools.split(",") if t.strip()}
 
         self._cumulative_tokens: int = 0
         self._recent_tool_calls: list[dict[str, Any]] = []
@@ -114,7 +112,7 @@ class ContextTerminationJudge:
                 should_compress=False,
             )
         except Exception as e:
-            logger.error(f"终止判断异常: {e}")
+            logger.exception("终止判断异常")
             return TerminationVerdict(
                 signal=TerminationSignal.CONTINUE,
                 action=TerminationAction.CONTINUE,
@@ -135,9 +133,7 @@ class ContextTerminationJudge:
 
     def _check_budget_exhausted(self, state: dict[str, Any]) -> TerminationVerdict | None:
         if self._cumulative_tokens >= self._token_budget_limit:
-            reason = (
-                f"Token 预算耗尽: 累计 {self._cumulative_tokens} >= 上限 {self._token_budget_limit}"
-            )
+            reason = f"Token 预算耗尽: 累计 {self._cumulative_tokens} >= 上限 {self._token_budget_limit}"
             logger.warning(reason)
             return TerminationVerdict(
                 signal=TerminationSignal.BUDGET_EXHAUSTED,
@@ -158,21 +154,23 @@ class ContextTerminationJudge:
         if not messages:
             return None
 
-        recent_msgs = messages[-self._window_size * 2:] if len(messages) > self._window_size * 2 else messages
+        recent_msgs = messages[-self._window_size * 2 :] if len(messages) > self._window_size * 2 else messages
 
         tool_calls_in_window: list[dict[str, Any]] = []
         for msg in recent_msgs:
             if isinstance(msg, AIMessage) and hasattr(msg, "tool_calls") and msg.tool_calls:
                 for tc in msg.tool_calls:
-                    tool_calls_in_window.append({
-                        "name": tc.get("name", ""),
-                        "args_repr": str(tc.get("args", {})),
-                    })
+                    tool_calls_in_window.append(
+                        {
+                            "name": tc.get("name", ""),
+                            "args_repr": str(tc.get("args", {})),
+                        }
+                    )
 
         if not tool_calls_in_window:
             return None
 
-        self._recent_tool_calls = tool_calls_in_window[-self._window_size:]
+        self._recent_tool_calls = tool_calls_in_window[-self._window_size :]
 
         # ── 0. 参数模式检测：递增/递减/遍历模式=合理重复，跳过 ──
         if self._detect_progressive_pattern(self._recent_tool_calls):
@@ -194,9 +192,7 @@ class ContextTerminationJudge:
 
             # 终止：安全网兜底
             if consecutive_same >= self._terminate_threshold:
-                reason = (
-                    f"循环检测: 工具 {tool_name} 连续相同调用 {consecutive_same} 次"
-                )
+                reason = f"循环检测: 工具 {tool_name} 连续相同调用 {consecutive_same} 次"
                 logger.warning(reason)
                 return TerminationVerdict(
                     signal=TerminationSignal.LOOP_DETECTED,
@@ -212,9 +208,7 @@ class ContextTerminationJudge:
 
             # 限流：强警告引导 Agent 停止
             if consecutive_same >= self._throttle_threshold:
-                reason = (
-                    f"循环检测: 工具 {tool_name} 连续相同调用 {consecutive_same} 次"
-                )
+                reason = f"循环检测: 工具 {tool_name} 连续相同调用 {consecutive_same} 次"
                 logger.warning(reason)
                 return TerminationVerdict(
                     signal=TerminationSignal.LOOP_DETECTED,
@@ -234,9 +228,7 @@ class ContextTerminationJudge:
                 )
 
             # 警告：注入警告消息让 Agent 自我纠正
-            reason = (
-                f"循环检测: 工具 {tool_name} 连续相同调用 {consecutive_same} 次"
-            )
+            reason = f"循环检测: 工具 {tool_name} 连续相同调用 {consecutive_same} 次"
             logger.info(reason)
             return TerminationVerdict(
                 signal=TerminationSignal.LOOP_DETECTED,
@@ -259,14 +251,10 @@ class ContextTerminationJudge:
             from Django_xm.apps.ai_engine.services.tool_usage_guard import (
                 get_tool_usage_guard,
             )
-            thread_id = state.get("thread_id") or state.get("configurable", {}).get(
-                "thread_id", "default"
-            )
+
+            thread_id = state.get("thread_id") or state.get("configurable", {}).get("thread_id", "default")
             if get_tool_usage_guard().is_in_hard_stop_state(str(thread_id)):
-                write_file_calls = [
-                    tc for tc in self._recent_tool_calls
-                    if tc["name"] == "fs_write_file"
-                ]
+                write_file_calls = [tc for tc in self._recent_tool_calls if tc["name"] == "fs_write_file"]
                 if len(write_file_calls) >= 3:
                     reason = (
                         f"ToolUsageGuard 已连续阻断，fs_write_file 在最近窗口内仍被 "
@@ -290,17 +278,13 @@ class ContextTerminationJudge:
 
         # ── 3. 多样性检测（参数感知） ──
         if len(self._recent_tool_calls) >= self._window_size:
-            unique_tools = len(set(tc["name"] for tc in self._recent_tool_calls))
+            unique_tools = len({tc["name"] for tc in self._recent_tool_calls})
             diversity_ratio = unique_tools / len(self._recent_tool_calls)
 
             # 安全工具豁免（扩展白名单）
-            all_safe = all(
-                tc["name"] in self._safe_tools for tc in self._recent_tool_calls
-            )
+            all_safe = all(tc["name"] in self._safe_tools for tc in self._recent_tool_calls)
             if all_safe:
-                unique_args = len(set(
-                    (tc["name"], tc["args_repr"]) for tc in self._recent_tool_calls
-                ))
+                unique_args = len({(tc["name"], tc["args_repr"]) for tc in self._recent_tool_calls})
                 if unique_args >= len(self._recent_tool_calls) * self._args_progressive_threshold:
                     logger.debug(
                         "循环检测: 多调用安全工具但参数多样性正常 (%d/%d)，跳过",
@@ -310,9 +294,7 @@ class ContextTerminationJudge:
                     return None
 
             # 参数多样性计算
-            unique_args = len(set(
-                (tc["name"], tc["args_repr"]) for tc in self._recent_tool_calls
-            ))
+            unique_args = len({(tc["name"], tc["args_repr"]) for tc in self._recent_tool_calls})
             args_diversity = unique_args / len(self._recent_tool_calls)
 
             # 参数多样性高=合理重复，跳过
@@ -327,8 +309,7 @@ class ContextTerminationJudge:
             if diversity_ratio < self._diversity_terminate_threshold:
                 if args_diversity < self._args_diversity_threshold:
                     reason = (
-                        f"循环检测: 工具多样性过低 ({diversity_ratio:.1%})，"
-                        f"参数多样性也过低 ({args_diversity:.1%})"
+                        f"循环检测: 工具多样性过低 ({diversity_ratio:.1%})，参数多样性也过低 ({args_diversity:.1%})"
                     )
                     logger.warning(reason)
                     return TerminationVerdict(
@@ -384,13 +365,12 @@ class ContextTerminationJudge:
         if len(tool_calls) < 3:
             return False
 
-        same_tool_calls = [tc for tc in tool_calls
-                           if tc["name"] == tool_calls[-1]["name"]]
+        same_tool_calls = [tc for tc in tool_calls if tc["name"] == tool_calls[-1]["name"]]
         if len(same_tool_calls) < 3:
             return False
 
         # 提取参数指纹，检查是否全部相同
-        unique_args = set(tc["args_repr"] for tc in same_tool_calls)
+        unique_args = {tc["args_repr"] for tc in same_tool_calls}
         if len(unique_args) <= 1:
             return False  # 所有参数完全相同=不是递进模式
 
@@ -408,9 +388,7 @@ class ContextTerminationJudge:
         ai_msg_count = sum(1 for m in messages if isinstance(m, AIMessage))
         min_rounds = 6
         if ai_msg_count < min_rounds:
-            logger.debug(
-                f"目标完成检测: AI 消息轮数不足 ({ai_msg_count} < {min_rounds})，跳过"
-            )
+            logger.debug(f"目标完成检测: AI 消息轮数不足 ({ai_msg_count} < {min_rounds})，跳过")
             return None
 
         recent = self._extract_recent_messages(state, self._goal_complete_window)
@@ -449,23 +427,22 @@ class ContextTerminationJudge:
         if len(ai_messages) < self._info_gain_window + 1:
             return None
 
-        recent_ai = ai_messages[-(self._info_gain_window + 1):]
+        recent_ai = ai_messages[-(self._info_gain_window + 1) :]
 
         novelties: list[float] = []
         for i in range(max(1, len(recent_ai) - self._info_gain_window), len(recent_ai)):
-            new_text = recent_ai[i].content if isinstance(recent_ai[i].content, str) else str(recent_ai[i].content)
-            context_text = " ".join(
-                msg.content[:500] for msg in recent_ai[:i] if isinstance(msg.content, str)
-            )
+            content = recent_ai[i].content
+            new_text = content if isinstance(content, str) else str(content)
+            context_text = " ".join(msg.content[:500] for msg in recent_ai[:i] if isinstance(msg.content, str))
             novelty = self._compute_semantic_novelty(new_text, context_text)
             novelties.append(novelty)
 
         self._recent_info_gains = novelties
 
         if len(novelties) >= self._info_gain_window:
-            all_below_threshold = all(n < self._info_gain_threshold for n in novelties[-self._info_gain_window:])
+            all_below_threshold = all(n < self._info_gain_threshold for n in novelties[-self._info_gain_window :])
             if all_below_threshold:
-                avg_novelty = sum(novelties[-self._info_gain_window:]) / self._info_gain_window
+                avg_novelty = sum(novelties[-self._info_gain_window :]) / self._info_gain_window
                 reason = (
                     f"信息增益衰减: 连续 {self._info_gain_window} 轮新颖度低于阈值 "
                     f"(平均={avg_novelty:.3f}, 阈值={self._info_gain_threshold})"
@@ -482,7 +459,7 @@ class ContextTerminationJudge:
                         "avg_novelty": avg_novelty,
                         "threshold": self._info_gain_threshold,
                         "window_size": self._info_gain_window,
-                        "recent_novelties": novelties[-self._info_gain_window:],
+                        "recent_novelties": novelties[-self._info_gain_window :],
                     },
                 )
 
@@ -544,10 +521,7 @@ class ContextTerminationJudge:
     def _has_summary_language(text: str) -> bool:
         if not text:
             return False
-        for pattern in _SUMMARY_PATTERNS:
-            if pattern.search(text):
-                return True
-        return False
+        return any(pattern.search(text) for pattern in _SUMMARY_PATTERNS)
 
     @staticmethod
     def _embedding_similarity(text_a: str, text_b: str) -> float | None:
@@ -555,6 +529,7 @@ class ContextTerminationJudge:
             import numpy as np
 
             from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
+
             embeddings = get_embeddings()
             vec_a = embeddings.embed_query(text_a[:500])
             vec_b = embeddings.embed_query(text_b[:500])

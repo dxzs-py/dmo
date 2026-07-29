@@ -101,7 +101,7 @@ class LoginSecurityServiceTest(unittest.TestCase):
         """第 4 次失败：count=4，仍未锁定。"""
         self._install_fake_cache(mock_cache)
 
-        for i in range(4):
+        for _i in range(4):
             count = LoginSecurityService.record_failure("bob")
 
         self.assertEqual(count, 4)
@@ -111,7 +111,7 @@ class LoginSecurityServiceTest(unittest.TestCase):
         """第 5 次失败：触发锁定，is_locked=True。"""
         self._install_fake_cache(mock_cache)
 
-        for i in range(5):
+        for _i in range(5):
             count = LoginSecurityService.record_failure("carol")
 
         self.assertEqual(count, 5)
@@ -121,7 +121,7 @@ class LoginSecurityServiceTest(unittest.TestCase):
         """第 6 次失败：仍锁定（lock key 已存在，不重置 TTL）。"""
         self._install_fake_cache(mock_cache)
 
-        for i in range(6):
+        for _i in range(6):
             count = LoginSecurityService.record_failure("dave")
 
         self.assertEqual(count, 6)
@@ -140,9 +140,7 @@ class LoginSecurityServiceTest(unittest.TestCase):
 
         LoginSecurityService.record_success("eve")
 
-        self.assertIsNone(
-            self.fake_cache.get(LoginSecurityService._fail_key("eve"))
-        )
+        self.assertIsNone(self.fake_cache.get(LoginSecurityService._fail_key("eve")))
 
     def test_record_success_does_not_clear_lock(self, mock_cache):
         """登录成功只清除失败计数，不清除锁定标记。

@@ -10,7 +10,7 @@ import { StreamState } from '@/types'
  * 抽取三处重复的流式最终化逻辑：
  * - chat.js sendMessage 的 onStreamEnd
  * - chat.js regenerateMessage 的 onStreamEnd
- * - approval.js _executeChatApproval 的 finally 块
+ * - approval.js _executeApprovalStream 的 finally 块
  *
  * 最终化流程：
  * FINALIZING → waitForSyncLock → flushPendingSync → waitForSyncLock →

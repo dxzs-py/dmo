@@ -65,8 +65,9 @@ class LoginSecurityService:
         """
         if not username:
             return 0
-        ttl = cache.ttl(cls._lock_key(username))
-        # django-redis: ttl 返回 None（key 不存在）/ -1（无过期）/ >=0（剩余秒数）
+        # django-redis 扩展方法：BaseCache 未声明 ttl()，django-stubs 不覆盖。
+        # 返回值约定：None(key 不存在) / -1(无过期) / >=0(剩余秒数)。
+        ttl = cache.ttl(cls._lock_key(username))  # type: ignore[attr-defined]  # django-redis extension
         if ttl is None or ttl < 0:
             return 0
         return int(ttl)
@@ -96,14 +97,10 @@ class LoginSecurityService:
         if count >= cls.MAX_FAIL_COUNT:
             cache.set(cls._lock_key(username), 1, cls.LOCK_TTL)
             logger.warning(
-                f"[LoginSecurity] 账号锁定: username={username}, "
-                f"fail_count={count}, lock_ttl={cls.LOCK_TTL}s"
+                f"[LoginSecurity] 账号锁定: username={username}, fail_count={count}, lock_ttl={cls.LOCK_TTL}s"
             )
         else:
-            logger.info(
-                f"[LoginSecurity] 登录失败计数: username={username}, "
-                f"fail_count={count}/{cls.MAX_FAIL_COUNT}"
-            )
+            logger.info(f"[LoginSecurity] 登录失败计数: username={username}, fail_count={count}/{cls.MAX_FAIL_COUNT}")
         return count
 
     @classmethod

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 class PlanStep(BaseModel):
     """计划步骤"""
+
     description: str
     tool: str
     args: dict = {}
@@ -16,6 +17,7 @@ class PlanStep(BaseModel):
 
 class PlanModel(BaseModel):
     """结构化执行计划"""
+
     steps: list[PlanStep]
     total_steps: int
 

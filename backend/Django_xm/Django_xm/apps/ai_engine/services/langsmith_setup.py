@@ -65,7 +65,9 @@ def configure_langsmith() -> None:
     if not should_enable:
         logger.debug(
             "LangSmith 追踪未启用 (settings.langsmith_tracing=%s, env_api_key_set=%s, env_tracing=%s)",
-            app_cfg.langsmith_tracing, bool(env_api_key), env_tracing,
+            app_cfg.langsmith_tracing,
+            bool(env_api_key),
+            env_tracing,
         )
         return
 
@@ -87,6 +89,7 @@ def configure_langsmith() -> None:
     # 关闭 LangChain debug/verbose，避免与 LangSmith tracing 冲突
     try:
         from langchain_core.globals import set_debug, set_verbose
+
         set_debug(False)
         set_verbose(False)
     except ImportError:
@@ -94,5 +97,6 @@ def configure_langsmith() -> None:
 
     logger.info(
         "LangSmith 追踪已启用 (project=%s, endpoint=%s)",
-        app_cfg.langsmith_project, app_cfg.langsmith_endpoint,
+        app_cfg.langsmith_project,
+        app_cfg.langsmith_endpoint,
     )

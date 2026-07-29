@@ -30,15 +30,15 @@ class RedisStatusProvider(DatabaseStatusProvider):
         redis_info = get_redis_info()
 
         redis_status: dict[str, Any] = {
-            'backend': 'Redis',
-            'connection': 'healthy' if redis_info else 'unhealthy',
+            "backend": "Redis",
+            "connection": "healthy" if redis_info else "unhealthy",
         }
         if redis_info:
-            redis_status['version'] = redis_info.get('redis_version', '-')
-            redis_status['used_memory_human'] = redis_info.get('used_memory_human', '-')
-            redis_status['connected_clients'] = redis_info.get('connected_clients', 0)
-            db_info = redis_info.get('db0', {})
+            redis_status["version"] = redis_info.get("redis_version", "-")
+            redis_status["used_memory_human"] = redis_info.get("used_memory_human", "-")
+            redis_status["connected_clients"] = redis_info.get("connected_clients", 0)
+            db_info = redis_info.get("db0", {})
             if isinstance(db_info, dict):
-                redis_status['total_keys'] = db_info.get('keys', 0)
+                redis_status["total_keys"] = db_info.get("keys", 0)
 
         return redis_status

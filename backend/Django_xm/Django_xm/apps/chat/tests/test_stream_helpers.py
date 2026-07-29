@@ -141,8 +141,10 @@ class HandleToolMessageChunkEventTests(unittest.TestCase):
         )
 
         _handle_tool_message_chunk(
-            msg, tool_calls_map,
-            session_id="session-1", message_id="msg-1",
+            msg,
+            tool_calls_map,
+            session_id="session-1",
+            message_id="msg-1",
         )
 
         # 验证事件序列：RUNNING → TIMEOUT
@@ -167,8 +169,10 @@ class HandleToolMessageChunkEventTests(unittest.TestCase):
         )
 
         _handle_tool_message_chunk(
-            msg, tool_calls_map,
-            session_id="session-1", message_id="msg-1",
+            msg,
+            tool_calls_map,
+            session_id="session-1",
+            message_id="msg-1",
         )
 
         event_types = [call.args[1] for call in mock_service.transition.call_args_list]
@@ -188,8 +192,10 @@ class HandleToolMessageChunkEventTests(unittest.TestCase):
         )
 
         _handle_tool_message_chunk(
-            msg, tool_calls_map,
-            session_id="session-1", message_id="msg-1",
+            msg,
+            tool_calls_map,
+            session_id="session-1",
+            message_id="msg-1",
         )
 
         event_types = [call.args[1] for call in mock_service.transition.call_args_list]
@@ -215,8 +221,10 @@ class HandleToolMessageChunkEventTests(unittest.TestCase):
         )
 
         _handle_tool_message_chunk(
-            msg, tool_calls_map,
-            session_id="session-1", message_id="msg-1",
+            msg,
+            tool_calls_map,
+            session_id="session-1",
+            message_id="msg-1",
         )
 
         event_types = [call.args[1] for call in mock_service.transition.call_args_list]
@@ -238,8 +246,10 @@ class HandleToolMessageChunkEventTests(unittest.TestCase):
         )
 
         _handle_tool_message_chunk(
-            msg, tool_calls_map,
-            session_id="session-1", message_id="msg-1",
+            msg,
+            tool_calls_map,
+            session_id="session-1",
+            message_id="msg-1",
         )
 
         event_types = [call.args[1] for call in mock_service.transition.call_args_list]

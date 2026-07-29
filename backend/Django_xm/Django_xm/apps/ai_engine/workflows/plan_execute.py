@@ -6,9 +6,9 @@ from langchain_core.tools import BaseTool
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 
-from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.ai_engine.prompts.plan_execute_prompts import PLAN_PROMPT, REFLECT_PROMPT, RESPOND_PROMPT
 from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
+from Django_xm.apps.core.config import get_logger
 
 from .state import PlanModel, PlanStep, WorkflowState
 
@@ -53,7 +53,7 @@ async def plan(state: WorkflowState) -> dict:
             "current_step": 0,
         }
     except Exception as e:
-        logger.error(f"[PlanExecute] plan error: {e}")
+        logger.exception("[PlanExecute] plan error")
         return {"error": str(e), "plan": None}
 
 
@@ -76,8 +76,7 @@ def _create_execute_node(tool_node: ToolNode):
         tool_name = step.tool
 
         logger.info(
-            f"[PlanExecute] execute step {current_step + 1}/{len(steps)}: "
-            f"{step_description[:60]}, tool={tool_name}"
+            f"[PlanExecute] execute step {current_step + 1}/{len(steps)}: {step_description[:60]}, tool={tool_name}"
         )
 
         # 使用 ToolNode 执行工具调用
@@ -85,12 +84,14 @@ def _create_execute_node(tool_node: ToolNode):
             # 构造 AIMessage 包含 tool_calls，供 ToolNode 处理
             ai_message = AIMessage(
                 content="",
-                tool_calls=[{
-                    "name": tool_name,
-                    "args": step.args or {},
-                    "id": f"plan_step_{current_step}",
-                    "type": "tool_call",
-                }],
+                tool_calls=[
+                    {
+                        "name": tool_name,
+                        "args": step.args or {},
+                        "id": f"plan_step_{current_step}",
+                        "type": "tool_call",
+                    }
+                ],
             )
 
             # ToolNode 自动处理工具调用和异常，将错误作为 ToolMessage 返回
@@ -100,22 +101,22 @@ def _create_execute_node(tool_node: ToolNode):
             tool_result = ""
             for msg in result.get("messages", []):
                 if isinstance(msg, ToolMessage):
-                    tool_result = msg.content
+                    tool_result = str(msg.content)
                     if msg.status == "error":
-                        logger.warning(
-                            f"[PlanExecute] tool '{tool_name}' returned error: {tool_result}"
-                        )
+                        logger.warning(f"[PlanExecute] tool '{tool_name}' returned error: {tool_result}")
                     else:
                         logger.info(f"[PlanExecute] tool '{tool_name}' executed successfully")
                     break
 
             tool_results = list(state.get("tool_results", []))
-            tool_results.append({
-                "step": current_step + 1,
-                "description": step_description,
-                "result": str(tool_result),
-                "tool": tool_name,
-            })
+            tool_results.append(
+                {
+                    "step": current_step + 1,
+                    "description": step_description,
+                    "result": str(tool_result),
+                    "tool": tool_name,
+                }
+            )
 
             return {
                 "current_step": current_step + 1,
@@ -124,12 +125,14 @@ def _create_execute_node(tool_node: ToolNode):
 
         # 无工具调用，直接使用步骤描述作为结果
         tool_results = list(state.get("tool_results", []))
-        tool_results.append({
-            "step": current_step + 1,
-            "description": step_description,
-            "result": step_description,
-            "tool": "none",
-        })
+        tool_results.append(
+            {
+                "step": current_step + 1,
+                "description": step_description,
+                "result": step_description,
+                "tool": "none",
+            }
+        )
 
         return {
             "current_step": current_step + 1,
@@ -176,7 +179,10 @@ async def reflect(state: WorkflowState) -> dict:
             result=last_result.get("result", ""),
         )
         response = await model.ainvoke([HumanMessage(content=prompt)])
-        assessment = _parse_json_response(response.content)
+        content = response.content
+        if not isinstance(content, str):
+            content = str(content)
+        assessment = _parse_json_response(content)
 
         status = assessment.get("status", "continue")
         logger.info(f"[PlanExecute] reflect: status={status}")
@@ -238,7 +244,7 @@ async def respond(state: WorkflowState) -> dict:
             "final_response": response.content,
         }
     except Exception as e:
-        logger.error(f"[PlanExecute] respond error: {e}")
+        logger.exception("[PlanExecute] respond error")
         return {"error": str(e), "final_response": f"生成最终回答时出错: {e}"}
 
 

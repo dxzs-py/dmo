@@ -116,9 +116,9 @@ class RetrievalNodeWithKnowledgeBaseTestCase(SimpleTestCase):
 
         # 验证调用参数（主查询 + 关键点补充检索）
         calls = mock_load.call_args_list
-        self.assertTrue(any(
-            call.args[0] == "user_7_数学笔记" for call in calls
-        ), f"未调用 user_7_数学笔记，实际调用: {calls}")
+        self.assertTrue(
+            any(call.args[0] == "user_7_数学笔记" for call in calls), f"未调用 user_7_数学笔记，实际调用: {calls}"
+        )
 
     @patch("Django_xm.apps.learning.nodes.retrieval_node._load_and_retrieve")
     def test_multiple_kbs_all_loaded(self, mock_load):
@@ -136,6 +136,7 @@ class RetrievalNodeWithKnowledgeBaseTestCase(SimpleTestCase):
     @patch("Django_xm.apps.learning.nodes.retrieval_node._load_and_retrieve")
     def test_kb_load_failure_does_not_break_others(self, mock_load):
         """单个知识库加载失败不影响其他知识库"""
+
         # kb_a 始终返回空（模拟加载失败），kb_b 返回文档
         def _side_effect(user_index_name, query, k=5):
             if "kb_a" in user_index_name:
@@ -187,10 +188,12 @@ class WorkflowStartSerializerKnowledgeBaseTestCase(SimpleTestCase):
         """序列化器接受 knowledge_base_ids 列表"""
         from Django_xm.apps.learning.serializers import WorkflowStartSerializer
 
-        serializer = WorkflowStartSerializer(data={
-            "query": "学习机器学习",
-            "knowledge_base_ids": ["数学笔记", "ml_basics"],
-        })
+        serializer = WorkflowStartSerializer(
+            data={
+                "query": "学习机器学习",
+                "knowledge_base_ids": ["数学笔记", "ml_basics"],
+            }
+        )
         self.assertTrue(serializer.is_valid(), serializer.errors)
         self.assertEqual(
             serializer.validated_data["knowledge_base_ids"],
@@ -209,9 +212,11 @@ class WorkflowStartSerializerKnowledgeBaseTestCase(SimpleTestCase):
         """元素类型必须为字符串（整数应被 CharField 拒绝或转换）"""
         from Django_xm.apps.learning.serializers import WorkflowStartSerializer
 
-        serializer = WorkflowStartSerializer(data={
-            "query": "学习",
-            "knowledge_base_ids": [123, "valid"],  # 123 会被 CharField 转换为 "123"
-        })
+        serializer = WorkflowStartSerializer(
+            data={
+                "query": "学习",
+                "knowledge_base_ids": [123, "valid"],  # 123 会被 CharField 转换为 "123"
+            }
+        )
         # CharField 默认会做 str() 转换，所以这里是 valid
         self.assertTrue(serializer.is_valid(), serializer.errors)

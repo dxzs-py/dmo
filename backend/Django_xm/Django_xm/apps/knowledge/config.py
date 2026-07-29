@@ -11,19 +11,19 @@ knowledge 模块的导入路径不需要同步修改，降低耦合。
 # 配置对象
 from Django_xm.apps.ai_engine.config import settings  # noqa: F401
 
+# 系统配置模型
+from Django_xm.apps.ai_engine.models import SystemConfig  # noqa: F401
+
+# Embedding 工厂
+from Django_xm.apps.ai_engine.services.embedding_factory import (  # noqa: F401
+    FallbackEmbedding,
+    detect_embedding_dimension,
+    get_embeddings_with_fallback,
+    get_system_embedding_provider,
+)
+
 # LLM 工厂
 from Django_xm.apps.ai_engine.services.llm_factory import (  # noqa: F401
     get_chat_model,
     get_model_string,
 )
-
-# Embedding 工厂
-from Django_xm.apps.ai_engine.services.embedding_factory import (  # noqa: F401
-    FallbackEmbedding,
-    get_embeddings_with_fallback,
-    detect_embedding_dimension,
-    get_system_embedding_provider,
-)
-
-# 系统配置模型
-from Django_xm.apps.ai_engine.models import SystemConfig  # noqa: F401

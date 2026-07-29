@@ -18,12 +18,13 @@
   确保客户端在任何路径下都能收到流结束信号
 - 所有 yield 都是 SSE 格式字符串（``"data: ...\\n\\n"``）
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -37,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 # ============== 流式上下文 ==============
 
+
 @dataclass
 class ChatStreamContext:
     """SSE 流式聊天上下文，封装原 generate() 闭包的共享状态。
@@ -45,6 +47,7 @@ class ChatStreamContext:
     ``_init_stream`` / ``_process_chunks`` / ``_cleanup_stream``
     可以作为独立函数测试与复用。
     """
+
     request: HttpRequest
     data: dict[str, Any]
     original_attachment_ids: list[str]
@@ -54,17 +57,18 @@ class ChatStreamContext:
     # 通过共享状态字典，在 finally 块中兜底刷新。
     stream_state: dict[str, str] = field(default_factory=lambda: {"pending_content": ""})
     loop: asyncio.AbstractEventLoop | None = None
-    gen: AsyncIterator | None = None
+    gen: AsyncGenerator[dict[str, Any], None] | None = None
     pending_task: asyncio.Task | None = None
 
 
 # ============== 子函数 ==============
 
+
 def _init_stream(ctx: ChatStreamContext) -> Iterator[str]:
     """初始化 SSE 流：创建事件循环，发送附件 ID 与预处理进度事件。"""
     ctx.loop = asyncio.new_event_loop()
     # 共享状态字典注入到 data，供 ChatService 内部写入 pending_content
-    ctx.data['_stream_state'] = ctx.stream_state
+    ctx.data["_stream_state"] = ctx.stream_state
 
     if ctx.original_attachment_ids:
         yield f"data: {json.dumps({'type': 'attachment_ids', 'data': ctx.original_attachment_ids}, ensure_ascii=False)}\n\n"
@@ -84,18 +88,18 @@ def _process_chunks(ctx: ChatStreamContext) -> Iterator[str]:
 
     chat_service = ChatService(
         user_id=ctx.request.user.id if ctx.request.user.is_authenticated else None,
-        thread_id=ctx.data.get('session_id'),
+        thread_id=ctx.data.get("session_id"),
     )
     ctx.gen = chat_service.process_stream_chat_request(ctx.data).__aiter__()
+    assert ctx.gen is not None  # for mypy type narrowing
+    assert ctx.loop is not None  # _init_stream 已保证初始化
 
     while True:
         try:
             if ctx.pending_task is None:
                 ctx.pending_task = ctx.loop.create_task(ctx.gen.__anext__())
 
-            done, _ = ctx.loop.run_until_complete(
-                asyncio.wait({ctx.pending_task}, timeout=30.0)
-            )
+            done, _ = ctx.loop.run_until_complete(asyncio.wait({ctx.pending_task}, timeout=30.0))
 
             if not done:
                 # 超时但任务仍在运行，发送心跳保活，不取消任务
@@ -106,10 +110,10 @@ def _process_chunks(ctx: ChatStreamContext) -> Iterator[str]:
             event = ctx.pending_task.result()
             ctx.pending_task = None
 
-            if isinstance(event, dict) and event.get('type') == 'error':
+            if isinstance(event, dict) and event.get("type") == "error":
                 yield sse_error_event(
                     code=str(int(ErrorCode.SERVER_ERROR)),
-                    message=event.get('message', '处理出错'),
+                    message=event.get("message", "处理出错"),
                 )
             else:
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
@@ -125,6 +129,8 @@ def _cleanup_stream(ctx: ChatStreamContext) -> Iterator[str]:
     Task 23.4：checkpointer 释放失败现在记录 WARNING 日志，不再静默吞掉，
     便于运维定位 PostgreSQL 连接泄漏问题。
     """
+    # _init_stream 已保证 ctx.loop 不为 None
+    assert ctx.loop is not None
     # 1. 取消未完成的 pending task
     if ctx.pending_task is not None:
         ctx.pending_task.cancel()
@@ -140,6 +146,7 @@ def _cleanup_stream(ctx: ChatStreamContext) -> Iterator[str]:
     # Task 23.4：记录释放失败，便于监控连接泄漏
     try:
         from Django_xm.apps.ai_engine.services.checkpointer_factory import release_async_checkpointer
+
         ctx.loop.run_until_complete(release_async_checkpointer())
     except Exception as e:
         logger.warning(
@@ -161,9 +168,7 @@ def _cleanup_stream(ctx: ChatStreamContext) -> Iterator[str]:
         for task in pending:
             task.cancel()
         if pending:
-            ctx.loop.run_until_complete(
-                asyncio.gather(*pending, return_exceptions=True)
-            )
+            ctx.loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
     except Exception as e:
         logger.debug(f"残留 Task 清理异常（通常无害）: {e}")
 
@@ -171,6 +176,7 @@ def _cleanup_stream(ctx: ChatStreamContext) -> Iterator[str]:
 
 
 # ============== 主生成器 ==============
+
 
 def generate_chat_stream(ctx: ChatStreamContext) -> Iterator[str]:
     """SSE 流式聊天生成器（组合 ``_init_stream`` → ``_process_chunks`` → ``_cleanup_stream``）。
@@ -190,8 +196,9 @@ def generate_chat_stream(ctx: ChatStreamContext) -> Iterator[str]:
     try:
         yield from _process_chunks(ctx)
     except Exception as e:
-        logger.error(f"流式处理出错: {e!s}", exc_info=True)
+        logger.exception("流式处理出错")
         from Django_xm.apps.ai_engine.services.exceptions import classify_exception
+
         classified = classify_exception(e)
         yield sse_error_event(
             code=str(int(ErrorCode.SERVER_ERROR)),

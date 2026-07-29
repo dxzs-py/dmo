@@ -46,6 +46,10 @@ const RECONNECT_MAX_ATTEMPTS = 5
 const LAST_SEQ_KEY_PREFIX = 'realtime:last_seq'
 // disconnected 状态显示防抖（ms）：网络抖动时延迟显示，避免频繁闪烁
 const DISCONNECT_DEBOUNCE_MS = 500
+// 订阅上限：防止重连时 N 个已订阅 session 触发 N 次 subscribe + replay 请求风暴
+// 超过上限时按 LRU 淘汰最旧的订阅（用户极少同时关注超过 10 个会话）
+const MAX_SUBSCRIBED_SESSIONS = 10
+const MAX_SUBSCRIBED_TASKS = 10
 
 /** @type {ReturnType<typeof createRealtimeSync> | null} */
 let instance = null
@@ -291,6 +295,18 @@ function createRealtimeSync() {
     callbacks.add(callback)
     subscribedSessions.add(sessionId)
 
+    // LRU 淘汰：超过订阅上限时移除最旧的 session 订阅
+    // 防止重连时 N 个已订阅 session 触发 N 次 subscribe + replay 请求风暴
+    if (isFirstSubscription && subscribedSessions.size > MAX_SUBSCRIBED_SESSIONS) {
+      const oldest = subscribedSessions.values().next().value
+      if (oldest && oldest !== sessionId) {
+        logger.warn(
+          `[Realtime] 订阅数超过上限 ${MAX_SUBSCRIBED_SESSIONS}，按 LRU 淘汰最旧 session: ${oldest}`
+        )
+        unsubscribeSession(oldest)
+      }
+    }
+
     if (isFirstSubscription && ws?.readyState === WebSocket.OPEN) {
       const key = `session_${sessionId}`
       // 始终从 lastSeq Map 解析 last_seq，与 onConnectionOpen 行为对齐
@@ -367,6 +383,17 @@ function createRealtimeSync() {
     const isFirstSubscription = callbacks.size === 0
     callbacks.add(callback)
     subscribedTasks.add(taskId)
+
+    // LRU 淘汰：与 subscribeSession 对称，超过上限时移除最旧 task 订阅
+    if (isFirstSubscription && subscribedTasks.size > MAX_SUBSCRIBED_TASKS) {
+      const oldest = subscribedTasks.values().next().value
+      if (oldest && oldest !== taskId) {
+        logger.warn(
+          `[Realtime] 订阅数超过上限 ${MAX_SUBSCRIBED_TASKS}，按 LRU 淘汰最旧 task: ${oldest}`
+        )
+        unsubscribeTask(oldest)
+      }
+    }
 
     if (isFirstSubscription && ws?.readyState === WebSocket.OPEN) {
       const key = `task_${taskId}`
@@ -582,7 +609,7 @@ function createRealtimeSync() {
     } catch (err) {
       logger.error('[RealtimeSync] 事件回调失败，保持 lastSeq 不变:', err)
       // 不更新 lastSeq，重连后 replay 会重新发送该事件
-      hasError = true
+      // hasError 已在 try 块内的 catch 分支设置，此处无需重复赋值
     }
 
     // 阶段二：关键事件触发快照校对（无论回调是否成功，只要事件类型匹配就触发）

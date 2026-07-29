@@ -38,7 +38,6 @@ class ProgressiveCompressionResult:
 
 
 class ProgressiveCompressor:
-
     _DEFAULT_THRESHOLDS: ClassVar[dict[CompressionLevel, float]] = {
         CompressionLevel.LEVEL_1_BASELINE: 0.0,
         CompressionLevel.LEVEL_2_SUMMARY: 0.5,
@@ -127,8 +126,8 @@ class ProgressiveCompressor:
                 compression_ratio=0.0,
                 messages=messages,
             )
-        except Exception as e:
-            logger.error(f"渐进式压缩失败: {e}", exc_info=True)
+        except Exception:
+            logger.exception("渐进式压缩失败")
             total_tokens = TokenEstimator.estimate_dict_messages(messages)
             return messages, ProgressiveCompressionResult(
                 level=CompressionLevel.LEVEL_1_BASELINE,
@@ -154,8 +153,8 @@ class ProgressiveCompressor:
                 messages=compressed_msgs,
                 strategy_used="baseline_prune",
             )
-        except Exception as e:
-            logger.error(f"Level 1 压缩失败: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Level 1 压缩失败")
             return messages, ProgressiveCompressionResult(
                 level=CompressionLevel.LEVEL_1_BASELINE,
                 original_tokens=total_tokens,
@@ -184,8 +183,8 @@ class ProgressiveCompressor:
                 key_decisions=result.key_decisions or [],
                 strategy_used="incremental_summary",
             )
-        except Exception as e:
-            logger.error(f"Level 2 压缩失败: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Level 2 压缩失败")
             return messages, ProgressiveCompressionResult(
                 level=CompressionLevel.LEVEL_2_SUMMARY,
                 original_tokens=total_tokens,
@@ -236,8 +235,8 @@ class ProgressiveCompressor:
                 key_decisions=level2_result.key_decisions,
                 strategy_used="relevance_filter",
             )
-        except Exception as e:
-            logger.error(f"Level 3 压缩失败: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Level 3 压缩失败")
             return messages, ProgressiveCompressionResult(
                 level=CompressionLevel.LEVEL_3_RELEVANCE,
                 original_tokens=total_tokens,
@@ -274,14 +273,14 @@ class ProgressiveCompressor:
                 content = msg.get("content", "")
                 if isinstance(content, list):
                     content = " ".join(
-                        block.get("text", "") if isinstance(block, dict) else str(block)
-                        for block in content
+                        block.get("text", "") if isinstance(block, dict) else str(block) for block in content
                     )
                 if isinstance(content, str) and msg.get("role") == "assistant":
                     import re
+
                     patterns = [
-                        r'(?:建议|推荐|应该|决定|确认|选择)\s*[：:]\s*([^\n，。]{4,60})',
-                        r'(?:结论|结果|答案)\s*[是为]\s*([^\n，。]{4,60})',
+                        r"(?:建议|推荐|应该|决定|确认|选择)\s*[：:]\s*([^\n，。]{4,60})",
+                        r"(?:结论|结果|答案)\s*[是为]\s*([^\n，。]{4,60})",
                     ]
                     for pattern in patterns:
                         matches = re.findall(pattern, content)
@@ -291,19 +290,18 @@ class ProgressiveCompressor:
                 entity_parts.append("【关键决策】\n" + "\n".join(f"- {d}" for d in decisions[:8]))
 
             if entity_parts:
-                compressed.append({
-                    "role": "system",
-                    "content": "\n\n".join(entity_parts),
-                    "memory_tier": MemoryTier.LONG_TERM.value,
-                })
+                compressed.append(
+                    {
+                        "role": "system",
+                        "content": "\n\n".join(entity_parts),
+                        "memory_tier": MemoryTier.LONG_TERM.value,
+                    }
+                )
 
             compressed.extend(recent_msgs)
 
             if query:
-                has_user_query = any(
-                    m.get("role") == "user" and query in (m.get("content") or "")
-                    for m in compressed
-                )
+                has_user_query = any(m.get("role") == "user" and query in (m.get("content") or "") for m in compressed)
                 if not has_user_query:
                     compressed.append({"role": "user", "content": query})
 
@@ -318,8 +316,8 @@ class ProgressiveCompressor:
                 key_decisions=decisions,
                 strategy_used="aggressive",
             )
-        except Exception as e:
-            logger.error(f"Level 4 压缩失败: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Level 4 压缩失败")
             return messages, ProgressiveCompressionResult(
                 level=CompressionLevel.LEVEL_4_AGGRESSIVE,
                 original_tokens=total_tokens,
@@ -331,9 +329,6 @@ class ProgressiveCompressor:
     @staticmethod
     def _mark_long_term(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         from Django_xm.apps.context_manager.services.manager import ContextManager
-        tags = (
-            context_settings.long_term_tags.split(",")
-            if context_settings.long_term_tags
-            else None
-        )
+
+        tags = context_settings.long_term_tags.split(",") if context_settings.long_term_tags else None
         return ContextManager.mark_long_term_static(messages, tags)

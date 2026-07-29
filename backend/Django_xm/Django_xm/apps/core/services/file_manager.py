@@ -2,8 +2,9 @@
 通用文件管理服务
 提供统一的文件列表、下载、搜索功能
 """
+
 import logging
-from datetime import datetime
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -40,8 +41,8 @@ class FileInfo:
             "relative_path": str(self.path.relative_to(self.base_dir)),
             "size": stat.st_size,
             "size_formatted": self._format_size(stat.st_size),
-            "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
-            "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "created_at": datetime.fromtimestamp(stat.st_ctime, tz=UTC).isoformat(),
+            "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
             "file_type": self.file_type,
             "task_id": self.task_id,
             "extension": self.path.suffix.lower(),
@@ -108,16 +109,14 @@ class FileManagerService:
 
         return sorted(files, key=lambda f: f.path.stat().st_mtime, reverse=True)
 
-    def get_file_info(
-        self, task_id: str, relative_path: str, task_type: str = "research"
-    ) -> FileInfo | None:
+    def get_file_info(self, task_id: str, relative_path: str, task_type: str = "research") -> FileInfo | None:
         """获取文件信息"""
         task_dir = self._get_task_dir(task_id, task_type)
 
         file_path = task_dir / relative_path
         if file_path.exists() and file_path.is_file():
             pass
-        elif '/' not in relative_path and '\\' not in relative_path:
+        elif "/" not in relative_path and "\\" not in relative_path:
             for file_candidate in task_dir.rglob("*"):
                 if file_candidate.is_file() and file_candidate.name == relative_path:
                     if "sandbox" in file_candidate.relative_to(task_dir).parts:
@@ -140,9 +139,7 @@ class FileManagerService:
             task_id=task_id,
         )
 
-    def read_file_content(
-        self, task_id: str, relative_path: str, task_type: str = "research"
-    ) -> str | None:
+    def read_file_content(self, task_id: str, relative_path: str, task_type: str = "research") -> str | None:
         """读取文件内容"""
         file_info = self.get_file_info(task_id, relative_path, task_type)
         if not file_info:
@@ -151,13 +148,11 @@ class FileManagerService:
         try:
             with open(file_info.path, encoding="utf-8") as f:
                 return f.read()
-        except Exception as e:
-            logger.error(f"读取文件失败: {e}")
+        except Exception:
+            logger.exception("读取文件失败")
             return None
 
-    def write_file_content(
-        self, task_id: str, relative_path: str, content: str, task_type: str = "research"
-    ) -> bool:
+    def write_file_content(self, task_id: str, relative_path: str, content: str, task_type: str = "research") -> bool:
         """写入文件内容"""
         try:
             task_dir = self._get_task_dir(task_id, task_type)
@@ -166,8 +161,8 @@ class FileManagerService:
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(content)
             return True
-        except Exception as e:
-            logger.error(f"写入文件失败: {e}")
+        except Exception:
+            logger.exception("写入文件失败")
             return False
 
     def search_files(
@@ -252,6 +247,8 @@ class FileManagerService:
                                 )
                             )
                 except Exception:
+                    # 文件不可读（权限/编码/不存在）时跳过，继续搜索其他文件
+                    logger.debug("搜索时跳过无法读取的文件: %s", file_path)
                     continue
 
         return results
@@ -263,23 +260,24 @@ class FileManagerService:
     def delete_task_files(self, task_id: str, task_type: str) -> bool:
         """
         删除任务的所有文件
-        
+
         Args:
             task_id: 任务ID
             task_type: 任务类型 (research/workflow)
-            
+
         Returns:
             是否成功删除
         """
         import shutil
+
         task_dir = self._get_task_dir(task_id, task_type)
         if task_dir.exists():
             try:
                 shutil.rmtree(task_dir)
                 logger.info(f"[FileManager] 已删除任务目录: {task_dir}")
                 return True
-            except Exception as e:
-                logger.error(f"[FileManager] 删除任务目录失败: {task_dir}, 错误: {e}")
+            except Exception:
+                logger.exception(f"[FileManager] 删除任务目录失败: {task_dir}, 错误")
                 return False
         return False
 

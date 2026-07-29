@@ -1,5 +1,3 @@
-
-
 class AgentHubError(Exception):
     pass
 
@@ -46,4 +44,3 @@ class PreflightCheckError(AgentHubError):
         if self.issues:
             return f"{super().__str__()} (issues: {self.issues})"
         return super().__str__()
-

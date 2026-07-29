@@ -11,7 +11,7 @@ from ..models import ChatMode
 
 def get_chat_session(session_id, user=None):
     """获取聊天会话（返回对象或 None）"""
-    ChatSession = apps.get_model('chat', 'ChatSession')
+    ChatSession = apps.get_model("chat", "ChatSession")
     qs = ChatSession.objects.filter(session_id=session_id, is_deleted=False)
     if user is not None:
         qs = qs.filter(user=user)
@@ -20,19 +20,19 @@ def get_chat_session(session_id, user=None):
 
 def get_chat_session_strict(session_id, user):
     """获取聊天会话，不存在则抛出 DoesNotExist"""
-    ChatSession = apps.get_model('chat', 'ChatSession')
+    ChatSession = apps.get_model("chat", "ChatSession")
     return ChatSession.objects.get(session_id=session_id, user=user, is_deleted=False)
 
 
 def clear_knowledge_base_selection(user_id=None, kb_name=None):
     """清除会话中选中的知识库引用"""
-    ChatSession = apps.get_model('chat', 'ChatSession')
+    ChatSession = apps.get_model("chat", "ChatSession")
     qs = ChatSession.objects.filter(is_deleted=False)
     if user_id is not None:
         qs = qs.filter(user_id=user_id)
     if kb_name is not None:
         qs = qs.filter(selected_knowledge_base=kb_name)
-    qs.update(selected_knowledge_base='')
+    qs.update(selected_knowledge_base="")
 
 
 def soft_delete_session(session_id):
@@ -41,7 +41,7 @@ def soft_delete_session(session_id):
     checkpoint/Store 数据清理已由 chat/signals.py 的 on_session_delete
     通过自定义信号 ai_data_cleanup_needed 委托给 ai_engine 的 Celery 任务处理。
     """
-    ChatSession = apps.get_model('chat', 'ChatSession')
+    ChatSession = apps.get_model("chat", "ChatSession")
     session = ChatSession.objects.filter(session_id=session_id, is_deleted=False).first()
     if session:
         session.soft_delete()
@@ -55,6 +55,7 @@ def get_chat_mode_labels():
 
 
 # ── 供 research 应用调用的服务封装（消除 research → chat.models 直接导入） ────
+
 
 def get_chat_message_for_writeback(
     message_id: str | None = None,
@@ -72,13 +73,13 @@ def get_chat_message_for_writeback(
     Returns:
         dict: {'id': str, 'session_id': str, 'content': str} 或 None
     """
-    ChatMessage = apps.get_model('chat', 'ChatMessage')
-    qs = ChatMessage.objects.filter(role='assistant', is_deleted=False).select_related('session')
+    ChatMessage = apps.get_model("chat", "ChatMessage")
+    qs = ChatMessage.objects.filter(role="assistant", is_deleted=False).select_related("session")
 
     if message_id:
         chat_msg = qs.filter(id=message_id).first()
     elif research_task_id:
-        chat_msg = qs.filter(research_task_id=research_task_id).order_by('-created_at').first()
+        chat_msg = qs.filter(research_task_id=research_task_id).order_by("-created_at").first()
     else:
         return None
 
@@ -86,9 +87,9 @@ def get_chat_message_for_writeback(
         return None
 
     return {
-        'id': str(chat_msg.id),
-        'session_id': chat_msg.session.session_id,
-        'content': chat_msg.content or '',
+        "id": str(chat_msg.id),
+        "session_id": chat_msg.session.session_id,
+        "content": chat_msg.content or "",
     }
 
 
@@ -109,18 +110,18 @@ def update_chat_message_fields(
         is_streaming: 流式状态（不更新则传 None）
         reasoning: 推理信息 dict（不更新则传 None）
     """
-    ChatMessage = apps.get_model('chat', 'ChatMessage')
+    ChatMessage = apps.get_model("chat", "ChatMessage")
     update_fields = []
     update_kwargs = {}
     if content is not None:
-        update_kwargs['content'] = content
-        update_fields.append('content')
+        update_kwargs["content"] = content
+        update_fields.append("content")
     if is_streaming is not None:
-        update_kwargs['is_streaming'] = is_streaming
-        update_fields.append('is_streaming')
+        update_kwargs["is_streaming"] = is_streaming
+        update_fields.append("is_streaming")
     if reasoning is not None:
-        update_kwargs['reasoning'] = reasoning
-        update_fields.append('reasoning')
+        update_kwargs["reasoning"] = reasoning
+        update_fields.append("reasoning")
     if not update_fields:
         return
     ChatMessage.objects.filter(id=message_id).update(**update_kwargs)
@@ -138,8 +139,10 @@ def get_active_session_ids_for_research_task(task_id: str) -> list:
     Returns:
         list[str]: 活跃 session_id 列表（可能为空）
     """
-    ChatMessage = apps.get_model('chat', 'ChatMessage')
-    return list(ChatMessage.all_objects.filter(
-        research_task_id=task_id,
-        session__is_deleted=False,
-    ).values_list('session__session_id', flat=True))
+    ChatMessage = apps.get_model("chat", "ChatMessage")
+    return list(
+        ChatMessage.all_objects.filter(
+            research_task_id=task_id,
+            session__is_deleted=False,
+        ).values_list("session__session_id", flat=True)
+    )

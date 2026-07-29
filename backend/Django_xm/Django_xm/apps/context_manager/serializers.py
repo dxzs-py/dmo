@@ -16,6 +16,7 @@ class KnowledgeGraphClearSerializer(serializers.Serializer):
 
 # ---------- Token Budget ----------
 
+
 class TokenBudgetRequestSerializer(serializers.Serializer):
     session_id = serializers.CharField(required=False, help_text="会话ID")
 
@@ -29,6 +30,7 @@ class TokenBudgetResponseSerializer(serializers.Serializer):
 
 # ---------- Context Compress ----------
 
+
 class ContextCompressRequestSerializer(serializers.Serializer):
     session_id = serializers.CharField(required=True, help_text="会话ID")
 
@@ -41,6 +43,7 @@ class ContextCompressResponseSerializer(serializers.Serializer):
 
 
 # ---------- Knowledge Graph Detail ----------
+
 
 class KnowledgeGraphDetailRequestSerializer(serializers.Serializer):
     session_id = serializers.CharField(required=False, help_text="会话ID")

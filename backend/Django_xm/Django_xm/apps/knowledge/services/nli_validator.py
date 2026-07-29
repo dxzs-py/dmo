@@ -31,7 +31,7 @@ def _detect_language(text: str) -> str:
     """
     if not text:
         return "en"
-    cn_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
+    cn_chars = len(re.findall(r"[\u4e00-\u9fff]", text))
     total = len(text.strip())
     if total == 0:
         return "en"
@@ -64,6 +64,7 @@ class HHEMValidator:
         try:
             import torch
             import transformers
+
             return True
         except ImportError:
             return False
@@ -93,9 +94,7 @@ class HHEMValidator:
 
                 logger.info(f"正在加载 HHEM 模型: {self._MODEL_NAME}")
                 self._tokenizer = AutoTokenizer.from_pretrained(self._MODEL_NAME)
-                self._model = AutoModelForSequenceClassification.from_pretrained(
-                    self._MODEL_NAME
-                )
+                self._model = AutoModelForSequenceClassification.from_pretrained(self._MODEL_NAME)
                 self._model.eval()
 
                 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -161,6 +160,7 @@ class ChineseNLIValidator:
         try:
             import torch
             import transformers
+
             return True
         except ImportError:
             return False
@@ -190,9 +190,7 @@ class ChineseNLIValidator:
 
                 logger.info(f"正在加载中文 NLI 模型: {self._MODEL_NAME}")
                 self._tokenizer = AutoTokenizer.from_pretrained(self._MODEL_NAME)
-                self._model = AutoModelForSequenceClassification.from_pretrained(
-                    self._MODEL_NAME
-                )
+                self._model = AutoModelForSequenceClassification.from_pretrained(self._MODEL_NAME)
                 self._model.eval()
 
                 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -253,6 +251,7 @@ class EmbeddingSimilarityValidator:
 
         try:
             from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
+
             embed = get_embeddings()
             self._available = embed is not None
         except Exception:
@@ -319,11 +318,7 @@ class CompositeNLIValidator:
 
     def is_available(self) -> bool:
         """至少有一个验证器可用即返回 True"""
-        return (
-            self._hhem.is_available()
-            or self._cn_nli.is_available()
-            or self._emb.is_available()
-        )
+        return self._hhem.is_available() or self._cn_nli.is_available() or self._emb.is_available()
 
     def predict(self, premise: str, hypothesis: str) -> float:
         """预测蕴含分数
@@ -384,6 +379,7 @@ def get_nli_validator() -> CompositeNLIValidator:
 
 
 # ── 向后兼容 ──────────────────────────────────────────────────────────────
+
 
 def get_hhem_validator() -> CompositeNLIValidator:
     """向后兼容：返回组合验证器（不再是纯 HHEM）"""

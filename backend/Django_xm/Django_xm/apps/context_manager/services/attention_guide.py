@@ -47,7 +47,6 @@ _CRITICAL_KEYWORDS = re.compile(r"(?:必须|禁止|不要|务必|严禁|绝不�
 
 
 class AttentionGuide:
-
     def __init__(self, state: AgentState | None = None):
         self._state = state or AgentState()
         self._sections: dict[str, Section] = {}

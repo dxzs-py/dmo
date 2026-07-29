@@ -8,8 +8,9 @@
 - 未选择知识库时跳过检索，仅以 LLM 内置知识继续生成（与原硬编码 test_index 的开发模式解耦）
 """
 
-from datetime import datetime
 from typing import Any
+
+from django.utils import timezone
 
 from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.knowledge.services.cross_app import get_index_manager
@@ -84,7 +85,7 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
             "retrieved_docs": [],
             "messages": [{"role": "assistant", "content": "\n\n⚠️ 学习计划生成失败，跳过文档检索。"}],
             "current_step": "retrieval",
-            "updated_at": datetime.now().isoformat()
+            "updated_at": timezone.now().isoformat(),
         }
 
     # 未选择知识库：明确跳过 RAG，与"硬编码 test_index"的开发模式彻底解耦
@@ -95,12 +96,14 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
         )
         return {
             "retrieved_docs": [],
-            "messages": [{
-                "role": "assistant",
-                "content": "\n\nℹ️ 未选择知识库，将使用 AI 内置知识生成学习内容。如需基于专属资料学习，请在启动工作流前选择知识库。"
-            }],
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "\n\nℹ️ 未选择知识库，将使用 AI 内置知识生成学习内容。如需基于专属资料学习，请在启动工作流前选择知识库。",
+                }
+            ],
             "current_step": "retrieval",
-            "updated_at": datetime.now().isoformat()
+            "updated_at": timezone.now().isoformat(),
         }
 
     topic = learning_plan["topic"]
@@ -141,7 +144,7 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
         retrieved_doc: RetrievedDocument = {
             "content": doc.page_content,
             "metadata": doc.metadata,
-            "relevance_score": 1.0 - (i * 0.1)
+            "relevance_score": 1.0 - (i * 0.1),
         }
         retrieved_docs.append(retrieved_doc)
 
@@ -151,5 +154,5 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
         "retrieved_docs": retrieved_docs,
         "messages": [{"role": "assistant", "content": retrieval_summary}],
         "current_step": "retrieval",
-        "updated_at": datetime.now().isoformat()
+        "updated_at": timezone.now().isoformat(),
     }

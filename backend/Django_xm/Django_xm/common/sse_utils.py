@@ -21,8 +21,8 @@ class SSERenderer(BaseRenderer):
     （由视图自行组装 "data: ...\\n\\n" 格式）。
     """
 
-    media_type = 'text/event-stream'
-    format = 'txt'
+    media_type = "text/event-stream"
+    format = "txt"
 
     def render(self, data, accepted_media_type=None, renderer_context=None):
         return data
@@ -70,11 +70,11 @@ def authenticate_sse_request(request):
 
     auth = JWTAuthentication()
 
-    auth_header = request.META.get('HTTP_AUTHORIZATION', '')
-    if auth_header.startswith('Bearer '):
-        token_str = auth_header.split(' ', 1)[1]
+    auth_header = request.META.get("HTTP_AUTHORIZATION", "")
+    if auth_header.startswith("Bearer "):
+        token_str = auth_header.split(" ", 1)[1]
         try:
-            header_bytes = f'Bearer {token_str}'.encode(HTTP_HEADER_ENCODING)
+            header_bytes = f"Bearer {token_str}".encode(HTTP_HEADER_ENCODING)
             raw_token = auth.get_raw_token(header_bytes)
             if raw_token:
                 validated_token = auth.get_validated_token(raw_token)
@@ -84,10 +84,10 @@ def authenticate_sse_request(request):
         except (InvalidToken, TokenError, Exception) as auth_err:
             logger.warning(f"[Auth] SSE端点Header Token验证失败: {auth_err}")
 
-    token = request.GET.get('token')
+    token = request.GET.get("token")
     if token:
         try:
-            header_bytes = f'Bearer {token}'.encode(HTTP_HEADER_ENCODING)
+            header_bytes = f"Bearer {token}".encode(HTTP_HEADER_ENCODING)
             raw_token = auth.get_raw_token(header_bytes)
             if raw_token:
                 validated_token = auth.get_validated_token(raw_token)
@@ -122,8 +122,8 @@ def authenticate_websocket_scope(scope):
     from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
     # 1. AuthMiddleware 已认证（如配置了 channels 的 AuthMiddlewareStack）
-    user = scope.get('user') if isinstance(scope, dict) else None
-    if user and getattr(user, 'is_authenticated', False):
+    user = scope.get("user") if isinstance(scope, dict) else None
+    if user and getattr(user, "is_authenticated", False):
         return user
 
     auth = JWTAuthentication()
@@ -139,14 +139,14 @@ def authenticate_websocket_scope(scope):
         return None
 
     # 2. 从 headers 提取 Authorization: Bearer <token>
-    headers = scope.get('headers') if isinstance(scope, dict) else None
+    headers = scope.get("headers") if isinstance(scope, dict) else None
     if headers:
         for name, value in headers:
-            if name == b'authorization':
+            if name == b"authorization":
                 try:
-                    header_str = value.decode('latin-1') if isinstance(value, (bytes, bytearray)) else value
-                    if header_str.startswith('Bearer '):
-                        raw_token = auth.get_raw_token(f'Bearer {header_str.split(" ", 1)[1]}'.encode('latin-1'))
+                    header_str = value.decode("latin-1") if isinstance(value, (bytes, bytearray)) else value
+                    if header_str.startswith("Bearer "):
+                        raw_token = auth.get_raw_token(f"Bearer {header_str.split(' ', 1)[1]}".encode("latin-1"))
                         if raw_token:
                             user = _resolve_user_from_raw_token(raw_token)
                             if user:
@@ -156,18 +156,18 @@ def authenticate_websocket_scope(scope):
                 break
 
     # 3. 从 query_string 提取 token=<JWT>
-    query_string = scope.get('query_string') if isinstance(scope, dict) else None
+    query_string = scope.get("query_string") if isinstance(scope, dict) else None
     if query_string:
         try:
-            qs_str = query_string.decode('latin-1') if isinstance(query_string, (bytes, bytearray)) else query_string
+            qs_str = query_string.decode("latin-1") if isinstance(query_string, (bytes, bytearray)) else query_string
             # 简单解析 token 参数（不引入 urllib.parse 避免边界问题）
             token = None
-            for pair in qs_str.split('&'):
-                if pair.startswith('token='):
-                    token = pair[len('token='):]
+            for pair in qs_str.split("&"):
+                if pair.startswith("token="):
+                    token = pair[len("token=") :]
                     break
             if token:
-                raw_token = auth.get_raw_token(f'Bearer {token}'.encode('latin-1'))
+                raw_token = auth.get_raw_token(f"Bearer {token}".encode("latin-1"))
                 if raw_token:
                     user = _resolve_user_from_raw_token(raw_token)
                     if user:
@@ -195,16 +195,14 @@ def sse_error_response(message, status_code=401, code=None, data=None):
         # Task 23.3：从 ErrorCode 枚举反查错误码，取代硬编码 _status_code_map
         # 单一真相源在 ErrorCode 枚举，新增错误码无需同步修改此处
         from Django_xm.common.error_codes import infer_error_code_from_http_status
+
         code = str(int(infer_error_code_from_http_status(status_code)))
 
     def error_event():
         yield sse_error_event(code=code, message=message, data=data)
 
     return StreamingHttpResponse(
-        error_event(),
-        content_type='text/event-stream',
-        status=status_code,
-        headers={'Cache-Control': 'no-cache'}
+        error_event(), content_type="text/event-stream", status=status_code, headers={"Cache-Control": "no-cache"}
     )
 
 
@@ -225,14 +223,14 @@ def sse_response(event_generator, headers=None):
         StreamingHttpResponse 对象
     """
     response_headers = {
-        'Cache-Control': 'no-cache',
-        'X-Accel-Buffering': 'no',
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
     }
     if headers:
         response_headers.update(headers)
     return StreamingHttpResponse(
         event_generator,
-        content_type='text/event-stream',
+        content_type="text/event-stream",
         headers=response_headers,
     )
 
@@ -286,10 +284,10 @@ async def sse_async_heartbeat_generator(async_gen, idle_timeout: float = 30.0):
             pending.cancel()
             try:
                 await pending
-            except (asyncio.CancelledError, Exception):
+            except (asyncio.CancelledError, Exception):  # noqa: S110  # cleanup, 取消后的 await 失败可忽略
                 pass
         # 确保内部生成器被正确关闭，释放资源（如 checkpointer 连接）
         try:
             await async_gen.aclose()
-        except Exception:
+        except Exception:  # noqa: S110  # cleanup, 生成器关闭失败可忽略
             pass

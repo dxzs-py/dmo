@@ -52,6 +52,20 @@ DEEP_RESEARCH_SYSTEM_PROMPT: str = (
 )
 
 
+def get_deep_research_prompt() -> str:
+    """返回深度研究主智能体的系统提示词。
+
+    单一来源封装：调用方通过此函数获取 prompt，而非直接引用常量，
+    便于未来按需追加运行时上下文（如 ``kwargs`` 格式化、动态拼接 suffix）。
+    当前实现直接返回 :data:`DEEP_RESEARCH_SYSTEM_PROMPT` 常量，
+    保持与原 ``deep_builder._build_system_prompt`` 行为一致。
+
+    Returns:
+        深度研究系统提示词字符串
+    """
+    return DEEP_RESEARCH_SYSTEM_PROMPT
+
+
 # ============================================================================
 # 子智能体 Prompt
 # ============================================================================

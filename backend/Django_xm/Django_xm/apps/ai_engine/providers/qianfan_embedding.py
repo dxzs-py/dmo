@@ -8,6 +8,7 @@
 注意：当前 settings 中只有 baidu_qianfan_api_key（作为 qianfan_ak 使用）。
 qianfan_sk 通过环境变量 QIANFAN_SK 注入，避免 settings 字段膨胀。
 """
+
 from typing import Any
 
 from langchain_core.embeddings import Embeddings

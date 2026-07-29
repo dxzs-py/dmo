@@ -17,3 +17,7 @@ class FileInfoSerializer(serializers.Serializer):
     file_type = serializers.CharField()
     task_id = serializers.CharField(allow_null=True)
     extension = serializers.CharField()
+
+
+class EmptySerializer(serializers.Serializer):
+    """空 Serializer，用于 write-only 操作端点的 @extend_schema 声明。"""

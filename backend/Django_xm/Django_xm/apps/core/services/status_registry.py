@@ -87,8 +87,8 @@ def get_status_by_name(name: str) -> dict[str, Any]:
             if provider.get_name() == name:
                 return provider.get_status()
     return {
-        'connection': 'unregistered',
-        'error': f"未注册的状态提供者: {name}",
+        "connection": "unregistered",
+        "error": f"未注册的状态提供者: {name}",
     }
 
 

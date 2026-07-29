@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 # 配置
 # ============================================================================
 
+
 @dataclass
 class ResilienceConfig:
     """统一韧性执行配置
@@ -34,17 +35,18 @@ class ResilienceConfig:
     - agent 执行层：retry_with_backoff / ExecutionTimeoutManager 使用
     - 模型调用层：ResilientInvoker / CircuitBreaker 使用
     """
+
     # ===== agent 执行层配置 =====
     max_retries: int = 3
     initial_retry_interval: float = 2.0
     max_retry_interval: float = 30.0
     retry_backoff_factor: float = 2.0
     # 重复工具调用检测：相同 tool_name + 相同 parameters 在窗口内超过阈值时注入提示
-    duplicate_tool_call_threshold: int = 3   # 触发阈值（窗口内相同调用次数）
-    duplicate_tool_call_window: int = 300    # 检测窗口（秒，默认 5 分钟）
+    duplicate_tool_call_threshold: int = 3  # 触发阈值（窗口内相同调用次数）
+    duplicate_tool_call_window: int = 300  # 检测窗口（秒，默认 5 分钟）
     # 执行超时
-    soft_timeout: float | None = None   # 警告阈值（秒），None 表示不限制
-    hard_timeout: float | None = None   # 强制终止阈值（秒），None 表示不限制
+    soft_timeout: float | None = None  # 警告阈值（秒），None 表示不限制
+    hard_timeout: float | None = None  # 强制终止阈值（秒），None 表示不限制
 
     # ===== 模型调用层配置 =====
     backoff_seconds: tuple[float, ...] = (0.5, 1.0, 2.0)
@@ -59,24 +61,25 @@ def get_resilience_config(**overrides) -> ResilienceConfig:
     """
     try:
         from django.conf import settings
+
         # settings 中 backoff_seconds 可能是 list，统一转换为 tuple
-        backoff = getattr(settings, 'MODEL_BACKOFF_SECONDS', (0.5, 1.0, 2.0))
+        backoff = getattr(settings, "MODEL_BACKOFF_SECONDS", (0.5, 1.0, 2.0))
         if backoff is not None and not isinstance(backoff, tuple):
             backoff = tuple(backoff)
-        defaults = {
+        defaults: dict[str, Any] = {
             # ===== agent 执行层 =====
-            'max_retries': getattr(settings, 'AGENT_MAX_RETRIES', 3),
-            'initial_retry_interval': getattr(settings, 'AGENT_INITIAL_RETRY_INTERVAL', 2.0),
-            'max_retry_interval': getattr(settings, 'AGENT_MAX_RETRY_INTERVAL', 30.0),
-            'retry_backoff_factor': getattr(settings, 'AGENT_RETRY_BACKOFF_FACTOR', 2.0),
-            'duplicate_tool_call_threshold': getattr(settings, 'AGENT_DUPLICATE_TOOL_CALL_THRESHOLD', 3),
-            'duplicate_tool_call_window': getattr(settings, 'AGENT_DUPLICATE_TOOL_CALL_WINDOW', 300),
-            'soft_timeout': getattr(settings, 'AGENT_SOFT_TIMEOUT', None),
-            'hard_timeout': getattr(settings, 'AGENT_HARD_TIMEOUT', None),
+            "max_retries": getattr(settings, "AGENT_MAX_RETRIES", 3),
+            "initial_retry_interval": getattr(settings, "AGENT_INITIAL_RETRY_INTERVAL", 2.0),
+            "max_retry_interval": getattr(settings, "AGENT_MAX_RETRY_INTERVAL", 30.0),
+            "retry_backoff_factor": getattr(settings, "AGENT_RETRY_BACKOFF_FACTOR", 2.0),
+            "duplicate_tool_call_threshold": getattr(settings, "AGENT_DUPLICATE_TOOL_CALL_THRESHOLD", 3),
+            "duplicate_tool_call_window": getattr(settings, "AGENT_DUPLICATE_TOOL_CALL_WINDOW", 300),
+            "soft_timeout": getattr(settings, "AGENT_SOFT_TIMEOUT", None),
+            "hard_timeout": getattr(settings, "AGENT_HARD_TIMEOUT", None),
             # ===== 模型调用层 =====
-            'backoff_seconds': backoff,
-            'circuit_breaker_threshold': getattr(settings, 'MODEL_CIRCUIT_BREAKER_THRESHOLD', 3),
-            'circuit_breaker_cooldown': getattr(settings, 'MODEL_CIRCUIT_BREAKER_COOLDOWN', 30.0),
+            "backoff_seconds": backoff,
+            "circuit_breaker_threshold": getattr(settings, "MODEL_CIRCUIT_BREAKER_THRESHOLD", 3),
+            "circuit_breaker_cooldown": getattr(settings, "MODEL_CIRCUIT_BREAKER_COOLDOWN", 30.0),
         }
     except Exception:
         defaults = {}
@@ -88,12 +91,14 @@ def get_resilience_config(**overrides) -> ResilienceConfig:
 # 异常决策
 # ============================================================================
 
+
 class ErrorAction(Enum):
     """异常处理动作"""
-    RETRY = "retry"          # 可恢复，重试
-    DEGRADE = "degrade"      # 需降级（减少工具/简化执行）
-    FALLBACK = "fallback"    # 回退到无工具纯对话
-    FAIL = "fail"            # 不可恢复，直接失败
+
+    RETRY = "retry"  # 可恢复，重试
+    DEGRADE = "degrade"  # 需降级（减少工具/简化执行）
+    FALLBACK = "fallback"  # 回退到无工具纯对话
+    FAIL = "fail"  # 不可恢复，直接失败
 
 
 def classify_and_decide(
@@ -112,6 +117,7 @@ def classify_and_decide(
         (ErrorAction, LCAgentException) 元组
     """
     from Django_xm.apps.ai_engine.services.exceptions import classify_exception
+
     classified = classify_exception(error)
 
     # 不可恢复错误 → 直接失败
@@ -133,8 +139,8 @@ def classify_and_decide(
     # Agent 执行错误（含 GraphRecursionError）→ 降级
     if classified.error_code == "AGENT_EXECUTION_ERROR":
         # GraphRecursionError 不重试，直接降级
-        details = getattr(classified, 'details', {}) or {}
-        if details.get('recursion_limit'):
+        details = getattr(classified, "details", {}) or {}
+        if details.get("recursion_limit"):
             return (ErrorAction.DEGRADE, classified)
         if attempt < max_retries:
             return (ErrorAction.RETRY, classified)
@@ -154,32 +160,46 @@ def classify_and_decide(
 # 降级等级
 # ============================================================================
 
+
 class DegradationLevel(Enum):
     """降级等级"""
-    FULL = "full"                # 完整工具集
-    REDUCED_TOOLS = "reduced"    # 减少工具（移除非核心工具）
-    NO_TOOLS = "no_tools"        # 无工具纯对话
-    MINIMAL = "minimal"          # 最小化（仅系统提示 + 直接回答）
+
+    FULL = "full"  # 完整工具集
+    REDUCED_TOOLS = "reduced"  # 减少工具（移除非核心工具）
+    NO_TOOLS = "no_tools"  # 无工具纯对话
+    MINIMAL = "minimal"  # 最小化（仅系统提示 + 直接回答）
 
 
 # 核心工具名称（降级时保留）
-_CORE_TOOL_NAMES = frozenset({
-    'file_reader', 'attachment_reader',
-    'todo_write', 'todo_read',
-})
+_CORE_TOOL_NAMES = frozenset(
+    {
+        "file_reader",
+        "attachment_reader",
+        "todo_write",
+        "todo_read",
+    }
+)
 
 # 可移除的工具类别（降级时优先移除）
 _REMOVABLE_TOOL_CATEGORIES = {
-    'reduced': frozenset({
-        # skill 工具（前缀 skill_）
-        'skill_baidu-search', 'skill_agent-browser', 'skill_ontology',
-        # MCP 工具
-        'sequentialthinking',
-        # 代理工具
-        'agent_create', 'agent_run', 'agent_list', 'agent_cleanup',
-        # 翻译工具
-        'translate_text', 'detect_language',
-    }),
+    "reduced": frozenset(
+        {
+            # skill 工具（前缀 skill_）
+            "skill_baidu-search",
+            "skill_agent-browser",
+            "skill_ontology",
+            # MCP 工具
+            "sequentialthinking",
+            # 代理工具
+            "agent_create",
+            "agent_run",
+            "agent_list",
+            "agent_cleanup",
+            # 翻译工具
+            "translate_text",
+            "detect_language",
+        }
+    ),
 }
 
 
@@ -201,7 +221,7 @@ def get_degraded_tools(
     if level == DegradationLevel.FULL:
         return tools
 
-    if level == DegradationLevel.NO_TOOLS or level == DegradationLevel.MINIMAL:
+    if level in (DegradationLevel.NO_TOOLS, DegradationLevel.MINIMAL):
         return []
 
     # REDUCED_TOOLS: 保留核心工具 + critical 工具
@@ -209,14 +229,14 @@ def get_degraded_tools(
     if critical_tool_names:
         keep_names.update(critical_tool_names)
 
-    removable = _REMOVABLE_TOOL_CATEGORIES.get('reduced', frozenset())
+    removable = _REMOVABLE_TOOL_CATEGORIES.get("reduced", frozenset())
 
     result = []
     for tool in tools:
-        tool_name = getattr(tool, 'name', getattr(tool, '__name__', str(tool)))
+        tool_name = getattr(tool, "name", getattr(tool, "__name__", str(tool)))
         if tool_name in keep_names:
             result.append(tool)
-        elif tool_name.startswith('skill_') and tool_name in removable:
+        elif tool_name.startswith("skill_") and tool_name in removable:
             continue  # 移除 skill 工具
         elif tool_name in removable:
             continue  # 移除可移除工具
@@ -230,6 +250,7 @@ def get_degraded_tools(
 # ============================================================================
 # 重试工具
 # ============================================================================
+
 
 def calculate_backoff(attempt: int, config: ResilienceConfig) -> float:
     """计算指数退避间隔
@@ -287,7 +308,8 @@ async def retry_with_backoff(
                     try:
                         on_retry(attempt + 1, e, backoff)
                     except Exception:
-                        pass
+                        # 回调失败不应影响重试主流程
+                        logger.debug("on_retry 回调执行失败", exc_info=True)
                 await asyncio.sleep(backoff)
             else:
                 raise
@@ -298,6 +320,7 @@ async def retry_with_backoff(
 # ============================================================================
 # 执行超时管理
 # ============================================================================
+
 
 class ExecutionTimeoutManager:
     """统一执行超时管理
@@ -315,6 +338,7 @@ class ExecutionTimeoutManager:
         self.soft_timeout = soft_timeout
         self.hard_timeout = hard_timeout
         import time
+
         self._start_time: float = time.monotonic()
         self._soft_timeout_triggered = False
         # 暂停计时支持：审批等待时不计入 elapsed
@@ -325,6 +349,7 @@ class ExecutionTimeoutManager:
     def elapsed(self) -> float:
         """已执行时间（秒），排除暂停期间"""
         import time
+
         now = time.monotonic()
         current_pause = (now - self._pause_start) if self._pause_start is not None else 0.0
         return now - self._start_time - self._paused_total - current_pause
@@ -332,12 +357,14 @@ class ExecutionTimeoutManager:
     def pause(self) -> None:
         """暂停计时（审批等待时调用）"""
         import time
+
         if self._pause_start is None:
             self._pause_start = time.monotonic()
 
     def resume(self) -> None:
         """恢复计时（审批完成后调用）"""
         import time
+
         if self._pause_start is not None:
             self._paused_total += time.monotonic() - self._pause_start
             self._pause_start = None
@@ -373,6 +400,7 @@ class ExecutionTimeoutManager:
             asyncio.TimeoutError: hard timeout 触发
         """
         import time
+
         self._start_time = time.monotonic()
         self._soft_timeout_triggered = False
         self._paused_total = 0.0
@@ -391,14 +419,14 @@ class ExecutionTimeoutManager:
                 try:
                     on_soft_timeout(self.elapsed)
                 except Exception:
-                    pass
+                    # 回调失败不应影响执行主流程
+                    logger.debug("on_soft_timeout 回调执行失败", exc_info=True)
 
             return result
         except TimeoutError:
             elapsed = self.elapsed
             logger.warning(
-                f"[Resilience] 执行超时: elapsed={elapsed:.1f}s, "
-                f"soft={self.soft_timeout}, hard={self.hard_timeout}"
+                f"[Resilience] 执行超时: elapsed={elapsed:.1f}s, soft={self.soft_timeout}, hard={self.hard_timeout}"
             )
             raise
 
@@ -406,6 +434,7 @@ class ExecutionTimeoutManager:
 # ============================================================================
 # 重复工具调用检测
 # ============================================================================
+
 
 @dataclass
 class DuplicateToolCallWarning:
@@ -429,8 +458,8 @@ class DuplicateToolCallWarning:
         """
         return (
             f'工具 "{self.tool_name}" 在最近 {self.window_seconds} 秒内已被调用 '
-            f'{self.count} 次（参数相同）。这可能是重试循环。'
-            f'请调整策略：换用其他工具、修改参数，或直接基于已有信息回答。'
+            f"{self.count} 次（参数相同）。这可能是重试循环。"
+            f"请调整策略：换用其他工具、修改参数，或直接基于已有信息回答。"
         )
 
 
@@ -566,10 +595,7 @@ class DuplicateToolCallDetector:
         使用 last_time（而非 first_time）确保持续调用的 key 不会被误删。
         """
         now = time.monotonic()
-        expired_keys = [
-            key for key, record in self._history.items()
-            if now - record["last_time"] > self.window_seconds
-        ]
+        expired_keys = [key for key, record in self._history.items() if now - record["last_time"] > self.window_seconds]
         for key in expired_keys:
             del self._history[key]
 

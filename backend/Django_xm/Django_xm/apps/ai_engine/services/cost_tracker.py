@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.ai_engine.config import settings as app_cfg
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -95,6 +95,7 @@ class TokenDetailTracker:
 
         if self._current_record is None:
             self.start_record(model)
+        assert self._current_record is not None  # start_record above guarantees this
 
         usage_meta = metadata.get("usage_metadata", {})
 
@@ -150,14 +151,10 @@ class TokenDetailTracker:
                 "reasoning": totals["reasoning_tokens"],
                 "cachedInput": totals["cached_input_tokens"],
                 "cacheCreation": totals["cache_creation_tokens"],
-                "total": (
-                    totals["input_tokens"]
-                    + totals["output_tokens"]
-                    + totals["reasoning_tokens"]
-                ),
+                "total": (totals["input_tokens"] + totals["output_tokens"] + totals["reasoning_tokens"]),
             },
             "recordCount": len(self.records),
-            "models": list(set(r.model for r in self.records)),
+            "models": list({r.model for r in self.records}),
             "records": [r.to_dict() for r in self.records[-10:]],
         }
 
@@ -209,7 +206,9 @@ class TokenDetailTracker:
         if detail["tools"]["count"] > 0:
             parts.append(f"工具 调用={detail['tools']['count']}次, Token={detail['tools']['tokens']}")
         if detail["storage"]["embeddingTokens"] > 0:
-            parts.append(f"存储 Embedding={detail['storage']['embeddingTokens']}, 检索文档={detail['storage']['retrievalDocs']}")
+            parts.append(
+                f"存储 Embedding={detail['storage']['embeddingTokens']}, 检索文档={detail['storage']['retrievalDocs']}"
+            )
         parts.append(f"总调用次数: {summary['recordCount']}")
         logger.info(" | ".join(parts))
 

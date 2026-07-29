@@ -11,9 +11,9 @@
 
 import warnings
 from collections.abc import Callable, Sequence
-from datetime import datetime
 from typing import Any
 
+from django.utils import timezone
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.tools import BaseTool
 
@@ -43,7 +43,9 @@ class SafeDeepResearchAgent:
         human_review_callback: Callable[[str, str], bool] | None = None,
         **kwargs,
     ):
-        warnings.warn("SafeDeepResearchAgent 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2)
+        warnings.warn(
+            "SafeDeepResearchAgent 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2
+        )
         self.thread_id = thread_id
         self.enable_input_validation = enable_input_validation
         self.enable_output_validation = enable_output_validation
@@ -105,8 +107,8 @@ class SafeDeepResearchAgent:
             result = self.agent.research(query, callbacks=callbacks)
             final_report = result.get("final_report", "")
 
-        except Exception as e:
-            logger.error(f"研究执行失败: {e}")
+        except Exception:
+            logger.exception("研究执行失败")
             raise
 
         sources = self._extract_sources(result)
@@ -148,8 +150,8 @@ class SafeDeepResearchAgent:
         try:
             result = await self.agent.aresearch(query)
             final_report = result.get("final_report", "")
-        except Exception as e:
-            logger.error(f"异步研究执行失败: {e}")
+        except Exception:
+            logger.exception("异步研究执行失败")
             raise
 
         sources = self._extract_sources(result)
@@ -189,8 +191,8 @@ class SafeDeepResearchAgent:
                 result = self._human_review_callback(action, content)
                 logger.info(f"   人工审核回调结果: {'通过' if result else '拒绝'}")
                 return bool(result)
-            except Exception as e:
-                logger.error(f"   人工审核回调异常: {e}")
+            except Exception:
+                logger.exception("   人工审核回调异常")
                 return False
 
         logger.info("   [自动批准 - 演示模式]")
@@ -203,9 +205,10 @@ class SafeDeepResearchAgent:
             fs = self.agent.filesystem
 
             try:
-                sources_file = fs.read("sources.json")
+                sources_file = fs.read_file("sources.json")
                 if sources_file:
                     import json
+
                     sources_data = json.loads(sources_file)
                     sources = sources_data.get("sources", [])
             except Exception as e:
@@ -253,11 +256,11 @@ class SafeDeepResearchAgent:
             sections=sections,
             conclusions=conclusions,
             references=sources,
-            created_at=datetime.now(),
+            created_at=timezone.now(),
             metadata={
                 "thread_id": self.thread_id,
                 "tool_calls_count": len(self.tool_calls_log),
-            }
+            },
         )
 
     def get_tool_calls_log(self) -> list[dict[str, Any]]:

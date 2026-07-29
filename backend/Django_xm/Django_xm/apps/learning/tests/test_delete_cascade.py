@@ -55,24 +55,16 @@ class DeleteWorkflowTestCase(TestCase):
         new_callable=AsyncMock,
     )
     @patch("Django_xm.apps.core.services.file_manager.get_file_manager")
-    def test_delete_workflow_soft_deletes_session(
-        self, mock_get_file_manager, mock_delete_checkpoints
-    ):
+    def test_delete_workflow_soft_deletes_session(self, mock_get_file_manager, mock_delete_checkpoints):
         """删除工作流软删除 session（记录仍保留在 all_objects 中）"""
-        self.assertTrue(
-            WorkflowSession.objects.filter(thread_id=self.thread_id).exists()
-        )
+        self.assertTrue(WorkflowSession.objects.filter(thread_id=self.thread_id).exists())
 
         WorkflowService.delete_workflow(self.thread_id, self.user.id)
 
         # 默认 manager 已过滤 is_deleted=False，应查不到
-        self.assertFalse(
-            WorkflowSession.objects.filter(thread_id=self.thread_id).exists()
-        )
+        self.assertFalse(WorkflowSession.objects.filter(thread_id=self.thread_id).exists())
         # all_objects 仍保留记录（软删除）
-        self.assertTrue(
-            WorkflowSession.all_objects.filter(thread_id=self.thread_id).exists()
-        )
+        self.assertTrue(WorkflowSession.all_objects.filter(thread_id=self.thread_id).exists())
 
         # 验证 is_deleted 已标记
         session = WorkflowSession.all_objects.get(thread_id=self.thread_id)
@@ -84,9 +76,7 @@ class DeleteWorkflowTestCase(TestCase):
         new_callable=AsyncMock,
     )
     @patch("Django_xm.apps.core.services.file_manager.get_file_manager")
-    def test_delete_workflow_raises_when_not_found(
-        self, mock_get_file_manager, mock_delete_checkpoints
-    ):
+    def test_delete_workflow_raises_when_not_found(self, mock_get_file_manager, mock_delete_checkpoints):
         """删除不存在的 thread_id 抛出 ValueError"""
         with self.assertRaises(ValueError) as ctx:
             WorkflowService.delete_workflow("nonexistent_thread", self.user.id)
@@ -97,27 +87,21 @@ class DeleteWorkflowTestCase(TestCase):
         new_callable=AsyncMock,
     )
     @patch("Django_xm.apps.core.services.file_manager.get_file_manager")
-    def test_delete_workflow_raises_when_not_owner(
-        self, mock_get_file_manager, mock_delete_checkpoints
-    ):
+    def test_delete_workflow_raises_when_not_owner(self, mock_get_file_manager, mock_delete_checkpoints):
         """删除他人 session 抛出 ValueError（user_id 过滤后查不到）"""
         with self.assertRaises(ValueError) as ctx:
             WorkflowService.delete_workflow(self.thread_id, self.other_user.id)
         self.assertIn("不存在", str(ctx.exception))
 
         # 验证原 session 未被删除
-        self.assertTrue(
-            WorkflowSession.objects.filter(thread_id=self.thread_id).exists()
-        )
+        self.assertTrue(WorkflowSession.objects.filter(thread_id=self.thread_id).exists())
 
     @patch(
         "Django_xm.apps.ai_engine.services.checkpointer_factory.delete_thread_checkpoints",
         new_callable=AsyncMock,
     )
     @patch("Django_xm.apps.core.services.file_manager.get_file_manager")
-    def test_delete_workflow_deletes_checkpoints(
-        self, mock_get_file_manager, mock_delete_checkpoints
-    ):
+    def test_delete_workflow_deletes_checkpoints(self, mock_get_file_manager, mock_delete_checkpoints):
         """删除工作流时清理 LangGraph checkpoint"""
         WorkflowService.delete_workflow(self.thread_id, self.user.id)
 
@@ -128,27 +112,21 @@ class DeleteWorkflowTestCase(TestCase):
         new_callable=AsyncMock,
     )
     @patch("Django_xm.apps.core.services.file_manager.get_file_manager")
-    def test_delete_workflow_deletes_files(
-        self, mock_get_file_manager, mock_delete_checkpoints
-    ):
+    def test_delete_workflow_deletes_files(self, mock_get_file_manager, mock_delete_checkpoints):
         """删除工作流时清理相关文件"""
         mock_file_manager = MagicMock()
         mock_get_file_manager.return_value = mock_file_manager
 
         WorkflowService.delete_workflow(self.thread_id, self.user.id)
 
-        mock_file_manager.delete_task_files.assert_called_once_with(
-            self.thread_id, "workflow"
-        )
+        mock_file_manager.delete_task_files.assert_called_once_with(self.thread_id, "workflow")
 
     @patch(
         "Django_xm.apps.ai_engine.services.checkpointer_factory.delete_thread_checkpoints",
         new_callable=AsyncMock,
     )
     @patch("Django_xm.apps.core.services.file_manager.get_file_manager")
-    def test_delete_workflow_clears_study_flow_cache(
-        self, mock_get_file_manager, mock_delete_checkpoints
-    ):
+    def test_delete_workflow_clears_study_flow_cache(self, mock_get_file_manager, mock_delete_checkpoints):
         """删除工作流时清除 StudyFlow 进程内缓存"""
         from Django_xm.apps.learning.services.study_flow import _study_flow_cache
 

@@ -113,6 +113,7 @@ class StudyFlowState(TypedDict):
 
 class QuizQuestion(TypedDict):
     """练习题单题结构"""
+
     id: str
     type: str
     question: str
@@ -124,6 +125,7 @@ class QuizQuestion(TypedDict):
 
 class RetrievedDocument(TypedDict):
     """检索文档结构"""
+
     content: str
     metadata: dict[str, Any]
     relevance_score: float
@@ -131,6 +133,7 @@ class RetrievedDocument(TypedDict):
 
 class ScoreDetail(TypedDict):
     """评分详情结构"""
+
     question_id: str
     user_answer: str
     correct_answer: str

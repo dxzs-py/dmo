@@ -88,6 +88,7 @@ def _make_user(user_id: int = 1, is_staff: bool = False, is_authenticated: bool 
 # Task 7.1：max_size 来自 settings
 # ============================================================================
 
+
 class MaxUploadSizeSourceTests(unittest.TestCase):
     """验证 get_max_upload_size 从 settings 读取，不硬编码。"""
 
@@ -105,6 +106,7 @@ class MaxUploadSizeSourceTests(unittest.TestCase):
 # ============================================================================
 # Task 7.2：magic bytes 校验
 # ============================================================================
+
 
 class MagicBytesValidationTests(unittest.TestCase):
     """验证 _verify_magic_bytes 拒绝伪装扩展名。
@@ -170,7 +172,7 @@ class MagicBytesValidationTests(unittest.TestCase):
     def test_unmanaged_extension_passes(self):
         """未在 VALIDATED_MIME_MAP 中的扩展名直接放行"""
         f = _make_file("ok.doc", b"some content")
-        is_valid, msg = _verify_magic_bytes(f, "doc")
+        is_valid, _msg = _verify_magic_bytes(f, "doc")
         self.assertTrue(is_valid)
 
 
@@ -180,14 +182,14 @@ class ValidateUploadFileIntegrationTests(unittest.TestCase):
     def test_disguised_pe_as_png_rejected(self):
         """PE 文件伪装成 .png 在 validate_upload_file 层被拒绝"""
         f = _make_file("evil.png", _PE_HEADER)
-        is_valid, msg, mime = validate_upload_file(f)
+        is_valid, msg, _mime = validate_upload_file(f)
         self.assertFalse(is_valid)
         self.assertIn("不匹配", msg)
 
     def test_disguised_zip_as_pdf_rejected(self):
         """ZIP 文件伪装成 .pdf 在 validate_upload_file 层被拒绝"""
         f = _make_file("evil.pdf", _ZIP_HEADER)
-        is_valid, msg, mime = validate_upload_file(f)
+        is_valid, msg, _mime = validate_upload_file(f)
         self.assertFalse(is_valid)
         self.assertIn("不匹配", msg)
 
@@ -203,7 +205,7 @@ class ValidateUploadFileIntegrationTests(unittest.TestCase):
         # 构造一个超过默认 10MB 的文件
         big_content = b"\x00" * (11 * 1024 * 1024)
         f = _make_file("big.png", big_content)
-        is_valid, msg, mime = validate_upload_file(f)
+        is_valid, msg, _mime = validate_upload_file(f)
         self.assertFalse(is_valid)
         self.assertIn("文件大小", msg)
 
@@ -213,7 +215,7 @@ class ValidateUploadFileIntegrationTests(unittest.TestCase):
         # 3MB 文件 > 2MB 上限
         content = b"\x89PNG\r\n\x1a\n" + b"\x00" * (3 * 1024 * 1024)
         f = _make_file("ok.png", content)
-        is_valid, msg, mime = validate_upload_file(f)
+        is_valid, msg, _mime = validate_upload_file(f)
         self.assertFalse(is_valid)
         self.assertIn("2MB", msg)
 
@@ -221,6 +223,7 @@ class ValidateUploadFileIntegrationTests(unittest.TestCase):
 # ============================================================================
 # Task 7.3：用户总存储配额校验
 # ============================================================================
+
 
 class UserStorageQuotaTests(unittest.TestCase):
     """验证 check_user_storage_quota / get_user_total_attachment_size"""
@@ -245,7 +248,7 @@ class UserStorageQuotaTests(unittest.TestCase):
             return_value=0.5 * 1024 * 1024,
         ):
             # 新上传 0.6MB → 0.5 + 0.6 = 1.1MB > 1MB
-            is_ok, msg, current = check_user_storage_quota(user, 0.6 * 1024 * 1024)
+            is_ok, msg, _current = check_user_storage_quota(user, 0.6 * 1024 * 1024)
         self.assertFalse(is_ok, f"超额应被拒绝, msg={msg}")
         self.assertIn("存储空间不足", msg)
 
@@ -257,7 +260,7 @@ class UserStorageQuotaTests(unittest.TestCase):
             "Django_xm.apps.attachments.services.attachment_validation.get_user_total_attachment_size",
             return_value=2 * 1024 * 1024,
         ):
-            is_ok, msg, current = check_user_storage_quota(user, 1 * 1024 * 1024)
+            is_ok, msg, _current = check_user_storage_quota(user, 1 * 1024 * 1024)
         self.assertTrue(is_ok)
         self.assertEqual(msg, "")
 
@@ -269,13 +272,14 @@ class UserStorageQuotaTests(unittest.TestCase):
             "Django_xm.apps.attachments.services.attachment_validation.get_user_total_attachment_size",
             return_value=4 * 1024 * 1024,
         ):
-            is_ok, msg, current = check_user_storage_quota(user, 1 * 1024 * 1024)
+            is_ok, _msg, _current = check_user_storage_quota(user, 1 * 1024 * 1024)
         self.assertTrue(is_ok)
 
 
 # ============================================================================
 # Task 7.3 + 7.5：ChatAttachmentUploadView 视图层测试（无 DB）
 # ============================================================================
+
 
 class ChatAttachmentUploadViewTests(unittest.TestCase):
     """ChatAttachmentUploadView 视图层测试
@@ -310,12 +314,15 @@ class ChatAttachmentUploadViewTests(unittest.TestCase):
 
     def test_disguised_extension_returns_400(self):
         """伪装扩展名 .png 包装 PE 文件被视图层拒绝（400）"""
-        with patch(
-            "Django_xm.apps.attachments.views.check_user_storage_quota",
-            return_value=(True, "", 0),
-        ), patch(
-            "Django_xm.apps.chat.services.cross_app.get_chat_session_strict",
-            return_value=self.session,
+        with (
+            patch(
+                "Django_xm.apps.attachments.views.check_user_storage_quota",
+                return_value=(True, "", 0),
+            ),
+            patch(
+                "Django_xm.apps.chat.services.cross_app.get_chat_session_strict",
+                return_value=self.session,
+            ),
         ):
             request = self._make_post_request(
                 self.session.session_id,
@@ -324,7 +331,8 @@ class ChatAttachmentUploadViewTests(unittest.TestCase):
             response = ChatAttachmentUploadView.as_view()(request, self.session.session_id)
             response.render()
         self.assertEqual(
-            response.status_code, 400,
+            response.status_code,
+            400,
             f"伪装扩展名应返回 400, actual={response.status_code}, body={response.content[:300]}",
         )
 
@@ -335,12 +343,15 @@ class ChatAttachmentUploadViewTests(unittest.TestCase):
         模拟场景：用户已用 0.6MB，上传 0.6MB → 1.2MB > 1MB
         """
         # Mock quota 直接拒绝
-        with patch(
-            "Django_xm.apps.attachments.views.check_user_storage_quota",
-            return_value=(False, "存储空间不足：已使用 0.6MB / 上限 1MB", 0.6 * 1024 * 1024),
-        ), patch(
-            "Django_xm.apps.chat.services.cross_app.get_chat_session_strict",
-            return_value=self.session,
+        with (
+            patch(
+                "Django_xm.apps.attachments.views.check_user_storage_quota",
+                return_value=(False, "存储空间不足：已使用 0.6MB / 上限 1MB", 0.6 * 1024 * 1024),
+            ),
+            patch(
+                "Django_xm.apps.chat.services.cross_app.get_chat_session_strict",
+                return_value=self.session,
+            ),
         ):
             request = self._make_post_request(
                 self.session.session_id,
@@ -349,7 +360,8 @@ class ChatAttachmentUploadViewTests(unittest.TestCase):
             response = ChatAttachmentUploadView.as_view()(request, self.session.session_id)
             response.render()
         self.assertEqual(
-            response.status_code, 413,
+            response.status_code,
+            413,
             f"超额上传应返回 413, actual={response.status_code}, body={response.content[:300]}",
         )
 
@@ -393,21 +405,27 @@ class ChatAttachmentUploadViewTests(unittest.TestCase):
         mock_file.url = "/media/test/ok.png"
         mock_attachment.file = mock_file
 
-        with patch(
-            "Django_xm.apps.attachments.views.check_user_storage_quota",
-            return_value=(True, "", 0),
-        ), patch(
-            "Django_xm.apps.chat.services.cross_app.get_chat_session_strict",
-            return_value=self.session,
-        ), patch(
-            "Django_xm.apps.attachments.views.ChatAttachment.objects.create",
-            return_value=mock_attachment,
-        ), patch(
-            "Django_xm.apps.attachments.views.serialize_attachment",
-            return_value={"id": 1, "original_name": "ok.png"},
-        ), patch(
-            "Django_xm.apps.attachments.services.attachment_lifecycle.AttachmentLifecycleService.record_file_hash",
-            return_value=None,
+        with (
+            patch(
+                "Django_xm.apps.attachments.views.check_user_storage_quota",
+                return_value=(True, "", 0),
+            ),
+            patch(
+                "Django_xm.apps.chat.services.cross_app.get_chat_session_strict",
+                return_value=self.session,
+            ),
+            patch(
+                "Django_xm.apps.attachments.views.ChatAttachment.objects.create",
+                return_value=mock_attachment,
+            ),
+            patch(
+                "Django_xm.apps.attachments.views.serialize_attachment",
+                return_value={"id": 1, "original_name": "ok.png"},
+            ),
+            patch(
+                "Django_xm.apps.attachments.services.attachment_lifecycle.AttachmentLifecycleService.record_file_hash",
+                return_value=None,
+            ),
         ):
             request = self._make_post_request(
                 self.session.session_id,
@@ -416,7 +434,8 @@ class ChatAttachmentUploadViewTests(unittest.TestCase):
             response = ChatAttachmentUploadView.as_view()(request, self.session.session_id)
             response.render()
         self.assertEqual(
-            response.status_code, 201,
+            response.status_code,
+            201,
             f"合法 PNG 上传应返回 201, actual={response.status_code}, body={response.content[:300]}",
         )
 

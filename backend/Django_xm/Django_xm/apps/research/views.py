@@ -1,9 +1,9 @@
-import json
 import logging
 import uuid
-from datetime import datetime
 
 from django.db import IntegrityError, transaction
+from django.utils import timezone
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -13,6 +13,7 @@ from Django_xm.apps.core.services.file_manager import get_file_manager
 from Django_xm.apps.core.throttling import ResearchRateThrottle
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.responses import error_response, not_found_response, success_response
+from Django_xm.common.serializers import EmptySerializer
 from Django_xm.tasks.deep_research import run_research_task
 
 from .models import ResearchTask, ResearchTaskStatus
@@ -32,6 +33,7 @@ class DeepResearchStartView(APIView):
     throttle_classes = [ResearchRateThrottle]
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(request=ResearchStartSerializer, responses={200: EmptySerializer})
     def post(self, request):
         serializer = ResearchStartSerializer(data=request.data)
         if not serializer.is_valid():
@@ -43,62 +45,64 @@ class DeepResearchStartView(APIView):
             )
 
         data = serializer.validated_data
-        thread_id = data.get('thread_id') or f"research_{uuid.uuid4().hex[:12]}"
+        thread_id = data.get("thread_id") or f"research_{uuid.uuid4().hex[:12]}"
 
         logger.info(f"收到研究请求：{data['query'][:50]}...")
 
         try:
-            knowledge_base_ids = data.get('knowledge_base_ids', [])
+            knowledge_base_ids = data.get("knowledge_base_ids", [])
 
             with transaction.atomic():
-                if ResearchTask.objects.select_for_update().filter(
-                    task_id=thread_id, created_by=request.user, is_deleted=False
-                ).exists():
+                if (
+                    ResearchTask.objects.select_for_update()
+                    .filter(task_id=thread_id, created_by=request.user, is_deleted=False)
+                    .exists()
+                ):
                     return error_response(
                         code=ErrorCode.DUPLICATE_RESOURCE,
-                        message=f'研究任务 {thread_id} 已存在',
+                        message=f"研究任务 {thread_id} 已存在",
                         http_status=status.HTTP_400_BAD_REQUEST,
                     )
 
                 task_manager.create_task(
                     thread_id,
-                    data['query'],
-                    enable_web_search=data.get('enable_web_search', True),
-                    enable_doc_analysis=data.get('enable_doc_analysis', False),
+                    data["query"],
+                    enable_web_search=data.get("enable_web_search", True),
+                    enable_doc_analysis=data.get("enable_doc_analysis", False),
                     created_by=request.user,
                 )
 
                 ResearchTask.objects.filter(task_id=thread_id).update(
                     knowledge_base_ids=knowledge_base_ids,
-                    use_mcp=data.get('use_mcp', False),
-                    selected_mcp_servers=data.get('selected_mcp_servers', []),
-                    selected_tools=data.get('selected_tools', []),
+                    use_mcp=data.get("use_mcp", False),
+                    selected_mcp_servers=data.get("selected_mcp_servers", []),
+                    selected_tools=data.get("selected_tools", []),
                 )
 
-            research_depth = data.get('research_depth', 'standard')
-            if research_depth == 'basic':
-                estimated_time = '3-5 分钟'
-            elif research_depth == 'comprehensive':
-                estimated_time = '10-15 分钟'
+            research_depth = data.get("research_depth", "standard")
+            if research_depth == "basic":
+                estimated_time = "3-5 分钟"
+            elif research_depth == "comprehensive":
+                estimated_time = "10-15 分钟"
             else:
-                estimated_time = '5-10 分钟'
+                estimated_time = "5-10 分钟"
 
             celery_result = run_research_task.delay(
                 thread_id=thread_id,
-                query=data['query'],
-                enable_web_search=data.get('enable_web_search', True),
-                enable_doc_analysis=data.get('enable_doc_analysis', False),
+                query=data["query"],
+                enable_web_search=data.get("enable_web_search", True),
+                enable_doc_analysis=data.get("enable_doc_analysis", False),
                 knowledge_base_ids=knowledge_base_ids,
                 user_id=request.user.id,
-                use_mcp=data.get('use_mcp', False),
-                selected_mcp_servers=data.get('selected_mcp_servers', []),
-                selected_tools=data.get('selected_tools', []),
-                provider_id=data.get('provider_id'),
-                model_name=data.get('model_name'),
-                enable_deep_thinking=data.get('enable_deep_thinking', False),
-                temperature=data.get('temperature'),
-                max_tokens=data.get('max_tokens'),
-                special_params=data.get('special_params'),
+                use_mcp=data.get("use_mcp", False),
+                selected_mcp_servers=data.get("selected_mcp_servers", []),
+                selected_tools=data.get("selected_tools", []),
+                provider_id=data.get("provider_id"),
+                model_name=data.get("model_name"),
+                enable_deep_thinking=data.get("enable_deep_thinking", False),
+                temperature=data.get("temperature"),
+                max_tokens=data.get("max_tokens"),
+                special_params=data.get("special_params"),
             )
 
             logger.info(f"研究任务已提交到 Celery 队列：{thread_id} (task_id: {celery_result.id})")
@@ -109,34 +113,34 @@ class DeepResearchStartView(APIView):
 
             return success_response(
                 data={
-                    'task_id': thread_id,
-                    'celery_task_id': celery_result.id,
-                    'status': 'pending',
-                    'query': data['query'],
-                    'created_at': datetime.now().isoformat(),
-                    'updated_at': datetime.now().isoformat(),
-                    'enable_web_search': data.get('enable_web_search', True),
-                    'enable_doc_analysis': data.get('enable_doc_analysis', False),
-                    'knowledge_base_ids': knowledge_base_ids,
-                    'use_mcp': data.get('use_mcp', False),
-                    'selected_mcp_servers': data.get('selected_mcp_servers', []),
-                    'selected_tools': data.get('selected_tools', []),
-                    'provider_id': data.get('provider_id'),
-                    'model_name': data.get('model_name'),
-                    'enable_deep_thinking': data.get('enable_deep_thinking', False),
-                    'estimated_time': estimated_time,
+                    "task_id": thread_id,
+                    "celery_task_id": celery_result.id,
+                    "status": "pending",
+                    "query": data["query"],
+                    "created_at": timezone.now().isoformat(),
+                    "updated_at": timezone.now().isoformat(),
+                    "enable_web_search": data.get("enable_web_search", True),
+                    "enable_doc_analysis": data.get("enable_doc_analysis", False),
+                    "knowledge_base_ids": knowledge_base_ids,
+                    "use_mcp": data.get("use_mcp", False),
+                    "selected_mcp_servers": data.get("selected_mcp_servers", []),
+                    "selected_tools": data.get("selected_tools", []),
+                    "provider_id": data.get("provider_id"),
+                    "model_name": data.get("model_name"),
+                    "enable_deep_thinking": data.get("enable_deep_thinking", False),
+                    "estimated_time": estimated_time,
                 },
-                message='研究任务已创建',
+                message="研究任务已创建",
             )
 
         except IntegrityError:
             return error_response(
                 code=ErrorCode.DUPLICATE_RESOURCE,
-                message=f'研究任务 {thread_id} 已存在',
+                message=f"研究任务 {thread_id} 已存在",
                 http_status=status.HTTP_400_BAD_REQUEST,
             )
-        except Exception as e:
-            logger.error(f"启动研究任务失败：{e}", exc_info=True)
+        except Exception:
+            logger.exception("启动研究任务失败：")
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
                 message="研究任务启动失败，请稍后重试",
@@ -148,6 +152,7 @@ class DeepResearchContinueView(APIView):
     throttle_classes = [ResearchRateThrottle]
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(request=ResearchContinueSerializer, responses={200: EmptySerializer})
     def post(self, request, task_id):
         serializer = ResearchContinueSerializer(data=request.data)
         if not serializer.is_valid():
@@ -171,11 +176,11 @@ class DeepResearchContinueView(APIView):
                 if parent_task.status != ResearchTaskStatus.COMPLETED:
                     return error_response(
                         code=ErrorCode.VALIDATION_FAILED,
-                        message='只能继续已完成的研究任务',
+                        message="只能继续已完成的研究任务",
                         http_status=status.HTTP_400_BAD_REQUEST,
                     )
 
-                additional_query = data.get('additional_query', '').strip()
+                additional_query = data.get("additional_query", "").strip()
                 # 续研查询：如果有补充说明则用补充说明，否则用增量指令
                 if additional_query:
                     new_query = additional_query
@@ -188,12 +193,12 @@ class DeepResearchContinueView(APIView):
                 new_task = ResearchTask(
                     task_id=new_thread_id,
                     query=new_query,
-                    enable_web_search=data.get('enable_web_search', parent_task.enable_web_search),
-                    enable_doc_analysis=data.get('enable_doc_analysis', parent_task.enable_doc_analysis),
-                    knowledge_base_ids=data.get('knowledge_base_ids', parent_task.knowledge_base_ids),
-                    use_mcp=data.get('use_mcp', parent_task.use_mcp),
-                    selected_mcp_servers=data.get('selected_mcp_servers', parent_task.selected_mcp_servers),
-                    selected_tools=data.get('selected_tools', parent_task.selected_tools),
+                    enable_web_search=data.get("enable_web_search", parent_task.enable_web_search),
+                    enable_doc_analysis=data.get("enable_doc_analysis", parent_task.enable_doc_analysis),
+                    knowledge_base_ids=data.get("knowledge_base_ids", parent_task.knowledge_base_ids),
+                    use_mcp=data.get("use_mcp", parent_task.use_mcp),
+                    selected_mcp_servers=data.get("selected_mcp_servers", parent_task.selected_mcp_servers),
+                    selected_tools=data.get("selected_tools", parent_task.selected_tools),
                     research_depth=parent_task.research_depth,
                     created_by=request.user,
                     parent_task=parent_task,
@@ -212,12 +217,12 @@ class DeepResearchContinueView(APIView):
                 use_mcp=new_task.use_mcp,
                 selected_mcp_servers=new_task.selected_mcp_servers,
                 selected_tools=new_task.selected_tools,
-                provider_id=data.get('provider_id'),
-                model_name=data.get('model_name'),
-                enable_deep_thinking=data.get('enable_deep_thinking', False),
-                temperature=data.get('temperature'),
-                max_tokens=data.get('max_tokens'),
-                special_params=data.get('special_params'),
+                provider_id=data.get("provider_id"),
+                model_name=data.get("model_name"),
+                enable_deep_thinking=data.get("enable_deep_thinking", False),
+                temperature=data.get("temperature"),
+                max_tokens=data.get("max_tokens"),
+                special_params=data.get("special_params"),
                 continue_task_id=task_id,
             )
 
@@ -229,21 +234,21 @@ class DeepResearchContinueView(APIView):
 
             return success_response(
                 data={
-                    'task_id': new_thread_id,
-                    'celery_task_id': celery_result.id,
-                    'status': 'pending',
-                    'query': new_query,
-                    'parent_task_id': task_id,
-                    'version': new_version,
-                    'created_at': datetime.now().isoformat(),
+                    "task_id": new_thread_id,
+                    "celery_task_id": celery_result.id,
+                    "status": "pending",
+                    "query": new_query,
+                    "parent_task_id": task_id,
+                    "version": new_version,
+                    "created_at": timezone.now().isoformat(),
                 },
-                message=f'续研任务已创建（v{new_version}）',
+                message=f"续研任务已创建（v{new_version}）",
             )
 
         except ResearchTask.DoesNotExist:
-            return not_found_response(message='研究任务不存在')
-        except Exception as e:
-            logger.error(f"启动续研任务失败：{e}", exc_info=True)
+            return not_found_response(message="研究任务不存在")
+        except Exception:
+            logger.exception("启动续研任务失败：")
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
                 message="续研任务启动失败，请稍后重试",
@@ -254,51 +259,55 @@ class DeepResearchContinueView(APIView):
 class DeepResearchStatusView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses={200: EmptySerializer})
     def get(self, request, task_id):
         try:
             cached_status = get_task_status(task_id)
 
             try:
-                task = ResearchTask.objects.select_related('created_by').get(
-                    task_id=task_id, created_by=request.user, is_deleted=False,
+                task = ResearchTask.objects.select_related("created_by").get(
+                    task_id=task_id,
+                    created_by=request.user,
+                    is_deleted=False,
                 )
 
                 response_data = {
-                    'task_id': task.task_id,
-                    'status': task.status,
-                    'query': task.query,
-                    'session_id': task.session_id or '',
-                    'created_at': task.created_at.isoformat() if task.created_at else '',
-                    'updated_at': task.updated_at.isoformat() if task.updated_at else '',
-                    'enable_web_search': task.enable_web_search,
-                    'enable_doc_analysis': task.enable_doc_analysis,
-                    'knowledge_base_ids': task.knowledge_base_ids or [],
-                    'current_step': cached_status.get('current_step', 'unknown') if cached_status else task.status,
-                    'final_report': task.final_report if task.status == 'completed' else '',
+                    "task_id": task.task_id,
+                    "status": task.status,
+                    "query": task.query,
+                    "session_id": task.session_id or "",
+                    "created_at": task.created_at.isoformat() if task.created_at else "",
+                    "updated_at": task.updated_at.isoformat() if task.updated_at else "",
+                    "enable_web_search": task.enable_web_search,
+                    "enable_doc_analysis": task.enable_doc_analysis,
+                    "knowledge_base_ids": task.knowledge_base_ids or [],
+                    "current_step": cached_status.get("current_step", "unknown") if cached_status else task.status,
+                    "final_report": task.final_report if task.status == "completed" else "",
                 }
 
-                if task.status == 'completed' and task.final_report:
+                if task.status == "completed" and task.final_report:
                     if cached_status:
-                        result = cached_status.get('result', {})
-                        response_data['plan'] = result.get('plan')
-                        response_data['steps_completed'] = result.get('steps_completed')
+                        result = cached_status.get("result", {})
+                        response_data["plan"] = result.get("plan")
+                        response_data["steps_completed"] = result.get("steps_completed")
 
-                if task.status == 'completed':
+                if task.status == "completed":
                     try:
                         from Django_xm.apps.core.services.file_manager import get_file_manager
+
                         fm = get_file_manager()
-                        file_list = fm.list_task_files(task_id, 'research')
-                        response_data['files'] = [f.to_dict() for f in file_list]
+                        file_list = fm.list_task_files(task_id, "research")
+                        response_data["files"] = [f.to_dict() for f in file_list]
                     except Exception:
-                        response_data['files'] = []
+                        response_data["files"] = []
 
                 return success_response(data=response_data)
 
             except ResearchTask.DoesNotExist:
-                return not_found_response(message='研究任务不存在')
+                return not_found_response(message="研究任务不存在")
 
-        except Exception as e:
-            logger.error(f"查询研究状态失败：{e}", exc_info=True)
+        except Exception:
+            logger.exception("查询研究状态失败：")
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
                 message="查询研究状态失败，请稍后重试",
@@ -309,48 +318,51 @@ class DeepResearchStatusView(APIView):
 class DeepResearchResultView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses={200: EmptySerializer})
     def get(self, request, task_id):
         try:
             try:
-                task = ResearchTask.objects.select_related('created_by').get(
-                    task_id=task_id, created_by=request.user, is_deleted=False,
+                task = ResearchTask.objects.select_related("created_by").get(
+                    task_id=task_id,
+                    created_by=request.user,
+                    is_deleted=False,
                 )
 
-                if task.status != 'completed':
-                    status_msg = '研究任务尚未完成' if task.status == 'running' else '研究任务失败'
+                if task.status != "completed":
+                    status_msg = "研究任务尚未完成" if task.status == "running" else "研究任务失败"
                     return success_response(
                         data={
-                            'status': task.status,
-                            'thread_id': task.task_id,
-                            'query': task.query,
+                            "status": task.status,
+                            "thread_id": task.task_id,
+                            "query": task.query,
                         },
                         message=status_msg,
                     )
 
                 cached_status = get_task_status(task_id)
-                result = cached_status.get('result', {}) if cached_status else {}
+                result = cached_status.get("result", {}) if cached_status else {}
 
                 return success_response(
                     data={
-                        'status': 'completed',
-                        'task_id': task.task_id,
-                        'query': task.query,
-                        'report': task.final_report,
-                        'plan': result.get('plan'),
-                        'steps_completed': result.get('steps_completed'),
-                        'created_at': task.created_at.isoformat() if task.created_at else '',
-                        'updated_at': task.updated_at.isoformat() if task.updated_at else '',
-                        'enable_web_search': task.enable_web_search,
-                        'enable_doc_analysis': task.enable_doc_analysis,
-                        'knowledge_base_ids': task.knowledge_base_ids or [],
+                        "status": "completed",
+                        "task_id": task.task_id,
+                        "query": task.query,
+                        "report": task.final_report,
+                        "plan": result.get("plan"),
+                        "steps_completed": result.get("steps_completed"),
+                        "created_at": task.created_at.isoformat() if task.created_at else "",
+                        "updated_at": task.updated_at.isoformat() if task.updated_at else "",
+                        "enable_web_search": task.enable_web_search,
+                        "enable_doc_analysis": task.enable_doc_analysis,
+                        "knowledge_base_ids": task.knowledge_base_ids or [],
                     }
                 )
 
             except ResearchTask.DoesNotExist:
-                return not_found_response(message='研究任务不存在')
+                return not_found_response(message="研究任务不存在")
 
-        except Exception as e:
-            logger.error(f"获取研究结果失败：{e}", exc_info=True)
+        except Exception:
+            logger.exception("获取研究结果失败：")
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
                 message="获取研究结果失败，请稍后重试",
@@ -361,17 +373,20 @@ class DeepResearchResultView(APIView):
 class DeepResearchTaskDeleteView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses={200: EmptySerializer})
     def delete(self, request, task_id):
         try:
             logger.info(f"删除研究任务：{task_id}")
 
             with transaction.atomic():
-                task_obj = ResearchTask.objects.select_for_update().filter(
-                    task_id=task_id, created_by=request.user, is_deleted=False
-                ).first()
+                task_obj = (
+                    ResearchTask.objects.select_for_update()
+                    .filter(task_id=task_id, created_by=request.user, is_deleted=False)
+                    .first()
+                )
 
                 if not task_obj:
-                    return not_found_response(message='研究任务不存在或无权删除')
+                    return not_found_response(message="研究任务不存在或无权删除")
 
                 # 保留 ChatMessage.research_task_id 引用，不置空
                 # 原因：置空后删除聊天会话时无法通过 ChatMessage 反查关联的已删除研究任务，
@@ -381,7 +396,7 @@ class DeepResearchTaskDeleteView(APIView):
                 result = task_manager.delete_task(task_id, user_id=request.user.id)
 
                 if not result:
-                    return not_found_response(message='研究任务不存在或无权删除')
+                    return not_found_response(message="研究任务不存在或无权删除")
 
             # 事务提交后检查是否需要清理后端数据
             # 规则：无活跃聊天关联 → 清理后端数据；有活跃聊天关联 → 保留
@@ -398,15 +413,15 @@ class DeepResearchTaskDeleteView(APIView):
 
             return success_response(
                 data={
-                    'status': 'success',
-                    'message': f'研究任务 {task_id} 已删除',
-                    'backend_cleaned': should_cleanup,
+                    "status": "success",
+                    "message": f"研究任务 {task_id} 已删除",
+                    "backend_cleaned": should_cleanup,
                 },
-                message='删除成功',
+                message="删除成功",
             )
 
-        except Exception as e:
-            logger.error(f"删除研究任务失败：{e}", exc_info=True)
+        except Exception:
+            logger.exception("删除研究任务失败：")
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
                 message="删除研究任务失败，请稍后重试",
@@ -416,66 +431,25 @@ class DeepResearchTaskDeleteView(APIView):
     def _cleanup_backend_data(self, task_id: str, user_id: int):
         """清理后端数据：checkpoint、store、磁盘文件（复用 cross_app 统一清理函数）"""
         from Django_xm.apps.research.services.cross_app import _cleanup_research_backend_data
+
         _cleanup_research_backend_data(task_id, user_id)
-
-
-class ResearchApprovalView(APIView):
-    """深度研究工具审批 API
-
-    前端点击"确认"或"拒绝"时调用此 API，
-    将审批结果发布到 Redis 响应频道，供 Celery worker 读取。
-    """
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        task_id = request.data.get('task_id')
-        interrupt_id = request.data.get('interrupt_id')
-        approved = request.data.get('approved', False)
-        user_input = request.data.get('user_input')
-
-        if not task_id or not interrupt_id:
-            return error_response(code=ErrorCode.INVALID_PARAMS, message='缺少 task_id 或 interrupt_id 参数')
-
-        # 验证任务归属
-        task = ResearchTask.objects.filter(task_id=task_id, created_by=request.user, is_deleted=False).first()
-        if not task:
-            return error_response(code=ErrorCode.NOT_FOUND, message='研究任务不存在', http_status=status.HTTP_404_NOT_FOUND)
-
-        # 发布审批结果到 Redis 响应频道
-        try:
-            from django.core.cache import cache
-
-            from Django_xm.apps.research.services.research_runner import REDIS_APPROVAL_RESPONSE_PREFIX
-            redis_client = cache.client.get_client()
-            channel = f"{REDIS_APPROVAL_RESPONSE_PREFIX}{task_id}"
-            payload = json.dumps({
-                "interrupt_id": interrupt_id,
-                "approved": bool(approved),
-                "user_input": user_input,
-            }, ensure_ascii=False)
-            redis_client.publish(channel, payload)
-            logger.info(f"研究审批结果已发布: task={task_id}, interrupt_id={interrupt_id}, approved={approved}")
-        except Exception as e:
-            logger.error(f"发布研究审批结果失败: {e}")
-            return error_response(code=ErrorCode.SERVER_ERROR, message="审批结果提交失败")
-
-        return success_response(data={"task_id": task_id, "approved": bool(approved)}, message="审批结果已提交")
 
 
 class DeepResearchTaskListView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
         try:
-            status_filter = request.query_params.get('status')
-            search_query = request.query_params.get('search')
-            page = int(request.query_params.get('page', 1))
-            page_size = min(int(request.query_params.get('page_size', 20)), 100)
+            status_filter = request.query_params.get("status")
+            search_query = request.query_params.get("search")
+            page = int(request.query_params.get("page", 1))
+            page_size = min(int(request.query_params.get("page_size", 20)), 100)
 
             queryset = ResearchTask.objects.filter(
                 created_by=request.user,
                 is_deleted=False,
-            ).select_related('created_by')
+            ).select_related("created_by")
 
             if status_filter:
                 queryset = queryset.filter(status=status_filter)
@@ -483,7 +457,7 @@ class DeepResearchTaskListView(APIView):
             if search_query:
                 queryset = queryset.filter(query__icontains=search_query)
 
-            queryset = queryset.order_by('-created_at')
+            queryset = queryset.order_by("-created_at")
 
             total = queryset.count()
             start = (page - 1) * page_size
@@ -494,19 +468,18 @@ class DeepResearchTaskListView(APIView):
 
             return success_response(
                 data={
-                    'items': serializer.data,
-                    'total': total,
-                    'page': page,
-                    'page_size': page_size,
-                    'total_pages': (total + page_size - 1) // page_size,
+                    "items": serializer.data,
+                    "total": total,
+                    "page": page,
+                    "page_size": page_size,
+                    "total_pages": (total + page_size - 1) // page_size,
                 }
             )
 
-        except Exception as e:
-            logger.error(f"获取研究任务列表失败：{e}", exc_info=True)
+        except Exception:
+            logger.exception("获取研究任务列表失败：")
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
                 message="获取研究任务列表失败，请稍后重试",
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-

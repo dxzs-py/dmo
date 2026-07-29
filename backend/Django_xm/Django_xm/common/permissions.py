@@ -5,6 +5,7 @@
 - IsAdmin: 仅管理员可访问
 - IsAuthenticatedOrQueryParam: 支持标准认证或查询参数 token 认证
 """
+
 from rest_framework.permissions import BasePermission
 
 
@@ -25,6 +26,7 @@ class IsAuthenticatedOrQueryParam(BasePermission):
         if request.user and request.user.is_authenticated:
             return True
         from Django_xm.apps.core.authentication import QueryParamTokenAuthentication
+
         authenticator = QueryParamTokenAuthentication()
         result = authenticator.authenticate(request)
         if result is not None:

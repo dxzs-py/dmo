@@ -40,7 +40,7 @@ class SkillAdapter:
         from Django_xm.apps.tools.skills.tool import SkillBaseTool
 
         skills = SkillRegistryService.get_skills(self.user_id)
-        tools = []
+        tools: list[BaseTool] = []
         for spec in skills:
             tools.append(SkillBaseTool(spec=spec, available_tools=available_tools or []))
 
@@ -73,9 +73,9 @@ class SkillAdapter:
         if not selected_skill_names:
             return []
 
-        qs = SkillPackage.objects.filter(status='active', name__in=selected_skill_names)
+        qs = SkillPackage.objects.filter(status="active", name__in=selected_skill_names)
         if self.user_id is not None:
-            qs = qs.filter(user_id=self.user_id) | qs.filter(source='system')
+            qs = qs.filter(user_id=self.user_id) | qs.filter(source="system")
 
         skill_dirs = []
         for pkg in qs:
@@ -94,9 +94,10 @@ class SkillAdapter:
 
         try:
             from Django_xm.apps.tools.models import SkillPackage
-            qs = SkillPackage.objects.filter(status='active')
+
+            qs = SkillPackage.objects.filter(status="active")
             if self.user_id is not None:
-                qs = qs.filter(user_id=self.user_id) | qs.filter(source='system')
+                qs = qs.filter(user_id=self.user_id) | qs.filter(source="system")
 
             tools = []
             for pkg in qs:
@@ -105,7 +106,7 @@ class SkillAdapter:
                 spec = SkillSpec(
                     name=pkg.name,
                     description=pkg.description or f"Skill: {pkg.name}",
-                    mode='advisor',
+                    mode="advisor",
                     skill_dir=pkg.skill_dir,
                     allowed_tools=pkg.allowed_tools,
                     version=pkg.version,

@@ -4,12 +4,21 @@
 提取 Celery 任务和聊天路径的公共逻辑：
 - 智能体执行（LLM Cache 控制 + Token 追踪）
 - 结果处理（文件同步 + Token 更新 + 状态更新 + Redis 发布）
-- 异步执行 + interrupt 审批机制（Redis 通信）
+- 异步执行 + interrupt 审批机制（Path D：DB 持久化 + Celery 恢复）
+
+Path D 架构变更：
+    旧实现：_handle_interrupt 阻塞等待 Redis pubsub 响应（worker 卡死 5min）
+    新实现：_handle_interrupt_create_and_exit 创建 Approval DB 记录 + 发布事件 + 返回空 dict（退出信号）
+           worker 退出后，用户审批时由 research_resume_task Celery 任务从 checkpoint 恢复
+
+统一性：
+    - 审批创建：与 chat 模块共用 request_approval_async（统一 DB 记录）
+    - 审批恢复：与 chat 模块共用 ApprovalResumeView → ApprovalGateway（统一端点）
+    - 事件发布：与 chat 模块共用 publish_approval（统一实时同步）
 """
-import asyncio
+
 import json
 import logging
-import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -18,8 +27,6 @@ from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHa
 logger = logging.getLogger(__name__)
 
 REDIS_CHANNEL_PREFIX = "research:result:"
-REDIS_APPROVAL_PREFIX = "research:approval:"
-REDIS_APPROVAL_RESPONSE_PREFIX = "research:approval:response:"
 APPROVAL_TIMEOUT_SECONDS = 300
 
 
@@ -69,11 +76,11 @@ def load_research_context(task_id: str, max_content_length: int = 12000) -> str:
 
         try:
             file_manager = get_file_manager()
-            files = file_manager.list_task_files(task_id, 'research')
-            md_files = [f for f in files if f.path.suffix in ('.md', '.txt')]
+            files = file_manager.list_task_files(task_id, "research")
+            md_files = [f for f in files if f.path.suffix in (".md", ".txt")]
             for f in md_files[:8]:
                 relative_path = str(f.path.relative_to(f.base_dir))
-                content = file_manager.read_file_content(task_id, relative_path, 'research')
+                content = file_manager.read_file_content(task_id, relative_path, "research")
                 if content and content.strip():
                     truncated = content.strip()
                     if len(truncated) > 3000:
@@ -81,12 +88,14 @@ def load_research_context(task_id: str, max_content_length: int = 12000) -> str:
                     parts.append(f"### {relative_path}\n{truncated}")
         except Exception as e:
             import logging
+
             logging.getLogger(__name__).warning(f"加载研究文件失败: {e}")
 
         return "\n\n".join(parts)
 
     except Exception as e:
         import logging
+
         logging.getLogger(__name__).warning(f"加载研究上下文失败: {e}")
         return ""
 
@@ -110,6 +119,7 @@ def execute_research(
     saved_cache = None
     if disable_llm_cache:
         from langchain_core.globals import get_llm_cache, set_llm_cache
+
         saved_cache = get_llm_cache()
         set_llm_cache(None)
 
@@ -118,21 +128,21 @@ def execute_research(
             result = agent.research(query, callbacks=[cb])
 
         usage_data = {
-            'prompt_tokens': cb.prompt_tokens,
-            'completion_tokens': cb.completion_tokens,
-            'successful_requests': cb.successful_requests,
+            "prompt_tokens": cb.prompt_tokens,
+            "completion_tokens": cb.completion_tokens,
+            "successful_requests": cb.successful_requests,
         }
-        model_name = getattr(cb, '_current_model', '') or ''
+        model_name = getattr(cb, "_current_model", "") or ""
 
-        success = result.get('success', True)
-        final_report = result.get('final_report', '')
-        error_message = result.get('error', '') if not success else ''
+        success = result.get("success", True)
+        final_report = result.get("final_report", "")
+        error_message = result.get("error", "") if not success else ""
 
         return ResearchResult(
             success=success,
             final_report=final_report,
-            files=result.get('files'),
-            state_files=result.get('state_files'),
+            files=result.get("files"),
+            state_files=result.get("state_files"),
             usage_data=usage_data,
             model_name=model_name,
             error_message=error_message,
@@ -141,7 +151,145 @@ def execute_research(
     finally:
         if disable_llm_cache and saved_cache is not None:
             from langchain_core.globals import set_llm_cache
+
             set_llm_cache(saved_cache)
+
+
+async def _handle_interrupt_create_and_exit(
+    interrupts_data,
+    *,
+    thread_id: str,
+    user_id: int | None = None,
+    chat_session_id: str | None = None,
+    message_id: str = "",
+) -> dict:
+    """审批中断回调：创建 Approval DB 记录 + 发布事件 + 返回退出信号（Path D）。
+
+    不阻塞等待决策。worker 创建审批后返回空 dict（退出信号），
+    astream_research_with_interrupts 检测到空返回值后退出循环，
+    Celery 任务结束（worker 释放）。
+
+    用户决策后由新 Celery 任务（research_resume_task）从 checkpoint 恢复 agent 执行。
+
+    与 chat 模块统一：
+    - 共用 request_approval_async 创建 Approval DB 记录（统一持久化）
+    - 共用 publish_approval 发布实时事件（统一事件通道）
+    - 共用 ApprovalResumeView 接收用户决策（统一端点）
+
+    Args:
+        interrupts_data: 单个 interrupt dict 或 interrupt dict list
+        thread_id: 研究任务 ID（= approval.source_id）
+        user_id: 任务归属用户 ID（用于 approval.user 外键）
+        chat_session_id: 关联的 chat 会话 ID（用于跨模块同步事件路由）
+        message_id: 关联的 chat message ID（前端用于精确定位消息）
+
+    Returns:
+        dict: 空字典表示"退出"（不恢复 agent），astream_research_with_interrupts 检测到后退出循环
+    """
+    # 兼容：单个 dict 自动包装为 list
+    if isinstance(interrupts_data, dict):
+        interrupts_data = [interrupts_data]
+
+    if not interrupts_data:
+        return {}
+
+    logger.info(
+        f"[ResearchApproval] 收到 {len(interrupts_data)} 个审批请求: "
+        f"tools={[i.get('tool_name', 'unknown') for i in interrupts_data]}, "
+        f"task_id={thread_id}"
+    )
+
+    from Django_xm.apps.approvals.models import Approval
+    from Django_xm.apps.approvals.services.approval_service import request_approval_async
+
+    # 提取批次 ID（graph_interrupt_id）和 langgraph_resume_id
+    # 同一批次的审批共享 graph_interrupt_id，下游统一从 _meta 读取
+    first_interrupt = interrupts_data[0] if interrupts_data else {}
+    graph_interrupt_id = first_interrupt.get("graph_interrupt_id", "") or ""
+    # langgraph_resume_id = LangGraph Interrupt.id，作为 Command(resume=...) 的 KEY
+    # 若 interrupt_data 中未携带，回退到 interrupt_id（= tool_call_id）
+    langgraph_resume_id = first_interrupt.get("interrupt_id", "") or ""
+
+    # 为每个 interrupt 创建 Approval DB 记录
+    for interrupt_data in interrupts_data:
+        interrupt_id = interrupt_data.get("interrupt_id", "")
+        if not interrupt_id:
+            logger.warning(f"[ResearchApproval] 跳过缺少 interrupt_id 的审批请求: {interrupt_data}")
+            continue
+
+        tool_name = interrupt_data.get("tool_name", "unknown")
+        tool_call_id = interrupt_data.get("tool_call_id", "") or interrupt_id
+
+        # approval_data 与 chat 模块字段对齐（统一 schema）
+        approval_data = {
+            "tool_name": tool_name,
+            "title": interrupt_data.get("title", "确认操作"),
+            "description": interrupt_data.get("description", ""),
+            "operation": interrupt_data.get("operation", ""),
+            "danger_level": interrupt_data.get("danger_level", "medium"),
+            "parameters": interrupt_data.get("parameters", {}) or interrupt_data.get("args", {}) or {},
+            "action": interrupt_data.get("action", Approval.ACTION_CONFIRM),
+            "session_id": chat_session_id,  # request_approval_async 从 session_id 读取 chat_session_id
+            "message_id": message_id,
+            "extra": {
+                "tool_call_id": tool_call_id,
+                "graph_interrupt_id": graph_interrupt_id,
+                "langgraph_resume_id": langgraph_resume_id,
+                "message_id": message_id,
+            },
+        }
+
+        # risk_level 透传（若 middleware 已注入）
+        risk_level = interrupt_data.get("risk_level")
+        if risk_level:
+            approval_data["extra"]["risk_level"] = risk_level
+
+        # 嵌套层级字段透传（Phase E3）：
+        # 子 agent 的审批请求携带 parent_tool_call_id / depth / agent_name / agent_path，
+        # 保存到 Approval.extra 供前端展示完整调用链路与嵌套层级。
+        # 主 agent 的 interrupt_data 不包含这些字段，跳过。
+        parent_tool_call_id = interrupt_data.get("parent_tool_call_id")
+        if parent_tool_call_id:
+            approval_data["extra"]["parent_tool_call_id"] = parent_tool_call_id
+        depth = interrupt_data.get("depth")
+        if depth is not None and isinstance(depth, int) and depth > 0:
+            approval_data["extra"]["depth"] = depth
+        agent_name = interrupt_data.get("agent_name")
+        if agent_name:
+            approval_data["extra"]["agent_name"] = agent_name
+        agent_path = interrupt_data.get("agent_path")
+        if agent_path and isinstance(agent_path, list):
+            approval_data["extra"]["agent_path"] = agent_path
+
+        try:
+            await request_approval_async(
+                source=Approval.SOURCE_DEEP_RESEARCH,
+                source_id=thread_id,
+                interrupt_id=interrupt_id,
+                approval_data=approval_data,
+            )
+            logger.info(
+                f"[ResearchApproval] 已创建审批 DB 记录: "
+                f"interrupt_id={interrupt_id}, tool={tool_name}, "
+                f"task_id={thread_id}, risk_level={risk_level or 'controlled'}"
+            )
+        except Exception:
+            logger.exception(
+                f"[ResearchApproval] 创建审批 DB 记录失败: "
+                f"interrupt_id={interrupt_id}, tool={tool_name}, "
+                f"task_id={thread_id}",
+            )
+            # 创建失败不影响其他审批请求的创建，但当前请求会被跳过
+            # agent 不会收到 resume_value，interrupt 会保留在 checkpoint 中
+            # research_resume_task 在用户审批时会从 checkpoint 恢复
+
+    # 返回空 dict 表示"退出"（不恢复 agent）
+    # astream_research_with_interrupts 检测到空返回值后返回 interrupted 结果
+    logger.info(
+        f"[ResearchApproval] 已创建 {len(interrupts_data)} 个审批记录，worker 退出: "
+        f"task_id={thread_id}, graph_interrupt_id={graph_interrupt_id}"
+    )
+    return {}
 
 
 async def execute_research_async(
@@ -149,277 +297,77 @@ async def execute_research_async(
     query: str,
     thread_id: str,
     disable_llm_cache: bool = True,
+    *,
+    user_id: int | None = None,
+    chat_session_id: str | None = None,
+    message_id: str = "",
+    resume_command=None,
 ) -> ResearchResult:
-    """异步研究执行逻辑（支持 interrupt 审批机制）
+    """异步研究执行逻辑（Path D：DB 持久化 + Celery 恢复）
 
     使用 agent.astream_research_with_interrupts() 执行，
-    当工具需要用户确认时，通过 Redis 在 Celery worker 和前端之间传递审批请求和响应。
+    当工具需要用户确认时：
+    1. on_interrupt 回调创建 Approval DB 记录 + 发布事件
+    2. on_interrupt 返回空 dict（退出信号）
+    3. astream_research_with_interrupts 检测到空返回值后退出，返回 interrupted 结果
+    4. Celery 任务结束（worker 释放）
+    5. 用户审批后由 research_resume_task 从 checkpoint 恢复
 
     Args:
         agent: 已创建的研究智能体
-        query: 研究查询
-        thread_id: 线程 ID（用于 Redis 频道标识）
+        query: 研究查询（resume_mode 时为 None）
+        thread_id: 线程 ID（= research task_id，用于 checkpoint 寻址）
         disable_llm_cache: 是否禁用 LLM Cache
+        user_id: 任务归属用户 ID（审批创建时写入 approval.user）
+        chat_session_id: 关联 chat 会话 ID（跨模块同步事件路由）
+        message_id: 关联 chat message ID（前端消息定位）
+        resume_command: 恢复模式时传入 Command(resume=...)，None 表示初始执行
 
     Returns:
-        ResearchResult 标准化结果
+        ResearchResult 标准化结果（interrupted 时 success=False, error_message='interrupted'）
     """
     saved_cache = None
     if disable_llm_cache:
         from langchain_core.globals import get_llm_cache, set_llm_cache
+
         saved_cache = get_llm_cache()
         set_llm_cache(None)
 
     try:
         with TokenUsageCallbackHandler() as cb:
-
-            async def _handle_interrupt(interrupts_data):
-                """审批中断回调：通过 Redis 通知前端并等待所有响应（async）
-
-                支持批量处理：当 LLM 一次返回多个 tool_call 导致多个 interrupt 时，
-                全部发布给前端，等待用户逐一审批后，返回 {interrupt_id: resume_value} dict。
-
-                关键设计（实时同步统一性）：
-                - 全部 Redis 阻塞调用通过 ``asyncio.to_thread`` 卸载到线程池，
-                  避免阻塞事件循环，确保审批等待期间其他 SSE 流的心跳与
-                  跨浏览器同步事件正常处理。
-                - ``pubsub.get_message(timeout=1.0)`` 是主阻塞点（每次最多 1s），
-                  必须在线程中执行，否则会冻结事件循环导致所有 SSE 客户端断连。
-
-                Args:
-                    interrupts_data: 单个 interrupt dict（兼容旧调用）或 interrupt dict list
-
-                Returns:
-                    dict: {interrupt_id: resume_value}，用于 Command(resume=...)
-                """
-                # 兼容：单个 dict 自动包装为 list
-                if isinstance(interrupts_data, dict):
-                    interrupts_data = [interrupts_data]
-
-                if not interrupts_data:
-                    return {}
-
-                logger.info(
-                    f"[ResearchApproval] 收到 {len(interrupts_data)} 个审批请求: "
-                    f"tools={[i.get('tool_name', 'unknown') for i in interrupts_data]}"
+            # 审批中断回调：创建 DB 记录 + 退出（Path D）
+            async def _on_interrupt(interrupts_data):
+                return await _handle_interrupt_create_and_exit(
+                    interrupts_data,
+                    thread_id=thread_id,
+                    user_id=user_id,
+                    chat_session_id=chat_session_id,
+                    message_id=message_id,
                 )
 
-                try:
-                    from django.core.cache import cache
-                    redis_client = await asyncio.to_thread(cache.client.get_client)
-                except Exception as e:
-                    logger.error(f"[ResearchApproval] 获取 Redis 客户端失败: {e}")
-                    return {i["interrupt_id"]: False for i in interrupts_data}
-
-                approval_channel = f"{REDIS_APPROVAL_PREFIX}{thread_id}"
-                response_channel = f"{REDIS_APPROVAL_RESPONSE_PREFIX}{thread_id}"
-
-                # 1. 批量发布所有审批请求到 Redis
-                pending_ids = set()
-                id_to_tool = {}  # interrupt_id -> tool_name 映射，超时/已处理通知需要
-                approval_list_key = f"{REDIS_APPROVAL_PREFIX}pending:{thread_id}"
-                for interrupt_data in interrupts_data:
-                    interrupt_id = interrupt_data.get("interrupt_id", "")
-                    if not interrupt_id:
-                        continue
-                    pending_ids.add(interrupt_id)
-                    id_to_tool[interrupt_id] = interrupt_data.get("tool_name", "unknown")
-                    approval_payload = json.dumps({
-                        "type": "approval",
-                        "tool_name": interrupt_data.get("tool_name", "unknown"),
-                        "interrupt_id": interrupt_id,
-                        "title": interrupt_data.get("title", "确认操作"),
-                        "description": interrupt_data.get("description", ""),
-                        "operation": interrupt_data.get("operation", ""),
-                        "danger_level": interrupt_data.get("danger_level", "medium"),
-                        "action": interrupt_data.get("action", "confirm"),
-                        "state": "pending",
-                        "source": "deep_research",
-                        "task_id": thread_id,
-                    }, ensure_ascii=False)
-                    # 透传 parameters（工具输入参数，前端展示用，非空时才显示输入区）
-                    if interrupt_data.get("parameters"):
-                        approval_payload_obj = json.loads(approval_payload)
-                        approval_payload_obj["parameters"] = interrupt_data["parameters"]
-                        approval_payload = json.dumps(approval_payload_obj, ensure_ascii=False)
-                    try:
-                        await asyncio.to_thread(redis_client.publish, approval_channel, approval_payload)
-                        # 缓存到 Redis List，供后续订阅者（如 DeepResearchView SSE 流）读取历史审批
-                        await asyncio.to_thread(redis_client.rpush, approval_list_key, approval_payload)
-                        await asyncio.to_thread(redis_client.expire, approval_list_key, 3600)  # 1小时，覆盖审批等待+页面刷新场景
-                    except Exception as e:
-                        logger.error(f"[ResearchApproval] 发布审批请求失败(id={interrupt_id}): {e}")
-
-                logger.info(f"[ResearchApproval] 已发布 {len(pending_ids)} 个审批请求: {approval_channel}")
-
-                if not pending_ids:
-                    return {}
-
-                # 2. 订阅审批响应频道，等待所有审批响应
-                resume_dict = {}
-                timed_out_ids = set()
-                pubsub = await asyncio.to_thread(redis_client.pubsub)
-                try:
-                    await asyncio.to_thread(pubsub.subscribe, response_channel)
-                    logger.info(f"[ResearchApproval] 等待 {len(pending_ids)} 个审批响应: {response_channel}")
-
-                    deadline = time.time() + APPROVAL_TIMEOUT_SECONDS
-                    while pending_ids and time.time() < deadline:
-                        # 关键：pubsub.get_message 是阻塞调用（最多 1s），
-                        # 必须在线程中执行，否则冻结事件循环导致其他 SSE 流断连
-                        message = await asyncio.to_thread(pubsub.get_message, timeout=1.0)
-                        if message and message["type"] == "message":
-                            try:
-                                response_data = json.loads(message["data"])
-                                resp_interrupt_id = response_data.get("interrupt_id", "")
-
-                                # 忽略不属于当前批次的响应
-                                if resp_interrupt_id not in pending_ids:
-                                    logger.debug(
-                                        f"[ResearchApproval] 忽略不匹配的响应: "
-                                        f"expected_one_of={pending_ids}, got={resp_interrupt_id}"
-                                    )
-                                    continue
-
-                                approved = response_data.get("approved", False)
-                                user_input = response_data.get("user_input")
-                                if approved:
-                                    resume_dict[resp_interrupt_id] = user_input if user_input is not None else True
-                                    logger.info(
-                                        f"[ResearchApproval] 审批通过: id={resp_interrupt_id}"
-                                    )
-                                else:
-                                    resume_dict[resp_interrupt_id] = False
-                                    logger.info(
-                                        f"[ResearchApproval] 审批拒绝: id={resp_interrupt_id}"
-                                    )
-                                pending_ids.discard(resp_interrupt_id)
-
-                                # 从 Redis List 中移除已处理的审批
-                                try:
-                                    pending_list = await asyncio.to_thread(
-                                        redis_client.lrange, approval_list_key, 0, -1
-                                    )
-                                    for item in pending_list:
-                                        try:
-                                            item_data = json.loads(item)
-                                            if item_data.get("interrupt_id") == resp_interrupt_id:
-                                                await asyncio.to_thread(
-                                                    redis_client.lrem, approval_list_key, 1, item
-                                                )
-                                                break
-                                        except (json.JSONDecodeError, KeyError):
-                                            continue
-                                except Exception:
-                                    pass
-
-                                # 写入已处理标记（含完整审批数据），供 SSE 历史补偿推送已处理审批的最终状态
-                                try:
-                                    processed_key = f"{REDIS_APPROVAL_PREFIX}processed:{thread_id}:{resp_interrupt_id}"
-                                    processed_data = json.dumps({
-                                        "interrupt_id": resp_interrupt_id,
-                                        "tool_name": id_to_tool.get(resp_interrupt_id, "unknown"),
-                                        "approved": approved,
-                                        "state": "approved" if approved else "rejected",
-                                        "source": "deep_research",
-                                        "task_id": thread_id,
-                                    }, ensure_ascii=False)
-                                    await asyncio.to_thread(
-                                        redis_client.setex, processed_key, 3600, processed_data
-                                    )
-                                except Exception:
-                                    pass
-
-                                # 发布"审批已处理"通知到审批频道，让双端 SSE 流同步更新 UI
-                                try:
-                                    processed_payload = json.dumps({
-                                        "type": "approval_processed",
-                                        "interrupt_id": resp_interrupt_id,
-                                        "tool_name": id_to_tool.get(resp_interrupt_id, "unknown"),
-                                        "approved": approved,
-                                        "state": "approved" if approved else "rejected",
-                                        "source": "deep_research",
-                                        "task_id": thread_id,
-                                    }, ensure_ascii=False)
-                                    await asyncio.to_thread(
-                                        redis_client.publish, approval_channel, processed_payload
-                                    )
-                                except Exception:
-                                    pass
-
-                            except (json.JSONDecodeError, KeyError) as e:
-                                logger.warning(f"[ResearchApproval] 解析审批响应失败: {e}")
-                                continue
-
-                    # 3. 超时处理：未响应的 interrupt 视为拒绝
-                    if pending_ids:
-                        logger.warning(
-                            f"[ResearchApproval] {len(pending_ids)} 个审批超时({APPROVAL_TIMEOUT_SECONDS}s): "
-                            f"ids={pending_ids}, 视为拒绝"
-                        )
-                        for tid in pending_ids:
-                            resume_dict[tid] = False
-                            timed_out_ids.add(tid)
-
-                        # 发布超时通知到审批频道，让前端更新审批状态
-                        for tid in timed_out_ids:
-                            try:
-                                timeout_payload = json.dumps({
-                                    "type": "approval_timeout",
-                                    "interrupt_id": tid,
-                                    "tool_name": id_to_tool.get(tid, "unknown"),
-                                    "source": "deep_research",
-                                    "state": "timeout",
-                                    "task_id": thread_id,
-                                }, ensure_ascii=False)
-                                await asyncio.to_thread(
-                                    redis_client.publish, approval_channel, timeout_payload
-                                )
-                                # 写入超时标记（含完整数据），供 SSE 历史补偿推送
-                                processed_key = f"{REDIS_APPROVAL_PREFIX}processed:{thread_id}:{tid}"
-                                timeout_data = json.dumps({
-                                    "interrupt_id": tid,
-                                    "tool_name": id_to_tool.get(tid, "unknown"),
-                                    "approved": False,
-                                    "state": "timeout",
-                                    "source": "deep_research",
-                                    "task_id": thread_id,
-                                }, ensure_ascii=False)
-                                await asyncio.to_thread(
-                                    redis_client.setex, processed_key, 3600, timeout_data
-                                )
-                            except Exception as pub_err:
-                                logger.warning(f"[ResearchApproval] 发布超时通知失败: {pub_err}")
-
-                finally:
-                    try:
-                        await asyncio.to_thread(pubsub.unsubscribe, response_channel)
-                        await asyncio.to_thread(pubsub.close)
-                    except Exception:
-                        pass
-
-                return resume_dict
-
             result = await agent.astream_research_with_interrupts(
-                query, callbacks=[cb], on_interrupt=_handle_interrupt,
+                query,
+                callbacks=[cb],
+                on_interrupt=_on_interrupt,
+                resume_command=resume_command,
             )
 
         usage_data = {
-            'prompt_tokens': cb.prompt_tokens,
-            'completion_tokens': cb.completion_tokens,
-            'successful_requests': cb.successful_requests,
+            "prompt_tokens": cb.prompt_tokens,
+            "completion_tokens": cb.completion_tokens,
+            "successful_requests": cb.successful_requests,
         }
-        model_name = getattr(cb, '_current_model', '') or ''
+        model_name = getattr(cb, "_current_model", "") or ""
 
-        success = result.get('success', True)
-        final_report = result.get('final_report', '')
-        error_message = result.get('error', '') if not success else ''
+        success = result.get("success", True)
+        final_report = result.get("final_report", "")
+        error_message = result.get("error", "") if not success else ""
 
         return ResearchResult(
             success=success,
             final_report=final_report,
-            files=result.get('files'),
-            state_files=result.get('state_files'),
+            files=result.get("files"),
+            state_files=result.get("state_files"),
             usage_data=usage_data,
             model_name=model_name,
             error_message=error_message,
@@ -428,21 +376,22 @@ async def execute_research_async(
     finally:
         if disable_llm_cache and saved_cache is not None:
             from langchain_core.globals import set_llm_cache
+
             set_llm_cache(saved_cache)
 
 
 def _normalize_file_path(path: str) -> str:
-    path = path.lstrip('/')
-    if path.startswith(('notes/', 'reports/', 'plans/')):
+    path = path.lstrip("/")
+    if path.startswith(("notes/", "reports/", "plans/")):
         return path
-    name = path.split('/')[-1]
+    name = path.split("/")[-1]
     name_lower = name.lower()
-    if 'report' in name_lower:
-        return f'reports/{name}'
-    if 'plan' in name_lower:
-        return f'plans/{name}'
-    if name.endswith(('.md', '.txt')):
-        return f'notes/{name}'
+    if "report" in name_lower:
+        return f"reports/{name}"
+    if "plan" in name_lower:
+        return f"plans/{name}"
+    if name.endswith((".md", ".txt")):
+        return f"notes/{name}"
     return path
 
 
@@ -461,11 +410,11 @@ def _sync_state_files_to_disk(thread_id: str, result: ResearchResult):
             path = _normalize_file_path(file_path)
             content = file_data
             if isinstance(file_data, dict):
-                content = file_data.get('content', '')
+                content = file_data.get("content", "")
                 if isinstance(content, list):
-                    content = '\n'.join(content)
+                    content = "\n".join(content)
             if isinstance(content, str) and content:
-                fm.write_file_content(thread_id, path, content, task_type='research')
+                fm.write_file_content(thread_id, path, content, task_type="research")
                 synced += 1
 
         logger.info(f"状态文件同步完成: {thread_id}, {synced}/{len(files)} 个文件")
@@ -476,13 +425,17 @@ def _sync_state_files_to_disk(thread_id: str, result: ResearchResult):
 def _publish_result_to_redis(thread_id: str, result: ResearchResult, response_time: float):
     try:
         from django.core.cache import cache
-        redis_client = cache.client.get_client()
+
+        redis_client = cache.client.get_client()  # type: ignore[attr-defined]  # django-redis extension: BaseCache.client not in stubs
         channel = f"{REDIS_CHANNEL_PREFIX}{thread_id}"
-        payload = json.dumps({
-            "thread_id": thread_id,
-            "response_time": response_time,
-            **result.to_dict(),
-        }, ensure_ascii=False)
+        payload = json.dumps(
+            {
+                "thread_id": thread_id,
+                "response_time": response_time,
+                **result.to_dict(),
+            },
+            ensure_ascii=False,
+        )
         redis_client.publish(channel, payload)
         logger.info(f"研究结果已发布到 Redis: {channel}")
     except Exception as e:
@@ -511,10 +464,11 @@ def finalize_research(
 
     try:
         from Django_xm.apps.research.services.cross_app import update_research_task_model_and_tokens
+
         total_tokens = 0
         token_detail = None
         if result.usage_data:
-            total_tokens = result.usage_data.get('prompt_tokens', 0) + result.usage_data.get('completion_tokens', 0)
+            total_tokens = result.usage_data.get("prompt_tokens", 0) + result.usage_data.get("completion_tokens", 0)
 
         update_research_task_model_and_tokens(
             task_id=thread_id,
@@ -531,11 +485,15 @@ def finalize_research(
     if result.success:
         try:
             from Django_xm.apps.research.services.task_manager import update_task_status as _update_status
-            _update_status(thread_id, {
-                'status': 'completed',
-                'current_step': 'completed',
-                'final_report': result.final_report,
-            })
+
+            _update_status(
+                thread_id,
+                {
+                    "status": "completed",
+                    "current_step": "completed",
+                    "final_report": result.final_report,
+                },
+            )
         except Exception as e:
             logger.warning(f"更新研究任务完成状态失败: {e}")
 

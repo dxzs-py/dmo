@@ -16,6 +16,7 @@
 import logging
 
 from django.core.cache import cache
+from drf_spectacular.utils import extend_schema
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
@@ -24,11 +25,13 @@ from Django_xm.apps.core.services.db_monitor import DatabaseMonitor
 from Django_xm.apps.core.services.status_registry import get_status_by_name
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.responses import error_response, success_response
+from Django_xm.common.serializers import EmptySerializer
 
 logger = logging.getLogger(__name__)
 
 
-@api_view(['GET'])
+@extend_schema(responses={200: EmptySerializer})
+@api_view(["GET"])
 @permission_classes([AllowAny])
 def health_check(request):
     """健康检查端点"""
@@ -38,24 +41,26 @@ def health_check(request):
     # 数据库检查
     try:
         connection.ensure_connection()
-        checks['database'] = 'ok'
+        checks["database"] = "ok"
     except Exception:
-        checks['database'] = 'error'
+        checks["database"] = "error"
 
     # 缓存检查
     try:
-        cache.set('health_check', 'ok', 1)
-        checks['cache'] = 'ok' if cache.get('health_check') == 'ok' else 'error'
+        cache.set("health_check", "ok", 1)
+        checks["cache"] = "ok" if cache.get("health_check") == "ok" else "error"
     except Exception:
-        checks['cache'] = 'error'
+        checks["cache"] = "error"
 
     return success_response(data=checks)
 
 
 class PostgreSQLStatusView(APIView):
     """PostgreSQL 数据库状态视图"""
+
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
         try:
             cache_key = "status:postgresql"
@@ -67,7 +72,7 @@ class PostgreSQLStatusView(APIView):
             cache.set(cache_key, status_info, 30)
             return success_response(data=status_info)
         except Exception as e:
-            logger.error(f"获取 PostgreSQL 状态失败: {e}", exc_info=True)
+            logger.exception("获取 PostgreSQL 状态失败")
             return error_response(code=ErrorCode.SERVER_ERROR, message=str(e))
 
 
@@ -76,8 +81,10 @@ class VectorStoreStatusView(APIView):
 
     通过 ``status_registry`` 查询 ``knowledge`` 注册的 ``VectorStoreStatusProvider``。
     """
+
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
         try:
             cache_key = "status:vector_store"
@@ -86,11 +93,11 @@ class VectorStoreStatusView(APIView):
                 return success_response(data=cached)
 
             # 通过注册表查询向量存储状态（Task 15.3）
-            status_info = get_status_by_name('vector_store')
+            status_info = get_status_by_name("vector_store")
             cache.set(cache_key, status_info, 30)
             return success_response(data=status_info)
         except Exception as e:
-            logger.error(f"获取向量存储状态失败: {e}", exc_info=True)
+            logger.exception("获取向量存储状态失败")
             return error_response(code=ErrorCode.SERVER_ERROR, message=str(e))
 
 
@@ -99,8 +106,10 @@ class DatabaseOverviewView(APIView):
 
     通过 ``DatabaseMonitor.get_database_overview()`` 聚合所有已注册状态提供者。
     """
+
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
         try:
             cache_key = "status:database_overview"
@@ -112,5 +121,5 @@ class DatabaseOverviewView(APIView):
             cache.set(cache_key, overview, 30)
             return success_response(data=overview)
         except Exception as e:
-            logger.error(f"获取数据库总览失败: {e}", exc_info=True)
+            logger.exception("获取数据库总览失败")
             return error_response(code=ErrorCode.SERVER_ERROR, message=str(e))

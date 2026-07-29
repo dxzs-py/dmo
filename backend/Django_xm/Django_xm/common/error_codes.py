@@ -4,6 +4,7 @@
 每个错误码携带默认消息和 HTTP 状态码，新增错误码只需在此处添加，
 无需同步修改 responses.py 的 _infer_http_status。
 """
+
 from enum import IntEnum
 
 

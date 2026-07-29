@@ -33,16 +33,30 @@ logger = logging.getLogger(__name__)
 def _get_data_dir() -> str:
     try:
         from django.conf import settings as django_settings
-        return str(getattr(django_settings, 'TOOLS_LANGCHAIN_DIR', os.path.join(str(django_settings.DATA_DIR), 'tools', 'langchain')))
+
+        return str(
+            getattr(
+                django_settings,
+                "TOOLS_LANGCHAIN_DIR",
+                os.path.join(str(django_settings.DATA_DIR), "tools", "langchain"),
+            )
+        )
     except (ImportError, AttributeError):
         try:
             from Django_xm.apps.ai_engine.config import settings
-            return str(getattr(settings, 'TOOLS_LANGCHAIN_DIR', os.path.join(str(getattr(settings, 'data_dir', 'data')), 'tools', 'langchain')))
+
+            return str(
+                getattr(
+                    settings,
+                    "TOOLS_LANGCHAIN_DIR",
+                    os.path.join(str(getattr(settings, "data_dir", "data")), "tools", "langchain"),
+                )
+            )
         except (ImportError, AttributeError):
-            return os.path.join('data', 'tools', 'langchain')
+            return os.path.join("data", "tools", "langchain")
 
 
-AGENT_STORE_DIR = os.path.join(_get_data_dir(), 'agents')
+AGENT_STORE_DIR = os.path.join(_get_data_dir(), "agents")
 
 AGENT_TYPES = {
     "general-purpose": "通用代理 - 处理各类任务",
@@ -60,7 +74,7 @@ def _ensure_agent_dir():
 
 def _get_agent_path(agent_id: str) -> str:
     _ensure_agent_dir()
-    safe_id = agent_id.replace('/', '_').replace('\\', '_')
+    safe_id = agent_id.replace("/", "_").replace("\\", "_")
     return os.path.join(AGENT_STORE_DIR, f"{safe_id}.json")
 
 
@@ -68,10 +82,10 @@ def _save_agent_meta(agent_id: str, meta: dict[str, Any]):
     path = _get_agent_path(agent_id)
     _ensure_agent_dir()
     try:
-        with open(path, 'w', encoding='utf-8') as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
-    except OSError as e:
-        logger.error(f"保存代理元数据失败: {e}")
+    except OSError:
+        logger.exception("保存代理元数据失败")
 
 
 def _load_agent_meta(agent_id: str) -> dict[str, Any] | None:
@@ -79,10 +93,10 @@ def _load_agent_meta(agent_id: str) -> dict[str, Any] | None:
     if not os.path.exists(path):
         return None
     try:
-        with open(path, encoding='utf-8') as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        logger.error(f"加载代理元数据失败: {e}")
+    except (OSError, json.JSONDecodeError):
+        logger.exception("加载代理元数据失败")
         return None
 
 
@@ -90,7 +104,7 @@ def _list_agents() -> list[dict[str, Any]]:
     _ensure_agent_dir()
     agents = []
     for filename in os.listdir(AGENT_STORE_DIR):
-        if filename.endswith('.json'):
+        if filename.endswith(".json"):
             agent_id = filename[:-5]
             meta = _load_agent_meta(agent_id)
             if meta:
@@ -130,7 +144,7 @@ class AgentCreateInput(BaseModel):
     description: str = Field(description="任务描述，详细说明子代理需要完成的工作")
     agent_type: str = Field(
         default="general-purpose",
-        description="代理类型：general-purpose/explore/plan/verification/code-review/research"
+        description="代理类型：general-purpose/explore/plan/verification/code-review/research",
     )
     parent_session_id: str = Field(default="", description="父会话ID，用于关联")
 
@@ -152,7 +166,9 @@ class AgentCleanupInput(BaseModel):
 class AgentCreateTool(BaseTool):
     name: str = "agent_create"
     version: str = TOOL_VERSION
-    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "agent"})
+    metadata: dict = Field(
+        default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "agent"}
+    )
     description: str = (
         "创建一个子代理任务，子代理可独立执行特定类型的工作（如探索、规划、验证、研究等）。"
         "适用场景：需要并行处理子任务、分配特定类型的工作给专门代理、拆分复杂任务。"
@@ -175,20 +191,25 @@ class AgentCreateTool(BaseTool):
         # 检查嵌套深度限制
         if is_max_depth_reached():
             current_depth = get_agent_depth()
-            return json.dumps({
-                "error": f"已达到最大子代理嵌套深度({MAX_AGENT_DEPTH})，当前深度={current_depth}。"
-                         f"请直接在当前代理中完成任务，不要创建更多子代理。",
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "error": f"已达到最大子代理嵌套深度({MAX_AGENT_DEPTH})，当前深度={current_depth}。"
+                    f"请直接在当前代理中完成任务，不要创建更多子代理。",
+                },
+                ensure_ascii=False,
+            )
 
         agent_id = f"agent_{int(time.time() * 1000)}"
         normalized_type = _normalize_agent_type(agent_type)
 
         from Django_xm.apps.context_manager.services.circuit_breaker import ContextCircuitBreaker
+
         _cb = ContextCircuitBreaker()
         if _cb.detect_injection(description):
             return json.dumps({"error": "检测到不安全的任务描述，请修改后重试"}, ensure_ascii=False)
 
         from Django_xm.apps.tools.langchain.agent_context import get_parent_tool_context, has_parent_tool_context
+
         tool_context = get_parent_tool_context() if has_parent_tool_context() else {}
 
         meta = {
@@ -229,7 +250,9 @@ class AgentCreateTool(BaseTool):
 class AgentRunTool(BaseTool):
     name: str = "agent_run"
     version: str = TOOL_VERSION
-    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "agent"})
+    metadata: dict = Field(
+        default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "agent"}
+    )
     description: str = (
         "执行一个已创建的子代理任务，子代理将独立完成分配的工作并返回结果。"
         "适用场景：已通过 agent_create 创建子代理后，需要执行该代理任务获取结果。"
@@ -302,14 +325,16 @@ class AgentRunTool(BaseTool):
                             use_web_search = parent_config.get("use_web_search", False)
                             use_mcp = bool(parent_mcp_servers)
 
-                            sub_tools = run_async(get_tools_for_request_async(
-                                use_tools=True,
-                                use_web_search=use_web_search,
-                                use_mcp=use_mcp,
-                                selected_mcp_servers=parent_mcp_servers or None,
-                                selected_tools=parent_tool_names or None,
-                                user_id=parent_config.get("user_id"),
-                            ))
+                            sub_tools = run_async(
+                                get_tools_for_request_async(
+                                    use_tools=True,
+                                    use_web_search=use_web_search,
+                                    use_mcp=use_mcp,
+                                    selected_mcp_servers=parent_mcp_servers or None,
+                                    selected_tools=parent_tool_names or None,
+                                    user_id=parent_config.get("user_id"),
+                                )
+                            )
 
                             # 始终剥离子代理创建工具，防止无限嵌套
                             sub_agent_tool_names = {"agent_create", "agent_run", "agent_list", "agent_cleanup"}
@@ -317,7 +342,9 @@ class AgentRunTool(BaseTool):
 
                             # 如果已达最大深度-1，也剥离 agent 工具（双重保险）
                             if current_depth >= MAX_AGENT_DEPTH - 1:
-                                logger.info(f"子代理 {agent_id} 接近最大深度({current_depth}/{MAX_AGENT_DEPTH})，已剥离 agent 工具")
+                                logger.info(
+                                    f"子代理 {agent_id} 接近最大深度({current_depth}/{MAX_AGENT_DEPTH})，已剥离 agent 工具"
+                                )
 
                             logger.info(f"子代理 {agent_id} 继承父代理工具: {[t.name for t in sub_tools]}")
                         except Exception as e:
@@ -326,15 +353,19 @@ class AgentRunTool(BaseTool):
                     else:
                         sub_tools = get_basic_tools()
 
-                    agent = run_async(agent_hub_create(AgentConfig(
-                        agent_type=AgentType.BASE,
-                        tools=sub_tools,
-                        system_prompt=system_prompt,
-                        user_id=parent_config.get("user_id"),
-                        session_id=parent_config.get("session_id"),
-                        model_name=parent_config.get("model_name"),
-                        store=parent_config.get("store"),
-                    )))
+                    agent = run_async(
+                        agent_hub_create(
+                            AgentConfig(
+                                agent_type=AgentType.BASE,
+                                tools=sub_tools,
+                                system_prompt=system_prompt,
+                                user_id=parent_config.get("user_id"),
+                                session_id=parent_config.get("session_id"),
+                                model_name=parent_config.get("model_name"),
+                                store=parent_config.get("store"),
+                            )
+                        )
+                    )
 
                     result = agent.invoke(input_text=task_input)
                     result_container["result"] = result
@@ -397,7 +428,9 @@ class AgentRunTool(BaseTool):
 class AgentListTool(BaseTool):
     name: str = "agent_list"
     version: str = TOOL_VERSION
-    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "agent"})
+    metadata: dict = Field(
+        default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "agent"}
+    )
     description: str = (
         "列出所有已创建的子代理任务，显示代理ID、类型、状态和任务描述。"
         "适用场景：需要查看当前有哪些子代理、了解各代理的执行状态、选择代理执行。"
@@ -448,9 +481,12 @@ class AgentCleanupTool(AsyncToolMixin, BaseTool):
     - 单个清理无需审批
     工具层不参与审批判断。
     """
+
     name: str = "agent_cleanup"
     version: str = TOOL_VERSION
-    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "agent"})
+    metadata: dict = Field(
+        default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "agent"}
+    )
     description: str = (
         "清理已完成或失败的子代理资源，释放内存和磁盘空间。"
         "适用场景：子代理执行完毕后清理资源、系统资源不足时回收。"
@@ -486,7 +522,7 @@ class AgentCleanupTool(AsyncToolMixin, BaseTool):
             os.remove(path)
             cleaned_count = 1
         except OSError as e:
-            logger.error(f"清理代理 {agent_id} 文件失败: {e}")
+            logger.exception(f"清理代理 {agent_id} 文件失败")
             return f"清理代理 {agent_id} 失败: {e}"
         return f"已清理 {cleaned_count} 个子代理资源"
 
@@ -501,8 +537,8 @@ class AgentCleanupTool(AsyncToolMixin, BaseTool):
                 try:
                     os.remove(path)
                     cleaned_count += 1
-                except OSError as e:
-                    logger.error(f"清理代理 {aid} 文件失败: {e}")
+                except OSError:
+                    logger.exception(f"清理代理 {aid} 文件失败")
         return f"已清理 {cleaned_count} 个子代理资源"
 
 

@@ -6,6 +6,7 @@
 - 深度研究任务执行（Celery + Redis 订阅）
 - 无工具回退模式
 """
+
 import asyncio
 import json
 import logging
@@ -18,7 +19,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from Django_xm.apps.ai_engine.services.cost_tracker import TokenDetailTracker
 from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
-from Django_xm.apps.research.services.cross_app import REDIS_APPROVAL_PREFIX, REDIS_CHANNEL_PREFIX
+from Django_xm.apps.research.services.cross_app import REDIS_CHANNEL_PREFIX
 
 from ..utils import _lcp_len, convert_chat_history
 from .stream_helpers import (
@@ -37,6 +38,7 @@ def _get_redis_pool(broker_url):
     global _redis_pool
     if _redis_pool is None:
         import redis as redis_lib
+
         _redis_pool = redis_lib.ConnectionPool.from_url(broker_url, max_connections=10)
     return _redis_pool
 
@@ -64,10 +66,10 @@ class DeepChatService:
             if isinstance(msg, ToolMessage):
                 responded_ids.add(msg.tool_call_id)
 
-        cleaned = []
+        cleaned: list[BaseMessage] = []
         for msg in messages:
-            if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
-                unresponded = [tc for tc in msg.tool_calls if tc.get('id') not in responded_ids]
+            if isinstance(msg, AIMessage) and hasattr(msg, "tool_calls") and msg.tool_calls:
+                unresponded = [tc for tc in msg.tool_calls if tc.get("id") not in responded_ids]
                 if unresponded:
                     if msg.content:
                         cleaned.append(AIMessage(content=msg.content))
@@ -92,27 +94,30 @@ class DeepChatService:
             tools = await self._chat_service._get_tools(data)
         if model_instance is None:
             model_instance = self._chat_service._resolve_model_instance(data)
-        provider_id = data.get('provider_id')
+        provider_id = data.get("provider_id")
 
-        prompt_mode = data.get('mode', 'agent')
+        prompt_mode = data.get("mode", "agent")
         tool_config = self._chat_service._build_tool_config(data)
         agent, thread_config, use_checkpointer = await self._chat_service._create_agent_with_memory(
-            data, prompt_mode=prompt_mode, model_instance=model_instance,
-            tool_config=tool_config, tools=tools,
+            data,
+            prompt_mode=prompt_mode,
+            model_instance=model_instance,
+            tool_config=tool_config,
+            tools=tools,
         )
 
         human_msg = await self._chat_service._acreate_human_message(data)
 
         if use_checkpointer:
             self._chat_service._apply_context_engineering_for_checkpointer(
-                user_message=data.get('message', ''),
-                model_name=data.get('model_name'),
-                mode=data.get('mode', 'agent'),
+                user_message=data.get("message", ""),
+                model_name=data.get("model_name"),
+                mode=data.get("mode", "agent"),
             )
             graph_input = {"messages": [human_msg]}
             config = thread_config
         else:
-            chat_history = data.get('chat_history', [])
+            chat_history = data.get("chat_history", [])
             langchain_chat_history = convert_chat_history(chat_history)
             messages = list(langchain_chat_history) if langchain_chat_history else []
             messages.append(human_msg)
@@ -125,7 +130,7 @@ class DeepChatService:
         tool_call_count: dict[str, int] = {}
         accumulated_reasoning: dict[str, str] = {
             "content": "",
-            "_stream_state": data.get('_stream_state'),  # 共享状态，供 generate() finally 兜底刷新
+            "_stream_state": data.get("_stream_state"),  # 共享状态，供 generate() finally 兜底刷新
         }
         tool_args_accumulator: dict[str, str] = {}
         thinking_start_time = time.time()
@@ -143,10 +148,11 @@ class DeepChatService:
         has_sent_reasoning = True
 
         with TokenUsageCallbackHandler() as cb:
-            from Django_xm.apps.ai_engine.services.llm_factory import FallbackDetectionCallback
+            from Django_xm.apps.ai_engine.services.llm_fallback import FallbackDetectionCallback
+
             fb_callback = FallbackDetectionCallback(
                 expected_provider=provider_id or "",
-                expected_model=data.get('model_name', '') or "",
+                expected_model=data.get("model_name", "") or "",
             )
             config["callbacks"] = [cb, fb_callback]
             # 使用多 stream mode：messages 获取消息流，updates 捕获 interrupt 事件
@@ -167,6 +173,7 @@ class DeepChatService:
                                 from langgraph.types import Interrupt
 
                                 from Django_xm.apps.tools.base import is_approval_interrupt
+
                                 for intr in interrupts:
                                     if isinstance(intr, Interrupt):
                                         interrupt_value = intr.value
@@ -188,40 +195,40 @@ class DeepChatService:
                                             "interrupt_id": interrupt_id,
                                         }
                                         approval_data = {
-                                            'tool_name': tool_name,
-                                            'tool_call_id': interrupt_id,
-                                            'interrupt_id': interrupt_id,
-                                            'title': interrupt_value.get("title", "确认操作"),
-                                            'description': interrupt_value.get("description", ""),
-                                            'action': action,
-                                            'danger_level': interrupt_value.get("danger_level", "medium"),
-                                            'state': 'pending',
+                                            "tool_name": tool_name,
+                                            "tool_call_id": interrupt_id,
+                                            "interrupt_id": interrupt_id,
+                                            "title": interrupt_value.get("title", "确认操作"),
+                                            "description": interrupt_value.get("description", ""),
+                                            "action": action,
+                                            "danger_level": interrupt_value.get("danger_level", "medium"),
+                                            "state": "pending",
                                         }
                                         # 透传 operation（统一字段，兼容旧 command）
                                         op = interrupt_value.get("operation") or interrupt_value.get("command") or ""
                                         if op:
-                                            approval_data['operation'] = op
+                                            approval_data["operation"] = op
                                             # 通用匹配：tool_name 一致 + parameters 中任意字段值等于 operation
                                             for tc_key, tc_info in tool_calls_map.items():
                                                 if tc_info.get("name") != tool_name:
                                                     continue
                                                 tc_params = tc_info.get("parameters", {})
                                                 if any(str(v) == op for v in tc_params.values()):
-                                                    approval_data['llm_tool_call_id'] = tc_info.get("id") or tc_key
+                                                    approval_data["llm_tool_call_id"] = tc_info.get("id") or tc_key
                                                     break
                                             # 回退：同名工具中第一个
-                                            if 'llm_tool_call_id' not in approval_data:
+                                            if "llm_tool_call_id" not in approval_data:
                                                 for tc_key, tc_info in tool_calls_map.items():
                                                     if tc_info.get("name") == tool_name:
-                                                        approval_data['llm_tool_call_id'] = tc_info.get("id") or tc_key
+                                                        approval_data["llm_tool_call_id"] = tc_info.get("id") or tc_key
                                                         break
                                         if interrupt_value.get("extra"):
-                                            approval_data['extra'] = interrupt_value["extra"]
+                                            approval_data["extra"] = interrupt_value["extra"]
                                         if interrupt_value.get("input_placeholder"):
-                                            approval_data['input_placeholder'] = interrupt_value["input_placeholder"]
+                                            approval_data["input_placeholder"] = interrupt_value["input_placeholder"]
                                         yield {
-                                            'type': 'approval',
-                                            'data': approval_data,
+                                            "type": "approval",
+                                            "data": approval_data,
                                         }
                         continue  # updates 模式的其他事件跳过
 
@@ -230,7 +237,9 @@ class DeepChatService:
 
                     try:
                         for event in process_stream_chunk(
-                            mode_data, tool_calls_map, current_message_content,
+                            mode_data,
+                            tool_calls_map,
+                            current_message_content,
                             tool_call_count=tool_call_count,
                             lcp_func=_lcp_len,
                             accumulated_reasoning=accumulated_reasoning,
@@ -260,11 +269,13 @@ class DeepChatService:
                     accumulated_reasoning["_pending_content"] = ""
                     # 同步清除 stream_state，避免 generate() finally 重复刷新
                     from .stream_helpers import _sync_pending_to_stream_state
+
                     _sync_pending_to_stream_state(accumulated_reasoning)
 
                 # GraphRecursionError: Agent 步数超限，但已收集了部分结果
                 # 优雅降级：用已收集的内容生成回复，不丢弃上下文
                 from langgraph.errors import GraphRecursionError
+
                 if isinstance(stream_err, GraphRecursionError):
                     logger.warning(
                         f"深度思考模式达到递归上限，优雅降级: 已收集 {len(all_messages)} 条消息, "
@@ -277,11 +288,14 @@ class DeepChatService:
                         # 没有内容时，从 all_messages 中提取最后的 AI 回复
                         for msg in reversed(all_messages):
                             if isinstance(msg, AIMessage) and msg.content:
-                                current_message_content = msg.content
+                                current_message_content = msg.content if isinstance(msg.content, str) else str(msg.content)
                                 yield {"type": "chunk", "content": msg.content}
                                 break
                         if not current_message_content:
-                            yield {"type": "chunk", "content": "任务执行步骤较多，已达到单次执行上限。以上是已收集的部分结果。"}
+                            yield {
+                                "type": "chunk",
+                                "content": "任务执行步骤较多，已达到单次执行上限。以上是已收集的部分结果。",
+                            }
                     # 跳过 fallback，继续后续的 finalize 和 reasoning 处理
                 elif provider_id and model_instance and tools:
                     # 其他异常（如 API 连接错误）：回退到无工具纯对话模式
@@ -294,13 +308,16 @@ class DeepChatService:
                         ):
                             yield fallback_event
                     except Exception as fallback_err:
-                        logger.error(
-                            f"无工具回退模式也失败: {type(fallback_err).__name__}: {fallback_err}"
-                        )
-                        yield {"type": "error", "content": f"模型服务暂时不可用，请稍后重试（{type(fallback_err).__name__}）"}
+                        logger.exception(f"无工具回退模式也失败: {type(fallback_err).__name__}")
+                        yield {
+                            "type": "error",
+                            "content": f"模型服务暂时不可用，请稍后重试（{type(fallback_err).__name__}）",
+                        }
                     return
                 else:
-                    logger.error(f"deep-thinking astream 执行异常: {type(stream_err).__name__}: {stream_err}", exc_info=True)
+                    logger.exception(
+                        f"deep-thinking astream 执行异常: {type(stream_err).__name__}"
+                    )
                     raise
 
         update_usage_and_tokens(cb, usage_tracker, token_detail_tracker)
@@ -310,23 +327,29 @@ class DeepChatService:
             fallback_info = fb_callback.get_fallback_info()
             if fallback_info:
                 yield {
-                    'type': 'model_fallback',
-                    'data': fallback_info,
+                    "type": "model_fallback",
+                    "data": fallback_info,
                 }
                 try:
                     from Django_xm.apps.ai_engine.models import SystemConfig
-                    SystemConfig.set_value("default_chat_model", {
-                        "provider_id": fallback_info["actual_provider"],
-                        "model_name": fallback_info["actual_model"],
-                    })
+
+                    SystemConfig.set_value(
+                        "default_chat_model",
+                        {
+                            "provider_id": fallback_info["actual_provider"],
+                            "model_name": fallback_info["actual_model"],
+                        },
+                    )
                 except Exception:
-                    pass
+                    # 持久化 fallback 配置失败不影响当前会话，运行时已切换
+                    logger.debug("持久化模型 fallback 配置到 SystemConfig 失败")
 
         # 审批中断场景：Agent 被 interrupt 暂停，等待用户确认
         # 跳过 finalize 逻辑（不需要补发 final_ai_message 等），直接结束流
         if interrupt_info is not None:
             logger.info(f"深度思考审批中断，跳过 finalize: tool={interrupt_info.get('tool_name')}")
             from .stream_helpers import finalize_tool_calls
+
             for tool_update_event in finalize_tool_calls(all_messages, tool_calls_map, tool_args_accumulator):
                 yield tool_update_event
             return
@@ -343,19 +366,20 @@ class DeepChatService:
             accumulated_reasoning["_pending_content"] = ""
             # 同步清除 stream_state，避免 generate() finally 重复刷新
             from .stream_helpers import _sync_pending_to_stream_state
+
             _sync_pending_to_stream_state(accumulated_reasoning)
 
         # 深度思考模式兜底：当模型（如 qwen3:8b + reasoning=True）将全部输出
         # 放入 thinking 字段而 content 为空时，将推理内容作为主内容发送
         # 但如果有 interrupt（工具审批等待），不应触发兜底
-        if (not current_message_content.strip()
-                and not interrupt_info
-                and accumulated_reasoning
-                and accumulated_reasoning.get("content", "").strip()):
+        if (
+            not current_message_content.strip()
+            and not interrupt_info
+            and accumulated_reasoning
+            and accumulated_reasoning.get("content", "").strip()
+        ):
             reasoning_text = accumulated_reasoning["content"].strip()
-            logger.info(
-                f"深度思考兜底: content 为空，将推理内容 ({len(reasoning_text)} 字符) 作为主内容发送"
-            )
+            logger.info(f"深度思考兜底: content 为空，将推理内容 ({len(reasoning_text)} 字符) 作为主内容发送")
             yield {"type": "chunk", "content": reasoning_text}
             current_message_content = reasoning_text
 
@@ -382,7 +406,9 @@ class DeepChatService:
             }
 
     async def create_deep_research_task(
-        self, query: str, session_id: str | None = None,
+        self,
+        query: str,
+        session_id: str | None = None,
         use_web_search: bool = True,
         retriever_tool=None,
         task_title: str | None = None,
@@ -392,6 +418,7 @@ class DeepChatService:
         from django.contrib.auth import get_user_model
 
         from Django_xm.apps.research.services.cross_app import get_research_task_manager
+
         User = get_user_model()
 
         thread_id = f"research_{uuid.uuid4().hex[:12]}"
@@ -400,6 +427,7 @@ class DeepChatService:
         created_by = None
         if self._chat_service.user_id:
             try:
+
                 @sync_to_async(thread_sensitive=True)
                 def _get_user():
                     return User.objects.get(id=self._chat_service.user_id)
@@ -423,8 +451,11 @@ class DeepChatService:
         return thread_id
 
     async def run_deep_research_task(
-        self, query: str, session_id: str | None = None,
-        usage_tracker=None, token_detail_tracker=None,
+        self,
+        query: str,
+        session_id: str | None = None,
+        usage_tracker=None,
+        token_detail_tracker=None,
         use_web_search: bool = True,
         retriever_tool=None,
         extra_tools: list | None = None,
@@ -458,11 +489,13 @@ class DeepChatService:
 
         if not task_id:
             from django.contrib.auth import get_user_model
+
             User = get_user_model()
 
             created_by = None
             if self._chat_service.user_id:
                 try:
+
                     @sync_to_async(thread_sensitive=True)
                     def _get_user():
                         return User.objects.get(id=self._chat_service.user_id)
@@ -485,24 +518,23 @@ class DeepChatService:
             await _create_task()
 
         if knowledge_base_ids:
+
             @sync_to_async(thread_sensitive=True)
             def _update_kb():
                 update_research_task_fields(thread_id, knowledge_base_ids=knowledge_base_ids)
+
             await _update_kb()
 
-        use_mcp = any(
-            (getattr(t, 'metadata', {}) or {}).get('is_mcp_tool', False)
-            for t in (extra_tools or [])
-        )
+        use_mcp = any((getattr(t, "metadata", {}) or {}).get("is_mcp_tool", False) for t in (extra_tools or []))
         selected_mcp_servers = []
         selected_tool_names = []
-        for t in (extra_tools or []):
-            meta = getattr(t, 'metadata', {}) or {}
-            t_name = getattr(t, 'name', '')
+        for t in extra_tools or []:
+            meta = getattr(t, "metadata", {}) or {}
+            t_name = getattr(t, "name", "")
             # 跳过 retriever_tool，它们由 knowledge_base_ids 在 worker 端重建
-            if t_name and t_name not in selected_tool_names and not t_name.startswith('knowledge_base_'):
+            if t_name and t_name not in selected_tool_names and not t_name.startswith("knowledge_base_"):
                 selected_tool_names.append(t_name)
-            server_name = meta.get('mcp_server_name', '')
+            server_name = meta.get("mcp_server_name", "")
             if server_name and server_name not in selected_mcp_servers:
                 selected_mcp_servers.append(server_name)
 
@@ -535,57 +567,70 @@ class DeepChatService:
         result_data = await self._wait_for_research_result(thread_id)
 
         if result_data is None:
+
             @sync_to_async(thread_sensitive=True)
             def _mark_timeout():
-                task_manager.update_task_status(thread_id, {
-                    'status': 'failed',
-                    'error_message': f'研究任务超时（{_RESEARCH_TIMEOUT}秒）',
-                })
+                task_manager.update_task_status(
+                    thread_id,
+                    {
+                        "status": "failed",
+                        "error_message": f"研究任务超时（{_RESEARCH_TIMEOUT}秒）",
+                    },
+                )
+
             await _mark_timeout()
             return {
-                'success': False,
-                'final_report': f'深度研究超时，请到深度研究模块查看任务 {thread_id}',
-                'files': None,
-                'task_id': thread_id,
-                'session_id': session_id,
-                'research_summary': '',
+                "success": False,
+                "final_report": f"深度研究超时，请到深度研究模块查看任务 {thread_id}",
+                "files": None,
+                "task_id": thread_id,
+                "session_id": session_id,
+                "research_summary": "",
             }
 
-        if usage_tracker and token_detail_tracker and result_data.get('usage_data'):
-            usage_data = result_data['usage_data']
-            usage_tracker.add_input_tokens(usage_data.get('prompt_tokens', 0))
-            usage_tracker.add_output_tokens(usage_data.get('completion_tokens', 0))
+        if usage_tracker and token_detail_tracker and result_data.get("usage_data"):
+            usage_data = result_data["usage_data"]
+            usage_tracker.add_input_tokens(usage_data.get("prompt_tokens", 0))
+            usage_tracker.add_output_tokens(usage_data.get("completion_tokens", 0))
             token_detail_tracker.update_from_metadata(
-                {'usage_metadata': {
-                    'input_tokens': usage_data.get('prompt_tokens', 0),
-                    'output_tokens': usage_data.get('completion_tokens', 0),
-                }}
+                {
+                    "usage_metadata": {
+                        "input_tokens": usage_data.get("prompt_tokens", 0),
+                        "output_tokens": usage_data.get("completion_tokens", 0),
+                    }
+                }
             )
             token_detail_tracker.finish_record()
 
         @sync_to_async(thread_sensitive=True)
         def _update_status():
-            task_manager.update_task_status(thread_id, {
-                'status': 'completed',
-                'final_report': result_data.get('final_report', ''),
-            })
+            task_manager.update_task_status(
+                thread_id,
+                {
+                    "status": "completed",
+                    "final_report": result_data.get("final_report", ""),
+                },
+            )
 
         await _update_status()
 
-        final_report = result_data.get('final_report', '')
-        research_summary = final_report[:2000] if final_report else ''
+        final_report = result_data.get("final_report", "")
+        research_summary = final_report[:2000] if final_report else ""
         return {
-            'success': result_data.get('success', True),
-            'final_report': final_report,
-            'files': result_data.get('files'),
-            'task_id': thread_id,
-            'session_id': session_id,
-            'research_summary': research_summary,
+            "success": result_data.get("success", True),
+            "final_report": final_report,
+            "files": result_data.get("files"),
+            "task_id": thread_id,
+            "session_id": session_id,
+            "research_summary": research_summary,
         }
 
     async def stream_deep_research_task(
-        self, query: str, session_id: str | None = None,
-        usage_tracker=None, token_detail_tracker=None,
+        self,
+        query: str,
+        session_id: str | None = None,
+        usage_tracker=None,
+        token_detail_tracker=None,
         use_web_search: bool = True,
         retriever_tool=None,
         extra_tools: list | None = None,
@@ -617,11 +662,13 @@ class DeepChatService:
 
         if not task_id:
             from django.contrib.auth import get_user_model
+
             User = get_user_model()
 
             created_by = None
             if self._chat_service.user_id:
                 try:
+
                     @sync_to_async(thread_sensitive=True)
                     def _get_user():
                         return User.objects.get(id=self._chat_service.user_id)
@@ -644,24 +691,23 @@ class DeepChatService:
             await _create_task()
 
         if knowledge_base_ids:
+
             @sync_to_async(thread_sensitive=True)
             def _update_kb():
                 update_research_task_fields(thread_id, knowledge_base_ids=knowledge_base_ids)
+
             await _update_kb()
 
-        use_mcp = any(
-            (getattr(t, 'metadata', {}) or {}).get('is_mcp_tool', False)
-            for t in (extra_tools or [])
-        )
+        use_mcp = any((getattr(t, "metadata", {}) or {}).get("is_mcp_tool", False) for t in (extra_tools or []))
         selected_mcp_servers = []
         selected_tool_names = []
-        for t in (extra_tools or []):
-            meta = getattr(t, 'metadata', {}) or {}
-            t_name = getattr(t, 'name', '')
+        for t in extra_tools or []:
+            meta = getattr(t, "metadata", {}) or {}
+            t_name = getattr(t, "name", "")
             # 跳过 retriever_tool，它们由 knowledge_base_ids 在 worker 端重建
-            if t_name and t_name not in selected_tool_names and not t_name.startswith('knowledge_base_'):
+            if t_name and t_name not in selected_tool_names and not t_name.startswith("knowledge_base_"):
                 selected_tool_names.append(t_name)
-            server_name = meta.get('mcp_server_name', '')
+            server_name = meta.get("mcp_server_name", "")
             if server_name and server_name not in selected_mcp_servers:
                 selected_mcp_servers.append(server_name)
 
@@ -694,7 +740,7 @@ class DeepChatService:
         # 使用流式等待替代阻塞等待，审批事件直接 yield 给上层
         result_data = None
         async for event in self._wait_for_research_result_streaming(thread_id):
-            if event.get('_is_result'):
+            if event.get("_is_result"):
                 result_data = event
                 break
             else:
@@ -702,55 +748,65 @@ class DeepChatService:
                 yield event
 
         if result_data is None:
+
             @sync_to_async(thread_sensitive=True)
             def _mark_timeout():
-                task_manager.update_task_status(thread_id, {
-                    'status': 'failed',
-                    'error_message': f'研究任务超时（{_RESEARCH_TIMEOUT}秒）',
-                })
+                task_manager.update_task_status(
+                    thread_id,
+                    {
+                        "status": "failed",
+                        "error_message": f"研究任务超时（{_RESEARCH_TIMEOUT}秒）",
+                    },
+                )
+
             await _mark_timeout()
             yield {
-                'success': False,
-                'final_report': f'深度研究超时，请到深度研究模块查看任务 {thread_id}',
-                'files': None,
-                'task_id': thread_id,
-                'session_id': session_id,
-                'research_summary': '',
-                '_is_result': True,
+                "success": False,
+                "final_report": f"深度研究超时，请到深度研究模块查看任务 {thread_id}",
+                "files": None,
+                "task_id": thread_id,
+                "session_id": session_id,
+                "research_summary": "",
+                "_is_result": True,
             }
             return
 
-        if usage_tracker and token_detail_tracker and result_data.get('usage_data'):
-            usage_data = result_data['usage_data']
-            usage_tracker.add_input_tokens(usage_data.get('prompt_tokens', 0))
-            usage_tracker.add_output_tokens(usage_data.get('completion_tokens', 0))
+        if usage_tracker and token_detail_tracker and result_data.get("usage_data"):
+            usage_data = result_data["usage_data"]
+            usage_tracker.add_input_tokens(usage_data.get("prompt_tokens", 0))
+            usage_tracker.add_output_tokens(usage_data.get("completion_tokens", 0))
             token_detail_tracker.update_from_metadata(
-                {'usage_metadata': {
-                    'input_tokens': usage_data.get('prompt_tokens', 0),
-                    'output_tokens': usage_data.get('completion_tokens', 0),
-                }}
+                {
+                    "usage_metadata": {
+                        "input_tokens": usage_data.get("prompt_tokens", 0),
+                        "output_tokens": usage_data.get("completion_tokens", 0),
+                    }
+                }
             )
             token_detail_tracker.finish_record()
 
         @sync_to_async(thread_sensitive=True)
         def _update_status():
-            task_manager.update_task_status(thread_id, {
-                'status': 'completed',
-                'final_report': result_data.get('final_report', ''),
-            })
+            task_manager.update_task_status(
+                thread_id,
+                {
+                    "status": "completed",
+                    "final_report": result_data.get("final_report", ""),
+                },
+            )
 
         await _update_status()
 
-        final_report = result_data.get('final_report', '')
-        research_summary = final_report[:2000] if final_report else ''
+        final_report = result_data.get("final_report", "")
+        research_summary = final_report[:2000] if final_report else ""
         yield {
-            'success': result_data.get('success', True),
-            'final_report': final_report,
-            'files': result_data.get('files'),
-            'task_id': thread_id,
-            'session_id': session_id,
-            'research_summary': research_summary,
-            '_is_result': True,
+            "success": result_data.get("success", True),
+            "final_report": final_report,
+            "files": result_data.get("files"),
+            "task_id": thread_id,
+            "session_id": session_id,
+            "research_summary": research_summary,
+            "_is_result": True,
         }
 
     async def _wait_for_research_result(self, thread_id: str) -> dict[str, Any] | None:
@@ -759,7 +815,7 @@ class DeepChatService:
         from django.conf import settings as django_settings
 
         channel = f"{REDIS_CHANNEL_PREFIX}{thread_id}"
-        broker_url = getattr(django_settings, 'CELERY_BROKER_URL', '')
+        broker_url = getattr(django_settings, "CELERY_BROKER_URL", "")
 
         if not broker_url:
             logger.error("CELERY_BROKER_URL 未配置，无法订阅研究结果")
@@ -781,15 +837,15 @@ class DeepChatService:
         except TimeoutError:
             logger.warning(f"等待研究结果超时: {channel}")
             return None
-        except Exception as e:
-            logger.error(f"订阅研究结果异常: {e}", exc_info=True)
+        except Exception:
+            logger.exception("订阅研究结果异常")
             return None
         finally:
             if pubsub:
                 try:
                     pubsub.unsubscribe(channel)
                     pubsub.close()
-                except Exception:
+                except Exception:  # noqa: S110  # cleanup, pubsub 资源释放失败可忽略
                     pass
 
     @staticmethod
@@ -800,62 +856,83 @@ class DeepChatService:
         def _get_message():
             while True:
                 msg = pubsub.get_message(timeout=1.0)
-                if msg and msg['type'] == 'message':
+                if msg and msg["type"] == "message":
                     return msg
 
         while True:
             msg = await loop.run_in_executor(None, _get_message)
-            if msg and msg['type'] == 'message':
-                data = msg['data']
+            if msg and msg["type"] == "message":
+                data = msg["data"]
                 if isinstance(data, bytes):
-                    data = data.decode('utf-8')
+                    data = data.decode("utf-8")
                 return json.loads(data)
 
     async def _wait_for_research_result_streaming(self, thread_id: str) -> AsyncGenerator[dict[str, Any], None]:
-        """同时监听研究结果和审批事件的 Redis 频道，yield 审批事件，最终研究结果带 _is_result 标记"""
+        """监听研究结果的 Redis 频道 + 从 DB 读取审批历史（Path D）。
+
+        Path D 变更：
+        - 审批历史从 DB（Approval 模型）读取，不再从 Redis List
+        - 实时审批事件通过 WebSocket 推送，此处仅监听研究结果
+        - 研究结果仍通过 Redis Pub/Sub 发布
+        """
         import redis as redis_lib
         from django.conf import settings as django_settings
 
         result_channel = f"{REDIS_CHANNEL_PREFIX}{thread_id}"
-        approval_channel = f"{REDIS_APPROVAL_PREFIX}{thread_id}"
-        approval_list_key = f"{REDIS_APPROVAL_PREFIX}pending:{thread_id}"
-        broker_url = getattr(django_settings, 'CELERY_BROKER_URL', '')
+        broker_url = getattr(django_settings, "CELERY_BROKER_URL", "")
 
         if not broker_url:
-            logger.error("CELERY_BROKER_URL 未配置，无法订阅研究结果+审批")
+            logger.error("CELERY_BROKER_URL 未配置，无法订阅研究结果")
             return
+
+        # Path D：从 DB 读取历史审批并 yield（刷新/重连恢复场景）
+        # 实时审批事件统一通过 WebSocket 推送（与 tool 事件一致）
+        try:
+            from asgiref.sync import sync_to_async
+
+            from Django_xm.apps.approvals.models import Approval
+
+            @sync_to_async
+            def _load_approvals():
+                return list(
+                    Approval.objects.filter(
+                        source=Approval.SOURCE_DEEP_RESEARCH,
+                        source_id=thread_id,
+                    ).order_by("created_at")
+                )
+
+            approvals = await _load_approvals()
+            for approval in approvals:
+                extra = approval.extra if isinstance(approval.extra, dict) else {}
+                approval_data = {
+                    "interrupt_id": approval.interrupt_id,
+                    "tool_name": approval.tool_name or "",
+                    "title": approval.title or "",
+                    "description": approval.description or "",
+                    "operation": approval.operation or "",
+                    "danger_level": approval.danger_level or "medium",
+                    "action": approval.action or "confirm",
+                    "parameters": approval.parameters or {},
+                    "state": approval.state,
+                    "tool_call_id": extra.get("tool_call_id", ""),
+                    "graph_interrupt_id": extra.get("graph_interrupt_id", ""),
+                    "langgraph_resume_id": extra.get("langgraph_resume_id", ""),
+                    "risk_level": extra.get("risk_level", ""),
+                }
+                if approval.user_input:
+                    approval_data["user_input"] = approval.user_input
+                yield {"type": "approval_history", "data": approval_data}
+        except Exception as e:
+            logger.warning(f"读取历史审批失败: {e}")
 
         pubsub = None
         try:
             r = redis_lib.Redis(connection_pool=_get_redis_pool(broker_url))
 
-            # 先读取 Redis List 历史审批并 yield（刷新/重连恢复场景）
-            # 关键设计（实时同步统一性）：
-            # 所有同步 Redis 调用通过 asyncio.to_thread 卸载到线程池，避免阻塞事件循环，
-            # 确保审批等待期间其他 SSE 流的心跳与跨浏览器同步事件正常处理。
-            # 与 research_runner.py._handle_interrupt 的实现保持统一。
-            try:
-                pending_approvals = await asyncio.to_thread(r.lrange, approval_list_key, 0, -1)
-                for item in pending_approvals:
-                    approval_data = json.loads(item)
-                    interrupt_id = approval_data.get("interrupt_id", "")
-                    if interrupt_id:
-                        processed_key = f"{REDIS_APPROVAL_PREFIX}processed:{thread_id}:{interrupt_id}"
-                        processed_raw = await asyncio.to_thread(r.get, processed_key)
-                        if processed_raw:
-                            try:
-                                processed_data = json.loads(processed_raw if isinstance(processed_raw, str) else processed_raw.decode('utf-8'))
-                                approval_data = {**approval_data, **processed_data}
-                            except (json.JSONDecodeError, UnicodeDecodeError):
-                                pass
-                    yield {"type": "approval_history", "data": approval_data}
-            except Exception as e:
-                logger.warning(f"读取历史审批失败: {e}")
-
             pubsub = await asyncio.to_thread(r.pubsub)
-            await asyncio.to_thread(pubsub.subscribe, result_channel, approval_channel)
+            await asyncio.to_thread(pubsub.subscribe, result_channel)
 
-            logger.info(f"订阅研究结果+审批: {result_channel}, {approval_channel}, 超时={_RESEARCH_TIMEOUT}s")
+            logger.info(f"订阅研究结果: {result_channel}, 超时={_RESEARCH_TIMEOUT}s")
 
             start_time = time.time()
 
@@ -866,39 +943,33 @@ class DeepChatService:
                     return
 
                 # pubsub.get_message 是同步阻塞调用（timeout=1.0 最多阻塞 1s），
-                # 必须通过 asyncio.to_thread 卸载到线程池，避免冻结事件循环导致
-                # 其他 SSE 客户端断连（与 research_runner.py._handle_interrupt 实现保持统一）
+                # 必须通过 asyncio.to_thread 卸载到线程池，避免冻结事件循环
                 msg = await asyncio.to_thread(pubsub.get_message, timeout=1.0)
 
-                if msg and msg['type'] == 'message':
-                    channel = msg.get('channel', b'')
+                if msg and msg["type"] == "message":
+                    channel = msg.get("channel", b"")
                     if isinstance(channel, bytes):
-                        channel = channel.decode('utf-8')
-                    data = msg['data']
+                        channel = channel.decode("utf-8")
+                    data = msg["data"]
                     if isinstance(data, bytes):
-                        data = data.decode('utf-8')
+                        data = data.decode("utf-8")
                     parsed = json.loads(data)
 
                     if channel == result_channel:
                         # 研究结果，标记后 yield
-                        parsed['_is_result'] = True
+                        parsed["_is_result"] = True
                         yield parsed
                         return
-                    elif channel == approval_channel:
-                        # 审批事件，提取内层 data 避免 double-nesting
-                        msg_type = parsed.get("type", "approval")
-                        inner_data = parsed.get("data", parsed)
-                        yield {"type": msg_type, "data": inner_data}
 
                 await asyncio.sleep(0.1)
-        except Exception as e:
-            logger.error(f"订阅研究结果+审批异常: {e}", exc_info=True)
+        except Exception:
+            logger.exception("订阅研究结果异常")
         finally:
             if pubsub:
                 try:
                     await asyncio.to_thread(pubsub.unsubscribe)
                     await asyncio.to_thread(pubsub.close)
-                except Exception:
+                except Exception:  # noqa: S110  # cleanup, pubsub 资源释放失败可忽略
                     pass
 
     async def _stream_without_tools(
@@ -908,11 +979,13 @@ class DeepChatService:
         usage_tracker,
         token_detail_tracker: TokenDetailTracker | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        chat_history = data.get('chat_history', [])
+        chat_history = data.get("chat_history", [])
         chat_history, _ce_metadata = self._chat_service._apply_context_engineering(
-                chat_history, data.get('message', ''), mode=data.get('mode', 'agent'),
-                model_name=data.get('model_name'),
-            )
+            chat_history,
+            data.get("message", ""),
+            mode=data.get("mode", "agent"),
+            model_name=data.get("model_name"),
+        )
         langchain_chat_history = convert_chat_history(chat_history)
 
         messages = []
@@ -929,11 +1002,15 @@ class DeepChatService:
         thinking_start_time = time.time()
 
         with TokenUsageCallbackHandler() as cb:
-            from Django_xm.apps.ai_engine.services.llm_factory import FallbackDetectionCallback
-            bound_model = getattr(model_instance, 'bound', model_instance)
+            from Django_xm.apps.ai_engine.services.llm_fallback import FallbackDetectionCallback
+
+            bound_model = getattr(model_instance, "bound", model_instance)
             fb_callback = FallbackDetectionCallback(
-                expected_provider=data.get('provider_id', '') or getattr(bound_model, '_provider_id', '') or '',
-                expected_model=data.get('model_name', '') or getattr(bound_model, 'model_name', '') or getattr(bound_model, 'model', '') or '',
+                expected_provider=data.get("provider_id", "") or getattr(bound_model, "_provider_id", "") or "",
+                expected_model=data.get("model_name", "")
+                or getattr(bound_model, "model_name", "")
+                or getattr(bound_model, "model", "")
+                or "",
             )
             try:
                 async for chunk in model_instance.astream(messages, config={"callbacks": [cb, fb_callback]}):
@@ -944,7 +1021,8 @@ class DeepChatService:
 
                     # 统一思考内容提取（兼容 DeepSeek/Ollama/Anthropic）
                     from Django_xm.apps.chat.services.stream_helpers import extract_thinking_content
-                    _provider_id = data.get('provider_id', '') or getattr(model_instance, '_provider_id', '')
+
+                    _provider_id = data.get("provider_id", "") or getattr(model_instance, "_provider_id", "")
                     thinking_text = extract_thinking_content(chunk, _provider_id)
                     if thinking_text:
                         prev = accumulated_reasoning.get("content", "") or ""
@@ -958,8 +1036,8 @@ class DeepChatService:
                         }
 
                     await asyncio.sleep(0.01)
-            except Exception as e:
-                logger.error(f"无工具模式流式调用失败: {e}", exc_info=True)
+            except Exception:
+                logger.exception("无工具模式流式调用失败")
                 raise
 
         update_usage_and_tokens(cb, usage_tracker, token_detail_tracker)
@@ -969,17 +1047,22 @@ class DeepChatService:
             fallback_info = fb_callback.get_fallback_info()
             if fallback_info:
                 yield {
-                    'type': 'model_fallback',
-                    'data': fallback_info,
+                    "type": "model_fallback",
+                    "data": fallback_info,
                 }
                 try:
                     from Django_xm.apps.ai_engine.models import SystemConfig
-                    SystemConfig.set_value("default_chat_model", {
-                        "provider_id": fallback_info["actual_provider"],
-                        "model_name": fallback_info["actual_model"],
-                    })
+
+                    SystemConfig.set_value(
+                        "default_chat_model",
+                        {
+                            "provider_id": fallback_info["actual_provider"],
+                            "model_name": fallback_info["actual_model"],
+                        },
+                    )
                 except Exception:
-                    pass
+                    # 持久化 fallback 配置失败不影响当前会话，运行时已切换
+                    logger.debug("持久化模型 fallback 配置到 SystemConfig 失败")
 
         thinking_duration = round(time.time() - thinking_start_time, 1)
         final_reasoning = (accumulated_reasoning.get("content") or "").strip()

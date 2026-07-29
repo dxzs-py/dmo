@@ -92,22 +92,22 @@ def _publish_input_ready_events(message: Any, *, session_id: str) -> None:
             else:
                 continue
             try:
-                service.register(ToolCallContext(
-                    tool_call_id=tc_id,
-                    tool_name=tc_name,
-                    module=EventSource.CHAT,
-                    module_id=session_id,
-                    parameters=parameters,
-                ))
+                service.register(
+                    ToolCallContext(
+                        tool_call_id=tc_id,
+                        tool_name=tc_name,
+                        module=EventSource.CHAT,
+                        module_id=session_id,
+                        parameters=parameters,
+                    )
+                )
                 service.transition(
                     tc_id,
                     EventType.TOOL_CALL_INPUT_READY,
                     parameters=parameters or None,
                 )
             except Exception as e:
-                logger.warning(
-                    f"发布 INPUT_READY 事件失败: tool_call_id={tc_id}, err={e}"
-                )
+                logger.warning(f"发布 INPUT_READY 事件失败: tool_call_id={tc_id}, err={e}")
         return
 
     # 完整 AIMessage（非 chunk）：tool_calls 的 args 已是完整 dict，直接使用
@@ -126,22 +126,22 @@ def _publish_input_ready_events(message: Any, *, session_id: str) -> None:
 
         parameters = _extract_tool_params(tool_call)
         try:
-            service.register(ToolCallContext(
-                tool_call_id=tool_call_id,
-                tool_name=tool_name,
-                module=EventSource.CHAT,
-                module_id=session_id,
-                parameters=parameters,
-            ))
+            service.register(
+                ToolCallContext(
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    module=EventSource.CHAT,
+                    module_id=session_id,
+                    parameters=parameters,
+                )
+            )
             service.transition(
                 tool_call_id,
                 EventType.TOOL_CALL_INPUT_READY,
                 parameters=parameters or None,
             )
         except Exception as e:
-            logger.warning(
-                f"发布 INPUT_READY 事件失败: tool_call_id={tool_call_id}, err={e}"
-            )
+            logger.warning(f"发布 INPUT_READY 事件失败: tool_call_id={tool_call_id}, err={e}")
 
 
 async def run_stream_loop(
@@ -166,9 +166,7 @@ async def run_stream_loop(
     async for event in strategy.on_loop_start(ctx, data):
         yield event
 
-    async for chunk in agent.graph.astream(
-        graph_input, config=config, stream_mode=["messages", "updates"]
-    ):
+    async for chunk in agent.graph.astream(graph_input, config=config, stream_mode=["messages", "updates"]):
         # 多 stream mode 下 chunk 是 (mode_name, data) 元组
         if isinstance(chunk, tuple) and len(chunk) == 2:
             mode_name, mode_data = chunk
@@ -189,17 +187,19 @@ async def run_stream_loop(
         # 仅对 AIMessage.tool_calls 发布；其他消息类型函数内部会跳过
         _publish_input_ready_events(
             message,
-            session_id=data.get('session_id', ''),
+            session_id=data.get("session_id", ""),
         )
 
         try:
             for event in process_stream_chunk(
-                mode_data, ctx.tool_calls_map, ctx.current_message_content,
+                mode_data,
+                ctx.tool_calls_map,
+                ctx.current_message_content,
                 tool_call_count=ctx.tool_call_count,
                 lcp_func=_lcp_len,
                 accumulated_reasoning=ctx.accumulated_reasoning,
                 tool_args_accumulator=ctx.tool_args_accumulator,
-                mode=data.get('mode', 'agent'),
+                mode=data.get("mode", "agent"),
                 enable_deep_thinking=strategy.enable_deep_thinking,
             ):
                 # chunk 事件：累积内容
@@ -253,8 +253,8 @@ async def _handle_updates_chunk(
         )
 
         for approval_data in approval_data_list:
-            tool_name = approval_data.get('tool_name', 'unknown')
-            action = approval_data.get('action', 'confirm')
+            tool_name = approval_data.get("tool_name", "unknown")
+            action = approval_data.get("action", "confirm")
             logger.info(
                 f"approval interrupt: tool={tool_name}, "
                 f"action={action}, danger={approval_data.get('danger_level', 'medium')}, "
@@ -266,11 +266,11 @@ async def _handle_updates_chunk(
             if ctx.interrupt_info is None:
                 ctx.interrupt_info = {
                     "tool_name": tool_name,
-                    "interrupt_id": approval_data.get('interrupt_id'),
+                    "interrupt_id": approval_data.get("interrupt_id"),
                     "graph_interrupt_id": graph_interrupt_id,
                     "langgraph_resume_id": langgraph_resume_id,
                 }
             yield {
-                'type': 'approval',
-                'data': approval_data,
+                "type": "approval",
+                "data": approval_data,
             }

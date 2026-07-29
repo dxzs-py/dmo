@@ -2,9 +2,9 @@
 练习题生成节点 (Quiz Generator Node)
 """
 
-from datetime import datetime
 from typing import Any
 
+from django.utils import timezone
 from pydantic import BaseModel, Field
 
 from Django_xm.apps.ai_engine.services.llm_factory import get_structured_model_with_fallback
@@ -52,7 +52,7 @@ def quiz_generator_node(state: StudyFlowState) -> dict[str, Any]:
                 "quiz": None,
                 "messages": [{"role": "assistant", "content": "\n\n⚠️ 学习计划生成失败，无法生成练习题。请稍后重试。"}],
                 "current_step": "quiz_error",
-                "updated_at": datetime.now().isoformat()
+                "updated_at": timezone.now().isoformat(),
             }
 
         # 结构化输出必须使用非流式模式（流式 + with_structured_output 嵌套结构会返回 None）
@@ -91,10 +91,10 @@ def quiz_generator_node(state: StudyFlowState) -> dict[str, Any]:
 请确保题目清晰、答案准确、解析详细。"""
 
         user_prompt = f"""学习计划：
-主题：{learning_plan['topic']}
-难度：{learning_plan['difficulty']}
+主题：{learning_plan["topic"]}
+难度：{learning_plan["difficulty"]}
 关键知识点：
-{chr(10).join(f"- {point}" for point in learning_plan['key_points'])}
+{chr(10).join(f"- {point}" for point in learning_plan["key_points"])}
 
 参考文档：
 {context}
@@ -102,10 +102,9 @@ def quiz_generator_node(state: StudyFlowState) -> dict[str, Any]:
 请根据以上信息生成练习题。"""
 
         logger.info("[Quiz Generator Node] 调用 LLM 生成练习题...")
-        quiz_response = structured_model.invoke([
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ])
+        quiz_response = structured_model.invoke(
+            [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+        )
 
         # 防御性检查：所有 fallback 模型都返回空时统一报错
         if quiz_response is None or not hasattr(quiz_response, "questions"):
@@ -116,7 +115,7 @@ def quiz_generator_node(state: StudyFlowState) -> dict[str, Any]:
                 "error": error_msg,
                 "messages": [{"role": "assistant", "content": f"\n\n⚠️ {error_msg}，请稍后重试。"}],
                 "current_step": "quiz_error",
-                "updated_at": datetime.now().isoformat()
+                "updated_at": timezone.now().isoformat(),
             }
 
         questions = []
@@ -128,14 +127,14 @@ def quiz_generator_node(state: StudyFlowState) -> dict[str, Any]:
                 "options": q.options,
                 "answer": q.answer,
                 "explanation": q.explanation,
-                "points": q.points
+                "points": q.points,
             }
             questions.append(question)
 
         quiz = {
             "questions": questions,
             "total_points": quiz_response.total_points,
-            "time_limit": quiz_response.time_limit
+            "time_limit": quiz_response.time_limit,
         }
 
         logger.info(f"[Quiz Generator Node] 练习题生成成功，共 {len(questions)} 题")
@@ -146,9 +145,9 @@ def quiz_generator_node(state: StudyFlowState) -> dict[str, Any]:
             quiz_display += f"**第 {i} 题** ({q['points']} 分)\n"
             quiz_display += f"{q['question']}\n"
 
-            if q['type'] == 'multiple_choice' and q['options']:
-                for j, opt in enumerate(q['options'], 1):
-                    quiz_display += f"  {chr(64+j)}. {opt}\n"
+            if q["type"] == "multiple_choice" and q["options"]:
+                for j, opt in enumerate(q["options"], 1):
+                    quiz_display += f"  {chr(64 + j)}. {opt}\n"
 
             quiz_display += "\n"
 
@@ -156,15 +155,15 @@ def quiz_generator_node(state: StudyFlowState) -> dict[str, Any]:
             "quiz": quiz,
             "messages": [{"role": "assistant", "content": quiz_display}],
             "current_step": "waiting_for_answers",
-            "updated_at": datetime.now().isoformat()
+            "updated_at": timezone.now().isoformat(),
         }
 
     except Exception as e:
-        logger.error(f"[Quiz Generator Node] 生成练习题失败: {e}", exc_info=True)
+        logger.exception("[Quiz Generator Node] 生成练习题失败")
         return {
             "quiz": None,
             "error": f"练习题生成失败: {e!s}",
             "messages": [{"role": "assistant", "content": f"\n\n⚠️ 练习题生成失败: {e!s}"}],
             "current_step": "quiz_error",
-            "updated_at": datetime.now().isoformat()
+            "updated_at": timezone.now().isoformat(),
         }

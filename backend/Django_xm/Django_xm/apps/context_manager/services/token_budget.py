@@ -12,8 +12,8 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 from Django_xm.apps.context_manager.config import context_settings
-from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.context_manager.services.compression import TokenEstimator
+from Django_xm.apps.core.config import get_logger
 
 logger = get_logger(__name__)
 
@@ -64,12 +64,12 @@ class ContextEfficiencyMetrics:
     """上下文使用效率度量"""
 
     def __init__(self) -> None:
-        self._total_injected_tokens: int = 0       # 注入的总token数
-        self._total_retrieved_tokens: int = 0       # 检索结果token数
-        self._total_compressed_tokens: int = 0      # 压缩后保留token数
-        self._compression_count: int = 0            # 压缩次数
-        self._retrieval_hit_count: int = 0          # 检索命中次数
-        self._retrieval_miss_count: int = 0         # 检索未命中次数
+        self._total_injected_tokens: int = 0  # 注入的总token数
+        self._total_retrieved_tokens: int = 0  # 检索结果token数
+        self._total_compressed_tokens: int = 0  # 压缩后保留token数
+        self._compression_count: int = 0  # 压缩次数
+        self._retrieval_hit_count: int = 0  # 检索命中次数
+        self._retrieval_miss_count: int = 0  # 检索未命中次数
         # 压缩前总量（用于计算压缩保留率）
         self._total_original_tokens_before_compression: int = 0
 
@@ -160,7 +160,6 @@ class BudgetCheckResult:
 
 
 class TokenBudgetManager:
-
     _custom_templates: ClassVar[dict[str, dict[str, float]]] = {}
 
     def __init__(self) -> None:

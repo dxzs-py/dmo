@@ -36,10 +36,11 @@ logger = get_logger(__name__)
 
 # 稳定文档 ID 生成的固定 namespace（uuid5 保证相同输入产生相同 ID）
 # 跨环境/跨进程一致，重试场景下相同 source+content 必然产生相同 ID
-_DOC_ID_NAMESPACE = uuid.UUID('a3e5b8c1-2d4f-4e6b-9c8d-7a1b2c3d4e5f')
+_DOC_ID_NAMESPACE = uuid.UUID("a3e5b8c1-2d4f-4e6b-9c8d-7a1b2c3d4e5f")
 
 
 # ==================== TTL 缓存 ====================
+
 
 class _TTLCache:
     """带 TTL 的 LRU 缓存"""
@@ -82,8 +83,15 @@ class _TTLCache:
             self._cache.clear()
             self._timestamps.clear()
 
+    def values(self) -> list:
+        """返回所有未过期缓存值的快照（线程安全）"""
+        with self._lock:
+            now = time.time()
+            return [v for k, v in self._cache.items() if now - self._timestamps[k] <= self._ttl]
+
 
 # ==================== Backend 工厂辅助 ====================
+
 
 def _get_backend_kwargs(store_type: str) -> dict[str, Any]:
     """根据 store_type 获取 Backend 构造参数"""
@@ -112,6 +120,7 @@ def _create_backend(store_type: str) -> VectorStoreBackend:
 
 
 # ==================== IndexManager (Facade) ====================
+
 
 class IndexManager:
     """索引管理器 - Facade 模式
@@ -167,7 +176,7 @@ class IndexManager:
         try:
             from Django_xm.apps.knowledge.models import IndexMetadata
 
-            obj, created = IndexMetadata.objects.update_or_create(
+            _obj, created = IndexMetadata.objects.update_or_create(
                 name=name,
                 defaults={
                     "description": metadata.get("description", ""),
@@ -220,8 +229,8 @@ class IndexManager:
             try:
                 with open(metadata_path, encoding="utf-8") as f:
                     return json.load(f)
-            except Exception as e:
-                logger.error(f"加载元数据失败: {e}")
+            except Exception:
+                logger.exception("加载元数据失败")
                 return None
 
     def _detect_store_type(self, name: str) -> str:
@@ -229,11 +238,13 @@ class IndexManager:
         # 1. 尝试从数据库判断
         try:
             from Django_xm.apps.knowledge.models import IndexMetadata
+
             record = IndexMetadata.objects.filter(name=name).first()
             if record:
                 return record.store_type
         except Exception:
-            pass
+            # 数据库查询失败时回退到文件系统判断
+            logger.debug("从数据库检测 store_type 失败，回退到文件系统")
 
         # 2. 尝试从文件系统元数据判断
         metadata_path = self._get_metadata_path(name)
@@ -244,7 +255,8 @@ class IndexManager:
                 if data.get("store_type"):
                     return data["store_type"]
             except Exception:
-                pass
+                # 文件系统元数据读取失败时回退到默认值
+                logger.debug("从文件系统读取 store_type 元数据失败，回退到默认值")
 
         # 3. 默认
         return settings.vector_store_type
@@ -392,7 +404,7 @@ class IndexManager:
             return vector_store
 
         except Exception as e:
-            logger.error(f"创建索引失败: {e}")
+            logger.exception("创建索引失败")
 
             # overwrite 模式下尝试恢复旧索引
             if is_overwrite and backup_documents and embeddings:
@@ -413,9 +425,11 @@ class IndexManager:
                     self._save_metadata(name, backup_metadata, store_type=effective_store_type)
                     self._set_index_status(name, effective_store_type, "ready")
                 except Exception as restore_err:
-                    logger.error(f"索引恢复失败: {name} - {restore_err}")
+                    logger.exception(f"索引恢复失败: {name} -")
                     self._set_index_status(
-                        name, effective_store_type, "error",
+                        name,
+                        effective_store_type,
+                        "error",
                         error_message=f"索引创建失败且恢复失败: {e}; 恢复错误: {restore_err}"[:500],
                     )
             else:
@@ -470,8 +484,8 @@ class IndexManager:
             self._cache.set(name, vector_store)
             return vector_store
 
-        except Exception as e:
-            logger.error(f"加载索引失败: {e}")
+        except Exception:
+            logger.exception("加载索引失败")
             raise
 
     def list_indexes(self) -> list[dict[str, Any]]:
@@ -484,16 +498,18 @@ class IndexManager:
             from Django_xm.apps.knowledge.models import IndexMetadata
 
             for record in IndexMetadata.objects.all():
-                indexes.append({
-                    "name": record.name,
-                    "description": record.description,
-                    "created_at": record.created_at.isoformat() if record.created_at else "",
-                    "updated_at": record.updated_at.isoformat() if record.updated_at else "",
-                    "num_documents": record.num_documents,
-                    "store_type": record.store_type,
-                    "embedding_model": record.embedding_model,
-                    "embedding_dimension": record.embedding_dimension,
-                })
+                indexes.append(
+                    {
+                        "name": record.name,
+                        "description": record.description,
+                        "created_at": record.created_at.isoformat() if record.created_at else "",
+                        "updated_at": record.updated_at.isoformat() if record.updated_at else "",
+                        "num_documents": record.num_documents,
+                        "store_type": record.store_type,
+                        "embedding_model": record.embedding_model,
+                        "embedding_dimension": record.embedding_dimension,
+                    }
+                )
                 seen_names.add(record.name)
         except Exception as e:
             logger.debug(f"从数据库列出索引失败，回退到文件系统: {e}")
@@ -506,15 +522,17 @@ class IndexManager:
                     if metadata:
                         indexes.append(metadata)
                     else:
-                        indexes.append({
-                            "name": item.name,
-                            "description": "",
-                            "created_at": "",
-                            "updated_at": "",
-                            "num_documents": 0,
-                            "store_type": "faiss",
-                            "embedding_model": "",
-                        })
+                        indexes.append(
+                            {
+                                "name": item.name,
+                                "description": "",
+                                "created_at": "",
+                                "updated_at": "",
+                                "num_documents": 0,
+                                "store_type": "faiss",
+                                "embedding_model": "",
+                            }
+                        )
                     seen_names.add(item.name)
 
         # 3. 从 Backend 补充（PGVector 等数据库类型可能不在文件系统中）
@@ -524,15 +542,17 @@ class IndexManager:
             collections = backend.list_collections()
             for collection_name in collections:
                 if collection_name not in seen_names:
-                    indexes.append({
-                        "name": collection_name,
-                        "description": "",
-                        "created_at": "",
-                        "updated_at": "",
-                        "num_documents": 0,
-                        "store_type": default_store_type,
-                        "embedding_model": "",
-                    })
+                    indexes.append(
+                        {
+                            "name": collection_name,
+                            "description": "",
+                            "created_at": "",
+                            "updated_at": "",
+                            "num_documents": 0,
+                            "store_type": default_store_type,
+                            "embedding_model": "",
+                        }
+                    )
         except Exception as e:
             logger.warning(f"从 Backend 列出集合失败: {e}")
 
@@ -556,6 +576,7 @@ class IndexManager:
             # 3. 删除 IndexMetadata 数据库记录
             try:
                 from Django_xm.apps.knowledge.models import IndexMetadata
+
                 IndexMetadata.objects.filter(name=name).delete()
             except Exception as e:
                 logger.debug(f"删除 IndexMetadata 记录失败（不影响主流程）: {e}")
@@ -564,8 +585,8 @@ class IndexManager:
                 logger.info(f"索引删除成功: {name}")
             return deleted
 
-        except Exception as e:
-            logger.error(f"删除索引失败: {e}")
+        except Exception:
+            logger.exception("删除索引失败")
             return False
 
     def index_exists(self, name: str) -> bool:
@@ -573,6 +594,7 @@ class IndexManager:
         # 1. 检查数据库
         try:
             from Django_xm.apps.knowledge.models import IndexMetadata
+
             if IndexMetadata.objects.filter(name=name).exists():
                 return True
         except Exception as e:
@@ -621,10 +643,7 @@ class IndexManager:
             backend = self._get_backend(store_type)
             backend_stats = backend.get_stats(name)
             if backend_stats.get("exists"):
-                stats.update({
-                    k: v for k, v in backend_stats.items()
-                    if k not in ("name", "exists")
-                })
+                stats.update({k: v for k, v in backend_stats.items() if k not in ("name", "exists")})
         except Exception as e:
             logger.debug(f"从 Backend 获取统计失败: {e}")
 
@@ -632,7 +651,7 @@ class IndexManager:
         if embeddings and store_type == "faiss":
             try:
                 vector_store = self.load_index(name, embeddings)
-                if hasattr(vector_store, 'index') and vector_store.index:
+                if hasattr(vector_store, "index") and vector_store.index:
                     stats["dimension"] = vector_store.index.d
                     stats["total_vectors"] = vector_store.index.ntotal
             except Exception as e:
@@ -660,9 +679,9 @@ class IndexManager:
         # 回退：加载向量库后遍历 docstore
         try:
             vector_store = self.load_index(name, embeddings)
-            if hasattr(vector_store, 'docstore') and hasattr(vector_store, 'index_to_docstore_id'):
+            if hasattr(vector_store, "docstore") and hasattr(vector_store, "index_to_docstore_id"):
                 documents = []
-                for idx, doc_id in vector_store.index_to_docstore_id.items():
+                for _idx, doc_id in vector_store.index_to_docstore_id.items():
                     doc = vector_store.docstore.search(doc_id)
                     if isinstance(doc, Document):
                         documents.append(doc)
@@ -690,10 +709,10 @@ class IndexManager:
         """
         ids: list[str] = []
         for doc in documents:
-            source = ''
+            source = ""
             if isinstance(doc.metadata, dict):
-                source = doc.metadata.get('source', '') or ''
-            content_hash = hashlib.sha256(doc.page_content.encode('utf-8')).hexdigest()
+                source = doc.metadata.get("source", "") or ""
+            content_hash = hashlib.sha256(doc.page_content.encode("utf-8")).hexdigest()
             stable_id = str(uuid.uuid5(_DOC_ID_NAMESPACE, f"{source}:{content_hash}"))
             ids.append(stable_id)
         return ids
@@ -724,9 +743,7 @@ class IndexManager:
                 raise
             # 非 PGVector 后端（faiss/chroma/milvus/inmemory）可能不支持 ids 或冲突报错
             # 回退到无 ID 模式，这些后端仅用于 dev/test，不保证严格幂等
-            logger.warning(
-                f"向量库 {store_type} 携带 ID 添加文档失败，回退到无 ID 模式（非幂等）: {e}"
-            )
+            logger.warning(f"向量库 {store_type} 携带 ID 添加文档失败，回退到无 ID 模式（非幂等）: {e}")
             vector_store.add_documents(documents)
 
     def add_documents(
@@ -765,7 +782,8 @@ class IndexManager:
                 # 空索引：创建新的向量库（携带稳定 ID）
                 logger.info(f"索引 {name} 为空，创建新的向量库")
                 vector_store = backend.create(
-                    documents, embeddings,
+                    documents,
+                    embeddings,
                     collection_name=name,
                     ids=stable_ids,
                 )
@@ -778,7 +796,10 @@ class IndexManager:
                 # 加载现有向量库并添加文档（携带稳定 ID）
                 vector_store = self.load_index(name, embeddings)
                 self._add_documents_with_stable_ids(
-                    vector_store, documents, stable_ids, store_type,
+                    vector_store,
+                    documents,
+                    stable_ids,
+                    store_type,
                 )
 
                 # 非 PGVector 需要手动保存
@@ -802,8 +823,8 @@ class IndexManager:
             logger.info(f"成功添加 {len(documents)} 个文档到索引 {name}")
             return len(documents)
 
-        except Exception as e:
-            logger.error(f"添加文档失败：{e}")
+        except Exception:
+            logger.exception("添加文档失败：")
             raise
 
     def remove_documents(
@@ -833,7 +854,7 @@ class IndexManager:
             if not success:
                 # 回退：加载向量库后通过 VectorStore.delete 删除
                 vector_store = self.load_index(name, embeddings)
-                if hasattr(vector_store, 'delete'):
+                if hasattr(vector_store, "delete"):
                     vector_store.delete(document_ids)
 
                     if store_type != "pgvector":
@@ -846,8 +867,8 @@ class IndexManager:
             logger.info(f"成功删除文档 from 索引 {name}")
             return len(document_ids) if document_ids else 0
 
-        except Exception as e:
-            logger.error(f"删除文档失败：{e}")
+        except Exception:
+            logger.exception("删除文档失败：")
             raise
 
     def remove_documents_by_filename(
@@ -884,7 +905,7 @@ class IndexManager:
                     logger.warning(f"未在索引 {name} 中找到文件 {filename} 的文档")
                     return 0
 
-                if hasattr(vector_store, 'delete'):
+                if hasattr(vector_store, "delete"):
                     logger.info(f"调用 vector_store.delete 删除 {len(ids_to_delete)} 个文档")
                     vector_store.delete(ids_to_delete)
                 else:
@@ -911,8 +932,8 @@ class IndexManager:
             logger.info(f"成功从索引 {name} 删除文件 {filename} 的 {deleted_count} 个文档块")
             return deleted_count
 
-        except Exception as e:
-            logger.error(f"按文件名删除文档失败：{e}")
+        except Exception:
+            logger.exception("按文件名删除文档失败：")
             raise
 
     def _find_documents_by_filename(
@@ -923,7 +944,7 @@ class IndexManager:
         """在向量库中查找匹配文件名的文档 ID"""
         ids_to_delete = []
 
-        if hasattr(vector_store, 'docstore') and hasattr(vector_store, 'index_to_docstore_id'):
+        if hasattr(vector_store, "docstore") and hasattr(vector_store, "index_to_docstore_id"):
             index_to_id = vector_store.index_to_docstore_id
             for idx, doc_id in index_to_id.items():
                 try:
@@ -931,20 +952,16 @@ class IndexManager:
                     if doc is None or isinstance(doc, str):
                         continue
                     if isinstance(doc, Document):
-                        doc_source = doc.metadata.get('source', '')
-                        doc_file_name = doc.metadata.get('file_name', '')
+                        doc_source = doc.metadata.get("source", "")
+                        doc_file_name = doc.metadata.get("file_name", "")
 
                         if idx < 5:
                             logger.debug(f"文档 {doc_id}: file_name={doc_file_name}, source={doc_source}")
 
-                        if (doc_file_name == filename
-                                or doc_source.endswith(filename)
-                                or (filename in doc_source)):
+                        if doc_file_name == filename or doc_source.endswith(filename) or (filename in doc_source):
                             ids_to_delete.append(doc_id)
                 except Exception as e:
                     logger.warning(f"查找文档 {doc_id} 失败: {e}")
                     continue
 
         return ids_to_delete
-
-

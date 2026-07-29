@@ -3,6 +3,7 @@ Research 跨 app 服务层 - 供其他 app 调用的接口
 
 解耦其他 app 对 research.models 的直接导入，通过薄封装的 ORM 查询提供服务。
 """
+
 import logging
 
 from django.apps import apps
@@ -30,6 +31,7 @@ _REDIS_CONSTANTS = {
 def __getattr__(name):
     if name in _REDIS_CONSTANTS:
         from . import research_runner
+
         return getattr(research_runner, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
@@ -53,54 +55,52 @@ __all__ = [
 
 def get_linked_research_tasks(session_id):
     """获取会话关联的研究任务摘要列表 [{'task_id': ..., 'query': ...}]"""
-    ResearchTask = apps.get_model('research', 'ResearchTask')
-    return list(ResearchTask.objects.filter(
-        session_id=session_id, is_deleted=False
-    ).values('task_id', 'query'))
+    ResearchTask = apps.get_model("research", "ResearchTask")
+    return list(ResearchTask.objects.filter(session_id=session_id, is_deleted=False).values("task_id", "query"))
 
 
 def get_linked_research_tasks_including_deleted(session_id):
     """获取会话关联的研究任务（包括已软删除的），用于清理判断"""
-    ResearchTask = apps.get_model('research', 'ResearchTask')
-    return list(ResearchTask.all_objects.filter(
-        session_id=session_id
-    ).values('task_id', 'query', 'is_deleted'))
+    ResearchTask = apps.get_model("research", "ResearchTask")
+    return list(ResearchTask.all_objects.filter(session_id=session_id).values("task_id", "query", "is_deleted"))
 
 
 def get_user_research_task_ids(user_id):
     """获取用户的研究任务 ID 集合"""
-    ResearchTask = apps.get_model('research', 'ResearchTask')
-    return set(ResearchTask.objects.filter(
-        created_by_id=user_id, is_deleted=False
-    ).values_list('task_id', flat=True))
+    ResearchTask = apps.get_model("research", "ResearchTask")
+    return set(ResearchTask.objects.filter(created_by_id=user_id, is_deleted=False).values_list("task_id", flat=True))
 
 
-def update_research_task_model_and_tokens(task_id, model_name='', token_count=0, token_detail=None, response_time=0):
+def update_research_task_model_and_tokens(task_id, model_name="", token_count=0, token_detail=None, response_time=0):
     """更新研究任务的模型和 Token 信息"""
-    ResearchTask = apps.get_model('research', 'ResearchTask')
-    update_fields = {'model': model_name, 'token_count': token_count, 'response_time': response_time}
+    ResearchTask = apps.get_model("research", "ResearchTask")
+    update_fields = {"model": model_name, "token_count": token_count, "response_time": response_time}
     if token_detail:
-        update_fields['token_detail'] = token_detail
+        update_fields["token_detail"] = token_detail
     ResearchTask.objects.filter(task_id=task_id).update(**update_fields)
 
 
 # ── 供 chat 应用调用的服务封装（消除循环依赖） ──────────────────────
 
+
 def get_research_task_manager():
     """供 chat 应用调用：获取研究任务管理器"""
     from .task_manager import get_task_manager
+
     return get_task_manager()
 
 
 def get_research_version_chain(task_id: str) -> list:
     """获取研究任务的版本链"""
     from Django_xm.apps.research.models import ResearchTask
+
     try:
         task = ResearchTask.objects.filter(task_id=task_id, is_deleted=False).first()
         if task:
             return task.version_chain
     except Exception:
-        pass
+        # 数据库读取失败时返回空列表，不影响调用方
+        logger.debug("获取研究任务 %s 版本链失败", task_id)
     return []
 
 
@@ -116,11 +116,9 @@ def user_owns_research_task(task_id: str, user) -> bool:
     Returns:
         bool: 用户拥有该任务返回 True，否则 False（含异常兜底）
     """
-    ResearchTask = apps.get_model('research', 'ResearchTask')
+    ResearchTask = apps.get_model("research", "ResearchTask")
     try:
-        return ResearchTask.objects.filter(
-            task_id=task_id, created_by=user, is_deleted=False
-        ).exists()
+        return ResearchTask.objects.filter(task_id=task_id, created_by=user, is_deleted=False).exists()
     except Exception as e:
         logger.warning(f"[CrossApp] user_owns_research_task 校验失败: task_id={task_id}, {e}")
         return False
@@ -137,7 +135,7 @@ def update_research_task_fields(task_id: str, **fields) -> None:
     """
     if not fields:
         return
-    ResearchTask = apps.get_model('research', 'ResearchTask')
+    ResearchTask = apps.get_model("research", "ResearchTask")
     ResearchTask.objects.filter(task_id=task_id).update(**fields)
 
 
@@ -156,7 +154,7 @@ def get_research_task_for_context(
     Returns:
         dict: {'task_id': str, 'query': str, 'final_report': str} 或 None
     """
-    ResearchTask = apps.get_model('research', 'ResearchTask')
+    ResearchTask = apps.get_model("research", "ResearchTask")
     qs = ResearchTask.all_objects.filter(task_id=research_task_id)
     if user_id:
         qs = qs.filter(created_by_id=user_id)
@@ -164,9 +162,9 @@ def get_research_task_for_context(
     if not task:
         return None
     return {
-        'task_id': task.task_id,
-        'query': task.query or '',
-        'final_report': task.final_report or '',
+        "task_id": task.task_id,
+        "query": task.query or "",
+        "final_report": task.final_report or "",
     }
 
 
@@ -182,7 +180,7 @@ def cleanup_research_if_both_deleted(task_id: str, user_id: int):
         task_id: 研究任务 ID
         user_id: 用户 ID
     """
-    ResearchTask = apps.get_model('research', 'ResearchTask')
+    ResearchTask = apps.get_model("research", "ResearchTask")
     # 查找包括已软删除的任务（必须用 all_objects，默认 objects 过滤了 is_deleted=True）
     task = ResearchTask.all_objects.filter(task_id=task_id, created_by_id=user_id).first()
     if task is None or not task.is_deleted:
@@ -192,6 +190,7 @@ def cleanup_research_if_both_deleted(task_id: str, user_id: int):
     # 检查是否仍有活跃聊天会话关联此研究任务
     # 通过 chat 应用 cross_app 门面访问 ChatMessage，消除 research → chat.models 直接依赖
     from Django_xm.apps.chat.services.cross_app import get_active_session_ids_for_research_task
+
     active_session_ids = get_active_session_ids_for_research_task(task_id)
     if active_session_ids:
         logger.info(f"深度研究 {task_id} 已删除，但仍有活跃聊天关联，保留后端数据")
@@ -224,6 +223,7 @@ def _cleanup_research_backend_data(task_id: str, user_id: int):
     # 清理磁盘文件
     try:
         from Django_xm.apps.core.services.file_manager import get_file_manager
+
         file_manager = get_file_manager()
         file_manager.delete_task_files(task_id, "research")
     except Exception as e:

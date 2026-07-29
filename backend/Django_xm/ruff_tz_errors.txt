@@ -1,0 +1,50 @@
+﻿conda : ERROR conda.cli.main_run:execute(125): `conda run ruff check --select DTZ005,DTZ006 --output-format=concise .` 
+failed. (See above for error)
+At line:15 char:5980
++ ... pgrep\bin'; conda run -n langchain_xm ruff check --select DTZ005,DTZ0 ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (ERROR conda.cli...bove for error):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Django_xm\apps\core\services\file_manager.py:44:27: DTZ006 `datetime.datetime.fromtimestamp()` called without a `tz` argument
+Django_xm\apps\core\services\file_manager.py:45:28: DTZ006 `datetime.datetime.fromtimestamp()` called without a `tz` argument
+Django_xm\apps\knowledge\services\kb_service.py:234:40: DTZ006 `datetime.datetime.fromtimestamp()` called without a `tz` argument
+Django_xm\apps\learning\nodes\planner_node.py:79:31: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\learning\nodes\planner_node.py:110:27: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\learning\nodes\planner_node.py:119:27: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\learning\nodes\quiz_generator_node.py:55:31: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\learning\nodes\quiz_generator_node.py:118:31: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\learning\nodes\quiz_generator_node.py:158:27: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\learning\nodes\quiz_generator_node.py:168:27: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\learning\nodes\retrieval_node.py:87:27: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\learning\nodes\retrieval_node.py:105:27: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\learning\nodes\retrieval_node.py:156:23: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\learning\services\study_flow.py:44:66: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\learning\services\study_flow.py:251:23: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\learning\services\study_flow.py:252:23: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\learning\services\study_flow.py:356:85: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\learning\views.py:214:35: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\learning\views.py:215:35: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\research\services\deep_agent.py:479:7: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\research\services\deep_agent.py:566:8: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\research\services\deep_agent.py:752:10: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\research\services\deep_agent.py:868:41: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\research\services\safe_deep_agent.py:259:24: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\research\services\task_manager.py:134:27: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\research\views.py:117:35: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\research\views.py:118:35: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\research\views.py:239:35: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\tools\langchain\filesystem.py:183:29: DTZ006 `datetime.datetime.fromtimestamp()` called without a `tz` argument
+Django_xm\apps\tools\langchain\time.py:33:24: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\tools\langchain\time.py:54:15: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\tools\mcp\middleware.py:162:26: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\tools\mcp\middleware.py:237:39: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\tools\mcp\middleware.py:288:43: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\tools\mcp\middleware.py:305:30: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\tools\mcp\middleware.py:344:41: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\tools\mcp\middleware.py:350:30: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\apps\tools\mcp\middleware.py:368:29: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Django_xm\tasks\workflow_tasks.py:72:32: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+data\tools\skills\1\baidu-search\scripts\search.py:85:20: DTZ005 `datetime.datetime.now()` called without a `tz` argument
+Found 40 errors.
+

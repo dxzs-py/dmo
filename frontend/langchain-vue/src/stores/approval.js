@@ -5,7 +5,6 @@ import { useModelStore } from './model'
 import { useSyncStore } from './sync'
 import { useStreamFinalizer } from '../composables/useStreamFinalizer'
 import { resumeApprovalStream } from '../api/approval'
-import { approveResearchCommand, rejectResearchCommand } from '../api/research'
 import { getInterruptId } from '../utils/message-operations'
 import { readSSEStream } from '../utils/sse'
 import { StreamState } from '../types'
@@ -41,30 +40,31 @@ export const useApprovalStore = defineStore('approval', () => {
   let cleanupTimer = null
 
   /**
-   * 聊天审批串行执行队列（按 sessionId 隔离）
+   * 审批串行执行队列（按 sessionId 隔离）
    *
    * 同一会话的审批恢复流必须串行执行，避免多个 SSE 流并发写入同一会话
    * 的最后一条消息（content/toolCalls 竞态）。不同会话可并行。
+   * deep_research 独立模式（无 sessionId）直接执行不入队。
    *
    * 结构：Map<sessionId, Promise>
    */
-  const _chatApprovalQueues = new Map()
+  const _approvalQueues = new Map()
 
   /**
-   * 将聊天审批执行入队（同一 session 串行）
+   * 将审批执行入队（同一 session 串行）
    * @param {string} sessionId
    * @param {() => Promise} fn - 审批执行函数
    * @returns {Promise} fn 的返回值
    */
-  const _enqueueChatApproval = (sessionId, fn) => {
+  const _enqueueApprovalExecution = (sessionId, fn) => {
     if (!sessionId) return fn()
-    const prev = _chatApprovalQueues.get(sessionId) || Promise.resolve()
+    const prev = _approvalQueues.get(sessionId) || Promise.resolve()
     // then(onFulfilled, onRejected)：前一个无论成功/失败都继续执行下一个
     const next = prev.then(fn, fn)
-    _chatApprovalQueues.set(sessionId, next)
+    _approvalQueues.set(sessionId, next)
     next.finally(() => {
-      if (_chatApprovalQueues.get(sessionId) === next) {
-        _chatApprovalQueues.delete(sessionId)
+      if (_approvalQueues.get(sessionId) === next) {
+        _approvalQueues.delete(sessionId)
       }
     })
     return next
@@ -307,18 +307,14 @@ export const useApprovalStore = defineStore('approval', () => {
     try {
       const interruptId = getInterruptId(approvalData)
 
-      if (source === 'deep_research') {
-        // 深度研究审批路径
-        if (!taskId) {
-          throw new Error('深度研究审批缺少 taskId，无法执行')
-        }
-        await _executeResearchApproval(taskId, interruptId, approved, userInput, approvalData)
-      } else {
-        // 聊天审批路径：同一 session 串行执行，避免多个 SSE 流并发写入同一消息
-        await _enqueueChatApproval(sessionId, () =>
-          _executeChatApproval(approvalData, approved, userInput, sessionId, toolCallId, options)
-        )
-      }
+      // 统一路径：所有审批（chat / deep_research）走 /approvals/{interrupt_id}/resume/
+      // 后端 ApprovalGateway 根据 Approval.source 路由：
+      // - chat → SSE 流式恢复（_stream_chat_resume_generator）
+      // - deep_research → Celery 任务恢复（research_resume_task），返回 JSON
+      // 同一 session 串行执行，避免多个 SSE 流并发写入同一消息
+      await _enqueueApprovalExecution(sessionId, () =>
+        _executeApprovalStream(approvalData, approved, userInput, sessionId, toolCallId, options)
+      )
 
       // 更新最终状态
       if (sessionId) {
@@ -336,7 +332,7 @@ export const useApprovalStore = defineStore('approval', () => {
       }
     } catch (err) {
       // waiting_for_others / idempotent / interrupted：
-      // 状态已在 _executeChatApproval 内部处理（processing / 实际状态 / timeout 等），
+      // 状态已在 _executeApprovalStream 内部处理（processing / 实际状态 / timeout 等），
       // 不应回退为 pending，也不需要再次同步消息
       if (err?.__approvalWaiting || err?.__approvalIdempotent || err?.__approvalInterrupted) {
         return
@@ -360,45 +356,41 @@ export const useApprovalStore = defineStore('approval', () => {
   }
 
   /**
-   * 深度研究审批执行
-   */
-  const _executeResearchApproval = async (taskId, interruptId, approved, userInput, approvalData) => {
-    if (approved) {
-      await approveResearchCommand(
-        taskId,
-        interruptId,
-        approvalData.action === 'confirm_with_input' ? userInput : undefined,
-      )
-    } else {
-      await rejectResearchCommand(taskId, interruptId)
-    }
-    ElMessage.success(approved ? '已确认操作' : '已拒绝操作')
-  }
-
-  /**
-   * 聊天审批执行（统一调用 /approvals/{interrupt_id}/resume/ SSE 流式端点）
+   * 统一审批执行（调用 /approvals/{interrupt_id}/resume/ 端点）
+   *
+   * Path D 统一架构：chat 与 deep_research 审批均走此路径，后端 ApprovalGateway
+   * 根据 Approval.source 路由：
+   * - chat → SSE 流式恢复（_stream_chat_resume_generator，HTTP 请求内执行）
+   * - deep_research → Celery 任务恢复（research_resume_task，worker 内执行）
    *
    * 后端响应类型由 content-type 区分：
-   * - `text/event-stream`：正常 SSE 流（agent 恢复执行）
-   * - `application/json`：批量审批等待（waiting_for_others）/ 幂等响应（已处理审批）/ 错误响应
+   * - `text/event-stream`：chat 模块的 SSE 流（agent 恢复执行）
+   * - `application/json`：
+   *   - waiting_for_others：批量审批等待（同批次其他工具待审批）
+   *   - idempotent：审批已被另一端处理（幂等响应）
+   *   - resumed：deep_research Celery 任务已派发（无 SSE 流，实际输出通过 WebSocket 推送）
+   *   - 错误响应
    *
    * 状态语义：
    * - waiting_for_others：本工具已审批，等待同批次其他工具审批完成后开始执行。
    *   UI 应保留为 `processing` 状态（不切到 approved/rejected），并通过 message 提示用户。
    *   通过抛出带 `__approvalWaiting` 标记的错误，让外层 `executeApproval` 跳过最终状态更新。
    * - idempotent：审批已被另一端处理。UI 直接更新为最终状态，外层跳过最终状态更新。
+   * - resumed：deep_research 恢复任务已启动。正常返回，外层 executeApproval 更新最终状态。
+   *   实际 agent 输出（工具调用/结果/推理）通过 WebSocket 推送，由 deep research 页面消费。
    * - interrupted：SSE 流中收到 approval_timeout / approval_processed 事件，流被中断。
    *   审批状态已在事件处理器中更新（timeout/approved/rejected），通过 `markInterrupted`
    *   保持消息为 INTERRUPTED 状态。抛出带 `__approvalInterrupted` 标记的错误，外层跳过最终状态更新。
    *
    * 流式生命周期复用 useStreamFinalizer（与 chat.js sendMessage 一致）：
    * - startStreaming → STREAMING → readSSEStream → finalizeStream (COMPLETED) / markInterrupted / ERROR
+   *   （仅 chat SSE 流路径触发，deep_research JSON 路径不进入流式生命周期）
    *
    * @returns {Promise<void>}
    * @throws {Error} 审批失败时抛出；带 `__approvalWaiting` / `__approvalIdempotent` /
    *                 `__approvalInterrupted` 标记的错误表示状态已在内部处理，外层应跳过最终状态更新。
    */
-  const _executeChatApproval = async (approvalData, approved, userInput, sessionId, toolCallId, options) => {
+  const _executeApprovalStream = async (approvalData, approved, userInput, sessionId, toolCallId, options) => {
     const interruptId = getInterruptId(approvalData)
     const modelStore = useModelStore()
     const modelConfig = modelStore.getModelConfig()
@@ -476,6 +468,16 @@ export const useApprovalStore = defineStore('approval', () => {
         const err = new Error('idempotent')
         err.__approvalIdempotent = true
         throw err
+      }
+
+      // deep_research 恢复：Celery 任务已派发，返回 JSON（status: 'resumed'）
+      // 后端 ApprovalGateway._resume_deep_research → research_resume_task.delay()
+      // 前端无需消费 SSE 流，实际 agent 输出通过 WebSocket 推送到 deep research 页面
+      // 正常返回，外层 executeApproval 更新最终状态为 approved/rejected
+      if (data.status === 'resumed') {
+        ElMessage.success(jsonData.message || '研究恢复任务已启动')
+        logger.info(`[ApprovalStore] deep_research 恢复任务已启动: ${toolCallId}`)
+        return
       }
 
       // 其他未知 JSON 响应：作为错误抛出

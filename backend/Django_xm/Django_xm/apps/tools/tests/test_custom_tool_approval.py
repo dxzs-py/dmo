@@ -42,6 +42,7 @@ from Django_xm.apps.tools.views_mcp import ToolUploadView
 # Task 3.2a：CustomTool.approval_status 字段配置
 # ============================================================================
 
+
 class CustomToolApprovalStatusFieldTests(unittest.TestCase):
     """验证 CustomTool 模型的 approval_status 字段配置"""
 
@@ -49,7 +50,8 @@ class CustomToolApprovalStatusFieldTests(unittest.TestCase):
         """CustomTool 必须包含 approval_status 字段"""
         field_names = {f.name for f in CustomTool._meta.get_fields()}
         self.assertIn(
-            "approval_status", field_names,
+            "approval_status",
+            field_names,
             "CustomTool 必须有 approval_status 字段",
         )
 
@@ -68,7 +70,8 @@ class CustomToolApprovalStatusFieldTests(unittest.TestCase):
         field = CustomTool._meta.get_field("approval_status")
         choices_keys = {c[0] for c in field.choices}
         self.assertEqual(
-            choices_keys, {"pending", "approved", "rejected"},
+            choices_keys,
+            {"pending", "approved", "rejected"},
             f"approval_status choices 应为 pending/approved/rejected, actual={choices_keys}",
         )
 
@@ -122,6 +125,7 @@ class CustomToolIsEffectiveTests(unittest.TestCase):
 # Task 3.2b：ToolUploadView throttle 配置
 # ============================================================================
 
+
 class ToolUploadViewThrottleTests(unittest.TestCase):
     """验证 ToolUploadView 配置了 SensitiveOperationRateThrottle"""
 
@@ -136,7 +140,8 @@ class ToolUploadViewThrottleTests(unittest.TestCase):
     def test_throttle_classes_not_empty(self):
         """ToolUploadView.throttle_classes 不能为空"""
         self.assertGreaterEqual(
-            len(ToolUploadView.throttle_classes), 1,
+            len(ToolUploadView.throttle_classes),
+            1,
             "ToolUploadView 至少配置一个 throttle",
         )
 
@@ -144,6 +149,7 @@ class ToolUploadViewThrottleTests(unittest.TestCase):
 # ============================================================================
 # Task 3.2a/b：ToolUploadView 创建工具时设置 approval_status='pending'
 # ============================================================================
+
 
 class ToolUploadViewApprovalTests(unittest.TestCase):
     """验证 ToolUploadView 上传工具时默认 approval_status='pending'
@@ -185,9 +191,7 @@ class ToolUploadViewApprovalTests(unittest.TestCase):
             mock_obj.name = kwargs.get("name", "test_tool")
             mock_obj.description = kwargs.get("description", "")
             mock_obj.status = kwargs.get("status", "active")
-            mock_obj.approval_status = kwargs.get(
-                "approval_status", CustomTool.ApprovalStatus.PENDING
-            )
+            mock_obj.approval_status = kwargs.get("approval_status", CustomTool.ApprovalStatus.PENDING)
             return mock_obj
 
         # 构造合法的 @tool 代码
@@ -202,14 +206,11 @@ def my_test_tool(query: str) -> str:
 
         # patch 原始模块路径（views_mcp.post 内部使用局部导入）
         # 同时 patch ToolUploadView.throttle_classes 以跳过限流（避免测试间缓存污染）
-        with patch(
-            "Django_xm.apps.tools.models.CustomTool"
-        ) as mock_custom_tool_cls, patch(
-            "Django_xm.apps.tools.models.ToolCategory"
-        ) as mock_category_cls, patch(
-            "Django_xm.apps.tools.serializers.McpToolUploadSerializer"
-        ) as mock_serializer_cls, patch.object(
-            ToolUploadView, "throttle_classes", []
+        with (
+            patch("Django_xm.apps.tools.models.CustomTool") as mock_custom_tool_cls,
+            patch("Django_xm.apps.tools.models.ToolCategory") as mock_category_cls,
+            patch("Django_xm.apps.tools.serializers.McpToolUploadSerializer") as mock_serializer_cls,
+            patch.object(ToolUploadView, "throttle_classes", []),
         ):
             # Mock serializer
             mock_serializer = MagicMock()
@@ -236,12 +237,14 @@ def my_test_tool(query: str) -> str:
             mock_custom_tool_cls.objects = mock_manager
             mock_custom_tool_cls.ApprovalStatus = CustomTool.ApprovalStatus
 
-            request = self._make_post_request({
-                "name": "my_test_tool",
-                "code": valid_code,
-                "description": "测试工具",
-                "category": "general",
-            })
+            request = self._make_post_request(
+                {
+                    "name": "my_test_tool",
+                    "code": valid_code,
+                    "description": "测试工具",
+                    "category": "general",
+                }
+            )
             response = ToolUploadView.as_view()(request)
             response.render()
 
@@ -252,12 +255,14 @@ def my_test_tool(query: str) -> str:
         )
         # 验证 approval_status 未显式设置（使用默认值 'pending'）
         self.assertNotIn(
-            "approval_status", captured_kwargs,
+            "approval_status",
+            captured_kwargs,
             "ToolUploadView 不应显式设置 approval_status（应使用模型默认值 'pending'）",
         )
         # 验证响应成功
         self.assertEqual(
-            response.status_code, 200,
+            response.status_code,
+            200,
             f"工具上传应成功，actual={response.status_code}, body={response.content[:300]}",
         )
 
@@ -265,6 +270,7 @@ def my_test_tool(query: str) -> str:
 # ============================================================================
 # Task 3.2a：_load_custom_tools_for_user 仅加载 approved 工具
 # ============================================================================
+
 
 class LoadCustomToolsApprovalFilterTests(unittest.TestCase):
     """验证 _load_custom_tools_for_user 仅加载 approval_status='approved' 的工具"""
@@ -283,9 +289,7 @@ class LoadCustomToolsApprovalFilterTests(unittest.TestCase):
         mock_qs.filter.return_value = mock_qs  # name__in=selected_names 链式
         mock_qs.__iter__ = MagicMock(return_value=iter([]))  # 空结果（pending 被过滤掉）
 
-        with patch(
-            "Django_xm.apps.tools.models.CustomTool"
-        ) as mock_custom_tool_cls:
+        with patch("Django_xm.apps.tools.models.CustomTool") as mock_custom_tool_cls:
             mock_custom_tool_cls.ApprovalStatus = CustomTool.ApprovalStatus
             mock_manager = MagicMock()
             mock_manager.filter.return_value = mock_qs
@@ -318,11 +322,10 @@ class LoadCustomToolsApprovalFilterTests(unittest.TestCase):
         mock_qs.filter.return_value = mock_qs
         mock_qs.__iter__ = MagicMock(return_value=iter([mock_tool_obj]))
 
-        with patch(
-            "Django_xm.apps.tools.models.CustomTool"
-        ) as mock_custom_tool_cls, patch(
-            "Django_xm.apps.tools._instantiate_custom_tool"
-        ) as mock_instantiate:
+        with (
+            patch("Django_xm.apps.tools.models.CustomTool") as mock_custom_tool_cls,
+            patch("Django_xm.apps.tools._instantiate_custom_tool") as mock_instantiate,
+        ):
             mock_custom_tool_cls.ApprovalStatus = CustomTool.ApprovalStatus
             mock_manager = MagicMock()
             mock_manager.filter.return_value = mock_qs
@@ -333,7 +336,8 @@ class LoadCustomToolsApprovalFilterTests(unittest.TestCase):
             tools = _load_custom_tools_for_user(user_id=1)
 
         self.assertEqual(
-            len(tools), 1,
+            len(tools),
+            1,
             f"应加载 1 个 approved 工具, actual={len(tools)}",
         )
 

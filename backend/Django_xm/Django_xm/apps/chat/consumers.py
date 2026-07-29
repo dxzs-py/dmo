@@ -14,7 +14,7 @@ import logging
 import time
 
 from asgiref.sync import sync_to_async
-from channels.generic.websocket import AsyncJsonWebsocketConsumer
+from channels.generic.websocket import AsyncJsonWebsocketConsumer  # type: ignore[import-untyped]
 from django.db import close_old_connections
 
 from Django_xm.common.realtime_events import EVENT_HISTORY_LIMIT, get_event_history
@@ -58,16 +58,18 @@ async def _send_replay_chunked(consumer, channel_type, channel_id, history):
     total = len(history)
 
     if total == 0:
-        await consumer.send_json({
-            "type": "replay",
-            "channel_type": channel_type,
-            "channel_id": channel_id,
-            "count": 0,
-            "chunk_index": 0,
-            "chunk_count": 1,
-            "events": [],
-            "timestamp": time.time(),
-        })
+        await consumer.send_json(
+            {
+                "type": "replay",
+                "channel_type": channel_type,
+                "channel_id": channel_id,
+                "count": 0,
+                "chunk_index": 0,
+                "chunk_count": 1,
+                "events": [],
+                "timestamp": time.time(),
+            }
+        )
         return
 
     chunks = []
@@ -75,11 +77,10 @@ async def _send_replay_chunked(consumer, channel_type, channel_id, history):
     current_size = 0
     for event in history:
         # 估算单条事件序列化字节大小
-        event_size = len(json.dumps(event, ensure_ascii=False).encode('utf-8'))
+        event_size = len(json.dumps(event, ensure_ascii=False).encode("utf-8"))
         # 当前块非空且加入后超阈值，则切分
         if current_chunk and (
-            current_size + event_size > REPLAY_CHUNK_SIZE_BYTES
-            or len(current_chunk) >= REPLAY_MAX_EVENTS_PER_CHUNK
+            current_size + event_size > REPLAY_CHUNK_SIZE_BYTES or len(current_chunk) >= REPLAY_MAX_EVENTS_PER_CHUNK
         ):
             chunks.append(current_chunk)
             current_chunk = []
@@ -91,20 +92,19 @@ async def _send_replay_chunked(consumer, channel_type, channel_id, history):
 
     chunk_count = len(chunks)
     for i, chunk in enumerate(chunks):
-        await consumer.send_json({
-            "type": "replay",
-            "channel_type": channel_type,
-            "channel_id": channel_id,
-            "count": total,
-            "chunk_index": i,
-            "chunk_count": chunk_count,
-            "events": chunk,
-            "timestamp": time.time(),
-        })
-    logger.info(
-        f"[RealtimeSync] 回放分块发送完成: {channel_type}:{channel_id}, "
-        f"total={total}, chunks={chunk_count}"
-    )
+        await consumer.send_json(
+            {
+                "type": "replay",
+                "channel_type": channel_type,
+                "channel_id": channel_id,
+                "count": total,
+                "chunk_index": i,
+                "chunk_count": chunk_count,
+                "events": chunk,
+                "timestamp": time.time(),
+            }
+        )
+    logger.info(f"[RealtimeSync] 回放分块发送完成: {channel_type}:{channel_id}, total={total}, chunks={chunk_count}")
 
 
 class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
@@ -134,11 +134,13 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
         await self.channel_layer.group_add(self.user_group, self.channel_name)
         await self.accept()
 
-        await self.send_json({
-            "type": "connected",
-            "channel": self.user_group,
-            "timestamp": time.time(),
-        })
+        await self.send_json(
+            {
+                "type": "connected",
+                "channel": self.user_group,
+                "timestamp": time.time(),
+            }
+        )
         logger.info(f"[RealtimeSync] 用户 {self.user_id} 已连接 WebSocket")
 
         # 启动周期性数据库连接清理任务
@@ -207,49 +209,58 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
         try:
             await handler(payload)
         except Exception as e:
-            logger.error(f"[RealtimeSync] 处理动作 {action} 失败: {e}", exc_info=True)
-            await self.send_json({
-                "type": "error",
-                "code": "50001",
-                "message": f"处理 {action} 失败: {e!s}",
-                "timestamp": time.time(),
-            })
+            logger.exception(f"[RealtimeSync] 处理动作 {action} 失败")
+            await self.send_json(
+                {
+                    "type": "error",
+                    "code": "50001",
+                    "message": f"处理 {action} 失败: {e!s}",
+                    "timestamp": time.time(),
+                }
+            )
 
     # ==================== 动作处理 ====================
 
     async def handle_subscribe_session(self, payload):
         session_id = payload.get("session_id")
         if not session_id:
-            await self.send_json({
-                "type": "error",
-                "code": "40002",
-                "message": "缺少 session_id 参数",
-                "timestamp": time.time(),
-            })
+            await self.send_json(
+                {
+                    "type": "error",
+                    "code": "40002",
+                    "message": "缺少 session_id 参数",
+                    "timestamp": time.time(),
+                }
+            )
             return
 
         if not await self._user_owns_session(session_id):
-            await self.send_json({
-                "type": "error",
-                "code": "40401",
-                "message": "会话不存在或无权限",
-                "timestamp": time.time(),
-            })
+            await self.send_json(
+                {
+                    "type": "error",
+                    "code": "40401",
+                    "message": "会话不存在或无权限",
+                    "timestamp": time.time(),
+                }
+            )
             logger.warning(f"[RealtimeSync] 订阅会话失败(无权限): user={self.user_id}, session={session_id}")
             return
 
         from Django_xm.common.realtime_events import _group_name
+
         group = _group_name("session", session_id)
         if group not in self.session_groups:
             await self.channel_layer.group_add(group, self.channel_name)
             self.session_groups.add(group)
             logger.info(f"[RealtimeSync] 用户 {self.user_id} 订阅会话: session={session_id}, group={group}")
 
-        await self.send_json({
-            "type": "subscribed",
-            "channel": group,
-            "timestamp": time.time(),
-        })
+        await self.send_json(
+            {
+                "type": "subscribed",
+                "channel": group,
+                "timestamp": time.time(),
+            }
+        )
 
         # 按需回放历史事件
         # 传 limit=EVENT_HISTORY_LIMIT（500）确保回放完整，避免因默认 limit=100
@@ -268,7 +279,9 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
                 history = await sync_to_async(get_event_history)(
                     "session", session_id, last_seq, limit=EVENT_HISTORY_LIMIT
                 )
-                logger.info(f"[RealtimeSync] 回放会话历史: session={session_id}, last_seq={last_seq}, count={len(history)}, limit={EVENT_HISTORY_LIMIT}")
+                logger.info(
+                    f"[RealtimeSync] 回放会话历史: session={session_id}, last_seq={last_seq}, count={len(history)}, limit={EVENT_HISTORY_LIMIT}"
+                )
                 await _send_replay_chunked(self, "session", session_id, history)
             except Exception as e:
                 logger.warning(f"[RealtimeSync] 回放会话历史失败: {session_id}, {e}")
@@ -279,25 +292,30 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
     async def handle_unsubscribe_session(self, payload):
         session_id = payload.get("session_id")
         if not session_id:
-            await self.send_json({
-                "type": "error",
-                "code": "40002",
-                "message": "缺少 session_id 参数",
-                "timestamp": time.time(),
-            })
+            await self.send_json(
+                {
+                    "type": "error",
+                    "code": "40002",
+                    "message": "缺少 session_id 参数",
+                    "timestamp": time.time(),
+                }
+            )
             return
 
         from Django_xm.common.realtime_events import _group_name
+
         group = _group_name("session", session_id)
         if group in self.session_groups:
             await self.channel_layer.group_discard(group, self.channel_name)
             self.session_groups.discard(group)
 
-        await self.send_json({
-            "type": "unsubscribed",
-            "channel": group,
-            "timestamp": time.time(),
-        })
+        await self.send_json(
+            {
+                "type": "unsubscribed",
+                "channel": group,
+                "timestamp": time.time(),
+            }
+        )
 
     async def handle_subscribe_task(self, payload):
         """订阅 task 通道（独立深度研究场景）。
@@ -310,34 +328,41 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
         """
         task_id = payload.get("task_id")
         if not task_id:
-            await self.send_json({
-                "type": "error",
-                "code": "40002",
-                "message": "缺少 task_id 参数",
-                "timestamp": time.time(),
-            })
+            await self.send_json(
+                {
+                    "type": "error",
+                    "code": "40002",
+                    "message": "缺少 task_id 参数",
+                    "timestamp": time.time(),
+                }
+            )
             return
 
         if not await self._user_owns_task(task_id):
-            await self.send_json({
-                "type": "error",
-                "code": "40401",
-                "message": "任务不存在或无权限",
-                "timestamp": time.time(),
-            })
+            await self.send_json(
+                {
+                    "type": "error",
+                    "code": "40401",
+                    "message": "任务不存在或无权限",
+                    "timestamp": time.time(),
+                }
+            )
             return
 
         from Django_xm.common.realtime_events import _group_name
+
         group = _group_name("task", task_id)
         if group not in self.task_groups:
             await self.channel_layer.group_add(group, self.channel_name)
             self.task_groups.add(group)
 
-        await self.send_json({
-            "type": "subscribed",
-            "channel": group,
-            "timestamp": time.time(),
-        })
+        await self.send_json(
+            {
+                "type": "subscribed",
+                "channel": group,
+                "timestamp": time.time(),
+            }
+        )
 
         # 按需回放历史事件
         # 统一底层修复（Z1/Z2/Z3/Z4/Z5 + 刷新慢半拍）：与 handle_subscribe_session 保持一致，
@@ -346,9 +371,7 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
         if last_seq is not None:
             try:
                 last_seq = int(last_seq)
-                history = await sync_to_async(get_event_history)(
-                    "task", task_id, last_seq, limit=EVENT_HISTORY_LIMIT
-                )
+                history = await sync_to_async(get_event_history)("task", task_id, last_seq, limit=EVENT_HISTORY_LIMIT)
                 await _send_replay_chunked(self, "task", task_id, history)
             except Exception as e:
                 logger.warning(f"[RealtimeSync] 回放任务历史失败: task_id={task_id}, {e}")
@@ -360,41 +383,50 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
         """离开 task:{task_id} 分组。"""
         task_id = payload.get("task_id")
         if not task_id:
-            await self.send_json({
-                "type": "error",
-                "code": "40002",
-                "message": "缺少 task_id 参数",
-                "timestamp": time.time(),
-            })
+            await self.send_json(
+                {
+                    "type": "error",
+                    "code": "40002",
+                    "message": "缺少 task_id 参数",
+                    "timestamp": time.time(),
+                }
+            )
             return
 
         from Django_xm.common.realtime_events import _group_name
+
         group = _group_name("task", task_id)
         if group in self.task_groups:
             await self.channel_layer.group_discard(group, self.channel_name)
             self.task_groups.discard(group)
 
-        await self.send_json({
-            "type": "unsubscribed",
-            "channel": group,
-            "timestamp": time.time(),
-        })
+        await self.send_json(
+            {
+                "type": "unsubscribed",
+                "channel": group,
+                "timestamp": time.time(),
+            }
+        )
 
     async def handle_ping(self, payload):
         """响应客户端心跳。"""
-        await self.send_json({
-            "type": "pong",
-            "timestamp": time.time(),
-        })
+        await self.send_json(
+            {
+                "type": "pong",
+                "timestamp": time.time(),
+            }
+        )
 
     async def handle_unknown(self, payload):
         """兜底：响应未知 action，避免静默失败。"""
-        await self.send_json({
-            "type": "error",
-            "code": "40001",
-            "message": "未知动作",
-            "timestamp": time.time(),
-        })
+        await self.send_json(
+            {
+                "type": "error",
+                "code": "40001",
+                "message": "未知动作",
+                "timestamp": time.time(),
+            }
+        )
 
     async def handle_replay(self, payload):
         channel_type = payload.get("channel_type")
@@ -405,49 +437,55 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
         limit = min(int(payload.get("limit", EVENT_HISTORY_LIMIT)), EVENT_HISTORY_LIMIT)
 
         if channel_type not in ("user", "session", "task") or not channel_id:
-            await self.send_json({
-                "type": "error",
-                "code": "40003",
-                "message": "channel_type 必须是 user/session/task 且 channel_id 不能为空",
-                "timestamp": time.time(),
-            })
+            await self.send_json(
+                {
+                    "type": "error",
+                    "code": "40003",
+                    "message": "channel_type 必须是 user/session/task 且 channel_id 不能为空",
+                    "timestamp": time.time(),
+                }
+            )
             return
 
         if channel_type == "session" and not await self._user_owns_session(channel_id):
-            await self.send_json({
-                "type": "error",
-                "code": "40401",
-                "message": "会话不存在或无权限",
-                "timestamp": time.time(),
-            })
+            await self.send_json(
+                {
+                    "type": "error",
+                    "code": "40401",
+                    "message": "会话不存在或无权限",
+                    "timestamp": time.time(),
+                }
+            )
             return
 
         if channel_type == "task" and not await self._user_owns_task(channel_id):
-            await self.send_json({
-                "type": "error",
-                "code": "40401",
-                "message": "任务不存在或无权限",
-                "timestamp": time.time(),
-            })
+            await self.send_json(
+                {
+                    "type": "error",
+                    "code": "40401",
+                    "message": "任务不存在或无权限",
+                    "timestamp": time.time(),
+                }
+            )
             return
 
         try:
             last_seq = int(last_seq) if last_seq is not None else None
             # limit 已在上方校验为 <= EVENT_HISTORY_LIMIT，此处不再二次限制
-            history = await sync_to_async(get_event_history)(
-                channel_type, channel_id, last_seq, limit
-            )
+            history = await sync_to_async(get_event_history)(channel_type, channel_id, last_seq, limit)
             # 统一底层修复（刷新浏览器同步滞后根因）：
             # 改为分块发送，避免 500 条历史事件序列化后超过 WebSocket 1MB 限制
             await _send_replay_chunked(self, channel_type, channel_id, history)
         except Exception as e:
-            logger.error(f"[RealtimeSync] replay 失败: {channel_type}:{channel_id}, {e}")
-            await self.send_json({
-                "type": "error",
-                "code": "50002",
-                "message": f"replay 失败: {e!s}",
-                "timestamp": time.time(),
-            })
+            logger.exception(f"[RealtimeSync] replay 失败: {channel_type}:{channel_id}")
+            await self.send_json(
+                {
+                    "type": "error",
+                    "code": "50002",
+                    "message": f"replay 失败: {e!s}",
+                    "timestamp": time.time(),
+                }
+            )
         finally:
             # 回放完成后清理 DB 连接
             await sync_to_async(close_old_connections)()
@@ -475,14 +513,17 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
             evt_type = to_send.get("type", "?")
             evt_seq = to_send.get("seq", "?")
             logger.debug(f"[RealtimeSync] broadcast_event 转发: user={self.user_id}, type={evt_type}, seq={evt_seq}")
-        except Exception as e:
-            logger.error(f"[RealtimeSync] broadcast_event 发送失败: user={getattr(self, 'user_id', '?')}, error={e}")
+        except Exception:
+            logger.exception(
+                f"[RealtimeSync] broadcast_event 发送失败: user={getattr(self, 'user_id', '?')}"
+            )
 
     # ==================== 辅助方法 ====================
 
     @sync_to_async
     def _user_owns_session(self, session_id):
         from Django_xm.apps.chat.models import ChatSession
+
         return ChatSession.objects.filter(
             session_id=session_id,
             user_id=self.user_id,
@@ -497,6 +538,7 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
         确保用户只能订阅自己的任务事件。
         """
         from Django_xm.apps.research.services.cross_app import user_owns_research_task
+
         try:
             return user_owns_research_task(task_id, self.user)
         except Exception as e:

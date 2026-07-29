@@ -47,21 +47,23 @@ async def finalize_interrupt(
 
     # 1. finalize_tool_calls 补发工具事件
     for tool_update_event in finalize_tool_calls(
-        ctx.all_messages, ctx.tool_calls_map, ctx.tool_args_accumulator,
-        session_id=data.get('session_id'),
-        message_id=data.get('_assistant_message_id'),
+        ctx.all_messages,
+        ctx.tool_calls_map,
+        ctx.tool_args_accumulator,
+        session_id=data.get("session_id"),
+        message_id=data.get("_assistant_message_id"),
     ):
         yield tool_update_event
 
     # 2. 显式通知前端：本次流因审批中断而结束
     # 修复 bug：深度思考模式原缺失此事件，导致前端无法正确转 INTERRUPTED 状态
     yield {
-        'type': 'interrupted',
-        'data': {
-            'interrupt_id': ctx.interrupt_info.get('interrupt_id'),
-            'graph_interrupt_id': ctx.interrupt_info.get('graph_interrupt_id'),
-            'tool_name': ctx.interrupt_info.get('tool_name'),
-            'reason': 'approval_required',
+        "type": "interrupted",
+        "data": {
+            "interrupt_id": ctx.interrupt_info.get("interrupt_id"),
+            "graph_interrupt_id": ctx.interrupt_info.get("graph_interrupt_id"),
+            "tool_name": ctx.interrupt_info.get("tool_name"),
+            "reason": "approval_required",
         },
     }
 
@@ -77,8 +79,7 @@ def _write_stream_state_snapshot(ctx: StreamContext) -> None:
 
     仅提取可序列化的必要字段，避免引用 ToolMessage 等不可序列化对象。
     """
-    if not (ctx.accumulated_reasoning
-            and ctx.accumulated_reasoning.get("_stream_state") is not None):
+    if not (ctx.accumulated_reasoning and ctx.accumulated_reasoning.get("_stream_state") is not None):
         return
 
     ctx.accumulated_reasoning["_stream_state"]["current_content"] = ctx.current_message_content

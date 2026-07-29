@@ -35,8 +35,10 @@ _CACHE_TTL: float = 300.0  # 5 分钟
 # 输入 Schema
 # ---------------------------------------------------------------------------
 
+
 class SkillBaseToolInput(BaseModel):
     """SkillBaseTool 输入 schema"""
+
     query: str = Field(description="技能执行的初始输入参数")
     args: dict = Field(default_factory=dict, description="额外参数")
     mode: str = Field(default="pipeline", description="技能执行模式: pipeline/advisor/hybrid")
@@ -45,6 +47,7 @@ class SkillBaseToolInput(BaseModel):
 # ---------------------------------------------------------------------------
 # SkillBaseTool
 # ---------------------------------------------------------------------------
+
 
 class SkillBaseTool(AsyncToolMixin, BaseTool):
     """统一技能工具
@@ -68,7 +71,7 @@ class SkillBaseTool(AsyncToolMixin, BaseTool):
         else:
             kwargs.setdefault("description", spec.description)
         tools = available_tools or []
-        tmap = {t.name: t for t in tools if hasattr(t, 'name')}
+        tmap = {t.name: t for t in tools if hasattr(t, "name")}
 
         class _Input(SkillBaseToolInput):
             mode: str = Field(default=spec.mode, description="技能执行模式")
@@ -83,18 +86,20 @@ class SkillBaseTool(AsyncToolMixin, BaseTool):
     def _run(self, query: str, args: dict | None = None, mode: str | None = None) -> str:
         """同步执行技能（安全处理事件循环）"""
         import asyncio
+
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             loop = None
         if loop and loop.is_running():
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(asyncio.run, self._dispatch(query, args or {}))
                 try:
                     return future.result(timeout=120)
                 except concurrent.futures.TimeoutError:
-                    logger.error(f"技能 '{self.spec.name}' 执行超时（120秒）")
+                    logger.exception(f"技能 '{self.spec.name}' 执行超时（120秒）")
                     return f"技能 '{self.spec.name}' 执行超时（120秒）"
         return asyncio.run(self._dispatch(query, args or {}))
 
@@ -137,7 +142,7 @@ class SkillBaseTool(AsyncToolMixin, BaseTool):
             try:
                 tool_result = await tool.ainvoke(resolved_args)
             except Exception as e:
-                logger.error(f"技能 '{self.spec.name}' 步骤 {idx} 执行失败: {e}")
+                logger.exception(f"技能 '{self.spec.name}' 步骤 {idx} 执行失败")
                 return f"技能 '{self.spec.name}' 步骤 {idx} 失败: {e}"
 
             if isinstance(tool_result, str):
@@ -198,6 +203,7 @@ class SkillBaseTool(AsyncToolMixin, BaseTool):
 
     def _interpolate(self, template_str: str, context: dict) -> str:
         """字符串插值：替换 {var} 和 {var.attr} 形式的占位符"""
+
         def replacer(match: re.Match) -> str:
             expr = match.group(1)
             try:
@@ -231,9 +237,9 @@ class SkillBaseTool(AsyncToolMixin, BaseTool):
         value 支持：无引号单词、双引号字符串、单引号字符串
         """
         try:
-            or_groups = re.split(r'\s+or\s+', condition)
+            or_groups = re.split(r"\s+or\s+", condition)
             for or_group in or_groups:
-                and_parts = re.split(r'\s+and\s+', or_group)
+                and_parts = re.split(r"\s+and\s+", or_group)
                 all_true = True
                 for part in and_parts:
                     part = part.strip()
@@ -248,15 +254,19 @@ class SkillBaseTool(AsyncToolMixin, BaseTool):
 
                     var_name = match.group(1)
                     op = match.group(2)
-                    comp_value = match.group(4) if match.group(4) is not None else (
-                        match.group(5) if match.group(5) is not None else (
-                            match.group(6) if match.group(6) is not None else ''
+                    comp_value = (
+                        match.group(4)
+                        if match.group(4) is not None
+                        else (
+                            match.group(5)
+                            if match.group(5) is not None
+                            else (match.group(6) if match.group(6) is not None else "")
                         )
                     )
 
-                    var_value = context.get(var_name, '')
+                    var_value = context.get(var_name, "")
 
-                    if op == '==':
+                    if op == "==":
                         part_result = str(var_value) == comp_value
                     else:
                         part_result = str(var_value) != comp_value
@@ -303,12 +313,12 @@ class SkillBaseTool(AsyncToolMixin, BaseTool):
                 return cached_body
 
         # 缓存未命中，从文件加载
-        skill_md_path = os.path.join(self.spec.skill_dir, 'SKILL.md')
+        skill_md_path = os.path.join(self.spec.skill_dir, "SKILL.md")
         if not os.path.isfile(skill_md_path):
             return f"[错误] Skill '{self.spec.name}' 的 SKILL.md 文件不存在"
 
         try:
-            with open(skill_md_path, encoding='utf-8') as f:
+            with open(skill_md_path, encoding="utf-8") as f:
                 content = f.read()
 
             body = self._extract_body(content)
@@ -319,13 +329,13 @@ class SkillBaseTool(AsyncToolMixin, BaseTool):
             return f"[警告] Skill '{self.spec.name}' 的 SKILL.md 没有指令内容"
 
         except Exception as e:
-            logger.error(f"加载 Skill '{self.spec.name}' 指令失败: {e}")
+            logger.exception(f"加载 Skill '{self.spec.name}' 指令失败")
             return f"[错误] 加载 Skill '{self.spec.name}' 指令失败: {e}"
 
     @staticmethod
     def _extract_body(content: str) -> str:
         """从 SKILL.md 内容中提取 body（指令部分，不含 frontmatter）"""
-        pattern = re.compile(r'^---\s*\n.*?\n---\s*\n?(.*)', re.DOTALL)
+        pattern = re.compile(r"^---\s*\n.*?\n---\s*\n?(.*)", re.DOTALL)
         match = pattern.match(content)
         if match:
             return match.group(1).strip()
@@ -347,6 +357,7 @@ class SkillBaseTool(AsyncToolMixin, BaseTool):
         if not self.spec.skill_dir:
             return None
         from Django_xm.apps.tools.skills.loader import SkillLoader
+
         loader = SkillLoader()
         return loader.load_resource(self.spec.name, resource_path)
 
@@ -354,6 +365,7 @@ class SkillBaseTool(AsyncToolMixin, BaseTool):
 # ---------------------------------------------------------------------------
 # 工厂函数
 # ---------------------------------------------------------------------------
+
 
 def create_skill_base_tools(
     tools: list[BaseTool],

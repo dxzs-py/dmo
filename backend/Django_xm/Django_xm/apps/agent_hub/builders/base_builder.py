@@ -13,8 +13,11 @@ logger = logging.getLogger(__name__)
 class BaseAgentBuilder:
     async def build(self, config) -> Any:
         from Django_xm.apps.agent_hub.builders._common import build_with_timeout
+
         return await build_with_timeout(
-            self._build_internal, config, "BaseAgentBuilder.build",
+            self._build_internal,
+            config,
+            "BaseAgentBuilder.build",
         )
 
     async def _build_internal(self, config) -> Any:
@@ -33,7 +36,7 @@ class BaseAgentBuilder:
 
         from langchain.agents import create_agent
 
-        agent_kwargs = {
+        agent_kwargs: dict[str, Any] = {
             "model": model,
             "tools": tools,
             "system_prompt": system_prompt,
@@ -42,14 +45,17 @@ class BaseAgentBuilder:
             agent_kwargs["middleware"] = middleware_stack
 
         from Django_xm.apps.agent_hub.builders._common import _build_common_agent_kwargs
+
         _build_common_agent_kwargs(config, agent_kwargs)
 
         graph = create_agent(**agent_kwargs)
-        logger.info(f"BaseAgent 创建成功 (type={config.agent_type.value}, tools={len(tools)}, middleware={len(middleware_stack)})")
+        logger.info(
+            f"BaseAgent 创建成功 (type={config.agent_type.value}, tools={len(tools)}, middleware={len(middleware_stack)})"
+        )
         return graph
 
     async def _build_system_prompt(self, config, tools=None) -> str:
-        prompt_mode = getattr(config, 'prompt_mode', 'default')
+        prompt_mode = getattr(config, "prompt_mode", "default")
 
         try:
             from Django_xm.apps.context_manager.services.manager import create_context_manager
@@ -60,15 +66,14 @@ class BaseAgentBuilder:
                     model_name_for_prompt = config.model
                 else:
                     model_name_for_prompt = (
-                        getattr(config.model, "model_name", None)
-                        or getattr(config.model, "model", None)
-                        or ""
+                        getattr(config.model, "model_name", None) or getattr(config.model, "model", None) or ""
                     )
 
             tools_desc = None
             if tools:
                 mcp_section = self._build_mcp_tools_section(tools)
                 from Django_xm.apps.ai_engine.prompts.system_prompts import TOOL_USAGE_INSTRUCTIONS
+
                 tools_desc = TOOL_USAGE_INSTRUCTIONS.format(mcp_tools_section=mcp_section)
 
             ctx_mgr = create_context_manager(
@@ -88,6 +93,7 @@ class BaseAgentBuilder:
             )
             skill_instructions = self._build_skill_instructions(tools)
             from Django_xm.apps.ai_engine.prompts.system_prompts import build_dynamic_prompt
+
             prompt = build_dynamic_prompt(
                 mode=prompt_mode,
                 context=context,
@@ -99,6 +105,7 @@ class BaseAgentBuilder:
             logger.warning(f"动态提示词构建失败，回退到静态: {e}")
             try:
                 from Django_xm.apps.ai_engine.prompts.system_prompts import get_system_prompt
+
                 return get_system_prompt(mode=prompt_mode)
             except Exception:
                 return "You are a helpful assistant."
@@ -107,7 +114,7 @@ class BaseAgentBuilder:
         if not tools:
             return "（当前未加载 MCP 工具）"
 
-        mcp_tools = [t for t in tools if hasattr(t, 'metadata') and (t.metadata or {}).get('is_mcp_tool', False)]
+        mcp_tools = [t for t in tools if hasattr(t, "metadata") and (t.metadata or {}).get("is_mcp_tool", False)]
         if not mcp_tools:
             return "（当前未加载 MCP 工具）"
 
@@ -129,9 +136,9 @@ class BaseAgentBuilder:
 
         sections = []
         for skill in skill_tools:
-            if skill.spec.mode in ('advisor', 'hybrid'):
+            if skill.spec.mode in ("advisor", "hybrid"):
                 instructions = skill._load_skill_instructions()
-                if instructions and not instructions.startswith('['):
+                if instructions and not instructions.startswith("["):
                     sections.append(f"## 技能: {skill.spec.name}\n{instructions}")
 
         if not sections:
@@ -154,11 +161,7 @@ class BaseAgentBuilder:
             if isinstance(model, str):
                 model_label = model
             elif model is not None:
-                model_label = (
-                    getattr(model, "model_name", "")
-                    or getattr(model, "model", "")
-                    or type(model).__name__
-                )
+                model_label = getattr(model, "model_name", "") or getattr(model, "model", "") or type(model).__name__
 
         parts = ["BaseAgent", model_label]
         if config.user_id:

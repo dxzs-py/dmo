@@ -11,8 +11,10 @@ EMBEDDING_CONFIGS、get_embeddings_by_preset 等向后兼容 API。
         detect_embedding_dimension,
     )
 """
+
 import asyncio
 import logging
+from typing import Any
 
 from langchain_core.embeddings import Embeddings
 
@@ -23,6 +25,7 @@ EMBEDDING_BATCH_DELAY = 0.5
 
 
 # ============== CachedEmbeddings 保留在本模块（与 cache_manager 耦合） ==============
+
 
 class CachedEmbeddings(Embeddings):
     """带 Redis 缓存的 Embeddings 包装器
@@ -58,22 +61,22 @@ class CachedEmbeddings(Embeddings):
         if uncached_texts:
             all_new_vectors: list[list[float]] = []
             for batch_start in range(0, len(uncached_texts), EMBEDDING_BATCH_SIZE):
-                batch = uncached_texts[batch_start:batch_start + EMBEDDING_BATCH_SIZE]
+                batch = uncached_texts[batch_start : batch_start + EMBEDDING_BATCH_SIZE]
                 batch_vectors = self._embeddings.embed_documents(batch)
                 all_new_vectors.extend(batch_vectors)
                 if batch_start + EMBEDDING_BATCH_SIZE < len(uncached_texts):
                     import time
+
                     time.sleep(EMBEDDING_BATCH_DELAY)
 
-            for idx, text, vector in zip(uncached_indices, uncached_texts, all_new_vectors):
+            for idx, text, vector in zip(uncached_indices, uncached_texts, all_new_vectors, strict=False):
                 results[idx] = vector
                 VectorSearchCacheService.cache_embedding(text, vector, self._model)
 
         if self._hit + self._miss > 0 and (self._hit + self._miss) % 100 == 0:
             total = self._hit + self._miss
             logger.info(
-                f"Embedding 缓存统计: 命中={self._hit}, 未命中={self._miss}, "
-                f"命中率={self._hit / total * 100:.1f}%"
+                f"Embedding 缓存统计: 命中={self._hit}, 未命中={self._miss}, 命中率={self._hit / total * 100:.1f}%"
             )
 
         return results
@@ -93,10 +96,12 @@ class CachedEmbeddings(Embeddings):
 
     # 透传 FallbackEmbedding 的降级检测方法
     def get_fallback_events(self):
-        return self._embeddings.get_fallback_events() if hasattr(self._embeddings, 'get_fallback_events') else []
+        return self._embeddings.get_fallback_events() if hasattr(self._embeddings, "get_fallback_events") else []
 
     def get_active_provider_id(self):
-        return self._embeddings.get_active_provider_id() if hasattr(self._embeddings, 'get_active_provider_id') else None
+        return (
+            self._embeddings.get_active_provider_id() if hasattr(self._embeddings, "get_active_provider_id") else None
+        )
 
     async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
         from Django_xm.apps.cache_manager.services.cache_service import VectorSearchCacheService
@@ -118,21 +123,20 @@ class CachedEmbeddings(Embeddings):
         if uncached_texts:
             all_new_vectors: list[list[float]] = []
             for batch_start in range(0, len(uncached_texts), EMBEDDING_BATCH_SIZE):
-                batch = uncached_texts[batch_start:batch_start + EMBEDDING_BATCH_SIZE]
+                batch = uncached_texts[batch_start : batch_start + EMBEDDING_BATCH_SIZE]
                 batch_vectors = await self._embeddings.aembed_documents(batch)
                 all_new_vectors.extend(batch_vectors)
                 if batch_start + EMBEDDING_BATCH_SIZE < len(uncached_texts):
                     await asyncio.sleep(EMBEDDING_BATCH_DELAY)
 
-            for idx, text, vector in zip(uncached_indices, uncached_texts, all_new_vectors):
+            for idx, text, vector in zip(uncached_indices, uncached_texts, all_new_vectors, strict=False):
                 results[idx] = vector
                 VectorSearchCacheService.cache_embedding(text, vector, self._model)
 
         if self._hit + self._miss > 0 and (self._hit + self._miss) % 100 == 0:
             total = self._hit + self._miss
             logger.info(
-                f"Embedding 缓存统计: 命中={self._hit}, 未命中={self._miss}, "
-                f"命中率={self._hit / total * 100:.1f}%"
+                f"Embedding 缓存统计: 命中={self._hit}, 未命中={self._miss}, 命中率={self._hit / total * 100:.1f}%"
             )
 
         return results
@@ -154,10 +158,10 @@ class CachedEmbeddings(Embeddings):
     def cache_stats(self):
         total = self._hit + self._miss
         return {
-            'hit': self._hit,
-            'miss': self._miss,
-            'total': total,
-            'hit_rate': round(self._hit / total * 100, 2) if total > 0 else 0,
+            "hit": self._hit,
+            "miss": self._miss,
+            "total": total,
+            "hit_rate": round(self._hit / total * 100, 2) if total > 0 else 0,
         }
 
 
@@ -241,8 +245,8 @@ def test_embeddings(
         logger.info("Embedding 模型测试通过")
         return True
 
-    except Exception as e:
-        logger.error(f"Embedding 模型测试失败: {e}")
+    except Exception:
+        logger.exception("Embedding 模型测试失败")
         return False
 
 
@@ -273,11 +277,9 @@ def get_embeddings_by_preset(
     """根据预设配置获取 Embedding 模型"""
     if preset not in EMBEDDING_CONFIGS:
         available = ", ".join(EMBEDDING_CONFIGS.keys())
-        raise ValueError(
-            f"未知的预设: {preset}. 可用预设: {available}"
-        )
+        raise ValueError(f"未知的预设: {preset}. 可用预设: {available}")
 
-    config = EMBEDDING_CONFIGS[preset].copy()
+    config: dict[str, Any] = EMBEDDING_CONFIGS[preset].copy()
     model_name = config.pop("model")
     config.update(kwargs)
 

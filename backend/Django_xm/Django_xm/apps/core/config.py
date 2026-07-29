@@ -44,221 +44,98 @@ class ProjectSettings(BaseSettings):
     )
 
     # ==================== 服务器配置 ====================
-    server_host: str = Field(
-        default="0.0.0.0",
-        description="服务器监听地址"
-    )
+    server_host: str = Field(default="0.0.0.0", description="服务器监听地址")
 
-    server_port: int = Field(
-        default=8000,
-        ge=1,
-        le=65535,
-        description="服务器监听端口"
-    )
+    server_port: int = Field(default=8000, ge=1, le=65535, description="服务器监听端口")
 
-    server_reload: bool = Field(
-        default=True,
-        description="开发模式热重载"
-    )
+    server_reload: bool = Field(default=True, description="开发模式热重载")
 
     # ==================== 调试 / 环境 ====================
-    debug: bool = Field(
-        default=False,
-        description=(
-            "调试模式，默认关闭。开发环境需在 .env 中显式设置 DEBUG=True"
-        )
-    )
+    debug: bool = Field(default=False, description=("调试模式，默认关闭。开发环境需在 .env 中显式设置 DEBUG=True"))
 
-    app_name: str = Field(
-        default="LC-StudyLab",
-        description="应用名称"
-    )
+    app_name: str = Field(default="LC-StudyLab", description="应用名称")
 
-    app_version: str = Field(
-        default="1.0.0",
-        description="应用版本"
-    )
+    app_version: str = Field(default="1.0.0", description="应用版本")
 
     # ==================== 日志配置 ====================
-    log_level: str = Field(
-        default="INFO",
-        description="日志级别: DEBUG/INFO/WARNING/ERROR/CRITICAL"
-    )
+    log_level: str = Field(default="INFO", description="日志级别: DEBUG/INFO/WARNING/ERROR/CRITICAL")
 
-    log_file: str = Field(
-        default="logs/app.log",
-        description="日志文件路径"
-    )
+    log_file: str = Field(default="logs/app.log", description="日志文件路径")
 
-    log_rotation: str = Field(
-        default="100 MB",
-        description="日志轮转大小"
-    )
+    log_rotation: str = Field(default="100 MB", description="日志轮转大小")
 
-    log_retention: str = Field(
-        default="30 days",
-        description="日志保留时间"
-    )
+    log_retention: str = Field(default="30 days", description="日志保留时间")
 
     # ==================== 数据目录配置 ====================
-    data_dir: str = Field(
-        default="data",
-        description="数据存储根目录"
-    )
+    data_dir: str = Field(default="data", description="数据存储根目录")
 
-    data_uploads_path: str = Field(
-        default="data/uploads",
-        description="上传文件路径"
-    )
+    data_uploads_path: str = Field(default="data/uploads", description="上传文件路径")
 
     # ==================== 数据库配置 ====================
-    db_host: str = Field(
-        default="127.0.0.1",
-        description="数据库主机"
-    )
+    db_host: str = Field(default="127.0.0.1", description="数据库主机")
 
-    db_port: int = Field(
-        default=5432,
-        description="数据库端口"
-    )
+    db_port: int = Field(default=5432, description="数据库端口")
 
-    db_name: str = Field(
-        default="langchain_xm",
-        description="数据库名称"
-    )
+    db_name: str = Field(default="langchain_xm", description="数据库名称")
 
     # ==================== Redis / Cache 配置 ====================
-    redis_url: str = Field(
-        default="redis://127.0.0.1:6379/1",
-        description="默认 Redis URL (default cache)"
-    )
+    redis_url: str = Field(default="redis://127.0.0.1:6379/1", description="默认 Redis URL (default cache)")
 
-    redis_chat_url: str = Field(
-        default="redis://127.0.0.1:6379/2",
-        description="Chat Session Redis URL"
-    )
+    redis_chat_url: str = Field(default="redis://127.0.0.1:6379/2", description="Chat Session Redis URL")
 
-    redis_password: str = Field(
-        default="",
-        description="Redis 密码"
-    )
+    redis_password: str = Field(default="", description="Redis 密码")
 
-    redis_default_timeout: int = Field(
-        default=300,
-        description="默认缓存超时(秒)"
-    )
+    redis_default_timeout: int = Field(default=300, description="默认缓存超时(秒)")
 
-    redis_chat_timeout: int = Field(
-        default=3600,
-        description="Chat 缓存超时(秒)"
-    )
+    redis_chat_timeout: int = Field(default=3600, description="Chat 缓存超时(秒)")
 
     # ==================== Celery 配置 ====================
-    celery_broker_url: str = Field(
-        default="redis://127.0.0.1:6379/3",
-        description="Celery Broker URL"
-    )
+    celery_broker_url: str = Field(default="redis://127.0.0.1:6379/3", description="Celery Broker URL")
 
-    celery_result_backend: str = Field(
-        default="redis://127.0.0.1:6379/4",
-        description="Celery Result Backend URL"
-    )
+    celery_result_backend: str = Field(default="redis://127.0.0.1:6379/4", description="Celery Result Backend URL")
 
-    celery_task_time_limit: int = Field(
-        default=1800,
-        ge=60,
-        description="Celery 任务超时(秒)"
-    )
+    celery_task_time_limit: int = Field(default=1800, ge=60, description="Celery 任务超时(秒)")
 
-    celery_worker_max_tasks_per_child: int = Field(
-        default=1000,
-        ge=1,
-        description="Worker 最大任务数后重启"
-    )
+    celery_worker_max_tasks_per_child: int = Field(default=1000, ge=1, description="Worker 最大任务数后重启")
 
     # ==================== 安全配置 ====================
-    secret_key: str = Field(
-        default="",
-        description="Django SECRET_KEY (必须通过环境变量设置)"
-    )
+    secret_key: str = Field(default="", description="Django SECRET_KEY (必须通过环境变量设置)")
 
-    allowed_hosts: str = Field(
-        default="localhost,127.0.0.1",
-        description="ALLOWED_HOSTS (逗号分隔)"
-    )
+    allowed_hosts: str = Field(default="localhost,127.0.0.1", description="ALLOWED_HOSTS (逗号分隔)")
 
     cors_allowed_origins: str = Field(
         default="",
-        description=(
-            "CORS 允许的源 (逗号分隔)。默认空字符串，dev/prod 必须显式配置。"
-            "生产环境若未配置则启动失败。"
-        )
+        description=("CORS 允许的源 (逗号分隔)。默认空字符串，dev/prod 必须显式配置。生产环境若未配置则启动失败。"),
     )
 
     csrf_trusted_origins: str = Field(
         default="http://localhost:3000,http://localhost:8000,http://www.langchain.cn:8080",
-        description="CSRF TRUSTED_ORIGINS (逗号分隔)"
+        description="CSRF TRUSTED_ORIGINS (逗号分隔)",
     )
 
-    session_cookie_age: int = Field(
-        default=604800,
-        description="Session 过期时间(秒), 默认7天"
-    )
+    session_cookie_age: int = Field(default=604800, description="Session 过期时间(秒), 默认7天")
 
     # ==================== JWT 配置 ====================
-    jwt_access_token_lifetime_days: int = Field(
-        default=3,
-        description="Access Token 有效期(天，开发环境)"
-    )
+    jwt_access_token_lifetime_days: int = Field(default=3, description="Access Token 有效期(天，开发环境)")
 
-    jwt_access_token_lifetime_minutes: int = Field(
-        default=30,
-        description="Access Token 有效期(分钟，生产环境)"
-    )
+    jwt_access_token_lifetime_minutes: int = Field(default=30, description="Access Token 有效期(分钟，生产环境)")
 
-    jwt_refresh_token_lifetime_days: int = Field(
-        default=7,
-        description="Refresh Token 有效期(天)"
-    )
+    jwt_refresh_token_lifetime_days: int = Field(default=7, description="Refresh Token 有效期(天)")
 
     # ==================== 邮件配置 ====================
-    email_backend: str = Field(
-        default="django.core.mail.backends.console.EmailBackend",
-        description="邮件后端"
-    )
+    email_backend: str = Field(default="django.core.mail.backends.console.EmailBackend", description="邮件后端")
 
-    default_from_email: str = Field(
-        default="noreply@langchain.cn",
-        description="默认发件人"
-    )
+    default_from_email: str = Field(default="noreply@langchain.cn", description="默认发件人")
 
     # ==================== 文件上传限制 ====================
-    upload_max_memory_size_mb: int = Field(
-        default=10,
-        description="上传文件内存限制(MB)"
-    )
+    upload_max_memory_size_mb: int = Field(default=10, description="上传文件内存限制(MB)")
 
     # ==================== 速率限制配置 ====================
-    rate_limit_rpm: int = Field(
-        default=60,
-        ge=1,
-        le=10000,
-        description="每分钟最大请求数 (Requests Per Minute)"
-    )
+    rate_limit_rpm: int = Field(default=60, ge=1, le=10000, description="每分钟最大请求数 (Requests Per Minute)")
 
-    rate_limit_rps: float = Field(
-        default=1.0,
-        ge=0.1,
-        le=100.0,
-        description="每秒最大请求数 (Requests Per Second)"
-    )
+    rate_limit_rps: float = Field(default=1.0, ge=0.1, le=100.0, description="每秒最大请求数 (Requests Per Second)")
 
-    rate_limit_max_concurrency: int = Field(
-        default=10,
-        ge=1,
-        le=100,
-        description="最大并发请求数"
-    )
+    rate_limit_max_concurrency: int = Field(default=10, ge=1, le=100, description="最大并发请求数")
 
     # ---- 校验方法 ----
 
@@ -306,6 +183,7 @@ settings = get_settings()
 
 # ==================== 日志工具 ====================
 
+
 def get_logger(name: str) -> logging.Logger:
     logger = logging.getLogger(name)
     if logger.handlers:
@@ -347,12 +225,7 @@ def setup_loguru_logging() -> None:
 
         _logger.add(
             settings.log_file,
-            format=(
-                "{time:YYYY-MM-DD HH:mm:ss.SSS} | "
-                "{level: <8} | "
-                "{name}:{function}:{line} | "
-                "{message}"
-            ),
+            format=("{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} | {message}"),
             level=settings.log_level,
             rotation=settings.log_rotation,
             retention=settings.log_retention,

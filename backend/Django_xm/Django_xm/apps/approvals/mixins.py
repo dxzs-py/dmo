@@ -7,7 +7,6 @@
 被 ApprovalDetailView / ApprovalResumeView / ApprovalRejectView / ApprovalStateView 复用。
 """
 
-
 from django.apps import apps as _apps
 from django.core.exceptions import PermissionDenied
 
@@ -49,7 +48,7 @@ class BaseApprovalAccessMixin:
 
         # fallback：三路关联校验（历史数据 user 字段为 NULL）
         if approval.chat_session_id:
-            ChatSession = _apps.get_model('chat', 'ChatSession')
+            ChatSession = _apps.get_model("chat", "ChatSession")
             if ChatSession.objects.filter(
                 session_id=approval.chat_session_id,
                 user=user,
@@ -58,7 +57,7 @@ class BaseApprovalAccessMixin:
                 return True
 
         if approval.source == Approval.SOURCE_DEEP_RESEARCH:
-            ResearchTask = _apps.get_model('research', 'ResearchTask')
+            ResearchTask = _apps.get_model("research", "ResearchTask")
             if ResearchTask.objects.filter(
                 task_id=approval.source_id,
                 created_by=user,
@@ -67,7 +66,7 @@ class BaseApprovalAccessMixin:
                 return True
 
         if approval.source == Approval.SOURCE_LEARNING:
-            WorkflowSession = _apps.get_model('learning', 'WorkflowSession')
+            WorkflowSession = _apps.get_model("learning", "WorkflowSession")
             if WorkflowSession.objects.filter(
                 thread_id=approval.source_id,
                 created_by=user,
@@ -85,16 +84,12 @@ class BaseApprovalAccessMixin:
             Approval | None: 命中且归属通过则返回模型实例；不存在或不归属则返回 None。
         """
         # 优先按 user 字段直接过滤
-        approval = Approval.objects.filter(
-            user=user, interrupt_id=interrupt_id
-        ).first()
+        approval = Approval.objects.filter(user=user, interrupt_id=interrupt_id).first()
         if approval is not None:
             return approval
 
         # fallback：user 字段为 NULL 的历史数据，按 interrupt_id 查询后调用 _user_owns_approval
-        approval = Approval.objects.filter(
-            interrupt_id=interrupt_id, user__isnull=True
-        ).first()
+        approval = Approval.objects.filter(interrupt_id=interrupt_id, user__isnull=True).first()
         if approval is not None and cls._user_owns_approval(user, approval):
             return approval
         return None
@@ -111,4 +106,4 @@ class BaseApprovalAccessMixin:
             PermissionDenied: 当 approval 为 None 或不属于该用户时。
         """
         if approval is None or not cls._user_owns_approval(user, approval):
-            raise PermissionDenied('无权访问该审批')
+            raise PermissionDenied("无权访问该审批")

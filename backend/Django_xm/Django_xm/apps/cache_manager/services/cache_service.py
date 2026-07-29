@@ -14,6 +14,7 @@ Redis 缓存服务 - 通用缓存增强模块
 - 支持缓存失效通知
 - 统计缓存命中率
 """
+
 import asyncio
 import hashlib
 import json
@@ -30,24 +31,24 @@ logger = logging.getLogger(__name__)
 
 # ==================== 缓存前缀常量 ====================
 
-CACHE_PREFIX_QUERY = 'rag_query'
-CACHE_PREFIX_MODEL = 'model_response'
-CACHE_PREFIX_EMBEDDING = 'embedding'
-CACHE_PREFIX_TOOL = 'tool_result'
-CACHE_PREFIX_VECTOR = 'vector_search'
-CACHE_PREFIX_INDEX = 'index_meta'
-CACHE_PREFIX_CONFIG = 'app_config'
-CACHE_PREFIX_SESSION = 'chat_session'
-CACHE_PREFIX_AGENT = 'agent_state'
+CACHE_PREFIX_QUERY = "rag_query"
+CACHE_PREFIX_MODEL = "model_response"
+CACHE_PREFIX_EMBEDDING = "embedding"
+CACHE_PREFIX_TOOL = "tool_result"
+CACHE_PREFIX_VECTOR = "vector_search"
+CACHE_PREFIX_INDEX = "index_meta"
+CACHE_PREFIX_CONFIG = "app_config"
+CACHE_PREFIX_SESSION = "chat_session"
+CACHE_PREFIX_AGENT = "agent_state"
 
 CACHE_PREFIX_LABELS = {
-    CACHE_PREFIX_QUERY: 'RAG 查询缓存',
-    CACHE_PREFIX_MODEL: '模型响应缓存',
-    CACHE_PREFIX_EMBEDDING: 'Embedding 缓存',
-    CACHE_PREFIX_TOOL: '工具结果缓存',
-    CACHE_PREFIX_VECTOR: '向量检索缓存',
-    CACHE_PREFIX_SESSION: '会话缓存',
-    CACHE_PREFIX_AGENT: 'Agent 状态缓存',
+    CACHE_PREFIX_QUERY: "RAG 查询缓存",
+    CACHE_PREFIX_MODEL: "模型响应缓存",
+    CACHE_PREFIX_EMBEDDING: "Embedding 缓存",
+    CACHE_PREFIX_TOOL: "工具结果缓存",
+    CACHE_PREFIX_VECTOR: "向量检索缓存",
+    CACHE_PREFIX_SESSION: "会话缓存",
+    CACHE_PREFIX_AGENT: "Agent 状态缓存",
 }
 
 
@@ -58,10 +59,11 @@ def get_redis_client():
     """
     try:
         from django.core.cache import caches
-        default_cache = caches['default']
-        if hasattr(default_cache, 'client'):
+
+        default_cache = caches["default"]
+        if hasattr(default_cache, "client"):
             client = default_cache.client
-            if hasattr(client, 'get_client'):
+            if hasattr(client, "get_client"):
                 return client.get_client()
             return client
     except Exception as e:
@@ -76,15 +78,17 @@ def get_redis_info():
         return None
     try:
         return client.info()
-    except Exception as e:
-        logger.error(f"获取 Redis info 失败: {e}")
+    except Exception:
+        logger.exception("获取 Redis info 失败")
         return None
 
 
 # ==================== 缓存 TTL 配置 ====================
 
+
 class CacheTTL:
     """缓存过期时间配置（秒）"""
+
     QUERY_SHORT = 300
     QUERY_MEDIUM = 1800
     QUERY_LONG = 86400
@@ -104,10 +108,11 @@ class CacheTTL:
 
 # ==================== 通用缓存工具类 ====================
 
+
 class CacheService:
     """
     通用 Redis 缓存服务
-    
+
     提供统一的缓存操作接口，支持：
     - 类型安全的存取
     - 自动序列化/反序列化
@@ -132,11 +137,11 @@ class CacheService:
     def get(cls, key: str, default: Any = None) -> Any:
         """
         获取缓存值
-        
+
         Args:
             key: 缓存键
             default: 默认值
-            
+
         Returns:
             缓存值或默认值
         """
@@ -147,21 +152,21 @@ class CacheService:
             else:
                 cls._increment_miss()
             return value
-        except Exception as e:
-            logger.error(f"缓存读取失败: {key}, 错误: {e}")
+        except Exception:
+            logger.exception(f"缓存读取失败: {key}, 错误")
             cls._increment_miss()
             return default
 
     @classmethod
-    def set(cls, key: str, value: Any, ttl: int = CacheTTL.QUERY_MEDIUM) -> bool:
+    def set(cls, key: str, value: Any, ttl: int | None = CacheTTL.QUERY_MEDIUM) -> bool:
         """
         设置缓存值
-        
+
         Args:
             key: 缓存键
             value: 缓存值
             ttl: 过期时间（秒）
-            
+
         Returns:
             是否设置成功
         """
@@ -169,8 +174,8 @@ class CacheService:
             cache.set(key, value, timeout=ttl)
             logger.debug(f"缓存设置: {key}, TTL={ttl}s")
             return True
-        except Exception as e:
-            logger.error(f"缓存设置失败: {key}, 错误: {e}")
+        except Exception:
+            logger.exception(f"缓存设置失败: {key}, 错误")
             return False
 
     @classmethod
@@ -180,32 +185,33 @@ class CacheService:
             cache.delete(key)
             logger.debug(f"缓存删除: {key}")
             return True
-        except Exception as e:
-            logger.error(f"缓存删除失败: {key}, 错误: {e}")
+        except Exception:
+            logger.exception(f"缓存删除失败: {key}, 错误")
             return False
 
     @classmethod
     def delete_pattern(cls, pattern: str) -> int:
         """
         按模式删除缓存
-        
+
         Args:
             pattern: 匹配模式，如 'rag_query:*'
-            
+
         Returns:
             删除的数量
         """
         try:
             from django.core.cache import caches
-            default_cache = caches['default']
 
-            if hasattr(default_cache, 'delete_pattern'):
+            default_cache = caches["default"]
+
+            if hasattr(default_cache, "delete_pattern"):
                 default_cache.delete_pattern(pattern)
                 logger.info(f"缓存模式删除: {pattern}")
                 return 1
             return 0
-        except Exception as e:
-            logger.error(f"缓存模式删除失败: {pattern}, 错误: {e}")
+        except Exception:
+            logger.exception(f"缓存模式删除失败: {pattern}, 错误")
             return 0
 
     @classmethod
@@ -214,10 +220,10 @@ class CacheService:
             total = cls._hit_count + cls._miss_count
             hit_rate = (cls._hit_count / total * 100) if total > 0 else 0
             return {
-                'hit_count': cls._hit_count,
-                'miss_count': cls._miss_count,
-                'total_requests': total,
-                'hit_rate': round(hit_rate, 2),
+                "hit_count": cls._hit_count,
+                "miss_count": cls._miss_count,
+                "total_requests": total,
+                "hit_rate": round(hit_rate, 2),
             }
 
     @classmethod
@@ -229,91 +235,81 @@ class CacheService:
 
 # ==================== 缓存键生成器 ====================
 
+
 def generate_query_cache_key(query: str, index_name: str, k: int = 4) -> str:
     """
     生成 RAG 查询缓存键
-    
+
     Args:
         query: 查询文本
         index_name: 索引名称
         k: 检索文档数
-        
+
     Returns:
         缓存键
     """
-    query_hash = hashlib.md5(query.encode('utf-8'), usedforsecurity=False).hexdigest()[:12]
+    query_hash = hashlib.md5(query.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
     return f"{CACHE_PREFIX_QUERY}:{index_name}:{query_hash}:k{k}"
 
 
-def generate_model_cache_key(
-    prompt: str,
-    model_name: str,
-    mode: str = 'default',
-    tools_hash: str | None = None
-) -> str:
+def generate_model_cache_key(prompt: str, model_name: str, mode: str = "default", tools_hash: str | None = None) -> str:
     """
     生成模型响应缓存键
-    
+
     Args:
         prompt: 提示词
         model_name: 模型名称
         mode: 模式
         tools_hash: 工具列表哈希
-        
+
     Returns:
         缓存键
     """
-    prompt_hash = hashlib.md5(prompt.encode('utf-8'), usedforsecurity=False).hexdigest()[:12]
-    tools_part = f":t{tools_hash}" if tools_hash else ''
+    prompt_hash = hashlib.md5(prompt.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
+    tools_part = f":t{tools_hash}" if tools_hash else ""
     return f"{CACHE_PREFIX_MODEL}:{model_name}:{mode}:{prompt_hash}{tools_part}"
 
 
-def generate_embedding_cache_key(text: str, model: str = 'default') -> str:
+def generate_embedding_cache_key(text: str, model: str = "default") -> str:
     """生成 embedding 缓存键"""
-    text_hash = hashlib.md5(text.encode('utf-8')).hexdigest()[:12]
+    text_hash = hashlib.md5(text.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
     return f"{CACHE_PREFIX_EMBEDDING}:{model}:{text_hash}"
 
 
-def generate_tool_cache_key(
-    tool_name: str,
-    params: dict[str, Any],
-    user_id: int | None = None
-) -> str:
+def generate_tool_cache_key(tool_name: str, params: dict[str, Any], user_id: int | None = None) -> str:
     """
     生成工具调用缓存键
-    
+
     Args:
         tool_name: 工具名称
         params: 工具参数
         user_id: 用户ID（可选）
-        
+
     Returns:
         缓存键
     """
     params_str = json.dumps(params, sort_keys=True, ensure_ascii=False)
-    params_hash = hashlib.md5(params_str.encode('utf-8'), usedforsecurity=False).hexdigest()[:12]
-    user_part = f":u{user_id}" if user_id else ''
+    params_hash = hashlib.md5(params_str.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
+    user_part = f":u{user_id}" if user_id else ""
     return f"{CACHE_PREFIX_TOOL}:{tool_name}:{params_hash}{user_part}"
 
 
 def generate_vector_search_cache_key(
-    query: str,
-    index_name: str,
-    k: int = 4,
-    score_threshold: float | None = None
+    query: str, index_name: str, k: int = 4, score_threshold: float | None = None
 ) -> str:
     """生成向量搜索缓存键"""
-    query_hash = hashlib.md5(query.encode('utf-8'), usedforsecurity=False).hexdigest()[:12]
-    threshold_part = f":th{score_threshold}" if score_threshold else ''
+    query_hash = hashlib.md5(query.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
+    threshold_part = f":th{score_threshold}" if score_threshold else ""
     return f"{CACHE_PREFIX_VECTOR}:{index_name}:{query_hash}:k{k}{threshold_part}"
 
 
 # ==================== 专用缓存服务 ====================
 
+
 class QueryCacheService:
     """
     热点查询缓存服务
-    
+
     缓存 RAG 检索结果和常用问答，避免重复检索和生成
     """
 
@@ -325,21 +321,16 @@ class QueryCacheService:
 
     @classmethod
     def cache_query_result(
-        cls,
-        query: str,
-        result: dict,
-        index_name: str,
-        k: int = 4,
-        ttl: int = CacheTTL.QUERY_MEDIUM
+        cls, query: str, result: dict, index_name: str, k: int = 4, ttl: int = CacheTTL.QUERY_MEDIUM
     ) -> bool:
         """缓存查询结果"""
         key = generate_query_cache_key(query, index_name, k)
 
         cache_data = {
-            'query': query,
-            'result': result,
-            'cached_at': timezone.now().isoformat(),
-            'index': index_name,
+            "query": query,
+            "result": result,
+            "cached_at": timezone.now().isoformat(),
+            "index": index_name,
         }
 
         return CacheService.set(key, cache_data, ttl)
@@ -356,39 +347,29 @@ class QueryCacheService:
 class ModelResponseCacheService:
     """
     模型响应缓存服务
-    
+
     缓存相同输入的 AI 回复，减少 API 调用
     """
 
     @classmethod
-    def get_cached_response(
-        cls,
-        prompt: str,
-        model_name: str,
-        mode: str = 'default'
-    ) -> dict | None:
+    def get_cached_response(cls, prompt: str, model_name: str, mode: str = "default") -> dict | None:
         """获取缓存的模型响应"""
         key = generate_model_cache_key(prompt, model_name, mode)
         return CacheService.get(key)
 
     @classmethod
     def cache_model_response(
-        cls,
-        prompt: str,
-        response: dict,
-        model_name: str,
-        mode: str = 'default',
-        ttl: int = CacheTTL.MODEL_MEDIUM
+        cls, prompt: str, response: dict, model_name: str, mode: str = "default", ttl: int = CacheTTL.MODEL_MEDIUM
     ) -> bool:
         """缓存模型响应"""
         key = generate_model_cache_key(prompt, model_name, mode)
 
         cache_data = {
-            'prompt': prompt,
-            'response': response,
-            'model': model_name,
-            'mode': mode,
-            'cached_at': timezone.now().isoformat(),
+            "prompt": prompt,
+            "response": response,
+            "model": model_name,
+            "mode": mode,
+            "cached_at": timezone.now().isoformat(),
         }
 
         return CacheService.set(key, cache_data, ttl)
@@ -405,17 +386,12 @@ class ModelResponseCacheService:
 class ToolResultCacheService:
     """
     工具调用结果缓存服务
-    
+
     缓存工具执行结果，减少重复调用
     """
 
     @classmethod
-    def get_cached_tool_result(
-        cls,
-        tool_name: str,
-        params: dict[str, Any],
-        user_id: int | None = None
-    ) -> Any | None:
+    def get_cached_tool_result(cls, tool_name: str, params: dict[str, Any], user_id: int | None = None) -> Any | None:
         """获取缓存的工具结果"""
         key = generate_tool_cache_key(tool_name, params, user_id)
         return CacheService.get(key)
@@ -427,7 +403,7 @@ class ToolResultCacheService:
         params: dict[str, Any],
         result: Any,
         user_id: int | None = None,
-        ttl: int = CacheTTL.TOOL_MEDIUM
+        ttl: int = CacheTTL.TOOL_MEDIUM,
     ) -> bool:
         """缓存工具结果"""
         key = generate_tool_cache_key(tool_name, params, user_id)
@@ -437,7 +413,7 @@ class ToolResultCacheService:
 class VectorSearchCacheService:
     """
     向量搜索缓存服务
-    
+
     缓存 embedding 计算和相似度搜索结果
     """
 
@@ -449,30 +425,21 @@ class VectorSearchCacheService:
 
     @classmethod
     def cache_search_result(
-        cls,
-        query: str,
-        results: list,
-        index_name: str,
-        k: int = 4,
-        ttl: int = CacheTTL.VECTOR_SEARCH
+        cls, query: str, results: list, index_name: str, k: int = 4, ttl: int = CacheTTL.VECTOR_SEARCH
     ) -> bool:
         """缓存向量搜索结果"""
         key = generate_vector_search_cache_key(query, index_name, k)
         return CacheService.set(key, results, ttl)
 
     @classmethod
-    def get_cached_embedding(cls, text: str, model: str = 'default') -> list[float] | None:
+    def get_cached_embedding(cls, text: str, model: str = "default") -> list[float] | None:
         """获取缓存的 embedding"""
         key = generate_embedding_cache_key(text, model)
         return CacheService.get(key)
 
     @classmethod
     def cache_embedding(
-        cls,
-        text: str,
-        embedding: list[float],
-        model: str = 'default',
-        ttl: int = CacheTTL.EMBEDDING
+        cls, text: str, embedding: list[float], model: str = "default", ttl: int = CacheTTL.EMBEDDING
     ) -> bool:
         """缓存 embedding"""
         key = generate_embedding_cache_key(text, model)
@@ -489,19 +456,16 @@ class VectorSearchCacheService:
 
 # ==================== 缓存装饰器 ====================
 
-def cache_result(
-    key_generator,
-    ttl: int = CacheTTL.QUERY_MEDIUM,
-    cache_class=CacheService
-):
+
+def cache_result(key_generator, ttl: int = CacheTTL.QUERY_MEDIUM, cache_class=CacheService):
     """
     缓存装饰器 - 用于缓存函数返回值
-    
+
     Args:
         key_generator: 缓存键生成函数
         ttl: 过期时间
         cache_class: 缓存服务类
-        
+
     Example:
         @cache_result(
             key_generator=lambda args, kwargs: f"my_cache:{args[0]}",
@@ -510,6 +474,7 @@ def cache_result(
         def expensive_function(query: str):
             return compute_result(query)
     """
+
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -526,22 +491,25 @@ def cache_result(
             logger.debug(f"装饰器缓存设置: {func.__name__}:{cache_key}")
 
             return result
+
         return wrapper
+
     return decorator
 
 
 def invalidate_cache(pattern: str):
     """
     缓存失效装饰器 - 调用函数时使匹配模式的缓存失效
-    
+
     Args:
         pattern: 匹配模式
-        
+
     Example:
         @invalidate_cache("rag_query:test_index:*")
         def rebuild_index(index_name: str):
             rebuild(index_name)
     """
+
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -549,16 +517,19 @@ def invalidate_cache(pattern: str):
             CacheService.delete_pattern(pattern)
             logger.info(f"装饰器缓存失效: {pattern}")
             return result
+
         return wrapper
+
     return decorator
 
 
 # ==================== 缓存预热 ====================
 
+
 class CacheWarmer:
     """
     缓存预热服务
-    
+
     在系统启动或低峰期预热常用数据
     """
 
@@ -566,13 +537,13 @@ class CacheWarmer:
     def warm_query_cache(cls, queries: list[dict[str, Any]]) -> int:
         """
         预热查询缓存
-        
+
         Args:
             queries: 查询列表，每个元素包含：
                 - query: 查询文本
                 - index_name: 索引名称
                 - result: 查询结果
-                
+
         Returns:
             预热成功数量
         """
@@ -580,10 +551,7 @@ class CacheWarmer:
         for q in queries:
             try:
                 QueryCacheService.cache_query_result(
-                    query=q['query'],
-                    result=q['result'],
-                    index_name=q['index_name'],
-                    ttl=CacheTTL.QUERY_LONG
+                    query=q["query"], result=q["result"], index_name=q["index_name"], ttl=CacheTTL.QUERY_LONG
                 )
                 count += 1
             except Exception as e:
@@ -594,11 +562,11 @@ class CacheWarmer:
     def warm_config_cache(cls, config_data: dict[str, Any], ttl: int = CacheTTL.QUERY_LONG) -> bool:
         """
         预热配置缓存
-        
+
         Args:
             config_data: 配置数据
             ttl: 过期时间
-            
+
         Returns:
             是否成功
         """
@@ -607,17 +575,18 @@ class CacheWarmer:
 
 # ==================== 缓存健康检查 ====================
 
+
 class CacheHealthChecker:
     """缓存健康检查"""
 
     @classmethod
     def check_connection(cls) -> bool:
         try:
-            cache.set('health_check', 'ok', timeout=10)
-            result = cache.get('health_check')
-            return result == 'ok'
-        except Exception as e:
-            logger.error(f"Redis 连接检查失败: {e}")
+            cache.set("health_check", "ok", timeout=10)
+            result = cache.get("health_check")
+            return result == "ok"
+        except Exception:
+            logger.exception("Redis 连接检查失败")
             return False
 
     @classmethod
@@ -626,13 +595,14 @@ class CacheHealthChecker:
         stats = CacheService.get_stats()
 
         return {
-            'connection': 'healthy' if connection_ok else 'unhealthy',
-            'stats': stats,
-            'checked_at': timezone.now().isoformat(),
+            "connection": "healthy" if connection_ok else "unhealthy",
+            "stats": stats,
+            "checked_at": timezone.now().isoformat(),
         }
 
 
 # ==================== 会话缓存服务 ====================
+
 
 class SessionCacheService:
     """
@@ -696,6 +666,7 @@ class SessionCacheService:
 
 # ==================== Agent 状态缓存服务 ====================
 
+
 class AgentStateCacheService:
     """
     Agent 状态缓存服务
@@ -731,6 +702,7 @@ class AgentStateCacheService:
 
 # ==================== Redis 原生操作 ====================
 
+
 class RedisDirectClient:
     """
     Redis 原生客户端
@@ -748,8 +720,9 @@ class RedisDirectClient:
         import os
 
         from Django_xm.apps.core.config import settings as project_cfg
-        redis_url = os.environ.get('REDIS_URL', project_cfg.redis_url)
-        redis_password = os.environ.get('REDIS_PASSWORD', project_cfg.redis_password) or None
+
+        redis_url = os.environ.get("REDIS_URL", project_cfg.redis_url)
+        redis_password = os.environ.get("REDIS_PASSWORD", project_cfg.redis_password) or None
         return redis_url, redis_password
 
     @classmethod
@@ -763,6 +736,7 @@ class RedisDirectClient:
 
         try:
             import redis
+
             redis_url, redis_password = cls._get_redis_config()
             cls._client = redis.from_url(
                 redis_url,
@@ -772,8 +746,8 @@ class RedisDirectClient:
                 password=redis_password,
             )
             cls._client.ping()
-        except Exception as e:
-            logger.error(f"Redis 客户端初始化失败: {e}")
+        except Exception:
+            logger.exception("Redis 客户端初始化失败")
             cls._client = None
         return cls._client
 
@@ -786,15 +760,13 @@ class RedisDirectClient:
             keys = []
             cursor = 0
             while True:
-                cursor, batch = client.scan(
-                    cursor=cursor, match=pattern, count=count
-                )
+                cursor, batch = client.scan(cursor=cursor, match=pattern, count=count)
                 keys.extend(batch)
                 if cursor == 0:
                     break
             return keys
-        except Exception as e:
-            logger.error(f"SCAN 失败: {e}")
+        except Exception:
+            logger.exception("SCAN 失败")
             return []
 
     @classmethod
@@ -804,8 +776,8 @@ class RedisDirectClient:
             return -2
         try:
             return client.ttl(key)
-        except Exception as e:
-            logger.error(f"TTL 查询失败: {e}")
+        except Exception:
+            logger.exception("TTL 查询失败")
             return -2
 
     @classmethod
@@ -816,16 +788,16 @@ class RedisDirectClient:
         try:
             info = client.info()
             return {
-                'used_memory_human': info.get('used_memory_human'),
-                'connected_clients': info.get('connected_clients'),
-                'uptime_in_seconds': info.get('uptime_in_seconds'),
-                'total_commands_processed': info.get('total_commands_processed'),
-                'keyspace_hits': info.get('keyspace_hits'),
-                'keyspace_misses': info.get('keyspace_misses'),
-                'db_size': client.dbsize(),
+                "used_memory_human": info.get("used_memory_human"),
+                "connected_clients": info.get("connected_clients"),
+                "uptime_in_seconds": info.get("uptime_in_seconds"),
+                "total_commands_processed": info.get("total_commands_processed"),
+                "keyspace_hits": info.get("keyspace_hits"),
+                "keyspace_misses": info.get("keyspace_misses"),
+                "db_size": client.dbsize(),
             }
-        except Exception as e:
-            logger.error(f"Redis INFO 失败: {e}")
+        except Exception:
+            logger.exception("Redis INFO 失败")
             return None
 
     @classmethod
@@ -840,12 +812,13 @@ class RedisDirectClient:
             deleted = client.delete(*keys)
             logger.info(f"按模式删除 {deleted} 个 key: {pattern}")
             return deleted
-        except Exception as e:
-            logger.error(f"批量删除失败: {e}")
+        except Exception:
+            logger.exception("批量删除失败")
             return 0
 
 
 # ==================== 缓存失效策略 ====================
+
 
 class CacheInvalidationStrategy:
     """
@@ -904,14 +877,14 @@ class CacheInvalidationStrategy:
     def invalidate_all(cls) -> dict[str, int]:
         results = {}
         for prefix_name, prefix in [
-            ('query', CACHE_PREFIX_QUERY),
-            ('model', CACHE_PREFIX_MODEL),
-            ('vector', CACHE_PREFIX_VECTOR),
-            ('tool', CACHE_PREFIX_TOOL),
-            ('embedding', CACHE_PREFIX_EMBEDDING),
-            ('index', CACHE_PREFIX_INDEX),
-            ('session', CACHE_PREFIX_SESSION),
-            ('agent', CACHE_PREFIX_AGENT),
+            ("query", CACHE_PREFIX_QUERY),
+            ("model", CACHE_PREFIX_MODEL),
+            ("vector", CACHE_PREFIX_VECTOR),
+            ("tool", CACHE_PREFIX_TOOL),
+            ("embedding", CACHE_PREFIX_EMBEDDING),
+            ("index", CACHE_PREFIX_INDEX),
+            ("session", CACHE_PREFIX_SESSION),
+            ("agent", CACHE_PREFIX_AGENT),
         ]:
             count = RedisDirectClient.delete_keys_by_pattern(f"{prefix}:*")
             results[prefix_name] = count
@@ -920,6 +893,7 @@ class CacheInvalidationStrategy:
 
 
 # ==================== LangChain LLM Cache 层 ====================
+
 
 class RedisLangChainCache:
     """
@@ -999,18 +973,16 @@ def setup_langchain_cache(enabled: bool = True) -> None:
         from langchain_core.globals import set_llm_cache
 
         cache_instance = RedisLangChainCache()
-        set_llm_cache(cache_instance)
+        set_llm_cache(cache_instance)  # type: ignore[arg-type]  # RedisLangChainCache implements BaseCache interface via duck typing
         logger.info("LangChain LLM Cache 已启用（Redis 后端）")
     except ImportError:
-        logger.warning(
-            "langchain_core.globals.set_llm_cache 不可用，"
-            "请升级 langchain-core"
-        )
+        logger.warning("langchain_core.globals.set_llm_cache 不可用，请升级 langchain-core")
     except Exception as e:
         logger.warning(f"LangChain Cache 设置失败: {e}")
 
 
 # ==================== 业务级统一缓存失效接口 ====================
+
 
 def invalidate_chat_cache(user_id=None):
     """统一聊天缓存失效接口

@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import datetime
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 
 from langchain_core.tools import BaseTool
@@ -15,13 +15,22 @@ logger = logging.getLogger(__name__)
 def get_data_dir() -> str:
     try:
         from django.conf import settings as django_settings
-        return str(getattr(django_settings, 'TOOLS_LANGCHAIN_DIR', django_settings.DATA_DIR / 'tools' / 'langchain'))
+
+        return str(getattr(django_settings, "TOOLS_LANGCHAIN_DIR", django_settings.DATA_DIR / "tools" / "langchain"))  # type: ignore[attr-defined]  # DATA_DIR is a custom Django setting not in stubs
     except (ImportError, AttributeError):
         try:
             from Django_xm.apps.ai_engine.config import settings
-            return str(getattr(settings, 'TOOLS_LANGCHAIN_DIR', getattr(settings, 'DATA_DIR', settings.DATA_DIR) / 'tools' / 'langchain'))
+
+            return str(
+                getattr(
+                    settings,
+                    "TOOLS_LANGCHAIN_DIR",
+                    Path(getattr(settings, "data_dir", "data")) / "tools" / "langchain",
+                )
+            )
         except (ImportError, AttributeError):
             from pathlib import Path
+
             base_dir = Path(__file__).resolve().parent.parent.parent.parent.parent
             data_dir = base_dir / "data" / "tools" / "langchain"
             data_dir.mkdir(parents=True, exist_ok=True)
@@ -38,10 +47,14 @@ class ResearchFileSystem:
 
         if base_path is None:
             from django.conf import settings as django_settings
-            data_dir = str(getattr(django_settings, 'DATA_DIR', None) or os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
-                "data"
-            ))
+
+            data_dir = str(
+                getattr(django_settings, "DATA_DIR", None)
+                or os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+                    "data",
+                )
+            )
             base_path = os.path.join(data_dir, "research")
 
         self.base_path = Path(base_path)
@@ -73,9 +86,7 @@ class ResearchFileSystem:
         # 检查 .. 组件
         # 如果路径中包含 ..，resolve 后的路径会"跳出"原始路径
         # 对于相对路径，检查 resolve 后是否还在 workspace 内
-        if ".." in path or "%2e" in path.lower() or "%2E" in path:
-            return True
-        return False
+        return bool(".." in path or "%2e" in path.lower() or "%2E" in path)
 
     def write_file(self, relative_path: str, content: str, subdirectory: str = "notes", **kwargs) -> str:
         if self._is_path_traversal(relative_path):
@@ -92,7 +103,7 @@ class ResearchFileSystem:
                 return f"成功写入文件: {relative_path}"
             except Exception as e:
                 error_msg = f"写入文件失败: {e!s}"
-                logger.error(error_msg)
+                logger.exception(error_msg)
                 return error_msg
 
         # 相对路径使用研究文件系统
@@ -113,7 +124,7 @@ class ResearchFileSystem:
             return f"成功写入文件: {relative_path}"
         except Exception as e:
             error_msg = f"写入文件失败: {e!s}"
-            logger.error(error_msg)
+            logger.exception(error_msg)
             return error_msg
 
     def read_file(self, relative_path: str, subdirectory: str = "notes") -> str:
@@ -150,7 +161,7 @@ class ResearchFileSystem:
             return f"错误：文件不存在: {Path(relative_path).name}"
         except Exception as e:
             error_msg = f"读取文件失败: {e!s}"
-            logger.error(error_msg)
+            logger.exception(error_msg)
             return error_msg
 
     def list_files(self, subdirectory: str = "notes", pattern: str = "*") -> str:
@@ -169,7 +180,7 @@ class ResearchFileSystem:
             for f in files:
                 if f.is_file():
                     size = f.stat().st_size
-                    mtime = datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+                    mtime = datetime.fromtimestamp(f.stat().st_mtime, tz=UTC).astimezone().strftime("%Y-%m-%d %H:%M")
                     file_list.append(f"  - {f.name} ({size} bytes, {mtime})")
 
             return "文件列表:\n" + "\n".join(file_list)
@@ -195,7 +206,7 @@ class ResearchFileSystem:
                 return f"文件不存在: {Path(relative_path).name}"
         except Exception as e:
             error_msg = f"删除文件失败: {e!s}"
-            logger.error(error_msg)
+            logger.exception(error_msg)
             return error_msg
 
     def search_files(self, keyword: str, subdirectory: str = "notes") -> str:
@@ -216,6 +227,8 @@ class ResearchFileSystem:
                                 rel_path = file_path.relative_to(self.workspace_path)
                                 matches.append(f"  - {rel_path}")
                     except Exception:
+                        # 文件不可读（权限/编码/不存在）时跳过，继续搜索其他文件
+                        logger.debug("搜索时跳过无法读取的文件: %s", file_path)
                         continue
 
             if matches:
@@ -237,7 +250,9 @@ def get_filesystem(thread_id: str) -> ResearchFileSystem:
 
 
 class FsWriteFileInput(BaseModel):
-    relative_path: str = Field(description="文件路径，支持相对路径（如'plan.md'、'notes/intro.md'）和绝对路径（如'D:\\docs\\report.md'）")
+    relative_path: str = Field(
+        description="文件路径，支持相对路径（如'plan.md'、'notes/intro.md'）和绝对路径（如'D:\\docs\\report.md'）"
+    )
     content: str = Field(description="要写入的内容")
     thread_id: str = Field(description="线程ID，用于隔离不同研究任务的文件（必填）")
 
@@ -266,6 +281,7 @@ class FsWriteFileTool(AsyncToolMixin, BaseTool):
     - 相对路径写入无需审批
     工具层不参与审批判断。
     """
+
     name: str = "fs_write_file"
     version: str = TOOL_VERSION
     metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "file"})
@@ -312,7 +328,7 @@ class FsReadFileTool(AsyncToolMixin, BaseTool):
         fs = get_filesystem(thread_id)
         result = fs.read_file(relative_path)
         # 判断是否为错误结果
-        is_error = result.startswith("错误") or result.startswith("读取文件失败")
+        is_error = result.startswith(("错误", "读取文件失败"))
         return StandardToolResult(
             content=result,
             status=ToolStatus.ERROR if is_error else ToolStatus.SUCCESS,

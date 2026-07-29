@@ -7,8 +7,8 @@ from typing import Literal
 from langgraph.graph import END, StateGraph
 
 from Django_xm.apps.ai_engine.config import settings
-from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.ai_engine.services.checkpointer_factory import get_checkpointer
+from Django_xm.apps.core.config import get_logger
 
 from ..nodes import feedback_node, grading_node, planner_node, quiz_generator_node, retrieval_node
 from .resilience import astream_with_resilience, invoke_with_resilience
@@ -36,7 +36,7 @@ def should_continue(state: StudyFlowState) -> Literal["retry", "end"]:
 
 
 def create_safe_study_flow_graph(
-    checkpointer_path: str = None,
+    checkpointer_path: str | None = None,
     enable_human_review: bool = True,
     strict_mode: bool = False,
 ):
@@ -125,7 +125,7 @@ def create_safe_study_flow_graph(
         {
             "retry": "quiz_generator",
             "end": END,
-        }
+        },
     )
 
     logger.info("[Safe Study Flow] 编译工作流...")
@@ -147,7 +147,7 @@ def create_safe_study_flow_graph(
 def create_default_safe_flow():
     import os
 
-    checkpoint_dir = os.path.join(getattr(settings, 'DATA_DIR', '.'), "checkpoints", "safe_study_flow")
+    checkpoint_dir = os.path.join(getattr(settings, "DATA_DIR", "."), "checkpoints", "safe_study_flow")
     os.makedirs(checkpoint_dir, exist_ok=True)
     checkpoint_path = os.path.join(checkpoint_dir, "safe_study_flow.db")
 
@@ -196,8 +196,8 @@ def run_safe_study_flow(
         result = invoke_with_resilience(graph, initial_state, config)
         logger.info("[Safe Study Flow] ✅ 工作流执行完成")
         return result
-    except Exception as e:
-        logger.error(f"[Safe Study Flow] ❌ 工作流执行失败: {e}")
+    except Exception:
+        logger.exception("[Safe Study Flow] ❌ 工作流执行失败")
         raise
 
 
@@ -240,6 +240,6 @@ async def stream_safe_study_flow(
             yield chunk
 
         logger.info("[Safe Study Flow] ✅ 流式执行完成")
-    except Exception as e:
-        logger.error(f"[Safe Study Flow] ❌ 流式执行失败: {e}")
+    except Exception:
+        logger.exception("[Safe Study Flow] ❌ 流式执行失败")
         raise

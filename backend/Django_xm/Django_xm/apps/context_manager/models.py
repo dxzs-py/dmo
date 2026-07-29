@@ -29,19 +29,20 @@ class ContextRule(BaseModel):
     继承 BaseModel 获得 created_at/updated_at/is_deleted/deleted_at 字段
     及软删除管理器（objects 过滤 is_deleted=False，all_objects 返回全部）。
     """
+
     SCOPE_CHOICES = [
-        ('organization', '组织策略'),
-        ('user_global', '用户全局规则'),
-        ('project', '项目规则'),
-        ('local', '本地覆盖'),
+        ("organization", "组织策略"),
+        ("user_global", "用户全局规则"),
+        ("project", "项目规则"),
+        ("local", "本地覆盖"),
     ]
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name='context_rules',
+        related_name="context_rules",
     )
-    scope = models.CharField(max_length=20, choices=SCOPE_CHOICES, default='user_global')
-    project_id = models.CharField(max_length=100, blank=True, default='')
+    scope = models.CharField(max_length=20, choices=SCOPE_CHOICES, default="user_global")
+    project_id = models.CharField(max_length=100, blank=True, default="")
     name = models.CharField(max_length=200)
     content = models.TextField()
     path_patterns = models.JSONField(
@@ -56,11 +57,11 @@ class ContextRule(BaseModel):
     is_active = models.BooleanField(default=True)
 
     class Meta:
-        db_table = 'context_rule'
-        ordering = ['-priority', '-updated_at']
+        db_table = "context_rule"
+        ordering = ["-priority", "-updated_at"]
         indexes = [
-            models.Index(fields=['user', 'scope', 'is_active'], name='idx_ctx_rule_user_scope'),
-            models.Index(fields=['user', 'project_id'], name='idx_ctx_rule_project'),
+            models.Index(fields=["user", "scope", "is_active"], name="idx_ctx_rule_user_scope"),
+            models.Index(fields=["user", "project_id"], name="idx_ctx_rule_project"),
         ]
 
     def __str__(self):
@@ -83,31 +84,32 @@ class AutoMemory(BaseModel):
     继承 BaseModel 获得 created_at/updated_at/is_deleted/deleted_at 字段
     及软删除管理器（objects 过滤 is_deleted=False，all_objects 返回全部）。
     """
+
     SOURCE_CHOICES = [
-        ('build_command', '构建命令'),
-        ('debug_insight', '调试洞察'),
-        ('preference', '用户偏好'),
-        ('pattern', '使用模式'),
-        ('other', '其他'),
+        ("build_command", "构建命令"),
+        ("debug_insight", "调试洞察"),
+        ("preference", "用户偏好"),
+        ("pattern", "使用模式"),
+        ("other", "其他"),
     ]
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name='auto_memories',
+        related_name="auto_memories",
     )
-    project_id = models.CharField(max_length=100, blank=True, default='')
+    project_id = models.CharField(max_length=100, blank=True, default="")
     content = models.TextField()
-    source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default='other')
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default="other")
     relevance_tags = models.JSONField(default=list, blank=True)
     access_count = models.IntegerField(default=0)
     last_accessed_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'auto_memory'
-        ordering = ['-last_accessed_at']
+        db_table = "auto_memory"
+        ordering = ["-last_accessed_at"]
         indexes = [
-            models.Index(fields=['user', 'project_id'], name='idx_auto_mem_project'),
-            models.Index(fields=['user', 'source'], name='idx_auto_mem_source'),
+            models.Index(fields=["user", "project_id"], name="idx_auto_mem_project"),
+            models.Index(fields=["user", "source"], name="idx_auto_mem_source"),
         ]
 
     def __str__(self):
@@ -132,35 +134,36 @@ class PromptCache(BaseModel):
     继承 BaseModel 获得 created_at/updated_at/is_deleted/deleted_at 字段
     及软删除管理器（objects 过滤 is_deleted=False，all_objects 返回全部）。
     """
+
     CACHE_TYPE_CHOICES = [
-        ('system_prefix', '系统前缀缓存'),
-        ('context_template', '上下文模板'),
-        ('user_template', '用户模板'),
+        ("system_prefix", "系统前缀缓存"),
+        ("context_template", "上下文模板"),
+        ("user_template", "用户模板"),
     ]
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name='prompt_caches',
+        related_name="prompt_caches",
     )
     name = models.CharField(max_length=200)
-    cache_type = models.CharField(max_length=20, choices=CACHE_TYPE_CHOICES, default='user_template')
+    cache_type = models.CharField(max_length=20, choices=CACHE_TYPE_CHOICES, default="user_template")
     content = models.TextField()
     variables = models.JSONField(
         default=list,
         blank=True,
         help_text="模板变量定义 [{name, description, default}]",
     )
-    description = models.TextField(blank=True, default='')
+    description = models.TextField(blank=True, default="")
     is_active = models.BooleanField(default=True)
     sort_order = models.IntegerField(default=0)
     token_count = models.IntegerField(default=0)
     usage_count = models.IntegerField(default=0)
 
     class Meta:
-        db_table = 'prompt_cache'
-        ordering = ['sort_order', '-updated_at']
+        db_table = "prompt_cache"
+        ordering = ["sort_order", "-updated_at"]
         indexes = [
-            models.Index(fields=['user', 'cache_type', 'is_active'], name='idx_prompt_cache_type'),
+            models.Index(fields=["user", "cache_type", "is_active"], name="idx_prompt_cache_type"),
         ]
 
     def __str__(self):

@@ -31,7 +31,10 @@ from langchain_text_splitters import (
 )
 
 try:
-    from langchain_text_splitters import SemanticChunker
+    from langchain_text_splitters import (
+        SemanticChunker,  # type: ignore[attr-defined]  # optional dep, may not exist in installed version
+    )
+
     SEMANTIC_CHUNKER_AVAILABLE = True
 except ImportError:
     SEMANTIC_CHUNKER_AVAILABLE = False
@@ -51,13 +54,10 @@ def get_text_splitter(
     chunk_overlap: int | None = None,
     **kwargs,
 ):
-    chunk_size = chunk_size or getattr(settings, 'chunk_size', 1000)
-    chunk_overlap = chunk_overlap or getattr(settings, 'chunk_overlap', 200)
+    chunk_size: int = chunk_size or getattr(settings, "chunk_size", 1000)
+    chunk_overlap: int = chunk_overlap or getattr(settings, "chunk_overlap", 200)
 
-    logger.debug(
-        f"创建文本分块器: type={splitter_type}, "
-        f"chunk_size={chunk_size}, chunk_overlap={chunk_overlap}"
-    )
+    logger.debug(f"创建文本分块器: type={splitter_type}, chunk_size={chunk_size}, chunk_overlap={chunk_overlap}")
 
     if splitter_type == "semantic":
         return _get_semantic_splitter(chunk_size, chunk_overlap, **kwargs)
@@ -93,8 +93,7 @@ def get_text_splitter(
         )
     else:
         raise ValueError(
-            f"不支持的分块器类型: {splitter_type}。"
-            f"支持的类型: recursive, character, markdown, token, semantic"
+            f"不支持的分块器类型: {splitter_type}。支持的类型: recursive, character, markdown, token, semantic"
         )
 
 
@@ -120,9 +119,7 @@ def _get_semantic_splitter(
 
         embeddings = get_embeddings()
     except Exception as e:
-        logger.warning(
-            f"获取嵌入模型失败: {e}，回退到 RecursiveCharacterTextSplitter"
-        )
+        logger.warning(f"获取嵌入模型失败: {e}，回退到 RecursiveCharacterTextSplitter")
         return RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
@@ -152,7 +149,7 @@ def _extract_markdown_heading(text: str) -> str | None:
 
     返回文本中最后一个标题行，如 "# 引言" 或 "## 1.1 概述"
     """
-    heading_pattern = re.compile(r'^(#{1,3})\s+(.+)$', re.MULTILINE)
+    heading_pattern = re.compile(r"^(#{1,3})\s+(.+)$", re.MULTILINE)
     matches = list(heading_pattern.finditer(text))
     if matches:
         last_match = matches[-1]
@@ -182,9 +179,15 @@ def _determine_doc_type(doc: Document) -> str:
     if source:
         ext = "." + source.rsplit(".", 1)[-1].lower() if "." in source else ""
         ext_map = {
-            ".md": "markdown", ".mdx": "markdown", ".pdf": "pdf",
-            ".html": "html", ".htm": "html", ".txt": "text",
-            ".docx": "docx", ".json": "json", ".csv": "csv",
+            ".md": "markdown",
+            ".mdx": "markdown",
+            ".pdf": "pdf",
+            ".html": "html",
+            ".htm": "html",
+            ".txt": "text",
+            ".docx": "docx",
+            ".json": "json",
+            ".csv": "csv",
         }
         if ext in ext_map:
             return ext_map[ext]
@@ -280,8 +283,8 @@ def split_documents(
 
         return chunks
 
-    except Exception as e:
-        logger.error(f"❌ 分块失败: {e}")
+    except Exception:
+        logger.exception("❌ 分块失败")
         raise
 
 
@@ -317,8 +320,8 @@ def split_text(
 
         return chunks
 
-    except Exception as e:
-        logger.error(f"❌ 分块失败: {e}")
+    except Exception:
+        logger.exception("❌ 分块失败")
         raise
 
 
@@ -335,16 +338,11 @@ def get_optimal_chunk_size(
     }
 
     if document_type not in recommendations:
-        logger.warning(
-            f"未知的文档类型: {document_type}，使用默认参数"
-        )
+        logger.warning(f"未知的文档类型: {document_type}，使用默认参数")
         return recommendations["general"]
 
     chunk_size, overlap = recommendations[document_type]
-    logger.info(
-        f"📊 推荐的分块参数 ({document_type}): "
-        f"chunk_size={chunk_size}, overlap={overlap}"
-    )
+    logger.info(f"📊 推荐的分块参数 ({document_type}): chunk_size={chunk_size}, overlap={overlap}")
 
     return chunk_size, overlap
 

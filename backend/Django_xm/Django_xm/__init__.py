@@ -13,6 +13,7 @@ warnings.filterwarnings(
 # 同时过滤 LangChain 自定义的 PendingDeprecationWarning 子类
 try:
     from langchain_core._api.deprecation import LangChainPendingDeprecationWarning
+
     warnings.filterwarnings(
         "ignore",
         message=".*allowed_objects.*",
@@ -23,6 +24,7 @@ except ImportError:
 
 try:
     from .celery import app as celery_app
-    __all__ = ('celery_app',)
+
+    __all__ = ("celery_app",)
 except ImportError:
     __all__ = ()

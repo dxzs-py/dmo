@@ -26,7 +26,7 @@ index_updated = Signal()
 ai_data_cleanup_needed = Signal()
 
 
-@receiver(post_save, sender='users.User')
+@receiver(post_save, sender="users.User")
 def user_post_save(sender, instance, created, **kwargs):
     if created:
         logger.info(f"新用户创建: {instance.username} (id={instance.id})")
@@ -34,7 +34,7 @@ def user_post_save(sender, instance, created, **kwargs):
         logger.debug(f"用户更新: {instance.username} (id={instance.id})")
 
 
-@receiver(post_delete, sender='users.User')
+@receiver(post_delete, sender="users.User")
 def user_post_delete(sender, instance, **kwargs):
     logger.info(f"用户删除: {instance.username} (id={instance.id})")
 
@@ -47,13 +47,13 @@ def user_post_delete(sender, instance, **kwargs):
 
 
 try:
-    CeleryTaskRecord = apps.get_model('core', 'CeleryTaskRecord')
+    CeleryTaskRecord = apps.get_model("core", "CeleryTaskRecord")
 
     @receiver(post_save, sender=CeleryTaskRecord)
     def celery_task_record_post_save(sender, instance, created, **kwargs):
         if created:
             logger.info(f"Celery 任务记录创建: {instance.celery_task_id} ({instance.task_name})")
-        elif instance.status in ('success', 'failure', 'revoked'):
+        elif instance.status in ("success", "failure", "revoked"):
             logger.info(
                 f"Celery 任务完成: {instance.celery_task_id} "
                 f"status={instance.status} runtime={instance.runtime_seconds}s"

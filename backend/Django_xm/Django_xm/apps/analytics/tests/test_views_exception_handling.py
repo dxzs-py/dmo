@@ -26,9 +26,7 @@ class _BaseViewTest(APITestCase):
 
     def setUp(self):
         super().setUp()
-        self.user = User.objects.create_user(
-            username="tester", password="test-pwd-123", email="t@example.com"
-        )
+        self.user = User.objects.create_user(username="tester", password="test-pwd-123", email="t@example.com")
         self.client.force_authenticate(user=self.user)
 
 
@@ -75,9 +73,7 @@ class PageViewTrackViewExceptionHandlingTests(_BaseViewTest):
 
     def test_page_view_success(self):
         """正常路径返回 200"""
-        with patch(
-            "Django_xm.apps.analytics.views.AnalyticsService.record_page_view"
-        ) as mock_record:
+        with patch("Django_xm.apps.analytics.views.AnalyticsService.record_page_view") as mock_record:
             response = self.client.post(
                 "/api/v1/analytics/track/page-view/",
                 {"path": "/home", "title": "首页"},
@@ -116,9 +112,7 @@ class FeatureUseTrackViewExceptionHandlingTests(_BaseViewTest):
 
     def test_feature_use_success(self):
         """正常路径返回 200"""
-        with patch(
-            "Django_xm.apps.analytics.views.AnalyticsService.record_feature_usage"
-        ) as mock_record:
+        with patch("Django_xm.apps.analytics.views.AnalyticsService.record_feature_usage") as mock_record:
             response = self.client.post(
                 "/api/v1/analytics/track/feature-use/",
                 {"feature": "export", "metadata": {"from": "menu"}},

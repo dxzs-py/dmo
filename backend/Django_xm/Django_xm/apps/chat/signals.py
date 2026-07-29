@@ -25,12 +25,14 @@ def on_session_save(sender, instance, created, **kwargs):
 
     try:
         from Django_xm.apps.cache_manager.services.secure_session_cache import SecureSessionCacheService
+
         SecureSessionCacheService.invalidate_all_user_sessions(instance.user_id)
     except Exception as e:
         logger.warning(f"会话安全缓存失效失败: {e}")
 
     try:
         from Django_xm.apps.cache_manager.services.cache_service import CacheInvalidationStrategy
+
         CacheInvalidationStrategy.on_session_updated(str(instance.session_id))
     except Exception as e:
         logger.warning(f"会话AI缓存失效失败: {e}")
@@ -42,6 +44,7 @@ def on_session_delete(sender, instance, **kwargs):
 
     # 通过自定义信号通知 ai_engine 清理 checkpoint/Store 数据
     from Django_xm.apps.core.signals import ai_data_cleanup_needed
+
     ai_data_cleanup_needed.send(
         sender=sender,
         user_id=instance.user_id,
@@ -50,12 +53,14 @@ def on_session_delete(sender, instance, **kwargs):
 
     try:
         from Django_xm.apps.cache_manager.services.secure_session_cache import SecureSessionCacheService
+
         SecureSessionCacheService.invalidate_all_user_sessions(instance.user_id)
-    except Exception as e:
-        logger.error(f"会话安全缓存失效失败: {e}")
+    except Exception:
+        logger.exception("会话安全缓存失效失败")
 
     try:
         from Django_xm.apps.cache_manager.services.cache_service import CacheInvalidationStrategy
+
         CacheInvalidationStrategy.on_session_deleted(str(instance.session_id))
-    except Exception as e:
-        logger.error(f"会话AI缓存失效失败: {e}")
+    except Exception:
+        logger.exception("会话AI缓存失效失败")

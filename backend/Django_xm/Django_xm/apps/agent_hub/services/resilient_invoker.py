@@ -110,16 +110,13 @@ class CircuitBreaker:
                 # HALF_OPEN 状态下任何失败都立即转 OPEN
                 self._state = CircuitState.OPEN
                 self._opened_at = time.monotonic()
-                logger.info(
-                    f"CircuitBreaker: HALF_OPEN -> OPEN（试探失败，冷却 {self.cooldown}s）"
-                )
+                logger.info(f"CircuitBreaker: HALF_OPEN -> OPEN（试探失败，冷却 {self.cooldown}s）")
                 return
             if self._consecutive_failures >= self.threshold:
                 self._state = CircuitState.OPEN
                 self._opened_at = time.monotonic()
                 logger.info(
-                    f"CircuitBreaker: CLOSED -> OPEN（连续失败 {self._consecutive_failures} 次，"
-                    f"冷却 {self.cooldown}s）"
+                    f"CircuitBreaker: CLOSED -> OPEN（连续失败 {self._consecutive_failures} 次，冷却 {self.cooldown}s）"
                 )
 
     def reset(self) -> None:
@@ -315,9 +312,7 @@ class ResilientInvoker:
         for idx, model in enumerate(self._models):
             breaker = self._breakers[idx]
             if not breaker.is_available():
-                logger.debug(
-                    f"模型 {self._get_model_label(model)} CircuitBreaker OPEN，跳过"
-                )
+                logger.debug(f"模型 {self._get_model_label(model)} CircuitBreaker OPEN，跳过")
                 errors.append(f"{self._get_model_label(model)}: CB OPEN")
                 continue
 
@@ -330,9 +325,7 @@ class ResilientInvoker:
                     result = method_fn(input, config=config, **kwargs)
                     breaker.record_success()
                     if attempt > 1:
-                        logger.info(
-                            f"模型 {self._get_model_label(model)} 第 {attempt} 次重试成功"
-                        )
+                        logger.info(f"模型 {self._get_model_label(model)} 第 {attempt} 次重试成功")
                     return result
                 except Exception as e:
                     last_error = e
@@ -341,8 +334,7 @@ class ResilientInvoker:
                     if action == _ERROR_ACTION_INPUT:
                         # 输入错误：不降级，直接抛出
                         logger.warning(
-                            f"模型 {self._get_model_label(model)} 遇到输入错误，不降级: "
-                            f"{classified.error_code}"
+                            f"模型 {self._get_model_label(model)} 遇到输入错误，不降级: {classified.error_code}"
                         )
                         raise
 
@@ -350,8 +342,7 @@ class ResilientInvoker:
                         # 永久性错误：不重试，记录失败，切换
                         breaker.record_failure()
                         logger.warning(
-                            f"模型 {self._get_model_label(model)} 遇到永久性错误，切换: "
-                            f"{classified.error_code}"
+                            f"模型 {self._get_model_label(model)} 遇到永久性错误，切换: {classified.error_code}"
                         )
                         break  # 退出重试循环，切换下一个模型
 
@@ -371,14 +362,9 @@ class ResilientInvoker:
                         )
 
             if last_error is not None:
-                errors.append(
-                    f"{self._get_model_label(model)}: "
-                    f"{type(last_error).__name__}: {last_error}"
-                )
+                errors.append(f"{self._get_model_label(model)}: {type(last_error).__name__}: {last_error}")
 
-        raise RuntimeError(
-            "所有模型调用均失败。已尝试: " + "; ".join(errors)
-        )
+        raise RuntimeError("所有模型调用均失败。已尝试: " + "; ".join(errors))
 
     def stream(
         self,
@@ -407,9 +393,7 @@ class ResilientInvoker:
         for idx, model in enumerate(self._models):
             breaker = self._breakers[idx]
             if not breaker.is_available():
-                logger.debug(
-                    f"模型 {self._get_model_label(model)} CircuitBreaker OPEN，跳过"
-                )
+                logger.debug(f"模型 {self._get_model_label(model)} CircuitBreaker OPEN，跳过")
                 errors.append(f"{self._get_model_label(model)}: CB OPEN")
                 continue
 
@@ -430,9 +414,7 @@ class ResilientInvoker:
                     # 成功获取第一个 chunk，后续不再重试
                     breaker.record_success()
                     if attempt > 1:
-                        logger.info(
-                            f"模型 {self._get_model_label(model)} 第 {attempt} 次重试成功"
-                        )
+                        logger.info(f"模型 {self._get_model_label(model)} 第 {attempt} 次重试成功")
                     yield first_chunk
                     yield from iterator
                     return
@@ -442,16 +424,14 @@ class ResilientInvoker:
 
                     if action == _ERROR_ACTION_INPUT:
                         logger.warning(
-                            f"模型 {self._get_model_label(model)} 流式遇到输入错误，不降级: "
-                            f"{classified.error_code}"
+                            f"模型 {self._get_model_label(model)} 流式遇到输入错误，不降级: {classified.error_code}"
                         )
                         raise
 
                     if action == _ERROR_ACTION_PERMANENT:
                         breaker.record_failure()
                         logger.warning(
-                            f"模型 {self._get_model_label(model)} 流式遇到永久性错误，切换: "
-                            f"{classified.error_code}"
+                            f"模型 {self._get_model_label(model)} 流式遇到永久性错误，切换: {classified.error_code}"
                         )
                         break
 
@@ -470,14 +450,9 @@ class ResilientInvoker:
                         )
 
             if last_error is not None:
-                errors.append(
-                    f"{self._get_model_label(model)}: "
-                    f"{type(last_error).__name__}: {last_error}"
-                )
+                errors.append(f"{self._get_model_label(model)}: {type(last_error).__name__}: {last_error}")
 
-        raise RuntimeError(
-            "所有模型流式调用均失败。已尝试: " + "; ".join(errors)
-        )
+        raise RuntimeError("所有模型流式调用均失败。已尝试: " + "; ".join(errors))
 
     def generate(
         self,
@@ -507,9 +482,7 @@ class ResilientInvoker:
         for idx, model in enumerate(self._models):
             breaker = self._breakers[idx]
             if not breaker.is_available():
-                logger.debug(
-                    f"模型 {self._get_model_label(model)} CircuitBreaker OPEN，跳过"
-                )
+                logger.debug(f"模型 {self._get_model_label(model)} CircuitBreaker OPEN，跳过")
                 errors.append(f"{self._get_model_label(model)}: CB OPEN")
                 continue
 
@@ -521,9 +494,7 @@ class ResilientInvoker:
                     result = model._generate(messages, stop=stop, **kwargs)
                     breaker.record_success()
                     if attempt > 1:
-                        logger.info(
-                            f"模型 {self._get_model_label(model)} 第 {attempt} 次重试成功"
-                        )
+                        logger.info(f"模型 {self._get_model_label(model)} 第 {attempt} 次重试成功")
                     return result
                 except Exception as e:
                     last_error = e
@@ -559,14 +530,9 @@ class ResilientInvoker:
                         )
 
             if last_error is not None:
-                errors.append(
-                    f"{self._get_model_label(model)}: "
-                    f"{type(last_error).__name__}: {last_error}"
-                )
+                errors.append(f"{self._get_model_label(model)}: {type(last_error).__name__}: {last_error}")
 
-        raise RuntimeError(
-            "所有模型 generate 调用均失败。已尝试: " + "; ".join(errors)
-        )
+        raise RuntimeError("所有模型 generate 调用均失败。已尝试: " + "; ".join(errors))
 
     # ----- 异步接口 -----
 
@@ -598,9 +564,7 @@ class ResilientInvoker:
         for idx, model in enumerate(self._models):
             breaker = self._breakers[idx]
             if not breaker.is_available():
-                logger.debug(
-                    f"模型 {self._get_model_label(model)} CircuitBreaker OPEN，跳过"
-                )
+                logger.debug(f"模型 {self._get_model_label(model)} CircuitBreaker OPEN，跳过")
                 errors.append(f"{self._get_model_label(model)}: CB OPEN")
                 continue
 
@@ -613,9 +577,7 @@ class ResilientInvoker:
                     result = await method_fn(input, config=config, **kwargs)
                     breaker.record_success()
                     if attempt > 1:
-                        logger.info(
-                            f"模型 {self._get_model_label(model)} 第 {attempt} 次异步重试成功"
-                        )
+                        logger.info(f"模型 {self._get_model_label(model)} 第 {attempt} 次异步重试成功")
                     return result
                 except Exception as e:
                     last_error = e
@@ -623,16 +585,14 @@ class ResilientInvoker:
 
                     if action == _ERROR_ACTION_INPUT:
                         logger.warning(
-                            f"模型 {self._get_model_label(model)} 异步遇到输入错误，不降级: "
-                            f"{classified.error_code}"
+                            f"模型 {self._get_model_label(model)} 异步遇到输入错误，不降级: {classified.error_code}"
                         )
                         raise
 
                     if action == _ERROR_ACTION_PERMANENT:
                         breaker.record_failure()
                         logger.warning(
-                            f"模型 {self._get_model_label(model)} 异步遇到永久性错误，切换: "
-                            f"{classified.error_code}"
+                            f"模型 {self._get_model_label(model)} 异步遇到永久性错误，切换: {classified.error_code}"
                         )
                         break
 
@@ -651,14 +611,9 @@ class ResilientInvoker:
                         )
 
             if last_error is not None:
-                errors.append(
-                    f"{self._get_model_label(model)}: "
-                    f"{type(last_error).__name__}: {last_error}"
-                )
+                errors.append(f"{self._get_model_label(model)}: {type(last_error).__name__}: {last_error}")
 
-        raise RuntimeError(
-            "所有模型异步调用均失败。已尝试: " + "; ".join(errors)
-        )
+        raise RuntimeError("所有模型异步调用均失败。已尝试: " + "; ".join(errors))
 
     async def astream(
         self,
@@ -687,9 +642,7 @@ class ResilientInvoker:
         for idx, model in enumerate(self._models):
             breaker = self._breakers[idx]
             if not breaker.is_available():
-                logger.debug(
-                    f"模型 {self._get_model_label(model)} CircuitBreaker OPEN，跳过"
-                )
+                logger.debug(f"模型 {self._get_model_label(model)} CircuitBreaker OPEN，跳过")
                 errors.append(f"{self._get_model_label(model)}: CB OPEN")
                 continue
 
@@ -707,9 +660,7 @@ class ResilientInvoker:
 
                     breaker.record_success()
                     if attempt > 1:
-                        logger.info(
-                            f"模型 {self._get_model_label(model)} 第 {attempt} 次异步重试成功"
-                        )
+                        logger.info(f"模型 {self._get_model_label(model)} 第 {attempt} 次异步重试成功")
                     yield first_chunk
                     async for chunk in iterator:
                         yield chunk
@@ -720,16 +671,14 @@ class ResilientInvoker:
 
                     if action == _ERROR_ACTION_INPUT:
                         logger.warning(
-                            f"模型 {self._get_model_label(model)} 异步流式遇到输入错误，不降级: "
-                            f"{classified.error_code}"
+                            f"模型 {self._get_model_label(model)} 异步流式遇到输入错误，不降级: {classified.error_code}"
                         )
                         raise
 
                     if action == _ERROR_ACTION_PERMANENT:
                         breaker.record_failure()
                         logger.warning(
-                            f"模型 {self._get_model_label(model)} 异步流式遇到永久性错误，切换: "
-                            f"{classified.error_code}"
+                            f"模型 {self._get_model_label(model)} 异步流式遇到永久性错误，切换: {classified.error_code}"
                         )
                         break
 
@@ -748,14 +697,9 @@ class ResilientInvoker:
                         )
 
             if last_error is not None:
-                errors.append(
-                    f"{self._get_model_label(model)}: "
-                    f"{type(last_error).__name__}: {last_error}"
-                )
+                errors.append(f"{self._get_model_label(model)}: {type(last_error).__name__}: {last_error}")
 
-        raise RuntimeError(
-            "所有模型异步流式调用均失败。已尝试: " + "; ".join(errors)
-        )
+        raise RuntimeError("所有模型异步流式调用均失败。已尝试: " + "; ".join(errors))
 
     async def agenerate(
         self,
@@ -785,9 +729,7 @@ class ResilientInvoker:
         for idx, model in enumerate(self._models):
             breaker = self._breakers[idx]
             if not breaker.is_available():
-                logger.debug(
-                    f"模型 {self._get_model_label(model)} CircuitBreaker OPEN，跳过"
-                )
+                logger.debug(f"模型 {self._get_model_label(model)} CircuitBreaker OPEN，跳过")
                 errors.append(f"{self._get_model_label(model)}: CB OPEN")
                 continue
 
@@ -799,9 +741,7 @@ class ResilientInvoker:
                     result = await model._agenerate(messages, stop=stop, **kwargs)
                     breaker.record_success()
                     if attempt > 1:
-                        logger.info(
-                            f"模型 {self._get_model_label(model)} 第 {attempt} 次异步重试成功"
-                        )
+                        logger.info(f"模型 {self._get_model_label(model)} 第 {attempt} 次异步重试成功")
                     return result
                 except Exception as e:
                     last_error = e
@@ -837,14 +777,9 @@ class ResilientInvoker:
                         )
 
             if last_error is not None:
-                errors.append(
-                    f"{self._get_model_label(model)}: "
-                    f"{type(last_error).__name__}: {last_error}"
-                )
+                errors.append(f"{self._get_model_label(model)}: {type(last_error).__name__}: {last_error}")
 
-        raise RuntimeError(
-            "所有模型 agenerate 调用均失败。已尝试: " + "; ".join(errors)
-        )
+        raise RuntimeError("所有模型 agenerate 调用均失败。已尝试: " + "; ".join(errors))
 
 
 # ============================================================================
@@ -895,10 +830,7 @@ class ResilientModel(BaseChatModel):
     def _identifying_params(self) -> dict[str, Any]:
         """用于缓存键的标识参数"""
         return {
-            "models": [
-                getattr(m, "_identifying_params", {"_llm_type": m._llm_type})
-                for m in self._invoker.models
-            ],
+            "models": [getattr(m, "_identifying_params", {"_llm_type": m._llm_type}) for m in self._invoker.models],
             "resilience_config": {
                 "max_retries": self._invoker.config.max_retries,
                 "circuit_breaker_threshold": self._invoker.config.circuit_breaker_threshold,

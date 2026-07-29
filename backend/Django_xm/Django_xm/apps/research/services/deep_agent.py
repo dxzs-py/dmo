@@ -13,9 +13,9 @@
 import json
 import warnings
 from collections.abc import Sequence
-from datetime import datetime
 from typing import Annotated, Any, Literal, TypedDict
 
+from django.utils import timezone
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.tools import BaseTool
@@ -45,9 +45,23 @@ class ResearchState(TypedDict):
 
 
 DEEP_RESEARCH_KEYWORDS = [
-    "深度", "研究", "趋势", "对比", "分析", "报告", "总结",
-    "未来", "影响", "市场", "发展", "机制", "原理",
-    "architecture", "best practice", "最佳实践", "详解",
+    "深度",
+    "研究",
+    "趋势",
+    "对比",
+    "分析",
+    "报告",
+    "总结",
+    "未来",
+    "影响",
+    "市场",
+    "发展",
+    "机制",
+    "原理",
+    "architecture",
+    "best practice",
+    "最佳实践",
+    "详解",
 ]
 
 
@@ -56,9 +70,7 @@ def should_use_deep_research(message: str) -> bool:
         return False
     if any(keyword in message for keyword in DEEP_RESEARCH_KEYWORDS):
         return True
-    if len(message.strip()) >= 80:
-        return True
-    return False
+    return len(message.strip()) >= 80
 
 
 def _route_after_planner(
@@ -152,7 +164,6 @@ def _route_after_error(
 
 
 class DeepResearchAgent:
-
     def __init__(
         self,
         thread_id: str,
@@ -175,7 +186,9 @@ class DeepResearchAgent:
         research_context: str = "",
         **kwargs,
     ):
-        warnings.warn("DeepResearchAgent 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2)
+        warnings.warn(
+            "DeepResearchAgent 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2
+        )
         self.thread_id = thread_id
         self.enable_web_search = enable_web_search
         self.enable_doc_analysis = enable_doc_analysis
@@ -204,6 +217,7 @@ class DeepResearchAgent:
         logger.info(f"  深度思考: {enable_deep_thinking}")
 
         from Django_xm.apps.tools.langchain.filesystem import get_filesystem
+
         self.filesystem = get_filesystem(thread_id)
 
         self._init_subagents(retriever_tool)
@@ -216,7 +230,8 @@ class DeepResearchAgent:
 
         if self.enable_web_search:
             self.web_researcher = create_web_researcher(
-                user_id=self.user_id, session_id=self.session_id,
+                user_id=self.user_id,
+                session_id=self.session_id,
                 middleware=self.middleware if self.middleware else None,
                 enable_guardrails=self.enable_guardrails,
                 extra_tools=self.extra_tools if self.extra_tools else None,
@@ -228,7 +243,8 @@ class DeepResearchAgent:
         if self.enable_doc_analysis:
             self.doc_analyst = create_doc_analyst(
                 retriever_tool=retriever_tool,
-                user_id=self.user_id, session_id=self.session_id,
+                user_id=self.user_id,
+                session_id=self.session_id,
                 middleware=self.middleware if self.middleware else None,
                 enable_guardrails=self.enable_guardrails,
                 extra_tools=self.extra_tools if self.extra_tools else None,
@@ -238,7 +254,8 @@ class DeepResearchAgent:
             self.doc_analyst = None
 
         self.report_writer = create_report_writer(
-            user_id=self.user_id, session_id=self.session_id,
+            user_id=self.user_id,
+            session_id=self.session_id,
             middleware=self.middleware if self.middleware else None,
             enable_guardrails=self.enable_guardrails,
         )
@@ -249,8 +266,9 @@ class DeepResearchAgent:
 
         if self.provider_id:
             merged_special_params = dict(self.special_params) if self.special_params else {}
-            if self.enable_deep_thinking and 'thinking' not in merged_special_params:
+            if self.enable_deep_thinking and "thinking" not in merged_special_params:
                 from Django_xm.apps.ai_engine.services.registry_service import get_provider_config
+
                 provider_cfg = get_provider_config(self.provider_id)
                 thinking_cfg = provider_cfg.get("special_params", {}).get("thinking")
                 if thinking_cfg:
@@ -431,7 +449,8 @@ class DeepResearchAgent:
             plan_text = response.content
 
             import re
-            json_match = re.search(r'\{.*\}', plan_text, re.DOTALL)
+
+            json_match = re.search(r"\{.*\}", plan_text, re.DOTALL)
             if json_match:
                 plan = json.loads(json_match.group())
             else:
@@ -439,32 +458,28 @@ class DeepResearchAgent:
                     "research_goal": query,
                     "key_questions": [query],
                     "search_keywords": query.split(),
-                    "expected_outcomes": ["完整的研究报告"]
+                    "expected_outcomes": ["完整的研究报告"],
                 }
 
             plan_content = f"""# 研究计划：{query}
 
 ## 研究目标
-{plan.get('research_goal', query)}
+{plan.get("research_goal", query)}
 
 ## 关键问题
-{chr(10).join([f"- {q}" for q in plan.get('key_questions', [query])])}
+{chr(10).join([f"- {q}" for q in plan.get("key_questions", [query])])}
 
 ## 搜索关键词
-{', '.join(plan.get('search_keywords', []))}
+{", ".join(plan.get("search_keywords", []))}
 
 ## 预期成果
-{chr(10).join([f"- {o}" for o in plan.get('expected_outcomes', [])])}
+{chr(10).join([f"- {o}" for o in plan.get("expected_outcomes", [])])}
 
 ---
-生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+生成时间：{timezone.localtime(timezone.now()).strftime("%Y-%m-%d %H:%M:%S")}
 """
 
-            self.filesystem.write_file(
-                "research_plan.md",
-                plan_content,
-                subdir="plans"
-            )
+            self.filesystem.write_file("research_plan.md", plan_content, subdir="plans")
 
             logger.info("研究计划已生成")
 
@@ -473,7 +488,7 @@ class DeepResearchAgent:
             state["messages"].append(AIMessage(content=f"研究计划已生成：{plan.get('research_goal')}"))
 
         except Exception as e:
-            logger.error(f"生成计划失败: {e}")
+            logger.exception("生成计划失败")
             state["error"] = str(e)
             state["current_step"] = "planner"
             state["plan"] = {"research_goal": query}
@@ -499,9 +514,9 @@ class DeepResearchAgent:
 研究问题：{query}
 
 研究计划：
-- 目标：{plan.get('research_goal', query)}
-- 关键问题：{', '.join(plan.get('key_questions', []))}
-- 搜索关键词：{', '.join(plan.get('search_keywords', []))}
+- 目标：{plan.get("research_goal", query)}
+- 关键问题：{", ".join(plan.get("key_questions", []))}
+- 搜索关键词：{", ".join(plan.get("search_keywords", []))}
 
 请使用网络搜索工具收集相关信息，并使用 write_research_file 保存研究笔记到 notes/web_research.md。
 
@@ -516,9 +531,7 @@ thread_id: {thread_id}
 """
 
         try:
-            result = self.web_researcher.invoke({
-                "messages": [HumanMessage(content=research_instruction)]
-            })
+            result = self.web_researcher.invoke({"messages": [HumanMessage(content=research_instruction)]})
 
             notes_saved = False
             try:
@@ -550,7 +563,7 @@ thread_id: {thread_id}
 {combined_content}
 
 ---
-*生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
+*生成时间：{timezone.localtime(timezone.now()).strftime("%Y-%m-%d %H:%M:%S")}*
 """
 
                         try:
@@ -558,11 +571,11 @@ thread_id: {thread_id}
                                 "web_research.md",
                                 combined_content,
                                 subdirectory="notes",
-                                metadata={"source": "agent_output_extraction"}
+                                metadata={"source": "agent_output_extraction"},
                             )
                             logger.info("已从 Agent 输出提取并保存研究笔记")
-                        except Exception as save_error:
-                            logger.error(f"保存提取的笔记失败: {save_error}")
+                        except Exception:
+                            logger.exception("保存提取的笔记失败")
 
             logger.info("网络研究完成")
 
@@ -571,7 +584,7 @@ thread_id: {thread_id}
             state["messages"].append(AIMessage(content="网络研究已完成"))
 
         except Exception as e:
-            logger.error(f"网络研究失败: {e}")
+            logger.exception("网络研究失败")
             state["error"] = str(e)
             state["current_step"] = "web_research"
 
@@ -606,9 +619,7 @@ thread_id: {thread_id}
 """
 
         try:
-            result = self.doc_analyst.invoke({
-                "messages": [HumanMessage(content=analysis_instruction)]
-            })
+            result = self.doc_analyst.invoke({"messages": [HumanMessage(content=analysis_instruction)]})
 
             notes_saved = False
             try:
@@ -635,11 +646,11 @@ thread_id: {thread_id}
                                 "doc_analysis.md",
                                 combined,
                                 subdirectory="notes",
-                                metadata={"source": "agent_output_extraction"}
+                                metadata={"source": "agent_output_extraction"},
                             )
                             logger.info("已从 Agent 输出提取并保存文档分析笔记")
-                        except Exception as save_error:
-                            logger.error(f"保存文档分析笔记失败: {save_error}")
+                        except Exception:
+                            logger.exception("保存文档分析笔记失败")
 
             logger.info("文档分析完成")
 
@@ -648,7 +659,7 @@ thread_id: {thread_id}
             state["messages"].append(AIMessage(content="文档分析已完成"))
 
         except Exception as e:
-            logger.error(f"文档分析失败: {e}")
+            logger.exception("文档分析失败")
             state["error"] = str(e)
             state["current_step"] = "doc_analysis"
 
@@ -656,10 +667,7 @@ thread_id: {thread_id}
 
     def _extract_report_from_fs(self) -> str | None:
         try:
-            report = self.filesystem.read_file(
-                "final_report.md",
-                subdirectory="reports"
-            )
+            report = self.filesystem.read_file("final_report.md", subdirectory="reports")
             logger.info("从文件系统读取最终报告")
             return report
         except Exception as fs_error:
@@ -682,13 +690,12 @@ thread_id: {thread_id}
                     ai_contents.append(content)
 
         for content in sorted(ai_contents, key=len, reverse=True):
-            is_report = (
-                len(content) > 200 and
-                (content.startswith("#") or
-                 "##" in content or
-                 "执行摘要" in content or
-                 "研究背景" in content or
-                 "主要发现" in content)
+            is_report = len(content) > 200 and (
+                content.startswith("#")
+                or "##" in content
+                or "执行摘要" in content
+                or "研究背景" in content
+                or "主要发现" in content
             )
 
             if is_report:
@@ -706,30 +713,21 @@ thread_id: {thread_id}
         research_materials: list[tuple] = []
 
         try:
-            plan_content = self.filesystem.read_file(
-                "research_plan.md",
-                subdirectory="plans"
-            )
+            plan_content = self.filesystem.read_file("research_plan.md", subdirectory="plans")
             research_materials.append(("研究计划", plan_content))
             logger.debug("读取研究计划")
         except Exception:
             logger.debug("未找到研究计划")
 
         try:
-            web_notes = self.filesystem.read_file(
-                "web_research.md",
-                subdirectory="notes"
-            )
+            web_notes = self.filesystem.read_file("web_research.md", subdirectory="notes")
             research_materials.append(("网络研究笔记", web_notes))
             logger.debug("读取网络研究笔记")
         except Exception:
             logger.debug("未找到网络研究笔记")
 
         try:
-            doc_notes = self.filesystem.read_file(
-                "doc_analysis.md",
-                subdirectory="notes"
-            )
+            doc_notes = self.filesystem.read_file("doc_analysis.md", subdirectory="notes")
             research_materials.append(("文档分析报告", doc_notes))
             logger.debug("读取文档分析报告")
         except Exception:
@@ -751,7 +749,7 @@ thread_id: {thread_id}
 参考来源：请在文末列出来源。
 
 ---
-*报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
+*报告生成时间：{timezone.localtime(timezone.now()).strftime("%Y-%m-%d %H:%M:%S")}*
 *研究任务ID：{thread_id}*
 """
         else:
@@ -785,7 +783,7 @@ thread_id: {thread_id}
             logger.warning(f"报告验证失败: {validation_result.errors}")
 
             revision_prompt = f"""请修订以下研究报告，解决以下问题：
-{', '.join(validation_result.errors)}
+{", ".join(validation_result.errors)}
 
 原报告：
 {report_content}
@@ -807,8 +805,8 @@ thread_id: {thread_id}
                 else:
                     logger.warning(f"修订后仍验证失败: {revised_validation.errors}")
                     return revised_text, revised_validation.is_valid
-            except Exception as revision_error:
-                logger.error(f"修订报告失败: {revision_error}")
+            except Exception:
+                logger.exception("修订报告失败")
 
         return report_content, validation_result.is_valid
 
@@ -826,10 +824,10 @@ thread_id: {thread_id}
 研究问题：{query}
 
 研究计划：
-- 目标：{plan.get('research_goal', query)}
-- 关键问题：{', '.join(plan.get('key_questions', []))}
-- 搜索关键词：{', '.join(plan.get('search_keywords', []))}
-- 预期成果：{', '.join(plan.get('expected_outcomes', []))}
+- 目标：{plan.get("research_goal", query)}
+- 关键问题：{", ".join(plan.get("key_questions", []))}
+- 搜索关键词：{", ".join(plan.get("search_keywords", []))}
+- 预期成果：{", ".join(plan.get("expected_outcomes", []))}
 
 写作指南：
 {WRITER_GUIDELINES}
@@ -846,9 +844,7 @@ thread_id: {thread_id}
 """
 
         try:
-            result = self.report_writer.invoke({
-                "messages": [HumanMessage(content=writing_instruction)]
-            })
+            result = self.report_writer.invoke({"messages": [HumanMessage(content=writing_instruction)]})
 
             final_report = self._extract_report_from_fs()
 
@@ -869,8 +865,8 @@ thread_id: {thread_id}
                         "source": "deep_research_agent",
                         "query": query,
                         "validated": is_valid,
-                        "generated_at": datetime.now().isoformat()
-                    }
+                        "generated_at": timezone.now().isoformat(),
+                    },
                 )
                 logger.info("最终报告已保存到文件系统")
             except Exception as save_error:
@@ -884,14 +880,16 @@ thread_id: {thread_id}
             state["messages"].append(AIMessage(content="研究报告已完成"))
 
         except Exception as e:
-            logger.error(f"撰写报告失败: {e}")
+            logger.exception("撰写报告失败")
             state["error"] = str(e)
             state["current_step"] = "report_writing"
             state["final_report"] = f"报告生成过程中遇到错误: {e!s}"
 
         return state
 
-    def research(self, query: str, config: dict[str, Any] | None = None, callbacks: list | None = None) -> dict[str, Any]:
+    def research(
+        self, query: str, config: dict[str, Any] | None = None, callbacks: list | None = None
+    ) -> dict[str, Any]:
         logger.info(f"开始深度研究: {query[:50]}...")
 
         if config is None:
@@ -906,7 +904,8 @@ thread_id: {thread_id}
             config["callbacks"] = callbacks
 
         from langchain_core.messages import SystemMessage
-        initial_messages = [HumanMessage(content=query)]
+
+        initial_messages: list[BaseMessage] = [HumanMessage(content=query)]
         if self.research_context:
             initial_messages.insert(0, SystemMessage(content=self.research_context))
 
@@ -939,7 +938,7 @@ thread_id: {thread_id}
             }
 
         except Exception as e:
-            logger.error(f"深度研究失败: {e}")
+            logger.exception("深度研究失败")
             return {
                 "success": False,
                 "query": query,
@@ -966,6 +965,7 @@ thread_id: {thread_id}
             config["callbacks"] = callbacks
 
         from langchain_core.messages import SystemMessage
+
         async_initial_messages = [HumanMessage(content=query)]
         if self.research_context:
             async_initial_messages.insert(0, SystemMessage(content=self.research_context))
@@ -999,7 +999,7 @@ thread_id: {thread_id}
             }
 
         except Exception as e:
-            logger.error(f"异步深度研究失败: {e}")
+            logger.exception("异步深度研究失败")
             return {
                 "success": False,
                 "query": query,
@@ -1032,7 +1032,8 @@ thread_id: {thread_id}
         config["configurable"]["thread_id"] = self.thread_id
 
         from langchain_core.messages import SystemMessage
-        stream_initial_messages = [HumanMessage(content=query)]
+
+        stream_initial_messages: list[BaseMessage] = [HumanMessage(content=query)]
         if self.research_context:
             stream_initial_messages.insert(0, SystemMessage(content=self.research_context))
 
@@ -1068,8 +1069,11 @@ thread_id: {thread_id}
                         "data": {"query": query},
                     }
                 elif kind == "on_chain_start" and name in (
-                    "planner", "web_research", "doc_analysis",
-                    "report_writing", "error_handler",
+                    "planner",
+                    "web_research",
+                    "doc_analysis",
+                    "report_writing",
+                    "error_handler",
                 ):
                     yield {
                         "event_type": "node_start",
@@ -1077,8 +1081,11 @@ thread_id: {thread_id}
                         "data": {},
                     }
                 elif kind == "on_chain_end" and name in (
-                    "planner", "web_research", "doc_analysis",
-                    "report_writing", "error_handler",
+                    "planner",
+                    "web_research",
+                    "doc_analysis",
+                    "report_writing",
+                    "error_handler",
                 ):
                     output = data.get("output", {})
                     yield {
@@ -1108,7 +1115,7 @@ thread_id: {thread_id}
                     }
 
         except Exception as e:
-            logger.error(f"流式深度研究失败: {e}")
+            logger.exception("流式深度研究失败")
             yield {
                 "event_type": "error",
                 "node_name": "root",
@@ -1149,7 +1156,9 @@ def create_deep_research_agent(
     research_context: str = "",
     **kwargs,
 ) -> DeepResearchAgent:
-    warnings.warn("create_deep_research_agent 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2)
+    warnings.warn(
+        "create_deep_research_agent 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2
+    )
     return DeepResearchAgent(
         thread_id=thread_id,
         enable_web_search=enable_web_search,

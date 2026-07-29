@@ -10,6 +10,7 @@
 - 百度千帆 embedding 走独立 QianfanEmbeddingsEndpoint
 - 本地 embedding 作为最终兜底，确保 RAG 不完全中断
 """
+
 from typing import Any
 
 from langchain_core.embeddings import Embeddings
@@ -33,9 +34,7 @@ def create_embedding(
     """
     from langchain_community.embeddings import HuggingFaceBgeEmbeddings
 
-    model_name = model_name or getattr(
-        settings, "local_embedding_model", "BAAI/bge-small-zh-v1.5"
-    )
+    model_name = model_name or getattr(settings, "local_embedding_model", "BAAI/bge-small-zh-v1.5")
     # 本地 BGE 不支持 dimensions 透传，保留入参仅作接口对齐
     kwargs.pop("dimensions", None)
     return HuggingFaceBgeEmbeddings(

@@ -55,6 +55,7 @@ class TokenUsageCallbackHandler(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         import time
+
         self._llm_start_times[str(run_id)] = time.time()
         model = _extract_model_name(serialized, **kwargs)
         if model:

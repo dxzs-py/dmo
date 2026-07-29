@@ -8,7 +8,7 @@
 
 import logging
 
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class DashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(view=False)
+    @extend_schema(exclude=True)
     def get(self, request):
         """获取仪表盘统计数据
 
@@ -36,8 +36,18 @@ class DashboardView(APIView):
 
 
 class PageViewTrackView(APIView):
+    """记录页面浏览事件（write-only 跟踪端点）。
+
+    无 list/retrieve 语义，仅声明 request/response schema 供 OpenAPI 文档生成，
+    不迁移到 GenericAPIView。
+    """
+
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        request=PageViewSerializer,
+        responses={200: OpenApiResponse(description="页面浏览已记录")},
+    )
     def post(self, request):
         """记录页面浏览事件
 
@@ -49,8 +59,8 @@ class PageViewTrackView(APIView):
 
         AnalyticsService.record_page_view(
             user=request.user,
-            page_path=serializer.validated_data['path'],
-            page_title=serializer.validated_data.get('title', ''),
+            page_path=serializer.validated_data["path"],
+            page_title=serializer.validated_data.get("title", ""),
             ip_address=get_client_ip(request),
             user_agent=get_user_agent(request, max_length=None),
         )
@@ -58,8 +68,18 @@ class PageViewTrackView(APIView):
 
 
 class FeatureUseTrackView(APIView):
+    """记录功能使用事件（write-only 跟踪端点）。
+
+    无 list/retrieve 语义，仅声明 request/response schema 供 OpenAPI 文档生成，
+    不迁移到 GenericAPIView。
+    """
+
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        request=FeatureUseSerializer,
+        responses={200: OpenApiResponse(description="功能使用已记录")},
+    )
     def post(self, request):
         """记录功能使用事件
 
@@ -71,8 +91,8 @@ class FeatureUseTrackView(APIView):
 
         AnalyticsService.record_feature_usage(
             user=request.user,
-            feature_name=serializer.validated_data['feature'],
-            metadata=serializer.validated_data.get('metadata', {}),
+            feature_name=serializer.validated_data["feature"],
+            metadata=serializer.validated_data.get("metadata", {}),
             ip_address=get_client_ip(request),
             user_agent=get_user_agent(request, max_length=None),
         )
@@ -80,8 +100,18 @@ class FeatureUseTrackView(APIView):
 
 
 class EventTrackView(APIView):
+    """记录用户事件（write-only 跟踪端点）。
+
+    无 list/retrieve 语义，仅声明 request/response schema 供 OpenAPI 文档生成，
+    不迁移到 GenericAPIView。
+    """
+
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        request=UserEventWriteSerializer,
+        responses={200: OpenApiResponse(description="事件已记录")},
+    )
     def post(self, request):
         """记录用户事件
 
@@ -92,6 +122,7 @@ class EventTrackView(APIView):
         serializer.is_valid(raise_exception=True)
 
         from Django_xm.apps.analytics.models import UserEvent
+
         UserEvent.objects.create(
             user=request.user,
             ip_address=get_client_ip(request),

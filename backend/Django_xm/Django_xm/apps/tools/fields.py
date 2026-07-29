@@ -45,9 +45,7 @@ def _get_fernet() -> Fernet:
     try:
         return Fernet(key.encode() if isinstance(key, str) else key)
     except (ValueError, TypeError) as exc:
-        raise RuntimeError(
-            f"FIELD_ENCRYPTION_KEY 格式非法（应为 base64 编码的 32 字节）: {exc}"
-        ) from exc
+        raise RuntimeError(f"FIELD_ENCRYPTION_KEY 格式非法（应为 base64 编码的 32 字节）: {exc}") from exc
 
 
 def validate_encryption_key() -> None:
@@ -96,9 +94,7 @@ class EncryptedCharField(models.TextField):
             fernet = _get_fernet()
         except RuntimeError:
             # 启动早期 / 管理命令（如 makemigrations）可能未配置密钥
-            logger.warning(
-                "EncryptedCharField.from_db_value: FIELD_ENCRYPTION_KEY 未配置，返回原值"
-            )
+            logger.warning("EncryptedCharField.from_db_value: FIELD_ENCRYPTION_KEY 未配置，返回原值")
             return value
         try:
             return fernet.decrypt(value.encode()).decode()
@@ -132,9 +128,7 @@ class EncryptedCharField(models.TextField):
         try:
             fernet = _get_fernet()
         except RuntimeError:
-            logger.warning(
-                "EncryptedCharField.get_prep_value: FIELD_ENCRYPTION_KEY 未配置，明文落库"
-            )
+            logger.warning("EncryptedCharField.get_prep_value: FIELD_ENCRYPTION_KEY 未配置，明文落库")
             return value
         try:
             fernet.decrypt(value.encode())

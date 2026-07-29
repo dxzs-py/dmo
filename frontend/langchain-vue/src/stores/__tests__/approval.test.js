@@ -49,21 +49,13 @@ vi.mock('@/stores/model', () => ({
 }))
 
 // Mock approval API
-// chat 审批 SSE 流响应需提供 headers.get，否则 _executeChatApproval 解析 content-type 时抛错
+// 统一审批端点 /approvals/{interrupt_id}/resume/：chat 返回 SSE 流，deep_research 返回 JSON
+// chat 审批 SSE 流响应需提供 headers.get，否则 _executeApprovalStream 解析 content-type 时抛错
 const mockResumeApprovalStream = vi.fn().mockResolvedValue({
   headers: { get: () => 'text/event-stream' },
 })
 vi.mock('@/api/approval', () => ({
   resumeApprovalStream: (...args) => mockResumeApprovalStream(...args),
-}))
-
-// Mock research API
-// deep_research 审批通过 approveResearchCommand / rejectResearchCommand（@/api/research 命名导出）
-const mockApproveResearch = vi.fn().mockResolvedValue({})
-const mockRejectResearch = vi.fn().mockResolvedValue({})
-vi.mock('@/api/research', () => ({
-  approveResearchCommand: (...args) => mockApproveResearch(...args),
-  rejectResearchCommand: (...args) => mockRejectResearch(...args),
 }))
 
 // Mock useStreamFinalizer
@@ -121,12 +113,10 @@ describe('useApprovalStore', () => {
     mockSessionStore.findToolCallInSession.mockReturnValue(null)
     mockModelStore.ensureProvidersLoaded.mockResolvedValue(undefined)
     mockModelStore.getModelConfig.mockReturnValue({ provider_id: 'p1', model_name: 'm1' })
-    // 需提供 headers.get 方法，避免 _executeChatApproval 解析 content-type 抛错
+    // 需提供 headers.get 方法，避免 _executeApprovalStream 解析 content-type 抛错
     mockResumeApprovalStream.mockResolvedValue({
       headers: { get: () => 'text/event-stream' },
     })
-    mockApproveResearch.mockResolvedValue({})
-    mockRejectResearch.mockResolvedValue({})
     mockReadSSEStream.mockResolvedValue(undefined)
     mockFinalizeStream.mockResolvedValue(true)
     mockSessionStore.sessions = []
@@ -231,8 +221,19 @@ describe('useApprovalStore', () => {
     })
   })
 
-  describe('executeApproval 路由', () => {
-    it('source=deep_research approved=true 调用 approveResearchCommand', async () => {
+  describe('executeApproval 统一路由（Path D）', () => {
+    it('source=deep_research approved=true 统一调用 resumeApprovalStream（JSON resumed）', async () => {
+      // deep_research 审批统一走 /approvals/{id}/resume/，后端返回 JSON {status:'resumed'}
+      mockResumeApprovalStream.mockResolvedValue({
+        ok: true,
+        headers: { get: () => 'application/json' },
+        json: async () => ({
+          code: 0,
+          message: '研究恢复任务已启动',
+          data: { interrupt_id: 'int-dr', source: 'deep_research', status: 'resumed' },
+        }),
+      })
+
       store.handleApprovalEvent(
         { interrupt_id: 'int-dr', tool_name: 'shell', state: 'pending', source: 'deep_research' },
         { source: 'deep_research', taskId: 'task-dr', sessionId: 'session-1' }
@@ -241,14 +242,27 @@ describe('useApprovalStore', () => {
       const approval = { interrupt_id: 'int-dr' }
       await store.executeApproval(approval, true, null, { taskId: 'task-dr' })
 
-      // deep_research 通过 approveResearchCommand(taskId, interruptId, userInput)
-      // action 非 confirm_with_input 时 userInput 传 undefined
-      expect(mockApproveResearch).toHaveBeenCalledWith('task-dr', 'int-dr', undefined)
-      expect(mockRejectResearch).not.toHaveBeenCalled()
-      expect(mockResumeApprovalStream).not.toHaveBeenCalled()
+      // 统一调用 resumeApprovalStream（不再走 approveResearchCommand）
+      expect(mockResumeApprovalStream).toHaveBeenCalledWith(
+        'int-dr',
+        expect.objectContaining({ approved: true }),
+        expect.anything()
+      )
+      // 不应消费 SSE 流（deep_research 返回 JSON）
+      expect(mockReadSSEStream).not.toHaveBeenCalled()
     })
 
-    it('source=deep_research approved=false 调用 rejectResearchCommand', async () => {
+    it('source=deep_research approved=false 统一调用 resumeApprovalStream（JSON resumed）', async () => {
+      mockResumeApprovalStream.mockResolvedValue({
+        ok: true,
+        headers: { get: () => 'application/json' },
+        json: async () => ({
+          code: 0,
+          message: '研究恢复任务已启动',
+          data: { interrupt_id: 'int-dr2', source: 'deep_research', status: 'resumed' },
+        }),
+      })
+
       store.handleApprovalEvent(
         { interrupt_id: 'int-dr2', tool_name: 'shell', state: 'pending', source: 'deep_research' },
         { source: 'deep_research', taskId: 'task-dr', sessionId: 'session-1' }
@@ -257,10 +271,13 @@ describe('useApprovalStore', () => {
       const approval = { interrupt_id: 'int-dr2' }
       await store.executeApproval(approval, false, null, { taskId: 'task-dr' })
 
-      // deep_research 拒绝通过 rejectResearchCommand(taskId, interruptId)
-      expect(mockRejectResearch).toHaveBeenCalledWith('task-dr', 'int-dr2')
-      expect(mockApproveResearch).not.toHaveBeenCalled()
-      expect(mockResumeApprovalStream).not.toHaveBeenCalled()
+      // 拒绝也统一走 resumeApprovalStream（approved=false）
+      expect(mockResumeApprovalStream).toHaveBeenCalledWith(
+        'int-dr2',
+        expect.objectContaining({ approved: false }),
+        expect.anything()
+      )
+      expect(mockReadSSEStream).not.toHaveBeenCalled()
     })
 
     it('source=chat 调用 resumeApprovalStream（SSE 流）', async () => {

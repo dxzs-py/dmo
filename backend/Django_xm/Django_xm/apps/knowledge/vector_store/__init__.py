@@ -23,16 +23,13 @@ def search_vector_store(
         )
 
         if score_threshold is not None:
-            results = [
-                (doc, score) for doc, score in results
-                if score >= score_threshold
-            ]
+            results = [(doc, score) for doc, score in results if score >= score_threshold]
 
         logger.info(f"找到 {len(results)} 个相关文档")
         return results
 
-    except Exception as e:
-        logger.error(f"搜索失败: {e}")
+    except Exception:
+        logger.exception("搜索失败")
         raise
 
 
@@ -54,19 +51,19 @@ from .pgvector_store import (
 from .registry import VectorStoreRegistry
 
 __all__ = [
-    # 向后兼容
-    "search_vector_store",
-    "create_pgvector_store",
-    "load_pgvector_store",
-    "delete_pgvector_store",
-    "list_pgvector_stores",
-    "get_pgvector_connection_string",
+    "ChromaBackend",
+    "FAISSBackend",
+    "InMemoryBackend",
+    "MilvusBackend",
+    "PGVectorBackend",
     # 新抽象层
     "VectorStoreBackend",
     "VectorStoreRegistry",
-    "PGVectorBackend",
-    "FAISSBackend",
-    "ChromaBackend",
-    "MilvusBackend",
-    "InMemoryBackend",
+    "create_pgvector_store",
+    "delete_pgvector_store",
+    "get_pgvector_connection_string",
+    "list_pgvector_stores",
+    "load_pgvector_store",
+    # 向后兼容
+    "search_vector_store",
 ]

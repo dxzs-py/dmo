@@ -4,9 +4,9 @@
 本节点负责分析用户问题，生成个性化的学习计划。
 """
 
-from datetime import UTC, datetime
 from typing import Any
 
+from django.utils import timezone
 from langchain_core.messages import AIMessage
 from pydantic import BaseModel, Field
 
@@ -20,6 +20,7 @@ logger = get_logger(__name__)
 
 class LearningPlanSchema(BaseModel):
     """学习计划的结构化输出模式"""
+
     topic: str = Field(description="学习主题")
     objectives: list[str] = Field(description="学习目标列表，至少3个")
     key_points: list[str] = Field(description="关键知识点列表，至少5个")
@@ -62,10 +63,9 @@ def planner_node(state: StudyFlowState) -> dict[str, Any]:
         user_prompt = f"用户的学习问题：{user_question}\n\n请为此问题制定学习计划。"
 
         logger.info("[Planner Node] 调用 LLM 生成学习计划...")
-        plan_response = structured_model.invoke([
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ])
+        plan_response = structured_model.invoke(
+            [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+        )
 
         # 防御性检查：所有 fallback 模型都返回空时统一报错
         if plan_response is None or not hasattr(plan_response, "topic"):
@@ -76,7 +76,7 @@ def planner_node(state: StudyFlowState) -> dict[str, Any]:
                 "error_node": "planner",
                 "current_step": "planner_error",
                 "messages": [AIMessage(content=f"\n\n⚠️ {error_msg}，请稍后重试。")],
-                "updated_at": datetime.now().isoformat()
+                "updated_at": timezone.now().isoformat(),
             }
 
         learning_plan = {
@@ -84,37 +84,37 @@ def planner_node(state: StudyFlowState) -> dict[str, Any]:
             "objectives": plan_response.objectives,
             "key_points": plan_response.key_points,
             "difficulty": plan_response.difficulty,
-            "estimated_time": plan_response.estimated_time
+            "estimated_time": plan_response.estimated_time,
         }
 
         logger.info(f"[Planner Node] 学习计划生成成功: {learning_plan['topic']}")
 
         plan_summary = f"""已为您制定学习计划：
 
-📚 **学习主题**: {learning_plan['topic']}
+📚 **学习主题**: {learning_plan["topic"]}
 
 🎯 **学习目标**:
-{chr(10).join(f"{i+1}. {obj}" for i, obj in enumerate(learning_plan['objectives']))}
+{chr(10).join(f"{i + 1}. {obj}" for i, obj in enumerate(learning_plan["objectives"]))}
 
 💡 **关键知识点**:
-{chr(10).join(f"• {point}" for point in learning_plan['key_points'])}
+{chr(10).join(f"• {point}" for point in learning_plan["key_points"])}
 
-📊 **难度级别**: {learning_plan['difficulty']}
-⏱️ **预计时间**: {learning_plan['estimated_time']} 分钟
+📊 **难度级别**: {learning_plan["difficulty"]}
+⏱️ **预计时间**: {learning_plan["estimated_time"]} 分钟
 """
 
         return {
             "learning_plan": learning_plan,
             "messages": [AIMessage(content=plan_summary)],
             "current_step": "planner",
-            "updated_at": datetime.now().isoformat()
+            "updated_at": timezone.now().isoformat(),
         }
 
     except Exception as e:
-        logger.error(f"[Planner Node] 生成学习计划失败: {e!s}", exc_info=True)
+        logger.exception("[Planner Node] 生成学习计划失败")
         return {
             "error": f"学习计划生成失败: {e!s}",
             "error_node": "planner",
             "current_step": "planner_error",
-            "updated_at": datetime.now().isoformat()
+            "updated_at": timezone.now().isoformat(),
         }

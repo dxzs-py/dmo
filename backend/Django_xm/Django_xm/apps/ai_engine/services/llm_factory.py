@@ -62,6 +62,7 @@ logger = get_logger(__name__)
 
 # ============== 模型能力查询 ==============
 
+
 def model_supports_capability(provider_id: str, model_name: str, capability: str) -> bool:
     """检查模型是否支持指定能力（如 deep_thinking / vision / tool_calling）"""
     provider_cfg = get_provider_config(provider_id)
@@ -74,6 +75,7 @@ def model_supports_capability(provider_id: str, model_name: str, capability: str
 
 
 # ============== 内部辅助：special_params 解析 ==============
+
 
 def _apply_special_params(
     init_kwargs: dict[str, Any],
@@ -123,7 +125,9 @@ def _apply_special_params(
         init_kwargs["extra_body"] = extra_body
 
     # 深度思考模式：Provider 感知参数注入
-    if model_supports_capability(provider_id, model_name, "deep_thinking") and is_thinking_enabled(special_params, provider_id):
+    if model_supports_capability(provider_id, model_name, "deep_thinking") and is_thinking_enabled(
+        special_params, provider_id
+    ):
         if provider_id == "deepseek":
             init_kwargs.pop("temperature", None)
             init_kwargs.pop("top_p", None)
@@ -137,6 +141,7 @@ def _apply_special_params(
 
 
 # ============== 单模型创建 ==============
+
 
 def _create_single_chat_model(
     model_name: str | None = None,
@@ -161,7 +166,7 @@ def _create_single_chat_model(
                 model_name = system_default.get("model_name")
 
     model_name = model_name or settings.openai_model
-    provider = model_provider or getattr(django_settings, 'AI_DEFAULT_PROVIDER', 'openai')
+    provider = model_provider or getattr(django_settings, "AI_DEFAULT_PROVIDER", "openai")
     temperature = temperature if temperature is not None else settings.openai_temperature
     streaming = streaming if streaming is not None else settings.openai_streaming
 
@@ -170,8 +175,8 @@ def _create_single_chat_model(
         "model_provider": provider,
         "temperature": temperature,
         "streaming": streaming,
-        "timeout": getattr(django_settings, 'AI_LLM_TIMEOUT', 120.0),
-        "max_retries": getattr(django_settings, 'AI_LLM_MAX_RETRIES', 3),
+        "timeout": getattr(django_settings, "AI_LLM_TIMEOUT", 120.0),
+        "max_retries": getattr(django_settings, "AI_LLM_MAX_RETRIES", 3),
     }
 
     provider_config = _get_provider_config(provider)
@@ -189,10 +194,10 @@ def _create_single_chat_model(
 
     # 从 kwargs 中提取 special_params，使用 provider 感知逻辑解析
     # 避免原样透传给 init_chat_model 导致 API 报错
-    special_params = kwargs.pop('special_params', None)
+    special_params = kwargs.pop("special_params", None)
     if special_params:
         # 确定 provider_id 用于查找注册表
-        provider_id = kwargs.pop('provider_id', None) or provider
+        provider_id: str = kwargs.pop("provider_id", None) or provider
         _apply_special_params(init_kwargs, special_params, provider_id, provider, model_name)
 
         if model_supports_capability(provider_id, model_name, "deep_thinking"):
@@ -207,7 +212,10 @@ def _create_single_chat_model(
     )
 
     cache_key = make_cache_key(
-        model_name, provider, temperature, streaming,
+        model_name,
+        provider,
+        temperature,
+        streaming,
         init_kwargs.get("max_tokens"),
         api_key=init_kwargs.get("api_key"),
         base_url=init_kwargs.get("base_url"),
@@ -224,6 +232,7 @@ def _create_single_chat_model(
 
 
 # ============== 公开 API：模型创建 ==============
+
 
 def get_chat_model(
     model_name: str | None = None,
@@ -277,8 +286,8 @@ def get_chat_model(
             if not model_name:
                 model_name = system_default.get("model_name")
 
-    resolved_provider = model_provider or getattr(django_settings, 'AI_DEFAULT_PROVIDER', 'openai')
-    resolved_model_name = model_name or settings.openai_model
+    resolved_provider: str = model_provider or getattr(django_settings, "AI_DEFAULT_PROVIDER", "openai")
+    resolved_model_name: str = model_name or settings.openai_model
 
     # 1. 尝试创建主模型（max_retries=0 快速失败，由 fallback 接管）
     primary_model = None
@@ -330,8 +339,7 @@ def get_chat_model(
             error_detail = "; ".join(creation_errors)
             logger.error(f"所有模型均不可用: {error_detail}")
             raise RuntimeError(
-                f"模型连接超时，所有已配置的模型均不可用。"
-                f"已尝试: {error_detail}。请检查 API Key 配置和网络连接。"
+                f"模型连接超时，所有已配置的模型均不可用。已尝试: {error_detail}。请检查 API Key 配置和网络连接。"
             )
 
     # 4. 使用 LazyFallbackChatModel 包装（fallback 模型延迟到运行时按需创建）
@@ -345,9 +353,7 @@ def get_chat_model(
             max_tokens=max_tokens,
             streaming=streaming if streaming is not None else settings.openai_streaming,
         )
-        logger.info(
-            f"已配置模型 fallback（懒加载）: 主模型 + {len(candidates)} 个候选"
-        )
+        logger.info(f"已配置模型 fallback（懒加载）: 主模型 + {len(candidates)} 个候选")
         return lazy_model
 
     logger.warning("无可用 fallback 模型，仅使用主模型（无自动切换）")
@@ -388,7 +394,7 @@ def get_structured_output_model(
 
     if response_format is not None:
         try:
-            base = model.bound if hasattr(model, 'bound') else model
+            base = model.bound if hasattr(model, "bound") else model
             model = base.with_structured_output(response_format)
             logger.info(f"已绑定结构化输出: {getattr(response_format, '__name__', str(response_format))}")
         except Exception as e:
@@ -469,7 +475,7 @@ def get_model_string(
             model_name = model_name or system_default.get("model_name")
 
     # 2. 回退到 settings
-    provider = provider or getattr(django_settings, 'AI_DEFAULT_PROVIDER', 'openai')
+    provider = provider or getattr(django_settings, "AI_DEFAULT_PROVIDER", "openai")
     model_name = model_name or settings.openai_model
 
     model_string = f"{provider}:{model_name}"
@@ -478,6 +484,7 @@ def get_model_string(
 
 
 # ============== 按 provider_id 创建模型 ==============
+
 
 def get_chat_model_by_provider(
     provider_id: str,
@@ -516,8 +523,8 @@ def get_chat_model_by_provider(
         "model_provider": provider,
         "temperature": resolved_temp,
         "streaming": resolved_streaming,
-        "timeout": getattr(django_settings, 'AI_LLM_TIMEOUT', 120.0),
-        "max_retries": getattr(django_settings, 'AI_LLM_MAX_RETRIES', 3),
+        "timeout": getattr(django_settings, "AI_LLM_TIMEOUT", 120.0),
+        "max_retries": getattr(django_settings, "AI_LLM_MAX_RETRIES", 3),
         "api_key": api_key,
     }
 
@@ -554,11 +561,16 @@ def get_chat_model_by_provider(
     special_suffix = ""
     if special_params:
         import json as _json
+
         special_suffix = f":sp{_json.dumps(special_params, sort_keys=True)}"
 
     cache_key = make_cache_key(
-        resolved_model, provider, resolved_temp, resolved_streaming,
-        init_kwargs.get("max_tokens"), special_suffix,
+        resolved_model,
+        provider,
+        resolved_temp,
+        resolved_streaming,
+        init_kwargs.get("max_tokens"),
+        special_suffix,
         api_key=api_key,
         base_url=init_kwargs.get("base_url"),
         max_retries=init_kwargs.get("max_retries"),
@@ -574,12 +586,22 @@ def get_chat_model_by_provider(
         # Ollama 本地服务无需 API Key，走专用 provider
         if provider == "ollama":
             from Django_xm.apps.ai_engine.providers.ollama import create_chat_model
+
             # 从 init_kwargs 中过滤掉 init_chat_model 专用字段，避免与 provider 内部重复传参
             ollama_kwargs = {
-                k: v for k, v in init_kwargs.items()
-                if k not in (
-                    "model", "model_provider", "temperature", "streaming",
-                    "api_key", "rate_limiter", "max_tokens", "timeout", "max_retries",
+                k: v
+                for k, v in init_kwargs.items()
+                if k
+                not in (
+                    "model",
+                    "model_provider",
+                    "temperature",
+                    "streaming",
+                    "api_key",
+                    "rate_limiter",
+                    "max_tokens",
+                    "timeout",
+                    "max_retries",
                     "base_url",
                 )
             }
@@ -643,9 +665,11 @@ def _ensure_groq_bind_tools_field() -> None:
 
         # 同时给类添加一个真正的 bind_tools 方法实现
         if not hasattr(ChatGroq, "bind_tools") or ChatGroq.__dict__.get("bind_tools") is None:
+
             def _bind_tools_default(self, tools, *, tool_choice=None, **kwargs):
                 """Groq 模型 bind_tools 默认实现：委托给 bind()"""
                 return self.bind(tools=tools, tool_choice=tool_choice, **kwargs)
+
             ChatGroq.bind_tools = _bind_tools_default  # type: ignore[attr-defined]
 
         try:
@@ -661,6 +685,7 @@ def _ensure_groq_bind_tools_field() -> None:
 
 
 # ============== 模型连接测试 ==============
+
 
 def test_model_connection(
     provider_id: str,
@@ -680,6 +705,7 @@ def test_model_connection(
         )
         from langchain_core.globals import get_llm_cache, set_llm_cache
         from langchain_core.messages import HumanMessage
+
         original_cache = get_llm_cache()
         try:
             set_llm_cache(None)
@@ -732,19 +758,21 @@ def get_helper_model() -> BaseChatModel | None:
     # 1. 优先从 SystemConfig 数据库读取（持久化，重启不丢失）
     try:
         from Django_xm.apps.ai_engine.models import SystemConfig
+
         helper_config = SystemConfig.get_value("helper_model", {})
         if helper_config.get("provider_id"):
             helper_provider = helper_config["provider_id"]
             helper_model_name = helper_config.get("model_name", "")
     except Exception:
-        pass
+        # 配置读取失败时回退到运行时内存，不影响主流程
+        logger.debug("读取 helper_model 配置失败，回退到运行时内存")
 
     # 2. 回退到运行时内存（兼容旧逻辑）
     if not helper_provider:
-        helper_provider = getattr(django_settings, 'AI_HELPER_MODEL_PROVIDER', '')
-        helper_model_name = getattr(django_settings, 'AI_HELPER_MODEL_NAME', '')
-    helper_temp = getattr(django_settings, 'AI_HELPER_MODEL_TEMPERATURE', 0.0)
-    helper_max_tokens = getattr(django_settings, 'AI_HELPER_MODEL_MAX_TOKENS', 256)
+        helper_provider = getattr(django_settings, "AI_HELPER_MODEL_PROVIDER", "")
+        helper_model_name = getattr(django_settings, "AI_HELPER_MODEL_NAME", "")
+    helper_temp = getattr(django_settings, "AI_HELPER_MODEL_TEMPERATURE", 0.0)
+    helper_max_tokens = getattr(django_settings, "AI_HELPER_MODEL_MAX_TOKENS", 256)
 
     def _wrap_with_fallback(primary: BaseChatModel, provider: str, model: str) -> BaseChatModel:
         """将辅助模型包装为 LazyFallbackChatModel"""
@@ -803,6 +831,7 @@ def get_helper_model() -> BaseChatModel | None:
 
 # ============== 数据库配置读取 ==============
 
+
 def get_system_default_chat_model() -> dict[str, str] | None:
     """从 SystemConfig 数据库读取用户偏好的默认聊天模型
 
@@ -811,15 +840,18 @@ def get_system_default_chat_model() -> dict[str, str] | None:
     """
     try:
         from Django_xm.apps.ai_engine.models import SystemConfig
+
         config = SystemConfig.get_value("default_chat_model", {})
         if config.get("provider_id"):
             return config
     except Exception:
-        pass
+        # 配置读取失败时返回 None，使用默认 provider
+        logger.debug("读取 default_chat_model 配置失败，返回 None")
     return None
 
 
 # ============== 结构化输出 + Fallback ==============
+
 
 def get_structured_model_with_fallback(
     schema: Any,
@@ -867,8 +899,8 @@ def get_structured_model_with_fallback(
             if not model_name:
                 model_name = system_default.get("model_name")
 
-    resolved_provider = model_provider or getattr(django_settings, 'AI_DEFAULT_PROVIDER', 'openai')
-    resolved_model_name = model_name or settings.openai_model
+    resolved_provider: str = model_provider or getattr(django_settings, "AI_DEFAULT_PROVIDER", "openai")
+    resolved_model_name: str = model_name or settings.openai_model
 
     structured_models: list[tuple[str, str, Any]] = []
     creation_errors: list[str] = []
@@ -921,8 +953,7 @@ def get_structured_model_with_fallback(
         error_detail = "; ".join(creation_errors)
         logger.error(f"所有结构化模型均不可用: {error_detail}")
         raise RuntimeError(
-            f"模型连接超时，所有已配置的模型均不可用。"
-            f"已尝试: {error_detail}。请检查 API Key 配置和网络连接。"
+            f"模型连接超时，所有已配置的模型均不可用。已尝试: {error_detail}。请检查 API Key 配置和网络连接。"
         )
 
     logger.info(f"已配置结构化模型 fallback（懒加载）: 主模型 + {len(candidates)} 个候选")
@@ -937,6 +968,7 @@ def get_structured_model_with_fallback(
 
 
 # ============== JSON Mode 结构化输出（DeepSeek 专用） ==============
+
 
 class JsonModeStructuredModel:
     """JSON mode 结构化输出模型（DeepSeek 专用）
@@ -968,6 +1000,7 @@ class JsonModeStructuredModel:
     def _build_schema_prompt(self) -> str:
         """构造 JSON Schema 提示词"""
         import json as _json
+
         try:
             schema_json = self._schema.model_json_schema()
         except Exception:
@@ -1005,7 +1038,7 @@ class JsonModeStructuredModel:
         text = content.strip()
 
         # 去除 markdown 代码块包裹
-        md_match = _re.match(r'^```(?:json)?\s*(.*?)\s*```$', text, _re.DOTALL)
+        md_match = _re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, _re.DOTALL)
         if md_match:
             text = md_match.group(1).strip()
 

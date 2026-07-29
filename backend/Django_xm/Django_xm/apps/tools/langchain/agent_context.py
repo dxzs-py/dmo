@@ -15,6 +15,7 @@
 - 默认最大深度 MAX_AGENT_DEPTH=3（主代理=0，子代理=1，孙代理=2，曾孙代理=3）
 - 超过最大深度时 agent_create 返回错误，阻止无限嵌套
 """
+
 import threading
 from typing import Any
 
@@ -34,63 +35,63 @@ def set_parent_tool_context(
     tool_names = [t.name for t in tools]
     mcp_servers = set()
     for t in tools:
-        meta = getattr(t, 'metadata', None) or {}
-        server = meta.get('mcp_server_name', '')
+        meta = getattr(t, "metadata", None) or {}
+        server = meta.get("mcp_server_name", "")
         if server:
             mcp_servers.add(server)
 
     with _context_lock:
-        _context_storage['tool_names'] = tool_names
-        _context_storage['mcp_servers'] = list(mcp_servers)
-        _context_storage['config'] = config or {}
+        _context_storage["tool_names"] = tool_names
+        _context_storage["mcp_servers"] = list(mcp_servers)
+        _context_storage["config"] = config or {}
         # 初始化深度：主代理为 0
-        if 'agent_depth' not in _context_storage:
-            _context_storage['agent_depth'] = 0
+        if "agent_depth" not in _context_storage:
+            _context_storage["agent_depth"] = 0
 
 
 def get_parent_tool_context() -> dict[str, Any]:
     with _context_lock:
         return {
-            'tool_names': list(_context_storage.get('tool_names', [])),
-            'mcp_servers': list(_context_storage.get('mcp_servers', [])),
-            'config': dict(_context_storage.get('config', {})),
-            'agent_depth': _context_storage.get('agent_depth', 0),
+            "tool_names": list(_context_storage.get("tool_names", [])),
+            "mcp_servers": list(_context_storage.get("mcp_servers", [])),
+            "config": dict(_context_storage.get("config", {})),
+            "agent_depth": _context_storage.get("agent_depth", 0),
         }
 
 
 def has_parent_tool_context() -> bool:
     with _context_lock:
-        return bool(_context_storage.get('tool_names'))
+        return bool(_context_storage.get("tool_names"))
 
 
 def get_agent_depth() -> int:
     """获取当前代理嵌套深度"""
     with _context_lock:
-        return _context_storage.get('agent_depth', 0)
+        return _context_storage.get("agent_depth", 0)
 
 
 def increment_agent_depth() -> int:
     """递增代理深度并返回新值，用于子代理启动时设置"""
     with _context_lock:
-        current = _context_storage.get('agent_depth', 0)
+        current = _context_storage.get("agent_depth", 0)
         new_depth = current + 1
-        _context_storage['agent_depth'] = new_depth
+        _context_storage["agent_depth"] = new_depth
         return new_depth
 
 
 def decrement_agent_depth() -> int:
     """递减代理深度并返回新值，用于子代理结束时恢复"""
     with _context_lock:
-        current = _context_storage.get('agent_depth', 0)
+        current = _context_storage.get("agent_depth", 0)
         new_depth = max(0, current - 1)
-        _context_storage['agent_depth'] = new_depth
+        _context_storage["agent_depth"] = new_depth
         return new_depth
 
 
 def is_max_depth_reached() -> bool:
     """检查是否已达到最大嵌套深度"""
     with _context_lock:
-        return _context_storage.get('agent_depth', 0) >= MAX_AGENT_DEPTH
+        return _context_storage.get("agent_depth", 0) >= MAX_AGENT_DEPTH
 
 
 def clear_parent_tool_context() -> None:

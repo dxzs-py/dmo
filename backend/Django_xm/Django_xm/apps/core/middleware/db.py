@@ -55,9 +55,7 @@ class DatabaseConnectionMiddleware:
             raise
 
         # 正常请求结束后清理
-        DatabaseConnectionManager.cleanup(
-            source=f"middleware:{request.method}:{request.path}"
-        )
+        DatabaseConnectionManager.cleanup(source=f"middleware:{request.method}:{request.path}")
 
         # 周期性检查连接使用率
         self._periodic_alert_check()

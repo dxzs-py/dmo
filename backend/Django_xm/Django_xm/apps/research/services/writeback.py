@@ -18,8 +18,8 @@ def broadcast_stream_completed(
     chat_session_id: str | None,
     task_id: str,
     success: bool,
-    final_report: str = '',
-    error: str = '',
+    final_report: str = "",
+    error: str = "",
     message_id: str | None = None,
 ):
     """广播 stream_completed 事件到 session + task 双频道。
@@ -44,17 +44,17 @@ def broadcast_stream_completed(
         message_id: 关联的 ChatMessage ID（可选，用于前端精确定位消息）
     """
     payload = {
-        'source': EventSource.DEEP_RESEARCH,
-        'source_id': chat_session_id or task_id,
-        'task_id': task_id,
-        'success': success,
-        'final_report': final_report,
-        'finalized': True,
+        "source": EventSource.DEEP_RESEARCH,
+        "source_id": chat_session_id or task_id,
+        "task_id": task_id,
+        "success": success,
+        "final_report": final_report,
+        "finalized": True,
     }
     if error:
-        payload['error'] = error
+        payload["error"] = error
     if message_id:
-        payload['message_id'] = message_id
+        payload["message_id"] = message_id
 
     try:
         # 统一底层：同时发布到 session + task 双频道
@@ -70,10 +70,9 @@ def broadcast_stream_completed(
             task_id=task_id,
         )
     except PayloadValidationError:
-        logger.error(
+        logger.exception(
             f"[Writeback] STREAM_COMPLETED payload 校验失败，跳过广播: "
             f"task_id={task_id}, chat_session_id={chat_session_id}, success={success}",
-            exc_info=True
         )
     except Exception as e:
         logger.warning(f"[Writeback] 广播 STREAM_COMPLETED 失败: {e}")
@@ -113,13 +112,12 @@ def writeback_to_chat_message(
         try:
             research_task = ResearchTask.objects.get(task_id=task_id)
             chat_session_id_from_task = research_task.session_id
-            if research_task.chat_message_id:
-                chat_msg_data = get_chat_message_for_writeback(
-                    message_id=research_task.chat_message_id
-                )
+            chat_message_id = getattr(research_task, "chat_message_id", None)
+            if chat_message_id:
+                chat_msg_data = get_chat_message_for_writeback(message_id=chat_message_id)
                 if chat_msg_data is None:
                     logger.warning(
-                        f"[Writeback] chat_message_id={research_task.chat_message_id} 存在但 ChatMessage 未找到,"
+                        f"[Writeback] chat_message_id={chat_message_id} 存在但 ChatMessage 未找到,"
                         f"回退到 research_task_id 查询: task_id={task_id}"
                     )
         except ResearchTask.DoesNotExist:
@@ -138,12 +136,12 @@ def writeback_to_chat_message(
             logger.warning(f"[Writeback] 未找到关联 ChatMessage: task_id={task_id}")
             return None
 
-        chat_msg_id = chat_msg_data['id']
-        current_content = chat_msg_data['content']
+        chat_msg_id = chat_msg_data["id"]
+        current_content = chat_msg_data["content"]
 
         # chat_session_id 优先使用传入参数，其次从 ResearchTask.session_id 获取，最后从 ChatMessage.session 获取
         if chat_session_id is None:
-            chat_session_id = chat_session_id_from_task or chat_msg_data['session_id']
+            chat_session_id = chat_session_id_from_task or chat_msg_data["session_id"]
 
         # 更新 ChatMessage 内容
         # 只在 new_content 比当前 content 更长时覆盖，避免用短的 final_report
@@ -155,7 +153,7 @@ def writeback_to_chat_message(
             new_content = f"深度研究执行失败：{content}"
 
         updated_content = None
-        if len(new_content) > len(current_content or ''):
+        if len(new_content) > len(current_content or ""):
             updated_content = new_content
             final_content = new_content
         else:
@@ -194,27 +192,25 @@ def writeback_to_chat_message(
             publish_event_sync(
                 EventType.MESSAGE_UPDATED,
                 {
-                    'message_id': chat_msg_id,
-                    'session_id': chat_session_id,
-                    'content': final_content,
-                    'is_streaming': False,
-                    'research_task_id': task_id,
+                    "message_id": chat_msg_id,
+                    "session_id": chat_session_id,
+                    "content": final_content,
+                    "is_streaming": False,
+                    "research_task_id": task_id,
                 },
                 session_id=chat_session_id,
             )
         except PayloadValidationError:
-            logger.error(
+            logger.exception(
                 f"[Writeback] MESSAGE_UPDATED payload 校验失败，跳过广播（回写仍生效）: "
                 f"task_id={task_id}, chat_session_id={chat_session_id}, message_id={chat_msg_id}",
-                exc_info=True
             )
 
         logger.info(
-            f"[Writeback] ChatMessage 回写成功: task_id={task_id}, "
-            f"session={chat_session_id}, success={success}"
+            f"[Writeback] ChatMessage 回写成功: task_id={task_id}, session={chat_session_id}, success={success}"
         )
         return chat_msg_id
 
-    except Exception as e:
-        logger.error(f"[Writeback] 回写 ChatMessage 失败: task_id={task_id}, error={e}", exc_info=True)
+    except Exception:
+        logger.exception(f"[Writeback] 回写 ChatMessage 失败: task_id={task_id}")
         return None

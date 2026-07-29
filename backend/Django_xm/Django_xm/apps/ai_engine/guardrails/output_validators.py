@@ -11,6 +11,7 @@ from .content_filters import ContentFilter, ContentSafetyLevel
 @dataclass
 class OutputValidationResult:
     """输出验证结果"""
+
     is_valid: bool
     filtered_output: str
     errors: list[str]
@@ -33,7 +34,7 @@ class OutputValidator:
     ):
         """
         初始化输出验证器
-        
+
         Args:
             content_filter: 内容过滤器
             require_sources: 是否要求引用来源（RAG 场景）
@@ -59,18 +60,18 @@ class OutputValidator:
     ) -> OutputValidationResult:
         """
         验证模型输出
-        
+
         Args:
             output: 模型输出文本
             sources: 引用来源列表
             context: 额外上下文信息
-            
+
         Returns:
             OutputValidationResult: 验证结果
         """
-        errors = []
-        warnings = []
-        metadata = {}
+        errors: list[str] = []
+        warnings: list[str] = []
+        metadata: dict[str, Any] = {}
         context = context or {}
 
         # 1. 检查空输出
@@ -145,15 +146,15 @@ class OutputValidator:
     ) -> str:
         """
         验证输出，如果失败则抛出异常
-        
+
         Args:
             output: 模型输出
             sources: 引用来源
             context: 上下文
-            
+
         Returns:
             str: 过滤后的输出
-            
+
         Raises:
             ValueError: 验证失败时抛出
         """
@@ -168,7 +169,7 @@ class OutputValidator:
     def _check_source_usage(self, output: str, sources: list[str]) -> bool:
         """
         检查输出是否使用了来源
-        
+
         简单实现：检查来源中的关键词是否出现在输出中
         """
         if not sources:

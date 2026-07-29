@@ -8,6 +8,7 @@ accumulated_reasoning / tool_calls_map / tool_call_count / tool_args_accumulator
 """
 
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -19,21 +20,19 @@ class StreamContext:
     """
 
     # ── 工具调用状态 ──
-    tool_calls_map: dict[str, dict] = field(default_factory=dict)
-    used_tool_call_ids: set = field(default_factory=set)
+    tool_calls_map: dict[str, dict[str, Any]] = field(default_factory=dict)
+    used_tool_call_ids: set[str] = field(default_factory=set)
     tool_call_count: dict[str, int] = field(default_factory=dict)
     tool_args_accumulator: dict[str, str] = field(default_factory=dict)
 
     # ── 消息累积 ──
     current_message_content: str = ""
-    all_messages: list = field(default_factory=list)
+    all_messages: list[Any] = field(default_factory=list)
 
     # ── 推理状态 ──
     # accumulated_reasoning 同时承载 _stream_state 共享引用，
     # 供 views_chat.py finally 块写入数据库
-    accumulated_reasoning: dict[str, str] = field(
-        default_factory=lambda: {"content": "", "_stream_state": None}
-    )
+    accumulated_reasoning: dict[str, Any] = field(default_factory=lambda: {"content": "", "_stream_state": None})
     has_sent_reasoning: bool = False
     has_model_reasoning: bool = False
     thinking_start_time: float = 0.0

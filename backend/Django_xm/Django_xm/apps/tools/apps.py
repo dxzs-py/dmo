@@ -12,16 +12,15 @@ logger = logging.getLogger(__name__)
 
 
 class ToolsConfig(AppConfig):
-    default_auto_field = 'django.db.models.BigAutoField'
-    name = 'Django_xm.apps.tools'
-    verbose_name = '工具模块'
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "Django_xm.apps.tools"
+    verbose_name = "工具模块"
 
     def ready(self):
         # 启动时校验加密密钥可用，缺失则启动失败
         from Django_xm.apps.tools.fields import validate_encryption_key
+
         try:
             validate_encryption_key()
         except RuntimeError as exc:
-            raise RuntimeError(
-                f"工具 app 启动失败：{exc}"
-            ) from exc
+            raise RuntimeError(f"工具 app 启动失败：{exc}") from exc

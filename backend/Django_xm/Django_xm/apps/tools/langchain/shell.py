@@ -39,10 +39,14 @@ DEFAULT_WHITELIST_COMMANDS: list[str] = [
     # 文档转换
     "pandoc",
     # Python 高频安全脚本（仅限 manage.py / pytest，其他 python 调用需审批）
-    "python manage.py", "python manage.py help",
-    "python -m pytest", "python -m unittest",
-    "python3 manage.py", "python3 manage.py help",
-    "python3 -m pytest", "python3 -m unittest",
+    "python manage.py",
+    "python manage.py help",
+    "python -m pytest",
+    "python -m unittest",
+    "python3 manage.py",
+    "python3 manage.py help",
+    "python3 -m pytest",
+    "python3 -m unittest",
     # pip 只读子命令
     "pip list",
     "pip show",
@@ -171,10 +175,10 @@ def _kill_process_tree(process: subprocess.Popen, is_windows: bool) -> None:
         else:
             # Unix: 向进程组发送 SIGTERM
             try:
-                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                os.killpg(os.getpgid(process.pid), signal.SIGTERM)  # type: ignore[attr-defined]  # POSIX-only, gracefully skipped on Windows
             except (ProcessLookupError, PermissionError, OSError):
                 pass
-    except Exception:
+    except Exception:  # noqa: S110  # cleanup, 进程终止失败不应影响调用方
         pass
     finally:
         # 兜底：确保主进程被终止
@@ -188,6 +192,7 @@ def _get_whitelist_commands() -> list[str]:
     """获取白名单命令列表（支持 Django settings 覆盖，根据平台过滤）"""
     try:
         from django.conf import settings as django_settings
+
         custom = getattr(django_settings, "SHELL_EXEC_WHITELIST", None)
         if custom is not None:
             return list(custom)
@@ -224,10 +229,10 @@ def _is_command_blocked(command: str) -> str | None:
 # 重定向/管道操作符检测模式：单词白名单命令携带这些操作符时需走审批
 # 防止 "echo bad > /etc/passwd" / "cat file | rm -rf /" 等绕过攻击
 _REDIRECT_PIPE_PATTERN = re.compile(
-    r'(?<!\w)(?:'
-    r'>{1,2}|<{1,2}|'  # 重定向: > >> < <<
-    r'\|'              # 管道: |
-    r')(?:\s|$)',
+    r"(?<!\w)(?:"
+    r">{1,2}|<{1,2}|"  # 重定向: > >> < <<
+    r"\|"  # 管道: |
+    r")(?:\s|$)",
     re.DOTALL,
 )
 
@@ -264,9 +269,7 @@ def _is_command_whitelisted(command: str) -> bool:
         if cmd_stripped == wl_cmd:
             # 单词命令精确匹配时仍需检查重定向/管道
             # （虽无参数，但保持一致性）
-            if " " not in wl_cmd and _has_redirect_or_pipe(cmd_stripped):
-                return False
-            return True
+            return not (" " not in wl_cmd and _has_redirect_or_pipe(cmd_stripped))
 
     cmd_first_word = cmd_stripped.split()[0] if cmd_stripped.split() else ""
     for wl_cmd in whitelist:
@@ -276,15 +279,11 @@ def _is_command_whitelisted(command: str) -> bool:
             if cmd_stripped.startswith(wl_cmd + " ") or cmd_stripped == wl_cmd:
                 # 多词白名单命令也检查重定向/管道，防止
                 # "git status > /etc/passwd" 等绕过
-                if _has_redirect_or_pipe(cmd_stripped):
-                    return False
-                return True
+                return not _has_redirect_or_pipe(cmd_stripped)
         # 单词白名单命令：仅当第一个词匹配且无重定向/管道时放行
         elif cmd_first_word == wl_first_word:
             # 携带重定向/管道的单词命令必须走审批
-            if _has_redirect_or_pipe(cmd_stripped):
-                return False
-            return True
+            return not _has_redirect_or_pipe(cmd_stripped)
 
     return False
 
@@ -296,6 +295,7 @@ def _get_safe_working_dir(working_dir: str = "") -> str:
         # 检查是否在允许的目录范围内
         try:
             from django.conf import settings as django_settings
+
             allowed_dirs = getattr(django_settings, "SHELL_EXEC_ALLOWED_DIRS", None)
             if allowed_dirs:
                 for ad in allowed_dirs:
@@ -328,42 +328,92 @@ def _adapt_command_for_platform(command: str) -> str:
     adapted = command
 
     # mkdir -p <path> → mkdir <path>（Windows mkdir 默认递归创建）
-    adapted = re.sub(r'\bmkdir\s+-p\s+', 'mkdir ', adapted)
+    adapted = re.sub(r"\bmkdir\s+-p\s+", "mkdir ", adapted)
     # mkdir --parents <path> → mkdir <path>
-    adapted = re.sub(r'\bmkdir\s+--parents\s+', 'mkdir ', adapted)
+    adapted = re.sub(r"\bmkdir\s+--parents\s+", "mkdir ", adapted)
 
     # rm -rf <path> → rmdir /s /q <path>（目录）或 del /f /q <path>（文件）
     # 注意：rm -rf 是危险操作，通常会被 BLOCKED_PATTERNS 拦截，
     # 这里只处理 rm -r（不带 -f）的情况
-    adapted = re.sub(r'\brm\s+-r\s+', 'rmdir /s /q ', adapted)
+    adapted = re.sub(r"\brm\s+-r\s+", "rmdir /s /q ", adapted)
 
     # cp -r <src> <dst> → xcopy /e /i <src> <dst>
-    adapted = re.sub(r'\bcp\s+-r\s+', 'xcopy /e /i ', adapted)
+    adapted = re.sub(r"\bcp\s+-r\s+", "xcopy /e /i ", adapted)
 
     # touch <file> → type nul > <file>（Windows 创建空文件）
-    adapted = re.sub(r'\btouch\s+', 'type nul > ', adapted)
+    adapted = re.sub(r"\btouch\s+", "type nul > ", adapted)
 
     # ls <args> → dir <args>（简单替换，不处理复杂参数）
-    adapted = re.sub(r'\bls\s+-la\b', 'dir /a', adapted)
-    adapted = re.sub(r'\bls\s+-l\b', 'dir', adapted)
-    adapted = re.sub(r'\bls\s+-a\b', 'dir /a', adapted)
-    adapted = re.sub(r'\bls\b', 'dir', adapted)
+    adapted = re.sub(r"\bls\s+-la\b", "dir /a", adapted)
+    adapted = re.sub(r"\bls\s+-l\b", "dir", adapted)
+    adapted = re.sub(r"\bls\s+-a\b", "dir /a", adapted)
+    adapted = re.sub(r"\bls\b", "dir", adapted)
 
     # cat <file> → type <file>
-    adapted = re.sub(r'\bcat\s+', 'type ', adapted)
+    adapted = re.sub(r"\bcat\s+", "type ", adapted)
 
     # grep <pattern> <file> → findstr <pattern> <file>（简单替换）
-    adapted = re.sub(r'\bgrep\s+-r\s+', 'findstr /s ', adapted)
-    adapted = re.sub(r'\bgrep\s+-i\s+', 'findstr /i ', adapted)
-    adapted = re.sub(r'\bgrep\s+', 'findstr ', adapted)
+    adapted = re.sub(r"\bgrep\s+-r\s+", "findstr /s ", adapted)
+    adapted = re.sub(r"\bgrep\s+-i\s+", "findstr /i ", adapted)
+    adapted = re.sub(r"\bgrep\s+", "findstr ", adapted)
 
     # which <cmd> → where <cmd>
-    adapted = re.sub(r'\bwhich\s+', 'where ', adapted)
+    adapted = re.sub(r"\bwhich\s+", "where ", adapted)
 
     # clear → cls
-    adapted = re.sub(r'\bclear\b', 'cls', adapted)
+    adapted = re.sub(r"\bclear\b", "cls", adapted)
 
     return adapted
+
+
+def _sandbox_result_to_standard(sandbox_result, command: str) -> StandardToolResult:
+    """将 SandboxResult 转换为 StandardToolResult（保持输出格式一致）。
+
+    Phase D：沙箱执行结果与本机执行结果统一格式，上层工具无感知差异。
+    """
+    output_parts = []
+    if sandbox_result.stdout.strip():
+        output_parts.append(sandbox_result.stdout.strip())
+    if sandbox_result.stderr.strip():
+        output_parts.append(f"[stderr]\n{sandbox_result.stderr.strip()}")
+
+    output = "\n\n".join(output_parts) if output_parts else "(命令执行完成，无输出)"
+    sandbox_tag = " [沙箱执行]" if sandbox_result.sandboxed else " [沙箱降级-本机执行]"
+
+    if sandbox_result.timed_out:
+        return StandardToolResult(
+            content=f"命令执行超时{sandbox_tag}。命令: {command}\n已捕获输出:\n{output}",
+            status=ToolStatus.ERROR,
+            source="shell_exec",
+            metadata={
+                "timeout": True,
+                "command": command,
+                "sandboxed": sandbox_result.sandboxed,
+            },
+        )
+
+    if sandbox_result.return_code != 0:
+        return StandardToolResult(
+            content=f"命令退出码: {sandbox_result.return_code}{sandbox_tag}\n{output}",
+            status=ToolStatus.ERROR,
+            source="shell_exec",
+            metadata={
+                "return_code": sandbox_result.return_code,
+                "command": command,
+                "sandboxed": sandbox_result.sandboxed,
+            },
+        )
+
+    return StandardToolResult(
+        content=output,
+        status=ToolStatus.SUCCESS,
+        source="shell_exec",
+        metadata={
+            "return_code": sandbox_result.return_code,
+            "command": command,
+            "sandboxed": sandbox_result.sandboxed,
+        },
+    )
 
 
 def _execute_command(
@@ -373,10 +423,40 @@ def _execute_command(
 ) -> StandardToolResult:
     """执行 Shell 命令并返回结果
 
+    Phase D 集成：HIGH 级命令通过沙箱执行器路由。
+    - sandbox_executor.should_sandbox() → True → Docker 容器内执行（或降级本机）
+    - 否则 → 本机直接执行（原有逻辑）
+
     使用 Popen + communicate(timeout) 替代 subprocess.run，
     超时后通过 _kill_process_tree 终止整个进程树，
     解决 Windows shell=True 下子进程不被杀导致管道挂起的问题。
     """
+    # Phase D: HIGH 级命令沙箱路由
+    try:
+        from Django_xm.common.sandbox import sandbox_executor
+
+        if sandbox_executor.should_sandbox(command):
+            effective_timeout = min(_get_effective_timeout(command, timeout), MAX_TIMEOUT)
+            safe_cwd = _get_safe_working_dir(working_dir)
+            sandbox_result = sandbox_executor.execute(
+                command,
+                working_dir=safe_cwd,
+                timeout=effective_timeout,
+            )
+            # 记录沙箱执行指标（F2）
+            try:
+                from Django_xm.common.observability.approval_metrics import approval_metrics
+
+                approval_metrics.on_sandbox_result(success=(sandbox_result.return_code == 0))
+            except Exception:
+                # 指标记录失败不影响沙箱执行主流程
+                logger.debug("记录沙箱执行指标失败")
+            return _sandbox_result_to_standard(sandbox_result, command)
+    except ImportError:
+        pass  # 沙箱模块不可用，走本机执行
+    except Exception as sandbox_err:
+        logger.warning(f"shell_exec: 沙箱路由异常(降级本机): {sandbox_err}")
+
     effective_timeout = _get_effective_timeout(command, timeout)
     effective_timeout = min(effective_timeout, MAX_TIMEOUT)
     cwd = _get_safe_working_dir(working_dir)
@@ -387,13 +467,13 @@ def _execute_command(
     command = _adapt_command_for_platform(command)
 
     try:
-        popen_kwargs = dict(
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=cwd,
-            encoding="utf-8",
-            errors="replace",
-        )
+        popen_kwargs = {
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "cwd": cwd,
+            "encoding": "utf-8",
+            "errors": "replace",
+        }
         if is_windows:
             process = subprocess.Popen(command, shell=True, **popen_kwargs)
         else:
@@ -422,7 +502,7 @@ def _execute_command(
         if len(stdout) > MAX_OUTPUT_LENGTH:
             stdout = stdout[:MAX_OUTPUT_LENGTH] + f"\n... [输出已截断，共 {len(stdout)} 字符]"
         if len(stderr) > MAX_OUTPUT_LENGTH // 4:
-            stderr = stderr[:MAX_OUTPUT_LENGTH // 4] + "\n... [错误输出已截断]"
+            stderr = stderr[: MAX_OUTPUT_LENGTH // 4] + "\n... [错误输出已截断]"
 
         output_parts = []
         if stdout.strip():
@@ -473,19 +553,13 @@ def _execute_command(
 
 # ── 工具定义 ──────────────────────────────────────────────────────
 
+
 class ShellExecInput(BaseModel):
     """Shell 命令执行工具输入"""
-    command: str = Field(
-        description="要执行的 Shell 命令"
-    )
-    timeout: int = Field(
-        default=DEFAULT_TIMEOUT,
-        description=f"命令执行超时时间（秒），最大 {MAX_TIMEOUT} 秒"
-    )
-    working_dir: str = Field(
-        default="",
-        description="命令执行的工作目录，为空则使用当前目录"
-    )
+
+    command: str = Field(description="要执行的 Shell 命令")
+    timeout: int = Field(default=DEFAULT_TIMEOUT, description=f"命令执行超时时间（秒），最大 {MAX_TIMEOUT} 秒")
+    working_dir: str = Field(default="", description="命令执行的工作目录，为空则使用当前目录")
 
 
 class ShellExecTool(AsyncToolMixin, BaseTool):
@@ -500,9 +574,12 @@ class ShellExecTool(AsyncToolMixin, BaseTool):
 
     工具层不参与审批判断，到达 _run 的命令已通过审批（或无需审批）。
     """
+
     name: str = "shell_exec"
     version: str = TOOL_VERSION
-    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "system"})
+    metadata: dict = Field(
+        default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "system"}
+    )
     description: str = (
         "执行 Shell 命令并返回输出结果。"
         "适用场景：需要运行命令行工具（如 agent-browser、pandoc、python manage.py 等）、查看系统信息、执行自动化任务。"
@@ -556,6 +633,7 @@ class ShellExecTool(AsyncToolMixin, BaseTool):
 
 
 # ── 工厂函数 ──────────────────────────────────────────────────────
+
 
 def get_shell_exec_tools() -> list:
     """获取 Shell 执行工具列表"""

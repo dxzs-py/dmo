@@ -52,8 +52,8 @@ class ToolDataPipe:
             serializable_data = self._ensure_serializable(data)
             self._store.put(namespace, key, serializable_data)
             logger.debug(f"工具数据已写入: tool={tool_name}, key={key}")
-        except Exception as e:
-            logger.error(f"工具数据写入失败: tool={tool_name}, key={key}, error={e}")
+        except Exception:
+            logger.exception(f"工具数据写入失败: tool={tool_name}, key={key}")
 
     async def read(self, tool_name: str, key: str) -> Any | None:
         """工具读取中间结果
@@ -69,10 +69,10 @@ class ToolDataPipe:
         try:
             item = self._store.get(namespace, key)
             if item is not None:
-                return item.value if hasattr(item, 'value') else item
+                return item.value if hasattr(item, "value") else item
             return None
-        except Exception as e:
-            logger.error(f"工具数据读取失败: tool={tool_name}, key={key}, error={e}")
+        except Exception:
+            logger.exception(f"工具数据读取失败: tool={tool_name}, key={key}")
             return None
 
     async def list_keys(self, tool_name: str) -> list[str]:
@@ -87,9 +87,9 @@ class ToolDataPipe:
         namespace = self._build_namespace(tool_name)
         try:
             items = self._store.search(namespace)
-            return [item.key for item in items if hasattr(item, 'key')]
-        except Exception as e:
-            logger.error(f"列出工具数据键失败: tool={tool_name}, error={e}")
+            return [item.key for item in items if hasattr(item, "key")]
+        except Exception:
+            logger.exception(f"列出工具数据键失败: tool={tool_name}")
             return []
 
     async def clear(self, tool_name: str | None = None) -> None:
@@ -104,21 +104,21 @@ class ToolDataPipe:
             try:
                 items = self._store.search(namespace)
                 for item in items:
-                    if hasattr(item, 'key'):
+                    if hasattr(item, "key"):
                         self._store.delete(namespace, item.key)
                 logger.info(f"工具数据已清除: tool={tool_name}")
-            except Exception as e:
-                logger.error(f"清除工具数据失败: tool={tool_name}, error={e}")
+            except Exception:
+                logger.exception(f"清除工具数据失败: tool={tool_name}")
         else:
             # 清除全部工具数据：遍历所有可能的 namespace
             try:
                 items = self._store.search(self._namespace_prefix)
                 for item in items:
-                    if hasattr(item, 'key'):
+                    if hasattr(item, "key"):
                         self._store.delete(self._namespace_prefix, item.key)
                 logger.info("全部工具数据已清除")
-            except Exception as e:
-                logger.error(f"清除全部工具数据失败: error={e}")
+            except Exception:
+                logger.exception("清除全部工具数据失败:")
 
     @staticmethod
     def _ensure_serializable(data: Any) -> Any:

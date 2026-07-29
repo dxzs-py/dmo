@@ -21,6 +21,7 @@
     conda activate langchain_xm
     python -m pytest Django_xm/apps/agent_hub/builders/tests/test_deep_builder_subagent_safety.py -v
 """
+
 from __future__ import annotations
 
 import os
@@ -85,6 +86,7 @@ class TestCheckpointerContextvarSetBeforeBuild(unittest.IsolatedAsyncioTestCase)
 
         # 构造最小 config，绕过实际 resolve_tools / resolve_model
         from Django_xm.apps.agent_hub.config import AgentConfig, AgentType
+
         config = AgentConfig(
             agent_type=AgentType.DEEP_RESEARCH,
             checkpointer=fake_checkpointer,
@@ -92,41 +94,65 @@ class TestCheckpointerContextvarSetBeforeBuild(unittest.IsolatedAsyncioTestCase)
             work_dir="/tmp/test_work_dir",
         )
 
-        with patch(
-            "Django_xm.apps.agent_hub.builders.subagent_patch.set_current_checkpointer",
-            side_effect=_spy_set,
-        ), patch(
-            "Django_xm.apps.agent_hub.builders.subagent_patch.reset_current_checkpointer",
-            side_effect=_spy_reset,
-        ), patch(
-            "Django_xm.apps.agent_hub.builders.subagent_patch.patch_subagent_middleware",
-            side_effect=_spy_patch,
-        ), patch(
-            "deepagents.create_deep_agent",
-            side_effect=_fake_create_deep_agent,
-        ), patch.object(
-            builder, "_resolve_subagents", return_value=([], None),
-        ), patch.object(
-            builder, "_resolve_backend", return_value=None,
-        ), patch.object(
-            builder, "_resolve_skills", return_value=None,
-        ), patch.object(
-            builder, "_ensure_work_dir", return_value=("/tmp/test", "/tmp/test/sandbox"),
-        ), patch.object(
-            builder, "_build_system_prompt", return_value="test prompt",
-        ), patch(
-            "Django_xm.apps.agent_hub.model_resolver.resolve_model",
-            return_value=MagicMock(),
-        ), patch(
-            "Django_xm.apps.agent_hub.tool_resolver.resolve_tools",
-            new_callable=AsyncMock,
-            return_value=[],
-        ), patch(
-            "Django_xm.apps.agent_hub.middleware.build_middleware",
-            return_value=[],
-        ), patch(
-            "Django_xm.apps.agent_hub.builders.deep_builder.OfficialDeepAgentAdapter",
-            return_value=MagicMock(),
+        with (
+            patch(
+                "Django_xm.apps.agent_hub.builders.subagent_patch.set_current_checkpointer",
+                side_effect=_spy_set,
+            ),
+            patch(
+                "Django_xm.apps.agent_hub.builders.subagent_patch.reset_current_checkpointer",
+                side_effect=_spy_reset,
+            ),
+            patch(
+                "Django_xm.apps.agent_hub.builders.subagent_patch.patch_subagent_middleware",
+                side_effect=_spy_patch,
+            ),
+            patch(
+                "deepagents.create_deep_agent",
+                side_effect=_fake_create_deep_agent,
+            ),
+            patch.object(
+                builder,
+                "_resolve_subagents",
+                return_value=([], None),
+            ),
+            patch.object(
+                builder,
+                "_resolve_backend",
+                return_value=None,
+            ),
+            patch.object(
+                builder,
+                "_resolve_skills",
+                return_value=None,
+            ),
+            patch.object(
+                builder,
+                "_ensure_work_dir",
+                return_value=("/tmp/test", "/tmp/test/sandbox"),
+            ),
+            patch.object(
+                builder,
+                "_build_system_prompt",
+                return_value="test prompt",
+            ),
+            patch(
+                "Django_xm.apps.agent_hub.model_resolver.resolve_model",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "Django_xm.apps.agent_hub.tool_resolver.resolve_tools",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "Django_xm.apps.agent_hub.middleware.build_middleware",
+                return_value=[],
+            ),
+            patch(
+                "Django_xm.apps.agent_hub.builders.deep_builder.OfficialDeepAgentAdapter",
+                return_value=MagicMock(),
+            ),
         ):
             await builder.build(config)
 
@@ -142,14 +168,15 @@ class TestCheckpointerContextvarSetBeforeBuild(unittest.IsolatedAsyncioTestCase)
         self.assertGreater(set_index, -1, "set_current_checkpointer 未被调用")
         self.assertGreater(create_index, -1, "create_deep_agent 未被调用")
         self.assertLess(
-            set_index, create_index,
-            f"set_current_checkpointer 必须在 create_deep_agent 之前调用，"
-            f"实际顺序: {call_sequence}",
+            set_index,
+            create_index,
+            f"set_current_checkpointer 必须在 create_deep_agent 之前调用，实际顺序: {call_sequence}",
         )
 
         # 断言 2：create_deep_agent 执行期间，contextvar 必须有值
         self.assertEqual(
-            captured_contextvar_during_build.get("value"), fake_checkpointer,
+            captured_contextvar_during_build.get("value"),
+            fake_checkpointer,
             "create_deep_agent 期间 contextvar 必须为 config.checkpointer，"
             "否则 patched _get_subagents 走 fallback 分支，子 agent 无 checkpointer",
         )
@@ -161,7 +188,8 @@ class TestCheckpointerContextvarSetBeforeBuild(unittest.IsolatedAsyncioTestCase)
         )
         self.assertGreater(reset_index, -1, "reset_current_checkpointer 未被调用")
         self.assertGreater(
-            reset_index, create_index,
+            reset_index,
+            create_index,
             "reset_current_checkpointer 必须在 create_deep_agent 之后调用",
         )
 
@@ -175,6 +203,7 @@ class TestCheckpointerContextvarSetBeforeBuild(unittest.IsolatedAsyncioTestCase)
             reset_called.append(token)
 
         from Django_xm.apps.agent_hub.config import AgentConfig, AgentType
+
         config = AgentConfig(
             agent_type=AgentType.DEEP_RESEARCH,
             checkpointer=MagicMock(),
@@ -182,38 +211,62 @@ class TestCheckpointerContextvarSetBeforeBuild(unittest.IsolatedAsyncioTestCase)
             work_dir="/tmp/test_work_dir",
         )
 
-        with patch(
-            "Django_xm.apps.agent_hub.builders.subagent_patch.set_current_checkpointer",
-            return_value=MagicMock(),
-        ), patch(
-            "Django_xm.apps.agent_hub.builders.subagent_patch.reset_current_checkpointer",
-            side_effect=_fake_reset,
-        ), patch(
-            "Django_xm.apps.agent_hub.builders.subagent_patch.patch_subagent_middleware",
-        ), patch(
-            "deepagents.create_deep_agent",
-            side_effect=RuntimeError("simulated build failure"),
-        ), patch.object(
-            builder, "_resolve_subagents", return_value=([], None),
-        ), patch.object(
-            builder, "_resolve_backend", return_value=None,
-        ), patch.object(
-            builder, "_resolve_skills", return_value=None,
-        ), patch.object(
-            builder, "_ensure_work_dir", return_value=("/tmp/test", "/tmp/test/sandbox"),
-        ), patch.object(
-            builder, "_build_system_prompt", return_value="test prompt",
-        ), patch(
-            "Django_xm.apps.agent_hub.model_resolver.resolve_model",
-            return_value=MagicMock(),
-        ), patch(
-            "Django_xm.apps.agent_hub.tool_resolver.resolve_tools",
-            new_callable=AsyncMock,
-            return_value=[],
-        ), patch(
-            "Django_xm.apps.agent_hub.middleware.build_middleware",
-            return_value=[],
-        ), self.assertRaises(RuntimeError):
+        with (
+            patch(
+                "Django_xm.apps.agent_hub.builders.subagent_patch.set_current_checkpointer",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "Django_xm.apps.agent_hub.builders.subagent_patch.reset_current_checkpointer",
+                side_effect=_fake_reset,
+            ),
+            patch(
+                "Django_xm.apps.agent_hub.builders.subagent_patch.patch_subagent_middleware",
+            ),
+            patch(
+                "deepagents.create_deep_agent",
+                side_effect=RuntimeError("simulated build failure"),
+            ),
+            patch.object(
+                builder,
+                "_resolve_subagents",
+                return_value=([], None),
+            ),
+            patch.object(
+                builder,
+                "_resolve_backend",
+                return_value=None,
+            ),
+            patch.object(
+                builder,
+                "_resolve_skills",
+                return_value=None,
+            ),
+            patch.object(
+                builder,
+                "_ensure_work_dir",
+                return_value=("/tmp/test", "/tmp/test/sandbox"),
+            ),
+            patch.object(
+                builder,
+                "_build_system_prompt",
+                return_value="test prompt",
+            ),
+            patch(
+                "Django_xm.apps.agent_hub.model_resolver.resolve_model",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "Django_xm.apps.agent_hub.tool_resolver.resolve_tools",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "Django_xm.apps.agent_hub.middleware.build_middleware",
+                return_value=[],
+            ),
+            self.assertRaises(RuntimeError),
+        ):
             await builder.build(config)
 
         self.assertEqual(len(reset_called), 1, "异常路径下 reset_current_checkpointer 必须被调用一次")
@@ -228,14 +281,17 @@ class TestGeneralPurposeSubagentApproval(unittest.TestCase):
 
         from Django_xm.apps.agent_hub.approval.middleware import ApprovalMiddleware
         from Django_xm.apps.agent_hub.config import AgentConfig, AgentType
+
         config = AgentConfig(
             agent_type=AgentType.DEEP_RESEARCH,
             tool_config={"enable_web_search": False, "enable_doc_analysis": False},
         )
         approval_mw = ApprovalMiddleware()
 
-        subagents, retriever_name = builder._resolve_subagents(
-            config, tools=[], approval_middleware=approval_mw,
+        subagents, _retriever_name = builder._resolve_subagents(
+            config,
+            tools=[],
+            approval_middleware=approval_mw,
         )
 
         # 必须有且仅有 general-purpose 子 agent
@@ -244,9 +300,7 @@ class TestGeneralPurposeSubagentApproval(unittest.TestCase):
 
         # general-purpose 的 middleware 必须包含 ApprovalMiddleware
         gp_middleware = subagents[0].get("middleware", [])
-        has_approval = any(
-            isinstance(m, ApprovalMiddleware) for m in gp_middleware
-        )
+        has_approval = any(isinstance(m, ApprovalMiddleware) for m in gp_middleware)
         self.assertTrue(
             has_approval,
             "general-purpose 子 agent 的 middleware 必须包含 ApprovalMiddleware",
@@ -258,21 +312,27 @@ class TestGeneralPurposeSubagentApproval(unittest.TestCase):
 
         from Django_xm.apps.agent_hub.approval.middleware import ApprovalMiddleware
         from Django_xm.apps.agent_hub.config import AgentConfig, AgentType
+
         config = AgentConfig(
             agent_type=AgentType.DEEP_RESEARCH,
             tool_config={"enable_web_search": True, "enable_doc_analysis": False},
         )
         approval_mw = ApprovalMiddleware()
 
-        with patch(
-            "Django_xm.apps.tools.langchain.web_search.create_tavily_search_tool",
-            side_effect=ValueError("no tavily key"),
-        ), patch(
-            "Django_xm.apps.agent_hub.builders.deep_builder._has_search_tools",
-            return_value=True,
+        with (
+            patch(
+                "Django_xm.apps.tools.langchain.web_search.create_tavily_search_tool",
+                side_effect=ValueError("no tavily key"),
+            ),
+            patch(
+                "Django_xm.apps.agent_hub.builders.deep_builder._has_search_tools",
+                return_value=True,
+            ),
         ):
             subagents, _ = builder._resolve_subagents(
-                config, tools=[], approval_middleware=approval_mw,
+                config,
+                tools=[],
+                approval_middleware=approval_mw,
             )
 
         names = [s["name"] for s in subagents]
@@ -281,9 +341,7 @@ class TestGeneralPurposeSubagentApproval(unittest.TestCase):
 
         # 所有子 agent 都应有 ApprovalMiddleware
         for s in subagents:
-            has_approval = any(
-                isinstance(m, ApprovalMiddleware) for m in s.get("middleware", [])
-            )
+            has_approval = any(isinstance(m, ApprovalMiddleware) for m in s.get("middleware", []))
             self.assertTrue(
                 has_approval,
                 f"子 agent {s['name']} 的 middleware 必须包含 ApprovalMiddleware",
@@ -301,6 +359,7 @@ class TestGeneralPurposeSubagentApproval(unittest.TestCase):
         main_tools = [tool_a, tool_b]
 
         from Django_xm.apps.agent_hub.config import AgentConfig, AgentType
+
         config = AgentConfig(
             agent_type=AgentType.DEEP_RESEARCH,
             tool_config={"enable_web_search": False, "enable_doc_analysis": False},
@@ -309,7 +368,9 @@ class TestGeneralPurposeSubagentApproval(unittest.TestCase):
 
         # _resolve_subagents 的 tools 参数由调用方传入（_build_internal 中是 resolve_tools 返回值）
         subagents, _ = builder._resolve_subagents(
-            config, tools=main_tools, approval_middleware=None,
+            config,
+            tools=main_tools,
+            approval_middleware=None,
         )
 
         gp = next(s for s in subagents if s["name"] == "general-purpose")

@@ -20,8 +20,10 @@ logger = logging.getLogger(__name__)
 # Pydantic 模型
 # ---------------------------------------------------------------------------
 
+
 class SkillStep(BaseModel):
     """技能步骤定义"""
+
     tool_name: str = Field(description="工具名称")
     args_template: dict = Field(default_factory=dict, description="参数模板，支持 {prev_result} 引用上一步结果")
     condition: str | None = Field(default=None, description="执行条件表达式")
@@ -30,6 +32,7 @@ class SkillStep(BaseModel):
 
 class SkillSpec(BaseModel):
     """统一技能定义模型"""
+
     name: str = Field(description="技能名称")
     description: str = Field(description="技能描述")
     mode: str = Field(default="pipeline", description="执行模式: pipeline/advisor/hybrid")
@@ -69,23 +72,24 @@ def _build_preset_specs() -> list[SkillSpec]:
     """将 PRESET_SKILLS 字典列表转为 SkillSpec 对象列表"""
     specs: list[SkillSpec] = []
     for preset in PRESET_SKILLS:
-        steps = [
-            SkillStep(**step_data) for step_data in preset.get("steps", [])
-        ]
-        specs.append(SkillSpec(
-            name=preset["name"],
-            description=preset["description"],
-            mode=preset.get("mode", "pipeline"),
-            steps=steps,
-            version="1.0.0",
-            source="system",
-        ))
+        steps = [SkillStep(**step_data) for step_data in preset.get("steps", [])]
+        specs.append(
+            SkillSpec(
+                name=preset["name"],
+                description=preset["description"],
+                mode=preset.get("mode", "pipeline"),
+                steps=steps,
+                version="1.0.0",
+                source="system",
+            )
+        )
     return specs
 
 
 # ---------------------------------------------------------------------------
 # SkillRegistryService
 # ---------------------------------------------------------------------------
+
 
 class SkillRegistryService:
     """基于 Django ORM 的技能注册服务
@@ -165,7 +169,8 @@ class SkillRegistryService:
         if user_id is not None:
             try:
                 from Django_xm.apps.tools.models import SkillConfig
-                qs = SkillConfig.objects.filter(status='active', user_id=user_id)
+
+                qs = SkillConfig.objects.filter(status="active", user_id=user_id)
                 for config in qs:
                     try:
                         skills.append(config.to_skill_definition())
@@ -190,7 +195,8 @@ class SkillRegistryService:
         query_lower = query.lower()
         all_skills = cls.get_skills(user_id)
         return [
-            skill for skill in all_skills
+            skill
+            for skill in all_skills
             if query_lower in skill.name.lower() or query_lower in skill.description.lower()
         ]
 
@@ -209,9 +215,8 @@ class SkillRegistryService:
         """
         try:
             from Django_xm.apps.tools.models import SkillConfig
-            deleted, _ = SkillConfig.objects.filter(
-                name=name, user_id=user_id
-            ).delete()
+
+            deleted, _ = SkillConfig.objects.filter(name=name, user_id=user_id).delete()
             return deleted > 0
         except Exception as e:
             logger.warning(f"移除用户技能 '{name}' 失败: {e}")
@@ -239,9 +244,8 @@ class SkillRegistryService:
         if user_id is not None:
             try:
                 from Django_xm.apps.tools.models import SkillConfig
-                config = SkillConfig.objects.filter(
-                    name=name, user_id=user_id, status='active'
-                ).first()
+
+                config = SkillConfig.objects.filter(name=name, user_id=user_id, status="active").first()
                 if config:
                     return config.to_skill_definition()
             except Exception as e:

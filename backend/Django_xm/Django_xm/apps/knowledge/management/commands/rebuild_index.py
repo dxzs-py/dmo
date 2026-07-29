@@ -107,9 +107,7 @@ class Command(BaseCommand):
             num_docs = idx.get("num_documents", 0)
             emb_model = idx.get("embedding_model", "")
             emb_dim = idx.get("embedding_dimension", "N/A")
-            self.stdout.write(
-                f"{name:<30} {store_type:<12} {num_docs:<8} {emb_model:<25} {emb_dim!s:<8}"
-            )
+            self.stdout.write(f"{name:<30} {store_type:<12} {num_docs:<8} {emb_model:<25} {emb_dim!s:<8}")
 
     def _rebuild_single(
         self,
@@ -149,18 +147,12 @@ class Command(BaseCommand):
 
         if old_dim == new_dim:
             self.stdout.write(
-                self.style.WARNING(
-                    f"  维度相同 ({old_dim})，无需重建。"
-                    "如需强制重建，请先删除索引再重新创建。"
-                )
+                self.style.WARNING(f"  维度相同 ({old_dim})，无需重建。如需强制重建，请先删除索引再重新创建。")
             )
             return
 
         self.stdout.write(
-            self.style.WARNING(
-                f"  即将重建索引: 维度 {old_dim} -> {new_dim}，"
-                f"文档将被重新嵌入。此操作不可逆！"
-            )
+            self.style.WARNING(f"  即将重建索引: 维度 {old_dim} -> {new_dim}，文档将被重新嵌入。此操作不可逆！")
         )
 
         confirm = input("确认继续？(y/N): ")
@@ -196,9 +188,7 @@ class Command(BaseCommand):
             name = idx.get("name", "")
             old_dim = idx.get("embedding_dimension", "N/A")
             num_docs = idx.get("num_documents", 0)
-            self.stdout.write(
-                f"  {name}: 维度 {old_dim} -> {new_dim}, 文档数 {num_docs}"
-            )
+            self.stdout.write(f"  {name}: 维度 {old_dim} -> {new_dim}, 文档数 {num_docs}")
 
         if dry_run:
             self.stdout.write(self.style.WARNING("[DRY RUN] 未实际执行重建"))
@@ -233,9 +223,7 @@ class Command(BaseCommand):
             old_store = manager.load_index(index_name, embeddings)
         except Exception:
             # 维度不匹配时无法加载，需要直接从 PGVector 读取原始文档
-            self.stdout.write(
-                "  无法用新 embedding 加载旧索引，尝试从数据库直接读取文档..."
-            )
+            self.stdout.write("  无法用新 embedding 加载旧索引，尝试从数据库直接读取文档...")
             old_store = None
 
         documents = []
@@ -251,6 +239,7 @@ class Command(BaseCommand):
                     # PGVector: 用大 k 尝试获取所有文档
                     # 先获取文档总数
                     from django.db import connections
+
                     with connections["default"].cursor() as cursor:
                         cursor.execute(
                             """SELECT COUNT(*) FROM langchain_pg_embedding
@@ -263,19 +252,14 @@ class Command(BaseCommand):
 
                     self.stdout.write(f"  从 PGVector 读取 {total} 条文档...")
                     if total > 0:
-                        documents = old_store.similarity_search(
-                            "", k=min(total, 10000)
-                        )
+                        documents = old_store.similarity_search("", k=min(total, 10000))
             except Exception as e:
                 self.stderr.write(self.style.ERROR(f"  读取旧文档失败: {e}"))
                 raise
 
         if not documents:
             self.stderr.write(
-                self.style.ERROR(
-                    f"无法从索引 {index_name} 中读取文档。"
-                    "请确保原始文档文件仍然存在，然后重新上传。"
-                )
+                self.style.ERROR(f"无法从索引 {index_name} 中读取文档。请确保原始文档文件仍然存在，然后重新上传。")
             )
             return
 
@@ -296,8 +280,4 @@ class Command(BaseCommand):
         )
         elapsed = time.time() - start_time
 
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"  索引重建完成: {len(documents)} 条文档, 耗时 {elapsed:.1f}s"
-            )
-        )
+        self.stdout.write(self.style.SUCCESS(f"  索引重建完成: {len(documents)} 条文档, 耗时 {elapsed:.1f}s"))

@@ -17,14 +17,14 @@ import re
 # OSC 序列: ESC ] ... BEL(\x07)
 # 其他单字符转义: ESC= / ESC>
 _ANSI_ESCAPE_RE = re.compile(
-    r'\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]'  # CSI 序列
-    r'|\x1b\][^\x07]*\x07'                          # OSC 序列（以 BEL 结尾）
-    r'|\x1b[=>]'                                    # 其他单字符转义（ESC=、ESC>）
+    r"\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]"  # CSI 序列
+    r"|\x1b\][^\x07]*\x07"  # OSC 序列（以 BEL 结尾）
+    r"|\x1b[=>]"  # 其他单字符转义（ESC=、ESC>）
 )
 
 # Unicode spinner 字符（braille 盲文图案，CLI 工具常用作进度旋转动画）
 _SPINNER_CHARS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-_SPINNER_RE = re.compile(f'[{_SPINNER_CHARS}]')
+_SPINNER_RE = re.compile(f"[{_SPINNER_CHARS}]")
 
 
 def filter_ansi_codes(text: str) -> str:
@@ -38,7 +38,7 @@ def filter_ansi_codes(text: str) -> str:
     """
     if not text:
         return text
-    return _ANSI_ESCAPE_RE.sub('', text)
+    return _ANSI_ESCAPE_RE.sub("", text)
 
 
 def filter_spinner_chars(text: str) -> str:
@@ -52,7 +52,7 @@ def filter_spinner_chars(text: str) -> str:
     """
     if not text:
         return text
-    return _SPINNER_RE.sub('', text)
+    return _SPINNER_RE.sub("", text)
 
 
 def clean_tool_output(text: str) -> str:

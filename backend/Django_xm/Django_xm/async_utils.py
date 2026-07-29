@@ -3,6 +3,7 @@
 提供在同步上下文中安全运行异步协程的公共函数，
 消除各模块中重复定义的 _run_async 桥接代码。
 """
+
 import asyncio
 import concurrent.futures
 from typing import TypeVar

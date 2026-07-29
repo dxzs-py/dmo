@@ -5,9 +5,9 @@
 
 import time
 from collections import OrderedDict
-from datetime import datetime
 from typing import Any, Literal
 
+from django.utils import timezone
 from langgraph.graph import END, StateGraph
 
 from Django_xm.apps.ai_engine.services.checkpointer_factory import get_checkpointer
@@ -41,16 +41,13 @@ def should_continue(state: StudyFlowState) -> Literal["retry", "end"]:
 
 def human_review_node(state: StudyFlowState) -> dict[str, Any]:
     logger.info("[Human Review Node] 等待用户提交答案...")
-    return {
-        "current_step": "waiting_for_answers",
-        "updated_at": datetime.now().isoformat()
-    }
+    return {"current_step": "waiting_for_answers", "updated_at": timezone.now().isoformat()}
 
 
 class StudyFlow:
     def __init__(
         self,
-        thread_id: str = None,
+        thread_id: str | None = None,
         checkpointer: Any = None,
         **kwargs,
     ):
@@ -81,18 +78,11 @@ class StudyFlow:
         workflow.add_edge("human_review", "grading")
         workflow.add_edge("grading", "feedback")
 
-        workflow.add_conditional_edges(
-            "feedback",
-            should_continue,
-            {
-                "retry": "quiz_generator",
-                "end": END
-            }
-        )
+        workflow.add_conditional_edges("feedback", should_continue, {"retry": "quiz_generator", "end": END})
 
         return workflow.compile(checkpointer=self.checkpointer, interrupt_before=["human_review"])
 
-    def invoke(self, inputs: dict[str, Any], config: dict[str, Any] = None):
+    def invoke(self, inputs: dict[str, Any], config: dict[str, Any] | None = None):
         if self.thread_id:
             if config is None:
                 config = {}
@@ -100,7 +90,7 @@ class StudyFlow:
 
         return invoke_with_resilience(self.graph, inputs, config)
 
-    async def ainvoke(self, inputs: dict[str, Any], config: dict[str, Any] = None):
+    async def ainvoke(self, inputs: dict[str, Any], config: dict[str, Any] | None = None):
         if self.thread_id:
             if config is None:
                 config = {}
@@ -108,7 +98,7 @@ class StudyFlow:
 
         return await ainvoke_with_resilience(self.graph, inputs, config)
 
-    def stream(self, inputs: dict[str, Any], config: dict[str, Any] = None, stream_mode: str = "values"):
+    def stream(self, inputs: dict[str, Any], config: dict[str, Any] | None = None, stream_mode: str = "values"):
         if self.thread_id:
             if config is None:
                 config = {}
@@ -116,7 +106,7 @@ class StudyFlow:
 
         return stream_with_resilience(self.graph, inputs, config, stream_mode=stream_mode)
 
-    def get_state(self, thread_id: str = None):
+    def get_state(self, thread_id: str | None = None):
         tid = thread_id or self.thread_id
         if not tid:
             raise ValueError("thread_id is required")
@@ -126,13 +116,10 @@ class StudyFlow:
         tid = thread_id or self.thread_id
         if not tid:
             raise ValueError("thread_id is required")
-        self.graph.update_state(
-            config={"configurable": {"thread_id": tid}},
-            values=new_state
-        )
+        self.graph.update_state(config={"configurable": {"thread_id": tid}}, values=new_state)
 
 
-def create_study_flow(thread_id: str = None, checkpointer: Any = None) -> StudyFlow:
+def create_study_flow(thread_id: str | None = None, checkpointer: Any = None) -> StudyFlow:
     return StudyFlow(thread_id=thread_id, checkpointer=checkpointer)
 
 
@@ -210,16 +197,23 @@ def _invalidate_study_flow_cache(thread_id: str) -> None:
     _study_flow_cache.pop(thread_id, None)
 
     from django.core.cache import cache
+
     cache.delete(f"study_flow:active:{thread_id}")
     logger.debug(f"StudyFlow 缓存已清除: {thread_id}")
 
 
-def _safe_publish(event_type: EventType, payload: dict, task_id: str | None = None,
-                  session_id: str | None = None, user_id: str | None = None) -> None:
+def _safe_publish(
+    event_type: EventType,
+    payload: dict,
+    task_id: str | None = None,
+    session_id: str | None = None,
+    user_id: str | None = None,
+) -> None:
     """安全发布事件，吞掉异常以避免影响主流程。"""
     try:
         publish_event_sync(
-            event_type, payload,
+            event_type,
+            payload,
             task_id=task_id,
             session_id=session_id,
             user_id=user_id,
@@ -254,18 +248,16 @@ def start_study_flow(
         "should_retry": False,
         "current_step": "start",
         "thread_id": thread_id,
-        "created_at": datetime.now().isoformat(),
-        "updated_at": datetime.now().isoformat(),
+        "created_at": timezone.now().isoformat(),
+        "updated_at": timezone.now().isoformat(),
         "error": None,
-        "error_node": None
+        "error_node": None,
     }
 
     cb = TokenUsageCallbackHandler()
 
     config = {
-        "configurable": {
-            "thread_id": thread_id
-        },
+        "configurable": {"thread_id": thread_id},
         "callbacks": [cb],
     }
 
@@ -273,11 +265,11 @@ def start_study_flow(
     _safe_publish(
         EventType.WORKFLOW_STEP,
         {
-            'source': EventSource.LEARNING.value,
-            'source_id': thread_id,
-            'step': 'planner',
-            'message': '正在生成学习计划...',
-            'thread_id': thread_id,
+            "source": EventSource.LEARNING.value,
+            "source_id": thread_id,
+            "step": "planner",
+            "message": "正在生成学习计划...",
+            "thread_id": thread_id,
         },
         task_id=thread_id,
         user_id=str(user_id) if user_id is not None else None,
@@ -286,37 +278,37 @@ def start_study_flow(
     logger.info("[Study Flow] 开始执行工作流...")
     start_time = time.time()
     try:
-        result = study_flow.invoke(initial_state, config)
+        result = study_flow.invoke(dict(initial_state), config)
     except Exception as e:
         # 工作流失败：发布失败事件
         _safe_publish(
             EventType.WORKFLOW_FAILED,
             {
-                'source': EventSource.LEARNING.value,
-                'source_id': thread_id,
-                'step': 'planner',
-                'error': str(e),
-                'thread_id': thread_id,
+                "source": EventSource.LEARNING.value,
+                "source_id": thread_id,
+                "step": "planner",
+                "error": str(e),
+                "thread_id": thread_id,
             },
             task_id=thread_id,
             user_id=str(user_id) if user_id is not None else None,
         )
         raise
 
-    current_step = result.get('current_step')
+    current_step = result.get("current_step")
     logger.info(f"[Study Flow] 工作流暂停在: {current_step}")
 
     # 工作流暂停/完成事件
-    if current_step == 'waiting_for_answers':
+    if current_step == "waiting_for_answers":
         _safe_publish(
             EventType.WORKFLOW_STATE_UPDATE,
             {
-                'source': EventSource.LEARNING.value,
-                'source_id': thread_id,
-                'step': current_step,
-                'state': 'waiting_for_answers',
-                'message': '等待用户提交答案',
-                'thread_id': thread_id,
+                "source": EventSource.LEARNING.value,
+                "source_id": thread_id,
+                "step": current_step,
+                "state": "waiting_for_answers",
+                "message": "等待用户提交答案",
+                "thread_id": thread_id,
             },
             task_id=thread_id,
             user_id=str(user_id) if user_id is not None else None,
@@ -325,10 +317,10 @@ def start_study_flow(
         _safe_publish(
             EventType.WORKFLOW_COMPLETED,
             {
-                'source': EventSource.LEARNING.value,
-                'source_id': thread_id,
-                'step': current_step,
-                'thread_id': thread_id,
+                "source": EventSource.LEARNING.value,
+                "source_id": thread_id,
+                "step": current_step,
+                "thread_id": thread_id,
             },
             task_id=thread_id,
             user_id=str(user_id) if user_id is not None else None,
@@ -344,47 +336,34 @@ def start_study_flow(
     return result
 
 
-def submit_answers(
-    thread_id: str,
-    user_answers: dict,
-    user_id: int | None = None
-) -> dict:
+def submit_answers(thread_id: str, user_answers: dict, user_id: int | None = None) -> dict:
     logger.info(f"[Study Flow] 提交答案，thread_id={thread_id}")
 
     study_flow = _get_cached_study_flow(thread_id)
 
     current_state = study_flow.get_state(thread_id)
-    if not current_state or not current_state.values or not current_state.values.get('current_step'):
+    if not current_state or not current_state.values or not current_state.values.get("current_step"):
         logger.info(f"[Study Flow] 内存中无状态，从持久化恢复，thread_id={thread_id}")
         saved_state = persistence_service.load_workflow_state(thread_id, user_id=user_id)
         if saved_state:
-            study_flow.graph.update_state(
-                config={"configurable": {"thread_id": thread_id}},
-                values=saved_state
-            )
+            study_flow.graph.update_state(config={"configurable": {"thread_id": thread_id}}, values=saved_state)
             current_state = study_flow.get_state(thread_id)
         else:
             raise ValueError(f"工作流状态不存在: {thread_id}")
 
     logger.info(f"[Study Flow] 当前状态: {current_state.values.get('current_step')}")
 
-    study_flow.update_state(
-        thread_id,
-        {
-            "user_answers": user_answers,
-            "updated_at": datetime.now().isoformat()
-        }
-    )
+    study_flow.update_state(thread_id, {"user_answers": user_answers, "updated_at": timezone.now().isoformat()})
 
     # 答案已提交，继续执行 grading → feedback 步骤
     _safe_publish(
         EventType.WORKFLOW_STEP,
         {
-            'source': EventSource.LEARNING.value,
-            'source_id': thread_id,
-            'step': 'grading',
-            'message': '正在评分...',
-            'thread_id': thread_id,
+            "source": EventSource.LEARNING.value,
+            "source_id": thread_id,
+            "step": "grading",
+            "message": "正在评分...",
+            "thread_id": thread_id,
         },
         task_id=thread_id,
         user_id=str(user_id) if user_id is not None else None,
@@ -395,24 +374,22 @@ def submit_answers(
 
     cb = TokenUsageCallbackHandler()
     invoke_config = {
-        "configurable": {
-            "thread_id": thread_id
-        },
+        "configurable": {"thread_id": thread_id},
         "callbacks": [cb],
     }
 
     try:
-        study_flow.invoke(None, config=invoke_config)
+        study_flow.invoke(None, config=invoke_config)  # type: ignore[arg-type]  # LangGraph accepts None for checkpoint resumption
     except Exception as e:
         # 工作流失败：发布失败事件
         _safe_publish(
             EventType.WORKFLOW_FAILED,
             {
-                'source': EventSource.LEARNING.value,
-                'source_id': thread_id,
-                'step': 'grading',
-                'error': str(e),
-                'thread_id': thread_id,
+                "source": EventSource.LEARNING.value,
+                "source_id": thread_id,
+                "step": "grading",
+                "error": str(e),
+                "thread_id": thread_id,
             },
             task_id=thread_id,
             user_id=str(user_id) if user_id is not None else None,
@@ -421,17 +398,17 @@ def submit_answers(
 
     result = get_workflow_state(thread_id)
 
-    final_step = result.get('current_step') if result else 'unknown'
+    final_step = result.get("current_step") if result else "unknown"
     logger.info(f"[Study Flow] 工作流执行完成，最终状态: {final_step}")
 
     # 工作流完成事件
     _safe_publish(
         EventType.WORKFLOW_COMPLETED,
         {
-            'source': EventSource.LEARNING.value,
-            'source_id': thread_id,
-            'step': final_step,
-            'thread_id': thread_id,
+            "source": EventSource.LEARNING.value,
+            "source_id": thread_id,
+            "step": final_step,
+            "thread_id": thread_id,
         },
         task_id=thread_id,
         user_id=str(user_id) if user_id is not None else None,
@@ -472,10 +449,7 @@ def get_workflow_state(thread_id: str) -> dict:
     saved_state = persistence_service.load_workflow_state(thread_id)
     if saved_state:
         study_flow = _get_study_flow(thread_id)
-        study_flow.graph.update_state(
-            config={"configurable": {"thread_id": thread_id}},
-            values=saved_state
-        )
+        study_flow.graph.update_state(config={"configurable": {"thread_id": thread_id}}, values=saved_state)
         return saved_state
 
     return None
@@ -495,26 +469,24 @@ def get_workflow_history(thread_id: str) -> list:
 
     study_flow = _get_cached_study_flow(thread_id)
 
-    config = {
-        "configurable": {
-            "thread_id": thread_id
-        }
-    }
+    config = {"configurable": {"thread_id": thread_id}}
 
     history = []
     try:
         for state in study_flow.graph.get_state_history(config):
-            history.append({
-                "step": state.metadata.get("step") if hasattr(state, "metadata") else None,
-                "values": state.values if hasattr(state, "values") else state,
-            })
+            history.append(
+                {
+                    "step": state.metadata.get("step") if hasattr(state, "metadata") else None,
+                    "values": state.values if hasattr(state, "values") else state,
+                }
+            )
     except Exception as e:
         logger.warning(f"[Study Flow] 获取历史失败: {e}")
 
     return history
 
 
-def get_study_flow_app(thread_id: str = None) -> StudyFlow:
+def get_study_flow_app(thread_id: str | None = None) -> StudyFlow:
     if thread_id:
         return _get_cached_study_flow(thread_id)
     return StudyFlow()
@@ -528,12 +500,14 @@ def _update_workflow_session_tokens(
 ):
     try:
         from ..models import WorkflowSession
+
         session = WorkflowSession.objects.filter(thread_id=thread_id, is_deleted=False).first()
         if not session:
             logger.warning(f"[Study Flow] 未找到工作流会话: {thread_id}")
             return
 
         from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
+
         # get_model_string() 内部已优先读 SystemConfig.default_chat_model，
         # 写入 WorkflowSession.model 与实际 LLM 调用模型保持一致
         model_name = get_model_string()
@@ -546,7 +520,7 @@ def _update_workflow_session_tokens(
             session.token_count = total_tokens
             session.response_time = response_time
 
-        session.save(update_fields=['model', 'token_count', 'response_time'])
+        session.save(update_fields=["model", "token_count", "response_time"])
         logger.info(f"[Study Flow] 更新工作流统计: thread_id={thread_id}, tokens={total_tokens}")
     except Exception as e:
         logger.warning(f"[Study Flow] 更新工作流会话 Token 失败: {e}")

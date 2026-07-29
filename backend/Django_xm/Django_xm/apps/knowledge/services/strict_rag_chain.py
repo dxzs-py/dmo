@@ -19,7 +19,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.retrievers import BaseRetriever
-from langchain_core.runnables import RunnablePassthrough
+from langchain_core.runnables import Runnable, RunnablePassthrough
 
 from Django_xm.apps.core.logging_utils import get_logger
 
@@ -49,6 +49,7 @@ def _resolve_chat_model(model, streaming: bool = False) -> BaseChatModel:
         provider, model_name = model.split(":", 1)
         return get_chat_model(model_name=model_name, model_provider=provider, streaming=streaming)
     return get_chat_model(model_name=model, streaming=streaming)
+
 
 STRICT_RAG_SYSTEM_PROMPT = """你是一个严格基于知识库内容的问答助手。你必须且只能基于下方【检索到的参考资料】来回答用户的问题。
 
@@ -99,10 +100,7 @@ def _format_docs(docs: list[Document]) -> str:
     result = "\n".join(formatted_parts)
 
     if has_degraded:
-        result = (
-            "【注意：向量检索服务暂时不可用，以下结果由关键词检索提供，相关性可能低于正常水平。】\n\n"
-            + result
-        )
+        result = "【注意：向量检索服务暂时不可用，以下结果由关键词检索提供，相关性可能低于正常水平。】\n\n" + result
 
     return result
 
@@ -141,9 +139,11 @@ async def _hyde_rewrite_query(query: str, llm: BaseChatModel | None = None) -> s
     if llm is None:
         try:
             from Django_xm.apps.ai_engine.services.llm_factory import get_helper_model
+
             llm = get_helper_model()
         except Exception:
-            pass
+            # 辅助模型获取失败时回退到 _resolve_chat_model
+            logger.debug("获取辅助模型失败，回退到 _resolve_chat_model")
         if llm is None:
             try:
                 llm = _resolve_chat_model(None, streaming=False)
@@ -174,9 +174,11 @@ def _hyde_rewrite_query_sync(query: str, llm: BaseChatModel | None = None) -> st
     if llm is None:
         try:
             from Django_xm.apps.ai_engine.services.llm_factory import get_helper_model
+
             llm = get_helper_model()
         except Exception:
-            pass
+            # 辅助模型获取失败时回退到 _resolve_chat_model
+            logger.debug("获取辅助模型失败（同步），回退到 _resolve_chat_model")
         if llm is None:
             try:
                 llm = _resolve_chat_model(None, streaming=False)
@@ -232,21 +234,18 @@ def create_strict_rag_chain(
             "retrieved_docs": docs,
         }
 
-    chain = (
-        RunnablePassthrough.assign(
-            context_and_docs=lambda x: retrieve_and_format(x["question"])
+    chain: Runnable[Any, Any] = RunnablePassthrough.assign(context_and_docs=lambda x: retrieve_and_format(x["question"])) | {
+        "answer": (
+            lambda x: {
+                "context": x["context_and_docs"]["context"],
+                "question": x["context_and_docs"]["question"],
+            }
         )
-        | {
-            "answer": (
-                lambda x: {
-                    "context": x["context_and_docs"]["context"],
-                    "question": x["context_and_docs"]["question"],
-                }
-            ) | prompt | (model if isinstance(model, BaseChatModel) else _get_chat_model(model))
-              | StrOutputParser(),
-            "retrieved_docs": (lambda x: x["context_and_docs"]["retrieved_docs"]),
-        }
-    )
+        | prompt
+        | (model if isinstance(model, BaseChatModel) else _get_chat_model(model))
+        | StrOutputParser(),
+        "retrieved_docs": (lambda x: x["context_and_docs"]["retrieved_docs"]),
+    }
 
     logger.info("严格 RAG Chain 创建成功")
     return {
@@ -318,7 +317,7 @@ def query_strict_rag(
             else:
                 raise
 
-        logger.info(f"检索到 {len(docs)} 个文档" + (" (降级模式)" if degraded else ""))
+        logger.info(f"检索到 {len(docs)} 个文档{' (降级模式)' if degraded else ''}")
 
         # 2. 构建上下文
         context = _format_docs(docs)
@@ -330,7 +329,7 @@ def query_strict_rag(
         llm = _resolve_chat_model(model, streaming=False)
 
         response = llm.invoke([HumanMessage(content=prompt_text)])
-        answer = response.content if hasattr(response, 'content') else str(response)
+        answer = response.content if hasattr(response, "content") else str(response)
 
         # 5. 提取来源
         sources = _extract_sources(docs)
@@ -350,8 +349,8 @@ def query_strict_rag(
         logger.info("严格 RAG 查询完成")
         return result
 
-    except Exception as e:
-        logger.error(f"严格 RAG 查询失败: {e}", exc_info=True)
+    except Exception:
+        logger.exception("严格 RAG 查询失败")
         raise
 
 
@@ -412,7 +411,7 @@ async def aquery_strict_rag(
             else:
                 raise
 
-        logger.info(f"检索到 {len(docs)} 个文档" + (" (降级模式)" if degraded else ""))
+        logger.info(f"检索到 {len(docs)} 个文档{' (降级模式)' if degraded else ''}")
 
         # 2. 构建上下文
         context = _format_docs(docs)
@@ -424,7 +423,7 @@ async def aquery_strict_rag(
         llm = _resolve_chat_model(model, streaming=True)
 
         response = await llm.ainvoke([HumanMessage(content=prompt_text)])
-        answer = response.content if hasattr(response, 'content') else str(response)
+        answer = response.content if hasattr(response, "content") else str(response)
 
         # 5. 提取来源
         sources = _extract_sources(docs)
@@ -444,8 +443,8 @@ async def aquery_strict_rag(
         logger.info("异步严格 RAG 查询完成")
         return result
 
-    except Exception as e:
-        logger.error(f"异步严格 RAG 查询失败: {e}", exc_info=True)
+    except Exception:
+        logger.exception("异步严格 RAG 查询失败")
         raise
 
 
@@ -514,7 +513,7 @@ async def astream_strict_rag(
             else:
                 raise
 
-        logger.info(f"检索到 {len(docs)} 个文档" + (" (降级模式)" if degraded else ""))
+        logger.info(f"检索到 {len(docs)} 个文档{' (降级模式)' if degraded else ''}")
 
         # 2. 构建上下文
         context = _format_docs(docs)
@@ -528,7 +527,7 @@ async def astream_strict_rag(
 
         full_response = ""
         async for chunk in llm.astream([HumanMessage(content=prompt_text)]):
-            if hasattr(chunk, 'content') and chunk.content:
+            if hasattr(chunk, "content") and chunk.content:
                 full_response += chunk.content
                 yield {"type": "chunk", "content": chunk.content}
 
@@ -547,7 +546,7 @@ async def astream_strict_rag(
         logger.info(f"严格 RAG 流式查询完成, total_len={len(full_response)}")
 
     except Exception as e:
-        logger.error(f"严格 RAG 流式查询失败: {e}", exc_info=True)
+        logger.exception("严格 RAG 流式查询失败")
         yield {"type": "error", "message": str(e)}
 
 
@@ -618,7 +617,7 @@ def stream_strict_rag(
             else:
                 raise
 
-        logger.info(f"检索到 {len(docs)} 个文档" + (" (降级模式)" if degraded else ""))
+        logger.info(f"检索到 {len(docs)} 个文档{' (降级模式)' if degraded else ''}")
 
         # 2. 构建上下文
         context = _format_docs(docs)
@@ -632,7 +631,7 @@ def stream_strict_rag(
 
         full_response = ""
         for chunk in llm.stream([HumanMessage(content=prompt_text)]):
-            if hasattr(chunk, 'content') and chunk.content:
+            if hasattr(chunk, "content") and chunk.content:
                 full_response += chunk.content
                 yield {"type": "chunk", "content": chunk.content}
 
@@ -651,5 +650,5 @@ def stream_strict_rag(
         logger.info(f"严格 RAG 同步流式查询完成, total_len={len(full_response)}")
 
     except Exception as e:
-        logger.error(f"严格 RAG 同步流式查询失败: {e}", exc_info=True)
+        logger.exception("严格 RAG 同步流式查询失败")
         yield {"type": "error", "message": str(e)}

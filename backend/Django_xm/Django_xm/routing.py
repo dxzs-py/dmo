@@ -9,5 +9,5 @@ from django.urls import path
 from Django_xm.apps.chat.consumers import RealtimeSyncConsumer
 
 websocket_urlpatterns = [
-    path("ws/realtime/", RealtimeSyncConsumer.as_asgi()),
+    path("ws/realtime/", RealtimeSyncConsumer.as_asgi()),  # type: ignore[arg-type]  # Django Channels ASGI app, not WSGI callable
 ]

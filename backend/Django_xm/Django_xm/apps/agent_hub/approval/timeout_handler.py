@@ -169,11 +169,9 @@ class ApprovalTimeoutHandler:
         for interrupt_id in timed_out_ids:
             try:
                 await self.handle_timeout(interrupt_id)
-            except Exception as e:
-                logger.error(
-                    f"[ApprovalTimeoutHandler] 处理超时失败: "
-                    f"interrupt_id={interrupt_id}, error={e}",
-                    exc_info=True,
+            except Exception:
+                logger.exception(
+                    f"[ApprovalTimeoutHandler] 处理超时失败: interrupt_id={interrupt_id}",
                 )
 
     async def handle_timeout(self, interrupt_id: str) -> None:
@@ -195,9 +193,7 @@ class ApprovalTimeoutHandler:
         """
         info = self._pending_approvals.get(interrupt_id)
         if info is None:
-            logger.warning(
-                f"[ApprovalTimeoutHandler] 超时处理跳过: 未注册的 interrupt_id={interrupt_id}"
-            )
+            logger.warning(f"[ApprovalTimeoutHandler] 超时处理跳过: 未注册的 interrupt_id={interrupt_id}")
             return
 
         tool_call_id = info["tool_call_id"]
@@ -215,14 +211,11 @@ class ApprovalTimeoutHandler:
             #   5. 触发批量恢复逻辑（深度研究场景递减 pending 计数）
             approval_service.timeout_approval(interrupt_id)
             logger.info(
-                f"[ApprovalTimeoutHandler] 超时处理完成: interrupt_id={interrupt_id}, "
-                f"tool_call_id={tool_call_id}"
+                f"[ApprovalTimeoutHandler] 超时处理完成: interrupt_id={interrupt_id}, tool_call_id={tool_call_id}"
             )
-        except Exception as e:
-            logger.error(
-                f"[ApprovalTimeoutHandler] 调用 timeout_approval 失败: "
-                f"interrupt_id={interrupt_id}, error={e}",
-                exc_info=True,
+        except Exception:
+            logger.exception(
+                f"[ApprovalTimeoutHandler] 调用 timeout_approval 失败: interrupt_id={interrupt_id}",
             )
         finally:
             await self.unregister_approval(interrupt_id)

@@ -52,6 +52,7 @@ if not django.apps.apps.ready:
 # 测试辅助：构造 fake deepagents.subagents 模块结构
 # ============================================================================
 
+
 def _make_fake_subagents_module():
     """构造一个 fake ``deepagents.middleware.subagents`` 模块。
 
@@ -72,6 +73,7 @@ def _make_fake_subagents_module():
         ``StructuredTool.from_function`` 要求 ``args_schema`` 是 pydantic BaseModel 子类，
         MagicMock 会触发 TypeError: args_schema must be a subclass of pydantic BaseModel。
         """
+
         description: str = Field(..., description="Task description")
         subagent_type: str = Field(..., description="Subagent type to invoke")
 
@@ -120,6 +122,7 @@ def _apply_fake_module_to_sys_modules(fake_module):
 # 测试 1: set_current_checkpointer / reset_current_checkpointer
 # ============================================================================
 
+
 class CheckpointerContextVarTests(unittest.IsolatedAsyncioTestCase):
     """checkpointer contextvar 设置/重置/协程隔离。"""
 
@@ -143,6 +146,7 @@ class CheckpointerContextVarTests(unittest.IsolatedAsyncioTestCase):
         from Django_xm.apps.agent_hub.builders.subagent_patch import (
             _CURRENT_CHECKPOINTER,
         )
+
         self.assertIsNone(_CURRENT_CHECKPOINTER.get())
 
     async def test_checkpointer_coroutine_isolation(self):
@@ -204,6 +208,7 @@ class CheckpointerContextVarTests(unittest.IsolatedAsyncioTestCase):
 # 测试 2: patch_subagent_middleware 幂等性
 # ============================================================================
 
+
 class PatchIdempotencyTests(unittest.TestCase):
     """patch_subagent_middleware 幂等性测试。"""
 
@@ -217,6 +222,7 @@ class PatchIdempotencyTests(unittest.TestCase):
 
         # 重置 _patched 标志，确保测试独立
         import Django_xm.apps.agent_hub.builders.subagent_patch as patch_module
+
         original_patched = patch_module._patched
         original_get_subagents = fake_module.SubAgentMiddleware._get_subagents
         original_build_task_tool = fake_module._build_task_tool
@@ -230,11 +236,13 @@ class PatchIdempotencyTests(unittest.TestCase):
             patched_get_subagents_1 = fake_module.SubAgentMiddleware._get_subagents
             patched_build_task_tool_1 = fake_module._build_task_tool
             self.assertIsNot(
-                patched_get_subagents_1, original_get_subagents,
+                patched_get_subagents_1,
+                original_get_subagents,
                 "第一次 patch 后 _get_subagents 应被替换",
             )
             self.assertIsNot(
-                patched_build_task_tool_1, original_build_task_tool,
+                patched_build_task_tool_1,
+                original_build_task_tool,
                 "第一次 patch 后 _build_task_tool 应被替换",
             )
 
@@ -259,6 +267,7 @@ class PatchIdempotencyTests(unittest.TestCase):
 # 测试 3: _patched_get_subagents
 # ============================================================================
 
+
 class PatchedGetSubagentsTests(unittest.IsolatedAsyncioTestCase):
     """_patched_get_subagents 行为测试。"""
 
@@ -268,6 +277,7 @@ class PatchedGetSubagentsTests(unittest.IsolatedAsyncioTestCase):
         _apply_fake_module_to_sys_modules(self.fake_module)
 
         import Django_xm.apps.agent_hub.builders.subagent_patch as patch_module
+
         self.patch_module = patch_module
         self.original_patched = patch_module._patched
         patch_module._patched = False
@@ -293,25 +303,33 @@ class PatchedGetSubagentsTests(unittest.IsolatedAsyncioTestCase):
 
         checkpointer = MagicMock(name="test_checkpointer")
         middleware = self.fake_module.SubAgentMiddleware(
-            subagents=[{
-                "name": "web-researcher",
-                "description": "search expert",
-                "model": "gpt-4o",
-                "tools": [MagicMock()],
-                "system_prompt": "you are a researcher",
-                "middleware": [],
-            }]
+            subagents=[
+                {
+                    "name": "web-researcher",
+                    "description": "search expert",
+                    "model": "gpt-4o",
+                    "tools": [MagicMock()],
+                    "system_prompt": "you are a researcher",
+                    "middleware": [],
+                }
+            ]
         )
 
-        with patch(
-            "langchain.agents.create_agent", fake_create_agent,
-        ), patch(
-            "deepagents._models.resolve_model", fake_resolve_model,
+        with (
+            patch(
+                "langchain.agents.create_agent",
+                fake_create_agent,
+            ),
+            patch(
+                "deepagents._models.resolve_model",
+                fake_resolve_model,
+            ),
         ):
             from Django_xm.apps.agent_hub.builders.subagent_patch import (
                 reset_current_checkpointer,
                 set_current_checkpointer,
             )
+
             token = set_current_checkpointer(checkpointer)
             try:
                 result = middleware._get_subagents()
@@ -336,22 +354,30 @@ class PatchedGetSubagentsTests(unittest.IsolatedAsyncioTestCase):
         compiled_runnable = MagicMock(name="compiled_runnable")
 
         middleware = self.fake_module.SubAgentMiddleware(
-            subagents=[{
-                "name": "doc-analyst",
-                "description": "doc analysis",
-                "runnable": compiled_runnable,
-            }]
+            subagents=[
+                {
+                    "name": "doc-analyst",
+                    "description": "doc analysis",
+                    "runnable": compiled_runnable,
+                }
+            ]
         )
 
-        with patch(
-            "langchain.agents.create_agent", fake_create_agent,
-        ), patch(
-            "deepagents._models.resolve_model", fake_resolve_model,
+        with (
+            patch(
+                "langchain.agents.create_agent",
+                fake_create_agent,
+            ),
+            patch(
+                "deepagents._models.resolve_model",
+                fake_resolve_model,
+            ),
         ):
             from Django_xm.apps.agent_hub.builders.subagent_patch import (
                 reset_current_checkpointer,
                 set_current_checkpointer,
             )
+
             token = set_current_checkpointer(MagicMock(name="ck"))
             try:
                 result = middleware._get_subagents()
@@ -366,19 +392,22 @@ class PatchedGetSubagentsTests(unittest.IsolatedAsyncioTestCase):
     def test_subagent_missing_model_raises_value_error(self):
         """SubAgent 缺少 model 字段抛 ValueError。"""
         middleware = self.fake_module.SubAgentMiddleware(
-            subagents=[{
-                "name": "broken-subagent",
-                "description": "missing model",
-                "tools": [],
-                "system_prompt": "x",
-                "middleware": [],
-            }]
+            subagents=[
+                {
+                    "name": "broken-subagent",
+                    "description": "missing model",
+                    "tools": [],
+                    "system_prompt": "x",
+                    "middleware": [],
+                }
+            ]
         )
 
         from Django_xm.apps.agent_hub.builders.subagent_patch import (
             reset_current_checkpointer,
             set_current_checkpointer,
         )
+
         token = set_current_checkpointer(MagicMock(name="ck"))
         try:
             with self.assertRaises(ValueError) as ctx:
@@ -391,19 +420,22 @@ class PatchedGetSubagentsTests(unittest.IsolatedAsyncioTestCase):
     def test_subagent_missing_tools_raises_value_error(self):
         """SubAgent 缺少 tools 字段抛 ValueError。"""
         middleware = self.fake_module.SubAgentMiddleware(
-            subagents=[{
-                "name": "no-tools-agent",
-                "description": "missing tools",
-                "model": "gpt-4o",
-                "system_prompt": "x",
-                "middleware": [],
-            }]
+            subagents=[
+                {
+                    "name": "no-tools-agent",
+                    "description": "missing tools",
+                    "model": "gpt-4o",
+                    "system_prompt": "x",
+                    "middleware": [],
+                }
+            ]
         )
 
         from Django_xm.apps.agent_hub.builders.subagent_patch import (
             reset_current_checkpointer,
             set_current_checkpointer,
         )
+
         token = set_current_checkpointer(MagicMock(name="ck"))
         try:
             with self.assertRaises(ValueError) as ctx:
@@ -419,28 +451,37 @@ class PatchedGetSubagentsTests(unittest.IsolatedAsyncioTestCase):
         fake_resolve_model = MagicMock(return_value=MagicMock())
 
         middleware = self.fake_module.SubAgentMiddleware(
-            subagents=[{
-                "name": "risky-agent",
-                "description": "needs approval",
-                "model": "gpt-4o",
-                "tools": [],
-                "system_prompt": "x",
-                "middleware": [],
-                "interrupt_on": {"write_file": True},
-            }]
+            subagents=[
+                {
+                    "name": "risky-agent",
+                    "description": "needs approval",
+                    "model": "gpt-4o",
+                    "tools": [],
+                    "system_prompt": "x",
+                    "middleware": [],
+                    "interrupt_on": {"write_file": True},
+                }
+            ]
         )
 
-        with patch(
-            "langchain.agents.create_agent", fake_create_agent,
-        ), patch(
-            "deepagents._models.resolve_model", fake_resolve_model,
-        ), patch(
-            "langchain.agents.middleware.HumanInTheLoopMiddleware",
-        ) as mock_hitl:
+        with (
+            patch(
+                "langchain.agents.create_agent",
+                fake_create_agent,
+            ),
+            patch(
+                "deepagents._models.resolve_model",
+                fake_resolve_model,
+            ),
+            patch(
+                "langchain.agents.middleware.HumanInTheLoopMiddleware",
+            ) as mock_hitl,
+        ):
             from Django_xm.apps.agent_hub.builders.subagent_patch import (
                 reset_current_checkpointer,
                 set_current_checkpointer,
             )
+
             token = set_current_checkpointer(MagicMock(name="ck"))
             try:
                 middleware._get_subagents()
@@ -457,6 +498,7 @@ class PatchedGetSubagentsTests(unittest.IsolatedAsyncioTestCase):
 # 测试 4: _patched_build_task_tool
 # ============================================================================
 
+
 class PatchedBuildTaskToolTests(unittest.IsolatedAsyncioTestCase):
     """_patched_build_task_tool 行为测试。"""
 
@@ -466,6 +508,7 @@ class PatchedBuildTaskToolTests(unittest.IsolatedAsyncioTestCase):
         _apply_fake_module_to_sys_modules(self.fake_module)
 
         import Django_xm.apps.agent_hub.builders.subagent_patch as patch_module
+
         self.patch_module = patch_module
         self.original_patched = patch_module._patched
         patch_module._patched = False
@@ -544,11 +587,13 @@ class PatchedBuildTaskToolTests(unittest.IsolatedAsyncioTestCase):
         from langchain.tools import ToolRuntime
 
         subagent_runnable = MagicMock(name="web_runnable")
-        subagents_spec = [{
-            "name": "web-researcher",
-            "description": "search",
-            "runnable": subagent_runnable,
-        }]
+        subagents_spec = [
+            {
+                "name": "web-researcher",
+                "description": "search",
+                "runnable": subagent_runnable,
+            }
+        ]
 
         tool = self.fake_module._build_task_tool(subagents_spec)
 
@@ -563,9 +608,12 @@ class PatchedBuildTaskToolTests(unittest.IsolatedAsyncioTestCase):
 
         # mock 子智能体 ainvoke 返回值（包含 messages 用于 _return_command_with_state_update）
         from langchain_core.messages import AIMessage
-        subagent_runnable.ainvoke = AsyncMock(return_value={
-            "messages": [AIMessage(content="subagent result")],
-        })
+
+        subagent_runnable.ainvoke = AsyncMock(
+            return_value={
+                "messages": [AIMessage(content="subagent result")],
+            }
+        )
 
         # 不传 _on_tool_event，走 ainvoke 路径
         result = await tool.coroutine(
@@ -581,7 +629,8 @@ class PatchedBuildTaskToolTests(unittest.IsolatedAsyncioTestCase):
         subagent_config = call_args[1]
         self.assertEqual(subagent_config["callbacks"], parent_callbacks)
         self.assertEqual(
-            subagent_config["configurable"]["ls_agent_type"], "subagent",
+            subagent_config["configurable"]["ls_agent_type"],
+            "subagent",
         )
         # _on_tool_event 应从子智能体 config 中移除（避免递归）
         self.assertNotIn("_on_tool_event", subagent_config["configurable"])
@@ -633,11 +682,13 @@ class PatchedBuildTaskToolTests(unittest.IsolatedAsyncioTestCase):
         from langchain_core.messages import AIMessageChunk, ToolMessage
 
         subagent_runnable = MagicMock(name="web_runnable")
-        subagents_spec = [{
-            "name": "web-researcher",
-            "description": "search",
-            "runnable": subagent_runnable,
-        }]
+        subagents_spec = [
+            {
+                "name": "web-researcher",
+                "description": "search",
+                "runnable": subagent_runnable,
+            }
+        ]
 
         tool = self.fake_module._build_task_tool(subagents_spec)
 
@@ -661,12 +712,14 @@ class PatchedBuildTaskToolTests(unittest.IsolatedAsyncioTestCase):
             # 模拟 AIMessageChunk 含 tool_calls
             chunk = AIMessageChunk(
                 content="",
-                tool_call_chunks=[{
-                    "name": "web_search",
-                    "args": '{"query": "test"}',
-                    "id": "tool-call-1",
-                    "index": 0,
-                }],
+                tool_call_chunks=[
+                    {
+                        "name": "web_search",
+                        "args": '{"query": "test"}',
+                        "id": "tool-call-1",
+                        "index": 0,
+                    }
+                ],
             )
             yield ("messages", (chunk, {"langgraph_node": "agent"}))
             # values 模式产出最终状态
@@ -687,8 +740,254 @@ class PatchedBuildTaskToolTests(unittest.IsolatedAsyncioTestCase):
 
 
 # ============================================================================
+# 测试 6: 子 agent 嵌套层级字段透传（Phase E3）
+# ============================================================================
+
+
+class NestedFieldPropagationTests(unittest.IsolatedAsyncioTestCase):
+    """_astream_with_tool_events 子 agent 嵌套层级字段透传测试。
+
+    Phase E3 端到端传播链路的第一段：
+        atask 在构造 subagent_config 时注入嵌套字段到 configurable →
+        _astream_with_tool_events 从 configurable 提取 →
+        随每个 tool 事件传递给 on_tool_event 回调（kwargs）→
+        adapter._on_tool_event 透传到 _publish_tool_event →
+        service.register 注册到 ToolCallContext（test_tool_call_lifecycle.py 覆盖）
+
+    本测试聚焦第一段：验证 _astream_with_tool_events 正确提取并传递嵌套字段。
+    """
+
+    def setUp(self):
+        """每个测试前重置 patch 状态。"""
+        self.fake_module = _make_fake_subagents_module()
+        _apply_fake_module_to_sys_modules(self.fake_module)
+
+        import Django_xm.apps.agent_hub.builders.subagent_patch as patch_module
+
+        self.patch_module = patch_module
+        self.original_patched = patch_module._patched
+        patch_module._patched = False
+        patch_module.patch_subagent_middleware()
+
+    def tearDown(self):
+        self.patch_module._patched = self.original_patched
+
+    async def test_atask_passes_nested_fields_to_on_tool_event(self):
+        """atask 异步函数：嵌套字段从 configurable 提取并传递给 on_tool_event kwargs。
+
+        验证 on_tool_event 收到的 kwargs 含：
+        - depth（=1，子 agent）
+        - parent_tool_call_id
+        - agent_name
+        - agent_path
+        - risk_ceiling
+        """
+        from langchain.tools import ToolRuntime
+        from langchain_core.messages import AIMessageChunk, ToolMessage
+
+        subagent_runnable = MagicMock(name="web_runnable")
+        subagents_spec = [
+            {
+                "name": "web-researcher",
+                "description": "search expert",
+                "runnable": subagent_runnable,
+            }
+        ]
+
+        tool = self.fake_module._build_task_tool(subagents_spec)
+
+        on_tool_event = AsyncMock(name="on_tool_event")
+
+        runtime = MagicMock(spec=ToolRuntime)
+        runtime.tool_call_id = "tc-parent-task-call"
+        runtime.state = {"messages": []}
+        # 父 configurable 不含嵌套字段（主 agent 视角），atask 应构造子 agent 嵌套字段
+        runtime.config = {
+            "callbacks": [MagicMock()],
+            "configurable": {
+                "thread_id": "task-1",
+                "_on_tool_event": on_tool_event,
+            },
+        }
+
+        # 构造 astream 产出的 chunk：子 agent 调用 web_search 工具
+        async def _fake_astream(state, config, stream_mode=None):
+            chunk = AIMessageChunk(
+                content="",
+                tool_call_chunks=[
+                    {
+                        "name": "web_search",
+                        "args": '{"query": "langchain"}',
+                        "id": "tool-call-sub-1",
+                        "index": 0,
+                    }
+                ],
+            )
+            yield ("messages", (chunk, {"langgraph_node": "agent"}))
+            yield (
+                "values",
+                {
+                    "messages": [chunk, ToolMessage(content="result", tool_call_id="tool-call-sub-1")],
+                },
+            )
+
+        subagent_runnable.astream = MagicMock(return_value=_fake_astream({}, {}, stream_mode=[]))
+
+        await tool.coroutine(
+            description="search the web",
+            subagent_type="web-researcher",
+            runtime=runtime,
+        )
+
+        # on_tool_event 至少被调用一次
+        self.assertTrue(on_tool_event.called, "on_tool_event 应被调用")
+
+        # 检查所有调用，至少有一次含嵌套字段
+        found_nested = False
+        for call in on_tool_event.call_args_list:
+            kwargs = call.kwargs
+            if (
+                kwargs.get("depth") == 1
+                and kwargs.get("parent_tool_call_id") == "tc-parent-task-call"
+                and kwargs.get("agent_name") == "web-researcher"
+                and kwargs.get("agent_path") == ["main", "web-researcher"]
+                and kwargs.get("risk_ceiling") is not None
+            ):
+                found_nested = True
+                break
+
+        self.assertTrue(
+            found_nested,
+            f"on_tool_event 应收到嵌套字段 kwargs, 实际调用: {on_tool_event.call_args_list}",
+        )
+
+    async def test_atask_inherits_parent_depth_for_nested_subagent(self):
+        """atask 嵌套深度递增：父 agent depth=1 时，子 agent depth=2。
+
+        场景：二级子 agent（子 agent 内部再调用 task 工具）。
+        验证 agent_path 从父继承并追加当前子 agent。
+        """
+        from langchain.tools import ToolRuntime
+        from langchain_core.messages import AIMessageChunk, ToolMessage
+
+        subagent_runnable = MagicMock(name="nested_runnable")
+        subagents_spec = [
+            {
+                "name": "doc-analyst",
+                "description": "doc analysis",
+                "runnable": subagent_runnable,
+            }
+        ]
+
+        tool = self.fake_module._build_task_tool(subagents_spec)
+
+        on_tool_event = AsyncMock(name="on_tool_event")
+
+        runtime = MagicMock(spec=ToolRuntime)
+        runtime.tool_call_id = "tc-level2-task"
+        runtime.state = {"messages": []}
+        # 父已经是子 agent（depth=1, agent_path=["main", "web-researcher"]）
+        runtime.config = {
+            "callbacks": [MagicMock()],
+            "configurable": {
+                "thread_id": "task-1",
+                "_on_tool_event": on_tool_event,
+                "depth": 1,
+                "agent_name": "web-researcher",
+                "agent_path": ["main", "web-researcher"],
+                "parent_tool_call_id": "tc-level1-task",
+                "risk_ceiling": "controlled",
+            },
+        }
+
+        async def _fake_astream(state, config, stream_mode=None):
+            chunk = AIMessageChunk(
+                content="",
+                tool_call_chunks=[
+                    {
+                        "name": "read_file",
+                        "args": '{"path": "/sandbox/report.md"}',
+                        "id": "tool-call-level2-1",
+                        "index": 0,
+                    }
+                ],
+            )
+            yield ("messages", (chunk, {"langgraph_node": "agent"}))
+            yield (
+                "values",
+                {
+                    "messages": [chunk, ToolMessage(content="doc", tool_call_id="tool-call-level2-1")],
+                },
+            )
+
+        subagent_runnable.astream = MagicMock(return_value=_fake_astream({}, {}, stream_mode=[]))
+
+        await tool.coroutine(
+            description="analyze doc",
+            subagent_type="doc-analyst",
+            runtime=runtime,
+        )
+
+        self.assertTrue(on_tool_event.called)
+        # 验证深度递增 + agent_path 追加
+        found_level2 = False
+        for call in on_tool_event.call_args_list:
+            kwargs = call.kwargs
+            if (
+                kwargs.get("depth") == 2
+                and kwargs.get("parent_tool_call_id") == "tc-level2-task"
+                and kwargs.get("agent_name") == "doc-analyst"
+                and kwargs.get("agent_path") == ["main", "web-researcher", "doc-analyst"]
+            ):
+                found_level2 = True
+                break
+
+        self.assertTrue(
+            found_level2,
+            f"二级子 agent 应 depth=2 且 agent_path 追加, 实际: {on_tool_event.call_args_list}",
+        )
+
+    async def test_atask_exceeds_max_depth_raises_value_error(self):
+        """atask 嵌套深度超过上限（默认 3）抛 ValueError，防止无限嵌套。"""
+        from langchain.tools import ToolRuntime
+
+        subagents_spec = [
+            {
+                "name": "web-researcher",
+                "description": "search",
+                "runnable": MagicMock(name="runnable"),
+            }
+        ]
+
+        tool = self.fake_module._build_task_tool(subagents_spec)
+
+        runtime = MagicMock(spec=ToolRuntime)
+        runtime.tool_call_id = "tc-over-depth"
+        runtime.state = {"messages": []}
+        # 父 depth=3，子 agent 将 depth=4，超过上限
+        runtime.config = {
+            "callbacks": [],
+            "configurable": {
+                "thread_id": "task-1",
+                "_on_tool_event": AsyncMock(),
+                "depth": 3,
+                "agent_path": ["main", "a", "b", "c"],
+            },
+        }
+
+        with self.assertRaises(ValueError) as ctx:
+            await tool.coroutine(
+                description="too deep",
+                subagent_type="web-researcher",
+                runtime=runtime,
+            )
+        self.assertIn("嵌套深度", str(ctx.exception))
+
+
+# ============================================================================
 # 测试 5: 集成场景 - checkpointer 注入 + callbacks 继承联合
 # ============================================================================
+
 
 class IntegrationTests(unittest.IsolatedAsyncioTestCase):
     """checkpointer 注入与 callbacks 继承的联合验证。"""
@@ -697,6 +996,7 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.fake_module = _make_fake_subagents_module()
         _apply_fake_module_to_sys_modules(self.fake_module)
         import Django_xm.apps.agent_hub.builders.subagent_patch as patch_module
+
         self.patch_module = patch_module
         self.original_patched = patch_module._patched
         patch_module._patched = False
@@ -718,24 +1018,32 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         # 模拟 SubAgent 配置（含 interrupt_on）
         middleware = self.fake_module.SubAgentMiddleware(
-            subagents=[{
-                "name": "approval-required-agent",
-                "description": "needs human approval",
-                "model": "gpt-4o",
-                "tools": [MagicMock()],
-                "system_prompt": "x",
-                "middleware": [],
-                "interrupt_on": {"shell_exec": True},
-            }]
+            subagents=[
+                {
+                    "name": "approval-required-agent",
+                    "description": "needs human approval",
+                    "model": "gpt-4o",
+                    "tools": [MagicMock()],
+                    "system_prompt": "x",
+                    "middleware": [],
+                    "interrupt_on": {"shell_exec": True},
+                }
+            ]
         )
 
-        with patch(
-            "langchain.agents.create_agent", fake_create_agent,
-        ), patch(
-            "deepagents._models.resolve_model", fake_resolve_model,
-        ), patch(
-            "langchain.agents.middleware.HumanInTheLoopMiddleware",
-        ) as mock_hitl:
+        with (
+            patch(
+                "langchain.agents.create_agent",
+                fake_create_agent,
+            ),
+            patch(
+                "deepagents._models.resolve_model",
+                fake_resolve_model,
+            ),
+            patch(
+                "langchain.agents.middleware.HumanInTheLoopMiddleware",
+            ) as mock_hitl,
+        ):
             token = set_current_checkpointer(checkpointer)
             try:
                 specs = middleware._get_subagents()
@@ -745,7 +1053,8 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         # 验证 create_agent 收到 checkpointer
         self.assertEqual(fake_create_agent.call_count, 1)
         self.assertIs(
-            fake_create_agent.call_args.kwargs["checkpointer"], checkpointer,
+            fake_create_agent.call_args.kwargs["checkpointer"],
+            checkpointer,
         )
         # 验证 HumanInTheLoopMiddleware 被创建（interrupt_on 触发）
         mock_hitl.assert_called_once()

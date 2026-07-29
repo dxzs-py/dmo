@@ -20,6 +20,7 @@ from .qianfan_embedding import create_embedding as create_qianfan_embedding
 def get_all_provider_configs() -> dict[str, dict[str, Any]]:
     """每次调用都从数据库读取最新配置（通过 registry_service 缓存机制）"""
     from Django_xm.apps.ai_engine.services.registry_service import get_model_registry
+
     return {k: v.copy() for k, v in get_model_registry().items()}
 
 
@@ -31,6 +32,7 @@ class _ProviderRegistryProxy:
 
     def _get_registry(self):
         from Django_xm.apps.ai_engine.services.registry_service import get_model_registry
+
         return get_model_registry()
 
     def __getitem__(self, key):
@@ -63,23 +65,23 @@ PROVIDER_REGISTRY = _ProviderRegistryProxy()
 
 __all__ = [
     "PROVIDER_REGISTRY",
-    "get_all_provider_configs",
-    "get_openai_config",
-    "get_deepseek_config",
-    "get_anthropic_config",
-    "get_groq_config",
-    "get_qianfan_config",
-    "get_ollama_config",
     "apply_reasoning_patch",
     "apply_reasoning_patch_if_needed",
-    "is_thinking_enabled",
-    "patch_groq_model",
-    "is_groq_model",
+    "create_local_embedding",
+    # Chat providers
+    "create_ollama_chat_model",
+    "create_ollama_embedding",
     # Embedding providers
     "create_openai_embedding",
     "create_qianfan_embedding",
-    "create_local_embedding",
-    "create_ollama_embedding",
-    # Chat providers
-    "create_ollama_chat_model",
+    "get_all_provider_configs",
+    "get_anthropic_config",
+    "get_deepseek_config",
+    "get_groq_config",
+    "get_ollama_config",
+    "get_openai_config",
+    "get_qianfan_config",
+    "is_groq_model",
+    "is_thinking_enabled",
+    "patch_groq_model",
 ]

@@ -13,8 +13,11 @@ from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
 
 logger = logging.getLogger(__name__)
 
-SUGGESTION_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """你是一个帮助用户生成后续问题的助手。
+SUGGESTION_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """你是一个帮助用户生成后续问题的助手。
 根据用户的当前问题和提供的上下文，生成 3 个可能的后续问题建议。
 
 要求：
@@ -22,22 +25,22 @@ SUGGESTION_PROMPT = ChatPromptTemplate.from_messages([
 - 问题应该简洁明了
 - 每个问题一行，不要编号
 - 使用与用户问题相同的语言
-- 不要添加任何额外的解释或格式"""),
-    ("human", """当前问题：{query}
+- 不要添加任何额外的解释或格式""",
+        ),
+        (
+            "human",
+            """当前问题：{query}
 
 相关上下文：
 {context}
 
-请生成 3 个后续问题建议：""")
-])
+请生成 3 个后续问题建议：""",
+        ),
+    ]
+)
 
 
-def generate_suggestions(
-    query: str,
-    context: str = "",
-    model_name: str | None = None,
-    count: int = 3
-) -> list[str]:
+def generate_suggestions(query: str, context: str = "", model_name: str | None = None, count: int = 3) -> list[str]:
     try:
         llm = get_chat_model(
             model_name=model_name,
@@ -47,16 +50,9 @@ def generate_suggestions(
 
         chain = SUGGESTION_PROMPT | llm | StrOutputParser()
 
-        suggestions_str = chain.invoke({
-            "query": query,
-            "context": context[:1000] if context else "无额外上下文"
-        })
+        suggestions_str = chain.invoke({"query": query, "context": context[:1000] if context else "无额外上下文"})
 
-        suggestions = [
-            s.strip()
-            for s in suggestions_str.strip().split("\n")
-            if s.strip()
-        ]
+        suggestions = [s.strip() for s in suggestions_str.strip().split("\n") if s.strip()]
 
         logger.info(f"生成 {len(suggestions)} 个建议问题")
         return suggestions[:count]
@@ -66,5 +62,5 @@ def generate_suggestions(
         return [
             f"你能详细解释一下关于 '{query}' 的内容吗？",
             f"有没有与 '{query}' 相关的实际案例？",
-            "关于这个主题，还有哪些重要信息需要了解？"
+            "关于这个主题，还有哪些重要信息需要了解？",
         ]

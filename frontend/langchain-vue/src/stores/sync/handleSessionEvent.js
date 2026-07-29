@@ -633,6 +633,16 @@ export const createHandleSessionEvent = (ctx) => {
       result: payload.result,
       error: payload.error,
       is_internal: payload.is_internal || false,
+      // SAFE 级自动通过标记（Phase F1）：后端 publish_tool_call payload 携带，
+      // ToolCallCard 读取 toolCall.auto_approved 显示"自动通过"徽章
+      auto_approved: payload.auto_approved === true,
+      // 子 agent 嵌套层级字段（Phase E3）：后端 publish_tool_call payload 携带，
+      // ToolCallCard 读取 toolCall.* 展示完整调用链路（非审批路径也可见）
+      parent_tool_call_id: payload.parent_tool_call_id || '',
+      depth: typeof payload.depth === 'number' && payload.depth > 0 ? payload.depth : 0,
+      agent_name: payload.agent_name || '',
+      agent_path: Array.isArray(payload.agent_path) ? payload.agent_path : [],
+      risk_ceiling: payload.risk_ceiling || '',
     }
 
     const hasMessageId = !!payload.message_id

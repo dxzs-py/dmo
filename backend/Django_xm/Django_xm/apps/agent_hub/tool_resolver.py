@@ -6,6 +6,7 @@ from langchain_core.tools import BaseTool
 
 logger = logging.getLogger(__name__)
 
+
 async def resolve_tools(config) -> list[BaseTool]:
     if config.tools is not None and len(config.tools) > 0:
         logger.info(f"使用显式工具集 ({len(config.tools)} 个)")
@@ -15,6 +16,7 @@ async def resolve_tools(config) -> list[BaseTool]:
 
     try:
         from Django_xm.apps.ai_engine.capabilities import registry
+
         capabilities = config.capabilities or registry.get_default_capabilities(_get_agent_type_str(config))
         if "tool_injection" in capabilities:
             built_tools = await registry.build_tools_for_agent_async(
@@ -28,9 +30,10 @@ async def resolve_tools(config) -> list[BaseTool]:
     except Exception as e:
         logger.warning(f"CapabilityRegistry 工具加载失败: {e}")
 
-    if config.agent_type.value == "rag" or config.agent_type.value == "safe_rag":
+    if config.agent_type.value in {"rag", "safe_rag"}:
         if config.retriever is not None:
             from langchain.tools.retriever import create_retriever_tool
+
             retriever_tool = create_retriever_tool(
                 config.retriever,
                 "knowledge_base",
@@ -42,13 +45,15 @@ async def resolve_tools(config) -> list[BaseTool]:
     if not tools:
         try:
             from Django_xm.apps.tools import get_core_tools
+
             tools = get_core_tools()
             logger.info(f"回退到核心工具集 ({len(tools)} 个)")
-        except Exception as e:
-            logger.error(f"核心工具集加载也失败: {e}")
+        except Exception:
+            logger.exception("核心工具集加载也失败")
             tools = []
 
     return tools
+
 
 def _get_agent_type_str(config) -> str:
     type_map = {

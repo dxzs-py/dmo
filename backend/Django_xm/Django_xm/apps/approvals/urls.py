@@ -2,20 +2,22 @@
 
 from django.urls import path
 
-app_name = 'approvals'
+app_name = "approvals"
 
 from Django_xm.apps.approvals.views import (
     ApprovalDetailView,
     ApprovalListView,
+    ApprovalMetricsView,
     ApprovalRejectView,
     ApprovalResumeView,
     ApprovalStateView,
 )
 
 urlpatterns = [
-    path('', ApprovalListView.as_view(), name='approval-list'),
-    path('<str:interrupt_id>/', ApprovalDetailView.as_view(), name='approval-detail'),
-    path('<str:interrupt_id>/state/', ApprovalStateView.as_view(), name='approval-state'),
-    path('<str:interrupt_id>/resume/', ApprovalResumeView.as_view(), name='approval-resume'),
-    path('<str:interrupt_id>/reject/', ApprovalRejectView.as_view(), name='approval-reject'),
+    path("", ApprovalListView.as_view(), name="approval-list"),
+    path("metrics/", ApprovalMetricsView.as_view(), name="approval-metrics"),
+    path("<str:interrupt_id>/", ApprovalDetailView.as_view(), name="approval-detail"),
+    path("<str:interrupt_id>/state/", ApprovalStateView.as_view(), name="approval-state"),
+    path("<str:interrupt_id>/resume/", ApprovalResumeView.as_view(), name="approval-resume"),
+    path("<str:interrupt_id>/reject/", ApprovalRejectView.as_view(), name="approval-reject"),
 ]

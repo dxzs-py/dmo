@@ -1,5 +1,6 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { watchDebounced } from '@vueuse/core'
 import { useRoute } from 'vue-router'
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
@@ -10,7 +11,6 @@ import { useChatUI } from '../composables/useChatUI'
 import { useChatCommands } from '../composables/useChatCommands'
 import { useChatKeyboard } from '../composables/useChatKeyboard'
 import { deepResearchAPI } from '../api/research'
-import { readSSEStream } from '../utils/sse'
 import ChatHeader from '../components/chat/ChatHeader.vue'
 import ChatMessages from '../components/chat/ChatMessages.vue'
 import ChatInput from '../components/chat/ChatInput.vue'
@@ -297,7 +297,10 @@ onUnmounted(() => {
   disconnectResearchSSE()
 })
 
-watch(() => sessionStore.currentSessionId, async (newId, oldId) => {
+// 会话切换防抖：快速切换时只执行最后一次，避免请求风暴
+// （loadSessionAttachments + restoreFromSession + connectResearchSSE 各触发 HTTP/SSE 请求）
+// 200ms 对用户无感知，但能有效抑制连续点击会话列表产生的 N 倍请求
+watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
   if (newId !== oldId) {
     // 切换会话时断开旧的深度研究 SSE 连接
     disconnectResearchSSE()
@@ -314,7 +317,7 @@ watch(() => sessionStore.currentSessionId, async (newId, oldId) => {
       clearAttachments()
     }
   }
-})
+}, { debounce: 200 })
 </script>
 
 <template>

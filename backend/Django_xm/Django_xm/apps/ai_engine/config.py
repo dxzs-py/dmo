@@ -39,123 +39,54 @@ class Settings(ProjectSettings):
     """
 
     # ==================== OpenAI 配置 ====================
-    openai_api_key: str = Field(
-        default="",
-        description="OpenAI API 密钥"
-    )
+    openai_api_key: str = Field(default="", description="OpenAI API 密钥")
 
-    openai_api_base: str = Field(
-        default="https://api.openai.com/v1",
-        description="OpenAI API 基础 URL"
-    )
+    openai_api_base: str = Field(default="https://api.openai.com/v1", description="OpenAI API 基础 URL")
 
-    openai_model: str = Field(
-        default="gpt-4o-mini",
-        description="默认 OpenAI 模型"
-    )
+    openai_model: str = Field(default="gpt-4o-mini", description="默认 OpenAI 模型")
 
-    openai_temperature: float = Field(
-        default=0.7,
-        ge=0.0,
-        le=1.0,
-        description="模型温度参数"
-    )
+    openai_temperature: float = Field(default=0.7, ge=0.0, le=1.0, description="模型温度参数")
 
-    openai_max_tokens: int | None = Field(
-        default=None,
-        description="最大生成 token 数"
-    )
+    openai_max_tokens: int | None = Field(default=None, description="最大生成 token 数")
 
-    openai_streaming: bool = Field(
-        default=True,
-        description="是否默认启用流式输出"
-    )
+    openai_streaming: bool = Field(default=True, description="是否默认启用流式输出")
 
     # ==================== Anthropic 配置 ====================
-    anthropic_api_key: str = Field(
-        default="",
-        description="Anthropic API 密钥"
-    )
+    anthropic_api_key: str = Field(default="", description="Anthropic API 密钥")
 
     # ==================== DeepSeek 配置 ====================
-    deepseek_api_key: str = Field(
-        default="",
-        description="DeepSeek API 密钥"
-    )
+    deepseek_api_key: str = Field(default="", description="DeepSeek API 密钥")
 
-    deepseek_api_base: str = Field(
-        default="https://api.deepseek.com",
-        description="DeepSeek API 基础 URL"
-    )
+    deepseek_api_base: str = Field(default="https://api.deepseek.com", description="DeepSeek API 基础 URL")
 
-    deepseek_model: str = Field(
-        default="deepseek-v4-flash",
-        description="DeepSeek 模型名称"
-    )
+    deepseek_model: str = Field(default="deepseek-v4-flash", description="DeepSeek 模型名称")
 
     # ==================== Groq 配置 ====================
-    groq_api_key: str = Field(
-        default="",
-        description="Groq API 密钥"
-    )
+    groq_api_key: str = Field(default="", description="Groq API 密钥")
 
-    groq_api_base: str = Field(
-        default="https://api.groq.com",
-        description="Groq API 基础 URL"
-    )
+    groq_api_base: str = Field(default="https://api.groq.com", description="Groq API 基础 URL")
 
-    groq_model: str = Field(
-        default="llama-3.3-70b-versatile",
-        description="Groq 模型名称"
-    )
+    groq_model: str = Field(default="llama-3.3-70b-versatile", description="Groq 模型名称")
 
     # ==================== 百度千帆 配置 ====================
-    baidu_qianfan_api_key: str = Field(
-        default="",
-        description="百度千帆 API 密钥"
-    )
+    baidu_qianfan_api_key: str = Field(default="", description="百度千帆 API 密钥")
 
-    baidu_qianfan_api_base: str = Field(
-        default="https://qianfan.baidubce.com/v2",
-        description="百度千帆 API 基础 URL"
-    )
+    baidu_qianfan_api_base: str = Field(default="https://qianfan.baidubce.com/v2", description="百度千帆 API 基础 URL")
 
-    baidu_qianfan_model: str = Field(
-        default="ernie-3.5-8k",
-        description="百度千帆模型名称"
-    )
+    baidu_qianfan_model: str = Field(default="ernie-3.5-8k", description="百度千帆模型名称")
 
     # ==================== Tavily 搜索配置 ====================
-    tavily_api_key: str = Field(
-        default="",
-        description="Tavily 搜索 API 密钥"
-    )
+    tavily_api_key: str = Field(default="", description="Tavily 搜索 API 密钥")
 
-    tavily_max_results: int = Field(
-        default=5,
-        ge=1,
-        le=20,
-        description="Tavily 最大返回结果数"
-    )
+    tavily_max_results: int = Field(default=5, ge=1, le=20, description="Tavily 最大返回结果数")
 
     # ==================== 高德地图配置 ====================
-    amap_key: str = Field(
-        default="",
-        description="高德地图 API 密钥"
-    )
+    amap_key: str = Field(default="", description="高德地图 API 密钥")
 
     # ==================== Agent 配置 ====================
-    agent_max_iterations: int = Field(
-        default=15,
-        ge=1,
-        le=100,
-        description="Agent 最大迭代次数"
-    )
+    agent_max_iterations: int = Field(default=15, ge=1, le=100, description="Agent 最大迭代次数")
 
-    agent_max_execution_time: float | None = Field(
-        default=None,
-        description="Agent 最大执行时间(秒)"
-    )
+    agent_max_execution_time: float | None = Field(default=None, description="Agent 最大执行时间(秒)")
 
     AGENT_CAPABILITIES_DEFAULT: dict = Field(
         default={
@@ -163,239 +94,107 @@ class Settings(ProjectSettings):
             "deep_research": ["context_management", "tool_injection", "rate_limit"],
             "learning": ["context_management", "rate_limit"],
         },
-        description="各 Agent 类型的默认能力列表"
+        description="各 Agent 类型的默认能力列表",
     )
 
     # ==================== RAG / Embedding 配置 ====================
-    embedding_model: str = Field(
-        default="text-embedding-3-small",
-        description="Embedding 模型名称"
-    )
+    embedding_model: str = Field(default="text-embedding-3-small", description="Embedding 模型名称")
 
-    embedding_batch_size: int = Field(
-        default=100,
-        ge=1,
-        le=1000,
-        description="Embedding 批处理大小"
-    )
+    embedding_batch_size: int = Field(default=100, ge=1, le=1000, description="Embedding 批处理大小")
 
     local_embedding_model: str = Field(
-        default="BAAI/bge-small-zh-v1.5",
-        description="本地兜底 Embedding 模型（HuggingFace，无 API 消耗）"
+        default="BAAI/bge-small-zh-v1.5", description="本地兜底 Embedding 模型（HuggingFace，无 API 消耗）"
     )
 
     # ==================== Ollama 配置 ====================
-    ollama_base_url: str = Field(
-        default="http://localhost:11435",
-        description="Ollama 服务地址（默认本地 11435）"
-    )
+    ollama_base_url: str = Field(default="http://localhost:11435", description="Ollama 服务地址（默认本地 11435）")
 
-    ollama_model: str = Field(
-        default="qwen3:8b",
-        description="Ollama 默认 chat 模型（需先 ollama pull <model>）"
-    )
+    ollama_model: str = Field(default="qwen3:8b", description="Ollama 默认 chat 模型（需先 ollama pull <model>）")
 
-    ollama_embedding_model: str = Field(
-        default="bge-m3",
-        description="Ollama 默认 embedding 模型（推荐 bge-m3）"
-    )
+    ollama_embedding_model: str = Field(default="bge-m3", description="Ollama 默认 embedding 模型（推荐 bge-m3）")
 
-    chunk_size: int = Field(
-        default=1000,
-        ge=100,
-        le=10000,
-        description="文本分块大小(字符)"
-    )
+    chunk_size: int = Field(default=1000, ge=100, le=10000, description="文本分块大小(字符)")
 
-    chunk_overlap: int = Field(
-        default=200,
-        ge=0,
-        le=1000,
-        description="分块重叠大小(字符)"
-    )
+    chunk_overlap: int = Field(default=200, ge=0, le=1000, description="分块重叠大小(字符)")
 
     vector_store_type: str = Field(
         default="pgvector",
-        description="向量库类型: pgvector/chroma/faiss/inmemory/milvus（推荐 pgvector，支持持久化和增量更新）"
+        description="向量库类型: pgvector/chroma/faiss/inmemory/milvus（推荐 pgvector，支持持久化和增量更新）",
     )
 
-    vector_store_path: str = Field(
-        default="data/indexes",
-        description="向量库存储路径"
-    )
+    vector_store_path: str = Field(default="data/indexes", description="向量库存储路径")
 
-    chroma_persist_directory: str = Field(
-        default="data/chroma_db",
-        description="Chroma 持久化目录"
-    )
+    chroma_persist_directory: str = Field(default="data/chroma_db", description="Chroma 持久化目录")
 
-    chroma_collection_name: str = Field(
-        default="langchain_xm",
-        description="Chroma 默认集合名称"
-    )
+    chroma_collection_name: str = Field(default="langchain_xm", description="Chroma 默认集合名称")
 
     retriever_search_type: str = Field(
-        default="similarity",
-        description="检索类型: similarity/mmr/similarity_score_threshold"
+        default="similarity", description="检索类型: similarity/mmr/similarity_score_threshold"
     )
 
-    retriever_k: int = Field(
-        default=4,
-        ge=1,
-        le=20,
-        description="检索返回文档数"
-    )
+    retriever_k: int = Field(default=4, ge=1, le=20, description="检索返回文档数")
 
-    retriever_score_threshold: float = Field(
-        default=0.5,
-        ge=0.0,
-        le=1.0,
-        description="相似度阈值"
-    )
+    retriever_score_threshold: float = Field(default=0.5, ge=0.0, le=1.0, description="相似度阈值")
 
-    retriever_fetch_k: int = Field(
-        default=20,
-        ge=1,
-        le=100,
-        description="MMR 候选文档数"
-    )
+    retriever_fetch_k: int = Field(default=20, ge=1, le=100, description="MMR 候选文档数")
 
-    retriever_comprehensive_k: int = Field(
-        default=6,
-        ge=1,
-        le=30,
-        description="全局分析模式检索文档数"
-    )
+    retriever_comprehensive_k: int = Field(default=6, ge=1, le=30, description="全局分析模式检索文档数")
 
-    retriever_use_multi_query: bool = Field(
-        default=True,
-        description="全局分析模式是否启用 MultiQuery 扩展召回"
-    )
+    retriever_use_multi_query: bool = Field(default=True, description="全局分析模式是否启用 MultiQuery 扩展召回")
 
-    retriever_intent_classification_enabled: bool = Field(
-        default=True,
-        description="是否启用查询意图自动分类"
-    )
+    retriever_intent_classification_enabled: bool = Field(default=True, description="是否启用查询意图自动分类")
 
-    retriever_map_reduce_batch_size: int = Field(
-        default=4,
-        ge=2,
-        le=10,
-        description="Map-Reduce 每批文档数"
-    )
+    retriever_map_reduce_batch_size: int = Field(default=4, ge=2, le=10, description="Map-Reduce 每批文档数")
 
-    rag_agent_max_iterations: int = Field(
-        default=10,
-        ge=1,
-        le=50,
-        description="RAG Agent 最大迭代数"
-    )
+    rag_agent_max_iterations: int = Field(default=10, ge=1, le=50, description="RAG Agent 最大迭代数")
 
-    rag_agent_return_source_documents: bool = Field(
-        default=True,
-        description="是否返回来源文档"
-    )
+    rag_agent_return_source_documents: bool = Field(default=True, description="是否返回来源文档")
 
     # ==================== Checkpointer 配置 ====================
-    checkpointer_backend: str = Field(
-        default="postgres",
-        description="Checkpointer 后端: sqlite/memory/postgres"
-    )
+    checkpointer_backend: str = Field(default="postgres", description="Checkpointer 后端: sqlite/memory/postgres")
 
     # ==================== Store 配置 ====================
-    store_enabled: bool = Field(
-        default=False,
-        description="是否自动注入 Store（长期记忆）到 Agent"
-    )
+    store_enabled: bool = Field(default=False, description="是否自动注入 Store（长期记忆）到 Agent")
 
-    store_backend: str = Field(
-        default="postgres",
-        description="Store 后端: memory/postgres"
-    )
+    store_backend: str = Field(default="postgres", description="Store 后端: memory/postgres")
 
     # ==================== Summarization 配置 ====================
     summarization_trigger_tokens: int = Field(
-        default=4000,
-        ge=500,
-        le=100000,
-        description="SummarizationMiddleware 触发摘要的 token 阈值"
+        default=4000, ge=500, le=100000, description="SummarizationMiddleware 触发摘要的 token 阈值"
     )
 
     summarization_keep_messages: int = Field(
-        default=20,
-        ge=2,
-        le=100,
-        description="SummarizationMiddleware 保留的最近消息数"
+        default=20, ge=2, le=100, description="SummarizationMiddleware 保留的最近消息数"
     )
 
     # ==================== Agent Cache 配置 ====================
-    agent_cache_enabled: bool = Field(
-        default=False,
-        description="是否自动注入 Agent 级别缓存（InMemoryCache）"
-    )
+    agent_cache_enabled: bool = Field(default=False, description="是否自动注入 Agent 级别缓存（InMemoryCache）")
 
-    llm_cache_enabled: bool = Field(
-        default=False,
-        description="是否启用全局 LLM Cache（langchain_core.llm_cache）"
-    )
+    llm_cache_enabled: bool = Field(default=False, description="是否启用全局 LLM Cache（langchain_core.llm_cache）")
 
-    llm_cache_type: str = Field(
-        default="memory",
-        description="LLM Cache 类型: memory/semantic"
-    )
+    llm_cache_type: str = Field(default="memory", description="LLM Cache 类型: memory/semantic")
 
     # ==================== Guardrails 配置 ====================
-    guardrails_enabled: bool = Field(
-        default=False,
-        description="是否全局启用 Guardrails Middleware"
-    )
+    guardrails_enabled: bool = Field(default=False, description="是否全局启用 Guardrails Middleware")
 
-    guardrails_strict_mode: bool = Field(
-        default=False,
-        description="Guardrails 严格模式（验证失败直接抛异常）"
-    )
+    guardrails_strict_mode: bool = Field(default=False, description="Guardrails 严格模式（验证失败直接抛异常）")
 
-    guardrails_enable_pii: bool = Field(
-        default=False,
-        description="是否启用 PII 检测与脱敏"
-    )
+    guardrails_enable_pii: bool = Field(default=False, description="是否启用 PII 检测与脱敏")
 
-    guardrails_enable_human_in_loop: bool = Field(
-        default=False,
-        description="是否启用人工审核中断"
-    )
+    guardrails_enable_human_in_loop: bool = Field(default=False, description="是否启用人工审核中断")
 
-    guardrails_max_message_count: int = Field(
-        default=100,
-        ge=1,
-        description="Guardrails 最大消息数量限制"
-    )
+    guardrails_max_message_count: int = Field(default=100, ge=1, description="Guardrails 最大消息数量限制")
 
-    guardrails_blocked_tools: str = Field(
-        default="",
-        description="Guardrails 额外屏蔽的工具名（逗号分隔）"
-    )
+    guardrails_blocked_tools: str = Field(default="", description="Guardrails 额外屏蔽的工具名（逗号分隔）")
 
     # ==================== LangSmith 配置 ====================
-    langsmith_api_key: str = Field(
-        default="",
-        description="LangSmith API 密钥"
-    )
+    langsmith_api_key: str = Field(default="", description="LangSmith API 密钥")
 
-    langsmith_project: str = Field(
-        default="langchain_xm",
-        description="LangSmith 项目名称"
-    )
+    langsmith_project: str = Field(default="langchain_xm", description="LangSmith 项目名称")
 
-    langsmith_endpoint: str = Field(
-        default="https://api.smith.langchain.com",
-        description="LangSmith API 端点"
-    )
+    langsmith_endpoint: str = Field(default="https://api.smith.langchain.com", description="LangSmith API 端点")
 
-    langsmith_tracing: bool = Field(
-        default=False,
-        description="是否启用 LangSmith 追踪"
-    )
+    langsmith_tracing: bool = Field(default=False, description="是否启用 LangSmith 追踪")
 
     # ==================== 工具调用使用防护配置 ====================
     # 借鉴 Cloud Code / Claude Code 的 PreToolUse 速率限制、PostToolUse
@@ -405,69 +204,41 @@ class Settings(ProjectSettings):
         ge=1,
         le=600,
         description="文件写入去重窗口（秒）。同一 (thread, path) 在此窗口内若 content_hash 相同，"
-                    "工具返回无变更响应且不计调用次数。"
+        "工具返回无变更响应且不计调用次数。",
     )
-    tool_usage_dedup_cache_size: int = Field(
-        default=1000,
-        ge=10,
-        le=100000,
-        description="文件写入去重 LRU 缓存容量。"
-    )
+    tool_usage_dedup_cache_size: int = Field(default=1000, ge=10, le=100000, description="文件写入去重 LRU 缓存容量。")
     tool_usage_rate_limit_max: int = Field(
-        default=30,
-        ge=1,
-        le=1000,
-        description="单 thread_id 滑动窗口内的最大工具调用次数。"
+        default=30, ge=1, le=1000, description="单 thread_id 滑动窗口内的最大工具调用次数。"
     )
-    tool_usage_rate_limit_window: int = Field(
-        default=60,
-        ge=1,
-        le=3600,
-        description="滑动窗口大小（秒）。"
-    )
+    tool_usage_rate_limit_window: int = Field(default=60, ge=1, le=3600, description="滑动窗口大小（秒）。")
     tool_usage_soft_warning_threshold: float = Field(
-        default=0.5,
-        ge=0.0,
-        le=1.0,
-        description="软警告阈值（占 rate_limit_max 的比例）。"
+        default=0.5, ge=0.0, le=1.0, description="软警告阈值（占 rate_limit_max 的比例）。"
     )
     tool_usage_hard_stop_threshold: float = Field(
-        default=0.9,
-        ge=0.0,
-        le=1.0,
-        description="硬阻断阈值（占 rate_limit_max 的比例）。"
+        default=0.9, ge=0.0, le=1.0, description="硬阻断阈值（占 rate_limit_max 的比例）。"
     )
     tool_usage_same_path_max: int = Field(
-        default=6,
-        ge=1,
-        le=100,
-        description="同一 path 在去重窗口内最多允许的写入次数（含去重命中）。"
+        default=6, ge=1, le=100, description="同一 path 在去重窗口内最多允许的写入次数（含去重命中）。"
     )
     tool_usage_same_path_diff_ratio: float = Field(
         default=0.05,
         ge=0.0,
         le=1.0,
-        description="同 path 连续多次写入的实质增量判定阈值：增量占比 < 此值视为"
-                    "无意义重写（被打磨循环）。"
+        description="同 path 连续多次写入的实质增量判定阈值：增量占比 < 此值视为无意义重写（被打磨循环）。",
     )
     tool_usage_blocked_consecutive_max: int = Field(
-        default=2,
-        ge=1,
-        le=10,
-        description="连续 blocked 多少次后交由 termination_judge 走 LOOP_DETECTED 流程。"
+        default=2, ge=1, le=10, description="连续 blocked 多少次后交由 termination_judge 走 LOOP_DETECTED 流程。"
     )
     # 通用资源防护配置（适用于所有工具，不仅 fs_write_file）
     tool_usage_general_dedup_enabled: bool = Field(
-        default=True,
-        description="是否启用通用 dedup + 通用资源循环检测。关闭后仅 fs_write_file "
-                    "和 rate_limit 仍生效。"
+        default=True, description="是否启用通用 dedup + 通用资源循环检测。关闭后仅 fs_write_file 和 rate_limit 仍生效。"
     )
     tool_usage_same_resource_max: int = Field(
         default=6,
         ge=1,
         le=100,
         description="同一资源在去重窗口内累计调用次数超过此值且最近 3 次 payload_hash 全部相同，"
-                    "判定为无进展循环并 BLOCK。适用于所有工具（按 tool_fingerprint 注册表）。"
+        "判定为无进展循环并 BLOCK。适用于所有工具（按 tool_fingerprint 注册表）。",
     )
 
     # ---- 校验方法 ----
@@ -528,6 +299,7 @@ def validate_settings() -> None:
     except ValueError as e:
         if s.debug:
             import warnings
+
             warnings.warn(str(e), stacklevel=2)
         else:
             raise
@@ -738,6 +510,7 @@ HELPER_MODEL_PRIORITY: list[dict[str, str]] = [
 def get_model_presets() -> dict[str, dict[str, Any]]:
     """从数据库汇总所有预设配置，返回扁平化的 preset_name -> config 映射"""
     from Django_xm.apps.ai_engine.services.registry_service import get_model_registry
+
     presets: dict[str, dict[str, Any]] = {}
     for _provider_id, cfg in get_model_registry().items():
         for preset_name, preset_cfg in cfg.get("presets", {}).items():
@@ -748,6 +521,7 @@ def get_model_presets() -> dict[str, dict[str, Any]]:
 def get_available_providers() -> list[dict[str, Any]]:
     """从数据库获取所有 Provider 列表（包含不可用的，available 字段标记可用性）"""
     from Django_xm.apps.ai_engine.services.registry_service import get_model_registry, is_provider_available
+
     result = []
     for key, cfg in get_model_registry().items():
         available = is_provider_available(key)
@@ -759,14 +533,16 @@ def get_available_providers() -> list[dict[str, Any]]:
                 normalized_models.append(model_cfg)
             else:
                 normalized_models.append({"name": model_cfg, "capabilities": []})
-        result.append({
-            "id": key,
-            "provider": cfg["provider"],
-            "label": cfg["label"],
-            "icon": cfg["icon"],
-            "models": normalized_models,
-            "default_model": cfg["default_model"],
-            "available": available,
-            "special_params": cfg.get("special_params", {}),
-        })
+        result.append(
+            {
+                "id": key,
+                "provider": cfg["provider"],
+                "label": cfg["label"],
+                "icon": cfg["icon"],
+                "models": normalized_models,
+                "default_model": cfg["default_model"],
+                "available": available,
+                "special_params": cfg.get("special_params", {}),
+            }
+        )
     return result

@@ -2,6 +2,7 @@
 通用异步任务管理模块
 基于 Redis 缓存提供任务状态跟踪、查询和管理功能
 """
+
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -14,34 +15,33 @@ logger = logging.getLogger(__name__)
 
 
 class TaskStatus(Enum):
-    PENDING = 'pending'
-    STARTED = 'started'
-    PROGRESS = 'progress'
-    SUCCESS = 'success'
-    FAILURE = 'failure'
-    REVOKED = 'revoked'
-    RETRY = 'retry'
+    PENDING = "pending"
+    STARTED = "started"
+    PROGRESS = "progress"
+    SUCCESS = "success"
+    FAILURE = "failure"
+    REVOKED = "revoked"
+    RETRY = "retry"
 
 
 class TaskType(Enum):
-    DEEP_RESEARCH = 'deep_research'
-    RAG_INDEX = 'rag_index'
-    RAG_ADD_DOCS = 'rag_add_docs'
-    RAG_DELETE_INDEX = 'rag_delete_index'
-    RAG_UPDATE_INDEX = 'rag_update_index'
-    WORKFLOW = 'workflow'
-    CHAT_CLEANUP = 'chat_cleanup'
-    CHAT_INDEX = 'chat_index'
-    CHAT_STORAGE = 'chat_storage'
-    OTHER = 'other'
+    DEEP_RESEARCH = "deep_research"
+    RAG_INDEX = "rag_index"
+    RAG_ADD_DOCS = "rag_add_docs"
+    RAG_DELETE_INDEX = "rag_delete_index"
+    RAG_UPDATE_INDEX = "rag_update_index"
+    WORKFLOW = "workflow"
+    CHAT_CLEANUP = "chat_cleanup"
+    CHAT_INDEX = "chat_index"
+    CHAT_STORAGE = "chat_storage"
+    OTHER = "other"
 
 
 _TERMINAL_STATES = {TaskStatus.SUCCESS.value, TaskStatus.FAILURE.value, TaskStatus.REVOKED.value}
 
 
 class TaskManager:
-
-    CACHE_PREFIX = 'task_status:'
+    CACHE_PREFIX = "task_status:"
     CACHE_TIMEOUT = 86400 * 7
 
     def __init__(self):
@@ -69,24 +69,24 @@ class TaskManager:
 
         metadata = metadata or {}
         if task_name:
-            metadata['task_name'] = task_name
+            metadata["task_name"] = task_name
         if task_params:
-            metadata['task_params'] = task_params
+            metadata["task_params"] = task_params
 
         task_data = {
-            'task_id': task_id,
-            'task_type': task_type.value,
-            'status': TaskStatus.PENDING.value,
-            'user_id': user_id,
-            'created_at': now,
-            'updated_at': now,
-            'start_time': None,
-            'end_time': None,
-            'progress': 0,
-            'current_step': 'waiting',
-            'result': None,
-            'error': None,
-            'metadata': metadata,
+            "task_id": task_id,
+            "task_type": task_type.value,
+            "status": TaskStatus.PENDING.value,
+            "user_id": user_id,
+            "created_at": now,
+            "updated_at": now,
+            "start_time": None,
+            "end_time": None,
+            "progress": 0,
+            "current_step": "waiting",
+            "result": None,
+            "error": None,
+            "metadata": metadata,
         }
 
         cache_key = self._get_cache_key(task_id)
@@ -116,14 +116,14 @@ class TaskManager:
             return None
 
         task_data.update(status_updates)
-        task_data['updated_at'] = datetime.now(UTC).isoformat()
+        task_data["updated_at"] = datetime.now(UTC).isoformat()
 
-        new_status = task_data.get('status')
-        if new_status in (TaskStatus.STARTED.value, TaskStatus.PROGRESS.value) and not task_data.get('start_time'):
-            task_data['start_time'] = datetime.now(UTC).isoformat()
+        new_status = task_data.get("status")
+        if new_status in (TaskStatus.STARTED.value, TaskStatus.PROGRESS.value) and not task_data.get("start_time"):
+            task_data["start_time"] = datetime.now(UTC).isoformat()
 
-        if new_status in _TERMINAL_STATES and not task_data.get('end_time'):
-            task_data['end_time'] = datetime.now(UTC).isoformat()
+        if new_status in _TERMINAL_STATES and not task_data.get("end_time"):
+            task_data["end_time"] = datetime.now(UTC).isoformat()
 
         self.cache.set(cache_key, task_data, self.CACHE_TIMEOUT)
 
@@ -153,21 +153,21 @@ class TaskManager:
             if not task_data:
                 continue
 
-            if task_type and task_data.get('task_type') != task_type.value:
+            if task_type and task_data.get("task_type") != task_type.value:
                 continue
-            if status and task_data.get('status') != status.value:
+            if status and task_data.get("status") != status.value:
                 continue
 
             tasks.append(task_data)
 
-        tasks.sort(key=lambda t: t.get('updated_at', ''), reverse=True)
+        tasks.sort(key=lambda t: t.get("updated_at", ""), reverse=True)
         return tasks[:limit]
 
     def delete_task(self, task_id: str) -> bool:
         cache_key = self._get_cache_key(task_id)
         task_data = self.cache.get(cache_key)
 
-        user_id = task_data.get('user_id') if task_data else None
+        user_id = task_data.get("user_id") if task_data else None
 
         deleted = self.cache.delete(cache_key)
 
@@ -222,11 +222,11 @@ def get_task_status(task_id: str) -> dict[str, Any] | None:
 
 
 def format_task_duration(task_data: dict[str, Any]) -> str | None:
-    if not task_data.get('start_time'):
+    if not task_data.get("start_time"):
         return None
 
-    start_time = datetime.fromisoformat(task_data['start_time'])
-    end_time = task_data.get('end_time')
+    start_time = datetime.fromisoformat(task_data["start_time"])
+    end_time = task_data.get("end_time")
 
     if end_time:
         end_time = datetime.fromisoformat(end_time)

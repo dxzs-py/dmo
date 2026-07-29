@@ -46,33 +46,36 @@ def build_approval_index_item(apv):
     extra = apv.extra if isinstance(apv.extra, dict) else {}
     # cross_module_id：仅 DEEP_RESEARCH 关联 chat 时为 chat_session_id
     # （与 approval_service._build_payload / _resolve_approval_channels 计算逻辑一致）
-    cross_module_id = (
-        apv.chat_session_id
-        if apv.source == apv.SOURCE_DEEP_RESEARCH and apv.chat_session_id
-        else None
-    )
+    cross_module_id = apv.chat_session_id if apv.source == apv.SOURCE_DEEP_RESEARCH and apv.chat_session_id else None
     return {
-        'state': apv.state,
-        'approval_id': apv.interrupt_id,
-        'tool_name': apv.tool_name,
-        'parameters': apv.parameters or {},
-        'extra': extra,
-        'interrupt_id': apv.interrupt_id,
+        "state": apv.state,
+        "approval_id": apv.interrupt_id,
+        "tool_name": apv.tool_name,
+        "parameters": apv.parameters or {},
+        "extra": extra,
+        "interrupt_id": apv.interrupt_id,
         # UI 展示字段（与 publish_approval 的 extra_fields 对齐）
-        'title': apv.title or '',
-        'description': apv.description or '',
-        'operation': apv.operation or '',
-        'danger_level': apv.danger_level or 'medium',
-        'action': apv.action or 'confirm',
-        'user_input': apv.user_input,
+        "title": apv.title or "",
+        "description": apv.description or "",
+        "operation": apv.operation or "",
+        "danger_level": apv.danger_level or "medium",
+        "action": apv.action or "confirm",
+        "user_input": apv.user_input,
+        # risk_level（新标准风险等级，优先于 danger_level）
+        "risk_level": extra.get("risk_level"),
+        # 子 agent 嵌套层级字段（Phase E3，前端展示完整调用链路）
+        "parent_tool_call_id": extra.get("parent_tool_call_id"),
+        "depth": extra.get("depth"),
+        "agent_name": extra.get("agent_name"),
+        "agent_path": extra.get("agent_path"),
         # 路由字段
-        'source': apv.source,
-        'source_id': apv.source_id,
-        'chat_session_id': apv.chat_session_id,
-        'cross_module_id': cross_module_id,
+        "source": apv.source,
+        "source_id": apv.source_id,
+        "chat_session_id": apv.chat_session_id,
+        "cross_module_id": cross_module_id,
         # 时间字段（ISO 格式，与 _build_payload 一致）
-        'created_at': apv.created_at.isoformat().replace('+00:00', 'Z') if apv.created_at else None,
-        'expires_at': apv.expires_at.isoformat().replace('+00:00', 'Z') if apv.expires_at else None,
+        "created_at": apv.created_at.isoformat().replace("+00:00", "Z") if apv.created_at else None,
+        "expires_at": apv.expires_at.isoformat().replace("+00:00", "Z") if apv.expires_at else None,
     }
 
 
@@ -99,7 +102,7 @@ def build_approval_index(session_id):
         return {}
 
     try:
-        Approval = apps.get_model('approvals', 'Approval')
+        Approval = apps.get_model("approvals", "Approval")
     except Exception as e:
         logger.warning(f"[approval_helpers] 获取 Approval 模型失败: {e}")
         return {}
@@ -108,7 +111,7 @@ def build_approval_index(session_id):
     index = {}
     for apv in approvals_qs:
         extra = apv.extra if isinstance(apv.extra, dict) else {}
-        apv_tc_id = extra.get('tool_call_id') or apv.interrupt_id
+        apv_tc_id = extra.get("tool_call_id") or apv.interrupt_id
         if not apv_tc_id:
             continue
         index[str(apv_tc_id)] = build_approval_index_item(apv)
@@ -123,9 +126,7 @@ def _is_missing(value):
     """
     if value is None:
         return True
-    if isinstance(value, str) and value == '':
-        return True
-    return False
+    return bool(isinstance(value, str) and value == "")
 
 
 def _build_approval_payload_from_index(apv_info):
@@ -147,15 +148,15 @@ def _build_approval_payload_from_index(apv_info):
         dict: approval payload，包含前端 APPROVAL_PAYLOAD_FIELDS 全部 23 个字段
               （缺失字段以 null 表示，与 WebSocket 事件 ApprovalPayload 对齐）
     """
-    extra = apv_info.get('extra') if isinstance(apv_info.get('extra'), dict) else {}
-    tool_call_id = apv_info.get('interrupt_id') or extra.get('tool_call_id') or ''
-    approval_id = apv_info.get('approval_id') or tool_call_id
+    extra = apv_info.get("extra") if isinstance(apv_info.get("extra"), dict) else {}
+    tool_call_id = apv_info.get("interrupt_id") or extra.get("tool_call_id") or ""
+    approval_id = apv_info.get("approval_id") or tool_call_id
 
     # tool_config 透传字段（前端用于显示 selected_tools/tool_tier）
-    tool_config = extra.get('tool_config')
+    tool_config = extra.get("tool_config")
     if isinstance(tool_config, dict):
-        selected_tools = tool_config.get('selected_tools')
-        tool_tier = tool_config.get('tool_tier') or None
+        selected_tools = tool_config.get("selected_tools")
+        tool_tier = tool_config.get("tool_tier") or None
     else:
         selected_tools = None
         tool_tier = None
@@ -165,36 +166,42 @@ def _build_approval_payload_from_index(apv_info):
     # 前端 mergeApprovalNonNull 跳过 null/空值，不会污染已有数据。
     return {
         # === 核心标识字段（11） ===
-        'state': apv_info.get('state'),
-        'approval_id': approval_id,
-        'interrupt_id': approval_id,
-        'tool_call_id': tool_call_id,
-        'tool_name': apv_info.get('tool_name') or '',
-        'parameters': apv_info.get('parameters') or {},
-        'title': apv_info.get('title') or '',
-        'description': apv_info.get('description') or '',
-        'operation': apv_info.get('operation') or '',
-        'danger_level': apv_info.get('danger_level') or 'medium',
-        'action': apv_info.get('action') or 'confirm',
+        "state": apv_info.get("state"),
+        "approval_id": approval_id,
+        "interrupt_id": approval_id,
+        "tool_call_id": tool_call_id,
+        "tool_name": apv_info.get("tool_name") or "",
+        "parameters": apv_info.get("parameters") or {},
+        "title": apv_info.get("title") or "",
+        "description": apv_info.get("description") or "",
+        "operation": apv_info.get("operation") or "",
+        "danger_level": apv_info.get("danger_level") or "medium",
+        "action": apv_info.get("action") or "confirm",
         # === 可选输入字段（1） ===
-        'user_input': apv_info.get('user_input'),
+        "user_input": apv_info.get("user_input"),
         # === 路由字段（4） ===
-        'source': apv_info.get('source'),
-        'source_id': apv_info.get('source_id'),
-        'chat_session_id': apv_info.get('chat_session_id'),
-        'cross_module_id': apv_info.get('cross_module_id'),
+        "source": apv_info.get("source"),
+        "source_id": apv_info.get("source_id"),
+        "chat_session_id": apv_info.get("chat_session_id"),
+        "cross_module_id": apv_info.get("cross_module_id"),
         # === 时间字段（2，ISO 格式，与 _build_payload 一致） ===
-        'created_at': apv_info.get('created_at'),
-        'expires_at': apv_info.get('expires_at'),
+        "created_at": apv_info.get("created_at"),
+        "expires_at": apv_info.get("expires_at"),
         # === 关联字段（2，从 extra 透传到顶层） ===
-        'message_id': extra.get('message_id'),
-        'graph_interrupt_id': extra.get('graph_interrupt_id'),
+        "message_id": extra.get("message_id"),
+        "graph_interrupt_id": extra.get("graph_interrupt_id"),
+        # === 风险等级 + 嵌套层级字段（从 extra 透传到顶层） ===
+        "risk_level": apv_info.get("risk_level"),
+        "parent_tool_call_id": apv_info.get("parent_tool_call_id"),
+        "depth": apv_info.get("depth"),
+        "agent_name": apv_info.get("agent_name"),
+        "agent_path": apv_info.get("agent_path"),
         # === 工具配置字段（2，从 extra.tool_config 透传） ===
-        'selected_tools': selected_tools,
-        'tool_tier': tool_tier,
+        "selected_tools": selected_tools,
+        "tool_tier": tool_tier,
         # === 逻辑字段（1）：快照 API 无法重放 WS 事件时的剩余 pending 计数，置 null。
         # 前端 mergeApprovalNonNull 会保留 WS 事件中已写入的非空值，不影响 ?? 语义。 ===
-        'remaining_pending_count': None,
+        "remaining_pending_count": None,
     }
 
 
@@ -220,40 +227,40 @@ def reconstruct_tool_call_from_approval(approval_info):
     if not isinstance(approval_info, dict):
         return {}
 
-    tool_call_id = approval_info.get('interrupt_id') or ''
-    tool_name = approval_info.get('tool_name') or ''
-    parameters = approval_info.get('parameters') or {}
-    extra = approval_info.get('extra') if isinstance(approval_info.get('extra'), dict) else {}
-    state = approval_info.get('state') or 'pending'
+    tool_call_id = approval_info.get("interrupt_id") or ""
+    tool_name = approval_info.get("tool_name") or ""
+    parameters = approval_info.get("parameters") or {}
+    extra = approval_info.get("extra") if isinstance(approval_info.get("extra"), dict) else {}
+    state = approval_info.get("state") or "pending"
 
     # 从 extra 中提取 args（如果存在），否则用 parameters
-    args = extra.get('args') if extra.get('args') else parameters
+    args = extra.get("args") if extra.get("args") else parameters
 
     # 根据 approval.state 设置重建项的 status
     # 与 enrich_tool_calls_with_approvals 中的 status 注入逻辑对齐，
     # 确保重建的 tool_call 项也有正确的 status
-    if state in ('pending', 'waiting'):
-        reconstructed_status = 'waiting'
-    elif state == 'processing':
-        reconstructed_status = 'running'
-    elif state == 'timeout':
-        reconstructed_status = 'timeout'
-    elif state == 'rejected':
-        reconstructed_status = 'rejected'
+    if state in ("pending", "waiting"):
+        reconstructed_status = "waiting"
+    elif state == "processing":
+        reconstructed_status = "running"
+    elif state == "timeout":
+        reconstructed_status = "timeout"
+    elif state == "rejected":
+        reconstructed_status = "rejected"
     else:
-        reconstructed_status = 'pending'
+        reconstructed_status = "pending"
 
     approval_payload = _build_approval_payload_from_index(approval_info)
 
     return {
-        'id': tool_call_id,
-        'tool_call_id': tool_call_id,
-        'name': tool_name,
-        'args': args,
-        'parameters': parameters,
-        'input': parameters,
-        'status': reconstructed_status,
-        'approval': approval_payload,
+        "id": tool_call_id,
+        "tool_call_id": tool_call_id,
+        "name": tool_name,
+        "args": args,
+        "parameters": parameters,
+        "input": parameters,
+        "status": reconstructed_status,
+        "approval": approval_payload,
     }
 
 
@@ -302,7 +309,7 @@ def enrich_tool_calls_with_approvals(tool_calls, session_id, approval_index=None
         if not isinstance(tc, dict):
             continue
         # tool_call_id 取值优先级：tool_call_id 字段 → id 字段（兼容旧格式）
-        tc_id = tc.get('tool_call_id') or tc.get('id')
+        tc_id = tc.get("tool_call_id") or tc.get("id")
         if not tc_id:
             continue
         apv_info = approval_index.get(str(tc_id))
@@ -310,10 +317,10 @@ def enrich_tool_calls_with_approvals(tool_calls, session_id, approval_index=None
             continue
 
         complete_approval = _build_approval_payload_from_index(apv_info)
-        existing = tc.get('approval')
+        existing = tc.get("approval")
         if not isinstance(existing, dict):
             # 不存在 approval 字段：设置为完整 approval 副本
-            tc['approval'] = complete_approval
+            tc["approval"] = complete_approval
         else:
             # 已有 approval 字段：仅补充缺失字段，保留已有信息
             # 避免覆盖前端写入的 graph_interrupt_id / interrupt_id 等
@@ -330,16 +337,16 @@ def enrich_tool_calls_with_approvals(tool_calls, session_id, approval_index=None
         # 在 enrich 时根据 approval.state 统一注入 status，确保所有模块
         # 从后端获取一致的 tool_calls.status（与实时事件设置的值对齐）。
         # 仅提升非终态 status（pending/空），不覆盖 running/completed/failed/timeout。
-        apv_state = apv_info.get('state')
-        tc_status = tc.get('status')
-        if apv_state in ('pending', 'waiting') and tc_status in (None, '', 'pending'):
-            tc['status'] = 'waiting'
-        elif apv_state == 'processing' and tc_status in (None, '', 'pending', 'waiting'):
-            tc['status'] = 'running'
-        elif apv_state == 'timeout' and tc_status not in ('completed', 'failed'):
-            tc['status'] = 'timeout'
-        elif apv_state == 'rejected' and tc_status in (None, '', 'pending', 'waiting'):
-            tc['status'] = 'rejected'
+        apv_state = apv_info.get("state")
+        tc_status = tc.get("status")
+        if apv_state in ("pending", "waiting") and tc_status in (None, "", "pending"):
+            tc["status"] = "waiting"
+        elif apv_state == "processing" and tc_status in (None, "", "pending", "waiting"):
+            tc["status"] = "running"
+        elif apv_state == "timeout" and tc_status not in ("completed", "failed"):
+            tc["status"] = "timeout"
+        elif apv_state == "rejected" and tc_status in (None, "", "pending", "waiting"):
+            tc["status"] = "rejected"
 
     # 补全 approval_index 中存在但 tool_calls 中缺失的 tool_call 项
     # 场景：ChatResume 尚未保存新 tool_calls 时序问题导致 tool_call_id 缺失，
@@ -347,7 +354,7 @@ def enrich_tool_calls_with_approvals(tool_calls, session_id, approval_index=None
     existing_tc_ids = set()
     for tc in tool_calls:
         if isinstance(tc, dict):
-            tc_id = tc.get('tool_call_id') or tc.get('id')
+            tc_id = tc.get("tool_call_id") or tc.get("id")
             if tc_id:
                 existing_tc_ids.add(str(tc_id))
 

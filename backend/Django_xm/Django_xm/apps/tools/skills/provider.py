@@ -39,7 +39,9 @@ class SkillProvider:
 
         adapter = SkillAdapter(user_id=user_id)
         # 同步 ORM 查询必须在 sync_to_async 中执行
-        all_skill_tools = await sync_to_async(adapter.to_langchain_tools, thread_sensitive=True)(available_tools=available_tools)
+        all_skill_tools = await sync_to_async(adapter.to_langchain_tools, thread_sensitive=True)(
+            available_tools=available_tools
+        )
 
         if selected_tools:
             selected_set = set(selected_tools)
@@ -73,6 +75,7 @@ class SkillProvider:
                 if step.tool_name not in existing_names:
                     # 从全局工具池查找
                     from Django_xm.apps.tools import get_all_tools
+
                     for t in get_all_tools():
                         if t.name == step.tool_name:
                             available_tools.append(t)

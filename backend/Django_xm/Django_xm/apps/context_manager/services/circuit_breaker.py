@@ -49,7 +49,6 @@ class CircuitBreakerState:
 
 
 class ContextCircuitBreaker:
-
     def __init__(self, loop_threshold: int = _LOOP_THRESHOLD) -> None:
         self._loop_threshold = loop_threshold
         self._state = CircuitBreakerState()
@@ -81,15 +80,14 @@ class ContextCircuitBreaker:
 
     def record_tool_call(self, tool_name: str, args: Any) -> bool:
         args_repr = str(args)
-        self._state.tool_call_history.append({
-            "tool_name": tool_name,
-            "args": args_repr,
-        })
+        self._state.tool_call_history.append(
+            {
+                "tool_name": tool_name,
+                "args": args_repr,
+            }
+        )
 
-        if (
-            tool_name == self._state.last_tool_name
-            and args_repr == self._state.last_tool_args
-        ):
+        if tool_name == self._state.last_tool_name and args_repr == self._state.last_tool_args:
             self._state.consecutive_same_calls += 1
         else:
             self._state.consecutive_same_calls = 1
@@ -99,10 +97,7 @@ class ContextCircuitBreaker:
 
         if self._state.consecutive_same_calls >= self._loop_threshold:
             self._state.tripped = True
-            self._state.trip_reason = (
-                f"死循环检测: 工具 {tool_name} 连续调用 "
-                f"{self._state.consecutive_same_calls} 次"
-            )
+            self._state.trip_reason = f"死循环检测: 工具 {tool_name} 连续调用 {self._state.consecutive_same_calls} 次"
             logger.warning(self._state.trip_reason)
             return False
 
@@ -110,6 +105,7 @@ class ContextCircuitBreaker:
 
     def save_checkpoint(self, messages: list[dict[str, Any]]) -> None:
         import copy
+
         self._state.checkpoint_stack.append(copy.deepcopy(messages))
         logger.debug(f"安全检查点已保存, 栈深度={len(self._state.checkpoint_stack)}")
 

@@ -11,6 +11,7 @@ Embedding 模型工厂
 - https://docs.langchain.com/oss/python/integrations/embeddings/index
 - 与 llm_factory.get_chat_model 对齐（默认启用 fallback）
 """
+
 from __future__ import annotations
 
 import threading
@@ -108,6 +109,7 @@ def _import_factory(factory_path: str):
     """按路径字符串导入工厂函数"""
     module_path, _, attr = factory_path.rpartition(".")
     import importlib
+
     module = importlib.import_module(module_path)
     return getattr(module, attr)
 
@@ -126,6 +128,7 @@ def _provider_available(provider_cfg: dict) -> bool:
 def get_embedding_fallback_chain() -> list[dict]:
     """获取可用的 embedding provider 列表（按注册表顺序）"""
     from Django_xm.apps.ai_engine.services.registry_service import get_embedding_registry
+
     available = []
     for cfg in get_embedding_registry():
         if _provider_available(cfg):
@@ -177,11 +180,8 @@ def _create_single_embedding(
             init_kwargs[k] = v
 
     factory = _import_factory(provider_cfg["factory_path"])
-    try:
-        embedding = factory(**init_kwargs)
-    except Exception:
-        # 初始化失败抛出，让上层 try/except 排除此 provider
-        raise
+    # 初始化失败抛出异常，让上层 try/except 排除此 provider
+    embedding = factory(**init_kwargs)
 
     _embedding_cache_set(cache_key, embedding)
     return embedding
@@ -230,13 +230,9 @@ class FallbackEmbedding(Embeddings):
                 vec = emb.embed_query("test")
                 dim = len(vec)
                 self._dimension_cache[idx] = dim
-                logger.debug(
-                    f"Embedding 维度探测: {self._labels[idx]} -> 维度={dim}"
-                )
+                logger.debug(f"Embedding 维度探测: {self._labels[idx]} -> 维度={dim}")
             except Exception as e:
-                logger.warning(
-                    f"Embedding 维度探测失败: {self._labels[idx]} -> {e}"
-                )
+                logger.warning(f"Embedding 维度探测失败: {self._labels[idx]} -> {e}")
 
     def _get_compatible_providers(self) -> list[int]:
         """返回维度匹配的 provider 索引列表
@@ -250,21 +246,13 @@ class FallbackEmbedding(Embeddings):
         # 确保维度已探测
         self._probe_dimensions()
 
-        compatible = [
-            idx
-            for idx, dim in self._dimension_cache.items()
-            if dim == self._required_dimension
-        ]
+        compatible = [idx for idx, dim in self._dimension_cache.items() if dim == self._required_dimension]
 
         if not compatible:
             # 收集所有已探测维度用于错误提示
-            dim_info = ", ".join(
-                f"{self._labels[idx]}={dim}"
-                for idx, dim in sorted(self._dimension_cache.items())
-            )
+            dim_info = ", ".join(f"{self._labels[idx]}={dim}" for idx, dim in sorted(self._dimension_cache.items()))
             raise ValueError(
-                f"无维度兼容的 Embedding provider：要求维度={self._required_dimension}，"
-                f"已有 provider 维度: {dim_info}"
+                f"无维度兼容的 Embedding provider：要求维度={self._required_dimension}，已有 provider 维度: {dim_info}"
             )
 
         logger.debug(
@@ -277,13 +265,15 @@ class FallbackEmbedding(Embeddings):
         """记录降级事件"""
         from_label = self._labels[from_idx]
         to_label = self._labels[to_idx]
-        self._fallback_events.append({
-            "from_provider": self._provider_ids[from_idx] if from_idx < len(self._provider_ids) else from_label,
-            "from_label": from_label,
-            "to_provider": self._provider_ids[to_idx] if to_idx < len(self._provider_ids) else to_label,
-            "to_label": to_label,
-            "reason": reason,
-        })
+        self._fallback_events.append(
+            {
+                "from_provider": self._provider_ids[from_idx] if from_idx < len(self._provider_ids) else from_label,
+                "from_label": from_label,
+                "to_provider": self._provider_ids[to_idx] if to_idx < len(self._provider_ids) else to_label,
+                "to_label": to_label,
+                "reason": reason,
+            }
+        )
 
     def get_fallback_events(self) -> list[dict[str, str]]:
         """获取所有降级事件"""
@@ -301,16 +291,15 @@ class FallbackEmbedding(Embeddings):
         last_error: Exception | None = None
 
         # 获取候选 provider 索引列表
-        try:
-            candidate_indices = self._get_compatible_providers()
-        except ValueError:
-            raise
+        candidate_indices = self._get_compatible_providers()
 
         for offset in range(len(candidate_indices)):
             idx = candidate_indices[
-                (candidate_indices.index(self._active_index) + offset
-                 if self._active_index in candidate_indices
-                 else offset)
+                (
+                    candidate_indices.index(self._active_index) + offset
+                    if self._active_index in candidate_indices
+                    else offset
+                )
                 % len(candidate_indices)
             ]
             emb = self._embeddings_list[idx]
@@ -318,17 +307,14 @@ class FallbackEmbedding(Embeddings):
                 result = getattr(emb, method_name)(*args, **kwargs)
                 if idx != self._active_index:
                     logger.info(
-                        f"Embedding fallback 成功切换: "
-                        f"{self._labels[self._active_index]} -> {self._labels[idx]}"
+                        f"Embedding fallback 成功切换: {self._labels[self._active_index]} -> {self._labels[idx]}"
                     )
                     self._record_fallback(self._active_index, idx, str(last_error) if last_error else "")
                     self._active_index = idx
                 return result
             except Exception as e:
                 last_error = e
-                logger.warning(
-                    f"Embedding 提供商 {self._labels[idx]} 调用 {method_name} 失败: {e}"
-                )
+                logger.warning(f"Embedding 提供商 {self._labels[idx]} 调用 {method_name} 失败: {e}")
                 continue
         logger.error(f"所有 Embedding 提供商均失败，最后错误: {last_error}")
         raise last_error  # type: ignore[misc]
@@ -339,16 +325,15 @@ class FallbackEmbedding(Embeddings):
         last_error: Exception | None = None
 
         # 获取候选 provider 索引列表
-        try:
-            candidate_indices = self._get_compatible_providers()
-        except ValueError:
-            raise
+        candidate_indices = self._get_compatible_providers()
 
         for offset in range(len(candidate_indices)):
             idx = candidate_indices[
-                (candidate_indices.index(self._active_index) + offset
-                 if self._active_index in candidate_indices
-                 else offset)
+                (
+                    candidate_indices.index(self._active_index) + offset
+                    if self._active_index in candidate_indices
+                    else offset
+                )
                 % len(candidate_indices)
             ]
             emb = self._embeddings_list[idx]
@@ -356,17 +341,14 @@ class FallbackEmbedding(Embeddings):
                 result = await getattr(emb, method_name)(*args, **kwargs)
                 if idx != self._active_index:
                     logger.info(
-                        f"Embedding fallback 成功切换: "
-                        f"{self._labels[self._active_index]} -> {self._labels[idx]}"
+                        f"Embedding fallback 成功切换: {self._labels[self._active_index]} -> {self._labels[idx]}"
                     )
                     self._record_fallback(self._active_index, idx, str(last_error) if last_error else "")
                     self._active_index = idx
                 return result
             except Exception as e:
                 last_error = e
-                logger.warning(
-                    f"Embedding 提供商 {self._labels[idx]} 异步调用 {method_name} 失败: {e}"
-                )
+                logger.warning(f"Embedding 提供商 {self._labels[idx]} 异步调用 {method_name} 失败: {e}")
                 continue
         logger.error(f"所有 Embedding 提供商均失败，最后错误: {last_error}")
         raise last_error  # type: ignore[misc]
@@ -425,19 +407,22 @@ def get_embeddings_with_fallback(
     user_fallback_id: str | None = None
     try:
         from Django_xm.apps.ai_engine.models import SystemConfig
+
         if not user_primary_id:
             emb_cfg = SystemConfig.get_value("embedding_provider", {})
             user_primary_id = emb_cfg.get("provider_id", "") or None
         fb_emb_config = SystemConfig.get_value("fallback_embedding_provider", {})
         user_fallback_id = fb_emb_config.get("provider_id", "") or None
     except Exception:
-        pass
+        # 配置读取失败时回退到默认 provider，不影响主流程
+        logger.debug("读取 embedding provider 配置失败，使用默认值")
 
     # 读取 MRL 维度配置（缓存 key 需要）
     user_mrl_dimension = dimension
     if user_mrl_dimension is None:
         try:
             from Django_xm.apps.ai_engine.models import SystemConfig
+
             emb_cfg = SystemConfig.get_value("embedding_provider", {})
             cfg_dim = emb_cfg.get("dimension")
             cfg_pid = emb_cfg.get("provider_id", "")
@@ -445,7 +430,8 @@ def get_embeddings_with_fallback(
             if cfg_dim and (not cfg_pid or cfg_pid == active_pid):
                 user_mrl_dimension = int(cfg_dim)
         except Exception:
-            pass
+            # MRL 维度配置读取失败时回退到传入维度，不影响主流程
+            logger.debug("读取 MRL 维度配置失败，使用传入维度")
 
     cache_key = (
         f"emb_fb:{user_primary_id or 'default'}:"
@@ -471,16 +457,11 @@ def get_embeddings_with_fallback(
         filtered = [p for p in providers if p["id"] in allowed_ids]
         if filtered:
             providers = filtered
-            logger.debug(
-                f"Embedding 按用户配置过滤: 只保留 {allowed_ids}，"
-                f"共 {len(providers)} 个 provider"
-            )
+            logger.debug(f"Embedding 按用户配置过滤: 只保留 {allowed_ids}，共 {len(providers)} 个 provider")
 
     # 调整优先级：preferred_provider 置顶
     if user_primary_id:
-        providers = sorted(
-            providers, key=lambda p: 0 if p["id"] == user_primary_id else 1
-        )
+        providers = sorted(providers, key=lambda p: 0 if p["id"] == user_primary_id else 1)
 
     # 用户配置的降级 Embedding 排在第二位
     if user_fallback_id and user_fallback_id != user_primary_id:
@@ -488,7 +469,7 @@ def get_embeddings_with_fallback(
         others = [p for p in providers if p["id"] != user_fallback_id]
         if fb_item:
             if others and others[0]["id"] == user_primary_id:
-                providers = [others[0]] + fb_item + others[1:]
+                providers = [others[0], *fb_item, *others[1:]]
             else:
                 providers = fb_item + others
 
@@ -496,6 +477,7 @@ def get_embeddings_with_fallback(
 
     # 维度预过滤：综合考虑精确匹配 + MRL 截断兼容
     if required_dimension is not None:
+
         def _is_dimension_compatible(p: dict) -> bool:
             """判断 provider 在 MRL 截断/固定维度下能否输出指定维度
 
@@ -534,8 +516,7 @@ def get_embeddings_with_fallback(
             else:
                 # 注册表中也无匹配，保留全部 provider，交由运行时维度探测处理
                 dim_info = ", ".join(
-                    f"{p['id']}={p.get('dimension', '未知')}/max{p.get('native_max_dimension', 0)}"
-                    for p in providers
+                    f"{p['id']}={p.get('dimension', '未知')}/max{p.get('native_max_dimension', 0)}" for p in providers
                 )
                 logger.warning(
                     f"Embedding 维度预过滤: 注册表中无维度={required_dimension} 的 provider，"
@@ -570,14 +551,13 @@ def get_embeddings_with_fallback(
             logger.warning(f"Embedding provider {provider_cfg['label']} 初始化失败: {e}")
 
     if not embeddings_list:
-        raise RuntimeError(
-            f"所有 Embedding provider 初始化失败: {'; '.join(errors)}"
-        )
+        raise RuntimeError(f"所有 Embedding provider 初始化失败: {'; '.join(errors)}")
 
     result: Embeddings
     if use_fallback and len(embeddings_list) > 1:
         result = FallbackEmbedding(
-            embeddings_list, labels,
+            embeddings_list,
+            labels,
             required_dimension=required_dimension,
             provider_ids=[p["id"] for p in providers],
         )
@@ -592,6 +572,7 @@ def get_embeddings_with_fallback(
     # 包装 Redis 缓存
     if use_cache:
         from Django_xm.apps.knowledge.services.embedding_service import CachedEmbeddings
+
         result = CachedEmbeddings(result, model=model or "default")
 
     with _embedding_fallback_lock:
@@ -609,6 +590,7 @@ def reset_embedding_factory() -> None:
 
 # ============== 数据库配置读取 ==============
 
+
 def get_system_embedding_provider() -> str | None:
     """从 SystemConfig 数据库读取用户偏好的 Embedding provider
 
@@ -616,12 +598,14 @@ def get_system_embedding_provider() -> str | None:
     """
     try:
         from Django_xm.apps.ai_engine.models import SystemConfig
+
         config = SystemConfig.get_value("embedding_provider", {})
         provider_id = config.get("provider_id", "")
         if provider_id:
             return provider_id
     except Exception:
-        pass
+        # 配置读取失败时返回 None，使用默认 provider
+        logger.debug("读取 embedding provider 配置失败，返回 None")
     return None
 
 

@@ -77,44 +77,48 @@ class _PatchCompositeBackend:
         err = self._check_sandbox_path(file_path)
         if err:
             from deepagents.backends.protocol import WriteResult
+
             return WriteResult(error=err, path=None, files_update=None)
         backend, key = self._resolve(file_path)
         res = backend.write(key, content)
         if res.path is not None:
-            object.__setattr__(res, 'path', file_path)
+            object.__setattr__(res, "path", file_path)
         return res
 
     async def awrite(self, file_path, content):
         err = self._check_sandbox_path(file_path)
         if err:
             from deepagents.backends.protocol import WriteResult
+
             return WriteResult(error=err, path=None, files_update=None)
         backend, key = self._resolve(file_path)
         res = await backend.awrite(key, content)
         if res.path is not None:
-            object.__setattr__(res, 'path', file_path)
+            object.__setattr__(res, "path", file_path)
         return res
 
     def edit(self, file_path, old_string, new_string, replace_all=False):
         err = self._check_sandbox_path(file_path)
         if err:
             from deepagents.backends.protocol import EditResult
+
             return EditResult(error=err, path=None, files_update=None, occurrences=None)
         backend, key = self._resolve(file_path)
         res = backend.edit(key, old_string, new_string, replace_all=replace_all)
         if res.path is not None:
-            object.__setattr__(res, 'path', file_path)
+            object.__setattr__(res, "path", file_path)
         return res
 
     async def aedit(self, file_path, old_string, new_string, replace_all=False):
         err = self._check_sandbox_path(file_path)
         if err:
             from deepagents.backends.protocol import EditResult
+
             return EditResult(error=err, path=None, files_update=None, occurrences=None)
         backend, key = self._resolve(file_path)
         res = await backend.aedit(key, old_string, new_string, replace_all=replace_all)
         if res.path is not None:
-            object.__setattr__(res, 'path', file_path)
+            object.__setattr__(res, "path", file_path)
         return res
 
 
@@ -126,6 +130,7 @@ def _get_backend(
     try:
         if backend_type == "state":
             from deepagents.backends import StateBackend
+
             return StateBackend()
         elif backend_type == "filesystem":
             from deepagents.backends import CompositeBackend, FilesystemBackend
@@ -145,10 +150,12 @@ def _get_backend(
             return fs_backend
         elif backend_type == "local_shell":
             from deepagents.backends import LocalShellBackend
+
             return LocalShellBackend(workdir=work_dir or ".")
         else:
             logger.warning(f"未知的 backend 类型: {backend_type}，使用 StateBackend")
             from deepagents.backends import StateBackend
+
             return StateBackend()
     except ImportError as e:
         logger.warning(f"Backend 导入失败: {e}，将不使用 backend")
@@ -240,16 +247,20 @@ class _DeepAgentExecutor(AgentExecutor):
         while ctx.retry_count <= self.config.max_retries:
             try:
                 async for event in self._iter_with_timeout(
-                    loop_fn, agent, graph_input, config, ctx, strategy, data,
+                    loop_fn,
+                    agent,
+                    graph_input,
+                    config,
+                    ctx,
+                    strategy,
+                    data,
                 ):
                     yield event
                 return  # 成功
 
             except _HardTimeoutSignaled:
                 # Hard timeout → fallback
-                logger.warning(
-                    f"[DeepAgentExecutor] 执行超时 (hard): {self.timeout_mgr.elapsed:.1f}s"
-                )
+                logger.warning(f"[DeepAgentExecutor] 执行超时 (hard): {self.timeout_mgr.elapsed:.1f}s")
                 async for fb_event in self._run_fallback():
                     yield fb_event
                 return
@@ -258,14 +269,20 @@ class _DeepAgentExecutor(AgentExecutor):
                 # GraphRecursionError → 触发降级（与原 official_deep_agent 行为一致）
                 logger.warning("[DeepAgentExecutor] GraphRecursionError，触发降级")
                 async for event in self._run_degrade(
-                    loop_fn, graph_input, ctx, strategy, data,
+                    loop_fn,
+                    graph_input,
+                    ctx,
+                    strategy,
+                    data,
                 ):
                     yield event
                 return
 
             except Exception as stream_err:
                 action, classified = classify_and_decide(
-                    stream_err, ctx.retry_count, self.config.max_retries,
+                    stream_err,
+                    ctx.retry_count,
+                    self.config.max_retries,
                 )
 
                 if action == ErrorAction.RETRY:
@@ -290,15 +307,17 @@ class _DeepAgentExecutor(AgentExecutor):
                 elif action == ErrorAction.DEGRADE:
                     logger.warning(f"[DeepAgentExecutor] 降级: {classified.error_code}")
                     async for event in self._run_degrade(
-                        loop_fn, graph_input, ctx, strategy, data,
+                        loop_fn,
+                        graph_input,
+                        ctx,
+                        strategy,
+                        data,
                     ):
                         yield event
                     return
 
                 elif action == ErrorAction.FAIL:
-                    logger.error(
-                        f"[DeepAgentExecutor] 不可恢复错误: {classified.error_code}: {classified.message}"
-                    )
+                    logger.exception(f"[DeepAgentExecutor] 不可恢复错误: {classified.error_code}: {classified.message}")
                     raise
 
                 else:  # FALLBACK
@@ -334,9 +353,7 @@ class _DeepAgentExecutor(AgentExecutor):
 
         # 已降级到 REDUCED_TOOLS，再次失败直接回退（多级降级级联）
         if self._current_degradation == DegradationLevel.REDUCED_TOOLS:
-            logger.warning(
-                "[DeepAgentExecutor] 已降级到 REDUCED_TOOLS，再次失败回退到无工具模式"
-            )
+            logger.warning("[DeepAgentExecutor] 已降级到 REDUCED_TOOLS，再次失败回退到无工具模式")
             async for fb_event in self._run_fallback():
                 yield fb_event
             return
@@ -357,9 +374,7 @@ class _DeepAgentExecutor(AgentExecutor):
         try:
             new_graph = await self._rebuild_coro_fn(degraded_tools)
         except Exception as rebuild_err:
-            logger.warning(
-                f"[DeepAgentExecutor] graph 重建异常: {rebuild_err}，回退到无工具模式"
-            )
+            logger.warning(f"[DeepAgentExecutor] graph 重建异常: {rebuild_err}，回退到无工具模式")
             async for fb_event in self._run_fallback():
                 yield fb_event
             return
@@ -380,24 +395,23 @@ class _DeepAgentExecutor(AgentExecutor):
         # 用新 graph 重试（不再次降级重建，失败则回退）
         try:
             async for event in self._iter_with_timeout(
-                loop_fn, None, graph_input, self._graph_config,
-                ctx, strategy, data,
+                loop_fn,
+                None,
+                graph_input,
+                self._graph_config,
+                ctx,
+                strategy,
+                data,
             ):
                 yield event
             # 降级成功
             return
         except _HardTimeoutSignaled:
-            logger.warning(
-                "[DeepAgentExecutor] 降级工具重试超时，回退到无工具模式"
-            )
+            logger.warning("[DeepAgentExecutor] 降级工具重试超时，回退到无工具模式")
         except GraphRecursionError:
-            logger.warning(
-                "[DeepAgentExecutor] 降级工具重试达到递归上限，回退到无工具模式"
-            )
+            logger.warning("[DeepAgentExecutor] 降级工具重试达到递归上限，回退到无工具模式")
         except Exception as degrade_err:
-            logger.warning(
-                f"[DeepAgentExecutor] 降级工具重试失败: {degrade_err}，回退到无工具模式"
-            )
+            logger.warning(f"[DeepAgentExecutor] 降级工具重试失败: {degrade_err}，回退到无工具模式")
 
         # 降级失败，落入 FALLBACK
         async for fb_event in self._run_fallback():
@@ -415,14 +429,12 @@ class _DeepAgentExecutor(AgentExecutor):
         logger.warning("[DeepAgentExecutor] 回退到无工具直接回答模式")
         try:
             result = await self._fallback_direct_answer_fn(
-                self._query, self._graph_config,
+                self._query,
+                self._graph_config,
             )
             yield {"type": "deep_agent_fallback_result", "data": result}
         except Exception as fallback_err:
-            logger.error(
-                f"[DeepAgentExecutor] 无工具回退也失败: "
-                f"{type(fallback_err).__name__}: {fallback_err}"
-            )
+            logger.exception(f"[DeepAgentExecutor] 无工具回退也失败: {type(fallback_err).__name__}")
             yield {
                 "type": "deep_agent_fallback_result",
                 "data": {

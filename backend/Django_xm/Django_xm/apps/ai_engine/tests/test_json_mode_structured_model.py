@@ -22,6 +22,7 @@ from Django_xm.apps.ai_engine.services.llm_factory import JsonModeStructuredMode
 
 class TestSchema(PydanticBaseModel):
     """测试用 schema"""
+
     name: str = Field(description="名称")
     age: int = Field(description="年龄")
 
@@ -140,6 +141,7 @@ class JsonModeStructuredModelTestCase(SimpleTestCase):
 
         # 传入单条消息（非 list）
         from langchain_core.messages import HumanMessage
+
         single_msg = HumanMessage(content="test")
 
         result = model.invoke(single_msg)
@@ -196,6 +198,7 @@ class JsonModeStructuredModelTestCase(SimpleTestCase):
         self.assertEqual(len(passed_messages), 3)
         # 第一条是 schema 提示词
         from langchain_core.messages import SystemMessage
+
         self.assertIsInstance(passed_messages[0], SystemMessage)
         self.assertIn("JSON Schema", passed_messages[0].content)
         # 后两条是原始消息

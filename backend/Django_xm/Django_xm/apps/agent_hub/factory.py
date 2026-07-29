@@ -60,13 +60,15 @@ class AgentFactory:
         # 执行预检（默认不阻止创建，仅记录问题；fail_fast_on_preflight=True 时抛出 PreflightCheckError）
         # 注意：PreflightCheckError 必须冒泡（不被 except 捕获），其他异常忽略保持向后兼容
         from .exceptions import PreflightCheckError
+
         try:
             from .preflight import ExecutionPreflight
+
             preflight = ExecutionPreflight()
             result = await preflight.check(config)
             if not result.passed:
                 config._preflight_issues = result.issues
-                if getattr(config, 'fail_fast_on_preflight', False):
+                if getattr(config, "fail_fast_on_preflight", False):
                     # 快速失败模式：抛出携带 issues 的 PreflightCheckError，不调用 builder.build
                     raise PreflightCheckError(
                         f"预检未通过，已阻止 agent 创建: {result.issues}",
@@ -102,15 +104,13 @@ class AgentFactory:
             else:
                 raise
         except Exception as e:
-            logger.error(f"智能体创建失败: {e}")
+            logger.exception("智能体创建失败")
             raise AgentCreationError(f"智能体创建失败: {e}") from e
 
         if isinstance(agent, CompiledStateGraph):
-            return AgentWrapper(graph=agent, work_dir=getattr(config, 'work_dir', None))
+            return AgentWrapper(graph=agent, work_dir=getattr(config, "work_dir", None))
 
         if not hasattr(agent, "graph"):
-            raise AgentCreationError(
-                f"Builder 返回的对象既不是 CompiledStateGraph 也没有 .graph 属性: {type(agent)}"
-            )
+            raise AgentCreationError(f"Builder 返回的对象既不是 CompiledStateGraph 也没有 .graph 属性: {type(agent)}")
 
         return agent

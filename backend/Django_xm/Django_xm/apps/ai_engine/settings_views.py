@@ -4,6 +4,7 @@ AI 设置 API
 提供系统级 AI 模型配置的读取、更新和索引重建功能。
 配置持久化到 SystemConfig 数据库表，服务重启后不丢失。
 """
+
 import logging
 from typing import Any
 
@@ -35,15 +36,17 @@ def _get_embedding_providers():
     available = get_embedding_fallback_chain()
     result = []
     for cfg in available:
-        result.append({
-            "id": cfg["id"],
-            "provider_id": cfg.get("provider_id", cfg["id"].split("/")[0] if "/" in cfg["id"] else cfg["id"]),
-            "label": cfg["label"],
-            "default_model": cfg.get("default_model", ""),
-            "dimension": cfg.get("dimension"),
-            "native_max_dimension": cfg.get("native_max_dimension", 0),
-            "min_dimension": cfg.get("min_dimension", 0),
-        })
+        result.append(
+            {
+                "id": cfg["id"],
+                "provider_id": cfg.get("provider_id", cfg["id"].split("/")[0] if "/" in cfg["id"] else cfg["id"]),
+                "label": cfg["label"],
+                "default_model": cfg.get("default_model", ""),
+                "dimension": cfg.get("dimension"),
+                "native_max_dimension": cfg.get("native_max_dimension", 0),
+                "min_dimension": cfg.get("min_dimension", 0),
+            }
+        )
     return result
 
 
@@ -69,12 +72,14 @@ def _get_affected_indexes(user, new_dimension: int) -> list:
 
         # 维度不匹配
         if idx_dim is not None and idx_dim != new_dimension:
-            affected.append({
-                "name": name,
-                "current_dimension": idx_dim,
-                "new_dimension": new_dimension,
-                "num_documents": num_docs,
-            })
+            affected.append(
+                {
+                    "name": name,
+                    "current_dimension": idx_dim,
+                    "new_dimension": new_dimension,
+                    "num_documents": num_docs,
+                }
+            )
     return affected
 
 
@@ -84,9 +89,10 @@ class AISettingsView(APIView):
     仅管理员可访问（IsAdmin），普通用户访问返回 403。
     涉及系统级 LLM/Embedding 配置，属于敏感操作。
     """
+
     permission_classes = [IsAdmin]
 
-    @extend_schema(view=False)
+    @extend_schema(exclude=True)
     def get(self, request):
         """获取全部 AI 设置"""
         # 可用 LLM provider 列表
@@ -104,8 +110,9 @@ class AISettingsView(APIView):
 
         # 运行时内存中的辅助模型配置（兼容旧逻辑）
         from django.conf import settings as django_settings
-        runtime_helper_provider = getattr(django_settings, 'AI_HELPER_MODEL_PROVIDER', '')
-        runtime_helper_model = getattr(django_settings, 'AI_HELPER_MODEL_NAME', '')
+
+        runtime_helper_provider = getattr(django_settings, "AI_HELPER_MODEL_PROVIDER", "")
+        runtime_helper_model = getattr(django_settings, "AI_HELPER_MODEL_NAME", "")
 
         # 合并：数据库优先，回退到运行时内存
         current_chat = {
@@ -134,25 +141,29 @@ class AISettingsView(APIView):
         for item in HELPER_MODEL_PRIORITY:
             pid = item["provider"]
             provider_cfg = get_model_registry().get(pid, {})
-            helper_priority.append({
-                "provider_id": pid,
-                "model_name": item["model"],
-                "reason": item["reason"],
-                "label": provider_cfg.get("label", pid),
-            })
+            helper_priority.append(
+                {
+                    "provider_id": pid,
+                    "model_name": item["model"],
+                    "reason": item["reason"],
+                    "label": provider_cfg.get("label", pid),
+                }
+            )
 
-        return success_response(data={
-            "providers": providers,
-            "embedding_providers": embedding_providers,
-            "current": {
-                "default_chat_model": current_chat,
-                "fallback_chat_model": current_fallback_chat,
-                "helper_model": current_helper,
-                "embedding_provider": current_embedding,
-                "fallback_embedding_provider": current_fallback_embedding,
-            },
-            "indexes": self._get_index_dimensions(),
-        })
+        return success_response(
+            data={
+                "providers": providers,
+                "embedding_providers": embedding_providers,
+                "current": {
+                    "default_chat_model": current_chat,
+                    "fallback_chat_model": current_fallback_chat,
+                    "helper_model": current_helper,
+                    "embedding_provider": current_embedding,
+                    "fallback_embedding_provider": current_fallback_embedding,
+                },
+                "indexes": self._get_index_dimensions(),
+            }
+        )
 
     def _get_index_dimensions(self) -> list:
         """获取所有索引的维度信息，供前端预检测"""
@@ -170,15 +181,17 @@ class AISettingsView(APIView):
                 emb_model = idx.get("embedding_model", "")
                 if emb_model:
                     idx_dim = get_embedding_dimension(emb_model)
-            result.append({
-                "name": idx.get("name", ""),
-                "embedding_dimension": idx_dim,
-                "embedding_model": idx.get("embedding_model", ""),
-                "num_documents": num_docs,
-            })
+            result.append(
+                {
+                    "name": idx.get("name", ""),
+                    "embedding_dimension": idx_dim,
+                    "embedding_model": idx.get("embedding_model", ""),
+                    "num_documents": num_docs,
+                }
+            )
         return result
 
-    @extend_schema(view=False)
+    @extend_schema(exclude=True)
     def put(self, request):
         """更新 AI 设置
 
@@ -209,10 +222,13 @@ class AISettingsView(APIView):
                     http_status=status.HTTP_400_BAD_REQUEST,
                 )
             if provider_id:
-                SystemConfig.set_value("default_chat_model", {
-                    "provider_id": provider_id,
-                    "model_name": model_name,
-                })
+                SystemConfig.set_value(
+                    "default_chat_model",
+                    {
+                        "provider_id": provider_id,
+                        "model_name": model_name,
+                    },
+                )
             else:
                 SystemConfig.set_value("default_chat_model", None)
 
@@ -228,17 +244,22 @@ class AISettingsView(APIView):
                 )
             # 空字符串视为重置，存 null
             if provider_id:
-                SystemConfig.set_value("helper_model", {
-                    "provider_id": provider_id,
-                    "model_name": model_name,
-                })
+                SystemConfig.set_value(
+                    "helper_model",
+                    {
+                        "provider_id": provider_id,
+                        "model_name": model_name,
+                    },
+                )
             else:
                 SystemConfig.set_value("helper_model", None)
             # 同步运行时内存（兼容 HelperModelView 逻辑）
             from django.conf import settings as django_settings
+
             django_settings.AI_HELPER_MODEL_PROVIDER = provider_id
             django_settings.AI_HELPER_MODEL_NAME = model_name
             import Django_xm.apps.ai_engine.services.llm_factory as llm_mod
+
             llm_mod._helper_model_cache = None
 
         # 3. 保存降级聊天模型
@@ -252,10 +273,13 @@ class AISettingsView(APIView):
                     http_status=status.HTTP_400_BAD_REQUEST,
                 )
             if fb_provider_id:
-                SystemConfig.set_value("fallback_chat_model", {
-                    "provider_id": fb_provider_id,
-                    "model_name": fb_model_name,
-                })
+                SystemConfig.set_value(
+                    "fallback_chat_model",
+                    {
+                        "provider_id": fb_provider_id,
+                        "model_name": fb_model_name,
+                    },
+                )
             else:
                 SystemConfig.set_value("fallback_chat_model", None)
 
@@ -335,23 +359,17 @@ class AISettingsView(APIView):
             from Django_xm.apps.ai_engine.services.embedding_factory import (
                 reset_embedding_factory,
             )
+
             reset_embedding_factory()
 
             # 检测维度变化：provider 切换 OR dimension 修改
-            dimension_changed = (
-                new_provider_id != old_provider_id
-                or new_cfg.get("dimension") != old_dimension
-            )
+            dimension_changed = new_provider_id != old_provider_id or new_cfg.get("dimension") != old_dimension
             if new_provider_id and dimension_changed:
                 # 获取新 provider 的有效输出维度
                 new_effective_dim = None
                 for p in get_embedding_registry():
                     if p["id"] == new_provider_id:
-                        new_effective_dim = (
-                            new_cfg.get("dimension")
-                            if new_cfg.get("dimension")
-                            else p.get("dimension")
-                        )
+                        new_effective_dim = new_cfg.get("dimension") if new_cfg.get("dimension") else p.get("dimension")
                         break
 
                 if new_effective_dim:
@@ -376,9 +394,12 @@ class AISettingsView(APIView):
                         message=f"未知的 Embedding provider: {fb_emb_id}",
                         http_status=status.HTTP_400_BAD_REQUEST,
                     )
-                SystemConfig.set_value("fallback_embedding_provider", {
-                    "provider_id": fb_emb_id,
-                })
+                SystemConfig.set_value(
+                    "fallback_embedding_provider",
+                    {
+                        "provider_id": fb_emb_id,
+                    },
+                )
             else:
                 SystemConfig.set_value("fallback_embedding_provider", None)
 
@@ -396,9 +417,10 @@ class RebuildIndexesView(APIView):
     仅管理员可访问（IsAdmin），普通用户访问返回 403。
     重建索引会调整 PGVector 维度，属于高风险操作。
     """
+
     permission_classes = [IsAdmin]
 
-    @extend_schema(view=False)
+    @extend_schema(exclude=True)
     def post(self, request):
         """触发索引重建
 
@@ -443,7 +465,8 @@ class RebuildIndexesView(APIView):
         # 重建所有维度不匹配的索引
         elif new_dimension:
             targets = [
-                idx for idx in all_indexes
+                idx
+                for idx in all_indexes
                 if idx.get("num_documents", 0) > 0
                 and idx.get("embedding_dimension") is not None
                 and idx.get("embedding_dimension") != new_dimension
@@ -469,6 +492,7 @@ class RebuildIndexesView(APIView):
             name = idx.get("name", "")
             try:
                 from langchain_core.documents import Document
+
                 documents = []
 
                 store_type = idx.get("store_type") or manager._get_store_type(name) or "pgvector"
@@ -497,7 +521,7 @@ class RebuildIndexesView(APIView):
                 else:
                     errors.append({"name": name, "error": "无法读取文档"})
             except Exception as e:
-                logger.error(f"索引文档读取失败: {name} - {e}")
+                logger.exception(f"索引文档读取失败: {name} -")
                 errors.append({"name": name, "error": f"读取失败: {e}"})
 
         # 所有文档读取完成后，逐个重建索引
@@ -513,14 +537,12 @@ class RebuildIndexesView(APIView):
         dimension_changed = False
         if new_dimension:
             from Django_xm.apps.knowledge.vector_store.pgvector_backend import PGVectorBackend
+
             backend = PGVectorBackend()
             current_dim = backend.get_embedding_column_dimension()
             if current_dim is not None and current_dim != new_dimension:
                 dimension_changed = True
-                logger.info(
-                    f"检测到维度变化: {current_dim} → {new_dimension}，"
-                    f"先删除所有旧集合数据并调整列类型"
-                )
+                logger.info(f"检测到维度变化: {current_dim} → {new_dimension}，先删除所有旧集合数据并调整列类型")
                 # 先删除所有要重建的集合的旧数据
                 for name in index_docs:
                     try:
@@ -531,11 +553,14 @@ class RebuildIndexesView(APIView):
                 # 调整 embedding 列维度
                 dim_ok = backend.ensure_embedding_dimension(new_dimension)
                 if not dim_ok:
-                    errors.insert(0, {
-                        "name": "__dimension__",
-                        "error": f"PGVector embedding 列维度无法从 {current_dim} 调整为 {new_dimension}，"
-                                 f"表中仍有其他集合数据。请先删除所有知识库索引后再重建。",
-                    })
+                    errors.insert(
+                        0,
+                        {
+                            "name": "__dimension__",
+                            "error": f"PGVector embedding 列维度无法从 {current_dim} 调整为 {new_dimension}，"
+                            f"表中仍有其他集合数据。请先删除所有知识库索引后再重建。",
+                        },
+                    )
                     return success_response(
                         data={
                             "rebuilt_indexes": [],
@@ -558,8 +583,8 @@ class RebuildIndexesView(APIView):
                 )
                 rebuilt.append(name)
                 logger.info(f"索引重建成功: {name}, {len(documents)} 条文档")
-            except Exception as e:
-                logger.error(f"索引重建失败，尝试重试: {name} - {e}")
+            except Exception:
+                logger.exception(f"索引重建失败，尝试重试: {name} -")
                 # 阶段4-1：用内存中的文档重试
                 try:
                     manager.create_index(
@@ -574,9 +599,10 @@ class RebuildIndexesView(APIView):
                     logger.info(f"索引重建重试成功: {name}")
                 except Exception:
                     # 阶段4-2：从原始文件重建
-                    logger.error(f"索引重建重试失败，尝试从原始文件重建: {name}")
+                    logger.exception(f"索引重建重试失败，尝试从原始文件重建: {name}")
                     try:
                         from Django_xm.apps.knowledge.services.kb_service import rebuild_index_from_source_files
+
                         rebuild_index_from_source_files(
                             user=user,
                             kb_name=name,
@@ -586,7 +612,7 @@ class RebuildIndexesView(APIView):
                         rebuilt.append(name)
                         logger.info(f"从原始文件重建成功: {name}")
                     except Exception as src_err:
-                        logger.error(f"从原始文件重建也失败: {name} - {src_err}")
+                        logger.exception(f"从原始文件重建也失败: {name} -")
                         errors.append({"name": name, "error": f"重建失败: {src_err}"})
 
         return success_response(

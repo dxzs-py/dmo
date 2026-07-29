@@ -99,7 +99,7 @@ class EncryptedCharFieldDeconstructTests(unittest.TestCase):
     def test_deconstruct_preserves_max_length(self):
         """deconstruct 应保留 max_length 参数。"""
         field = EncryptedCharField(max_length=500, blank=True, default="")
-        name, path, args, kwargs = field.deconstruct()
+        _name, path, _args, kwargs = field.deconstruct()
         self.assertEqual(kwargs.get("max_length"), 500)
         self.assertEqual(path, "Django_xm.apps.tools.fields.EncryptedCharField")
 

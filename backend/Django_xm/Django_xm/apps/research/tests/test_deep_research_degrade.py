@@ -10,6 +10,7 @@
     conda activate langchain_xm
     python -m pytest Django_xm/apps/research/tests/test_deep_research_degrade.py -v
 """
+
 from __future__ import annotations
 
 import os
@@ -36,7 +37,8 @@ from Django_xm.apps.research.services.adapter import (
 # 辅助函数
 # ============================================================================
 
-def _make_failing_astream(error: Exception = None):
+
+def _make_failing_astream(error: Exception | None = None):
     """构造一个立即抛出异常的 async generator astream"""
     err = error or RuntimeError("simulate astream failure")
 
@@ -87,6 +89,7 @@ def _make_classified():
 # 测试用例
 # ============================================================================
 
+
 class TestDegradeFullToReduced(unittest.IsolatedAsyncioTestCase):
     """测试 FULL → REDUCED_TOOLS 降级路径"""
 
@@ -109,23 +112,27 @@ class TestDegradeFullToReduced(unittest.IsolatedAsyncioTestCase):
             original_tools=[MagicMock(name="tool_1"), MagicMock(name="tool_2")],
         )
 
-        with patch(
-            "Django_xm.apps.agent_hub.services.agent_resilience.classify_and_decide",
-            return_value=(ErrorAction.DEGRADE, _make_classified()),
-        ), patch(
-            "Django_xm.apps.agent_hub.services.agent_resilience.get_degraded_tools",
-            return_value=degraded_tools,
-        ) as mock_get_degraded, patch(
-            "Django_xm.apps.agent_hub.services.agent_resilience.calculate_backoff",
-            return_value=0.0,
-        ), patch(
-            "asyncio.sleep", new_callable=AsyncMock
-        ), patch.object(
-            adapter,
-            "_rebuild_with_degraded_tools",
-            new_callable=AsyncMock,
-            return_value=new_graph,
-        ) as mock_rebuild:
+        with (
+            patch(
+                "Django_xm.apps.agent_hub.services.agent_resilience.classify_and_decide",
+                return_value=(ErrorAction.DEGRADE, _make_classified()),
+            ),
+            patch(
+                "Django_xm.apps.agent_hub.services.agent_resilience.get_degraded_tools",
+                return_value=degraded_tools,
+            ) as mock_get_degraded,
+            patch(
+                "Django_xm.apps.agent_hub.services.agent_resilience.calculate_backoff",
+                return_value=0.0,
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+            patch.object(
+                adapter,
+                "_rebuild_with_degraded_tools",
+                new_callable=AsyncMock,
+                return_value=new_graph,
+            ) as mock_rebuild,
+        ):
             result = await adapter.astream_research_with_interrupts(query="测试查询")
 
         # 验证 get_degraded_tools 被调用，传入原始工具和 REDUCED_TOOLS 级别
@@ -157,9 +164,7 @@ class TestDegradeReducedToNoTools(unittest.IsolatedAsyncioTestCase):
         original_graph = _make_mock_graph(astream_fn=_make_failing_astream())
 
         # 新 graph：astream 也抛异常（触发 REDUCED → NO_TOOLS 回退）
-        new_graph = _make_mock_graph(astream_fn=_make_failing_astream(
-            RuntimeError("second failure on degraded graph")
-        ))
+        new_graph = _make_mock_graph(astream_fn=_make_failing_astream(RuntimeError("second failure on degraded graph")))
 
         degraded_tools = [MagicMock(name="degraded_tool_1")]
 
@@ -184,28 +189,33 @@ class TestDegradeReducedToNoTools(unittest.IsolatedAsyncioTestCase):
             "degradation_level": "no_tools",
         }
 
-        with patch(
-            "Django_xm.apps.agent_hub.services.agent_resilience.classify_and_decide",
-            return_value=(ErrorAction.DEGRADE, _make_classified()),
-        ), patch(
-            "Django_xm.apps.agent_hub.services.agent_resilience.get_degraded_tools",
-            return_value=degraded_tools,
-        ), patch(
-            "Django_xm.apps.agent_hub.services.agent_resilience.calculate_backoff",
-            return_value=0.0,
-        ), patch(
-            "asyncio.sleep", new_callable=AsyncMock
-        ), patch.object(
-            adapter,
-            "_rebuild_with_degraded_tools",
-            new_callable=AsyncMock,
-            return_value=new_graph,
-        ) as mock_rebuild, patch.object(
-            adapter,
-            "_fallback_direct_answer",
-            new_callable=AsyncMock,
-            return_value=fallback_result,
-        ) as mock_fallback:
+        with (
+            patch(
+                "Django_xm.apps.agent_hub.services.agent_resilience.classify_and_decide",
+                return_value=(ErrorAction.DEGRADE, _make_classified()),
+            ),
+            patch(
+                "Django_xm.apps.agent_hub.services.agent_resilience.get_degraded_tools",
+                return_value=degraded_tools,
+            ),
+            patch(
+                "Django_xm.apps.agent_hub.services.agent_resilience.calculate_backoff",
+                return_value=0.0,
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+            patch.object(
+                adapter,
+                "_rebuild_with_degraded_tools",
+                new_callable=AsyncMock,
+                return_value=new_graph,
+            ) as mock_rebuild,
+            patch.object(
+                adapter,
+                "_fallback_direct_answer",
+                new_callable=AsyncMock,
+                return_value=fallback_result,
+            ) as mock_fallback,
+        ):
             result = await adapter.astream_research_with_interrupts(query="测试查询")
 
         # 验证 _rebuild_with_degraded_tools 被调用一次（FULL → REDUCED）
@@ -249,27 +259,32 @@ class TestDegradeEmptyToolsFallback(unittest.IsolatedAsyncioTestCase):
             "degradation_level": "no_tools",
         }
 
-        with patch(
-            "Django_xm.apps.agent_hub.services.agent_resilience.classify_and_decide",
-            return_value=(ErrorAction.DEGRADE, _make_classified()),
-        ), patch(
-            "Django_xm.apps.agent_hub.services.agent_resilience.get_degraded_tools",
-            return_value=[],  # 空降级工具集
-        ) as mock_get_degraded, patch(
-            "Django_xm.apps.agent_hub.services.agent_resilience.calculate_backoff",
-            return_value=0.0,
-        ), patch(
-            "asyncio.sleep", new_callable=AsyncMock
-        ), patch.object(
-            adapter,
-            "_rebuild_with_degraded_tools",
-            new_callable=AsyncMock,
-        ) as mock_rebuild, patch.object(
-            adapter,
-            "_fallback_direct_answer",
-            new_callable=AsyncMock,
-            return_value=fallback_result,
-        ) as mock_fallback:
+        with (
+            patch(
+                "Django_xm.apps.agent_hub.services.agent_resilience.classify_and_decide",
+                return_value=(ErrorAction.DEGRADE, _make_classified()),
+            ),
+            patch(
+                "Django_xm.apps.agent_hub.services.agent_resilience.get_degraded_tools",
+                return_value=[],  # 空降级工具集
+            ) as mock_get_degraded,
+            patch(
+                "Django_xm.apps.agent_hub.services.agent_resilience.calculate_backoff",
+                return_value=0.0,
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+            patch.object(
+                adapter,
+                "_rebuild_with_degraded_tools",
+                new_callable=AsyncMock,
+            ) as mock_rebuild,
+            patch.object(
+                adapter,
+                "_fallback_direct_answer",
+                new_callable=AsyncMock,
+                return_value=fallback_result,
+            ) as mock_fallback,
+        ):
             result = await adapter.astream_research_with_interrupts(query="测试查询")
 
         # 验证 get_degraded_tools 被调用

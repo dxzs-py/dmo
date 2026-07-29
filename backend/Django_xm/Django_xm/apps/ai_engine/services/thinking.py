@@ -7,6 +7,7 @@
 - clean_thinking_params: 清除思考参数
 - is_thinking_enabled: 判断深度思考是否启用
 """
+
 import logging
 from typing import Any
 
@@ -125,6 +126,4 @@ def is_thinking_enabled(special_params: dict[str, Any], provider_id: str = "") -
     if "reasoning_effort" in special_params:
         return True
     # Ollama 特有：reasoning 参数
-    if special_params.get("reasoning"):
-        return True
-    return False
+    return bool(special_params.get("reasoning"))

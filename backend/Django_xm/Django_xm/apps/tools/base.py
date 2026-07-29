@@ -10,15 +10,19 @@
     统一处理（批量拦截 AIMessage.tool_calls 中需要审批的工具调用）。
     到达工具 _run/_arun 的命令已通过审批或无需审批。
 """
+
 import asyncio
 import logging
 import os
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
 
 class AsyncToolMixin:
+    # _run 由混入目标类（BaseTool 子类）提供，这里仅声明类型供 mypy 检查
+    _run: Callable[..., Any]
+
     """异步工具混入
 
     自动将同步 _run 方法包装为真正的异步 _arun，
@@ -36,6 +40,7 @@ class AsyncToolMixin:
         """真正的异步执行：在线程池中运行同步 _run"""
         # 获取 _run 方法的参数名列表，只传递 _run 接受的参数
         import inspect
+
         run_params = set(inspect.signature(self._run).parameters.keys())
         filtered_kwargs = {k: v for k, v in kwargs.items() if k in run_params}
         return asyncio.to_thread(self._run, **filtered_kwargs)
@@ -49,7 +54,7 @@ class SafeConfigMixin:
     """
 
     @staticmethod
-    def get_config(key: str, default: Any = None, env_key: str = '') -> Any:
+    def get_config(key: str, default: Any = None, env_key: str = "") -> Any:
         """安全获取配置
 
         Args:
@@ -59,6 +64,7 @@ class SafeConfigMixin:
         """
         try:
             from Django_xm.apps.ai_engine.config import settings
+
             value = getattr(settings, key, None)
             if value is not None:
                 return value
@@ -77,7 +83,19 @@ TOOL_METADATA_DEFAULTS = {
 
 VALID_TOOL_TIERS = {"core", "standard", "extended"}
 VALID_TOOL_VISIBILITIES = {"core", "switch", "selectable"}
-VALID_TOOL_CATEGORIES = {"basic", "web_search", "web_fetch", "file", "weather", "agent", "todo", "translation", "system", "other"}
+VALID_TOOL_CATEGORIES = {
+    "basic",
+    "web_search",
+    "web_fetch",
+    "file",
+    "weather",
+    "agent",
+    "todo",
+    "translation",
+    "system",
+    "other",
+}
+
 
 def validate_tool_metadata(metadata: dict) -> dict:
     merged = {**TOOL_METADATA_DEFAULTS, **(metadata or {})}
@@ -106,14 +124,14 @@ def is_approval_interrupt(value: Any) -> bool:
 
 
 # 工具元数据默认规则（替代原 chat_service.py 中硬编码的 weather_tools / raw_content_tools / knowledge_base_ 前缀）
-_RAW_CONTENT_TOOL_NAMES = frozenset({
-    "web_fetch",
-    "web_search",
-    "skill_web_research",
-})
-_RAW_CONTENT_TOOL_PREFIXES = (
-    "knowledge_base_",
+_RAW_CONTENT_TOOL_NAMES = frozenset(
+    {
+        "web_fetch",
+        "web_search",
+        "skill_web_research",
+    }
 )
+_RAW_CONTENT_TOOL_PREFIXES = ("knowledge_base_",)
 
 _DEFAULT_TOOL_META: dict[str, Any] = {
     "output_to_chat": True,
@@ -155,7 +173,9 @@ def get_tool_metadata(tool_name: str, tools: list | None = None) -> dict[str, An
                 break
 
     # 2. 工具名匹配的默认规则
-    if tool_name in _RAW_CONTENT_TOOL_NAMES or any(tool_name.startswith(prefix) for prefix in _RAW_CONTENT_TOOL_PREFIXES):
+    if tool_name in _RAW_CONTENT_TOOL_NAMES or any(
+        tool_name.startswith(prefix) for prefix in _RAW_CONTENT_TOOL_PREFIXES
+    ):
         meta["raw_content"] = True
 
     return meta

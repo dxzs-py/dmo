@@ -45,9 +45,7 @@ class ChromaBackend(VectorStoreBackend):
 
             return Chroma
         except ImportError:
-            raise ImportError(
-                "Chroma 未安装。请运行: pip install langchain-chroma chromadb"
-            ) from None
+            raise ImportError("Chroma 未安装。请运行: pip install langchain-chroma chromadb") from None
 
     @property
     def store_type(self) -> str:
@@ -77,10 +75,7 @@ class ChromaBackend(VectorStoreBackend):
             documents=documents,
             **chroma_kwargs,
         )
-        logger.info(
-            f"Chroma 向量库创建成功 "
-            f"(persist={persist_directory}, collection={collection_name})"
-        )
+        logger.info(f"Chroma 向量库创建成功 (persist={persist_directory}, collection={collection_name})")
         return vector_store
 
     def load(
@@ -129,8 +124,8 @@ class ChromaBackend(VectorStoreBackend):
             client.delete_collection(name=collection_name)
             logger.info(f"Chroma 集合已删除: {collection_name}")
             return True
-        except Exception as e:
-            logger.error(f"Chroma 集合删除失败: {e}")
+        except Exception:
+            logger.exception("Chroma 集合删除失败")
             return False
 
     def list_collections(self, prefix: str = "") -> list[str]:
@@ -187,12 +182,10 @@ class ChromaBackend(VectorStoreBackend):
             client = chromadb.PersistentClient(path=self.persist_directory)
             collection = client.get_collection(name=collection_name)
             collection.delete(ids=document_ids)
-            logger.info(
-                f"Chroma 从集合 {collection_name} 删除 {len(document_ids)} 个文档"
-            )
+            logger.info(f"Chroma 从集合 {collection_name} 删除 {len(document_ids)} 个文档")
             return True
-        except Exception as e:
-            logger.error(f"Chroma 删除文档失败: {e}")
+        except Exception:
+            logger.exception("Chroma 删除文档失败")
             return False
 
     def remove_documents_by_metadata(
@@ -211,12 +204,11 @@ class ChromaBackend(VectorStoreBackend):
             if ids_to_delete:
                 collection.delete(ids=ids_to_delete)
             logger.info(
-                f"Chroma 按元数据删除 {len(ids_to_delete)} 个文档 "
-                f"(collection={collection_name}, {key}={value})"
+                f"Chroma 按元数据删除 {len(ids_to_delete)} 个文档 (collection={collection_name}, {key}={value})"
             )
             return len(ids_to_delete)
-        except Exception as e:
-            logger.error(f"Chroma 按元数据删除失败: {e}")
+        except Exception:
+            logger.exception("Chroma 按元数据删除失败")
             return 0
 
     def search(

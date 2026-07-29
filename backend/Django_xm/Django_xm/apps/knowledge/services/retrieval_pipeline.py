@@ -53,10 +53,7 @@ class RetrievalPipeline:
         retrieval_query = self._maybe_rewrite(query)
         docs = self.retriever.invoke(retrieval_query)
         cleaned = self._clean_docs(docs)
-        logger.info(
-            f"RetrievalPipeline.retrieve: query='{query[:50]}...', "
-            f"raw={len(docs)}, cleaned={len(cleaned)}"
-        )
+        logger.info(f"RetrievalPipeline.retrieve: query='{query[:50]}...', raw={len(docs)}, cleaned={len(cleaned)}")
         return cleaned
 
     async def aretrieve(self, query: str) -> list[Document]:
@@ -67,10 +64,7 @@ class RetrievalPipeline:
         except Exception:
             docs = await asyncio.to_thread(self.retriever.invoke, retrieval_query)
         cleaned = self._clean_docs(docs)
-        logger.info(
-            f"RetrievalPipeline.aretrieve: query='{query[:50]}...', "
-            f"raw={len(docs)}, cleaned={len(cleaned)}"
-        )
+        logger.info(f"RetrievalPipeline.aretrieve: query='{query[:50]}...', raw={len(docs)}, cleaned={len(cleaned)}")
         return cleaned
 
     # ── HyDE 查询改写 ──────────────────────────────────────────────────────────
@@ -139,12 +133,12 @@ class RetrievalPipeline:
                     pass
             # 过滤 MultiQuery 生成的替代查询（短问题文本，以问号结尾）
             stripped = content.strip()
-            if len(stripped) < 150 and (stripped.endswith('？') or stripped.endswith('?')):
+            if len(stripped) < 150 and (stripped.endswith(("？", "?"))):
                 continue
 
             # 去重：优先用 source + chunk_index，回退到内容前缀
-            source = doc.metadata.get('source', '')
-            chunk_index = doc.metadata.get('chunk_index')
+            source = doc.metadata.get("source", "")
+            chunk_index = doc.metadata.get("chunk_index")
             if source and chunk_index is not None:
                 doc_id = f"{source}:{chunk_index}"
                 if doc_id in seen_ids:
@@ -160,13 +154,7 @@ class RetrievalPipeline:
 
         total_dedup = len(docs) - len(cleaned)
         if total_dedup > 0:
-            logger.debug(
-                f"文档清洗+去重: {len(docs)} -> {len(cleaned)} "
-                f"（过滤了 {total_dedup} 个非文档/重复内容）"
-            )
+            logger.debug(f"文档清洗+去重: {len(docs)} -> {len(cleaned)} （过滤了 {total_dedup} 个非文档/重复内容）")
         elif len(cleaned) != len(docs):
-            logger.debug(
-                f"文档清洗: {len(docs)} -> {len(cleaned)} "
-                f"（过滤了 {len(docs) - len(cleaned)} 个非文档内容）"
-            )
+            logger.debug(f"文档清洗: {len(docs)} -> {len(cleaned)} （过滤了 {len(docs) - len(cleaned)} 个非文档内容）")
         return cleaned

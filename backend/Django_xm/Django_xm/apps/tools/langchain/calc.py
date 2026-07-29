@@ -11,9 +11,9 @@ logger = logging.getLogger(__name__)
 
 def _safe_eval(expression: str) -> float | int | str:
     expression = expression.replace(" ", "")
-    if not re.match(r'^[\d+\-*/().]+$', expression):
+    if not re.match(r"^[\d+\-*/().]+$", expression):
         return "错误：表达式包含不允许的字符。只支持数字和基本运算符 (+, -, *, /, ())"
-    if expression.count('(') != expression.count(')'):
+    if expression.count("(") != expression.count(")"):
         return "错误：括号不匹配"
     try:
         result = eval(expression)

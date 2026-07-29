@@ -42,8 +42,40 @@ from Django_xm.apps.research.services._constants import (
 # 能获取完整构建参数重建 graph（根本性修复 af_16 残留：韧性降级失效）。
 from Django_xm.apps.research.services.adapter import OfficialDeepAgentAdapter
 from Django_xm.async_utils import run_async
+from Django_xm.common.risk_levels import RiskLevel
 
 logger = logging.getLogger(__name__)
+
+
+# 子 agent 角色风险上限（RiskLevel）。
+# 设计参考 Claude Code：子 agent 拥有与主 agent 对等的工具权限，
+# 但通过 risk_ceiling 约束角色边界，避免研究型子 agent 执行高危操作。
+#
+# 角色边界约束（非风险降级）：超过 risk_ceiling 的工具调用被拒绝，
+# agent 收到 error ToolMessage 后可调整策略或委派给有权限的 agent。
+#
+# 映射由 subagent_patch.py 在 atask 中注入到子 agent configurable，
+# ApprovalMiddleware._extract_subagent_context 读取后传给 policies.assess_risk。
+_SUBAGENT_RISK_CEILINGS: dict[str, RiskLevel] = {}
+
+
+def _register_subagent_risk_ceilings():
+    """注册子 agent 角色风险上限。
+
+    在模块加载时调用，将 RiskLevel 枚举值注册到 _SUBAGENT_RISK_CEILINGS。
+    RiskLevel 已在模块顶层导入（common.risk_levels 仅依赖 enum，无循环依赖风险）。
+    """
+    _SUBAGENT_RISK_CEILINGS.clear()
+    # web-researcher / doc-analyst：研究型子 agent，最高 CONTROLLED
+    # （可执行只读 + 常规审批操作，但禁止 HIGH 级如沙箱外写文件）
+    _SUBAGENT_RISK_CEILINGS["web-researcher"] = RiskLevel.CONTROLLED
+    _SUBAGENT_RISK_CEILINGS["doc-analyst"] = RiskLevel.CONTROLLED
+    # general-purpose：通用子 agent，与主 agent 一致不限制
+    # （拥有完整工具权限，可执行 HIGH 级操作，充分发挥能力）
+    _SUBAGENT_RISK_CEILINGS["general-purpose"] = RiskLevel.HIGH
+
+
+_register_subagent_risk_ceilings()
 
 
 def _patch_filesystem_backend_windows():
@@ -53,7 +85,7 @@ def _patch_filesystem_backend_windows():
     inconsistently between init time and runtime, causing relative_to() to fail
     even when the path is logically within root_dir.
     """
-    if sys.platform != 'win32':
+    if sys.platform != "win32":
         return
 
     try:
@@ -61,7 +93,7 @@ def _patch_filesystem_backend_windows():
     except ImportError:
         return
 
-    if getattr(FilesystemBackend._resolve_path, '_win_patched', False):
+    if getattr(FilesystemBackend._resolve_path, "_win_patched", False):
         return
 
     _original_resolve_path = FilesystemBackend._resolve_path
@@ -94,6 +126,7 @@ def _patch_filesystem_backend_windows():
             raise ValueError(msg) from None
 
         from deepagents.backends.filesystem import _raise_if_symlink_loop
+
         _raise_if_symlink_loop(full)
         return full
 
@@ -122,10 +155,7 @@ _patch_subagent_middleware()
 def _has_search_tools(extra_tools: list[BaseTool] | None = None) -> bool:
     if not extra_tools:
         return False
-    return any(
-        getattr(t, 'name', '') in _SEARCH_TOOL_NAMES
-        for t in extra_tools
-    )
+    return any(getattr(t, "name", "") in _SEARCH_TOOL_NAMES for t in extra_tools)
 
 
 def _ensure_sync_tool(tool: BaseTool) -> BaseTool:
@@ -163,7 +193,7 @@ def _merge_tool_lists(*tool_lists) -> list[BaseTool]:
         if not tools:
             continue
         for t in tools:
-            name = getattr(t, 'name', '') or ''
+            name = getattr(t, "name", "") or ""
             if name and name in seen_names:
                 continue
             seen_names.add(name)
@@ -206,14 +236,16 @@ def _build_subagents(
 
     subagents: list[Any] = []
     # deepagents 内部 spec.get("middleware", []) 在 middleware=None 时返回 None，
-    # 导致 extend 失败，因此必须确保 middleware 不为 None
-    safe_middleware: Sequence[AgentMiddleware] = subagent_middleware or []
+    # 导致 extend 失败，因此必须确保 middleware 不为 None。
+    # SubAgent.middleware 字段类型为 list[AgentMiddleware]，需将 Sequence 转为 list。
+    safe_middleware: list[AgentMiddleware] = list(subagent_middleware or [])
 
     need_web_researcher = enable_web_search or _has_search_tools(extra_tools)
 
     if need_web_researcher:
         try:
             from Django_xm.apps.tools.langchain.web_search import create_tavily_search_tool
+
             search_tool = create_tavily_search_tool()
             # 子智能体继承主 agent 全部工具 + 专用搜索工具 + extra_tools
             web_tools = _merge_tool_lists(main_tools, [search_tool], extra_tools)
@@ -225,10 +257,7 @@ def _build_subagents(
                 middleware=safe_middleware,
             )
             subagents.append(web_subagent)
-            logger.debug(
-                f"添加 WebResearcher 子智能体 (tools={len(web_tools)}, "
-                f"含主 agent 工具继承)"
-            )
+            logger.debug(f"添加 WebResearcher 子智能体 (tools={len(web_tools)}, 含主 agent 工具继承)")
         except ValueError:
             logger.warning("Tavily API Key 未配置，web-researcher 子智能体将使用继承工具")
             # 无 search_tool 时：继承主 agent 工具 + extra_tools
@@ -237,7 +266,9 @@ def _build_subagents(
                 name="web-researcher",
                 description="网络搜索和信息整理专家",
                 system_prompt=WEB_RESEARCHER_SUBAGENT_PROMPT,
-                tools=web_fallback_tools if web_fallback_tools else None,
+                # SubAgent.tools 字段为 NotRequired[Sequence[...]]，不接受 None。
+                # _merge_tool_lists 已合并 main_tools，空列表与 None 行为等价（key 存在即不继承）。
+                tools=web_fallback_tools,
                 middleware=safe_middleware,
             )
             subagents.append(web_subagent)
@@ -250,14 +281,12 @@ def _build_subagents(
             name="doc-analyst",
             description="文档分析和知识提取专家，负责在知识库中检索和分析文档",
             system_prompt=DOC_ANALYST_SUBAGENT_PROMPT,
-            tools=doc_tools if doc_tools else None,
+            # _merge_tool_lists 已合并 main_tools + retriever_tool + extra_tools
+            tools=doc_tools,
             middleware=safe_middleware,
         )
         subagents.append(doc_subagent)
-        logger.debug(
-            f"添加 DocAnalyst 子智能体 (tools={len(doc_tools)}, "
-            f"含主 agent 工具继承)"
-        )
+        logger.debug(f"添加 DocAnalyst 子智能体 (tools={len(doc_tools)}, 含主 agent 工具继承)")
 
     return subagents
 
@@ -293,44 +322,48 @@ class _PatchCompositeBackend:
         err = self._check_sandbox_path(file_path)
         if err:
             from deepagents.backends.protocol import WriteResult
+
             return WriteResult(error=err, path=None)
         backend, key = self._resolve(file_path)
         res = backend.write(key, content)
         if res.path is not None:
-            object.__setattr__(res, 'path', file_path)
+            object.__setattr__(res, "path", file_path)
         return res
 
     async def awrite(self, file_path, content):
         err = self._check_sandbox_path(file_path)
         if err:
             from deepagents.backends.protocol import WriteResult
+
             return WriteResult(error=err, path=None)
         backend, key = self._resolve(file_path)
         res = await backend.awrite(key, content)
         if res.path is not None:
-            object.__setattr__(res, 'path', file_path)
+            object.__setattr__(res, "path", file_path)
         return res
 
     def edit(self, file_path, old_string, new_string, replace_all=False):
         err = self._check_sandbox_path(file_path)
         if err:
             from deepagents.backends.protocol import EditResult
+
             return EditResult(error=err, path=None, occurrences=None)
         backend, key = self._resolve(file_path)
         res = backend.edit(key, old_string, new_string, replace_all=replace_all)
         if res.path is not None:
-            object.__setattr__(res, 'path', file_path)
+            object.__setattr__(res, "path", file_path)
         return res
 
     async def aedit(self, file_path, old_string, new_string, replace_all=False):
         err = self._check_sandbox_path(file_path)
         if err:
             from deepagents.backends.protocol import EditResult
+
             return EditResult(error=err, path=None, occurrences=None)
         backend, key = self._resolve(file_path)
         res = await backend.aedit(key, old_string, new_string, replace_all=replace_all)
         if res.path is not None:
-            object.__setattr__(res, 'path', file_path)
+            object.__setattr__(res, "path", file_path)
         return res
 
 
@@ -342,6 +375,7 @@ def _get_backend(
     try:
         if backend_type == "state":
             from deepagents.backends import StateBackend
+
             return StateBackend()
         elif backend_type == "filesystem":
             from deepagents.backends import CompositeBackend, FilesystemBackend
@@ -362,10 +396,14 @@ def _get_backend(
             return fs_backend
         elif backend_type == "local_shell":
             from deepagents.backends import LocalShellBackend
-            return LocalShellBackend(workdir=work_dir or ".")
+
+            # LocalShellBackend 签名：root_dir, virtual_mode, timeout, max_output_bytes, env, inherit_env
+            # 使用 root_dir 指定工作目录（原 workdir 参数不存在，是历史误用）
+            return LocalShellBackend(root_dir=work_dir or ".")
         else:
             logger.warning(f"未知的 backend 类型: {backend_type}，使用 StateBackend")
             from deepagents.backends import StateBackend
+
             return StateBackend()
     except ImportError as e:
         logger.warning(f"Backend 导入失败: {e}，将不使用 backend")
@@ -378,7 +416,9 @@ def _get_retriever_tool(retriever: Any) -> BaseTool | None:
     if isinstance(retriever, BaseTool):
         return retriever
     try:
-        from langchain.tools.retriever import create_retriever_tool
+        # langchain.tools.retriever 模块不存在；create_retriever_tool 实际位于 langchain_core.tools.retriever
+        from langchain_core.tools.retriever import create_retriever_tool
+
         return create_retriever_tool(
             retriever=retriever,
             name="knowledge_retrieve",
@@ -391,11 +431,13 @@ def _get_retriever_tool(retriever: Any) -> BaseTool | None:
 
 @register_builder(AgentType.DEEP_RESEARCH)
 class DeepAgentBuilder:
-
     async def build(self, config) -> Any:
         from Django_xm.apps.agent_hub.builders._common import build_with_timeout
+
         return await build_with_timeout(
-            self._build_internal, config, "DeepAgentBuilder.build",
+            self._build_internal,
+            config,
+            "DeepAgentBuilder.build",
         )
 
     async def _build_internal(self, config) -> Any:
@@ -403,6 +445,7 @@ class DeepAgentBuilder:
             from deepagents import create_deep_agent
         except ImportError:
             from Django_xm.apps.agent_hub.exceptions import FrameworkNotAvailableError
+
             raise FrameworkNotAvailableError("deepagents 包不可用，请降级到 DEEP_RESEARCH_CUSTOM") from None
 
         from Django_xm.apps.agent_hub.middleware import build_middleware
@@ -421,10 +464,13 @@ class DeepAgentBuilder:
         # 两套工具功能重复但路径不同，agent 可能调用错误的工具导致文件写入错误目录。
         # 解决方案：过滤 fs_* 工具，deepagents 内置工具已完全覆盖文件操作需求。
         _CONFLICT_TOOL_NAMES = {
-            "fs_write_file", "fs_read_file", "fs_list_files", "fs_search_files",
+            "fs_write_file",
+            "fs_read_file",
+            "fs_list_files",
+            "fs_search_files",
         }
         original_count = len(tools)
-        tools = [t for t in tools if getattr(t, 'name', '') not in _CONFLICT_TOOL_NAMES]
+        tools = [t for t in tools if getattr(t, "name", "") not in _CONFLICT_TOOL_NAMES]
         filtered_count = original_count - len(tools)
         if filtered_count > 0:
             logger.info(
@@ -441,6 +487,7 @@ class DeepAgentBuilder:
         # 2. 审批机制是核心安全能力，应对所有有工具的 agent 强制启用，与 chat 模块保持统一
         # 3. 统一三模块（chat / deep_research / learning）的审批入口，确保实时同步行为一致
         from Django_xm.apps.agent_hub.approval.middleware import ApprovalMiddleware
+
         approval_middleware_instance: ApprovalMiddleware | None = None
         for m in middleware_stack:
             if isinstance(m, ApprovalMiddleware):
@@ -454,17 +501,21 @@ class DeepAgentBuilder:
             logger.info("deep_research 中间件栈已包含 ApprovalMiddleware（来自 CapabilityRegistry）")
 
         subagents, retriever_tool_name = self._resolve_subagents(
-            config, tools, approval_middleware=approval_middleware_instance,
+            config,
+            tools,
+            approval_middleware=approval_middleware_instance,
         )
 
         # 从主 agent 工具列表中移除 retriever_tool，避免主 agent 直接调用
         # retriever_tool 应由 doc-analyst 子智能体使用，主 agent 通过 task 工具委派
         if retriever_tool_name:
-            tools = [t for t in tools if getattr(t, 'name', '') != retriever_tool_name]
-            logger.info(f"已从主 agent 工具列表中移除 retriever_tool: {retriever_tool_name}，由 doc-analyst 子智能体使用")
+            tools = [t for t in tools if getattr(t, "name", "") != retriever_tool_name]
+            logger.info(
+                f"已从主 agent 工具列表中移除 retriever_tool: {retriever_tool_name}，由 doc-analyst 子智能体使用"
+            )
 
-        backend_type = getattr(config, 'backend_type', 'filesystem') or 'filesystem'
-        work_dir = getattr(config, 'work_dir', None)
+        backend_type = getattr(config, "backend_type", "filesystem") or "filesystem"
+        work_dir = getattr(config, "work_dir", None)
 
         # 先确保 work_dir 存在，再创建 backend（backend 依赖 work_dir 作为 root_dir）
         work_dir, sandbox_dir = self._ensure_work_dir(backend_type, work_dir, config)
@@ -479,12 +530,16 @@ class DeepAgentBuilder:
             system_prompt = self._build_system_prompt(config)
             logger.info(f"DeepAgent 使用默认 system_prompt ({len(system_prompt)} 字符)")
         else:
-            logger.info(f"DeepAgent 使用自定义 system_prompt ({len(system_prompt)} 字符, 含续研上下文: {'先前研究' in system_prompt})")
+            logger.info(
+                f"DeepAgent 使用自定义 system_prompt ({len(system_prompt)} 字符, 含续研上下文: {'先前研究' in system_prompt})"
+            )
 
         # 当启用文档分析时，追加知识库检索引导到 system_prompt
         tool_config = config.tool_config or {}
         _enable_doc_analysis = tool_config.get("enable_doc_analysis") or tool_config.get("use_doc_analysis", False)
-        logger.info(f"DeepBuilder tool_config check: enable_doc_analysis={_enable_doc_analysis}, has_suffix={DOC_ANALYSIS_PROMPT_SUFFIX[:30] in system_prompt}")
+        logger.info(
+            f"DeepBuilder tool_config check: enable_doc_analysis={_enable_doc_analysis}, has_suffix={DOC_ANALYSIS_PROMPT_SUFFIX[:30] in system_prompt}"
+        )
         if _enable_doc_analysis and DOC_ANALYSIS_PROMPT_SUFFIX not in system_prompt:
             system_prompt += DOC_ANALYSIS_PROMPT_SUFFIX
             logger.info(f"DeepAgent system_prompt 已追加知识库文档分析引导 ({len(system_prompt)} 字符)")
@@ -508,9 +563,10 @@ class DeepAgentBuilder:
             agent_kwargs["backend"] = backend
 
         from Django_xm.apps.agent_hub.builders._common import _build_common_agent_kwargs
+
         _build_common_agent_kwargs(config, agent_kwargs)
 
-        interrupt_on = getattr(config, 'interrupt_on', None)
+        interrupt_on = getattr(config, "interrupt_on", None)
         if interrupt_on:
             agent_kwargs["interrupt_on"] = interrupt_on
 
@@ -528,9 +584,10 @@ class DeepAgentBuilder:
             reset_current_checkpointer,
             set_current_checkpointer,
         )
+
         # 确保补丁已应用（幂等，重复调用无副作用）
         patch_subagent_middleware()
-        _ck_token = set_current_checkpointer(getattr(config, 'checkpointer', None))
+        _ck_token = set_current_checkpointer(getattr(config, "checkpointer", None))
         try:
             graph = create_deep_agent(**agent_kwargs)
         finally:
@@ -553,7 +610,7 @@ class DeepAgentBuilder:
         # 韧性降级完全失效。
         adapter = OfficialDeepAgentAdapter(
             graph=graph,
-            thread_id=config.session_id or '',
+            thread_id=config.session_id or "",
             work_dir=work_dir,
             model=model,
             original_tools=tools,
@@ -593,8 +650,7 @@ class DeepAgentBuilder:
                 subagent_middleware_list.append(m)
         if approval_middleware is not None:
             already_has = any(
-                m is approval_middleware or isinstance(m, type(approval_middleware))
-                for m in subagent_middleware_list
+                m is approval_middleware or isinstance(m, type(approval_middleware)) for m in subagent_middleware_list
             )
             if not already_has:
                 subagent_middleware_list.append(approval_middleware)
@@ -620,18 +676,17 @@ class DeepAgentBuilder:
         retriever_tool_name = None
         if retriever_tool is None and tools:
             for t in tools:
-                name = getattr(t, 'name', '')
+                name = getattr(t, "name", "")
                 if any(name.startswith(prefix) or name == prefix for prefix in _RETRIEVER_TOOL_NAME_PREFIXES):
                     retriever_tool = t
                     retriever_tool_name = name
                     logger.info(f"从 tools 列表中识别到 retriever_tool: {name}")
                     break
         elif retriever_tool is not None:
-            retriever_tool_name = getattr(retriever_tool, 'name', None)
+            retriever_tool_name = getattr(retriever_tool, "name", None)
 
         extra_tools = [
-            t for t in tools
-            if isinstance(t, BaseTool) and getattr(t, 'name', '') in _SEARCH_TOOL_NAMES
+            t for t in tools if isinstance(t, BaseTool) and getattr(t, "name", "") in _SEARCH_TOOL_NAMES
         ] or None
 
         # ============================================================
@@ -708,7 +763,8 @@ class DeepAgentBuilder:
         """
         from deepagents import SubAgent
 
-        safe_middleware: Sequence[AgentMiddleware] = subagent_middleware or []
+        # SubAgent.middleware 字段类型为 list[AgentMiddleware]，需将 Sequence 转为 list
+        safe_middleware: list[AgentMiddleware] = list(subagent_middleware or [])
         gp_tools = _merge_tool_lists(tools, extra_tools)
         gp_subagent = SubAgent(
             name="general-purpose",
@@ -726,7 +782,8 @@ class DeepAgentBuilder:
                 "task. Do not make assumptions about the user's intent - if something "
                 "is unclear, ask for clarification."
             ),
-            tools=gp_tools if gp_tools else None,
+            # _merge_tool_lists 已合并 main_tools + ApprovalMiddleware 工具
+            tools=gp_tools,
             middleware=safe_middleware,
         )
         logger.debug(
@@ -741,9 +798,7 @@ class DeepAgentBuilder:
 
         return _get_backend(backend_type=backend_type, work_dir=work_dir, sandbox_dir=sandbox_dir)
 
-    def _ensure_work_dir(
-        self, backend_type: str, work_dir: str | None, config
-    ) -> tuple:
+    def _ensure_work_dir(self, backend_type: str, work_dir: str | None, config) -> tuple:
         """返回 (work_dir, sandbox_dir) 元组"""
         if backend_type != "filesystem":
             return (work_dir, None)
@@ -752,14 +807,19 @@ class DeepAgentBuilder:
             return (work_dir, sandbox_dir)
 
         from django.conf import settings as django_settings
+
         data_dir = str(
             getattr(django_settings, "DATA_DIR", None)
             or os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
-                "..", "..", "..", "..", "data",
+                "..",
+                "..",
+                "..",
+                "..",
+                "data",
             )
         )
-        session_id = getattr(config, 'session_id', None)
+        session_id = getattr(config, "session_id", None)
         if not session_id:
             raise ValueError("深度研究任务缺少 session_id，无法创建工作目录")
         work_dir = os.path.join(data_dir, "research", session_id)
@@ -769,9 +829,7 @@ class DeepAgentBuilder:
         logger.info(f"自动创建工作目录: {work_dir}, sandbox: {sandbox_dir}")
         return (work_dir, sandbox_dir)
 
-    def _resolve_skills(
-        self, config, backend_type: str, work_dir: str | None
-    ) -> list[str] | None:
+    def _resolve_skills(self, config, backend_type: str, work_dir: str | None) -> list[str] | None:
         skills = config.skills
         if not skills or backend_type != "filesystem" or not work_dir:
             return skills
@@ -796,10 +854,13 @@ class DeepAgentBuilder:
 
     def _build_system_prompt(self, config) -> str:
         from Django_xm.apps.agent_hub.config import AgentType
+
         if config.agent_type == AgentType.DEEP_RESEARCH:
             return DEEP_RESEARCH_SYSTEM_PROMPT
         try:
-            from Django_xm.apps.ai_engine.prompts.system_prompts import get_deep_research_prompt
+            # prompt 归属 research 模块（单一来源），从 research.prompts 导入
+            from Django_xm.apps.research.prompts import get_deep_research_prompt
+
             return get_deep_research_prompt()
         except Exception:
             return "You are a deep research assistant. Conduct thorough research on the given topic."

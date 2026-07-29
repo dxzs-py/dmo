@@ -190,7 +190,7 @@ class TokenErrorIsinstanceCheckTests(unittest.TestCase):
         exc = InvalidToken("Token is expired")
         # 验证 detail 为 dict
         self.assertIsInstance(exc.detail, dict)
-        self.assertIn('detail', exc.detail)
+        self.assertIn("detail", exc.detail)
         # custom_exception_handler 能正确提取消息并识别为过期
         response = custom_exception_handler(exc, _make_context())
         self.assertEqual(response.data["code"], int(ErrorCode.TOKEN_EXPIRED))

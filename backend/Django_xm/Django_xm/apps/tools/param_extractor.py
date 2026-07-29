@@ -103,7 +103,8 @@ def extract_tool_params(tool_call) -> dict:
         if result is not None:
             logger.debug(
                 "[extract_tool_params] 从 %s 提取: keys=%s",
-                field, list(result.keys()),
+                field,
+                list(result.keys()),
             )
             return result
 

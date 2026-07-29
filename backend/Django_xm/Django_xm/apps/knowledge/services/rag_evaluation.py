@@ -3,7 +3,6 @@ RAG 评估框架
 提供检索质量和生成质量的评估能力
 """
 
-
 from langchain_core.documents import Document
 from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel, Field
@@ -68,7 +67,6 @@ def _compute_mrr(retrieved_ids: list[str], relevant_ids: set) -> float:
 
 
 class RAGEvaluator:
-
     def __init__(self, llm: BaseChatModel | None = None):
         self.llm = llm
 
@@ -117,9 +115,7 @@ class RAGEvaluator:
         response: str,
         source_docs: list[Document],
     ) -> GenerationMetrics:
-        source_text = "\n---\n".join(
-            doc.page_content for doc in source_docs
-        ) if source_docs else "（无源文档）"
+        source_text = "\n---\n".join(doc.page_content for doc in source_docs) if source_docs else "（无源文档）"
 
         prompt = EVALUATION_PROMPT.format(
             query=query,
@@ -129,12 +125,14 @@ class RAGEvaluator:
 
         try:
             from langchain_core.messages import HumanMessage
+
             result = self.llm.invoke([HumanMessage(content=prompt)])
             content = result.content.strip()
 
             import json
             import re
-            json_match = re.search(r'\{[^}]+\}', content)
+
+            json_match = re.search(r"\{[^}]+\}", content)
             if json_match:
                 scores = json.loads(json_match.group())
                 return GenerationMetrics(
@@ -185,13 +183,9 @@ class RAGEvaluator:
     ) -> RAGEvaluationResult:
         retrieval_metrics = RetrievalMetrics()
         if relevant_doc_ids is not None:
-            retrieval_metrics = self.evaluate_retrieval(
-                query, retrieved_docs, relevant_doc_ids
-            )
+            retrieval_metrics = self.evaluate_retrieval(query, retrieved_docs, relevant_doc_ids)
 
-        generation_metrics = self.evaluate_generation(
-            query, response, retrieved_docs
-        )
+        generation_metrics = self.evaluate_generation(query, response, retrieved_docs)
 
         overall = (
             retrieval_metrics.precision * 0.2

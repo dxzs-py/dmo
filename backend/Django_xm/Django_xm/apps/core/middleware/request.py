@@ -40,44 +40,36 @@ class APIRequestMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        if not request.path.startswith('/api/'):
+        if not request.path.startswith("/api/"):
             request._start_time = time.time()
             response = self.get_response(request)
-            if hasattr(request, '_start_time'):
+            if hasattr(request, "_start_time"):
                 duration = time.time() - request._start_time
-                response['X-Request-Duration'] = f'{duration:.3f}'
+                response["X-Request-Duration"] = f"{duration:.3f}"
             return response
 
         request._start_time = time.time()
 
-        user_info = 'anonymous'
-        if hasattr(request, 'user') and request.user.is_authenticated:
-            user_info = f'user:{request.user.id}'
+        user_info = "anonymous"
+        if hasattr(request, "user") and request.user.is_authenticated:
+            user_info = f"user:{request.user.id}"
 
-        logger.info(
-            f'[API] --> {request.method} {request.get_full_path()} ({user_info})'
-        )
+        logger.info(f"[API] --> {request.method} {request.get_full_path()} ({user_info})")
 
         response = self.get_response(request)
 
         duration = time.time() - request._start_time
         status_code = response.status_code
 
-        response['X-Request-Duration'] = f'{duration:.3f}'
+        response["X-Request-Duration"] = f"{duration:.3f}"
 
         log_level = logging.WARNING if status_code >= 400 else logging.INFO
         logger.log(
             log_level,
-            f'[API] <-- {request.method} {request.get_full_path()} '
-            f'{status_code} {duration:.3f}s ({user_info})'
+            f"[API] <-- {request.method} {request.get_full_path()} {status_code} {duration:.3f}s ({user_info})",
         )
 
         if duration > self.SLOW_REQUEST_THRESHOLD:
-            logger.warning(
-                'Slow request: %s %s took %.2fs',
-                request.method,
-                request.get_full_path(),
-                duration
-            )
+            logger.warning("Slow request: %s %s took %.2fs", request.method, request.get_full_path(), duration)
 
         return response

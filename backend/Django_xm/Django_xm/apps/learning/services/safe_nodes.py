@@ -86,11 +86,7 @@ def with_output_guardrails(
             if require_sources:
                 sources = result_state.get("sources", []) or result_state.get("retrieved_docs", [])
                 if sources and hasattr(sources[0], "metadata"):
-                    sources = [
-                        doc.metadata.get("source", "unknown")
-                        for doc in sources
-                        if hasattr(doc, "metadata")
-                    ]
+                    sources = [doc.metadata.get("source", "unknown") for doc in sources if hasattr(doc, "metadata")]
 
             validation_result = validator.validate(
                 str(output_content),

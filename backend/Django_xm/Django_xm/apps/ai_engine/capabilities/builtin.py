@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 
 
 class ContextManagementCapability(AgentCapability):
-
     @property
     def name(self) -> str:
         return "context_management"
@@ -34,8 +33,8 @@ class ContextManagementCapability(AgentCapability):
                 thread_id=kwargs.get("thread_id"),
             )
             return [middleware]
-        except Exception as e:
-            logger.error("Failed to build ContextManagerMiddleware: %s", e)
+        except Exception:
+            logger.exception("Failed to build ContextManagerMiddleware")
             return []
 
     def build_tools(self, **kwargs) -> Sequence[BaseTool]:
@@ -66,7 +65,6 @@ class ContextManagementCapability(AgentCapability):
 
 
 class ToolInjectionCapability(AgentCapability):
-
     @property
     def name(self) -> str:
         return "tool_injection"
@@ -80,8 +78,8 @@ class ToolInjectionCapability(AgentCapability):
             return []
         try:
             return run_async(self.build_tools_async(tool_config=tool_config))
-        except Exception as e:
-            logger.error("Failed to build tools for ToolInjectionCapability: %s", e)
+        except Exception:
+            logger.exception("Failed to build tools for ToolInjectionCapability")
             return []
 
     async def build_tools_async(self, **kwargs) -> Sequence[BaseTool]:
@@ -101,8 +99,8 @@ class ToolInjectionCapability(AgentCapability):
                 tool_tier=tool_config.get("tool_tier", TOOL_TIER_STANDARD),
             )
             return self._apply_tool_budget(tools, tool_config)
-        except Exception as e:
-            logger.error("Failed to build tools (async): %s", e)
+        except Exception:
+            logger.exception("Failed to build tools (async)")
             return []
 
     def _apply_tool_budget(self, tools: list[BaseTool], tool_config: dict) -> list[BaseTool]:
@@ -120,7 +118,7 @@ class ToolInjectionCapability(AgentCapability):
             for tool in tools:
                 desc = (tool.description or "")[:500]
                 tokens = TokenEstimator.estimate_tokens(desc)
-                is_mcp = hasattr(tool, 'metadata') and (tool.metadata or {}).get('is_mcp_tool', False)
+                is_mcp = hasattr(tool, "metadata") and (tool.metadata or {}).get("is_mcp_tool", False)
                 if tool.name in selected_names or (is_mcp and tool.name in selected_mcp):
                     priority = 3
                 elif is_mcp:
@@ -140,17 +138,22 @@ class ToolInjectionCapability(AgentCapability):
                 else:
                     logger.info(
                         "Tool '%s' skipped: token budget exceeded (used=%d, budget=%d)",
-                        tool.name, used, budget,
+                        tool.name,
+                        used,
+                        budget,
                     )
 
             if len(result) < len(tools):
                 logger.info(
                     "Tool token budget applied: %d/%d tools kept, %d tokens used / %d budget",
-                    len(result), len(tools), used, budget,
+                    len(result),
+                    len(tools),
+                    used,
+                    budget,
                 )
             return result
-        except Exception as e:
-            logger.error("Tool token budget check failed: %s", e)
+        except Exception:
+            logger.exception("Tool token budget check failed")
             return tools
 
     def build_config(self, **kwargs) -> dict[str, Any]:
@@ -176,7 +179,6 @@ class ToolInjectionCapability(AgentCapability):
 
 
 class GuardrailsCapability(AgentCapability):
-
     @property
     def name(self) -> str:
         return "guardrails"
@@ -196,8 +198,8 @@ class GuardrailsCapability(AgentCapability):
                 on_approval_request=kwargs.get("on_approval_request"),
                 extra_middleware=kwargs.get("extra_middleware"),
             )
-        except Exception as e:
-            logger.error("Failed to build guardrails middleware: %s", e)
+        except Exception:
+            logger.exception("Failed to build guardrails middleware")
             return []
 
     def build_tools(self, **kwargs) -> Sequence[BaseTool]:
@@ -228,7 +230,6 @@ class GuardrailsCapability(AgentCapability):
 
 
 class RateLimitCapability(AgentCapability):
-
     @property
     def name(self) -> str:
         return "rate_limit"
@@ -255,8 +256,8 @@ class RateLimitCapability(AgentCapability):
                     task_id=kwargs.get("task_id"),
                 )
             return [middleware]
-        except Exception as e:
-            logger.error("Failed to build rate limit middleware: %s", e)
+        except Exception:
+            logger.exception("Failed to build rate limit middleware")
             return []
 
     def build_tools(self, **kwargs) -> Sequence[BaseTool]:
@@ -276,7 +277,6 @@ class RateLimitCapability(AgentCapability):
 
 
 class GroqCompatCapability(AgentCapability):
-
     @property
     def name(self) -> str:
         return "groq_compat"
@@ -288,8 +288,8 @@ class GroqCompatCapability(AgentCapability):
             )
 
             return [GroqToolCallCompatMiddleware()]
-        except Exception as e:
-            logger.error("Failed to build GroqToolCallCompatMiddleware: %s", e)
+        except Exception:
+            logger.exception("Failed to build GroqToolCallCompatMiddleware")
             return []
 
     def build_tools(self, **kwargs) -> Sequence[BaseTool]:

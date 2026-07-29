@@ -53,7 +53,6 @@ _SECTION_ORDER = ("system", "memory", "tools", "history", "state", "user_query")
 
 
 class ContextBuilder:
-
     def __init__(self, mode: BuildMode = BuildMode.FULL):
         self._mode = mode
         self._parts: dict[str, list[str]] = {key: [] for key in _SECTION_ORDER}

@@ -72,10 +72,12 @@ class OfficialDeepAgentAdapter:
         # - 非空（chat 关联场景）：发布到 session:{chat_session_id} + task:{thread_id} 双频道
         # - None（独立深度研究场景）：仅发布到 task:{thread_id} 频道
         # 实例化时未传入则保持 None，astream_research_with_interrupts 内部按需从 ResearchTask 反查
-        self.chat_session_id: str | None = kwargs.get('chat_session_id')
+        self.chat_session_id: str | None = kwargs.get("chat_session_id")
         self._kwargs = kwargs
 
-    def research(self, query: str, config: dict[str, Any] | None = None, callbacks: list | None = None) -> dict[str, Any]:
+    def research(
+        self, query: str, config: dict[str, Any] | None = None, callbacks: list | None = None
+    ) -> dict[str, Any]:
         logger.info(f"[OfficialDeepAgent] 同步研究: {query[:50]}...")
 
         if config is None:
@@ -119,7 +121,7 @@ class OfficialDeepAgentAdapter:
             }
 
         except Exception as e:
-            logger.error(f"[OfficialDeepAgent] 同步研究失败: {e}")
+            logger.exception("[OfficialDeepAgent] 同步研究失败")
             return {
                 "success": False,
                 "query": query,
@@ -127,7 +129,9 @@ class OfficialDeepAgentAdapter:
                 "error": str(e),
             }
 
-    async def aresearch(self, query: str, config: dict[str, Any] | None = None, callbacks: list | None = None) -> dict[str, Any]:
+    async def aresearch(
+        self, query: str, config: dict[str, Any] | None = None, callbacks: list | None = None
+    ) -> dict[str, Any]:
         logger.info(f"[OfficialDeepAgent] 异步研究: {query[:50]}...")
 
         if config is None:
@@ -171,7 +175,7 @@ class OfficialDeepAgentAdapter:
             }
 
         except Exception as e:
-            logger.error(f"[OfficialDeepAgent] 异步研究失败: {e}")
+            logger.exception("[OfficialDeepAgent] 异步研究失败")
             return {
                 "success": False,
                 "query": query,
@@ -181,29 +185,41 @@ class OfficialDeepAgentAdapter:
 
     async def astream_research_with_interrupts(
         self,
-        query: str,
+        query: str | None,
         config: dict[str, Any] | None = None,
         callbacks: list | None = None,
         on_interrupt=None,
+        *,
+        resume_command=None,
     ) -> dict[str, Any]:
         """流式研究 + interrupt 审批机制
 
         使用 graph.astream() + stream_mode=["messages", "updates"] 执行，
-        捕获 __interrupt__ 事件，通过 on_interrupt 回调通知外部，
-        等待回调返回后使用 Command(resume=...) 恢复 agent 继续执行。
+        捕获 __interrupt__ 事件，通过 on_interrupt 回调通知外部。
+
+        Path D 双模式：
+            - 初始执行（resume_command=None）：graph_input = {"messages": [HumanMessage(content=query)]}
+              on_interrupt 返回非空 dict → Command(resume=...) 恢复（同步审批流）
+              on_interrupt 返回空 dict → 退出信号（Path D：DB 持久化 + Celery 恢复）
+            - 恢复执行（resume_command=Command(resume=...)）：
+              graph_input = resume_command，从 checkpoint 恢复 agent 执行
 
         集成韧性模块：重试（指数退避）、降级（减少工具）、回退（无工具直接 LLM 回答）。
 
         Args:
-            query: 研究查询
+            query: 研究查询（resume_command 模式时可为 None）
             config: LangGraph 运行配置
             callbacks: LangChain 回调列表
             on_interrupt: 审批中断回调，签名 on_interrupt(interrupt_data: dict) -> resume_value
                           interrupt_data 包含 tool_name, interrupt_id, title, description 等
-                          返回值作为 Command(resume=...) 的 resume_value（True/False/用户输入）
+                          返回值约定：
+                          - 非空 dict {interrupt_id: bool} → 同步恢复（Command(resume=...)）
+                          - 空 dict {} → Path D 退出信号（已创建 Approval DB 记录，worker 退出）
+            resume_command: 恢复模式时传入 Command(resume=...)，None 表示初始执行
 
         Returns:
-            与 research() 方法相同格式的结果字典
+            与 research() 方法相同格式的结果字典；
+            Path D 退出时返回 {"success": False, "error": "interrupted", ...}
         """
         from types import SimpleNamespace
 
@@ -222,7 +238,9 @@ class OfficialDeepAgentAdapter:
         from Django_xm.apps.tools.tool_event_extractor import extract_tool_events_from_message
         from Django_xm.common.event_schema import EventType
 
-        logger.info(f"[OfficialDeepAgent] 流式研究(interrupt): {query[:50]}...")
+        # resume_command 模式下 query 可能为 None，使用占位符避免 [:50] 切片失败
+        query_display = (query or "(resume)")[:50]
+        logger.info(f"[OfficialDeepAgent] 流式研究(interrupt): {query_display}...")
 
         # 解析 chat_session_id（用于工具事件的跨模块同步路由）
         # - 实例化时已传入：直接使用
@@ -236,20 +254,22 @@ class OfficialDeepAgentAdapter:
 
                 @sync_to_async(thread_sensitive=True)
                 def _load_chat_session_id() -> str | None:
-                    task = ResearchTask.objects.filter(
-                        task_id=self.thread_id, is_deleted=False,
-                    ).only("session_id").first()
+                    task = (
+                        ResearchTask.objects.filter(
+                            task_id=self.thread_id,
+                            is_deleted=False,
+                        )
+                        .only("session_id")
+                        .first()
+                    )
                     return task.session_id if task else None
 
                 self.chat_session_id = await _load_chat_session_id()
                 if self.chat_session_id:
-                    logger.info(
-                        f"[OfficialDeepAgent] 从 ResearchTask 反查 chat_session_id={self.chat_session_id}"
-                    )
+                    logger.info(f"[OfficialDeepAgent] 从 ResearchTask 反查 chat_session_id={self.chat_session_id}")
             except Exception as e:
                 logger.warning(
-                    f"[OfficialDeepAgent] 反查 ResearchTask.session_id 失败，"
-                    f"工具事件仅发布到 task 频道: {e}"
+                    f"[OfficialDeepAgent] 反查 ResearchTask.session_id 失败，工具事件仅发布到 task 频道: {e}"
                 )
 
         if config is None:
@@ -272,25 +292,49 @@ class OfficialDeepAgentAdapter:
         # 回调内部构造 evt dict 并调用 _publish_tool_event 发布到统一 tool_call_lifecycle.service，
         # 与父 graph 的工具事件发布路径完全一致（service.transition_async）。
         async def _on_tool_event(
-            event_type, tool_call_id, tool_name, **kwargs,
+            event_type,
+            tool_call_id,
+            tool_name,
+            **kwargs,
         ):
             """子 agent 工具事件转发回调。
 
             将子 agent 内部的工具调用事件转发到父 SSE 流，
             通过统一 ``service.transition_async`` 发布到实时频道。
+
+            子 agent 嵌套层级字段（Phase E3）：
+            subagent_patch._astream_with_tool_events 通过 kwargs 传递
+            parent_tool_call_id / depth / agent_name / agent_path / risk_ceiling，
+            本回调透传到 evt dict，由 _publish_tool_event 注册到 ToolCallContext，
+            最终经 transition_async 透传到事件 payload，前端 ToolCallCard 可展示
+            完整调用链路（与父 agent 直接调用的工具行为一致）。
             """
             evt: dict[str, Any] = {
-                'event_type': event_type,
-                'tool_call_id': tool_call_id,
-                'tool_name': tool_name,
+                "event_type": event_type,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
             }
             # 透传 parameters / result / error（仅非空时）
-            if kwargs.get('parameters'):
-                evt['parameters'] = kwargs['parameters']
-            if 'result' in kwargs and kwargs['result'] is not None:
-                evt['result'] = kwargs['result']
-            if 'error' in kwargs and kwargs['error'] is not None:
-                evt['error'] = kwargs['error']
+            if kwargs.get("parameters"):
+                evt["parameters"] = kwargs["parameters"]
+            if "result" in kwargs and kwargs["result"] is not None:
+                evt["result"] = kwargs["result"]
+            if "error" in kwargs and kwargs["error"] is not None:
+                evt["error"] = kwargs["error"]
+            # 透传子 agent 嵌套层级字段（Phase E3）
+            for sub_field in (
+                "parent_tool_call_id",
+                "depth",
+                "agent_name",
+                "agent_path",
+                "risk_ceiling",
+            ):
+                val = kwargs.get(sub_field)
+                if val is not None and val not in {"", 0}:
+                    evt[sub_field] = val
+                elif val == 0 and sub_field == "depth":
+                    # depth=0 是主 agent，不写入（仅子 agent depth>0 才写入）
+                    pass
             await self._publish_tool_event(evt)
 
         config["configurable"]["_on_tool_event"] = _on_tool_event
@@ -347,10 +391,17 @@ class OfficialDeepAgentAdapter:
         # subagent_patch.py 的 _patched_get_subagents 会从 contextvar 读取 checkpointer
         # 并注入到子 agent 的 create_agent()，使子 agent 的 interrupt() 不再被 Pregel 抑制。
         # try/finally 确保 contextvar 在流结束（正常或异常）后恢复原值，避免泄漏。
-        graph_checkpointer = getattr(self.graph, 'checkpointer', None)
+        graph_checkpointer = getattr(self.graph, "checkpointer", None)
         _checkpointer_token = set_current_checkpointer(graph_checkpointer)
         try:
-            graph_input = {"messages": [HumanMessage(content=query)]}
+            # Path D 双模式初始化：
+            # - resume_command 非空：恢复模式，从 checkpoint 续流（query 可为 None）
+            # - resume_command 为 None：初始执行，使用 HumanMessage 包装 query
+            if resume_command is not None:
+                graph_input = resume_command
+                logger.info("[OfficialDeepAgent] 恢复模式: 使用 resume_command 从 checkpoint 续流")
+            else:
+                graph_input = {"messages": [HumanMessage(content=query or "")]}
             accumulated_result = None
             # 工具事件追踪状态：整个流期间持续累积（含 interrupt 恢复后的续流）
             # - seen_tool_call_ids: 已发射 INPUT_READY 的 tool_call_id 集合，避免流式 chunk 重复发射
@@ -360,17 +411,26 @@ class OfficialDeepAgentAdapter:
             accumulated_messages: list = []
             # 在循环外定义，避免 loop_fn 闭包捕获每次迭代的重新赋值（B023）
             all_resume_values: dict = {}
+            # Path D 退出信号：on_interrupt 返回空 dict 时置为 True，
+            # 表示已创建 Approval DB 记录，worker 应退出等待 Celery 恢复
+            exit_signal: dict = {"exited": False}
 
             # 外层 interrupt 循环：处理 __interrupt__ 事件 + Command(resume=...) 恢复
             while True:
                 all_resume_values.clear()  # 清空上一轮的审批结果，复用同一 dict 对象
+                exit_signal["exited"] = False  # 重置退出信号
                 ctx.retry_count = 0  # 重置重试计数
 
                 # 定义 loop_fn：核心流式循环（闭包捕获 all_resume_values 等）
                 # 处理 chunks：updates 模式（interrupt 事件）+ messages 模式（工具事件提取）
                 # 重复工具调用警告在 loop_fn 内部注入并重入 astream（对 AgentExecutor 透明）
                 async def loop_fn(
-                    _agent, graph_input_arg, config_arg, _ctx, _strategy, _data,
+                    _agent,
+                    graph_input_arg,
+                    config_arg,
+                    _ctx,
+                    _strategy,
+                    _data,
                 ):
                     current_input = graph_input_arg
                     while True:  # 重复工具调用警告注入重入
@@ -382,9 +442,7 @@ class OfficialDeepAgentAdapter:
                         ):
                             # 检查 soft timeout（仅警告一次）
                             if timeout_mgr.check_soft_timeout():
-                                logger.warning(
-                                    f"[Resilience] 深度研究执行超时 (soft): {timeout_mgr.elapsed:.1f}s"
-                                )
+                                logger.warning(f"[Resilience] 深度研究执行超时 (soft): {timeout_mgr.elapsed:.1f}s")
 
                             # 多 stream mode 下 chunk 是 (mode_name, data) 元组
                             if isinstance(chunk, tuple) and len(chunk) == 2:
@@ -422,21 +480,23 @@ class OfficialDeepAgentAdapter:
                                                     batch_interrupts = []
                                                     for req in requests_list:
                                                         req_tc_id = req.get("tool_call_id", "")
-                                                        batch_interrupts.append({
-                                                            "tool_name": req.get("tool_name", "unknown"),
-                                                            "interrupt_id": req_tc_id or interrupt_id,
-                                                            "graph_interrupt_id": interrupt_value.get(
-                                                                "_meta", {}
-                                                            ).get("graph_interrupt_id", interrupt_id),
-                                                            "title": req.get("title", "确认操作"),
-                                                            "description": req.get("description", ""),
-                                                            "action": req.get("action", "confirm"),
-                                                            "danger_level": req.get("danger_level", "medium"),
-                                                            "operation": req.get("operation", ""),
-                                                            "parameters": req.get("args", {}) or {},
-                                                            "state": "pending",
-                                                            "tool_call_id": req_tc_id,
-                                                        })
+                                                        batch_interrupts.append(
+                                                            {
+                                                                "tool_name": req.get("tool_name", "unknown"),
+                                                                "interrupt_id": req_tc_id or interrupt_id,
+                                                                "graph_interrupt_id": interrupt_value.get(
+                                                                    "_meta", {}
+                                                                ).get("graph_interrupt_id", interrupt_id),
+                                                                "title": req.get("title", "确认操作"),
+                                                                "description": req.get("description", ""),
+                                                                "action": req.get("action", "confirm"),
+                                                                "danger_level": req.get("danger_level", "medium"),
+                                                                "operation": req.get("operation", ""),
+                                                                "parameters": req.get("args", {}) or {},
+                                                                "state": "pending",
+                                                                "tool_call_id": req_tc_id,
+                                                            }
+                                                        )
                                                     tool_name = batch_interrupts[0]["tool_name"]
                                                     logger.info(
                                                         f"[OfficialDeepAgent] 批量审批中断: "
@@ -456,6 +516,17 @@ class OfficialDeepAgentAdapter:
                                                                 batch_resume = await batch_resume
                                                         finally:
                                                             timeout_mgr.resume()
+                                                        # Path D 退出信号检测：
+                                                        # on_interrupt 返回空 dict 表示
+                                                        # "已创建 Approval DB 记录，worker 应退出"
+                                                        # → 设置 exit_signal，跳出内层 while True
+                                                        if isinstance(batch_resume, dict) and not batch_resume:
+                                                            logger.info(
+                                                                "[OfficialDeepAgent] Path D 退出信号(批量): "
+                                                                "已创建审批 DB 记录，worker 退出"
+                                                            )
+                                                            exit_signal["exited"] = True
+                                                            break
                                                         if isinstance(batch_resume, dict):
                                                             all_resume_values.update(batch_resume)
                                                         else:
@@ -494,7 +565,9 @@ class OfficialDeepAgentAdapter:
                                                     if interrupt_value.get("extra"):
                                                         interrupt_data["extra"] = interrupt_value["extra"]
                                                     if interrupt_value.get("input_placeholder"):
-                                                        interrupt_data["input_placeholder"] = interrupt_value["input_placeholder"]
+                                                        interrupt_data["input_placeholder"] = interrupt_value[
+                                                            "input_placeholder"
+                                                        ]
                                                     # 透传 tool_call_id（若中间件在 interrupt_value 中携带）
                                                     tool_call_id = interrupt_value.get("tool_call_id")
                                                     if tool_call_id:
@@ -517,6 +590,16 @@ class OfficialDeepAgentAdapter:
                                                                 single_resume = await single_resume
                                                         finally:
                                                             timeout_mgr.resume()
+                                                        # Path D 退出信号检测：
+                                                        # on_interrupt 返回空 dict 表示
+                                                        # "已创建 Approval DB 记录，worker 应退出"
+                                                        if isinstance(single_resume, dict) and not single_resume:
+                                                            logger.info(
+                                                                "[OfficialDeepAgent] Path D 退出信号(单工具): "
+                                                                "已创建审批 DB 记录，worker 退出"
+                                                            )
+                                                            exit_signal["exited"] = True
+                                                            break
                                                         if isinstance(single_resume, dict):
                                                             all_resume_values.update(single_resume)
                                                         else:
@@ -533,32 +616,28 @@ class OfficialDeepAgentAdapter:
                             # 在 ToolMessage 阶段补发完整 parameters，避免前端显示为 {}。
                             if mode_name == "messages":
                                 msg_obj = (
-                                    mode_data[0]
-                                    if isinstance(mode_data, tuple) and len(mode_data) == 2
-                                    else mode_data
+                                    mode_data[0] if isinstance(mode_data, tuple) and len(mode_data) == 2 else mode_data
                                 )
                                 try:
                                     tool_events = extract_tool_events_from_message(
-                                        msg_obj, seen_tool_call_ids, accumulated_messages,
+                                        msg_obj,
+                                        seen_tool_call_ids,
+                                        accumulated_messages,
                                     )
                                 except Exception as e:
-                                    logger.warning(
-                                        f"[OfficialDeepAgent] 工具事件提取失败: {e}"
-                                    )
+                                    logger.warning(f"[OfficialDeepAgent] 工具事件提取失败: {e}")
                                     tool_events = []
 
                                 for evt in tool_events:
                                     # 重复工具调用检测：仅对 INPUT_READY 事件记录，
                                     # 避免对同一 tool_call_id 的 COMPLETED/FAILED 重复计数
-                                    if evt.get('event_type') == EventType.TOOL_CALL_INPUT_READY:
+                                    if evt.get("event_type") == EventType.TOOL_CALL_INPUT_READY:
                                         warning = duplicate_detector.record(
-                                            evt.get('tool_name', 'unknown'),
-                                            evt.get('parameters') or {},
+                                            evt.get("tool_name", "unknown"),
+                                            evt.get("parameters") or {},
                                         )
                                         if warning is not None:
-                                            local_pending_warnings.append(
-                                                SystemMessage(content=warning.to_prompt())
-                                            )
+                                            local_pending_warnings.append(SystemMessage(content=warning.to_prompt()))
                                     await self._publish_tool_event(evt)
                                 # 检测到重复调用：中断当前流以注入警告
                                 # break 退出 async for，由下方 aupdate_state 注入后重入
@@ -570,17 +649,15 @@ class OfficialDeepAgentAdapter:
                         # 注入后以 current_input=None 重入 astream，从当前 checkpoint 续流。
                         if local_pending_warnings:
                             logger.info(
-                                f"[Resilience] 注入 {len(local_pending_warnings)} 条"
-                                f"重复工具调用警告到 agent 状态"
+                                f"[Resilience] 注入 {len(local_pending_warnings)} 条重复工具调用警告到 agent 状态"
                             )
                             try:
                                 await self.graph.aupdate_state(
-                                    config_arg, {"messages": local_pending_warnings},
+                                    config_arg,
+                                    {"messages": local_pending_warnings},
                                 )
                             except Exception as e:
-                                logger.warning(
-                                    f"[Resilience] 注入重复调用警告失败: {e}"
-                                )
+                                logger.warning(f"[Resilience] 注入重复调用警告失败: {e}")
                             current_input = None  # 从当前 checkpoint 续流
                             continue  # 继续重入 astream（不计入 retry_count）
                         break  # astream 正常结束，退出 loop_fn 的 while True
@@ -592,7 +669,13 @@ class OfficialDeepAgentAdapter:
                 # 替代原内联的 retry/timeout/degrade 循环
                 fallback_result = None
                 async for event in executor.run(
-                    loop_fn, None, graph_input, config, ctx, None, {"query": query},
+                    loop_fn,
+                    None,
+                    graph_input,
+                    config,
+                    ctx,
+                    None,
+                    {"query": query or ""},
                 ):
                     # 捕获 fallback 结果事件
                     if event.get("type") == "deep_agent_fallback_result":
@@ -601,6 +684,24 @@ class OfficialDeepAgentAdapter:
                 # 如果触发回退，返回 fallback 结果
                 if fallback_result is not None:
                     return fallback_result
+
+                # Path D 退出信号优先检查：
+                # on_interrupt 返回空 dict 时 exit_signal["exited"] = True，
+                # 表示已创建 Approval DB 记录，worker 应退出。
+                # research_runner.execute_research_async 检测到 "interrupted" 后
+                # 返回 ResearchResult(success=False)，Celery 任务结束。
+                # 用户审批后由 research_resume_task 从 checkpoint 恢复。
+                if exit_signal["exited"]:
+                    logger.info("[OfficialDeepAgent] Path D 退出: worker 结束，等待 research_resume_task 恢复")
+                    return {
+                        "success": False,
+                        "query": query,
+                        "final_report": None,
+                        "error": "interrupted",
+                        "current_step": "interrupted",
+                        "files": None,
+                        "state_files": None,
+                    }
 
                 # 流结束后检查是否有实时回调收集的审批结果
                 if all_resume_values:
@@ -618,7 +719,7 @@ class OfficialDeepAgentAdapter:
 
             # 从 checkpointer 获取最终状态
             final_state = await self.graph.aget_state(config)
-            if final_state and hasattr(final_state, 'values') and final_state.values:
+            if final_state and hasattr(final_state, "values") and final_state.values:
                 accumulated_result = final_state.values
             else:
                 accumulated_result = {}
@@ -654,7 +755,7 @@ class OfficialDeepAgentAdapter:
 
         except Exception as e:
             error_msg = str(e) or repr(e) or type(e).__name__
-            logger.error(f"[OfficialDeepAgent] 流式研究(interrupt)失败: {error_msg}", exc_info=True)
+            logger.exception(f"[OfficialDeepAgent] 流式研究(interrupt)失败: {error_msg}")
             return {
                 "success": False,
                 "query": query,
@@ -679,6 +780,12 @@ class OfficialDeepAgentAdapter:
           context 透传 cross_module_id 给底层 publish_tool_call
         - 独立深度研究场景：仅 task 频道
 
+        子 agent 嵌套层级字段（Phase E3）：
+        evt 中的 parent_tool_call_id / depth / agent_name / agent_path / risk_ceiling
+        （由 _on_tool_event 从 subagent_patch 透传）注册到 ToolCallContext，
+        transition_async 从 context 透传到事件 payload，前端 ToolCallCard 可展示
+        完整调用链路。主 agent 直接调用的工具不携带这些字段（evt 中无对应 key）。
+
         Args:
             evt: extract_tool_events_from_message 返回的事件 dict，字段：
                 - event_type: EventType (TOOL_CALL_INPUT_READY / TOOL_CALL_COMPLETED / TOOL_CALL_FAILED)
@@ -687,21 +794,21 @@ class OfficialDeepAgentAdapter:
                 - parameters: dict
                 - result: str (仅 COMPLETED)
                 - error: str (仅 FAILED)
+                - parent_tool_call_id/depth/agent_name/agent_path/risk_ceiling: 子 agent 嵌套字段（可选）
         """
         from Django_xm.common.event_schema import EventSource, EventType
         from Django_xm.common.tool_call_lifecycle import ToolCallContext, service
 
-        event_type = evt.get('event_type')
-        tool_call_id = evt.get('tool_call_id', '') or ''
-        tool_name = evt.get('tool_name') or 'unknown'
-        parameters = evt.get('parameters') or {}
+        event_type = evt.get("event_type")
+        tool_call_id = evt.get("tool_call_id", "") or ""
+        tool_name = evt.get("tool_name") or "unknown"
+        parameters = evt.get("parameters") or {}
 
         # event_type 必须为 EventType 枚举（extract_tool_events_from_message 保证）
         # 防御性校验：跳过非法事件类型，避免 transition_async 内部抛 KeyError
         if not isinstance(event_type, EventType):
             logger.warning(
-                f"[OfficialDeepAgent] 跳过非 EventType 事件: "
-                f"event_type={event_type!r}, tool_call_id={tool_call_id}"
+                f"[OfficialDeepAgent] 跳过非 EventType 事件: event_type={event_type!r}, tool_call_id={tool_call_id}"
             )
             return
 
@@ -710,33 +817,59 @@ class OfficialDeepAgentAdapter:
         #    - cross_module_id = chat_session_id（关联 chat 场景触发双频道广播）
         #    - message_id 留空：deep_research 模块无关联 chat message，
         #      若 chat 模块已注册过同 tool_call_id 则由 register 合并补全
+        #    - 子 agent 嵌套层级字段：从 evt 提取（仅子 agent 工具事件携带）
         cross_module_id = self.chat_session_id or None
-        try:
-            service.register(ToolCallContext(
-                tool_call_id=tool_call_id,
-                tool_name=tool_name,
-                module=EventSource.DEEP_RESEARCH,
-                module_id=self.thread_id,
-                message_id='',
-                parameters=parameters,
-                cross_module_id=cross_module_id,
-            ))
-        except Exception as e:
-            logger.warning(
-                f"[OfficialDeepAgent] 注册工具调用上下文失败 "
-                f"(tool={tool_name}, tc_id={tool_call_id}): {e}"
+
+        # 提取子 agent 嵌套层级字段（Phase E3）
+        # evt 中无对应 key 时使用默认空值（主 agent 场景）
+        sub_parent_tool_call_id = evt.get("parent_tool_call_id", "") or ""
+        sub_depth = evt.get("depth", 0)
+        if not isinstance(sub_depth, int) or sub_depth < 0:
+            sub_depth = 0
+        sub_agent_name = evt.get("agent_name", "") or ""
+        sub_agent_path = evt.get("agent_path")
+        if not isinstance(sub_agent_path, list):
+            sub_agent_path = []
+        # risk_ceiling 统一转字符串（可能是 RiskLevel 枚举）
+        sub_risk_ceiling_raw = evt.get("risk_ceiling")
+        if sub_risk_ceiling_raw is not None and not isinstance(sub_risk_ceiling_raw, str):
+            sub_risk_ceiling = (
+                sub_risk_ceiling_raw.value if hasattr(sub_risk_ceiling_raw, "value") else str(sub_risk_ceiling_raw)
             )
+        else:
+            sub_risk_ceiling = sub_risk_ceiling_raw or ""
+
+        try:
+            service.register(
+                ToolCallContext(
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    module=EventSource.DEEP_RESEARCH,
+                    module_id=self.thread_id,
+                    message_id="",
+                    parameters=parameters,
+                    cross_module_id=cross_module_id,
+                    # 子 agent 嵌套层级字段（Phase E3）
+                    parent_tool_call_id=sub_parent_tool_call_id,
+                    depth=sub_depth,
+                    agent_name=sub_agent_name,
+                    agent_path=sub_agent_path,
+                    risk_ceiling=sub_risk_ceiling,
+                )
+            )
+        except Exception as e:
+            logger.warning(f"[OfficialDeepAgent] 注册工具调用上下文失败 (tool={tool_name}, tc_id={tool_call_id}): {e}")
 
         # 2. 状态机转换：transition_async 内部 await publish_tool_call，
         #    parameters / message_id / cross_module_id / graph_interrupt_id
-        #    从 context 透传，底层传输逻辑不变
+        #    / 子 agent 嵌套层级字段 从 context 透传，底层传输逻辑不变
         transition_kwargs: dict[str, Any] = {
-            'parameters': parameters or None,
+            "parameters": parameters or None,
         }
-        if 'result' in evt:
-            transition_kwargs['result'] = evt['result']
-        if 'error' in evt:
-            transition_kwargs['error'] = evt['error']
+        if "result" in evt:
+            transition_kwargs["result"] = evt["result"]
+        if "error" in evt:
+            transition_kwargs["error"] = evt["error"]
 
         try:
             await service.transition_async(
@@ -772,16 +905,13 @@ class OfficialDeepAgentAdapter:
 
         try:
             from deepagents import create_deep_agent
-        except Exception as e:
-            logger.error(f"[Resilience] 导入 create_deep_agent 失败: {e}")
+        except Exception:
+            logger.exception("[Resilience] 导入 create_deep_agent 失败")
             return None
 
         try:
             # 复制原始构建配置，替换 tools 为降级工具集
-            base_config: dict[str, Any] = (
-                dict(self.original_config) if isinstance(self.original_config, dict)
-                else {}
-            )
+            base_config: dict[str, Any] = dict(self.original_config) if isinstance(self.original_config, dict) else {}
             base_config["tools"] = degraded_tools
 
             # 兜底：若 original_config 未带 model，使用实例的 self.model
@@ -789,12 +919,10 @@ class OfficialDeepAgentAdapter:
                 base_config["model"] = self.model
 
             new_graph = create_deep_agent(**base_config)
-            logger.info(
-                f"[Resilience] graph 重建成功 (tools={len(degraded_tools)})"
-            )
+            logger.info(f"[Resilience] graph 重建成功 (tools={len(degraded_tools)})")
             return new_graph
-        except Exception as e:
-            logger.error(f"[Resilience] graph 重建失败: {e}", exc_info=True)
+        except Exception:
+            logger.exception("[Resilience] graph 重建失败")
             return None
 
     async def _fallback_direct_answer(self, query: str, config: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -802,22 +930,24 @@ class OfficialDeepAgentAdapter:
         logger.warning("[Resilience] 深度研究回退到无工具直接回答")
         try:
             messages = [HumanMessage(content=query)]
-            if hasattr(self, 'model') and self.model:
+            if hasattr(self, "model") and self.model:
                 # model 可能是 ChatModel 实例或 model string
-                if hasattr(self.model, 'ainvoke'):
+                if hasattr(self.model, "ainvoke"):
                     response = await self.model.ainvoke(messages)
-                    content = response.content if hasattr(response, 'content') else str(response)
+                    content = response.content if hasattr(response, "content") else str(response)
                 else:
                     # model 是字符串，需要创建 ChatModel 实例
                     from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
+
                     chat_model = get_chat_model()
                     response = await chat_model.ainvoke(messages)
-                    content = response.content if hasattr(response, 'content') else str(response)
+                    content = response.content if hasattr(response, "content") else str(response)
             else:
                 from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
+
                 chat_model = get_chat_model()
                 response = await chat_model.ainvoke(messages)
-                content = response.content if hasattr(response, 'content') else str(response)
+                content = response.content if hasattr(response, "content") else str(response)
 
             return {
                 "success": True,
@@ -832,7 +962,7 @@ class OfficialDeepAgentAdapter:
                 "degradation_level": "no_tools",
             }
         except Exception as e:
-            logger.error(f"[Resilience] 深度研究回退回答也失败: {e}")
+            logger.exception("[Resilience] 深度研究回退回答也失败")
             return {
                 "success": False,
                 "query": query,
@@ -910,7 +1040,7 @@ class OfficialDeepAgentAdapter:
                     }
 
         except Exception as e:
-            logger.error(f"[OfficialDeepAgent] 流式研究失败: {e}")
+            logger.exception("[OfficialDeepAgent] 流式研究失败")
             yield {
                 "event_type": "error",
                 "node_name": "root",
@@ -926,8 +1056,8 @@ class OfficialDeepAgentAdapter:
     def _get_files_from_state(self, config: dict[str, Any]) -> dict[str, Any]:
         try:
             state = self.graph.get_state(config)
-            if state and hasattr(state, 'values') and state.values:
-                files = state.values.get('files', {})
+            if state and hasattr(state, "values") and state.values:
+                files = state.values.get("files", {})
                 if files:
                     logger.info(f"[OfficialDeepAgent] 从 state 获取到 {len(files)} 个文件")
                     return files
@@ -944,7 +1074,7 @@ class OfficialDeepAgentAdapter:
             sub_path = os.path.join(self.work_dir, subdir)
             if not os.path.isdir(sub_path):
                 continue
-            for root, dirs, fnames in os.walk(sub_path):
+            for root, _dirs, fnames in os.walk(sub_path):
                 for fname in fnames:
                     full_path = os.path.join(root, fname)
                     rel_path = os.path.relpath(full_path, self.work_dir).replace("\\", "/")
@@ -972,12 +1102,14 @@ class OfficialDeepAgentAdapter:
                         args = tc.get("args", {})
                         path = args.get("path", "")
                         if path:
-                            files.append({
-                                "path": path,
-                                "name": os.path.basename(path),
-                                "type": "file",
-                                "size": len(args.get("content", "")),
-                            })
+                            files.append(
+                                {
+                                    "path": path,
+                                    "name": os.path.basename(path),
+                                    "type": "file",
+                                    "size": len(args.get("content", "")),
+                                }
+                            )
             if hasattr(msg, "name") and msg.name == "write_file":
                 pass
         return files

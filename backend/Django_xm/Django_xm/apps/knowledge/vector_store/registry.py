@@ -47,9 +47,7 @@ class VectorStoreRegistry:
             ValueError: 未注册的后端名称
         """
         if name not in cls._backends:
-            raise ValueError(
-                f"未注册的向量存储后端: {name}，可用: {list(cls._backends.keys())}"
-            )
+            raise ValueError(f"未注册的向量存储后端: {name}，可用: {list(cls._backends.keys())}")
         return cls._backends[name]
 
     @classmethod

@@ -129,9 +129,7 @@ def make_mock_model(
     if ainvoke_side_effects is not None:
         model.ainvoke = AsyncMock(side_effect=ainvoke_side_effects)
     else:
-        model.ainvoke = AsyncMock(
-            return_value=MagicMock(content=f"async response from {name}")
-        )
+        model.ainvoke = AsyncMock(return_value=MagicMock(content=f"async response from {name}"))
 
     # stream
     if stream_chunks is not None:
@@ -175,9 +173,7 @@ def make_mock_model(
     if agenerate_side_effects is not None:
         model._agenerate = AsyncMock(side_effect=agenerate_side_effects)
     else:
-        model._agenerate = AsyncMock(
-            return_value=MagicMock(generations=[MagicMock()])
-        )
+        model._agenerate = AsyncMock(return_value=MagicMock(generations=[MagicMock()]))
 
     return model
 
@@ -343,9 +339,7 @@ class ResilientInvokerSyncTestCase(unittest.TestCase):
             invoke_side_effects=[MagicMock(content="success from b")],
         )
 
-        invoker = ResilientInvoker(
-            models=[model_a, model_b], config=make_fast_config()
-        )
+        invoker = ResilientInvoker(models=[model_a, model_b], config=make_fast_config())
         result = invoker.invoke("test input")
 
         self.assertEqual(result.content, "success from b")
@@ -370,9 +364,7 @@ class ResilientInvokerSyncTestCase(unittest.TestCase):
             invoke_side_effects=[MagicMock(content="success from b")],
         )
 
-        invoker = ResilientInvoker(
-            models=[model_a, model_b], config=make_fast_config()
-        )
+        invoker = ResilientInvoker(models=[model_a, model_b], config=make_fast_config())
         result = invoker.invoke("test input")
 
         self.assertEqual(result.content, "success from b")
@@ -388,15 +380,11 @@ class ResilientInvokerSyncTestCase(unittest.TestCase):
         """输入错误（GuardrailsValidationError）不降级，直接抛出"""
         model_a = make_mock_model(
             name="model-a",
-            invoke_side_effects=[
-                GuardrailsValidationError("content validation failed")
-            ],
+            invoke_side_effects=[GuardrailsValidationError("content validation failed")],
         )
         model_b = make_mock_model(name="model-b")
 
-        invoker = ResilientInvoker(
-            models=[model_a, model_b], config=make_fast_config()
-        )
+        invoker = ResilientInvoker(models=[model_a, model_b], config=make_fast_config())
 
         with self.assertRaises(GuardrailsValidationError):
             invoker.invoke("test input")
@@ -445,9 +433,7 @@ class ResilientInvokerSyncTestCase(unittest.TestCase):
             ],
         )
 
-        invoker = ResilientInvoker(
-            models=[model_a, model_b], config=make_fast_config()
-        )
+        invoker = ResilientInvoker(models=[model_a, model_b], config=make_fast_config())
 
         with self.assertRaises(RuntimeError) as ctx:
             invoker.invoke("test input")
@@ -472,9 +458,7 @@ class ResilientInvokerSyncTestCase(unittest.TestCase):
             invoke_side_effects=[MagicMock(content="success from b")],
         )
 
-        invoker = ResilientInvoker(
-            models=[model_a, model_b], config=make_fast_config()
-        )
+        invoker = ResilientInvoker(models=[model_a, model_b], config=make_fast_config())
 
         # 第一次调用：model_a 重试 3 次失败，切换到 model_b 成功
         result1 = invoker.invoke("test input")
@@ -509,9 +493,7 @@ class ResilientInvokerSyncTestCase(unittest.TestCase):
             generate_side_effects=[MagicMock(generations=[MagicMock(text="b")])],
         )
 
-        invoker = ResilientInvoker(
-            models=[model_a, model_b], config=make_fast_config()
-        )
+        invoker = ResilientInvoker(models=[model_a, model_b], config=make_fast_config())
         result = invoker.generate([])
 
         self.assertEqual(model_a._generate.call_count, 3)
@@ -530,9 +512,7 @@ class ResilientInvokerSyncTestCase(unittest.TestCase):
             stream_chunks=["chunk-b-1", "chunk-b-2"],
         )
 
-        invoker = ResilientInvoker(
-            models=[model_a, model_b], config=make_fast_config()
-        )
+        invoker = ResilientInvoker(models=[model_a, model_b], config=make_fast_config())
         chunks = list(invoker.stream("test input"))
 
         self.assertEqual(chunks, ["chunk-b-1", "chunk-b-2"])
@@ -568,9 +548,7 @@ class ResilientInvokerSyncTestCase(unittest.TestCase):
             name="model-b",
             invoke_side_effects=[MagicMock(content="from b")],
         )
-        invoker = ResilientInvoker(
-            models=[model_a, model_b], config=config
-        )
+        invoker = ResilientInvoker(models=[model_a, model_b], config=config)
 
         # CLOSED -> OPEN（3 次失败）
         invoker.invoke("test")
@@ -635,9 +613,7 @@ class ResilientInvokerAsyncTestCase(unittest.TestCase):
             ainvoke_side_effects=[MagicMock(content="async from b")],
         )
 
-        invoker = ResilientInvoker(
-            models=[model_a, model_b], config=make_fast_config()
-        )
+        invoker = ResilientInvoker(models=[model_a, model_b], config=make_fast_config())
         result = asyncio.run(invoker.ainvoke("test input"))
 
         self.assertEqual(result.content, "async from b")
@@ -656,9 +632,7 @@ class ResilientInvokerAsyncTestCase(unittest.TestCase):
             ainvoke_side_effects=[MagicMock(content="async from b")],
         )
 
-        invoker = ResilientInvoker(
-            models=[model_a, model_b], config=make_fast_config()
-        )
+        invoker = ResilientInvoker(models=[model_a, model_b], config=make_fast_config())
         result = asyncio.run(invoker.ainvoke("test input"))
 
         self.assertEqual(result.content, "async from b")
@@ -670,15 +644,11 @@ class ResilientInvokerAsyncTestCase(unittest.TestCase):
         """异步接口输入错误直接抛出"""
         model_a = make_mock_model(
             name="model-a",
-            ainvoke_side_effects=[
-                GuardrailsValidationError("async validation failed")
-            ],
+            ainvoke_side_effects=[GuardrailsValidationError("async validation failed")],
         )
         model_b = make_mock_model(name="model-b")
 
-        invoker = ResilientInvoker(
-            models=[model_a, model_b], config=make_fast_config()
-        )
+        invoker = ResilientInvoker(models=[model_a, model_b], config=make_fast_config())
 
         with self.assertRaises(GuardrailsValidationError):
             asyncio.run(invoker.ainvoke("test input"))
@@ -706,9 +676,7 @@ class ResilientInvokerAsyncTestCase(unittest.TestCase):
             ],
         )
 
-        invoker = ResilientInvoker(
-            models=[model_a, model_b], config=make_fast_config()
-        )
+        invoker = ResilientInvoker(models=[model_a, model_b], config=make_fast_config())
 
         with self.assertRaises(RuntimeError):
             asyncio.run(invoker.ainvoke("test input"))
@@ -733,9 +701,7 @@ class ResilientInvokerAsyncTestCase(unittest.TestCase):
         model_b._provider_id = "mock"
         model_b._agenerate = MagicMock(side_effect=_b_agenerate)
 
-        invoker = ResilientInvoker(
-            models=[model_a, model_b], config=make_fast_config()
-        )
+        invoker = ResilientInvoker(models=[model_a, model_b], config=make_fast_config())
         result = asyncio.run(invoker.agenerate([]))
 
         self.assertEqual(model_a._agenerate.call_count, 3)
@@ -764,9 +730,7 @@ class ResilientInvokerAsyncTestCase(unittest.TestCase):
         model_b._provider_id = "mock"
         model_b.astream = MagicMock(side_effect=_b_stream)
 
-        invoker = ResilientInvoker(
-            models=[model_a, model_b], config=make_fast_config()
-        )
+        invoker = ResilientInvoker(models=[model_a, model_b], config=make_fast_config())
 
         async def _collect():
             chunks = []
@@ -796,9 +760,7 @@ class ResilientModelTestCase(unittest.TestCase):
             invoke_side_effects=[MagicMock(content="result")],
         )
 
-        resilient = ResilientModel(
-            models=[model_a], config=make_fast_config()
-        )
+        resilient = ResilientModel(models=[model_a], config=make_fast_config())
         result = resilient.invoke("test")
 
         self.assertEqual(result.content, "result")
@@ -820,9 +782,7 @@ class ResilientModelTestCase(unittest.TestCase):
             invoke_side_effects=[MagicMock(content="from b")],
         )
 
-        resilient = ResilientModel(
-            models=[model_a, model_b], config=make_fast_config()
-        )
+        resilient = ResilientModel(models=[model_a, model_b], config=make_fast_config())
         result = resilient.invoke("test")
 
         self.assertEqual(result.content, "from b")
@@ -840,9 +800,7 @@ class ResilientModelTestCase(unittest.TestCase):
         model_a = make_mock_model(name="model-a")
         model_b = make_mock_model(name="model-b")
 
-        resilient = ResilientModel(
-            models=[model_a, model_b], config=make_fast_config()
-        )
+        resilient = ResilientModel(models=[model_a, model_b], config=make_fast_config())
         params = resilient._identifying_params
 
         self.assertIn("models", params)
@@ -855,9 +813,7 @@ class ResilientModelTestCase(unittest.TestCase):
         model_a = make_mock_model(name="model-a")
         model_b = make_mock_model(name="model-b")
 
-        resilient = ResilientModel(
-            models=[model_a, model_b], config=make_fast_config()
-        )
+        resilient = ResilientModel(models=[model_a, model_b], config=make_fast_config())
         self.assertEqual(len(resilient.models), 2)
         self.assertIs(resilient.models[0], model_a)
         self.assertIs(resilient.models[1], model_b)
@@ -870,9 +826,7 @@ class ResilientModelTestCase(unittest.TestCase):
             generate_side_effects=[MagicMock(generations=[])],
         )
 
-        resilient = ResilientModel(
-            models=[model_a], config=make_fast_config()
-        )
+        resilient = ResilientModel(models=[model_a], config=make_fast_config())
         result = resilient._generate([])
 
         self.assertEqual(model_a._generate.call_count, 1)

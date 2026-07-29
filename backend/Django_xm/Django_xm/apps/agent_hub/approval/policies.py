@@ -99,7 +99,7 @@ class ApprovalPolicy:
             risk = RiskLevel.HIGH
 
         # 应用角色风险上限
-        risk_ceiling = subagent_context.get('risk_ceiling')
+        risk_ceiling = subagent_context.get("risk_ceiling")
         if risk_ceiling is not None:
             if risk_ceiling == RiskLevel.SAFE:
                 return RiskLevel.SAFE
@@ -181,14 +181,35 @@ class ShellExecApprovalPolicy(ApprovalPolicy):
 class FileReaderApprovalPolicy(ApprovalPolicy):
     """file_reader 工具审批策略
 
-    绝对路径读取需要审批，相对路径自动通过。
+    风险分级（RiskLevel）：
+        - 相对路径 → SAFE（沙箱内读取，自动通过）
+        - 绝对路径 → CONTROLLED（可能读取沙箱外文件，需审批）
     """
 
     tool_name = "file_reader"
+    # 只读工具：is_write_operation=False，子 agent 中不上调风险等级
 
-    def should_approve(self, args: dict) -> bool:
+    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
+        """评估 file_reader 风险等级。
+
+        相对路径在沙箱内，安全自动通过；
+        绝对路径可能读取沙箱外文件，需用户审批。
+        """
         file_path = args.get("file_path", "")
-        return os.path.isabs(file_path)
+        if not file_path:
+            return RiskLevel.SAFE  # 空路径，工具内部会处理
+        if os.path.isabs(file_path):
+            return self._apply_subagent_weighting(RiskLevel.CONTROLLED, subagent_context)
+        return RiskLevel.SAFE  # 相对路径，沙箱内自动通过
+
+    def assess_danger(self, args: dict) -> str:
+        """旧格式危险等级（兼容 DB 字段 danger_level）。"""
+        risk = self.assess_risk(args)
+        if risk == RiskLevel.HIGH:
+            return "high"
+        elif risk == RiskLevel.SAFE:
+            return "low"
+        return "medium"
 
     def build_operation_desc(self, args: dict) -> str:
         return args.get("file_path", "")
@@ -198,37 +219,76 @@ class FsWriteFileApprovalPolicy(ApprovalPolicy):
     """fs_write_file 工具审批策略
 
     写文件操作风险较高：
-    - 绝对路径写入需要审批
-    - 危险等级固定为 high
+    - 绝对路径写入 → HIGH（可能覆盖沙箱外文件）
+    - 相对路径写入 → CONTROLLED（沙箱内写入，仍需审批防止误操作）
     """
 
     tool_name = "fs_write_file"
+    is_write_operation = True  # 写操作，子 agent 中上调一级
 
-    def should_approve(self, args: dict) -> bool:
-        relative_path = args.get("relative_path", "")
-        return os.path.isabs(relative_path)
+    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
+        """评估 fs_write_file 风险等级。
+
+        写文件操作有副作用，相对路径需审批（CONTROLLED），
+        绝对路径可能覆盖沙箱外文件（HIGH）。
+        """
+        relative_path = args.get("relative_path", "") or args.get("file_path", "")
+        if not relative_path:
+            return RiskLevel.SAFE  # 空路径，工具内部会处理
+        if os.path.isabs(relative_path):
+            return self._apply_subagent_weighting(RiskLevel.HIGH, subagent_context)
+        return self._apply_subagent_weighting(RiskLevel.CONTROLLED, subagent_context)
 
     def assess_danger(self, args: dict) -> str:
-        return "high"
+        """旧格式危险等级（兼容 DB 字段 danger_level）。"""
+        risk = self.assess_risk(args)
+        if risk == RiskLevel.HIGH:
+            return "high"
+        elif risk == RiskLevel.SAFE:
+            return "low"
+        return "medium"
 
     def build_operation_desc(self, args: dict) -> str:
-        return args.get("relative_path", "")
+        return args.get("relative_path", "") or args.get("file_path", "")
 
 
 class AgentCleanupApprovalPolicy(ApprovalPolicy):
     """agent_cleanup 工具审批策略
 
-    批量清理（未指定 agent_id）需要审批，
-    单个清理自动通过。
+    风险分级（RiskLevel）：
+        - 指定 agent_id（单个清理）→ SAFE（自动通过，仅审计）
+        - 未指定 agent_id（批量清理）→ CONTROLLED（批量操作有风险，需审批）
     """
 
     tool_name = "agent_cleanup"
+    # 清理操作有副作用，但批量才需要审批
+    is_write_operation = True
 
-    def should_approve(self, args: dict) -> bool:
-        return args.get("agent_id", "") == ""
+    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
+        """评估 agent_cleanup 风险等级。
+
+        批量清理（未指定 agent_id）风险较高，需用户审批。
+        单个清理自动通过（仅审计）。
+        """
+        agent_id = args.get("agent_id", "")
+        if not agent_id:
+            return self._apply_subagent_weighting(RiskLevel.CONTROLLED, subagent_context)
+        return RiskLevel.SAFE  # 单个清理，自动通过
+
+    def assess_danger(self, args: dict) -> str:
+        """旧格式危险等级（兼容 DB 字段 danger_level）。"""
+        risk = self.assess_risk(args)
+        if risk == RiskLevel.HIGH:
+            return "high"
+        elif risk == RiskLevel.SAFE:
+            return "low"
+        return "medium"
 
     def build_operation_desc(self, args: dict) -> str:
-        return "批量清理所有 Agent"
+        agent_id = args.get("agent_id", "")
+        if not agent_id:
+            return "批量清理所有 Agent"
+        return f"清理 Agent: {agent_id}"
 
 
 # ── deepagents 框架工具审批策略 ──────────────────────────────────
@@ -254,17 +314,34 @@ class WriteFileApprovalPolicy(ApprovalPolicy):
     """deepagents write_file 工具审批策略
 
     deepagents 的 write_file 使用 file_path 参数（非 relative_path）。
-    写文件操作风险较高，固定为 high。
+    写文件操作有副作用，风险分级：
+        - 绝对路径 → HIGH（可能覆盖沙箱外文件）
+        - 相对路径 → CONTROLLED（沙箱内写入，仍需审批）
     """
 
     tool_name = "write_file"
+    is_write_operation = True  # 写操作，子 agent 中上调一级
 
-    def should_approve(self, args: dict) -> bool:
-        # deepagents write_file 总是需要审批（写副作用）
-        return True
+    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
+        """评估 write_file 风险等级。
+
+        写文件操作有副作用，始终需要审批：
+        - 绝对路径 → HIGH
+        - 相对路径 → CONTROLLED
+        """
+        file_path = args.get("file_path", "")
+        if file_path and os.path.isabs(file_path):
+            return self._apply_subagent_weighting(RiskLevel.HIGH, subagent_context)
+        return self._apply_subagent_weighting(RiskLevel.CONTROLLED, subagent_context)
 
     def assess_danger(self, args: dict) -> str:
-        return "high"
+        """旧格式危险等级（兼容 DB 字段 danger_level）。"""
+        risk = self.assess_risk(args)
+        if risk == RiskLevel.HIGH:
+            return "high"
+        elif risk == RiskLevel.SAFE:
+            return "low"
+        return "medium"
 
     def build_operation_desc(self, args: dict) -> str:
         return args.get("file_path", "")
@@ -281,16 +358,34 @@ class EditFileApprovalPolicy(ApprovalPolicy):
 
     edit_file 修改文件内容，有写副作用，需要审批。
     deepagents 的 edit_file 使用 file_path 参数。
+    风险分级：
+        - 绝对路径 → HIGH（可能修改沙箱外文件）
+        - 相对路径 → CONTROLLED（沙箱内修改）
     """
 
     tool_name = "edit_file"
+    is_write_operation = True  # 写操作，子 agent 中上调一级
 
-    def should_approve(self, args: dict) -> bool:
-        # edit_file 总是需要审批（写副作用）
-        return True
+    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
+        """评估 edit_file 风险等级。
+
+        修改文件内容有副作用，始终需要审批：
+        - 绝对路径 → HIGH
+        - 相对路径 → CONTROLLED
+        """
+        file_path = args.get("file_path", "")
+        if file_path and os.path.isabs(file_path):
+            return self._apply_subagent_weighting(RiskLevel.HIGH, subagent_context)
+        return self._apply_subagent_weighting(RiskLevel.CONTROLLED, subagent_context)
 
     def assess_danger(self, args: dict) -> str:
-        return "high"
+        """旧格式危险等级（兼容 DB 字段 danger_level）。"""
+        risk = self.assess_risk(args)
+        if risk == RiskLevel.HIGH:
+            return "high"
+        elif risk == RiskLevel.SAFE:
+            return "low"
+        return "medium"
 
     def build_operation_desc(self, args: dict) -> str:
         path = args.get("file_path", "")
@@ -308,16 +403,12 @@ class EditFileApprovalPolicy(ApprovalPolicy):
 class ReadFileApprovalPolicy(FileReaderApprovalPolicy):
     """deepagents read_file 工具审批策略
 
-    继承 FileReaderApprovalPolicy 的绝对路径审批逻辑，
+    继承 FileReaderApprovalPolicy 的风险评估逻辑（assess_risk），
     仅覆盖 tool_name 以匹配 deepagents 的 read_file 工具。
-    deepagents read_file 使用 file_path 参数。
+    deepagents read_file 使用 file_path 参数（与 file_reader 一致）。
     """
 
     tool_name = "read_file"
-
-    def should_approve(self, args: dict) -> bool:
-        file_path = args.get("file_path", "")
-        return os.path.isabs(file_path)
 
     def build_operation_desc(self, args: dict) -> str:
         return args.get("file_path", "")

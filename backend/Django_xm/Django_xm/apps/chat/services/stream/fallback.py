@@ -53,10 +53,10 @@ class FallbackStreamService:
             if isinstance(msg, ToolMessage):
                 responded_ids.add(msg.tool_call_id)
 
-        cleaned = []
+        cleaned: list[BaseMessage] = []
         for msg in messages:
-            if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
-                unresponded = [tc for tc in msg.tool_calls if tc.get('id') not in responded_ids]
+            if isinstance(msg, AIMessage) and hasattr(msg, "tool_calls") and msg.tool_calls:
+                unresponded = [tc for tc in msg.tool_calls if tc.get("id") not in responded_ids]
                 if unresponded:
                     if msg.content:
                         cleaned.append(AIMessage(content=msg.content))
@@ -85,10 +85,12 @@ class FallbackStreamService:
         """
         from Django_xm.apps.chat.services.chat_service import convert_chat_history
 
-        chat_history = data.get('chat_history', [])
+        chat_history = data.get("chat_history", [])
         chat_history, _ce_metadata = self._chat_service._apply_context_engineering(
-            chat_history, data.get('message', ''), mode=data.get('mode', 'agent'),
-            model_name=data.get('model_name'),
+            chat_history,
+            data.get("message", ""),
+            mode=data.get("mode", "agent"),
+            model_name=data.get("model_name"),
         )
         langchain_chat_history = convert_chat_history(chat_history)
 
@@ -106,11 +108,15 @@ class FallbackStreamService:
         thinking_start_time = time.time()
 
         with TokenUsageCallbackHandler() as cb:
-            from Django_xm.apps.ai_engine.services.llm_factory import FallbackDetectionCallback
-            bound_model = getattr(model_instance, 'bound', model_instance)
+            from Django_xm.apps.ai_engine.services.llm_fallback import FallbackDetectionCallback
+
+            bound_model = getattr(model_instance, "bound", model_instance)
             fb_callback = FallbackDetectionCallback(
-                expected_provider=data.get('provider_id', '') or getattr(bound_model, '_provider_id', '') or '',
-                expected_model=data.get('model_name', '') or getattr(bound_model, 'model_name', '') or getattr(bound_model, 'model', '') or '',
+                expected_provider=data.get("provider_id", "") or getattr(bound_model, "_provider_id", "") or "",
+                expected_model=data.get("model_name", "")
+                or getattr(bound_model, "model_name", "")
+                or getattr(bound_model, "model", "")
+                or "",
             )
             try:
                 async for chunk in model_instance.astream(messages, config={"callbacks": [cb, fb_callback]}):
@@ -133,8 +139,8 @@ class FallbackStreamService:
                         }
 
                     await asyncio.sleep(0.01)
-            except Exception as e:
-                logger.error(f"无工具模式流式调用失败: {e}", exc_info=True)
+            except Exception:
+                logger.exception("无工具模式流式调用失败")
                 raise
 
         update_usage_and_tokens(cb, usage_tracker, token_detail_tracker)
@@ -144,16 +150,20 @@ class FallbackStreamService:
             fallback_info = fb_callback.get_fallback_info()
             if fallback_info:
                 yield {
-                    'type': 'model_fallback',
-                    'data': fallback_info,
+                    "type": "model_fallback",
+                    "data": fallback_info,
                 }
                 try:
-                    SystemConfig.set_value("default_chat_model", {
-                        "provider_id": fallback_info["actual_provider"],
-                        "model_name": fallback_info["actual_model"],
-                    })
+                    SystemConfig.set_value(
+                        "default_chat_model",
+                        {
+                            "provider_id": fallback_info["actual_provider"],
+                            "model_name": fallback_info["actual_model"],
+                        },
+                    )
                 except Exception:
-                    pass
+                    # 持久化 fallback 配置失败不影响当前会话，运行时已切换
+                    logger.debug("持久化模型 fallback 配置到 SystemConfig 失败")
 
         thinking_duration = round(time.time() - thinking_start_time, 1)
         final_reasoning = (accumulated_reasoning.get("content") or "").strip()

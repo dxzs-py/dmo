@@ -68,10 +68,14 @@ def _keyword_search_fallback(query: str, collection_name: str, k: int = 4) -> li
         _check_table_exists,
         _get_collection_table_name,
         _get_embedding_table_name,
+        _quote_identifier,
     )
 
     collection_table = _get_collection_table_name()
     embedding_table = _get_embedding_table_name()
+    # 使用 _quote_identifier 包装表名，防止 SQL 注入与保留字冲突
+    collection_table_quoted = _quote_identifier(collection_table)
+    embedding_table_quoted = _quote_identifier(embedding_table)
 
     if not _check_table_exists(collection_table) or not _check_table_exists(embedding_table):
         logger.warning("降级检索: PGVector 表不存在，返回空结果")
@@ -86,8 +90,8 @@ def _keyword_search_fallback(query: str, collection_name: str, k: int = 4) -> li
                 f"""
                 SELECT e.document, e.cmetadata,
                        ts_rank_cd(to_tsvector('simple', e.document), to_tsquery('simple', %s)) as rank
-                FROM {embedding_table} e
-                JOIN {collection_table} c ON e.collection_id = c.uuid
+                FROM {embedding_table_quoted} e
+                JOIN {collection_table_quoted} c ON e.collection_id = c.uuid
                 WHERE c.name = %s
                 AND to_tsvector('simple', e.document) @@ to_tsquery('simple', %s)
                 ORDER BY rank DESC
@@ -106,7 +110,9 @@ def _keyword_search_fallback(query: str, collection_name: str, k: int = 4) -> li
                 metadata["degraded_score"] = float(rank)
                 results.append(Document(page_content=doc_content, metadata=metadata))
 
-            logger.info(f"降级全文检索: query='{query[:50]}...', collection={collection_name}, 返回 {len(results)} 个文档")
+            logger.info(
+                f"降级全文检索: query='{query[:50]}...', collection={collection_name}, 返回 {len(results)} 个文档"
+            )
             return results
 
     except Exception as e:
@@ -155,9 +161,7 @@ class DegradableRetriever(BaseRetriever):
             return docs
         except Exception as e:
             if _is_embedding_error(e):
-                logger.warning(
-                    f"向量检索失败（Embedding 不可用），降级到全文关键词检索: {e}"
-                )
+                logger.warning(f"向量检索失败（Embedding 不可用），降级到全文关键词检索: {e}")
                 if self.collection_name:
                     _record_degradation_metric(self.collection_name, e)
                 return _keyword_search_fallback(query, self.collection_name, k=self.fallback_k)
@@ -169,14 +173,10 @@ class DegradableRetriever(BaseRetriever):
             return docs
         except Exception as e:
             if _is_embedding_error(e):
-                logger.warning(
-                    f"向量检索失败（Embedding 不可用），降级到全文关键词检索: {e}"
-                )
+                logger.warning(f"向量检索失败（Embedding 不可用），降级到全文关键词检索: {e}")
                 if self.collection_name:
                     _record_degradation_metric(self.collection_name, e)
-                return await asyncio.to_thread(
-                    _keyword_search_fallback, query, self.collection_name, self.fallback_k
-                )
+                return await asyncio.to_thread(_keyword_search_fallback, query, self.collection_name, self.fallback_k)
             raise
 
 
@@ -212,12 +212,14 @@ def wrap_with_degradation(
 
 try:
     from langchain_community.document_compressors import FlashRankReranker
+
     FLASHRANK_AVAILABLE = True
 except ImportError:
     FLASHRANK_AVAILABLE = False
 
 try:
     from langchain_classic.retrievers import ContextualCompressionRetriever, MultiQueryRetriever
+
     ADVANCED_RETRIEVERS_AVAILABLE = True
 except ImportError:
     ADVANCED_RETRIEVERS_AVAILABLE = False
@@ -232,14 +234,14 @@ def create_retriever(
     use_reranker: bool = False,
     **kwargs,
 ) -> BaseRetriever:
-    search_type = search_type or settings.retriever_search_type
+    search_type: str = search_type or settings.retriever_search_type
     k = k or settings.retriever_k
     score_threshold = score_threshold or settings.retriever_score_threshold
     fetch_k = fetch_k or settings.retriever_fetch_k
 
     logger.info(f"创建检索器: search_type={search_type}, k={k}, use_reranker={use_reranker}")
 
-    search_kwargs = {"k": k}
+    search_kwargs: dict[str, Any] = {"k": k}
 
     if search_type == "mmr":
         search_kwargs["fetch_k"] = fetch_k
@@ -249,7 +251,7 @@ def create_retriever(
     search_kwargs.update(kwargs)
 
     try:
-        retriever = vector_store.as_retriever(
+        retriever: BaseRetriever = vector_store.as_retriever(
             search_type=search_type,
             search_kwargs=search_kwargs,
         )
@@ -262,8 +264,8 @@ def create_retriever(
                 logger.info("检索器已添加 Reranker 增强")
 
         return retriever
-    except Exception as e:
-        logger.error(f"创建检索器失败: {e}")
+    except Exception:
+        logger.exception("创建检索器失败")
         raise
 
 
@@ -310,6 +312,7 @@ def create_reranking_retriever(
 MULTI_QUERY_PROMPT = None
 try:
     from langchain_core.prompts import PromptTemplate
+
     MULTI_QUERY_PROMPT = PromptTemplate.from_template(
         "你是一个AI语言模型助手。你的任务是生成3个不同版本的用户问题，"
         "用于从向量数据库中检索相关文档。通过生成多个视角的问题，"
@@ -343,25 +346,27 @@ def create_multi_query_retriever(
 
         class _LineListParser(BaseOutputParser[list[str]]):
             """将 LLM 输出按换行拆分为字符串列表，替代 langchain_classic 的 LineListOutputParser"""
+
             def parse(self, text: str) -> list[str]:
                 return [line.strip() for line in text.strip().split("\n") if line.strip()]
 
         def _quiet_invoke(input, config=None, **kwargs):
             config = config or {}
             config["callbacks"] = []
-            config["tags"] = config.get("tags", []) + ["nostream"]
+            config["tags"] = [*config.get("tags", []), "nostream"]
             return llm.invoke(input, config=config, **kwargs)
 
         async def _quiet_ainvoke(input, config=None, **kwargs):
             config = config or {}
             config["callbacks"] = []
-            config["tags"] = config.get("tags", []) + ["nostream"]
+            config["tags"] = [*config.get("tags", []), "nostream"]
             return await llm.ainvoke(input, config=config, **kwargs)
 
         quiet_llm = RunnableLambda(func=_quiet_invoke, afunc=_quiet_ainvoke)
         prompt = MULTI_QUERY_PROMPT
         if prompt is None:
             from langchain.retrievers.multi_query import DEFAULT_QUERY_PROMPT
+
             prompt = DEFAULT_QUERY_PROMPT
 
         output_parser = _LineListParser()
@@ -429,15 +434,17 @@ def create_parent_document_retriever(
     try:
         from langchain_classic.retrievers import ParentDocumentRetriever
     except ImportError:
-        logger.error("ParentDocumentRetriever 不可用，请升级 langchain")
+        logger.exception("ParentDocumentRetriever 不可用，请升级 langchain")
         raise
 
     if docstore is None:
         from langchain_classic.storage import InMemoryStore
+
         docstore = InMemoryStore()
 
     if child_splitter is None:
         from langchain_text_splitters import RecursiveCharacterTextSplitter
+
         child_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
 
     retriever = ParentDocumentRetriever(
@@ -480,7 +487,7 @@ class SyncSafeRetrieverTool(BaseTool):
     name: str = "knowledge_base"
     description: str = "搜索知识库中的相关信息。当需要回答关于文档内容的问题时使用此工具。输入应该是一个搜索查询。"
     args_schema: type[BaseModel] = _RetrieverToolInput
-    retriever: BaseRetriever = None
+    retriever: BaseRetriever | None = None
     comprehensive_retriever: BaseRetriever | None = None
     retrieval_mode: str = "auto"
     llm: Any | None = None
@@ -584,7 +591,7 @@ class SyncSafeRetrieverTool(BaseTool):
                     pass
             # 过滤 MultiQuery 生成的替代查询（短问题文本，以问号结尾）
             stripped = content.strip()
-            if len(stripped) < 150 and (stripped.endswith('？') or stripped.endswith('?')):
+            if len(stripped) < 150 and (stripped.endswith(("？", "?"))):
                 continue
             cleaned.append(doc)
         if len(cleaned) != len(docs):
@@ -599,7 +606,7 @@ class SyncSafeRetrieverTool(BaseTool):
         limited_docs = docs[:MAX_DOCS_IN_RESULT]
         formatted = []
         for i, doc in enumerate(limited_docs, 1):
-            source = doc.metadata.get('source', '未知来源')
+            source = doc.metadata.get("source", "未知来源")
             content = doc.page_content
             if len(content) > MAX_DOC_CONTENT_LENGTH:
                 content = content[:MAX_DOC_CONTENT_LENGTH].rstrip() + "...[内容已截断]"
@@ -621,9 +628,7 @@ def create_retriever_tool(
 ) -> BaseTool:
     if description is None:
         description = (
-            f"搜索 {name} 知识库中的相关信息。"
-            "当需要回答关于文档内容的问题时使用此工具。"
-            "输入应该是一个搜索查询。"
+            f"搜索 {name} 知识库中的相关信息。当需要回答关于文档内容的问题时使用此工具。输入应该是一个搜索查询。"
         )
 
     logger.info(f"创建检索器工具: {name}, retrieval_mode={retrieval_mode}")
@@ -641,8 +646,8 @@ def create_retriever_tool(
         )
         logger.info(f"检索器工具创建成功（SyncSafe 模式, retrieval_mode={retrieval_mode}）")
         return tool
-    except Exception as e:
-        logger.error(f"创建检索器工具失败: {e}")
+    except Exception:
+        logger.exception("创建检索器工具失败")
         raise
 
 
@@ -668,8 +673,8 @@ def test_retriever(
 
         return True
 
-    except Exception as e:
-        logger.error(f"❌ 检索器测试失败: {e}")
+    except Exception:
+        logger.exception("❌ 检索器测试失败")
         return False
 
 
@@ -695,16 +700,19 @@ class QueryIntentClassifier:
             return self._llm
         try:
             from Django_xm.apps.ai_engine.services.llm_factory import get_helper_model
+
             llm = get_helper_model()
             if llm is not None:
                 return llm
             from Django_xm.apps.knowledge.config import get_chat_model
+
             return get_chat_model(streaming=False)
         except Exception:
             return None
 
-    def _parse_intent(self, response_text: str) -> str:
-        match = re.search(r'\{[^}]+\}', response_text)
+    def _parse_intent(self, response_text: Any) -> str:
+        response_text = response_text if isinstance(response_text, str) else str(response_text)
+        match = re.search(r"\{[^}]+\}", response_text)
         if match:
             try:
                 data = json.loads(match.group())
@@ -743,9 +751,13 @@ class QueryIntentClassifier:
 
         try:
             from langchain_core.messages import HumanMessage
+
             prompt = _INTENT_CLASSIFICATION_PROMPT.format(query=query)
-            response = llm.invoke([HumanMessage(content=prompt)], config={"timeout": 3, "callbacks": [], "tags": ["nostream"]})
-            intent = self._parse_intent(response.content if hasattr(response, 'content') else str(response))
+            response = llm.invoke(
+                [HumanMessage(content=prompt)],
+                config={"timeout": 3, "callbacks": [], "tags": ["nostream"]},  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
+            )
+            intent = self._parse_intent(str(response.content) if hasattr(response, "content") else str(response))
             self._set_cache(query, intent)
             logger.info(f"意图分类: query='{query[:50]}...' -> {intent}")
             return intent
@@ -773,12 +785,13 @@ class QueryIntentClassifier:
             import asyncio
 
             from langchain_core.messages import HumanMessage
+
             prompt = _INTENT_CLASSIFICATION_PROMPT.format(query=query)
             response = await asyncio.wait_for(
-                llm.ainvoke([HumanMessage(content=prompt)], config={"callbacks": [], "tags": ["nostream"]}),
+                llm.ainvoke([HumanMessage(content=prompt)], config={"callbacks": [], "tags": ["nostream"]}),  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
                 timeout=3.0,
             )
-            intent = self._parse_intent(response.content if hasattr(response, 'content') else str(response))
+            intent = self._parse_intent(str(response.content) if hasattr(response, "content") else str(response))
             self._set_cache(query, intent)
             logger.info(f"意图分类: query='{query[:50]}...' -> {intent}")
             return intent
@@ -845,10 +858,12 @@ class MapReduceDocCombiner:
             return self._llm
         try:
             from Django_xm.apps.ai_engine.services.llm_factory import get_helper_model
+
             llm = get_helper_model()
             if llm is not None:
                 return llm
             from Django_xm.apps.knowledge.config import get_chat_model
+
             return get_chat_model(streaming=False)
         except Exception:
             return None
@@ -857,6 +872,7 @@ class MapReduceDocCombiner:
         if self._batch_size is not None:
             return self._batch_size
         from Django_xm.apps.knowledge.config import settings as app_cfg
+
         return app_cfg.retriever_map_reduce_batch_size
 
     def _should_use_map_reduce(self, doc_count: int) -> bool:
@@ -864,12 +880,13 @@ class MapReduceDocCombiner:
 
     def _map_batch_sync(self, docs: list[Document], query: str, llm: BaseChatModel) -> list[str]:
         from langchain_core.messages import HumanMessage
+
         results = []
         for doc in docs:
             prompt = _MAP_PROMPT_TEMPLATE.format(doc=doc.page_content, question=query)
             try:
-                response = llm.invoke([HumanMessage(content=prompt)], config={"callbacks": [], "tags": ["nostream"]})
-                content = response.content if hasattr(response, 'content') else str(response)
+                response = llm.invoke([HumanMessage(content=prompt)], config={"callbacks": [], "tags": ["nostream"]})  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
+                content = str(response.content) if hasattr(response, "content") else str(response)
                 results.append(content)
             except Exception as e:
                 logger.warning(f"Map 阶段文档处理失败: {e}")
@@ -880,10 +897,11 @@ class MapReduceDocCombiner:
         import asyncio
 
         from langchain_core.messages import HumanMessage
+
         tasks = []
         for doc in docs:
             prompt = _MAP_PROMPT_TEMPLATE.format(doc=doc.page_content, question=query)
-            tasks.append(llm.ainvoke([HumanMessage(content=prompt)], config={"callbacks": [], "tags": ["nostream"]}))
+            tasks.append(llm.ainvoke([HumanMessage(content=prompt)], config={"callbacks": [], "tags": ["nostream"]}))  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
         responses = await asyncio.gather(*tasks, return_exceptions=True)
         results = []
         for resp in responses:
@@ -891,7 +909,7 @@ class MapReduceDocCombiner:
                 logger.warning(f"Map 阶段文档处理失败: {resp}")
                 results.append("")
             else:
-                content = resp.content if hasattr(resp, 'content') else str(resp)
+                content = str(resp.content) if hasattr(resp, "content") else str(resp)
                 results.append(content)
         return results
 
@@ -909,8 +927,8 @@ class MapReduceDocCombiner:
             context = SyncSafeRetrieverTool._format_docs(docs)
             prompt = _STUFF_PROMPT_TEMPLATE.format(context=context, question=query)
             try:
-                response = llm.invoke([HumanMessage(content=prompt)], config={"callbacks": [], "tags": ["nostream"]})
-                result = response.content if hasattr(response, 'content') else str(response)
+                response = llm.invoke([HumanMessage(content=prompt)], config={"callbacks": [], "tags": ["nostream"]})  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
+                result = str(response.content) if hasattr(response, "content") else str(response)
                 if "[NO_RELEVANT_INFO]" in result:
                     logger.warning("Stuff 策略 LLM 判定无相关信息，回退到原始文档")
                     return context
@@ -922,7 +940,7 @@ class MapReduceDocCombiner:
                 return context
 
         batch_size = self._get_batch_size()
-        batches = [docs[i:i + batch_size] for i in range(0, len(docs), batch_size)]
+        batches = [docs[i : i + batch_size] for i in range(0, len(docs), batch_size)]
         logger.info(f"Map-Reduce: {len(docs)} 个文档分为 {len(batches)} 批处理")
 
         all_summaries = []
@@ -930,7 +948,7 @@ class MapReduceDocCombiner:
             summaries = self._map_batch_sync(batch, query, llm)
             valid = [s for s in summaries if s and "[NO_RELEVANT_INFO]" not in s and len(s.strip()) > 10]
             all_summaries.extend(valid)
-            logger.debug(f"Map 批次 {i+1}/{len(batches)}: {len(valid)} 个有效摘要")
+            logger.debug(f"Map 批次 {i + 1}/{len(batches)}: {len(valid)} 个有效摘要")
 
         if not all_summaries:
             logger.warning(f"Map-Reduce 全部摘要被过滤，回退到原始文档 (docs={len(docs)})")
@@ -940,8 +958,8 @@ class MapReduceDocCombiner:
         combined = "\n\n---\n\n".join(all_summaries)
         reduce_prompt = _REDUCE_PROMPT_TEMPLATE.format(summaries=combined, question=query)
         try:
-            response = llm.invoke([HumanMessage(content=reduce_prompt)], config={"callbacks": [], "tags": ["nostream"]})
-            result = response.content if hasattr(response, 'content') else str(response)
+            response = llm.invoke([HumanMessage(content=reduce_prompt)], config={"callbacks": [], "tags": ["nostream"]})  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
+            result = str(response.content) if hasattr(response, "content") else str(response)
             # 限制 Reduce 结果长度，避免返回过多内容给 LLM
             if len(result) > 3000:
                 result = result[:3000].rstrip() + "\n\n[内容已截断，以上为最相关的核心要点摘要]"
@@ -965,8 +983,10 @@ class MapReduceDocCombiner:
             context = SyncSafeRetrieverTool._format_docs(docs)
             prompt = _STUFF_PROMPT_TEMPLATE.format(context=context, question=query)
             try:
-                response = await llm.ainvoke([HumanMessage(content=prompt)], config={"callbacks": [], "tags": ["nostream"]})
-                result = response.content if hasattr(response, 'content') else str(response)
+                response = await llm.ainvoke(
+                    [HumanMessage(content=prompt)], config={"callbacks": [], "tags": ["nostream"]}  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
+                )
+                result = str(response.content) if hasattr(response, "content") else str(response)
                 if "[NO_RELEVANT_INFO]" in result:
                     logger.warning("Stuff 策略 LLM 判定无相关信息，回退到原始文档")
                     return context
@@ -978,7 +998,7 @@ class MapReduceDocCombiner:
                 return context
 
         batch_size = self._get_batch_size()
-        batches = [docs[i:i + batch_size] for i in range(0, len(docs), batch_size)]
+        batches = [docs[i : i + batch_size] for i in range(0, len(docs), batch_size)]
         logger.info(f"Map-Reduce: {len(docs)} 个文档分为 {len(batches)} 批处理")
 
         all_summaries = []
@@ -986,7 +1006,7 @@ class MapReduceDocCombiner:
             summaries = await self._map_batch_async(batch, query, llm)
             valid = [s for s in summaries if s and "[NO_RELEVANT_INFO]" not in s and len(s.strip()) > 10]
             all_summaries.extend(valid)
-            logger.debug(f"Map 批次 {i+1}/{len(batches)}: {len(valid)} 个有效摘要")
+            logger.debug(f"Map 批次 {i + 1}/{len(batches)}: {len(valid)} 个有效摘要")
 
         if not all_summaries:
             logger.warning(f"Map-Reduce 全部摘要被过滤，回退到原始文档 (docs={len(docs)})")
@@ -996,8 +1016,10 @@ class MapReduceDocCombiner:
         combined = "\n\n---\n\n".join(all_summaries)
         reduce_prompt = _REDUCE_PROMPT_TEMPLATE.format(summaries=combined, question=query)
         try:
-            response = await llm.ainvoke([HumanMessage(content=reduce_prompt)], config={"callbacks": [], "tags": ["nostream"]})
-            result = response.content if hasattr(response, 'content') else str(response)
+            response = await llm.ainvoke(
+                [HumanMessage(content=reduce_prompt)], config={"callbacks": [], "tags": ["nostream"]}  # type: ignore[arg-type]  # RunnableConfig accepts arbitrary keys
+            )
+            result = str(response.content) if hasattr(response, "content") else str(response)
             # 限制 Reduce 结果长度，避免返回过多内容给 LLM
             if len(result) > 3000:
                 result = result[:3000].rstrip() + "\n\n[内容已截断，以上为最相关的核心要点摘要]"
@@ -1027,7 +1049,7 @@ class _RRFEnsembleRetriever(BaseRetriever):
         doc_scores: dict = {}
         doc_map: dict = {}
 
-        for retriever, weight in zip(self.retrievers, self.weights):
+        for retriever, weight in zip(self.retrievers, self.weights, strict=False):
             try:
                 docs = retriever.invoke(query)
             except Exception as e:
@@ -1048,7 +1070,7 @@ class _RRFEnsembleRetriever(BaseRetriever):
         doc_scores: dict = {}
         doc_map: dict = {}
 
-        for retriever, weight in zip(self.retrievers, self.weights):
+        for retriever, weight in zip(self.retrievers, self.weights, strict=False):
             try:
                 docs = await retriever.ainvoke(query)
             except Exception:
@@ -1094,8 +1116,8 @@ def create_multi_retriever(
         logger.info("✅ 组合检索器创建成功")
         return ensemble
 
-    except Exception as e:
-        logger.error(f"❌ 创建组合检索器失败: {e}")
+    except Exception:
+        logger.exception("❌ 创建组合检索器失败")
         raise
 
 

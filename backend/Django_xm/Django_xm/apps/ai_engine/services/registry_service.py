@@ -7,6 +7,7 @@
 异步安全：通过缓存机制避免在异步上下文中直接访问 ORM。
 应用启动时预加载缓存，后续调用优先走缓存。
 """
+
 import logging
 from typing import Any
 
@@ -44,12 +45,14 @@ def _is_async_context() -> bool:
     """检测当前是否在异步上下文中"""
     try:
         import asyncio
+
         return asyncio.get_running_loop() is not None
     except RuntimeError:
         return False
 
 
 # ─── MODEL_REGISTRY 兼容接口 ────────────────────────────────────────
+
 
 def get_model_registry() -> dict[str, dict[str, Any]]:
     """
@@ -66,23 +69,26 @@ def get_model_registry() -> dict[str, dict[str, Any]]:
     if _is_async_context():
         logger.debug("异步上下文中访问 registry，缓存未预热，回退到 config.py")
         from Django_xm.apps.ai_engine.config import MODEL_REGISTRY
+
         return MODEL_REGISTRY
 
     from Django_xm.apps.ai_engine.models import AIProvider
 
     registry: dict[str, dict[str, Any]] = {}
     try:
-        providers = AIProvider.objects.filter(is_enabled=True).select_related().prefetch_related('models')
+        providers = AIProvider.objects.filter(is_enabled=True).select_related().prefetch_related("models")
         for p in providers:
-            enabled_models = p.models.filter(is_enabled=True).order_by('sort_order', 'name')
+            enabled_models = p.models.filter(is_enabled=True).order_by("sort_order", "name")
             # 构建模型列表：带 capabilities 的 dict 格式
             model_list = []
             model_names = []
             for m in enabled_models:
-                model_list.append({
-                    "name": m.name,
-                    "capabilities": m.capabilities or [],
-                })
+                model_list.append(
+                    {
+                        "name": m.name,
+                        "capabilities": m.capabilities or [],
+                    }
+                )
                 model_names.append(m.name)
             registry[p.provider_id] = {
                 "label": p.label,
@@ -99,11 +105,13 @@ def get_model_registry() -> dict[str, dict[str, Any]]:
     except Exception as e:
         logger.warning(f"从数据库读取 MODEL_REGISTRY 失败，回退到 config.py: {e}")
         from Django_xm.apps.ai_engine.config import MODEL_REGISTRY
+
         return MODEL_REGISTRY
 
     if not registry:
         logger.warning("数据库中无 AIProvider 数据，回退到 config.py")
         from Django_xm.apps.ai_engine.config import MODEL_REGISTRY
+
         return MODEL_REGISTRY
 
     _registry_cache = registry
@@ -142,6 +150,7 @@ def is_provider_valid(provider_id: str) -> bool:
 
 # ─── EMBEDDING_PROVIDER_REGISTRY 兼容接口 ───────────────────────────
 
+
 def get_embedding_registry() -> list[dict[str, Any]]:
     """
     从数据库构建与 embedding_factory.EMBEDDING_PROVIDER_REGISTRY 格式兼容的列表。
@@ -156,39 +165,48 @@ def get_embedding_registry() -> list[dict[str, Any]]:
     if _is_async_context():
         logger.debug("异步上下文中访问 embedding registry，缓存未预热，回退到硬编码")
         from Django_xm.apps.ai_engine.services.embedding_factory import EMBEDDING_PROVIDER_REGISTRY
+
         return EMBEDDING_PROVIDER_REGISTRY
 
     from Django_xm.apps.ai_engine.models import EmbeddingProviderConfig
 
     registry: list[dict[str, Any]] = []
     try:
-        providers = EmbeddingProviderConfig.objects.filter(is_enabled=True).select_related('provider').order_by('sort_order', 'id')
+        providers = (
+            EmbeddingProviderConfig.objects.filter(is_enabled=True)
+            .select_related("provider")
+            .order_by("sort_order", "id")
+        )
         for p in providers:
             # 同一 Provider 可有多个 Embedding 配置，id 用 "provider_id/model_name" 格式保证唯一
             pid = p.provider.provider_id if p.provider else "unknown"
             model_name = p.default_model or p.name or ""
             unique_id = f"{pid}/{model_name}" if model_name else pid
-            registry.append({
-                "id": unique_id,
-                "provider_id": pid,
-                "label": p.label,
-                "default_model": p.default_model,
-                "factory_path": p.factory_path,
-                "key_attr": p.key_attr or None,
-                "enabled": p.is_enabled,
-                "supported_params": p.supported_params or [],
-                "dimension": p.dimension,
-                "native_max_dimension": p.native_max_dimension or 0,
-                "min_dimension": p.min_dimension or 0,
-            })
+            registry.append(
+                {
+                    "id": unique_id,
+                    "provider_id": pid,
+                    "label": p.label,
+                    "default_model": p.default_model,
+                    "factory_path": p.factory_path,
+                    "key_attr": p.key_attr or None,
+                    "enabled": p.is_enabled,
+                    "supported_params": p.supported_params or [],
+                    "dimension": p.dimension,
+                    "native_max_dimension": p.native_max_dimension or 0,
+                    "min_dimension": p.min_dimension or 0,
+                }
+            )
     except Exception as e:
         logger.warning(f"从数据库读取 EMBEDDING_PROVIDER_REGISTRY 失败，回退到硬编码: {e}")
         from Django_xm.apps.ai_engine.services.embedding_factory import EMBEDDING_PROVIDER_REGISTRY
+
         return EMBEDDING_PROVIDER_REGISTRY
 
     if not registry:
         logger.warning("数据库中无 EmbeddingProviderConfig 数据，回退到硬编码")
         from Django_xm.apps.ai_engine.services.embedding_factory import EMBEDDING_PROVIDER_REGISTRY
+
         return EMBEDDING_PROVIDER_REGISTRY
 
     _embedding_registry_cache = registry
@@ -210,6 +228,7 @@ def get_embedding_provider_ids() -> list[str]:
 
 # ─── 可用性检查 ─────────────────────────────────────────────────────
 
+
 def is_provider_available(provider_id: str) -> bool:
     """
     判断 provider 是否可用（API key 已配置或为本地 provider）。
@@ -221,6 +240,7 @@ def is_provider_available(provider_id: str) -> bool:
     # 配置真相源是 ai_engine.config 的 Pydantic Settings（统一读取 .env / 环境变量）
     # 不是 django.conf.settings（后者只装载 Django 框架级配置）
     from Django_xm.apps.ai_engine.config import settings as app_cfg
+
     key_attr = cfg.get("api_key_attr")
     if key_attr is None:
         # 本地 provider：检查 base_url

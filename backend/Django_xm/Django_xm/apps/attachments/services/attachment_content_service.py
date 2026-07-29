@@ -2,6 +2,7 @@
 附件内容加载服务
 支持多模态消息和 RAG 检索增强
 """
+
 import logging
 from typing import Any
 
@@ -9,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 
 class AttachmentService:
-
     RAG_CONTENT_THRESHOLD = 30000
 
     def classify_attachments(self, attachment_ids: list[int]) -> dict[str, list[int]]:
@@ -19,6 +19,7 @@ class AttachmentService:
         for att_id in attachment_ids:
             try:
                 from Django_xm.apps.tools.langchain.file_reader import get_attachment_info
+
                 info = get_attachment_info(att_id)
                 if info.get("is_image"):
                     image_ids.append(att_id)
@@ -36,12 +37,13 @@ class AttachmentService:
 
         try:
             from Django_xm.apps.tools.langchain.file_reader import read_multiple_attachments
+
             content = read_multiple_attachments(attachment_ids)
             if content:
                 logger.info(f"成功加载 {len(attachment_ids)} 个文本附件内容，共 {len(content)} 字符")
             return content if content.strip() else None
-        except Exception as e:
-            logger.error(f"加载文本附件内容失败: {e}")
+        except Exception:
+            logger.exception("加载文本附件内容失败")
             return None
 
     def load_attachment_contents(self, attachment_ids: list[int]) -> str | None:
@@ -75,28 +77,34 @@ class AttachmentService:
         if text_ids:
             text_content = self.load_text_attachment_contents(text_ids)
             if text_content:
-                content_parts.append({
-                    "type": "text",
-                    "text": (
-                        f"\n\n---\n以下是用户上传的文件内容（已直接包含在本消息中，无需使用工具读取，请直接基于以下内容分析和回答）：\n\n"
-                        f"{text_content}\n---\n"
-                    ),
-                })
+                content_parts.append(
+                    {
+                        "type": "text",
+                        "text": (
+                            f"\n\n---\n以下是用户上传的文件内容（已直接包含在本消息中，无需使用工具读取，请直接基于以下内容分析和回答）：\n\n"
+                            f"{text_content}\n---\n"
+                        ),
+                    }
+                )
 
         for img_id in image_ids:
             try:
                 image_data, mime_type = read_attachment_as_base64(img_id)
-                content_parts.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime_type};base64,{image_data}"},
-                })
+                content_parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime_type};base64,{image_data}"},
+                    }
+                )
                 logger.info(f"图片附件 {img_id} 已构造为多模态消息")
             except Exception as e:
-                logger.error(f"构造图片多模态消息失败 (id={img_id}): {e}")
-                content_parts.append({
-                    "type": "text",
-                    "text": f"\n[图片附件 (id={img_id}) 加载失败: {e!s}]",
-                })
+                logger.exception(f"构造图片多模态消息失败 (id={img_id})")
+                content_parts.append(
+                    {
+                        "type": "text",
+                        "text": f"\n[图片附件 (id={img_id}) 加载失败: {e!s}]",
+                    }
+                )
 
         return content_parts
 
@@ -115,30 +123,29 @@ class AttachmentService:
         text_ids = classified["text_ids"]
 
         if progress_callback:
-            progress_callback('reading', '正在读取文档内容...')
+            progress_callback("reading", "正在读取文档内容...")
 
         for att_id in text_ids:
             try:
                 docs = read_attachment_as_documents(att_id)
                 all_docs.extend(docs)
                 logger.info(f"附件 {att_id} 生成 {len(docs)} 个文档片段")
-            except Exception as e:
-                logger.error(f"读取附件文档失败 (id={att_id}): {e}")
+            except Exception:
+                logger.exception(f"读取附件文档失败 (id={att_id})")
 
         if not all_docs:
-            return self.build_message_with_attachments(
-                user_message, self.load_text_attachment_contents(text_ids)
-            )
+            return self.build_message_with_attachments(user_message, self.load_text_attachment_contents(text_ids))
 
         try:
             if progress_callback:
-                progress_callback('indexing', '正在建立向量索引...')
+                progress_callback("indexing", "正在建立向量索引...")
             from langchain_core.vectorstores import InMemoryVectorStore
+
             embeddings = get_embeddings()
             vector_store = InMemoryVectorStore.from_documents(all_docs, embeddings)
 
             if progress_callback:
-                progress_callback('searching', '正在进行相关信息检索...')
+                progress_callback("searching", "正在进行相关信息检索...")
             retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 6})
             relevant_docs = retriever.invoke(user_message)
 
@@ -154,7 +161,7 @@ class AttachmentService:
                 image_note = f"\n\n注意：用户还上传了 {len(image_ids)} 张图片，图片内容已作为多模态消息直接传递给模型。"
 
             if progress_callback:
-                progress_callback('complete', '文档处理完成')
+                progress_callback("complete", "文档处理完成")
 
             return (
                 f"{user_message}\n\n"
@@ -164,11 +171,9 @@ class AttachmentService:
                 f"---\n"
                 f"[原始文件共 {len(all_docs)} 个片段，已检索最相关的 {len(relevant_docs)} 个]{image_note}"
             )
-        except Exception as e:
-            logger.error(f"RAG 检索失败，回退到直接注入: {e}")
-            return self.build_message_with_attachments(
-                user_message, self.load_text_attachment_contents(text_ids)
-            )
+        except Exception:
+            logger.exception("RAG 检索失败，回退到直接注入")
+            return self.build_message_with_attachments(user_message, self.load_text_attachment_contents(text_ids))
 
     def should_use_rag(self, attachment_ids: list[int]) -> bool:
         from Django_xm.apps.tools.langchain.file_reader import get_attachment_info
@@ -188,10 +193,7 @@ class AttachmentService:
         if text_count > 3:
             return True
 
-        if total_size > self.RAG_CONTENT_THRESHOLD:
-            return True
-
-        return False
+        return total_size > self.RAG_CONTENT_THRESHOLD
 
     def has_images(self, attachment_ids: list[int]) -> bool:
         classified = self.classify_attachments(attachment_ids)
@@ -210,7 +212,9 @@ class AttachmentService:
         classified = self.classify_attachments(attachment_ids)
         has_images = len(classified["image_ids"]) > 0
         has_text = len(classified["text_ids"]) > 0
-        logger.info(f"[Attachment] build_user_content: ids={attachment_ids}, images={classified['image_ids']}, texts={classified['text_ids']}")
+        logger.info(
+            f"[Attachment] build_user_content: ids={attachment_ids}, images={classified['image_ids']}, texts={classified['text_ids']}"
+        )
 
         if has_images and not has_text:
             return {
@@ -221,7 +225,9 @@ class AttachmentService:
         if has_images and has_text:
             use_rag = self.should_use_rag(attachment_ids)
             if use_rag:
-                rag_text = self.build_rag_enhanced_message(user_message, attachment_ids, progress_callback=progress_callback)
+                rag_text = self.build_rag_enhanced_message(
+                    user_message, attachment_ids, progress_callback=progress_callback
+                )
                 image_ids = classified["image_ids"]
                 from Django_xm.apps.tools.langchain.file_reader import read_attachment_as_base64
 
@@ -229,12 +235,14 @@ class AttachmentService:
                 for img_id in image_ids:
                     try:
                         image_data, mime_type = read_attachment_as_base64(img_id)
-                        content_parts.append({
-                            "type": "image_url",
-                            "image_url": {"url": f"data:{mime_type};base64,{image_data}"},
-                        })
-                    except Exception as e:
-                        logger.error(f"构造图片多模态消息失败 (id={img_id}): {e}")
+                        content_parts.append(
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:{mime_type};base64,{image_data}"},
+                            }
+                        )
+                    except Exception:
+                        logger.exception(f"构造图片多模态消息失败 (id={img_id})")
 
                 return {"type": "multimodal", "content": content_parts}
             else:
@@ -247,7 +255,9 @@ class AttachmentService:
             if self.should_use_rag(attachment_ids):
                 return {
                     "type": "text",
-                    "content": self.build_rag_enhanced_message(user_message, attachment_ids, progress_callback=progress_callback),
+                    "content": self.build_rag_enhanced_message(
+                        user_message, attachment_ids, progress_callback=progress_callback
+                    ),
                 }
             else:
                 text_content = self.load_text_attachment_contents(attachment_ids)
@@ -264,11 +274,9 @@ class AttachmentService:
 
         from Django_xm.apps.attachments.models import ChatAttachment
 
-        ChatAttachment.objects.filter(
-            id__in=attachment_ids,
-            session=message.session,
-            message__isnull=True
-        ).update(message=message)
+        ChatAttachment.objects.filter(id__in=attachment_ids, session=message.session, message__isnull=True).update(
+            message=message
+        )
 
     def persist_attachments_to_store(
         self,
@@ -280,12 +288,14 @@ class AttachmentService:
             return 0
 
         from Django_xm.apps.attachments.services.document_memory_service import DocumentMemoryService
+
         service = DocumentMemoryService(store=store)
         saved_count = 0
 
         for att_id in attachment_ids:
             try:
                 from Django_xm.apps.tools.langchain.file_reader import get_attachment_info
+
                 info = get_attachment_info(att_id)
                 if info.get("is_image"):
                     continue
@@ -307,8 +317,8 @@ class AttachmentService:
                 )
                 if saved:
                     saved_count += 1
-            except Exception as e:
-                logger.error(f"附件 {att_id} 持久化到 Store 失败: {e}")
+            except Exception:
+                logger.exception(f"附件 {att_id} 持久化到 Store 失败")
 
         if saved_count > 0:
             logger.info(f"已将 {saved_count}/{len(attachment_ids)} 个附件持久化到 Store (user={user_id})")

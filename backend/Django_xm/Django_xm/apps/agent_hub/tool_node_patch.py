@@ -35,6 +35,7 @@ def patch_tool_node():
         # ---- Replicate the original _afunc setup ----
         tool_calls, input_type = self._parse_input(input)
         from langgraph.prebuilt.tool_node import get_config_list
+
         config_list = get_config_list(config, len(tool_calls))
 
         # 获取 state.messages，用于检测已有 ToolMessage（跳过被拒绝的工具）
@@ -45,6 +46,7 @@ def patch_tool_node():
         else:
             state_messages = []
         from langchain_core.messages import ToolMessage as _ToolMessage
+
         existing_tool_call_ids = {
             getattr(m, "tool_call_id", None)
             for m in state_messages
@@ -60,6 +62,7 @@ def patch_tool_node():
                 continue
             state = self._extract_state(input, cfg)
             from langgraph.prebuilt.tool_node import ToolRuntime
+
             tool_runtime = ToolRuntime(
                 state=state,
                 tool_call_id=call["id"],
@@ -75,8 +78,7 @@ def patch_tool_node():
 
         if skipped_call_ids:
             logger.info(
-                f"[ToolNodePatch] 跳过 {len(skipped_call_ids)} 个已有 ToolMessage 的 tool_call: "
-                f"{skipped_call_ids}"
+                f"[ToolNodePatch] 跳过 {len(skipped_call_ids)} 个已有 ToolMessage 的 tool_call: {skipped_call_ids}"
             )
 
         coros = []

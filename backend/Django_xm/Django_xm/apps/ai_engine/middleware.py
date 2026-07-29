@@ -37,6 +37,7 @@ class AIExceptionMiddleware:
                 BadRequestError,
                 RateLimitError,
             )
+
             mapping[RateLimitError] = (429, "AI 服务请求频率超限，请稍后重试", "AI_RATE_LIMIT")
             mapping[AuthenticationError] = (401, "AI 服务认证失败", "AI_AUTH_ERROR")
             mapping[BadRequestError] = (400, "AI 请求参数错误", "AI_BAD_REQUEST")
@@ -48,18 +49,21 @@ class AIExceptionMiddleware:
 
         try:
             from langchain_core.exceptions import OutputParserException
+
             mapping[OutputParserException] = (422, "AI 输出解析失败", "AI_OUTPUT_PARSE_ERROR")
         except ImportError:
             pass
 
         try:
             from langgraph.errors import GraphRecursionError
+
             mapping[GraphRecursionError] = (422, "Agent 执行超出最大迭代次数", "AI_RECURSION_LIMIT")
         except ImportError:
             pass
 
         try:
             from httpx import ConnectError, TimeoutException
+
             mapping[TimeoutException] = (504, "AI 服务响应超时", "AI_TIMEOUT")
             mapping[ConnectError] = (502, "AI 服务连接失败", "AI_CONNECTION_ERROR")
         except ImportError:
@@ -69,7 +73,7 @@ class AIExceptionMiddleware:
         return mapping
 
     def process_exception(self, request, exception):
-        if not request.path.startswith('/api/'):
+        if not request.path.startswith("/api/"):
             return None
 
         exception_map = self._build_exception_map()

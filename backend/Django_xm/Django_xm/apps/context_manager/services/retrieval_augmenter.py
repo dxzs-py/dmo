@@ -19,7 +19,6 @@ logger = get_logger(__name__)
 
 
 class RetrievalAugmenter:
-
     @staticmethod
     async def hyde_rewrite(query: str, llm: BaseChatModel) -> str:
         prompt = f"请写一段详细的回答来回答以下问题：{query}"
@@ -31,8 +30,8 @@ class RetrievalAugmenter:
                 return query
             logger.info(f"HyDE 改写完成: query='{query[:50]}...' -> doc_len={len(hypothetical_doc)}")
             return hypothetical_doc
-        except Exception as e:
-            logger.error(f"HyDE 改写失败: {e}")
+        except Exception:
+            logger.exception("HyDE 改写失败")
             return query
 
     @staticmethod
@@ -46,8 +45,8 @@ class RetrievalAugmenter:
                 return query
             logger.info(f"HyDE 改写完成: query='{query[:50]}...' -> doc_len={len(hypothetical_doc)}")
             return hypothetical_doc
-        except Exception as e:
-            logger.error(f"HyDE 改写失败: {e}")
+        except Exception:
+            logger.exception("HyDE 改写失败")
             return query
 
     @staticmethod
@@ -69,8 +68,8 @@ class RetrievalAugmenter:
                 summary = RetrievalAugmenter._summarize_with_llm(result_str, llm, max_length)
                 if summary:
                     return summary
-            except Exception as e:
-                logger.error(f"LLM 总结工具结果失败: {e}")
+            except Exception:
+                logger.exception("LLM 总结工具结果失败")
 
         return result_str[:max_length] + "\n[内容已截断]"
 
@@ -79,7 +78,7 @@ class RetrievalAugmenter:
         stripped = text.strip()
         if not stripped:
             return False
-        if stripped[0] not in ('{', '['):
+        if stripped[0] not in ("{", "["):
             return False
         try:
             json.loads(stripped)
@@ -145,8 +144,7 @@ class RetrievalAugmenter:
     def _summarize_with_llm(text: str, llm: BaseChatModel, max_length: int) -> str | None:
         truncated_input = text[:8000] if len(text) > 8000 else text
         prompt = (
-            f"请将以下工具返回结果总结为简洁的自然语言，"
-            f"保留关键信息和数据，不超过{max_length}字：\n\n{truncated_input}"
+            f"请将以下工具返回结果总结为简洁的自然语言，保留关键信息和数据，不超过{max_length}字：\n\n{truncated_input}"
         )
         response = llm.invoke([{"role": "user", "content": prompt}])
         summary = getattr(response, "content", "")

@@ -28,10 +28,11 @@ class ContextLifecycleManager:
             return
         try:
             from Django_xm.apps.context_manager.models import AutoMemory
+
             AutoMemory.objects.create(
                 user_id=user_id,
                 content=summary[:5000],  # 限制长度
-                source='pattern',
+                source="pattern",
             )
         except Exception as e:
             logger.warning(f"ContextLifecycle: 保存会话摘要失败: {e}")
@@ -44,14 +45,15 @@ class ContextLifecycleManager:
             from django.utils import timezone
 
             from Django_xm.apps.context_manager.models import AutoMemory
+
             AutoMemory.objects.filter(id__in=memory_ids, user_id=user_id).update(
-                access_count=models.F('access_count') + 1,
+                access_count=models.F("access_count") + 1,
                 last_accessed_at=timezone.now(),
             )
         except Exception as e:
             logger.warning(f"ContextLifecycle: 更新访问计数失败: {e}")
 
-    def cleanup_expired(self, user_id: int = None, days: int = 30):
+    def cleanup_expired(self, user_id: int | None = None, days: int = 30):
         """清理超过 N 天未访问的上下文"""
         try:
             from datetime import timedelta
@@ -75,6 +77,7 @@ class ContextLifecycleManager:
         """用户删除时级联清理（Django FK CASCADE 会自动处理，此方法作为兜底）"""
         try:
             from Django_xm.apps.context_manager.models import AutoMemory, ContextRule, PromptCache
+
             ContextRule.objects.filter(user_id=user_id).delete()
             AutoMemory.objects.filter(user_id=user_id).delete()
             PromptCache.objects.filter(user_id=user_id).delete()
@@ -86,14 +89,12 @@ class ContextLifecycleManager:
         """获取自动记忆统计信息"""
         try:
             from Django_xm.apps.context_manager.models import AutoMemory
+
             qs = AutoMemory.objects.filter(user_id=user_id)
             return {
-                'total_count': qs.count(),
-                'total_size': sum(len(m.content) for m in qs.only('content')[:1000]),
-                'by_source': {
-                    source: qs.filter(source=source).count()
-                    for source, _ in AutoMemory.SOURCE_CHOICES
-                },
+                "total_count": qs.count(),
+                "total_size": sum(len(m.content) for m in qs.only("content")[:1000]),
+                "by_source": {source: qs.filter(source=source).count() for source, _ in AutoMemory.SOURCE_CHOICES},
             }
         except Exception:
-            return {'total_count': 0, 'total_size': 0, 'by_source': {}}
+            return {"total_count": 0, "total_size": 0, "by_source": {}}

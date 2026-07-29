@@ -9,32 +9,32 @@
 三条业务链路（chat 主 Agent / deep_research / 子 Agent）共用同一套风险分级。
 """
 
-from enum import Enum
+from enum import StrEnum
 
 
-class RiskLevel(str, Enum):
+class RiskLevel(StrEnum):
     """工具调用风险等级。
 
     继承 str + Enum，支持与字符串字面量直接比较：
         RiskLevel.SAFE == 'safe'  # True
     """
 
-    SAFE = 'safe'
+    SAFE = "safe"
     """自动通过，不 interrupt，仅审计日志（auto_approved=True）"""
 
-    CONTROLLED = 'controlled'
+    CONTROLLED = "controlled"
     """需用户审批，常规 UI 展示"""
 
-    HIGH = 'high'
+    HIGH = "high"
     """需用户审批，红名高亮 + 强制 Docker 沙箱执行"""
 
 
 # 旧 danger_level（low/medium/high）→ 新 RiskLevel 映射
 # 兼容期使用：policies.assess_danger() 仍返回旧格式，assess_risk() 内部转换
 _LEGACY_DANGER_TO_RISK: dict[str, RiskLevel] = {
-    'low': RiskLevel.SAFE,
-    'medium': RiskLevel.CONTROLLED,
-    'high': RiskLevel.HIGH,
+    "low": RiskLevel.SAFE,
+    "medium": RiskLevel.CONTROLLED,
+    "high": RiskLevel.HIGH,
 }
 
 

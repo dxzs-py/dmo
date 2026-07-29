@@ -1,3 +1,5 @@
+import logging
+
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -16,23 +18,27 @@ from Django_xm.apps.ai_engine.services.registry_service import (
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.responses import error_response, success_response
 
+logger = logging.getLogger(__name__)
+
 
 class ModelListView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(view=False)
+    @extend_schema(exclude=True)
     def get(self, request):
         providers = get_available_providers()
-        return success_response(data={
-            "providers": providers,
-            "default_provider": "openai",
-        })
+        return success_response(
+            data={
+                "providers": providers,
+                "default_provider": "openai",
+            }
+        )
 
 
 class ModelTestView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(view=False)
+    @extend_schema(exclude=True)
     def post(self, request):
         provider_id = request.data.get("provider_id")
         model_name = request.data.get("model_name")
@@ -69,7 +75,7 @@ class ModelTestView(APIView):
 class ModelSwitchView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(view=False)
+    @extend_schema(exclude=True)
     def post(self, request):
         provider_id = request.data.get("provider_id")
         model_name = request.data.get("model_name")
@@ -125,50 +131,58 @@ class ModelSwitchView(APIView):
 class HelperModelView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(view=False)
+    @extend_schema(exclude=True)
     def get(self, request):
         # 优先从 SystemConfig 数据库读取
         current_provider = ""
         current_model = ""
         try:
             from Django_xm.apps.ai_engine.models import SystemConfig
+
             helper_config = SystemConfig.get_value("helper_model", {})
             current_provider = helper_config.get("provider_id", "")
             current_model = helper_config.get("model_name", "")
         except Exception:
-            pass
+            # 配置读取失败时回退到运行时内存配置，不影响主流程
+            logger.debug("读取 helper_model 配置失败，回退到运行时内存")
 
         # 回退到运行时内存
         if not current_provider:
             from django.conf import settings as django_settings
-            current_provider = getattr(django_settings, 'AI_HELPER_MODEL_PROVIDER', '')
-            current_model = getattr(django_settings, 'AI_HELPER_MODEL_NAME', '')
+
+            current_provider = getattr(django_settings, "AI_HELPER_MODEL_PROVIDER", "")
+            current_model = getattr(django_settings, "AI_HELPER_MODEL_NAME", "")
 
         priority_list = []
         for item in HELPER_MODEL_PRIORITY:
             pid = item["provider"]
             provider_cfg = get_provider_config(pid)
-            priority_list.append({
-                "provider_id": pid,
-                "model_name": item["model"],
-                "reason": item["reason"],
-                "label": provider_cfg.get("label", pid),
-            })
+            priority_list.append(
+                {
+                    "provider_id": pid,
+                    "model_name": item["model"],
+                    "reason": item["reason"],
+                    "label": provider_cfg.get("label", pid),
+                }
+            )
 
         providers = get_available_providers()
-        return success_response(data={
-            "current": {
-                "provider_id": current_provider or None,
-                "model_name": current_model or None,
-                "is_auto": not current_provider,
-            },
-            "priority": priority_list,
-            "providers": providers,
-        })
+        return success_response(
+            data={
+                "current": {
+                    "provider_id": current_provider or None,
+                    "model_name": current_model or None,
+                    "is_auto": not current_provider,
+                },
+                "priority": priority_list,
+                "providers": providers,
+            }
+        )
 
-    @extend_schema(view=False)
+    @extend_schema(exclude=True)
     def put(self, request):
         from django.conf import settings as django_settings
+
         provider_id = request.data.get("provider_id") or ""
         model_name = request.data.get("model_name") or ""
 
@@ -182,21 +196,27 @@ class HelperModelView(APIView):
         # 持久化到数据库：空字符串视为重置，存 null
         try:
             from Django_xm.apps.ai_engine.models import SystemConfig
+
             if provider_id:
-                SystemConfig.set_value("helper_model", {
-                    "provider_id": provider_id,
-                    "model_name": model_name,
-                })
+                SystemConfig.set_value(
+                    "helper_model",
+                    {
+                        "provider_id": provider_id,
+                        "model_name": model_name,
+                    },
+                )
             else:
                 SystemConfig.set_value("helper_model", None)
         except Exception:
-            pass
+            # 数据库持久化失败不影响当前请求，运行时内存仍会同步
+            logger.exception("保存 helper_model 配置到数据库失败")
 
         # 同步运行时内存（兼容旧逻辑）
         django_settings.AI_HELPER_MODEL_PROVIDER = provider_id
         django_settings.AI_HELPER_MODEL_NAME = model_name
 
         import Django_xm.apps.ai_engine.services.llm_factory as llm_mod
+
         llm_mod._helper_model_cache = None
 
         return success_response(

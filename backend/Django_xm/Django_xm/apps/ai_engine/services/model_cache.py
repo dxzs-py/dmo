@@ -18,7 +18,8 @@ _model_cache_lock = threading.Lock()
 
 def _get_cache_maxsize():
     from django.conf import settings
-    return getattr(settings, 'AI_MODEL_CACHE_MAXSIZE', 32)
+
+    return getattr(settings, "AI_MODEL_CACHE_MAXSIZE", 32)
 
 
 def make_cache_key(

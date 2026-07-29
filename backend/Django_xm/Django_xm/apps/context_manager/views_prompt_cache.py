@@ -18,12 +18,13 @@ logger = get_logger(__name__)
 
 class PromptCacheListView(APIView):
     """提示缓存列表 + 创建"""
+
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         """获取当前用户的提示缓存列表"""
         qs = PromptCache.objects.filter(user=request.user)
-        cache_type = request.query_params.get('cache_type')
+        cache_type = request.query_params.get("cache_type")
         if cache_type:
             qs = qs.filter(cache_type=cache_type)
         serializer = PromptCacheSerializer(qs, many=True)
@@ -36,7 +37,7 @@ class PromptCacheListView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         # 计算 token 数（粗略估算：中文约 1.5 字符/token，英文约 4 字符/token）
-        content = serializer.validated_data.get('content', '')
+        content = serializer.validated_data.get("content", "")
         token_count = len(content) // 3
 
         cache = serializer.save(user=request.user, token_count=token_count)
@@ -48,6 +49,7 @@ class PromptCacheListView(APIView):
 
 class PromptCacheDetailView(APIView):
     """提示缓存详情 + 更新 + 删除"""
+
     permission_classes = [IsAuthenticated]
 
     def _get_object(self, request, pk):
@@ -59,21 +61,21 @@ class PromptCacheDetailView(APIView):
     def get(self, request, pk):
         cache = self._get_object(request, pk)
         if not cache:
-            return Response({'detail': '未找到'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": "未找到"}, status=status.HTTP_404_NOT_FOUND)
         serializer = PromptCacheSerializer(cache)
         return Response(serializer.data)
 
     def put(self, request, pk):
         cache = self._get_object(request, pk)
         if not cache:
-            return Response({'detail': '未找到'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": "未找到"}, status=status.HTTP_404_NOT_FOUND)
 
         serializer = PromptCacheSerializer(cache, data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         # 重新计算 token 数
-        content = serializer.validated_data.get('content', cache.content)
+        content = serializer.validated_data.get("content", cache.content)
         token_count = len(content) // 3
 
         cache = serializer.save(token_count=token_count)
@@ -83,15 +85,15 @@ class PromptCacheDetailView(APIView):
         """部分更新（仅更新传入的字段，未传入字段保留原值）"""
         cache = self._get_object(request, pk)
         if not cache:
-            return Response({'detail': '未找到'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": "未找到"}, status=status.HTTP_404_NOT_FOUND)
 
         serializer = PromptCacheSerializer(cache, data=request.data, partial=True)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         # 如果更新了 content，重新计算 token 数
-        if 'content' in serializer.validated_data:
-            token_count = len(serializer.validated_data['content']) // 3
+        if "content" in serializer.validated_data:
+            token_count = len(serializer.validated_data["content"]) // 3
             cache = serializer.save(token_count=token_count)
         else:
             cache = serializer.save()
@@ -101,13 +103,14 @@ class PromptCacheDetailView(APIView):
     def delete(self, request, pk):
         cache = self._get_object(request, pk)
         if not cache:
-            return Response({'detail': '未找到'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": "未找到"}, status=status.HTTP_404_NOT_FOUND)
         cache.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class PromptCacheTestView(APIView):
     """提示缓存模板测试"""
+
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
@@ -115,28 +118,31 @@ class PromptCacheTestView(APIView):
         try:
             cache = PromptCache.objects.get(pk=pk, user=request.user)
         except PromptCache.DoesNotExist:
-            return Response({'detail': '未找到'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": "未找到"}, status=status.HTTP_404_NOT_FOUND)
 
         # 获取变量值
-        variables = request.data.get('variables', {})
+        variables = request.data.get("variables", {})
 
         # 渲染模板
         rendered = cache.content
         for var_def in cache.variables:
-            var_name = var_def.get('name', '')
-            default_val = var_def.get('default', '')
+            var_name = var_def.get("name", "")
+            default_val = var_def.get("default", "")
             value = variables.get(var_name, default_val)
-            rendered = rendered.replace(f'{{{{{var_name}}}}}', str(value))
+            rendered = rendered.replace(f"{{{{{var_name}}}}}", str(value))
 
-        return Response({
-            'rendered': rendered,
-            'token_count': len(rendered) // 3,
-            'variables_used': list(variables.keys()),
-        })
+        return Response(
+            {
+                "rendered": rendered,
+                "token_count": len(rendered) // 3,
+                "variables_used": list(variables.keys()),
+            }
+        )
 
 
 class PromptCacheReorderView(APIView):
     """批量排序"""
+
     permission_classes = [IsAuthenticated]
 
     def put(self, request):
@@ -144,17 +150,15 @@ class PromptCacheReorderView(APIView):
 
         请求体: { items: [{ id: 1, sort_order: 0 }, { id: 2, sort_order: 1 }, ...] }
         """
-        items = request.data.get('items', [])
+        items = request.data.get("items", [])
         if not items:
-            return Response({'detail': 'items 不能为空'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "items 不能为空"}, status=status.HTTP_400_BAD_REQUEST)
 
         updated = 0
         for item in items:
-            pk = item.get('id')
-            sort_order = item.get('sort_order', 0)
+            pk = item.get("id")
+            sort_order = item.get("sort_order", 0)
             if pk is not None:
-                updated += PromptCache.objects.filter(
-                    pk=pk, user=request.user
-                ).update(sort_order=sort_order)
+                updated += PromptCache.objects.filter(pk=pk, user=request.user).update(sort_order=sort_order)
 
-        return Response({'updated': updated})
+        return Response({"updated": updated})

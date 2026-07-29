@@ -6,10 +6,16 @@ RAG 模式聊天服务
 - RAG 检索器获取
 - RAG 评估闭环（检索质量 + 生成质量评估，低分触发重检索）
 """
+
+from __future__ import annotations
+
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.documents import Document
+
+if TYPE_CHECKING:
+    from Django_xm.apps.knowledge.services.retrieval_service import SearchType
 
 logger = logging.getLogger(__name__)
 
@@ -32,24 +38,32 @@ class RAGChatService:
     def _get_user_index_name(self, index_name: str) -> str:
         return f"user_{self.user_id}_{index_name}" if self.user_id else index_name
 
-    def get_rag_retriever(self, index_name: str, k: int = 4, search_type: str = "similarity", retrieval_mode: str = "precise"):
+    def get_rag_retriever(
+        self, index_name: str, k: int = 4, search_type: SearchType = "similarity", retrieval_mode: str = "precise"
+    ):
         from Django_xm.apps.ai_engine.config import settings as app_cfg
         from Django_xm.apps.knowledge.services.cross_app import get_index_manager
         from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
-        from Django_xm.apps.knowledge.services.retrieval_service import create_multi_query_retriever, create_retriever
+        from Django_xm.apps.knowledge.services.retrieval_service import (
+            SearchType,
+            create_multi_query_retriever,
+            create_retriever,
+        )
 
         if not self.user_id:
             logger.warning("get_rag_retriever: user_id 为空，跳过")
             return None
         try:
             user_index_name = self._get_user_index_name(index_name)
-            logger.info(f"get_rag_retriever: index_name={index_name}, user_index_name={user_index_name}, user_id={self.user_id}")
+            logger.info(
+                f"get_rag_retriever: index_name={index_name}, user_index_name={user_index_name}, user_id={self.user_id}"
+            )
             manager = get_index_manager()
             if not manager.index_exists(user_index_name):
                 logger.warning(f"索引不存在: {user_index_name}")
                 return None
             metadata = manager._load_metadata(user_index_name)
-            num_documents = metadata.get('num_documents', 0) if metadata else 0
+            num_documents = metadata.get("num_documents", 0) if metadata else 0
             if num_documents == 0:
                 logger.warning(f"索引中无文档: {user_index_name}")
                 return None
@@ -60,12 +74,16 @@ class RAGChatService:
                 comp_k = app_cfg.retriever_comprehensive_k
                 comp_fetch_k = max(comp_k * 3, 30)
                 retriever = create_retriever(
-                    vector_store, k=comp_k, search_type="mmr", fetch_k=comp_fetch_k,
+                    vector_store,
+                    k=comp_k,
+                    search_type="mmr",
+                    fetch_k=comp_fetch_k,
                 )
 
                 if app_cfg.retriever_use_multi_query:
                     try:
                         from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model, get_helper_model
+
                         mq_llm = get_helper_model() or get_chat_model(streaming=False)
                         retriever = create_multi_query_retriever(retriever, llm=mq_llm, include_original=True)
                         logger.info(f"comprehensive 检索器已叠加 MultiQuery (k={comp_k})")
@@ -77,8 +95,8 @@ class RAGChatService:
 
             retriever = create_retriever(vector_store, k=k, search_type=search_type)
             return retriever
-        except Exception as e:
-            logger.error(f"获取 RAG 检索器失败: {e}", exc_info=True)
+        except Exception:
+            logger.exception("获取 RAG 检索器失败")
             return None
 
     def _compute_retrieval_quality(self, query: str, docs: list[Document]) -> float:
@@ -138,7 +156,7 @@ class RAGChatService:
     def process_rag_request(self, data: dict[str, Any]) -> dict[str, Any]:
         from Django_xm.apps.knowledge.services.strict_rag_chain import query_strict_rag
 
-        selected_kb = data.get('selected_knowledge_base')
+        selected_kb = data.get("selected_knowledge_base")
         if not selected_kb:
             return None
 
@@ -146,12 +164,12 @@ class RAGChatService:
         if not retriever:
             return None
 
-        query = data['message']
+        query = data["message"]
         logger.info(f"使用知识库 {selected_kb} 进行 RAG 查询")
 
         # Strict Chain 模式：强制检索 -> 注入上下文 -> 生成（防幻觉）
         result = query_strict_rag(retriever, query, k=4, collection_name=selected_kb)
-        answer = result.get('answer', '')
+        answer = result.get("answer", "")
 
         # 获取检索文档用于评估
         try:
@@ -170,8 +188,7 @@ class RAGChatService:
         final_answer = answer
         final_eval = eval_info
 
-        if (retrieval_quality < RETRIEVAL_QUALITY_THRESHOLD
-                or generation_quality < GENERATION_QUALITY_THRESHOLD):
+        if retrieval_quality < RETRIEVAL_QUALITY_THRESHOLD or generation_quality < GENERATION_QUALITY_THRESHOLD:
             retry_count += 1
             logger.info(
                 f"RAG 评估低分，触发重检索 (第{retry_count}次): "
@@ -183,12 +200,10 @@ class RAGChatService:
             new_search_type = "mmr" if generation_quality < GENERATION_QUALITY_THRESHOLD else "similarity"
 
             # 创建新检索器并重新查询
-            new_retriever = self.get_rag_retriever(
-                selected_kb, k=new_k, search_type=new_search_type
-            )
+            new_retriever = self.get_rag_retriever(selected_kb, k=new_k, search_type=new_search_type)
             if new_retriever:
                 new_result = query_strict_rag(new_retriever, query, k=new_k, collection_name=selected_kb)
-                new_answer = new_result.get('answer', '')
+                new_answer = new_result.get("answer", "")
 
                 # 重新评估
                 try:
@@ -217,16 +232,16 @@ class RAGChatService:
         )
 
         return {
-            'message': final_answer,
-            'mode': 'rag',
-            'tools_used': ['rag_retrieve'],
-            'success': True,
-            'sources': result.get('sources', []),
-            'evaluation': {
-                'retrieval_quality': round(final_eval['retrieval_quality'], 4),
-                'generation_quality': round(final_eval['generation_quality'], 4),
-                'overall_score': final_eval['evaluation_result'].overall_score,
-                'retry_count': retry_count,
+            "message": final_answer,
+            "mode": "rag",
+            "tools_used": ["rag_retrieve"],
+            "success": True,
+            "sources": result.get("sources", []),
+            "evaluation": {
+                "retrieval_quality": round(final_eval["retrieval_quality"], 4),
+                "generation_quality": round(final_eval["generation_quality"], 4),
+                "overall_score": final_eval["evaluation_result"].overall_score,
+                "retry_count": retry_count,
             },
         }
 
@@ -242,8 +257,7 @@ class RAGChatService:
 
             with TokenUsageCallbackHandler() as cb:
                 async for event in astream_strict_rag(
-                    retriever, data['message'], k=4,
-                    collection_name=data.get('selected_knowledge_base', '')
+                    retriever, data["message"], k=4, collection_name=data.get("selected_knowledge_base", "")
                 ):
                     if event["type"] == "chunk":
                         full_response += event["content"]
@@ -257,16 +271,18 @@ class RAGChatService:
                         return
 
             from .stream_helpers import update_usage_and_tokens
+
             update_usage_and_tokens(cb, usage_tracker, token_detail_tracker)
 
             if sources:
-                yield {'type': 'sources', 'data': sources}
+                yield {"type": "sources", "data": sources}
 
             return
 
         except Exception as e:
-            logger.error(f"Strict RAG Chain 流式查询失败: {e}", exc_info=True)
+            logger.exception("Strict RAG Chain 流式查询失败")
             from Django_xm.apps.ai_engine.services.exceptions import classify_exception
+
             classified = classify_exception(e)
             yield {"type": "error", "message": classified.user_message}
             return

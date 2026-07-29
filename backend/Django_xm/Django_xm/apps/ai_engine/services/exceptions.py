@@ -180,6 +180,7 @@ def classify_exception(exc: Exception) -> LCAgentException:
 
     try:
         from langgraph.errors import GraphRecursionError
+
         if isinstance(exc, GraphRecursionError):
             return AgentExecutionError(
                 message=f"Agent 执行超出最大迭代次数: {exc}",
@@ -206,6 +207,7 @@ def classify_exception(exc: Exception) -> LCAgentException:
         from openai import (
             RateLimitError as OpenAIRateLimitError,
         )
+
         if isinstance(exc, OpenAIRateLimitError):
             return RateLimitExceededError(
                 message=f"OpenAI 速率限制: {exc}",

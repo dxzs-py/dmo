@@ -108,7 +108,9 @@ def create_web_researcher(
     from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
     from Django_xm.apps.tools.langchain.web_search import create_tavily_search_tool
 
-    warnings.warn("create_web_researcher 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2)
+    warnings.warn(
+        "create_web_researcher 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2
+    )
     logger.info("🔍 创建 WebResearcher 子智能体")
 
     if model is None:
@@ -118,12 +120,16 @@ def create_web_researcher(
         agent_tools = []
 
         web_researcher_tool_names = [
-            'web_search', 'duckduckgo_search',
-            'fs_write_file', 'fs_read_file', 'fs_list_files', 'fs_search_files',
+            "web_search",
+            "duckduckgo_search",
+            "fs_write_file",
+            "fs_read_file",
+            "fs_list_files",
+            "fs_search_files",
         ]
         agent_tools.extend(_get_tools_by_names(web_researcher_tool_names))
 
-        if not any(t.name in ('web_search', 'duckduckgo_search') for t in agent_tools):
+        if not any(t.name in ("web_search", "duckduckgo_search") for t in agent_tools):
             try:
                 search_tool = create_tavily_search_tool()
                 agent_tools.append(search_tool)
@@ -172,7 +178,9 @@ def create_doc_analyst(
     from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
     from Django_xm.apps.tools.langchain.web_search import create_tavily_search_tool
 
-    warnings.warn("create_doc_analyst 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2)
+    warnings.warn(
+        "create_doc_analyst 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2
+    )
     logger.info("📚 创建 DocAnalyst 子智能体")
 
     if model is None:
@@ -188,12 +196,16 @@ def create_doc_analyst(
             logger.warning("⚠️ 未提供 retriever_tool，DocAnalyst 将无法检索文档")
 
         doc_analyst_tool_names = [
-            'web_search', 'duckduckgo_search',
-            'fs_write_file', 'fs_read_file', 'fs_list_files', 'fs_search_files',
+            "web_search",
+            "duckduckgo_search",
+            "fs_write_file",
+            "fs_read_file",
+            "fs_list_files",
+            "fs_search_files",
         ]
         agent_tools.extend(_get_tools_by_names(doc_analyst_tool_names))
 
-        if enable_web_supplement and not any(t.name in ('web_search', 'duckduckgo_search') for t in agent_tools):
+        if enable_web_supplement and not any(t.name in ("web_search", "duckduckgo_search") for t in agent_tools):
             try:
                 search_tool = create_tavily_search_tool()
                 agent_tools.append(search_tool)
@@ -238,7 +250,9 @@ def create_report_writer(
     from Django_xm.apps.ai_engine.prompts.system_prompts import WRITER_GUIDELINES
     from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
 
-    warnings.warn("create_report_writer 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2)
+    warnings.warn(
+        "create_report_writer 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2
+    )
     logger.info("✍️ 创建 ReportWriter 子智能体")
 
     if model is None:
@@ -246,7 +260,10 @@ def create_report_writer(
 
     if tools is None:
         report_writer_tool_names = [
-            'fs_write_file', 'fs_read_file', 'fs_list_files', 'fs_search_files',
+            "fs_write_file",
+            "fs_read_file",
+            "fs_list_files",
+            "fs_search_files",
         ]
         tools = _get_tools_by_names(report_writer_tool_names)
         logger.debug(f"   添加文件系统工具: {len(tools)} 个")
@@ -281,7 +298,14 @@ def get_subagent_info() -> dict:
                 "来源评估",
                 "笔记整理",
             ],
-            "tools": ["web_search", "duckduckgo_search", "fs_write_file", "fs_read_file", "fs_list_files", "fs_search_files"],
+            "tools": [
+                "web_search",
+                "duckduckgo_search",
+                "fs_write_file",
+                "fs_read_file",
+                "fs_list_files",
+                "fs_search_files",
+            ],
         },
         "doc_analyst": {
             "name": "DocAnalyst",
@@ -294,7 +318,15 @@ def get_subagent_info() -> dict:
                 "网络搜索补充",
                 "结构化来源输出",
             ],
-            "tools": ["knowledge_base", "web_search", "duckduckgo_search", "fs_write_file", "fs_read_file", "fs_list_files", "fs_search_files"],
+            "tools": [
+                "knowledge_base",
+                "web_search",
+                "duckduckgo_search",
+                "fs_write_file",
+                "fs_read_file",
+                "fs_list_files",
+                "fs_search_files",
+            ],
         },
         "report_writer": {
             "name": "ReportWriter",

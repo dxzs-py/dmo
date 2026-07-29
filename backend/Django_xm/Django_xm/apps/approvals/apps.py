@@ -2,5 +2,5 @@ from django.apps import AppConfig
 
 
 class ApprovalsConfig(AppConfig):
-    default_auto_field = 'django.db.models.BigAutoField'
-    name = 'Django_xm.apps.approvals'
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "Django_xm.apps.approvals"

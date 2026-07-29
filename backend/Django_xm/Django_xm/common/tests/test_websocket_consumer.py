@@ -41,10 +41,12 @@ def _make_consumer(user_id=1):
     同时显式初始化 ``connect()`` 中设置的属性（user_group/session_groups/
     task_groups），避免测试未调用 ``connect()`` 时报 AttributeError。
     """
-    consumer = RealtimeSyncConsumer(scope={
-        "type": "websocket",
-        "query_string": b"token=fake-token",
-    })
+    consumer = RealtimeSyncConsumer(
+        scope={
+            "type": "websocket",
+            "query_string": b"token=fake-token",
+        }
+    )
     # channels 4.x: scope 通过 __call__ 在运行时设置，测试中显式赋值
     consumer.scope = {
         "type": "websocket",
@@ -71,7 +73,7 @@ def _make_consumer(user_id=1):
 class ConnectTests(unittest.IsolatedAsyncioTestCase):
     """connect 方法测试。"""
 
-    @patch('Django_xm.apps.chat.consumers.authenticate_websocket_scope')
+    @patch("Django_xm.apps.chat.consumers.authenticate_websocket_scope")
     async def test_connect_subscribes_user_group(self, mock_auth):
         """connect 后订阅 user 频道并发送 connected 消息。"""
         mock_user = MagicMock()
@@ -79,10 +81,12 @@ class ConnectTests(unittest.IsolatedAsyncioTestCase):
         mock_user.is_authenticated = True
         mock_auth.return_value = mock_user
 
-        consumer = RealtimeSyncConsumer(scope={
-            "type": "websocket",
-            "query_string": b"token=fake",
-        })
+        consumer = RealtimeSyncConsumer(
+            scope={
+                "type": "websocket",
+                "query_string": b"token=fake",
+            }
+        )
         # channels 4.x: scope 通过 __call__ 在运行时设置，测试中显式赋值
         consumer.scope = {
             "type": "websocket",
@@ -111,17 +115,19 @@ class ConnectTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(consumer.session_groups, set())
         self.assertEqual(consumer.task_groups, set())
 
-    @patch('Django_xm.apps.chat.consumers.authenticate_websocket_scope')
+    @patch("Django_xm.apps.chat.consumers.authenticate_websocket_scope")
     async def test_connect_rejected_when_not_authenticated(self, mock_auth):
         """未认证时关闭连接（close code=4001）。"""
         mock_user = MagicMock()
         mock_user.is_authenticated = False
         mock_auth.return_value = mock_user
 
-        consumer = RealtimeSyncConsumer(scope={
-            "type": "websocket",
-            "query_string": b"",
-        })
+        consumer = RealtimeSyncConsumer(
+            scope={
+                "type": "websocket",
+                "query_string": b"",
+            }
+        )
         # channels 4.x: scope 通过 __call__ 在运行时设置，测试中显式赋值
         consumer.scope = {
             "type": "websocket",
@@ -137,15 +143,17 @@ class ConnectTests(unittest.IsolatedAsyncioTestCase):
         consumer.accept.assert_not_called()
         consumer.send_json.assert_not_called()
 
-    @patch('Django_xm.apps.chat.consumers.authenticate_websocket_scope')
+    @patch("Django_xm.apps.chat.consumers.authenticate_websocket_scope")
     async def test_connect_rejected_when_user_none(self, mock_auth):
         """authenticate 返回 None 时关闭连接。"""
         mock_auth.return_value = None
 
-        consumer = RealtimeSyncConsumer(scope={
-            "type": "websocket",
-            "query_string": b"",
-        })
+        consumer = RealtimeSyncConsumer(
+            scope={
+                "type": "websocket",
+                "query_string": b"",
+            }
+        )
         # channels 4.x: scope 通过 __call__ 在运行时设置，测试中显式赋值
         consumer.scope = {
             "type": "websocket",
@@ -171,9 +179,7 @@ class DisconnectTests(unittest.IsolatedAsyncioTestCase):
 
         await consumer.disconnect(1000)
 
-        consumer.channel_layer.group_discard.assert_called_once_with(
-            "user_1", "test-channel-name"
-        )
+        consumer.channel_layer.group_discard.assert_called_once_with("user_1", "test-channel-name")
 
     async def test_disconnect_cleans_session_groups(self):
         """disconnect 离开所有已订阅的 session 分组。"""
@@ -186,9 +192,7 @@ class DisconnectTests(unittest.IsolatedAsyncioTestCase):
 
         # 3 次 group_discard：1 个 user + 2 个 session
         self.assertEqual(consumer.channel_layer.group_discard.call_count, 3)
-        discarded_groups = [
-            call.args[0] for call in consumer.channel_layer.group_discard.call_args_list
-        ]
+        discarded_groups = [call.args[0] for call in consumer.channel_layer.group_discard.call_args_list]
         self.assertIn("user_1", discarded_groups)
         self.assertIn("session_a", discarded_groups)
         self.assertIn("session_b", discarded_groups)
@@ -203,9 +207,7 @@ class DisconnectTests(unittest.IsolatedAsyncioTestCase):
         await consumer.disconnect(1000)
 
         self.assertEqual(consumer.channel_layer.group_discard.call_count, 2)
-        discarded_groups = [
-            call.args[0] for call in consumer.channel_layer.group_discard.call_args_list
-        ]
+        discarded_groups = [call.args[0] for call in consumer.channel_layer.group_discard.call_args_list]
         self.assertIn("task_a", discarded_groups)
 
     async def test_disconnect_without_user_group_no_raise(self):
@@ -228,9 +230,7 @@ class SubscribeSessionTests(unittest.IsolatedAsyncioTestCase):
         await consumer.handle_subscribe_session({"session_id": "session-1"})
 
         group = _group_name("session", "session-1")
-        consumer.channel_layer.group_add.assert_called_once_with(
-            group, "test-channel-name"
-        )
+        consumer.channel_layer.group_add.assert_called_once_with(group, "test-channel-name")
         self.assertIn(group, consumer.session_groups)
         # 响应 subscribed
         consumer.send_json.assert_called()
@@ -282,9 +282,7 @@ class SubscribeSessionTests(unittest.IsolatedAsyncioTestCase):
 
         await consumer.handle_unsubscribe_session({"session_id": "session-1"})
 
-        consumer.channel_layer.group_discard.assert_called_once_with(
-            group, "test-channel-name"
-        )
+        consumer.channel_layer.group_discard.assert_called_once_with(group, "test-channel-name")
         self.assertNotIn(group, consumer.session_groups)
         sent = consumer.send_json.call_args.args[0]
         self.assertEqual(sent["type"], "unsubscribed")
@@ -322,9 +320,7 @@ class SubscribeTaskTests(unittest.IsolatedAsyncioTestCase):
         await consumer.handle_subscribe_task({"task_id": "task-1"})
 
         group = _group_name("task", "task-1")
-        consumer.channel_layer.group_add.assert_called_once_with(
-            group, "test-channel-name"
-        )
+        consumer.channel_layer.group_add.assert_called_once_with(group, "test-channel-name")
         self.assertIn(group, consumer.task_groups)
         sent = consumer.send_json.call_args.args[0]
         self.assertEqual(sent["type"], "subscribed")
@@ -357,9 +353,7 @@ class SubscribeTaskTests(unittest.IsolatedAsyncioTestCase):
 
         await consumer.handle_unsubscribe_task({"task_id": "task-1"})
 
-        consumer.channel_layer.group_discard.assert_called_once_with(
-            group, "test-channel-name"
-        )
+        consumer.channel_layer.group_discard.assert_called_once_with(group, "test-channel-name")
         self.assertNotIn(group, consumer.task_groups)
 
 
@@ -460,7 +454,7 @@ class BroadcastEventTests(unittest.IsolatedAsyncioTestCase):
 class ReplayTests(unittest.IsolatedAsyncioTestCase):
     """handle_replay 历史回放测试。"""
 
-    @patch('Django_xm.apps.chat.consumers.get_event_history')
+    @patch("Django_xm.apps.chat.consumers.get_event_history")
     async def test_replay_session_returns_history(self, mock_history):
         """replay session 频道返回历史事件列表。"""
         consumer = _make_consumer(user_id=1)
@@ -470,11 +464,13 @@ class ReplayTests(unittest.IsolatedAsyncioTestCase):
             {"type": "message_added", "seq": 3, "payload": {}},
         ]
 
-        await consumer.handle_replay({
-            "channel_type": "session",
-            "channel_id": "session-1",
-            "last_seq": 1,
-        })
+        await consumer.handle_replay(
+            {
+                "channel_type": "session",
+                "channel_id": "session-1",
+                "last_seq": 1,
+            }
+        )
 
         sent = consumer.send_json.call_args.args[0]
         self.assertEqual(sent["type"], "replay")
@@ -483,18 +479,20 @@ class ReplayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent["count"], 2)
         self.assertEqual(len(sent["events"]), 2)
 
-    @patch('Django_xm.apps.chat.consumers.get_event_history')
+    @patch("Django_xm.apps.chat.consumers.get_event_history")
     async def test_replay_task_returns_history(self, mock_history):
         """replay task 频道返回历史事件。"""
         consumer = _make_consumer(user_id=1)
         consumer._user_owns_task = AsyncMock(return_value=True)
         mock_history.return_value = []
 
-        await consumer.handle_replay({
-            "channel_type": "task",
-            "channel_id": "task-1",
-            "last_seq": 0,
-        })
+        await consumer.handle_replay(
+            {
+                "channel_type": "task",
+                "channel_id": "task-1",
+                "last_seq": 0,
+            }
+        )
 
         sent = consumer.send_json.call_args.args[0]
         self.assertEqual(sent["type"], "replay")
@@ -504,10 +502,12 @@ class ReplayTests(unittest.IsolatedAsyncioTestCase):
         """非法 channel_type 响应 error。"""
         consumer = _make_consumer(user_id=1)
 
-        await consumer.handle_replay({
-            "channel_type": "invalid",
-            "channel_id": "x",
-        })
+        await consumer.handle_replay(
+            {
+                "channel_type": "invalid",
+                "channel_id": "x",
+            }
+        )
 
         sent = consumer.send_json.call_args.args[0]
         self.assertEqual(sent["type"], "error")
@@ -517,10 +517,12 @@ class ReplayTests(unittest.IsolatedAsyncioTestCase):
         """缺少 channel_id 响应 error。"""
         consumer = _make_consumer(user_id=1)
 
-        await consumer.handle_replay({
-            "channel_type": "session",
-            "channel_id": "",
-        })
+        await consumer.handle_replay(
+            {
+                "channel_type": "session",
+                "channel_id": "",
+            }
+        )
 
         sent = consumer.send_json.call_args.args[0]
         self.assertEqual(sent["code"], "40003")
@@ -530,10 +532,12 @@ class ReplayTests(unittest.IsolatedAsyncioTestCase):
         consumer = _make_consumer(user_id=1)
         consumer._user_owns_session = AsyncMock(return_value=False)
 
-        await consumer.handle_replay({
-            "channel_type": "session",
-            "channel_id": "session-1",
-        })
+        await consumer.handle_replay(
+            {
+                "channel_type": "session",
+                "channel_id": "session-1",
+            }
+        )
 
         sent = consumer.send_json.call_args.args[0]
         self.assertEqual(sent["code"], "40401")
@@ -542,7 +546,7 @@ class ReplayTests(unittest.IsolatedAsyncioTestCase):
 class SubscribeWithReplayTests(unittest.IsolatedAsyncioTestCase):
     """订阅时携带 last_seq 自动回放历史事件。"""
 
-    @patch('Django_xm.apps.chat.consumers.get_event_history')
+    @patch("Django_xm.apps.chat.consumers.get_event_history")
     async def test_subscribe_session_with_last_seq_replays(self, mock_history):
         """handle_subscribe_session 携带 last_seq → 回放历史事件。
 
@@ -556,10 +560,12 @@ class SubscribeWithReplayTests(unittest.IsolatedAsyncioTestCase):
             {"type": "message_added", "seq": 5, "payload": {}},
         ]
 
-        await consumer.handle_subscribe_session({
-            "session_id": "session-1",
-            "last_seq": 4,
-        })
+        await consumer.handle_subscribe_session(
+            {
+                "session_id": "session-1",
+                "last_seq": 4,
+            }
+        )
 
         # 第一次 send_json 是 subscribed 响应，第二次是 replay 包装的历史事件
         self.assertEqual(consumer.send_json.call_count, 2)
@@ -574,7 +580,7 @@ class SubscribeWithReplayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second_call["events"][0]["type"], "message_added")
         self.assertEqual(second_call["events"][0]["seq"], 5)
 
-    @patch('Django_xm.apps.chat.consumers.get_event_history')
+    @patch("Django_xm.apps.chat.consumers.get_event_history")
     async def test_subscribe_session_no_last_seq_no_replay(self, mock_history):
         """handle_subscribe_session 不携带 last_seq → 不回放。"""
         consumer = _make_consumer(user_id=1)
@@ -586,7 +592,7 @@ class SubscribeWithReplayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(consumer.send_json.call_count, 1)
         mock_history.assert_not_called()
 
-    @patch('Django_xm.apps.chat.consumers.get_event_history')
+    @patch("Django_xm.apps.chat.consumers.get_event_history")
     async def test_subscribe_task_with_last_seq_replays(self, mock_history):
         """handle_subscribe_task 携带 last_seq → 回放历史事件。
 
@@ -599,10 +605,12 @@ class SubscribeWithReplayTests(unittest.IsolatedAsyncioTestCase):
             {"type": "tool_call_running", "seq": 3, "payload": {}},
         ]
 
-        await consumer.handle_subscribe_task({
-            "task_id": "task-1",
-            "last_seq": 2,
-        })
+        await consumer.handle_subscribe_task(
+            {
+                "task_id": "task-1",
+                "last_seq": 2,
+            }
+        )
 
         # 第二次发送 replay 包装消息
         self.assertEqual(consumer.send_json.call_count, 2)
@@ -616,5 +624,5 @@ class SubscribeWithReplayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second_call["events"][0]["seq"], 3)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

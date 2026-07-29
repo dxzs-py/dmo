@@ -10,6 +10,7 @@ _patch_applied: bool = False
 # 延迟导入，避免循环依赖
 def _get_registry_config() -> dict[str, Any]:
     from Django_xm.apps.ai_engine.services.registry_service import get_provider_config
+
     return get_provider_config("deepseek")
 
 
@@ -64,6 +65,7 @@ def apply_reasoning_patch() -> None:
             return result
 
         import langchain_openai.chat_models.base as _base_module
+
         _base_module._convert_delta_to_message_chunk = _convert_delta_with_reasoning
         _base_module._convert_message_to_dict = _convert_msg_with_reasoning
         _patch_applied = True
@@ -94,6 +96,4 @@ def is_thinking_enabled(special_params: dict[str, Any], provider_id: str = "") -
     if "reasoning_effort" in special_params:
         return True
     # Ollama 特有：reasoning 参数
-    if special_params.get("reasoning"):
-        return True
-    return False
+    return bool(special_params.get("reasoning"))
