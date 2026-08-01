@@ -62,7 +62,11 @@ const { throttledFn: handleScrollThrottled } = useThrottle((event) => {
 }, 100)
 
 onMounted(async () => {
-  themeStore.setTheme(themeStore.currentTheme)
+  try {
+    themeStore.setTheme(themeStore.currentTheme)
+  } catch (e) {
+    console.error('Failed to set theme:', e)
+  }
 })
 </script>
 

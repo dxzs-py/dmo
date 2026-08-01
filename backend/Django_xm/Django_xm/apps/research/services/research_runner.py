@@ -207,8 +207,7 @@ async def _handle_interrupt_create_and_exit(
     first_interrupt = interrupts_data[0] if interrupts_data else {}
     graph_interrupt_id = first_interrupt.get("graph_interrupt_id", "") or ""
     # langgraph_resume_id = LangGraph Interrupt.id，作为 Command(resume=...) 的 KEY
-    # 若 interrupt_data 中未携带，回退到 interrupt_id（= tool_call_id）
-    langgraph_resume_id = first_interrupt.get("interrupt_id", "") or ""
+    langgraph_resume_id = first_interrupt.get("langgraph_resume_id", "") or ""
 
     # 为每个 interrupt 创建 Approval DB 记录
     for interrupt_data in interrupts_data:

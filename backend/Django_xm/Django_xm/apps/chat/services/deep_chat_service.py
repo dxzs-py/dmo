@@ -15,6 +15,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from asgiref.sync import sync_to_async
 from langchain_core.messages import AIMessage, ToolMessage
 
 from Django_xm.apps.ai_engine.services.cost_tracker import TokenDetailTracker
@@ -41,6 +42,82 @@ def _get_redis_pool(broker_url):
 
         _redis_pool = redis_lib.ConnectionPool.from_url(broker_url, max_connections=10)
     return _redis_pool
+
+
+# =============================================================================
+# sync_to_async 预包装函数
+# 将原本在 async def 方法内部每次调用时重新创建的 @sync_to_async
+# 局部闭包提取为模块级函数，装饰器在模块加载时仅执行一次。
+# =============================================================================
+
+
+@sync_to_async(thread_sensitive=True)
+def _get_user_sync(user_id):
+    """同步获取 User 对象"""
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+    return User.objects.get(id=user_id)
+
+
+@sync_to_async(thread_sensitive=True)
+def _create_task_sync(task_manager, thread_id, title, enable_web_search, enable_doc_analysis, created_by, session_id):
+    """同步创建研究任务"""
+    task_manager.create_task(
+        thread_id,
+        title,
+        enable_web_search=enable_web_search,
+        enable_doc_analysis=enable_doc_analysis,
+        created_by=created_by,
+        session_id=session_id,
+    )
+
+
+@sync_to_async(thread_sensitive=True)
+def _update_kb_sync(thread_id, knowledge_base_ids):
+    """同步更新研究任务的知识库字段"""
+    from Django_xm.apps.research.services.cross_app import update_research_task_fields
+
+    update_research_task_fields(thread_id, knowledge_base_ids=knowledge_base_ids)
+
+
+@sync_to_async(thread_sensitive=True)
+def _update_celery_task_id_sync(thread_id, celery_task_id):
+    """同步更新研究任务的 Celery task ID"""
+    from Django_xm.apps.research.services.cross_app import update_research_task_fields
+
+    update_research_task_fields(thread_id, celery_task_id=celery_task_id)
+
+
+@sync_to_async(thread_sensitive=True)
+def _mark_timeout_sync(task_manager, thread_id):
+    """同步标记研究任务超时失败"""
+    task_manager.update_task_status(
+        thread_id,
+        {"status": "failed", "error_message": f"研究任务超时（{_RESEARCH_TIMEOUT}秒）"},
+    )
+
+
+@sync_to_async(thread_sensitive=True)
+def _update_status_sync(task_manager, thread_id, final_report):
+    """同步更新研究任务为已完成状态"""
+    task_manager.update_task_status(
+        thread_id,
+        {"status": "completed", "final_report": final_report},
+    )
+
+
+@sync_to_async
+def _load_approvals_sync(thread_id):
+    """同步从 DB 加载审批记录"""
+    from Django_xm.apps.approvals.models import Approval
+
+    return list(
+        Approval.objects.filter(
+            source=Approval.SOURCE_DEEP_RESEARCH,
+            source_id=thread_id,
+        ).order_by("created_at")
+    )
 
 
 class DeepChatService:
@@ -226,6 +303,26 @@ class DeepChatService:
                                             approval_data["extra"] = interrupt_value["extra"]
                                         if interrupt_value.get("input_placeholder"):
                                             approval_data["input_placeholder"] = interrupt_value["input_placeholder"]
+
+                                        # P25修复：持久化 Approval 记录到数据库
+                                        # 确保后续 POST /api/v1/approvals/{interrupt_id}/resume/ 可查询到记录
+                                        session_id = data.get("session_id", "")
+                                        message_id = str(data.get("_assistant_message_id") or data.get("message_id", ""))
+                                        if session_id:
+                                            approval_data["session_id"] = session_id
+                                        if message_id:
+                                            approval_data["message_id"] = message_id
+                                        try:
+                                            from Django_xm.apps.approvals.services.approval_service import request_approval_async
+                                            await request_approval_async(
+                                                source="chat",
+                                                source_id=session_id or "",
+                                                interrupt_id=interrupt_id,
+                                                approval_data=approval_data,
+                                            )
+                                        except Exception as e:
+                                            logger.error(f"[Approval] DB记录创建失败: interrupt_id={interrupt_id}, error={e}")
+
                                         yield {
                                             "type": "approval",
                                             "data": approval_data,
@@ -245,7 +342,10 @@ class DeepChatService:
                             accumulated_reasoning=accumulated_reasoning,
                             tool_args_accumulator=tool_args_accumulator,
                             mode=prompt_mode,
-                            enable_deep_thinking=True,  # 深度思考模式始终启用
+                            enable_deep_thinking=True,
+                            session_id=data.get("session_id", ""),
+                            message_id=str(data.get("_assistant_message_id") or data.get("message_id", "")),
+                            module_id=data.get("session_id", ""),
                         ):
                             if event.get("type") == "chunk":
                                 current_message_content += event.get("content", "")
@@ -414,7 +514,6 @@ class DeepChatService:
         task_title: str | None = None,
     ) -> str:
         """创建深度研究任务并返回 task_id（不执行研究）"""
-        from asgiref.sync import sync_to_async
         from django.contrib.auth import get_user_model
 
         from Django_xm.apps.research.services.cross_app import get_research_task_manager
@@ -427,27 +526,19 @@ class DeepChatService:
         created_by = None
         if self._chat_service.user_id:
             try:
-
-                @sync_to_async(thread_sensitive=True)
-                def _get_user():
-                    return User.objects.get(id=self._chat_service.user_id)
-
-                created_by = await _get_user()
+                created_by = await _get_user_sync(self._chat_service.user_id)
             except User.DoesNotExist:
                 pass
 
-        @sync_to_async(thread_sensitive=True)
-        def _create_task():
-            task_manager.create_task(
-                thread_id,
-                task_title or query,
-                enable_web_search=use_web_search,
-                enable_doc_analysis=retriever_tool is not None,
-                created_by=created_by,
-                session_id=session_id,
-            )
-
-        await _create_task()
+        await _create_task_sync(
+            task_manager,
+            thread_id,
+            task_title or query,
+            use_web_search,
+            retriever_tool is not None,
+            created_by,
+            session_id,
+        )
         return thread_id
 
     async def run_deep_research_task(
@@ -479,9 +570,7 @@ class DeepChatService:
         3. 订阅 Redis channel 等待结果
         4. 返回标准化结果
         """
-        from asgiref.sync import sync_to_async
-
-        from Django_xm.apps.research.services.cross_app import get_research_task_manager, update_research_task_fields
+        from Django_xm.apps.research.services.cross_app import get_research_task_manager
         from Django_xm.tasks.deep_research import run_research_task
 
         thread_id = task_id or f"research_{uuid.uuid4().hex[:12]}"
@@ -495,35 +584,22 @@ class DeepChatService:
             created_by = None
             if self._chat_service.user_id:
                 try:
-
-                    @sync_to_async(thread_sensitive=True)
-                    def _get_user():
-                        return User.objects.get(id=self._chat_service.user_id)
-
-                    created_by = await _get_user()
+                    created_by = await _get_user_sync(self._chat_service.user_id)
                 except User.DoesNotExist:
                     pass
 
-            @sync_to_async(thread_sensitive=True)
-            def _create_task():
-                task_manager.create_task(
-                    thread_id,
-                    task_title or query,
-                    enable_web_search=use_web_search,
-                    enable_doc_analysis=retriever_tool is not None,
-                    created_by=created_by,
-                    session_id=session_id,
-                )
-
-            await _create_task()
+            await _create_task_sync(
+                task_manager,
+                thread_id,
+                task_title or query,
+                use_web_search,
+                retriever_tool is not None,
+                created_by,
+                session_id,
+            )
 
         if knowledge_base_ids:
-
-            @sync_to_async(thread_sensitive=True)
-            def _update_kb():
-                update_research_task_fields(thread_id, knowledge_base_ids=knowledge_base_ids)
-
-            await _update_kb()
+            await _update_kb_sync(thread_id, knowledge_base_ids)
 
         use_mcp = any((getattr(t, "metadata", {}) or {}).get("is_mcp_tool", False) for t in (extra_tools or []))
         selected_mcp_servers = []
@@ -558,27 +634,12 @@ class DeepChatService:
             publish_to_redis=True,
         )
 
-        @sync_to_async(thread_sensitive=True)
-        def _update_celery_task_id():
-            update_research_task_fields(thread_id, celery_task_id=celery_result.id)
-
-        await _update_celery_task_id()
+        await _update_celery_task_id_sync(thread_id, celery_result.id)
 
         result_data = await self._wait_for_research_result(thread_id)
 
         if result_data is None:
-
-            @sync_to_async(thread_sensitive=True)
-            def _mark_timeout():
-                task_manager.update_task_status(
-                    thread_id,
-                    {
-                        "status": "failed",
-                        "error_message": f"研究任务超时（{_RESEARCH_TIMEOUT}秒）",
-                    },
-                )
-
-            await _mark_timeout()
+            await _mark_timeout_sync(task_manager, thread_id)
             return {
                 "success": False,
                 "final_report": f"深度研究超时，请到深度研究模块查看任务 {thread_id}",
@@ -602,17 +663,7 @@ class DeepChatService:
             )
             token_detail_tracker.finish_record()
 
-        @sync_to_async(thread_sensitive=True)
-        def _update_status():
-            task_manager.update_task_status(
-                thread_id,
-                {
-                    "status": "completed",
-                    "final_report": result_data.get("final_report", ""),
-                },
-            )
-
-        await _update_status()
+        await _update_status_sync(task_manager, thread_id, result_data.get("final_report", ""))
 
         final_report = result_data.get("final_report", "")
         research_summary = final_report[:2000] if final_report else ""
@@ -652,9 +703,7 @@ class DeepChatService:
         同时监听研究结果和审批频道。审批事件会以 {"type": "approval", "data": ...}
         形式 yield，最终研究结果以 {"_is_result": True, ...} 形式 yield。
         """
-        from asgiref.sync import sync_to_async
-
-        from Django_xm.apps.research.services.cross_app import get_research_task_manager, update_research_task_fields
+        from Django_xm.apps.research.services.cross_app import get_research_task_manager
         from Django_xm.tasks.deep_research import run_research_task
 
         thread_id = task_id or f"research_{uuid.uuid4().hex[:12]}"
@@ -668,35 +717,22 @@ class DeepChatService:
             created_by = None
             if self._chat_service.user_id:
                 try:
-
-                    @sync_to_async(thread_sensitive=True)
-                    def _get_user():
-                        return User.objects.get(id=self._chat_service.user_id)
-
-                    created_by = await _get_user()
+                    created_by = await _get_user_sync(self._chat_service.user_id)
                 except User.DoesNotExist:
                     pass
 
-            @sync_to_async(thread_sensitive=True)
-            def _create_task():
-                task_manager.create_task(
-                    thread_id,
-                    task_title or query,
-                    enable_web_search=use_web_search,
-                    enable_doc_analysis=retriever_tool is not None,
-                    created_by=created_by,
-                    session_id=session_id,
-                )
-
-            await _create_task()
+            await _create_task_sync(
+                task_manager,
+                thread_id,
+                task_title or query,
+                use_web_search,
+                retriever_tool is not None,
+                created_by,
+                session_id,
+            )
 
         if knowledge_base_ids:
-
-            @sync_to_async(thread_sensitive=True)
-            def _update_kb():
-                update_research_task_fields(thread_id, knowledge_base_ids=knowledge_base_ids)
-
-            await _update_kb()
+            await _update_kb_sync(thread_id, knowledge_base_ids)
 
         use_mcp = any((getattr(t, "metadata", {}) or {}).get("is_mcp_tool", False) for t in (extra_tools or []))
         selected_mcp_servers = []
@@ -731,11 +767,7 @@ class DeepChatService:
             publish_to_redis=True,
         )
 
-        @sync_to_async(thread_sensitive=True)
-        def _update_celery_task_id():
-            update_research_task_fields(thread_id, celery_task_id=celery_result.id)
-
-        await _update_celery_task_id()
+        await _update_celery_task_id_sync(thread_id, celery_result.id)
 
         # 使用流式等待替代阻塞等待，审批事件直接 yield 给上层
         result_data = None
@@ -748,18 +780,7 @@ class DeepChatService:
                 yield event
 
         if result_data is None:
-
-            @sync_to_async(thread_sensitive=True)
-            def _mark_timeout():
-                task_manager.update_task_status(
-                    thread_id,
-                    {
-                        "status": "failed",
-                        "error_message": f"研究任务超时（{_RESEARCH_TIMEOUT}秒）",
-                    },
-                )
-
-            await _mark_timeout()
+            await _mark_timeout_sync(task_manager, thread_id)
             yield {
                 "success": False,
                 "final_report": f"深度研究超时，请到深度研究模块查看任务 {thread_id}",
@@ -785,17 +806,7 @@ class DeepChatService:
             )
             token_detail_tracker.finish_record()
 
-        @sync_to_async(thread_sensitive=True)
-        def _update_status():
-            task_manager.update_task_status(
-                thread_id,
-                {
-                    "status": "completed",
-                    "final_report": result_data.get("final_report", ""),
-                },
-            )
-
-        await _update_status()
+        await _update_status_sync(task_manager, thread_id, result_data.get("final_report", ""))
 
         final_report = result_data.get("final_report", "")
         research_summary = final_report[:2000] if final_report else ""
@@ -888,20 +899,7 @@ class DeepChatService:
         # Path D：从 DB 读取历史审批并 yield（刷新/重连恢复场景）
         # 实时审批事件统一通过 WebSocket 推送（与 tool 事件一致）
         try:
-            from asgiref.sync import sync_to_async
-
-            from Django_xm.apps.approvals.models import Approval
-
-            @sync_to_async
-            def _load_approvals():
-                return list(
-                    Approval.objects.filter(
-                        source=Approval.SOURCE_DEEP_RESEARCH,
-                        source_id=thread_id,
-                    ).order_by("created_at")
-                )
-
-            approvals = await _load_approvals()
+            approvals = await _load_approvals_sync(thread_id)
             for approval in approvals:
                 extra = approval.extra if isinstance(approval.extra, dict) else {}
                 approval_data = {

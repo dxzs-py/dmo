@@ -46,6 +46,11 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           ws: true,
         },
+        '/ws': {
+          target: env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8000',
+          changeOrigin: true,
+          ws: true,
+        },
         '/health': {
           target: env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8000',
           changeOrigin: true,
@@ -93,6 +98,7 @@ export default defineConfig(({ mode }) => {
         'vue-router',
         'pinia',
         'element-plus',
+        'element-plus/es',
         '@element-plus/icons-vue',
         'axios',
         '@vueuse/core',

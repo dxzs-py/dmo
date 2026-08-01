@@ -92,6 +92,11 @@ class ChatMessage(AuditModel):
     research_task_id = models.CharField(
         max_length=100, blank=True, null=True, verbose_name="关联深度研究任务ID", db_index=True
     )
+    is_streaming = models.BooleanField(
+        default=False,
+        verbose_name="是否正在流式输出",
+        help_text="标记该消息是否正在进行流式输出，用于前端刷新后判断是否需要恢复",
+    )
 
     class Meta:
         db_table = "chat_message"

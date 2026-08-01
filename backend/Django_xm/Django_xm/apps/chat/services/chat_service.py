@@ -11,6 +11,7 @@
 - ToolService：工具获取、过滤和协调
 """
 
+import asyncio
 import logging
 import time
 from collections.abc import AsyncGenerator
@@ -94,7 +95,7 @@ class ChatService:
     async def _create_agent_with_memory(
         self,
         data: dict[str, Any],
-        prompt_mode: str = "default",
+        prompt_mode: str = "agent",
         model_instance=None,
         tool_config: dict[str, Any] | None = None,
         tools: list | None = None,
@@ -811,6 +812,10 @@ class ChatService:
         # 创建 StreamContext（流式可变状态封装，替代散布的局部变量）
         ctx = StreamContext()
         ctx.init_stream_state(data.get("_stream_state"))
+        # P25修复：注入 session_id / message_id，供 _handle_updates_chunk
+        # 创建 Approval DB 记录时使用
+        ctx.session_id = data.get("session_id", "")
+        ctx.message_id = str(data.get("_assistant_message_id") or data.get("message_id", ""))
 
         # 创建普通 agent 模式策略（注入差异点）
         strategy = NormalStreamStrategy()
@@ -823,17 +828,22 @@ class ChatService:
         degraded_agent_holder: dict[str, Any] = {}
         if tools and degraded_tools_preview and len(degraded_tools_preview) < len(tools):
             try:
-                deg_agent, deg_config, _ = await self._create_agent_with_memory(
-                    data,
-                    prompt_mode=data["mode"],
-                    model_instance=model_instance,
-                    tool_config=tool_config,
-                    tools=degraded_tools_preview,
+                deg_agent, deg_config, _ = await asyncio.wait_for(
+                    self._create_agent_with_memory(
+                        data,
+                        prompt_mode=data["mode"],
+                        model_instance=model_instance,
+                        tool_config=tool_config,
+                        tools=degraded_tools_preview,
+                    ),
+                    timeout=10.0,
                 )
                 if deg_config is None:
                     deg_config = {"recursion_limit": 500}
                 degraded_agent_holder["agent"] = deg_agent
                 degraded_agent_holder["config"] = deg_config
+            except asyncio.TimeoutError:
+                logger.warning("预创建降级 agent 超时（DEGRADE 将落入 FALLBACK）")
             except Exception as e:
                 logger.warning(f"预创建降级 agent 失败（DEGRADE 将落入 FALLBACK）: {e}")
 

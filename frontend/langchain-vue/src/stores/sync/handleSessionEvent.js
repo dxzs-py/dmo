@@ -235,10 +235,13 @@ export const createHandleSessionEvent = (ctx) => {
       case 'messages_deleted':
         handleMessagesDeleted(sessionId, payload.deleted_message_ids || payload.ids || [])
         break
-      // 7 个工具调用事件类型（每个 EventType 独立 ws_event_name）
+      // 10 个工具调用事件类型（每个 EventType 独立 ws_event_name）
       case 'tool_call_pending':
       case 'tool_call_input_ready':
       case 'tool_call_waiting':
+      case 'tool_call_pending_approval':
+      case 'tool_call_approved':
+      case 'tool_call_rejected':
       case 'tool_call_running':
       case 'tool_call_completed':
       case 'tool_call_failed':
@@ -371,6 +374,13 @@ export const createHandleSessionEvent = (ctx) => {
       logger.info(`[Sync] 消息新增: session=${sessionId}, message=${message.backendId || message.id}`)
     }
     session.updatedAt = Date.now()
+
+    // 消息新增/合并后，同步 toolCallsMap 到该消息的 toolCalls 数组
+    // 场景：非触发浏览器 tool_call_* 事件可能先于 message_added 到达，Map 中已有数据
+    // 此时新合并的 assistant 消息尚未派生 toolCalls，导致审批组件以降级方式渲染在错误位置
+    if (message.role === 'assistant') {
+      sessionStore.syncMessageToolCalls(sessionId, message)
+    }
   }
 
   /**
@@ -845,32 +855,45 @@ export const createHandleSessionEvent = (ctx) => {
       // SubTask 11.2-11.4: 批量审批场景，查询本地 store 中同一批次的 Approval 状态
       const targetMsg = _findMessageByIdOrExtra(sessionId, payload) || getLastAssistantMessage(sessionId)
       if (targetMsg?.streamState === StreamState.INTERRUPTED && !streamingSessions.has(sessionId)) {
-        const siblingApprovals = _collectSiblingApprovals(targetMsg, graphInterruptId)
-        const hasApprovedOrProcessing = siblingApprovals.some(a =>
-          a.approvalState === 'approved' ||
-          a.approvalState === 'processing'
-        )
-        const allRejectedOrTimeout = siblingApprovals.length > 0 && siblingApprovals.every(a =>
-          a.approvalState === 'rejected' || a.approvalState === 'timeout'
-        )
+        const siblingApprovals = _collectSiblingApprovals(targetMsg, graphInterruptId, payload.remaining_pending_count)
 
-        if (hasApprovedOrProcessing) {
-          // SubTask 11.3: 任一 sibling 处于 approved/processing，触发 INTERRUPTED → STREAMING
-          // 注意：'waiting' 不触发此转换，approval_waiting 保持 INTERRUPTED
-          targetMsg.streamState = StreamState.STREAMING
-          logger.info(
-            `[Sync] 批量审批 sibling approved/processing，INTERRUPTED → STREAMING: ` +
-            `session=${sessionId}, source=${source}, graphInterruptId=${graphInterruptId}, ` +
-            `message=${targetMsg.backendId || targetMsg.id}, siblings=${siblingApprovals.length}`
+        // remaining_pending_count 为权威计数时直接返回 number，> 0 表示仍有待审批 sibling
+        if (typeof siblingApprovals === 'number') {
+          if (siblingApprovals > 0) {
+            logger.info(
+              `[Sync] 批量审批仍有 ${siblingApprovals} 个待审批 (权威计数)，保持 INTERRUPTED: ` +
+              `session=${sessionId}, source=${source}, graphInterruptId=${graphInterruptId}`
+            )
+          }
+          // count === 0 时所有已决，但无法从 count 推断具体状态，不做额外转换
+        } else {
+          // 回退：本地 toolCalls 遍历（低版本兼容）
+          const hasApprovedOrProcessing = siblingApprovals.some(a =>
+            a.approvalState === 'approved' ||
+            a.approvalState === 'processing'
           )
-        } else if (allRejectedOrTimeout) {
-          // SubTask 11.4: 所有 sibling 均为 rejected/timeout，保持 INTERRUPTED 并标记消息为 failed
-          targetMsg.isFailed = true
-          logger.info(
-            `[Sync] 批量审批全部 rejected/timeout，标记消息 failed: ` +
-            `session=${sessionId}, source=${source}, graphInterruptId=${graphInterruptId}, ` +
-            `message=${targetMsg.backendId || targetMsg.id}, siblings=${siblingApprovals.length}`
+          const allRejectedOrTimeout = siblingApprovals.length > 0 && siblingApprovals.every(a =>
+            a.approvalState === 'rejected' || a.approvalState === 'timeout'
           )
+
+          if (hasApprovedOrProcessing) {
+            // SubTask 11.3: 任一 sibling 处于 approved/processing，触发 INTERRUPTED → STREAMING
+            // 注意：'waiting' 不触发此转换，approval_waiting 保持 INTERRUPTED
+            targetMsg.streamState = StreamState.STREAMING
+            logger.info(
+              `[Sync] 批量审批 sibling approved/processing，INTERRUPTED → STREAMING: ` +
+              `session=${sessionId}, source=${source}, graphInterruptId=${graphInterruptId}, ` +
+              `message=${targetMsg.backendId || targetMsg.id}, siblings=${siblingApprovals.length}`
+            )
+          } else if (allRejectedOrTimeout) {
+            // SubTask 11.4: 所有 sibling 均为 rejected/timeout，保持 INTERRUPTED 并标记消息为 failed
+            targetMsg.isFailed = true
+            logger.info(
+              `[Sync] 批量审批全部 rejected/timeout，标记消息 failed: ` +
+              `session=${sessionId}, source=${source}, graphInterruptId=${graphInterruptId}, ` +
+              `message=${targetMsg.backendId || targetMsg.id}, siblings=${siblingApprovals.length}`
+            )
+          }
         }
       }
     } else if ((mappedState === ApprovalState.APPROVED || mappedState === ApprovalState.PROCESSING) && !streamingSessions.has(sessionId)) {
@@ -886,12 +909,24 @@ export const createHandleSessionEvent = (ctx) => {
   }
 
   /**
-   * 收集同一 graph_interrupt_id 下所有 toolCall 的 approval 状态（spec Task 11.2）
+   * 收集同一 graph_interrupt_id 下所有 toolCall 的 approval 状态
+   *
+   * 优先使用后端返回的 remaining_pending_count（权威计数），避免因不同浏览器
+   * toolCalls 事件到达顺序不一致导致本地计算结果不同。
+   *
    * @param {Object} message - 消息对象
    * @param {string} graphInterruptId - LangGraph 的 interrupt_id（同一批审批共享）
-   * @returns {Array<{toolCallId: string, approvalState: string}>}
+   * @param {number} [remainingPendingCount] - 后端返回的剩余待审批数量（低版本兼容回退到本地计算）
+   * @returns {number|Array<{toolCallId: string, approvalState: string}>}
+   *   当 remainingPendingCount 有效时返回 number，否则返回本地计算的数组
    */
-  const _collectSiblingApprovals = (message, graphInterruptId) => {
+  const _collectSiblingApprovals = (message, graphInterruptId, remainingPendingCount) => {
+    // 优先使用后端权威计数
+    if (remainingPendingCount != null) {
+      return remainingPendingCount
+    }
+
+    // 回退：本地遍历 toolCalls 计算（低版本兼容）
     if (!message?.toolCalls || !Array.isArray(message.toolCalls) || !graphInterruptId) return []
     const siblings = []
     for (const tc of message.toolCalls) {

@@ -1,0 +1,284 @@
+INFO web_duckduckgo 12 ✅ langchain-community DuckDuckGo 搜索工具可用
+DEBUG langsmith_setup 66 LangSmith 追踪未启用 (settings.langsmith_tracing=False, env_api_key_set=False, env_tracing=False)
+INFO registry 25 Registered capability: context_management
+INFO registry 25 Registered capability: tool_injection
+INFO registry 25 Registered capability: guardrails
+INFO registry 25 Registered capability: rate_limit
+INFO registry 25 Registered capability: groq_compat
+INFO setup 16 Default capabilities registered: ['context_management', 'tool_injection', 'guardrails', 'rate_limit', 'groq_compat']
+DEBUG registry 57 扩展工具已注册: agent_create
+DEBUG registry 57 扩展工具已注册: agent_run
+DEBUG registry 57 扩展工具已注册: agent_list
+DEBUG registry 57 扩展工具已注册: agent_cleanup
+DEBUG _registry 54 注册 Builder: base -> Django_xm.apps.agent_hub.builders.base_builder.BaseAgentBuilder
+DEBUG _registry 54 注册 Builder: rag -> Django_xm.apps.agent_hub.builders.base_builder.BaseAgentBuilder
+DEBUG _registry 54 注册 Builder: safe_rag -> Django_xm.apps.agent_hub.builders.base_builder.BaseAgentBuilder
+DEBUG _registry 54 注册 Builder: deep_research_custom -> Django_xm.apps.agent_hub.builders.custom_builder.CustomWorkflowBuilder
+DEBUG _registry 54 注册 Builder: web_researcher -> Django_xm.apps.agent_hub.builders.subagent_builder.SubAgentBuilder
+DEBUG _registry 54 注册 Builder: doc_analyst -> Django_xm.apps.agent_hub.builders.subagent_builder.SubAgentBuilder
+DEBUG _registry 54 注册 Builder: report_writer -> Django_xm.apps.agent_hub.builders.subagent_builder.SubAgentBuilder
+ 
+ -------------- celery@dxzs-hhh v5.4.0 (opalescent)
+--- ***** ----- 
+-- ******* ---- Windows-10-10.0.26200-SP0 2026-08-01 22:19:24
+- *** --- * --- 
+- ** ---------- [config]
+- ** ---------- .> app:         Django_xm:0x1d3b7999d10
+- ** ---------- .> transport:   redis://127.0.0.1:6379/3
+- ** ---------- .> results:     redis://127.0.0.1:6379/4
+- *** --- * --- .> concurrency: 4 (thread)
+-- ******* ---- .> task events: OFF (enable -E to monitor tasks in this worker)
+--- ***** ----- 
+ -------------- [queues]
+                .> celery           exchange=celery(direct) key=celery
+                
+
+[tasks]
+  . analytics.track_event
+  . approvals.cleanup_expired_approvals
+  . approvals.process_outbox
+  . approvals.resume_chat_after_timeout
+  . base.check_stale_tasks
+  . base.cleanup_old_task_records
+  . base.debug_task
+  . chat.attachment_full_lifecycle
+  . chat.check_storage_alerts
+  . chat.cleanup_checkpoints
+  . chat.cleanup_expired_attachments
+  . chat.index_old_attachments
+  . rag.add_documents
+  . rag.create_index
+  . rag.delete_index
+  . rag.update_index
+  . research.cleanup_sandbox
+  . research.resume
+  . research.run_research
+  . workflow.execute
+
+[2026-08-01 22:19:24,463: INFO/MainProcess] Connected to redis://127.0.0.1:6379/3
+[2026-08-01 22:19:24,467: INFO/MainProcess] mingle: searching for neighbors
+[2026-08-01 22:19:25,498: INFO/MainProcess] mingle: all alone
+[2026-08-01 22:19:25,520: INFO/MainProcess] celery@dxzs-hhh ready.
+[2026-08-01 22:19:25,721: INFO/MainProcess] Task approvals.cleanup_expired_approvals[44047309-56b1-48f9-a069-26d36071a6a4] received
+[2026-08-01 22:19:25,723: INFO/MainProcess] Task approvals.process_outbox[d0abe46e-1768-4744-a7a1-780840ee6b01] received
+[2026-08-01 22:19:25,727: INFO/MainProcess] Task approvals.process_outbox[613ca0b7-4e78-479d-be5f-f55bc028a7bc] received
+[2026-08-01 22:19:25,730: INFO/MainProcess] Task approvals.process_outbox[1d76ad31-4511-434b-93ab-ee340fcdb8bb] received
+[2026-08-01 22:19:25,977: INFO/MainProcess] [ApprovalCleanup] 任务被调用: 扫描超时审批
+[2026-08-01 22:19:26,016: INFO/MainProcess] Task approvals.process_outbox[d0abe46e-1768-4744-a7a1-780840ee6b01] succeeded in 0.2820000000001528s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:19:26,017: INFO/MainProcess] Task approvals.process_outbox[1d76ad31-4511-434b-93ab-ee340fcdb8bb] succeeded in 0.2820000000001528s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:19:26,033: INFO/MainProcess] Task approvals.cleanup_expired_approvals[44047309-56b1-48f9-a069-26d36071a6a4] succeeded in 0.2969999999995707s: {'expired_count': 0}
+[2026-08-01 22:19:26,034: INFO/MainProcess] Task approvals.process_outbox[613ca0b7-4e78-479d-be5f-f55bc028a7bc] succeeded in 0.31300000000010186s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:19:27,537: INFO/MainProcess] Task approvals.process_outbox[98fb621e-28ce-4205-aba4-b546d8131dd0] received
+[2026-08-01 22:19:27,538: INFO/MainProcess] Task approvals.process_outbox[f3aa9e0d-8368-4626-9238-c04516051545] received
+[2026-08-01 22:19:27,541: INFO/MainProcess] Task approvals.cleanup_expired_approvals[d23b75b9-6ae8-4795-99c6-85f22fd7f7af] received
+[2026-08-01 22:19:27,543: INFO/MainProcess] [ApprovalCleanup] 任务被调用: 扫描超时审批
+[2026-08-01 22:19:27,545: INFO/MainProcess] Task approvals.process_outbox[8fa6ecca-4d75-4785-be1a-403e65d56532] received
+[2026-08-01 22:19:27,546: INFO/MainProcess] Task approvals.process_outbox[98fb621e-28ce-4205-aba4-b546d8131dd0] succeeded in 0.0s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:19:27,548: INFO/MainProcess] Task approvals.process_outbox[f3aa9e0d-8368-4626-9238-c04516051545] succeeded in 0.0s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:19:27,550: INFO/MainProcess] Task approvals.cleanup_expired_approvals[d23b75b9-6ae8-4795-99c6-85f22fd7f7af] succeeded in 0.01599999999962165s: {'expired_count': 0}
+[2026-08-01 22:19:27,552: INFO/MainProcess] Task approvals.process_outbox[8fa6ecca-4d75-4785-be1a-403e65d56532] succeeded in 0.01599999999962165s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:19:29,537: INFO/MainProcess] Task approvals.process_outbox[24d81626-41f7-45bf-b5d9-3662645fb3aa] received
+[2026-08-01 22:19:29,540: INFO/MainProcess] Task approvals.cleanup_expired_approvals[668fb8a9-b05d-457f-9e2e-a02188a67220] received
+[2026-08-01 22:19:29,543: INFO/MainProcess] Task approvals.process_outbox[fc39beba-1a7d-46e0-ab11-1c9bdd186dbe] received
+[2026-08-01 22:19:29,543: INFO/MainProcess] [ApprovalCleanup] 任务被调用: 扫描超时审批
+[2026-08-01 22:19:29,549: INFO/MainProcess] Task approvals.process_outbox[24d81626-41f7-45bf-b5d9-3662645fb3aa] succeeded in 0.0s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:19:29,549: INFO/MainProcess] Task approvals.cleanup_expired_approvals[668fb8a9-b05d-457f-9e2e-a02188a67220] succeeded in 0.0s: {'expired_count': 0}
+[2026-08-01 22:19:29,551: INFO/MainProcess] Task approvals.process_outbox[fc39beba-1a7d-46e0-ab11-1c9bdd186dbe] succeeded in 0.01599999999962165s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:19:32,323: INFO/MainProcess] Task approvals.process_outbox[51c910eb-1bd5-4f8b-b7b1-db3e1cbe1699] received
+[2026-08-01 22:19:32,328: INFO/MainProcess] Task approvals.process_outbox[51c910eb-1bd5-4f8b-b7b1-db3e1cbe1699] succeeded in 0.0s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:19:37,322: INFO/MainProcess] Task approvals.process_outbox[7b1cfcdc-cc58-45ba-ba29-e745bc93d957] received
+[2026-08-01 22:19:37,328: INFO/MainProcess] Task approvals.process_outbox[7b1cfcdc-cc58-45ba-ba29-e745bc93d957] succeeded in 0.0s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:19:42,323: INFO/MainProcess] Task approvals.process_outbox[50b89817-b283-4094-bd9a-f3f42b7e229e] received
+[2026-08-01 22:19:42,331: INFO/MainProcess] Task approvals.process_outbox[50b89817-b283-4094-bd9a-f3f42b7e229e] succeeded in 0.0s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:19:47,326: INFO/MainProcess] Task approvals.process_outbox[5a26bde1-8990-40e4-a991-7aa3afc87711] received
+[2026-08-01 22:19:47,335: INFO/MainProcess] Task approvals.process_outbox[5a26bde1-8990-40e4-a991-7aa3afc87711] succeeded in 0.01599999999962165s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:19:52,328: INFO/MainProcess] Task approvals.process_outbox[69177ab8-7d53-40d0-bae0-97e25398c5fc] received
+[2026-08-01 22:19:52,336: INFO/MainProcess] Task approvals.process_outbox[69177ab8-7d53-40d0-bae0-97e25398c5fc] succeeded in 0.01599999999962165s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:19:57,326: INFO/MainProcess] Task approvals.process_outbox[feeef992-8556-45f5-84ac-f3906bcc2ea7] received
+[2026-08-01 22:19:57,334: INFO/MainProcess] Task approvals.process_outbox[feeef992-8556-45f5-84ac-f3906bcc2ea7] succeeded in 0.01599999999962165s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:20:02,326: INFO/MainProcess] Task approvals.process_outbox[3b07524c-1280-4516-a040-8e710f279373] received
+[2026-08-01 22:20:02,334: INFO/MainProcess] Task approvals.process_outbox[3b07524c-1280-4516-a040-8e710f279373] succeeded in 0.01599999999962165s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:20:07,327: INFO/MainProcess] Task approvals.process_outbox[1fdccbaa-8b98-4fc8-baa0-d1f0376a844d] received
+[2026-08-01 22:20:07,335: INFO/MainProcess] Task approvals.process_outbox[1fdccbaa-8b98-4fc8-baa0-d1f0376a844d] succeeded in 0.01599999999962165s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:20:11,057: INFO/MainProcess] Task analytics.track_event[0707da6c-3907-4300-92fd-b0c7185c90c8] received
+[2026-08-01 22:20:11,059: INFO/MainProcess] Task analytics.track_event[02e07098-000c-4d10-b4ba-3c650b10e312] received
+[2026-08-01 22:20:11,062: INFO/MainProcess] Task analytics.track_event[b7a86cd2-6418-479e-a83b-e2c03638ed19] received
+[2026-08-01 22:20:11,082: INFO/MainProcess] Task analytics.track_event[b7a86cd2-6418-479e-a83b-e2c03638ed19] succeeded in 0.01599999999962165s: None
+[2026-08-01 22:20:11,086: INFO/MainProcess] Task analytics.track_event[02e07098-000c-4d10-b4ba-3c650b10e312] succeeded in 0.03099999999994907s: None
+[2026-08-01 22:20:11,086: INFO/MainProcess] Task analytics.track_event[0707da6c-3907-4300-92fd-b0c7185c90c8] succeeded in 0.03099999999994907s: None
+[2026-08-01 22:20:12,328: INFO/MainProcess] Task approvals.process_outbox[aa377e47-f196-430b-97d4-256c00587636] received
+[2026-08-01 22:20:12,335: INFO/MainProcess] Task approvals.process_outbox[aa377e47-f196-430b-97d4-256c00587636] succeeded in 0.01599999999962165s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:20:13,224: INFO/MainProcess] Task analytics.track_event[7e101ec3-570c-4985-a6d0-aff27f3a5d03] received
+[2026-08-01 22:20:13,229: INFO/MainProcess] Task analytics.track_event[cb091c17-836b-4cc2-a48e-ac8179898c9d] received
+[2026-08-01 22:20:13,235: INFO/MainProcess] Task analytics.track_event[7e101ec3-570c-4985-a6d0-aff27f3a5d03] succeeded in 0.0s: None
+[2026-08-01 22:20:13,239: INFO/MainProcess] Task analytics.track_event[cb091c17-836b-4cc2-a48e-ac8179898c9d] succeeded in 0.01599999999962165s: None
+[2026-08-01 22:20:13,267: INFO/MainProcess] Task analytics.track_event[228875e0-17d9-4442-bf18-398a6e99af1c] received
+[2026-08-01 22:20:13,278: INFO/MainProcess] Task analytics.track_event[228875e0-17d9-4442-bf18-398a6e99af1c] succeeded in 0.014999999999417923s: None
+[2026-08-01 22:20:13,280: INFO/MainProcess] Task analytics.track_event[a9e41527-833b-4bb2-a6cc-d7a810a7949e] received
+[2026-08-01 22:20:13,291: INFO/MainProcess] Task analytics.track_event[a9e41527-833b-4bb2-a6cc-d7a810a7949e] succeeded in 0.016000000000531145s: None
+[2026-08-01 22:20:13,304: INFO/MainProcess] Task analytics.track_event[5af74c42-51dd-4901-99e9-a01a426bbd0d] received
+[2026-08-01 22:20:13,316: INFO/MainProcess] Task analytics.track_event[d6c62222-b0c2-44d0-a808-bd0d3f7c492b] received
+[2026-08-01 22:20:13,319: INFO/MainProcess] Task analytics.track_event[5af74c42-51dd-4901-99e9-a01a426bbd0d] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:13,328: INFO/MainProcess] Task analytics.track_event[d6c62222-b0c2-44d0-a808-bd0d3f7c492b] succeeded in 0.0s: None
+[2026-08-01 22:20:13,688: INFO/MainProcess] Task analytics.track_event[e4c12be9-1c1b-4521-9ad4-a6d5769b861b] received
+[2026-08-01 22:20:13,690: INFO/MainProcess] Task analytics.track_event[528394ae-531e-46e2-a873-ac9435c9e330] received
+[2026-08-01 22:20:13,701: INFO/MainProcess] Task analytics.track_event[e4c12be9-1c1b-4521-9ad4-a6d5769b861b] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:13,704: INFO/MainProcess] Task analytics.track_event[528394ae-531e-46e2-a873-ac9435c9e330] succeeded in 0.0s: None
+[2026-08-01 22:20:13,725: INFO/MainProcess] Task analytics.track_event[4530fc14-089b-4cd9-90fd-4b21a33140da] received
+[2026-08-01 22:20:13,737: INFO/MainProcess] Task analytics.track_event[4530fc14-089b-4cd9-90fd-4b21a33140da] succeeded in 0.0s: None
+[2026-08-01 22:20:13,760: INFO/MainProcess] Task analytics.track_event[1518df90-0b9c-4caf-9277-e3cadd606140] received
+[2026-08-01 22:20:13,771: INFO/MainProcess] Task analytics.track_event[1518df90-0b9c-4caf-9277-e3cadd606140] succeeded in 0.014999999999417923s: None
+[2026-08-01 22:20:13,908: INFO/MainProcess] Task analytics.track_event[e4231f5a-a6e5-41e5-8916-2329ad232a2b] received
+[2026-08-01 22:20:13,918: INFO/MainProcess] Task analytics.track_event[e4231f5a-a6e5-41e5-8916-2329ad232a2b] succeeded in 0.0s: None
+[2026-08-01 22:20:17,328: INFO/MainProcess] Task approvals.process_outbox[5368c354-9f3f-43d0-b831-491cc07548eb] received
+[2026-08-01 22:20:17,335: INFO/MainProcess] Task approvals.process_outbox[5368c354-9f3f-43d0-b831-491cc07548eb] succeeded in 0.01599999999962165s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:20:20,808: INFO/MainProcess] Task analytics.track_event[31fdf892-0133-4b50-8952-28275987d8f4] received
+[2026-08-01 22:20:20,812: INFO/MainProcess] Task analytics.track_event[d0d419a4-3d94-45c1-9140-4395acfb3c73] received
+[2026-08-01 22:20:20,817: INFO/MainProcess] Task analytics.track_event[31fdf892-0133-4b50-8952-28275987d8f4] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:20,820: INFO/MainProcess] Task analytics.track_event[d0d419a4-3d94-45c1-9140-4395acfb3c73] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:20,820: INFO/MainProcess] Task analytics.track_event[ac475e26-d1d8-4641-9ccc-0558aa6315e4] received
+[2026-08-01 22:20:20,823: INFO/MainProcess] Task analytics.track_event[4656e46d-df29-4226-be24-af151575e761] received
+[2026-08-01 22:20:20,829: INFO/MainProcess] Task analytics.track_event[ac475e26-d1d8-4641-9ccc-0558aa6315e4] succeeded in 0.0s: None
+[2026-08-01 22:20:20,831: INFO/MainProcess] Task analytics.track_event[4656e46d-df29-4226-be24-af151575e761] succeeded in 0.0s: None
+[2026-08-01 22:20:21,124: INFO/MainProcess] Task analytics.track_event[2bc1cf4d-566c-48ef-a92a-0096c6728a33] received
+[2026-08-01 22:20:21,127: INFO/MainProcess] Task analytics.track_event[1d7ce54e-ec55-42cb-84cc-e406c6537ccf] received
+[2026-08-01 22:20:21,128: INFO/MainProcess] Task analytics.track_event[1351181a-8a34-4b20-9685-8f7620a71fc1] received
+[2026-08-01 22:20:21,131: INFO/MainProcess] Task analytics.track_event[6dbf1703-5a20-4e7c-8790-f43469c3477b] received
+[2026-08-01 22:20:21,133: INFO/MainProcess] Task analytics.track_event[2bc1cf4d-566c-48ef-a92a-0096c6728a33] succeeded in 0.016000000000531145s: None
+[2026-08-01 22:20:21,133: INFO/MainProcess] Task analytics.track_event[1d7ce54e-ec55-42cb-84cc-e406c6537ccf] succeeded in 0.016000000000531145s: None
+[2026-08-01 22:20:21,135: INFO/MainProcess] Task analytics.track_event[1351181a-8a34-4b20-9685-8f7620a71fc1] succeeded in 0.0s: None
+[2026-08-01 22:20:21,138: INFO/MainProcess] Task analytics.track_event[6dbf1703-5a20-4e7c-8790-f43469c3477b] succeeded in 0.0s: None
+[2026-08-01 22:20:21,574: INFO/MainProcess] Task analytics.track_event[69b3c61b-731e-406b-b8f9-023af961037c] received
+[2026-08-01 22:20:21,575: INFO/MainProcess] Task analytics.track_event[f4d06424-d236-40e4-a589-699d731538ae] received
+[2026-08-01 22:20:21,577: INFO/MainProcess] Task analytics.track_event[45e78116-bdf4-44d0-807e-8df6ad436a3d] received
+[2026-08-01 22:20:21,578: INFO/MainProcess] Task analytics.track_event[6400332b-9454-4923-a3c2-7f1d05216d35] received
+[2026-08-01 22:20:21,581: INFO/MainProcess] Task analytics.track_event[69b3c61b-731e-406b-b8f9-023af961037c] succeeded in 0.0s: None
+[2026-08-01 22:20:21,582: INFO/MainProcess] Task analytics.track_event[f4d06424-d236-40e4-a589-699d731538ae] succeeded in 0.01599999999962165s: None
+[2026-08-01 22:20:21,584: INFO/MainProcess] Task analytics.track_event[6400332b-9454-4923-a3c2-7f1d05216d35] succeeded in 0.01599999999962165s: None
+[2026-08-01 22:20:21,584: INFO/MainProcess] Task analytics.track_event[45e78116-bdf4-44d0-807e-8df6ad436a3d] succeeded in 0.01599999999962165s: None
+[2026-08-01 22:20:23,578: INFO/MainProcess] Task analytics.track_event[9fa807c3-8bb7-48d3-bcdd-547e1d01a0e2] received
+[2026-08-01 22:20:23,582: INFO/MainProcess] Task analytics.track_event[b46b919f-201c-4aa9-88c0-baec0326aefd] received
+[2026-08-01 22:20:23,586: INFO/MainProcess] Task analytics.track_event[bf4666b8-b3d3-4170-809b-9360b94ada02] received
+[2026-08-01 22:20:23,592: INFO/MainProcess] Task approvals.process_outbox[2f3ad466-a6f1-4d6f-95d4-ba5f60f76211] received
+[2026-08-01 22:20:23,596: INFO/MainProcess] Task analytics.track_event[9fa807c3-8bb7-48d3-bcdd-547e1d01a0e2] succeeded in 0.01599999999962165s: None
+[2026-08-01 22:20:23,600: INFO/MainProcess] Task analytics.track_event[b46b919f-201c-4aa9-88c0-baec0326aefd] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:23,601: INFO/MainProcess] Task analytics.track_event[bf4666b8-b3d3-4170-809b-9360b94ada02] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:23,603: INFO/MainProcess] Task approvals.process_outbox[2f3ad466-a6f1-4d6f-95d4-ba5f60f76211] succeeded in 0.015000000000327418s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:20:25,580: INFO/MainProcess] Task approvals.cleanup_expired_approvals[5a2f2231-8053-4d3c-a619-67a55030d7c2] received
+[2026-08-01 22:20:25,582: INFO/MainProcess] Task analytics.track_event[38b095ef-984d-42a9-b679-d05b8833c3b7] received
+[2026-08-01 22:20:25,583: INFO/MainProcess] [ApprovalCleanup] 任务被调用: 扫描超时审批
+[2026-08-01 22:20:25,586: INFO/MainProcess] Task analytics.track_event[6052108b-c96f-4034-b75c-c926a75e6bd9] received
+[2026-08-01 22:20:25,588: INFO/MainProcess] Task analytics.track_event[54ef25a7-180c-4caa-b9d9-5504683cd5f8] received
+[2026-08-01 22:20:25,595: INFO/MainProcess] Task approvals.cleanup_expired_approvals[5a2f2231-8053-4d3c-a619-67a55030d7c2] succeeded in 0.0s: {'expired_count': 0}
+[2026-08-01 22:20:25,598: INFO/MainProcess] Task analytics.track_event[38b095ef-984d-42a9-b679-d05b8833c3b7] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:25,600: INFO/MainProcess] Task analytics.track_event[6052108b-c96f-4034-b75c-c926a75e6bd9] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:25,602: INFO/MainProcess] Task analytics.track_event[54ef25a7-180c-4caa-b9d9-5504683cd5f8] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:27,583: INFO/MainProcess] Task analytics.track_event[0d7f377f-ebee-441f-ad5f-85c7ae8d9230] received
+[2026-08-01 22:20:27,585: INFO/MainProcess] Task analytics.track_event[691bb216-bfc2-4e4a-a05c-d0b7e41a9432] received
+[2026-08-01 22:20:27,590: INFO/MainProcess] Task analytics.track_event[ed8df1a2-2250-4f40-aa7f-43e67609a25d] received
+[2026-08-01 22:20:27,595: INFO/MainProcess] Task analytics.track_event[25691cba-403b-483d-91b4-3a2e4f9585de] received
+[2026-08-01 22:20:27,618: INFO/MainProcess] Task analytics.track_event[0d7f377f-ebee-441f-ad5f-85c7ae8d9230] succeeded in 0.03099999999994907s: None
+[2026-08-01 22:20:27,621: INFO/MainProcess] Task analytics.track_event[691bb216-bfc2-4e4a-a05c-d0b7e41a9432] succeeded in 0.03099999999994907s: None
+[2026-08-01 22:20:27,629: INFO/MainProcess] Task analytics.track_event[25691cba-403b-483d-91b4-3a2e4f9585de] succeeded in 0.04700000000048021s: None
+[2026-08-01 22:20:27,631: INFO/MainProcess] Task analytics.track_event[ed8df1a2-2250-4f40-aa7f-43e67609a25d] succeeded in 0.04700000000048021s: None
+[2026-08-01 22:20:29,586: INFO/MainProcess] Task analytics.track_event[96602e0e-e136-45f5-8036-bdc6cacc1cf1] received
+[2026-08-01 22:20:29,588: INFO/MainProcess] Task analytics.track_event[75cd8cd9-c1ff-4284-be2d-e1e817da429c] received
+[2026-08-01 22:20:29,593: INFO/MainProcess] Task analytics.track_event[a85af9a1-1b3f-4aaf-9285-79b905bb7905] received
+[2026-08-01 22:20:29,596: INFO/MainProcess] Task analytics.track_event[a4fe97d6-08eb-43e9-a730-eb83953ab039] received
+[2026-08-01 22:20:29,602: INFO/MainProcess] Task analytics.track_event[96602e0e-e136-45f5-8036-bdc6cacc1cf1] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:29,604: INFO/MainProcess] Task analytics.track_event[75cd8cd9-c1ff-4284-be2d-e1e817da429c] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:29,607: INFO/MainProcess] Task analytics.track_event[a85af9a1-1b3f-4aaf-9285-79b905bb7905] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:29,609: INFO/MainProcess] Task analytics.track_event[a4fe97d6-08eb-43e9-a730-eb83953ab039] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:31,571: INFO/MainProcess] Task analytics.track_event[27640d82-86bb-461c-8a3b-4ada1dc616ce] received
+[2026-08-01 22:20:31,573: INFO/MainProcess] Task analytics.track_event[3b8762e9-6d41-43b4-b454-bf550bba3ec7] received
+[2026-08-01 22:20:31,577: INFO/MainProcess] Task analytics.track_event[ab30abc6-025f-402c-9ace-1344d3291aa7] received
+[2026-08-01 22:20:31,580: INFO/MainProcess] Task analytics.track_event[63aeac05-36b5-40ec-8c74-ffa141e107e1] received
+[2026-08-01 22:20:31,586: INFO/MainProcess] Task analytics.track_event[27640d82-86bb-461c-8a3b-4ada1dc616ce] succeeded in 0.01599999999962165s: None
+[2026-08-01 22:20:31,588: INFO/MainProcess] Task analytics.track_event[3b8762e9-6d41-43b4-b454-bf550bba3ec7] succeeded in 0.01599999999962165s: None
+[2026-08-01 22:20:31,589: INFO/MainProcess] Task analytics.track_event[ab30abc6-025f-402c-9ace-1344d3291aa7] succeeded in 0.01599999999962165s: None
+[2026-08-01 22:20:31,591: INFO/MainProcess] Task analytics.track_event[63aeac05-36b5-40ec-8c74-ffa141e107e1] succeeded in 0.0s: None
+[2026-08-01 22:20:33,575: INFO/MainProcess] Task analytics.track_event[4aca2204-a770-4449-b758-90920c3ef316] received
+[2026-08-01 22:20:33,578: INFO/MainProcess] Task analytics.track_event[4f226ff9-46de-4885-bfe9-f19e0b7d69e7] received
+[2026-08-01 22:20:33,581: INFO/MainProcess] Task analytics.track_event[34624e1f-f459-4737-9f8d-8d44cb53a5fb] received
+[2026-08-01 22:20:33,584: INFO/MainProcess] Task analytics.track_event[42a35c6b-c3da-4bf4-9f9f-09f9745c0e1d] received
+[2026-08-01 22:20:33,590: INFO/MainProcess] Task analytics.track_event[4aca2204-a770-4449-b758-90920c3ef316] succeeded in 0.01599999999962165s: None
+[2026-08-01 22:20:33,593: INFO/MainProcess] Task analytics.track_event[4f226ff9-46de-4885-bfe9-f19e0b7d69e7] succeeded in 0.01599999999962165s: None
+[2026-08-01 22:20:33,594: INFO/MainProcess] Task analytics.track_event[34624e1f-f459-4737-9f8d-8d44cb53a5fb] succeeded in 0.0s: None
+[2026-08-01 22:20:33,597: INFO/MainProcess] Task analytics.track_event[42a35c6b-c3da-4bf4-9f9f-09f9745c0e1d] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:35,575: INFO/MainProcess] Task approvals.process_outbox[eb837b8d-7920-4fd3-b433-afbfb8f72260] received
+[2026-08-01 22:20:35,577: INFO/MainProcess] Task analytics.track_event[5284f41d-9e52-4015-9059-4758ca9d085f] received
+[2026-08-01 22:20:35,582: INFO/MainProcess] Task analytics.track_event[b17ddf16-8fdd-4481-8a3a-f67d0b2cde1d] received
+[2026-08-01 22:20:35,585: INFO/MainProcess] Task analytics.track_event[75c22a7b-14f4-4aa8-a1ba-bc385081e9f5] received
+[2026-08-01 22:20:35,588: INFO/MainProcess] Task approvals.process_outbox[eb837b8d-7920-4fd3-b433-afbfb8f72260] succeeded in 0.01599999999962165s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:20:35,590: INFO/MainProcess] Task analytics.track_event[5284f41d-9e52-4015-9059-4758ca9d085f] succeeded in 0.01599999999962165s: None
+[2026-08-01 22:20:35,592: INFO/MainProcess] Task analytics.track_event[b17ddf16-8fdd-4481-8a3a-f67d0b2cde1d] succeeded in 0.0s: None
+[2026-08-01 22:20:35,594: INFO/MainProcess] Task analytics.track_event[75c22a7b-14f4-4aa8-a1ba-bc385081e9f5] succeeded in 0.0s: None
+[2026-08-01 22:20:37,579: INFO/MainProcess] Task approvals.process_outbox[b05e3ead-b6d2-4230-996e-d1ad53cace0e] received
+[2026-08-01 22:20:37,582: INFO/MainProcess] Task analytics.track_event[87308087-cb1b-4995-8c9d-c6f193251c6d] received
+[2026-08-01 22:20:37,584: INFO/MainProcess] Task analytics.track_event[6d0ebb7e-e4eb-4ceb-95d6-62da22ecf605] received
+[2026-08-01 22:20:37,587: INFO/MainProcess] Task analytics.track_event[cf28e74b-4f33-4d7b-b446-0176642b99e4] received
+[2026-08-01 22:20:37,592: INFO/MainProcess] Task approvals.process_outbox[b05e3ead-b6d2-4230-996e-d1ad53cace0e] succeeded in 0.01599999999962165s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:20:37,598: INFO/MainProcess] Task analytics.track_event[87308087-cb1b-4995-8c9d-c6f193251c6d] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:37,601: INFO/MainProcess] Task analytics.track_event[cf28e74b-4f33-4d7b-b446-0176642b99e4] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:37,601: INFO/MainProcess] Task analytics.track_event[6d0ebb7e-e4eb-4ceb-95d6-62da22ecf605] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:39,580: INFO/MainProcess] Task analytics.track_event[a589f758-8897-4cd8-bf7b-5680030b2192] received
+[2026-08-01 22:20:39,581: INFO/MainProcess] Task analytics.track_event[16083028-86fd-4e9e-bd92-74b5f78d13c9] received
+[2026-08-01 22:20:39,584: INFO/MainProcess] Task analytics.track_event[b4638f9f-8afa-4ca3-aecd-8e863ef9984e] received
+[2026-08-01 22:20:39,586: INFO/MainProcess] Task analytics.track_event[c26c05dd-c819-4edf-816f-391d35156558] received
+[2026-08-01 22:20:39,593: INFO/MainProcess] Task analytics.track_event[a589f758-8897-4cd8-bf7b-5680030b2192] succeeded in 0.01599999999962165s: None
+[2026-08-01 22:20:39,594: INFO/MainProcess] Task analytics.track_event[16083028-86fd-4e9e-bd92-74b5f78d13c9] succeeded in 0.0s: None
+[2026-08-01 22:20:39,598: INFO/MainProcess] Task analytics.track_event[c26c05dd-c819-4edf-816f-391d35156558] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:39,598: INFO/MainProcess] Task analytics.track_event[b4638f9f-8afa-4ca3-aecd-8e863ef9984e] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:41,583: INFO/MainProcess] Task approvals.process_outbox[9fedfe79-0603-47b0-9a01-cd61a86619eb] received
+[2026-08-01 22:20:41,586: INFO/MainProcess] Task analytics.track_event[272399ac-9198-4690-9e96-0cb98fec150e] received
+[2026-08-01 22:20:41,591: INFO/MainProcess] Task analytics.track_event[779d44e9-32fa-472c-866c-3ea8773c7a4f] received
+[2026-08-01 22:20:41,595: INFO/MainProcess] Task analytics.track_event[88901e37-42b3-4ced-8506-0d4e9b547c76] received
+[2026-08-01 22:20:41,599: INFO/MainProcess] Task approvals.process_outbox[9fedfe79-0603-47b0-9a01-cd61a86619eb] succeeded in 0.015000000000327418s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:20:41,604: INFO/MainProcess] Task analytics.track_event[272399ac-9198-4690-9e96-0cb98fec150e] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:41,607: INFO/MainProcess] Task analytics.track_event[779d44e9-32fa-472c-866c-3ea8773c7a4f] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:41,609: INFO/MainProcess] Task analytics.track_event[88901e37-42b3-4ced-8506-0d4e9b547c76] succeeded in 0.015000000000327418s: None
+[2026-08-01 22:20:43,586: INFO/MainProcess] Task approvals.process_outbox[01ffdea4-4dc6-4806-89ff-977308c5b47e] received
+[2026-08-01 22:20:43,595: INFO/MainProcess] Task approvals.process_outbox[01ffdea4-4dc6-4806-89ff-977308c5b47e] succeeded in 0.0s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:20:44,919: INFO/MainProcess] Task analytics.track_event[1ae3cbbe-9b5b-4420-83f7-7adc7d06967d] received
+[2026-08-01 22:20:44,929: INFO/MainProcess] Task analytics.track_event[1ae3cbbe-9b5b-4420-83f7-7adc7d06967d] succeeded in 0.01599999999962165s: None
+[2026-08-01 22:20:47,331: INFO/MainProcess] Task approvals.process_outbox[a1d11efd-905b-424e-a5e8-d9234d671f15] received
+[2026-08-01 22:20:47,340: INFO/MainProcess] Task approvals.process_outbox[a1d11efd-905b-424e-a5e8-d9234d671f15] succeeded in 0.0s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:20:49,915: INFO/MainProcess] Task analytics.track_event[4a02e76a-30e6-4693-aa62-5fa836352fca] received
+[2026-08-01 22:20:49,925: INFO/MainProcess] Task analytics.track_event[4a02e76a-30e6-4693-aa62-5fa836352fca] succeeded in 0.01599999999962165s: None
+[2026-08-01 22:20:51,235: INFO/MainProcess] Task analytics.track_event[13b201a6-0fe9-4c1a-9fc9-346c874509fc] received
+[2026-08-01 22:20:51,245: INFO/MainProcess] Task analytics.track_event[13b201a6-0fe9-4c1a-9fc9-346c874509fc] succeeded in 0.01599999999962165s: None
+[2026-08-01 22:20:51,258: INFO/MainProcess] Task analytics.track_event[bcc3d9d0-bf38-4a8a-92b9-259902928d2d] received
+[2026-08-01 22:20:51,268: INFO/MainProcess] Task analytics.track_event[bcc3d9d0-bf38-4a8a-92b9-259902928d2d] succeeded in 0.0s: None
+[2026-08-01 22:20:51,471: INFO/MainProcess] Task analytics.track_event[ba2831cd-2f9f-47b1-a39e-e7e6390d81a9] received
+[2026-08-01 22:20:51,480: INFO/MainProcess] Task analytics.track_event[92705ced-a394-4977-8e96-07f7da5fb701] received
+[2026-08-01 22:20:51,483: INFO/MainProcess] Task analytics.track_event[ba2831cd-2f9f-47b1-a39e-e7e6390d81a9] succeeded in 0.0s: None
+[2026-08-01 22:20:51,489: INFO/MainProcess] Task analytics.track_event[92705ced-a394-4977-8e96-07f7da5fb701] succeeded in 0.01599999999962165s: None
+[2026-08-01 22:20:51,651: INFO/MainProcess] Task analytics.track_event[31d8007b-7501-445d-b11c-3a1aa501b427] received
+[2026-08-01 22:20:51,657: INFO/MainProcess] Task analytics.track_event[ecf6f2bc-885a-4d70-a671-dfd70299bcf4] received
+[2026-08-01 22:20:51,661: INFO/MainProcess] Task analytics.track_event[31d8007b-7501-445d-b11c-3a1aa501b427] succeeded in 0.016000000000531145s: None
+[2026-08-01 22:20:51,666: INFO/MainProcess] Task analytics.track_event[c0df623f-82b6-418c-a7d7-738ed805c63b] received
+[2026-08-01 22:20:51,667: INFO/MainProcess] Task analytics.track_event[ecf6f2bc-885a-4d70-a671-dfd70299bcf4] succeeded in 0.016000000000531145s: None
+[2026-08-01 22:20:51,675: INFO/MainProcess] Task analytics.track_event[c0df623f-82b6-418c-a7d7-738ed805c63b] succeeded in 0.01599999999962165s: None
+[2026-08-01 22:20:52,331: INFO/MainProcess] Task approvals.process_outbox[5ec42288-c3c3-47b8-86a2-96db8395afa0] received
+[2026-08-01 22:20:52,338: INFO/MainProcess] Task approvals.process_outbox[5ec42288-c3c3-47b8-86a2-96db8395afa0] succeeded in 0.0s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:20:57,332: INFO/MainProcess] Task approvals.process_outbox[389a120e-6abd-4426-b146-e8d350790f7d] received
+[2026-08-01 22:20:57,338: INFO/MainProcess] Task approvals.process_outbox[389a120e-6abd-4426-b146-e8d350790f7d] succeeded in 0.0s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:21:02,331: INFO/MainProcess] Task approvals.process_outbox[b3f0ecb1-3a12-4259-9066-2f0e35fe3310] received
+[2026-08-01 22:21:02,341: INFO/MainProcess] Task approvals.process_outbox[b3f0ecb1-3a12-4259-9066-2f0e35fe3310] succeeded in 0.0s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:21:07,333: INFO/MainProcess] Task approvals.process_outbox[73a92221-790c-4c5b-8a40-879d7df1c828] received
+[2026-08-01 22:21:07,354: INFO/MainProcess] Task approvals.process_outbox[73a92221-790c-4c5b-8a40-879d7df1c828] succeeded in 0.015000000000327418s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:21:12,332: INFO/MainProcess] Task approvals.process_outbox[339df5a7-e86e-4dee-8322-39edc4b103f3] received
+[2026-08-01 22:21:12,340: INFO/MainProcess] Task approvals.process_outbox[339df5a7-e86e-4dee-8322-39edc4b103f3] succeeded in 0.0s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:21:17,333: INFO/MainProcess] Task approvals.process_outbox[abe9ff79-c0f1-4dd7-b574-0a5f5fa4d4ae] received
+[2026-08-01 22:21:17,340: INFO/MainProcess] Task approvals.process_outbox[abe9ff79-c0f1-4dd7-b574-0a5f5fa4d4ae] succeeded in 0.0s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:21:22,333: INFO/MainProcess] Task approvals.process_outbox[df0620e7-9f93-4cbd-af20-5a577fe3ffcd] received
+[2026-08-01 22:21:22,341: INFO/MainProcess] Task approvals.process_outbox[df0620e7-9f93-4cbd-af20-5a577fe3ffcd] succeeded in 0.0s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:21:22,364: INFO/MainProcess] Task approvals.cleanup_expired_approvals[97fcc15a-b121-4176-b019-c1d2e0e71ecb] received
+[2026-08-01 22:21:22,367: INFO/MainProcess] [ApprovalCleanup] 任务被调用: 扫描超时审批
+[2026-08-01 22:21:22,373: INFO/MainProcess] Task approvals.cleanup_expired_approvals[97fcc15a-b121-4176-b019-c1d2e0e71ecb] succeeded in 0.0s: {'expired_count': 0}
+[2026-08-01 22:21:27,335: INFO/MainProcess] Task approvals.process_outbox[24c554fd-6592-4e37-9a20-c4a0b3a2caf8] received
+[2026-08-01 22:21:27,341: INFO/MainProcess] Task approvals.process_outbox[24c554fd-6592-4e37-9a20-c4a0b3a2caf8] succeeded in 0.0s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:21:32,334: INFO/MainProcess] Task approvals.process_outbox[9e1b8609-42c9-4a78-87de-78e667a090dc] received
+[2026-08-01 22:21:32,359: INFO/MainProcess] Task approvals.process_outbox[9e1b8609-42c9-4a78-87de-78e667a090dc] succeeded in 0.015000000000327418s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-01 22:21:37,335: INFO/MainProcess] Task approvals.process_outbox[3c470c00-05f6-4d5f-ac82-a3ed3fcfaf7a] received
+[2026-08-01 22:21:37,362: INFO/MainProcess] Task approvals.process_outbox[3c470c00-05f6-4d5f-ac82-a3ed3fcfaf7a] succeeded in 0.015000000000327418s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}

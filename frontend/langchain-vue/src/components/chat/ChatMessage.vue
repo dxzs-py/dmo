@@ -94,8 +94,11 @@ const toolCallApprovals = computed(() => {
 })
 
 // 是否使用消息级审批（向后兼容：当没有 toolCall 级审批时回退到 message.approval）
+// 仅 assistant 消息：user 消息不应渲染审批 UI
 const useMessageLevelApproval = computed(() => {
-  return toolCallApprovals.value.length === 0 && props.message.approval
+  return props.message.role === 'assistant'
+    && toolCallApprovals.value.length === 0
+    && props.message.approval
 })
 
 // ToolCall 级审批确认：从 ToolCallCard 冒泡上来
@@ -169,8 +172,8 @@ const hasMetadata = computed(() => {
     (m.sources && m.sources.length > 0) ||
     (m.toolCalls && m.toolCalls.length > 0) ||
     (m.reasoning && m.reasoning.content) ||
-    m.plan ||
-    m.chainOfThought
+    (m.plan && typeof m.plan === 'object' && Object.keys(m.plan).length > 0) ||
+    (Array.isArray(m.chainOfThought) && m.chainOfThought.length > 0)
   )
 })
 
@@ -435,14 +438,14 @@ function handleMessageClick() {
       />
 
       <Plan
-        v-if="message.plan"
+        v-if="message.role !== 'user' && message.plan && typeof message.plan === 'object' && Object.keys(message.plan).length > 0"
         :title="message.plan.title"
         :description="message.plan.description"
         :steps="message.plan.steps"
         :is-streaming="isStreaming && isLast"
       />
 
-      <div v-if="message.chainOfThought" class="message-cot">
+      <div v-if="message.role !== 'user' && Array.isArray(message.chainOfThought) && message.chainOfThought.length > 0" class="message-cot">
         <ChainOfThought :steps="message.chainOfThought" />
       </div>
 

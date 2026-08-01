@@ -6,10 +6,12 @@ import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
 import { useModelStore } from '../stores/model'
 import { useApprovalStore } from '../stores/approval'
+import { useSyncStore } from '../stores/sync'
 import { useChatInput } from '../composables/useChatInput'
 import { useChatUI } from '../composables/useChatUI'
 import { useChatCommands } from '../composables/useChatCommands'
 import { useChatKeyboard } from '../composables/useChatKeyboard'
+import { useRealtimeSync } from '../composables/useRealtimeSync'
 import { deepResearchAPI } from '../api/research'
 import ChatHeader from '../components/chat/ChatHeader.vue'
 import ChatMessages from '../components/chat/ChatMessages.vue'
@@ -21,6 +23,7 @@ const chatStore = useChatStore()
 const sessionStore = useSessionStore()
 const modelStore = useModelStore()
 const approvalStore = useApprovalStore()
+const syncStore = useSyncStore()
 const route = useRoute()
 
 // --- 输入相关逻辑 ---
@@ -75,7 +78,8 @@ useChatKeyboard({
   inputRef: chatInputRef,
 })
 
-const connectionStatus = computed(() => chatStore.connectionStatus)
+const realtime = useRealtimeSync()
+const connectionStatus = computed(() => realtime.connectionStatus.value)
 
 // --- 深度研究 SSE 重连（刷新/新浏览器恢复审批监听） ---
 let researchSSEAbortController = null
@@ -183,6 +187,29 @@ const disconnectResearchSSE = () => {
   researchSSERetryCount = 0
 }
 
+// --- WebSocket 实时同步 ---
+/** 当前通过 WebSocket 订阅的 sessionId */
+let subscribedSessionId = null
+/** subscribeSession 返回的取消函数，仅删除 ChatView 注册的 callback */
+let _sessionUnsubscribeFn = null
+
+const subscribeToSessionEvents = (sessionId) => {
+  if (!sessionId || subscribedSessionId === sessionId) return
+  unsubscribeFromSessionEvents()
+  subscribedSessionId = sessionId
+  _sessionUnsubscribeFn = realtime.subscribeSession(sessionId, syncStore.handleRealtimeEvent)
+  console.log('[ChatView] WebSocket 订阅会话事件:', sessionId)
+}
+
+const unsubscribeFromSessionEvents = () => {
+  if (_sessionUnsubscribeFn) {
+    _sessionUnsubscribeFn()
+    _sessionUnsubscribeFn = null
+    console.log('[ChatView] WebSocket 取消订阅会话事件:', subscribedSessionId)
+  }
+  subscribedSessionId = null
+}
+
 const handleModeChange = (newMode) => {
   chatStore.currentMode = newMode
 }
@@ -225,7 +252,9 @@ const loadCurrentSessionDetail = async () => {
   const sessionId = sessionStore.currentSessionId
   if (sessionId) {
     const session = sessionStore.sessions.find(s => s.id === sessionId)
-    if (!session || !session.messages || session.messages.length === 0) {
+    // Task 15 P0 修复：当本地仅用户消息无 AI 回复时，仍需从后端加载完整详情
+    const hasAssistantMessages = session?.messages?.some(m => m.role === 'assistant')
+    if (!session || !session.messages || session.messages.length === 0 || !hasAssistantMessages) {
       await sessionStore.loadSessionDetail(sessionId)
     }
     await loadSessionAttachments(sessionId)
@@ -291,10 +320,16 @@ onMounted(async () => {
   if (chatStore.researchTaskId) {
     connectResearchSSE(chatStore.researchTaskId)
   }
+
+  // 订阅当前会话的 WebSocket 事件（初始会话）
+  if (sessionStore.currentSessionId) {
+    subscribeToSessionEvents(sessionStore.currentSessionId)
+  }
 })
 
 onUnmounted(() => {
   disconnectResearchSSE()
+  unsubscribeFromSessionEvents()
 })
 
 // 会话切换防抖：快速切换时只执行最后一次，避免请求风暴
@@ -302,6 +337,8 @@ onUnmounted(() => {
 // 200ms 对用户无感知，但能有效抑制连续点击会话列表产生的 N 倍请求
 watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
   if (newId !== oldId) {
+    // 取消订阅旧会话的 WebSocket 事件
+    unsubscribeFromSessionEvents()
     // 切换会话时断开旧的深度研究 SSE 连接
     disconnectResearchSSE()
     if (newId) {
@@ -313,6 +350,8 @@ watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
       if (chatStore.researchTaskId) {
         connectResearchSSE(chatStore.researchTaskId)
       }
+      // 订阅新会话的 WebSocket 事件
+      subscribeToSessionEvents(newId)
     } else {
       clearAttachments()
     }
@@ -384,7 +423,7 @@ watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
             key="messages"
             :messages="messages"
             :is-loading="chatStore.isLoading"
-            :is-streaming="chatStore.isStreaming"
+            :is-streaming="chatStore.isStreaming || syncStore.isThinking(sessionStore.currentSessionId)"
             :selected-message-id="selectedMessage?.id"
             :show-debug="showDebug"
             @regenerate="handleRegenerate"

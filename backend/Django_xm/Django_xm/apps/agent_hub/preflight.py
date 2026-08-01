@@ -6,6 +6,8 @@
 
 import logging
 
+from asgiref.sync import sync_to_async
+
 from Django_xm.apps.agent_hub.config import AgentType
 
 logger = logging.getLogger(__name__)
@@ -90,8 +92,8 @@ class ExecutionPreflight:
         try:
             from django.core.cache import cache
 
-            cache.set("_preflight_check", "1", timeout=5)
-            result = cache.get("_preflight_check")
+            await sync_to_async(cache.set, thread_sensitive=False)("_preflight_check", "1", timeout=5)
+            result = await sync_to_async(cache.get, thread_sensitive=False)("_preflight_check")
             if result == "1":
                 return (True, "")
             return (False, "Redis 读写不一致")

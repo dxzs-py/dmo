@@ -166,7 +166,9 @@ async def run_stream_loop(
     async for event in strategy.on_loop_start(ctx, data):
         yield event
 
+    logger.info(f"[Loop] About to call agent.graph.astream, input keys: {list(graph_input.keys()) if isinstance(graph_input, dict) else type(graph_input).__name__}")
     async for chunk in agent.graph.astream(graph_input, config=config, stream_mode=["messages", "updates"]):
+        logger.info(f"[Loop] astream produced chunk: type={type(chunk).__name__}, is_tuple={isinstance(chunk, tuple)}")
         # 多 stream mode 下 chunk 是 (mode_name, data) 元组
         if isinstance(chunk, tuple) and len(chunk) == 2:
             mode_name, mode_data = chunk
@@ -201,6 +203,9 @@ async def run_stream_loop(
                 tool_args_accumulator=ctx.tool_args_accumulator,
                 mode=data.get("mode", "agent"),
                 enable_deep_thinking=strategy.enable_deep_thinking,
+                session_id=data.get("session_id", ""),
+                message_id=str(data.get("_assistant_message_id") or data.get("message_id", "")),
+                module_id=data.get("session_id", ""),
             ):
                 # chunk 事件：累积内容
                 if event.get("type") == "chunk":
@@ -229,6 +234,8 @@ async def _handle_updates_chunk(
     """处理 updates stream mode chunk（审批中断检测）
 
     检测 __interrupt__ 事件，解析审批请求，更新 ctx.interrupt_info。
+    同时调用 request_approval_async 创建 Approval 数据库记录（P25修复：
+    与 chat_resume_generator 保持一致，避免审批 resume 端点404）。
     """
     if not (isinstance(mode_data, dict) and "__interrupt__" in mode_data):
         return
@@ -255,6 +262,7 @@ async def _handle_updates_chunk(
         for approval_data in approval_data_list:
             tool_name = approval_data.get("tool_name", "unknown")
             action = approval_data.get("action", "confirm")
+            tool_call_id = approval_data.get("tool_call_id", "")
             logger.info(
                 f"approval interrupt: tool={tool_name}, "
                 f"action={action}, danger={approval_data.get('danger_level', 'medium')}, "
@@ -262,6 +270,27 @@ async def _handle_updates_chunk(
                 f"graph_interrupt_id={graph_interrupt_id}, "
                 f"langgraph_resume_id={langgraph_resume_id}"
             )
+
+            # P25修复：持久化 Approval 记录到数据库
+            # 与 chat_resume_generator.py 第357-362行逻辑对齐。
+            # 若不创建 DB 记录，后续 POST /api/v1/approvals/{interrupt_id}/resume/
+            # 会因找不到记录而返回404 → 审批操作无效 → 前端状态回退。
+            if ctx.session_id:
+                approval_data["session_id"] = ctx.session_id
+            if ctx.message_id:
+                approval_data["message_id"] = ctx.message_id
+            try:
+                from Django_xm.apps.approvals.services.approval_service import request_approval_async
+                await request_approval_async(
+                    source="chat",
+                    source_id=ctx.session_id or "",
+                    interrupt_id=tool_call_id,
+                    approval_data=approval_data,
+                )
+                logger.info(f"[Approval] DB记录已创建: interrupt_id={tool_call_id}, session={ctx.session_id}")
+            except Exception as e:
+                logger.error(f"[Approval] DB记录创建失败: interrupt_id={tool_call_id}, error={e}")
+
             # 标记发生了审批中断（用第一个请求的信息）
             if ctx.interrupt_info is None:
                 ctx.interrupt_info = {

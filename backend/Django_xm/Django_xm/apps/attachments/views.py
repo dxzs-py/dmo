@@ -396,7 +396,7 @@ class StorageAlertView(APIView):
                 except StorageAlert.DoesNotExist:
                     return error_response(code=ErrorCode.NOT_FOUND, message="告警不存在")
 
-            alerts = StorageAlert.objects.all().order_by("-created_at")
+            alerts = StorageAlert.objects.all().order_by("-created_at")[:500]
             data = [serialize_storage_alert(a) for a in alerts]
             return success_response(data=data)
         except Exception:

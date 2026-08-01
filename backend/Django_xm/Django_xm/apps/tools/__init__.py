@@ -177,7 +177,7 @@ async def _load_mcp_tools_async(
 
                 from Django_xm.apps.tools.models import McpServerConfig
 
-                @sync_to_async
+                @sync_to_async(thread_sensitive=False)
                 def _get_user_servers():
                     return list(McpServerConfig.objects.filter(user_id=user_id, status="active"))
 
@@ -292,7 +292,7 @@ async def get_tools_for_request_async(
 
                 from Django_xm.apps.tools.models import CustomTool, SkillConfig
 
-                @sync_to_async
+                @sync_to_async(thread_sensitive=False)
                 def _get_custom_and_skill_names():
                     cn = set(CustomTool.objects.filter(user_id=user_id).values_list("name", flat=True))
                     sn = set(SkillConfig.objects.filter(user_id=user_id).values_list("name", flat=True))
@@ -311,7 +311,7 @@ async def get_tools_for_request_async(
 
                 from Django_xm.apps.tools.models import SkillPackage
 
-                @sync_to_async
+                @sync_to_async(thread_sensitive=False)
                 def _get_skill_package_names():
                     return set(SkillPackage.objects.filter(user_id=user_id).values_list("name", flat=True))
 
@@ -335,7 +335,7 @@ async def get_tools_for_request_async(
             if selected_custom:
                 from asgiref.sync import sync_to_async
 
-                custom_tools = await sync_to_async(_load_custom_tools_for_user, thread_sensitive=True)(
+                custom_tools = await sync_to_async(_load_custom_tools_for_user, thread_sensitive=False)(
                     user_id, selected_names=list(selected_custom)
                 )
                 if custom_tools:

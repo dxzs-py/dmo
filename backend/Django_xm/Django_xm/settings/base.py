@@ -50,6 +50,7 @@ ALLOWED_HOSTS = (
 )
 
 INSTALLED_APPS = [
+    "daphne",  # ASGI WebSocket 服务器（必须在 django 相关 app 之前）
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -61,6 +62,7 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
     "drf_spectacular",
+    "channels",  # Django Channels（WebSocket + 后台任务）
     "Django_xm.apps.cache_manager.apps.CacheManagerConfig",
     "Django_xm.apps.attachments.apps.AttachmentsConfig",
     "Django_xm.apps.users.apps.UsersConfig",
@@ -95,6 +97,8 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = "Django_xm.wsgi.application"
+# Django Channels ASGI 应用路径（WebSocket 支持）
+ASGI_APPLICATION = "Django_xm.asgi.application"
 
 DATABASES = {
     "default": {

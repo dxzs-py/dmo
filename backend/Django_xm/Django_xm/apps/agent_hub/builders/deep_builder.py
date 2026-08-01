@@ -863,4 +863,5 @@ class DeepAgentBuilder:
 
             return get_deep_research_prompt()
         except Exception:
+            logger.exception("深度研究 prompt 导入失败，使用默认 prompt")
             return "You are a deep research assistant. Conduct thorough research on the given topic."

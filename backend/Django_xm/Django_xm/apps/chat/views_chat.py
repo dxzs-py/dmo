@@ -24,6 +24,8 @@ from Django_xm.apps.cache_manager.services.secure_session_cache import SecureSes
 from Django_xm.apps.core.throttling import ChatStreamRateThrottle
 from Django_xm.async_utils import run_async
 from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.event_schema import EventSource, EventType
+from Django_xm.common.realtime_events import publish_event_sync
 from Django_xm.common.responses import error_response, success_response, validation_error_response
 from Django_xm.common.sse_utils import sse_error_event, sse_error_response, sse_response
 
@@ -40,6 +42,52 @@ from .serializers import (
 from .services.chat_service import ChatService
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_publish_session_created(session_id, title, mode, knowledge_bases,
+                                   created_at, updated_at, user_id, session_data):
+    """安全发布 SESSION_CREATED 事件（与参考项目 _safe_publish_event_sync 对齐）。
+
+    在 transaction.on_commit 回调中调用，确保事务已提交、其他浏览器可查询到该会话。
+    失败仅记日志，不抛出异常（避免 on_commit 回调异常传播）。
+    """
+    try:
+        publish_event_sync(
+            EventType.SESSION_CREATED,
+            {
+                "id": session_id,          # UUID（与前端 handleUserEvent 对齐）
+                "session_id": session_id,
+                "title": title,
+                "mode": mode,
+                "message_count": 0,
+                "selected_knowledge_bases": knowledge_bases,
+                "created_at": created_at.isoformat() if created_at else None,
+                "updated_at": updated_at.isoformat() if updated_at else created_at.isoformat() if created_at else None,
+                "session": session_data,
+            },
+            user_id=str(user_id),
+        )
+    except Exception as e:
+        logger.warning(f"广播 SESSION_CREATED 失败: session={session_id}, error={e}")
+
+
+def _safe_publish_session_deleted(session_id, user_id):
+    """安全发布 SESSION_DELETED 事件（与 _safe_publish_session_created 对齐）。
+
+    在 transaction.on_commit 回调中调用，确保事务已提交、其他浏览器可感知会话已删除。
+    失败仅记日志，不抛出异常。
+    """
+    try:
+        publish_event_sync(
+            EventType.SESSION_DELETED,
+            {
+                "id": session_id,
+                "session_id": session_id,
+            },
+            user_id=str(user_id),
+        )
+    except Exception as e:
+        logger.warning(f"广播 SESSION_DELETED 失败: session={session_id}, error={e}")
 
 
 async def _cleanup_checkpoint_messages_async_by_id(session_id, deleted_message_ids):
@@ -350,8 +398,81 @@ class ChatStreamView(BaseChatAPIView):
             except Exception:
                 logger.exception("预加载附件内容失败")
 
-        # Task 23.1：generate() 闭包拆分为 _init_stream / _process_chunks / _cleanup_stream
-        # 三个职责单一的子函数，共享状态通过 ChatStreamContext dataclass 传递。
+        # ── 预创建消息对 + WebSocket 广播 ──
+        # 参考项目关键行为：流式输出开始前，先创建用户消息和 assistant 占位消息，
+        # 并广播 MESSAGE_ADDED 事件，确保其他浏览器在 tool/approval 事件到达前已有消息可挂载。
+        assistant_message_id = None
+        user_message_id = None
+        if session_id:
+            try:
+                session_obj = ChatSession.objects.get(session_id=session_id)
+                _user = request.user if request.user.is_authenticated else None
+
+                # 1. 创建用户消息
+                user_msg = ChatMessage(
+                    session=session_obj,
+                    role=MessageRole.USER,
+                    content=data.get("message", ""),
+                    created_by=_user,
+                    updated_by=_user,
+                )
+                user_msg.save()
+                user_message_id = user_msg.id
+                if original_attachment_ids:
+                    from Django_xm.apps.attachments.services.cross_app import get_attachment_service
+                    get_attachment_service().link_attachments_to_message(user_msg, original_attachment_ids)
+
+                # 2. 清理残留的 is_streaming=True 空 assistant 消息
+                ChatMessage.objects.filter(
+                    session=session_obj,
+                    role=MessageRole.ASSISTANT,
+                    is_deleted=False,
+                    is_streaming=True,
+                    content="",
+                ).update(is_streaming=False)
+
+                # 3. 创建 assistant 占位消息
+                ai_msg = ChatMessage(
+                    session=session_obj,
+                    role=MessageRole.ASSISTANT,
+                    content="",
+                    is_streaming=True,
+                    created_by=_user,
+                    updated_by=_user,
+                )
+                ai_msg.save()
+                assistant_message_id = ai_msg.id
+                logger.info(
+                    f"[ChatStream] 创建流式消息对: user={user_msg.id}, assistant={ai_msg.id}"
+                )
+
+                # 将 assistant 占位消息 ID 传递给 chat_service
+                data["_assistant_message_id"] = str(assistant_message_id)
+
+                # 广播 MESSAGE_ADDED 到 WebSocket
+                try:
+                    from Django_xm.common.event_schema import EventSource, EventType
+                    from Django_xm.common.realtime_events import publish_event_sync
+                    from .serializers import ChatMessageSerializer as _MsgSerializer
+
+                    for mid in (user_message_id, assistant_message_id):
+                        msg = ChatMessage.objects.get(id=mid)
+                        publish_event_sync(
+                            EventType.MESSAGE_ADDED,
+                            {
+                                "session_id": session_id,
+                                "message_id": str(mid),
+                                "message": _MsgSerializer(msg).data,
+                            },
+                            session_id=session_id,
+                        )
+                except Exception as broadcast_err:
+                    logger.warning(f"[ChatStream] 广播 MESSAGE_ADDED 失败: {broadcast_err}")
+            except Exception as e:
+                logger.warning(f"[ChatStream] 创建流式消息失败: {e}")
+
+        # Task 23.1：generate() 闭包拆分为独立模块。
+        # 使用 ASGI 原生事件循环的异步生成器（不再创建 new_event_loop）。
         # 详见 chat/services/sse_generator.py
         from .services.sse_generator import ChatStreamContext, generate_chat_stream
 
@@ -360,6 +481,8 @@ class ChatStreamView(BaseChatAPIView):
             data=data,
             original_attachment_ids=original_attachment_ids,
             pending_progress=pending_progress,
+            assistant_message_id=assistant_message_id,
+            user_message_id=user_message_id,
         )
         return sse_response(generate_chat_stream(ctx))
 
@@ -535,8 +658,27 @@ class ChatSessionCreateView(BaseChatAPIView):
         # prefetch messages + attachments 避免 ChatSessionDetailSerializer N+1
         session = ChatSession.objects.prefetch_related("messages", "messages__attachments").get(pk=session.pk)
 
+        session_data = ChatSessionDetailSerializer(session).data
+
+        # P16/P17/P18 修复：广播 SESSION_CREATED 事件
+        # - 使用 transaction.on_commit 确保事务提交后再广播（防止其他浏览器查询时会话尚未提交）
+        # - id 字段使用 session.session_id（UUID）而非 session.id（整数PK），与前端 handleUserEvent 对齐
+        # - 提取局部变量避免 lambda 闭包中 ORM 对象失效
+        _session_id = session.session_id
+        _title = session.title
+        _mode = session.mode
+        _knowledge_bases = session.selected_knowledge_bases or []
+        _created_at = session.created_at
+        _updated_at = session.updated_at
+        _user_id = request.user.id
+        _session_data = session_data
+        transaction.on_commit(lambda: _safe_publish_session_created(
+            _session_id, _title, _mode, _knowledge_bases,
+            _created_at, _updated_at, _user_id, _session_data,
+        ))
+
         return success_response(
-            data=ChatSessionDetailSerializer(session).data, message="会话创建成功", http_status=status.HTTP_201_CREATED
+            data=session_data, message="会话创建成功", http_status=status.HTTP_201_CREATED
         )
 
 
@@ -650,6 +792,13 @@ class ChatSessionDetailView(BaseChatAPIView):
 
         SecureSessionCacheService.invalidate_all_user_sessions(request.user.id)
         invalidate_chat_cache(user_id=request.user.id)
+
+        # 广播 SESSION_DELETED 事件，实现跨浏览器实时同步
+        # 与 _safe_publish_session_created 一致：在 transaction.on_commit 中发布，
+        # 确保软删除已提交到 DB
+        _sid = session.session_id
+        _uid = request.user.id
+        transaction.on_commit(lambda: _safe_publish_session_deleted(_sid, _uid))
 
         response_data = {"message": "会话删除成功"}
         if linked_tasks:
@@ -1231,6 +1380,12 @@ async def _stream_chat_resume_generator(
                     accumulated_reasoning=accumulated_reasoning,
                     tool_args_accumulator=tool_args_accumulator,
                     mode="agent",
+                    enable_deep_thinking=enable_deep_thinking,
+                    session_id=str(session_id or ""),
+                    message_id=str(
+                        (approval.extra or {}).get("message_id", "") or getattr(approval, "message_id", "") or ""
+                    ),
+                    module_id=str(session_id or ""),
                 ):
                     if event.get("type") == "chunk":
                         current_message_content += event.get("content", "")

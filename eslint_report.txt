@@ -1,0 +1,162 @@
+﻿
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\App.vue
+   3:20  warning  'useRouter' is defined but never used              no-unused-vars
+  17:7   warning  'sessionStore' is assigned a value but never used  no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\chat\ChatHeader.vue
+   2:20  warning  'ref' is defined but never used                                         no-unused-vars
+  46:20  warning  'data' is defined but never used. Allowed unused args must match /^_/u  no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\chat\ChatInput.vue
+  3:58  warning  'SetUp' is defined but never used  no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\chat\ChatMessage.vue
+   2:72  warning  'Search' is defined but never used                  no-unused-vars
+  73:3   warning  'toolCallCount' is assigned a value but never used  no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\chat\ChatMessages.vue
+   6:10  warning  'AiSuggestions' is defined but never used              no-unused-vars
+  66:7   warning  'estimateItemSize' is assigned a value but never used  no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\chat\ChatRightPanel.vue
+  67:12  warning  'error' is defined but never used  no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\chat\DebugPanel.vue
+  8:7  warning  'props' is assigned a value but never used  no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\chat\DeepResearchCard.vue
+  11:7  warning  'props' is assigned a value but never used  no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\chat\LangchainToolsTab.vue
+  17:10  warning  'item' is defined but never used. Allowed unused args must match /^_/u  no-unused-vars
+  95:7   warning  'handleToggleCustomTool' is assigned a value but never used             no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\chat\McpToolsTab.vue
+   17:10  warning  'item' is defined but never used. Allowed unused args must match /^_/u  no-unused-vars
+  106:7   warning  'handleToggleMcpServer' is assigned a value but never used              no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\chat\MessageAttachments.vue
+  12:7  warning  'props' is assigned a value but never used  no-unused-vars
+  23:7  warning  'emits' is assigned a value but never used  no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\chat\SkillToolsTab.vue
+   20:10  warning  'item' is defined but never used. Allowed unused args must match /^_/u  no-unused-vars
+   97:7   warning  'handleToggleSkill' is assigned a value but never used                  no-unused-vars
+  133:7   warning  'toggleSkillPackageStatus' is assigned a value but never used           no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\chat\TaskList.vue
+  102:21  warning  'ElMessageBox' is defined but never used  no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\chat\ToolCallCard.vue
+  265:7  warning  'dangerLevelLabel' is assigned a value but never used    no-unused-vars
+  270:7  warning  'dangerLevelTagType' is assigned a value but never used  no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\chat\ToolCallSection.vue
+  16:7  warning  'props' is assigned a value but never used  no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\common\GlobalSearch.vue
+  135:13  error  'v-memo' directive does not work inside 'v-for'  vue/valid-v-memo
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\common\KnowledgeBaseSelector.vue
+  56:7  warning  'props' is assigned a value but never used  no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\common\MarkdownRenderer.vue
+   52:11  error    Empty block statement                      no-empty
+  213:5   warning  'v-html' directive can lead to XSS attack  vue/no-v-html
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\common\ModelSelector.vue
+  3:85  warning  'ElDivider' is defined but never used       no-unused-vars
+  4:56  warning  'Close' is defined but never used           no-unused-vars
+  8:7   warning  'props' is assigned a value but never used  no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\common\__tests__\ErrorBoundary.test.js
+  30:26  warning  There is more than one component in this file  vue/one-component-per-file
+  32:5   error    Expected to return a value in render function  vue/require-render-return
+  39:37  warning  There is more than one component in this file  vue/one-component-per-file
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\layout\AppHeader.vue
+  11:7  warning  'props' is assigned a value but never used       no-unused-vars
+  20:7  warning  'themeStore' is assigned a value but never used  no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\layout\AppSidebar.vue
+  5:7  warning  'props' is assigned a value but never used  no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\components\layout\Sidebar.vue
+   14:3   warning  'Calendar' is defined but never used                 no-unused-vars
+   51:7   warning  'userStore' is assigned a value but never used       no-unused-vars
+   71:7   warning  'toggleCollapse' is assigned a value but never used  no-unused-vars
+  100:11  error    Empty block statement                                no-empty
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\composables\useChatInput.js
+  19:11  error  Empty block statement  no-empty
+  26:11  error  Empty block statement  no-empty
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\composables\useChatMessage.js
+  202:13  error  Empty block statement  no-empty
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\composables\useErrorHandler.js
+  96:40  error  'chrome' is not defined  no-undef
+  97:5   error  'chrome' is not defined  no-undef
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\composables\useKeyboardShortcuts.js
+  7:15  warning  '_name' is assigned a value but never used  no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\stores\research.js
+  368:71  warning  'messageBackendId' is assigned a value but never used. Allowed unused args must match /^_/u  no-unused-vars
+  433:61  warning  'messageBackendId' is assigned a value but never used. Allowed unused args must match /^_/u  no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\utils\api-error-handler.js
+  105:13  error  Empty block statement  no-empty
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\utils\sse.js
+  320:17  error  Empty block statement  no-empty
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\utils\tool-adapters.js
+  372:9  error  The value assigned to 'language' is not used in subsequent statements  no-useless-assignment
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\views\AttachmentView.vue
+    6:3   warning  'Download' is defined but never used                no-unused-vars
+   14:3   warning  'Document' is defined but never used                no-unused-vars
+  249:12  warning  'e' is defined but never used                       no-unused-vars
+  264:12  warning  'e' is defined but never used                       no-unused-vars
+  269:7   warning  'handleRestore' is assigned a value but never used  no-unused-vars
+  279:12  warning  'e' is defined but never used                       no-unused-vars
+  335:12  warning  'e' is defined but never used                       no-unused-vars
+  382:12  warning  'e' is defined but never used                       no-unused-vars
+  445:12  warning  'e' is defined but never used                       no-unused-vars
+  480:12  warning  'e' is defined but never used                       no-unused-vars
+  497:12  warning  'e' is defined but never used                       no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\views\DashboardView.vue
+   4:10  warning  'ElMessage' is defined but never used  no-unused-vars
+   8:3   warning  'Upload' is defined but never used     no-unused-vars
+  65:11  error    Empty block statement                  no-empty
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\views\DeepResearchView.vue
+  415:10  warning  'ToolCallStatus' is defined but never used  no-unused-vars
+  598:11  error    Empty block statement                       no-empty
+  654:12  warning  'e' is defined but never used               no-unused-vars
+  680:12  warning  'e' is defined but never used               no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\views\KnowledgeBaseView.vue
+    4:85  warning  'Download' is defined but never used  no-unused-vars
+  102:12  warning  'error' is defined but never used     no-unused-vars
+  153:12  warning  'error' is defined but never used     no-unused-vars
+  276:12  warning  'error' is defined but never used     no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\views\ProfileView.vue
+    4:21  warning  'ElMessageBox' is defined but never used  no-unused-vars
+    6:10  warning  'chatAPI' is defined but never used       no-unused-vars
+  105:12  warning  'error' is defined but never used         no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\views\RagView.vue
+  565:15  error    Empty block statement              no-empty
+  736:12  warning  'error' is defined but never used  no-unused-vars
+
+D:\programming\langchain\langchain_xm\frontend\langchain-vue\src\views\WorkflowView.vue
+  245:8   warning  'AiConnection' is defined but never used  no-unused-vars
+  456:15  error    Empty block statement                     no-empty
+  768:11  error    Empty block statement                     no-empty
+
+✖ 83 problems (17 errors, 66 warnings)
+

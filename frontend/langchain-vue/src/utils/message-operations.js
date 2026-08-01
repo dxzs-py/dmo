@@ -171,18 +171,43 @@ function _updateOrAddToolResultInMessage(message, data) {
       }
       // 否则保留审批状态，不更新 status
     } else {
-      if (data.status !== undefined) updates.status = data.status
-      if (!updates.status && updates.state) {
+      // status 推导：显式 status > stateMap > result→COMPLETED > error→FAILED
+      if (data.status !== undefined) {
+        updates.status = data.status
+      } else if (data.state !== undefined) {
         const stateMap = { 'input-available': 'running', 'output-available': 'completed', 'output-error': 'failed' }
-        updates.status = stateMap[updates.state] || 'running'
+        updates.status = stateMap[data.state]
       }
+      if (!updates.status && data.result != null && data.state !== 'output-error') {
+        updates.status = ToolCallStatus.COMPLETED
+      }
+      if (!updates.status && data.error != null) {
+        updates.status = ToolCallStatus.FAILED
+      }
+    }
+    // 进入终态时设置 completed_at（Task 16 P1 修复）
+    if (updates.status && _TERMINAL_TOOL_STATUSES.has(updates.status) && !existing.completed_at) {
+      updates.completed_at = new Date().toISOString()
     }
     Object.assign(message.toolCalls[idx], updates)
   } else {
     const toolData = { ...data }
-    if (!toolData.status && toolData.state) {
-      const stateMap = { 'input-available': 'running', 'output-available': 'completed', 'output-error': 'failed' }
-      toolData.status = stateMap[toolData.state] || 'running'
+    // status 推导：显式 status > stateMap > result→COMPLETED > error→FAILED（Task 16 P1 修复）
+    const stateMap = { 'input-available': 'running', 'output-available': 'completed', 'output-error': 'failed' }
+    if (data.status !== undefined) {
+      toolData.status = data.status
+    } else if (data.state && stateMap[data.state]) {
+      toolData.status = stateMap[data.state]
+    } else if (data.result != null && data.state !== 'output-error') {
+      toolData.status = ToolCallStatus.COMPLETED
+    } else if (data.error != null) {
+      toolData.status = ToolCallStatus.FAILED
+    } else if (!toolData.status) {
+      toolData.status = toolData.state ? (stateMap[toolData.state] || 'running') : 'running'
+    }
+    // 终态时设置 completed_at（Task 16 P1 修复）
+    if (toolData.status && _TERMINAL_TOOL_STATUSES.has(toolData.status) && !toolData.completed_at) {
+      toolData.completed_at = new Date().toISOString()
     }
     message.toolCalls.push(toolData)
   }

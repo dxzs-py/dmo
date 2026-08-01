@@ -484,6 +484,7 @@ class OfficialDeepAgentAdapter:
                                                             {
                                                                 "tool_name": req.get("tool_name", "unknown"),
                                                                 "interrupt_id": req_tc_id or interrupt_id,
+                                                                "langgraph_resume_id": interrupt_id,
                                                                 "graph_interrupt_id": interrupt_value.get(
                                                                     "_meta", {}
                                                                 ).get("graph_interrupt_id", interrupt_id),
@@ -553,6 +554,7 @@ class OfficialDeepAgentAdapter:
                                                     interrupt_data = {
                                                         "tool_name": tool_name,
                                                         "interrupt_id": interrupt_id,
+                                                        "langgraph_resume_id": interrupt_id,
                                                         "graph_interrupt_id": interrupt_id,
                                                         "title": interrupt_value.get("title", "确认操作"),
                                                         "description": interrupt_value.get("description", ""),

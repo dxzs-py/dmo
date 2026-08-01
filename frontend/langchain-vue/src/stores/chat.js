@@ -5,6 +5,7 @@ import { useSessionStore } from './session'
 import { useModelStore } from './model'
 import { useUserStore } from './user'
 import { useApprovalStore } from './approval'
+import { useSyncStore } from './sync'
 import { chatAPI } from '../api'
 import { ElMessage, ElNotification } from 'element-plus'
 import { nanoid } from 'nanoid'
@@ -113,6 +114,9 @@ export const useChatStore = defineStore('chat', () => {
 
     isLoading.value = true
     lastStreamError.value = null
+    // 通知 syncStore 流式开始，跳过 WebSocket 的 message_updated（避免 SSE 流式内容被快照覆盖）
+    const syncStore = useSyncStore()
+    syncStore.startStreaming(sessionId)
     deepResearchTask.value = null
     attachmentProcessing.value = null
     const currentResearchTaskId = researchTaskId.value
@@ -149,7 +153,7 @@ export const useChatStore = defineStore('chat', () => {
       suggestions: null,
       context: null,
     }
-    sessionStore.addMessageToSession(sessionId, assistantMessage, false)
+    sessionStore.addMessageToSession(sessionId, assistantMessage, true)
     messageCount.value += 1
 
     let streamSyncTimer = null
@@ -323,7 +327,10 @@ export const useChatStore = defineStore('chat', () => {
         ElMessage.error('发送消息失败，请稍后重试')
       }
 
-      if (result.aborted) return
+      if (result.aborted) {
+        syncStore.stopStreaming(sessionId)
+        return
+      }
 
       // 审批中断时：将工具调用状态标记为 pending_approval，并保存审批数据
       // 这样刷新后前端能正确显示"等待审批"状态，而非"执行中"
@@ -376,6 +383,7 @@ export const useChatStore = defineStore('chat', () => {
       clearInterval(streamSyncTimer)
       sessionStore.clearToolSyncTimer(sessionId)
       isLoading.value = false
+      syncStore.stopStreaming(sessionId)
       sessionStore.touchSessionUpdatedAt(sessionId)
       if (attachmentProcessing.value && attachmentProcessing.value.stage !== 'complete') {
         attachmentProcessing.value = null

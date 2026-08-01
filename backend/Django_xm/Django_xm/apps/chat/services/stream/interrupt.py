@@ -50,8 +50,6 @@ async def finalize_interrupt(
         ctx.all_messages,
         ctx.tool_calls_map,
         ctx.tool_args_accumulator,
-        session_id=data.get("session_id"),
-        message_id=data.get("_assistant_message_id"),
     ):
         yield tool_update_event
 

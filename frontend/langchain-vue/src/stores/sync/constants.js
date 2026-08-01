@@ -11,11 +11,13 @@ export const TOOL_CALL_STATUS_MAP = {
   tool_call_pending: ToolCallStatus.PENDING,
   tool_call_input_ready: ToolCallStatus.PENDING,
   tool_call_waiting: ToolCallStatus.WAITING,
+  tool_call_pending_approval: ToolCallStatus.PENDING_APPROVAL,
+  tool_call_approved: ToolCallStatus.APPROVED,
+  tool_call_rejected: ToolCallStatus.REJECTED,
   tool_call_running: ToolCallStatus.RUNNING,
   tool_call_completed: ToolCallStatus.COMPLETED,
   tool_call_failed: ToolCallStatus.FAILED,
   tool_call_timeout: ToolCallStatus.TIMEOUT,
-  tool_call_rejected: ToolCallStatus.REJECTED,
 }
 
 /** 审批事件类型 → ApprovalState 映射 */

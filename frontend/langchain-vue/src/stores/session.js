@@ -36,20 +36,55 @@ import {
 } from '../utils/message-operations'
 import { ToolCallStatus, mapApprovalStateToStatus } from '../types'
 
+/** localStorage key：持久化 currentSessionId，防止刷新后丢失（Task 15 P0 修复） */
+const CURRENT_SESSION_ID_KEY = 'lc_current_session_id'
+
+/** 安全读取 localStorage（Node 测试环境可能不存在） */
+const _safeGetLocalStorage = (key) => {
+  try { return typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null }
+  catch { return null }
+}
+/** 安全写入 localStorage */
+const _safeSetLocalStorage = (key, value) => {
+  try { if (typeof localStorage !== 'undefined') localStorage.setItem(key, value) }
+  catch { /* 静默忽略 */ }
+}
+/** 安全移除 localStorage */
+const _safeRemoveLocalStorage = (key) => {
+  try { if (typeof localStorage !== 'undefined') localStorage.removeItem(key) }
+  catch { /* 静默忽略 */ }
+}
+
 export const useSessionStore = defineStore('session', () => {
   const sessions = ref([])
-  const currentSessionId = ref(null)
+  // 刷新后从 localStorage 恢复 currentSessionId，避免 loadSessionsFromBackend 因
+  // currentSessionId 为空 fallback 到 sessions[0]（按加载顺序，非真正最新的会话）
+  const _savedSessionId = _safeGetLocalStorage(CURRENT_SESSION_ID_KEY)
+  const currentSessionId = ref(_savedSessionId || null)
   const selectedKnowledgeBase = ref(null)
   const selectedKnowledgeBases = ref([])
   const knowledgeBases = ref([])
   const isLoading = ref(false)
   const lastLoadedUserId = ref(null)
+  /** 乐观删除 ID 集合：防止 session_deleted WS 事件与 HTTP 删除重复操作（Task 5 修复） */
+  const deletedSessionIds = ref(new Set())
   const paginationMeta = ref({
     total: 0,
     page: 1,
     pageSize: 20,
     totalPages: 1,
     hasMore: false,
+  })
+
+  // 持久化 currentSessionId（Task 15 P0 修复）：
+  // 刷新后从 localStorage 恢复，避免 loadSessionsFromBackend fallback 到 sessions[0]
+  // 选中错误会话。newId 为空时移除条目，防止跨用户残留。
+  watch(currentSessionId, (newId) => {
+    if (newId) {
+      _safeSetLocalStorage(CURRENT_SESSION_ID_KEY, newId)
+    } else {
+      _safeRemoveLocalStorage(CURRENT_SESSION_ID_KEY)
+    }
   })
 
   // ==================== 工具调用状态（Map 为唯一真相源） ====================
@@ -65,12 +100,26 @@ export const useSessionStore = defineStore('session', () => {
   // 占位条目并加入 pendingApprovals 队列；后续 tool 事件到达时通过
   // flushPendingApprovals 绑定审批数据到真实 toolCall。
 
+  /** @type {import('vue').Ref<Set<string>>} */
+  const optimisticSessionIds = ref(new Set())
+
   /** @type {import('vue').Ref<Map<string, Map<string, Object>>>} */
   const toolCallsMap = ref(new Map())
   /** @type {import('vue').Ref<Map<string, Map<string, {approvalData: Object, toolCallId: string}>>>} */
   const pendingApprovals = ref(new Map())
 
   const userStore = useUserStore()
+
+  /** 乐观会话去重：非触发浏览器收到 session_created 后调用，命中则跳过 subscribeSession + currentSessionId 切换 */
+  const consumeOptimisticSession = (sessionId) => {
+    if (!sessionId || !optimisticSessionIds.value.has(sessionId)) return false
+    optimisticSessionIds.value.delete(sessionId)
+    optimisticSessionIds.value = new Set(optimisticSessionIds.value)
+    return true
+  }
+
+  /** 按 ID 查找会话 */
+  const _findSession = (sessionId) => sessions.value.find(s => s.id === sessionId)
 
   const _getLast = (sessionId) => getLastAssistantMessage(sessions.value, sessionId)
   const _setLastField = (sessionId, field, value) => setLastMessageField(sessions.value, sessionId, field, value)
@@ -119,17 +168,55 @@ export const useSessionStore = defineStore('session', () => {
    * - 当前 version（versions[currentVersion]）的 toolCalls
    *
    * @param {string} sessionId - 会话 ID
+   * @param {Object} [message] - 可选，指定目标消息；不传则回退到最后一条 assistant
    */
-  const _syncMessageToolCalls = (sessionId) => {
+  const _syncMessageToolCalls = (sessionId, message) => {
     const session = sessions.value.find(s => s.id === sessionId)
     if (!session || session.messages.length === 0) return
-    const lastMsg = session.messages[session.messages.length - 1]
-    if (!lastMsg || lastMsg.role !== 'assistant') return
+    const targetMsg = message || session.messages[session.messages.length - 1]
+    if (!targetMsg || targetMsg.role !== 'assistant') return
     const toolCallMap = toolCallsMap.value.get(sessionId)
-    const toolCalls = toolCallMap ? Array.from(toolCallMap.values()) : []
-    lastMsg.toolCalls = toolCalls
-    const ver = lastMsg.versions?.[lastMsg.currentVersion]
-    if (ver) ver.toolCalls = toolCalls
+    if (!toolCallMap) {
+      targetMsg.toolCalls = []
+      const ver = targetMsg.versions?.[targetMsg.currentVersion]
+      if (ver) ver.toolCalls = []
+      return
+    }
+    const backendId = targetMsg.backendId?.toString()
+    const isLast = _isLastAssistantMessage(sessionId, targetMsg)
+    const arr = []
+    for (const tc of toolCallMap.values()) {
+      if (tc.messageBackendId) {
+        if (tc.messageBackendId === backendId) arr.push(tc)
+      } else if (isLast) {
+        arr.push(tc)  // 无归属的兜底到最后一个 assistant
+      }
+    }
+    targetMsg.toolCalls = arr
+    const ver = targetMsg.versions?.[targetMsg.currentVersion]
+    if (ver) ver.toolCalls = arr
+    // 同步完成后清理其他 assistant 消息上残留的 toolCalls（避免旧消息保留审批 UI）
+    for (const msg of session.messages) {
+      if (msg !== targetMsg && msg.role === 'assistant' && msg.toolCalls?.length > 0) {
+        const stillValid = msg.toolCalls.some(tc => {
+          const mapTc = toolCallMap.get(tc.id)
+          return mapTc && (!mapTc.messageBackendId || mapTc.messageBackendId === msg.backendId?.toString())
+        })
+        if (!stillValid) msg.toolCalls = []
+      }
+    }
+  }
+
+  /** 判断消息是否为 session 中最后一条 assistant */
+  const _isLastAssistantMessage = (sessionId, msg) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (!session) return false
+    for (let i = session.messages.length - 1; i >= 0; i--) {
+      if (session.messages[i].role === 'assistant') {
+        return session.messages[i] === msg
+      }
+    }
+    return false
   }
 
   const addSourceToMessage = (sessionId, messageIndex, source) => _addFieldItem(sessionId, messageIndex, 'sources', source)
@@ -156,6 +243,10 @@ export const useSessionStore = defineStore('session', () => {
     // 同步清理工具调用与待绑定审批数据（Map 为唯一真相源）
     toolCallsMap.value = new Map()
     pendingApprovals.value = new Map()
+    deletedSessionIds.value = new Set()
+    // 清理 currentSessionId 持久化（Task 15 P0 修复）：登出/切换用户时清除，
+    // 避免残留的会话 ID 被下一个用户恢复，导致跨用户会话串扰
+    _safeRemoveLocalStorage(CURRENT_SESSION_ID_KEY)
     logger.log('[Security] Cleared all local session data')
   }
 
@@ -227,8 +318,18 @@ export const useSessionStore = defineStore('session', () => {
         lastLoadedUserId.value = currentUserId
 
         if (sessions.value.length > 0) {
-          if (!currentSessionId.value || !sessions.value.find(s => s.id === currentSessionId.value)) {
-            currentSessionId.value = sessions.value[0].id
+          // Task 15 P0 修复：优先使用 localStorage 恢复的 currentSessionId；
+          // 若恢复的 id 在已加载会话列表中不存在，则 fallback 到 updatedAt 最新的会话
+          const restoredId = currentSessionId.value
+          if (restoredId && sessions.value.find(s => s.id === restoredId)) {
+            // 恢复的 currentSessionId 在列表中，保留
+          } else if (!restoredId || !sessions.value.find(s => s.id === restoredId)) {
+            // 按 updatedAt 降序选中最新会话（而非 sessions[0] 按加载顺序）
+            const latest = sessions.value.reduce((a, b) =>
+              (b.updatedAt || 0) > (a.updatedAt || 0) ? b : a
+            )
+            currentSessionId.value = latest.id
+            logger.log(`[Session] currentSessionId 恢复失败，fallback 到最新会话: ${latest.id}`)
           }
         } else {
           currentSessionId.value = null
@@ -258,7 +359,10 @@ export const useSessionStore = defineStore('session', () => {
 
     if (!forceRefresh) {
       const existing = sessions.value.find(s => s.id === sessionId)
-      if (existing && existing.messages && existing.messages.length > 0) {
+      // Task 15 P0 修复：当本地仅用户消息无 AI 消息时，不短路返回，
+      // 强制从后端加载（刷新后恢复了 currentSessionId 但后端可能有完整 AI 回复）
+      const hasAssistantMessages = existing?.messages?.some(m => m.role === 'assistant')
+      if (existing && existing.messages && existing.messages.length > 0 && hasAssistantMessages) {
         return existing
       }
     }
@@ -295,9 +399,19 @@ export const useSessionStore = defineStore('session', () => {
       })
 
       if (isApiSuccess(response)) {
-        const newSession = transformBackendSessionToFrontend(response.data.data)
-        sessions.value.unshift(newSession)
+        // 使用 upsertSession 而非 unshift：避免与 WebSocket session_created 事件重复添加
+        // 竞态：WebSocket 事件可能比 HTTP 响应更早到达前端，导致 store 中已存在该 session
+        // upsertSession 的 findIndex 会命中已有项，仅更新元数据，不会重复添加
+        const newSession = upsertSession(response.data.data)
+        if (!newSession) {
+          logger.error('createNewSession: upsertSession returned null', response.data)
+          ElMessage.error('创建会话失败：数据格式异常')
+          return null
+        }
         currentSessionId.value = newSession.id
+        // 乐观标记：触发浏览器标记已创建，WS session_created 到达时 consume 跳过重复处理
+        optimisticSessionIds.value.add(newSession.id)
+        triggerRef(optimisticSessionIds)  // 确保 Vue 响应式感知 Set 变更
         logger.log(`[Security] Created new session ${newSession.id} for user ${userStore.userInfo?.id}`)
         return newSession
       }
@@ -329,49 +443,56 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   const deleteSession = async (sessionId) => {
-    const index = sessions.value.findIndex(s => s.id === sessionId)
-    if (index !== -1) {
-      if (userStore.isLoggedIn) {
-        try {
-          const response = await chatAPI.deleteSession(sessionId)
-          const resData = response.data?.data || response.data
-          if (resData?.linked_research_preserved) {
-            ElMessage.info(`关联的深度研究将保留在独立模块中（${resData.linked_research_count || ''}个任务）`)
-          }
-          logger.log(`[Security] Deleted session ${sessionId} for user ${userStore.userInfo?.id}`)
-        } catch (error) {
-          if (error === 'cancel' || error?.toString?.().includes('cancel')) return
-          logger.error('Failed to delete session from backend:', error)
-          throw error
-        }
-      }
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (!session) return
 
-      sessions.value.splice(index, 1)
-      // 清理该会话关联的工具调用与待绑定审批数据（Map 为唯一真相源）
-      if (toolCallsMap.value.has(sessionId)) {
-        toolCallsMap.value.delete(sessionId)
-        triggerRef(toolCallsMap)
-      }
-      if (pendingApprovals.value.has(sessionId)) {
-        pendingApprovals.value.delete(sessionId)
-        triggerRef(pendingApprovals)
-      }
-      // 清理该会话关联的审批条目（延迟导入避免循环依赖）
+    // 标记乐观删除 ID（Task 5 修复）：防止 WebSocket session_deleted 事件
+    // 与 HTTP 删除重复操作导致的误删/重复侧边栏移除
+    deletedSessionIds.value.add(sessionId)
+
+    if (userStore.isLoggedIn) {
       try {
-        const { useApprovalStore } = await import('./approval')
-        const approvalStore = useApprovalStore()
-        for (const [key, entry] of approvalStore.pendingApprovals) {
-          if (entry.sessionId === sessionId) {
-            approvalStore.pendingApprovals.delete(key)
-          }
+        const response = await chatAPI.deleteSession(sessionId)
+        const resData = response.data?.data || response.data
+        if (resData?.linked_research_preserved) {
+          ElMessage.info(`关联的深度研究将保留在独立模块中（${resData.linked_research_count || ''}个任务）`)
         }
-      } catch { /* 忽略 */ }
-      if (currentSessionId.value === sessionId) {
-        if (sessions.value.length > 0) {
-          currentSessionId.value = sessions.value[0].id
-        } else {
-          currentSessionId.value = null
+        logger.log(`[Security] Deleted session ${sessionId} for user ${userStore.userInfo?.id}`)
+      } catch (error) {
+        // HTTP 失败时回滚乐观删除标记
+        deletedSessionIds.value.delete(sessionId)
+        if (error === 'cancel' || error?.toString?.().includes('cancel')) return
+        logger.error('Failed to delete session from backend:', error)
+        throw error
+      }
+    }
+
+    // 用 filter 按 session_id 过滤移除（非按 index splice，避免 await 后 index 过期误删相邻会话）
+    sessions.value = sessions.value.filter(s => s.id !== sessionId)
+    // 清理该会话关联的工具调用与待绑定审批数据（Map 为唯一真相源）
+    if (toolCallsMap.value.has(sessionId)) {
+      toolCallsMap.value.delete(sessionId)
+      triggerRef(toolCallsMap)
+    }
+    if (pendingApprovals.value.has(sessionId)) {
+      pendingApprovals.value.delete(sessionId)
+      triggerRef(pendingApprovals)
+    }
+    // 清理该会话关联的审批条目（延迟导入避免循环依赖）
+    try {
+      const { useApprovalStore } = await import('./approval')
+      const approvalStore = useApprovalStore()
+      for (const [key, entry] of approvalStore.pendingApprovals) {
+        if (entry.sessionId === sessionId) {
+          approvalStore.pendingApprovals.delete(key)
         }
+      }
+    } catch { /* 忽略 */ }
+    if (currentSessionId.value === sessionId) {
+      if (sessions.value.length > 0) {
+        currentSessionId.value = sessions.value[0].id
+      } else {
+        currentSessionId.value = null
       }
     }
   }
@@ -857,6 +978,59 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   /**
+   * 插入或更新会话（实时同步用）
+   * 与参考项目 sync.js/handleUserEvent.js 的 session_created 处理对齐。
+   * @param {Object} sessionData - 后端会话原始数据
+   */
+  const upsertSession = (sessionData) => {
+    const normalized = transformBackendSessionToFrontend(sessionData)
+    if (!normalized) return null
+
+    const index = sessions.value.findIndex(s => s.id === normalized.id)
+    if (index !== -1) {
+      const existing = sessions.value[index]
+      Object.assign(existing, {
+        title: normalized.title,
+        mode: normalized.mode,
+        selectedKnowledgeBase: normalized.selectedKnowledgeBase,
+        selectedKnowledgeBases: normalized.selectedKnowledgeBases,
+        updatedAt: normalized.updatedAt,
+        ...(existing.messages?.length === 0 && normalized.messages?.length > 0
+          ? { messages: normalized.messages, messageCount: normalized.messages.length }
+          : {}),
+      })
+      return existing
+    } else {
+      sessions.value.unshift(normalized)
+      return normalized
+    }
+  }
+
+  /** sync.js updateSessionFields 依赖的白名单 */
+  const SESSION_SAFE_UPDATE_KEYS = new Set([
+    'title', 'mode', 'selectedKnowledgeBase', 'selectedKnowledgeBases',
+    'updatedAt', 'messageCount', 'knowledgeBases'
+  ])
+
+  /**
+   * 合并会话字段（session_updated 事件处理用）
+   * @param {string} sessionId
+   * @param {Object} fields
+   */
+  const updateSessionFields = (sessionId, fields) => {
+    const session = _findSession(sessionId)
+    if (!session || !fields) return
+    const safeFields = {}
+    for (const key of Object.keys(fields)) {
+      if (SESSION_SAFE_UPDATE_KEYS.has(key)) {
+        safeFields[key] = fields[key]
+      }
+    }
+    Object.assign(session, safeFields)
+    session.updatedAt = Date.now()
+  }
+
+  /**
    * 从 store 中移除指定 session（同步清理 toolCallsMap / pendingApprovals）
    *
    * 与 deleteSession 不同：deleteSession 是异步方法（含后端调用 + UI 提示），
@@ -1080,6 +1254,7 @@ export const useSessionStore = defineStore('session', () => {
     // 工具调用状态（Map 为唯一真相源，按 sessionId 索引）
     toolCallsMap,
     pendingApprovals,
+    optimisticSessionIds,
     currentSession,
     loadSessionsFromBackend,
     loadMoreSessions,
@@ -1090,6 +1265,9 @@ export const useSessionStore = defineStore('session', () => {
     removeSession,
     updateSession,
     updateSessionTitle,
+    upsertSession,
+    updateSessionFields,
+    consumeOptimisticSession,
     addMessageToSession,
     syncLastMessageToBackend,
     addVersionToMessage,
@@ -1121,6 +1299,8 @@ export const useSessionStore = defineStore('session', () => {
     findToolCallInSession,
     updateToolCallStatus,
     flushPendingApprovals,
+    // 同步工具调用到消息（handleSessionEvent 中 message_added 后调用，解决审批组件错位问题）
+    syncMessageToolCalls: _syncMessageToolCalls,
     setUsageToLastMessage,
     setAttachmentIdsToLastUserMessage,
     addSourceToMessage,
@@ -1145,5 +1325,6 @@ export const useSessionStore = defineStore('session', () => {
     clearAllLocalData,
     touchSessionUpdatedAt,
     clearToolSyncTimer,
+    deletedSessionIds,
   }
 })

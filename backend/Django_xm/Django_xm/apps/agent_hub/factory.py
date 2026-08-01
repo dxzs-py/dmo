@@ -40,6 +40,13 @@ class AgentFactory:
             # 导入 builder 模块以触发 @register_builder 装饰器注册
             from Django_xm.apps.agent_hub.builders._registry import get_registered_builders
 
+            # deep_builder 与 research.services.adapter 存在循环依赖，
+            # 不能在 builders/__init__.py 模块级导入，在此处延迟导入触发注册。
+            try:
+                from Django_xm.apps.agent_hub.builders.deep_builder import DeepResearchBuilder  # noqa: F401
+            except ImportError:
+                logger.warning("[AgentFactory] deep_builder 导入失败（循环依赖），DEEP_RESEARCH 类型将不可用")
+
             registry = get_registered_builders()
             builders: dict = {}
             # 同一 builder 类的多个 AgentType 共享同一实例

@@ -48,9 +48,12 @@ async def resolve_tools(config) -> list[BaseTool]:
 
             tools = get_core_tools()
             logger.info(f"回退到核心工具集 ({len(tools)} 个)")
-        except Exception:
-            logger.exception("核心工具集加载也失败")
+        except (ImportError, ModuleNotFoundError):
+            logger.exception("核心工具集加载失败（导入错误，永久故障）")
             tools = []
+        except Exception:
+            logger.exception("核心工具集加载失败（临时故障）")
+            raise
 
     return tools
 

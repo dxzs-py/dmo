@@ -244,12 +244,9 @@ import AiEdge from '../components/ai-elements/AiEdge.vue'
 import AiCanvas from '../components/ai-elements/AiCanvas.vue'
 import { formatDate } from '../utils/format'
 import { logger } from '../utils/logger'
-import { useRealtimeSync } from '@/composables/useRealtimeSync'
-import { useSyncStore } from '@/stores/sync'
+import { useTaskRealtimeSync } from '@/composables/useTaskRealtimeSync'
 import { useWorkflowStore } from '@/stores/workflow'
 
-const realtime = useRealtimeSync()
-const syncStore = useSyncStore()
 const workflowStore = useWorkflowStore()
 
 const isLoading = ref(false)
@@ -557,60 +554,7 @@ const closeSSE = () => {
   }
 }
 
-// ============================================================================
-// 实时同步（WebSocket）：接入统一订阅入口
-// - task 频道：以 thread_id 作为任务标识，订阅工具调用 / 状态更新等事件
-// - session 频道：工作流若关联 chat session（未来扩展），同样订阅
-// - 订阅在 viewTask 入口与 onActivated 中触发；在 onDeactivated/onUnmounted/deleteTask 中清理
-// - SSE 仍保留用于当前请求的流式输出，轮询作为 WS 断连兜底，二者互不干扰
-// ============================================================================
-/** @type {import('vue').Ref<Array<() => void>>} */
-const realtimeUnsubscribers = ref([])
-let subscribedTaskId = null
-let subscribedSessionId = null
-
-const clearRealtimeSubscriptions = () => {
-  realtimeUnsubscribers.value.forEach(fn => {
-    try { fn() } catch (e) { logger.warn('[WorkflowView] 取消订阅失败', e) }
-  })
-  realtimeUnsubscribers.value = []
-  subscribedTaskId = null
-  subscribedSessionId = null
-}
-
-/**
- * 为指定工作流执行订阅 WebSocket 实时事件
- * 幂等：若 thread_id 与 session_id 均与当前已订阅一致，则跳过
- * @param {{ thread_id?: string, chat_session_id?: string, session_id?: string } | null} taskObj
- */
-const subscribeRealtimeForTask = (taskObj) => {
-  if (!taskObj) return
-  // WorkflowView 用 thread_id 作为任务标识（与 DeepResearchView 的 task_id 对应）
-  const taskId = taskObj.thread_id
-  const chatSessionId = taskObj.chat_session_id || taskObj.session_id
-
-  // 幂等判断：task 和 session 均已订阅则跳过（fresh 刷新后重复调用场景）
-  if (taskId && taskId === subscribedTaskId && chatSessionId === subscribedSessionId) {
-    return
-  }
-
-  // 清理上一任务的订阅，避免泄漏
-  clearRealtimeSubscriptions()
-  subscribedTaskId = taskId || null
-  subscribedSessionId = chatSessionId || null
-
-  if (taskId) {
-    const unsubTask = realtime.subscribeTask(taskId, syncStore.handleRealtimeEvent, { replayFromSeq: 0 })
-    realtimeUnsubscribers.value.push(unsubTask)
-    if (chatSessionId) {
-      const unsubSession = realtime.subscribeSession(chatSessionId, syncStore.handleRealtimeEvent, { replayFromSeq: 0 })
-      realtimeUnsubscribers.value.push(unsubSession)
-      logger.info(`[WorkflowView] 订阅 task=${taskId} + session=${chatSessionId}`)
-    } else {
-      logger.info(`[WorkflowView] 订阅 task=${taskId}（无关联 chat session）`)
-    }
-  }
-}
+const { subscribeRealtimeForTask, clearRealtimeSubscriptions } = useTaskRealtimeSync('Workflow', 'thread_id')
 
 // ============================================================================
 // WebSocket 事件 → execution.value 同步（workflowStore 监听）

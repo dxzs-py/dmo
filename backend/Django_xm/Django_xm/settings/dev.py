@@ -26,6 +26,22 @@ except Exception as e:
 
     logging.getLogger(__name__).warning(f"Redis 启动检测失败: {e} (django_redis 将在请求时自动重连)")
 
+# Django Channels 通道层配置（WebSocket 实时同步）
+# dev 环境优先 Redis，不可用时回退 InMemoryChannelLayer
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [os.environ.get("REDIS_URL", app_cfg.redis_url)],
+            "symmetric_encryption_keys": [SECRET_KEY],
+        },
+    }
+} if REDIS_AVAILABLE else {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer",
+    }
+}
+
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",

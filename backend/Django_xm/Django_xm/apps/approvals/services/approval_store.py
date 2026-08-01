@@ -135,20 +135,38 @@ def get_approval_history(source_id):
         pending_key = f"{APPROVAL_PENDING_PREFIX}{source_id}"
         pending_items = redis_client.lrange(pending_key, 0, -1)
 
-        result = []
+        # 解析所有 pending items，收集 interrupt_id
+        parsed_items = []  # [(approval_data, interrupt_id_or_None), ...]
         for item in pending_items:
             try:
                 if isinstance(item, bytes):
                     item = item.decode("utf-8")
                 approval_data = json.loads(item)
                 interrupt_id = approval_data.get("interrupt_id")
-                if interrupt_id:
-                    processed_data = get_approval_processed(interrupt_id)
-                    if processed_data:
-                        approval_data = {**approval_data, **processed_data}
-                result.append(approval_data)
+                parsed_items.append((approval_data, interrupt_id))
             except (json.JSONDecodeError, UnicodeDecodeError):
                 continue
+
+        # 用 Pipeline 批量获取所有 processed entries
+        pipe = redis_client.pipeline()
+        for _, interrupt_id in parsed_items:
+            if interrupt_id:
+                pipe.get(f"{APPROVAL_PROCESSED_PREFIX}{interrupt_id}")
+        processed_results = pipe.execute() if parsed_items else []
+
+        # 将批量结果映射回对应的 approval_data
+        result = []
+        processed_idx = 0
+        for approval_data, interrupt_id in parsed_items:
+            if interrupt_id:
+                raw = processed_results[processed_idx]
+                processed_idx += 1
+                if raw:
+                    if isinstance(raw, bytes):
+                        raw = raw.decode("utf-8")
+                    processed_data = json.loads(raw)
+                    approval_data = {**approval_data, **processed_data}
+            result.append(approval_data)
 
         if result:
             logger.info(f"[ApprovalStore] 读取历史审批: source_id={source_id}, count={len(result)}")

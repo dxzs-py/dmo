@@ -67,10 +67,13 @@ export const createHandleTaskEvent = (ctx) => {
     const source = payload.source || 'deep_research'
 
     switch (event.type) {
-      // 7 个工具调用事件类型
+      // 10 个工具调用事件类型（每个 EventType 独立 ws_event_name）
       case 'tool_call_pending':
       case 'tool_call_input_ready':
       case 'tool_call_waiting':
+      case 'tool_call_pending_approval':
+      case 'tool_call_approved':
+      case 'tool_call_rejected':
       case 'tool_call_running':
       case 'tool_call_completed':
       case 'tool_call_failed':

@@ -497,7 +497,10 @@ class IndexManager:
         try:
             from Django_xm.apps.knowledge.models import IndexMetadata
 
-            for record in IndexMetadata.objects.all():
+            for record in IndexMetadata.objects.only(
+                "name", "description", "created_at", "updated_at",
+                "num_documents", "store_type", "embedding_model", "embedding_dimension",
+            ).all():
                 indexes.append(
                     {
                         "name": record.name,

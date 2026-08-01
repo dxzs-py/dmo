@@ -181,13 +181,18 @@ def writeback_to_chat_message(
         )
 
         # 广播 message_updated 事件到 chat session 频道
-        # 注意：writeback 只修改 content/is_streaming，不广播 tool_calls
-        # 原因：writeback 加载的 chat_msg 实例可能未包含最新审批状态
-        #   （sync_approval_state_to_chat_message 在 complete_approval 时更新 DB，
-        #    但本函数加载 chat_msg 时刻可能早于该提交），广播陈旧 tool_calls 会
-        #    覆盖前端通过 approval_* 系列事件维护的正确本地审批状态。
-        #    前端应通过 approval_* / tool_call_* 系列事件维护 tool_calls 状态，
-        #    与代理模式行为一致（代理模式 SSE 流的 message_updated 不携带 tool_calls）。
+        # 发布前从 DB 重新加载 tool_calls，确保拿到 sync_approval_state_to_chat_message
+        # 已更新的最新数据（本函数开头加载的 chat_msg_data 可能早于审批状态提交）。
+        # 前端 _mergeToolCalls 有终态保护（local result/status/approval 不被后端旧快照覆盖），
+        # 因此即使 tool_calls 中有陈旧数据也不会覆盖前端已更新的状态，可安全同步。
+        from django.apps import apps
+
+        ChatMessage = apps.get_model("chat", "ChatMessage")
+        try:
+            tool_calls = ChatMessage.objects.only("tool_calls").get(id=chat_msg_id).tool_calls or []
+        except ChatMessage.DoesNotExist:
+            tool_calls = []
+
         try:
             publish_event_sync(
                 EventType.MESSAGE_UPDATED,
@@ -197,6 +202,7 @@ def writeback_to_chat_message(
                     "content": final_content,
                     "is_streaming": False,
                     "research_task_id": task_id,
+                    "tool_calls": tool_calls,
                 },
                 session_id=chat_session_id,
             )

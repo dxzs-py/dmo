@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from asgiref.sync import sync_to_async
+
 from Django_xm.apps.agent_hub.builders._registry import register_builder
 from Django_xm.apps.agent_hub.config import AgentType
 
@@ -28,6 +30,18 @@ class BaseAgentBuilder:
         model = resolve_model(config)
         tools = await resolve_tools(config)
         middleware_stack = build_middleware(config)
+
+        # 显式注入 ApprovalMiddleware（与 deep_builder 保持一致）
+        # 审批机制是核心安全能力，应对所有有工具的 agent 强制启用，与 chat/deep_research/learning 三模块统一
+        try:
+            from Django_xm.apps.agent_hub.approval.middleware import ApprovalMiddleware
+
+            has_approval = any(isinstance(m, ApprovalMiddleware) for m in middleware_stack)
+            if not has_approval:
+                middleware_stack.append(ApprovalMiddleware())
+                logger.info("已注入 ApprovalMiddleware 到 chat agent 中间件栈")
+        except Exception as e:
+            logger.warning(f"ApprovalMiddleware 注入失败(非致命): {e}")
 
         # 始终构建默认 system_prompt，再追加自定义内容（如研究上下文）
         system_prompt = await self._build_system_prompt(config, tools=tools)
@@ -82,7 +96,7 @@ class BaseAgentBuilder:
                 model_name=model_name_for_prompt,
                 thread_id=config.session_id,
             )
-            context = ctx_mgr.build_prompt_context(
+            context = await sync_to_async(ctx_mgr.build_prompt_context, thread_sensitive=False)(
                 mode=prompt_mode,
                 session_id=config.session_id,
                 include_document_context=bool(tools),
@@ -108,6 +122,7 @@ class BaseAgentBuilder:
 
                 return get_system_prompt(mode=prompt_mode)
             except Exception:
+                logger.exception("系统提示词构建完全失败，使用最小回退提示词")
                 return "You are a helpful assistant."
 
     def _build_mcp_tools_section(self, tools) -> str:

@@ -29,7 +29,7 @@ def warmup_system_config_cache():
             _config_cache[obj.key] = obj.value
         logger.debug(f"SystemConfig 缓存预热完成，共 {len(_config_cache)} 项")
     except Exception as e:
-        logger.warning(f"SystemConfig 缓存预热失败（非致命）: {e}")
+        logger.exception(f"SystemConfig 缓存预热失败（非致命）: {e}")
 
 
 def _is_async_context() -> bool:

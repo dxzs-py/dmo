@@ -72,8 +72,8 @@ const estimateItemSize = (msgIndex) => {
   let weight = 1
   if (msg.toolCalls && msg.toolCalls.length > 0) weight = 3
   else if (msg.sources && msg.sources.length > 0) weight = 2
-  else if (msg.plan) weight = 2
-  else if (msg.chainOfThought) weight = 1.5
+  else if (msg.plan && typeof msg.plan === 'object' && Object.keys(msg.plan).length > 0) weight = 2
+  else if (Array.isArray(msg.chainOfThought) && msg.chainOfThought.length > 0) weight = 1.5
 
   if (contentLen < 50) return Math.round(120 * weight)
   if (contentLen < 200) return Math.round(180 * weight)

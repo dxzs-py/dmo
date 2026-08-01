@@ -47,7 +47,7 @@ class AgentService:
     async def create_agent_with_memory(
         self,
         data: dict[str, Any],
-        prompt_mode: str = "default",
+        prompt_mode: str = "agent",
         model_instance=None,
         tool_config: dict[str, Any] | None = None,
         tools: list | None = None,
@@ -93,6 +93,7 @@ class AgentService:
             tools=tools,
             tool_config=tool_config,
             system_prompt=data.get("_research_system_prompt"),
+            prompt_mode=prompt_mode,
             checkpointer=checkpointer,
             store=store,
             context_schema=context_schema,

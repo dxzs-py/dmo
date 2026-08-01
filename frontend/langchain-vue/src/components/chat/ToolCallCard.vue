@@ -126,8 +126,11 @@ const statusText = computed(() => {
       return '待审批'
     case 'timeout':
       return '已超时'
+    case 'pending':
+    case 'waiting':
+      return '等待中'
     default:
-      return '待执行'
+      return '等待中'
   }
 })
 

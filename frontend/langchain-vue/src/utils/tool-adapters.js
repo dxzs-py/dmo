@@ -569,6 +569,10 @@ export function formatToolParameters(toolName, params) {
   if (adapter?.parameterFormatter) {
     return adapter.parameterFormatter(params)
   }
+  // 空参数 → 跳过输入区渲染
+  if (!params || typeof params !== 'object' || Object.keys(params).length === 0) {
+    return { label: '输入', formatted: '', displayMode: 'skip' }
+  }
   // 非内置工具：返回原始 params 的通用序列化（与 ToolCallCard.vue formatContent 行为一致）
   return {
     label: '输入',

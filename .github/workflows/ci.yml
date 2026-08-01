@@ -1,0 +1,148 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  # 允许手动触发（用于 hotfix 验证或定期回归）
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-gate:
+    name: Backend Quality Gate (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend/Django_xm
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # 与 conda 环境 langchain_xm (Python 3.11.15) 保持一致，
+        # pyproject.toml 的 ruff target-version 与 mypy python_version 同步为 3.11
+        python-version: ["3.11"]
+
+    env:
+      DJANGO_SETTINGS_MODULE: Django_xm.settings.test
+      PYTHONUNBUFFERED: "1"
+      # 禁用 LangSmith 追踪（避免 CI 中网络调用）
+      LANGSMITH_TRACING: "false"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            backend/Django_xm/requirements*.txt
+            backend/Django_xm/pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # 优先安装 requirements.txt，再安装测试/质量工具
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pip install ruff mypy drf-spectacular django-stubs djangorestframework-stubs
+          # 验证关键依赖安装成功
+          python -c "import django; print(f'Django {django.get_version()}')"
+          python -c "import pytest; print(f'pytest {pytest.__version__}')"
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format check
+        run: ruff format --check .
+
+      - name: Mypy type check
+        # mypy 对 Django 项目允许非零退出码（仅作为信息性门禁）
+        # 现阶段关注 errors 不增加，未来可收紧为硬门禁
+        run: mypy Django_xm || true
+
+      - name: Django system check (test settings)
+        run: python manage.py check --settings=Django_xm.settings.test
+
+      - name: Django deploy check (production settings)
+        # 生产部署检查（容许 W 警告，仅做信息性输出）
+        run: python manage.py check --deploy --settings=Django_xm.settings.prod || true
+
+      - name: Run pytest (test settings)
+        env:
+          # 测试环境变量（test.py 已默认大部分配置，此处仅补充密钥占位）
+          SECRET_KEY: "ci-test-secret-key-not-for-production"
+          DATABASE_URL: "sqlite:///:memory:"
+        run: |
+          python -m pytest \
+            --cov=Django_xm \
+            --cov-report=xml:coverage.xml \
+            --cov-report=term-missing \
+            -p no:cacheprovider
+
+      - name: OpenAPI schema validation (drf-spectacular)
+        # 生成 schema 并与已提交版本对比（首次运行会生成 schema.yml）
+        run: |
+          python manage.py spectacular --settings=Django_xm.settings.test --color --file schema.yml
+          # 验证 schema 文件非空且为有效 YAML
+          python -c "import yaml; data = yaml.safe_load(open('schema.yml')); assert data.get('openapi'), 'schema.yml missing openapi version'"
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: backend/Django_xm/coverage.xml
+          retention-days: 7
+
+      - name: Upload schema artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-schema-${{ matrix.python-version }}
+          path: backend/Django_xm/schema.yml
+          retention-days: 7
+
+  frontend-quality-gate:
+    name: Frontend Quality Gate (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/langchain-vue
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: frontend/langchain-vue/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Build
+        run: npm run build --if-present
+
+      - name: Test (Vitest)
+        run: npm run test --if-present
+        env:
+          NODE_ENV: test

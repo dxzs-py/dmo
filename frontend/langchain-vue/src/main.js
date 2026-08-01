@@ -10,6 +10,7 @@ import { useUserStore } from './stores/user'
 import { useSessionStore } from './stores/session'
 import { useCapabilityStore } from './stores/capability'
 import ErrorBoundary from './components/common/ErrorBoundary.vue'
+import { useSyncStore } from './stores/sync'
 import { logger } from './utils/logger'
 import { setupErrorHandler } from './composables/useErrorHandler'
 
@@ -46,6 +47,10 @@ const sessionStore = useSessionStore()
 sessionStore.initialize().catch(err => {
   logger.warn('初始化会话状态失败:', err)
 })
+
+// Initialize real-time sync store for WebSocket connection
+const syncStore = useSyncStore()
+syncStore.initialize()
 
 const capabilityStore = useCapabilityStore()
 if (userStore.isLoggedIn) {

@@ -90,8 +90,14 @@ const rawJson = computed(() => {
 const hasSources = computed(() => metadata.value?.sources?.length > 0)
 const hasTools = computed(() => metadata.value?.tools?.length > 0)
 const hasReasoning = computed(() => !!metadata.value?.reasoning)
-const hasChainOfThought = computed(() => !!metadata.value?.chainOfThought)
-const hasPlan = computed(() => !!metadata.value?.plan)
+const hasChainOfThought = computed(() => {
+  const cot = metadata.value?.chainOfThought
+  return Array.isArray(cot) && cot.length > 0
+})
+const hasPlan = computed(() => {
+  const plan = metadata.value?.plan
+  return plan && typeof plan === 'object' && !Array.isArray(plan) && Object.keys(plan).length > 0
+})
 const hasAnyReasoning = computed(() => hasReasoning.value || hasChainOfThought.value || hasPlan.value)
 
 const artifacts = computed(() => {

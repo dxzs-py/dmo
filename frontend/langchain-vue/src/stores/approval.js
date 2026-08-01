@@ -792,8 +792,46 @@ export const useApprovalStore = defineStore('approval', () => {
   }
   startCleanup()
 
+  /**
+   * 待绑定审批队列：审批事件到达时 toolCall 可能尚未创建（LLM 流式输出渐进），
+   * 暂存到队列，由 tool_call_* 系列事件触发重绑定
+   * @type {import('vue').Ref<Array<{sessionId: string, toolCallId: string, approvalData: Object, createdAt: number}>>}
+   */
+  const pendingBindQueue = ref([])
+
+  /**
+   * 刷新待绑定队列：尝试将队列中的审批绑定到已创建的 toolCall
+   * @param {string} [sessionId] - 仅刷新指定 session 的待绑定审批
+   */
+  const flushPendingBindQueue = (sessionId) => {
+    if (pendingBindQueue.value.length === 0) return
+
+    const sessionStore = useSessionStore()
+    const remaining = []
+
+    for (const item of pendingBindQueue.value) {
+      if (sessionId && item.sessionId !== sessionId) {
+        remaining.push(item)
+        continue
+      }
+      const result = sessionStore.setApprovalToToolCall(item.sessionId, item.toolCallId, item.approvalData)
+      if (result) {
+        logger.info(`[ApprovalStore] 队列重绑定成功: toolCallId=${item.toolCallId}, sessionId=${item.sessionId}`)
+      } else {
+        remaining.push(item)
+      }
+    }
+
+    pendingBindQueue.value = remaining
+
+    // 清理超时的队列项（30 秒）
+    const now = Date.now()
+    pendingBindQueue.value = pendingBindQueue.value.filter(q => now - q.createdAt < 30000)
+  }
+
   return {
     pendingApprovals,
+    pendingBindQueue,
     hasPending,
     handleApprovalEvent,
     executeApproval,
@@ -804,5 +842,6 @@ export const useApprovalStore = defineStore('approval', () => {
     clearBySource,
     clearByTaskId,
     clearAll,
+    flushPendingBindQueue,
   }
 })

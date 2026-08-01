@@ -39,6 +39,8 @@ class StreamContext:
 
     # ── 审批中断 ──
     interrupt_info: dict | None = None
+    session_id: str = ""
+    message_id: str = ""
 
     # ── 韧性重试 ──
     retry_count: int = 0

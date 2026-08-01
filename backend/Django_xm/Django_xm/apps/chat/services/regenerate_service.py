@@ -487,8 +487,10 @@ async def stream_regenerate(
                         accumulated_reasoning=accumulated_reasoning,
                         tool_args_accumulator=tool_args_accumulator,
                         mode=mode,
+                        enable_deep_thinking=enable_deep_thinking,
                         session_id=session_id,
                         message_id=message.id,
+                        module_id=str(session_id or ""),
                     ):
                         if event.get("type") == "chunk":
                             current_message_content += event.get("content", "")
@@ -968,8 +970,10 @@ async def stream_regenerate_resume(
                         accumulated_reasoning=accumulated_reasoning,
                         tool_args_accumulator=tool_args_accumulator,
                         mode="agent",
+                        enable_deep_thinking=enable_deep_thinking,
                         session_id=session_id,
                         message_id=regen_message_id,
+                        module_id=str(session_id or ""),
                     ):
                         if event.get("type") == "chunk":
                             current_message_content += event.get("content", "")
