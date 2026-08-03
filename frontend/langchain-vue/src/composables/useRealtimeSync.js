@@ -60,7 +60,7 @@ let instance = null
  * @returns {string}
  */
 function buildRealtimeUrl(token) {
-  const apiUrl = settings.API_BASE_URL || ''
+  const apiUrl = settings.apiBaseUrl || ''
   let wsOrigin
 
   if (apiUrl.startsWith('http://') || apiUrl.startsWith('https://')) {

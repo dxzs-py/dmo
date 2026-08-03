@@ -1,7 +1,0 @@
-﻿
-?: (drf_spectacular.W002) D:\programming\langchain\langchain_xm\backend\Django_xm\Django_xm\apps\users\views.py: Error 
-[UserUsageStatsView]: unable to guess serializer. This is graceful fallback handling for APIViews. Consider using Gener
-icAPIView as view base class, if view is under your control. Either way you may want to add a serializer_class (or meth
-od). Ignoring view for now.
-
-

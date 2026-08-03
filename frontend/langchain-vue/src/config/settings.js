@@ -11,27 +11,27 @@ const getApiBaseUrl = () => {
 }
 
 const settings = {
-  Host: '',
-  get API_BASE_URL() {
+  host: '',
+  get apiBaseUrl() {
     return getApiBaseUrl()
   },
-  set API_BASE_URL(value) {
+  set apiBaseUrl(value) {
     if (typeof window !== 'undefined') {
       localStorage.setItem('lc-studylab-api-url', value)
     }
   },
 
-  HOME_PAGE: {
-    REDIRECT_TO_CHAT: false,
-    ENABLE_QUICK_START: true
+  homePage: {
+    redirectToChat: false,
+    enableQuickStart: true
   },
 
-  API_VALIDATION: {
-    MESSAGE_MAX_LENGTH: 10000,
-    CHAT_HISTORY_MAX_ITEMS: 50,
-    SESSION_ID_PATTERN: /^[a-f0-9-]{36}$/,
-    ALLOWED_MODES: ['agent', 'deep-research'],
-    BATCH_CREATE_MAX_ITEMS: 50,
+  apiValidation: {
+    messageMaxLength: 10000,
+    chatHistoryMaxItems: 50,
+    sessionIdPattern: /^[a-f0-9-]{36}$/,
+    allowedModes: ['agent', 'deep-research'],
+    batchCreateMaxItems: 50,
   }
 }
 

@@ -316,7 +316,7 @@ export const useSessionStore = defineStore('session', () => {
     isLoading.value = true
     const promise = (async () => {
     try {
-      const response = await chatAPI.getSessions({ page, page_size: paginationMeta.value.pageSize })
+      const response = await chatAPI.getSessions({ page, pageSize: paginationMeta.value.pageSize })
 
       if (isApiSuccess(response)) {
         const data = response.data.data

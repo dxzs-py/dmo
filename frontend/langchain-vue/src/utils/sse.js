@@ -197,7 +197,7 @@ export async function fetchSSE(url, options = {}) {
 
   const buildUrl = (baseUrl) => {
     if (!baseUrl.startsWith('http')) {
-      baseUrl = `${settings.API_BASE_URL}${baseUrl}`
+      baseUrl = `${settings.apiBaseUrl}${baseUrl}`
     }
     if (options.injectTokenQuery && userStore.token) {
       const separator = baseUrl.includes('?') ? '&' : '?'

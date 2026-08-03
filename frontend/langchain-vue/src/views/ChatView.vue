@@ -274,7 +274,7 @@ onMounted(async () => {
   // 如果从深度研究页面跳转过来，且指定了 session_id，先切换到该会话
   const targetSessionId = getQueryParam(route, 'session_id')
   const researchTaskId = getQueryParam(route, 'research_task_id')
-  const queryMessage = route.query.q
+  const queryMessage = getQueryParam(route, 'q')
   if (targetSessionId || researchTaskId) {
     console.log('[ChatView] 深度研究跳转参数:', {
       sessionId: targetSessionId || '(未传递)',

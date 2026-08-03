@@ -1,1 +1,0 @@
-﻿Django_xm\routing.py:12: error: Argument 2 to "path" has incompatible type "_ASGIApplicationProtocol"; expected "Callable[..., HttpResponseBase]"  [arg-type]

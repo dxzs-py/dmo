@@ -8,7 +8,7 @@ let isRefreshing = false
 let refreshSubscribers = []
 
 const apiClient = axios.create({
-  baseURL: settings.API_BASE_URL,
+  baseURL: settings.apiBaseUrl,
   timeout: 300000,
   headers: { 'Content-Type': 'application/json' },
 })
@@ -36,15 +36,17 @@ apiClient.interceptors.request.use(
       && !(config.data instanceof Blob)
       && !(config.data instanceof File)) {
       try {
-        const before = JSON.stringify(config.data).slice(0, 200)
         config.data = toSnakeCase(config.data)
-        const after = JSON.stringify(config.data).slice(0, 200)
-        if (before !== after) {
-          console.debug('[Axios] 请求转换:', config.url, '\n  前:', before, '\n  后:', after)
-        }
       } catch (e) {
-        // 转换失败不影响请求正常发送
         console.warn('[Axios] toSnakeCase 转换请求 body 失败:', e)
+      }
+    }
+    // URL query params 统一转换 camelCase → snake_case
+    if (config.params && typeof config.params === 'object') {
+      try {
+        config.params = toSnakeCase(config.params)
+      } catch (e) {
+        console.warn('[Axios] toSnakeCase 转换 query params 失败:', e)
       }
     }
     return config

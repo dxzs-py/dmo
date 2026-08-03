@@ -315,7 +315,7 @@ const isSaving = ref(false)
 const themeStore = useThemeStore()
 
 const settingsForm = reactive({
-  apiBaseUrl: settings.API_BASE_URL,
+  apiBaseUrl: settings.apiBaseUrl,
 })
 
 const themeForm = reactive({
@@ -611,7 +611,7 @@ const saveSettings = async () => {
   isSaving.value = true
   try {
     localStorage.setItem('lc-studylab-api-url', settingsForm.apiBaseUrl)
-    settings.API_BASE_URL = settingsForm.apiBaseUrl
+    settings.apiBaseUrl = settingsForm.apiBaseUrl
     updateBaseURL(settingsForm.apiBaseUrl)
     ElMessage.success('设置已保存')
   } catch (error) {

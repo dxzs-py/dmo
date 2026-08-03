@@ -9,7 +9,7 @@ export const deepResearchAPI = {
   getTasks(params = {}) { return apiClient.get('/research/tasks/', { params }) },
   deleteTask(taskId, params = {}) { return apiClient.delete(`/research/task/${taskId}/`, { params }) },
   getFiles(taskId) { return apiClient.get(`/research/${taskId}/files/`) },
-  downloadFile(taskId, filename) { return `${settings.API_BASE_URL}/research/${taskId}/file/download/${filename}` },
+  downloadFile(taskId, filename) { return `${settings.apiBaseUrl}/research/${taskId}/file/download/${filename}` },
   getFileContent(taskId, filename) { return apiClient.get(`/research/${taskId}/file/content/${filename}/`) },
   searchFiles(query) { return apiClient.get('/research/search/', { params: { keyword: query } }) },
   streamFetch(taskId, options = {}) {

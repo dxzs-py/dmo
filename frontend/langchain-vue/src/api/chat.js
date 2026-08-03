@@ -10,16 +10,16 @@ function validateChatRequest(data) {
   } else {
     const trimmedMessage = data.message.trim()
     if (trimmedMessage.length === 0) errors.push('消息内容不能为空或仅包含空格')
-    else if (trimmedMessage.length > settings.API_VALIDATION.MESSAGE_MAX_LENGTH)
-      errors.push(`消息内容不能超过${settings.API_VALIDATION.MESSAGE_MAX_LENGTH}个字符`)
+    else if (trimmedMessage.length > settings.apiValidation.messageMaxLength)
+      errors.push(`消息内容不能超过${settings.apiValidation.messageMaxLength}个字符`)
   }
-  if (data.mode && !settings.API_VALIDATION.ALLOWED_MODES.includes(data.mode))
-    errors.push(`不支持的模式: ${data.mode}。允许的模式: ${settings.API_VALIDATION.ALLOWED_MODES.join(', ')}`)
-  if (data.sessionId && !settings.API_VALIDATION.SESSION_ID_PATTERN.test(data.sessionId))
+  if (data.mode && !settings.apiValidation.allowedModes.includes(data.mode))
+    errors.push(`不支持的模式: ${data.mode}。允许的模式: ${settings.apiValidation.allowedModes.join(', ')}`)
+  if (data.sessionId && !settings.apiValidation.sessionIdPattern.test(data.sessionId))
     errors.push('会话ID格式无效')
   if (data.chatHistory && Array.isArray(data.chatHistory)) {
-    if (data.chatHistory.length > settings.API_VALIDATION.CHAT_HISTORY_MAX_ITEMS)
-      errors.push(`聊天历史记录不能超过${settings.API_VALIDATION.CHAT_HISTORY_MAX_ITEMS}条`)
+    if (data.chatHistory.length > settings.apiValidation.chatHistoryMaxItems)
+      errors.push(`聊天历史记录不能超过${settings.apiValidation.chatHistoryMaxItems}条`)
     data.chatHistory.forEach((msg, index) => {
       if (!['user', 'assistant', 'system'].includes(msg.role))
         errors.push(`聊天历史第${index + 1}条消息的角色无效`)
@@ -60,19 +60,19 @@ export const chatAPI = {
 
   getSessions(params = {}) {
     const validatedParams = { ...params }
-    if (validatedParams.page_size && validatedParams.page_size > 100) validatedParams.page_size = 100
+    if (validatedParams.pageSize && validatedParams.pageSize > 100) validatedParams.pageSize = 100
     return apiClient.get('/chat/sessions/', { params: validatedParams })
   },
 
   createSession(data) {
     const sessionData = { ...data }
     if (sessionData.title && sessionData.title.length > 200) sessionData.title = sessionData.title.slice(0, 200)
-    if (sessionData.mode && !settings.API_VALIDATION.ALLOWED_MODES.includes(sessionData.mode)) sessionData.mode = 'agent'
+    if (sessionData.mode && !settings.apiValidation.allowedModes.includes(sessionData.mode)) sessionData.mode = 'agent'
     return apiClient.post('/chat/sessions/create/', sessionData)
   },
 
   getSession(sessionId) {
-    if (!sessionId || !settings.API_VALIDATION.SESSION_ID_PATTERN.test(sessionId))
+    if (!sessionId || !settings.apiValidation.sessionIdPattern.test(sessionId))
       return Promise.reject(new Error('会话ID格式无效'))
     return apiClient.get(`/chat/sessions/${sessionId}/`)
   },
@@ -105,8 +105,8 @@ export const chatAPI = {
     if (!sessionId) return Promise.reject(new Error('会话ID不能为空'))
     if (!Array.isArray(data.messages) || data.messages.length === 0)
       return Promise.reject(new Error('messages必须是非空数组'))
-    if (data.messages.length > settings.API_VALIDATION.BATCH_CREATE_MAX_ITEMS)
-      return Promise.reject(new Error(`批量创建数量不能超过${settings.API_VALIDATION.BATCH_CREATE_MAX_ITEMS}条`))
+    if (data.messages.length > settings.apiValidation.batchCreateMaxItems)
+      return Promise.reject(new Error(`批量创建数量不能超过${settings.apiValidation.batchCreateMaxItems}条`))
     return apiClient.post(`/chat/sessions/${sessionId}/messages/batch/`, data)
   },
 
