@@ -8,7 +8,7 @@
             size="small"
             class="version-tag"
             :style="v.taskId === task.taskId ? '' : 'cursor: pointer'"
-            @click="v.taskId !== task.taskId && emit('view-task', { task_id: v.taskId })"
+            @click="v.taskId !== task.taskId && emit('view-task', { taskId: v.taskId })"
           >
             v{{ v.version }}
           </el-tag>

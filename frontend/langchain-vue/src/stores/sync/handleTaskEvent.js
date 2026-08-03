@@ -129,7 +129,7 @@ export const createHandleTaskEvent = (ctx) => {
         } else {
           logger.info(
             `[Sync] task ${event.type}: taskId=${taskId}, ` +
-            `step=${payload.step || payload.current_step || 'unknown'}, source=${source}`
+            `step=${payload.step || payload.currentStep || 'unknown'}, source=${source}`
           )
         }
         break

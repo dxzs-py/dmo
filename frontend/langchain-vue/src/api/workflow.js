@@ -7,7 +7,7 @@ export const workflowAPI = {
   startStreamUrl() { return `${settings.API_BASE_URL}/learning/start/stream/` },
   streamUrl(threadId) { return `${settings.API_BASE_URL}/learning/stream/${threadId}/` },
   getState(threadId) { return apiClient.get(`/learning/status/${threadId}/`) },
-  submitAnswers(threadId, data) { return apiClient.post('/learning/submit/', { thread_id: threadId, answers: data }) },
+  submitAnswers(threadId, data) { return apiClient.post('/learning/submit/', { threadId: threadId, answers: data }) },
   getTasks(params = {}) { return apiClient.get('/learning/tasks/', { params }) },
   getFiles(threadId) { return apiClient.get(`/learning/${threadId}/files/`) },
   downloadFile(threadId, filename) { return `${settings.API_BASE_URL}/learning/${threadId}/file/download/${filename}` },

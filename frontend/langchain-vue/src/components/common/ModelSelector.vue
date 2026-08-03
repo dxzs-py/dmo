@@ -90,7 +90,7 @@ const handleTest = async () => {
 const handleThinkingToggle = (val) => {
   const paramCfg = modelStore.currentProviderSpecialParams?.thinking
   if (!paramCfg) return
-  modelStore.setSpecialParam('thinking', val ? paramCfg.enabled_value : paramCfg.disabled_value)
+  modelStore.setSpecialParam('thinking', val ? paramCfg.enabledValue : paramCfg.disabledValue)
   if (val) {
     ElMessage.info('思考模式已启用')
   } else {
@@ -99,7 +99,7 @@ const handleThinkingToggle = (val) => {
 }
 
 const handleReasoningEffortChange = (val) => {
-  modelStore.setSpecialParam('reasoning_effort', val)
+  modelStore.setSpecialParam('reasoningEffort', val)
 }
 
 const thinkingEnabled = computed(() => {
@@ -110,8 +110,8 @@ const thinkingEnabled = computed(() => {
 })
 
 const reasoningEffort = computed(() => {
-  return modelStore.specialParams?.reasoning_effort ||
-    modelStore.currentProviderSpecialParams?.reasoning_effort?.default ||
+  return modelStore.specialParams?.reasoningEffort ||
+    modelStore.currentProviderSpecialParams?.reasoningEffort?.default ||
     'high'
 })
 
@@ -274,11 +274,11 @@ onMounted(() => {
                 </div>
               </template>
 
-              <template v-if="modelStore.currentProviderSpecialParams?.reasoning_effort && thinkingEnabled">
+              <template v-if="modelStore.currentProviderSpecialParams?.reasoningEffort && thinkingEnabled">
                 <div class="param-row">
                   <span class="param-label">
-                    {{ modelStore.currentProviderSpecialParams.reasoning_effort.label }}
-                    <el-tooltip :content="modelStore.currentProviderSpecialParams.reasoning_effort.description" placement="top">
+                    {{ modelStore.currentProviderSpecialParams.reasoningEffort.label }}
+                    <el-tooltip :content="modelStore.currentProviderSpecialParams.reasoningEffort.description" placement="top">
                       <el-icon class="param-help"><Warning /></el-icon>
                     </el-tooltip>
                   </span>
@@ -289,7 +289,7 @@ onMounted(() => {
                     @update:model-value="handleReasoningEffortChange"
                   >
                     <el-option
-                      v-for="opt in modelStore.currentProviderSpecialParams.reasoning_effort.options"
+                      v-for="opt in modelStore.currentProviderSpecialParams.reasoningEffort.options"
                       :key="opt"
                       :label="opt"
                       :value="opt"

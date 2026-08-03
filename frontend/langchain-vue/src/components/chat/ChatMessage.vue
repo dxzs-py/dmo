@@ -390,7 +390,7 @@ function handleMessageClick() {
           :key="imgIdx"
           :base64="img.base64 || img.data"
           :uint8-array="img.uint8Array"
-          :media-type="img.mediaType || img.mime_type || 'image/png'"
+          :media-type="img.mediaType || 'image/png'"
           :alt="img.alt || `AI生成图片 ${imgIdx + 1}`"
           class="message-ai-image"
         />

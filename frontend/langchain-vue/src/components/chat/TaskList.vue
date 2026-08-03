@@ -179,7 +179,7 @@ const loadTasks = async () => {
   try {
     const params = {
       page: currentPage.value,
-      page_size: pageSize.value,
+      pageSize: pageSize.value,
     }
     if (statusFilter.value) {
       params.status = statusFilter.value
@@ -225,7 +225,7 @@ const continueTask = (task) => {
 }
 
 const confirmDeleteTask = async (task) => {
-  const name = task.query || task.userQuestion || task.taskId || task.thread_id
+  const name = task.query || task.userQuestion || task.taskId || task.threadId
   try {
     await confirmDelete(`确定要删除任务"${name}"吗？此操作不可撤销。`)
     await deleteTask(task)
@@ -236,7 +236,7 @@ const confirmDeleteTask = async (task) => {
 
 const deleteTask = async (task) => {
   try {
-    const taskId = task.taskId || task.thread_id
+    const taskId = task.taskId || task.threadId
     await props.api.deleteTask(taskId)
     ElMessage.success('删除成功')
     loadTasks()

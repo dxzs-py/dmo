@@ -132,8 +132,8 @@ async function handleChangePassword() {
   passwordLoading.value = true
   try {
     const response = await userAPI.changePassword({
-      old_password: passwordForm.value.oldPassword,
-      new_password: passwordForm.value.newPassword,
+      oldPassword: passwordForm.value.oldPassword,
+      newPassword: passwordForm.value.newPassword,
     })
     if (response.data?.code === 200) {
       ElMessage.success('密码修改成功，请重新登录')

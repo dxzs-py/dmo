@@ -36,7 +36,7 @@ const form = ref({
   name: '',
   description: '',
   steps: [
-    { toolName: '', args_template: '', condition: '' },
+    { toolName: '', argsTemplate: '', condition: '' },
   ],
 })
 
@@ -53,13 +53,13 @@ watch(() => props.modelValue, (val) => {
     const rawName = (skill.name || '').replace(/^skill_/, '')
     const steps = (skill.steps || []).map(s => ({
       toolName: s.toolName || '',
-      args_template: typeof s.args_template === 'object' ? JSON.stringify(s.args_template) : (s.args_template || ''),
+      argsTemplate: typeof s.argsTemplate === 'object' ? JSON.stringify(s.argsTemplate) : (s.argsTemplate || ''),
       condition: s.condition || '',
     }))
     form.value = {
       name: rawName,
       description: skill.description || '',
-      steps: steps.length > 0 ? steps : [{ toolName: '', args_template: '', condition: '' }],
+      steps: steps.length > 0 ? steps : [{ toolName: '', argsTemplate: '', condition: '' }],
     }
     skillMode.value = skill.mode || 'pipeline'
     mode.value = 'pipeline'
@@ -75,7 +75,7 @@ const handleFileChange = (file) => {
 }
 
 const addStep = () => {
-  form.value.steps.push({ toolName: '', args_template: '', condition: '' })
+  form.value.steps.push({ toolName: '', argsTemplate: '', condition: '' })
 }
 
 const removeStep = (index) => {
@@ -90,7 +90,7 @@ const resetForm = () => {
   form.value = {
     name: '',
     description: '',
-    steps: [{ toolName: '', args_template: '', condition: '' }],
+    steps: [{ toolName: '', argsTemplate: '', condition: '' }],
   }
   skillMode.value = 'pipeline'
   skillFile.value = null
@@ -113,14 +113,14 @@ const handleSubmit = async () => {
     const steps = validSteps.map(s => {
       const step = {
         toolName: s.toolName.trim(),
-        args_template: {},
+        argsTemplate: {},
         condition: null,
       }
-      if (s.args_template.trim()) {
+      if (s.argsTemplate.trim()) {
         try {
-          step.args_template = JSON.parse(s.args_template.trim())
+          step.argsTemplate = JSON.parse(s.argsTemplate.trim())
         } catch {
-          step.args_template = {}
+          step.argsTemplate = {}
         }
       }
       if (s.condition.trim()) {
@@ -192,14 +192,14 @@ const handleSubmit = async () => {
   const steps = validSteps.map(s => {
     const step = {
       toolName: s.toolName.trim(),
-      args_template: {},
+      argsTemplate: {},
       condition: null,
     }
-    if (s.args_template.trim()) {
+    if (s.argsTemplate.trim()) {
       try {
-        step.args_template = JSON.parse(s.args_template.trim())
+        step.argsTemplate = JSON.parse(s.argsTemplate.trim())
       } catch {
-        step.args_template = {}
+        step.argsTemplate = {}
       }
     }
     if (s.condition.trim()) {
@@ -364,7 +364,7 @@ const handleClose = () => {
 
             <el-form-item label="参数模板 (JSON)" class="step-field">
               <el-input
-                v-model="step.args_template"
+                v-model="step.argsTemplate"
                 placeholder='例如：{"query": "{{input}}"}'
               />
             </el-form-item>

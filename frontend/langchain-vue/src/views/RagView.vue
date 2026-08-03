@@ -501,10 +501,10 @@ const executeNormalQuery = async () => {
 
   try {
     const response = await ragAPI.query({
-      index_name: selectedIndexName.value,
+      indexName: selectedIndexName.value,
       query: queryForm.query,
       k: queryForm.k,
-      return_sources: true
+      returnSources: true
     })
     
     result.value = response.data.data || response.data
@@ -546,10 +546,10 @@ const executeStreamQuery = async () => {
 
   try {
     const response = await ragAPI.streamQuery({
-      index_name: selectedIndexName.value,
+      indexName: selectedIndexName.value,
       query: queryForm.query,
       k: queryForm.k,
-      return_sources: true
+      returnSources: true
     }, {
       signal: abortController.signal,
     })

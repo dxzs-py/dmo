@@ -44,7 +44,7 @@ const trashPagination = reactive({
 const filters = reactive({
   status: '',
   search: '',
-  sortBy: '-created_at',
+  sortBy: '-createdAt',
 })
 
 const trashSearch = ref('')
@@ -56,7 +56,7 @@ const alerts = ref([])
 const statusMap = {
   active: { label: '活跃', type: 'success' },
   indexed: { label: '已入库', type: 'warning' },
-  pending_delete: { label: '待删除', type: 'danger' },
+  pendingDelete: { label: '待删除', type: 'danger' },
 }
 
 const selectedIds = ref([])
@@ -119,10 +119,10 @@ const loadAttachments = async () => {
   try {
     const res = await attachmentAPI.getList({
       page: pagination.page,
-      page_size: pagination.pageSize,
+      pageSize: pagination.pageSize,
       status: filters.status || undefined,
       search: filters.search || undefined,
-      sort_by: filters.sortBy,
+      sortBy: filters.sortBy,
     })
     if (res.data?.code === 200) {
       const data = res.data.data
@@ -141,9 +141,9 @@ const loadTrashedAttachments = async () => {
   try {
     const res = await attachmentAPI.getTrashedList({
       page: trashPagination.page,
-      page_size: trashPagination.pageSize,
+      pageSize: trashPagination.pageSize,
       search: trashSearch.value || undefined,
-      sort_by: '-created_at',
+      sortBy: '-createdAt',
     })
     if (res.data?.code === 200) {
       const data = res.data.data
@@ -198,7 +198,7 @@ const handleSearch = () => {
 const handleReset = () => {
   filters.status = ''
   filters.search = ''
-  filters.sortBy = '-created_at'
+  filters.sortBy = '-createdAt'
   pagination.page = 1
   loadAttachments()
 }
@@ -289,7 +289,7 @@ const handleUpdateRetention = async (row) => {
       inputErrorMessage: '请输入有效数字',
     })
     const res = await attachmentAPI.actionAttachment(row.id, 'update_retention', {
-      retention_days: parseInt(value),
+      retentionDays: parseInt(value),
     })
     if (res.data?.code === 200) {
       ElMessage.success('更新成功')
@@ -666,8 +666,8 @@ onMounted(() => {
               style="width: 100%"
             >
               <el-table-column type="selection" width="40" />
-              <el-table-column prop="original_name" label="文件名" min-width="180" show-overflow-tooltip />
-              <el-table-column prop="file_type" label="类型" width="80" />
+              <el-table-column prop="originalName" label="文件名" min-width="180" show-overflow-tooltip />
+              <el-table-column prop="fileType" label="类型" width="80" />
               <el-table-column label="大小" width="100">
                 <template #default="{ row }">{{ formatSize(row.fileSize) }}</template>
               </el-table-column>
@@ -678,7 +678,7 @@ onMounted(() => {
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="reference_count" label="引用" width="70" align="center" />
+              <el-table-column prop="referenceCount" label="引用" width="70" align="center" />
               <el-table-column label="保留天数" width="90" align="center">
                 <template #default="{ row }">{{ row.retentionDays || '-' }}</template>
               </el-table-column>
@@ -780,8 +780,8 @@ onMounted(() => {
               style="width: 100%"
             >
               <el-table-column type="selection" width="40" />
-              <el-table-column prop="original_name" label="文件名" min-width="180" show-overflow-tooltip />
-              <el-table-column prop="file_type" label="类型" width="80" />
+              <el-table-column prop="originalName" label="文件名" min-width="180" show-overflow-tooltip />
+              <el-table-column prop="fileType" label="类型" width="80" />
               <el-table-column label="大小" width="100">
                 <template #default="{ row }">{{ formatSize(row.fileSize) }}</template>
               </el-table-column>

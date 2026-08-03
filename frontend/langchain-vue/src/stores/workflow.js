@@ -111,9 +111,9 @@ export const useWorkflowStore = defineStore('workflow', () => {
    * 获取指定工作流的状态（响应式，建议在 computed 中调用）
    *
    * 在 WorkflowView 中使用示例：
-   *   const workflowState = computed(() => workflowStore.getWorkflowState(execution.value?.thread_id))
+   *   const workflowState = computed(() => workflowStore.getWorkflowState(execution.value?.threadId))
    *
-   * @param {string} taskId - 工作流 thread_id
+   * @param {string} taskId - 工作流 threadId
    * @returns {Object|null} 工作流状态对象（taskId 无效或未设置时返回 null）
    */
   const getWorkflowState = (taskId) => {
@@ -139,7 +139,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
    * @param {string} [payload.step] - 当前步骤（workflow_step）
    * @param {string} [payload.message] - 步骤消息（workflow_step）
    * @param {string} [payload.state] - 工作流状态（workflow_state_update）
-   * @param {string} [payload.current_step] - 当前步骤（workflow_state_update）
+   * @param {string} [payload.currentStep] - 当前步骤（workflow_state_update）
    * @param {Object} [payload.learning_plan] - 学习计划
    * @param {Array} [payload.retrieved_docs] - 检索文档
    * @param {Object} [payload.quiz] - 练习题

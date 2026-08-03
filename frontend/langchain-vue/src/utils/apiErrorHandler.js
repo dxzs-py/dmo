@@ -53,8 +53,8 @@ export function extractErrorMessage(error) {
       if (validationDetails) return `验证失败 (${validationDetails})`
     }
 
-    if (data.non_field_errors?.length > 0) {
-      return data.non_field_errors.join('; ')
+    if (data.nonFieldErrors?.length > 0) {
+      return data.nonFieldErrors.join('; ')
     }
   }
 

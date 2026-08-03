@@ -59,15 +59,15 @@ export const useModelStore = defineStore('model', () => {
     const init = {}
     for (const [key, cfg] of Object.entries(spConfig)) {
       if (cfg.type === 'toggle' && cfg.default === true) {
-        init[key] = cfg.enabled_value
+        init[key] = cfg.enabledValue
       } else if (cfg.type === 'select' && cfg.default) {
         init[key] = cfg.default
       }
     }
-    // DeepSeek: reasoning_effort 仅在 thinking 已启用时才生效
-    // 如果 thinking 未启用（default=false），移除 reasoning_effort 避免强制启用 thinking
-    if ('reasoning_effort' in init && 'thinking' in spConfig && !('thinking' in init)) {
-      delete init.reasoning_effort
+    // DeepSeek: reasoningEffort 仅在 thinking 已启用时才生效
+    // 如果 thinking 未启用（default=false），移除 reasoningEffort 避免强制启用 thinking
+    if ('reasoningEffort' in init && 'thinking' in spConfig && !('thinking' in init)) {
+      delete init.reasoningEffort
     }
     return init
   }
@@ -156,21 +156,21 @@ export const useModelStore = defineStore('model', () => {
     } else {
       specialParams.value = { ...specialParams.value, [key]: value }
     }
-    // DeepSeek: 关闭 thinking 时同步移除 reasoning_effort（API 约束）
+    // DeepSeek: 关闭 thinking 时同步移除 reasoningEffort（API 约束）
     const spConfig = currentProviderSpecialParams.value
-    if (key === 'thinking' && spConfig?.reasoning_effort) {
+    if (key === 'thinking' && spConfig?.reasoningEffort) {
       const isThinkingOff = !value || (typeof value === 'object' && value.type !== 'enabled') || value === false
-      if (isThinkingOff && 'reasoning_effort' in specialParams.value) {
+      if (isThinkingOff && 'reasoningEffort' in specialParams.value) {
         const newParams = { ...specialParams.value }
-        delete newParams.reasoning_effort
+        delete newParams.reasoningEffort
         specialParams.value = newParams
       }
     }
-    // DeepSeek: 设置 reasoning_effort 时自动启用 thinking（API 约束）
-    if (key === 'reasoning_effort' && spConfig?.thinking) {
+    // DeepSeek: 设置 reasoningEffort 时自动启用 thinking（API 约束）
+    if (key === 'reasoningEffort' && spConfig?.thinking) {
       const thinkingAlreadyEnabled = specialParams.value.thinking?.type === 'enabled'
       if (!thinkingAlreadyEnabled) {
-        specialParams.value = { ...specialParams.value, thinking: spConfig.thinking.enabled_value }
+        specialParams.value = { ...specialParams.value, thinking: spConfig.thinking.enabledValue }
       }
     }
   }

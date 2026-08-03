@@ -274,7 +274,7 @@ async function handleLogin() {
         username: formData.username,
         password: formData.password,
         captcha: formData.captcha,
-        captcha_key: captchaKey.value
+        captchaKey: captchaKey.value
       })
     } else {
       result = await userStore.login({

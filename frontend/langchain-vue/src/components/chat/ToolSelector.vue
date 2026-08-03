@@ -267,7 +267,7 @@ const handleTestMcpServer = (name) => withPopoverLock(async () => {
     const res = await toolsAPI.testMcpServer(name)
     const data = res.data?.data || res.data
     if (data.connected) {
-      mcpTestResult.value = { name, success: true, message: `连接成功，共 ${data.tool_count} 个工具` }
+      mcpTestResult.value = { name, success: true, message: `连接成功，共 ${data.toolCount} 个工具` }
     } else {
       mcpTestResult.value = { name, success: false, message: `连接失败${data.error ? '：' + data.error : ''}` }
     }

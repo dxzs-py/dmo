@@ -394,7 +394,7 @@ const useDeepThinking = computed({
   set: (val) => {
     const paramCfg = modelStore.currentProviderSpecialParams?.thinking
     if (!paramCfg) return
-    modelStore.setSpecialParam('thinking', val ? paramCfg.enabled_value : paramCfg.disabled_value)
+    modelStore.setSpecialParam('thinking', val ? paramCfg.enabledValue : paramCfg.disabledValue)
   },
 })
 
@@ -951,16 +951,16 @@ const openInChat = () => {
   const researchQuery = task.value.query
   // 如果研究任务关联了聊天会话，跳转到该会话；否则创建新会话
   const query = {
-    researchTaskId: taskId,
+    research_task_id: taskId,
     q: `关于"${researchQuery}"的深度研究，请帮我进一步分析`,
     session_id: sessionId || undefined,
     research_query: researchQuery,
   }
   console.log('[DeepResearch] 跳转聊天:', {
-    task_id: taskId,
-    session_id: sessionId || '(未关联)',
-    has_session_id: !!sessionId,
-    research_query: researchQuery,
+    taskId: taskId,
+    sessionId: sessionId || '(未关联)',
+    hasSessionId: !!sessionId,
+    researchQuery: researchQuery,
   })
   router.push({ path: '/chat', query })
 }

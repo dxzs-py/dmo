@@ -38,7 +38,7 @@ export function useChatInput() {
     set: (val) => {
       const paramCfg = modelStore.currentProviderSpecialParams?.thinking
       if (!paramCfg) return
-      modelStore.setSpecialParam('thinking', val ? paramCfg.enabled_value : paramCfg.disabled_value)
+      modelStore.setSpecialParam('thinking', val ? paramCfg.enabledValue : paramCfg.disabledValue)
     },
   })
 

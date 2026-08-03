@@ -32,8 +32,8 @@
           <div class="file-info">
             <div class="file-name" :title="file.name">{{ file.name }}</div>
             <div class="file-meta">
-              <span class="file-type">{{ file.file_type }}</span>
-              <span class="file-size">{{ file.size_formatted }}</span>
+              <span class="file-type">{{ file.fileType }}</span>
+              <span class="file-size">{{ file.sizeFormatted }}</span>
             </div>
           </div>
           <div class="file-actions" @click.stop>

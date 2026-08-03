@@ -1,6 +1,5 @@
 import settings from '../config/settings'
 import { generateId } from './id'
-import { getModeLabel } from './format'
 
 const API_SUCCESS_CODE = 200
 

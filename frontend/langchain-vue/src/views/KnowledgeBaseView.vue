@@ -269,7 +269,7 @@ async function handleTestSearch() {
   try {
     const response = await knowledgeAPI.testSearch(currentKB.value.id, {
       query: testQuery.value,
-      top_k: 5,
+      topK: 5,
     })
     if (response.data?.code === 200) {
       testResults.value = response.data.data?.results || []

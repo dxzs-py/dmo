@@ -342,7 +342,7 @@ const operationLabel = computed(() => {
 const approvalArgs = computed(() => {
   const args = approvalData.value?.parameters
   if (!args || typeof args !== 'object') return []
-  const skipKeys = ['thread_id', '_meta', 'timeout', 'encoding']
+  const skipKeys = ['threadId', '_meta', 'timeout', 'encoding']
   return Object.entries(args)
     .filter(([key, val]) => val != null && val !== '' && !skipKeys.includes(key) && !key.startsWith('_'))
     .map(([key, val]) => ({ key, value: String(val) }))

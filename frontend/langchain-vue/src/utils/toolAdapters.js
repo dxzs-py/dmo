@@ -260,18 +260,18 @@ const internalParameterFormatters = {
     }
   },
 
-  /** edit_file: 显示 file_path + old_string + new_string（差异形式） */
+  /** edit_file: 显示 filePath + oldString + newString（差异形式） */
   edit_file: (params) => {
     const p = normalizeParams(params)
     const filePath = p.filePath || p.path || ''
-    const oldStr = p.old_string != null ? p.old_string : (p.old_str != null ? p.old_str : '')
-    const newStr = p.new_string != null ? p.new_string : (p.new_str != null ? p.new_str : '')
+    const oldStr = p.oldString != null ? p.oldString : (p.oldStr != null ? p.oldStr : '')
+    const newStr = p.newString != null ? p.newString : (p.newStr != null ? p.newStr : '')
     return {
       label: '编辑文件',
       formatted: JSON.stringify({
         filePath: filePath,
-        old_string: truncate(String(oldStr), 200),
-        new_string: truncate(String(newStr), 200),
+        oldString: truncate(String(oldStr), 200),
+        newString: truncate(String(newStr), 200),
       }, null, 2),
       displayMode: 'diff',
     }

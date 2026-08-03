@@ -447,24 +447,24 @@ const handleSSEEvent = (data) => {
       }
       break
     case 'workflow_state_update':
-      // 学习工作流状态变更（原 'state_update' 和 'waiting' 合并）
-      // 新格式：{ type: 'workflow_state_update', data: { current_step, learning_plan, quiz, state, ... } }
+      // 学习工作流状态变更
       if (execution.value && data.data) {
-        if (data.data.currentStep) execution.value.currentStep = data.data.currentStep
-        if (data.data.learning_plan) execution.value.learningPlan = toCamelCase(data.data.learning_plan)
-        if (data.data.retrieved_docs) execution.value.retrievedDocs = toCamelCase(data.data.retrieved_docs)
-        if (data.data.quiz) execution.value.quiz = data.data.quiz
-        if (data.data.score !== undefined) execution.value.score = data.data.score
-        if (data.data.feedback !== undefined) execution.value.feedback = data.data.feedback
-        if (data.data.shouldRetry !== undefined) execution.value.shouldRetry = data.data.shouldRetry
+        const d = toCamelCase(data.data)
+        if (d.currentStep) execution.value.currentStep = d.currentStep
+        if (d.learningPlan) execution.value.learningPlan = d.learningPlan
+        if (d.retrievedDocs) execution.value.retrievedDocs = d.retrievedDocs
+        if (d.quiz) execution.value.quiz = d.quiz
+        if (d.score !== undefined) execution.value.score = d.score
+        if (d.feedback !== undefined) execution.value.feedback = d.feedback
+        if (d.shouldRetry !== undefined) execution.value.shouldRetry = d.shouldRetry
         // waiting_for_answers 状态：原 'waiting' 行为，关闭 SSE 并初始化答题表单
-        const isWaiting = data.data.state === 'waiting_for_answers'
-          || data.data.currentStep === 'waiting_for_answers'
-          || data.data.status === 'waiting_for_answers'
+        const isWaiting = d.state === 'waiting_for_answers'
+          || d.currentStep === 'waiting_for_answers'
+          || d.status === 'waiting_for_answers'
         if (isWaiting) {
-          execution.value = { ...execution.value, ...data.data }
-          if (data.data.quiz && !Object.keys(answersForm).length) {
-            data.data.quiz.questions.forEach(q => {
+          execution.value = { ...execution.value, ...d }
+          if (d.quiz && !Object.keys(answersForm).length) {
+            d.quiz.questions.forEach(q => {
               answersForm[q.id] = ''
             })
           }

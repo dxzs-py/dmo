@@ -252,9 +252,9 @@ async function handleRegister() {
       email: formData.email || undefined,
       mobile: formData.mobile || undefined,
       password: formData.password,
-      password_confirm: formData.passwordConfirm,
+      passwordConfirm: formData.passwordConfirm,
       captcha: formData.captcha,
-      captcha_key: captchaKey.value
+      captchaKey: captchaKey.value
     })
 
     if (result.success) {

@@ -32,7 +32,7 @@
           </el-table-column>
           <el-table-column label="操作" width="100">
             <template #default="scope">
-              <el-button link type="primary" size="small" @click="emit('view-task', { task_id: scope.row.taskId })">
+              <el-button link type="primary" size="small" @click="emit('view-task', { taskId: scope.row.taskId })">
                 查看任务
               </el-button>
             </template>

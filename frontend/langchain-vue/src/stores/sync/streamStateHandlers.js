@@ -58,7 +58,7 @@ export const createStreamStateHandlers = (ctx) => {
    * @param {string} sessionId
    * @param {Object} payload - stream_event 事件载荷
    * @param {string} payload.messageId - 消息 ID
-   * @param {string} payload.event_type - 事件类型（reasoning/sources/suggestions/context/content_update）
+   * @param {string} payload.eventType - 事件类型（reasoning/sources/suggestions/context/content_update）
    * @param {Object} payload.data - 事件数据
    * @param {number} [payload.seq] - 序列号（幂等保护）
    */
