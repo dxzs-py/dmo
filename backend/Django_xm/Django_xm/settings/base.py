@@ -75,6 +75,7 @@ INSTALLED_APPS = [
     "Django_xm.apps.knowledge.apps.KnowledgeConfig",
     "Django_xm.apps.learning.apps.LearningConfig",
     "Django_xm.apps.research.apps.ResearchConfig",
+    "Django_xm.apps.realtime.apps.RealtimeConfig",
     "Django_xm.apps.analytics.apps.AnalyticsConfig",
     "Django_xm.apps.agent_hub",
 ]

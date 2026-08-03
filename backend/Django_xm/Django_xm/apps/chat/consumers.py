@@ -512,7 +512,7 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
             # 诊断日志：确认事件被转发到 WebSocket 客户端
             evt_type = to_send.get("type", "?")
             evt_seq = to_send.get("seq", "?")
-            logger.debug(f"[RealtimeSync] broadcast_event 转发: user={self.user_id}, type={evt_type}, seq={evt_seq}")
+            logger.info(f"[RealtimeSync] broadcast_event 转发: user={self.user_id}, type={evt_type}, seq={evt_seq}")
         except Exception:
             logger.exception(
                 f"[RealtimeSync] broadcast_event 发送失败: user={getattr(self, 'user_id', '?')}"

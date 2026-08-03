@@ -157,6 +157,11 @@ LOGGING = {
             "level": "DEBUG",
             "propagate": False,
         },
+        "Django_xm.common": {
+            "handlers": ["console", "file"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
         "Django_xm.apps.context_manager": {
             "handlers": ["console", "file"],
             "level": "DEBUG",

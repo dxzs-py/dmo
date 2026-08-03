@@ -37,28 +37,13 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.runtime import Runtime
 from langgraph.types import Command
 
+from Django_xm.common.messages import content_to_str
+
 from .content_filters import ContentFilter
 from .input_validators import InputValidator
 from .output_validators import OutputValidator
 
 logger = logging.getLogger(__name__)
-
-
-def _content_to_str(content: str | list[str | dict[str, Any]]) -> str:
-    """从 LangChain 消息内容中提取纯文本。
-
-    LangChain 的 message.content 类型为 str | list[str | dict]，
-    多模态场景下为列表结构，此函数将其拼接为纯文本字符串。
-    """
-    if isinstance(content, str):
-        return content
-    parts: list[str] = []
-    for item in content:
-        if isinstance(item, str):
-            parts.append(item)
-        elif isinstance(item, dict):
-            parts.append(str(item.get("text", "")))
-    return " ".join(parts)
 
 
 _LOOP_JUDGE_PROMPT = """你是一个循环检测器。分析以下 AI Agent 最近的工具调用历史，判断它是否陷入了循环。
@@ -527,7 +512,7 @@ class GuardrailsMiddleware(AgentMiddleware):
         messages = state.get("messages", [])
         for msg in reversed(messages):
             if isinstance(msg, HumanMessage):
-                query = _content_to_str(msg.content)[:100]
+                query = content_to_str(msg.content)[:100]
                 break
         logger.info(f"[Guardrails] Agent 开始执行, 查询: {query}...")
         return None
@@ -597,7 +582,7 @@ class GuardrailsMiddleware(AgentMiddleware):
                     last_user_msg = msg.content
                     break
             if last_user_msg:
-                self._validate_input(_content_to_str(last_user_msg), "模型输入")
+                self._validate_input(content_to_str(last_user_msg), "模型输入")
 
         response = handler(request)
 
@@ -758,7 +743,7 @@ class PIIMiddleware(AgentMiddleware):
         if messages:
             for i, msg in enumerate(messages):
                 if isinstance(msg, HumanMessage):
-                    filter_result = self._content_filter.filter_input(_content_to_str(msg.content))
+                    filter_result = self._content_filter.filter_input(content_to_str(msg.content))
                     if not filter_result.is_safe:
                         if self.reject_on_pii:
                             raise ValueError("输入包含个人身份信息(PII)，已被安全策略拒绝")
@@ -778,7 +763,7 @@ class PIIMiddleware(AgentMiddleware):
         if messages:
             for i, msg in enumerate(messages):
                 if isinstance(msg, HumanMessage):
-                    filter_result = self._content_filter.filter_input(_content_to_str(msg.content))
+                    filter_result = self._content_filter.filter_input(content_to_str(msg.content))
                     if not filter_result.is_safe:
                         if self.reject_on_pii:
                             raise ValueError("输入包含个人身份信息(PII)，已被安全策略拒绝")

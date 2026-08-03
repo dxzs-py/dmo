@@ -373,7 +373,7 @@ const internalParameterFormatters = {
     return {
       label: '写入文件',
       formatted: JSON.stringify({
-        relative_path: filePath,
+        relativePath: filePath,
         content: truncate(contentStr, 200),
       }, null, 2),
       displayMode: 'json',

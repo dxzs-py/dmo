@@ -69,8 +69,8 @@ export const createStreamStateHandlers = (ctx) => {
       return
     }
 
-    const { message_id, event_type, data, seq } = payload
-    if (!message_id || !event_type) {
+    const { messageId, eventType, data, seq } = payload
+    if (!messageId || !eventType) {
       logger.warn('[Sync] stream_event 缺少 message_id 或 event_type')
       return
     }
@@ -78,9 +78,9 @@ export const createStreamStateHandlers = (ctx) => {
     // 查找消息
     const session = getSession(sessionStore, sessionId)
     if (!session?.messages) return
-    const message = findMessageById(session, message_id)
+    const message = findMessageById(session, messageId)
     if (!message) {
-      logger.debug(`[Sync] stream_event 未找到消息(时序竞态): session=${sessionId}, message=${message_id}`)
+      logger.debug(`[Sync] stream_event 未找到消息(时序竞态): session=${sessionId}, message=${messageId}`)
       return
     }
 
@@ -95,7 +95,7 @@ export const createStreamStateHandlers = (ctx) => {
       message.isStreaming = true
       logger.info(
         `[Sync] stream_event 设置 streamState=STREAMING: ` +
-        `session=${sessionId}, message=${message_id}, type=${event_type}`
+        `session=${sessionId}, message=${messageId}, type=${eventType}`
       )
     }
 
@@ -113,18 +113,18 @@ export const createStreamStateHandlers = (ctx) => {
       'stream_context': 'context',
       'stream_content_update': 'content',
     }
-    const field = fieldMap[event_type]
+    const field = fieldMap[eventType]
     if (!field) {
-      logger.warn(`[Sync] stream_event 未知 event_type: ${event_type}`)
+      logger.warn(`[Sync] stream_event 未知 event_type: ${eventType}`)
       return
     }
 
     // stream_content_update 事件取 data.content，其他事件取 data
-    const value = event_type === 'stream_content_update' ? data.content : data
-    sessionStore.updateMessageFieldByBackendId(sessionId, message_id, field, value)
+    const value = eventType === 'stream_content_update' ? data.content : data
+    sessionStore.updateMessageFieldByBackendId(sessionId, messageId, field, value)
 
     if (seq) message._lastStreamEventSeq = seq
-    logger.info(`[Sync] stream_event 处理: session=${sessionId}, message=${message_id}, type=${event_type}`)
+    logger.info(`[Sync] stream_event 处理: session=${sessionId}, message=${messageId}, type=${eventType}`)
   }
 
   /**

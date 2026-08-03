@@ -4,7 +4,7 @@ import settings from '@/config/settings'
 import { logger } from '@/utils/logger'
 import { useSnapshotSync, useSnapshotSyncByTask } from '@/composables/useSnapshotSync'
 import { useSyncStore } from '@/stores/sync'
-import { toSnakeCase } from '@/utils/session-transformers.js'
+import { toSnakeCase, toCamelCase } from '@/utils/session-transformers.js'
 import {
   SNAPSHOT_TRIGGER_EVENTS,
   RealtimeConnectionStatus,
@@ -801,7 +801,7 @@ function createRealtimeSync() {
       const key = `session_${sessionId}`
       const seq = lastSeq.has(key) ? lastSeq.get(key) : 0
       _setReplayPending(key)
-      send({ action: 'subscribe_session', payload: { session_id: sessionId, last_seq: seq } })
+      send({ action: 'subscribe_session', payload: { sessionId, lastSeq: seq } })
     })
 
     // 统一 task 重连：subscribe + replay 合并为单次请求
@@ -810,12 +810,16 @@ function createRealtimeSync() {
       const key = `task_${taskId}`
       const seq = lastSeq.has(key) ? lastSeq.get(key) : 0
       _setReplayPending(key)
-      send({ action: 'subscribe_task', payload: { task_id: taskId, last_seq: seq } })
+      send({ action: 'subscribe_task', payload: { taskId, lastSeq: seq } })
     })
   }
 
   /**
-   * 处理收到的消息
+   * onMessage：接收 WebSocket 消息的主入口
+   *
+   * 命名边界：对 rawData 整体调用 toCamelCase 递归转换（snake_case → camelCase），
+   * 然后将 type 还原为后端原始 snake_case（协议路由标识符，非业务数据）。
+   * 其余字段均为前端 camelCase。
    *
    * replay 事件使用 async + for...of + await 处理，确保所有 replay 事件处理完成后再 flush。
    * 避免 _flushBufferedEvents 在 replay 事件尚未完成时就被调用，
@@ -824,31 +828,40 @@ function createRealtimeSync() {
    * @param {MessageEvent} event
    */
   const onMessage = async (event) => {
-    let data
+    let rawData
     try {
-      data = JSON.parse(event.data)
+      rawData = JSON.parse(event.data)
     } catch {
       logger.warn('[Realtime] 收到非 JSON 消息:', event.data)
       return
     }
 
-    // 处理服务端心跳/ pong
-    if (data.type === 'pong' || data.action === 'pong') {
+    // 处理服务端心跳/ pong（不需要转换）
+    if (rawData.type === 'pong' || rawData.action === 'pong') {
       logger.debug('[Realtime] 收到 pong')
       return
     }
 
+    // === 命名边界：snake_case → camelCase ===
+    // 对整体数据递归转换，然后还原 type 为原始 snake_case
+    // （协议路由标识符，如 "session_created"、"tool_result" 非业务数据）
+    const originalType = rawData.type
+    const data = toCamelCase(rawData)
+    if (originalType) {
+      data.type = originalType
+    }
+
     // 处理服务端历史事件回放回包（支持分块）
     if (data.type === 'replay' && Array.isArray(data.events)) {
-      const channelKey = _channelKeyFromParts(data.channel_type, data.channel_id)
-      const chunkIdx = typeof data.chunk_index === 'number' ? data.chunk_index : 0
+      const channelKey = _channelKeyFromParts(data.channelType, data.channelId)
+      const chunkIdx = typeof data.chunkIndex === 'number' ? data.chunkIndex : 0
       const chunkCount = typeof data.chunkCount === 'number' ? data.chunkCount : 1
       logger.info(
-        `[Realtime] 收到 replay 回包: channel=${data.channel_type}:${data.channel_id}, `
+        `[Realtime] 收到 replay 回包: channel=${data.channelType}:${data.channelId}, `
         + `count=${data.count}, chunk=${chunkIdx + 1}/${chunkCount}`
       )
       // replay 事件 bypass barrier，直接处理（isReplay=true）
-      // 使用 for...of + await 确保顺序执行，避免 barrier 提前清除
+      // 每个 evt 已在 data.events 的 toCamelCase 中转换，但需还原其 type
       for (const evt of data.events) {
         if (evt.type && typeof evt.seq === 'number') {
           await dispatchEvent(evt, true)
