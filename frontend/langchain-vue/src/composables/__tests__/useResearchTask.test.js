@@ -257,7 +257,7 @@ describe('useResearchTask', () => {
       expect(router.push).toHaveBeenCalledWith({
         path: '/chat',
         query: expect.objectContaining({
-          research_task_id: 't-1',
+          researchTaskId: 't-1',
           session_id: 's-1',
           research_query: '研究主题',
         }),

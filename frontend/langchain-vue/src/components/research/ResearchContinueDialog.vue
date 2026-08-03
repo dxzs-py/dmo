@@ -20,7 +20,7 @@
     <el-form :model="continueForm" label-width="100px" @submit.prevent>
       <el-form-item label="补充说明">
         <el-input
-          v-model="continueForm.additional_query"
+          v-model="continueForm.additionalQuery"
           type="textarea"
           :rows="3"
           placeholder="描述你想继续探索的方向（可选）..."
@@ -40,7 +40,7 @@
         </span>
       </el-form-item>
       <el-form-item label="启用网络搜索">
-        <el-switch v-model="continueForm.enable_web_search" />
+        <el-switch v-model="continueForm.enableWebSearch" />
       </el-form-item>
       <el-form-item label="选择知识库">
         <div class="kb-selector">
@@ -48,13 +48,13 @@
             <span>暂无可用知识库</span>
           </div>
           <div v-else class="kb-list">
-            <el-checkbox-group v-model="continueForm.knowledge_base_ids">
+            <el-checkbox-group v-model="continueForm.knowledgeBaseIds">
               <div v-for="kb in filteredKnowledgeBases" :key="kb.id" class="kb-item">
                 <el-checkbox :label="kb.name" :value="kb.id">
                   <div class="kb-item-content">
                     <span class="kb-name">{{ kb.name }}</span>
                     <span class="kb-meta">
-                      <el-tag size="small" type="info">{{ kb.chunk_count || 0 }} 文档块</el-tag>
+                      <el-tag size="small" type="info">{{ kb.chunkCount || 0 }} 文档块</el-tag>
                     </span>
                   </div>
                 </el-checkbox>
@@ -66,13 +66,13 @@
       <el-form-item label="工具选择">
         <div class="tool-selector-wrapper">
           <ToolSelector
-            :model-value="continueForm.selected_tools"
-            @update:model-value="(val) => continueForm.selected_tools = val"
-            @update:selected-mcp-servers="(val) => continueForm.selected_mcp_servers = val"
-            @update:use-mcp="(val) => continueForm.use_mcp = val"
+            :model-value="continueForm.selectedTools"
+            @update:model-value="(val) => continueForm.selectedTools = val"
+            @update:selected-mcp-servers="(val) => continueForm.selectedMcpServers = val"
+            @update:use-mcp="(val) => continueForm.useMcp = val"
           />
-          <span v-if="continueForm.selected_tools.length > 0" class="tool-selected-hint">
-            已选择 {{ continueForm.selected_tools.length }} 个工具
+          <span v-if="continueForm.selectedTools.length > 0" class="tool-selected-hint">
+            已选择 {{ continueForm.selectedTools.length }} 个工具
           </span>
         </div>
       </el-form-item>

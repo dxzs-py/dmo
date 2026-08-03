@@ -15,7 +15,7 @@
         />
       </el-form-item>
       <el-form-item label="启用网络搜索">
-        <el-switch v-model="researchForm.enable_web_search" />
+        <el-switch v-model="researchForm.enableWebSearch" />
       </el-form-item>
       <el-form-item label="选择知识库">
         <div class="kb-selector">
@@ -42,7 +42,7 @@
             <span v-else>暂无可用知识库，请先在知识库页面创建并上传文档</span>
           </div>
           <div v-else class="kb-list">
-            <el-checkbox-group v-model="researchForm.knowledge_base_ids">
+            <el-checkbox-group v-model="researchForm.knowledgeBaseIds">
               <div
                 v-for="kb in filteredKnowledgeBases"
                 :key="kb.id"
@@ -60,8 +60,8 @@
               </div>
             </el-checkbox-group>
           </div>
-          <div v-if="researchForm.knowledge_base_ids.length > 0" class="kb-selected-summary">
-            已选择 {{ researchForm.knowledge_base_ids.length }} 个知识库
+          <div v-if="researchForm.knowledgeBaseIds.length > 0" class="kb-selected-summary">
+            已选择 {{ researchForm.knowledgeBaseIds.length }} 个知识库
           </div>
         </div>
       </el-form-item>
@@ -81,13 +81,13 @@
       <el-form-item label="工具选择">
         <div class="tool-selector-wrapper">
           <ToolSelector
-            :model-value="researchForm.selected_tools"
-            @update:model-value="(val) => researchForm.selected_tools = val"
-            @update:selected-mcp-servers="(val) => researchForm.selected_mcp_servers = val"
-            @update:use-mcp="(val) => researchForm.use_mcp = val"
+            :model-value="researchForm.selectedTools"
+            @update:model-value="(val) => researchForm.selectedTools = val"
+            @update:selected-mcp-servers="(val) => researchForm.selectedMcpServers = val"
+            @update:use-mcp="(val) => researchForm.useMcp = val"
           />
-          <span v-if="researchForm.selected_tools.length > 0" class="tool-selected-hint">
-            已选择 {{ researchForm.selected_tools.length }} 个工具
+          <span v-if="researchForm.selectedTools.length > 0" class="tool-selected-hint">
+            已选择 {{ researchForm.selectedTools.length }} 个工具
           </span>
         </div>
       </el-form-item>

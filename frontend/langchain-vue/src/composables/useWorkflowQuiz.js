@@ -1,5 +1,5 @@
 import { reactive, ref, nextTick } from 'vue'
-import { workflowAPI } from '@/api'
+import { workflowAPI } from '@/api/workflow'
 import { ElMessage } from 'element-plus'
 import { logger } from '@/utils/logger'
 
@@ -75,15 +75,15 @@ export function useWorkflowQuiz({ execution, fileBrowserRef }) {
     isSubmitting.value = true
 
     try {
-      const response = await workflowAPI.submitAnswers(execution.value.thread_id, answersForm)
+      const response = await workflowAPI.submitAnswers(execution.value.threadId, answersForm)
       const responseData = response.data.data || response.data
       execution.value = { ...execution.value, ...responseData }
       ElMessage.success('答案已提交')
 
-      if (responseData.should_retry) {
+      if (responseData.shouldRetry) {
         resetAnswers()
         bridge.stopPolling?.()
-        bridge.connectSSE?.(execution.value.thread_id)
+        bridge.connectSSE?.(execution.value.threadId)
       } else {
         nextTick(() => {
           if (fileBrowserRef.value) {

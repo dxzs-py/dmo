@@ -15,12 +15,12 @@ function validateChatRequest(data) {
   }
   if (data.mode && !settings.API_VALIDATION.ALLOWED_MODES.includes(data.mode))
     errors.push(`不支持的模式: ${data.mode}。允许的模式: ${settings.API_VALIDATION.ALLOWED_MODES.join(', ')}`)
-  if (data.session_id && !settings.API_VALIDATION.SESSION_ID_PATTERN.test(data.session_id))
+  if (data.sessionId && !settings.API_VALIDATION.SESSION_ID_PATTERN.test(data.sessionId))
     errors.push('会话ID格式无效')
-  if (data.chat_history && Array.isArray(data.chat_history)) {
-    if (data.chat_history.length > settings.API_VALIDATION.CHAT_HISTORY_MAX_ITEMS)
+  if (data.chatHistory && Array.isArray(data.chatHistory)) {
+    if (data.chatHistory.length > settings.API_VALIDATION.CHAT_HISTORY_MAX_ITEMS)
       errors.push(`聊天历史记录不能超过${settings.API_VALIDATION.CHAT_HISTORY_MAX_ITEMS}条`)
-    data.chat_history.forEach((msg, index) => {
+    data.chatHistory.forEach((msg, index) => {
       if (!['user', 'assistant', 'system'].includes(msg.role))
         errors.push(`聊天历史第${index + 1}条消息的角色无效`)
       if (msg.content && msg.content.length > 50000)

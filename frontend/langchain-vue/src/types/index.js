@@ -204,24 +204,24 @@ export function validateMessage(msg) {
  * 工具调用事件的标准前端数据结构。
  *
  * 字段来源：后端 WebSocket 推送的 tool_call_* 事件 payload（snake_case），
- * 由 toolCallHandler.js 的 createHandleToolCallEvent 构建，三模块（chat/deep_research/workflow）共享。
+ * 由 handleSessionEvent.js 入口统一调用 toCamelCase 转换，下游均为 camelCase。
  *
- * @property {string} id - 工具调用唯一标识（= tool_call_id）
- * @property {string} tool_call_id - 工具调用唯一标识（后端 LLM tool_call.id）
- * @property {string} name - 工具名称（去前缀显示用，= tool_name）
- * @property {string} tool_name - 工具全名（后端注册名，如 langchain_tools.shell_exec）
+ * @property {string} id - 工具调用唯一标识（= toolCallId）
+ * @property {string} toolCallId - 工具调用唯一标识（后端 LLM tool_call.id → toolCallId）
+ * @property {string} name - 工具名称（去前缀显示用，= toolName）
+ * @property {string} toolName - 工具全名（后端注册名，如 langchain_tools.shell_exec）
  * @property {Object} [parameters] - 工具入参（非空对象时才设置，{@link isNonEmptyParams} 判断）
  * @property {string} state - 工具状态（生命周期原始状态）
  * @property {string} status - 工具状态（ToolCallStatus 枚举值）
  * @property {string} [result] - 工具输出结果
  * @property {string} [error] - 错误信息
- * @property {boolean} is_internal - 是否为内部工具（只读工具标识）
- * @property {boolean} auto_approved - SAFE 级自动通过标记
- * @property {string} parent_tool_call_id - 父级工具调用 ID（子 agent 场景）
+ * @property {boolean} isInternal - 是否为内部工具（只读工具标识）
+ * @property {boolean} autoApproved - SAFE 级自动通过标记
+ * @property {string} parentToolCallId - 父级工具调用 ID（子 agent 场景）
  * @property {number} depth - 嵌套深度（0 = 顶层）
- * @property {string} agent_name - 子 agent 名称
- * @property {string[]} agent_path - agent 调用路径链
- * @property {string} risk_ceiling - 风险等级上限
+ * @property {string} agentName - 子 agent 名称
+ * @property {string[]} agentPath - agent 调用路径链
+ * @property {string} riskCeiling - 风险等级上限
  *
  * @see toolCallHandler.js - createHandleToolCallEvent 构建此结构
  * @see ToolCallCard.vue - 消费此结构渲染工具调用卡片
@@ -231,19 +231,20 @@ export function validateMessage(msg) {
  * @typedef {Object} ApprovalData
  * 审批事件的标准前端数据结构。
  *
- * 字段来源：后端 approval_* 事件 payload，由 approvalHandler.js 处理。
+ * 字段来源：后端 approval_* 事件 payload，由 handleSessionEvent.js 入口统一
+ * 调用 toCamelCase 转换，下游均为 camelCase。
  *
- * @property {string} interrupt_id - 审批中断 ID（resume 端点 KEY）
- * @property {string} graph_interrupt_id - 批次 ID（ApprovalMiddleware 生成）
- * @property {string} tool_call_id - 关联的工具调用 ID
- * @property {string} tool_name - 工具名称
+ * @property {string} interruptId - 审批中断 ID（resume 端点 KEY）
+ * @property {string} graphInterruptId - 批次 ID（ApprovalMiddleware 生成）
+ * @property {string} toolCallId - 关联的工具调用 ID
+ * @property {string} toolName - 工具名称
  * @property {string} state - 审批状态（ApprovalState 枚举值）
  * @property {string} [description] - 审批描述文案
- * @property {string} [danger_level] - 危险等级（safe/controlled/high）
- * @property {string} [risk_level] - 风险等级
+ * @property {string} [dangerLevel] - 危险等级（safe/controlled/high）
+ * @property {string} [riskLevel] - 风险等级
  * @property {Object} [parameters] - 工具入参（前端展示用）
  * @property {string} [operation] - 待执行操作描述
- * @property {string} [llm_tool_call_id] - LLM 工具调用 ID（关联 toolCallsMap）
+ * @property {string} [llmToolCallId] - LLM 工具调用 ID（关联 toolCallsMap）
  *
  * @see approvalHandler.js - createHandleApprovalEvent 处理此结构
  * @see ToolCallCard.vue - 审批面板消费此结构

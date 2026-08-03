@@ -30,7 +30,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { chatAPI } from '@/api'
+import { chatAPI } from '@/api/chat'
 import { Loading } from '@element-plus/icons-vue'
 import { logger } from '../../utils/logger'
 

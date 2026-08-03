@@ -3,7 +3,7 @@ import { getSessionSnapshot } from '@/api/realtime'
 import { getApprovalHistory } from '@/api/approval'
 import { useSessionStore } from '@/stores/session'
 import { logger } from '@/utils/logger'
-import { transformBackendMessageToFrontend } from '@/utils/session-transformers'
+import { transformBackendMessageToFrontend, toCamelCase } from '@/utils/session-transformers'
 import { mergeMessageFromBackend } from '@/utils/message-operations'
 import { ToolCallStatus, mapApprovalStateToStatus } from '@/types'
 
@@ -135,7 +135,7 @@ function createSnapshotSyncInstance(sessionId) {
     let reconciledCount = 0
     for (const backendTc of backendToolCalls) {
       if (!backendTc) continue
-      const toolCallId = backendTc.tool_call_id || backendTc.id
+      const toolCallId = backendTc.toolCallId || backendTc.id
       if (!toolCallId) continue
 
       const localTc = sessionStore.getToolCallById(sessionId, toolCallId)
@@ -182,7 +182,7 @@ function createSnapshotSyncInstance(sessionId) {
     let reconciledCount = 0
     for (const backendApproval of backendApprovals) {
       if (!backendApproval) continue
-      const toolCallId = backendApproval.interrupt_id || backendApproval.tool_call_id
+      const toolCallId = backendApproval.interruptId
       if (!toolCallId) continue
 
       const localTc = sessionStore.getToolCallById(sessionId, toolCallId)
@@ -245,18 +245,20 @@ function createSnapshotSyncInstance(sessionId) {
         return
       }
 
-      // 校对消息（data.messages 可选）
-      if (data.messages !== undefined) {
-        _reconcileMessages(sessionStore, data.messages)
+      const converted = toCamelCase(data)
+
+      // 校对消息（converted.messages 可选）
+      if (converted.messages !== undefined) {
+        _reconcileMessages(sessionStore, converted.messages)
       }
 
-      // 校对工具调用（data.tool_calls 可选）
-      if (data.tool_calls !== undefined) {
-        _reconcileToolCalls(sessionStore, data.tool_calls)
+      // 校对工具调用（converted.toolCalls 可选）
+      if (converted.toolCalls !== undefined) {
+        _reconcileToolCalls(sessionStore, converted.toolCalls)
       }
 
-      // 校对审批（data.pending_approvals 或 data.approvals 可选）
-      const approvals = data.pending_approvals || data.approvals
+      // 校对审批（converted.pendingApprovals 或 converted.approvals 可选）
+      const approvals = converted.pendingApprovals || converted.approvals
       if (approvals !== undefined) {
         _reconcileApprovals(sessionStore, approvals)
       }
@@ -401,7 +403,7 @@ function createTaskSnapshotSyncInstance(taskId) {
             const localToolCalls = researchStore.getToolCalls(taskId)
             const localToolCallMap = new Map(
               localToolCalls.map(tc => [
-                tc.id || tc.tool_call_id,
+                tc.id,
                 tc,
               ])
             )
@@ -409,10 +411,10 @@ function createTaskSnapshotSyncInstance(taskId) {
             // 遍历审批记录，更新 toolCall 与 approval 状态
             for (const approval of approvalList) {
               if (!approval) continue
-              const interruptId = approval.interrupt_id
+              const interruptId = approval.interruptId
               if (!interruptId) continue
               const extra = (approval.extra && typeof approval.extra === 'object') ? approval.extra : {}
-              const toolCallId = extra.tool_call_id || interruptId
+              const toolCallId = extra.toolCallId || interruptId
 
               // 从 approval.state 推导 toolCall status
               const backendStatus = mapApprovalStateToStatus(approval.state)
@@ -427,15 +429,15 @@ function createTaskSnapshotSyncInstance(taskId) {
                     || backendStatus === ToolCallStatus.FAILED
                   const data = {
                     id: toolCallId,
-                    tool_call_id: toolCallId,
-                    name: approval.tool_name,
-                    tool_name: approval.tool_name,
+                    toolCallId,
+                    name: approval.toolName,
+                    toolName: approval.toolName,
                     parameters: approval.parameters || {},
                     args: approval.parameters || {},
                     status: backendStatus,
                     result: extra.result,
                     error: extra.error,
-                    is_internal: extra.is_internal || false,
+                    isInternal: extra.isInternal || false,
                   }
                   if (isResultAvailable || extra.result != null || extra.error) {
                     researchStore.updateOrAddToolResult(taskId, data)
@@ -462,7 +464,7 @@ function createTaskSnapshotSyncInstance(taskId) {
                 researchStore.setApprovalToToolCall(taskId, toolCallId, approval)
                 // 同步到 approvalStore（跨模块统一审批状态）
                 approvalStore.updateApprovalState(interruptId, approval.state, {
-                  sessionId: approval.chat_session_id,
+                  sessionId: approval.chatSessionId,
                   taskId,
                 })
               }

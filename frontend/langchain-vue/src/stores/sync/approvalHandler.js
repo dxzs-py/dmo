@@ -36,7 +36,7 @@ export const createHandleApprovalEvent = (ctx) => {
   const { sessionStore, approvalStore, streamingSessions } = ctx
 
   /**
-   * 根据 payload.message_id 或 payload.extra.message_id 在指定会话中定位消息。
+   * 根据 payload.messageId 或 payload.extra.messageId 在指定会话中定位消息。
    * 用于 approval_* 等事件优先按 message_id 路由，避免最后一条 assistant 消息兜底
    * 导致非末尾消息（如重新生成中途的旧消息）审批 UI 错位到最后一条。
    * @param {string} sessionId
@@ -44,7 +44,7 @@ export const createHandleApprovalEvent = (ctx) => {
    * @returns {Object|null}
    */
   const _findMessageByIdOrExtra = (sessionId, payload) => {
-    const messageId = payload?.message_id || payload?.extra?.message_id
+    const messageId = payload?.messageId || payload?.extra?.messageId
     if (!messageId) return null
     const session = getSession(sessionStore, sessionId)
     return findMessageById(session, messageId)
@@ -84,10 +84,10 @@ export const createHandleApprovalEvent = (ctx) => {
     for (const tc of message.toolCalls) {
       const approval = tc.approval
       if (!approval) continue
-      const tcGraphId = approval.graph_interrupt_id || approval.extra?.graph_interrupt_id
+      const tcGraphId = approval.graphInterruptId || approval.extra?.graphInterruptId
       if (tcGraphId === graphInterruptId) {
         siblings.push({
-          toolCallId: tc.id || tc.tool_call_id || '',
+          toolCallId: tc.id || tc.toolCallId || '',
           approvalState: approval.state,
         })
       }
@@ -115,8 +115,8 @@ export const createHandleApprovalEvent = (ctx) => {
     const mappedState = APPROVAL_STATE_MAP[eventType]
     const source = options.source || payload.source || 'chat'
     const taskId = options.taskId || null
-    // session_id 为 schema 必填字段
-    const chatSessionId = payload.session_id
+    // sessionId 为 schema 必填字段
+    const chatSessionId = payload.sessionId
       || payload.chatSessionId
       || sessionId
 
@@ -125,8 +125,8 @@ export const createHandleApprovalEvent = (ctx) => {
       return
     }
 
-    // 解析 payload 中的 graph_interrupt_id 字段（批量审批场景）
-    const graphInterruptId = payload.graph_interrupt_id || payload.extra?.graph_interrupt_id
+    // 解析 payload 中的 graphInterruptId 字段（批量审批场景）
+    const graphInterruptId = payload.graphInterruptId || payload.extra?.graphInterruptId
 
     // 先调用 approvalStore 更新 toolCall.approval.state，再处理 streamState 转换。
     // 否则 _collectSiblingApprovals 读到的是旧状态（pending），
@@ -155,13 +155,13 @@ export const createHandleApprovalEvent = (ctx) => {
       // approvalStore.handleApprovalEvent 会根据 payload 中的 session_id 推导 sessionId，
       // 若仍无 sessionId 则识别为独立 deep_research 模式，仅更新 pendingApprovals。
       approvalStore.handleApprovalEvent(enrichedPayload, { source, taskId })
-      logger.info(`[Sync] 审批变更(独立深度研究): taskId=${taskId}, source=${source}, tool=${payload.tool_name}, eventType=${eventType}, mappedState=${mappedState}, graphInterruptId=${graphInterruptId || '(none)'}`)
+      logger.info(`[Sync] 审批变更(独立深度研究): taskId=${taskId}, source=${source}, tool=${payload.toolName}, eventType=${eventType}, mappedState=${mappedState}, graphInterruptId=${graphInterruptId || '(none)'}`)
       return
     }
 
     // 2. 消息 streamState 转换（sync 的职责，仅 chat/learning/关联 deep_research 场景）
     // 审批恢复后有 token 级流式输出，需从 INTERRUPTED 转为 STREAMING
-    // 优先按 payload.message_id / payload.extra.message_id 路由（重新生成非末尾消息场景），
+    // 优先按 payload.messageId / payload.extra.messageId 路由（重新生成非末尾消息场景），
     // 找不到时回退到最后一条 assistant 消息（保持原行为）
     //
     // approval_pending 是"流被审批中断"的权威信号：
@@ -190,7 +190,7 @@ export const createHandleApprovalEvent = (ctx) => {
       // 批量审批场景，查询本地 store 中同一批次的 Approval 状态
       const targetMsg = _findMessageByIdOrExtra(sessionId, payload) || _getLastAssistantMessage(sessionId)
       if (targetMsg?.streamState === StreamState.INTERRUPTED && !streamingSessions.has(sessionId)) {
-        const siblingApprovals = _collectSiblingApprovals(targetMsg, graphInterruptId, payload.remaining_pending_count)
+        const siblingApprovals = _collectSiblingApprovals(targetMsg, graphInterruptId, payload.remainingPendingCount)
 
         // remaining_pending_count 为权威计数时直接返回 number，> 0 表示仍有待审批 sibling
         if (typeof siblingApprovals === 'number') {
@@ -241,7 +241,7 @@ export const createHandleApprovalEvent = (ctx) => {
       }
     }
 
-    logger.info(`[Sync] 审批变更: session=${sessionId}, chatSession=${chatSessionId}, source=${source}, tool=${payload.tool_name}, eventType=${eventType}, mappedState=${mappedState}, graphInterruptId=${graphInterruptId || '(none)'}`)
+    logger.info(`[Sync] 审批变更: session=${sessionId}, chatSession=${chatSessionId}, source=${source}, tool=${payload.toolName}, eventType=${eventType}, mappedState=${mappedState}, graphInterruptId=${graphInterruptId || '(none)'}`)
   }
 
   return {

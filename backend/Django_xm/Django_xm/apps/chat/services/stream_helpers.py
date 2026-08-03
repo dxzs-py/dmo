@@ -68,7 +68,7 @@ def build_context_info(usage_tracker, token_detail_tracker, stream_start_time=No
     context_info = usage_tracker.get_usage_info()
     token_summary = token_detail_tracker.get_summary()
     context_info["tokens"] = token_summary["tokens"]
-    context_info["tokenDetail"] = token_detail_tracker.get_token_detail()
+    context_info["token_detail"] = token_detail_tracker.get_token_detail()
     context_info["model"] = usage_tracker.model_id
     context_info["total_tokens"] = usage_tracker.get_total_tokens()
     if stream_start_time is not None:

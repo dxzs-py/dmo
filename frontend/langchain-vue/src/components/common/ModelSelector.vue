@@ -63,7 +63,7 @@ const groupedOptions = computed(() => {
         label: modelName,
         providerId: provider.id,
         modelName: modelName,
-        isDefault: modelName === provider.default_model,
+        isDefault: modelName === provider.defaultModel,
       })
     }
   }

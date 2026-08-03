@@ -55,7 +55,7 @@ export const attachmentAPI = {
   batchAction(action, attachmentIds) {
     return apiClient.post('/attachments/admin/batch/', {
       action,
-      attachment_ids: attachmentIds,
+      attachmentIds: attachmentIds,
     })
   },
 
@@ -74,7 +74,7 @@ export const attachmentAPI = {
   runCleanup(action = 'cleanup', dryRun = false) {
     return apiClient.post('/attachments/admin/cleanup/', {
       action,
-      dry_run: dryRun,
+      dryRun: dryRun,
     })
   },
 

@@ -301,7 +301,7 @@ async function loadCacheInfo() {
     if (dbOverviewRes.status === 'fulfilled' && dbOverviewRes.value.data?.code === 200) {
       const overview = dbOverviewRes.value.data.data
       postgresqlStatus.value = overview.postgresql
-      vectorStoreStatus.value = overview.vector_store
+      vectorStoreStatus.value = overview.vectorStore
     }
   } catch (error) {
     logger.error('加载数据库信息失败:', error)
@@ -352,7 +352,7 @@ async function handleClearCache(scope = 'all') {
 
     <el-row :gutter="20" v-loading="loading">
       <el-col :xs="24" :sm="12" :md="8" v-for="kb in filteredKBs" :key="kb.id"
-              v-memo="[kb.name, kb.description, kb.chunk_count, kb.updated_at]">
+              v-memo="[kb.name, kb.description, kb.chunkCount, kb.updatedAt]">
         <el-card class="kb-card" shadow="hover">
           <template #header>
             <div class="kb-card-header">
@@ -389,7 +389,7 @@ async function handleClearCache(scope = 'all') {
           </template>
           <p class="kb-desc">{{ kb.description || '暂无描述' }}</p>
           <div class="kb-stats">
-            <span>{{ kb.chunk_count || 0 }} 分段</span>
+            <span>{{ kb.chunkCount || 0 }} 分段</span>
           </div>
         </el-card>
       </el-col>
@@ -484,11 +484,11 @@ async function handleClearCache(scope = 'all') {
       <div v-if="vectorStoreStatus?.indices?.length" style="margin-top: 20px;">
         <h4 style="margin-bottom: 12px;">索引详情</h4>
         <el-table :data="vectorStoreStatus.indices" style="width: 100%" size="small">
-          <el-table-column prop="original_name" label="索引名称" />
-          <el-table-column prop="num_documents" label="文档数" width="100" />
-          <el-table-column prop="size_human" label="大小" width="100" />
-          <el-table-column prop="created_at" label="创建时间" />
-          <el-table-column prop="updated_at" label="更新时间" />
+          <el-table-column prop="originalName" label="索引名称" />
+          <el-table-column prop="numDocuments" label="文档数" width="100" />
+          <el-table-column prop="sizeHuman" label="大小" width="100" />
+          <el-table-column prop="createdAt" label="创建时间" />
+          <el-table-column prop="updatedAt" label="更新时间" />
         </el-table>
       </div>
     </el-card>
@@ -527,8 +527,8 @@ async function handleClearCache(scope = 'all') {
       <template v-if="currentKB">
         <el-descriptions :column="2" border>
           <el-descriptions-item label="名称">{{ currentKB.name }}</el-descriptions-item>
-          <el-descriptions-item label="分段数">{{ currentKB.chunk_count || 0 }}</el-descriptions-item>
-          <el-descriptions-item label="创建时间">{{ currentKB.created_at }}</el-descriptions-item>
+          <el-descriptions-item label="分段数">{{ currentKB.chunkCount || 0 }}</el-descriptions-item>
+          <el-descriptions-item label="创建时间">{{ currentKB.createdAt }}</el-descriptions-item>
           <el-descriptions-item label="描述" :span="2">{{ currentKB.description || '暂无' }}</el-descriptions-item>
         </el-descriptions>
       </template>

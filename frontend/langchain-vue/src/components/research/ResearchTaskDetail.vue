@@ -18,17 +18,17 @@
     </template>
 
     <el-descriptions :column="2" border>
-      <el-descriptions-item label="任务ID">{{ task.task_id }}</el-descriptions-item>
-      <el-descriptions-item label="创建时间">{{ formatDate(task.created_at) }}</el-descriptions-item>
+      <el-descriptions-item label="任务ID">{{ task.taskId }}</el-descriptions-item>
+      <el-descriptions-item label="创建时间">{{ formatDate(task.createdAt) }}</el-descriptions-item>
       <el-descriptions-item label="研究主题" :span="2">{{ task.query }}</el-descriptions-item>
       <el-descriptions-item label="网络搜索">
-        <el-tag :type="task.enable_web_search ? 'success' : 'info'">
-          {{ task.enable_web_search ? '已启用' : '未启用' }}
+        <el-tag :type="task.enableWebSearch ? 'success' : 'info'">
+          {{ task.enableWebSearch ? '已启用' : '未启用' }}
         </el-tag>
       </el-descriptions-item>
       <el-descriptions-item label="文档分析">
-        <el-tag :type="task.enable_doc_analysis ? 'success' : 'info'">
-          {{ task.enable_doc_analysis ? '已启用' : '未启用' }}
+        <el-tag :type="task.enableDocAnalysis ? 'success' : 'info'">
+          {{ task.enableDocAnalysis ? '已启用' : '未启用' }}
         </el-tag>
       </el-descriptions-item>
       <el-descriptions-item label="来源">
@@ -39,12 +39,12 @@
         <el-tag v-else type="info">独立研究</el-tag>
       </el-descriptions-item>
       <el-descriptions-item
-        v-if="task.enable_doc_analysis && task.knowledge_base_ids && task.knowledge_base_ids.length"
+        v-if="task.enableDocAnalysis && task.knowledgeBaseIds && task.knowledgeBaseIds.length"
         label="关联知识库"
         :span="2"
       >
         <el-tag
-          v-for="kbId in task.knowledge_base_ids"
+          v-for="kbId in task.knowledgeBaseIds"
           :key="kbId"
           size="small"
           class="kb-tag"
@@ -72,12 +72,12 @@
         <ToolCallCard
           v-for="[id, entry] in taskPendingApprovals"
           :key="id"
-          :tool-name="entry.approvalData?.tool_name || 'unknown'"
+          :tool-name="entry.approvalData?.toolName || 'unknown'"
           :description="entry.approvalData?.description || ''"
           :status="mapApprovalStateToStatus(entry.approvalData?.state) || 'pending_approval'"
           :input="entry.approvalData?.parameters"
           :output="entry.approvalData?.result || entry.approvalData?.output"
-          :tool-call="{ approval: entry.approvalData, id: entry.approvalData?.interrupt_id || entry.approvalData?.tool_call_id || id }"
+          :tool-call="{ approval: entry.approvalData, id: entry.approvalData?.interruptId || id }"
           @approve="(data) => emit('approve', data)"
           @reject="(data) => emit('reject', data)"
         />
@@ -90,8 +90,8 @@
       <TransitionGroup name="tool-list" tag="div" class="tool-calls-list">
         <ToolCallCard
           v-for="tc in toolCalls"
-          :key="tc.id || tc.tool_call_id || Math.random()"
-          :tool-name="tc.name || tc.tool_name"
+          :key="tc.id || tc.toolCallId || Math.random()"
+          :tool-name="tc.name || tc.toolName"
           :description="tc.description || ''"
           :status="tc.status"
           :input="tc.input || tc.parameters"

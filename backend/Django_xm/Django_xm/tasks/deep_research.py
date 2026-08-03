@@ -317,6 +317,27 @@ def run_research_task(
 
         finalize_research(thread_id, result, response_time, sync_files=True, publish_to_redis=publish_to_redis)
 
+        # 回写 ChatMessage + 广播 stream_completed，确保前端感知完成
+        try:
+            from Django_xm.apps.research.models import ResearchTask
+            from Django_xm.apps.research.services.writeback import (
+                writeback_to_chat_message,
+                broadcast_stream_completed,
+            )
+            research_task = ResearchTask.objects.get(task_id=thread_id)
+            chat_session_id = research_task.session_id
+            if chat_session_id:
+                message_id = writeback_to_chat_message(
+                    thread_id, result.final_report, success=True,
+                    chat_session_id=chat_session_id,
+                )
+                broadcast_stream_completed(
+                    chat_session_id, thread_id, success=True,
+                    final_report=result.final_report, message_id=message_id,
+                )
+        except Exception as e:
+            logger.warning(f"[Celery] 回写 ChatMessage 失败: {e}")
+
         cleanup_research_sandbox.apply_async(args=(thread_id,), countdown=120)
 
         tracker.mark_success(
@@ -333,6 +354,26 @@ def run_research_task(
     except Exception as exc:
         logger.exception(f"[Celery] 深度研究任务失败：{thread_id}, 错误：")
         _mark_failed(str(exc), exc)
+        # 回写 ChatMessage + 广播 stream_completed，确保前端感知失败
+        try:
+            from Django_xm.apps.research.models import ResearchTask
+            from Django_xm.apps.research.services.writeback import (
+                writeback_to_chat_message,
+                broadcast_stream_completed,
+            )
+            research_task = ResearchTask.objects.get(task_id=thread_id)
+            chat_session_id = research_task.session_id
+            if chat_session_id:
+                message_id = writeback_to_chat_message(
+                    thread_id, str(exc), success=False,
+                    chat_session_id=chat_session_id,
+                )
+                broadcast_stream_completed(
+                    chat_session_id, thread_id, success=False,
+                    error=str(exc), message_id=message_id,
+                )
+        except Exception as e:
+            logger.warning(f"[Celery] 回写 ChatMessage 失败: {e}")
         cleanup_research_sandbox.apply_async(args=(thread_id,), countdown=120)
         return {"status": "error", "thread_id": thread_id, "error": str(exc)}
 
@@ -723,6 +764,23 @@ def research_resume_task(
                     sync_files=True,
                     publish_to_redis=False,
                 )
+                # 回写 ChatMessage + 广播 stream_completed，确保前端感知完成
+                if chat_session_id:
+                    try:
+                        from Django_xm.apps.research.services.writeback import (
+                            writeback_to_chat_message,
+                            broadcast_stream_completed,
+                        )
+                        message_id = writeback_to_chat_message(
+                            thread_id, result.final_report, success=True,
+                            chat_session_id=chat_session_id,
+                        )
+                        broadcast_stream_completed(
+                            chat_session_id, thread_id, success=True,
+                            final_report=result.final_report, message_id=message_id,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[Resume] 回写 ChatMessage 失败: {e}")
                 tracker.mark_success(
                     result={
                         "thread_id": thread_id,

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { toCamelCase } from '@/utils/session-transformers'
 import { logger } from '@/utils/logger'
 
 /**
@@ -151,40 +152,41 @@ export const useWorkflowStore = defineStore('workflow', () => {
    */
   const updateWorkflowFromEvent = (eventType, payload, taskId) => {
     if (!taskId || !payload) return null
+    const data = toCamelCase(payload)
     const patch = {}
 
     switch (eventType) {
       case 'workflow_step':
         // 学习工作流节点执行进度
-        if (payload.step) patch.current_step = payload.step
-        if (payload.message !== undefined) patch.step_message = payload.message
+        if (data.step) patch.currentStep = data.step
+        if (data.message !== undefined) patch.stepMessage = data.message
         break
       case 'workflow_state_update':
         // 学习工作流状态变更（如 waiting_for_answers / completed）
-        if (payload.state) patch.status = payload.state
-        if (payload.current_step) patch.current_step = payload.current_step
-        if (payload.learning_plan) patch.learning_plan = payload.learning_plan
-        if (payload.retrieved_docs) patch.retrieved_docs = payload.retrieved_docs
-        if (payload.quiz) patch.quiz = payload.quiz
-        if (payload.score !== undefined) patch.score = payload.score
-        if (payload.feedback !== undefined) patch.feedback = payload.feedback
-        if (payload.should_retry !== undefined) patch.should_retry = payload.should_retry
+        if (data.state) patch.status = data.state
+        if (data.currentStep) patch.currentStep = data.currentStep
+        if (data.learningPlan) patch.learningPlan = data.learningPlan
+        if (data.retrievedDocs) patch.retrievedDocs = data.retrievedDocs
+        if (data.quiz) patch.quiz = data.quiz
+        if (data.score !== undefined) patch.score = data.score
+        if (data.feedback !== undefined) patch.feedback = data.feedback
+        if (data.shouldRetry !== undefined) patch.shouldRetry = data.shouldRetry
         break
       case 'workflow_completed':
         // 学习工作流完成（终态，force=true 强制覆盖）
         patch.status = 'completed'
-        if (payload.current_step) patch.current_step = payload.current_step
-        if (payload.learning_plan) patch.learning_plan = payload.learning_plan
-        if (payload.quiz) patch.quiz = payload.quiz
-        if (payload.score !== undefined) patch.score = payload.score
-        if (payload.feedback !== undefined) patch.feedback = payload.feedback
-        if (payload.should_retry !== undefined) patch.should_retry = payload.should_retry
+        if (data.currentStep) patch.currentStep = data.currentStep
+        if (data.learningPlan) patch.learningPlan = data.learningPlan
+        if (data.quiz) patch.quiz = data.quiz
+        if (data.score !== undefined) patch.score = data.score
+        if (data.feedback !== undefined) patch.feedback = data.feedback
+        if (data.shouldRetry !== undefined) patch.shouldRetry = data.shouldRetry
         break
       case 'workflow_failed':
         // 学习工作流失败（终态，force=true 强制覆盖）
         patch.status = 'failed'
-        if (payload.error) patch.error = payload.error
-        if (payload.message) patch.error_message = payload.message
+        if (data.error) patch.error = data.error
+        if (data.message) patch.errorMessage = data.message
         break
       default:
         logger.warn(`[Workflow] updateWorkflowFromEvent 未处理的事件类型: ${eventType}`)

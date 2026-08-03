@@ -102,7 +102,8 @@ class ChatRequestSerializer(serializers.Serializer):
         required=False, allow_null=True, min_value=1, max_value=32768, help_text="最大生成 token 数"
     )
     research_task_id = serializers.CharField(
-        required=False, allow_null=True, max_length=100, help_text="关联的深度研究任务ID，用于注入研究上下文"
+        required=False, allow_null=True, max_length=100,
+        help_text="关联的深度研究任务ID，用于注入研究上下文"
     )
     continue_task_id = serializers.CharField(
         required=False, allow_null=True, max_length=100, help_text="继续研究的任务ID，用于加载先前研究成果"
@@ -173,14 +174,23 @@ class ChatResponseSerializer(serializers.Serializer):
 
 class ChatMessageSerializer(serializers.ModelSerializer):
     attachments = serializers.SerializerMethodField()
-    attachment_ids = serializers.SerializerMethodField()
-    research_task_deleted = serializers.SerializerMethodField()
+    attachment_ids = serializers.SerializerMethodField(method_name='get_attachment_ids')
+    research_task_id = serializers.CharField(read_only=True)
+    research_task_deleted = serializers.SerializerMethodField(method_name='get_research_task_deleted')
+    session_id = serializers.PrimaryKeyRelatedField(source='session', read_only=True)
+    chain_of_thought = serializers.JSONField(read_only=True)
+    tool_calls = serializers.JSONField(read_only=True)
+    current_version = serializers.IntegerField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    token_count = serializers.IntegerField(read_only=True)
+    token_detail = serializers.JSONField(read_only=True)
+    response_time = serializers.FloatField(read_only=True)
 
     class Meta:
         model = ChatMessage
         fields = [
             "id",
-            "session",
+            "session_id",
             "role",
             "content",
             "sources",
@@ -202,7 +212,7 @@ class ChatMessageSerializer(serializers.ModelSerializer):
             "research_task_id",
             "research_task_deleted",
         ]
-        read_only_fields = ["id", "session", "created_at"]
+        read_only_fields = ["id", "session_id", "created_at"]
 
     def get_attachments(self, obj) -> list[Any]:
         from Django_xm.apps.attachments.serializers import ChatAttachmentSerializer
@@ -280,6 +290,11 @@ class ChatSessionListSerializer(serializers.ModelSerializer):
     """
 
     message_count = serializers.IntegerField(read_only=True)
+    session_id = serializers.CharField(read_only=True)
+    selected_knowledge_base = serializers.CharField(read_only=True, allow_null=True)
+    selected_knowledge_bases = serializers.JSONField(read_only=True, allow_null=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    updated_at = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = ChatSession
@@ -317,7 +332,12 @@ class ChatSessionDetailSerializer(serializers.ModelSerializer):
     """
 
     messages = ChatMessageSerializer(many=True, read_only=True)
-    message_count = serializers.SerializerMethodField()
+    message_count = serializers.IntegerField(read_only=True)
+    session_id = serializers.CharField(read_only=True)
+    selected_knowledge_base = serializers.CharField(read_only=True, allow_null=True)
+    selected_knowledge_bases = serializers.JSONField(read_only=True, allow_null=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    updated_at = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = ChatSession
@@ -355,6 +375,13 @@ class ChatSessionCreateSerializer(serializers.ModelSerializer):
     绑定模型：ChatSession
     """
 
+    selected_knowledge_base = serializers.CharField(
+        required=False, allow_null=True, max_length=100
+    )
+    selected_knowledge_bases = serializers.JSONField(
+        required=False, allow_null=True
+    )
+
     class Meta:
         model = ChatSession
         fields = ["title", "mode", "selected_knowledge_base", "selected_knowledge_bases"]
@@ -385,6 +412,13 @@ class ChatSessionUpdateSerializer(serializers.ModelSerializer):
     绑定模型：ChatSession
     允许修改 title 和 selected_knowledge_base 字段
     """
+
+    selected_knowledge_base = serializers.CharField(
+        required=False, allow_null=True, max_length=100
+    )
+    selected_knowledge_bases = serializers.JSONField(
+        required=False, allow_null=True
+    )
 
     class Meta:
         model = ChatSession

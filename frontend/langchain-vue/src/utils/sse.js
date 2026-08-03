@@ -1,6 +1,7 @@
 import { useUserStore } from '@/stores/user'
 import settings from '../config/settings'
 import { logger } from './logger'
+import { toCamelCase, toSnakeCase } from './session-transformers'
 
 const SSE_EVENT_HANDLERS = {
   chunk: (parsed, appendFn) => {
@@ -48,10 +49,10 @@ const SSE_EVENT_HANDLERS = {
       sessionOps.setContext?.(parsed.data)
       const usageData = {}
       if (parsed.data.model) usageData.model = parsed.data.model
-      if (parsed.data.total_tokens) usageData.tokenCount = parsed.data.total_tokens
+      if (parsed.data.totalTokens) usageData.tokenCount = parsed.data.totalTokens
       if (parsed.data.tokens) usageData.tokens = parsed.data.tokens
       if (parsed.data.tokenDetail) usageData.tokenDetail = parsed.data.tokenDetail
-      if (parsed.data.response_time) usageData.responseTime = parsed.data.response_time
+      if (parsed.data.responseTime) usageData.responseTime = parsed.data.responseTime
       if (Object.keys(usageData).length > 0) {
         sessionOps.setUsage?.(usageData)
       }
@@ -76,13 +77,13 @@ const SSE_EVENT_HANDLERS = {
   },
   retry: (parsed, _appendFn, sessionOps) => {
     const data = parsed.data || {}
-    const retryMs = parsed.retry_after || (data.backoff ? data.backoff * 1000 : 1000)
-    logger.info(`[SSE] 服务端重试通知: ${data.attempt}/${data.max}, ${retryMs}ms 后, 错误: ${data.error_code}`)
+    const retryMs = parsed.retryAfter || (data.backoff ? data.backoff * 1000 : 1000)
+    logger.info(`[SSE] 服务端重试通知: ${data.attempt}/${data.max}, ${retryMs}ms 后, 错误: ${data.errorCode}`)
     sessionOps.onRetry?.({
       attempt: data.attempt,
       max: data.max,
       backoff: data.backoff,
-      errorCode: data.error_code,
+      errorCode: data.errorCode,
     })
   },
   timeout_warning: (parsed, _appendFn, sessionOps) => {
@@ -94,10 +95,10 @@ const SSE_EVENT_HANDLERS = {
   },
   approval_timeout: (parsed, _appendFn, sessionOps) => {
     // 兼容两种数据结构：
-    // 1. 嵌套：{ type: "approval_timeout", data: { tool_name, interrupt_id, ... } }
-    // 2. 扁平：{ type: "approval_timeout", tool_name, interrupt_id, ... }（后端统一事件结构后）
+    // 1. 嵌套：{ type: "approval_timeout", data: { toolName, interruptId, ... } }
+    // 2. 扁平：{ type: "approval_timeout", toolName, interruptId, ... }（后端统一事件结构后）
     const data = parsed.data || parsed
-    logger.info(`[SSE] 深度研究审批超时: tool=${data.tool_name}, interrupt_id=${data.interrupt_id}`)
+    logger.info(`[SSE] 深度研究审批超时: tool=${data.toolName}, interruptId=${data.interruptId}`)
     sessionOps.onApprovalTimeout?.(data)
   },
   heartbeat: (_parsed, _appendFn, _sessionOps) => {
@@ -110,7 +111,7 @@ const SSE_EVENT_HANDLERS = {
     if (parsed.data) sessionOps.setDeepResearchTask?.(parsed.data)
   },
   research_task_id: (parsed, _appendFn, sessionOps) => {
-    if (parsed.data) sessionOps.setResearchTaskId?.(parsed.data.research_task_id)
+    if (parsed.data) sessionOps.setResearchTaskId?.(parsed.data.researchTaskId)
   },
   model_fallback: (parsed, _appendFn, sessionOps) => {
     if (parsed.data) sessionOps.setModelFallback?.(parsed.data)
@@ -123,14 +124,14 @@ const SSE_EVENT_HANDLERS = {
   /** 审批已处理通知：一端审批后通知另一端更新 UI */
   approval_processed: (parsed, _appendFn, sessionOps) => {
     const data = parsed.data || parsed
-    if (data?.interrupt_id) {
+    if (data?.interruptId) {
       sessionOps.onApprovalProcessed?.(data)
     }
   },
   /** 历史审批补偿：SSE 重连时后端推送 Redis List 中的历史审批 */
   approval_history: (parsed, _appendFn, sessionOps) => {
-    // 传递完整 parsed 对象（含 task_id），而非仅 parsed.data
-    // chat.js onApprovalHistory 回调需要 parsed.task_id
+    // 传递完整 parsed 对象（含 taskId），而非仅 parsed.data
+    // chat.js onApprovalHistory 回调需要 parsed.taskId
     if (parsed.data) sessionOps.onApprovalHistory?.(parsed)
   },
   /** 工具调用去重：短时相同内容自动跳过 */
@@ -150,16 +151,26 @@ const SSE_EVENT_HANDLERS = {
   },
 }
 
+/** 
+ * 解析 SSE 原始事件（snake_case）为前端 camelCase 并路由分发
+ *
+ * 命名边界：对 parsed 整体调用 toCamelCase 递归转换，
+ * 然后将 type 还原为后端原始 snake_case（协议路由标识符，非业务数据）。
+ * 其余字段（parsed.data 嵌套数据 + retry_after/content 等顶层字段）均为前端 camelCase。
+ */
 export function parseSSEEvent(parsed, appendFn, sessionOps) {
-  const handler = SSE_EVENT_HANDLERS[parsed.type]
+  const camelParsed = toCamelCase(parsed)
+  camelParsed.type = parsed.type  // 还原协议标识符
+
+  const handler = SSE_EVENT_HANDLERS[camelParsed.type]
   if (handler) {
-    handler(parsed, appendFn, sessionOps)
-  } else if (parsed.content) {
+    handler(camelParsed, appendFn, sessionOps)
+  } else if (camelParsed.content) {
     // 未注册的事件类型携带 content，安全追加但记录警告
-    logger.warn(`[SSE] 未注册事件类型 "${parsed.type}" 携带 content，已作为文本追加`)
-    appendFn(parsed.content)
-  } else if (parsed.type && parsed.type !== 'heartbeat') {
-    logger.debug(`[SSE] 未注册事件类型 "${parsed.type}" 被忽略`)
+    logger.warn(`[SSE] 未注册事件类型 "${camelParsed.type}" 携带 content，已作为文本追加`)
+    appendFn(camelParsed.content)
+  } else if (camelParsed.type && camelParsed.type !== 'heartbeat') {
+    logger.debug(`[SSE] 未注册事件类型 "${camelParsed.type}" 被忽略`)
   }
 }
 
@@ -209,6 +220,14 @@ export async function fetchSSE(url, options = {}) {
   delete fetchOptions.onRetry
   delete fetchOptions.timeout
   delete fetchOptions.injectTokenQuery
+
+  // Convert request body from camelCase to snake_case (bypasses axios interceptor)
+  if (fetchOptions.body && typeof fetchOptions.body === 'string') {
+    try {
+      const parsed = JSON.parse(fetchOptions.body)
+      fetchOptions.body = JSON.stringify(toSnakeCase(parsed))
+    } catch { /* body is not JSON, leave as-is */ }
+  }
 
   for (let attempt = 0; attempt <= (options.maxRetries ?? MAX_RETRIES); attempt++) {
     try {

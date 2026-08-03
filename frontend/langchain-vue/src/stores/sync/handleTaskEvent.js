@@ -1,4 +1,5 @@
 import { logger } from '@/utils/logger'
+import { toCamelCase } from '@/utils/session-transformers'
 
 /**
  * @typedef {import('@/composables/useRealtimeSync').RealtimeEvent} RealtimeEvent
@@ -60,7 +61,9 @@ export const createHandleTaskEvent = (ctx) => {
    * @param {RealtimeEvent} event
    */
   const handleTaskEvent = async (event) => {
-    const taskId = event.payload?.task_id
+    // 统一入站转换：task 通道 WebSocket 事件 payload snake_case → camelCase
+    event.payload = toCamelCase(event.payload)
+    const taskId = event.payload?.taskId
     if (!taskId) return
 
     const payload = event.payload || event

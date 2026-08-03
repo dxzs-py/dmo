@@ -33,7 +33,7 @@ export const createHandleUserEvent = (ctx) => {
    */
   const applyUserEvent = async (event) => {
     const payload = event.payload || event
-    const sessionId = payload.session_id || payload.id
+    const sessionId = payload.sessionId || payload.id
     // 区分 replay 事件与实时事件（由 useRealtimeSync.dispatchEvent 注入）
     // replay 事件仅用于状态重建，不应触发副作用（自动订阅/自动切换），
     // 否则 N 条历史 session_created 会触发 N 次 subscribeSession + N 次快照请求
@@ -46,7 +46,7 @@ export const createHandleUserEvent = (ctx) => {
           return
         }
         const sessionData = payload.session || payload
-        const hasFullMeta = sessionData.title !== undefined && sessionData.created_at !== undefined
+        const hasFullMeta = sessionData.title !== undefined && sessionData.createdAt !== undefined
         if (!hasFullMeta) {
           await sessionStore.loadSessionDetail(sessionId)
         } else {
@@ -105,10 +105,10 @@ export const createHandleUserEvent = (ctx) => {
           const safeFields = {
             ...(fields.title !== undefined && { title: fields.title }),
             ...(fields.mode !== undefined && { mode: fields.mode }),
-            ...(fields.selected_knowledge_bases !== undefined && {
-              selectedKnowledgeBases: fields.selected_knowledge_bases,
+            ...(fields.selectedKnowledgeBases !== undefined && {
+              selectedKnowledgeBases: fields.selectedKnowledgeBases,
             }),
-            ...(fields.updated_at !== undefined && { updatedAt: fields.updated_at }),
+            ...(fields.updatedAt !== undefined && { updatedAt: fields.updatedAt }),
           }
           sessionStore.updateSessionFields(sessionId, safeFields)
           logger.info(`[Sync] 会话更新: ${sessionId}`)

@@ -236,7 +236,7 @@ const isWaitingForSiblings = computed(() => {
   return true
 })
 
-const dangerLevel = computed(() => approvalData.value?.danger_level || 'low')
+const dangerLevel = computed(() => approvalData.value?.dangerLevel || 'low')
 
 // 风险等级（新标准：safe/controlled/high，优先于 danger_level）
 // risk_level 来自 Approval.extra，由 ApprovalMiddleware 透传到事件 payload 和快照 API
@@ -263,7 +263,7 @@ const riskLevelTagType = computed(() => {
 // SAFE 级自动通过标记（来自 tool_call 事件 payload 的 auto_approved 字段）
 // SAFE 级工具不创建 Approval 记录，由 ApprovalMiddleware._audit_auto_approved_tools
 // 注册 auto_approved=True 到 tool_call_lifecycle context 并透传到事件 payload
-const isAutoApproved = computed(() => props.toolCall?.auto_approved === true)
+const isAutoApproved = computed(() => props.toolCall?.isAutoApproved === true)
 
 // 子 agent 嵌套层级（Phase E3）
 // 双数据源：toolCall（工具事件路径，覆盖 SAFE 自动通过/子 agent 内部工具调用）
@@ -278,11 +278,11 @@ const nestingDepth = computed(() => {
 
 // 完整调用链路（如 ["main", "web-researcher"]）
 const agentPath = computed(() => {
-  const path = props.toolCall?.agent_path ?? approvalData.value?.agent_path
+  const path = props.toolCall?.agentPath ?? approvalData.value?.agentPath
   return Array.isArray(path) && path.length > 0 ? path : null
 })
 
-const agentName = computed(() => props.toolCall?.agent_name || approvalData.value?.agent_name || '')
+const agentName = computed(() => props.toolCall?.agentName || approvalData.value?.agentName || '')
 
 // 是否为子 agent 调用（有嵌套层级信息）
 const isSubagentCall = computed(() => nestingDepth.value > 0 || !!agentName.value)
@@ -328,7 +328,7 @@ const operationText = computed(() => approvalData.value?.operation || approvalDa
 // operationLabel：由 formatToolParameters 返回的 label 决定
 // 所有工具（含后端自定义工具）已注册独立的参数格式化器，不再需要 fallbackMap。
 const operationLabel = computed(() => {
-  const toolName = approvalData.value?.tool_name
+  const toolName = approvalData.value?.toolName
   if (!toolName) return '操作'
   const params = approvalData.value?.parameters
   const result = formatToolParameters(toolName, params)
@@ -432,7 +432,7 @@ const approvalArgs = computed(() => {
         <div v-if="isConfirmWithInput && !isWaitingForSiblings && !isProcessingApproval" class="approval-panel__input">
           <el-input
             v-model="approvalInputValue"
-            :placeholder="approvalData.input_placeholder || '请输入值...'"
+            :placeholder="approvalData.inputPlaceholder || '请输入值...'"
             size="small"
             clearable
             @keyup.enter="emit('approve', { ...toolCall, _user_input: approvalInputValue })"

@@ -16,7 +16,7 @@ const passwordDialog = ref(false)
 const passwordForm = ref({
   old_password: '',
   new_password: '',
-  confirm_password: ''
+  confirmPassword: ''
 })
 const passwordLoading = ref(false)
 
@@ -110,7 +110,7 @@ async function handleAvatarUpload(options) {
 }
 
 function openPasswordDialog() {
-  passwordForm.value = { old_password: '', new_password: '', confirm_password: '' }
+  passwordForm.value = { old_password: '', new_password: '', confirmPassword: '' }
   passwordDialog.value = true
 }
 
@@ -268,7 +268,7 @@ async function handleBindPhone() {
           <el-input v-model="passwordForm.new_password" type="password" show-password placeholder="至少8个字符" />
         </el-form-item>
         <el-form-item label="确认密码">
-          <el-input v-model="passwordForm.confirm_password" type="password" show-password />
+          <el-input v-model="passwordForm.confirmPassword" type="password" show-password />
         </el-form-item>
       </el-form>
       <template #footer>

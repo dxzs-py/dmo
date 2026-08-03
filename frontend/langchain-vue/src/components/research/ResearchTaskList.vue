@@ -24,7 +24,7 @@
       <div v-if="fileSearchResults.length" class="file-search-results">
         <el-table :data="fileSearchResults" style="width: 100%" size="small">
           <el-table-column prop="filename" label="文件名" />
-          <el-table-column prop="task_id" label="任务ID" width="160" />
+          <el-table-column prop="taskId" label="任务ID" width="160" />
           <el-table-column prop="size" label="大小" width="100">
             <template #default="scope">
               {{ scope.row.size ? formatFileSize(scope.row.size) : '-' }}
@@ -32,7 +32,7 @@
           </el-table-column>
           <el-table-column label="操作" width="100">
             <template #default="scope">
-              <el-button link type="primary" size="small" @click="emit('view-task', { task_id: scope.row.task_id })">
+              <el-button link type="primary" size="small" @click="emit('view-task', { task_id: scope.row.taskId })">
                 查看任务
               </el-button>
             </template>
@@ -56,7 +56,7 @@
 
 <script setup>
 import TaskList from '@/components/chat/TaskList.vue'
-import { deepResearchAPI } from '@/api'
+import { deepResearchAPI } from '@/api/research'
 import { formatFileSize } from '@/utils/format'
 
 /**

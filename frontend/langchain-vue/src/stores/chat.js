@@ -31,22 +31,19 @@ export const useChatStore = defineStore('chat', () => {
   const attachmentProcessing = ref(null)
   const approvalStore = useApprovalStore()
 
-  /**
-   * 从已加载的消息中恢复 researchTaskId 和 researchContextInfo
-   * 页面刷新后运行时 ref 会丢失，需要从 assistant 消息的 researchTaskId 字段重建
-   */
   const restoreResearchContextFromMessages = (sessionId) => {
-    if (researchTaskId.value) return // 已有值则不覆盖
+    // Recover researchTaskId from loaded messages after refresh
+    if (researchTaskId.value) return
     const sessionStore = useSessionStore()
     const session = sessionStore.sessions.find(s => s.id === sessionId)
     if (!session?.messages) return
-    // 从后往前找最后一条带 researchTaskId 的 assistant 消息
+    // Find last assistant message with researchTaskId from end
     for (let i = session.messages.length - 1; i >= 0; i--) {
       const msg = session.messages[i]
       if (msg.role === 'assistant' && msg.researchTaskId) {
         researchTaskId.value = msg.researchTaskId
         researchContextInfo.value = { taskId: msg.researchTaskId, query: '' }
-        logger.log('[ChatStore] 从消息历史恢复 researchTaskId:', msg.researchTaskId)
+        logger.log('[ChatStore] Restored researchTaskId:', msg.researchTaskId)
         return
       }
     }
@@ -80,16 +77,16 @@ export const useChatStore = defineStore('chat', () => {
     const validation = validateSchema(ChatRequestSchema, {
       message,
       mode: currentMode.value,
-      use_tools: options.useTools !== false,
-      use_web_search: options.use_web_search || false,
-      use_knowledge_base: options.use_knowledge_base || false,
-      use_deep_thinking: options.use_deep_thinking || false,
-      use_mcp: options.useMcp || false,
-      selected_mcp_servers: options.selectedMcpServers || null,
-      selected_tools: options.selectedTools || null,
-      selected_knowledge_base: selectedKnowledgeBaseId,
-      selected_knowledge_bases: sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
-      attachment_ids: options.attachmentIds || [],
+      useTools: options.useTools !== false,
+      useWebSearch: options.useWebSearch || false,
+      useKnowledgeBase: options.useKnowledgeBase || false,
+      useDeepThinking: options.useDeepThinking || false,
+      useMcp: options.useMcp || false,
+      selectedMcpServers: options.selectedMcpServers || null,
+      selectedTools: options.selectedTools || null,
+      selectedKnowledgeBase: selectedKnowledgeBaseId,
+      selectedKnowledgeBases: sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
+      attachmentIds: options.attachmentIds || [],
     })
 
     if (!validation.success) {
@@ -114,16 +111,16 @@ export const useChatStore = defineStore('chat', () => {
 
     isLoading.value = true
     lastStreamError.value = null
-    // 通知 syncStore 流式开始，跳过 WebSocket 的 message_updated（避免 SSE 流式内容被快照覆盖）
+    // 通知 syncStore 流式开始，跳过 WebSocket message_updated（避免 SSE 流式内容被快照覆盖）
     const syncStore = useSyncStore()
     syncStore.startStreaming(sessionId)
     deepResearchTask.value = null
     attachmentProcessing.value = null
     const currentResearchTaskId = researchTaskId.value
-    // 不再清空 researchTaskId — 深度研究审批依赖此值路由到正确的 API
+    // 不再清空 researchTaskId，深度研究审批依赖此值路由到正确的 API
     // 仅在 clearAll / 登出 / 会话删除时清空
     const currentResearchContextInfo = researchContextInfo.value
-    const continueTaskId = options.continue_task_id || null
+    const continueTaskId = options.continueTaskId || null
     // 发送首条消息后清空研究上下文标签（保留 researchTaskId 供审批使用）
     if (currentResearchContextInfo) {
       researchContextInfo.value = null
@@ -138,7 +135,7 @@ export const useChatStore = defineStore('chat', () => {
       attachments: options.attachments || [],
       researchContext: currentResearchContextInfo || null,
     }
-    // 用户消息由后端 ChatStreamView 在流式开始时创建并广播，前端不再重复创建。
+    // 用户消息由后端 ChatStreamView 在流式开始时创建并广播，前端不再重复创建
     sessionStore.addMessageToSession(sessionId, userMessage, false)
 
     const assistantMessage = {
@@ -154,7 +151,7 @@ export const useChatStore = defineStore('chat', () => {
       suggestions: null,
       context: null,
     }
-    // AI 消息由后端 SSE 流创建并广播，前端只创建本地占位。
+    // AI 消息由后端 SSE 流创建并广播，前端只创建本地占位
     sessionStore.addMessageToSession(sessionId, assistantMessage, false)
     messageCount.value += 1
 
@@ -175,7 +172,7 @@ export const useChatStore = defineStore('chat', () => {
             content: m.content || '',
           }
           if (m.role === 'user' && m.attachmentIds && m.attachmentIds.length > 0) {
-            item.attachment_ids = m.attachmentIds
+            item.attachmentIds = m.attachmentIds
           }
           return item
         })
@@ -183,31 +180,31 @@ export const useChatStore = defineStore('chat', () => {
 
       logger.log('[ChatStore] streamChat 请求参数, attachment_ids:', options.attachmentIds || [])
       const modelConfig = modelStore.getModelConfig()
-      const specialParams = modelConfig.special_params ? { ...modelConfig.special_params } : null
+      const specialParams = modelConfig.specialParams ? { ...modelConfig.specialParams } : null
       const result = await streamChat(
         {
           message,
-          chat_history: chatHistory,
+          chatHistory: chatHistory,
           mode: currentMode.value,
-          use_tools: options.useTools !== false,
-          use_web_search: options.use_web_search || false,
-          use_knowledge_base: options.use_knowledge_base || false,
-          use_deep_thinking: modelStore.thinkingEnabled,
-          use_mcp: options.useMcp || false,
-          selected_mcp_servers: options.selectedMcpServers || null,
-          selected_tools: options.selectedTools || null,
+          useTools: options.useTools !== false,
+          useWebSearch: options.useWebSearch || false,
+          useKnowledgeBase: options.useKnowledgeBase || false,
+          useDeepThinking: modelStore.thinkingEnabled,
+          useMcp: options.useMcp || false,
+          selectedMcpServers: options.selectedMcpServers || null,
+          selectedTools: options.selectedTools || null,
           streaming: true,
-          session_id: sessionId,
-          selected_knowledge_base: selectedKnowledgeBaseId,
-          selected_knowledge_bases: sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
-          attachment_ids: options.attachmentIds || [],
-          provider_id: modelConfig.provider_id || null,
-          model_name: modelConfig.model_name || null,
-          special_params: specialParams,
+          sessionId: sessionId,
+          selectedKnowledgeBase: selectedKnowledgeBaseId,
+          selectedKnowledgeBases: sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
+          attachmentIds: options.attachmentIds || [],
+          providerId: modelConfig.providerId || null,
+          modelName: modelConfig.modelName || null,
+          specialParams: specialParams,
           temperature: modelConfig.temperature || null,
-          max_tokens: modelConfig.max_tokens || null,
-          research_task_id: currentResearchTaskId || null,
-          continue_task_id: continueTaskId,
+          maxTokens: modelConfig.maxTokens || null,
+          researchTaskId: currentResearchTaskId || null,
+          continueTaskId: continueTaskId,
         },
         {
           appendToLastMessage: (content) => sessionStore.appendToLastMessage(sessionId, content),
@@ -223,9 +220,9 @@ export const useChatStore = defineStore('chat', () => {
           setDeepResearchTask: (data) => {
             deepResearchTask.value = data
             // 深度研究任务创建时立即设置 researchTaskId，确保后续审批能正确路由到研究审批 API
-            if (data?.task_id) {
-              researchTaskId.value = data.task_id
-              sessionStore.setResearchTaskIdToLastMessage(sessionId, data.task_id)
+            if (data?.taskId) {
+              researchTaskId.value = data.taskId
+              sessionStore.setResearchTaskIdToLastMessage(sessionId, data.taskId)
             }
           },
           setResearchTaskId: (taskId) => {
@@ -250,11 +247,11 @@ export const useChatStore = defineStore('chat', () => {
               })
             }
             // 同步更新 modelStore 为实际使用的模型
-            if (data?.actual_provider && data?.actual_model) {
+            if (data?.actualProvider && data?.actualModel) {
               const mStore = useModelStore()
-              if (mStore.currentProviderId !== data.actual_provider || mStore.currentModelName !== data.actual_model) {
-                mStore.currentProviderId = data.actual_provider
-                mStore.currentModelName = data.actual_model
+              if (mStore.currentProviderId !== data.actualProvider || mStore.currentModelName !== data.actualModel) {
+                mStore.currentProviderId = data.actualProvider
+                mStore.currentModelName = data.actualModel
               }
             }
           },
@@ -263,15 +260,15 @@ export const useChatStore = defineStore('chat', () => {
             approvalStore.handleApprovalEvent(data, {
               source: 'chat',
               sessionId,
-              taskId: data.task_id || null,
+              taskId: data.taskId || null,
               baseApproval: {
-                use_tools: options.useTools !== false,
-                use_web_search: options.use_web_search || false,
-                use_mcp: options.useMcp || false,
-                selected_mcp_servers: options.selectedMcpServers || null,
-                selected_tools: options.selectedTools || null,
-                use_knowledge_base: options.use_knowledge_base || false,
-                selected_knowledge_bases: sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
+                useTools: options.useTools !== false,
+                useWebSearch: options.useWebSearch || false,
+                useMcp: options.useMcp || false,
+                selectedMcpServers: options.selectedMcpServers || null,
+                selectedTools: options.selectedTools || null,
+                useKnowledgeBase: options.useKnowledgeBase || false,
+                selectedKnowledgeBases: sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
               },
             })
           },
@@ -280,7 +277,7 @@ export const useChatStore = defineStore('chat', () => {
             const errorCode = data.errorCode || 'unknown'
             sessionStore.appendToLastMessage(
               sessionId,
-              `\n\n> ⏳ 正在重试 (${data.attempt}/${data.max})，${backoffStr}秒后重试... (${errorCode})\n`
+              `\n\n> 正在重试 (${data.attempt}/${data.max})，${backoffStr}秒后重试... (${errorCode})\n`
             )
           },
           onTimeoutWarning: (data) => {
@@ -299,8 +296,8 @@ export const useChatStore = defineStore('chat', () => {
           },
           onApprovalHistory: (parsed) => {
             // 历史审批补偿：SSE 重连时后端推送 Redis List 中的历史审批
-            // parsed 结构：{ type: "approval_history", data: {...approval_data...}, task_id: "research_xxx" }
-            const taskId = parsed.task_id || parsed.data?.task_id || researchTaskId.value || null
+            // parsed 结构：{ type: "approval_history", data: {...approval_data...}, taskId: "research_xxx" }
+            const taskId = parsed.taskId || parsed.data?.taskId || researchTaskId.value || null
             if (taskId && parsed.data) {
               approvalStore.restoreFromSSEHistory(parsed.data, taskId, sessionId)
             }
@@ -325,7 +322,7 @@ export const useChatStore = defineStore('chat', () => {
 
       if (!result.success && !result.aborted) {
         lastStreamError.value = result.error?.message || '消息发送失败'
-        sessionStore.updateLastMessage(sessionId, '抱歉，消息发送失败，请稍后重试。')
+        sessionStore.updateLastMessage(sessionId, '抱歉，消息发送失败，请稍后重试')
         ElMessage.error('发送消息失败，请稍后重试')
       }
 
@@ -374,7 +371,7 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false }).catch((error) => {
-        logger.error('[ChatStore] 消息同步到后端失败:', error)
+        logger.error('[ChatStore] 消息同步到后端失败', error)
         ElMessage.warning({
           message: '消息同步失败，请刷新页面重试',
           duration: 5000,
@@ -456,7 +453,7 @@ export const useChatStore = defineStore('chat', () => {
 
     let streamSyncTimer = null
     try {
-      // 流式输出期间每 5 秒同步消息到后端（仅 PATCH 不 POST 创建）
+      // 流式输出期间每 5 秒同步消息到后端（仅 PATCH）
       streamSyncTimer = setInterval(() => {
         sessionStore.syncLastMessageToBackend(sid, { allowCreate: false }).catch(() => {})
       }, 5000)
@@ -470,26 +467,26 @@ export const useChatStore = defineStore('chat', () => {
         .filter(m => m.content && m.content.trim())
 
       const modelConfig = modelStore.getModelConfig()
-      let regenSpecialParams = modelConfig.special_params ? { ...modelConfig.special_params } : null
+      let regenSpecialParams = modelConfig.specialParams ? { ...modelConfig.specialParams } : null
       const result = await streamChat(
         {
           message: userMessage.content || '',
-          chat_history: chatHistory,
+          chatHistory: chatHistory,
           mode: currentMode.value,
-          use_tools: true,
-          use_web_search: false,
-          use_knowledge_base: !!selectedKnowledgeBaseId,
-          use_deep_thinking: modelStore.thinkingEnabled,
-          use_mcp: false,
+          useTools: true,
+          useWebSearch: false,
+          useKnowledgeBase: !!selectedKnowledgeBaseId,
+          useDeepThinking: modelStore.thinkingEnabled,
+          useMcp: false,
           streaming: true,
-          session_id: sid,
-          selected_knowledge_base: selectedKnowledgeBaseId,
-          selected_knowledge_bases: sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
-          provider_id: modelConfig.provider_id || null,
-          model_name: modelConfig.model_name || null,
-          special_params: regenSpecialParams,
+          sessionId: sid,
+          selectedKnowledgeBase: selectedKnowledgeBaseId,
+          selectedKnowledgeBases: sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
+          providerId: modelConfig.providerId || null,
+          modelName: modelConfig.modelName || null,
+          specialParams: regenSpecialParams,
           temperature: modelConfig.temperature || null,
-          max_tokens: modelConfig.max_tokens || null,
+          maxTokens: modelConfig.maxTokens || null,
         },
         {
           appendToLastMessage: (content) => sessionStore.appendToMessage(sid, messageIndex, content),
@@ -515,15 +512,15 @@ export const useChatStore = defineStore('chat', () => {
           setApproval: (data) => approvalStore.handleApprovalEvent(data, {
             source: 'chat',
             sessionId: sid,
-            taskId: data.task_id || null,
+            taskId: data.taskId || null,
             baseApproval: {
-              use_tools: true,
-              use_web_search: false,
-              use_mcp: false,
-              selected_mcp_servers: null,
-              selected_tools: null,
-              use_knowledge_base: !!selectedKnowledgeBaseId,
-              selected_knowledge_bases: sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
+              useTools: true,
+              useWebSearch: false,
+              useMcp: false,
+              selectedMcpServers: null,
+              selectedTools: null,
+              useKnowledgeBase: !!selectedKnowledgeBaseId,
+              selectedKnowledgeBases: sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
             },
           }),
           onApprovalTimeout: (data) => {
@@ -533,7 +530,7 @@ export const useChatStore = defineStore('chat', () => {
             approvalStore.handleApprovalEvent(data, { source: 'chat', sessionId: sid })
           },
           onApprovalHistory: (data) => {
-            const taskId = data.task_id || researchTaskId.value || null
+            const taskId = data.taskId || researchTaskId.value || null
             if (taskId) {
               approvalStore.restoreFromSSEHistory(data, taskId, sid)
             }
@@ -541,7 +538,7 @@ export const useChatStore = defineStore('chat', () => {
           onRetry: (data) => {
             const backoffStr = data.backoff != null ? data.backoff.toFixed(1) : '?'
             const errorCode = data.errorCode || 'unknown'
-            sessionStore.appendToMessage(sid, messageIndex, `\n\n> ⏳ 正在重试 (${data.attempt}/${data.max})，${backoffStr}秒后重试... (${errorCode})\n`)
+            sessionStore.appendToMessage(sid, messageIndex, `\n\n> 正在重试 (${data.attempt}/${data.max})，${backoffStr}秒后重试... (${errorCode})\n`)
           },
           onTimeoutWarning: (data) => {
             sessionStore.appendToMessage(sid, messageIndex, `\n\n> ⚠️ 执行时间较长（已 ${data.elapsed}s / 阈值 ${data.limit}s），正在继续执行...\n`)
@@ -555,11 +552,11 @@ export const useChatStore = defineStore('chat', () => {
                 duration: 8000,
               })
             }
-            if (data?.actual_provider && data?.actual_model) {
+            if (data?.actualProvider && data?.actualModel) {
               const mStore = useModelStore()
-              if (mStore.currentProviderId !== data.actual_provider || mStore.currentModelName !== data.actual_model) {
-                mStore.currentProviderId = data.actual_provider
-                mStore.currentModelName = data.actual_model
+              if (mStore.currentProviderId !== data.actualProvider || mStore.currentModelName !== data.actualModel) {
+                mStore.currentProviderId = data.actualProvider
+                mStore.currentModelName = data.actualModel
               }
             }
           },
@@ -615,7 +612,7 @@ export const useChatStore = defineStore('chat', () => {
           availableModes.value = backendModes
         }
       }
-      if (data.data?.default_mode) currentMode.value = data.data.default_mode
+      if (data.data?.defaultMode) currentMode.value = data.data.defaultMode
     } catch (error) {
       logger.error('Failed to fetch modes:', error)
     }
@@ -674,7 +671,7 @@ export const useChatStore = defineStore('chat', () => {
    * 统一的审批执行函数（approveCommand / rejectCommand 的合并实现）
    * @param {Object} approval - 审批数据
    * @param {boolean} approved - true=确认, false=拒绝
-   * @param {string|null} userInput - 用户输入（confirm_with_input 模式）
+   * @param {string|null} userInput - 用户输入（confirm_with_input 模式下）
    */
   const _executeApproval = async (approval, approved, userInput = null) => {
     if (!approval) return
@@ -684,12 +681,12 @@ export const useChatStore = defineStore('chat', () => {
 
     // 深度研究审批：如果 researchTaskId 丢失，尝试恢复
     if (approval.source === 'deep_research' && !researchTaskId.value) {
-      if (deepResearchTask.value?.task_id) {
-        researchTaskId.value = deepResearchTask.value.task_id
+      if (deepResearchTask.value?.taskId) {
+        researchTaskId.value = deepResearchTask.value.taskId
         logger.warn('[ChatStore] 深度研究审批时 researchTaskId 为空，从 deepResearchTask 恢复:', researchTaskId.value)
       } else {
         restoreResearchContextFromMessages(useSessionStore().currentSessionId)
-        logger.warn('[ChatStore] 深度研究审批时 researchTaskId 为空，已尝试从消息历史恢复:', researchTaskId.value)
+        logger.warn('[ChatStore] 深度研究审批时 researchTaskId 为空，已尝试从消息历史恢复', researchTaskId.value)
       }
     }
 

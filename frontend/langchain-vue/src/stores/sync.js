@@ -286,8 +286,8 @@ export const useSyncStore = defineStore('sync', () => {
    *
    * 合并 handleSessionEvent + handleTaskEvent 的统一入口，通过 session_id / task_id
    * 自动路由到正确的处理通道。路由字段解析顺序：
-   *   payload.session_id || event.session_id
-   *   payload.task_id    || event.task_id
+   *   payload.sessionId || event.sessionId
+   *   payload.taskId    || event.taskId
    * （后端 _publish_to_session_async 将 session_id 注入到 event 顶层，与 payload 平级，
    *  需 fallback 到 event 顶层才能正确路由。）
    *
@@ -305,11 +305,11 @@ export const useSyncStore = defineStore('sync', () => {
    */
   const handleRealtimeEvent = async (event) => {
     const payload = event?.payload || event || {}
-    // 修复：从 event 顶层提取 session_id/task_id，作为 fallback
-    // 后端 _publish_to_session_async 将 session_id 注入到 event 顶层（与 payload 平级），不在 payload 内。
+    // 修复：从 event 顶层提取 sessionId/taskId，作为 fallback
+    // 后端 _publish_to_session_async 将 sessionId 注入到 event 顶层（与 payload 平级），不在 payload 内。
     // 与 useRealtimeSync.getChannelKey / dispatchEvent / handleSessionEvent 解析逻辑对齐。
-    const sessionId = payload.session_id || event.session_id
-    const taskId = payload.task_id || event.task_id
+    const sessionId = payload.sessionId || event.sessionId
+    const taskId = payload.taskId || event.taskId
 
     if (sessionId) {
       await handleSessionEvent(event)

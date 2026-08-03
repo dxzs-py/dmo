@@ -609,7 +609,7 @@ describe('updateOrAddToolResultInMap', () => {
     expect(tc.result).toBe('done')
     expect(tc.state).toBe('success')
     expect(tc.status).toBe(ToolCallStatus.COMPLETED)
-    expect(tc.completed_at).toBeTruthy()
+    expect(tc.completedAt).toBeTruthy()
   })
 
   it('existing 分支 → 显式传 status=FAILED', () => {

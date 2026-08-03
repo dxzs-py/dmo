@@ -17,7 +17,7 @@
             />
           </el-form-item>
           <el-form-item label="启用网络搜索">
-            <el-switch v-model="researchForm.enable_web_search" />
+            <el-switch v-model="researchForm.enableWebSearch" />
           </el-form-item>
           <el-form-item label="选择知识库">
             <div class="kb-selector">
@@ -43,7 +43,7 @@
                 <span v-else>暂无可用知识库，请先在知识库页面创建并上传文档</span>
               </div>
               <div v-else class="kb-list">
-                <el-checkbox-group v-model="researchForm.knowledge_base_ids">
+                <el-checkbox-group v-model="researchForm.knowledgeBaseIds">
                   <div
                     v-for="kb in filteredKnowledgeBases"
                     :key="kb.id"
@@ -53,7 +53,7 @@
                       <div class="kb-item-content">
                         <span class="kb-name">{{ kb.name }}</span>
                         <span class="kb-meta">
-                          <el-tag size="small" type="info">{{ kb.chunk_count || 0 }} 文档块</el-tag>
+                          <el-tag size="small" type="info">{{ kb.chunkCount || 0 }} 文档块</el-tag>
                           <span v-if="kb.description" class="kb-desc">{{ kb.description }}</span>
                         </span>
                       </div>
@@ -61,8 +61,8 @@
                   </div>
                 </el-checkbox-group>
               </div>
-              <div v-if="researchForm.knowledge_base_ids.length > 0" class="kb-selected-summary">
-                已选择 {{ researchForm.knowledge_base_ids.length }} 个知识库
+              <div v-if="researchForm.knowledgeBaseIds.length > 0" class="kb-selected-summary">
+                已选择 {{ researchForm.knowledgeBaseIds.length }} 个知识库
               </div>
             </div>
           </el-form-item>
@@ -82,13 +82,13 @@
           <el-form-item label="工具选择">
             <div class="tool-selector-wrapper">
               <ToolSelector
-                :model-value="researchForm.selected_tools"
-                @update:model-value="(val) => researchForm.selected_tools = val"
-                @update:selected-mcp-servers="(val) => researchForm.selected_mcp_servers = val"
-                @update:use-mcp="(val) => researchForm.use_mcp = val"
+                :model-value="researchForm.selectedTools"
+                @update:model-value="(val) => researchForm.selectedTools = val"
+                @update:selected-mcp-servers="(val) => researchForm.selectedMcpServers = val"
+                @update:use-mcp="(val) => researchForm.useMcp = val"
               />
-              <span v-if="researchForm.selected_tools.length > 0" class="tool-selected-hint">
-                已选择 {{ researchForm.selected_tools.length }} 个工具
+              <span v-if="researchForm.selectedTools.length > 0" class="tool-selected-hint">
+                已选择 {{ researchForm.selectedTools.length }} 个工具
               </span>
             </div>
           </el-form-item>
@@ -144,7 +144,7 @@
           <div v-if="fileSearchResults.length" class="file-search-results">
             <el-table :data="fileSearchResults" style="width: 100%" size="small">
               <el-table-column prop="filename" label="文件名" />
-              <el-table-column prop="task_id" label="任务ID" width="160" />
+              <el-table-column prop="taskId" label="任务ID" width="160" />
               <el-table-column prop="size" label="大小" width="100">
                 <template #default="scope">
                   {{ scope.row.size ? formatFileSize(scope.row.size) : '-' }}
@@ -152,7 +152,7 @@
               </el-table-column>
               <el-table-column label="操作" width="100">
                 <template #default="scope">
-                  <el-button link type="primary" size="small" @click="viewTask({ task_id: scope.row.task_id })">
+                  <el-button link type="primary" size="small" @click="viewTask({ taskId: scope.row.taskId })">
                     查看任务
                   </el-button>
                 </template>
@@ -189,7 +189,7 @@
       <el-form :model="continueForm" label-width="100px" @submit.prevent>
         <el-form-item label="补充说明">
           <el-input
-            v-model="continueForm.additional_query"
+            v-model="continueForm.additionalQuery"
             type="textarea"
             :rows="3"
             placeholder="描述你想继续探索的方向（可选）..."
@@ -209,7 +209,7 @@
           </span>
         </el-form-item>
         <el-form-item label="启用网络搜索">
-          <el-switch v-model="continueForm.enable_web_search" />
+          <el-switch v-model="continueForm.enableWebSearch" />
         </el-form-item>
         <el-form-item label="选择知识库">
           <div class="kb-selector">
@@ -217,13 +217,13 @@
               <span>暂无可用知识库</span>
             </div>
             <div v-else class="kb-list">
-              <el-checkbox-group v-model="continueForm.knowledge_base_ids">
+              <el-checkbox-group v-model="continueForm.knowledgeBaseIds">
                 <div v-for="kb in filteredKnowledgeBases" :key="kb.id" class="kb-item">
                   <el-checkbox :label="kb.name" :value="kb.id">
                     <div class="kb-item-content">
                       <span class="kb-name">{{ kb.name }}</span>
                       <span class="kb-meta">
-                        <el-tag size="small" type="info">{{ kb.chunk_count || 0 }} 文档块</el-tag>
+                        <el-tag size="small" type="info">{{ kb.chunkCount || 0 }} 文档块</el-tag>
                       </span>
                     </div>
                   </el-checkbox>
@@ -235,13 +235,13 @@
         <el-form-item label="工具选择">
           <div class="tool-selector-wrapper">
             <ToolSelector
-              :model-value="continueForm.selected_tools"
-              @update:model-value="(val) => continueForm.selected_tools = val"
-              @update:selected-mcp-servers="(val) => continueForm.selected_mcp_servers = val"
-              @update:use-mcp="(val) => continueForm.use_mcp = val"
+              :model-value="continueForm.selectedTools"
+              @update:model-value="(val) => continueForm.selectedTools = val"
+              @update:selected-mcp-servers="(val) => continueForm.selectedMcpServers = val"
+              @update:use-mcp="(val) => continueForm.useMcp = val"
             />
-            <span v-if="continueForm.selected_tools.length > 0" class="tool-selected-hint">
-              已选择 {{ continueForm.selected_tools.length }} 个工具
+            <span v-if="continueForm.selectedTools.length > 0" class="tool-selected-hint">
+              已选择 {{ continueForm.selectedTools.length }} 个工具
             </span>
           </div>
         </el-form-item>
@@ -274,6 +274,7 @@ import { useResearchStore } from '../stores/research'
 import { formatFileSize } from '../utils/format'
 import { logger } from '../utils/logger'
 import { getInterruptId } from '../utils/message-operations'
+import { toCamelCase } from '@/utils/session-transformers'
 import { useTaskRealtimeSync } from '@/composables/useTaskRealtimeSync'
 
 const modelStore = useModelStore()
@@ -288,7 +289,7 @@ const task = ref(null)
 /** 当前任务的待审批列表（过滤出 source=deep_research 且 taskId 匹配的审批） */
 const taskPendingApprovals = computed(() => {
   const result = new Map()
-  const currentTaskId = task.value?.task_id
+  const currentTaskId = task.value?.taskId
   if (!currentTaskId) return result
   for (const [id, entry] of approvalStore.pendingApprovals) {
     if (entry.source === 'deep_research' && entry.taskId === currentTaskId) {
@@ -301,10 +302,10 @@ const taskPendingApprovals = computed(() => {
 /** 当前任务的工具调用历史列表 */
 const taskToolCalls = computed(() => {
   const currentTask = task.value
-  if (!currentTask?.task_id) return []
+  if (!currentTask?.taskId) return []
 
   // 优先从 sessionStore 读取（聊天触发的深度研究，有 session_id 关联）
-  const chatSessionId = currentTask.session_id || currentTask.chat_session_id
+  const chatSessionId = currentTask.sessionId || currentTask.chatSessionId
   if (chatSessionId) {
     const sessionStore = useSessionStore()
     const messages = sessionStore.getSessionMessages(chatSessionId)
@@ -316,7 +317,7 @@ const taskToolCalls = computed(() => {
   }
 
   // 回退到 researchStore（独立深度研究任务）
-  return researchStore.getToolCalls(currentTask.task_id)
+  return researchStore.getToolCalls(currentTask.taskId)
 })
 const showTaskDetail = ref(false)
 const taskListRef = ref(null)
@@ -341,14 +342,14 @@ const docAnalysisFile = ref(null)
 const continueDialogVisible = ref(false)
 const continueParentTask = ref(null)
 const continueForm = reactive({
-  additional_query: '',
-  enable_web_search: true,
-  knowledge_base_ids: [],
-  provider_id: null,
-  model_name: null,
-  use_mcp: false,
-  selected_mcp_servers: [],
-  selected_tools: [],
+  additionalQuery: '',
+  enableWebSearch: true,
+  knowledgeBaseIds: [],
+  providerId: null,
+  modelName: null,
+  useMcp: false,
+  selectedMcpServers: [],
+  selectedTools: [],
 })
 
 let pollingTimer = null
@@ -378,13 +379,13 @@ const progressPercentage = computed(() => {
 
 const researchForm = reactive({
   query: '',
-  enable_web_search: true,
-  knowledge_base_ids: [],
-  provider_id: null,
-  model_name: null,
-  use_mcp: false,
-  selected_mcp_servers: [],
-  selected_tools: [],
+  enableWebSearch: true,
+  knowledgeBaseIds: [],
+  providerId: null,
+  modelName: null,
+  useMcp: false,
+  selectedMcpServers: [],
+  selectedTools: [],
 })
 
 const useDeepThinking = computed({
@@ -409,8 +410,8 @@ const modelSupportsDeepThinking = computed(() => {
 })
 
 const onModelChange = ({ providerId, modelName }) => {
-  researchForm.provider_id = providerId
-  researchForm.model_name = modelName
+  researchForm.providerId = providerId
+  researchForm.modelName = modelName
 }
 
 const refreshKnowledgeBases = async () => {
@@ -440,12 +441,12 @@ const filterKnowledgeBases = () => {
 }
 
 const loadDocAnalysis = async () => {
-  if (!task.value?.task_id || !task.value?.knowledge_base_ids?.length) return
+  if (!task.value?.taskId || !task.value?.knowledgeBaseIds?.length) return
   docAnalysisLoading.value = true
   try {
     const file = await _findDocAnalysisFile()
     if (file) {
-      const response = await deepResearchAPI.getFileContent(task.value.task_id, file)
+      const response = await deepResearchAPI.getFileContent(task.value.taskId, file)
       const data = response.data?.data || response.data
       docAnalysisContent.value = data?.content || data || ''
       docAnalysisFile.value = file
@@ -461,9 +462,9 @@ const loadDocAnalysis = async () => {
 }
 
 const _findDocAnalysisFile = async () => {
-  if (!task.value?.task_id) return null
+  if (!task.value?.taskId) return null
   try {
-    const res = await deepResearchAPI.getFiles(task.value.task_id)
+    const res = await deepResearchAPI.getFiles(task.value.taskId)
     const data = res.data?.data || res.data
     const files = data?.files || data || []
     const notesDir = files.find(f => f.name === 'notes' && f.type === 'directory')
@@ -488,8 +489,8 @@ const checkDocAnalysisFile = () => {
 }
 
 const autoLoadDocAnalysis = async () => {
-  if (!task.value?.task_id) return
-  if (!task.value?.enable_doc_analysis) return
+  if (!task.value?.taskId) return
+  if (!task.value?.enableDocAnalysis) return
   await loadDocAnalysis()
 }
 
@@ -508,7 +509,7 @@ const handleApprove = async (toolCallData) => {
 
   try {
     await approvalStore.executeApproval(approval, true, userInput, {
-      taskId: task.value?.task_id,
+      taskId: task.value?.taskId,
     })
     ElMessage.success('已确认操作')
   } catch (e) {
@@ -534,7 +535,7 @@ const handleReject = async (toolCallData) => {
 
   try {
     await approvalStore.executeApproval(approval, false, null, {
-      taskId: task.value?.task_id,
+      taskId: task.value?.taskId,
     })
     ElMessage.info('已拒绝操作')
   } catch (e) {
@@ -568,7 +569,7 @@ const pollTaskStatus = async () => {
   }
 
   try {
-    const response = await deepResearchAPI.getStatus(task.value.task_id)
+    const response = await deepResearchAPI.getStatus(task.value.taskId)
     const responseData = response.data.data || response.data
     const prevStatus = task.value.status
     task.value = { ...task.value, ...responseData }
@@ -598,7 +599,7 @@ const pollTaskStatus = async () => {
     logger.error('获取任务状态失败:', error)
     if (error?.response?.status === 404) {
       task.value.status = 'failed'
-      task.value.error_message = '研究任务不存在或已被删除'
+      task.value.errorMessage = '研究任务不存在或已被删除'
       stopPolling()
       return
     }
@@ -636,18 +637,18 @@ const startResearch = async () => {
     const modelConfig = modelStore.getModelConfig()
     const response = await deepResearchAPI.start({
       query: researchForm.query,
-      enable_web_search: researchForm.enable_web_search,
-      enable_doc_analysis: researchForm.knowledge_base_ids.length > 0,
-      knowledge_base_ids: researchForm.knowledge_base_ids,
-      use_mcp: researchForm.use_mcp,
-      selected_mcp_servers: researchForm.selected_mcp_servers,
-      selected_tools: researchForm.selected_tools,
-      provider_id: researchForm.provider_id || modelConfig.provider_id,
-      model_name: researchForm.model_name || modelConfig.model_name,
-      enable_deep_thinking: modelStore.thinkingEnabled,
+      enableWebSearch: researchForm.enableWebSearch,
+      enableDocAnalysis: researchForm.knowledgeBaseIds.length > 0,
+      knowledgeBaseIds: researchForm.knowledgeBaseIds,
+      useMcp: researchForm.useMcp,
+      selectedMcpServers: researchForm.selectedMcpServers,
+      selectedTools: researchForm.selectedTools,
+      providerId: researchForm.providerId || modelConfig.providerId,
+      modelName: researchForm.modelName || modelConfig.modelName,
+      enableDeepThinking: modelStore.thinkingEnabled,
       temperature: modelConfig.temperature,
-      max_tokens: modelConfig.max_tokens,
-      special_params: modelConfig.special_params,
+      maxTokens: modelConfig.maxTokens,
+      specialParams: modelConfig.specialParams,
     })
     task.value = response.data.data || response.data
     showTaskDetail.value = true
@@ -657,7 +658,7 @@ const startResearch = async () => {
     startElapsedTimer()
     // 启动新任务后立即订阅 WebSocket 实时事件，避免在用户切走再回来前丢失事件
     subscribeRealtimeForTask(task.value)
-    connectSSE(task.value.task_id)
+    connectSSE(task.value.taskId)
   } catch (error) {
     logger.error('启动研究任务失败:', error)
     const detail = error.response?.data?.data || error.response?.data?.message
@@ -732,24 +733,26 @@ const connectSSE = async (taskId) => {
 }
 
 const handleSSEEvent = (data) => {
-  switch (data.type) {
+  const sseData = toCamelCase(data)
+
+  switch (sseData.type) {
     case 'connected':
       progressMessage.value = '已连接，等待研究启动...'
       break
     case 'status_change':
       if (task.value) {
-        task.value.status = data.status
-        progressMessage.value = data.message || ''
-        if (data.final_report) {
-          task.value.final_report = data.final_report
+        task.value.status = sseData.status
+        progressMessage.value = sseData.message || ''
+        if (sseData.finalReport) {
+          task.value.finalReport = sseData.finalReport
         }
       }
-      if (data.status === 'completed' || data.status === 'failed') {
+      if (sseData.status === 'completed' || sseData.status === 'failed') {
         closeSSE()
         stopElapsedTimer()
         // 主动获取完整任务数据，确保 final_report、files 等字段不丢失
-        if (data.status === 'completed' && task.value?.task_id) {
-          deepResearchAPI.getStatus(task.value.task_id).then(resp => {
+        if (sseData.status === 'completed' && task.value?.taskId) {
+          deepResearchAPI.getStatus(task.value.taskId).then(resp => {
             const fresh = resp.data?.data || resp.data
             if (fresh) {
               task.value = { ...task.value, ...fresh }
@@ -764,7 +767,7 @@ const handleSSEEvent = (data) => {
       }
       break
     case 'step_update':
-      progressMessage.value = data.step || ''
+      progressMessage.value = sseData.step || ''
       break
     case 'done':
       closeSSE()
@@ -780,7 +783,7 @@ const handleSSEEvent = (data) => {
       pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
       break
     case 'error':
-      ElMessage.error(data.message || '研究执行出错')
+      ElMessage.error(sseData.message || '研究执行出错')
       closeSSE()
       stopElapsedTimer()
       break
@@ -788,11 +791,11 @@ const handleSSEEvent = (data) => {
     // （syncStore.handleRealtimeEvent，于 subscribeRealtimeForTask 中订阅 task 频道），
     // SSE 仅处理 approval_history（初始历史审批加载，SSE 专属）。
     case 'approval_history':
-      // 优先使用 SSE 事件自带的 task_id，避免 task.value 竞态
-      if (data.data) {
-        const effectiveTaskId = data.task_id || task.value?.task_id
+      // 优先使用 SSE 事件自带的 taskId，避免 task.value 竞态
+      if (sseData.data) {
+        const effectiveTaskId = sseData.taskId || task.value?.taskId
         if (effectiveTaskId) {
-          approvalStore.restoreFromSSEHistory(data.data, effectiveTaskId)
+          approvalStore.restoreFromSSEHistory(sseData.data, effectiveTaskId)
         }
       }
       break
@@ -822,10 +825,10 @@ const viewTask = async (selectedTask) => {
 
   if (selectedTask.status === 'running' || selectedTask.status === 'pending' || selectedTask.status === 'pending_approval') {
     startElapsedTimer()
-    connectSSE(selectedTask.task_id)
-  } else if (selectedTask.task_id) {
+    connectSSE(selectedTask.taskId)
+  } else if (selectedTask.taskId) {
     try {
-      const resp = await deepResearchAPI.getStatus(selectedTask.task_id)
+      const resp = await deepResearchAPI.getStatus(selectedTask.taskId)
       const fresh = resp.data?.data || resp.data
       if (fresh) {
         task.value = { ...selectedTask, ...fresh }
@@ -833,7 +836,7 @@ const viewTask = async (selectedTask) => {
         subscribeRealtimeForTask(task.value)
         if (fresh.status === 'running' || fresh.status === 'pending') {
           startElapsedTimer()
-          connectSSE(fresh.task_id)
+          connectSSE(fresh.taskId)
         } else if (fresh.status === 'completed') {
           nextTick(() => {
             if (fileBrowserRef.value) {
@@ -856,8 +859,8 @@ const deleteTask = () => {
   // 取消 WebSocket 实时订阅，避免对已删除任务继续接收事件
   clearRealtimeSubscriptions()
   // 清理该任务关联的审批条目
-  if (task.value?.task_id) {
-    approvalStore.clearByTaskId(task.value.task_id)
+  if (task.value?.taskId) {
+    approvalStore.clearByTaskId(task.value.taskId)
   }
   task.value = null
   showTaskDetail.value = false
@@ -866,29 +869,29 @@ const deleteTask = () => {
 }
 
 const onContinueModelChange = ({ providerId, modelName }) => {
-  continueForm.provider_id = providerId
-  continueForm.model_name = modelName
+  continueForm.providerId = providerId
+  continueForm.modelName = modelName
 }
 
 const openContinueDialog = (taskData) => {
   continueParentTask.value = taskData
-  continueForm.additional_query = ''
-  continueForm.enable_web_search = taskData.enable_web_search ?? true
-  continueForm.knowledge_base_ids = taskData.knowledge_base_ids || []
-  continueForm.provider_id = taskData.provider_id || null
-  continueForm.model_name = taskData.model_name || null
-  continueForm.use_mcp = taskData.use_mcp ?? false
-  continueForm.selected_mcp_servers = taskData.selected_mcp_servers || []
-  continueForm.selected_tools = taskData.selected_tools || []
-  if (continueForm.provider_id && continueForm.model_name) {
-    modelStore.selectProvider(continueForm.provider_id, continueForm.model_name)
+  continueForm.additionalQuery = ''
+  continueForm.enableWebSearch = taskData.enableWebSearch ?? true
+  continueForm.knowledgeBaseIds = taskData.knowledgeBaseIds || []
+  continueForm.providerId = taskData.providerId || null
+  continueForm.modelName = taskData.modelName || null
+  continueForm.useMcp = taskData.useMcp ?? false
+  continueForm.selectedMcpServers = taskData.selectedMcpServers || []
+  continueForm.selectedTools = taskData.selectedTools || []
+  if (continueForm.providerId && continueForm.modelName) {
+    modelStore.selectProvider(continueForm.providerId, continueForm.modelName)
   }
   continueDialogVisible.value = true
 }
 
 watch(continueDialogVisible, (visible) => {
-  if (!visible && researchForm.provider_id && researchForm.model_name) {
-    modelStore.selectProvider(researchForm.provider_id, researchForm.model_name)
+  if (!visible && researchForm.providerId && researchForm.modelName) {
+    modelStore.selectProvider(researchForm.providerId, researchForm.modelName)
   }
 })
 
@@ -898,21 +901,21 @@ const submitContinueResearch = async () => {
   try {
     const modelConfig = modelStore.getModelConfig()
     const response = await deepResearchAPI.continueResearch(
-      continueParentTask.value.task_id,
+      continueParentTask.value.taskId,
       {
-        additional_query: continueForm.additional_query,
-        enable_web_search: continueForm.enable_web_search,
-        enable_doc_analysis: continueForm.knowledge_base_ids.length > 0,
-        knowledge_base_ids: continueForm.knowledge_base_ids,
-        use_mcp: continueForm.use_mcp,
-        selected_mcp_servers: continueForm.selected_mcp_servers,
-        selected_tools: continueForm.selected_tools,
-        provider_id: continueForm.provider_id || modelConfig.provider_id,
-        model_name: continueForm.model_name || modelConfig.model_name,
-        enable_deep_thinking: modelStore.thinkingEnabled,
+        additionalQuery: continueForm.additionalQuery,
+        enableWebSearch: continueForm.enableWebSearch,
+        enableDocAnalysis: continueForm.knowledgeBaseIds.length > 0,
+        knowledgeBaseIds: continueForm.knowledgeBaseIds,
+        useMcp: continueForm.useMcp,
+        selectedMcpServers: continueForm.selectedMcpServers,
+        selectedTools: continueForm.selectedTools,
+        providerId: continueForm.providerId || modelConfig.providerId,
+        modelName: continueForm.modelName || modelConfig.modelName,
+        enableDeepThinking: modelStore.thinkingEnabled,
         temperature: modelConfig.temperature,
-        max_tokens: modelConfig.max_tokens,
-        special_params: modelConfig.special_params,
+        maxTokens: modelConfig.maxTokens,
+        specialParams: modelConfig.specialParams,
       }
     )
     task.value = response.data.data || response.data
@@ -923,7 +926,7 @@ const submitContinueResearch = async () => {
     startElapsedTimer()
     // 续研任务同样作为新任务启动，立即订阅 WebSocket 实时事件
     subscribeRealtimeForTask(task.value)
-    connectSSE(task.value.task_id)
+    connectSSE(task.value.taskId)
   } catch (error) {
     logger.error('启动续研任务失败:', error)
     const detail = error.response?.data?.data || error.response?.data?.message
@@ -938,16 +941,16 @@ const handleContinueTask = (taskData) => {
 }
 
 const openInChat = () => {
-  if (!task.value?.query || !task.value?.task_id) {
+  if (!task.value?.query || !task.value?.taskId) {
     ElMessage.warning('研究任务信息不完整，无法在聊天中讨论')
     return
   }
-  const taskId = task.value.task_id
-  const sessionId = task.value.session_id
+  const taskId = task.value.taskId
+  const sessionId = task.value.sessionId
   const researchQuery = task.value.query
   // 如果研究任务关联了聊天会话，跳转到该会话；否则创建新会话
   const query = {
-    research_task_id: taskId,
+    researchTaskId: taskId,
     q: `关于"${researchQuery}"的深度研究，请帮我进一步分析`,
     session_id: sessionId || undefined,
     research_query: researchQuery,
@@ -1006,7 +1009,7 @@ onMounted(async () => {
 onActivated(async () => {
   const taskId = route.query.task_id
   // 如果 URL 带有 task_id 且当前没有查看任务，自动加载
-  if (taskId && (!task.value || task.value.task_id !== taskId)) {
+  if (taskId && (!task.value || task.value.taskId !== taskId)) {
     try {
       const resp = await deepResearchAPI.getStatus(taskId)
       const taskData = resp.data?.data || resp.data
@@ -1020,17 +1023,17 @@ onActivated(async () => {
   }
 
   // 如果正在查看任务，根据状态决定是否重连/刷新
-  if (task.value && task.value.task_id) {
+  if (task.value && task.value.taskId) {
     // 重新订阅 WebSocket（onDeactivated 时已清理，此处恢复）
     subscribeRealtimeForTask(task.value)
     if (task.value.status === 'running' || task.value.status === 'pending') {
       // 任务还在运行，重连 SSE 或启动轮询
       startElapsedTimer()
-      connectSSE(task.value.task_id)
+      connectSSE(task.value.taskId)
     } else {
       // 任务已完成，刷新最新数据
       try {
-        const resp = await deepResearchAPI.getStatus(task.value.task_id)
+        const resp = await deepResearchAPI.getStatus(task.value.taskId)
         const fresh = resp.data?.data || resp.data
         if (fresh) {
           task.value = { ...task.value, ...fresh }
@@ -1071,7 +1074,7 @@ onDeactivated(() => {
 // 监听路由参数变化，支持从聊天页面多次跳转到不同任务
 watch(() => route.query.task_id, async (newTaskId) => {
   if (!newTaskId) return
-  if (task.value && task.value.task_id === newTaskId) return
+  if (task.value && task.value.taskId === newTaskId) return
   try {
     const resp = await deepResearchAPI.getStatus(newTaskId)
     const taskData = resp.data?.data || resp.data

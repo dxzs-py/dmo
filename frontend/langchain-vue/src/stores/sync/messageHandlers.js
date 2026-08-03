@@ -174,29 +174,25 @@ export const createMessageHandlers = (ctx) => {
         delete filteredMessage.sources
         delete filteredMessage.suggestions
         delete filteredMessage.context
-        // 仅当存在 tool_calls 或用于匹配的 id 时才合并
-        if (filteredMessage.tool_calls !== undefined || filteredMessage.id !== undefined) {
+        // 仅当存在 toolCalls 或用于匹配的 id 时才合并
+        if (filteredMessage.toolCalls !== undefined || filteredMessage.id !== undefined) {
           const backendMessage = transformBackendMessageToFrontend(filteredMessage)
           if (backendMessage) {
             mergeMessageFromBackend(message, backendMessage)
           }
         }
       } else {
-        // 扁平结构：仅提取 toolCalls / tool_calls 字段
-        const toolCallFields = {}
-        if (fields?.toolCalls !== undefined) toolCallFields.toolCalls = fields.toolCalls
-        if (fields?.tool_calls !== undefined) toolCallFields.tool_calls = fields.tool_calls
-        if (Object.keys(toolCallFields).length > 0) {
-          const mapped = sessionStore._mapBackendMessageFields(toolCallFields)
-          // 空值保护：后端 tool_calls 为空数组时不覆盖本地审批记录
-          if (Array.isArray(mapped.toolCalls) && mapped.toolCalls.length === 0
+        // 扁平结构：仅提取 toolCalls 字段
+        if (fields?.toolCalls !== undefined) {
+          // 空值保护：后端 toolCalls 为空数组时不覆盖本地审批记录
+          if (Array.isArray(fields.toolCalls) && fields.toolCalls.length === 0
               && Array.isArray(message.toolCalls) && message.toolCalls.length > 0) {
             logger.debug(`[Sync] message_updated 流式期间保留本地 toolCalls（后端为空）: message=${messageId}`)
           } else {
             // 走 mergeMessageFromBackend 而非 Object.assign，
             // 确保 mergeToolCalls 的状态优先级保护生效，防止后端滞后快照（status=running）
             // 覆盖本地高优先级状态（status=completed）
-            mergeMessageFromBackend(message, mapped)
+            mergeMessageFromBackend(message, { toolCalls: fields.toolCalls })
           }
         }
       }
@@ -217,20 +213,22 @@ export const createMessageHandlers = (ctx) => {
         mergeMessageFromBackend(message, backendMessage)
       }
     } else {
-      const mapped = sessionStore._mapBackendMessageFields(fields)
-      // tool_calls 空值保护：后端 tool_calls 为空数组时不覆盖本地审批记录
-      // 场景：深度研究 writeback 时后端 ChatMessage.tool_calls 可能为空，
+      // toolCalls 空值保护：后端 toolCalls 为空数组时不覆盖本地审批记录
+      // 场景：深度研究 writeback 时后端 ChatMessage.toolCalls 可能为空，
       // 但本地已有审批记录（通过 approval_* 系列事件同步），直接覆盖会导致审批卡片消失
-      if (Array.isArray(mapped.toolCalls) && mapped.toolCalls.length === 0
+      if (Array.isArray(fields.toolCalls) && fields.toolCalls.length === 0
           && Array.isArray(message.toolCalls) && message.toolCalls.length > 0) {
-        delete mapped.toolCalls
+        const filtered = { ...fields }
+        delete filtered.toolCalls
         logger.debug(`[Sync] message_updated 保留本地 toolCalls（后端为空）: message=${messageId}`)
+        mergeMessageFromBackend(message, filtered)
+      } else {
+        // 走 mergeMessageFromBackend 而非 Object.assign，
+        // 确保 mergeToolCalls 的状态优先级保护生效，防止后端滞后快照覆盖本地高优先级状态。
+        // fields 可能包含 toolCalls 之外的字段（如 reasoning/sources 等），
+        // mergeMessageFromBackend 会按字段类型分别处理
+        mergeMessageFromBackend(message, fields)
       }
-      // 走 mergeMessageFromBackend 而非 Object.assign，
-      // 确保 mergeToolCalls 的状态优先级保护生效，防止后端滞后快照覆盖本地高优先级状态。
-      // mapped 可能包含 toolCalls 之外的字段（如 reasoning/sources 等），
-      // mergeMessageFromBackend 会按字段类型分别处理
-      mergeMessageFromBackend(message, mapped)
     }
 
     // 记录已处理的 seq，用于后续去重
@@ -277,7 +275,7 @@ export const createMessageHandlers = (ctx) => {
    * @param {Object} payload - 至少包含 message_id
    */
   const handleMessageRegenerated = (sessionId, payload) => {
-    const messageId = payload.message_id || payload.id
+    const messageId = payload.messageId
     if (!messageId) {
       logger.warn('[Sync] message_regenerated 事件缺少 message_id')
       return
@@ -371,7 +369,7 @@ export const createMessageHandlers = (ctx) => {
    * @param {Object} payload - 包含 message_id 和回滚后的完整 message 数据
    */
   const handleMessageRegenerateReverted = (sessionId, payload) => {
-    const messageId = payload.message_id || payload.id
+    const messageId = payload.messageId
     const backendMessage = payload.message
     if (!messageId) {
       logger.warn('[Sync] message_regenerate_reverted 事件缺少 message_id')

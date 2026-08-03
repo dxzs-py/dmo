@@ -92,7 +92,7 @@ export function findToolCallById(toolCalls, toolCallId, options = {}) {
   if (!toolCalls || toolCalls.length === 0 || !toolCallId) return null
   const { approvalData = null, skipApproved = true } = options
   const _getCmd = (t) => t.parameters?.command || t.args?.command
-  const _getToolName = (t) => t.name || t.tool_name || t.function?.name
+  const _getToolName = (t) => t.name || t.toolName || t.function?.name
   /** 判断 toolCall 是否处于审批终态（已确认/已拒绝/已超时/已完成） */
   const _isApprovalFinal = (t) => {
     if (!t.approval) return false
@@ -100,10 +100,10 @@ export function findToolCallById(toolCalls, toolCallId, options = {}) {
     return finalStates.includes(t.approval.state)
   }
 
-  // 0. tool_call_id 精确匹配（最可靠，匹配 t.id 和 t.tool_call_id 两个维度）
-  if (approvalData?.tool_call_id) {
-    const tcId = approvalData.tool_call_id
-    const tc = toolCalls.find(t => t.id === tcId || t.tool_call_id === tcId)
+  // 0. tool_call_id 精确匹配（最可靠，匹配 t.id 和 t.toolCallId 两个维度）
+  if (approvalData?.toolCallId) {
+    const tcId = approvalData.toolCallId
+    const tc = toolCalls.find(t => t.id === tcId || t.toolCallId === tcId)
     if (tc) return tc
     // 精确匹配失败保护：tool_call_id 存在但未匹配到 → 立即返回 null，
     // 禁止进入 toolName 回退匹配（避免将审批数据错误绑定到其他同名工具）
@@ -114,15 +114,15 @@ export function findToolCallById(toolCalls, toolCallId, options = {}) {
   if (tc) return tc
   // 1.5 approval 内的 interrupt_id/tool_call_id 匹配
   tc = toolCalls.find(t =>
-    t.approval && (t.approval.interrupt_id === toolCallId || t.approval.tool_call_id === toolCallId)
+    t.approval && (t.approval.interruptId === toolCallId || t.approval.toolCallId === toolCallId)
   )
   if (tc) return tc
   // 2. toolName + operation 内容匹配
-  if (approvalData?.tool_name) {
+  if (approvalData?.toolName) {
     const _op = approvalData.operation || approvalData.command
     if (_op) {
       tc = toolCalls.find(t =>
-        _getToolName(t) === approvalData.tool_name &&
+        _getToolName(t) === approvalData.toolName &&
         (_getCmd(t) === _op || Object.values(t.parameters || {}).some(v => String(v) === _op)) &&
         (skipApproved ? !_isApprovalFinal(t) : true)
       )
@@ -131,7 +131,7 @@ export function findToolCallById(toolCalls, toolCallId, options = {}) {
     // 3. toolName 宽松匹配
     for (let i = toolCalls.length - 1; i >= 0; i--) {
       const t = toolCalls[i]
-      if (_getToolName(t) === approvalData.tool_name && (skipApproved ? !_isApprovalFinal(t) : true)) {
+      if (_getToolName(t) === approvalData.toolName && (skipApproved ? !_isApprovalFinal(t) : true)) {
         return t
       }
     }
@@ -146,7 +146,7 @@ export function findToolCallById(toolCalls, toolCallId, options = {}) {
  * @returns {string} interrupt ID
  */
 export function getInterruptId(approval) {
-  return approval?.interrupt_id || approval?.tool_call_id || ''
+  return approval?.interruptId || approval?.toolCallId || ''
 }
 
 function _addOrUpdateToolCallInMessage(message, data) {
@@ -223,9 +223,9 @@ function _updateOrAddToolResultInMessage(message, data) {
         updates.approval = null
       }
     }
-    // 进入终态时设置 completed_at（Task 16 P1 修复）
-    if (updates.status && isTerminalStatus(updates.status) && !existing.completed_at) {
-      updates.completed_at = new Date().toISOString()
+    // 进入终态时设置 completedAt（Task 16 P1 修复）
+    if (updates.status && isTerminalStatus(updates.status) && !existing.completedAt) {
+      updates.completedAt = new Date().toISOString()
     }
     Object.assign(message.toolCalls[idx], updates)
   } else {
@@ -243,9 +243,9 @@ function _updateOrAddToolResultInMessage(message, data) {
     } else if (!toolData.status) {
       toolData.status = toolData.state ? (stateMap[toolData.state] || 'running') : 'running'
     }
-    // 终态时设置 completed_at
-    if (toolData.status && isTerminalStatus(toolData.status) && !toolData.completed_at) {
-      toolData.completed_at = new Date().toISOString()
+    // 终态时设置 completedAt
+    if (toolData.status && isTerminalStatus(toolData.status) && !toolData.completedAt) {
+      toolData.completedAt = new Date().toISOString()
     }
     message.toolCalls.push(toolData)
   }
@@ -409,7 +409,7 @@ export function createMessageVersion(message) {
 // 但操作 Map<toolCallId, toolCall> 而非 message.toolCalls 数组。
 //
 // 设计意图：researchStore 以 toolCallMap 为唯一真相源，toolCalls 数组为派生（通过 _syncToolCalls 同步）。
-// Map 的 key 为 toolCall.id || toolCall.tool_call_id。
+// Map 的 key 为 toolCall.id || toolCall.toolCallId。
 //
 // 合并/保护逻辑与数组版本（_addOrUpdateToolCallInMessage / _updateOrAddToolResultInMessage）保持一致，
 // 确保两个 store 行为对齐。
@@ -484,14 +484,14 @@ function _findKeyByValue(map, value) {
  *
  * Map 版本的 findToolCallById，匹配策略：
  *   0. Map key 直接匹配 toolCallId
- *   1. data.tool_call_id 在 Map key 中查找（altId 查找）
- *   2. 遍历兜底：tc.id / tc.tool_call_id 匹配 toolCallId 或 data.tool_call_id
+ *   1. data.toolCallId 在 Map key 中查找（altId 查找）
+ *   2. 遍历兜底：tc.id / tc.toolCallId 匹配 toolCallId 或 data.toolCallId
  *   3. findToolCallById 兜底（approval 内的 interrupt_id/tool_call_id / toolName 匹配）
  *
  * @param {Map} toolCallMap - toolCall Map（key 为 toolCallId，value 为 toolCall 对象）
  * @param {string} toolCallId - 待匹配的 ID（通常是 interrupt_id）
  * @param {Object} [data] - 审批数据对象（含 tool_call_id / tool_name 等字段），
- *                          data.tool_call_id 用于 altId 查找
+ *                          data.toolCallId 用于 altId 查找
  * @returns {{ toolCall: Object|null, key: string|null }} 匹配结果（toolCall 和对应的 Map key）
  */
 export function findToolCallInMap(toolCallMap, toolCallId, data = null) {
@@ -504,18 +504,18 @@ export function findToolCallInMap(toolCallMap, toolCallId, data = null) {
     return { toolCall: toolCallMap.get(toolCallId), key: toolCallId }
   }
 
-  // 1. data.tool_call_id 在 Map key 中查找（altId 查找）
-  const altId = data?.tool_call_id || data?.approval?.tool_call_id
+  // 1. data.toolCallId 在 Map key 中查找（altId 查找）
+  const altId = data?.toolCallId || data?.approval?.toolCallId
   if (altId && toolCallMap.has(altId)) {
     return { toolCall: toolCallMap.get(altId), key: altId }
   }
 
-  // 2. 遍历兜底：tc.id / tc.tool_call_id 匹配 toolCallId 或 data.tool_call_id
+  // 2. 遍历兜底：tc.id / tc.toolCallId 匹配 toolCallId 或 data.toolCallId
   for (const [key, tc] of toolCallMap.entries()) {
-    if (tc.id === toolCallId || tc.tool_call_id === toolCallId) {
+    if (tc.id === toolCallId || tc.toolCallId === toolCallId) {
       return { toolCall: tc, key }
     }
-    if (altId && (tc.id === altId || tc.tool_call_id === altId)) {
+    if (altId && (tc.id === altId || tc.toolCallId === altId)) {
       return { toolCall: tc, key }
     }
   }
@@ -561,9 +561,9 @@ export function addOrUpdateToolCallInMap(toolCallMap, data) {
     const merged = _mergeExistingToolCall(existing, data)
     // key 优先级：tool_call_id > id > oldKey
     const oldKey = _findKeyByValue(toolCallMap, existing)
-    const newKey = merged.tool_call_id || merged.id || oldKey
+    const newKey = merged.toolCallId || merged.id || oldKey
     // _synthetic 占位迁移：清除标记，删除旧 key，用真实 tool_call_id 作为新 key
-    if (merged._synthetic && (merged.tool_call_id || merged.id)) {
+    if (merged._synthetic && (merged.toolCallId || merged.id)) {
       delete merged._synthetic
       if (oldKey && oldKey !== newKey) {
         toolCallMap.delete(oldKey)
@@ -576,7 +576,7 @@ export function addOrUpdateToolCallInMap(toolCallMap, data) {
   }
   // 新建 toolCall
   const toolData = _normalizeNewToolCall(data)
-  const toolCallId = toolData.tool_call_id || toolData.id
+  const toolCallId = toolData.toolCallId || toolData.id
   if (!toolCallId) return null
   toolCallMap.set(toolCallId, toolData)
   return toolCallId
@@ -594,7 +594,7 @@ export function addOrUpdateToolCallInMap(toolCallMap, data) {
  *   3. data.result 有值（且 state 非 output-error）→ COMPLETED
  *   4. data.error 有值 → FAILED
  *
- * 进入终态时设置 completed_at 时间戳。
+ * 进入终态时设置 completedAt 时间戳。
  *
  * @param {Map} toolCallMap - toolCall Map
  * @param {Object} data - 工具结果事件数据
@@ -638,12 +638,12 @@ export function updateOrAddToolResultInMap(toolCallMap, data) {
         updates.approval = null
       }
     }
-    // 进入终态时设置 completed_at
-    if (updates.status && isTerminalStatus(updates.status) && !existing.completed_at) {
-      updates.completed_at = new Date().toISOString()
+    // 进入终态时设置 completedAt
+    if (updates.status && isTerminalStatus(updates.status) && !existing.completedAt) {
+      updates.completedAt = new Date().toISOString()
     }
     Object.assign(existing, updates)
-    return existing.tool_call_id || existing.id
+    return existing.toolCallId || existing.id
   }
   // 新建（容错场景：tool_result 先于 tool 到达）
   const toolData = _normalizeNewToolCall(data)
@@ -659,11 +659,11 @@ export function updateOrAddToolResultInMap(toolCallMap, data) {
   } else if (toolData.error != null) {
     toolData.status = ToolCallStatus.FAILED
   }
-  // 终态时设置 completed_at
-  if (toolData.status && isTerminalStatus(toolData.status) && !toolData.completed_at) {
-    toolData.completed_at = new Date().toISOString()
+  // 终态时设置 completedAt
+  if (toolData.status && isTerminalStatus(toolData.status) && !toolData.completedAt) {
+    toolData.completedAt = new Date().toISOString()
   }
-  const toolCallId = toolData.tool_call_id || toolData.id
+  const toolCallId = toolData.toolCallId || toolData.id
   if (!toolCallId) return null
   toolCallMap.set(toolCallId, toolData)
   return toolCallId
@@ -709,13 +709,13 @@ export function setApprovalToToolCallInMap(toolCallMap, toolCallId, approvalData
   }
   // toolCall 还未到达，创建 _synthetic 占位条目
   // 顶层 tool_call_id = interrupt_id（作为占位 key，与 Map key 一致）；
-  // approval.tool_call_id 保留原始 LLM tool_call_id（approvalData.tool_call_id）
+  // approval.toolCallId 保留原始 LLM tool_call_id（approvalData.toolCallId）
   const syntheticToolCall = {
     id: toolCallId,
-    tool_call_id: toolCallId,
-    interrupt_id: toolCallId,
-    name: approvalData?.tool_name || 'unknown',
-    tool_name: approvalData?.tool_name || 'unknown',
+    toolCallId: toolCallId,
+    interruptId: toolCallId,
+    name: approvalData?.toolName || 'unknown',
+    toolName: approvalData?.toolName || 'unknown',
     parameters: approvalData?.parameters || approvalData?.args || {},
     status: ToolCallStatus.RUNNING,
     approval: approvalData,
@@ -759,9 +759,9 @@ export function flushPendingApprovalsInMap(pendingMap, toolCallMap, toolCallId) 
   }
 
   pendingMap.delete(toolCallId)
-  // 同时移除 altId（如 approvalData.tool_call_id）对应的条目
-  if (pending.approvalData?.tool_call_id && pending.approvalData.tool_call_id !== toolCallId) {
-    pendingMap.delete(pending.approvalData.tool_call_id)
+  // 同时移除 altId（如 approvalData.toolCallId）对应的条目
+  if (pending.approvalData?.toolCallId && pending.approvalData.toolCallId !== toolCallId) {
+    pendingMap.delete(pending.approvalData.toolCallId)
   }
 
   setApprovalToToolCallInMap(toolCallMap, toolCallId, pending.approvalData)
@@ -851,9 +851,9 @@ export function _mergeToolCalls(existingList, backendList) {
   const usedBackendIds = new Set()
   // 第一遍：遍历本地，匹配后端
   for (const local of existingList) {
-    const localId = local.id || local.tool_call_id
+    const localId = local.id || local.toolCallId
     const backend = backendList.find(b => {
-      const bId = b.id || b.tool_call_id
+      const bId = b.id || b.toolCallId
       return bId && bId === localId
     })
     if (backend) {
@@ -875,7 +875,7 @@ export function _mergeToolCalls(existingList, backendList) {
         mergedTc.approval = local.approval
       }
       merged.push(mergedTc)
-      usedBackendIds.add(backend.id || backend.tool_call_id)
+      usedBackendIds.add(backend.id || backend.toolCallId)
     } else {
       // 本地独有：可能是实时同步数据（_synthetic 已被替换的真实 toolCall），保留
       // _synthetic 占位若后端无对应，丢弃（已被真实 toolCall 替代或不再需要）
@@ -886,7 +886,7 @@ export function _mergeToolCalls(existingList, backendList) {
   }
   // 第二遍：追加后端独有
   for (const backend of backendList) {
-    const bId = backend.id || backend.tool_call_id
+    const bId = backend.id || backend.toolCallId
     if (bId && !usedBackendIds.has(bId)) {
       merged.push(backend)
     }
@@ -1005,3 +1005,4 @@ export function isNonEmptyParams(params) {
   if (!params || typeof params !== 'object' || Array.isArray(params)) return false
   return Object.keys(params).length > 0
 }
+

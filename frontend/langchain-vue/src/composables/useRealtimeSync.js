@@ -434,12 +434,12 @@ function createRealtimeSync() {
    * 获取事件所属通道 key
    *
    * sessionId 解析优先级：
-   *   1. payload.session_id（message_added / approval_* 等事件显式携带）
-   *   2. event.session_id（顶层字段，由后端 _publish_to_session_async 注入）
+   *   1. payload.sessionId（message_added / approval_* 等事件显式携带）
+   *   2. event.sessionId（顶层字段，由后端 _publish_to_session_async 注入）
    *
    * taskId 解析优先级：
-   *   1. payload.task_id
-   *   2. event.task_id（顶层字段，由后端 _publish_to_task_async 注入）
+   *   1. payload.taskId
+   *   2. event.taskId（顶层字段，由后端 _publish_to_task_async 注入）
    *
    * task 通道兜底：当 payload 仅携带 task_id 时（独立深度研究场景），路由到 task 通道。
    *
@@ -450,12 +450,12 @@ function createRealtimeSync() {
     if (['session_created', 'session_deleted', 'session_updated'].includes(event.type)) {
       return 'user'
     }
-    // session_id 为路由字段：优先 payload，其次 event 顶层（后端 _publish_to_session_async 注入）
-    const sessionId = event.payload?.session_id
-      || event.session_id
+    // sessionId 为路由字段：优先 payload，其次 event 顶层（后端 _publish_to_session_async 注入）
+    const sessionId = event.payload?.sessionId
+      || event.sessionId
     if (sessionId) return `session_${sessionId}`
     // task_id 为路由字段：优先 payload，其次 event 顶层（后端 _publish_to_task_async 注入）
-    const taskId = event.payload?.task_id || event.task_id
+    const taskId = event.payload?.taskId || event.taskId
     if (taskId) return `task_${taskId}`
     return null
   }
@@ -559,9 +559,9 @@ function createRealtimeSync() {
           }
         }
       } else {
-        // session_id 为路由字段：优先 payload，其次 event 顶层（后端 _publish_to_session_async 注入）
-        const sessionId = event.payload?.session_id
-          || event.session_id
+        // sessionId 为路由字段：优先 payload，其次 event 顶层（后端 _publish_to_session_async 注入）
+        const sessionId = event.payload?.sessionId
+          || event.sessionId
         if (sessionId) {
           const callbacks = sessionCallbacks.get(sessionId)
           if (callbacks) {
@@ -578,7 +578,7 @@ function createRealtimeSync() {
 
         // task 通道分发：事件可能同时携带 session_id 和 task_id，两个通道都应收到
         // task_id 为路由字段：优先 payload，其次 event 顶层（后端 _publish_to_task_async 注入）
-        const taskId = event.payload?.task_id || event.task_id
+        const taskId = event.payload?.taskId || event.taskId
         if (taskId) {
           const callbacks = taskCallbacks.get(taskId)
           if (callbacks) {
@@ -615,13 +615,13 @@ function createRealtimeSync() {
     // 阶段二：关键事件触发快照校对（无论回调是否成功，只要事件类型匹配就触发）
     // 失败时仅记录日志，不阻塞后续事件处理
     if (SNAPSHOT_TRIGGER_EVENTS.has(event.type)) {
-      const sessionId = event.payload?.session_id || event.session_id
+      const sessionId = event.payload?.sessionId || event.sessionId
       if (sessionId) {
         _triggerSnapshotSync(sessionId, event.type)
       }
       // M19-d：task 频道关键事件触发 task 快照校对（深度研究模块跨浏览器同步）
       // task_id 优先 payload，其次 event 顶层（后端 _publish_to_task_async 注入）
-      const taskId = event.payload?.task_id || event.task_id
+      const taskId = event.payload?.taskId || event.taskId
       if (taskId) {
         _triggerSnapshotSyncByTask(taskId, event.type)
       }
@@ -837,7 +837,7 @@ function createRealtimeSync() {
     if (data.type === 'replay' && Array.isArray(data.events)) {
       const channelKey = _channelKeyFromParts(data.channel_type, data.channel_id)
       const chunkIdx = typeof data.chunk_index === 'number' ? data.chunk_index : 0
-      const chunkCount = typeof data.chunk_count === 'number' ? data.chunk_count : 1
+      const chunkCount = typeof data.chunkCount === 'number' ? data.chunkCount : 1
       logger.info(
         `[Realtime] 收到 replay 回包: channel=${data.channel_type}:${data.channel_id}, `
         + `count=${data.count}, chunk=${chunkIdx + 1}/${chunkCount}`

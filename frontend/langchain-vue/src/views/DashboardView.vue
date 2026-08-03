@@ -9,24 +9,24 @@ import {
 } from '@element-plus/icons-vue'
 import { dashboardAPI } from '../api'
 import { logger } from '../utils/logger'
-import { formatDuration as _formatDuration } from '../utils/format'
+import { formatDuration } from '../utils/format'
 
 const route = useRoute()
 const loading = ref(false)
 const activeTab = ref('overview')
 
 const overview = ref({
-  total_sessions: 0,
-  total_messages: 0,
-  total_tokens: 0,
-  avg_response_time: 0,
-  total_events: 0,
-  api_requests: 0,
-  api_errors: 0,
-  total_documents: 0,
-  total_workflows: 0,
-  total_research: 0,
-  token_breakdown: { chat: 0, research: 0, workflow: 0 },
+  totalSessions: 0,
+  totalMessages: 0,
+  totalTokens: 0,
+  avgResponseTime: 0,
+  totalEvents: 0,
+  apiRequests: 0,
+  apiErrors: 0,
+  totalDocuments: 0,
+  totalWorkflows: 0,
+  totalResearch: 0,
+  tokenBreakdown: { chat: 0, research: 0, workflow: 0 },
 })
 
 const usageTrend = ref([])
@@ -73,12 +73,12 @@ async function loadDashboardData() {
     if (response.data?.code === 200) {
       const data = response.data.data || {}
       overview.value = data.overview || {}
-      usageTrend.value = data.usage_trend || []
-      categoryDistribution.value = data.category_distribution || []
-      featureUsage.value = data.feature_usage || []
-      modelDistribution.value = data.model_distribution || []
-      performanceMetrics.value = data.performance_metrics || {}
-      recentActivities.value = data.recent_activities || []
+      usageTrend.value = data.usageTrend || []
+      categoryDistribution.value = data.categoryDistribution || []
+      featureUsage.value = data.featureUsage || []
+      modelDistribution.value = data.modelDistribution || []
+      performanceMetrics.value = data.performanceMetrics || {}
+      recentActivities.value = data.recentActivities || []
     }
   } catch (error) {
     logger.error('加载仪表盘数据失败:', error)
@@ -91,16 +91,16 @@ async function loadDashboardData() {
 
 function loadMockData() {
   overview.value = {
-    total_sessions: 42,
-    total_messages: 356,
-    total_tokens: 128450,
-    avg_response_time: 3.2,
-    total_events: 1240,
-    api_requests: 890,
-    api_errors: 12,
-    total_documents: 28,
-    total_workflows: 15,
-    total_research: 8,
+    totalSessions: 42,
+    totalMessages: 356,
+    totalTokens: 128450,
+    avgResponseTime: 3.2,
+    totalEvents: 1240,
+    apiRequests: 890,
+    apiErrors: 12,
+    totalDocuments: 28,
+    totalWorkflows: 15,
+    totalResearch: 8,
   }
   usageTrend.value = Array.from({ length: 7 }, (_, i) => ({
     date: new Date(Date.now() - (6 - i) * 86400000).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }),
@@ -131,14 +131,14 @@ function loadMockData() {
     { name: '其他', value: 10, tokens: 7450 },
   ]
   performanceMetrics.value = {
-    avg_response_time_ms: 1850,
-    error_rate: 1.35,
-    total_tracked_requests: 890,
+    avgResponseTimeMs: 1850,
+    errorRate: 1.35,
+    totalTrackedRequests: 890,
   }
   recentActivities.value = [
-    { id: 1, event_type_label: '发送聊天消息', event_category_label: '智能聊天', is_success: true, duration_ms: 1200, created_at: new Date().toISOString() },
-    { id: 2, event_type_label: 'RAG检索查询', event_category_label: 'RAG检索', is_success: true, duration_ms: 3500, created_at: new Date(Date.now() - 60000).toISOString() },
-    { id: 3, event_type_label: '上传文档', event_category_label: '文件操作', is_success: true, duration_ms: 800, created_at: new Date(Date.now() - 120000).toISOString() },
+    { id: 1, eventTypeLabel: '发送聊天消息', eventCategoryLabel: '智能聊天', isSuccess: true, durationMs: 1200, createdAt: new Date().toISOString() },
+    { id: 2, eventTypeLabel: 'RAG检索查询', eventCategoryLabel: 'RAG检索', isSuccess: true, durationMs: 3500, createdAt: new Date(Date.now() - 60000).toISOString() },
+    { id: 3, eventTypeLabel: '上传文档', eventCategoryLabel: '文件操作', isSuccess: true, durationMs: 800, createdAt: new Date(Date.now() - 120000).toISOString() },
   ]
 }
 
@@ -154,9 +154,9 @@ function formatTime(isoStr) {
   return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
-function formatDuration(ms) {
+function formatDurationMs(ms) {
   if (!ms) return '-'
-  return _formatDuration(ms / 1000)
+  return formatDuration(ms / 1000)
 }
 
 const categoryColors = {
@@ -209,7 +209,7 @@ function getCategoryColor(name) {
                   <el-icon :size="22"><TrendCharts /></el-icon>
                 </div>
                 <div class="stat-info">
-                  <div class="stat-value">{{ overview.total_sessions }}</div>
+                  <div class="stat-value">{{ overview.totalSessions }}</div>
                   <div class="stat-label">聊天会话</div>
                 </div>
               </el-card>
@@ -220,7 +220,7 @@ function getCategoryColor(name) {
                   <el-icon :size="22"><DataLine /></el-icon>
                 </div>
                 <div class="stat-info">
-                  <div class="stat-value">{{ formatNumber(overview.total_messages) }}</div>
+                  <div class="stat-value">{{ formatNumber(overview.totalMessages) }}</div>
                   <div class="stat-label">聊天消息</div>
                 </div>
               </el-card>
@@ -231,7 +231,7 @@ function getCategoryColor(name) {
                   <el-icon :size="22"><Document /></el-icon>
                 </div>
                 <div class="stat-info">
-                  <div class="stat-value">{{ overview.total_documents }}</div>
+                  <div class="stat-value">{{ overview.totalDocuments }}</div>
                   <div class="stat-label">知识库文档</div>
                 </div>
               </el-card>
@@ -242,7 +242,7 @@ function getCategoryColor(name) {
                   <el-icon :size="22"><Management /></el-icon>
                 </div>
                 <div class="stat-info">
-                  <div class="stat-value">{{ overview.total_workflows }}</div>
+                  <div class="stat-value">{{ overview.totalWorkflows }}</div>
                   <div class="stat-label">工作流</div>
                 </div>
               </el-card>
@@ -253,7 +253,7 @@ function getCategoryColor(name) {
                   <el-icon :size="22"><Reading /></el-icon>
                 </div>
                 <div class="stat-info">
-                  <div class="stat-value">{{ overview.total_research }}</div>
+                  <div class="stat-value">{{ overview.totalResearch }}</div>
                   <div class="stat-label">深度研究</div>
                 </div>
               </el-card>
@@ -264,7 +264,7 @@ function getCategoryColor(name) {
                   <el-icon :size="22"><Coin /></el-icon>
                 </div>
                 <div class="stat-info">
-                  <div class="stat-value">{{ formatNumber(overview.total_tokens) }}</div>
+                  <div class="stat-value">{{ formatNumber(overview.totalTokens) }}</div>
                   <div class="stat-label">总 Token</div>
                 </div>
               </el-card>
@@ -376,7 +376,7 @@ function getCategoryColor(name) {
                   <el-icon :size="22"><Timer /></el-icon>
                 </div>
                 <div class="stat-info">
-                  <div class="stat-value">{{ formatDuration(performanceMetrics.avg_response_time_ms) }}</div>
+                  <div class="stat-value">{{ formatDurationMs(performanceMetrics.avgResponseTimeMs) }}</div>
                   <div class="stat-label">平均响应时间</div>
                 </div>
               </el-card>
@@ -387,7 +387,7 @@ function getCategoryColor(name) {
                   <el-icon :size="22"><Monitor /></el-icon>
                 </div>
                 <div class="stat-info">
-                  <div class="stat-value">{{ performanceMetrics.error_rate }}%</div>
+                  <div class="stat-value">{{ performanceMetrics.errorRate }}%</div>
                   <div class="stat-label">API 错误率</div>
                 </div>
               </el-card>
@@ -398,7 +398,7 @@ function getCategoryColor(name) {
                   <el-icon :size="22"><Cpu /></el-icon>
                 </div>
                 <div class="stat-info">
-                  <div class="stat-value">{{ formatNumber(performanceMetrics.total_tracked_requests) }}</div>
+                  <div class="stat-value">{{ formatNumber(performanceMetrics.totalTrackedRequests) }}</div>
                   <div class="stat-label">追踪请求数</div>
                 </div>
               </el-card>
@@ -411,34 +411,34 @@ function getCategoryColor(name) {
             </template>
             <el-descriptions :column="2" border>
               <el-descriptions-item label="平均响应时间">
-                {{ formatDuration(performanceMetrics.avg_response_time_ms) }}
+                {{ formatDurationMs(performanceMetrics.avgResponseTimeMs) }}
               </el-descriptions-item>
               <el-descriptions-item label="API 错误率">
-                {{ performanceMetrics.error_rate }}%
+                {{ performanceMetrics.errorRate }}%
               </el-descriptions-item>
               <el-descriptions-item label="追踪请求数">
-                {{ performanceMetrics.total_tracked_requests }}
+                {{ performanceMetrics.totalTrackedRequests }}
               </el-descriptions-item>
               <el-descriptions-item label="总 Token 消耗">
-                {{ formatNumber(overview.total_tokens) }}
+                {{ formatNumber(overview.totalTokens) }}
               </el-descriptions-item>
               <el-descriptions-item label="平均每会话消息数">
-                {{ overview.total_sessions > 0 ? (overview.total_messages / overview.total_sessions).toFixed(1) : 0 }}
+                {{ overview.totalSessions > 0 ? (overview.totalMessages / overview.totalSessions).toFixed(1) : 0 }}
               </el-descriptions-item>
               <el-descriptions-item label="平均每消息 Token 数">
-                {{ overview.total_messages > 0 ? Math.round(overview.total_tokens / overview.total_messages) : 0 }}
+                {{ overview.totalMessages > 0 ? Math.round(overview.totalTokens / overview.totalMessages) : 0 }}
               </el-descriptions-item>
               <el-descriptions-item label="总事件数">
-                {{ formatNumber(overview.total_events) }}
+                {{ formatNumber(overview.totalEvents) }}
               </el-descriptions-item>
               <el-descriptions-item label="聊天 Token">
-                {{ formatNumber(overview.token_breakdown?.chat || 0) }}
+                {{ formatNumber(overview.tokenBreakdown?.chat || 0) }}
               </el-descriptions-item>
               <el-descriptions-item label="深度研究 Token">
-                {{ formatNumber(overview.token_breakdown?.research || 0) }}
+                {{ formatNumber(overview.tokenBreakdown?.research || 0) }}
               </el-descriptions-item>
               <el-descriptions-item label="工作流 Token">
-                {{ formatNumber(overview.token_breakdown?.workflow || 0) }}
+                {{ formatNumber(overview.tokenBreakdown?.workflow || 0) }}
               </el-descriptions-item>
             </el-descriptions>
           </el-card>
@@ -452,29 +452,29 @@ function getCategoryColor(name) {
               <span class="card-title">最近操作记录</span>
             </template>
             <el-table :data="recentActivities" stripe style="width: 100%">
-              <el-table-column prop="event_type_label" label="事件" min-width="140" />
-              <el-table-column prop="event_category_label" label="分类" width="120">
+              <el-table-column prop="eventTypeLabel" label="事件" min-width="140" />
+              <el-table-column prop="eventCategoryLabel" label="分类" width="120">
                 <template #default="{ row }">
-                  <el-tag size="small" :color="getCategoryColor(row.event_category_label)" effect="dark" style="border:none;">
-                    {{ row.event_category_label }}
+                  <el-tag size="small" :color="getCategoryColor(row.eventCategoryLabel)" effect="dark" style="border:none;">
+                    {{ row.eventCategoryLabel }}
                   </el-tag>
                 </template>
               </el-table-column>
               <el-table-column label="状态" width="80" align="center">
                 <template #default="{ row }">
-                  <el-tag :type="row.is_success ? 'success' : 'danger'" size="small">
-                    {{ row.is_success ? '成功' : '失败' }}
+                  <el-tag :type="row.isSuccess ? 'success' : 'danger'" size="small">
+                    {{ row.isSuccess ? '成功' : '失败' }}
                   </el-tag>
                 </template>
               </el-table-column>
               <el-table-column label="耗时" width="100" align="right">
                 <template #default="{ row }">
-                  {{ formatDuration(row.duration_ms) }}
+                  {{ formatDurationMs(row.durationMs) }}
                 </template>
               </el-table-column>
               <el-table-column label="时间" width="140">
                 <template #default="{ row }">
-                  {{ formatTime(row.created_at) }}
+                  {{ formatTime(row.createdAt) }}
                 </template>
               </el-table-column>
             </el-table>

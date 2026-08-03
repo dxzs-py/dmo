@@ -17,7 +17,7 @@
             />
           </el-form-item>
           <el-form-item label="知识库">
-            <KnowledgeBaseSelector v-model="workflowForm.knowledge_base_ids" />
+            <KnowledgeBaseSelector v-model="workflowForm.knowledgeBaseIds" />
             <div class="kb-tip">不选择知识库时将使用 AI 内置知识生成学习内容</div>
           </el-form-item>
           <el-form-item>
@@ -36,8 +36,8 @@
               <el-tag v-if="currentStepMessage" type="info" class="step-message">
                 {{ currentStepMessage }}
               </el-tag>
-              <el-tag :type="getStepType(execution.current_step)">
-                {{ getStepText(execution.current_step) }}
+              <el-tag :type="getStepType(execution.currentStep)">
+                {{ getStepText(execution.currentStep) }}
               </el-tag>
               <el-button link type="primary" size="small" @click="showDetail = false">
                 返回列表
@@ -53,52 +53,52 @@
                 <div
                   :class="['progress-step', {
                     'is-completed': completedSteps.includes(step.key),
-                    'is-active': execution?.current_step === step.key,
-                    'is-pending': !completedSteps.includes(step.key) && execution?.current_step !== step.key
+                    'is-active': execution?.currentStep === step.key,
+                    'is-pending': !completedSteps.includes(step.key) && execution?.currentStep !== step.key
                   }]"
                 >
                   <AiCheckpoint v-if="completedSteps.includes(step.key)" class="step-checkpoint">
                     <span class="step-label">{{ step.label }}</span>
                   </AiCheckpoint>
                   <div v-else class="step-node-wrapper">
-                    <AiNode :title="step.label" :status="execution?.current_step === step.key ? 'running' : ''" />
+                    <AiNode :title="step.label" :status="execution?.currentStep === step.key ? 'running' : ''" />
                   </div>
                 </div>
                 <AiEdge
                   v-if="idx < workflowSteps.length - 1"
-                  :status="completedSteps.includes(step.key) ? 'success' : (execution?.current_step === step.key ? 'active' : 'default')"
+                  :status="completedSteps.includes(step.key) ? 'success' : (execution?.currentStep === step.key ? 'active' : 'default')"
                 />
               </template>
             </div>
           </AiCanvas>
         </div>
 
-        <el-card v-if="execution.learning_plan" class="plan-card">
+        <el-card v-if="execution.learningPlan" class="plan-card">
           <template #header>
             <div class="card-header">
               <span>📚 学习计划</span>
-              <el-tag type="info">{{ execution.learning_plan.difficulty }}</el-tag>
+              <el-tag type="info">{{ execution.learningPlan.difficulty }}</el-tag>
             </div>
           </template>
 
-          <h4>{{ execution.learning_plan.topic }}</h4>
+          <h4>{{ execution.learningPlan.topic }}</h4>
 
           <div class="plan-section">
             <h5>🎯 学习目标</h5>
             <ul>
-              <li v-for="(obj, idx) in execution.learning_plan.objectives" :key="idx">{{ obj }}</li>
+              <li v-for="(obj, idx) in execution.learningPlan.objectives" :key="idx">{{ obj }}</li>
             </ul>
           </div>
 
           <div class="plan-section">
             <h5>💡 关键知识点</h5>
             <ul>
-              <li v-for="(point, idx) in execution.learning_plan.key_points" :key="idx">{{ point }}</li>
+              <li v-for="(point, idx) in execution.learningPlan.keyPoints" :key="idx">{{ point }}</li>
             </ul>
           </div>
 
           <div class="plan-info">
-            <el-tag>预计时间: {{ execution.learning_plan.estimated_time }} 分钟</el-tag>
+            <el-tag>预计时间: {{ execution.learningPlan.estimatedTime }} 分钟</el-tag>
           </div>
         </el-card>
 
@@ -108,7 +108,7 @@
           :is-submitting="isSubmitting"
           :score="execution.score"
           :feedback="execution.feedback"
-          :should-retry="execution.should_retry"
+          :should-retry="execution.shouldRetry"
           :get-question-type-text="getQuestionTypeText"
           @submit="submitAnswers"
           @reset="resetWorkflow"
@@ -122,10 +122,10 @@
           </template>
 
           <el-descriptions :column="1" border size="small">
-            <el-descriptions-item label="线程ID">{{ execution.thread_id }}</el-descriptions-item>
-            <el-descriptions-item label="查询">{{ execution.user_question }}</el-descriptions-item>
-            <el-descriptions-item label="创建时间">{{ formatDate(execution.created_at) }}</el-descriptions-item>
-            <el-descriptions-item label="更新时间">{{ formatDate(execution.updated_at) }}</el-descriptions-item>
+            <el-descriptions-item label="线程ID">{{ execution.threadId }}</el-descriptions-item>
+            <el-descriptions-item label="查询">{{ execution.userQuestion }}</el-descriptions-item>
+            <el-descriptions-item label="创建时间">{{ formatDate(execution.createdAt) }}</el-descriptions-item>
+            <el-descriptions-item label="更新时间">{{ formatDate(execution.updatedAt) }}</el-descriptions-item>
           </el-descriptions>
         </el-card>
 
@@ -155,7 +155,7 @@
           <h4>生成的文件</h4>
           <FileBrowser
             ref="fileBrowserRef"
-            :task-id="execution.thread_id"
+            :task-id="execution.threadId"
             :api="workflowAPI"
           />
         </div>
@@ -184,6 +184,7 @@
 import { ref, reactive, computed, watch, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { workflowAPI } from '../api'
 import { readSSEStream } from '../utils/sse'
+import { toCamelCase } from '@/utils/session-transformers'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import TaskList from '../components/chat/TaskList.vue'
@@ -223,7 +224,7 @@ const POLL_BACKOFF_FACTOR = 1.5
 
 const workflowForm = reactive({
   query: '',
-  knowledge_base_ids: [],
+  knowledgeBaseIds: [],
 })
 
 const statusOptions = [
@@ -249,7 +250,7 @@ const stepOrder = workflowSteps.map(s => s.key)
 
 const completedSteps = computed(() => {
   if (!execution.value) return []
-  const currentIdx = stepOrder.indexOf(execution.value.current_step)
+  const currentIdx = stepOrder.indexOf(execution.value.currentStep)
   if (currentIdx < 0) return []
   return stepOrder.slice(0, currentIdx)
 })
@@ -301,7 +302,7 @@ const pollExecutionStatus = async () => {
     return
   }
 
-  const currentStep = execution.value.current_step
+  const currentStep = execution.value.currentStep
 
   if (currentStep === 'waiting_for_answers' || currentStep === 'end' || currentStep === 'completed') {
     stopPolling()
@@ -313,7 +314,7 @@ const pollExecutionStatus = async () => {
   }
 
   try {
-    const response = await workflowAPI.getState(execution.value.thread_id)
+    const response = await workflowAPI.getState(execution.value.threadId)
     const data = response.data
     execution.value = { ...execution.value, ...(data.data || data) }
 
@@ -324,7 +325,7 @@ const pollExecutionStatus = async () => {
       })
     }
 
-    if (currentStep !== execution.value.current_step) {
+    if (currentStep !== execution.value.currentStep) {
       currentPollInterval = BASE_POLL_INTERVAL
     } else {
       currentPollInterval = Math.min(
@@ -372,7 +373,7 @@ const startWorkflow = async () => {
     stopPolling()
     // 启动新工作流后立即订阅 WebSocket 实时事件，避免在用户切走再回来前丢失事件
     subscribeRealtimeForTask(execution.value)
-    connectSSE(result.thread_id)
+    connectSSE(result.threadId)
   } catch (error) {
     logger.error('启动工作流失败:', error)
     ElMessage.error('启动工作流失败，请稍后重试')
@@ -411,7 +412,7 @@ const connectSSE = async (threadId) => {
     }, sseAbortController.signal)
 
     if (sseReaderActive && execution.value) {
-      const step = execution.value.current_step
+      const step = execution.value.currentStep
       if (step !== 'waiting_for_answers' && step !== 'end' && step !== 'completed') {
         pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
       }
@@ -422,7 +423,7 @@ const connectSSE = async (threadId) => {
     }
     logger.error('SSE连接失败，回退到轮询:', error)
     if (execution.value) {
-      const step = execution.value.current_step
+      const step = execution.value.currentStep
       if (step !== 'waiting_for_answers' && step !== 'end' && step !== 'completed') {
         pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
       }
@@ -442,20 +443,20 @@ const handleSSEEvent = (data) => {
       // 新格式：{ type: 'workflow_step', data: { step, message } }
       currentStepMessage.value = data.data?.message || '工作流启动中...'
       if (execution.value && data.data?.step) {
-        execution.value.current_step = data.data.step
+        execution.value.currentStep = data.data.step
       }
       break
     case 'workflow_state_update':
       // 学习工作流状态变更（原 'state_update' 和 'waiting' 合并）
       // 新格式：{ type: 'workflow_state_update', data: { current_step, learning_plan, quiz, state, ... } }
       if (execution.value && data.data) {
-        if (data.data.current_step) execution.value.current_step = data.data.current_step
-        if (data.data.learning_plan) execution.value.learning_plan = data.data.learning_plan
-        if (data.data.retrieved_docs) execution.value.retrieved_docs = data.data.retrieved_docs
+        if (data.data.current_step) execution.value.currentStep = data.data.current_step
+        if (data.data.learning_plan) execution.value.learningPlan = toCamelCase(data.data.learning_plan)
+        if (data.data.retrieved_docs) execution.value.retrievedDocs = toCamelCase(data.data.retrieved_docs)
         if (data.data.quiz) execution.value.quiz = data.data.quiz
         if (data.data.score !== undefined) execution.value.score = data.data.score
         if (data.data.feedback !== undefined) execution.value.feedback = data.data.feedback
-        if (data.data.should_retry !== undefined) execution.value.should_retry = data.data.should_retry
+        if (data.data.should_retry !== undefined) execution.value.shouldRetry = data.data.should_retry
         // waiting_for_answers 状态：原 'waiting' 行为，关闭 SSE 并初始化答题表单
         const isWaiting = data.data.state === 'waiting_for_answers'
           || data.data.current_step === 'waiting_for_answers'
@@ -523,39 +524,39 @@ const { subscribeRealtimeForTask, clearRealtimeSubscriptions } = useTaskRealtime
  * @type {import('vue').ComputedRef<Object|null>}
  */
 const workflowStateFromStore = computed(() => {
-  if (!execution.value?.thread_id) return null
-  return workflowStore.getWorkflowState(execution.value.thread_id)
+  if (!execution.value?.threadId) return null
+  return workflowStore.getWorkflowState(execution.value.threadId)
 })
 
 watch(workflowStateFromStore, (newState, oldState) => {
   if (!newState || !execution.value) return
 
   // 检测关键字段变化，避免无意义的重复合并
-  const stepChanged = newState.current_step !== oldState?.current_step
+  const stepChanged = newState.currentStep !== oldState?.currentStep
   const statusChanged = newState.status !== oldState?.status
   const quizChanged = newState.quiz !== oldState?.quiz
   const scoreChanged = newState.score !== oldState?.score
   const feedbackChanged = newState.feedback !== oldState?.feedback
-  const planChanged = newState.learning_plan !== oldState?.learning_plan
+  const planChanged = newState.learningPlan !== oldState?.learningPlan
 
   if (!stepChanged && !statusChanged && !quizChanged && !scoreChanged
       && !feedbackChanged && !planChanged) return
 
   // 合并 store 状态到 execution.value（仅合并 store 中存在的字段）
   const merged = { ...execution.value }
-  if (newState.current_step) merged.current_step = newState.current_step
+  if (newState.currentStep) merged.currentStep = newState.currentStep
   if (newState.status) merged.status = newState.status
-  if (newState.learning_plan) merged.learning_plan = newState.learning_plan
-  if (newState.retrieved_docs) merged.retrieved_docs = newState.retrieved_docs
+  if (newState.learningPlan) merged.learningPlan = newState.learningPlan
+  if (newState.retrievedDocs) merged.retrievedDocs = newState.retrievedDocs
   if (newState.quiz) merged.quiz = newState.quiz
   if (newState.score !== undefined) merged.score = newState.score
   if (newState.feedback !== undefined) merged.feedback = newState.feedback
-  if (newState.should_retry !== undefined) merged.should_retry = newState.should_retry
+  if (newState.shouldRetry !== undefined) merged.shouldRetry = newState.shouldRetry
   execution.value = merged
 
-  // 更新步骤消息（store 中独立维护 step_message 字段）
-  if (newState.step_message !== undefined) {
-    currentStepMessage.value = newState.step_message
+  // 更新步骤消息（store 中独立维护 stepMessage 字段）
+  if (newState.stepMessage !== undefined) {
+    currentStepMessage.value = newState.stepMessage
   }
 
   // quiz 变化时初始化答题表单（避免重复初始化）
@@ -575,7 +576,7 @@ watch(workflowStateFromStore, (newState, oldState) => {
         autoLoadKeyFile()
       })
     } else if (newState.status === 'failed') {
-      const errorMsg = newState.error_message || newState.error
+      const errorMsg = newState.errorMessage || newState.error
       if (errorMsg) {
         ElMessage.error(errorMsg)
       }
@@ -583,8 +584,8 @@ watch(workflowStateFromStore, (newState, oldState) => {
   }
 
   logger.info(
-    `[WorkflowView] workflowStore 同步到 execution: taskId=${execution.value.thread_id}, ` +
-    `step=${newState.current_step || 'unknown'}, status=${newState.status || 'unknown'}`
+    `[WorkflowView] workflowStore 同步到 execution: taskId=${execution.value.threadId}, ` +
+    `step=${newState.currentStep || 'unknown'}, status=${newState.status || 'unknown'}`
   )
 })
 
@@ -598,15 +599,15 @@ const submitAnswers = async () => {
   isSubmitting.value = true
 
   try {
-    const response = await workflowAPI.submitAnswers(execution.value.thread_id, answersForm)
+    const response = await workflowAPI.submitAnswers(execution.value.threadId, answersForm)
     const responseData = response.data.data || response.data
     execution.value = { ...execution.value, ...responseData }
     ElMessage.success('答案已提交')
 
-    if (responseData.should_retry) {
+    if (responseData.shouldRetry) {
       Object.keys(answersForm).forEach(key => delete answersForm[key])
       stopPolling()
-      connectSSE(execution.value.thread_id)
+      connectSSE(execution.value.threadId)
     } else {
       nextTick(() => {
         if (fileBrowserRef.value) {
@@ -626,13 +627,13 @@ const submitAnswers = async () => {
 
 const resetWorkflow = () => {
   // 清理 workflowStore 中对应任务的状态
-  if (execution.value?.thread_id) {
-    workflowStore.clearWorkflowState(execution.value.thread_id)
+  if (execution.value?.threadId) {
+    workflowStore.clearWorkflowState(execution.value.threadId)
   }
   execution.value = null
   Object.keys(answersForm).forEach(key => delete answersForm[key])
   workflowForm.query = ''
-  workflowForm.knowledge_base_ids = []
+  workflowForm.knowledgeBaseIds = []
   showDetail.value = false
   autoLoadContent.value = null
   stopPolling()
@@ -641,9 +642,9 @@ const resetWorkflow = () => {
 
 /** 自动查找并加载学习工作流生成的关键文件 */
 const _findKeyFile = async () => {
-  if (!execution.value?.thread_id) return null
+  if (!execution.value?.threadId) return null
   try {
-    const res = await workflowAPI.getFiles(execution.value.thread_id)
+    const res = await workflowAPI.getFiles(execution.value.threadId)
     const data = res.data?.data || res.data
     const files = data?.files || data || []
     // 优先查找 notes/ 目录下的 .md 文件
@@ -665,13 +666,13 @@ const _findKeyFile = async () => {
 }
 
 const autoLoadKeyFile = async () => {
-  if (!execution.value?.thread_id) return
+  if (!execution.value?.threadId) return
   autoLoadContent.value = null
   autoLoadLoading.value = true
   try {
     const file = await _findKeyFile()
     if (file) {
-      const response = await workflowAPI.getFileContent(execution.value.thread_id, file)
+      const response = await workflowAPI.getFileContent(execution.value.threadId, file)
       const data = response.data?.data || response.data
       autoLoadContent.value = data?.content || data || ''
     }
@@ -698,29 +699,29 @@ const viewTask = async (selectedTask) => {
   }
 
   const isActive = selectedTask.status === 'running'
-    || selectedTask.current_step === 'planner'
-    || selectedTask.current_step === 'retrieval'
-    || selectedTask.current_step === 'quiz_generator'
-    || selectedTask.current_step === 'grading'
-    || selectedTask.current_step === 'feedback'
+    || selectedTask.currentStep === 'planner'
+    || selectedTask.currentStep === 'retrieval'
+    || selectedTask.currentStep === 'quiz_generator'
+    || selectedTask.currentStep === 'grading'
+    || selectedTask.currentStep === 'feedback'
 
-  if (isActive && selectedTask.thread_id) {
-    connectSSE(selectedTask.thread_id)
-  } else if (selectedTask.thread_id) {
+  if (isActive && selectedTask.threadId) {
+    connectSSE(selectedTask.threadId)
+  } else if (selectedTask.threadId) {
     try {
-      const resp = await workflowAPI.getState(selectedTask.thread_id)
+      const resp = await workflowAPI.getState(selectedTask.threadId)
       const fresh = resp.data?.data || resp.data
       if (fresh) {
         execution.value = { ...selectedTask, ...fresh }
         // fresh 可能补充 chat_session_id 字段，重新订阅（幂等：若已订阅同 task+session 则跳过）
         subscribeRealtimeForTask(execution.value)
-        const freshActive = fresh.current_step
-          && fresh.current_step !== 'waiting_for_answers'
-          && fresh.current_step !== 'end'
-          && fresh.current_step !== 'completed'
-          && fresh.current_step !== 'failed'
+        const freshActive = fresh.currentStep
+          && fresh.currentStep !== 'waiting_for_answers'
+          && fresh.currentStep !== 'end'
+          && fresh.currentStep !== 'completed'
+          && fresh.currentStep !== 'failed'
         if (freshActive) {
-          connectSSE(fresh.thread_id)
+          connectSSE(fresh.threadId)
         } else {
           // 已完成任务，自动加载文件和资料
           nextTick(() => {
@@ -746,8 +747,8 @@ const deleteTask = () => {
   // 取消 WebSocket 实时订阅，避免对已删除任务继续接收事件
   clearRealtimeSubscriptions()
   // 清理 workflowStore 中对应任务的状态，避免内存泄漏与残留状态干扰
-  if (execution.value?.thread_id) {
-    workflowStore.clearWorkflowState(execution.value.thread_id)
+  if (execution.value?.threadId) {
+    workflowStore.clearWorkflowState(execution.value.threadId)
   }
   execution.value = null
   showDetail.value = false
@@ -757,7 +758,7 @@ const deleteTask = () => {
 // keep-alive 激活时：恢复 WebSocket 订阅（onDeactivated 时已清理）
 // 首次挂载时 onActivated 也会触发，此时 execution.value 通常为 null，subscribeRealtimeForTask 会安全跳过
 onActivated(() => {
-  if (execution.value && execution.value.thread_id) {
+  if (execution.value && execution.value.threadId) {
     subscribeRealtimeForTask(execution.value)
   }
 })

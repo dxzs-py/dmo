@@ -1,8 +1,9 @@
 import { ref, computed, watch, nextTick } from 'vue'
-import { workflowAPI } from '@/api'
+import { workflowAPI } from '@/api/workflow'
 import { readSSEStream } from '@/utils/sse'
 import { ElMessage } from 'element-plus'
 import { logger } from '@/utils/logger'
+import { toCamelCase } from '@/utils/session-transformers'
 import { useRealtimeSync } from '@/composables/useRealtimeSync'
 import { useSyncStore } from '@/stores/sync'
 import { useWorkflowStore } from '@/stores/workflow'
@@ -105,7 +106,7 @@ export function useWorkflowExecution({
       return
     }
 
-    const currentStep = execution.value.current_step
+    const currentStep = execution.value.currentStep
 
     if (currentStep === 'waiting_for_answers' || currentStep === 'end' || currentStep === 'completed') {
       stopPolling()
@@ -117,7 +118,7 @@ export function useWorkflowExecution({
     }
 
     try {
-      const response = await workflowAPI.getState(execution.value.thread_id)
+      const response = await workflowAPI.getState(execution.value.threadId)
       const data = response.data
       execution.value = { ...execution.value, ...(data.data || data) }
 
@@ -126,7 +127,7 @@ export function useWorkflowExecution({
         initAnswersFromQuiz(responseData.quiz)
       }
 
-      if (currentStep !== execution.value.current_step) {
+      if (currentStep !== execution.value.currentStep) {
         currentPollInterval = BASE_POLL_INTERVAL
       } else {
         currentPollInterval = Math.min(
@@ -162,32 +163,34 @@ export function useWorkflowExecution({
    * @param {Object} data - SSE 事件，格式 { type: 'workflow_*', data: {...} }
    */
   const handleSSEEvent = (data) => {
+    const eventData = data.data ? toCamelCase(data.data) : null
+
     switch (data.type) {
       case 'workflow_step':
         // 学习工作流节点执行进度（原 'start' 和 'step' 合并）
-        currentStepMessage.value = data.data?.message || '工作流启动中...'
-        if (execution.value && data.data?.step) {
-          execution.value.current_step = data.data.step
+        currentStepMessage.value = eventData?.message || '工作流启动中...'
+        if (execution.value && eventData?.step) {
+          execution.value.currentStep = eventData.step
         }
         break
       case 'workflow_state_update':
         // 学习工作流状态变更（原 'state_update' 和 'waiting' 合并）
-        if (execution.value && data.data) {
-          if (data.data.current_step) execution.value.current_step = data.data.current_step
-          if (data.data.learning_plan) execution.value.learning_plan = data.data.learning_plan
-          if (data.data.retrieved_docs) execution.value.retrieved_docs = data.data.retrieved_docs
-          if (data.data.quiz) execution.value.quiz = data.data.quiz
-          if (data.data.score !== undefined) execution.value.score = data.data.score
-          if (data.data.feedback !== undefined) execution.value.feedback = data.data.feedback
-          if (data.data.should_retry !== undefined) execution.value.should_retry = data.data.should_retry
+        if (execution.value && eventData) {
+          if (eventData.currentStep) execution.value.currentStep = eventData.currentStep
+          if (eventData.learningPlan) execution.value.learningPlan = eventData.learningPlan
+          if (eventData.retrievedDocs) execution.value.retrievedDocs = eventData.retrievedDocs
+          if (eventData.quiz) execution.value.quiz = eventData.quiz
+          if (eventData.score !== undefined) execution.value.score = eventData.score
+          if (eventData.feedback !== undefined) execution.value.feedback = eventData.feedback
+          if (eventData.shouldRetry !== undefined) execution.value.shouldRetry = eventData.shouldRetry
           // waiting_for_answers 状态：原 'waiting' 行为，关闭 SSE 并初始化答题表单
-          const isWaiting = data.data.state === 'waiting_for_answers'
-            || data.data.current_step === 'waiting_for_answers'
-            || data.data.status === 'waiting_for_answers'
+          const isWaiting = eventData.state === 'waiting_for_answers'
+            || eventData.currentStep === 'waiting_for_answers'
+            || eventData.status === 'waiting_for_answers'
           if (isWaiting) {
-            execution.value = { ...execution.value, ...data.data }
-            if (data.data.quiz) {
-              initAnswersFromQuiz(data.data.quiz)
+            execution.value = { ...execution.value, ...eventData }
+            if (eventData.quiz) {
+              initAnswersFromQuiz(eventData.quiz)
             }
             closeSSE()
           }
@@ -196,8 +199,8 @@ export function useWorkflowExecution({
       case 'workflow_completed':
         // 学习工作流完成（原 'complete'）
         closeSSE()
-        if (execution.value && data.data) {
-          execution.value = { ...execution.value, status: 'completed', ...data.data }
+        if (execution.value && eventData) {
+          execution.value = { ...execution.value, status: 'completed', ...eventData }
         }
         if (fileBrowserRef.value) {
           fileBrowserRef.value.loadFiles()
@@ -207,16 +210,16 @@ export function useWorkflowExecution({
       case 'workflow_failed':
         // 学习工作流失败（新增）
         closeSSE()
-        if (execution.value && data.data) {
-          execution.value = { ...execution.value, status: 'failed', ...data.data }
+        if (execution.value && eventData) {
+          execution.value = { ...execution.value, status: 'failed', ...eventData }
         }
-        ElMessage.error(data.data?.error || data.data?.message || '工作流执行失败')
+        ElMessage.error(eventData?.error || eventData?.message || '工作流执行失败')
         break
       case 'stream_error':
-        logger.warn('工作流流式执行异常:', data.message || data.data?.message)
+        logger.warn('工作流流式执行异常:', data.message || eventData?.message)
         break
       case 'error':
-        ElMessage.error(data.message || data.data?.message || '工作流执行出错')
+        ElMessage.error(data.message || eventData?.message || '工作流执行出错')
         closeSSE()
         break
     }
@@ -261,7 +264,7 @@ export function useWorkflowExecution({
       }, sseAbortController.signal)
 
       if (sseReaderActive && execution.value) {
-        const step = execution.value.current_step
+        const step = execution.value.currentStep
         if (step !== 'waiting_for_answers' && step !== 'end' && step !== 'completed') {
           pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
         }
@@ -272,7 +275,7 @@ export function useWorkflowExecution({
       }
       logger.error('SSE连接失败，回退到轮询:', error)
       if (execution.value) {
-        const step = execution.value.current_step
+        const step = execution.value.currentStep
         if (step !== 'waiting_for_answers' && step !== 'end' && step !== 'completed') {
           pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
         }
@@ -309,8 +312,8 @@ export function useWorkflowExecution({
   const subscribeRealtimeForTask = (taskObj) => {
     if (!taskObj) return
     // WorkflowView 用 thread_id 作为任务标识（与 DeepResearchView 的 task_id 对应）
-    const taskId = taskObj.thread_id
-    const chatSessionId = taskObj.chat_session_id || taskObj.session_id
+    const taskId = taskObj.threadId
+    const chatSessionId = taskObj.chatSessionId || taskObj.sessionId
 
     // 幂等判断：task 和 session 均已订阅则跳过（fresh 刷新后重复调用场景）
     if (taskId && taskId === subscribedTaskId && chatSessionId === subscribedSessionId) {
@@ -346,39 +349,39 @@ export function useWorkflowExecution({
 
   /** 从 workflowStore 读取当前 execution.thread_id 对应的状态（响应式） */
   const workflowStateFromStore = computed(() => {
-    if (!execution.value?.thread_id) return null
-    return workflowStore.getWorkflowState(execution.value.thread_id)
+    if (!execution.value?.threadId) return null
+    return workflowStore.getWorkflowState(execution.value.threadId)
   })
 
   watch(workflowStateFromStore, (newState, oldState) => {
     if (!newState || !execution.value) return
 
     // 检测关键字段变化，避免无意义的重复合并
-    const stepChanged = newState.current_step !== oldState?.current_step
+    const stepChanged = newState.currentStep !== oldState?.currentStep
     const statusChanged = newState.status !== oldState?.status
     const quizChanged = newState.quiz !== oldState?.quiz
     const scoreChanged = newState.score !== oldState?.score
     const feedbackChanged = newState.feedback !== oldState?.feedback
-    const planChanged = newState.learning_plan !== oldState?.learning_plan
+    const planChanged = newState.learningPlan !== oldState?.learningPlan
 
     if (!stepChanged && !statusChanged && !quizChanged && !scoreChanged
         && !feedbackChanged && !planChanged) return
 
     // 合并 store 状态到 execution.value（仅合并 store 中存在的字段）
     const merged = { ...execution.value }
-    if (newState.current_step) merged.current_step = newState.current_step
+    if (newState.currentStep) merged.currentStep = newState.currentStep
     if (newState.status) merged.status = newState.status
-    if (newState.learning_plan) merged.learning_plan = newState.learning_plan
-    if (newState.retrieved_docs) merged.retrieved_docs = newState.retrieved_docs
+    if (newState.learningPlan) merged.learningPlan = newState.learningPlan
+    if (newState.retrievedDocs) merged.retrievedDocs = newState.retrievedDocs
     if (newState.quiz) merged.quiz = newState.quiz
     if (newState.score !== undefined) merged.score = newState.score
     if (newState.feedback !== undefined) merged.feedback = newState.feedback
-    if (newState.should_retry !== undefined) merged.should_retry = newState.should_retry
+    if (newState.shouldRetry !== undefined) merged.shouldRetry = newState.shouldRetry
     execution.value = merged
 
     // 更新步骤消息（store 中独立维护 step_message 字段）
-    if (newState.step_message !== undefined) {
-      currentStepMessage.value = newState.step_message
+    if (newState.stepMessage !== undefined) {
+      currentStepMessage.value = newState.stepMessage
     }
 
     // quiz 变化时初始化答题表单（避免重复初始化）
@@ -396,7 +399,7 @@ export function useWorkflowExecution({
           autoLoadKeyFile()
         })
       } else if (newState.status === 'failed') {
-        const errorMsg = newState.error_message || newState.error
+        const errorMsg = newState.errorMessage || newState.error
         if (errorMsg) {
           ElMessage.error(errorMsg)
         }
@@ -404,8 +407,8 @@ export function useWorkflowExecution({
     }
 
     logger.info(
-      `[WorkflowView] workflowStore 同步到 execution: taskId=${execution.value.thread_id}, ` +
-      `step=${newState.current_step || 'unknown'}, status=${newState.status || 'unknown'}`
+      `[WorkflowView] workflowStore 同步到 execution: taskId=${execution.value.threadId}, ` +
+      `step=${newState.currentStep || 'unknown'}, status=${newState.status || 'unknown'}`
     )
   })
 
@@ -435,7 +438,7 @@ export function useWorkflowExecution({
       stopPolling()
       // 启动新工作流后立即订阅 WebSocket 实时事件，避免在用户切走再回来前丢失事件
       subscribeRealtimeForTask(execution.value)
-      connectSSE(result.thread_id)
+      connectSSE(result.threadId)
     } catch (error) {
       logger.error('启动工作流失败:', error)
       ElMessage.error('启动工作流失败，请稍后重试')
@@ -462,29 +465,29 @@ export function useWorkflowExecution({
     }
 
     const isActive = selectedTask.status === 'running'
-      || selectedTask.current_step === 'planner'
-      || selectedTask.current_step === 'retrieval'
-      || selectedTask.current_step === 'quiz_generator'
-      || selectedTask.current_step === 'grading'
-      || selectedTask.current_step === 'feedback'
+      || selectedTask.currentStep === 'planner'
+      || selectedTask.currentStep === 'retrieval'
+      || selectedTask.currentStep === 'quiz_generator'
+      || selectedTask.currentStep === 'grading'
+      || selectedTask.currentStep === 'feedback'
 
-    if (isActive && selectedTask.thread_id) {
-      connectSSE(selectedTask.thread_id)
-    } else if (selectedTask.thread_id) {
+    if (isActive && selectedTask.threadId) {
+      connectSSE(selectedTask.threadId)
+    } else if (selectedTask.threadId) {
       try {
-        const resp = await workflowAPI.getState(selectedTask.thread_id)
+        const resp = await workflowAPI.getState(selectedTask.threadId)
         const fresh = resp.data?.data || resp.data
         if (fresh) {
           execution.value = { ...selectedTask, ...fresh }
           // fresh 可能补充 chat_session_id 字段，重新订阅（幂等：若已订阅同 task+session 则跳过）
           subscribeRealtimeForTask(execution.value)
-          const freshActive = fresh.current_step
-            && fresh.current_step !== 'waiting_for_answers'
-            && fresh.current_step !== 'end'
-            && fresh.current_step !== 'completed'
-            && fresh.current_step !== 'failed'
+          const freshActive = fresh.currentStep
+            && fresh.currentStep !== 'waiting_for_answers'
+            && fresh.currentStep !== 'end'
+            && fresh.currentStep !== 'completed'
+            && fresh.currentStep !== 'failed'
           if (freshActive) {
-            connectSSE(fresh.thread_id)
+            connectSSE(fresh.threadId)
           } else {
             // 已完成任务，自动加载文件和资料
             nextTick(() => {
@@ -509,8 +512,8 @@ export function useWorkflowExecution({
     // 取消 WebSocket 实时订阅，避免对已删除任务继续接收事件
     clearRealtimeSubscriptions()
     // 清理 workflowStore 中对应任务的状态，避免内存泄漏与残留状态干扰
-    if (execution.value?.thread_id) {
-      workflowStore.clearWorkflowState(execution.value.thread_id)
+    if (execution.value?.threadId) {
+      workflowStore.clearWorkflowState(execution.value.threadId)
     }
     execution.value = null
     showDetail.value = false
@@ -520,13 +523,13 @@ export function useWorkflowExecution({
   /** 重置工作流：回到开始表单，清理所有状态与订阅 */
   const resetWorkflow = () => {
     // 清理 workflowStore 中对应任务的状态
-    if (execution.value?.thread_id) {
-      workflowStore.clearWorkflowState(execution.value.thread_id)
+    if (execution.value?.threadId) {
+      workflowStore.clearWorkflowState(execution.value.threadId)
     }
     execution.value = null
     resetAnswers()
     workflowForm.query = ''
-    workflowForm.knowledge_base_ids = []
+    workflowForm.knowledgeBaseIds = []
     showDetail.value = false
     clearAutoLoad()
     stopPolling()
@@ -558,3 +561,4 @@ export function useWorkflowExecution({
     backToList,
   }
 }
+

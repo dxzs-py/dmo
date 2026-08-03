@@ -1,5 +1,5 @@
 import { logger } from '@/utils/logger'
-import { transformBackendMessageToFrontend } from '@/utils/session-transformers'
+import { transformBackendMessageToFrontend, toCamelCase } from '@/utils/session-transformers'
 import { mergeMessageFromBackend, createMessageVersion } from '@/utils/message-operations'
 import { StreamState, ToolCallStatus, ApprovalState, PROTECTED_STREAM_STATES } from '@/types'
 import {
@@ -64,12 +64,15 @@ export const createHandleSessionEvent = (ctx) => {
   /**
    * 处理 session 通道事件（由 ChatView 等订阅方回调）
    *
-   * session_id 为 schema 必填字段，直接从 payload.session_id 获取。
+   * sessionId 为 schema 必填字段，入口 toCamelCase 转换后从 payload.sessionId 获取。
    * @param {RealtimeEvent} event
    */
   const handleSessionEvent = async (event) => {
-    const sessionId = event.payload?.session_id
-      || event.session_id
+    // 统一入站转换：WebSocket 事件 payload snake_case → camelCase
+    // 此转换后所有下游 handler（messageHandlers/toolCallHandler/approvalHandler）
+    // 收到的数据均为 camelCase，禁止再访问 snake_case 键名
+    event.payload = toCamelCase(event.payload)
+    const sessionId = event.payload?.sessionId
     if (!sessionId) return
 
     // 使用有序队列处理，避免 async 回调乱序导致 seq 回退
@@ -81,13 +84,13 @@ export const createHandleSessionEvent = (ctx) => {
   /**
    * 从事件中解析 sessionId
    *
-   * session_id 为 schema 必填字段，直接从 payload.session_id 获取。
+   * sessionId 为 schema 必填字段，直接从 payload.sessionId 获取。
+   * 注意：applySessionEvent 入口处已将 payload snake_case → camelCase。
    * @param {RealtimeEvent} event
    * @returns {string | null}
    */
   const _getSessionId = (event) => {
-    return event.payload?.session_id
-      || event.session_id
+    return event.payload?.sessionId
       || null
   }
 
@@ -105,10 +108,10 @@ export const createHandleSessionEvent = (ctx) => {
 
     let messageId = null
     if (event.type === 'message_updated') {
-      messageId = event.payload?.message_id || event.payload?.id
+      messageId = event.payload?.messageId
     } else {
-      // tool_call_* / approval_* 等事件统一从 payload.message_id 或 payload.extra.message_id 提取
-      messageId = event.payload?.message_id || event.payload?.extra?.message_id
+      // tool_call_* / approval_* 等事件统一从 payload.messageId 或 payload.extra.messageId 提取
+      messageId = event.payload?.messageId || event.payload?.extra?.messageId
     }
 
     if (messageId) {
@@ -130,7 +133,7 @@ export const createHandleSessionEvent = (ctx) => {
   const applySessionEvent = async (event) => {
     const sessionId = _getSessionId(event)
     if (!sessionId) {
-      logger.warn('[Sync] session 事件缺少 session_id:', event.type)
+      logger.warn('[Sync] session 事件缺少 sessionId:', event.type)
       return
     }
 
@@ -157,7 +160,7 @@ export const createHandleSessionEvent = (ctx) => {
         // 获取本地消息内容长度进行比较，后端内容更长时放行
         const session = sessionStore.sessions.find(s => s.id === sessionId)
         const targetMsg = session?.messages?.find(m =>
-          m.backendId?.toString() === (earlyPayload.message_id || earlyPayload.id)?.toString()
+          m.backendId?.toString() === (earlyPayload.messageId)?.toString()
         )
         const localLen = (targetMsg?.content || '').length
         const backendContent = earlyPayload?.message?.content || earlyPayload?.content
@@ -227,13 +230,13 @@ export const createHandleSessionEvent = (ctx) => {
         ctx.handleMessageAdded(sessionId, payload.message || payload)
         break
       case 'message_updated':
-        ctx.handleMessageUpdated(sessionId, payload.message_id || payload.id, payload.fields || payload)
+        ctx.handleMessageUpdated(sessionId, payload.messageId, payload.fields || payload)
         break
       case 'stream_event':
         ctx.handleStreamEvent(sessionId, payload)
         break
       case 'messages_deleted':
-        ctx.handleMessagesDeleted(sessionId, payload.deleted_message_ids || payload.ids || [])
+        ctx.handleMessagesDeleted(sessionId, payload.deletedMessageIds || payload.ids || [])
         break
       // 工具调用事件类型（每个 EventType 独立 ws_event_name）
       case 'tool_call_pending':
@@ -298,7 +301,7 @@ export const createHandleSessionEvent = (ctx) => {
   }
 
   /**
-   * 根据 payload.message_id 或 payload.extra.message_id 在指定会话中定位消息。
+   * 根据 payload.messageId 或 payload.extra.messageId 在指定会话中定位消息。
    * 用于 approval_* 等事件优先按 message_id 路由，避免 getLastAssistantMessage 兜底
    * 导致非末尾消息（如重新生成中途的旧消息）审批 UI 错位到最后一条。
    * @param {string} sessionId
@@ -306,7 +309,7 @@ export const createHandleSessionEvent = (ctx) => {
    * @returns {Object|null}
    */
   const _findMessageByIdOrExtra = (sessionId, payload) => {
-    const messageId = payload?.message_id || payload?.extra?.message_id
+    const messageId = payload?.messageId || payload?.extra?.messageId
     if (!messageId) return null
     const session = sessionStore.sessions.find(s => s.id === sessionId)
     if (!session?.messages) return null
@@ -345,8 +348,8 @@ export const createHandleSessionEvent = (ctx) => {
     const mappedState = APPROVAL_STATE_MAP[eventType]
     const source = options.source || payload.source || 'chat'
     const taskId = options.taskId || null
-    // session_id 为 schema 必填字段
-    const chatSessionId = payload.session_id
+    // sessionId 为 schema 必填字段
+    const chatSessionId = payload.sessionId
       || payload.chatSessionId
       || sessionId
 
@@ -355,8 +358,8 @@ export const createHandleSessionEvent = (ctx) => {
       return
     }
 
-    // SubTask 11.1: 解析 payload 中的 graph_interrupt_id 字段（批量审批场景）
-    const graphInterruptId = payload.graph_interrupt_id || payload.extra?.graph_interrupt_id
+    // 解析 payload 中的 graphInterruptId 字段（批量审批场景）
+    const graphInterruptId = payload.graphInterruptId || payload.extra?.graphInterruptId
 
     // 先调用 approvalStore 更新 toolCall.approval.state，再处理 streamState 转换。
     // 否则 _collectSiblingApprovals 读到的是旧状态（pending），
@@ -389,13 +392,13 @@ export const createHandleSessionEvent = (ctx) => {
       // approvalStore.handleApprovalEvent 会根据 payload 中的 session_id 推导 sessionId，
       // 若仍无 sessionId 则识别为独立 deep_research 模式，仅更新 pendingApprovals。
       approvalStore.handleApprovalEvent(enrichedPayload, { source, taskId })
-      logger.info(`[Sync] 审批变更(独立深度研究): taskId=${taskId}, source=${source}, tool=${payload.tool_name}, eventType=${eventType}, mappedState=${mappedState}, graphInterruptId=${graphInterruptId || '(none)'}`)
+      logger.info(`[Sync] 审批变更(独立深度研究): taskId=${taskId}, source=${source}, tool=${payload.toolName}, eventType=${eventType}, mappedState=${mappedState}, graphInterruptId=${graphInterruptId || '(none)'}`)
       return
     }
 
     // 2. 消息 streamState 转换（sync 的职责，仅 chat/learning/关联 deep_research 场景）
     // 审批恢复后有 token 级流式输出，需从 INTERRUPTED 转为 STREAMING
-    // 优先按 payload.message_id / payload.extra.message_id 路由（重新生成非末尾消息场景），
+    // 优先按 payload.messageId / payload.extra.messageId 路由（重新生成非末尾消息场景），
     // 找不到时回退到最后一条 assistant 消息（保持原行为）
     //
     // approval_pending 是"流被审批中断"的权威信号：
@@ -424,7 +427,7 @@ export const createHandleSessionEvent = (ctx) => {
       // SubTask 11.2-11.4: 批量审批场景，查询本地 store 中同一批次的 Approval 状态
       const targetMsg = _findMessageByIdOrExtra(sessionId, payload) || getLastAssistantMessage(sessionId)
       if (targetMsg?.streamState === StreamState.INTERRUPTED && !streamingSessions.has(sessionId)) {
-        const siblingApprovals = _collectSiblingApprovals(targetMsg, graphInterruptId, payload.remaining_pending_count)
+        const siblingApprovals = _collectSiblingApprovals(targetMsg, graphInterruptId, payload.remainingPendingCount)
 
         // remaining_pending_count 为权威计数时直接返回 number，> 0 表示仍有待审批 sibling
         if (typeof siblingApprovals === 'number') {
@@ -474,7 +477,7 @@ export const createHandleSessionEvent = (ctx) => {
       }
     }
 
-    logger.info(`[Sync] 审批变更: session=${sessionId}, chatSession=${chatSessionId}, source=${source}, tool=${payload.tool_name}, eventType=${eventType}, mappedState=${mappedState}, graphInterruptId=${graphInterruptId || '(none)'}`)
+    logger.info(`[Sync] 审批变更: session=${sessionId}, chatSession=${chatSessionId}, source=${source}, tool=${payload.toolName}, eventType=${eventType}, mappedState=${mappedState}, graphInterruptId=${graphInterruptId || '(none)'}`)
   }
 
   /**
@@ -501,10 +504,10 @@ export const createHandleSessionEvent = (ctx) => {
     for (const tc of message.toolCalls) {
       const approval = tc.approval
       if (!approval) continue
-      const tcGraphId = approval.graph_interrupt_id || approval.extra?.graph_interrupt_id
+      const tcGraphId = approval.graphInterruptId || approval.extra?.graphInterruptId
       if (tcGraphId === graphInterruptId) {
         siblings.push({
-          toolCallId: tc.id || tc.tool_call_id || '',
+          toolCallId: tc.id || tc.toolCallId || '',
           approvalState: approval.state,
         })
       }

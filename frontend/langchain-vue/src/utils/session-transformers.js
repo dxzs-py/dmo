@@ -4,7 +4,93 @@ import { getModeLabel } from './format'
 
 const API_SUCCESS_CODE = 200
 
-export { getModeLabel }
+// =============================================================================
+// 通用深层键名转换函数
+// 唯一命名风格转换边界：snake_case ↔ camelCase
+// 使用 Object.prototype.toString.call 严格判断类型，防止 Date/RegExp 等被破坏
+// =============================================================================
+
+/**
+ * 判断 value 是否为可遍历的普通对象（非 Date/RegExp/File/Blob/FormData/null 等）
+ * @param {*} value
+ * @returns {boolean}
+ */
+function _isPlainObject(value) {
+  if (value === null || typeof value !== 'object') return false
+  const tag = Object.prototype.toString.call(value)
+  // 只处理纯 Object 字面量，排除 Date/RegExp/File/Blob/FormData/ArrayBuffer 等
+  return tag === '[object Object]'
+}
+
+/**
+ * snake_case 字符串 → camelCase 字符串
+ * @param {string} str
+ * @returns {string}
+ */
+function _snakeToCamel(str) {
+  return str.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
+}
+
+/**
+ * camelCase 字符串 → snake_case 字符串
+ * @param {string} str
+ * @returns {string}
+ */
+function _camelToSnake(str) {
+  return str.replace(/([A-Z])/g, '_$1').toLowerCase()
+}
+
+/**
+ * 递归将对象所有键从 snake_case 转为 camelCase
+ * 跳过 Date/RegExp/File/Blob/FormData/null/基本类型
+ * @param {*} obj
+ * @returns {*}
+ */
+export function toCamelCase(obj, _depth = 0) {
+  if (obj === null || obj === undefined) return obj
+  if (Array.isArray(obj)) return obj.map(v => toCamelCase(v, _depth + 1))
+  if (!_isPlainObject(obj)) return obj
+
+  const result = {}
+  for (const key of Object.keys(obj)) {
+    const camelKey = _snakeToCamel(key)
+    result[camelKey] = toCamelCase(obj[key], _depth + 1)
+    // 仅在 key 实际发生变化且是顶层（非递归内部）时输出日志
+    if (_depth === 0 && key !== camelKey) {
+      console.debug('[toCamelCase]', key, '→', camelKey)
+    }
+  }
+  return result
+}
+
+/**
+ * 递归将对象所有键从 camelCase 转为 snake_case
+ * 跳过 Date/RegExp/File/Blob/FormData/null/基本类型
+ * @param {*} obj
+ * @returns {*}
+ */
+export function toSnakeCase(obj, _depth = 0) {
+  if (obj === null || obj === undefined) return obj
+  if (Array.isArray(obj)) return obj.map(v => toSnakeCase(v, _depth + 1))
+  if (!_isPlainObject(obj)) return obj
+
+  const result = {}
+  for (const key of Object.keys(obj)) {
+    const snakeKey = _camelToSnake(key)
+    result[snakeKey] = toSnakeCase(obj[key], _depth + 1)
+    if (_depth === 0 && key !== snakeKey) {
+      console.debug('[toSnakeCase]', key, '→', snakeKey)
+    }
+  }
+  return result
+}
+
+// =============================================================================
+// 会话转换函数（从后端 snake_case 转前端 camelCase）
+// 注：这些函数处理的是 REST API 响应数据。由于 axios 响应拦截器已调用 toCamelCase，
+// 此处收到的数据已是 camelCase 格式。函数负责数据规范化（ID 生成、日期解析等），
+// 不做键名转换。
+// =============================================================================
 
 export function isApiSuccess(response) {
   return response?.data?.code === API_SUCCESS_CODE
@@ -19,26 +105,24 @@ export function transformBackendSessionToFrontend(session) {
   const rawMessages = sessionObj.messages || []
   const validMessages = Array.isArray(rawMessages) ? rawMessages : []
 
-  // 合并连续的 assistant 消息：
-  // 竞态条件可能导致同一个 AI 回复被保存为两条消息：
-  //   1) 含 tool_calls 但 content 为空的 assistant 消息
-  //   2) 含 content 但 tool_calls 为空的 assistant 消息
-  // 需要将它们合并为一条完整的 assistant 消息
+  // 合并连续的 assistant 消息
+  // 注：由于 axios 响应拦截器已调用 toCamelCase，此处收到的数据已是 camelCase。
+  // _mergeConsecutiveAssistantMessages 操作原始 camelCase 数据。
   const mergedMessages = _mergeConsecutiveAssistantMessages(validMessages)
 
   const sanitized = {
-    id: sessionObj.session_id || sessionObj.id,
-    sessionId: sessionObj.session_id || sessionObj.id,
+    id: sessionObj.sessionId || sessionObj.id,
+    sessionId: sessionObj.sessionId || sessionObj.id,
     title: sessionObj.title || '新对话',
     mode: sessionObj.mode || 'agent',
-    selectedKnowledgeBase: sessionObj.selected_knowledge_base || null,
-    selectedKnowledgeBases: sessionObj.selected_knowledge_bases || [],
-    messageCount: sessionObj.message_count || 0,
+    selectedKnowledgeBase: sessionObj.selectedKnowledgeBase || null,
+    selectedKnowledgeBases: sessionObj.selectedKnowledgeBases || [],
+    messageCount: sessionObj.messageCount || 0,
     messages: mergedMessages
       .map(transformBackendMessageToFrontend)
       .filter(msg => msg !== null),
-    createdAt: sessionObj.created_at ? new Date(sessionObj.created_at).getTime() : Date.now(),
-    updatedAt: sessionObj.updated_at ? new Date(sessionObj.updated_at).getTime() : Date.now(),
+    createdAt: sessionObj.createdAt ? new Date(sessionObj.createdAt).getTime() : Date.now(),
+    updatedAt: sessionObj.updatedAt ? new Date(sessionObj.updatedAt).getTime() : Date.now(),
   }
 
   if (!Array.isArray(sanitized.messages)) {
@@ -69,8 +153,9 @@ function _mergeConsecutiveAssistantMessages(messages) {
     if (msg.role === 'assistant' && i + 1 < messages.length) {
       const nextMsg = messages[i + 1]
 
-      // 情况1：当前消息有 tool_calls 但 content 为空，下一条也是 assistant
-      if (_hasToolCalls(msg) && !_hasContent(msg) && nextMsg.role === 'assistant') {
+      // 情况1：占位消息（无内容无 toolCalls）或 有 toolCalls 但 content 为空，下一条也是 assistant
+      const isPlaceholder = !_hasContent(msg) && !_hasToolCalls(msg)
+      if ((isPlaceholder || (_hasToolCalls(msg) && !_hasContent(msg))) && nextMsg.role === 'assistant') {
         const merged = { ...msg }
         // 合并 content
         merged.content = nextMsg.content || msg.content || ''
@@ -78,14 +163,15 @@ function _mergeConsecutiveAssistantMessages(messages) {
         // 浅拷贝了 msg.tool_calls 导致 !_hasToolCalls(merged) 永远为 false，
         // nextMsg.tool_calls 被丢弃，刷新后只保留第一条消息的 tool_calls）
         if (_hasToolCalls(nextMsg)) {
-          const existingIds = new Set((merged.tool_calls || []).map(tc => tc.id || tc.tool_call_id))
-          const nextToolCalls = (nextMsg.tool_calls || []).filter(
-            tc => !existingIds.has(tc.id || tc.tool_call_id)
+          const existingIds = new Set((merged.toolCalls || []).map(tc => tc.id || tc.toolCallId))
+          const nextToolCalls = (nextMsg.toolCalls || []).filter(
+            tc => !existingIds.has(tc.id || tc.toolCallId)
           )
-          merged.tool_calls = [...(merged.tool_calls || []), ...nextToolCalls]
+          merged.toolCalls = [...(merged.toolCalls || []), ...nextToolCalls]
         }
-        // 合并其他字段（plan, chain_of_thought, reasoning 等）
-        for (const field of ['plan', 'chain_of_thought', 'reasoning', 'suggestions', 'sources']) {
+        // 合并其他字段（plan, chainOfThought, reasoning 等）
+        for (const field of ['researchTaskId', 'reasoning', 'suggestions', 'sources', 'plan',
+          'chainOfThought', 'model', 'streamState', 'isStreaming', 'researchContext']) {
           if (!merged[field] && nextMsg[field]) {
             merged[field] = nextMsg[field]
           }
@@ -103,6 +189,21 @@ function _mergeConsecutiveAssistantMessages(messages) {
             }
           }
         }
+        // 将合并后的 toolCalls 同步到 versions 中，确保 transformBackendMessageToFrontend
+        // 从 activeVersion.toolCalls 取值时不会丢失工具调用数据
+        if (merged.toolCalls && merged.toolCalls.length > 0) {
+          if (merged.versions && merged.versions.length > 0) {
+            for (const ver of merged.versions) {
+              ver.toolCalls = merged.toolCalls
+            }
+          } else {
+            merged.versions = [{
+              id: merged.id || '',
+              content: merged.content || '',
+              toolCalls: merged.toolCalls,
+            }]
+          }
+        }
         result.push(merged)
         i += 2
         continue
@@ -117,7 +218,7 @@ function _mergeConsecutiveAssistantMessages(messages) {
 }
 
 function _hasToolCalls(msg) {
-  return msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0
+  return msg.toolCalls && Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0
 }
 
 function _hasContent(msg) {
@@ -146,8 +247,8 @@ export function transformBackendMessageToFrontend(msg) {
       content: v.content || '',
       sources: v.sources || [],
       plan: v.plan || null,
-      chainOfThought: v.chain_of_thought || v.chainOfThought || null,
-      toolCalls: v.tool_calls || v.toolCalls || [],
+      chainOfThought: v.chainOfThought || null,
+      toolCalls: v.toolCalls || [],
       reasoning: v.reasoning || null,
       suggestions: v.suggestions || null,
       context: v.context || null,
@@ -158,8 +259,8 @@ export function transformBackendMessageToFrontend(msg) {
       content: msgObj.content || '',
       sources: msgObj.sources || [],
       plan: msgObj.plan || null,
-      chainOfThought: msgObj.chain_of_thought || null,
-      toolCalls: msgObj.tool_calls || [],
+      chainOfThought: msgObj.chainOfThought || null,
+      toolCalls: msgObj.toolCalls || [],
       reasoning: msgObj.reasoning || null,
       suggestions: msgObj.suggestions || null,
       context: msgObj.context || null,
@@ -167,8 +268,8 @@ export function transformBackendMessageToFrontend(msg) {
     versions = [version]
   }
 
-  const currentVersion = typeof msgObj.current_version === 'number' && msgObj.current_version >= 0
-    ? Math.min(msgObj.current_version, versions.length - 1)
+  const currentVersion = typeof msgObj.currentVersion === 'number' && msgObj.currentVersion >= 0
+    ? Math.min(msgObj.currentVersion, versions.length - 1)
     : 0
 
   const activeVersion = versions[currentVersion]
@@ -189,18 +290,18 @@ export function transformBackendMessageToFrontend(msg) {
     reasoning: activeVersion.reasoning,
     suggestions: activeVersion.suggestions,
     context: activeVersion.context,
-    attachmentIds: msgObj.attachment_ids || msgObj.attachmentIds || [],
+    attachmentIds: msgObj.attachmentIds || [],
     attachments: msgObj.attachments || [],
-    researchContext: msgObj.research_context || msgObj.researchContext || null,
+    researchContext: msgObj.researchContext || null,
     versions: versions,
     currentVersion: currentVersion,
-    timestamp: msgObj.created_at ? new Date(msgObj.created_at).getTime() : Date.now(),
+    timestamp: msgObj.createdAt ? new Date(msgObj.createdAt).getTime() : Date.now(),
     model: msgObj.model || null,
-    tokenCount: msgObj.token_count || 0,
-    tokenDetail: msgObj.token_detail || null,
-    responseTime: msgObj.response_time || 0,
-    researchTaskId: msgObj.research_task_id || null,
-    researchTaskDeleted: msgObj.research_task_deleted || null,
+    tokenCount: msgObj.tokenCount || 0,
+    tokenDetail: msgObj.tokenDetail || null,
+    responseTime: msgObj.responseTime || 0,
+    researchTaskId: msgObj.researchTaskId || null,
+    researchTaskDeleted: msgObj.researchTaskDeleted || null,
   }
 }
 
@@ -211,8 +312,8 @@ export function transformFrontendMessageToBackend(msg) {
         content: v.content || '',
         sources: v.sources || [],
         plan: v.plan || null,
-        chain_of_thought: v.chainOfThought || null,
-        tool_calls: v.toolCalls || [],
+        chainOfThought: v.chainOfThought || null,
+        toolCalls: v.toolCalls || [],
         reasoning: v.reasoning || null,
         suggestions: v.suggestions || null,
         context: v.context || null,
@@ -222,33 +323,34 @@ export function transformFrontendMessageToBackend(msg) {
         content: msg.content || '',
         sources: msg.sources || [],
         plan: msg.plan || null,
-        chain_of_thought: msg.chainOfThought || null,
-        tool_calls: msg.toolCalls || [],
+        chainOfThought: msg.chainOfThought || null,
+        toolCalls: msg.toolCalls || [],
         reasoning: msg.reasoning || null,
         suggestions: msg.suggestions || null,
         context: msg.context || null,
       }]
 
+  // 输出 camelCase，由 axios 请求拦截器的 toSnakeCase 统一转换为 snake_case
   return {
     role: msg.role,
     content: msg.content,
     sources: msg.sources || [],
     plan: msg.plan || null,
-    chain_of_thought: msg.chainOfThought || null,
-    tool_calls: msg.toolCalls || [],
+    chainOfThought: msg.chainOfThought || null,
+    toolCalls: msg.toolCalls || [],
     approval: msg.approval || null,
     reasoning: msg.reasoning || null,
     suggestions: msg.suggestions || null,
     context: msg.context || null,
-    attachment_ids: msg.attachmentIds || [],
+    attachmentIds: msg.attachmentIds || [],
     attachments: msg.attachments || [],
-    research_context: msg.researchContext || null,
+    researchContext: msg.researchContext || null,
     versions: backendVersions,
-    current_version: typeof msg.currentVersion === 'number' ? msg.currentVersion : 0,
+    currentVersion: typeof msg.currentVersion === 'number' ? msg.currentVersion : 0,
     model: msg.model || null,
-    token_count: msg.tokenCount || 0,
-    token_detail: msg.tokenDetail || {},
-    response_time: msg.responseTime || 0,
-    research_task_id: msg.researchTaskId || null,
+    tokenCount: msg.tokenCount || 0,
+    tokenDetail: msg.tokenDetail || {},
+    responseTime: msg.responseTime || 0,
+    researchTaskId: msg.researchTaskId || null,
   }
 }

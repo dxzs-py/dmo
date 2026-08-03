@@ -10,4 +10,4 @@ hermes3:8b                           4f6b83f30b62    4.7 GB    3 months ago
 
 ===== ollama ps =====
 NAME    ID    SIZE    PROCESSOR    CONTEXT    UNTIL
-(当前没有正在运行的模型)
+(无正在运行的模型)

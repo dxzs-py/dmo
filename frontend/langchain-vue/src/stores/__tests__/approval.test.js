@@ -76,7 +76,7 @@ vi.mock('@/utils/sse', () => ({
 
 // Mock message-operations
 vi.mock('@/utils/message-operations', () => ({
-  getInterruptId: vi.fn((approval) => approval?.interrupt_id || approval?.tool_call_id || ''),
+  getInterruptId: vi.fn((approval) => approval?.interruptId || approval?.toolCallId || ''),
 }))
 
 vi.mock('@/utils/logger', () => ({

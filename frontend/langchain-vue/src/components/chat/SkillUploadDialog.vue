@@ -36,7 +36,7 @@ const form = ref({
   name: '',
   description: '',
   steps: [
-    { tool_name: '', args_template: '', condition: '' },
+    { toolName: '', args_template: '', condition: '' },
   ],
 })
 
@@ -52,14 +52,14 @@ watch(() => props.modelValue, (val) => {
     const skill = props.editingSkill
     const rawName = (skill.name || '').replace(/^skill_/, '')
     const steps = (skill.steps || []).map(s => ({
-      tool_name: s.tool_name || '',
+      toolName: s.toolName || '',
       args_template: typeof s.args_template === 'object' ? JSON.stringify(s.args_template) : (s.args_template || ''),
       condition: s.condition || '',
     }))
     form.value = {
       name: rawName,
       description: skill.description || '',
-      steps: steps.length > 0 ? steps : [{ tool_name: '', args_template: '', condition: '' }],
+      steps: steps.length > 0 ? steps : [{ toolName: '', args_template: '', condition: '' }],
     }
     skillMode.value = skill.mode || 'pipeline'
     mode.value = 'pipeline'
@@ -75,7 +75,7 @@ const handleFileChange = (file) => {
 }
 
 const addStep = () => {
-  form.value.steps.push({ tool_name: '', args_template: '', condition: '' })
+  form.value.steps.push({ toolName: '', args_template: '', condition: '' })
 }
 
 const removeStep = (index) => {
@@ -90,7 +90,7 @@ const resetForm = () => {
   form.value = {
     name: '',
     description: '',
-    steps: [{ tool_name: '', args_template: '', condition: '' }],
+    steps: [{ toolName: '', args_template: '', condition: '' }],
   }
   skillMode.value = 'pipeline'
   skillFile.value = null
@@ -104,7 +104,7 @@ const handleSubmit = async () => {
       return
     }
 
-    const validSteps = form.value.steps.filter(s => s.tool_name.trim())
+    const validSteps = form.value.steps.filter(s => s.toolName.trim())
     if (validSteps.length === 0) {
       ElMessage.warning('至少需要一个执行步骤，且工具名不能为空')
       return
@@ -112,7 +112,7 @@ const handleSubmit = async () => {
 
     const steps = validSteps.map(s => {
       const step = {
-        tool_name: s.tool_name.trim(),
+        toolName: s.toolName.trim(),
         args_template: {},
         condition: null,
       }
@@ -183,7 +183,7 @@ const handleSubmit = async () => {
     return
   }
 
-  const validSteps = form.value.steps.filter(s => s.tool_name.trim())
+  const validSteps = form.value.steps.filter(s => s.toolName.trim())
   if (validSteps.length === 0) {
     ElMessage.warning('至少需要一个执行步骤，且工具名不能为空')
     return
@@ -191,7 +191,7 @@ const handleSubmit = async () => {
 
   const steps = validSteps.map(s => {
     const step = {
-      tool_name: s.tool_name.trim(),
+      toolName: s.toolName.trim(),
       args_template: {},
       condition: null,
     }
@@ -346,7 +346,7 @@ const handleClose = () => {
 
             <el-form-item label="工具名称" required class="step-field">
               <el-select
-                v-model="step.tool_name"
+                v-model="step.toolName"
                 placeholder="选择或输入工具名"
                 filterable
                 allow-create

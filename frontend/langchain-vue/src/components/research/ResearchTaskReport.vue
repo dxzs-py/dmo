@@ -1,18 +1,18 @@
 <template>
   <div class="report-wrapper">
-    <div v-if="task.final_report" class="report-section">
-      <div v-if="task.version_chain && task.version_chain.length > 1" class="version-chain">
-        <span v-for="(v, idx) in task.version_chain" :key="v.task_id">
+    <div v-if="task.finalReport" class="report-section">
+      <div v-if="task.versionChain && task.versionChain.length > 1" class="version-chain">
+        <span v-for="(v, idx) in task.versionChain" :key="v.taskId">
           <el-tag
-            :type="v.task_id === task.task_id ? 'primary' : 'info'"
+            :type="v.taskId === task.taskId ? 'primary' : 'info'"
             size="small"
             class="version-tag"
-            :style="v.task_id === task.task_id ? '' : 'cursor: pointer'"
-            @click="v.task_id !== task.task_id && emit('view-task', { task_id: v.task_id })"
+            :style="v.taskId === task.taskId ? '' : 'cursor: pointer'"
+            @click="v.taskId !== task.taskId && emit('view-task', { task_id: v.taskId })"
           >
             v{{ v.version }}
           </el-tag>
-          <span v-if="idx < task.version_chain.length - 1" class="version-arrow">→</span>
+          <span v-if="idx < task.versionChain.length - 1" class="version-arrow">�?/span>
         </span>
       </div>
       <div class="report-header">
@@ -30,9 +30,9 @@
         </div>
       </div>
       <div class="report-content">
-        <!-- 局部 ErrorBoundary：研究报告 Markdown 渲染畸形内容时仅替换报告区，保留审批面板与文件列表 -->
+        <!-- 局�?ErrorBoundary：研究报�?Markdown 渲染畸形内容时仅替换报告区，保留审批面板与文件列�?-->
         <ErrorBoundary :full-screen="false">
-          <MarkdownRenderer :content="task.final_report" />
+          <MarkdownRenderer :content="task.finalReport" />
         </ErrorBoundary>
       </div>
 
@@ -64,10 +64,10 @@
     <el-divider />
 
     <div class="files-section">
-      <h4>生成的文件</h4>
+      <h4>生成的文�?/h4>
       <FileBrowser
         :ref="fileBrowserRef"
-        :task-id="task.task_id"
+        :task-id="task.taskId"
         :api="deepResearchAPI"
       />
     </div>
@@ -80,15 +80,11 @@ import FileBrowser from '@/components/chat/FileBrowser.vue'
 import MarkdownRenderer from '@/components/common/MarkdownRenderer.vue'
 import ErrorBoundary from '@/components/common/ErrorBoundary.vue'
 import AiOpenInChat from '@/components/ai-elements/AiOpenInChat.vue'
-import { deepResearchAPI } from '@/api'
+import { deepResearchAPI } from '@/api/research'
 
 /**
- * 深度研究 - 任务报告区
- * 包含：版本链 / 研究报告 Markdown / 文档分析详情 / 生成的文件列表
- *
- * FileBrowser 的 ref 通过 fileBrowserRef prop 透传（view 层级维护，
- * 同时注入到 useResearchPolling / useResearchStream 等 composable）。
- */
+ * 深度研究 - 任务报告�? * 包含：版本链 / 研究报告 Markdown / 文档分析详情 / 生成的文件列�? *
+ * FileBrowser �?ref 通过 fileBrowserRef prop 透传（view 层级维护�? * 同时注入�?useResearchPolling / useResearchStream �?composable）�? */
 defineProps({
   /** 当前任务对象 */
   task: {
@@ -105,12 +101,12 @@ defineProps({
     type: String,
     default: null,
   },
-  /** 文档分析加载中 */
+  /** 文档分析加载�?*/
   docAnalysisLoading: {
     type: Boolean,
     default: false,
   },
-  /** FileBrowser 组件 ref（Ref 对象，透传绑定） */
+  /** FileBrowser 组件 ref（Ref 对象，透传绑定�?*/
   fileBrowserRef: {
     type: Object,
     required: true,

@@ -7,18 +7,18 @@ export const modelAPI = {
 
   testConnection(providerId, modelName = null) {
     return apiClient.post('/ai-engine/models/test/', {
-      provider_id: providerId,
-      model_name: modelName,
+      providerId: providerId,
+      modelName: modelName,
     })
   },
 
   switchModel(providerId, modelName = null, options = {}) {
     return apiClient.post('/ai-engine/models/switch/', {
-      provider_id: providerId,
-      model_name: modelName,
+      providerId: providerId,
+      modelName: modelName,
       temperature: options.temperature,
-      max_tokens: options.max_tokens,
-      special_params: options.special_params || null,
+      maxTokens: options.maxTokens,
+      specialParams: options.specialParams || null,
     })
   },
 
@@ -28,8 +28,8 @@ export const modelAPI = {
 
   setHelperModel(providerId = '', modelName = '') {
     return apiClient.put('/ai-engine/helper-model/', {
-      provider_id: providerId,
-      model_name: modelName,
+      providerId: providerId,
+      modelName: modelName,
     })
   },
 
@@ -44,8 +44,8 @@ export const modelAPI = {
 
   rebuildIndexes(providerId, indexNames = []) {
     return apiClient.post('/ai-engine/settings/rebuild-indexes/', {
-      provider_id: providerId,
-      index_names: indexNames,
+      providerId: providerId,
+      indexNames: indexNames,
     })
   },
 }

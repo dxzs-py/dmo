@@ -265,7 +265,7 @@
                 size="small"
                 style="margin: 2px 4px;"
               >
-                {{ idx.name }} ({{ idx.embedding_dimension }}维 → {{ selectedEmbeddingDim }}维, {{ idx.num_documents }}条)
+                {{ idx.name }} ({{ idx.embeddingDimension }}维 → {{ selectedEmbeddingDim }}维, {{ idx.numDocuments }}条)
               </el-tag>
             </div>
           </el-form-item>
@@ -370,7 +370,7 @@ const onChatProviderChange = (providerId) => {
   chatModelForm.modelName = ''
   if (providerId) {
     const provider = chatProviders.value.find(p => p.id === providerId)
-    chatModelForm.modelName = provider?.default_model || ''
+    chatModelForm.modelName = provider?.defaultModel || ''
   }
 }
 
@@ -378,7 +378,7 @@ const onFallbackChatProviderChange = (providerId) => {
   fallbackChatForm.modelName = ''
   if (providerId) {
     const provider = chatProviders.value.find(p => p.id === providerId)
-    fallbackChatForm.modelName = provider?.default_model || ''
+    fallbackChatForm.modelName = provider?.defaultModel || ''
   }
 }
 
@@ -386,7 +386,7 @@ const onHelperProviderChange = (providerId) => {
   helperForm.modelName = ''
   if (providerId) {
     const provider = chatProviders.value.find(p => p.id === providerId)
-    helperForm.modelName = provider?.default_model || ''
+    helperForm.modelName = provider?.defaultModel || ''
   }
 }
 
@@ -394,17 +394,17 @@ const saveChatModels = async () => {
   chatModelSaving.value = true
   try {
     await modelAPI.updateAISettings({
-      default_chat_model: {
-        provider_id: chatModelForm.providerId,
-        model_name: chatModelForm.modelName,
+      defaultChatModel: {
+        providerId: chatModelForm.providerId,
+        modelName: chatModelForm.modelName,
       },
-      fallback_chat_model: {
-        provider_id: fallbackChatForm.providerId,
-        model_name: fallbackChatForm.modelName,
+      fallbackChatModel: {
+        providerId: fallbackChatForm.providerId,
+        modelName: fallbackChatForm.modelName,
       },
-      helper_model: {
-        provider_id: helperForm.providerId,
-        model_name: helperForm.modelName,
+      helperModel: {
+        providerId: helperForm.providerId,
+        modelName: helperForm.modelName,
       },
     })
     ElMessage.success('聊天模型配置已保存')
@@ -442,7 +442,7 @@ const selectedEmbeddingMinDim = computed(() => {
 const selectedEmbeddingMaxDim = computed(() => {
   if (!embeddingForm.providerId) return 0
   const p = embeddingProviders.value.find(p => p.id === embeddingForm.providerId)
-  return p ? (p.native_max_dimension || 0) : 0
+  return p ? (p.nativeMaxDimension || 0) : 0
 })
 
 // 是否 MRL 模型：min_dimension > 0 且 native_max_dimension > 0
@@ -486,7 +486,7 @@ const onEmbeddingProviderChange = () => {
     return
   }
   affectedIndexes.value = indexDimensions.value.filter(
-    idx => idx.embedding_dimension && idx.embedding_dimension !== newDim
+    idx => idx.embeddingDimension && idx.embeddingDimension !== newDim
   )
 }
 
@@ -507,14 +507,14 @@ const applyEmbeddingDim = async () => {
   embeddingSaving.value = true
   try {
     const res = await modelAPI.updateAISettings({
-      embedding_provider: {
-        provider_id: embeddingForm.providerId,
+      embeddingProvider: {
+        providerId: embeddingForm.providerId,
         dimension: dim,
       },
     })
     const data = res.data?.data
-    if (data?.dimension_info?.dimension_changed) {
-      affectedIndexes.value = data.dimension_info.affected_indexes || []
+    if (data?.dimensionInfo?.dimensionChanged) {
+      affectedIndexes.value = data.dimensionInfo.affectedIndexes || []
       if (affectedIndexes.value.length > 0) {
         ElMessageBox.confirm(
           `Embedding 维度已变化，${affectedIndexes.value.length} 个索引需要重建才能正常使用 RAG 检索。是否立即重建？`,
@@ -543,21 +543,21 @@ const saveEmbedding = async () => {
   embeddingSaving.value = true
   try {
     const payload = {
-      embedding_provider: {
-        provider_id: embeddingForm.providerId,
+      embeddingProvider: {
+        providerId: embeddingForm.providerId,
       },
-      fallback_embedding_provider: {
-        provider_id: fallbackEmbeddingForm.providerId,
+      fallbackEmbeddingProvider: {
+        providerId: fallbackEmbeddingForm.providerId,
       },
     }
     // 如果是 MRL 模型且输入框有值，把当前 dimension 一并保存
     if (isMrlEmbedding.value && embeddingDimInput.value) {
-      payload.embedding_provider.dimension = Number(embeddingDimInput.value)
+      payload.embeddingProvider.dimension = Number(embeddingDimInput.value)
     }
     const res = await modelAPI.updateAISettings(payload)
     const data = res.data?.data
-    if (data?.dimension_info?.dimension_changed) {
-      affectedIndexes.value = data.dimension_info.affected_indexes || []
+    if (data?.dimensionInfo?.dimensionChanged) {
+      affectedIndexes.value = data.dimensionInfo.affectedIndexes || []
       if (affectedIndexes.value.length > 0) {
         ElMessageBox.confirm(
           `Embedding 维度已变化，${affectedIndexes.value.length} 个索引需要重建才能正常使用 RAG 检索。是否立即重建？`,
@@ -639,30 +639,30 @@ onMounted(async () => {
 
       const current = data.current || {}
 
-      if (current.default_chat_model) {
-        chatModelForm.providerId = current.default_chat_model.provider_id || ''
-        chatModelForm.modelName = current.default_chat_model.model_name || ''
+      if (current.defaultChatModel) {
+        chatModelForm.providerId = current.defaultChatModel?.providerId || ''
+        chatModelForm.modelName = current.defaultChatModel?.modelName || ''
       }
-      if (current.fallback_chat_model) {
-        fallbackChatForm.providerId = current.fallback_chat_model.provider_id || ''
-        fallbackChatForm.modelName = current.fallback_chat_model.model_name || ''
+      if (current.fallbackChatModel) {
+        fallbackChatForm.providerId = current.fallbackChatModel?.providerId || ''
+        fallbackChatForm.modelName = current.fallbackChatModel?.modelName || ''
       }
-      if (current.embedding_provider) {
-        embeddingForm.providerId = current.embedding_provider.provider_id || ''
+      if (current.embeddingProvider) {
+        embeddingForm.providerId = current.embeddingProvider?.providerId || ''
         // 同步当前生效的 MRL 截断维度到输入框
-        if (current.embedding_provider.dimension) {
-          embeddingDimInput.value = Number(current.embedding_provider.dimension)
+        if (current.embeddingProvider?.dimension) {
+          embeddingDimInput.value = Number(current.embeddingProvider?.dimension)
         } else {
           const p = embeddingProviders.value.find(p => p.id === embeddingForm.providerId)
           embeddingDimInput.value = p ? Number(p.dimension) : null
         }
       }
-      if (current.fallback_embedding_provider) {
-        fallbackEmbeddingForm.providerId = current.fallback_embedding_provider.provider_id || ''
+      if (current.fallbackEmbeddingProvider) {
+        fallbackEmbeddingForm.providerId = current.fallbackEmbeddingProvider?.providerId || ''
       }
-      if (current.helper_model) {
-        helperForm.providerId = current.helper_model.provider_id || ''
-        helperForm.modelName = current.helper_model.model_name || ''
+      if (current.helperModel) {
+        helperForm.providerId = current.helperModel?.providerId || ''
+        helperForm.modelName = current.helperModel?.modelName || ''
       }
 
       onEmbeddingProviderChange()

@@ -57,7 +57,7 @@ export const createStreamStateHandlers = (ctx) => {
    * 触发浏览器跳过此事件（已通过 SSE 实时处理）。
    * @param {string} sessionId
    * @param {Object} payload - stream_event 事件载荷
-   * @param {string} payload.message_id - 消息 ID
+   * @param {string} payload.messageId - 消息 ID
    * @param {string} payload.event_type - 事件类型（reasoning/sources/suggestions/context/content_update）
    * @param {Object} payload.data - 事件数据
    * @param {number} [payload.seq] - 序列号（幂等保护）
@@ -161,14 +161,13 @@ export const createStreamStateHandlers = (ctx) => {
       return
     }
 
-    // payload 可能有两种结构：
-    // 1. 嵌套：{ source, source_id, session_id, message_id, data: { task_id, ... } }
-    // 2. 扁平：{ source, source_id, session_id, message_id, task_id, ... }
-    const data = payload.data || {}
-    const taskId = data.task_id || payload.task_id
-    const messageId = data.message_id || payload.message_id
+    // payload 可能有两种结构（entry-point toCamelCase 已转换，均为 camelCase）：
+    // 1. 嵌套：{ source, sourceId, sessionId, messageId, data: { taskId, ... } }
+    // 2. 扁平：{ source, sourceId, sessionId, messageId, taskId, ... }
+    const taskId = payload.taskId || (payload.data && payload.data.taskId) || null
+    const messageId = payload.messageId || (payload.data && payload.data.messageId) || null
 
-    // 定位目标消息（优先按 message_id，兜底最后一条 assistant 消息）
+    // 定位目标消息（优先按 messageId，兜底最后一条 assistant 消息）
     let targetMsg = null
     if (messageId) {
       targetMsg = findMessageById(session, messageId)
@@ -243,8 +242,8 @@ export const createStreamStateHandlers = (ctx) => {
       return
     }
 
-    // 定位目标消息（优先按 message_id，兜底最后一条 assistant 消息）
-    const messageId = payload.message_id
+    // 定位目标消息（优先按 messageId，兜底最后一条 assistant 消息）
+    const messageId = payload.messageId
     let targetMsg = null
     if (messageId) {
       targetMsg = findMessageById(session, messageId)
@@ -293,7 +292,7 @@ export const createStreamStateHandlers = (ctx) => {
    *
    * 职责：
    * 1. 处理 chat 消息回写（content/reasoning/streamState 更新）
-   * 2. 关联场景下委托更新 researchStore.taskInfo（payload.task_id 存在且 hasResearchResult）
+   * 2. 关联场景下委托更新 researchStore.taskInfo（payload.taskId 存在且 hasResearchResult）
    *    解耦 taskInfo 更新与 task 频道订阅状态，确保 DeepResearchView 未打开时 taskInfo 也实时更新
    *    幂等性：与 handleTaskEvent 的 stream_completed 分支形成双路径，updateTaskFromEvent 使用 force:true 保证一致
    *
@@ -317,7 +316,7 @@ export const createStreamStateHandlers = (ctx) => {
     // 普通聊天模式（无 finalized 字段或 finalized=false）消息不会处于 INTERRUPTED 状态，
     // 不受此判断影响，行为与原有逻辑一致。
     if (payload.finalized !== true) {
-      const earlyMessageId = payload.message_id
+      const earlyMessageId = payload.messageId
       let earlyTargetMsg = null
       if (earlyMessageId) {
         earlyTargetMsg = findMessageById(session, earlyMessageId)
@@ -340,17 +339,17 @@ export const createStreamStateHandlers = (ctx) => {
     // 即使 final_report 为空字符串（AI 回复过短且磁盘文件提取失败），也需进入回写逻辑：
     // 1. 标记消息 COMPLETED + isStreaming=false（解除 FINALIZING 卡死状态）
     // 2. 触发 requestFullSync 从后端拉取 writeback_to_chat_message 已写入的正确内容
-    const hasResearchResult = payload.task_id && (payload.final_report !== undefined || payload.error)
+    const hasResearchResult = payload.taskId && (payload.finalReport !== undefined || payload.error)
     if (hasResearchResult) {
-      const messageId = payload.message_id
+      const messageId = payload.messageId
       let targetMsg = null
       if (messageId) {
         targetMsg = findMessageById(session, messageId)
       }
       if (!targetMsg) {
-        // 通过 research_task_id 查找关联消息
+        // 通过 researchTaskId 查找关联消息
         targetMsg = [...session.messages].reverse().find(m =>
-          m.role === 'assistant' && m.researchTaskId === payload.task_id
+          m.role === 'assistant' && m.researchTaskId === payload.taskId
         )
       }
       if (!targetMsg) {
@@ -360,7 +359,7 @@ export const createStreamStateHandlers = (ctx) => {
 
       if (!targetMsg) {
         // 极端情况：无 assistant 消息，仅触发全量同步
-        logger.warn(`[Sync] 深度研究结果回写但未找到目标消息: session=${sessionId}, task=${payload.task_id}`)
+        logger.warn(`[Sync] 深度研究结果回写但未找到目标消息: session=${sessionId}, task=${payload.taskId}`)
         requestFullSync(sessionId)
         return
       }
@@ -390,8 +389,8 @@ export const createStreamStateHandlers = (ctx) => {
           targetMsg.reasoning = { ...targetMsg.reasoning, content: successMsg }
         }
         // 更新消息内容
-        if (payload.success !== false && payload.final_report) {
-          targetMsg.content = payload.final_report
+        if (payload.success !== false && payload.finalReport) {
+          targetMsg.content = payload.finalReport
         } else if (payload.error) {
           targetMsg.content = `深度研究执行失败：${payload.error}`
         }
@@ -444,13 +443,13 @@ export const createStreamStateHandlers = (ctx) => {
         }
         // 清理 pendingApprovals 中属于这个任务的审批
         let clearedApprovalCount = 0
-        if (payload.task_id) {
-          clearedApprovalCount = approvalStore.clearByTaskId(payload.task_id)
+        if (payload.taskId) {
+          clearedApprovalCount = approvalStore.clearByTaskId(payload.taskId)
         }
 
         logger.info(
           `[Sync] 深度研究结果回写 - 审批状态清理: ` +
-          `session=${sessionId}, task=${payload.task_id}, ` +
+          `session=${sessionId}, task=${payload.taskId}, ` +
           `success=${payload.success !== false}, ` +
           `toolCalls总数=${targetMsg.toolCalls?.length || 0}, ` +
           `清理前pending审批数=${pendingApprovalCount}, ` +
@@ -458,7 +457,7 @@ export const createStreamStateHandlers = (ctx) => {
           `clearByTaskId清除数=${clearedApprovalCount}`
         )
 
-        logger.info(`[Sync] 深度研究结果回写: session=${sessionId}, task=${payload.task_id}, success=${payload.success !== false}`)
+        logger.info(`[Sync] 深度研究结果回写: session=${sessionId}, task=${payload.taskId}, success=${payload.success !== false}`)
 
         // 触发全量同步确保数据一致性
         requestFullSync(sessionId)
@@ -466,17 +465,17 @@ export const createStreamStateHandlers = (ctx) => {
         // 委托更新 researchStore.taskInfo（关联 chat 场景主路径）
         // 解耦 taskInfo 更新与 task 频道订阅状态，确保 DeepResearchView 未打开时 taskInfo 也实时更新
         // 幂等性：与 handleTaskEvent 的 stream_completed 分支形成双路径，updateTaskFromEvent 使用 force:true 保证一致
-        if (payload.task_id) {
+        if (payload.taskId) {
           try {
-            researchStore.updateTaskFromEvent(payload.task_id, payload)
+            researchStore.updateTaskFromEvent(payload.taskId, payload)
             logger.info(
               `[Sync] handleStreamCompleted 委托更新 taskInfo: ` +
-              `taskId=${payload.task_id}, success=${payload.success !== false}`
+              `taskId=${payload.taskId}, success=${payload.success !== false}`
             )
           } catch (err) {
             logger.warn(
               `[Sync] handleStreamCompleted 委托更新 taskInfo 失败: ` +
-              `taskId=${payload.task_id}, error=${err?.message || err}`
+              `taskId=${payload.taskId}, error=${err?.message || err}`
             )
           }
         }
@@ -486,7 +485,7 @@ export const createStreamStateHandlers = (ctx) => {
     }
     // === 深度研究结果处理结束 ===
 
-    const messageId = payload.message_id
+    const messageId = payload.messageId
     let targetMsg = null
     if (messageId) {
       targetMsg = findMessageById(session, messageId)
@@ -502,18 +501,18 @@ export const createStreamStateHandlers = (ctx) => {
 
     // 记录后端 content_length 用于早期可观测性
     // 实际完整性校验由 verifyMessageIntegrityAfterSync 通过后端快照对比完成
-    if (typeof payload.content_length === 'number') {
+    if (typeof payload.contentLength === 'number') {
       const localLen = (targetMsg.content || '').length
-      if (payload.content_length > localLen) {
+      if (payload.contentLength > localLen) {
         logger.warn(
-          `[Sync] stream_completed 后端 content_length 大于本地: ` +
+          `[Sync] stream_completed 后端 contentLength 大于本地: ` +
           `session=${sessionId}, message=${messageId || '(兜底)'}, ` +
-          `local=${localLen}, backend=${payload.content_length}`
+          `local=${localLen}, backend=${payload.contentLength}`
         )
-      } else {
-        logger.debug(
-          `[Sync] stream_completed content_length 校验通过: ` +
-          `session=${sessionId}, local=${localLen}, backend=${payload.content_length}`
+      }
+    } else {
+      logger.info(
+        `[Sync] 流式完成: session=${sessionId}, local=${localLen}, backend=${payload.contentLength}`
         )
       }
     }
@@ -651,7 +650,7 @@ export const createStreamStateHandlers = (ctx) => {
     const session = getSession(sessionStore, sessionId)
     if (!session?.messages) return
 
-    const messageId = payload.message_id
+    const messageId = payload.messageId
     let targetMsg = null
     if (messageId) {
       targetMsg = findMessageById(session, messageId)

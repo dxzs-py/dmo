@@ -219,7 +219,7 @@ const handleTrashSelectionChange = (rows) => {
 const handleDelete = async (row) => {
   try {
     await ElMessageBox.confirm(
-      `确定要删除文件 "${row.original_name}" 吗？文件将移入回收站，可从回收站恢复。`,
+      `确定要删除文件 "${row.originalName}" 吗？文件将移入回收站，可从回收站恢复。`,
       '确认删除',
       { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
     )
@@ -284,7 +284,7 @@ const handleRestore = async (row) => {
 const handleUpdateRetention = async (row) => {
   try {
     const { value } = await ElMessageBox.prompt('请输入保留天数', '设置保留天数', {
-      inputValue: row.retention_days || 30,
+      inputValue: row.retentionDays || 30,
       inputPattern: /^\d+$/,
       inputErrorMessage: '请输入有效数字',
     })
@@ -305,7 +305,7 @@ const handleUpdateRetention = async (row) => {
 const handlePermanentDelete = async (row) => {
   try {
     await ElMessageBox.confirm(
-      `确定要永久删除文件 "${row.original_name}" 吗？此操作不可恢复！`,
+      `确定要永久删除文件 "${row.originalName}" 吗？此操作不可恢复！`,
       '永久删除',
       { type: 'error', confirmButtonText: '永久删除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' }
     )
@@ -531,23 +531,23 @@ onMounted(() => {
 
         <div class="stats-grid">
           <div class="stat-item">
-            <div class="stat-value">{{ stats.storage?.total_files || 0 }}</div>
+            <div class="stat-value">{{ stats.storage?.totalFiles || 0 }}</div>
             <div class="stat-label">总文件数</div>
           </div>
           <div class="stat-item">
-            <div class="stat-value">{{ stats.storage?.active_files || 0 }}</div>
+            <div class="stat-value">{{ stats.storage?.activeFiles || 0 }}</div>
             <div class="stat-label">活跃文件</div>
           </div>
           <div class="stat-item">
-            <div class="stat-value">{{ stats.storage?.indexed_files || 0 }}</div>
+            <div class="stat-value">{{ stats.storage?.indexedFiles || 0 }}</div>
             <div class="stat-label">已入库</div>
           </div>
           <div class="stat-item">
-            <div class="stat-value">{{ stats.storage?.trashed_files || 0 }}</div>
+            <div class="stat-value">{{ stats.storage?.trashedFiles || 0 }}</div>
             <div class="stat-label">回收站</div>
           </div>
           <div class="stat-item">
-            <div class="stat-value">{{ formatSize(stats.storage?.total_size_bytes) }}</div>
+            <div class="stat-value">{{ formatSize(stats.storage?.totalSizeBytes) }}</div>
             <div class="stat-label">附件总大小</div>
           </div>
           <div class="stat-item disk-usage">
@@ -561,7 +561,7 @@ onMounted(() => {
             />
           </div>
           <div class="stat-item">
-            <div class="stat-value">{{ formatGB(stats.storage?.disk_free_bytes) }}</div>
+            <div class="stat-value">{{ formatGB(stats.storage?.diskFreeBytes) }}</div>
             <div class="stat-label">磁盘剩余</div>
           </div>
         </div>
@@ -669,7 +669,7 @@ onMounted(() => {
               <el-table-column prop="original_name" label="文件名" min-width="180" show-overflow-tooltip />
               <el-table-column prop="file_type" label="类型" width="80" />
               <el-table-column label="大小" width="100">
-                <template #default="{ row }">{{ formatSize(row.file_size) }}</template>
+                <template #default="{ row }">{{ formatSize(row.fileSize) }}</template>
               </el-table-column>
               <el-table-column label="状态" width="100">
                 <template #default="{ row }">
@@ -680,10 +680,10 @@ onMounted(() => {
               </el-table-column>
               <el-table-column prop="reference_count" label="引用" width="70" align="center" />
               <el-table-column label="保留天数" width="90" align="center">
-                <template #default="{ row }">{{ row.retention_days || '-' }}</template>
+                <template #default="{ row }">{{ row.retentionDays || '-' }}</template>
               </el-table-column>
               <el-table-column label="上传时间" width="160">
-                <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
+                <template #default="{ row }">{{ formatDate(row.createdAt) }}</template>
               </el-table-column>
               <el-table-column label="操作" width="220" fixed="right">
                 <template #default="{ row }">
@@ -747,7 +747,7 @@ onMounted(() => {
             <template #label>
               <span>
                 回收站
-                <el-badge v-if="stats.storage?.trashed_files > 0" :value="stats.storage.trashed_files" class="tab-badge" />
+                <el-badge v-if="stats.storage?.trashedFiles > 0" :value="stats.storage.trashedFiles" class="tab-badge" />
               </span>
             </template>
 
@@ -783,13 +783,13 @@ onMounted(() => {
               <el-table-column prop="original_name" label="文件名" min-width="180" show-overflow-tooltip />
               <el-table-column prop="file_type" label="类型" width="80" />
               <el-table-column label="大小" width="100">
-                <template #default="{ row }">{{ formatSize(row.file_size) }}</template>
+                <template #default="{ row }">{{ formatSize(row.fileSize) }}</template>
               </el-table-column>
               <el-table-column label="删除时间" width="160">
                 <template #default="{ row }">{{ formatDate(row.deleted_at) }}</template>
               </el-table-column>
               <el-table-column label="所属会话" min-width="140" show-overflow-tooltip>
-                <template #default="{ row }">{{ row.session_title || row.session_id || '-' }}</template>
+                <template #default="{ row }">{{ row.sessionTitle || row.sessionId || '-' }}</template>
               </el-table-column>
               <el-table-column label="操作" width="180" fixed="right">
                 <template #default="{ row }">
@@ -865,7 +865,7 @@ onMounted(() => {
             </template>
           </el-table-column>
           <el-table-column label="时间" width="160">
-            <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
+            <template #default="{ row }">{{ formatDate(row.createdAt) }}</template>
           </el-table-column>
           <el-table-column label="操作" width="160">
             <template #default="{ row }">

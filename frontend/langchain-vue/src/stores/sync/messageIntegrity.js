@@ -76,9 +76,9 @@ export const createMessageIntegrityHandlers = (ctx) => {
     if (ver?.toolCalls && Array.isArray(ver.toolCalls)) {
       for (const verTc of ver.toolCalls) {
         if (!verTc) continue
-        // 按 id/tool_call_id 匹配并同步状态
+        // 按 id/toolCallId 匹配并同步状态
         const matched = message.toolCalls.find(tc =>
-          tc && (tc.id === verTc.id || tc.tool_call_id === verTc.tool_call_id)
+          tc && (tc.id === verTc.id || tc.toolCallId === verTc.toolCallId)
         )
         if (matched) {
           verTc.status = matched.status

@@ -5,11 +5,11 @@ import { knowledgeAPI } from '../api'
 import { useUserStore } from './user'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { logger } from '../utils/logger'
+import { getModeLabel } from '../utils/format'
 import {
   isApiSuccess,
   transformBackendSessionToFrontend,
   transformFrontendMessageToBackend,
-  getModeLabel
 } from '../utils/session-transformers'
 import {
   getLastAssistantMessage,
@@ -35,6 +35,7 @@ import {
   findToolCallInMap,
   flushPendingApprovalsInMap,
   isTerminalStatus,
+  mergeMessageFromBackend,
 } from '../utils/message-operations'
 import { StreamState, ToolCallStatus, mapApprovalStateToStatus } from '../types'
 
@@ -183,7 +184,7 @@ export const useSessionStore = defineStore('session', () => {
     for (const msg of messages) {
       if (msg.role !== 'assistant' || !Array.isArray(msg.toolCalls)) continue
       for (const tc of msg.toolCalls) {
-        const key = tc.tool_call_id || tc.id
+        const key = tc.toolCallId || tc.id
         if (!key || targetMap.has(key)) continue
         // 以浅拷贝创建条目，同时标注所属消息 backendId
         targetMap.set(key, { ...tc, messageBackendId: msg.backendId?.toString() })
@@ -344,9 +345,9 @@ export const useSessionStore = defineStore('session', () => {
           paginationMeta.value = {
             total: data.total || 0,
             page: data.page || page,
-            pageSize: data.page_size || paginationMeta.value.pageSize,
-            totalPages: data.total_pages || 1,
-            hasMore: (data.page || page) < (data.total_pages || 1),
+            pageSize: data.pageSize || paginationMeta.value.pageSize,
+            totalPages: data.totalPages || 1,
+            hasMore: (data.page || page) < (data.totalPages || 1),
           }
         } else {
           paginationMeta.value = {
@@ -418,11 +419,31 @@ export const useSessionStore = defineStore('session', () => {
         
         const index = sessions.value.findIndex(s => s.id === sessionId)
         if (index !== -1) {
-          sessions.value[index] = detailData
-          // 同步 API 加载的 toolCalls 到 toolCallsMap，建立双向一致性
-          // 防止后续 WebSocket 事件触发 _syncMessageToolCalls 时，用不完整的
-          // toolCallsMap 替换覆盖 API 返回的完整 message.toolCalls 数组
-          _syncToolCallsMapFromMessages(sessionId, detailData.messages || [])
+          const existingSession = sessions.value[index]
+          if (existingSession && existingSession.messages?.length > 0) {
+            // 逐消息合并：API 数据是权威快照，但保留本地保护态数据（流式中的 content/streamState 等）
+            const apiMessages = detailData.messages
+            for (const apiMsg of apiMessages) {
+              const existingMsg = existingSession.messages.find(m =>
+                String(m.backendId) === String(apiMsg.backendId)
+              )
+              if (existingMsg) {
+                mergeMessageFromBackend(existingMsg, apiMsg)
+              } else {
+                existingSession.messages.push(apiMsg)
+              }
+            }
+            existingSession.title = detailData.title
+            existingSession.mode = detailData.mode
+            existingSession.messageCount = detailData.messageCount
+            existingSession.updatedAt = detailData.updatedAt
+          } else {
+            sessions.value[index] = detailData
+          }
+          // 同步 API 加载的 toolCalls 到 toolCallsMap
+          _syncToolCallsMapFromMessages(sessionId, existingSession?.messages || detailData.messages || [])
+          // 反向同步：将 Map 中的完整状态回写到 messages 数组
+          _syncAllMessageToolCallsFromMap(sessionId)
         }
         logger.log(`[Session] Loaded detail for session ${sessionId} with ${detailData.messages?.length || 0} messages`)
         return detailData
@@ -501,8 +522,8 @@ export const useSessionStore = defineStore('session', () => {
       try {
         const response = await chatAPI.deleteSession(sessionId)
         const resData = response.data?.data || response.data
-        if (resData?.linked_research_preserved) {
-          ElMessage.info(`关联的深度研究将保留在独立模块中（${resData.linked_research_count || ''}个任务）`)
+        if (resData?.linkedResearchPreserved) {
+          ElMessage.info(`关联的深度研究将保留在独立模块中（${resData.linkedResearchCount || ''}个任务）`)
         }
         logger.log(`[Security] Deleted session ${sessionId} for user ${userStore.userInfo?.id}`)
       } catch (error) {
@@ -647,7 +668,7 @@ export const useSessionStore = defineStore('session', () => {
       } else {
         const backendMsg = transformFrontendMessageToBackend(lastMessage)
         // 签名检测：内容未变化则跳过 PATCH，避免流结束后重复请求
-        const signature = `${lastMessage.backendId}:${lastMessage.content?.length}:${lastMessage.tool_calls?.length}:${lastMessage.sources?.length}`
+        const signature = `${lastMessage.backendId}:${lastMessage.content?.length}:${lastMessage.toolCalls?.length}:${lastMessage.sources?.length}`
         if (_lastSyncSignatures.get(sessionId) === signature) return
         _lastSyncSignatures.set(sessionId, signature)
         try {
@@ -824,7 +845,7 @@ export const useSessionStore = defineStore('session', () => {
     if (isSynthetic) {
       const pendingMap = _ensurePendingApprovalsMap(sessionId)
       if (pendingMap) {
-        const pendingIds = [toolCallId, approvalData.tool_call_id].filter(Boolean)
+        const pendingIds = [toolCallId, approvalData.toolCallId].filter(Boolean)
         for (const pid of pendingIds) {
           pendingMap.set(pid, { approvalData, toolCallId })
         }
@@ -913,7 +934,7 @@ export const useSessionStore = defineStore('session', () => {
         for (const msg of session.messages) {
           if (msg.role !== 'assistant' || !Array.isArray(msg.toolCalls)) continue
           for (const tc of msg.toolCalls) {
-            const key = tc.tool_call_id || tc.id
+            const key = tc.toolCallId || tc.id
             if (key && key === toolCallId && !toolCallMap.has(key)) {
               toolCallMap.set(key, { ...tc, messageBackendId: msg.backendId?.toString() })
             }
@@ -1003,7 +1024,7 @@ export const useSessionStore = defineStore('session', () => {
     if (!sessionId || !toolCall) return
     const toolCallMap = _ensureToolCallsMap(sessionId)
     if (!toolCallMap) return
-    const key = toolCall.id || toolCall.tool_call_id
+    const key = toolCall.id || toolCall.toolCallId
     if (!key) return
     toolCallMap.set(key, toolCall)
     triggerRef(toolCallsMap)
@@ -1163,7 +1184,7 @@ export const useSessionStore = defineStore('session', () => {
         for (const msg of session.messages) {
           if (msg.role !== 'assistant' || !Array.isArray(msg.toolCalls)) continue
           for (const tc of msg.toolCalls) {
-            const key = tc.tool_call_id || tc.id
+            const key = tc.toolCallId || tc.id
             if (key && key === toolCallId && !toolCallMap.has(key)) {
               toolCallMap.set(key, { ...tc, messageBackendId: msg.backendId?.toString() })
             }
@@ -1471,6 +1492,62 @@ export const useSessionStore = defineStore('session', () => {
     if (ver) ver[field] = value
   }
 
+  // ==================== 工具调用 Map 反向同步 ====================
+
+  /**
+   * 将 toolCallsMap 中的状态同步回所有消息的 toolCalls 数组
+   *
+   * 方向：Map → messages（反向同步）。
+   * 场景：loadSessionDetail 后 API 数据已写入 Map，需将 Map 中的完整状态
+   * （含 WebSocket 事件已更新的动态字段）回写到 messages 数组供 UI 渲染。
+   */
+  const _syncAllMessageToolCallsFromMap = (sessionId) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (!session) return
+    const toolCallMap = toolCallsMap.value.get(sessionId)
+    if (!toolCallMap || toolCallMap.size === 0) return
+    for (const msg of session.messages) {
+      if (msg.role !== 'assistant') continue
+      const backendId = msg.backendId?.toString()
+      const arr = []
+      for (const tc of toolCallMap.values()) {
+        if (tc.messageBackendId) {
+          if (tc.messageBackendId === backendId) arr.push(tc)
+        } else {
+          arr.push(tc)
+        }
+      }
+      if (arr.length > 0) {
+        arr.sort((a, b) => {
+          const ai = a._index ?? 999
+          const bi = b._index ?? 999
+          return ai - bi
+        })
+        msg.toolCalls = arr
+        const ver = msg.versions?.[msg.currentVersion]
+        if (ver) ver.toolCalls = arr
+      }
+    }
+  }
+
+  // ==================== 消息删除 ====================
+
+  const removeMessagesByIds = (sessionId, ids) => {
+    if (!sessionId || !Array.isArray(ids) || ids.length === 0) return
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (!session) return
+    const idSet = new Set(ids.map(String))
+    session.messages = session.messages.filter(
+      m => !idSet.has(String(m.id)) && !idSet.has(String(m.backendId))
+    )
+    const tcMap = toolCallsMap.value.get(sessionId)
+    if (tcMap) {
+      for (const [tcId, tc] of tcMap) {
+        if (tc.messageBackendId && idSet.has(tc.messageBackendId)) tcMap.delete(tcId)
+      }
+    }
+  }
+
   return {
     sessions,
     currentSessionId,
@@ -1561,5 +1638,6 @@ export const useSessionStore = defineStore('session', () => {
     setStreamStateToLastMessage,
     setStreamStateToMessageByIdx,
     deletedSessionIds,
+    removeMessagesByIds,
   }
 })

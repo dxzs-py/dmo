@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { workflowAPI } from '@/api'
+import { workflowAPI } from '@/api/workflow'
 import { logger } from '@/utils/logger'
 
 /**
@@ -34,9 +34,9 @@ export function useWorkflowFiles({ execution }) {
    * @returns {Promise<string|null>} 文件相对路径，未找到返回 null
    */
   const _findKeyFile = async () => {
-    if (!execution.value?.thread_id) return null
+    if (!execution.value?.threadId) return null
     try {
-      const res = await workflowAPI.getFiles(execution.value.thread_id)
+      const res = await workflowAPI.getFiles(execution.value.threadId)
       const data = res.data?.data || res.data
       const files = data?.files || data || []
       // 优先查找 notes/ 目录下的 .md 文件
@@ -49,10 +49,10 @@ export function useWorkflowFiles({ execution }) {
       }
       // 查找根目录下非 report 的 .md 文件
       const mdFiles = files.filter(f => f.type === 'file' && f.name?.endsWith('.md') && !f.name?.includes('report'))
-      if (mdFiles.length > 0) return mdFiles[0].relative_path || mdFiles[0].name
+      if (mdFiles.length > 0) return mdFiles[0].relativePath || mdFiles[0].name
       // 查找根目录下的 .txt 文件
       const rootNotes = files.filter(f => f.type === 'file' && f.name?.endsWith('.txt'))
-      if (rootNotes.length > 0) return rootNotes[0].relative_path || rootNotes[0].name
+      if (rootNotes.length > 0) return rootNotes[0].relativePath || rootNotes[0].name
     } catch {
       // 查找关键文件失败时返回 null
     }
@@ -65,13 +65,13 @@ export function useWorkflowFiles({ execution }) {
    * @returns {Promise<void>}
    */
   const autoLoadKeyFile = async () => {
-    if (!execution.value?.thread_id) return
+    if (!execution.value?.threadId) return
     autoLoadContent.value = null
     autoLoadLoading.value = true
     try {
       const file = await _findKeyFile()
       if (file) {
-        const response = await workflowAPI.getFileContent(execution.value.thread_id, file)
+        const response = await workflowAPI.getFileContent(execution.value.threadId, file)
         const data = response.data?.data || response.data
         autoLoadContent.value = data?.content || data || ''
       }
@@ -90,3 +90,4 @@ export function useWorkflowFiles({ execution }) {
     clearAutoLoad,
   }
 }
+

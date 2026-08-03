@@ -74,7 +74,7 @@ async def finalize_stream(
                     "default_chat_model",
                     {
                         "provider_id": fallback_info["actual_provider"],
-                        "model_name": fallback_info["actual_model"],
+                            "model_name": fallback_info["actual_model"],
                     },
                 )
             except Exception:

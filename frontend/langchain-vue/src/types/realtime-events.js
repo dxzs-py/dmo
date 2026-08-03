@@ -104,21 +104,24 @@ export const APPROVAL_EVENT_TYPES = new Set([
  * @property {number} [seq] - 事件序号（合成事件无此字段）
  * @property {number} [timestamp] - 事件时间戳（毫秒）
  * @property {Object} payload - 事件载荷
- * @property {string} [payload.session_id] - 会话 ID（schema 必填字段）
- * @property {string} [payload.task_id] - 任务 ID（独立深度研究场景）
- * @property {string} [session_id] - 顶层 session_id（部分事件使用）
+ * @property {string} [payload.sessionId] - 会话 ID（schema 必填字段）
+ * @property {string} [payload.taskId] - 任务 ID（独立深度研究场景）
+ * @property {string} [sessionId] - 顶层 sessionId（部分事件使用）
  */
 
 /**
  * 工具调用生命周期事件 payload
  *
+ * 注意：payload 在 handleSessionEvent.applySessionEvent 入口处
+ * 已通过 toCamelCase 统一转换，下游收到的均为 camelCase。
+ *
  * @typedef {Object} ToolCallLifecyclePayload
- * @property {string} session_id - 会话 ID
- * @property {string} [task_id] - 任务 ID
- * @property {string} tool_call_id - 工具调用 ID
- * @property {string} [interrupt_id] - 中断 ID（审批场景）
+ * @property {string} sessionId - 会话 ID
+ * @property {string} [taskId] - 任务 ID
+ * @property {string} toolCallId - 工具调用 ID
+ * @property {string} [interruptId] - 中断 ID（审批场景）
  * @property {string} [name] - 工具名称
- * @property {string} [tool_name] - 工具名称（snake_case）
+ * @property {string} [toolName] - 工具名称
  * @property {string} state - 工具调用状态（input-available/output-available/output-error 等）
  * @property {string} [status] - 前端映射后的 ToolCallStatus
  * @property {Object} [parameters] - 工具调用参数
@@ -127,42 +130,48 @@ export const APPROVAL_EVENT_TYPES = new Set([
  * @property {*} [output] - 工具调用结果（别名）
  * @property {string} [error] - 错误信息
  * @property {string} [messageBackendId] - 关联消息的 backendId（前端附加）
- * @property {string} [message_id] - 关联消息 ID（后端字段）
+ * @property {string} [messageId] - 关联消息 ID（后端字段）
  */
 
 /**
  * 审批事件 payload
  *
+ * 注意：payload 在 handleSessionEvent.applySessionEvent 入口处
+ * 已通过 toCamelCase 统一转换，下游收到的均为 camelCase。
+ *
  * @typedef {Object} ApprovalPayload
- * @property {string} session_id - 会话 ID
- * @property {string} [task_id] - 任务 ID
- * @property {string} interrupt_id - 中断 ID（= tool_call_id）
- * @property {string} tool_call_id - 工具调用 ID
- * @property {string} [tool_name] - 工具名称
+ * @property {string} sessionId - 会话 ID
+ * @property {string} [taskId] - 任务 ID
+ * @property {string} interruptId - 中断 ID（= toolCallId）
+ * @property {string} toolCallId - 工具调用 ID
+ * @property {string} [toolName] - 工具名称
  * @property {string} state - 审批状态（pending/processing/waiting/approved/rejected/timeout）
  * @property {string} [source] - 审批来源（chat/research/learning）
- * @property {string} [source_id] - 来源 ID
+ * @property {string} [sourceId] - 来源 ID
  * @property {string} [operation] - 审批操作内容
  * @property {string} [command] - 审批命令（兼容字段）
  * @property {string} [action] - 审批动作（confirm_with_input 等）
- * @property {string} [danger_level] - 风险等级（medium/high）
+ * @property {string} [dangerLevel] - 风险等级（medium/high）
  * @property {string} [title] - 审批标题
  * @property {string} [description] - 审批描述
  * @property {Object} [parameters] - 工具调用参数
- * @property {string} [graph_interrupt_id] - 批量审批的图中断 ID
- * @property {string} [input_placeholder] - 输入框占位文案
+ * @property {string} [graphInterruptId] - 批量审批的图中断 ID
+ * @property {string} [inputPlaceholder] - 输入框占位文案
  * @property {string} [messageBackendId] - 关联消息的 backendId（前端附加）
  */
 
 /**
  * 流式事件 payload
  *
+ * 注意：payload 在 handleSessionEvent.applySessionEvent 入口处
+ * 已通过 toCamelCase 统一转换。
+ *
  * @typedef {Object} StreamPayload
- * @property {string} session_id - 会话 ID
- * @property {string} [message_id] - 消息 ID
+ * @property {string} sessionId - 会话 ID
+ * @property {string} [messageId] - 消息 ID
  * @property {string} [content] - 流式内容
  * @property {string} [reasoning] - 推理内容
- * @property {string} [stream_state] - 流式状态（streaming/completed/finalized 等）
+ * @property {string} [streamState] - 流式状态（streaming/completed/finalized 等）
  * @property {boolean} [finalized] - 是否已完成 finalize
  * @property {Object} [usage] - token 用量
  * @property {number} [duration] - 推理耗时（秒）

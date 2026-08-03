@@ -7,6 +7,7 @@ import { useResearchStore } from './research'
 import { useStreamFinalizer } from '../composables/useStreamFinalizer'
 import { resumeApprovalStream } from '../api/approval'
 import { getInterruptId } from '../utils/message-operations'
+import { toCamelCase } from '../utils/session-transformers'
 import { readSSEStream } from '../utils/sse'
 import { StreamState } from '../types'
 import { logger } from '../utils/logger'
@@ -88,23 +89,24 @@ export const useApprovalStore = defineStore('approval', () => {
    */
   const handleApprovalEvent = (data, options = {}) => {
     const { source = 'chat', sessionId, taskId, baseApproval = {} } = options
-    const eventType = data.type || data.state
+    const converted = toCamelCase(data)
+    const eventType = converted.type || converted.state
 
     // 审批超时
-    if (eventType === 'approval_timeout' || data.state === 'timeout') {
-      _handleTimeout(data, source, sessionId)
+    if (eventType === 'approval_timeout' || converted.state === 'timeout') {
+      _handleTimeout(converted, source, sessionId)
       return
     }
 
     // 审批正在处理（另一端已点击确认/拒绝，后端处理中）
     if (eventType === 'approval_processing') {
-      _handleProcessing(data, source, sessionId)
+      _handleProcessing(converted, source, sessionId)
       return
     }
 
     // 批量审批等待（同批次部分已审批，其他工具仍 pending）
     if (eventType === 'approval_waiting') {
-      _handleWaiting(data, source, sessionId)
+      _handleWaiting(converted, source, sessionId)
       return
     }
 
@@ -112,12 +114,12 @@ export const useApprovalStore = defineStore('approval', () => {
     if (eventType === 'approval_processed'
         || eventType === 'approval_approved'
         || eventType === 'approval_rejected') {
-      _handleProcessed(data, source, sessionId)
+      _handleProcessed(converted, source, sessionId)
       return
     }
 
     // 新审批请求
-    _handleNewApproval(data, source, sessionId, taskId, baseApproval)
+    _handleNewApproval(converted, source, sessionId, taskId, baseApproval)
   }
 
   /**
@@ -139,19 +141,19 @@ export const useApprovalStore = defineStore('approval', () => {
       ...data,
       state: 'pending',
       ...(isDeepResearch ? {} : {
-        use_tools: baseApproval.use_tools ?? true,
-        use_web_search: baseApproval.use_web_search ?? false,
-        use_mcp: baseApproval.use_mcp ?? false,
-        selected_mcp_servers: baseApproval.selected_mcp_servers ?? null,
-        selected_tools: baseApproval.selected_tools ?? null,
-        use_knowledge_base: baseApproval.use_knowledge_base ?? false,
-        selected_knowledge_bases: baseApproval.selected_knowledge_bases ?? [],
+        useTools: baseApproval.useTools ?? true,
+        useWebSearch: baseApproval.useWebSearch ?? false,
+        useMcp: baseApproval.useMcp ?? false,
+        selectedMcpServers: baseApproval.selectedMcpServers ?? null,
+        selectedTools: baseApproval.selectedTools ?? null,
+        useKnowledgeBase: baseApproval.useKnowledgeBase ?? false,
+        selectedKnowledgeBases: baseApproval.selectedKnowledgeBases ?? [],
       }),
     }
 
     const effectiveSource = isDeepResearch ? 'deep_research' : 'chat'
-    // 优先使用事件数据中的 task_id（最准确），而非组件传入的 taskId（可能因切换任务而过时）
-    const effectiveTaskId = data.task_id || taskId || null
+    // 优先使用事件数据中的 taskId（最准确），而非组件传入的 taskId（可能因切换任务而过时）
+    const effectiveTaskId = data.taskId || null
 
     pendingApprovals.value.set(toolCallId, {
       source: effectiveSource,
@@ -189,7 +191,7 @@ export const useApprovalStore = defineStore('approval', () => {
     if (effectiveSessionId) {
       sessionStore.appendToLastMessage(
         effectiveSessionId,
-        `\n\n> ⏰ 工具 "${data.tool_name || '未知'}" 的审批已超时，Agent 将使用其他方式继续\n`
+        `\n\n> ⏰ 工具 "${data.toolName || '未知'}" 的审批已超时，Agent 将使用其他方式继续\n`
       )
       if (toolCallId) {
         sessionStore.updateToolCallApprovalState(effectiveSessionId, toolCallId, 'timeout')
@@ -201,7 +203,7 @@ export const useApprovalStore = defineStore('approval', () => {
 
     // 深度研究来源额外提示
     if (source === 'deep_research' || data.source === 'deep_research') {
-      ElMessage.warning(`工具 "${data.tool_name || '未知'}" 的审批已超时，Agent 将使用其他方式继续`)
+      ElMessage.warning(`工具 "${data.toolName || '未知'}" 的审批已超时，Agent 将使用其他方式继续`)
     }
   }
 
@@ -452,22 +454,22 @@ export const useApprovalStore = defineStore('approval', () => {
     // interrupt_id 由 URL path 传递；session_id 由后端从 Approval.chat_session_id / source_id 读取
     const requestBody = {
       approved,
-      provider_id: modelConfig.provider_id || null,
-      model_name: modelConfig.model_name || null,
-      use_deep_thinking: modelStore.thinkingEnabled,
-      special_params: modelConfig.special_params ? { ...modelConfig.special_params } : null,
+      providerId: modelConfig.providerId || null,
+      modelName: modelConfig.modelName || null,
+      useDeepThinking: modelStore.thinkingEnabled,
+      specialParams: modelConfig.specialParams ? { ...modelConfig.specialParams } : null,
       temperature: modelConfig.temperature || null,
-      max_tokens: modelConfig.max_tokens || null,
-      use_tools: approvalData.use_tools ?? true,
-      use_web_search: approvalData.use_web_search ?? false,
-      use_mcp: approvalData.use_mcp ?? false,
-      selected_mcp_servers: approvalData.selected_mcp_servers ?? null,
-      selected_tools: approvalData.selected_tools ?? null,
-      use_knowledge_base: approvalData.use_knowledge_base ?? false,
-      selected_knowledge_bases: approvalData.selected_knowledge_bases ?? [],
+      maxTokens: modelConfig.maxTokens || null,
+      useTools: approvalData.useTools ?? true,
+      useWebSearch: approvalData.useWebSearch ?? false,
+      useMcp: approvalData.useMcp ?? false,
+      selectedMcpServers: approvalData.selectedMcpServers ?? null,
+      selectedTools: approvalData.selectedTools ?? null,
+      useKnowledgeBase: approvalData.useKnowledgeBase ?? false,
+      selectedKnowledgeBases: approvalData.selectedKnowledgeBases ?? [],
     }
     if (approved && approvalData.action === 'confirm_with_input' && userInput !== null) {
-      requestBody.user_input = userInput
+      requestBody.userInput = userInput
     }
 
     const approvalAbortController = new AbortController()
@@ -701,7 +703,7 @@ export const useApprovalStore = defineStore('approval', () => {
             const isDeepResearch = approval.source === 'deep_research'
             pendingApprovals.value.set(toolCallId, {
               source: isDeepResearch ? 'deep_research' : 'chat',
-              taskId: approval.task_id || null,
+              taskId: approval.taskId || null,
               sessionId,
               approvalData: approval,
               createdAt: Date.now(),
@@ -760,7 +762,7 @@ export const useApprovalStore = defineStore('approval', () => {
       return
     }
 
-    logger.info(`[ApprovalStore] restoreFromSSEHistory: 恢复审批 ${toolCallId}, taskId=${taskId}, tool=${approvalData.tool_name}`)
+    logger.info(`[ApprovalStore] restoreFromSSEHistory: 恢复审批 ${toolCallId}, taskId=${taskId}, tool=${approvalData.toolName}`)
 
     pendingApprovals.value.set(toolCallId, {
       source: 'deep_research',

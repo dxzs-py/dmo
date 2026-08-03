@@ -51,15 +51,15 @@ class ProjectContext:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "projectName": self.project_name,
-            "projectRoot": self.project_root,
+            "project_name": self.project_name,
+            "project_root": self.project_root,
             "languages": self.languages,
             "frameworks": self.frameworks,
-            "hasGit": self.has_git,
-            "gitBranch": self.git_branch,
-            "instructionContent": self.instruction_content[:500] if self.instruction_content else "",
-            "directoryStructure": self.directory_structure[:1000] if self.directory_structure else "",
-            "keyFiles": self.key_files[:20],
+            "has_git": self.has_git,
+            "git_branch": self.git_branch,
+            "instruction_content": self.instruction_content[:500] if self.instruction_content else "",
+            "directory_structure": self.directory_structure[:1000] if self.directory_structure else "",
+            "key_files": self.key_files[:20],
         }
 
     def to_system_prompt_section(self) -> str:

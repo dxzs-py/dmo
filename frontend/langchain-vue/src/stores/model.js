@@ -24,12 +24,12 @@ export const useModelStore = defineStore('model', () => {
 
   const currentProviderSpecialParams = computed(() => {
     if (!currentProvider.value) return {}
-    return currentProvider.value.special_params || {}
+    return currentProvider.value.specialParams || {}
   })
 
   const selectedModelLabel = computed(() => {
     if (!currentProvider.value) return ''
-    const modelName = currentModelName.value || currentProvider.value.default_model
+    const modelName = currentModelName.value || currentProvider.value.defaultModel
     return `${currentProvider.value.label} / ${modelName}`
   })
 
@@ -54,7 +54,7 @@ export const useModelStore = defineStore('model', () => {
   })
 
   const _initSpecialParams = (provider) => {
-    const spConfig = provider?.special_params
+    const spConfig = provider?.specialParams
     if (!spConfig || typeof spConfig !== 'object') return {}
     const init = {}
     for (const [key, cfg] of Object.entries(spConfig)) {
@@ -86,9 +86,9 @@ export const useModelStore = defineStore('model', () => {
         try {
           const settingsRes = await modelAPI.getAISettings()
           const settingsData = settingsRes.data?.data
-          if (settingsData?.current?.default_chat_model?.provider_id) {
-            savedProvider = settingsData.current.default_chat_model.provider_id
-            savedModel = settingsData.current.default_chat_model.model_name
+          if (settingsData?.current?.defaultChatModel?.providerId) {
+            savedProvider = settingsData.current.defaultChatModel.providerId
+            savedModel = settingsData.current.defaultChatModel.modelName
           }
         } catch {
           // 忽略，使用默认逻辑
@@ -96,7 +96,7 @@ export const useModelStore = defineStore('model', () => {
 
         if (savedProvider && providers.value.find(p => p.id === savedProvider && p.available)) {
           currentProviderId.value = savedProvider
-          currentModelName.value = savedModel || providers.value.find(p => p.id === savedProvider)?.default_model || ''
+          currentModelName.value = savedModel || providers.value.find(p => p.id === savedProvider)?.defaultModel || ''
           const provider = providers.value.find(p => p.id === savedProvider)
           if (provider) specialParams.value = _initSpecialParams(provider)
         } else if (savedProvider && !providers.value.find(p => p.id === savedProvider && p.available)) {
@@ -105,7 +105,7 @@ export const useModelStore = defineStore('model', () => {
           const firstAvailable = providers.value.find(p => p.available)
           if (firstAvailable) {
             currentProviderId.value = firstAvailable.id
-            currentModelName.value = firstAvailable.default_model
+            currentModelName.value = firstAvailable.defaultModel
             specialParams.value = _initSpecialParams(firstAvailable)
             ElMessage.warning(`您配置的默认模型 ${savedLabel} 已不可用，已切换到 ${firstAvailable.label}`)
           }
@@ -113,13 +113,13 @@ export const useModelStore = defineStore('model', () => {
           const firstAvailable = providers.value.find(p => p.available)
           if (firstAvailable) {
             currentProviderId.value = firstAvailable.id
-            currentModelName.value = firstAvailable.default_model
+            currentModelName.value = firstAvailable.defaultModel
             specialParams.value = _initSpecialParams(firstAvailable)
           }
         } else if (!currentModelName.value) {
           const current = providers.value.find(p => p.id === currentProviderId.value)
           if (current) {
-            currentModelName.value = current.default_model
+            currentModelName.value = current.defaultModel
             specialParams.value = _initSpecialParams(current)
           }
         }
@@ -142,7 +142,7 @@ export const useModelStore = defineStore('model', () => {
       return
     }
     currentProviderId.value = providerId
-    currentModelName.value = modelName || provider.default_model
+    currentModelName.value = modelName || provider.defaultModel
     specialParams.value = _initSpecialParams(provider)
     testResult.value = null
     switchResult.value = null
@@ -216,12 +216,12 @@ export const useModelStore = defineStore('model', () => {
     try {
       const config = getModelConfig()
       const res = await modelAPI.switchModel(
-        config.provider_id,
-        config.model_name,
+        config.providerId,
+        config.modelName,
         {
           temperature: config.temperature,
-          max_tokens: config.max_tokens,
-          special_params: config.special_params,
+          maxTokens: config.maxTokens,
+          specialParams: config.specialParams,
         }
       )
       const data = res.data
@@ -247,11 +247,11 @@ export const useModelStore = defineStore('model', () => {
   const getModelConfig = () => {
     if (!currentProviderId.value) return {}
     const config = {
-      provider_id: currentProviderId.value,
-      model_name: currentModelName.value,
+      providerId: currentProviderId.value,
+      modelName: currentModelName.value,
       temperature: temperature.value,
-      max_tokens: maxTokens.value,
-      special_params: Object.keys(specialParams.value).length > 0 ? specialParams.value : null,
+      maxTokens: maxTokens.value,
+      specialParams: Object.keys(specialParams.value).length > 0 ? specialParams.value : null,
     }
     return config
   }

@@ -36,7 +36,7 @@ const form = ref({
   args: '',
   description: '',
   headers: '',
-  auth_token: '',
+  authToken: '',
 })
 
 const loading = ref(false)
@@ -59,7 +59,7 @@ const resetForm = () => {
     args: '',
     description: '',
     headers: '',
-    auth_token: '',
+    authToken: '',
   }
 }
 
@@ -74,7 +74,7 @@ watch(() => props.modelValue, (val) => {
       args: Array.isArray(srv.args) ? srv.args.join(' ') : (srv.args || ''),
       description: srv.description || '',
       headers: srv.headers && typeof srv.headers === 'object' ? JSON.stringify(srv.headers, null, 2) : '',
-      auth_token: srv.auth_token || '',
+      authToken: srv.authToken || '',
     }
   } else if (val) {
     resetForm()
@@ -100,8 +100,8 @@ const buildPayload = () => {
         data.headers = {}
       }
     }
-    if (form.value.auth_token.trim()) {
-      data.auth_token = form.value.auth_token.trim()
+    if (form.value.authToken.trim()) {
+      data.authToken = form.value.authToken.trim()
     }
   }
 
@@ -220,7 +220,7 @@ const handleClose = () => {
 
       <el-form-item v-if="!isStdio" label="Auth Token">
         <el-input
-          v-model="form.auth_token"
+          v-model="form.authToken"
           type="password"
           show-password
           placeholder="可选的认证令牌"

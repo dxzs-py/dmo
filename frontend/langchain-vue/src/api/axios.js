@@ -2,6 +2,7 @@ import axios from 'axios'
 import settings from '../config/settings'
 import { useUserStore } from '@/stores/user'
 import { useLoadingStore } from '@/stores/loading'
+import { toCamelCase, toSnakeCase } from '@/utils/session-transformers'
 
 let isRefreshing = false
 let refreshSubscribers = []
@@ -29,6 +30,23 @@ apiClient.interceptors.request.use(
       if (!config.params) config.params = {}
       config.params._t = Date.now()
     }
+    // JSON body 统一转换 camelCase → snake_case
+    if (config.data
+      && !(config.data instanceof FormData)
+      && !(config.data instanceof Blob)
+      && !(config.data instanceof File)) {
+      try {
+        const before = JSON.stringify(config.data).slice(0, 200)
+        config.data = toSnakeCase(config.data)
+        const after = JSON.stringify(config.data).slice(0, 200)
+        if (before !== after) {
+          console.debug('[Axios] 请求转换:', config.url, '\n  前:', before, '\n  后:', after)
+        }
+      } catch (e) {
+        // 转换失败不影响请求正常发送
+        console.warn('[Axios] toSnakeCase 转换请求 body 失败:', e)
+      }
+    }
     return config
   },
   (error) => {
@@ -54,6 +72,19 @@ apiClient.interceptors.response.use(
     if (!response.config.skipLoading) {
       const loadingStore = useLoadingStore()
       loadingStore.stop()
+    }
+    // 统一转换响应数据 snake_case → camelCase
+    if (response.data) {
+      try {
+        const before = JSON.stringify(response.data).slice(0, 200)
+        response.data = toCamelCase(response.data)
+        const after = JSON.stringify(response.data).slice(0, 200)
+        if (before !== after) {
+          console.debug('[Axios] 响应转换:', response.config?.url, '\n  前:', before, '\n  后:', after)
+        }
+      } catch (e) {
+        console.warn('[Axios] toCamelCase 转换响应数据失败:', e)
+      }
     }
     return response
   },

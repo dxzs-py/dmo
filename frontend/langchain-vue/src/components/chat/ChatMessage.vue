@@ -8,7 +8,7 @@ import ChainOfThought from './ChainOfThought.vue'
 import ToolCallCard from './ToolCallCard.vue'
 import Sources from './Sources.vue'
 import Plan from './Plan.vue'
-import { AiReasoning } from '../ai-elements'
+import AiReasoning from '../ai-elements/AiReasoning.vue'
 import { StreamState } from '../../types'
 import AiTask from '../ai-elements/AiTask.vue'
 import AiImage from '../ai-elements/AiImage.vue'
@@ -171,9 +171,9 @@ const attachments = computed(() => {
   if (props.message.attachments && props.message.attachments.length > 0) {
     return props.message.attachments.map(att => ({
       ...att,
-      name: att.name || att.original_name,
-      size: att.size || att.file_size,
-      fileType: att.fileType || att.file_type,
+      name: att.name || att.originalName,
+      size: att.size || att.fileSize,
+      fileType: att.fileType,
     }))
   }
   return []

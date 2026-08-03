@@ -835,13 +835,13 @@ class ChatSessionCompactView(BaseChatAPIView):
         return success_response(
             data={
                 "compressed": prune_info["pruned_count"] > 0,
-                "originalMessageCount": prune_info["original_count"],
-                "keptMessageCount": prune_info["original_count"] - prune_info["pruned_count"],
-                "prunedCount": prune_info["pruned_count"],
-                "dedupedCount": prune_info["deduped_count"],
-                "filteredCount": prune_info["filtered_count"],
-                "injectionDetected": metadata["injection_detected"],
-                "budgetOverSections": metadata["budget_over_sections"],
+                "original_message_count": prune_info["original_count"],
+                "kept_message_count": prune_info["original_count"] - prune_info["pruned_count"],
+                "pruned_count": prune_info["pruned_count"],
+                "deduped_count": prune_info["deduped_count"],
+                "filtered_count": prune_info["filtered_count"],
+                "injection_detected": metadata["injection_detected"],
+                "budget_over_sections": metadata["budget_over_sections"],
             }
         )
 

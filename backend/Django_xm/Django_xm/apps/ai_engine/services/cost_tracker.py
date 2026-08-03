@@ -33,11 +33,11 @@ class TokenRecord:
     def to_dict(self) -> dict[str, Any]:
         return {
             "model": self.model,
-            "inputTokens": self.input_tokens,
-            "outputTokens": self.output_tokens,
-            "reasoningTokens": self.reasoning_tokens,
-            "cachedInputTokens": self.cached_input_tokens,
-            "cacheCreationTokens": self.cache_creation_tokens,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "reasoning_tokens": self.reasoning_tokens,
+            "cached_input_tokens": self.cached_input_tokens,
+            "cache_creation_tokens": self.cache_creation_tokens,
             "category": self.category,
             "timestamp": self.timestamp,
         }
@@ -149,17 +149,17 @@ class TokenDetailTracker:
                 "input": totals["input_tokens"],
                 "output": totals["output_tokens"],
                 "reasoning": totals["reasoning_tokens"],
-                "cachedInput": totals["cached_input_tokens"],
-                "cacheCreation": totals["cache_creation_tokens"],
+                "cached_input": totals["cached_input_tokens"],
+                "cache_creation": totals["cache_creation_tokens"],
                 "total": (totals["input_tokens"] + totals["output_tokens"] + totals["reasoning_tokens"]),
             },
-            "recordCount": len(self.records),
+            "record_count": len(self.records),
             "models": list({r.model for r in self.records}),
             "records": [r.to_dict() for r in self.records[-10:]],
         }
 
     def get_token_detail(self) -> dict[str, Any]:
-        llm_totals = {"input": 0, "output": 0, "reasoning": 0, "cachedInput": 0, "cacheCreation": 0}
+        llm_totals = {"input": 0, "output": 0, "reasoning": 0, "cached_input": 0, "cache_creation": 0}
         tool_llm_totals = {"input": 0, "output": 0}
 
         for record in self.records:
@@ -170,8 +170,8 @@ class TokenDetailTracker:
                 llm_totals["input"] += record.input_tokens
                 llm_totals["output"] += record.output_tokens
                 llm_totals["reasoning"] += record.reasoning_tokens
-                llm_totals["cachedInput"] += record.cached_input_tokens
-                llm_totals["cacheCreation"] += record.cache_creation_tokens
+                llm_totals["cached_input"] += record.cached_input_tokens
+                llm_totals["cache_creation"] += record.cache_creation_tokens
 
         llm_totals["total"] = llm_totals["input"] + llm_totals["output"] + llm_totals["reasoning"]
 
@@ -179,15 +179,15 @@ class TokenDetailTracker:
             "count": sum(t.call_count for t in self.tool_usages.values()),
             "names": list(self.tool_usages.keys()),
             "tokens": sum(t.tokens for t in self.tool_usages.values()),
-            "llmTokens": {
+            "llm_tokens": {
                 "input": tool_llm_totals["input"],
                 "output": tool_llm_totals["output"],
             },
         }
 
         storage_info = {
-            "embeddingTokens": self.storage_usage.embedding_tokens,
-            "retrievalDocs": self.storage_usage.retrieval_docs,
+            "embedding_tokens": self.storage_usage.embedding_tokens,
+            "retrieval_docs": self.storage_usage.retrieval_docs,
         }
 
         return {
@@ -205,11 +205,11 @@ class TokenDetailTracker:
         ]
         if detail["tools"]["count"] > 0:
             parts.append(f"工具 调用={detail['tools']['count']}次, Token={detail['tools']['tokens']}")
-        if detail["storage"]["embeddingTokens"] > 0:
+        if detail["storage"]["embedding_tokens"] > 0:
             parts.append(
-                f"存储 Embedding={detail['storage']['embeddingTokens']}, 检索文档={detail['storage']['retrievalDocs']}"
+                f"存储 Embedding={detail['storage']['embedding_tokens']}, 检索文档={detail['storage']['retrieval_docs']}"
             )
-        parts.append(f"总调用次数: {summary['recordCount']}")
+        parts.append(f"总调用次数: {summary['record_count']}")
         logger.info(" | ".join(parts))
 
 

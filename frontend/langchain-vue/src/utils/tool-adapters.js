@@ -232,7 +232,7 @@ const internalParameterFormatters = {
   /** read_file: 显示 file_path（含可选 offset/limit） */
   read_file: (params) => {
     const p = normalizeParams(params)
-    const filePath = p.file_path || p.path || ''
+    const filePath = p.filePath || p.path || ''
     const parts = []
     if (filePath) parts.push(filePath)
     if (p.offset != null) parts.push(`offset=${p.offset}`)
@@ -247,13 +247,13 @@ const internalParameterFormatters = {
   /** write_file: 显示 file_path + content（content 截断预览） */
   write_file: (params) => {
     const p = normalizeParams(params)
-    const filePath = p.file_path || p.path || ''
+    const filePath = p.filePath || p.path || ''
     const content = p.content != null ? p.content : ''
     const contentStr = typeof content === 'string' ? content : formatContent(content)
     return {
       label: '写入文件',
       formatted: JSON.stringify({
-        file_path: filePath,
+        filePath: filePath,
         content: truncate(contentStr, 200),
       }, null, 2),
       displayMode: 'json',
@@ -263,13 +263,13 @@ const internalParameterFormatters = {
   /** edit_file: 显示 file_path + old_string + new_string（差异形式） */
   edit_file: (params) => {
     const p = normalizeParams(params)
-    const filePath = p.file_path || p.path || ''
+    const filePath = p.filePath || p.path || ''
     const oldStr = p.old_string != null ? p.old_string : (p.old_str != null ? p.old_str : '')
     const newStr = p.new_string != null ? p.new_string : (p.new_str != null ? p.new_str : '')
     return {
       label: '编辑文件',
       formatted: JSON.stringify({
-        file_path: filePath,
+        filePath: filePath,
         old_string: truncate(String(oldStr), 200),
         new_string: truncate(String(newStr), 200),
       }, null, 2),
@@ -280,7 +280,7 @@ const internalParameterFormatters = {
   /** execute: 显示 command（shell 命令） */
   execute: (params) => {
     const p = normalizeParams(params)
-    const cmd = p.command || p.cmd || p.shell_command || ''
+    const cmd = p.command || p.cmd || p.shellCommand || ''
     return {
       label: '命令',
       formatted: String(cmd),
@@ -360,14 +360,14 @@ const internalParameterFormatters = {
   /** shell_exec: 显示命令（需要 special 命令展示） */
   shell_exec: (params) => {
     const p = normalizeParams(params)
-    const cmd = p.command || p.cmd || p.shell_command || ''
+    const cmd = p.command || p.cmd || p.shellCommand || ''
     return { label: '命令', formatted: String(cmd), displayMode: 'command' }
   },
 
   /** fs_write_file: 显示 relative_path + content（需要 content 截断预览） */
   fs_write_file: (params) => {
     const p = normalizeParams(params)
-    const filePath = p.relative_path || p.file_path || p.path || ''
+    const filePath = p.relativePath || p.filePath || p.path || ''
     const content = p.content != null ? p.content : ''
     const contentStr = typeof content === 'string' ? content : formatContent(content)
     return {
@@ -383,7 +383,7 @@ const internalParameterFormatters = {
   /** file_reader: 显示 file_path（需要 syntax highlighting 的结果） */
   file_reader: (params) => {
     const p = normalizeParams(params)
-    const filePath = p.file_path || p.path || ''
+    const filePath = p.filePath || p.path || ''
     return { label: '文件路径', formatted: String(filePath), displayMode: 'inline' }
   },
 }
@@ -406,8 +406,8 @@ const internalResultFormatters = {
     const text = extractText(result)
     let language = 'text'
     // 优先：result 对象本身携带 file_path，按扩展名推断
-    if (result && typeof result === 'object' && (result.file_path || result.path)) {
-      language = inferLanguageFromPath(result.file_path || result.path)
+    if (result && typeof result === 'object' && (result.filePath || result.path)) {
+      language = inferLanguageFromPath(result.filePath || result.path)
     } else {
       // 回退：根据内容启发式推断
       language = inferLanguageFromContent(text)
@@ -520,8 +520,8 @@ const internalResultFormatters = {
   file_reader: (result) => {
     const text = extractText(result)
     let language = 'text'
-    if (result && typeof result === 'object' && (result.file_path || result.path)) {
-      language = inferLanguageFromPath(result.file_path || result.path)
+    if (result && typeof result === 'object' && (result.filePath || result.path)) {
+      language = inferLanguageFromPath(result.filePath || result.path)
     } else {
       language = inferLanguageFromContent(text)
     }

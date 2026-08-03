@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, markRaw, triggerRef } from 'vue'
 import { getApprovalHistory } from '@/api/approval'
 import { logger } from '@/utils/logger'
+import { toCamelCase } from '@/utils/session-transformers'
 import { mapApprovalStateToStatus } from '@/types'
 import {
   addOrUpdateToolCallInMap,
@@ -24,7 +25,7 @@ import {
  * 转换为前端 toolCall 结构，供 loadHistory 合并使用。
  *
  * 字段映射：
- * - extra.tool_call_id / interrupt_id → toolCall.id / tool_call_id
+ * - extra.toolCallId / interrupt_id → toolCall.id / toolCallId
  * - tool_name → toolCall.name
  * - parameters → toolCall.parameters
  * - state → toolCall.status（通过 mapApprovalStateToStatus 映射）
@@ -39,29 +40,29 @@ import {
 function _approvalToToolCall(approval) {
   if (!approval) return null
   const extra = (approval.extra && typeof approval.extra === 'object') ? approval.extra : {}
-  const toolCallId = extra.tool_call_id || approval.interrupt_id
+  const toolCallId = extra.toolCallId || approval.interruptId
   return {
     id: toolCallId,
-    tool_call_id: toolCallId,
-    name: approval.tool_name,
-    tool_name: approval.tool_name,
+    toolCallId: toolCallId,
+    name: approval.toolName,
+    toolName: approval.toolName,
     parameters: approval.parameters || {},
     status: mapApprovalStateToStatus(approval.state),
     approval: {
-      interrupt_id: approval.interrupt_id,
+      interruptId: approval.interruptId,
       source: approval.source,
-      source_id: approval.source_id,
+      sourceId: approval.sourceId,
       state: approval.state,
-      tool_name: approval.tool_name,
+      toolName: approval.toolName,
       title: approval.title,
       description: approval.description,
       action: approval.action,
       operation: approval.operation,
-      danger_level: approval.danger_level,
+      dangerLevel: approval.dangerLevel,
       parameters: approval.parameters,
-      user_input: approval.user_input,
-      created_at: approval.created_at,
-      resolved_at: approval.resolved_at,
+      userInput: approval.userInput,
+      createdAt: approval.createdAt,
+      resolvedAt: approval.resolvedAt,
       ...extra,
     },
   }
@@ -103,7 +104,7 @@ export const useResearchStore = defineStore('research', () => {
    * 由 setTaskStatus / updateTaskFromEvent 写入，由 DeepResearchView 通过
    * getTaskStatus（建议在 computed 中调用）读取，实现跨浏览器实时同步。
    *
-   * 数据结构：Map<taskId, ref({task_id, status, final_report, ...})>
+   * 数据结构：Map<taskId, ref({taskId, status, finalReport, ...})>
    */
   const taskInfo = ref(new Map())
 
@@ -168,7 +169,7 @@ export const useResearchStore = defineStore('research', () => {
    * - 新 status 是终态 → 直接覆盖（终态是权威）
    * - 其他情况 → 用新 status 覆盖
    *
-   * 其他字段（final_report / current_step / message 等）直接合并更新。
+   * 其他字段（finalReport / currentStep / message 等）直接合并更新。
    *
    * @param {string} taskId - 研究任务 ID
    * @param {Object} fresh - 新的任务数据（部分字段即可，会与现有数据合并）
@@ -243,28 +244,29 @@ export const useResearchStore = defineStore('research', () => {
    * 与 setTaskStatus 的区别：
    * - 此方法专用于 stream_completed 事件，使用 force=true 强制覆盖终态
    *   （stream_completed 是权威完成事件，必须更新）
-   * - 自动从 payload 提取 status / final_report / error 等字段
+   * - 自动从 payload 提取 status / finalReport / error 等字段
    *
    * @param {string} taskId - 研究任务 ID
    * @param {Object} payload - stream_completed 事件 payload
    * @param {boolean} [payload.success] - 是否成功
-   * @param {string} [payload.final_report] - 最终报告内容
+   * @param {string} [payload.finalReport] - 最终报告内容
    * @param {string} [payload.error] - 错误信息
-   * @param {string} [payload.message_id] - 关联的 ChatMessage ID
+   * @param {string} [payload.messageId] - 关联的 ChatMessage ID
    * @returns {Object|null} 更新后的任务状态
    */
   const updateTaskFromEvent = (taskId, payload) => {
     if (!taskId || !payload) return null
-    const success = payload.success !== false
+    const data = toCamelCase(payload)
+    const success = data.success !== false
     const patch = {
       status: success ? 'completed' : 'failed',
     }
-    if (payload.final_report !== undefined) patch.final_report = payload.final_report
-    if (payload.error) patch.error = payload.error
-    if (payload.message_id) patch.message_id = payload.message_id
+    if (data.finalReport !== undefined) patch.finalReport = data.finalReport
+    if (data.error) patch.error = data.error
+    if (data.messageId) patch.messageId = data.messageId
     logger.info(
       `[Research] updateTaskFromEvent stream_completed: taskId=${taskId}, ` +
-      `success=${success}, hasReport=${!!payload.final_report}, error=${payload.error || ''}`
+      `success=${success}, hasReport=${!!data.finalReport}, error=${data.error || ''}`
     )
     return setTaskStatus(taskId, patch, { force: true })
   }
@@ -351,7 +353,7 @@ export const useResearchStore = defineStore('research', () => {
 
     // 如果创建了占位条目，同时存入 pendingApprovals 队列（兜底机制，确保后续 tool 事件能正确合并）
     if (isSynthetic) {
-      const pendingIds = [toolCallId, approvalData.tool_call_id].filter(Boolean)
+      const pendingIds = [toolCallId, approvalData.toolCallId].filter(Boolean)
       for (const pid of pendingIds) {
         task.pendingApprovals.value.set(pid, { approvalData, toolCallId })
       }
@@ -421,7 +423,7 @@ export const useResearchStore = defineStore('research', () => {
       if (toolCallsArr && Array.isArray(toolCallsArr)) {
         const tc = findToolCallById(toolCallsArr, toolCallId, { skipApproved: false })
         if (tc) {
-          const writeKey = tc.id || tc.tool_call_id || toolCallId
+          const writeKey = tc.id || tc.toolCallId || toolCallId
           toolCallMap.set(writeKey, tc)
           triggerRef(task.toolCallMap)
           target = tc
@@ -442,7 +444,7 @@ export const useResearchStore = defineStore('research', () => {
     }
 
     const oldState = target.approval?.state
-    const toolName = target.name || target.tool_name
+    const toolName = target.name || target.toolName
 
     // 统一通过 Map 函数更新 approval.state
     const updated = updateApprovalStateInMap(toolCallMap, toolCallId, state)
@@ -484,7 +486,7 @@ export const useResearchStore = defineStore('research', () => {
       if (toolCallsArr && Array.isArray(toolCallsArr)) {
         const tc = findToolCallById(toolCallsArr, toolCallId, { skipApproved: false })
         if (tc) {
-          const writeKey = tc.id || tc.tool_call_id || toolCallId
+          const writeKey = tc.id || tc.toolCallId || toolCallId
           toolCallMap.set(writeKey, tc)
           triggerRef(task.toolCallMap)
           target = tc
@@ -505,7 +507,7 @@ export const useResearchStore = defineStore('research', () => {
     }
 
     const oldStatus = target.status
-    const toolName = target.name || target.tool_name
+    const toolName = target.name || target.toolName
 
     // 统一通过 Map 函数更新 status
     updateToolCallStatusInMap(toolCallMap, toolCallId, status)
@@ -565,7 +567,7 @@ export const useResearchStore = defineStore('research', () => {
       const mergedList = _mergeToolCalls(existingList, backendList)
 
       // 同步更新 toolCallMap：重建 Map 以确保一致性
-      const mergedMap = new Map(mergedList.map(tc => [tc.id || tc.tool_call_id, tc]))
+      const mergedMap = new Map(mergedList.map(tc => [tc.id || tc.toolCallId, tc]))
       // 保留 Map 中已有但 mergedList 中不存在的条目（WebSocket 事件写入的高优先级数据）
       for (const [key, value] of task.toolCallMap.value.entries()) {
         if (!mergedMap.has(key)) {

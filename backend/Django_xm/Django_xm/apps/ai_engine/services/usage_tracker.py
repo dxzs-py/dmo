@@ -27,10 +27,10 @@ class TokenUsage:
     def to_dict(self) -> dict[str, int]:
         """转换为字典格式"""
         return {
-            "inputTokens": self.input_tokens,
-            "outputTokens": self.output_tokens,
-            "reasoningTokens": self.reasoning_tokens,
-            "cachedInputTokens": self.cached_input_tokens,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "reasoning_tokens": self.reasoning_tokens,
+            "cached_input_tokens": self.cached_input_tokens,
         }
 
 
@@ -108,10 +108,10 @@ class UsageTracker:
         max_tokens = self.get_max_tokens()
 
         return {
-            "usedTokens": total_tokens,
-            "maxTokens": max_tokens,
+            "used_tokens": total_tokens,
+            "max_tokens": max_tokens,
             "usage": self.usage.to_dict(),
-            "modelId": self.model_id,
+            "model_id": self.model_id,
             "percentage": self.get_usage_percentage(),
         }
 
@@ -120,7 +120,7 @@ class UsageTracker:
         info = self.get_usage_info()
         logger.info(
             f"📊 Token 使用统计: "
-            f"{info['usedTokens']}/{info['maxTokens']} "
+            f"{info['used_tokens']}/{info['max_tokens']} "
             f"({info['percentage']:.1%}) - "
             f"输入:{self.usage.input_tokens}, "
             f"输出:{self.usage.output_tokens}"

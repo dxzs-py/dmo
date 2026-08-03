@@ -135,7 +135,7 @@ const connectResearchSSE = async (taskId) => {
                   sessionId: sessionStore.currentSessionId,
                 })
               } else if (parsed.type === 'approval_history') {
-                const effectiveTaskId = parsed.task_id || taskId
+                const effectiveTaskId = parsed.taskId || taskId
                 if (parsed.data) {
                   approvalStore.restoreFromSSEHistory(parsed.data, effectiveTaskId, sessionStore.currentSessionId)
                 }
@@ -223,7 +223,7 @@ const handleContinueResearch = (taskId) => {
   chatStore.currentMode = 'deep-research'
   chatStore.sendMessage('请继续深入研究', {
     useTools: true,
-    continue_task_id: taskId,
+    continueTaskId: taskId,
   })
 }
 
@@ -272,12 +272,12 @@ onMounted(async () => {
 
   // 如果从深度研究页面跳转过来，且指定了 session_id，先切换到该会话
   const targetSessionId = route.query.session_id
-  const researchTaskId = route.query.research_task_id
+  const researchTaskId = route.query.researchTaskId
   const queryMessage = route.query.q
   if (targetSessionId || researchTaskId) {
     console.log('[ChatView] 深度研究跳转参数:', {
       session_id: targetSessionId || '(未传递)',
-      research_task_id: researchTaskId || '(未传递)',
+      researchTaskId: researchTaskId || '(未传递)',
       q: queryMessage || '(未传递)',
       currentSessionId: sessionStore.currentSessionId || '(无)',
       sessionMatch: targetSessionId === sessionStore.currentSessionId,

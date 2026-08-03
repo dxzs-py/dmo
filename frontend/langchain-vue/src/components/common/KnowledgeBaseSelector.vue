@@ -32,7 +32,7 @@
             <div class="kb-item-content">
               <span class="kb-name">{{ kb.name }}</span>
               <span class="kb-meta">
-                <el-tag size="small" type="info">{{ kb.chunk_count || 0 }} 文档块</el-tag>
+                <el-tag size="small" type="info">{{ kb.chunkCount || 0 }} 文档块</el-tag>
                 <span v-if="kb.description" class="kb-desc">{{ kb.description }}</span>
               </span>
             </div>
@@ -50,7 +50,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElIcon } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
-import { knowledgeAPI } from '@/api'
+import { knowledgeAPI } from '@/api/knowledge'
 import { logger } from '@/utils/logger'
 
 const props = defineProps({

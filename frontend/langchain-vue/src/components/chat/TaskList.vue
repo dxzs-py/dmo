@@ -30,7 +30,7 @@
       <el-table-column prop="id" label="ID" width="100" />
       <el-table-column label="主题/问题" min-width="250">
         <template #default="{ row }">
-          <div class="task-query">{{ row.query || row.user_question }}</div>
+          <div class="task-query">{{ row.query || row.userQuestion }}</div>
         </template>
       </el-table-column>
       <el-table-column prop="status" label="状态" width="120">
@@ -49,14 +49,14 @@
           <el-tag v-else type="info" size="small">独立研究</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="created_at" label="创建时间" width="180">
+      <el-table-column prop="createdAt" label="创建时间" width="180">
         <template #default="{ row }">
-          {{ formatDate(row.created_at) }}
+          {{ formatDate(row.createdAt) }}
         </template>
       </el-table-column>
-      <el-table-column prop="updated_at" label="更新时间" width="180">
+      <el-table-column prop="updatedAt" label="更新时间" width="180">
         <template #default="{ row }">
-          {{ formatDate(row.updated_at) }}
+          {{ formatDate(row.updatedAt) }}
         </template>
       </el-table-column>
       <el-table-column label="操作" width="200" fixed="right">
@@ -225,7 +225,7 @@ const continueTask = (task) => {
 }
 
 const confirmDeleteTask = async (task) => {
-  const name = task.query || task.user_question || task.task_id || task.thread_id
+  const name = task.query || task.userQuestion || task.taskId || task.thread_id
   try {
     await confirmDelete(`确定要删除任务"${name}"吗？此操作不可撤销。`)
     await deleteTask(task)
@@ -236,7 +236,7 @@ const confirmDeleteTask = async (task) => {
 
 const deleteTask = async (task) => {
   try {
-    const taskId = task.task_id || task.thread_id
+    const taskId = task.taskId || task.thread_id
     await props.api.deleteTask(taskId)
     ElMessage.success('删除成功')
     loadTasks()

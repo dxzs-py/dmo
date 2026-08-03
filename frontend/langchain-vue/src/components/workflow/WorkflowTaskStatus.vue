@@ -8,10 +8,10 @@
       </template>
 
       <el-descriptions :column="1" border size="small">
-        <el-descriptions-item label="线程ID">{{ execution.thread_id }}</el-descriptions-item>
-        <el-descriptions-item label="查询">{{ execution.user_question }}</el-descriptions-item>
-        <el-descriptions-item label="创建时间">{{ formatDate(execution.created_at) }}</el-descriptions-item>
-        <el-descriptions-item label="更新时间">{{ formatDate(execution.updated_at) }}</el-descriptions-item>
+        <el-descriptions-item label="线程ID">{{ execution.threadId }}</el-descriptions-item>
+        <el-descriptions-item label="查询">{{ execution.userQuestion }}</el-descriptions-item>
+        <el-descriptions-item label="创建时间">{{ formatDate(execution.createdAt) }}</el-descriptions-item>
+        <el-descriptions-item label="更新时间">{{ formatDate(execution.updatedAt) }}</el-descriptions-item>
       </el-descriptions>
     </el-card>
 
@@ -41,7 +41,7 @@
       <h4>生成的文件</h4>
       <FileBrowser
         :ref="fileBrowserRef"
-        :task-id="execution.thread_id"
+        :task-id="execution.threadId"
         :api="workflowAPI"
       />
     </div>
@@ -53,7 +53,7 @@ import { Loading } from '@element-plus/icons-vue'
 import FileBrowser from '@/components/chat/FileBrowser.vue'
 import MarkdownRenderer from '@/components/common/MarkdownRenderer.vue'
 import { formatDate } from '@/utils/format'
-import { workflowAPI } from '@/api'
+import { workflowAPI } from '@/api/workflow'
 
 /**
  * 学习工作流 - 任务状态信息

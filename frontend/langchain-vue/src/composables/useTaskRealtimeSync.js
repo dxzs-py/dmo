@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { useRealtimeSync } from '@/composables/useRealtimeSync'
 import { useSyncStore } from '@/stores/sync'
 import { logger } from '@/utils/logger'
+import { toCamelCase } from '@/utils/session-transformers'
 
 /**
  * 任务实时同步（WebSocket）composable
@@ -47,7 +48,7 @@ export function useTaskRealtimeSync(sourceType, taskIdField) {
   const subscribeRealtimeForTask = (taskObj) => {
     if (!taskObj) return
     const taskId = taskObj[taskIdField]
-    const chatSessionId = taskObj.chat_session_id || taskObj.session_id
+    const chatSessionId = taskObj.chatSessionId || taskObj.sessionId
 
     // 幂等判断：task 和 session 均已订阅则跳过（fresh 刷新后重复调用场景）
     if (taskId && taskId === subscribedTaskId && chatSessionId === subscribedSessionId) {

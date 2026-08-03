@@ -28,7 +28,6 @@ const mockSessionStore = {
   loadSessionDetail: vi.fn(),
   upsertSession: vi.fn(),
   removeMessagesByIds: vi.fn(),
-  _mapBackendMessageFields: vi.fn((fields) => fields),
 }
 
 vi.mock('@/stores/session', () => ({
@@ -64,11 +63,11 @@ vi.mock('@/utils/logger', () => ({
 
 vi.mock('@/utils/session-transformers', () => ({
   transformBackendMessageToFrontend: vi.fn((data) => data),
+  toCamelCase: vi.fn((data) => data),
 }))
-
 vi.mock('@/utils/message-operations', () => ({
   mergeMessageFromBackend: vi.fn((existing, backend) => Object.assign(existing, backend)),
-  getInterruptId: vi.fn((approval) => approval?.interrupt_id || approval?.tool_call_id || ''),
+  getInterruptId: vi.fn((approval) => approval?.interruptId || approval?.toolCallId || ''),
 }))
 
 import { useSyncStore } from '../sync'
@@ -83,7 +82,6 @@ describe('useSyncStore', () => {
     mockSessionStore.loadSessionDetail.mockReset()
     mockSessionStore.upsertSession.mockReset()
     mockSessionStore.removeMessagesByIds.mockReset()
-    mockSessionStore._mapBackendMessageFields.mockImplementation((fields) => fields)
     mockIncrementStreaming.mockReset()
     mockDecrementStreaming.mockReset()
   })

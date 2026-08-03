@@ -15,7 +15,7 @@
         />
       </el-form-item>
       <el-form-item label="知识库">
-        <KnowledgeBaseSelector v-model="form.knowledge_base_ids" />
+        <KnowledgeBaseSelector v-model="form.knowledgeBaseIds" />
         <div class="kb-tip">不选择知识库时将使用 AI 内置知识生成学习内容</div>
       </el-form-item>
       <el-form-item>

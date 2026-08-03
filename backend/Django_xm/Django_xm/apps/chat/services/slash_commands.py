@@ -40,7 +40,7 @@ class SlashCommand:
             "category": self.category.value,
             "usage": self.usage,
             "examples": self.examples,
-            "requiresSession": self.requires_session,
+            "requires_session": self.requires_session,
         }
 
 
@@ -194,7 +194,7 @@ def _handle_export(context: dict[str, Any]) -> dict[str, Any]:
     export_data = {
         "session": session,
         "messages": messages,
-        "exportedAt": context.get("timestamp", ""),
+        "exported_at": context.get("timestamp", ""),
     }
 
     return {

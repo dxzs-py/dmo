@@ -15,8 +15,8 @@ export const useCapabilityStore = defineStore('capability', () => {
     try {
       const res = await capabilityAPI.getConfig(agentType)
       if (res.data && res.data.code === 200) {
-        availableCapabilities.value = res.data.data.available_capabilities || []
-        defaultCapabilities.value = res.data.data.default_capabilities || []
+        availableCapabilities.value = res.data.data.availableCapabilities || []
+        defaultCapabilities.value = res.data.data.defaultCapabilities || []
         loaded.value = true
       }
     } catch (e) {

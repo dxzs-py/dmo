@@ -38,7 +38,7 @@ export function useWorkflowSteps({ execution }) {
   /** current_step 之前的所有步骤（不含当前步骤） */
   const completedSteps = computed(() => {
     if (!execution.value) return []
-    const currentIdx = stepOrder.indexOf(execution.value.current_step)
+    const currentIdx = stepOrder.indexOf(execution.value.currentStep)
     if (currentIdx < 0) return []
     return stepOrder.slice(0, currentIdx)
   })

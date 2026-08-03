@@ -39,11 +39,11 @@ export const createHandleToolCallEvent = (ctx) => {
    * @param {string} source - 事件来源模块（'chat' / 'deep_research' / 'learning'）
    */
   const handleToolCallEvent = async (sessionId, taskId, payload, eventType, source) => {
-    // tool_call_id 为唯一主键（= LLM tool_call.id）
-    const toolCallId = payload.tool_call_id
+    // toolCallId 为唯一主键（= LLM tool_call.id → toolCallId after toCamelCase）
+    const toolCallId = payload.toolCallId
 
     if (!toolCallId) {
-      logger.warn(`[Sync] handleToolCallEvent 缺少 tool_call_id: ${eventType}`, payload)
+      logger.warn(`[Sync] handleToolCallEvent 缺少 toolCallId: ${eventType}`, payload)
       return
     }
 
@@ -65,37 +65,37 @@ export const createHandleToolCallEvent = (ctx) => {
     /** @type {import('@/types').ToolCallData} */
     const toolData = {
       id: toolCallId,
-      tool_call_id: toolCallId,
-      name: payload.tool_name,
-      tool_name: payload.tool_name,
+      toolCallId: toolCallId,
+      name: payload.toolName,
+      toolName: payload.toolName,
       parameters: hasNonEmptyParams ? payload.parameters : undefined,
       state: payload.state,
       status: mappedStatus || payload.status,
       result: payload.result,
       error: payload.error,
-      is_internal: payload.is_internal || false,
+      isInternal: payload.isInternal || false,
       // SAFE 级自动通过标记（Phase F1）：后端 publish_tool_call payload 携带，
-      // ToolCallCard 读取 toolCall.auto_approved 显示"自动通过"徽章
-      auto_approved: payload.auto_approved === true,
+      // ToolCallCard 读取 toolCall.isAutoApproved 显示"自动通过"徽章
+      isAutoApproved: payload.autoApproved === true,
       // 子 agent 嵌套层级字段（Phase E3）：后端 publish_tool_call payload 携带，
       // ToolCallCard 读取 toolCall.* 展示完整调用链路（非审批路径也可见）
-      parent_tool_call_id: payload.parent_tool_call_id || '',
+      parentToolCallId: payload.parentToolCallId || '',
       depth: typeof payload.depth === 'number' && payload.depth > 0 ? payload.depth : 0,
-      agent_name: payload.agent_name || '',
-      agent_path: Array.isArray(payload.agent_path) ? payload.agent_path : [],
-      risk_ceiling: payload.risk_ceiling || '',
+      agentName: payload.agentName || '',
+      agentPath: Array.isArray(payload.agentPath) ? payload.agentPath : [],
+      riskCeiling: payload.riskCeiling || '',
     }
 
-    const hasMessageId = !!payload.message_id
+    const hasMessageId = !!payload.messageId
     const isResultEvent = TOOL_CALL_RESULT_STATUSES.has(mappedStatus)
     const storeId = sessionId || taskId
     const storeName = sessionId ? 'sessionStore' : 'researchStore'
 
     logger.info(
       `[Sync] 收到 ${eventType} 事件: ${storeName}=${storeId}, ` +
-      `tool=${payload.tool_name}, toolCallId=${toolCallId}, ` +
+      `tool=${payload.toolName}, toolCallId=${toolCallId}, ` +
       `mappedStatus=${mappedStatus}, isResult=${isResultEvent}, ` +
-      `message_id=${payload.message_id || '(none)'}, source=${source || '(none)'}`
+      `messageId=${payload.messageId || '(none)'}, source=${source || '(none)'}`
     )
 
     if (sessionId) {
@@ -115,21 +115,21 @@ export const createHandleToolCallEvent = (ctx) => {
         // 工具结果事件（completed / failed / timeout）：更新工具结果
         // updateOrAddToolResultInMap 已有参数保护：仅在非空时更新，空时保留已有参数
         if (hasMessageId) {
-          sessionStore.updateOrAddToolResult(sessionId, { ...toolData, messageBackendId: payload.message_id?.toString() })
+          sessionStore.updateOrAddToolResult(sessionId, { ...toolData, messageBackendId: payload.messageId?.toString() })
         } else {
           sessionStore.updateOrAddToolResult(sessionId, toolData)
         }
-        logger.info(`[Sync] 工具调用结果: session=${sessionId}, message=${payload.message_id || '(兜底)'}, tool=${payload.tool_name}, id=${toolCallId}, eventType=${eventType}`)
+        logger.info(`[Sync] 工具调用结果: session=${sessionId}, message=${payload.messageId || '(兜底)'}, tool=${payload.toolName}, id=${toolCallId}, eventType=${eventType}`)
       } else {
         // 工具开始/运行中事件（pending / input_ready / waiting / running）：新增或更新工具调用
         if (hasMessageId) {
-          sessionStore.addOrUpdateToolCall(sessionId, { ...toolData, messageBackendId: payload.message_id?.toString() })
+          sessionStore.addOrUpdateToolCall(sessionId, { ...toolData, messageBackendId: payload.messageId?.toString() })
         } else {
           sessionStore.addOrUpdateToolCall(sessionId, toolData)
         }
         // 每次 toolCall 创建后，检查是否有待绑定的审批（时序保护）
         approvalStore.flushPendingBindQueue(sessionId)
-        logger.info(`[Sync] 工具调用更新: session=${sessionId}, message=${payload.message_id || '(兜底)'}, tool=${payload.tool_name}, id=${toolCallId}, eventType=${eventType}`)
+        logger.info(`[Sync] 工具调用更新: session=${sessionId}, message=${payload.messageId || '(兜底)'}, tool=${payload.toolName}, id=${toolCallId}, eventType=${eventType}`)
       }
     } else if (taskId) {
       // 独立 deep_research：路由到 researchStore
@@ -140,7 +140,7 @@ export const createHandleToolCallEvent = (ctx) => {
       } else {
         researchStore.addOrUpdateToolCall(taskId, toolData)
       }
-      logger.info(`[Sync] task ${eventType}: taskId=${taskId}, tool=${payload.tool_name}, toolCallId=${toolCallId}, mappedStatus=${mappedStatus}`)
+      logger.info(`[Sync] task ${eventType}: taskId=${taskId}, tool=${payload.toolName}, toolCallId=${toolCallId}, mappedStatus=${mappedStatus}`)
     }
   }
 

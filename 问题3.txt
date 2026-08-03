@@ -91,3 +91,95 @@
 === 遗留问题 ===
 1. 聊天深度研究模式状态文本"正在思考" → 应显示"正在进行深度研究"（UI文案问题，非同步bug）
 2. fs_write_file参数短暂为空（低优先级SSE时序问题）
+
+=== 深度研究模式完整测试 === 测试时间：2026-08-03 13:05
+测试命令：请分析当前Python项目的架构和模块依赖关系
+浏览器：Page 39(触发/深度研究模式) / Page 40(非触发/聊天页) / Page 41(深度研究模块) / Page 42(非触发/聊天页)
+
+【关键问题】
+
+【问题A】刷新浏览器后工具调用从10个缩减为2个 — 严重
+严重程度：高（核心数据丢失）
+影响范围：所有浏览器刷新后
+当前状态：
+  - Page 42（未刷新）：10个工具调用 ✅
+  - Page 39（刷新后）：仅2个工具调用 ✗
+  - Page 40（刷新后）：仅2个工具调用 ✗
+  - Page 41（深度研究模块）：10个工具调用 ✅
+根因方向：
+  - _mergeConsecutiveAssistantMessages 修复疑似未生效
+  - 或后端API返回的消息结构仍然分多段，合并逻辑有遗漏的分支
+  - 需检查前端构建是否包含最新代码 + 后端API返回的原始消息结构
+
+【问题B】深度研究完成后聊天页仍显示"正在思考"而非"深度研究已完成"
+严重程度：中
+影响范围：ChatMessage.vue + AiReasoning.vue
+当前状态：
+  - Page 39/40/42 AI消息均显示"正在思考" ✗
+  - 应显示"正在进行深度研究"（研究中）→ "深度研究已完成"（完成后）
+  - Page 42（未刷新）也显示"正在思考"，说明实时更新时reasoningMode未生效
+分析：
+  - reasoningMode computed 依赖 `props.message.researchTaskId`
+  - 如果消息加载时 researchTaskId 字段未正确传递或为null，mode不会设为'deep-research'
+  - 也可能 stream_completed 事件未正确更新消息的 reasoning 状态
+
+【问题C】聊天页缺少深度研究完成卡片
+严重程度：中
+当前状态：
+  - Page 39/40/42 均未显示深度研究跳转卡片
+  - showDeepResearchCard 依赖 researchTaskId 且不为 deleted
+  - 与问题B同根因：消息的 researchTaskId 可能丢失
+
+=== 待执行 ===
+1. 检查前端 Vite dev server 是否加载了最新代码（session-transformers.js fix）
+2. 抓取后端 API 返回的原始消息数据，确认数据结构
+3. 定位刷新后 tool_calls 从10→2 的确切根因
+4. 定位 reasoningMode 未生效的根因
+5. 统一修复，确保聊天模块和深度研究模块同步受益
+
+=== 第二轮测试（2026-08-03 14:00）FIX-0~FIX-6 部署后 ===
+
+【测试环境】
+- 4浏览器：Page 48(触发) / Page 49 / Page 50 / Page 51
+- 触发页：Page 48，代理模式
+- 命令：运行 ollama lis 和 ollama pst 并把结保存到D:\programming\langchain\langchain_xm\test_approval25.txt
+
+【代理模式测试结果】
+✅ 用户消息实时同步：4浏览器一致
+✅ 2个shell_exec工具调用实时同步：4浏览器一致
+✅ 审批状态实时同步：确认第1个工具后，4浏览器均显示"已审批，等待其余工具"
+✅ 审批结果同步：2个工具完成后，所有浏览器显示输出结果
+✅ fs_write_file审批同步：参数和审批界面4浏览器一致
+✅ 任务最终完成：所有tool calls显示"已完成"
+✅ 文件成功写入：test_approval25.txt
+✅ 刷新后tool calls保留：Page 49刷新后，代理模式的3个tool calls全部保留
+
+【深度研究模式测试结果】
+测试命令：请分析当前Python项目的架构和模块依赖关系
+触发页：Page 48，切换到深度研究模式
+
+✅ Page 48（触发）：显示"正在进行深度研究"（推理文字正确！）
+✅ Page 48：14个工具调用，实时进展正常
+⚠️ Page 49（非触发，未刷新）：显示"正在思考"而非"正在进行深度研究"
+   - 根因：非触发浏览器通过WebSocket获得消息，但researchTaskId未正确传递
+   - reasoningMode computed 返回undefined（researchTaskId为null/falsy）
+⚠️ Page 49（刷新后）：tool_calls从14个缩减到2个！
+   - _mergeConsecutiveAssistantMessages 修复对深度研究模式不生效
+   - 需检查后端API返回的消息结构是否有别于代理模式
+⚠️ Page 51（非触发，未刷新）：同样显示"正在思考"
+
+【深度研究模块同步】
+⚠️ Page 50自动跳转到/deep-research，与预期不符（应为手动导航）
+
+【核心问题汇总】
+1. 【严重】深度研究模式刷新后 tool_calls 大量丢失（14→2）
+   - FIX-6 (_mergeConsecutiveAssistantMessages) 对深度研究后端存储的消息结构不生效
+   - 需要抓取后端API原始数据确认消息拆分方式
+   
+2. 【严重】非触发浏览器 WebSocket 通道中 researchTaskId 未传递
+   - 导致非触发浏览器显示"正在思考"而非"正在进行深度研究"
+   - 根因：message_updated WebSocket 事件中 researchTaskId 字段缺失
+   - 需检查 writeback.py / messageHandlers.js 的 researchTaskId 传递链路
+   
+3. 【中】深度研究完成后聊天页UI无反应
+   - 需等深度研究完成后再验证（当前仍在进行中）

@@ -89,9 +89,9 @@ export function useChatInput() {
       logger.log('[ChatInput] 发送消息, attachmentIds:', uploadedAttachmentIds)
       await chatStore.sendMessage(message, {
         useTools: true,
-        use_web_search: useWebSearch.value,
-        use_knowledge_base: !!(sessionStore.selectedKnowledgeBase?.id || sessionStore.selectedKnowledgeBases?.length > 0),
-        use_deep_thinking: useDeepThinking.value,
+        useWebSearch: useWebSearch.value,
+        useKnowledgeBase: !!(sessionStore.selectedKnowledgeBase?.id || sessionStore.selectedKnowledgeBases?.length > 0),
+        useDeepThinking: useDeepThinking.value,
         useMcp: hasMcpToolSelected.value,
         selectedMcpServers: selectedMcpServers.value.length > 0 ? selectedMcpServers.value : null,
         selectedTools: selectedTools.value.length > 0 ? selectedTools.value : null,
@@ -263,13 +263,13 @@ export function useChatInput() {
       const response = await chatAPI.getAttachments(sessionId)
       const data = response.data?.data || []
       pendingAttachments.value = data
-        .filter(att => !att.message_id)
+        .filter(att => !att.messageId)
         .map(att => ({
           tempId: `loaded_${att.id}`,
           id: att.id,
-          name: att.original_name || att.name,
-          size: att.file_size || att.size,
-          fileType: att.file_type || att.fileType,
+          name: att.originalName,
+          size: att.fileSize,
+          fileType: att.fileType,
           status: 'success',
           progress: 100,
           error: null,

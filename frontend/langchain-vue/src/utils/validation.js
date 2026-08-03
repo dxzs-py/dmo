@@ -25,21 +25,21 @@ export const ChatSessionSchema = z.object({
 
 export const ChatRequestSchema = z.object({
   message: z.string().min(1, '消息内容不能为空'),
-  chat_history: z.array(z.object({
+  chatHistory: z.array(z.object({
     role: z.enum(['user', 'assistant', 'system']),
     content: z.string(),
   })).optional(),
   mode: z.enum(['agent', 'deep-research']).optional(),
-  use_tools: z.boolean().optional(),
-  use_web_search: z.boolean().optional(),
-  use_knowledge_base: z.boolean().optional(),
-  use_deep_thinking: z.boolean().optional(),
-  use_mcp: z.boolean().optional(),
-  selected_mcp_servers: z.array(z.string()).optional().nullable(),
-  selected_tools: z.array(z.string()).optional().nullable(),
-  selected_knowledge_base: z.string().optional().nullable(),
-  selected_knowledge_bases: z.array(z.string()).optional().nullable(),
-  attachment_ids: z.array(z.number().int().positive()).optional().default([]),
+  useTools: z.boolean().optional(),
+  useWebSearch: z.boolean().optional(),
+  useKnowledgeBase: z.boolean().optional(),
+  useDeepThinking: z.boolean().optional(),
+  useMcp: z.boolean().optional(),
+  selectedMcpServers: z.array(z.string()).optional().nullable(),
+  selectedTools: z.array(z.string()).optional().nullable(),
+  selectedKnowledgeBase: z.string().optional().nullable(),
+  selectedKnowledgeBases: z.array(z.string()).optional().nullable(),
+  attachmentIds: z.array(z.number().int().positive()).optional().default([]),
 })
 
 export const SettingsSchema = z.object({
