@@ -2,7 +2,7 @@ import { ref } from 'vue'
 import { useRealtimeSync } from '@/composables/useRealtimeSync'
 import { useSyncStore } from '@/stores/sync'
 import { logger } from '@/utils/logger'
-import { toCamelCase } from '@/utils/sessionTransformers'
+import { toCamelCase } from '@/utils/session-transformers'
 
 /**
  * 任务实时同步（WebSocket）composable

@@ -27,7 +27,7 @@ export function getApprovalHistory(sourceId, options = {}) {
   if (!sourceId) {
     return Promise.reject(new Error('sourceId 不能为空'))
   }
-  const params = { source_id: sourceId }
+  const params = { sourceId }
   if (options.source) params.source = options.source
   if (options.state) params.state = options.state
   return apiClient.get('/approvals/', { params })

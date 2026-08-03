@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { toCamelCase } from '@/utils/sessionTransformers'
+import { toCamelCase } from '@/utils/session-transformers'
 import { logger } from '@/utils/logger'
 
 /**

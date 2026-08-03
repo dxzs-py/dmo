@@ -2,7 +2,7 @@ import { apiClient } from './axios'
 
 export const toolsAPI = {
   getMcpTools(params = {}) { return apiClient.get('/tools/mcp/tools/', { params }) },
-  testMcpServer(serverName) { return apiClient.post('/tools/mcp/test/', { server_name: serverName }) },
+  testMcpServer(serverName) { return apiClient.post('/tools/mcp/test/', { serverName }) },
   getMcpServers() { return apiClient.get('/tools/mcp/servers/') },
   addMcpServer(data) { return apiClient.post('/tools/mcp/servers/add/', data) },
   updateMcpServer(data) { return apiClient.post('/tools/mcp/servers/update/', data) },

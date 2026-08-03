@@ -125,7 +125,7 @@ export const chatAPI = {
   deleteMessagePair(sessionId, userMessageId) {
     if (!sessionId) return Promise.reject(new Error('会话ID不能为空'))
     if (!userMessageId) return Promise.reject(new Error('用户消息ID不能为空'))
-    return apiClient.delete(`/chat/sessions/${sessionId}/messages/pair/delete/`, { data: { user_message_id: userMessageId } })
+    return apiClient.delete(`/chat/sessions/${sessionId}/messages/pair/delete/`, { data: { userMessageId } })
   },
 
   uploadAttachment(sessionId, file, { onUploadProgress, signal } = {}) {
@@ -161,7 +161,7 @@ export const chatAPI = {
   },
 
   getCommands() { return apiClient.get('/chat/commands/') },
-  executeCommand(command, sessionId = null) { return apiClient.post('/chat/commands/execute/', { command, session_id: sessionId }) },
+  executeCommand(command, sessionId = null) { return apiClient.post('/chat/commands/execute/', { command, sessionId }) },
   getProjectContext(path = null) { return apiClient.get('/chat/project-context/', { params: path ? { path } : {} }) },
   finalizeStream: (sessionId, messageId) => chatFinalize(sessionId, messageId),
 }
@@ -179,7 +179,7 @@ export const chatAPI = {
 export function chatFinalize(sessionId, messageId) {
   if (!sessionId) return Promise.reject(new Error('会话ID不能为空'))
   if (!messageId) return Promise.reject(new Error('消息ID不能为空'))
-  return apiClient.post('/chat/finalize/', { session_id: sessionId, message_id: messageId })
+  return apiClient.post('/chat/finalize/', { sessionId, messageId })
 }
 
 export async function* streamChat(request) {

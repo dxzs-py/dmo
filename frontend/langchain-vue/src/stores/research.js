@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, markRaw, triggerRef } from 'vue'
 import { getApprovalHistory } from '@/api/approval'
 import { logger } from '@/utils/logger'
-import { toCamelCase } from '@/utils/sessionTransformers'
+import { toCamelCase } from '@/utils/session-transformers'
 import { mapApprovalStateToStatus } from '@/types'
 import {
   addOrUpdateToolCallInMap,

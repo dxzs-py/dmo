@@ -4,6 +4,7 @@ import settings from '@/config/settings'
 import { logger } from '@/utils/logger'
 import { useSnapshotSync, useSnapshotSyncByTask } from '@/composables/useSnapshotSync'
 import { useSyncStore } from '@/stores/sync'
+import { toSnakeCase } from '@/utils/session-transformers.js'
 import {
   SNAPSHOT_TRIGGER_EVENTS,
   RealtimeConnectionStatus,
@@ -244,7 +245,11 @@ function createRealtimeSync() {
   const send = (message) => {
     if (ws?.readyState === WebSocket.OPEN) {
       try {
-        ws.send(JSON.stringify(message))
+        // 对 payload 字段递归转换为 snake_case（action 作为路由标识符不转换）
+        const action = message.action
+        const converted = toSnakeCase(message)
+        converted.action = action
+        ws.send(JSON.stringify(converted))
       } catch (error) {
         logger.error('[Realtime] 发送消息失败:', error)
       }
@@ -330,7 +335,7 @@ function createRealtimeSync() {
 
       // Replay barrier：replay 期间缓冲实时事件，避免污染 lastSeq
       _setReplayPending(key)
-      send({ action: 'subscribe_session', payload: { session_id: sessionId, last_seq: seq } })
+      send({ action: 'subscribe_session', payload: { sessionId, lastSeq: seq } })
     }
 
     return () => {
@@ -353,7 +358,7 @@ function createRealtimeSync() {
     _clearReplayPending(`session_${sessionId}`)
 
     if (ws?.readyState === WebSocket.OPEN) {
-      send({ action: 'unsubscribe_session', payload: { session_id: sessionId } })
+      send({ action: 'unsubscribe_session', payload: { sessionId } })
     }
   }
 
@@ -402,7 +407,7 @@ function createRealtimeSync() {
       const seq = options.replayFromSeq !== undefined ? options.replayFromSeq : storedSeq
       // Replay barrier：replay 期间缓冲实时事件，避免污染 lastSeq
       _setReplayPending(key)
-      send({ action: 'subscribe_task', payload: { task_id: taskId, last_seq: seq } })
+      send({ action: 'subscribe_task', payload: { taskId, lastSeq: seq } })
     }
 
     // 返回取消函数（与 subscribeSession 一致）
@@ -426,7 +431,7 @@ function createRealtimeSync() {
     _clearReplayPending(`task_${taskId}`)
 
     if (ws?.readyState === WebSocket.OPEN) {
-      send({ action: 'unsubscribe_task', payload: { task_id: taskId } })
+      send({ action: 'unsubscribe_task', payload: { taskId } })
     }
   }
 
@@ -653,9 +658,9 @@ function createRealtimeSync() {
     send({
       action: 'replay',
       payload: {
-        channel_type: channelType,
-        channel_id: channelId,
-        last_seq: seq,
+        channelType,
+        channelId,
+        lastSeq: seq,
       },
     })
   }

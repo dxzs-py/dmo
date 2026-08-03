@@ -1,7 +1,7 @@
 import { useUserStore } from '@/stores/user'
 import settings from '../config/settings'
 import { logger } from './logger'
-import { toCamelCase, toSnakeCase } from './sessionTransformers'
+import { toCamelCase, toSnakeCase } from './session-transformers'
 
 const SSE_EVENT_HANDLERS = {
   chunk: (parsed, appendFn) => {

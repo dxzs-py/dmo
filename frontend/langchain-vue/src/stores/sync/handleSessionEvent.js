@@ -1,5 +1,5 @@
 import { logger } from '@/utils/logger'
-import { transformBackendMessageToFrontend, toCamelCase } from '@/utils/sessionTransformers'
+import { transformBackendMessageToFrontend, toCamelCase } from '@/utils/session-transformers'
 import { mergeMessageFromBackend, createMessageVersion } from '@/utils/messageOperations'
 import { StreamState, ToolCallStatus, ApprovalState, PROTECTED_STREAM_STATES } from '@/types'
 import {

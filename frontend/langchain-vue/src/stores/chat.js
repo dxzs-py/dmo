@@ -12,7 +12,7 @@ import { nanoid } from 'nanoid'
 import { ChatRequestSchema, validateSchema } from '../utils/validation'
 import { logger } from '../utils/logger'
 import { getModeLabel } from '../utils/format'
-import { transformFrontendMessageToBackend } from '../utils/sessionTransformers'
+import { transformFrontendMessageToBackend } from '../utils/session-transformers'
 import { getInterruptId } from '../utils/messageOperations'
 import { ToolCallStatus } from '../types'
 

@@ -1,5 +1,5 @@
 import { logger } from '@/utils/logger'
-import { transformBackendMessageToFrontend } from '@/utils/sessionTransformers'
+import { transformBackendMessageToFrontend } from '@/utils/session-transformers'
 import { mergeMessageFromBackend, createMessageVersion } from '@/utils/messageOperations'
 import { StreamState } from '@/types'
 import {
