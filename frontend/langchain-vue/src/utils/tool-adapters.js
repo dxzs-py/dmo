@@ -12,7 +12,7 @@
  * - displayConfig 只控制样式，审批面板由 approvalData 驱动（关注点分离）
  *
  * 提取来源：components/chat/ToolCallCard.vue
- *   - isReadonlyTool 判定（原 isInternalTool）
+ *   - isReadonlyTool 判定
  *   - 只读工具默认展开（L97）
  *   - 只读状态符号 ✓/✗/… （L100-107）
  *   - formatContent 通用序列化（L169-175）
@@ -351,6 +351,41 @@ const internalParameterFormatters = {
       displayMode: 'inline',
     }
   },
+
+  // ================================================================
+  // 后端自定义工具——仅注册需要特殊 UX 的少数工具（命令展示/内容截断等）
+  // 其余所有工具（含 DeepAgents 内置工具、MCP 工具、Skill 等）走通用回退逻辑
+  // ================================================================
+
+  /** shell_exec: 显示命令（需要 special 命令展示） */
+  shell_exec: (params) => {
+    const p = normalizeParams(params)
+    const cmd = p.command || p.cmd || p.shell_command || ''
+    return { label: '命令', formatted: String(cmd), displayMode: 'command' }
+  },
+
+  /** fs_write_file: 显示 relative_path + content（需要 content 截断预览） */
+  fs_write_file: (params) => {
+    const p = normalizeParams(params)
+    const filePath = p.relative_path || p.file_path || p.path || ''
+    const content = p.content != null ? p.content : ''
+    const contentStr = typeof content === 'string' ? content : formatContent(content)
+    return {
+      label: '写入文件',
+      formatted: JSON.stringify({
+        relative_path: filePath,
+        content: truncate(contentStr, 200),
+      }, null, 2),
+      displayMode: 'json',
+    }
+  },
+
+  /** file_reader: 显示 file_path（需要 syntax highlighting 的结果） */
+  file_reader: (params) => {
+    const p = normalizeParams(params)
+    const filePath = p.file_path || p.path || ''
+    return { label: '文件路径', formatted: String(filePath), displayMode: 'inline' }
+  },
 }
 
 // ==================== 内置工具结果格式化器 ====================
@@ -463,6 +498,35 @@ const internalResultFormatters = {
       language: 'text',
     }
   },
+
+  // ================================================================
+  // 后端自定义工具结果格式化器——仅注册需要特殊 UX 的少数工具
+  // 其余所有工具走通用回退逻辑
+  // ================================================================
+
+  /** shell_exec: 命令输出（monospace） */
+  shell_exec: (result) => {
+    const text = extractText(result)
+    return { formatted: text, displayMode: 'monospace', language: 'bash' }
+  },
+
+  /** fs_write_file: 写入状态 */
+  fs_write_file: (result) => {
+    const text = extractText(result)
+    return { formatted: text || '已写入', displayMode: 'text', language: 'text' }
+  },
+
+  /** file_reader: 文件内容（需要 syntax highlighting） */
+  file_reader: (result) => {
+    const text = extractText(result)
+    let language = 'text'
+    if (result && typeof result === 'object' && (result.file_path || result.path)) {
+      language = inferLanguageFromPath(result.file_path || result.path)
+    } else {
+      language = inferLanguageFromContent(text)
+    }
+    return { formatted: text, displayMode: 'code', language }
+  },
 }
 
 // ==================== 工具适配器注册 ====================
@@ -499,13 +563,8 @@ function registerInternalAdapters() {
     })
   }
 
-  // shell_exec 不在格式化器列表中（它是后端审批工具名），
-  // 但与 execute 共享相同的参数/结果格式化逻辑，因此注册为同名适配器。
-  adapterRegistry.set('shell_exec', {
-    displayConfig: DEFAULT_DISPLAY_CONFIG,
-    parameterFormatter: internalParameterFormatters.execute,
-    resultFormatter: internalResultFormatters.execute,
-  })
+  // 所有工具已在 internalParameterFormatters / internalResultFormatters 中
+  // 以各自的真名注册，不再使用别名映射。
 }
 
 // 模块加载时自动注册内置工具适配器
@@ -640,7 +699,4 @@ export function isReadonlyTool(toolName) {
   return READONLY_TOOL_NAMES.has(toolName)
 }
 
-/** @deprecated 使用 isReadonlyTool 代替 */
-export function isInternalTool(toolName) {
-  return isReadonlyTool(toolName)
-}
+

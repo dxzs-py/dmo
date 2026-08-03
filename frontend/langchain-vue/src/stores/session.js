@@ -33,8 +33,10 @@ import {
   updateApprovalStateInMap,
   updateToolCallStatusInMap,
   findToolCallInMap,
+  flushPendingApprovalsInMap,
+  isTerminalStatus,
 } from '../utils/message-operations'
-import { ToolCallStatus, mapApprovalStateToStatus } from '../types'
+import { StreamState, ToolCallStatus, mapApprovalStateToStatus } from '../types'
 
 /** localStorage key：持久化 currentSessionId，防止刷新后丢失（Task 15 P0 修复） */
 const CURRENT_SESSION_ID_KEY = 'lc_current_session_id'
@@ -158,6 +160,38 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   /**
+   * 将 API 加载的消息中的 toolCalls 初始化到 toolCallsMap
+   *
+   * loadSessionDetail 从后端加载完整消息后，message.toolCalls 已有完整数据，
+   * 但 toolCallsMap 为空。若后续 WebSocket 事件先于全量 tool_call_* 事件
+   * 触发 _syncMessageToolCalls，会把 message.toolCalls 替换为 toolCallsMap
+   * 的不完整子集（P27）。
+   *
+   * 此函数建立双向一致性：将 message.toolCalls 回填到 toolCallsMap。
+   * 仅填充尚不存在的条目，不覆盖 WebSocket 已写入的动态字段。
+   *
+   * @param {string} sessionId - 会话 ID
+   * @param {Array} messages - 消息列表（来自 API）
+   */
+  const _syncToolCallsMapFromMessages = (sessionId, messages) => {
+    if (!sessionId || !Array.isArray(messages)) return
+    let targetMap = toolCallsMap.value.get(sessionId)
+    if (!targetMap) {
+      targetMap = new Map()
+      toolCallsMap.value.set(sessionId, targetMap)
+    }
+    for (const msg of messages) {
+      if (msg.role !== 'assistant' || !Array.isArray(msg.toolCalls)) continue
+      for (const tc of msg.toolCalls) {
+        const key = tc.tool_call_id || tc.id
+        if (!key || targetMap.has(key)) continue
+        // 以浅拷贝创建条目，同时标注所属消息 backendId
+        targetMap.set(key, { ...tc, messageBackendId: msg.backendId?.toString() })
+      }
+    }
+  }
+
+  /**
    * 将 toolCallMap 同步到 messages 数组（最后一条 assistant 消息的 toolCalls）
    *
    * 单向数据流：Map → message.toolCalls（派生）。
@@ -191,6 +225,15 @@ export const useSessionStore = defineStore('session', () => {
       } else if (isLast) {
         arr.push(tc)  // 无归属的兜底到最后一个 assistant
       }
+    }
+    // 按 LLM 原始生成序号稳定排序（跨浏览器工具顺序一致性保障）
+    // _index 由后端 stream_chunk_processors 在解析 AIMessage.tool_calls 时标注
+    if (arr.length > 1) {
+      arr.sort((a, b) => {
+        const ai = a._index ?? 999
+        const bi = b._index ?? 999
+        return ai - bi
+      })
     }
     targetMsg.toolCalls = arr
     const ver = targetMsg.versions?.[targetMsg.currentVersion]
@@ -376,6 +419,10 @@ export const useSessionStore = defineStore('session', () => {
         const index = sessions.value.findIndex(s => s.id === sessionId)
         if (index !== -1) {
           sessions.value[index] = detailData
+          // 同步 API 加载的 toolCalls 到 toolCallsMap，建立双向一致性
+          // 防止后续 WebSocket 事件触发 _syncMessageToolCalls 时，用不完整的
+          // toolCallsMap 替换覆盖 API 返回的完整 message.toolCalls 数组
+          _syncToolCallsMapFromMessages(sessionId, detailData.messages || [])
         }
         logger.log(`[Session] Loaded detail for session ${sessionId} with ${detailData.messages?.length || 0} messages`)
         return detailData
@@ -547,7 +594,32 @@ export const useSessionStore = defineStore('session', () => {
   // 记录上次同步的消息签名，避免重复 PATCH 相同内容
   const _lastSyncSignatures = new Map()
 
-  const syncLastMessageToBackend = async (sessionId) => {
+  /**
+   * 等待当前同步锁释放（供 useStreamFinalizer 使用）
+   * @param {string} sessionId
+   */
+  const waitForSyncLock = async (sessionId) => {
+    const lock = _syncLocks.get(sessionId)
+    if (lock) await lock
+  }
+
+  /**
+   * 刷新待同步队列（供 useStreamFinalizer 流结束后调用）
+   * 确保所有 pending 的审批同步、消息同步等操作完成后再最终 PATCH
+   * @param {string} sessionId
+   * @param {{ messageIndex?: number }} [options]
+   */
+  const flushPendingSync = async (sessionId, { messageIndex } = {}) => {
+    await syncLastMessageToBackend(sessionId, { allowCreate: false })
+  }
+
+  /**
+   * 同步最后一条消息到后端（PATCH 已有，或 POST 创建）
+   * @param {string} sessionId
+   * @param {{ allowCreate?: boolean }} [options]
+   *   - allowCreate: 为 false 时禁止 POST 创建新消息（后端 SSE 负责创建）
+   */
+  const syncLastMessageToBackend = async (sessionId, { allowCreate = true } = {}) => {
     if (!userStore.isLoggedIn) return
 
     // 防止并发：如果已有同步操作在进行，等待它完成
@@ -562,6 +634,7 @@ export const useSessionStore = defineStore('session', () => {
 
       const lastMessage = session.messages[session.messages.length - 1]
       if (!lastMessage.backendId) {
+        if (!allowCreate) return  // 后端 SSE 流负责创建，前端禁止 POST
         const backendMsg = transformFrontendMessageToBackend(lastMessage)
         try {
           const res = await chatAPI.addMessage(sessionId, backendMsg)
@@ -598,9 +671,50 @@ export const useSessionStore = defineStore('session', () => {
   const _debouncedToolSync = (sessionId) => {
     if (_toolSyncTimers[sessionId]) clearTimeout(_toolSyncTimers[sessionId])
     _toolSyncTimers[sessionId] = setTimeout(() => {
-      syncLastMessageToBackend(sessionId).catch(() => {})
+      syncLastMessageToBackend(sessionId, { allowCreate: false }).catch(() => {})
       delete _toolSyncTimers[sessionId]
     }, 300)
+  }
+
+  /**
+   * 按 messageBackendId 精确同步指定消息到后端
+   * @param {string} sessionId
+   * @param {string} messageBackendId - 后端消息 ID
+   * @param {{ allowCreate?: boolean }} [options]
+   */
+  const syncMessageByBackendIdToBackend = async (sessionId, messageBackendId, { allowCreate = true } = {}) => {
+    if (!userStore.isLoggedIn || !messageBackendId) return
+
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (!session?.messages) return
+
+    const message = session.messages.find(m =>
+      m.backendId?.toString() === messageBackendId?.toString()
+    )
+    if (!message) {
+      logger.warn(`[Session] syncMessageByBackendIdToBackend 未找到消息: sessionId=${sessionId}, backendId=${messageBackendId}`)
+      return
+    }
+
+    if (!message.backendId) {
+      if (!allowCreate) return
+      const backendMsg = transformFrontendMessageToBackend(message)
+      try {
+        const res = await chatAPI.addMessage(sessionId, backendMsg)
+        if (isApiSuccess(res) && res.data.data?.id) {
+          message.backendId = res.data.data.id
+        }
+      } catch (error) {
+        logger.error('Failed to sync message by backendId to backend:', error)
+      }
+    } else {
+      const backendMsg = transformFrontendMessageToBackend(message)
+      try {
+        await chatAPI.updateMessage(message.backendId, backendMsg)
+      } catch (error) {
+        logger.error('Failed to update message by backendId in backend:', error)
+      }
+    }
   }
 
   /** 清理指定会话的工具同步定时器，流结束时调用 */
@@ -609,6 +723,11 @@ export const useSessionStore = defineStore('session', () => {
       clearTimeout(_toolSyncTimers[sessionId])
       delete _toolSyncTimers[sessionId]
     }
+  }
+
+  /** 清除同步签名缓存（用于 interrupted 状态清理） */
+  const clearSyncSignature = (sessionId) => {
+    _lastSyncSignatures.delete(sessionId)
   }
 
   const addVersionToMessage = (sessionId, messageIndex, version) => {
@@ -732,17 +851,15 @@ export const useSessionStore = defineStore('session', () => {
     if (!sessionId || !toolCallId) return
     const pendingMap = pendingApprovals.value.get(sessionId)
     if (!pendingMap) return
-    const pending = pendingMap.get(toolCallId)
-    if (!pending) return
-    // 从队列移除后递归调用 setApprovalToToolCall，此时 toolCallMap 中已有目标条目
-    pendingMap.delete(toolCallId)
-    // 同时移除 altId（如 approvalData.tool_call_id）对应的条目
-    if (pending.approvalData?.tool_call_id && pending.approvalData.tool_call_id !== toolCallId) {
-      pendingMap.delete(pending.approvalData.tool_call_id)
+    const toolCallMap = toolCallsMap.value.get(sessionId)
+    if (!toolCallMap) return
+    const didBind = flushPendingApprovalsInMap(pendingMap, toolCallMap, toolCallId)
+    if (didBind) {
+      triggerRef(pendingApprovals)
+      triggerRef(toolCallsMap)
+      _syncMessageToolCalls(sessionId)
+      logger.info(`[Session] pending 审批已绑定: sessionId=${sessionId}, toolCallId=${toolCallId}`)
     }
-    triggerRef(pendingApprovals)
-    setApprovalToToolCall(sessionId, toolCallId, pending.approvalData)
-    logger.info(`[Session] pending 审批已绑定: sessionId=${sessionId}, toolCallId=${toolCallId}`)
   }
 
   /**
@@ -788,6 +905,24 @@ export const useSessionStore = defineStore('session', () => {
       logger.warn(`[Session] updateToolCallApprovalStateOnly: toolCallMap 不存在, sessionId=${sessionId}`)
       return false
     }
+
+    // Map 未命中：从 messages 数组回填到 Map，对齐 research.js 行为
+    if (!toolCallMap.has(toolCallId)) {
+      const session = _findSession(sessionId)
+      if (session?.messages) {
+        for (const msg of session.messages) {
+          if (msg.role !== 'assistant' || !Array.isArray(msg.toolCalls)) continue
+          for (const tc of msg.toolCalls) {
+            const key = tc.tool_call_id || tc.id
+            if (key && key === toolCallId && !toolCallMap.has(key)) {
+              toolCallMap.set(key, { ...tc, messageBackendId: msg.backendId?.toString() })
+            }
+          }
+        }
+        triggerRef(toolCallsMap)
+      }
+    }
+
     const updated = updateApprovalStateInMap(toolCallMap, toolCallId, state)
     if (!updated) {
       logger.warn(
@@ -807,6 +942,52 @@ export const useSessionStore = defineStore('session', () => {
     result.message.content = (result.message.content || '') + content
     const ver = result.message.versions?.[result.message.currentVersion]
     if (ver) ver.content = result.message.content
+  }
+
+  /**
+   * 设置最后一条消息的 streamState，并同步到当前 version。
+   *
+   * 用于流式生命周期管理（approval.js、useStreamFinalizer 等调用）：
+   * - STREAMING：标记消息开始流式输出
+   * - INTERRUPTED：中断流（取消同步、清理定时器）
+   * - FINALIZING / SYNCING / COMPLETED / ERROR：流结束各阶段
+   *
+   * @param {string} sessionId - 会话 ID
+   * @param {string} state - StreamState 枚举值
+   */
+  const setStreamStateToLastMessage = (sessionId, state) => {
+    const result = _getLast(sessionId)
+    if (!result) return
+    result.message.streamState = state
+    result.message.isStreaming = state === StreamState.STREAMING
+    const ver = result.message.versions?.[result.message.currentVersion]
+    if (ver) {
+      ver.streamState = state
+      ver.isStreaming = state === StreamState.STREAMING
+    }
+
+    if (state === StreamState.INTERRUPTED) {
+      clearToolSyncTimer(sessionId)
+      clearSyncSignature(sessionId)
+    }
+  }
+
+  /**
+   * 设置指定索引消息的 streamState，并同步到当前 version。
+   * @param {string} sessionId
+   * @param {number} idx
+   * @param {string} state
+   */
+  const setStreamStateToMessageByIdx = (sessionId, idx, state) => {
+    const result = _getByIndex(sessionId, idx)
+    if (!result) return
+    result.message.streamState = state
+    result.message.isStreaming = state === StreamState.STREAMING
+    const ver = result.message.versions?.[result.message.currentVersion]
+    if (ver) {
+      ver.streamState = state
+      ver.isStreaming = state === StreamState.STREAMING
+    }
   }
 
   /**
@@ -880,9 +1061,13 @@ export const useSessionStore = defineStore('session', () => {
     const toolCallId = updateOrAddToolResultInMap(toolCallMap, data)
     if (!toolCallId) return
 
-    // toolCall 创建后（容错场景：tool_result 先于 tool 到达），检查是否有待绑定的审批
-    // flushPendingApprovals 内部会检查 pending 队列，无匹配时直接返回，调用安全
-    flushPendingApprovals(sessionId, toolCallId)
+    // 仅当工具未进入终态时才刷新待绑审批。updateOrAddToolResultInMap 在终态时
+    // 已将 approval 置 null，flushPendingApprovals 会找到旧批次审批并重设，
+    // 导致审批面板残留（P29 次生问题：已完成工具仍显示审批确认）
+    const isTerminal = isTerminalStatus(data.status)
+    if (!isTerminal) {
+      flushPendingApprovals(sessionId, toolCallId)
+    }
     triggerRef(toolCallsMap)
     _syncMessageToolCalls(sessionId)
     _debouncedToolSync(sessionId)
@@ -970,6 +1155,24 @@ export const useSessionStore = defineStore('session', () => {
     if (!sessionId || !toolCallId) return false
     const toolCallMap = toolCallsMap.value.get(sessionId)
     if (!toolCallMap) return false
+
+    // Map 未命中：从 messages 数组回填到 Map，对齐 research.js 行为
+    if (!toolCallMap.has(toolCallId)) {
+      const session = _findSession(sessionId)
+      if (session?.messages) {
+        for (const msg of session.messages) {
+          if (msg.role !== 'assistant' || !Array.isArray(msg.toolCalls)) continue
+          for (const tc of msg.toolCalls) {
+            const key = tc.tool_call_id || tc.id
+            if (key && key === toolCallId && !toolCallMap.has(key)) {
+              toolCallMap.set(key, { ...tc, messageBackendId: msg.backendId?.toString() })
+            }
+          }
+        }
+        triggerRef(toolCallsMap)
+      }
+    }
+
     const updated = updateToolCallStatusInMap(toolCallMap, toolCallId, status)
     if (!updated) return false
     triggerRef(toolCallsMap)
@@ -1243,6 +1446,31 @@ export const useSessionStore = defineStore('session', () => {
     if (session) session.updatedAt = Date.now()
   }
 
+  /**
+   * 按 backendId 定位消息并更新指定字段。
+   * 用于非触发浏览器通过 WebSocket stream_content_update 等事件
+   * 实时更新消息内容（content/reasoning/sources/suggestions/context）。
+   * @param {string} sessionId - 会话 ID
+   * @param {string} backendId - 消息的后端 ID
+   * @param {string} field - 要更新的字段名
+   * @param {*} value - 新值
+   */
+  const updateMessageFieldByBackendId = (sessionId, backendId, field, value) => {
+    if (!sessionId || !backendId || !field) return
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (!session?.messages) return
+    const msg = session.messages.find(m =>
+      m.backendId?.toString() === backendId?.toString() ||
+      m.id?.toString() === backendId?.toString()
+    )
+    if (!msg) return
+    // 兼容 Vue 2 reactivity：直接赋值
+    msg[field] = value
+    // 同步到 versions
+    const ver = msg.versions?.[msg.currentVersion]
+    if (ver) ver[field] = value
+  }
+
   return {
     sessions,
     currentSessionId,
@@ -1270,6 +1498,9 @@ export const useSessionStore = defineStore('session', () => {
     consumeOptimisticSession,
     addMessageToSession,
     syncLastMessageToBackend,
+    syncMessageByBackendIdToBackend,
+    waitForSyncLock,
+    flushPendingSync,
     addVersionToMessage,
     switchMessageVersion,
     updateLastMessage,
@@ -1324,7 +1555,11 @@ export const useSessionStore = defineStore('session', () => {
     initialize,
     clearAllLocalData,
     touchSessionUpdatedAt,
+    updateMessageFieldByBackendId,
     clearToolSyncTimer,
+    clearSyncSignature,
+    setStreamStateToLastMessage,
+    setStreamStateToMessageByIdx,
     deletedSessionIds,
   }
 })

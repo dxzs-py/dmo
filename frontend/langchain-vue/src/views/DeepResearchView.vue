@@ -100,153 +100,25 @@
         </el-form>
       </el-card>
 
-      <el-card v-if="showTaskDetail && task" class="task-detail-card">
-        <template #header>
-          <div class="card-header">
-            <span>研究任务详情</span>
-            <div class="header-actions">
-              <el-tag v-if="progressMessage" type="info" class="progress-message">
-                {{ progressMessage }}
-              </el-tag>
-              <el-tag :type="getStatusType(task.status)">
-                {{ getStatusText(task.status) }}
-              </el-tag>
-              <el-button link type="primary" size="small" @click="showTaskDetail = false">
-                返回列表
-              </el-button>
-            </div>
-          </div>
-        </template>
-
-        <el-descriptions :column="2" border>
-          <el-descriptions-item label="任务ID">{{ task.task_id }}</el-descriptions-item>
-          <el-descriptions-item label="创建时间">{{ formatDate(task.created_at) }}</el-descriptions-item>
-          <el-descriptions-item label="研究主题" :span="2">{{ task.query }}</el-descriptions-item>
-          <el-descriptions-item label="网络搜索">
-            <el-tag :type="task.enable_web_search ? 'success' : 'info'">
-              {{ task.enable_web_search ? '已启用' : '未启用' }}
-            </el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item label="文档分析">
-            <el-tag :type="task.enable_doc_analysis ? 'success' : 'info'">
-              {{ task.enable_doc_analysis ? '已启用' : '未启用' }}
-            </el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item label="来源">
-            <el-tag v-if="task.source === 'chat'" type="primary">
-              <el-icon style="vertical-align: middle; margin-right: 4px;"><ChatDotRound /></el-icon>
-              聊天触发
-            </el-tag>
-            <el-tag v-else type="info">独立研究</el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item
-            v-if="task.enable_doc_analysis && task.knowledge_base_ids && task.knowledge_base_ids.length"
-            label="关联知识库"
-            :span="2"
-          >
-            <el-tag
-              v-for="kbId in task.knowledge_base_ids"
-              :key="kbId"
-              size="small"
-              class="kb-tag"
-            >
-              {{ kbId }}
-            </el-tag>
-          </el-descriptions-item>
-        </el-descriptions>
-
-        <div v-if="task.status === 'running' || task.status === 'pending'" class="progress-section">
-          <el-progress
-            :percentage="progressPercentage"
-            :status="task.status === 'pending' ? '' : undefined"
-            :stroke-width="8"
-            striped
-            striped-flow
-          />
-          <p class="progress-hint">深度研究通常需要 5-10 分钟，请耐心等待...</p>
-        </div>
-
-        <!-- 审批面板 -->
-        <div v-if="taskPendingApprovals.size > 0" class="approval-section">
-          <ToolCallCard
-            v-for="[id, entry] in taskPendingApprovals"
-            :key="id"
-            :tool-name="entry.approvalData?.tool_name || 'unknown'"
-            :description="entry.approvalData?.description || ''"
-            :status="mapApprovalStateToStatus(entry.approvalData?.state) || 'pending_approval'"
-            :tool-call="{ approval: entry.approvalData, id: entry.approvalData?.interrupt_id || entry.approvalData?.tool_call_id || id }"
-            @approve="handleApprove"
-            @reject="handleReject"
-          />
-        </div>
-
-        <div v-if="task.final_report" class="report-section">
-          <div v-if="task.version_chain && task.version_chain.length > 1" class="version-chain">
-            <span v-for="(v, idx) in task.version_chain" :key="v.task_id">
-              <el-tag
-                :type="v.task_id === task.task_id ? 'primary' : 'info'"
-                size="small"
-                class="version-tag"
-                @click="v.task_id !== task.task_id && viewTask({ task_id: v.task_id })"
-                :style="v.task_id === task.task_id ? '' : 'cursor: pointer'"
-              >
-                v{{ v.version }}
-              </el-tag>
-              <span v-if="idx < task.version_chain.length - 1" class="version-arrow">→</span>
-            </span>
-          </div>
-          <div class="report-header">
-            <h4>研究报告</h4>
-            <div class="report-header-actions">
-              <el-button
-                v-if="task.status === 'completed'"
-                type="success"
-                size="small"
-                @click="openContinueDialog(task)"
-              >
-                继续研究
-              </el-button>
-              <AiOpenInChat label="在聊天中讨论" @click="openInChat" />
-            </div>
-          </div>
-          <div class="report-content">
-            <MarkdownRenderer :content="task.final_report" />
-          </div>
-
-          <div v-if="docAnalysisFile" class="analysis-section">
-            <el-divider />
-            <div class="analysis-header">
-              <h4>文档分析详情</h4>
-              <el-button
-                v-if="!docAnalysisContent"
-                size="small"
-                @click="loadDocAnalysis"
-                :loading="docAnalysisLoading"
-              >
-                查看分析依据
-              </el-button>
-            </div>
-            <div v-if="docAnalysisLoading" class="analysis-loading">
-              <el-icon class="is-loading"><Loading /></el-icon>
-              <span>加载分析详情...</span>
-            </div>
-            <div v-else-if="docAnalysisContent" class="analysis-content">
-              <MarkdownRenderer :content="docAnalysisContent" />
-            </div>
-          </div>
-        </div>
-
-        <el-divider />
-
-        <div class="files-section">
-          <h4>生成的文件</h4>
-          <FileBrowser
-            ref="fileBrowserRef"
-            :task-id="task.task_id"
-            :api="deepResearchAPI"
-          />
-        </div>
-      </el-card>
+      <ResearchTaskDetail
+        v-if="showTaskDetail && task"
+        :task="task"
+        :progress-message="progressMessage"
+        :progress-percentage="progressPercentage"
+        :task-pending-approvals="taskPendingApprovals"
+        :tool-calls="taskToolCalls"
+        :doc-analysis-file="docAnalysisFile"
+        :doc-analysis-content="docAnalysisContent"
+        :doc-analysis-loading="docAnalysisLoading"
+        :file-browser-ref="fileBrowserRef"
+        @back="showTaskDetail = false"
+        @view-task="viewTask"
+        @open-continue-dialog="openContinueDialog"
+        @open-in-chat="openInChat"
+        @load-doc-analysis="loadDocAnalysis"
+        @approve="handleApprove"
+        @reject="handleReject"
+      />
 
       <el-card v-else class="task-list-card">
         <template #header>
@@ -390,25 +262,23 @@ import { useRouter, useRoute } from 'vue-router'
 import { deepResearchAPI, knowledgeAPI } from '../api'
 import { readSSEStream } from '../utils/sse'
 import { ElMessage } from 'element-plus'
-import { Loading, ChatDotRound } from '@element-plus/icons-vue'
+import { Loading } from '@element-plus/icons-vue'
 import TaskList from '../components/chat/TaskList.vue'
-import FileBrowser from '../components/chat/FileBrowser.vue'
-import MarkdownRenderer from '../components/common/MarkdownRenderer.vue'
-import AiOpenInChat from '../components/ai-elements/AiOpenInChat.vue'
 import ModelSelector from '../components/common/ModelSelector.vue'
 import ToolSelector from '../components/chat/ToolSelector.vue'
-import ToolCallCard from '../components/chat/ToolCallCard.vue'
+import ResearchTaskDetail from '../components/research/ResearchTaskDetail.vue'
 import { useModelStore } from '../stores/model'
 import { useSessionStore } from '../stores/session'
 import { useApprovalStore } from '../stores/approval'
-import { formatDate, formatFileSize } from '../utils/format'
+import { useResearchStore } from '../stores/research'
+import { formatFileSize } from '../utils/format'
 import { logger } from '../utils/logger'
 import { getInterruptId } from '../utils/message-operations'
-import { ToolCallStatus, mapApprovalStateToStatus } from '../types'
 import { useTaskRealtimeSync } from '@/composables/useTaskRealtimeSync'
 
 const modelStore = useModelStore()
 const approvalStore = useApprovalStore()
+const researchStore = useResearchStore()
 
 const isLoading = ref(false)
 const router = useRouter()
@@ -426,6 +296,27 @@ const taskPendingApprovals = computed(() => {
     }
   }
   return result
+})
+
+/** 当前任务的工具调用历史列表 */
+const taskToolCalls = computed(() => {
+  const currentTask = task.value
+  if (!currentTask?.task_id) return []
+
+  // 优先从 sessionStore 读取（聊天触发的深度研究，有 session_id 关联）
+  const chatSessionId = currentTask.session_id || currentTask.chat_session_id
+  if (chatSessionId) {
+    const sessionStore = useSessionStore()
+    const messages = sessionStore.getSessionMessages(chatSessionId)
+    for (const msg of messages) {
+      if (msg.toolCalls && msg.toolCalls.length > 0) {
+        return msg.toolCalls
+      }
+    }
+  }
+
+  // 回退到 researchStore（独立深度研究任务）
+  return researchStore.getToolCalls(currentTask.task_id)
 })
 const showTaskDetail = ref(false)
 const taskListRef = ref(null)
@@ -475,6 +366,7 @@ const progressPercentage = computed(() => {
   if (!task.value) return 0
   if (task.value.status === 'completed') return 100
   if (task.value.status === 'failed') return 0
+  if (task.value.status === 'pending_approval') return 50
   if (task.value.status === 'pending') return 10
   if (task.value.status === 'running') {
     const maxSeconds = 600
@@ -507,6 +399,7 @@ const useDeepThinking = computed({
 const statusOptions = [
   { value: 'pending', label: '待执行' },
   { value: 'running', label: '执行中' },
+  { value: 'pending_approval', label: '等待审批' },
   { value: 'completed', label: '已完成' },
   { value: 'failed', label: '失败' },
 ]
@@ -600,28 +493,6 @@ const autoLoadDocAnalysis = async () => {
   await loadDocAnalysis()
 }
 
-const getStatusType = (status) => {
-  const typeMap = {
-    pending: 'info',
-    progress: 'warning',
-    running: 'warning',
-    completed: 'success',
-    failed: 'danger',
-  }
-  return typeMap[status] || 'info'
-}
-
-const getStatusText = (status) => {
-  const textMap = {
-    pending: '待执行',
-    progress: '执行中',
-    running: '执行中',
-    completed: '已完成',
-    failed: '失败',
-  }
-  return textMap[status] || status
-}
-
 // 实时审批事件由 WebSocket 处理（syncStore.handleRealtimeEvent），
 // SSE 仅处理 approval_history（初始历史加载），故不再需要本地 handleApprovalEvent 桥接。
 
@@ -678,8 +549,10 @@ const handleReject = async (toolCallData) => {
   }
 }
 
+const isTerminalStatus = (s) => s === 'completed' || s === 'failed'
+
 const pollTaskStatus = async () => {
-  if (!task.value || task.value.status === 'completed' || task.value.status === 'failed') {
+  if (!task.value || isTerminalStatus(task.value.status)) {
     stopPolling()
     if (fileBrowserRef.value) {
       fileBrowserRef.value.loadFiles()
@@ -700,7 +573,7 @@ const pollTaskStatus = async () => {
     const prevStatus = task.value.status
     task.value = { ...task.value, ...responseData }
 
-    if (task.value.status === 'completed' || task.value.status === 'failed') {
+    if (isTerminalStatus(task.value.status)) {
       stopPolling()
       stopElapsedTimer()
       checkDocAnalysisFile()
@@ -841,7 +714,7 @@ const connectSSE = async (taskId) => {
       handleSSEEvent(data)
     }, sseAbortController.signal)
 
-    if (sseReaderActive && task.value && task.value.status !== 'completed' && task.value.status !== 'failed') {
+    if (sseReaderActive && task.value && !isTerminalStatus(task.value.status)) {
       pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
     }
   } catch (error) {
@@ -849,7 +722,7 @@ const connectSSE = async (taskId) => {
       return
     }
     logger.error('SSE连接失败，回退到轮询:', error)
-    if (task.value && task.value.status !== 'completed' && task.value.status !== 'failed') {
+    if (task.value && !isTerminalStatus(task.value.status)) {
       pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
     }
   } finally {
@@ -897,7 +770,7 @@ const handleSSEEvent = (data) => {
       closeSSE()
       stopElapsedTimer()
       // SSE 流结束但任务可能尚未完成（如连接超时），启动轮询检查
-      if (task.value && task.value.status !== 'completed' && task.value.status !== 'failed') {
+      if (task.value && !isTerminalStatus(task.value.status)) {
         pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
       }
       break
@@ -947,7 +820,7 @@ const viewTask = async (selectedTask) => {
   // 接入统一 WebSocket 实时同步：入口先订阅一次（基于 selectedTask 当前已知字段）
   subscribeRealtimeForTask(selectedTask)
 
-  if (selectedTask.status === 'running' || selectedTask.status === 'pending') {
+  if (selectedTask.status === 'running' || selectedTask.status === 'pending' || selectedTask.status === 'pending_approval') {
     startElapsedTimer()
     connectSSE(selectedTask.task_id)
   } else if (selectedTask.task_id) {
@@ -1107,6 +980,13 @@ const handleFileSearch = async () => {
 
 onMounted(async () => {
   refreshKnowledgeBases()
+  // 任务列表首次加载：TaskList 自身 onMounted 会调用 loadTasks，
+  // 但可能在任务创建之前已完成加载，此处做一次兜底刷新
+  nextTick(() => {
+    if (taskListRef.value?.refreshTasks) {
+      taskListRef.value.refreshTasks()
+    }
+  })
   // 支持从聊天模块跳转，自动选中指定任务
   const taskId = route.query.task_id
   if (taskId) {
@@ -1170,6 +1050,13 @@ onActivated(async () => {
         logger.warn('[DeepResearchView] onActivated 刷新任务状态失败:', e)
       }
     }
+  } else {
+    // 任务列表视图：自动刷新列表
+    nextTick(() => {
+      if (taskListRef.value?.refreshTasks) {
+        taskListRef.value.refreshTasks()
+      }
+    })
   }
 })
 

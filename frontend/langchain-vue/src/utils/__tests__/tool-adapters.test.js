@@ -3,7 +3,6 @@ import {
   formatToolParameters,
   formatToolResult,
   getToolDisplayConfig,
-  isInternalTool,
   isReadonlyTool,
   inferLanguageFromPath,
   registerToolAdapter,
@@ -318,7 +317,7 @@ describe('getToolDisplayConfig', () => {
   })
 })
 
-// ==================== isReadonlyTool / isInternalTool ====================
+// ==================== isReadonlyTool ====================
 
 describe('isReadonlyTool', () => {
   it('只读工具返回 true（ls/glob/grep）', () => {
@@ -341,16 +340,6 @@ describe('isReadonlyTool', () => {
     expect(isReadonlyTool('custom_tool')).toBe(false)
     expect(isReadonlyTool('')).toBe(false)
     expect(isReadonlyTool(null)).toBe(false)
-  })
-})
-
-describe('isInternalTool (deprecated alias)', () => {
-  it('与 isReadonlyTool 行为一致', () => {
-    expect(isInternalTool('ls')).toBe(true)
-    expect(isInternalTool('glob')).toBe(true)
-    expect(isInternalTool('grep')).toBe(true)
-    expect(isInternalTool('write_file')).toBe(false)
-    expect(isInternalTool('execute')).toBe(false)
   })
 })
 

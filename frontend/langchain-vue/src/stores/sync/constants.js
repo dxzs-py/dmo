@@ -10,6 +10,7 @@ import { ToolCallStatus, ApprovalState } from '@/types'
 export const TOOL_CALL_STATUS_MAP = {
   tool_call_pending: ToolCallStatus.PENDING,
   tool_call_input_ready: ToolCallStatus.PENDING,
+  tool_call_output_ready: ToolCallStatus.COMPLETED,
   tool_call_waiting: ToolCallStatus.WAITING,
   tool_call_pending_approval: ToolCallStatus.PENDING_APPROVAL,
   tool_call_approved: ToolCallStatus.APPROVED,
@@ -37,3 +38,19 @@ export const TOOL_CALL_RESULT_STATUSES = new Set([
   ToolCallStatus.TIMEOUT,
   ToolCallStatus.REJECTED,
 ])
+
+/** 非终态工具调用状态集合（流式完成兜底时需要修正的状态） */
+export const NON_TERMINAL_TOOLCALL_STATUSES = [
+  ToolCallStatus.PENDING,
+  ToolCallStatus.RUNNING,
+  ToolCallStatus.WAITING,
+  'pending_approval',
+  ToolCallStatus.APPROVED,
+]
+
+/** 非终态审批状态集合（流式完成/深度研究完成时需清理的状态） */
+export const NON_TERMINAL_APPROVAL_STATES = [
+  ApprovalState.PENDING,
+  ApprovalState.PROCESSING,
+  ApprovalState.WAITING,
+]

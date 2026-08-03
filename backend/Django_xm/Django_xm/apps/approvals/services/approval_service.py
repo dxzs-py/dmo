@@ -32,6 +32,8 @@ from Django_xm.common.realtime_sync import (
     publish_approval_sync,
 )
 from Django_xm.common.risk_levels import RiskLevel
+from Django_xm.common.approval_utils import derive_cross_module_id
+from Django_xm.common.redis_utils import get_redis_client
 from Django_xm.common.tool_call_lifecycle import ToolCallContext, service
 
 logger = logging.getLogger(__name__)
@@ -90,10 +92,6 @@ _SOURCE_TO_EVENT_SOURCE: dict[str, EventSource] = {
 }
 
 
-def _get_redis_client():
-    return cache.client.get_client()
-
-
 def _now():
     return datetime.now(UTC)
 
@@ -112,13 +110,7 @@ def _resolve_approval_channels(approval: Approval) -> tuple[str | None, str | No
     """
     module = _SOURCE_TO_EVENT_SOURCE.get(approval.source, EventSource.CHAT)
     module_id = approval.source_id or ""
-    # cross_module_id 仅 DEEP_RESEARCH 关联 chat 时为 chat_session_id
-    cross_module_id = (
-        approval.chat_session_id
-        if approval.source == Approval.SOURCE_DEEP_RESEARCH and approval.chat_session_id
-        else None
-    )
-    return _resolve_channels(module, module_id, cross_module_id)
+    return _resolve_channels(module, module_id, derive_cross_module_id(approval))
 
 
 def _build_payload(approval: Approval, state: str | None = None, extra: dict | None = None) -> dict[str, Any]:
@@ -129,11 +121,7 @@ def _build_payload(approval: Approval, state: str | None = None, extra: dict | N
     # 频道路由统一委托 _resolve_approval_channels（三模块共享 _resolve_channels）
     session_id, task_id = _resolve_approval_channels(approval)
     # cross_module_id：仅 DEEP_RESEARCH 关联 chat 时有值，前端用于识别跨模块事件
-    cross_module_id = (
-        approval.chat_session_id
-        if approval.source == Approval.SOURCE_DEEP_RESEARCH and approval.chat_session_id
-        else None
-    )
+    cross_module_id = derive_cross_module_id(approval)
     payload = {
         "interrupt_id": approval.interrupt_id,
         "tool_call_id": tool_call_id,
@@ -191,11 +179,7 @@ def _build_tool_call_payload(approval: Approval) -> dict[str, Any]:
     tool_call_id = approval_extra.get("tool_call_id") or approval.interrupt_id
     event_source = _SOURCE_TO_EVENT_SOURCE.get(approval.source, EventSource.CHAT)
     session_id, task_id = _resolve_approval_channels(approval)
-    cross_module_id = (
-        approval.chat_session_id
-        if approval.source == Approval.SOURCE_DEEP_RESEARCH and approval.chat_session_id
-        else None
-    )
+    cross_module_id = derive_cross_module_id(approval)
     payload = {
         "tool_call_id": tool_call_id,
         "tool_name": approval.tool_name or "unknown",
@@ -227,11 +211,7 @@ def _extract_tool_call_event_kwargs(approval: Approval) -> dict[str, Any]:
     approval_extra = approval.extra if isinstance(approval.extra, dict) else {}
     tool_call_id = approval_extra.get("tool_call_id") or approval.interrupt_id
     event_source = _SOURCE_TO_EVENT_SOURCE.get(approval.source, EventSource.CHAT)
-    cross_module_id = (
-        approval.chat_session_id
-        if approval.source == Approval.SOURCE_DEEP_RESEARCH and approval.chat_session_id
-        else None
-    )
+    cross_module_id = derive_cross_module_id(approval)
     return {
         "tool_call_id": tool_call_id,
         "tool_name": approval.tool_name or "unknown",
@@ -436,11 +416,7 @@ def _build_approval_event_params(approval: Approval, state: str, extra: dict | N
     approval_extra = approval.extra if isinstance(approval.extra, dict) else {}
     tool_call_id = approval_extra.get("tool_call_id") or approval.interrupt_id
     event_source = _SOURCE_TO_EVENT_SOURCE.get(approval.source, EventSource.CHAT)
-    cross_module_id = (
-        approval.chat_session_id
-        if approval.source == Approval.SOURCE_DEEP_RESEARCH and approval.chat_session_id
-        else None
-    )
+    cross_module_id = derive_cross_module_id(approval)
     extra_fields_merged = _build_approval_extra_fields(approval, extra)
 
     # v8: 计算后端权威字段 remaining_pending_count
@@ -584,7 +560,6 @@ async def _broadcast_approval_changed_async(approval: Approval, state: str, extr
 
     params = _build_approval_event_params(approval, state, extra)
 
-    # Phase C: 创建 outbox 条目（异步路径用 sync_to_async 包装 ORM 调用）
     outbox_entry = await sync_to_async(_create_outbox_entry)(approval, params)
 
     try:
@@ -1067,13 +1042,13 @@ async def _persist_and_broadcast_async(approval: Approval, state: str, extra: di
 
 
 def _acquire_lock(interrupt_id: str) -> bool:
-    redis_client = _get_redis_client()
+    redis_client = get_redis_client()
     lock_key = f"{APPROVAL_LOCK_PREFIX}{interrupt_id}"
     return bool(redis_client.set(lock_key, "1", nx=True, ex=APPROVAL_LOCK_TTL))
 
 
 def _release_lock(interrupt_id: str):
-    redis_client = _get_redis_client()
+    redis_client = get_redis_client()
     lock_key = f"{APPROVAL_LOCK_PREFIX}{interrupt_id}"
     redis_client.delete(lock_key)
 
@@ -1082,13 +1057,13 @@ _release_lock_async = sync_to_async(_release_lock)
 
 
 def _acquire_task_resume_lock(task_id: str) -> bool:
-    redis_client = _get_redis_client()
+    redis_client = get_redis_client()
     lock_key = f"{TASK_RESUME_LOCK_PREFIX}{task_id}"
     return bool(redis_client.set(lock_key, "1", nx=True, ex=TASK_RESUME_LOCK_TTL))
 
 
 def _release_task_resume_lock(task_id: str):
-    redis_client = _get_redis_client()
+    redis_client = get_redis_client()
     lock_key = f"{TASK_RESUME_LOCK_PREFIX}{task_id}"
     redis_client.delete(lock_key)
 
@@ -1127,7 +1102,79 @@ _EXTRA_PASSTHROUGH_FIELDS = (
     "depth",
     "agent_name",
     "agent_path",
+    "graph_interrupt_id",
+    "langgraph_resume_id",
 )
+
+
+def build_approval_extra(
+    data: dict[str, Any],
+    *,
+    tool_call_id: str = "",
+    graph_interrupt_id: str = "",
+    langgraph_resume_id: str = "",
+    message_id: str = "",
+    base_extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """构建 Approval.extra 的统一出口（chat / deep_research 共用）。
+
+    所有通过 ``request_approval_async`` 创建审批的模块都应调用此函数，
+    确保 extra 中携带完整元数据，供后端 resume 端点（ChatApprovalResume /
+    deep_research resume）重建 agent 时读取工具/模型配置，以及前端事件
+    payload 读取路由 ID。
+
+    参数说明：
+        data: 请求配置 dict（含 tool_config / model_config 等字段）
+        tool_call_id: 工具调用 ID（= approval.interrupt_id）
+        graph_interrupt_id: 批次 UUID（批量审批分组键）
+        langgraph_resume_id: LangGraph Interrupt.id（Command(resume=) KEY）
+        message_id: 关联的 chat message ID（前端精确定位消息）
+        base_extra: 审批中断解析时已携带的额外字段（如 risk_level / depth 等）
+
+    Returns:
+        扁平 dict，作为 Approval.extra 持久化。
+    """
+    extra: dict[str, Any] = dict(base_extra or {})
+
+    # ── 核心路由 ID ──
+    if tool_call_id:
+        extra.setdefault("tool_call_id", tool_call_id)
+    if graph_interrupt_id:
+        extra.setdefault("graph_interrupt_id", graph_interrupt_id)
+    if langgraph_resume_id:
+        extra.setdefault("langgraph_resume_id", langgraph_resume_id)
+    if message_id:
+        extra.setdefault("message_id", message_id)
+
+    # ── 工具配置（审批恢复时 ChatApprovalResume 重建 agent 的工具集）──
+    extra.setdefault(
+        "tool_config",
+        {
+            "use_tools": data.get("use_tools", True),
+            "use_web_search": data.get("use_web_search", False),
+            "use_mcp": data.get("use_mcp", False),
+            "selected_mcp_servers": data.get("selected_mcp_servers"),
+            "selected_tools": data.get("selected_tools"),
+            "use_knowledge_base": data.get("use_knowledge_base", False),
+            "selected_knowledge_bases": data.get("selected_knowledge_bases", []),
+            "tool_tier": data.get("tool_tier", "standard"),
+        },
+    )
+
+    # ── 模型配置（审批恢复时重建相同模型的 LLM 实例）──
+    extra.setdefault(
+        "model_config",
+        {
+            "provider_id": data.get("provider_id"),
+            "model_name": data.get("model_name"),
+            "use_deep_thinking": data.get("use_deep_thinking", False),
+            "special_params": data.get("special_params"),
+            "temperature": data.get("temperature"),
+            "max_tokens": data.get("max_tokens"),
+        },
+    )
+
+    return extra
 
 
 def _merge_passthrough_fields(approval_data: dict[str, Any], extra_data: dict[str, Any]) -> dict[str, Any]:
@@ -1234,7 +1281,7 @@ def request_approval(
     # 深度研究场景：Redis 原子递增 pending 计数器
     if source == Approval.SOURCE_DEEP_RESEARCH:
         try:
-            redis_client = _get_redis_client()
+            redis_client = get_redis_client()
             counter_key = f"{PENDING_COUNT_PREFIX}{source_id}"
             redis_client.eval(_LUA_INCR_WITH_EXPIRE, 1, counter_key, PENDING_COUNT_TTL)
         except Exception as counter_err:
@@ -1334,7 +1381,7 @@ async def request_approval_async(
     # 深度研究场景：Redis 原子递增 pending 计数器
     if source == Approval.SOURCE_DEEP_RESEARCH:
         try:
-            redis_client = _get_redis_client()
+            redis_client = get_redis_client()
             counter_key = f"{PENDING_COUNT_PREFIX}{source_id}"
             redis_client.eval(_LUA_INCR_WITH_EXPIRE, 1, counter_key, PENDING_COUNT_TTL)
         except Exception as counter_err:
@@ -1399,7 +1446,7 @@ def resume_approval(
     # 深度研究场景：SETNX 乐观锁防止并发恢复
     is_deep_research = approval.source == Approval.SOURCE_DEEP_RESEARCH
     if is_deep_research:
-        redis_client = _get_redis_client()
+        redis_client = get_redis_client()
         lock_key = f"{RESUME_LOCK_PREFIX}{interrupt_id}"
         acquired = redis_client.set(lock_key, "1", nx=True, ex=RESUME_LOCK_TTL)
         if not acquired:
@@ -1437,6 +1484,14 @@ def resume_approval(
             extra_data = {}
         graph_interrupt_id = extra_data.get("graph_interrupt_id")
 
+        logger.info(
+            f"[ApprovalService] _check_batch: interrupt_id={interrupt_id}, "
+            f"graph_interrupt_id={graph_interrupt_id}, "
+            f"approval.state={approval.state}, "
+            f"approval.source={approval.source}, "
+            f"extra_keys={list(extra_data.keys())[:10]}"
+        )
+
         has_pending_siblings = False
         if graph_interrupt_id:
             pending_siblings = Approval.objects.filter(
@@ -1444,6 +1499,12 @@ def resume_approval(
                 state=Approval.STATE_PENDING,
             ).exclude(interrupt_id=interrupt_id)
             has_pending_siblings = pending_siblings.exists()
+            logger.info(
+                f"[ApprovalService] sibling_check: interrupt_id={interrupt_id}, "
+                f"graph_interrupt_id={graph_interrupt_id}, "
+                f"sibling_count={pending_siblings.count()}, "
+                f"has_pending={has_pending_siblings}"
+            )
 
         broadcast_state = Approval.STATE_WAITING if has_pending_siblings else Approval.STATE_PROCESSING
 
@@ -1478,26 +1539,6 @@ def resume_approval(
                 "stream_generator": None,
                 "state": "waiting",
             }
-
-        # 深度研究场景：原子递减 pending 计数，全部完成时触发恢复
-        if is_deep_research:
-            task_id = approval.source_id
-            try:
-                redis_client = _get_redis_client()
-                counter_key = f"{PENDING_COUNT_PREFIX}{task_id}"
-                remaining = redis_client.eval(_LUA_DECR_NON_NEGATIVE, 1, counter_key, PENDING_COUNT_TTL)
-                logger.info(f"[ApprovalService] 原子递减pending计数: task_id={task_id}, remaining={remaining}")
-                # 深度研究已改为 in-process SSE 执行，不再触发 Celery 恢复任务
-                # 审批恢复通过 POST /api/v1/approvals/{interrupt_id}/resume/
-                # → ApprovalResumeView → _stream_chat_resume_generator → 新 SSE 流完成
-                if remaining == 0:
-                    logger.info(
-                        f"[ApprovalService] 深度研究所有审批已确认: task_id={task_id}, now handled via chat SSE resume"
-                    )
-            except Exception as counter_err:
-                logger.warning(
-                    f"[ApprovalService] 原子计数器操作失败，降级到原有逻辑: task_id={task_id}, err={counter_err}"
-                )
 
         return {
             "approval": approval,
@@ -1830,7 +1871,7 @@ def timeout_approval(interrupt_id: str):
 
             # 原子递减 pending 计数（Lua 防负数）
             try:
-                redis_client = _get_redis_client()
+                redis_client = get_redis_client()
                 counter_key = f"{PENDING_COUNT_PREFIX}{task_id}"
                 remaining = redis_client.eval(_LUA_DECR_NON_NEGATIVE, 1, counter_key, PENDING_COUNT_TTL)
                 logger.info(f"[ApprovalService] 超时递减pending计数: task_id={task_id}, remaining={remaining}")

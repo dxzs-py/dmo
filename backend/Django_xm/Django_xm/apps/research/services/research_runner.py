@@ -162,6 +162,7 @@ async def _handle_interrupt_create_and_exit(
     user_id: int | None = None,
     chat_session_id: str | None = None,
     message_id: str = "",
+    data: dict[str, Any] | None = None,
 ) -> dict:
     """审批中断回调：创建 Approval DB 记录 + 发布事件 + 返回退出信号（Path D）。
 
@@ -219,6 +220,18 @@ async def _handle_interrupt_create_and_exit(
         tool_name = interrupt_data.get("tool_name", "unknown")
         tool_call_id = interrupt_data.get("tool_call_id", "") or interrupt_id
 
+        # 构建 base_extra（中断解析时已携带的字段：risk_level / 嵌套层级等）
+        from Django_xm.apps.approvals.services.approval_service import build_approval_extra
+
+        base_extra: dict[str, Any] = {}
+        risk_level = interrupt_data.get("risk_level")
+        if risk_level:
+            base_extra["risk_level"] = risk_level
+        for field in ("parent_tool_call_id", "depth", "agent_name", "agent_path"):
+            val = interrupt_data.get(field)
+            if val is not None and val not in ("", []):
+                base_extra[field] = val
+
         # approval_data 与 chat 模块字段对齐（统一 schema）
         approval_data = {
             "tool_name": tool_name,
@@ -228,37 +241,17 @@ async def _handle_interrupt_create_and_exit(
             "danger_level": interrupt_data.get("danger_level", "medium"),
             "parameters": interrupt_data.get("parameters", {}) or interrupt_data.get("args", {}) or {},
             "action": interrupt_data.get("action", Approval.ACTION_CONFIRM),
-            "session_id": chat_session_id,  # request_approval_async 从 session_id 读取 chat_session_id
+            "session_id": chat_session_id,
             "message_id": message_id,
-            "extra": {
-                "tool_call_id": tool_call_id,
-                "graph_interrupt_id": graph_interrupt_id,
-                "langgraph_resume_id": langgraph_resume_id,
-                "message_id": message_id,
-            },
+            "extra": build_approval_extra(
+                data or {},
+                tool_call_id=tool_call_id,
+                graph_interrupt_id=graph_interrupt_id,
+                langgraph_resume_id=langgraph_resume_id,
+                message_id=message_id,
+                base_extra=base_extra,
+            ),
         }
-
-        # risk_level 透传（若 middleware 已注入）
-        risk_level = interrupt_data.get("risk_level")
-        if risk_level:
-            approval_data["extra"]["risk_level"] = risk_level
-
-        # 嵌套层级字段透传（Phase E3）：
-        # 子 agent 的审批请求携带 parent_tool_call_id / depth / agent_name / agent_path，
-        # 保存到 Approval.extra 供前端展示完整调用链路与嵌套层级。
-        # 主 agent 的 interrupt_data 不包含这些字段，跳过。
-        parent_tool_call_id = interrupt_data.get("parent_tool_call_id")
-        if parent_tool_call_id:
-            approval_data["extra"]["parent_tool_call_id"] = parent_tool_call_id
-        depth = interrupt_data.get("depth")
-        if depth is not None and isinstance(depth, int) and depth > 0:
-            approval_data["extra"]["depth"] = depth
-        agent_name = interrupt_data.get("agent_name")
-        if agent_name:
-            approval_data["extra"]["agent_name"] = agent_name
-        agent_path = interrupt_data.get("agent_path")
-        if agent_path and isinstance(agent_path, list):
-            approval_data["extra"]["agent_path"] = agent_path
 
         try:
             await request_approval_async(
@@ -301,6 +294,7 @@ async def execute_research_async(
     chat_session_id: str | None = None,
     message_id: str = "",
     resume_command=None,
+    data: dict[str, Any] | None = None,
 ) -> ResearchResult:
     """异步研究执行逻辑（Path D：DB 持久化 + Celery 恢复）
 
@@ -342,6 +336,7 @@ async def execute_research_async(
                     user_id=user_id,
                     chat_session_id=chat_session_id,
                     message_id=message_id,
+                    data=data,
                 )
 
             result = await agent.astream_research_with_interrupts(

@@ -54,7 +54,7 @@
       </el-descriptions-item>
     </el-descriptions>
 
-    <div v-if="task.status === 'running' || task.status === 'pending'" class="progress-section">
+    <div v-if="task.status === 'running' || task.status === 'pending' || task.status === 'pending_approval'" class="progress-section">
       <el-progress
         :percentage="progressPercentage"
         :status="task.status === 'pending' ? '' : undefined"
@@ -75,11 +75,32 @@
           :tool-name="entry.approvalData?.tool_name || 'unknown'"
           :description="entry.approvalData?.description || ''"
           :status="mapApprovalStateToStatus(entry.approvalData?.state) || 'pending_approval'"
+          :input="entry.approvalData?.parameters"
+          :output="entry.approvalData?.result || entry.approvalData?.output"
           :tool-call="{ approval: entry.approvalData, id: entry.approvalData?.interrupt_id || entry.approvalData?.tool_call_id || id }"
           @approve="(data) => emit('approve', data)"
           @reject="(data) => emit('reject', data)"
         />
       </ErrorBoundary>
+    </div>
+
+    <!-- 工具调用历史 -->
+    <div v-if="toolCalls.length > 0" class="tool-calls-section">
+      <h4 class="section-title">工具调用记录</h4>
+      <TransitionGroup name="tool-list" tag="div" class="tool-calls-list">
+        <ToolCallCard
+          v-for="tc in toolCalls"
+          :key="tc.id || tc.tool_call_id || Math.random()"
+          :tool-name="tc.name || tc.tool_name"
+          :description="tc.description || ''"
+          :status="tc.status"
+          :input="tc.input || tc.parameters"
+          :output="tc.output || tc.result"
+          :tool-call="tc"
+          @approve="(data) => emit('approve', data)"
+          @reject="(data) => emit('reject', data)"
+        />
+      </TransitionGroup>
     </div>
 
     <ResearchTaskReport
@@ -132,6 +153,11 @@ defineProps({
     type: Map,
     default: () => new Map(),
   },
+  /** 当前任务的工具调用历史数组 */
+  toolCalls: {
+    type: Array,
+    default: () => [],
+  },
   /** 文档分析文件路径 */
   docAnalysisFile: {
     type: String,
@@ -167,6 +193,7 @@ const emit = defineEmits([
 const getStatusType = (status) => {
   const typeMap = {
     pending: 'info',
+    pending_approval: 'warning',
     progress: 'warning',
     running: 'warning',
     completed: 'success',
@@ -178,6 +205,7 @@ const getStatusType = (status) => {
 const getStatusText = (status) => {
   const textMap = {
     pending: '待执行',
+    pending_approval: '等待审批',
     progress: '执行中',
     running: '执行中',
     completed: '已完成',
@@ -234,6 +262,23 @@ const getStatusText = (status) => {
 
 .approval-section {
   margin: 16px 0;
+}
+
+.tool-calls-section {
+  margin: 24px 0;
+}
+
+.section-title {
+  margin: 0 0 12px 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.tool-calls-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 @media (max-width: 768px) {

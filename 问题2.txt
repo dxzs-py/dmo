@@ -1,325 +1,345 @@
-=== 2026-07-23 测试（重启服务+清理日志后）===
+# 问题记录 — 2026-08-01 MCP 4浏览器实时同步测试
 
-## 测试命令
-运行 ollama lis 和 ollama pst 并把结保存到D:\programming\langchain\langchain_xm\test_approval25.txt
+## 问题1：触发浏览器（Page 7）WebSocket 连接状态显示"已断开"
+- **发现时间**：15:40
+- **页面**：Page 7（触发浏览器）
+- **现象**：ChatHeader 连接状态显示"已断开"，而非"已连接"
+- **预期**：按照 正常现象.txt 标准，应显示"已连接"
+- **影响**：WebSocket 未连接，实时同步功能可能整体失效
+- **状态**：待分析
 
-## 浏览器分配
-- Page 0 (触发浏览器)
-- Page 1 (非触发浏览器，刷新测试)
-- Page 2 (非触发浏览器，观察)
-- Page 3 (非触发浏览器，观察)
+## 问题2：触发浏览器发送消息后 AI 回复内容为空，无工具调用
+- **发现时间**：14:49~14:50
+- **页面**：Page 7（触发浏览器）
+- **现象**：
+  1. 用户消息文本出现重复显示（同样的内容拼接了两次）
+  2. AI 消息区域无任何文本内容渲染
+  3. 无工具调用卡片，无"确认执行"/"拒绝"按钮
+  4. 仅显示 AI 的复制/重新生成/删除按钮
+- **预期**：按照 正常现象.txt，应显示：
+  - 完整的 AI 回复文本
+  - 多个工具调用卡片（shell_exec × 2-3, fs_write_file 等）
+  - "等待中/待审批"状态 + "确认执行"按钮
+- **影响**：P0 阻断性问题，聊天功能核心流程不工作
+- **状态**：待分析
 
-## 初始状态（Page 0 发送命令后）
-| 浏览器 | Tool 1 (ollama list) | Tool 2 (ollama ps) |
-|--------|---------------------|--------------------|
-| Page 0 (触发) | 等待中/待审批 + 确认执行 ✓ | 等待中/待审批 + 确认执行 ✓ |
-| Page 1 (非触发) | 等待中/待审批 + 确认执行 ✓ | 等待中/待审批 + 确认执行 ✓ |
-| Page 2 (观察) | 等待中/待审批 + 确认执行 ✓ | 等待中/待审批 + 确认执行 ✓ |
-| Page 3 (观察) | 等待中/待审批 + 确认执行 ✓ | 等待中/待审批 + 确认执行 ✓ |
+## 问题3：WebSocket 连接状态异常变化（"已断开" → "连接中" → "已断开"）
+- **发现时间**：14:49
+- **页面**：Page 7（触发浏览器）
+- **现象**：发送消息前显示"已断开"，发送后短暂变为"连接中"，最终又变回"已断开"
+- **预期**：应持续显示"已连接"
+- **状态**：待分析
 
-**结论：实时同步初始状态正常，4 个浏览器完全一致。**
+## 问题4：SSE 流被 Daphne ASGI 超时强制终止（70秒无输出）
+- **发现时间**：14:50:15（日志时间戳）
+- **根因**：Agent 在 `[GetTools]` 后无任何输出，70秒后被 Daphne kill
+- **日志证据**：
+  ```
+  WARNING 14:50:15,937 Application instance <Task pending...> for connection
+  <WebRequest method=POST uri=/api/v1/chat/stream/>
+  took too long to shut down and was killed.
+  ```
+- **时间线**：
+  - 14:49:05 - Stream 连接建立，GetTools 开始
+  - 14:49:10 - 第二次 POST /messages/ (重复创建消息)
+  - 14:49:15 - PATCH /messages/2831/ (streamSyncTimer)
+  - 14:50:15 - Daphne kill 连接（70秒）
+- **代码层面无异常**：日志中无 ERROR/Traceback/TypeError/AgentCreationError
+- **影响**：P0 阻断，agent 处理超时导致 SSE 流中断，前端收到空内容
+- **状态**：待分析
 
-## 问题 Z1-刷新：【严重】刷新后工具丢失审批状态，显示"待执行"无审批按钮
+## 问题5：非触发浏览器（Page 8/9/10）未收到新对话同步
+- **发现时间**：14:50
+- **页面**：Page 8（刷新超时）、Page 9（显示旧对话）
+- **现象**：
+  - Page 7 新建会话后，Page 9 侧边栏未见新会话项（或无法区分）
+  - Page 8 刷新页面超时（Vite App busy 状态）
+  - 所有非触发浏览器 WebSocket 状态为"已断开"
+- **预期**：实时同步生效，新会话应在其他浏览器侧边栏"今天"分组立即出现
+- **根因**：`vite.config.js` 缺少 `/ws` 代理规则，WebSocket 请求 `ws://localhost:8080/ws/realtime/` 无法转发到 Django 8000 端口
+- **次因**：`main.js` 未导入 `useSyncStore` 导致 ReferenceError 阻断 Vue 挂载；ChatView 使用 SSE 连接状态而非 WebSocket 状态；ChatView 缺失 `subscribeToSessionEvents` 调用；`chat.js` 缺失 `syncStore.startStreaming()`
+- **修复**：
+  1. `vite.config.js` 添加 `/ws` 代理规则（ws: true）
+  2. `main.js` 添加 `import { useSyncStore }` + 调用 `syncStore.initialize()`
+  3. `ChatView.vue` connectionStatus 数据源改为 `realtime.connectionStatus.value`
+  4. `ChatView.vue` 添加 `subscribeToSessionEvents`/`unsubscribeFromSessionEvents` + watch 会话切换
+  5. `chat.js` sendMessage 添加 `syncStore.startStreaming()`/`stopStreaming()`
+- **验证**：刷新浏览器后显示"已连接" ✅
+- **状态**：已修复
 
-**操作**：Page 0 发送命令后，所有浏览器初始正常。手动刷新 Page 1。
+## 问题2：触发浏览器发送消息后 AI 回复内容为空，无工具调用
+- **发现时间**：14:49~14:50
+- **根因**：Agent 创建过程中存在同步阻塞（store.search() 等），导致 70s+ 无输出，Daphne kill SSE 连接。详见问题4
+- **状态**：部分修复（Agent 阻塞已修复，需重启服务后重新测试验证）
 
-**刷新前 (Page 1)**：Tool 1/2 均显示"等待中/待审批" + 完整审批按钮
-**刷新后 (Page 1)**：
-- Tool 1 (shell_exec "ollama list"): **待执行**（无"待审批"标签，无审批按钮）✗
-- Tool 2 (shell_exec "ollama ps"): **待执行**（无"待审批"标签，无审批按钮）✗
+## 问题3：WebSocket 连接状态异常变化
+- **根因**：同问题1
+- **状态**：已修复 ✅
 
-**严重程度**：严重 - 刷新后审批功能完全不可用，用户无法审批工具
-**复现率**：必现
+## 问题4：SSE 流被 Daphne ASGI 超时强制终止（70秒无输出）
+- **修复**：
+  1. `preflight.py` `_check_redis_connected` 的 Redis 调用改为 `sync_to_async(thread_sensitive=False)`
+  2. `tools/__init__.py` 4处 `sync_to_async` 从 `thread_sensitive=True` 改为 `False`
+  3. `base_builder.py` `build_prompt_context` 改为 `sync_to_async(thread_sensitive=False)`
+  4. `chat_service.py` 降级 agent 预创建用 `asyncio.wait_for(timeout=10)` 包裹
+- **状态**：已修复，需重启后端验证
 
-## 操作1：Page 0 点击 Tool 1 (ollama list) "确认执行"
+## 问题5：非触发浏览器未收到新对话同步
+- **根因**：同问题1 — WebSocket 未连接导致所有实时同步失效
+- **状态**：已修复（WebSocket 恢复后，auto-subscription 应正常工作，需测试验证）
 
-| 浏览器 | Tool 1 (ollama list) | Tool 2 (ollama ps) |
-|--------|---------------------|--------------------|
-| Page 0 (触发) | 等待中/等待其他审批 + disabled ✓ | 等待中/待审批 + 确认执行 ✓ |
-| Page 1 (刷新后) | **待执行**（无审批）✗ | **待执行**（无审批）✗ |
-| Page 2 (观察) | 待检查 | 待检查 |
-| Page 3 (观察) | 待检查 | 待检查 |
+## 问题6：后端消息重复创建
+- **修复**：`chat.js` 中 assistantMessage `saveToBackend` 改为 `true`
+- **状态**：已修复
 
-## 问题 Z2-操作1后刷新浏览器：【严重】操作1后刷新浏览器状态无任何变化
+---
+## 更新时间：16:22 — 后端修复后重新测试
 
-**操作**：Page 0 点击 Tool 1 "确认执行"后，查看 Page 1（已刷新）。
-**期望**：Page 1 通过 WebSocket 实时事件更新 Tool 1 为"等待其他审批"状态。
-**实际**：Page 1 两个工具仍显示"待执行"，无审批按钮，无任何状态变化。
-**说明**：WebSocket 连接正常（已在同一会话中），但实时事件未能更新刷新后的浏览器状态。
+### 后端已修复项（16:15~16:21）
+1. **is_streaming 字段缺失** → models.py 添加 `is_streaming` BooleanField → ✅
+2. **prompt_mode 未传 AgentConfig** → agent_service.py 默认值改为 "agent" + 传递 → ✅
+3. **STREAM_CONTENT_UPDATE payload 错误** → sse_generator.py 改为 data.content → ✅
+4. **finalize_tool_calls() 多余参数** → finalizer.py 移除 session_id/message_id → ✅
+5. **publish_event_sync 未导入** → views_chat.py 添加 import → ✅
+6. **SESSION_CREATED 未广播** → ChatSessionCreateView 添加 publish_event_sync → ✅
 
-## 操作2：Page 0 点击 Tool 2 (ollama ps) "确认执行"
+### 当前新发现问题
 
-| 浏览器 | Tool 1/2 终态 | Tool 3 (file_reader) |
-|--------|-------------|---------------------|
-| Page 0 (触发) | 已完成/已确认 + 输出 ✓ | 等待中/待审批 + 确认执行 ✓ |
-| Page 1 (刷新后) | 已完成/已确认 + 输出 ✓(snapshot) | **待执行**/待审批 + 确认执行 ✓ |
-| Page 2 (观察) | 已完成/已确认 + 输出 ✓ | 等待中/待审批 + 确认执行 ✓ |
-| Page 3 (观察) | 待检查 | 待检查 |
+### 问题7：非触发浏览器不自动切换到新会话（实时同步仍不生效）
+- **发现时间**：16:22
+- **现象**：SESSION_CREATED 广播成功（x4 到所有浏览器），侧边栏出现新会话条目，但 Page 12/13/14 主视图仍停留在旧会话，看不到新会话的实时消息内容
+- **预期**：非触发浏览器应能看到当前进行的对话内容
+- **根因分析**：前端收到 session_created 事件后只更新侧边栏列表，未订阅新会话的 stream_event 通道。非触发浏览器订阅的是自己当前所在的旧会话，新会话的 stream_event 收不到
+- **影响范围**：所有模块（聊天、深度研究、学习工作流）
+- **状态**：待修复
 
-## 问题 Z3-操作2后刷新浏览器状态标签不一致：【中】刷新后 Tool 3 显示"待执行"而非"等待中"
+### 问题8：审批组件错误出现在用户消息下方（UI bug）
+- **发现时间**：16:18（Page 12 replay 数据显示）
+- **现象**：用户消息气泡下方出现孤立的「确认操作」组件（含「拒绝」「确认执行」按钮），没有对应的工具调用卡片
+- **预期**：审批组件应仅在 AI 助手消息的工具调用上下文内出现
+- **根因**：前端 TOOL_CALL_INPUT_READY 事件的渲染逻辑未正确关联到消息角色
+- **状态**：待修复
 
-**操作**：Page 0 点击 Tool 2 确认后，所有浏览器同步了 Tool 1/2 完成状态和新 Tool 3。
-**期望**：所有浏览器 Tool 3 均显示"等待中/待审批"。
-**实际 Page 2 (观察，未刷新)**：Tool 3 显示"等待中/待审批" ✓
-**实际 Page 1 (刷新后)**：Tool 3 显示"**待执行**/待审批 + 有审批按钮"（状态标签不一致）
-**说明**：刷新浏览器通过 snapshot+replay 恢复了审批按钮，但 tool_calls 状态标签显示为"待执行"而非实时同步的"等待中"。
+### 问题9：用户消息重复出现
+- **发现时间**：16:18（Page 12）
+- **现象**：同一会话中用户消息显示两次，一次带工具审批组件、一次正常
+- **可能根因**：MESSAGE_ADDED + TOOL_CALL_INPUT_READY 分别触发了独立的渲染路径
+- **状态**：待修复
 
-## 操作3：Page 0 点击 Tool 3 (file_reader) "确认执行" → 操作4：Page 0 点击 Tool 4 (fs_write_file) "确认执行"
+### 问题10：工具调用"待执行"但实际已执行（状态不同步）
+- **发现时间**：多次测试
+- **现象**：shell_exec 卡片显示"待执行"，实际命令已执行完毕，AI 回复已包含完整结果
+- **可能根因**：agent 未等待人工审批即执行（human-in-the-loop 未生效），或前端状态机未正确更新
+- **状态**：待修复
 
-### 最终状态汇总
-| 浏览器 | Tool 1-4 终态 | 中间状态 | 文字内容 | 审批功能 |
-|--------|-------------|---------|---------|---------|
-| Page 0 (触发) | 全部完成 ✓ | 正常 ✓ | 完整 ✓ | N/A |
-| Page 1 (刷新后) | 全部完成 ✓(snapshot) | 刷新后初始丢失，后续通过 snapshot 恢复 ✓ | 完整 ✓ | 后续工具恢复 ✓ |
-| Page 2 (观察) | 全部完成 ✓ | 正常 ✓ | 完整 ✓ | N/A |
+---
+## 更新时间：17:05 — MCP 4浏览器测试 + 代码分析
 
-## 测试结论（2026-07-23）
+### 测试结果：会话创建实时同步 ✅ 通过
+- Page 22 点击"新建对话"后，Pages 23/24/25 均在 1 秒内自动切换到新会话
+- 侧边栏新会话条目实时出现
+- WebSocket 连接状态所有浏览器均为"已连接"
 
-### 发现的问题
+### 测试结果：消息内容实时同步 ✅ 通过
+- 用户消息和 AI 回复内容在非触发浏览器中正确显示
 
-1. **Z1-刷新：【严重】刷新后工具丢失审批状态** — 刷新后初始工具显示"待执行"无审批按钮。刷新发生在审批阶段时，审批完全不可用。但流继续推进后，后续 snapshot 会恢复终态数据。
+### 问题11（新发现）：approvalStore.flushPendingBindQueue is not a function — 工具调用事件崩溃
+- **发现时间**：17:00
+- **严重程度**：P0 阻断
+- **根因**：重构时 `approval.js` 中 `flushPendingBindQueue` 方法被遗漏删除，`handleSessionEvent.js` 和 `toolCallHandler.js` 调用该方法时抛出 TypeError
+- **日志证据**（Page 24 控制台）：
+  ```
+  [error] [Sync] 事件处理失败 seq=5: TypeError: approvalStore.flushPendingBindQueue is not a function
+  [error] [Sync] 事件处理失败 seq=6: TypeError: approvalStore.flushPendingBindQueue is not a function
+  ```
+- **影响范围**：所有非触发浏览器的 `tool_call_input_ready` 等事件处理失败，导致工具调用状态不更新、事件跳号触发多次全量同步
+- **参考**：`D:\programming\langchain\langchain_xm_\langchain_xm\frontend\langchain-vue\src\stores\approval.js` L152-180 有完整实现
+- **修复**：已在 `d:\programming\langchain\langchain_xm\frontend\langchain-vue\src\stores\approval.js` 添加 `pendingBindQueue` + `flushPendingBindQueue`
+- **状态**：已修复，待重新测试验证
 
-2. **Z2-操作1后刷新浏览器无法实时更新：【严重】** — 刷新后虽然 WebSocket 连接仍在同一会话，但操作1的审批事件未能实时更新刷新后的浏览器。刷新浏览器只能通过后续的 snapshot/replay 获取更新。
+### 问题12（新发现）：stream_event 缺少 message_id 或 event_type
+- **发现时间**：17:00
+- **日志**：多处 `[warn] [Sync] stream_event 缺少 message_id 或 event_type`
+- **影响**：非触发浏览器无法通过 WS stream_event 接收 reasoning/sources/suggestions 等内容
+- **状态**：待分析
 
-3. **Z3-状态标签不一致：【中】** — 刷新后通过 snapshot/replay 恢复的工具状态标签显示"待执行"而非"等待中"（相比未刷新浏览器显示"等待中"）。
+### 问题13（新发现 — P0）：ApprovalMiddleware 未注入 base agent（chat），审批机制完全失效
+- **发现时间**：17:02
+- **严重程度**：P0 阻断
+- **根因**：`base_builder.py` 的 `_build_internal()` 只调用 `build_middleware(config)` 构建中间件栈，
+  但 `ApprovalMiddleware` 不在 `CapabilityRegistry` 的 guardrails 栈中。对比 `deep_builder.py` L483-501
+  显式注入 `ApprovalMiddleware`，chat agent 完全没有审批中间件，所有工具调用绕过 HITL 直接执行。
+- **影响**：
+  - 聊天模块代理模式：所有工具（含 shell_exec）无审批直接执行
+  - 聊天模块深度研究模式：同上
+  - 学习工作流模块：使用 base agent 时同上
+- **日志证据**：无 `ApprovalMiddleware 初始化` 日志（对比 deep_builder 有）
+- **修复**：在 `base_builder.py:32` 后添加 `ApprovalMiddleware` 注入逻辑
+- **状态**：已修复，需重启后端验证
 
-### 与之前测试对比
-- 审批按钮恢复：后续工具（Tool 3/4）刷新后**有审批按钮** ✓（与上次修复一致）
-- 参数显示：刷新后工具参数**完整** ✓
-- 终态同步：所有工具完成后刷新浏览器能获取终态 ✓
-- 仍存在：初始工具刷新后丢失审批按钮 ✗（未改善）
-- 仍存在：状态标签不一致（"待执行" vs "等待中"）✗（未改善）
+---
+## 更新时间：17:10 — 修后验证测试结果
 
-=== 2026-07-23 第二次测试（含根因分析）===
+### 4浏览器同步测试总结
 
-## 初始状态
-Page 0: Tool 1 (ollama lis) 等待中/待审批 ✓, Tool 2 (ollama pst) 等待中/待审批 ✓
+| 测试项 | 结果 | 说明 |
+|--------|------|------|
+| WebSocket 连接 | ✅ | 4个浏览器均为"已连接"，无断连 |
+| 会话创建同步 (仅1个) | ✅ | 点击"新建对话"仅产生1个会话（问题14修复生效） |
+| 非触发浏览器自动切换 | ✅ | Pages 28/29/30 均在1秒内自动切换到新会话 |
+| 消息内容同步 | ✅ | 用户消息、AI回复在非触发浏览器正确显示 |
+| 工具调用同步 | ✅ | tool_call_input_ready 事件正常处理，无 TypeError |
+| 审批UI出现 | ✅ | "待审批"+"确认操作"+"拒绝/确认执行" 全部显示 |
+| 跨浏览器审批UI一致 | ✅ | Pages 28/29/30 与 Page 27 显示相同审批界面 |
 
-## 操作1：Page 0 点击 Tool 1 "确认执行" → 操作2：Page 0 点击 Tool 2 "确认执行"
+### 仍存在的问题
 
-Page 0 操作2后状态：Tool 1/2 已完成(Error)，Tool 3/4 (ollama list/ps) 新增待审批 ✓
+**问题8（已修复 — 双重修复）**: 非触发浏览器中"确认操作"组件出现在用户消息下方
+- **根因1**：`handleMessageAdded` 创建/合并 assistant 消息后未调用 `_syncMessageToolCalls`
+  竞态：`tool_call_input_ready` 先于 `message_added` 到达，Map 已有数据但消息 toolCalls 为空
+- **根因2**：`ChatMessage.vue` 中 `useMessageLevelApproval` 未限制 `role === 'assistant'`
+  导致任何消息（含 user）只要 `.approval` 存在就渲染 AiConfirmation 审批组件
+- **修复1**：`handleMessageAdded` 对 assistant 消息调用 `sessionStore.syncMessageToolCalls(sessionId, message)`
+- **修复2**：`useMessageLevelApproval` 增加 `props.message.role === 'assistant'` 守卫
+- **状态**：已修复，待验证
 
-| 浏览器 | Tool 1/2 终态 | 新工具 (ollama list/ps) |
-|--------|-------------|----------------------|
-| Page 0 (触发) | 已完成/已确认 + 输出 ✓ | 等待中/待审批 + 确认执行 ✓ |
-| Page 1 (刷新后) | **待执行 无变化** ✗（仍显示旧 lis/pst 输入） | 未出现 ✗ |
-| Page 2 (观察) | 待检查 | 待检查 |
+**问题12**: `stream_event 缺少 message_id 或 event_type` 警告持续出现
 
-## 问题 Z4-操作2后刷新浏览器数据显示陈旧：【严重】刷新后 tool_calls 未更新
-
-**操作**：Page 0 审批并执行 Tool 1/2 后，流推进，Tool 1/2 完成并出现新 Tool 3/4。
-**期望**：Page 1（已刷新在同一会话中）通过 snapshot/replay 更新到最新状态。
-**实际**：Page 1 文字内容更新了（"看起来 ollama lis...不是有效命令"）✓，但 tool_calls 仍显示旧数据（2个工具 lis/pst 待执行），新 Tool 3/4 未出现 ✗。
-**数据对比**：
-- 数据库：msg_id=2687 有 2 个 tool_calls（approval.state=pending）
-- Page 0：4 个 tool_calls（2 已完成 + 2 新增）
-- Page 1（刷新后）：2 个 tool_calls（lis/pst，待执行）
-**根因线索**：Redis 完全为空（0 keys），replay 返回 count=0，API snapshot 返回的数据是刷新时的快照（流尚未推进到 Tool 3/4），后续流推进产生的 message_updated 事件因 Redis 无持久化而无法 replay 到刷新后的浏览器。
-
-## 操作3+4：Page 0 逐次批准 Tool 3/4 → 最终状态
-
-Page 0 完整流程：5 个工具全部已完成/已确认，最终文本完整 ✓
-Page 1 (刷新后) 最终状态：5 个工具全部已完成/已确认 + 完整输出（通过流结束后的 snapshot 获取）✓
+**问题15（新 — 已修复）**: 点击"确认执行"后出现"⚠️ 服务暂时不可用"
 
 ---
 
-## 根因分析
+## 2026-08-01 后端日志综合分析 + 参考项目对比
 
-### 证据汇总
-1. **数据库**：tool_calls 正确持久化，approval.state=pending ✓
-2. **Redis**：**完全为空（0 keys）** ❌ — replay 始终返回 count=0
-3. **实时推送**（未刷新浏览器）：完美同步 ✓ — Page 0/2/3 所有事件实时更新
-4. **刷新后浏览器**（Page 1）：
-   - 刷新时 replay count=0（Redis 无事件可回放）
-   - 仅靠 API snapshot 恢复数据
-   - snapshot 返回刷新时的数据库快照（此时流正在中断中，只有 2 个旧工具）
-   - 后续流推进的 message_updated 事件通过 Redis Pub/Sub 瞬态发布，**不持久化**
-   - 刷新后的浏览器通过 WebSocket 连接，但因 replay 无事件，错过了这些瞬态 Pub/Sub 消息
-   - 直到流结束后，API snapshot 更新到最终状态
+### 发现的ERROR日志:
+1. `16:35:53` - DeepSeek API insufficient_balance (余额不足，账户问题非代码问题)
+2. `17:07:23` - `TypeError: finalize_tool_calls() got an unexpected keyword argument 'session_id'` (P15已修复)
+3. `17:07:48~17:12:48` - 多次 `/api/v1/approvals/{hash}/resume/` 404 (审批ID哈希不匹配)
 
-### 根本原因
-Redis Pub/Sub 是瞬态的（fire-and-forget），事件不持久化。WebSocket replay 依赖 Redis 持久化 keys 来补发历史事件。当 Redis 无持久化 key 时，刷新后的浏览器只能：
-1. 从 API snapshot 获取初始数据（时点快照，可能已过时）
-2. 后续流推进的更新通过 Redis Pub/Sub 发布，但刷新后的浏览器错过了之前的订阅
+### 发现的WARNING日志:
+1. `16:24:10` - `工具列表为空，agent 将无法使用工具` (use_tools=False，前端工具选择未传递)
+2. `16:24:11` - `deep_builder 导入失败（循环依赖），DEEP_RESEARCH 类型将不可用`
+3. `16:34:42~16:35:00` - 大量 `Too Many Requests` 节流警告
 
-### 正确修复方向
-**不是**在"approval_pending 事件顺序"或"streamState 转换"上打补丁，而是：
-1. 后端在发布实时事件时，同时将事件持久化到 Redis（如 list 结构，按 session_id 组织）
-2. 前端刷新后通过 replay 获取所有历史事件（包括 approval_pending、tool_call_waiting、message_updated 等）
-3. 前端按事件顺序还原完整状态（包括中间态如"等待中"、"等待其他审批"）
+### 与参考项目（未重构版）对比发现的关键差异:
 
----
+**差异1 (P16新)**: SESSION_CREATED 事件 `id` 字段类型不一致
+- 参考项目: `'id': session.session_id` (UUID字符串)
+- 当前项目: `'id': session.id` (数据库自增整数PK)
+- 前端 `handleUserEvent.js` 先取 `payload.session_id` (UUID)，再 fallback `payload.id`
+- 当前项目 payload 同时包含 session_id(UUID) 和 id(整数)，session_id 优先 → 实际不受影响
+- 但 id 字段语义错误，影响代码可读性和未来维护
 
-## 【纠正】根因分析修订（2026-07-23 spec `fix-realtime-sync-state-recovery`）
+**差异2 (P17新)**: SESSION_CREATED 发布时机不一致
+- 参考项目: `transaction.on_commit(lambda: _safe_publish_event_sync(...))` → 事务提交后才广播
+- 当前项目: 事务内直接 `publish_event_sync(...)` → 事务提交前即广播
+- 风险: 若事务回滚（虽然当前代码路径不太可能），前端会收到无效事件
 
-### "Redis 完全为空"结论已被日志证据推翻
+**差异3 (P18新)**: SESSION_CREATED 缺少 `_safe_publish_event_sync` 错误包装
+- 参考项目: 单独捕获 `PayloadValidationError` 记录 payload 结构
+- 当前项目: 泛化 `try/except Exception`
 
-上述第 117 行、第 130 行声称"Redis 完全为空（0 keys）"，以及第 140-148 行基于该前提的
-"根本原因"部分，经后续日志复核被推翻。日志证据如下：
+**差异4 (P19新)**: SESSION_CREATED payload 字段差异
+- 参考项目: 有 `message_count`, `selected_knowledge_bases`
+- 当前项目: 无 `message_count`, 字段名改为 `knowledge_bases`，多了完整 `session` 对象
 
-1. **seq 单调递增**：seq 37→56 连续递增，证明 Lua 脚本 INCR + RPUSH 成功执行，
-   事件已持久化到 Redis List。
-2. **LRANGE 成功取到事件**：12:55 通过 LRANGE 成功取到 12 条事件。
-3. **count=0 的真实原因**：前端 `lastSeq=32` 已被持久化，replay 查询 `seq > 32`
-   自然返回 0 条（因为后端 seq 从 37 开始递增，但前端 lastSeq=32 是旧值，
-   查询条件 `seq > last_seq` 在某些场景下未能匹配到新事件，并非 Redis 为空）。
-
-因此"Redis 为空"是误判，**不是**本次问题的根因。Redis 持久化机制本身工作正常。
-
-### 真正根因（已被日志证据确认）
-
-刷新后状态恢复链路的数据源不一致，具体三个根因：
-
-1. **【主根因 Z1】初始加载 API 不注入 approval 状态**
-   `ChatMessageSerializer.to_representation` 不从 Approval 表注入 approval 中间态，
-   导致刷新后 tool_calls 中 approval 字段为空 → 审批按钮消失。
-   修复：Task 1-3 创建 `enrich_tool_calls_with_approvals` 公共函数，
-   ChatMessageSerializer 和 SnapshotView 复用，统一在初始加载时注入 approval。
-
-2. **【次根因 Z1】前端快照校对不合并 approval 字段**
-   `_reconcileApprovals` / `_reconcileToolCalls` 因 `_approvalStatePriority(undefined)`
-   返回 0，导致空 approval 无法合并 → 快照中有 approval 数据但合并被跳过。
-   修复：Task 5-6 修正 `_approvalStatePriority` 空 approval 返回 -1，
-   `_reconcileApprovals` / `_reconcileToolCalls` 合并 approval 字段。
-
-3. **【根因 Z2/Z3】`timeout_approval` 绕过 `_persist_and_broadcast`**
-   `timeout_approval` 未同步 TIMEOUT 终态到 ChatMessage → 超时后刷新状态丢失。
-   修复：Task 4 补充 TIMEOUT 终态同步到 ChatMessage。
-
-### 说明
-- 原始问题描述（Z1-Z4）仍然有效，问题现象描述准确。
-- 仅"根因分析"部分的"Redis 为空"结论被纠正。
-- 上述"正确修复方向"（Redis 持久化 + replay）并非本次修复方案，
-  实际修复方案为后端统一 approval 注入 + 前端快照校对合并 + 超时终态同步。
+**差异5 (P20新)**: 审批ID格式不匹配
+- 日志中审批 resume URL 使用 hash 格式: `/api/v1/approvals/{32位hex_hash}/resume/`
+- 前端期望 UUID 格式或其他格式
+- 导致多次 404 Not Found
+- **根因**：`interrupt.py:49` 调用 `finalize_tool_calls()` 时传入了已移除的 `session_id`/`message_id` kwarg
 
 ---
 
-=== 2026-07-23 第三轮测试（spec fix-realtime-sync-state-recovery 验证）===
+## P16/P17/P18 修复验证 — 2026-08-01 17:38
 
-## 测试命令
-运行 ollama lis 和 ollama pst 并把结保存到D:\programming\langchain\langchain_xm\test_approval25.txt
+### 修复内容:
+- P16: `views_chat.py` SESSION_CREATED payload `id` 字段从 `session.id`(整数PK) 改为 `session.session_id`(UUID)
+- P17: 使用 `transaction.on_commit` + 闭包变量提取，确保事务提交后才广播事件
+- P18: 新增 `_safe_publish_session_created` 辅助函数（统一错误处理）
 
-## 浏览器分配
-- Page 0 (触发浏览器, Page 12)
-- Page 1 (刷新测试浏览器, Page 13)
-- Page 2 (观察浏览器, Page 14)
-- Page 3 (观察浏览器, Page 15)
+### 验证结果: ✅ 通过
+- Page 32 (触发浏览器): 点击"新建对话" → 侧边栏显示新会话，自动切换
+- Page 33 (非触发): ✅ 自动切换到新会话，侧边栏显示新会话
+- Page 34 (非触发): ✅ 自动切换到新会话，侧边栏显示新会话
+- Page 35 (非触发): ✅ 自动切换到新会话，侧边栏显示新会话
 
-## 初始状态（Page 0 发送命令后）
+### 结论:
+SESSION_CREATED 跨浏览器实时同步已修复。根因是:
+1. `transaction.on_commit` 缺失 → 事件在DB事务提交前广播，其他浏览器查询时会话尚不存在
+2. `id` 字段类型错误 → 使用整数PK而非UUID
+  → TypeError 导致 sse_generator 崩溃
+  → 前端收到 HTTP 500 或连接中断 → "服务暂时不可用" 提示
+- **日志证据**：`TypeError: finalize_tool_calls() got an unexpected keyword argument 'session_id'`
+- **修复**：移除 `interrupt.py:53-54` 的 `session_id`/`message_id` 传参
+- **状态**：已修复，待验证
 
-| 浏览器 | Tool 1 (shell_exec "ollama lis") | Tool 2 (shell_exec "ollama pst") |
-|--------|---------------------|--------------------|
-| Page 0 (触发) | 等待中/待审批 + 确认执行 ✓ | 等待中/待审批 + 确认执行 ✓ |
-| Page 1 (未刷新) | 等待中/待审批 + 确认执行 ✓ | 等待中/待审批 + 确认执行 ✓ |
-| Page 2 (观察) | 等待中/待审批 + 确认执行 ✓ | 等待中/待审批 + 确认执行 ✓ |
-| Page 3 (观察) | 等待中/待审批 + 确认执行 ✓ | 等待中/待审批 + 确认执行 ✓ |
+---
 
-**结论：实时同步初始状态正常，4 个浏览器完全一致。**
+## 2026-08-01 17:42 第二轮4浏览器完整测试
 
-## 操作：刷新 Page 1
+### 测试环境:
+- Page 32: 触发浏览器，代理模式，deepseek-v4-flash，15个工具全选
+- Pages 33/34/35: 非触发浏览器，自动切换到新会话
+- 测试命令: `运行 ollama lis 和 ollama pst 并把结果保存到D:\programming\langchain\langchain_xm\test_approval25.txt`
 
-## 问题 N1-刷新后工具调用卡片完全消失：【严重】刷新后整个工具调用卡片区块消失，无任何工具显示
+### 已验证通过:
+1. ✅ SESSION_CREATED 跨浏览器实时同步（P16/P17/P18修复生效）
+2. ✅ 用户消息同步到所有浏览器
+3. ✅ WebSocket 状态所有浏览器均显示"已连接"
+4. ✅ 审批组件不出现在用户消息下方（P8修复确认）
+5. ✅ 部分工具调用卡片同步到非触发浏览器（2个 shell_exec）
 
-**操作**：Page 0 发送命令后，所有浏览器初始正常。手动刷新 Page 1 (Page 13)。
+### 新发现问题:
 
-**刷新前 (Page 1)**：
-- Tool 1 (shell_exec "ollama lis"): 等待中/待审批 + 确认执行 ✓
-- Tool 2 (shell_exec "ollama pst"): 等待中/待审批 + 确认执行 ✓
+**P21（新）**: 非触发浏览器缺失AI文本内容
+- 触发浏览器(Page 32): 显示 "我来运行这两个命令并将结果保存到指定文件。"
+- 非触发浏览器(33/34/35): 该文本缺失，仅显示"工具调用"卡片
+- 影响: stream_event 的文本增量未通过 WebSocket 同步到非触发浏览器
+- 状态: 待分析
 
-**刷新后 (Page 1)**：
-- 显示用户消息 ✓
-- 显示 AI 助手消息 ✓
-- **无任何工具调用卡片**（无"工具调用 (2)"、"队列"、"shell_exec"、"等待中"、"待审批"、"确认执行"等任何元素）✗
-- 仅有 AI 消息的"复制"、"重新生成"、"删除"按钮
+**P22（新）**: 非触发浏览器工具调用数量不一致
+- 触发浏览器(Page 32): 3个工具调用（shell_exec ollama list, shell_exec ollama ps, unknown 待审批）
+- 非触发浏览器(33/34/35): 仅2个（shell_exec ollama list, shell_exec ollama ps），缺少"unknown"待审批工具
+- 影响: tool_call_pending 事件可能未广播到非触发浏览器，或 handleToolCallEvent 未正确处理
 
-**对比上次测试（第二轮）**：
-- 第二轮刷新后：Tool 1/2 仍可见但显示"待执行"无审批按钮
-- 第三轮刷新后（本次修复后）：**Tool 1/2 整个工具调用区块完全消失**，状态比修复前更差
+**P23（新）**: 非触发浏览器会话标题不同步
+- 触发浏览器(Page 32): 标题已更新为 "我来运行这两个命令并将结果保存到指定文件。"
+- 非触发浏览器(33/34/35): 仍显示 "新对话 - 代理"
+- 影响: session_updated 事件未正确传播或处理
 
-**严重程度**：严重 - 刷新后工具完全不可见，用户完全无法操作
-**复现率**：必现
+**P24（新 — 确认与P20相关）**: 非触发浏览器审批状态不同步 + 审批操作不生效
+- 触发浏览器(Page 32): 点击"确认执行"后"unknown"变为"处理中"，但随即恢复为"待审批"
+- 非触发浏览器(33/34/35): 始终保持"待审批"状态，审批按钮未消失
+- 日志证据: P20中的 `/api/v1/approvals/{hash}/resume/` 404 错误
+- 根因推测: 审批ID格式不匹配（hash vs UUID），导致审批resume端点404
 
-## 操作1-5：逐次确认执行全部工具
+**P25（新）**: 审批确认后状态回退
+- 触发浏览器点击"确认执行"→"处理中"→又变回"待审批"
+- 说明审批请求失败，前端状态被回退
+- 与P24/P20为同一根因的不同表现
 
-操作流程（均在 Page 0 执行）：
-1. 操作1：确认 Tool 1 (ollama lis)
-2. 操作2：确认 Tool 2 (ollama pst)
-3. 操作3：确认 Tool 3 (ollama list)
-4. 操作4：确认 Tool 4 (ollama ps)
-5. 操作5：确认 Tool 5 (file_reader)
+---
 
-### 每次操作后浏览器状态
+## P20/P24/P25 根因分析与修复 — 2026-08-01 17:50
 
-| 操作 | Page 0 (触发) | Page 1 (刷新后) | Page 2 (观察) | 同步结果 |
-|------|-------------|----------------|-------------|---------|
-| 初始 | Tool 1/2 待审批 ✓ | Tool 1/2 待审批 ✓ | Tool 1/2 待审批 ✓ | 完全一致 ✓ |
-| 刷新后 | Tool 1/2 待审批 ✓ | **无任何工具调用卡片** ✗ | Tool 1/2 待审批 ✓ | **N1 问题** |
-| 操作1后 (Tool 1确认) | 等待其他审批 ✓ | 等待其他审批 ✓(WebSocket恢复) | 等待其他审批 ✓ | 一致 ✓ |
-| 操作2后 (Tool 2确认) | Tool 1/2完成 + Tool 3/4新增待审批 ✓ | Tool 1/2完成 + Tool 3/4待审批 ✓ | 一致 ✓ | 一致 ✓ |
-| 操作3后 (Tool 3确认) | Tool 1/2/3完成 + Tool 4待审批 ✓ | 一致 ✓ | 一致 ✓ | 一致 ✓ |
-| 操作4后 (Tool 4确认) | Tool 1-4完成 + Tool 5 (file_reader)待审批 ✓ | 一致 ✓ | 一致 ✓ | 一致 ✓ |
-| 操作5后 (Tool 5确认) | Tool 1-5全部完成 ✓ | 一致 ✓(Tool 5=已确认) | 一致 ✓ | 一致 ✓ |
+### 根因:
+**根因A (loop.py)**: `_handle_updates_chunk` 解析审批中断后仅 yield 事件到前端，
+但从未调用 `request_approval_async` 创建 Approval DB 记录。
+导致 `POST /api/v1/approvals/{interrupt_id}/resume/` 因 `Approval.objects.get()` 找不到记录返回404。
+(对比：`chat_resume_generator.py` 第357行正确调用了 `request_approval_async`)
 
-### 关键发现
+**根因B (adapter.py)**: 批量/单工具格式分支均缺失 `langgraph_resume_id` 字段。
+`research_runner.py` 第211行用 `interrupt_id`(tool_call_id) 替代 `langgraph_resume_id`(intr.id)，
+导致 resume 时 `Command(resume=...)` 的 key 与 LangGraph checkpoint 不匹配。
 
-1. **N1-刷新后工具调用卡片消失：【严重】** 刷新后整个工具调用区块消失，但在 WebSocket 实时事件（Tool 1 确认操作推送）到达后恢复。说明：
-   - 初始 API 加载（刷新时）不返回/返回空 tool_calls
-   - WebSocket replay 事件未正确恢复工具调用卡片
-   - 实时 WebSocket 事件（操作后的更新）能恢复正确状态
-   - **前一版本（第二轮测试）刷新后至少显示工具卡片（无审批），本轮修复后反而更差——工具卡片完全消失**
+### 修复:
+1. **loop.py**: 在 `_handle_updates_chunk` 中 yield 前调用 `request_approval_async` 创建 DB 记录
+2. **context.py**: StreamContext 新增 `session_id` / `message_id` 字段
+3. **chat_service.py**: 创建 StreamContext 时注入 `session_id` / `message_id`
+4. **adapter.py**: 批量/单工具分支均追加 `"langgraph_resume_id": interrupt_id`
+5. **research_runner.py**: `langgraph_resume_id` 从 `first_interrupt["langgraph_resume_id"]` 读取
+   (之前在 adapter.py 无此字段时补偿缺失，现已不必要)
 
-2. **实时同步在未刷新浏览器之间完美工作**：Page 0/2/3 所有操作完全一致
+### 状态: 已修复，待验证
 
-3. **WebSocket 恢复能力**：刷新后的 Page 1 在收到操作1的 WebSocket 事件后，从"无工具卡片"恢复到正确状态
-
-4. **审批按钮功能正常**：所有浏览器的审批按钮均正确显示并可用（初始状态和实时同步后）
-
-
-
-=== 2026-07-23 第四轮测试（spec fix-toolcall-recovery-from-approval-source 验证） ===
-
-## 测试命令
-运行 ollama lis 和 ollGMA pst 并把结保存到D:\programming\langchain\langchain_xm\test_approval25.txt
-
-## �7览器分配
-- Page 0 (触发浏览器)
-- Page 1 (非触发7览器，刷新测试)
-- Page 2 (非触发7览器，观察)
-- Page 3 (非触发7览器，观察)
-
-
-【第四轮测试-刷新差异】
-1. 刷新后工具卡片不再消失(N1已修复)，但存在UI差异：
-   - 触发浏览器(未刷新)Tool状态='等待中'，刷新后='待执行'
-   - 刷新后缺少'全部确认'按钮和'确认执行shell_exec'描述文字
-
-【第四轮测试-严重问题】审批状态未同步到刷新后的浏览器
-- 触发浏览器(P23)点击Tool1确认后，Tool1状态='等待中/等待其他审批'，显示'本工具已审批...'
-- 刷新浏览器(P24)Tool1状态仍为'待执行/待审批'，'确认执行'按钮仍可点击
-- 这说明刷新后的浏览器WebSocket连接未接收到审批状态变更事件
-- 时间: 2026-07-23 19:13:01
-
-【第四轮测试-完整结果汇总】
-时间: 2026-07-23 19:22:03
-
-✅ N1修复验证通过：刷新后工具调用卡片不再消失（之前完全消失，现在正常显示）
-✅ 未刷新浏览器（P25/P26）实时同步正常：审批状态、工具结果、新消息均实时同步
-✅ 刷新浏览器（P24）消息同步正常：新消息、工具执行结果都能同步
-✅ 后端日志无ERROR：'tool_calls中未找到匹配项'和'async context'错误已消除
-✅ 所有6个工具审批流程完成：4个shell_exec + 1个file_reader + 1个fs_write_file
-
-❌ 严重问题：刷新后浏览器(P24)审批中间状态未同步
-   - 触发浏览器点击确认后，Tool状态从'待审批'变为'等待其他审批'
-   - 刷新浏览器仍显示'待审批'，确认执行按钮仍可点击
-   - 这意味着刷新后的WebSocket连接未能接收到审批状态变更的实时事件
-   - 最终状态（已完成/已确认）能同步，但中间态（等待其他审批）丢失
-
-⚠️ UI差异：刷新后浏览器工具状态文字不同
-   - 未刷新浏览器显示'等待中'，刷新后显示'待执行'
-   - 刷新后缺少'全部确认'按钮和详细描述文字
-
-根因分析：
-1. 审批中间状态事件可能未通过WebSocket推送到刷新后重新连接的客户端
-2. 或者刷新后WebSocket重连时只回放（replay）了历史事件，但中间态事件在replay中被遗漏
-3. 也可能是前端在处理replay事件时忽略了中间态审批事件（只处理终态）
-4. '待执行'vs'等待中'的差异可能是API snapshot与实时事件对状态字段取值不同导致

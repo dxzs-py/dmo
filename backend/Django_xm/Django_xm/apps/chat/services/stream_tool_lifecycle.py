@@ -106,12 +106,16 @@ def _publish_tool_lifecycle_event(
     # error 仅 FAILED 事件透传
     error = tool_info.get("error") if event_type == EventType.TOOL_CALL_FAILED else None
 
+    # _index：LLM 生成的工具调用原始序号（用于跨浏览器工具顺序稳定排序）
+    _index = tool_info.get("_index") if isinstance(tool_info, dict) else None
+
     service.transition(
         tool_call_id,
         event_type,
         parameters=transition_parameters,
         result=result,
         error=error,
+        _index=_index,
     )
 
 

@@ -296,7 +296,7 @@ class AgentRunTool(BaseTool):
                 # 同 app 内导入 agent_hub.create（Task 15.1：原为 tools→agent_hub 违规，迁入后合规）
                 from Django_xm.apps.agent_hub import AgentConfig, AgentType
                 from Django_xm.apps.agent_hub import create as agent_hub_create
-                from Django_xm.apps.tools import get_basic_tools
+                from Django_xm.apps.tools import get_all_basic_tools
                 from Django_xm.apps.tools.langchain.agent_context import (
                     MAX_AGENT_DEPTH,
                     decrement_agent_depth,
@@ -349,9 +349,9 @@ class AgentRunTool(BaseTool):
                             logger.info(f"子代理 {agent_id} 继承父代理工具: {[t.name for t in sub_tools]}")
                         except Exception as e:
                             logger.warning(f"子代理加载继承工具失败，回退到基础工具: {e}")
-                            sub_tools = get_basic_tools()
+                            sub_tools = get_all_basic_tools()
                     else:
-                        sub_tools = get_basic_tools()
+                        sub_tools = get_all_basic_tools()
 
                     agent = run_async(
                         agent_hub_create(

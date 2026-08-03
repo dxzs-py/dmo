@@ -28,8 +28,6 @@ from .web_search import (
     web_search,
 )
 
-get_daily_weather = weather_query  # 别名，与 tools/__init__.py 保持一致
-
 # 文件系统工具
 # 文件读取工具
 from .file_reader import (
@@ -87,7 +85,6 @@ __all__ = [
     "get_current_date",
     # 时间
     "get_current_time",
-    "get_daily_weather",
     "get_duckduckgo_tools",
     "get_file_reader_tools",
     "get_filesystem_tools",

@@ -138,7 +138,8 @@ export const useChatStore = defineStore('chat', () => {
       attachments: options.attachments || [],
       researchContext: currentResearchContextInfo || null,
     }
-    sessionStore.addMessageToSession(sessionId, userMessage)
+    // 用户消息由后端 ChatStreamView 在流式开始时创建并广播，前端不再重复创建。
+    sessionStore.addMessageToSession(sessionId, userMessage, false)
 
     const assistantMessage = {
       id: nanoid(),
@@ -153,14 +154,15 @@ export const useChatStore = defineStore('chat', () => {
       suggestions: null,
       context: null,
     }
-    sessionStore.addMessageToSession(sessionId, assistantMessage, true)
+    // AI 消息由后端 SSE 流创建并广播，前端只创建本地占位。
+    sessionStore.addMessageToSession(sessionId, assistantMessage, false)
     messageCount.value += 1
 
     let streamSyncTimer = null
     try {
-      // 流式输出期间每 5 秒同步 assistant 消息到后端，防止刷新丢失
+      // 流式输出期间每 5 秒同步 assistant 消息到后端（仅 PATCH 不 POST 创建）
       streamSyncTimer = setInterval(() => {
-        sessionStore.syncLastMessageToBackend(sessionId).catch(() => {})
+        sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false }).catch(() => {})
       }, 5000)
 
       const messages = sessionStore.getSessionMessages(sessionId) || []
@@ -371,7 +373,7 @@ export const useChatStore = defineStore('chat', () => {
         }
       }
 
-      sessionStore.syncLastMessageToBackend(sessionId).catch((error) => {
+      sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false }).catch((error) => {
         logger.error('[ChatStore] 消息同步到后端失败:', error)
         ElMessage.warning({
           message: '消息同步失败，请刷新页面重试',
@@ -454,9 +456,9 @@ export const useChatStore = defineStore('chat', () => {
 
     let streamSyncTimer = null
     try {
-      // 流式输出期间每 5 秒同步 assistant 消息到后端，防止刷新丢失
+      // 流式输出期间每 5 秒同步消息到后端（仅 PATCH 不 POST 创建）
       streamSyncTimer = setInterval(() => {
-        sessionStore.syncLastMessageToBackend(sid).catch(() => {})
+        sessionStore.syncLastMessageToBackend(sid, { allowCreate: false }).catch(() => {})
       }, 5000)
 
       const chatHistory = messages

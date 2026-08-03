@@ -22,6 +22,8 @@ import logging
 
 from django.apps import apps
 
+from Django_xm.common.approval_utils import derive_cross_module_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -45,8 +47,8 @@ def build_approval_index_item(apv):
     """
     extra = apv.extra if isinstance(apv.extra, dict) else {}
     # cross_module_id：仅 DEEP_RESEARCH 关联 chat 时为 chat_session_id
-    # （与 approval_service._build_payload / _resolve_approval_channels 计算逻辑一致）
-    cross_module_id = apv.chat_session_id if apv.source == apv.SOURCE_DEEP_RESEARCH and apv.chat_session_id else None
+    # （统一由 derive_cross_module_id 计算，与 approval_service 保持一致）
+    cross_module_id = derive_cross_module_id(apv)
     return {
         "state": apv.state,
         "approval_id": apv.interrupt_id,

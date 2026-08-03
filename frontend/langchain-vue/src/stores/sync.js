@@ -13,6 +13,9 @@ import { createOrderedQueue } from './sync/orderedQueue'
 import { createHandleUserEvent } from './sync/handleUserEvent'
 import { createHandleSessionEvent } from './sync/handleSessionEvent'
 import { createHandleTaskEvent } from './sync/handleTaskEvent'
+import { createMessageHandlers } from './sync/messageHandlers'
+import { createMessageIntegrityHandlers } from './sync/messageIntegrity'
+import { createStreamStateHandlers } from './sync/streamStateHandlers'
 
 /**
  * @typedef {import('@/composables/useRealtimeSync').RealtimeEvent} RealtimeEvent
@@ -225,14 +228,28 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   // === 装配 handlers ===
-  // 装配顺序说明（避免循环依赖）：
-  // 1. handleSessionEvent 模块先创建：不依赖 handleTaskEvent/handleRealtimeEvent
-  //    模块内部需要的依赖通过 ctx 传入（seqDedup/orderedQueue/streamingSessions/
-  //    thinkingSessions/fullSyncPending/requestFullSync + 三个 store）
-  // 2. handleTaskEvent 模块接收 handleToolCallEvent/handleApprovalEvent
-  //    （由 handleSessionEvent 模块创建并导出，三模块共享同一份处理逻辑）
-  // 3. handleRealtimeEvent 在主文件定义，路由到 handleSessionEvent/handleTaskEvent
-  // 4. handleUserEvent 接收 handleRealtimeEvent（applyUserEvent 中 session_created 自动订阅时使用）
+  // 分层装配（Task 16）：底层 handler → 流式状态 handler → session handler
+  // 独立模块（messageHandlers / streamStateHandlers / messageIntegrity）
+  // 提供与 handleSessionEvent.js 内联版本逻辑等价的工厂函数，
+  // 通过依赖注入方式传入 createHandleSessionEvent，实现模块职责分离。
+  //
+  // Step 1: 创建底层 handler（消息 CRUD + 完整性校验）
+  const messageHandlers = createMessageHandlers({ sessionStore, streamingSessions })
+  const integrityHandlers = createMessageIntegrityHandlers({ sessionStore })
+
+  // Step 2: 创建流式状态 handler（依赖 messageIntegrity）
+  const streamStateHandlers = createStreamStateHandlers({
+    sessionStore,
+    approvalStore,
+    researchStore,
+    streamingSessions,
+    thinkingSessions,
+    requestFullSync,
+    finalizeToolCalls: integrityHandlers.finalizeToolCallsForCompletedMessage,
+    verifyMessageIntegrity: integrityHandlers.verifyMessageIntegrityAfterSync,
+  })
+
+  // Step 3: 创建 session handler（注入独立模块的函数）
   const sessionHandlers = createHandleSessionEvent({
     sessionStore,
     approvalStore,
@@ -243,14 +260,15 @@ export const useSyncStore = defineStore('sync', () => {
     thinkingSessions,
     fullSyncPending,
     requestFullSync,
+    // 注入独立模块函数，handleSessionEvent.js 中优先使用注入版本，回退内联版本
+    ...messageHandlers,
+    ...streamStateHandlers,
   })
   const {
     handleSessionEvent,
     applySessionEvent,
     handleToolCallEvent,
     handleApprovalEvent,
-    handleMessageUpdated,
-    handleStreamCompleted,
   } = sessionHandlers
 
   const { handleTaskEvent } = createHandleTaskEvent({
@@ -374,8 +392,6 @@ export const useSyncStore = defineStore('sync', () => {
     handleToolCallEvent,
     handleApprovalEvent,
     handleRealtimeEvent,
-    handleMessageUpdated,
-    handleStreamCompleted,
     initialize,
     handleUserEvent,
     handleSessionEvent,

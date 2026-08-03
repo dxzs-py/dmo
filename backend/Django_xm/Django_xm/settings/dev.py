@@ -147,6 +147,11 @@ LOGGING = {
             "level": "DEBUG",
             "propagate": False,
         },
+        "Django_xm.apps.approvals": {
+            "handlers": ["console", "file"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
         "Django_xm.apps.agent_hub": {
             "handlers": ["console", "file"],
             "level": "DEBUG",
@@ -162,6 +167,11 @@ LOGGING = {
             "level": "DEBUG",
             "propagate": False,
         },
+        "Django_xm.apps.research": {
+            "handlers": ["console", "file"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
     },
 }
 
@@ -172,9 +182,9 @@ CELERY_BROKER_TRANSPORT_OPTIONS = {
 CELERY_BROKER_CONNECTION_MAX_RETRIES = 10
 CELERY_BROKER_POOL_LIMIT = 10
 CELERY_REDIS_BACKEND_HEALTH_CHECK_INTERVAL = 60
-# dev 环境保留 base.py 的 CELERY_TASK_ROUTES（与生产一致），不再清空。
-# 清空会导致 analytics.track_event / approvals.cleanup_expired_approvals 等路由丢失，
-# 任务被发送到默认队列而非预期的 celery 队列。
+# dev 环境：单 worker 运行，清空 CELERY_TASK_ROUTES 使所有任务统一走 celery 队列。
+# CELERY_TASK_DEFAULT_QUEUE = "celery"（base.py 已设置），无需担心路由丢失。
+CELERY_TASK_ROUTES = None
 
 # MCP_SERVERS 配置已迁移到 apps/tools/mcp/config.py（Task 27.3），
 # 由 discovery.py 直接 import get_system_mcp_servers() 调用，

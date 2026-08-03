@@ -1057,6 +1057,9 @@ async def _stream_chat_resume_generator(
 
     from Django_xm.apps.ai_engine.services.checkpointer_factory import release_async_checkpointer
     from Django_xm.apps.chat.services.chat_service import ChatService
+    from Django_xm.apps.chat.services.sse_generator import _publish_stream_event
+    from Django_xm.common.event_schema import EventSource, EventType
+    from Django_xm.common.realtime_events import publish_event
 
     if request_data is None:
         try:
@@ -1109,6 +1112,9 @@ async def _stream_chat_resume_generator(
     tool_call_count = {}
     accumulated_reasoning = {}
     tool_args_accumulator = {}
+    used_tool_call_ids = set()
+    # P6-b 修复：恢复流的内容节流广播状态（与 sse_generator.py generate_chat_stream 对齐）
+    content_state = {"content": "", "last_broadcast": 0.0}
 
     try:
         chat_service = ChatService(user_id=request.user.id, thread_id=session_id)
@@ -1234,60 +1240,126 @@ async def _stream_chat_resume_generator(
                 if isinstance(mode_data, dict):
                     # 处理 __interrupt__ 事件：审批恢复后 agent 又触发新的审批请求
                     if "__interrupt__" in mode_data:
-                        from langgraph.types import Interrupt
+                        # P6-b 修复：interrupt 前 flush 残留内容状态到 WebSocket
+                        # 内容广播使用 0.5s 节流，interrupt 暂停流时可能仍有未广播内容
+                        if content_state and content_state.get("content", "").strip():
+                            try:
+                                content_state["last_broadcast"] = time.monotonic()
+                                await publish_event(
+                                    EventType.STREAM_CONTENT_UPDATE,
+                                    {
+                                        "source": EventSource.CHAT,
+                                        "source_id": str(session_id or ""),
+                                        "data": {"content": content_state["content"]},
+                                    },
+                                    session_id=str(session_id or ""),
+                                )
+                            except Exception as flush_err:
+                                logger.debug(f"[ChatApprovalResume] interrupt 前 flush 失败: {flush_err}")
 
+                        from Django_xm.apps.chat.services.stream_helpers import (
+                            extract_interrupt_ids,
+                            parse_approval_interrupt,
+                        )
                         from Django_xm.apps.tools.base import is_approval_interrupt
 
                         interrupts = mode_data["__interrupt__"]
                         if interrupts:
+                            # 收集所有审批请求（兼容批量格式和旧格式单条）
+                            batch_approval_data = []  # [(graph_intr_id, tool_call_id, approval_data)]
                             for intr in interrupts:
-                                if isinstance(intr, Interrupt):
-                                    interrupt_value = intr.value
-                                elif isinstance(intr, dict):
-                                    interrupt_value = intr.get("value", intr)
-                                else:
-                                    interrupt_value = intr
+                                interrupt_value, batch_id, resume_id = extract_interrupt_ids(intr)
 
-                                if is_approval_interrupt(interrupt_value):
-                                    tool_name = interrupt_value.get("tool_name", "unknown")
-                                    new_interrupt_id = intr.id if isinstance(intr, Interrupt) else ""
-                                    approval_data = {
-                                        "tool_name": tool_name,
-                                        "tool_call_id": new_interrupt_id,
-                                        "interrupt_id": new_interrupt_id,
-                                        "title": interrupt_value.get("title", "确认操作"),
-                                        "description": interrupt_value.get("description", ""),
-                                        "action": interrupt_value.get("action", "confirm"),
-                                        "danger_level": interrupt_value.get("danger_level", "medium"),
-                                        "state": "pending",
-                                    }
-                                    # 透传 operation（统一字段，兼容旧 command）
-                                    op = interrupt_value.get("operation") or interrupt_value.get("command") or ""
-                                    if op:
-                                        approval_data["operation"] = op
-                                        # 通用匹配：tool_name 一致 + parameters 中任意字段值等于 operation
-                                        for tc_key, tc_info in tool_calls_map.items():
-                                            if tc_info.get("name") != tool_name:
-                                                continue
-                                            tc_params = tc_info.get("parameters", {})
-                                            if any(str(v) == op for v in tc_params.values()):
-                                                approval_data["llm_tool_call_id"] = tc_info.get("id") or tc_key
-                                                break
-                                        # 回退：同名工具中第一个
-                                        if "llm_tool_call_id" not in approval_data:
-                                            for tc_key, tc_info in tool_calls_map.items():
-                                                if tc_info.get("name") == tool_name:
-                                                    approval_data["llm_tool_call_id"] = tc_info.get("id") or tc_key
-                                                    break
-                                    if interrupt_value.get("extra"):
-                                        approval_data["extra"] = interrupt_value["extra"]
-                                    if interrupt_value.get("input_placeholder"):
-                                        approval_data["input_placeholder"] = interrupt_value["input_placeholder"]
-                                    logger.info(
-                                        f"[ChatApprovalResume] 检测到新审批: tool={tool_name}, "
-                                        f"danger={approval_data['danger_level']}"
+                                if not is_approval_interrupt(interrupt_value):
+                                    continue
+
+                                parsed_list = parse_approval_interrupt(
+                                    interrupt_value,
+                                    graph_interrupt_id=batch_id,
+                                    langgraph_resume_id=resume_id,
+                                    tool_calls_map=tool_calls_map,
+                                    tool_args_accumulator=tool_args_accumulator,
+                                    used_tool_call_ids=used_tool_call_ids,
+                                )
+                                for approval_data in parsed_list:
+                                    tool_call_id = approval_data.get("tool_call_id", "")
+                                    batch_approval_data.append(
+                                        (resume_id, tool_call_id, approval_data)
                                     )
-                                    yield f"data: {json.dumps({'type': 'approval', 'data': approval_data}, ensure_ascii=False)}\n\n"
+
+                            # 消息 ID（关联当前审批所属的消息）
+                            _approval_msg_id = str(
+                                (approval.extra or {}).get("message_id", "")
+                                or getattr(approval, "message_id", "")
+                                or ""
+                            )
+
+                            for graph_intr_id, tool_call_id, approval_data in batch_approval_data:
+                                tool_name = approval_data.get("tool_name", "unknown")
+                                logger.info(
+                                    f"[ChatApprovalResume] 检测到新审批: tool={tool_name}, "
+                                    f"danger={approval_data.get('danger_level', 'medium')}"
+                                )
+
+                                # 注入 session_id / message_id
+                                approval_data["session_id"] = str(session_id or "")
+                                approval_data["message_id"] = _approval_msg_id
+
+                                # 持久化工具/模型配置到 approval.extra
+                                # P20 修复：使用已从首轮 approval.extra 提取的完整配置
+                                # 而非 request_data（HTTP POST 体仅含 {approved: true}）
+                                from Django_xm.apps.approvals.services.approval_service import (
+                                    build_approval_extra,
+                                    request_approval_async,
+                                )
+                                _resume_config = {
+                                    "use_tools": use_tools,
+                                    "use_web_search": use_web_search,
+                                    "use_mcp": use_mcp,
+                                    "selected_mcp_servers": selected_mcp_servers,
+                                    "selected_tools": selected_tools,
+                                    "use_knowledge_base": use_knowledge_base,
+                                    "selected_knowledge_bases": selected_knowledge_bases,
+                                    "provider_id": provider_id,
+                                    "model_name": model_name,
+                                    "use_deep_thinking": use_deep_thinking,
+                                    "special_params": special_params,
+                                    "temperature": temperature,
+                                    "max_tokens": max_tokens,
+                                }
+                                approval_data["extra"] = build_approval_extra(
+                                    _resume_config,
+                                    tool_call_id=tool_call_id,
+                                    graph_interrupt_id=approval_data.get("graph_interrupt_id", ""),
+                                    langgraph_resume_id=approval_data.get("langgraph_resume_id", ""),
+                                    message_id=_approval_msg_id,
+                                    base_extra=approval_data.get("extra"),
+                                )
+
+                                try:
+                                    await request_approval_async(
+                                        source="chat",
+                                        source_id=str(session_id or ""),
+                                        interrupt_id=tool_call_id,
+                                        approval_data=approval_data,
+                                    )
+                                    logger.info(
+                                        f"[Approval] DB记录已创建: interrupt_id={tool_call_id}, "
+                                        f"session={session_id}"
+                                    )
+                                except Exception as e:
+                                    logger.error(
+                                        f"[Approval] DB记录创建失败: interrupt_id={tool_call_id}, error={e}"
+                                    )
+
+                                yield f"data: {json.dumps({'type': 'approval', 'data': approval_data}, ensure_ascii=False)}\n\n"
+                                # P6-b 修复：广播 approval 事件到 WebSocket
+                                await _publish_stream_event(
+                                    {"type": "approval", "data": approval_data},
+                                    str(session_id or ""),
+                                    message_id=int(_approval_msg_id) if _approval_msg_id.isdigit() else None,
+                                    content_state=content_state,
+                                )
 
                     for node_name, node_output in mode_data.items():
                         if node_name == "__interrupt__":
@@ -1322,7 +1394,13 @@ async def _stream_chat_resume_generator(
                                         # 写入 tool result，供前端展示
                                         # 必须包含 id 字段（值等于 tool_call_id），否则前端
                                         # _findMatchingToolCall 无法匹配，会新增而非更新
-                                        yield f"data: {json.dumps({'type': 'tool_result', 'data': {'id': tool_call_id, 'tool_call_id': tool_call_id, 'name': tool_name, 'content': tool_content, 'state': 'output-available', 'status': 'completed'}}, ensure_ascii=False)}\n\n"
+                                        yield f"data: {json.dumps({'type': 'tool_result', 'data': {'id': tool_call_id, 'tool_call_id': tool_call_id, 'name': tool_name, 'result': tool_content, 'state': 'output-available', 'status': 'completed'}}, ensure_ascii=False)}\n\n"
+                                        # P6-b 修复：广播 tool_result 到 WebSocket
+                                        await _publish_stream_event(
+                                            {"type": "tool_result", "data": {"id": tool_call_id, "tool_call_id": tool_call_id, "name": tool_name, "result": tool_content, "state": "output-available", "status": "completed"}},
+                                            str(session_id or ""),
+                                            content_state=content_state,
+                                        )
                 continue
 
             # 处理 messages 模式
@@ -1341,23 +1419,37 @@ async def _stream_chat_resume_generator(
                 getattr(msg_obj, "tool_calls", None) or getattr(msg_obj, "tool_call_chunks", None)
             ):
                 msg_tool_calls = getattr(msg_obj, "tool_calls", None) or []
-                # 检查是否有新增的 tool_call（不在 tool_calls_map 中的）
-                new_tool_calls = []
-                for tc in msg_tool_calls:
-                    tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
-                    if tc_id and tc_id not in tool_calls_map:
-                        new_tool_calls.append(tc)
-
-                if not new_tool_calls:
-                    # 全部是已有的 tool_calls，跳过整条 AIMessage
-                    continue
+                # 仅处理完整的 tool_calls；tool_call_chunks（流式部分数据）
+                # 交由下方 process_stream_chunk 增量累积，确保工具名/参数完整
+                if not msg_tool_calls:
+                    # 只有 tool_call_chunks，无完整 tool_calls → 回退到增量处理
+                    # （不 continue，让代码落入 process_stream_chunk）
+                    pass
                 else:
+                    # 检查是否有新增的 tool_call（不在 tool_calls_map 中的）
+                    new_tool_calls = []
+                    for tc in msg_tool_calls:
+                        tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                        if tc_id and tc_id not in tool_calls_map:
+                            new_tool_calls.append(tc)
+
+                    if not new_tool_calls:
+                        # 全部是已有的 tool_calls，跳过整条 AIMessage
+                        continue
                     # 有新增的 tool_calls，只处理新增部分
                     # 将新增的 tool_call 推送给前端
+                    _approval_msg_id = str(
+                        (approval.extra or {}).get("message_id", "") or getattr(approval, "message_id", "") or ""
+                    )
                     for tc in new_tool_calls:
                         tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
                         tc_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
                         tc_args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
+                        logger.info(
+                            f"[ChatApprovalResume] NEW_TOOL: tc_id={tc_id}, "
+                            f"tc_name={tc_name}, tc_type={type(tc).__name__}, "
+                            f"tc_args_keys={list(tc_args.keys())[:5] if isinstance(tc_args, dict) else 'N/A'}"
+                        )
                         if tc_id:
                             tool_calls_map[tc_id] = {
                                 "id": tc_id,
@@ -1366,6 +1458,15 @@ async def _stream_chat_resume_generator(
                                 "state": "input-available",
                                 "status": "running",
                             }
+                            # 广播到 WebSocket（非触发浏览器实时同步新增工具）
+                            from Django_xm.apps.chat.services.stream_tool_lifecycle import _broadcast_tool_input_ready
+                            _broadcast_tool_input_ready(
+                                tool_calls_map[tc_id],
+                                str(session_id or ""),
+                                _approval_msg_id,
+                                module=EventSource.CHAT,
+                                module_id=str(session_id or ""),
+                            )
                             yield f"data: {json.dumps({'type': 'tool', 'data': tool_calls_map[tc_id]}, ensure_ascii=False)}\n\n"
                     # 跳过这条 AIMessage 的文本内容处理（tool_calls 消息通常没有文本内容）
                     continue
@@ -1390,6 +1491,20 @@ async def _stream_chat_resume_generator(
                     if event.get("type") == "chunk":
                         current_message_content += event.get("content", "")
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    # P6-b 修复：广播 chunk/tool 事件到 WebSocket（非触发浏览器实时同步）
+                    _resume_msg_id = int(
+                        (approval.extra or {}).get("message_id", "")
+                        or getattr(approval, "message_id", "")
+                        or "0"
+                    )
+                    if not isinstance(_resume_msg_id, int) or _resume_msg_id <= 0:
+                        _resume_msg_id = None
+                    await _publish_stream_event(
+                        event,
+                        str(session_id or ""),
+                        message_id=_resume_msg_id,
+                        content_state=content_state,
+                    )
             except Exception as chunk_err:
                 logger.warning(f"[ChatApprovalResume] 流式 chunk 处理失败: {chunk_err}")
                 continue
@@ -1411,6 +1526,26 @@ async def _stream_chat_resume_generator(
         # 注意：审批恢复后的消息由前端 syncLastMessageToBackend 统一保存到数据库，
         # 后端不再重复保存，避免创建重复消息。
         # 后端只在流式完成后发送 [DONE]，前端收到后触发同步。
+
+        # P6-b 修复：flush 恢复流残留的内容到 WebSocket
+        if content_state and content_state.get("content", "").strip():
+            try:
+                await publish_event(
+                    EventType.STREAM_CONTENT_UPDATE,
+                    {
+                        "source": EventSource.CHAT,
+                        "source_id": str(session_id or ""),
+                        "message_id": str(
+                            (approval.extra or {}).get("message_id", "")
+                            or getattr(approval, "message_id", "")
+                            or ""
+                        ) or None,
+                        "data": {"content": content_state["content"]},
+                    },
+                    session_id=str(session_id or ""),
+                )
+            except Exception as flush_err:
+                logger.debug(f"[ChatApprovalResume] content_state flush 失败: {flush_err}")
 
         yield "data: [DONE]\n\n"
 

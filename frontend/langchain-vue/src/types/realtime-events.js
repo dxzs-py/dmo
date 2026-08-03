@@ -27,9 +27,10 @@ export const EventType = {
   STREAM_COMPLETED: 'stream_completed',
   STREAM_FINALIZED: 'stream_finalized',
 
-  // 工具调用生命周期事件（7 个）
+  // 工具调用生命周期事件（8 个）
   TOOL_CALL_PENDING: 'tool_call_pending',
   TOOL_CALL_INPUT_READY: 'tool_call_input_ready',
+  TOOL_CALL_OUTPUT_READY: 'tool_call_output_ready',
   TOOL_CALL_WAITING: 'tool_call_waiting',
   TOOL_CALL_RUNNING: 'tool_call_running',
   TOOL_CALL_COMPLETED: 'tool_call_completed',
@@ -75,6 +76,7 @@ export const SNAPSHOT_TRIGGER_EVENTS = new Set([
 export const TOOL_CALL_EVENT_TYPES = new Set([
   EventType.TOOL_CALL_PENDING,
   EventType.TOOL_CALL_INPUT_READY,
+  EventType.TOOL_CALL_OUTPUT_READY,
   EventType.TOOL_CALL_WAITING,
   EventType.TOOL_CALL_RUNNING,
   EventType.TOOL_CALL_COMPLETED,

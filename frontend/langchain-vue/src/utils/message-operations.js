@@ -1,5 +1,39 @@
 import { PROTECTED_STATUSES, PROTECTED_STREAM_STATES, ToolCallStatus, mapApprovalStateToStatus } from '../types'
 
+// ==================== 标准化常量（统一所有模块的工具调用状态判断） ====================
+
+/** 工具调用的终态状态集合（完成后不可逆） */
+const _TERMINAL_TOOL_STATUSES_SET = new Set([
+  ToolCallStatus.COMPLETED,
+  ToolCallStatus.FAILED,
+  ToolCallStatus.TIMEOUT,
+  ToolCallStatus.REJECTED,
+])
+
+/**
+ * 标准化状态流转检查：审批态向执行终态的流转是否允许
+ *
+ * 审批态的 toolCall（approved/processing/waiting）在收到工具结果时，
+ * 应允许状态向 running/completed/failed 正常流转。
+ * 这是 4 处重复逻辑的统一版本，所有模块通过此函数共享同一套规则。
+ *
+ * @param {string} existingStatus - 当前 toolCall 的 status
+ * @param {string} incomingStatus - SSE/WebSocket 事件携带的 status
+ * @returns {boolean} 是否允许状态流转
+ */
+function _isApprovedTransition(existingStatus, incomingStatus) {
+  const allowedSources = [ToolCallStatus.APPROVED, ToolCallStatus.PROCESSING, ToolCallStatus.WAITING]
+  const allowedTargets = [ToolCallStatus.RUNNING, ToolCallStatus.COMPLETED, ToolCallStatus.FAILED]
+  return allowedSources.includes(existingStatus) && allowedTargets.includes(incomingStatus)
+}
+
+/**
+ * 标准化终态判断（供 session.js 和 research.js 的 isTerminal 检查复用）
+ * @param {string} status
+ * @returns {boolean}
+ */
+export const isTerminalStatus = (status) => _TERMINAL_TOOL_STATUSES_SET.has(status)
+
 function _paramsOverlap(a, b) {
   for (const key of Object.keys(a)) {
     if (key in b && String(a[key]) === String(b[key])) return true
@@ -66,10 +100,14 @@ export function findToolCallById(toolCalls, toolCallId, options = {}) {
     return finalStates.includes(t.approval.state)
   }
 
-  // 0. llm_tool_call_id 精确匹配（最可靠）
-  if (approvalData?.llm_tool_call_id) {
-    const tc = toolCalls.find(t => t.id === approvalData.llm_tool_call_id)
+  // 0. tool_call_id 精确匹配（最可靠，匹配 t.id 和 t.tool_call_id 两个维度）
+  if (approvalData?.tool_call_id) {
+    const tcId = approvalData.tool_call_id
+    const tc = toolCalls.find(t => t.id === tcId || t.tool_call_id === tcId)
     if (tc) return tc
+    // 精确匹配失败保护：tool_call_id 存在但未匹配到 → 立即返回 null，
+    // 禁止进入 toolName 回退匹配（避免将审批数据错误绑定到其他同名工具）
+    return null
   }
   // 1. id 精确匹配
   let tc = toolCalls.find(t => t.id === toolCallId)
@@ -123,13 +161,10 @@ function _addOrUpdateToolCallInMessage(message, data) {
     if (data.args && typeof data.args === 'object') {
       merged.parameters = { ...(merged.parameters || {}), ...data.args }
     }
-    // 保护审批相关状态不被SSE流中的status/state覆盖
-    // 但允许 approved 状态向 running/completed/failed 正常流转（审批通过后的工具执行流程）
+    // 保护审批相关状态不被 SSE 流中的 status/state 覆盖，
+    // 但允许审批态向执行终态正常流转（统一使用 _isApprovedTransition）
     if (PROTECTED_STATUSES.includes(existing.status) && existing.approval) {
-      const incomingStatus = data.status
-      const isApprovedTransition = existing.status === 'approved' &&
-        ['running', 'completed', 'failed'].includes(incomingStatus)
-      if (!isApprovedTransition) {
+      if (!_isApprovedTransition(existing.status, data.status)) {
         merged.status = existing.status
       }
       merged.approval = { ...existing.approval, ...(data.approval || {}) }
@@ -160,16 +195,15 @@ function _updateOrAddToolResultInMessage(message, data) {
     if (data.state !== undefined) updates.state = data.state
     if (data.result !== undefined) updates.result = data.result
     if (data.error !== undefined) updates.error = data.error
-    // 保护审批相关状态：当已有审批状态时，不覆盖 status
-    // 但允许 approved 状态向 running/completed/failed 正常流转
+    // 保护审批相关状态：使用统一的 _isApprovedTransition 和 isTerminalStatus
     if (PROTECTED_STATUSES.includes(existing.status) && existing.approval) {
-      const incomingStatus = data.status
-      const isApprovedTransition = existing.status === 'approved' &&
-        ['running', 'completed', 'failed'].includes(incomingStatus)
-      if (isApprovedTransition) {
+      if (_isApprovedTransition(existing.status, data.status)) {
         if (data.status !== undefined) updates.status = data.status
+        // 工具进入终态后清除审批状态，防止审批组件残留
+        if (isTerminalStatus(updates.status)) {
+          updates.approval = null
+        }
       }
-      // 否则保留审批状态，不更新 status
     } else {
       // status 推导：显式 status > stateMap > result→COMPLETED > error→FAILED
       if (data.status !== undefined) {
@@ -184,9 +218,13 @@ function _updateOrAddToolResultInMessage(message, data) {
       if (!updates.status && data.error != null) {
         updates.status = ToolCallStatus.FAILED
       }
+      // P21/P22 修复：非保护状态下进入终态也清除审批状态
+      if (updates.status && isTerminalStatus(updates.status) && existing.approval) {
+        updates.approval = null
+      }
     }
     // 进入终态时设置 completed_at（Task 16 P1 修复）
-    if (updates.status && _TERMINAL_TOOL_STATUSES.has(updates.status) && !existing.completed_at) {
+    if (updates.status && isTerminalStatus(updates.status) && !existing.completed_at) {
       updates.completed_at = new Date().toISOString()
     }
     Object.assign(message.toolCalls[idx], updates)
@@ -205,8 +243,8 @@ function _updateOrAddToolResultInMessage(message, data) {
     } else if (!toolData.status) {
       toolData.status = toolData.state ? (stateMap[toolData.state] || 'running') : 'running'
     }
-    // 终态时设置 completed_at（Task 16 P1 修复）
-    if (toolData.status && _TERMINAL_TOOL_STATUSES.has(toolData.status) && !toolData.completed_at) {
+    // 终态时设置 completed_at
+    if (toolData.status && isTerminalStatus(toolData.status) && !toolData.completed_at) {
       toolData.completed_at = new Date().toISOString()
     }
     message.toolCalls.push(toolData)
@@ -393,13 +431,9 @@ function _mergeExistingToolCall(existing, data) {
   if (data.args && typeof data.args === 'object') {
     merged.parameters = { ...(merged.parameters || {}), ...data.args }
   }
-  // 保护审批相关状态不被 SSE 流中的 status/state 覆盖
-  // 但允许 approved 状态向 running/completed/failed 正常流转（审批通过后的工具执行流程）
+  // 保护审批相关状态（与 _addOrUpdateToolCallInMessage 共用统一的 _isApprovedTransition）
   if (PROTECTED_STATUSES.includes(existing.status) && existing.approval) {
-    const incomingStatus = data.status
-    const isApprovedTransition = existing.status === 'approved' &&
-      ['running', 'completed', 'failed'].includes(incomingStatus)
-    if (!isApprovedTransition) {
+    if (!_isApprovedTransition(existing.status, data.status)) {
       merged.status = existing.status
     }
     merged.approval = { ...existing.approval, ...(data.approval || {}) }
@@ -411,11 +445,12 @@ function _mergeExistingToolCall(existing, data) {
 }
 
 /**
- * 规范化新建 toolCall 的数据（args → parameters，state → status）
+ * 规范化新建 toolCall 的数据（外部字段归一化：args/state → parameters/status）
  *
  * 抽取自 _addOrUpdateToolCallInMessage 的新建逻辑，Map 版本与数组版本共用。
+ * 注：args 到 parameters 的转换是入口边界的归一化处理，内部逻辑仅使用 parameters。
  *
- * @param {Object} data - 原始数据
+ * @param {Object} data - 原始数据（可能含 args、state 等外部字段）
  * @returns {Object} 规范化后的 toolCall 数据
  */
 function _normalizeNewToolCall(data) {
@@ -541,10 +576,6 @@ export function addOrUpdateToolCallInMap(toolCallMap, data) {
   }
   // 新建 toolCall
   const toolData = _normalizeNewToolCall(data)
-  // 确保 args 与 parameters 同步（新建场景）
-  if (toolData.parameters && typeof toolData.parameters === 'object' && !toolData.args) {
-    toolData.args = { ...toolData.parameters }
-  }
   const toolCallId = toolData.tool_call_id || toolData.id
   if (!toolCallId) return null
   toolCallMap.set(toolCallId, toolData)
@@ -579,13 +610,14 @@ export function updateOrAddToolResultInMap(toolCallMap, data) {
     if (data.state !== undefined) updates.state = data.state
     if (data.result !== undefined) updates.result = data.result
     if (data.error !== undefined) updates.error = data.error
-    // 保护审批相关状态（与 _updateOrAddToolResultInMessage 一致）
+    // 保护审批相关状态（统一使用 _isApprovedTransition 和 isTerminalStatus）
     if (PROTECTED_STATUSES.includes(existing.status) && existing.approval) {
-      const incomingStatus = data.status
-      const isApprovedTransition = existing.status === 'approved' &&
-        ['running', 'completed', 'failed'].includes(incomingStatus)
-      if (isApprovedTransition) {
+      if (_isApprovedTransition(existing.status, data.status)) {
         if (data.status !== undefined) updates.status = data.status
+        // 工具从审批态进入终态后清除审批状态
+        if (isTerminalStatus(updates.status)) {
+          updates.approval = null
+        }
       }
     } else {
       // status 推导：显式 status > stateMap > result→COMPLETED > error→FAILED
@@ -601,9 +633,13 @@ export function updateOrAddToolResultInMap(toolCallMap, data) {
       if (!updates.status && data.error != null) {
         updates.status = ToolCallStatus.FAILED
       }
+      // P21/P22 修复：非保护状态下进入终态也清除审批状态
+      if (updates.status && isTerminalStatus(updates.status) && existing.approval) {
+        updates.approval = null
+      }
     }
     // 进入终态时设置 completed_at
-    if (updates.status && _TERMINAL_TOOL_STATUSES.has(updates.status) && !existing.completed_at) {
+    if (updates.status && isTerminalStatus(updates.status) && !existing.completed_at) {
       updates.completed_at = new Date().toISOString()
     }
     Object.assign(existing, updates)
@@ -611,10 +647,6 @@ export function updateOrAddToolResultInMap(toolCallMap, data) {
   }
   // 新建（容错场景：tool_result 先于 tool 到达）
   const toolData = _normalizeNewToolCall(data)
-  // 确保 args 与 parameters 同步（容错创建场景）
-  if (toolData.parameters && typeof toolData.parameters === 'object' && !toolData.args) {
-    toolData.args = { ...toolData.parameters }
-  }
   // status 推导：覆盖 _normalizeNewToolCall 的默认值（state 不在 stateMap 时默认 running 不准确）
   // 优先级：显式 status > stateMap > result→COMPLETED > error→FAILED
   const stateMap = { 'input-available': 'running', 'output-available': 'completed', 'output-error': 'failed' }
@@ -628,7 +660,7 @@ export function updateOrAddToolResultInMap(toolCallMap, data) {
     toolData.status = ToolCallStatus.FAILED
   }
   // 终态时设置 completed_at
-  if (toolData.status && _TERMINAL_TOOL_STATUSES.has(toolData.status) && !toolData.completed_at) {
+  if (toolData.status && isTerminalStatus(toolData.status) && !toolData.completed_at) {
     toolData.completed_at = new Date().toISOString()
   }
   const toolCallId = toolData.tool_call_id || toolData.id
@@ -656,8 +688,23 @@ export function setApprovalToToolCallInMap(toolCallMap, toolCallId, approvalData
   // 在 Map values 中查找匹配的 toolCall
   const { toolCall: tc } = findToolCallInMap(toolCallMap, toolCallId, approvalData)
   if (tc) {
+    // 工具已进入终态时跳过绑定（核心防护：防止 SnapshotSync 审批校对
+    // 在工具完成后重新写入审批数据，导致审批面板残留）
+    if (isTerminalStatus(tc.status)) {
+      return false
+    }
     // toolCall 已存在：仅附加 approval，不修改 status（审批态与工具执行态解耦）
     tc.approval = approvalData
+    // P30 修复：tool 事件到达时 parameters 可能为空（{}），但审批数据中有完整参数。
+    // 当现有条目 parameters 为空对象时，从审批数据回填，确保工具卡片的"输入参数"正确显示
+    const approvalParams = approvalData?.parameters || approvalData?.args
+    if (approvalParams && typeof approvalParams === 'object' && Object.keys(approvalParams).length > 0) {
+      const existingParams = tc.parameters || {}
+      const nonEmptyKeys = Object.keys(existingParams).filter(k => existingParams[k] !== '' && existingParams[k] != null)
+      if (nonEmptyKeys.length === 0) {
+        tc.parameters = { ...approvalParams }
+      }
+    }
     return false
   }
   // toolCall 还未到达，创建 _synthetic 占位条目
@@ -669,8 +716,7 @@ export function setApprovalToToolCallInMap(toolCallMap, toolCallId, approvalData
     interrupt_id: toolCallId,
     name: approvalData?.tool_name || 'unknown',
     tool_name: approvalData?.tool_name || 'unknown',
-    parameters: {},
-    args: {},
+    parameters: approvalData?.parameters || approvalData?.args || {},
     status: ToolCallStatus.RUNNING,
     approval: approvalData,
     _synthetic: true,
@@ -678,9 +724,47 @@ export function setApprovalToToolCallInMap(toolCallMap, toolCallId, approvalData
   const op = approvalData?.operation || approvalData?.command
   if (op) {
     syntheticToolCall.parameters.command = op
-    syntheticToolCall.args.command = op
   }
   toolCallMap.set(toolCallId, syntheticToolCall)
+  return true
+}
+
+/**
+ * 刷新待绑定的审批数据（session.js 与 research.js 共享）
+ *
+ * 在 addOrUpdateToolCall / updateOrAddToolResult 创建/更新 toolCall 后调用，
+ * 处理审批事件先于 tool 事件到达的时序场景：
+ * 1. 从 pendingApprovals Map 中查找匹配的审批
+ * 2. 从队列移除后调用 setApprovalToToolCallInMap 绑定（此时 toolCallMap 中已有目标条目）
+ *
+ * @param {Map} pendingMap - pendingApprovals Map (key=toolCallId, value={approvalData, toolCallId})
+ * @param {Map} toolCallMap - toolCall Map
+ * @param {string} toolCallId - 工具调用 ID
+ * @returns {boolean} 是否执行了绑定
+ */
+export function flushPendingApprovalsInMap(pendingMap, toolCallMap, toolCallId) {
+  if (!pendingMap || !toolCallMap || !toolCallId) return false
+  const pending = pendingMap.get(toolCallId)
+  if (!pending) return false
+
+  // 工具已进入终态时跳过绑定：updateOrAddToolResultInMap 已将 approval 置 null，
+  // 此时 pending 中的审批数据是旧批次的残留（已执行完毕），重新绑定会导致审批面板
+  // 在"已完成"工具上永久显示。这是根因防护，覆盖所有调用方。
+  const existingTc = toolCallMap.get(toolCallId)
+  if (existingTc) {
+    if (isTerminalStatus(existingTc.status)) {
+      pendingMap.delete(toolCallId)
+      return false
+    }
+  }
+
+  pendingMap.delete(toolCallId)
+  // 同时移除 altId（如 approvalData.tool_call_id）对应的条目
+  if (pending.approvalData?.tool_call_id && pending.approvalData.tool_call_id !== toolCallId) {
+    pendingMap.delete(pending.approvalData.tool_call_id)
+  }
+
+  setApprovalToToolCallInMap(toolCallMap, toolCallId, pending.approvalData)
   return true
 }
 
@@ -705,6 +789,10 @@ export function updateApprovalStateInMap(toolCallMap, toolCallId, state, data = 
   if (!toolCallMap || !toolCallId) return false
   const { toolCall: tc } = findToolCallInMap(toolCallMap, toolCallId, data)
   if (!tc) return false
+  // 工具已进入终态时禁止创建/修改 approval：
+  // approval_processed 事件可能在 tool_result 之后到达（WebSocket 事件乱序），
+  // 此时重新创建 tc.approval 会导致已完成的工具上审批面板永久残留
+  if (isTerminalStatus(tc.status)) return false
   // approval 不存在时初始化为空对象后设置 state
   if (!tc.approval) tc.approval = {}
   tc.approval.state = state
@@ -731,15 +819,8 @@ export function updateToolCallStatusInMap(toolCallMap, toolCallId, status, data 
   return true
 }
 
-/**
- * 工具调用终态集合：进入这些状态后不应回退到非终态
- */
-const _TERMINAL_TOOL_STATUSES = new Set([
-  ToolCallStatus.COMPLETED,
-  ToolCallStatus.FAILED,
-  ToolCallStatus.TIMEOUT,
-  ToolCallStatus.REJECTED,
-])
+/** 工具调用终态集合别名（向后兼容 _mergeToolCalls 内引用） */
+const _TERMINAL_TOOL_STATUSES = _TERMINAL_TOOL_STATUSES_SET
 
 /**
  * 合并本地 toolCalls 与后端 toolCalls（增量合并，保留本地更完整的数据）

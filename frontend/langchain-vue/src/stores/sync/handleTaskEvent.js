@@ -67,9 +67,10 @@ export const createHandleTaskEvent = (ctx) => {
     const source = payload.source || 'deep_research'
 
     switch (event.type) {
-      // 10 个工具调用事件类型（每个 EventType 独立 ws_event_name）
+      // 工具调用事件类型（每个 EventType 独立 ws_event_name）
       case 'tool_call_pending':
       case 'tool_call_input_ready':
+      case 'tool_call_output_ready':
       case 'tool_call_waiting':
       case 'tool_call_pending_approval':
       case 'tool_call_approved':
@@ -90,11 +91,19 @@ export const createHandleTaskEvent = (ctx) => {
         await handleApprovalEvent(null, payload, event.type, { taskId, source })
         break
       case 'stream_completed':
-        // 统一底层：task 频道也处理 stream_completed，更新 DeepResearchView 任务状态
-        // 关联 chat 场景下 session 频道会同时收到此事件并触发 handleStreamCompleted
-        // 处理聊天消息回写；task 频道仅负责更新 researchStore.taskInfo，职责互不重叠。
-        // 独立深度研究模式（无 chat_session_id）下，session 频道收不到事件，
-        // task 频道是唯一的任务完成事件来源。
+        // 幂等保护：若 researchStore 中该 task 已是终态（completed/failed），跳过
+        // 场景：关联 chat 场景下 session 频道已更新 taskInfo，task 频道的 stream_completed
+        // 为冗余事件；独立深度研究模式下 task 频道是唯一路径，initial null 不会触发跳过
+        {
+          const existingTask = researchStore.tasks?.get?.(taskId)
+          if (existingTask?.status === 'completed' || existingTask?.status === 'failed') {
+            logger.debug(
+              `[Sync] task stream_completed 幂等跳过（已是终态）: taskId=${taskId}, ` +
+              `status=${existingTask.status}`
+            )
+            break
+          }
+        }
         researchStore.updateTaskFromEvent(taskId, payload)
         logger.info(
           `[Sync] task stream_completed: taskId=${taskId}, ` +

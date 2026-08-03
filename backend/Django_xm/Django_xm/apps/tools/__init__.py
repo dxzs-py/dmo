@@ -53,8 +53,6 @@ def _deduplicate_tools(tools: list[BaseTool]) -> list[BaseTool]:
     return result
 
 
-get_daily_weather = weather_query
-
 
 TOOL_TIER_CORE = "core"
 TOOL_TIER_STANDARD = "standard"
@@ -140,8 +138,6 @@ def get_all_advanced_tools() -> list[BaseTool]:
 def get_all_tools() -> list[BaseTool]:
     return get_all_advanced_tools()
 
-
-get_basic_tools = get_all_basic_tools
 
 # 懒加载常量：避免模块级实例化所有工具导致的循环依赖和启动开销
 _TOOLS_CACHE: dict = {}
@@ -731,7 +727,6 @@ __all__ = [
     "get_core_tools",
     "get_current_date",
     "get_current_time",
-    "get_daily_weather",
     "get_duckduckgo_tools",
     "get_extension_tools",
     "get_file_reader_tools",

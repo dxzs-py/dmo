@@ -69,6 +69,7 @@ def run_research_task(
     special_params: dict | None = None,
     continue_task_id: str | None = None,
     publish_to_redis: bool = False,
+    session_id: str | None = None,
 ):
     tracker = TrackedTask(self)
     if user_id:
@@ -280,7 +281,12 @@ def run_research_task(
             #  韧性降级 _rebuild_with_degraded_tools 可用）
             agent = await agent_hub_create(config)
 
-            result = await execute_research_async(agent, query, thread_id, disable_llm_cache=True)
+            result = await execute_research_async(
+                agent, query, thread_id,
+                disable_llm_cache=True,
+                user_id=user_id,
+                chat_session_id=session_id,
+            )
 
             # 释放异步 Checkpointer 连接
             try:
@@ -299,6 +305,12 @@ def run_research_task(
         tracker.update_progress(90, "研究执行完成")
 
         if not result.success:
+            if result.error_message == "interrupted":
+                # Agent 正常中断等待审批（Path D 退出），非失败
+                # 审批记录已在 on_interrupt 回调中创建
+                logger.info(f"[Celery] 研究中断等待审批：{thread_id}")
+                update_task_status(thread_id, {"status": "pending_approval"})
+                return {"status": "interrupted", "thread_id": thread_id, "message": "等待用户审批"}
             logger.warning(f"[Celery] 研究逻辑失败：{thread_id}, {result.error_message}")
             _mark_failed(result.error_message)
             return {"status": "error", "thread_id": thread_id, "error": result.error_message}
@@ -503,8 +515,9 @@ def _collect_batch_decisions(thread_id: str, graph_interrupt_id: str) -> tuple[d
         graph_interrupt_id: 批次 ID
 
     Returns:
-        (all_resume_values, all_resolved)
-        - all_resume_values: {tool_call_id: bool} 决策 dict
+        (resume_by_interrupt, all_resolved)
+        - resume_by_interrupt: {langgraph_resume_id: {tool_call_id: bool}}
+          Command(resume=...) 的 key 必须是 LangGraph Interrupt.id（langgraph_resume_id）
         - all_resolved: 是否所有审批都已决断（approved/rejected/timeout）
     """
     from Django_xm.apps.approvals.models import Approval
@@ -515,24 +528,31 @@ def _collect_batch_decisions(thread_id: str, graph_interrupt_id: str) -> tuple[d
         extra__graph_interrupt_id=graph_interrupt_id,
     )
 
-    all_resume_values = {}
+    # 按 langgraph_resume_id 分组，确保 Command(resume=...) 的 key 是 LangGraph 的 intr.id
+    # 参见 LangGraph 文档：多 pending interrupt 时必须指定 interrupt id
+    resume_by_interrupt = {}
     all_resolved = True
 
     for approval in batch_approvals:
         extra = approval.extra if isinstance(approval.extra, dict) else {}
         tc_id = extra.get("tool_call_id", approval.interrupt_id)
+        langgraph_id = extra.get("langgraph_resume_id", graph_interrupt_id)
 
-        if approval.state == Approval.STATE_APPROVED:
-            all_resume_values[tc_id] = True
+        if approval.state in (Approval.STATE_APPROVED, Approval.STATE_PROCESSING):
+            # processing 表示用户已确认、审批正在执行恢复，等同于 approved
+            resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = True
         elif approval.state == Approval.STATE_REJECTED:
-            all_resume_values[tc_id] = False
+            resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = False
         elif approval.state == Approval.STATE_TIMEOUT:
-            all_resume_values[tc_id] = False  # 超时视为拒绝
+            resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = False  # 超时视为拒绝
+        elif approval.state == Approval.STATE_WAITING:
+            # waiting 表示同批次其他工具还在等待，本工具已确认
+            resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = True
         else:
-            # pending 状态 → 未决断
+            # pending / unknown → 未决断
             all_resolved = False
 
-    return all_resume_values, all_resolved
+    return resume_by_interrupt, all_resolved
 
 
 @shared_task(
@@ -655,8 +675,8 @@ def research_resume_task(
             # 4. 构建 Command(resume=...)
             from langgraph.types import Command
 
-            # all_resume_values = {tool_call_id: bool, ...}
-            # 整个 dict 作为 interrupt() 的返回值传递给 middleware
+            # resume_by_interrupt = {langgraph_resume_id: {tool_call_id: bool}}
+            # Command(resume=...) 的 key 必须是 LangGraph Interrupt.id（langgraph_resume_id）
             resume_command: "Command[Any]" = Command(resume=all_resume_values)
             logger.info(f"[Resume] 构建恢复命令: resume_values={all_resume_values}")
 
@@ -717,6 +737,7 @@ def research_resume_task(
                 # 等待用户对新 Approval 做决策，触发新的 research_resume_task
                 logger.info(f"[Resume] 恢复过程中再次 interrupt，退出等待新审批: thread_id={thread_id}")
                 tracker.update_progress(50, "等待新审批")
+                update_task_status(thread_id, {"status": "pending_approval"})
                 return {
                     "status": "interrupted",
                     "thread_id": thread_id,

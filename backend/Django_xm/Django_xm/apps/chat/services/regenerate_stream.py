@@ -307,8 +307,6 @@ async def stream_regenerate(
             all_messages,
             tool_calls_map,
             tool_args_accumulator,
-            session_id=session_id,
-            message_id=message.id,
         )
 
         if interrupt_info is not None:

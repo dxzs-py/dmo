@@ -59,6 +59,10 @@ class ResearchTask(AuditModel):
     use_mcp = models.BooleanField(default=False, verbose_name="启用MCP")
     selected_mcp_servers = models.JSONField(default=list, blank=True, verbose_name="选中的MCP服务器")
     selected_tools = models.JSONField(default=list, blank=True, verbose_name="选中的工具")
+    tool_calls = models.JSONField(
+        default=list, blank=True, verbose_name="工具调用历史",
+        help_text="数组结构，每个元素为工具调用详情对象，与 ChatMessage.tool_calls 格式一致"
+    )
 
     class Meta:
         db_table = "research_task"

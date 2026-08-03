@@ -180,6 +180,7 @@ class ResearchTriggerService:
             max_tokens=cast(int, max_tokens),
             special_params=cast(dict, special_params),
             continue_task_id=cast(str, continue_task_id),
+            session_id=session_id,
         )
 
         from Django_xm.apps.research.models import ResearchTask

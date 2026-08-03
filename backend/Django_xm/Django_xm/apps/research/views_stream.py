@@ -1,7 +1,8 @@
+import asyncio
 import json
 import logging
-import time
 
+from asgiref.sync import sync_to_async
 from rest_framework.renderers import BaseRenderer
 from rest_framework.views import APIView
 
@@ -10,6 +11,8 @@ from Django_xm.common.sse_utils import authenticate_sse_request, sse_error_event
 
 from .models import ResearchTask
 from .services.task_manager import get_task_status
+
+logger = logging.getLogger(__name__)
 
 
 class SSERenderer(BaseRenderer):
@@ -20,20 +23,11 @@ class SSERenderer(BaseRenderer):
         return data
 
 
-logger = logging.getLogger(__name__)
-
-
+@sync_to_async
 def _load_approval_history_from_db(task_id: str) -> list[dict]:
-    """从 Approval DB 读取历史审批数据（Path D：DB 为唯一真相源）。
-
-    替代原 Redis List 读取逻辑：
-    - 旧：REDIS_APPROVAL_PREFIX:pending:{task_id} + processed key
-    - 新：Approval.objects.filter(source=DEEP_RESEARCH, source_id=task_id)
+    """从 Approval DB 读取历史审批数据。
 
     实时审批事件通过 WebSocket 推送，SSE 仅负责初始 history 加载。
-
-    Returns:
-        审批数据 dict 列表（与原 Redis 格式兼容）
     """
     try:
         from Django_xm.apps.approvals.models import Approval
@@ -73,32 +67,42 @@ def _load_approval_history_from_db(task_id: str) -> list[dict]:
         return []
 
 
-def deep_research_stream(request, task_id):
-    user = authenticate_sse_request(request)
+@sync_to_async
+def _get_research_task(task_id: str, user):
+    return ResearchTask.objects.get(task_id=task_id, created_by=user, is_deleted=False)
+
+
+@sync_to_async
+def _get_task_status_async(task_id: str, user_id: int | None = None):
+    return get_task_status(task_id, user_id=user_id)
+
+
+async def deep_research_stream(request, task_id):
+    """深度研究 SSE 流式进度推送（异步版）。
+
+    每 2 秒轮询一次任务状态（底层有 Redis 缓存，实际 DB 查询频率约 12 次/分钟）。
+    asyncio.sleep 不阻塞事件循环，彻底消除 "took too long to shut down and was killed"。
+    """
+    user = await sync_to_async(authenticate_sse_request)(request)
 
     if not user:
         return sse_error_response("未登录或登录已过期", 401, code="40101")
 
     try:
-        ResearchTask.objects.get(
-            task_id=task_id,
-            created_by=user,
-            is_deleted=False,
-        )
+        await _get_research_task(task_id, user)
     except ResearchTask.DoesNotExist:
         return sse_error_response("研究任务不存在", 404, code="40401")
 
     logger.info(f"[API] SSE流式监听研究进度，task_id={task_id}, user_id={user.id}")
 
-    def event_stream():
+    async def event_stream():
         last_status = None
-        start_time = time.time()
+        loop = asyncio.get_running_loop()
+        start_time = loop.time()
         max_duration = 600
 
-        # Path D：从 DB 读取历史审批数据（替代原 Redis List）
-        # 实时 approval 事件统一通过 WebSocket 推送（与 tool 事件一致），
-        # SSE 仅负责初始 approval_history 加载。
-        approval_history = _load_approval_history_from_db(task_id)
+        # Path D：从 DB 读取历史审批数据
+        approval_history = await _load_approval_history_from_db(task_id)
         if approval_history:
             for approval_data in approval_history:
                 yield f"data: {json.dumps({'type': 'approval_history', 'data': approval_data, 'task_id': task_id}, ensure_ascii=False, default=str)}\n\n"
@@ -113,12 +117,12 @@ def deep_research_stream(request, task_id):
             yield f"data: {json.dumps({'type': 'connected', 'task_id': task_id}, ensure_ascii=False)}\n\n"
 
             while True:
-                elapsed = time.time() - start_time
+                elapsed = loop.time() - start_time
                 if elapsed > max_duration:
                     yield f"data: {json.dumps({'type': 'timeout', 'message': '连接超时'}, ensure_ascii=False)}\n\n"
                     break
 
-                status_data = get_task_status(task_id, user_id=user.id)
+                status_data = await _get_task_status_async(task_id, user_id=user.id)
                 if not status_data:
                     yield sse_error_event(code="40401", message="任务不存在或无权访问")
                     break
@@ -130,6 +134,7 @@ def deep_research_stream(request, task_id):
                     step_messages = {
                         "pending": "研究任务已创建，等待执行...",
                         "running": "正在执行深度研究...",
+                        "pending_approval": "等待工具审批...",
                         "completed": "研究已完成！",
                         "failed": "研究执行失败",
                     }
@@ -149,20 +154,12 @@ def deep_research_stream(request, task_id):
                     if current_status in ("completed", "failed"):
                         break
 
-                cached = get_task_status(task_id, user_id=user.id)
-                if cached and cached.get("current_step"):
-                    step = cached["current_step"]
-                    if step != current_status:
-                        yield f"data: {json.dumps({'type': 'step_update', 'step': step, 'task_id': task_id}, ensure_ascii=False)}\n\n"
-
-                # 分步 sleep 控制 while 循环频率（每 0.5s 让出一次，总 2s 间隔）
-                # 实时 approval 事件统一通过 WebSocket 推送（与 tool 事件一致）
-                for _ in range(4):
-                    time.sleep(0.5)
+                # 非阻塞等待：asyncio.sleep 将控制权还给事件循环
+                await asyncio.sleep(2)
 
             yield f"data: {json.dumps({'type': 'done', 'task_id': task_id}, ensure_ascii=False)}\n\n"
 
-        except GeneratorExit:
+        except asyncio.CancelledError:
             logger.info(f"[API] SSE连接关闭，task_id={task_id}")
         except Exception as e:
             logger.exception("[API] SSE流式输出异常：")
@@ -176,5 +173,5 @@ class DeepResearchStreamView(APIView):
     permission_classes = [IsAuthenticatedOrQueryParam]
     renderer_classes = [SSERenderer]
 
-    def get(self, request, task_id):
-        return deep_research_stream(request, task_id)
+    async def get(self, request, task_id):
+        return await deep_research_stream(request, task_id)

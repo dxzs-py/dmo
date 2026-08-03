@@ -13,11 +13,10 @@ import AiTask from '../ai-elements/AiTask.vue'
 import AiImage from '../ai-elements/AiImage.vue'
 import AiControls from '../ai-elements/AiControls.vue'
 import AiQueue from '../ai-elements/AiQueue.vue'
-import AiConfirmation from '../ai-elements/AiConfirmation.vue'
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
 import { useApprovalStore } from '../../stores/approval'
-import { ToolCallStatus, ApprovalState } from '../../types'
+import { ToolCallStatus } from '../../types'
 import { logger } from '../../utils/logger'
 import { formatFileSize } from '../../utils/format'
 
@@ -93,14 +92,6 @@ const toolCallApprovals = computed(() => {
     }))
 })
 
-// 是否使用消息级审批（向后兼容：当没有 toolCall 级审批时回退到 message.approval）
-// 仅 assistant 消息：user 消息不应渲染审批 UI
-const useMessageLevelApproval = computed(() => {
-  return props.message.role === 'assistant'
-    && toolCallApprovals.value.length === 0
-    && props.message.approval
-})
-
 // ToolCall 级审批确认：从 ToolCallCard 冒泡上来
 function handleToolCallApprove(toolCall) {
   const approval = toolCall?.approval
@@ -121,28 +112,6 @@ function handleToolCallReject(toolCall) {
   const approval = toolCall?.approval
   if (!approval) return
   emit('reject', { message: props.message, approval })
-}
-
-// 通用审批确认处理：支持 CONFIRM 和 CONFIRM_WITH_INPUT 两种模式（消息级审批）
-function handleApprove(toolCallId) {
-  if (toolCallId) {
-    // 工具调用级审批（旧逻辑，已被 handleToolCallApprove 替代，保留以防遗漏）
-    const tc = props.message.toolCalls?.find(t => t.id === toolCallId)
-    const approval = tc?.approval
-    if (!approval) return
-    if (approval.action === 'confirm_with_input') {
-      emit('approve', { message: props.message, approval, user_input: approvalInputValues.value[toolCallId] || '' })
-    } else {
-      emit('approve', { message: props.message, approval })
-    }
-  } else if (useMessageLevelApproval.value) {
-    // 向后兼容：消息级审批
-    if (props.message.approval?.action === 'confirm_with_input') {
-      emit('approve', { message: props.message, approval: props.message.approval, user_input: approvalInputValues.value['message'] || '' })
-    } else {
-      emit('approve', { message: props.message, approval: props.message.approval })
-    }
-  }
 }
 
 const attachmentProcessing = computed(() => chatStore.attachmentProcessing)
@@ -519,68 +488,6 @@ function handleMessageClick() {
           />
         </TransitionGroup>
       </div>
-
-      <!-- 向后兼容：消息级审批（当没有 toolCall 级审批时回退） -->
-      <AiConfirmation
-        v-if="useMessageLevelApproval"
-        :approval="message.approval"
-        :state="message.approvalState || 'pending'"
-        class="message-confirmation"
-        :class-name="'danger-' + (message.approval.danger_level || 'medium')"
-        :extra-class="{ 'confirmation-collapsed': [ApprovalState.APPROVED, ApprovalState.REJECTED, ApprovalState.TIMEOUT].includes(message.approvalState) }"
-      >
-        <!-- 已确认/已拒绝/已超时：折叠显示，只保留一行状态标签 -->
-        <template v-if="[ApprovalState.APPROVED, ApprovalState.REJECTED, ApprovalState.TIMEOUT].includes(message.approvalState)">
-          <div class="confirmation-result-inline">
-            <span class="confirmation-tool-badge" :class="'badge-' + (message.approval.danger_level || 'medium')">
-              {{ message.approval.tool_name || '工具' }}
-            </span>
-            <el-tag v-if="message.approvalState === ApprovalState.APPROVED" type="success" size="small">已确认</el-tag>
-            <el-tag v-else-if="message.approvalState === ApprovalState.REJECTED" type="danger" size="small">已拒绝</el-tag>
-            <el-tag v-else-if="message.approvalState === ApprovalState.TIMEOUT" type="warning" size="small">已超时</el-tag>
-          </div>
-        </template>
-        <!-- 待审批：完整展示 -->
-        <template v-else>
-          <div class="confirmation-request">
-            <div class="confirmation-header">
-              <span class="confirmation-tool-badge" :class="'badge-' + (message.approval.danger_level || 'medium')">
-                {{ message.approval.tool_name || '工具' }}
-              </span>
-              <span class="confirmation-title">{{ message.approval.title || '确认操作' }}</span>
-            </div>
-            <div v-if="message.approval.command" class="confirmation-command">
-              <code>{{ message.approval.command }}</code>
-            </div>
-            <div v-if="message.approval.description" class="confirmation-desc">
-              {{ message.approval.description }}
-            </div>
-          </div>
-          <!-- CONFIRM_WITH_INPUT 模式：显示输入框 -->
-          <div v-if="message.approval.action === 'confirm_with_input'" class="confirmation-input-area">
-            <el-input
-              v-model="approvalInputValues['message']"
-              :placeholder="message.approval.input_placeholder || '请输入值...'"
-              size="small"
-              clearable
-              @keyup.enter="handleApprove()"
-            />
-          </div>
-          <div class="confirmation-actions">
-            <button class="confirmation-action confirm-reject" @click="emit('reject', { message, approval: message.approval })">
-              拒绝
-            </button>
-            <button
-              class="confirmation-action confirm-approve"
-              :class="'approve-' + (message.approval.danger_level || 'medium')"
-              @click="handleApprove()"
-            >
-              {{ message.approval.action === 'confirm_with_input' ? '确认并提交' : '确认执行' }}
-            </button>
-          </div>
-        </template>
-      </AiConfirmation>
-
 
 
       <div v-if="showDebug && message.role === 'assistant'" class="debug-panel">
@@ -1086,25 +993,6 @@ function handleMessageClick() {
   font-size: 13px;
 }
 
-.message-confirmation {
-  margin-top: 12px;
-}
-
-/* 已确认/已拒绝的审批面板折叠为紧凑一行 */
-.message-confirmation.confirmation-collapsed {
-  padding: 4px 10px;
-  gap: 0;
-  border-color: var(--border);
-  background-color: transparent;
-}
-
-.confirmation-result-inline {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-}
-
 .confirm-reject {
   background-color: var(--el-color-danger) !important;
 }
@@ -1160,142 +1048,6 @@ function handleMessageClick() {
   background: var(--sidebar-primary);
   border-color: var(--sidebar-primary);
   color: white;
-}
-
-.confirmation-request {
-  padding: 8px 0;
-}
-
-.confirmation-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-
-.confirmation-tool-badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.confirmation-tool-badge.badge-low {
-  background: var(--el-color-success-light-8);
-  color: var(--el-color-success-dark-2);
-}
-
-.confirmation-tool-badge.badge-medium {
-  background: var(--el-color-warning-light-8);
-  color: var(--el-color-warning-dark-2);
-}
-
-.confirmation-tool-badge.badge-high {
-  background: var(--el-color-danger-light-8);
-  color: var(--el-color-danger-dark-2);
-}
-
-/* danger_level 边框颜色区分 */
-.danger-low .ai-confirmation {
-  border-color: var(--el-color-success-light-5);
-}
-
-.danger-medium .ai-confirmation {
-  border-color: var(--el-color-warning-light-5);
-}
-
-.danger-high .ai-confirmation {
-  border-color: var(--el-color-danger-light-5);
-}
-
-.confirmation-title {
-  font-weight: 600;
-  font-size: 14px;
-  color: var(--foreground);
-}
-
-.confirmation-command {
-  margin-top: 8px;
-  padding: 8px 12px;
-  background: var(--background);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow-x: auto;
-}
-
-.confirmation-command code {
-  font-family: var(--font-mono);
-  font-size: 13px;
-  color: var(--foreground);
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.confirmation-desc {
-  margin-top: 6px;
-  font-size: 13px;
-  color: var(--muted-foreground);
-  line-height: 1.5;
-}
-
-.confirmation-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.confirmation-action {
-  padding: 6px 16px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--foreground);
-  font-size: 13px;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.confirmation-action:hover {
-  opacity: 0.8;
-}
-
-.confirmation-action.confirm-approve {
-  background: var(--el-color-primary);
-  border-color: var(--el-color-primary);
-  color: white;
-}
-
-.confirmation-action.confirm-approve.approve-low {
-  background: var(--el-color-success);
-  border-color: var(--el-color-success);
-}
-
-.confirmation-action.confirm-approve.approve-medium {
-  background: var(--el-color-warning);
-  border-color: var(--el-color-warning);
-  color: var(--el-color-warning-dark-2);
-}
-
-.confirmation-action.confirm-approve.approve-high {
-  background: var(--el-color-danger);
-  border-color: var(--el-color-danger);
-}
-
-.confirmation-input-area {
-  margin-top: 8px;
-}
-
-.confirmation-action.confirm-reject {
-  background: var(--el-color-danger);
-  border-color: var(--el-color-danger);
-  color: white;
-}
-
-.confirmation-result {
-  margin-top: 8px;
 }
 
 .tool-call-enter-active {

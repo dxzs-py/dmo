@@ -77,7 +77,7 @@ class ChatMessage(AuditModel):
     sources = models.JSONField(default=list, blank=True, null=True, verbose_name="来源")
     plan = models.JSONField(default=dict, blank=True, null=True, verbose_name="计划")
     chain_of_thought = models.JSONField(default=list, blank=True, null=True, verbose_name="思维链")
-    tool_calls = models.JSONField(default=list, blank=True, null=True, verbose_name="工具调用")
+    tool_calls = models.JSONField(default=list, blank=True, verbose_name="工具调用")
     approval = models.JSONField(default=dict, blank=True, null=True, verbose_name="审批数据")
     reasoning = models.JSONField(default=dict, blank=True, null=True, verbose_name="推理")
     suggestions = models.JSONField(default=list, blank=True, null=True, verbose_name="建议问题")

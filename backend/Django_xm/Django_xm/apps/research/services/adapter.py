@@ -236,6 +236,7 @@ class OfficialDeepAgentAdapter:
         # 注意：工具事件的实际发布由 _publish_tool_event 内部通过
         # service.transition_async 完成（状态机统一入口），此处仅需 EventType
         from Django_xm.apps.tools.tool_event_extractor import extract_tool_events_from_message
+        from Django_xm.common.approval_utils import derive_cross_module_id_from_source
         from Django_xm.common.event_schema import EventType
 
         # resume_command 模式下 query 可能为 None，使用占位符避免 [:50] 切片失败
@@ -467,148 +468,71 @@ class OfficialDeepAgentAdapter:
                                                 interrupt_id = ""
 
                                             if is_approval_interrupt(interrupt_value):
-                                                # 支持两种审批中断格式：
-                                                # 1. 单工具格式（旧版/工具级 interrupt_for_approval）：
-                                                #    {"_approval": True, "tool_name": "shell_exec", ...}
-                                                # 2. 批量格式（ApprovalMiddleware）：
-                                                #    {"_approval": True, "requests": [{tool_name, tool_call_id, ...}], "_meta": {...}}
-                                                # 批量格式将多个 tool_call 的审批请求合并为一次 interrupt，
-                                                # 解决并行 tool_calls 只捕获首个 GraphInterrupt 的问题。
-                                                requests_list = interrupt_value.get("requests")
-                                                if isinstance(requests_list, list) and requests_list:
-                                                    # 批量格式：从 requests 列表提取每个审批请求
-                                                    batch_interrupts = []
-                                                    for req in requests_list:
-                                                        req_tc_id = req.get("tool_call_id", "")
-                                                        batch_interrupts.append(
-                                                            {
-                                                                "tool_name": req.get("tool_name", "unknown"),
-                                                                "interrupt_id": req_tc_id or interrupt_id,
-                                                                "langgraph_resume_id": interrupt_id,
-                                                                "graph_interrupt_id": interrupt_value.get(
-                                                                    "_meta", {}
-                                                                ).get("graph_interrupt_id", interrupt_id),
-                                                                "title": req.get("title", "确认操作"),
-                                                                "description": req.get("description", ""),
-                                                                "action": req.get("action", "confirm"),
-                                                                "danger_level": req.get("danger_level", "medium"),
-                                                                "operation": req.get("operation", ""),
-                                                                "parameters": req.get("args", {}) or {},
-                                                                "state": "pending",
-                                                                "tool_call_id": req_tc_id,
-                                                            }
-                                                        )
-                                                    tool_name = batch_interrupts[0]["tool_name"]
+                                                # 使用公共审批中断解析器，统一批量/单工具两种格式
+                                                from Django_xm.common.approval_parser import (
+                                                    parse_approval_interrupt as _parse_interrupt,
+                                                )
+
+                                                interrupt_list = _parse_interrupt(
+                                                    interrupt_value,
+                                                    graph_interrupt_id=interrupt_id,
+                                                    langgraph_resume_id=interrupt_id,
+                                                )
+                                                if not interrupt_list:
+                                                    continue
+
+                                                tool_name = interrupt_list[0]["tool_name"]
+                                                is_batch = len(interrupt_list) > 1
+                                                logger.info(
+                                                    f"[OfficialDeepAgent] 审批中断: "
+                                                    f"{'批量' if is_batch else '单工具'}, "
+                                                    f"{len(interrupt_list)} 个工具, "
+                                                    f"tools={[b['tool_name'] for b in interrupt_list]}"
+                                                )
+                                                if on_interrupt is not None:
                                                     logger.info(
-                                                        f"[OfficialDeepAgent] 批量审批中断: "
-                                                        f"{len(batch_interrupts)} 个工具, "
-                                                        f"tools={[b['tool_name'] for b in batch_interrupts]}"
+                                                        f"[OfficialDeepAgent] 实时通知审批回调"
+                                                        f"{'(批量)' if is_batch else ''}: "
+                                                        f"{len(interrupt_list)} 个工具"
                                                     )
-                                                    # 批量调用 on_interrupt，一次性传递所有审批请求
-                                                    if on_interrupt is not None:
+                                                    timeout_mgr.pause()
+                                                    try:
+                                                        batch_resume = on_interrupt(interrupt_list)
+                                                        if asyncio.iscoroutine(batch_resume):
+                                                            batch_resume = await batch_resume
+                                                    finally:
+                                                        timeout_mgr.resume()
+                                                    # Path D 退出信号检测
+                                                    if isinstance(batch_resume, dict) and not batch_resume:
                                                         logger.info(
-                                                            f"[OfficialDeepAgent] 实时通知审批回调(批量): "
-                                                            f"{len(batch_interrupts)} 个工具"
+                                                            "[OfficialDeepAgent] Path D 退出信号: "
+                                                            "已创建审批 DB 记录，worker 退出"
                                                         )
-                                                        timeout_mgr.pause()
-                                                        try:
-                                                            batch_resume = on_interrupt(batch_interrupts)
-                                                            if asyncio.iscoroutine(batch_resume):
-                                                                batch_resume = await batch_resume
-                                                        finally:
-                                                            timeout_mgr.resume()
-                                                        # Path D 退出信号检测：
-                                                        # on_interrupt 返回空 dict 表示
-                                                        # "已创建 Approval DB 记录，worker 应退出"
-                                                        # → 设置 exit_signal，跳出内层 while True
-                                                        if isinstance(batch_resume, dict) and not batch_resume:
-                                                            logger.info(
-                                                                "[OfficialDeepAgent] Path D 退出信号(批量): "
-                                                                "已创建审批 DB 记录，worker 退出"
-                                                            )
-                                                            exit_signal["exited"] = True
-                                                            break
-                                                        if isinstance(batch_resume, dict):
+                                                        exit_signal["exited"] = True
+                                                        break
+                                                    # 按 langgraph_resume_id 分组构造 resume dict
+                                                    # Command(resume=...) 的 key 必须是 LangGraph Interrupt.id
+                                                    langgraph_id = interrupt_list[0].get("langgraph_resume_id", "")
+                                                    if isinstance(batch_resume, dict):
+                                                        if langgraph_id:
+                                                            all_resume_values.setdefault(langgraph_id, {}).update(batch_resume)
+                                                        else:
                                                             all_resume_values.update(batch_resume)
+                                                    else:
+                                                        if langgraph_id:
+                                                            for bi in interrupt_list:
+                                                                all_resume_values.setdefault(langgraph_id, {})[bi["interrupt_id"]] = batch_resume
                                                         else:
-                                                            for bi in batch_interrupts:
+                                                            for bi in interrupt_list:
                                                                 all_resume_values[bi["interrupt_id"]] = batch_resume
-                                                    else:
-                                                        for bi in batch_interrupts:
-                                                            all_resume_values[bi["interrupt_id"]] = False
                                                 else:
-                                                    # 单工具格式：直接从 interrupt_value 提取字段
-                                                    tool_name = interrupt_value.get("tool_name", "unknown")
-                                                    logger.info(
-                                                        f"[OfficialDeepAgent] 审批中断: tool={tool_name}, "
-                                                        f"danger={interrupt_value.get('danger_level', 'medium')}"
-                                                    )
-                                                    # interrupt_data 字段对齐 _handle_interrupt 与
-                                                    # request_approval_async 的参数需求：
-                                                    # - interrupt_id: LangGraph Interrupt.id（用于 Command(resume=...)）
-                                                    # - graph_interrupt_id: 同 interrupt_id（保留显式字段供调用方区分
-                                                    #   LangGraph interrupt_id 与业务侧 tool_call_id）
-                                                    # - parameters: 工具调用入参（用于前端展示输入区，
-                                                    #   非空时才显示，参考 ToolCallCard 设计）
-                                                    # - tool_call_id / session_id: 由调用方从 ResearchTask 补全
-                                                    interrupt_data = {
-                                                        "tool_name": tool_name,
-                                                        "interrupt_id": interrupt_id,
-                                                        "langgraph_resume_id": interrupt_id,
-                                                        "graph_interrupt_id": interrupt_id,
-                                                        "title": interrupt_value.get("title", "确认操作"),
-                                                        "description": interrupt_value.get("description", ""),
-                                                        "action": interrupt_value.get("action", "confirm"),
-                                                        "danger_level": interrupt_value.get("danger_level", "medium"),
-                                                        "operation": interrupt_value.get("operation", ""),
-                                                        "parameters": interrupt_value.get("parameters", {}) or {},
-                                                        "state": "pending",
-                                                    }
-                                                    if interrupt_value.get("extra"):
-                                                        interrupt_data["extra"] = interrupt_value["extra"]
-                                                    if interrupt_value.get("input_placeholder"):
-                                                        interrupt_data["input_placeholder"] = interrupt_value[
-                                                            "input_placeholder"
-                                                        ]
-                                                    # 透传 tool_call_id（若中间件在 interrupt_value 中携带）
-                                                    tool_call_id = interrupt_value.get("tool_call_id")
-                                                    if tool_call_id:
-                                                        interrupt_data["tool_call_id"] = tool_call_id
-                                                    # 实时回调：立即发布审批请求，不等流结束
-                                                    # on_interrupt 支持同步与异步两种签名：
-                                                    #   - 同步：sync def on_interrupt(interrupts_data: list) -> dict
-                                                    #   - 异步：async def on_interrupt(interrupts_data: list) -> dict
-                                                    # 返回值统一为 {interrupt_id: resume_value} dict，供 Command(resume=...) 使用
-                                                    if on_interrupt is not None:
-                                                        logger.info(
-                                                            f"[OfficialDeepAgent] 实时通知审批回调: tool={tool_name}"
-                                                        )
-                                                        # 审批等待期间暂停执行计时，避免用户思考时间计入 elapsed（RC17）
-                                                        timeout_mgr.pause()
-                                                        try:
-                                                            single_resume = on_interrupt([interrupt_data])
-                                                            # 异步回调返回 coroutine，需 await 拿到 dict
-                                                            if asyncio.iscoroutine(single_resume):
-                                                                single_resume = await single_resume
-                                                        finally:
-                                                            timeout_mgr.resume()
-                                                        # Path D 退出信号检测：
-                                                        # on_interrupt 返回空 dict 表示
-                                                        # "已创建 Approval DB 记录，worker 应退出"
-                                                        if isinstance(single_resume, dict) and not single_resume:
-                                                            logger.info(
-                                                                "[OfficialDeepAgent] Path D 退出信号(单工具): "
-                                                                "已创建审批 DB 记录，worker 退出"
-                                                            )
-                                                            exit_signal["exited"] = True
-                                                            break
-                                                        if isinstance(single_resume, dict):
-                                                            all_resume_values.update(single_resume)
-                                                        else:
-                                                            # 防御：非 dict 返回值（旧签名返回单个 resume_value）
-                                                            all_resume_values[interrupt_id] = single_resume
+                                                    langgraph_id = interrupt_list[0].get("langgraph_resume_id", "")
+                                                    if langgraph_id:
+                                                        for bi in interrupt_list:
+                                                            all_resume_values.setdefault(langgraph_id, {})[bi["interrupt_id"]] = False
                                                     else:
-                                                        all_resume_values[interrupt_id] = False
+                                                        for bi in interrupt_list:
+                                                            all_resume_values[bi["interrupt_id"]] = False
                                 continue
 
                             # messages 模式：提取工具调用生命周期事件并发布到实时频道
@@ -798,6 +722,7 @@ class OfficialDeepAgentAdapter:
                 - error: str (仅 FAILED)
                 - parent_tool_call_id/depth/agent_name/agent_path/risk_ceiling: 子 agent 嵌套字段（可选）
         """
+        from Django_xm.common.approval_utils import derive_cross_module_id_from_source
         from Django_xm.common.event_schema import EventSource, EventType
         from Django_xm.common.tool_call_lifecycle import ToolCallContext, service
 
@@ -820,7 +745,7 @@ class OfficialDeepAgentAdapter:
         #    - message_id 留空：deep_research 模块无关联 chat message，
         #      若 chat 模块已注册过同 tool_call_id 则由 register 合并补全
         #    - 子 agent 嵌套层级字段：从 evt 提取（仅子 agent 工具事件携带）
-        cross_module_id = self.chat_session_id or None
+        cross_module_id = derive_cross_module_id_from_source("deep_research", self.chat_session_id)
 
         # 提取子 agent 嵌套层级字段（Phase E3）
         # evt 中无对应 key 时使用默认空值（主 agent 场景）

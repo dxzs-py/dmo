@@ -21,6 +21,4 @@ export { default as AiOpenInChat } from './AiOpenInChat.vue'
 export { default as AiCanvas } from './AiCanvas.vue'
 export { default as AiToolbar } from './AiToolbar.vue'
 
-export { default as AiConfirmation } from './AiConfirmation.vue'
-
 export { default as AiSuggestions } from './AiSuggestions.vue'

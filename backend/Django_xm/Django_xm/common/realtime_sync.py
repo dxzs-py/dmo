@@ -129,6 +129,7 @@ async def publish_tool_call(
     agent_name: str | None = None,
     agent_path: list | None = None,
     risk_ceiling: str | None = None,
+    _index: int | None = None,
 ) -> None:
     """工具调用生命周期事件发布（三模块统一入口）。
 
@@ -188,6 +189,8 @@ async def publish_tool_call(
         payload["agent_path"] = agent_path
     if risk_ceiling:
         payload["risk_ceiling"] = risk_ceiling
+    if _index is not None:
+        payload["_index"] = _index
 
     # 解析频道路由（三模块统一）
     session_id, task_id = _resolve_channels(module, module_id, cross_module_id)

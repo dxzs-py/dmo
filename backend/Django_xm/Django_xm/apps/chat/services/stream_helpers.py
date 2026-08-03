@@ -285,98 +285,91 @@ def parse_approval_interrupt(
     tool_args_accumulator: dict[str, str] | None = None,
     used_tool_call_ids: set | None = None,
 ) -> list[dict[str, Any]]:
-    """解析审批中断值为前端 approval 事件数据列表
+    """解析审批中断值为前端 approval 事件数据列表。
 
-    将 ApprovalMiddleware 产生的 interrupt_value 转换为前端可渲染的 approval_data。
-    ApprovalMiddleware 在 after_model 钩子批量拦截需要审批的 tool_calls，
-    一次 interrupt 携带所有审批请求（批量格式）。
-    若 interrupt_value 中携带 operation，则尝试匹配 tool_calls_map /
-    tool_args_accumulator 中的 llm_tool_call_id，便于前端关联工具调用卡片。
+    委托 `common.approval_parser.parse_approval_interrupt` 完成核心解析
+    （批量/单工具格式 → approval_data 列表），然后进行聊天模块特有的
+    llm_tool_call_id 匹配（通过 operation 命令匹配流式工具参数）。
 
     Args:
-        interrupt_value: interrupt 的值（dict，包含 _approval/requests/_meta 等）
+        interrupt_value: interrupt 的值
         graph_interrupt_id: graph 节点的 interrupt id
-        langgraph_resume_id: resume 协议使用的 id（当前与 graph_interrupt_id 相同）
-        tool_calls_map: 工具调用映射（用于匹配 llm_tool_call_id）
-        tool_args_accumulator: 工具参数累积器（流式参数更完整）
-        used_tool_call_ids: 已使用的 tool_call_id 集合（用于去重，避免重复审批）
+        langgraph_resume_id: resume 协议使用的 id
+        tool_calls_map: 工具调用映射（用于匹配 llm_tool_call_id，聊天特性）
+        tool_args_accumulator: 工具参数累积器（流式参数更完整，聊天特性）
+        used_tool_call_ids: 已使用的 tool_call_id 集合（去重，聊天特性）
 
     Returns:
-        approval_data 列表（批量格式下为多个元素，每个对应一个 tool_call 的审批请求）
+        approval_data 列表
     """
-    if not isinstance(interrupt_value, dict):
+    from Django_xm.common.approval_parser import parse_approval_interrupt as _base_parse
+
+    parsed_list = _base_parse(interrupt_value, graph_interrupt_id, langgraph_resume_id)
+    if not parsed_list:
         return []
 
     tool_calls_map = tool_calls_map or {}
     tool_args_accumulator = tool_args_accumulator or {}
     used_tool_call_ids = used_tool_call_ids or set()
 
-    tool_name = interrupt_value.get("tool_name", "unknown")
-    action = interrupt_value.get("action", "confirm")
-    interrupt_id = graph_interrupt_id or interrupt_value.get("interrupt_id", "")
+    for entry in parsed_list:
+        _match_llm_tool_call_id(
+            entry=entry,
+            tool_calls_map=tool_calls_map,
+            tool_args_accumulator=tool_args_accumulator,
+            used_tool_call_ids=used_tool_call_ids,
+        )
 
-    approval_data = {
-        "tool_name": tool_name,
-        "tool_call_id": interrupt_id,
-        "interrupt_id": interrupt_id,
-        "graph_interrupt_id": graph_interrupt_id,
-        "langgraph_resume_id": langgraph_resume_id,
-        "title": interrupt_value.get("title", "确认操作"),
-        "description": interrupt_value.get("description", ""),
-        "action": action,
-        "danger_level": interrupt_value.get("danger_level", "medium"),
-        "state": "pending",
-    }
+    return parsed_list
 
-    # 透传 operation（统一字段，兼容旧 command）
-    op = interrupt_value.get("operation") or interrupt_value.get("command") or ""
-    if op:
-        approval_data["operation"] = op
-        # 匹配 llm_tool_call_id：同时检查 tool_args_accumulator（累积的完整参数）
-        # 和 tool_calls_map（可能不完整），避免流式传输中参数未累积完导致匹配失败
-        matched = False
-        for tc_key, tc_info in tool_calls_map.items():
-            if tc_info.get("name") != tool_name:
-                continue
-            # 跳过已审批的工具调用
+
+def _match_llm_tool_call_id(
+    entry: dict[str, Any],
+    tool_calls_map: dict[str, dict],
+    tool_args_accumulator: dict[str, str],
+    used_tool_call_ids: set,
+) -> None:
+    """为 approval_data 条目匹配 llm_tool_call_id。
+
+    通过 operation 命令匹配流式工具参数，找到对应的 LLM 工具调用 ID。
+    匹配逻辑：先检查 tool_args_accumulator（更完整的累积参数），
+    再检查 tool_calls_map 中的 parameters，最后回退到同名工具中最后一个。
+    """
+    tool_name = entry.get("tool_name", "")
+    op = entry.get("operation", "")
+    if not op or not tool_name:
+        return
+
+    # 先检查 tool_args_accumulator 中的累积参数（更完整）
+    for tc_key, tc_info in tool_calls_map.items():
+        if tc_info.get("name") != tool_name:
+            continue
+        if tc_key in used_tool_call_ids or tc_info.get("id") in used_tool_call_ids:
+            continue
+        accumulated_args = tool_args_accumulator.get(tc_key, "")
+        if accumulated_args:
+            try:
+                import json as _json
+                parsed_args = (
+                    _json.loads(accumulated_args) if isinstance(accumulated_args, str) else accumulated_args
+                )
+                if any(str(v) == op for v in (parsed_args or {}).values()):
+                    entry["llm_tool_call_id"] = tc_info.get("id") or tc_key
+                    return
+            except (_json.JSONDecodeError, TypeError):
+                pass
+        tc_params = tc_info.get("parameters", {})
+        if any(str(v) == op for v in tc_params.values()):
+            entry["llm_tool_call_id"] = tc_info.get("id") or tc_key
+            return
+
+    # 回退：同名工具中最后一个（interrupt 总是最新的调用）
+    for tc_key, tc_info in reversed(list(tool_calls_map.items())):
+        if tc_info.get("name") == tool_name:
             if tc_key in used_tool_call_ids or tc_info.get("id") in used_tool_call_ids:
                 continue
-            # 先检查 tool_args_accumulator 中的累积参数（更完整）
-            accumulated_args = tool_args_accumulator.get(tc_key, "")
-            if accumulated_args:
-                try:
-                    parsed_args = (
-                        _json.loads(accumulated_args) if isinstance(accumulated_args, str) else accumulated_args
-                    )
-                    if any(str(v) == op for v in (parsed_args or {}).values()):
-                        approval_data["llm_tool_call_id"] = tc_info.get("id") or tc_key
-                        matched = True
-                        break
-                except (_json.JSONDecodeError, TypeError):
-                    pass
-            # 再检查 tool_calls_map 中的 parameters
-            tc_params = tc_info.get("parameters", {})
-            if any(str(v) == op for v in tc_params.values()):
-                approval_data["llm_tool_call_id"] = tc_info.get("id") or tc_key
-                matched = True
-                break
-        # 回退：同名工具中最后一个（interrupt 总是最新的调用）
-        if not matched:
-            for tc_key, tc_info in reversed(list(tool_calls_map.items())):
-                if tc_info.get("name") == tool_name:
-                    if tc_key in used_tool_call_ids or tc_info.get("id") in used_tool_call_ids:
-                        continue
-                    approval_data["llm_tool_call_id"] = tc_info.get("id") or tc_key
-                    break
-
-    # 透传 extra（工具自定义数据）
-    if interrupt_value.get("extra"):
-        approval_data["extra"] = interrupt_value["extra"]
-    # 透传 input_placeholder（CONFIRM_WITH_INPUT 模式）
-    if interrupt_value.get("input_placeholder"):
-        approval_data["input_placeholder"] = interrupt_value["input_placeholder"]
-
-    return [approval_data]
+            entry["llm_tool_call_id"] = tc_info.get("id") or tc_key
+            break
 
 
 def merge_existing_approval_fields(

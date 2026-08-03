@@ -315,6 +315,7 @@ class ToolCallLifecycleService:
         result: Any = None,
         error: str | None = None,
         parameters: dict | None = None,
+        _index: int | None = None,
     ) -> None:
         """状态机转换并发布事件（同步版，适配 sync 上下文：chat 模块 stream_helpers）。
 
@@ -328,6 +329,7 @@ class ToolCallLifecycleService:
             result: 工具执行结果（仅 COMPLETED 事件）
             error: 错误信息（仅 FAILED 事件）
             parameters: 补全的参数（可选，用于参数恢复场景）
+            _index: LLM 生成的工具调用原始序号（用于跨浏览器工具顺序稳定排序）
         """
         ctx_dict = self._prepare_transition(tool_call_id, event_type, parameters)
         if ctx_dict is None:
@@ -363,6 +365,7 @@ class ToolCallLifecycleService:
                 agent_name=ctx_dict.get("agent_name") or None,
                 agent_path=ctx_dict.get("agent_path") or None,
                 risk_ceiling=_normalize_risk_ceiling(ctx_dict.get("risk_ceiling")),
+                _index=_index if _index is not None else ctx_dict.get("_index"),
             )
         except Exception:
             logger.exception(
@@ -380,6 +383,7 @@ class ToolCallLifecycleService:
         result: Any = None,
         error: str | None = None,
         parameters: dict | None = None,
+        _index: int | None = None,
     ) -> None:
         """状态机转换并发布事件（异步版，适配 async 上下文：research/learning 模块）。
 
@@ -391,6 +395,7 @@ class ToolCallLifecycleService:
             result: 工具执行结果（仅 COMPLETED 事件）
             error: 错误信息（仅 FAILED 事件）
             parameters: 补全的参数（可选，用于参数恢复场景）
+            _index: LLM 生成的工具调用原始序号（用于跨浏览器工具顺序稳定排序）
         """
         ctx_dict = self._prepare_transition(tool_call_id, event_type, parameters)
         if ctx_dict is None:
@@ -425,6 +430,7 @@ class ToolCallLifecycleService:
                 agent_name=ctx_dict.get("agent_name") or None,
                 agent_path=ctx_dict.get("agent_path") or None,
                 risk_ceiling=_normalize_risk_ceiling(ctx_dict.get("risk_ceiling")),
+                _index=_index if _index is not None else ctx_dict.get("_index"),
             )
         except Exception:
             logger.exception(

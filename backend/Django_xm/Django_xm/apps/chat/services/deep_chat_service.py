@@ -247,86 +247,84 @@ class DeepChatService:
                         if isinstance(mode_data, dict) and "__interrupt__" in mode_data:
                             interrupts = mode_data["__interrupt__"]
                             if interrupts:
-                                from langgraph.types import Interrupt
-
+                                from Django_xm.apps.chat.services.stream_helpers import (
+                                    extract_interrupt_ids,
+                                    parse_approval_interrupt,
+                                )
                                 from Django_xm.apps.tools.base import is_approval_interrupt
 
+                                # 收集所有审批请求（兼容批量格式和旧格式单条）
+                                batch_approval_data = []  # [(graph_intr_id, tool_call_id, approval_data)]
                                 for intr in interrupts:
-                                    if isinstance(intr, Interrupt):
-                                        interrupt_value = intr.value
-                                    elif isinstance(intr, dict):
-                                        interrupt_value = intr.get("value", intr)
-                                    else:
-                                        interrupt_value = intr
+                                    interrupt_value, batch_id, resume_id = extract_interrupt_ids(intr)
 
-                                    if is_approval_interrupt(interrupt_value):
-                                        tool_name = interrupt_value.get("tool_name", "unknown")
-                                        action = interrupt_value.get("action", "confirm")
-                                        logger.info(
-                                            f"深度思考 approval interrupt: tool={tool_name}, "
-                                            f"action={action}, danger={interrupt_value.get('danger_level', 'medium')}"
+                                    if not is_approval_interrupt(interrupt_value):
+                                        continue
+
+                                    parsed_list = parse_approval_interrupt(
+                                        interrupt_value,
+                                        graph_interrupt_id=batch_id,
+                                        langgraph_resume_id=resume_id,
+                                        tool_calls_map=tool_calls_map,
+                                        tool_args_accumulator=tool_args_accumulator,
+                                    )
+                                    for approval_data in parsed_list:
+                                        tool_call_id = approval_data.get("tool_call_id", "")
+                                        batch_approval_data.append(
+                                            (resume_id, tool_call_id, approval_data)
                                         )
-                                        interrupt_id = intr.id if isinstance(intr, Interrupt) else ""
-                                        interrupt_info = {
-                                            "tool_name": tool_name,
-                                            "interrupt_id": interrupt_id,
-                                        }
-                                        approval_data = {
-                                            "tool_name": tool_name,
-                                            "tool_call_id": interrupt_id,
-                                            "interrupt_id": interrupt_id,
-                                            "title": interrupt_value.get("title", "确认操作"),
-                                            "description": interrupt_value.get("description", ""),
-                                            "action": action,
-                                            "danger_level": interrupt_value.get("danger_level", "medium"),
-                                            "state": "pending",
-                                        }
-                                        # 透传 operation（统一字段，兼容旧 command）
-                                        op = interrupt_value.get("operation") or interrupt_value.get("command") or ""
-                                        if op:
-                                            approval_data["operation"] = op
-                                            # 通用匹配：tool_name 一致 + parameters 中任意字段值等于 operation
-                                            for tc_key, tc_info in tool_calls_map.items():
-                                                if tc_info.get("name") != tool_name:
-                                                    continue
-                                                tc_params = tc_info.get("parameters", {})
-                                                if any(str(v) == op for v in tc_params.values()):
-                                                    approval_data["llm_tool_call_id"] = tc_info.get("id") or tc_key
-                                                    break
-                                            # 回退：同名工具中第一个
-                                            if "llm_tool_call_id" not in approval_data:
-                                                for tc_key, tc_info in tool_calls_map.items():
-                                                    if tc_info.get("name") == tool_name:
-                                                        approval_data["llm_tool_call_id"] = tc_info.get("id") or tc_key
-                                                        break
-                                        if interrupt_value.get("extra"):
-                                            approval_data["extra"] = interrupt_value["extra"]
-                                        if interrupt_value.get("input_placeholder"):
-                                            approval_data["input_placeholder"] = interrupt_value["input_placeholder"]
 
-                                        # P25修复：持久化 Approval 记录到数据库
-                                        # 确保后续 POST /api/v1/approvals/{interrupt_id}/resume/ 可查询到记录
-                                        session_id = data.get("session_id", "")
-                                        message_id = str(data.get("_assistant_message_id") or data.get("message_id", ""))
-                                        if session_id:
-                                            approval_data["session_id"] = session_id
-                                        if message_id:
-                                            approval_data["message_id"] = message_id
-                                        try:
-                                            from Django_xm.apps.approvals.services.approval_service import request_approval_async
-                                            await request_approval_async(
-                                                source="chat",
-                                                source_id=session_id or "",
-                                                interrupt_id=interrupt_id,
-                                                approval_data=approval_data,
-                                            )
-                                        except Exception as e:
-                                            logger.error(f"[Approval] DB记录创建失败: interrupt_id={interrupt_id}, error={e}")
+                                session_id = data.get("session_id", "")
+                                message_id = str(
+                                    data.get("_assistant_message_id") or data.get("message_id", "")
+                                )
 
-                                        yield {
-                                            "type": "approval",
-                                            "data": approval_data,
-                                        }
+                                for graph_intr_id, tool_call_id, approval_data in batch_approval_data:
+                                    tool_name = approval_data.get("tool_name", "unknown")
+                                    action = approval_data.get("action", "confirm")
+                                    logger.info(
+                                        f"深度思考 approval interrupt: tool={tool_name}, "
+                                        f"action={action}, danger={approval_data.get('danger_level', 'medium')}"
+                                    )
+
+                                    # 注入 session_id / message_id
+                                    approval_data["session_id"] = session_id
+                                    approval_data["message_id"] = message_id
+
+                                    # 持久化工具/模型配置到 approval.extra
+                                    from Django_xm.apps.approvals.services.approval_service import (
+                                        build_approval_extra,
+                                        request_approval_async,
+                                    )
+                                    approval_data["extra"] = build_approval_extra(
+                                        data,
+                                        tool_call_id=tool_call_id,
+                                        graph_interrupt_id=approval_data.get("graph_interrupt_id", ""),
+                                        langgraph_resume_id=approval_data.get("langgraph_resume_id", ""),
+                                        message_id=message_id,
+                                        base_extra=approval_data.get("extra"),
+                                    )
+
+                                    try:
+                                        await request_approval_async(
+                                            source="chat",
+                                            source_id=session_id or "",
+                                            interrupt_id=tool_call_id,
+                                            approval_data=approval_data,
+                                        )
+                                        logger.info(
+                                            f"[Approval] DB记录已创建: interrupt_id={tool_call_id}, "
+                                            f"session={session_id}"
+                                        )
+                                    except Exception as e:
+                                        logger.error(
+                                            f"[Approval] DB记录创建失败: interrupt_id={tool_call_id}, error={e}"
+                                        )
+
+                                    yield {
+                                        "type": "approval",
+                                        "data": approval_data,
+                                    }
                         continue  # updates 模式的其他事件跳过
 
                     # 处理 messages stream mode
@@ -446,10 +444,10 @@ class DeepChatService:
 
         # 审批中断场景：Agent 被 interrupt 暂停，等待用户确认
         # 跳过 finalize 逻辑（不需要补发 final_ai_message 等），直接结束流
+        from .stream_helpers import finalize_tool_calls
+
         if interrupt_info is not None:
             logger.info(f"深度思考审批中断，跳过 finalize: tool={interrupt_info.get('tool_name')}")
-            from .stream_helpers import finalize_tool_calls
-
             for tool_update_event in finalize_tool_calls(all_messages, tool_calls_map, tool_args_accumulator):
                 yield tool_update_event
             return
@@ -632,6 +630,7 @@ class DeepChatService:
             special_params=special_params,
             continue_task_id=continue_task_id,
             publish_to_redis=True,
+            session_id=session_id,
         )
 
         await _update_celery_task_id_sync(thread_id, celery_result.id)
@@ -765,6 +764,7 @@ class DeepChatService:
             special_params=special_params,
             continue_task_id=continue_task_id,
             publish_to_redis=True,
+            session_id=session_id,
         )
 
         await _update_celery_task_id_sync(thread_id, celery_result.id)

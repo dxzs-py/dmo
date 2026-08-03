@@ -121,6 +121,13 @@ export const createMessageHandlers = (ctx) => {
       logger.info(`[Sync] 消息新增: session=${sessionId}, message=${message.backendId || message.id}`)
     }
     session.updatedAt = Date.now()
+
+    // 消息新增/合并后，同步 toolCallsMap 到该消息的 toolCalls 数组
+    // 场景：非触发浏览器 tool_call_* 事件可能先于 message_added 到达，Map 中已有数据
+    // 此时新合并的 assistant 消息尚未派生 toolCalls，导致审批组件以降级方式渲染在错误位置
+    if (message.role === 'assistant') {
+      sessionStore.syncMessageToolCalls(sessionId, message)
+    }
   }
 
   /**

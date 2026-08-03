@@ -60,13 +60,17 @@ export function useTaskRealtimeSync(sourceType, taskIdField) {
     subscribedSessionId = chatSessionId || null
 
     if (taskId) {
-      const unsubTask = realtime.subscribeTask(taskId, syncStore.handleRealtimeEvent, { replayFromSeq: 0 })
-      realtimeUnsubscribers.value.push(unsubTask)
+      // 频道路由优化（Task 16）：后端 _resolve_channels 在有关联 chat_session_id 时
+      // 同时广播到 session + task 频道，前端无需双重订阅。
+      // - 有 chat_session_id：只订阅 session 频道（包含完整 tool_call/approval/stream_completed 事件）
+      // - 无 chat_session_id（独立深度研究）：只订阅 task 频道
       if (chatSessionId) {
         const unsubSession = realtime.subscribeSession(chatSessionId, syncStore.handleRealtimeEvent, { replayFromSeq: 0 })
         realtimeUnsubscribers.value.push(unsubSession)
-        logger.info(`[${sourceType}] 订阅 task=${taskId} + session=${chatSessionId}`)
+        logger.info(`[${sourceType}] 订阅 session=${chatSessionId}（关联 chat，task=${taskId} 事件由双频道广播）`)
       } else {
+        const unsubTask = realtime.subscribeTask(taskId, syncStore.handleRealtimeEvent, { replayFromSeq: 0 })
+        realtimeUnsubscribers.value.push(unsubTask)
         logger.info(`[${sourceType}] 订阅 task=${taskId}（无关联 chat session）`)
       }
     }

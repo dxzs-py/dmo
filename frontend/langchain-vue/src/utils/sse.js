@@ -378,6 +378,13 @@ export async function readSSEStream(response, onEvent, signal) {
  *   实时审批事件统一由 WebSocket 推送，不再需要在此延迟处理。
  * - approval_history / error / retry / timeout_warning 等 SSE 专属
  *   或顺序敏感事件保持同步处理，不在此集合中。
+ *
+ * N7修复（根本性）：
+ * 旧实现中 setTimeout 回调内再次检查 isStreamingRef 守卫（L397），
+ * 导致 SSE 流结束后延迟入队的 tool/tool_result 事件被静默丢弃。
+ * SSE 流中已产生的工具事件应在收到时立即处理，不应因流结束而丢弃。
+ * 修复：移除 setTimeout 回调中的 isStreamingRef 二次守卫；
+ * 外层的 L392 守卫已在事件入队前确认了流处于活跃状态，内层重复检查多余且有害。
  */
 const SSE_DEFERRED_EVENT_TYPES = new Set([
   'tool',
@@ -394,7 +401,6 @@ export async function readSSEStreamWithEvents(response, isStreamingRef, appendFn
     // 与 WebSocket 重叠的事件让出主线程，允许 WS onmessage 优先处理
     if (parsed.type && SSE_DEFERRED_EVENT_TYPES.has(parsed.type)) {
       setTimeout(() => {
-        if (isStreamingRef && !isStreamingRef.value) return
         parseSSEEvent(parsed, appendFn, sessionOps)
       }, 0)
       return

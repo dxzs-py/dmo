@@ -141,6 +141,7 @@ const formatDate = (dateStr) => {
 const getStatusType = (status) => {
   const typeMap = {
     pending: 'info',
+    pending_approval: 'warning',
     running: 'warning',
     completed: 'success',
     failed: 'danger',
@@ -158,6 +159,7 @@ const getStatusType = (status) => {
 const getStatusText = (status) => {
   const textMap = {
     pending: '待执行',
+    pending_approval: '等待审批',
     running: '执行中',
     completed: '已完成',
     failed: '失败',
@@ -250,7 +252,7 @@ onMounted(() => {
   loadTasks()
 })
 
-defineExpose({ tasks, loading })
+defineExpose({ tasks, loading, loadTasks, refreshTasks })
 </script>
 
 <style scoped>

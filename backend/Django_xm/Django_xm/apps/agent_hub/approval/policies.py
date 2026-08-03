@@ -109,8 +109,17 @@ class ApprovalPolicy:
         return risk
 
     def build_operation_desc(self, args: dict) -> str:
-        """构建 operation 描述（前端展示）"""
-        raise NotImplementedError
+        """统一的 operation 描述：返回第一个用户可见的参数值。
+
+        前端已改为遍历 args 全量展示参数，此方法仅作兼容摘要保留。
+        子类无需覆盖此方法。
+        """
+        _INTERNAL_KEYS = {"thread_id", "_meta", "timeout", "encoding"}
+        for key, value in args.items():
+            if value and key not in _INTERNAL_KEYS and not key.startswith("_"):
+                s = str(value)
+                return s[:200] if len(s) > 200 else s
+        return ""
 
     def build_title(self, args: dict) -> str:
         """构建审批标题"""
@@ -174,9 +183,6 @@ class ShellExecApprovalPolicy(ApprovalPolicy):
             return "low"
         return "medium"
 
-    def build_operation_desc(self, args: dict) -> str:
-        return args.get("command", "")
-
 
 class FileReaderApprovalPolicy(ApprovalPolicy):
     """file_reader 工具审批策略
@@ -210,9 +216,6 @@ class FileReaderApprovalPolicy(ApprovalPolicy):
         elif risk == RiskLevel.SAFE:
             return "low"
         return "medium"
-
-    def build_operation_desc(self, args: dict) -> str:
-        return args.get("file_path", "")
 
 
 class FsWriteFileApprovalPolicy(ApprovalPolicy):
@@ -248,9 +251,6 @@ class FsWriteFileApprovalPolicy(ApprovalPolicy):
             return "low"
         return "medium"
 
-    def build_operation_desc(self, args: dict) -> str:
-        return args.get("relative_path", "") or args.get("file_path", "")
-
 
 class AgentCleanupApprovalPolicy(ApprovalPolicy):
     """agent_cleanup 工具审批策略
@@ -283,12 +283,6 @@ class AgentCleanupApprovalPolicy(ApprovalPolicy):
         elif risk == RiskLevel.SAFE:
             return "low"
         return "medium"
-
-    def build_operation_desc(self, args: dict) -> str:
-        agent_id = args.get("agent_id", "")
-        if not agent_id:
-            return "批量清理所有 Agent"
-        return f"清理 Agent: {agent_id}"
 
 
 # ── deepagents 框架工具审批策略 ──────────────────────────────────
@@ -343,9 +337,6 @@ class WriteFileApprovalPolicy(ApprovalPolicy):
             return "low"
         return "medium"
 
-    def build_operation_desc(self, args: dict) -> str:
-        return args.get("file_path", "")
-
     def build_title(self, args: dict) -> str:
         return f"写入文件: {args.get('file_path', '')}"
 
@@ -387,10 +378,6 @@ class EditFileApprovalPolicy(ApprovalPolicy):
             return "low"
         return "medium"
 
-    def build_operation_desc(self, args: dict) -> str:
-        path = args.get("file_path", "")
-        return f"编辑文件: {path}"
-
     def build_title(self, args: dict) -> str:
         return f"编辑文件: {args.get('file_path', '')}"
 
@@ -410,5 +397,56 @@ class ReadFileApprovalPolicy(FileReaderApprovalPolicy):
 
     tool_name = "read_file"
 
-    def build_operation_desc(self, args: dict) -> str:
-        return args.get("file_path", "")
+
+# ── 其他工具审批策略 ──────────────────────────────────────────────
+
+
+class AgentCreateApprovalPolicy(ApprovalPolicy):
+    """agent_create 工具审批策略。
+
+    创建子 Agent 有明确副作用（新建执行环境、分配资源），固定 CONTROLLED。
+    """
+
+    tool_name = "agent_create"
+    is_write_operation = True
+
+    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
+        return self._apply_subagent_weighting(RiskLevel.CONTROLLED, subagent_context)
+
+    def assess_danger(self, args: dict) -> str:
+        risk = self.assess_risk(args)
+        return "medium" if risk == RiskLevel.CONTROLLED else "low"
+
+
+class AgentRunApprovalPolicy(ApprovalPolicy):
+    """agent_run 工具审批策略。
+
+    运行子 Agent 执行任意任务，有明确副作用，固定 CONTROLLED。
+    """
+
+    tool_name = "agent_run"
+    is_write_operation = True
+
+    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
+        return self._apply_subagent_weighting(RiskLevel.CONTROLLED, subagent_context)
+
+    def assess_danger(self, args: dict) -> str:
+        risk = self.assess_risk(args)
+        return "medium" if risk == RiskLevel.CONTROLLED else "low"
+
+
+class TodoWriteApprovalPolicy(ApprovalPolicy):
+    """todo_write 工具审批策略。
+
+    修改任务状态（增/删/改待办事项），可能影响分析链路，固定 CONTROLLED。
+    """
+
+    tool_name = "todo_write"
+    is_write_operation = True
+
+    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
+        return self._apply_subagent_weighting(RiskLevel.CONTROLLED, subagent_context)
+
+    def assess_danger(self, args: dict) -> str:
+        risk = self.assess_risk(args)
+        return "medium" if risk == RiskLevel.CONTROLLED else "low"

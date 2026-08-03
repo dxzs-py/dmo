@@ -91,6 +91,12 @@ def _publish_input_ready_events(message: Any, *, session_id: str) -> None:
                 parameters = {"items": parsed_args}
             else:
                 continue
+            # 语义完整性检查：所有 string 值均为空串 → LLM 流式占位，跳过
+            # 避免发布 {"relative_path": "", "content": ""} 等空参数工具事件
+            if isinstance(parsed_args, dict):
+                string_values = [v for v in parsed_args.values() if isinstance(v, str)]
+                if string_values and all(v == '' for v in string_values):
+                    continue
             try:
                 service.register(
                     ToolCallContext(
@@ -279,6 +285,18 @@ async def _handle_updates_chunk(
                 approval_data["session_id"] = ctx.session_id
             if ctx.message_id:
                 approval_data["message_id"] = ctx.message_id
+
+            # 持久化工具/模型配置到 approval.extra（统一出口，chat/deep_research 共用）
+            from Django_xm.apps.approvals.services.approval_service import build_approval_extra
+            approval_data["extra"] = build_approval_extra(
+                data,
+                tool_call_id=tool_call_id,
+                graph_interrupt_id=graph_interrupt_id,
+                langgraph_resume_id=langgraph_resume_id,
+                message_id=ctx.message_id,
+                base_extra=approval_data.get("extra"),
+            )
+
             try:
                 from Django_xm.apps.approvals.services.approval_service import request_approval_async
                 await request_approval_async(

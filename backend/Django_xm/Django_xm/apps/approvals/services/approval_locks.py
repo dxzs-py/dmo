@@ -14,6 +14,8 @@ import logging
 from asgiref.sync import sync_to_async
 from django.core.cache import cache
 
+from Django_xm.common.redis_utils import get_redis_client
+
 logger = logging.getLogger(__name__)
 
 APPROVAL_LOCK_TTL = 300
@@ -24,18 +26,14 @@ RESUME_LOCK_PREFIX = "approval:resume_lock:"
 RESUME_LOCK_TTL = 30
 
 
-def _get_redis_client():
-    return cache.client.get_client()
-
-
 def _acquire_lock(interrupt_id: str) -> bool:
-    redis_client = _get_redis_client()
+    redis_client = get_redis_client()
     lock_key = f"{APPROVAL_LOCK_PREFIX}{interrupt_id}"
     return bool(redis_client.set(lock_key, "1", nx=True, ex=APPROVAL_LOCK_TTL))
 
 
 def release_lock(interrupt_id: str):
-    redis_client = _get_redis_client()
+    redis_client = get_redis_client()
     lock_key = f"{APPROVAL_LOCK_PREFIX}{interrupt_id}"
     redis_client.delete(lock_key)
 
@@ -44,13 +42,13 @@ release_lock_async = sync_to_async(release_lock)
 
 
 def _acquire_task_resume_lock(task_id: str) -> bool:
-    redis_client = _get_redis_client()
+    redis_client = get_redis_client()
     lock_key = f"{TASK_RESUME_LOCK_PREFIX}{task_id}"
     return bool(redis_client.set(lock_key, "1", nx=True, ex=TASK_RESUME_LOCK_TTL))
 
 
 def _release_task_resume_lock(task_id: str):
-    redis_client = _get_redis_client()
+    redis_client = get_redis_client()
     lock_key = f"{TASK_RESUME_LOCK_PREFIX}{task_id}"
     redis_client.delete(lock_key)
 

@@ -42,6 +42,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 # 局部导入会导致 patch 失败（AttributeError: module has no attribute 'interrupt'）
 from langgraph.types import interrupt
 
+from Django_xm.common.approval_utils import derive_cross_module_id_from_source
 from Django_xm.common.observability.approval_metrics import approval_metrics
 from Django_xm.common.risk_levels import RiskLevel
 
@@ -67,6 +68,8 @@ class ApprovalMiddleware(AgentMiddleware):
     def _default_policies() -> list[Any]:
         from .policies import (
             AgentCleanupApprovalPolicy,
+            AgentCreateApprovalPolicy,
+            AgentRunApprovalPolicy,
             EditFileApprovalPolicy,
             # deepagents 框架工具审批策略
             # deepagents FilesystemMiddleware 提供的工具名称与项目自定义工具不同，
@@ -76,6 +79,7 @@ class ApprovalMiddleware(AgentMiddleware):
             FsWriteFileApprovalPolicy,
             ReadFileApprovalPolicy,
             ShellExecApprovalPolicy,
+            TodoWriteApprovalPolicy,
             WriteFileApprovalPolicy,
         )
 
@@ -85,6 +89,10 @@ class ApprovalMiddleware(AgentMiddleware):
             FileReaderApprovalPolicy(),
             FsWriteFileApprovalPolicy(),
             AgentCleanupApprovalPolicy(),
+            # 其他副作用工具策略（agent_create/agent_run/todo_write）
+            AgentCreateApprovalPolicy(),
+            AgentRunApprovalPolicy(),
+            TodoWriteApprovalPolicy(),
             # deepagents 框架工具策略
             # execute → 继承 ShellExecApprovalPolicy 黑白名单逻辑
             ExecuteApprovalPolicy(),
@@ -222,9 +230,9 @@ class ApprovalMiddleware(AgentMiddleware):
             module_id = chat_session_id
 
         # cross_module_id：深度研究关联 chat 场景
-        cross_module_id = None
-        if module == EventSource.DEEP_RESEARCH and chat_session_id:
-            cross_module_id = chat_session_id
+        cross_module_id = derive_cross_module_id_from_source(
+            "deep_research" if module == EventSource.DEEP_RESEARCH else module.value, chat_session_id
+        )
 
         # 子 agent 嵌套层级字段（Phase E3）：从 configurable 提取
         # 主 agent 不注入这些字段，得到默认空值（不影响 payload）

@@ -404,8 +404,6 @@ async def stream_regenerate_resume(
             all_messages,
             tool_calls_map,
             tool_args_accumulator,
-            session_id=session_id,
-            message_id=regen_message_id,
         )
 
         if ended_by_interrupt:

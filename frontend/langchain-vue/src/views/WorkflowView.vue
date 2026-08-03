@@ -102,64 +102,17 @@
           </div>
         </el-card>
 
-        <el-card v-if="execution.quiz" class="quiz-card">
-          <template #header>
-            <div class="card-header">
-              <span>📝 练习题</span>
-              <el-tag type="warning">等待答题</el-tag>
-            </div>
-          </template>
-
-          <el-form :model="answersForm" label-width="0">
-            <div v-for="question in execution.quiz.questions" :key="question.id" class="question-item">
-              <div class="question-header">
-                <span class="question-title">第 {{ question.id.replace('q', '') }} 题 ({{ question.points }} 分)</span>
-                <el-tag size="small">{{ getQuestionTypeText(question.type) }}</el-tag>
-              </div>
-              <p class="question-text">{{ question.question }}</p>
-
-              <div v-if="question.type === 'multiple_choice'" class="options">
-                <el-radio-group v-model="answersForm[question.id]">
-                  <el-radio v-for="(opt, idx) in question.options" :key="idx" :value="opt">
-                    {{ String.fromCharCode(65 + idx) }}. {{ opt }}
-                  </el-radio>
-                </el-radio-group>
-              </div>
-
-              <el-input v-else-if="question.type === 'fill_blank'" v-model="answersForm[question.id]" placeholder="请填入答案" />
-
-              <el-input v-else v-model="answersForm[question.id]" type="textarea" :rows="3" placeholder="请输入答案" />
-            </div>
-
-            <el-button type="primary" :loading="isSubmitting" size="large" @click="submitAnswers">
-              提交答案
-            </el-button>
-          </el-form>
-        </el-card>
-
-        <el-card v-if="execution.score !== null" class="result-card">
-          <template #header>
-            <div class="card-header">
-              <span>🎓 测验结果</span>
-              <el-tag :type="execution.score >= 60 ? 'success' : 'danger'">
-                {{ execution.score }} 分
-              </el-tag>
-            </div>
-          </template>
-
-          <div v-if="execution.feedback" class="feedback">
-            <h5>📋 反馈</h5>
-            <p>{{ execution.feedback }}</p>
-          </div>
-
-          <div v-if="execution.should_retry" class="retry-notice">
-            <el-alert type="warning" title="未通过测验，将重新生成练习题..." show-icon />
-          </div>
-
-          <el-button v-if="!execution.should_retry" type="primary" @click="resetWorkflow">
-            重新开始
-          </el-button>
-        </el-card>
+        <WorkflowQuiz
+          :quiz="execution.quiz"
+          :answers-form="answersForm"
+          :is-submitting="isSubmitting"
+          :score="execution.score"
+          :feedback="execution.feedback"
+          :should-retry="execution.should_retry"
+          :get-question-type-text="getQuestionTypeText"
+          @submit="submitAnswers"
+          @reset="resetWorkflow"
+        />
 
         <el-card class="status-card">
           <template #header>
@@ -235,6 +188,7 @@ import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import TaskList from '../components/chat/TaskList.vue'
 import FileBrowser from '../components/chat/FileBrowser.vue'
+import WorkflowQuiz from '../components/workflow/WorkflowQuiz.vue'
 import MarkdownRenderer from '../components/common/MarkdownRenderer.vue'
 import KnowledgeBaseSelector from '../components/common/KnowledgeBaseSelector.vue'
 import AiCheckpoint from '../components/ai-elements/AiCheckpoint.vue'

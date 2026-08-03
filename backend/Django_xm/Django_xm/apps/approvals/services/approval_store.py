@@ -11,6 +11,8 @@ import logging
 
 from django.core.cache import cache
 
+from Django_xm.common.redis_utils import get_redis_client
+
 logger = logging.getLogger(__name__)
 
 # Redis key 前缀（按 source_id 索引 pending 列表）
@@ -19,10 +21,6 @@ APPROVAL_PENDING_PREFIX = "approval:pending:"
 APPROVAL_PROCESSED_PREFIX = "approval:processed:"
 # TTL：30 分钟，与前端 APPROVAL_EXPIRY_MS 一致
 APPROVAL_TTL = 1800
-
-
-def _get_redis_client():
-    return cache.client.get_client()
 
 
 def persist_approval_pending(source_id, approval_data):
@@ -36,7 +34,7 @@ def persist_approval_pending(source_id, approval_data):
         if not approval_data.get("interrupt_id"):
             logger.warning(f"[ApprovalStore] 持久化 pending 跳过: 缺少 interrupt_id, source_id={source_id}")
             return
-        redis_client = _get_redis_client()
+        redis_client = get_redis_client()
         key = f"{APPROVAL_PENDING_PREFIX}{source_id}"
         redis_client.rpush(key, json.dumps(approval_data, ensure_ascii=False))
         redis_client.expire(key, APPROVAL_TTL)
@@ -60,7 +58,7 @@ def persist_approval_processed(interrupt_id, processed_data):
         if not interrupt_id:
             logger.warning("[ApprovalStore] 持久化 processed 跳过: 缺少 interrupt_id")
             return
-        redis_client = _get_redis_client()
+        redis_client = get_redis_client()
         key = f"{APPROVAL_PROCESSED_PREFIX}{interrupt_id}"
         redis_client.setex(key, APPROVAL_TTL, json.dumps(processed_data, ensure_ascii=False))
         logger.info(
@@ -102,7 +100,7 @@ def get_approval_processed(interrupt_id):
         dict 或 None
     """
     try:
-        redis_client = _get_redis_client()
+        redis_client = get_redis_client()
         key = f"{APPROVAL_PROCESSED_PREFIX}{interrupt_id}"
         raw = redis_client.get(key)
         if not raw:
@@ -131,7 +129,7 @@ def get_approval_history(source_id):
         list[dict]: 审批数据列表
     """
     try:
-        redis_client = _get_redis_client()
+        redis_client = get_redis_client()
         pending_key = f"{APPROVAL_PENDING_PREFIX}{source_id}"
         pending_items = redis_client.lrange(pending_key, 0, -1)
 

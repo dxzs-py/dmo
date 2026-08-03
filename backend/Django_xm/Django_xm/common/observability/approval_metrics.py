@@ -38,6 +38,7 @@ from typing import Any
 from django.core.cache import cache
 
 from Django_xm.common.risk_levels import RiskLevel
+from Django_xm.common.redis_utils import get_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -70,15 +71,10 @@ _PENDING_TTL = 3600
 _COUNTER_TTL = 86400
 
 
-def _get_redis_client():
-    """获取 Redis 客户端（与 approval_service 一致）。"""
-    return cache.client.get_client()
-
-
 def _safe_incr(key: str, ttl: int = _COUNTER_TTL) -> None:
     """安全 INCR + EXPIRE，失败时仅记日志不抛异常。"""
     try:
-        client = _get_redis_client()
+        client = get_redis_client()
         if client is None:
             return
         client.incr(key)
@@ -90,7 +86,7 @@ def _safe_incr(key: str, ttl: int = _COUNTER_TTL) -> None:
 def _safe_decr(key: str) -> None:
     """安全 DECR，失败时仅记日志不抛异常。"""
     try:
-        client = _get_redis_client()
+        client = get_redis_client()
         if client is None:
             return
         # 防止递减到负数
@@ -104,7 +100,7 @@ def _safe_decr(key: str) -> None:
 def _safe_get(key: str) -> int:
     """安全 GET 整数值，失败返回 0。"""
     try:
-        client = _get_redis_client()
+        client = get_redis_client()
         if client is None:
             return 0
         return int(client.get(key) or 0)
@@ -185,7 +181,7 @@ class ApprovalMetrics:
         if not source_id:
             return 0
         try:
-            client = _get_redis_client()
+            client = get_redis_client()
             if client is None:
                 return 0
             key = f"{_HIGH_RISK_WINDOW_PREFIX}{source_id}"
@@ -208,7 +204,7 @@ class ApprovalMetrics:
         if not source_id:
             return 0
         try:
-            client = _get_redis_client()
+            client = get_redis_client()
             if client is None:
                 return 0
             key = f"{_HIGH_RISK_WINDOW_PREFIX}{source_id}"
@@ -224,7 +220,7 @@ class ApprovalMetrics:
         """记录审批延迟（从创建到终态的耗时）。"""
         try:
             latency = max(0.0, time.time() - created_at)
-            client = _get_redis_client()
+            client = get_redis_client()
             if client is None:
                 return
             client.incrbyfloat(_LATENCY_SUM, latency)
@@ -260,7 +256,7 @@ class ApprovalMetrics:
         avg_approval_time = 0.0
         if latency_count > 0:
             try:
-                client = _get_redis_client()
+                client = get_redis_client()
                 if client is not None:
                     latency_sum = float(client.get(_LATENCY_SUM) or 0)
                     avg_approval_time = round(latency_sum / latency_count, 2)

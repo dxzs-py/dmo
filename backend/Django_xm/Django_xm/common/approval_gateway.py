@@ -117,6 +117,11 @@ class ApprovalGateway:
             CircuitBreakerError: HIGH 级操作数超过滑动窗口阈值
             ValueError: 不支持的审批来源
         """
+        logger.info(
+            f"[ApprovalGateway] route_resume 入口: source={approval.source}, "
+            f"interrupt_id={approval.interrupt_id}, approved={approved}"
+        )
+
         # F3 熔断检查：仅对用户批准的 HIGH 级操作触发
         if approved and self._is_high_risk_approval(approval):
             self._check_circuit_breaker(approval)

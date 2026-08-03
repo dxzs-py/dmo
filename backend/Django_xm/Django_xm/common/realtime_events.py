@@ -64,6 +64,7 @@ from Django_xm.common.event_schema import (
     get_ws_event_name,
     validate_payload,
 )
+from Django_xm.common.redis_utils import get_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -79,11 +80,6 @@ SEQ_TTL_SECONDS = 24 * 60 * 60
 # Redis key 前缀
 SEQ_KEY_PREFIX = "realtime:seq"
 HISTORY_KEY_PREFIX = "realtime:history"
-
-
-def _get_redis_client():
-    """获取默认缓存底层的 Redis 客户端。"""
-    return cache.client.get_client()
 
 
 def _seq_key(channel_type, channel_id):
@@ -190,7 +186,7 @@ async def _publish_to_session_async(session_id, event_type, payload):
         payload: 事件载荷 dict
     """
     try:
-        redis_client = _get_redis_client()
+        redis_client = get_redis_client()
         # 在 event 顶层注入 session_id（路由字段），供前端 dispatchEvent 路由使用
         # 前端 useRealtimeSync.dispatchEvent 通过 event.payload?.session_id || event.session_id 解析通道
         event = {
@@ -238,7 +234,7 @@ async def _publish_to_task_async(task_id, event_type, payload):
         payload: 事件载荷 dict
     """
     try:
-        redis_client = _get_redis_client()
+        redis_client = get_redis_client()
         # 在 event 顶层注入 task_id（路由字段），供前端 dispatchEvent 路由使用
         # 前端 useRealtimeSync.dispatchEvent 通过 event.payload?.task_id 解析 task 通道
         event = {
@@ -285,7 +281,7 @@ async def _publish_to_user_async(user_id, event_type, payload):
         payload: 事件载荷 dict
     """
     try:
-        redis_client = _get_redis_client()
+        redis_client = get_redis_client()
         event = {
             "type": event_type,
             "timestamp": time.time(),
@@ -606,7 +602,7 @@ def get_event_history(channel_type, channel_id, last_seq=None, limit=100):
         list[dict]: 事件列表，按 seq 升序排列
     """
     try:
-        redis_client = _get_redis_client()
+        redis_client = get_redis_client()
         key = _history_key(channel_type, channel_id)
         raw_items = redis_client.lrange(key, 0, -1)
 
@@ -643,7 +639,7 @@ def get_channel_seq(channel_type, channel_id):
         int: 当前最大 seq，无事件时返回 0
     """
     try:
-        redis_client = _get_redis_client()
+        redis_client = get_redis_client()
         key = _seq_key(channel_type, channel_id)
         raw = redis_client.get(key)
         if raw is None:

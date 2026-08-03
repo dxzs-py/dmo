@@ -954,7 +954,7 @@ class ChatService:
         final_ai_content = final_ai_message.content if final_ai_message else None
         final_ai_strip_len = len(final_ai_content.strip()) if isinstance(final_ai_content, str) else 0
         if (not final_ai_message or not final_ai_content or final_ai_strip_len < 10) and tool_calls_map:
-            weather_tools = ["get_daily_weather", "get_weather_forecast", "get_weather"]
+            weather_tools = ["weather_query", "get_weather_forecast", "get_weather"]
             for tool_name in weather_tools:
                 for tool_info in tool_calls_map.values():
                     if (

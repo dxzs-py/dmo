@@ -10,8 +10,8 @@
 关键修复（对比参考项目）：
 - 移除 ``asyncio.new_event_loop()``，使用 ASGI 原生事件循环，
   解决 Django ORM / async checkpointer 连接池绑定到错误事件循环的问题
-- 工具事件过滤：tool/tool_result/tool_usage_dedup/tool_usage_blocked
-  仅通过 WebSocket 推送，不混入 SSE 流
+- 工具事件发布统一通过 ToolCallLifecycleService，主 SSE 流不推送工具事件至 SSE，
+  仅通过 WebSocket 广播；恢复 SSE 流通过 transition_async 统一发布
 - 5 分钟全局超时保护
 - 流结束后持久化 assistant 消息内容到数据库
 """
@@ -97,8 +97,8 @@ async def _publish_stream_event(
                         {
                             "source": EventSource.CHAT,
                             "source_id": session_id,
+                            "message_id": str(message_id) if message_id else None,
                             "data": {
-                                "message_id": str(message_id) if message_id else None,
                                 "content": content_state["content"],
                             },
                         },
@@ -108,25 +108,45 @@ async def _publish_stream_event(
                     logger.debug(f"广播 STREAM_CONTENT_UPDATE 失败: {e}")
         return
 
-    # ── tool 系列事件：广播到 WebSocket ──
+    # ── tool 系列事件：通过 ToolCallLifecycleService 统一发布 ──
+    # 先 register 确保上下文存在（幂等，参考项目 _publish_tool_lifecycle_event），
+    # 再 transition_async 发布事件。若上下文缺失直接 transition 会被静默丢弃，
+    # 导致非触发浏览器收不到工具结果。
     if event_type_str in _TOOL_EVENT_TYPES:
+        from Django_xm.common.tool_call_lifecycle import service as lifecycle_service, ToolCallContext
+
         tool_data = event.get("data", {})
+        tool_call_id = tool_data.get("id") or tool_data.get("tool_call_id", "")
+        if not tool_call_id:
+            return
+
         try:
-            await publish_event(
-                EventType.TOOL_CALL_INPUT_READY if event_type_str == "tool" else EventType.TOOL_CALL_OUTPUT_READY,
-                {
-                    "source": EventSource.CHAT,
-                    "source_id": session_id,
-                    "tool_call_id": tool_data.get("id") or tool_data.get("tool_call_id", ""),
-                    "tool_name": tool_data.get("name", ""),
-                    "parameters": tool_data.get("parameters", {}),
-                    "state": tool_data.get("state", ""),
-                    "status": tool_data.get("status", ""),
-                },
-                session_id=session_id,
+            target_event_type = (
+                EventType.TOOL_CALL_OUTPUT_READY if event_type_str == "tool_result"
+                else EventType.TOOL_CALL_INPUT_READY
+            )
+
+            # 确保上下文已注册（幂等，重复调用无副作用）
+            lifecycle_service.register(ToolCallContext(
+                tool_call_id=tool_call_id,
+                tool_name=tool_data.get("name", ""),
+                module=EventSource.CHAT,
+                module_id=session_id,
+            ))
+
+            tool_result = tool_data.get("result")
+            tool_error = tool_data.get("error")
+            tool_parameters = tool_data.get("parameters") or tool_data.get("args")
+
+            await lifecycle_service.transition_async(
+                tool_call_id,
+                target_event_type,
+                result=tool_result,
+                error=tool_error,
+                parameters=tool_parameters if tool_parameters and isinstance(tool_parameters, dict) and tool_parameters else None,
             )
         except Exception as e:
-            logger.debug(f"广播 tool 事件失败: {e}")
+            logger.debug(f"ToolCallLifecycleService 发布工具事件失败: tool={tool_call_id}, error={e}")
         return
 
     # ── reasoning / sources / suggestions / context / deep_research / approval ──

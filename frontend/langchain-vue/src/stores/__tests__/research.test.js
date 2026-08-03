@@ -282,28 +282,29 @@ describe('useResearchStore - Map 操作一致性（SubTask 9.5）', () => {
   // ==================== 4. updateToolCallStatus ====================
 
   describe('updateToolCallStatus', () => {
-    it('更新 status → toolCall.status 改变', () => {
+    it('更新 status → toolCall.status 改变，返回 true', () => {
       const taskId = 'task-status-1'
       store.addOrUpdateToolCall(taskId, makeToolCall('tc-status', {
         status: ToolCallStatus.RUNNING,
       }))
 
-      store.updateToolCallStatus(taskId, 'tc-status', ToolCallStatus.COMPLETED)
+      const result = store.updateToolCallStatus(taskId, 'tc-status', ToolCallStatus.COMPLETED)
 
+      expect(result).toBe(true)
       const toolCalls = store.getToolCalls(taskId)
       expect(toolCalls[0].status).toBe(ToolCallStatus.COMPLETED)
     })
 
-    it('不存在的 task → 无操作（不抛错）', () => {
-      store.updateToolCallStatus('nonexistent-task', 'tc-x', ToolCallStatus.COMPLETED)
-      // 不应抛错
+    it('不存在的 task → 返回 false', () => {
+      const result = store.updateToolCallStatus('nonexistent-task', 'tc-x', ToolCallStatus.COMPLETED)
+      expect(result).toBe(false)
     })
 
-    it('不存在的 toolCall → 无操作（不抛错）', () => {
+    it('不存在的 toolCall → 返回 false', () => {
       const taskId = 'task-status-2'
       store.addOrUpdateToolCall(taskId, makeToolCall('tc-exist'))
-      store.updateToolCallStatus(taskId, 'nonexistent-tc', ToolCallStatus.COMPLETED)
-      // 不应抛错
+      const result = store.updateToolCallStatus(taskId, 'nonexistent-tc', ToolCallStatus.COMPLETED)
+      expect(result).toBe(false)
     })
   })
 
@@ -355,6 +356,48 @@ describe('useResearchStore - Map 操作一致性（SubTask 9.5）', () => {
         ApprovalState.PROCESSING
       )
       expect(result).toBe(false)
+    })
+  })
+
+  // ==================== 5.5. updateToolCallApprovalState ====================
+
+  describe('updateToolCallApprovalState（审批状态 + status 联动更新）', () => {
+    it('processing → approval.state=processing, toolCall.status=processing', () => {
+      const taskId = 'task-approval-combined-1'
+      store.addOrUpdateToolCall(taskId, makeToolCall('tc-combined', {
+        name: 'execute',
+        status: ToolCallStatus.WAITING,
+      }))
+      store.setApprovalToToolCall(taskId, 'tc-combined', {
+        interrupt_id: 'tc-combined',
+        tool_name: 'execute',
+        state: ApprovalState.PENDING,
+      })
+
+      store.updateToolCallApprovalState(taskId, 'tc-combined', ApprovalState.PROCESSING)
+
+      const toolCalls = store.getToolCalls(taskId)
+      expect(toolCalls[0].approval.state).toBe(ApprovalState.PROCESSING)
+      expect(toolCalls[0].status).toBe(ToolCallStatus.PROCESSING)
+    })
+
+    it('rejected → approval.state=rejected, toolCall.status=rejected', () => {
+      const taskId = 'task-approval-combined-2'
+      store.addOrUpdateToolCall(taskId, makeToolCall('tc-rej', {
+        name: 'execute',
+        status: ToolCallStatus.WAITING,
+      }))
+      store.setApprovalToToolCall(taskId, 'tc-rej', {
+        interrupt_id: 'tc-rej',
+        tool_name: 'execute',
+        state: ApprovalState.PENDING,
+      })
+
+      store.updateToolCallApprovalState(taskId, 'tc-rej', ApprovalState.REJECTED)
+
+      const toolCalls = store.getToolCalls(taskId)
+      expect(toolCalls[0].approval.state).toBe(ApprovalState.REJECTED)
+      expect(toolCalls[0].status).toBe(ToolCallStatus.REJECTED)
     })
   })
 

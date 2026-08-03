@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { useSessionStore } from './session'
 import { useModelStore } from './model'
 import { useSyncStore } from './sync'
+import { useResearchStore } from './research'
 import { useStreamFinalizer } from '../composables/useStreamFinalizer'
 import { resumeApprovalStream } from '../api/approval'
 import { getInterruptId } from '../utils/message-operations'
@@ -18,10 +19,14 @@ const CLEANUP_INTERVAL_MS = 5 * 60 * 1000
 
 /** debounced 同步到后端 — 审批事件到达后立即同步，确保跨浏览器/刷新可恢复 */
 const _approvalSyncTimers = {}
-const _debouncedApprovalSync = (sessionStore, sessionId) => {
+const _debouncedApprovalSync = (sessionStore, sessionId, messageBackendId) => {
   if (_approvalSyncTimers[sessionId]) clearTimeout(_approvalSyncTimers[sessionId])
   _approvalSyncTimers[sessionId] = setTimeout(() => {
-    sessionStore.syncLastMessageToBackend(sessionId).catch(() => {})
+    if (messageBackendId) {
+      sessionStore.syncMessageByBackendIdToBackend(sessionId, messageBackendId, { allowCreate: false }).catch(() => {})
+    } else {
+      sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false }).catch(() => {})
+    }
     delete _approvalSyncTimers[sessionId]
   }, 200)
 }
@@ -94,6 +99,12 @@ export const useApprovalStore = defineStore('approval', () => {
     // 审批正在处理（另一端已点击确认/拒绝，后端处理中）
     if (eventType === 'approval_processing') {
       _handleProcessing(data, source, sessionId)
+      return
+    }
+
+    // 批量审批等待（同批次部分已审批，其他工具仍 pending）
+    if (eventType === 'approval_waiting') {
+      _handleWaiting(data, source, sessionId)
       return
     }
 
@@ -185,7 +196,7 @@ export const useApprovalStore = defineStore('approval', () => {
         sessionStore.setApprovalToLastMessage(effectiveSessionId, { ...data, state: 'timeout' })
       }
       // 同步审批状态到后端，防止刷新后状态丢失
-      sessionStore.syncLastMessageToBackend(effectiveSessionId).catch(() => {})
+      sessionStore.syncLastMessageToBackend(effectiveSessionId, { allowCreate: false }).catch(() => {})
     }
 
     // 深度研究来源额外提示
@@ -220,7 +231,30 @@ export const useApprovalStore = defineStore('approval', () => {
     if (effectiveSessionId) {
       sessionStore.updateToolCallApprovalState(effectiveSessionId, toolCallId, 'processing')
       sessionStore.setApprovalToLastMessage(effectiveSessionId, { ...data, state: 'processing' })
-      sessionStore.syncLastMessageToBackend(effectiveSessionId).catch(() => {})
+      sessionStore.syncLastMessageToBackend(effectiveSessionId, { allowCreate: false }).catch(() => {})
+    }
+  }
+
+  /**
+   * 批量审批等待：同批次本工具已审批，等待其他工具。
+   */
+  const _handleWaiting = (data, source, sessionId) => {
+    const sessionStore = useSessionStore()
+    const toolCallId = getInterruptId(data)
+    if (!toolCallId) return
+
+    const existingEntry = pendingApprovals.value.get(toolCallId)
+    const effectiveSessionId = sessionId || existingEntry?.sessionId || sessionStore.currentSessionId
+
+    // P19 修复：waiting 状态应保持 'waiting' 而非覆盖为 'processing'
+    // 这样 ToolCallCard 的 isWaitingForSiblings 才能检测到并显示提示文字
+    if (existingEntry) {
+      existingEntry.approvalData = { ...existingEntry.approvalData, ...data, state: 'waiting' }
+    }
+    if (effectiveSessionId) {
+      sessionStore.updateToolCallApprovalState(effectiveSessionId, toolCallId, 'waiting')
+      sessionStore.setApprovalToLastMessage(effectiveSessionId, { ...data, state: 'waiting' })
+      sessionStore.syncLastMessageToBackend(effectiveSessionId, { allowCreate: false }).catch(() => {})
     }
   }
 
@@ -255,7 +289,7 @@ export const useApprovalStore = defineStore('approval', () => {
       sessionStore.updateToolCallApprovalState(effectiveSessionId, toolCallId, finalState)
       sessionStore.setApprovalToLastMessage(effectiveSessionId, { ...data, state: finalState })
       // 同步审批状态到后端，防止刷新后状态丢失
-      sessionStore.syncLastMessageToBackend(effectiveSessionId).catch(() => {})
+      sessionStore.syncLastMessageToBackend(effectiveSessionId, { allowCreate: false }).catch(() => {})
     }
   }
 
@@ -300,9 +334,13 @@ export const useApprovalStore = defineStore('approval', () => {
       sessionStore.updateToolCallApprovalState(sessionId, toolCallId, 'processing')
       sessionStore.setApprovalToLastMessage(sessionId, { ...approvalData, state: 'processing' })
     }
+    if (taskId) {
+      try {
+        const researchStore = useResearchStore()
+        researchStore.updateToolCallApprovalState(taskId, toolCallId, 'processing')
+      } catch (e) { logger.warn('[ApprovalStore] 更新 researchStore processing 失败:', e) }
+    }
     pendingApprovals.value.delete(toolCallId)
-
-    const finalState = approved ? 'approved' : 'rejected'
 
     try {
       const interruptId = getInterruptId(approvalData)
@@ -316,16 +354,24 @@ export const useApprovalStore = defineStore('approval', () => {
         _executeApprovalStream(approvalData, approved, userInput, sessionId, toolCallId, options)
       )
 
-      // 更新最终状态
-      if (sessionId) {
-        sessionStore.updateToolCallApprovalState(sessionId, toolCallId, finalState)
-        sessionStore.setApprovalToLastMessage(sessionId, { ...approvalData, state: finalState })
+      // 仅在拒绝时更新状态为 rejected
+      // 通过时不设 approved：SSE 流中 tool_result 事件已自行更新状态，
+      // 设为 approved 会覆盖"处理中"状态，导致 P1（触发浏览器显示"已确认"而非"处理中"）
+      if (!approved && sessionId) {
+        sessionStore.updateToolCallApprovalState(sessionId, toolCallId, 'rejected')
+        sessionStore.setApprovalToLastMessage(sessionId, { ...approvalData, state: 'rejected' })
+      }
+      if (!approved && taskId) {
+        try {
+          const researchStore = useResearchStore()
+          researchStore.updateToolCallApprovalState(taskId, toolCallId, 'rejected')
+        } catch (e) { logger.warn('[ApprovalStore] 更新 researchStore rejected 失败:', e) }
       }
 
       // 同步消息到后端
       if (sessionId) {
         try {
-          await sessionStore.syncLastMessageToBackend(sessionId)
+          await sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false })
         } catch (syncErr) {
           logger.error('[ApprovalStore] 审批后同步消息失败:', syncErr)
         }
@@ -349,9 +395,15 @@ export const useApprovalStore = defineStore('approval', () => {
       if (sessionId) {
         sessionStore.updateToolCallApprovalState(sessionId, toolCallId, 'pending')
         sessionStore.setApprovalToLastMessage(sessionId, { ...approvalData, state: 'pending' })
-        // 同步恢复后的状态到后端
-        sessionStore.syncLastMessageToBackend(sessionId).catch(() => {})
       }
+      if (taskId) {
+        try {
+          const researchStore = useResearchStore()
+          researchStore.updateToolCallApprovalState(taskId, toolCallId, 'pending')
+        } catch (e) { logger.warn('[ApprovalStore] 更新 researchStore pending 失败:', e) }
+      }
+      // 同步恢复后的状态到后端
+      sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false }).catch(() => {})
     }
   }
 
@@ -440,11 +492,13 @@ export const useApprovalStore = defineStore('approval', () => {
       const data = jsonData.data || {}
 
       // 批量审批等待：本工具已审批，等待同批次其他工具
+      // P19 修复：waiting 状态应保持 'waiting' 而非覆盖为 'processing'
+      // 这样 ToolCallCard 的 isWaitingForSiblings 才能检测到并显示提示文字
       if (data.status === 'waiting_for_others' || data.state === 'waiting') {
         if (sessionId) {
-          sessionStore.updateToolCallApprovalState(sessionId, toolCallId, 'processing')
-          sessionStore.setApprovalToLastMessage(sessionId, { ...data, state: 'processing' })
-          sessionStore.syncLastMessageToBackend(sessionId).catch(() => {})
+          sessionStore.updateToolCallApprovalState(sessionId, toolCallId, 'waiting')
+          sessionStore.setApprovalToLastMessage(sessionId, { ...data, state: 'waiting' })
+          sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false }).catch(() => {})
         }
         ElMessage.info(data.message || '本工具已审批，等待同批次其他工具审批完成后开始执行...')
         const err = new Error('waiting_for_others')
@@ -456,13 +510,13 @@ export const useApprovalStore = defineStore('approval', () => {
       if (data.idempotent) {
         const idempotentState = data.state === 'approved' ? 'approved'
           : data.state === 'rejected' ? 'rejected'
-          : data.state === 'waiting' ? 'processing'
+          : data.state === 'waiting' ? 'waiting'
           : 'processing'
         if (sessionId) {
           pendingApprovals.value.delete(toolCallId)
           sessionStore.updateToolCallApprovalState(sessionId, toolCallId, idempotentState)
           sessionStore.setApprovalToLastMessage(sessionId, { ...data, state: idempotentState })
-          sessionStore.syncLastMessageToBackend(sessionId).catch(() => {})
+          sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false }).catch(() => {})
         }
         logger.info(`[ApprovalStore] 审批幂等响应：${toolCallId} 状态=${idempotentState}`)
         const err = new Error('idempotent')
@@ -557,7 +611,7 @@ export const useApprovalStore = defineStore('approval', () => {
             pendingApprovals.value.delete(timeoutToolCallId)
             sessionStore.updateToolCallApprovalState(sessionId, timeoutToolCallId, 'timeout')
             sessionStore.setApprovalToLastMessage(sessionId, { ...(parsed.data || parsed), state: 'timeout' })
-            sessionStore.syncLastMessageToBackend(sessionId).catch(() => {})
+            sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false }).catch(() => {})
           }
           approvalAbortController.abort()
           break
@@ -572,7 +626,7 @@ export const useApprovalStore = defineStore('approval', () => {
             const finalState = processedData.approved ? 'approved' : 'rejected'
             sessionStore.updateToolCallApprovalState(sessionId, processedToolCallId, finalState)
             sessionStore.setApprovalToLastMessage(sessionId, { ...processedData, state: finalState })
-            sessionStore.syncLastMessageToBackend(sessionId).catch(() => {})
+            sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false }).catch(() => {})
           }
           approvalAbortController.abort()
           break

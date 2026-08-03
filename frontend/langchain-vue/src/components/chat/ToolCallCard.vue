@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed } from 'vue'
-import { ArrowDown, ArrowRight, CircleCheck, Close, Connection, Loading, MagicStick } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowRight, CircleCheck, Clock, Close, Connection, Loading, MagicStick } from '@element-plus/icons-vue'
 import { ToolCallStatus } from '../../types'
 import {
   formatToolParameters,
@@ -193,16 +193,48 @@ const outputContentClass = computed(() => [
   'section-content',
   `display-mode--${outputDisplay.value.displayMode}`,
   {
-    'section-content--compact': isKnowledgeBase.value,
     'section-content--inline': outputDisplay.value.displayMode === 'inline',
     'section-content--monospace': outputDisplay.value.displayMode === 'monospace' || outputDisplay.value.displayMode === 'command',
   },
 ])
 
+/** 工具是否处于可展示输出的终态（completed/failed/rejected/timeout），
+ *  避免审批阶段（pending/waiting/running）提前渲染 result 字段导致显示"已写入"等误导文案。 */
+const shouldShowOutput = computed(() => {
+  const status = props.status
+  return status === ToolCallStatus.COMPLETED
+    || status === ToolCallStatus.FAILED
+    || status === ToolCallStatus.REJECTED
+    || status === ToolCallStatus.TIMEOUT
+})
+
 // 审批相关
 const approvalData = computed(() => props.toolCall?.approval || null)
 
-const isPendingApproval = computed(() => props.status === ToolCallStatus.PENDING_APPROVAL && approvalData.value)
+// 审批态与工具执行态解耦：tc.approval.state 驱动审批面板，tc.status 驱动工具执行状态。
+// isPendingApproval 同时检查 status（timer 更新）和 approval.state（setApprovalToToolCall 设置）
+// 包含 processing 状态：批量审批中单工具先点击"确认执行"后 state 变为 processing，
+// 此时审批面板仍需保留（按钮禁用），防止面板突然消失给用户带来困惑
+const isPendingApproval = computed(() => {
+  const approval = approvalData.value
+  if (!approval) return false
+  return props.status === ToolCallStatus.PENDING_APPROVAL
+    || approval.state === 'pending'
+    || approval.state === 'processing'
+})
+
+// 审批处理中（已提交确认，等待执行完毕）
+const isProcessingApproval = computed(() => approvalData.value?.state === 'processing')
+
+// P19 修复：已审批但等待同批其余工具完成审批（approval.state === 'waiting'）
+// 此时审批面板应保留，按钮 disabled，并显示提示文字
+// P21 补充：工具进入终态后不可能还在等待同批——终态时等待审批面板应消失
+const isWaitingForSiblings = computed(() => {
+  if (!approvalData.value || approvalData.value.state !== 'waiting') return false
+  // 工具已进入终态：不再显示"等待同批"面板
+  if (props.status === ToolCallStatus.COMPLETED || props.status === ToolCallStatus.FAILED) return false
+  return true
+})
 
 const dangerLevel = computed(() => approvalData.value?.danger_level || 'low')
 
@@ -293,35 +325,27 @@ const isConfirmWithInput = computed(() => approvalData.value?.action === 'confir
 // operationText：优先 approval.operation，回退 approval.command
 const operationText = computed(() => approvalData.value?.operation || approvalData.value?.command || '')
 
-// operationLabel：由 formatToolParameters 返回的 label 决定（覆盖 deepagents 工具名）
-// 原硬编码 map 仅覆盖 shell_exec/fs_write_file/file_reader/agent_cleanup，
-// 现通过 formatToolParameters(approvalData.tool_name, approvalData.args) 获取 label：
-//   - shell_exec/execute → '命令'
-//   - write_file/fs_write_file → '写入文件'（fs_write_file 走通用分支，label='输入'）
-//   - read_file/file_reader → '文件路径'
-//   - edit_file → '编辑文件'
-//   - glob → '匹配模式'
-//   - grep → '搜索模式'
-//   - ls → '目录'
-//   - task → '任务描述'
-//   - 其他 → '操作'
-// 注意：fs_write_file/file_reader/agent_cleanup 是项目自定义工具名，不在 adapter 注册表中，
-// formatToolParameters 返回 label='输入'。为保留原 UX，对这些工具名做显式回退映射。
+// operationLabel：由 formatToolParameters 返回的 label 决定
+// 所有工具（含后端自定义工具）已注册独立的参数格式化器，不再需要 fallbackMap。
 const operationLabel = computed(() => {
   const toolName = approvalData.value?.tool_name
   if (!toolName) return '操作'
-  // 先尝试 formatToolParameters（覆盖 deepagents 工具）
-  const result = formatToolParameters(toolName, approvalData.value?.args)
+  const params = approvalData.value?.parameters
+  const result = formatToolParameters(toolName, params)
   if (result.label && result.label !== '输入') {
     return result.label
   }
-  // 项目自定义工具回退映射（与原硬编码 map 一致）
-  const fallbackMap = {
-    fs_write_file: '文件路径',
-    file_reader: '文件路径',
-    agent_cleanup: '操作',
-  }
-  return fallbackMap[toolName] || '操作'
+  return '操作'
+})
+
+// approvalArgs：审批面板统一展示所有用户可见参数
+const approvalArgs = computed(() => {
+  const args = approvalData.value?.parameters
+  if (!args || typeof args !== 'object') return []
+  const skipKeys = ['thread_id', '_meta', 'timeout', 'encoding']
+  return Object.entries(args)
+    .filter(([key, val]) => val != null && val !== '' && !skipKeys.includes(key) && !key.startsWith('_'))
+    .map(([key, val]) => ({ key, value: String(val) }))
 })
 </script>
 
@@ -363,7 +387,7 @@ const operationLabel = computed(() => {
     <div v-if="isExpanded" class="tool-call-content">
       <!-- 输入区：按 inputDisplay.displayMode 差异化渲染 -->
       <div v-if="inputDisplay.displayMode !== 'skip'" class="tool-call-section">
-        <div class="section-title">{{ inputDisplay.label }}</div>
+        <div class="section-title">输入参数</div>
         <pre :class="inputContentClass">{{ inputDisplay.formatted }}</pre>
       </div>
       <!-- Skill hybrid 模式分区渲染 -->
@@ -379,27 +403,33 @@ const operationLabel = computed(() => {
           <div class="section-content">{{ output }}</div>
         </div>
       </template>
-      <!-- 普通输出：按 outputDisplay.displayMode 差异化渲染 -->
+      <!-- 普通输出：仅终态展示（防止审批阶段提前渲染 result 字段） -->
       <template v-else>
-        <div v-if="outputDisplay.displayMode !== 'skip'" class="tool-call-section">
-          <div class="section-title">{{ isKnowledgeBase ? '检索摘要' : outputDisplay.label }}</div>
+        <div v-if="shouldShowOutput && outputDisplay.displayMode !== 'skip'" class="tool-call-section">
+          <div class="section-title">输出结果</div>
           <pre :class="outputContentClass">{{ outputDisplay.formatted }}</pre>
         </div>
       </template>
 
       <!-- 审批面板 -->
-      <div v-if="isPendingApproval" class="approval-panel" :class="{ 'approval-panel--high-risk': isHighRisk }">
+      <div v-if="isPendingApproval || isWaitingForSiblings" class="approval-panel" :class="{ 'approval-panel--high-risk': isHighRisk }">
         <div class="approval-panel__header">
           <span class="approval-panel__title">审批确认</span>
           <el-tag size="small" :type="riskLevelTagType" effect="dark">{{ riskLevelLabel }}</el-tag>
         </div>
+        <div v-if="isWaitingForSiblings" class="approval-panel__waiting-hint">
+          <el-icon><Clock /></el-icon>
+          <span>本工具已审批，等待其余工具完成审批</span>
+        </div>
         <div v-if="approvalData.title" class="approval-panel__title-text">{{ approvalData.title }}</div>
         <div v-if="approvalData.description" class="approval-panel__desc">{{ approvalData.description }}</div>
-        <div v-if="operationText" class="approval-panel__command">
-          <span class="approval-panel__command-label">{{ operationLabel }}</span>
-          <pre class="approval-panel__code">{{ operationText }}</pre>
+        <div v-if="approvalArgs.length > 0 && !isWaitingForSiblings && !isProcessingApproval" class="approval-panel__command">
+          <div v-for="(arg, idx) in approvalArgs" :key="idx" class="approval-panel__arg">
+            <span class="approval-panel__command-label">{{ arg.key }}</span>
+            <pre class="approval-panel__code">{{ arg.value }}</pre>
+          </div>
         </div>
-        <div v-if="isConfirmWithInput" class="approval-panel__input">
+        <div v-if="isConfirmWithInput && !isWaitingForSiblings && !isProcessingApproval" class="approval-panel__input">
           <el-input
             v-model="approvalInputValue"
             :placeholder="approvalData.input_placeholder || '请输入值...'"
@@ -409,10 +439,11 @@ const operationLabel = computed(() => {
           />
         </div>
         <div class="approval-panel__actions">
-          <el-button type="danger" size="small" @click.stop="emit('reject', toolCall)">拒绝</el-button>
+          <el-button type="danger" size="small" :disabled="isWaitingForSiblings || isProcessingApproval" @click.stop="emit('reject', toolCall)">拒绝</el-button>
           <el-button
             type="primary"
             size="small"
+            :disabled="isWaitingForSiblings || isProcessingApproval"
             @click.stop="emit('approve', isConfirmWithInput ? { ...toolCall, _user_input: approvalInputValue } : toolCall)"
           >
             {{ isConfirmWithInput ? '确认并提交' : '确认执行' }}
@@ -430,6 +461,7 @@ const operationLabel = computed(() => {
   border-radius: 8px;
   margin: 8px 0;
   overflow: hidden;
+  transition: border-color 0.25s ease, border-left-color 0.25s ease, border-left-width 0.25s ease;
 }
 
 .tool-call-card--completed {
@@ -701,6 +733,30 @@ const operationLabel = computed(() => {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* P19 修复：按钮 disabled 样式（等待同批审批） */
+.approval-panel__actions .el-button.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.approval-panel__waiting-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  background: var(--el-color-info-light-9);
+  border: 1px solid var(--el-color-info-light-5);
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--el-color-info);
+}
+
+.approval-panel__waiting-hint .el-icon {
+  font-size: 16px;
+  flex-shrink: 0;
 }
 
 .approval-panel__title-text {

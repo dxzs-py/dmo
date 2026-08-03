@@ -10,8 +10,9 @@ import { getSession, ensureSessionLoaded } from './helpers'
  * 创建工具调用事件处理器（三模块共享：chat / deep_research / learning）
  *
  * 后端为每个 EventType 独立 ws_event_name，前端通过 event.type 直接区分
- * 8 个工具调用事件类型（含 rejected），映射到对应的 ToolCallStatus。
- * SSE 不推送工具事件，工具事件统一通过 WebSocket 发布。
+ * 11 个工具调用事件类型（含 rejected），映射到对应的 ToolCallStatus。
+ * 工具事件主通道为 WebSocket（ToolCallLifecycleService）；恢复 SSE 流同时通过
+ * SSE 和 WebSocket 推送 tool_result，前端通过 updateOrAddToolResultInMap 兼容处理。
  *
  * 通过 sessionId / taskId 自动路由到 sessionStore 或 researchStore：
  * - sessionId 存在（chat / learning / 关联 deep_research）→ sessionStore
@@ -61,13 +62,13 @@ export const createHandleToolCallEvent = (ctx) => {
       && !Array.isArray(payload.parameters)
       && Object.keys(payload.parameters).length > 0
 
+    /** @type {import('@/types').ToolCallData} */
     const toolData = {
       id: toolCallId,
       tool_call_id: toolCallId,
       name: payload.tool_name,
       tool_name: payload.tool_name,
       parameters: hasNonEmptyParams ? payload.parameters : undefined,
-      args: hasNonEmptyParams ? payload.parameters : undefined,
       state: payload.state,
       status: mappedStatus || payload.status,
       result: payload.result,

@@ -225,7 +225,7 @@ def _handle_ai_message_chunk(
     tool_calls = getattr(message, "tool_calls", [])
     tool_call_chunks = getattr(message, "tool_call_chunks", None)
     if tool_calls:
-        for raw_tool_call in tool_calls:
+        for i, raw_tool_call in enumerate(tool_calls):
             tool_call = _fix_groq_tool_call(raw_tool_call)
             tool_id = tool_call.get("id") or ""
             tool_name = tool_call.get("name") or ""
@@ -254,6 +254,7 @@ def _handle_ai_message_chunk(
                     updated_params = _extract_tool_params(tool_call)
                     if updated_params:
                         tool_calls_map[dedup_key]["parameters"] = updated_params
+                        tool_calls_map[dedup_key]["_index"] = i
                         tool_info = dict(tool_calls_map[dedup_key])
                         tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
                         # 广播 INPUT_READY 事件到非触发浏览器（仅完整 AIMessage 路径）
@@ -347,6 +348,7 @@ def _handle_ai_message_chunk(
                 "parameters": {} if is_chunk else _extract_tool_params(tool_call),
                 "result": None,
                 "error": None,
+                "_index": i,
             }
             tool_calls_map[dedup_key] = tool_info
             if not is_chunk:

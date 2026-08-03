@@ -11,6 +11,8 @@ import {
   findToolCallById,
   updateApprovalStateInMap,
   updateToolCallStatusInMap,
+  flushPendingApprovalsInMap,
+  isTerminalStatus,
   _mergeToolCalls,
 } from '@/utils/message-operations'
 
@@ -320,9 +322,12 @@ export const useResearchStore = defineStore('research', () => {
     const toolCallId = updateOrAddToolResultInMap(toolCallMap, data)
     if (!toolCallId) return
 
-    // toolCall 创建后（容错场景：tool_result 先于 tool 到达），检查是否有待绑定的审批
-    // flushPendingApprovals 内部会检查 pending 队列，无匹配时直接返回，调用安全
-    flushPendingApprovals(taskId, toolCallId)
+    // 仅当工具未进入终态时才刷新待绑审批（与 session.js 对齐：
+    // 终态时 approval 已置 null，flush 会重设导致审批面板残留）
+    const isTerminal = isTerminalStatus(data.status)
+    if (!isTerminal) {
+      flushPendingApprovals(taskId, toolCallId)
+    }
     _syncToolCalls(task)
   }
 
@@ -357,6 +362,33 @@ export const useResearchStore = defineStore('research', () => {
   }
 
   /**
+   * 更新审批状态并联动 toolCall.status（审批通过/拒绝/超时时同步更新 status）
+   *
+   * 与 session.js 的 updateToolCallApprovalState 签名和语义完全对齐，
+   * 供 approval.js 统一调用，确保代理模式和深度研究模块行为一致。
+   *
+   * @param {string} taskId - 研究任务 ID
+   * @param {string} toolCallId - 工具调用 ID
+   * @param {string} state - 新的 approval.state（如 'processing' / 'approved' / 'rejected' / 'timeout'）
+   */
+  const updateToolCallApprovalState = (taskId, toolCallId, state) => {
+    if (!taskId || !toolCallId) return
+    const task = tasks.value.get(taskId)
+    if (!task) {
+      logger.warn(`[Research] updateToolCallApprovalState: task 不存在, taskId=${taskId}`)
+      return
+    }
+    const toolCallMap = task.toolCallMap.value
+    // 1. 更新 approval.state（不修改 status，由 updateApprovalStateInMap 保证）
+    const stateUpdated = updateApprovalStateInMap(toolCallMap, toolCallId, state)
+    if (!stateUpdated) return
+    // 2. 显式同步 toolCall.status（审批通过/拒绝/超时需要流转 status）
+    updateToolCallStatusInMap(toolCallMap, toolCallId, mapApprovalStateToStatus(state))
+    triggerRef(task.toolCallMap)
+    _syncToolCalls(task)
+  }
+
+  /**
    * 仅更新 approval.state，不改变 toolCall.status
    *
    * 统一通过 toolCallMap 作为唯一真相源操作。Map 未命中时，先从 task.toolCalls
@@ -369,11 +401,9 @@ export const useResearchStore = defineStore('research', () => {
    * @param {string} taskId - 研究任务 ID
    * @param {string} toolCallId - 工具调用 ID
    * @param {string} state - 新的 approval.state（如 'processing'）
-   * @param {string|null} [messageBackendId=null] - 预留参数，与 sessionStore 签名对齐（research 不按消息分组）
-   * @param {Object|null} [data=null] - 审批数据，用于辅助查找 toolCall（tool_call_id）
    * @returns {boolean} 是否成功更新
    */
-  const updateToolCallApprovalStateOnly = (taskId, toolCallId, state, messageBackendId = null, data = null) => {
+  const updateToolCallApprovalStateOnly = (taskId, toolCallId, state) => {
     const task = tasks.value.get(taskId)
     if (!task) {
       logger.warn(`[Research] updateToolCallApprovalStateOnly: task 不存在, taskId=${taskId}`)
@@ -382,7 +412,7 @@ export const useResearchStore = defineStore('research', () => {
     const toolCallMap = task.toolCallMap.value
 
     // 尝试从 Map 查找
-    let { toolCall: target } = findToolCallInMap(toolCallMap, toolCallId, data)
+    let { toolCall: target } = findToolCallInMap(toolCallMap, toolCallId)
 
     // Map 未命中：从 task.toolCalls 数组填充到 Map（单向数据流：数组 → Map）
     // 场景：刷新后 toolCallMap 可能未填充该 toolCall，但 toolCalls 数组中已有
@@ -415,7 +445,7 @@ export const useResearchStore = defineStore('research', () => {
     const toolName = target.name || target.tool_name
 
     // 统一通过 Map 函数更新 approval.state
-    const updated = updateApprovalStateInMap(toolCallMap, toolCallId, state, data)
+    const updated = updateApprovalStateInMap(toolCallMap, toolCallId, state)
     if (!updated) return false
 
     _syncToolCalls(task)
@@ -435,25 +465,24 @@ export const useResearchStore = defineStore('research', () => {
    * @param {string} taskId - 研究任务 ID
    * @param {string} toolCallId - 工具调用 ID
    * @param {string} status - 新的 toolCall.status
-   * @param {string|null} [messageBackendId=null] - 预留参数，与 sessionStore 签名对齐
-   * @param {Object|null} [data=null] - 审批数据，用于辅助查找 toolCall（tool_call_id）
+   * @returns {boolean} 是否成功更新
    */
-  const updateToolCallStatus = (taskId, toolCallId, status, messageBackendId = null, data = null) => {
+  const updateToolCallStatus = (taskId, toolCallId, status) => {
     const task = tasks.value.get(taskId)
     if (!task) {
       logger.warn(`[Research] updateToolCallStatus: task 不存在, taskId=${taskId}`)
-      return
+      return false
     }
     const toolCallMap = task.toolCallMap.value
 
     // 尝试从 Map 查找
-    let { toolCall: target } = findToolCallInMap(toolCallMap, toolCallId, data)
+    let { toolCall: target } = findToolCallInMap(toolCallMap, toolCallId)
 
     // Map 未命中：从 task.toolCalls 数组填充到 Map（单向数据流：数组 → Map）
     if (!target) {
       const toolCallsArr = task.toolCalls.value
       if (toolCallsArr && Array.isArray(toolCallsArr)) {
-        const tc = findToolCallById(toolCallsArr, toolCallId, { approvalData: data, skipApproved: false })
+        const tc = findToolCallById(toolCallsArr, toolCallId, { skipApproved: false })
         if (tc) {
           const writeKey = tc.id || tc.tool_call_id || toolCallId
           toolCallMap.set(writeKey, tc)
@@ -472,20 +501,21 @@ export const useResearchStore = defineStore('research', () => {
         `[Research] updateToolCallStatus: 未找到 toolCall, taskId=${taskId}, ` +
         `toolCallId=${toolCallId}, status=${status}`
       )
-      return
+      return false
     }
 
     const oldStatus = target.status
     const toolName = target.name || target.tool_name
 
     // 统一通过 Map 函数更新 status
-    updateToolCallStatusInMap(toolCallMap, toolCallId, status, data)
+    updateToolCallStatusInMap(toolCallMap, toolCallId, status)
 
     _syncToolCalls(task)
     logger.debug(
       `[Research] updateToolCallStatus: taskId=${taskId}, toolCallId=${toolCallId}, ` +
       `oldStatus=${oldStatus}, newStatus=${status}, toolName=${toolName}`
     )
+    return true
   }
 
   /**
@@ -585,12 +615,15 @@ export const useResearchStore = defineStore('research', () => {
     if (!taskId || !toolCallId) return
     const task = tasks.value.get(taskId)
     if (!task) return
-    const pending = task.pendingApprovals.value.get(toolCallId)
-    if (!pending) return
-    // 从队列移除后递归调用 setApprovalToToolCall，此时 toolCallMap 中已有目标条目
-    task.pendingApprovals.value.delete(toolCallId)
-    setApprovalToToolCall(taskId, toolCallId, pending.approvalData)
-    logger.info(`[Research] pending 审批已绑定: taskId=${taskId}, toolCallId=${toolCallId}`)
+    const didBind = flushPendingApprovalsInMap(
+      task.pendingApprovals.value,
+      task.toolCallMap.value,
+      toolCallId
+    )
+    if (didBind) {
+      _syncToolCalls(task)
+      logger.info(`[Research] pending 审批已绑定: taskId=${taskId}, toolCallId=${toolCallId}`)
+    }
   }
 
   return {
@@ -599,6 +632,7 @@ export const useResearchStore = defineStore('research', () => {
     addOrUpdateToolCall,
     updateOrAddToolResult,
     setApprovalToToolCall,
+    updateToolCallApprovalState,     // 与 session.js 对齐：审批状态 + toolCall.status 联动更新
     updateToolCallApprovalStateOnly,
     updateToolCallStatus,
     getToolCalls,

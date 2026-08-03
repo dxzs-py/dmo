@@ -346,6 +346,13 @@ class ApprovalResumeView(BaseApprovalAccessMixin, APIView):
             return error_response(code=ErrorCode.VALIDATION_FAILED, message=str(e))
 
         approval = result["approval"]
+
+        logger.info(
+            f"[ApprovalResumeView] result: interrupt_id={interrupt_id}, "
+            f"state={result.get('state')}, idempotent={result.get('idempotent')}, "
+            f"not_found={result.get('not_found')}, "
+            f"graph_interrupt_id={approval.extra.get('graph_interrupt_id') if approval and approval.extra else 'N/A'}"
+        )
         resume_value = result["resume_value"]
         is_idempotent = result.get("idempotent", False)
         not_found = result.get("not_found", False)
