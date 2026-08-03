@@ -22,13 +22,16 @@ function _isPlainObject(value) {
 }
 
 /**
- * snake_case 字符串 → camelCase 字符串
+ * snake_case 字符串 → camelCase 字符串（公共导出，用于转换单个字符串值）
  * @param {string} str
  * @returns {string}
  */
-function _snakeToCamel(str) {
+export function snakeToCamel(str) {
   return str.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
 }
+
+// 内部别名，保持向后兼容
+const _snakeToCamel = snakeToCamel
 
 /**
  * camelCase 字符串 → snake_case 字符串

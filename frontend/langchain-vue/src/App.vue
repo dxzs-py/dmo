@@ -10,7 +10,7 @@ import { useThemeStore } from './stores/theme'
 import { useSessionStore } from './stores/session'
 import { useUserStore } from './stores/user'
 import { useLoadingStore } from './stores/loading'
-import { useThrottle } from './composables/useDebounce'
+import { useThrottle } from './composables/useThrottle'
 
 const route = useRoute()
 const themeStore = useThemeStore()

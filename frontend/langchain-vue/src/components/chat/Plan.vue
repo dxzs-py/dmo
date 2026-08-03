@@ -46,7 +46,7 @@ const progress = computed(() => {
 const getStepStatusType = (status) => {
   const typeMap = {
     pending: 'info',
-    in_progress: 'warning',
+    inProgress: 'warning',
     completed: 'success',
     failed: 'danger'
   }
@@ -56,7 +56,7 @@ const getStepStatusType = (status) => {
 const getStepStatusText = (status) => {
   const textMap = {
     pending: '待开始',
-    in_progress: '进行中',
+    inProgress: '进行中',
     completed: '已完成',
     failed: '失败'
   }
@@ -65,7 +65,7 @@ const getStepStatusText = (status) => {
 
 const getStepIcon = (status) => {
   if (status === 'completed') return CircleCheck
-  if (status === 'in_progress') return Loading
+  if (status === 'inProgress') return Loading
   return Clock
 }
 
@@ -138,7 +138,7 @@ const handleStepClick = (step, index) => {
               v-for="(step, index) in steps"
               :key="step.id || index"
               class="plan-step"
-              :class="[`step-${step.status}`, { clickable: step.status === 'pending' || step.status === 'in_progress' }]"
+              :class="[`step-${step.status}`, { clickable: step.status === 'pending' || step.status === 'inProgress' }]">}]"
               @click="handleStepClick(step, index)"
             >
               <div class="step-indicator">
@@ -338,7 +338,7 @@ const handleStepClick = (step, index) => {
   color: var(--el-text-color-secondary);
 }
 
-.step-icon.status-in_progress {
+.step-icon.status-inProgress {
   color: var(--el-color-warning);
 }
 

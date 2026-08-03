@@ -76,17 +76,17 @@ const emit = defineEmits({
   send: () => true,
   keydown: (event) => event instanceof KeyboardEvent,
   attach: () => true,
-  removeAttachment: (index) => typeof index === 'number',
-  webSearch: () => true,
+  'remove-attachment': (index) => typeof index === 'number',
+  'web-search': () => true,
   mcp: () => true,
   'update:selectedMcpServers': (val) => Array.isArray(val),
   'update:selectedTools': (val) => Array.isArray(val),
   'update:useDeepThinking': (val) => typeof val === 'boolean',
-  stopStreaming: () => true,
-  commandSelect: (cmd) => cmd instanceof Object,
-  retryUpload: (index) => typeof index === 'number',
-  cancelUpload: () => true,
-  dismissResearchContext: () => true,
+  'stop-streaming': () => true,
+  'command-select': (cmd) => cmd instanceof Object,
+  'retry-upload': (index) => typeof index === 'number',
+  'cancel-upload': () => true,
+  'dismiss-research-context': () => true,
 })
 
 const textareaRef = ref(null)
@@ -225,16 +225,16 @@ const handleFileChange = (event) => {
 }
 
 const handleRemoveAttachment = (index) => {
-  emit('removeAttachment', index)
+  emit('remove-attachment', index)
 }
 
 const handleWebSearch = () => {
-  emit('webSearch')
+  emit('web-search')
 }
 
 const handleCommandSelect = (cmd) => {
   showCommandPanel.value = false
-  emit('commandSelect', cmd)
+  emit('command-select', cmd)
 }
 
 const adjustTextareaHeight = async () => {
@@ -265,7 +265,7 @@ watch(() => props.modelValue, adjustTextareaHeight)
                 <span v-if="researchContextInfo.query" class="attachment-size">{{ researchContextInfo.query }}</span>
               </div>
               <div class="attachment-actions">
-                <button class="attachment-remove" @click="emit('dismissResearchContext')">
+                <button class="attachment-remove" @click="emit('dismiss-research-context')">
                   <el-icon :size="12"><Close /></el-icon>
                 </button>
               </div>
@@ -302,7 +302,7 @@ watch(() => props.modelValue, adjustTextareaHeight)
                   size="small"
                   type="primary"
                   class="attachment-retry"
-                  @click="emit('retryUpload', index)"
+                  @click="emit('retry-upload', index)"
                 >
                   <el-icon :size="12"><RefreshRight /></el-icon>
                 </el-button>
@@ -328,7 +328,7 @@ watch(() => props.modelValue, adjustTextareaHeight)
           :show-text="false"
           style="flex: 1; max-width: 120px; margin: 0 8px;"
         />
-        <el-button text size="small" type="danger" @click="emit('cancelUpload')">取消上传</el-button>
+        <el-button text size="small" type="danger" @click="emit('cancel-upload')">取消上传</el-button>
       </div>
 
       <div class="input-card" :class="{ 'is-focused': isFocused, 'is-streaming': isStreaming }">
@@ -402,7 +402,7 @@ watch(() => props.modelValue, adjustTextareaHeight)
                 v-if="isStreaming"
                 key="stop"
                 class="stop-btn"
-                @click="emit('stopStreaming')"
+                @click="emit('stop-streaming')"
               >
                 <el-icon :size="14"><VideoPause /></el-icon>
                 <span>停止</span>

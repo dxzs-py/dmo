@@ -184,7 +184,7 @@
 import { ref, reactive, computed, watch, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { workflowAPI } from '@/api/workflow'
 import { readSSEStream } from '../utils/sse'
-import { toCamelCase } from '@/utils/sessionTransformers'
+import { toCamelCase, snakeToCamel } from '@/utils/sessionTransformers'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import TaskList from '../components/chat/TaskList.vue'
@@ -239,8 +239,8 @@ const workflowSteps = [
   { key: 'start', label: '启动' },
   { key: 'planner', label: '规划' },
   { key: 'retrieval', label: '检索' },
-  { key: 'quiz_generator', label: '出题' },
-  { key: 'waiting_for_answers', label: '答题' },
+  { key: 'quizGenerator', label: '出题' },
+  { key: 'waitingForAnswers', label: '答题' },
   { key: 'grading', label: '评分' },
   { key: 'feedback', label: '反馈' },
   { key: 'end', label: '完成' },
@@ -260,11 +260,11 @@ const getStepType = (step) => {
     start: 'info',
     planner: 'primary',
     retrieval: 'primary',
-    quiz_generator: 'warning',
-    waiting_for_answers: 'warning',
+    quizGenerator: 'warning',
+    waitingForAnswers: 'warning',
     grading: 'primary',
     feedback: 'success',
-    feedback_completed: 'success',
+    feedbackCompleted: 'success',
     end: 'success',
     completed: 'success',
   }
@@ -276,11 +276,11 @@ const getStepText = (step) => {
     start: '准备中',
     planner: '生成学习计划',
     retrieval: '检索资料',
-    quiz_generator: '生成练习题',
-    waiting_for_answers: '等待答题',
+    quizGenerator: '生成练习题',
+    waitingForAnswers: '等待答题',
     grading: '评分中',
     feedback: '生成反馈',
-    feedback_completed: '工作流已完成',
+    feedbackCompleted: '工作流已完成',
     end: '已结束',
     completed: '已完成',
   }
@@ -289,9 +289,9 @@ const getStepText = (step) => {
 
 const getQuestionTypeText = (type) => {
   const map = {
-    multiple_choice: '选择题',
-    fill_blank: '填空题',
-    short_answer: '简答题',
+    multipleChoice: '选择题',
+    fillBlank: '填空题',
+    shortAnswer: '简答题',
   }
   return map[type] || type
 }
@@ -304,9 +304,9 @@ const pollExecutionStatus = async () => {
 
   const currentStep = execution.value.currentStep
 
-  if (currentStep === 'waiting_for_answers' || currentStep === 'end' || currentStep === 'completed') {
+  if (currentStep === 'waitingForAnswers' || currentStep === 'end' || currentStep === 'completed') {
     stopPolling()
-    if (fileBrowserRef.value && currentStep !== 'waiting_for_answers') {
+    if (fileBrowserRef.value && currentStep !== 'waitingForAnswers') {
       fileBrowserRef.value.loadFiles()
       autoLoadKeyFile()
     }
@@ -413,7 +413,7 @@ const connectSSE = async (threadId) => {
 
     if (sseReaderActive && execution.value) {
       const step = execution.value.currentStep
-      if (step !== 'waiting_for_answers' && step !== 'end' && step !== 'completed') {
+      if (step !== 'waitingForAnswers' && step !== 'end' && step !== 'completed') {
         pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
       }
     }
@@ -424,7 +424,7 @@ const connectSSE = async (threadId) => {
     logger.error('SSE连接失败，回退到轮询:', error)
     if (execution.value) {
       const step = execution.value.currentStep
-      if (step !== 'waiting_for_answers' && step !== 'end' && step !== 'completed') {
+      if (step !== 'waitingForAnswers' && step !== 'end' && step !== 'completed') {
         pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
       }
     }
@@ -443,7 +443,7 @@ const handleSSEEvent = (data) => {
       // 新格式：{ type: 'workflow_step', data: { step, message } }
       currentStepMessage.value = data.data?.message || '工作流启动中...'
       if (execution.value && data.data?.step) {
-        execution.value.currentStep = data.data.step
+        execution.value.currentStep = snakeToCamel(data.data.step)
       }
       break
     case 'workflow_state_update':
@@ -457,10 +457,10 @@ const handleSSEEvent = (data) => {
         if (d.score !== undefined) execution.value.score = d.score
         if (d.feedback !== undefined) execution.value.feedback = d.feedback
         if (d.shouldRetry !== undefined) execution.value.shouldRetry = d.shouldRetry
-        // waiting_for_answers 状态：原 'waiting' 行为，关闭 SSE 并初始化答题表单
-        const isWaiting = d.state === 'waiting_for_answers'
-          || d.currentStep === 'waiting_for_answers'
-          || d.status === 'waiting_for_answers'
+        // waitingForAnswers 状态：原 'waiting' 行为，关闭 SSE 并初始化答题表单
+        const isWaiting = d.state === 'waitingForAnswers'
+          || d.currentStep === 'waitingForAnswers'
+          || d.status === 'waitingForAnswers'
         if (isWaiting) {
           execution.value = { ...execution.value, ...d }
           if (d.quiz && !Object.keys(answersForm).length) {
@@ -701,7 +701,7 @@ const viewTask = async (selectedTask) => {
   const isActive = selectedTask.status === 'running'
     || selectedTask.currentStep === 'planner'
     || selectedTask.currentStep === 'retrieval'
-    || selectedTask.currentStep === 'quiz_generator'
+    || selectedTask.currentStep === 'quizGenerator'
     || selectedTask.currentStep === 'grading'
     || selectedTask.currentStep === 'feedback'
 
@@ -716,7 +716,7 @@ const viewTask = async (selectedTask) => {
         // fresh 可能补充 chat_session_id 字段，重新订阅（幂等：若已订阅同 task+session 则跳过）
         subscribeRealtimeForTask(execution.value)
         const freshActive = fresh.currentStep
-          && fresh.currentStep !== 'waiting_for_answers'
+          && fresh.currentStep !== 'waitingForAnswers'
           && fresh.currentStep !== 'end'
           && fresh.currentStep !== 'completed'
           && fresh.currentStep !== 'failed'

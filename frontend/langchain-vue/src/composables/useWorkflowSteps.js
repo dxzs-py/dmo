@@ -4,8 +4,8 @@ import { computed } from 'vue'
  * 学习工作流步骤可视化 composable
  *
  * 封装工作流步骤定义与状态映射：
- *   - workflowSteps / stepOrder：8 个固定步骤（start → planner → retrieval → quiz_generator
- *     → waiting_for_answers → grading → feedback → end）及其顺序
+ *   - workflowSteps / stepOrder：8 个固定步骤（start → planner → retrieval → quizGenerator
+ *     → waitingForAnswers → grading → feedback → end）及其顺序
  *   - completedSteps：基于 execution.current_step 计算已完成步骤（current_step 之前的所有步骤）
  *   - getStepType / getStepText：步骤 → el-tag type / 中文文案 映射
  *   - getQuestionTypeText：题目类型 → 中文文案映射
@@ -26,8 +26,8 @@ export function useWorkflowSteps({ execution }) {
     { key: 'start', label: '启动' },
     { key: 'planner', label: '规划' },
     { key: 'retrieval', label: '检索' },
-    { key: 'quiz_generator', label: '出题' },
-    { key: 'waiting_for_answers', label: '答题' },
+    { key: 'quizGenerator', label: '出题' },
+    { key: 'waitingForAnswers', label: '答题' },
     { key: 'grading', label: '评分' },
     { key: 'feedback', label: '反馈' },
     { key: 'end', label: '完成' },
@@ -49,11 +49,11 @@ export function useWorkflowSteps({ execution }) {
       start: 'info',
       planner: 'primary',
       retrieval: 'primary',
-      quiz_generator: 'warning',
-      waiting_for_answers: 'warning',
+      quizGenerator: 'warning',
+      waitingForAnswers: 'warning',
       grading: 'primary',
       feedback: 'success',
-      feedback_completed: 'success',
+      feedbackCompleted: 'success',
       end: 'success',
       completed: 'success',
     }
@@ -66,11 +66,11 @@ export function useWorkflowSteps({ execution }) {
       start: '准备中',
       planner: '生成学习计划',
       retrieval: '检索资料',
-      quiz_generator: '生成练习题',
-      waiting_for_answers: '等待答题',
+      quizGenerator: '生成练习题',
+      waitingForAnswers: '等待答题',
       grading: '评分中',
       feedback: '生成反馈',
-      feedback_completed: '工作流已完成',
+      feedbackCompleted: '工作流已完成',
       end: '已结束',
       completed: '已完成',
     }

@@ -47,8 +47,8 @@ const emit = defineEmits({
   'update:currentMode': (mode) => typeof mode === 'string',
   'update:useWebSearch': (val) => typeof val === 'boolean',
   'update:useDeepThinking': (val) => typeof val === 'boolean',
-  toggleDebug: () => true,
-  toggleRightPanel: () => true,
+  'toggle-debug': () => true,
+  'toggle-right-panel': () => true,
 })
 
 const sessionStore = useSessionStore()
@@ -212,7 +212,7 @@ function handleModeChange(mode) {
         <el-tooltip :content="showRightPanel ? '隐藏详情面板 (Ctrl+B)' : '显示详情面板 (Ctrl+B)'">
           <button
             :class="['header-icon-btn', { active: showRightPanel }]"
-            @click="emit('toggleRightPanel')"
+            @click="emit('toggle-right-panel')"
           >
             <el-icon :size="15"><component :is="showRightPanel ? Hide : View" /></el-icon>
           </button>
@@ -220,7 +220,7 @@ function handleModeChange(mode) {
         <el-tooltip :content="showDebug ? '关闭调试模式' : '开启调试模式'">
           <button
             :class="['header-icon-btn debug-btn', { active: showDebug }]"
-            @click="emit('toggleDebug')"
+            @click="emit('toggle-debug')"
           >
             <el-icon :size="15"><Cpu /></el-icon>
           </button>

@@ -61,7 +61,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['openChange'])
+const emit = defineEmits(['open-change'])
 
 const isOpen = ref(props.source === 'model_intrinsic' ? false : props.defaultOpen)
 const hasAutoClosed = ref(false)
@@ -94,7 +94,7 @@ const thinkingMessage = computed(() => {
 
 function toggleOpen() {
   isOpen.value = !isOpen.value
-  emit('openChange', isOpen.value)
+  emit('open-change', isOpen.value)
 }
 
 watch(() => props.isStreaming, (isStreaming) => {

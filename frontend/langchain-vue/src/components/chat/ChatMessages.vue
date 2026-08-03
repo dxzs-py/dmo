@@ -47,11 +47,11 @@ const props = defineProps({
 
 const emit = defineEmits({
   regenerate: (index) => typeof index === 'number' && index >= 0,
-  suggestionClick: (suggestion) => typeof suggestion === 'string',
-  scrollChange: (isScrolled) => typeof isScrolled === 'boolean',
-  messageClick: (message) => message && typeof message === 'object',
-  messageDelete: (payload) => payload && typeof payload.messageId !== 'undefined',
-  continueResearch: (taskId) => typeof taskId === 'string' && taskId.length > 0,
+  'suggestion-click': (suggestion) => typeof suggestion === 'string',
+  'scroll-change': (isScrolled) => typeof isScrolled === 'boolean',
+  'message-click': (message) => message && typeof message === 'object',
+  'message-delete': (payload) => payload && typeof payload.messageId !== 'undefined',
+  'continue-research': (taskId) => typeof taskId === 'string' && taskId.length > 0,
   approve: (payload) => payload && typeof payload === 'object',
   reject: (message) => message && typeof message === 'object',
 })
@@ -109,7 +109,7 @@ const handleScroll = () => {
   const isCurrentlyScrolled = container.scrollTop > 0
   if (isCurrentlyScrolled !== isScrolled.value) {
     isScrolled.value = isCurrentlyScrolled
-    emit('scrollChange', isScrolled.value)
+    emit('scroll-change', isScrolled.value)
   }
 }
 
@@ -174,7 +174,7 @@ const displaySuggestions = computed(() => {
 
 const handleSuggestionClick = (suggestion) => {
   const text = typeof suggestion === 'string' ? suggestion : suggestion.text
-  emit('suggestionClick', text)
+  emit('suggestion-click', text)
 }
 </script>
 
@@ -228,9 +228,9 @@ const handleSuggestionClick = (suggestion) => {
                 :is-selected="selectedMessageId && msg.id === selectedMessageId"
                 :show-debug="showDebug"
                 @regenerate="(idx) => emit('regenerate', idx)"
-                @click="(message) => emit('messageClick', message)"
-                @delete="(payload) => emit('messageDelete', payload)"
-                @continue-research="(taskId) => emit('continueResearch', taskId)"
+                @click="(message) => emit('message-click', message)"
+                @delete="(payload) => emit('message-delete', payload)"
+                @continue-research="(taskId) => emit('continue-research', taskId)"
                 @approve="(message) => emit('approve', message)"
                 @reject="(message) => emit('reject', message)"
             />
@@ -254,9 +254,9 @@ const handleSuggestionClick = (suggestion) => {
               :is-selected="selectedMessageId && msg.id === selectedMessageId"
               :show-debug="showDebug"
               @regenerate="(idx) => emit('regenerate', idx)"
-              @click="(message) => emit('messageClick', message)"
-              @delete="(payload) => emit('messageDelete', payload)"
-              @continue-research="(taskId) => emit('continueResearch', taskId)"
+              @click="(message) => emit('message-click', message)"
+              @delete="(payload) => emit('message-delete', payload)"
+              @continue-research="(taskId) => emit('continue-research', taskId)"
               @approve="(message) => emit('approve', message)"
               @reject="(message) => emit('reject', message)"
             />
