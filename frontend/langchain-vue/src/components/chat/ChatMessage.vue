@@ -9,6 +9,7 @@ import ToolCallCard from './ToolCallCard.vue'
 import Sources from './Sources.vue'
 import Plan from './Plan.vue'
 import { AiReasoning } from '../ai-elements'
+import { StreamState } from '../../types'
 import AiTask from '../ai-elements/AiTask.vue'
 import AiImage from '../ai-elements/AiImage.vue'
 import AiControls from '../ai-elements/AiControls.vue'
@@ -123,11 +124,11 @@ const showAttachmentProcessing = computed(() => {
   return false
 })
 const showDeepResearchCard = computed(() => {
-  return props.message.role === 'assistant' && !!props.message.research_task_id && !props.message.research_task_deleted
+  return props.message.role === 'assistant' && !!props.message.researchTaskId && !props.message.researchTaskDeleted
 })
 
 function navigateToDeepResearch() {
-  const taskId = props.message.research_task_id
+  const taskId = props.message.researchTaskId
   if (taskId) {
     router.push({ path: '/deep-research', query: { task_id: taskId } })
   } else {
@@ -197,15 +198,20 @@ function handleRegenerate() {
   emit('regenerate', props.index)
 }
 
-const hasResearchTask = computed(() => !!props.message.research_task_id && !props.message.research_task_deleted)
+const hasResearchTask = computed(() => !!props.message.researchTaskId && !props.message.researchTaskDeleted)
+
+/** 推理面板模式：深度研究任务存在时使用专用文案，否则默认（agent/深度思考） */
+const reasoningMode = computed(() => {
+  return props.message.researchTaskId ? 'deep-research' : undefined
+})
 
 const showContinueResearch = computed(() => {
   return props.message.role === 'assistant' && hasResearchTask.value && !props.isStreaming
 })
 
 function handleContinueResearch() {
-  if (props.message.research_task_id) {
-    emit('continue-research', props.message.research_task_id)
+  if (props.message.researchTaskId) {
+    emit('continue-research', props.message.researchTaskId)
   }
 }
 
@@ -220,7 +226,7 @@ async function handleDelete() {
       cancelButtonText: '取消',
       type: 'warning',
     })
-    emit('delete', { messageId: props.message.id, researchTaskId: props.message.research_task_id })
+    emit('delete', { messageId: props.message.id, researchTaskId: props.message.researchTaskId })
   } catch {}
 }
 
@@ -349,6 +355,7 @@ function handleMessageClick() {
           :duration="message.reasoning.duration"
           :is-streaming="isStreaming && isLast"
           :source="message.reasoning.source || 'deep_thinking'"
+          :mode="reasoningMode"
         />
         <div
           v-if="message.versions && message.versions.length > 1"

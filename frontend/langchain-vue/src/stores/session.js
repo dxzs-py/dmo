@@ -211,9 +211,9 @@ export const useSessionStore = defineStore('session', () => {
     if (!targetMsg || targetMsg.role !== 'assistant') return
     const toolCallMap = toolCallsMap.value.get(sessionId)
     if (!toolCallMap) {
-      targetMsg.toolCalls = []
-      const ver = targetMsg.versions?.[targetMsg.currentVersion]
-      if (ver) ver.toolCalls = []
+      // 兜底保护：toolCallMap 未初始化时，不清空已有 toolCalls 数据
+      // （刷新后 API 加载的 toolCalls 已在 message.toolCalls 中，等待
+      //  loadSessionDetail → _syncToolCallsMapFromMessages 回填 Map）
       return
     }
     const backendId = targetMsg.backendId?.toString()

@@ -74,9 +74,15 @@ function _mergeConsecutiveAssistantMessages(messages) {
         const merged = { ...msg }
         // 合并 content
         merged.content = nextMsg.content || msg.content || ''
-        // 合并 tool_calls（保留当前消息的 tool_calls）
-        if (!_hasToolCalls(merged) && _hasToolCalls(nextMsg)) {
-          merged.tool_calls = nextMsg.tool_calls
+        // 合并 tool_calls：将两条消息的 tool_calls 去重合并（修复：原逻辑因 merged
+        // 浅拷贝了 msg.tool_calls 导致 !_hasToolCalls(merged) 永远为 false，
+        // nextMsg.tool_calls 被丢弃，刷新后只保留第一条消息的 tool_calls）
+        if (_hasToolCalls(nextMsg)) {
+          const existingIds = new Set((merged.tool_calls || []).map(tc => tc.id || tc.tool_call_id))
+          const nextToolCalls = (nextMsg.tool_calls || []).filter(
+            tc => !existingIds.has(tc.id || tc.tool_call_id)
+          )
+          merged.tool_calls = [...(merged.tool_calls || []), ...nextToolCalls]
         }
         // 合并其他字段（plan, chain_of_thought, reasoning 等）
         for (const field of ['plan', 'chain_of_thought', 'reasoning', 'suggestions', 'sources']) {
