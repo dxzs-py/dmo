@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { toolsAPI } from '../../api'
+import { toolsAPI } from '@/api/tools'
 
 const props = defineProps({
   modelValue: {

@@ -2,7 +2,8 @@
 import { ref, onMounted, onActivated, onUnmounted, computed } from 'vue'
 import { ElMessage, ElNotification } from 'element-plus'
 import { Plus, Search, Upload, Delete, View, Document, FolderOpened, Edit, Refresh, Download } from '@element-plus/icons-vue'
-import { knowledgeAPI, cacheAPI } from '../api'
+import { knowledgeAPI } from '@/api/knowledge'
+import { cacheAPI } from '@/api/cache'
 import { logger } from '../utils/logger'
 import { formatFileSize } from '../utils/format'
 import { confirmDelete, confirmAction } from '../utils/dialog'
@@ -179,9 +180,9 @@ async function handleUpload() {
       const resultData = response.data.data
       ElMessage.success('文档上传并向量化成功！')
       // 检查 Embedding 降级提示
-      if (resultData?.fallback_info?.events?.length) {
-        const events = resultData.fallback_info.events
-        const chain = events.map(e => e.from_label).concat([events[events.length - 1].to_label]).join(' → ')
+      if (resultData?.fallbackInfo?.events?.length) {
+        const events = resultData.fallbackInfo.events
+        const chain = events.map(e => e.fromLabel).concat([events[events.length - 1].toLabel]).join(' → ')
         ElNotification({
           title: 'Embedding 模型降级提示',
           message: `降级链路: ${chain}`,
@@ -426,10 +427,10 @@ async function handleClearCache(scope = 'all') {
               </el-tag>
             </el-descriptions-item>
             <el-descriptions-item label="版本" :span="2">{{ postgresqlStatus.version ? postgresqlStatus.version.split(' (')[0] : '-' }}</el-descriptions-item>
-            <el-descriptions-item label="数据库名">{{ postgresqlStatus.database_name || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="表数量">{{ postgresqlStatus.table_count ?? '-' }}</el-descriptions-item>
-            <el-descriptions-item label="总大小">{{ postgresqlStatus.total_size_mb ? postgresqlStatus.total_size_mb + ' MB' : '-' }}</el-descriptions-item>
-            <el-descriptions-item label="当前连接">{{ postgresqlStatus.threads_connected ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item label="数据库名">{{ postgresqlStatus.databaseName || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="表数量">{{ postgresqlStatus.tableCount ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item label="总大小">{{ postgresqlStatus.totalSizeMb ? postgresqlStatus.totalSizeMb + ' MB' : '-' }}</el-descriptions-item>
+            <el-descriptions-item label="当前连接">{{ postgresqlStatus.threadsConnected ?? '-' }}</el-descriptions-item>
             <el-descriptions-item label="总查询数">{{ postgresqlStatus.questions ?? '-' }}</el-descriptions-item>
           </el-descriptions>
           <el-empty v-else description="无法获取 PostgreSQL 状态" :image-size="60" />
@@ -444,11 +445,11 @@ async function handleClearCache(scope = 'all') {
               </el-tag>
             </el-descriptions-item>
             <el-descriptions-item label="类型">{{ vectorStoreStatus.backend || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="索引数量">{{ vectorStoreStatus.index_count ?? '-' }}</el-descriptions-item>
-            <el-descriptions-item label="总大小">{{ vectorStoreStatus.total_size_human || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="索引数量">{{ vectorStoreStatus.indexCount ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item label="总大小">{{ vectorStoreStatus.totalSizeHuman || '-' }}</el-descriptions-item>
             <el-descriptions-item label="存储路径" :span="2">
-              <el-tooltip :content="vectorStoreStatus.base_path" placement="top">
-                <span class="truncate-text">{{ vectorStoreStatus.base_path || '-' }}</span>
+              <el-tooltip :content="vectorStoreStatus.basePath" placement="top">
+                <span class="truncate-text">{{ vectorStoreStatus.basePath || '-' }}</span>
               </el-tooltip>
             </el-descriptions-item>
           </el-descriptions>
@@ -464,14 +465,14 @@ async function handleClearCache(scope = 'all') {
               </el-tag>
             </el-descriptions-item>
             <el-descriptions-item label="版本">{{ cacheHealth.version || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="内存">{{ cacheHealth.used_memory_human || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="客户端">{{ cacheHealth.connected_clients ?? '-' }}</el-descriptions-item>
-            <el-descriptions-item label="键数">{{ cacheHealth.total_keys ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item label="内存">{{ cacheHealth.usedMemoryHuman || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="客户端">{{ cacheHealth.connectedClients ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item label="键数">{{ cacheHealth.totalKeys ?? '-' }}</el-descriptions-item>
             <el-descriptions-item label="命中率" :span="2" v-if="cacheStats">
               <el-progress
-                :percentage="cacheStats.redis_hit_rate ?? 0"
+                :percentage="cacheStats.redisHitRate ?? 0"
                 :stroke-width="10"
-                :color="cacheStats.redis_hit_rate > 80 ? '#67c23a' : cacheStats.redis_hit_rate > 50 ? '#e6a23c' : '#f56c6c'"
+                :color="cacheStats.redisHitRate > 80 ? '#67c23a' : cacheStats.redisHitRate > 50 ? '#e6a23c' : '#f56c6c'"
                 :format="(p) => p + '%'"
               />
             </el-descriptions-item>
@@ -577,7 +578,7 @@ async function handleClearCache(scope = 'all') {
               {{ formatFileSize(scope.row.size) }}
             </template>
           </el-table-column>
-          <el-table-column prop="uploaded_at" label="上传时间" />
+          <el-table-column prop="uploadedAt" label="上传时间" />
           <el-table-column label="操作" width="120">
             <template #default="scope">
               <el-button type="danger" size="small" @click="handleDeleteDocument(currentKB.id, scope.row.name)">

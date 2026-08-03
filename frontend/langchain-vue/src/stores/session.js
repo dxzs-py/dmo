@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch, triggerRef } from 'vue'
-import { chatAPI } from '../api'
-import { knowledgeAPI } from '../api'
+import { chatAPI } from '@/api/chat'
+import { knowledgeAPI } from '@/api/knowledge'
 import { useUserStore } from './user'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { logger } from '../utils/logger'
@@ -10,7 +10,7 @@ import {
   isApiSuccess,
   transformBackendSessionToFrontend,
   transformFrontendMessageToBackend,
-} from '../utils/session-transformers'
+} from '../utils/sessionTransformers'
 import {
   getLastAssistantMessage,
   setLastMessageField,
@@ -36,7 +36,7 @@ import {
   flushPendingApprovalsInMap,
   isTerminalStatus,
   mergeMessageFromBackend,
-} from '../utils/message-operations'
+} from '../utils/messageOperations'
 import { StreamState, ToolCallStatus, mapApprovalStateToStatus } from '../types'
 
 /** localStorage key：持久化 currentSessionId，防止刷新后丢失（Task 15 P0 修复） */

@@ -56,11 +56,11 @@ vi.mock('@/utils/logger', () => ({
   },
 }))
 
-// 使用真实的 message-operations 函数（需端到端验证）
-// 不 mock @/utils/message-operations
+// 使用真实的 messageOperations 函数（需端到端验证）
+// 不 mock @/utils/messageOperations
 
-// Mock session-transformers（简化数据转换，保留必要字段）
-vi.mock('@/utils/session-transformers', () => ({
+// Mock sessionTransformers（简化数据转换，保留必要字段）
+vi.mock('@/utils/sessionTransformers', () => ({
   isApiSuccess: (response) => response?.data?.code === 200,
   transformBackendSessionToFrontend: (data) => {
     if (!data) return null

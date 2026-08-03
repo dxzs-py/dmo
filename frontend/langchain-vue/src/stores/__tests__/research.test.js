@@ -36,8 +36,8 @@ vi.mock('@/utils/logger', () => ({
   },
 }))
 
-// 使用真实的 message-operations 函数（架构核心，需端到端验证一致性）
-// 不 mock @/utils/message-operations
+// 使用真实的 messageOperations 函数（架构核心，需端到端验证一致性）
+// 不 mock @/utils/messageOperations
 
 import { useResearchStore } from '../research'
 

@@ -17,7 +17,7 @@
       <div v-else class="file-grid">
         <div
           v-for="file in files"
-          :key="file.relative_path"
+          :key="file.relativePath"
           class="file-item"
           @click="viewFile(file)"
         >

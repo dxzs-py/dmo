@@ -19,12 +19,12 @@
     <div class="plan-section">
       <h5>💡 关键知识点</h5>
       <ul>
-        <li v-for="(point, idx) in plan.key_points" :key="idx">{{ point }}</li>
+        <li v-for="(point, idx) in plan.keyPoints" :key="idx">{{ point }}</li>
       </ul>
     </div>
 
     <div class="plan-info">
-      <el-tag>预计时间: {{ plan.estimated_time }} 分钟</el-tag>
+      <el-tag>预计时间: {{ plan.estimatedTime }} 分钟</el-tag>
     </div>
   </el-card>
 </template>
@@ -35,7 +35,7 @@
  * 渲染学习计划：主题 / 难度 / 学习目标 / 关键知识点 / 预计时间
  */
 defineProps({
-  /** 学习计划对象（topic / difficulty / objectives / key_points / estimated_time） */
+  /** 学习计划对象（topic / difficulty / objectives / keyPoints / estimatedTime） */
   plan: {
     type: Object,
     required: true,

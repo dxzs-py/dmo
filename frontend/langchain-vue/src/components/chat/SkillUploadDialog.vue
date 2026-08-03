@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Delete, UploadFilled } from '@element-plus/icons-vue'
-import { toolsAPI } from '../../api'
+import { toolsAPI } from '@/api/tools'
 import { useToolsStore } from '../../stores/tools'
 
 const toolsStore = useToolsStore()

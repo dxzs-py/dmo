@@ -61,3 +61,16 @@ export function getModeLabel(mode) {
   }
   return labels[mode] || mode
 }
+
+/**
+ * 安全读取 route.query 中的 snake_case 参数（URL 协议标识符例外隔离点）
+ * 命名边界说明：URL query 参数名由后端控制（snake_case），
+ * 前端通过此函数集中访问，其余代码不得直接使用 route.query.snake_case_key。
+ *
+ * @param {import('vue-router').RouteLocationNormalizedLoaded} route
+ * @param {string} key - snake_case 查询参数名（如 'session_id', 'task_id'）
+ * @returns {string|undefined}
+ */
+export function getQueryParam(route, key) {
+  return route.query[key]
+}

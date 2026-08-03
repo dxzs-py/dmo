@@ -4,7 +4,7 @@ import router from '@/router'
 import { ElMessage } from 'element-plus'
 import { userAPI } from '@/api/user'
 import { logger } from '../utils/logger'
-import { extractErrorMessage } from '../utils/api-error-handler'
+import { extractErrorMessage } from '../utils/apiErrorHandler'
 
 const TOKEN_KEY = 'user_token'
 const REFRESH_TOKEN_KEY = 'user_refresh_token'

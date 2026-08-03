@@ -2,7 +2,7 @@ import { ref, computed, watch, reactive } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
 import { useModelStore } from '../stores/model'
-import { chatAPI } from '../api'
+import { chatAPI } from '@/api/chat'
 import { ElMessage } from 'element-plus'
 import { logger } from '../utils/logger'
 

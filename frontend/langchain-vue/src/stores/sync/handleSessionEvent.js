@@ -1,6 +1,6 @@
 import { logger } from '@/utils/logger'
-import { transformBackendMessageToFrontend, toCamelCase } from '@/utils/session-transformers'
-import { mergeMessageFromBackend, createMessageVersion } from '@/utils/message-operations'
+import { transformBackendMessageToFrontend, toCamelCase } from '@/utils/sessionTransformers'
+import { mergeMessageFromBackend, createMessageVersion } from '@/utils/messageOperations'
 import { StreamState, ToolCallStatus, ApprovalState, PROTECTED_STREAM_STATES } from '@/types'
 import {
   TOOL_CALL_STATUS_MAP,

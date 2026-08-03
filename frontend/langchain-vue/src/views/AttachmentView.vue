@@ -26,7 +26,7 @@ const cleanupLoading = ref(false)
 const stats = ref({
   storage: {},
   alert: [],
-  recent_logs: [],
+  recentLogs: [],
 })
 
 const pagination = reactive({
@@ -44,7 +44,7 @@ const trashPagination = reactive({
 const filters = reactive({
   status: '',
   search: '',
-  sort_by: '-created_at',
+  sortBy: '-created_at',
 })
 
 const trashSearch = ref('')
@@ -90,7 +90,7 @@ const formatGB = (bytes) => {
 }
 
 const diskUsagePercent = computed(() => {
-  return stats.value.storage?.disk_usage_percent || 0
+  return stats.value.storage?.diskUsagePercent || 0
 })
 
 const diskUsageStatus = computed(() => {
@@ -122,7 +122,7 @@ const loadAttachments = async () => {
       page_size: pagination.pageSize,
       status: filters.status || undefined,
       search: filters.search || undefined,
-      sort_by: filters.sort_by,
+      sort_by: filters.sortBy,
     })
     if (res.data?.code === 200) {
       const data = res.data.data
@@ -198,7 +198,7 @@ const handleSearch = () => {
 const handleReset = () => {
   filters.status = ''
   filters.search = ''
-  filters.sort_by = '-created_at'
+  filters.sortBy = '-created_at'
   pagination.page = 1
   loadAttachments()
 }
@@ -469,8 +469,8 @@ const handleCleanup = async (action, dryRun = false) => {
     if (res.data?.code === 200) {
       const data = res.data.data
       ElMessage.success(
-        `${label}完成: 处理=${data.files_processed}, ` +
-          `${action === 'cleanup' ? '删除' : '入库'}=${action === 'cleanup' ? data.files_deleted : data.files_archived}`
+        `${label}完成: 处理=${data.filesProcessed}, ` +
+          `${action === 'cleanup' ? '删除' : '入库'}=${action === 'cleanup' ? data.filesDeleted : data.filesArchived}`
       )
       loadAttachments()
       loadStats()
@@ -786,7 +786,7 @@ onMounted(() => {
                 <template #default="{ row }">{{ formatSize(row.fileSize) }}</template>
               </el-table-column>
               <el-table-column label="删除时间" width="160">
-                <template #default="{ row }">{{ formatDate(row.deleted_at) }}</template>
+                <template #default="{ row }">{{ formatDate(row.deletedAt) }}</template>
               </el-table-column>
               <el-table-column label="所属会话" min-width="140" show-overflow-tooltip>
                 <template #default="{ row }">{{ row.sessionTitle || row.sessionId || '-' }}</template>
@@ -852,7 +852,7 @@ onMounted(() => {
           </el-table-column>
           <el-table-column prop="message" label="告警信息" min-width="250" show-overflow-tooltip />
           <el-table-column label="使用率" width="100">
-            <template #default="{ row }">{{ row.usage_percent?.toFixed(1) }}%</template>
+            <template #default="{ row }">{{ row.usagePercent?.toFixed(1) }}%</template>
           </el-table-column>
           <el-table-column label="状态" width="100">
             <template #default="{ row }">
@@ -893,7 +893,7 @@ onMounted(() => {
       </el-card>
 
       <!-- 清理日志 -->
-      <el-card v-if="stats.recent_logs && stats.recent_logs.length > 0" shadow="never" style="margin-top: 16px">
+      <el-card v-if="stats.recentLogs && stats.recentLogs.length > 0" shadow="never" style="margin-top: 16px">
         <template #header>
           <div class="card-header">
             <span class="card-title">
@@ -902,17 +902,17 @@ onMounted(() => {
             </span>
           </div>
         </template>
-        <el-table :data="stats.recent_logs" stripe style="width: 100%">
+        <el-table :data="stats.recentLogs" stripe style="width: 100%">
           <el-table-column prop="action" label="操作" width="100" />
-          <el-table-column prop="files_processed" label="处理数" width="80" />
-          <el-table-column prop="files_deleted" label="删除数" width="80" />
-          <el-table-column prop="files_archived" label="入库数" width="80" />
+          <el-table-column prop="filesProcessed" label="处理数" width="80" />
+          <el-table-column prop="filesDeleted" label="删除数" width="80" />
+          <el-table-column prop="filesArchived" label="入库数" width="80" />
           <el-table-column label="释放空间" width="100">
-            <template #default="{ row }">{{ formatMB(row.space_freed) }}</template>
+            <template #default="{ row }">{{ formatMB(row.spaceFreed) }}</template>
           </el-table-column>
-          <el-table-column prop="triggered_by" label="触发方式" width="100" />
+          <el-table-column prop="triggeredBy" label="触发方式" width="100" />
           <el-table-column label="执行时间" min-width="160">
-            <template #default="{ row }">{{ formatDate(row.started_at) }}</template>
+            <template #default="{ row }">{{ formatDate(row.startedAt) }}</template>
           </el-table-column>
         </el-table>
       </el-card>

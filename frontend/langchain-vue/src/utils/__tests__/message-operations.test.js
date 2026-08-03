@@ -9,7 +9,7 @@ import {
   updateToolCallStatusInMap,
   isNonEmptyParams,
   getInterruptId,
-} from '../message-operations'
+} from '../messageOperations'
 import { StreamState, ToolCallStatus, ApprovalState } from '@/types'
 
 // 屏蔽 logger 输出，避免测试日志噪音

@@ -12,7 +12,7 @@
           >
             v{{ v.version }}
           </el-tag>
-          <span v-if="idx < task.versionChain.length - 1" class="version-arrow">�?/span>
+          <span v-if="idx < task.versionChain.length - 1" class="version-arrow">&rarr;</span>
         </span>
       </div>
       <div class="report-header">
@@ -64,7 +64,7 @@
     <el-divider />
 
     <div class="files-section">
-      <h4>生成的文�?/h4>
+      <h4>生成的文档</h4>
       <FileBrowser
         :ref="fileBrowserRef"
         :task-id="task.taskId"

@@ -1,0 +1,303 @@
+client:733 [vite] connecting...
+client:827 [vite] connected.
+logger.js:6 [Security] Initializing session store...
+logger.js:19 [Realtime] 已从 localStorage 恢复 lastSeq: 397 条通道
+logger.js:6 [Sync] 实时同步 store 已初始化
+logger.js:19 [Realtime] WebSocket 已连接
+logger.js:24 [Realtime] replay barrier 设置 pending: user
+logger.js:19 [Realtime] 收到 replay 回包: channel=user:1, count=0, chunk=1/1
+logger.js:24 [Realtime] replay barrier flush 无缓冲事件: user
+logger.js:15 全局错误捕获: Object
+(anonymous) @ logger.js:15
+(anonymous) @ ErrorBoundary.vue:18
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+hook.__weh.hook.__weh @ chunk-IGIFKXF4.js?v=8039668a:5243
+handleError @ chunk-IGIFKXF4.js?v=8039668a:2389
+renderComponentRoot @ chunk-IGIFKXF4.js?v=8039668a:6756
+componentUpdateFn @ chunk-IGIFKXF4.js?v=8039668a:8288
+run @ chunk-IGIFKXF4.js?v=8039668a:507
+setupRenderEffect @ chunk-IGIFKXF4.js?v=8039668a:8423
+mountComponent @ chunk-IGIFKXF4.js?v=8039668a:8195
+processComponent @ chunk-IGIFKXF4.js?v=8039668a:8147
+patch @ chunk-IGIFKXF4.js?v=8039668a:7644
+mountChildren @ chunk-IGIFKXF4.js?v=8039668a:7895
+processFragment @ chunk-IGIFKXF4.js?v=8039668a:8077
+patch @ chunk-IGIFKXF4.js?v=8039668a:7618
+mountChildren @ chunk-IGIFKXF4.js?v=8039668a:7895
+mountElement @ chunk-IGIFKXF4.js?v=8039668a:7811
+processElement @ chunk-IGIFKXF4.js?v=8039668a:7766
+patch @ chunk-IGIFKXF4.js?v=8039668a:7632
+componentUpdateFn @ chunk-IGIFKXF4.js?v=8039668a:8295
+run @ chunk-IGIFKXF4.js?v=8039668a:507
+setupRenderEffect @ chunk-IGIFKXF4.js?v=8039668a:8423
+mountComponent @ chunk-IGIFKXF4.js?v=8039668a:8195
+processComponent @ chunk-IGIFKXF4.js?v=8039668a:8147
+patch @ chunk-IGIFKXF4.js?v=8039668a:7644
+mountChildren @ chunk-IGIFKXF4.js?v=8039668a:7895
+processFragment @ chunk-IGIFKXF4.js?v=8039668a:8077
+patch @ chunk-IGIFKXF4.js?v=8039668a:7618
+mountChildren @ chunk-IGIFKXF4.js?v=8039668a:7895
+mountElement @ chunk-IGIFKXF4.js?v=8039668a:7811
+processElement @ chunk-IGIFKXF4.js?v=8039668a:7766
+patch @ chunk-IGIFKXF4.js?v=8039668a:7632
+componentUpdateFn @ chunk-IGIFKXF4.js?v=8039668a:8295
+run @ chunk-IGIFKXF4.js?v=8039668a:507
+setupRenderEffect @ chunk-IGIFKXF4.js?v=8039668a:8423
+mountComponent @ chunk-IGIFKXF4.js?v=8039668a:8195
+processComponent @ chunk-IGIFKXF4.js?v=8039668a:8147
+patch @ chunk-IGIFKXF4.js?v=8039668a:7644
+mountChildren @ chunk-IGIFKXF4.js?v=8039668a:7895
+mountElement @ chunk-IGIFKXF4.js?v=8039668a:7811
+processElement @ chunk-IGIFKXF4.js?v=8039668a:7766
+patch @ chunk-IGIFKXF4.js?v=8039668a:7632
+mountChildren @ chunk-IGIFKXF4.js?v=8039668a:7895
+processFragment @ chunk-IGIFKXF4.js?v=8039668a:8077
+patch @ chunk-IGIFKXF4.js?v=8039668a:7618
+mountChildren @ chunk-IGIFKXF4.js?v=8039668a:7895
+mountElement @ chunk-IGIFKXF4.js?v=8039668a:7811
+processElement @ chunk-IGIFKXF4.js?v=8039668a:7766
+patch @ chunk-IGIFKXF4.js?v=8039668a:7632
+componentUpdateFn @ chunk-IGIFKXF4.js?v=8039668a:8295
+run @ chunk-IGIFKXF4.js?v=8039668a:507
+setupRenderEffect @ chunk-IGIFKXF4.js?v=8039668a:8423
+mountComponent @ chunk-IGIFKXF4.js?v=8039668a:8195
+processComponent @ chunk-IGIFKXF4.js?v=8039668a:8147
+patch @ chunk-IGIFKXF4.js?v=8039668a:7644
+mountChildren @ chunk-IGIFKXF4.js?v=8039668a:7895
+processFragment @ chunk-IGIFKXF4.js?v=8039668a:8077
+patch @ chunk-IGIFKXF4.js?v=8039668a:7618
+mountChildren @ chunk-IGIFKXF4.js?v=8039668a:7895
+mountElement @ chunk-IGIFKXF4.js?v=8039668a:7811
+processElement @ chunk-IGIFKXF4.js?v=8039668a:7766
+patch @ chunk-IGIFKXF4.js?v=8039668a:7632
+mountChildren @ chunk-IGIFKXF4.js?v=8039668a:7895
+mountElement @ chunk-IGIFKXF4.js?v=8039668a:7811
+processElement @ chunk-IGIFKXF4.js?v=8039668a:7766
+patch @ chunk-IGIFKXF4.js?v=8039668a:7632
+componentUpdateFn @ chunk-IGIFKXF4.js?v=8039668a:8295
+run @ chunk-IGIFKXF4.js?v=8039668a:507
+setupRenderEffect @ chunk-IGIFKXF4.js?v=8039668a:8423
+mountComponent @ chunk-IGIFKXF4.js?v=8039668a:8195
+processComponent @ chunk-IGIFKXF4.js?v=8039668a:8147
+patch @ chunk-IGIFKXF4.js?v=8039668a:7644
+mountChildren @ chunk-IGIFKXF4.js?v=8039668a:7895
+mountElement @ chunk-IGIFKXF4.js?v=8039668a:7811
+processElement @ chunk-IGIFKXF4.js?v=8039668a:7766
+patch @ chunk-IGIFKXF4.js?v=8039668a:7632
+componentUpdateFn @ chunk-IGIFKXF4.js?v=8039668a:8295
+run @ chunk-IGIFKXF4.js?v=8039668a:507
+setupRenderEffect @ chunk-IGIFKXF4.js?v=8039668a:8423
+mountComponent @ chunk-IGIFKXF4.js?v=8039668a:8195
+processComponent @ chunk-IGIFKXF4.js?v=8039668a:8147
+patch @ chunk-IGIFKXF4.js?v=8039668a:7644
+componentUpdateFn @ chunk-IGIFKXF4.js?v=8039668a:8375
+run @ chunk-IGIFKXF4.js?v=8039668a:507
+updateComponent @ chunk-IGIFKXF4.js?v=8039668a:8224
+processComponent @ chunk-IGIFKXF4.js?v=8039668a:8158
+patch @ chunk-IGIFKXF4.js?v=8039668a:7644
+componentUpdateFn @ chunk-IGIFKXF4.js?v=8039668a:8375
+run @ chunk-IGIFKXF4.js?v=8039668a:507
+runIfDirty @ chunk-IGIFKXF4.js?v=8039668a:545
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+flushJobs @ chunk-IGIFKXF4.js?v=8039668a:2559
+Promise.then
+queueFlush @ chunk-IGIFKXF4.js?v=8039668a:2473
+queueJob @ chunk-IGIFKXF4.js?v=8039668a:2468
+baseWatchOptions.scheduler @ chunk-IGIFKXF4.js?v=8039668a:3055
+effect2.scheduler @ chunk-IGIFKXF4.js?v=8039668a:2097
+trigger @ chunk-IGIFKXF4.js?v=8039668a:535
+endBatch @ chunk-IGIFKXF4.js?v=8039668a:593
+notify @ chunk-IGIFKXF4.js?v=8039668a:855
+trigger @ chunk-IGIFKXF4.js?v=8039668a:829
+set value @ chunk-IGIFKXF4.js?v=8039668a:1743
+finalizeNavigation @ vue-router.js?v=8039668a:2213
+(anonymous) @ vue-router.js?v=8039668a:2151
+Promise.then
+pushWithRedirect @ vue-router.js?v=8039668a:2138
+push @ vue-router.js?v=8039668a:2089
+install @ vue-router.js?v=8039668a:2321
+use @ chunk-IGIFKXF4.js?v=8039668a:6329
+(anonymous) @ main.js:30
+logger.js:15 全局错误捕获: Object
+(anonymous) @ logger.js:15
+(anonymous) @ ErrorBoundary.vue:18
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+hook.__weh.hook.__weh @ chunk-IGIFKXF4.js?v=8039668a:5243
+handleError @ chunk-IGIFKXF4.js?v=8039668a:2389
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2353
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+hook.__weh.hook.__weh @ chunk-IGIFKXF4.js?v=8039668a:5243
+invokeArrayFns @ chunk-IGIFKXF4.js?v=8039668a:79
+unmountComponent @ chunk-IGIFKXF4.js?v=8039668a:8925
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8821
+unmountChildren @ chunk-IGIFKXF4.js?v=8039668a:8944
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8845
+unmountChildren @ chunk-IGIFKXF4.js?v=8039668a:8944
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8853
+unmountChildren @ chunk-IGIFKXF4.js?v=8039668a:8944
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8853
+unmountComponent @ chunk-IGIFKXF4.js?v=8039668a:8930
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8821
+unmountChildren @ chunk-IGIFKXF4.js?v=8039668a:8944
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8845
+unmountComponent @ chunk-IGIFKXF4.js?v=8039668a:8930
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8821
+unmountComponent @ chunk-IGIFKXF4.js?v=8039668a:8930
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8821
+unmountComponent @ chunk-IGIFKXF4.js?v=8039668a:8930
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8821
+unmountChildren @ chunk-IGIFKXF4.js?v=8039668a:8944
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8845
+patch @ chunk-IGIFKXF4.js?v=8039668a:7595
+componentUpdateFn @ chunk-IGIFKXF4.js?v=8039668a:8375
+run @ chunk-IGIFKXF4.js?v=8039668a:507
+runIfDirty @ chunk-IGIFKXF4.js?v=8039668a:545
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+flushJobs @ chunk-IGIFKXF4.js?v=8039668a:2559
+Promise.then
+queueFlush @ chunk-IGIFKXF4.js?v=8039668a:2473
+queueJob @ chunk-IGIFKXF4.js?v=8039668a:2468
+baseWatchOptions.scheduler @ chunk-IGIFKXF4.js?v=8039668a:3055
+effect2.scheduler @ chunk-IGIFKXF4.js?v=8039668a:2097
+trigger @ chunk-IGIFKXF4.js?v=8039668a:535
+endBatch @ chunk-IGIFKXF4.js?v=8039668a:593
+notify @ chunk-IGIFKXF4.js?v=8039668a:855
+trigger @ chunk-IGIFKXF4.js?v=8039668a:829
+set value @ chunk-IGIFKXF4.js?v=8039668a:1743
+finalizeNavigation @ vue-router.js?v=8039668a:2213
+(anonymous) @ vue-router.js?v=8039668a:2151
+Promise.then
+pushWithRedirect @ vue-router.js?v=8039668a:2138
+push @ vue-router.js?v=8039668a:2089
+install @ vue-router.js?v=8039668a:2321
+use @ chunk-IGIFKXF4.js?v=8039668a:6329
+(anonymous) @ main.js:30
+logger.js:15 全局错误捕获: Object
+(anonymous) @ logger.js:15
+(anonymous) @ ErrorBoundary.vue:18
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+hook.__weh.hook.__weh @ chunk-IGIFKXF4.js?v=8039668a:5243
+handleError @ chunk-IGIFKXF4.js?v=8039668a:2389
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2353
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+hook.__weh.hook.__weh @ chunk-IGIFKXF4.js?v=8039668a:5243
+invokeArrayFns @ chunk-IGIFKXF4.js?v=8039668a:79
+unmountComponent @ chunk-IGIFKXF4.js?v=8039668a:8925
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8821
+unmountChildren @ chunk-IGIFKXF4.js?v=8039668a:8944
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8845
+unmountChildren @ chunk-IGIFKXF4.js?v=8039668a:8944
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8853
+unmountChildren @ chunk-IGIFKXF4.js?v=8039668a:8944
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8853
+unmountComponent @ chunk-IGIFKXF4.js?v=8039668a:8930
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8821
+unmountChildren @ chunk-IGIFKXF4.js?v=8039668a:8944
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8845
+unmountComponent @ chunk-IGIFKXF4.js?v=8039668a:8930
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8821
+unmountComponent @ chunk-IGIFKXF4.js?v=8039668a:8930
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8821
+unmountComponent @ chunk-IGIFKXF4.js?v=8039668a:8930
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8821
+unmountChildren @ chunk-IGIFKXF4.js?v=8039668a:8944
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8845
+patch @ chunk-IGIFKXF4.js?v=8039668a:7595
+componentUpdateFn @ chunk-IGIFKXF4.js?v=8039668a:8375
+run @ chunk-IGIFKXF4.js?v=8039668a:507
+runIfDirty @ chunk-IGIFKXF4.js?v=8039668a:545
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+flushJobs @ chunk-IGIFKXF4.js?v=8039668a:2559
+Promise.then
+queueFlush @ chunk-IGIFKXF4.js?v=8039668a:2473
+queueJob @ chunk-IGIFKXF4.js?v=8039668a:2468
+baseWatchOptions.scheduler @ chunk-IGIFKXF4.js?v=8039668a:3055
+effect2.scheduler @ chunk-IGIFKXF4.js?v=8039668a:2097
+trigger @ chunk-IGIFKXF4.js?v=8039668a:535
+endBatch @ chunk-IGIFKXF4.js?v=8039668a:593
+notify @ chunk-IGIFKXF4.js?v=8039668a:855
+trigger @ chunk-IGIFKXF4.js?v=8039668a:829
+set value @ chunk-IGIFKXF4.js?v=8039668a:1743
+finalizeNavigation @ vue-router.js?v=8039668a:2213
+(anonymous) @ vue-router.js?v=8039668a:2151
+Promise.then
+pushWithRedirect @ vue-router.js?v=8039668a:2138
+push @ vue-router.js?v=8039668a:2089
+install @ vue-router.js?v=8039668a:2321
+use @ chunk-IGIFKXF4.js?v=8039668a:6329
+(anonymous) @ main.js:30
+logger.js:15 全局错误捕获: Object
+(anonymous) @ logger.js:15
+(anonymous) @ ErrorBoundary.vue:18
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+hook.__weh.hook.__weh @ chunk-IGIFKXF4.js?v=8039668a:5243
+handleError @ chunk-IGIFKXF4.js?v=8039668a:2389
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2353
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+hook.__weh.hook.__weh @ chunk-IGIFKXF4.js?v=8039668a:5243
+invokeArrayFns @ chunk-IGIFKXF4.js?v=8039668a:79
+unmountComponent @ chunk-IGIFKXF4.js?v=8039668a:8925
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8821
+unmountChildren @ chunk-IGIFKXF4.js?v=8039668a:8944
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8845
+unmountChildren @ chunk-IGIFKXF4.js?v=8039668a:8944
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8853
+unmountChildren @ chunk-IGIFKXF4.js?v=8039668a:8944
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8853
+unmountComponent @ chunk-IGIFKXF4.js?v=8039668a:8930
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8821
+unmountChildren @ chunk-IGIFKXF4.js?v=8039668a:8944
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8845
+unmountComponent @ chunk-IGIFKXF4.js?v=8039668a:8930
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8821
+unmountComponent @ chunk-IGIFKXF4.js?v=8039668a:8930
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8821
+unmountComponent @ chunk-IGIFKXF4.js?v=8039668a:8930
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8821
+unmountChildren @ chunk-IGIFKXF4.js?v=8039668a:8944
+unmount @ chunk-IGIFKXF4.js?v=8039668a:8845
+patch @ chunk-IGIFKXF4.js?v=8039668a:7595
+componentUpdateFn @ chunk-IGIFKXF4.js?v=8039668a:8375
+run @ chunk-IGIFKXF4.js?v=8039668a:507
+runIfDirty @ chunk-IGIFKXF4.js?v=8039668a:545
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+flushJobs @ chunk-IGIFKXF4.js?v=8039668a:2559
+Promise.then
+queueFlush @ chunk-IGIFKXF4.js?v=8039668a:2473
+queueJob @ chunk-IGIFKXF4.js?v=8039668a:2468
+baseWatchOptions.scheduler @ chunk-IGIFKXF4.js?v=8039668a:3055
+effect2.scheduler @ chunk-IGIFKXF4.js?v=8039668a:2097
+trigger @ chunk-IGIFKXF4.js?v=8039668a:535
+endBatch @ chunk-IGIFKXF4.js?v=8039668a:593
+notify @ chunk-IGIFKXF4.js?v=8039668a:855
+trigger @ chunk-IGIFKXF4.js?v=8039668a:829
+set value @ chunk-IGIFKXF4.js?v=8039668a:1743
+finalizeNavigation @ vue-router.js?v=8039668a:2213
+(anonymous) @ vue-router.js?v=8039668a:2151
+Promise.then
+pushWithRedirect @ vue-router.js?v=8039668a:2138
+push @ vue-router.js?v=8039668a:2089
+install @ vue-router.js?v=8039668a:2321
+use @ chunk-IGIFKXF4.js?v=8039668a:6329
+(anonymous) @ main.js:30
+axios.js:83 [Axios] 响应转换: /context/capability-config/ 
+  前: {"code":200,"message":"操作成功","data":{"available_capabilities":["context_management","tool_injection","guardrails","rate_limit","groq_compat"],"default_capabilities":["context_management","tool_injecti 
+  后: {"code":200,"message":"操作成功","data":{"availableCapabilities":["context_management","tool_injection","guardrails","rate_limit","groq_compat"],"defaultCapabilities":["context_management","tool_injection
+axios.js:83 [Axios] 响应转换: /users/info/ 
+  前: {"code":200,"message":"获取成功","data":{"id":1,"username":"daixing","email":"3309201506@qq.com","mobile":null,"avatar":"/media/avatar/1/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE_2026-05-01_172822.png","date_j 
+  后: {"code":200,"message":"获取成功","data":{"id":1,"username":"daixing","email":"3309201506@qq.com","mobile":null,"avatar":"/media/avatar/1/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE_2026-05-01_172822.png","dateJo
+axios.js:83 [Axios] 响应转换: /knowledge/knowledge-bases/ 
+  前: {"code":200,"message":"操作成功","data":{"items":[{"id":"test2","name":"test2","description":"redis学习文档","num_documents":76,"chunk_count":76,"created_at":"2026-06-21T02:23:41.870493+00:00","updated_at":"2 
+  后: {"code":200,"message":"操作成功","data":{"items":[{"id":"test2","name":"test2","description":"redis学习文档","numDocuments":76,"chunkCount":76,"createdAt":"2026-06-21T02:23:41.870493+00:00","updatedAt":"2026-
+axios.js:83 [Axios] 响应转换: /chat/sessions/ 
+  前: {"code":200,"message":"操作成功","data":{"items":[{"user_id":1,"cached_at":"2026-08-03T14:50:18.082887+00:00","id":1511,"session_id":"6a65fea1-a502-49c2-8e45-e5de2057a6d8","title":"新对话 - 代理","mode":"agent 
+  后: {"code":200,"message":"操作成功","data":{"items":[{"userId":1,"cachedAt":"2026-08-03T14:50:18.082887+00:00","id":1511,"sessionId":"6a65fea1-a502-49c2-8e45-e5de2057a6d8","title":"新对话 - 代理","mode":"agent","
+logger.js:6 [Security] Loaded 5 sessions (page 1/1) for user 1
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong

@@ -2,7 +2,7 @@
  * session-store-helpers 纯函数单元测试
  *
  * 覆盖从 session.js 抽取的纯数据操作函数主路径。
- * 参考现有测试风格（message-operations.test.js）。
+ * 参考现有测试风格（messageOperations.test.js）。
  */
 import { describe, it, expect } from 'vitest'
 import {

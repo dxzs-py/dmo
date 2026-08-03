@@ -13,6 +13,7 @@ import { useChatCommands } from '../composables/useChatCommands'
 import { useChatKeyboard } from '../composables/useChatKeyboard'
 import { useRealtimeSync } from '../composables/useRealtimeSync'
 import { deepResearchAPI } from '../api/research'
+import { getQueryParam } from '../utils/format'
 import ChatHeader from '../components/chat/ChatHeader.vue'
 import ChatMessages from '../components/chat/ChatMessages.vue'
 import ChatInput from '../components/chat/ChatInput.vue'
@@ -234,7 +235,7 @@ const handleApprove = (payload) => {
   // 3. 纯 message 对象（极旧兼容）
   const approval = payload?.approval || payload?.message?.approval
   if (!approval) return
-  const userInput = payload?.user_input
+  const userInput = payload?.userInput
   if (userInput !== undefined) {
     chatStore.approveCommand(approval, userInput)
   } else {
@@ -271,7 +272,7 @@ onMounted(async () => {
   chatStore.fetchModes()
 
   // 如果从深度研究页面跳转过来，且指定了 session_id，先切换到该会话
-  const targetSessionId = route.query.session_id
+  const targetSessionId = getQueryParam(route, 'session_id')
   const researchTaskId = route.query.researchTaskId
   const queryMessage = route.query.q
   if (targetSessionId || researchTaskId) {
@@ -307,7 +308,7 @@ onMounted(async () => {
   if (researchTaskId) {
     chatStore.researchTaskId = researchTaskId
     // 设置持久化研究上下文标识，不随消息发送清空
-    const researchQuery = route.query.research_query || ''
+    const researchQuery = getQueryParam(route, 'research_query') || ''
     chatStore.researchContextInfo = { taskId: researchTaskId, query: researchQuery }
   }
   // 非 URL 跳转（如页面刷新）时，restoreResearchContextFromMessages 已在 loadCurrentSessionDetail 中调用

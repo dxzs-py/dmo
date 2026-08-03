@@ -34,7 +34,7 @@ vi.mock('@/stores/session', () => ({
 
 vi.mock('element-plus', () => ({ ElMessage: mockElMessage }))
 
-vi.mock('@/utils/message-operations', () => ({
+vi.mock('@/utils/messageOperations', () => ({
   getInterruptId: (...args) => mockGetInterruptId(...args),
 }))
 
@@ -63,13 +63,13 @@ describe('useResearchApproval', () => {
     expect(mockElMessage.success).toHaveBeenCalledWith('已确认操作')
   })
 
-  it('handleApprove 携带 _user_input', async () => {
+  it('handleApprove 携带 _userInput', async () => {
     mockGetInterruptId.mockReturnValue('int-1')
     mockExecuteApproval.mockResolvedValue(true)
     const task = ref({ task_id: 't-1' })
 
     const { handleApprove } = useResearchApproval({ task })
-    await handleApprove({ approval: {}, id: 'int-1', _user_input: 'hello' })
+    await handleApprove({ approval: {}, id: 'int-1', _userInput: 'hello' })
 
     expect(mockExecuteApproval).toHaveBeenCalledWith(
       expect.anything(),

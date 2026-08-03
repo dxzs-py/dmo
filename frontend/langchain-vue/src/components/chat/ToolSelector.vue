@@ -5,7 +5,7 @@ import {
   SetUp, Upload, Refresh, Delete, Edit, Check, Warning,
   Connection, VideoPlay, MagicStick, View, InfoFilled,
 } from '@element-plus/icons-vue'
-import { toolsAPI } from '../../api'
+import { toolsAPI } from '@/api/tools'
 import { useToolsStore } from '../../stores/tools'
 import ToolUploadDialog from './ToolUploadDialog.vue'
 import McpUploadDialog from './McpUploadDialog.vue'

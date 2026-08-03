@@ -6,7 +6,7 @@ import {
   formatToolParameters,
   formatToolResult,
   isReadonlyTool,
-} from '../../utils/tool-adapters'
+} from '../../utils/toolAdapters'
 
 const props = defineProps({
   toolName: {
@@ -135,7 +135,7 @@ const statusText = computed(() => {
 })
 
 // ============================================================
-// 工具参数 / 结果格式化（接入 utils/tool-adapters.js）
+// 工具参数 / 结果格式化（接入 utils/toolAdapters.js）
 // ============================================================
 // 设计说明：
 // ToolCallCard 原先用简陋的 formatContent(content) = JSON.stringify(content, null, 2)
@@ -146,7 +146,7 @@ const statusText = computed(() => {
 //   - execute 不以命令行 monospace 展示
 //   - write_file 不截断 content 预览
 //
-// 修复：通过 formatToolParameters/formatToolResult 调用 utils/tool-adapters.js 中
+// 修复：通过 formatToolParameters/formatToolResult 调用 utils/toolAdapters.js 中
 // 注册的专用格式化器，按工具名返回 { label, formatted, displayMode } 三元组。
 // 非内置工具回退到通用 JSON 序列化（与原 formatContent 行为一致）。
 //
@@ -435,7 +435,7 @@ const approvalArgs = computed(() => {
             :placeholder="approvalData.inputPlaceholder || '请输入值...'"
             size="small"
             clearable
-            @keyup.enter="emit('approve', { ...toolCall, _user_input: approvalInputValue })"
+            @keyup.enter="emit('approve', { ...toolCall, _userInput: approvalInputValue })"
           />
         </div>
         <div class="approval-panel__actions">
@@ -444,7 +444,7 @@ const approvalArgs = computed(() => {
             type="primary"
             size="small"
             :disabled="isWaitingForSiblings || isProcessingApproval"
-            @click.stop="emit('approve', isConfirmWithInput ? { ...toolCall, _user_input: approvalInputValue } : toolCall)"
+            @click.stop="emit('approve', isConfirmWithInput ? { ...toolCall, _userInput: approvalInputValue } : toolCall)"
           >
             {{ isConfirmWithInput ? '确认并提交' : '确认执行' }}
           </el-button>
@@ -624,7 +624,7 @@ const approvalArgs = computed(() => {
   color: var(--el-text-color-secondary);
 }
 
-/* displayMode 差异化渲染样式（由 tool-adapters.js formatToolParameters/formatToolResult 返回值驱动） */
+/* displayMode 差异化渲染样式（由 toolAdapters.js formatToolParameters/formatToolResult 返回值驱动） */
 /* inline: 单行展示（如 read_file 的 file_path、grep 的 pattern），无背景框 */
 .section-content--inline {
   display: inline-block;

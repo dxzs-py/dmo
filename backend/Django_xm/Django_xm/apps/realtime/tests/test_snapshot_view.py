@@ -100,7 +100,7 @@ class SnapshotViewTestBase(APITestCase):
         """生成 snapshot 接口 URL。"""
         from django.urls import reverse
 
-        return reverse("realtime:realtime-snapshot", kwargs={"session_id": str(session_id)})
+        return reverse("realtime:realtime_snapshot", kwargs={"session_id": str(session_id)})
 
 
 class SnapshotViewAuthTests(SnapshotViewTestBase):

@@ -61,11 +61,11 @@ vi.mock('@/utils/logger', () => ({
   },
 }))
 
-vi.mock('@/utils/session-transformers', () => ({
+vi.mock('@/utils/sessionTransformers', () => ({
   transformBackendMessageToFrontend: vi.fn((data) => data),
   toCamelCase: vi.fn((data) => data),
 }))
-vi.mock('@/utils/message-operations', () => ({
+vi.mock('@/utils/messageOperations', () => ({
   mergeMessageFromBackend: vi.fn((existing, backend) => Object.assign(existing, backend)),
   getInterruptId: vi.fn((approval) => approval?.interruptId || approval?.toolCallId || ''),
 }))

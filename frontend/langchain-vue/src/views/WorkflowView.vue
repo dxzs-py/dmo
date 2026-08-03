@@ -182,9 +182,9 @@
 
 <script setup>
 import { ref, reactive, computed, watch, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
-import { workflowAPI } from '../api'
+import { workflowAPI } from '@/api/workflow'
 import { readSSEStream } from '../utils/sse'
-import { toCamelCase } from '@/utils/session-transformers'
+import { toCamelCase } from '@/utils/sessionTransformers'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import TaskList from '../components/chat/TaskList.vue'
@@ -450,16 +450,16 @@ const handleSSEEvent = (data) => {
       // 学习工作流状态变更（原 'state_update' 和 'waiting' 合并）
       // 新格式：{ type: 'workflow_state_update', data: { current_step, learning_plan, quiz, state, ... } }
       if (execution.value && data.data) {
-        if (data.data.current_step) execution.value.currentStep = data.data.current_step
+        if (data.data.currentStep) execution.value.currentStep = data.data.currentStep
         if (data.data.learning_plan) execution.value.learningPlan = toCamelCase(data.data.learning_plan)
         if (data.data.retrieved_docs) execution.value.retrievedDocs = toCamelCase(data.data.retrieved_docs)
         if (data.data.quiz) execution.value.quiz = data.data.quiz
         if (data.data.score !== undefined) execution.value.score = data.data.score
         if (data.data.feedback !== undefined) execution.value.feedback = data.data.feedback
-        if (data.data.should_retry !== undefined) execution.value.shouldRetry = data.data.should_retry
+        if (data.data.shouldRetry !== undefined) execution.value.shouldRetry = data.data.shouldRetry
         // waiting_for_answers 状态：原 'waiting' 行为，关闭 SSE 并初始化答题表单
         const isWaiting = data.data.state === 'waiting_for_answers'
-          || data.data.current_step === 'waiting_for_answers'
+          || data.data.currentStep === 'waiting_for_answers'
           || data.data.status === 'waiting_for_answers'
         if (isWaiting) {
           execution.value = { ...execution.value, ...data.data }
@@ -657,10 +657,10 @@ const _findKeyFile = async () => {
     }
     // 查找根目录下非 report 的 .md 文件
     const mdFiles = files.filter(f => f.type === 'file' && f.name?.endsWith('.md') && !f.name?.includes('report'))
-    if (mdFiles.length > 0) return mdFiles[0].relative_path || mdFiles[0].name
+    if (mdFiles.length > 0) return mdFiles[0].relativePath || mdFiles[0].name
     // 查找根目录下的 .txt 文件
     const rootNotes = files.filter(f => f.type === 'file' && f.name?.endsWith('.txt'))
-    if (rootNotes.length > 0) return rootNotes[0].relative_path || rootNotes[0].name
+    if (rootNotes.length > 0) return rootNotes[0].relativePath || rootNotes[0].name
   } catch {}
   return null
 }

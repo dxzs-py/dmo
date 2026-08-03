@@ -170,11 +170,11 @@
           </h4>
           <div v-if="files.length > 0" class="files-list">
             <div v-for="file in files" :key="file.name" class="file-item"
-                 v-memo="[file.name, file.size, file.uploaded_at, isDeletingFile === file.name]">
+                 v-memo="[file.name, file.size, file.uploadedAt, isDeletingFile === file.name]">
               <div class="file-info">
                 <span class="file-name">{{ file.name }}</span>
                 <span class="file-meta">
-                  {{ formatFileSize(file.size) }} · {{ formatDate(file.uploaded_at) }}
+                  {{ formatFileSize(file.size) }} · {{ formatDate(file.uploadedAt) }}
                 </span>
               </div>
               <el-button 
@@ -279,7 +279,7 @@
 
 <script setup>
 import { ref, reactive, onMounted, onActivated, computed, onUnmounted } from 'vue'
-import { ragAPI } from '../api'
+import { ragAPI } from '@/api/knowledge'
 import { ElMessage, ElNotification } from 'element-plus'
 import { Upload, Document } from '@element-plus/icons-vue'
 import { formatDate, formatFileSize } from '../utils/format'
@@ -319,6 +319,7 @@ const queryForm = reactive({
   query: '',
   k: 4,
   streaming: true,
+  indexName: '',
 })
 
 const createForm = reactive({
@@ -350,7 +351,7 @@ const getSourceTitle = (source, index) => {
 
 const handleIndexChange = (value) => {
   if (value) {
-    queryForm.index_name = value
+    queryForm.indexName = value
     loadFiles()
   } else {
     files.value = []
@@ -448,7 +449,7 @@ const fetchIndexes = async () => {
     
     if (availableIndexes.value.length > 0 && !selectedIndexName.value) {
       selectedIndexName.value = availableIndexes.value[0].name
-      queryForm.index_name = availableIndexes.value[0].name
+      queryForm.indexName = availableIndexes.value[0].name
     }
   } catch (error) {
     logger.error('获取索引列表失败:', error)
@@ -691,9 +692,9 @@ const handleUpload = async () => {
     ElMessage.success('文件上传并索引成功！')
     // 检查 Embedding 降级提示
     const resultData = response.data?.data
-    if (resultData?.fallback_info?.events?.length) {
-      const events = resultData.fallback_info.events
-      const chain = events.map(e => e.from_label).concat([events[events.length - 1].to_label]).join(' → ')
+    if (resultData?.fallbackInfo?.events?.length) {
+      const events = resultData.fallbackInfo.events
+      const chain = events.map(e => e.fromLabel).concat([events[events.length - 1].toLabel]).join(' → ')
       ElNotification({
         title: 'Embedding 模型降级提示',
         message: `降级链路: ${chain}`,
@@ -761,7 +762,7 @@ const handleCreateIndex = async () => {
     
     await fetchIndexes()
     selectedIndexName.value = createForm.name
-    queryForm.index_name = createForm.name
+    queryForm.indexName = createForm.name
     await loadFiles()
   } catch (error) {
     logger.error('创建索引失败:', error)

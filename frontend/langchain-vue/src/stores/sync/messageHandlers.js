@@ -1,6 +1,6 @@
 import { logger } from '@/utils/logger'
-import { transformBackendMessageToFrontend } from '@/utils/session-transformers'
-import { mergeMessageFromBackend, createMessageVersion } from '@/utils/message-operations'
+import { transformBackendMessageToFrontend } from '@/utils/sessionTransformers'
+import { mergeMessageFromBackend, createMessageVersion } from '@/utils/messageOperations'
 import { StreamState } from '@/types'
 import {
   findMessageById,

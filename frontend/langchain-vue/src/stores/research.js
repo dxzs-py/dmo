@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, markRaw, triggerRef } from 'vue'
 import { getApprovalHistory } from '@/api/approval'
 import { logger } from '@/utils/logger'
-import { toCamelCase } from '@/utils/session-transformers'
+import { toCamelCase } from '@/utils/sessionTransformers'
 import { mapApprovalStateToStatus } from '@/types'
 import {
   addOrUpdateToolCallInMap,
@@ -15,7 +15,7 @@ import {
   flushPendingApprovalsInMap,
   isTerminalStatus,
   _mergeToolCalls,
-} from '@/utils/message-operations'
+} from '@/utils/messageOperations'
 
 /**
  * 将 Approval 记录转换为 toolCall 对象
@@ -146,7 +146,7 @@ export const useResearchStore = defineStore('research', () => {
   //
   // 状态优先级保护：终态（completed/failed/cancelled）不被非终态覆盖，
   // 防止后端滞后快照（running/pending）覆盖本地已完成状态。
-  // 与 message-operations.js 中 STATUS_PRIORITY 对 toolCall.status 的保护机制对齐。
+  // 与 messageOperations.js 中 STATUS_PRIORITY 对 toolCall.status 的保护机制对齐。
 
   /**
    * 获取或创建指定 task 的状态 ref

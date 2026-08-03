@@ -1,5 +1,5 @@
 import { logger } from '@/utils/logger'
-import { mergeMessageFromBackend } from '@/utils/message-operations'
+import { mergeMessageFromBackend } from '@/utils/messageOperations'
 import { ToolCallStatus, ApprovalState } from '@/types'
 import {
   NON_TERMINAL_TOOLCALL_STATUSES,

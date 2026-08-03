@@ -97,12 +97,12 @@ const toolCallApprovals = computed(() => {
 function handleToolCallApprove(toolCall) {
   const approval = toolCall?.approval
   if (!approval) return
-  // ToolCallCard 在 confirm_with_input 模式下会附加 _user_input 字段
-  const userInput = toolCall._user_input
+  // ToolCallCard 在 confirm_with_input 模式下会附加 _userInput 字段
+  const userInput = toolCall._userInput
   if (userInput !== undefined) {
-    emit('approve', { message: props.message, approval, user_input: userInput })
+    emit('approve', { message: props.message, approval, userInput: userInput })
   } else if (approval.action === 'confirm_with_input') {
-    emit('approve', { message: props.message, approval, user_input: approvalInputValues.value[toolCall.id] || '' })
+    emit('approve', { message: props.message, approval, userInput: approvalInputValues.value[toolCall.id] || '' })
   } else {
     emit('approve', { message: props.message, approval })
   }

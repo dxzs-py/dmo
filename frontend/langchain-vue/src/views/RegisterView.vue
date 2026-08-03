@@ -47,9 +47,9 @@
           />
         </el-form-item>
 
-        <el-form-item prop="password_confirm">
+        <el-form-item prop="passwordConfirm">
           <el-input
-            v-model="formData.password_confirm"
+            v-model="formData.passwordConfirm"
             type="password"
             placeholder="请再次输入密码"
             size="large"
@@ -136,7 +136,7 @@ const formData = reactive({
   email: '',
   mobile: '',
   password: '',
-  password_confirm: '',
+  passwordConfirm: '',
   captcha: '',
   agree: false
 })
@@ -159,8 +159,8 @@ const validatePassword = (rule, value, callback) => {
   } else if (value.length < 6 || value.length > 128) {
     callback(new Error('密码长度为6-128个字符'))
   } else {
-    if (formData.password_confirm) {
-      formRef.value?.validateField('password_confirm')
+    if (formData.passwordConfirm) {
+      formRef.value?.validateField('passwordConfirm')
     }
     callback()
   }
@@ -217,7 +217,7 @@ const rules = reactive({
   email: [{ validator: validateEmail, trigger: 'blur' }],
   mobile: [{ validator: validateMobile, trigger: 'blur' }],
   password: [{ validator: validatePassword, trigger: 'blur' }],
-  password_confirm: [{ validator: validateConfirmPassword, trigger: 'blur' }],
+  passwordConfirm: [{ validator: validateConfirmPassword, trigger: 'blur' }],
   captcha: [{ validator: validateCaptcha, trigger: 'blur' }],
   agree: [{ validator: validateAgree, trigger: 'change' }],
 })
@@ -252,7 +252,7 @@ async function handleRegister() {
       email: formData.email || undefined,
       mobile: formData.mobile || undefined,
       password: formData.password,
-      password_confirm: formData.password_confirm,
+      password_confirm: formData.passwordConfirm,
       captcha: formData.captcha,
       captcha_key: captchaKey.value
     })

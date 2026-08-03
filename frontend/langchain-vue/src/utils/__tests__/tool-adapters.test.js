@@ -6,7 +6,7 @@ import {
   isReadonlyTool,
   inferLanguageFromPath,
   registerToolAdapter,
-} from '../tool-adapters'
+} from '../toolAdapters'
 import { ToolCallStatus } from '@/types'
 
 // ==================== SubTask 9.8: formatToolParameters ====================

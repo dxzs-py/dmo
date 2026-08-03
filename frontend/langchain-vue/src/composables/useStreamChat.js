@@ -1,7 +1,7 @@
 import { ref, readonly, computed } from 'vue'
-import { chatAPI } from '../api'
+import { chatAPI } from '@/api/chat'
 import { readSSEStreamWithEvents } from '../utils/sse'
-import { extractSSEError } from '../utils/api-error-handler'
+import { extractSSEError } from '../utils/apiErrorHandler'
 import { logger } from '../utils/logger'
 
 export const CONNECTION_STATUS = {

@@ -436,7 +436,7 @@ const selectedEmbeddingDim = computed(() => {
 const selectedEmbeddingMinDim = computed(() => {
   if (!embeddingForm.providerId) return 0
   const p = embeddingProviders.value.find(p => p.id === embeddingForm.providerId)
-  return p ? (p.min_dimension || 0) : 0
+  return p ? (p.minDimension || 0) : 0
 })
 
 const selectedEmbeddingMaxDim = computed(() => {
@@ -634,7 +634,7 @@ onMounted(async () => {
     const data = res.data?.data
     if (data) {
       chatProviders.value = data.providers || []
-      embeddingProviders.value = data.embedding_providers || []
+      embeddingProviders.value = data.embeddingProviders || []
       indexDimensions.value = data.indexes || []
 
       const current = data.current || {}

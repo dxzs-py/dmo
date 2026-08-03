@@ -66,8 +66,8 @@ vi.mock('@/utils/logger', () => ({
   },
 }))
 
-// Mock session-transformers（保留必要字段，updatedAt 可控用于 Task 6 排序测试）
-vi.mock('@/utils/session-transformers', () => ({
+// Mock sessionTransformers（保留必要字段，updatedAt 可控用于 Task 6 排序测试）
+vi.mock('@/utils/sessionTransformers', () => ({
   isApiSuccess: (response) => response?.data?.code === 200,
   transformBackendSessionToFrontend: (data) => {
     if (!data) return null

@@ -4,7 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Edit, Delete, Refresh, View,
 } from '@element-plus/icons-vue'
-import { toolsAPI } from '../../api'
+import { toolsAPI } from '@/api/tools'
 import { useToolsStore } from '../../stores/tools'
 import MarkdownRenderer from '../common/MarkdownRenderer.vue'
 

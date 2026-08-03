@@ -368,7 +368,7 @@ export const createStreamStateHandlers = (ctx) => {
         // 计算深度研究耗时并设置到 reasoning.duration
         // 触发浏览器: chat SSE 很快结束，message.timestamp 接近深度研究开始时间
         // 非触发浏览器: message_added 事件在 chat SSE 开始时发布，timestamp 也接近深度研究开始时间
-        // 注意：mergeMessageFromBackend 的 reasoning 完成态保护（message-operations.js）
+        // 注意：mergeMessageFromBackend 的 reasoning 完成态保护（messageOperations.js）
         // 在 streamState=COMPLETED 且本地 reasoning 非空时不用后端覆盖，
         // 故此处设置的 duration 和 content 均不会被 requestFullSync 覆盖
         if (targetMsg.timestamp) {
@@ -508,11 +508,6 @@ export const createStreamStateHandlers = (ctx) => {
           `[Sync] stream_completed 后端 contentLength 大于本地: ` +
           `session=${sessionId}, message=${messageId || '(兜底)'}, ` +
           `local=${localLen}, backend=${payload.contentLength}`
-        )
-      }
-    } else {
-      logger.info(
-        `[Sync] 流式完成: session=${sessionId}, local=${localLen}, backend=${payload.contentLength}`
         )
       }
     }

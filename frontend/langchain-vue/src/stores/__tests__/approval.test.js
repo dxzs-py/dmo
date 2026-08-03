@@ -74,8 +74,8 @@ vi.mock('@/utils/sse', () => ({
   readSSEStream: (...args) => mockReadSSEStream(...args),
 }))
 
-// Mock message-operations
-vi.mock('@/utils/message-operations', () => ({
+// Mock messageOperations
+vi.mock('@/utils/messageOperations', () => ({
   getInterruptId: vi.fn((approval) => approval?.interruptId || approval?.toolCallId || ''),
 }))
 

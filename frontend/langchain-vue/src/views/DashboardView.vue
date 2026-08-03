@@ -7,7 +7,7 @@ import {
   Document, Reading, Management, Monitor,
   Upload, Cpu
 } from '@element-plus/icons-vue'
-import { dashboardAPI } from '../api'
+import { dashboardAPI } from '@/api/dashboard'
 import { logger } from '../utils/logger'
 import { formatDuration } from '../utils/format'
 
@@ -34,9 +34,9 @@ const categoryDistribution = ref([])
 const featureUsage = ref([])
 const modelDistribution = ref([])
 const performanceMetrics = ref({
-  avg_response_time_ms: 0,
-  error_rate: 0,
-  total_tracked_requests: 0,
+  avgResponseTimeMs: 0,
+  errorRate: 0,
+  totalTrackedRequests: 0,
 })
 const recentActivities = ref([])
 const isMockData = ref(false)

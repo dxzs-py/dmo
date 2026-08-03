@@ -7,7 +7,7 @@ import { useSyncStore } from '@/stores/sync'
 import {
   SNAPSHOT_TRIGGER_EVENTS,
   RealtimeConnectionStatus,
-} from '@/types/realtime-events'
+} from '@/types/realtimeEvents'
 
 /**
  * 简单防抖辅助函数
@@ -30,11 +30,11 @@ function debounce(fn, delay = 200) {
 }
 
 /**
- * @typedef {import('@/types/realtime-events').RealtimeEvent} RealtimeEvent
+ * @typedef {import('@/types/realtimeEvents').RealtimeEvent} RealtimeEvent
  */
 
 /**
- * @typedef {import('@/types/realtime-events').RealtimeEventCallback} RealtimeEventCallback
+ * @typedef {import('@/types/realtimeEvents').RealtimeEventCallback} RealtimeEventCallback
  */
 
 const WS_PATH = '/ws/realtime/'

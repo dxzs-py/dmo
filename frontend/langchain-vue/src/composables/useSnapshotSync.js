@@ -3,8 +3,8 @@ import { getSessionSnapshot } from '@/api/realtime'
 import { getApprovalHistory } from '@/api/approval'
 import { useSessionStore } from '@/stores/session'
 import { logger } from '@/utils/logger'
-import { transformBackendMessageToFrontend, toCamelCase } from '@/utils/session-transformers'
-import { mergeMessageFromBackend } from '@/utils/message-operations'
+import { transformBackendMessageToFrontend, toCamelCase } from '@/utils/sessionTransformers'
+import { mergeMessageFromBackend } from '@/utils/messageOperations'
 import { ToolCallStatus, mapApprovalStateToStatus } from '@/types'
 
 /**

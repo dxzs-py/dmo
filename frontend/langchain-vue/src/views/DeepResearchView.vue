@@ -259,7 +259,8 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { deepResearchAPI, knowledgeAPI } from '../api'
+import { deepResearchAPI } from '@/api/research'
+import { knowledgeAPI } from '@/api/knowledge'
 import { readSSEStream } from '../utils/sse'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
@@ -271,10 +272,10 @@ import { useModelStore } from '../stores/model'
 import { useSessionStore } from '../stores/session'
 import { useApprovalStore } from '../stores/approval'
 import { useResearchStore } from '../stores/research'
-import { formatFileSize } from '../utils/format'
+import { formatFileSize, getQueryParam } from '../utils/format'
 import { logger } from '../utils/logger'
-import { getInterruptId } from '../utils/message-operations'
-import { toCamelCase } from '@/utils/session-transformers'
+import { getInterruptId } from '../utils/messageOperations'
+import { toCamelCase } from '@/utils/sessionTransformers'
 import { useTaskRealtimeSync } from '@/composables/useTaskRealtimeSync'
 
 const modelStore = useModelStore()
@@ -475,9 +476,9 @@ const _findDocAnalysisFile = async () => {
       if (txtFile) return `notes/${txtFile.name}`
     }
     const mdFiles = files.filter(f => f.type === 'file' && f.name?.endsWith('.md') && !f.name?.includes('report'))
-    if (mdFiles.length > 0) return mdFiles[0].relative_path || mdFiles[0].name
+    if (mdFiles.length > 0) return mdFiles[0].relativePath || mdFiles[0].name
     const rootNotes = files.filter(f => f.type === 'file' && f.name?.endsWith('.txt'))
-    if (rootNotes.length > 0) return rootNotes[0].relative_path || rootNotes[0].name
+    if (rootNotes.length > 0) return rootNotes[0].relativePath || rootNotes[0].name
   } catch {
   }
   return null
@@ -501,7 +502,7 @@ const autoLoadDocAnalysis = async () => {
 const handleApprove = async (toolCallData) => {
   const approval = toolCallData.approval || toolCallData
   const interruptId = getInterruptId(approval) || toolCallData.id
-  const userInput = toolCallData._user_input
+  const userInput = toolCallData._userInput
 
   // 防重复：如果正在处理中，忽略（executeApproval 内部也有防重复，此处提前拦截避免无效调用）
   const entry = approvalStore.pendingApprovals.get(interruptId)
@@ -991,7 +992,7 @@ onMounted(async () => {
     }
   })
   // 支持从聊天模块跳转，自动选中指定任务
-  const taskId = route.query.task_id
+  const taskId = getQueryParam(route, 'task_id')
   if (taskId) {
     try {
       const resp = await deepResearchAPI.getStatus(taskId)
@@ -1007,7 +1008,7 @@ onMounted(async () => {
 
 // keep-alive 激活时：检查当前任务状态，必要时重连 SSE 或刷新结果
 onActivated(async () => {
-  const taskId = route.query.task_id
+  const taskId = getQueryParam(route, 'task_id')
   // 如果 URL 带有 task_id 且当前没有查看任务，自动加载
   if (taskId && (!task.value || task.value.taskId !== taskId)) {
     try {
@@ -1072,7 +1073,7 @@ onDeactivated(() => {
 })
 
 // 监听路由参数变化，支持从聊天页面多次跳转到不同任务
-watch(() => route.query.task_id, async (newTaskId) => {
+watch(() => getQueryParam(route, 'task_id'), async (newTaskId) => {
   if (!newTaskId) return
   if (task.value && task.value.taskId === newTaskId) return
   try {

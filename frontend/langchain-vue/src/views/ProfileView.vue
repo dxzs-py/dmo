@@ -3,7 +3,8 @@ import { ref, onMounted, computed } from 'vue'
 import { useUserStore } from '@/stores/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { User, Lock, Phone, Upload } from '@element-plus/icons-vue'
-import { chatAPI, userAPI } from '../api'
+import { chatAPI } from '@/api/chat'
+import { userAPI } from '@/api/user'
 import { logger } from '../utils/logger'
 
 const userStore = useUserStore()
@@ -14,8 +15,8 @@ const avatarUploading = ref(false)
 
 const passwordDialog = ref(false)
 const passwordForm = ref({
-  old_password: '',
-  new_password: '',
+  oldPassword: '',
+  newPassword: '',
   confirmPassword: ''
 })
 const passwordLoading = ref(false)
@@ -110,20 +111,20 @@ async function handleAvatarUpload(options) {
 }
 
 function openPasswordDialog() {
-  passwordForm.value = { old_password: '', new_password: '', confirmPassword: '' }
+  passwordForm.value = { oldPassword: '', newPassword: '', confirmPassword: '' }
   passwordDialog.value = true
 }
 
 async function handleChangePassword() {
-  if (!passwordForm.value.old_password) {
+  if (!passwordForm.value.oldPassword) {
     ElMessage.warning('请输入当前密码')
     return
   }
-  if (!passwordForm.value.new_password || passwordForm.value.new_password.length < 8) {
+  if (!passwordForm.value.newPassword || passwordForm.value.newPassword.length < 8) {
     ElMessage.warning('新密码至少8个字符')
     return
   }
-  if (passwordForm.value.new_password !== passwordForm.value.confirm_password) {
+  if (passwordForm.value.newPassword !== passwordForm.value.confirmPassword) {
     ElMessage.warning('两次输入的密码不一致')
     return
   }
@@ -131,8 +132,8 @@ async function handleChangePassword() {
   passwordLoading.value = true
   try {
     const response = await userAPI.changePassword({
-      old_password: passwordForm.value.old_password,
-      new_password: passwordForm.value.new_password,
+      old_password: passwordForm.value.oldPassword,
+      new_password: passwordForm.value.newPassword,
     })
     if (response.data?.code === 200) {
       ElMessage.success('密码修改成功，请重新登录')
@@ -262,10 +263,10 @@ async function handleBindPhone() {
     <el-dialog v-model="passwordDialog" title="修改密码" width="420px" :close-on-click-modal="false">
       <el-form :model="passwordForm" label-width="100px">
         <el-form-item label="当前密码">
-          <el-input v-model="passwordForm.old_password" type="password" show-password />
+          <el-input v-model="passwordForm.oldPassword" type="password" show-password />
         </el-form-item>
         <el-form-item label="新密码">
-          <el-input v-model="passwordForm.new_password" type="password" show-password placeholder="至少8个字符" />
+          <el-input v-model="passwordForm.newPassword" type="password" show-password placeholder="至少8个字符" />
         </el-form-item>
         <el-form-item label="确认密码">
           <el-input v-model="passwordForm.confirmPassword" type="password" show-password />
