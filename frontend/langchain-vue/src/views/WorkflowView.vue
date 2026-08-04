@@ -509,7 +509,7 @@ const closeSSE = () => {
   }
 }
 
-const { subscribeRealtimeForTask, clearRealtimeSubscriptions } = useTaskRealtimeSync('Workflow', 'thread_id')
+const { subscribeRealtimeForTask, clearRealtimeSubscriptions } = useTaskRealtimeSync('Workflow', 'threadId')
 
 // ============================================================================
 // WebSocket 事件 → execution.value 同步（workflowStore 监听）

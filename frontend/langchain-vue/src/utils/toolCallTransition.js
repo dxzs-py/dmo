@@ -89,7 +89,7 @@ export function canTransition(fromStatus, toStatus) {
  * @param {string} status
  * @returns {number}
  */
-export function toolCallStatusPriority(status) {
+export function getToolCallStatusPriority(status) {
   switch (status) {
     case ToolCallStatus.PENDING: return 0
     case ToolCallStatus.WAITING: return 1

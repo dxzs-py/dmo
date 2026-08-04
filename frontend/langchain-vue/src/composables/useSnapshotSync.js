@@ -6,7 +6,7 @@ import { logger } from '@/utils/logger'
 import { transformBackendMessageToFrontend, toCamelCase } from '@/utils/sessionTransformers'
 import { mergeMessageFromBackend } from '@/utils/messageOperations'
 import { ToolCallStatus } from '@/types'
-import { toolCallStatusPriority } from '@/utils/toolCallTransition'
+import { getToolCallStatusPriority } from '@/utils/toolCallTransition'
 
 /**
  * 快照校对 debounce 时间（ms）
@@ -123,8 +123,8 @@ function createSnapshotSyncInstance(sessionId) {
       const localTc = sessionStore.getToolCallById(sessionId, toolCallId)
       if (localTc) {
         // 状态滞后判断：本地非终态、快照为终态时以快照为准
-        const localPriority = toolCallStatusPriority(localTc.status)
-        const backendPriority = toolCallStatusPriority(backendTc.status)
+        const localPriority = getToolCallStatusPriority(localTc.status)
+        const backendPriority = getToolCallStatusPriority(backendTc.status)
         if (backendPriority > localPriority) {
           // 通过 addOrUpdateToolCall 触发响应式更新（携带 messageBackendId 以定位消息）
           const updateData = {
@@ -347,7 +347,7 @@ const taskInstanceCache = new Map()
  * 优先级保护策略（与 createSnapshotSyncInstance 一致）：
  *   - tool_call：仅当后端 status 优先级 > 本地时才更新
  *   - approval：仅当后端 state 优先级 > 本地时才更新
- *   优先级函数复用 toolCallTransition.js 的 toolCallStatusPriority / 模块级 _approvalStatePriority
+ *   优先级函数复用 toolCallTransition.js 的 getToolCallStatusPriority / 模块级 _approvalStatePriority
  *
  * @param {string} taskId - 深度研究任务 ID
  * @returns {{ syncFromSnapshot: () => Promise<void>, isSyncing: import('vue').Ref<boolean> }}
@@ -404,8 +404,8 @@ function createTaskSnapshotSyncInstance(taskId) {
               // 1. toolCall 状态更新（优先级保护：仅当后端优先级 > 本地时才更新）
               const localTc = localToolCallMap.get(toolCallId)
               if (localTc) {
-                const localPriority = toolCallStatusPriority(localTc.status)
-                const backendPriority = toolCallStatusPriority(backendStatus)
+                const localPriority = getToolCallStatusPriority(localTc.status)
+                const backendPriority = getToolCallStatusPriority(backendStatus)
                 if (backendPriority > localPriority) {
                   const isResultAvailable = backendStatus === ToolCallStatus.COMPLETED
                     || backendStatus === ToolCallStatus.FAILED

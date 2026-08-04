@@ -23,6 +23,9 @@ backend/Django_xm/data/media/
 
 # 运行时生成的数据目录与文件
 backend/Django_xm/data/celerybeat/
+backend/Django_xm/data/uploads/
+backend/Django_xm/data/workflow/
+backend/Django_xm/data/tools/
 **/snapshot.json
 *.pid
 

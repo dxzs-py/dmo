@@ -9,14 +9,14 @@ import { toCamelCase } from '@/utils/sessionTransformers'
  *
  * 封装 task / session 通道的 WebSocket 订阅与清理：
  *   - subscribeRealtimeForTask：为指定任务订阅 task 频道（及关联 chat session 频道），
- *     幂等：task_id / thread_id 与 session_id 均与当前已订阅一致时跳过
+ *     幂等：taskId / threadId 与 sessionId 均与当前已订阅一致时跳过
  *   - clearRealtimeSubscriptions：取消所有订阅，避免泄漏
  *
  * 实时审批 / 工具调用 / stream_completed 等事件统一由 syncStore.handleRealtimeEvent 消费；
  * SSE 仅负责流式输出与 approval_history，二者互不干扰。
  *
  * @param {string} sourceType - 视图标识，用于日志区分配（如 'DeepResearch' / 'Workflow'）
- * @param {string} taskIdField - 任务对象中用作 task ID 的字段名（如 'task_id' / 'thread_id'）
+ * @param {string} taskIdField - 任务对象中用作 task ID 的字段名（如 'taskId' / 'threadId'）
  * @returns {{
  *   subscribeRealtimeForTask: (taskObj: object | null) => void,
  *   clearRealtimeSubscriptions: () => void,
@@ -42,7 +42,7 @@ export function useTaskRealtimeSync(sourceType, taskIdField) {
 
   /**
    * 为指定任务订阅 WebSocket 实时事件
-   * 幂等：若 task_id/thread_id 与 session_id 均与当前已订阅一致，则跳过
+   * 幂等：若 taskId/threadId 与 sessionId 均与当前已订阅一致，则跳过
    * @param {object | null} taskObj
    */
   const subscribeRealtimeForTask = (taskObj) => {

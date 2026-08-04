@@ -202,7 +202,7 @@ export function createErrorHandler(componentName = '') {
   }
 }
 
-export function withErrorHandling(asyncFn, options = {}) {
+export function wrapWithErrorHandling(asyncFn, options = {}) {
   return async (...args) => {
     try {
       return await asyncFn(...args)
@@ -217,7 +217,7 @@ export default {
   handleApiError,
   handleValidationError,
   createErrorHandler,
-  withErrorHandling,
+  wrapWithErrorHandling,
   ERROR_MESSAGES,
   BIZ_ERROR_CODES,
 }

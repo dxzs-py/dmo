@@ -811,7 +811,7 @@ const closeSSE = () => {
   }
 }
 
-const { subscribeRealtimeForTask, clearRealtimeSubscriptions } = useTaskRealtimeSync('DeepResearch', 'task_id')
+const { subscribeRealtimeForTask, clearRealtimeSubscriptions } = useTaskRealtimeSync('DeepResearch', 'taskId')
 
 const viewTask = async (selectedTask) => {
   closeSSE()

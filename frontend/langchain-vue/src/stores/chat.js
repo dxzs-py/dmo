@@ -178,7 +178,7 @@ export const useChatStore = defineStore('chat', () => {
         })
         .filter(m => m.content && m.content.trim())
 
-      logger.log('[ChatStore] streamChat 请求参数, attachment_ids:', options.attachmentIds || [])
+      logger.log('[ChatStore] streamChat 请求参数, attachmentIds:', options.attachmentIds || [])
       const modelConfig = modelStore.getModelConfig()
       const specialParams = modelConfig.specialParams ? { ...modelConfig.specialParams } : null
       const result = await streamChat(
