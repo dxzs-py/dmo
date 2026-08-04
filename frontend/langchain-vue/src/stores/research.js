@@ -3,7 +3,6 @@ import { ref, markRaw, triggerRef } from 'vue'
 import { getApprovalHistory } from '@/api/approval'
 import { logger } from '@/utils/logger'
 import { toCamelCase } from '@/utils/session-transformers'
-import { mapApprovalStateToStatus } from '@/types'
 import {
   addOrUpdateToolCallInMap,
   updateOrAddToolResultInMap,
@@ -28,7 +27,7 @@ import {
  * - extra.toolCallId / interrupt_id → toolCall.id / toolCallId
  * - tool_name → toolCall.name
  * - parameters → toolCall.parameters
- * - state → toolCall.status（通过 mapApprovalStateToStatus 映射）
+ * - state → toolCall.status（映射规则：rejected→rejected, timeout→timeout, 其余→running）
  * - 完整审批记录 → toolCall.approval（含 interrupt_id / state / operation 等）
  *
  * 注意：toolCall.result（工具执行输出）不在 Approval 中持久化，仅通过 SSE 流实时推送。
@@ -47,7 +46,7 @@ function _approvalToToolCall(approval) {
     name: approval.toolName,
     toolName: approval.toolName,
     parameters: approval.parameters || {},
-    status: mapApprovalStateToStatus(approval.state),
+    status: approval.state === 'rejected' ? 'rejected' : (approval.state === 'timeout' ? 'timeout' : 'running'),
     approval: {
       interruptId: approval.interruptId,
       source: approval.source,
@@ -384,8 +383,6 @@ export const useResearchStore = defineStore('research', () => {
     // 1. 更新 approval.state（不修改 status，由 updateApprovalStateInMap 保证）
     const stateUpdated = updateApprovalStateInMap(toolCallMap, toolCallId, state)
     if (!stateUpdated) return
-    // 2. 显式同步 toolCall.status（审批通过/拒绝/超时需要流转 status）
-    updateToolCallStatusInMap(toolCallMap, toolCallId, mapApprovalStateToStatus(state))
     triggerRef(task.toolCallMap)
     _syncToolCalls(task)
   }

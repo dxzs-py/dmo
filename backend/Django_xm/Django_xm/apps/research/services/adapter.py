@@ -555,9 +555,9 @@ class OfficialDeepAgentAdapter:
                                     tool_events = []
 
                                 for evt in tool_events:
-                                    # 重复工具调用检测：仅对 INPUT_READY 事件记录，
+                                    # 重复工具调用检测：仅对 PENDING 事件记录，
                                     # 避免对同一 tool_call_id 的 COMPLETED/FAILED 重复计数
-                                    if evt.get("event_type") == EventType.TOOL_CALL_INPUT_READY:
+                                    if evt.get("event_type") == EventType.TOOL_CALL_PENDING:
                                         warning = duplicate_detector.record(
                                             evt.get("tool_name", "unknown"),
                                             evt.get("parameters") or {},
@@ -714,7 +714,7 @@ class OfficialDeepAgentAdapter:
 
         Args:
             evt: extract_tool_events_from_message 返回的事件 dict，字段：
-                - event_type: EventType (TOOL_CALL_INPUT_READY / TOOL_CALL_COMPLETED / TOOL_CALL_FAILED)
+                - event_type: EventType (TOOL_CALL_PENDING / TOOL_CALL_COMPLETED / TOOL_CALL_FAILED)
                 - tool_call_id: str
                 - tool_name: str
                 - parameters: dict

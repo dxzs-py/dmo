@@ -1,12 +1,12 @@
 """工具调用生命周期服务（三模块共享的状态机）。
 
 管理工具调用从创建到终态的完整上下文：
-  pending → input_ready → waiting/running → completed/failed/timeout/rejected
+  pending → waiting/running → completed/failed/timeout/rejected
 
 所有 TOOL_CALL_* 事件必须通过本服务发布，确保：
 1. parameters/message_id/graph_interrupt_id/cross_module_id 不缺失（从 context 透传）
 2. 状态机转换合法（非法转换仅 warning，不抛异常，容错优先）
-3. 事件不重复发布（同 tool_call_id + 同 event_type 仅发布一次，INPUT_READY 除外）
+3. 事件不重复发布（同 tool_call_id + 同 event_type 仅发布一次，PENDING 除外）
 4. 三模块（chat/deep_research/learning）共享同一份代码
 
 使用方式：
@@ -54,41 +54,42 @@ _TC_CTX_TTL = 24 * 60 * 60
 _PUBLISHED_KEY_PREFIX = "tool_call:published"
 
 # 状态机：合法的前驱状态集合（None 表示初始状态，允许从无到有）
-# INPUT_READY 允许自循环（参数补全场景下重发）
-# INPUT_READY 允许从 None 转换：chat/learning 模块直接发布 INPUT_READY，不发布 PENDING
-# WAITING 允许从 None 转换：ApprovalMiddleware 创建审批时直接发布 WAITING（无需先 INPUT_READY）
-# RUNNING 允许自循环：审批通过（PROCESSING）时由 approval_service 发布 RUNNING，stream_helpers 可能因并发再次发布
-# FAILED 允许从 WAITING 转换：审批通过前工具可能因前置依赖失败
+# PENDING 允许自循环（参数补全场景下重发）；允许从 None 转换（chat/learning/research 模块首个工具事件）
+# WAITING 允许从 None/PENDING 转换，自循环（ApprovalMiddleware 直接发布 WAITING / 审批重试）
+# RUNNING 允许从 None/PENDING/WAITING 转换，自循环（无需审批直接执行 / 审批通过后执行 / 并发重发）
+# 终态（COMPLETED/FAILED/TIMEOUT/REJECTED）允许从任意非终态 + None 转换
+# REJECTED 不包括 RUNNING（执行中的工具不可被拒绝，只能取消）
 _VALID_TRANSITIONS: dict[EventType, set[EventType | None]] = {
-    EventType.TOOL_CALL_PENDING: {None},
-    EventType.TOOL_CALL_INPUT_READY: {None, EventType.TOOL_CALL_PENDING, EventType.TOOL_CALL_INPUT_READY},
-    EventType.TOOL_CALL_WAITING: {None, EventType.TOOL_CALL_INPUT_READY, EventType.TOOL_CALL_WAITING},
+    EventType.TOOL_CALL_PENDING: {None, EventType.TOOL_CALL_PENDING},
+    EventType.TOOL_CALL_WAITING: {None, EventType.TOOL_CALL_PENDING, EventType.TOOL_CALL_WAITING},
     EventType.TOOL_CALL_RUNNING: {
-        EventType.TOOL_CALL_INPUT_READY,
+        None,
+        EventType.TOOL_CALL_PENDING,
         EventType.TOOL_CALL_WAITING,
         EventType.TOOL_CALL_RUNNING,
     },
     EventType.TOOL_CALL_COMPLETED: {
-        EventType.TOOL_CALL_RUNNING,
-        EventType.TOOL_CALL_INPUT_READY,
-        EventType.TOOL_CALL_WAITING,
         None,
+        EventType.TOOL_CALL_PENDING,
+        EventType.TOOL_CALL_WAITING,
+        EventType.TOOL_CALL_RUNNING,
     },
     EventType.TOOL_CALL_FAILED: {
-        EventType.TOOL_CALL_RUNNING,
-        EventType.TOOL_CALL_INPUT_READY,
-        EventType.TOOL_CALL_WAITING,
         None,
+        EventType.TOOL_CALL_PENDING,
+        EventType.TOOL_CALL_WAITING,
+        EventType.TOOL_CALL_RUNNING,
     },
     EventType.TOOL_CALL_TIMEOUT: {
-        EventType.TOOL_CALL_INPUT_READY,
-        EventType.TOOL_CALL_WAITING,
         None,
+        EventType.TOOL_CALL_PENDING,
+        EventType.TOOL_CALL_WAITING,
+        EventType.TOOL_CALL_RUNNING,
     },
     EventType.TOOL_CALL_REJECTED: {
-        EventType.TOOL_CALL_INPUT_READY,
-        EventType.TOOL_CALL_WAITING,
         None,
+        EventType.TOOL_CALL_PENDING,
+        EventType.TOOL_CALL_WAITING,
     },
 }
 
@@ -247,8 +248,8 @@ class ToolCallLifecycleService:
 
         流程：
         1. 读取 context（不存在则 warning 并跳过）
-        2. 校验状态转换合法性（仅 warning，不抛异常）
-        3. 去重检查（同 tool_call_id + event_type 已发布则跳过，INPUT_READY 除外）
+        2. 去重检查（同 tool_call_id + event_type 已发布则跳过，PENDING 豁免）
+        3. 校验状态转换合法性（非法则 warning 并阻止发布）
         4. 补全 parameters（如果调用方提供了非空 parameters）
 
         Returns:
@@ -263,25 +264,26 @@ class ToolCallLifecycleService:
             )
             return None
 
-        # 状态机校验（仅 warning，容错优先）
-        last_event = ctx_dict.get("last_event_type")
-        last_event_enum = EventType.from_value(last_event) if last_event else None
-        valid_prev = _VALID_TRANSITIONS.get(event_type, set())
-        if last_event_enum not in valid_prev:
-            logger.warning(
-                f"[ToolCallLifecycle] 非法状态转换: "
-                f"tool_call_id={tool_call_id}, {last_event} → {event_type.value}, "
-                f"allowed_prev={[e.value if e else None for e in valid_prev]}"
-            )
-
-        # 去重：非 INPUT_READY 事件已发布则跳过
-        if event_type != EventType.TOOL_CALL_INPUT_READY:
+        # 去重：非 PENDING 事件已发布则跳过（在状态校验之前，避免重复事件误报非法转换）
+        if event_type != EventType.TOOL_CALL_PENDING:
             dedup_key = f"{_PUBLISHED_KEY_PREFIX}:{tool_call_id}:{event_type.value}"
             if cache.get(dedup_key):
                 logger.info(
                     f"[ToolCallLifecycle] 事件已发布，跳过: tool_call_id={tool_call_id}, event_type={event_type.value}"
                 )
                 return None
+
+        # 状态机校验：非法转换阻止发布
+        last_event = ctx_dict.get("last_event_type")
+        last_event_enum = EventType.from_value(last_event) if last_event else None
+        valid_prev = _VALID_TRANSITIONS.get(event_type, set())
+        if last_event_enum not in valid_prev:
+            logger.warning(
+                f"[ToolCallLifecycle] 非法状态转换，阻止发布: "
+                f"tool_call_id={tool_call_id}, {last_event} → {event_type.value}, "
+                f"allowed_prev={[e.value if e else None for e in valid_prev]}"
+            )
+            return None
 
         # 补全 parameters（如果调用方提供了非空 parameters）
         if parameters and isinstance(parameters, dict):
@@ -303,7 +305,7 @@ class ToolCallLifecycleService:
         key = f"{_TC_CTX_PREFIX}:{tool_call_id}"
         ctx_dict["last_event_type"] = event_type.value
         cache.set(key, ctx_dict, _TC_CTX_TTL)
-        if event_type != EventType.TOOL_CALL_INPUT_READY:
+        if event_type != EventType.TOOL_CALL_PENDING:
             dedup_key = f"{_PUBLISHED_KEY_PREFIX}:{tool_call_id}:{event_type.value}"
             cache.set(dedup_key, 1, _TC_CTX_TTL)
 

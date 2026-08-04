@@ -240,11 +240,7 @@ export const createHandleSessionEvent = (ctx) => {
         break
       // 工具调用事件类型（每个 EventType 独立 ws_event_name）
       case 'tool_call_pending':
-      case 'tool_call_input_ready':
-      case 'tool_call_output_ready':
       case 'tool_call_waiting':
-      case 'tool_call_pending_approval':
-      case 'tool_call_approved':
       case 'tool_call_rejected':
       case 'tool_call_running':
       case 'tool_call_completed':

@@ -10,7 +10,7 @@
 
 相对原 ResilienceRunner 的改进：
 - 集成 DuplicateToolCallDetector：提供 record_tool_call / inject_warning 方法，
-  由 loop_fn 在检测到 TOOL_CALL_INPUT_READY 事件时调用，避免重复调用循环。
+  由 loop_fn 在检测到 TOOL_CALL_PENDING 事件时调用，避免重复调用循环。
 - 集成审批 pause/resume：yield approval 事件时暂停执行计时，
   避免用户思考时间惩罚 agent（RC17 修复）。
 - 修复 hard timeout 检查顺序：先检查 hard timeout 再检查 soft timeout，
@@ -372,7 +372,7 @@ class AgentExecutor:
     ) -> DuplicateToolCallWarning | None:
         """记录工具调用，返回警告对象（若触发阈值）或 None
 
-        供 loop_fn 在检测到 TOOL_CALL_INPUT_READY 事件时调用。
+        供 loop_fn 在检测到 TOOL_CALL_PENDING 事件时调用。
         检测到重复调用时，应调用 inject_warning 注入提示到 agent state，
         并中断当前 astream 以让注入生效。
 

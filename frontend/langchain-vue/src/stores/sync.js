@@ -31,7 +31,7 @@ import { createStreamStateHandlers } from './sync/streamStateHandlers'
  *
  * WebSocket（所有浏览器共享）：
  *   - 跨浏览器同步事件（session_created/deleted/updated 等）
- *   - 8 个工具调用事件（tool_call_pending/input_ready/waiting/running/completed/failed/timeout/rejected）：
+ *   - 7 个工具调用事件（tool_call_pending/waiting/running/completed/failed/timeout/rejected）：
  *     所有浏览器（含请求浏览器）均通过 WebSocket 接收工具调用状态
  *   - 6 个审批事件（approval_pending/processing/waiting/approved/rejected/timeout）：
  *     所有浏览器通过 WebSocket 同步审批状态

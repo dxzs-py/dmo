@@ -41,7 +41,7 @@ def extract_tool_events_from_message(
        - 将 message 追加到 accumulated_messages
        - 遍历 tool_calls，用 seen_tool_call_ids 去重
        - args 为空时不发射、不去重（等后续 chunk 或 ToolMessage 补发）
-       - args 非空时加入 seen_tool_call_ids，发射 TOOL_CALL_INPUT_READY
+       - args 非空时加入 seen_tool_call_ids，发射 TOOL_CALL_PENDING
        注意：AIMessageChunk 是 AIMessage 的子类，isinstance(msg, AIMessage)
        对两者均成立，无需单独处理 chunk。
 
@@ -54,7 +54,7 @@ def extract_tool_events_from_message(
          * 解析失败时 fallback 到 parse_partial_json
          * 仍失败时 fallback 到 AIMessage.tool_calls 的 extract_tool_params
        - 若 AIMessageChunk 阶段未发射（tc_id 不在 seen_tool_call_ids），
-         补发 TOOL_CALL_INPUT_READY
+         补发 TOOL_CALL_PENDING
        - 检测工具执行状态（status=='error' 或 content 以 'Error' 开头）：
          * 失败：发射 TOOL_CALL_FAILED（携带 error）
          * 成功：发射 TOOL_CALL_COMPLETED（携带 result）
@@ -148,7 +148,7 @@ def extract_tool_events_from_message(
                     seen_tool_call_ids.add(tc_id)
                     events.append(
                         {
-                            "event_type": EventType.TOOL_CALL_INPUT_READY,
+                            "event_type": EventType.TOOL_CALL_PENDING,
                             "tool_call_id": tc_id,
                             "tool_name": tc_name or "unknown",
                             "parameters": tc_args,
@@ -158,7 +158,7 @@ def extract_tool_events_from_message(
                     seen_tool_call_ids.add(tc_id)
                     events.append(
                         {
-                            "event_type": EventType.TOOL_CALL_INPUT_READY,
+                            "event_type": EventType.TOOL_CALL_PENDING,
                             "tool_call_id": tc_id,
                             "tool_name": tc_name or "unknown",
                             "parameters": {"items": parsed_args},
@@ -180,7 +180,7 @@ def extract_tool_events_from_message(
                 seen_tool_call_ids.add(tc_id)
                 events.append(
                     {
-                        "event_type": EventType.TOOL_CALL_INPUT_READY,
+                        "event_type": EventType.TOOL_CALL_PENDING,
                         "tool_call_id": tc_id,
                         "tool_name": tc_name or "unknown",
                         "parameters": tc_args,
@@ -273,7 +273,7 @@ def extract_tool_events_from_message(
             seen_tool_call_ids.add(tc_id)
             events.append(
                 {
-                    "event_type": EventType.TOOL_CALL_INPUT_READY,
+                    "event_type": EventType.TOOL_CALL_PENDING,
                     "tool_call_id": tc_id,
                     "tool_name": tool_name,
                     "parameters": tool_parameters,

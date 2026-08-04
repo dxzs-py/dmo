@@ -4,8 +4,8 @@
 所有实时事件 payload 必须符合本模块定义的 TypedDict，不允许 **extra 开放透传。
 
 事件类型分层：
-- 工具调用生命周期事件（7 个）：覆盖 pending → input_ready → waiting/running →
-  completed/failed/timeout 的完整状态机
+- 工具调用生命周期事件（7 个）：覆盖 pending → waiting/running →
+  completed/failed/timeout/rejected 的完整状态机
 - 审批事件（5 个）：覆盖 pending → processing → approved/rejected/timeout
 - 流式事件（5 个）：reasoning/sources/suggestions/context/content_update
 - 会话/消息事件（5 个）：session_created/updated/deleted + message_updated/deleted
@@ -47,8 +47,6 @@ class EventType(StrEnum):
 
     # === 工具调用生命周期事件（WebSocket 推送）===
     TOOL_CALL_PENDING = "tool_call_pending"  # 工具调用已创建，参数未就绪
-    TOOL_CALL_INPUT_READY = "tool_call_input_ready"  # 工具调用参数已就绪（待审批或待执行）
-    TOOL_CALL_OUTPUT_READY = "tool_call_output_ready"  # 工具输出结果已就绪
     TOOL_CALL_WAITING = "tool_call_waiting"  # 同批次其他工具待审批，本工具等待中
     TOOL_CALL_RUNNING = "tool_call_running"  # 工具开始执行
     TOOL_CALL_COMPLETED = "tool_call_completed"  # 工具执行完成（成功）
@@ -133,7 +131,7 @@ class ToolCallLifecyclePayload(TypedDict, total=False):
 
     注意：不包含 state 字段，状态由 event_type 本身表达。
     前端通过 event.type（ws_event_name）直接区分工具事件子类型
-    （tool_call_pending / tool_call_input_ready / tool_call_completed 等）。
+    （tool_call_pending / tool_call_waiting / tool_call_completed 等）。
 
     标准化（统一通用，三模块共享）：
     - tool_call_id 为唯一主键（= LLM AIMessage.tool_calls[].id）
@@ -259,8 +257,6 @@ class StreamPayload(TypedDict, total=False):
 
 _PAYLOAD_TYPE_MAP: dict[EventType, type] = {
     EventType.TOOL_CALL_PENDING: ToolCallLifecyclePayload,
-    EventType.TOOL_CALL_INPUT_READY: ToolCallLifecyclePayload,
-    EventType.TOOL_CALL_OUTPUT_READY: ToolCallLifecyclePayload,
     EventType.TOOL_CALL_WAITING: ToolCallLifecyclePayload,
     EventType.TOOL_CALL_RUNNING: ToolCallLifecyclePayload,
     EventType.TOOL_CALL_COMPLETED: ToolCallLifecyclePayload,
@@ -289,8 +285,6 @@ _REQUIRED_FIELDS: dict[EventType, tuple[str, ...]] = {
     # parameters 必填（空参数传 {}），message_id 可选（learning 模块无 chat message）
     # session_id/task_id 二选一路由，由 RealtimeSyncService._resolve_channels 自动填充，不在必填校验中
     EventType.TOOL_CALL_PENDING: ("tool_call_id", "tool_name", "source", "source_id", "parameters"),
-    EventType.TOOL_CALL_INPUT_READY: ("tool_call_id", "tool_name", "source", "source_id", "parameters"),
-    EventType.TOOL_CALL_OUTPUT_READY: ("tool_call_id", "tool_name", "source", "source_id", "parameters"),
     EventType.TOOL_CALL_WAITING: ("tool_call_id", "tool_name", "source", "source_id", "parameters"),
     EventType.TOOL_CALL_RUNNING: ("tool_call_id", "tool_name", "source", "source_id", "parameters"),
     EventType.TOOL_CALL_COMPLETED: ("tool_call_id", "tool_name", "source", "source_id", "parameters"),
@@ -322,7 +316,7 @@ _REQUIRED_FIELDS: dict[EventType, tuple[str, ...]] = {
 # === 事件类型到 WebSocket 频道事件名的映射 ===
 # 每个 EventType 使用其 value 作为独立 ws_event_name，
 # 前端通过 event.type 直接区分事件子类型（不再统一映射为 tool_call_changed / approval_changed）。
-# - 工具事件 7 个独立：tool_call_pending / tool_call_input_ready / ...
+# - 工具事件 7 个独立：tool_call_pending / tool_call_waiting / ...
 # - 审批事件 5 个独立：approval_pending / approval_processing / ...
 # - 流式事件保持原名：stream_event（reasoning/sources/suggestions/context/content_update）
 #   / stream_started / stream_completed / stream_finalized
@@ -330,8 +324,6 @@ _REQUIRED_FIELDS: dict[EventType, tuple[str, ...]] = {
 
 _WS_EVENT_NAME_MAP: dict[EventType, str] = {
     EventType.TOOL_CALL_PENDING: "tool_call_pending",
-    EventType.TOOL_CALL_INPUT_READY: "tool_call_input_ready",
-    EventType.TOOL_CALL_OUTPUT_READY: "tool_call_output_ready",
     EventType.TOOL_CALL_WAITING: "tool_call_waiting",
     EventType.TOOL_CALL_RUNNING: "tool_call_running",
     EventType.TOOL_CALL_COMPLETED: "tool_call_completed",

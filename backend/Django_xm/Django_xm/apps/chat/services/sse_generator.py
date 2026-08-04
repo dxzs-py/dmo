@@ -122,8 +122,8 @@ async def _publish_stream_event(
 
         try:
             target_event_type = (
-                EventType.TOOL_CALL_OUTPUT_READY if event_type_str == "tool_result"
-                else EventType.TOOL_CALL_INPUT_READY
+                EventType.TOOL_CALL_COMPLETED if event_type_str == "tool_result"
+                else EventType.TOOL_CALL_PENDING
             )
 
             # 确保上下文已注册（幂等，重复调用无副作用）

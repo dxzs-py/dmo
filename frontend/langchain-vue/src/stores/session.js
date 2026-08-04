@@ -37,7 +37,7 @@ import {
   isTerminalStatus,
   mergeMessageFromBackend,
 } from '../utils/messageOperations'
-import { StreamState, ToolCallStatus, mapApprovalStateToStatus } from '../types'
+import { StreamState, ToolCallStatus } from '../types'
 
 /** localStorage key：持久化 currentSessionId，防止刷新后丢失（Task 15 P0 修复） */
 const CURRENT_SESSION_ID_KEY = 'lc_current_session_id'
@@ -884,11 +884,10 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   /**
-   * 更新 toolCall 的审批状态（approval.state），同时同步 toolCall.status
+   * 更新 toolCall 的审批状态（approval.state）
    *
    * 用于审批成功/失败/超时后同步消息中的审批数据。
-   * 与 updateToolCallApprovalStateOnly 的区别：此方法同时更新 toolCall.status
-   * （通过 mapApprovalStateToStatus 将 state 映射为对应的 status）。
+   * 仅更新 approval.state，不再同步修改 toolCall.status（审批事件不应改变工具状态）。
    *
    * @param {string} sessionId - 会话 ID
    * @param {string} toolCallId - 工具调用 ID
@@ -901,8 +900,6 @@ export const useSessionStore = defineStore('session', () => {
     // 1. 更新 approval.state（不修改 status，由 updateApprovalStateInMap 保证）
     const stateUpdated = updateApprovalStateInMap(toolCallMap, toolCallId, state)
     if (!stateUpdated) return
-    // 2. 显式同步 toolCall.status（审批通过/拒绝/超时需要流转 status）
-    updateToolCallStatusInMap(toolCallMap, toolCallId, mapApprovalStateToStatus(state))
     triggerRef(toolCallsMap)
     _syncMessageToolCalls(sessionId)
   }

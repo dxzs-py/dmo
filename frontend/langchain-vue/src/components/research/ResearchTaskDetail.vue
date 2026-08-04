@@ -74,7 +74,7 @@
           :key="id"
           :tool-name="entry.approvalData?.toolName || 'unknown'"
           :description="entry.approvalData?.description || ''"
-          :status="mapApprovalStateToStatus(entry.approvalData?.state) || 'pending_approval'"
+          :status="entry.approvalData?.state === 'rejected' ? 'rejected' : (entry.approvalData?.state === 'timeout' ? 'timeout' : 'running')"
           :input="entry.approvalData?.parameters"
           :output="entry.approvalData?.result || entry.approvalData?.output"
           :tool-call="{ approval: entry.approvalData, id: entry.approvalData?.interruptId || id }"
@@ -123,7 +123,6 @@ import ErrorBoundary from '@/components/common/ErrorBoundary.vue'
 import ToolCallCard from '@/components/chat/ToolCallCard.vue'
 import ResearchTaskReport from './ResearchTaskReport.vue'
 import { formatDate } from '@/utils/format'
-import { mapApprovalStateToStatus } from '@/types'
 
 /**
  * 深度研究 - 任务详情卡片

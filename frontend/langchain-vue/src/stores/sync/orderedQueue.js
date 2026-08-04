@@ -20,7 +20,7 @@ import { logger } from '@/utils/logger'
  * - 保留队列 + processing 标志：多个 onMessage 并发时（浏览器不 await onMessage 的 Promise），
  *   processing 标志保证事件串行处理，避免并发竞态。
  * - WebSocket 事件可能乱序到达（如 seq=11 先于 seq=3-10），间隙等待避免
- *   expectedSeq 跳过中间事件导致关键事件（tool_call_input_ready/approval_pending 等）被丢弃。
+ *   expectedSeq 跳过中间事件导致关键事件（approval_pending 等）被丢弃。
  * - 每次间隙只等待一次 2 秒，避免无限等待；真正的事件丢失由 requestFullSync 兜底。
  *
  * @returns {{

@@ -54,7 +54,7 @@ def _publish_tool_lifecycle_event(
         - ``error``：仅 ``EventType.TOOL_CALL_FAILED`` 传 ``tool_info.get('error')``
 
     Args:
-        event_type: ``EventType`` 枚举成员（如 ``TOOL_CALL_INPUT_READY``）
+        event_type: ``EventType`` 枚举成员（如 ``TOOL_CALL_PENDING``）
         tool_info: 工具调用信息 dict，必须包含 ``id`` / ``name``，
             可选包含 ``parameters`` / ``result`` / ``error``
         session_id: 会话 ID（用于 ``ToolCallContext.module_id`` 兜底）
@@ -127,7 +127,7 @@ def _broadcast_tool_input_ready(
     module: EventSource = EventSource.CHAT,
     module_id: str | None = None,
 ) -> None:
-    """流式期间实时广播 TOOL_CALL_INPUT_READY 事件到同会话其他浏览器。
+    """流式期间实时广播 TOOL_CALL_PENDING 事件到同会话其他浏览器。
 
     在 ``_handle_ai_message_chunk`` / ``finalize_tool_calls`` 内部每次 yield ``tool``
     SSE 事件时调用，确保非触发浏览器通过 WebSocket 实时收到工具调用（含输入参数）。
@@ -161,7 +161,7 @@ def _broadcast_tool_input_ready(
         return
     try:
         _publish_tool_lifecycle_event(
-            EventType.TOOL_CALL_INPUT_READY,
+            EventType.TOOL_CALL_PENDING,
             tool_info,
             session_id,
             message_id,
@@ -169,4 +169,4 @@ def _broadcast_tool_input_ready(
             module_id=module_id,
         )
     except Exception as e:
-        logger.warning(f"发布 INPUT_READY 事件失败: tool_call_id={tool_call_id}, err={e}")
+        logger.warning(f"发布 PENDING 事件失败: tool_call_id={tool_call_id}, err={e}")

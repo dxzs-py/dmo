@@ -952,7 +952,7 @@ async def stream_regenerate_resume(
                                     tool_args_accumulator[tc_id] = json.dumps(tc_args, ensure_ascii=False)
                                 # 工具事件仅通过 WebSocket 发布，不再 yield 到 SSE 流
                                 _publish_tool_lifecycle_event(
-                                    EventType.TOOL_CALL_INPUT_READY,
+                                    EventType.TOOL_CALL_PENDING,
                                     tool_calls_map[tc_id],
                                     session_id,
                                     str(regen_message_id) if regen_message_id else None,

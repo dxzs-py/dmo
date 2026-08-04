@@ -71,15 +71,13 @@ const hybridSections = computed(() => {
 const statusIcon = computed(() => {
   switch (props.status) {
     case 'completed':
-    case 'approved':
       return CircleCheck
     case 'failed':
     case 'rejected':
       return Close
     case 'running':
-    case 'processing':
       return Loading
-    case 'pending_approval':
+    case 'waiting':
       return ArrowRight
     case 'timeout':
       return Close
@@ -91,15 +89,13 @@ const statusIcon = computed(() => {
 const statusType = computed(() => {
   switch (props.status) {
     case 'completed':
-    case 'approved':
       return 'success'
     case 'failed':
     case 'rejected':
       return 'danger'
     case 'running':
-    case 'processing':
       return 'warning'
-    case 'pending_approval':
+    case 'waiting':
       return 'info'
     case 'timeout':
       return 'danger'
@@ -112,22 +108,17 @@ const statusText = computed(() => {
   switch (props.status) {
     case 'completed':
       return '已完成'
-    case 'approved':
-      return '已确认'
     case 'failed':
       return '失败'
     case 'rejected':
       return '已拒绝'
     case 'running':
       return '执行中'
-    case 'processing':
-      return '处理中'
-    case 'pending_approval':
+    case 'waiting':
       return '待审批'
     case 'timeout':
       return '已超时'
     case 'pending':
-    case 'waiting':
       return '等待中'
     default:
       return '等待中'
@@ -212,13 +203,13 @@ const shouldShowOutput = computed(() => {
 const approvalData = computed(() => props.toolCall?.approval || null)
 
 // 审批态与工具执行态解耦：tc.approval.state 驱动审批面板，tc.status 驱动工具执行状态。
-// isPendingApproval 同时检查 status（timer 更新）和 approval.state（setApprovalToToolCall 设置）
+// isWaiting 同时检查 status（timer 更新）和 approval.state（setApprovalToToolCall 设置）
 // 包含 processing 状态：批量审批中单工具先点击"确认执行"后 state 变为 processing，
 // 此时审批面板仍需保留（按钮禁用），防止面板突然消失给用户带来困惑
-const isPendingApproval = computed(() => {
+const isWaiting = computed(() => {
   const approval = approvalData.value
   if (!approval) return false
-  return props.status === ToolCallStatus.PENDING_APPROVAL
+  return props.status === ToolCallStatus.WAITING
     || approval.state === 'pending'
     || approval.state === 'processing'
 })
@@ -306,7 +297,7 @@ const dangerLevelTagType = computed(() => {
 })
 
 const approvalBorderColor = computed(() => {
-  if (props.status !== 'pending_approval') return ''
+  if (props.status !== 'waiting') return ''
   // 高危红名边框，中风险橙色，安全/低风险蓝色
   if (isHighRisk.value) return 'var(--el-color-danger)'
   const map = {
@@ -357,7 +348,7 @@ const approvalArgs = computed(() => {
     <div class="tool-call-header" @click="isExpanded = !isExpanded">
       <div class="tool-call-left">
         <el-icon class="status-icon" :class="`status-${status}`">
-          <component :is="isSkillCall ? MagicStick : statusIcon" :class="{ 'is-loading': status === ToolCallStatus.RUNNING || status === ToolCallStatus.PROCESSING }" />
+          <component :is="isSkillCall ? MagicStick : statusIcon" :class="{ 'is-loading': status === ToolCallStatus.RUNNING }" />
         </el-icon>
         <div class="tool-info">
           <span :class="['tool-name', { 'tool-name--high-risk': isHighRisk }]">{{ toolName }}</span>
@@ -372,7 +363,6 @@ const approvalArgs = computed(() => {
           <!-- 高危风险等级徽章（Phase G2） -->
           <el-tag v-if="isHighRisk" size="small" type="danger" effect="dark">高危</el-tag>
           <el-tag v-if="isSkillCall && skillModeLabel" size="small" :type="skillModeLabel === '管线' ? 'primary' : skillModeLabel === '顾问' ? 'success' : 'warning'" effect="plain">{{ skillModeLabel }}</el-tag>
-          <el-tag v-if="status === ToolCallStatus.APPROVED" size="small" type="success">已确认</el-tag>
           <el-tag v-else-if="status === ToolCallStatus.REJECTED" size="small" type="danger">已拒绝</el-tag>
           <el-tag v-else :type="statusType" size="small">{{ statusText }}</el-tag>
         </div>
@@ -412,7 +402,7 @@ const approvalArgs = computed(() => {
       </template>
 
       <!-- 审批面板 -->
-      <div v-if="isPendingApproval || isWaitingForSiblings" class="approval-panel" :class="{ 'approval-panel--high-risk': isHighRisk }">
+      <div v-if="isWaiting || isWaitingForSiblings" class="approval-panel" :class="{ 'approval-panel--high-risk': isHighRisk }">
         <div class="approval-panel__header">
           <span class="approval-panel__title">审批确认</span>
           <el-tag size="small" :type="riskLevelTagType" effect="dark">{{ riskLevelLabel }}</el-tag>
@@ -464,10 +454,6 @@ const approvalArgs = computed(() => {
   transition: border-color 0.25s ease, border-left-color 0.25s ease, border-left-width 0.25s ease;
 }
 
-.tool-call-card--completed {
-  border-left: 3px solid var(--el-color-success);
-}
-
 .tool-call-card--failed {
   border-left: 3px solid var(--el-color-danger);
 }
@@ -476,12 +462,8 @@ const approvalArgs = computed(() => {
   border-left: 3px solid var(--el-color-warning);
 }
 
-.tool-call-card--pending_approval {
+.tool-call-card--waiting {
   border-left: 3px solid var(--el-color-info);
-}
-
-.tool-call-card--approved {
-  border-left: 3px solid var(--el-color-success);
 }
 
 .tool-call-card--rejected {
@@ -490,10 +472,6 @@ const approvalArgs = computed(() => {
 
 .tool-call-card--timeout {
   border-left: 3px solid var(--el-color-danger);
-}
-
-.tool-call-card--processing {
-  border-left: 3px solid var(--el-color-warning);
 }
 
 .tool-call-card--skill {
@@ -664,12 +642,8 @@ const approvalArgs = computed(() => {
   font-family: 'Courier New', 'Consolas', monospace;
 }
 
-.status-icon.status-pending_approval {
+.status-icon.status-waiting {
   color: var(--el-color-info);
-}
-
-.status-icon.status-approved {
-  color: var(--el-color-success);
 }
 
 .status-icon.status-rejected {

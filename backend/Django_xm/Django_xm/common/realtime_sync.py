@@ -136,7 +136,7 @@ async def publish_tool_call(
     所有 TOOL_CALL_* 事件必须通过此函数发布，禁止直接调用 publish_event。
 
     Args:
-        event_type: 工具调用事件类型（TOOL_CALL_PENDING / TOOL_CALL_INPUT_READY /
+        event_type: 工具调用事件类型（TOOL_CALL_PENDING /
                     TOOL_CALL_RUNNING / TOOL_CALL_COMPLETED / 等）
         tool_call_id: 工具调用 ID（= LLM tool_call.id，唯一主键）
         tool_name: 工具名称

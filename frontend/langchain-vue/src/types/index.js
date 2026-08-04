@@ -15,23 +15,9 @@ export const ToolCallStatus = {
   RUNNING: 'running',
   COMPLETED: 'completed',
   FAILED: 'failed',
-  PENDING_APPROVAL: 'pending_approval',
-  APPROVED: 'approved',
   REJECTED: 'rejected',
   TIMEOUT: 'timeout',
-  PROCESSING: 'processing',
 }
-
-/** 受保护的 toolCall status 集合，这些状态不应被 SSE 流中的 status/state 覆盖 */
-export const PROTECTED_STATUSES = [
-  ToolCallStatus.PENDING_APPROVAL,
-  ToolCallStatus.APPROVED,
-  ToolCallStatus.COMPLETED,
-  ToolCallStatus.PROCESSING,
-  ToolCallStatus.REJECTED,
-  ToolCallStatus.TIMEOUT,
-  ToolCallStatus.WAITING,
-]
 
 /**
  * 只读工具名称集合
@@ -97,16 +83,6 @@ export const PROTECTED_STREAM_STATES = new Set([
   StreamState.COMPLETED,
   StreamState.ERROR,
 ])
-
-/** 将 approval state 映射到 toolCall status（统一映射函数） */
-export function mapApprovalStateToStatus(state) {
-  if (state === ApprovalState.APPROVED) return ToolCallStatus.APPROVED
-  if (state === ApprovalState.REJECTED) return ToolCallStatus.REJECTED
-  if (state === ApprovalState.TIMEOUT) return ToolCallStatus.TIMEOUT
-  if (state === ApprovalState.PENDING) return ToolCallStatus.PENDING_APPROVAL
-  if (state === ApprovalState.PROCESSING) return ToolCallStatus.PROCESSING
-  return state
-}
 
 export const PlanStepStatus = {
   PENDING: 'pending',

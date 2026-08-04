@@ -1,4 +1,6 @@
-import { PROTECTED_STATUSES, PROTECTED_STREAM_STATES, ToolCallStatus, mapApprovalStateToStatus } from '../types'
+import { PROTECTED_STATUSES } from './toolCallTransition'
+import { canTransition } from './toolCallTransition'
+import { PROTECTED_STREAM_STATES, ToolCallStatus } from '../types'
 
 // ==================== 标准化常量（统一所有模块的工具调用状态判断） ====================
 
@@ -9,23 +11,6 @@ const _TERMINAL_TOOL_STATUSES_SET = new Set([
   ToolCallStatus.TIMEOUT,
   ToolCallStatus.REJECTED,
 ])
-
-/**
- * 标准化状态流转检查：审批态向执行终态的流转是否允许
- *
- * 审批态的 toolCall（approved/processing/waiting）在收到工具结果时，
- * 应允许状态向 running/completed/failed 正常流转。
- * 这是 4 处重复逻辑的统一版本，所有模块通过此函数共享同一套规则。
- *
- * @param {string} existingStatus - 当前 toolCall 的 status
- * @param {string} incomingStatus - SSE/WebSocket 事件携带的 status
- * @returns {boolean} 是否允许状态流转
- */
-function _isApprovedTransition(existingStatus, incomingStatus) {
-  const allowedSources = [ToolCallStatus.APPROVED, ToolCallStatus.PROCESSING, ToolCallStatus.WAITING]
-  const allowedTargets = [ToolCallStatus.RUNNING, ToolCallStatus.COMPLETED, ToolCallStatus.FAILED]
-  return allowedSources.includes(existingStatus) && allowedTargets.includes(incomingStatus)
-}
 
 /**
  * 标准化终态判断（供 session.js 和 research.js 的 isTerminal 检查复用）
@@ -162,12 +147,14 @@ function _addOrUpdateToolCallInMessage(message, data) {
       merged.parameters = { ...(merged.parameters || {}), ...data.args }
     }
     // 保护审批相关状态不被 SSE 流中的 status/state 覆盖，
-    // 但允许审批态向执行终态正常流转（统一使用 _isApprovedTransition）
-    if (PROTECTED_STATUSES.includes(existing.status) && existing.approval) {
-      if (!_isApprovedTransition(existing.status, data.status)) {
+    // 但允许审批态向执行终态正常流转（统一使用 canTransition）
+    if (PROTECTED_STATUSES.has(existing.status)) {
+      if (!canTransition(existing.status, data.status)) {
         merged.status = existing.status
       }
-      merged.approval = { ...existing.approval, ...(data.approval || {}) }
+      if (existing.approval || data.approval) {
+        merged.approval = { ...(existing.approval || {}), ...(data.approval || {}) }
+      }
     } else if (!merged.status && merged.state) {
       const stateMap = { 'input-available': 'running', 'output-available': 'completed', 'output-error': 'failed' }
       merged.status = stateMap[merged.state] || 'running'
@@ -195,9 +182,9 @@ function _updateOrAddToolResultInMessage(message, data) {
     if (data.state !== undefined) updates.state = data.state
     if (data.result !== undefined) updates.result = data.result
     if (data.error !== undefined) updates.error = data.error
-    // 保护审批相关状态：使用统一的 _isApprovedTransition 和 isTerminalStatus
-    if (PROTECTED_STATUSES.includes(existing.status) && existing.approval) {
-      if (_isApprovedTransition(existing.status, data.status)) {
+    // 保护审批相关状态：使用统一的 canTransition 和 isTerminalStatus
+    if (PROTECTED_STATUSES.has(existing.status)) {
+      if (canTransition(existing.status, data.status)) {
         if (data.status !== undefined) updates.status = data.status
         // 工具进入终态后清除审批状态，防止审批组件残留
         if (isTerminalStatus(updates.status)) {
@@ -264,9 +251,7 @@ function _matchPendingApprovals(message, data) {
 
     if (matched) {
       matched.approval = approvalData
-      if (approvalData?.state) {
-        matched.status = mapApprovalStateToStatus(approvalData.state)
-      }
+      // approvalData 用于审批面板显示，toolCall.status 仅由 tool_call_* 事件变更
       // 匹配成功后，移除对应的合成 toolCall（避免重复渲染）
       if (matched._synthetic !== true) {
         const syntheticIdx = message.toolCalls.findIndex(
@@ -431,12 +416,14 @@ function _mergeExistingToolCall(existing, data) {
   if (data.args && typeof data.args === 'object') {
     merged.parameters = { ...(merged.parameters || {}), ...data.args }
   }
-  // 保护审批相关状态（与 _addOrUpdateToolCallInMessage 共用统一的 _isApprovedTransition）
-  if (PROTECTED_STATUSES.includes(existing.status) && existing.approval) {
-    if (!_isApprovedTransition(existing.status, data.status)) {
+  // 保护审批相关状态（与 _addOrUpdateToolCallInMessage 共用统一的 canTransition）
+  if (PROTECTED_STATUSES.has(existing.status)) {
+    if (!canTransition(existing.status, data.status)) {
       merged.status = existing.status
     }
-    merged.approval = { ...existing.approval, ...(data.approval || {}) }
+    if (existing.approval || data.approval) {
+      merged.approval = { ...(existing.approval || {}), ...(data.approval || {}) }
+    }
   } else if (!merged.status && merged.state) {
     const stateMap = { 'input-available': 'running', 'output-available': 'completed', 'output-error': 'failed' }
     merged.status = stateMap[merged.state] || 'running'
@@ -610,9 +597,9 @@ export function updateOrAddToolResultInMap(toolCallMap, data) {
     if (data.state !== undefined) updates.state = data.state
     if (data.result !== undefined) updates.result = data.result
     if (data.error !== undefined) updates.error = data.error
-    // 保护审批相关状态（统一使用 _isApprovedTransition 和 isTerminalStatus）
-    if (PROTECTED_STATUSES.includes(existing.status) && existing.approval) {
-      if (_isApprovedTransition(existing.status, data.status)) {
+    // 保护审批相关状态（统一使用 canTransition 和 isTerminalStatus）
+    if (PROTECTED_STATUSES.has(existing.status)) {
+      if (canTransition(existing.status, data.status)) {
         if (data.status !== undefined) updates.status = data.status
         // 工具从审批态进入终态后清除审批状态
         if (isTerminalStatus(updates.status)) {

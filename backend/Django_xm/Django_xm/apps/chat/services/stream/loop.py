@@ -39,7 +39,7 @@ from .strategy import BaseStreamStrategy
 logger = logging.getLogger(__name__)
 
 
-def _publish_input_ready_events(message: Any, *, session_id: str) -> None:
+def _publish_input_ready_events(message: Any, *, session_id: str, seen_tool_call_ids: set) -> None:
     """检测 AIMessage.tool_calls 并发布 INPUT_READY 事件。
 
     在 process_stream_chunk 处理 AIMessage 之前调用，确保非触发浏览器
@@ -59,6 +59,7 @@ def _publish_input_ready_events(message: Any, *, session_id: str) -> None:
     Args:
         message: chunk 中的消息对象（AIMessage / AIMessageChunk 或 tuple 解构后的 message）
         session_id: 会话 ID（用于 module_id 字段）
+        seen_tool_call_ids: 整条流中已发布 PENDING 的 tool_call_id 集合，用于去重
     """
     if not isinstance(message, AIMessage):
         return
@@ -97,6 +98,9 @@ def _publish_input_ready_events(message: Any, *, session_id: str) -> None:
                 string_values = [v for v in parsed_args.values() if isinstance(v, str)]
                 if string_values and all(v == '' for v in string_values):
                     continue
+            # 去重：同一流式生命周期中每个 tool_call_id 仅发布一次 PENDING
+            if tc_id in seen_tool_call_ids:
+                continue
             try:
                 service.register(
                     ToolCallContext(
@@ -109,11 +113,12 @@ def _publish_input_ready_events(message: Any, *, session_id: str) -> None:
                 )
                 service.transition(
                     tc_id,
-                    EventType.TOOL_CALL_INPUT_READY,
+                    EventType.TOOL_CALL_PENDING,
                     parameters=parameters or None,
                 )
+                seen_tool_call_ids.add(tc_id)
             except Exception as e:
-                logger.warning(f"发布 INPUT_READY 事件失败: tool_call_id={tc_id}, err={e}")
+                logger.warning(f"发布 PENDING 事件失败: tool_call_id={tc_id}, err={e}")
         return
 
     # 完整 AIMessage（非 chunk）：tool_calls 的 args 已是完整 dict，直接使用
@@ -131,6 +136,9 @@ def _publish_input_ready_events(message: Any, *, session_id: str) -> None:
             continue
 
         parameters = _extract_tool_params(tool_call)
+        # 去重：同一流式生命周期中每个 tool_call_id 仅发布一次 PENDING
+        if tool_call_id in seen_tool_call_ids:
+            continue
         try:
             service.register(
                 ToolCallContext(
@@ -143,11 +151,12 @@ def _publish_input_ready_events(message: Any, *, session_id: str) -> None:
             )
             service.transition(
                 tool_call_id,
-                EventType.TOOL_CALL_INPUT_READY,
+                EventType.TOOL_CALL_PENDING,
                 parameters=parameters or None,
             )
+            seen_tool_call_ids.add(tool_call_id)
         except Exception as e:
-            logger.warning(f"发布 INPUT_READY 事件失败: tool_call_id={tool_call_id}, err={e}")
+            logger.warning(f"发布 PENDING 事件失败: tool_call_id={tool_call_id}, err={e}")
 
 
 async def run_stream_loop(
@@ -168,6 +177,9 @@ async def run_stream_loop(
         strategy: 模式策略（Normal / DeepThinking）
         data: 请求数据
     """
+    # 去重：整条流中每个 tool_call_id 最多发布一次 PENDING（避免与 ApprovalMiddleware 竞态）
+    seen_tool_call_ids = set()
+
     # 策略钩子：循环开始前的事件（深度思考发送"正在深度思考中..."）
     async for event in strategy.on_loop_start(ctx, data):
         yield event
@@ -196,6 +208,7 @@ async def run_stream_loop(
         _publish_input_ready_events(
             message,
             session_id=data.get("session_id", ""),
+            seen_tool_call_ids=seen_tool_call_ids,
         )
 
         try:

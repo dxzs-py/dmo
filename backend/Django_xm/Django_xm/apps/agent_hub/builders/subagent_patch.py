@@ -385,7 +385,7 @@ def patch_subagent_middleware() -> None:
             """通过 astream 执行子智能体，转发工具事件到 on_tool_event 回调
 
             与父 graph 的 astream_research_with_interrupts 事件格式保持一致：
-            - AIMessage/AIMessageChunk(含 tool_calls) → TOOL_CALL_INPUT_READY
+            - AIMessage/AIMessageChunk(含 tool_calls) → TOOL_CALL_PENDING
             - ToolMessage → TOOL_CALL_COMPLETED / TOOL_CALL_FAILED
 
             事件提取逻辑统一复用 tool_event_extractor.extract_tool_events_from_message,
@@ -483,8 +483,8 @@ def patch_subagent_middleware() -> None:
                         accumulated_messages,
                     )
                     for evt in tool_events:
-                        # 重复工具调用检测：仅对 INPUT_READY 记录
-                        if evt.get("event_type") == EventType.TOOL_CALL_INPUT_READY:
+                        # 重复工具调用检测：仅对 PENDING 记录
+                        if evt.get("event_type") == EventType.TOOL_CALL_PENDING:
                             warning = duplicate_detector.record(
                                 evt.get("tool_name") or "unknown",
                                 evt.get("parameters") or {},

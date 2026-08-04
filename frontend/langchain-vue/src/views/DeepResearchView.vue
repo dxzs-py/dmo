@@ -368,7 +368,7 @@ const progressPercentage = computed(() => {
   if (!task.value) return 0
   if (task.value.status === 'completed') return 100
   if (task.value.status === 'failed') return 0
-  if (task.value.status === 'pending_approval') return 50
+  if (task.value.status === 'waiting') return 50
   if (task.value.status === 'pending') return 10
   if (task.value.status === 'running') {
     const maxSeconds = 600
@@ -401,7 +401,7 @@ const useDeepThinking = computed({
 const statusOptions = [
   { value: 'pending', label: '待执行' },
   { value: 'running', label: '执行中' },
-  { value: 'pending_approval', label: '等待审批' },
+  { value: 'waiting', label: '等待审批' },
   { value: 'completed', label: '已完成' },
   { value: 'failed', label: '失败' },
 ]
@@ -824,7 +824,7 @@ const viewTask = async (selectedTask) => {
   // 接入统一 WebSocket 实时同步：入口先订阅一次（基于 selectedTask 当前已知字段）
   subscribeRealtimeForTask(selectedTask)
 
-  if (selectedTask.status === 'running' || selectedTask.status === 'pending' || selectedTask.status === 'pending_approval') {
+  if (selectedTask.status === 'running' || selectedTask.status === 'pending' || selectedTask.status === 'waiting') {
     startElapsedTimer()
     connectSSE(selectedTask.taskId)
   } else if (selectedTask.taskId) {

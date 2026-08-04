@@ -331,7 +331,7 @@ export const useChatStore = defineStore('chat', () => {
         return
       }
 
-      // 审批中断时：将工具调用状态标记为 pending_approval，并保存审批数据
+      // 审批中断时：将工具调用状态标记为 waiting，并保存审批数据
       // 这样刷新后前端能正确显示"等待审批"状态，而非"执行中"
       if (approvalStore.pendingApprovals.size > 0) {
         const session = sessionStore.sessions.find(s => s.id === sessionId)
@@ -340,7 +340,7 @@ export const useChatStore = defineStore('chat', () => {
           if (lastMsg.toolCalls && Array.isArray(lastMsg.toolCalls)) {
             lastMsg.toolCalls = lastMsg.toolCalls.map(tc => ({
               ...tc,
-              status: tc.status === ToolCallStatus.RUNNING ? ToolCallStatus.PENDING_APPROVAL : tc.status,
+              status: tc.status === ToolCallStatus.RUNNING ? ToolCallStatus.WAITING : tc.status,
             }))
           }
           // 向后兼容：保存审批数据到消息对象

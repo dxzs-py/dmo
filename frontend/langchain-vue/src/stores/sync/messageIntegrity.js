@@ -1,10 +1,8 @@
 import { logger } from '@/utils/logger'
 import { mergeMessageFromBackend } from '@/utils/messageOperations'
 import { ToolCallStatus, ApprovalState } from '@/types'
-import {
-  NON_TERMINAL_TOOLCALL_STATUSES,
-  NON_TERMINAL_APPROVAL_STATES,
-} from './constants'
+import { NON_TERMINAL_STATUSES } from '@/utils/toolCallTransition'
+import { NON_TERMINAL_APPROVAL_STATES } from './constants'
 import {
   findMessageById,
   getSession,
@@ -52,12 +50,12 @@ export const createMessageIntegrityHandlers = (ctx) => {
 
     let finalizedCount = 0
     // 流式结束时兜底：将所有非终态工具调用修正为 COMPLETED
-    // APPROVED 也需纳入：审批通过但 tool_call_completed 事件丢失时，状态会卡在 'approved'，
+    // RUNNING 也需纳入：审批通过但 tool_call_completed 事件丢失时，状态会卡在 'running'，
     // 流式已结束说明 agent 处理完毕，应兜底为 COMPLETED（issue_new_c 根因）
 
     for (const tc of message.toolCalls) {
       if (!tc) continue
-      if (NON_TERMINAL_TOOLCALL_STATUSES.includes(tc.status)) {
+      if (NON_TERMINAL_STATUSES.has(tc.status)) {
         // 有结果 → COMPLETED，无结果也 → COMPLETED（流式已结束）
         tc.status = ToolCallStatus.COMPLETED
         if (!tc.state) tc.state = 'output-available'

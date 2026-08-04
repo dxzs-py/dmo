@@ -5,7 +5,8 @@ import { useSessionStore } from '@/stores/session'
 import { logger } from '@/utils/logger'
 import { transformBackendMessageToFrontend, toCamelCase } from '@/utils/session-transformers'
 import { mergeMessageFromBackend } from '@/utils/messageOperations'
-import { ToolCallStatus, mapApprovalStateToStatus } from '@/types'
+import { ToolCallStatus } from '@/types'
+import { toolCallStatusPriority } from '@/utils/toolCallTransition'
 
 /**
  * 快照校对 debounce 时间（ms）
@@ -30,25 +31,6 @@ const SNAPSHOT_TIMEOUT_MS = 8000
  * @type {Map<string, { syncFromSnapshot: () => Promise<void>, isSyncing: import('vue').Ref<boolean> }>}
  */
 const instanceCache = new Map()
-
-/**
- * 工具调用状态优先级（数值越大优先级越高）
- * 用于判断本地状态是否滞后于快照
- *
- * @param {string} status
- * @returns {number}
- */
-function _toolCallStatusPriority(status) {
-  switch (status) {
-    case ToolCallStatus.PENDING: return 0
-    case ToolCallStatus.WAITING: return 1
-    case ToolCallStatus.RUNNING: return 2
-    case ToolCallStatus.COMPLETED: return 3
-    case ToolCallStatus.FAILED: return 3
-    case ToolCallStatus.TIMEOUT: return 3
-    default: return 0
-  }
-}
 
 /**
  * 审批状态优先级（数值越大优先级越高）
@@ -141,8 +123,8 @@ function createSnapshotSyncInstance(sessionId) {
       const localTc = sessionStore.getToolCallById(sessionId, toolCallId)
       if (localTc) {
         // 状态滞后判断：本地非终态、快照为终态时以快照为准
-        const localPriority = _toolCallStatusPriority(localTc.status)
-        const backendPriority = _toolCallStatusPriority(backendTc.status)
+        const localPriority = toolCallStatusPriority(localTc.status)
+        const backendPriority = toolCallStatusPriority(backendTc.status)
         if (backendPriority > localPriority) {
           // 通过 addOrUpdateToolCall 触发响应式更新（携带 messageBackendId 以定位消息）
           const updateData = {
@@ -359,13 +341,13 @@ const taskInstanceCache = new Map()
  * 数据源：工具调用数据的唯一持久化来源是 Approval 模型
  * （source='deep_research', source_id=taskId）。
  * 通过统一审批 API getApprovalHistory 查询审批记录，
- * 从 approval.state 推导 toolCall status（mapApprovalStateToStatus），
+ * 从 approval.state 推导 toolCall status，
  * 替代原 getResearchSnapshot（后端无对应端点）。
  *
  * 优先级保护策略（与 createSnapshotSyncInstance 一致）：
  *   - tool_call：仅当后端 status 优先级 > 本地时才更新
  *   - approval：仅当后端 state 优先级 > 本地时才更新
- *   优先级函数复用模块级 _toolCallStatusPriority / _approvalStatePriority
+ *   优先级函数复用 toolCallTransition.js 的 toolCallStatusPriority / 模块级 _approvalStatePriority
  *
  * @param {string} taskId - 深度研究任务 ID
  * @returns {{ syncFromSnapshot: () => Promise<void>, isSyncing: import('vue').Ref<boolean> }}
@@ -417,13 +399,13 @@ function createTaskSnapshotSyncInstance(taskId) {
               const toolCallId = extra.toolCallId || interruptId
 
               // 从 approval.state 推导 toolCall status
-              const backendStatus = mapApprovalStateToStatus(approval.state)
+              const backendStatus = approval.state === 'rejected' ? ToolCallStatus.REJECTED : (approval.state === 'timeout' ? ToolCallStatus.TIMEOUT : ToolCallStatus.RUNNING)
 
               // 1. toolCall 状态更新（优先级保护：仅当后端优先级 > 本地时才更新）
               const localTc = localToolCallMap.get(toolCallId)
               if (localTc) {
-                const localPriority = _toolCallStatusPriority(localTc.status)
-                const backendPriority = _toolCallStatusPriority(backendStatus)
+                const localPriority = toolCallStatusPriority(localTc.status)
+                const backendPriority = toolCallStatusPriority(backendStatus)
                 if (backendPriority > localPriority) {
                   const isResultAvailable = backendStatus === ToolCallStatus.COMPLETED
                     || backendStatus === ToolCallStatus.FAILED

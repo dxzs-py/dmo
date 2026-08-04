@@ -121,7 +121,7 @@ export const createHandleToolCallEvent = (ctx) => {
         }
         logger.info(`[Sync] 工具调用结果: session=${sessionId}, message=${payload.messageId || '(兜底)'}, tool=${payload.toolName}, id=${toolCallId}, eventType=${eventType}`)
       } else {
-        // 工具开始/运行中事件（pending / input_ready / waiting / running）：新增或更新工具调用
+        // 工具开始/运行中事件（pending / waiting / running）：新增或更新工具调用
         if (hasMessageId) {
           sessionStore.addOrUpdateToolCall(sessionId, { ...toolData, messageBackendId: payload.messageId?.toString() })
         } else {

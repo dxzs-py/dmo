@@ -409,14 +409,13 @@ export const createStreamStateHandlers = (ctx) => {
         if (targetMsg.toolCalls && Array.isArray(targetMsg.toolCalls)) {
           for (const tc of targetMsg.toolCalls) {
             if (NON_TERMINAL_APPROVAL_STATES.includes(tc.approval?.state)) pendingApprovalCount++
-            if (tc.status === 'pending_approval' || tc.status === 'running') runningToolCount++
+            if (tc.status === ToolCallStatus.WAITING || tc.status === ToolCallStatus.RUNNING) runningToolCount++
             // 对于仍在 pending/processing/waiting 状态的审批，研究完成/失败后强制清理为终态
             if (tc.approval && NON_TERMINAL_APPROVAL_STATES.includes(tc.approval.state)) {
               tc.approval.state = payload.success !== false ? ApprovalState.APPROVED : ApprovalState.REJECTED
             }
-            // 如果工具还是 pending_approval/running/approved 状态，研究都结束了，根据实际情况设置
-            // approved 也需纳入：审批通过但 tool_call_completed 事件丢失时状态会卡住（issue_new_c）
-            if (tc.status === 'pending_approval' || tc.status === 'running' || tc.status === ToolCallStatus.APPROVED) {
+            // 如果工具还是 waiting/running 状态，研究都结束了，根据实际情况设置
+            if (tc.status === ToolCallStatus.WAITING || tc.status === ToolCallStatus.RUNNING) {
               if (tc.result || tc.output) {
                 tc.status = ToolCallStatus.COMPLETED
               } else {
@@ -432,7 +431,7 @@ export const createStreamStateHandlers = (ctx) => {
             if (tc.approval && NON_TERMINAL_APPROVAL_STATES.includes(tc.approval.state)) {
               tc.approval.state = payload.success !== false ? ApprovalState.APPROVED : ApprovalState.REJECTED
             }
-            if (tc.status === 'pending_approval' || tc.status === 'running') {
+            if (tc.status === ToolCallStatus.WAITING || tc.status === ToolCallStatus.RUNNING) {
               if (tc.result || tc.output) {
                 tc.status = ToolCallStatus.COMPLETED
               } else {
