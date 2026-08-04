@@ -1,5 +1,5 @@
 import { logger } from '@/utils/logger'
-import { toCamelCase } from '@/utils/session-transformers'
+import { toCamelCase } from '@/utils/sessionTransformers'
 
 /**
  * @typedef {import('@/composables/useRealtimeSync').RealtimeEvent} RealtimeEvent

@@ -28,6 +28,7 @@ backend/Django_xm/data/celerybeat/
 
 # Node
 node_modules/
+coverage/
 
 # OS
 .DS_Store

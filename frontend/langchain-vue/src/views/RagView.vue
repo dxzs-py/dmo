@@ -286,7 +286,7 @@ import { formatDate, formatFileSize } from '../utils/format'
 import MarkdownRenderer from '../components/common/MarkdownRenderer.vue'
 import { logger } from '../utils/logger'
 import { readSSEStream } from '../utils/sse'
-import { toCamelCase } from '@/utils/session-transformers'
+import { toCamelCase } from '@/utils/sessionTransformers'
 import { confirmDelete, confirmAction } from '../utils/dialog'
 import { useSessionStore } from '../stores/session'
 

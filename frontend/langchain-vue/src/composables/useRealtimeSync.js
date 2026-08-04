@@ -4,7 +4,7 @@ import settings from '@/config/settings'
 import { logger } from '@/utils/logger'
 import { useSnapshotSync, useSnapshotSyncByTask } from '@/composables/useSnapshotSync'
 import { useSyncStore } from '@/stores/sync'
-import { toSnakeCase, toCamelCase } from '@/utils/session-transformers.js'
+import { toSnakeCase, toCamelCase } from '@/utils/sessionTransformers.js'
 import {
   SNAPSHOT_TRIGGER_EVENTS,
   RealtimeConnectionStatus,

@@ -184,7 +184,7 @@
 import { ref, reactive, computed, watch, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { workflowAPI } from '@/api/workflow'
 import { readSSEStream } from '../utils/sse'
-import { toCamelCase, snakeToCamel } from '@/utils/session-transformers'
+import { toCamelCase, snakeToCamel } from '@/utils/sessionTransformers'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import TaskList from '../components/chat/TaskList.vue'

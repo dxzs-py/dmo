@@ -275,7 +275,7 @@ import { useResearchStore } from '../stores/research'
 import { formatFileSize, getQueryParam } from '../utils/format'
 import { logger } from '../utils/logger'
 import { getInterruptId } from '../utils/messageOperations'
-import { toCamelCase } from '@/utils/session-transformers'
+import { toCamelCase } from '@/utils/sessionTransformers'
 import { useTaskRealtimeSync } from '@/composables/useTaskRealtimeSync'
 
 const modelStore = useModelStore()

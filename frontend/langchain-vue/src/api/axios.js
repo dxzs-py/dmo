@@ -2,7 +2,7 @@ import axios from 'axios'
 import settings from '../config/settings'
 import { useUserStore } from '@/stores/user'
 import { useLoadingStore } from '@/stores/loading'
-import { toCamelCase, toSnakeCase } from '@/utils/session-transformers'
+import { toCamelCase, toSnakeCase } from '@/utils/sessionTransformers'
 
 let isRefreshing = false
 let refreshSubscribers = []

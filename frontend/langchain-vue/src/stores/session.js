@@ -10,7 +10,7 @@ import {
   isApiSuccess,
   transformBackendSessionToFrontend,
   transformFrontendMessageToBackend,
-} from '../utils/session-transformers'
+} from '../utils/sessionTransformers'
 import {
   getLastAssistantMessage,
   setLastMessageField,
