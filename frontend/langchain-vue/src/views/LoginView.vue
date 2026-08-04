@@ -147,6 +147,7 @@ import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { userAPI } from '@/api/user'
 import { ElMessage } from 'element-plus'
+import { getQueryParam } from '../utils/format'
 import { logger } from '../utils/logger'
 
 const router = useRouter()

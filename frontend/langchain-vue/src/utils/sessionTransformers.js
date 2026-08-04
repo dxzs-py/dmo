@@ -26,12 +26,12 @@ function _isPlainObject(value) {
  * @param {string} str
  * @returns {string}
  */
-export function snakeToCamel(str) {
+export function convertSnakeToCamel(str) {
   return str.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
 }
 
 // 内部别名，保持向后兼容
-const _snakeToCamel = snakeToCamel
+const _convertSnakeToCamel = convertSnakeToCamel
 
 /**
  * camelCase 字符串 → snake_case 字符串
@@ -55,7 +55,7 @@ export function toCamelCase(obj, _depth = 0) {
 
   const result = {}
   for (const key of Object.keys(obj)) {
-    const camelKey = _snakeToCamel(key)
+    const camelKey = _convertSnakeToCamel(key)
     result[camelKey] = toCamelCase(obj[key], _depth + 1)
     // 仅在 key 实际发生变化且是顶层（非递归内部）时输出日志
     if (_depth === 0 && key !== camelKey) {

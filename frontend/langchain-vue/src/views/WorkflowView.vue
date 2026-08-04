@@ -184,7 +184,7 @@
 import { ref, reactive, computed, watch, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { workflowAPI } from '@/api/workflow'
 import { readSSEStream } from '../utils/sse'
-import { toCamelCase, snakeToCamel } from '@/utils/sessionTransformers'
+import { toCamelCase, convertSnakeToCamel } from '@/utils/sessionTransformers'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import TaskList from '../components/chat/TaskList.vue'
@@ -443,7 +443,7 @@ const handleSSEEvent = (data) => {
       // 新格式：{ type: 'workflow_step', data: { step, message } }
       currentStepMessage.value = data.data?.message || '工作流启动中...'
       if (execution.value && data.data?.step) {
-        execution.value.currentStep = snakeToCamel(data.data.step)
+        execution.value.currentStep = convertSnakeToCamel(data.data.step)
       }
       break
     case 'workflow_state_update':

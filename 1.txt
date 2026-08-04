@@ -1,0 +1,86 @@
+client:733 [vite] connecting...
+client:827 [vite] connected.
+logger.js:6 [Security] Initializing session store...
+logger.js:19 [Realtime] 已从 localStorage 恢复 lastSeq: 223 条通道
+logger.js:6 [Sync] 实时同步 store 已初始化
+sessionTransformers.js:84 [toSnakeCase] pageSize → page_size
+sessionTransformers.js:84 [toSnakeCase] agentType → agent_type
+logger.js:19 [Realtime] WebSocket 已连接
+logger.js:24 [Realtime] replay barrier 设置 pending: user
+sessionTransformers.js:62 [toCamelCase] channel_type → channelType
+sessionTransformers.js:62 [toCamelCase] channel_id → channelId
+sessionTransformers.js:62 [toCamelCase] chunk_index → chunkIndex
+sessionTransformers.js:62 [toCamelCase] chunk_count → chunkCount
+logger.js:19 [Realtime] 收到 replay 回包: channel=user:1, count=0, chunk=1/1
+logger.js:24 [Realtime] replay barrier flush 无缓冲事件: user
+pinia.js?v=8039668a:4622 🍍 "chat" store installed 🆕
+pinia.js?v=8039668a:4622 🍍 "model" store installed 🆕
+pinia.js?v=8039668a:4622 🍍 "tools" store installed 🆕
+axios.js:85 [Axios] 响应转换: /users/info/ 
+  前: {"code":200,"message":"获取成功","data":{"id":1,"username":"daixing","email":"3309201506@qq.com","mobile":null,"avatar":"/media/avatar/1/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE_2026-05-01_172822.png","date_j 
+  后: {"code":200,"message":"获取成功","data":{"id":1,"username":"daixing","email":"3309201506@qq.com","mobile":null,"avatar":"/media/avatar/1/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE_2026-05-01_172822.png","dateJo
+axios.js:85 [Axios] 响应转换: /context/capability-config/ 
+  前: {"code":200,"message":"操作成功","data":{"available_capabilities":["context_management","tool_injection","guardrails","rate_limit","groq_compat"],"default_capabilities":["context_management","tool_injecti 
+  后: {"code":200,"message":"操作成功","data":{"availableCapabilities":["context_management","tool_injection","guardrails","rate_limit","groq_compat"],"defaultCapabilities":["context_management","tool_injection
+axios.js:85 [Axios] 响应转换: /chat/sessions/ 
+  前: {"code":200,"message":"操作成功","data":{"items":[{"user_id":1,"cached_at":"2026-08-04T13:52:02.924920+00:00","id":1524,"session_id":"867f5d67-f240-4220-9bf3-554cf4ba99be","title":"我来帮你执行这两个命令。注意到你写的 `oll 
+  后: {"code":200,"message":"操作成功","data":{"items":[{"userId":1,"cachedAt":"2026-08-04T13:52:02.924920+00:00","id":1524,"sessionId":"867f5d67-f240-4220-9bf3-554cf4ba99be","title":"我来帮你执行这两个命令。注意到你写的 `ollama
+logger.js:6 [Session] currentSessionId 恢复失败，fallback 到最新会话: 867f5d67-f240-4220-9bf3-554cf4ba99be
+logger.js:6 [Security] Loaded 3 sessions (page 1/1) for user 1
+axios.js:85 [Axios] 响应转换: /knowledge/knowledge-bases/ 
+  前: {"code":200,"message":"操作成功","data":{"items":[{"id":"test2","name":"test2","description":"redis学习文档","num_documents":76,"chunk_count":76,"created_at":"2026-06-21T02:23:41.870493+00:00","updated_at":"2 
+  后: {"code":200,"message":"操作成功","data":{"items":[{"id":"test2","name":"test2","description":"redis学习文档","numDocuments":76,"chunkCount":76,"createdAt":"2026-06-21T02:23:41.870493+00:00","updatedAt":"2026-
+axios.js:85 [Axios] 响应转换: /chat/project-context/ 
+  前: {"code":200,"message":"操作成功","data":{"project_name":"","project_root":"","languages":[],"frameworks":[],"has_git":false,"git_branch":"","instruction_content":"","directory_structure":"","key_files":[] 
+  后: {"code":200,"message":"操作成功","data":{"projectName":"","projectRoot":"","languages":[],"frameworks":[],"hasGit":false,"gitBranch":"","instructionContent":"","directoryStructure":"","keyFiles":[]}}
+axios.js:85 [Axios] 响应转换: /tools/mcp/servers/ 
+  前: {"code":200,"message":"操作成功","data":{"servers":[{"name":"postgres","description":"PostgreSQL 数据库操作工具 - 查询 langchain 数据库（可读写）","tool_type":"mcp","category":{"code":"general","name":"通用"},"source":"user 
+  后: {"code":200,"message":"操作成功","data":{"servers":[{"name":"postgres","description":"PostgreSQL 数据库操作工具 - 查询 langchain 数据库（可读写）","toolType":"mcp","category":{"code":"general","name":"通用"},"source":"user"
+axios.js:85 [Axios] 响应转换: /tools/skills/ 
+  前: {"code":200,"message":"操作成功","data":{"skills":[{"name":"skill_web_research","description":"网络研究技能：搜索关键词 → 抓取相关网页 → 总结关键信息。适用场景：需要深入了解某个话题。","tool_type":"skill","category":{"code":"general","name":"通用" 
+  后: {"code":200,"message":"操作成功","data":{"skills":[{"name":"skill_web_research","description":"网络研究技能：搜索关键词 → 抓取相关网页 → 总结关键信息。适用场景：需要深入了解某个话题。","toolType":"skill","category":{"code":"general","name":"通用"}
+logger.js:24 [Realtime] replay barrier 设置 pending: session_867f5d67-f240-4220-9bf3-554cf4ba99be
+ChatView.vue:202 [ChatView] WebSocket 订阅会话事件: 867f5d67-f240-4220-9bf3-554cf4ba99be
+sessionTransformers.js:62 [toCamelCase] channel_type → channelType
+sessionTransformers.js:62 [toCamelCase] channel_id → channelId
+sessionTransformers.js:62 [toCamelCase] chunk_index → chunkIndex
+sessionTransformers.js:62 [toCamelCase] chunk_count → chunkCount
+logger.js:19 [Realtime] 收到 replay 回包: channel=session:867f5d67-f240-4220-9bf3-554cf4ba99be, count=0, chunk=1/1
+logger.js:24 [Realtime] replay barrier flush 无缓冲事件: session_867f5d67-f240-4220-9bf3-554cf4ba99be
+logger.js:24 [Realtime] 收到 pong
+axios.js:85 [Axios] 响应转换: /users/secure-logout/ 
+  前: {"code":200,"message":"安全登出成功","data":{"sessions_cleared":3,"token_blacklisted":true}} 
+  后: {"code":200,"message":"安全登出成功","data":{"sessionsCleared":3,"tokenBlacklisted":true}}
+logger.js:6 [Security] Secure logout completed, server-side data cleared
+logger.js:6 [Security] User logged out, clearing all session data
+logger.js:6 [Security] Cleared all local session data
+ChatView.vue:209 [ChatView] WebSocket 取消订阅会话事件: 867f5d67-f240-4220-9bf3-554cf4ba99be
+sessionTransformers.js:84 [toSnakeCase] captchaKey → captcha_key
+logger.js:6 [Security] User logged in, loading sessions from backend
+logger.js:6 [Security] Initializing session store...
+logger.js:19 [Realtime] 已从 localStorage 恢复 lastSeq: 223 条通道
+sessionTransformers.js:84 [toSnakeCase] pageSize → page_size
+sessionTransformers.js:84 [toSnakeCase] agentType → agent_type
+logger.js:15 [Realtime] WebSocket 错误: Event
+(anonymous) @ logger.js:15
+logger.js:19 [Realtime] WebSocket 已连接
+logger.js:24 [Realtime] replay barrier 设置 pending: user
+sessionTransformers.js:62 [toCamelCase] channel_type → channelType
+sessionTransformers.js:62 [toCamelCase] channel_id → channelId
+sessionTransformers.js:62 [toCamelCase] chunk_index → chunkIndex
+sessionTransformers.js:62 [toCamelCase] chunk_count → chunkCount
+logger.js:19 [Realtime] 收到 replay 回包: channel=user:1, count=0, chunk=1/1
+logger.js:24 [Realtime] replay barrier flush 无缓冲事件: user
+axios.js:85 [Axios] 响应转换: /context/capability-config/ 
+  前: {"code":200,"message":"操作成功","data":{"available_capabilities":["context_management","tool_injection","guardrails","rate_limit","groq_compat"],"default_capabilities":["context_management","tool_injecti 
+  后: {"code":200,"message":"操作成功","data":{"availableCapabilities":["context_management","tool_injection","guardrails","rate_limit","groq_compat"],"defaultCapabilities":["context_management","tool_injection
+axios.js:85 [Axios] 响应转换: /chat/sessions/ 
+  前: {"code":200,"message":"操作成功","data":{"items":[{"id":1524,"session_id":"867f5d67-f240-4220-9bf3-554cf4ba99be","title":"我来帮你执行这两个命令。注意到你写的 `ollama lis...","mode":"agent","selected_knowledge_base":null," 
+  后: {"code":200,"message":"操作成功","data":{"items":[{"id":1524,"sessionId":"867f5d67-f240-4220-9bf3-554cf4ba99be","title":"我来帮你执行这两个命令。注意到你写的 `ollama lis...","mode":"agent","selectedKnowledgeBase":null,"sel
+logger.js:6 [Session] currentSessionId 恢复失败，fallback 到最新会话: 867f5d67-f240-4220-9bf3-554cf4ba99be
+logger.js:6 [Security] Loaded 3 sessions (page 1/1) for user 1
+axios.js:85 [Axios] 响应转换: /knowledge/knowledge-bases/ 
+  前: {"code":200,"message":"操作成功","data":{"items":[{"id":"test2","name":"test2","description":"redis学习文档","num_documents":76,"chunk_count":76,"created_at":"2026-06-21T02:23:41.870493+00:00","updated_at":"2 
+  后: {"code":200,"message":"操作成功","data":{"items":[{"id":"test2","name":"test2","description":"redis学习文档","numDocuments":76,"chunkCount":76,"createdAt":"2026-06-21T02:23:41.870493+00:00","updatedAt":"2026-
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong

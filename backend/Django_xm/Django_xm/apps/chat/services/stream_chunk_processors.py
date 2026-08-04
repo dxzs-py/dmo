@@ -12,7 +12,7 @@
 - ``process_stream_chunk``：流式 chunk 分发入口
 
 依赖方向：
-- 模块级导入 ``stream_tool_lifecycle._broadcast_tool_input_ready``（生命周期广播）
+- 工具调用状态定义（运行/输入就绪/输出就绪/错误等）
 - 延迟导入 ``stream_tool_state._detect_tool_*``（避免与 stream_tool_state 的模块级
   反向导入形成循环依赖；stream_tool_state 模块级导入本模块的 _map_state_to_status /
   _try_parse_concatenated_json）
@@ -27,8 +27,6 @@ from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from Django_xm.common.event_schema import EventSource, EventType
 from Django_xm.common.tool_call_lifecycle import service
-
-from .stream_tool_lifecycle import _broadcast_tool_input_ready, _publish_tool_lifecycle_event
 
 logger = logging.getLogger(__name__)
 
@@ -257,8 +255,6 @@ def _handle_ai_message_chunk(
                         tool_calls_map[dedup_key]["_index"] = i
                         tool_info = dict(tool_calls_map[dedup_key])
                         tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
-                        # 广播 INPUT_READY 事件到非触发浏览器（仅完整 AIMessage 路径）
-                        _broadcast_tool_input_ready(tool_info, session_id, message_id, module=module, module_id=module_id)
                         yield {"type": "tool", "data": tool_info}
                 continue
 
@@ -352,8 +348,6 @@ def _handle_ai_message_chunk(
             }
             tool_calls_map[dedup_key] = tool_info
             if not is_chunk:
-                # 广播 INPUT_READY 事件到非触发浏览器（仅完整 AIMessage 路径）
-                _broadcast_tool_input_ready(tool_info, session_id, message_id, module=module, module_id=module_id)
                 yield {"type": "tool", "data": tool_info}
 
     if tool_call_chunks and tool_args_accumulator is not None:
@@ -449,8 +443,6 @@ def _handle_ai_message_chunk(
                         tool_calls_map[dedup_key]["parameters"] = parsed_args
                         tool_info = dict(tool_calls_map[dedup_key])
                         tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
-                        # 广播 INPUT_READY 事件到非触发浏览器（参数完整时）
-                        _broadcast_tool_input_ready(tool_info, session_id, message_id, module=module, module_id=module_id)
                         yield {"type": "tool", "data": tool_info}
                     else:
                         new_tool_info = {
@@ -466,8 +458,6 @@ def _handle_ai_message_chunk(
                         if tc_index is not None:
                             new_tool_info["_index"] = tc_index
                         tool_calls_map[dedup_key] = new_tool_info
-                        # 广播 INPUT_READY 事件到非触发浏览器（参数完整时）
-                        _broadcast_tool_input_ready(new_tool_info, session_id, message_id, module=module, module_id=module_id)
                         yield {"type": "tool", "data": dict(new_tool_info)}
             except (_json.JSONDecodeError, ValueError):
                 pass
