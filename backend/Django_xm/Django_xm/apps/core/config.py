@@ -219,20 +219,5 @@ def setup_loguru_logging() -> None:
             backtrace=True,
             diagnose=True,
         )
-
-        log_path = Path(settings.log_file)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-
-        _logger.add(
-            settings.log_file,
-            format=("{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} | {message}"),
-            level=settings.log_level,
-            rotation=settings.log_rotation,
-            retention=settings.log_retention,
-            compression="zip",
-            backtrace=True,
-            diagnose=True,
-            enqueue=True,
-        )
     except ImportError:
         pass
