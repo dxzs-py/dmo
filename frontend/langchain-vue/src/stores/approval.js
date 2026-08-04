@@ -565,34 +565,37 @@ export const useApprovalStore = defineStore('approval', () => {
     let interrupted = false
     const onEvent = (parsed) => {
       if (!parsed || !parsed.type) return
-      switch (parsed.type) {
+      const originalType = parsed.type
+      const convertedParsed = toCamelCase(parsed)
+      convertedParsed.type = originalType
+      switch (convertedParsed.type) {
         case 'heartbeat':
           // readSSEStream 内部已通过 lastEventTime 维持心跳检测
           break
         case 'chunk':
-          if (parsed.content) {
-            options.onChatStreamChunk?.(parsed.content)
-            sessionStore.appendToLastAssistantMessage(sessionId, parsed.content)
+          if (convertedParsed.content) {
+            options.onChatStreamChunk?.(convertedParsed.content)
+            sessionStore.appendToLastAssistantMessage(sessionId, convertedParsed.content)
           }
           break
         case 'tool':
-          options.onChatStreamTool?.(parsed.data)
-          sessionStore.addOrUpdateToolCallToLastMessage(sessionId, parsed.data)
+          options.onChatStreamTool?.(convertedParsed.data)
+          sessionStore.addOrUpdateToolCallToLastMessage(sessionId, convertedParsed.data)
           break
         case 'tool_result':
-          options.onChatStreamToolResult?.(parsed.data)
-          sessionStore.updateOrAddToolResultToLastMessage(sessionId, parsed.data)
+          options.onChatStreamToolResult?.(convertedParsed.data)
+          sessionStore.updateOrAddToolResultToLastMessage(sessionId, convertedParsed.data)
           break
         case 'reasoning':
-          if (parsed.data?.content) {
-            options.onChatStreamReasoning?.(parsed.data)
-            sessionStore.setReasoningToLastMessage(sessionId, parsed.data)
+          if (convertedParsed.data?.content) {
+            options.onChatStreamReasoning?.(convertedParsed.data)
+            sessionStore.setReasoningToLastMessage(sessionId, convertedParsed.data)
           }
           break
         case 'approval':
-          if (parsed.data) {
+          if (convertedParsed.data) {
             // 审批流中又出现新审批
-            handleApprovalEvent(parsed.data, {
+            handleApprovalEvent(convertedParsed.data, {
               source: 'chat',
               sessionId,
               baseApproval: approvalData,
@@ -600,7 +603,7 @@ export const useApprovalStore = defineStore('approval', () => {
           }
           break
         case 'error': {
-          const errorMsg = parsed.message || parsed.data?.message || ''
+          const errorMsg = convertedParsed.message || convertedParsed.data?.message || ''
           streamError = new Error(errorMsg || '审批处理失败')
           approvalAbortController.abort()
           break
@@ -608,11 +611,11 @@ export const useApprovalStore = defineStore('approval', () => {
         case 'approval_timeout': {
           // 审批超时：终止当前流，标记 interrupted 由 finally 调用 markInterrupted
           interrupted = true
-          const timeoutToolCallId = getInterruptId(parsed.data || parsed)
+          const timeoutToolCallId = getInterruptId(convertedParsed.data || convertedParsed)
           if (timeoutToolCallId) {
             pendingApprovals.value.delete(timeoutToolCallId)
             sessionStore.updateToolCallApprovalState(sessionId, timeoutToolCallId, 'timeout')
-            sessionStore.setApprovalToLastMessage(sessionId, { ...(parsed.data || parsed), state: 'timeout' })
+            sessionStore.setApprovalToLastMessage(sessionId, { ...(convertedParsed.data || convertedParsed), state: 'timeout' })
             sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false }).catch(() => {})
           }
           approvalAbortController.abort()
@@ -621,10 +624,10 @@ export const useApprovalStore = defineStore('approval', () => {
         case 'approval_processed': {
           // 审批已在另一端处理：终止当前流，标记 interrupted 由 finally 调用 markInterrupted
           interrupted = true
-          const processedToolCallId = getInterruptId(parsed.data || parsed)
+          const processedToolCallId = getInterruptId(convertedParsed.data || convertedParsed)
           if (processedToolCallId) {
             pendingApprovals.value.delete(processedToolCallId)
-            const processedData = parsed.data || parsed
+            const processedData = convertedParsed.data || convertedParsed
             const finalState = processedData.approved ? 'approved' : 'rejected'
             sessionStore.updateToolCallApprovalState(sessionId, processedToolCallId, finalState)
             sessionStore.setApprovalToLastMessage(sessionId, { ...processedData, state: finalState })

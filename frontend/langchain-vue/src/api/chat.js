@@ -1,7 +1,7 @@
 import { apiClient } from './axios'
 import settings from '../config/settings'
 import { useUserStore } from '@/stores/user'
-import { fetchSSE, readSSEStream } from '../utils/sse'
+import { fetchSSE } from '../utils/sse'
 
 function validateChatRequest(data) {
   const errors = []
@@ -182,22 +182,3 @@ export function chatFinalize(sessionId, messageId) {
   return apiClient.post('/chat/finalize/', { sessionId, messageId })
 }
 
-export async function* streamChat(request) {
-  const response = await createStreamRequest(request)
-  const eventQueue = []
-  let resolveEvent = null
-  let done = false
-
-  await readSSEStream(response, (parsed) => {
-    if (resolveEvent) {
-      resolveEvent(parsed)
-      resolveEvent = null
-    } else {
-      eventQueue.push(parsed)
-    }
-  })
-
-  while (eventQueue.length > 0) {
-    yield eventQueue.shift()
-  }
-}

@@ -476,7 +476,7 @@ const handleSSEEvent = (data) => {
       // 学习工作流完成（原 'complete'）
       closeSSE()
       if (execution.value && data.data) {
-        execution.value = { ...execution.value, status: 'completed', ...data.data }
+        execution.value = { ...execution.value, status: 'completed', ...toCamelCase(data.data) }
       }
       if (fileBrowserRef.value) {
         fileBrowserRef.value.loadFiles()
@@ -487,7 +487,7 @@ const handleSSEEvent = (data) => {
       // 学习工作流失败（新增）
       closeSSE()
       if (execution.value && data.data) {
-        execution.value = { ...execution.value, status: 'failed', ...data.data }
+        execution.value = { ...execution.value, status: 'failed', ...toCamelCase(data.data) }
       }
       ElMessage.error(data.data?.error || data.data?.message || '工作流执行失败')
       break

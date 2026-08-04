@@ -127,10 +127,10 @@ apiClient.interceptors.response.use(
           originalRequest.headers.Authorization = `Bearer ${userStore.token}`
           return apiClient(originalRequest)
         } else {
-          userStore.forceLogout('token_expired')
+          userStore.forceLogout('tokenExpired')
         }
       } catch (refreshError) {
-        userStore.forceLogout('token_invalid')
+        userStore.forceLogout('tokenInvalid')
         return Promise.reject(refreshError)
       } finally {
         isRefreshing = false

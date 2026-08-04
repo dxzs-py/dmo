@@ -285,7 +285,7 @@ async function handleLogin() {
 
     if (result.success) {
       ElMessage.success(result.message)
-      const redirect = router.currentRoute.value.query.redirect || '/'
+      const redirect = getQueryParam(router.currentRoute.value, 'redirect') || '/'
       router.push(redirect)
     } else {
       ElMessage.error(result.message)

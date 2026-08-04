@@ -138,12 +138,12 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
-  function forceLogout(reason = 'token_expired') {
+  function forceLogout(reason = 'tokenExpired') {
     clearUser()
     const reasonMessages = {
-      token_expired: '登录已过期，请重新登录',
-      token_invalid: '登录凭证无效，请重新登录',
-      session_expired: '会话已过期，请重新登录',
+      tokenExpired: '登录已过期，请重新登录',
+      tokenInvalid: '登录凭证无效，请重新登录',
+      sessionExpired: '会话已过期，请重新登录',
     }
     const message = reasonMessages[reason] || '登录已过期，请重新登录'
 

@@ -286,6 +286,7 @@ import { formatDate, formatFileSize } from '../utils/format'
 import MarkdownRenderer from '../components/common/MarkdownRenderer.vue'
 import { logger } from '../utils/logger'
 import { readSSEStream } from '../utils/sse'
+import { toCamelCase } from '@/utils/session-transformers'
 import { confirmDelete, confirmAction } from '../utils/dialog'
 import { useSessionStore } from '../stores/session'
 
@@ -592,13 +593,16 @@ const executeStreamQuery = async () => {
 }
 
 const handleStreamEvent = (data) => {
-  switch (data.type) {
+  const originalType = data.type
+  const convertedData = toCamelCase(data)
+  convertedData.type = originalType
+  switch (convertedData.type) {
     case 'start':
       break
     case 'chunk':
     case 'content':
-      if (data.content) {
-        streamingAnswer.value += data.content
+      if (convertedData.content) {
+        streamingAnswer.value += convertedData.content
         if (result.value) {
           result.value.answer = streamingAnswer.value
         }
@@ -612,35 +616,35 @@ const handleStreamEvent = (data) => {
       }
       break
     case 'error':
-      errorMessage.value = data.message || data.error || '查询出错'
+      errorMessage.value = convertedData.message || convertedData.error || '查询出错'
       if (result.value) {
         result.value.success = false
         result.value.error = errorMessage.value
       }
       break
     case 'model_fallback':
-      if (data.data?.message) {
+      if (convertedData.data?.message) {
         ElNotification({
           title: '模型降级提示',
-          message: data.data.message,
+          message: convertedData.data.message,
           type: 'warning',
           duration: 8000,
         })
       }
       break
     case 'sources':
-      if (data.data && result.value) {
-        result.value.sources = data.data
+      if (convertedData.data && result.value) {
+        result.value.sources = convertedData.data
       }
       break
     case 'degradation':
-      if (data.message) {
-        ElMessage.warning({ message: data.message, duration: 5000 })
+      if (convertedData.message) {
+        ElMessage.warning({ message: convertedData.message, duration: 5000 })
       }
       break
     default:
-      if (data.content) {
-        streamingAnswer.value += data.content
+      if (convertedData.content) {
+        streamingAnswer.value += convertedData.content
         if (result.value) {
           result.value.answer = streamingAnswer.value
         }
