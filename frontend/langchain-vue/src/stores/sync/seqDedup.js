@@ -1,76 +1,59 @@
 import { logger } from '@/utils/logger'
 
 /**
- * 创建 seq 去重器
+ * 创建 seq 跳号检测基线（Task 4：seq 单一权威）
  *
- * 维护每个 session 最后处理的 seq，用于跳号检测和事件去重。
- * 纯函数式：所有状态都封装在返回对象内，不依赖外部闭包。
+ * 职责定位（Task 4 单一权威收敛后）：
+ * - 事件级去重的**唯一权威**是 useRealtimeSync.lastSeq（channel 维度，单调推进，
+ *   决定 replay 起点并持久化）；"事件已见"不再由本模块判断。
+ * - 本模块仅维护 per-session 的**跳号检测基线**（lastSeenSeq），
+ *   供 handleSessionEvent.js 的跳号检测（seq > prevSeq + 1 → 触发 requestFullSync）使用。
+ * - 事件丢弃（seq < orderedQueue.expectedSeq）时，由 sync.js 的 advanceBaseline
+ *   联动推进本基线，保证基线不落后于有序队列，避免误判跳号（双基线发散修复）。
  *
  * 原逻辑位于 sync.js L514-536（applySessionEvent 内）与 L491-501（resetSessionSeq 内）。
+ * shouldSkip 的"事件已见去重 / replay 基线重置"逻辑已删除（职责移交 lastSeq + orderedQueue）。
  *
  * @returns {{
  *   lastSeenSeq: Map<string, number>,
  *   getPrevSeq: (sessionId: string) => number,
  *   setSeenSeq: (sessionId: string, seq: number) => void,
- *   resetSeq: (sessionId: string) => void,
- *   shouldSkip: (event: { seq?: number, _isReplay?: boolean }, sessionId: string, isReplay?: boolean) => { skip: boolean, resetToZero: boolean }
+ *   resetSeq: (sessionId: string) => void
  * }}
  */
 export const createSeqDedup = () => {
-  /** 每个 session 最后处理的 seq，用于跳号检测 */
+  /** 每个 session 最后处理的 seq，仅用于跳号检测（非去重） */
   /** @type {Map<string, number>} */
   const lastSeenSeq = new Map()
 
+  /**
+   * 获取指定 session 的跳号检测基线（无记录时返回 0）
+   * @param {string} sessionId
+   * @returns {number}
+   */
   const getPrevSeq = (sessionId) => lastSeenSeq.get(sessionId) || 0
 
+  /**
+   * 推进跳号检测基线（取 max 防回退：replay/乱序事件可能携带更小 seq，
+   * 直接覆盖会令后续事件被误判为跳号）
+   * @param {string} sessionId
+   * @param {number} seq
+   */
   const setSeenSeq = (sessionId, seq) => {
-    lastSeenSeq.set(sessionId, seq)
-  }
-
-  const resetSeq = (sessionId) => {
-    lastSeenSeq.delete(sessionId)
+    const prev = lastSeenSeq.get(sessionId) || 0
+    if (seq > prev) {
+      lastSeenSeq.set(sessionId, seq)
+    } else {
+      logger.debug(`[Sync] setSeenSeq 忽略回退 seq: session=${sessionId}, seq=${seq}, prev=${prev}`)
+    }
   }
 
   /**
-   * 判断事件是否应被跳过（seq 去重）
-   *
-   * 原逻辑（sync.js L514-536）：
-   * - seq <= prevSeq 且非 replay → 跳过（debug 日志）
-   * - seq <= prevSeq 且 replay → 重置基线为 0 后继续处理（info 日志，调用方负责 setSeenSeq(sessionId, 0)）
-   * - seq > prevSeq → 正常处理
-   *
-   * @param {{ seq?: number, _isReplay?: boolean }} event
+   * 重置指定 session 的跳号检测基线（replayFromSeq=0 全量回放前调用）
    * @param {string} sessionId
-   * @param {boolean} [isReplay] - 是否为 replay 事件（默认读取 event._isReplay）
-   * @returns {{ skip: boolean, resetToZero: boolean }}
-   *   - skip: true 表示跳过该事件
-   *   - resetToZero: true 表示应将基线重置为 0 后继续处理
    */
-  const shouldSkip = (event, sessionId, isReplay) => {
-    if (typeof event.seq !== 'number') {
-      return { skip: false, resetToZero: false }
-    }
-    const prevSeq = getPrevSeq(sessionId)
-    const replay = isReplay === true || event._isReplay === true
-    if (event.seq <= prevSeq) {
-      if (replay) {
-        // replay 事件特殊处理：
-        // 调用方通过 subscribeSession(replayFromSeq=0) 触发后端回放历史事件时，
-        // 这些事件的 seq 可能远小于本地 lastSeenSeq（如切换任务后回放 seq=1,2,3，
-        // 但本地 lastSeenSeq=50）。若按普通逻辑跳过，回放将完全失效，状态无法重建。
-        // 此时重置 lastSeenSeq 为 0，让该事件及后续低 seq 事件能正常通过去重检查。
-        // 注意：调用方应优先在 subscribeSession 前调用 resetSessionSeq 显式重置，
-        // 此分支作为兜底保护，防止遗漏调用导致回放失效。
-        logger.info(
-          `[Sync] replay 事件 seq<=lastSeq，重置基线后继续处理: session=${sessionId}, ` +
-          `seq=${event.seq}, lastSeq=${prevSeq}`
-        )
-        return { skip: false, resetToZero: true }
-      }
-      logger.debug(`[Sync] 跳过已处理事件: session=${sessionId}, seq=${event.seq}, lastSeq=${prevSeq}`)
-      return { skip: true, resetToZero: false }
-    }
-    return { skip: false, resetToZero: false }
+  const resetSeq = (sessionId) => {
+    lastSeenSeq.delete(sessionId)
   }
 
   return {
@@ -78,6 +61,5 @@ export const createSeqDedup = () => {
     getPrevSeq,
     setSeenSeq,
     resetSeq,
-    shouldSkip,
   }
 }

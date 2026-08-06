@@ -1,4 +1,5 @@
 import { ToolCallStatus, ApprovalState } from '@/types'
+import { TERMINAL_STATUSES } from '@/utils/toolCallStateMachine'
 
 /**
  * 事件类型常量（与后端 event_schema.py EventType 枚举对应）
@@ -27,13 +28,11 @@ export const APPROVAL_STATE_MAP = {
   approval_timeout: ApprovalState.TIMEOUT,
 }
 
-/** 工具调用结果事件集合（映射到 updateOrAddToolResult 路径） */
-export const TOOL_CALL_RESULT_STATUSES = new Set([
-  ToolCallStatus.COMPLETED,
-  ToolCallStatus.FAILED,
-  ToolCallStatus.TIMEOUT,
-  ToolCallStatus.REJECTED,
-])
+/** 工具调用结果事件集合（映射到 updateOrAddToolResult 路径）
+ *  与 utils/toolCallStateMachine.js 的 TERMINAL_STATUSES 为同一终态集合
+ *  （唯一权威），此处仅 re-export，避免重复定义枚举值。
+ */
+export const TOOL_CALL_RESULT_STATUSES = TERMINAL_STATUSES
 
 /** 非终态审批状态集合（流式完成/深度研究完成时需清理的状态） */
 export const NON_TERMINAL_APPROVAL_STATES = [

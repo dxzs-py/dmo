@@ -11,8 +11,15 @@ import { getSession, ensureSessionLoaded } from './helpers'
  *
  * 后端为每个 EventType 独立 ws_event_name，前端通过 event.type 直接区分
  * 11 个工具调用事件类型（含 rejected），映射到对应的 ToolCallStatus。
- * 工具事件主通道为 WebSocket（ToolCallLifecycleService）；恢复 SSE 流同时通过
- * SSE 和 WebSocket 推送 tool_result，前端通过 updateOrAddToolResultInMap 兼容处理。
+ * 工具调用唯一真相源为 sessionStore.toolCallsMap：WebSocket tool_call_* 事件
+ * （ToolCallLifecycleService）与 SSE tool / tool_result 事件（请求浏览器恢复流、
+ * 实时工具渲染）均写入同一幂等入口 addOrUpdateToolCallInMap / updateOrAddToolResultInMap，
+ * 以 id/toolCallId 精确匹配幂等合并——双通道重复推送同一工具时不产生重复条目（Task 5.1）。
+ *
+ * 状态应用：本模块仅做"事件类型 → 目标状态"映射（TOOL_CALL_STATUS_MAP），
+ * 状态推进/校验（合法转换、终态不回退）统一由唯一状态机
+ * toolCallStateMachine.applyToolCallState 在写入入口内完成（核心层权威化，Task 2），
+ * 本模块不自行推导/覆盖状态。
  *
  * 通过 sessionId / taskId 自动路由到 sessionStore 或 researchStore：
  * - sessionId 存在（chat / learning / 关联 deep_research）→ sessionStore
@@ -84,6 +91,12 @@ export const createHandleToolCallEvent = (ctx) => {
       agentName: payload.agentName || '',
       agentPath: Array.isArray(payload.agentPath) ? payload.agentPath : [],
       riskCeiling: payload.riskCeiling || '',
+      // 工具调用实际风险等级（safe/controlled/high）
+      // 根因修复：后端 publish_tool_call payload 携带 risk_level（toCamelCase 后为 riskLevel），
+      // 让前端从工具事件直接获取风险等级，不再单一依赖 approval_pending 事件路径。
+      // ToolCallCard 优先读 toolCall.riskLevel，回退 approvalData.riskLevel，
+      // 避免 approval_pending 事件丢失时跨浏览器风险等级显示不一致
+      riskLevel: payload.riskLevel || '',
     }
 
     const hasMessageId = !!payload.messageId

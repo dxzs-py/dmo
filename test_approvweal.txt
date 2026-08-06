@@ -1,0 +1,8 @@
+=== 运行模型: ollama run ornith:latest "你是谁" ===
+
+我是 **Ornith**，一个开源的 agentic 编程助手。我可以帮你编写代码、调试问题、设计架构等。有什么需要我帮忙的吗？
+
+=== ollama ps ===
+NAME             ID              SIZE      PROCESSOR    CONTEXT    UNTIL              
+bge-m3:latest    790764642607    664 MB    100% GPU     4096       4 minutes from now    
+ornith:latest    a75697c14589    5.3 GB    100% GPU     4096       4 minutes from now

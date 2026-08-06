@@ -2,11 +2,13 @@ import { ref } from 'vue'
 import { getSessionSnapshot } from '@/api/realtime'
 import { getApprovalHistory } from '@/api/approval'
 import { useSessionStore } from '@/stores/session'
+import { useResearchStore } from '@/stores/research'
+import { useApprovalStore } from '@/stores/approval'
 import { logger } from '@/utils/logger'
 import { transformBackendMessageToFrontend, toCamelCase } from '@/utils/sessionTransformers'
-import { mergeMessageFromBackend } from '@/utils/messageOperations'
+import { _mergeToolCalls } from '@/utils/messageOperations'
 import { ToolCallStatus } from '@/types'
-import { getToolCallStatusPriority } from '@/utils/toolCallTransition'
+import { getToolCallStatusPriority, TERMINAL_STATUSES } from '@/utils/toolCallStateMachine'
 
 /**
  * 快照校对 debounce 时间（ms）
@@ -21,9 +23,25 @@ const SNAPSHOT_DEBOUNCE_MS = 500
 const SNAPSHOT_TIMEOUT_MS = 8000
 
 /**
- * 工具调用终态集合（用于状态滞后判断）
- * 注：原 TERMINAL_TOOL_CALL_STATUSES / TERMINAL_APPROVAL_STATES 常量已删除（未使用，oxlint 清理）
+ * 工具调用终态集合（快照校对 result 路径路由判断用）
+ *
+ * 快照 tool 状态为终态（COMPLETED/FAILED/TIMEOUT）时走 result 路径
+ * （sessionStore.updateOrAddToolResult：工具结果唯一写入入口，允许终态覆盖本地
+ * PENDING，绕过 add 路径的 PENDING+非终态审批锁死保护），
+ * 否则走 add 路径（sessionStore.addOrUpdateToolCall：工具创建/中间态入口）。
+ * 与 utils/toolCallStateMachine.js 的 TERMINAL_STATUSES（终态唯一权威）的关系：
+ * 本集合是它的子集，显式排除 REJECTED——快照 result 路径仅覆盖
+ * COMPLETED/FAILED/TIMEOUT 三种终态，REJECTED 保持走 add 路径（与原实现行为一致）。
+ * 枚举值从权威集合派生，避免重复定义魔法值。
  */
+const _TERMINAL_TOOL_CALL_STATUSES = new Set(
+  [...TERMINAL_STATUSES].filter(status => status !== ToolCallStatus.REJECTED)
+)
+
+/**
+ * 快照校对消息状态提升时"始终以后端为准"的非内容字段（后端是元数据权威）
+ */
+const _SNAPSHOT_NON_CONTENT_FIELDS = ['tokenCount', 'responseTime', 'model', 'backendId']
 
 /**
  * 按 sessionId 缓存的快照校对实例
@@ -31,6 +49,13 @@ const SNAPSHOT_TIMEOUT_MS = 8000
  * @type {Map<string, { syncFromSnapshot: () => Promise<void>, isSyncing: import('vue').Ref<boolean> }>}
  */
 const instanceCache = new Map()
+
+/**
+ * 按 taskId 缓存的快照校对实例
+ *
+ * @type {Map<string, { syncFromSnapshot: () => Promise<void>, isSyncing: import('vue').Ref<boolean> }>}
+ */
+const taskInstanceCache = new Map()
 
 /**
  * 审批状态优先级（数值越大优先级越高）
@@ -54,29 +79,125 @@ function _approvalStatePriority(state) {
 }
 
 /**
- * 创建指定会话的快照校对实例
+ * 消息字段状态提升合并（Task 3.3）
  *
- * @param {string} sessionId
+ * 快照校对只做**状态提升**：仅当本地缺失或后端更新（优先级更高）时才以快照覆盖，
+ * 不再对非保护态消息调用 mergeMessageFromBackend 做整体覆盖（防止陈旧快照
+ * 覆盖本地较新的流式/审批状态）。
+ *
+ * 规则（与 mergeMessageFromBackend 保护态分支 L1045-1074 对齐，统一适用于所有消息）：
+ * - 非内容字段（tokenCount/responseTime/model/backendId）：始终以后端为准
+ * - content：本地为空或后端更长时允许覆盖，否则保留本地
+ * - toolCalls：后端数量 >= 本地时用 _mergeToolCalls 合并（保留本地更完整的 result/status），
+ *   后端数量 < 本地时保留本地（快照滞后，本地更完整）
+ * - reasoning：后端 reasoning.content 更长时覆盖
+ * - sources/suggestions/context：本地缺失时补充，否则保留本地
+ *
+ * @param {Object} localMsg - 本地消息（会被原地修改）
+ * @param {Object} backendMsg - 后端快照消息（已通过 transformBackendMessageToFrontend 转换）
+ */
+function _reconcileMessageField(localMsg, backendMsg) {
+  if (!localMsg || !backendMsg) return
+
+  // 非内容字段始终以后端为准（后端是元数据权威）
+  for (const field of _SNAPSHOT_NON_CONTENT_FIELDS) {
+    if (backendMsg[field] !== undefined) {
+      localMsg[field] = backendMsg[field]
+    }
+  }
+
+  // content：本地为空或后端更长时允许覆盖（状态提升，不整体覆盖本地新内容）
+  const localContent = localMsg.content || ''
+  const backendContent = backendMsg.content || ''
+  const localContentEmpty = localContent.length === 0
+  const backendLonger = backendContent.length > localContent.length
+  let contentLifted = false
+  if (localContentEmpty || backendLonger) {
+    if (backendMsg.content !== undefined) {
+      localMsg.content = backendMsg.content
+      contentLifted = true
+    }
+  }
+
+  // toolCalls：后端数量 >= 本地时合并（保留本地更完整状态）；否则保留本地
+  const localToolCalls = localMsg.toolCalls || []
+  const backendToolCalls = Array.isArray(backendMsg.toolCalls) ? backendMsg.toolCalls : []
+  if (backendToolCalls.length >= localToolCalls.length) {
+    localMsg.toolCalls = _mergeToolCalls(localToolCalls, backendToolCalls)
+  }
+
+  // reasoning：后端 reasoning.content 更长时允许覆盖
+  if (backendMsg.reasoning !== undefined) {
+    const localReasoningContent = localMsg.reasoning?.content || ''
+    const backendReasoningContent = backendMsg.reasoning?.content || ''
+    if (backendReasoningContent.length > localReasoningContent.length) {
+      localMsg.reasoning = backendMsg.reasoning
+    }
+  }
+
+  // sources/suggestions/context：本地缺失时补充（状态提升），否则保留本地
+  for (const field of ['sources', 'suggestions', 'context']) {
+    const localValue = localMsg[field]
+    const localEmpty = !localValue || (Array.isArray(localValue) && localValue.length === 0)
+    if (localEmpty && backendMsg[field] !== undefined) {
+      localMsg[field] = backendMsg[field]
+    }
+  }
+
+  // 同步到当前版本快照（与 mergeMessageFromBackend 保护态分支的版本同步语义对齐）：
+  // 仅同步非内容字段与已提升字段，content 仅在实际提升时同步（保护态下不覆盖版本内容）
+  const versionIdx = localMsg.currentVersion
+  if (localMsg.versions && versionIdx !== undefined && localMsg.versions[versionIdx]) {
+    const ver = localMsg.versions[versionIdx]
+    for (const field of _SNAPSHOT_NON_CONTENT_FIELDS) {
+      if (localMsg[field] !== undefined) ver[field] = localMsg[field]
+    }
+    ver.toolCalls = localMsg.toolCalls
+    ver.sources = localMsg.sources
+    ver.reasoning = localMsg.reasoning
+    ver.suggestions = localMsg.suggestions
+    ver.context = localMsg.context
+    if (contentLifted && localMsg.content !== undefined) {
+      ver.content = localMsg.content
+    }
+  }
+}
+
+/**
+ * 创建快照校对实例（Task 9.3：session / task 双工厂参数化合并）
+ *
+ * 通过 { kind: 'session' | 'task', id } 区分两种校对源：
+ * - kind='session'：数据源为 getSessionSnapshot（消息 / toolCalls / 审批），
+ *   校对目标为 sessionStore
+ * - kind='task'：数据源为 getApprovalHistory（source='deep_research'），
+ *   校对目标为 researchStore + approvalStore（深度研究模块跨浏览器同步）
+ *
+ * 公共框架（isSyncing / debounce / inflight 并发复用）两 kind 共用，
+ * 数据获取与校对逻辑在 _performSessionSync / _performTaskSync 内分支。
+ *
+ * @param {{ kind: 'session' | 'task', id: string }} options
  * @returns {{ syncFromSnapshot: () => Promise<void>, isSyncing: import('vue').Ref<boolean> }}
  */
-function createSnapshotSyncInstance(sessionId) {
+function createSnapshotSyncInstance({ kind, id }) {
   const isSyncing = ref(false)
   /** @type {number | null} */
   let debounceTimer = null
   /** @type {Promise<void> | null} */
   let inflightPromise = null
 
+  // ==================== kind='session' 校对实现 ====================
+
   /**
-   * 对比本地消息与快照消息，差异部分以快照为准覆盖本地
+   * 对比本地消息与快照消息（Task 3.3 状态提升合并）
    *
    * @param {Object} sessionStore
    * @param {Array} backendMessages - 后端快照消息列表
    */
   const _reconcileMessages = (sessionStore, backendMessages) => {
     if (!Array.isArray(backendMessages) || backendMessages.length === 0) return
-    const session = sessionStore.sessions.find(s => s.id === sessionId)
+    const session = sessionStore.sessions.find(s => s.id === id)
     if (!session) {
-      logger.warn(`[SnapshotSync] 会话不存在，跳过消息校对: session=${sessionId}`)
+      logger.warn(`[SnapshotSync] 会话不存在，跳过消息校对: session=${id}`)
       return
     }
 
@@ -93,16 +214,18 @@ function createSnapshotSyncInstance(sessionId) {
       )
 
       if (localMsg) {
-        // 本地存在：增量合并（mergeMessageFromBackend 内含流式保护逻辑）
-        mergeMessageFromBackend(localMsg, transformed)
+        // 本地存在：状态提升合并（仅当本地缺失或后端更新时写，不整体覆盖）
+        _reconcileMessageField(localMsg, transformed)
       } else {
-        // 本地缺失：添加消息（addMessageToSessionById 内部已做幂等处理）
-        sessionStore.addMessageToSessionById(sessionId, backendMsg)
+        // 本地缺失：状态提升——从快照补入消息。
+        // saveToBackend=false：快照校对不应将本地补入的消息回写后端
+        // （addMessageToSession 内部已做 versions 初始化）
+        sessionStore.addMessageToSession(id, transformed, false)
       }
       reconciledCount++
     }
     if (reconciledCount > 0) {
-      logger.info(`[SnapshotSync] 消息校对完成: session=${sessionId}, count=${reconciledCount}`)
+      logger.info(`[SnapshotSync] 消息校对完成: session=${id}, count=${reconciledCount}`)
     }
   }
 
@@ -120,18 +243,25 @@ function createSnapshotSyncInstance(sessionId) {
       const toolCallId = backendTc.toolCallId || backendTc.id
       if (!toolCallId) continue
 
-      const localTc = sessionStore.getToolCallById(sessionId, toolCallId)
+      const localTc = sessionStore.getToolCallById(id, toolCallId)
       if (localTc) {
         // 状态滞后判断：本地非终态、快照为终态时以快照为准
         const localPriority = getToolCallStatusPriority(localTc.status)
         const backendPriority = getToolCallStatusPriority(backendTc.status)
         if (backendPriority > localPriority) {
-          // 通过 addOrUpdateToolCall 触发响应式更新（携带 messageBackendId 以定位消息）
+          // 通过 addOrUpdateToolCall / updateOrAddToolResult 触发响应式更新（携带 messageBackendId 以定位消息）
+          // 快照为终态（COMPLETED/FAILED/TIMEOUT）时走 result 路径（updateOrAddToolResult，
+          // 允许终态覆盖本地 PENDING，绕过 add 路径的 PENDING+非终态审批锁死保护），
+          // 否则走 add 路径（addOrUpdateToolCall）
           const updateData = {
             ...backendTc,
             messageBackendId: localTc.messageBackendId,
           }
-          sessionStore.addOrUpdateToolCall(sessionId, updateData)
+          if (_TERMINAL_TOOL_CALL_STATUSES.has(backendTc.status)) {
+            sessionStore.updateOrAddToolResult(id, updateData)
+          } else {
+            sessionStore.addOrUpdateToolCall(id, updateData)
+          }
           reconciledCount++
         } else if (
           // approval 字段完整性检查：本地 approval 为空但快照有 approval 数据时合并
@@ -139,17 +269,28 @@ function createSnapshotSyncInstance(sessionId) {
           (!localTc.approval || Object.keys(localTc.approval).length === 0) &&
           backendTc.approval && Object.keys(backendTc.approval).length > 0
         ) {
-          sessionStore.setApprovalToToolCall(sessionId, toolCallId, backendTc.approval)
+          sessionStore.setApprovalToToolCall(id, toolCallId, backendTc.approval)
           reconciledCount++
         }
       } else {
-        // 本地缺失：通过 addOrUpdateToolCall 添加
-        sessionStore.addOrUpdateToolCall(sessionId, backendTc)
+        // 本地缺失：快照为终态时走 result 路径（updateOrAddToolResult），否则走 add 路径（addOrUpdateToolCall）
+        // Task 3.3：补传 messageBackendId（后端快照 toolCall 携带的归属消息 id），
+        // 确保 toolCallsMap → message.toolCalls 的派生同步能将 toolCall 挂载到正确消息
+        // （toolCallsMap 中 toolCall.messageBackendId 驱动 _syncMessageToolCalls 归属）
+        const addData = {
+          ...backendTc,
+          messageBackendId: backendTc.messageBackendId || backendTc.messageId,
+        }
+        if (_TERMINAL_TOOL_CALL_STATUSES.has(backendTc.status)) {
+          sessionStore.updateOrAddToolResult(id, addData)
+        } else {
+          sessionStore.addOrUpdateToolCall(id, addData)
+        }
         reconciledCount++
       }
     }
     if (reconciledCount > 0) {
-      logger.info(`[SnapshotSync] 工具调用校对完成: session=${sessionId}, count=${reconciledCount}`)
+      logger.info(`[SnapshotSync] 工具调用校对完成: session=${id}, count=${reconciledCount}`)
     }
   }
 
@@ -167,7 +308,7 @@ function createSnapshotSyncInstance(sessionId) {
       const toolCallId = backendApproval.interruptId
       if (!toolCallId) continue
 
-      const localTc = sessionStore.getToolCallById(sessionId, toolCallId)
+      const localTc = sessionStore.getToolCallById(id, toolCallId)
       if (!localTc) continue
 
       const localApprovalState = localTc.approval?.state
@@ -180,34 +321,29 @@ function createSnapshotSyncInstance(sessionId) {
       const localPriority = _approvalStatePriority(localApprovalState)
       const backendPriority = _approvalStatePriority(backendApprovalState)
       if (backendPriority > localPriority) {
-        sessionStore.setApprovalToToolCall(sessionId, toolCallId, backendApproval)
+        sessionStore.setApprovalToToolCall(id, toolCallId, backendApproval)
         reconciledCount++
       }
     }
     if (reconciledCount > 0) {
-      logger.info(`[SnapshotSync] 审批校对完成: session=${sessionId}, count=${reconciledCount}`)
+      logger.info(`[SnapshotSync] 审批校对完成: session=${id}, count=${reconciledCount}`)
     }
   }
 
   /**
-   * 执行一次快照校对（带超时保护）
+   * 执行一次 session 快照校对（带超时保护）
    *
    * @returns {Promise<void>}
    */
-  const _performSync = async () => {
-    if (isSyncing.value) {
-      logger.debug(`[SnapshotSync] 校对进行中，跳过本次: session=${sessionId}`)
-      return
-    }
-    isSyncing.value = true
+  const _performSessionSync = async () => {
     try {
       const sessionStore = useSessionStore()
 
       // 带超时的请求，避免快照接口卡死阻塞 UI
-      const fetchPromise = getSessionSnapshot(sessionId)
+      const fetchPromise = getSessionSnapshot(id)
       const timeoutPromise = new Promise((_, reject) => {
         const timer = setTimeout(() => {
-          reject(new Error(`Snapshot timeout: ${sessionId}`))
+          reject(new Error(`Snapshot timeout: ${id}`))
         }, SNAPSHOT_TIMEOUT_MS)
         // 清理 timer 避免内存泄漏
         fetchPromise.finally(() => clearTimeout(timer))
@@ -217,13 +353,13 @@ function createSnapshotSyncInstance(sessionId) {
       try {
         resp = await Promise.race([fetchPromise, timeoutPromise])
       } catch (error) {
-        logger.warn(`[SnapshotSync] 快照请求失败，保留本地状态: session=${sessionId}, error=${error.message}`)
+        logger.warn(`[SnapshotSync] 快照请求失败，保留本地状态: session=${id}, error=${error.message}`)
         return
       }
 
       const data = resp?.data?.data
       if (!data) {
-        logger.warn(`[SnapshotSync] 快照响应数据为空: session=${sessionId}`)
+        logger.warn(`[SnapshotSync] 快照响应数据为空: session=${id}`)
         return
       }
 
@@ -245,10 +381,139 @@ function createSnapshotSyncInstance(sessionId) {
         _reconcileApprovals(sessionStore, approvals)
       }
 
-      logger.info(`[SnapshotSync] 快照校对成功: session=${sessionId}`)
+      logger.info(`[SnapshotSync] 快照校对成功: session=${id}`)
     } catch (error) {
       // 任何异常都不阻塞 UI，保留本地状态
-      logger.warn(`[SnapshotSync] 快照校对异常，保留本地状态: session=${sessionId}, error=${error?.message || error}`)
+      logger.warn(`[SnapshotSync] 快照校对异常，保留本地状态: session=${id}, error=${error?.message || error}`)
+    }
+  }
+
+  // ==================== kind='task' 校对实现 ====================
+
+  /**
+   * 执行一次 task 快照校对（深度研究模块专用）
+   *
+   * 数据源：工具调用数据的唯一持久化来源是 Approval 模型
+   * （source='deep_research', source_id=taskId）。
+   * 通过统一审批 API getApprovalHistory 查询审批记录，
+   * 从 approval.state 推导 toolCall status。
+   *
+   * 优先级保护策略（与 session 校对一致）：
+   *   - tool_call：仅当后端 status 优先级 > 本地时才更新
+   *   - approval：仅当后端 state 优先级 > 本地时才更新
+   *   优先级函数复用 toolCallStateMachine.js 的 getToolCallStatusPriority / 模块级 _approvalStatePriority
+   *
+   * @returns {Promise<void>}
+   */
+  const _performTaskSync = async () => {
+    try {
+      // 工具调用数据的唯一持久化来源是 Approval 模型（source='deep_research'）
+      // 通过统一审批 API 查询，替代原 getResearchSnapshot
+      const response = await getApprovalHistory(id, { source: 'deep_research' })
+      const approvalList = response?.data?.data || []
+      const researchStore = useResearchStore()
+      const approvalStore = useApprovalStore()
+
+      // 获取本地已有工具调用，用于优先级比较
+      const localToolCalls = researchStore.getToolCalls(id)
+      const localToolCallMap = new Map(
+        localToolCalls.map(tc => [
+          tc.id,
+          tc,
+        ])
+      )
+
+      // 遍历审批记录，更新 toolCall 与 approval 状态
+      for (const approval of approvalList) {
+        if (!approval) continue
+        const interruptId = approval.interruptId
+        if (!interruptId) continue
+        const extra = (approval.extra && typeof approval.extra === 'object') ? approval.extra : {}
+        const toolCallId = extra.toolCallId || interruptId
+
+        // 从 approval.state 推导 toolCall status
+        const backendStatus = approval.state === 'rejected' ? ToolCallStatus.REJECTED : (approval.state === 'timeout' ? ToolCallStatus.TIMEOUT : ToolCallStatus.RUNNING)
+
+        // 1. toolCall 状态更新（优先级保护：仅当后端优先级 > 本地时才更新）
+        const localTc = localToolCallMap.get(toolCallId)
+        if (localTc) {
+          const localPriority = getToolCallStatusPriority(localTc.status)
+          const backendPriority = getToolCallStatusPriority(backendStatus)
+          if (backendPriority > localPriority) {
+            const isResultAvailable = backendStatus === ToolCallStatus.COMPLETED
+              || backendStatus === ToolCallStatus.FAILED
+            const data = {
+              id: toolCallId,
+              toolCallId,
+              name: approval.toolName,
+              toolName: approval.toolName,
+              parameters: approval.parameters || {},
+              args: approval.parameters || {},
+              status: backendStatus,
+              result: extra.result,
+              error: extra.error,
+              isInternal: extra.isInternal || false,
+            }
+            if (isResultAvailable || extra.result != null || extra.error) {
+              researchStore.updateOrAddToolResult(id, data)
+            } else {
+              researchStore.addOrUpdateToolCall(id, data)
+            }
+          } else if (
+            // approval 字段完整性检查：本地 approval 为空但后端有 approval 数据时合并
+            // 解决刷新后 API 返回的 tool_calls 不含 approval 字段的问题
+            (!localTc.approval || Object.keys(localTc.approval).length === 0) &&
+            approval && Object.keys(approval).length > 0
+          ) {
+            researchStore.setApprovalToToolCall(id, toolCallId, approval)
+          }
+        }
+
+        // 2. approval 状态更新（优先级保护：仅当后端优先级 > 本地时才更新）
+        // 注意：本地 approval 为空时（_approvalStatePriority(undefined) = -1），
+        // 任何后端状态都会 > -1，从而合并缺失的 approval 数据
+        const localApprovalState = localTc?.approval?.state
+        const localPriority = _approvalStatePriority(localApprovalState)
+        const backendPriority = _approvalStatePriority(approval.state)
+        if (backendPriority > localPriority) {
+          researchStore.setApprovalToToolCall(id, toolCallId, approval)
+          // 同步到 approvalStore（跨模块统一审批状态）
+          approvalStore.updateApprovalState(interruptId, approval.state, {
+            sessionId: approval.chatSessionId,
+            taskId: id,
+          })
+        }
+      }
+
+      logger.info(
+        `[SnapshotSync] task=${id} 快照校对完成: ${approvalList.length} 个审批记录`
+      )
+    } catch (err) {
+      logger.warn(
+        `[SnapshotSync] task=${id} 快照校对失败（非致命）: ${err?.message || err}`
+      )
+    }
+  }
+
+  // ==================== 公共框架 ====================
+
+  /**
+   * 执行一次快照校对（按 kind 路由，带 isSyncing 保护）
+   *
+   * @returns {Promise<void>}
+   */
+  const _performSync = async () => {
+    if (isSyncing.value) {
+      logger.debug(`[SnapshotSync] 校对进行中，跳过本次: ${kind}=${id}`)
+      return
+    }
+    isSyncing.value = true
+    try {
+      if (kind === 'task') {
+        await _performTaskSync()
+      } else {
+        await _performSessionSync()
+      }
     } finally {
       isSyncing.value = false
     }
@@ -291,7 +556,7 @@ function createSnapshotSyncInstance(sessionId) {
 }
 
 /**
- * 快照校对组合式函数
+ * 快照校对组合式函数（session 通道）
  *
  * 按 sessionId 缓存实例，同一会话多次调用返回同一实例。
  * 用于在关键事件（stream_finalized / tool_call_completed / approval_approved）后，
@@ -308,7 +573,7 @@ export function useSnapshotSync(sessionId) {
   }
   let instance = instanceCache.get(sessionId)
   if (!instance) {
-    instance = createSnapshotSyncInstance(sessionId)
+    instance = createSnapshotSyncInstance({ kind: 'session', id: sessionId })
     instanceCache.set(sessionId, instance)
   }
   return instance
@@ -323,158 +588,8 @@ export function clearSnapshotSyncInstance(sessionId) {
   instanceCache.delete(sessionId)
 }
 
-// ==================== M19-c: 深度研究任务快照校对（按 taskId） ====================
-
-import { useResearchStore } from '@/stores/research'
-import { useApprovalStore } from '@/stores/approval'
-
 /**
- * 按 taskId 缓存的快照校对实例
- *
- * @type {Map<string, { syncFromSnapshot: () => Promise<void>, isSyncing: import('vue').Ref<boolean> }>}
- */
-const taskInstanceCache = new Map()
-
-/**
- * 创建指定任务的快照校对实例（深度研究模块专用）
- *
- * 数据源：工具调用数据的唯一持久化来源是 Approval 模型
- * （source='deep_research', source_id=taskId）。
- * 通过统一审批 API getApprovalHistory 查询审批记录，
- * 从 approval.state 推导 toolCall status，
- * 替代原 getResearchSnapshot（后端无对应端点）。
- *
- * 优先级保护策略（与 createSnapshotSyncInstance 一致）：
- *   - tool_call：仅当后端 status 优先级 > 本地时才更新
- *   - approval：仅当后端 state 优先级 > 本地时才更新
- *   优先级函数复用 toolCallTransition.js 的 getToolCallStatusPriority / 模块级 _approvalStatePriority
- *
- * @param {string} taskId - 深度研究任务 ID
- * @returns {{ syncFromSnapshot: () => Promise<void>, isSyncing: import('vue').Ref<boolean> }}
- */
-function createTaskSnapshotSyncInstance(taskId) {
-  const isSyncing = ref(false)
-  /** @type {number | null} */
-  let debounceTimer = null
-  /** @type {Promise<void> | null} */
-  let inflightPromise = null
-
-  const syncFromSnapshot = async () => {
-    if (debounceTimer) {
-      clearTimeout(debounceTimer)
-    }
-    return new Promise((resolve) => {
-      debounceTimer = setTimeout(async () => {
-        debounceTimer = null
-        if (inflightPromise) {
-          await inflightPromise
-          resolve()
-          return
-        }
-        isSyncing.value = true
-        inflightPromise = (async () => {
-          try {
-            // 工具调用数据的唯一持久化来源是 Approval 模型（source='deep_research'）
-            // 通过统一审批 API 查询，替代原 getResearchSnapshot
-            const response = await getApprovalHistory(taskId, { source: 'deep_research' })
-            const approvalList = response?.data?.data || []
-            const researchStore = useResearchStore()
-            const approvalStore = useApprovalStore()
-
-            // 获取本地已有工具调用，用于优先级比较
-            const localToolCalls = researchStore.getToolCalls(taskId)
-            const localToolCallMap = new Map(
-              localToolCalls.map(tc => [
-                tc.id,
-                tc,
-              ])
-            )
-
-            // 遍历审批记录，更新 toolCall 与 approval 状态
-            for (const approval of approvalList) {
-              if (!approval) continue
-              const interruptId = approval.interruptId
-              if (!interruptId) continue
-              const extra = (approval.extra && typeof approval.extra === 'object') ? approval.extra : {}
-              const toolCallId = extra.toolCallId || interruptId
-
-              // 从 approval.state 推导 toolCall status
-              const backendStatus = approval.state === 'rejected' ? ToolCallStatus.REJECTED : (approval.state === 'timeout' ? ToolCallStatus.TIMEOUT : ToolCallStatus.RUNNING)
-
-              // 1. toolCall 状态更新（优先级保护：仅当后端优先级 > 本地时才更新）
-              const localTc = localToolCallMap.get(toolCallId)
-              if (localTc) {
-                const localPriority = getToolCallStatusPriority(localTc.status)
-                const backendPriority = getToolCallStatusPriority(backendStatus)
-                if (backendPriority > localPriority) {
-                  const isResultAvailable = backendStatus === ToolCallStatus.COMPLETED
-                    || backendStatus === ToolCallStatus.FAILED
-                  const data = {
-                    id: toolCallId,
-                    toolCallId,
-                    name: approval.toolName,
-                    toolName: approval.toolName,
-                    parameters: approval.parameters || {},
-                    args: approval.parameters || {},
-                    status: backendStatus,
-                    result: extra.result,
-                    error: extra.error,
-                    isInternal: extra.isInternal || false,
-                  }
-                  if (isResultAvailable || extra.result != null || extra.error) {
-                    researchStore.updateOrAddToolResult(taskId, data)
-                  } else {
-                    researchStore.addOrUpdateToolCall(taskId, data)
-                  }
-                } else if (
-                  // approval 字段完整性检查：本地 approval 为空但后端有 approval 数据时合并
-                  // 解决刷新后 API 返回的 tool_calls 不含 approval 字段的问题
-                  (!localTc.approval || Object.keys(localTc.approval).length === 0) &&
-                  approval && Object.keys(approval).length > 0
-                ) {
-                  researchStore.setApprovalToToolCall(taskId, toolCallId, approval)
-                }
-              }
-
-              // 2. approval 状态更新（优先级保护：仅当后端优先级 > 本地时才更新）
-              // 注意：本地 approval 为空时（_approvalStatePriority(undefined) = -1），
-              // 任何后端状态都会 > -1，从而合并缺失的 approval 数据
-              const localApprovalState = localTc?.approval?.state
-              const localPriority = _approvalStatePriority(localApprovalState)
-              const backendPriority = _approvalStatePriority(approval.state)
-              if (backendPriority > localPriority) {
-                researchStore.setApprovalToToolCall(taskId, toolCallId, approval)
-                // 同步到 approvalStore（跨模块统一审批状态）
-                approvalStore.updateApprovalState(interruptId, approval.state, {
-                  sessionId: approval.chatSessionId,
-                  taskId,
-                })
-              }
-            }
-
-            logger.info(
-              `[SnapshotSync] task=${taskId} 快照校对完成: ${approvalList.length} 个审批记录`
-            )
-          } catch (err) {
-            logger.warn(
-              `[SnapshotSync] task=${taskId} 快照校对失败（非致命）: ${err?.message || err}`
-            )
-          } finally {
-            isSyncing.value = false
-            inflightPromise = null
-          }
-        })()
-        await inflightPromise
-        resolve()
-      }, SNAPSHOT_DEBOUNCE_MS)
-    })
-  }
-
-  return { syncFromSnapshot, isSyncing }
-}
-
-/**
- * 深度研究任务快照校对 composable（v5 M19-c 新增）
+ * 深度研究任务快照校对 composable（task 通道，v5 M19-c 新增）
  *
  * 按 taskId 缓存实例，debounce 500ms，避免短时间内多次请求快照接口。
  * 用于深度研究模块跨浏览器同步时拉取最新状态。
@@ -488,7 +603,7 @@ export function useSnapshotSyncByTask(taskId) {
   }
   let instance = taskInstanceCache.get(taskId)
   if (!instance) {
-    instance = createTaskSnapshotSyncInstance(taskId)
+    instance = createSnapshotSyncInstance({ kind: 'task', id: taskId })
     taskInstanceCache.set(taskId, instance)
   }
   return instance

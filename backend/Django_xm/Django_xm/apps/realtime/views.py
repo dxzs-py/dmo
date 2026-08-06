@@ -20,6 +20,7 @@ from Django_xm.apps.approvals.services.approval_helpers import (
     build_approval_index_item,
     enrich_tool_calls_with_approvals,
 )
+from Django_xm.apps.core.throttling import SnapshotRateThrottle
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.responses import error_response, success_response
 from Django_xm.common.serializers import EmptySerializer
@@ -76,6 +77,8 @@ class SnapshotView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    # 快照为全量聚合接口，开销大；独立 30/min 额度，避免与普通请求共享 user 池（Task 3.1）
+    throttle_classes = [SnapshotRateThrottle]
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request, session_id: str):

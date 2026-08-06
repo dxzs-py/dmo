@@ -25,16 +25,31 @@ const SSE_EVENT_HANDLERS = {
     if (parsed.data) sessionOps.setPlan?.(parsed.data)
   },
   /** 预留接口：思维链展示（后端当前发送 reasoning，此接口预留未来扩展） */
-  chainOfThought: (parsed, _appendFn, sessionOps) => {
+  chain_of_thought: (parsed, _appendFn, sessionOps) => {
     if (parsed.data) sessionOps.setChainOfThought?.(parsed.data)
   },
   tool: (parsed, _appendFn, sessionOps) => {
     if (parsed.data) {
+      // 统一 autoApproved → isAutoApproved（P3-12/P3-24 根因修复）：
+      // 后端 SSE 事件字段为 auto_approved，toCamelCase 后为 autoApproved，
+      // 但 ToolCallCard 读取 toolCall.isAutoApproved（与 WebSocket 路径 toolCallHandler.js 一致）。
+      // SSE 路径直接合并 parsed.data 到 toolCall，若不统一字段名，
+      // 触发浏览器的"自动通过"徽章不显示（非触发浏览器通过 WebSocket 路径正常显示）。
+      if (parsed.data.autoApproved !== undefined && parsed.data.isAutoApproved === undefined) {
+        parsed.data.isAutoApproved = parsed.data.autoApproved
+        delete parsed.data.autoApproved
+      }
+      // Task 5.1：SSE tool 事件与 WebSocket tool_call_pending/waiting/running 共用同一
+      // 幂等写入入口（sessionStore.addOrUpdateToolCall → addOrUpdateToolCallInMap，
+      // id/toolCallId 精确匹配），双通道重复推送同一工具时幂等合并，杜绝重复条目。
+      // 保留 SSE 写入：请求浏览器需即时渲染工具卡片，WS 事件存在网络延迟。
       sessionOps.addOrUpdateToolCall?.(parsed.data)
     }
   },
   tool_result: (parsed, _appendFn, sessionOps) => {
     if (parsed.data) {
+      // Task 5.1：同上，SSE tool_result 与 WebSocket tool_call_completed/failed/timeout
+      // 共用同一幂等写入入口（updateOrAddToolResultInMap），双通道重复推送不重复写入。
       sessionOps.updateOrAddToolResult?.(parsed.data)
     }
   },
@@ -221,6 +236,18 @@ export async function fetchSSE(url, options = {}) {
   delete fetchOptions.timeout
   delete fetchOptions.injectTokenQuery
 
+  // Task 6.3：幂等键感知——在 body 转 snake_case 之前解析原始 camelCase 字段。
+  // 重试仅限"确认未受理"的场景：网络错误（请求未发出）必然未受理，可重试；
+  // 携带 clientMessageId 时后端按 id 去重（已受理返回 409），此时 5xx 重试安全；
+  // 无幂等键时禁止 5xx 盲重试（重发可能重复创建会话/消息）。
+  let hasClientMessageId = false
+  if (fetchOptions.body && typeof fetchOptions.body === 'string') {
+    try {
+      const parsed = JSON.parse(fetchOptions.body)
+      hasClientMessageId = typeof parsed.clientMessageId === 'string' && parsed.clientMessageId.length > 0
+    } catch { /* body is not JSON, ignore */ }
+  }
+
   // Convert request body from camelCase to snake_case (bypasses axios interceptor)
   if (fetchOptions.body && typeof fetchOptions.body === 'string') {
     try {
@@ -267,7 +294,20 @@ export async function fetchSSE(url, options = {}) {
         }
       }
 
-      if (response.status >= 500 && attempt < (options.maxRetries ?? MAX_RETRIES)) {
+      // Task 6.3：携带 clientMessageId 时，后端对已受理的重复请求返回 409，
+      // 说明同一请求已开流，此时重试只会徒增双流风险，直接停止并抛出。
+      // __serverResponse 标记使 catch 不再重发（已受理 = 不重发）。
+      if (hasClientMessageId && response.status === 409) {
+        lastError = new Error('该消息已在处理中，请勿重复发送')
+        lastError.__serverResponse = true
+        logger.warn('[SSE] 请求已被后端受理（409 duplicate），停止重试')
+        throw lastError
+      }
+
+      // 5xx：仅当请求携带幂等键 clientMessageId 时才允许重试（后端按 id 去重，
+      // 重试安全）；无幂等键时禁止盲重试——重发可能重复创建会话/消息
+      // （Task 6.3：仅在确认未受理时重发，服务端已响应一律不盲发）。
+      if (response.status >= 500 && hasClientMessageId && attempt < (options.maxRetries ?? MAX_RETRIES)) {
         lastError = new Error(`服务器错误: HTTP ${response.status}`)
         const delay = getRetryDelay(attempt)
         logger.warn(`[SSE] 服务器错误 ${response.status}, ${delay}ms 后重试 (${attempt + 1}/${MAX_RETRIES})`)
@@ -307,13 +347,21 @@ export async function fetchSSE(url, options = {}) {
             }
           }
         } catch {}
-        throw new Error(errorMsg)
+        // Task 6.3：服务端已响应（4xx/5xx）说明请求已被受理处理，
+        // 标记 __serverResponse 使 catch 不再重发。
+        const serverError = new Error(errorMsg)
+        serverError.__serverResponse = true
+        throw serverError
       }
 
       return response
     } catch (error) {
       if (error.name === 'AbortError') throw error
       lastError = error
+      // Task 6.3：服务端已响应（含 409 已受理 / 4xx 校验失败 / 无幂等键时的 5xx）
+      // 一律不再重发；仅网络层错误（请求未发出、必然未受理）允许重试，
+      // 重试次数上限为 options.maxRetries ?? MAX_RETRIES。
+      if (error.__serverResponse) break
       if (attempt < (options.maxRetries ?? MAX_RETRIES)) {
         const delay = getRetryDelay(attempt)
         logger.warn(`[SSE] 请求失败: ${error.message}, ${delay}ms 后重试 (${attempt + 1}/${MAX_RETRIES})`)
@@ -381,50 +429,9 @@ export async function readSSEStream(response, onEvent, signal) {
   }
 }
 
-/**
- * 与 WebSocket 通道重叠的 SSE 事件类型集合
- *
- * 这些事件后端同时通过 WebSocket 广播给所有浏览器（含触发浏览器），
- * SSE 通道是冗余的实时推送。若在 SSE for 循环中同步处理，会与
- * WebSocket onmessage 竞争修改同一 store 状态，且高频 chunk 流持续
- * 占据主线程 microtask 队列时，WebSocket message（macrotask）被推迟，
- * 导致触发浏览器工具调用计数滞后于非触发浏览器。
- *
- * 改为 setTimeout(fn, 0) 让出主线程，允许 WebSocket 事件优先处理。
- *
- * 注意：
- * - approval / approval_processed / approval_timeout 已从 SSE 移除，
- *   实时审批事件统一由 WebSocket 推送，不再需要在此延迟处理。
- * - approval_history / error / retry / timeout_warning 等 SSE 专属
- *   或顺序敏感事件保持同步处理，不在此集合中。
- *
- * N7修复（根本性）：
- * 旧实现中 setTimeout 回调内再次检查 isStreamingRef 守卫（L397），
- * 导致 SSE 流结束后延迟入队的 tool/tool_result 事件被静默丢弃。
- * SSE 流中已产生的工具事件应在收到时立即处理，不应因流结束而丢弃。
- * 修复：移除 setTimeout 回调中的 isStreamingRef 二次守卫；
- * 外层的 L392 守卫已在事件入队前确认了流处于活跃状态，内层重复检查多余且有害。
- */
-const SSE_DEFERRED_EVENT_TYPES = new Set([
-  'tool',
-  'tool_result',
-  'tool_usage_dedup',
-  'tool_usage_blocked',
-  'tool_usage_warning',
-])
-
 export async function readSSEStreamWithEvents(response, isStreamingRef, appendFn, sessionOps) {
   await readSSEStream(response, (parsed) => {
     if (isStreamingRef && !isStreamingRef.value) return
-
-    // 与 WebSocket 重叠的事件让出主线程，允许 WS onmessage 优先处理
-    if (parsed.type && SSE_DEFERRED_EVENT_TYPES.has(parsed.type)) {
-      setTimeout(() => {
-        parseSSEEvent(parsed, appendFn, sessionOps)
-      }, 0)
-      return
-    }
-
     parseSSEEvent(parsed, appendFn, sessionOps)
   })
 }

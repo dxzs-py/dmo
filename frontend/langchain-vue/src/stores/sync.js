@@ -1,10 +1,7 @@
 import { defineStore } from 'pinia'
 import { watch, reactive } from 'vue'
 import { useRealtimeSync } from '@/composables/useRealtimeSync'
-import { useSessionStore } from '@/stores/session'
-import { useApprovalStore } from '@/stores/approval'
-import { useResearchStore } from '@/stores/research'
-import { useWorkflowStore } from '@/stores/workflow'
+import { useSnapshotSync } from '@/composables/useSnapshotSync'
 import { logger } from '@/utils/logger'
 import { mergeMessageFromBackend } from '@/utils/messageOperations'
 import { PROTECTED_STREAM_STATES } from '@/types'
@@ -40,51 +37,117 @@ import { createStreamStateHandlers } from './sync/streamStateHandlers'
  *     所有浏览器通过 WebSocket 同步学习工作流进度与状态（Task 23），
  *     由 onWorkflowEvent 回调委托给 workflowStore，WorkflowView watch store 更新 UI
  *
- * 双通道冗余设计（tool/tool_result）：
- *   请求浏览器同时从 SSE 和 WebSocket 接收工具调用事件，
- *   通过 utils/sse.js 的 SSE_DEFERRED_EVENT_TYPES 把 SSE 的 tool/tool_result 延迟
- *   到下一个事件循环（setTimeout 0），让 WebSocket 优先处理，
- *   避免请求浏览器工具调用计数滞后。
- *   两个通道的事件最终汇聚到 sessionStore.toolCallsMap（Map 为唯一真相源），
+ * 工具调用状态唯一真相源：
+ *   工具调用状态统一由 WebSocket 推送（tool_call_* 事件，所有浏览器一致），
+ *   汇聚到 sessionStore.toolCallsMap（Map 为唯一真相源），
  *   通过 _findMatchingToolCall 的 id 精确匹配 + PROTECTED_STATUSES 状态保护
  *   实现幂等合并。
  *
  * 关键规则：请求浏览器在流式期间，以 SSE 为准处理 content/reasoning 等字段，
  * 跳过 WebSocket 中与 SSE 重叠的 message_updated，
  * 避免双通道数据冲突导致"输出到一半被刷新"。
- * 工具调用事件采用双通道冗余设计（见上方说明），由 SSE_DEFERRED_EVENT_TYPES
- * 协调顺序，最终汇聚到 toolCallsMap 实现幂等合并。
  *
  * 模块拆分说明（Task 10）：
  *   主文件仅负责状态初始化、装配各 handler、公共方法、watch 与 return。
  *   具体事件处理逻辑拆分到 ./sync/ 子目录下：
  *   - constants.js     : 事件类型与状态映射常量
- *   - seqDedup.js      : seq 去重器（lastSeenSeq + shouldSkip）
- *   - orderedQueue.js  : 有序事件队列（_processSessionEventOrdered）
+ *   - seqDedup.js      : seq 跳号检测基线（Task 4 后不再做事件已见去重，lastSeq 为唯一权威）
+ *   - orderedQueue.js  : 有序事件队列（仅排序与间隙等待，丢弃时联动 advanceBaseline）
  *   - handleUserEvent.js   : user 通道事件处理（session_created/deleted/updated）
  *   - handleSessionEvent.js: session 通道事件处理（含工具调用/审批/消息/流式状态等）
  *   - handleTaskEvent.js   : task 通道事件处理（独立深度研究 + 学习工作流 workflow_* 事件）
+ *
+ * 业务 store 依赖解耦（SubTask 8.2）：
+ *   本文件不再静态 import session/approval/research/workflow 4 个业务 store
+ *   （原顶层静态依赖与 approval.js → sync.js 形成模块加载期循环依赖）。
+ *   现改为惰性解析：
+ *   - 模块加载期仅保留 sync.js → useRealtimeSync.js 单向静态依赖；
+ *   - 业务 store 实例经 _getStores()（动态 import + Promise 缓存）在运行期解析；
+ *   - 11 个 handler 工厂由 _ensureHandlers()（装配器）在首次使用时接收注入的
+ *     store 实例完成装配，即"调用时注入"。
+ *   本 store 为同步 setup，setup 期不触碰任何业务 store（同步可用的状态与方法
+ *   均不依赖业务 store）；异步入口（handleRealtimeEvent / handleApprovalAction /
+ *   initialize / watch 回调 / requestFullSync）内部 await 解析。
  */
 export const useSyncStore = defineStore('sync', () => {
   const realtime = useRealtimeSync()
-  const sessionStore = useSessionStore()
-  const approvalStore = useApprovalStore()
-  const researchStore = useResearchStore()
-  const workflowStore = useWorkflowStore()
 
   /** @type {(() => void) | null} */
   let unsubscribeUser = null
 
   // === 状态初始化 ===
 
-  /** seq 去重器（封装 lastSeenSeq Map 与 shouldSkip 逻辑） */
+  /**
+   * 惰性加载业务 store 模块（SubTask 8.2：消除 sync.js ↔ 业务 store 静态循环依赖）
+   *
+   * 仅缓存模块导入 Promise（与 useRealtimeSync.js 的 _getSyncStoreModule 同模式），
+   * store 实例在每个调用点通过 useXStore() 按当前 pinia 实例解析（保持原语义）。
+   * 本函数只应被 async 方法/回调调用，禁止在同步 setup 中使用。
+   */
+  /** @type {Promise<[Object, Object, Object, Object]> | null} */
+  let storeModulesPromise = null
+  const _getStores = async () => {
+    if (!storeModulesPromise) {
+      storeModulesPromise = Promise.all([
+        import('@/stores/session'),
+        import('@/stores/approval'),
+        import('@/stores/research'),
+        import('@/stores/workflow'),
+      ])
+    }
+    const [sessionMod, approvalMod, researchMod, workflowMod] = await storeModulesPromise
+    return {
+      sessionStore: sessionMod.useSessionStore(),
+      approvalStore: approvalMod.useApprovalStore(),
+      researchStore: researchMod.useResearchStore(),
+      workflowStore: workflowMod.useWorkflowStore(),
+    }
+  }
+
+  /**
+   * seq 跳号检测基线（Task 4 收敛后：不再承担"事件已见"去重，
+   * 仅维护 per-session 基线供 handleSessionEvent.js 跳号检测使用；
+   * 事件级去重唯一权威是 useRealtimeSync.lastSeq）
+   */
   const seqDedup = createSeqDedup()
 
-  /** session 通道事件有序队列（封装 _sessionEventQueue Map 与 _processSessionEventOrdered） */
-  const orderedQueue = createOrderedQueue()
+  /**
+   * 统一推进事件基线（Task 4：双基线发散修复的唯一联动点）
+   *
+   * 职责：同时推进 seqDedup 跳号检测基线 与 realtime.lastSeq 事件级去重基线，
+   * 保证各基线单调收敛、互不背离，避免 orderedQueue 丢弃事件（seq < expectedSeq）后
+   * seqDedup 基线不推进导致 handleSessionEvent.js 跳号检测误判、
+   * 触发多余 requestFullSync 覆盖较新状态。
+   *
+   * 调用路径：
+   * - orderedQueue 丢弃事件时（createOrderedQueue({ onDropped }) 注入本函数）
+   * - 其他需要显式推进基线的路径（如有）
+   *
+   * @param {string} sessionId
+   * @param {number} seq - 事件 seq（丢弃事件或需推进基线的 seq）
+   */
+  const advanceBaseline = (sessionId, seq) => {
+    if (!sessionId || typeof seq !== 'number') return
+    seqDedup.setSeenSeq(sessionId, seq)
+    // lastSeq 为事件级去重唯一权威（channel 维度），同步推进保持基线收敛
+    realtime.advanceLastSeq(`session_${sessionId}`, seq)
+  }
 
-  /** 避免重复触发全量同步 */
-  /** @type {Set<string>} */
+  /**
+   * 跳号检测触发的全量同步去重锁（单一职责：仅锁 handleSessionEvent.js 的跳号检测路径）
+   *
+   * Task 9.2 与 streamStateHandlers.guardedRequestFullSync（streamStateHandlers.js 内部
+   * 自维护同一会话的全量同步锁）的分工说明：
+   *   - 本锁：handleSessionEvent.js 事件序列跳号检测（seq > prevSeq + 1）触发的
+   *     requestFullSync 兜底（应对真正的事件丢失）
+   *   - streamStateHandlers 锁：流结束路径（stream_completed / stream_finalized）触发的
+   *     guardedRequestFullSync（后端数据已持久化，可安全全量同步）
+   * 两锁各自独立、互不感知（模块边界清晰，改动面最小原则下不合并）。
+   * 同一会话同一时刻至多各发起一次全量同步，requestFullSync 内部按保护态合并，
+   * 不会因两处并发请求产生数据回退。
+   *
+   * @type {Set<string>}
+   */
   const fullSyncPending = new Set()
 
   /**
@@ -103,6 +166,70 @@ export const useSyncStore = defineStore('sync', () => {
    * @type {Set<string>}
    */
   const thinkingSessions = reactive(new Set())
+
+  /**
+   * 有序队列间隙停滞回调（Task 6：间隙即触发快照校对）
+   *
+   * 触发时机：orderedQueue 等待 GAP_WAIT_MS 后 expectedSeq 仍缺失（真实乱序/丢包），
+   * 将正常处理队列中最小 seq 事件，并在处理前同步调用本函数。
+   *
+   * 处理内容：
+   * 1. 推进 seqDedup 跳号检测基线到 minSeqInQueue - 1（标记缺失 seq 为"已跳过"），
+   *    避免 applySessionEvent 处理 minSeqInQueue 时误判跳号（eventSeq > prevSeq + 1）
+   *    触发 requestFullSync 全量替换本地较新状态。
+   *    注意：**不推进 realtime.lastSeq**——lastSeq 只由已处理事件推进
+   *    （advanceLastSeq 是唯一写入入口）；缺失事件从未到达/从未处理，不视为"已见"，
+   *    重连 replay 仍可从缺失 seq 补发。
+   * 2. 异步触发一次快照校对（useSnapshotSync），补齐 gap 造成的状态缺失：
+   *    - 非流式期间：直接触发
+   *    - 流式期间：不触发（SSE 提供内容、WebSocket 事件为补充，避免打断流式渲染），
+   *      由流结束路径（stream_completed / stream_finalized 的 guardedRequestFullSync）兜底
+   *
+   * requestFullSync 不在此处触发：间隙 ≠ 事件丢失（P3-R1 已修复事件路由后
+   * 真实丢包概率极低），全量同步只应在真正需要时触发（如 replay 完成后的
+   * 状态校验失败、处理链显式错误），避免因单次间隙误触发全量同步。
+   *
+   * @param {string} sessionId
+   * @param {number} expectedSeq - 间隙起始 seq（缺失序列的首个 seq）
+   * @param {number} minSeqInQueue - 将正常处理的最小 seq（缺失序列的末个 seq + 1）
+   */
+  const handleOrderedQueueGap = (sessionId, expectedSeq, minSeqInQueue) => {
+    if (!sessionId || typeof minSeqInQueue !== 'number') return
+    const gapEndSeq = minSeqInQueue - 1
+    // 1. 推进跳号检测基线（跳过缺失 seq，防 applySessionEvent 误判跳号触发全量同步）
+    seqDedup.setSeenSeq(sessionId, gapEndSeq)
+    // 2. 流式期间不触发快照校对，流结束后由 guardedRequestFullSync 兜底
+    if (streamingSessions.has(sessionId)) {
+      logger.info(
+        `[Sync] 流式期间事件间隙，跳过快照校对（流结束后兜底）: session=${sessionId}, ` +
+        `gap=[${expectedSeq}, ${gapEndSeq}]`
+      )
+      return
+    }
+    // 3. 异步触发快照校对，补齐 gap 造成的状态缺失（不阻塞事件处理）
+    try {
+      const { syncFromSnapshot } = useSnapshotSync(sessionId)
+      syncFromSnapshot().catch(err => {
+        logger.warn(
+          `[Sync] 间隙快照校对失败（非致命）: session=${sessionId}, gap=[${expectedSeq}, ${gapEndSeq}], ` +
+          `error=${err?.message || err}`
+        )
+      })
+    } catch (err) {
+      logger.warn(
+        `[Sync] 触发间隙快照校对异常（非致命）: session=${sessionId}, gap=[${expectedSeq}, ${gapEndSeq}], ` +
+        `error=${err?.message || err}`
+      )
+    }
+  }
+
+  /** session 通道事件有序队列（封装 _sessionEventQueue Map 与 _processSessionEventOrdered）；
+   *  仅负责排序与间隙等待；丢弃过期事件时通过 onDropped 联动 advanceBaseline，
+   *  间隙停滞时通过 onGapStalled 联动 handleOrderedQueueGap（推进跳号基线 + 快照校对） */
+  const orderedQueue = createOrderedQueue({
+    onDropped: advanceBaseline,
+    onGapStalled: handleOrderedQueueGap,
+  })
 
   // === 公共方法（与流式生命周期相关） ===
 
@@ -157,6 +284,8 @@ export const useSyncStore = defineStore('sync', () => {
    */
   const requestFullSync = async (sessionId, options = {}) => {
     if (!sessionId) return null
+
+    const { sessionStore } = await _getStores()
 
     const localSession = sessionStore.sessions.find(s => s.id === sessionId)
     // 保护态消息：使用字段级合并，避免后端快照整体替换本地内容
@@ -227,59 +356,78 @@ export const useSyncStore = defineStore('sync', () => {
     return { backendMessages: backendMessagesSnapshot }
   }
 
-  // === 装配 handlers ===
+  // === 装配 handlers（惰性，SubTask 8.2） ===
   // 分层装配（Task 16）：底层 handler → 流式状态 handler → session handler
   // 独立模块（messageHandlers / streamStateHandlers / messageIntegrity）
   // 提供与 handleSessionEvent.js 内联版本逻辑等价的工厂函数，
   // 通过依赖注入方式传入 createHandleSessionEvent，实现模块职责分离。
   //
-  // Step 1: 创建底层 handler（消息 CRUD + 完整性校验）
-  const messageHandlers = createMessageHandlers({ sessionStore, streamingSessions })
-  const integrityHandlers = createMessageIntegrityHandlers({ sessionStore })
+  // 装配器接收 _getStores() 注入的 store 实例（"调用时注入"），
+  // 仅在首次需要时执行一次（Promise 缓存）；所有被注入的 store 均在
+  // 事件/动作触发时（运行期）解析，模块加载期无业务 store 依赖。
+  /** @type {Promise<{ handleSessionEvent: Function, handleTaskEvent: Function, handleUserEvent: Function }> | null} */
+  let handlersPromise = null
+  const _ensureHandlers = () => {
+    if (!handlersPromise) {
+      handlersPromise = _getStores().then(({ sessionStore, approvalStore, researchStore, workflowStore }) => {
+        // Step 1: 创建底层 handler（消息 CRUD + 完整性校验）
+        const messageHandlers = createMessageHandlers({ sessionStore, streamingSessions })
+        const integrityHandlers = createMessageIntegrityHandlers({ sessionStore })
 
-  // Step 2: 创建流式状态 handler（依赖 messageIntegrity）
-  const streamStateHandlers = createStreamStateHandlers({
-    sessionStore,
-    approvalStore,
-    researchStore,
-    streamingSessions,
-    thinkingSessions,
-    requestFullSync,
-    finalizeToolCalls: integrityHandlers.finalizeToolCallsForCompletedMessage,
-    verifyMessageIntegrity: integrityHandlers.verifyMessageIntegrityAfterSync,
-  })
+        // Step 2: 创建流式状态 handler（依赖 messageIntegrity）
+        const streamStateHandlers = createStreamStateHandlers({
+          sessionStore,
+          approvalStore,
+          researchStore,
+          streamingSessions,
+          thinkingSessions,
+          requestFullSync,
+          finalizeToolCalls: integrityHandlers.finalizeToolCallsForCompletedMessage,
+          verifyMessageIntegrity: integrityHandlers.verifyMessageIntegrityAfterSync,
+        })
 
-  // Step 3: 创建 session handler（注入独立模块的函数）
-  const sessionHandlers = createHandleSessionEvent({
-    sessionStore,
-    approvalStore,
-    researchStore,
-    seqDedup,
-    orderedQueue,
-    streamingSessions,
-    thinkingSessions,
-    fullSyncPending,
-    requestFullSync,
-    // 注入独立模块函数，handleSessionEvent.js 中优先使用注入版本，回退内联版本
-    ...messageHandlers,
-    ...streamStateHandlers,
-  })
-  const {
-    handleSessionEvent,
-    applySessionEvent,
-    handleToolCallEvent,
-    handleApprovalEvent,
-  } = sessionHandlers
+        // Step 3: 创建 session handler（注入独立模块的函数）
+        const sessionHandlers = createHandleSessionEvent({
+          sessionStore,
+          approvalStore,
+          researchStore,
+          seqDedup,
+          orderedQueue,
+          streamingSessions,
+          thinkingSessions,
+          fullSyncPending,
+          requestFullSync,
+          // 注入独立模块函数，handleSessionEvent.js 中优先使用注入版本，回退内联版本
+          ...messageHandlers,
+          ...streamStateHandlers,
+        })
+        const {
+          handleSessionEvent,
+          handleToolCallEvent,
+          handleApprovalEvent,
+        } = sessionHandlers
 
-  const { handleTaskEvent } = createHandleTaskEvent({
-    researchStore,
-    handleToolCallEvent,
-    handleApprovalEvent,
-    onWorkflowEvent: (eventType, payload, taskId) => {
-      // 学习工作流事件委托给 workflowStore，由 WorkflowView watch store 变化更新 UI
-      workflowStore.updateWorkflowFromEvent(eventType, payload, taskId)
-    },
-  })
+        const { handleTaskEvent } = createHandleTaskEvent({
+          researchStore,
+          handleToolCallEvent,
+          handleApprovalEvent,
+          onWorkflowEvent: (eventType, payload, taskId) => {
+            // 学习工作流事件委托给 workflowStore，由 WorkflowView watch store 变化更新 UI
+            workflowStore.updateWorkflowFromEvent(eventType, payload, taskId)
+          },
+        })
+
+        const { handleUserEvent } = createHandleUserEvent({
+          sessionStore,
+          realtime,
+          handleRealtimeEvent,
+        })
+
+        return { handleSessionEvent, handleTaskEvent, handleUserEvent }
+      })
+    }
+    return handlersPromise
+  }
 
   /**
    * 统一实时事件处理器（三模块共享入口）
@@ -298,12 +446,13 @@ export const useSyncStore = defineStore('sync', () => {
    *   （task 通道事件量小，无需 seq 去重）
    *
    * 用于 WebSocket 订阅入口统一化：所有模块的 subscribeSession / subscribeTask
-   * 均使用此函数作为回调（含 applyUserEvent 中 session_created 自动订阅），
+   * 均使用此函数作为回调（含 handleUserEvent 中 session_created 自动订阅），
    * 通过 payload + event 顶层字段自动区分模块和 store，避免双重订阅。
    *
    * @param {RealtimeEvent} event - 实时事件对象
    */
   const handleRealtimeEvent = async (event) => {
+    const { handleSessionEvent, handleTaskEvent } = await _ensureHandlers()
     const payload = event?.payload || event || {}
     // 修复：从 event 顶层提取 sessionId/taskId，作为 fallback
     // 后端 _publish_to_session_async 将 sessionId 注入到 event 顶层（与 payload 平级），不在 payload 内。
@@ -320,12 +469,6 @@ export const useSyncStore = defineStore('sync', () => {
       logger.warn(`[Sync] handleRealtimeEvent 无法路由（缺少 session_id 和 task_id）: type=${event?.type}`)
     }
   }
-
-  const { handleUserEvent, applyUserEvent } = createHandleUserEvent({
-    sessionStore,
-    realtime,
-    handleRealtimeEvent,
-  })
 
   // === 其他公共方法 ===
 
@@ -359,46 +502,82 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   /**
+   * 深度研究 SSE 审批事件转发（视图层入口收敛，SubTask 11.3）
+   *
+   * 背景：ChatView 深度研究 SSE 流中的审批事件（approval / approval_timeout /
+   * approval_processed / approval_history）原由视图层直接调用 approvalStore，
+   * 现统一经 sync 层转发，保持事件处理的语义与数据完全一致。
+   *
+   * 说明：SSE 事件类型与 WebSocket 审批事件（approval_pending 等 6 种，经
+   * handleApprovalEvent 的状态映射 + streamState 转换）不同——深度研究 SSE
+   * 直接下发审批业务数据，因此此处直接委托 approvalStore 处理，不做转换。
+   *
+   * 视图层以 fire-and-forget 方式调用（返回 Promise 不 await）；内部经 _getStores()
+   * 惰性解析 approvalStore（SubTask 8.2），失败仅记录日志，不影响调用方。
+   *
+   * @param {'handleApprovalEvent'|'restoreFromSSEHistory'} action - 转发动作
+   * @param {Object} data - 审批数据
+   * @param {Object} [options] - 转发选项（透传 approvalStore 方法参数）
+   * @param {string} [options.source] - 事件来源 'chat' | 'deep_research'
+   * @param {string} [options.taskId] - 深度研究任务 ID
+   * @param {string} [options.sessionId] - 聊天会话 ID
+   * @returns {Promise<void>}
+   */
+  const handleApprovalAction = async (action, data, options = {}) => {
+    try {
+      const { approvalStore } = await _getStores()
+      if (action === 'restoreFromSSEHistory') {
+        approvalStore.restoreFromSSEHistory(data, options.taskId, options.sessionId)
+        return
+      }
+      approvalStore.handleApprovalEvent(data, options)
+    } catch (err) {
+      logger.error('[Sync] handleApprovalAction 转发失败:', err)
+    }
+  }
+
+  /**
    * 初始化同步监听
    */
-  const initialize = () => {
-    if (unsubscribeUser) {
-      unsubscribeUser()
+  const initialize = async () => {
+    try {
+      if (unsubscribeUser) {
+        unsubscribeUser()
+      }
+      const { handleUserEvent } = await _ensureHandlers()
+      unsubscribeUser = realtime.subscribeUserEvents(handleUserEvent)
+      logger.log('[Sync] 实时同步 store 已初始化')
+    } catch (err) {
+      logger.error('[Sync] 初始化实时同步 store 失败:', err)
     }
-    unsubscribeUser = realtime.subscribeUserEvents(handleUserEvent)
-    logger.log('[Sync] 实时同步 store 已初始化')
   }
 
   // WebSocket 重连成功后，对当前会话触发一次全量同步兜底
   watch(
     () => realtime.connectionStatus.value,
-    (status, prevStatus) => {
+    async (status, prevStatus) => {
       if (prevStatus === 'reconnecting' && status === 'connected') {
-        const currentSessionId = sessionStore.currentSessionId
-        if (currentSessionId) {
-          logger.info(`[Sync] WebSocket 重连成功，触发全量同步: ${currentSessionId}`)
-          requestFullSync(currentSessionId)
+        try {
+          const { sessionStore } = await _getStores()
+          const currentSessionId = sessionStore.currentSessionId
+          if (currentSessionId) {
+            logger.info(`[Sync] WebSocket 重连成功，触发全量同步: ${currentSessionId}`)
+            requestFullSync(currentSessionId)
+          }
+        } catch (err) {
+          logger.error('[Sync] 重连全量同步失败:', err)
         }
       }
     }
   )
 
   return {
-    streamingSessions,
-    thinkingSessions,
     isThinking,
     startStreaming,
     stopStreaming,
-    handleToolCallEvent,
-    handleApprovalEvent,
     handleRealtimeEvent,
+    handleApprovalAction,
     initialize,
-    handleUserEvent,
-    handleSessionEvent,
-    handleTaskEvent,
-    applyUserEvent,
-    applySessionEvent,
     resetSessionSeq,
-    requestFullSync,
   }
 })

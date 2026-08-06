@@ -2,7 +2,7 @@
 
 集中处理流结束后 AI 回复内容与工具调用到 ``ChatMessage`` 的持久化：
 - ``_build_persisted_tool_calls``：从 tool_calls_map 构建可持久化列表（清理内部字段）
-- ``_merge_tool_calls_incremental``：增量合并工具调用列表（已存在不覆盖）
+- ``_merge_tool_calls_incremental``：增量合并工具调用列表（字段级状态演进，P3-R2）
 - ``_persist_to_db_sync``：同步执行所有 DB 操作（供 sync_to_async 调用）
 - ``persist_stream_result``：流结束时持久化并广播 MESSAGE_UPDATED 事件
 
@@ -14,6 +14,23 @@ import logging
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# 工具调用状态优先级（数值越大越接近终态）。
+# 与前端 ``utils/toolCallTransition.js`` 的 ``getToolCallStatusPriority`` 保持一致，
+# 用于非终态间的演进方向判断（拒绝回退，如 running → pending）。
+_TOOL_CALL_STATUS_PRIORITY: dict[str, int] = {
+    "pending": 0,
+    "waiting": 1,
+    "running": 2,
+    "completed": 3,
+    "failed": 3,
+    "timeout": 3,
+    "rejected": 3,
+}
+
+# 工具调用终态集合（不可回退）。
+# 与前端 ``TERMINAL_STATUSES``（completed/failed/timeout/rejected）保持一致。
+_TOOL_CALL_TERMINAL_STATUSES: frozenset[str] = frozenset({"completed", "failed", "timeout", "rejected"})
 
 
 def _build_persisted_tool_calls(
@@ -50,7 +67,7 @@ def _build_persisted_tool_calls(
                 "name": tool_name,
                 "type": tool_info.get("type", "") or f"tool-call-{tool_name}",
                 "state": tool_info.get("state", "") or "input-available",
-                "status": tool_info.get("status", "") or "running",
+                "status": tool_info.get("status", "") or "pending",
                 "parameters": tool_info.get("parameters") or {},
                 "result": tool_info.get("result"),
                 "error": tool_info.get("error"),
@@ -59,61 +76,140 @@ def _build_persisted_tool_calls(
     return persisted
 
 
+def _evolve_tool_call(
+    existing_tc: dict[str, Any],
+    new_tc: dict[str, Any],
+) -> dict[str, Any]:
+    """字段级状态演进：合并已匹配的 existing/new 工具调用条目。
+
+    P3-R2 修复核心：审批中断时首次流将 tool_calls 持久化为非终态
+    （如 status='pending'）；审批通过、工具执行完成后再次持久化时，
+    new 已更新为 completed + result，必须演进数据库条目，否则刷新/断连后
+    快照（直接读取 ``ChatMessage.tool_calls``）永远停留在 pending，
+    无 status/result 可恢复。
+
+    演进规则（与前端状态机 ``utils/toolCallTransition.js`` 一致）：
+        - ``approval`` 等审批字段：existing 原样保留（审批字段由审批服务
+          单独写入，LLM 输出不含）；existing 无 approval 而 new 有时以 new 为准
+        - ``status``/``state``/``result``/``error``：用 new 的值演进（new 有值才演进）
+        - **禁止终态回退**：existing 的 status 已是终态
+          （completed/failed/timeout/rejected）时，new 提供 pending/waiting/
+          running 等非终态则保持 existing 不变（终态不可逆）
+        - existing 非终态而 new 更终态（如 pending→completed）：演进 status，
+          并同步演进 state/result/error
+        - 两者皆非终态时按状态优先级演进（pending < waiting < running），
+          拒绝非终态回退（如 running→pending）
+
+    Args:
+        existing_tc: 数据库中已有的工具调用条目（只读）
+        new_tc: 本次流式产出的同 id/name 工具调用条目（只读）
+
+    Returns:
+        dict: 演进后的新条目（不修改入参对象）
+    """
+    evolved: dict[str, Any] = dict(existing_tc)
+
+    # approval 等审批字段：existing 原样保留；existing 无 approval 而 new 有，以 new 为准
+    if "approval" not in evolved and isinstance(new_tc.get("approval"), dict):
+        evolved["approval"] = new_tc["approval"]
+
+    existing_status = str(existing_tc.get("status") or "").lower()
+    new_status = str(new_tc.get("status") or "").lower()
+
+    # 终态保护：existing 已是终态 → 保持 existing 全部字段不变（终态不可逆）
+    if existing_status in _TOOL_CALL_TERMINAL_STATUSES:
+        return evolved
+
+    # 非终态演进：仅当 new 状态不构成回退时演进 status
+    if not new_status:
+        can_evolve_status = False
+    elif new_status == existing_status:
+        can_evolve_status = False  # 等值幂等，避免无意义变更
+    elif new_status in _TOOL_CALL_TERMINAL_STATUSES:
+        can_evolve_status = True  # 非终态 → 终态
+    else:
+        # 两者皆非终态：按优先级演进（pending<waiting<running），拒绝回退
+        existing_priority = _TOOL_CALL_STATUS_PRIORITY.get(existing_status, 0)
+        new_priority = _TOOL_CALL_STATUS_PRIORITY.get(new_status, 0)
+        can_evolve_status = new_priority >= existing_priority
+
+    if can_evolve_status:
+        evolved["status"] = new_tc["status"]
+
+    # state/result/error：new 有值则演进（new 无值保留 existing）
+    for field in ("state", "result", "error"):
+        if field in new_tc and new_tc[field] is not None:
+            evolved[field] = new_tc[field]
+
+    return evolved
+
+
 def _merge_tool_calls_incremental(
     existing_tool_calls: list[dict[str, Any]] | None,
     new_tool_calls: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """增量合并工具调用列表，避免覆盖已有 tool_calls。
+    """增量合并工具调用列表（字段级状态演进，P3-R2）。
 
     匹配策略（按优先级）：
         1. ``tool_call_id`` 字段（即 ``id``）
         2. ``name`` 字段（降级，兼容仅含 name 的旧数据）
 
-    合并规则（"追加而非覆盖"）：
+    合并规则（演进而非覆盖）：
         - existing 中存在但 new 中不存在的条目：保留（不丢失历史）
-        - new 中存在且 existing 中也存在的条目：**保留 existing 完整不动**
-          （existing 已含 approval / result 等终态字段，new 来自 LLM 输出
-          不含审批信息，覆盖会丢失 approval）
+        - new 中存在且 existing 中也存在的条目：调用 ``_evolve_tool_call``
+          做字段级状态演进——保留 existing 的 approval 等审批字段，
+          用 new 演进 status/state/result/error（含终态回退保护，P3-R2 修复）
         - new 中存在但 existing 中不存在的条目：追加
+
+    P3-R2 背景：审批中断时首次流将 tool_calls 持久化为 status='pending'；
+    审批通过、工具执行完成后再次持久化时，new 已更新为 completed + result，
+    旧策略「保留 existing 完整不动」导致永不覆盖，数据库永远停留在 pending。
+    本函数改为字段级演进：existing 非终态且 new 更终态时演进，恢复流完成后
+    刷新/断连快照即可读到 completed + result。
 
     Args:
         existing_tool_calls: 数据库中已有的 tool_calls（None 视为空列表）
         new_tool_calls: 本次流式产出的 tool_calls
 
     Returns:
-        list[dict]: 合并后的 tool_calls 列表（existing 在前，新增在后）
+        list[dict]: 合并后的 tool_calls 列表（existing 在前，新增在后；
+        matched 条目为演进后的新字典，不修改入参对象）
     """
     if not existing_tool_calls:
         return list(new_tool_calls)
     if not new_tool_calls:
         return list(existing_tool_calls)
 
-    # 建立 existing 索引（按 tool_call_id 与 name 双索引）
-    existing_by_id: set[str] = set()
-    existing_by_name: set[str] = set()
+    # 建立 existing 索引（按 id 与 name 双索引，记录其在 merged 中的下标；
+    # 过滤非 dict 条目，保证索引与 merged 下标一一对应）
+    merged: list[dict[str, Any]] = []
+    existing_by_id: dict[str, int] = {}
+    existing_by_name: dict[str, int] = {}
     for tc in existing_tool_calls:
         if not isinstance(tc, dict):
             continue
+        idx = len(merged)
+        merged.append(dict(tc))
         tc_id = tc.get("id") or ""
         tc_name = tc.get("name") or ""
-        if tc_id:
-            existing_by_id.add(tc_id)
-        if tc_name:
-            existing_by_name.add(tc_name)
+        if tc_id and tc_id not in existing_by_id:
+            existing_by_id[tc_id] = idx
+        if tc_name and tc_name not in existing_by_name:
+            existing_by_name[tc_name] = idx
 
-    # 保留 existing 完整不动，仅追加 new 中未在 existing 出现的条目
-    merged: list[dict[str, Any]] = [tc for tc in existing_tool_calls if isinstance(tc, dict)]
     for new_tc in new_tool_calls:
         if not isinstance(new_tc, dict):
             continue
         new_id = new_tc.get("id") or ""
         new_name = new_tc.get("name") or ""
-        # 已存在（按 id 或 name 匹配）则跳过，保留 existing
-        if new_id and new_id in existing_by_id:
-            continue
-        if new_name and new_name in existing_by_name:
-            continue
-        merged.append(new_tc)
+        # 匹配已存在条目：按 id 优先，name 降级
+        matched_idx = existing_by_id.get(new_id) if new_id else None
+        if matched_idx is None and new_name:
+            matched_idx = existing_by_name.get(new_name)
+        if matched_idx is None:
+            merged.append(new_tc)  # 无匹配 → 追加
+        else:
+            merged[matched_idx] = _evolve_tool_call(merged[matched_idx], new_tc)
 
     return merged
 
@@ -134,7 +230,10 @@ def _persist_to_db_sync(
         - ``content``：仅当新内容严格长于已有内容时覆盖（避免覆盖前端更长版本）；
           已有内容等长或更长时保留前端版本
         - ``tool_calls``：增量合并（``_merge_tool_calls_incremental``），
-          已有 tool_call 不被覆盖（保留 approval 字段），新 tool_call 追加
+          已匹配条目做字段级状态演进（保留 approval 字段，演进
+          status/state/result/error，P3-R2），未匹配的新 tool_call 追加；
+          ``tool_calls_changed`` 采用深度比较，字段级演进（长度不变）
+          也能被正确识别并落库
         - ``reasoning``：仅当传入非空 reasoning 且其 content 与已有值不同时覆盖
 
     Args:
@@ -191,10 +290,12 @@ def _persist_to_db_sync(
         assistant_msg.content = content
         content_changed = True
 
-    # 增量合并 tool_calls（避免覆盖已有）
+    # 增量合并 tool_calls（字段级状态演进，P3-R2）
     existing_tool_calls = assistant_msg.tool_calls or []
     merged_tool_calls = _merge_tool_calls_incremental(existing_tool_calls, new_tool_calls)
-    tool_calls_changed = len(merged_tool_calls) != len(existing_tool_calls)
+    # 变更检测：深度比较而非仅比较长度——字段级演进（如 pending→completed）
+    # 不改变列表长度，若仅按长度判断会漏存（P3-R2 落库的关键一环）
+    tool_calls_changed = merged_tool_calls != existing_tool_calls
 
     # reasoning 覆盖策略：仅当传入非空 reasoning 且 content 不同时覆盖
     reasoning_changed = False
@@ -248,7 +349,8 @@ async def persist_stream_result(
         - ``content``：仅当新内容严格长于已有内容时覆盖（避免覆盖前端更长版本）；
           已有内容等长或更长时保留前端版本
         - ``tool_calls``：增量合并（``_merge_tool_calls_incremental``），
-          已有 tool_call 不被覆盖（保留 approval 字段），新 tool_call 追加
+          已匹配条目做字段级状态演进（保留 approval 字段，演进
+          status/state/result/error，P3-R2），未匹配的新 tool_call 追加
         - ``reasoning``：仅当传入非空 reasoning 且其 content 与已有值不同时覆盖
 
     持久化后广播 ``MESSAGE_UPDATED`` 事件到同会话其他浏览器，

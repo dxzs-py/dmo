@@ -31,9 +31,11 @@ __all__ = [
     "ChatStreamRateThrottle",
     "KnowledgeRateThrottle",
     "LoginRateThrottle",
+    "MetaRateThrottle",
     "ResearchRateThrottle",
     "ScopedRateThrottle",
     "SensitiveOperationRateThrottle",
+    "SnapshotRateThrottle",
     "UserRateThrottle",
 ]
 
@@ -79,6 +81,18 @@ class LoginRateThrottle(SimpleRateThrottle):
 
 class ChatStreamRateThrottle(ScopedRateThrottle):
     scope: str = "chat_stream"  # type: ignore[assignment]  # django-stubs types scope as None
+
+
+class SnapshotRateThrottle(ScopedRateThrottle):
+    """会话快照校对接口（全量聚合，开销大），独立额度避免与普通请求抢 user 池。"""
+
+    scope: str = "snapshot"  # type: ignore[assignment]  # django-stubs types scope as None
+
+
+class MetaRateThrottle(ScopedRateThrottle):
+    """页面加载即请求的只读元数据接口，独立额度避免与用户会话操作共享 user 池。"""
+
+    scope: str = "meta"  # type: ignore[assignment]  # django-stubs types scope as None
 
 
 class ResearchRateThrottle(ScopedRateThrottle):

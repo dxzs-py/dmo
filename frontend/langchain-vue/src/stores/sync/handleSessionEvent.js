@@ -1,13 +1,14 @@
 import { logger } from '@/utils/logger'
-import { transformBackendMessageToFrontend, toCamelCase } from '@/utils/sessionTransformers'
-import { mergeMessageFromBackend, createMessageVersion } from '@/utils/messageOperations'
-import { StreamState, ToolCallStatus, ApprovalState, PROTECTED_STREAM_STATES } from '@/types'
-import {
-  TOOL_CALL_STATUS_MAP,
-  TOOL_CALL_RESULT_STATUSES,
-  APPROVAL_STATE_MAP,
-} from './constants'
+import { toCamelCase } from '@/utils/sessionTransformers'
+import { getEventSessionId } from '@/utils/eventRouting'
+import { StreamState, ApprovalState, PROTECTED_STREAM_STATES } from '@/types'
+import { APPROVAL_STATE_MAP } from './constants'
 import { createHandleToolCallEvent } from './toolCallHandler'
+import {
+  findMessageById,
+  getSession,
+  getLastAssistantMessage,
+} from './helpers'
 
 /**
  * @typedef {import('@/composables/useRealtimeSync').RealtimeEvent} RealtimeEvent
@@ -27,8 +28,9 @@ import { createHandleToolCallEvent } from './toolCallHandler'
  * @param {Object} ctx.sessionStore - session store 实例
  * @param {Object} ctx.approvalStore - approval store 实例
  * @param {Object} ctx.researchStore - research store 实例
- * @param {{ getPrevSeq: Function, setSeenSeq: Function, shouldSkip: Function }} ctx.seqDedup
- *   - 来自 createSeqDedup，提供 seq 去重能力
+ * @param {{ getPrevSeq: Function, setSeenSeq: Function }} ctx.seqDedup
+ *   - 来自 createSeqDedup，仅提供跳号检测基线（Task 4：事件已见去重由
+ *     useRealtimeSync.lastSeq 与 orderedQueue.expectedSeq 负责，本模块不做）
  * @param {{ process: Function }} ctx.orderedQueue
  *   - 来自 createOrderedQueue，提供有序队列处理能力
  * @param {Set<string>} ctx.streamingSessions - reactive(new Set())，请求浏览器 SSE 活跃会话集合
@@ -71,8 +73,21 @@ export const createHandleSessionEvent = (ctx) => {
     // 统一入站转换：WebSocket 事件 payload snake_case → camelCase
     // 此转换后所有下游 handler（messageHandlers/toolCallHandler/approvalHandler）
     // 收到的数据均为 camelCase，禁止再访问 snake_case 键名
-    event.payload = toCamelCase(event.payload)
-    const sessionId = event.payload?.sessionId
+    // 防御：转换异常时跳过该事件（事件丢弃由后续 replay/fullSync 补偿），
+    // 保证函数不抛异常，避免事件不进 orderedQueue 直接丢失
+    try {
+      event.payload = toCamelCase(event.payload)
+    } catch (err) {
+      logger.error(
+        `[Sync] session 事件 payload 转换失败，跳过事件: type=${event.type}, error=${err?.message || err}`
+      )
+      return
+    }
+    // 路由字段解析（P3-R1 根因修复，统一入口 getEventSessionId）：
+    // 后端将 session_id 注入事件顶层（与 payload 平级，见 realtime_events.py
+    // _publish_to_session_async），payload 内部不含 session_id。
+    // 统一 helper 优先 payload，其次 event 顶层，否则所有 WebSocket 事件被静默丢弃。
+    const sessionId = getEventSessionId(event)
     if (!sessionId) return
 
     // 使用有序队列处理，避免 async 回调乱序导致 seq 回退
@@ -84,14 +99,15 @@ export const createHandleSessionEvent = (ctx) => {
   /**
    * 从事件中解析 sessionId
    *
-   * sessionId 为 schema 必填字段，直接从 payload.sessionId 获取。
-   * 注意：applySessionEvent 入口处已将 payload snake_case → camelCase。
+   * sessionId 为 schema 必填字段（P3-R1 根因修复）：
+   * 后端将 session_id 注入事件顶层（event.sessionId，与 payload 平级），
+   * payload 内部不含 session_id。统一委托 getEventSessionId 解析
+   * （优先 payload，其次 event 顶层，null 兜底）。
    * @param {RealtimeEvent} event
    * @returns {string | null}
    */
   const _getSessionId = (event) => {
-    return event.payload?.sessionId
-      || null
+    return getEventSessionId(event)
   }
 
   /**
@@ -103,7 +119,7 @@ export const createHandleSessionEvent = (ctx) => {
    * @returns {string | null}
    */
   const _getTargetMessageStreamState = (sessionId, event) => {
-    const session = sessionStore.sessions.find(s => s.id === sessionId)
+    const session = getSession(sessionStore, sessionId)
     if (!session?.messages) return null
 
     let messageId = null
@@ -115,14 +131,11 @@ export const createHandleSessionEvent = (ctx) => {
     }
 
     if (messageId) {
-      const msg = session.messages.find(m =>
-        m.backendId?.toString() === messageId?.toString() ||
-        m.id?.toString() === messageId?.toString()
-      )
+      const msg = findMessageById(session, messageId)
       if (msg) return msg.streamState || null
     }
 
-    const lastAssistant = [...session.messages].reverse().find(m => m.role === 'assistant')
+    const lastAssistant = getLastAssistantMessage(session)
     return lastAssistant?.streamState || null
   }
 
@@ -137,15 +150,19 @@ export const createHandleSessionEvent = (ctx) => {
       return
     }
 
-    // 事件去重：跳过已处理过的 seq（回放 + 实时推送可能重复送达同一事件）
-    const dedupResult = seqDedup.shouldSkip(event, sessionId)
-    if (dedupResult.skip) return
-    if (dedupResult.resetToZero) seqDedup.setSeenSeq(sessionId, 0)
+    // 事件去重（Task 4 seq 单一权威）：
+    // - 事件级"已见"去重由 useRealtimeSync.lastSeq（决定 replay 起点）+ 本层有序队列
+    //   expectedSeq（丢弃 seq < expectedSeq 的重复/过期事件）负责，此处不再做独立去重，
+    //   避免双基线发散导致跳号误判。
+    // - 跳号检测见下方（基于 seqDedup 基线，基线由 applySessionEvent 末尾与
+    //   sync.js advanceBaseline 联动推进）。
 
     // 目标消息处于 streaming / interrupted / finalizing / syncing 状态时，跳过与 SSE 重叠的
     // WebSocket message_updated 事件，避免滞后快照覆盖本地正在流式追加的最新内容。
-    // 工具调用事件（7 个 tool_call_*）不再跳过，因为 SSE 已不推送工具事件（Task 3+4），
-    // 所有浏览器均通过 WebSocket 接收工具调用状态。
+    // 工具调用事件（7 个 tool_call_*）不跳过：SSE 通道仍推送 tool / tool_result 事件
+    // （请求浏览器即时渲染工具卡片），与 WebSocket tool_call_* 事件共用同一幂等写入入口
+    // （addOrUpdateToolCallInMap / updateOrAddToolResultInMap，id/toolCallId 精确匹配），
+    // 双通道重复推送同一工具时幂等合并，无需按流状态跳过（Task 5.1）。
     const targetStreamState = _getTargetMessageStreamState(sessionId, event)
     const earlyPayload = event.payload || event
     // message_updated 中的内容增长事件：非请求浏览器在 INTERRUPTED 状态下放行
@@ -186,26 +203,33 @@ export const createHandleSessionEvent = (ctx) => {
       return
     }
 
-    // 事件序列跳号检测
-    // Task 2 修复后（_processSessionEventOrdered 间隙等待逻辑），事件跳号会大幅减少。
-    // 此处保留 requestFullSync 作为兜底，应对真正的序列号丢失（重连/严重故障等场景）。
+    // 事件序列跳号检测（Task 6 seq 治理后，此路径基本不再因间隙触发）：
+    // seqDedup 基线由三条路径共同推进，保证与有序队列 expectedSeq 收敛一致：
+    // - applySessionEvent 末尾 setSeenSeq（处理成功）
+    // - sync.js advanceBaseline（orderedQueue 丢弃过期事件联动）
+    // - sync.js handleOrderedQueueGap（orderedQueue 间隙停滞联动：处理最小 seq 前
+    //   推进基线到 minSeqInQueue - 1，跳过缺失 seq，避免此处误判跳号）
+    // 间隙场景已由"正常处理最小 seq + 快照校对"兜底（见 orderedQueue.js / sync.js），
+    // 此处 requestFullSync 仅作为最后防线，应对真正的事件丢失
+    // （replay 完成后的状态校验失败、处理链异常等显式错误），不再因单次间隙触发。
     const prevSeq = seqDedup.getPrevSeq(sessionId)
     const eventSeq = typeof event.seq === 'number' ? event.seq : prevSeq + 1
     if (eventSeq > prevSeq + 1 && !fullSyncPending.has(sessionId)) {
       const isFirstEvent = prevSeq === 0
       if (isFirstEvent) {
-        // 首次事件跳号是正常行为（页面刚加载，lastSeenSeq 未初始化）
+        // 首次事件跳号是正常行为（页面刚加载，跳号基线未初始化）
         // 不触发全量同步，避免在 SSE 流式期间 loadSessionDetail 全量替换 session 对象，
         // 破坏前端占位消息引用，导致 SSE 回调（appendToLastMessage 等）失效产生两个 AI 气泡
         // 会话详情已通过 loadSessionDetail/switchSession 加载，历史事件无需同步
         logger.info(`[Sync] 首次事件跳号(正常，跳过全量同步): session=${sessionId}, got=${eventSeq}`)
       } else {
-        // 跳号原因：_processSessionEventOrdered 已等待 2 秒仍未补齐 expectedSeq，
-        // 视为真正的事件丢失（重连后 lastSeenSeq 与后端 seq 不连续、或后端事件被去重跳过）
+        // 兜底路径：正常间隙已被 orderedQueue + handleOrderedQueueGap 处理
+        // （推进基线 + 快照校对），到达此处说明存在异常（如间隙停滞回调失败、
+        // 基线推进缺失、或后端序列号真正不连续），视为显式错误触发全量同步。
         logger.warn(
-          `[Sync] 事件跳号触发全量同步: session=${sessionId}, ` +
+          `[Sync] 事件跳号触发全量同步(兜底): session=${sessionId}, ` +
           `expected=${prevSeq + 1}, got=${eventSeq}, ` +
-          `reason=间隙等待后仍未补齐或后端序列号不连续`
+          `reason=间隙停滞回调未推进基线或后端序列号不连续`
         )
         fullSyncPending.add(sessionId)
         requestFullSync(sessionId).finally(() => fullSyncPending.delete(sessionId))
@@ -283,17 +307,6 @@ export const createHandleSessionEvent = (ctx) => {
     if (typeof event.seq === 'number') {
       seqDedup.setSeenSeq(sessionId, event.seq)
     }
-  }
-
-  /**
-   * 获取会话最后一条 assistant 消息
-   * @param {string} sessionId
-   * @returns {Object|null}
-   */
-  const getLastAssistantMessage = (sessionId) => {
-    const session = sessionStore.sessions.find(s => s.id === sessionId)
-    if (!session?.messages) return null
-    return [...session.messages].reverse().find(m => m.role === 'assistant') || null
   }
 
   /**
@@ -405,7 +418,7 @@ export const createHandleSessionEvent = (ctx) => {
     // 统一性：所有模块（chat/deep_research/learning/chat_deep_research）的审批事件
     // 均通过此函数处理，replay 和实时推送行为一致。
     if (mappedState === ApprovalState.PENDING && !streamingSessions.has(sessionId)) {
-      const targetMsg = _findMessageByIdOrExtra(sessionId, payload) || getLastAssistantMessage(sessionId)
+      const targetMsg = _findMessageByIdOrExtra(sessionId, payload) || getLastAssistantMessage(getSession(sessionStore, sessionId))
       if (targetMsg && targetMsg.streamState !== StreamState.INTERRUPTED) {
         const prevState = targetMsg.streamState || 'undefined'
         targetMsg.streamState = StreamState.INTERRUPTED
@@ -421,7 +434,7 @@ export const createHandleSessionEvent = (ctx) => {
     // 2b. 批量审批：INTERRUPTED → STREAMING（当 sibling approved/processing 时）
     if (graphInterruptId) {
       // SubTask 11.2-11.4: 批量审批场景，查询本地 store 中同一批次的 Approval 状态
-      const targetMsg = _findMessageByIdOrExtra(sessionId, payload) || getLastAssistantMessage(sessionId)
+      const targetMsg = _findMessageByIdOrExtra(sessionId, payload) || getLastAssistantMessage(getSession(sessionStore, sessionId))
       if (targetMsg?.streamState === StreamState.INTERRUPTED && !streamingSessions.has(sessionId)) {
         const siblingApprovals = _collectSiblingApprovals(targetMsg, graphInterruptId, payload.remainingPendingCount)
 
@@ -466,7 +479,7 @@ export const createHandleSessionEvent = (ctx) => {
       }
     } else if ((mappedState === ApprovalState.APPROVED || mappedState === ApprovalState.PROCESSING) && !streamingSessions.has(sessionId)) {
       // 非批量 approval_approved / approval_processing：INTERRUPTED → STREAMING
-      const targetMsg = _findMessageByIdOrExtra(sessionId, payload) || getLastAssistantMessage(sessionId)
+      const targetMsg = _findMessageByIdOrExtra(sessionId, payload) || getLastAssistantMessage(getSession(sessionStore, sessionId))
       if (targetMsg?.streamState === StreamState.INTERRUPTED) {
         targetMsg.streamState = StreamState.STREAMING
         logger.info(`[Sync] 非请求浏览器审批 ${mappedState}，INTERRUPTED → STREAMING: session=${sessionId}, source=${source}, message=${targetMsg.backendId || targetMsg.id}`)

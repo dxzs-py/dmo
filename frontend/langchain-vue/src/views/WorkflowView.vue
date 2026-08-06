@@ -435,21 +435,31 @@ const connectSSE = async (threadId) => {
 }
 
 const handleSSEEvent = (data) => {
+  // 命名边界：统一解析——对 sseData 整体调用 toCamelCase 递归转换（含 data 嵌套），
+  // 然后将 type 还原为后端原始 snake_case（协议路由标识符，非业务数据）。
+  // 原散落的 data.data 局部转换（toCamelCase(data.data)）收敛于此一次完成。
+  const sseData = toCamelCase(data)
+  if (data && typeof data === 'object') {
+    sseData.type = data.type
+  }
+
   // SSE 事件格式：{ type: 'workflow_*', data: { ... } }
   // 与 task WebSocket 频道的 workflow_* 事件类型对齐，便于双路径统一处理
-  switch (data.type) {
+  switch (sseData.type) {
     case 'workflow_step':
       // 学习工作流节点执行进度（原 'start' 和 'step' 合并）
       // 新格式：{ type: 'workflow_step', data: { step, message } }
-      currentStepMessage.value = data.data?.message || '工作流启动中...'
-      if (execution.value && data.data?.step) {
-        execution.value.currentStep = convertSnakeToCamel(data.data.step)
+      currentStepMessage.value = sseData.data?.message || '工作流启动中...'
+      if (execution.value && sseData.data?.step) {
+        // step 值是后端 snake_case 字符串（如 waiting_for_answers），
+        // 需单独转 camelCase：toCamelCase 仅转换键名、不转换字符串值
+        execution.value.currentStep = convertSnakeToCamel(sseData.data.step)
       }
       break
     case 'workflow_state_update':
       // 学习工作流状态变更
-      if (execution.value && data.data) {
-        const d = toCamelCase(data.data)
+      if (execution.value && sseData.data) {
+        const d = sseData.data
         if (d.currentStep) execution.value.currentStep = d.currentStep
         if (d.learningPlan) execution.value.learningPlan = d.learningPlan
         if (d.retrievedDocs) execution.value.retrievedDocs = d.retrievedDocs
@@ -475,8 +485,8 @@ const handleSSEEvent = (data) => {
     case 'workflow_completed':
       // 学习工作流完成（原 'complete'）
       closeSSE()
-      if (execution.value && data.data) {
-        execution.value = { ...execution.value, status: 'completed', ...toCamelCase(data.data) }
+      if (execution.value && sseData.data) {
+        execution.value = { ...execution.value, status: 'completed', ...sseData.data }
       }
       if (fileBrowserRef.value) {
         fileBrowserRef.value.loadFiles()
@@ -486,16 +496,16 @@ const handleSSEEvent = (data) => {
     case 'workflow_failed':
       // 学习工作流失败（新增）
       closeSSE()
-      if (execution.value && data.data) {
-        execution.value = { ...execution.value, status: 'failed', ...toCamelCase(data.data) }
+      if (execution.value && sseData.data) {
+        execution.value = { ...execution.value, status: 'failed', ...sseData.data }
       }
-      ElMessage.error(data.data?.error || data.data?.message || '工作流执行失败')
+      ElMessage.error(sseData.data?.error || sseData.data?.message || '工作流执行失败')
       break
     case 'stream_error':
-      logger.warn('工作流流式执行异常:', data.message || data.data?.message)
+      logger.warn('工作流流式执行异常:', sseData.message || sseData.data?.message)
       break
     case 'error':
-      ElMessage.error(data.message || data.data?.message || '工作流执行出错')
+      ElMessage.error(sseData.message || sseData.data?.message || '工作流执行出错')
       closeSSE()
       break
   }

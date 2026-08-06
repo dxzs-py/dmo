@@ -1,5 +1,10 @@
 import { logger } from '@/utils/logger'
 
+// 间隙等待时长（ms）：真实乱序到达窗口，远小于旧 2s 等待。
+// 等待后 expectedSeq 仍缺失即视为"间隙停滞"，走"正常处理最小 seq + 快照校对"路径，
+// 不再强制等待 2 秒、不再依赖 requestFullSync 兜底（间隙≠事件丢失，见核心策略 3）。
+const GAP_WAIT_MS = 400
+
 /**
  * 创建有序事件队列
  *
@@ -8,28 +13,46 @@ import { logger } from '@/utils/logger'
  *
  * 原逻辑位于 sync.js L197-329（_sessionEventQueue 与 _processSessionEventOrdered）。
  *
- * 核心策略：
+ * 核心策略（Task 6 seq 治理后）：
  * 1. 事件按 seq 进入队列，按 seq 升序处理
  * 2. expectedSeq 在队列中：正常顺序处理
  * 3. expectedSeq 缺失但存在间隙（minSeqInQueue > expectedSeq + 1 且 expectedSeq > 0）：
- *    等待 2 秒让乱序事件到达，等待后重新检查；仍未到达则强制处理 minSeqInQueue
+ *    短暂等待 GAP_WAIT_MS 让乱序事件到达，等待后重新检查；仍未到达则：
+ *    (a) 正常处理队列中已收到的最小 seq 事件（保持处理连续性）
+ *    (b) 通过 onGapStalled 通知调用方异步触发一次快照校对
+ *        （补齐 gap 造成的状态缺失，而非全量同步）
  * 4. 首次事件（expectedSeq=0）或连续事件（无间隙）：直接处理，不等待
- * 5. seq < expectedSeq 的事件视为已处理/过期，直接丢弃
+ * 5. seq < expectedSeq 的事件视为已处理/过期，直接丢弃，并通过 onDropped 通知调用方
+ *    （Task 4 双基线发散修复：调用方在丢弃时同步推进 seqDedup/lastSeq 基线，
+ *    避免后续事件被误判跳号而触发多余 requestFullSync）
  *
  * 设计说明：
+ * - 事件级去重的唯一权威是 useRealtimeSync.lastSeq（决定 replay 起点），
+ *   本队列的 expectedSeq 丢弃（seq < expectedSeq）是第二道防线（乱序/重复投递）。
  * - 保留队列 + processing 标志：多个 onMessage 并发时（浏览器不 await onMessage 的 Promise），
  *   processing 标志保证事件串行处理，避免并发竞态。
  * - WebSocket 事件可能乱序到达（如 seq=11 先于 seq=3-10），间隙等待避免
  *   expectedSeq 跳过中间事件导致关键事件（approval_pending 等）被丢弃。
- * - 每次间隙只等待一次 2 秒，避免无限等待；真正的事件丢失由 requestFullSync 兜底。
+ * - 每次间隙只等待一次 GAP_WAIT_MS，避免无限等待；间隙停滞后的状态补齐由
+ *   onGapStalled 触发的快照校对承担（requestFullSync 只应在真正需要时触发，
+ *   如 replay 完成后的状态校验或显式错误）。
  *
+ * @param {Object} [options]
+ * @param {(sessionId: string, seq: number) => void} [options.onDropped]
+ *   - 丢弃事件（seq < expectedSeq）时的联动回调，由 sync.js 注入 advanceBaseline，
+ *     保证 seqDedup/lastSeq 基线不落后于有序队列（双基线收敛）。
+ * @param {(sessionId: string, expectedSeq: number, minSeqInQueue: number) => void} [options.onGapStalled]
+ *   - 间隙停滞回调（等待 GAP_WAIT_MS 后 expectedSeq 仍缺失，将处理 minSeqInQueue 前调用），
+ *     由 sync.js 注入：内部推进 seqDedup 跳号基线（跳过缺失 seq，防误判跳号触发全量同步）、
+ *     按流式状态决定是否异步触发快照校对。回调应同步返回（快照校对由调用方异步触发）。
  * @returns {{
  *   queue: Map<string, {expectedSeq: number, queue: Map<number, {event: Object, processor: Function}>, processing: boolean}>,
  *   process: (sessionId: string, event: Object, handler: (event: Object) => Promise<void>) => Promise<void>,
  *   reset: (sessionId: string) => void
  * }}
  */
-export const createOrderedQueue = () => {
+export const createOrderedQueue = (options = {}) => {
+  const { onDropped, onGapStalled } = options
   // session 通道事件有序队列
   // 所有模块（聊天/深度研究/学习工作流/深度研究模式）的 WebSocket 事件
   // 统一通过此队列按 seq 顺序处理，避免乱序导致状态不一致。
@@ -57,9 +80,16 @@ export const createOrderedQueue = () => {
     }
     const state = queue.get(sessionId)
 
-    // 已处理或过期的事件直接丢弃
+    // 已处理或过期的事件直接丢弃（Task 4：丢弃时联动推进调用方基线，防双基线发散）
     if (event.seq < state.expectedSeq) {
       logger.debug(`[Sync] 丢弃过期事件: session=${sessionId}, seq=${event.seq}, expected=${state.expectedSeq}`)
+      if (onDropped) {
+        try {
+          onDropped(sessionId, event.seq)
+        } catch (err) {
+          logger.warn(`[Sync] onDropped 联动失败: session=${sessionId}, seq=${event.seq}, error=${err?.message || err}`)
+        }
+      }
       return
     }
 
@@ -96,17 +126,17 @@ export const createOrderedQueue = () => {
         if (minSeqInQueue === Infinity) break
 
         // 间隙等待：minSeqInQueue > expectedSeq + 1 且 expectedSeq > 0（非首次事件）
-        // WebSocket 事件乱序到达时（如 seq=11 先于 seq=3-10），等待 2 秒让中间事件到达
+        // WebSocket 事件乱序到达时（如 seq=11 先于 seq=3-10），短暂等待让中间事件到达
         // 避免直接处理 minSeqInQueue 导致 expectedSeq 跳过中间事件、关键事件被丢弃。
         // 首次事件（expectedSeq=0）和连续事件（minSeqInQueue == expectedSeq + 1）不等待。
         if (minSeqInQueue > state.expectedSeq + 1 && state.expectedSeq > 0) {
           const gapStartSeq = state.expectedSeq
           const awaitedMinSeq = minSeqInQueue
           logger.warn(
-            `[Sync] 检测到事件间隙，等待 2 秒让乱序事件到达: session=${sessionId}, ` +
+            `[Sync] 检测到事件间隙，等待 ${GAP_WAIT_MS}ms 让乱序事件到达: session=${sessionId}, ` +
             `expected=${gapStartSeq}, minInQueue=${awaitedMinSeq}`
           )
-          await new Promise(resolve => setTimeout(resolve, 2000))
+          await new Promise(resolve => setTimeout(resolve, GAP_WAIT_MS))
 
           // 等待后重新检查 expectedSeq 是否在队列中（乱序事件已到达）
           if (state.queue.has(state.expectedSeq)) {
@@ -117,8 +147,7 @@ export const createOrderedQueue = () => {
             continue
           }
 
-          // 等待后仍未到达：强制处理 minSeqInQueue（避免无限等待）
-          // 重新计算 minSeqInQueue（等待期间可能有新事件入队）
+          // 等待后仍未到达：重新计算 minSeqInQueue（等待期间可能有新事件入队）
           minSeqInQueue = Infinity
           for (const [seq] of state.queue) {
             if (seq < state.expectedSeq) {
@@ -129,10 +158,24 @@ export const createOrderedQueue = () => {
           }
           if (minSeqInQueue === Infinity) break
 
+          // 间隙停滞（Task 6）：不再"强制处理"，而是
+          // (a) 正常处理队列中已收到的最小 seq 事件（保持处理连续性）
+          // (b) 在处理前通过 onGapStalled 通知调用方推进跳号基线（跳过缺失 seq，
+          //     防 applySessionEvent 误判跳号触发全量同步）并异步触发快照校对
+          //     （补齐 gap 造成的状态缺失）。快照校对不阻塞事件处理。
           logger.warn(
-            `[Sync] 间隙等待 2 秒后 expectedSeq 仍未到达，强制处理 minSeq: session=${sessionId}, ` +
+            `[Sync] 间隙等待 ${GAP_WAIT_MS}ms 后 expectedSeq 仍未到达，` +
+            `处理最小 seq 并触发快照校对: session=${sessionId}, ` +
             `expected=${gapStartSeq}, min=${minSeqInQueue}`
           )
+          if (onGapStalled) {
+            try {
+              // 同步回调：调用方（sync.js）在内部推进跳号基线并异步触发快照校对
+              onGapStalled(sessionId, gapStartSeq, minSeqInQueue)
+            } catch (err) {
+              logger.warn(`[Sync] onGapStalled 回调失败: session=${sessionId}, error=${err?.message || err}`)
+            }
+          }
         }
 
         // 处理 minSeqInQueue，推进 expectedSeq

@@ -129,6 +129,7 @@ async def publish_tool_call(
     agent_name: str | None = None,
     agent_path: list | None = None,
     risk_ceiling: str | None = None,
+    risk_level: str | None = None,
     _index: int | None = None,
 ) -> None:
     """工具调用生命周期事件发布（三模块统一入口）。
@@ -154,6 +155,10 @@ async def publish_tool_call(
         agent_name: 子 agent 名称（如 web-researcher）
         agent_path: 完整调用链路（如 ["main", "web-researcher"]）
         risk_ceiling: 子 agent 角色风险上限（safe/controlled/high）
+        risk_level: 工具调用实际风险等级（safe/controlled/high，由 ApprovalMiddleware
+                    计算）。根因修复：注入到 tool_call_* 事件 payload，让前端从工具
+                    事件直接获取风险等级，不再单一依赖 approval_pending 事件路径，
+                    避免跨浏览器风险等级显示不一致。
 
     Raises:
         PayloadValidationError: payload 校验失败时抛出
@@ -189,6 +194,11 @@ async def publish_tool_call(
         payload["agent_path"] = agent_path
     if risk_ceiling:
         payload["risk_ceiling"] = risk_ceiling
+    # risk_level：工具调用实际风险等级，注入到所有 tool_call_* 事件 payload
+    # 根因修复：原 payload 不携带 risk_level，非触发浏览器依赖 approval_pending
+    # 事件获取风险等级，事件丢失时前端 riskLevel 缺失导致跨浏览器显示不一致
+    if risk_level:
+        payload["risk_level"] = risk_level
     if _index is not None:
         payload["_index"] = _index
 

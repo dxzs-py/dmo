@@ -120,4 +120,20 @@ def _build_approval_entry(
     if req.get("input_placeholder"):
         entry["input_placeholder"] = req["input_placeholder"]
 
+    # 透传子 agent 嵌套层级字段（Phase E3 / P-BE-5 根因修复）：
+    # ApprovalMiddleware.aafter_model 在子 agent 执行时为审批请求注入
+    # parent_tool_call_id / depth / agent_name / agent_path，
+    # 此处透传到 approval_data，供下游（stream_helpers.parse_approval_interrupt
+    # → loop._handle_updates_chunk → request_approval_async → Approval.extra）
+    # 最终 ChatApprovalResume 通过 approval.extra.depth 识别子 agent interrupt，
+    # 跳过主 agent checkpoint namespace 的归属校验。
+    if req.get("parent_tool_call_id"):
+        entry["parent_tool_call_id"] = req["parent_tool_call_id"]
+    if req.get("depth") or req.get("depth") == 0:
+        entry["depth"] = req["depth"]
+    if req.get("agent_name"):
+        entry["agent_name"] = req["agent_name"]
+    if req.get("agent_path"):
+        entry["agent_path"] = req["agent_path"]
+
     return entry

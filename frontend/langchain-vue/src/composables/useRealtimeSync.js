@@ -3,7 +3,6 @@ import { useUserStore } from '@/stores/user'
 import settings from '@/config/settings'
 import { logger } from '@/utils/logger'
 import { useSnapshotSync, useSnapshotSyncByTask } from '@/composables/useSnapshotSync'
-import { useSyncStore } from '@/stores/sync'
 import { toSnakeCase, toCamelCase } from '@/utils/sessionTransformers.js'
 import {
   SNAPSHOT_TRIGGER_EVENTS,
@@ -28,6 +27,32 @@ function debounce(fn, delay = 200) {
       fn(...args)
     }, delay)
   }
+}
+
+/**
+ * 惰性加载 sync store 模块（消除模块加载期循环依赖，SubTask 11.1）
+ *
+ * 背景：useRealtimeSync.js ↔ sync.js 存在模块加载期双向依赖：
+ *   - 本文件原 L6 静态 import sync.js（useSyncStore）
+ *   - sync.js 顶层静态 import 本文件（useRealtimeSync，store setup 内调用）
+ * 本文件改为函数内动态 import 后，静态依赖图中仅剩 sync.js → useRealtimeSync.js
+ * 单向依赖，循环依赖在模块加载期消除。
+ *
+ * 使用点 subscribeSession 为同步函数，无法 await，故采用 fire-and-forget 的
+ * .then 调用；动态 import 在 microtask 中 resolve，必然早于 WebSocket 消息的
+ * 网络往返，因此 resetSessionSeq 先于 subscribe 请求生效，与原同步调用等价。
+ * Promise 缓存保证模块只动态加载一次。
+ */
+/** @type {Promise<{ useSyncStore: Function }> | null} */
+let syncStoreModulePromise = null
+/**
+ * @returns {Promise<{ useSyncStore: Function }>}
+ */
+const _getSyncStoreModule = () => {
+  if (!syncStoreModulePromise) {
+    syncStoreModulePromise = import('@/stores/sync')
+  }
+  return syncStoreModulePromise
 }
 
 /**
@@ -145,8 +170,18 @@ function createRealtimeSync() {
     }
   }
 
-  /** 每个通道最近收到的 seq：key 为 'user' 或 'session_<id>' */
-  /** @type {Map<string, number>} */
+  /**
+   * 每个通道最近收到的 seq：key 为 'user' 或 'session_<id>' 或 'task_<id>'
+   *
+   * Task 4：本 Map 是**事件级去重的唯一权威**（channel + seq 单调）：
+   * - subscribe/replay 请求的 last_seq 起点由本 Map 决定（已处理事件不会被重复回放）
+   * - dispatchEvent 在回调全部成功后推进本 Map（取 max 防并发回退）
+   * - sync.js 的 advanceBaseline（有序队列丢弃联动）也会推进本 Map，保持基线收敛
+   * 其他 seq 跟踪器（seqDedup 仅做跳号检测、orderedQueue 仅排序/间隙等待）均不得
+   * 独立承担"事件已见"去重职责。
+   *
+   * @type {Map<string, number>}
+   */
   const lastSeq = new Map()
 
   /**
@@ -183,18 +218,66 @@ function createRealtimeSync() {
 
   /**
    * 将 lastSeq 持久化到 localStorage
+   *
+   * Task 4 跨标签页防互踩：写入前读取旧值，逐 channel 取最大值后合并写回。
+   * 多标签页（同一用户）各自维护 lastSeq Map，直接覆盖会令较新标签页的
+   * 已处理 seq 基线被较旧标签页覆盖（陈旧 lastSeq 使重连 replay 重复投递已处理事件）。
+   * 取 max 合并保证各标签页写入单调不减。
    */
   const persistLastSeq = () => {
     const key = getLastSeqKey()
     if (!key) return
     try {
-      localStorage.setItem(key, JSON.stringify(Array.from(lastSeq.entries())))
+      // 读取旧值，构建合并基线（旧值损坏时忽略，用当前值覆盖）
+      /** @type {Map<string, number>} */
+      const merged = new Map()
+      const raw = localStorage.getItem(key)
+      if (raw) {
+        try {
+          const entries = JSON.parse(raw)
+          if (Array.isArray(entries)) {
+            entries.forEach(([k, v]) => {
+              if (typeof v === 'number') merged.set(k, v)
+            })
+          }
+        } catch {
+          logger.warn('[Realtime] 解析 localStorage lastSeq 旧值失败，以当前值覆盖')
+        }
+      }
+      // 当前内存值取 max 合并
+      for (const [k, v] of lastSeq.entries()) {
+        const prev = merged.get(k) || 0
+        if (v > prev) merged.set(k, v)
+      }
+      localStorage.setItem(key, JSON.stringify(Array.from(merged.entries())))
     } catch (error) {
       logger.error('[Realtime] 保存 lastSeq 失败:', error)
     }
   }
 
   const saveLastSeqDebounced = debounce(persistLastSeq, 200)
+
+  /**
+   * 推进指定通道的 lastSeq（事件级去重单一权威的唯一写入入口）
+   *
+   * Task 4：
+   * - dispatchEvent（回调全部成功后）与 sync.js 的 advanceBaseline（有序队列丢弃联动）
+   *   均通过本方法推进 lastSeq，保证多路径基线收敛，避免双基线发散。
+   * - 取 max 防回退：多个 dispatchEvent 并发时（浏览器不 await onMessage 的 Promise），
+   *   回调完成顺序可能与事件到达顺序不一致，直接 set 会导致 lastSeq 回退，
+   *   重连时 replay 从更早 seq 开始，重复处理已处理事件。
+   *
+   * @param {string} channelKey - 'user' / 'session_<id>' / 'task_<id>'
+   * @param {number} seq
+   */
+  const advanceLastSeq = (channelKey, seq) => {
+    if (!channelKey || typeof seq !== 'number') return
+    const current = lastSeq.get(channelKey) || 0
+    if (seq > current) {
+      lastSeq.set(channelKey, seq)
+      saveLastSeqDebounced()
+    }
+  }
 
   /**
    * 清除当前用户的 lastSeq（登出或切换用户时）
@@ -326,11 +409,19 @@ function createRealtimeSync() {
       // 必须在发送 subscribe 请求之前重置，确保回放事件到达时去重基线已清零。
       // 注意：仅重置该 session 的状态，不影响其他会话；不清理 streamingSessions/thinkingSessions。
       if (options.replayFromSeq === 0) {
-        try {
-          useSyncStore().resetSessionSeq(sessionId)
-        } catch (err) {
-          logger.warn(`[Realtime] resetSessionSeq 失败: session=${sessionId}`, err)
-        }
+        // 动态 import（microtask resolve）早于 WebSocket 消息网络往返执行，
+        // 时序与原同步调用等价（reset 先于 subscribe 请求生效）
+        _getSyncStoreModule()
+          .then(({ useSyncStore: getSyncStore }) => {
+            try {
+              getSyncStore().resetSessionSeq(sessionId)
+            } catch (err) {
+              logger.warn(`[Realtime] resetSessionSeq 失败: session=${sessionId}`, err)
+            }
+          })
+          .catch((err) => {
+            logger.warn(`[Realtime] resetSessionSeq 加载失败: session=${sessionId}`, err)
+          })
       }
 
       // Replay barrier：replay 期间缓冲实时事件，避免污染 lastSeq
@@ -531,14 +622,15 @@ function createRealtimeSync() {
   const dispatchEvent = async (event, isReplay = false) => {
     const channelKey = getChannelKey(event)
 
-    // 注入 _isReplay 标记，让回调（如 sync.js 的 applyUserEvent）能区分：
+    // 注入 isReplay 标记，让回调（如 sync.js 的 applyUserEvent）能区分：
     //   - 实时事件（isReplay=false）：来自后端实时推送，需要响应副作用
     //   - replay 事件（isReplay=true）：来自历史回放，仅用于状态重建，不应触发
     //     自动订阅、自动切换会话等副作用（否则 N 条历史 session_created 会触发
     //     N 次 subscribeSession + N 次快照请求，造成请求风暴）
     // 标记挂在 event 上而非第二参数，避免修改所有回调签名
+    // Task 7.1：_isReplay → isReplay（内部标记，不参与网络传输）
     if (isReplay) {
-      event._isReplay = true
+      event.isReplay = true
     }
 
     // Replay barrier：实时事件在 channel pending 期间缓冲
@@ -601,15 +693,9 @@ function createRealtimeSync() {
 
       // 回调全部成功后才更新 lastSeq，失败时保持原 lastSeq
       // 仅对携带有效 seq 的事件更新（合成事件无 seq 时不污染 lastSeq）
-      // 取 max 防止回退：多个 dispatchEvent 并发时（浏览器不 await onMessage 的 Promise），
-      // 回调完成顺序可能与事件到达顺序不一致，直接 set 可能导致 lastSeq 回退，
-      // 重连时 replay 从更早的 seq 开始，重复处理已处理事件。
+      // 统一走 advanceLastSeq（取 max 防回退 + debounce 持久化，单一权威唯一写入入口）
       if (!hasError && channelKey && typeof event.seq === 'number') {
-        const current = lastSeq.get(channelKey) || 0
-        if (event.seq > current) {
-          lastSeq.set(channelKey, event.seq)
-          saveLastSeqDebounced()
-        }
+        advanceLastSeq(channelKey, event.seq)
       }
     } catch (err) {
       logger.error('[RealtimeSync] 事件回调失败，保持 lastSeq 不变:', err)
@@ -1093,6 +1179,7 @@ function createRealtimeSync() {
     connectionStatus,
     streamingActiveCount,
     lastSeq,
+    advanceLastSeq,
     subscribeUserEvents,
     subscribeSession,
     unsubscribeSession,

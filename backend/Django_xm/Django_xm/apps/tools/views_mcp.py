@@ -5,7 +5,7 @@ from drf_spectacular.utils import extend_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
-from Django_xm.apps.core.throttling import SensitiveOperationRateThrottle
+from Django_xm.apps.core.throttling import MetaRateThrottle, SensitiveOperationRateThrottle
 from Django_xm.apps.tools.managers import _build_user_tool_category_info
 from Django_xm.apps.tools.views_common import (
     StandardPagination,
@@ -292,6 +292,8 @@ class McpServerListView(APIView):
     """MCP Server 列表视图"""
 
     permission_classes = [IsAuthenticated]
+    # 页面加载即请求的只读接口，独立 meta 额度（Task 3.2）
+    throttle_classes = [MetaRateThrottle]
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
@@ -409,6 +411,8 @@ class McpServerToggleView(APIView):
 
 class ToolListView(APIView):
     permission_classes = [IsAuthenticated]
+    # 页面加载即请求的只读接口，独立 meta 额度（Task 3.2）
+    throttle_classes = [MetaRateThrottle]
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
@@ -705,6 +709,8 @@ class SkillListView(APIView):
     """Skill 列表视图"""
 
     permission_classes = [IsAuthenticated]
+    # 页面加载即请求的只读接口，独立 meta 额度（Task 3.2）
+    throttle_classes = [MetaRateThrottle]
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
@@ -825,6 +831,8 @@ class SkillToggleView(APIView):
 
 class SkillPackageListView(APIView):
     permission_classes = [IsAuthenticated]
+    # 页面加载即请求的只读接口，独立 meta 额度（Task 3.2）
+    throttle_classes = [MetaRateThrottle]
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
@@ -977,6 +985,8 @@ class SkillPackageDetailView(APIView):
 
 class ToolMetaView(APIView):
     permission_classes = [IsAuthenticated]
+    # 页面加载即请求的只读接口，独立 meta 额度（Task 3.2）
+    throttle_classes = [MetaRateThrottle]
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):

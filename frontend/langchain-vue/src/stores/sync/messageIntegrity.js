@@ -1,7 +1,7 @@
 import { logger } from '@/utils/logger'
 import { mergeMessageFromBackend } from '@/utils/messageOperations'
 import { ToolCallStatus, ApprovalState } from '@/types'
-import { NON_TERMINAL_STATUSES } from '@/utils/toolCallTransition'
+import { NON_TERMINAL_STATUSES, applyToolCallState } from '@/utils/toolCallStateMachine'
 import { NON_TERMINAL_APPROVAL_STATES } from './constants'
 import {
   findMessageById,
@@ -12,6 +12,60 @@ import {
 /**
  * @typedef {import('@/composables/useRealtimeSync').RealtimeEvent} RealtimeEvent
  */
+
+/**
+ * 最终化深度研究结果回写场景的非终态 toolCalls（success 感知终态）
+ *
+ * 收敛自 streamStateHandlers.js handleStreamCompleted 深度研究回写分支的内联实现，
+ * 与原实现行为完全一致。与 finalizeToolCallsForCompletedMessage（通用流式兜底）的差异：
+ * - 审批终态：研究成功 → APPROVED，失败 → REJECTED（通用兜底无条件 → TIMEOUT）
+ * - 工具终态：仅处理 WAITING/RUNNING，按 result/output 与 success 区分
+ *   COMPLETED/FAILED（通用兜底将所有非终态 → COMPLETED）
+ * - 不同步 toolCallsMap（原内联实现无此行为）
+ *
+ * @param {Object} message - 目标消息对象
+ * @param {boolean} success - 深度研究是否成功（对应 payload.success !== false）
+ * @returns {{ pendingApprovalCount: number, runningToolCount: number }} 清理前计数（供日志使用）
+ */
+export const finalizeToolCallsForResearchResult = (message, success) => {
+  let pendingApprovalCount = 0
+  let runningToolCount = 0
+
+  if (message?.toolCalls && Array.isArray(message.toolCalls)) {
+    for (const tc of message.toolCalls) {
+      if (NON_TERMINAL_APPROVAL_STATES.includes(tc.approval?.state)) pendingApprovalCount++
+      if (tc.status === ToolCallStatus.WAITING || tc.status === ToolCallStatus.RUNNING) runningToolCount++
+      // 对于仍在 pending/processing/waiting 状态的审批，研究完成/失败后强制清理为终态
+      if (tc.approval && NON_TERMINAL_APPROVAL_STATES.includes(tc.approval.state)) {
+        tc.approval.state = success ? ApprovalState.APPROVED : ApprovalState.REJECTED
+      }
+      // 如果工具还是 waiting/running 状态，研究都结束了，根据实际情况设置。
+      // 状态推进统一走状态机（add 模式），终态不回退由 applyToolCallState 保证
+      if (tc.status === ToolCallStatus.WAITING || tc.status === ToolCallStatus.RUNNING) {
+        const target = (tc.result || tc.output) ? ToolCallStatus.COMPLETED : (success ? ToolCallStatus.COMPLETED : ToolCallStatus.FAILED)
+        const { status: nextStatus, applied } = applyToolCallState(tc, { status: target }, { mode: 'add' })
+        if (applied && nextStatus !== undefined) tc.status = nextStatus
+      }
+    }
+  }
+
+  // 同步清理 versions 中的审批状态
+  const ver = getCurrentVersion(message)
+  if (ver?.toolCalls) {
+    for (const tc of ver.toolCalls) {
+      if (tc.approval && NON_TERMINAL_APPROVAL_STATES.includes(tc.approval.state)) {
+        tc.approval.state = success ? ApprovalState.APPROVED : ApprovalState.REJECTED
+      }
+      if (tc.status === ToolCallStatus.WAITING || tc.status === ToolCallStatus.RUNNING) {
+        const target = (tc.result || tc.output) ? ToolCallStatus.COMPLETED : (success ? ToolCallStatus.COMPLETED : ToolCallStatus.FAILED)
+        const { status: nextStatus, applied } = applyToolCallState(tc, { status: target }, { mode: 'add' })
+        if (applied && nextStatus !== undefined) tc.status = nextStatus
+      }
+    }
+  }
+
+  return { pendingApprovalCount, runningToolCount }
+}
 
 /**
  * 创建消息完整性兜底处理器
@@ -55,17 +109,26 @@ export const createMessageIntegrityHandlers = (ctx) => {
 
     for (const tc of message.toolCalls) {
       if (!tc) continue
-      if (NON_TERMINAL_STATUSES.has(tc.status)) {
-        // 有结果 → COMPLETED，无结果也 → COMPLETED（流式已结束）
-        tc.status = ToolCallStatus.COMPLETED
-        if (!tc.state) tc.state = 'output-available'
-        finalizedCount++
-      }
-      // 审批仍在 pending/processing/waiting：流式已结束说明审批已超时
+      // 审批未放行执行（state 非 approved/completed）：工具尚未被确认执行，
+      // 流式结束（如审批恢复流）不代表其已完成，不得兜底为 COMPLETED（P3-34/P3-35 根因修复）。
+      // 覆盖 pending/processing/waiting（审批未完成，等待用户确认/拒绝）与
+      // rejected/timeout（未执行，防止误标"已完成"）；审批超时/拒绝由后端
+      // tool_call_timeout / tool_call_rejected 事件驱动，前端不代为判定。
       if (tc.approval
-          && NON_TERMINAL_APPROVAL_STATES.includes(tc.approval.state)) {
-        tc.approval.state = ApprovalState.TIMEOUT
-        finalizedCount++
+          && tc.approval.state !== 'approved'
+          && tc.approval.state !== 'completed') {
+        continue
+      }
+      if (NON_TERMINAL_STATUSES.has(tc.status)) {
+        // 有结果 → COMPLETED，无结果也 → COMPLETED（流式已结束）。
+        // 状态推进统一走状态机（add 模式），终态不回退由 applyToolCallState 保证
+        const { status: nextStatus, applied } =
+          applyToolCallState(tc, { status: ToolCallStatus.COMPLETED }, { mode: 'add' })
+        if (applied && nextStatus !== undefined) {
+          tc.status = nextStatus
+          if (!tc.state) tc.state = 'output-available'
+          finalizedCount++
+        }
       }
     }
 

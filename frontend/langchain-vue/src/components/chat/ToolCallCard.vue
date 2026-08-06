@@ -227,16 +227,20 @@ const isWaitingForSiblings = computed(() => {
   return true
 })
 
-const dangerLevel = computed(() => approvalData.value?.dangerLevel || 'low')
-
-// 风险等级（新标准：safe/controlled/high，优先于 danger_level）
-// risk_level 来自 Approval.extra，由 ApprovalMiddleware 透传到事件 payload 和快照 API
+// riskLevel 是唯一权威风险等级字段（safe/controlled/high）
+// 双数据源（根因修复）：
+//   1. toolCall.riskLevel（工具事件路径）：后端 publish_tool_call payload 携带 risk_level，
+//      toolCallHandler.js 写入 toolCall.riskLevel。所有 tool_call_waiting/running/timeout
+//      事件都携带此字段，非触发浏览器通过 WebSocket 收到工具事件即可获取风险等级
+//   2. approvalData.riskLevel（审批事件路径）：后端 _build_approval_extra_fields 注入
+//      approval_* 事件 payload 顶层，approvalStore.handleApprovalEvent 写入 approval
+// 优先级：toolCall.riskLevel > approvalData.riskLevel > 'controlled'（保守策略）
+// 根因：原实现仅从 approvalData 读取，approval_pending 事件丢失时 riskLevel 缺失，
+// 导致非触发浏览器误显示"安全"（保守回退 'controlled' 避免此问题）
 const riskLevel = computed(() => {
-  const rl = approvalData.value?.risk_level
-  if (rl) return rl
-  // 回退：从 danger_level 映射（legacy 兼容）
-  const map = { low: 'safe', medium: 'controlled', high: 'high' }
-  return map[dangerLevel.value] || 'controlled'
+  return props.toolCall?.riskLevel
+    || approvalData.value?.riskLevel
+    || 'controlled'
 })
 
 const isHighRisk = computed(() => riskLevel.value === 'high')
@@ -286,26 +290,15 @@ const agentPathText = computed(() => {
   return agentName.value || ''
 })
 
-const dangerLevelLabel = computed(() => {
-  const map = { low: '低风险', medium: '中风险', high: '高风险' }
-  return map[dangerLevel.value] || '低风险'
-})
-
-const dangerLevelTagType = computed(() => {
-  const map = { low: 'primary', medium: 'warning', high: 'danger' }
-  return map[dangerLevel.value] || 'primary'
-})
-
 const approvalBorderColor = computed(() => {
   if (props.status !== 'waiting') return ''
-  // 高危红名边框，中风险橙色，安全/低风险蓝色
-  if (isHighRisk.value) return 'var(--el-color-danger)'
+  // 统一使用 riskLevel 驱动边框颜色（与风险等级标签一致）
   const map = {
-    medium: 'var(--el-color-warning)',
+    safe: 'var(--el-color-primary)',
+    controlled: 'var(--el-color-warning)',
     high: 'var(--el-color-danger)',
-    low: 'var(--el-color-primary)'
   }
-  return map[dangerLevel.value] || ''
+  return map[riskLevel.value] || ''
 })
 
 const approvalInputValue = ref('')

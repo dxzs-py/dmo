@@ -224,7 +224,8 @@ def reconstruct_tool_call_from_approval(approval_info):
 
     Returns:
         dict: 重建的 tool_call 项，字段与 build_persisted_tool_calls 输出对齐：
-            {id, tool_call_id, name, args, parameters, input, status, approval}
+            {id, tool_call_id, name, args, parameters, input, status, result, error,
+             message_id, approval}
     """
     if not isinstance(approval_info, dict):
         return {}
@@ -262,6 +263,15 @@ def reconstruct_tool_call_from_approval(approval_info):
         "parameters": parameters,
         "input": parameters,
         "status": reconstructed_status,
+        # result/error：从 Approval.extra 透传（快照完整性：重建条目同样满足
+        # status/result/error 字段必有；extra 无 result/error 时输出 None，
+        # 与 build_persisted_tool_calls 输出的 result/error 结构保持一致）
+        "result": extra.get("result"),
+        "error": extra.get("error"),
+        # message_id：与 SnapshotView 注入到 tool_calls 条目的 message_id 字段对齐，
+        # 供前端快照校对通过 messageBackendId 将重建的工具调用挂载到对应消息
+        # （重建场景下 Approval.extra 由 approval_parser 透传 message_id）
+        "message_id": extra.get("message_id"),
         "approval": approval_payload,
     }
 

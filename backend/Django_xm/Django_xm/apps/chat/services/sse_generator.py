@@ -105,7 +105,10 @@ async def _publish_stream_event(
                         session_id=session_id,
                     )
                 except Exception as e:
-                    logger.debug(f"广播 STREAM_CONTENT_UPDATE 失败: {e}")
+                    logger.warning(
+                        f"广播 STREAM_CONTENT_UPDATE 失败: event_type=chunk, "
+                        f"session_id={session_id}, message_id={message_id}, error={e}"
+                    )
         return
 
     # ── tool 系列事件：通过 ToolCallLifecycleService 统一发布 ──
@@ -121,18 +124,36 @@ async def _publish_stream_event(
             return
 
         try:
-            target_event_type = (
-                EventType.TOOL_CALL_COMPLETED if event_type_str == "tool_result"
-                else EventType.TOOL_CALL_PENDING
-            )
+            # 根据 lifecycle_event 字段确定目标事件类型（P-BE-1 根因修复）：
+            # stream_chunk_processors._handle_tool_message_chunk 在 tool_info 中标记
+            # lifecycle_event，指明具体的工具终态（timeout/rejected/failed/completed），
+            # 而非简单判断 tool_result → COMPLETED。
+            # tool 事件（非 tool_result）默认为 PENDING。
+            lifecycle_event = tool_data.get("lifecycle_event")
+            if lifecycle_event:
+                target_event_type = EventType(lifecycle_event)
+            elif event_type_str == "tool_result":
+                target_event_type = EventType.TOOL_CALL_COMPLETED
+            else:
+                target_event_type = EventType.TOOL_CALL_PENDING
 
             # 确保上下文已注册（幂等，重复调用无副作用）
-            lifecycle_service.register(ToolCallContext(
-                tool_call_id=tool_call_id,
-                tool_name=tool_data.get("name", ""),
-                module=EventSource.CHAT,
-                module_id=session_id,
-            ))
+            # 补全 message_id 和 parameters（P-BE-3 修复）：
+            # 前端通过 message_id 路由事件到正确消息，parameters 用于工具卡片参数回显。
+            # parameters 兼容 args 字段：PENDING 指纹去重（Task 1）依赖 parameters 稳定哈希，
+            # 若 tool 事件仅携带 args 会导致指纹退化为 no_batch 而失去参数维度区分。
+            # 传入 event_type 以启用 register 的 last_event_type 防护（PENDING 状态已推进时拒绝）。
+            lifecycle_service.register(
+                ToolCallContext(
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_data.get("name", ""),
+                    module=EventSource.CHAT,
+                    module_id=session_id,
+                    message_id=str(message_id) if message_id else "",
+                    parameters=tool_data.get("parameters") or tool_data.get("args") or {},
+                ),
+                event_type=target_event_type,
+            )
 
             tool_result = tool_data.get("result")
             tool_error = tool_data.get("error")
@@ -146,7 +167,10 @@ async def _publish_stream_event(
                 parameters=tool_parameters if tool_parameters and isinstance(tool_parameters, dict) and tool_parameters else None,
             )
         except Exception as e:
-            logger.debug(f"ToolCallLifecycleService 发布工具事件失败: tool={tool_call_id}, error={e}")
+            logger.warning(
+                f"ToolCallLifecycleService 发布工具事件失败: "
+                f"event_type={event_type_str}, tool_call_id={tool_call_id}, error={e}"
+            )
         return
 
     # ── reasoning / sources / suggestions / context / deep_research / approval ──
@@ -174,7 +198,10 @@ async def _publish_stream_event(
                 session_id=session_id,
             )
         except Exception as e:
-            logger.debug(f"广播 {event_type_str} 事件失败: {e}")
+            logger.warning(
+                f"广播事件失败: event_type={event_type_str}, "
+                f"session_id={session_id}, message_id={message_id}, error={e}"
+            )
 
 
 async def _finalize_stream_content(
@@ -182,7 +209,13 @@ async def _finalize_stream_content(
     current_content: str,
     tool_calls_map: dict[str, Any] | None = None,
 ) -> None:
-    """流结束后持久化 assistant 消息内容到数据库。
+    """流结束后持久化 assistant 消息内容与工具调用终态到数据库。
+
+    复用 ``stream_persistence.persist_stream_result``（唯一持久化入口，不新增重复逻辑）：
+    - tool_calls 增量合并（existing 优先，保留 approval 等审批中间态字段；
+      流式累积的 completed/failed/timeout 终态 + result 写入新条目，P-FE-7 修复）
+    - content 仅在新内容更长时覆盖
+    - 广播 MESSAGE_UPDATED，通知非触发浏览器拉取完整 tool_calls
 
     参考项目在 finally 块中执行此操作，确保无论流如何结束，
     内容都能被保存到数据库。
@@ -190,44 +223,49 @@ async def _finalize_stream_content(
     Args:
         ctx: 流式上下文
         current_content: 累积的完整 assistant 回复内容
-        tool_calls_map: 工具调用映射表（用于持久化 tool_calls 数据）
+        tool_calls_map: 工具调用映射表（含终态 state/status/result/error）
     """
-    if not ctx.assistant_message_id or not current_content.strip():
+    if not ctx.assistant_message_id:
+        return
+
+    session_id = ctx.data.get("session_id", "")
+    if not session_id:
         return
 
     from asgiref.sync import sync_to_async
     from django.apps import apps
 
+    from Django_xm.apps.chat.services.stream_persistence import persist_stream_result
+
     ChatMessage = apps.get_model("chat", "ChatMessage")
 
     try:
+        # 复用现有持久化入口：工具终态（completed/failed/timeout + result）
+        # 由后端在流结束时可靠落库，不再依赖前端 syncLastMessageToBackend 回写
+        await persist_stream_result(
+            session_id=session_id,
+            user_id=None,
+            content=current_content,
+            tool_calls_map=tool_calls_map or {},
+            message_id=str(ctx.assistant_message_id),
+        )
 
+        # persist_stream_result 不处理 is_streaming，流结束须标记为非流式
         @sync_to_async
-        def _save():
+        def _mark_not_streaming():
             msg = ChatMessage.objects.filter(id=ctx.assistant_message_id).first()
-            if msg:
-                msg.content = current_content
+            if msg and msg.is_streaming:
                 msg.is_streaming = False
-                if tool_calls_map:
-                    # 持久化 tool_calls 数据
-                    persisted_tool_calls = []
-                    for tc_key, tc_info in tool_calls_map.items():
-                        tc_data = {
-                            "id": tc_info.get("id") or tc_key,
-                            "name": tc_info.get("name", ""),
-                            "args": tc_info.get("parameters", {}),
-                        }
-                        persisted_tool_calls.append(tc_data)
-                    msg.tool_calls = persisted_tool_calls
-                msg.save(update_fields=["content", "is_streaming", "tool_calls"])
+                msg.save(update_fields=["is_streaming"])
 
-        await _save()
+        await _mark_not_streaming()
+
         logger.info(
             f"[SSE Finalize] 持久化 assistant 消息: id={ctx.assistant_message_id}, "
-            f"content_len={len(current_content)}"
+            f"content_len={len(current_content)}, tool_calls_count={len(tool_calls_map or {})}"
         )
     except Exception as e:
-        logger.warning(f"[SSE Finalize] 持久化内容失败: {e}")
+        logger.warning(f"[SSE Finalize] 持久化内容失败: {e}", exc_info=True)
 
 
 # ============== 主生成器 ==============
@@ -324,7 +362,10 @@ async def generate_chat_stream(ctx: ChatStreamContext) -> AsyncGenerator[str, No
                     session_id=session_id,
                 )
             except Exception as e:
-                logger.debug(f"finally 块广播 content_update 失败: {e}")
+                logger.warning(
+                    f"finally 块广播 STREAM_CONTENT_UPDATE 失败: "
+                    f"session_id={session_id}, error={e}"
+                )
 
         # 持久化 assistant 消息内容到数据库
         await _finalize_stream_content(ctx, final_content, tool_calls_map)
@@ -382,17 +423,34 @@ async def _stream_events(
             continue
 
         # ── 收集 tool_calls_map 用于持久化 ──
-        if event_type == "tool" and isinstance(event.get("data"), dict):
+        # tool 事件创建条目；tool_result 事件更新终态（result/error/state/status），
+        # 确保流结束时 tool_calls_map 携带 completed/failed/timeout 终态（P-FE-7 持久化链修复）
+        if event_type in ("tool", "tool_result") and isinstance(event.get("data"), dict):
             tc_data = event["data"]
             tc_id = tc_data.get("id") or ""
-            if tc_id and tc_id not in tool_calls_map:
-                tool_calls_map[tc_id] = {
-                    "id": tc_id,
-                    "name": tc_data.get("name", ""),
-                    "parameters": tc_data.get("parameters", {}),
-                    "state": tc_data.get("state", ""),
-                    "status": tc_data.get("status", ""),
-                }
+            if tc_id:
+                entry = tool_calls_map.get(tc_id)
+                if entry is None:
+                    entry = {
+                        "id": tc_id,
+                        "name": tc_data.get("name", ""),
+                        "parameters": tc_data.get("parameters", {}),
+                        "state": tc_data.get("state", ""),
+                        "status": tc_data.get("status", ""),
+                    }
+                    tool_calls_map[tc_id] = entry
+                if tc_data.get("name"):
+                    entry["name"] = tc_data["name"]
+                if isinstance(tc_data.get("parameters"), dict) and tc_data["parameters"]:
+                    entry["parameters"] = tc_data["parameters"]
+                if tc_data.get("state"):
+                    entry["state"] = tc_data["state"]
+                if tc_data.get("status"):
+                    entry["status"] = tc_data["status"]
+                if tc_data.get("result") is not None:
+                    entry["result"] = tc_data["result"]
+                if tc_data.get("error") is not None:
+                    entry["error"] = tc_data["error"]
 
         # ── 工具事件：仅 WebSocket，不通过 SSE 推送 ──
         is_tool_event = event_type in _TOOL_EVENT_TYPES

@@ -23,7 +23,7 @@
     - 返回熔断错误响应给前端
 
 依赖关系：
-    - chat 模块：复用 views_chat._stream_chat_resume_generator（已测试的 SSE 流）
+    - chat 模块：复用 services.chat_resume_generator._stream_chat_resume_generator（已测试的 SSE 流）
     - deep_research 模块：派发 tasks.deep_research.research_resume_task（Celery 任务）
     - 前端：统一调用 POST /api/v1/approvals/{interrupt_id}/resume/，无需 source 分支
 """
@@ -221,7 +221,7 @@ class ApprovalGateway:
         chat 模块的 agent 在 HTTP 请求上下文中运行，
         通过 SSE 流式推送后续输出到前端。
         """
-        from Django_xm.apps.chat.views_chat import _stream_chat_resume_generator
+        from Django_xm.apps.chat.services.chat_resume_generator import _stream_chat_resume_generator
         from Django_xm.common.sse_utils import sse_async_heartbeat_generator, sse_response
 
         # 会话 ID 优先使用传入参数，回退到 approval.chat_session_id 或 approval.source_id

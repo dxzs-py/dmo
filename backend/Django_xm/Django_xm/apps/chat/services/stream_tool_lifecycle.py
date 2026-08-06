@@ -80,6 +80,8 @@ def _publish_tool_lifecycle_event(
     resolved_module_id = module_id if module_id else session_id
 
     # register：始终调用，parameters 始终为 dict（空时为 {}）
+    # 传入 event_type 以启用 register 的 last_event_type 防护：
+    # PENDING 在状态已推进（waiting/running 等）时重复注册会被拒绝并告警。
     parameters = tool_info.get("parameters") or {}
     ctx = ToolCallContext(
         tool_call_id=tool_call_id,
@@ -89,7 +91,7 @@ def _publish_tool_lifecycle_event(
         message_id=resolved_message_id,
         parameters=parameters,
     )
-    service.register(ctx)
+    service.register(ctx, event_type=event_type)
 
     # bind_message_id：仅当 message_id 非 None 时调用（补全 message_id）
     if message_id is not None:
@@ -157,6 +159,9 @@ def _broadcast_tool_input_ready(
     # 参数未就绪时跳过广播（None 表示参数尚未解析完成，避免前端展示残缺参数）
     # 空 dict {} 是合法的"无参数"状态（如 get_current_time），必须正常广播，
     # 否则非触发浏览器对该工具收不到任何事件（issue_p0_cross_browser_tool_call_count_mismatch 根因 B1）
+    # PENDING 重复发布由 tool_call_lifecycle 的批次指纹去重天然拦截
+    # （同 tool_call_id + 同 parameters 指纹仅发布一次，Task 1）。本函数保留
+    # 供恢复流（chat_resume_generator）等调用方兼容使用，不在此处额外去重。
     if parameters is None or not isinstance(parameters, dict):
         return
     try:

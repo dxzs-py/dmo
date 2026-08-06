@@ -1,0 +1,148 @@
+========================================
+重构项目实时同步测试（2026-08-06 第四轮·核心层修复后回归）
+========================================
+本轮测试环境：
+- 代码基线：realtime-sync-core-authority spec 修复已完成（事件路由统一 / 工具状态机统一 / 后端 tool_calls 权威持久化 / seq 治理 / 模块解耦）
+- 服务：前端 Vite 8080、后端 runserver 8000、Redis 6379（重启后加载新代码）
+- 浏览器：Page 3 = 触发；Page 4/5/6 = 非触发（默认 context 共享登录态）
+- 测试请求：运行 ollama lis 和 ollama pst 并把结保存到D:\programming\langchain\langchain_xm\test_approval25.txt
+- 模式：代理 | 模型：deepseek-v4-flash | 工具：15 个全选
+- 基准参照：正常现象.txt（等待中/待审批 → 等待中/等待其他审批 → 已完成/已确认）
+- 说明：本文件为第四轮重开（前序轮次 P3-1~P3-33 明细已不在本文件，本轮聚焦修复后回归发现）
+
+----------------------------------------
+【初始状态】4 浏览器一致 ✓（17:12 发送指令后）
+- 工具调用 (2)，队列 2
+- Tool 1 shell_exec "ollama list"：状态「等待中」+ 审批「需审批」+ 拒绝/确认执行可点击 ✓
+- Tool 2 shell_exec "ollama ps"：状态「待审批」+ 审批「需审批」+ 按钮可点击 ✓
+- AI 回复文本流式输出 ✓
+- 非触发浏览器 Page 4/5/6 均实时同步（工具卡片、状态、按钮完整，无刷新）✓
+  ← 核心改善：P3-R1（事件路由）修复生效，此前非触发浏览器完全收不到工具事件
+- 观察：Tool 1「等待中」与 Tool 2「待审批」标签不一致（同批待审批工具，P3-5 类遗留，低严重）
+
+----------------------------------------
+【操作1】Page 3 点击 Tool 1 (ollama list)「确认执行」（17:13:37）
+### 【问题 P3-34】致命：触发浏览器工具状态错误显示「已完成」（无输出），与非触发浏览器严重不一致
+- 时间：17:13:37 操作1 后持续存在
+- 涉及浏览器：Page 3（触发）vs Page 4/5/6（非触发）
+- 现象：
+  - Page 3：Tool 1「已完成」+ 输入参数，但【无输出结果】；Tool 2（未审批）也显示「已完成」+ 审批区「需审批」+ 拒绝/确认执行按钮仍可点击
+  - Page 4/5/6：Tool 1「等待中」+「本工具已审批，等待其余工具完成审批」+ 按钮 disabled（正确 ✓）；Tool 2「待审批」+ 按钮可点（正确 ✓）
+- 后端权威状态（django.log 17:13:37）：
+  - `_check_batch`: call_00 approval.state=pending；`sibling_check: sibling_count=1, has_pending=True`
+  - `[ApprovalStore] 持久化 processed: call_00, state=waiting`（仅标记 waiting，未执行）
+  - 无工具执行日志、无 persist 完成日志（batch 等待中，工具均未真正执行）
+- 结论：后端实际为 Tool 1=waiting、Tool 2=pending，触发浏览器错误显示为 completed（且两工具均无输出）。非触发浏览器显示正确。
+- 对照正常现象.txt：Tool 1 审批后应显示「等待中/等待其他审批」+「本工具已审批，等待其余工具完成审批」+ 按钮 disabled；Tool 2 应保持「等待中/待审批」
+- 影响：触发浏览器是用户主要操作端，状态错误直接影响审批与结果查看；跨浏览器不一致违反核心目标（实时同步一致性）
+- 复现步骤：代理模式全选工具 → 发送上述指令 → 工具批量待审批 → 点击 Tool 1「确认执行」→ 触发浏览器 Tool 1/2 变「已完成」（无输出），非触发浏览器正确显示等待中/待审批
+- 疑似根因（待代码定位，禁止补丁）：
+  1. 审批恢复流（batch 挂起时）启动的 SSE 流在触发浏览器端被消费，SSE 工具事件/tool_result 被状态机误判为 completed
+  2. 状态机 applyToolCallState result 路径：existing=WAITING 时收到 result 数据直接推进 COMPLETED（Task 2 行为修正③）——审批恢复流挂起阶段若 yield 了工具结果或空结果，会误推进
+  3. 前端 executeApproval 本地乐观更新与 SSE/WebSocket 事件叠加导致过推进
+  → 需检查：approval resume 的 SSE 流在 sibling pending 时的具体输出、sse.js tool/tool_result 事件处理、addOrUpdateToolCallInMap/updateOrAddToolResultInMap 对 waiting 的处理
+
+### 【观察项（好转，记录备查）】
+- 非触发浏览器状态流转正确：Tool 1 审批后「等待中」+「本工具已审批」+ disabled ✓（符合基准，此前为错误「执行中」）
+- WebSocket 实时同步链路（→ 非触发浏览器）正常 ✓
+
+----------------------------------------
+【操作2】Page 3 点击 Tool 2 (ollama ps)「确认执行」（17:16:09）
+- 后端日志：call_01 sibling_check has_pending=False → 聚合恢复触发 resume_value={'call_01':True,'call_00':True} → 两工具一起执行 → tool_call_completed × 2（seq=19/20）✓
+- 触发浏览器 Tool 1/2 恢复正确：已完成 + 输出结果（模型列表/表头）✓ —— P3-34 的「已完成无输出」为 batch 等待期间的临时错误状态，batch 全部审批后自我纠正
+- 非触发浏览器 Tool 1/2 同样：已完成 + 输出结果 ✓
+- 新增 Tool 3 (fs_write_file)：
+
+### 【问题 P3-35】致命：触发浏览器新工具 fs_write_file 误显示「已完成+已写入」且无审批按钮，非触发浏览器正确显示「等待中」+ 审批按钮
+- 时间：17:16:13 后持续存在
+- 涉及浏览器：Page 3（触发）vs Page 4/5/6（非触发）
+- 现象：
+  - Page 3：fs_write_file「高危」+「已完成」+ 输入参数（relativePath/content 完整）+ 输出结果「已写入」+【无审批按钮】（无法在触发端审批）
+  - Page 4/5/6：fs_write_file「高危」+「等待中」+ 审批确认「高危」+「确认执行 fs_write_file」+ content 参数完整（审批按钮存在）✓ 正确
+- 后端权威状态（django.log）：
+  - 17:16:13 `[ApprovalMiddleware] 需要审批: tool=fs_write_file, danger=high, risk_level=high, tc_id=call_00_QmeK...`
+  - 批量发起审批: 1 个请求 → approval_pending (seq=24) → tool_call_waiting
+  - 【无后续审批通过/执行日志】——fs_write_file 实际未执行、未写文件，「已写入」为前端幻觉
+- 结论：触发浏览器在审批等待期间将 waiting 的 fs_write_file 误推进为 completed 并伪造输出「已写入」，且审批按钮消失 → 用户在触发端无法审批该工具
+- 影响：高危工具审批链路在触发端失效（用户无法看到待审批、无法点击确认）；跨浏览器严重不一致；伪造执行结果（实际未写文件）
+- 与 P3-34 同源（疑）：审批恢复流 SSE 事件被前端状态机误判，waiting → completed（Task 2 行为修正③：result 路径 existing=WAITING 收到 result 数据推进 COMPLETED）
+
+----------------------------------------
+【操作3】Page 4（非触发）点击 fs_write_file「确认执行」（17:17:37）——跨浏览器审批验证
+- 后端日志：17:17:37 `persist_stream_result 持久化成功: content_len=603, tool_calls_count=3, tool_calls_changed=True` + approval_approved remaining_pending_count=0 ✓
+- fs_write_file 真正执行并写入文件（真实结果「成功写入文件: ...test_approval25.txt」）
+- Page 3（触发）同步恢复为真实结果「成功写入文件」✓ —— 跨浏览器审批同步正常（P3-35 的「已写入」幻觉被真实结果覆盖）
+- 操作3 后 4 浏览器状态一致：Tool 1/2/fs_write_file 全部「已完成」+ 真实输出 ✓
+
+----------------------------------------
+【刷新验证】Page 6 导航到 /chat?session_id=16fe0b37-...（等价刷新加载快照）
+- Tool 1/2：completed + 输出结果（模型列表/表头）恢复 ✓
+- fs_write_file：高危 + completed + 输入参数完整 + 输出结果「成功写入文件: ...」恢复 ✓
+- 无审批按钮（已完成工具）、工具卡片不消失 ✓
+- 结论：P3-R2 持久化 + P3-31 快照完整修复验证通过（此前刷新后 status 缺失无法恢复；现审批恢复流落库 + 快照全字段透传，刷新后完整恢复）
+
+----------------------------------------
+【本轮测试结论】
+- ✅ 核心改善：实时同步（P3-R1）、跨浏览器审批同步、Task 4 持久化、Task 5 快照恢复、非触发浏览器状态流转正确
+- ❌ 未解决：P3-34/P3-35 同源——触发浏览器在审批等待期间（batch 挂起/新审批挂起）将 waiting 误推进为 completed 并伪造 result，且审批按钮消失（触发端无法审批）——这是实时同步核心层最后的关键缺陷，需定位根因后修复
+
+【待代码/日志确认清单】
+1. P3-34/P3-35 根因：审批等待期间（batch 挂起 / 新审批挂起），触发浏览器审批恢复流 SSE 输出被前端误推进 waiting→completed（含伪造 result「已写入」）。需检查：approval resume SSE 在工具未执行时是否 yield 了 tool/tool_result 事件；sse.js tool handler；updateOrAddToolResultInMap 对 waiting 的处理；approval.js 审批面板/按钮消失逻辑
+2. Tool 1「等待中」vs Tool 2「待审批」标签差异（P3-5 类）
+
+========================================
+重构项目实时同步测试（2026-08-06 第五轮·P3-34/P3-35 修复后回归）
+========================================
+本轮环境：
+- 修复内容：finalize 跳过「审批未放行执行」的工具（approval.state 非 approved/completed 时，不兜底 COMPLETED、不标审批 TIMEOUT）。
+  修改文件：stores/sync/messageIntegrity.js（finalizeToolCallsForCompletedMessage）、utils/messageOperations.js（finalizeToolCallsInMap）
+- 单元测试：messageOperations.test.js 新增 13 用例（全部通过）；构建 vite build 通过
+- 浏览器：Page 3 = 触发；Page 2/4/5 = 非触发
+- 指令：运行 ollama lis 和 ollama pst 并把结保存到D:\programming\langchain\langchain_xm\test_approval25.txt（17:35 发送）
+
+----------------------------------------
+【初始状态】审批等待阶段（17:35，未做任何操作）4 浏览器快照对比
+- 页面 3（触发）：工具调用 (2) 队列 2，但渲染 3 个卡片：
+  - shell_exec ollama list「等待中」+ 审批「需审批」+ 拒绝/确认执行 ✓
+  - shell_exec ollama list「等待中」+ 审批「需审批」+ 拒绝/确认执行 ✓ ← 疑似重复卡片
+  - shell_exec ollama ps「待审批」+ 审批「需审批」+ 拒绝/确认执行 ✓
+- 页面 2/4/5（非触发）：工具调用 (2) 队列 2，渲染 2 个卡片：
+  - shell_exec ollama list「等待中」+ 审批「需审批」+ 按钮 ✓
+  - shell_exec ollama ps「待审批」+ 审批「需审批」+ 按钮 ✓
+### 【观察项 P3-36】触发浏览器渲染 3 个工具卡片（2 个 ollama list + 1 个 ollama ps），非触发浏览器渲染 2 个（1 个 ollama list + 1 个 ollama ps）——疑似 SSE/WebSocket 事件重复导致触发端多一个同名卡片（待代码确认，低/中严重）
+### ✅ P3-34/P3-35 验证（关键）：所有 4 个浏览器待审批工具均保持「等待中/待审批」+ 审批按钮存在，未被误标「已完成」、无伪造输出、审批按钮不消失 —— 核心修复生效
+
+----------------------------------------
+【操作1】Page 3 点击 Tool 1 (ollama list)「确认执行」（17:36）—— P3-34 回归验证
+- Page 3（触发）：Tool 1「等待中」+「本工具已审批，等待其余工具完成审批」+ 拒绝/确认执行按钮 disabled ✓；Tool 2「待审批」+ 按钮可点 ✓
+- Page 2/4/5（非触发）：与 Page 3 完全一致（跨浏览器实时同步 ✓）
+- ✅ P3-34 修复验证通过：操作 1 后触发浏览器 Tool 1 未再误标「已完成」（上轮此处 Tool 1/2 均变「已完成」无输出），审批按钮正常 disabled 不消失
+- 观察：Tool 1 状态标签「等待中」（status=pending）与 Tool 2「待审批」（status=waiting）不一致 → 边框差异（Tool 1 无橙色边框、Tool 2 有）——P3-5 类遗留标签不一致问题，Tool 1 的 toolCall.status 未随审批推进到 waiting（待代码确认根因）
+
+----------------------------------------
+【操作2】Page 3 点击 Tool 2 (ollama ps)「确认执行」（17:37）—— P3-35 回归验证
+- Page 3（触发）：两个工具确认后聚合恢复 → Tool 1/2「已完成」+ 真实输出结果（模型列表/表头）✓；新增 fs_write_file「高危」+「等待中」+ 输入参数完整（relativePath/content）+ 审批「高危」+ 拒绝/确认执行按钮 ✓
+- Page 2/4/5（非触发）：与 Page 3 完全一致（实时同步 ✓）
+- ✅ P3-35 修复验证通过：fs_write_file 未再误标「已完成+已写入」、无伪造输出、审批按钮存在（上轮此处 fs_write_file 显示「已完成+已写入」且无审批按钮，无法在触发端审批）
+- 小观察：fs_write_file 卡片初次渲染时输入参数为空（{}），约 1-2 秒后审批事件到达补全参数——属正常时序（tool 事件先于 approval 事件），非缺陷
+
+----------------------------------------
+【操作3】Page 2（非触发）点击 fs_write_file「确认执行」（17:38）—— 跨浏览器审批同步验证
+- Page 2（操作方）：fs_write_file「高危」+「已完成」+ 输出结果「成功写入文件: D:\programming\langchain\langchain_xm\test_approval25.txt」（真实写入）+ AI 回复完整（✅ 已完成 + 摘要）
+- Page 3（触发）/Page 4/5（非触发）：实时同步 fs_write_file「已完成」+ 真实输出结果 + AI 回复完整，无审批按钮残留 ✓
+- ✅ 跨浏览器审批同步验证通过：非触发端审批 → 所有浏览器同步真实结果（与上轮一致）
+- ✅ 无「已写入」伪造结果：fs_write_file 输出为真实执行结果
+
+----------------------------------------
+【刷新验证】Page 5（非触发）刷新后快照恢复
+- AI 回复完整恢复（摘要 + 模型列表 + 说明）✓
+- 工具调用 (3)：Tool 1/2「已完成」+ 输出结果完整恢复；fs_write_file「高危」+「已完成」+ 输入参数完整 + 输出结果「成功写入文件: ...」恢复 ✓
+- 无审批按钮残留（已完成工具）✓
+- ✅ P3-R2 持久化 + Task 5 快照恢复验证通过（刷新后完整恢复）
+
+----------------------------------------
+【第五轮测试结论】
+- ✅ P3-34 修复验证通过：审批等待期间触发浏览器工具不再误标「已完成」（操作 1 后 Tool 1 正确显示「等待中」+「本工具已审批，等待其余工具完成审批」+ disabled）
+- ✅ P3-35 修复验证通过：fs_write_file 审批等待期间不再误标「已完成+已写入」、审批按钮不消失（触发端可审批）
+- ✅ 跨浏览器审批同步 + 刷新快照恢复均通过
+- ❌ 遗留（P3-5 类）：同批工具状态标签不一致——Tool 1「等待中」（status=pending）vs Tool 2「待审批」（status=waiting），已审批的 Tool 1 的 toolCall.status 停在 pending 未随审批推进到 waiting（导致边框差异：Tool 1 无橙色边框、Tool 2 有）——待定位根因

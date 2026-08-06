@@ -145,7 +145,7 @@ const getToolStateType = (state) => {
 
 const getToolStateLabel = (state) => {
   const labelMap = {
-    'input-available': '调用中',
+    'input-available': '等待中',
     'output-available': '已完成',
     'output-error': '出错',
     'calling': '调用中',

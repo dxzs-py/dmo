@@ -2,8 +2,6 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useSessionStore } from './session'
 import { useModelStore } from './model'
-import { useSyncStore } from './sync'
-import { useResearchStore } from './research'
 import { useStreamFinalizer } from '../composables/useStreamFinalizer'
 import { resumeApprovalStream } from '../api/approval'
 import { getInterruptId } from '../utils/messageOperations'
@@ -11,12 +9,28 @@ import { toCamelCase } from '../utils/sessionTransformers'
 import { readSSEStream } from '../utils/sse'
 import { StreamState } from '../types'
 import { logger } from '../utils/logger'
-import { ElMessage, ElNotification } from 'element-plus'
+import { ElMessage } from 'element-plus'
 
 /** 审批过期时间：30 分钟 */
 const APPROVAL_EXPIRY_MS = 30 * 60 * 1000
 /** 清理检查间隔：5 分钟 */
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000
+
+/**
+ * 惰性加载 research store（统一审批中心对 research 模块的依赖解耦）
+ *
+ * Task 9 / spec Change 5：approval.js 不静态 import research，避免与业务模块
+ * 形成模块加载期依赖；仅在审批执行（async 上下文）实际需要更新研究任务
+ * 工具审批状态时动态 import 并缓存模块 Promise，实例按当前 pinia 解析。
+ */
+let _researchStoreModulePromise = null
+const _getResearchStore = async () => {
+  if (!_researchStoreModulePromise) {
+    _researchStoreModulePromise = import('./research')
+  }
+  const mod = await _researchStoreModulePromise
+  return mod.useResearchStore()
+}
 
 /** debounced 同步到后端 — 审批事件到达后立即同步，确保跨浏览器/刷新可恢复 */
 const _approvalSyncTimers = {}
@@ -130,7 +144,7 @@ export const useApprovalStore = defineStore('approval', () => {
     const toolCallId = getInterruptId(data)
     if (!toolCallId) return
 
-    // 去重：已存在相同 interruptId 的 pending 审批，跳过（双端 SSE 可能同时推送）
+    // 去重：已存在相同 toolCallId 的 pending 审批，跳过（双端 SSE 可能同时推送）
     const existing = pendingApprovals.value.get(toolCallId)
     if (existing && existing.approvalData?.state === 'pending') {
       return
@@ -181,6 +195,12 @@ export const useApprovalStore = defineStore('approval', () => {
 
     // 从 pendingApprovals Map 中获取已有条目的 sessionId
     const existingEntry = toolCallId ? pendingApprovals.value.get(toolCallId) : null
+
+    // 幂等保护（P-FE-7）：pendingApprovals 中已无该审批条目时直接返回。
+    // 同一审批超时事件可能经 WebSocket / SSE 主聊天流 / 审批恢复流多条路径重复到达，
+    // 首次处理已删除条目，后续重复到达不应再重复写 store / 重复同步后端。
+    if (toolCallId && !existingEntry) return
+
     const effectiveSessionId = sessionId || existingEntry?.sessionId || sessionStore.currentSessionId
 
     if (toolCallId) {
@@ -277,6 +297,13 @@ export const useApprovalStore = defineStore('approval', () => {
 
     // 从 pendingApprovals Map 中获取已有条目的 sessionId（可能比参数中的更准确）
     const existingEntry = pendingApprovals.value.get(toolCallId)
+
+    // 幂等保护（P-FE-7）：pendingApprovals 中已无该审批条目时直接返回。
+    // 同一审批终态事件（approval_processed / approval_approved / approval_rejected）
+    // 可能经 WebSocket / SSE 主聊天流 / 审批恢复流多条路径重复到达，
+    // 首次处理已删除条目，后续重复到达不应再重复写 store / 重复同步后端。
+    if (!existingEntry) return
+
     const effectiveSessionId = sessionId || existingEntry?.sessionId || sessionStore.currentSessionId
 
     pendingApprovals.value.delete(toolCallId)
@@ -338,15 +365,13 @@ export const useApprovalStore = defineStore('approval', () => {
     }
     if (taskId) {
       try {
-        const researchStore = useResearchStore()
+        const researchStore = await _getResearchStore()
         researchStore.updateToolCallApprovalState(taskId, toolCallId, 'processing')
       } catch (e) { logger.warn('[ApprovalStore] 更新 researchStore processing 失败:', e) }
     }
     pendingApprovals.value.delete(toolCallId)
 
     try {
-      const interruptId = getInterruptId(approvalData)
-
       // 统一路径：所有审批（chat / deep_research）走 /approvals/{interrupt_id}/resume/
       // 后端 ApprovalGateway 根据 Approval.source 路由：
       // - chat → SSE 流式恢复（_stream_chat_resume_generator）
@@ -365,7 +390,7 @@ export const useApprovalStore = defineStore('approval', () => {
       }
       if (!approved && taskId) {
         try {
-          const researchStore = useResearchStore()
+          const researchStore = await _getResearchStore()
           researchStore.updateToolCallApprovalState(taskId, toolCallId, 'rejected')
         } catch (e) { logger.warn('[ApprovalStore] 更新 researchStore rejected 失败:', e) }
       }
@@ -400,7 +425,7 @@ export const useApprovalStore = defineStore('approval', () => {
       }
       if (taskId) {
         try {
-          const researchStore = useResearchStore()
+          const researchStore = await _getResearchStore()
           researchStore.updateToolCallApprovalState(taskId, toolCallId, 'pending')
         } catch (e) { logger.warn('[ApprovalStore] 更新 researchStore pending 失败:', e) }
       }
@@ -448,6 +473,8 @@ export const useApprovalStore = defineStore('approval', () => {
     const interruptId = getInterruptId(approvalData)
     const modelStore = useModelStore()
     const modelConfig = modelStore.getModelConfig()
+    // 动态 import 破环：sync.js 装配了 approval 事件处理器，approval store 不应静态依赖它
+    const { useSyncStore } = await import('./sync')
     const syncStore = useSyncStore()
     const { finalizeStream, markInterrupted } = useStreamFinalizer()
     const sessionStore = useSessionStore()
@@ -580,11 +607,16 @@ export const useApprovalStore = defineStore('approval', () => {
           break
         case 'tool':
           options.onChatStreamTool?.(convertedParsed.data)
-          sessionStore.addOrUpdateToolCallToLastMessage(sessionId, convertedParsed.data)
+          // Task 5.1：恢复流 SSE tool 事件与 WebSocket tool_call_pending/waiting/running
+          // 共用同一幂等写入入口（addOrUpdateToolCall → addOrUpdateToolCallInMap，
+          // id/toolCallId 精确匹配），双通道重复推送同一工具时幂等合并。
+          sessionStore.addOrUpdateToolCall(sessionId, convertedParsed.data)
           break
         case 'tool_result':
           options.onChatStreamToolResult?.(convertedParsed.data)
-          sessionStore.updateOrAddToolResultToLastMessage(sessionId, convertedParsed.data)
+          // Task 5.1：同上，tool_result 与 WS tool_call_completed/failed/timeout
+          // 共用 updateOrAddToolResultInMap 幂等入口。
+          sessionStore.updateOrAddToolResult(sessionId, convertedParsed.data)
           break
         case 'reasoning':
           if (convertedParsed.data?.content) {
@@ -609,30 +641,20 @@ export const useApprovalStore = defineStore('approval', () => {
           break
         }
         case 'approval_timeout': {
-          // 审批超时：终止当前流，标记 interrupted 由 finally 调用 markInterrupted
+          // 审批超时：终止当前流，标记 interrupted 由 finally 调用 markInterrupted。
+          // 状态更新统一委托 _handleTimeout（与 WebSocket 路径 handleApprovalEvent 一致，
+          // 幂等保护：pendingApprovals 中已无该条目时跳过，避免多路径重复写 store / 重复同步）
           interrupted = true
-          const timeoutToolCallId = getInterruptId(convertedParsed.data || convertedParsed)
-          if (timeoutToolCallId) {
-            pendingApprovals.value.delete(timeoutToolCallId)
-            sessionStore.updateToolCallApprovalState(sessionId, timeoutToolCallId, 'timeout')
-            sessionStore.setApprovalToLastMessage(sessionId, { ...(convertedParsed.data || convertedParsed), state: 'timeout' })
-            sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false }).catch(() => {})
-          }
+          _handleTimeout(convertedParsed.data || convertedParsed, 'chat', sessionId)
           approvalAbortController.abort()
           break
         }
         case 'approval_processed': {
-          // 审批已在另一端处理：终止当前流，标记 interrupted 由 finally 调用 markInterrupted
+          // 审批已在另一端处理：终止当前流，标记 interrupted 由 finally 调用 markInterrupted。
+          // 状态更新统一委托 _handleProcessed（与 WebSocket 路径 handleApprovalEvent 一致，
+          // 幂等保护：pendingApprovals 中已无该条目时跳过，避免多路径重复写 store / 重复同步）
           interrupted = true
-          const processedToolCallId = getInterruptId(convertedParsed.data || convertedParsed)
-          if (processedToolCallId) {
-            pendingApprovals.value.delete(processedToolCallId)
-            const processedData = convertedParsed.data || convertedParsed
-            const finalState = processedData.approved ? 'approved' : 'rejected'
-            sessionStore.updateToolCallApprovalState(sessionId, processedToolCallId, finalState)
-            sessionStore.setApprovalToLastMessage(sessionId, { ...processedData, state: finalState })
-            sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false }).catch(() => {})
-          }
+          _handleProcessed(convertedParsed.data || convertedParsed, 'chat', sessionId)
           approvalAbortController.abort()
           break
         }
@@ -742,7 +764,7 @@ export const useApprovalStore = defineStore('approval', () => {
   const restoreFromSSEHistory = (approvalData, taskId, sessionId = null) => {
     const toolCallId = getInterruptId(approvalData)
     if (!toolCallId) {
-      logger.warn('[ApprovalStore] restoreFromSSEHistory: 无法提取 interruptId', approvalData)
+      logger.warn('[ApprovalStore] restoreFromSSEHistory: 无法提取 toolCallId', approvalData)
       return
     }
     // 已存在则跳过（可能已通过实时推送收到）

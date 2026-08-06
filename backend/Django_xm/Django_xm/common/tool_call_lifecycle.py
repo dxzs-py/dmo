@@ -6,7 +6,8 @@
 所有 TOOL_CALL_* 事件必须通过本服务发布，确保：
 1. parameters/message_id/graph_interrupt_id/cross_module_id 不缺失（从 context 透传）
 2. 状态机转换合法（非法转换仅 warning，不抛异常，容错优先）
-3. 事件不重复发布（同 tool_call_id + 同 event_type 仅发布一次，PENDING 除外）
+3. 事件不重复发布（批次指纹去重：同 tool_call_id + 同 event_type + 同批次指纹仅发布一次；
+   PENDING 同样参与去重，指纹以 parameters 稳定哈希为批次维度，参数变化允许重新发布）
 4. 三模块（chat/deep_research/learning）共享同一份代码
 
 使用方式：
@@ -35,6 +36,8 @@
 模块级单例：service = ToolCallLifecycleService()
 """
 
+import hashlib
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -50,7 +53,11 @@ logger = logging.getLogger(__name__)
 _TC_CTX_PREFIX = "tool_call:ctx"
 _TC_CTX_TTL = 24 * 60 * 60
 
-# 已发布事件去重 key 前缀（tool_call_id:event_type → 1）
+# 已发布事件去重 key 前缀（tool_call_id:event_type:batch_fingerprint → 1）
+# batch_fingerprint 构成（见 _compute_batch_fingerprint）：
+#   - g:{graph_interrupt_id}：审批批次标识（WAITING/RUNNING/终态事件优先使用）
+#   - p:{parameters_md5_12}：parameters 稳定内容哈希（PENDING 固定使用；无批次标识时其他事件回退）
+#   - no_batch：两者皆无（退化场景）
 _PUBLISHED_KEY_PREFIX = "tool_call:published"
 
 # 状态机：合法的前驱状态集合（None 表示初始状态，允许从无到有）
@@ -122,6 +129,95 @@ def _normalize_risk_ceiling(risk_ceiling: Any) -> str | None:
     return None
 
 
+def _normalize_risk_level(risk_level: Any) -> str | None:
+    """将 risk_level 统一为合法 RiskLevel 字符串（供 publish_tool_call payload 使用）。
+
+    与 _normalize_risk_ceiling 逻辑一致，独立函数以便后续语义分化（risk_level
+    可能扩展更多等级，risk_ceiling 仅限子 agent 角色上限场景）。
+
+    Args:
+        risk_level: RiskLevel 枚举值 / 枚举字符串 / None
+
+    Returns:
+        RiskLevel 枚举的 .value 字符串（如 'safe'/'controlled'/'high'），
+        或 None（None/空值/未知值，不写入 payload）
+    """
+    if risk_level is None:
+        return None
+    if hasattr(risk_level, "value"):
+        return str(risk_level.value)
+    if isinstance(risk_level, str) and risk_level:
+        from Django_xm.common.risk_levels import RiskLevel
+
+        try:
+            RiskLevel(risk_level)
+            return risk_level
+        except ValueError:
+            logger.warning(f"[ToolCallLifecycle] 非法 risk_level 值: {risk_level!r}, 忽略")
+            return None
+    return None
+
+
+def _stable_parameters_digest(parameters: Any) -> str:
+    """计算 parameters 的稳定内容哈希（12 位 hex）。
+
+    稳定性要求（PENDING 参数就绪场景）：
+    - sort_keys=True：忽略 dict 键顺序差异（同一参数内容多次序列化结果一致）
+    - ensure_ascii=False + default=str：非 ASCII 内容与非常规对象（datetime 等）可序列化
+    - 参数为空 / 非 dict 时返回空串（调用方据此退化为 no_batch）
+
+    Returns:
+        12 位 md5 hex；无法计算时返回空串
+    """
+    if not isinstance(parameters, dict) or not parameters:
+        return ""
+    try:
+        payload = json.dumps(parameters, sort_keys=True, ensure_ascii=False, default=str)
+        return hashlib.md5(payload.encode("utf-8")).hexdigest()[:12]
+    except Exception:
+        # 极端不可序列化场景退化为 repr（仍内容相关、稳定），避免指纹计算中断发布
+        try:
+            return hashlib.md5(repr(parameters).encode("utf-8")).hexdigest()[:12]
+        except Exception:
+            return ""
+
+
+def _compute_batch_fingerprint(
+    event_type: EventType,
+    ctx_dict: dict[str, Any],
+    parameters: dict | None,
+) -> str:
+    """计算事件批次指纹（去重 key 的批次维度，Task 1 指纹去重核心）。
+
+    指纹构成决定"同一 tool_call_id + 同一 event_type 的事件是否重复发布"：
+    - TOOL_CALL_PENDING：固定使用 parameters 稳定哈希 → no_batch。
+      graph_interrupt_id 在首次 PENDING 发布时通常尚未绑定（审批批次在 PENDING
+      之后才创建），若改用 context 的 graph_interrupt_id，会在审批创建后发生
+      指纹漂移（p:xxx → g:yyy），导致同批次重复 PENDING 无法被去重拦截
+      （Task 1 根因：PENDING 被多个发布入口重复发布）。
+    - 其他事件：优先 graph_interrupt_id（审批批次标识）——M16 复用 interrupt_id
+      重审批时新批次携带新 graph_interrupt_id，可区分批次、避免被旧批次 dedup key
+      误拦截；无 graph_interrupt_id 时回退 parameters 哈希；再退化为 no_batch。
+
+    与去重检查/写入的对应：_prepare_transition 用本指纹检查 dedup key 是否存在，
+    _finalize_transition 用同一指纹写入 dedup key，保证检查与写入一致。
+
+    Returns:
+        指纹字符串（含来源前缀，如 g:xxx / p:xxxxxxxxxxxx / no_batch）
+    """
+    if event_type == EventType.TOOL_CALL_PENDING:
+        params = parameters if isinstance(parameters, dict) and parameters else ctx_dict.get("parameters")
+        digest = _stable_parameters_digest(params)
+        return f"p:{digest}" if digest else "no_batch"
+
+    graph_interrupt_id = ctx_dict.get("graph_interrupt_id")
+    if graph_interrupt_id:
+        return f"g:{graph_interrupt_id}"
+    params = parameters if isinstance(parameters, dict) and parameters else ctx_dict.get("parameters")
+    digest = _stable_parameters_digest(params)
+    return f"p:{digest}" if digest else "no_batch"
+
+
 @dataclass
 class ToolCallContext:
     """工具调用上下文（Redis 持久化，跨模块共享）。
@@ -160,6 +256,13 @@ class ToolCallContext:
     agent_name: str = ""
     agent_path: list = field(default_factory=list)
     risk_ceiling: str = ""
+    # 工具调用实际风险等级（safe/controlled/high，由 ApprovalMiddleware 计算）
+    # 与 risk_ceiling 区别：
+    #   - risk_ceiling: 子 agent 角色风险上限（如 web-researcher 角色上限为 safe）
+    #   - risk_level: 具体工具调用的实际风险等级，驱动前端审批 UI 显示
+    # 根因修复：原 tool_call_* 事件 payload 不携带 risk_level，非触发浏览器依赖
+    # approval_pending 事件获取风险等级，事件丢失时 riskLevel 缺失导致跨浏览器显示不一致
+    risk_level: str = ""
 
 
 class ToolCallLifecycleService:
@@ -171,23 +274,55 @@ class ToolCallLifecycleService:
     - parameters/message_id 从 context 透传，杜绝字段缺失
     """
 
-    def register(self, ctx: ToolCallContext) -> None:
+    def register(
+        self,
+        ctx: ToolCallContext,
+        *,
+        event_type: EventType | None = None,
+    ) -> None:
         """注册工具调用上下文（首次发现 tool_call 时调用）。幂等。
 
         已存在时不覆盖非空字段（保留先注册的值），仅补全空字段。
         auto_approved 一旦为 True 就保持 True（不会被覆盖回 False）。
         子 agent 嵌套层级字段（parent_tool_call_id/depth/agent_name/agent_path/risk_ceiling）
         一旦写入非空值就保持（不被覆盖回空），确保主 agent 与子 agent 场景的字段不互斥。
+        graph_interrupt_id 是例外：作为审批批次标识允许更新为新批次（M16 复用
+        interrupt_id 重新发起审批时携带新批次 id，保留旧值会导致后续 WAITING/RUNNING
+        事件沿用旧批次指纹，被旧批次 dedup key 误拦截）。
+
+        Args:
+            ctx: 工具调用上下文
+            event_type: 本次注册对应的待发布事件类型（可选）。
+                last_event_type 防护（Task 1）：当 context 已存在且 last_event_type
+                已推进到 waiting/running 等非 PENDING 状态，而本次注册为
+                TOOL_CALL_PENDING（同 tool_call_id 的重复发布入口）时，拒绝本次
+                注册并 log warning（说明重复发布来源），不覆盖已推进状态。
+                None 表示仅补全上下文（不触发防护）。
         """
         key = f"{_TC_CTX_PREFIX}:{ctx.tool_call_id}"
         existing = cache.get(key)
         if existing:
+            # last_event_type 防护：状态已推进到非 PENDING 状态时拒绝重复 PENDING 注册
+            # （与状态机"waiting → pending 非法"一致，提前拦截并记录重复发布入口）
+            last_event = existing.get("last_event_type")
+            if (
+                event_type == EventType.TOOL_CALL_PENDING
+                and last_event
+                and last_event != EventType.TOOL_CALL_PENDING.value
+            ):
+                logger.warning(
+                    f"[ToolCallLifecycle] 拒绝重复 PENDING 注册（状态已推进）: "
+                    f"tool_call_id={ctx.tool_call_id}, tool_name={ctx.tool_name}, "
+                    f"last_event_type={last_event}, 本次注册将被忽略（重复发布入口）"
+                )
+                return
             # 合并：仅补全空字段，不覆盖已有非空值
             if not existing.get("parameters") and ctx.parameters:
                 existing["parameters"] = ctx.parameters
             if not existing.get("message_id") and ctx.message_id:
                 existing["message_id"] = ctx.message_id
-            if not existing.get("graph_interrupt_id") and ctx.graph_interrupt_id:
+            # graph_interrupt_id：批次标识允许更新为新批次（M16 重审批防护，见 docstring）
+            if ctx.graph_interrupt_id and existing.get("graph_interrupt_id") != ctx.graph_interrupt_id:
                 existing["graph_interrupt_id"] = ctx.graph_interrupt_id
             if not existing.get("cross_module_id") and ctx.cross_module_id:
                 existing["cross_module_id"] = ctx.cross_module_id
@@ -205,6 +340,10 @@ class ToolCallLifecycleService:
                 existing["agent_path"] = ctx.agent_path
             if not existing.get("risk_ceiling") and ctx.risk_ceiling:
                 existing["risk_ceiling"] = ctx.risk_ceiling
+            # risk_level：仅补全空字段（审批创建时由 ApprovalMiddleware 计算并传入）
+            # 一旦写入非空值就保持，避免后续事件覆盖已计算的风险等级
+            if not existing.get("risk_level") and ctx.risk_level:
+                existing["risk_level"] = ctx.risk_level
             cache.set(key, existing, _TC_CTX_TTL)
         else:
             cache.set(key, ctx.__dict__, _TC_CTX_TTL)
@@ -243,17 +382,24 @@ class ToolCallLifecycleService:
         tool_call_id: str,
         event_type: EventType,
         parameters: dict | None,
-    ) -> dict[str, Any] | None:
+        batch_fingerprint: str | None = None,
+    ) -> tuple[dict[str, Any], str] | None:
         """状态机转换的公共预处理逻辑（sync/async 共享）。
 
         流程：
         1. 读取 context（不存在则 warning 并跳过）
-        2. 去重检查（同 tool_call_id + event_type 已发布则跳过，PENDING 豁免）
+        2. 计算批次指纹并去重检查（同 tool_call_id + event_type + 批次指纹 已发布则跳过，
+           PENDING 同样参与去重，在状态校验之前拦截同批次重复发布）
         3. 校验状态转换合法性（非法则 warning 并阻止发布）
         4. 补全 parameters（如果调用方提供了非空 parameters）
 
+        Args:
+            batch_fingerprint: 调用方显式指定的批次指纹（可选，如审批流程直接传入
+                graph_interrupt_id）；为空时按 _compute_batch_fingerprint 推导。
+
         Returns:
-            context_dict（如果应该继续发布事件），None 表示跳过
+            (context_dict, fingerprint)：应该继续发布事件时返回二元组；
+            None 表示跳过（上下文缺失 / 已去重 / 非法转换）
         """
         key = f"{_TC_CTX_PREFIX}:{tool_call_id}"
         ctx_dict = cache.get(key)
@@ -264,14 +410,17 @@ class ToolCallLifecycleService:
             )
             return None
 
-        # 去重：非 PENDING 事件已发布则跳过（在状态校验之前，避免重复事件误报非法转换）
-        if event_type != EventType.TOOL_CALL_PENDING:
-            dedup_key = f"{_PUBLISHED_KEY_PREFIX}:{tool_call_id}:{event_type.value}"
-            if cache.get(dedup_key):
-                logger.info(
-                    f"[ToolCallLifecycle] 事件已发布，跳过: tool_call_id={tool_call_id}, event_type={event_type.value}"
-                )
-                return None
+        # 批次指纹：调用方显式传入优先，否则按（事件类型 + 上下文 + 本次参数）推导
+        fingerprint = batch_fingerprint or _compute_batch_fingerprint(event_type, ctx_dict, parameters)
+        # 去重：同 tool_call_id + event_type + 批次指纹 已发布则跳过
+        # （PENDING 同样参与去重，在状态校验之前拦截同批次重复发布）
+        dedup_key = f"{_PUBLISHED_KEY_PREFIX}:{tool_call_id}:{event_type.value}:{fingerprint}"
+        if cache.get(dedup_key):
+            logger.info(
+                f"[ToolCallLifecycle] 事件已发布（同批次指纹），跳过: "
+                f"tool_call_id={tool_call_id}, event_type={event_type.value}, fingerprint={fingerprint}"
+            )
+            return None
 
         # 状态机校验：非法转换阻止发布
         last_event = ctx_dict.get("last_event_type")
@@ -290,24 +439,24 @@ class ToolCallLifecycleService:
             self.bind_parameters(tool_call_id, parameters)
             ctx_dict = cache.get(key) or ctx_dict
 
-        return ctx_dict
+        return ctx_dict, fingerprint
 
     def _finalize_transition(
         self,
         tool_call_id: str,
         event_type: EventType,
         ctx_dict: dict[str, Any],
+        fingerprint: str,
     ) -> None:
         """状态机转换的公共后处理逻辑（sync/async 共享）。
 
-        标记已发布，更新 last_event_type。
+        标记已发布（含批次指纹），更新 last_event_type。
         """
         key = f"{_TC_CTX_PREFIX}:{tool_call_id}"
         ctx_dict["last_event_type"] = event_type.value
         cache.set(key, ctx_dict, _TC_CTX_TTL)
-        if event_type != EventType.TOOL_CALL_PENDING:
-            dedup_key = f"{_PUBLISHED_KEY_PREFIX}:{tool_call_id}:{event_type.value}"
-            cache.set(dedup_key, 1, _TC_CTX_TTL)
+        dedup_key = f"{_PUBLISHED_KEY_PREFIX}:{tool_call_id}:{event_type.value}:{fingerprint}"
+        cache.set(dedup_key, 1, _TC_CTX_TTL)
 
     def transition(
         self,
@@ -317,6 +466,7 @@ class ToolCallLifecycleService:
         result: Any = None,
         error: str | None = None,
         parameters: dict | None = None,
+        batch_fingerprint: str | None = None,
         _index: int | None = None,
     ) -> None:
         """状态机转换并发布事件（同步版，适配 sync 上下文：chat 模块 stream_helpers）。
@@ -331,11 +481,14 @@ class ToolCallLifecycleService:
             result: 工具执行结果（仅 COMPLETED 事件）
             error: 错误信息（仅 FAILED 事件）
             parameters: 补全的参数（可选，用于参数恢复场景）
+            batch_fingerprint: 批次指纹（可选，显式传入时跳过自动推导，
+                如审批流程直接传入 graph_interrupt_id）
             _index: LLM 生成的工具调用原始序号（用于跨浏览器工具顺序稳定排序）
         """
-        ctx_dict = self._prepare_transition(tool_call_id, event_type, parameters)
-        if ctx_dict is None:
+        prepared = self._prepare_transition(tool_call_id, event_type, parameters, batch_fingerprint)
+        if prepared is None:
             return
+        ctx_dict, fingerprint = prepared
 
         # 从 context 透传所有字段（三模块共享逻辑）
         module_value = ctx_dict.get("module", "chat")
@@ -367,6 +520,9 @@ class ToolCallLifecycleService:
                 agent_name=ctx_dict.get("agent_name") or None,
                 agent_path=ctx_dict.get("agent_path") or None,
                 risk_ceiling=_normalize_risk_ceiling(ctx_dict.get("risk_ceiling")),
+                # risk_level 透传：从 context 读取，注入到 tool_call_* 事件 payload
+                # 根因修复：让前端从工具事件直接获取风险等级，不再单一依赖 approval_pending 事件
+                risk_level=_normalize_risk_level(ctx_dict.get("risk_level")),
                 _index=_index if _index is not None else ctx_dict.get("_index"),
             )
         except Exception:
@@ -375,7 +531,7 @@ class ToolCallLifecycleService:
             )
             return
 
-        self._finalize_transition(tool_call_id, event_type, ctx_dict)
+        self._finalize_transition(tool_call_id, event_type, ctx_dict, fingerprint)
 
     async def transition_async(
         self,
@@ -385,6 +541,7 @@ class ToolCallLifecycleService:
         result: Any = None,
         error: str | None = None,
         parameters: dict | None = None,
+        batch_fingerprint: str | None = None,
         _index: int | None = None,
     ) -> None:
         """状态机转换并发布事件（异步版，适配 async 上下文：research/learning 模块）。
@@ -397,11 +554,14 @@ class ToolCallLifecycleService:
             result: 工具执行结果（仅 COMPLETED 事件）
             error: 错误信息（仅 FAILED 事件）
             parameters: 补全的参数（可选，用于参数恢复场景）
+            batch_fingerprint: 批次指纹（可选，显式传入时跳过自动推导，
+                如审批流程直接传入 graph_interrupt_id）
             _index: LLM 生成的工具调用原始序号（用于跨浏览器工具顺序稳定排序）
         """
-        ctx_dict = self._prepare_transition(tool_call_id, event_type, parameters)
-        if ctx_dict is None:
+        prepared = self._prepare_transition(tool_call_id, event_type, parameters, batch_fingerprint)
+        if prepared is None:
             return
+        ctx_dict, fingerprint = prepared
 
         module_value = ctx_dict.get("module", "chat")
         module_enum = EventSource.from_value(module_value) or EventSource.CHAT
@@ -432,6 +592,9 @@ class ToolCallLifecycleService:
                 agent_name=ctx_dict.get("agent_name") or None,
                 agent_path=ctx_dict.get("agent_path") or None,
                 risk_ceiling=_normalize_risk_ceiling(ctx_dict.get("risk_ceiling")),
+                # risk_level 透传：从 context 读取，注入到 tool_call_* 事件 payload
+                # 根因修复：让前端从工具事件直接获取风险等级，不再单一依赖 approval_pending 事件
+                risk_level=_normalize_risk_level(ctx_dict.get("risk_level")),
                 _index=_index if _index is not None else ctx_dict.get("_index"),
             )
         except Exception:
@@ -441,7 +604,7 @@ class ToolCallLifecycleService:
             )
             return
 
-        self._finalize_transition(tool_call_id, event_type, ctx_dict)
+        self._finalize_transition(tool_call_id, event_type, ctx_dict, fingerprint)
 
     def get_context(self, tool_call_id: str) -> dict | None:
         """获取工具调用上下文（调试/测试用）。"""
@@ -450,7 +613,8 @@ class ToolCallLifecycleService:
     def clear_context(self, tool_call_id: str) -> None:
         """清除工具调用上下文（工具进入终态后可调用，释放 Redis 空间）。"""
         cache.delete(f"{_TC_CTX_PREFIX}:{tool_call_id}")
-        # 清除所有 event_type 的去重 key
+        # 清除 legacy（无指纹）去重 key；指纹去重 key（tool_call:published:{id}:{type}:{fp}）
+        # 无法枚举全部指纹，依赖 24h TTL 自动过期（_TC_CTX_TTL）
         for event_type in EventType:
             if event_type.value.startswith("tool_call_"):
                 cache.delete(f"{_PUBLISHED_KEY_PREFIX}:{tool_call_id}:{event_type.value}")

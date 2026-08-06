@@ -1,5 +1,4 @@
-import settings from '../config/settings'
-import { generateId } from './id'
+import { generateId } from './id.js'
 
 const API_SUCCESS_CODE = 200
 
@@ -333,13 +332,16 @@ export function transformFrontendMessageToBackend(msg) {
       }]
 
   // 输出 camelCase，由 axios 请求拦截器的 toSnakeCase 统一转换为 snake_case
+  // 注意：顶层不发送 tool_calls —— 后端 ChatMessageSerializer.tool_calls 为 read_only
+  // （serializers.py），POST/PATCH 均不接收，发送纯属无效负载（spec REMOVED Requirements）。
+  // toolCalls 的持久化权威是后端流式/审批事件；versions[].toolCalls 保留用于
+  // transformBackendMessageToFrontend 刷新后从 activeVersion 恢复工具调用数据。
   return {
     role: msg.role,
     content: msg.content,
     sources: msg.sources || [],
     plan: msg.plan || null,
     chainOfThought: msg.chainOfThought || null,
-    toolCalls: msg.toolCalls || [],
     approval: msg.approval || null,
     reasoning: msg.reasoning || null,
     suggestions: msg.suggestions || null,

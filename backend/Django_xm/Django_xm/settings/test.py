@@ -114,6 +114,8 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "research": "9999/min",
     "knowledge": "9999/min",
     "sensitive": "9999/min",
+    "snapshot": "9999/min",
+    "meta": "9999/min",
 }
 
 # ── 文件上传：测试环境限制（避免大文件测试 OOM）─────────────────

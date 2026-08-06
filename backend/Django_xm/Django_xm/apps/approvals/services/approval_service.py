@@ -17,6 +17,16 @@ from asgiref.sync import sync_to_async
 from django.core.cache import cache
 
 from Django_xm.apps.approvals.models import Approval, ApprovalOutboxEntry
+from Django_xm.apps.approvals.services.approval_constants import (
+    APPROVAL_LOCK_PREFIX,
+    APPROVAL_LOCK_TTL,
+    PENDING_COUNT_PREFIX,
+    PENDING_COUNT_TTL,
+    RESUME_LOCK_PREFIX,
+    RESUME_LOCK_TTL,
+    TASK_RESUME_LOCK_PREFIX,
+    TASK_RESUME_LOCK_TTL,
+)
 from Django_xm.apps.approvals.services.approval_store import (
     get_approval_history as _get_approval_history_from_store,
 )
@@ -39,14 +49,6 @@ from Django_xm.common.tool_call_lifecycle import ToolCallContext, service
 logger = logging.getLogger(__name__)
 
 APPROVAL_TIMEOUT_SECONDS = 300
-APPROVAL_LOCK_TTL = 300
-APPROVAL_LOCK_PREFIX = "approval:lock:"
-TASK_RESUME_LOCK_PREFIX = "approval:task_resume:"
-TASK_RESUME_LOCK_TTL = 1800
-RESUME_LOCK_PREFIX = "approval:resume_lock:"
-RESUME_LOCK_TTL = 30
-PENDING_COUNT_PREFIX = "approval:pending_count:"
-PENDING_COUNT_TTL = 3600
 
 # Lua: 原子 DECR，确保计数器不小于 0。返回递减后的值。
 # KEYS[1] = counter key; ARGV[1] = TTL（仅在 key 仍存在时刷新）
@@ -73,6 +75,9 @@ return result
 """
 
 _TEMP_EXTRA_KEYS = ("_resume_value", "_approved", "_timeout")
+
+# remaining_pending_count 未计算哨兵：非 APPROVED 或非批次场景下不注入该字段
+_UNSET = object()
 
 # Approval.state → EventType 映射
 _APPROVAL_STATE_TO_EVENT_TYPE: dict[str, EventType] = {
@@ -113,115 +118,271 @@ def _resolve_approval_channels(approval: Approval) -> tuple[str | None, str | No
     return _resolve_channels(module, module_id, derive_cross_module_id(approval))
 
 
-def _build_payload(approval: Approval, state: str | None = None, extra: dict | None = None) -> dict[str, Any]:
-    # 从 extra 中提取 tool_call_id（ApprovalMiddleware 创建审批时写入）
-    approval_extra = approval.extra if isinstance(approval.extra, dict) else {}
-    tool_call_id = approval_extra.get("tool_call_id") or approval.interrupt_id
+def build_approval_payload(
+    approval: Approval,
+    state: str | None = None,
+    scope: str = "broadcast",
+    extra: dict | None = None,
+    *,
+    remaining_pending_count: Any = _UNSET,
+) -> dict[str, Any]:
+    """审批 payload 单一构造入口（四个 scope 共享字段映射表）。
 
-    # 频道路由统一委托 _resolve_approval_channels（三模块共享 _resolve_channels）
-    session_id, task_id = _resolve_approval_channels(approval)
-    # cross_module_id：仅 DEEP_RESEARCH 关联 chat 时有值，前端用于识别跨模块事件
-    cross_module_id = derive_cross_module_id(approval)
-    payload = {
-        "interrupt_id": approval.interrupt_id,
-        "tool_call_id": tool_call_id,
-        "source": approval.source,
-        "source_id": approval.source_id,
-        "session_id": session_id,
-        "task_id": task_id,
-        "state": state or approval.state,
-        "tool_name": approval.tool_name,
-        "title": approval.title,
-        "description": approval.description,
-        "action": approval.action,
-        "operation": approval.operation,
-        "danger_level": approval.danger_level,
-        "parameters": approval.parameters,
-        "user_input": approval.user_input,
-        "extra": approval.extra,
-        "created_at": approval.created_at.isoformat().replace("+00:00", "Z") if approval.created_at else None,
-        "expires_at": approval.expires_at.isoformat().replace("+00:00", "Z") if approval.expires_at else None,
-        "timestamp": time.time(),
-    }
-    if cross_module_id:
-        payload["cross_module_id"] = cross_module_id
-    if extra:
-        payload.update(extra)
-    # 顶层提取 message_id（重新生成场景下 approval.extra.message_id 携带被重新生成的消息 ID）
-    # 便于前端 handleApprovalChanged 直接从 payload.message_id 路由，无需解析 extra 嵌套
-    # message_id 可选：chat/deep_research 模块携带用于前端路由，learning 模块无 chat message 可不传
-    if isinstance(approval.extra, dict) and approval.extra.get("message_id") is not None:
-        payload.setdefault("message_id", approval.extra["message_id"])
-    # 顶层提取 graph_interrupt_id，便于前端 sync.js 直接读取批次信息
-    # 批量审批场景下，前端需要 graph_interrupt_id 来收集同一批次的 sibling approvals
-    if isinstance(approval.extra, dict) and approval.extra.get("graph_interrupt_id"):
-        payload.setdefault("graph_interrupt_id", approval.extra["graph_interrupt_id"])
-    # 顶层提取 tool_config 中的 selected_tools 和 tool_tier，便于前端直接读取
-    if isinstance(approval.extra, dict):
-        tool_config = approval.extra.get("tool_config")
-        if isinstance(tool_config, dict):
-            if tool_config.get("selected_tools") is not None:
-                payload.setdefault("selected_tools", tool_config["selected_tools"])
-            if tool_config.get("tool_tier"):
-                payload.setdefault("tool_tier", tool_config["tool_tier"])
-    return payload
+    收敛原四处构造器（_build_payload / _build_approval_extra_fields /
+    _build_approval_sync_fields / _extract_tool_call_event_kwargs），
+    新增字段只需在共享映射表登记一次，四个 scope 按需取子集并应用各自规范化，
+    避免四处逻辑漂移。
 
+    共享字段映射表（字段名 → 取值函数）：以 approval / approval.extra / state
+    为输入、输出原始值；scope 分支负责各自的字段子集与规范化
+    （默认值 / 非空过滤 / 路由字段 / timestamp 等）。
 
-def _build_tool_call_payload(approval: Approval) -> dict[str, Any]:
-    """从 Approval 构造 ToolCallLifecyclePayload 格式的 payload。
+    Args:
+        approval: Approval 模型实例
+        state: 审批状态（persist/broadcast/sync 使用；tool 传 None）
+        scope: 输出 scope，persist / broadcast / sync / tool
+        extra: 动态附加字段（persist 合并到 payload 顶层；
+               broadcast 合并到 extra_fields，可覆盖默认值）
+        remaining_pending_count: broadcast scope 的权威剩余 pending 计数。
+               默认 _UNSET 不注入；由 sync/async 双路径计算后传入。
 
-    用于发布 TOOL_CALL_TIMEOUT / TOOL_CALL_WAITING 等工具生命周期事件，
-    让前端 ToolCallCard 同步更新工具卡片状态（与审批面板分离）。
-
-    频道路由统一委托 _resolve_approval_channels（三模块共享 _resolve_channels）。
+    Returns:
+        dict: 对应 scope 的 payload
     """
+    if scope not in ("persist", "broadcast", "sync", "tool"):
+        raise ValueError(f"未知 approval payload scope: {scope!r}")
+
     approval_extra = approval.extra if isinstance(approval.extra, dict) else {}
-    tool_call_id = approval_extra.get("tool_call_id") or approval.interrupt_id
-    event_source = _SOURCE_TO_EVENT_SOURCE.get(approval.source, EventSource.CHAT)
-    session_id, task_id = _resolve_approval_channels(approval)
-    cross_module_id = derive_cross_module_id(approval)
-    payload = {
-        "tool_call_id": tool_call_id,
-        "tool_name": approval.tool_name or "unknown",
-        "source": event_source,
-        "source_id": approval.source_id,
-        "session_id": session_id,
-        "task_id": task_id,
-        "parameters": approval.parameters,
+    tool_config = approval_extra.get("tool_config")
+    tool_config = tool_config if isinstance(tool_config, dict) else {}
+
+    # ── 共享字段映射表：字段名 → 取值函数（输出原始值，scope 分支再规范化）──
+    field_getters: dict[str, Any] = {
+        "interrupt_id": lambda: approval.interrupt_id,
+        "tool_call_id": lambda: approval_extra.get("tool_call_id") or approval.interrupt_id,
+        "tool_name": lambda: approval.tool_name,
+        "title": lambda: approval.title,
+        "description": lambda: approval.description,
+        "operation": lambda: approval.operation,
+        "action": lambda: approval.action,
+        "user_input": lambda: approval.user_input,
+        "parameters": lambda: approval.parameters,
+        "source": lambda: approval.source,
+        "source_id": lambda: approval.source_id,
+        "chat_session_id": lambda: approval.chat_session_id,
+        "created_at": lambda: (
+            approval.created_at.isoformat().replace("+00:00", "Z") if approval.created_at else None
+        ),
+        "expires_at": lambda: (
+            approval.expires_at.isoformat().replace("+00:00", "Z") if approval.expires_at else None
+        ),
+        "message_id": lambda: approval_extra.get("message_id"),
+        "graph_interrupt_id": lambda: approval_extra.get("graph_interrupt_id"),
+        "cross_module_id": lambda: derive_cross_module_id(approval),
+        "risk_level": lambda: approval_extra.get("risk_level"),
+        # 子 agent 嵌套层级字段（Phase E3，approval_parser.py 已透传至 Approval.extra）
+        "parent_tool_call_id": lambda: approval_extra.get("parent_tool_call_id"),
+        "depth": lambda: approval_extra.get("depth"),
+        "agent_name": lambda: approval_extra.get("agent_name"),
+        "agent_path": lambda: approval_extra.get("agent_path"),
+        # tool_config 展开（前端用于显示 selected_tools / tool_tier）
+        "selected_tools": lambda: tool_config.get("selected_tools"),
+        "tool_tier": lambda: tool_config.get("tool_tier"),
+        "state": lambda: state or approval.state,
     }
-    if cross_module_id:
-        payload["cross_module_id"] = cross_module_id
-    # 顶层提取 graph_interrupt_id，便于前端 sync.js 直接读取批次信息
-    graph_interrupt_id = approval_extra.get("graph_interrupt_id")
-    if graph_interrupt_id:
-        payload["graph_interrupt_id"] = graph_interrupt_id
-    # 顶层提取 message_id（与 _build_payload 一致）
-    # message_id 可选：chat/deep_research 模块携带用于前端路由，learning 模块无 chat message 可不传
+
+    def _get(field: str) -> Any:
+        return field_getters[field]()
+
+    # ── persist：Redis 持久化 payload（原 _build_payload）──
+    if scope == "persist":
+        session_id, task_id = _resolve_approval_channels(approval)
+        # cross_module_id：仅 DEEP_RESEARCH 关联 chat 时有值，前端用于识别跨模块事件
+        cross_module_id = _get("cross_module_id")
+        payload = {
+            "interrupt_id": _get("interrupt_id"),
+            "tool_call_id": _get("tool_call_id"),
+            "source": _get("source"),
+            "source_id": _get("source_id"),
+            "session_id": session_id,
+            "task_id": task_id,
+            "state": _get("state"),
+            "tool_name": _get("tool_name"),
+            "title": _get("title"),
+            "description": _get("description"),
+            "action": _get("action"),
+            "operation": _get("operation"),
+            "parameters": _get("parameters"),
+            "user_input": _get("user_input"),
+            "extra": approval.extra,
+            "created_at": _get("created_at"),
+            "expires_at": _get("expires_at"),
+            "timestamp": time.time(),
+        }
+        if cross_module_id:
+            payload["cross_module_id"] = cross_module_id
+        if extra:
+            payload.update(extra)
+        # 顶层提取 message_id / graph_interrupt_id / tool_config 展开（setdefault 语义）
+        # message_id 可选：chat/deep_research 模块携带用于前端路由，learning 模块无 chat message 可不传
+        if approval_extra.get("message_id") is not None:
+            payload.setdefault("message_id", approval_extra["message_id"])
+        # 批量审批场景下，前端需要 graph_interrupt_id 来收集同一批次的 sibling approvals
+        if approval_extra.get("graph_interrupt_id"):
+            payload.setdefault("graph_interrupt_id", approval_extra["graph_interrupt_id"])
+        if tool_config.get("selected_tools") is not None:
+            payload.setdefault("selected_tools", tool_config["selected_tools"])
+        if tool_config.get("tool_tier"):
+            payload.setdefault("tool_tier", tool_config["tool_tier"])
+        return payload
+
+    # ── tool：工具调用事件统一参数（原 _extract_tool_call_event_kwargs）──
+    if scope == "tool":
+        parameters = _get("parameters")
+        return {
+            "tool_call_id": _get("tool_call_id"),
+            "tool_name": _get("tool_name") or "unknown",
+            "module": _SOURCE_TO_EVENT_SOURCE.get(approval.source, EventSource.CHAT),
+            "module_id": _get("source_id") or "",
+            "message_id": approval_extra.get("message_id") or "",
+            "parameters": parameters if isinstance(parameters, dict) else {},
+            "cross_module_id": _get("cross_module_id"),
+            "graph_interrupt_id": approval_extra.get("graph_interrupt_id"),
+            "risk_level": approval_extra.get("risk_level") or "",
+        }
+
+    # ── sync：ChatMessage.tool_calls[].approval 同步字段（原 _build_approval_sync_fields）──
+    if scope == "sync":
+        sync_fields: dict[str, Any] = {
+            "state": _get("state"),
+            "interrupt_id": _get("interrupt_id"),
+        }
+        tc_id = approval_extra.get("tool_call_id") or ""
+        if tc_id:
+            sync_fields["tool_call_id"] = tc_id
+        if approval_extra.get("graph_interrupt_id"):
+            sync_fields["graph_interrupt_id"] = approval_extra["graph_interrupt_id"]
+        # UI 展示字段（V1/V2 根因修复）
+        if approval.title:
+            sync_fields["title"] = approval.title
+        if approval.description:
+            sync_fields["description"] = approval.description
+        if approval.operation:
+            sync_fields["operation"] = approval.operation
+        if approval.parameters:
+            sync_fields["parameters"] = approval.parameters
+        if approval.tool_name:
+            sync_fields["tool_name"] = approval.tool_name
+        if approval.action:
+            sync_fields["action"] = approval.action
+        if approval.user_input:
+            sync_fields["user_input"] = approval.user_input
+        # 路由字段
+        if approval.source:
+            sync_fields["source"] = approval.source
+        if approval.source_id:
+            sync_fields["source_id"] = approval.source_id
+        if approval.chat_session_id:
+            sync_fields["chat_session_id"] = approval.chat_session_id
+        # 时间字段（ISO 格式，与 persist scope 一致）
+        created_at = _get("created_at")
+        if created_at:
+            sync_fields["created_at"] = created_at
+        expires_at = _get("expires_at")
+        if expires_at:
+            sync_fields["expires_at"] = expires_at
+        # 透传 extra 中的 message_id（前端依赖此字段精确定位消息）
+        if approval_extra.get("message_id") is not None:
+            sync_fields["message_id"] = approval_extra["message_id"]
+        # 透传 extra 中的 risk_level（统一风险等级字段，优先于 danger_level）
+        if approval_extra.get("risk_level"):
+            sync_fields["risk_level"] = approval_extra["risk_level"]
+        # 补齐缺失字段（Task 2.2）：子 agent 嵌套层级 + tool_config 展开，
+        # 与事件 payload / 快照 approval payload 对齐（approval_parser.py 已透传至 extra）
+        if approval_extra.get("parent_tool_call_id"):
+            sync_fields["parent_tool_call_id"] = approval_extra["parent_tool_call_id"]
+        if isinstance(approval_extra.get("depth"), int) and approval_extra["depth"] > 0:
+            sync_fields["depth"] = approval_extra["depth"]
+        if approval_extra.get("agent_name"):
+            sync_fields["agent_name"] = approval_extra["agent_name"]
+        if isinstance(approval_extra.get("agent_path"), list) and approval_extra["agent_path"]:
+            sync_fields["agent_path"] = approval_extra["agent_path"]
+        if tool_config.get("selected_tools") is not None:
+            sync_fields["selected_tools"] = tool_config["selected_tools"]
+        if tool_config.get("tool_tier"):
+            sync_fields["tool_tier"] = tool_config["tool_tier"]
+        return sync_fields
+
+    # ── broadcast：publish_approval 调用参数（原 _build_approval_event_params）──
+    event_source = _SOURCE_TO_EVENT_SOURCE.get(approval.source, EventSource.CHAT)
+    extra_fields: dict[str, Any] = {
+        "title": approval.title or "",
+        "description": approval.description or "",
+        "operation": approval.operation or "",
+        "action": approval.action or Approval.ACTION_CONFIRM,
+    }
+    if approval.user_input:
+        extra_fields["user_input"] = approval.user_input
+    # 透传 extra 中的关键字段到顶层
     if approval_extra.get("message_id") is not None:
-        payload["message_id"] = approval_extra["message_id"]
-    return payload
+        extra_fields["message_id"] = approval_extra["message_id"]
+    if approval_extra.get("graph_interrupt_id"):
+        extra_fields["graph_interrupt_id"] = approval_extra["graph_interrupt_id"]
+    # risk_level 透传（新标准风险等级，优先于 danger_level，前端 ToolCallCard 显示高危红名）
+    if approval_extra.get("risk_level"):
+        extra_fields["risk_level"] = approval_extra["risk_level"]
+    # 子 agent 嵌套层级字段透传（Phase E3，前端展示完整调用链路）
+    if approval_extra.get("parent_tool_call_id"):
+        extra_fields["parent_tool_call_id"] = approval_extra["parent_tool_call_id"]
+    if isinstance(approval_extra.get("depth"), int) and approval_extra["depth"] > 0:
+        extra_fields["depth"] = approval_extra["depth"]
+    if approval_extra.get("agent_name"):
+        extra_fields["agent_name"] = approval_extra["agent_name"]
+    if isinstance(approval_extra.get("agent_path"), list) and approval_extra["agent_path"]:
+        extra_fields["agent_path"] = approval_extra["agent_path"]
+    # tool_config 透传（前端用于显示 selected_tools/tool_tier）
+    if tool_config.get("selected_tools") is not None:
+        extra_fields["selected_tools"] = tool_config["selected_tools"]
+    if tool_config.get("tool_tier"):
+        extra_fields["tool_tier"] = tool_config["tool_tier"]
+    # 调用方传入的 extra 覆盖默认值（用于 approved_by 等动态字段）
+    if extra:
+        extra_fields.update(extra)
+
+    parameters = _get("parameters")
+    params = {
+        "event_type": _APPROVAL_STATE_TO_EVENT_TYPE.get(_get("state"), EventType.APPROVAL_PENDING),
+        "interrupt_id": _get("interrupt_id"),
+        "tool_call_id": _get("tool_call_id"),
+        "module": event_source,
+        "module_id": _get("source_id") or "",
+        "state": _get("state"),
+        "tool_name": _get("tool_name") or "",
+        "message_id": approval_extra.get("message_id") or "",
+        "parameters": parameters if isinstance(parameters, dict) else {},
+        "cross_module_id": _get("cross_module_id"),
+        "graph_interrupt_id": approval_extra.get("graph_interrupt_id"),
+        "extra_fields": extra_fields,
+    }
+    # remaining_pending_count 由 sync/async 双路径计算后注入（默认 _UNSET 不注入）
+    if remaining_pending_count is not _UNSET:
+        params["extra_fields"]["remaining_pending_count"] = remaining_pending_count
+    return params
+
+
+def _build_payload(approval: Approval, state: str | None = None, extra: dict | None = None) -> dict[str, Any]:
+    """兼容薄包装：Redis 持久化 payload（原独立构造器，已收敛到 build_approval_payload）。"""
+    return build_approval_payload(approval, state, "persist", extra)
 
 
 def _extract_tool_call_event_kwargs(approval: Approval) -> dict[str, Any]:
-    """从 Approval 提取 publish_tool_call_sync 所需的统一参数。
+    """兼容薄包装：工具调用事件统一参数（原独立构造器，已收敛到 build_approval_payload）。
 
     所有从 Approval 发布工具调用事件（TIMEOUT/WAITING/RUNNING）的统一参数构造出口，
-    避免 _build_tool_call_payload + publish_event_sync 的旧路径导致的双轨发布。
+    避免旧路径（构造 payload + publish_event_sync）导致的双轨发布。
+    risk_level 等字段的提取逻辑位于 build_approval_payload（tool scope）共享映射表。
     """
-    approval_extra = approval.extra if isinstance(approval.extra, dict) else {}
-    tool_call_id = approval_extra.get("tool_call_id") or approval.interrupt_id
-    event_source = _SOURCE_TO_EVENT_SOURCE.get(approval.source, EventSource.CHAT)
-    cross_module_id = derive_cross_module_id(approval)
-    return {
-        "tool_call_id": tool_call_id,
-        "tool_name": approval.tool_name or "unknown",
-        "module": event_source,
-        "module_id": approval.source_id or "",
-        "message_id": approval_extra.get("message_id") or "",
-        "parameters": approval.parameters if isinstance(approval.parameters, dict) else {},
-        "cross_module_id": cross_module_id,
-        "graph_interrupt_id": approval_extra.get("graph_interrupt_id"),
-    }
+    return build_approval_payload(approval, None, "tool")
 
 
 def _publish_tool_call_timeout_event(approval: Approval):
@@ -238,6 +399,8 @@ def _publish_tool_call_timeout_event(approval: Approval):
     tool_call_id = kwargs["tool_call_id"]
     try:
         # 注册上下文（幂等：已存在时不覆盖非空字段，仅补全空字段）
+        # risk_level 透传：让 ToolCallContext 持有风险等级，transition 发布事件时
+        # 注入到 tool_call_* 事件 payload，前端从工具事件直接获取风险等级
         service.register(
             ToolCallContext(
                 tool_call_id=tool_call_id,
@@ -248,6 +411,7 @@ def _publish_tool_call_timeout_event(approval: Approval):
                 parameters=kwargs["parameters"],
                 cross_module_id=kwargs["cross_module_id"],
                 graph_interrupt_id=kwargs["graph_interrupt_id"],
+                risk_level=kwargs.get("risk_level", ""),
             )
         )
         # 状态机转换并发布事件（内部调用 publish_tool_call_sync）
@@ -285,6 +449,8 @@ def _publish_tool_call_waiting_event(approval: Approval):
     tool_call_id = kwargs["tool_call_id"]
     try:
         # 注册上下文（幂等：已存在时不覆盖非空字段，仅补全空字段）
+        # risk_level 透传：让 ToolCallContext 持有风险等级，transition 发布事件时
+        # 注入到 tool_call_* 事件 payload，前端从工具事件直接获取风险等级
         service.register(
             ToolCallContext(
                 tool_call_id=tool_call_id,
@@ -295,6 +461,7 @@ def _publish_tool_call_waiting_event(approval: Approval):
                 parameters=kwargs["parameters"],
                 cross_module_id=kwargs["cross_module_id"],
                 graph_interrupt_id=kwargs["graph_interrupt_id"],
+                risk_level=kwargs.get("risk_level", ""),
             )
         )
         # 状态机转换并发布事件（内部调用 publish_tool_call_sync）
@@ -329,6 +496,8 @@ def _publish_tool_call_running_event(approval: Approval):
     tool_call_id = kwargs["tool_call_id"]
     try:
         # 注册上下文（幂等：已存在时不覆盖非空字段，仅补全空字段）
+        # risk_level 透传：让 ToolCallContext 持有风险等级，transition 发布事件时
+        # 注入到 tool_call_* 事件 payload，前端从工具事件直接获取风险等级
         service.register(
             ToolCallContext(
                 tool_call_id=tool_call_id,
@@ -339,6 +508,7 @@ def _publish_tool_call_running_event(approval: Approval):
                 parameters=kwargs["parameters"],
                 cross_module_id=kwargs["cross_module_id"],
                 graph_interrupt_id=kwargs["graph_interrupt_id"],
+                risk_level=kwargs.get("risk_level", ""),
             )
         )
         # 状态机转换并发布事件（内部调用 publish_tool_call_sync）
@@ -359,105 +529,115 @@ def _publish_tool_call_running_event(approval: Approval):
         )
 
 
-def _build_approval_extra_fields(approval: Approval, extra: dict | None = None) -> dict[str, Any]:
-    """构造 publish_approval_sync 的 extra_fields 参数。
+def _count_remaining_pending(graph_interrupt_id: str, exclude_interrupt_id: str) -> int:
+    """统计同批次剩余 pending 审批数量（sync ORM 查询）。
 
-    将 Approval 的展示字段（title/description/operation/danger_level/action/user_input）
-    以及 extra 中透传的字段（graph_interrupt_id/message_id 等）合并为扁平 dict，
-    供 publish_approval_sync 注入 payload 顶层。
+    供 sync 路径（_build_approval_event_params）与 async 路径
+    （_build_approval_event_params_async，经 sync_to_async 包装复用）共享，
+    避免双路径各自内联 ORM 查询导致逻辑漂移。
     """
+    return (
+        Approval.objects.filter(
+            extra__graph_interrupt_id=graph_interrupt_id,
+            state=Approval.STATE_PENDING,
+        )
+        .exclude(interrupt_id=exclude_interrupt_id)
+        .count()
+    )
+
+
+_count_remaining_pending_async = sync_to_async(_count_remaining_pending)
+
+
+def _remaining_pending_condition(approval: Approval, state: str) -> tuple[str, str] | None:
+    """判断是否需要计算 remaining_pending_count。
+
+    Returns:
+        需要计算时返回 (graph_interrupt_id, interrupt_id)；否则返回 None（不注入字段）。
+    """
+    if state != Approval.STATE_APPROVED:
+        return None
     approval_extra = approval.extra if isinstance(approval.extra, dict) else {}
-    fields: dict[str, Any] = {
-        "title": approval.title or "",
-        "description": approval.description or "",
-        "operation": approval.operation or "",
-        "danger_level": approval.danger_level or "medium",
-        "action": approval.action or Approval.ACTION_CONFIRM,
-    }
-    if approval.user_input:
-        fields["user_input"] = approval.user_input
-    # 透传 extra 中的关键字段到顶层
-    if approval_extra.get("message_id") is not None:
-        fields["message_id"] = approval_extra["message_id"]
-    if approval_extra.get("graph_interrupt_id"):
-        fields["graph_interrupt_id"] = approval_extra["graph_interrupt_id"]
-    # risk_level 透传（新标准风险等级，优先于 danger_level，前端 ToolCallCard 显示高危红名）
-    if approval_extra.get("risk_level"):
-        fields["risk_level"] = approval_extra["risk_level"]
-    # 子 agent 嵌套层级字段透传（Phase E3，前端展示完整调用链路）
-    if approval_extra.get("parent_tool_call_id"):
-        fields["parent_tool_call_id"] = approval_extra["parent_tool_call_id"]
-    if isinstance(approval_extra.get("depth"), int) and approval_extra["depth"] > 0:
-        fields["depth"] = approval_extra["depth"]
-    if approval_extra.get("agent_name"):
-        fields["agent_name"] = approval_extra["agent_name"]
-    if isinstance(approval_extra.get("agent_path"), list) and approval_extra["agent_path"]:
-        fields["agent_path"] = approval_extra["agent_path"]
-    # tool_config 透传（前端用于显示 selected_tools/tool_tier）
-    tool_config = approval_extra.get("tool_config")
-    if isinstance(tool_config, dict):
-        if tool_config.get("selected_tools") is not None:
-            fields["selected_tools"] = tool_config["selected_tools"]
-        if tool_config.get("tool_tier"):
-            fields["tool_tier"] = tool_config["tool_tier"]
-    # 调用方传入的 extra 覆盖默认值（用于 approved_by 等动态字段）
-    if extra:
-        fields.update(extra)
-    return fields
+    graph_interrupt_id = approval_extra.get("graph_interrupt_id")
+    if not graph_interrupt_id:
+        return None
+    return graph_interrupt_id, approval.interrupt_id
+
+
+def _log_remaining_pending_success(approval: Approval, graph_interrupt_id: str, count: int) -> None:
+    logger.info(
+        f"[ApprovalService] approval_approved 携带 remaining_pending_count="
+        f"{count}, interrupt_id={approval.interrupt_id}, gid={graph_interrupt_id}"
+    )
+
+
+def _log_remaining_pending_failure(approval: Approval, err: Exception) -> int:
+    """remaining_pending_count 计算失败：记录 ERROR 并回退 0（保证字段不缺失，不再静默吞掉）。"""
+    logger.error(
+        f"[ApprovalService] 计算 remaining_pending_count 失败，回退为 0: "
+        f"interrupt_id={approval.interrupt_id}, error={err}"
+    )
+    return 0
+
+
+def _resolve_remaining_pending_count_sync(approval: Approval, state: str) -> Any:
+    """同步路径：计算 remaining_pending_count（仅 APPROVED + 批次场景，否则返回 _UNSET）。"""
+    condition = _remaining_pending_condition(approval, state)
+    if condition is None:
+        return _UNSET
+    graph_interrupt_id, interrupt_id = condition
+    try:
+        count = _count_remaining_pending(graph_interrupt_id, interrupt_id)
+        _log_remaining_pending_success(approval, graph_interrupt_id, count)
+        return count
+    except Exception as e:
+        return _log_remaining_pending_failure(approval, e)
+
+
+async def _resolve_remaining_pending_count_async(approval: Approval, state: str) -> Any:
+    """异步路径：await sync_to_async count（修复 async context 直接调 sync ORM 的报错）。"""
+    condition = _remaining_pending_condition(approval, state)
+    if condition is None:
+        return _UNSET
+    graph_interrupt_id, interrupt_id = condition
+    try:
+        count = await _count_remaining_pending_async(graph_interrupt_id, interrupt_id)
+        _log_remaining_pending_success(approval, graph_interrupt_id, count)
+        return count
+    except Exception as e:
+        return _log_remaining_pending_failure(approval, e)
 
 
 def _build_approval_event_params(approval: Approval, state: str, extra: dict | None = None) -> dict:
-    """构建 publish_approval_sync 调用参数（供直接发布与 outbox 补偿复用）。
+    """构建 publish_approval_sync 调用参数（同步版，供直接发布与 outbox 补偿复用）。
 
-    统一参数构建出口，确保直接发布与 outbox 补偿使用完全相同的参数集，
-    避免双轨构建导致的事件不一致。
+    统一参数构建出口，确保直接发布与 outbox 补偿使用完全相同的参数集。
+    字段逻辑收敛到 build_approval_payload（broadcast scope），本函数仅负责
+    remaining_pending_count 的同步计算与注入。
     """
-    event_type = _APPROVAL_STATE_TO_EVENT_TYPE.get(state, EventType.APPROVAL_PENDING)
-    approval_extra = approval.extra if isinstance(approval.extra, dict) else {}
-    tool_call_id = approval_extra.get("tool_call_id") or approval.interrupt_id
-    event_source = _SOURCE_TO_EVENT_SOURCE.get(approval.source, EventSource.CHAT)
-    cross_module_id = derive_cross_module_id(approval)
-    extra_fields_merged = _build_approval_extra_fields(approval, extra)
+    return build_approval_payload(
+        approval,
+        state,
+        "broadcast",
+        extra,
+        remaining_pending_count=_resolve_remaining_pending_count_sync(approval, state),
+    )
 
-    # v8: 计算后端权威字段 remaining_pending_count
-    if state == Approval.STATE_APPROVED:
-        graph_interrupt_id = approval_extra.get("graph_interrupt_id")
-        if graph_interrupt_id:
-            try:
-                remaining_pending_count = (
-                    Approval.objects.filter(
-                        extra__graph_interrupt_id=graph_interrupt_id,
-                        state=Approval.STATE_PENDING,
-                    )
-                    .exclude(interrupt_id=approval.interrupt_id)
-                    .count()
-                )
-                extra_fields_merged["remaining_pending_count"] = remaining_pending_count
-                logger.info(
-                    f"[ApprovalService] approval_approved 携带 remaining_pending_count="
-                    f"{remaining_pending_count}, interrupt_id={approval.interrupt_id}, "
-                    f"gid={graph_interrupt_id}"
-                )
-            except Exception as e:
-                logger.warning(
-                    f"[ApprovalService] 计算 remaining_pending_count 失败，忽略: "
-                    f"interrupt_id={approval.interrupt_id}, error={e}"
-                )
 
-    return {
-        "event_type": event_type,
-        "interrupt_id": approval.interrupt_id,
-        "tool_call_id": tool_call_id,
-        "module": event_source,
-        "module_id": approval.source_id or "",
-        "state": state,
-        "tool_name": approval.tool_name or "",
-        "message_id": approval_extra.get("message_id") or "",
-        "parameters": approval.parameters if isinstance(approval.parameters, dict) else {},
-        "cross_module_id": cross_module_id,
-        "graph_interrupt_id": approval_extra.get("graph_interrupt_id"),
-        "extra_fields": extra_fields_merged,
-    }
+async def _build_approval_event_params_async(approval: Approval, state: str, extra: dict | None = None) -> dict:
+    """构建 publish_approval 调用参数（异步版）。
+
+    修复 remaining_pending_count async 报错（根因：sync ORM count 在 async context
+    直接调用被 Django 拒绝）：count 查询经 sync_to_async 包装后 await 执行，
+    与同步版共用 _remaining_pending_condition / 日志收尾，避免双路径逻辑漂移。
+    """
+    return build_approval_payload(
+        approval,
+        state,
+        "broadcast",
+        extra,
+        remaining_pending_count=await _resolve_remaining_pending_count_async(approval, state),
+    )
 
 
 def _create_outbox_entry(approval: Approval, params: dict) -> ApprovalOutboxEntry | None:
@@ -553,12 +733,14 @@ async def _broadcast_approval_changed_async(approval: Approval, state: str, extr
     """统一发布审批事件（异步版，通过 publish_approval 异步入口）。
 
     Phase C 集成：与同步版对称的双写 + 补偿模式。
-    参数构建复用 _build_approval_event_params，确保同步/异步路径参数一致。
+    参数构建复用 _build_approval_event_params_async（remaining_pending_count 的
+    sync ORM count 经 sync_to_async 包装 await 执行，修复 async context 报错），
+    确保同步/异步路径参数一致。
     outbox 创建使用 sync_to_async 包装（Django ORM 是同步的）。
     """
     from Django_xm.common.realtime_sync import publish_approval
 
-    params = _build_approval_event_params(approval, state, extra)
+    params = await _build_approval_event_params_async(approval, state, extra)
 
     outbox_entry = await sync_to_async(_create_outbox_entry)(approval, params)
 
@@ -647,7 +829,12 @@ def _record_metrics_for_state(approval: Approval, state: str) -> None:
         approval_metrics.on_timeout(_approval_created_timestamp(approval))
 
 
-def _persist_and_broadcast(approval: Approval, state: str, extra: dict | None = None):
+def _persist_and_broadcast(
+    approval: Approval,
+    state: str,
+    extra: dict | None = None,
+    suppress_tool_event: bool = False,
+):
     """统一状态持久化：DB更新 → Redis同步 → 事件广播 + 工具调用事件联动。
 
     这是所有审批状态变更的唯一出口，确保三层存储始终一致，并联动发布工具调用事件：
@@ -655,6 +842,14 @@ def _persist_and_broadcast(approval: Approval, state: str, extra: dict | None = 
     - state=PROCESSING：发布 TOOL_CALL_RUNNING（工具开始执行）
     - state=WAITING：发布 TOOL_CALL_WAITING（同批次还有其他 pending）
     - 终态(approved/rejected/timeout)：写入 Redis processed key，构建终态payload
+
+    Args:
+        approval: Approval 模型实例
+        state: 目标状态
+        extra: 附加数据（透传至事件 payload 与终态 payload）
+        suppress_tool_event: 为 True 时跳过工具生命周期事件联动（仅 Redis 同步 +
+            审批事件广播）。用于 timeout_approval 的 PROCESSING 中间态——发布
+            PROCESSING 后不再发布 RUNNING，避免前端短暂显示"执行中"再变为"超时"。
 
     修复问题 O/P：审批创建即发布 WAITING（不依赖 batch_size），
                   审批通过即发布 RUNNING（不依赖 stream_helpers 补发）。
@@ -677,15 +872,16 @@ def _persist_and_broadcast(approval: Approval, state: str, extra: dict | None = 
     _broadcast_approval_changed(approval, state, extra)
 
     # 工具调用事件联动（让 ToolCallCard 状态与审批面板分离）
-    if state == Approval.STATE_PENDING:
-        # 审批创建：工具进入"等待审批"状态
-        _publish_tool_call_waiting_event(approval)
-    elif state == Approval.STATE_PROCESSING:
-        # 审批通过：工具开始执行
-        _publish_tool_call_running_event(approval)
-    elif state == Approval.STATE_WAITING:
-        # 同批次还有其他 pending：工具保持"等待"状态
-        _publish_tool_call_waiting_event(approval)
+    if not suppress_tool_event:
+        if state == Approval.STATE_PENDING:
+            # 审批创建：工具进入"等待审批"状态
+            _publish_tool_call_waiting_event(approval)
+        elif state == Approval.STATE_PROCESSING:
+            # 审批通过：工具开始执行
+            _publish_tool_call_running_event(approval)
+        elif state == Approval.STATE_WAITING:
+            # 同批次还有其他 pending：工具保持"等待"状态
+            _publish_tool_call_waiting_event(approval)
 
     # 统一底层修复（Z1 次根因）：对所有状态同步 DB ChatMessage.tool_calls[].approval.state
     # 确保非终态（waiting/processing/pending）也回写 DB，前端 snapshot 兜底能拿到正确中间态。
@@ -754,74 +950,6 @@ def _match_tool_call_in_list(tool_calls, approval: Approval):
     return None
 
 
-def _build_approval_sync_fields(
-    approval: Approval,
-    state: str,
-    approval_extra: dict,
-    tc_id: str,
-    graph_interrupt_id: str | None,
-) -> dict[str, Any]:
-    """构造要同步到 tool_call.approval 的完整字段字典。
-
-    根本性修复（V1/V2）：同步完整 UI 字段到 ChatMessage.tool_calls[].approval，
-    确保前端刷新后 loadSessionDetail 能拿到 title/description/operation 等 UI 字段。
-
-    仅包含非空值字段，调用方负责字段比对与写库。
-
-    Args:
-        approval: Approval 模型实例
-        state: 审批状态
-        approval_extra: approval.extra 字典
-        tc_id: tool_call_id（从 extra 提取）
-        graph_interrupt_id: 批次 ID（从 extra 提取）
-
-    Returns:
-        Dict[str, Any]: 同步字段字典
-    """
-    sync_fields: dict[str, Any] = {
-        "state": state,
-        "interrupt_id": approval.interrupt_id,
-    }
-    if tc_id:
-        sync_fields["tool_call_id"] = tc_id
-    if graph_interrupt_id:
-        sync_fields["graph_interrupt_id"] = graph_interrupt_id
-    # UI 展示字段（V1/V2 根因修复）
-    if approval.title:
-        sync_fields["title"] = approval.title
-    if approval.description:
-        sync_fields["description"] = approval.description
-    if approval.operation:
-        sync_fields["operation"] = approval.operation
-    if approval.danger_level:
-        sync_fields["danger_level"] = approval.danger_level
-    if approval.parameters:
-        sync_fields["parameters"] = approval.parameters
-    if approval.tool_name:
-        sync_fields["tool_name"] = approval.tool_name
-    if approval.action:
-        sync_fields["action"] = approval.action
-    if approval.user_input:
-        sync_fields["user_input"] = approval.user_input
-    # 路由字段
-    if approval.source:
-        sync_fields["source"] = approval.source
-    if approval.source_id:
-        sync_fields["source_id"] = approval.source_id
-    if approval.chat_session_id:
-        sync_fields["chat_session_id"] = approval.chat_session_id
-    # 时间字段（ISO 格式，与 _build_payload 一致）
-    if approval.created_at:
-        sync_fields["created_at"] = approval.created_at.isoformat().replace("+00:00", "Z")
-    if approval.expires_at:
-        sync_fields["expires_at"] = approval.expires_at.isoformat().replace("+00:00", "Z")
-    # 透传 extra 中的 message_id（前端依赖此字段精确定位消息）
-    if approval_extra.get("message_id") is not None:
-        sync_fields["message_id"] = approval_extra["message_id"]
-
-    return sync_fields
-
-
 def _apply_sync_fields_to_approval(tc: dict, sync_fields: dict[str, Any]) -> bool:
     """将 sync_fields 应用到 tool_call.approval，返回是否有字段变更。
 
@@ -829,7 +957,7 @@ def _apply_sync_fields_to_approval(tc: dict, sync_fields: dict[str, Any]) -> boo
 
     Args:
         tc: tool_call 字典（含 approval 字段）
-        sync_fields: _build_approval_sync_fields 返回的同步字段字典
+        sync_fields: build_approval_payload(..., scope='sync') 返回的同步字段字典
 
     Returns:
         bool: 是否有字段变更
@@ -948,11 +1076,8 @@ def sync_approval_state_to_chat_message(approval: Approval, state: str) -> bool:
         )
         # 继续进入后续的 approval.state 更新逻辑（old_state 为 None，会触发更新）
 
-    # 构造完整同步字段（V1/V2 根因修复：同步全 UI 字段）
-    approval_extra = approval.extra if isinstance(approval.extra, dict) else {}
-    tc_id = approval_extra.get("tool_call_id") or ""
-    graph_interrupt_id = approval_extra.get("graph_interrupt_id")
-    sync_fields = _build_approval_sync_fields(approval, state, approval_extra, tc_id, graph_interrupt_id)
+    # 构造完整同步字段（V1/V2 根因修复：同步全 UI 字段，含嵌套层级与 tool_config 展开）
+    sync_fields = build_approval_payload(approval, state, "sync")
 
     # 全字段比对应用（幂等：无字段变更则跳过写库）
     old_state = target_tc.get("approval", {}).get("state") if isinstance(target_tc.get("approval"), dict) else None
@@ -1182,7 +1307,7 @@ def _merge_passthrough_fields(approval_data: dict[str, Any], extra_data: dict[st
 
     ApprovalMiddleware 创建的审批请求包含 risk_level 和嵌套层级字段，
     这些字段不在 Approval 模型字段中，需要保存到 extra JSON 字段，
-    供 _build_approval_extra_fields 发布到事件 payload 顶层，
+    供 build_approval_payload（broadcast/sync scope）发布到事件 payload 顶层，
     以及 build_approval_index_item 供快照 API 返回。
 
     已存在 extra_data 中的字段不覆盖（保留先注册的值）。
@@ -1257,26 +1382,16 @@ def request_approval(
         approval.save(update_fields=["created_at", "expires_at"])
 
     pending_data = _build_payload(approval, state=Approval.STATE_PENDING)
-    persist_approval_pending(source_id, pending_data)
-    _broadcast_approval_changed(approval, Approval.STATE_PENDING)
-
-    # 审批创建时联动发布 TOOL_CALL_WAITING 事件（与 async 版本一致）
-    # 修复问题 O/P：让 ToolCallCard 立即显示"等待审批"状态，而非"执行中"
-    _publish_tool_call_waiting_event(approval)
-
-    # 统一底层修复（Z1 补强）：PENDING 状态也回写 DB ChatMessage.tool_calls[].approval.state
-    # 与 _persist_and_broadcast 中的逻辑对称。覆盖 M16 复用 interrupt_id 重新发起审批场景
-    # （created=False 时 DB 中可能保留上一次终态），确保前端 snapshot 兜底拿到正确的 PENDING 状态。
-    # persist_approval_pending 使用 approval:pending:{source_id} key（待处理列表），
-    # 与 _persist_and_broadcast 中的 persist_approval_state（approval:processed:{interrupt_id}）不同，
+    # persist_approval_pending 写入 approval:pending:{source_id}（待处理列表），
+    # 与 _persist_and_broadcast 内的 persist_approval_state（approval:processed:{interrupt_id}）不同，
     # 两者职责互补，不可合并。
-    try:
-        sync_approval_state_to_chat_message(approval, Approval.STATE_PENDING)
-    except Exception as sync_err:
-        logger.warning(
-            f"[ApprovalService] request_approval 同步 PENDING 态到 ChatMessage 失败(非致命): "
-            f"interrupt_id={approval.interrupt_id}, err={sync_err}"
-        )
+    persist_approval_pending(source_id, pending_data)
+
+    # 统一发布出口（与 _persist_and_broadcast 其他调用方一致，消除双轨发布）：
+    # PENDING 广播（APPROVAL_PENDING）+ TOOL_CALL_WAITING 联动（问题 O/P）+
+    # ChatMessage.tool_calls 中间态回写（Z1）+ metrics 采集，全部由统一出口完成。
+    # 覆盖 M16 复用 interrupt_id 重新发起审批场景（created=False 时 DB 中可能保留上一次终态）。
+    _persist_and_broadcast(approval, Approval.STATE_PENDING)
 
     # 深度研究场景：Redis 原子递增 pending 计数器
     if source == Approval.SOURCE_DEEP_RESEARCH:
@@ -1361,22 +1476,16 @@ async def request_approval_async(
         await _reset_timestamps(approval)
 
     pending_data = _build_payload(approval, state=Approval.STATE_PENDING)
+    # persist_approval_pending 写入 approval:pending:{source_id}（待处理列表），
+    # 与 _persist_and_broadcast_async 内的 persist_approval_state（approval:processed:{interrupt_id}）不同，
+    # 两者职责互补，不可合并。
     persist_approval_pending(source_id, pending_data)
-    await _broadcast_approval_changed_async(approval, Approval.STATE_PENDING)
 
-    # 审批创建时联动发布 TOOL_CALL_WAITING 事件
-    # 修复问题 O/P：让 ToolCallCard 立即显示"等待审批"状态，而非"执行中"
-    _publish_tool_call_waiting_event(approval)
-
-    # 统一底层修复（Z1 补强）：PENDING 状态也回写 DB ChatMessage.tool_calls[].approval.state
-    # 与 _persist_and_broadcast_async 中的逻辑对称。覆盖 M16 复用 interrupt_id 重新发起审批场景。
-    try:
-        await _sync_approval_state_to_chat_message_async(approval, Approval.STATE_PENDING)
-    except Exception as sync_err:
-        logger.warning(
-            f"[ApprovalService] request_approval_async 同步 PENDING 态到 ChatMessage 失败(非致命): "
-            f"interrupt_id={approval.interrupt_id}, err={sync_err}"
-        )
+    # 统一发布出口（与 _persist_and_broadcast_async 其他调用方一致，消除双轨发布）：
+    # PENDING 广播 + TOOL_CALL_WAITING 联动（问题 O/P）+ ChatMessage.tool_calls
+    # 中间态回写（Z1）+ metrics 采集，全部由统一出口完成。
+    # 覆盖 M16 复用 interrupt_id 重新发起审批场景。
+    await _persist_and_broadcast_async(approval, Approval.STATE_PENDING)
 
     # 深度研究场景：Redis 原子递增 pending 计数器
     if source == Approval.SOURCE_DEEP_RESEARCH:
@@ -1787,30 +1896,18 @@ def timeout_approval(interrupt_id: str):
         approval.extra = extra_data
         approval.save(update_fields=["state", "extra"])
 
-        # 超时场景：先持久化 PROCESSING 状态（仅 Redis 同步，不联动发布 TOOL_CALL_RUNNING，
-        # 避免前端短暂显示"执行中"再变为"超时"），然后直接发布 APPROVAL_TIMEOUT + TOOL_CALL_TIMEOUT
-        persist_approval_state(approval.interrupt_id, Approval.STATE_PROCESSING)
-        _broadcast_approval_changed(approval, Approval.STATE_PROCESSING)
+        # 统一发布出口（与 _persist_and_broadcast 其他调用方一致，消除"绕过统一出口"的
+        # PROCESSING 联动语义不一致）：
+        # 1. 先持久化 PROCESSING（suppress_tool_event=True：仅 Redis 同步 + APPROVAL_PROCESSING
+        #    广播，不联动发布 TOOL_CALL_RUNNING，避免前端短暂显示"执行中"再变为"超时"）
+        _persist_and_broadcast(approval, Approval.STATE_PROCESSING, suppress_tool_event=True)
 
-        # 终态：APPROVAL_TIMEOUT（审批面板显示"审批已超时"）
-        timeout_payload = _build_payload(approval, state=Approval.STATE_TIMEOUT, extra={"timeout": True})
-        persist_approval_processed(approval.interrupt_id, timeout_payload)
-        _broadcast_approval_changed(approval, Approval.STATE_TIMEOUT, extra={"timeout": True})
+        # 2. 终态：APPROVAL_TIMEOUT（审批面板显示"审批已超时"）。
+        #    Redis 终态持久化、ChatMessage.tool_calls 同步（Z1）与 metrics 均由统一出口完成。
+        _persist_and_broadcast(approval, Approval.STATE_TIMEOUT, extra={"timeout": True})
 
         # 工具卡片显示"审批超时"状态（与审批面板分离）
         _publish_tool_call_timeout_event(approval)
-
-        # 统一底层修复（Z1 补强）：timeout_approval 绕过了 _persist_and_broadcast，
-        # 需要显式同步 TIMEOUT 终态到 ChatMessage.tool_calls，确保刷新后 API 返回的
-        # tool_calls 中 approval.state 反映超时状态（与 _persist_and_broadcast 中逻辑对称）。
-        # 用 try/except 保护，DB 同步失败不影响主流程（与 _persist_and_broadcast 一致）。
-        try:
-            sync_approval_state_to_chat_message(approval, Approval.STATE_TIMEOUT)
-        except Exception as sync_err:
-            logger.warning(
-                f"[ApprovalService] timeout_approval 同步 TIMEOUT 终态到 ChatMessage 失败(非致命): "
-                f"interrupt_id={approval.interrupt_id}, err={sync_err}"
-            )
 
         logger.info(
             f"[ApprovalService] 审批超时处理(超时): interrupt_id={interrupt_id}, "

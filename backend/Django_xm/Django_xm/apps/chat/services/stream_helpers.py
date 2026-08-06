@@ -44,6 +44,7 @@ from .stream_tool_state import (
     _detect_tool_error,
     _detect_tool_rejected,
     _detect_tool_timeout,
+    is_tool_call_failure,
 )
 
 # ---------------------------------------------------------------------------
@@ -211,40 +212,6 @@ def finalize_tool_calls(
                             break
 
     return events
-
-
-def is_tool_call_failure(exc: Exception) -> bool:
-    error_msg = str(exc).lower()
-    tool_call_failure_patterns = [
-        "failed to call a function",
-        "failed_generation",
-        "tool call failed",
-        "function call",
-    ]
-    if any(p in error_msg for p in tool_call_failure_patterns):
-        return True
-    try:
-        from openai import (
-            BadRequestError as OpenAIBadRequest,
-        )
-        from openai import (
-            PermissionDeniedError as OpenAIPermissionDenied,
-        )
-
-        if isinstance(exc, OpenAIPermissionDenied):
-            return True
-        if isinstance(exc, OpenAIBadRequest):
-            return True
-    except ImportError:
-        pass
-    try:
-        from groq import PermissionDeniedError as GroqPermissionDenied
-
-        if isinstance(exc, GroqPermissionDenied):
-            return True
-    except ImportError:
-        pass
-    return bool("403" in error_msg and "forbidden" in error_msg)
 
 
 def extract_interrupt_ids(intr: Any) -> tuple:

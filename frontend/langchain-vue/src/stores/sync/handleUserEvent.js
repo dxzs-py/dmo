@@ -1,4 +1,5 @@
 import { logger } from '@/utils/logger'
+import { getEventSessionId } from '@/utils/eventRouting'
 
 /**
  * @typedef {import('@/composables/useRealtimeSync').RealtimeEvent} RealtimeEvent
@@ -33,11 +34,15 @@ export const createHandleUserEvent = (ctx) => {
    */
   const applyUserEvent = async (event) => {
     const payload = event.payload || event
-    const sessionId = payload.sessionId || payload.id
+    // user 通道事件（session_created/deleted/updated）的会话 ID 在 payload 内部
+    // （后端 _publish_to_user_async 不注入顶层 session_id），统一经 getEventSessionId
+    // 解析（payload.sessionId 兜底），再回退 payload.id（会话对象内嵌 id，user 通道特有）。
+    const sessionId = getEventSessionId(event) || payload.id
     // 区分 replay 事件与实时事件（由 useRealtimeSync.dispatchEvent 注入）
     // replay 事件仅用于状态重建，不应触发副作用（自动订阅/自动切换），
     // 否则 N 条历史 session_created 会触发 N 次 subscribeSession + N 次快照请求
-    const isReplay = event._isReplay === true
+    // Task 7.1：_isReplay → isReplay（内部标记，不参与网络传输）
+    const isReplay = event.isReplay === true
 
     switch (event.type) {
       case 'session_created': {

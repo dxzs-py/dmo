@@ -115,7 +115,7 @@ export const StreamChunkType = {
   QUEUE: 'queue',
   CONTEXT: 'context',
   CITATION: 'citation',
-  CHAIN_OF_THOUGHT: 'chainOfThought',
+  CHAIN_OF_THOUGHT: 'chain_of_thought',
   SUGGESTIONS: 'suggestions',
   END: 'end',
   ERROR: 'error',
@@ -192,7 +192,7 @@ export function validateMessage(msg) {
  * @property {string} [result] - 工具输出结果
  * @property {string} [error] - 错误信息
  * @property {boolean} isInternal - 是否为内部工具（只读工具标识）
- * @property {boolean} autoApproved - SAFE 级自动通过标记
+ * @property {boolean} isAutoApproved - SAFE 级自动通过标记（SSE tool 事件经 utils/sse.js 由 autoApproved 统一改名，与 WebSocket 路径 toolCallHandler.js 消费端字段一致）
  * @property {string} parentToolCallId - 父级工具调用 ID（子 agent 场景）
  * @property {number} depth - 嵌套深度（0 = 顶层）
  * @property {string} agentName - 子 agent 名称
@@ -216,11 +216,9 @@ export function validateMessage(msg) {
  * @property {string} toolName - 工具名称
  * @property {string} state - 审批状态（ApprovalState 枚举值）
  * @property {string} [description] - 审批描述文案
- * @property {string} [dangerLevel] - 危险等级（safe/controlled/high）
- * @property {string} [riskLevel] - 风险等级
+ * @property {string} [riskLevel] - 风险等级（safe/controlled/high，唯一权威字段）
  * @property {Object} [parameters] - 工具入参（前端展示用）
  * @property {string} [operation] - 待执行操作描述
- * @property {string} [llmToolCallId] - LLM 工具调用 ID（关联 toolCallsMap）
  *
  * @see approvalHandler.js - createHandleApprovalEvent 处理此结构
  * @see ToolCallCard.vue - 审批面板消费此结构

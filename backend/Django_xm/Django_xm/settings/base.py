@@ -205,6 +205,8 @@ REST_FRAMEWORK = {
         "research": "5/min",
         "knowledge": "60/min",
         "sensitive": "10/min",
+        "snapshot": "30/min",
+        "meta": "60/min",
     },
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,

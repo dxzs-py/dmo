@@ -26,7 +26,6 @@ from typing import Any
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from Django_xm.common.event_schema import EventSource, EventType
-from Django_xm.common.tool_call_lifecycle import service
 
 logger = logging.getLogger(__name__)
 
@@ -74,15 +73,20 @@ def extract_thinking_content(chunk, provider_id: str = "") -> str | None:
     return None
 
 
+# 根因修复（P-FE-5）："input-available" 表示工具输入参数已就绪，
+# 但工具尚未开始执行（可能需要审批）。映射为 "pending" 而非 "running"，
+# 确保 SSE tool 事件与 WebSocket tool_call_pending 事件状态一致。
+# 原映射为 "running" 导致触发浏览器显示"执行中"，非触发浏览器显示"待审批"。
+# 实际执行状态由 tool_call_running 事件（SAFE 级自动通过 / 审批通过后）推进。
 _STATE_TO_STATUS = {
-    "input-available": "running",
+    "input-available": "pending",
     "output-available": "completed",
     "output-error": "failed",
 }
 
 
 def _map_state_to_status(state: str) -> str:
-    return _STATE_TO_STATUS.get(state, "running")
+    return _STATE_TO_STATUS.get(state, "pending")
 
 
 def _extract_tool_params(tool_call: dict) -> dict:
@@ -340,7 +344,7 @@ def _handle_ai_message_chunk(
                 "name": tool_name,
                 "type": f"tool-call-{tool_name}",
                 "state": "input-available",
-                "status": "running",
+                "status": "pending",
                 "parameters": {} if is_chunk else _extract_tool_params(tool_call),
                 "result": None,
                 "error": None,
@@ -422,7 +426,7 @@ def _handle_ai_message_chunk(
                         "name": tc_name,
                         "type": f"tool-call-{tc_name}",
                         "state": "input-available",
-                        "status": "running",
+                        "status": "pending",
                         "parameters": {},
                         "result": None,
                         "error": None,
@@ -450,7 +454,7 @@ def _handle_ai_message_chunk(
                             "name": tc_name,
                             "type": f"tool-call-{tc_name}",
                             "state": "input-available",
-                            "status": "running",
+                            "status": "pending",
                             "parameters": parsed_args,
                             "result": None,
                             "error": None,
@@ -573,33 +577,21 @@ def _handle_tool_message_chunk(
                 tool_info["result"] = message.content
             tool_info["error"] = None
 
-        # 发布工具调用生命周期事件（仅在能定位到上下文时调用）
+        # 标记工具生命周期事件类型，由 _publish_stream_event 统一发布（P-BE-1 根因修复）：
+        # 原代码在此处调用 sync 版 service.transition（fire-and-forget），立即设置 dedup_key，
+        # 导致后续 _publish_stream_event 的 async transition_async 被 dedup 跳过，
+        # 事件可能延迟或丢失。改为仅标记 lifecycle_event 字段，由 _publish_stream_event
+        # 作为唯一发布出口（await 确保事件可靠广播）。
         # 事件优先级：超时 > 拒绝 > 失败 > 完成（与 test_stream_helpers.py 一致）
-        # 注意：函数返回 list（而非 generator）以确保 transition 在调用时立即执行，
-        # 调用方 ``yield from _handle_tool_message_chunk(...)`` 语义不变（list 可迭代）。
         if tool_call_id:
             if is_timeout:
-                service.transition(
-                    tool_call_id,
-                    EventType.TOOL_CALL_TIMEOUT,
-                )
+                tool_info["lifecycle_event"] = EventType.TOOL_CALL_TIMEOUT.value
             elif is_rejected:
-                service.transition(
-                    tool_call_id,
-                    EventType.TOOL_CALL_REJECTED,
-                )
+                tool_info["lifecycle_event"] = EventType.TOOL_CALL_REJECTED.value
             elif is_error:
-                service.transition(
-                    tool_call_id,
-                    EventType.TOOL_CALL_FAILED,
-                    error=str(message.content) if message.content else None,
-                )
+                tool_info["lifecycle_event"] = EventType.TOOL_CALL_FAILED.value
             else:
-                service.transition(
-                    tool_call_id,
-                    EventType.TOOL_CALL_COMPLETED,
-                    result=message.content,
-                )
+                tool_info["lifecycle_event"] = EventType.TOOL_CALL_COMPLETED.value
 
         return [{"type": "tool_result", "data": tool_info}]
 

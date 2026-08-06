@@ -1,5 +1,6 @@
 import { logger } from '@/utils/logger'
 import { toCamelCase } from '@/utils/sessionTransformers'
+import { getEventTaskId } from '@/utils/eventRouting'
 
 /**
  * @typedef {import('@/composables/useRealtimeSync').RealtimeEvent} RealtimeEvent
@@ -63,7 +64,11 @@ export const createHandleTaskEvent = (ctx) => {
   const handleTaskEvent = async (event) => {
     // 统一入站转换：task 通道 WebSocket 事件 payload snake_case → camelCase
     event.payload = toCamelCase(event.payload)
-    const taskId = event.payload?.taskId
+    // 路由字段解析（P3-R1 同源修复，统一入口 getEventTaskId）：
+    // 后端将 task_id 注入事件顶层（见 realtime_events.py _publish_to_task_async），
+    // payload 内部不含 task_id。统一 helper 优先 payload，其次 event 顶层，
+    // 否则 task 通道事件被静默丢弃。
+    const taskId = getEventTaskId(event)
     if (!taskId) return
 
     const payload = event.payload || event

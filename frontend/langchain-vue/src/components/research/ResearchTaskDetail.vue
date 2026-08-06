@@ -69,12 +69,14 @@
     <div v-if="taskPendingApprovals.size > 0" class="approval-section">
       <!-- 局部 ErrorBoundary：审批卡片渲染畸形 approval 数据时仅替换审批区，保留报告与文件列表 -->
       <ErrorBoundary :full-screen="false">
+        <!-- Task 7：审批面板工具状态统一走 approvalStateToToolStatus（唯一推导），
+             修复"待审批/等待同批"工具被映射为 running 显示"执行中"（P3-19 同类根因） -->
         <ToolCallCard
           v-for="[id, entry] in taskPendingApprovals"
           :key="id"
           :tool-name="entry.approvalData?.toolName || 'unknown'"
           :description="entry.approvalData?.description || ''"
-          :status="entry.approvalData?.state === 'rejected' ? 'rejected' : (entry.approvalData?.state === 'timeout' ? 'timeout' : 'running')"
+          :status="approvalStateToToolStatus(entry.approvalData?.state)"
           :input="entry.approvalData?.parameters"
           :output="entry.approvalData?.result || entry.approvalData?.output"
           :tool-call="{ approval: entry.approvalData, id: entry.approvalData?.interruptId || id }"
@@ -123,6 +125,7 @@ import ErrorBoundary from '@/components/common/ErrorBoundary.vue'
 import ToolCallCard from '@/components/chat/ToolCallCard.vue'
 import ResearchTaskReport from './ResearchTaskReport.vue'
 import { formatDate } from '@/utils/format'
+import { approvalStateToToolStatus } from '@/utils/toolCallStateMachine'
 
 /**
  * 深度研究 - 任务详情卡片

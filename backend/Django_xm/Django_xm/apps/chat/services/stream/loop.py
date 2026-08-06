@@ -111,11 +111,11 @@ def _publish_input_ready_events(message: Any, *, session_id: str, seen_tool_call
                         parameters=parameters,
                     )
                 )
-                service.transition(
-                    tc_id,
-                    EventType.TOOL_CALL_PENDING,
-                    parameters=parameters or None,
-                )
+                # PENDING 事件由 _publish_stream_event 统一发布（P-BE-1 根因修复）：
+                # 原在此处 sync transition（fire-and-forget）立即设置 dedup_key，
+                # 导致后续 _publish_stream_event 的 async transition_async 被 dedup 跳过，
+                # 事件可能延迟或丢失。register 已注册上下文（含 parameters），
+                # _publish_stream_event 处理 SSE tool 事件时会复用并 await 发布。
                 seen_tool_call_ids.add(tc_id)
             except Exception as e:
                 logger.warning(f"发布 PENDING 事件失败: tool_call_id={tc_id}, err={e}")
@@ -149,11 +149,10 @@ def _publish_input_ready_events(message: Any, *, session_id: str, seen_tool_call
                     parameters=parameters,
                 )
             )
-            service.transition(
-                tool_call_id,
-                EventType.TOOL_CALL_PENDING,
-                parameters=parameters or None,
-            )
+            # PENDING 事件由 _publish_stream_event 统一发布（P-BE-1 根因修复）：
+            # 原在此处 sync transition（fire-and-forget）立即设置 dedup_key，
+            # 导致后续 _publish_stream_event 的 async transition_async 被 dedup 跳过。
+            # register 已注册上下文（含 parameters），_publish_stream_event 会复用。
             seen_tool_call_ids.add(tool_call_id)
         except Exception as e:
             logger.warning(f"发布 PENDING 事件失败: tool_call_id={tool_call_id}, err={e}")

@@ -10,6 +10,7 @@ from drf_spectacular.utils import extend_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from Django_xm.apps.core.throttling import MetaRateThrottle
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.responses import error_response, success_response
 
@@ -81,6 +82,8 @@ class ChatCommandExecuteView(APIView):
 
 class ProjectContextView(APIView):
     permission_classes = [IsAuthenticated]
+    # 页面加载即请求的只读接口，独立 meta 额度（Task 3.2）
+    throttle_classes = [MetaRateThrottle]
 
     @extend_schema(exclude=True)
     def get(self, request):

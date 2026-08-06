@@ -285,15 +285,16 @@ const researchStore = useResearchStore()
 const isLoading = ref(false)
 const router = useRouter()
 const route = useRoute()
-const task = ref(null)
+const currentTaskId = ref(null)
+const task = computed(() => researchStore.getTaskStatus(currentTaskId.value))
 
 /** 当前任务的待审批列表（过滤出 source=deep_research 且 taskId 匹配的审批） */
 const taskPendingApprovals = computed(() => {
   const result = new Map()
-  const currentTaskId = task.value?.taskId
-  if (!currentTaskId) return result
+  const tid = task.value?.taskId
+  if (!tid) return result
   for (const [id, entry] of approvalStore.pendingApprovals) {
-    if (entry.source === 'deep_research' && entry.taskId === currentTaskId) {
+    if (entry.source === 'deep_research' && entry.taskId === tid) {
       result.set(id, entry)
     }
   }
@@ -573,7 +574,7 @@ const pollTaskStatus = async () => {
     const response = await deepResearchAPI.getStatus(task.value.taskId)
     const responseData = response.data.data || response.data
     const prevStatus = task.value.status
-    task.value = { ...task.value, ...responseData }
+    researchStore.setTaskStatus(currentTaskId.value, responseData)
 
     if (isTerminalStatus(task.value.status)) {
       stopPolling()
@@ -599,8 +600,7 @@ const pollTaskStatus = async () => {
   } catch (error) {
     logger.error('获取任务状态失败:', error)
     if (error?.response?.status === 404) {
-      task.value.status = 'failed'
-      task.value.errorMessage = '研究任务不存在或已被删除'
+      researchStore.setTaskStatus(currentTaskId.value, { status: 'failed', errorMessage: '研究任务不存在或已被删除' })
       stopPolling()
       return
     }
@@ -627,7 +627,7 @@ const startResearch = async () => {
   }
 
   isLoading.value = true
-  task.value = null
+  currentTaskId.value = null
   pollCount = 0
   currentPollInterval = BASE_POLL_INTERVAL
   elapsedSeconds.value = 0
@@ -651,7 +651,9 @@ const startResearch = async () => {
       maxTokens: modelConfig.maxTokens,
       specialParams: modelConfig.specialParams,
     })
-    task.value = response.data.data || response.data
+    const taskData = response.data.data || response.data
+    currentTaskId.value = taskData.taskId
+    researchStore.setTaskStatus(currentTaskId.value, taskData, { force: true })
     showTaskDetail.value = true
     ElMessage.success('研究任务已启动')
 
@@ -734,19 +736,27 @@ const connectSSE = async (taskId) => {
 }
 
 const handleSSEEvent = (data) => {
+  // 命名边界：对 sseData 整体调用 toCamelCase 递归转换，
+  // 然后将 type 还原为后端原始 snake_case（协议路由标识符，非业务数据）。
+  // case 分支依赖原始 snake_case 值（如 status_change/step_update），
+  // 显式还原后不再隐式依赖 toCamelCase 的实现细节。
   const sseData = toCamelCase(data)
+  if (data && typeof data === 'object') {
+    sseData.type = data.type
+  }
 
   switch (sseData.type) {
     case 'connected':
       progressMessage.value = '已连接，等待研究启动...'
       break
     case 'status_change':
-      if (task.value) {
-        task.value.status = sseData.status
-        progressMessage.value = sseData.message || ''
+      if (currentTaskId.value) {
+        const updateData = { status: sseData.status }
         if (sseData.finalReport) {
-          task.value.finalReport = sseData.finalReport
+          updateData.finalReport = sseData.finalReport
         }
+        researchStore.setTaskStatus(currentTaskId.value, updateData)
+        progressMessage.value = sseData.message || ''
       }
       if (sseData.status === 'completed' || sseData.status === 'failed') {
         closeSSE()
@@ -756,7 +766,7 @@ const handleSSEEvent = (data) => {
           deepResearchAPI.getStatus(task.value.taskId).then(resp => {
             const fresh = resp.data?.data || resp.data
             if (fresh) {
-              task.value = { ...task.value, ...fresh }
+              researchStore.setTaskStatus(currentTaskId.value, fresh)
             }
           }).catch(() => {})
         }
@@ -818,7 +828,8 @@ const viewTask = async (selectedTask) => {
   stopPolling()
   stopElapsedTimer()
 
-  task.value = selectedTask
+  currentTaskId.value = selectedTask.taskId
+  researchStore.setTaskStatus(currentTaskId.value, selectedTask, { force: true })
   showTaskDetail.value = true
   checkDocAnalysisFile()
   // 接入统一 WebSocket 实时同步：入口先订阅一次（基于 selectedTask 当前已知字段）
@@ -832,7 +843,7 @@ const viewTask = async (selectedTask) => {
       const resp = await deepResearchAPI.getStatus(selectedTask.taskId)
       const fresh = resp.data?.data || resp.data
       if (fresh) {
-        task.value = { ...selectedTask, ...fresh }
+        researchStore.setTaskStatus(currentTaskId.value, fresh)
         // fresh 可能补充 chat_session_id 字段，重新订阅（幂等：若已订阅同 task+session 则跳过）
         subscribeRealtimeForTask(task.value)
         if (fresh.status === 'running' || fresh.status === 'pending') {
@@ -863,7 +874,7 @@ const deleteTask = () => {
   if (task.value?.taskId) {
     approvalStore.clearByTaskId(task.value.taskId)
   }
-  task.value = null
+  currentTaskId.value = null
   showTaskDetail.value = false
   docAnalysisContent.value = null
   docAnalysisFile.value = null
@@ -919,7 +930,9 @@ const submitContinueResearch = async () => {
         specialParams: modelConfig.specialParams,
       }
     )
-    task.value = response.data.data || response.data
+    const taskData = response.data.data || response.data
+    currentTaskId.value = taskData.taskId
+    researchStore.setTaskStatus(currentTaskId.value, taskData, { force: true })
     showTaskDetail.value = true
     continueDialogVisible.value = false
     ElMessage.success('续研任务已启动')
@@ -1037,7 +1050,7 @@ onActivated(async () => {
         const resp = await deepResearchAPI.getStatus(task.value.taskId)
         const fresh = resp.data?.data || resp.data
         if (fresh) {
-          task.value = { ...task.value, ...fresh }
+          researchStore.setTaskStatus(currentTaskId.value, fresh)
           // fresh 可能补充 chat_session_id，重新订阅（幂等）
           subscribeRealtimeForTask(task.value)
           // 如果状态变为已完成，加载文件列表
@@ -1086,6 +1099,19 @@ watch(() => getQueryParam(route, 'task_id'), async (newTaskId) => {
     logger.warn('[DeepResearchView] 路由参数变化加载任务失败:', e)
   }
 })
+
+// 审批清除后恢复轮询（所有待审批项处理完后，后台可能已完成但前端未刷新）
+let _prevPendingSize = 0
+watch(
+  () => approvalStore.pendingApprovals.size,
+  (newSize) => {
+    if (_prevPendingSize > 0 && newSize === 0 && task.value?.status === 'running') {
+      logger.info('[DeepResearch] 审批已全部处理，恢复轮询')
+      pollTaskStatus()
+    }
+    _prevPendingSize = newSize
+  }
+)
 
 onUnmounted(() => {
   stopPolling()

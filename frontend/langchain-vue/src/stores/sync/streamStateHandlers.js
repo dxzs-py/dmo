@@ -1,14 +1,12 @@
 import { logger } from '@/utils/logger'
-import { StreamState, ToolCallStatus, ApprovalState } from '@/types'
-import {
-  NON_TERMINAL_APPROVAL_STATES,
-} from './constants'
+import { StreamState } from '@/types'
 import {
   findMessageById,
   getSession,
   getCurrentVersion,
   getLastAssistantMessage,
 } from './helpers'
+import { finalizeToolCallsForResearchResult } from './messageIntegrity'
 
 /**
  * @typedef {import('@/composables/useRealtimeSync').RealtimeEvent} RealtimeEvent
@@ -51,6 +49,41 @@ export const createStreamStateHandlers = (ctx) => {
     finalizeToolCalls,
     verifyMessageIntegrity,
   } = ctx
+
+  /**
+   * 同一会话全量同步去重锁（本模块内部维护）
+   * handleStreamCompleted（finalized=true 分支）与 handleStreamFinalized 可能对同一会话
+   * 先后触发 requestFullSync，通过该 Set 确保同一会话同一时刻只发起一次全量同步。
+   * @type {Set<string>}
+   */
+  const fullSyncPending = new Set()
+
+  /**
+   * 去重包装的 requestFullSync：同一会话已有进行中的全量同步时直接返回 null
+   * @param {string} sessionId
+   * @param {Object} [options] - 透传给 requestFullSync 的合并选项
+   * @returns {Promise<{backendMessages: Array}|null>} 返回后端消息快照（合并前）；被去重跳过时返回 null
+   */
+  const guardedRequestFullSync = async (sessionId, options) => {
+    if (fullSyncPending.has(sessionId)) {
+      logger.debug(`[Sync] 全量同步进行中，跳过重复触发: session=${sessionId}`)
+      return null
+    }
+    fullSyncPending.add(sessionId)
+    try {
+      return await requestFullSync(sessionId, options)
+    } catch (err) {
+      // 防御：全量同步失败仅记录日志并返回 null（调用方按"被跳过"处理），
+      // 避免所有 requestFullSync 调用链产生 unhandled rejection；
+      // 数据不一致由后续 replay/新事件触发全量同步补偿
+      logger.error(
+        `[Sync] 全量同步失败: session=${sessionId}, error=${err?.message || err}`
+      )
+      return null
+    } finally {
+      fullSyncPending.delete(sessionId)
+    }
+  }
 
   /**
    * 处理流式事件（非触发浏览器通过 WebSocket 接收）
@@ -360,7 +393,7 @@ export const createStreamStateHandlers = (ctx) => {
       if (!targetMsg) {
         // 极端情况：无 assistant 消息，仅触发全量同步
         logger.warn(`[Sync] 深度研究结果回写但未找到目标消息: session=${sessionId}, task=${payload.taskId}`)
-        requestFullSync(sessionId)
+        guardedRequestFullSync(sessionId)
         return
       }
 
@@ -404,42 +437,10 @@ export const createStreamStateHandlers = (ctx) => {
         // 统一清理 pending/processing/waiting 三种非终态审批为对应终态。
         // waiting 状态由批量审批场景下 _handleProcessed 设置（同批次还有 pending 时），
         // 若研究完成时仍有工具卡在 waiting，将永久显示"等待其他审批"。
-        let pendingApprovalCount = 0
-        let runningToolCount = 0
-        if (targetMsg.toolCalls && Array.isArray(targetMsg.toolCalls)) {
-          for (const tc of targetMsg.toolCalls) {
-            if (NON_TERMINAL_APPROVAL_STATES.includes(tc.approval?.state)) pendingApprovalCount++
-            if (tc.status === ToolCallStatus.WAITING || tc.status === ToolCallStatus.RUNNING) runningToolCount++
-            // 对于仍在 pending/processing/waiting 状态的审批，研究完成/失败后强制清理为终态
-            if (tc.approval && NON_TERMINAL_APPROVAL_STATES.includes(tc.approval.state)) {
-              tc.approval.state = payload.success !== false ? ApprovalState.APPROVED : ApprovalState.REJECTED
-            }
-            // 如果工具还是 waiting/running 状态，研究都结束了，根据实际情况设置
-            if (tc.status === ToolCallStatus.WAITING || tc.status === ToolCallStatus.RUNNING) {
-              if (tc.result || tc.output) {
-                tc.status = ToolCallStatus.COMPLETED
-              } else {
-                tc.status = payload.success !== false ? ToolCallStatus.COMPLETED : ToolCallStatus.FAILED
-              }
-            }
-          }
-        }
-        // 同步清理 versions 中的审批状态
-        const ver = getCurrentVersion(targetMsg)
-        if (ver?.toolCalls) {
-          for (const tc of ver.toolCalls) {
-            if (tc.approval && NON_TERMINAL_APPROVAL_STATES.includes(tc.approval.state)) {
-              tc.approval.state = payload.success !== false ? ApprovalState.APPROVED : ApprovalState.REJECTED
-            }
-            if (tc.status === ToolCallStatus.WAITING || tc.status === ToolCallStatus.RUNNING) {
-              if (tc.result || tc.output) {
-                tc.status = ToolCallStatus.COMPLETED
-              } else {
-                tc.status = payload.success !== false ? ToolCallStatus.COMPLETED : ToolCallStatus.FAILED
-              }
-            }
-          }
-        }
+        // 收敛：内联循环移入 messageIntegrity.finalizeToolCallsForResearchResult
+        //（success 感知终态：审批→APPROVED/REJECTED，工具→COMPLETED/FAILED，行为与原内联一致）
+        const { pendingApprovalCount, runningToolCount } =
+          finalizeToolCallsForResearchResult(targetMsg, payload.success !== false)
         // 清理 pendingApprovals 中属于这个任务的审批
         let clearedApprovalCount = 0
         if (payload.taskId) {
@@ -458,8 +459,8 @@ export const createStreamStateHandlers = (ctx) => {
 
         logger.info(`[Sync] 深度研究结果回写: session=${sessionId}, task=${payload.taskId}, success=${payload.success !== false}`)
 
-        // 触发全量同步确保数据一致性
-        requestFullSync(sessionId)
+        // 触发全量同步确保数据一致性（去重锁：同一会话已有进行中的同步时跳过）
+        guardedRequestFullSync(sessionId)
 
         // 委托更新 researchStore.taskInfo（关联 chat 场景主路径）
         // 解耦 taskInfo 更新与 task 频道订阅状态，确保 DeepResearchView 未打开时 taskInfo 也实时更新
@@ -524,10 +525,8 @@ export const createStreamStateHandlers = (ctx) => {
         targetMsg.isStreaming = false
         logger.info(`[Sync] stream_completed 兜底 syncing→completed: session=${sessionId}`)
 
-        // 请求浏览器也需要最终化 toolCalls 状态
-        // 场景：WebSocket tool_call_completed 事件丢失或未到达时，
-        // toolCall.status 可能卡在 pending/running，导致 UI 永久显示"执行中"
-        finalizeToolCalls(targetMsg, sessionId)
+        // toolCalls 最终化统一收敛到 handleStreamFinalized（单一最终化路径）：
+        // stream_completed 仅兜底消息状态，toolCalls 由 stream_finalized 幂等最终化
       } else if (finalized
                  && targetMsg.streamState === StreamState.FINALIZING) {
         // FINALIZING 状态：PATCH 尚未完成，不兜底，等待 onStreamEnd 完成
@@ -537,9 +536,9 @@ export const createStreamStateHandlers = (ctx) => {
                  || targetMsg.streamState === StreamState.SYNCING) {
         logger.info(`[Sync] stream_completed 收到时请求浏览器消息状态为 ${targetMsg.streamState}，等待本地流程: session=${sessionId}, finalized=${finalized}`)
       } else if (finalized && targetMsg.streamState === StreamState.COMPLETED) {
-        // 消息已 COMPLETED：确保 toolCalls 也最终化（可能 WebSocket 事件乱序导致 toolCall 未更新）
-        finalizeToolCalls(targetMsg, sessionId)
-        logger.info(`[Sync] stream_completed 请求浏览器消息已 completed，最终化 toolCalls: session=${sessionId}`)
+        // 消息已 COMPLETED：toolCalls 最终化由 handleStreamFinalized 兜底
+        // （可能 WebSocket 事件乱序导致 toolCall 未更新，stream_finalized 幂等修正）
+        logger.info(`[Sync] stream_completed 请求浏览器消息已 completed，等待 stream_finalized 最终化 toolCalls: session=${sessionId}`)
       } else {
         logger.info(`[Sync] stream_completed 收到时请求浏览器消息状态为 ${targetMsg.streamState}，不切换: session=${sessionId}`)
       }
@@ -574,7 +573,8 @@ export const createStreamStateHandlers = (ctx) => {
           )
           if (m?.streamState === StreamState.FINALIZING) {
             logger.warn(`[Sync] FINALIZING 超时(15s)，主动全量同步: session=${sessionId}`)
-            requestFullSync(sessionId).then(() => {
+            guardedRequestFullSync(sessionId).then((result) => {
+              if (result === null) return
               if (m.streamState === StreamState.FINALIZING) {
                 m.streamState = StreamState.COMPLETED
                 m.isStreaming = false
@@ -599,10 +599,8 @@ export const createStreamStateHandlers = (ctx) => {
         && targetMsg.streamState !== StreamState.INTERRUPTED) {
       targetMsg.streamState = StreamState.COMPLETED
       targetMsg.isStreaming = false
-      // 非请求浏览器标记 COMPLETED 后，立即最终化所有非终态 toolCalls
-      // 防止 WebSocket tool_call_completed 事件丢失或乱序导致 toolCall 卡在 pending/running/waiting
-      // 与请求浏览器路径（isRequestBrowser 分支）行为对齐，确保跨浏览器工具状态一致
-      finalizeToolCalls(targetMsg, sessionId)
+      // toolCalls 最终化统一收敛到 handleStreamFinalized（单一最终化路径）：
+      // 非请求浏览器最终化在 stream_finalized 同步完成后执行（含 wasCompleted 场景）
     }
     // 清理非触发浏览器的"正在思考"状态（finalized=true 表示流式已最终化）
     thinkingSessions.delete(sessionId)
@@ -613,7 +611,7 @@ export const createStreamStateHandlers = (ctx) => {
       const targetMessageId = messageId
       || targetMsg.backendId?.toString()
       || targetMsg.id?.toString()
-      requestFullSync(sessionId).then((result) => {
+      guardedRequestFullSync(sessionId).then((result) => {
         if (!result?.backendMessages) return
         verifyMessageIntegrity(sessionId, targetMessageId, result.backendMessages)
       })
@@ -677,6 +675,12 @@ export const createStreamStateHandlers = (ctx) => {
       // 请求浏览器：本地数据已是权威，直接标记 COMPLETED
       targetMsg.streamState = StreamState.COMPLETED
       targetMsg.isStreaming = false
+      // 最终化 toolCalls（P3-22/P3-23 根因修复）：
+      // handleStreamCompleted 可能因时序原因未调用 finalizeToolCalls（如 stream_finalized
+      // 先于 stream_completed 到达，或 stream_completed 被保护态拦截）。
+      // 此处幂等调用确保 toolCallsMap 中非终态 toolCall 被修正为 COMPLETED，
+      // approval 非终态被修正为 TIMEOUT，避免审批按钮不消失。
+      finalizeToolCalls(targetMsg, sessionId)
       logger.info(`[Sync] stream_finalized 请求浏览器标记 completed: session=${sessionId}, message=${messageId || '(兜底)'}, wasCompleted=${wasCompleted}`)
       return
     }
@@ -689,7 +693,7 @@ export const createStreamStateHandlers = (ctx) => {
     if (!wasCompleted) {
       const prevState = targetMsg.streamState
       logger.info(`[Sync] stream_finalized 非请求浏览器触发全量同步: session=${sessionId}, message=${messageId || '(兜底)'}, prevState=${prevState}`)
-      await requestFullSync(sessionId, { allowContentMerge: true })
+      await guardedRequestFullSync(sessionId, { allowContentMerge: true })
     }
 
     // 同步完成后再标记 COMPLETED（纳入保护态，防止后续覆盖）
@@ -704,6 +708,12 @@ export const createStreamStateHandlers = (ctx) => {
         && refreshedTarget.streamState !== StreamState.ERROR) {
       refreshedTarget.streamState = StreamState.COMPLETED
       refreshedTarget.isStreaming = false
+      // 非请求浏览器最终化 toolCalls（P3-22/P3-23 根因修复）：
+      // 非请求浏览器依赖 WebSocket 事件同步工具状态，tool_call_completed/approval_approved
+      // 事件可能丢失或乱序，导致 toolCallsMap 中 toolCall 卡在 pending/running/waiting，
+      // approval 卡在 pending/processing/waiting。stream_finalized 表示流式已最终化，
+      // 所有非终态工具调用应兜底为终态，避免 UI 永久显示"执行中"和审批按钮不消失。
+      finalizeToolCalls(refreshedTarget, sessionId)
       logger.info(`[Sync] stream_finalized 非请求浏览器同步后标记 completed: session=${sessionId}, message=${messageId || '(兜底)'}`)
     }
   }

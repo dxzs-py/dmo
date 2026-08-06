@@ -210,7 +210,7 @@ def resume_chat_after_timeout(self, interrupt_id):
     )
 
     async def _run_resume():
-        from Django_xm.apps.chat.views_chat import _stream_chat_resume_generator
+        from Django_xm.apps.chat.services.chat_resume_generator import _stream_chat_resume_generator
 
         logger.info(f"[ResumeChatTimeout] 开始执行 LangGraph 恢复流: interrupt_id={interrupt_id}")
         async for event in _stream_chat_resume_generator(

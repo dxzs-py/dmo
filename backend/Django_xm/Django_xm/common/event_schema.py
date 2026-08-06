@@ -169,6 +169,7 @@ class ToolCallLifecyclePayload(TypedDict, total=False):
     agent_name: str | None  # 子 agent 名称（如 web-researcher）
     agent_path: list | None  # 完整调用链路（如 ["main", "web-researcher"]）
     risk_ceiling: str | None  # 子 agent 角色风险上限（safe/controlled/high）
+    risk_level: str | None  # 工具调用实际风险等级（safe/controlled/high，由 ApprovalMiddleware 计算，注入到 tool_call_* 事件 payload）
 
 
 class ApprovalPayload(TypedDict, total=False):

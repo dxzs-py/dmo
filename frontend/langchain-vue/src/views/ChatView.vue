@@ -1,19 +1,25 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { watchDebounced } from '@vueuse/core'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
 import { useModelStore } from '../stores/model'
 import { useApprovalStore } from '../stores/approval'
 import { useSyncStore } from '../stores/sync'
+import { useChatDeepResearchStore } from '../stores/chatDeepResearch'
 import { useChatInput } from '../composables/useChatInput'
 import { useChatUI } from '../composables/useChatUI'
 import { useChatCommands } from '../composables/useChatCommands'
 import { useChatKeyboard } from '../composables/useChatKeyboard'
 import { useRealtimeSync } from '../composables/useRealtimeSync'
 import { deepResearchAPI } from '../api/research'
+import { getSessionSnapshot } from '../api/realtime'
+import { chatAPI } from '../api/chat'
 import { getQueryParam } from '../utils/format'
+import { toCamelCase } from '../utils/sessionTransformers'
+import { readSSEStream } from '../utils/sse'
+import { Loading } from '@element-plus/icons-vue'
 import ChatHeader from '../components/chat/ChatHeader.vue'
 import ChatMessages from '../components/chat/ChatMessages.vue'
 import ChatInput from '../components/chat/ChatInput.vue'
@@ -25,7 +31,13 @@ const sessionStore = useSessionStore()
 const modelStore = useModelStore()
 const approvalStore = useApprovalStore()
 const syncStore = useSyncStore()
+// 聊天深度研究桥接层（Task 9：chat 与 deep_research 解耦后唯一桥接入口）
+const chatDeepResearchStore = useChatDeepResearchStore()
 const route = useRoute()
+const router = useRouter()
+
+// --- 刷新恢复：检查后端流状态 ---
+const streamStatusVisible = ref(false)
 
 // --- 输入相关逻辑 ---
 const {
@@ -97,8 +109,8 @@ const connectResearchSSE = async (taskId) => {
     if (!taskData || taskData.status !== 'running') return
   } catch (error) {
     // 任务不存在（404）时清空 researchTaskId，避免后续重复请求已删除任务
-    if (error?.response?.status === 404 && chatStore.researchTaskId === taskId) {
-      chatStore.researchTaskId = null
+    if (error?.response?.status === 404 && chatDeepResearchStore.researchTaskId === taskId) {
+      chatDeepResearchStore.researchTaskId = null
     }
     return // 查询失败则不连接
   }
@@ -113,43 +125,41 @@ const connectResearchSSE = async (taskId) => {
     // 连接成功，重置重连计数
     researchSSERetryCount = 0
 
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
+    // buffer/line 切分由 utils/sse.js readSSEStream 统一负责
 
     const processChunk = async () => {
       try {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buffer += decoder.decode(value, { stream: true })
-          const lines = buffer.split('\n')
-          buffer = lines.pop() || ''
-          for (const line of lines) {
-            if (!line.startsWith('data: ') || line === 'data: [DONE]') continue
-            try {
-              const parsed = JSON.parse(line.slice(6))
-              if (parsed.type === 'approval' || parsed.type === 'approval_timeout' || parsed.type === 'approval_processed') {
-                approvalStore.handleApprovalEvent(parsed.data || parsed, {
-                  source: 'deep_research',
-                  taskId,
-                  sessionId: sessionStore.currentSessionId,
-                })
-              } else if (parsed.type === 'approval_history') {
-                const effectiveTaskId = parsed.taskId || taskId
-                if (parsed.data) {
-                  approvalStore.restoreFromSSEHistory(parsed.data, effectiveTaskId, sessionStore.currentSessionId)
-                }
-              } else if (parsed.type === 'status_change') {
-                const status = parsed.status
-                if (status === 'completed' || status === 'failed') {
-                  researchSSEAbortController?.abort()
-                  return
-                }
-              }
-            } catch { /* 忽略 JSON 解析错误 */ }
+        await readSSEStream(response, (parsedRaw) => {
+          // 命名边界：统一解析（utils/sse.js readSSEStream 完成 buffer/line 切分），
+          // 对 parsed 整体调用 toCamelCase 递归转换，
+          // 然后将 type 还原为后端原始 snake_case（协议路由标识符，非业务数据）。
+          const parsed = toCamelCase(parsedRaw)
+          if (parsedRaw && typeof parsedRaw === 'object') {
+            parsed.type = parsedRaw.type
           }
-        }
+          if (parsed.type === 'approval' || parsed.type === 'approval_timeout' || parsed.type === 'approval_processed') {
+            // 审批事件经 sync 层转发（视图层收敛，SubTask 11.3），语义与数据与原直调 approvalStore 完全一致
+            syncStore.handleApprovalAction('handleApprovalEvent', parsed.data || parsed, {
+              source: 'deep_research',
+              taskId,
+              sessionId: sessionStore.currentSessionId,
+            })
+          } else if (parsed.type === 'approval_history') {
+            const effectiveTaskId = parsed.taskId || taskId
+            if (parsed.data) {
+              syncStore.handleApprovalAction('restoreFromSSEHistory', parsed.data, {
+                taskId: effectiveTaskId,
+                sessionId: sessionStore.currentSessionId,
+              })
+            }
+          } else if (parsed.type === 'status_change') {
+            const status = parsed.status
+            if (status === 'completed' || status === 'failed') {
+              // abort 后 readSSEStream 在下一轮 while 检测 signal.aborted 退出
+              researchSSEAbortController?.abort()
+            }
+          }
+        }, researchSSEAbortController.signal)
       } catch (e) {
         if (e.name !== 'AbortError') {
           console.warn('[ChatView] 深度研究 SSE 连接异常:', e)
@@ -161,8 +171,6 @@ const connectResearchSSE = async (taskId) => {
             setTimeout(() => connectResearchSSE(taskId), delay)
           }
         }
-      } finally {
-        reader.releaseLock()
       }
     }
     processChunk() // 不 await，后台运行
@@ -261,10 +269,32 @@ const loadCurrentSessionDetail = async () => {
     await loadSessionAttachments(sessionId)
     // 页面刷新后从已加载的 toolCalls 中恢复 pendingApprovals Map
     approvalStore.restoreFromSession(sessionId)
-    // 页面刷新后从消息历史恢复 researchTaskId
-    chatStore.restoreResearchContextFromMessages(sessionId)
+    // 页面刷新后从消息历史恢复 researchTaskId（经桥接层）
+    chatDeepResearchStore.restoreChatResearchContext(sessionId)
   } else {
     clearAttachments()
+  }
+}
+
+/**
+ * 刷新恢复：检查后端会话快照中的流状态
+ * 如果最后一条消息的 streamState 为 interrupted 或 streaming，
+ * 说明刷新前流式响应未正常完成，显示恢复提示。
+ */
+const checkBackendStreamStatus = async () => {
+  const sessionId = sessionStore.currentSessionId
+  if (!sessionId) return
+  try {
+    const response = await getSessionSnapshot(sessionId)
+    const data = response.data?.data || response.data
+    const messages = data?.messages || []
+    if (messages.length === 0) return
+    const lastMessage = messages[messages.length - 1]
+    if (lastMessage.streamState === 'interrupted' || lastMessage.streamState === 'streaming') {
+      streamStatusVisible.value = true
+    }
+  } catch {
+    // 静默失败，不影响正常使用
   }
 }
 
@@ -306,25 +336,46 @@ onMounted(async () => {
   await loadCurrentSessionDetail()
 
   if (researchTaskId) {
-    chatStore.researchTaskId = researchTaskId
+    chatDeepResearchStore.researchTaskId = researchTaskId
     // 设置持久化研究上下文标识，不随消息发送清空
     const researchQuery = getQueryParam(route, 'research_query') || ''
-    chatStore.researchContextInfo = { taskId: researchTaskId, query: researchQuery }
+    chatDeepResearchStore.researchContextInfo = { taskId: researchTaskId, query: researchQuery }
   }
-  // 非 URL 跳转（如页面刷新）时，restoreResearchContextFromMessages 已在 loadCurrentSessionDetail 中调用
+  // 非 URL 跳转（如页面刷新）时，restoreChatResearchContext 已在 loadCurrentSessionDetail 中调用
   if (queryMessage) {
     await nextTick()
     inputMessage.value = queryMessage
   }
 
   // 深度研究 SSE 重连：如果当前会话有进行中的深度研究任务，自动建立 SSE 连接恢复审批监听
-  if (chatStore.researchTaskId) {
-    connectResearchSSE(chatStore.researchTaskId)
+  if (chatDeepResearchStore.researchTaskId) {
+    connectResearchSSE(chatDeepResearchStore.researchTaskId)
   }
 
   // 订阅当前会话的 WebSocket 事件（初始会话）
   if (sessionStore.currentSessionId) {
     subscribeToSessionEvents(sessionStore.currentSessionId)
+  }
+
+  // 刷新恢复：检查后端流状态
+  checkBackendStreamStatus()
+
+  // 刷新恢复：如果没有 session_id 在路由参数中，尝试恢复最近活跃会话
+  if (!targetSessionId && !sessionStore.currentSessionId) {
+    try {
+      const response = await chatAPI.getSessions({ page: 1, pageSize: 1 })
+      const data = response.data?.data
+      const sessions = Array.isArray(data) ? data : (data?.items || [])
+      if (sessions.length > 0) {
+        const latestSession = sessions[0]
+        const sessionId = latestSession.id
+        if (sessionId) {
+          router.replace({ query: { ...route.query, session_id: sessionId } })
+        }
+      }
+    } catch {
+      // 静默失败，sessionStore.initialize() 已处理常规加载
+    }
   }
 })
 
@@ -347,9 +398,9 @@ watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
       // 切换会话时恢复该会话的待审批状态
       approvalStore.restoreFromSession(newId)
       // 如果新会话有进行中的深度研究任务，自动建立 SSE 连接
-      chatStore.restoreResearchContextFromMessages(newId)
-      if (chatStore.researchTaskId) {
-        connectResearchSSE(chatStore.researchTaskId)
+      chatDeepResearchStore.restoreChatResearchContext(newId)
+      if (chatDeepResearchStore.researchTaskId) {
+        connectResearchSSE(chatDeepResearchStore.researchTaskId)
       }
       // 订阅新会话的 WebSocket 事件
       subscribeToSessionEvents(newId)
@@ -362,6 +413,11 @@ watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
 
 <template>
   <div class="chat-view">
+    <div v-if="streamStatusVisible" class="stream-status-bar">
+      <el-icon><Loading /></el-icon>
+      <span>正在恢复流式连接...</span>
+    </div>
+
     <ChatHeader
       title="智能聊天"
       :current-mode="chatStore.currentMode"
@@ -452,7 +508,7 @@ watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
           :use-deep-thinking="useDeepThinking"
           :model-supports-deep-thinking="modelStore.currentModelCapabilities.includes('deep_thinking')"
           :is-uploading="isUploading"
-          :research-context-info="chatStore.researchContextInfo"
+          :research-context-info="chatDeepResearchStore.researchContextInfo"
           @send="sendMessage"
           @attach="handleAttach"
           @remove-attachment="handleRemoveAttachment"
@@ -464,7 +520,7 @@ watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
           @command-select="handleCommandSelect"
           @retry-upload="retryUpload"
           @cancel-upload="cancelUpload"
-          @dismiss-research-context="chatStore.clearResearchContext()"
+          @dismiss-research-context="chatDeepResearchStore.clearChatResearchContext()"
         />
       </div>
 
@@ -485,6 +541,18 @@ watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
   background-color: var(--background);
   position: relative;
   overflow: hidden;
+}
+
+.stream-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  background: color-mix(in srgb, var(--color-info, #409eff) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-info, #409eff) 20%, transparent);
+  font-size: 13px;
+  color: var(--color-info, #409eff);
+  flex-shrink: 0;
 }
 
 .chat-welcome {

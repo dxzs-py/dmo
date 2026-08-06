@@ -9,12 +9,27 @@ import { useSyncStore } from './sync'
 import { chatAPI } from '@/api/chat'
 import { ElMessage, ElNotification } from 'element-plus'
 import { nanoid } from 'nanoid'
+import { generateId } from '../utils/id'
 import { ChatRequestSchema, validateSchema } from '../utils/validation'
 import { logger } from '../utils/logger'
-import { getModeLabel } from '../utils/format'
 import { transformFrontendMessageToBackend } from '../utils/sessionTransformers'
 import { getInterruptId } from '../utils/messageOperations'
-import { ToolCallStatus } from '../types'
+
+/**
+ * 聊天深度研究桥接层模块加载缓存（惰性动态加载）
+ *
+ * Task 9 / spec Change 5：chat.js 与 research.js 完全解耦，本文件不静态 import
+ * research 与桥接层。仅在发送消息 / 审批等实际用到聊天深度研究状态时，经本 helper
+ * 动态 import 桥接层 chatDeepResearch.js（模块 Promise 缓存，实例按当前 pinia 解析）。
+ */
+let _chatDeepResearchModulePromise = null
+const _getChatDeepResearch = async () => {
+  if (!_chatDeepResearchModulePromise) {
+    _chatDeepResearchModulePromise = import('./chatDeepResearch')
+  }
+  const mod = await _chatDeepResearchModulePromise
+  return mod.useChatDeepResearchStore()
+}
 
 export const useChatStore = defineStore('chat', () => {
   const isLoading = ref(false)
@@ -25,29 +40,8 @@ export const useChatStore = defineStore('chat', () => {
   })
   const lastStreamError = ref(null)
   const messageCount = ref(0)
-  const deepResearchTask = ref(null)
-  const researchTaskId = ref(null)
-  const researchContextInfo = ref(null)  // { taskId, query } 研究上下文标识，发送首条消息后清空
   const attachmentProcessing = ref(null)
   const approvalStore = useApprovalStore()
-
-  const restoreResearchContextFromMessages = (sessionId) => {
-    // Recover researchTaskId from loaded messages after refresh
-    if (researchTaskId.value) return
-    const sessionStore = useSessionStore()
-    const session = sessionStore.sessions.find(s => s.id === sessionId)
-    if (!session?.messages) return
-    // Find last assistant message with researchTaskId from end
-    for (let i = session.messages.length - 1; i >= 0; i--) {
-      const msg = session.messages[i]
-      if (msg.role === 'assistant' && msg.researchTaskId) {
-        researchTaskId.value = msg.researchTaskId
-        researchContextInfo.value = { taskId: msg.researchTaskId, query: '' }
-        logger.log('[ChatStore] Restored researchTaskId:', msg.researchTaskId)
-        return
-      }
-    }
-  }
 
   const {
     isStreaming,
@@ -66,7 +60,15 @@ export const useChatStore = defineStore('chat', () => {
 
   const sendMessage = async (message, options = {}) => {
     logger.log('[ChatStore] sendMessage called')
-    
+
+    // Task 6.1：入口幂等守卫——置于所有 await 之前。
+    // 此前 isLoading 在 createNewSession（await）之后才置 true，await 窗口内
+    // 并发调用可同时进入并创建双份 user/assistant 占位消息。
+    if (isLoading.value) {
+      logger.warn('[ChatStore] sendMessage ignored: 已有消息正在发送中 (isLoading)')
+      return
+    }
+
     const sessionStore = useSessionStore()
     const modelStore = useModelStore()
     let sessionId = sessionStore.currentSessionId
@@ -114,16 +116,19 @@ export const useChatStore = defineStore('chat', () => {
     // 通知 syncStore 流式开始，跳过 WebSocket message_updated（避免 SSE 流式内容被快照覆盖）
     const syncStore = useSyncStore()
     syncStore.startStreaming(sessionId)
-    deepResearchTask.value = null
+    // 惰性获取聊天深度研究桥接层（chat.js 不静态依赖 research / 桥接层，
+    // 首次发送消息时动态加载并缓存，供研究分支回调与状态读写使用）
+    const chatDeepResearch = await _getChatDeepResearch()
+    chatDeepResearch.clearChatDeepResearchTask()
     attachmentProcessing.value = null
-    const currentResearchTaskId = researchTaskId.value
+    const currentResearchTaskId = chatDeepResearch.researchTaskId
     // 不再清空 researchTaskId，深度研究审批依赖此值路由到正确的 API
     // 仅在 clearAll / 登出 / 会话删除时清空
-    const currentResearchContextInfo = researchContextInfo.value
+    const currentResearchContextInfo = chatDeepResearch.researchContextInfo
     const continueTaskId = options.continueTaskId || null
     // 发送首条消息后清空研究上下文标签（保留 researchTaskId 供审批使用）
     if (currentResearchContextInfo) {
-      researchContextInfo.value = null
+      chatDeepResearch.clearChatResearchContext()
     }
 
     const userMessage = {
@@ -184,6 +189,7 @@ export const useChatStore = defineStore('chat', () => {
       const result = await streamChat(
         {
           message,
+          clientMessageId: generateId(), // Task 6.2：幂等键（可选字段，后端缺失时行为不变），fetchSSE 重试复用同一 id 保证后端只受理一次
           chatHistory: chatHistory,
           mode: currentMode.value,
           useTools: options.useTools !== false,
@@ -218,15 +224,16 @@ export const useChatStore = defineStore('chat', () => {
           setReasoning: (data) => sessionStore.setReasoningToLastMessage(sessionId, data),
           setSuggestions: (data) => sessionStore.setSuggestionsToLastMessage(sessionId, data),
           setDeepResearchTask: (data) => {
-            deepResearchTask.value = data
+            // 状态迁移至 chatDeepResearch 桥接层（Task 9），
+            // 内部会同步写入 deepResearchTask 与 researchTaskId
+            chatDeepResearch.setChatDeepResearchTask(data)
             // 深度研究任务创建时立即设置 researchTaskId，确保后续审批能正确路由到研究审批 API
             if (data?.taskId) {
-              researchTaskId.value = data.taskId
               sessionStore.setResearchTaskIdToLastMessage(sessionId, data.taskId)
             }
           },
           setResearchTaskId: (taskId) => {
-            researchTaskId.value = taskId
+            chatDeepResearch.setChatResearchTaskId(taskId)
             sessionStore.setResearchTaskIdToLastMessage(sessionId, taskId)
           },
           setContext: (data) => sessionStore.setContextToLastMessage(sessionId, data),
@@ -297,7 +304,7 @@ export const useChatStore = defineStore('chat', () => {
           onApprovalHistory: (parsed) => {
             // 历史审批补偿：SSE 重连时后端推送 Redis List 中的历史审批
             // parsed 结构：{ type: "approval_history", data: {...approval_data...}, taskId: "research_xxx" }
-            const taskId = parsed.taskId || parsed.data?.taskId || researchTaskId.value || null
+            const taskId = parsed.taskId || parsed.data?.taskId || chatDeepResearch.researchTaskId || null
             if (taskId && parsed.data) {
               approvalStore.restoreFromSSEHistory(parsed.data, taskId, sessionId)
             }
@@ -331,35 +338,14 @@ export const useChatStore = defineStore('chat', () => {
         return
       }
 
-      // 审批中断时：将工具调用状态标记为 waiting，并保存审批数据
-      // 这样刷新后前端能正确显示"等待审批"状态，而非"执行中"
-      if (approvalStore.pendingApprovals.size > 0) {
-        const session = sessionStore.sessions.find(s => s.id === sessionId)
-        if (session && session.messages.length > 0) {
-          const lastMsg = session.messages[session.messages.length - 1]
-          if (lastMsg.toolCalls && Array.isArray(lastMsg.toolCalls)) {
-            lastMsg.toolCalls = lastMsg.toolCalls.map(tc => ({
-              ...tc,
-              status: tc.status === ToolCallStatus.RUNNING ? ToolCallStatus.WAITING : tc.status,
-            }))
-          }
-          // 向后兼容：保存审批数据到消息对象
-          const firstEntry = approvalStore.pendingApprovals.values().next().value
-          if (firstEntry) {
-            lastMsg.approval = firstEntry.approvalData || firstEntry
-            lastMsg.approvalState = 'pending'
-          }
-          // 同步到 version
-          const ver = lastMsg.versions?.[lastMsg.currentVersion]
-          if (ver) {
-            if (lastMsg.toolCalls) {
-              ver.toolCalls = lastMsg.toolCalls.map(tc => ({ ...tc }))
-            }
-            if (lastMsg.approval) ver.approval = { ...lastMsg.approval }
-            ver.approvalState = lastMsg.approvalState
-          }
-        }
-      }
+      // 审批中断兜底已移除（Task 7 / Task 10）：
+      // 审批挂起时 toolCall.status 由后端 tool_call_waiting 事件经 WebSocket 权威维护
+      // （approval_service._publish_tool_call_waiting_event），审批面板显示由
+      // approval.state 驱动（ToolCallCard.isWaiting），审批态与工具执行态解耦；
+      // 消息级 approval 已由 approvalStore._handleNewApproval → setApprovalToLastMessage
+      // 写入并 PATCH 持久化。原直接改 message.toolCalls 状态绕过了 toolCallMap
+      // 唯一真相源与状态机（applyToolCallState），且 tool_calls 后端 read_only 不持久化，
+      // 纯属冗余本地修复。
 
       const finalMessages = sessionStore.getSessionMessages(sessionId) || []
       if (finalMessages.length <= 2) {
@@ -391,11 +377,21 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const regenerateMessage = async (messageIndex) => {
+    // Task 6.1：发送类方法入口幂等守卫，防止并发重复生成双流
+    if (isLoading.value) {
+      logger.warn('[ChatStore] regenerateMessage ignored: 已有消息正在发送中 (isLoading)')
+      return
+    }
+
     const sessionStore = useSessionStore()
     const modelStore = useModelStore()
     const sid = sessionStore.currentSessionId
     const selectedKnowledgeBaseId = sessionStore.selectedKnowledgeBase?.id || null
     const messages = sessionStore.getSessionMessages(sid)
+    // 惰性获取聊天深度研究桥接层（与 sendMessage 一致）：onApprovalHistory 等
+    // SSE 回调需要读取 researchTaskId。Task 9 解耦后 regenerateMessage 不再直接
+    // 访问 research store，统一经 chatDeepResearch 桥接层读取（修复原作用域未定义的 ReferenceError）
+    const chatDeepResearch = await _getChatDeepResearch()
 
     if (messageIndex < 1 || !messages?.length || messages.length < 2) return
 
@@ -471,6 +467,7 @@ export const useChatStore = defineStore('chat', () => {
       const result = await streamChat(
         {
           message: userMessage.content || '',
+          clientMessageId: generateId(), // Task 6.2：幂等键，防止重新生成时重复请求造成双流
           chatHistory: chatHistory,
           mode: currentMode.value,
           useTools: true,
@@ -530,7 +527,7 @@ export const useChatStore = defineStore('chat', () => {
             approvalStore.handleApprovalEvent(data, { source: 'chat', sessionId: sid })
           },
           onApprovalHistory: (data) => {
-            const taskId = data.taskId || researchTaskId.value || null
+            const taskId = data.taskId || chatDeepResearch.researchTaskId || null
             if (taskId) {
               approvalStore.restoreFromSSEHistory(data, taskId, sid)
             }
@@ -627,19 +624,14 @@ export const useChatStore = defineStore('chat', () => {
     lastStreamError.value = null
   }
 
-  const clearResearchContext = () => {
-    researchContextInfo.value = null
-  }
-
   const clearAll = () => {
     isLoading.value = false
     currentMode.value = 'agent'
     availableModes.value = { 'agent': '代理', 'deep-research': '深度研究' }
     lastStreamError.value = null
     messageCount.value = 0
-    deepResearchTask.value = null
-    researchTaskId.value = null
-    researchContextInfo.value = null
+    // 重置聊天深度研究桥接状态（惰性加载；clearAll / 登出场景）
+    _getChatDeepResearch().then(bridge => bridge.resetChatDeepResearch()).catch(() => {})
     attachmentProcessing.value = null
     approvalStore.clearAll()
   }
@@ -679,19 +671,13 @@ export const useChatStore = defineStore('chat', () => {
     const toolCallId = getInterruptId(approval)
     const entry = approvalStore.pendingApprovals.get(toolCallId)
 
-    // 深度研究审批：如果 researchTaskId 丢失，尝试恢复
-    if (approval.source === 'deep_research' && !researchTaskId.value) {
-      if (deepResearchTask.value?.taskId) {
-        researchTaskId.value = deepResearchTask.value.taskId
-        logger.warn('[ChatStore] 深度研究审批时 researchTaskId 为空，从 deepResearchTask 恢复:', researchTaskId.value)
-      } else {
-        restoreResearchContextFromMessages(useSessionStore().currentSessionId)
-        logger.warn('[ChatStore] 深度研究审批时 researchTaskId 为空，已尝试从消息历史恢复', researchTaskId.value)
-      }
-    }
+    // 深度研究审批：researchTaskId 恢复与取值统一委托桥接层
+    // （内部实现原"从 deepResearchTask / 消息历史恢复"逻辑）
+    const chatDeepResearch = await _getChatDeepResearch()
+    const researchTaskId = chatDeepResearch.getResearchTaskIdForApproval(approval)
 
     await approvalStore.executeApproval(approval, approved, userInput, {
-      taskId: entry?.taskId || researchTaskId.value || null,
+      taskId: entry?.taskId || researchTaskId || null,
     })
   }
 
@@ -719,15 +705,10 @@ export const useChatStore = defineStore('chat', () => {
     clearCurrentSession,
     stopStreaming,
     clearError,
-    deepResearchTask,
-    researchTaskId,
-    researchContextInfo,
     attachmentProcessing,
     deleteMessage,
     deleteMessagePair,
     approveCommand,
     rejectCommand,
-    restoreResearchContextFromMessages,
-    clearResearchContext,
   }
 })

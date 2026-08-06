@@ -11,16 +11,14 @@ import logging
 
 from django.core.cache import cache
 
+from Django_xm.apps.approvals.services.approval_constants import (
+    APPROVAL_PENDING_PREFIX,
+    APPROVAL_PROCESSED_PREFIX,
+    APPROVAL_TTL,
+)
 from Django_xm.common.redis_utils import get_redis_client
 
 logger = logging.getLogger(__name__)
-
-# Redis key 前缀（按 source_id 索引 pending 列表）
-APPROVAL_PENDING_PREFIX = "approval:pending:"
-# Redis key 前缀（按 interrupt_id 索引 processed 最终状态）
-APPROVAL_PROCESSED_PREFIX = "approval:processed:"
-# TTL：30 分钟，与前端 APPROVAL_EXPIRY_MS 一致
-APPROVAL_TTL = 1800
 
 
 def persist_approval_pending(source_id, approval_data):

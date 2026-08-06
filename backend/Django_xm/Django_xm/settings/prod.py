@@ -61,6 +61,8 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "research": "5/min",
     "knowledge": "60/min",
     "sensitive": "5/min",
+    "snapshot": "30/min",
+    "meta": "60/min",
 }
 
 SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"] = timedelta(minutes=app_cfg.jwt_access_token_lifetime_minutes)

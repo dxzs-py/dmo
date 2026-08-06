@@ -47,6 +47,12 @@ class ChatRequestSerializer(serializers.Serializer):
     """
 
     message = serializers.CharField(min_length=1, max_length=10000, help_text="用户消息内容，1-10000字符")
+    client_message_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=64,
+        help_text="客户端消息幂等ID（可选），同一用户短时间内相同 ID 的重复请求将被去重",
+    )
     chat_history = MessageSerializer(many=True, required=False, allow_null=True)
     mode = serializers.CharField(default="agent", max_length=50, help_text="对话模式标识")
     use_tools = serializers.BooleanField(default=True, help_text="是否使用工具")

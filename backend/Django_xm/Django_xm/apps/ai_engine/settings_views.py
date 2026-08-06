@@ -23,6 +23,7 @@ from Django_xm.apps.ai_engine.services.registry_service import (
     get_model_registry,
     is_provider_valid,
 )
+from Django_xm.apps.core.throttling import MetaRateThrottle
 from Django_xm.apps.knowledge.services.index_service import IndexManager
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.permissions import IsAdmin
@@ -91,6 +92,8 @@ class AISettingsView(APIView):
     """
 
     permission_classes = [IsAdmin]
+    # 页面加载即请求的只读接口，独立 meta 额度（Task 3.2）
+    throttle_classes = [MetaRateThrottle]
 
     @extend_schema(exclude=True)
     def get(self, request):

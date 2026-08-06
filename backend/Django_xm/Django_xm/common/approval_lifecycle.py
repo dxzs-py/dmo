@@ -24,7 +24,6 @@ from Django_xm.apps.approvals.services.approval_service import (
     _persist_and_broadcast,
     _publish_tool_call_timeout_event,
     _release_lock,
-    sync_approval_state_to_chat_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -165,14 +164,9 @@ class ApprovalLifecycleService:
             _publish_tool_call_timeout_event(approval)
         _release_lock(approval.interrupt_id)
 
-        # 同步审批终态到关联 ChatMessage.tool_calls，确保非触发浏览器全量同步时
-        # 能读取到正确的审批状态
-        try:
-            sync_approval_state_to_chat_message(approval, final_state)
-        except Exception as e:
-            logger.warning(
-                f"[ApprovalLifecycle] 同步 ChatMessage 失败(非致命): interrupt_id={approval.interrupt_id}, err={e}"
-            )
+        # 注意：不再重复调用 sync_approval_state_to_chat_message ——
+        # _persist_and_broadcast 内部已统一调用（含全字段比对幂等检查），
+        # 此处删除原显式重复调用，避免双重副作用（Task 2.3）。
 
     def _complete_single(
         self,

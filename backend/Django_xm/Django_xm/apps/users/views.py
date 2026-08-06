@@ -19,7 +19,7 @@ from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.views import TokenRefreshView as _TokenRefreshView
 
-from Django_xm.apps.core.throttling import LoginRateThrottle, SensitiveOperationRateThrottle
+from Django_xm.apps.core.throttling import LoginRateThrottle, MetaRateThrottle, SensitiveOperationRateThrottle
 from Django_xm.common.captcha_mixin import CaptchaMixin
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.responses import (
@@ -193,6 +193,8 @@ class UserInfoView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    # 页面加载即请求的只读接口，独立 meta 额度（Task 3.2）
+    throttle_classes = [MetaRateThrottle]
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):

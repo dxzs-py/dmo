@@ -2,12 +2,13 @@ import logging
 
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
 
 from Django_xm.apps.ai_engine.services.checkpointer_factory import get_store
 from Django_xm.apps.context_manager.services.manager import create_context_manager
+from Django_xm.apps.core.throttling import MetaRateThrottle
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.responses import error_response, success_response
 from Django_xm.common.serializers import EmptySerializer
@@ -230,6 +231,7 @@ class KnowledgeGraphDetailView(APIView):
 
 @extend_schema(responses={200: EmptySerializer})
 @api_view(["GET"])
+@throttle_classes([MetaRateThrottle])
 @permission_classes([AllowAny])
 def capability_config_view(request):
     try:

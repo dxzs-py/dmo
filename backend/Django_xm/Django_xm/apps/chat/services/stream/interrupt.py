@@ -55,14 +55,18 @@ async def finalize_interrupt(
 
     # 2. 显式通知前端：本次流因审批中断而结束
     # 修复 bug：深度思考模式原缺失此事件，导致前端无法正确转 INTERRUPTED 状态
+    interrupted_payload = {
+        "interrupt_id": ctx.interrupt_info.get("interrupt_id"),
+        "graph_interrupt_id": ctx.interrupt_info.get("graph_interrupt_id"),
+        "tool_name": ctx.interrupt_info.get("tool_name"),
+        "reason": "approval_required",
+    }
+    research_task_id = data.get("research_task_id", "")
+    if research_task_id:
+        interrupted_payload["research_task_id"] = research_task_id
     yield {
         "type": "interrupted",
-        "data": {
-            "interrupt_id": ctx.interrupt_info.get("interrupt_id"),
-            "graph_interrupt_id": ctx.interrupt_info.get("graph_interrupt_id"),
-            "tool_name": ctx.interrupt_info.get("tool_name"),
-            "reason": "approval_required",
-        },
+        "data": interrupted_payload,
     }
 
     # 3. stream_state 快照写入

@@ -20,8 +20,6 @@ import {
   addMessageFieldItem,
   appendToMessage,
   createMessageVersion,
-  addOrUpdateToolCallInLastMessage,
-  updateOrAddToolResultInLastMessage,
   addOrUpdateToolCallInMessageByIdx,
   updateOrAddToolResultInMessageByIdx,
   findToolCallById,
@@ -32,6 +30,7 @@ import {
   setApprovalToToolCallInMap,
   updateApprovalStateInMap,
   updateToolCallStatusInMap,
+  finalizeToolCallsInMap,
   findToolCallInMap,
   flushPendingApprovalsInMap,
   isTerminalStatus,
@@ -99,7 +98,7 @@ export const useSessionStore = defineStore('session', () => {
   //   toolCallsMap: Map<sessionId, Map<toolCallId, toolCall>>
   //   pendingApprovals: Map<sessionId, Map<toolCallId, {approvalData, toolCallId}>>
   //
-  // 时序保护：审批事件先于 tool 事件到达时，setApprovalToToolCall 创建 _synthetic
+  // 时序保护：审批事件先于 tool 事件到达时，setApprovalToToolCall 创建 isSynthetic
   // 占位条目并加入 pendingApprovals 队列；后续 tool 事件到达时通过
   // flushPendingApprovals 绑定审批数据到真实 toolCall。
 
@@ -193,6 +192,32 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   /**
+   * 从 toolCallMap 收集应同步到目标消息的 toolCall 数组（唯一归属规则，两处同步共用）
+   *
+   * 归属规则（Task 5.4，_syncMessageToolCalls 与 _syncAllMessageToolCallsFromMap 统一）：
+   * - 有 messageBackendId 的条目仅归属到匹配消息
+   * - 无 messageBackendId 的条目仅归属到最后一条 assistant 消息
+   *   （禁止复制到每条 assistant 消息，避免工具卡片迁移）
+   *
+   * @param {Map} toolCallMap - 该 session 的 toolCall Map
+   * @param {Object} targetMsg - 目标消息
+   * @param {boolean} isLast - targetMsg 是否为 session 中最后一条 assistant 消息
+   * @returns {Array} 归属到该消息的 toolCall 数组
+   */
+  const _collectToolCallsForMessage = (toolCallMap, targetMsg, isLast) => {
+    const backendId = targetMsg.backendId?.toString()
+    const arr = []
+    for (const tc of toolCallMap.values()) {
+      if (tc.messageBackendId) {
+        if (tc.messageBackendId === backendId) arr.push(tc)
+      } else if (isLast) {
+        arr.push(tc)  // 无归属的兜底到最后一个 assistant
+      }
+    }
+    return arr
+  }
+
+  /**
    * 将 toolCallMap 同步到 messages 数组（最后一条 assistant 消息的 toolCalls）
    *
    * 单向数据流：Map → message.toolCalls（派生）。
@@ -217,16 +242,9 @@ export const useSessionStore = defineStore('session', () => {
       //  loadSessionDetail → _syncToolCallsMapFromMessages 回填 Map）
       return
     }
-    const backendId = targetMsg.backendId?.toString()
     const isLast = _isLastAssistantMessage(sessionId, targetMsg)
-    const arr = []
-    for (const tc of toolCallMap.values()) {
-      if (tc.messageBackendId) {
-        if (tc.messageBackendId === backendId) arr.push(tc)
-      } else if (isLast) {
-        arr.push(tc)  // 无归属的兜底到最后一个 assistant
-      }
-    }
+    // 归属规则统一走 _collectToolCallsForMessage（Task 5.4）
+    const arr = _collectToolCallsForMessage(toolCallMap, targetMsg, isLast)
     // 按 LLM 原始生成序号稳定排序（跨浏览器工具顺序一致性保障）
     // _index 由后端 stream_chunk_processors 在解析 AIMessage.tool_calls 时标注
     if (arr.length > 1) {
@@ -271,6 +289,9 @@ export const useSessionStore = defineStore('session', () => {
   const setSuggestionsToMessage = (sessionId, messageIndex, suggestions) => _setField(sessionId, messageIndex, 'suggestions', suggestions)
   const setContextToMessage = (sessionId, messageIndex, context) => _setField(sessionId, messageIndex, 'context', context)
   const addToolCallToMessage = (sessionId, messageIndex, toolCall) => _addFieldItem(sessionId, messageIndex, 'toolCalls', toolCall)
+  // 数组版入口（按消息索引写入）：仅保留给重新生成 SSE 流等"目标消息非最后一条 assistant"
+  // 的场景（chat.js regenerateMessage 调用）。合并/保护逻辑已与 Map 版共用
+  // _mergeExistingToolCall / _findMatchingToolCall，不再存在双实现漂移（Task 5.5）。
   const addOrUpdateToolCallToMessage = (sessionId, messageIndex, data) => addOrUpdateToolCallInMessageByIdx(sessions.value, sessionId, messageIndex, data)
   const updateOrAddToolResultToMessage = (sessionId, messageIndex, data) => updateOrAddToolResultInMessageByIdx(sessions.value, sessionId, messageIndex, data)
 
@@ -825,7 +846,7 @@ export const useSessionStore = defineStore('session', () => {
    * 将审批数据设置到指定 toolCall（工具调用级审批）
    *
    * 统一通过 toolCallMap 作为唯一真相源操作（与 researchStore 对齐）。
-   * _synthetic 占位机制：审批先于真实 tool 事件到达时，创建占位条目使 ToolCallCard
+   * isSynthetic 占位机制：审批先于真实 tool 事件到达时，创建占位条目使 ToolCallCard
    * 立即渲染审批面板，并加入 pendingApprovals 队列（兜底机制）。
    *
    * @param {string} sessionId - 会话 ID
@@ -902,56 +923,6 @@ export const useSessionStore = defineStore('session', () => {
     if (!stateUpdated) return
     triggerRef(toolCallsMap)
     _syncMessageToolCalls(sessionId)
-  }
-
-  /**
-   * 仅更新 approval.state，不改变 toolCall.status
-   *
-   * 审批态与工具执行态解耦：
-   * - approval.state 驱动审批面板显示/按钮禁用
-   * - toolCall.status 由 tool_result 事件驱动（completed/failed）
-   *
-   * @param {string} sessionId - 会话 ID
-   * @param {string} toolCallId - 工具调用 ID
-   * @param {string} state - 新的 approval.state（如 'processing'）
-   * @returns {boolean} 是否成功更新
-   */
-  const updateToolCallApprovalStateOnly = (sessionId, toolCallId, state) => {
-    if (!sessionId || !toolCallId) return false
-    const toolCallMap = toolCallsMap.value.get(sessionId)
-    if (!toolCallMap) {
-      logger.warn(`[Session] updateToolCallApprovalStateOnly: toolCallMap 不存在, sessionId=${sessionId}`)
-      return false
-    }
-
-    // Map 未命中：从 messages 数组回填到 Map，对齐 research.js 行为
-    if (!toolCallMap.has(toolCallId)) {
-      const session = _findSession(sessionId)
-      if (session?.messages) {
-        for (const msg of session.messages) {
-          if (msg.role !== 'assistant' || !Array.isArray(msg.toolCalls)) continue
-          for (const tc of msg.toolCalls) {
-            const key = tc.toolCallId || tc.id
-            if (key && key === toolCallId && !toolCallMap.has(key)) {
-              toolCallMap.set(key, { ...tc, messageBackendId: msg.backendId?.toString() })
-            }
-          }
-        }
-        triggerRef(toolCallsMap)
-      }
-    }
-
-    const updated = updateApprovalStateInMap(toolCallMap, toolCallId, state)
-    if (!updated) {
-      logger.warn(
-        `[Session] updateToolCallApprovalStateOnly: 未找到 toolCall, sessionId=${sessionId}, ` +
-        `toolCallId=${toolCallId}, state=${state}`
-      )
-      return false
-    }
-    triggerRef(toolCallsMap)
-    _syncMessageToolCalls(sessionId)
-    return true
   }
 
   const appendToLastAssistantMessage = (sessionId, content) => {
@@ -1031,7 +1002,7 @@ export const useSessionStore = defineStore('session', () => {
   /**
    * 创建/更新 toolCall（对应 SSE tool 事件）
    *
-   * 委托通用函数 addOrUpdateToolCallInMap 处理 toolCallMap 操作（含 _synthetic 占位机制、
+   * 委托通用函数 addOrUpdateToolCallInMap 处理 toolCallMap 操作（含 isSynthetic 占位机制、
    * parameters 参数回查），保留 store 特定的 _syncMessageToolCalls 和 flushPendingApprovals 调用。
    *
    * @param {string} sessionId - 会话 ID
@@ -1196,6 +1167,40 @@ export const useSessionStore = defineStore('session', () => {
     triggerRef(toolCallsMap)
     _syncMessageToolCalls(sessionId)
     return true
+  }
+
+  /**
+   * 最终化指定消息的所有非终态 toolCalls（流式完成后兜底）
+   *
+   * 被 messageIntegrity.finalizeToolCallsForCompletedMessage 调用（P3-22/P3-23 根因修复）：
+   * WebSocket tool_call_completed / approval_approved 事件丢失或乱序时，
+   * toolCallsMap（单一真相源）中 toolCall.status 可能卡在 pending/running/waiting，
+   * approval.state 可能卡在 pending/processing/waiting，导致 UI 永久显示"执行中"
+   * 和审批按钮不消失。
+   *
+   * 此方法在流式结束时兜底：将非终态工具状态修正为 COMPLETED，
+   * 将非终态审批状态修正为 TIMEOUT，并同步到 message.toolCalls（派生数据）。
+   *
+   * @param {string} sessionId - 会话 ID
+   * @param {string} [messageBackendId] - 可选，仅最终化属于该消息的 toolCalls；
+   *   不传则最终化该 session 下所有 toolCalls
+   * @returns {number} 最终化的 toolCall 数量
+   */
+  const finalizeToolCallsInMapForSession = (sessionId, messageBackendId) => {
+    if (!sessionId) return 0
+    const toolCallMap = toolCallsMap.value.get(sessionId)
+    if (!toolCallMap || toolCallMap.size === 0) return 0
+
+    const finalizedCount = finalizeToolCallsInMap(toolCallMap, messageBackendId)
+    if (finalizedCount > 0) {
+      triggerRef(toolCallsMap)
+      _syncMessageToolCalls(sessionId)
+      logger.info(
+        `[Session] finalizeToolCallsInMap: 最终化 ${finalizedCount} 个 toolCall: ` +
+        `session=${sessionId}, message=${messageBackendId || '(全部)'}`
+      )
+    }
+    return finalizedCount
   }
 
   /**
@@ -1505,15 +1510,10 @@ export const useSessionStore = defineStore('session', () => {
     if (!toolCallMap || toolCallMap.size === 0) return
     for (const msg of session.messages) {
       if (msg.role !== 'assistant') continue
-      const backendId = msg.backendId?.toString()
-      const arr = []
-      for (const tc of toolCallMap.values()) {
-        if (tc.messageBackendId) {
-          if (tc.messageBackendId === backendId) arr.push(tc)
-        } else {
-          arr.push(tc)
-        }
-      }
+      // 归属规则统一走 _collectToolCallsForMessage（Task 5.4）：
+      // 无 messageBackendId 条目仅进最后一条 assistant，禁止复制到每条 assistant
+      const isLast = _isLastAssistantMessage(sessionId, msg)
+      const arr = _collectToolCallsForMessage(toolCallMap, msg, isLast)
       if (arr.length > 0) {
         arr.sort((a, b) => {
           const ai = a._index ?? 999
@@ -1555,7 +1555,8 @@ export const useSessionStore = defineStore('session', () => {
     paginationMeta,
     // 工具调用状态（Map 为唯一真相源，按 sessionId 索引）
     toolCallsMap,
-    pendingApprovals,
+    // pendingApprovals（合成占位绑定队列）不导出：SubTask 8.4 收敛为
+    // approvalStore.pendingApprovals 单一权威，本队列仅为内部中间态
     optimisticSessionIds,
     currentSession,
     loadSessionsFromBackend,
@@ -1591,7 +1592,6 @@ export const useSessionStore = defineStore('session', () => {
     setApprovalToLastMessage,
     setApprovalToToolCall,
     updateToolCallApprovalState,
-    updateToolCallApprovalStateOnly,
     appendToLastAssistantMessage,
     addToolCallToLastMessage,
     addOrUpdateToolCall,
@@ -1603,6 +1603,7 @@ export const useSessionStore = defineStore('session', () => {
     getToolCallsByMessage,
     findToolCallInSession,
     updateToolCallStatus,
+    finalizeToolCallsInMap: finalizeToolCallsInMapForSession,
     flushPendingApprovals,
     // 同步工具调用到消息（handleSessionEvent 中 message_added 后调用，解决审批组件错位问题）
     syncMessageToolCalls: _syncMessageToolCalls,

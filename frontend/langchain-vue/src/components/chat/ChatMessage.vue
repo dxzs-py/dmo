@@ -17,9 +17,9 @@ import AiQueue from '../ai-elements/AiQueue.vue'
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
 import { useApprovalStore } from '../../stores/approval'
-import { ToolCallStatus } from '../../types'
 import { logger } from '../../utils/logger'
 import { formatFileSize } from '../../utils/format'
+import { deriveDisplayStatus } from '../../utils/toolCallStateMachine'
 
 const props = defineProps({
   message: {
@@ -200,13 +200,20 @@ function handleRegenerate() {
 
 const hasResearchTask = computed(() => !!props.message.researchTaskId && !props.message.researchTaskDeleted)
 
+const _isResearchRunning = computed(() =>
+  hasResearchTask.value && (
+    props.message.streamState === StreamState.INTERRUPTED ||
+    (props.isStreaming && props.isLast)
+  )
+)
+
 /** 推理面板模式：深度研究任务存在时使用专用文案，否则默认（agent/深度思考） */
 const reasoningMode = computed(() => {
   return props.message.researchTaskId ? 'deep-research' : undefined
 })
 
 const showContinueResearch = computed(() => {
-  return props.message.role === 'assistant' && hasResearchTask.value && !props.isStreaming
+  return props.message.role === 'assistant' && hasResearchTask.value && !props.isStreaming && props.message.streamState !== StreamState.INTERRUPTED
 })
 
 function handleContinueResearch() {
@@ -316,7 +323,7 @@ function handleMessageClick() {
         </div>
       </div>
 
-      <div v-if="researchContext" class="attachment-list">
+      <div v-if="message.role !== 'user' && researchContext" class="attachment-list">
         <div class="attachment-item research-attachment-item">
           <span class="attachment-icon">🔬</span>
           <div class="attachment-info">
@@ -408,7 +415,7 @@ function handleMessageClick() {
       </div>
 
       <Sources
-        v-if="message.sources && message.sources.length > 0"
+        v-if="message.role !== 'user' && message.sources && message.sources.length > 0"
         :sources="message.sources"
         :is-streaming="isStreaming && isLast"
       />
@@ -426,25 +433,38 @@ function handleMessageClick() {
       </div>
 
       <!-- 深度研究进度卡片 -->
-      <div v-if="showDeepResearchCard" class="deep-research-card" @click.stop="navigateToDeepResearch">
+      <div
+        v-if="showDeepResearchCard"
+        class="deep-research-card"
+        :class="{ 'research-running': _isResearchRunning, 'research-completed': !_isResearchRunning }"
+        :style="{
+          background: _isResearchRunning
+            ? 'linear-gradient(135deg, var(--el-color-primary-light-9) 0%, var(--el-color-primary-light-7) 100%)'
+            : 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)'
+        }"
+        @click.stop="navigateToDeepResearch"
+      >
         <div class="deep-research-card-icon">
-          <el-icon :size="20"><Search /></el-icon>
+          <el-icon v-if="_isResearchRunning" :size="20" class="is-loading"><Loading /></el-icon>
+          <el-icon v-else :size="20"><Search /></el-icon>
         </div>
         <div class="deep-research-card-content">
-          <div class="deep-research-card-title">深度研究任务已创建</div>
+          <div class="deep-research-card-title">
+            {{ _isResearchRunning ? '研究进行中' : '研究已完成' }}
+          </div>
           <div class="deep-research-card-desc">
-            <template v-if="isStreaming && isLast">
-              <el-icon class="is-loading" :size="12"><Loading /></el-icon>
-              <span>研究进行中，点击查看实时进度</span>
-            </template>
-            <template v-else>
-              <span>研究已完成，点击查看详细报告和文件</span>
-            </template>
+            {{ _isResearchRunning ? '点击查看实时进度' : '点击查看详细报告和文件' }}
           </div>
         </div>
-        <div class="deep-research-card-arrow">
-          <el-icon :size="14"><ArrowRight /></el-icon>
-        </div>
+        <el-button
+          class="deep-research-card-jump"
+          size="small"
+          type="primary"
+          text
+          @click.stop="router.push({ name: 'deep-research', params: { taskId: message.researchTaskId } })"
+        >
+          查看详情
+        </el-button>
       </div>
 
       <!-- 继续研究按钮 -->
@@ -453,7 +473,7 @@ function handleMessageClick() {
         <span>继续研究</span>
       </div>
 
-      <div v-if="message.tasks && message.tasks.length > 0" class="message-tasks">
+      <div v-if="message.role !== 'user' && message.tasks && message.tasks.length > 0" class="message-tasks">
         <AiTask
           v-for="(task, idx) in message.tasks"
           :key="idx"
@@ -462,7 +482,7 @@ function handleMessageClick() {
         />
       </div>
 
-      <div v-if="message.toolCalls && message.toolCalls.length > 0" class="message-tool-calls">
+      <div v-if="message.role !== 'user' && message.toolCalls && message.toolCalls.length > 0" class="message-tool-calls">
         <div class="tool-calls-header">
           <span class="tool-calls-label">
             <el-icon :size="14"><Tools /></el-icon>
@@ -477,7 +497,7 @@ function handleMessageClick() {
               :tool-name="toolCall.name"
               :input="toolCall.input || toolCall.parameters"
               :output="toolCall.output || toolCall.result"
-              :status="toolCall.status || (toolCall.state === 'output-error' ? ToolCallStatus.FAILED : toolCall.state === 'output-available' ? ToolCallStatus.COMPLETED : ToolCallStatus.RUNNING)"
+              :status="deriveDisplayStatus(toolCall)"
               :tool-call="toolCall"
               @approve="(tc) => handleToolCallApprove(tc)"
               @reject="(tc) => handleToolCallReject(tc)"
@@ -488,7 +508,7 @@ function handleMessageClick() {
             :tool-name="message.toolCalls[0].name"
             :input="message.toolCalls[0].input || message.toolCalls[0].parameters"
             :output="message.toolCalls[0].output || message.toolCalls[0].result"
-            :status="message.toolCalls[0].status || (message.toolCalls[0].state === 'output-error' ? ToolCallStatus.FAILED : message.toolCalls[0].state === 'output-available' ? ToolCallStatus.COMPLETED : ToolCallStatus.RUNNING)"
+            :status="deriveDisplayStatus(message.toolCalls[0])"
             :tool-call="message.toolCalls[0]"
             @approve="(tc) => handleToolCallApprove(tc)"
             @reject="(tc) => handleToolCallReject(tc)"
@@ -876,31 +896,43 @@ function handleMessageClick() {
   align-items: center;
   gap: 12px;
   margin-top: 12px;
-  padding: 12px 0;
+  padding: 12px;
   border-radius: 10px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--sidebar-primary) 8%, transparent), color-mix(in srgb, var(--sidebar-primary) 3%, transparent));
-  border: 1px solid color-mix(in srgb, var(--sidebar-primary) 20%, transparent);
+  border: 1px solid var(--border);
   cursor: pointer;
   transition: all var(--transition-fast);
+  position: relative;
 }
 
 .deep-research-card:hover {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--sidebar-primary) 14%, transparent), color-mix(in srgb, var(--sidebar-primary) 6%, transparent));
-  border-color: color-mix(in srgb, var(--sidebar-primary) 35%, transparent);
   box-shadow: var(--shadow-sm);
   transform: translateY(-1px);
+}
+
+.deep-research-card.research-running {
+  animation: research-pulse 2s ease-in-out infinite;
+}
+
+@keyframes research-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.92; }
 }
 
 .deep-research-card-icon {
   width: 36px;
   height: 36px;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--sidebar-primary) 15%, transparent);
+  background: rgba(255, 255, 255, 0.6);
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--sidebar-primary);
   flex-shrink: 0;
+}
+
+.deep-research-card.research-completed .deep-research-card-icon {
+  color: #16a34a;
+  background: rgba(255, 255, 255, 0.8);
 }
 
 .deep-research-card-content {
@@ -915,27 +947,15 @@ function handleMessageClick() {
 }
 
 .deep-research-card-desc {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   font-size: 12px;
   color: var(--muted-foreground);
   margin-top: 2px;
 }
 
-.deep-research-card-desc .is-loading {
-  color: var(--sidebar-primary);
-}
-
-.deep-research-card-arrow {
-  color: var(--muted-foreground);
-  flex-shrink: 0;
-  transition: transform var(--transition-fast);
-}
-
-.deep-research-card:hover .deep-research-card-arrow {
-  color: var(--sidebar-primary);
-  transform: translateX(2px);
+.deep-research-card-jump {
+  position: absolute;
+  bottom: 8px;
+  right: 10px;
 }
 
 .continue-research-btn {

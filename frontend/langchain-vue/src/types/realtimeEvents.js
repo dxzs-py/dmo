@@ -6,6 +6,22 @@
  */
 
 /**
+ * 事件来源枚举（与后端 event_schema.py EventSource 枚举 value 对应，用作 source 字段）
+ *
+ * 注意：值是后端 snake_case 协议标识符（如 'deep_research'），
+ * 作为网络传输协议值不参与 toCamelCase 转换，保持原样使用。
+ *
+ * @enum {string}
+ */
+export const EventSource = {
+  CHAT: 'chat',
+  DEEP_RESEARCH: 'deep_research',
+  LEARNING: 'learning',
+  WORKFLOW: 'workflow',
+  AGENT: 'agent',
+}
+
+/**
  * 事件类型枚举（与后端 EventType value 对应，用作 ws_event_name）
  *
  * @enum {string}
@@ -20,12 +36,21 @@ export const EventType = {
   MESSAGE_ADDED: 'message_added',
   MESSAGE_UPDATED: 'message_updated',
   MESSAGE_DELETED: 'message_deleted',
+  MESSAGES_DELETED: 'messages_deleted',
+  MESSAGE_REGENERATED: 'message_regenerated',
+  MESSAGE_REGENERATE_REVERTED: 'message_regenerate_reverted',
 
   // 流式生命周期事件
   STREAM_STARTED: 'stream_started',
   STREAM_EVENT: 'stream_event',
   STREAM_COMPLETED: 'stream_completed',
   STREAM_FINALIZED: 'stream_finalized',
+  STREAM_INTERRUPTED: 'stream_interrupted',
+  STREAM_REASONING: 'stream_reasoning',
+  STREAM_SOURCES: 'stream_sources',
+  STREAM_SUGGESTIONS: 'stream_suggestions',
+  STREAM_CONTEXT: 'stream_context',
+  STREAM_CONTENT_UPDATE: 'stream_content_update',
 
   // 工具调用生命周期事件（7 个）
   TOOL_CALL_PENDING: 'tool_call_pending',
@@ -34,6 +59,7 @@ export const EventType = {
   TOOL_CALL_COMPLETED: 'tool_call_completed',
   TOOL_CALL_FAILED: 'tool_call_failed',
   TOOL_CALL_TIMEOUT: 'tool_call_timeout',
+  TOOL_CALL_REJECTED: 'tool_call_rejected',
 
   // 审批事件（6 个）
   APPROVAL_PENDING: 'approval_pending',
@@ -42,6 +68,12 @@ export const EventType = {
   APPROVAL_APPROVED: 'approval_approved',
   APPROVAL_REJECTED: 'approval_rejected',
   APPROVAL_TIMEOUT: 'approval_timeout',
+
+  // 学习工作流事件（4 个）
+  WORKFLOW_STEP: 'workflow_step',
+  WORKFLOW_STATE_UPDATE: 'workflow_state_update',
+  WORKFLOW_COMPLETED: 'workflow_completed',
+  WORKFLOW_FAILED: 'workflow_failed',
 }
 
 /**
@@ -126,8 +158,8 @@ export const APPROVAL_EVENT_TYPES = new Set([
  * @property {*} [result] - 工具调用结果
  * @property {*} [output] - 工具调用结果（别名）
  * @property {string} [error] - 错误信息
- * @property {string} [messageBackendId] - 关联消息的 backendId（前端附加）
- * @property {string} [messageId] - 关联消息 ID（后端字段）
+ * @property {string} [messageBackendId] - 前端附加字段，用于将事件路由到特定消息（与 backendId 相同含义，事件路径专用）
+ * @property {string} [messageId] - 后端消息主键（ChatMessage.id / backend_id），来源于后端事件 payload 的 message_id
  */
 
 /**
@@ -148,7 +180,6 @@ export const APPROVAL_EVENT_TYPES = new Set([
  * @property {string} [operation] - 审批操作内容
  * @property {string} [command] - 审批命令（兼容字段）
  * @property {string} [action] - 审批动作（confirm_with_input 等）
- * @property {string} [dangerLevel] - 风险等级（medium/high）
  * @property {string} [title] - 审批标题
  * @property {string} [description] - 审批描述
  * @property {Object} [parameters] - 工具调用参数

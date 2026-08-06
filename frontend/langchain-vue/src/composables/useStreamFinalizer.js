@@ -7,10 +7,9 @@ import { StreamState } from '@/types'
 /**
  * 统一流式最终化 composable
  *
- * 抽取三处重复的流式最终化逻辑：
- * - chat.js sendMessage 的 onStreamEnd
- * - chat.js regenerateMessage 的 onStreamEnd
- * - approval.js _executeApprovalStream 的 finally 块
+ * 当前仅审批恢复流（approval.js _executeApprovalStream 的 finally 块）使用；
+ * chat.js sendMessage / regenerateMessage 尚未接入本 composable，
+ * 其流式最终化仍由各自 onStreamEnd 内联实现。
  *
  * 最终化流程：
  * FINALIZING → waitForSyncLock → flushPendingSync → waitForSyncLock →
@@ -24,7 +23,7 @@ import { StreamState } from '@/types'
  * const { finalizeStream, markInterrupted } = useStreamFinalizer()
  * // 默认操作最后一条消息
  * await finalizeStream(sessionId, lastMsg, { allowCreate: false })
- * // 操作指定索引消息（regenerateMessage 场景）
+ * // 操作指定索引消息
  * await finalizeStream(sessionId, currentMsg, {
  *   messageIndex: idx,
  *   setStreamState: (state) => sessionStore.setStreamStateToMessageByIdx(sid, idx, state)
@@ -43,7 +42,7 @@ export function useStreamFinalizer() {
    * @param {{ allowCreate?: boolean, setStreamState?: (state: string) => void, messageIndex?: number }} [options]
    * @param {boolean} [options.allowCreate=false] - 是否允许创建新消息
    * @param {Function} [options.setStreamState] - 自定义状态设置函数，默认使用 setStreamStateToLastMessage
-   * @param {number} [options.messageIndex] - 指定同步的消息索引（regenerateMessage 场景），未传入时同步最后一条消息
+   * @param {number} [options.messageIndex] - 指定同步的消息索引，未传入时同步最后一条消息
    * @returns {Promise<boolean>} 是否成功完成最终化
    */
   async function finalizeStream(sessionId, lastMsg, { allowCreate = false, setStreamState, messageIndex } = {}) {
@@ -68,7 +67,7 @@ export function useStreamFinalizer() {
       sessionStore.clearToolSyncTimer(sessionId)
 
       // 2. 等待现有同步完成 → flush pending → 等待 flush 完成
-      //    传入 messageIndex 时按索引 flush（regenerateMessage 场景），否则 flush 最后一条消息
+      //    传入 messageIndex 时按索引 flush，否则 flush 最后一条消息
       await sessionStore.waitForSyncLock(sessionId)
       await sessionStore.flushPendingSync(sessionId, messageIndex !== undefined ? { messageIndex } : {})
       await sessionStore.waitForSyncLock(sessionId)
@@ -77,7 +76,7 @@ export function useStreamFinalizer() {
       setState(StreamState.SYNCING)
 
       // 4. 最终 PATCH → 等待 PATCH 完成
-      //    传入 messageIndex 时按索引同步（regenerateMessage 场景），否则同步最后一条消息
+      //    传入 messageIndex 时按索引同步，否则同步最后一条消息
       if (messageIndex !== undefined) {
         await sessionStore.syncMessageToBackend(sessionId, messageIndex, { allowCreate })
       } else {

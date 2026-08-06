@@ -13,7 +13,7 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
-from Django_xm.apps.core.throttling import KnowledgeRateThrottle
+from Django_xm.apps.core.throttling import KnowledgeRateThrottle, MetaRateThrottle
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.responses import (
     error_response,
@@ -278,6 +278,10 @@ class KnowledgeIndexDetailView(KnowledgeBaseDetailView):
 @extend_schema_view(get=extend_schema(operation_id="knowledge_knowledge_bases_list", responses={200: EmptySerializer}))
 class KnowledgeBasesListView(KnowledgeBaseListView):
     """知识库列表视图，专用于 knowledge-bases/ 路径，避免 operationId 冲突。"""
+
+    # 页面加载即请求的只读接口，独立 meta 额度（Task 3.2）；
+    # 仅作用于 knowledge-bases/ 路径（indices/ 复用父类不受影响）
+    throttle_classes = [MetaRateThrottle]
 
 
 @extend_schema_view(get=extend_schema(operation_id="knowledge_knowledge_bases_detail", responses={200: EmptySerializer}))

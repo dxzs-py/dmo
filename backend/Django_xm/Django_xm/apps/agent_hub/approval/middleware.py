@@ -277,6 +277,10 @@ class ApprovalMiddleware(AgentMiddleware):
                         agent_name=sub_agent_name,
                         agent_path=sub_agent_path,
                         risk_ceiling=sub_risk_ceiling,
+                        # SAFE 级工具显式传入 risk_level='safe'，确保 tool_call_running
+                        # 事件 payload 携带 risk_level，前端 toolCall.riskLevel='safe'
+                        # 根因修复：原注册遗漏 risk_level，导致 SAFE 级工具事件缺风险等级
+                        risk_level=str(RiskLevel.SAFE.value),
                     )
                 )
                 # 转换为 TOOL_CALL_RUNNING（auto_approved=True 已写入 context，

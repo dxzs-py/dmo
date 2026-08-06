@@ -26,7 +26,7 @@ const WORKFLOW_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled'])
  * 与 SSE 的关系：
  * - SSE 是请求浏览器独占的流式数据源，WorkflowView 仍直接更新 execution.value
  * - WebSocket 通过本 store 同步给所有浏览器（含请求浏览器），WorkflowView watch 本 store 后合并到 execution.value
- * - 双路径幂等：状态字段（current_step/status 等）以最新事件为准，重复更新结果一致
+ * - 双路径幂等：状态字段（currentStep/status 等）以最新事件为准，重复更新结果一致
  */
 export const useWorkflowStore = defineStore('workflow', () => {
   /** 工作流状态 Map（按 thread_id 索引） */
@@ -57,7 +57,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
    * - 新 status 是终态 → 直接覆盖（终态是权威）
    * - 其他情况 → 用新 status 覆盖
    *
-   * 其他字段（current_step / learning_plan / quiz 等）直接合并更新。
+   * 其他字段（currentStep / learningPlan / quiz 等）直接合并更新。
    *
    * @param {string} taskId - 工作流 thread_id
    * @param {Object} fresh - 新的工作流数据（部分字段即可，会与现有数据合并）
@@ -129,8 +129,8 @@ export const useWorkflowStore = defineStore('workflow', () => {
    * 用于跨浏览器同步工作流步骤/状态/完成/失败事件。
    *
    * 事件类型处理：
-   * - workflow_step：更新 current_step 和 step_message（步骤进度）
-   * - workflow_state_update：更新 status / current_step / learning_plan / quiz 等字段（状态变更）
+   * - workflow_step：更新 currentStep 和 stepMessage（步骤进度）
+   * - workflow_state_update：更新 status / currentStep / learningPlan / quiz 等字段（状态变更）
    * - workflow_completed：标记为 completed 终态（force=true，权威完成事件）
    * - workflow_failed：标记为 failed 终态（force=true，权威失败事件）
    *
@@ -140,12 +140,12 @@ export const useWorkflowStore = defineStore('workflow', () => {
    * @param {string} [payload.message] - 步骤消息（workflow_step）
    * @param {string} [payload.state] - 工作流状态（workflow_state_update）
    * @param {string} [payload.currentStep] - 当前步骤（workflow_state_update）
-   * @param {Object} [payload.learning_plan] - 学习计划
-   * @param {Array} [payload.retrieved_docs] - 检索文档
+   * @param {Object} [payload.learningPlan] - 学习计划
+   * @param {Array} [payload.retrievedDocs] - 检索文档
    * @param {Object} [payload.quiz] - 练习题
    * @param {number} [payload.score] - 分数
    * @param {string} [payload.feedback] - 反馈
-   * @param {boolean} [payload.should_retry] - 是否需要重试
+   * @param {boolean} [payload.shouldRetry] - 是否需要重试
    * @param {string} [payload.error] - 错误信息
    * @param {string} taskId - 工作流 thread_id
    * @returns {Object|null} 更新后的工作流状态
