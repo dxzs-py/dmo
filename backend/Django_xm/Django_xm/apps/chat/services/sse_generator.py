@@ -349,13 +349,15 @@ async def generate_chat_stream(ctx: ChatStreamContext) -> AsyncGenerator[str, No
                 from Django_xm.common.event_schema import EventSource, EventType
                 from Django_xm.common.realtime_events import publish_event
 
+                # message_id 必须放在 payload 顶层（与节流广播格式一致），
+                # 否则前端 handleStreamEvent 解构 messageId 失败，最终完整 content 被丢弃
                 await publish_event(
                     EventType.STREAM_CONTENT_UPDATE,
                     {
                         "source": EventSource.CHAT,
                         "source_id": session_id,
+                        "message_id": str(ctx.assistant_message_id) if ctx.assistant_message_id else None,
                         "data": {
-                            "message_id": str(ctx.assistant_message_id) if ctx.assistant_message_id else None,
                             "content": final_content,
                         },
                     },

@@ -146,3 +146,171 @@
 - ✅ P3-35 修复验证通过：fs_write_file 审批等待期间不再误标「已完成+已写入」、审批按钮不消失（触发端可审批）
 - ✅ 跨浏览器审批同步 + 刷新快照恢复均通过
 - ❌ 遗留（P3-5 类）：同批工具状态标签不一致——Tool 1「等待中」（status=pending）vs Tool 2「待审批」（status=waiting），已审批的 Tool 1 的 toolCall.status 停在 pending 未随审批推进到 waiting（导致边框差异：Tool 1 无橙色边框、Tool 2 有）——待定位根因
+- ✅ P3-5 类修复：锁死保护放行 tool_call_waiting（_mergeExistingToolCall exception2），同批工具状态标签统一「待审批」，边框差异消失（用户已确认）
+
+========================================
+重构项目测试（2026-08-06 第六轮·深度思考功能边界审查）
+========================================
+本轮环境：
+- Spec：verify-deep-thinking-boundary-and-research-sync（深度思考功能边界 + 深度研究实时同步专项验证）
+- 审查对象：深度思考功能 vs 普通 AI 对话模式的边界；聊天模块深度研究模式 vs 深度研究模块实时同步
+- 方法：先代码审查（Task 1）→ 单浏览器运行时验证（Task 2）→ 4 浏览器实时同步验证（Task 3）
+
+----------------------------------------
+【Task 1 代码审查结论】（静态取证，未运行）
+1. 前端深度思考入口（三处一致，均以 modelStore 为唯一状态源）：
+   - ChatHeader.vue L202：`v-if="modelSupportsDeepThinking && (currentMode === 'agent' || currentMode === 'deep-research')"`（MagicStick 按钮）
+   - ChatInput.vue L367：`v-if="modelSupportsDeepThinking && (currentMode === 'agent' || currentMode === 'deep-research')"`（🧠 按钮）
+   - DeepResearchView.vue L72-81：深度思考开关 `:disabled="!modelSupportsDeepThinking"`
+   - 三处均依赖 `modelStore.currentModelCapabilities` 包含 `deep_thinking`；开关状态绑定 `modelStore.thinkingEnabled`
+2. 前端展示区分（AiReasoning 三语境）：
+   - ChatMessage.vue L359-366：`AiReasoning :source="message.reasoning.source || 'deep_thinking'" :mode="reasoningMode"`，`reasoningMode = researchTaskId ? 'deep-research' : undefined`
+   - AiReasoning.vue：mode='deep-research' → 深度研究文案；source='deep_thinking' → 深度思考；source='model_intrinsic' → 推理中/推理过程
+   - 结论：展示层三种语境已区分，普通对话不会出现深度思考面板（仅当 message.reasoning 存在时渲染）
+3. 后端启用链路：
+   - chat_service.py L547-553：`use_deep_thinking` → `model_supports_capability(provider_id, model_name, "deep_thinking")` → `data["_enable_deep_thinking"] = True`
+   - L711-721：`_enable_deep_thinking` → `process_deep_thinking_stream`（deep_chat_service.py，独立实现）
+   - stream/strategy.py：NormalStreamStrategy（普通，reasoning_source=model_intrinsic）vs DeepThinkingStreamStrategy（深度思考，reasoning_source=deep_thinking）
+   - llm_factory.py L128-140：`_apply_special_params` 注入 thinking 参数（deepseek/ollama/anthropic）
+4. 深度研究模块（Celery）：
+   - research/views.py L90-106：`run_research_task.delay(...)`，`enable_deep_thinking=data.get("enable_deep_thinking", False)`
+   - deep_agent.py L180-283：`enable_deep_thinking` → special_params 注入 thinking
+5. 聊天深度研究模式（SSE）：chat_service.py L610-638 `stream_deep_research_task`，`enable_deep_thinking=data.get("use_deep_thinking") and model_supports_capability(...)`
+   - 命名差异确认：聊天 SSE 用 `use_deep_thinking`，深度研究模块 Celery 用 `enable_deep_thinking`（既定差异，语义一致）
+6. 【P4-1 潜在边界问题·待运行时验证】模型能力（deep_thinking capability）由 config.py PROVIDER_REGISTRY 静态声明，但是否支持由数据库 AIProvider 配置覆盖（registry_service.py 优先读数据库，异步上下文回退 config.py）。若数据库配置与静态声明不一致，可能出现「入口显示但实际不支持」或「入口隐藏但实际支持」。需在 Task 2 运行时确认。
+7. 【P4-2 观察】前端 ChatView L34-60 useDeepThinking 来自 useChatInput（绑定 modelStore.thinkingEnabled），ChatHeader 内部 localUseDeepThinking 为 computed 透传 props——单一状态源一致，无分叉。
+8. 结论：深度思考功能边界（代码层面）设计清晰：入口受模型能力约束、展示三语境区分、后端启用链路完整。待运行时验证实际行为（Task 2）。
+
+----------------------------------------
+【Task 4 功能统一性核验结论】（静态取证）
+1. 参数一致性：
+   - 聊天 SSE 链路：chat.js L198 `useDeepThinking: modelStore.thinkingEnabled` → chat_service.py L547 `use_deep_thinking` → `_enable_deep_thinking` → process_deep_thinking_stream
+   - 深度研究 Celery 链路：DeepResearchView.vue L649 `enableDeepThinking: modelStore.thinkingEnabled` → research/views.py L102 `enable_deep_thinking`
+   - 既定命名差异确认（use_deep_thinking vs enable_deep_thinking），二者语义一致（均指"是否启用深度思考"），且都经 axios 拦截器 toSnakeCase 转换 ✓
+   - 无其他参数命名/结构偏差 ✓
+2. 数据结构与状态机：
+   - session.js L33 导入 `finalizeToolCallsInMap` 等 utils/messageOperations.js 函数；research.js L8-13 导入 `addOrUpdateToolCallInMap`/`updateOrAddToolResultInMap`/`setApprovalToToolCallInMap` 等同一 utils 模块函数
+   - 两 store 共用同一 Map 版工具函数 + toolCallStateMachine.js（research.js L6 `approvalStateToToolStatus` 来自 toolCallStateMachine）→ 工具状态机完全一致 ✓
+   - 审批路由：approval.js 惰性动态 import research（模块解耦 Task 9 已验），session 基础层静态 ✓
+3. 命名边界：
+   - axios.js L39/L47/L82：请求 body/query 统一 toSnakeCase、响应统一 toCamelCase；sessionTransformers.js 为唯一转换边界（toCamelCase/toSnakeCase/convertSnakeToCamel），_isPlainObject 用 Object.prototype.toString.call 严格判断（符合规范）✓
+   - 前端其余代码无 snake_case 泄漏（工具函数统一入口）✓
+4. 【P4-3 代码质量·死代码/双实现】`DeepThinkingStreamStrategy`（strategy.py L102-143）定义了但**从未被实例化**：
+   - chat_service.py L32 仅 import `NormalStreamStrategy`，L820 `strategy = NormalStreamStrategy()`
+   - 深度思考实际走 `process_deep_thinking_stream`（deep_chat_service.py 独立实现），不经 run_stream_loop
+   - stream/__init__.py 虽导出 DeepThinkingStreamStrategy，但全库无 `DeepThinkingStreamStrategy(` 实例化
+   - 影响：深度思考与普通 agent 是两套流实现（process_deep_thinking_stream vs run_stream_loop+strategy），DeepThinkingStreamStrategy 为重构遗留冗余——若两套实现对 reasoning/工具事件处理不一致，可能导致深度思考模式行为与普通模式有细微差异（待 Task 2 运行时确认是否影响功能）
+5. 结论：功能统一性（参数/函数/数据结构）整体达标；唯一代码质量问题是 P4-3 死代码（不影响运行时，属清理项）
+
+========================================
+重构项目测试（2026-08-06 第七轮·实时推送缺陷根因修复 + 模块解耦回归）
+========================================
+本轮环境：
+- 触发点（用户反馈）：「3个浏览器的结果有问题，是因为数据没有更新完，你刷新了一个浏览器，看到了正确的结果」+「触发浏览器没有数据更新完」——实时推送链路缺陷；「聊天模块选择了深度思考和深度研究模块有什么关系？都是完全独立的模块，各种模式选择、工具、模型不应该关联」——模块耦合缺陷
+- 修复原则：定位根因（禁止补丁式），前端改动经 vite build 验证、后端经 py_compile 验证
+
+----------------------------------------
+【根因 A（P3-36）】STREAM_CONTENT_UPDATE 广播 message_id 位置错误 → 非触发浏览器无法路由到正确消息
+- 位置：backend/Django_xm/apps/chat/services/sse_generator.py `_finalize_stream_content` 的 finally 块
+- 缺陷：finally 兜底广播 STREAM_CONTENT_UPDATE 时，`message_id` 放在 `data` 内层；前端按 payload 顶层 `message_id` 解构（与节流广播 L100 格式一致），导致非触发浏览器拿到 message_id=None 无法路由 → 消息内容缺失、未更新完
+- 修复：message_id 移到 payload 顶层（与节流广播格式统一）：`{"source": CHAT, "source_id": session_id, "message_id": str(...), "data": {"content": final_content}}`
+
+----------------------------------------
+【根因 B（P3-37）】chat.js 从未调用 chatFinalize → STREAM_FINALIZED 从未广播 → 触发/非触发浏览器消息均不最终化
+- 位置：frontend/langchain-vue/src/stores/chat.js（sendMessage / regenerateMessage）
+- 缺陷：流式结束后只调用 `sessionStore.syncLastMessageToBackend`（PATCH 单条），从不调用 useStreamFinalizer.finalizeStream；而后端 ChatFinalizeView 发布 STREAM_FINALIZED 的唯⼀入口是 chatFinalize → 非触发浏览器永远收不到最终化信号 → streamState 卡住（「AI正在输入...」残留）、消息状态不落 COMPLETED
+- 连带缺陷：session.js 缺失 useStreamFinalizer 依赖的 `syncMessageToBackend(sessionId, messageIndex, {allowCreate})`，直接调用会 TypeError
+- 修复：
+  - session.js 新增 `syncMessageToBackend`（按消息索引精确同步，allowCreate 可配），并导出
+  - chat.js sendMessage/regenerateMessage 在 `result.success && !result.aborted` 后调用 `finalizeStream(sessionId, lastMsg, { allowCreate: false })`（审批中断 INTERRUPTED / 深度研究中断场景由 useStreamFinalizer 状态守卫自动跳过）
+
+----------------------------------------
+【根因 C（P3-38）】聊天模块与深度研究模块共享 modelStore → 模式/模型/深度思考/参数相互污染
+- 位置：frontend/langchain-vue/src/stores/model.js + views/DeepResearchView.vue + components/common/ModelSelector.vue
+- 缺陷：深度研究模块直接读写全局 modelStore，聊天页切模型/开关深度思考会联动深度研究模块（反之亦然），违反「完全独立模块」边界
+- 修复：新建 `stores/researchSettings.js`（深度研究模块独立设置 store：currentProviderId/currentModelName/specialParams/temperature/maxTokens），providers 列表只读共享 modelStore（computed 委托），首次加载后 `syncFromModelStore` 拷贝初始值（监听 providers+isLoading，避免过早同步停在 openai）
+- 连带修复（实现层）：
+  1. ModelSelector 经 props 传 Pinia store 触发 ElOptions 渲染错误（`Cannot read properties of undefined (reading 'indexOf')`）→ 改为 provide/inject（`inject('modelSettingsStore') || useModelStore()`）
+  2. ModelSelector onMounted 无条件 loadProviders 会重置用户手动设置的 specialParams → 改为 `if (providers.length === 0)` 仅首次加载
+
+----------------------------------------
+【4 浏览器深度思考模式实时同步回归验证】（本轮核心回归）
+- 环境：4 浏览器 Page 8/9/10/11（http://localhost:8080/chat，SPA 导航，不刷新）
+- Page 8 开启 🧠 深度思考，发送「4+4 等于多少？请直接回答。」（19:19）
+- 结果（无需刷新，全部实时同步）：
+  - Page 8（触发）：推理面板「已深度思考（用时 19.4 秒）」+「4+ = 8。」+ 复制/重新生成/删除按钮（COMPLETED 最终化）✓
+  - Page 9/10/11（非触发）：推理面板 + 结果 + COMPLETED 全部实时同步 ✓（根因 A/B 修复生效：此前非触发浏览器停留在「AI正在输入...」数据未更新完，刷新后才正确）
+  - 流式过程中 Page 8 瞬时显示「正在深度思考中.../AI正在输入...」为正常进行中状态，流结束即最终化（此前触发浏览器最终化后仍残留停止按钮）
+- 结论：深度思考模式 4 浏览器实时推送链路（SSE + STREAM_FINALIZED + WebSocket 同步）完整无回归
+
+----------------------------------------
+【模块解耦验证】（Page 8 SPA 导航链，此前会话已验证，本轮确认无回归）
+- 深度研究页开启深度思考 → 切聊天页：聊天页 🧠 不受影响（正向解耦）✓
+- 聊天页点 🧠 → 切深度研究页：深度研究开关不受影响（反向解耦）✓
+- 深度研究页切换模型 gpt-4o → 切聊天页：聊天页仍 deepseek-v4-flash（模型解耦）✓
+- 聊天页开启 🧠 后切深度研究页再切回：🧠 状态保持（ModelSelector 仅首次加载修复生效）✓
+- 说明：4 浏览器各自独立 Pinia 实例，开关/模型状态本就是浏览器本地态；非触发浏览器渲染消息 reasoning 内容来自后端同步数据，与本地开关无关（合理）
+
+----------------------------------------
+【构建验证】
+- 后端：py_compile sse_generator.py + views.py → PY_COMPILE_OK
+- 前端：vite build → ✓ built in 32.34s（仅动态/静态导入 chunk 分割提示，非错误）
+- 既有单元测试：messageOperations.test.js（第五轮）保持通过
+
+----------------------------------------
+【本轮结论】
+- ✅ P3-36 修复：STREAM_CONTENT_UPDATE message_id 顶层化，非触发浏览器可正确路由消息内容
+- ✅ P3-37 修复：chat.js 接入 finalizeStream，STREAM_FINALIZED 正常广播，触发/非触发浏览器消息均落 COMPLETED
+- ✅ P3-38 修复：researchSettingsStore 解耦，聊天与深度研究模块模式/模型/深度思考/参数完全独立
+- ✅ 4 浏览器深度思考模式实时同步 + 模块解耦回归全部通过
+- 遗留（低优先，非本轮范围）：P4-3 DeepThinkingStreamStrategy 死代码（Task 5 清理项）
+
+========================================
+重构项目测试（2026-08-06 第八轮·打开 /chat 会话定位修复）
+========================================
+触发点（用户反馈）：「为什么我打开 http://localhost:8080/chat 不是定位到最新的对话？」
+
+----------------------------------------
+【根因】打开 /chat 恢复 localStorage 记住的「上次会话」，而非定位最新对话
+- 数据取证（后端 /api/v1/chat/sessions/ 按 updated_at 降序）：
+  - 最新会话 1544「1+ = 2。」updatedAt=2026-08-06 18:16
+  - localStorage lc_current_session_id = 8300e5ac-... 匹配会话 1502「我来帮您运行这两个命令...」updatedAt=2026-08-03 12:39（旧会话）
+- 行为链（stores/session.js loadSessionsFromBackend）：
+  1. currentSessionId 初始值 = localStorage _savedSessionId（上次会话）
+  2. 该 id 在会话列表中 → 直接保留，不定位最新 → 打开 /chat 永远回到上次会话（Task 15 P0「刷新恢复」的副作用）
+- 影响：侧边栏列表第一项明明是最新会话，消息区却显示旧会话（8-03 的 ollama 测试），用户感知为「定位错误」
+
+----------------------------------------
+【修复】会话定位策略（用户确认方案：新开→最新，刷新→恢复）
+- stores/session.js：
+  1. 定位逻辑按页面加载类型区分：
+     - URL 带 session_id（深度研究跳转/分享链接）：保留切换，URL 权威（ChatView 按 query 覆盖），避免竞态
+     - 刷新（navigation type=reload）：恢复 localStorage 上次会话（Task 15 P0 保留）；恢复失败 fallback 最新
+     - 新打开 /chat（navigate/back_forward，URL 无 session_id）：定位 updatedAt 最新会话，忽略 localStorage 旧会话
+  2. initialize 幂等化（缓存 promise）：main.js 与 ChatView onMounted 都可能触发，避免并发重复请求
+  3. 新增 import：router（getQueryParam 隔离访问 URL query，符合命名边界规范）
+- views/ChatView.vue：onMounted 先 `await sessionStore.initialize()` 再加载会话详情
+  - 竞态根因：initialize 异步，onMounted 的 loadCurrentSessionDetail 可能先执行（currentSessionId 未定位为 null）→ 消息区空白（欢迎页）；定位完成切最新时 watchDebounced 只加载附件/审批、不加载消息详情 → 必须等待 initialize
+
+----------------------------------------
+【浏览器三场景验证】（全部通过，无刷新对比）
+- 场景 1 新打开（navigate）：localStorage 手动设为旧会话 8300e5ac → navigate /chat → 消息区显示最新会话（1544「1+ = 2。」4+4 消息），localStorage 同步更新为最新会话 UUID 188a9266 ✓
+- 场景 2 刷新（reload）：localStorage 设为旧会话 8300e5ac → location.reload() → 消息区恢复旧会话（1502，12:39 ollama 测试，工具调用完整）✓（刷新恢复保留）
+- 场景 3 URL 权威：localStorage 设为最新会话 + navigate /chat?session_id=8300e5ac → 消息区显示 URL 指定旧会话（1502），URL 覆盖 localStorage ✓
+
+----------------------------------------
+【观察项（独立问题，待确认，非本轮范围）】快照恢复时深度思考推理面板显示「正在思考/正在深度思考中...」
+- 现象：最新会话（1544）重新加载后，4+4 消息的 AiReasoning 面板显示「正在思考」+「正在深度思考中...」（进行中态），而流式实时过程（Page 8/9/10/11）显示「已深度思考（用时 19.4 秒）」+「深度思考完成，共思考了 19.4 秒」（完成态）
+- 疑点：快照恢复的 message.reasoning 缺少完成标记/用时元数据，或 AiReasoning 状态判断依赖流式期间的 thinkingState（重启后丢失）→ 展示层恢复逻辑待核查
+- 记录备查，不随本轮修改（避免扩大范围）
+
+----------------------------------------
+【构建验证】
+- GetDiagnostics：ChatView.vue / session.js 无诊断错误
+- 前端 vite build → ✓ built in 32.49s（仅动态/静态导入 chunk 提示，非错误）
+
+----------------------------------------
+【本轮结论】
+- ✅ 根因：打开 /chat 恢复 localStorage 上次会话而非最新 → 已按「新开→最新 / 刷新→恢复 / URL 权威」策略修复
+- ✅ 竞态：initialize 与 ChatView onMounted 并发导致消息区空白 → initialize 幂等 + onMounted 等待，已修复
+- ✅ 三场景浏览器验证全部通过；遗留观察项（推理面板快照恢复态）已记录

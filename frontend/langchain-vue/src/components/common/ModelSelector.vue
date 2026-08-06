@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, inject } from 'vue'
 import { ElSelect, ElOption, ElOptionGroup, ElInput, ElSwitch, ElButton, ElTooltip, ElDivider, ElTag, ElSlider, ElInputNumber, ElPopover } from 'element-plus'
 import { Check, Loading, Setting, Connection, Warning, Close } from '@element-plus/icons-vue'
 import { useModelStore } from '../../stores/model'
@@ -14,7 +14,13 @@ const props = defineProps({
 
 const emit = defineEmits(['change'])
 
-const modelStore = useModelStore()
+// 根因 C 解耦：深度研究模块通过 provide/inject 注入独立设置 store；
+// providers 列表始终由全局 modelStore 加载（唯一数据源），读写目标由注入的 store 决定。
+// 不使用 props 传递 store：Pinia store 经 props 代理后会导致 el-select(ElOptions)
+// 渲染异常（Cannot read properties of undefined (reading 'indexOf')）。
+const globalModelStore = useModelStore()
+const injectedStore = inject('modelSettingsStore', null)
+const modelStore = injectedStore || globalModelStore
 const searchQuery = ref('')
 const settingsVisible = ref(false)
 
@@ -120,7 +126,13 @@ const hasSpecialParams = computed(() => {
 })
 
 onMounted(() => {
-  modelStore.loadProviders()
+  // providers 列表唯一数据源：仅首次加载。
+  // ⚠️ 不可在每次挂载都调用：loadProviders 内部会重新执行
+  // specialParams = _initSpecialParams(...)，覆盖用户手动设置的 thinking 等参数，
+  // 导致页面切换（ModelSelector 重新挂载）后深度思考开关状态被重置。
+  if (globalModelStore.providers.length === 0) {
+    globalModelStore.loadProviders()
+  }
 })
 </script>
 

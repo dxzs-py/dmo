@@ -1,11 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch, triggerRef } from 'vue'
+import router from '../router'
 import { chatAPI } from '@/api/chat'
 import { knowledgeAPI } from '@/api/knowledge'
 import { useUserStore } from './user'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { logger } from '../utils/logger'
-import { getModeLabel } from '../utils/format'
+import { getModeLabel, getQueryParam } from '../utils/format'
 import {
   isApiSuccess,
   transformBackendSessionToFrontend,
@@ -383,19 +384,41 @@ export const useSessionStore = defineStore('session', () => {
         lastLoadedUserId.value = currentUserId
 
         if (sessions.value.length > 0) {
-          // Task 15 P0 修复：优先使用 localStorage 恢复的 currentSessionId；
-          // 若恢复的 id 在已加载会话列表中不存在，则 fallback 到 updatedAt 最新的会话
+          // 会话定位策略（页面加载时执行一次，SPA 导航不触发 initialize，不受影响）：
+          // - URL 带 session_id（深度研究跳转/分享链接）：ChatView onMounted 会按 query 设置
+          //   currentSessionId，此处必须保留任何切换，避免竞态覆盖 URL 指定会话（URL 权威）。
+          // - 刷新（navigation type=reload，Task 15 P0）：恢复 localStorage 记住的上次会话；
+          //   若恢复失败（会话已删除/不存在），fallback 到 updatedAt 最新会话。
+          // - 新打开 /chat（navigate/back_forward，URL 无 session_id）：定位 updatedAt 最新会话，
+          //   而非 localStorage 里的旧会话（用户期望「打开即最新对话」）。
+          const urlSessionId = getQueryParam(router.currentRoute.value, 'session_id')
+          const isPageReload = typeof performance !== 'undefined'
+            && performance.getEntriesByType?.('navigation')[0]?.type === 'reload'
           const restoredId = currentSessionId.value
-          if (restoredId && sessions.value.find(s => s.id === restoredId)) {
-            // 恢复的 currentSessionId 在列表中，保留
-          } else if (!restoredId || !sessions.value.find(s => s.id === restoredId)) {
-            // 按 updatedAt 降序选中最新会话（而非 sessions[0] 按加载顺序）
+          const restoredExists = restoredId && sessions.value.find(s => s.id === restoredId)
+          if (!urlSessionId && !isPageReload && restoredExists) {
+            // 新打开 /chat：忽略 localStorage 旧会话，定位 updatedAt 最新会话
             const latest = sessions.value.reduce((a, b) =>
               (b.updatedAt || 0) > (a.updatedAt || 0) ? b : a
             )
             currentSessionId.value = latest.id
-            logger.log(`[Session] currentSessionId 恢复失败，fallback 到最新会话: ${latest.id}`)
+            logger.log(`[Session] 新打开页面，定位最新会话: ${latest.id}（忽略 localStorage: ${restoredId}）`)
+          } else if (!urlSessionId && !isPageReload && !restoredExists) {
+            // 新打开 /chat 且无有效恢复值：同样定位最新
+            const latest = sessions.value.reduce((a, b) =>
+              (b.updatedAt || 0) > (a.updatedAt || 0) ? b : a
+            )
+            currentSessionId.value = latest.id
+            logger.log(`[Session] 新打开页面（无恢复值），定位最新会话: ${latest.id}`)
+          } else if (!urlSessionId && isPageReload && !restoredExists) {
+            // 刷新但恢复失败（会话已删除），fallback 到最新会话
+            const latest = sessions.value.reduce((a, b) =>
+              (b.updatedAt || 0) > (a.updatedAt || 0) ? b : a
+            )
+            currentSessionId.value = latest.id
+            logger.log(`[Session] 刷新恢复失败，fallback 到最新会话: ${latest.id}`)
           }
+          // 刷新且恢复成功 / URL 指定会话：保留，不做切换
         } else {
           currentSessionId.value = null
         }
@@ -705,6 +728,38 @@ export const useSessionStore = defineStore('session', () => {
       await promise
     } finally {
       _syncLocks.delete(sessionId)
+    }
+  }
+
+  /**
+   * 按消息索引精确同步指定消息到后端（useStreamFinalizer 依赖）
+   * @param {string} sessionId
+   * @param {number} messageIndex
+   * @param {{ allowCreate?: boolean }} [options]
+   */
+  const syncMessageToBackend = async (sessionId, messageIndex, { allowCreate = true } = {}) => {
+    if (!userStore.isLoggedIn) return
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (!session?.messages || !session.messages[messageIndex]) return
+    const message = session.messages[messageIndex]
+    if (!message.backendId) {
+      if (!allowCreate) return
+      const backendMsg = transformFrontendMessageToBackend(message)
+      try {
+        const res = await chatAPI.addMessage(sessionId, backendMsg)
+        if (isApiSuccess(res) && res.data.data?.id) {
+          message.backendId = res.data.data.id
+        }
+      } catch (error) {
+        logger.error('Failed to sync message to backend:', error)
+      }
+    } else {
+      const backendMsg = transformFrontendMessageToBackend(message)
+      try {
+        await chatAPI.updateMessage(message.backendId, backendMsg)
+      } catch (error) {
+        logger.error('Failed to update message in backend:', error)
+      }
     }
   }
 
@@ -1431,13 +1486,20 @@ export const useSessionStore = defineStore('session', () => {
     return promise
   }
 
+  // 幂等初始化：main.js 与 ChatView onMounted 都可能触发，重复调用只返回同一 promise，
+  // 避免并发重复请求（loadSessionsFromBackend 内部亦有 _loadingPromise 兜底）
+  let _initializePromise = null
   const initialize = async () => {
-    logger.log('[Security] Initializing session store...')
-    if (userStore.isLoggedIn) {
-      await Promise.all([loadSessionsFromBackend(), loadKnowledgeBases()])
-    } else {
-      clearAllLocalData()
-    }
+    if (_initializePromise) return _initializePromise
+    _initializePromise = (async () => {
+      logger.log('[Security] Initializing session store...')
+      if (userStore.isLoggedIn) {
+        await Promise.all([loadSessionsFromBackend(), loadKnowledgeBases()])
+      } else {
+        clearAllLocalData()
+      }
+    })()
+    return _initializePromise
   }
 
   watch(() => userStore.isLoggedIn, async (newVal, oldVal) => {
@@ -1574,6 +1636,7 @@ export const useSessionStore = defineStore('session', () => {
     addMessageToSession,
     syncLastMessageToBackend,
     syncMessageByBackendIdToBackend,
+    syncMessageToBackend,
     waitForSyncLock,
     flushPendingSync,
     addVersionToMessage,

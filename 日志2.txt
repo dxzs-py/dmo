@@ -1,0 +1,93 @@
+INFO web_duckduckgo 12 ✅ langchain-community DuckDuckGo 搜索工具可用
+DEBUG langsmith_setup 66 LangSmith 追踪未启用 (settings.langsmith_tracing=False, env_api_key_set=False, env_tracing=False)
+INFO registry 25 Registered capability: context_management
+INFO registry 25 Registered capability: tool_injection
+INFO registry 25 Registered capability: guardrails
+INFO registry 25 Registered capability: rate_limit
+INFO registry 25 Registered capability: groq_compat
+INFO setup 16 Default capabilities registered: ['context_management', 'tool_injection', 'guardrails', 'rate_limit', 'groq_compat']
+INFO tool_node_patch 137 [ToolNodePatch] ToolNode._afunc 已 monkey-patch（支持多并行 GraphInterrupt）
+DEBUG registry 57 扩展工具已注册: agent_create
+DEBUG registry 57 扩展工具已注册: agent_run
+DEBUG registry 57 扩展工具已注册: agent_list
+DEBUG registry 57 扩展工具已注册: agent_cleanup
+DEBUG _registry 54 注册 Builder: base -> Django_xm.apps.agent_hub.builders.base_builder.BaseAgentBuilder
+DEBUG _registry 54 注册 Builder: rag -> Django_xm.apps.agent_hub.builders.base_builder.BaseAgentBuilder
+DEBUG _registry 54 注册 Builder: safe_rag -> Django_xm.apps.agent_hub.builders.base_builder.BaseAgentBuilder
+DEBUG _registry 54 注册 Builder: deep_research_custom -> Django_xm.apps.agent_hub.builders.custom_builder.CustomWorkflowBuilder
+DEBUG _registry 54 注册 Builder: web_researcher -> Django_xm.apps.agent_hub.builders.subagent_builder.SubAgentBuilder
+DEBUG _registry 54 注册 Builder: doc_analyst -> Django_xm.apps.agent_hub.builders.subagent_builder.SubAgentBuilder
+DEBUG _registry 54 注册 Builder: report_writer -> Django_xm.apps.agent_hub.builders.subagent_builder.SubAgentBuilder
+ 
+ -------------- celery@dxzs-hhh v5.4.0 (opalescent)
+--- ***** ----- 
+-- ******* ---- Windows-10-10.0.26200-SP0 2026-08-06 21:19:08
+- *** --- * --- 
+- ** ---------- [config]
+- ** ---------- .> app:         Django_xm:0x1b843eed650
+- ** ---------- .> transport:   redis://127.0.0.1:6379/3
+- ** ---------- .> results:     redis://127.0.0.1:6379/4
+- *** --- * --- .> concurrency: 4 (thread)
+-- ******* ---- .> task events: OFF (enable -E to monitor tasks in this worker)
+--- ***** ----- 
+ -------------- [queues]
+                .> celery           exchange=celery(direct) key=celery
+                
+
+[tasks]
+  . analytics.track_event
+  . approvals.cleanup_expired_approvals
+  . approvals.process_outbox
+  . approvals.resume_chat_after_timeout
+  . base.check_stale_tasks
+  . base.cleanup_old_task_records
+  . base.debug_task
+  . chat.attachment_full_lifecycle
+  . chat.check_storage_alerts
+  . chat.cleanup_checkpoints
+  . chat.cleanup_expired_attachments
+  . chat.index_old_attachments
+  . rag.add_documents
+  . rag.create_index
+  . rag.delete_index
+  . rag.update_index
+  . research.cleanup_sandbox
+  . research.resume
+  . research.run_research
+  . workflow.execute
+
+[2026-08-06 21:19:08,466: INFO/MainProcess] Connected to redis://127.0.0.1:6379/3
+[2026-08-06 21:19:08,494: INFO/MainProcess] mingle: searching for neighbors
+[2026-08-06 21:19:09,531: INFO/MainProcess] mingle: all alone
+[2026-08-06 21:19:09,560: INFO/MainProcess] celery@dxzs-hhh ready.
+[2026-08-06 21:19:09,563: INFO/MainProcess] Task base.check_stale_tasks[62b62009-f4df-4606-b65a-2a71076ca868] received
+[2026-08-06 21:19:09,566: INFO/MainProcess] Task approvals.process_outbox[171db39c-aa36-4964-a950-a65cc0cd182e] received
+[2026-08-06 21:19:09,569: INFO/MainProcess] Task chat.check_storage_alerts[2221818a-954f-4a43-907c-bfa8876f9ca9] received
+[2026-08-06 21:19:09,573: INFO/MainProcess] Task approvals.cleanup_expired_approvals[acacba45-f3d9-4b68-b8c5-52bd02a78c7b] received
+[2026-08-06 21:19:09,856: INFO/MainProcess] [ApprovalCleanup] 任务被调用: 扫描超时审批
+[2026-08-06 21:19:09,901: INFO/MainProcess] Task approvals.cleanup_expired_approvals[acacba45-f3d9-4b68-b8c5-52bd02a78c7b] succeeded in 0.3280000000013388s: {'expired_count': 0}
+[2026-08-06 21:19:09,902: INFO/MainProcess] Task approvals.process_outbox[171db39c-aa36-4964-a950-a65cc0cd182e] succeeded in 0.3280000000013388s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-06 21:19:09,919: INFO/MainProcess] base.check_stale_tasks[62b62009-f4df-4606-b65a-2a71076ca868]: [Celery Base] 标记了 3 个超时任务
+[2026-08-06 21:19:09,923: INFO/MainProcess] Task base.check_stale_tasks[62b62009-f4df-4606-b65a-2a71076ca868] succeeded in 0.35900000000037835s: {'status': 'success', 'marked_stale': 3}
+[2026-08-06 21:19:09,929: INFO/MainProcess] chat.check_storage_alerts[2221818a-954f-4a43-907c-bfa8876f9ca9]: [Celery Chat] 存储正常: 使用率=59.07%
+[2026-08-06 21:19:09,935: INFO/MainProcess] Task chat.check_storage_alerts[2221818a-954f-4a43-907c-bfa8876f9ca9] succeeded in 0.3600000000005821s: {'status': 'success', 'disk_usage_percent': 59.07, 'disk_free_gb': 390.41, 'total_files': 0, 'total_size_mb': 0.0, 'alert_triggered': False, 'alert_level': None, 'alert_message': None}
+[2026-08-06 21:19:13,527: INFO/MainProcess] Task approvals.process_outbox[5db24de4-baaf-41f2-a684-b20a6f47d215] received
+[2026-08-06 21:19:13,535: INFO/MainProcess] Task approvals.process_outbox[5db24de4-baaf-41f2-a684-b20a6f47d215] succeeded in 0.01599999999962165s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-06 21:19:18,528: INFO/MainProcess] Task approvals.process_outbox[e99a7362-d1ba-4fdf-aed3-c79c779e1002] received
+[2026-08-06 21:19:18,536: INFO/MainProcess] Task approvals.process_outbox[e99a7362-d1ba-4fdf-aed3-c79c779e1002] succeeded in 0.01599999999962165s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-06 21:19:23,529: INFO/MainProcess] Task approvals.process_outbox[01fdc4a5-c7d8-482d-a334-1a62bc85149e] received
+[2026-08-06 21:19:23,536: INFO/MainProcess] Task approvals.process_outbox[01fdc4a5-c7d8-482d-a334-1a62bc85149e] succeeded in 0.01599999999962165s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-06 21:19:28,529: INFO/MainProcess] Task approvals.process_outbox[15bae1a7-488d-42bb-a5aa-fcf28db59a9b] received
+[2026-08-06 21:19:28,537: INFO/MainProcess] Task approvals.process_outbox[15bae1a7-488d-42bb-a5aa-fcf28db59a9b] succeeded in 0.01599999999962165s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-06 21:19:33,531: INFO/MainProcess] Task approvals.process_outbox[52ae5982-00b2-4ee2-9689-fc40ff84b35b] received
+[2026-08-06 21:19:33,539: INFO/MainProcess] Task approvals.process_outbox[52ae5982-00b2-4ee2-9689-fc40ff84b35b] succeeded in 0.01599999999962165s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-06 21:19:36,888: INFO/MainProcess] Task analytics.track_event[5da4bf64-68ca-48f8-8410-967b05580657] received
+[2026-08-06 21:19:36,892: INFO/MainProcess] Task analytics.track_event[bfa08290-56ab-4045-a510-4ce2764aefe2] received
+[2026-08-06 21:19:36,896: INFO/MainProcess] Task analytics.track_event[71200896-103d-434a-ba09-3bb9fe23ac98] received
+[2026-08-06 21:19:36,900: INFO/MainProcess] Task analytics.track_event[60f09e95-d397-4b7e-ad8d-ca284d22a8f0] received
+[2026-08-06 21:19:36,906: INFO/MainProcess] Task analytics.track_event[5da4bf64-68ca-48f8-8410-967b05580657] succeeded in 0.014999999999417923s: None
+[2026-08-06 21:19:36,912: INFO/MainProcess] Task analytics.track_event[bfa08290-56ab-4045-a510-4ce2764aefe2] succeeded in 0.030999999999039574s: None
+[2026-08-06 21:19:36,914: INFO/MainProcess] Task analytics.track_event[71200896-103d-434a-ba09-3bb9fe23ac98] succeeded in 0.01599999999962165s: None
+[2026-08-06 21:19:36,917: INFO/MainProcess] Task analytics.track_event[60f09e95-d397-4b7e-ad8d-ca284d22a8f0] succeeded in 0.01599999999962165s: None
+[2026-08-06 21:19:38,531: INFO/MainProcess] Task approvals.process_outbox[22205dcd-78f8-4e44-bbd4-731c08bca252] received
+[2026-08-06 21:19:38,538: INFO/MainProcess] Task approvals.process_outbox[22205dcd-78f8-4e44-bbd4-731c08bca252] succeeded in 0.01599999999962165s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}

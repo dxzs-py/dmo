@@ -4,6 +4,7 @@ import { modelAPI } from '../api/model'
 import { useUserStore } from './user'
 import { ElMessage } from 'element-plus'
 import { logger } from '../utils/logger'
+import { initSpecialParams, isThinkingEnabled, applySpecialParamChange } from '../utils/specialParams'
 
 export const useModelStore = defineStore('model', () => {
   const providers = ref([])
@@ -34,13 +35,7 @@ export const useModelStore = defineStore('model', () => {
   })
 
   const thinkingEnabled = computed(() => {
-    const thinking = specialParams.value?.thinking
-    if (!thinking) return false
-    // DeepSeek/Anthropic 格式: { type: "enabled" }
-    if (typeof thinking === 'object' && thinking.type === 'enabled') return true
-    // Ollama 格式: true
-    if (thinking === true) return true
-    return false
+    return isThinkingEnabled(specialParams.value?.thinking)
   })
 
   const currentModelCapabilities = computed(() => {
@@ -54,22 +49,7 @@ export const useModelStore = defineStore('model', () => {
   })
 
   const _initSpecialParams = (provider) => {
-    const spConfig = provider?.specialParams
-    if (!spConfig || typeof spConfig !== 'object') return {}
-    const init = {}
-    for (const [key, cfg] of Object.entries(spConfig)) {
-      if (cfg.type === 'toggle' && cfg.default === true) {
-        init[key] = cfg.enabledValue
-      } else if (cfg.type === 'select' && cfg.default) {
-        init[key] = cfg.default
-      }
-    }
-    // DeepSeek: reasoningEffort 仅在 thinking 已启用时才生效
-    // 如果 thinking 未启用（default=false），移除 reasoningEffort 避免强制启用 thinking
-    if ('reasoningEffort' in init && 'thinking' in spConfig && !('thinking' in init)) {
-      delete init.reasoningEffort
-    }
-    return init
+    return initSpecialParams(provider)
   }
 
   const loadProviders = async () => {
@@ -149,30 +129,12 @@ export const useModelStore = defineStore('model', () => {
   }
 
   const setSpecialParam = (key, value) => {
-    if (value === undefined || value === null) {
-      const newParams = { ...specialParams.value }
-      delete newParams[key]
-      specialParams.value = newParams
-    } else {
-      specialParams.value = { ...specialParams.value, [key]: value }
-    }
-    // DeepSeek: 关闭 thinking 时同步移除 reasoningEffort（API 约束）
-    const spConfig = currentProviderSpecialParams.value
-    if (key === 'thinking' && spConfig?.reasoningEffort) {
-      const isThinkingOff = !value || (typeof value === 'object' && value.type !== 'enabled') || value === false
-      if (isThinkingOff && 'reasoningEffort' in specialParams.value) {
-        const newParams = { ...specialParams.value }
-        delete newParams.reasoningEffort
-        specialParams.value = newParams
-      }
-    }
-    // DeepSeek: 设置 reasoningEffort 时自动启用 thinking（API 约束）
-    if (key === 'reasoningEffort' && spConfig?.thinking) {
-      const thinkingAlreadyEnabled = specialParams.value.thinking?.type === 'enabled'
-      if (!thinkingAlreadyEnabled) {
-        specialParams.value = { ...specialParams.value, thinking: spConfig.thinking.enabledValue }
-      }
-    }
+    specialParams.value = applySpecialParamChange(
+      specialParams.value,
+      key,
+      value,
+      currentProviderSpecialParams.value
+    )
   }
 
   const setTemperature = (val) => {

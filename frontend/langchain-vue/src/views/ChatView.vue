@@ -301,6 +301,13 @@ const checkBackendStreamStatus = async () => {
 onMounted(async () => {
   chatStore.fetchModes()
 
+  // 等待 sessionStore 初始化完成（main.js 中异步调用，可能晚于本组件挂载）：
+  // 会话定位（新打开→最新 / 刷新→恢复）在 initialize 内完成，若此处先执行，
+  // loadCurrentSessionDetail 会拿到未定位的 currentSessionId（null），
+  // 后续定位变化只触发附件/审批加载、不加载消息详情，导致消息区空白。
+  // initialize 已幂等（重复调用返回同一 promise），此处等待安全。
+  await sessionStore.initialize()
+
   // 如果从深度研究页面跳转过来，且指定了 session_id，先切换到该会话
   const targetSessionId = getQueryParam(route, 'session_id')
   const researchTaskId = getQueryParam(route, 'research_task_id')

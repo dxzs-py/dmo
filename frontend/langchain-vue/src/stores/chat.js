@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { useStreamChat, CONNECTION_STATUS } from '../composables/useStreamChat'
+import { useStreamFinalizer } from '../composables/useStreamFinalizer'
 import { useSessionStore } from './session'
 import { useModelStore } from './model'
 import { useUserStore } from './user'
@@ -356,14 +357,20 @@ export const useChatStore = defineStore('chat', () => {
         }
       }
 
-      sessionStore.syncLastMessageToBackend(sessionId, { allowCreate: false }).catch((error) => {
-        logger.error('[ChatStore] 消息同步到后端失败', error)
-        ElMessage.warning({
-          message: '消息同步失败，请刷新页面重试',
-          duration: 5000,
-          showClose: true,
-        })
-      })
+      // 根因 B 修复：流式正常结束后统一最终化（chat.js 此前未接入 useStreamFinalizer，
+      // STREAM_FINALIZED 从未广播 → 非触发浏览器 streamState 永久卡在 streaming）。
+      // finalizeStream 内部：等待同步锁 → flush pending → 最终 PATCH →
+      // 通知后端广播 stream_finalized（非触发浏览器据此触发权威全量同步并标记 COMPLETED）
+      // → 本地消息标记 COMPLETED。
+      // 审批中断（INTERRUPTED）/深度研究中断场景由 useStreamFinalizer 状态守卫自动跳过，
+      // 不影响审批恢复流与深度研究完成流（两者均有各自最终化链路）。
+      if (result.success && !result.aborted) {
+        const lastMsg = (sessionStore.getSessionMessages(sessionId) || []).slice(-1)[0]
+        if (lastMsg) {
+          const { finalizeStream } = useStreamFinalizer()
+          await finalizeStream(sessionId, lastMsg, { allowCreate: false })
+        }
+      }
     } finally {
       clearInterval(streamSyncTimer)
       sessionStore.clearToolSyncTimer(sessionId)
@@ -585,6 +592,14 @@ export const useChatStore = defineStore('chat', () => {
         chatAPI.updateMessage(currentMessage.backendId, backendMsg).catch(error => {
           logger.error('Failed to sync regenerated message to backend:', error)
         })
+      }
+
+      // 根因 B 修复：重新生成流结束后统一最终化（与 sendMessage 一致），
+      // 广播 stream_finalized 让非触发浏览器同步完整结果并最终化。
+      // 审批中断（INTERRUPTED）场景由 useStreamFinalizer 状态守卫自动跳过。
+      if (result.success && !result.aborted) {
+        const { finalizeStream } = useStreamFinalizer()
+        await finalizeStream(sid, currentMessage, { messageIndex, allowCreate: false })
       }
     } finally {
       clearInterval(streamSyncTimer)

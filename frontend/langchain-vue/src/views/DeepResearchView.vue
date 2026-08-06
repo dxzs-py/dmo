@@ -257,7 +257,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick, provide } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { deepResearchAPI } from '@/api/research'
 import { knowledgeAPI } from '@/api/knowledge'
@@ -268,7 +268,7 @@ import TaskList from '../components/chat/TaskList.vue'
 import ModelSelector from '../components/common/ModelSelector.vue'
 import ToolSelector from '../components/chat/ToolSelector.vue'
 import ResearchTaskDetail from '../components/research/ResearchTaskDetail.vue'
-import { useModelStore } from '../stores/model'
+import { useResearchSettingsStore } from '../stores/researchSettings'
 import { useSessionStore } from '../stores/session'
 import { useApprovalStore } from '../stores/approval'
 import { useResearchStore } from '../stores/research'
@@ -278,7 +278,11 @@ import { getInterruptId } from '../utils/messageOperations'
 import { toCamelCase } from '@/utils/sessionTransformers'
 import { useTaskRealtimeSync } from '@/composables/useTaskRealtimeSync'
 
-const modelStore = useModelStore()
+// 根因 C 解耦：深度研究模块使用独立设置 store，
+// 与聊天模块的全局 modelStore（模型/深度思考/参数）完全独立
+const researchSettings = useResearchSettingsStore()
+// 通过 provide/inject 传递给 ModelSelector（避免 Pinia store 经 props 代理导致渲染异常）
+provide('modelSettingsStore', researchSettings)
 const approvalStore = useApprovalStore()
 const researchStore = useResearchStore()
 
@@ -391,11 +395,11 @@ const researchForm = reactive({
 })
 
 const useDeepThinking = computed({
-  get: () => modelStore.thinkingEnabled,
+  get: () => researchSettings.thinkingEnabled,
   set: (val) => {
-    const paramCfg = modelStore.currentProviderSpecialParams?.thinking
+    const paramCfg = researchSettings.currentProviderSpecialParams?.thinking
     if (!paramCfg) return
-    modelStore.setSpecialParam('thinking', val ? paramCfg.enabledValue : paramCfg.disabledValue)
+    researchSettings.setSpecialParam('thinking', val ? paramCfg.enabledValue : paramCfg.disabledValue)
   },
 })
 
@@ -408,7 +412,7 @@ const statusOptions = [
 ]
 
 const modelSupportsDeepThinking = computed(() => {
-  return modelStore.currentModelCapabilities.includes('deep_thinking')
+  return researchSettings.currentModelCapabilities.includes('deep_thinking')
 })
 
 const onModelChange = ({ providerId, modelName }) => {
@@ -635,7 +639,7 @@ const startResearch = async () => {
   docAnalysisFile.value = null
 
   try {
-    const modelConfig = modelStore.getModelConfig()
+    const modelConfig = researchSettings.getModelConfig()
     const response = await deepResearchAPI.start({
       query: researchForm.query,
       enableWebSearch: researchForm.enableWebSearch,
@@ -646,7 +650,7 @@ const startResearch = async () => {
       selectedTools: researchForm.selectedTools,
       providerId: researchForm.providerId || modelConfig.providerId,
       modelName: researchForm.modelName || modelConfig.modelName,
-      enableDeepThinking: modelStore.thinkingEnabled,
+      enableDeepThinking: researchSettings.thinkingEnabled,
       temperature: modelConfig.temperature,
       maxTokens: modelConfig.maxTokens,
       specialParams: modelConfig.specialParams,
@@ -896,14 +900,14 @@ const openContinueDialog = (taskData) => {
   continueForm.selectedMcpServers = taskData.selectedMcpServers || []
   continueForm.selectedTools = taskData.selectedTools || []
   if (continueForm.providerId && continueForm.modelName) {
-    modelStore.selectProvider(continueForm.providerId, continueForm.modelName)
+    researchSettings.selectProvider(continueForm.providerId, continueForm.modelName)
   }
   continueDialogVisible.value = true
 }
 
 watch(continueDialogVisible, (visible) => {
   if (!visible && researchForm.providerId && researchForm.modelName) {
-    modelStore.selectProvider(researchForm.providerId, researchForm.modelName)
+    researchSettings.selectProvider(researchForm.providerId, researchForm.modelName)
   }
 })
 
@@ -911,7 +915,7 @@ const submitContinueResearch = async () => {
   if (!continueParentTask.value) return
   isLoading.value = true
   try {
-    const modelConfig = modelStore.getModelConfig()
+    const modelConfig = researchSettings.getModelConfig()
     const response = await deepResearchAPI.continueResearch(
       continueParentTask.value.taskId,
       {
@@ -924,7 +928,7 @@ const submitContinueResearch = async () => {
         selectedTools: continueForm.selectedTools,
         providerId: continueForm.providerId || modelConfig.providerId,
         modelName: continueForm.modelName || modelConfig.modelName,
-        enableDeepThinking: modelStore.thinkingEnabled,
+        enableDeepThinking: researchSettings.thinkingEnabled,
         temperature: modelConfig.temperature,
         maxTokens: modelConfig.maxTokens,
         specialParams: modelConfig.specialParams,
@@ -996,6 +1000,9 @@ const handleFileSearch = async () => {
 }
 
 onMounted(async () => {
+  // 根因 C：确保独立设置 store 已从全局 modelStore 同步初始模型配置
+  // （ModelSelector 挂载后 loadProviders 完成即同步；此处兜底一次）
+  researchSettings.syncFromModelStore()
   refreshKnowledgeBases()
   // 任务列表首次加载：TaskList 自身 onMounted 会调用 loadTasks，
   // 但可能在任务创建之前已完成加载，此处做一次兜底刷新
