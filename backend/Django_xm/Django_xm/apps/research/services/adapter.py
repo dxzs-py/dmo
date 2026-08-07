@@ -782,6 +782,23 @@ class OfficialDeepAgentAdapter:
             )
             return
 
+        # PENDING 补发防护（P13）：ToolMessage 阶段 extractor 会对 AIMessage 阶段
+        # args 不完整（未发射）的工具补发 PENDING。若 lifecycle context 已推进到
+        # 非 PENDING 状态（SAFE 自动通过场景：ApprovalMiddleware 直接发布 RUNNING；
+        # 审批场景：WAITING/RUNNING），补发 PENDING 会导致状态机
+        # `running → pending` 非法转换 WARNING。此时 RUNNING/WAITING 事件已携带
+        # 完整 parameters，前端无需重复 PENDING，直接跳过（debug 记录）。
+        # 子 agent 事件经 _on_tool_event 统一走本函数，主/子 agent 均覆盖。
+        if event_type == EventType.TOOL_CALL_PENDING:
+            _existing_ctx = service.get_context(tool_call_id)
+            _last_event = _existing_ctx.get("last_event_type") if _existing_ctx else None
+            if _last_event and _last_event != EventType.TOOL_CALL_PENDING.value:
+                logger.debug(
+                    f"[OfficialDeepAgent] 跳过 PENDING 补发（状态已推进）: "
+                    f"tool_call_id={tool_call_id}, last_event_type={_last_event}"
+                )
+                return
+
         # 1. 注册工具调用上下文（幂等）
         #    - module_id = task_id（深度研究任务 ID）
         #    - cross_module_id = chat_session_id（关联 chat 场景触发双频道广播）

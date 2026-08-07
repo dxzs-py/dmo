@@ -279,6 +279,7 @@ import { getInterruptId } from '../utils/messageOperations'
 import { toCamelCase } from '@/utils/sessionTransformers'
 import { useTaskRealtimeSync } from '@/composables/useTaskRealtimeSync'
 import { useRealtimeSync } from '@/composables/useRealtimeSync'
+import { ResearchTaskStatus } from '@/types'
 
 // 根因 C 解耦：深度研究模块使用独立设置 store，
 // 与聊天模块的全局 modelStore（模型/深度思考/参数）完全独立
@@ -376,11 +377,11 @@ const POLL_BACKOFF_FACTOR = 1.5
 
 const progressPercentage = computed(() => {
   if (!task.value) return 0
-  if (task.value.status === 'completed') return 100
-  if (task.value.status === 'failed') return 0
-  if (task.value.status === 'waiting') return 50
-  if (task.value.status === 'pending') return 10
-  if (task.value.status === 'running') {
+  if (task.value.status === ResearchTaskStatus.COMPLETED) return 100
+  if (task.value.status === ResearchTaskStatus.FAILED) return 0
+  if (task.value.status === ResearchTaskStatus.AWAITING_APPROVAL) return 50
+  if (task.value.status === ResearchTaskStatus.PENDING) return 10
+  if (task.value.status === ResearchTaskStatus.RUNNING) {
     const maxSeconds = 600
     const pct = Math.min(90, 10 + (elapsedSeconds.value / maxSeconds) * 80)
     return Math.round(pct)
@@ -409,11 +410,11 @@ const useDeepThinking = computed({
 })
 
 const statusOptions = [
-  { value: 'pending', label: '待执行' },
-  { value: 'running', label: '执行中' },
-  { value: 'waiting', label: '等待审批' },
-  { value: 'completed', label: '已完成' },
-  { value: 'failed', label: '失败' },
+  { value: ResearchTaskStatus.PENDING, label: '待执行' },
+  { value: ResearchTaskStatus.RUNNING, label: '执行中' },
+  { value: ResearchTaskStatus.AWAITING_APPROVAL, label: '等待审批' },
+  { value: ResearchTaskStatus.COMPLETED, label: '已完成' },
+  { value: ResearchTaskStatus.FAILED, label: '失败' },
 ]
 
 const modelSupportsDeepThinking = computed(() => {
@@ -561,7 +562,7 @@ const handleReject = async (toolCallData) => {
   }
 }
 
-const isTerminalStatus = (s) => s === 'completed' || s === 'failed'
+const isTerminalStatus = (s) => s === ResearchTaskStatus.COMPLETED || s === ResearchTaskStatus.FAILED
 
 const pollTaskStatus = async () => {
   if (!task.value || isTerminalStatus(task.value.status)) {
@@ -596,7 +597,7 @@ const pollTaskStatus = async () => {
       return
     }
 
-    if (prevStatus === 'pending' && task.value.status === 'running') {
+    if (prevStatus === ResearchTaskStatus.PENDING && task.value.status === ResearchTaskStatus.RUNNING) {
       currentPollInterval = BASE_POLL_INTERVAL
     } else {
       currentPollInterval = Math.min(
@@ -609,7 +610,7 @@ const pollTaskStatus = async () => {
   } catch (error) {
     logger.error('获取任务状态失败:', error)
     if (error?.response?.status === 404) {
-      researchStore.setTaskStatus(currentTaskId.value, { status: 'failed', errorMessage: '研究任务不存在或已被删除' })
+      researchStore.setTaskStatus(currentTaskId.value, { status: ResearchTaskStatus.FAILED, errorMessage: '研究任务不存在或已被删除' })
       stopPolling()
       return
     }
@@ -767,11 +768,11 @@ const handleSSEEvent = (data) => {
         researchStore.setTaskStatus(currentTaskId.value, updateData)
         progressMessage.value = sseData.message || ''
       }
-      if (sseData.status === 'completed' || sseData.status === 'failed') {
+      if (sseData.status === ResearchTaskStatus.COMPLETED || sseData.status === ResearchTaskStatus.FAILED) {
         closeSSE()
         stopElapsedTimer()
         // 主动获取完整任务数据，确保 final_report、files 等字段不丢失
-        if (sseData.status === 'completed' && task.value?.taskId) {
+        if (sseData.status === ResearchTaskStatus.COMPLETED && task.value?.taskId) {
           deepResearchAPI.getStatus(task.value.taskId).then(resp => {
             const fresh = resp.data?.data || resp.data
             if (fresh) {
@@ -861,7 +862,7 @@ const viewTask = async (selectedTask) => {
   // 接入统一 WebSocket 实时同步：入口先订阅一次（基于 selectedTask 当前已知字段）
   subscribeRealtimeForTask(selectedTask)
 
-  if (selectedTask.status === 'running' || selectedTask.status === 'pending' || selectedTask.status === 'waiting') {
+  if (selectedTask.status === ResearchTaskStatus.RUNNING || selectedTask.status === ResearchTaskStatus.PENDING || selectedTask.status === ResearchTaskStatus.AWAITING_APPROVAL) {
     startElapsedTimer()
     connectSSE(selectedTask.taskId)
   } else if (selectedTask.taskId) {
@@ -872,10 +873,10 @@ const viewTask = async (selectedTask) => {
         researchStore.setTaskStatus(currentTaskId.value, fresh)
         // fresh 可能补充 chat_session_id 字段，重新订阅（幂等：若已订阅同 task+session 则跳过）
         subscribeRealtimeForTask(task.value)
-        if (fresh.status === 'running' || fresh.status === 'pending') {
+        if (fresh.status === ResearchTaskStatus.RUNNING || fresh.status === ResearchTaskStatus.PENDING) {
           startElapsedTimer()
           connectSSE(fresh.taskId)
-        } else if (fresh.status === 'completed') {
+        } else if (fresh.status === ResearchTaskStatus.COMPLETED) {
           nextTick(() => {
             if (fileBrowserRef.value) {
               fileBrowserRef.value.loadFiles()
@@ -1072,7 +1073,7 @@ onActivated(async () => {
   if (task.value && task.value.taskId) {
     // 重新订阅 WebSocket（onDeactivated 时已清理，此处恢复）
     subscribeRealtimeForTask(task.value)
-    if (task.value.status === 'running' || task.value.status === 'pending') {
+    if (task.value.status === ResearchTaskStatus.RUNNING || task.value.status === ResearchTaskStatus.PENDING) {
       // 任务还在运行，重连 SSE 或启动轮询
       startElapsedTimer()
       connectSSE(task.value.taskId)
@@ -1086,7 +1087,7 @@ onActivated(async () => {
           // fresh 可能补充 chat_session_id，重新订阅（幂等）
           subscribeRealtimeForTask(task.value)
           // 如果状态变为已完成，加载文件列表
-          if (fresh.status === 'completed') {
+          if (fresh.status === ResearchTaskStatus.COMPLETED) {
             nextTick(() => {
               if (fileBrowserRef.value) {
                 fileBrowserRef.value.loadFiles()
@@ -1137,7 +1138,7 @@ let _prevPendingSize = 0
 watch(
   () => approvalStore.pendingApprovals.size,
   (newSize) => {
-    if (_prevPendingSize > 0 && newSize === 0 && task.value?.status === 'running') {
+    if (_prevPendingSize > 0 && newSize === 0 && task.value?.status === ResearchTaskStatus.RUNNING) {
       logger.info('[DeepResearch] 审批已全部处理，恢复轮询')
       pollTaskStatus()
     }

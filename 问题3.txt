@@ -44,6 +44,73 @@
 - **验证**：Pinia 中模拟「登出 → 登录」：登出后列表清空为 0，登录后 2.5s 内列表恢复 3 个会话（无需刷新）。
 - **备注**：用户原话「怎么就一个对话了？点击还没有信息，刷新后会恢复正常」——根因是未登录阶段的初始化 promise 被永久缓存，登录后无法触发列表加载。
 
+### 问题 P11：深度研究模块任务详情面板状态回退（「等待工具审批」→「待执行」）
+- **现象**：任务 research_d7de240a2a38（来源：聊天触发）正在等待工具审批并陆续执行工具，深度研究模块详情面板任务状态在 20:02 显示「等待工具审批...」（正确），20:03:28 却回退显示「研究任务已创建，等待执行...」+「待执行」（错误）。同一时刻聊天模块 4 个浏览器均显示「研究进行中」，深度研究模块详情显示「待执行」——跨模块状态不一致。工具调用记录本身正确（前 5 个工具已完成/失败，第 6 个待审批）。
+- **期望**：深度研究模块详情面板任务状态应与聊天模块一致（审批/执行中显示「等待工具审批」或「执行中」），不应回退为「待执行」
+- **复现**：聊天模块触发深度研究 → 进入 /deep-research 任务详情 → 审批部分工具后观察详情面板状态
+- **截图**：20:03:28 页面5快照（任务ID research_d7de240a2a38，状态「研究任务已创建，等待执行...」「待执行」，但工具记录 5 已完成/失败 + 1 待审批）
+
+### 问题 P12（根因已定位，待修复）：触发浏览器深度研究刚触发时「研究已完成」闪现数秒
+- **现象**：聊天模块深度研究模式触发后，触发浏览器 AI 气泡中的研究卡片先显示「研究进行中」，任务刚触发后的数秒内闪现「研究已完成」，随后又恢复「研究进行中」。非触发浏览器未见该闪现。
+- **根因（代码 + 前后端日志双重定位）**：
+  1. 权威状态缺失：`message_added` 预创建 assistant 消息时 `research_task_id` 为空 → 消息 `researchTaskStatus=null`；SSE `deep_research` 事件只设置 `researchTaskId`，不设置 `researchTaskStatus`；后端 `update_chat_message_research_task_id_async` 写库后**不广播任何事件**（前端只能靠快照校对延迟注入，日志显示约 1.4s 后）。
+  2. 判定回退误判：[ChatMessage.vue `_isResearchRunning`](file:///d:/programming/langchain/langchain_xm/frontend/langchain-vue/src/components/chat/ChatMessage.vue#L203-L218) 在 `researchTaskStatus=null` 时回退 `streamState`/`isStreaming` 判定——触发浏览器 SSE 立即结束（`chatStore.isStreaming=false`，日志 19:59:31,561）后、WS `stream_interrupted`（日志 19:59:31,470 发布，前端处理有延迟）到达前，消息处于 `streamState=STREAMING/undefined + isStreaming=false` → 回退分支返回 false → 误显「研究已完成」。
+  3. 非触发浏览器不闪变：`handleStreamInterrupted` 设置 `INTERRUPTED + thinkingSessions`（`isStreaming=true`），后续 `stream_completed(finalized=false)` 有 thinkingSessions 保护、`stream_finalized` 有 INTERRUPTED 保护，进入 INTERRUPTED 后稳定。
+- **期望**：触发浏览器与研究任务状态一致，刚触发时显示「研究进行中」直至真正完成；「研究已完成」只在实际完成后显示。
+- **待修复方案**：① ChatMessage 判定修复——有 `researchTaskId` 且 `researchTaskStatus` 缺失时保守视为进行中，不因 `streamState/isStreaming` 误显完成；`showContinueResearch` 同步修复（避免「继续研究」闪现）。② 后端 `update_chat_message_research_task_id_async` 写库后广播 `message_updated`（携带权威 `research_task_status`），补全数据链路。
+- **状态**：2026-08-07 已实施两项修复（ChatMessage.vue + deep_chat_service.py），待重启服务实测。
+
+### 问题 P13：后端日志 WARNING「非法状态转换 tool_call_running → tool_call_pending」
+- **现象**：django.log L691 `[ToolCallLifecycle] 非法状态转换，阻止发布: tool_call_id=call_00_A32uinH9hqIZFa2iymQA7319, tool_call_running → tool_call_pending, allowed_prev=['tool_call_pending', None]`。发生在 SAFE 级工具自动通过后（日志 L687-688 为 SAFE 自动通过 + SAFE 审计已注册）。
+- **根因**：`tool_event_extractor.extract_tool_events_from_message` 在 ToolMessage 阶段会补发 TOOL_CALL_PENDING（当 AIMessage 阶段因 args 不完整未发射时）。而 SAFE 级工具由 `ApprovalMiddleware._audit_auto_approved_tools` 直接发布 TOOL_CALL_RUNNING（从 None 转换合法）。工具执行完的 ToolMessage 到达时 extractor 补发 PENDING → 状态机 `running → pending` 非法 → WARNING。既有 B7 预热修复（adapter.py L412-432）只覆盖「审批恢复模式」，未覆盖 SAFE 自动通过场景。
+- **影响**：无功能影响（PENDING 补发被拦截，前端工具卡片由 RUNNING 事件创建，参数完整），但产生日志噪音且状态机语义不完整（PENDING 补发场景未覆盖）。
+- **期望**：状态已推进（running 等）时不再补发 PENDING，消除 WARNING。
+- **待修复方案**：`adapter.py _publish_tool_event` 发布 TOOL_CALL_PENDING 前检查 lifecycle context 的 `last_event_type`，已推进到非 PENDING/None 时跳过补发（debug 记录）。子 agent 事件经 `_on_tool_event` 统一走 `_publish_tool_event`，一处修复覆盖主/子 agent。
+- **状态**：2026-08-07 已修复（adapter.py `_publish_tool_event` 增加 PENDING 补发防护，py_compile 通过），待重启服务实测验证日志不再出现该 WARNING。
+
+### 问题 P14：SAFE 级工具事件静默丢失（module 误判 CHAT → 无频道发布）
+- **现象**：深度研究（聊天触发）任务 research_d7de240a2a38 中，SAFE 级工具 call_00_A32uinH9hqIZFa2iymQA7319（`type` 命令，第 7 个工具）执行完成后，聊天模块与深度研究模块均不显示该工具。日志 L687-688 显示「SAFE 自动通过」「SAFE 审计已注册」，但 **tool_call_running / tool_call_completed 发布日志缺失**（仅 L691 PENDING 补发被状态机拦截的 WARNING，且其 last_event 已为 running，证明 RUNNING 状态已推进但未广播）。
+- **根因**：`ApprovalMiddleware.aafter_model`（middleware.py L320-328）提取 chat_session_id 只查 `runtime.context` 与 `state`，**不查 `runtime.config.configurable`**。深度研究 agent 的 configurable 含 `chat_session_id`（research_runner.py L345-346 传入，adapter.py 仅补 thread_id），但 aafter_model 提取为空 → `_audit_auto_approved_tools`（L224-226）误判 `module=CHAT`、`module_id=chat_session_id=""` → `publish_tool_call` → `_resolve_channels(CHAT, "", None)` 返回 `("", None)` → `publish_event` 无任何频道 → **事件静默丢弃**（_finalize_transition 仍执行，last_event 推进为 running，与 WARNING 证据吻合）。
+- **影响**：SAFE 级工具（自动通过、无审批记录）的整个生命周期事件丢失 → 所有浏览器均不显示该工具，且无任何报错日志。已审批工具（CONTROLLED/HIGH）不受影响（走 approval_service 路径，其 chat_session_id 来自 Approval 记录）。
+- **期望**：SAFE 工具事件正常发布到 session+task 双频道，前端显示工具卡片与执行结果。
+- **待修复方案**：`aafter_model` 提取 chat_session_id 时补充从 `runtime.config.configurable` 读取（`cfg.get("chat_session_id") or cfg.get("session_id")`），与 `_audit_auto_approved_tools` 的 configurable 提取一致。
+
+### 问题 P15：ChatMessage.tool_calls 只持久化审批中间态，工具终态（completed/failed+result）从不写库
+- **现象**：任务 research_d7de240a2a38 完成后，数据库 ChatMessage 3200 的 tool_calls 仅 4 条且全为中间态（status=waiting×2 / running×2，approval.state=waiting×2 / processing×2）；Approval 模型也仅 4 条中间态。深度研究模块详情（页面 5，未刷新，基于 WS 事件内存态）显示 6 个工具全部完成，聊天模块（刷新后基于数据库）显示第 6 个工具「执行中」+ 审批 UI 残留、无输出结果。用户问题「聊天模块没有看到工具调用的结果」由此产生。
+- **根因**：
+  1. `sync_approval_state_to_chat_message`（approval_service.py L979-1138）只在**审批状态变化**时写入 ChatMessage.tool_calls，其 status 映射（L1088-1095）上限为 running（processing→running），**无 completed**。
+  2. `tool_call_completed/failed` 事件只通过 `publish_tool_call` 实时广播（realtime_sync.py L113+），**没有任何链路把终态 status/result/error 持久化到 ChatMessage.tool_calls**。
+  3. `ResearchTask.tool_calls`（models.py L63）字段存在但**从未被写入**（全仓库仅 writeback.py L270 读取合并，无写者）→ Writeback B3 合并（writeback.py L264-275）无终态可合并。
+- **影响**：刷新/重新加载后，聊天模块从数据库读到的工具状态永远停留在中间态（执行中/审批中），无法显示工具执行结果；审批 UI 残留。实时状态下（WS 事件驱动）正常，掩盖了缺陷。
+- **期望**：工具执行终态持久化到 ChatMessage.tool_calls（status=completed/failed + result/error），刷新后状态与深度研究详情一致。
+- **待修复方案**：在工具终态事件发布链路（adapter.py `_publish_tool_event` 或 tool_call_lifecycle transition_async 终态分支）持久化终态到 ResearchTask.tool_calls（或直接 ChatMessage.tool_calls），Writeback 合并后快照/详情接口返回正确终态。需保证与 sync_approval_state_to_chat_message 的增量合并幂等（复用 `_merge_tool_calls_incremental`）。
+- **状态**：2026-08-07 已修复。方案演进为通用持久化：`transition/transition_async` 内置 `_persist_tool_state`，全状态链（PENDING/RUNNING/COMPLETED/FAILED）自动写 `ChatMessage.tool_calls`，所有模块无需注册即可自动获得持久化能力。
+
+### 问题 P16：`_persist_tool_state` 在 async 上下文中调用 sync ORM 报 SynchronousOnlyOperation
+- **现象**：django.log 多条 `sync_tool_result_to_chat_message 查找 ChatMessage 失败: err=You cannot call this from an async context - use a thread or sync_to_async`。代理模式 SSE 通过 `transition_async`（async）发布工具事件 → `_persist_tool_state` 直接调用 sync `sync_tool_result_to_chat_message`（含 Django ORM）→ `SynchronousOnlyOperation`。持久化失败但事件广播正常（WARNING 后仍有 `broadcast_event 转发`）。
+- **根因**：`_persist_tool_state` 未检测运行上下文（async 还是 sync），统一直接调用 sync ORM 函数。
+- **修复**（2026-08-07）：通过 `asyncio.get_running_loop()` 检测上下文：
+  - async 上下文：fire-and-forget 经由 `sync_to_async(_do_persist, thread_sensitive=True)` 写库
+  - sync 上下文：直接调用
+  - 异常仅 logger.warning，不阻塞 transition
+
+### 问题 P17：代理模式下"研究进行中"组件误显（P12 修复回归）
+- **现象**：代理模式下旧深度研究消息（有 `researchTaskId` 但已完成）短暂显示"研究进行中"后消失。
+- **根因**：P12 修复 `_isResearchRunning` 在 `researchTaskStatus` 缺失时 `return true`（保守视为进行中），但代理模式下加载的旧消息可能有残余 `researchTaskId`（同一 session 此前触发过深度研究）而 `researchTaskStatus` 为 null → 误显示"研究进行中"。
+- **修复**（2026-08-07）：不再盲目 `return true`。仅在以下情况视为进行中：
+  1. `streamState === INTERRUPTED`（深度研究审批中断，任务仍在执行）
+  2. `isStreaming && isLast`（正在流式输出）
+  已完成/历史消息（`streamState !== INTERRUPTED` 且不流式）正确返回 `false`。
+
+### 问题 P18：刷新浏览器后工具调用顺序错乱 — fire-and-forget PENDING 持久化竞态
+- **现象**：代理模式中，浏览器 A 点击「确认执行」最后一个工具后，立即刷新浏览器 B，最后一个工具跑到最前面（顺序错乱）。任务完成后再次刷新恢复正常。
+- **根因**：`_persist_tool_state` 对 PENDING 事件也 fire-and-forget 持久化。async 路径下多个 fire-and-forget 任务乱序完成：COMPLETED(工具4) 先于 PENDING(工具2,3) 完成 → 工具4 先 append 到 DB → 工具2,3 后 append → 顺序变为 [1,4,2,3]。
+- **修复**（2026-08-07）：`_persist_tool_state` 仅持久化终态（COMPLETED / FAILED），跳过 PENDING / RUNNING：
+  - 瞬态通过 WS 实时广播无需写库
+  - 终态 append 时依赖 `_merge_tool_calls_incremental` 的 `_evolve_tool_call` 终态保护
+  - agent 模式 `persist_stream_result`（finally 块）补齐 PENDING 全量持久化
+  - 深度研究模式 Writeback 合并链补齐缺失的 PENDING 条目
+
 ---
 
 （后续测试发现的问题继续追加）

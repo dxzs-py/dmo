@@ -61,7 +61,7 @@
                     <span class="step-label">{{ step.label }}</span>
                   </AiCheckpoint>
                   <div v-else class="step-node-wrapper">
-                    <AiNode :title="step.label" :status="execution?.currentStep === step.key ? 'running' : ''" />
+                    <AiNode :title="step.label" :status="execution?.currentStep === step.key ? LearningTaskStatus.RUNNING : ''" />
                   </div>
                 </div>
                 <AiEdge
@@ -201,6 +201,7 @@ import { formatDate } from '../utils/format'
 import { logger } from '../utils/logger'
 import { useTaskRealtimeSync } from '@/composables/useTaskRealtimeSync'
 import { useWorkflowStore } from '@/stores/workflow'
+import { LearningStep, LearningTaskStatus } from '@/types'
 
 const workflowStore = useWorkflowStore()
 
@@ -228,22 +229,22 @@ const workflowForm = reactive({
 })
 
 const statusOptions = [
-  { value: 'running', label: '执行中' },
-  { value: 'waiting_for_answers', label: '等待答题' },
-  { value: 'retry', label: '重试' },
-  { value: 'completed', label: '已完成' },
-  { value: 'failed', label: '失败' },
+  { value: LearningTaskStatus.RUNNING, label: '执行中' },
+  { value: LearningTaskStatus.WAITING_FOR_ANSWERS, label: '等待答题' },
+  { value: LearningTaskStatus.RETRY, label: '重试' },
+  { value: LearningTaskStatus.COMPLETED, label: '已完成' },
+  { value: LearningTaskStatus.FAILED, label: '失败' },
 ]
 
 const workflowSteps = [
-  { key: 'start', label: '启动' },
-  { key: 'planner', label: '规划' },
-  { key: 'retrieval', label: '检索' },
-  { key: 'quizGenerator', label: '出题' },
-  { key: 'waitingForAnswers', label: '答题' },
-  { key: 'grading', label: '评分' },
-  { key: 'feedback', label: '反馈' },
-  { key: 'end', label: '完成' },
+  { key: LearningStep.START, label: '启动' },
+  { key: LearningStep.PLANNER, label: '规划' },
+  { key: LearningStep.RETRIEVAL, label: '检索' },
+  { key: LearningStep.QUIZ_GENERATOR, label: '出题' },
+  { key: LearningStep.WAITING_FOR_ANSWERS, label: '答题' },
+  { key: LearningStep.GRADING, label: '评分' },
+  { key: LearningStep.FEEDBACK, label: '反馈' },
+  { key: LearningStep.END, label: '完成' },
 ]
 
 const stepOrder = workflowSteps.map(s => s.key)
@@ -257,32 +258,32 @@ const completedSteps = computed(() => {
 
 const getStepType = (step) => {
   const typeMap = {
-    start: 'info',
-    planner: 'primary',
-    retrieval: 'primary',
-    quizGenerator: 'warning',
-    waitingForAnswers: 'warning',
-    grading: 'primary',
-    feedback: 'success',
-    feedbackCompleted: 'success',
-    end: 'success',
-    completed: 'success',
+    [LearningStep.START]: 'info',
+    [LearningStep.PLANNER]: 'primary',
+    [LearningStep.RETRIEVAL]: 'primary',
+    [LearningStep.QUIZ_GENERATOR]: 'warning',
+    [LearningStep.WAITING_FOR_ANSWERS]: 'warning',
+    [LearningStep.GRADING]: 'primary',
+    [LearningStep.FEEDBACK]: 'success',
+    [LearningStep.FEEDBACK_COMPLETED]: 'success',
+    [LearningStep.END]: 'success',
+    [LearningTaskStatus.COMPLETED]: 'success',
   }
   return typeMap[step] || 'info'
 }
 
 const getStepText = (step) => {
   const textMap = {
-    start: '准备中',
-    planner: '生成学习计划',
-    retrieval: '检索资料',
-    quizGenerator: '生成练习题',
-    waitingForAnswers: '等待答题',
-    grading: '评分中',
-    feedback: '生成反馈',
-    feedbackCompleted: '工作流已完成',
-    end: '已结束',
-    completed: '已完成',
+    [LearningStep.START]: '准备中',
+    [LearningStep.PLANNER]: '生成学习计划',
+    [LearningStep.RETRIEVAL]: '检索资料',
+    [LearningStep.QUIZ_GENERATOR]: '生成练习题',
+    [LearningStep.WAITING_FOR_ANSWERS]: '等待答题',
+    [LearningStep.GRADING]: '评分中',
+    [LearningStep.FEEDBACK]: '生成反馈',
+    [LearningStep.FEEDBACK_COMPLETED]: '工作流已完成',
+    [LearningStep.END]: '已结束',
+    [LearningTaskStatus.COMPLETED]: '已完成',
   }
   return textMap[step] || step
 }
@@ -304,9 +305,9 @@ const pollExecutionStatus = async () => {
 
   const currentStep = execution.value.currentStep
 
-  if (currentStep === 'waitingForAnswers' || currentStep === 'end' || currentStep === 'completed') {
+  if (currentStep === LearningStep.WAITING_FOR_ANSWERS || currentStep === LearningStep.END || currentStep === LearningStep.COMPLETED) {
     stopPolling()
-    if (fileBrowserRef.value && currentStep !== 'waitingForAnswers') {
+    if (fileBrowserRef.value && currentStep !== LearningStep.WAITING_FOR_ANSWERS) {
       fileBrowserRef.value.loadFiles()
       autoLoadKeyFile()
     }
@@ -413,7 +414,7 @@ const connectSSE = async (threadId) => {
 
     if (sseReaderActive && execution.value) {
       const step = execution.value.currentStep
-      if (step !== 'waitingForAnswers' && step !== 'end' && step !== 'completed') {
+      if (step !== LearningStep.WAITING_FOR_ANSWERS && step !== LearningStep.END && step !== LearningStep.COMPLETED) {
         pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
       }
     }
@@ -424,7 +425,7 @@ const connectSSE = async (threadId) => {
     logger.error('SSE连接失败，回退到轮询:', error)
     if (execution.value) {
       const step = execution.value.currentStep
-      if (step !== 'waitingForAnswers' && step !== 'end' && step !== 'completed') {
+      if (step !== LearningStep.WAITING_FOR_ANSWERS && step !== LearningStep.END && step !== LearningStep.COMPLETED) {
         pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
       }
     }
@@ -467,10 +468,10 @@ const handleSSEEvent = (data) => {
         if (d.score !== undefined) execution.value.score = d.score
         if (d.feedback !== undefined) execution.value.feedback = d.feedback
         if (d.shouldRetry !== undefined) execution.value.shouldRetry = d.shouldRetry
-        // waitingForAnswers 状态：原 'waiting' 行为，关闭 SSE 并初始化答题表单
-        const isWaiting = d.state === 'waitingForAnswers'
-          || d.currentStep === 'waitingForAnswers'
-          || d.status === 'waitingForAnswers'
+        // waiting_for_answers 状态：原 'waiting' 行为，关闭 SSE 并初始化答题表单
+        const isWaiting = d.state === LearningStep.WAITING_FOR_ANSWERS
+          || d.currentStep === LearningStep.WAITING_FOR_ANSWERS
+          || d.status === LearningTaskStatus.WAITING_FOR_ANSWERS
         if (isWaiting) {
           execution.value = { ...execution.value, ...d }
           if (d.quiz && !Object.keys(answersForm).length) {
@@ -486,7 +487,7 @@ const handleSSEEvent = (data) => {
       // 学习工作流完成（原 'complete'）
       closeSSE()
       if (execution.value && sseData.data) {
-        execution.value = { ...execution.value, status: 'completed', ...sseData.data }
+        execution.value = { ...execution.value, status: LearningTaskStatus.COMPLETED, ...sseData.data }
       }
       if (fileBrowserRef.value) {
         fileBrowserRef.value.loadFiles()
@@ -497,7 +498,7 @@ const handleSSEEvent = (data) => {
       // 学习工作流失败（新增）
       closeSSE()
       if (execution.value && sseData.data) {
-        execution.value = { ...execution.value, status: 'failed', ...sseData.data }
+        execution.value = { ...execution.value, status: LearningTaskStatus.FAILED, ...sseData.data }
       }
       ElMessage.error(sseData.data?.error || sseData.data?.message || '工作流执行失败')
       break
@@ -578,14 +579,14 @@ watch(workflowStateFromStore, (newState, oldState) => {
 
   // 终态处理：完成时加载文件，失败时显示错误
   if (statusChanged) {
-    if (newState.status === 'completed') {
+    if (newState.status === LearningTaskStatus.COMPLETED) {
       nextTick(() => {
         if (fileBrowserRef.value) {
           fileBrowserRef.value.loadFiles()
         }
         autoLoadKeyFile()
       })
-    } else if (newState.status === 'failed') {
+    } else if (newState.status === LearningTaskStatus.FAILED) {
       const errorMsg = newState.errorMessage || newState.error
       if (errorMsg) {
         ElMessage.error(errorMsg)
@@ -708,12 +709,12 @@ const viewTask = async (selectedTask) => {
     })
   }
 
-  const isActive = selectedTask.status === 'running'
-    || selectedTask.currentStep === 'planner'
-    || selectedTask.currentStep === 'retrieval'
-    || selectedTask.currentStep === 'quizGenerator'
-    || selectedTask.currentStep === 'grading'
-    || selectedTask.currentStep === 'feedback'
+  const isActive = selectedTask.status === LearningTaskStatus.RUNNING
+    || selectedTask.currentStep === LearningStep.PLANNER
+    || selectedTask.currentStep === LearningStep.RETRIEVAL
+    || selectedTask.currentStep === LearningStep.QUIZ_GENERATOR
+    || selectedTask.currentStep === LearningStep.GRADING
+    || selectedTask.currentStep === LearningStep.FEEDBACK
 
   if (isActive && selectedTask.threadId) {
     connectSSE(selectedTask.threadId)
@@ -726,10 +727,10 @@ const viewTask = async (selectedTask) => {
         // fresh 可能补充 chat_session_id 字段，重新订阅（幂等：若已订阅同 task+session 则跳过）
         subscribeRealtimeForTask(execution.value)
         const freshActive = fresh.currentStep
-          && fresh.currentStep !== 'waitingForAnswers'
-          && fresh.currentStep !== 'end'
-          && fresh.currentStep !== 'completed'
-          && fresh.currentStep !== 'failed'
+          && fresh.currentStep !== LearningStep.WAITING_FOR_ANSWERS
+          && fresh.currentStep !== LearningStep.END
+          && fresh.currentStep !== LearningStep.COMPLETED
+          && fresh.currentStep !== LearningStep.FAILED
         if (freshActive) {
           connectSSE(fresh.threadId)
         } else {

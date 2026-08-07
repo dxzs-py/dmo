@@ -19,7 +19,7 @@
         <h4>研究报告</h4>
         <div class="report-header-actions">
           <el-button
-            v-if="task.status === 'completed'"
+            v-if="task.status === ResearchTaskStatus.COMPLETED"
             type="success"
             size="small"
             @click="emit('open-continue-dialog', task)"
@@ -81,10 +81,13 @@ import MarkdownRenderer from '@/components/common/MarkdownRenderer.vue'
 import ErrorBoundary from '@/components/common/ErrorBoundary.vue'
 import AiOpenInChat from '@/components/ai-elements/AiOpenInChat.vue'
 import { deepResearchAPI } from '@/api/research'
-
+import { ResearchTaskStatus } from '@/types'
 /**
- * 深度研究 - 任务报告�? * 包含：版本链 / 研究报告 Markdown / 文档分析详情 / 生成的文件列�? *
- * FileBrowser �?ref 通过 fileBrowserRef prop 透传（view 层级维护�? * 同时注入�?useResearchPolling / useResearchStream �?composable）�? */
+ * 深度研究 - 任务报告
+ * 包含：版本链 / 研究报告 Markdown / 文档分析详情 / 生成的文件列表
+ * FileBrowser 的 ref 通过 fileBrowserRef prop 透传（view 层级维护）
+ * 同时注入 useResearchPolling / useResearchStream 等 composable
+ */
 defineProps({
   /** 当前任务对象 */
   task: {

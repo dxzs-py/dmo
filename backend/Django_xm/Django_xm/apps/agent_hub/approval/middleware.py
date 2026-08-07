@@ -318,11 +318,29 @@ class ApprovalMiddleware(AgentMiddleware):
 
         # 提取 chat_session_id（chat 模块事件路由依赖，M1）
         # 三模块统一：chat 模块必填，deep_research 关联 chat 时填，learning 模块为 thread_id
+        # P14 根因修复：深度研究 agent 的 chat_session_id 存在于 runtime.config.configurable
+        # （research_runner.py L345-346 注入），但 aafter_model 原著只查 runtime.context 和 state，
+        # 导致提取为空 → _audit_auto_approved_tools module 误判为 CHAT → SAFE 工具事件路由到空频道。
+        # 修复：补充从 runtime.config.configurable 读取（与 _audit_auto_approved_tools 提取路径一致）。
         chat_session_id = ""
         try:
-            runtime_context = getattr(runtime, "context", None) or {}
-            if isinstance(runtime_context, dict):
-                chat_session_id = runtime_context.get("chat_session_id") or runtime_context.get("session_id") or ""
+            # 优先从 configurable 读取（深度研究主要路径）
+            configurable: dict = {}
+            try:
+                if hasattr(runtime, "config"):
+                    config = runtime.config
+                    if isinstance(config, dict):
+                        configurable = config.get("configurable") or {}
+            except Exception:
+                pass
+            if configurable:
+                chat_session_id = configurable.get("chat_session_id") or configurable.get("session_id") or ""
+            # 回退：runtime.context
+            if not chat_session_id:
+                runtime_context = getattr(runtime, "context", None) or {}
+                if isinstance(runtime_context, dict):
+                    chat_session_id = runtime_context.get("chat_session_id") or runtime_context.get("session_id") or ""
+            # 回退：state
             if not chat_session_id and isinstance(state, dict):
                 chat_session_id = state.get("chat_session_id") or state.get("session_id") or ""
         except Exception as extract_err:

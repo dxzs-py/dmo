@@ -104,7 +104,9 @@ export const createStreamStateHandlers = (ctx) => {
 
     const { messageId, eventType, data, seq } = payload
     if (!messageId || !eventType) {
-      logger.warn('[Sync] stream_event 缺少 message_id 或 event_type')
+      // stream_event 事件在非触发浏览器的 WebSocket 重放中可能无 messageId
+      // （如 approval/interrupted 等由专用 handler 处理的事件），静默跳过。
+      logger.debug(`[Sync] stream_event 缺少 messageId 或 eventType: messageId=${messageId}, eventType=${eventType}`)
       return
     }
 
@@ -148,7 +150,11 @@ export const createStreamStateHandlers = (ctx) => {
     }
     const field = fieldMap[eventType]
     if (!field) {
-      logger.warn(`[Sync] stream_event 未知 event_type: ${eventType}`)
+      // stream_event 是 approval/interrupted/model_fallback/research_task_id
+      // 等事件的 WS 统一容器；这些事件由 handleApprovalEvent /
+      // handleStreamInterrupted 等专用 handler 处理，此处仅负责 L126-133
+      // 的 streamState=STREAMING 设置，无需更新消息字段。
+      logger.debug(`[Sync] stream_event 无内容更新字段，跳过: eventType=${eventType}`)
       return
     }
 

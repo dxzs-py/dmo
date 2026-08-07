@@ -20,6 +20,44 @@ export const ToolCallStatus = {
 }
 
 /**
+ * 深度研究任务状态（后端 ResearchTask.status，snake_case 协议值）
+ *
+ * 协议值不参与 toCamelCase 转换（值非键名），前端通过本常量统一引用，
+ * 避免在组件中散落裸 snake_case 字符串。
+ */
+export const ResearchTaskStatus = {
+  PENDING: 'pending',
+  AWAITING_APPROVAL: 'awaiting_approval',
+  RUNNING: 'running',
+  COMPLETED: 'completed',
+  FAILED: 'failed',
+}
+
+/** 学习工作流任务状态（后端 WorkflowSession.status，snake_case 协议值） */
+export const LearningTaskStatus = {
+  RUNNING: 'running',
+  WAITING_FOR_ANSWERS: 'waiting_for_answers',
+  RETRY: 'retry',
+  COMPLETED: 'completed',
+  FAILED: 'failed',
+}
+
+/** 学习工作流阶段（后端 current_step，snake_case 协议值） */
+export const LearningStep = {
+  START: 'start',
+  PLANNER: 'planner',
+  RETRIEVAL: 'retrieval',
+  QUIZ_GENERATOR: 'quiz_generator',
+  WAITING_FOR_ANSWERS: 'waiting_for_answers',
+  GRADING: 'grading',
+  FEEDBACK: 'feedback',
+  FEEDBACK_COMPLETED: 'feedback_completed',
+  END: 'end',
+  COMPLETED: 'completed',
+  FAILED: 'failed',
+}
+
+/**
  * 只读工具名称集合
  *
  * 这些工具无副作用（不修改文件系统、不执行命令），后端不发起审批，

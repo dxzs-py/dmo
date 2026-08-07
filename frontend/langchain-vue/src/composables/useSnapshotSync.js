@@ -22,6 +22,9 @@ const SNAPSHOT_DEBOUNCE_MS = 500
  */
 const SNAPSHOT_TIMEOUT_MS = 8000
 
+/** 429 限流冷却期：收到 429 后此期间内不再发起快照请求，避免额度耗尽窗口内空转重试 */
+const SNAPSHOT_COOLDOWN_MS = 15000
+
 /**
  * 工具调用终态集合（快照校对 result 路径路由判断用）
  *
@@ -188,6 +191,8 @@ function createSnapshotSyncInstance({ kind, id }) {
   let debounceTimer = null
   /** @type {Promise<void> | null} */
   let inflightPromise = null
+  /** 429 冷却截止时间戳（Date.now()），0 = 不在冷却期 */
+  let cooldownUntil = 0
 
   // ==================== kind='session' 校对实现 ====================
 
@@ -357,6 +362,17 @@ function createSnapshotSyncInstance({ kind, id }) {
       try {
         resp = await Promise.race([fetchPromise, timeoutPromise])
       } catch (error) {
+        // 429 限流：进入冷却期，暂停后续快照触发，避免额度耗尽窗口内空转
+        if (error?.response?.status === 429) {
+          cooldownUntil = Date.now() + SNAPSHOT_COOLDOWN_MS
+          // 清理残留 debounce 定时器，避免冷却期结束后立即触发一次
+          if (debounceTimer !== null) {
+            clearTimeout(debounceTimer)
+            debounceTimer = null
+          }
+          logger.warn(`[SnapshotSync] 快照请求被限流(429)，冷却 ${SNAPSHOT_COOLDOWN_MS / 1000}s: session=${id}`)
+          return
+        }
         logger.warn(`[SnapshotSync] 快照请求失败，保留本地状态: session=${id}, error=${error.message}`)
         return
       }
@@ -493,6 +509,15 @@ function createSnapshotSyncInstance({ kind, id }) {
         `[SnapshotSync] task=${id} 快照校对完成: ${approvalList.length} 个审批记录`
       )
     } catch (err) {
+      if (err?.response?.status === 429) {
+        cooldownUntil = Date.now() + SNAPSHOT_COOLDOWN_MS
+        if (debounceTimer !== null) {
+          clearTimeout(debounceTimer)
+          debounceTimer = null
+        }
+        logger.warn(`[SnapshotSync] task=${id} 快照校对被限流(429)，冷却 ${SNAPSHOT_COOLDOWN_MS / 1000}s`)
+        return
+      }
       logger.warn(
         `[SnapshotSync] task=${id} 快照校对失败（非致命）: ${err?.message || err}`
       )
@@ -500,6 +525,12 @@ function createSnapshotSyncInstance({ kind, id }) {
   }
 
   // ==================== 公共框架 ====================
+
+  /**
+   * 检查是否处于 429 冷却期
+   * @returns {boolean}
+   */
+  const _isInCooldown = () => cooldownUntil > 0 && Date.now() < cooldownUntil
 
   /**
    * 执行一次快照校对（按 kind 路由，带 isSyncing 保护）
@@ -532,6 +563,11 @@ function createSnapshotSyncInstance({ kind, id }) {
    * @returns {Promise<void>}
    */
   const syncFromSnapshot = () => {
+    // 429 冷却期内跳过（不发请求），避免额度耗尽窗口内空转
+    if (_isInCooldown()) {
+      logger.debug(`[SnapshotSync] 429 冷却期内跳过校对: ${kind}=${id}`)
+      return Promise.resolve()
+    }
     // 清除前一个 debounce 定时器
     if (debounceTimer !== null) {
       clearTimeout(debounceTimer)

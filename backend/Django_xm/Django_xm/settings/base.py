@@ -205,7 +205,7 @@ REST_FRAMEWORK = {
         "research": "5/min",
         "knowledge": "60/min",
         "sensitive": "10/min",
-        "snapshot": "30/min",
+        "snapshot": "120/min",
         # 页面加载即请求的只读元数据接口（多浏览器并发时单页约 13 个请求），
         # 60/min 会被 4 浏览器同时打开瞬间打满，提升至 300/min 匹配设计意图
         "meta": "300/min",

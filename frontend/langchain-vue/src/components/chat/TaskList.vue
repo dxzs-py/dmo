@@ -66,7 +66,7 @@
             查看
           </el-button>
           <el-button
-            v-if="row.status === 'completed' && moduleType === 'deep-research'"
+            v-if="row.status === ResearchTaskStatus.COMPLETED && moduleType === 'deep-research'"
             link type="success" size="small"
             @click="continueTask(row)"
           >
@@ -103,6 +103,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh, View, Delete, ChatDotRound, RefreshRight } from '@element-plus/icons-vue'
 import { logger } from '../../utils/logger'
 import { confirmDelete } from '../../utils/dialog'
+import { ResearchTaskStatus, LearningStep } from '../../types'
 
 const props = defineProps({
   moduleType: {
@@ -140,36 +141,36 @@ const formatDate = (dateStr) => {
 
 const getStatusType = (status) => {
   const typeMap = {
-    pending: 'info',
-    awaitingApproval: 'warning',
-    running: 'warning',
-    completed: 'success',
-    failed: 'danger',
-    waitingForAnswers: 'warning',
-    planner: 'primary',
-    retrieval: 'primary',
-    quizGenerator: 'warning',
-    grading: 'primary',
-    feedback: 'success',
-    end: 'success',
+    [ResearchTaskStatus.PENDING]: 'info',
+    [ResearchTaskStatus.AWAITING_APPROVAL]: 'warning',
+    [ResearchTaskStatus.RUNNING]: 'warning',
+    [ResearchTaskStatus.COMPLETED]: 'success',
+    [ResearchTaskStatus.FAILED]: 'danger',
+    [LearningStep.WAITING_FOR_ANSWERS]: 'warning',
+    [LearningStep.PLANNER]: 'primary',
+    [LearningStep.RETRIEVAL]: 'primary',
+    [LearningStep.QUIZ_GENERATOR]: 'warning',
+    [LearningStep.GRADING]: 'primary',
+    [LearningStep.FEEDBACK]: 'success',
+    [LearningStep.END]: 'success',
   }
   return typeMap[status] || 'info'
 }
 
 const getStatusText = (status) => {
   const textMap = {
-    pending: '待执行',
-    awaitingApproval: '等待审批',
-    running: '执行中',
-    completed: '已完成',
-    failed: '失败',
-    waitingForAnswers: '等待答题',
-    planner: '生成计划',
-    retrieval: '检索资料',
-    quizGenerator: '生成题目',
-    grading: '评分中',
-    feedback: '生成反馈',
-    end: '已结束',
+    [ResearchTaskStatus.PENDING]: '待执行',
+    [ResearchTaskStatus.AWAITING_APPROVAL]: '等待审批',
+    [ResearchTaskStatus.RUNNING]: '执行中',
+    [ResearchTaskStatus.COMPLETED]: '已完成',
+    [ResearchTaskStatus.FAILED]: '失败',
+    [LearningStep.WAITING_FOR_ANSWERS]: '等待答题',
+    [LearningStep.PLANNER]: '生成计划',
+    [LearningStep.RETRIEVAL]: '检索资料',
+    [LearningStep.QUIZ_GENERATOR]: '生成题目',
+    [LearningStep.GRADING]: '评分中',
+    [LearningStep.FEEDBACK]: '生成反馈',
+    [LearningStep.END]: '已结束',
   }
   return textMap[status] || status
 }

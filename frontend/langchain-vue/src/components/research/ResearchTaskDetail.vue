@@ -54,10 +54,15 @@
       </el-descriptions-item>
     </el-descriptions>
 
-    <div v-if="task.status === 'running' || task.status === 'pending' || task.status === 'awaitingApproval'" class="progress-section">
+    <div
+      v-if="task.status === ResearchTaskStatus.RUNNING
+        || task.status === ResearchTaskStatus.PENDING
+        || task.status === ResearchTaskStatus.AWAITING_APPROVAL"
+      class="progress-section"
+    >
       <el-progress
         :percentage="progressPercentage"
-        :status="task.status === 'pending' ? '' : undefined"
+        :status="task.status === ResearchTaskStatus.PENDING ? '' : undefined"
         :stroke-width="8"
         striped
         striped-flow
@@ -70,7 +75,7 @@
       v-if="reasoning && reasoning.content"
       :content="reasoning.content"
       :duration="reasoning.duration"
-      :is-streaming="task.status === 'running' || task.status === 'pending'"
+      :is-streaming="task.status === ResearchTaskStatus.RUNNING || task.status === ResearchTaskStatus.PENDING"
       :source="reasoning.source || 'deep_thinking'"
       style="margin-top: 16px;"
     />
@@ -137,6 +142,7 @@ import ResearchTaskReport from './ResearchTaskReport.vue'
 import AiReasoning from '@/components/ai-elements/AiReasoning.vue'
 import { formatDate } from '@/utils/format'
 import { approvalStateToToolStatus } from '@/utils/toolCallStateMachine'
+import { ResearchTaskStatus } from '@/types'
 
 /**
  * 深度研究 - 任务详情卡片
@@ -210,24 +216,22 @@ const emit = defineEmits([
 
 const getStatusType = (status) => {
   const typeMap = {
-    pending: 'info',
-    awaitingApproval: 'warning',
-    progress: 'warning',
-    running: 'warning',
-    completed: 'success',
-    failed: 'danger',
+    [ResearchTaskStatus.PENDING]: 'info',
+    [ResearchTaskStatus.AWAITING_APPROVAL]: 'warning',
+    [ResearchTaskStatus.RUNNING]: 'warning',
+    [ResearchTaskStatus.COMPLETED]: 'success',
+    [ResearchTaskStatus.FAILED]: 'danger',
   }
   return typeMap[status] || 'info'
 }
 
 const getStatusText = (status) => {
   const textMap = {
-    pending: '待执行',
-    awaitingApproval: '等待审批',
-    progress: '执行中',
-    running: '执行中',
-    completed: '已完成',
-    failed: '失败',
+    [ResearchTaskStatus.PENDING]: '待执行',
+    [ResearchTaskStatus.AWAITING_APPROVAL]: '等待审批',
+    [ResearchTaskStatus.RUNNING]: '执行中',
+    [ResearchTaskStatus.COMPLETED]: '已完成',
+    [ResearchTaskStatus.FAILED]: '失败',
   }
   return textMap[status] || status
 }

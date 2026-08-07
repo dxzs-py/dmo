@@ -84,9 +84,18 @@ class ChatStreamRateThrottle(ScopedRateThrottle):
 
 
 class SnapshotRateThrottle(ScopedRateThrottle):
-    """会话快照校对接口（全量聚合，开销大），独立额度避免与普通请求抢 user 池。"""
+    """会话快照校对接口（全量聚合，开销大），独立额度避免与普通请求抢 user 池。
+
+    按用户粒度计数（复用 UserRateThrottle 模式）：同一用户多浏览器共享额度，
+    跨账号隔离；未认证请求不计数（返回 None）。避免多浏览器同 IP 互相挤兑额度。
+    """
 
     scope: str = "snapshot"  # type: ignore[assignment]  # django-stubs types scope as None
+
+    def get_cache_key(self, request, view):
+        if request.user and request.user.is_authenticated:
+            return self.cache_format % {"scope": self.scope, "ident": request.user.pk}
+        return None
 
 
 class MetaRateThrottle(ScopedRateThrottle):

@@ -585,8 +585,24 @@ class ChatService:
     ) -> AsyncGenerator[dict[str, Any], None]:
         """为特定模式创建并执行 Agent 流，返回事件流"""
         if mode == "deep-research":
-            # 先创建任务获取 task_id，以便前端尽早展示跳转链接
-            # B1: 从 request data 提取工具选择参数，传递到 create_deep_research_task 以写入 DB
+            # 深度研究模式架构（chat SSE 立即返回）：
+            # 1. 创建深度研究任务记录（create_deep_research_task，不启动 Celery）
+            # 2. 发送 deep_research 事件，前端据此：
+            #    - 设置 researchTaskId
+            #    - 将消息 streamState 转为 INTERRUPTED
+            # 3. 更新 ChatMessage 双向关联（research_task_id + message_id）
+            # 4. 启动 Celery 任务（start_celery，不等待结果）
+            # 5. 发送 interrupted 事件（触发 sse_generator 广播 stream_interrupted WebSocket 事件）
+            # 6. chat SSE 立即结束（return），不持续等待研究完成
+            #
+            # 研究结果回写链路（完全独立于 chat SSE）：
+            #   - Celery worker 完成/失败时调用 writeback_to_chat_message 回写 final_report 到 ChatMessage
+            #   - Celery worker 调用 broadcast_stream_completed 广播 WebSocket 事件
+            #   - 前端通过 WebSocket stream_completed 事件回写结果并转 COMPLETED
+            #
+            # 实时进度同步（跨浏览器）：
+            #   - 审批 / 工具事件通过 WebSocket 统一推送
+            #   - 非触发浏览器通过 stream_interrupted WebSocket 事件感知深度研究模式切换
             task_id = await self._deep_service.create_deep_research_task(
                 data["message"],
                 session_id=data.get("session_id"),
@@ -605,7 +621,7 @@ class ChatService:
                     "session_id": data.get("session_id", ""),
                 },
             }
-            # B4: 将 research_task_id 写入 ChatMessage（双向关联），
+            # 将 research_task_id 写入 ChatMessage（双向关联），
             # 确保 sync_approval_state_to_chat_message 和 writeback_to_chat_message 能通过
             # research_task_id 查找到关联的 ChatMessage。
             assistant_msg_id = data.get("_assistant_message_id")
@@ -622,17 +638,29 @@ class ChatService:
                     pass
             from Django_xm.apps.ai_engine.services.llm_factory import model_supports_capability
 
-            deep_result = None
-            async for event in self._deep_service.stream_deep_research_task(
-                data["message"],
+            # 深度思考参数透传：前端开启时后端不再静默禁用，仅在不支持时发送 warning 提示
+            use_deep_thinking = data.get("use_deep_thinking", False)
+            enable_deep_thinking = use_deep_thinking
+            if use_deep_thinking and not model_supports_capability(
+                data.get("provider_id", ""), data.get("model_name", ""), "deep_thinking"
+            ):
+                yield {
+                    "type": "warning",
+                    "data": {
+                        "message": (
+                            f'模型 {data.get("provider_id", "")}/{data.get("model_name", "")} '
+                            "可能不支持深度思考，将尝试透传参数"
+                        ),
+                    },
+                }
+            # 启动 Celery 任务（不等待结果，Chat SSE 立即返回）
+            await self._deep_service.start_celery(
+                query=data["message"],
                 session_id=data.get("session_id"),
-                usage_tracker=usage_tracker,
-                token_detail_tracker=token_detail_tracker,
                 use_web_search=data.get("use_web_search", True),
                 retriever_tool=data.get("_retriever_tool"),
                 extra_tools=data.get("_deep_extra_tools", []),
-                enable_deep_thinking=data.get("use_deep_thinking", False)
-                and model_supports_capability(data.get("provider_id", ""), data.get("model_name", ""), "deep_thinking"),
+                enable_deep_thinking=enable_deep_thinking,
                 provider_id=data.get("provider_id"),
                 model_name=data.get("model_name"),
                 task_id=task_id,
@@ -641,17 +669,20 @@ class ChatService:
                 max_tokens=data.get("max_tokens"),
                 special_params=data.get("special_params"),
                 continue_task_id=data.get("continue_task_id"),
-                task_title=data.get("_original_message"),
-            ):
-                if event.get("type") in ("approval", "approval_timeout", "approval_processed", "approval_history"):
-                    yield event  # 审批事件/超时通知/审批处理通知/历史审批补偿直接传递给前端 SSE
-                elif event.get("_is_result"):
-                    deep_result = event  # 最终研究结果
-            final_report = deep_result.get("final_report") or deep_result.get("error") if deep_result else None
-            if not final_report:
-                final_report = "深度研究已完成，但未生成可用报告。请稍后重试或调整问题表述。"
-            yield {"type": "chunk", "content": final_report}
+            )
+            # 通知前端 stream_interrupted（触发 sse_generator 广播 WebSocket 事件）
+            # 非触发浏览器通过此事件感知深度研究模式切换
+            yield {
+                "type": "interrupted",
+                "data": {
+                    "task_id": task_id,
+                    "message_id": str(assistant_msg_id) if assistant_msg_id else None,
+                    "session_id": data.get("session_id", ""),
+                },
+            }
+            # 设置 researchTaskId（触发浏览器通过 SSE 设置 lastMessage 的 researchTaskId）
             yield {"type": "research_task_id", "data": {"research_task_id": task_id}}
+            # 立即结束 chat SSE 流，不发送 chunk（最终报告由 Celery worker 通过 WebSocket 回写）
             return
 
     async def _get_deep_research_tools(self, data: dict) -> list:

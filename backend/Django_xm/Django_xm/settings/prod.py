@@ -61,7 +61,7 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "research": "5/min",
     "knowledge": "60/min",
     "sensitive": "5/min",
-    "snapshot": "30/min",
+    "snapshot": "120/min",
     "meta": "60/min",
 }
 

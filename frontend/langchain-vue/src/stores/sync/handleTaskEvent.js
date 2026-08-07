@@ -1,6 +1,7 @@
 import { logger } from '@/utils/logger'
 import { toCamelCase } from '@/utils/sessionTransformers'
 import { getEventTaskId } from '@/utils/eventRouting'
+import { ResearchTaskStatus } from '@/types'
 
 /**
  * @typedef {import('@/composables/useRealtimeSync').RealtimeEvent} RealtimeEvent
@@ -100,7 +101,7 @@ export const createHandleTaskEvent = (ctx) => {
         // 为冗余事件；独立深度研究模式下 task 频道是唯一路径，initial null 不会触发跳过
         {
           const existingTask = researchStore.tasks?.get?.(taskId)
-          if (existingTask?.status === 'completed' || existingTask?.status === 'failed') {
+          if (existingTask?.status === ResearchTaskStatus.COMPLETED || existingTask?.status === ResearchTaskStatus.FAILED) {
             logger.debug(
               `[Sync] task stream_completed 幂等跳过（已是终态）: taskId=${taskId}, ` +
               `status=${existingTask.status}`

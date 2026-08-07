@@ -9,7 +9,7 @@ import ToolCallCard from './ToolCallCard.vue'
 import Sources from './Sources.vue'
 import Plan from './Plan.vue'
 import AiReasoning from '../ai-elements/AiReasoning.vue'
-import { StreamState } from '../../types'
+import { ResearchTaskStatus, StreamState } from '../../types'
 import AiTask from '../ai-elements/AiTask.vue'
 import AiImage from '../ai-elements/AiImage.vue'
 import AiControls from '../ai-elements/AiControls.vue'
@@ -203,18 +203,19 @@ const hasResearchTask = computed(() => !!props.message.researchTaskId && !props.
 const _isResearchRunning = computed(() => {
   if (!hasResearchTask.value) return false
   // 后端 ResearchTask 权威状态优先（P7 根因修复）
-  // researchTaskStatus 是"研究进行中/已完成"的唯一权威判定源：
-  // 深度研究审批恢复后 SSE 流会先结束（streamState=completed），
-  // 但研究任务仍在进行（pending/running/awaiting_approval），
-  // 若 streamState 优先会误显"研究已完成"，出现状态横跳。
   const researchStatus = props.message.researchTaskStatus
   if (researchStatus) {
-    return researchStatus === 'pending' || researchStatus === 'running' || researchStatus === 'awaiting_approval'
+    return researchStatus === ResearchTaskStatus.PENDING || researchStatus === ResearchTaskStatus.RUNNING || researchStatus === ResearchTaskStatus.AWAITING_APPROVAL
   }
-  // 权威状态缺失（实时流式期间/历史消息）时回退 streamState
-  if (props.message.streamState === StreamState.COMPLETED) return false
+  // 权威状态缺失（P12 根因修复）：
+  // 深度研究触发后 chat SSE 立即结束（start_celery 架构），后端通过
+  // stream_interrupted 明确通知"任务未完成"，但 researchTaskStatus 尚未注入
+  // （需 research_task_id 写库后才能查询）。此时仅 INTERRUPTED 或流式中的
+  // 消息视为"研究进行中"。已完成/历史消息不误显，避免代理模式下旧深度研究
+  // 消息（有 researchTaskId 但已完成）显示"研究进行中"。
   if (props.message.streamState === StreamState.INTERRUPTED) return true
-  return !!(props.isStreaming && props.isLast)
+  if (props.isStreaming && props.isLast) return true
+  return false
 })
 
 const showContinueResearch = computed(() => {
@@ -222,10 +223,11 @@ const showContinueResearch = computed(() => {
   const researchStatus = props.message.researchTaskStatus
   if (researchStatus) {
     // 权威状态：仅已完成才显示"继续研究"
-    return researchStatus === 'completed' && !props.isStreaming
+    return researchStatus === ResearchTaskStatus.COMPLETED && !props.isStreaming
   }
-  // 实时流式期间（无权威状态）回退原逻辑
-  return !props.isStreaming && props.message.streamState !== StreamState.INTERRUPTED
+  // 权威状态缺失（P12 根因修复）：无完成证据时不显示"继续研究"，
+  // 避免触发浏览器 SSE 结束后误显"继续研究"按钮
+  return false
 })
 
 function handleContinueResearch() {

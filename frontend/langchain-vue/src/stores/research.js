@@ -4,6 +4,7 @@ import { getApprovalHistory } from '@/api/approval'
 import { logger } from '@/utils/logger'
 import { toCamelCase } from '@/utils/sessionTransformers'
 import { approvalStateToToolStatus } from '@/utils/toolCallStateMachine'
+import { ResearchTaskStatus } from '@/types'
 import {
   addOrUpdateToolCallInMap,
   updateOrAddToolResultInMap,
@@ -260,7 +261,7 @@ export const useResearchStore = defineStore('research', () => {
     const data = toCamelCase(payload)
     const success = data.success !== false
     const patch = {
-      status: success ? 'completed' : 'failed',
+      status: success ? ResearchTaskStatus.COMPLETED : ResearchTaskStatus.FAILED,
     }
     if (data.finalReport !== undefined) patch.finalReport = data.finalReport
     if (data.error) patch.error = data.error
