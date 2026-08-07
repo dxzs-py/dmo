@@ -64,6 +64,12 @@ export const useSessionStore = defineStore('session', () => {
   // currentSessionId 为空 fallback 到 sessions[0]（按加载顺序，非真正最新的会话）
   const _savedSessionId = _safeGetLocalStorage(CURRENT_SESSION_ID_KEY)
   const currentSessionId = ref(_savedSessionId || null)
+  /**
+   * SSE deep_research 事件早于 assistant 消息创建到达时的 researchTaskId 暂存区。
+   * setResearchTaskIdToLastMessage 找不到最后一条 assistant 消息时写入，
+   * addMessageToSession 创建 assistant 消息后消费补充（P3 根因修复）。
+   */
+  const _pendingResearchTaskIds = new Map()
   const selectedKnowledgeBase = ref(null)
   const selectedKnowledgeBases = ref([])
   const knowledgeBases = ref([])
@@ -646,6 +652,17 @@ export const useSessionStore = defineStore('session', () => {
       session.messages.push(messageWithVersions)
       session.messageCount = session.messages.length
 
+      // 消费 pending researchTaskId（P3 根因修复）：SSE deep_research 事件早于
+      // assistant 消息创建到达时暂存于 _pendingResearchTaskIds，此处补充到新消息
+      if (message.role === 'assistant' && _pendingResearchTaskIds.has(sessionId)) {
+        const pendingTaskId = _pendingResearchTaskIds.get(sessionId)
+        messageWithVersions.researchTaskId = pendingTaskId
+        if (messageWithVersions.versions?.[0]) {
+          messageWithVersions.versions[0].researchTaskId = pendingTaskId
+        }
+        _pendingResearchTaskIds.delete(sessionId)
+      }
+
       if (saveToBackend && userStore.isLoggedIn) {
         const backendMsg = transformFrontendMessageToBackend(messageWithVersions)
         chatAPI.addMessage(sessionId, backendMsg).then(res => {
@@ -898,9 +915,10 @@ export const useSessionStore = defineStore('session', () => {
   const setContextToLastMessage = (sessionId, context) => _setLastField(sessionId, 'context', context)
   const setResearchTaskIdToLastMessage = (sessionId, researchTaskId) => {
     const applied = _setLastField(sessionId, 'researchTaskId', researchTaskId)
-    if (!applied && researchTaskId && _pendingResearchTaskIds) {
-      // 兜底（P3 根因修复）：SSE deep_research 事件可能早于 assistant 消息创建到达，
-      // 此时 last assistant 消息不存在，暂存 taskId，待消息创建后由 addMessageToSession 补充
+    if (!applied && researchTaskId) {
+      // SSE deep_research 事件可能早于 assistant 消息创建到达，
+      // 此时无最后一条 assistant 消息可写入，暂存 taskId，
+      // 待消息创建后由 addMessageToSession 补充（P3 根因修复）
       _pendingResearchTaskIds.set(sessionId, researchTaskId)
     }
     return applied
@@ -1521,6 +1539,11 @@ export const useSessionStore = defineStore('session', () => {
       clearAllLocalData()
     } else if (!oldVal && newVal) {
       logger.log('[Security] User logged in, loading sessions from backend')
+      // 重置初始化缓存：首次 initialize() 可能在未登录时执行（main.js 早于登录，
+      // 仅执行 clearAllLocalData）。若 _initializePromise 被缓存为未登录版本，
+      // 登录后此处直接返回旧 promise，会话列表将永远不会从 API 加载，
+      // 表现为侧边栏只有 WebSocket session_created 注入的会话、刷新后恢复。
+      _initializePromise = null
       await initialize()
     } else if (oldVal && newVal) {
       const oldUserId = lastLoadedUserId.value

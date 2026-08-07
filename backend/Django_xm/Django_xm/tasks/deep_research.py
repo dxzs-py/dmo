@@ -40,6 +40,36 @@ except ImportError:
     pass
 
 
+def _publish_research_failure(thread_id: str, error_message: str) -> None:
+    """发布深度研究失败结果到 Redis（供聊天 SSE 及时结束等待）。
+
+    聊天模块深度研究模式的 SSE 生成器订阅 research:result:{thread_id}
+    通道等待研究结果；若终态失败不发布失败结果，SSE 将一直阻塞到
+    超时（前端输入框持续显示运行中）。仅在终态失败时调用，可重试
+    异常或等待审批（interrupted）路径不得调用。
+
+    Args:
+        thread_id: 研究任务 ID
+        error_message: 失败信息（作为 final_report / error 字段）
+    """
+    try:
+        from Django_xm.apps.research.services.research_runner import publish_result_payload
+
+        publish_result_payload(
+            thread_id,
+            {
+                "response_time": 0,
+                "success": False,
+                "final_report": error_message,
+                "files": None,
+                "usage_data": None,
+                "error": error_message,
+            },
+        )
+    except Exception as e:
+        logger.warning(f"发布研究失败结果到 Redis 失败: {e}")
+
+
 @shared_task(
     bind=True,
     name="research.run_research",
@@ -314,6 +344,8 @@ def run_research_task(
                 update_task_status(thread_id, {"status": "awaiting_approval"})
                 return {"status": "interrupted", "thread_id": thread_id, "message": "等待用户审批"}
             logger.warning(f"[Celery] 研究逻辑失败：{thread_id}, {result.error_message}")
+            if publish_to_redis:
+                _publish_research_failure(thread_id, result.error_message)
             _mark_failed(result.error_message)
             return {"status": "error", "thread_id": thread_id, "error": result.error_message}
 
@@ -336,6 +368,7 @@ def run_research_task(
                 broadcast_stream_completed(
                     chat_session_id, thread_id, success=True,
                     final_report=result.final_report, message_id=message_id,
+                    user_id=research_task.created_by_id,
                 )
         except Exception as e:
             logger.warning(f"[Celery] 回写 ChatMessage 失败: {e}")
@@ -355,7 +388,14 @@ def run_research_task(
         raise
     except Exception as exc:
         logger.exception(f"[Celery] 深度研究任务失败：{thread_id}, 错误：")
-        _mark_failed(str(exc), exc)
+        try:
+            _mark_failed(str(exc), exc)
+        except Retry:
+            # 可重试异常且剩余重试次数：不发布失败结果，避免聊天 SSE 提前结束
+            raise
+        # 终态失败：发布失败结果，让聊天 SSE 及时结束
+        if publish_to_redis:
+            _publish_research_failure(thread_id, str(exc))
         # 回写 ChatMessage + 广播 stream_completed，确保前端感知失败
         try:
             from Django_xm.apps.research.models import ResearchTask
@@ -373,6 +413,7 @@ def run_research_task(
                 broadcast_stream_completed(
                     chat_session_id, thread_id, success=False,
                     error=str(exc), message_id=message_id,
+                    user_id=research_task.created_by_id,
                 )
         except Exception as e:
             logger.warning(f"[Celery] 回写 ChatMessage 失败: {e}")
@@ -691,6 +732,8 @@ def research_resume_task(
                 logger.warning(
                     f"[Resume] 同批次无审批决策: thread_id={thread_id}, graph_interrupt_id={graph_interrupt_id}"
                 )
+                if chat_session_id:
+                    _publish_research_failure(thread_id, "同批次无审批决策")
                 return {
                     "status": "error",
                     "reason": "no_decisions",
@@ -706,6 +749,8 @@ def research_resume_task(
                 task = ResearchTask.objects.get(task_id=thread_id, is_deleted=False)
             except ResearchTask.DoesNotExist:
                 logger.exception(f"[Resume] ResearchTask 不存在: {thread_id}")
+                if chat_session_id:
+                    _publish_research_failure(thread_id, f"ResearchTask 不存在: {thread_id}")
                 return {
                     "status": "error",
                     "reason": "task_not_found",
@@ -764,7 +809,7 @@ def research_resume_task(
                     result,
                     response_time,
                     sync_files=True,
-                    publish_to_redis=False,
+                    publish_to_redis=bool(chat_session_id),
                 )
                 # 回写 ChatMessage + 广播 stream_completed，确保前端感知完成
                 if chat_session_id:
@@ -780,6 +825,7 @@ def research_resume_task(
                         broadcast_stream_completed(
                             chat_session_id, thread_id, success=True,
                             final_report=result.final_report, message_id=message_id,
+                            user_id=task.created_by_id,
                         )
                     except Exception as e:
                         logger.warning(f"[Resume] 回写 ChatMessage 失败: {e}")
@@ -807,6 +853,8 @@ def research_resume_task(
             else:
                 logger.warning(f"[Resume] 恢复失败: thread_id={thread_id}, error={result.error_message}")
                 tracker.mark_failure(error_message=result.error_message)
+                if chat_session_id:
+                    _publish_research_failure(thread_id, result.error_message)
                 return {
                     "status": "error",
                     "thread_id": thread_id,
@@ -825,4 +873,6 @@ def research_resume_task(
             f"[Resume] 深度研究恢复任务异常: thread_id={thread_id}",
         )
         tracker.mark_failure(error_message=str(exc))
+        if chat_session_id:
+            _publish_research_failure(thread_id, str(exc))
         return {"status": "error", "thread_id": thread_id, "error": str(exc)}

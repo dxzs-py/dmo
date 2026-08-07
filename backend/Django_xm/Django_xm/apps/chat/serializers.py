@@ -182,6 +182,7 @@ class ChatMessageSerializer(serializers.ModelSerializer):
     attachments = serializers.SerializerMethodField()
     attachment_ids = serializers.SerializerMethodField(method_name='get_attachment_ids')
     research_task_id = serializers.CharField(read_only=True)
+    research_task_status = serializers.SerializerMethodField(method_name='get_research_task_status')
     research_task_deleted = serializers.SerializerMethodField(method_name='get_research_task_deleted')
     session_id = serializers.PrimaryKeyRelatedField(source='session', read_only=True)
     chain_of_thought = serializers.JSONField(read_only=True)
@@ -216,6 +217,7 @@ class ChatMessageSerializer(serializers.ModelSerializer):
             "token_detail",
             "response_time",
             "research_task_id",
+            "research_task_status",
             "research_task_deleted",
         ]
         read_only_fields = ["id", "session_id", "created_at"]
@@ -239,6 +241,23 @@ class ChatMessageSerializer(serializers.ModelSerializer):
             return [att.id for att in attachments]
         except Exception:
             return []
+
+    def get_research_task_status(self, obj) -> str | None:
+        """返回关联研究任务的权威状态（P7 根因修复）
+
+        前端刷新后凭该字段判定"研究进行中/已完成"，避免快照不含状态导致误显。
+        必须用 all_objects（默认 objects 过滤了 is_deleted=True）。
+        """
+        if not obj.research_task_id:
+            return None
+        try:
+            from django.apps import apps
+
+            ResearchTask = apps.get_model("research", "ResearchTask")
+            task = ResearchTask.all_objects.filter(task_id=obj.research_task_id).first()
+            return task.status if task else None
+        except Exception:
+            return None
 
     def get_research_task_deleted(self, obj) -> bool | None:
         """检查关联的研究任务是否已软删除"""

@@ -302,6 +302,7 @@ export function transformBackendMessageToFrontend(msg) {
     tokenDetail: msgObj.tokenDetail || null,
     responseTime: msgObj.responseTime || 0,
     researchTaskId: msgObj.researchTaskId || null,
+    researchTaskStatus: msgObj.researchTaskStatus || null,
     researchTaskDeleted: msgObj.researchTaskDeleted || null,
     streamState: msgObj.isStreaming ? 'streaming' : (msgObj.streamState || undefined),
   }

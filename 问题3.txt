@@ -23,5 +23,27 @@
 - **复现**：聊天模块触发深度研究 → 切换至 /deep-research → 新任务未自动出现
 - **补充**：此前已添加 task_created 事件链路（event_schema + views.py 发布 + DeepResearchView 监听），但仍未生效，需重新验证根因
 
+### 问题 P9（已修复）：登录后侧边栏出现大量未创建过的「新对话 - 代理」会话
+- **现象**：用户手动登录后，侧边栏出现 19 个「新对话 - 代理」会话；其中部分会话在数据库中不存在（幽灵会话），真实会话 `8300e5ac...` 的标题被错误显示为「新对话 - 代理」（数据库正确标题为「我来帮您运行这两个命令并保存结果…」）。手动刷新页面后恢复正常（仅 2 个真实会话）。
+- **根因**：
+  1. Redis DB1（`realtime:history:user:1`）残留 8-01 测试产生的 369 条 user 频道历史事件（`session_created`×187 / `session_deleted`×170 / `session_updated`×2 / `task_*`×10，TTL 24h 未过期）。
+  2. 登录时 `lastSeq` 为空 → WebSocket replay 回退 seq=0 全量回放 → 19 条"存活"的 `session_created` 事件被前端 `upsertSession` 注入列表（这些会话已在数据库删除），形成幽灵会话；且真实会话的标题被旧事件载荷覆盖。
+- **修复**：
+  1. 后端 `common/realtime_events.py`：`get_event_history` 对 **user 频道** 的 `session_created` 历史事件做数据库存在性校验（`_filter_ghost_session_created`），会话不存在则跳过回放；存在则用数据库最新字段覆盖事件载荷（`title`/`mode`/`message_count`/`updated_at`/`selected_knowledge_bases`）。仅影响 user 频道 `session_created`，session/task 频道及 `session_deleted`/`session_updated`/`task_*` 事件不受影响。
+  2. 清理 Redis：删除 `realtime:history:user:1`、`realtime:seq:user:1`；重建 `realtime:seq:user:1=1000`（避免前端缓存的 lastSeq=369 跳过 seq≤369 的新事件）。
+- **验证**：
+  - 刷新后侧边栏仅 2 个真实会话，标题正确。
+  - 新建对话 `session_created` 以 seq=1001 正常发布并实时同步（无回归）。
+  - 单元验证 `_filter_ghost_session_created`：幽灵会话被跳过、真实会话字段被数据库权威值覆盖、`session_deleted` 保持原样。
+- **备注**：用户原话「是不是没有同步？因为刚刚登录，如果手动刷新是可以看到正常的」——实际不是未同步，而是历史事件全量回放导致列表污染；后端权威过滤已修复。
+
+### 问题 P10（已修复）：登录后侧边栏只剩 1 个会话，点击无消息，刷新后恢复
+- **现象**：用户手动登录后，侧边栏只剩 1 个「新对话 - 代理」会话（数据库有 3 个 daixing 会话），点击该会话无消息；刷新页面后恢复正常（3 个会话全部显示）。
+- **根因**：[session.js:1520-1534](file:///d:/programming/langchain/langchain_xm/frontend/langchain-vue/src/stores/session.js#L1520-L1534) 的 `initialize()` 用模块级 `_initializePromise` 永久缓存初始化结果。首次调用发生在 `main.js`（页面加载时），此时用户**未登录** → `initialize()` 走 `clearAllLocalData()` 分支并缓存该 promise。用户手动登录后，`isLoggedIn` watch 触发 `initialize()`，但 `_initializePromise` 已缓存为"未登录清空"版本 → 直接返回旧 promise → **会话列表永远不会从 API 加载**（网络请求中无 `GET /api/v1/chat/sessions/`）。侧边栏只剩 WebSocket `session_created` 事件注入的新会话；刷新后新页面实例 `_initializePromise` 重置、已登录 → 正常加载。
+- **修复**：[session.js:1540-1547](file:///d:/programming/langchain/langchain_xm/frontend/langchain-vue/src/stores/session.js#L1540-L1547) `isLoggedIn` watch 的登录分支（`!oldVal && newVal`）在调用 `initialize()` 前先 `_initializePromise = null`，确保登录后真正从后端重新加载会话列表与知识库。
+- **验证**：Pinia 中模拟「登出 → 登录」：登出后列表清空为 0，登录后 2.5s 内列表恢复 3 个会话（无需刷新）。
+- **备注**：用户原话「怎么就一个对话了？点击还没有信息，刷新后会恢复正常」——根因是未登录阶段的初始化 promise 被永久缓存，登录后无法触发列表加载。
+
 ---
+
 （后续测试发现的问题继续追加）

@@ -301,10 +301,11 @@ export function getLastAssistantMessage(sessions, sessionId) {
 
 export function setLastMessageField(sessions, sessionId, field, value) {
   const result = getLastAssistantMessage(sessions, sessionId)
-  if (!result) return
+  if (!result) return false
   result.message[field] = value
   const ver = result.message.versions?.[result.message.currentVersion]
   if (ver) ver[field] = value
+  return true
 }
 
 export function addLastMessageFieldItem(sessions, sessionId, field, item) {
@@ -1007,7 +1008,7 @@ export function mergeMessageFromBackend(existingMsg, backendMsg) {
   if (!backendMsg) return existingMsg
 
   const isProtected = PROTECTED_STREAM_STATES.has(existingMsg.streamState)
-  const _NON_CONTENT_FIELDS = ['tokenCount', 'responseTime', 'model', 'backendId', 'researchTaskId']
+  const _NON_CONTENT_FIELDS = ['tokenCount', 'responseTime', 'model', 'backendId', 'researchTaskId', 'researchTaskStatus']
 
   // 非内容字段始终以后端为准（后端是元数据权威）
   for (const field of _NON_CONTENT_FIELDS) {

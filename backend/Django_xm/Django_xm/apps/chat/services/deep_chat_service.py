@@ -176,6 +176,27 @@ class DeepChatService:
 
         return cleaned
 
+    async def _publish_task_created(self, thread_id: str) -> None:
+        """发布 TASK_CREATED 实时事件到 user 频道，通知深度研究模块自动刷新列表。
+
+        与独立深度研究模块 research/views.py 的 start 视图行为对齐（P8 根因修复）。
+        """
+        user_id = self._chat_service.user_id
+        if not user_id:
+            return
+        try:
+            from Django_xm.common.event_schema import EventType
+            from Django_xm.common.realtime_events import publish_event
+
+            await publish_event(
+                EventType.TASK_CREATED,
+                {"task_id": thread_id},
+                user_id=str(user_id),
+            )
+            logger.info(f"已发布 task_created 事件: task_id={thread_id}")
+        except Exception as e:
+            logger.warning(f"发布 task_created 事件失败: task_id={thread_id}, error={e}")
+
     async def create_deep_research_task(
         self,
         query: str,
@@ -231,6 +252,9 @@ class DeepChatService:
             if selected_mcp_servers is not None:
                 update_fields["selected_mcp_servers"] = selected_mcp_servers
             await update_research_task_fields_async(thread_id, **update_fields)
+
+        # 发布 task_created 实时事件，通知深度研究模块自动刷新任务列表
+        await self._publish_task_created(thread_id)
 
         return thread_id
 
@@ -290,6 +314,9 @@ class DeepChatService:
                 created_by,
                 session_id,
             )
+
+            # 发布 task_created 实时事件，通知深度研究模块自动刷新任务列表
+            await self._publish_task_created(thread_id)
 
         if knowledge_base_ids:
             await _update_kb_sync(thread_id, knowledge_base_ids)
@@ -357,7 +384,8 @@ class DeepChatService:
             )
             token_detail_tracker.finish_record()
 
-        await _update_status_sync(task_manager, thread_id, result_data.get("final_report", ""))
+        if result_data.get("success", True):
+            await _update_status_sync(task_manager, thread_id, result_data.get("final_report", ""))
 
         final_report = result_data.get("final_report", "")
         research_summary = final_report[:2000] if final_report else ""
@@ -424,6 +452,9 @@ class DeepChatService:
                 created_by,
                 session_id,
             )
+
+            # 发布 task_created 实时事件，通知深度研究模块自动刷新任务列表
+            await self._publish_task_created(thread_id)
 
         if knowledge_base_ids:
             await _update_kb_sync(thread_id, knowledge_base_ids)
@@ -501,7 +532,8 @@ class DeepChatService:
             )
             token_detail_tracker.finish_record()
 
-        await _update_status_sync(task_manager, thread_id, result_data.get("final_report", ""))
+        if result_data.get("success", True):
+            await _update_status_sync(task_manager, thread_id, result_data.get("final_report", ""))
 
         final_report = result_data.get("final_report", "")
         research_summary = final_report[:2000] if final_report else ""

@@ -103,6 +103,15 @@ class SnapshotView(APIView):
         messages = ChatMessage.objects.filter(session=session).order_by("created_at")
         messages_data = []
         all_tool_calls = []
+        # 批量查询研究任务权威状态（P7 根因修复）：
+        # 刷新后前端凭 research_task_status 判定研究是否仍在进行，
+        # 避免快照不含状态导致误显"研究已完成"。
+        research_status_map = {}
+        research_ids = [m.research_task_id for m in messages if m.research_task_id]
+        if research_ids:
+            ResearchTask = apps.get_model("research", "ResearchTask")
+            for _task in ResearchTask.all_objects.filter(task_id__in=research_ids).only("task_id", "status"):
+                research_status_map[_task.task_id] = _task.status
         for msg in messages:
             msg_tool_calls = msg.tool_calls if isinstance(msg.tool_calls, list) else []
             msg_data = {
@@ -115,6 +124,7 @@ class SnapshotView(APIView):
                 # 否则 SnapshotSync 合并后本地 researchTaskId 被置空，
                 # 聊天端"研究进行中/已完成"卡片无法显示（P3 根因之一）
                 "research_task_id": msg.research_task_id,
+                "research_task_status": research_status_map.get(msg.research_task_id),
                 "tool_calls": msg_tool_calls,
             }
             messages_data.append(msg_data)

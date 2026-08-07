@@ -422,24 +422,43 @@ def _sync_state_files_to_disk(thread_id: str, result: ResearchResult):
         logger.warning(f"同步状态文件到磁盘失败: {e}")
 
 
-def _publish_result_to_redis(thread_id: str, result: ResearchResult, response_time: float):
-    try:
-        from django.core.cache import cache
+def publish_result_payload(thread_id: str, payload: dict) -> None:
+    """发布研究结果负载到 Redis channel（与聊天 SSE 订阅方同一数据库）。
 
-        redis_client = cache.client.get_client()  # type: ignore[attr-defined]  # django-redis extension: BaseCache.client not in stubs
+    聊天模块深度研究模式的 SSE 生成器（deep_chat_service.py 的
+    _wait_for_research_result_streaming）使用 settings.CELERY_BROKER_URL
+    （Redis DB 3）订阅 research:result:{thread_id} 通道。
+    Redis Pub/Sub 按数据库隔离，因此发布方必须使用同一 broker URL
+    （同一 Redis DB），否则订阅方永远收不到消息。发布频率低，单次连接即可。
+
+    Args:
+        thread_id: 研究任务 ID（channel 后缀）
+        payload: 结果负载（业务字段，将连同 thread_id 一并序列化发布）
+    """
+    from django.conf import settings as django_settings
+
+    broker_url = getattr(django_settings, "CELERY_BROKER_URL", "")
+    if not broker_url:
+        logger.warning("CELERY_BROKER_URL 未配置，无法发布研究结果")
+        return
+
+    try:
+        import redis as redis_lib
+
         channel = f"{REDIS_CHANNEL_PREFIX}{thread_id}"
-        payload = json.dumps(
-            {
-                "thread_id": thread_id,
-                "response_time": response_time,
-                **result.to_dict(),
-            },
-            ensure_ascii=False,
+        redis_client = redis_lib.Redis.from_url(broker_url)
+        redis_client.publish(
+            channel,
+            json.dumps({"thread_id": thread_id, **payload}, ensure_ascii=False),
         )
-        redis_client.publish(channel, payload)
         logger.info(f"研究结果已发布到 Redis: {channel}")
     except Exception as e:
         logger.warning(f"发布研究结果到 Redis 失败: {e}")
+
+
+def _publish_result_to_redis(thread_id: str, result: ResearchResult, response_time: float):
+    """委托 publish_result_payload 发布成功研究结果（保持调用点不变）。"""
+    publish_result_payload(thread_id, {"response_time": response_time, **result.to_dict()})
 
 
 def finalize_research(

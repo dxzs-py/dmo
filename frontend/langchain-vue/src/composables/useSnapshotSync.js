@@ -40,8 +40,12 @@ const _TERMINAL_TOOL_CALL_STATUSES = new Set(
 
 /**
  * 快照校对消息状态提升时"始终以后端为准"的非内容字段（后端是元数据权威）
+ * 注意：与 messageOperations.js 的 _NON_CONTENT_FIELDS 保持一致，
+ * researchTaskStatus 是研究卡片"进行中/已完成"判定的权威来源（P7 根因修复），
+ * 快照校对必须注入，否则实时流式期间消息 researchTaskStatus 恒为 null，
+ * 卡片回退 streamState 判定导致"研究已完成"误显。
  */
-const _SNAPSHOT_NON_CONTENT_FIELDS = ['tokenCount', 'responseTime', 'model', 'backendId', 'researchTaskId']
+const _SNAPSHOT_NON_CONTENT_FIELDS = ['tokenCount', 'responseTime', 'model', 'backendId', 'researchTaskId', 'researchTaskStatus']
 
 /**
  * 按 sessionId 缓存的快照校对实例

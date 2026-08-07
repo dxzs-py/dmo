@@ -21,6 +21,7 @@ def broadcast_stream_completed(
     final_report: str = "",
     error: str = "",
     message_id: str | None = None,
+    user_id: int | None = None,
 ):
     """广播 stream_completed 事件到 session + task 双频道。
 
@@ -34,6 +35,9 @@ def broadcast_stream_completed(
     - task:{task_id} 频道：DeepResearchView 独立模式订阅，触发
       researchStore.updateTaskFromEvent 更新任务状态（status/final_report/error）。
       独立深度研究模式（无 chat_session_id）下，task 频道是唯一事件源。
+    - user:{user_id} 频道：任务进入终态时发布 task_status_changed，
+      深度研究模块任务列表据此自动刷新状态（completed/failed），
+      避免列表停留在旧状态（awaiting_approval/running）需手动刷新。
 
     Args:
         chat_session_id: 关联的 chat session ID（可为 None，表示独立深度研究模式）
@@ -76,6 +80,23 @@ def broadcast_stream_completed(
         )
     except Exception as e:
         logger.warning(f"[Writeback] 广播 STREAM_COMPLETED 失败: {e}")
+
+    # 任务进入终态：发布 task_status_changed 到 user 频道，通知深度研究模块任务列表
+    # 自动刷新状态（completed/failed）。与 stream_completed（session+task 频道，业务事件）
+    # 分离：task_status_changed 仅 user 频道，是用户级列表刷新通知（非业务数据）。
+    # 发布失败不影响主流程（stream_completed 已广播），仅记录日志。
+    if user_id:
+        try:
+            publish_event_sync(
+                EventType.TASK_STATUS_CHANGED,
+                {
+                    "task_id": task_id,
+                    "status": "completed" if success else "failed",
+                },
+                user_id=user_id,
+            )
+        except Exception as e:
+            logger.warning(f"[Writeback] 发布 task_status_changed 失败: task_id={task_id}, error={e}")
 
 
 def broadcast_stream_reasoning(

@@ -200,15 +200,32 @@ function handleRegenerate() {
 
 const hasResearchTask = computed(() => !!props.message.researchTaskId && !props.message.researchTaskDeleted)
 
-const _isResearchRunning = computed(() =>
-  hasResearchTask.value && (
-    props.message.streamState === StreamState.INTERRUPTED ||
-    (props.isStreaming && props.isLast)
-  )
-)
+const _isResearchRunning = computed(() => {
+  if (!hasResearchTask.value) return false
+  // 后端 ResearchTask 权威状态优先（P7 根因修复）
+  // researchTaskStatus 是"研究进行中/已完成"的唯一权威判定源：
+  // 深度研究审批恢复后 SSE 流会先结束（streamState=completed），
+  // 但研究任务仍在进行（pending/running/awaiting_approval），
+  // 若 streamState 优先会误显"研究已完成"，出现状态横跳。
+  const researchStatus = props.message.researchTaskStatus
+  if (researchStatus) {
+    return researchStatus === 'pending' || researchStatus === 'running' || researchStatus === 'awaiting_approval'
+  }
+  // 权威状态缺失（实时流式期间/历史消息）时回退 streamState
+  if (props.message.streamState === StreamState.COMPLETED) return false
+  if (props.message.streamState === StreamState.INTERRUPTED) return true
+  return !!(props.isStreaming && props.isLast)
+})
 
 const showContinueResearch = computed(() => {
-  return props.message.role === 'assistant' && hasResearchTask.value && !props.isStreaming && props.message.streamState !== StreamState.INTERRUPTED
+  if (props.message.role !== 'assistant' || !hasResearchTask.value) return false
+  const researchStatus = props.message.researchTaskStatus
+  if (researchStatus) {
+    // 权威状态：仅已完成才显示"继续研究"
+    return researchStatus === 'completed' && !props.isStreaming
+  }
+  // 实时流式期间（无权威状态）回退原逻辑
+  return !props.isStreaming && props.message.streamState !== StreamState.INTERRUPTED
 })
 
 function handleContinueResearch() {

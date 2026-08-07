@@ -87,6 +87,7 @@ class EventType(StrEnum):
 
     # === 任务事件（WebSocket 推送）===
     TASK_CREATED = "task_created"  # 新任务创建（深度研究/工作流），通知列表刷新
+    TASK_STATUS_CHANGED = "task_status_changed"  # 任务状态进入终态（completed/failed），通知列表刷新
 
     # === 学习工作流事件（WebSocket 推送）===
     WORKFLOW_STEP = "workflow_step"  # 工作流节点执行进度
