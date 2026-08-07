@@ -1,396 +1,140 @@
- [vite] connecting...
- [vite] connected.
- [Security] Initializing session store...
- [Realtime] 已从 localStorage 恢复 lastSeq: 224 条通道
- [Sync] 实时同步 store 已初始化
- [toSnakeCase] pageSize → page_size
- [toSnakeCase] agentType → agent_type
- [Realtime] WebSocket 已连接
- [Realtime] replay barrier 设置 pending: user
- [toCamelCase] channel_type → channelType
- [toCamelCase] channel_id → channelId
- [toCamelCase] chunk_index → chunkIndex
- [toCamelCase] chunk_count → chunkCount
- [Realtime] 收到 replay 回包: channel=user:1, count=0, chunk=1/1
- [Realtime] replay barrier flush 无缓冲事件: user
- 🍍 "chat" store installed 🆕
- 🍍 "model" store installed 🆕
- 🍍 "tools" store installed 🆕
- [Axios] 响应转换: /chat/sessions/ 
-  前: {"code":200,"message":"操作成功","data":{"items":[{"user_id":1,"cached_at":"2026-08-04T23:33:06.854014+00:00","id":1525,"session_id":"a42762af-9289-44dd-992b-57ce176cab29","title":"我来帮你运行这两个命令。注意到 `lis` 和 
-  后: {"code":200,"message":"操作成功","data":{"items":[{"userId":1,"cachedAt":"2026-08-04T23:33:06.854014+00:00","id":1525,"sessionId":"a42762af-9289-44dd-992b-57ce176cab29","title":"我来帮你运行这两个命令。注意到 `lis` 和 `p
- [Security] Loaded 3 sessions (page 1/1) for user 1
- [Axios] 响应转换: /users/info/ 
-  前: {"code":200,"message":"获取成功","data":{"id":1,"username":"daixing","email":"3309201506@qq.com","mobile":null,"avatar":"/media/avatar/1/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE_2026-05-01_172822.png","date_j 
-  后: {"code":200,"message":"获取成功","data":{"id":1,"username":"daixing","email":"3309201506@qq.com","mobile":null,"avatar":"/media/avatar/1/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE_2026-05-01_172822.png","dateJo
- [Axios] 响应转换: /context/capability-config/ 
-  前: {"code":200,"message":"操作成功","data":{"available_capabilities":["context_management","tool_injection","guardrails","rate_limit","groq_compat"],"default_capabilities":["context_management","tool_injecti 
-  后: {"code":200,"message":"操作成功","data":{"availableCapabilities":["context_management","tool_injection","guardrails","rate_limit","groq_compat"],"defaultCapabilities":["context_management","tool_injection
- [Axios] 响应转换: /knowledge/knowledge-bases/ 
-  前: {"code":200,"message":"操作成功","data":{"items":[{"id":"test2","name":"test2","description":"redis学习文档","num_documents":76,"chunk_count":76,"created_at":"2026-06-21T02:23:41.870493+00:00","updated_at":"2 
-  后: {"code":200,"message":"操作成功","data":{"items":[{"id":"test2","name":"test2","description":"redis学习文档","numDocuments":76,"chunkCount":76,"createdAt":"2026-06-21T02:23:41.870493+00:00","updatedAt":"2026-
- [Axios] 响应转换: /chat/project-context/ 
-  前: {"code":200,"message":"操作成功","data":{"project_name":"","project_root":"","languages":[],"frameworks":[],"has_git":false,"git_branch":"","instruction_content":"","directory_structure":"","key_files":[] 
-  后: {"code":200,"message":"操作成功","data":{"projectName":"","projectRoot":"","languages":[],"frameworks":[],"hasGit":false,"gitBranch":"","instructionContent":"","directoryStructure":"","keyFiles":[]}}
- [Axios] 响应转换: /tools/mcp/servers/ 
-  前: {"code":200,"message":"操作成功","data":{"servers":[{"name":"postgres","description":"PostgreSQL 数据库操作工具 - 查询 langchain 数据库（可读写）","tool_type":"mcp","category":{"code":"general","name":"通用"},"source":"user 
-  后: {"code":200,"message":"操作成功","data":{"servers":[{"name":"postgres","description":"PostgreSQL 数据库操作工具 - 查询 langchain 数据库（可读写）","toolType":"mcp","category":{"code":"general","name":"通用"},"source":"user"
- [Axios] 响应转换: /tools/skills/ 
-  前: {"code":200,"message":"操作成功","data":{"skills":[{"name":"skill_web_research","description":"网络研究技能：搜索关键词 → 抓取相关网页 → 总结关键信息。适用场景：需要深入了解某个话题。","tool_type":"skill","category":{"code":"general","name":"通用" 
-  后: {"code":200,"message":"操作成功","data":{"skills":[{"name":"skill_web_research","description":"网络研究技能：搜索关键词 → 抓取相关网页 → 总结关键信息。适用场景：需要深入了解某个话题。","toolType":"skill","category":{"code":"general","name":"通用"}
- [Axios] 响应转换: /chat/sessions/a42762af-9289-44dd-992b-57ce176cab29/ 
-  前: {"code":200,"message":"操作成功","data":{"id":1525,"session_id":"a42762af-9289-44dd-992b-57ce176cab29","title":"我来帮你运行这两个命令。注意到 `lis` 和 `pst` ...","mode":"agent","selected_knowledge_base":null,"selected_k 
-  后: {"code":200,"message":"操作成功","data":{"id":1525,"sessionId":"a42762af-9289-44dd-992b-57ce176cab29","title":"我来帮你运行这两个命令。注意到 `lis` 和 `pst` ...","mode":"agent","selectedKnowledgeBase":null,"selectedKnowl
- [Session] Loaded detail for session a42762af-9289-44dd-992b-57ce176cab29 with 2 messages
- [Realtime] replay barrier 设置 pending: session_a42762af-9289-44dd-992b-57ce176cab29
- [ChatView] WebSocket 订阅会话事件: a42762af-9289-44dd-992b-57ce176cab29
- [toCamelCase] channel_type → channelType
- [toCamelCase] channel_id → channelId
- [toCamelCase] chunk_index → chunkIndex
- [toCamelCase] chunk_count → chunkCount
- [Realtime] 收到 replay 回包: channel=session:a42762af-9289-44dd-992b-57ce176cab29, count=0, chunk=1/1
- [Realtime] replay barrier flush 无缓冲事件: session_a42762af-9289-44dd-992b-57ce176cab29
- [Axios] 响应转换: /realtime/snapshot/a42762af-9289-44dd-992b-57ce176cab29/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"a42762af-9289-44dd-992b-57ce176cab29","session_title":"我来帮你运行这两个命令。注意到 `lis` 和 `pst` ...","messages":[{"id":"3095","session_id":"a42762af-9289-44dd-9 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"a42762af-9289-44dd-992b-57ce176cab29","sessionTitle":"我来帮你运行这两个命令。注意到 `lis` 和 `pst` ...","messages":[{"id":"3095","sessionId":"a42762af-9289-44dd-992b
- [Realtime] 收到 pong
- [Sync] 会话删除: a42762af-9289-44dd-992b-57ce176cab29
- [Security] Deleted session a42762af-9289-44dd-992b-57ce176cab29 for user 1
- [ChatView] WebSocket 取消订阅会话事件: a42762af-9289-44dd-992b-57ce176cab29
- [Realtime] replay barrier 设置 pending: session_8300e5ac-8aea-4fb0-9f29-57a735ff8ac8
- [ChatView] WebSocket 订阅会话事件: 8300e5ac-8aea-4fb0-9f29-57a735ff8ac8
- [toCamelCase] channel_type → channelType
- [toCamelCase] channel_id → channelId
- [toCamelCase] chunk_index → chunkIndex
- [toCamelCase] chunk_count → chunkCount
- [Realtime] 收到 replay 回包: channel=session:8300e5ac-8aea-4fb0-9f29-57a735ff8ac8, count=0, chunk=1/1
- [Realtime] replay barrier flush 无缓冲事件: session_8300e5ac-8aea-4fb0-9f29-57a735ff8ac8
- [Sync] session_created 自动切换会话: 8300e5ac-8aea-4fb0-9f29-57a735ff8ac8 -> 6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
- [Sync] 重置 session seq 状态: 6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
- [Realtime] replay barrier 设置 pending: session_6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
- [Sync] 会话创建并自动订阅: 6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
- [toCamelCase] channel_type → channelType
- [toCamelCase] channel_id → channelId
- [toCamelCase] chunk_index → chunkIndex
- [toCamelCase] chunk_count → chunkCount
- [Realtime] 收到 replay 回包: channel=session:6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=0, chunk=1/1
- [Realtime] replay barrier flush 无缓冲事件: session_6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
- [Axios] 响应转换: /chat/project-context/ 
-  前: {"code":200,"message":"操作成功","data":{"project_name":"","project_root":"","languages":[],"frameworks":[],"has_git":false,"git_branch":"","instruction_content":"","directory_structure":"","key_files":[] 
-  后: {"code":200,"message":"操作成功","data":{"projectName":"","projectRoot":"","languages":[],"frameworks":[],"hasGit":false,"gitBranch":"","instructionContent":"","directoryStructure":"","keyFiles":[]}}
- [ChatView] WebSocket 取消订阅会话事件: 8300e5ac-8aea-4fb0-9f29-57a735ff8ac8
- [Axios] 响应转换: /chat/sessions/create/ 
-  前: {"code":200,"message":"会话创建成功","data":{"id":1526,"session_id":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","title":"新对话 - 代理","mode":"agent","selected_knowledge_base":null,"selected_knowledge_bases":[],"mes 
-  后: {"code":200,"message":"会话创建成功","data":{"id":1526,"sessionId":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","title":"新对话 - 代理","mode":"agent","selectedKnowledgeBase":null,"selectedKnowledgeBases":[],"messages
- [Security] Created new session 6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6 for user 1
- [ChatView] WebSocket 订阅会话事件: 6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
- [ChatInput] 发送消息, attachmentIds: Array(0)
- [ChatStore] sendMessage called
- [ChatStore] sessionId: 6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
- [Sync] 开始流式: 6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
- [ChatStore] streamChat 请求参数, attachmentIds: Array(0)
- [toSnakeCase] chatHistory → chat_history
- [toSnakeCase] useTools → use_tools
- [toSnakeCase] useWebSearch → use_web_search
- [toSnakeCase] useKnowledgeBase → use_knowledge_base
- [toSnakeCase] useDeepThinking → use_deep_thinking
- [toSnakeCase] useMcp → use_mcp
- [toSnakeCase] selectedMcpServers → selected_mcp_servers
- [toSnakeCase] selectedTools → selected_tools
- [toSnakeCase] sessionId → session_id
- [toSnakeCase] selectedKnowledgeBase → selected_knowledge_base
- [toSnakeCase] selectedKnowledgeBases → selected_knowledge_bases
- [toSnakeCase] attachmentIds → attachment_ids
- [toSnakeCase] providerId → provider_id
- [toSnakeCase] modelName → model_name
- [toSnakeCase] specialParams → special_params
- [toSnakeCase] maxTokens → max_tokens
- [toSnakeCase] researchTaskId → research_task_id
- [toSnakeCase] continueTaskId → continue_task_id
- [toCamelCase] session_id → sessionId
- [Sync] handleMessageAdded 诊断: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, incoming.role=user, incoming.backendId=3097, messagesCount=2, placeholderCount=2, exactMatch=false
- [Sync] 匹配到前端占位消息: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, frontendId=D0Zu727gXIz5DbN6YTwUG, backendId=3097, role=user, isStreaming=undefined, contentLen=91
- [Sync] 消息已存在，合并更新: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, message=3097
- [Sync] 丢弃过期事件: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, seq=1, expected=2
- [toCamelCase] session_id → sessionId
- [Sync] handleMessageAdded 诊断: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, incoming.role=assistant, incoming.backendId=3098, messagesCount=2, placeholderCount=1, exactMatch=false
- [Sync] 匹配到前端占位消息: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, frontendId=pN8qQupi9MhqudueU5zL9, backendId=3098, role=assistant, isStreaming=undefined, contentLen=0
- [Sync] 消息已存在，合并更新: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, message=3098
- [Sync] 丢弃过期事件: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, seq=2, expected=3
- [SSE] 未注册事件类型 "start" 被忽略
- [Realtime] 收到 pong
- [toSnakeCase] chainOfThought → chain_of_thought
- [toSnakeCase] toolCalls → tool_calls
- [toSnakeCase] attachmentIds → attachment_ids
- [toSnakeCase] researchContext → research_context
- [toSnakeCase] currentVersion → current_version
- [toSnakeCase] tokenCount → token_count
- [toSnakeCase] tokenDetail → token_detail
- [toSnakeCase] responseTime → response_time
- [toSnakeCase] researchTaskId → research_task_id
- [Axios] 响应转换: /chat/messages/3098/ 
-  前: {"code":200,"message":"消息更新成功","data":{"id":3098,"session_id":1526,"role":"assistant","content":"","sources":[],"plan":null,"chain_of_thought":[],"tool_calls":[],"approval":null,"reasoning":{},"sugges 
-  后: {"code":200,"message":"消息更新成功","data":{"id":3098,"sessionId":1526,"role":"assistant","content":"","sources":[],"plan":null,"chainOfThought":[],"toolCalls":[],"approval":null,"reasoning":{},"suggestion
- [toCamelCase] session_id → sessionId
- [toCamelCase] session_id → sessionId
- [toCamelCase] session_id → sessionId
- [Session] 占位 toolCall 已加入 pendingApprovals 队列: sessionId=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, toolCallId=call_00_EV7zfYwLSUsAl99C1RE95427, pendingIds=call_00_EV7zfYwLSUsAl99C1RE95427,call_00_EV7zfYwLSUsAl99C1RE95427
- [toCamelCase] session_id → sessionId
- [toCamelCase] session_id → sessionId
- [toCamelCase] session_id → sessionId
- [Session] 占位 toolCall 已加入 pendingApprovals 队列: sessionId=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, toolCallId=call_01_otkkCw9ygIfB8cpSeYtA1703, pendingIds=call_01_otkkCw9ygIfB8cpSeYtA1703,call_01_otkkCw9ygIfB8cpSeYtA1703
- [toCamelCase] session_id → sessionId
- [SSE] 未注册事件类型 "interrupted" 被忽略
- [toCamelCase] session_id → sessionId
- [SSE] 未注册事件类型 "end" 被忽略
- [toCamelCase] session_id → sessionId
- [Sync] 结束流式: 6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
- [toSnakeCase] chainOfThought → chain_of_thought
- [toSnakeCase] toolCalls → tool_calls
- [toSnakeCase] attachmentIds → attachment_ids
- [toSnakeCase] researchContext → research_context
- [toSnakeCase] currentVersion → current_version
- [toSnakeCase] tokenCount → token_count
- [toSnakeCase] tokenDetail → token_detail
- [toSnakeCase] responseTime → response_time
- [toSnakeCase] researchTaskId → research_task_id
- [Axios] 响应转换: /chat/messages/3098/ 
-  前: {"code":200,"message":"消息更新成功","data":{"id":3098,"session_id":1526,"role":"assistant","content":"","sources":[],"plan":null,"chain_of_thought":[],"tool_calls":[{"id":"call_00_EV7zfYwLSUsAl99C1RE95427" 
-  后: {"code":200,"message":"消息更新成功","data":{"id":3098,"sessionId":1526,"role":"assistant","content":"","sources":[],"plan":null,"chainOfThought":[],"toolCalls":[{"id":"call_00_EV7zfYwLSUsAl99C1RE95427","ar
- [Axios] 响应转换: /realtime/snapshot/6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","session_title":"新对话 - 代理","messages":[{"id":"3097","session_id":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","sessionTitle":"新对话 - 代理","messages":[{"id":"3097","sessionId":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","role":"us
- [SnapshotSync] 消息校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=2
- [SnapshotSync] 快照校对成功: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
- [Realtime] 收到 pong
- [Realtime] 收到 pong
- [toSnakeCase] providerId → provider_id
- [toSnakeCase] modelName → model_name
- [toSnakeCase] useDeepThinking → use_deep_thinking
- [toSnakeCase] specialParams → special_params
- [toSnakeCase] maxTokens → max_tokens
- [toSnakeCase] useTools → use_tools
- [toSnakeCase] useWebSearch → use_web_search
- [toSnakeCase] useMcp → use_mcp
- [toSnakeCase] selectedMcpServers → selected_mcp_servers
- [toSnakeCase] selectedTools → selected_tools
- [toSnakeCase] useKnowledgeBase → use_knowledge_base
- [toSnakeCase] selectedKnowledgeBases → selected_knowledge_bases
- [toCamelCase] session_id → sessionId
- [toCamelCase] session_id → sessionId
- [Sync] 开始流式: 6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
- [toSnakeCase] sessionId → session_id
- [toSnakeCase] messageId → message_id
- [toCamelCase] session_id → sessionId
- [useStreamFinalizer] 通知后端 stream_finalized: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, msg=3098
- [Sync] 结束流式: 6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
- [Axios] 响应转换: /realtime/snapshot/6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","session_title":"新对话 - 代理","messages":[{"id":"3097","session_id":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","sessionTitle":"新对话 - 代理","messages":[{"id":"3097","sessionId":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","role":"us
- [SnapshotSync] 消息校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=2
- [SnapshotSync] 快照校对成功: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
- [toSnakeCase] providerId → provider_id
- [toSnakeCase] modelName → model_name
- [toSnakeCase] useDeepThinking → use_deep_thinking
- [toSnakeCase] specialParams → special_params
- [toSnakeCase] maxTokens → max_tokens
- [toSnakeCase] useTools → use_tools
- [toSnakeCase] useWebSearch → use_web_search
- [toSnakeCase] useMcp → use_mcp
- [toSnakeCase] selectedMcpServers → selected_mcp_servers
- [toSnakeCase] selectedTools → selected_tools
- [toSnakeCase] useKnowledgeBase → use_knowledge_base
- [toSnakeCase] selectedKnowledgeBases → selected_knowledge_bases
- [toCamelCase] session_id → sessionId
- [toCamelCase] session_id → sessionId
- [Sync] 开始流式: 6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
- [toCamelCase] session_id → sessionId
- [toCamelCase] session_id → sessionId
- [Realtime] 收到 pong
- [Axios] 响应转换: /realtime/snapshot/6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","session_title":"新对话 - 代理","messages":[{"id":"3097","session_id":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","sessionTitle":"新对话 - 代理","messages":[{"id":"3097","sessionId":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","role":"us
- [SnapshotSync] 消息校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=2
- [SnapshotSync] 工具调用校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=2
- [SnapshotSync] 审批校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=2
- [SnapshotSync] 快照校对成功: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
- [toCamelCase] session_id → sessionId
- [toCamelCase] session_id → sessionId
- [toCamelCase] session_id → sessionId
- [toCamelCase] session_id → sessionId
- [toCamelCase] session_id → sessionId
- [toCamelCase] session_id → sessionId
- [toSnakeCase] chainOfThought → chain_of_thought
- [toSnakeCase] toolCalls → tool_calls
- [toSnakeCase] attachmentIds → attachment_ids
- [toSnakeCase] researchContext → research_context
- [toSnakeCase] currentVersion → current_version
- [toSnakeCase] tokenCount → token_count
- [toSnakeCase] tokenDetail → token_detail
- [toSnakeCase] responseTime → response_time
- [toSnakeCase] researchTaskId → research_task_id
- [toCamelCase] session_id → sessionId
- [toCamelCase] session_id → sessionId
- [toCamelCase] session_id → sessionId
- [toCamelCase] session_id → sessionId
- [toCamelCase] session_id → sessionId
- [Axios] 响应转换: /chat/messages/3098/ 
-  前: {"code":200,"message":"消息更新成功","data":{"id":3098,"session_id":1526,"role":"assistant","content":"`ollama lis` 和 `ollama pst` 是拼写错误（ollama 提示应为 `list` 和 `ps`），我来运行正确的命令：","sources":[],"plan":null,"chai 
-  后: {"code":200,"message":"消息更新成功","data":{"id":3098,"sessionId":1526,"role":"assistant","content":"`ollama lis` 和 `ollama pst` 是拼写错误（ollama 提示应为 `list` 和 `ps`），我来运行正确的命令：","sources":[],"plan":null,"chain
- [toSnakeCase] sessionId → session_id
- [toSnakeCase] messageId → message_id
- [toCamelCase] session_id → sessionId
- [useStreamFinalizer] 通知后端 stream_finalized: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, msg=3098
- [Sync] 结束流式: 6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
- [Axios] 响应转换: /realtime/snapshot/6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","session_title":"新对话 - 代理","messages":[{"id":"3097","session_id":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","sessionTitle":"新对话 - 代理","messages":[{"id":"3097","sessionId":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","role":"us
- [SnapshotSync] 消息校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=2
- [SnapshotSync] 工具调用校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=2
-logger.js:19 [SnapshotSync] 审批校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=2
-logger.js:19 [SnapshotSync] 快照校对成功: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
-sessionTransformers.js:84 [toSnakeCase] providerId → provider_id
-sessionTransformers.js:84 [toSnakeCase] modelName → model_name
-sessionTransformers.js:84 [toSnakeCase] useDeepThinking → use_deep_thinking
-sessionTransformers.js:84 [toSnakeCase] specialParams → special_params
-sessionTransformers.js:84 [toSnakeCase] maxTokens → max_tokens
-sessionTransformers.js:84 [toSnakeCase] useTools → use_tools
-sessionTransformers.js:84 [toSnakeCase] useWebSearch → use_web_search
-sessionTransformers.js:84 [toSnakeCase] useMcp → use_mcp
-sessionTransformers.js:84 [toSnakeCase] selectedMcpServers → selected_mcp_servers
-sessionTransformers.js:84 [toSnakeCase] selectedTools → selected_tools
-sessionTransformers.js:84 [toSnakeCase] useKnowledgeBase → use_knowledge_base
-sessionTransformers.js:84 [toSnakeCase] selectedKnowledgeBases → selected_knowledge_bases
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-logger.js:19 [Sync] 开始流式: 6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
-sessionTransformers.js:84 [toSnakeCase] sessionId → session_id
-sessionTransformers.js:84 [toSnakeCase] messageId → message_id
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-logger.js:24 [useStreamFinalizer] 通知后端 stream_finalized: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, msg=3098
-logger.js:19 [Sync] 结束流式: 6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
-axios.js:85 [Axios] 响应转换: /realtime/snapshot/6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","session_title":"新对话 - 代理","messages":[{"id":"3097","session_id":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","sessionTitle":"新对话 - 代理","messages":[{"id":"3097","sessionId":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","role":"us
-logger.js:19 [SnapshotSync] 消息校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=2
-logger.js:19 [SnapshotSync] 工具调用校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=2
-logger.js:19 [SnapshotSync] 审批校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=2
-logger.js:19 [SnapshotSync] 快照校对成功: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
-sessionTransformers.js:84 [toSnakeCase] providerId → provider_id
-sessionTransformers.js:84 [toSnakeCase] modelName → model_name
-sessionTransformers.js:84 [toSnakeCase] useDeepThinking → use_deep_thinking
-sessionTransformers.js:84 [toSnakeCase] specialParams → special_params
-sessionTransformers.js:84 [toSnakeCase] maxTokens → max_tokens
-sessionTransformers.js:84 [toSnakeCase] useTools → use_tools
-sessionTransformers.js:84 [toSnakeCase] useWebSearch → use_web_search
-sessionTransformers.js:84 [toSnakeCase] useMcp → use_mcp
-sessionTransformers.js:84 [toSnakeCase] selectedMcpServers → selected_mcp_servers
-sessionTransformers.js:84 [toSnakeCase] selectedTools → selected_tools
-sessionTransformers.js:84 [toSnakeCase] useKnowledgeBase → use_knowledge_base
-sessionTransformers.js:84 [toSnakeCase] selectedKnowledgeBases → selected_knowledge_bases
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-logger.js:19 [Sync] 开始流式: 6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-axios.js:85 [Axios] 响应转换: /realtime/snapshot/6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","session_title":"新对话 - 代理","messages":[{"id":"3097","session_id":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","sessionTitle":"新对话 - 代理","messages":[{"id":"3097","sessionId":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","role":"us
-logger.js:19 [SnapshotSync] 消息校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=2
-logger.js:19 [SnapshotSync] 工具调用校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=4
-logger.js:19 [SnapshotSync] 审批校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=4
-logger.js:19 [SnapshotSync] 快照校对成功: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-sessionTransformers.js:84 [toSnakeCase] chainOfThought → chain_of_thought
-sessionTransformers.js:84 [toSnakeCase] toolCalls → tool_calls
-sessionTransformers.js:84 [toSnakeCase] attachmentIds → attachment_ids
-sessionTransformers.js:84 [toSnakeCase] researchContext → research_context
-sessionTransformers.js:84 [toSnakeCase] currentVersion → current_version
-sessionTransformers.js:84 [toSnakeCase] tokenCount → token_count
-sessionTransformers.js:84 [toSnakeCase] tokenDetail → token_detail
-sessionTransformers.js:84 [toSnakeCase] responseTime → response_time
-sessionTransformers.js:84 [toSnakeCase] researchTaskId → research_task_id
-axios.js:85 [Axios] 响应转换: /chat/messages/3098/ 
-  前: {"code":200,"message":"消息更新成功","data":{"id":3098,"session_id":1526,"role":"assistant","content":"`ollama lis` 和 `ollama pst` 是拼写错误（ollama 提示应为 `list` 和 `ps`），我来运行正确的命令：两个命令执行成功，现在将结果保存到目标文件：","sources 
-  后: {"code":200,"message":"消息更新成功","data":{"id":3098,"sessionId":1526,"role":"assistant","content":"`ollama lis` 和 `ollama pst` 是拼写错误（ollama 提示应为 `list` 和 `ps`），我来运行正确的命令：两个命令执行成功，现在将结果保存到目标文件：","sources"
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-sessionTransformers.js:84 [toSnakeCase] sessionId → session_id
-sessionTransformers.js:84 [toSnakeCase] messageId → message_id
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-logger.js:24 [useStreamFinalizer] 通知后端 stream_finalized: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, msg=3098
-logger.js:19 [Sync] 结束流式: 6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
-axios.js:85 [Axios] 响应转换: /realtime/snapshot/6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","session_title":"新对话 - 代理","messages":[{"id":"3097","session_id":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","sessionTitle":"新对话 - 代理","messages":[{"id":"3097","sessionId":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","role":"us
-logger.js:19 [SnapshotSync] 消息校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=2
-logger.js:19 [SnapshotSync] 工具调用校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=4
-logger.js:19 [SnapshotSync] 审批校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=4
-logger.js:19 [SnapshotSync] 快照校对成功: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
-logger.js:24 [Realtime] 收到 pong
-sessionTransformers.js:84 [toSnakeCase] providerId → provider_id
-sessionTransformers.js:84 [toSnakeCase] modelName → model_name
-sessionTransformers.js:84 [toSnakeCase] useDeepThinking → use_deep_thinking
-sessionTransformers.js:84 [toSnakeCase] specialParams → special_params
-sessionTransformers.js:84 [toSnakeCase] maxTokens → max_tokens
-sessionTransformers.js:84 [toSnakeCase] useTools → use_tools
-sessionTransformers.js:84 [toSnakeCase] useWebSearch → use_web_search
-sessionTransformers.js:84 [toSnakeCase] useMcp → use_mcp
-sessionTransformers.js:84 [toSnakeCase] selectedMcpServers → selected_mcp_servers
-sessionTransformers.js:84 [toSnakeCase] selectedTools → selected_tools
-sessionTransformers.js:84 [toSnakeCase] useKnowledgeBase → use_knowledge_base
-sessionTransformers.js:84 [toSnakeCase] selectedKnowledgeBases → selected_knowledge_bases
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-logger.js:19 [Sync] 开始流式: 6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-axios.js:85 [Axios] 响应转换: /realtime/snapshot/6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","session_title":"新对话 - 代理","messages":[{"id":"3097","session_id":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","sessionTitle":"新对话 - 代理","messages":[{"id":"3097","sessionId":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","role":"us
-logger.js:19 [SnapshotSync] 消息校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=2
-logger.js:19 [SnapshotSync] 工具调用校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=5
-logger.js:19 [SnapshotSync] 审批校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=5
-logger.js:19 [SnapshotSync] 快照校对成功: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-sessionTransformers.js:84 [toSnakeCase] chainOfThought → chain_of_thought
-sessionTransformers.js:84 [toSnakeCase] toolCalls → tool_calls
-sessionTransformers.js:84 [toSnakeCase] attachmentIds → attachment_ids
-sessionTransformers.js:84 [toSnakeCase] researchContext → research_context
-sessionTransformers.js:84 [toSnakeCase] currentVersion → current_version
-sessionTransformers.js:84 [toSnakeCase] tokenCount → token_count
-sessionTransformers.js:84 [toSnakeCase] tokenDetail → token_detail
-sessionTransformers.js:84 [toSnakeCase] responseTime → response_time
-sessionTransformers.js:84 [toSnakeCase] researchTaskId → research_task_id
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-axios.js:85 [Axios] 响应转换: /chat/messages/3098/ 
-  前: {"code":200,"message":"消息更新成功","data":{"id":3098,"session_id":1526,"role":"assistant","content":"`ollama lis` 和 `ollama pst` 是拼写错误（ollama 提示应为 `list` 和 `ps`），我来运行正确的命令：两个命令执行成功，现在将结果保存到目标文件：✅ 已完成！结果已保 
-  后: {"code":200,"message":"消息更新成功","data":{"id":3098,"sessionId":1526,"role":"assistant","content":"`ollama lis` 和 `ollama pst` 是拼写错误（ollama 提示应为 `list` 和 `ps`），我来运行正确的命令：两个命令执行成功，现在将结果保存到目标文件：✅ 已完成！结果已保存
-sessionTransformers.js:84 [toSnakeCase] sessionId → session_id
-sessionTransformers.js:84 [toSnakeCase] messageId → message_id
-sessionTransformers.js:62 [toCamelCase] session_id → sessionId
-logger.js:24 [useStreamFinalizer] 通知后端 stream_finalized: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, msg=3098
-logger.js:19 [Sync] 结束流式: 6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
-axios.js:85 [Axios] 响应转换: /realtime/snapshot/6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","session_title":"新对话 - 代理","messages":[{"id":"3097","session_id":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","sessionTitle":"新对话 - 代理","messages":[{"id":"3097","sessionId":"6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6","role":"us
-logger.js:19 [SnapshotSync] 消息校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=2
-logger.js:19 [SnapshotSync] 工具调用校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=5
-logger.js:19 [SnapshotSync] 审批校对完成: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6, count=5
-logger.js:19 [SnapshotSync] 快照校对成功: session=6a0e4fa4-5fb0-4ae8-88e2-9df6bb2e51a6
-logger.js:24 [Realtime] 收到 pong
-logger.js:24 [Realtime] 收到 pong
-logger.js:24 [Realtime] 收到 pong
-logger.js:24 [Realtime] 收到 pong
-logger.js:24 [Realtime] 收到 pong
-logger.js:24 [Realtime] 收到 pong
-logger.js:24 [Realtime] 收到 pong
-logger.js:24 [Realtime] 收到 pong
-logger.js:24 [Realtime] 收到 pong
-logger.js:24 [Realtime] 收到 pong
+client:733 [vite] connecting...
+client:827 [vite] connected.
+logger.js:6 [Security] Initializing session store...
+logger.js:19 [Realtime] 已从 localStorage 恢复 lastSeq: 426 条通道
+sessionTransformers.js:83 [toSnakeCase] pageSize → page_size
+sessionTransformers.js:83 [toSnakeCase] agentType → agent_type
+logger.js:19 [Realtime] WebSocket 已连接
+logger.js:24 [Realtime] replay barrier 设置 pending: user
+pinia.js?v=8039668a:4622 🍍 "approval" store installed 🆕
+pinia.js?v=8039668a:4622 🍍 "research" store installed 🆕
+pinia.js?v=8039668a:4622 🍍 "workflow" store installed 🆕
+logger.js:6 [Sync] 实时同步 store 已初始化
+sessionTransformers.js:61 [toCamelCase] channel_type → channelType
+sessionTransformers.js:61 [toCamelCase] channel_id → channelId
+sessionTransformers.js:61 [toCamelCase] chunk_index → chunkIndex
+sessionTransformers.js:61 [toCamelCase] chunk_count → chunkCount
+logger.js:19 [Realtime] 收到 replay 回包: channel=user:1, count=0, chunk=1/1
+logger.js:24 [Realtime] replay barrier flush 无缓冲事件: user
+pinia.js?v=8039668a:4622 🍍 "model" store installed 🆕
+pinia.js?v=8039668a:4622 🍍 "researchSettings" store installed 🆕
+pinia.js?v=8039668a:4622 🍍 "tools" store installed 🆕
+sessionTransformers.js:83 [toSnakeCase] pageSize → page_size
+sessionTransformers.js:83 [toSnakeCase] pageSize → page_size
+logger.js:15 Failed to load knowledge bases: AxiosError: Request failed with status code 429
+    at settle (axios.js?v=8039668a:1319:7)
+    at XMLHttpRequest.onloadend (axios.js?v=8039668a:1682:7)
+    at Axios.request (axios.js?v=8039668a:2328:41)
+    at async session.js:1475:24
+    at async Promise.all (index 1)
+    at async session.js:1510:9
+(anonymous) @ logger.js:15
+(anonymous) @ session.js:1493
+await in (anonymous)
+(anonymous) @ session.js:1497
+(anonymous) @ session.js:1510
+(anonymous) @ session.js:1514
+wrappedAction @ pinia.js?v=8039668a:5507
+store.<computed> @ pinia.js?v=8039668a:5204
+(anonymous) @ main.js:47
+logger.js:15 获取用户信息失败: AxiosError: Request failed with status code 429
+    at settle (axios.js?v=8039668a:1319:7)
+    at XMLHttpRequest.onloadend (axios.js?v=8039668a:1682:7)
+    at Axios.request (axios.js?v=8039668a:2328:41)
+    at async Proxy.getUserInfo (user.js:115:24)
+(anonymous) @ logger.js:15
+(anonymous) @ user.js:123
+await in (anonymous)
+wrappedAction @ pinia.js?v=8039668a:5507
+store.<computed> @ pinia.js?v=8039668a:5204
+(anonymous) @ main.js:41
+logger.js:11 获取能力配置失败: AxiosError: Request failed with status code 429
+    at settle (axios.js?v=8039668a:1319:7)
+    at XMLHttpRequest.onloadend (axios.js?v=8039668a:1682:7)
+    at Axios.request (axios.js?v=8039668a:2328:41)
+    at async Proxy.fetchCapabilityConfig (capability.js:16:19)
+(anonymous) @ logger.js:11
+(anonymous) @ capability.js:23
+await in (anonymous)
+wrappedAction @ pinia.js?v=8039668a:5507
+store.<computed> @ pinia.js?v=8039668a:5204
+(anonymous) @ main.js:57
+axios.js:85 [Axios] 响应转换: /chat/sessions/ 
+  前: {"code":200,"message":"操作成功","data":{"items":[{"user_id":1,"cached_at":"2026-08-07T07:58:06.572953+00:00","id":1562,"session_id":"b28ad812-a978-48dd-887f-2f39cb266097","title":"新对话 - 代理","mode":"agent 
+  后: {"code":200,"message":"操作成功","data":{"items":[{"userId":1,"cachedAt":"2026-08-07T07:58:06.572953+00:00","id":1562,"sessionId":"b28ad812-a978-48dd-887f-2f39cb266097","title":"新对话 - 代理","mode":"agent","
+logger.js:6 [Security] Loaded 4 sessions (page 1/1) for user 1
+logger.js:15 获取技能包列表失败: AxiosError: Request failed with status code 429
+    at settle (axios.js?v=8039668a:1319:7)
+    at XMLHttpRequest.onloadend (axios.js?v=8039668a:1682:7)
+    at Axios.request (axios.js?v=8039668a:2328:41)
+    at async Proxy.loadSkillPackages (tools.js:85:19)
+(anonymous) @ logger.js:15
+(anonymous) @ tools.js:90
+await in (anonymous)
+wrappedAction @ pinia.js?v=8039668a:5507
+store.<computed> @ pinia.js?v=8039668a:5204
+(anonymous) @ ToolSelector.vue:135
+(anonymous) @ ToolSelector.vue:538
+(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:5263
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+hook.__weh.hook.__weh @ chunk-IGIFKXF4.js?v=8039668a:5243
+flushPostFlushCbs @ chunk-IGIFKXF4.js?v=8039668a:2536
+flushJobs @ chunk-IGIFKXF4.js?v=8039668a:2578
+Promise.then
+queueFlush @ chunk-IGIFKXF4.js?v=8039668a:2473
+queueJob @ chunk-IGIFKXF4.js?v=8039668a:2468
+baseWatchOptions.scheduler @ chunk-IGIFKXF4.js?v=8039668a:3055
+effect2.scheduler @ chunk-IGIFKXF4.js?v=8039668a:2097
+trigger @ chunk-IGIFKXF4.js?v=8039668a:535
+endBatch @ chunk-IGIFKXF4.js?v=8039668a:593
+notify @ chunk-IGIFKXF4.js?v=8039668a:855
+trigger @ chunk-IGIFKXF4.js?v=8039668a:829
+set value @ chunk-IGIFKXF4.js?v=8039668a:1743
+finalizeNavigation @ vue-router.js?v=8039668a:2213
+(anonymous) @ vue-router.js?v=8039668a:2151
+Promise.then
+pushWithRedirect @ vue-router.js?v=8039668a:2138
+push @ vue-router.js?v=8039668a:2089
+install @ vue-router.js?v=8039668a:2321
+use @ chunk-IGIFKXF4.js?v=8039668a:6329
+(anonymous) @ main.js:30
+axios.js:85 [Axios] 响应转换: /research/tasks/ 
+  前: {"code":200,"message":"操作成功","data":{"items":[],"total":0,"page":1,"page_size":20,"total_pages":0}} 
+  后: {"code":200,"message":"操作成功","data":{"items":[],"total":0,"page":1,"pageSize":20,"totalPages":0}}
+logger.js:15 加载知识库列表失败: AxiosError: Request failed with status code 429
+    at settle (axios.js?v=8039668a:1319:7)
+    at XMLHttpRequest.onloadend (axios.js?v=8039668a:1682:7)
+    at Axios.request (axios.js?v=8039668a:2328:41)
+    at async refreshKnowledgeBases (DeepResearchView.vue:431:22)
+(anonymous) @ logger.js:15
+(anonymous) @ DeepResearchView.vue:436
+await in (anonymous)
+(anonymous) @ DeepResearchView.vue:1029
+(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:5263
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+hook.__weh.hook.__weh @ chunk-IGIFKXF4.js?v=8039668a:5243
+flushPostFlushCbs @ chunk-IGIFKXF4.js?v=8039668a:2536
+flushJobs @ chunk-IGIFKXF4.js?v=8039668a:2578
+Promise.then
+queueFlush @ chunk-IGIFKXF4.js?v=8039668a:2473
+queueJob @ chunk-IGIFKXF4.js?v=8039668a:2468
+baseWatchOptions.scheduler @ chunk-IGIFKXF4.js?v=8039668a:3055
+effect2.scheduler @ chunk-IGIFKXF4.js?v=8039668a:2097
+trigger @ chunk-IGIFKXF4.js?v=8039668a:535
+endBatch @ chunk-IGIFKXF4.js?v=8039668a:593
+notify @ chunk-IGIFKXF4.js?v=8039668a:855
+trigger @ chunk-IGIFKXF4.js?v=8039668a:829
+set value @ chunk-IGIFKXF4.js?v=8039668a:1743
+finalizeNavigation @ vue-router.js?v=8039668a:2213
+(anonymous) @ vue-router.js?v=8039668a:2151
+Promise.then
+pushWithRedirect @ vue-router.js?v=8039668a:2138
+push @ vue-router.js?v=8039668a:2089
+install @ vue-router.js?v=8039668a:2321
+use @ chunk-IGIFKXF4.js?v=8039668a:6329
+(anonymous) @ main.js:30
+axios.js:85 [Axios] 响应转换: /research/tasks/ 
+  前: {"code":200,"message":"操作成功","data":{"items":[],"total":0,"page":1,"page_size":20,"total_pages":0}} 
+  后: {"code":200,"message":"操作成功","data":{"items":[],"total":0,"page":1,"pageSize":20,"totalPages":0}}

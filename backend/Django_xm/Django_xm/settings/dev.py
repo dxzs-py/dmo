@@ -85,7 +85,9 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
     "knowledge": "60/min",
     "sensitive": "10/min",
     "snapshot": "30/min",
-    "meta": "60/min",
+    # 页面加载即请求的只读元数据接口（多浏览器并发时单页约 13 个请求），
+    # 60/min 会被 4 浏览器同时打开瞬间打满，提升至 300/min 匹配设计意图
+    "meta": "300/min",
 }
 
 SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"] = timedelta(days=app_cfg.jwt_access_token_lifetime_days)

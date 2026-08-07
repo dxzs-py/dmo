@@ -278,6 +278,7 @@ import { logger } from '../utils/logger'
 import { getInterruptId } from '../utils/messageOperations'
 import { toCamelCase } from '@/utils/sessionTransformers'
 import { useTaskRealtimeSync } from '@/composables/useTaskRealtimeSync'
+import { useRealtimeSync } from '@/composables/useRealtimeSync'
 
 // 根因 C 解耦：深度研究模块使用独立设置 store，
 // 与聊天模块的全局 modelStore（模型/深度思考/参数）完全独立
@@ -831,6 +832,21 @@ const closeSSE = () => {
 
 const { subscribeRealtimeForTask, clearRealtimeSubscriptions } = useTaskRealtimeSync('DeepResearch', 'taskId')
 
+const realtimeSync = useRealtimeSync()
+let userEventUnsubscribe = null
+
+/**
+ * 监听 task_created 事件，自动刷新任务列表
+ * 解决 P2：深度研究模块任务列表不自动实时更新
+ */
+const handleTaskCreated = (event) => {
+  if (event.type !== 'task_created') return
+  logger.info('[DeepResearch] 收到 task_created 事件，自动刷新任务列表')
+  if (taskListRef.value?.refreshTasks) {
+    taskListRef.value.refreshTasks()
+  }
+}
+
 const viewTask = async (selectedTask) => {
   closeSSE()
   stopPolling()
@@ -1004,6 +1020,9 @@ const handleFileSearch = async () => {
 }
 
 onMounted(async () => {
+  // 订阅 user 通道 task_created 事件（P2 修复：列表自动刷新）
+  userEventUnsubscribe = realtimeSync.subscribeUserEvents(handleTaskCreated)
+
   // 根因 C：确保独立设置 store 已从全局 modelStore 同步初始模型配置
   // （ModelSelector 挂载后 loadProviders 完成即同步；此处兜底一次）
   researchSettings.syncFromModelStore()
@@ -1129,6 +1148,10 @@ onUnmounted(() => {
   closeSSE()
   stopElapsedTimer()
   clearRealtimeSubscriptions()
+  if (userEventUnsubscribe) {
+    userEventUnsubscribe()
+    userEventUnsubscribe = null
+  }
 })
 </script>
 

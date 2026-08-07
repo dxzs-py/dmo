@@ -54,7 +54,7 @@
       </el-descriptions-item>
     </el-descriptions>
 
-    <div v-if="task.status === 'running' || task.status === 'pending' || task.status === 'pendingApproval'" class="progress-section">
+    <div v-if="task.status === 'running' || task.status === 'pending' || task.status === 'awaitingApproval'" class="progress-section">
       <el-progress
         :percentage="progressPercentage"
         :status="task.status === 'pending' ? '' : undefined"
@@ -211,7 +211,7 @@ const emit = defineEmits([
 const getStatusType = (status) => {
   const typeMap = {
     pending: 'info',
-    pendingApproval: 'warning',
+    awaitingApproval: 'warning',
     progress: 'warning',
     running: 'warning',
     completed: 'success',
@@ -223,7 +223,7 @@ const getStatusType = (status) => {
 const getStatusText = (status) => {
   const textMap = {
     pending: '待执行',
-    pendingApproval: '等待审批',
+    awaitingApproval: '等待审批',
     progress: '执行中',
     running: '执行中',
     completed: '已完成',

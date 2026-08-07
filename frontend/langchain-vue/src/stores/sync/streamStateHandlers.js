@@ -197,7 +197,7 @@ export const createStreamStateHandlers = (ctx) => {
     // payload 可能有两种结构（entry-point toCamelCase 已转换，均为 camelCase）：
     // 1. 嵌套：{ source, sourceId, sessionId, messageId, data: { taskId, ... } }
     // 2. 扁平：{ source, sourceId, sessionId, messageId, taskId, ... }
-    const taskId = payload.taskId || (payload.data && payload.data.taskId) || null
+    const taskId = payload.taskId || payload.data?.researchTaskId || (payload.data && payload.data.taskId) || null
     const messageId = payload.messageId || (payload.data && payload.data.messageId) || null
 
     // 定位目标消息（优先按 messageId，兜底最后一条 assistant 消息）

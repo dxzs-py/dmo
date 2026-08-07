@@ -1,0 +1,20 @@
+========== ollama list ==========
+NAME                                 ID              SIZE      MODIFIED     
+ornith:latest                        a75697c14589    5.6 GB    3 weeks ago     
+lfm2.5:latest                        9cf756159fc2    5.2 GB    7 weeks ago     
+dengcao/Qwen3-Embedding-4B:Q5_K_M    7e8c9ad6885b    2.9 GB    2 months ago    
+bge-m3:latest                        790764642607    1.2 GB    2 months ago    
+qwen3:8b                             500a1f067a9f    5.2 GB    2 months ago    
+qwen3.5:9b                           6488c96fa5fa    6.6 GB    3 months ago    
+hermes3:8b                           4f6b83f30b62    4.7 GB    3 months ago
+
+========== 运行第一个模型 ornith:latest ==========
+命令: ollama run ornith:latest "你是谁"
+
+模型回答:
+我是 **Ornith**，一个开源的 agentic 编程助手。我可以帮你编写代码、调试问题、设计架构，以及完成各种开发任务。有什么需要帮忙的吗？
+
+========== ollama ps ==========
+NAME             ID              SIZE      PROCESSOR    CONTEXT    UNTIL              
+bge-m3:latest    790764642607    664 MB    100% GPU     4096       4 minutes from now    
+ornith:latest    a75697c14589    5.3 GB    100% GPU     4096       4 minutes from now

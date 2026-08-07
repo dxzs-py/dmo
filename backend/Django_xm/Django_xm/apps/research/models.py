@@ -6,6 +6,7 @@ from Django_xm.apps.core.base_models import AuditModel
 
 class ResearchTaskStatus(models.TextChoices):
     PENDING = "pending", "待执行"
+    AWAITING_APPROVAL = "awaiting_approval", "等待审批"
     RUNNING = "running", "执行中"
     COMPLETED = "completed", "已完成"
     FAILED = "failed", "失败"

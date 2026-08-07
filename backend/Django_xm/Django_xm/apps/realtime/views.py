@@ -111,6 +111,10 @@ class SnapshotView(APIView):
                 "role": msg.role,
                 "content": msg.content or "",
                 "created_at": msg.created_at.isoformat() if msg.created_at else None,
+                # 深度研究关联：快照校对时必须携带 research_task_id，
+                # 否则 SnapshotSync 合并后本地 researchTaskId 被置空，
+                # 聊天端"研究进行中/已完成"卡片无法显示（P3 根因之一）
+                "research_task_id": msg.research_task_id,
                 "tool_calls": msg_tool_calls,
             }
             messages_data.append(msg_data)

@@ -134,7 +134,7 @@ async def deep_research_stream(request, task_id):
                     step_messages = {
                         "pending": "研究任务已创建，等待执行...",
                         "running": "正在执行深度研究...",
-                        "pending_approval": "等待工具审批...",
+                        "awaiting_approval": "等待工具审批...",
                         "completed": "研究已完成！",
                         "failed": "研究执行失败",
                     }

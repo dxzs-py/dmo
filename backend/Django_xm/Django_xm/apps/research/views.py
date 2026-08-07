@@ -111,6 +111,18 @@ class DeepResearchStartView(APIView):
                 celery_task_id=celery_result.id,
             )
 
+            # 发布 task_created 实时事件，通知所有浏览器刷新深度研究任务列表
+            try:
+                from Django_xm.common.realtime_events import publish_event_sync
+                from Django_xm.common.event_schema import EventType
+                publish_event_sync(
+                    EventType.TASK_CREATED,
+                    {"task_id": thread_id},
+                    user_id=request.user.id,
+                )
+            except Exception:
+                logger.warning(f"发布 task_created 事件失败: task_id={thread_id}", exc_info=True)
+
             return success_response(
                 data={
                     "task_id": thread_id,

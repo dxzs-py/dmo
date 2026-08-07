@@ -309,8 +309,9 @@ def run_research_task(
             if result.error_message == "interrupted":
                 # Agent 正常中断等待审批（Path D 退出），非失败
                 # 审批记录已在 on_interrupt 回调中创建
+                # 状态保持 pending：前端根据 pending 状态 + 存在待审批记录计算显示文案
                 logger.info(f"[Celery] 研究中断等待审批：{thread_id}")
-                update_task_status(thread_id, {"status": "pending_approval"})
+                update_task_status(thread_id, {"status": "awaiting_approval"})
                 return {"status": "interrupted", "thread_id": thread_id, "message": "等待用户审批"}
             logger.warning(f"[Celery] 研究逻辑失败：{thread_id}, {result.error_message}")
             _mark_failed(result.error_message)
@@ -796,7 +797,7 @@ def research_resume_task(
                 # 等待用户对新 Approval 做决策，触发新的 research_resume_task
                 logger.info(f"[Resume] 恢复过程中再次 interrupt，退出等待新审批: thread_id={thread_id}")
                 tracker.update_progress(50, "等待新审批")
-                update_task_status(thread_id, {"status": "pending_approval"})
+                update_task_status(thread_id, {"status": "pending"})
                 return {
                     "status": "interrupted",
                     "thread_id": thread_id,

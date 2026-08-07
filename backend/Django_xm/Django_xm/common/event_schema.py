@@ -85,6 +85,9 @@ class EventType(StrEnum):
     MESSAGE_REGENERATED = "message_regenerated"  # 消息重新生成（版本归档 + 新版本切换）
     MESSAGE_REGENERATE_REVERTED = "message_regenerate_reverted"  # 重新生成回滚
 
+    # === 任务事件（WebSocket 推送）===
+    TASK_CREATED = "task_created"  # 新任务创建（深度研究/工作流），通知列表刷新
+
     # === 学习工作流事件（WebSocket 推送）===
     WORKFLOW_STEP = "workflow_step"  # 工作流节点执行进度
     WORKFLOW_STATE_UPDATE = "workflow_state_update"  # 工作流状态变更

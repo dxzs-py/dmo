@@ -896,7 +896,15 @@ export const useSessionStore = defineStore('session', () => {
   const setReasoningToLastMessage = (sessionId, reasoning) => _setLastField(sessionId, 'reasoning', reasoning)
   const setSuggestionsToLastMessage = (sessionId, suggestions) => _setLastField(sessionId, 'suggestions', suggestions)
   const setContextToLastMessage = (sessionId, context) => _setLastField(sessionId, 'context', context)
-  const setResearchTaskIdToLastMessage = (sessionId, researchTaskId) => _setLastField(sessionId, 'researchTaskId', researchTaskId)
+  const setResearchTaskIdToLastMessage = (sessionId, researchTaskId) => {
+    const applied = _setLastField(sessionId, 'researchTaskId', researchTaskId)
+    if (!applied && researchTaskId && _pendingResearchTaskIds) {
+      // 兜底（P3 根因修复）：SSE deep_research 事件可能早于 assistant 消息创建到达，
+      // 此时 last assistant 消息不存在，暂存 taskId，待消息创建后由 addMessageToSession 补充
+      _pendingResearchTaskIds.set(sessionId, researchTaskId)
+    }
+    return applied
+  }
   const setApprovalToLastMessage = (sessionId, approval) => {
     _setLastField(sessionId, 'approval', approval)
     _setLastField(sessionId, 'approvalState', approval?.state || 'pending')
