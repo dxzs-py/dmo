@@ -34,9 +34,9 @@ from ..config import HELPER_MODEL_PRIORITY, get_model_presets, settings
 from ..providers import (
     PROVIDER_REGISTRY,
     apply_reasoning_patch_if_needed,
-    is_thinking_enabled,
     patch_groq_model,
 )
+from .thinking import is_thinking_enabled
 
 # 从拆分后的模块导入（Task 19）
 from .llm_cache import (

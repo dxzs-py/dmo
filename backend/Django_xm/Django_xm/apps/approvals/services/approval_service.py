@@ -1082,6 +1082,22 @@ def sync_approval_state_to_chat_message(approval: Approval, state: str) -> bool:
     # 全字段比对应用（幂等：无字段变更则跳过写库）
     old_state = target_tc.get("approval", {}).get("state") if isinstance(target_tc.get("approval"), dict) else None
     target_changed = _apply_sync_fields_to_approval(target_tc, sync_fields)
+
+    # B3: 同步 tool_call 顶层 status 字段（与 approval.state 一致），
+    # 确保非审批单页（如深度研究快照）也能拿到工具执行状态。
+    status_mapping = {
+        Approval.STATE_PENDING: "waiting",
+        Approval.STATE_PROCESSING: "running",
+        Approval.STATE_WAITING: "waiting",
+        Approval.STATE_APPROVED: "completed",
+        Approval.STATE_REJECTED: "rejected",
+        Approval.STATE_TIMEOUT: "timeout",
+    }
+    mapped_status = status_mapping.get(state, "")
+    if mapped_status and target_tc.get("status") != mapped_status:
+        target_tc["status"] = mapped_status
+        target_changed = True
+
     if not target_changed and old_state == state:
         # 主字段无变更且 state 未变，跳过写库（保留幂等性）
         return False
@@ -1099,6 +1115,10 @@ def sync_approval_state_to_chat_message(approval: Approval, state: str) -> bool:
             ver_tc = _match_tool_call_in_list(ver_tcs, approval)
             if ver_tc is not None:
                 if _apply_sync_fields_to_approval(ver_tc, sync_fields):
+                    version_updated = True
+                # B3: versions 中也同步 tool_call 顶层 status
+                if mapped_status and ver_tc.get("status") != mapped_status:
+                    ver_tc["status"] = mapped_status
                     version_updated = True
 
     # 保存

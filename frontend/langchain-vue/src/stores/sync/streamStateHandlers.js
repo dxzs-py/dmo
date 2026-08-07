@@ -413,14 +413,6 @@ export const createStreamStateHandlers = (ctx) => {
             targetMsg.reasoning = { ...targetMsg.reasoning, duration: researchDuration }
           }
         }
-        // 更新 reasoning.content 为完成态消息
-        // 避免完成后展开 AiReasoning 仍显示旧的"正在调度深度研究工作流..."内容
-        if (targetMsg.reasoning) {
-          const successMsg = payload.success !== false
-            ? '深度研究已完成'
-            : `深度研究执行失败：${payload.error || '未知错误'}`
-          targetMsg.reasoning = { ...targetMsg.reasoning, content: successMsg }
-        }
         // 更新消息内容
         if (payload.success !== false && payload.finalReport) {
           targetMsg.content = payload.finalReport
@@ -447,8 +439,7 @@ export const createStreamStateHandlers = (ctx) => {
           clearedApprovalCount = approvalStore.clearByTaskId(payload.taskId)
         }
 
-        logger.info(
-          `[Sync] 深度研究结果回写 - 审批状态清理: ` +
+        logger.info(`[Sync] 深度研究结果回写 - 审批状态清理: ` +
           `session=${sessionId}, task=${payload.taskId}, ` +
           `success=${payload.success !== false}, ` +
           `toolCalls总数=${targetMsg.toolCalls?.length || 0}, ` +
@@ -458,6 +449,13 @@ export const createStreamStateHandlers = (ctx) => {
         )
 
         logger.info(`[Sync] 深度研究结果回写: session=${sessionId}, task=${payload.taskId}, success=${payload.success !== false}`)
+
+        // 补写 researchTaskId（F3-B：非触发端 stream_completed 到达时确保 researchTaskId 存在）
+        if (payload.taskId && !targetMsg.researchTaskId) {
+          targetMsg.researchTaskId = payload.taskId
+          const ver = getCurrentVersion(targetMsg)
+          if (ver) ver.researchTaskId = payload.taskId
+        }
 
         // 触发全量同步确保数据一致性（去重锁：同一会话已有进行中的同步时跳过）
         guardedRequestFullSync(sessionId)
@@ -542,6 +540,9 @@ export const createStreamStateHandlers = (ctx) => {
       } else {
         logger.info(`[Sync] stream_completed 收到时请求浏览器消息状态为 ${targetMsg.streamState}，不切换: session=${sessionId}`)
       }
+      // F4-B：请求浏览器完成时清理 thinkingSessions，防止深度研究模式下 thinkingSessions
+      // 在 handleStreamCompleted 非请求浏览器分支才被 delete 而遗留
+      thinkingSessions.delete(sessionId)
       return
     }
 

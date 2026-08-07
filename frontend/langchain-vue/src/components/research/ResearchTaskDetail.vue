@@ -65,6 +65,16 @@
       <p class="progress-hint">深度研究通常需要 5-10 分钟，请耐心等待...</p>
     </div>
 
+    <!-- AI 推理面板（框架接入：绑定 stream_reasoning WebSocket 事件） -->
+    <AiReasoning
+      v-if="reasoning && reasoning.content"
+      :content="reasoning.content"
+      :duration="reasoning.duration"
+      :is-streaming="task.status === 'running' || task.status === 'pending'"
+      :source="reasoning.source || 'deep_thinking'"
+      style="margin-top: 16px;"
+    />
+
     <!-- 审批面板 -->
     <div v-if="taskPendingApprovals.size > 0" class="approval-section">
       <!-- 局部 ErrorBoundary：审批卡片渲染畸形 approval 数据时仅替换审批区，保留报告与文件列表 -->
@@ -124,6 +134,7 @@ import { ChatDotRound } from '@element-plus/icons-vue'
 import ErrorBoundary from '@/components/common/ErrorBoundary.vue'
 import ToolCallCard from '@/components/chat/ToolCallCard.vue'
 import ResearchTaskReport from './ResearchTaskReport.vue'
+import AiReasoning from '@/components/ai-elements/AiReasoning.vue'
 import { formatDate } from '@/utils/format'
 import { approvalStateToToolStatus } from '@/utils/toolCallStateMachine'
 
@@ -144,6 +155,11 @@ defineProps({
   progressMessage: {
     type: String,
     default: '',
+  },
+  /** AI 推理内容（来自 stream_reasoning 事件） */
+  reasoning: {
+    type: Object,
+    default: null,
   },
   /** 进度百分比 */
   progressPercentage: {

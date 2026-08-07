@@ -341,6 +341,12 @@ async def execute_research_async(
 
             result = await agent.astream_research_with_interrupts(
                 query,
+                config={
+                    "configurable": {
+                        "chat_session_id": chat_session_id,
+                        "assistant_message_id": message_id,
+                    }
+                },
                 callbacks=[cb],
                 on_interrupt=_on_interrupt,
                 resume_command=resume_command,

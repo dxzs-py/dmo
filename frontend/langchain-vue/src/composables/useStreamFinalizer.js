@@ -48,12 +48,15 @@ export function useStreamFinalizer() {
   async function finalizeStream(sessionId, lastMsg, { allowCreate = false, setStreamState, messageIndex } = {}) {
     if (!sessionId || !lastMsg) return false
 
-    // 状态守卫：仅 STREAMING/FINALIZING/SYNCING 状态可继续最终化
-    // COMPLETED/INTERRUPTED/ERROR 是终态或中断态，不应重复最终化
+    // 状态守卫：COMPLETED/ERROR 是终态，不应重复最终化
+    // INTERRUPTED 在深度研究流完成后需要放行最终化（researchTaskId 存在时）
     if (lastMsg.streamState === StreamState.COMPLETED
-        || lastMsg.streamState === StreamState.INTERRUPTED
         || lastMsg.streamState === StreamState.ERROR) {
       logger.debug(`[useStreamFinalizer] 消息状态为 ${lastMsg.streamState}，跳过最终化: session=${sessionId}`)
+      return false
+    }
+    if (lastMsg.streamState === StreamState.INTERRUPTED && !lastMsg.researchTaskId) {
+      logger.debug(`[useStreamFinalizer] 消息状态为 INTERRUPTED 且无 researchTaskId，跳过最终化: session=${sessionId}`)
       return false
     }
 

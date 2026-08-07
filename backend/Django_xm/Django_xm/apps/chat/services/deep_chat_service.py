@@ -1,8 +1,7 @@
 """
 深度模式聊天服务
 
-从 chat_service.py 拆分出的深度思考/深度研究相关逻辑：
-- 深度思考流式处理
+从 chat_service.py 拆分出的深度研究相关逻辑：
 - 深度研究任务执行（Celery + Redis 订阅）
 - 无工具回退模式
 """
@@ -22,11 +21,8 @@ from Django_xm.apps.ai_engine.services.cost_tracker import TokenDetailTracker
 from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
 from Django_xm.apps.research.services.cross_app import REDIS_CHANNEL_PREFIX
 
-from ..utils import _lcp_len, convert_chat_history
-from .stream_helpers import (
-    process_stream_chunk,
-    update_usage_and_tokens,
-)
+from ..utils import convert_chat_history
+from .stream_helpers import update_usage_and_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +75,28 @@ def _update_kb_sync(thread_id, knowledge_base_ids):
     from Django_xm.apps.research.services.cross_app import update_research_task_fields
 
     update_research_task_fields(thread_id, knowledge_base_ids=knowledge_base_ids)
+
+
+@sync_to_async(thread_sensitive=True)
+def update_research_task_fields_async(thread_id: str, **fields):
+    """异步更新研究任务字段（供 create_deep_research_task 存储工具选择等额外字段）"""
+    from Django_xm.apps.research.services.cross_app import update_research_task_fields
+
+    update_research_task_fields(thread_id, **fields)
+
+
+@sync_to_async(thread_sensitive=True)
+def update_chat_message_research_task_id_async(
+    assistant_message_id: int,
+    research_task_id: str,
+) -> None:
+    """异步更新 ChatMessage.research_task_id 字段"""
+    from django.apps import apps
+
+    ChatMessage = apps.get_model("chat", "ChatMessage")
+    ChatMessage.objects.filter(id=assistant_message_id).update(
+        research_task_id=research_task_id,
+    )
 
 
 @sync_to_async(thread_sensitive=True)
@@ -158,351 +176,6 @@ class DeepChatService:
 
         return cleaned
 
-    async def process_deep_thinking_stream(
-        self,
-        data: dict[str, Any],
-        usage_tracker,
-        token_detail_tracker: TokenDetailTracker | None = None,
-        tools: list | None = None,
-        model_instance=None,
-    ) -> AsyncGenerator[dict[str, Any], None]:
-        """深度思考流式处理（可作为 chat/agent 模式的叠加能力）"""
-        if tools is None:
-            tools = await self._chat_service._get_tools(data)
-        if model_instance is None:
-            model_instance = self._chat_service._resolve_model_instance(data)
-        provider_id = data.get("provider_id")
-
-        prompt_mode = data.get("mode", "agent")
-        tool_config = self._chat_service._build_tool_config(data)
-        agent, thread_config, use_checkpointer = await self._chat_service._create_agent_with_memory(
-            data,
-            prompt_mode=prompt_mode,
-            model_instance=model_instance,
-            tool_config=tool_config,
-            tools=tools,
-        )
-
-        human_msg = await self._chat_service._acreate_human_message(data)
-
-        if use_checkpointer:
-            self._chat_service._apply_context_engineering_for_checkpointer(
-                user_message=data.get("message", ""),
-                model_name=data.get("model_name"),
-                mode=data.get("mode", "agent"),
-            )
-            graph_input = {"messages": [human_msg]}
-            config = thread_config
-        else:
-            chat_history = data.get("chat_history", [])
-            langchain_chat_history = convert_chat_history(chat_history)
-            messages = list(langchain_chat_history) if langchain_chat_history else []
-            messages.append(human_msg)
-            graph_input = {"messages": messages}
-            config = {"recursion_limit": 500}
-
-        current_message_content = ""
-        all_messages = []
-        tool_calls_map: dict[str, dict] = {}
-        tool_call_count: dict[str, int] = {}
-        accumulated_reasoning: dict[str, str] = {
-            "content": "",
-            "_stream_state": data.get("_stream_state"),  # 共享状态，供 generate() finally 兜底刷新
-        }
-        tool_args_accumulator: dict[str, str] = {}
-        thinking_start_time = time.time()
-        has_sent_reasoning = False
-        has_model_reasoning = False
-
-        yield {
-            "type": "reasoning",
-            "data": {
-                "content": "正在深度思考中...",
-                "duration": 0,
-                "source": "deep_thinking",
-            },
-        }
-        has_sent_reasoning = True
-
-        with TokenUsageCallbackHandler() as cb:
-            from Django_xm.apps.ai_engine.services.llm_fallback import FallbackDetectionCallback
-
-            fb_callback = FallbackDetectionCallback(
-                expected_provider=provider_id or "",
-                expected_model=data.get("model_name", "") or "",
-            )
-            config["callbacks"] = [cb, fb_callback]
-            # 使用多 stream mode：messages 获取消息流，updates 捕获 interrupt 事件
-            interrupt_info = None
-            try:
-                async for chunk in agent.graph.astream(graph_input, config=config, stream_mode=["messages", "updates"]):
-                    # 多 stream mode 下 chunk 是 (mode_name, data) 元组
-                    if isinstance(chunk, tuple) and len(chunk) == 2:
-                        mode_name, mode_data = chunk
-                    else:
-                        mode_name, mode_data = "messages", chunk
-
-                    # 处理 updates stream mode（包含 interrupt 事件）
-                    if mode_name == "updates":
-                        if isinstance(mode_data, dict) and "__interrupt__" in mode_data:
-                            interrupts = mode_data["__interrupt__"]
-                            if interrupts:
-                                from Django_xm.apps.chat.services.stream_helpers import (
-                                    extract_interrupt_ids,
-                                    parse_approval_interrupt,
-                                )
-                                from Django_xm.apps.tools.base import is_approval_interrupt
-
-                                # 收集所有审批请求（兼容批量格式和旧格式单条）
-                                batch_approval_data = []  # [(graph_intr_id, tool_call_id, approval_data)]
-                                for intr in interrupts:
-                                    interrupt_value, batch_id, resume_id = extract_interrupt_ids(intr)
-
-                                    if not is_approval_interrupt(interrupt_value):
-                                        continue
-
-                                    parsed_list = parse_approval_interrupt(
-                                        interrupt_value,
-                                        graph_interrupt_id=batch_id,
-                                        langgraph_resume_id=resume_id,
-                                        tool_calls_map=tool_calls_map,
-                                        tool_args_accumulator=tool_args_accumulator,
-                                    )
-                                    for approval_data in parsed_list:
-                                        tool_call_id = approval_data.get("tool_call_id", "")
-                                        batch_approval_data.append(
-                                            (resume_id, tool_call_id, approval_data)
-                                        )
-
-                                session_id = data.get("session_id", "")
-                                message_id = str(
-                                    data.get("_assistant_message_id") or data.get("message_id", "")
-                                )
-
-                                for graph_intr_id, tool_call_id, approval_data in batch_approval_data:
-                                    tool_name = approval_data.get("tool_name", "unknown")
-                                    action = approval_data.get("action", "confirm")
-                                    logger.info(
-                                        f"深度思考 approval interrupt: tool={tool_name}, "
-                                        f"action={action}, danger={approval_data.get('danger_level', 'medium')}"
-                                    )
-
-                                    # 注入 session_id / message_id
-                                    approval_data["session_id"] = session_id
-                                    approval_data["message_id"] = message_id
-
-                                    # 持久化工具/模型配置到 approval.extra
-                                    from Django_xm.apps.approvals.services.approval_service import (
-                                        build_approval_extra,
-                                        request_approval_async,
-                                    )
-                                    approval_data["extra"] = build_approval_extra(
-                                        data,
-                                        tool_call_id=tool_call_id,
-                                        graph_interrupt_id=approval_data.get("graph_interrupt_id", ""),
-                                        langgraph_resume_id=approval_data.get("langgraph_resume_id", ""),
-                                        message_id=message_id,
-                                        base_extra=approval_data.get("extra"),
-                                    )
-
-                                    try:
-                                        await request_approval_async(
-                                            source="chat",
-                                            source_id=session_id or "",
-                                            interrupt_id=tool_call_id,
-                                            approval_data=approval_data,
-                                        )
-                                        logger.info(
-                                            f"[Approval] DB记录已创建: interrupt_id={tool_call_id}, "
-                                            f"session={session_id}"
-                                        )
-                                    except Exception as e:
-                                        logger.error(
-                                            f"[Approval] DB记录创建失败: interrupt_id={tool_call_id}, error={e}"
-                                        )
-
-                                    yield {
-                                        "type": "approval",
-                                        "data": approval_data,
-                                    }
-                        continue  # updates 模式的其他事件跳过
-
-                    # 处理 messages stream mode
-                    all_messages.append(mode_data if not isinstance(mode_data, tuple) else mode_data[0])
-
-                    try:
-                        for event in process_stream_chunk(
-                            mode_data,
-                            tool_calls_map,
-                            current_message_content,
-                            tool_call_count=tool_call_count,
-                            lcp_func=_lcp_len,
-                            accumulated_reasoning=accumulated_reasoning,
-                            tool_args_accumulator=tool_args_accumulator,
-                            mode=prompt_mode,
-                            enable_deep_thinking=True,
-                            session_id=data.get("session_id", ""),
-                            message_id=str(data.get("_assistant_message_id") or data.get("message_id", "")),
-                            module_id=data.get("session_id", ""),
-                        ):
-                            if event.get("type") == "chunk":
-                                current_message_content += event.get("content", "")
-                            elif event.get("type") == "reasoning":
-                                if not has_sent_reasoning:
-                                    has_sent_reasoning = True
-                                has_model_reasoning = True
-                            yield event
-                    except Exception as chunk_err:
-                        logger.warning(f"处理流式 chunk 失败: {chunk_err}")
-                        continue
-
-                    await asyncio.sleep(0.01)
-            except Exception as stream_err:
-                # 异常路径：先刷新可能残留的缓冲内容，避免前端什么都没看到
-                pending = accumulated_reasoning.get("_pending_content", "") if accumulated_reasoning else ""
-                if pending:
-                    logger.debug(f"深度思考模式异常路径: 刷新缓冲内容 ({len(pending)} 字符)")
-                    yield {"type": "chunk", "content": pending}
-                    current_message_content += pending
-                    accumulated_reasoning["_pending_content"] = ""
-                    # 同步清除 stream_state，避免 generate() finally 重复刷新
-                    from .stream_helpers import _sync_pending_to_stream_state
-
-                    _sync_pending_to_stream_state(accumulated_reasoning)
-
-                # GraphRecursionError: Agent 步数超限，但已收集了部分结果
-                # 优雅降级：用已收集的内容生成回复，不丢弃上下文
-                from langgraph.errors import GraphRecursionError
-
-                if isinstance(stream_err, GraphRecursionError):
-                    logger.warning(
-                        f"深度思考模式达到递归上限，优雅降级: 已收集 {len(all_messages)} 条消息, "
-                        f"内容长度={len(current_message_content)}"
-                    )
-                    # 如果已经收集到内容，直接返回已有结果
-                    if current_message_content:
-                        yield {"type": "chunk", "content": ""}
-                    else:
-                        # 没有内容时，从 all_messages 中提取最后的 AI 回复
-                        for msg in reversed(all_messages):
-                            if isinstance(msg, AIMessage) and msg.content:
-                                current_message_content = msg.content if isinstance(msg.content, str) else str(msg.content)
-                                yield {"type": "chunk", "content": msg.content}
-                                break
-                        if not current_message_content:
-                            yield {
-                                "type": "chunk",
-                                "content": "任务执行步骤较多，已达到单次执行上限。以上是已收集的部分结果。",
-                            }
-                    # 跳过 fallback，继续后续的 finalize 和 reasoning 处理
-                elif provider_id and model_instance and tools:
-                    # 其他异常（如 API 连接错误）：回退到无工具纯对话模式
-                    logger.warning(
-                        f"深度思考模式模型 {provider_id} agent模式执行失败，回退到无工具纯对话模式: {type(stream_err).__name__}: {stream_err}"
-                    )
-                    try:
-                        async for fallback_event in self._stream_without_tools(
-                            model_instance, data, usage_tracker, token_detail_tracker
-                        ):
-                            yield fallback_event
-                    except Exception as fallback_err:
-                        logger.exception(f"无工具回退模式也失败: {type(fallback_err).__name__}")
-                        yield {
-                            "type": "error",
-                            "content": f"模型服务暂时不可用，请稍后重试（{type(fallback_err).__name__}）",
-                        }
-                    return
-                else:
-                    logger.exception(
-                        f"deep-thinking astream 执行异常: {type(stream_err).__name__}"
-                    )
-                    raise
-
-        update_usage_and_tokens(cb, usage_tracker, token_detail_tracker)
-
-        # 检测运行时 LLM fallback
-        if fb_callback.fallback_detected:
-            fallback_info = fb_callback.get_fallback_info()
-            if fallback_info:
-                yield {
-                    "type": "model_fallback",
-                    "data": fallback_info,
-                }
-                try:
-                    from Django_xm.apps.ai_engine.models import SystemConfig
-
-                    SystemConfig.set_value(
-                        "default_chat_model",
-                        {
-                            "provider_id": fallback_info["actual_provider"],
-                            "model_name": fallback_info["actual_model"],
-                        },
-                    )
-                except Exception:
-                    # 持久化 fallback 配置失败不影响当前会话，运行时已切换
-                    logger.debug("持久化模型 fallback 配置到 SystemConfig 失败")
-
-        # 审批中断场景：Agent 被 interrupt 暂停，等待用户确认
-        # 跳过 finalize 逻辑（不需要补发 final_ai_message 等），直接结束流
-        from .stream_helpers import finalize_tool_calls
-
-        if interrupt_info is not None:
-            logger.info(f"深度思考审批中断，跳过 finalize: tool={interrupt_info.get('tool_name')}")
-            for tool_update_event in finalize_tool_calls(all_messages, tool_calls_map, tool_args_accumulator):
-                yield tool_update_event
-            return
-
-        for tool_update_event in finalize_tool_calls(all_messages, tool_calls_map, tool_args_accumulator):
-            yield tool_update_event
-
-        # Agent 模式：刷新缓冲的 content（最终回答）
-        pending = accumulated_reasoning.get("_pending_content", "") if accumulated_reasoning else ""
-        if pending:
-            logger.debug(f"深度思考模式: 刷新缓冲的最终回答内容 ({len(pending)} 字符)")
-            yield {"type": "chunk", "content": pending}
-            current_message_content += pending
-            accumulated_reasoning["_pending_content"] = ""
-            # 同步清除 stream_state，避免 generate() finally 重复刷新
-            from .stream_helpers import _sync_pending_to_stream_state
-
-            _sync_pending_to_stream_state(accumulated_reasoning)
-
-        # 深度思考模式兜底：当模型（如 qwen3:8b + reasoning=True）将全部输出
-        # 放入 thinking 字段而 content 为空时，将推理内容作为主内容发送
-        # 但如果有 interrupt（工具审批等待），不应触发兜底
-        if (
-            not current_message_content.strip()
-            and not interrupt_info
-            and accumulated_reasoning
-            and accumulated_reasoning.get("content", "").strip()
-        ):
-            reasoning_text = accumulated_reasoning["content"].strip()
-            logger.info(f"深度思考兜底: content 为空，将推理内容 ({len(reasoning_text)} 字符) 作为主内容发送")
-            yield {"type": "chunk", "content": reasoning_text}
-            current_message_content = reasoning_text
-
-        thinking_duration = round(time.time() - thinking_start_time, 1)
-
-        final_reasoning = (accumulated_reasoning.get("content") or "").strip()
-        if has_model_reasoning and final_reasoning:
-            yield {
-                "type": "reasoning",
-                "data": {
-                    "content": final_reasoning,
-                    "duration": thinking_duration,
-                    "source": "deep_thinking",
-                },
-            }
-        elif has_sent_reasoning or not has_model_reasoning:
-            yield {
-                "type": "reasoning",
-                "data": {
-                    "content": f"深度思考完成，共思考了 {thinking_duration} 秒",
-                    "duration": thinking_duration,
-                    "source": "deep_thinking",
-                },
-            }
-
     async def create_deep_research_task(
         self,
         query: str,
@@ -510,11 +183,20 @@ class DeepChatService:
         use_web_search: bool = True,
         retriever_tool=None,
         task_title: str | None = None,
+        selected_tools: list | None = None,
+        use_mcp: bool = False,
+        selected_mcp_servers: list | None = None,
     ) -> str:
-        """创建深度研究任务并返回 task_id（不执行研究）"""
+        """创建深度研究任务并返回 task_id（不执行研究）
+
+        Args:
+            selected_tools: 用户选择的工具名称列表（不含 knowledge_base_ 前缀的检索工具）
+            use_mcp: 是否启用 MCP 工具
+            selected_mcp_servers: 选中的 MCP 服务器名称列表
+        """
         from django.contrib.auth import get_user_model
 
-        from Django_xm.apps.research.services.cross_app import get_research_task_manager
+        from Django_xm.apps.research.services.cross_app import get_research_task_manager, update_research_task_fields
 
         User = get_user_model()
 
@@ -537,6 +219,19 @@ class DeepChatService:
             created_by,
             session_id,
         )
+
+        # B1: 将工具选择写入 ResearchTask DB，确保恢复路径（research_resume_task）
+        # 能通过 _build_research_agent_from_task 读取 selected_tools/use_mcp/selected_mcp_servers
+        if selected_tools or use_mcp or selected_mcp_servers:
+            update_fields = {}
+            if selected_tools is not None:
+                update_fields["selected_tools"] = selected_tools
+            if use_mcp:
+                update_fields["use_mcp"] = use_mcp
+            if selected_mcp_servers is not None:
+                update_fields["selected_mcp_servers"] = selected_mcp_servers
+            await update_research_task_fields_async(thread_id, **update_fields)
+
         return thread_id
 
     async def run_deep_research_task(

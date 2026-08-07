@@ -57,7 +57,7 @@ const props = defineProps({
   mode: {
     type: String,
     default: undefined,
-    validator: (v) => v === undefined || v === 'deep-research'
+    validator: (v) => v === undefined
   }
 })
 
@@ -74,12 +74,6 @@ const MS_IN_S = 1000
 const isIntrinsic = computed(() => props.source === 'model_intrinsic')
 
 const thinkingMessage = computed(() => {
-  // 深度研究模式：专用文案（独立于 source，因为深度研究不是思考功能）
-  if (props.mode === 'deep-research') {
-    if (props.isStreaming || duration.value === 0) return '正在进行深度研究'
-    if (duration.value === undefined) return '深度研究已完成'
-    return `深度研究已完成（用时 ${duration.value} 秒）`
-  }
   if (isIntrinsic.value) {
     return props.isStreaming ? '推理中' : '推理过程'
   }

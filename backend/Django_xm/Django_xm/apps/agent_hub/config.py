@@ -44,6 +44,7 @@ class AgentConfig:
     temperature: float | None = None
     max_tokens: int | None = None
     special_params: dict | None = None
+    enable_deep_thinking: bool = False
     tools: list | None = None
     tool_config: dict | None = None
     system_prompt: str | None = None

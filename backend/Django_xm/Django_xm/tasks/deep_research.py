@@ -256,6 +256,7 @@ def run_research_task(
             temperature=temperature,
             max_tokens=max_tokens,
             special_params=special_params,
+            enable_deep_thinking=enable_deep_thinking,
             tools=tools if tools else None,
             tool_config=tool_config,
             system_prompt=system_prompt,

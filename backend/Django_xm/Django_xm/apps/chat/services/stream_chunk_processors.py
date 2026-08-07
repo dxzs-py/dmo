@@ -480,7 +480,7 @@ def _handle_ai_message_chunk(
                 "data": {
                     "content": reasoning_content,
                     "duration": 0,
-                    "source": "model_intrinsic",
+                    "source": "deep_thinking" if enable_deep_thinking else "model_intrinsic",
                 },
             }
 

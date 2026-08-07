@@ -403,7 +403,7 @@ export async function readSSEStream(response, onEvent, signal) {
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue
         const dataStr = line.slice(6)
-        if (dataStr === '[DONE]') continue
+        if (dataStr === '[DONE]') break
 
         try {
           const parsed = JSON.parse(dataStr)

@@ -78,6 +78,52 @@ def broadcast_stream_completed(
         logger.warning(f"[Writeback] 广播 STREAM_COMPLETED 失败: {e}")
 
 
+def broadcast_stream_reasoning(
+    session_id: str,
+    task_id: str,
+    message_id: str,
+    content: str,
+):
+    """广播 stream_reasoning 事件到 session + task 双频道。
+
+    深度研究执行过程中，每当 LLM 产生 reasoning_content（思考链），
+    通过 WebSocket 实时推送到前端，供 AiReasoning 组件展示。
+
+    与 broadcast_stream_completed 相同的双频道策略：
+    - session:{session_id} 频道：聊天模块深度研究模式订阅
+    - task:{task_id} 频道：DeepResearchView 独立模式订阅
+
+    Args:
+        session_id: 关联的 chat session ID
+        task_id: 深度研究任务 ID
+        message_id: 关联的 ChatMessage ID（前端精确定位消息）
+        content: 推理文本内容
+    """
+    payload = {
+        "source": EventSource.DEEP_RESEARCH,
+        "source_id": session_id,
+        "message_id": message_id,
+        "session_id": session_id,
+        "task_id": task_id,
+        "data": {"content": content},
+    }
+
+    try:
+        publish_event_sync(
+            EventType.STREAM_REASONING,
+            payload,
+            session_id=session_id,
+            task_id=task_id,
+        )
+    except PayloadValidationError:
+        logger.debug(
+            f"[Writeback] STREAM_REASONING payload 校验失败，跳过广播: "
+            f"task_id={task_id}, session_id={session_id}",
+        )
+    except Exception as e:
+        logger.debug(f"[Writeback] 广播 STREAM_REASONING 失败: {e}")
+
+
 def writeback_to_chat_message(
     task_id: str,
     content: str,
@@ -180,14 +226,48 @@ def writeback_to_chat_message(
             reasoning=reasoning,
         )
 
-        # 广播 message_updated 事件到 chat session 频道
-        # 发布前从 DB 重新加载 tool_calls，确保拿到 sync_approval_state_to_chat_message
-        # 已更新的最新数据（本函数开头加载的 chat_msg_data 可能早于审批状态提交）。
-        # 前端 _mergeToolCalls 有终态保护（local result/status/approval 不被后端旧快照覆盖），
-        # 因此即使 tool_calls 中有陈旧数据也不会覆盖前端已更新的状态，可安全同步。
+        # B3: 将 ResearchTask.tool_calls 合并到 ChatMessage.tool_calls 顶层，
+        # 确保工具执行的 status/result/error 对快照 API 可见（不在仅 versions 内）。
+        # B5: 同步 versions[0].content 到最终报告内容。
         from django.apps import apps
 
         ChatMessage = apps.get_model("chat", "ChatMessage")
+        try:
+            msg = ChatMessage.objects.get(id=chat_msg_id)
+        except ChatMessage.DoesNotExist:
+            msg = None
+
+        msg_save_fields = []
+        if msg is not None:
+            # B3: 合并 ResearchTask tool_calls
+            if research_task is not None and research_task.tool_calls:
+                from Django_xm.apps.chat.services.stream_persistence import _merge_tool_calls_incremental
+
+                existing_tc = msg.tool_calls or []
+                merged_tc = _merge_tool_calls_incremental(existing_tc, research_task.tool_calls)
+                if merged_tc != existing_tc:
+                    msg.tool_calls = merged_tc
+                    msg_save_fields.append("tool_calls")
+                    logger.info(
+                        f"[Writeback] 已合并 tool_calls: task_id={task_id}, "
+                        f"existing={len(existing_tc)}, merged={len(merged_tc)}"
+                    )
+
+            # B5: 同步 versions[0].content（最终报告内容对 API 快照可见）
+            versions = msg.versions or []
+            if final_content and versions:
+                ver0 = versions[0] if isinstance(versions[0], dict) else {}
+                if ver0.get("content") != final_content:
+                    ver0["content"] = final_content
+                    versions[0] = ver0
+                    msg.versions = versions
+                    if "versions" not in msg_save_fields:
+                        msg_save_fields.append("versions")
+
+            if msg_save_fields:
+                msg.save(update_fields=msg_save_fields + ["updated_at"])
+
+        # 重新加载 tool_calls 用于广播（确保拿到合并后的最新数据）
         try:
             tool_calls = ChatMessage.objects.only("tool_calls").get(id=chat_msg_id).tool_calls or []
         except ChatMessage.DoesNotExist:

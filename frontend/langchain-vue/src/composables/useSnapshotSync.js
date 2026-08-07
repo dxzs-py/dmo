@@ -41,7 +41,7 @@ const _TERMINAL_TOOL_CALL_STATUSES = new Set(
 /**
  * 快照校对消息状态提升时"始终以后端为准"的非内容字段（后端是元数据权威）
  */
-const _SNAPSHOT_NON_CONTENT_FIELDS = ['tokenCount', 'responseTime', 'model', 'backendId']
+const _SNAPSHOT_NON_CONTENT_FIELDS = ['tokenCount', 'responseTime', 'model', 'backendId', 'researchTaskId']
 
 /**
  * 按 sessionId 缓存的快照校对实例

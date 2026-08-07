@@ -73,27 +73,3 @@ def apply_reasoning_patch() -> None:
     except Exception as e:
         logger.warning(f"DeepSeek reasoning_content patch 应用失败: {e}")
 
-
-def is_thinking_enabled(special_params: dict[str, Any], provider_id: str = "") -> bool:
-    """通用判断深度思考是否启用，兼容 DeepSeek/Ollama/Anthropic 等多 Provider。
-
-    - DeepSeek: thinking={"type": "enabled"} 或 reasoning_effort 存在
-    - Ollama: thinking=True 或 reasoning=True
-    - Anthropic: thinking={"type": "enabled", "budget_tokens": N}
-    """
-    if not special_params:
-        return False
-    # 通用检查：thinking 参数
-    thinking_val = special_params.get("thinking")
-    if thinking_val:
-        # DeepSeek/Anthropic 格式: {"type": "enabled", ...}
-        if isinstance(thinking_val, dict) and thinking_val.get("type") == "enabled":
-            return True
-        # Ollama 格式: True
-        if isinstance(thinking_val, bool) and thinking_val:
-            return True
-    # DeepSeek 特有：reasoning_effort 存在时 thinking 自动启用
-    if "reasoning_effort" in special_params:
-        return True
-    # Ollama 特有：reasoning 参数
-    return bool(special_params.get("reasoning"))

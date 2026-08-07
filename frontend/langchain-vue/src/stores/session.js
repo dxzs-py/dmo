@@ -450,7 +450,12 @@ export const useSessionStore = defineStore('session', () => {
       // Task 15 P0 修复：当本地仅用户消息无 AI 消息时，不短路返回，
       // 强制从后端加载（刷新后恢复了 currentSessionId 但后端可能有完整 AI 回复）
       const hasAssistantMessages = existing?.messages?.some(m => m.role === 'assistant')
-      if (existing && existing.messages && existing.messages.length > 0 && hasAssistantMessages) {
+      // F3-D：检查是否存在疑似深度研究消息但缺少 researchTaskId，
+      // 若有则仍需触发详情请求以恢复丢失的 researchTaskId
+      const hasResearchContext = existing?.messages?.some(m => m.researchContext != null)
+      const hasAnyResearchTaskId = existing?.messages?.some(m => m.researchTaskId != null)
+      const needsResearchReload = hasResearchContext && !hasAnyResearchTaskId
+      if (existing && existing.messages && existing.messages.length > 0 && hasAssistantMessages && !needsResearchReload) {
         return existing
       }
     }

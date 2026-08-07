@@ -28,6 +28,7 @@ from Django_xm.apps.agent_hub.services.agent_resilience import (
 from Django_xm.apps.ai_engine.services.cost_tracker import TokenDetailTracker
 from Django_xm.apps.chat.services.slash_commands import execute_command, parse_command
 from Django_xm.apps.chat.services.stream import (
+    DeepThinkingStreamStrategy,
     FallbackStreamService,
     NormalStreamStrategy,
     StreamContext,
@@ -584,17 +585,17 @@ class ChatService:
     ) -> AsyncGenerator[dict[str, Any], None]:
         """为特定模式创建并执行 Agent 流，返回事件流"""
         if mode == "deep-research":
-            yield {
-                "type": "reasoning",
-                "data": {"content": "正在调度深度研究工作流并执行网络搜索...", "duration": 0},
-            }
             # 先创建任务获取 task_id，以便前端尽早展示跳转链接
+            # B1: 从 request data 提取工具选择参数，传递到 create_deep_research_task 以写入 DB
             task_id = await self._deep_service.create_deep_research_task(
                 data["message"],
                 session_id=data.get("session_id"),
                 use_web_search=data.get("use_web_search", True),
                 retriever_tool=data.get("_retriever_tool"),
                 task_title=data.get("_original_message"),
+                selected_tools=data.get("selected_tools"),
+                use_mcp=data.get("use_mcp", False),
+                selected_mcp_servers=data.get("selected_mcp_servers"),
             )
             # 立即发送 deep_research 事件，让用户可以跳转到深度研究模块查看实时进度
             yield {
@@ -604,6 +605,21 @@ class ChatService:
                     "session_id": data.get("session_id", ""),
                 },
             }
+            # B4: 将 research_task_id 写入 ChatMessage（双向关联），
+            # 确保 sync_approval_state_to_chat_message 和 writeback_to_chat_message 能通过
+            # research_task_id 查找到关联的 ChatMessage。
+            assistant_msg_id = data.get("_assistant_message_id")
+            if assistant_msg_id:
+                try:
+                    assistant_msg_id_int = int(assistant_msg_id)
+                    from Django_xm.apps.chat.services.deep_chat_service import (
+                        update_chat_message_research_task_id_async,
+                    )
+                    await update_chat_message_research_task_id_async(
+                        assistant_msg_id_int, task_id,
+                    )
+                except (ValueError, TypeError):
+                    pass
             from Django_xm.apps.ai_engine.services.llm_factory import model_supports_capability
 
             deep_result = None
@@ -708,19 +724,6 @@ class ChatService:
             },
         )
 
-        # 深度思考叠加：调用 DeepChatService 处理流式输出
-        if data.get("_enable_deep_thinking"):
-            async for event in self._deep_service.process_deep_thinking_stream(
-                data,
-                usage_tracker,
-                token_detail_tracker,
-                tools=tools,
-                model_instance=model_instance,
-            ):
-                yield event
-            clear_parent_tool_context()
-            return
-
         tool_config = self._build_tool_config(data)
 
         # 在创建 agent 之前加载研究上下文，以便注入到 system_prompt
@@ -817,8 +820,8 @@ class ChatService:
         ctx.session_id = data.get("session_id", "")
         ctx.message_id = str(data.get("_assistant_message_id") or data.get("message_id", ""))
 
-        # 创建普通 agent 模式策略（注入差异点）
-        strategy = NormalStreamStrategy()
+        # 根据 _enable_deep_thinking 选择策略
+        strategy = DeepThinkingStreamStrategy() if data.get("_enable_deep_thinking") else NormalStreamStrategy()
 
         # 预创建降级 agent（用于 AgentExecutor 的 DEGRADE 分支）
         # AgentExecutor.rebuild_agent_fn 是同步回调，无法 await 异步 create_agent_with_memory，

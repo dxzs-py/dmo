@@ -1,7 +1,7 @@
 from typing import Any, Dict
 
 from .anthropic import get_provider_config as get_anthropic_config
-from .deepseek import apply_reasoning_patch, apply_reasoning_patch_if_needed, is_thinking_enabled
+from .deepseek import apply_reasoning_patch, apply_reasoning_patch_if_needed
 from .deepseek import get_provider_config as get_deepseek_config
 from .groq import get_provider_config as get_groq_config
 from .groq import is_groq_model, patch_groq_model
@@ -82,6 +82,5 @@ __all__ = [
     "get_openai_config",
     "get_qianfan_config",
     "is_groq_model",
-    "is_thinking_enabled",
     "patch_groq_model",
 ]

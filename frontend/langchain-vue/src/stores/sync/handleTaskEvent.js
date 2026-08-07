@@ -134,6 +134,10 @@ export const createHandleTaskEvent = (ctx) => {
           )
         }
         break
+      // stream_reasoning：深度研究推理内容（task 通道，独立深度研究模式）
+      case 'stream_reasoning':
+        researchStore.setTaskReasoning(taskId, payload)
+        break
       default:
         logger.debug(`[Sync] 未处理的 task 事件: ${event.type}`)
     }

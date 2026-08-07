@@ -279,7 +279,7 @@ export function transformBackendMessageToFrontend(msg) {
     id: msgObj.id?.toString() || generateId(),
     backendId: msgObj.id,
     role: role,
-    content: activeVersion.content,
+    content: activeVersion.content || msgObj.content || '',
     sources: activeVersion.sources,
     plan: activeVersion.plan,
     chainOfThought: activeVersion.chainOfThought,
@@ -288,7 +288,7 @@ export function transformBackendMessageToFrontend(msg) {
     approvalState: msgObj.approval?.state
       || (activeVersion.toolCalls || []).find(tc => tc.approval)?.approval?.state
       || null,
-    reasoning: activeVersion.reasoning,
+    reasoning: activeVersion.reasoning || msgObj.reasoning || null,
     suggestions: activeVersion.suggestions,
     context: activeVersion.context,
     attachmentIds: msgObj.attachmentIds || [],
@@ -303,6 +303,7 @@ export function transformBackendMessageToFrontend(msg) {
     responseTime: msgObj.responseTime || 0,
     researchTaskId: msgObj.researchTaskId || null,
     researchTaskDeleted: msgObj.researchTaskDeleted || null,
+    streamState: msgObj.isStreaming ? 'streaming' : (msgObj.streamState || undefined),
   }
 }
 

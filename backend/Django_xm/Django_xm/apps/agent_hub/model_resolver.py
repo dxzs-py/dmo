@@ -28,12 +28,27 @@ def resolve_model(config) -> str | BaseChatModel:
         if isinstance(config.model, str) and ":" in config.model:
             model_provider, model_name = config.model.split(":", 1)
 
+        special_params = getattr(config, "special_params", None) or {}
+
+        # 深度思考统一注入：当 enable_deep_thinking=True 且 special_params 中无 thinking 配置时，
+        # 从 provider registry 读取默认 enabled_value 并合并
+        if getattr(config, "enable_deep_thinking", False) and "thinking" not in special_params:
+            try:
+                from Django_xm.apps.ai_engine.services.registry_service import get_provider_config
+                provider_cfg = get_provider_config(model_provider)
+                thinking_cfg = provider_cfg.get("special_params", {}).get("thinking")
+                if thinking_cfg and thinking_cfg.get("enabled_value"):
+                    special_params["thinking"] = thinking_cfg["enabled_value"]
+                    logger.info("已从 provider 配置自动注入 deep_thinking 参数")
+            except Exception as e:
+                logger.warning(f"无法自动注入 deep_thinking 参数: {e}")
+
         model = get_chat_model(
             model_name=model_name,
             model_provider=model_provider,
             temperature=config.temperature,
             max_tokens=config.max_tokens,
-            special_params=getattr(config, "special_params", None),
+            special_params=special_params or None,
             enable_fallback=True,
         )
         if model is not None:

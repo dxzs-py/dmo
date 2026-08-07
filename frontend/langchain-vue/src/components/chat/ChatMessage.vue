@@ -207,11 +207,6 @@ const _isResearchRunning = computed(() =>
   )
 )
 
-/** 推理面板模式：深度研究任务存在时使用专用文案，否则默认（agent/深度思考） */
-const reasoningMode = computed(() => {
-  return props.message.researchTaskId ? 'deep-research' : undefined
-})
-
 const showContinueResearch = computed(() => {
   return props.message.role === 'assistant' && hasResearchTask.value && !props.isStreaming && props.message.streamState !== StreamState.INTERRUPTED
 })
@@ -357,12 +352,11 @@ function handleMessageClick() {
           <span class="attachment-processing-text">{{ attachmentProcessing.message || '正在处理文档...' }}</span>
         </div>
         <AiReasoning
-          v-if="message.reasoning && message.reasoning.content"
+          v-if="message.reasoning && message.reasoning.content && !message.researchTaskId"
           :content="message.reasoning.content"
           :duration="message.reasoning.duration"
           :is-streaming="isStreaming && isLast"
           :source="message.reasoning.source || 'deep_thinking'"
-          :mode="reasoningMode"
         />
         <div
           v-if="message.versions && message.versions.length > 1"
@@ -461,7 +455,7 @@ function handleMessageClick() {
           size="small"
           type="primary"
           text
-          @click.stop="router.push({ name: 'deep-research', params: { taskId: message.researchTaskId } })"
+          @click.stop="router.push({ name: 'deep-research', query: { task_id: message.researchTaskId } })"
         >
           查看详情
         </el-button>

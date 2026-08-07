@@ -31,6 +31,7 @@ from Django_xm.apps.agent_hub.builders.subagent_patch import (
     set_current_checkpointer,
 )
 from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.ai_engine.services.thinking import extract_thinking_content
 from Django_xm.apps.research.services.patches import (
     _DeepAgentExecutor,
     _extract_ai_response,
@@ -409,6 +410,26 @@ class OfficialDeepAgentAdapter:
             # - accumulated_messages: 累积的 AIMessage/AIMessageChunk/ToolMessage 列表，
             #   供 ToolMessage 阶段从 tool_call_chunks 聚合完整参数
             seen_tool_call_ids: set = set()
+            # B7: 恢复模式预热 seen_tool_call_ids —— 从 checkpoint state 中提取已注册的
+            # tool_call_id 集合，避免 ToolMessage 阶段触发 PENDING 补发导致非法状态转换 WARNING。
+            if resume_command is not None:
+                try:
+                    state = await self.graph.aget_state(config)
+                    if state and hasattr(state, "values") and state.values:
+                        from langchain_core.messages import AIMessage
+
+                        for msg in state.values.get("messages", []) or []:
+                            if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+                                for tc in msg.tool_calls:
+                                    tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                                    if tc_id:
+                                        seen_tool_call_ids.add(tc_id)
+                        logger.info(
+                            f"[OfficialDeepAgent] 恢复模式预热 seen_tool_call_ids: "
+                            f"count={len(seen_tool_call_ids)}, ids={list(seen_tool_call_ids)[:5]}..."
+                        )
+                except Exception as e:
+                    logger.warning(f"[OfficialDeepAgent] 预热 seen_tool_call_ids 失败(非致命): {e}")
             accumulated_messages: list = []
             # 在循环外定义，避免 loop_fn 闭包捕获每次迭代的重新赋值（B023）
             all_resume_values: dict = {}
@@ -565,6 +586,28 @@ class OfficialDeepAgentAdapter:
                                         if warning is not None:
                                             local_pending_warnings.append(SystemMessage(content=warning.to_prompt()))
                                     await self._publish_tool_event(evt)
+
+                                # 捕获 LLM thinking/reasoning 内容（AIMessageChunk.additional_kwargs.reasoning_content）
+                                thinking_text = extract_thinking_content(msg_obj)
+                                if thinking_text:
+                                    _configurable = config_arg.get("configurable", {})
+                                    _session_id = _configurable.get("chat_session_id") or self.chat_session_id
+                                    _message_id = _configurable.get("assistant_message_id")
+                                    if _session_id and _message_id:
+                                        try:
+                                            from Django_xm.apps.research.services.writeback import (
+                                                broadcast_stream_reasoning,
+                                            )
+
+                                            broadcast_stream_reasoning(
+                                                session_id=_session_id,
+                                                task_id=self.thread_id,
+                                                message_id=_message_id,
+                                                content=thinking_text,
+                                            )
+                                        except Exception:
+                                            pass
+
                                 # 检测到重复调用：中断当前流以注入警告
                                 # break 退出 async for，由下方 aupdate_state 注入后重入
                                 if local_pending_warnings:

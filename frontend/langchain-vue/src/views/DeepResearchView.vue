@@ -111,6 +111,7 @@
         :doc-analysis-content="docAnalysisContent"
         :doc-analysis-loading="docAnalysisLoading"
         :file-browser-ref="fileBrowserRef"
+        :reasoning="reasoning"
         @back="showTaskDetail = false"
         @view-task="viewTask"
         @open-continue-dialog="openContinueDialog"
@@ -291,6 +292,9 @@ const router = useRouter()
 const route = useRoute()
 const currentTaskId = ref(null)
 const task = computed(() => researchStore.getTaskStatus(currentTaskId.value))
+
+/** 当前任务推理内容（来自 stream_reasoning WebSocket 事件） */
+const reasoning = computed(() => task.value?.reasoning || null)
 
 /** 当前任务的待审批列表（过滤出 source=deep_research 且 taskId 匹配的审批） */
 const taskPendingApprovals = computed(() => {

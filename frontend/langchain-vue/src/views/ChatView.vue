@@ -13,12 +13,10 @@ import { useChatUI } from '../composables/useChatUI'
 import { useChatCommands } from '../composables/useChatCommands'
 import { useChatKeyboard } from '../composables/useChatKeyboard'
 import { useRealtimeSync } from '../composables/useRealtimeSync'
-import { deepResearchAPI } from '../api/research'
+import { useResearchApprovalListener } from '../composables/useResearchApprovalListener'
 import { getSessionSnapshot } from '../api/realtime'
 import { chatAPI } from '../api/chat'
 import { getQueryParam } from '../utils/format'
-import { toCamelCase } from '../utils/sessionTransformers'
-import { readSSEStream } from '../utils/sse'
 import { Loading } from '@element-plus/icons-vue'
 import ChatHeader from '../components/chat/ChatHeader.vue'
 import ChatMessages from '../components/chat/ChatMessages.vue'
@@ -95,106 +93,7 @@ const realtime = useRealtimeSync()
 const connectionStatus = computed(() => realtime.connectionStatus.value)
 
 // --- 深度研究 SSE 重连（刷新/新浏览器恢复审批监听） ---
-let researchSSEAbortController = null
-let researchSSERetryCount = 0
-const MAX_SSE_RETRY = 3
-const SSE_RETRY_BASE_DELAY = 2000 // 2s, 4s, 8s
-
-const connectResearchSSE = async (taskId) => {
-  if (!taskId) return
-  // 先检查任务状态，只有 running 才连接
-  try {
-    const resp = await deepResearchAPI.getStatus(taskId)
-    const taskData = resp.data?.data || resp.data
-    if (!taskData || taskData.status !== 'running') return
-  } catch (error) {
-    // 任务不存在（404）时清空 researchTaskId，避免后续重复请求已删除任务
-    if (error?.response?.status === 404 && chatDeepResearchStore.researchTaskId === taskId) {
-      chatDeepResearchStore.researchTaskId = null
-    }
-    return // 查询失败则不连接
-  }
-
-  researchSSEAbortController = new AbortController()
-  try {
-    const response = await deepResearchAPI.streamFetch(taskId, {
-      signal: researchSSEAbortController.signal,
-    })
-    if (!response.ok) return
-
-    // 连接成功，重置重连计数
-    researchSSERetryCount = 0
-
-    // buffer/line 切分由 utils/sse.js readSSEStream 统一负责
-
-    const processChunk = async () => {
-      try {
-        await readSSEStream(response, (parsedRaw) => {
-          // 命名边界：统一解析（utils/sse.js readSSEStream 完成 buffer/line 切分），
-          // 对 parsed 整体调用 toCamelCase 递归转换，
-          // 然后将 type 还原为后端原始 snake_case（协议路由标识符，非业务数据）。
-          const parsed = toCamelCase(parsedRaw)
-          if (parsedRaw && typeof parsedRaw === 'object') {
-            parsed.type = parsedRaw.type
-          }
-          if (parsed.type === 'approval' || parsed.type === 'approval_timeout' || parsed.type === 'approval_processed') {
-            // 审批事件经 sync 层转发（视图层收敛，SubTask 11.3），语义与数据与原直调 approvalStore 完全一致
-            syncStore.handleApprovalAction('handleApprovalEvent', parsed.data || parsed, {
-              source: 'deep_research',
-              taskId,
-              sessionId: sessionStore.currentSessionId,
-            })
-          } else if (parsed.type === 'approval_history') {
-            const effectiveTaskId = parsed.taskId || taskId
-            if (parsed.data) {
-              syncStore.handleApprovalAction('restoreFromSSEHistory', parsed.data, {
-                taskId: effectiveTaskId,
-                sessionId: sessionStore.currentSessionId,
-              })
-            }
-          } else if (parsed.type === 'status_change') {
-            const status = parsed.status
-            if (status === 'completed' || status === 'failed') {
-              // abort 后 readSSEStream 在下一轮 while 检测 signal.aborted 退出
-              researchSSEAbortController?.abort()
-            }
-          }
-        }, researchSSEAbortController.signal)
-      } catch (e) {
-        if (e.name !== 'AbortError') {
-          console.warn('[ChatView] 深度研究 SSE 连接异常:', e)
-          // 指数退避重连
-          if (researchSSERetryCount < MAX_SSE_RETRY) {
-            researchSSERetryCount++
-            const delay = SSE_RETRY_BASE_DELAY * Math.pow(2, researchSSERetryCount - 1)
-            console.log(`[ChatView] ${delay}ms 后重连深度研究 SSE (第${researchSSERetryCount}次)`)
-            setTimeout(() => connectResearchSSE(taskId), delay)
-          }
-        }
-      }
-    }
-    processChunk() // 不 await，后台运行
-  } catch (e) {
-    if (e.name !== 'AbortError') {
-      console.warn('[ChatView] 深度研究 SSE 连接失败:', e)
-      // 连接失败也尝试重连
-      if (researchSSERetryCount < MAX_SSE_RETRY) {
-        researchSSERetryCount++
-        const delay = SSE_RETRY_BASE_DELAY * Math.pow(2, researchSSERetryCount - 1)
-        console.log(`[ChatView] ${delay}ms 后重连深度研究 SSE (第${researchSSERetryCount}次)`)
-        setTimeout(() => connectResearchSSE(taskId), delay)
-      }
-    }
-  }
-}
-
-const disconnectResearchSSE = () => {
-  if (researchSSEAbortController) {
-    researchSSEAbortController.abort()
-    researchSSEAbortController = null
-  }
-  researchSSERetryCount = 0
-}
+const { connectResearchSSE, disconnectResearchSSE } = useResearchApprovalListener()
 
 // --- WebSocket 实时同步 ---
 /** 当前通过 WebSocket 订阅的 sessionId */

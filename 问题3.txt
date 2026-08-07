@@ -1,316 +1,145 @@
 ========================================
-重构项目实时同步测试（2026-08-06 第四轮·核心层修复后回归）
+重构项目测试（2026-08-06 第九轮·聊天深度研究模式 ↔ 深度研究模块跨模块实时同步专项验证）
 ========================================
-本轮测试环境：
-- 代码基线：realtime-sync-core-authority spec 修复已完成（事件路由统一 / 工具状态机统一 / 后端 tool_calls 权威持久化 / seq 治理 / 模块解耦）
-- 服务：前端 Vite 8080、后端 runserver 8000、Redis 6379（重启后加载新代码）
-- 浏览器：Page 3 = 触发；Page 4/5/6 = 非触发（默认 context 共享登录态）
-- 测试请求：运行 ollama lis 和 ollama pst 并把结保存到D:\programming\langchain\langchain_xm\test_approval25.txt
-- 模式：代理 | 模型：deepseek-v4-flash | 工具：15 个全选
-- 基准参照：正常现象.txt（等待中/待审批 → 等待中/等待其他审批 → 已完成/已确认）
-- 说明：本文件为第四轮重开（前序轮次 P3-1~P3-33 明细已不在本文件，本轮聚焦修复后回归发现）
+本轮环境：
+- 测试依据：spec `verify-chat-research-cross-module-sync`（已批准）
+- 浏览器：Page 20/21/22 访问 http://localhost:8080/chat（浏览器 A=20 触发端，B=21、C=22 非触发端），Page 23 访问 http://localhost:8080/deep-research（浏览器 D）
+- 指令：`运行 ollama lis 和 ollama pst 并把结保存到D:\programming\langchain\langchain_xm\test_approva.txt`
+- 模式：浏览器 A 聊天模块「深度研究」模式（🔬）；工具已选 15 个（含 shell_exec/fs_write_file）
+- 约束：仅点击「确认执行」/「拒绝」，禁止「全部执行」；单次操作后立即核查其余浏览器
+- 后端日志：D:\programming\langchain\langchain_xm\backend\Django_xm\logs\django.log
+- 参照：正常现象.txt（未重构前基准）
 
 ----------------------------------------
-【初始状态】4 浏览器一致 ✓（17:12 发送指令后）
-- 工具调用 (2)，队列 2
-- Tool 1 shell_exec "ollama list"：状态「等待中」+ 审批「需审批」+ 拒绝/确认执行可点击 ✓
-- Tool 2 shell_exec "ollama ps"：状态「待审批」+ 审批「需审批」+ 按钮可点击 ✓
-- AI 回复文本流式输出 ✓
-- 非触发浏览器 Page 4/5/6 均实时同步（工具卡片、状态、按钮完整，无刷新）✓
-  ← 核心改善：P3-R1（事件路由）修复生效，此前非触发浏览器完全收不到工具事件
-- 观察：Tool 1「等待中」与 Tool 2「待审批」标签不一致（同批待审批工具，P3-5 类遗留，低严重）
+【基线（21:35 前）】
+- 服务正常：后端 Daphne 21:18-19 重启、Vite dev 21:19、Redis 在线
+- 4 浏览器就绪；登录态正常；会话定位正常（最新会话「新对话 - 代理」空会话，欢迎页属正常）
+- 浏览器 A 模式切换为「🔬 深度研究」；工具 15 个已选
 
 ----------------------------------------
-【操作1】Page 3 点击 Tool 1 (ollama list)「确认执行」（17:13:37）
-### 【问题 P3-34】致命：触发浏览器工具状态错误显示「已完成」（无输出），与非触发浏览器严重不一致
-- 时间：17:13:37 操作1 后持续存在
-- 涉及浏览器：Page 3（触发）vs Page 4/5/6（非触发）
+【21:36 触发】浏览器 A（Page 20）发送深度研究指令
+- Page 20（触发端）UI：AI 消息头部「正在进行深度研究」+「正在调度深度研究工作流并执行网络搜索...」；研究卡片「研究进行中」+「点击查看实时进度」+「查看详情」按钮；工具调用 (2) = shell_exec ollama list / ollama ps（均「待审批」）；状态「AI正在输入...」+ 停止按钮
+- Page 21/22（非触发端）UI：AI 消息头部「正在思考」推理面板 +「正在调度深度研究工作流并执行网络搜索...」；无研究卡片；工具调用 (2) = 同一 2 个工具卡片（待审批）；消息显示「复制/重新生成/删除」（完成态按钮，无停止）
+
+----------------------------------------
+【观察点 P5-1（已确认，非瞬时态）】触发端与非触发端深度研究 AI 消息 UI 形态不一致
 - 现象：
-  - Page 3：Tool 1「已完成」+ 输入参数，但【无输出结果】；Tool 2（未审批）也显示「已完成」+ 审批区「需审批」+ 拒绝/确认执行按钮仍可点击
-  - Page 4/5/6：Tool 1「等待中」+「本工具已审批，等待其余工具完成审批」+ 按钮 disabled（正确 ✓）；Tool 2「待审批」+ 按钮可点（正确 ✓）
-- 后端权威状态（django.log 17:13:37）：
-  - `_check_batch`: call_00 approval.state=pending；`sibling_check: sibling_count=1, has_pending=True`
-  - `[ApprovalStore] 持久化 processed: call_00, state=waiting`（仅标记 waiting，未执行）
-  - 无工具执行日志、无 persist 完成日志（batch 等待中，工具均未真正执行）
-- 结论：后端实际为 Tool 1=waiting、Tool 2=pending，触发浏览器错误显示为 completed（且两工具均无输出）。非触发浏览器显示正确。
-- 对照正常现象.txt：Tool 1 审批后应显示「等待中/等待其他审批」+「本工具已审批，等待其余工具完成审批」+ 按钮 disabled；Tool 2 应保持「等待中/待审批」
-- 影响：触发浏览器是用户主要操作端，状态错误直接影响审批与结果查看；跨浏览器不一致违反核心目标（实时同步一致性）
-- 复现步骤：代理模式全选工具 → 发送上述指令 → 工具批量待审批 → 点击 Tool 1「确认执行」→ 触发浏览器 Tool 1/2 变「已完成」（无输出），非触发浏览器正确显示等待中/待审批
-- 疑似根因（待代码定位，禁止补丁）：
-  1. 审批恢复流（batch 挂起时）启动的 SSE 流在触发浏览器端被消费，SSE 工具事件/tool_result 被状态机误判为 completed
-  2. 状态机 applyToolCallState result 路径：existing=WAITING 时收到 result 数据直接推进 COMPLETED（Task 2 行为修正③）——审批恢复流挂起阶段若 yield 了工具结果或空结果，会误推进
-  3. 前端 executeApproval 本地乐观更新与 SSE/WebSocket 事件叠加导致过推进
-  → 需检查：approval resume 的 SSE 流在 sibling pending 时的具体输出、sse.js tool/tool_result 事件处理、addOrUpdateToolCallInMap/updateOrAddToolResultInMap 对 waiting 的处理
-
-### 【观察项（好转，记录备查）】
-- 非触发浏览器状态流转正确：Tool 1 审批后「等待中」+「本工具已审批」+ disabled ✓（符合基准，此前为错误「执行中」）
-- WebSocket 实时同步链路（→ 非触发浏览器）正常 ✓
+  - 触发端（Page 20）：「正在进行深度研究」+ 研究卡片（研究进行中/点击查看实时进度/查看详情）+「AI正在输入...」
+  - 非触发端（Page 21/22）：「正在思考」推理面板 + 无研究卡片 + 完成态按钮（复制/重新生成/删除）
+- 复现：触发深度研究后检查非触发浏览器（无需刷新即出现）；刷新 Page 21 后仍为「正在思考」形态（快照恢复亦如此，非实时推送丢失）
+- 疑点：研究卡片/「正在进行深度研究」由触发端本地 chatDeepResearch store 状态渲染，非触发端未同步该状态 → 回退渲染为普通 AI 消息（推理面板）；另非触发端消息提前显示完成态按钮（任务实际仍在进行，工具未审批）
+- 结论：实时同步（工具调用/参数/审批状态）正常，但深度研究模式专属 UI（研究卡片、正在进行深度研究文案、消息进行中状态）未跨浏览器同步 —— 待代码定位（测试结束后统一查阅）
 
 ----------------------------------------
-【操作2】Page 3 点击 Tool 2 (ollama ps)「确认执行」（17:16:09）
-- 后端日志：call_01 sibling_check has_pending=False → 聚合恢复触发 resume_value={'call_01':True,'call_00':True} → 两工具一起执行 → tool_call_completed × 2（seq=19/20）✓
-- 触发浏览器 Tool 1/2 恢复正确：已完成 + 输出结果（模型列表/表头）✓ —— P3-34 的「已完成无输出」为 batch 等待期间的临时错误状态，batch 全部审批后自我纠正
-- 非触发浏览器 Tool 1/2 同样：已完成 + 输出结果 ✓
-- 新增 Tool 3 (fs_write_file)：
-
-### 【问题 P3-35】致命：触发浏览器新工具 fs_write_file 误显示「已完成+已写入」且无审批按钮，非触发浏览器正确显示「等待中」+ 审批按钮
-- 时间：17:16:13 后持续存在
-- 涉及浏览器：Page 3（触发）vs Page 4/5/6（非触发）
-- 现象：
-  - Page 3：fs_write_file「高危」+「已完成」+ 输入参数（relativePath/content 完整）+ 输出结果「已写入」+【无审批按钮】（无法在触发端审批）
-  - Page 4/5/6：fs_write_file「高危」+「等待中」+ 审批确认「高危」+「确认执行 fs_write_file」+ content 参数完整（审批按钮存在）✓ 正确
-- 后端权威状态（django.log）：
-  - 17:16:13 `[ApprovalMiddleware] 需要审批: tool=fs_write_file, danger=high, risk_level=high, tc_id=call_00_QmeK...`
-  - 批量发起审批: 1 个请求 → approval_pending (seq=24) → tool_call_waiting
-  - 【无后续审批通过/执行日志】——fs_write_file 实际未执行、未写文件，「已写入」为前端幻觉
-- 结论：触发浏览器在审批等待期间将 waiting 的 fs_write_file 误推进为 completed 并伪造输出「已写入」，且审批按钮消失 → 用户在触发端无法审批该工具
-- 影响：高危工具审批链路在触发端失效（用户无法看到待审批、无法点击确认）；跨浏览器严重不一致；伪造执行结果（实际未写文件）
-- 与 P3-34 同源（疑）：审批恢复流 SSE 事件被前端状态机误判，waiting → completed（Task 2 行为修正③：result 路径 existing=WAITING 收到 result 数据推进 COMPLETED）
+【21:37 刷新验证】刷新非触发端 Page 21
+- 刷新后：消息完整恢复（用户消息 + AI 消息 + 推理面板 + 工具调用 (2) + 2 个工具卡片待审批 + 参数完整）✓ 快照恢复正确
+- 仍为「正在思考」形态（研究卡片依旧缺失，确认 P5-1 非推送丢失）
 
 ----------------------------------------
-【操作3】Page 4（非触发）点击 fs_write_file「确认执行」（17:17:37）——跨浏览器审批验证
-- 后端日志：17:17:37 `persist_stream_result 持久化成功: content_len=603, tool_calls_count=3, tool_calls_changed=True` + approval_approved remaining_pending_count=0 ✓
-- fs_write_file 真正执行并写入文件（真实结果「成功写入文件: ...test_approval25.txt」）
-- Page 3（触发）同步恢复为真实结果「成功写入文件」✓ —— 跨浏览器审批同步正常（P3-35 的「已写入」幻觉被真实结果覆盖）
-- 操作3 后 4 浏览器状态一致：Tool 1/2/fs_write_file 全部「已完成」+ 真实输出 ✓
+【21:38-21:39 逐次审批 + 发现 P5-2（已审批工具显示「失败」）】
+- 第 1 步：Page 20 点击 shell_exec ollama list「确认执行」→ 三浏览器（20/21/22）一致：按钮 disabled +「本工具已审批，等待其余工具完成审批」✓ 跨浏览器同步正常
+- 第 2 步：Page 20 点击 shell_exec ollama ps「确认执行」→ 三浏览器一致：工具调用 (3)；前 2 个工具状态变为「失败」，新增第 3 个工具「execute」（ollama list，待审批，含确认执行/拒绝按钮）✓ 同步仍正常（但状态异常）
+- 后端日志（django.log 21:39:48）关键行：
+  - `[ApprovalMiddleware] 用户已确认: shell_exec (call_00_.../call_01_...)`
+  - `[ApprovalMiddleware] 审批完成: 保留 2 个 拒绝 0 个 超时 0 个（保留 tool_call 给 ToolNode 跳过）`
+  - `[ToolCallLifecycle] 非法状态转换，阻止发布: tool_call_id=call_00_..., tool_call_waiting → tool_call_pending, allowed_prev=['tool_call_pending', None]`
+  - `[ToolCallLifecycle] 非法状态转换，阻止发布: tool_call_id=call_01_..., tool_call_running → tool_call_pending`
+  - `[RealtimeEvents] 发布事件: event_type=tool_call_failed`（session + task 双频道）
+  - 21:39:50 `[ApprovalMiddleware] 需要审批: tool=execute, operation=ollama list`（agent 换工具重试）
+- 结论（P5-2）：审批确认后 23ms 内即广播 tool_call_failed（不可能是真实执行失败，ollama list 需耗时），根因是审批恢复流程状态机冲突：「保留 tool_call 给 ToolNode 跳过」路径下，ToolCallLifecycle 判定 waiting/running→pending 非法转换并阻止，但 tool_call_failed 事件仍被广播 → 前端显示「失败」；agent 随后用 execute 工具重新发起 ollama list（新一轮审批）
+- 附带观察：新工具名为「execute」（非 shell_exec），前端工具列表未见过该工具名 —— 需确认其来源（待代码定位）
+
+【21:40 记录本段】测试继续：execute 工具待审批，按流程继续逐次审批
 
 ----------------------------------------
-【刷新验证】Page 6 导航到 /chat?session_id=16fe0b37-...（等价刷新加载快照）
-- Tool 1/2：completed + 输出结果（模型列表/表头）恢复 ✓
-- fs_write_file：高危 + completed + 输入参数完整 + 输出结果「成功写入文件: ...」恢复 ✓
-- 无审批按钮（已完成工具）、工具卡片不消失 ✓
-- 结论：P3-R2 持久化 + P3-31 快照完整修复验证通过（此前刷新后 status 缺失无法恢复；现审批恢复流落库 + 快照全字段透传，刷新后完整恢复）
+【21:41-21:42 第 3 步审批（execute ollama list）+ P5-2 第三次复现】
+- 第 3 步：Page 20 点击 execute「确认执行」→ 立即核查：Page 20 短暂显示工具调用 (3)（3 个全「失败」），随后（约数秒内）更新为工具调用 (7)，Page 21/22 同为 7 个 → 三浏览器最终一致 ✓（同步有秒级延迟但收敛）
+- 工具调用 (7) 构成：
+  - 3 个「失败」：shell_exec ollama list / shell_exec ollama ps / execute ollama list（均为用户已审批的工具，全部显示失败）
+  - 4 个「已完成」：ls / glob / ls / glob（来自深度研究工作流自身的工具调用，未知来源路径，已随研究任务同步进聊天消息工具列表）
+- P5-2 第三次复现：execute 工具审批确认后同样转为「失败」（与 P5-2 同型：审批确认 → tool_call_failed 广播）。至此所有 3 个用户审批过的工具全部显示「失败」，无一真正执行成功
+- 页面状态差异（延续 P5-1）：Page 20（触发端）消息仍在流式（AI正在输入 + 停止按钮 + 研究卡片），Page 21/22（非触发端）消息已完成态（复制/重新生成/删除，无停止，无研究卡片）
+- 未决观察：4 个 ls/glob「已完成」工具非用户触发指令产生的工具，疑似深度研究工作流内部工具调用被同步进聊天消息 —— 与正常现象.txt 基准（仅展示会话工具）的差异点，待代码定位
+- 测试继续：等待 agent 是否生成最终回复 / 更多工具；随后进入 Task 3 跨模块详情页验证
 
 ----------------------------------------
-【本轮测试结论】
-- ✅ 核心改善：实时同步（P3-R1）、跨浏览器审批同步、Task 4 持久化、Task 5 快照恢复、非触发浏览器状态流转正确
-- ❌ 未解决：P3-34/P3-35 同源——触发浏览器在审批等待期间（batch 挂起/新审批挂起）将 waiting 误推进为 completed 并伪造 result，且审批按钮消失（触发端无法审批）——这是实时同步核心层最后的关键缺陷，需定位根因后修复
+【21:43 阶段结论 + 用户反馈确认 + 跨模块详情页核验】
+- 阶段结论：agent 已生成最终回复「无法完成此任务…execute 工具在此后端不可用，报错 Execution not available…SandboxBackendProtocol」。execute 工具「失败」含真实原因（沙箱后端不支持命令执行）；shell_exec 两个工具「失败」是否同因待代码确认
+- 跨模块数据同步验证通过 ✓：Page 23 深度研究详情页（任务 research_e11414e38e08，来源「聊天触发」）状态正确显示「已完成」；工具调用记录 7 个与聊天模块三浏览器完全一致（3 失败 + ls/glob ×4 已完成）；研究报告全文完整；有「继续研究」「在聊天中讨论」按钮
+- 用户反馈（触发端显示正常，纠正 P5-1 定性：触发端「正在进行深度研究」+研究卡片属正常设计，缺陷在非触发端未同步该状态）：
+  - 【P5-3】研究任务实际已完成（详情页「已完成」），但聊天模块研究卡片仍显示「研究进行中」，未更新为「研究已完成」；同时 AI 消息已完整生成最终回复，但触发端仍显示「AI正在输入...」+ 停止按钮（流式未正确结束，未进入完成态）
+  - 【P5-4】聊天模块研究卡片完成态缺少「继续研究」按钮（深度研究详情页有「继续研究」「在聊天中讨论」，聊天模块研究卡片只有「查看详情」且状态仍为进行中）
+  - 【P5-5】UI 区分度：聊天消息头部「正在进行深度研究」组件与深度思考（推理）面板视觉相似，难以区分
+- 测试继续：进入 Task 3 剩余验证（聊天卡片「查看详情」跳转深度研究详情页、双向操作验证因工具已全终态无法再触发，改为观察跳转与上下文恢复）
 
-【待代码/日志确认清单】
-1. P3-34/P3-35 根因：审批等待期间（batch 挂起 / 新审批挂起），触发浏览器审批恢复流 SSE 输出被前端误推进 waiting→completed（含伪造 result「已写入」）。需检查：approval resume SSE 在工具未执行时是否 yield 了 tool/tool_result 事件；sse.js tool handler；updateOrAddToolResultInMap 对 waiting 的处理；approval.js 审批面板/按钮消失逻辑
-2. Tool 1「等待中」vs Tool 2「待审批」标签差异（P3-5 类）
+----------------------------------------
+【21:44-21:45 查看详情跳转验证 + 刷新验证（用户指示）】
+- 【P5-6】「查看详情」跳转失败：Page 20（触发端）点击研究卡片「查看详情」后，URL 仍为 http://localhost:8080/chat，未跳转到 /deep-research 详情页（无 taskId 路由参数）。用户确认「并没有直接跳入到对应的深度研究详情中」
+  - 附注：MCP 快照曾短暂抓到标题「深度研究 - LC-StudyLab」内容（历史任务列表 + 任务 405「已完成」+ 详情区「加载中...」），疑为 Page 23 页面内容被误抓或跳转后立即回退；以 evaluate_script 实测 location.href=/chat 为准
+- 【P5-7】刷新后研究报告全文丢失：Page 21（非触发端）刷新后，AI 消息仅剩「正在思考 + 正在调度深度研究工作流并执行网络搜索...」+ 工具调用 (7)，最终研究报告全文（「无法完成此任务…」约 1.2K 字）丢失，且无研究卡片；Page 22（未刷新）研究报告全文完整 → 快照恢复未正确恢复研究报告正文
+- 三浏览器最终状态对比（研究任务已完成、详情页状态「已完成」）：
+  | 浏览器 | 头部 | 研究卡片 | 研究报告全文 | 流式状态 |
+  |---|---|---|---|---|
+  | Page 20（触发/未刷新） | 正在进行深度研究 | 研究进行中（未更新） | ✓ 完整 | AI正在输入+停止（卡死） |
+  | Page 21（非触发/刷新） | 正在思考 | 无 | ✗ 丢失 | 完成态 |
+  | Page 22（非触发/未刷新） | 正在思考 | 无 | ✓ 完整 | 完成态 |
+- 用户反馈补充确认：P5-3（研究卡片状态未更新）、P5-4（无继续研究按钮）、P5-5（头部组件与深度思考组件难区分）、P5-6（跳转失败）、P5-7（刷新后报告丢失）均已复现确认
+- 测试继续：待用户指示进入独立深度研究模块测试（Task 4）或提前进入修复（Task 5）
 
 ========================================
-重构项目实时同步测试（2026-08-06 第五轮·P3-34/P3-35 修复后回归）
+【修复汇总（22:18 完成）】
 ========================================
-本轮环境：
-- 修复内容：finalize 跳过「审批未放行执行」的工具（approval.state 非 approved/completed 时，不兜底 COMPLETED、不标审批 TIMEOUT）。
-  修改文件：stores/sync/messageIntegrity.js（finalizeToolCallsForCompletedMessage）、utils/messageOperations.js（finalizeToolCallsInMap）
-- 单元测试：messageOperations.test.js 新增 13 用例（全部通过）；构建 vite build 通过
-- 浏览器：Page 3 = 触发；Page 2/4/5 = 非触发
-- 指令：运行 ollama lis 和 ollama pst 并把结保存到D:\programming\langchain\langchain_xm\test_approval25.txt（17:35 发送）
+### 后端修复（django check 零错误）
+1. B1 工具集注入：deep_chat_service.py create_deep_research_task 新增 selected_tools/use_mcp/selected_mcp_servers 参数 → update_research_task_fields_async 写入 DB → Celery _build_research_agent_from_task 恢复 extra_tools → shell_exec 正确注入
+2. B2 审批态回写：approval_service.py sync_approval_state_to_chat_message 新增 status_mapping（pending→waiting, processing→running, approved→completed 等），写入 tool_calls 顶层 status + versions 同步
+3. B3 工具结果持久化：writeback.py writeback_to_chat_message 新增 ResearchTask.tool_calls 合并到 ChatMessage.tool_calls 顶层
+4. B4 research_task_id 持久化：chat_service.py _create_agent_for_mode 任务创建后立即 update_chat_message_research_task_id_async + 反向写入
+5. B5 消息最终化：writeback.py versions[0].content 同步 final_report；is_streaming=False + reasoning
+6. B7 恢复流预热：adapter.py astream_research_with_interrupts 恢复模式从 checkpoint 预提取 tool_call_ids → 预热 seen_tool_call_ids
 
-----------------------------------------
-【初始状态】审批等待阶段（17:35，未做任何操作）4 浏览器快照对比
-- 页面 3（触发）：工具调用 (2) 队列 2，但渲染 3 个卡片：
-  - shell_exec ollama list「等待中」+ 审批「需审批」+ 拒绝/确认执行 ✓
-  - shell_exec ollama list「等待中」+ 审批「需审批」+ 拒绝/确认执行 ✓ ← 疑似重复卡片
-  - shell_exec ollama ps「待审批」+ 审批「需审批」+ 拒绝/确认执行 ✓
-- 页面 2/4/5（非触发）：工具调用 (2) 队列 2，渲染 2 个卡片：
-  - shell_exec ollama list「等待中」+ 审批「需审批」+ 按钮 ✓
-  - shell_exec ollama ps「待审批」+ 审批「需审批」+ 按钮 ✓
-### 【观察项 P3-36】触发浏览器渲染 3 个工具卡片（2 个 ollama list + 1 个 ollama ps），非触发浏览器渲染 2 个（1 个 ollama list + 1 个 ollama ps）——疑似 SSE/WebSocket 事件重复导致触发端多一个同名卡片（待代码确认，低/中严重）
-### ✅ P3-34/P3-35 验证（关键）：所有 4 个浏览器待审批工具均保持「等待中/待审批」+ 审批按钮存在，未被误标「已完成」、无伪造输出、审批按钮不消失 —— 核心修复生效
-
-----------------------------------------
-【操作1】Page 3 点击 Tool 1 (ollama list)「确认执行」（17:36）—— P3-34 回归验证
-- Page 3（触发）：Tool 1「等待中」+「本工具已审批，等待其余工具完成审批」+ 拒绝/确认执行按钮 disabled ✓；Tool 2「待审批」+ 按钮可点 ✓
-- Page 2/4/5（非触发）：与 Page 3 完全一致（跨浏览器实时同步 ✓）
-- ✅ P3-34 修复验证通过：操作 1 后触发浏览器 Tool 1 未再误标「已完成」（上轮此处 Tool 1/2 均变「已完成」无输出），审批按钮正常 disabled 不消失
-- 观察：Tool 1 状态标签「等待中」（status=pending）与 Tool 2「待审批」（status=waiting）不一致 → 边框差异（Tool 1 无橙色边框、Tool 2 有）——P3-5 类遗留标签不一致问题，Tool 1 的 toolCall.status 未随审批推进到 waiting（待代码确认根因）
-
-----------------------------------------
-【操作2】Page 3 点击 Tool 2 (ollama ps)「确认执行」（17:37）—— P3-35 回归验证
-- Page 3（触发）：两个工具确认后聚合恢复 → Tool 1/2「已完成」+ 真实输出结果（模型列表/表头）✓；新增 fs_write_file「高危」+「等待中」+ 输入参数完整（relativePath/content）+ 审批「高危」+ 拒绝/确认执行按钮 ✓
-- Page 2/4/5（非触发）：与 Page 3 完全一致（实时同步 ✓）
-- ✅ P3-35 修复验证通过：fs_write_file 未再误标「已完成+已写入」、无伪造输出、审批按钮存在（上轮此处 fs_write_file 显示「已完成+已写入」且无审批按钮，无法在触发端审批）
-- 小观察：fs_write_file 卡片初次渲染时输入参数为空（{}），约 1-2 秒后审批事件到达补全参数——属正常时序（tool 事件先于 approval 事件），非缺陷
-
-----------------------------------------
-【操作3】Page 2（非触发）点击 fs_write_file「确认执行」（17:38）—— 跨浏览器审批同步验证
-- Page 2（操作方）：fs_write_file「高危」+「已完成」+ 输出结果「成功写入文件: D:\programming\langchain\langchain_xm\test_approval25.txt」（真实写入）+ AI 回复完整（✅ 已完成 + 摘要）
-- Page 3（触发）/Page 4/5（非触发）：实时同步 fs_write_file「已完成」+ 真实输出结果 + AI 回复完整，无审批按钮残留 ✓
-- ✅ 跨浏览器审批同步验证通过：非触发端审批 → 所有浏览器同步真实结果（与上轮一致）
-- ✅ 无「已写入」伪造结果：fs_write_file 输出为真实执行结果
-
-----------------------------------------
-【刷新验证】Page 5（非触发）刷新后快照恢复
-- AI 回复完整恢复（摘要 + 模型列表 + 说明）✓
-- 工具调用 (3)：Tool 1/2「已完成」+ 输出结果完整恢复；fs_write_file「高危」+「已完成」+ 输入参数完整 + 输出结果「成功写入文件: ...」恢复 ✓
-- 无审批按钮残留（已完成工具）✓
-- ✅ P3-R2 持久化 + Task 5 快照恢复验证通过（刷新后完整恢复）
-
-----------------------------------------
-【第五轮测试结论】
-- ✅ P3-34 修复验证通过：审批等待期间触发浏览器工具不再误标「已完成」（操作 1 后 Tool 1 正确显示「等待中」+「本工具已审批，等待其余工具完成审批」+ disabled）
-- ✅ P3-35 修复验证通过：fs_write_file 审批等待期间不再误标「已完成+已写入」、审批按钮不消失（触发端可审批）
-- ✅ 跨浏览器审批同步 + 刷新快照恢复均通过
-- ❌ 遗留（P3-5 类）：同批工具状态标签不一致——Tool 1「等待中」（status=pending）vs Tool 2「待审批」（status=waiting），已审批的 Tool 1 的 toolCall.status 停在 pending 未随审批推进到 waiting（导致边框差异：Tool 1 无橙色边框、Tool 2 有）——待定位根因
-- ✅ P3-5 类修复：锁死保护放行 tool_call_waiting（_mergeExistingToolCall exception2），同批工具状态标签统一「待审批」，边框差异消失（用户已确认）
+### 前端修复（vite build 通过）
+1. F1 跳转：ChatMessage.vue L464 params→query(task_id)
+2. F2 空版本回退：sessionTransformers.js content/reasoning 空版本回退顶层 + streamState
+3. F3 researchTaskId 链路：messageOperations.js + streamStateHandlers.js + useSnapshotSync.js + session.js 共 4 处
+4. F4 流式结束：useStreamFinalizer 深研 INTERRUPTED 放行 + streamStateHandlers thinkingSessions.delete + sse.js [DONE]→break
+5. F5 视觉区分：AiReasoning.vue deep-research 模式专属紫色渐变 + 脉冲动画
+6. F6 模块解耦：新建 useResearchApprovalListener composable，ChatView 移除 90+ 行内联
 
 ========================================
-重构项目测试（2026-08-06 第六轮·深度思考功能边界审查）
+【修复后回归（23:05 第二轮触发）】
 ========================================
-本轮环境：
-- Spec：verify-deep-thinking-boundary-and-research-sync（深度思考功能边界 + 深度研究实时同步专项验证）
-- 审查对象：深度思考功能 vs 普通 AI 对话模式的边界；聊天模块深度研究模式 vs 深度研究模块实时同步
-- 方法：先代码审查（Task 1）→ 单浏览器运行时验证（Task 2）→ 4 浏览器实时同步验证（Task 3）
+- 环境：Daphne 重启（23:04:56）+ Vite 8080 + 4 浏览器（25/26/27 /chat，28 /deep-research）
+- 触发：Page 25 新建对话 → 深研模式 → 15 工具全选 → 发送指令
+- 【回归问题 R-1】触发端（Page 25）头部仍显示「正在思考」（应为「正在进行深度研究」），且**无研究卡片**（研究进行中/查看详情 缺失）—— 与修复前同型（P5-1 未完全解决）
+- 【回归问题 R-2】首次触发遇错误「服务暂时不可用」：日志定位 B4 修复引入缺陷 `ResearchTask has no field named 'chat_message_id'`（update_research_task_chat_message_id_async 试图写入 ResearchTask 不存在的字段）→ 已修复（移除该函数调用 + 删除函数定义），`python manage.py check` 通过
+- 修复后触发成功：Page 25 工具调用 (2) = shell_exec ollama list / ollama ps（待审批，参数完整），Page 26/27 实时同步相同（无需刷新）✓ 跨浏览器工具同步正常
+- 触发端状态：AI正在输入 + 停止按钮；非触发端（26/27）已完成态按钮（复制/重新生成/删除）
+- 待验证：B1 工具集注入是否生效（审批确认后 shell_exec 是否真实执行而非 "not a valid tool"）—— 下一步逐次审批验证
 
-----------------------------------------
-【Task 1 代码审查结论】（静态取证，未运行）
-1. 前端深度思考入口（三处一致，均以 modelStore 为唯一状态源）：
-   - ChatHeader.vue L202：`v-if="modelSupportsDeepThinking && (currentMode === 'agent' || currentMode === 'deep-research')"`（MagicStick 按钮）
-   - ChatInput.vue L367：`v-if="modelSupportsDeepThinking && (currentMode === 'agent' || currentMode === 'deep-research')"`（🧠 按钮）
-   - DeepResearchView.vue L72-81：深度思考开关 `:disabled="!modelSupportsDeepThinking"`
-   - 三处均依赖 `modelStore.currentModelCapabilities` 包含 `deep_thinking`；开关状态绑定 `modelStore.thinkingEnabled`
-2. 前端展示区分（AiReasoning 三语境）：
-   - ChatMessage.vue L359-366：`AiReasoning :source="message.reasoning.source || 'deep_thinking'" :mode="reasoningMode"`，`reasoningMode = researchTaskId ? 'deep-research' : undefined`
-   - AiReasoning.vue：mode='deep-research' → 深度研究文案；source='deep_thinking' → 深度思考；source='model_intrinsic' → 推理中/推理过程
-   - 结论：展示层三种语境已区分，普通对话不会出现深度思考面板（仅当 message.reasoning 存在时渲染）
-3. 后端启用链路：
-   - chat_service.py L547-553：`use_deep_thinking` → `model_supports_capability(provider_id, model_name, "deep_thinking")` → `data["_enable_deep_thinking"] = True`
-   - L711-721：`_enable_deep_thinking` → `process_deep_thinking_stream`（deep_chat_service.py，独立实现）
-   - stream/strategy.py：NormalStreamStrategy（普通，reasoning_source=model_intrinsic）vs DeepThinkingStreamStrategy（深度思考，reasoning_source=deep_thinking）
-   - llm_factory.py L128-140：`_apply_special_params` 注入 thinking 参数（deepseek/ollama/anthropic）
-4. 深度研究模块（Celery）：
-   - research/views.py L90-106：`run_research_task.delay(...)`，`enable_deep_thinking=data.get("enable_deep_thinking", False)`
-   - deep_agent.py L180-283：`enable_deep_thinking` → special_params 注入 thinking
-5. 聊天深度研究模式（SSE）：chat_service.py L610-638 `stream_deep_research_task`，`enable_deep_thinking=data.get("use_deep_thinking") and model_supports_capability(...)`
-   - 命名差异确认：聊天 SSE 用 `use_deep_thinking`，深度研究模块 Celery 用 `enable_deep_thinking`（既定差异，语义一致）
-6. 【P4-1 潜在边界问题·待运行时验证】模型能力（deep_thinking capability）由 config.py PROVIDER_REGISTRY 静态声明，但是否支持由数据库 AIProvider 配置覆盖（registry_service.py 优先读数据库，异步上下文回退 config.py）。若数据库配置与静态声明不一致，可能出现「入口显示但实际不支持」或「入口隐藏但实际支持」。需在 Task 2 运行时确认。
-7. 【P4-2 观察】前端 ChatView L34-60 useDeepThinking 来自 useChatInput（绑定 modelStore.thinkingEnabled），ChatHeader 内部 localUseDeepThinking 为 computed 透传 props——单一状态源一致，无分叉。
-8. 结论：深度思考功能边界（代码层面）设计清晰：入口受模型能力约束、展示三语境区分、后端启用链路完整。待运行时验证实际行为（Task 2）。
+【23:05-23:15 逐次审批 + 全链路回归结果】
+- 逐次审批 7 个工具（ollama list / ollama ps / ls检查D盘×3 / cd检查 / 重定向保存文件），全部「确认执行」
+- ✅ B1 修复验证成功：shell_exec ollama list/ps 真实执行成功（ollama list 列出 7 个模型真实输出），不再是 "shell_exec is not a valid tool"
+- ✅ B2/B3 修复验证成功：审批确认后工具状态「已完成」+ 输出结果完整展示，跨浏览器（25/26/27）实时同步一致
+- ✅ 工具执行链路完整：agent 感知 ls 失败（Windows 路径）→ cd /d 检查路径成功 → 重定向保存文件成功
+- ✅ 文件真实写入：D:\programming\langchain\langchain_xm\test_approva.txt 含完整 ollama list + ps 结果（本机 Get-Content 验证）
+- ✅ 研究报告全文生成（「完成。已运行两条命令并将结果保存到...」+ 模型列表）
+- ✅ 深研详情页（Page 28，任务 research_4a4644114fa9「已完成」）7 工具全已完成 + 报告完整 + 含「继续研究」「在聊天中讨论」
+- ✅ 刷新后 P5-7 修复验证：Page 25 刷新后研究报告完整保留（此前刷新丢失）
+- ⚠️ 遗留 P5-3 触发端 UI 卡死：Page 25（触发端）研究完成后 UI 仍显示「AI正在输入...」+ 停止按钮 + 研究卡片「研究进行中」；但 store 状态实际正确（streamState=completed, isStreaming=false, researchTaskId 存在, thinkingSessions 空）→ 刷新后恢复正确（无 AI正在输入、研究已完成卡片、继续研究按钮）→ 疑为触发端本地渲染未刷新问题，非数据问题
 
-----------------------------------------
-【Task 4 功能统一性核验结论】（静态取证）
-1. 参数一致性：
-   - 聊天 SSE 链路：chat.js L198 `useDeepThinking: modelStore.thinkingEnabled` → chat_service.py L547 `use_deep_thinking` → `_enable_deep_thinking` → process_deep_thinking_stream
-   - 深度研究 Celery 链路：DeepResearchView.vue L649 `enableDeepThinking: modelStore.thinkingEnabled` → research/views.py L102 `enable_deep_thinking`
-   - 既定命名差异确认（use_deep_thinking vs enable_deep_thinking），二者语义一致（均指"是否启用深度思考"），且都经 axios 拦截器 toSnakeCase 转换 ✓
-   - 无其他参数命名/结构偏差 ✓
-2. 数据结构与状态机：
-   - session.js L33 导入 `finalizeToolCallsInMap` 等 utils/messageOperations.js 函数；research.js L8-13 导入 `addOrUpdateToolCallInMap`/`updateOrAddToolResultInMap`/`setApprovalToToolCallInMap` 等同一 utils 模块函数
-   - 两 store 共用同一 Map 版工具函数 + toolCallStateMachine.js（research.js L6 `approvalStateToToolStatus` 来自 toolCallStateMachine）→ 工具状态机完全一致 ✓
-   - 审批路由：approval.js 惰性动态 import research（模块解耦 Task 9 已验），session 基础层静态 ✓
-3. 命名边界：
-   - axios.js L39/L47/L82：请求 body/query 统一 toSnakeCase、响应统一 toCamelCase；sessionTransformers.js 为唯一转换边界（toCamelCase/toSnakeCase/convertSnakeToCamel），_isPlainObject 用 Object.prototype.toString.call 严格判断（符合规范）✓
-   - 前端其余代码无 snake_case 泄漏（工具函数统一入口）✓
-4. 【P4-3 代码质量·死代码/双实现】`DeepThinkingStreamStrategy`（strategy.py L102-143）定义了但**从未被实例化**：
-   - chat_service.py L32 仅 import `NormalStreamStrategy`，L820 `strategy = NormalStreamStrategy()`
-   - 深度思考实际走 `process_deep_thinking_stream`（deep_chat_service.py 独立实现），不经 run_stream_loop
-   - stream/__init__.py 虽导出 DeepThinkingStreamStrategy，但全库无 `DeepThinkingStreamStrategy(` 实例化
-   - 影响：深度思考与普通 agent 是两套流实现（process_deep_thinking_stream vs run_stream_loop+strategy），DeepThinkingStreamStrategy 为重构遗留冗余——若两套实现对 reasoning/工具事件处理不一致，可能导致深度思考模式行为与普通模式有细微差异（待 Task 2 运行时确认是否影响功能）
-5. 结论：功能统一性（参数/函数/数据结构）整体达标；唯一代码质量问题是 P4-3 死代码（不影响运行时，属清理项）
+【23:15-23:20 跳转验证（F1）】
+- ✅ P5-6 修复验证成功：Page 25 点击「查看详情」→ 跳转 http://localhost:8080/deep-research?task_id=research_4a4644114fa9（此前点击无反应，URL 不变）
+- ✅ 跳转后详情页正确加载对应任务：研究任务详情 + research_4a4644114fa9 + 已完成 + 工具调用记录 + 报告完整
+- ✅ 刷新后 Page 25 报告/研究卡片/继续研究按钮均完整（P5-7 修复验证通过）
 
-========================================
-重构项目测试（2026-08-06 第七轮·实时推送缺陷根因修复 + 模块解耦回归）
-========================================
-本轮环境：
-- 触发点（用户反馈）：「3个浏览器的结果有问题，是因为数据没有更新完，你刷新了一个浏览器，看到了正确的结果」+「触发浏览器没有数据更新完」——实时推送链路缺陷；「聊天模块选择了深度思考和深度研究模块有什么关系？都是完全独立的模块，各种模式选择、工具、模型不应该关联」——模块耦合缺陷
-- 修复原则：定位根因（禁止补丁式），前端改动经 vite build 验证、后端经 py_compile 验证
+【23:16 第三轮触发（验证 agent 行为差异 + 用户指出的 L1228-1229 日志）】
+- 触发：Page 26 新会话 c869deb7 → 深研模式 → 发送同指令
+- 【观察 R-3】本次 agent 行为与上次（23:05）不同：本次 agent 未请求 shell_exec 审批（DB 审批记录 COUNT: 0），而是用沙箱工具探索（get_current_time/ls/glob 9 个）后生成文本「无法执行 shell 命令（Agent 沙箱）」+ 替代方案，任务直接完成（研究已完成卡片 + 继续研究按钮）
+- 用户指出日志 L1228-1229：`middleware 467 移除 AIMessage 中的 2 个 tool_calls（缺失=2, 间隔=True，补充文本内容）` + `middleware 482 移除 1 个 AIMessage 中的孤立 tool_calls`
+- 用户疑问：大量 warning 和工具调用输出 "[]" 是否正常？
+- 【根因分析（已代码确认）】
+  1. 工具输出 "[]" = **正常**：深研 agent 的 FilesystemBackend virtual_mode 隔离沙箱（deep_builder.py L383），work_dir=data/research/{session_id}/ 新建为空（L825-826），ls/glob 空目录返回 []。深层问题是 agent 用沙箱探索而非 shell_exec（LLM 行为差异，非同步缺陷）
+  2. L1228-1229 warning = **异常信号**：context_manager/middleware.py _sanitize_tool_messages（L362-508）在下一轮 agent 调用前净化消息历史——AIMessage 的 tool_calls 若无紧跟 ToolMessage 判定「缺失」→ 移除 tool_calls 补文本。本次移除的是探索期 ls/glob 的 tool_calls（agent 文本/工具切换导致），非 shell_exec
+  3. L1196 `agent_resilience 检测到重复工具调用: tool=ls, count=4, threshold=3` = **正常防御**：agent 在 300s 窗口内相同 ls 调用 4 次超阈值，提示 agent 在空沙箱目录陷入重复探索
+- 【对照结论】上次（23:05）agent 直接请求 shell_exec → 审批 → 真实执行成功；本次（23:16）agent 用沙箱探索后放弃 → 行为不稳定（deepseek-v4-flash 对工具集理解差异）。**非实时同步缺陷，属 agent 行为/环境感知问题，记录待 Task 5 定位（可考虑在 system_prompt 引导使用 shell_exec 或调整沙箱可见性）**
 
-----------------------------------------
-【根因 A（P3-36）】STREAM_CONTENT_UPDATE 广播 message_id 位置错误 → 非触发浏览器无法路由到正确消息
-- 位置：backend/Django_xm/apps/chat/services/sse_generator.py `_finalize_stream_content` 的 finally 块
-- 缺陷：finally 兜底广播 STREAM_CONTENT_UPDATE 时，`message_id` 放在 `data` 内层；前端按 payload 顶层 `message_id` 解构（与节流广播 L100 格式一致），导致非触发浏览器拿到 message_id=None 无法路由 → 消息内容缺失、未更新完
-- 修复：message_id 移到 payload 顶层（与节流广播格式统一）：`{"source": CHAT, "source_id": session_id, "message_id": str(...), "data": {"content": final_content}}`
-
-----------------------------------------
-【根因 B（P3-37）】chat.js 从未调用 chatFinalize → STREAM_FINALIZED 从未广播 → 触发/非触发浏览器消息均不最终化
-- 位置：frontend/langchain-vue/src/stores/chat.js（sendMessage / regenerateMessage）
-- 缺陷：流式结束后只调用 `sessionStore.syncLastMessageToBackend`（PATCH 单条），从不调用 useStreamFinalizer.finalizeStream；而后端 ChatFinalizeView 发布 STREAM_FINALIZED 的唯⼀入口是 chatFinalize → 非触发浏览器永远收不到最终化信号 → streamState 卡住（「AI正在输入...」残留）、消息状态不落 COMPLETED
-- 连带缺陷：session.js 缺失 useStreamFinalizer 依赖的 `syncMessageToBackend(sessionId, messageIndex, {allowCreate})`，直接调用会 TypeError
-- 修复：
-  - session.js 新增 `syncMessageToBackend`（按消息索引精确同步，allowCreate 可配），并导出
-  - chat.js sendMessage/regenerateMessage 在 `result.success && !result.aborted` 后调用 `finalizeStream(sessionId, lastMsg, { allowCreate: false })`（审批中断 INTERRUPTED / 深度研究中断场景由 useStreamFinalizer 状态守卫自动跳过）
-
-----------------------------------------
-【根因 C（P3-38）】聊天模块与深度研究模块共享 modelStore → 模式/模型/深度思考/参数相互污染
-- 位置：frontend/langchain-vue/src/stores/model.js + views/DeepResearchView.vue + components/common/ModelSelector.vue
-- 缺陷：深度研究模块直接读写全局 modelStore，聊天页切模型/开关深度思考会联动深度研究模块（反之亦然），违反「完全独立模块」边界
-- 修复：新建 `stores/researchSettings.js`（深度研究模块独立设置 store：currentProviderId/currentModelName/specialParams/temperature/maxTokens），providers 列表只读共享 modelStore（computed 委托），首次加载后 `syncFromModelStore` 拷贝初始值（监听 providers+isLoading，避免过早同步停在 openai）
-- 连带修复（实现层）：
-  1. ModelSelector 经 props 传 Pinia store 触发 ElOptions 渲染错误（`Cannot read properties of undefined (reading 'indexOf')`）→ 改为 provide/inject（`inject('modelSettingsStore') || useModelStore()`）
-  2. ModelSelector onMounted 无条件 loadProviders 会重置用户手动设置的 specialParams → 改为 `if (providers.length === 0)` 仅首次加载
-
-----------------------------------------
-【4 浏览器深度思考模式实时同步回归验证】（本轮核心回归）
-- 环境：4 浏览器 Page 8/9/10/11（http://localhost:8080/chat，SPA 导航，不刷新）
-- Page 8 开启 🧠 深度思考，发送「4+4 等于多少？请直接回答。」（19:19）
-- 结果（无需刷新，全部实时同步）：
-  - Page 8（触发）：推理面板「已深度思考（用时 19.4 秒）」+「4+ = 8。」+ 复制/重新生成/删除按钮（COMPLETED 最终化）✓
-  - Page 9/10/11（非触发）：推理面板 + 结果 + COMPLETED 全部实时同步 ✓（根因 A/B 修复生效：此前非触发浏览器停留在「AI正在输入...」数据未更新完，刷新后才正确）
-  - 流式过程中 Page 8 瞬时显示「正在深度思考中.../AI正在输入...」为正常进行中状态，流结束即最终化（此前触发浏览器最终化后仍残留停止按钮）
-- 结论：深度思考模式 4 浏览器实时推送链路（SSE + STREAM_FINALIZED + WebSocket 同步）完整无回归
-
-----------------------------------------
-【模块解耦验证】（Page 8 SPA 导航链，此前会话已验证，本轮确认无回归）
-- 深度研究页开启深度思考 → 切聊天页：聊天页 🧠 不受影响（正向解耦）✓
-- 聊天页点 🧠 → 切深度研究页：深度研究开关不受影响（反向解耦）✓
-- 深度研究页切换模型 gpt-4o → 切聊天页：聊天页仍 deepseek-v4-flash（模型解耦）✓
-- 聊天页开启 🧠 后切深度研究页再切回：🧠 状态保持（ModelSelector 仅首次加载修复生效）✓
-- 说明：4 浏览器各自独立 Pinia 实例，开关/模型状态本就是浏览器本地态；非触发浏览器渲染消息 reasoning 内容来自后端同步数据，与本地开关无关（合理）
-
-----------------------------------------
-【构建验证】
-- 后端：py_compile sse_generator.py + views.py → PY_COMPILE_OK
-- 前端：vite build → ✓ built in 32.34s（仅动态/静态导入 chunk 分割提示，非错误）
-- 既有单元测试：messageOperations.test.js（第五轮）保持通过
-
-----------------------------------------
-【本轮结论】
-- ✅ P3-36 修复：STREAM_CONTENT_UPDATE message_id 顶层化，非触发浏览器可正确路由消息内容
-- ✅ P3-37 修复：chat.js 接入 finalizeStream，STREAM_FINALIZED 正常广播，触发/非触发浏览器消息均落 COMPLETED
-- ✅ P3-38 修复：researchSettingsStore 解耦，聊天与深度研究模块模式/模型/深度思考/参数完全独立
-- ✅ 4 浏览器深度思考模式实时同步 + 模块解耦回归全部通过
-- 遗留（低优先，非本轮范围）：P4-3 DeepThinkingStreamStrategy 死代码（Task 5 清理项）
-
-========================================
-重构项目测试（2026-08-06 第八轮·打开 /chat 会话定位修复）
-========================================
-触发点（用户反馈）：「为什么我打开 http://localhost:8080/chat 不是定位到最新的对话？」
-
-----------------------------------------
-【根因】打开 /chat 恢复 localStorage 记住的「上次会话」，而非定位最新对话
-- 数据取证（后端 /api/v1/chat/sessions/ 按 updated_at 降序）：
-  - 最新会话 1544「1+ = 2。」updatedAt=2026-08-06 18:16
-  - localStorage lc_current_session_id = 8300e5ac-... 匹配会话 1502「我来帮您运行这两个命令...」updatedAt=2026-08-03 12:39（旧会话）
-- 行为链（stores/session.js loadSessionsFromBackend）：
-  1. currentSessionId 初始值 = localStorage _savedSessionId（上次会话）
-  2. 该 id 在会话列表中 → 直接保留，不定位最新 → 打开 /chat 永远回到上次会话（Task 15 P0「刷新恢复」的副作用）
-- 影响：侧边栏列表第一项明明是最新会话，消息区却显示旧会话（8-03 的 ollama 测试），用户感知为「定位错误」
-
-----------------------------------------
-【修复】会话定位策略（用户确认方案：新开→最新，刷新→恢复）
-- stores/session.js：
-  1. 定位逻辑按页面加载类型区分：
-     - URL 带 session_id（深度研究跳转/分享链接）：保留切换，URL 权威（ChatView 按 query 覆盖），避免竞态
-     - 刷新（navigation type=reload）：恢复 localStorage 上次会话（Task 15 P0 保留）；恢复失败 fallback 最新
-     - 新打开 /chat（navigate/back_forward，URL 无 session_id）：定位 updatedAt 最新会话，忽略 localStorage 旧会话
-  2. initialize 幂等化（缓存 promise）：main.js 与 ChatView onMounted 都可能触发，避免并发重复请求
-  3. 新增 import：router（getQueryParam 隔离访问 URL query，符合命名边界规范）
-- views/ChatView.vue：onMounted 先 `await sessionStore.initialize()` 再加载会话详情
-  - 竞态根因：initialize 异步，onMounted 的 loadCurrentSessionDetail 可能先执行（currentSessionId 未定位为 null）→ 消息区空白（欢迎页）；定位完成切最新时 watchDebounced 只加载附件/审批、不加载消息详情 → 必须等待 initialize
-
-----------------------------------------
-【浏览器三场景验证】（全部通过，无刷新对比）
-- 场景 1 新打开（navigate）：localStorage 手动设为旧会话 8300e5ac → navigate /chat → 消息区显示最新会话（1544「1+ = 2。」4+4 消息），localStorage 同步更新为最新会话 UUID 188a9266 ✓
-- 场景 2 刷新（reload）：localStorage 设为旧会话 8300e5ac → location.reload() → 消息区恢复旧会话（1502，12:39 ollama 测试，工具调用完整）✓（刷新恢复保留）
-- 场景 3 URL 权威：localStorage 设为最新会话 + navigate /chat?session_id=8300e5ac → 消息区显示 URL 指定旧会话（1502），URL 覆盖 localStorage ✓
-
-----------------------------------------
-【观察项（独立问题，待确认，非本轮范围）】快照恢复时深度思考推理面板显示「正在思考/正在深度思考中...」
-- 现象：最新会话（1544）重新加载后，4+4 消息的 AiReasoning 面板显示「正在思考」+「正在深度思考中...」（进行中态），而流式实时过程（Page 8/9/10/11）显示「已深度思考（用时 19.4 秒）」+「深度思考完成，共思考了 19.4 秒」（完成态）
-- 疑点：快照恢复的 message.reasoning 缺少完成标记/用时元数据，或 AiReasoning 状态判断依赖流式期间的 thinkingState（重启后丢失）→ 展示层恢复逻辑待核查
-- 记录备查，不随本轮修改（避免扩大范围）
-
-----------------------------------------
-【构建验证】
-- GetDiagnostics：ChatView.vue / session.js 无诊断错误
-- 前端 vite build → ✓ built in 32.49s（仅动态/静态导入 chunk 提示，非错误）
-
-----------------------------------------
-【本轮结论】
-- ✅ 根因：打开 /chat 恢复 localStorage 上次会话而非最新 → 已按「新开→最新 / 刷新→恢复 / URL 权威」策略修复
-- ✅ 竞态：initialize 与 ChatView onMounted 并发导致消息区空白 → initialize 幂等 + onMounted 等待，已修复
-- ✅ 三场景浏览器验证全部通过；遗留观察项（推理面板快照恢复态）已记录

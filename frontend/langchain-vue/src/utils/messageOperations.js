@@ -1007,7 +1007,7 @@ export function mergeMessageFromBackend(existingMsg, backendMsg) {
   if (!backendMsg) return existingMsg
 
   const isProtected = PROTECTED_STREAM_STATES.has(existingMsg.streamState)
-  const _NON_CONTENT_FIELDS = ['tokenCount', 'responseTime', 'model', 'backendId']
+  const _NON_CONTENT_FIELDS = ['tokenCount', 'responseTime', 'model', 'backendId', 'researchTaskId']
 
   // 非内容字段始终以后端为准（后端是元数据权威）
   for (const field of _NON_CONTENT_FIELDS) {

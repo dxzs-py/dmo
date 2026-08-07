@@ -559,6 +559,24 @@ export const useResearchStore = defineStore('research', () => {
     }
   }
 
+  /**
+   * 设置任务推理内容（来自 stream_reasoning WebSocket 事件）
+   * @param {string} taskId - 研究任务 ID
+   * @param {Object} payload - stream_reasoning 事件 payload
+   */
+  const setTaskReasoning = (taskId, payload) => {
+    if (!taskId || !payload) return
+    const taskRef = _ensureTaskInfo(taskId)
+    if (!taskRef) return
+    const current = taskRef.value || {}
+    const reasoning = {
+      content: payload.content || (current.reasoning && current.reasoning.content) || '',
+      source: payload.source || 'deep_thinking',
+      ...(payload.duration !== undefined && { duration: payload.duration }),
+    }
+    taskRef.value = { ...current, reasoning }
+  }
+
   return {
     tasks,
     taskInfo,
@@ -575,6 +593,7 @@ export const useResearchStore = defineStore('research', () => {
     setTaskStatus,
     getTaskStatus,
     updateTaskFromEvent,
+    setTaskReasoning,
     clearTaskInfo,
   }
 })
