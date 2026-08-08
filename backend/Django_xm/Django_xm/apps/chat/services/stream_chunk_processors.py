@@ -549,6 +549,23 @@ def _handle_tool_message_chunk(
             if tc.get("id") == tool_call_id or (not tc.get("id") and key == tool_call_id):
                 tool_info = tc
                 break
+    # 根本修复：ToolMessage 可能在 AIMessageChunk 之前到达流中（LangGraph 工具并发
+    # 执行的正常时序）。此时 tool_calls_map 尚无该 tool_call_id 的条目。不再静默跳过，
+    # 而是从 ToolMessage.name 创建最小条目，让后续生命周期事件正常发布。
+    if not tool_info and tool_call_id:
+        tool_name = getattr(message, "name", "") or ""
+        if tool_name:
+            tool_info = {
+                "id": tool_call_id,
+                "name": tool_name,
+                "type": f"tool-call-{tool_name}",
+                "state": "output-available",
+                "status": "completed",
+                "parameters": {},
+                "result": None,
+                "error": None,
+            }
+            tool_calls_map[tool_call_id] = tool_info
     if tool_info:
         # 事件优先级判定：超时 > 拒绝 > 失败 > 完成
         is_timeout = _detect_tool_timeout(message)

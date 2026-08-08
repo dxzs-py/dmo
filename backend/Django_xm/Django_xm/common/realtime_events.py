@@ -215,7 +215,7 @@ async def _publish_to_session_async(session_id, event_type, payload):
         except Exception:
             logger.exception(f"[RealtimeEvents] group_send 失败: session={session_id}")
 
-        logger.info(f"[RealtimeEvents] 异步发布会话事件: session={session_id}, type={event_type}, seq={seq}")
+        logger.debug(f"[RealtimeEvents] 异步发布会话事件: session={session_id}, type={event_type}, seq={seq}")
     except Exception:
         logger.exception(
             f"[RealtimeEvents] _publish_to_session_async 失败: session={session_id}, type={event_type}"
@@ -419,7 +419,7 @@ async def publish_event(
                     f"session:{session_id}",
                 )
             )
-            logger.info(
+            logger.debug(
                 f"[RealtimeEvents] 发布事件到 session 频道: session={session_id}, "
                 f"event_type={event_type.value}, ws_name={ws_event_name}"
             )

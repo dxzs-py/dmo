@@ -93,7 +93,7 @@ class ProjectContextView(APIView):
         cache_key = f"project_context:user_{user.id}"
         cached = CacheService.get(cache_key)
         if cached is not None:
-            logger.info("项目上下文缓存命中")
+            logger.debug("项目上下文缓存命中")
             return success_response(data=cached)
 
         try:

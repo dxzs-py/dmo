@@ -265,6 +265,52 @@ class ToolCallContext:
     risk_level: str = ""
 
 
+def _is_empty(value: Any) -> bool:
+    """fill_empty 合并策略的空值判定。
+
+    空值定义：None、空串、空 list/dict、False、int 0。
+    注意 int 0 被判定为空（如 depth=0 表示主 agent，允许被子 agent 的非零 depth 覆盖）。
+    """
+    if value is None:
+        return True
+    if isinstance(value, str) and value == "":
+        return True
+    if isinstance(value, (list, dict)) and len(value) == 0:
+        return True
+    if isinstance(value, bool):
+        return not value
+    if isinstance(value, int):
+        return value == 0
+    return False
+
+
+# register() 全字段合并策略
+# 每个 ToolCallContext 字段的合并语义：
+#   skip:         不合并（主键字段 tool_call_id）
+#   fill_empty:   已存在为空时用新值补全（默认策略）
+#   keep_existing: 始终保留已存在值（如 last_event_type，由状态机管理）
+#   allow_update:  允许新值覆盖已有值（如 graph_interrupt_id 批次更新）
+#   once_true:     一旦为 True/非空永不回退（如 auto_approved）
+_FIELD_MERGE_POLICY: dict[str, str] = {
+    "tool_call_id":      "skip",
+    "tool_name":         "fill_empty",
+    "module":            "fill_empty",
+    "module_id":         "fill_empty",
+    "cross_module_id":   "fill_empty",
+    "message_id":        "fill_empty",
+    "parameters":        "fill_empty",
+    "graph_interrupt_id":"allow_update",
+    "last_event_type":   "keep_existing",
+    "auto_approved":     "once_true",
+    "parent_tool_call_id":"fill_empty",
+    "depth":             "fill_empty",
+    "agent_name":        "fill_empty",
+    "agent_path":        "fill_empty",
+    "risk_ceiling":      "fill_empty",
+    "risk_level":        "fill_empty",
+}
+
+
 class ToolCallLifecycleService:
     """工具调用生命周期服务（模块级单例，三模块共享）。
 
@@ -316,34 +362,29 @@ class ToolCallLifecycleService:
                     f"last_event_type={last_event}, 本次注册将被忽略（重复发布入口）"
                 )
                 return
-            # 合并：仅补全空字段，不覆盖已有非空值
-            if not existing.get("parameters") and ctx.parameters:
-                existing["parameters"] = ctx.parameters
-            if not existing.get("message_id") and ctx.message_id:
-                existing["message_id"] = ctx.message_id
-            # graph_interrupt_id：批次标识允许更新为新批次（M16 重审批防护，见 docstring）
-            if ctx.graph_interrupt_id and existing.get("graph_interrupt_id") != ctx.graph_interrupt_id:
-                existing["graph_interrupt_id"] = ctx.graph_interrupt_id
-            if not existing.get("cross_module_id") and ctx.cross_module_id:
-                existing["cross_module_id"] = ctx.cross_module_id
-            # auto_approved：一旦为 True 就保持（不被覆盖回 False）
-            if ctx.auto_approved and not existing.get("auto_approved"):
-                existing["auto_approved"] = True
-            # 子 agent 嵌套层级字段：仅补全空字段（主 agent 不传，子 agent 传入非空值）
-            if not existing.get("parent_tool_call_id") and ctx.parent_tool_call_id:
-                existing["parent_tool_call_id"] = ctx.parent_tool_call_id
-            if not existing.get("depth") and ctx.depth:
-                existing["depth"] = ctx.depth
-            if not existing.get("agent_name") and ctx.agent_name:
-                existing["agent_name"] = ctx.agent_name
-            if not existing.get("agent_path") and ctx.agent_path:
-                existing["agent_path"] = ctx.agent_path
-            if not existing.get("risk_ceiling") and ctx.risk_ceiling:
-                existing["risk_ceiling"] = ctx.risk_ceiling
-            # risk_level：仅补全空字段（审批创建时由 ApprovalMiddleware 计算并传入）
-            # 一旦写入非空值就保持，避免后续事件覆盖已计算的风险等级
-            if not existing.get("risk_level") and ctx.risk_level:
-                existing["risk_level"] = ctx.risk_level
+            # 全字段合并：由 _FIELD_MERGE_POLICY 驱动，替代手选字段列表。
+            # 每个 ToolCallContext 字段的策略定义在模块级 _FIELD_MERGE_POLICY 中，
+            # 新增字段只需在 dataclass 和 policy 各加一行，无需修改合并逻辑。
+            ctx_dict = ctx.__dict__
+            for field_name, new_val in ctx_dict.items():
+                if field_name == "tool_call_id":
+                    continue  # 主键跳过
+
+                policy = _FIELD_MERGE_POLICY.get(field_name, "fill_empty")
+                if policy == "keep_existing":
+                    continue
+                elif policy == "skip":
+                    continue
+                elif policy == "fill_empty":
+                    if _is_empty(existing.get(field_name)) and not _is_empty(new_val):
+                        existing[field_name] = new_val
+                elif policy == "allow_update":
+                    if new_val is not None and new_val != existing.get(field_name):
+                        existing[field_name] = new_val
+                elif policy == "once_true":
+                    if new_val and not existing.get(field_name):
+                        existing[field_name] = new_val
+
             cache.set(key, existing, _TC_CTX_TTL)
         else:
             cache.set(key, ctx.__dict__, _TC_CTX_TTL)

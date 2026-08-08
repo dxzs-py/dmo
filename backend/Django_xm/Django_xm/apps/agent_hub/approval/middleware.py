@@ -326,7 +326,7 @@ class ApprovalMiddleware(AgentMiddleware):
         # 修复：补充从 runtime.config.configurable 读取（与 _audit_auto_approved_tools 提取路径一致）。
         chat_session_id = ""
         try:
-            # 优先从 configurable 读取（深度研究主要路径）
+            # 优先从 configurable 读取
             configurable: dict = {}
             try:
                 if hasattr(runtime, "config"):
@@ -336,7 +336,14 @@ class ApprovalMiddleware(AgentMiddleware):
             except Exception:
                 pass
             if configurable:
-                chat_session_id = configurable.get("chat_session_id") or configurable.get("session_id") or ""
+                # chat 模块：thread_id == session_id（agent_service.py 注入）
+                # deep_research 模块：chat_session_id 显式注入
+                chat_session_id = (
+                    configurable.get("chat_session_id")
+                    or configurable.get("session_id")
+                    or configurable.get("thread_id")
+                    or ""
+                )
             # 回退：runtime.context
             if not chat_session_id:
                 runtime_context = getattr(runtime, "context", None) or {}

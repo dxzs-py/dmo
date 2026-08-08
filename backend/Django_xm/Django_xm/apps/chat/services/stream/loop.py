@@ -183,9 +183,8 @@ async def run_stream_loop(
     async for event in strategy.on_loop_start(ctx, data):
         yield event
 
-    logger.info(f"[Loop] About to call agent.graph.astream, input keys: {list(graph_input.keys()) if isinstance(graph_input, dict) else type(graph_input).__name__}")
+    logger.debug(f"[Loop] astream: input keys={list(graph_input.keys()) if isinstance(graph_input, dict) else type(graph_input).__name__}")
     async for chunk in agent.graph.astream(graph_input, config=config, stream_mode=["messages", "updates"]):
-        logger.info(f"[Loop] astream produced chunk: type={type(chunk).__name__}, is_tuple={isinstance(chunk, tuple)}")
         # 多 stream mode 下 chunk 是 (mode_name, data) 元组
         if isinstance(chunk, tuple) and len(chunk) == 2:
             mode_name, mode_data = chunk

@@ -252,7 +252,7 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
         if group not in self.session_groups:
             await self.channel_layer.group_add(group, self.channel_name)
             self.session_groups.add(group)
-            logger.info(f"[RealtimeSync] 用户 {self.user_id} 订阅会话: session={session_id}, group={group}")
+            logger.debug(f"[RealtimeSync] 用户 {self.user_id} 订阅会话: session={session_id}, group={group}")
 
         await self.send_json(
             {
@@ -279,7 +279,7 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
                 history = await sync_to_async(get_event_history)(
                     "session", session_id, last_seq, limit=EVENT_HISTORY_LIMIT
                 )
-                logger.info(
+                logger.debug(
                     f"[RealtimeSync] 回放会话历史: session={session_id}, last_seq={last_seq}, count={len(history)}, limit={EVENT_HISTORY_LIMIT}"
                 )
                 await _send_replay_chunked(self, "session", session_id, history)
@@ -512,7 +512,7 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
             # 诊断日志：确认事件被转发到 WebSocket 客户端
             evt_type = to_send.get("type", "?")
             evt_seq = to_send.get("seq", "?")
-            logger.info(f"[RealtimeSync] broadcast_event 转发: user={self.user_id}, type={evt_type}, seq={evt_seq}")
+            logger.debug(f"[RealtimeSync] broadcast_event 转发: user={self.user_id}, type={evt_type}, seq={evt_seq}")
         except Exception:
             logger.exception(
                 f"[RealtimeSync] broadcast_event 发送失败: user={getattr(self, 'user_id', '?')}"
