@@ -187,38 +187,54 @@ export const useSessionStore = defineStore('session', () => {
       targetMap = new Map()
       toolCallsMap.value.set(sessionId, targetMap)
     }
+    // 以 API 消息 toolCalls 顺序（= 后端 DB 数组顺序，时间权威）重建 Map 插入顺序。
+    // 根因修复：WebSocket 事件与 API 历史加载并发时，事件先到达会将新工具（如
+    // 审批恢复后的 fs_write_file）插入 Map 开头，而 _index（LLM 单轮序号）被后端
+    // persist 丢弃（_build_persisted_tool_calls 过滤内部字段），前端排序退化为
+    // Map 插入顺序，导致刷新后工具乱序。API 快照是顺序权威，以其为准重建插入顺序；
+    // 已存在条目保留实时动态字段（status/approval），不覆盖。
+    const orderedEntries = []
+    const seenKeys = new Set()
     for (const msg of messages) {
       if (msg.role !== 'assistant' || !Array.isArray(msg.toolCalls)) continue
       for (const tc of msg.toolCalls) {
         const key = tc.toolCallId || tc.id
-        if (!key || targetMap.has(key)) continue
-        // 以浅拷贝创建条目，同时标注所属消息 backendId
-        targetMap.set(key, { ...tc, messageBackendId: msg.backendId?.toString() })
+        if (!key || seenKeys.has(key)) continue
+        seenKeys.add(key)
+        const existing = targetMap.get(key)
+        orderedEntries.push([
+          key,
+          existing
+            ? existing
+            : { ...tc, messageBackendId: msg.backendId?.toString() },
+        ])
       }
     }
+    // 保留 API 快照未覆盖的实时条目（WebSocket 刚插入的最新工具），追加末尾
+    for (const [key, value] of targetMap) {
+      if (!seenKeys.has(key)) orderedEntries.push([key, value])
+    }
+    // 重建 Map 使插入顺序与 API 权威顺序一致
+    toolCallsMap.value.set(sessionId, new Map(orderedEntries))
+    triggerRef(toolCallsMap)
   }
 
   /**
    * 从 toolCallMap 收集应同步到目标消息的 toolCall 数组（唯一归属规则，两处同步共用）
    *
-   * 归属规则（Task 5.4，_syncMessageToolCalls 与 _syncAllMessageToolCallsFromMap 统一）：
-   * - 有 messageBackendId 的条目仅归属到匹配消息
-   * - 无 messageBackendId 的条目仅归属到最后一条 assistant 消息
-   *   （禁止复制到每条 assistant 消息，避免工具卡片迁移）
+   * 归属规则：仅 messageBackendId 与目标消息 backendId 精确匹配的条目。
+   * 无 messageBackendId 的条目不归入任何消息（丢弃），不得兜底。
    *
    * @param {Map} toolCallMap - 该 session 的 toolCall Map
    * @param {Object} targetMsg - 目标消息
-   * @param {boolean} isLast - targetMsg 是否为 session 中最后一条 assistant 消息
    * @returns {Array} 归属到该消息的 toolCall 数组
    */
-  const _collectToolCallsForMessage = (toolCallMap, targetMsg, isLast) => {
+  const _collectToolCallsForMessage = (toolCallMap, targetMsg) => {
     const backendId = targetMsg.backendId?.toString()
     const arr = []
     for (const tc of toolCallMap.values()) {
-      if (tc.messageBackendId) {
-        if (tc.messageBackendId === backendId) arr.push(tc)
-      } else if (isLast) {
-        arr.push(tc)  // 无归属的兜底到最后一个 assistant
+      if (tc.messageBackendId && tc.messageBackendId === backendId) {
+        arr.push(tc)
       }
     }
     return arr
@@ -250,8 +266,8 @@ export const useSessionStore = defineStore('session', () => {
       return
     }
     const isLast = _isLastAssistantMessage(sessionId, targetMsg)
-    // 归属规则统一走 _collectToolCallsForMessage（Task 5.4）
-    const arr = _collectToolCallsForMessage(toolCallMap, targetMsg, isLast)
+    // 归属规则统一走 _collectToolCallsForMessage
+    const arr = _collectToolCallsForMessage(toolCallMap, targetMsg)
     // 按 LLM 原始生成序号稳定排序（跨浏览器工具顺序一致性保障）
     // _index 由后端 stream_chunk_processors 在解析 AIMessage.tool_calls 时标注
     if (arr.length > 1) {
@@ -269,7 +285,7 @@ export const useSessionStore = defineStore('session', () => {
       if (msg !== targetMsg && msg.role === 'assistant' && msg.toolCalls?.length > 0) {
         const stillValid = msg.toolCalls.some(tc => {
           const mapTc = toolCallMap.get(tc.id)
-          return mapTc && (!mapTc.messageBackendId || mapTc.messageBackendId === msg.backendId?.toString())
+          return mapTc && mapTc.messageBackendId === msg.backendId?.toString()
         })
         if (!stillValid) msg.toolCalls = []
       }
@@ -495,8 +511,13 @@ export const useSessionStore = defineStore('session', () => {
           } else {
             sessions.value[index] = detailData
           }
-          // 同步 API 加载的 toolCalls 到 toolCallsMap
-          _syncToolCallsMapFromMessages(sessionId, existingSession?.messages || detailData.messages || [])
+          // 同步 API 加载的 toolCalls 到 toolCallsMap。
+          // 必须以 detailData.messages（API 原始顺序 = 后端 DB 数组顺序，权威）为基准，
+          // 而非 existingSession.messages：后者是本地派生数据，可能已被 WebSocket 竞态
+          // 污染（事件先于 API 到达插入 Map → _syncMessageToolCalls 回写乱序 → merge 时
+          // 本地顺序优先 _mergeToolCalls 保持乱序 → 循环污染）。每次 API 加载都重置
+          // Map 插入顺序为权威顺序，切断污染循环。
+          _syncToolCallsMapFromMessages(sessionId, detailData.messages || [])
           // 反向同步：将 Map 中的完整状态回写到 messages 数组
           _syncAllMessageToolCallsFromMap(sessionId)
         }
@@ -1608,10 +1629,8 @@ export const useSessionStore = defineStore('session', () => {
     if (!toolCallMap || toolCallMap.size === 0) return
     for (const msg of session.messages) {
       if (msg.role !== 'assistant') continue
-      // 归属规则统一走 _collectToolCallsForMessage（Task 5.4）：
-      // 无 messageBackendId 条目仅进最后一条 assistant，禁止复制到每条 assistant
-      const isLast = _isLastAssistantMessage(sessionId, msg)
-      const arr = _collectToolCallsForMessage(toolCallMap, msg, isLast)
+      // 归属规则统一走 _collectToolCallsForMessage：仅 messageBackendId 精确匹配
+      const arr = _collectToolCallsForMessage(toolCallMap, msg)
       if (arr.length > 0) {
         arr.sort((a, b) => {
           const ai = a._index ?? 999

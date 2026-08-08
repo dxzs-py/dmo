@@ -509,15 +509,16 @@ class ChatStreamView(BaseChatAPIView):
                 # 将 assistant 占位消息 ID 传递给 chat_service
                 data["_assistant_message_id"] = str(assistant_message_id)
 
-                # 广播 MESSAGE_ADDED 到 WebSocket
+                # 广播 MESSAGE_ADDED 到 WebSocket（强制同步，确保先于 SSE 流到达所有浏览器）
                 try:
+                    from asgiref.sync import async_to_sync
                     from Django_xm.common.event_schema import EventSource, EventType
-                    from Django_xm.common.realtime_events import publish_event_sync
+                    from Django_xm.common.realtime_events import publish_event
                     from .serializers import ChatMessageSerializer as _MsgSerializer
 
                     for mid in (user_message_id, assistant_message_id):
                         msg = ChatMessage.objects.get(id=mid)
-                        publish_event_sync(
+                        async_to_sync(publish_event)(
                             EventType.MESSAGE_ADDED,
                             {
                                 "session_id": session_id,

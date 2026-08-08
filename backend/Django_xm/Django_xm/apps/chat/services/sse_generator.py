@@ -137,6 +137,25 @@ async def _publish_stream_event(
             else:
                 target_event_type = EventType.TOOL_CALL_PENDING
 
+            # PENDING 补发防护（根因修复，替代 register 拒绝 + 非法转换双重 WARNING）：
+            # finalize_tool_calls（审批中断补发 tool 事件）/ resume 流 new_tool_calls
+            # 等路径补发的 tool 事件，其工具状态可能已被审批中间件/SAFE 审计推进到
+            # waiting/running。此时再发布 PENDING 会被状态机判定非法（waiting → pending）。
+            # 发布前查询 last_event_type，已推进则跳过发布、仅补全参数到 context，
+            # 后续 waiting/running/completed 事件携带补全后的参数。
+            if target_event_type == EventType.TOOL_CALL_PENDING:
+                _existing_ctx = lifecycle_service.get_context(tool_call_id)
+                _last_event = _existing_ctx.get("last_event_type") if _existing_ctx else None
+                if _last_event and _last_event != EventType.TOOL_CALL_PENDING.value:
+                    tool_parameters_ready = tool_data.get("parameters") or tool_data.get("args")
+                    if isinstance(tool_parameters_ready, dict) and tool_parameters_ready:
+                        lifecycle_service.bind_parameters(tool_call_id, tool_parameters_ready)
+                    logger.debug(
+                        f"[Sync] PENDING 补发跳过（状态已推进）: tool_call_id={tool_call_id}, "
+                        f"last_event_type={_last_event}, event_type_str={event_type_str}"
+                    )
+                    return
+
             # 确保上下文已注册（幂等，重复调用无副作用）
             # 补全 message_id 和 parameters（P-BE-3 修复）：
             # 前端通过 message_id 路由事件到正确消息，parameters 用于工具卡片参数回显。

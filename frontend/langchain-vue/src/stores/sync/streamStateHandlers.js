@@ -150,11 +150,12 @@ export const createStreamStateHandlers = (ctx) => {
     }
     const field = fieldMap[eventType]
     if (!field) {
-      // stream_event 是 approval/interrupted/model_fallback/research_task_id
-      // 等事件的 WS 统一容器；这些事件由 handleApprovalEvent /
-      // handleStreamInterrupted 等专用 handler 处理，此处仅负责 L126-133
-      // 的 streamState=STREAMING 设置，无需更新消息字段。
-      logger.debug(`[Sync] stream_event 无内容更新字段，跳过: eventType=${eventType}`)
+      // 通用 stream_event（approval / deep_research / model_fallback / research_task_id）
+      // SSE 流事件通过 _publish_stream_event → STREAM_EVENT 发布到非触发浏览器。
+      // streamState 已在 L126-133 设为 STREAMING（流存活信号），无消息字段需更新。
+      // 仅更新 seq 做幂等去重，不做字段更新。
+      if (seq) message._lastStreamEventSeq = seq
+      logger.debug(`[Sync] stream_event 通用事件: eventType=${eventType}, seq=${seq}`)
       return
     }
 

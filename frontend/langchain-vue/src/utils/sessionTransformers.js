@@ -275,22 +275,32 @@ export function transformBackendMessageToFrontend(msg) {
 
   const activeVersion = versions[currentVersion]
 
+  // 顶层字段是权威数据源（后端 persist_stream_result 增量维护顶层
+  // content/tool_calls/reasoning；versions 是消息创建时的初始快照，
+  // 审批中断/流式演进后不随顶层更新，导致 versions[0] 内容回退、
+  // 工具缺失/状态陈旧）。统一顶层优先，versions 仅兜底（根因修复）。
+  const msgToolCalls = Array.isArray(msgObj.toolCalls) ? msgObj.toolCalls : []
+  const versionToolCalls = (activeVersion && Array.isArray(activeVersion.toolCalls))
+    ? activeVersion.toolCalls
+    : []
+  const toolCalls = msgToolCalls.length > 0 ? msgToolCalls : versionToolCalls
+
   return {
     id: msgObj.id?.toString() || generateId(),
     backendId: msgObj.id,
     role: role,
-    content: activeVersion.content || msgObj.content || '',
-    sources: activeVersion.sources,
-    plan: activeVersion.plan,
-    chainOfThought: activeVersion.chainOfThought,
-    toolCalls: activeVersion.toolCalls || [],
+    content: msgObj.content || activeVersion.content || '',
+    sources: msgObj.sources || activeVersion.sources || [],
+    plan: msgObj.plan || activeVersion.plan || null,
+    chainOfThought: msgObj.chainOfThought || activeVersion.chainOfThought || null,
+    toolCalls: toolCalls,
     approval: msgObj.approval || null,
     approvalState: msgObj.approval?.state
-      || (activeVersion.toolCalls || []).find(tc => tc.approval)?.approval?.state
+      || toolCalls.find(tc => tc.approval)?.approval?.state
       || null,
-    reasoning: activeVersion.reasoning || msgObj.reasoning || null,
-    suggestions: activeVersion.suggestions,
-    context: activeVersion.context,
+    reasoning: msgObj.reasoning || activeVersion.reasoning || null,
+    suggestions: msgObj.suggestions || activeVersion.suggestions || null,
+    context: activeVersion.context || msgObj.context || null,
     attachmentIds: msgObj.attachmentIds || [],
     attachments: msgObj.attachments || [],
     researchContext: msgObj.researchContext || null,

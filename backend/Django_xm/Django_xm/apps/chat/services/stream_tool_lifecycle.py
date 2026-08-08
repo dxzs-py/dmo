@@ -79,10 +79,32 @@ def _publish_tool_lifecycle_event(
     # module_id 处理：显式传入优先，否则回退到 session_id
     resolved_module_id = module_id if module_id else session_id
 
-    # register：始终调用，parameters 始终为 dict（空时为 {}）
+    # parameters 始终为 dict（空时为 {}）
+    parameters = tool_info.get("parameters") or {}
+
+    # PENDING 补发防护（根因修复，替代 register 拒绝 + 非法转换双重 WARNING）：
+    # finalize_tool_calls（审批中断补发 tool 事件）/ resume 流 new_tool_calls
+    # 补发的 PENDING，其工具状态可能已被审批中间件/SAFE 审计推进到 waiting/running。
+    # 发布前查询 last_event_type，已推进则跳过发布、仅补全 message_id/parameters 到
+    # context，后续 waiting/running/completed 事件携带补全后的字段。
+    if event_type == EventType.TOOL_CALL_PENDING:
+        _existing_ctx = service.get_context(tool_call_id)
+        _last_event = _existing_ctx.get("last_event_type") if _existing_ctx else None
+        if _last_event and _last_event != EventType.TOOL_CALL_PENDING.value:
+            if parameters:
+                service.bind_parameters(tool_call_id, parameters)
+            if message_id is not None:
+                service.bind_message_id(tool_call_id, resolved_message_id)
+            logger.debug(
+                f"[ToolLifecycle] PENDING 补发跳过（状态已推进）: "
+                f"tool_call_id={tool_call_id}, tool_name={tool_name}, "
+                f"last_event_type={_last_event}"
+            )
+            return
+
+    # register：始终调用
     # 传入 event_type 以启用 register 的 last_event_type 防护：
     # PENDING 在状态已推进（waiting/running 等）时重复注册会被拒绝并告警。
-    parameters = tool_info.get("parameters") or {}
     ctx = ToolCallContext(
         tool_call_id=tool_call_id,
         tool_name=tool_name,
@@ -154,15 +176,6 @@ def _broadcast_tool_input_ready(
     tool_call_id = tool_info.get("id") or ""
     tool_name = tool_info.get("name") or ""
     if not tool_call_id or not tool_name:
-        return
-    parameters = tool_info.get("parameters")
-    # 参数未就绪时跳过广播（None 表示参数尚未解析完成，避免前端展示残缺参数）
-    # 空 dict {} 是合法的"无参数"状态（如 get_current_time），必须正常广播，
-    # 否则非触发浏览器对该工具收不到任何事件（issue_p0_cross_browser_tool_call_count_mismatch 根因 B1）
-    # PENDING 重复发布由 tool_call_lifecycle 的批次指纹去重天然拦截
-    # （同 tool_call_id + 同 parameters 指纹仅发布一次，Task 1）。本函数保留
-    # 供恢复流（chat_resume_generator）等调用方兼容使用，不在此处额外去重。
-    if parameters is None or not isinstance(parameters, dict):
         return
     try:
         _publish_tool_lifecycle_event(

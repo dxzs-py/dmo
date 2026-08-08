@@ -461,9 +461,10 @@ async def _stream_chat_resume_generator(
                         continue
                     # 有新增的 tool_calls，只处理新增部分
                     # 将新增的 tool_call 推送给前端
-                    _approval_msg_id = str(
-                        (approval.extra or {}).get("message_id", "") or getattr(approval, "message_id", "") or ""
-                    )
+                    # 确保 message_id 非空：优先取 approval.extra.message_id →
+                    # approval.message_id → 消息持久化时写入的 assistant_message_id
+                    _raw_msg_id = (approval.extra or {}).get("message_id", "") or getattr(approval, "message_id", "") or ""
+                    _approval_msg_id = str(_raw_msg_id) if _raw_msg_id else ""
                     for tc in new_tool_calls:
                         tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
                         tc_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)

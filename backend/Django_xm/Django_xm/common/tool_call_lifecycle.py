@@ -272,73 +272,7 @@ class ToolCallLifecycleService:
     - 跨请求/跨 worker 状态一致（Celery worker 重启后仍可恢复）
     - 跨模块共享同一份状态机代码
     - parameters/message_id 从 context 透传，杜绝字段缺失
-    - 所有模块工具状态变更自动持久化到 ChatMessage.tool_calls（内置，无需注册）
     """
-
-    @staticmethod
-    def _persist_tool_state(
-        ctx_dict: dict,
-        event_type: EventType,
-        result: Any = None,
-        error: str | None = None,
-    ) -> None:
-        """工具终态持久化（所有模块自动生效，transition/transition_async 内置调用）。
-
-        仅持久化终态（COMPLETED / FAILED）到 ChatMessage.tool_calls。
-        PENDING / RUNNING 不触发持久化：
-        - 瞬态通过 WS 实时广播即可，无需写库
-        - 避免 fire-and-forget 乱序竞态：多个 PENDING→COMPLETED 任务交叉完成
-          时，后完成的 PENDING 可能在 COMPLETED 之后 append，破坏 tool_calls 顺序
-        - agent 模式依赖 persist_stream_result（finally 块）做全量持久化兜底
-        - 深度研究模式依赖 Writeback 合并链弥补缺失的 PENDING 条目
-
-        通过 asyncio.get_running_loop() 检测运行上下文：
-        - async 上下文（transition_async / agent mode SSE）：fire-and-forget
-          经由 sync_to_async 写库，不阻塞事件发布
-        - sync 上下文（transition 同步调用）：直接写库
-
-        异常仅 logger.warning，不阻塞 transition。
-        """
-        tool_call_id = ctx_dict.get("tool_call_id", "")
-        if not tool_call_id:
-            return
-        module_str = ctx_dict.get("module", "")
-        module_id = ctx_dict.get("module_id", "")
-        if not module_str or not module_id:
-            return
-
-        # 仅终态需要持久化（PENDING/RUNNING 不写库，避免乱序竞态）
-        TERMINAL_STATUS_MAP = {
-            EventType.TOOL_CALL_COMPLETED: "completed",
-            EventType.TOOL_CALL_FAILED: "failed",
-        }
-        status = TERMINAL_STATUS_MAP.get(event_type)
-        if not status:
-            return
-
-        tool_name = ctx_dict.get("tool_name", "unknown")
-
-        def _do_persist():
-            try:
-                sync_tool_result_to_chat_message(
-                    tool_call_id, tool_name, status, result, error, module_str, module_id
-                )
-            except Exception:
-                logger.warning(
-                    f"[ToolCallLifecycle] 持久化工具状态失败: "
-                    f"tool_call_id={tool_call_id}, status={status}, module={module_str}",
-                    exc_info=True,
-                )
-
-        try:
-            import asyncio as _asyncio
-            _asyncio.get_running_loop()
-            # async 上下文：fire-and-forget 写库，不阻塞事件发布
-            from asgiref.sync import sync_to_async as _stoa
-            _asyncio.ensure_future(_stoa(_do_persist, thread_sensitive=True)())
-        except RuntimeError:
-            # sync 上下文：直接调用
-            _do_persist()
 
     def register(
         self,
@@ -599,9 +533,6 @@ class ToolCallLifecycleService:
 
         self._finalize_transition(tool_call_id, event_type, ctx_dict, fingerprint)
 
-        # 工具状态持久化：所有模块自动生效，无需注册
-        ToolCallLifecycleService._persist_tool_state(ctx_dict, event_type, result, error)
-
     async def transition_async(
         self,
         tool_call_id: str,
@@ -675,9 +606,6 @@ class ToolCallLifecycleService:
 
         self._finalize_transition(tool_call_id, event_type, ctx_dict, fingerprint)
 
-        # 工具状态持久化：所有模块自动生效，无需注册
-        ToolCallLifecycleService._persist_tool_state(ctx_dict, event_type, result, error)
-
     def get_context(self, tool_call_id: str) -> dict | None:
         """获取工具调用上下文（调试/测试用）。"""
         return cache.get(f"{_TC_CTX_PREFIX}:{tool_call_id}")
@@ -690,106 +618,6 @@ class ToolCallLifecycleService:
         for event_type in EventType:
             if event_type.value.startswith("tool_call_"):
                 cache.delete(f"{_PUBLISHED_KEY_PREFIX}:{tool_call_id}:{event_type.value}")
-
-
-def sync_tool_result_to_chat_message(
-    tool_call_id: str,
-    tool_name: str,
-    status: str,
-    result: Any = None,
-    error: str | None = None,
-    module: str = "",
-    module_id: str = "",
-) -> bool:
-    """工具终态持久化统一入口（所有模块共用）。
-
-    在 COMPLETED/FAILED 事件发布后调用，直接写入 ChatMessage.tool_calls。
-    使用 _merge_tool_calls_incremental 做字段级演进（非终态 → 终态，终态不可回退）。
-
-    Args:
-        tool_call_id: 工具调用 ID
-        tool_name: 工具名称
-        status: 终态（completed / failed）
-        result: 输出结果（COMPLETED）
-        error: 错误信息（FAILED）
-        module: 业务模块（chat / deep_research / learning）
-        module_id: 模块实例 ID（session_id / task_id / thread_id）
-
-    Returns:
-        bool: 是否成功写库
-    """
-    from django.apps import apps
-    from django.db import transaction
-
-    ChatMessage = apps.get_model("chat", "ChatMessage")
-
-    # 用 select_for_update + transaction.atomic 序列化同一 ChatMessage 的并发写入，
-    # 消除 read-modify-write 竞态（多个 PENDING/COMPLETED 写交叉 append 破坏顺序）。
-    try:
-        with transaction.atomic():
-            if module == "deep_research" and module_id:
-                chat_msg = (
-                    ChatMessage.objects.select_for_update()
-                    .filter(
-                        research_task_id=module_id,
-                        role="assistant",
-                        is_deleted=False,
-                    )
-                    .order_by("-created_at")
-                    .first()
-                )
-            elif module_id:
-                chat_msg = (
-                    ChatMessage.objects.select_for_update()
-                    .filter(
-                        session__session_id=module_id,
-                        role="assistant",
-                        is_deleted=False,
-                    )
-                    .order_by("-created_at")
-                    .first()
-                )
-            else:
-                return False
-
-            if chat_msg is None:
-                logger.info(
-                    f"[ToolCallLifecycle] sync_tool_result_to_chat_message 跳过（未找到关联 ChatMessage）: "
-                    f"tool_call_id={tool_call_id}, module={module}, module_id={module_id}"
-                )
-                return False
-
-            tool_entry: dict[str, Any] = {
-                "id": tool_call_id,
-                "tool_call_id": tool_call_id,
-                "name": tool_name,
-                "status": status,
-            }
-            if result is not None:
-                tool_entry["result"] = result
-            if error is not None:
-                tool_entry["error"] = error
-
-            from Django_xm.apps.chat.services.stream_persistence import _merge_tool_calls_incremental
-
-            existing = chat_msg.tool_calls or []
-            merged = _merge_tool_calls_incremental(existing, [tool_entry])
-
-            if merged != existing:
-                chat_msg.tool_calls = merged
-                chat_msg.save(update_fields=["tool_calls", "updated_at"])
-                logger.info(
-                    f"[ToolCallLifecycle] sync_tool_result_to_chat_message 已持久化: "
-                    f"msg={chat_msg.id}, tool_call_id={tool_call_id}, status={status}, "
-                    f"module={module}"
-                )
-            return True
-    except Exception as e:
-        logger.warning(
-            f"[ToolCallLifecycle] sync_tool_result_to_chat_message 持久化失败: "
-            f"tool_call_id={tool_call_id}, module={module}, module_id={module_id}, err={e}"
-        )
-        return False
 
 
 # 模块级单例
