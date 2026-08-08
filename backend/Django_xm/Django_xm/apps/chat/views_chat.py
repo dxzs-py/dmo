@@ -450,10 +450,14 @@ class ChatStreamView(BaseChatAPIView):
                 if user_content["type"] == "text":
                     data["message"] = user_content["content"]
                     data["_preloaded_attachment_type"] = "text"
+                    # hint 仅注入 LLM 上下文，不展示给用户
+                    data["_attachment_hint"] = user_content.get("hint") or ""
                 else:
                     data["_preloaded_attachment_content"] = user_content["content"]
                     data["_preloaded_attachment_type"] = "multimodal"
+                    data["_attachment_hint"] = user_content.get("hint") or ""
                 data["_has_attachments"] = True
+                data["_attachment_ids"] = original_attachment_ids
                 data["attachment_ids"] = []
             except Exception:
                 logger.exception("预加载附件内容失败")

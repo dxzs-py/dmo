@@ -70,6 +70,7 @@ class ApprovalMiddleware(AgentMiddleware):
             AgentCleanupApprovalPolicy,
             AgentCreateApprovalPolicy,
             AgentRunApprovalPolicy,
+            AttachmentRagSearchApprovalPolicy,
             EditFileApprovalPolicy,
             # deepagents 框架工具审批策略
             # deepagents FilesystemMiddleware 提供的工具名称与项目自定义工具不同，
@@ -87,6 +88,7 @@ class ApprovalMiddleware(AgentMiddleware):
             # 项目自定义工具策略
             ShellExecApprovalPolicy(),
             FileReaderApprovalPolicy(),
+            AttachmentRagSearchApprovalPolicy(),
             FsWriteFileApprovalPolicy(),
             AgentCleanupApprovalPolicy(),
             # 其他副作用工具策略（agent_create/agent_run/todo_write）

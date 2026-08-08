@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.apps.knowledge.config import settings
+from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
 
 logger = get_logger(__name__)
 
@@ -544,15 +545,27 @@ class SyncSafeRetrieverTool(BaseTool):
     def _run_precise(self, query: str) -> str:
         docs = self.retriever.invoke(query)
         logger.info(f"precise 检索: query='{query[:50]}...', 返回 {len(docs)} 个文档")
-        return self._build_kb_context() + KB_RESULT_INSTRUCTION + self._format_docs(self._clean_docs(docs))
+        cleaned = self._clean_docs(docs)
+
+        if not cleaned:
+            # 检索无结果，调用统一降级管道
+            pipeline = UnifiedRagPipeline()
+            return pipeline.search(query, docs, total_token_count=0)
+
+        return self._build_kb_context() + KB_RESULT_INSTRUCTION + self._format_docs(cleaned)
 
     def _run_comprehensive(self, query: str) -> str:
         retriever = self.comprehensive_retriever or self.retriever
         docs = retriever.invoke(query)
         logger.info(f"comprehensive 检索: query='{query[:50]}...', 返回 {len(docs)} 个文档")
+        cleaned = self._clean_docs(docs)
+
+        if not cleaned:
+            pipeline = UnifiedRagPipeline()
+            return pipeline.search(query, docs, total_token_count=0)
 
         combiner = MapReduceDocCombiner(llm=self.llm)
-        result = combiner.combine_sync(self._clean_docs(docs), query, llm=self.llm)
+        result = combiner.combine_sync(cleaned, query, llm=self.llm)
         return self._build_kb_context() + KB_RESULT_INSTRUCTION + result
 
     async def _arun_comprehensive(self, query: str) -> str:
@@ -562,9 +575,14 @@ class SyncSafeRetrieverTool(BaseTool):
         except Exception:
             docs = await asyncio.to_thread(retriever.invoke, query)
         logger.info(f"comprehensive 异步检索: query='{query[:50]}...', 返回 {len(docs)} 个文档")
+        cleaned = self._clean_docs(docs)
+
+        if not cleaned:
+            pipeline = UnifiedRagPipeline()
+            return pipeline.search(query, docs, total_token_count=0)
 
         combiner = MapReduceDocCombiner(llm=self.llm)
-        result = await combiner.combine(self._clean_docs(docs), query, llm=self.llm)
+        result = await combiner.combine(cleaned, query, llm=self.llm)
         return self._build_kb_context() + KB_RESULT_INSTRUCTION + result
 
     @staticmethod

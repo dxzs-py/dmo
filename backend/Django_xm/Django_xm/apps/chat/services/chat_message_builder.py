@@ -40,31 +40,55 @@ class ChatMessageBuilder:
             return {"type": "text", "content": user_message}
         return self._attachment_service.build_user_content(user_message, attachment_ids)
 
+    @staticmethod
+    def _inject_hint(content: Any, hint: str) -> Any:
+        """将附件检索提示注入到 HumanMessage content 中。
+
+        仅修改 LLM 上下文，不影响 DB 持久化的用户消息展示内容。
+        文本路径追加分隔行；多模态路径追加额外的 text 片段。
+        """
+        if not hint:
+            return content
+        hint_text = f"---\n{hint}\n---"
+        if isinstance(content, list):
+            return [*content, {"type": "text", "text": hint_text}]
+        if isinstance(content, str):
+            return f"{content}\n\n{hint_text}"
+        return content
+
     async def acreate_human_message(self, data: dict[str, Any]) -> HumanMessage:
         preloaded_type = data.get("_preloaded_attachment_type")
+        hint = data.get("_attachment_hint", "")
         if preloaded_type == "multimodal":
             content = data.get("_preloaded_attachment_content", data["message"])
-            return HumanMessage(content=content)
+            return HumanMessage(content=self._inject_hint(content, hint))
         if preloaded_type == "text":
-            return HumanMessage(content=data["message"])
+            content = self._inject_hint(data["message"], hint)
+            return HumanMessage(content=content)
 
         user_content = await self.abuild_user_content(data)
+        if user_content.get("hint"):
+            data["_attachment_hint"] = user_content["hint"]
         if user_content["type"] == "multimodal":
-            return HumanMessage(content=user_content["content"])
-        return HumanMessage(content=user_content["content"])
+            return HumanMessage(content=self._inject_hint(user_content["content"], user_content.get("hint", "")))
+        return HumanMessage(content=self._inject_hint(user_content["content"], user_content.get("hint", "")))
 
     def create_human_message(self, data: dict[str, Any]) -> HumanMessage:
         preloaded_type = data.get("_preloaded_attachment_type")
+        hint = data.get("_attachment_hint", "")
         if preloaded_type == "multimodal":
             content = data.get("_preloaded_attachment_content", data["message"])
-            return HumanMessage(content=content)
+            return HumanMessage(content=self._inject_hint(content, hint))
         if preloaded_type == "text":
-            return HumanMessage(content=data["message"])
+            content = self._inject_hint(data["message"], hint)
+            return HumanMessage(content=content)
 
         user_content = self.build_user_content(data)
+        if user_content.get("hint"):
+            data["_attachment_hint"] = user_content["hint"]
         if user_content["type"] == "multimodal":
-            return HumanMessage(content=user_content["content"])
-        return HumanMessage(content=user_content["content"])
+            return HumanMessage(content=self._inject_hint(user_content["content"], user_content.get("hint", "")))
+        return HumanMessage(content=self._inject_hint(user_content["content"], user_content.get("hint", "")))
 
     @staticmethod
     def convert_chat_history(chat_history: list[dict[str, Any]]) -> list:

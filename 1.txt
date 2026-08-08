@@ -1,39 +1,38 @@
  [vite] connecting...
  [vite] connected.
  [Security] Initializing session store...
- [Realtime] 已从 localStorage 恢复 lastSeq: 3 条通道
+ [Realtime] 已从 localStorage 恢复 lastSeq: 446 条通道
  [toSnakeCase] pageSize → page_size
  [toSnakeCase] agentType → agent_type
- [Realtime] WebSocket 已连接
- [Realtime] replay barrier 设置 pending: user
  🍍 "approval" store installed 🆕
  🍍 "research" store installed 🆕
  🍍 "workflow" store installed 🆕
  [Sync] 实时同步 store 已初始化
+ [Realtime] WebSocket 已连接
+ [Realtime] replay barrier 设置 pending: user
  [toCamelCase] channel_type → channelType
  [toCamelCase] channel_id → channelId
  [toCamelCase] chunk_index → chunkIndex
  [toCamelCase] chunk_count → chunkCount
- [Realtime] 收到 replay 回包: channel=user:1, count=1, chunk=1/1
- [Sync] 未处理的 user 事件: task_created
+ [Realtime] 收到 replay 回包: channel=user:1, count=0, chunk=1/1
  [Realtime] replay barrier flush 无缓冲事件: user
+ [Axios] 响应转换: /context/capability-config/ 
+  前: {"code":200,"message":"操作成功","data":{"available_capabilities":["context_management","tool_injection","guardrails","rate_limit","groq_compat"],"default_capabilities":["context_management","tool_injecti 
+  后: {"code":200,"message":"操作成功","data":{"availableCapabilities":["context_management","tool_injection","guardrails","rate_limit","groq_compat"],"defaultCapabilities":["context_management","tool_injection
+ [Axios] 响应转换: /users/info/ 
+  前: {"code":200,"message":"获取成功","data":{"id":1,"username":"daixing","email":"3309201506@qq.com","mobile":null,"avatar":"/media/avatar/1/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE_2026-05-01_172822.png","date_j 
+  后: {"code":200,"message":"获取成功","data":{"id":1,"username":"daixing","email":"3309201506@qq.com","mobile":null,"avatar":"/media/avatar/1/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE_2026-05-01_172822.png","dateJo
+ [Axios] 响应转换: /chat/sessions/ 
+  前: {"code":200,"message":"操作成功","data":{"items":[{"user_id":1,"cached_at":"2026-08-08T14:21:22.863419+00:00","id":1581,"session_id":"66d7fc78-a022-451c-827f-64766f82e06d","title":"新对话 - 代理","mode":"agent 
+  后: {"code":200,"message":"操作成功","data":{"items":[{"userId":1,"cachedAt":"2026-08-08T14:21:22.863419+00:00","id":1581,"sessionId":"66d7fc78-a022-451c-827f-64766f82e06d","title":"新对话 - 代理","mode":"agent","
+ [Security] Loaded 4 sessions (page 1/1) for user 1
+ [Axios] 响应转换: /knowledge/knowledge-bases/ 
+  前: {"code":200,"message":"操作成功","data":{"items":[{"id":"test2","name":"test2","description":"redis学习文档","num_documents":76,"chunk_count":76,"created_at":"2026-06-21T02:23:41.870493+00:00","updated_at":"2 
+  后: {"code":200,"message":"操作成功","data":{"items":[{"id":"test2","name":"test2","description":"redis学习文档","numDocuments":76,"chunkCount":76,"createdAt":"2026-06-21T02:23:41.870493+00:00","updatedAt":"2026-
  🍍 "chat" store installed 🆕
  🍍 "model" store installed 🆕
  🍍 "chatDeepResearch" store installed 🆕
  🍍 "tools" store installed 🆕
- [Axios] 响应转换: /context/capability-config/ 
-  前: {"code":200,"message":"操作成功","data":{"available_capabilities":["context_management","tool_injection","guardrails","rate_limit","groq_compat"],"default_capabilities":["context_management","tool_injecti 
-  后: {"code":200,"message":"操作成功","data":{"availableCapabilities":["context_management","tool_injection","guardrails","rate_limit","groq_compat"],"defaultCapabilities":["context_management","tool_injection
- [Axios] 响应转换: /chat/sessions/ 
-  前: {"code":200,"message":"操作成功","data":{"items":[{"user_id":1,"cached_at":"2026-08-07T10:16:44.896014+00:00","id":1564,"session_id":"640c7469-6bac-4db6-9e7e-3de63a6b79f8","title":"新对话 - 代理","mode":"agent 
-  后: {"code":200,"message":"操作成功","data":{"items":[{"userId":1,"cachedAt":"2026-08-07T10:16:44.896014+00:00","id":1564,"sessionId":"640c7469-6bac-4db6-9e7e-3de63a6b79f8","title":"新对话 - 代理","mode":"agent","
- [Security] Loaded 3 sessions (page 1/1) for user 1
- [Axios] 响应转换: /users/info/ 
-  前: {"code":200,"message":"获取成功","data":{"id":1,"username":"daixing","email":"3309201506@qq.com","mobile":null,"avatar":"/media/avatar/1/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE_2026-05-01_172822.png","date_j 
-  后: {"code":200,"message":"获取成功","data":{"id":1,"username":"daixing","email":"3309201506@qq.com","mobile":null,"avatar":"/media/avatar/1/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE_2026-05-01_172822.png","dateJo
- [Axios] 响应转换: /knowledge/knowledge-bases/ 
-  前: {"code":200,"message":"操作成功","data":{"items":[{"id":"test2","name":"test2","description":"redis学习文档","num_documents":76,"chunk_count":76,"created_at":"2026-06-21T02:23:41.870493+00:00","updated_at":"2 
-  后: {"code":200,"message":"操作成功","data":{"items":[{"id":"test2","name":"test2","description":"redis学习文档","numDocuments":76,"chunkCount":76,"createdAt":"2026-06-21T02:23:41.870493+00:00","updatedAt":"2026-
  [Axios] 响应转换: /chat/project-context/ 
   前: {"code":200,"message":"操作成功","data":{"project_name":"","project_root":"","languages":[],"frameworks":[],"has_git":false,"git_branch":"","instruction_content":"","directory_structure":"","key_files":[] 
   后: {"code":200,"message":"操作成功","data":{"projectName":"","projectRoot":"","languages":[],"frameworks":[],"hasGit":false,"gitBranch":"","instructionContent":"","directoryStructure":"","keyFiles":[]}}
@@ -43,80 +42,50 @@
  [Axios] 响应转换: /tools/mcp/servers/ 
   前: {"code":200,"message":"操作成功","data":{"servers":[{"name":"postgres","description":"PostgreSQL 数据库操作工具 - 查询 langchain 数据库（可读写）","tool_type":"mcp","category":{"code":"general","name":"通用"},"source":"user 
   后: {"code":200,"message":"操作成功","data":{"servers":[{"name":"postgres","description":"PostgreSQL 数据库操作工具 - 查询 langchain 数据库（可读写）","toolType":"mcp","category":{"code":"general","name":"通用"},"source":"user"
- [Axios] 响应转换: /chat/sessions/640c7469-6bac-4db6-9e7e-3de63a6b79f8/ 
-  前: {"code":200,"message":"操作成功","data":{"id":1564,"session_id":"640c7469-6bac-4db6-9e7e-3de63a6b79f8","title":"抱歉，消息发送失败，请稍后重试","mode":"agent","selected_knowledge_base":null,"selected_knowledge_bases":[] 
-  后: {"code":200,"message":"操作成功","data":{"id":1564,"sessionId":"640c7469-6bac-4db6-9e7e-3de63a6b79f8","title":"抱歉，消息发送失败，请稍后重试","mode":"agent","selectedKnowledgeBase":null,"selectedKnowledgeBases":[],"mes
- [Session] Loaded detail for session 640c7469-6bac-4db6-9e7e-3de63a6b79f8 with 2 messages
- [ChatDeepResearch] 已恢复聊天深度研究 researchTaskId: research_2cb40d04717a
- [Realtime] replay barrier 设置 pending: session_640c7469-6bac-4db6-9e7e-3de63a6b79f8
- [ChatView] WebSocket 订阅会话事件: 640c7469-6bac-4db6-9e7e-3de63a6b79f8
+ [Axios] 响应转换: /chat/sessions/66d7fc78-a022-451c-827f-64766f82e06d/ 
+  前: {"code":200,"message":"操作成功","data":{"id":1581,"session_id":"66d7fc78-a022-451c-827f-64766f82e06d","title":"新对话 - 代理","mode":"agent","selected_knowledge_base":null,"selected_knowledge_bases":[],"messa 
+  后: {"code":200,"message":"操作成功","data":{"id":1581,"sessionId":"66d7fc78-a022-451c-827f-64766f82e06d","title":"新对话 - 代理","mode":"agent","selectedKnowledgeBase":null,"selectedKnowledgeBases":[],"messages":
+ [Session] Loaded detail for session 66d7fc78-a022-451c-827f-64766f82e06d with 4 messages
+ [Axios] 响应转换: /attachments/sessions/66d7fc78-a022-451c-827f-64766f82e06d/list/ 
+  前: {"code":200,"message":"操作成功","data":[{"id":117,"original_name":"MySQL学习手册.md","file_size":129878,"file_type":"md","mime_type":"text/markdown","url":"/media/chat_attachments/1/66d7fc78-a022-451c-827f-6 
+  后: {"code":200,"message":"操作成功","data":[{"id":117,"originalName":"MySQL学习手册.md","fileSize":129878,"fileType":"md","mimeType":"text/markdown","url":"/media/chat_attachments/1/66d7fc78-a022-451c-827f-64766
+ [Realtime] replay barrier 设置 pending: session_66d7fc78-a022-451c-827f-64766f82e06d
+ [ChatView] WebSocket 订阅会话事件: 66d7fc78-a022-451c-827f-64766f82e06d
  [toCamelCase] channel_type → channelType
  [toCamelCase] channel_id → channelId
  [toCamelCase] chunk_index → chunkIndex
  [toCamelCase] chunk_count → chunkCount
- [Realtime] 收到 replay 回包: channel=session:640c7469-6bac-4db6-9e7e-3de63a6b79f8, count=1, chunk=1/1
- [Sync] 首次事件跳号(正常，跳过全量同步): session=640c7469-6bac-4db6-9e7e-3de63a6b79f8, got=4
- [Sync] 消息更新: session=640c7469-6bac-4db6-9e7e-3de63a6b79f8, message=3192
- [Realtime] replay barrier flush 无缓冲事件: session_640c7469-6bac-4db6-9e7e-3de63a6b79f8
- [Axios] 响应转换: /realtime/snapshot/640c7469-6bac-4db6-9e7e-3de63a6b79f8/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"640c7469-6bac-4db6-9e7e-3de63a6b79f8","session_title":"抱歉，消息发送失败，请稍后重试","messages":[{"id":"3191","session_id":"640c7469-6bac-4db6-9e7e-3de63a6b79f8", 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"640c7469-6bac-4db6-9e7e-3de63a6b79f8","sessionTitle":"抱歉，消息发送失败，请稍后重试","messages":[{"id":"3191","sessionId":"640c7469-6bac-4db6-9e7e-3de63a6b79f8","ro
- [Axios] 响应转换: /research/status/research_2cb40d04717a/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_2cb40d04717a","status":"pending","query":"运行 ollama lis 和 ollama pst 并把结保存到D:programminglangchainlangchain_xm\test_approva.txt","session_id":"6 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_2cb40d04717a","status":"pending","query":"运行 ollama lis 和 ollama pst 并把结保存到D:programminglangchainlangchain_xm\test_approva.txt","sessionId":"640
+ [Realtime] 收到 replay 回包: channel=session:66d7fc78-a022-451c-827f-64766f82e06d, count=0, chunk=1/1
+ [Realtime] replay barrier flush 无缓冲事件: session_66d7fc78-a022-451c-827f-64766f82e06d
+ [Axios] 响应转换: /realtime/snapshot/66d7fc78-a022-451c-827f-64766f82e06d/ 
+  前: {"code":200,"message":"操作成功","data":{"session_id":"66d7fc78-a022-451c-827f-64766f82e06d","session_title":"新对话 - 代理","messages":[{"id":"3229","session_id":"66d7fc78-a022-451c-827f-64766f82e06d","role": 
+  后: {"code":200,"message":"操作成功","data":{"sessionId":"66d7fc78-a022-451c-827f-64766f82e06d","sessionTitle":"新对话 - 代理","messages":[{"id":"3229","sessionId":"66d7fc78-a022-451c-827f-64766f82e06d","role":"us
  [Realtime] 收到 pong
- [Sync] session_created 自动切换会话: 640c7469-6bac-4db6-9e7e-3de63a6b79f8 -> 6a859d29-3d3b-4558-b254-a30147802f5e
- [Realtime] replay barrier 设置 pending: session_6a859d29-3d3b-4558-b254-a30147802f5e
- [Sync] 会话创建并自动订阅: 6a859d29-3d3b-4558-b254-a30147802f5e
- [Sync] 重置 session seq 状态: 6a859d29-3d3b-4558-b254-a30147802f5e
+ [Sync] 会话删除: 2400c8b7-dae6-4736-9940-d576a8d3af5e
+ [Security] Deleted session 2400c8b7-dae6-4736-9940-d576a8d3af5e for user 1
+ [Sync] session_created 自动切换会话: 66d7fc78-a022-451c-827f-64766f82e06d -> 531ac78b-a754-454b-9582-fb2101a7f575
+ [Realtime] replay barrier 设置 pending: session_531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 会话创建并自动订阅: 531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 重置 session seq 状态: 531ac78b-a754-454b-9582-fb2101a7f575
  [toCamelCase] channel_type → channelType
  [toCamelCase] channel_id → channelId
  [toCamelCase] chunk_index → chunkIndex
  [toCamelCase] chunk_count → chunkCount
- [Realtime] 收到 replay 回包: channel=session:6a859d29-3d3b-4558-b254-a30147802f5e, count=0, chunk=1/1
- [Realtime] replay barrier flush 无缓冲事件: session_6a859d29-3d3b-4558-b254-a30147802f5e
+ [Realtime] 收到 replay 回包: channel=session:531ac78b-a754-454b-9582-fb2101a7f575, count=0, chunk=1/1
+ [Realtime] replay barrier flush 无缓冲事件: session_531ac78b-a754-454b-9582-fb2101a7f575
  [Axios] 响应转换: /chat/sessions/create/ 
-  前: {"code":200,"message":"会话创建成功","data":{"id":1565,"session_id":"6a859d29-3d3b-4558-b254-a30147802f5e","title":"新对话 - 代理","mode":"agent","selected_knowledge_base":null,"selected_knowledge_bases":[],"mes 
-  后: {"code":200,"message":"会话创建成功","data":{"id":1565,"sessionId":"6a859d29-3d3b-4558-b254-a30147802f5e","title":"新对话 - 代理","mode":"agent","selectedKnowledgeBase":null,"selectedKnowledgeBases":[],"messages
- [Security] Created new session 6a859d29-3d3b-4558-b254-a30147802f5e for user 1
- [ChatView] WebSocket 取消订阅会话事件: 640c7469-6bac-4db6-9e7e-3de63a6b79f8
+  前: {"code":200,"message":"会话创建成功","data":{"id":1582,"session_id":"531ac78b-a754-454b-9582-fb2101a7f575","title":"新对话 - 代理","mode":"agent","selected_knowledge_base":null,"selected_knowledge_bases":[],"mes 
+  后: {"code":200,"message":"会话创建成功","data":{"id":1582,"sessionId":"531ac78b-a754-454b-9582-fb2101a7f575","title":"新对话 - 代理","mode":"agent","selectedKnowledgeBase":null,"selectedKnowledgeBases":[],"messages
+ [Security] Created new session 531ac78b-a754-454b-9582-fb2101a7f575 for user 1
+ [ChatView] WebSocket 取消订阅会话事件: 66d7fc78-a022-451c-827f-64766f82e06d
+ [ChatView] WebSocket 订阅会话事件: 531ac78b-a754-454b-9582-fb2101a7f575
  [Axios] 响应转换: /chat/project-context/ 
   前: {"code":200,"message":"操作成功","data":{"project_name":"","project_root":"","languages":[],"frameworks":[],"has_git":false,"git_branch":"","instruction_content":"","directory_structure":"","key_files":[] 
   后: {"code":200,"message":"操作成功","data":{"projectName":"","projectRoot":"","languages":[],"frameworks":[],"hasGit":false,"gitBranch":"","instructionContent":"","directoryStructure":"","keyFiles":[]}}
- [ChatView] WebSocket 订阅会话事件: 6a859d29-3d3b-4558-b254-a30147802f5e
- [Axios] 响应转换: /research/status/research_2cb40d04717a/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_2cb40d04717a","status":"pending","query":"运行 ollama lis 和 ollama pst 并把结保存到D:programminglangchainlangchain_xm\test_approva.txt","session_id":"6 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_2cb40d04717a","status":"pending","query":"运行 ollama lis 和 ollama pst 并把结保存到D:programminglangchainlangchain_xm\test_approva.txt","sessionId":"640
- [ChatView] WebSocket 取消订阅会话事件: 6a859d29-3d3b-4558-b254-a30147802f5e
- [Realtime] replay barrier 设置 pending: session_640c7469-6bac-4db6-9e7e-3de63a6b79f8
- [ChatView] WebSocket 订阅会话事件: 640c7469-6bac-4db6-9e7e-3de63a6b79f8
- [toCamelCase] channel_type → channelType
- [toCamelCase] channel_id → channelId
- [toCamelCase] chunk_index → chunkIndex
- [toCamelCase] chunk_count → chunkCount
- [Realtime] 收到 replay 回包: channel=session:640c7469-6bac-4db6-9e7e-3de63a6b79f8, count=0, chunk=1/1
- [Realtime] replay barrier flush 无缓冲事件: session_640c7469-6bac-4db6-9e7e-3de63a6b79f8
- [Axios] 响应转换: /research/status/research_2cb40d04717a/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_2cb40d04717a","status":"pending","query":"运行 ollama lis 和 ollama pst 并把结保存到D:programminglangchainlangchain_xm\test_approva.txt","session_id":"6 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_2cb40d04717a","status":"pending","query":"运行 ollama lis 和 ollama pst 并把结保存到D:programminglangchainlangchain_xm\test_approva.txt","sessionId":"640
- [Axios] 响应转换: /chat/sessions/6a859d29-3d3b-4558-b254-a30147802f5e/ 
-  前: {"code":200,"message":"操作成功","data":{"id":1565,"session_id":"6a859d29-3d3b-4558-b254-a30147802f5e","title":"新对话 - 代理","mode":"agent","selected_knowledge_base":null,"selected_knowledge_bases":[],"messa 
-  后: {"code":200,"message":"操作成功","data":{"id":1565,"sessionId":"6a859d29-3d3b-4558-b254-a30147802f5e","title":"新对话 - 代理","mode":"agent","selectedKnowledgeBase":null,"selectedKnowledgeBases":[],"messages":
- [Session] Loaded detail for session 6a859d29-3d3b-4558-b254-a30147802f5e with 0 messages
- [ChatView] WebSocket 取消订阅会话事件: 640c7469-6bac-4db6-9e7e-3de63a6b79f8
- [ChatView] WebSocket 订阅会话事件: 6a859d29-3d3b-4558-b254-a30147802f5e
- [Axios] 响应转换: /chat/project-context/ 
-  前: {"code":200,"message":"操作成功","data":{"project_name":"","project_root":"","languages":[],"frameworks":[],"has_git":false,"git_branch":"","instruction_content":"","directory_structure":"","key_files":[] 
-  后: {"code":200,"message":"操作成功","data":{"projectName":"","projectRoot":"","languages":[],"frameworks":[],"hasGit":false,"gitBranch":"","instructionContent":"","directoryStructure":"","keyFiles":[]}}
- [Axios] 响应转换: /research/status/research_2cb40d04717a/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_2cb40d04717a","status":"pending","query":"运行 ollama lis 和 ollama pst 并把结保存到D:programminglangchainlangchain_xm\test_approva.txt","session_id":"6 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_2cb40d04717a","status":"pending","query":"运行 ollama lis 和 ollama pst 并把结保存到D:programminglangchainlangchain_xm\test_approva.txt","sessionId":"640
- [Realtime] 收到 pong
- [Realtime] 收到 pong
  [ChatInput] 发送消息, attachmentIds: Array(0)
  [ChatStore] sendMessage called
- [ChatStore] sessionId: 6a859d29-3d3b-4558-b254-a30147802f5e
- [Sync] 开始流式: 6a859d29-3d3b-4558-b254-a30147802f5e
+ [ChatStore] sessionId: 531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 开始流式: 531ac78b-a754-454b-9582-fb2101a7f575
  [ChatStore] streamChat 请求参数, attachmentIds: Array(0)
  [toSnakeCase] clientMessageId → client_message_id
  [toSnakeCase] chatHistory → chat_history
@@ -138,23 +107,18 @@
  [toSnakeCase] researchTaskId → research_task_id
  [toSnakeCase] continueTaskId → continue_task_id
  [toCamelCase] session_id → sessionId
- [Sync] handleMessageAdded 诊断: session=6a859d29-3d3b-4558-b254-a30147802f5e, incoming.role=user, incoming.backendId=3193, messagesCount=2, placeholderCount=2, exactMatch=false
- [Sync] 匹配到前端占位消息: session=6a859d29-3d3b-4558-b254-a30147802f5e, frontendId=jHthCqig9uXF_wwggW8DZ, backendId=3193, role=user, isStreaming=undefined, contentLen=87
- [Sync] 消息已存在，合并更新: session=6a859d29-3d3b-4558-b254-a30147802f5e, message=3193
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=1, expected=2
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=1, prev=1
+ [Sync] handleMessageAdded 诊断: session=531ac78b-a754-454b-9582-fb2101a7f575, incoming.role=user, incoming.backendId=3233, messagesCount=2, placeholderCount=2, exactMatch=false
+ [Sync] 匹配到前端占位消息: session=531ac78b-a754-454b-9582-fb2101a7f575, frontendId=E1iNaXBGbxp02cjqBdwWw, backendId=3233, role=user, isStreaming=undefined, contentLen=91
+ [Sync] 消息已存在，合并更新: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3233
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=1, expected=2
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=1, prev=1
  [toCamelCase] session_id → sessionId
- [Sync] handleMessageAdded 诊断: session=6a859d29-3d3b-4558-b254-a30147802f5e, incoming.role=assistant, incoming.backendId=3194, messagesCount=2, placeholderCount=1, exactMatch=false
- [Sync] 匹配到前端占位消息: session=6a859d29-3d3b-4558-b254-a30147802f5e, frontendId=z0Fdb4eLkyMGNOV5iiyA9, backendId=3194, role=assistant, isStreaming=undefined, contentLen=0
- [Sync] 消息已存在，合并更新: session=6a859d29-3d3b-4558-b254-a30147802f5e, message=3194
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=2, expected=3
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=2, prev=2
+ [Sync] handleMessageAdded 诊断: session=531ac78b-a754-454b-9582-fb2101a7f575, incoming.role=assistant, incoming.backendId=3234, messagesCount=2, placeholderCount=1, exactMatch=false
+ [Sync] 匹配到前端占位消息: session=531ac78b-a754-454b-9582-fb2101a7f575, frontendId=lTofuwRNOgHpUjJCfGPMm, backendId=3234, role=assistant, isStreaming=undefined, contentLen=0
+ [Sync] 消息已存在，合并更新: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3234
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=2, expected=3
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=2, prev=2
  [SSE] 未注册事件类型 "start" 被忽略
- [Sync] 未处理的 user 事件: task_created
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 跳过（触发浏览器 SSE 活跃）: session=6a859d29-3d3b-4558-b254-a30147802f5e
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=3, expected=4
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=3, prev=3
  [toSnakeCase] chainOfThought → chain_of_thought
  [toSnakeCase] attachmentIds → attachment_ids
  [toSnakeCase] researchContext → research_context
@@ -163,56 +127,23 @@
  [toSnakeCase] tokenDetail → token_detail
  [toSnakeCase] responseTime → response_time
  [toSnakeCase] researchTaskId → research_task_id
- [Axios] 响应转换: /chat/messages/3194/ 
-  前: {"code":200,"message":"消息更新成功","data":{"id":3194,"session_id":1565,"role":"assistant","content":"","sources":[],"plan":null,"chain_of_thought":[],"tool_calls":[],"approval":null,"reasoning":{},"sugges 
-  后: {"code":200,"message":"消息更新成功","data":{"id":3194,"sessionId":1565,"role":"assistant","content":"","sources":[],"plan":null,"chainOfThought":[],"toolCalls":[],"approval":null,"reasoning":{},"suggestion
- [Realtime] 收到 pong
- [Realtime] 收到 pong
- [SSE] 收到心跳
- [Realtime] 收到 pong
- [Realtime] 收到 pong
- [SSE] 收到心跳
- [Realtime] 收到 pong
- [Realtime] 收到 pong
- [SSE] 收到心跳
- [Realtime] 收到 pong
- [Realtime] 收到 pong
- [SSE] 收到心跳
- [Realtime] 收到 pong
- [Realtime] 收到 pong
- [SSE] 收到心跳
- [Realtime] 收到 pong
- [Realtime] 收到 pong
- [SSE] 收到心跳
- [Realtime] 收到 pong
- [Realtime] 收到 pong
- [SSE] 收到心跳
- [Realtime] 收到 pong
- [Realtime] 收到 pong
- [SSE] 收到心跳
+ [Axios] 响应转换: /chat/messages/3234/ 
+  前: {"code":200,"message":"消息更新成功","data":{"id":3234,"session_id":1582,"role":"assistant","content":"","sources":[],"plan":null,"chain_of_thought":[],"tool_calls":[],"approval":null,"reasoning":{},"sugges 
+  后: {"code":200,"message":"消息更新成功","data":{"id":3234,"sessionId":1582,"role":"assistant","content":"","sources":[],"plan":null,"chainOfThought":[],"toolCalls":[],"approval":null,"reasoning":{},"suggestion
  [Realtime] 收到 pong
  [toCamelCase] session_id → sessionId
- [Session] 占位 toolCall 已加入 pendingApprovals 队列: sessionId=6a859d29-3d3b-4558-b254-a30147802f5e, toolCallId=call_00_ORw8VyRFH1YgIVKLilMC0461, pendingIds=call_00_ORw8VyRFH1YgIVKLilMC0461,call_00_ORw8VyRFH1YgIVKLilMC0461
- [Sync] 审批变更: session=6a859d29-3d3b-4558-b254-a30147802f5e, chatSession=6a859d29-3d3b-4558-b254-a30147802f5e, source=deep_research, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=2a19ad1bc47d4b48a4271906777c04a1
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=4, expected=5
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=4, prev=4
+ [Sync] stream_event 跳过（触发浏览器 SSE 活跃）: session=531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=3, expected=4
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=3, prev=3
  [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_waiting 事件: sessionStore=6a859d29-3d3b-4558-b254-a30147802f5e, tool=shell_exec, toolCallId=call_00_ORw8VyRFH1YgIVKLilMC0461, mappedStatus=waiting, isResult=false, messageId=(none), source=deep_research
- [Session] pending 审批已绑定: sessionId=6a859d29-3d3b-4558-b254-a30147802f5e, toolCallId=call_00_ORw8VyRFH1YgIVKLilMC0461
- [Sync] 工具调用更新: session=6a859d29-3d3b-4558-b254-a30147802f5e, message=(兜底), tool=shell_exec, id=call_00_ORw8VyRFH1YgIVKLilMC0461, eventType=tool_call_waiting
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=5, expected=6
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=5, prev=5
+ [Sync] 收到 tool_call_pending 事件: sessionStore=531ac78b-a754-454b-9582-fb2101a7f575, tool=shell_exec, toolCallId=call_00_LF21wBjyRFszOtcfgkC22532, mappedStatus=pending, isResult=false, messageId=3234, source=chat
+ [Sync] 工具调用更新: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3234, tool=shell_exec, id=call_00_LF21wBjyRFszOtcfgkC22532, eventType=tool_call_pending
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=4, expected=5
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=4, prev=4
  [toCamelCase] session_id → sessionId
- [Session] 占位 toolCall 已加入 pendingApprovals 队列: sessionId=6a859d29-3d3b-4558-b254-a30147802f5e, toolCallId=call_01_VoXjx2JlegXi6oaX0zzd9726, pendingIds=call_01_VoXjx2JlegXi6oaX0zzd9726,call_01_VoXjx2JlegXi6oaX0zzd9726
- [Sync] 审批变更: session=6a859d29-3d3b-4558-b254-a30147802f5e, chatSession=6a859d29-3d3b-4558-b254-a30147802f5e, source=deep_research, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=2a19ad1bc47d4b48a4271906777c04a1
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=6, expected=7
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=6, prev=6
- [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_waiting 事件: sessionStore=6a859d29-3d3b-4558-b254-a30147802f5e, tool=shell_exec, toolCallId=call_01_VoXjx2JlegXi6oaX0zzd9726, mappedStatus=waiting, isResult=false, messageId=(none), source=deep_research
- [Session] pending 审批已绑定: sessionId=6a859d29-3d3b-4558-b254-a30147802f5e, toolCallId=call_01_VoXjx2JlegXi6oaX0zzd9726
- [Sync] 工具调用更新: session=6a859d29-3d3b-4558-b254-a30147802f5e, message=(兜底), tool=shell_exec, id=call_01_VoXjx2JlegXi6oaX0zzd9726, eventType=tool_call_waiting
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=7, expected=8
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=7, prev=7
+ [Sync] 审批变更: session=531ac78b-a754-454b-9582-fb2101a7f575, chatSession=531ac78b-a754-454b-9582-fb2101a7f575, source=chat, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=2a305a76218377543df4bad7c86c2ad3
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=5, expected=6
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=5, prev=5
  [toSnakeCase] chainOfThought → chain_of_thought
  [toSnakeCase] attachmentIds → attachment_ids
  [toSnakeCase] researchContext → research_context
@@ -221,21 +152,61 @@
  [toSnakeCase] tokenDetail → token_detail
  [toSnakeCase] responseTime → response_time
  [toSnakeCase] researchTaskId → research_task_id
- [Axios] 响应转换: /chat/messages/3194/ 
-  前: {"code":200,"message":"消息更新成功","data":{"id":3194,"session_id":1565,"role":"assistant","content":"","sources":[],"plan":null,"chain_of_thought":[],"tool_calls":[{"id":"call_00_ORw8VyRFH1YgIVKLilMC0461" 
-  后: {"code":200,"message":"消息更新成功","data":{"id":3194,"sessionId":1565,"role":"assistant","content":"","sources":[],"plan":null,"chainOfThought":[],"toolCalls":[{"id":"call_00_ORw8VyRFH1YgIVKLilMC0461","ar
- [Axios] 响应转换: /realtime/snapshot/6a859d29-3d3b-4558-b254-a30147802f5e/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"6a859d29-3d3b-4558-b254-a30147802f5e","session_title":"新对话 - 代理","messages":[{"id":"3193","session_id":"6a859d29-3d3b-4558-b254-a30147802f5e","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"6a859d29-3d3b-4558-b254-a30147802f5e","sessionTitle":"新对话 - 代理","messages":[{"id":"3193","sessionId":"6a859d29-3d3b-4558-b254-a30147802f5e","role":"us
- [SnapshotSync] 消息校对完成: session=6a859d29-3d3b-4558-b254-a30147802f5e, count=2
- [SnapshotSync] 快照校对成功: session=6a859d29-3d3b-4558-b254-a30147802f5e
- [Realtime] 收到 pong
- [SSE] 收到心跳
- [Realtime] 收到 pong
- [Realtime] 收到 pong
- [SSE] 收到心跳
- [Realtime] 收到 pong
- [Research] updateToolCallApprovalState: task 不存在, taskId=research_dcd879504196
+ [toCamelCase] session_id → sessionId
+ [Sync] 收到 tool_call_waiting 事件: sessionStore=531ac78b-a754-454b-9582-fb2101a7f575, tool=shell_exec, toolCallId=call_00_LF21wBjyRFszOtcfgkC22532, mappedStatus=waiting, isResult=false, messageId=3234, source=chat
+ [Sync] 工具调用更新: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3234, tool=shell_exec, id=call_00_LF21wBjyRFszOtcfgkC22532, eventType=tool_call_waiting
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=6, expected=7
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=6, prev=6
+ [toCamelCase] session_id → sessionId
+ [Sync] stream_event 跳过（触发浏览器 SSE 活跃）: session=531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=7, expected=8
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=7, prev=7
+ [toCamelCase] session_id → sessionId
+ [Session] 占位 toolCall 已加入 pendingApprovals 队列: sessionId=531ac78b-a754-454b-9582-fb2101a7f575, toolCallId=call_01_rqoGhH9p4ibS52AAvTqY7425, pendingIds=call_01_rqoGhH9p4ibS52AAvTqY7425,call_01_rqoGhH9p4ibS52AAvTqY7425
+ [Sync] 审批变更: session=531ac78b-a754-454b-9582-fb2101a7f575, chatSession=531ac78b-a754-454b-9582-fb2101a7f575, source=chat, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=2a305a76218377543df4bad7c86c2ad3
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=8, expected=9
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=8, prev=8
+ [toCamelCase] session_id → sessionId
+ [Sync] 收到 tool_call_waiting 事件: sessionStore=531ac78b-a754-454b-9582-fb2101a7f575, tool=shell_exec, toolCallId=call_01_rqoGhH9p4ibS52AAvTqY7425, mappedStatus=waiting, isResult=false, messageId=3234, source=chat
+ [Session] pending 审批已绑定: sessionId=531ac78b-a754-454b-9582-fb2101a7f575, toolCallId=call_01_rqoGhH9p4ibS52AAvTqY7425
+ [Sync] 工具调用更新: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3234, tool=shell_exec, id=call_01_rqoGhH9p4ibS52AAvTqY7425, eventType=tool_call_waiting
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=9, expected=10
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=9, prev=9
+ [toCamelCase] session_id → sessionId
+ [Sync] stream_event 跳过（触发浏览器 SSE 活跃）: session=531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=10, expected=11
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=10, prev=10
+ [SSE] 未注册事件类型 "interrupted" 被忽略
+ [toCamelCase] session_id → sessionId
+ [Sync] stream_interrupted 消息进入 INTERRUPTED 状态: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3234, task=(无)
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=11, expected=12
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=11, prev=11
+ [SSE] 未注册事件类型 "end" 被忽略
+ [toCamelCase] session_id → sessionId
+ [Sync] stream_event 跳过（触发浏览器 SSE 活跃）: session=531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=12, expected=13
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=12, prev=12
+ [toCamelCase] session_id → sessionId
+ [Sync] stream_event 跳过（触发浏览器 SSE 活跃）: session=531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=13, expected=14
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=13, prev=13
+ [toCamelCase] session_id → sessionId
+ [Sync] 消息更新(流式期间仅 toolCalls): session=531ac78b-a754-454b-9582-fb2101a7f575, message=3234
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=14, expected=15
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=14, prev=14
+ [useStreamFinalizer] 消息状态为 INTERRUPTED 且无 researchTaskId，跳过最终化: session=531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 结束流式: 531ac78b-a754-454b-9582-fb2101a7f575
+ [Axios] 响应转换: /chat/messages/3234/ 
+  前: {"code":200,"message":"消息更新成功","data":{"id":3234,"session_id":1582,"role":"assistant","content":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` 应该是 `ollama list`（列出已安装模型）和 `ollama ps`（列出正在运行的模型），先运行这两个命令获取结果：","source 
+  后: {"code":200,"message":"消息更新成功","data":{"id":3234,"sessionId":1582,"role":"assistant","content":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` 应该是 `ollama list`（列出已安装模型）和 `ollama ps`（列出正在运行的模型），先运行这两个命令获取结果：","sources
+ [Axios] 响应转换: /chat/sessions/531ac78b-a754-454b-9582-fb2101a7f575/ 
+  前: {"code":200,"message":"会话更新成功","data":{"id":1582,"session_id":"531ac78b-a754-454b-9582-fb2101a7f575","title":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` ...","mode":"agent","selected_knowledge_base":null,"selected 
+  后: {"code":200,"message":"会话更新成功","data":{"id":1582,"sessionId":"531ac78b-a754-454b-9582-fb2101a7f575","title":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` ...","mode":"agent","selectedKnowledgeBase":null,"selectedKno
+ [Axios] 响应转换: /realtime/snapshot/531ac78b-a754-454b-9582-fb2101a7f575/ 
+  前: {"code":200,"message":"操作成功","data":{"session_id":"531ac78b-a754-454b-9582-fb2101a7f575","session_title":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` ...","messages":[{"id":"3233","session_id":"531ac78b-a754-454b-9 
+  后: {"code":200,"message":"操作成功","data":{"sessionId":"531ac78b-a754-454b-9582-fb2101a7f575","sessionTitle":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` ...","messages":[{"id":"3233","sessionId":"531ac78b-a754-454b-9582
+ [SnapshotSync] 消息校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=2
+ [SnapshotSync] 快照校对成功: session=531ac78b-a754-454b-9582-fb2101a7f575
  [toSnakeCase] providerId → provider_id
  [toSnakeCase] modelName → model_name
  [toSnakeCase] useDeepThinking → use_deep_thinking
@@ -249,27 +220,199 @@
  [toSnakeCase] useKnowledgeBase → use_knowledge_base
  [toSnakeCase] selectedKnowledgeBases → selected_knowledge_bases
  [toCamelCase] session_id → sessionId
- [Sync] 审批变更: session=6a859d29-3d3b-4558-b254-a30147802f5e, chatSession=6a859d29-3d3b-4558-b254-a30147802f5e, source=deep_research, tool=shell_exec, eventType=approval_waiting, mappedState=waiting, graphInterruptId=2a19ad1bc47d4b48a4271906777c04a1
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=8, expected=9
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=8, prev=8
- [Sync] 开始流式: 6a859d29-3d3b-4558-b254-a30147802f5e
+ [Sync] 审批变更: session=531ac78b-a754-454b-9582-fb2101a7f575, chatSession=531ac78b-a754-454b-9582-fb2101a7f575, source=chat, tool=shell_exec, eventType=approval_waiting, mappedState=waiting, graphInterruptId=2a305a76218377543df4bad7c86c2ad3
+ [toSnakeCase] chainOfThought → chain_of_thought
+ [toSnakeCase] attachmentIds → attachment_ids
+ [toSnakeCase] researchContext → research_context
+ [toSnakeCase] currentVersion → current_version
+ [toSnakeCase] tokenCount → token_count
+ [toSnakeCase] tokenDetail → token_detail
+ [toSnakeCase] responseTime → response_time
+ [toSnakeCase] researchTaskId → research_task_id
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=15, expected=16
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=15, prev=15
+ [Sync] 开始流式: 531ac78b-a754-454b-9582-fb2101a7f575
+ [Axios] 响应转换: /chat/messages/3234/ 
+  前: {"code":200,"message":"消息更新成功","data":{"id":3234,"session_id":1582,"role":"assistant","content":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` 应该是 `ollama list`（列出已安装模型）和 `ollama ps`（列出正在运行的模型），先运行这两个命令获取结果：","source 
+  后: {"code":200,"message":"消息更新成功","data":{"id":3234,"sessionId":1582,"role":"assistant","content":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` 应该是 `ollama list`（列出已安装模型）和 `ollama ps`（列出正在运行的模型），先运行这两个命令获取结果：","sources
  [toSnakeCase] sessionId → session_id
  [toSnakeCase] messageId → message_id
  [toCamelCase] session_id → sessionId
- [Sync] stream_finalized 请求浏览器标记 completed: session=6a859d29-3d3b-4558-b254-a30147802f5e, message=3194, wasCompleted=false
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=9, expected=10
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=9, prev=9
- [useStreamFinalizer] 通知后端 stream_finalized: session=6a859d29-3d3b-4558-b254-a30147802f5e, msg=3194
- [Sync] 结束流式: 6a859d29-3d3b-4558-b254-a30147802f5e
- [Axios] 响应转换: /realtime/snapshot/6a859d29-3d3b-4558-b254-a30147802f5e/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"6a859d29-3d3b-4558-b254-a30147802f5e","session_title":"新对话 - 代理","messages":[{"id":"3193","session_id":"6a859d29-3d3b-4558-b254-a30147802f5e","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"6a859d29-3d3b-4558-b254-a30147802f5e","sessionTitle":"新对话 - 代理","messages":[{"id":"3193","sessionId":"6a859d29-3d3b-4558-b254-a30147802f5e","role":"us
- [SnapshotSync] 消息校对完成: session=6a859d29-3d3b-4558-b254-a30147802f5e, count=2
- [SnapshotSync] 快照校对成功: session=6a859d29-3d3b-4558-b254-a30147802f5e
+ [Sync] stream_finalized 请求浏览器标记 completed: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3234, wasCompleted=false
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=16, expected=17
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=16, prev=16
+ [useStreamFinalizer] 通知后端 stream_finalized: session=531ac78b-a754-454b-9582-fb2101a7f575, msg=3234
+ [Sync] 结束流式: 531ac78b-a754-454b-9582-fb2101a7f575
+ [Axios] 响应转换: /realtime/snapshot/531ac78b-a754-454b-9582-fb2101a7f575/ 
+  前: {"code":200,"message":"操作成功","data":{"session_id":"531ac78b-a754-454b-9582-fb2101a7f575","session_title":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` ...","messages":[{"id":"3233","session_id":"531ac78b-a754-454b-9 
+  后: {"code":200,"message":"操作成功","data":{"sessionId":"531ac78b-a754-454b-9582-fb2101a7f575","sessionTitle":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` ...","messages":[{"id":"3233","sessionId":"531ac78b-a754-454b-9582
+ [SnapshotSync] 消息校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=2
+ [SnapshotSync] 快照校对成功: session=531ac78b-a754-454b-9582-fb2101a7f575
+ [toCamelCase] session_id → sessionId
+ [Sync] 审批变更: session=531ac78b-a754-454b-9582-fb2101a7f575, chatSession=531ac78b-a754-454b-9582-fb2101a7f575, source=chat, tool=shell_exec, eventType=approval_processing, mappedState=processing, graphInterruptId=2a305a76218377543df4bad7c86c2ad3
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=17, expected=18
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=17, prev=17
+ [toCamelCase] session_id → sessionId
+ [Sync] 收到 tool_call_running 事件: sessionStore=531ac78b-a754-454b-9582-fb2101a7f575, tool=shell_exec, toolCallId=call_01_rqoGhH9p4ibS52AAvTqY7425, mappedStatus=running, isResult=false, messageId=3234, source=chat
+ [Sync] 工具调用更新: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3234, tool=shell_exec, id=call_01_rqoGhH9p4ibS52AAvTqY7425, eventType=tool_call_running
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=18, expected=19
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=18, prev=18
+ [toCamelCase] session_id → sessionId
+ [Sync] 收到 tool_call_completed 事件: sessionStore=531ac78b-a754-454b-9582-fb2101a7f575, tool=shell_exec, toolCallId=call_01_rqoGhH9p4ibS52AAvTqY7425, mappedStatus=completed, isResult=true, messageId=3234, source=chat
+ [Sync] 工具调用结果: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3234, tool=shell_exec, id=call_01_rqoGhH9p4ibS52AAvTqY7425, eventType=tool_call_completed
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=19, expected=20
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=19, prev=19
+ [toCamelCase] session_id → sessionId
+ [Sync] 收到 tool_call_completed 事件: sessionStore=531ac78b-a754-454b-9582-fb2101a7f575, tool=shell_exec, toolCallId=call_00_LF21wBjyRFszOtcfgkC22532, mappedStatus=completed, isResult=true, messageId=3234, source=chat
+ [Sync] 工具调用结果: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3234, tool=shell_exec, id=call_00_LF21wBjyRFszOtcfgkC22532, eventType=tool_call_completed
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=20, expected=21
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=20, prev=20
+ [Axios] 响应转换: /realtime/snapshot/531ac78b-a754-454b-9582-fb2101a7f575/ 
+  前: {"code":200,"message":"操作成功","data":{"session_id":"531ac78b-a754-454b-9582-fb2101a7f575","session_title":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` ...","messages":[{"id":"3233","session_id":"531ac78b-a754-454b-9 
+  后: {"code":200,"message":"操作成功","data":{"sessionId":"531ac78b-a754-454b-9582-fb2101a7f575","sessionTitle":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` ...","messages":[{"id":"3233","sessionId":"531ac78b-a754-454b-9582
+ [SnapshotSync] 消息校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=2
+ [SnapshotSync] 工具调用校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=2
+ [SnapshotSync] 审批校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=2
+ [SnapshotSync] 快照校对成功: session=531ac78b-a754-454b-9582-fb2101a7f575
+ [toCamelCase] session_id → sessionId
+ [Sync] stream_event 处理: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3234, type=stream_content_update
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=21, expected=22
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=21, prev=21
+ [toCamelCase] session_id → sessionId
+ [Sync] 收到 tool_call_pending 事件: sessionStore=531ac78b-a754-454b-9582-fb2101a7f575, tool=fs_write_file, toolCallId=call_00_wW8WnPFRI2ulkrNmA6fV7938, mappedStatus=pending, isResult=false, messageId=3234, source=chat
+ [Sync] 工具调用更新: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3234, tool=fs_write_file, id=call_00_wW8WnPFRI2ulkrNmA6fV7938, eventType=tool_call_pending
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=22, expected=23
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=22, prev=22
+ [toSnakeCase] chainOfThought → chain_of_thought
+ [toSnakeCase] attachmentIds → attachment_ids
+ [toSnakeCase] researchContext → research_context
+ [toSnakeCase] currentVersion → current_version
+ [toSnakeCase] tokenCount → token_count
+ [toSnakeCase] tokenDetail → token_detail
+ [toSnakeCase] responseTime → response_time
+ [toSnakeCase] researchTaskId → research_task_id
+ [toCamelCase] session_id → sessionId
+ [Sync] 消息更新: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3234
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=23, expected=24
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=23, prev=23
+ [toCamelCase] session_id → sessionId
+ [Sync] 审批变更: session=531ac78b-a754-454b-9582-fb2101a7f575, chatSession=531ac78b-a754-454b-9582-fb2101a7f575, source=chat, tool=shell_exec, eventType=approval_rejected, mappedState=rejected, graphInterruptId=2a305a76218377543df4bad7c86c2ad3
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=24, expected=25
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=24, prev=24
+ [Axios] 响应转换: /chat/messages/3234/ 
+  前: {"code":200,"message":"消息更新成功","data":{"id":3234,"session_id":1582,"role":"assistant","content":"两个","sources":[],"plan":null,"chain_of_thought":[],"tool_calls":[{"id":"call_00_LF21wBjyRFszOtcfgkC2253 
+  后: {"code":200,"message":"消息更新成功","data":{"id":3234,"sessionId":1582,"role":"assistant","content":"两个","sources":[],"plan":null,"chainOfThought":[],"toolCalls":[{"id":"call_00_LF21wBjyRFszOtcfgkC22532","
+ [toCamelCase] session_id → sessionId
+ [Sync] 审批变更: session=531ac78b-a754-454b-9582-fb2101a7f575, chatSession=531ac78b-a754-454b-9582-fb2101a7f575, source=chat, tool=shell_exec, eventType=approval_approved, mappedState=approved, graphInterruptId=2a305a76218377543df4bad7c86c2ad3
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=25, expected=26
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=25, prev=25
+ [Axios] 响应转换: /realtime/snapshot/531ac78b-a754-454b-9582-fb2101a7f575/ 
+  前: {"code":200,"message":"操作成功","data":{"session_id":"531ac78b-a754-454b-9582-fb2101a7f575","session_title":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` ...","messages":[{"id":"3233","session_id":"531ac78b-a754-454b-9 
+  后: {"code":200,"message":"操作成功","data":{"sessionId":"531ac78b-a754-454b-9582-fb2101a7f575","sessionTitle":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` ...","messages":[{"id":"3233","sessionId":"531ac78b-a754-454b-9582
+ [SnapshotSync] 消息校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=2
+ [SnapshotSync] 工具调用校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=2
+ [SnapshotSync] 审批校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=2
+ [SnapshotSync] 快照校对成功: session=531ac78b-a754-454b-9582-fb2101a7f575
  [Realtime] 收到 pong
- [SSE] 收到心跳
  [Realtime] 收到 pong
- [Research] updateToolCallApprovalState: task 不存在, taskId=research_dcd879504196
+ [ChatInput] 发送消息, attachmentIds: Array(0)
+ [ChatStore] sendMessage called
+ [ChatStore] sessionId: 531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 开始流式: 531ac78b-a754-454b-9582-fb2101a7f575
+ [ChatStore] streamChat 请求参数, attachmentIds: Array(0)
+ [toSnakeCase] clientMessageId → client_message_id
+ [toSnakeCase] chatHistory → chat_history
+ [toSnakeCase] useTools → use_tools
+ [toSnakeCase] useWebSearch → use_web_search
+ [toSnakeCase] useKnowledgeBase → use_knowledge_base
+ [toSnakeCase] useDeepThinking → use_deep_thinking
+ [toSnakeCase] useMcp → use_mcp
+ [toSnakeCase] selectedMcpServers → selected_mcp_servers
+ [toSnakeCase] selectedTools → selected_tools
+ [toSnakeCase] sessionId → session_id
+ [toSnakeCase] selectedKnowledgeBase → selected_knowledge_base
+ [toSnakeCase] selectedKnowledgeBases → selected_knowledge_bases
+ [toSnakeCase] attachmentIds → attachment_ids
+ [toSnakeCase] providerId → provider_id
+ [toSnakeCase] modelName → model_name
+ [toSnakeCase] specialParams → special_params
+ [toSnakeCase] maxTokens → max_tokens
+ [toSnakeCase] researchTaskId → research_task_id
+ [toSnakeCase] continueTaskId → continue_task_id
+ [toCamelCase] session_id → sessionId
+ [Sync] handleMessageAdded 诊断: session=531ac78b-a754-454b-9582-fb2101a7f575, incoming.role=user, incoming.backendId=3235, messagesCount=4, placeholderCount=2, exactMatch=false
+ [Sync] 匹配到前端占位消息: session=531ac78b-a754-454b-9582-fb2101a7f575, frontendId=CPb1FXsYYn8oF7LdN5NTY, backendId=3235, role=user, isStreaming=undefined, contentLen=2
+ [Sync] 消息已存在，合并更新: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3235
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=26, expected=27
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=26, prev=26
+ [toCamelCase] session_id → sessionId
+ [Sync] handleMessageAdded 诊断: session=531ac78b-a754-454b-9582-fb2101a7f575, incoming.role=assistant, incoming.backendId=3236, messagesCount=4, placeholderCount=1, exactMatch=false
+ [Sync] 匹配到前端占位消息: session=531ac78b-a754-454b-9582-fb2101a7f575, frontendId=koDmq_DMWEfnV8qrD7oGA, backendId=3236, role=assistant, isStreaming=undefined, contentLen=0
+ [Sync] 消息已存在，合并更新: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3236
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=27, expected=28
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=27, prev=27
+ [SSE] 未注册事件类型 "start" 被忽略
+ [Realtime] 收到 pong
+ [toCamelCase] session_id → sessionId
+ [Sync] stream_event 跳过（触发浏览器 SSE 活跃）: session=531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=28, expected=29
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=28, prev=28
+ [toCamelCase] session_id → sessionId
+ [Sync] 收到 tool_call_pending 事件: sessionStore=531ac78b-a754-454b-9582-fb2101a7f575, tool=file_reader, toolCallId=call_00_TqrVIkJPSVkMaq6bGBqa4932, mappedStatus=pending, isResult=false, messageId=3236, source=chat
+ [Sync] 工具调用更新: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3236, tool=file_reader, id=call_00_TqrVIkJPSVkMaq6bGBqa4932, eventType=tool_call_pending
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=29, expected=30
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=29, prev=29
+ [toCamelCase] session_id → sessionId
+ [Sync] 审批变更: session=531ac78b-a754-454b-9582-fb2101a7f575, chatSession=531ac78b-a754-454b-9582-fb2101a7f575, source=chat, tool=file_reader, eventType=approval_pending, mappedState=pending, graphInterruptId=fff14113dddabd16109a0bebef5624ed
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=30, expected=31
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=30, prev=30
+ [toCamelCase] session_id → sessionId
+ [Sync] 收到 tool_call_waiting 事件: sessionStore=531ac78b-a754-454b-9582-fb2101a7f575, tool=file_reader, toolCallId=call_00_TqrVIkJPSVkMaq6bGBqa4932, mappedStatus=waiting, isResult=false, messageId=3236, source=chat
+ [Sync] 工具调用更新: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3236, tool=file_reader, id=call_00_TqrVIkJPSVkMaq6bGBqa4932, eventType=tool_call_waiting
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=31, expected=32
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=31, prev=31
+ [toCamelCase] session_id → sessionId
+ [Sync] stream_event 跳过（触发浏览器 SSE 活跃）: session=531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=32, expected=33
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=32, prev=32
+ [SSE] 未注册事件类型 "interrupted" 被忽略
+ [toCamelCase] session_id → sessionId
+ [Sync] stream_interrupted 消息进入 INTERRUPTED 状态: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3236, task=(无)
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=33, expected=34
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=33, prev=33
+ [SSE] 未注册事件类型 "end" 被忽略
+ [toCamelCase] session_id → sessionId
+ [Sync] stream_event 跳过（触发浏览器 SSE 活跃）: session=531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=34, expected=35
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=34, prev=34
+ [toCamelCase] session_id → sessionId
+ [Sync] stream_event 跳过（触发浏览器 SSE 活跃）: session=531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=35, expected=36
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=35, prev=35
+ [toCamelCase] session_id → sessionId
+ [Sync] 消息更新(流式期间仅 toolCalls): session=531ac78b-a754-454b-9582-fb2101a7f575, message=3236
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=36, expected=37
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=36, prev=36
+ [useStreamFinalizer] 消息状态为 INTERRUPTED 且无 researchTaskId，跳过最终化: session=531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 结束流式: 531ac78b-a754-454b-9582-fb2101a7f575
+ [toSnakeCase] chainOfThought → chain_of_thought
+ [toSnakeCase] attachmentIds → attachment_ids
+ [toSnakeCase] researchContext → research_context
+ [toSnakeCase] currentVersion → current_version
+ [toSnakeCase] tokenCount → token_count
+ [toSnakeCase] tokenDetail → token_detail
+ [toSnakeCase] responseTime → response_time
+ [toSnakeCase] researchTaskId → research_task_id
+ [Axios] 响应转换: /chat/messages/3236/ 
+  前: {"code":200,"message":"消息更新成功","data":{"id":3236,"session_id":1582,"role":"assistant","content":"已经获取到两个命令的输出结果。现在将结果保存到指定文件。先检查目标文件是否存在：","sources":[],"plan":null,"chain_of_thought":[],"tool_calls":[ 
+  后: {"code":200,"message":"消息更新成功","data":{"id":3236,"sessionId":1582,"role":"assistant","content":"已经获取到两个命令的输出结果。现在将结果保存到指定文件。先检查目标文件是否存在：","sources":[],"plan":null,"chainOfThought":[],"toolCalls":[{"id
+ [Axios] 响应转换: /realtime/snapshot/531ac78b-a754-454b-9582-fb2101a7f575/ 
+  前: {"code":200,"message":"操作成功","data":{"session_id":"531ac78b-a754-454b-9582-fb2101a7f575","session_title":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` ...","messages":[{"id":"3233","session_id":"531ac78b-a754-454b-9 
+  后: {"code":200,"message":"操作成功","data":{"sessionId":"531ac78b-a754-454b-9582-fb2101a7f575","sessionTitle":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` ...","messages":[{"id":"3233","sessionId":"531ac78b-a754-454b-9582
+ [SnapshotSync] 消息校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=4
+ [SnapshotSync] 工具调用校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=2
+ [SnapshotSync] 审批校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=2
+ [SnapshotSync] 快照校对成功: session=531ac78b-a754-454b-9582-fb2101a7f575
  [toSnakeCase] providerId → provider_id
  [toSnakeCase] modelName → model_name
  [toSnakeCase] useDeepThinking → use_deep_thinking
@@ -283,54 +426,60 @@
  [toSnakeCase] useKnowledgeBase → use_knowledge_base
  [toSnakeCase] selectedKnowledgeBases → selected_knowledge_bases
  [toCamelCase] session_id → sessionId
- [Sync] 审批变更: session=6a859d29-3d3b-4558-b254-a30147802f5e, chatSession=6a859d29-3d3b-4558-b254-a30147802f5e, source=deep_research, tool=shell_exec, eventType=approval_processing, mappedState=processing, graphInterruptId=2a19ad1bc47d4b48a4271906777c04a1
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=10, expected=11
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=10, prev=10
+ [Sync] 批量审批 sibling approved/processing，INTERRUPTED → STREAMING: session=531ac78b-a754-454b-9582-fb2101a7f575, source=chat, graphInterruptId=fff14113dddabd16109a0bebef5624ed, message=3236, siblings=1
+ [Sync] 审批变更: session=531ac78b-a754-454b-9582-fb2101a7f575, chatSession=531ac78b-a754-454b-9582-fb2101a7f575, source=chat, tool=file_reader, eventType=approval_processing, mappedState=processing, graphInterruptId=fff14113dddabd16109a0bebef5624ed
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=37, expected=38
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=37, prev=37
  [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_running 事件: sessionStore=6a859d29-3d3b-4558-b254-a30147802f5e, tool=shell_exec, toolCallId=call_01_VoXjx2JlegXi6oaX0zzd9726, mappedStatus=running, isResult=false, messageId=(none), source=deep_research
- [Sync] 工具调用更新: session=6a859d29-3d3b-4558-b254-a30147802f5e, message=(兜底), tool=shell_exec, id=call_01_VoXjx2JlegXi6oaX0zzd9726, eventType=tool_call_running
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=11, expected=12
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=11, prev=11
- [Sync] 开始流式: 6a859d29-3d3b-4558-b254-a30147802f5e
- [toSnakeCase] sessionId → session_id
- [toSnakeCase] messageId → message_id
+ [Sync] 收到 tool_call_running 事件: sessionStore=531ac78b-a754-454b-9582-fb2101a7f575, tool=file_reader, toolCallId=call_00_TqrVIkJPSVkMaq6bGBqa4932, mappedStatus=running, isResult=false, messageId=3236, source=chat
+ [Sync] 工具调用更新: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3236, tool=file_reader, id=call_00_TqrVIkJPSVkMaq6bGBqa4932, eventType=tool_call_running
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=38, expected=39
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=38, prev=38
+ [Sync] 开始流式: 531ac78b-a754-454b-9582-fb2101a7f575
  [toCamelCase] session_id → sessionId
- [Sync] stream_finalized 请求浏览器标记 completed: session=6a859d29-3d3b-4558-b254-a30147802f5e, message=3194, wasCompleted=false
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=12, expected=13
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=12, prev=12
- [useStreamFinalizer] 通知后端 stream_finalized: session=6a859d29-3d3b-4558-b254-a30147802f5e, msg=3194
- [Sync] 结束流式: 6a859d29-3d3b-4558-b254-a30147802f5e
+ [Sync] 收到 tool_call_completed 事件: sessionStore=531ac78b-a754-454b-9582-fb2101a7f575, tool=file_reader, toolCallId=call_00_TqrVIkJPSVkMaq6bGBqa4932, mappedStatus=completed, isResult=true, messageId=3236, source=chat
+ [Sync] 工具调用结果: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3236, tool=file_reader, id=call_00_TqrVIkJPSVkMaq6bGBqa4932, eventType=tool_call_completed
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=39, expected=40
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=39, prev=39
+ [Axios] 响应转换: /realtime/snapshot/531ac78b-a754-454b-9582-fb2101a7f575/ 
+  前: {"code":200,"message":"操作成功","data":{"session_id":"531ac78b-a754-454b-9582-fb2101a7f575","session_title":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` ...","messages":[{"id":"3233","session_id":"531ac78b-a754-454b-9 
+  后: {"code":200,"message":"操作成功","data":{"sessionId":"531ac78b-a754-454b-9582-fb2101a7f575","sessionTitle":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` ...","messages":[{"id":"3233","sessionId":"531ac78b-a754-454b-9582
+ [SnapshotSync] 消息校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=4
+ [SnapshotSync] 工具调用校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=3
+ [SnapshotSync] 审批校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=3
+ [SnapshotSync] 快照校对成功: session=531ac78b-a754-454b-9582-fb2101a7f575
  [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_completed 事件: sessionStore=6a859d29-3d3b-4558-b254-a30147802f5e, tool=shell_exec, toolCallId=call_01_VoXjx2JlegXi6oaX0zzd9726, mappedStatus=completed, isResult=true, messageId=(none), source=deep_research
- [Sync] 工具调用结果: session=6a859d29-3d3b-4558-b254-a30147802f5e, message=(兜底), tool=shell_exec, id=call_01_VoXjx2JlegXi6oaX0zzd9726, eventType=tool_call_completed
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=13, expected=14
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=13, prev=13
+ [Sync] stream_event 跳过（触发浏览器 SSE 活跃）: session=531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=40, expected=41
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=40, prev=40
  [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_completed 事件: sessionStore=6a859d29-3d3b-4558-b254-a30147802f5e, tool=shell_exec, toolCallId=call_00_ORw8VyRFH1YgIVKLilMC0461, mappedStatus=completed, isResult=true, messageId=(none), source=deep_research
- [Sync] 工具调用结果: session=6a859d29-3d3b-4558-b254-a30147802f5e, message=(兜底), tool=shell_exec, id=call_00_ORw8VyRFH1YgIVKLilMC0461, eventType=tool_call_completed
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=14, expected=15
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=14, prev=14
- [Axios] 响应转换: /realtime/snapshot/6a859d29-3d3b-4558-b254-a30147802f5e/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"6a859d29-3d3b-4558-b254-a30147802f5e","session_title":"新对话 - 代理","messages":[{"id":"3193","session_id":"6a859d29-3d3b-4558-b254-a30147802f5e","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"6a859d29-3d3b-4558-b254-a30147802f5e","sessionTitle":"新对话 - 代理","messages":[{"id":"3193","sessionId":"6a859d29-3d3b-4558-b254-a30147802f5e","role":"us
- [SnapshotSync] 消息校对完成: session=6a859d29-3d3b-4558-b254-a30147802f5e, count=2
- [SnapshotSync] 工具调用校对完成: session=6a859d29-3d3b-4558-b254-a30147802f5e, count=2
- [SnapshotSync] 审批校对完成: session=6a859d29-3d3b-4558-b254-a30147802f5e, count=2
- [SnapshotSync] 快照校对成功: session=6a859d29-3d3b-4558-b254-a30147802f5e
- [Realtime] 收到 pong
- [SSE] 收到心跳
+ [Sync] stream_event 跳过（触发浏览器 SSE 活跃）: session=531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=41, expected=42
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=41, prev=41
  [toCamelCase] session_id → sessionId
- [Session] 占位 toolCall 已加入 pendingApprovals 队列: sessionId=6a859d29-3d3b-4558-b254-a30147802f5e, toolCallId=call_01_JGpwbtnfjNKA4RcqHyiA4025, pendingIds=call_01_JGpwbtnfjNKA4RcqHyiA4025,call_01_JGpwbtnfjNKA4RcqHyiA4025
- [Sync] approval_pending completed → INTERRUPTED: session=6a859d29-3d3b-4558-b254-a30147802f5e, source=deep_research, graphInterruptId=052ca21c24984128af66af4d00812bd3, message=3194
- [Sync] 审批变更: session=6a859d29-3d3b-4558-b254-a30147802f5e, chatSession=6a859d29-3d3b-4558-b254-a30147802f5e, source=deep_research, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=052ca21c24984128af66af4d00812bd3
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=15, expected=16
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=15, prev=15
+ [Sync] stream_event 跳过（触发浏览器 SSE 活跃）: session=531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=42, expected=43
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=42, prev=42
  [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_waiting 事件: sessionStore=6a859d29-3d3b-4558-b254-a30147802f5e, tool=shell_exec, toolCallId=call_01_JGpwbtnfjNKA4RcqHyiA4025, mappedStatus=waiting, isResult=false, messageId=(none), source=deep_research
- [Session] pending 审批已绑定: sessionId=6a859d29-3d3b-4558-b254-a30147802f5e, toolCallId=call_01_JGpwbtnfjNKA4RcqHyiA4025
- [Sync] 工具调用更新: session=6a859d29-3d3b-4558-b254-a30147802f5e, message=(兜底), tool=shell_exec, id=call_01_JGpwbtnfjNKA4RcqHyiA4025, eventType=tool_call_waiting
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=16, expected=17
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=16, prev=16
+ [Sync] stream_event 跳过（触发浏览器 SSE 活跃）: session=531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=43, expected=44
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=43, prev=43
+ [toCamelCase] session_id → sessionId
+ [Sync] stream_event 跳过（触发浏览器 SSE 活跃）: session=531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=44, expected=45
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=44, prev=44
+ [toCamelCase] session_id → sessionId
+ [Sync] stream_event 跳过（触发浏览器 SSE 活跃）: session=531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=45, expected=46
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=45, prev=45
+ [toCamelCase] session_id → sessionId
+ [Sync] 消息更新(流式期间仅 toolCalls): session=531ac78b-a754-454b-9582-fb2101a7f575, message=3236
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=46, expected=47
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=46, prev=46
+ [toCamelCase] session_id → sessionId
+ [Sync] 审批变更: session=531ac78b-a754-454b-9582-fb2101a7f575, chatSession=531ac78b-a754-454b-9582-fb2101a7f575, source=chat, tool=file_reader, eventType=approval_approved, mappedState=approved, graphInterruptId=fff14113dddabd16109a0bebef5624ed
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=47, expected=48
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=47, prev=47
  [toSnakeCase] chainOfThought → chain_of_thought
  [toSnakeCase] attachmentIds → attachment_ids
  [toSnakeCase] researchContext → research_context
@@ -339,92 +488,81 @@
  [toSnakeCase] tokenDetail → token_detail
  [toSnakeCase] responseTime → response_time
  [toSnakeCase] researchTaskId → research_task_id
- [Axios] 响应转换: /chat/messages/3194/ 
-  前: {"code":200,"message":"消息更新成功","data":{"id":3194,"session_id":1565,"role":"assistant","content":"","sources":[],"plan":null,"chain_of_thought":[],"tool_calls":[{"id":"call_00_ORw8VyRFH1YgIVKLilMC0461" 
-  后: {"code":200,"message":"消息更新成功","data":{"id":3194,"sessionId":1565,"role":"assistant","content":"","sources":[],"plan":null,"chainOfThought":[],"toolCalls":[{"id":"call_00_ORw8VyRFH1YgIVKLilMC0461","ar
- [Axios] 响应转换: /realtime/snapshot/6a859d29-3d3b-4558-b254-a30147802f5e/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"6a859d29-3d3b-4558-b254-a30147802f5e","session_title":"新对话 - 代理","messages":[{"id":"3193","session_id":"6a859d29-3d3b-4558-b254-a30147802f5e","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"6a859d29-3d3b-4558-b254-a30147802f5e","sessionTitle":"新对话 - 代理","messages":[{"id":"3193","sessionId":"6a859d29-3d3b-4558-b254-a30147802f5e","role":"us
- [SnapshotSync] 消息校对完成: session=6a859d29-3d3b-4558-b254-a30147802f5e, count=2
- [SnapshotSync] 工具调用校对完成: session=6a859d29-3d3b-4558-b254-a30147802f5e, count=2
- [SnapshotSync] 审批校对完成: session=6a859d29-3d3b-4558-b254-a30147802f5e, count=2
- [SnapshotSync] 快照校对成功: session=6a859d29-3d3b-4558-b254-a30147802f5e
+ [Axios] 响应转换: /chat/messages/3236/ 
+  前: {"code":200,"message":"消息更新成功","data":{"id":3236,"session_id":1582,"role":"assistant","content":"已经获取到两个命令的输出结果。现在将结果保存到指定文件。先检查目标文件是否存在：目标文件已存在，且内容与刚才运行的最新命令输出**完全一致**（已包含 `ollama list` 和 `ollama ps` 
+  后: {"code":200,"message":"消息更新成功","data":{"id":3236,"sessionId":1582,"role":"assistant","content":"已经获取到两个命令的输出结果。现在将结果保存到指定文件。先检查目标文件是否存在：目标文件已存在，且内容与刚才运行的最新命令输出**完全一致**（已包含 `ollama list` 和 `ollama ps` 
+ [toSnakeCase] sessionId → session_id
+ [toSnakeCase] messageId → message_id
+ [toCamelCase] session_id → sessionId
+ [Sync] stream_finalized 请求浏览器标记 completed: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3236, wasCompleted=false
+ [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=48, expected=49
+ [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=48, prev=48
+ [useStreamFinalizer] 通知后端 stream_finalized: session=531ac78b-a754-454b-9582-fb2101a7f575, msg=3236
+ [Sync] 结束流式: 531ac78b-a754-454b-9582-fb2101a7f575
+ [Axios] 响应转换: /realtime/snapshot/531ac78b-a754-454b-9582-fb2101a7f575/ 
+  前: {"code":200,"message":"操作成功","data":{"session_id":"531ac78b-a754-454b-9582-fb2101a7f575","session_title":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` ...","messages":[{"id":"3233","session_id":"531ac78b-a754-454b-9 
+  后: {"code":200,"message":"操作成功","data":{"sessionId":"531ac78b-a754-454b-9582-fb2101a7f575","sessionTitle":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` ...","messages":[{"id":"3233","sessionId":"531ac78b-a754-454b-9582
+ [SnapshotSync] 消息校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=4
+ [SnapshotSync] 工具调用校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=5
+ [SnapshotSync] 审批校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=3
+ [SnapshotSync] 快照校对成功: session=531ac78b-a754-454b-9582-fb2101a7f575
  [Realtime] 收到 pong
  [Realtime] 收到 pong
- [SSE] 收到心跳
- [Research] updateToolCallApprovalState: task 不存在, taskId=research_dcd879504196
- [toSnakeCase] providerId → provider_id
- [toSnakeCase] modelName → model_name
- [toSnakeCase] useDeepThinking → use_deep_thinking
- [toSnakeCase] specialParams → special_params
- [toSnakeCase] maxTokens → max_tokens
+ [Axios] 响应转换: /attachments/sessions/531ac78b-a754-454b-9582-fb2101a7f575/upload/ 
+  前: {"code":200,"message":"文件上传成功","data":{"id":118,"original_name":"MySQL学习手册.md","file_size":129878,"file_type":"md","mime_type":"text/markdown","url":"/media/chat_attachments/1/531ac78b-a754-454b-9582- 
+  后: {"code":200,"message":"文件上传成功","data":{"id":118,"originalName":"MySQL学习手册.md","fileSize":129878,"fileType":"md","mimeType":"text/markdown","url":"/media/chat_attachments/1/531ac78b-a754-454b-9582-fb21
+ [Realtime] 收到 pong
+ [ChatInput] 发送消息, attachmentIds: Array(1)
+ [ChatStore] sendMessage called
+ [ChatStore] sessionId: 531ac78b-a754-454b-9582-fb2101a7f575
+ [Sync] 开始流式: 531ac78b-a754-454b-9582-fb2101a7f575
+ [ChatStore] streamChat 请求参数, attachmentIds: Array(1)
+ [toSnakeCase] clientMessageId → client_message_id
+ [toSnakeCase] chatHistory → chat_history
  [toSnakeCase] useTools → use_tools
  [toSnakeCase] useWebSearch → use_web_search
- [toSnakeCase] useMcp → use_mcp
- [toSnakeCase] selectedMcpServers → selected_mcp_servers
- [toSnakeCase] selectedTools → selected_tools
  [toSnakeCase] useKnowledgeBase → use_knowledge_base
- [toSnakeCase] selectedKnowledgeBases → selected_knowledge_bases
- [toCamelCase] session_id → sessionId
- [Sync] 批量审批 sibling approved/processing，INTERRUPTED → STREAMING: session=6a859d29-3d3b-4558-b254-a30147802f5e, source=deep_research, graphInterruptId=052ca21c24984128af66af4d00812bd3, message=3194, siblings=1
- [Sync] 审批变更: session=6a859d29-3d3b-4558-b254-a30147802f5e, chatSession=6a859d29-3d3b-4558-b254-a30147802f5e, source=deep_research, tool=shell_exec, eventType=approval_processing, mappedState=processing, graphInterruptId=052ca21c24984128af66af4d00812bd3
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=17, expected=18
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=17, prev=17
- [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_running 事件: sessionStore=6a859d29-3d3b-4558-b254-a30147802f5e, tool=shell_exec, toolCallId=call_01_JGpwbtnfjNKA4RcqHyiA4025, mappedStatus=running, isResult=false, messageId=(none), source=deep_research
- [Sync] 工具调用更新: session=6a859d29-3d3b-4558-b254-a30147802f5e, message=(兜底), tool=shell_exec, id=call_01_JGpwbtnfjNKA4RcqHyiA4025, eventType=tool_call_running
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=18, expected=19
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=18, prev=18
- [Sync] 开始流式: 6a859d29-3d3b-4558-b254-a30147802f5e
- [toSnakeCase] sessionId → session_id
- [toSnakeCase] messageId → message_id
- [toCamelCase] session_id → sessionId
- [Sync] stream_finalized 请求浏览器标记 completed: session=6a859d29-3d3b-4558-b254-a30147802f5e, message=3194, wasCompleted=false
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=19, expected=20
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=19, prev=19
- [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_failed 事件: sessionStore=6a859d29-3d3b-4558-b254-a30147802f5e, tool=ls, toolCallId=call_00_SDddoGiwnnLqDyZLcOQY7906, mappedStatus=failed, isResult=true, messageId=(none), source=deep_research
- [Sync] 工具调用结果: session=6a859d29-3d3b-4558-b254-a30147802f5e, message=(兜底), tool=ls, id=call_00_SDddoGiwnnLqDyZLcOQY7906, eventType=tool_call_failed
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=20, expected=21
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=20, prev=20
- [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_completed 事件: sessionStore=6a859d29-3d3b-4558-b254-a30147802f5e, tool=shell_exec, toolCallId=call_01_JGpwbtnfjNKA4RcqHyiA4025, mappedStatus=completed, isResult=true, messageId=(none), source=deep_research
- [Sync] 工具调用结果: session=6a859d29-3d3b-4558-b254-a30147802f5e, message=(兜底), tool=shell_exec, id=call_01_JGpwbtnfjNKA4RcqHyiA4025, eventType=tool_call_completed
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=21, expected=22
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=21, prev=21
- [useStreamFinalizer] 通知后端 stream_finalized: session=6a859d29-3d3b-4558-b254-a30147802f5e, msg=3194
- [Sync] 结束流式: 6a859d29-3d3b-4558-b254-a30147802f5e
- [toSnakeCase] chainOfThought → chain_of_thought
- [toSnakeCase] attachmentIds → attachment_ids
- [toSnakeCase] researchContext → research_context
- [toSnakeCase] currentVersion → current_version
- [toSnakeCase] tokenCount → token_count
- [toSnakeCase] tokenDetail → token_detail
- [toSnakeCase] responseTime → response_time
- [toSnakeCase] researchTaskId → research_task_id
- [Axios] 响应转换: /chat/messages/3194/ 
-  前: {"code":200,"message":"消息更新成功","data":{"id":3194,"session_id":1565,"role":"assistant","content":"","sources":[],"plan":null,"chain_of_thought":[],"tool_calls":[{"id":"call_00_ORw8VyRFH1YgIVKLilMC0461" 
-  后: {"code":200,"message":"消息更新成功","data":{"id":3194,"sessionId":1565,"role":"assistant","content":"","sources":[],"plan":null,"chainOfThought":[],"toolCalls":[{"id":"call_00_ORw8VyRFH1YgIVKLilMC0461","ar
- [Axios] 响应转换: /realtime/snapshot/6a859d29-3d3b-4558-b254-a30147802f5e/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"6a859d29-3d3b-4558-b254-a30147802f5e","session_title":"新对话 - 代理","messages":[{"id":"3193","session_id":"6a859d29-3d3b-4558-b254-a30147802f5e","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"6a859d29-3d3b-4558-b254-a30147802f5e","sessionTitle":"新对话 - 代理","messages":[{"id":"3193","sessionId":"6a859d29-3d3b-4558-b254-a30147802f5e","role":"us
- [SnapshotSync] 消息校对完成: session=6a859d29-3d3b-4558-b254-a30147802f5e, count=2
- [SnapshotSync] 工具调用校对完成: session=6a859d29-3d3b-4558-b254-a30147802f5e, count=3
- [SnapshotSync] 审批校对完成: session=6a859d29-3d3b-4558-b254-a30147802f5e, count=3
- [SnapshotSync] 快照校对成功: session=6a859d29-3d3b-4558-b254-a30147802f5e
- [Realtime] 收到 pong
- [toCamelCase] session_id → sessionId
- [Session] 占位 toolCall 已加入 pendingApprovals 队列: sessionId=6a859d29-3d3b-4558-b254-a30147802f5e, toolCallId=call_00_LsnLrDg5uY8MmM9A8K3T7459, pendingIds=call_00_LsnLrDg5uY8MmM9A8K3T7459,call_00_LsnLrDg5uY8MmM9A8K3T7459
- [Sync] approval_pending completed → INTERRUPTED: session=6a859d29-3d3b-4558-b254-a30147802f5e, source=deep_research, graphInterruptId=d00da38c59b8477695fec73639b5b39b, message=3194
- [Sync] 审批变更: session=6a859d29-3d3b-4558-b254-a30147802f5e, chatSession=6a859d29-3d3b-4558-b254-a30147802f5e, source=deep_research, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=d00da38c59b8477695fec73639b5b39b
- [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=22, expected=23
- [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=22, prev=22
- [toCamelCase] session_id → sessionId
-logger.js:19 [Sync] 收到 tool_call_waiting 事件: sessionStore=6a859d29-3d3b-4558-b254-a30147802f5e, tool=shell_exec, toolCallId=call_00_LsnLrDg5uY8MmM9A8K3T7459, mappedStatus=waiting, isResult=false, messageId=(none), source=deep_research
-logger.js:19 [Session] pending 审批已绑定: sessionId=6a859d29-3d3b-4558-b254-a30147802f5e, toolCallId=call_00_LsnLrDg5uY8MmM9A8K3T7459
-logger.js:19 [Sync] 工具调用更新: session=6a859d29-3d3b-4558-b254-a30147802f5e, message=(兜底), tool=shell_exec, id=call_00_LsnLrDg5uY8MmM9A8K3T7459, eventType=tool_call_waiting
-logger.js:24 [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=23, expected=24
-logger.js:24 [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=23, prev=23
+ [toSnakeCase] useDeepThinking → use_deep_thinking
+sessionTransformers.js:83 [toSnakeCase] useMcp → use_mcp
+sessionTransformers.js:83 [toSnakeCase] selectedMcpServers → selected_mcp_servers
+sessionTransformers.js:83 [toSnakeCase] selectedTools → selected_tools
+sessionTransformers.js:83 [toSnakeCase] sessionId → session_id
+sessionTransformers.js:83 [toSnakeCase] selectedKnowledgeBase → selected_knowledge_base
+sessionTransformers.js:83 [toSnakeCase] selectedKnowledgeBases → selected_knowledge_bases
+sessionTransformers.js:83 [toSnakeCase] attachmentIds → attachment_ids
+sessionTransformers.js:83 [toSnakeCase] providerId → provider_id
+sessionTransformers.js:83 [toSnakeCase] modelName → model_name
+sessionTransformers.js:83 [toSnakeCase] specialParams → special_params
+sessionTransformers.js:83 [toSnakeCase] maxTokens → max_tokens
+sessionTransformers.js:83 [toSnakeCase] researchTaskId → research_task_id
+sessionTransformers.js:83 [toSnakeCase] continueTaskId → continue_task_id
+sessionTransformers.js:61 [toCamelCase] session_id → sessionId
+logger.js:19 [Sync] handleMessageAdded 诊断: session=531ac78b-a754-454b-9582-fb2101a7f575, incoming.role=user, incoming.backendId=3237, messagesCount=6, placeholderCount=2, exactMatch=false
+logger.js:19 [Sync] 匹配到前端占位消息: session=531ac78b-a754-454b-9582-fb2101a7f575, frontendId=kpKKehxIDa2JT0lOdaGVl, backendId=3237, role=user, isStreaming=undefined, contentLen=8
+logger.js:19 [Sync] 消息已存在，合并更新: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3237
+logger.js:24 [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=49, expected=50
+logger.js:24 [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=49, prev=49
+sessionTransformers.js:61 [toCamelCase] session_id → sessionId
+logger.js:19 [Sync] handleMessageAdded 诊断: session=531ac78b-a754-454b-9582-fb2101a7f575, incoming.role=assistant, incoming.backendId=3238, messagesCount=6, placeholderCount=1, exactMatch=false
+logger.js:19 [Sync] 匹配到前端占位消息: session=531ac78b-a754-454b-9582-fb2101a7f575, frontendId=xV6MA3p7gx3lN6TLzhlM3, backendId=3238, role=assistant, isStreaming=undefined, contentLen=0
+logger.js:19 [Sync] 消息已存在，合并更新: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3238
+logger.js:24 [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=50, expected=51
+logger.js:24 [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=50, prev=50
+logger.js:24 [SSE] 未注册事件类型 "start" 被忽略
+sessionTransformers.js:61 [toCamelCase] session_id → sessionId
+logger.js:24 [Sync] stream_event 跳过（触发浏览器 SSE 活跃）: session=531ac78b-a754-454b-9582-fb2101a7f575
+logger.js:24 [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=51, expected=52
+logger.js:24 [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=51, prev=51
+sessionTransformers.js:61 [toCamelCase] session_id → sessionId
+logger.js:19 [Sync] 收到 tool_call_pending 事件: sessionStore=531ac78b-a754-454b-9582-fb2101a7f575, tool=attachment_reader, toolCallId=call_00_HZeo9F5jvaM7pJ13AVUL2453, mappedStatus=pending, isResult=false, messageId=3238, source=chat
+logger.js:19 [Sync] 工具调用更新: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3238, tool=attachment_reader, id=call_00_HZeo9F5jvaM7pJ13AVUL2453, eventType=tool_call_pending
+logger.js:24 [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=52, expected=53
+logger.js:24 [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=52, prev=52
+sessionTransformers.js:61 [toCamelCase] session_id → sessionId
+logger.js:19 [Sync] 收到 tool_call_completed 事件: sessionStore=531ac78b-a754-454b-9582-fb2101a7f575, tool=attachment_reader, toolCallId=call_00_HZeo9F5jvaM7pJ13AVUL2453, mappedStatus=completed, isResult=true, messageId=3238, source=chat
+logger.js:19 [Sync] 工具调用结果: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3238, tool=attachment_reader, id=call_00_HZeo9F5jvaM7pJ13AVUL2453, eventType=tool_call_completed
+logger.js:24 [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=53, expected=54
+logger.js:24 [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=53, prev=53
 sessionTransformers.js:83 [toSnakeCase] chainOfThought → chain_of_thought
 sessionTransformers.js:83 [toSnakeCase] attachmentIds → attachment_ids
 sessionTransformers.js:83 [toSnakeCase] researchContext → research_context
@@ -433,104 +571,30 @@ sessionTransformers.js:83 [toSnakeCase] tokenCount → token_count
 sessionTransformers.js:83 [toSnakeCase] tokenDetail → token_detail
 sessionTransformers.js:83 [toSnakeCase] responseTime → response_time
 sessionTransformers.js:83 [toSnakeCase] researchTaskId → research_task_id
-axios.js:85 [Axios] 响应转换: /realtime/snapshot/6a859d29-3d3b-4558-b254-a30147802f5e/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"6a859d29-3d3b-4558-b254-a30147802f5e","session_title":"新对话 - 代理","messages":[{"id":"3193","session_id":"6a859d29-3d3b-4558-b254-a30147802f5e","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"6a859d29-3d3b-4558-b254-a30147802f5e","sessionTitle":"新对话 - 代理","messages":[{"id":"3193","sessionId":"6a859d29-3d3b-4558-b254-a30147802f5e","role":"us
-logger.js:19 [SnapshotSync] 消息校对完成: session=6a859d29-3d3b-4558-b254-a30147802f5e, count=2
-logger.js:19 [SnapshotSync] 工具调用校对完成: session=6a859d29-3d3b-4558-b254-a30147802f5e, count=3
-logger.js:19 [SnapshotSync] 审批校对完成: session=6a859d29-3d3b-4558-b254-a30147802f5e, count=3
-logger.js:19 [SnapshotSync] 快照校对成功: session=6a859d29-3d3b-4558-b254-a30147802f5e
-axios.js:85 [Axios] 响应转换: /chat/messages/3194/ 
-  前: {"code":200,"message":"消息更新成功","data":{"id":3194,"session_id":1565,"role":"assistant","content":"","sources":[],"plan":null,"chain_of_thought":[],"tool_calls":[{"id":"call_00_ORw8VyRFH1YgIVKLilMC0461" 
-  后: {"code":200,"message":"消息更新成功","data":{"id":3194,"sessionId":1565,"role":"assistant","content":"","sources":[],"plan":null,"chainOfThought":[],"toolCalls":[{"id":"call_00_ORw8VyRFH1YgIVKLilMC0461","ar
-logger.js:11 [Research] updateToolCallApprovalState: task 不存在, taskId=research_dcd879504196
-(anonymous) @ logger.js:11
-(anonymous) @ research.js:381
-wrappedAction @ pinia.js?v=8039668a:5507
-store.<computed> @ pinia.js?v=8039668a:5204
-(anonymous) @ approval.js:369
-await in (anonymous)
-wrappedAction @ pinia.js?v=8039668a:5507
-store.<computed> @ pinia.js?v=8039668a:5204
-(anonymous) @ chat.js:694
-await in (anonymous)
-(anonymous) @ chat.js:699
-wrappedAction @ pinia.js?v=8039668a:5507
-store.<computed> @ pinia.js?v=8039668a:5204
-(anonymous) @ ChatView.vue:149
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
-callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
-emit @ chunk-IGIFKXF4.js?v=8039668a:6604
-(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
-(anonymous) @ ChatMessages.vue:260
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
-callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
-emit @ chunk-IGIFKXF4.js?v=8039668a:6604
-(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
-handleToolCallApprove @ ChatMessage.vue:107
-(anonymous) @ ChatMessage.vue:513
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
-callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
-emit @ chunk-IGIFKXF4.js?v=8039668a:6604
-(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
-(anonymous) @ ToolCallCard.vue:430
-(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:12603
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
-callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
-emit @ chunk-IGIFKXF4.js?v=8039668a:6604
-(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
-handleClick @ chunk-VIKWBYFT.js?v=8039668a:19542
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
-callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
-invoker @ chunk-IGIFKXF4.js?v=8039668a:11519
-(anonymous) @ pptr:evaluateHandle;performEvaluation%20(file%3A%2F%2F%2FC%3A%2FUsers%2F33092%2FAppData%2FLocal%2Fnpm-cache%2F_npx%2F15c61037b1978c83%2Fnode_modules%2Fchrome-devtools-mcp%2Fbuild%2Fsrc%2Ftools%2Fscript.js%3A100%3A34):1
-(anonymous) @ pptr:evaluate;performEvaluation%20(file%3A%2F%2F%2FC%3A%2FUsers%2F33092%2FAppData%2FLocal%2Fnpm-cache%2F_npx%2F15c61037b1978c83%2Fnode_modules%2Fchrome-devtools-mcp%2Fbuild%2Fsrc%2Ftools%2Fscript.js%3A102%3A42):3
-sessionTransformers.js:83 [toSnakeCase] providerId → provider_id
-sessionTransformers.js:83 [toSnakeCase] modelName → model_name
-sessionTransformers.js:83 [toSnakeCase] useDeepThinking → use_deep_thinking
-sessionTransformers.js:83 [toSnakeCase] specialParams → special_params
-sessionTransformers.js:83 [toSnakeCase] maxTokens → max_tokens
-sessionTransformers.js:83 [toSnakeCase] useTools → use_tools
-sessionTransformers.js:83 [toSnakeCase] useWebSearch → use_web_search
-sessionTransformers.js:83 [toSnakeCase] useMcp → use_mcp
-sessionTransformers.js:83 [toSnakeCase] selectedMcpServers → selected_mcp_servers
-sessionTransformers.js:83 [toSnakeCase] selectedTools → selected_tools
-sessionTransformers.js:83 [toSnakeCase] useKnowledgeBase → use_knowledge_base
-sessionTransformers.js:83 [toSnakeCase] selectedKnowledgeBases → selected_knowledge_bases
+axios.js:85 [Axios] 响应转换: /chat/messages/3238/ 
+  前: {"code":200,"message":"消息更新成功","data":{"id":3238,"session_id":1582,"role":"assistant","content":"我来读取这份文档的内容。","sources":[],"plan":null,"chain_of_thought":[],"tool_calls":[],"approval":null,"reasoning 
+  后: {"code":200,"message":"消息更新成功","data":{"id":3238,"sessionId":1582,"role":"assistant","content":"我来读取这份文档的内容。","sources":[],"plan":null,"chainOfThought":[],"toolCalls":[],"approval":null,"reasoning":{}
+axios.js:85 [Axios] 响应转换: /realtime/snapshot/531ac78b-a754-454b-9582-fb2101a7f575/ 
+  前: {"code":200,"message":"操作成功","data":{"session_id":"531ac78b-a754-454b-9582-fb2101a7f575","session_title":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` ...","messages":[{"id":"3233","session_id":"531ac78b-a754-454b-9 
+  后: {"code":200,"message":"操作成功","data":{"sessionId":"531ac78b-a754-454b-9582-fb2101a7f575","sessionTitle":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` ...","messages":[{"id":"3233","sessionId":"531ac78b-a754-454b-9582
+logger.js:19 [SnapshotSync] 消息校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=6
+logger.js:19 [SnapshotSync] 工具调用校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=5
+logger.js:19 [SnapshotSync] 审批校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=3
+logger.js:19 [SnapshotSync] 快照校对成功: session=531ac78b-a754-454b-9582-fb2101a7f575
 sessionTransformers.js:61 [toCamelCase] session_id → sessionId
-logger.js:19 [Sync] 批量审批 sibling approved/processing，INTERRUPTED → STREAMING: session=6a859d29-3d3b-4558-b254-a30147802f5e, source=deep_research, graphInterruptId=d00da38c59b8477695fec73639b5b39b, message=3194, siblings=1
-logger.js:19 [Sync] 审批变更: session=6a859d29-3d3b-4558-b254-a30147802f5e, chatSession=6a859d29-3d3b-4558-b254-a30147802f5e, source=deep_research, tool=shell_exec, eventType=approval_processing, mappedState=processing, graphInterruptId=d00da38c59b8477695fec73639b5b39b
-logger.js:24 [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=24, expected=25
-logger.js:24 [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=24, prev=24
-sessionTransformers.js:61 [toCamelCase] session_id → sessionId
-logger.js:19 [Sync] 收到 tool_call_running 事件: sessionStore=6a859d29-3d3b-4558-b254-a30147802f5e, tool=shell_exec, toolCallId=call_00_LsnLrDg5uY8MmM9A8K3T7459, mappedStatus=running, isResult=false, messageId=(none), source=deep_research
-logger.js:19 [Sync] 工具调用更新: session=6a859d29-3d3b-4558-b254-a30147802f5e, message=(兜底), tool=shell_exec, id=call_00_LsnLrDg5uY8MmM9A8K3T7459, eventType=tool_call_running
-logger.js:24 [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=25, expected=26
-logger.js:24 [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=25, prev=25
-logger.js:19 [Sync] 开始流式: 6a859d29-3d3b-4558-b254-a30147802f5e
-sessionTransformers.js:83 [toSnakeCase] sessionId → session_id
-sessionTransformers.js:83 [toSnakeCase] messageId → message_id
-sessionTransformers.js:61 [toCamelCase] session_id → sessionId
-logger.js:19 [Sync] stream_finalized 请求浏览器标记 completed: session=6a859d29-3d3b-4558-b254-a30147802f5e, message=3194, wasCompleted=false
-logger.js:24 [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=26, expected=27
-logger.js:24 [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=26, prev=26
-logger.js:24 [useStreamFinalizer] 通知后端 stream_finalized: session=6a859d29-3d3b-4558-b254-a30147802f5e, msg=3194
-logger.js:19 [Sync] 结束流式: 6a859d29-3d3b-4558-b254-a30147802f5e
-sessionTransformers.js:61 [toCamelCase] session_id → sessionId
-logger.js:19 [Sync] 收到 tool_call_completed 事件: sessionStore=6a859d29-3d3b-4558-b254-a30147802f5e, tool=shell_exec, toolCallId=call_00_LsnLrDg5uY8MmM9A8K3T7459, mappedStatus=completed, isResult=true, messageId=(none), source=deep_research
-logger.js:19 [Sync] 工具调用结果: session=6a859d29-3d3b-4558-b254-a30147802f5e, message=(兜底), tool=shell_exec, id=call_00_LsnLrDg5uY8MmM9A8K3T7459, eventType=tool_call_completed
-logger.js:24 [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=27, expected=28
-logger.js:24 [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=27, prev=27
-axios.js:85 [Axios] 响应转换: /realtime/snapshot/6a859d29-3d3b-4558-b254-a30147802f5e/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"6a859d29-3d3b-4558-b254-a30147802f5e","session_title":"新对话 - 代理","messages":[{"id":"3193","session_id":"6a859d29-3d3b-4558-b254-a30147802f5e","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"6a859d29-3d3b-4558-b254-a30147802f5e","sessionTitle":"新对话 - 代理","messages":[{"id":"3193","sessionId":"6a859d29-3d3b-4558-b254-a30147802f5e","role":"us
-logger.js:19 [SnapshotSync] 消息校对完成: session=6a859d29-3d3b-4558-b254-a30147802f5e, count=2
-logger.js:19 [SnapshotSync] 工具调用校对完成: session=6a859d29-3d3b-4558-b254-a30147802f5e, count=4
-logger.js:19 [SnapshotSync] 审批校对完成: session=6a859d29-3d3b-4558-b254-a30147802f5e, count=4
-logger.js:19 [SnapshotSync] 快照校对成功: session=6a859d29-3d3b-4558-b254-a30147802f5e
+logger.js:24 [Sync] stream_event 跳过（触发浏览器 SSE 活跃）: session=531ac78b-a754-454b-9582-fb2101a7f575
+logger.js:24 [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=54, expected=55
+logger.js:24 [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=54, prev=54
+sessionTransformers.js:83 [toSnakeCase] chainOfThought → chain_of_thought
+sessionTransformers.js:83 [toSnakeCase] attachmentIds → attachment_ids
+sessionTransformers.js:83 [toSnakeCase] researchContext → research_context
+sessionTransformers.js:83 [toSnakeCase] currentVersion → current_version
+sessionTransformers.js:83 [toSnakeCase] tokenCount → token_count
+sessionTransformers.js:83 [toSnakeCase] tokenDetail → token_detail
+sessionTransformers.js:83 [toSnakeCase] responseTime → response_time
+sessionTransformers.js:83 [toSnakeCase] researchTaskId → research_task_id
 logger.js:24 [Realtime] 收到 pong
-logger.js:24 [SSE] 收到心跳
-logger.js:15 [SSE] 服务端错误事件: 响应超时（已等待 429s），请稍后重试
+logger.js:15 [SSE] 服务端错误事件: 服务暂时不可用，请稍后重试
 (anonymous) @ logger.js:15
 (anonymous) @ sse.js:89
 (anonymous) @ sse.js:182
@@ -553,9 +617,7 @@ emit @ chunk-IGIFKXF4.js?v=8039668a:6604
 callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
 callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
 invoker @ chunk-IGIFKXF4.js?v=8039668a:11519
-(anonymous) @ pptr:evaluateHandle;performEvaluation%20(file%3A%2F%2F%2FC%3A%2FUsers%2F33092%2FAppData%2FLocal%2Fnpm-cache%2F_npx%2F15c61037b1978c83%2Fnode_modules%2Fchrome-devtools-mcp%2Fbuild%2Fsrc%2Ftools%2Fscript.js%3A100%3A34):1
-(anonymous) @ pptr:evaluate;performEvaluation%20(file%3A%2F%2F%2FC%3A%2FUsers%2F33092%2FAppData%2FLocal%2Fnpm-cache%2F_npx%2F15c61037b1978c83%2Fnode_modules%2Fchrome-devtools-mcp%2Fbuild%2Fsrc%2Ftools%2Fscript.js%3A102%3A42):3
-logger.js:15 [ChatStore] 流式错误: 响应超时（已等待 429s），请稍后重试
+logger.js:15 [ChatStore] 流式错误: 服务暂时不可用，请稍后重试
 (anonymous) @ logger.js:15
 (anonymous) @ chat.js:246
 (anonymous) @ useStreamChat.js:54
@@ -580,48 +642,33 @@ emit @ chunk-IGIFKXF4.js?v=8039668a:6604
 callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
 callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
 invoker @ chunk-IGIFKXF4.js?v=8039668a:11519
-(anonymous) @ pptr:evaluateHandle;performEvaluation%20(file%3A%2F%2F%2FC%3A%2FUsers%2F33092%2FAppData%2FLocal%2Fnpm-cache%2F_npx%2F15c61037b1978c83%2Fnode_modules%2Fchrome-devtools-mcp%2Fbuild%2Fsrc%2Ftools%2Fscript.js%3A100%3A34):1
-(anonymous) @ pptr:evaluate;performEvaluation%20(file%3A%2F%2F%2FC%3A%2FUsers%2F33092%2FAppData%2FLocal%2Fnpm-cache%2F_npx%2F15c61037b1978c83%2Fnode_modules%2Fchrome-devtools-mcp%2Fbuild%2Fsrc%2Ftools%2Fscript.js%3A102%3A42):3
 sessionTransformers.js:61 [toCamelCase] session_id → sessionId
-logger.js:11 [Sync] 事件跳号触发全量同步(兜底): session=6a859d29-3d3b-4558-b254-a30147802f5e, expected=28, got=29, reason=间隙停滞回调未推进基线或后端序列号不连续
-(anonymous) @ logger.js:11
-(anonymous) @ handleSessionEvent.js:229
-(anonymous) @ handleSessionEvent.js:95
-(anonymous) @ orderedQueue.js:185
-(anonymous) @ handleSessionEvent.js:94
-(anonymous) @ sync.js:464
-await in (anonymous)
-(anonymous) @ useRealtimeSync.js:673
-(anonymous) @ useRealtimeSync.js:974
-logger.js:19 [Sync] 消息更新: session=6a859d29-3d3b-4558-b254-a30147802f5e, message=3194
-logger.js:24 [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=29, expected=30
-logger.js:24 [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=29, prev=29
-logger.js:24 [useStreamFinalizer] 消息状态为 completed，跳过最终化: session=6a859d29-3d3b-4558-b254-a30147802f5e
-logger.js:19 [Sync] 结束流式: 6a859d29-3d3b-4558-b254-a30147802f5e
+logger.js:24 [Sync] stream_event 跳过（触发浏览器 SSE 活跃）: session=531ac78b-a754-454b-9582-fb2101a7f575
+logger.js:24 [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=55, expected=56
+logger.js:24 [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=55, prev=55
 sessionTransformers.js:61 [toCamelCase] session_id → sessionId
-logger.js:24 [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=28, expected=30
-logger.js:24 [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=28, prev=29
-logger.js:24 [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=28, expected=30
-logger.js:24 [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=28, prev=29
+logger.js:19 [Sync] 消息更新(流式期间仅 toolCalls): session=531ac78b-a754-454b-9582-fb2101a7f575, message=3238
+logger.js:24 [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=56, expected=57
+logger.js:24 [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=56, prev=56
+axios.js:85 [Axios] 响应转换: /chat/messages/3238/ 
+  前: {"code":200,"message":"消息更新成功","data":{"id":3238,"session_id":1582,"role":"assistant","content":"我来读取这份文档的内容。直接用 RAG 检索方式来了解文档内容：","sources":[],"plan":null,"chain_of_thought":[],"tool_calls":[],"appro 
+  后: {"code":200,"message":"消息更新成功","data":{"id":3238,"sessionId":1582,"role":"assistant","content":"我来读取这份文档的内容。直接用 RAG 检索方式来了解文档内容：","sources":[],"plan":null,"chainOfThought":[],"toolCalls":[],"approval"
+sessionTransformers.js:83 [toSnakeCase] sessionId → session_id
+sessionTransformers.js:83 [toSnakeCase] messageId → message_id
 sessionTransformers.js:61 [toCamelCase] session_id → sessionId
-logger.js:19 [Sync] 深度研究结果回写 - 审批状态清理: session=6a859d29-3d3b-4558-b254-a30147802f5e, task=research_dcd879504196, success=true, toolCalls总数=5, 清理前pending审批数=0, 清理前运行中工具数=0, clearByTaskId清除数=undefined
-logger.js:19 [Sync] 深度研究结果回写: session=6a859d29-3d3b-4558-b254-a30147802f5e, task=research_dcd879504196, success=true
-logger.js:19 [Research] updateTaskFromEvent stream_completed: taskId=research_dcd879504196, success=true, hasReport=true, error=
-logger.js:19 [Research] setTaskStatus 首次设置: taskId=research_dcd879504196, status=completed
-logger.js:19 [Sync] handleStreamCompleted 委托更新 taskInfo: taskId=research_dcd879504196, success=true
-logger.js:24 [Sync] 丢弃过期事件: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=30, expected=31
-logger.js:24 [Sync] setSeenSeq 忽略回退 seq: session=6a859d29-3d3b-4558-b254-a30147802f5e, seq=30, prev=30
-logger.js:24 [Sync] 未处理的 user 事件: task_status_changed
-axios.js:85 [Axios] 响应转换: /chat/sessions/6a859d29-3d3b-4558-b254-a30147802f5e/ 
-  前: {"code":200,"message":"操作成功","data":{"id":1565,"session_id":"6a859d29-3d3b-4558-b254-a30147802f5e","title":"新对话 - 代理","mode":"agent","selected_knowledge_base":null,"selected_knowledge_bases":[],"messa 
-  后: {"code":200,"message":"操作成功","data":{"id":1565,"sessionId":"6a859d29-3d3b-4558-b254-a30147802f5e","title":"新对话 - 代理","mode":"agent","selectedKnowledgeBase":null,"selectedKnowledgeBases":[],"messages":
-logger.js:6 [Session] Loaded detail for session 6a859d29-3d3b-4558-b254-a30147802f5e with 2 messages
-logger.js:19 [Sync] 全量同步完成: session=6a859d29-3d3b-4558-b254-a30147802f5e, messages=2, allowContentMerge=false
-axios.js:85 [Axios] 响应转换: /chat/sessions/6a859d29-3d3b-4558-b254-a30147802f5e/ 
-  前: {"code":200,"message":"操作成功","data":{"id":1565,"session_id":"6a859d29-3d3b-4558-b254-a30147802f5e","title":"新对话 - 代理","mode":"agent","selected_knowledge_base":null,"selected_knowledge_bases":[],"messa 
-  后: {"code":200,"message":"操作成功","data":{"id":1565,"sessionId":"6a859d29-3d3b-4558-b254-a30147802f5e","title":"新对话 - 代理","mode":"agent","selectedKnowledgeBase":null,"selectedKnowledgeBases":[],"messages":
-logger.js:6 [Session] Loaded detail for session 6a859d29-3d3b-4558-b254-a30147802f5e with 2 messages
-logger.js:19 [Sync] 全量同步完成: session=6a859d29-3d3b-4558-b254-a30147802f5e, messages=2, allowContentMerge=false
+logger.js:19 [Sync] stream_finalized 请求浏览器标记 completed: session=531ac78b-a754-454b-9582-fb2101a7f575, message=3238, wasCompleted=false
+logger.js:24 [Sync] 丢弃过期事件: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=57, expected=58
+logger.js:24 [Sync] setSeenSeq 忽略回退 seq: session=531ac78b-a754-454b-9582-fb2101a7f575, seq=57, prev=57
+logger.js:24 [useStreamFinalizer] 通知后端 stream_finalized: session=531ac78b-a754-454b-9582-fb2101a7f575, msg=3238
+logger.js:19 [Sync] 结束流式: 531ac78b-a754-454b-9582-fb2101a7f575
+logger.js:19 [Sync] 结束流式: 531ac78b-a754-454b-9582-fb2101a7f575
+axios.js:85 [Axios] 响应转换: /realtime/snapshot/531ac78b-a754-454b-9582-fb2101a7f575/ 
+  前: {"code":200,"message":"操作成功","data":{"session_id":"531ac78b-a754-454b-9582-fb2101a7f575","session_title":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` ...","messages":[{"id":"3233","session_id":"531ac78b-a754-454b-9 
+  后: {"code":200,"message":"操作成功","data":{"sessionId":"531ac78b-a754-454b-9582-fb2101a7f575","sessionTitle":"我来帮你执行这两个命令。注意到 `lis` 和 `pst` ...","messages":[{"id":"3233","sessionId":"531ac78b-a754-454b-9582
+logger.js:19 [SnapshotSync] 消息校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=6
+logger.js:19 [SnapshotSync] 工具调用校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=5
+logger.js:19 [SnapshotSync] 审批校对完成: session=531ac78b-a754-454b-9582-fb2101a7f575, count=3
+logger.js:19 [SnapshotSync] 快照校对成功: session=531ac78b-a754-454b-9582-fb2101a7f575
 logger.js:24 [Realtime] 收到 pong
 logger.js:24 [Realtime] 收到 pong
 logger.js:24 [Realtime] 收到 pong

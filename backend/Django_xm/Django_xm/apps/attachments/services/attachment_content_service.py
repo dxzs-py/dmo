@@ -199,15 +199,34 @@ class AttachmentService:
         classified = self.classify_attachments(attachment_ids)
         return len(classified["image_ids"]) > 0
 
+    def _get_attachment_names(self, attachment_ids: list[int]) -> list[str]:
+        """获取附件文件名列表，用于元信息提示。"""
+        names = []
+        for att_id in attachment_ids:
+            try:
+                from Django_xm.apps.tools.langchain.file_reader import get_attachment_info
+
+                info = get_attachment_info(att_id)
+                names.append(info.get("original_name", f"附件{att_id}"))
+            except Exception:
+                names.append(f"附件{att_id}")
+        return names
+
     def build_user_content(
         self,
         user_message: str,
         attachment_ids: list[int],
         progress_callback=None,
     ) -> dict[str, Any]:
+        """构建用户消息内容。
+
+        返回格式: {"type": "text"|"multimodal", "content": ..., "hint": str|None}
+        - content: 用户原始输入（纯文本/多模态），用于展示与持久化
+        - hint: LLM 引导文本（附件检索工具说明），不展示给用户，仅注入 LLM 上下文
+        """
         if not attachment_ids:
             logger.info("[Attachment] build_user_content: 无附件ID")
-            return {"type": "text", "content": user_message}
+            return {"type": "text", "content": user_message, "hint": None}
 
         classified = self.classify_attachments(attachment_ids)
         has_images = len(classified["image_ids"]) > 0
@@ -220,18 +239,23 @@ class AttachmentService:
             return {
                 "type": "multimodal",
                 "content": self.build_multimodal_message_content(user_message, attachment_ids),
+                "hint": None,
             }
 
         if has_images and has_text:
             use_rag = self.should_use_rag(attachment_ids)
             if use_rag:
-                rag_text = self.build_rag_enhanced_message(
-                    user_message, attachment_ids, progress_callback=progress_callback
+                hints = self._get_attachment_names(attachment_ids)
+                names_str = ", ".join(hints) if hints else f"{len(attachment_ids)}个文件"
+                hint = (
+                    f"用户上传了以下文件：{names_str}\n"
+                    f"优先使用 attachment_rag_search 工具检索文件内容（支持向量相似度搜索，适合大文件）。"
+                    f"仅在检索无相关性时，才使用 attachment_reader 读取单个文件全文。"
                 )
                 image_ids = classified["image_ids"]
                 from Django_xm.apps.tools.langchain.file_reader import read_attachment_as_base64
 
-                content_parts = [{"type": "text", "text": rag_text}]
+                content_parts = [{"type": "text", "text": user_message}]
                 for img_id in image_ids:
                     try:
                         image_data, mime_type = read_attachment_as_base64(img_id)
@@ -244,29 +268,33 @@ class AttachmentService:
                     except Exception:
                         logger.exception(f"构造图片多模态消息失败 (id={img_id})")
 
-                return {"type": "multimodal", "content": content_parts}
+                return {"type": "multimodal", "content": content_parts, "hint": hint}
             else:
                 return {
                     "type": "multimodal",
                     "content": self.build_multimodal_message_content(user_message, attachment_ids),
+                    "hint": None,
                 }
 
         if has_text:
             if self.should_use_rag(attachment_ids):
-                return {
-                    "type": "text",
-                    "content": self.build_rag_enhanced_message(
-                        user_message, attachment_ids, progress_callback=progress_callback
-                    ),
-                }
+                names = self._get_attachment_names(attachment_ids)
+                names_str = ", ".join(names) if names else f"{len(attachment_ids)}个文件"
+                hint = (
+                    f"用户上传了以下文件：{names_str}\n"
+                    f"优先使用 attachment_rag_search 工具检索文件内容（支持向量相似度搜索，适合大文件）。"
+                    f"仅在检索无相关性时，才使用 attachment_reader 读取单个文件全文。"
+                )
+                return {"type": "text", "content": user_message, "hint": hint}
             else:
                 text_content = self.load_text_attachment_contents(attachment_ids)
                 return {
                     "type": "text",
                     "content": self.build_message_with_attachments(user_message, text_content),
+                    "hint": None,
                 }
 
-        return {"type": "text", "content": user_message}
+        return {"type": "text", "content": user_message, "hint": None}
 
     def link_attachments_to_message(self, message, attachment_ids: list[int] | None):
         if not attachment_ids:

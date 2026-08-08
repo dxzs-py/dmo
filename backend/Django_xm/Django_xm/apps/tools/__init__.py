@@ -14,6 +14,7 @@ from .errors import (
     create_tool_result,
     exception_to_tool_error,
 )
+from .langchain.attachment_rag import ATTACHMENT_RAG_TOOLS, attachment_rag_search, get_attachment_rag_tools
 from .langchain.calc import calculator, get_calculator_tools
 from .langchain.file_reader import FILE_READER_TOOLS, attachment_reader, file_reader, get_file_reader_tools
 from .langchain.filesystem import (
@@ -101,17 +102,6 @@ def _get_web_search_tools() -> list[BaseTool]:
     return tools
 
 
-def _get_attachment_tools(attachment_ids: list[int] | None = None) -> list[BaseTool]:
-    """附件工具"""
-    if not attachment_ids:
-        return []
-    tools = []
-    for t in get_file_reader_tools():
-        if t not in tools:
-            tools.append(t)
-    return tools
-
-
 def _filter_tools_by_names(tools: list[BaseTool], selected_tools: list[str]) -> list[BaseTool]:
     """按名称过滤工具"""
     selected_set = set(selected_tools)
@@ -126,6 +116,7 @@ def get_all_advanced_tools() -> list[BaseTool]:
     tools.extend(get_weather_tools())
     tools.extend(get_filesystem_tools())
     tools.extend(get_file_reader_tools())
+    tools.extend(get_attachment_rag_tools())
     tools.extend(get_web_fetch_tools())
     tools.extend(get_todo_tools())
     # 扩展工具由高层 app（如 agent_hub）通过注册表注入（Task 15.1）
@@ -683,6 +674,7 @@ def _instantiate_custom_tool(tool_obj) -> BaseTool | None:
 __all__ = [
     "ADVANCED_TOOLS",
     "ALL_TOOLS",
+    "ATTACHMENT_RAG_TOOLS",
     "BASIC_TOOLS",
     "DUCKDUCKGO_TOOLS",
     "FILESYSTEM_TOOLS",
@@ -704,6 +696,7 @@ __all__ = [
     "ToolError",
     "ToolErrorCode",
     "ToolResult",
+    "attachment_rag_search",
     "attachment_reader",
     "calculator",
     "clear_extension_tools",
@@ -723,6 +716,7 @@ __all__ = [
     "get_all_available_tool_info",
     "get_all_basic_tools",
     "get_all_tools",
+    "get_attachment_rag_tools",
     "get_calculator_tools",
     "get_core_tools",
     "get_current_date",

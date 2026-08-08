@@ -146,6 +146,7 @@ def finalize_tool_calls(
                     tool_info = dict(tool_calls_map[key])
                     tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
                     tool_info.pop("_index", None)
+                    tool_info.pop("lifecycle_event", None)
                     events.append({"type": "tool", "data": tool_info})
                     logger.debug(f"[FINALIZE-TOOL] 从 accumulator 解析参数成功: key={key}, args={parsed_args}")
             except (_json.JSONDecodeError, ValueError):
@@ -155,6 +156,7 @@ def finalize_tool_calls(
                     tool_info = dict(tool_calls_map[key])
                     tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
                     tool_info.pop("_index", None)
+                    tool_info.pop("lifecycle_event", None)
                     events.append({"type": "tool", "data": tool_info})
                     logger.info(f"[FINALIZE-TOOL] 从拼接 JSON 中恢复参数成功: key={key}")
                 else:
@@ -207,6 +209,7 @@ def finalize_tool_calls(
                             tool_info = dict(tc)
                             tool_info["status"] = _map_state_to_status(tool_info.get("state", ""))
                             tool_info.pop("_index", None)
+                            tool_info.pop("lifecycle_event", None)
                             events.append({"type": "tool", "data": tool_info})
                             logger.info(f"[FINALIZE-TOOL] 从累积消息提取参数成功: name={tool_name}, args={args}")
                             break

@@ -450,3 +450,21 @@ class TodoWriteApprovalPolicy(ApprovalPolicy):
     def assess_danger(self, args: dict) -> str:
         risk = self.assess_risk(args)
         return "medium" if risk == RiskLevel.CONTROLLED else "low"
+
+
+class AttachmentRagSearchApprovalPolicy(ApprovalPolicy):
+    """attachment_rag_search 工具审批策略
+
+    纯只读检索工具，固定 SAFE 级自动通过，仅审计。
+    与 knowledge_base 检索工具对齐。
+    """
+
+    tool_name = "attachment_rag_search"
+    # 只读工具：is_write_operation=False（默认），子 agent 中不上调风险等级
+    # 继承基类的 assess_risk → 默认 SAFE → should_approve=False（自动通过）
+
+    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
+        return RiskLevel.SAFE
+
+    def assess_danger(self, args: dict) -> str:
+        return "low"

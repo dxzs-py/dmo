@@ -99,7 +99,8 @@ TOOL_USAGE_INSTRUCTIONS = """
 - 🔍 web_search / duckduckgo_search: 搜索互联网获取最新信息
 - 🌐 web_fetch: 抓取网页内容并转换为纯文本
 - 📄 file_reader: 读取指定路径的文件内容
-- 📎 attachment_reader: 读取用户上传的聊天附件内容
+- 📎 attachment_reader: 读取用户上传的聊天附件全文
+- 📎 attachment_rag_search: 检索用户上传文件的内容（RAG 向量检索），自动定位最近上传的附件
 - 📁 fs_write_file / fs_read_file / fs_list_files / fs_search_files: 文件系统操作
 - ✅ todo_write / todo_read: 任务管理（创建/读取待办事项）
 - 🤖 agent_create / agent_run / agent_list: 子代理管理（创建/执行/列出子代理任务）
@@ -120,7 +121,8 @@ TOOL_USAGE_INSTRUCTIONS = """
 - 查询天气时，使用 weather_query（不需要先获取时间）
 - 需要翻译文本时，使用 translate_text
 - 需要检测语言时，使用 detect_language
-- 用户上传了文件并基于文件提问时，使用 attachment_reader 读取文件内容
+- 用户上传了文件并基于文件提问时，使用 attachment_reader 读取完整文件内容
+- 用户上传了大文件或多文件、只需查找特定信息时，使用 attachment_rag_search 进行向量相似度检索，自动定位最近上传的附件，返回最相关片段
 - 需要读取服务器上的文件时，使用 file_reader
 - 需要获取网页内容时，使用 web_fetch
 - 需要管理任务列表时，使用 todo_write 和 todo_read

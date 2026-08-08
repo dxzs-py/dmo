@@ -31,44 +31,59 @@ class ToolService:
         selected_tools = data.get("selected_tools")
         use_knowledge_base = data.get("use_knowledge_base", False)
         tool_tier = data.get("tool_tier", TOOL_TIER_STANDARD)
+        attachment_ids = data.get("_attachment_ids") or data.get("attachment_ids") or []
 
         has_any_tool_enabled = bool(use_web_search or use_mcp or use_knowledge_base or selected_tools)
         use_tools = has_any_tool_enabled
 
         logger.info(
-            f"[GetTools] mode={mode}, use_tools={use_tools}, use_web={use_web_search}, use_mcp={use_mcp}, tier={tool_tier}"
+            f"[GetTools] mode={mode}, use_tools={use_tools}, use_web={use_web_search}, "
+            f"use_mcp={use_mcp}, tier={tool_tier}, attachments={len(attachment_ids)}"
         )
 
         if not use_tools:
-            return []
-
-        capabilities = registry.get_default_capabilities("base")
-
-        if "tool_injection" in capabilities:
-            tool_config = {
-                "use_tools": True,
-                "use_web_search": use_web_search,
-                "use_mcp": use_mcp,
-                "selected_tools": selected_tools,
-                "selected_mcp_servers": selected_mcp_servers,
-                "user_id": self.user_id,
-                "tool_tier": tool_tier,
-            }
-            tools = await registry.build_tools_for_agent_async("base", capabilities, tool_config=tool_config)
-            logger.info(f"[GetTools] 通过 CapabilityRegistry 返回 {len(tools)} 个工具")
+            tools = []
         else:
-            from Django_xm.apps.tools import get_tools_for_request_async
+            capabilities = registry.get_default_capabilities("base")
 
-            tools = await get_tools_for_request_async(
-                use_tools=True,
-                use_web_search=use_web_search,
-                use_mcp=use_mcp,
-                selected_mcp_servers=selected_mcp_servers,
-                selected_tools=selected_tools,
-                user_id=self.user_id,
-                tool_tier=tool_tier,
-            )
-            logger.info(f"[GetTools] 回退直接加载 {len(tools)} 个工具")
+            if "tool_injection" in capabilities:
+                tool_config = {
+                    "use_tools": True,
+                    "use_web_search": use_web_search,
+                    "use_mcp": use_mcp,
+                    "selected_tools": selected_tools,
+                    "selected_mcp_servers": selected_mcp_servers,
+                    "user_id": self.user_id,
+                    "tool_tier": tool_tier,
+                }
+                tools = await registry.build_tools_for_agent_async("base", capabilities, tool_config=tool_config)
+                logger.info(f"[GetTools] 通过 CapabilityRegistry 返回 {len(tools)} 个工具")
+            else:
+                from Django_xm.apps.tools import get_tools_for_request_async
+
+                tools = await get_tools_for_request_async(
+                    use_tools=True,
+                    use_web_search=use_web_search,
+                    use_mcp=use_mcp,
+                    selected_mcp_servers=selected_mcp_servers,
+                    selected_tools=selected_tools,
+                    user_id=self.user_id,
+                    tool_tier=tool_tier,
+                )
+                logger.info(f"[GetTools] 回退直接加载 {len(tools)} 个工具")
+
+        # 附件工具有附件时始终注入（基础设施工具，不受用户工具开关控制）
+        if attachment_ids:
+            from Django_xm.apps.tools.langchain.attachment_rag import attachment_rag_search
+            from Django_xm.apps.tools.langchain.file_reader import attachment_reader
+
+            existing = set(t.name for t in tools)
+            if attachment_rag_search.name not in existing:
+                tools.append(attachment_rag_search)
+                existing.add(attachment_rag_search.name)
+            if attachment_reader.name not in existing:
+                tools.append(attachment_reader)
+                existing.add(attachment_reader.name)
 
         extra_tools = data.get("_extra_tools", [])
         if extra_tools:
