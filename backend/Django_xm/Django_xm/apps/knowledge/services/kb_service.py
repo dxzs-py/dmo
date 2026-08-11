@@ -239,9 +239,11 @@ def list_documents(user, kb_id: str) -> list[dict[str, Any]]:
     return files
 
 
-def upload_documents(user, kb_id: str, uploaded_files: list) -> dict[str, Any]:
-    """
-    上传文档到知识库：保存文件、加载文档、分块、向量化、更新索引
+def save_uploaded_files(user, kb_id: str, uploaded_files: list) -> list[dict[str, Any]]:
+    """保存上传文件到知识库 upload 目录（轻量同步操作）。
+
+    仅负责文件落盘，文档加载/分块/向量化由 process_uploaded_documents 处理
+    （Celery 异步任务中执行），避免长耗时阻塞 HTTP 请求。
 
     Args:
         user: 用户对象
@@ -249,11 +251,11 @@ def upload_documents(user, kb_id: str, uploaded_files: list) -> dict[str, Any]:
         uploaded_files: Django 上传文件对象列表
 
     Returns:
-        包含上传结果的字典
+        已保存文件的列表 [{"name", "size"}, ...]
 
     Raises:
         FileNotFoundError: 知识库不存在
-        ValueError: 文件列表为空或无法提取内容
+        ValueError: 文件列表为空
     """
     user_index_name = get_user_index_name(user, kb_id)
     manager = IndexManager()
@@ -267,17 +269,12 @@ def upload_documents(user, kb_id: str, uploaded_files: list) -> dict[str, Any]:
     upload_dir = Path(app_cfg.data_uploads_path) / user_index_name
     upload_dir.mkdir(parents=True, exist_ok=True)
 
-    all_documents = []
     saved_files = []
-
     for uploaded_file in uploaded_files:
         file_path = upload_dir / uploaded_file.name
         with open(file_path, "wb") as f:
             for chunk in uploaded_file.chunks():
                 f.write(chunk)
-
-        docs = load_document(str(file_path))
-        all_documents.extend(docs)
         saved_files.append(
             {
                 "name": uploaded_file.name,
@@ -285,14 +282,73 @@ def upload_documents(user, kb_id: str, uploaded_files: list) -> dict[str, Any]:
             }
         )
 
+    return saved_files
+
+
+def process_uploaded_documents(
+    user,
+    kb_id: str,
+    file_names: list,
+    progress_callback=None,
+) -> dict[str, Any]:
+    """处理已落盘的上传文件：加载文档、分块、向量化、更新索引。
+
+    由 Celery 异步任务调用（upload_documents_task），也可被同步 upload_documents 复用。
+
+    Args:
+        user: 用户对象
+        kb_id: 知识库名称
+        file_names: upload 目录下的文件名列表（save_uploaded_files 已落盘）
+        progress_callback: 可选进度回调 callable(progress: int, message: str)
+
+    Returns:
+        包含上传结果的字典
+
+    Raises:
+        FileNotFoundError: 知识库不存在
+        ValueError: 无法提取内容
+    """
+    user_index_name = get_user_index_name(user, kb_id)
+    manager = IndexManager()
+
+    if not manager.index_exists(user_index_name):
+        raise FileNotFoundError(f"知识库不存在: {kb_id}")
+
+    upload_dir = Path(app_cfg.data_uploads_path) / user_index_name
+
+    all_documents = []
+    saved_files = []
+    for name in file_names:
+        file_path = upload_dir / name
+        if not file_path.is_file():
+            raise ValueError(f"上传文件不存在: {name}")
+        docs = load_document(str(file_path))
+        all_documents.extend(docs)
+        saved_files.append(
+            {
+                "name": name,
+                "size": file_path.stat().st_size,
+            }
+        )
+
+    if progress_callback:
+        progress_callback(30, f"文档加载完成：{len(saved_files)} 个文件")
+
     if not all_documents:
         raise ValueError("未能从上传文件中提取内容")
 
     chunks = split_documents(all_documents)
+
+    if progress_callback:
+        progress_callback(60, f"分块完成：{len(chunks)} 个文本块")
+
     # 上传文档时使用索引原有维度约束（如有），确保维度一致
     index_metadata = manager._load_metadata(user_index_name)
     required_dim = index_metadata.get("embedding_dimension") if index_metadata else None
     embeddings = get_embeddings(required_dimension=required_dim)
+
+    if progress_callback:
+        progress_callback(75, "正在向量化并写入索引")
 
     count = manager.add_documents(user_index_name, chunks, embeddings)
 
@@ -338,12 +394,40 @@ def upload_documents(user, kb_id: str, uploaded_files: list) -> dict[str, Any]:
 
     invalidate_knowledge_cache(user_id=user.id, user_index_name=user_index_name)
 
+    if progress_callback:
+        progress_callback(100, "上传完成")
+
     return {
         "documents_uploaded": len(saved_files),
         "chunks_created": count,
         "files": saved_files,
         "fallback_info": fallback_info,
     }
+
+
+def upload_documents(user, kb_id: str, uploaded_files: list) -> dict[str, Any]:
+    """
+    上传文档到知识库（同步版本）：保存文件、加载文档、分块、向量化、更新索引
+
+    由 save_uploaded_files + process_uploaded_documents 组合实现。
+    视图层默认走异步 Celery 任务（见 views_kb.KnowledgeBaseUploadView），
+    本函数保留供内部/测试同步调用。
+
+    Args:
+        user: 用户对象
+        kb_id: 知识库名称
+        uploaded_files: Django 上传文件对象列表
+
+    Returns:
+        包含上传结果的字典
+
+    Raises:
+        FileNotFoundError: 知识库不存在
+        ValueError: 文件列表为空或无法提取内容
+    """
+    saved_files = save_uploaded_files(user, kb_id, uploaded_files)
+    file_names = [f["name"] for f in saved_files]
+    return process_uploaded_documents(user, kb_id, file_names)
 
 
 def delete_document(user, kb_id: str, filename: str) -> dict[str, Any]:

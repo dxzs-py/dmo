@@ -280,14 +280,19 @@ export const useSessionStore = defineStore('session', () => {
     targetMsg.toolCalls = arr
     const ver = targetMsg.versions?.[targetMsg.currentVersion]
     if (ver) ver.toolCalls = arr
-    // 同步完成后清理其他 assistant 消息上残留的 toolCalls（避免旧消息保留审批 UI）
+    // 同步完成后清理其他 assistant 消息上残留的 toolCalls（避免旧消息保留审批 UI）。
+    // 逐条过滤：仅保留 Map 中 messageBackendId 精确归属本消息且仍存在的工具调用。
+    // 原实现用 some（至少一个有效则保留全部），污染消息只要有一个工具归属正确
+    // 整批残留都会被保留，放大跨消息污染。改为 filter 逐条校验。
     for (const msg of session.messages) {
       if (msg !== targetMsg && msg.role === 'assistant' && msg.toolCalls?.length > 0) {
-        const stillValid = msg.toolCalls.some(tc => {
+        const validToolCalls = msg.toolCalls.filter(tc => {
           const mapTc = toolCallMap.get(tc.id)
           return mapTc && mapTc.messageBackendId === msg.backendId?.toString()
         })
-        if (!stillValid) msg.toolCalls = []
+        if (validToolCalls.length !== msg.toolCalls.length) {
+          msg.toolCalls = validToolCalls
+        }
       }
     }
   }
@@ -1714,6 +1719,7 @@ export const useSessionStore = defineStore('session', () => {
     addToolCallToLastMessage,
     addOrUpdateToolCall,
     addOrUpdateToolCallToLastMessage,
+    syncAllMessageToolCallsFromMap: _syncAllMessageToolCallsFromMap,
     updateOrAddToolResult,
     updateOrAddToolResultToLastMessage,
     getToolCallById,

@@ -28,6 +28,7 @@ class TaskType(Enum):
     DEEP_RESEARCH = "deep_research"
     RAG_INDEX = "rag_index"
     RAG_ADD_DOCS = "rag_add_docs"
+    RAG_UPLOAD = "rag_upload"
     RAG_DELETE_INDEX = "rag_delete_index"
     RAG_UPDATE_INDEX = "rag_update_index"
     WORKFLOW = "workflow"

@@ -27,6 +27,7 @@ class CeleryTaskRecord(AuditModel):
         DEEP_RESEARCH = "deep_research", "深度研究"
         RAG_INDEX = "rag_index", "RAG索引创建"
         RAG_ADD_DOCS = "rag_add_docs", "RAG文档添加"
+        RAG_UPLOAD = "rag_upload", "RAG文档上传"
         RAG_DELETE_INDEX = "rag_delete_index", "RAG索引删除"
         RAG_UPDATE_INDEX = "rag_update_index", "RAG索引更新"
         WORKFLOW = "workflow", "工作流执行"

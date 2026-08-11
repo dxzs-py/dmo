@@ -30,18 +30,6 @@ async def resolve_tools(config) -> list[BaseTool]:
     except Exception as e:
         logger.warning(f"CapabilityRegistry 工具加载失败: {e}")
 
-    if config.agent_type.value in {"rag", "safe_rag"}:
-        if config.retriever is not None:
-            from langchain.tools.retriever import create_retriever_tool
-
-            retriever_tool = create_retriever_tool(
-                config.retriever,
-                "knowledge_base",
-                "Search for information in the knowledge base",
-            )
-            tools.append(retriever_tool)
-            logger.info("已注入 RAG retriever 工具")
-
     if not tools:
         try:
             from Django_xm.apps.tools import get_core_tools

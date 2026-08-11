@@ -9,7 +9,6 @@ RAG 模式聊天服务
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Any
 
 from langchain_core.documents import Document
@@ -17,7 +16,10 @@ from langchain_core.documents import Document
 if TYPE_CHECKING:
     from Django_xm.apps.knowledge.services.retrieval_service import SearchType
 
-logger = logging.getLogger(__name__)
+from Django_xm.apps.core.logging_utils import get_logger
+from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
+
+logger = get_logger(__name__)
 
 # RAG 评估阈值配置
 RETRIEVAL_QUALITY_THRESHOLD: float = 0.5
@@ -168,12 +170,13 @@ class RAGChatService:
         logger.info(f"使用知识库 {selected_kb} 进行 RAG 查询")
 
         # Strict Chain 模式：强制检索 -> 注入上下文 -> 生成（防幻觉）
-        result = query_strict_rag(retriever, query, k=4, collection_name=selected_kb)
+        result = query_strict_rag(retriever, query, k=4, collection_name=self._get_user_index_name(selected_kb))
         answer = result.get("answer", "")
 
         # 获取检索文档用于评估
         try:
-            retrieved_docs = retriever.invoke(query)
+            pipeline = UnifiedRagPipeline(scenario="knowledge_base")
+            retrieved_docs = pipeline.retrieve_documents_from_retriever(retriever=retriever, query=query, vector_store=None)
         except Exception as e:
             logger.warning(f"获取检索文档失败: {e}")
             retrieved_docs = []
@@ -202,12 +205,13 @@ class RAGChatService:
             # 创建新检索器并重新查询
             new_retriever = self.get_rag_retriever(selected_kb, k=new_k, search_type=new_search_type)
             if new_retriever:
-                new_result = query_strict_rag(new_retriever, query, k=new_k, collection_name=selected_kb)
+                new_result = query_strict_rag(new_retriever, query, k=new_k, collection_name=self._get_user_index_name(selected_kb))
                 new_answer = new_result.get("answer", "")
 
                 # 重新评估
                 try:
-                    new_docs = new_retriever.invoke(query)
+                    pipeline = UnifiedRagPipeline(scenario="knowledge_base")
+                    new_docs = pipeline.retrieve_documents_from_retriever(retriever=new_retriever, query=query, vector_store=None)
                 except Exception:
                     new_docs = []
 
@@ -254,10 +258,12 @@ class RAGChatService:
         try:
             full_response = ""
             sources = []
+            selected_kb = data.get("selected_knowledge_base", "")
+            collection_name = self._get_user_index_name(selected_kb) if selected_kb else ""
 
             with TokenUsageCallbackHandler() as cb:
                 async for event in astream_strict_rag(
-                    retriever, data["message"], k=4, collection_name=data.get("selected_knowledge_base", "")
+                    retriever, data["message"], k=4, collection_name=collection_name
                 ):
                     if event["type"] == "chunk":
                         full_response += event["content"]

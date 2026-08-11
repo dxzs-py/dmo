@@ -5,8 +5,7 @@
 视图层只负责请求解析、服务调用、响应构建。
 """
 
-import logging
-
+from Django_xm.apps.core.logging_utils import get_logger
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import status
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -29,12 +28,12 @@ from .services.kb_service import (
     get_knowledge_base_detail,
     list_documents,
     list_knowledge_bases,
+    save_uploaded_files,
     search_knowledge_base,
     update_knowledge_base,
-    upload_documents,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _paginate_list(items, page, page_size):
@@ -194,19 +193,53 @@ class KnowledgeBaseUploadView(APIView):
             )
 
         try:
-            result = upload_documents(request.user, kb_id, files)
-            return success_response(data=result, message="文档上传成功")
+            # 同步快操作：仅保存文件落盘，返回秒级响应
+            saved_files = save_uploaded_files(request.user, kb_id, files)
         except FileNotFoundError as e:
             return not_found_response(message=str(e))
         except ValueError as e:
             return error_response(
                 code=ErrorCode.INVALID_PARAMS, message=str(e), http_status=status.HTTP_400_BAD_REQUEST
             )
-        except Exception as e:
-            logger.exception("上传文档失败")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+
+        # 提交 Celery 异步任务：文档加载/分块/向量化在 worker 中执行，
+        # 进度通过 WebSocket task:{task_id} 频道实时推送（前端 subscribeTask 订阅）
+        file_names = [f["name"] for f in saved_files]
+
+        try:
+            from Django_xm.apps.core.task_redis_manager import TaskType, get_task_manager
+            from Django_xm.tasks.rag_tasks import upload_documents_task
+
+            task_manager = get_task_manager()
+            task_id = task_manager.create_task(
+                task_type=TaskType.RAG_UPLOAD,
+                user_id=request.user.id,
+                task_name=f"上传文档到知识库: {kb_id}",
+                task_params={"kb_id": kb_id, "file_names": file_names},
             )
+            celery_result = upload_documents_task.delay(
+                user_id=request.user.id,
+                kb_id=kb_id,
+                file_names=file_names,
+                task_id=task_id,
+            )
+            task_manager.update_task_status(task_id, {"celery_task_id": celery_result.id})
+        except Exception:
+            logger.exception("提交知识库上传任务失败")
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message="上传任务队列不可用，请确认 Celery worker 已启动",
+                http_status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        return success_response(
+            data={
+                "task_id": task_id,
+                "status": "pending",
+                "files": saved_files,
+            },
+            message="文档已接收，正在后台处理",
+        )
 
 
 class KnowledgeBaseDocumentDeleteView(APIView):

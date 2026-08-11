@@ -358,7 +358,7 @@ class IndexManager:
             # 备份旧索引的文档
             if embeddings:
                 try:
-                    backup_documents = self._read_all_documents(name, embeddings, effective_store_type)
+                    backup_documents = self.read_all_documents(name, embeddings, effective_store_type)
                     logger.info(f"overwrite 模式：备份旧索引文档 {len(backup_documents)} 个: {name}")
                 except Exception as e:
                     logger.warning(f"overwrite 模式：备份旧索引文档失败（旧索引可能已损坏）: {e}")
@@ -384,6 +384,11 @@ class IndexManager:
                     backend.save(vector_store, str(index_path))
 
             # 保存元数据
+            active_model = (
+                embeddings.get_active_provider_id()
+                if embeddings is not None and hasattr(embeddings, "get_active_provider_id")
+                else settings.embedding_model
+            )
             metadata = {
                 "name": name,
                 "description": description,
@@ -391,7 +396,7 @@ class IndexManager:
                 "updated_at": datetime.now(UTC).isoformat(),
                 "num_documents": len(documents) if documents else 0,
                 "store_type": effective_store_type,
-                "embedding_model": settings.embedding_model,
+                "embedding_model": active_model,
                 "embedding_dimension": self._detect_embedding_dimension(embeddings),
             }
             self._save_metadata(name, metadata, store_type=effective_store_type)
@@ -412,6 +417,11 @@ class IndexManager:
                     backend.create(backup_documents, embeddings, collection_name=name)
                     logger.warning(f"索引重建失败，已恢复旧索引文档 {len(backup_documents)} 个: {name}")
                     # 恢复元数据
+                    active_model = (
+                        embeddings.get_active_provider_id()
+                        if hasattr(embeddings, "get_active_provider_id")
+                        else settings.embedding_model
+                    )
                     backup_metadata = {
                         "name": name,
                         "description": description,
@@ -419,7 +429,7 @@ class IndexManager:
                         "updated_at": datetime.now(UTC).isoformat(),
                         "num_documents": len(backup_documents),
                         "store_type": effective_store_type,
-                        "embedding_model": settings.embedding_model,
+                        "embedding_model": active_model,
                         "embedding_dimension": self._detect_embedding_dimension(embeddings),
                     }
                     self._save_metadata(name, backup_metadata, store_type=effective_store_type)
@@ -669,8 +679,25 @@ class IndexManager:
             return metadata["embedding_dimension"]
         return None
 
-    def _read_all_documents(self, name: str, embeddings: Embeddings, store_type: str) -> list[Document]:
-        """从索引中读取所有文档（用于 overwrite 备份）"""
+    def read_all_documents(
+        self,
+        name: str,
+        embeddings: Embeddings | None = None,
+        store_type: str | None = None,
+    ) -> list[Document]:
+        """从索引读取所有文档（PGVector 全量读取 / 其他后端回退 docstore 遍历）。
+
+        供知识库降级检索与 overwrite 备份等场景加载全量 chunk。
+
+        Args:
+            name: 索引名称
+            embeddings: Embeddings 实例（docstore 回退路径需要）
+            store_type: 存储类型，缺省时自动检测
+
+        Returns:
+            Document 列表，读取失败或索引无文档时返回空列表
+        """
+        store_type = store_type or self._detect_store_type(name)
         backend = self._get_backend(store_type)
 
         # PGVector: 使用 backend 的 read_all_documents
@@ -700,9 +727,12 @@ class IndexManager:
     def _generate_stable_ids(documents: list[Document]) -> list[str]:
         """为文档列表生成稳定 ID
 
-        基于 metadata.source（文件路径）+ page_content SHA256 生成 uuid5，
-        相同文件相同内容的 chunk 在重试场景下产生相同 ID，
-        配合 PGVector ON CONFLICT DO NOTHING 实现幂等写入。
+        基于 metadata.source（文件路径）+ page_content SHA256 + 文档序号生成 uuid5。
+        - 相同文件相同内容的 chunk 在重试场景下产生相同 ID（序号按批内顺序稳定），
+          配合 PGVector ON CONFLICT DO NOTHING 实现幂等写入。
+        - 加入序号是为了保证同一批内 ID 唯一：UnstructuredLoader 分割出的 chunk
+          可能包含内容完全相同的片段，若只基于 source+content 生成 ID 会出现重复，
+          导致批量 upsert 抛 "ON CONFLICT DO UPDATE command cannot affect row a second time"。
 
         Args:
             documents: 文档列表
@@ -711,12 +741,12 @@ class IndexManager:
             与 documents 等长的稳定 ID 列表
         """
         ids: list[str] = []
-        for doc in documents:
+        for idx, doc in enumerate(documents):
             source = ""
             if isinstance(doc.metadata, dict):
                 source = doc.metadata.get("source", "") or ""
             content_hash = hashlib.sha256(doc.page_content.encode("utf-8")).hexdigest()
-            stable_id = str(uuid.uuid5(_DOC_ID_NAMESPACE, f"{source}:{content_hash}"))
+            stable_id = str(uuid.uuid5(_DOC_ID_NAMESPACE, f"{source}:{content_hash}:{idx}"))
             ids.append(stable_id)
         return ids
 
@@ -815,6 +845,11 @@ class IndexManager:
                 old_count = metadata.get("num_documents", 0)
                 metadata["num_documents"] = old_count + len(documents)
                 metadata["updated_at"] = datetime.now(UTC).isoformat()
+                # 记录实际激活的 embedding 模型（provider id），与向量数据真实来源一致
+                if embeddings is not None and hasattr(embeddings, "get_active_provider_id"):
+                    active_model = embeddings.get_active_provider_id()
+                    if active_model:
+                        metadata["embedding_model"] = active_model
                 # 补充维度信息（旧索引可能没有此字段）
                 if not metadata.get("embedding_dimension") and embeddings:
                     metadata["embedding_dimension"] = self._detect_embedding_dimension(embeddings)

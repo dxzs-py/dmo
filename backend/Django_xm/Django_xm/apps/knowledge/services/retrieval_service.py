@@ -19,7 +19,6 @@ from pydantic import BaseModel, Field
 
 from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.apps.knowledge.config import settings
-from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
 
 logger = get_logger(__name__)
 
@@ -140,73 +139,6 @@ def _record_degradation_metric(collection_name: str, error: Exception) -> None:
         meta.save(update_fields=["metadata_json", "updated_at"])
     except Exception as e:
         logger.debug(f"记录降级指标失败（可忽略）: {e}")
-
-
-class DegradableRetriever(BaseRetriever):
-    """支持降级的检索器包装器
-
-    正常情况下委托给内部 retriever 做向量检索；
-    当 Embedding 服务不可用时自动降级到 PostgreSQL 全文关键词检索。
-    """
-
-    base_retriever: BaseRetriever
-    collection_name: str = ""
-    fallback_k: int = 4
-
-    class Config:
-        arbitrary_types_allowed = True
-
-    def _get_relevant_documents(self, query: str) -> list[Document]:
-        try:
-            docs = self.base_retriever.invoke(query)
-            return docs
-        except Exception as e:
-            if _is_embedding_error(e):
-                logger.warning(f"向量检索失败（Embedding 不可用），降级到全文关键词检索: {e}")
-                if self.collection_name:
-                    _record_degradation_metric(self.collection_name, e)
-                return _keyword_search_fallback(query, self.collection_name, k=self.fallback_k)
-            raise
-
-    async def _aget_relevant_documents(self, query: str) -> list[Document]:
-        try:
-            docs = await self.base_retriever.ainvoke(query)
-            return docs
-        except Exception as e:
-            if _is_embedding_error(e):
-                logger.warning(f"向量检索失败（Embedding 不可用），降级到全文关键词检索: {e}")
-                if self.collection_name:
-                    _record_degradation_metric(self.collection_name, e)
-                return await asyncio.to_thread(_keyword_search_fallback, query, self.collection_name, self.fallback_k)
-            raise
-
-
-def wrap_with_degradation(
-    retriever: BaseRetriever,
-    collection_name: str = "",
-    fallback_k: int = 4,
-) -> BaseRetriever:
-    """将检索器包装为支持降级的检索器
-
-    如果 retriever 已经是 DegradableRetriever 则不再重复包装。
-    正常路径零开销，仅在异常时触发降级逻辑。
-
-    Args:
-        retriever: 原始检索器
-        collection_name: PGVector collection 名称，用于降级全文检索
-        fallback_k: 降级检索返回文档数
-
-    Returns:
-        包装后的 DegradableRetriever 实例
-    """
-    if isinstance(retriever, DegradableRetriever):
-        return retriever
-
-    return DegradableRetriever(
-        base_retriever=retriever,
-        collection_name=collection_name,
-        fallback_k=fallback_k,
-    )
 
 
 # ── 检索器创建 ────────────────────────────────────────────────────────────────
@@ -494,6 +426,7 @@ class SyncSafeRetrieverTool(BaseTool):
     llm: Any | None = None
     kb_name: str = ""
     kb_description: str = ""
+    collection_names: list[str] = []
 
     def _build_kb_context(self) -> str:
         """构建知识库上下文前缀，注入到工具返回结果中"""
@@ -505,6 +438,21 @@ class SyncSafeRetrieverTool(BaseTool):
         if parts:
             return "【知识库信息】\n" + "\n".join(parts) + "\n\n"
         return ""
+
+    def _degrade_knowledge_search(self, query: str) -> str:
+        """检索无结果时的知识库降级：加载全库文档走 UnifiedRagPipeline。
+
+        与 attachment_rag_search 共享同一 5 步检索管道，
+        降级仅在初始检索无结果时触发。
+        """
+        if not self.collection_names:
+            return "知识库中未找到与您问题相关的信息。"
+
+        from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline, load_kb_documents
+
+        documents, total_tokens = load_kb_documents(self.collection_names)
+        pipeline = UnifiedRagPipeline(scenario="knowledge_base")
+        return pipeline.search(query, documents, total_tokens)
 
     def _run(self, query: str, retrieval_mode: str | None = None) -> str:
         mode = retrieval_mode or self.retrieval_mode
@@ -543,46 +491,94 @@ class SyncSafeRetrieverTool(BaseTool):
             return "precise"
 
     def _run_precise(self, query: str) -> str:
-        docs = self.retriever.invoke(query)
-        logger.info(f"precise 检索: query='{query[:50]}...', 返回 {len(docs)} 个文档")
-        cleaned = self._clean_docs(docs)
+        from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
 
-        if not cleaned:
-            # 检索无结果，调用统一降级管道
-            pipeline = UnifiedRagPipeline()
-            return pipeline.search(query, docs, total_token_count=0)
-
-        return self._build_kb_context() + KB_RESULT_INSTRUCTION + self._format_docs(cleaned)
+        pipeline = UnifiedRagPipeline(scenario="knowledge_base")
+        result = pipeline.search_with_retriever(
+            retriever=self.retriever,
+            query=query,
+            vector_store=None,  # PGVector can't do InMemoryVectorStore keyword search
+            documents=None,
+            total_token_count=0,
+        )
+        # search_with_retriever returns formatted output; if it's the "no results" message, try degradation
+        if "未找到" in result or "未检索到" in result or "暂无文档" in result:
+            # Try to get docs from retriever for cleaning
+            try:
+                docs = self.retriever.invoke(query)
+                cleaned = self._clean_docs(docs)
+                if cleaned:
+                    logger.info(f"precise 检索: query='{query[:50]}...', 返回 {len(cleaned)} 个文档 (Pipeline level=0)")
+                    return self._build_kb_context() + KB_RESULT_INSTRUCTION + self._format_docs(cleaned)
+            except Exception:
+                pass
+            return self._degrade_knowledge_search(query)
+        logger.info(f"precise 检索 Pipeline: query='{query[:50]}...'")
+        return self._build_kb_context() + KB_RESULT_INSTRUCTION + result
 
     def _run_comprehensive(self, query: str) -> str:
+        from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
+
         retriever = self.comprehensive_retriever or self.retriever
-        docs = retriever.invoke(query)
-        logger.info(f"comprehensive 检索: query='{query[:50]}...', 返回 {len(docs)} 个文档")
-        cleaned = self._clean_docs(docs)
-
-        if not cleaned:
-            pipeline = UnifiedRagPipeline()
-            return pipeline.search(query, docs, total_token_count=0)
-
-        combiner = MapReduceDocCombiner(llm=self.llm)
-        result = combiner.combine_sync(cleaned, query, llm=self.llm)
+        pipeline = UnifiedRagPipeline(scenario="knowledge_base")
+        result = pipeline.search_with_retriever(
+            retriever=retriever,
+            query=query,
+            vector_store=None,
+            documents=None,
+            total_token_count=0,
+        )
+        if "未找到" in result or "未检索到" in result or "暂无文档" in result:
+            try:
+                docs = retriever.invoke(query)
+                cleaned = self._clean_docs(docs)
+                if cleaned:
+                    logger.info(
+                        f"comprehensive 检索: query='{query[:50]}...', "
+                        f"返回 {len(cleaned)} 个文档 (Pipeline level=0)"
+                    )
+                    combiner = MapReduceDocCombiner(llm=self.llm)
+                    combined = combiner.combine_sync(cleaned, query, llm=self.llm)
+                    return self._build_kb_context() + KB_RESULT_INSTRUCTION + combined
+            except Exception:
+                pass
+            return self._degrade_knowledge_search(query)
+        logger.info(f"comprehensive 检索 Pipeline: query='{query[:50]}...'")
         return self._build_kb_context() + KB_RESULT_INSTRUCTION + result
 
     async def _arun_comprehensive(self, query: str) -> str:
+        import asyncio
+
+        from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
+
         retriever = self.comprehensive_retriever or self.retriever
-        try:
-            docs = await retriever.ainvoke(query)
-        except Exception:
-            docs = await asyncio.to_thread(retriever.invoke, query)
-        logger.info(f"comprehensive 异步检索: query='{query[:50]}...', 返回 {len(docs)} 个文档")
-        cleaned = self._clean_docs(docs)
-
-        if not cleaned:
-            pipeline = UnifiedRagPipeline()
-            return pipeline.search(query, docs, total_token_count=0)
-
-        combiner = MapReduceDocCombiner(llm=self.llm)
-        result = await combiner.combine(cleaned, query, llm=self.llm)
+        pipeline = UnifiedRagPipeline(scenario="knowledge_base")
+        result = pipeline.search_with_retriever(
+            retriever=retriever,
+            query=query,
+            vector_store=None,
+            documents=None,
+            total_token_count=0,
+        )
+        if "未找到" in result or "未检索到" in result or "暂无文档" in result:
+            try:
+                try:
+                    docs = await retriever.ainvoke(query)
+                except Exception:
+                    docs = await asyncio.to_thread(retriever.invoke, query)
+                cleaned = self._clean_docs(docs)
+                if cleaned:
+                    logger.info(
+                        f"comprehensive 异步检索: query='{query[:50]}...', "
+                        f"返回 {len(cleaned)} 个文档 (Pipeline level=0)"
+                    )
+                    combiner = MapReduceDocCombiner(llm=self.llm)
+                    combined = await combiner.combine(cleaned, query, llm=self.llm)
+                    return self._build_kb_context() + KB_RESULT_INSTRUCTION + combined
+            except Exception:
+                pass
+            return self._degrade_knowledge_search(query)
+        logger.info(f"comprehensive 异步检索 Pipeline: query='{query[:50]}...'")
         return self._build_kb_context() + KB_RESULT_INSTRUCTION + result
 
     @staticmethod
@@ -643,6 +639,7 @@ def create_retriever_tool(
     llm: Any | None = None,
     kb_name: str = "",
     kb_description: str = "",
+    collection_names: list[str] | None = None,
 ) -> BaseTool:
     if description is None:
         description = (
@@ -661,6 +658,7 @@ def create_retriever_tool(
             llm=llm,
             kb_name=kb_name,
             kb_description=kb_description,
+            collection_names=collection_names or [],
         )
         logger.info(f"检索器工具创建成功（SyncSafe 模式, retrieval_mode={retrieval_mode}）")
         return tool

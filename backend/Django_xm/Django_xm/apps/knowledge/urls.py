@@ -1,9 +1,6 @@
 from django.urls import path
 
 from .views import (
-    AsyncRAGDocumentUploadView,
-    AsyncRAGIndexCreateView,
-    AsyncRAGIndexDeleteView,
     KnowledgeBaseDetailView,
     KnowledgeBaseDocumentDeleteView,
     KnowledgeBaseDocumentListView,
@@ -37,7 +34,6 @@ urlpatterns = [
         KnowledgeBaseDocumentDeleteView.as_view(),
         name="document_delete",
     ),
-    path("indices/<str:kb_id>/add-directory/", KnowledgeBaseUploadView.as_view(), name="document_add_directory"),
     # RAG 查询/检索/流式
     path("query/", RAGQueryView.as_view(), name="query"),
     path("search/", RAGSearchView.as_view(), name="search"),
@@ -58,8 +54,4 @@ urlpatterns = [
         name="knowledge_bases_document_delete",
     ),
     path("knowledge-bases/<str:kb_id>/search/", KnowledgeBaseSearchView.as_view(), name="knowledge_bases_search"),
-    # 异步 RAG 操作
-    path("async/indices/", AsyncRAGIndexCreateView.as_view(), name="async_index_create"),
-    path("async/indices/<str:kb_id>/upload/", AsyncRAGDocumentUploadView.as_view(), name="async_document_upload"),
-    path("async/indices/<str:kb_id>/delete/", AsyncRAGIndexDeleteView.as_view(), name="async_index_delete"),
 ]

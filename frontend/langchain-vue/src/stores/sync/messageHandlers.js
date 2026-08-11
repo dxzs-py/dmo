@@ -58,7 +58,10 @@ export const createMessageHandlers = (ctx) => {
     // 2. 占位消息合并：前端 sendMessage 创建的本地占位消息（backendId 尚未设置），
     //    从后向前查找最近一条无 backendId 的同角色消息作为占位进行合并。
     //    - assistant：content 为空即可（流式占位初始为空，SSE chunk 会追加到已合并的消息）
-    //    - user：content 与后端消息一致
+    //    - user：只要存在无 backendId 的 user 占位即可合并。
+    //      注意：不能依赖内容相等——占位 content 是前端原始输入（未 trim），
+    //      而后端存储/广播的 content 经过 trim、附件注入等处理，二者必然不一致，
+    //      内容相等判断会导致 user 占位合并失败进而产生重复消息。
     let existing = session.messages?.find(m =>
       (m.backendId && m.backendId?.toString() === message.backendId?.toString()) ||
       (m.id && m.id?.toString() === message.id?.toString())
@@ -77,7 +80,10 @@ export const createMessageHandlers = (ctx) => {
     if (!existing && message.backendId) {
       for (let i = session.messages.length - 1; i >= 0; i--) {
         const m = session.messages[i]
-        if (m.backendId) break
+        // 跳过已绑定后端 ID 的消息，继续向前寻找本地占位。
+        // 若遇带 backendId 的消息即 break，会因"user 后端消息先到达并排在末尾"而
+        // 中断对 assistant 占位的查找，导致 assistant 合并失败产生重复消息。
+        if (m.backendId) continue
         if (m.role !== message.role) continue
         if (m.role === 'assistant') {
           // assistant 占位合并条件：content 为空 OR isStreaming===true（当前流式占位）
@@ -90,10 +96,10 @@ export const createMessageHandlers = (ctx) => {
             break
           }
         } else if (m.role === 'user') {
-          if (m.content === message.content) {
-            existing = m
-            break
-          }
+          // user 占位合并：不依赖内容相等（原因见上）。同一时刻前端只会有一个
+          // 待确认的 user 占位，找到最后一个无 backendId 的 user 消息即视为占位。
+          existing = m
+          break
         }
       }
       if (existing) {

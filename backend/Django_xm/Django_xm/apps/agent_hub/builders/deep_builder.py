@@ -410,25 +410,6 @@ def _get_backend(
         return None
 
 
-def _get_retriever_tool(retriever: Any) -> BaseTool | None:
-    if retriever is None:
-        return None
-    if isinstance(retriever, BaseTool):
-        return retriever
-    try:
-        # langchain.tools.retriever 模块不存在；create_retriever_tool 实际位于 langchain_core.tools.retriever
-        from langchain_core.tools.retriever import create_retriever_tool
-
-        return create_retriever_tool(
-            retriever=retriever,
-            name="knowledge_retrieve",
-            description="在知识库中检索相关文档信息",
-        )
-    except Exception:
-        logger.warning("无法将 retriever 转换为工具")
-        return None
-
-
 @register_builder(AgentType.DEEP_RESEARCH)
 class DeepAgentBuilder:
     async def build(self, config) -> Any:
@@ -668,13 +649,11 @@ class DeepAgentBuilder:
             )
             return [gp_subagent], None
 
-        # 优先从 config.retriever 获取 retriever_tool
-        retriever_tool = _get_retriever_tool(config.retriever)
-
-        # 如果 config.retriever 为空，从 tools 列表中识别已有的 retriever_tool
+        # 从 tools 列表中识别已有的 retriever_tool
         # （deep_research.py 将 retriever_tool 放入了 config.tools 而非 config.retriever）
+        retriever_tool = None
         retriever_tool_name = None
-        if retriever_tool is None and tools:
+        if tools:
             for t in tools:
                 name = getattr(t, "name", "")
                 if any(name.startswith(prefix) or name == prefix for prefix in _RETRIEVER_TOOL_NAME_PREFIXES):
@@ -682,8 +661,6 @@ class DeepAgentBuilder:
                     retriever_tool_name = name
                     logger.info(f"从 tools 列表中识别到 retriever_tool: {name}")
                     break
-        elif retriever_tool is not None:
-            retriever_tool_name = getattr(retriever_tool, "name", None)
 
         extra_tools = [
             t for t in tools if isinstance(t, BaseTool) and getattr(t, "name", "") in _SEARCH_TOOL_NAMES

@@ -1,0 +1,45 @@
+logger.js:6 [Security] Initializing session store...
+logger.js:19 [Realtime] 已从 localStorage 恢复 lastSeq: 46 条通道
+logger.js:19 [Realtime] WebSocket 已连接
+pinia.mjs:290 🍍 "approval" store installed 🆕
+pinia.mjs:290 🍍 "research" store installed 🆕
+pinia.mjs:290 🍍 "workflow" store installed 🆕
+logger.js:6 [Sync] 实时同步 store 已初始化
+content_main.js:4962 Immersive Translate ERROR: sync dynamic-i18n error Error: dynamic-i18n version mismatch: expected 6, got 5
+    at M1 (content_main.js:4962:197311)
+error @ content_main.js:4962
+content_main.js:4990 This page uses the built-in LanguageDetector feature. To learn more and leave feedback, see https://learn.microsoft.com/microsoft-edge/web-platform/languagedetector-api
+logger.js:19 [Realtime] 收到 replay 回包: channel=user:1, count=0, chunk=1/1
+logger.js:6 [Session] 新打开页面，定位最新会话: bc3223ff-114e-49f4-b69c-aeb4fa4183d3（忽略 localStorage: bc3223ff-114e-49f4-b69c-aeb4fa4183d3）
+logger.js:6 [Security] Loaded 4 sessions (page 1/1) for user 1
+pinia.mjs:290 🍍 "chat" store installed 🆕
+pinia.mjs:290 🍍 "model" store installed 🆕
+pinia.mjs:290 🍍 "chatDeepResearch" store installed 🆕
+pinia.mjs:290 🍍 "tools" store installed 🆕
+logger.js:6 [Session] Loaded detail for session bc3223ff-114e-49f4-b69c-aeb4fa4183d3 with 2 messages
+ChatView.vue:109 [ChatView] WebSocket 订阅会话事件: bc3223ff-114e-49f4-b69c-aeb4fa4183d3
+logger.js:19 [Realtime] 收到 replay 回包: channel=session:bc3223ff-114e-49f4-b69c-aeb4fa4183d3, count=0, chunk=1/1
+logger.js:19 [Sync] 会话删除: bc3223ff-114e-49f4-b69c-aeb4fa4183d3
+logger.js:6 [Security] Deleted session bc3223ff-114e-49f4-b69c-aeb4fa4183d3 for user 1
+ChatView.vue:116 [ChatView] WebSocket 取消订阅会话事件: bc3223ff-114e-49f4-b69c-aeb4fa4183d3
+ChatView.vue:109 [ChatView] WebSocket 订阅会话事件: 11b2ba20-fe22-49f2-810b-ad0c38cfc769
+logger.js:19 [Realtime] 收到 replay 回包: channel=session:11b2ba20-fe22-49f2-810b-ad0c38cfc769, count=0, chunk=1/1
+logger.js:19 [Sync] 会话删除: 11b2ba20-fe22-49f2-810b-ad0c38cfc769
+logger.js:6 [Security] Deleted session 11b2ba20-fe22-49f2-810b-ad0c38cfc769 for user 1
+ChatView.vue:116 [ChatView] WebSocket 取消订阅会话事件: 11b2ba20-fe22-49f2-810b-ad0c38cfc769
+ChatView.vue:109 [ChatView] WebSocket 订阅会话事件: e2227e83-2472-45a7-b93d-74a9d9ea8363
+logger.js:19 [Realtime] 收到 replay 回包: channel=session:e2227e83-2472-45a7-b93d-74a9d9ea8363, count=0, chunk=1/1
+logger.js:19 [Sync] 会话删除: e2227e83-2472-45a7-b93d-74a9d9ea8363
+logger.js:6 [Security] Deleted session e2227e83-2472-45a7-b93d-74a9d9ea8363 for user 1
+ChatView.vue:116 [ChatView] WebSocket 取消订阅会话事件: e2227e83-2472-45a7-b93d-74a9d9ea8363
+ChatView.vue:109 [ChatView] WebSocket 订阅会话事件: 2da3b8dc-ce72-4c92-b910-340171ee45a3
+logger.js:19 [Realtime] 收到 replay 回包: channel=session:2da3b8dc-ce72-4c92-b910-340171ee45a3, count=0, chunk=1/1
+logger.js:19 [Sync] 会话删除: 2da3b8dc-ce72-4c92-b910-340171ee45a3
+logger.js:6 [Security] Deleted session 2da3b8dc-ce72-4c92-b910-340171ee45a3 for user 1
+ChatView.vue:116 [ChatView] WebSocket 取消订阅会话事件: 2da3b8dc-ce72-4c92-b910-340171ee45a3
+logger.js:15 上传失败: Error: 上传响应缺少任务ID
+    at handleUpload (RagView.vue:709:13)
+(匿名) @ logger.js:15
+logger.js:15 上传失败: Error: 上传响应缺少任务ID
+    at handleUpload (KnowledgeBaseView.vue:191:13)
+(匿名) @ logger.js:15

@@ -532,15 +532,30 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
 
     @sync_to_async
     def _user_owns_task(self, task_id):
-        """校验当前用户是否为指定 ResearchTask 的创建者。
+        """校验当前用户是否为指定任务的创建者。
 
-        用于 task 通道订阅/回放权限校验，独立深度研究场景下
-        确保用户只能订阅自己的任务事件。
+        task 频道为通用实时同步能力（工具调用/审批/任务进度），任务来源有两类：
+        - ResearchTask（独立深度研究任务，DB 持久化）
+        - Redis TrackedTask（RAG 上传等通用任务，task_redis_manager 记录 user_id）
+        任一归属校验通过即允许订阅，确保各模块 task 事件同步链路一致。
         """
-        from Django_xm.apps.research.services.cross_app import user_owns_research_task
-
+        # 1. ResearchTask（深度研究）
         try:
-            return user_owns_research_task(task_id, self.user)
+            from Django_xm.apps.research.services.cross_app import user_owns_research_task
+
+            if user_owns_research_task(task_id, self.user):
+                return True
         except Exception as e:
-            logger.warning(f"[RealtimeSync] _user_owns_task 校验失败: task_id={task_id}, {e}")
-            return False
+            logger.warning(f"[RealtimeSync] _user_owns_task ResearchTask 校验失败: task_id={task_id}, {e}")
+
+        # 2. Redis TrackedTask（RAG 上传等通用任务）
+        try:
+            from Django_xm.apps.core.task_redis_manager import get_task_manager
+
+            task_data = get_task_manager().get_task_status(task_id)
+            if task_data and task_data.get("user_id") == self.user.id:
+                return True
+        except Exception as e:
+            logger.warning(f"[RealtimeSync] _user_owns_task TrackedTask 校验失败: task_id={task_id}, {e}")
+
+        return False

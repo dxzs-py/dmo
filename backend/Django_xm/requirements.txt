@@ -119,6 +119,9 @@ nbconvert>=7.17.1
 nbformat>=5.10.4
 numba>=0.64.0
 numpy>=2.4.3
+# pandas 必须 >=2.2.3 以兼容 numpy 2.x（pandas 2.0.x 按 numpy<2 编译，
+# 会导致 UnstructuredLoader 导入 pandas 时抛 "numpy.dtype size changed" → 知识库上传 400）
+pandas>=2.2.3
 olefile>=0.47
 openai>=2.30.0
 orjson>=3.11.7
@@ -151,6 +154,9 @@ python-dateutil>=2.9.0.post0
 python-dotenv>=1.0.1
 python-iso639>=2026.1.31
 python-magic>=0.4.27
+# Windows 上 python-magic 依赖外部 libmagic.dll，python-magic-bin 提供内置 DLL，
+# 消除 unstructured 加载时 "libmagic is unavailable" 警告（Linux/macOS 走 python-magic）
+python-magic-bin>=0.4.14 ; platform_system == "Windows"
 python-multipart>=0.0.22
 python-oxmsg>=0.0.2
 pytz>=2026.1.post1

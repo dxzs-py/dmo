@@ -49,43 +49,22 @@ class AttachmentService:
     def load_attachment_contents(self, attachment_ids: list[int]) -> str | None:
         return self.load_text_attachment_contents(attachment_ids)
 
-    def build_message_with_attachments(self, user_message: str, attachment_content: str | None) -> str:
-        if not attachment_content:
-            return user_message
-
-        return (
-            f"{user_message}\n\n"
-            f"---\n"
-            f"以下是用户上传的文件内容（已直接包含在本消息中，无需使用工具读取，请直接基于以下内容分析和回答）：\n\n"
-            f"{attachment_content}\n"
-            f"---\n"
-        )
-
     def build_multimodal_message_content(
         self,
         user_message: str,
         attachment_ids: list[int],
     ) -> list:
+        """构造多模态消息内容（纯图片场景）。
+
+        文本附件不再注入本消息——由 hint 引导 Agent 通过 attachment_rag_search /
+        attachment_reader 工具按需检索，保持用户消息展示内容纯净。
+        """
         from Django_xm.apps.tools.langchain.file_reader import read_attachment_as_base64
 
         content_parts = [{"type": "text", "text": user_message}]
 
         classified = self.classify_attachments(attachment_ids)
         image_ids = classified["image_ids"]
-        text_ids = classified["text_ids"]
-
-        if text_ids:
-            text_content = self.load_text_attachment_contents(text_ids)
-            if text_content:
-                content_parts.append(
-                    {
-                        "type": "text",
-                        "text": (
-                            f"\n\n---\n以下是用户上传的文件内容（已直接包含在本消息中，无需使用工具读取，请直接基于以下内容分析和回答）：\n\n"
-                            f"{text_content}\n---\n"
-                        ),
-                    }
-                )
 
         for img_id in image_ids:
             try:
@@ -107,73 +86,6 @@ class AttachmentService:
                 )
 
         return content_parts
-
-    def build_rag_enhanced_message(
-        self,
-        user_message: str,
-        attachment_ids: list[int],
-        progress_callback=None,
-    ) -> str:
-        from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
-        from Django_xm.apps.tools.langchain.file_reader import read_attachment_as_documents
-
-        all_docs = []
-        classified = self.classify_attachments(attachment_ids)
-        image_ids = classified["image_ids"]
-        text_ids = classified["text_ids"]
-
-        if progress_callback:
-            progress_callback("reading", "正在读取文档内容...")
-
-        for att_id in text_ids:
-            try:
-                docs = read_attachment_as_documents(att_id)
-                all_docs.extend(docs)
-                logger.info(f"附件 {att_id} 生成 {len(docs)} 个文档片段")
-            except Exception:
-                logger.exception(f"读取附件文档失败 (id={att_id})")
-
-        if not all_docs:
-            return self.build_message_with_attachments(user_message, self.load_text_attachment_contents(text_ids))
-
-        try:
-            if progress_callback:
-                progress_callback("indexing", "正在建立向量索引...")
-            from langchain_core.vectorstores import InMemoryVectorStore
-
-            embeddings = get_embeddings()
-            vector_store = InMemoryVectorStore.from_documents(all_docs, embeddings)
-
-            if progress_callback:
-                progress_callback("searching", "正在进行相关信息检索...")
-            retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 6})
-            relevant_docs = retriever.invoke(user_message)
-
-            rag_content = "\n\n".join(
-                f"[来源: {doc.metadata.get('original_name', doc.metadata.get('source', '未知'))}]\n{doc.page_content}"
-                for doc in relevant_docs
-            )
-
-            logger.info(f"RAG 检索到 {len(relevant_docs)} 个相关片段（共 {len(all_docs)} 个片段）")
-
-            image_note = ""
-            if image_ids:
-                image_note = f"\n\n注意：用户还上传了 {len(image_ids)} 张图片，图片内容已作为多模态消息直接传递给模型。"
-
-            if progress_callback:
-                progress_callback("complete", "文档处理完成")
-
-            return (
-                f"{user_message}\n\n"
-                f"---\n"
-                f"以下是用户上传文件中与问题最相关的内容（RAG 检索结果）：\n\n"
-                f"{rag_content}\n"
-                f"---\n"
-                f"[原始文件共 {len(all_docs)} 个片段，已检索最相关的 {len(relevant_docs)} 个]{image_note}"
-            )
-        except Exception:
-            logger.exception("RAG 检索失败，回退到直接注入")
-            return self.build_message_with_attachments(user_message, self.load_text_attachment_contents(text_ids))
 
     def should_use_rag(self, attachment_ids: list[int]) -> bool:
         from Django_xm.apps.tools.langchain.file_reader import get_attachment_info
@@ -242,57 +154,46 @@ class AttachmentService:
                 "hint": None,
             }
 
+        # 含文本附件：content 保持纯净（仅用户原始输入），文件内容通过 hint 引导工具检索
+        names = self._get_attachment_names(attachment_ids)
+        names_str = ", ".join(names) if names else f"{len(attachment_ids)}个文件"
+        # 构造 "文件名 (id=N)" 标签，供 attachment_reader 工具获取真实附件 ID（LLM 无法从上下文自行推导）
+        id_labels = ", ".join(f"{name} (id={att_id})" for name, att_id in zip(names, attachment_ids))
+        if self.should_use_rag(attachment_ids):
+            hint = (
+                f"用户上传了以下文件：{names_str}\n"
+                f"优先使用 attachment_rag_search 工具检索文件内容（自动检索会话附件，无需指定ID）。"
+                f"仅在检索无相关性时，才使用 attachment_reader 读取单个文件全文，"
+                f"其 attachment_id 参数必须从以下对应关系取值：{id_labels}。"
+            )
+        else:
+            hint = (
+                f"用户上传了以下文件：{names_str}\n"
+                f"请使用 attachment_reader 工具读取文件内容，"
+                f"其 attachment_id 参数必须从以下对应关系取值：{id_labels}。"
+            )
+
         if has_images and has_text:
-            use_rag = self.should_use_rag(attachment_ids)
-            if use_rag:
-                hints = self._get_attachment_names(attachment_ids)
-                names_str = ", ".join(hints) if hints else f"{len(attachment_ids)}个文件"
-                hint = (
-                    f"用户上传了以下文件：{names_str}\n"
-                    f"优先使用 attachment_rag_search 工具检索文件内容（支持向量相似度搜索，适合大文件）。"
-                    f"仅在检索无相关性时，才使用 attachment_reader 读取单个文件全文。"
-                )
-                image_ids = classified["image_ids"]
-                from Django_xm.apps.tools.langchain.file_reader import read_attachment_as_base64
+            image_ids = classified["image_ids"]
+            from Django_xm.apps.tools.langchain.file_reader import read_attachment_as_base64
 
-                content_parts = [{"type": "text", "text": user_message}]
-                for img_id in image_ids:
-                    try:
-                        image_data, mime_type = read_attachment_as_base64(img_id)
-                        content_parts.append(
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": f"data:{mime_type};base64,{image_data}"},
-                            }
-                        )
-                    except Exception:
-                        logger.exception(f"构造图片多模态消息失败 (id={img_id})")
+            content_parts = [{"type": "text", "text": user_message}]
+            for img_id in image_ids:
+                try:
+                    image_data, mime_type = read_attachment_as_base64(img_id)
+                    content_parts.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mime_type};base64,{image_data}"},
+                        }
+                    )
+                except Exception:
+                    logger.exception(f"构造图片多模态消息失败 (id={img_id})")
 
-                return {"type": "multimodal", "content": content_parts, "hint": hint}
-            else:
-                return {
-                    "type": "multimodal",
-                    "content": self.build_multimodal_message_content(user_message, attachment_ids),
-                    "hint": None,
-                }
+            return {"type": "multimodal", "content": content_parts, "hint": hint}
 
         if has_text:
-            if self.should_use_rag(attachment_ids):
-                names = self._get_attachment_names(attachment_ids)
-                names_str = ", ".join(names) if names else f"{len(attachment_ids)}个文件"
-                hint = (
-                    f"用户上传了以下文件：{names_str}\n"
-                    f"优先使用 attachment_rag_search 工具检索文件内容（支持向量相似度搜索，适合大文件）。"
-                    f"仅在检索无相关性时，才使用 attachment_reader 读取单个文件全文。"
-                )
-                return {"type": "text", "content": user_message, "hint": hint}
-            else:
-                text_content = self.load_text_attachment_contents(attachment_ids)
-                return {
-                    "type": "text",
-                    "content": self.build_message_with_attachments(user_message, text_content),
-                    "hint": None,
-                }
+            return {"type": "text", "content": user_message, "hint": hint}
 
         return {"type": "text", "content": user_message, "hint": None}
 

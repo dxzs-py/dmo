@@ -4,9 +4,6 @@ import { useUserStore } from '@/stores/user'
 import { useLoadingStore } from '@/stores/loading'
 import { toCamelCase, toSnakeCase } from '@/utils/sessionTransformers'
 
-let isRefreshing = false
-let refreshSubscribers = []
-
 const apiClient = axios.create({
   baseURL: settings.apiBaseUrl,
   timeout: 300000,
@@ -60,15 +57,6 @@ apiClient.interceptors.request.use(
   }
 )
 
-function subscribeTokenRefresh(cb) {
-  refreshSubscribers.push(cb)
-}
-
-function onTokenRefreshed(token) {
-  refreshSubscribers.forEach(cb => cb(token))
-  refreshSubscribers = []
-}
-
 apiClient.interceptors.response.use(
   (response) => {
     if (!response.config.skipLoading) {
@@ -99,6 +87,7 @@ apiClient.interceptors.response.use(
     const userStore = useUserStore()
 
     if (error.response?.status === 401 && !originalRequest._retry) {
+      // 登录/刷新接口自身的 401 直接透传，不做拦截重试
       if (originalRequest.url && originalRequest.url.includes('/users/login/')) {
         return Promise.reject(error)
       }
@@ -108,33 +97,17 @@ apiClient.interceptors.response.use(
         return Promise.reject(error)
       }
 
-      if (isRefreshing) {
-        return new Promise((resolve) => {
-          subscribeTokenRefresh((token) => {
-            originalRequest.headers.Authorization = `Bearer ${token}`
-            resolve(apiClient(originalRequest))
-          })
-        })
-      }
-
       originalRequest._retry = true
-      isRefreshing = true
 
-      try {
-        const refreshed = await userStore.refreshAccessToken()
-        if (refreshed) {
-          onTokenRefreshed(userStore.token)
-          originalRequest.headers.Authorization = `Bearer ${userStore.token}`
-          return apiClient(originalRequest)
-        } else {
-          userStore.forceLogout('tokenExpired')
-        }
-      } catch (refreshError) {
-        userStore.forceLogout('tokenInvalid')
-        return Promise.reject(refreshError)
-      } finally {
-        isRefreshing = false
+      // 统一由 userStore 刷新：并发 401 会复用同一 in-flight promise，
+      // 刷新成功后各请求用新 token 重发；失败则触发幂等登出（仅一次）。
+      const refreshed = await userStore.refreshAccessToken()
+      if (refreshed) {
+        originalRequest.headers.Authorization = `Bearer ${userStore.token}`
+        return apiClient(originalRequest)
       }
+      userStore.forceLogout('tokenExpired')
+      return Promise.reject(error)
     }
 
     return Promise.reject(error)

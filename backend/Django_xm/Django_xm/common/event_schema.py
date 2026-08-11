@@ -88,6 +88,7 @@ class EventType(StrEnum):
     # === 任务事件（WebSocket 推送）===
     TASK_CREATED = "task_created"  # 新任务创建（深度研究/工作流），通知列表刷新
     TASK_STATUS_CHANGED = "task_status_changed"  # 任务状态进入终态（completed/failed），通知列表刷新
+    TASK_PROGRESS = "task_progress"  # 后台任务进度（RAG 文档上传等），task 频道实时推送
 
     # === 学习工作流事件（WebSocket 推送）===
     WORKFLOW_STEP = "workflow_step"  # 工作流节点执行进度
@@ -114,6 +115,7 @@ class EventSource(StrEnum):
     CHAT = "chat"
     DEEP_RESEARCH = "deep_research"
     LEARNING = "learning"
+    KNOWLEDGE = "knowledge"  # 知识库模块（RAG 文档上传等后台任务）
     # 预留：未来新增模块（_resolve_channels 默认路由到 session 频道）
     WORKFLOW = "workflow"
     AGENT = "agent"
@@ -258,6 +260,25 @@ class StreamPayload(TypedDict, total=False):
     seq: int | None  # 业务序列号（幂等保护，可选）
 
 
+class TaskProgressPayload(TypedDict, total=False):
+    """后台任务进度事件 payload（统一 schema）。
+
+    供 RAG 文档上传、索引重建等耗时任务在 task:{task_id} 频道实时推送进度，
+    前端据此展示进度条并识别终态（status=success / failure）。
+
+    路由字段 task_id 由 _publish_to_task_async 注入事件顶层，payload 中不强制携带。
+    """
+
+    task_id: str | None  # 业务任务 ID（与 WebSocket 频道路由 ID 一致）
+    source: EventSource  # 事件来源（必填，如 knowledge）
+    source_id: str | None  # 源实体 ID（RAG 场景为 user_index_name）
+    status: str | None  # 任务状态（started/progress/success/failure）
+    progress: int | None  # 进度百分比 0-100
+    current_step: str | None  # 当前步骤描述（加载文档/分块/向量化）
+    result: dict | None  # 成功结果（documents_uploaded/chunks_created/files）
+    error: str | None  # 失败原因（status=failure 时）
+
+
 # === 事件类型到 payload 类型的映射 ===
 
 _PAYLOAD_TYPE_MAP: dict[EventType, type] = {
@@ -280,6 +301,7 @@ _PAYLOAD_TYPE_MAP: dict[EventType, type] = {
     EventType.STREAM_CONTEXT: StreamPayload,
     EventType.STREAM_CONTENT_UPDATE: StreamPayload,
     EventType.STREAM_INTERRUPTED: StreamPayload,
+    EventType.TASK_PROGRESS: TaskProgressPayload,
     # STREAM_STARTED / STREAM_COMPLETED / SESSION_* / MESSAGE_* 事件无固定 payload schema，校验时跳过必填字段检查
 }
 
@@ -363,6 +385,7 @@ _WS_EVENT_NAME_MAP: dict[EventType, str] = {
     EventType.WORKFLOW_STATE_UPDATE: "workflow_state_update",
     EventType.WORKFLOW_COMPLETED: "workflow_completed",
     EventType.WORKFLOW_FAILED: "workflow_failed",
+    EventType.TASK_PROGRESS: "task_progress",
 }
 
 

@@ -303,10 +303,12 @@ def query_strict_rag(
             else:
                 logger.info("HyDE 改写未生效，使用原始查询")
 
-        # 1. 检索（使用改写后的查询），支持降级
+        # 1. 检索（使用改写后的查询），通过 Pipeline 执行初始检索
         degraded = False
         try:
-            docs = retriever.invoke(retrieval_query)
+            from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
+            pipeline = UnifiedRagPipeline(scenario="knowledge_base")
+            docs = pipeline.retrieve_documents_from_retriever(retriever=retriever, query=retrieval_query, vector_store=None)
         except Exception as e:
             if _is_embedding_error(e):
                 logger.warning(f"向量检索失败，降级到全文关键词检索: {e}")
@@ -319,19 +321,41 @@ def query_strict_rag(
 
         logger.info(f"检索到 {len(docs)} 个文档{' (降级模式)' if degraded else ''}")
 
-        # 2. 构建上下文
+        # 2. 无检索结果时，加载知识库全量文档走统一降级管道
+        if not docs:
+            from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline, load_kb_documents
+
+            if collection_name:
+                kb_docs, kb_tokens = load_kb_documents([collection_name])
+            else:
+                kb_docs, kb_tokens = [], 0
+            if kb_docs:
+                pipeline = UnifiedRagPipeline(scenario="knowledge_base")
+                answer = pipeline.search(query, kb_docs, kb_tokens)
+                degraded = True
+                logger.info("RAG 查询无检索结果，已走知识库降级管道")
+            else:
+                answer = "根据知识库中的资料，未找到与您问题相关的信息。"
+            result = {"answer": answer, "sources": [], "retrieved_docs": [], "success": True}
+            if degraded:
+                result["degraded"] = True
+                result["degradation_notice"] = "向量检索未命中，结果由知识库全文/降级检索提供"
+            logger.info("严格 RAG 查询完成（无检索结果，走知识库降级）")
+            return result
+
+        # 3. 构建上下文
         context = _format_docs(docs)
 
-        # 3. 构建 prompt（使用原始查询）
+        # 4. 构建 prompt（使用原始查询）
         prompt_text = STRICT_RAG_QA_PROMPT.format(context=context, question=query)
 
-        # 4. 调用 LLM（_resolve_chat_model 已内置 fallback，model=None 时自动读 SystemConfig）
+        # 5. 调用 LLM（_resolve_chat_model 已内置 fallback，model=None 时自动读 SystemConfig）
         llm = _resolve_chat_model(model, streaming=False)
 
         response = llm.invoke([HumanMessage(content=prompt_text)])
         answer = response.content if hasattr(response, "content") else str(response)
 
-        # 5. 提取来源
+        # 6. 提取来源
         sources = _extract_sources(docs)
 
         result = {
@@ -341,7 +365,7 @@ def query_strict_rag(
             "success": True,
         }
 
-        # 6. 降级标记
+        # 7. 降级标记
         if degraded or any(doc.metadata.get("degraded") for doc in docs):
             result["degraded"] = True
             result["degradation_notice"] = "向量检索服务暂时不可用，结果由关键词检索提供，相关性可能低于正常水平"
@@ -397,10 +421,12 @@ async def aquery_strict_rag(
             else:
                 logger.info("HyDE 改写未生效，使用原始查询")
 
-        # 1. 检索（使用改写后的查询），支持降级
+        # 1. 检索（使用改写后的查询），通过 Pipeline 执行初始检索
         degraded = False
         try:
-            docs = await retriever.ainvoke(retrieval_query)
+            from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
+            pipeline = UnifiedRagPipeline(scenario="knowledge_base")
+            docs = pipeline.retrieve_documents_from_retriever(retriever=retriever, query=retrieval_query, vector_store=None)
         except Exception as e:
             if _is_embedding_error(e):
                 logger.warning(f"向量检索失败，降级到全文关键词检索: {e}")
@@ -413,19 +439,41 @@ async def aquery_strict_rag(
 
         logger.info(f"检索到 {len(docs)} 个文档{' (降级模式)' if degraded else ''}")
 
-        # 2. 构建上下文
+        # 2. 无检索结果时，加载知识库全量文档走统一降级管道
+        if not docs:
+            from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline, load_kb_documents
+
+            if collection_name:
+                kb_docs, kb_tokens = await asyncio.to_thread(load_kb_documents, [collection_name])
+            else:
+                kb_docs, kb_tokens = [], 0
+            if kb_docs:
+                pipeline = UnifiedRagPipeline(scenario="knowledge_base")
+                answer = await asyncio.to_thread(pipeline.search, query, kb_docs, kb_tokens)
+                degraded = True
+                logger.info("异步 RAG 查询无检索结果，已走知识库降级管道")
+            else:
+                answer = "根据知识库中的资料，未找到与您问题相关的信息。"
+            result = {"answer": answer, "sources": [], "retrieved_docs": [], "success": True}
+            if degraded:
+                result["degraded"] = True
+                result["degradation_notice"] = "向量检索未命中，结果由知识库全文/降级检索提供"
+            logger.info("严格 RAG 查询完成（无检索结果，走知识库降级）")
+            return result
+
+        # 3. 构建上下文
         context = _format_docs(docs)
 
-        # 3. 构建 prompt（使用原始查询）
+        # 4. 构建 prompt（使用原始查询）
         prompt_text = STRICT_RAG_QA_PROMPT.format(context=context, question=query)
 
-        # 4. 调用 LLM（_resolve_chat_model 已内置 fallback，model=None 时自动读 SystemConfig）
+        # 5. 调用 LLM（_resolve_chat_model 已内置 fallback，model=None 时自动读 SystemConfig）
         llm = _resolve_chat_model(model, streaming=True)
 
         response = await llm.ainvoke([HumanMessage(content=prompt_text)])
         answer = response.content if hasattr(response, "content") else str(response)
 
-        # 5. 提取来源
+        # 6. 提取来源
         sources = _extract_sources(docs)
 
         result = {
@@ -435,7 +483,7 @@ async def aquery_strict_rag(
             "success": True,
         }
 
-        # 6. 降级标记
+        # 7. 降级标记
         if degraded or any(doc.metadata.get("degraded") for doc in docs):
             result["degraded"] = True
             result["degradation_notice"] = "向量检索服务暂时不可用，结果由关键词检索提供，相关性可能低于正常水平"
@@ -498,11 +546,13 @@ async def astream_strict_rag(
             else:
                 logger.info("HyDE 改写未生效，使用原始查询")
 
-        # 1. 检索（非流式，必须先完成，使用改写后的查询），支持降级
+        # 1. 检索（非流式，必须先完成，使用改写后的查询），通过 Pipeline 执行初始检索
         yield {"type": "heartbeat", "message": "正在检索文档..."}
         degraded = False
         try:
-            docs = await retriever.ainvoke(retrieval_query)
+            from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
+            pipeline = UnifiedRagPipeline(scenario="knowledge_base")
+            docs = pipeline.retrieve_documents_from_retriever(retriever=retriever, query=retrieval_query, vector_store=None)
         except Exception as e:
             if _is_embedding_error(e):
                 logger.warning(f"向量检索失败，降级到全文关键词检索: {e}")
@@ -515,13 +565,33 @@ async def astream_strict_rag(
 
         logger.info(f"检索到 {len(docs)} 个文档{' (降级模式)' if degraded else ''}")
 
-        # 2. 构建上下文
+        # 2. 无检索结果时，加载知识库全量文档走统一降级管道
+        if not docs:
+            from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline, load_kb_documents
+
+            if collection_name:
+                kb_docs, kb_tokens = await asyncio.to_thread(load_kb_documents, [collection_name])
+            else:
+                kb_docs, kb_tokens = [], 0
+            if kb_docs:
+                pipeline = UnifiedRagPipeline(scenario="knowledge_base")
+                degraded_text = await asyncio.to_thread(pipeline.search, query, kb_docs, kb_tokens)
+                degraded = True
+            else:
+                degraded_text = "根据知识库中的资料，未找到与您问题相关的信息。"
+            yield {"type": "chunk", "content": degraded_text}
+            if degraded:
+                yield {"type": "degradation", "message": "向量检索未命中，结果由知识库全文/降级检索提供"}
+            logger.info("严格 RAG 流式查询完成（无检索结果，走知识库降级）")
+            return
+
+        # 3. 构建上下文
         context = _format_docs(docs)
 
-        # 3. 构建 prompt（使用原始查询）
+        # 4. 构建 prompt（使用原始查询）
         prompt_text = STRICT_RAG_QA_PROMPT.format(context=context, question=query)
 
-        # 4. 流式调用 LLM（_resolve_chat_model 已内置 fallback，model=None 时自动读 SystemConfig）
+        # 5. 流式调用 LLM（_resolve_chat_model 已内置 fallback，model=None 时自动读 SystemConfig）
         yield {"type": "heartbeat", "message": "正在生成回答..."}
         llm = _resolve_chat_model(model, streaming=True)
 
@@ -531,14 +601,14 @@ async def astream_strict_rag(
                 full_response += chunk.content
                 yield {"type": "chunk", "content": chunk.content}
 
-        # 5. 发送降级提示
+        # 6. 发送降级提示
         if degraded or any(doc.metadata.get("degraded") for doc in docs):
             yield {
                 "type": "degradation",
                 "message": "向量检索服务暂时不可用，结果由关键词检索提供，相关性可能低于正常水平",
             }
 
-        # 6. 发送来源信息
+        # 7. 发送来源信息
         sources = _extract_sources(docs)
         if sources:
             yield {"type": "sources", "data": sources}
@@ -602,11 +672,13 @@ def stream_strict_rag(
             else:
                 logger.info("HyDE 改写未生效，使用原始查询")
 
-        # 1. 检索（同步，使用改写后的查询），支持降级
+        # 1. 检索（同步，使用改写后的查询），通过 Pipeline 执行初始检索
         yield {"type": "heartbeat", "message": "正在检索文档..."}
         degraded = False
         try:
-            docs = retriever.invoke(retrieval_query)
+            from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
+            pipeline = UnifiedRagPipeline(scenario="knowledge_base")
+            docs = pipeline.retrieve_documents_from_retriever(retriever=retriever, query=retrieval_query, vector_store=None)
         except Exception as e:
             if _is_embedding_error(e):
                 logger.warning(f"向量检索失败，降级到全文关键词检索: {e}")
@@ -619,13 +691,33 @@ def stream_strict_rag(
 
         logger.info(f"检索到 {len(docs)} 个文档{' (降级模式)' if degraded else ''}")
 
-        # 2. 构建上下文
+        # 2. 无检索结果时，加载知识库全量文档走统一降级管道
+        if not docs:
+            from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline, load_kb_documents
+
+            if collection_name:
+                kb_docs, kb_tokens = load_kb_documents([collection_name])
+            else:
+                kb_docs, kb_tokens = [], 0
+            if kb_docs:
+                pipeline = UnifiedRagPipeline(scenario="knowledge_base")
+                degraded_text = pipeline.search(query, kb_docs, kb_tokens)
+                degraded = True
+            else:
+                degraded_text = "根据知识库中的资料，未找到与您问题相关的信息。"
+            yield {"type": "chunk", "content": degraded_text}
+            if degraded:
+                yield {"type": "degradation", "message": "向量检索未命中，结果由知识库全文/降级检索提供"}
+            logger.info("严格 RAG 同步流式查询完成（无检索结果，走知识库降级）")
+            return
+
+        # 3. 构建上下文
         context = _format_docs(docs)
 
-        # 3. 构建 prompt（使用原始查询）
+        # 4. 构建 prompt（使用原始查询）
         prompt_text = STRICT_RAG_QA_PROMPT.format(context=context, question=query)
 
-        # 4. 流式调用 LLM（_resolve_chat_model 已内置 fallback，model=None 时自动读 SystemConfig）
+        # 5. 流式调用 LLM（_resolve_chat_model 已内置 fallback，model=None 时自动读 SystemConfig）
         yield {"type": "heartbeat", "message": "正在生成回答..."}
         llm = _resolve_chat_model(model, streaming=True)
 
@@ -635,14 +727,14 @@ def stream_strict_rag(
                 full_response += chunk.content
                 yield {"type": "chunk", "content": chunk.content}
 
-        # 5. 发送降级提示
+        # 6. 发送降级提示
         if degraded or any(doc.metadata.get("degraded") for doc in docs):
             yield {
                 "type": "degradation",
                 "message": "向量检索服务暂时不可用，结果由关键词检索提供，相关性可能低于正常水平",
             }
 
-        # 6. 发送来源信息
+        # 7. 发送来源信息
         sources = _extract_sources(docs)
         if sources:
             yield {"type": "sources", "data": sources}

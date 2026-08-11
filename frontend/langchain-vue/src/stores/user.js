@@ -10,6 +10,10 @@ const TOKEN_KEY = 'user_token'
 const REFRESH_TOKEN_KEY = 'user_refresh_token'
 const USER_INFO_KEY = 'user_info'
 
+// 模块级 in-flight 单例：并发调用（axios 拦截器 / SSE / WebSocket 预检）共享，
+// 避免用同一 refresh token 并发刷新被后端轮换机制（ROTATE_REFRESH_TOKENS）失效。
+let refreshPromise = null
+
 export const useUserStore = defineStore('user', () => {
   const token = ref(localStorage.getItem(TOKEN_KEY) || '')
   const refreshToken = ref(localStorage.getItem(REFRESH_TOKEN_KEY) || '')
@@ -92,21 +96,31 @@ export const useUserStore = defineStore('user', () => {
 
   async function refreshAccessToken() {
     if (!refreshToken.value) return false
-    try {
-      const response = await userAPI.refreshToken(refreshToken.value)
-      const data = response.data
-      const access = data.data?.access || data.access
-      const newRefresh = data.data?.refresh || data.refresh
-      if (access) {
-        setToken(access, newRefresh || undefined)
-        return true
+    // 已有刷新在进行中：复用同一 promise，等待其完成（并发去重）
+    if (refreshPromise) return refreshPromise
+
+    refreshPromise = (async () => {
+      try {
+        const response = await userAPI.refreshToken(refreshToken.value)
+        const data = response.data
+        const access = data.data?.access || data.access
+        const newRefresh = data.data?.refresh || data.refresh
+        if (access) {
+          setToken(access, newRefresh || undefined)
+          return true
+        }
+        return false
+      } catch (error) {
+        logger.error('刷新 token 失败:', error)
+        // 不清空本地凭证：会话失效登出由调用方统一触发 forceLogout（幂等），
+        // 避免并发调用方互相清空对方状态。
+        return false
+      } finally {
+        refreshPromise = null
       }
-      return false
-    } catch (error) {
-      logger.error('刷新 token 失败:', error)
-      clearUser()
-      return false
-    }
+    })()
+
+    return refreshPromise
   }
 
   async function getUserInfo() {
@@ -139,7 +153,12 @@ export const useUserStore = defineStore('user', () => {
   }
 
   function forceLogout(reason = 'tokenExpired') {
+    // 幂等：会话已被清理（如并发刷新失败时多个调用方同时触发）时，
+    // 跳过重复弹窗与跳转，仅首次执行清理与跳转。
+    const hadSession = !!token.value || !!refreshToken.value
     clearUser()
+    if (!hadSession) return
+
     const reasonMessages = {
       tokenExpired: '登录已过期，请重新登录',
       tokenInvalid: '登录凭证无效，请重新登录',

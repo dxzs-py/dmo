@@ -15,5 +15,9 @@ def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter("%(levelname)s %(name)s %(lineno)d %(message)s"))
         logger.addHandler(handler)
+    # 阻断向根 logger 传播，避免同一日志同时由本 handler 与根 logger 重复输出
+    # （与 core.config.get_logger 行为对齐；否则 splitters/index_service 等
+    #  模块的日志会在 stderr 与 django.log 中重复出现）
+    logger.propagate = False
     logger.setLevel(level)
     return logger

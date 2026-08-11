@@ -12,7 +12,7 @@ from typing import Any
 
 from django.utils import timezone
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.apps.knowledge.services.cross_app import get_index_manager
 from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
 from Django_xm.apps.knowledge.services.retrieval_service import create_retriever
@@ -33,20 +33,57 @@ def _compose_user_index_name(user_id: int, kb_name: str) -> str:
     return f"user_{user_id}_{kb_name}"
 
 
-def _load_and_retrieve(user_index_name: str, query: str, k: int = 5) -> list[Any]:
-    """加载单个知识库的向量库并执行检索，失败时记录日志返回空列表。"""
+def _load_and_retrieve(user_index_name: str, query: str, k: int = 5) -> tuple[list[Any], bool]:
+    """加载单个知识库的向量库并执行检索。
+
+    Returns:
+        (检索结果列表, is_degraded): is_degraded 为 True 表示向量检索无结果、
+        降级加载全库文档通过 UnifiedRagPipeline.retrieve_documents() 重排序获得结果。
+    """
     manager = get_index_manager()
     embeddings = get_embeddings()
     try:
         vector_store = manager.load_index(user_index_name, embeddings)
         retriever = create_retriever(vector_store, k=k)
-        return retriever.invoke(query)
     except FileNotFoundError:
         logger.warning(f"[Retrieval Node] 索引不存在: {user_index_name}")
-        return []
+        return [], False
     except Exception as e:
         logger.warning(f"[Retrieval Node] 加载索引 {user_index_name} 失败: {e}")
-        return []
+        return [], False
+
+    # Use UnifiedRagPipeline for retrieval with degradation
+    from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
+
+    pipeline = UnifiedRagPipeline(scenario="knowledge_base")
+    docs = pipeline.retrieve_documents_from_retriever(
+        retriever=retriever,
+        query=query,
+        vector_store=None,  # PGVector can't do InMemoryVectorStore keyword search
+    )
+
+    if docs:
+        return docs, False
+
+    # Pipeline couldn't find anything; try full document load as Level 2 fallback
+    logger.info(f"[Retrieval Node] 向量检索无结果，降级加载全库文档: {user_index_name}")
+    try:
+        from Django_xm.apps.knowledge.services.rag_retrieval import load_kb_documents
+
+        kb_docs, total_tokens = load_kb_documents([user_index_name])
+        if not kb_docs:
+            logger.warning(f"[Retrieval Node] 降级加载全库文档为空: {user_index_name}")
+            return [], False
+
+        degraded_docs = pipeline.retrieve_documents(query, kb_docs, total_tokens)
+        logger.info(
+            f"[Retrieval Node] 降级检索完成: {user_index_name}, "
+            f"全库 {len(kb_docs)} 片段 -> 命中 {len(degraded_docs)} 个文档"
+        )
+        return degraded_docs, True
+    except Exception as e:
+        logger.warning(f"[Retrieval Node] 降级检索失败: {user_index_name}, {e}")
+        return [], False
 
 
 def _dedup_by_content(docs: list[Any]) -> list[Any]:
@@ -114,15 +151,18 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
 
     # 对每个知识库独立检索后合并去重
     all_docs: list[Any] = []
+    has_degraded = False
     for kb_name in knowledge_base_ids:
         user_index_name = _compose_user_index_name(user_id, kb_name)
         original_name = get_original_index_name(user_index_name)
         logger.info(f"[Retrieval Node] 检索知识库: {original_name} (full_index={user_index_name})")
-        docs = _load_and_retrieve(user_index_name, main_query, k=5)
+        docs, degraded = _load_and_retrieve(user_index_name, main_query, k=5)
         all_docs.extend(docs)
+        if degraded:
+            has_degraded = True
 
     all_docs = _dedup_by_content(all_docs)
-    logger.info(f"[Retrieval Node] 主查询检索到 {len(all_docs)} 个去重文档")
+    logger.info(f"[Retrieval Node] 主查询检索到 {len(all_docs)} 个去重文档{' (含降级)' if has_degraded else ''}")
 
     # 文档较少时使用关键点补充检索
     if len(all_docs) < 3 and key_points:
@@ -130,7 +170,7 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
         for point in key_points[:2]:
             for kb_name in knowledge_base_ids:
                 user_index_name = _compose_user_index_name(user_id, kb_name)
-                additional_docs = _load_and_retrieve(user_index_name, point, k=2)
+                additional_docs, _degraded = _load_and_retrieve(user_index_name, point, k=2)
                 for doc in additional_docs[:2]:
                     if getattr(doc, "page_content", None) and doc.page_content not in {
                         getattr(d, "page_content", None) for d in all_docs

@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, onActivated, onUnmounted, computed } from 'vue'
-import { ElMessage, ElNotification } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Plus, Search, Upload, Delete, View, Document, FolderOpened, Edit, Refresh, Download } from '@element-plus/icons-vue'
 import { knowledgeAPI } from '@/api/knowledge'
 import { cacheAPI } from '@/api/cache'
@@ -8,6 +8,8 @@ import { logger } from '../utils/logger'
 import { formatFileSize } from '../utils/format'
 import { confirmDelete, confirmAction } from '../utils/dialog'
 import { useSessionStore } from '../stores/session'
+import { useRealtimeSync } from '../composables/useRealtimeSync'
+import { buildUploadFormData, notifyEmbeddingFallback, getUploadErrorMessage, trackUploadTask } from '../utils/knowledgeUpload'
 
 const sessionStore = useSessionStore()
 const knowledgeBases = ref([])
@@ -60,6 +62,10 @@ onUnmounted(() => {
   if (cacheTimer) {
     clearInterval(cacheTimer)
     cacheTimer = null
+  }
+  if (cancelUploadTask) {
+    cancelUploadTask()
+    cancelUploadTask = null
   }
 })
 
@@ -163,41 +169,56 @@ function openUpload(kb) {
 }
 
 const uploadLoading = ref(false)
+const uploadProgress = ref(0)
+const uploadStatusText = ref('')
+
+const realtimeSync = useRealtimeSync()
+let cancelUploadTask = null
 
 async function handleUpload() {
   if (!uploadFiles.value.length) {
     ElMessage.warning('请选择文件')
     return
   }
-  const formData = new FormData()
-  uploadFiles.value.forEach(file => {
-    formData.append('files', file.raw)
-  })
+  const formData = buildUploadFormData(uploadFiles.value)
   uploadLoading.value = true
+  uploadProgress.value = 0
+  uploadStatusText.value = '正在上传文件...'
   try {
     const response = await knowledgeAPI.uploadDocuments(currentKB.value.id, formData)
-    if (response.data?.code === 200) {
-      const resultData = response.data.data
-      ElMessage.success('文档上传并向量化成功！')
-      // 检查 Embedding 降级提示
-      if (resultData?.fallbackInfo?.events?.length) {
-        const events = resultData.fallbackInfo.events
-        const chain = events.map(e => e.fromLabel).concat([events[events.length - 1].toLabel]).join(' → ')
-        ElNotification({
-          title: 'Embedding 模型降级提示',
-          message: `降级链路: ${chain}`,
-          type: 'warning',
-          duration: 8000,
-        })
-      }
-      uploadDialog.value = false
-      await loadKnowledgeBases()
+    const taskId = response.data?.data?.taskId
+    if (!taskId) {
+      throw new Error('上传响应缺少任务ID')
     }
+    // 异步 Celery 任务：订阅 WebSocket task 频道实时进度，终态后刷新列表
+    uploadStatusText.value = '文档已接收，正在后台处理...'
+    cancelUploadTask = trackUploadTask(realtimeSync, taskId, {
+      onProgress: (progress, step) => {
+        uploadProgress.value = progress
+        uploadStatusText.value = step || `处理中 ${progress}%`
+      },
+      onSuccess: (result) => {
+        uploadLoading.value = false
+        uploadProgress.value = 100
+        uploadStatusText.value = ''
+        uploadDialog.value = false
+        ElMessage.success('文档上传并向量化成功！')
+        notifyEmbeddingFallback(result)
+        loadKnowledgeBases()
+      },
+      onFailure: (errorMsg) => {
+        uploadLoading.value = false
+        uploadProgress.value = 0
+        uploadStatusText.value = ''
+        ElMessage.error(errorMsg || '上传处理失败')
+      },
+    })
   } catch (error) {
     logger.error('上传失败:', error)
-    ElMessage.error('上传失败，请检查文件格式或重试')
-  } finally {
+    ElMessage.error(getUploadErrorMessage(error))
     uploadLoading.value = false
+    uploadProgress.value = 0
+    uploadStatusText.value = ''
   }
 }
 
@@ -557,6 +578,10 @@ async function handleClearCache(scope = 'all') {
           <span class="file-size">{{ formatFileSize(file.size) }}</span>
         </div>
       </div>
+      <div v-if="uploadLoading" class="upload-progress">
+        <el-progress :percentage="uploadProgress" :status="uploadProgress >= 100 ? 'success' : undefined" />
+        <div class="upload-status-text">{{ uploadStatusText }}</div>
+      </div>
       <template #footer>
         <el-button @click="uploadDialog = false" :disabled="uploadLoading">取消</el-button>
         <el-button type="primary" @click="handleUpload" :loading="uploadLoading">
@@ -766,6 +791,20 @@ async function handleClearCache(scope = 'all') {
 
 .upload-file-item:last-child {
   margin-bottom: 0;
+}
+
+.upload-progress {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--el-fill-color-light);
+  border-radius: 6px;
+}
+
+.upload-status-text {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  text-align: center;
 }
 
 .file-size {

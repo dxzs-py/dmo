@@ -300,6 +300,13 @@ function createSnapshotSyncInstance({ kind, id }) {
     }
     if (reconciledCount > 0) {
       logger.info(`[SnapshotSync] 工具调用校对完成: session=${id}, count=${reconciledCount}`)
+      // 根本修复：_reconcileToolCalls 将 snapshot 的平铺 tool_calls 列表
+      // 全部写入 toolCallsMap（含旧消息的工具调用），但 addOrUpdateToolCall
+      // 只调用 _syncMessageToolCalls（仅同步最后一条消息）。
+      // 旧消息的工具调用留在 Map 中未分发到其 message.toolCalls。
+      // 此处调用 syncAllMessageToolCallsFromMap 将 Map 中所有工具调用
+      // 按 messageBackendId 正确分发到各条消息，消除跨消息工具调用污染。
+      sessionStore.syncAllMessageToolCallsFromMap(id)
     }
   }
 

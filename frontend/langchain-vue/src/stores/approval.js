@@ -166,8 +166,14 @@ export const useApprovalStore = defineStore('approval', () => {
     }
 
     const effectiveSource = isDeepResearch ? 'deep_research' : 'chat'
-    // 优先使用事件数据中的 taskId（最准确），而非组件传入的 taskId（可能因切换任务而过时）
-    const effectiveTaskId = data.taskId || null
+    // taskId 路由（独立深度研究根因修复）：
+    // - 优先事件 payload 内的 taskId（chat 关联场景可能携带）
+    // - 回退函数参数 taskId（task 通道事件将 task_id 注入事件顶层，经
+    //   handleApprovalEvent 的 options.taskId 传入，payload 内部不含 taskId）
+    // 原实现仅取 data.taskId 导致独立 deep_research 的 taskId 恒为 null，
+    // DeepResearchView.taskPendingApprovals 过滤 entry.taskId === tid 永不命中，
+    // 审批面板（含确认/拒绝按钮）不渲染、任务卡在"等待审批"。
+    const effectiveTaskId = data.taskId || taskId || null
 
     pendingApprovals.value.set(toolCallId, {
       source: effectiveSource,
@@ -183,6 +189,15 @@ export const useApprovalStore = defineStore('approval', () => {
       sessionStore.setApprovalToLastMessage(sessionId, { ...data, state: 'pending' })
       // 立即同步审批状态到后端，确保其他浏览器/刷新后可恢复
       _debouncedApprovalSync(sessionStore, sessionId)
+    } else if (effectiveTaskId) {
+      // 独立 deep_research（无 sessionId）：同步审批数据到 researchStore 的 toolCall。
+      // 原实现缺失此分支，导致 researchStore 中 toolCall 无 approval 字段，
+      // ToolCallCard.isWaiting 依赖 approvalData 渲染"确认执行/拒绝"按钮 → 按钮不渲染。
+      // 时序保护：审批事件可能先于 tool_call_waiting 到达，setApprovalToToolCall 内部
+      // 会创建 isSynthetic 占位条目并入 pendingApprovals 队列，后续工具事件合并绑定。
+      _getResearchStore()
+        .then((rs) => rs.setApprovalToToolCall(effectiveTaskId, toolCallId, approvalData))
+        .catch((e) => logger.warn('[ApprovalStore] 同步 researchStore 审批数据失败:', e))
     }
   }
 
@@ -219,6 +234,12 @@ export const useApprovalStore = defineStore('approval', () => {
       }
       // 同步审批状态到后端，防止刷新后状态丢失
       sessionStore.syncLastMessageToBackend(effectiveSessionId, { allowCreate: false }).catch(() => {})
+    } else if (existingEntry?.taskId) {
+      // 独立 deep_research：同步超时状态到 researchStore，
+      // 否则 toolCall.approval.state 残留 pending 导致 isWaiting 仍为 true，审批面板不消失
+      _getResearchStore()
+        .then((rs) => rs.updateToolCallApprovalState(existingEntry.taskId, toolCallId, 'timeout'))
+        .catch((e) => logger.warn('[ApprovalStore] 同步 researchStore timeout 失败:', e))
     }
 
     // 深度研究来源额外提示
@@ -254,6 +275,11 @@ export const useApprovalStore = defineStore('approval', () => {
       sessionStore.updateToolCallApprovalState(effectiveSessionId, toolCallId, 'processing')
       sessionStore.setApprovalToLastMessage(effectiveSessionId, { ...data, state: 'processing' })
       sessionStore.syncLastMessageToBackend(effectiveSessionId, { allowCreate: false }).catch(() => {})
+    } else if (existingEntry?.taskId) {
+      // 独立 deep_research：同步审批状态到 researchStore（跨浏览器按钮禁用一致性）
+      _getResearchStore()
+        .then((rs) => rs.updateToolCallApprovalState(existingEntry.taskId, toolCallId, 'processing'))
+        .catch((e) => logger.warn('[ApprovalStore] 同步 researchStore processing 失败:', e))
     }
   }
 
@@ -277,6 +303,11 @@ export const useApprovalStore = defineStore('approval', () => {
       sessionStore.updateToolCallApprovalState(effectiveSessionId, toolCallId, 'waiting')
       sessionStore.setApprovalToLastMessage(effectiveSessionId, { ...data, state: 'waiting' })
       sessionStore.syncLastMessageToBackend(effectiveSessionId, { allowCreate: false }).catch(() => {})
+    } else if (existingEntry?.taskId) {
+      // 独立 deep_research：同步"等待同批"状态到 researchStore
+      _getResearchStore()
+        .then((rs) => rs.updateToolCallApprovalState(existingEntry.taskId, toolCallId, 'waiting'))
+        .catch((e) => logger.warn('[ApprovalStore] 同步 researchStore waiting 失败:', e))
     }
   }
 
@@ -319,6 +350,11 @@ export const useApprovalStore = defineStore('approval', () => {
       sessionStore.setApprovalToLastMessage(effectiveSessionId, { ...data, state: finalState })
       // 同步审批状态到后端，防止刷新后状态丢失
       sessionStore.syncLastMessageToBackend(effectiveSessionId, { allowCreate: false }).catch(() => {})
+    } else if (existingEntry?.taskId) {
+      // 独立 deep_research：同步终态审批状态到 researchStore（跨浏览器一致性）
+      _getResearchStore()
+        .then((rs) => rs.updateToolCallApprovalState(existingEntry.taskId, toolCallId, finalState))
+        .catch((e) => logger.warn('[ApprovalStore] 同步 researchStore 终态失败:', e))
     }
   }
 

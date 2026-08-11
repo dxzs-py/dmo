@@ -441,7 +441,14 @@ class FileReaderTool(AsyncToolMixin, BaseTool):
 
 class AttachmentReaderTool(BaseTool):
     name: str = "attachment_reader"
-    metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "file"})
+    metadata: dict = Field(
+        default_factory=lambda: {
+            "tier": "extended",
+            "visibility": "selectable",
+            "category": "file",
+            "output_to_chat": False,  # 文件内容是中间数据，不作为聊天文本补发
+        }
+    )
     description: str = (
         "读取用户上传的聊天附件内容，支持多种文件格式（文本、PDF、Word、Excel、PPT、图片等）。"
         "适用场景：用户上传了文件并基于文件内容提问时使用，attachment_id 可从前端消息的 attachments 字段获取。"

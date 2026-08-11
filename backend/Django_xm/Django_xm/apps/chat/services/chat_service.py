@@ -447,6 +447,7 @@ class ChatService:
                                 retrieval_mode="comprehensive",
                                 kb_name=kb_name,
                                 kb_description=kb_desc,
+                                collection_names=[f"user_{self._rag_service.user_id}_{kb_id}"],
                             )
                             data.setdefault("_retriever_tool_list", []).append(retriever_tool)
 
@@ -478,6 +479,7 @@ class ChatService:
                             retrieval_mode="comprehensive",
                             kb_name=single_kb_name,
                             kb_description=single_kb_desc,
+                            collection_names=[f"user_{self._rag_service.user_id}_{single_kb_id}"],
                         )
                         data["_retriever_tool"] = retriever_tool
             # MCP 工具和用户选择工具
@@ -541,6 +543,7 @@ class ChatService:
                             llm=get_helper_model(),
                             kb_name=kb_name,
                             kb_description=kb_desc,
+                            collection_names=[f"user_{self._rag_service.user_id}_{kb_id}"],
                         )
                         data.setdefault("_extra_tools", []).append(retriever_tool)
 

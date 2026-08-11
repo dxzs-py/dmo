@@ -152,6 +152,10 @@
             </el-button>
             <el-button @click="clearUpload" :disabled="!uploadFiles.length">清除</el-button>
           </div>
+          <div v-if="isUploading" class="upload-progress">
+            <el-progress :percentage="uploadProgress" :status="uploadProgress >= 100 ? 'success' : undefined" />
+            <div class="upload-status-text">{{ uploadStatusText }}</div>
+          </div>
         </div>
         
         <el-divider />
@@ -289,6 +293,8 @@ import { readSSEStream } from '../utils/sse'
 import { toCamelCase } from '@/utils/sessionTransformers'
 import { confirmDelete, confirmAction } from '../utils/dialog'
 import { useSessionStore } from '../stores/session'
+import { useRealtimeSync } from '../composables/useRealtimeSync'
+import { buildUploadFormData, notifyEmbeddingFallback, getUploadErrorMessage, trackUploadTask } from '../utils/knowledgeUpload'
 
 const sessionStore = useSessionStore()
 const isLoading = ref(false)
@@ -676,6 +682,12 @@ const clearUpload = () => {
   }
 }
 
+const uploadProgress = ref(0)
+const uploadStatusText = ref('')
+
+const realtimeSync = useRealtimeSync()
+let cancelUploadTask = null
+
 const handleUpload = async () => {
   if (!uploadFiles.value.length) {
     ElMessage.warning('请先选择文件')
@@ -687,45 +699,45 @@ const handleUpload = async () => {
   }
 
   isUploading.value = true
+  uploadProgress.value = 0
+  uploadStatusText.value = '正在上传文件...'
   try {
-    const formData = new FormData()
-    uploadFiles.value.forEach(file => {
-      formData.append('files', file.raw)
-    })
+    const formData = buildUploadFormData(uploadFiles.value)
     const response = await ragAPI.uploadDocuments(selectedIndexName.value, formData)
-    ElMessage.success('文件上传并索引成功！')
-    // 检查 Embedding 降级提示
-    const resultData = response.data?.data
-    if (resultData?.fallbackInfo?.events?.length) {
-      const events = resultData.fallbackInfo.events
-      const chain = events.map(e => e.fromLabel).concat([events[events.length - 1].toLabel]).join(' → ')
-      ElNotification({
-        title: 'Embedding 模型降级提示',
-        message: `降级链路: ${chain}`,
-        type: 'warning',
-        duration: 8000,
-      })
+    const taskId = response.data?.data?.taskId
+    if (!taskId) {
+      throw new Error('上传响应缺少任务ID')
     }
-    clearUpload()
-    await fetchIndexes()
-    await loadFiles()
+    // 异步 Celery 任务：订阅 WebSocket task 频道实时进度，终态后刷新列表
+    uploadStatusText.value = '文档已接收，正在后台处理...'
+    cancelUploadTask = trackUploadTask(realtimeSync, taskId, {
+      onProgress: (progress, step) => {
+        uploadProgress.value = progress
+        uploadStatusText.value = step || `处理中 ${progress}%`
+      },
+      onSuccess: (result) => {
+        isUploading.value = false
+        uploadProgress.value = 100
+        uploadStatusText.value = ''
+        ElMessage.success('文件上传并索引成功！')
+        notifyEmbeddingFallback(result)
+        clearUpload()
+        fetchIndexes()
+        loadFiles()
+      },
+      onFailure: (errorMsg) => {
+        isUploading.value = false
+        uploadProgress.value = 0
+        uploadStatusText.value = ''
+        ElMessage.error(errorMsg || '上传处理失败')
+      },
+    })
   } catch (error) {
     logger.error('上传失败:', error)
-    let errorMsg = '上传失败'
-    
-    if (error.response) {
-      if (error.response.status === 404) {
-        errorMsg = '索引不存在'
-      } else if (error.response.data && error.response.data.message) {
-        errorMsg = error.response.data.message
-      } else if (error.response.data && error.response.data.detail) {
-        errorMsg = error.response.data.detail
-      }
-    }
-    
-    ElMessage.error(errorMsg)
-  } finally {
+    ElMessage.error(getUploadErrorMessage(error))
     isUploading.value = false
+    uploadProgress.value = 0
+    uploadStatusText.value = ''
   }
 }
 
@@ -801,6 +813,10 @@ onActivated(async () => {
 
 onUnmounted(() => {
   stopStreaming()
+  if (cancelUploadTask) {
+    cancelUploadTask()
+    cancelUploadTask = null
+  }
 })
 </script>
 
@@ -911,6 +927,20 @@ onUnmounted(() => {
   margin-top: 16px;
   display: flex;
   gap: 12px;
+}
+
+.upload-progress {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--el-fill-color-light);
+  border-radius: 6px;
+}
+
+.upload-status-text {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  text-align: center;
 }
 
 .upload-tip {

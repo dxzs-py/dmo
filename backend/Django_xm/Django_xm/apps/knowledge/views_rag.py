@@ -6,8 +6,8 @@ RAG 查询/检索视图
 """
 
 import json
-import logging
 
+from Django_xm.apps.core.logging_utils import get_logger
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.decorators import api_view, renderer_classes
@@ -43,7 +43,7 @@ from .services.strict_rag_chain import query_strict_rag, stream_strict_rag
 from .vector_store import search_vector_store
 from .views_utils import get_user_index_name
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class SSERenderer(BaseRenderer):

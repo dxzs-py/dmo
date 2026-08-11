@@ -32,7 +32,12 @@ class AttachmentRagSearchTool(BaseTool):
 
     name: str = "attachment_rag_search"
     metadata: dict = Field(
-        default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "file"}
+        default_factory=lambda: {
+            "tier": "extended",
+            "visibility": "selectable",
+            "category": "file",
+            "output_to_chat": False,  # 检索输出是中间数据（ToolCallCard 展示），不作为聊天文本补发
+        }
     )
     description: str = (
         "搜索用户在当前会话中上传的文件内容。当用户上传了文件并基于文件内容提问时使用此工具。"

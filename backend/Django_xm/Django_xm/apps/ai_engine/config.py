@@ -146,6 +146,35 @@ class Settings(ProjectSettings):
 
     retriever_map_reduce_batch_size: int = Field(default=4, ge=2, le=10, description="Map-Reduce 每批文档数")
 
+    # ==================== Unified RAG Pipeline 配置 ====================
+    rag_score_threshold: float = Field(default=0.7, ge=0.0, le=1.0, description="RAG Pipeline 初始检索相似度阈值")
+
+    rag_degraded_threshold: float = Field(default=0.4, ge=0.0, le=1.0, description="RAG Pipeline 降级检索相似度阈值")
+
+    rag_initial_k: int = Field(default=6, ge=1, le=50, description="RAG Pipeline 初始检索返回文档数")
+
+    rag_degraded_k: int = Field(default=12, ge=1, le=100, description="RAG Pipeline 降级检索返回文档数")
+
+    rag_keyword_max: int = Field(default=5, ge=1, le=20, description="RAG Pipeline 关键词最大数量")
+
+    rag_keyword_k: int = Field(default=3, ge=1, le=20, description="RAG Pipeline 每个关键词检索文档数")
+
+    rag_rerank_top_n: int = Field(default=6, ge=1, le=50, description="RAG Pipeline FlashRank 重排序保留数")
+
+    rag_fulltext_token_threshold: int = Field(default=5000, ge=0, le=100000, description="RAG Pipeline 全文注入 token 阈值")
+
+    rag_max_docs_in_result: int = Field(default=10, ge=1, le=50, description="RAG Pipeline 格式化输出最大文档数")
+
+    rag_max_doc_content_length: int = Field(default=800, ge=100, le=10000, description="RAG Pipeline 单文档内容截断长度")
+
+    rag_quality_retrieval_threshold: float = Field(default=0.5, ge=0.0, le=1.0, description="RAG Pipeline 检索质量评分阈值")
+
+    rag_quality_generation_threshold: float = Field(default=0.6, ge=0.0, le=1.0, description="RAG Pipeline 生成质量评分阈值")
+
+    rag_max_retry_count: int = Field(default=1, ge=0, le=5, description="RAG Pipeline 最大重检索次数")
+
+    rag_rrf_constant: int = Field(default=60, ge=1, le=200, description="RAG Pipeline RRF 融合常数")
+
     rag_agent_max_iterations: int = Field(default=10, ge=1, le=50, description="RAG Agent 最大迭代数")
 
     rag_agent_return_source_documents: bool = Field(default=True, description="是否返回来源文档")
