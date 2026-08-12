@@ -328,8 +328,14 @@ class ApprovalMiddleware(AgentMiddleware):
         """构建审批幂等集合（3.5）。
 
         恢复场景下，checkpoint 旧 AIMessage.tool_calls 中的 tool_call 可能在
-        上一轮已审批/已完成（DB Approval 非 pending、ctx last_event_type 为
+        上一轮已审批/已完成（DB Approval 为 approved、ctx last_event_type 为
         completed/failed），这些 tool_call 不再重复拦截。
+
+        只对 approved 幂等：rejected / timeout 是"已决策但未执行"，恢复时
+        必须走 decision_map 分支注入拒绝/超时 ToolMessage（error 反馈），
+        让 ToolNode 跳过执行、LLM 收到反馈后调整策略，而不是直接执行。
+        （拒绝后仍执行工具 = 拒绝失效，日志实证"幂等跳过"把 rejected
+        tool_call 保留执行。）
 
         本方法在 async 上下文（aafter_model）中执行，DB 查询与 cache 读取
         均为同步调用，必须经 sync_to_async 包装，否则 Django 抛
@@ -343,10 +349,13 @@ class ApprovalMiddleware(AgentMiddleware):
 
             _all_tc_ids = [t.get("id", "") for t in last_ai_msg.tool_calls]
 
+            # 仅统计 approved（已批准执行的）；pending/processing/waiting 未决、
+            # rejected/timeout 已决未执行——这些都不幂等，恢复时走 decision_map
+            # 重新投递决策（拒绝/超时注入 error ToolMessage）。
             _resolved_ids: set[str] = await sync_to_async(
                 lambda: set(
                     _Approval.objects.filter(interrupt_id__in=_all_tc_ids)
-                    .exclude(state=_Approval.STATE_PENDING)
+                    .filter(state=_Approval.STATE_APPROVED)
                     .values_list("interrupt_id", flat=True)
                 )
             )()

@@ -687,16 +687,25 @@ def _collect_batch_decisions(thread_id: str, graph_interrupt_id: str) -> tuple[d
         tc_id = extra.get("tool_call_id", approval.interrupt_id)
         langgraph_id = extra.get("langgraph_resume_id", graph_interrupt_id)
 
-        if approval.state in (Approval.STATE_APPROVED, Approval.STATE_PROCESSING):
-            # processing 表示用户已确认、审批正在执行恢复，等同于 approved
+        if approval.state == Approval.STATE_APPROVED:
             resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = True
+        elif approval.state in (Approval.STATE_PROCESSING, Approval.STATE_WAITING):
+            # 关键修复：PROCESSING/WAITING 不能一律视为 approved。
+            # resume_approval 对用户点击（无论确认/拒绝）都设 state=PROCESSING
+            # （有 pending 同批时设 WAITING），实际决策写入 extra._approved
+            # （approval_service.resume_approval L1631）。
+            # 若把 PROCESSING 一律当 True，拒绝的审批在收集决策时被收集成 True，
+            # 下游 _finalize_batch_approvals 会将其终态化为 approved → 拒绝失效
+            # （日志实证：approved=False 到达，resume_value=False，最终 DB state=approved）。
+            # 缺失 _approved（历史兼容）时默认视为确认（True）。
+            _approved = extra.get("_approved")
+            resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = (
+                True if _approved is None or _approved is True else False
+            )
         elif approval.state == Approval.STATE_REJECTED:
             resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = False
         elif approval.state == Approval.STATE_TIMEOUT:
             resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = False  # 超时视为拒绝
-        elif approval.state == Approval.STATE_WAITING:
-            # waiting 表示同批次其他工具还在等待，本工具已确认
-            resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = True
         else:
             # pending / unknown → 未决断
             all_resolved = False
@@ -1063,12 +1072,24 @@ def research_resume_task(
         except Exception:
             _recoverable = False
         if _recoverable and self.request.retries < self.max_retries:
-            logger.warning(
-                f"[Resume] 可恢复异常，退避重试: thread_id={thread_id}, "
-                f"retry={self.request.retries + 1}/{self.max_retries}, "
-                f"error={str(exc)[:200]}"
+            # 手动 self.retry 不会自动应用 retry_backoff（该逻辑仅存在于 autoretry_for
+            # 包装路径），不传 countdown 时走 default_retry_delay（固定 180s）。
+            # 显式按装饰器 retry_backoff=True / retry_backoff_max=30 计算指数退避：
+            # countdown = min(30, 1 * 2**retries)，full_jitter 随机化。
+            from celery.utils.time import get_exponential_backoff_interval
+
+            retry_countdown = get_exponential_backoff_interval(
+                factor=1,
+                retries=self.request.retries,
+                maximum=30,
+                full_jitter=True,
             )
-            raise self.retry(exc=exc)
+            logger.warning(
+                f"[Resume] 可恢复异常，指数退避重试: thread_id={thread_id}, "
+                f"retry={self.request.retries + 1}/{self.max_retries}, "
+                f"countdown={retry_countdown}s, error={str(exc)[:200]}"
+            )
+            raise self.retry(exc=exc, countdown=retry_countdown)
         logger.exception(
             f"[Resume] 深度研究恢复任务终态失败: thread_id={thread_id}",
         )
