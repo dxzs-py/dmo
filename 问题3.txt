@@ -119,4 +119,49 @@ research_bbb46677d112 的 read_file 审批（call_00_zAJAKhYVQbVbJxdVjyGe9055）
 - 3.7 ResearchTaskDetail.vue：工具调用记录区标题可点击折叠/展开（箭头图标 + 数量徽标），有 pending/running/waiting 卡片时强制展开
 - 清理：test_approval_timeout.py、_verify_fix.py 已删除
 
+## 2026-08-12 端到端复测（research_bff11788a002）发现 3 个新缺陷并修复
+### 缺陷 1：middleware 幂等检查在 async 上下文失效（根因确认）
+- 日志铁证（每次拦截前）：
+  ```
+  [ApprovalMiddleware] 构建幂等集合失败(非致命): You cannot call this from an async context - use a thread or sync_to_async.
+  ```
+- 根因：aafter_model 是 async 方法，幂等块直接调用 Django ORM 同步查询 + django.core.cache（同步）→ 抛 SynchronousOnlyOperation → 异常被吞 → 幂等集合恒为空 → 恢复后同一 tc_id 二次拦截（新批次审批）
+- 修复：middleware.py 幂等构建提取为 `_build_idempotent_tc_ids`（async），DB 查询与 cache 读取用 `sync_to_async` 包装；新增 INFO 日志（幂等集合内容/幂等跳过）
+- 验证：恢复链路日志 `幂等集合: 1 个 tc_id=['call_00_...'], resolved_ids=[...]` + `幂等跳过已审批/已完成 tool_call: tool=write_file`（同步脚本模拟命中 vs 运行时未命中的差异=async 上下文）
+
+### 缺陷 2：并行恢复导致同一 tc_id 二次拦截（pending 防护）
+- 场景：write_todos#1/#2 几乎同时确认 → 两个 research_resume_task 并行恢复同一 checkpoint → 线程 B 在线程 A 中断释放 thread 锁后进入，从同一 checkpoint 恢复，拦截**尚未决断**的同一 read_file（DB pending → 幂等不命中）→ 重复审批 + 前端同一 tc_id 两个卡片
+- DB 实证：read_file（call_00_tSznR8RLswX8ae61QWVX3260）仅 1 条记录（id=2381），gid 被后线程覆盖为 d6540fb7（原 44065cd2）
+- 修复：research_resume_task 获取锁后检查**其他批次**（exclude 本 graph_interrupt_id）是否有 pending/waiting 审批，有则退出等待（`pending_approvals_in_other_batches`）
+- 验证：修复后恢复链路干净，write_todos#7/#8 等均为新 tc_id 单批次，无重复审批
+
+### 缺陷 3：worker kill 后 thread 锁残留（运维场景）
+- 场景：重启 Celery worker 导致在执行的恢复任务被终止 → finally 未执行 → `research:resume:task_lock:{thread_id}` 残留（TTL 1800s）→ 新恢复任务永久 retry（实测锁 ttl=1641s）
+- 处理：手动删除残留锁（已验证恢复）
+- 建议长期方案：锁 TTL 缩短 + 执行中续租，或增加孤儿锁清理（base.check_stale_tasks 轮询）
+
+### 端到端验证结论（research_bff11788a002，Redis 数据结构主题）
+- 问题A（参数 []）：write_todos/write_file/read_file 参数完整显示 ✓
+- 问题C（折叠/展开）：工具调用记录标题 + 数量徽标正常 ✓
+- 问题四（超时卡死）：write_file 审批超时（10:47:31 approval_timeout）→ 自动恢复 → 任务继续推进 ✓
+- 幂等（sync_to_async）：恢复后已审批 tool_call 幂等跳过 ✓
+- pending 防护：并行恢复不再重复审批 ✓
+- 残留锁清除后恢复正常 ✓
+- 任务持续健康推进（多次审批确认后 agent 继续工作，无卡死）
+
+## 2026-08-12 任务结束：LLM 流式异常（观察项，非审批/恢复问题）
+### 现象
+research_bff11788a002 运行约 30 分钟（多次审批推进正常）后，11:11:41 恢复任务失败：
+```
+[Resume] 恢复失败: thread_id=research_bff11788a002, error='NoneType' object has no attribute 'splitlines'
+Task research.resume succeeded in 4.297s: {'status': 'error', ...}
+```
+11:11:38 前有 `token_counter LLM error occurred`（deepseek-v4-flash 流式异常）→ 11:11:41 库内部对 None 调 splitlines。
+### 分析
+- splitlines 不在项目代码内（全项目 grep 无匹配）→ 异常来自第三方库（langchain/deepagents 流式响应解析）
+- 与本次审批/恢复修复无关（修复均验证通过）；任务明确失败（非卡死），前端正确展示"失败"状态
+- LLM 偶发流式错误，重新发起任务可规避
+### 建议
+- 若频繁出现，需在 adapter astream 循环对 LLM 流式异常做重试/降级（当前 max_retries 由 Celery 处理，但恢复任务 error 路径未重试）
+
 

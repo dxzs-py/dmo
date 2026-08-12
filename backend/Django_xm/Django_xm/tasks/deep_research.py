@@ -791,6 +791,33 @@ def research_resume_task(
             }
 
         try:
+            # 1.2 其他批次待审批防护（并行恢复 → 重复审批根因修复）
+            # 场景：write_todos#1/#2 并行确认触发两个 research_resume_task。
+            # 线程 A 恢复时拦截 read_file（Path D 创建 pending 审批）后中断退出并
+            # 释放 thread 锁；线程 B（等待 thread 锁后进入）若继续恢复执行，会从
+            # 同一 checkpoint 重新拦截同一 read_file（DB 仍 pending → 幂等不命中），
+            # 产生重复审批。正确行为：B 检测到"其他批次已有 pending/waiting 审批"
+            # 直接退出，等待该审批决断后由新的恢复任务统一恢复。
+            # 排除本批次（graph_interrupt_id）：本批次未决断走下方决断检查（自愈/重试）。
+            from Django_xm.apps.approvals.models import Approval as _Approval
+
+            _pending_count = _Approval.objects.filter(
+                source=_Approval.SOURCE_DEEP_RESEARCH,
+                source_id=thread_id,
+                state__in=[_Approval.STATE_PENDING, _Approval.STATE_WAITING],
+            ).exclude(extra__graph_interrupt_id=graph_interrupt_id).count()
+            if _pending_count:
+                logger.info(
+                    f"[Resume] 其他批次存在 {_pending_count} 条 pending/waiting 审批，"
+                    f"退出等待（防并行恢复重复审批）: thread_id={thread_id}, "
+                    f"graph_interrupt_id={graph_interrupt_id}"
+                )
+                return {
+                    "status": "skipped",
+                    "reason": "pending_approvals_in_other_batches",
+                    "thread_id": thread_id,
+                }
+
             # 2. 检查同批次所有审批是否已决断
             all_resume_values, all_resolved = _collect_batch_decisions(
                 thread_id,
@@ -1025,8 +1052,25 @@ def research_resume_task(
         # （否则会误发布失败结果，且吞掉重试机制）
         raise
     except Exception as exc:
+        # 区分可恢复/终态异常：可恢复异常（LLM 连接/超时/限流、checkpoint 错误）
+        # 走 Celery 指数退避重试，不发布终态失败（避免前端显示错误终态）；
+        # 重试耗尽或终态异常才标记失败并发布失败结果。
+        try:
+            from Django_xm.apps.ai_engine.services.exceptions import classify_exception
+
+            _classified = classify_exception(exc)
+            _recoverable = _classified.recoverable
+        except Exception:
+            _recoverable = False
+        if _recoverable and self.request.retries < self.max_retries:
+            logger.warning(
+                f"[Resume] 可恢复异常，退避重试: thread_id={thread_id}, "
+                f"retry={self.request.retries + 1}/{self.max_retries}, "
+                f"error={str(exc)[:200]}"
+            )
+            raise self.retry(exc=exc)
         logger.exception(
-            f"[Resume] 深度研究恢复任务异常: thread_id={thread_id}",
+            f"[Resume] 深度研究恢复任务终态失败: thread_id={thread_id}",
         )
         tracker.mark_failure(error_message=str(exc))
         if chat_session_id:

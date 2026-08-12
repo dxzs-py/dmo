@@ -293,6 +293,27 @@ def patch_subagent_middleware() -> None:
             parent_configurable = runtime.config.get("configurable", {}) or {}
             on_tool_event = parent_configurable.get("_on_tool_event")
 
+            # 恢复模式检测（子 agent 审批恢复决策投递）：
+            # 父 graph 恢复本 task 工具调用时，Command(resume=...) 的值以 NULL_TASK_ID
+            # RESUME write 进入 ToolNode 任务 scratchpad（__pregel_scratchpad）。
+            # 非空 → 恢复模式：不再注入全新 subagent_state（避免污染子 agent 消息状态、
+            # LLM 重执行产出新 tool_call_id 导致决策失配），改为 Command(resume=...) 驱动
+            # 子 agent 从自身 checkpoint 续流，把审批决策直接投递给子 agent 的 interrupt()。
+            resume_value = None
+            try:
+                from langgraph._internal._constants import CONFIG_KEY_SCRATCHPAD
+
+                _scratchpad = parent_configurable.get(CONFIG_KEY_SCRATCHPAD)
+                if _scratchpad is not None and hasattr(_scratchpad, "get_null_resume"):
+                    resume_value = _scratchpad.get_null_resume(consume=False)
+            except Exception as exc:
+                logger.debug(f"[SubAgentPatch] 恢复值检测失败(非致命): {exc}")
+            if resume_value:
+                logger.info(
+                    f"[SubAgentPatch] atask 恢复模式: subagent={subagent_type}, "
+                    f"resume_keys={list(resume_value.keys()) if isinstance(resume_value, dict) else type(resume_value).__name__}"
+                )
+
             # 嵌套层级字段注入（Phase E1 + E3）：
             # 参考 Claude Code Task 工具设计，子 agent 需携带嵌套层级信息，
             # 供 ApprovalMiddleware 评估子 agent 风险加权 + 透传到 Approval.extra。
@@ -360,18 +381,31 @@ def patch_subagent_middleware() -> None:
                     f"callbacks_count={len(parent_callbacks) if isinstance(parent_callbacks, list) else 1}"
                 )
 
+            if resume_value:
+                # 恢复模式：不注入全新 subagent_state，从子 agent checkpoint 续流
+                subagent_input = Command(resume=resume_value)
+                subagent_state_for_log = "(resume)"
+            else:
+                # 初始模式：保持原行为（注入 task 描述）
+                subagent_input = subagent_state
+                subagent_state_for_log = f"(initial, {len(subagent_state.get('messages', []))} msgs)"
+
             if on_tool_event is not None:
                 # 有回调时用 astream 转发工具事件到父 SSE 流
                 result = await _astream_with_tool_events(
                     subagent,
-                    subagent_state,
+                    subagent_input,
                     subagent_config,
                     on_tool_event,
                     subagent_type=subagent_type,
+                    resume_value=resume_value or None,
                 )
-                logger.debug(f"[SubAgentPatch] atask astream 转发完成: subagent={subagent_type}")
+                logger.debug(
+                    f"[SubAgentPatch] atask astream 转发完成: subagent={subagent_type}, "
+                    f"mode={subagent_state_for_log}"
+                )
             else:
-                result = await subagent.ainvoke(subagent_state, subagent_config)
+                result = await subagent.ainvoke(subagent_input, subagent_config)
             return _return_command_with_state_update(result, runtime.tool_call_id)
 
         async def _astream_with_tool_events(
@@ -381,6 +415,7 @@ def patch_subagent_middleware() -> None:
             on_tool_event,
             *,
             subagent_type: str,
+            resume_value=None,
         ) -> dict:
             """通过 astream 执行子智能体，转发工具事件到 on_tool_event 回调
 
@@ -444,15 +479,39 @@ def patch_subagent_middleware() -> None:
             # 根因：与 official_deep_agent.py 一致，deepagents astream(messages)
             # 只产出 AIMessageChunk，不产出完整 AIMessage，需去重。
             seen_tool_call_ids: set = set()
+            # 恢复模式预热 seen_tool_call_ids：从子 agent checkpoint 提取已注册的
+            # tool_call_id，避免 ToolMessage 阶段补发 PENDING 导致状态机非法转换告警
+            # （与 adapter.py B7 预热逻辑一致）。
+            if resume_value:
+                try:
+                    _cp_state = await subagent.aget_state(subagent_config)
+                    if _cp_state is not None and hasattr(_cp_state, "values") and _cp_state.values:
+                        from langchain_core.messages import AIMessage as _AIMessage
+
+                        for _msg in _cp_state.values.get("messages", []) or []:
+                            if isinstance(_msg, _AIMessage) and getattr(_msg, "tool_calls", None):
+                                for _tc in _msg.tool_calls:
+                                    _tc_id = _tc.get("id") if isinstance(_tc, dict) else getattr(_tc, "id", None)
+                                    if _tc_id:
+                                        seen_tool_call_ids.add(_tc_id)
+                        logger.info(
+                            f"[SubAgentPatch] 恢复模式预热 seen_tool_call_ids: "
+                            f"subagent={subagent_type}, count={len(seen_tool_call_ids)}"
+                        )
+                except Exception as _prewarm_err:
+                    logger.warning(
+                        f"[SubAgentPatch] 恢复模式预热 seen_tool_call_ids 失败(非致命): {_prewarm_err}"
+                    )
             # 重复工具调用检测器：子智能体内部的工具调用不冒泡到父 graph，
             # 需在子智能体层面独立检测，防止子智能体陷入重试循环。
             duplicate_detector = DuplicateToolCallDetector()
             pending_duplicate_warnings: list = []
 
             # while True 用于检测到重复调用时中断流、注入警告后重入
+            current_input = subagent_state
             while True:
                 async for chunk in subagent.astream(
-                    subagent_state,
+                    current_input,
                     config=subagent_config,
                     stream_mode=["messages", "values"],
                 ):
@@ -545,7 +604,7 @@ def patch_subagent_middleware() -> None:
                     except Exception as e:
                         logger.warning(f"[SubAgentPatch] 注入重复调用警告失败 (subagent={subagent_type}): {e}")
                     pending_duplicate_warnings.clear()
-                    subagent_state = None  # 从当前 checkpoint 续流
+                    current_input = None  # 从当前 checkpoint 续流
                     continue
                 break  # 流正常结束
 
