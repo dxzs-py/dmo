@@ -12,6 +12,7 @@ from typing import Any
 
 from celery import shared_task
 from celery.exceptions import Retry
+from django.db import models
 
 from Django_xm.apps.agent_hub import AgentConfig, AgentType
 from Django_xm.apps.agent_hub import create as agent_hub_create
@@ -588,6 +589,70 @@ async def _build_research_agent_from_task(task):
     return agent
 
 
+def _finalize_batch_approvals(all_resume_values: dict, thread_id: str) -> None:
+    """审批终态化：对批次内所有已确认的审批记录调用 complete_approval。
+
+    修复 DB 残留 pending 污染后续批次计数的 bug：
+    research_resume_task 从未调用 complete_approval → 审批通过后
+    Approval DB 记录残留 pending → 后续超时批次误含已通过的审批（batch_size 错误）。
+
+    all_resume_values 可能是两种格式：
+    1. {tool_call_id: bool}（单层，无 graph_interrupt_id 分隔）
+    2. {langgraph_resume_id: {tool_call_id: bool}}（双层，批量场景）
+
+    Args:
+        all_resume_values: 同批次所有审批决策
+        thread_id: 研究任务 ID（用于日志）
+    """
+    from Django_xm.apps.approvals.models import Approval
+    from Django_xm.apps.approvals.services.approval_service import complete_approval
+
+    # 展平决策：收集所有 tool_call_id → bool
+    flat_decisions: dict[str, bool] = {}
+    for key, val in all_resume_values.items():
+        if isinstance(val, dict):
+            # 双层格式：{langgraph_resume_id: {tool_call_id: bool}}
+            flat_decisions.update(val)
+        elif isinstance(val, bool):
+            # 单层格式：{tool_call_id: bool}
+            flat_decisions[key] = val
+
+    # 终态化所有已决断的审批（包括确认/拒绝/超时）
+    for tc_or_int_id, decision in flat_decisions.items():
+        try:
+            # 按 tool_call_id 或 interrupt_id 匹配 Approval 记录
+            approval_qs = Approval.objects.filter(
+                source=Approval.SOURCE_DEEP_RESEARCH,
+                source_id=thread_id,
+            )
+            approval = approval_qs.filter(
+                models.Q(interrupt_id=tc_or_int_id)
+                | models.Q(extra__tool_call_id=tc_or_int_id)
+            ).first()
+
+            if approval is None:
+                logger.debug(
+                    f"[Resume] 审批终态化跳过(未找到记录): "
+                    f"tc_id={tc_or_int_id}, task={thread_id}"
+                )
+                continue
+
+            # 只终态化状态为 processing 的记录（已被 timeout_approval 设为 processing）
+            # 或状态为 waiting 的记录（用户手动确认后进入的等待状态）
+            if approval.state in (Approval.STATE_PROCESSING, Approval.STATE_WAITING):
+                final_state = Approval.STATE_APPROVED if decision is True else Approval.STATE_REJECTED
+                complete_approval(approval.interrupt_id, final_state)
+                logger.info(
+                    f"[Resume] 审批终态化: tc_id={tc_or_int_id}, "
+                    f"task={thread_id}, state={final_state}"
+                )
+        except Exception:
+            logger.warning(
+                f"[Resume] 审批终态化失败: tc_id={tc_or_int_id}, task={thread_id}",
+                exc_info=True,
+            )
+
+
 def _collect_batch_decisions(thread_id: str, graph_interrupt_id: str) -> tuple[dict, bool]:
     """收集同批次所有审批决策。
 
@@ -642,7 +707,9 @@ def _collect_batch_decisions(thread_id: str, graph_interrupt_id: str) -> tuple[d
 @shared_task(
     bind=True,
     name="research.resume",
-    max_retries=1,
+    max_retries=10,
+    retry_backoff=True,
+    retry_backoff_max=30,
     soft_time_limit=1800,
 )
 def research_resume_task(
@@ -691,16 +758,32 @@ def research_resume_task(
             f"interrupt_id={interrupt_id}, graph_interrupt_id={graph_interrupt_id}"
         )
 
-        # 1. 并发安全：获取批次恢复锁
-        # 同一批次的多个审批可能同时触发 research_resume_task，
-        # 只有第一个获取锁的任务执行恢复，其余退出。
+        # 1. 并发安全：thread 粒度恢复锁
+        # 同一 thread 的多个审批（可能来自并行恢复任务）会同时触发 research_resume_task，
+        # 必须保证同一 thread 只有一个恢复任务执行，防止 checkpoint 竞争/重复审批。
+        # 锁覆盖整个恢复执行周期，TTL 1800s（与审批 TTL 一致）。
         from django.core.cache import cache
 
+        thread_lock_key = f"research:resume:task_lock:{thread_id}"
+        if not cache.add(thread_lock_key, "1", timeout=1800):
+            logger.info(f"[Resume] 同 thread 恢复任务执行中，延时重试: thread_id={thread_id}")
+            raise self.retry(
+                countdown=15,
+                exc=RuntimeError(f"thread_resume_lock held: {thread_id}"),
+            )
+
+        # 1.1 批次恢复锁（graph_interrupt_id 粒度）
+        # 同一批次的多个审批可能同时触发 research_resume_task，
+        # 只有第一个获取锁的任务执行恢复，其余退出。
         lock_key = f"research:resume:lock:{graph_interrupt_id}"
         # SET NX + EX 300：锁有效期 5 分钟（足够恢复执行）
         lock_acquired = cache.add(lock_key, "1", timeout=300)
         if not lock_acquired:
             logger.info(f"[Resume] 同批次恢复锁已被占用，跳过: graph_interrupt_id={graph_interrupt_id}")
+            try:
+                cache.delete(thread_lock_key)
+            except Exception:  # noqa: S110  # cleanup, 锁释放失败可忽略
+                pass
             return {
                 "status": "skipped",
                 "reason": "batch_already_resuming",
@@ -715,10 +798,70 @@ def research_resume_task(
             )
 
             if not all_resolved:
-                logger.info(
-                    f"[Resume] 同批次尚有未决断审批，退出: "
-                    f"thread_id={thread_id}, "
-                    f"graph_interrupt_id={graph_interrupt_id}, "
+                # 2.1 批次自愈：对批次内"已过期且仍为 pending"的审批终态化为 TIMEOUT。
+                # 解决 batch_not_all_resolved 永久卡死（用户实测：审批超时后任务停止）：
+                # - cleanup_expired_approvals 事务提交竞态（worker 读到 pending）
+                # - timeout_approval 后 DB 停留 PROCESSING 未终态化
+                # 自愈只终态化（dispatch_resume=False），恢复仍由本任务统一执行。
+                from datetime import UTC as _UTC
+                from datetime import datetime as _datetime
+                from datetime import timedelta as _timedelta
+
+                from django.db.models import Q as _Q
+
+                from Django_xm.apps.approvals.models import Approval as _Approval
+                from Django_xm.apps.approvals.services.approval_service import (
+                    timeout_approval as _timeout_approval,
+                )
+
+                _now = _datetime.now(_UTC)
+                _expired_ids = list(
+                    _Approval.objects.filter(
+                        source=_Approval.SOURCE_DEEP_RESEARCH,
+                        source_id=thread_id,
+                        extra__graph_interrupt_id=graph_interrupt_id,
+                        state=_Approval.STATE_PENDING,
+                    )
+                    .filter(
+                        _Q(expires_at__lt=_now)
+                        | _Q(
+                            expires_at__isnull=True,
+                            created_at__lt=_now - _timedelta(seconds=300),
+                        )
+                    )
+                    .values_list("interrupt_id", flat=True)
+                )
+                for _interrupt_id in _expired_ids:
+                    _timeout_approval(_interrupt_id, dispatch_resume=False)
+                if _expired_ids:
+                    logger.info(
+                        f"[Resume] 批次自愈终态化 {len(_expired_ids)} 条过期审批: "
+                        f"thread_id={thread_id}, graph_interrupt_id={graph_interrupt_id}"
+                    )
+                    all_resume_values, all_resolved = _collect_batch_decisions(
+                        thread_id,
+                        graph_interrupt_id,
+                    )
+
+            if not all_resolved:
+                # 2.2 仍有未决断（未过期/真实等待）：延时重试（防竞态），
+                # 避免 batch_not_all_resolved 直接退出导致任务永久停住。
+                if self.request.retries < self.max_retries:
+                    logger.info(
+                        f"[Resume] 同批次尚有未决断审批，延时重试: "
+                        f"thread_id={thread_id}, graph_interrupt_id={graph_interrupt_id}, "
+                        f"resolved={len(all_resume_values)}, retries={self.request.retries}"
+                    )
+                    raise self.retry(
+                        countdown=5,
+                        exc=RuntimeError(
+                            f"batch_not_all_resolved: thread_id={thread_id}, "
+                            f"graph_interrupt_id={graph_interrupt_id}"
+                        ),
+                    )
+                logger.warning(
+                    f"[Resume] 同批次尚有未决断审批，重试耗尽退出: "
+                    f"thread_id={thread_id}, graph_interrupt_id={graph_interrupt_id}, "
                     f"resolved={len(all_resume_values)}"
                 )
                 return {
@@ -741,6 +884,11 @@ def research_resume_task(
                 }
 
             logger.info(f"[Resume] 同批次全部决断，开始恢复: thread_id={thread_id}, decisions={all_resume_values}")
+
+            # 审批终态化：对批次内所有已确认的审批记录调用 complete_approval，
+            # 防止 DB 记录残留 pending 污染后续批次计数。
+            # all_resume_values = {langgraph_resume_id: {tool_call_id: bool}} 或 {tool_call_id: bool}
+            _finalize_batch_approvals(all_resume_values, thread_id)
 
             # 3. 加载 ResearchTask
             from Django_xm.apps.research.models import ResearchTask
@@ -862,12 +1010,20 @@ def research_resume_task(
                 }
 
         finally:
-            # 释放批次恢复锁
+            # 释放批次恢复锁 + thread 恢复锁
             try:
                 cache.delete(lock_key)
             except Exception:  # noqa: S110  # cleanup, 锁释放失败可忽略
                 pass
+            try:
+                cache.delete(thread_lock_key)
+            except Exception:  # noqa: S110  # cleanup, 锁释放失败可忽略
+                pass
 
+    except Retry:
+        # Celery 重试信号：必须向上抛出，不能当作失败处理
+        # （否则会误发布失败结果，且吞掉重试机制）
+        raise
     except Exception as exc:
         logger.exception(
             f"[Resume] 深度研究恢复任务异常: thread_id={thread_id}",

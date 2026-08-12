@@ -229,6 +229,14 @@ def extract_tool_events_from_message(
                     if not cc_id:
                         continue  # 跳过无 id 的 chunk（无法归属）
                     if cc_args:
+                        # 类型归一化：args 可能是 str（分片/完整 JSON）或 dict/list
+                        # （个别 provider 直接在 chunk 中给出完整对象）。统一转 str
+                        # 后拼接，避免 `str + dict` 拼接 TypeError 导致参数聚合失败
+                        # （根因：write_todos 等工具参数恒为空 []）。
+                        if isinstance(cc_args, (dict, list)):
+                            cc_args = json.dumps(cc_args, ensure_ascii=False)
+                        else:
+                            cc_args = str(cc_args)
                         chunk_args_by_id[cc_id] = chunk_args_by_id.get(cc_id, "") + cc_args
             # 直接按 tc_id 取累积的 args
             agg_args_str = chunk_args_by_id.get(tc_id, "")

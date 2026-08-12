@@ -24,8 +24,6 @@ from Django_xm.apps.approvals.services.approval_constants import (
     PENDING_COUNT_TTL,
     RESUME_LOCK_PREFIX,
     RESUME_LOCK_TTL,
-    TASK_RESUME_LOCK_PREFIX,
-    TASK_RESUME_LOCK_TTL,
 )
 from Django_xm.apps.approvals.services.approval_store import (
     get_approval_history as _get_approval_history_from_store,
@@ -418,7 +416,7 @@ def _publish_tool_call_timeout_event(approval: Approval):
         service.transition(
             tool_call_id,
             EventType.TOOL_CALL_TIMEOUT,
-            parameters=kwargs["parameters"] or None,
+            parameters=kwargs["parameters"] if isinstance(kwargs["parameters"], dict) else None,
         )
     except PayloadValidationError:
         logger.exception(
@@ -468,7 +466,7 @@ def _publish_tool_call_waiting_event(approval: Approval):
         service.transition(
             tool_call_id,
             EventType.TOOL_CALL_WAITING,
-            parameters=kwargs["parameters"] or None,
+            parameters=kwargs["parameters"] if isinstance(kwargs["parameters"], dict) else None,
         )
     except PayloadValidationError:
         logger.exception(
@@ -515,7 +513,7 @@ def _publish_tool_call_running_event(approval: Approval):
         service.transition(
             tool_call_id,
             EventType.TOOL_CALL_RUNNING,
-            parameters=kwargs["parameters"] or None,
+            parameters=kwargs["parameters"] if isinstance(kwargs["parameters"], dict) else None,
         )
     except PayloadValidationError:
         logger.exception(
@@ -1201,18 +1199,6 @@ def _release_lock(interrupt_id: str):
 _release_lock_async = sync_to_async(_release_lock)
 
 
-def _acquire_task_resume_lock(task_id: str) -> bool:
-    redis_client = get_redis_client()
-    lock_key = f"{TASK_RESUME_LOCK_PREFIX}{task_id}"
-    return bool(redis_client.set(lock_key, "1", nx=True, ex=TASK_RESUME_LOCK_TTL))
-
-
-def _release_task_resume_lock(task_id: str):
-    redis_client = get_redis_client()
-    lock_key = f"{TASK_RESUME_LOCK_PREFIX}{task_id}"
-    redis_client.delete(lock_key)
-
-
 def _is_task_in_terminal_state(task_id: str) -> bool:
     try:
         from django.apps import apps as _apps
@@ -1882,12 +1868,18 @@ def check_and_trigger_research_resume(
     }
 
 
-def timeout_approval(interrupt_id: str):
+def timeout_approval(interrupt_id: str, dispatch_resume: bool = True):
     """审批超时处理：pending→processing(resume_value=TIMEOUT_DECISION)，然后走批量恢复逻辑。
 
     超时后设置 resume_value=TIMEOUT_DECISION（而非 False），让 ApprovalMiddleware
     能区分"用户拒绝"和"审批超时"，注入"工具运行失败：审批超时"的 ToolMessage，
     agent 收到后可调整策略继续执行。
+
+    Args:
+        interrupt_id: 审批中断 ID（tool_call_id）
+        dispatch_resume: 是否触发恢复。research_resume_task 批次自愈调用时传 False
+            （仅终态化，不派发恢复任务，避免递归派发），恢复统一由
+            research_resume_task 的批次判定在收集决策后执行。
     """
     from Django_xm.common.constants import TIMEOUT_DECISION
 
@@ -1925,6 +1917,13 @@ def timeout_approval(interrupt_id: str):
         # 2. 终态：APPROVAL_TIMEOUT（审批面板显示"审批已超时"）。
         #    Redis 终态持久化、ChatMessage.tool_calls 同步（Z1）与 metrics 均由统一出口完成。
         _persist_and_broadcast(approval, Approval.STATE_TIMEOUT, extra={"timeout": True})
+        # DB 终态化：_persist_and_broadcast 只写 Redis+广播、不更新 DB，
+        # 显式将 DB 状态更新为 TIMEOUT，保证 DB 与 Redis/前端语义一致。
+        # research_resume_task 的批次判定（_collect_batch_decisions）以 DB 状态为准，
+        # DB 停留在 PROCESSING 会把"超时"误判为"已批准"（resolved=True），
+        # 且下一次 cleanup 不再扫描（非 pending），造成终态不可达。
+        approval.state = Approval.STATE_TIMEOUT
+        approval.save(update_fields=["state"])
 
         # 工具卡片显示"审批超时"状态（与审批面板分离）
         _publish_tool_call_timeout_event(approval)
@@ -1956,19 +1955,22 @@ def timeout_approval(interrupt_id: str):
                     )
                     return
 
-            # 所有同批次审批都已处理完（或无批次），触发 Celery 恢复任务
-            # 使用 delay 异步执行，避免阻塞 cleanup_expired_approvals 任务
-            try:
-                from Django_xm.tasks.approval_tasks import resume_chat_after_timeout
+            if not dispatch_resume:
+                # 自愈场景：仅终态化，不触发恢复（由 research_resume_task 批次判定统一恢复）
+                return
 
-                resume_chat_after_timeout.delay(interrupt_id)
+            # 所有同批次审批都已处理完（或无批次），统一走 gateway 路由恢复
+            try:
+                from Django_xm.common.approval_gateway import gateway
+
+                gateway.route_timeout(approval, resume_value=TIMEOUT_DECISION)
                 logger.info(
-                    f"[ApprovalService] chat 超时恢复任务已派发: "
-                    f"interrupt_id={interrupt_id}, session={approval.chat_session_id}"
+                    f"[ApprovalService] 超时恢复已路由: interrupt_id={interrupt_id}, "
+                    f"source={approval.source}, session={approval.chat_session_id}"
                 )
             except Exception:
                 logger.exception(
-                    f"[ApprovalService] chat 超时恢复任务派发失败: interrupt_id={interrupt_id}",
+                    f"[ApprovalService] 超时恢复路由失败: interrupt_id={interrupt_id}",
                 )
                 # 派发失败时回退：将审批标记为 rejected，避免永久卡死
                 try:
@@ -1979,7 +1981,7 @@ def timeout_approval(interrupt_id: str):
                     )
                 except Exception:
                     logger.exception(
-                        f"[ApprovalService] chat 超时回退完成审批失败: "
+                        f"[ApprovalService] 超时回退完成审批失败: "
                         f"interrupt_id={interrupt_id}"
                     )
 
@@ -1987,18 +1989,24 @@ def timeout_approval(interrupt_id: str):
             task_id = approval.source_id
 
             # 原子递减 pending 计数（Lua 防负数）
+            # 修复：移除 remaining==0 短路 return——计数归零同样走 check_and_trigger，
+            # 由 DB pending_count 决定是否恢复。原逻辑在"单审批超时且计数准确"时
+            # （DECR 后 remaining=0）直接返回，永不触发恢复，任务永久停住。
             try:
                 redis_client = get_redis_client()
                 counter_key = f"{PENDING_COUNT_PREFIX}{task_id}"
                 remaining = redis_client.eval(_LUA_DECR_NON_NEGATIVE, 1, counter_key, PENDING_COUNT_TTL)
                 logger.info(f"[ApprovalService] 超时递减pending计数: task_id={task_id}, remaining={remaining}")
-                if remaining == 0:
-                    logger.info(f"[ApprovalService] 深度研究所有审批超时处理完毕: task_id={task_id}")
-                    return
             except Exception as counter_err:
                 logger.warning(
                     f"[ApprovalService] 超时原子计数器操作失败，降级到原有逻辑: task_id={task_id}, err={counter_err}"
                 )
+
+            if not dispatch_resume:
+                # 自愈场景（research_resume_task 批次自愈调用）：仅终态化，不触发恢复，
+                # 避免递归派发 research_resume_task。恢复由 research_resume_task 的
+                # 批次判定在收集决策后统一执行。
+                return
 
             batch_result = check_and_trigger_research_resume(
                 task_id=task_id,
@@ -2011,16 +2019,36 @@ def timeout_approval(interrupt_id: str):
                 )
                 return
             if batch_result["should_resume"]:
-                if not _acquire_task_resume_lock(task_id):
-                    logger.info(f"[ApprovalService] 超时处理: 任务锁已被持有，跳过恢复: task={task_id}")
-                else:
-                    # 深度研究恢复已改为 Chat SSE 流式执行，超时不再触发 Celery 恢复
-                    # 释放锁，等待用户通过 Chat SSE 恢复
-                    _release_task_resume_lock(task_id)
+                # 统一走 gateway 路由恢复（替代原"等待 Chat SSE 恢复"）
+                # deep_research 审批超时与确认/拒绝同属审批决策，统一由 ApprovalGateway 路由
+                # 修复：移除 _acquire_task_resume_lock——该锁只覆盖"派发瞬间"且成功路径不释放，
+                # 造成 TTL(1800s) 内残留、后续超时恢复被跳过（实证"任务锁已被持有，跳过恢复"）。
+                # 并行恢复防护统一由 research_resume_task 内部的 thread 粒度锁保证。
+                try:
+                    from Django_xm.common.approval_gateway import gateway
+
+                    gateway.route_timeout(approval, resume_value=TIMEOUT_DECISION)
                     logger.info(
-                        f"[ApprovalService] 超时处理: 深度研究恢复已废弃，等待 Chat SSE 恢复: "
+                        f"[ApprovalService] 超时恢复已路由(deep_research): "
                         f"task={task_id}, interrupt_id={interrupt_id}"
                     )
+                except Exception:
+                    logger.exception(
+                        f"[ApprovalService] 超时恢复路由失败(deep_research): "
+                        f"task={task_id}, interrupt_id={interrupt_id}"
+                    )
+                    # 派发失败时回退：将审批标记为 rejected
+                    try:
+                        complete_approval(
+                            interrupt_id,
+                            Approval.STATE_REJECTED,
+                            extra={"reason": "timeout_dispatch_failed", "timeout": True},
+                        )
+                    except Exception:
+                        logger.exception(
+                            f"[ApprovalService] 超时回退完成审批失败: "
+                            f"interrupt_id={interrupt_id}"
+                        )
             else:
                 logger.info(
                     f"[ApprovalService] 超时后等待其他审批: task_id={task_id}, "

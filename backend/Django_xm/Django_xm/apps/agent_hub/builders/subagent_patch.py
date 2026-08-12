@@ -483,6 +483,11 @@ def patch_subagent_middleware() -> None:
                         accumulated_messages,
                     )
                     for evt in tool_events:
+                        logger.info(
+                            f"[SubAgentPatch] 工具事件提取: tool={evt.get('tool_name')}, "
+                            f"tc_id={evt.get('tool_call_id')}, event_type={evt.get('event_type')}, "
+                            f"subagent={subagent_type}"
+                        )
                         # 重复工具调用检测：仅对 PENDING 记录
                         if evt.get("event_type") == EventType.TOOL_CALL_PENDING:
                             warning = duplicate_detector.record(

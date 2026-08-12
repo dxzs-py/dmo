@@ -311,13 +311,20 @@ class OfficialDeepAgentAdapter:
             最终经 transition_async 透传到事件 payload，前端 ToolCallCard 可展示
             完整调用链路（与父 agent 直接调用的工具行为一致）。
             """
+            logger.info(
+                f"[OfficialDeepAgent] _on_tool_event 入口: event_type={event_type}, "
+                f"tool={tool_name}, tc_id={tool_call_id}, "
+                f"has_params={bool(kwargs.get('parameters'))}, has_result={'result' in kwargs}"
+            )
             evt: dict[str, Any] = {
                 "event_type": event_type,
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
             }
-            # 透传 parameters / result / error（仅非空时）
-            if kwargs.get("parameters"):
+            # 透传 parameters / result / error
+            # must-use is-not-None check: 空 dict {} 是 falsy 但仍是有效值，
+            # "if kwargs.get('parameters'):" 会丢弃空 dict → evt 缺 key → _publish_tool_event 取到 {}
+            if kwargs.get("parameters") is not None:
                 evt["parameters"] = kwargs["parameters"]
             if "result" in kwargs and kwargs["result"] is not None:
                 evt["result"] = kwargs["result"]
@@ -773,6 +780,23 @@ class OfficialDeepAgentAdapter:
         tool_call_id = evt.get("tool_call_id", "") or ""
         tool_name = evt.get("tool_name") or "unknown"
         parameters = evt.get("parameters") or {}
+        # 3.4 参数权威源兜底：extractor 参数聚合失败（parameters 为空）时，
+        # 从 ctx（middleware SAFE/审批/无策略注册路径已写入完整 AIMessage 参数）兜底，
+        # 避免前端显示参数为空 []（write_todos/web_search 等工具实测复现）。
+        if not parameters:
+            try:
+                _ctx = service.get_context(tool_call_id)
+                _ctx_params = _ctx.get("parameters") if _ctx else None
+                if isinstance(_ctx_params, dict) and _ctx_params:
+                    parameters = _ctx_params
+            except Exception:
+                pass
+
+        logger.info(
+            f"[OfficialDeepAgent] _publish_tool_event 入口: event_type={event_type}, "
+            f"tool={tool_name}, tc_id={tool_call_id}, "
+            f"params_keys={list(parameters.keys()) if isinstance(parameters, dict) else type(parameters).__name__}"
+        )
 
         # event_type 必须为 EventType 枚举（extract_tool_events_from_message 保证）
         # 防御性校验：跳过非法事件类型，避免 transition_async 内部抛 KeyError
@@ -850,8 +874,12 @@ class OfficialDeepAgentAdapter:
         # 2. 状态机转换：transition_async 内部 await publish_tool_call，
         #    parameters / message_id / cross_module_id / graph_interrupt_id
         #    / 子 agent 嵌套层级字段 从 context 透传，底层传输逻辑不变
+        # must-use is-not-None: empty dict {} 是有效占位 → 保留为 {} 而非 None，
+        # 后续 middleware SAFE 工具路径通过 is_non_empty_params 保护不会覆盖已有非空参数
         transition_kwargs: dict[str, Any] = {
-            "parameters": parameters or None,
+            "parameters": parameters
+            if (isinstance(parameters, dict) and parameters)
+            else ({} if isinstance(parameters, dict) else None),
         }
         if "result" in evt:
             transition_kwargs["result"] = evt["result"]

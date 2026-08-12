@@ -32,6 +32,7 @@ import logging
 from typing import Any, cast
 
 from Django_xm.apps.approvals.models import Approval
+from Django_xm.common.constants import TIMEOUT_DECISION
 from Django_xm.common.observability.approval_metrics import (
     HIGH_RISK_WINDOW_THRESHOLD,
     approval_metrics,
@@ -299,6 +300,51 @@ class ApprovalGateway:
             message_id=message_id,
             chat_session_id=approval.chat_session_id,
         )
+
+    def route_timeout(
+        self,
+        approval: Approval,
+        resume_value: Any = None,
+    ) -> None:
+        """统一超时恢复路由（后台派发，无 HTTP 请求）。
+
+        确认/拒绝/超时三种审批决策统一通过 ApprovalGateway 路由，
+        超时由 Celery cleanup_expired_approvals 检测并触发，不经过 HTTP 请求路径。
+        按 approval.source 分派到对应 Celery 恢复任务。
+
+        Args:
+            approval: Approval 模型实例
+            resume_value: 恢复值，默认 TIMEOUT_DECISION
+
+        Returns:
+            None（后台派发，无需 SSE 流）
+        """
+        effective_resume_value = resume_value if resume_value is not None else TIMEOUT_DECISION
+
+        if approval.source == Approval.SOURCE_CHAT:
+            from Django_xm.tasks.approval_tasks import resume_chat_after_timeout
+
+            logger.info(
+                f"[ApprovalGateway] 超时恢复路由(chat): interrupt_id={approval.interrupt_id}, "
+                f"session={approval.chat_session_id}"
+            )
+            resume_chat_after_timeout.delay(approval.interrupt_id)
+
+        elif approval.source == Approval.SOURCE_DEEP_RESEARCH:
+            self._resume_deep_research(
+                approval,
+                effective_resume_value,
+                graph_interrupt_id=None,
+                langgraph_resume_id=None,
+                approved=False,
+            )
+
+        else:
+            logger.error(
+                f"[ApprovalGateway] 不支持的审批来源（超时）: "
+                f"source={approval.source}, interrupt_id={approval.interrupt_id}"
+            )
+            raise ValueError(f"不支持的审批来源: {approval.source}")
 
 
 # 模块级单例：views.py 统一通过此实例路由

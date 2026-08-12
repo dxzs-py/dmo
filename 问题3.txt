@@ -49,4 +49,74 @@ write_file 在最前/重复 = 两处独立渲染：① 工具调用记录区展�
 - 疑点：seen_tool_call_ids（恢复模式预热，count=8）中 read_file 的 tool_call_id 已存在 → extractor 分支 1（AIMessage）跳过，但分支 2（ToolMessage）**只对 PENDING 用 seen 去重**，COMPLETED 应正常发射。
 - 需进一步确认：恢复模式下 messages 模式的 astream 是否产出 read_file 的 ToolMessage；或 ToolNodePatch 的 skipped_call_ids（已有 ToolMessage 跳过执行）导致 read_file 未执行。
 
+## 2026-08-12 复测：write_todos 参数 [] + read_file 卡执行中（MCP 实测）
+### 测试 1（research_370569511a23，Vue 响应式主题）
+- write_todos 输入参数区显示 `[]`，输出结果完整（Updated todo list to [...]）
+- web_search/web_fetch 无输入参数区（参数为空被前端跳过渲染）
+- write_file 审批通过后正常完成（tool_call_completed 已发布，日志 L517）
+- read_file 审批通过后正常完成（L667 tool_call_completed）
+- 任务最终完成（09:42:11）
+
+### 测试 2（research_bbb46677d112，Redis 知识库主题）
+- write_todos 输入参数 `[]`（再次复现）
+- write_file 审批通过后正常完成（L985 tool_call_completed）
+- **read_file 审批通过后卡"执行中"（复现问题 B）**
+  - Redis `tool_call:published:call_00_9wrybxhVkTh6gx5gPqfc0873:*` 只有 tool_call_waiting + tool_call_running（g:e656d3e5），**无 tool_call_completed**
+  - 恢复后（L1248）同一 read_file 被再次审批（新批次 graph_interrupt_id=7fd6c29f）→ "用户已确认"（L1252）
+  - **恢复后 read_file 未执行**（无 ToolMessage / COMPLETED，日志 L1253 之后无该 tc_id 任何事件）
+  - 之后出现第三个 read_file 审批（L1442，新 tc_id call_00_zAJAKhYVQbVbJxdVjyGe9055）→ agent 未收到 read_file 结果又发起新调用
+
+### 后端关键证据
+1. `_publish_tool_event 入口: ... tool=write_todos ... params_keys=[]`（日志 L200/L205 等）：extractor 参数提取为空
+2. `[extract_tool_params] 无有效参数，返回空字典`（日志 L199）：ToolMessage 阶段 fallback 也拿不到参数
+3. Redis ctx 实证：
+   - write_todos / web_search / web_fetch：ctx.parameters = {}（参数丢失）
+   - write_file / read_file（审批路径）：ctx.parameters 完整（file_path/content 等）
+4. 策略注册列表：`['shell_exec', 'file_reader', 'attachment_rag_search', 'fs_write_file', 'agent_cleanup', 'agent_create', 'agent_run', 'todo_write', 'execute', 'write_file', 'edit_file', 'read_file']`（日志 L183）
+   - **无 write_todos（策略名是 todo_write，与 deepagents 内置工具名 write_todos 不匹配）**
+   - **无 ls / glob / grep（deepagents 只读内置工具无策略）**
+5. 恢复模式预热 seen_tool_call_ids：
+   - 测试1（正常完成）：count=8，**含 read_file**（L661）
+   - 测试2（卡执行中）：count=5，**不含 read_file**（L1244）
+6. read_file 卡"执行中"根因链：恢复后（L1242）→ 预热不含 read_file → aafter_model 再次拦截（L1248）→ 确认（L1252）→ ToolNode 未产出 read_file ToolMessage → extractor 无 COMPLETED → 前端永久"执行中"
+
+### 前端现状
+- ToolCallCard 已有单卡片展开/收回（isExpanded，点击 header 切换）
+- ResearchTaskDetail.vue 工具调用记录区（L83-100）**无整体展开/收回功能**（用户要求参考聊天模块交互实现记录区折叠）
+
+### 用户结论
+问题 A（参数 []）、问题 B（read_file 卡执行中 + 恢复后重复审批）已 100% 复现，根因锁定在后端 extractor 参数聚合 + 策略注册 + 恢复链路。
+
+## 2026-08-12 审批超时后任务永久停止（第四次反馈）
+### 现象
+research_bbb46677d112 的 read_file 审批（call_00_zAJAKhYVQbVbJxdVjyGe9055）超时后整个任务停止，浏览器长时间无响应。
+### 后端日志证据（日志2.txt L1654-1682）
+1. L1655-1656 cleanup 扫描到 1 条超时审批（2376）→ timeout_approval 完整执行（L1662 Redis 持久化 state=timeout）
+2. L1672 `超时递减pending计数: remaining=2`（该任务仅 1 条 pending → 计数偏差）
+3. L1674 gateway 路由 deep_research 恢复（approved=False）→ 派发 research.resume
+4. **L1678 `[Resume] 同批次尚有未决断审批，退出: resolved=0` → Task research.resume succeeded: {'status': 'waiting', 'reason': 'batch_not_all_resolved'} → 永久卡死**
+### DB/Redis 实证
+- DB：2376 `state=processing`（timeout_approval 只把 DB 置 PROCESSING，_persist_and_broadcast 不更新 DB）
+- Redis：`approval:processed:call_00_zAJAKhYVQbVbJxdVjyGe9055` = `timeout` → **DB/Redis 状态不一致**
+- 模拟实验：2376 置 pending+过期 → timeout_approval → DB=processing；pending 态下 `_collect_batch_decisions` 返回 `({}, False)`（resolved=0，与日志吻合）
+### 根因链（5 个缺陷叠加）
+1. research_resume_task 批次判定 `_collect_batch_decisions` 读到 pending → `batch_not_all_resolved` 直接退出，无自愈/重试 → 永久卡死
+2. DB/Redis 状态不一致：DB 停留 PROCESSING（被误判为"已批准"），Redis 是 timeout
+3. 并行恢复无 thread 粒度锁：1da9d0d4（155.9s）+ ab3725c7（58.7s）并行恢复同一 thread（checkpoint 竞争 + 重复审批）
+4. timeout_approval 成功路由后不释放 task 锁（TTL 1800s 残留）→ 后续超时恢复被跳过
+5. remaining==0 短路：计数归零直接 return 不触发恢复 → 单审批超时卡死
+### 修复（已实施）
+- approval_service.timeout_approval：加 dispatch_resume 参数；DB 终态化为 TIMEOUT；移除 remaining==0 短路；移除 task 锁（并行防护移交 research_resume_task thread 锁）
+- deep_research.research_resume_task：max_retries 1→10；入口 thread 粒度锁（research:resume:task_lock:{thread_id}）；批次未决断先自愈（过期 pending → timeout_approval(dispatch_resume=False) 终态化）→ 重新收集 → 仍未决断 retry(countdown=5)；外层 except Retry: raise
+- 验证：pending+过期 → timeout_approval(dispatch_resume=False) → DB=timeout → `_collect_batch_decisions` 返回 resolved=1（TIMEOUT 视为已决断=False，恢复命令可构建）
+### 附加修复（计划 3.1-3.7 补全）
+- 3.1 extractor：chunk args 类型归一化（dict/list → json.dumps），防拼接 TypeError；聚合验证通过（分片拼回 {"todos": ["a", 1]}）
+- 3.2 策略补全：write_todos（原 todo_write）+ ls/glob/grep/web_search/web_fetch SAFE 策略 → middleware 注册验证通过（POLICY_OK）
+- 3.3 middleware：无策略工具注册 ctx（完整参数，不发布 RUNNING）
+- 3.4 adapter._publish_tool_event：parameters 空时从 ctx 兜底（权威参数源）
+- 3.5 middleware 审批幂等：已审批/已完成 tc_id 跳过拦截（恢复后不重复审批）；tool_node_patch 经复核不收紧（正常 ToolMessage 跳过 = 防重复执行，收紧有重复执行风险）
+- 3.6 approval_service：WAITING/RUNNING/TIMEOUT 事件 parameters 保留空 dict（is not None 判断）
+- 3.7 ResearchTaskDetail.vue：工具调用记录区标题可点击折叠/展开（箭头图标 + 数量徽标），有 pending/running/waiting 卡片时强制展开
+- 清理：test_approval_timeout.py、_verify_fix.py 已删除
+
 

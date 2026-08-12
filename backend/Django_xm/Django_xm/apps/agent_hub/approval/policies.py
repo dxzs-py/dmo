@@ -436,12 +436,14 @@ class AgentRunApprovalPolicy(ApprovalPolicy):
 
 
 class TodoWriteApprovalPolicy(ApprovalPolicy):
-    """todo_write 工具审批策略。
+    """write_todos 工具审批策略。
 
     修改任务状态（增/删/改待办事项），可能影响分析链路，固定 CONTROLLED。
+    deepagents TodoListMiddleware 内置工具名为 write_todos
+    （此前注册为 todo_write，与实际工具名不匹配，导致参数丢失）。
     """
 
-    tool_name = "todo_write"
+    tool_name = "write_todos"
     is_write_operation = True
 
     def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
@@ -462,6 +464,74 @@ class AttachmentRagSearchApprovalPolicy(ApprovalPolicy):
     tool_name = "attachment_rag_search"
     # 只读工具：is_write_operation=False（默认），子 agent 中不上调风险等级
     # 继承基类的 assess_risk → 默认 SAFE → should_approve=False（自动通过）
+
+    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
+        return RiskLevel.SAFE
+
+    def assess_danger(self, args: dict) -> str:
+        return "low"
+
+
+# ── deepagents 内置只读工具策略 ──────────────────────────────────
+# deepagents FilesystemMiddleware / WebSearchMiddleware 提供的 ls/glob/grep/
+# web_search/web_fetch 为只读工具。此前未注册策略，middleware 直接 continue 跳过，
+# 不注册 ToolCallContext，导致 extractor 参数聚合失败时无权威参数源，
+# 前端显示参数为空 []。注册为 SAFE 级后走 _audit_auto_approved_tools：
+# 用完整 AIMessage.tool_calls 参数注册 ctx + 自动通过，参数完整。
+
+
+class LsApprovalPolicy(ApprovalPolicy):
+    """deepagents ls 工具审批策略（只读，SAFE 自动通过）"""
+
+    tool_name = "ls"
+
+    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
+        return RiskLevel.SAFE
+
+    def assess_danger(self, args: dict) -> str:
+        return "low"
+
+
+class GlobApprovalPolicy(ApprovalPolicy):
+    """deepagents glob 工具审批策略（只读，SAFE 自动通过）"""
+
+    tool_name = "glob"
+
+    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
+        return RiskLevel.SAFE
+
+    def assess_danger(self, args: dict) -> str:
+        return "low"
+
+
+class GrepApprovalPolicy(ApprovalPolicy):
+    """deepagents grep 工具审批策略（只读，SAFE 自动通过）"""
+
+    tool_name = "grep"
+
+    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
+        return RiskLevel.SAFE
+
+    def assess_danger(self, args: dict) -> str:
+        return "low"
+
+
+class WebSearchApprovalPolicy(ApprovalPolicy):
+    """deepagents web_search 工具审批策略（只读，SAFE 自动通过）"""
+
+    tool_name = "web_search"
+
+    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
+        return RiskLevel.SAFE
+
+    def assess_danger(self, args: dict) -> str:
+        return "low"
+
+
+class WebFetchApprovalPolicy(ApprovalPolicy):
+    """deepagents web_fetch 工具审批策略（只读，SAFE 自动通过）"""
+
+    tool_name = "web_fetch"
 
     def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
         return RiskLevel.SAFE

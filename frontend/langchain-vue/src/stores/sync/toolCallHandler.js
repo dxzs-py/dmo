@@ -61,13 +61,14 @@ export const createHandleToolCallEvent = (ctx) => {
       return
     }
 
-    // 参数非空判断：{} 是 truthy 但空对象，需显式判断非空。
-    // 仅在参数非空时传递，让 addOrUpdateToolCallInMap/updateOrAddToolResultInMap
-    // 的 isNonEmptyParams 保护逻辑正确工作（undefined → 保留已有参数）
+    // 参数非空判断：{} 和空数组 [] 视为空，非空 dict/array 视为有效。
+    // 接受非空数组（如 write_todos 的 todos 数组），之前 !Array.isArray 排除所有数组导致数组参数丢失。
     const hasNonEmptyParams = !!payload.parameters
       && typeof payload.parameters === 'object'
-      && !Array.isArray(payload.parameters)
-      && Object.keys(payload.parameters).length > 0
+      && (
+        (!Array.isArray(payload.parameters) && Object.keys(payload.parameters).length > 0)
+        || (Array.isArray(payload.parameters) && payload.parameters.length > 0)
+      )
 
     /** @type {import('@/types').ToolCallData} */
     const toolData = {

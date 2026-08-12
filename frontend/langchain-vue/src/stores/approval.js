@@ -190,11 +190,12 @@ export const useApprovalStore = defineStore('approval', () => {
       // 立即同步审批状态到后端，确保其他浏览器/刷新后可恢复
       _debouncedApprovalSync(sessionStore, sessionId)
     } else if (effectiveTaskId) {
-      // 独立 deep_research（无 sessionId）：同步审批数据到 researchStore 的 toolCall。
-      // 原实现缺失此分支，导致 researchStore 中 toolCall 无 approval 字段，
-      // ToolCallCard.isWaiting 依赖 approvalData 渲染"确认执行/拒绝"按钮 → 按钮不渲染。
+      // 独立 deep_research（无 sessionId）：将审批数据写入 researchStore 的 toolCall。
+      // 这是 approval 数据进入工具卡片（toolCall.approval）的唯一路径：
+      // toolCallHandler.js 处理 tool_call_waiting 事件构造的 toolData 不含 approval 字段，
+      // ToolCallCard.isWaiting 依赖 toolCall.approval 渲染"确认执行/拒绝"按钮。
       // 时序保护：审批事件可能先于 tool_call_waiting 到达，setApprovalToToolCall 内部
-      // 会创建 isSynthetic 占位条目并入 pendingApprovals 队列，后续工具事件合并绑定。
+      // 会创建 isSynthetic 占位条目，后续工具事件合并绑定。
       _getResearchStore()
         .then((rs) => rs.setApprovalToToolCall(effectiveTaskId, toolCallId, approvalData))
         .catch((e) => logger.warn('[ApprovalStore] 同步 researchStore 审批数据失败:', e))

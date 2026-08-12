@@ -105,7 +105,6 @@
         :task="task"
         :progress-message="progressMessage"
         :progress-percentage="progressPercentage"
-        :task-pending-approvals="taskPendingApprovals"
         :tool-calls="taskToolCalls"
         :doc-analysis-file="docAnalysisFile"
         :doc-analysis-content="docAnalysisContent"
@@ -297,19 +296,6 @@ const task = computed(() => researchStore.getTaskStatus(currentTaskId.value))
 
 /** 当前任务推理内容（来自 stream_reasoning WebSocket 事件） */
 const reasoning = computed(() => task.value?.reasoning || null)
-
-/** 当前任务的待审批列表（过滤出 source=deep_research 且 taskId 匹配的审批） */
-const taskPendingApprovals = computed(() => {
-  const result = new Map()
-  const tid = task.value?.taskId
-  if (!tid) return result
-  for (const [id, entry] of approvalStore.pendingApprovals) {
-    if (entry.source === 'deep_research' && entry.taskId === tid) {
-      result.set(id, entry)
-    }
-  }
-  return result
-})
 
 /** 当前任务的工具调用历史列表 */
 const taskToolCalls = computed(() => {

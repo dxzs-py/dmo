@@ -80,31 +80,26 @@
       style="margin-top: 16px;"
     />
 
-    <!-- 审批面板 -->
-    <div v-if="taskPendingApprovals.size > 0" class="approval-section">
-      <!-- 局部 ErrorBoundary：审批卡片渲染畸形 approval 数据时仅替换审批区，保留报告与文件列表 -->
-      <ErrorBoundary :full-screen="false">
-        <!-- Task 7：审批面板工具状态统一走 approvalStateToToolStatus（唯一推导），
-             修复"待审批/等待同批"工具被映射为 running 显示"执行中"（P3-19 同类根因） -->
-        <ToolCallCard
-          v-for="[id, entry] in taskPendingApprovals"
-          :key="id"
-          :tool-name="entry.approvalData?.toolName || 'unknown'"
-          :description="entry.approvalData?.description || ''"
-          :status="approvalStateToToolStatus(entry.approvalData?.state)"
-          :input="entry.approvalData?.parameters"
-          :output="entry.approvalData?.result || entry.approvalData?.output"
-          :tool-call="{ approval: entry.approvalData, id: entry.approvalData?.interruptId || id }"
-          @approve="(data) => emit('approve', data)"
-          @reject="(data) => emit('reject', data)"
-        />
-      </ErrorBoundary>
-    </div>
-
     <!-- 工具调用历史 -->
     <div v-if="toolCalls.length > 0" class="tool-calls-section">
-      <h4 class="section-title">工具调用记录</h4>
-      <TransitionGroup name="tool-list" tag="div" class="tool-calls-list">
+      <h4
+        class="section-title tool-calls-title"
+        :class="{ 'is-active': hasActiveToolCalls }"
+        @click="toggleToolCalls"
+      >
+        <el-icon class="toggle-icon" :class="{ 'is-expanded': toolCallsExpanded }">
+          <ArrowRight v-if="!toolCallsExpanded" />
+          <ArrowDown v-else />
+        </el-icon>
+        工具调用记录
+        <span class="tool-calls-count">{{ toolCalls.length }}</span>
+      </h4>
+      <TransitionGroup
+        v-show="toolCallsExpanded"
+        name="tool-list"
+        tag="div"
+        class="tool-calls-list"
+      >
         <ToolCallCard
           v-for="tc in toolCalls"
           :key="tc.id || tc.toolCallId || Math.random()"
@@ -135,13 +130,12 @@
 </template>
 
 <script setup>
-import { ChatDotRound } from '@element-plus/icons-vue'
-import ErrorBoundary from '@/components/common/ErrorBoundary.vue'
+import { computed, ref, watch } from 'vue'
+import { ArrowDown, ArrowRight, ChatDotRound } from '@element-plus/icons-vue'
 import ToolCallCard from '@/components/chat/ToolCallCard.vue'
 import ResearchTaskReport from './ResearchTaskReport.vue'
 import AiReasoning from '@/components/ai-elements/AiReasoning.vue'
 import { formatDate } from '@/utils/format'
-import { approvalStateToToolStatus } from '@/utils/toolCallStateMachine'
 import { ResearchTaskStatus } from '@/types'
 
 /**
@@ -151,7 +145,7 @@ import { ResearchTaskStatus } from '@/types'
  * 状态展示辅助函数（getStatusType / getStatusText）保留在本组件内，
  * 与 TaskList.vue 中的同名函数职责一致但映射表不同（本组件仅覆盖研究任务状态）。
  */
-defineProps({
+const props = defineProps({
   /** 当前任务对象 */
   task: {
     type: Object,
@@ -171,11 +165,6 @@ defineProps({
   progressPercentage: {
     type: Number,
     default: 0,
-  },
-  /** 当前任务的待审批条目（Map：interruptId -> entry） */
-  taskPendingApprovals: {
-    type: Map,
-    default: () => new Map(),
   },
   /** 当前任务的工具调用历史数组 */
   toolCalls: {
@@ -235,6 +224,26 @@ const getStatusText = (status) => {
   }
   return textMap[status] || status
 }
+
+// 工具调用记录区展开/收回（3.7）
+// 有审批中/执行中（非终态）卡片时强制展开，避免审批组件被意外折叠隐藏
+const toolCallsExpanded = ref(true)
+
+const ACTIVE_TOOL_STATES = new Set(['pending', 'running', 'waiting'])
+
+const hasActiveToolCalls = computed(() =>
+  props.toolCalls.some((tc) => ACTIVE_TOOL_STATES.has(tc.status)),
+)
+
+const toggleToolCalls = () => {
+  if (hasActiveToolCalls.value) return // 有审批中/执行中卡片时不可折叠
+  toolCallsExpanded.value = !toolCallsExpanded.value
+}
+
+// 出现审批中/执行中卡片时强制展开
+watch(hasActiveToolCalls, (active) => {
+  if (active) toolCallsExpanded.value = true
+})
 </script>
 
 <style scoped>
@@ -295,6 +304,42 @@ const getStatusText = (status) => {
   font-size: 15px;
   font-weight: 600;
   color: var(--el-text-color-primary);
+}
+
+.tool-calls-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 12px;
+}
+
+.tool-calls-title:hover {
+  color: var(--el-color-primary);
+}
+
+.tool-calls-title.is-active {
+  color: var(--el-color-primary);
+}
+
+.toggle-icon {
+  font-size: 14px;
+  transition: transform 0.2s ease;
+}
+
+.toggle-icon.is-expanded {
+  transform: rotate(0deg);
+}
+
+.tool-calls-count {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color-light);
+  border-radius: 10px;
+  padding: 0 8px;
+  line-height: 18px;
 }
 
 .tool-calls-list {
