@@ -331,6 +331,9 @@ class OfficialDeepAgentAdapter:
             if "error" in kwargs and kwargs["error"] is not None:
                 evt["error"] = kwargs["error"]
             # 透传子 agent 嵌套层级字段（Phase E3）
+            # 注意：不能使用 `val not in {"", 0}` 判断——agent_path 是 list，
+            # list 参与 set 成员测试会抛 `unhashable type: 'list'`。
+            # 改用标量比较（list == "" / list == 0 均安全返回 False）。
             for sub_field in (
                 "parent_tool_call_id",
                 "depth",
@@ -339,11 +342,10 @@ class OfficialDeepAgentAdapter:
                 "risk_ceiling",
             ):
                 val = kwargs.get(sub_field)
-                if val is not None and val not in {"", 0}:
-                    evt[sub_field] = val
-                elif val == 0 and sub_field == "depth":
-                    # depth=0 是主 agent，不写入（仅子 agent depth>0 才写入）
-                    pass
+                if val is None or val == "" or val == 0:
+                    # 空字符串 / 0（depth=0 主 agent）不写入
+                    continue
+                evt[sub_field] = val
             await self._publish_tool_event(evt)
 
         config["configurable"]["_on_tool_event"] = _on_tool_event

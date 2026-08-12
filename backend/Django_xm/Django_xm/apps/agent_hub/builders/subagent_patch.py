@@ -294,18 +294,19 @@ def patch_subagent_middleware() -> None:
             on_tool_event = parent_configurable.get("_on_tool_event")
 
             # 恢复模式检测（子 agent 审批恢复决策投递）：
-            # 父 graph 恢复本 task 工具调用时，Command(resume=...) 的值以 NULL_TASK_ID
-            # RESUME write 进入 ToolNode 任务 scratchpad（__pregel_scratchpad）。
+            # 父 graph 恢复本 task 工具调用时，Command(resume={langgraph_id: {tc: bool}})
+            # 的 key 为 langgraph 中断 id（xxh3(namespace_hash) 格式），langgraph 将其放入
+            # __pregel_resume_map（_loop.py L731-742），并按任务 namespace_hash 分发到
+            # 对应任务的 scratchpad.resume（_algo.py L1110-1112），而非写入 NULL_TASK_ID 的
+            # RESUME write —— 因此不能依赖 scratchpad.get_null_resume()。
             # 非空 → 恢复模式：不再注入全新 subagent_state（避免污染子 agent 消息状态、
             # LLM 重执行产出新 tool_call_id 导致决策失配），改为 Command(resume=...) 驱动
             # 子 agent 从自身 checkpoint 续流，把审批决策直接投递给子 agent 的 interrupt()。
             resume_value = None
             try:
-                from langgraph._internal._constants import CONFIG_KEY_SCRATCHPAD
+                from langgraph._internal._constants import CONFIG_KEY_RESUME_MAP
 
-                _scratchpad = parent_configurable.get(CONFIG_KEY_SCRATCHPAD)
-                if _scratchpad is not None and hasattr(_scratchpad, "get_null_resume"):
-                    resume_value = _scratchpad.get_null_resume(consume=False)
+                resume_value = parent_configurable.get(CONFIG_KEY_RESUME_MAP)
             except Exception as exc:
                 logger.debug(f"[SubAgentPatch] 恢复值检测失败(非致命): {exc}")
             if resume_value:
@@ -448,7 +449,7 @@ def patch_subagent_middleware() -> None:
             Returns:
                 子智能体最终状态字典（与 ainvoke 返回值格式一致）
             """
-            from langchain_core.messages import SystemMessage
+            from langchain_core.messages import SystemMessage, ToolMessage
 
             from Django_xm.apps.agent_hub.services.agent_resilience import DuplicateToolCallDetector
             from Django_xm.apps.tools.tool_event_extractor import extract_tool_events_from_message
@@ -506,6 +507,57 @@ def patch_subagent_middleware() -> None:
             # 需在子智能体层面独立检测，防止子智能体陷入重试循环。
             duplicate_detector = DuplicateToolCallDetector()
             pending_duplicate_warnings: list = []
+            # 已处理的消息 id（values 增量检测用，按消息 id 去重）
+            seen_message_ids: set = set()
+
+            # 统一事件转发：messages 流（AIMessageChunk/AIMessage）与
+            # values 状态（ToolMessage 补发）共用同一套转发逻辑。
+            async def _forward_tool_event(evt: dict) -> None:
+                """转发单个工具事件到 on_tool_event 回调"""
+                # 重复工具调用检测：仅对 PENDING 记录
+                if evt.get("event_type") == EventType.TOOL_CALL_PENDING:
+                    warning = duplicate_detector.record(
+                        evt.get("tool_name") or "unknown",
+                        evt.get("parameters") or {},
+                    )
+                    if warning is not None:
+                        pending_duplicate_warnings.append(SystemMessage(content=warning.to_prompt()))
+                evt_kwargs = {"parameters": evt.get("parameters", {})}
+                if "result" in evt:
+                    evt_kwargs["result"] = evt["result"]
+                if "error" in evt:
+                    evt_kwargs["error"] = evt["error"]
+                # 子 agent 嵌套层级字段（Phase E3）：随事件一起传递
+                # depth>0 才传递（主 agent depth=0 不传，避免污染 payload）
+                if sub_depth > 0:
+                    evt_kwargs["depth"] = sub_depth
+                if sub_parent_tool_call_id:
+                    evt_kwargs["parent_tool_call_id"] = sub_parent_tool_call_id
+                if sub_agent_name:
+                    evt_kwargs["agent_name"] = sub_agent_name
+                if sub_agent_path:
+                    evt_kwargs["agent_path"] = sub_agent_path
+                if sub_risk_ceiling is not None:
+                    evt_kwargs["risk_ceiling"] = sub_risk_ceiling
+                logger.info(
+                    f"[SubAgentPatch] 工具事件提取: tool={evt.get('tool_name')}, "
+                    f"tc_id={evt.get('tool_call_id')}, event_type={evt.get('event_type')}, "
+                    f"subagent={subagent_type}"
+                )
+                try:
+                    # on_tool_event 签名固定为 async（adapter.py 的 _on_tool_event）
+                    # 统一 await 调用，移除 iscoroutine 双模式判断
+                    await on_tool_event(
+                        evt["event_type"],
+                        evt["tool_call_id"],
+                        evt["tool_name"] or "unknown",
+                        **evt_kwargs,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[SubAgentPatch] 子智能体 tool 事件转发失败 "
+                        f"(subagent={subagent_type}, event={evt['event_type']}): {e}"
+                    )
 
             # while True 用于检测到重复调用时中断流、注入警告后重入
             current_input = subagent_state
@@ -522,6 +574,26 @@ def patch_subagent_middleware() -> None:
                     if mode_name == "values":
                         if isinstance(mode_data, dict):
                             final_state = mode_data
+                            # 工具执行结果补发（根因修复）：
+                            # langgraph StreamMessagesHandler 在 subgraphs=False 时，
+                            # on_chain_start 只注册 ns 为空（顶层 graph）的节点，
+                            # 子 agent 节点 ns="tools:xxx" 非空 → 节点输出（ToolMessage）
+                            # 从不进入 messages 流 → COMPLETED/FAILED 事件永久缺失。
+                            # 从 values 完整状态按消息 id 增量检测新增 ToolMessage 补发，
+                            # 复用 extract 公共模块（ToolMessage 分支无条件发射 COMPLETED）。
+                            for _m in (mode_data.get("messages") or []):
+                                _mid = getattr(_m, "id", None)
+                                if _mid and _mid in seen_message_ids:
+                                    continue
+                                if _mid:
+                                    seen_message_ids.add(_mid)
+                                if isinstance(_m, ToolMessage):
+                                    for _evt in extract_tool_events_from_message(
+                                        _m,
+                                        seen_tool_call_ids,
+                                        accumulated_messages,
+                                    ):
+                                        await _forward_tool_event(_evt)
                         continue
 
                     if mode_name != "messages":
@@ -542,50 +614,7 @@ def patch_subagent_middleware() -> None:
                         accumulated_messages,
                     )
                     for evt in tool_events:
-                        logger.info(
-                            f"[SubAgentPatch] 工具事件提取: tool={evt.get('tool_name')}, "
-                            f"tc_id={evt.get('tool_call_id')}, event_type={evt.get('event_type')}, "
-                            f"subagent={subagent_type}"
-                        )
-                        # 重复工具调用检测：仅对 PENDING 记录
-                        if evt.get("event_type") == EventType.TOOL_CALL_PENDING:
-                            warning = duplicate_detector.record(
-                                evt.get("tool_name") or "unknown",
-                                evt.get("parameters") or {},
-                            )
-                            if warning is not None:
-                                pending_duplicate_warnings.append(SystemMessage(content=warning.to_prompt()))
-                        evt_kwargs = {"parameters": evt.get("parameters", {})}
-                        if "result" in evt:
-                            evt_kwargs["result"] = evt["result"]
-                        if "error" in evt:
-                            evt_kwargs["error"] = evt["error"]
-                        # 子 agent 嵌套层级字段（Phase E3）：随事件一起传递
-                        # depth>0 才传递（主 agent depth=0 不传，避免污染 payload）
-                        if sub_depth > 0:
-                            evt_kwargs["depth"] = sub_depth
-                        if sub_parent_tool_call_id:
-                            evt_kwargs["parent_tool_call_id"] = sub_parent_tool_call_id
-                        if sub_agent_name:
-                            evt_kwargs["agent_name"] = sub_agent_name
-                        if sub_agent_path:
-                            evt_kwargs["agent_path"] = sub_agent_path
-                        if sub_risk_ceiling is not None:
-                            evt_kwargs["risk_ceiling"] = sub_risk_ceiling
-                        try:
-                            # on_tool_event 签名固定为 async（adapter.py 的 _on_tool_event）
-                            # 统一 await 调用，移除 iscoroutine 双模式判断
-                            await on_tool_event(
-                                evt["event_type"],
-                                evt["tool_call_id"],
-                                evt["tool_name"] or "unknown",
-                                **evt_kwargs,
-                            )
-                        except Exception as e:
-                            logger.warning(
-                                f"[SubAgentPatch] 子智能体 tool 事件转发失败 "
-                                f"(subagent={subagent_type}, event={evt['event_type']}): {e}"
-                            )
+                        await _forward_tool_event(evt)
                     # 检测到重复调用：中断流以注入警告
                     if pending_duplicate_warnings:
                         break
