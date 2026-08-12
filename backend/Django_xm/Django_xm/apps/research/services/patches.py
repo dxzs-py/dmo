@@ -1,19 +1,21 @@
-"""Deep Agent 补丁与韧性执行器模块。
+"""Deep Agent 韧性执行器模块。
 
 职责：
-- ``_PatchCompositeBackend``：修复 deepagents 0.5.x CompositeBackend 的 files_update
-  弃用警告，并强制 /sandbox/ 写入守卫。
-- ``_get_backend``：根据 backend_type 构建 deepagents 后端（state/filesystem/local_shell）。
 - ``_extract_ai_response``：从 create_deep_agent 的 invoke 结果中提取最终 AI 回复。
 - ``_DeepAgentExecutor``：Deep Agent 专用执行器，扩展 AgentExecutor 支持 async rebuild
   与多级降级（FULL → REDUCED_TOOLS → NO_TOOLS）。
 
 抽取自原 ``official_deep_agent.py``（Task 18.1）。
 
+注意：
+  废弃的 ``_PatchCompositeBackend`` 与 ``_get_backend`` 已删除（死代码）。
+  backend 构建统一由 ``agent_hub.builders.deep_builder._get_backend`` 负责，
+  其中 sandbox 守卫通过继承官方 ``CompositeBackend`` 的
+  ``_SandboxGuardCompositeBackend`` 实现（0.7.5 类级能力检测要求）。
+
 依赖关系：
 - 本模块不依赖 adapter.py / builders.py，可独立导入。
 - 被 ``adapter.py`` 导入：``_DeepAgentExecutor`` / ``_extract_ai_response``。
-- 被 ``builders.py`` 导入：``_get_backend``。
 """
 
 import asyncio
@@ -28,138 +30,8 @@ from Django_xm.apps.agent_hub.services.agent_executor import (
     _HardTimeoutSignaled,
 )
 from Django_xm.apps.core.config import get_logger
-from Django_xm.apps.research.services._constants import (
-    SANDBOX_ALLOWED_DIRS as _SANDBOX_ALLOWED_DIRS,
-)
 
 logger = get_logger(__name__)
-
-
-class _PatchCompositeBackend:
-    """修复 CompositeBackend 的 files_update 弃用警告 + sandbox 写入守卫
-
-    1. deepagents 0.5.x 的 CompositeBackend.write/edit 使用 dataclasses.replace()
-       重建 WriteResult/EditResult，触发 files_update 参数的弃用警告。
-       绕过方式：直接修改 path 属性。
-
-    2. /sandbox/ 是 Agent 工具区（skills、MCP 工具、第三方依赖等），
-       只允许预定义的工具子目录（_SANDBOX_ALLOWED_DIRS）写入，
-       其他 /sandbox/ 路径一律拒绝，引导 Agent 将研究产出写入 /notes/、/plans/、/reports/。
-    """
-
-    def __init__(self, composite):
-        self._composite = composite
-
-    def __getattr__(self, name):
-        return getattr(self._composite, name)
-
-    @staticmethod
-    def _check_sandbox_path(file_path: str) -> str | None:
-        norm = file_path.replace("\\", "/")
-        if not norm.startswith("/sandbox/"):
-            return None
-        for allowed in _SANDBOX_ALLOWED_DIRS:
-            if norm.startswith(allowed):
-                return None
-        allowed_list = ", ".join(_SANDBOX_ALLOWED_DIRS)
-        return (
-            f"Error: Path {norm} is not allowed in /sandbox/. "
-            f"/sandbox/ is for tool execution only. "
-            f"Research output must be written to /notes/, /plans/, or /reports/. "
-            f"Allowed sandbox paths: {allowed_list}"
-        )
-
-    def _resolve(self, file_path: str):
-        backend, key = self._composite._get_backend_and_key(file_path)
-        return backend, key
-
-    def write(self, file_path, content):
-        err = self._check_sandbox_path(file_path)
-        if err:
-            from deepagents.backends.protocol import WriteResult
-
-            return WriteResult(error=err, path=None, files_update=None)
-        backend, key = self._resolve(file_path)
-        res = backend.write(key, content)
-        if res.path is not None:
-            object.__setattr__(res, "path", file_path)
-        return res
-
-    async def awrite(self, file_path, content):
-        err = self._check_sandbox_path(file_path)
-        if err:
-            from deepagents.backends.protocol import WriteResult
-
-            return WriteResult(error=err, path=None, files_update=None)
-        backend, key = self._resolve(file_path)
-        res = await backend.awrite(key, content)
-        if res.path is not None:
-            object.__setattr__(res, "path", file_path)
-        return res
-
-    def edit(self, file_path, old_string, new_string, replace_all=False):
-        err = self._check_sandbox_path(file_path)
-        if err:
-            from deepagents.backends.protocol import EditResult
-
-            return EditResult(error=err, path=None, files_update=None, occurrences=None)
-        backend, key = self._resolve(file_path)
-        res = backend.edit(key, old_string, new_string, replace_all=replace_all)
-        if res.path is not None:
-            object.__setattr__(res, "path", file_path)
-        return res
-
-    async def aedit(self, file_path, old_string, new_string, replace_all=False):
-        err = self._check_sandbox_path(file_path)
-        if err:
-            from deepagents.backends.protocol import EditResult
-
-            return EditResult(error=err, path=None, files_update=None, occurrences=None)
-        backend, key = self._resolve(file_path)
-        res = await backend.aedit(key, old_string, new_string, replace_all=replace_all)
-        if res.path is not None:
-            object.__setattr__(res, "path", file_path)
-        return res
-
-
-def _get_backend(
-    backend_type: str = "state",
-    work_dir: str | None = None,
-    sandbox_dir: str | None = None,
-) -> Any:
-    try:
-        if backend_type == "state":
-            from deepagents.backends import StateBackend
-
-            return StateBackend()
-        elif backend_type == "filesystem":
-            from deepagents.backends import CompositeBackend, FilesystemBackend
-
-            fs_backend = FilesystemBackend(root_dir=work_dir or ".", virtual_mode=True)
-
-            if sandbox_dir and os.path.isdir(sandbox_dir):
-                sandbox_backend = FilesystemBackend(root_dir=sandbox_dir, virtual_mode=True)
-                composite = CompositeBackend(
-                    default=fs_backend,
-                    routes={"/sandbox/": sandbox_backend},
-                )
-                patched = _PatchCompositeBackend(composite)
-                logger.info(f"CompositeBackend: default={work_dir}, /sandbox/={sandbox_dir}")
-                return patched
-
-            return fs_backend
-        elif backend_type == "local_shell":
-            from deepagents.backends import LocalShellBackend
-
-            return LocalShellBackend(workdir=work_dir or ".")
-        else:
-            logger.warning(f"未知的 backend 类型: {backend_type}，使用 StateBackend")
-            from deepagents.backends import StateBackend
-
-            return StateBackend()
-    except ImportError as e:
-        logger.warning(f"Backend 导入失败: {e}，将不使用 backend")
-        return None
 
 
 def _extract_ai_response(result: dict[str, Any]) -> str:

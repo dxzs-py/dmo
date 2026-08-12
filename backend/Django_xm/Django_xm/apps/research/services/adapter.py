@@ -2,7 +2,7 @@
 
 职责：
 - ``OfficialDeepAgentAdapter``：将 ``create_deep_agent`` 返回的 CompiledStateGraph
-  适配为与 ``DeepResearchAgent`` 兼容的接口（research/aresearch/astream_research），
+  适配为上层统一接口（research/aresearch/astream_research），
   使上层调用方无需关心底层实现差异。
   - 集成 interrupt 审批机制（astream_research_with_interrupts）
   - 集成韧性模块（retry/timeout/degrade/fallback）
@@ -10,6 +10,8 @@
   - 降级时使用 original_tools / original_config 重建 graph
 
 抽取自原 ``official_deep_agent.py``（Task 18.1）。
+废弃的 ``DeepResearchAgent``（deep_agent.py）已删除，
+本适配器是深度研究的唯一官方实现。
 
 依赖关系：
 - 依赖 ``patches.py``：``_DeepAgentExecutor`` / ``_extract_ai_response``。
@@ -23,13 +25,12 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-# subagent_patch：set_current_checkpointer 注入父 graph 的 checkpointer 到子 agent，
-# 使子 agent 的 interrupt() 不再被 Pregel 抑制（is_nested=False 时 _suppress_interrupt）。
-# _on_tool_event 回调由本模块在 config["configurable"] 中注入，转发子 agent 工具事件到父 SSE 流。
-from Django_xm.apps.agent_hub.builders.subagent_patch import (
-    reset_current_checkpointer,
-    set_current_checkpointer,
-)
+# 子 agent 机制（deepagents 0.7.5 官方，取代旧 subagent_patch monkey-patch）：
+# - 中断冒泡 + Command(resume) 恢复：0.7.5 原生支持，无需 checkpointer contextvar 注入。
+# - 嵌套层级字段（depth/agent_path）：本模块在主 config 注入基础值（depth=0/agent_path=["main"]），
+#   SubAgentNestingMiddleware 在子 agent 内计算递增值写入 state。
+# - 子 agent 工具事件：SubAgentToolEventMiddleware 从 configurable 读取本模块注入的
+#   _on_tool_event 回调并转发到父 SSE 流。
 from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.ai_engine.services.thinking import extract_thinking_content
 from Django_xm.apps.research.services.patches import (
@@ -233,7 +234,7 @@ class OfficialDeepAgentAdapter:
         )
         from Django_xm.apps.tools.base import is_approval_interrupt
 
-        # 工具事件提取与发布（与 subagent_patch.py 保持一致）
+        # 工具事件提取与发布（与子 agent 事件转发路径一致）
         # 注意：工具事件的实际发布由 _publish_tool_event 内部通过
         # service.transition_async 完成（状态机统一入口），此处仅需 EventType
         from Django_xm.apps.tools.tool_event_extractor import extract_tool_events_from_message
@@ -284,12 +285,13 @@ class OfficialDeepAgentAdapter:
             config["callbacks"] = callbacks
 
         # 注入 _on_tool_event 回调到 config["configurable"]：
-        # subagent_patch.py 的 _patched_build_task_tool.atask 会从 configurable 读取此回调，
-        # 通过 astream 转发子 agent 工具调用事件到父 SSE 流。
+        # SubAgentToolEventMiddleware（子 agent middleware）会从 configurable 读取此回调，
+        # 将子 agent 工具调用事件转发到父 SSE 流。父 config 经 langgraph ensure_config
+        # 自动传播到子 agent。
         #
-        # 回调签名（与 subagent_patch.py _astream_with_tool_events 一致）：
+        # 回调签名：
         #   on_tool_event(event_type, tool_call_id, tool_name, **kwargs) -> coroutine
-        # kwargs 可能包含 parameters / result / error
+        # kwargs 可能包含 parameters / result / error / depth / agent_path / risk_ceiling
         #
         # 回调内部构造 evt dict 并调用 _publish_tool_event 发布到统一 tool_call_lifecycle.service，
         # 与父 graph 的工具事件发布路径完全一致（service.transition_async）。
@@ -305,8 +307,8 @@ class OfficialDeepAgentAdapter:
             通过统一 ``service.transition_async`` 发布到实时频道。
 
             子 agent 嵌套层级字段（Phase E3）：
-            subagent_patch._astream_with_tool_events 通过 kwargs 传递
-            parent_tool_call_id / depth / agent_name / agent_path / risk_ceiling，
+            SubAgentToolEventMiddleware 通过 kwargs 传递
+            depth / agent_path / risk_ceiling（agent_name 由回调自行读取），
             本回调透传到 evt dict，由 _publish_tool_event 注册到 ToolCallContext，
             最终经 transition_async 透传到事件 payload，前端 ToolCallCard 可展示
             完整调用链路（与父 agent 直接调用的工具行为一致）。
@@ -398,12 +400,14 @@ class OfficialDeepAgentAdapter:
             graph_config=config,
         )
 
-        # 设置当前协程的 checkpointer contextvar：
-        # subagent_patch.py 的 _patched_get_subagents 会从 contextvar 读取 checkpointer
-        # 并注入到子 agent 的 create_agent()，使子 agent 的 interrupt() 不再被 Pregel 抑制。
-        # try/finally 确保 contextvar 在流结束（正常或异常）后恢复原值，避免泄漏。
-        graph_checkpointer = getattr(self.graph, "checkpointer", None)
-        _checkpointer_token = set_current_checkpointer(graph_checkpointer)
+        # 主 config 注入嵌套层级基础值（deepagents 0.7.5 官方机制）：
+        # 子 agent 经 langgraph ensure_config 自动继承主 configurable；
+        # SubAgentNestingMiddleware 在子 agent 内基于这些值计算递增值写入 state。
+        if "depth" not in config["configurable"]:
+            config["configurable"]["depth"] = 0
+        if "agent_path" not in config["configurable"]:
+            config["configurable"]["agent_path"] = ["main"]
+
         try:
             # Path D 双模式初始化：
             # - resume_command 非空：恢复模式，从 checkpoint 续流（query 可为 None）
@@ -740,10 +744,6 @@ class OfficialDeepAgentAdapter:
                 "final_report": None,
                 "error": error_msg,
             }
-        finally:
-            # 恢复 checkpointer contextvar 到原值，避免泄漏到后续协程
-            # （set_current_checkpointer 返回 Token，reset_current_checkpointer 用 Token 恢复）
-            reset_current_checkpointer(_checkpointer_token)
 
     async def _publish_tool_event(self, evt: dict[str, Any]) -> None:
         """发布单个工具调用生命周期事件到实时频道。
@@ -760,7 +760,7 @@ class OfficialDeepAgentAdapter:
 
         子 agent 嵌套层级字段（Phase E3）：
         evt 中的 parent_tool_call_id / depth / agent_name / agent_path / risk_ceiling
-        （由 _on_tool_event 从 subagent_patch 透传）注册到 ToolCallContext，
+        （由 _on_tool_event 从 SubAgentToolEventMiddleware 透传）注册到 ToolCallContext，
         transition_async 从 context 透传到事件 payload，前端 ToolCallCard 可展示
         完整调用链路。主 agent 直接调用的工具不携带这些字段（evt 中无对应 key）。
 

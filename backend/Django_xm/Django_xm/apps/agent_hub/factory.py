@@ -102,14 +102,9 @@ class AgentFactory:
         try:
             agent = await builder.build(config)
         except FrameworkNotAvailableError:
-            if config.agent_type == AgentType.DEEP_RESEARCH:
-                logger.warning("DeepAgent 框架不可用，降级到 CustomWorkflow")
-                config.agent_type = AgentType.DEEP_RESEARCH_CUSTOM
-                config.resolve_defaults()
-                custom_builder = builders[AgentType.DEEP_RESEARCH_CUSTOM]
-                agent = await custom_builder.build(config)
-            else:
-                raise
+            # deepagents 已作为唯一深度研究实现（DEEP_RESEARCH_CUSTOM 已删除），
+            # 不再提供自定义降级路径；框架不可用则直接抛出
+            raise
         except Exception as e:
             logger.exception("智能体创建失败")
             raise AgentCreationError(f"智能体创建失败: {e}") from e

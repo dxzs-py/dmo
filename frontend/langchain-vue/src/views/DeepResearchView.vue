@@ -109,7 +109,6 @@
         :doc-analysis-file="docAnalysisFile"
         :doc-analysis-content="docAnalysisContent"
         :doc-analysis-loading="docAnalysisLoading"
-        :file-browser-ref="fileBrowserRef"
         :reasoning="reasoning"
         @back="showTaskDetail = false"
         @view-task="viewTask"
@@ -319,7 +318,6 @@ const taskToolCalls = computed(() => {
 })
 const showTaskDetail = ref(false)
 const taskListRef = ref(null)
-const fileBrowserRef = ref(null)
 const progressMessage = ref('')
 const elapsedSeconds = ref(0)
 const showFileSearch = ref(false)
@@ -553,9 +551,6 @@ const isTerminalStatus = (s) => s === ResearchTaskStatus.COMPLETED || s === Rese
 const pollTaskStatus = async () => {
   if (!task.value || isTerminalStatus(task.value.status)) {
     stopPolling()
-    if (fileBrowserRef.value) {
-      fileBrowserRef.value.loadFiles()
-    }
     return
   }
 
@@ -576,9 +571,6 @@ const pollTaskStatus = async () => {
       stopPolling()
       stopElapsedTimer()
       checkDocAnalysisFile()
-      if (fileBrowserRef.value) {
-        fileBrowserRef.value.loadFiles()
-      }
       autoLoadDocAnalysis()
       return
     }
@@ -767,9 +759,6 @@ const handleSSEEvent = (data) => {
           }).catch(() => {})
         }
         checkDocAnalysisFile()
-        if (fileBrowserRef.value) {
-          fileBrowserRef.value.loadFiles()
-        }
         autoLoadDocAnalysis()
       }
       break
@@ -863,11 +852,7 @@ const viewTask = async (selectedTask) => {
           startElapsedTimer()
           connectSSE(fresh.taskId)
         } else if (fresh.status === ResearchTaskStatus.COMPLETED) {
-          nextTick(() => {
-            if (fileBrowserRef.value) {
-              fileBrowserRef.value.loadFiles()
-            }
-          })
+          autoLoadDocAnalysis()
         }
       }
     } catch (e) {
@@ -1072,13 +1057,8 @@ onActivated(async () => {
           researchStore.setTaskStatus(currentTaskId.value, fresh)
           // fresh 可能补充 chat_session_id，重新订阅（幂等）
           subscribeRealtimeForTask(task.value)
-          // 如果状态变为已完成，加载文件列表
+          // 如果状态变为已完成，自动加载文档分析（文件列表由 FileBrowser 自管理自动刷新）
           if (fresh.status === ResearchTaskStatus.COMPLETED) {
-            nextTick(() => {
-              if (fileBrowserRef.value) {
-                fileBrowserRef.value.loadFiles()
-              }
-            })
             autoLoadDocAnalysis()
           }
         }

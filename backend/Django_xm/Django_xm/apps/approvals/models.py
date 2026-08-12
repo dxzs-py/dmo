@@ -18,14 +18,9 @@ class Approval(models.Model):
     # 审批来源
     SOURCE_CHAT = "chat"
     SOURCE_DEEP_RESEARCH = "deep_research"
-    # SOURCE_LEARNING 当前未启用：learning 模块是纯学习评测工作流（StateGraph），
-    # 无工具调用、无 agent，不接入 ApprovalMiddleware（架构不匹配）。
-    # 枚举值保留以避免数据库迁移，若未来 learning 引入 agent 化改造可启用。
-    SOURCE_LEARNING = "learning"
     SOURCE_CHOICES = [
         (SOURCE_CHAT, "Chat"),
         (SOURCE_DEEP_RESEARCH, "Deep Research"),
-        (SOURCE_LEARNING, "Learning"),
     ]
 
     # 审批状态

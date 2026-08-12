@@ -151,7 +151,7 @@ class ToolCallLifecyclePayload(TypedDict, total=False):
     子 agent 嵌套层级字段（Phase E3，与 ApprovalPayload 对齐）：
     工具调用生命周期事件也携带这些字段，确保非审批路径（SAFE 自动通过、
     子 agent 内部工具调用）的前端 ToolCallCard 也能展示完整调用链路。
-    这些字段由 subagent_patch.py 注入到 configurable，经 ToolCallContext
+    这些字段由 subagent_support.py（SubAgentNestingMiddleware）注入到 configurable，经 ToolCallContext
     透传到 publish_tool_call，最终到达前端 toolCall 对象。
     """
 
@@ -168,7 +168,7 @@ class ToolCallLifecyclePayload(TypedDict, total=False):
     graph_interrupt_id: str | None  # 批量审批批次 ID（同批次审批共享）
     cross_module_id: str | None  # 跨模块同步目标 ID（DEEP_RESEARCH 关联 chat 时为 chat_session_id）
     auto_approved: bool | None  # SAFE 级自动通过标记（True=无需用户审批，仅审计）
-    # 子 agent 嵌套层级字段（Phase E3，由 subagent_patch 注入到 configurable，
+    # 子 agent 嵌套层级字段（Phase E3，由 subagent_support.py 注入到 configurable，
     # 经 ToolCallContext 透传到事件 payload，前端 ToolCallCard 展示完整调用链路）
     parent_tool_call_id: str | None  # 父工具调用 ID（主 agent 调用 task 工具的 tool_call_id）
     depth: int | None  # 嵌套层级（0=主 agent，1=一级子 agent）

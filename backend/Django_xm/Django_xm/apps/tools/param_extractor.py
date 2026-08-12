@@ -1,7 +1,7 @@
 """统一的工具参数提取模块
 
-提供单一入口 extract_tool_params，替代散落在 stream_helpers / official_deep_agent /
-subagent_patch 等多处的重复实现。支持 dict 和非 dict（带属性的对象）输入。
+提供单一入口 extract_tool_params，替代散落在 stream_helpers / adapter /
+subagent_support 等多处的重复实现。支持 dict 和非 dict（带属性的对象）输入。
 
 支持的 tool_call 格式：
     1. LangChain tool_call: {"name": ..., "args": {...}, "id": ...}

@@ -228,7 +228,7 @@ class ToolCallContext:
         cross_module_id: 跨模块同步目标（仅 DEEP_RESEARCH 关联 chat 时为 chat_session_id）
         auto_approved: SAFE 级自动通过标记（True=无需用户审批，仅审计）
 
-    子 agent 嵌套层级字段（Phase E3，由 subagent_patch 注入到 configurable，
+    子 agent 嵌套层级字段（Phase E3，由 subagent_support.py 注入到 configurable，
     ApprovalMiddleware._audit_auto_approved_tools / adapter._publish_tool_event
     从 configurable 提取后传入 register）：
         parent_tool_call_id: 主 agent 调用 task 工具的 tool_call_id

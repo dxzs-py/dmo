@@ -34,10 +34,9 @@ class BaseApprovalAccessMixin:
     def _user_owns_approval(user, approval: Approval | None) -> bool:
         """检查用户是否拥有该审批。
 
-        优先比较 ``approval.user_id``；为 NULL 时回退到三路关联校验：
+        优先比较 ``approval.user_id``；为 NULL 时回退到关联校验：
         1. ``chat_session_id`` → ``ChatSession.session_id`` → ``ChatSession.user``
         2. ``source='deep_research'`` 时 ``source_id`` → ``ResearchTask.task_id`` → ``ResearchTask.created_by``
-        3. ``source='learning'`` 时 ``source_id`` → ``WorkflowSession.thread_id`` → ``WorkflowSession.created_by``
         """
         if approval is None:
             return False
@@ -60,15 +59,6 @@ class BaseApprovalAccessMixin:
             ResearchTask = _apps.get_model("research", "ResearchTask")
             if ResearchTask.objects.filter(
                 task_id=approval.source_id,
-                created_by=user,
-                is_deleted=False,
-            ).exists():
-                return True
-
-        if approval.source == Approval.SOURCE_LEARNING:
-            WorkflowSession = _apps.get_model("learning", "WorkflowSession")
-            if WorkflowSession.objects.filter(
-                thread_id=approval.source_id,
                 created_by=user,
                 is_deleted=False,
             ).exists():

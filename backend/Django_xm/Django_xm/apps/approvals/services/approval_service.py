@@ -91,7 +91,6 @@ _APPROVAL_STATE_TO_EVENT_TYPE: dict[str, EventType] = {
 _SOURCE_TO_EVENT_SOURCE: dict[str, EventSource] = {
     Approval.SOURCE_CHAT: EventSource.CHAT,
     Approval.SOURCE_DEEP_RESEARCH: EventSource.DEEP_RESEARCH,
-    Approval.SOURCE_LEARNING: EventSource.LEARNING,
 }
 
 

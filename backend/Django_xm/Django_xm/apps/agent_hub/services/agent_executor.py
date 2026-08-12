@@ -6,7 +6,7 @@
 通过回调注入核心循环逻辑和 agent 重建逻辑，支持多种执行模式：
 - 普通 agent 模式（chat_service.py，Task 18.3 适配）
 - 深度思考模式（chat_service.py，Task 18.3 适配）
-- 深度研究模式（official_deep_agent.py，Task 18.4 适配）
+- 深度研究模式（adapter.py，Task 18.4 适配）
 
 相对原 ResilienceRunner 的改进：
 - 集成 DuplicateToolCallDetector：提供 record_tool_call / inject_warning 方法，

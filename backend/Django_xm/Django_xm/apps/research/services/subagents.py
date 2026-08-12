@@ -1,31 +1,20 @@
 """
 SubAgents 子智能体模块
 
-定义专门的子智能体，每个负责特定的研究任务：
+定义专门的子智能体 prompt 与元信息：
 1. WebResearcher: 网络搜索和信息整理
 2. DocAnalyst: 文档分析和知识提取（支持网络搜索补充）
 3. ReportWriter: 报告撰写和内容组织
 
-改进：支持 middleware 传入 create_agent，使 Guardrails 在子智能体中生效
+注意：
+  废弃的 ``create_web_researcher`` / ``create_doc_analyst`` / ``create_report_writer``
+  工厂函数已删除（死代码，无调用方）。子智能体的创建统一通过
+  ``agent_hub.builders.deep_builder`` 的官方 ``create_deep_agent`` 机制构建。
 """
 
-import warnings
-from collections.abc import Sequence
-
-from langchain.agents import create_agent
-from langchain.agents.middleware import AgentMiddleware
-from langchain_core.tools import BaseTool
-
 from Django_xm.apps.core.config import get_logger
-from Django_xm.apps.tools import get_all_tools
 
 logger = get_logger(__name__)
-
-
-def _get_tools_by_names(names: list[str]) -> list:
-    """从统一工具入口按名称获取工具"""
-    all_tools = get_all_tools()
-    return [t for t in all_tools if t.name in names]
 
 
 WEB_RESEARCHER_PROMPT = (
@@ -91,200 +80,6 @@ REPORT_WRITER_PROMPT = (
     "- 网络来源：[URL] 或 [Web:标题]\n"
     "在报告末尾列出完整的参考来源列表，分为「知识库来源」和「网络来源」两部分。"
 )
-
-
-def create_web_researcher(
-    model: str | None = None,
-    tools: Sequence[BaseTool] | None = None,
-    middleware: Sequence[AgentMiddleware] | None = None,
-    enable_guardrails: bool = False,
-    user_id: int | None = None,
-    session_id: str | None = None,
-    extra_tools: Sequence[BaseTool] | None = None,
-    **kwargs,
-):
-    from Django_xm.apps.ai_engine.guardrails import create_guardrails_middleware
-    from Django_xm.apps.ai_engine.prompts.system_prompts import WRITER_GUIDELINES
-    from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
-    from Django_xm.apps.tools.langchain.web_search import create_tavily_search_tool
-
-    warnings.warn(
-        "create_web_researcher 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2
-    )
-    logger.info("🔍 创建 WebResearcher 子智能体")
-
-    if model is None:
-        model = get_model_string()
-
-    if tools is None:
-        agent_tools = []
-
-        web_researcher_tool_names = [
-            "web_search",
-            "duckduckgo_search",
-            "fs_write_file",
-            "fs_read_file",
-            "fs_list_files",
-            "fs_search_files",
-        ]
-        agent_tools.extend(_get_tools_by_names(web_researcher_tool_names))
-
-        if not any(t.name in ("web_search", "duckduckgo_search") for t in agent_tools):
-            try:
-                search_tool = create_tavily_search_tool()
-                agent_tools.append(search_tool)
-                logger.info("   通过 create_tavily_search_tool 降级创建搜索工具")
-            except (ValueError, ImportError) as e:
-                logger.warning(f"⚠️ 无法创建搜索工具（统一入口和降级均失败）: {e}")
-
-        if extra_tools:
-            agent_tools.extend(extra_tools)
-
-        tools = agent_tools
-
-    middleware_list = list(middleware) if middleware else []
-    if enable_guardrails:
-        middleware_list.append(create_guardrails_middleware(strict_mode=False, raise_on_error=False))
-
-    agent_kwargs: dict = {
-        "model": model,
-        "tools": tools,
-        "system_prompt": f"{WEB_RESEARCHER_PROMPT}\n\n{WRITER_GUIDELINES}",
-    }
-    if middleware_list:
-        agent_kwargs["middleware"] = middleware_list
-    agent_kwargs.update(kwargs)
-
-    agent = create_agent(**agent_kwargs)
-
-    logger.info("✅ WebResearcher 子智能体创建成功")
-    return agent
-
-
-def create_doc_analyst(
-    model: str | None = None,
-    tools: Sequence[BaseTool] | None = None,
-    retriever_tool: BaseTool | None = None,
-    enable_web_supplement: bool = True,
-    middleware: Sequence[AgentMiddleware] | None = None,
-    enable_guardrails: bool = False,
-    user_id: int | None = None,
-    session_id: str | None = None,
-    extra_tools: Sequence[BaseTool] | None = None,
-    **kwargs,
-):
-    from Django_xm.apps.ai_engine.guardrails import create_guardrails_middleware
-    from Django_xm.apps.ai_engine.prompts.system_prompts import WRITER_GUIDELINES
-    from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
-    from Django_xm.apps.tools.langchain.web_search import create_tavily_search_tool
-
-    warnings.warn(
-        "create_doc_analyst 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2
-    )
-    logger.info("📚 创建 DocAnalyst 子智能体")
-
-    if model is None:
-        model = get_model_string()
-
-    if tools is None:
-        agent_tools = []
-
-        if retriever_tool:
-            agent_tools.append(retriever_tool)
-            logger.debug("   添加 RAG 检索工具")
-        else:
-            logger.warning("⚠️ 未提供 retriever_tool，DocAnalyst 将无法检索文档")
-
-        doc_analyst_tool_names = [
-            "web_search",
-            "duckduckgo_search",
-            "fs_write_file",
-            "fs_read_file",
-            "fs_list_files",
-            "fs_search_files",
-        ]
-        agent_tools.extend(_get_tools_by_names(doc_analyst_tool_names))
-
-        if enable_web_supplement and not any(t.name in ("web_search", "duckduckgo_search") for t in agent_tools):
-            try:
-                search_tool = create_tavily_search_tool()
-                agent_tools.append(search_tool)
-                logger.info("   通过 create_tavily_search_tool 降级创建搜索工具（用于补充文档分析）")
-            except (ValueError, ImportError) as e:
-                logger.warning(f"⚠️ 无法创建搜索工具，DocAnalyst 将无法进行网络补充搜索: {e}")
-
-        if extra_tools:
-            agent_tools.extend(extra_tools)
-
-        tools = agent_tools
-
-    middleware_list = list(middleware) if middleware else []
-    if enable_guardrails:
-        middleware_list.append(create_guardrails_middleware(strict_mode=False, raise_on_error=False))
-
-    agent_kwargs: dict = {
-        "model": model,
-        "tools": tools,
-        "system_prompt": f"{DOC_ANALYST_PROMPT}\n\n{WRITER_GUIDELINES}",
-    }
-    if middleware_list:
-        agent_kwargs["middleware"] = middleware_list
-    agent_kwargs.update(kwargs)
-
-    agent = create_agent(**agent_kwargs)
-
-    logger.info("✅ DocAnalyst 子智能体创建成功")
-    return agent
-
-
-def create_report_writer(
-    model: str | None = None,
-    tools: Sequence[BaseTool] | None = None,
-    middleware: Sequence[AgentMiddleware] | None = None,
-    enable_guardrails: bool = False,
-    user_id: int | None = None,
-    session_id: str | None = None,
-    **kwargs,
-):
-    from Django_xm.apps.ai_engine.guardrails import create_guardrails_middleware
-    from Django_xm.apps.ai_engine.prompts.system_prompts import WRITER_GUIDELINES
-    from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
-
-    warnings.warn(
-        "create_report_writer 已废弃，请使用 Django_xm.apps.agent_hub.create()", DeprecationWarning, stacklevel=2
-    )
-    logger.info("✍️ 创建 ReportWriter 子智能体")
-
-    if model is None:
-        model = get_model_string()
-
-    if tools is None:
-        report_writer_tool_names = [
-            "fs_write_file",
-            "fs_read_file",
-            "fs_list_files",
-            "fs_search_files",
-        ]
-        tools = _get_tools_by_names(report_writer_tool_names)
-        logger.debug(f"   添加文件系统工具: {len(tools)} 个")
-
-    middleware_list = list(middleware) if middleware else []
-    if enable_guardrails:
-        middleware_list.append(create_guardrails_middleware(strict_mode=False, raise_on_error=False))
-
-    agent_kwargs: dict = {
-        "model": model,
-        "tools": tools,
-        "system_prompt": f"{REPORT_WRITER_PROMPT}\n\n{WRITER_GUIDELINES}",
-    }
-    if middleware_list:
-        agent_kwargs["middleware"] = middleware_list
-    agent_kwargs.update(kwargs)
-
-    agent = create_agent(**agent_kwargs)
-
-    logger.info("✅ ReportWriter 子智能体创建成功")
-    return agent
 
 
 def get_subagent_info() -> dict:

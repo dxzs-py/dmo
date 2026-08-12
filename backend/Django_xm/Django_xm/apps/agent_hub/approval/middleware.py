@@ -122,45 +122,53 @@ class ApprovalMiddleware(AgentMiddleware):
         return None
 
     @staticmethod
-    def _extract_subagent_context(runtime) -> dict | None:
-        """从 runtime.config.configurable 提取子 agent 上下文。
+    def _extract_subagent_context(state: dict | None = None, runtime=None) -> dict | None:
+        """提取子 agent 上下文。
 
-        子 agent 上下文由 subagent_patch.py 在 atask 中注入到 configurable：
-            - risk_ceiling: RiskLevel，子 agent 角色风险上限
-            - depth: int，嵌套层级（0=主 agent，1=子 agent）
-            - agent_name: str，子 agent 名称
-            - agent_path: list[str]，完整调用链路（如 ["main", "web-researcher"]）
-            - parent_tool_call_id: str，主 agent 调用 task 工具的 tool_call_id
+        deepagents 0.7.5 升级后，middleware 钩子的 runtime 参数为标准
+        ``langgraph.runtime.Runtime``（无 config 属性），因此子 agent 上下文
+        不再从 runtime.config.configurable 读取，改为：
 
-        主 agent 不注入这些字段，返回 None（assess_risk 不做加权）。
+        1. state 字段（SubAgentNestingMiddleware.before_model 写入）：
+           - subagent_depth: int，嵌套层级（0=主 agent，1=子 agent）
+           - subagent_path: list[str]，完整调用链路（如 ["main", "web-researcher"]）
+           - subagent_risk_ceiling: str，子 agent 角色风险上限
+        2. get_config().metadata.lc_agent_name：子 agent 名称（create_agent 官方设置）
+        3. configurable.ls_agent_type == "subagent"：子 agent 判定（0.7.5 atask 注入）
+
+        主 agent 的 state 无 subagent_* 字段，返回 None（assess_risk 不做加权）。
+
+        Args:
+            state: 当前 agent state（aafter_model 参数）
+            runtime: 兼容旧调用（保留参数，实际不再依赖）
 
         Returns:
             dict | None: 子 agent 上下文字典；主 agent 返回 None
         """
         try:
-            # runtime 是 RunnableConfig 或 AgentMiddleware 运行时对象
-            # configurable 通常在 runtime.config.configurable 或 runtime['configurable']
-            configurable = None
-            if hasattr(runtime, "config"):
-                config = runtime.config
-                if isinstance(config, dict):
-                    configurable = config.get("configurable")
-            elif isinstance(runtime, dict):
-                configurable = runtime.get("configurable")
+            state = state or {}
+            depth = state.get("subagent_depth", 0)
+            agent_path = state.get("subagent_path")
+            risk_ceiling = state.get("subagent_risk_ceiling")
 
-            if not isinstance(configurable, dict):
+            if depth == 0 and not agent_path:
+                # 主 agent：无嵌套字段，返回 None
                 return None
 
-            # 仅当 configurable 中存在 risk_ceiling 或 depth 时才返回子 agent 上下文
-            # 主 agent 的 configurable 不包含这些字段
-            risk_ceiling = configurable.get("risk_ceiling")
-            depth = configurable.get("depth")
-            agent_name = configurable.get("agent_name")
-            agent_path = configurable.get("agent_path")
-            parent_tool_call_id = configurable.get("parent_tool_call_id")
+            if not isinstance(depth, int) or depth < 0:
+                depth = 0
+            if not isinstance(agent_path, list):
+                agent_path = []
 
-            if risk_ceiling is None and depth is None and not agent_name:
-                return None
+            from langgraph.config import get_config
+
+            agent_name = ""
+            try:
+                config = get_config()
+                metadata = config.get("metadata") if isinstance(config, dict) else None
+                agent_name = (metadata or {}).get("lc_agent_name") or ""
+            except Exception:
+                pass
 
             # risk_ceiling 可能是 RiskLevel 枚举或字符串，统一为 RiskLevel
             if risk_ceiling is not None and not isinstance(risk_ceiling, RiskLevel):
@@ -171,10 +179,11 @@ class ApprovalMiddleware(AgentMiddleware):
 
             return {
                 "risk_ceiling": risk_ceiling,
-                "depth": depth if isinstance(depth, int) else 0,
+                "depth": depth,
                 "agent_name": agent_name or "",
-                "agent_path": agent_path if isinstance(agent_path, list) else [],
-                "parent_tool_call_id": parent_tool_call_id or "",
+                "agent_path": agent_path,
+                # 0.7.5 官方机制不提供父 task 工具的 tool_call_id，留空（前端不展示父链路）
+                "parent_tool_call_id": "",
             }
         except Exception as e:
             logger.debug(f"[ApprovalMiddleware] 提取 subagent_context 失败(非致命): {e}")
@@ -209,26 +218,64 @@ class ApprovalMiddleware(AgentMiddleware):
         from Django_xm.common.event_schema import EventSource, EventType
         from Django_xm.common.tool_call_lifecycle import ToolCallContext, service
 
-        # 提取 module / module_id（与 adapter._publish_tool_event 一致）
-        # 主 agent 默认 CHAT，子 agent 通过 configurable.agent_path 判断
+        # 提取 configurable（deepagents 0.7.5 升级后 runtime 无 config 属性，
+        # 优先用 get_config()，回退 runtime）
         configurable: dict[str, Any] = {}
         try:
-            if hasattr(runtime, "config"):
-                config = runtime.config
-                if isinstance(config, dict):
-                    configurable = config.get("configurable") or {}
-            elif isinstance(runtime, dict):
-                configurable = runtime.get("configurable") or {}
+            from langgraph.config import get_config as _get_config
+
+            _cfg = _get_config()
+            if isinstance(_cfg, dict):
+                configurable = _cfg.get("configurable") or {}
         except Exception:
-            # runtime 结构不可识别时回退到空 configurable，后续以默认值处理
-            logger.debug("提取 runtime configurable 失败，使用空字典")
+            pass
+        if not configurable:
+            try:
+                if hasattr(runtime, "config"):
+                    _config = runtime.config
+                    if isinstance(_config, dict):
+                        configurable = _config.get("configurable") or {}
+                elif isinstance(runtime, dict):
+                    configurable = runtime.get("configurable") or {}
+            except Exception:
+                # runtime 结构不可识别时回退到空 configurable，后续以默认值处理
+                logger.debug("提取 runtime configurable 失败，使用空字典")
 
         # 判断来源：深度研究 agent 的 configurable 含 thread_id（=task_id）
         thread_id = configurable.get("thread_id", "")
-        configurable.get("agent_name", "")
-        depth = configurable.get("depth", 0)
 
-        if thread_id and depth > 0:
+        # 嵌套层级字段（deepagents 0.7.5 机制）：
+        # SubAgentNestingMiddleware 写入 state（subagent_depth/path/risk_ceiling），
+        # 优先从 state 读取，回退 configurable（兼容旧调用方）
+        sub_depth = state.get("subagent_depth", 0) if isinstance(state, dict) else 0
+        if not isinstance(sub_depth, int) or sub_depth < 0:
+            sub_depth = 0
+        sub_agent_path = state.get("subagent_path") if isinstance(state, dict) else None
+        if not isinstance(sub_agent_path, list):
+            sub_agent_path = []
+        sub_risk_ceiling_raw = state.get("subagent_risk_ceiling") if isinstance(state, dict) else None
+        if sub_risk_ceiling_raw is None:
+            sub_risk_ceiling_raw = configurable.get("risk_ceiling")
+        # risk_ceiling 可能是 RiskLevel 枚举或字符串，统一转字符串存入 context
+        if sub_risk_ceiling_raw is not None and not isinstance(sub_risk_ceiling_raw, str):
+            sub_risk_ceiling = (
+                sub_risk_ceiling_raw.value if hasattr(sub_risk_ceiling_raw, "value") else str(sub_risk_ceiling_raw)
+            )
+        else:
+            sub_risk_ceiling = sub_risk_ceiling_raw or ""
+        # parent_tool_call_id：0.7.5 官方机制不提供，兼容旧 configurable 值
+        sub_parent_tool_call_id = configurable.get("parent_tool_call_id", "") or ""
+        # agent_name：优先 metadata.lc_agent_name（create_agent 官方设置）
+        sub_agent_name = ""
+        try:
+            _metadata = _get_config().get("metadata") if isinstance(_get_config(), dict) else None
+            sub_agent_name = (_metadata or {}).get("lc_agent_name") or ""
+        except Exception:
+            pass
+        if not sub_agent_name:
+            sub_agent_name = configurable.get("agent_name", "") or ""
+
+        if thread_id and sub_depth > 0:
             # 子 agent：沿用父 agent 的来源（通常为 DEEP_RESEARCH）
             module = EventSource.DEEP_RESEARCH
             module_id = thread_id
@@ -250,25 +297,6 @@ class ApprovalMiddleware(AgentMiddleware):
         cross_module_id = derive_cross_module_id_from_source(
             "deep_research" if module == EventSource.DEEP_RESEARCH else module.value, chat_session_id
         )
-
-        # 子 agent 嵌套层级字段（Phase E3）：从 configurable 提取
-        # 主 agent 不注入这些字段，得到默认空值（不影响 payload）
-        sub_parent_tool_call_id = configurable.get("parent_tool_call_id", "") or ""
-        sub_depth = configurable.get("depth", 0)
-        if not isinstance(sub_depth, int) or sub_depth < 0:
-            sub_depth = 0
-        sub_agent_name = configurable.get("agent_name", "") or ""
-        sub_agent_path = configurable.get("agent_path")
-        if not isinstance(sub_agent_path, list):
-            sub_agent_path = []
-        # risk_ceiling 可能是 RiskLevel 枚举或字符串，统一转字符串存入 context
-        sub_risk_ceiling_raw = configurable.get("risk_ceiling")
-        if sub_risk_ceiling_raw is not None and not isinstance(sub_risk_ceiling_raw, str):
-            sub_risk_ceiling = (
-                sub_risk_ceiling_raw.value if hasattr(sub_risk_ceiling_raw, "value") else str(sub_risk_ceiling_raw)
-            )
-        else:
-            sub_risk_ceiling = sub_risk_ceiling_raw or ""
 
         for tc_info in tool_calls:
             tool_call_id = tc_info["tool_call_id"]
@@ -394,21 +422,30 @@ class ApprovalMiddleware(AgentMiddleware):
 
         # 提取 chat_session_id（chat 模块事件路由依赖，M1）
         # 三模块统一：chat 模块必填，deep_research 关联 chat 时填，learning 模块为 thread_id
-        # P14 根因修复：深度研究 agent 的 chat_session_id 存在于 runtime.config.configurable
-        # （research_runner.py L345-346 注入），但 aafter_model 原著只查 runtime.context 和 state，
-        # 导致提取为空 → _audit_auto_approved_tools module 误判为 CHAT → SAFE 工具事件路由到空频道。
-        # 修复：补充从 runtime.config.configurable 读取（与 _audit_auto_approved_tools 提取路径一致）。
+        # P14 根因修复：深度研究 agent 的 chat_session_id 存在于 config.configurable
+        # （research_runner.py 注入），经 langgraph get_config() 读取。
+        # deepagents 0.7.5 升级后 middleware 钩子 runtime 为标准 Runtime（无 config），
+        # 优先用 get_config()，回退 runtime.context / state。
         chat_session_id = ""
         try:
-            # 优先从 configurable 读取
+            # 优先从 get_config() 的 configurable 读取
             configurable: dict = {}
             try:
-                if hasattr(runtime, "config"):
-                    config = runtime.config
-                    if isinstance(config, dict):
-                        configurable = config.get("configurable") or {}
+                from langgraph.config import get_config as _get_config
+
+                _cfg = _get_config()
+                if isinstance(_cfg, dict):
+                    configurable = _cfg.get("configurable") or {}
             except Exception:
                 pass
+            if not configurable:
+                try:
+                    if hasattr(runtime, "config"):
+                        config = runtime.config
+                        if isinstance(config, dict):
+                            configurable = config.get("configurable") or {}
+                except Exception:
+                    pass
             if configurable:
                 # chat 模块：thread_id == session_id（agent_service.py 注入）
                 # deep_research 模块：chat_session_id 显式注入
@@ -450,9 +487,9 @@ class ApprovalMiddleware(AgentMiddleware):
         # 不影响 Command(resume=...) 恢复逻辑（恢复使用 interrupt_id=tool_call_id）
         graph_interrupt_id = uuid.uuid4().hex
 
-        # 提取 subagent_context（从 runtime.config.configurable 读取）
+        # 提取 subagent_context（从 state + get_config 读取）
         # 用于子 agent 风险加权（assess_risk 的 subagent_context 参数）
-        subagent_context = self._extract_subagent_context(runtime)
+        subagent_context = self._extract_subagent_context(state, runtime)
 
         # 3.5 审批幂等：恢复场景下，checkpoint 旧 AIMessage.tool_calls 中的
         # 已审批/已完成 tool_call 不再重复拦截（生成新批次审批，导致 L1248 冗余审批、

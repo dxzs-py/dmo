@@ -3,12 +3,15 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-import sys
 from collections.abc import Sequence
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.tools import BaseTool, StructuredTool
+
+# 官方 CompositeBackend：_SandboxGuardCompositeBackend 以其为基类（模块级导入，
+# 类定义即求值；不能在函数内延迟导入）
+from deepagents.backends import CompositeBackend  # noqa: E402
 
 from Django_xm.apps.agent_hub.builders._registry import register_builder
 from Django_xm.apps.agent_hub.config import AgentType
@@ -33,7 +36,7 @@ from Django_xm.apps.research.services._constants import (
 #
 # 分层依赖说明：
 # - agent_hub.builders.deep_builder → research.services.adapter（本导入）
-# - research.services.adapter → agent_hub.builders.subagent_patch（已存在）
+# - research.services.adapter → agent_hub.builders.subagent_support（子 agent 官方支持中间件）
 # 这是 agent_hub ↔ research 的循环依赖，与 spec 2.4 的 chat ↔ research 循环同性质，
 # 后续应通过 cross_app 门面统一收敛。当前保持现状，不引入新的循环依赖。
 #
@@ -54,8 +57,8 @@ logger = logging.getLogger(__name__)
 # 角色边界约束（非风险降级）：超过 risk_ceiling 的工具调用被拒绝，
 # agent 收到 error ToolMessage 后可调整策略或委派给有权限的 agent。
 #
-# 映射由 subagent_patch.py 在 atask 中注入到子 agent configurable，
-# ApprovalMiddleware._extract_subagent_context 读取后传给 policies.assess_risk。
+# 映射由 SubAgentNestingMiddleware 在 before_model 中按子 agent 名称动态查询，
+# ApprovalMiddleware 从 state（subagent_risk_ceiling）读取后传给 policies.assess_risk。
 _SUBAGENT_RISK_CEILINGS: dict[str, RiskLevel] = {}
 
 
@@ -78,78 +81,14 @@ def _register_subagent_risk_ceilings():
 _register_subagent_risk_ceilings()
 
 
-def _patch_filesystem_backend_windows():
-    r"""Patch FilesystemBackend._resolve_path to handle Windows \\?\ prefix inconsistency.
-
-    On Windows, Path.resolve() may add the extended-length path prefix (\\?\)
-    inconsistently between init time and runtime, causing relative_to() to fail
-    even when the path is logically within root_dir.
-    """
-    if sys.platform != "win32":
-        return
-
-    try:
-        from deepagents.backends.filesystem import FilesystemBackend
-    except ImportError:
-        return
-
-    if getattr(FilesystemBackend._resolve_path, "_win_patched", False):
-        return
-
-    _original_resolve_path = FilesystemBackend._resolve_path
-
-    def _patched_resolve_path(self, key: str):
-        if not self.virtual_mode:
-            return _original_resolve_path(self, key)
-
-        from pathlib import Path as _Path
-
-        vpath = key if key.startswith("/") else "/" + key
-        if ".." in vpath or vpath.startswith("~"):
-            raise ValueError("Path traversal not allowed")
-
-        full = (self.cwd / vpath.lstrip("/")).resolve()
-
-        # Normalize \\?\ prefix for consistent comparison
-        full_str = str(full)
-        cwd_str = str(self.cwd)
-        if full_str.startswith("\\\\?\\") != cwd_str.startswith("\\\\?\\"):
-            if full_str.startswith("\\\\?\\"):
-                full_str = full_str[4:]
-            else:
-                cwd_str = cwd_str[4:]
-
-        try:
-            _Path(full_str).relative_to(_Path(cwd_str))
-        except ValueError:
-            msg = f"Path:{full} outside root directory: {self.cwd}"
-            raise ValueError(msg) from None
-
-        from deepagents.backends.filesystem import _raise_if_symlink_loop
-
-        _raise_if_symlink_loop(full)
-        return full
-
-    _patched_resolve_path._win_patched = True
-    FilesystemBackend._resolve_path = _patched_resolve_path
-    logger.debug("FilesystemBackend._resolve_path 已打 Windows 路径补丁")
-
-
-# 模块加载时自动打补丁
-_patch_filesystem_backend_windows()
-
-# 应用 SubAgentMiddleware 补丁（幂等）：
-# - Patch 1: _get_subagents 注入 checkpointer（修复子 agent 无 checkpointer 问题）
-# - Patch 2: _build_task_tool atask 继承父 callbacks（修复子 agent 工具事件不转发问题）
-#
-# 补丁应用后，子 agent 拥有 checkpointer，interrupt() 不再被 Pregel 抑制，
-# ApprovalMiddleware 可安全注入到子 agent（与 Claude Code Task 工具设计对齐）。
-# 子 agent 工具调用事件通过 _on_tool_event 回调转发到父 SSE 流（adapter.py 注入）。
-from Django_xm.apps.agent_hub.builders.subagent_patch import (
-    patch_subagent_middleware as _patch_subagent_middleware,
-)
-
-_patch_subagent_middleware()
+# 子 agent 机制说明（deepagents 0.7.5 升级后，官方机制取代旧 monkey-patch）：
+# - 中断冒泡 + Command(resume) 恢复：0.7.5 原生支持，无需注入 checkpointer。
+# - 嵌套层级字段（depth/agent_path/risk_ceiling）：SubAgentNestingMiddleware 注入 state。
+# - 子 agent 工具事件转发：SubAgentToolEventMiddleware（after_model + wrap_tool_call）。
+# - 旧 subagent_patch.py 已删除（详见 .trae/specs 升级记录）。
+# - 旧 _patch_filesystem_backend_windows（\\?\ 前缀补丁）已删除：
+#   0.7.5 官方 FilesystemBackend.__init__ 统一 self.cwd = Path(root_dir).resolve()，
+#   _resolve_path 内部已处理前缀一致性，实测 355 字符路径下 relative_to 正常。
 
 
 def _has_search_tools(extra_tools: list[BaseTool] | None = None) -> bool:
@@ -249,57 +188,65 @@ def _build_subagents(
             search_tool = create_tavily_search_tool()
             # 子智能体继承主 agent 全部工具 + 专用搜索工具 + extra_tools
             web_tools = _merge_tool_lists(main_tools, [search_tool], extra_tools)
-            web_subagent = SubAgent(
-                name="web-researcher",
-                description="网络搜索和信息整理专家，负责从互联网搜索和整理研究信息",
-                system_prompt=WEB_RESEARCHER_SUBAGENT_PROMPT,
-                tools=web_tools,
-                middleware=safe_middleware,
-            )
+            web_subagent: SubAgent = {
+                "name": "web-researcher",
+                "description": "网络搜索和信息整理专家，负责从互联网搜索和整理研究信息",
+                "system_prompt": WEB_RESEARCHER_SUBAGENT_PROMPT,
+                "tools": web_tools,
+                "middleware": safe_middleware,
+            }
             subagents.append(web_subagent)
             logger.debug(f"添加 WebResearcher 子智能体 (tools={len(web_tools)}, 含主 agent 工具继承)")
         except ValueError:
             logger.warning("Tavily API Key 未配置，web-researcher 子智能体将使用继承工具")
             # 无 search_tool 时：继承主 agent 工具 + extra_tools
             web_fallback_tools = _merge_tool_lists(main_tools, extra_tools)
-            web_subagent = SubAgent(
-                name="web-researcher",
-                description="网络搜索和信息整理专家",
-                system_prompt=WEB_RESEARCHER_SUBAGENT_PROMPT,
+            web_subagent = {
+                "name": "web-researcher",
+                "description": "网络搜索和信息整理专家",
+                "system_prompt": WEB_RESEARCHER_SUBAGENT_PROMPT,
                 # SubAgent.tools 字段为 NotRequired[Sequence[...]]，不接受 None。
                 # _merge_tool_lists 已合并 main_tools，空列表与 None 行为等价（key 存在即不继承）。
-                tools=web_fallback_tools,
-                middleware=safe_middleware,
-            )
+                "tools": web_fallback_tools,
+                "middleware": safe_middleware,
+            }
             subagents.append(web_subagent)
 
     if enable_doc_analysis:
         # doc-analyst 专用 retriever_tool + 继承主 agent 工具 + extra_tools
         doc_specialized = [retriever_tool] if retriever_tool else []
         doc_tools = _merge_tool_lists(main_tools, doc_specialized, extra_tools)
-        doc_subagent = SubAgent(
-            name="doc-analyst",
-            description="文档分析和知识提取专家，负责在知识库中检索和分析文档",
-            system_prompt=DOC_ANALYST_SUBAGENT_PROMPT,
+        doc_subagent = {
+            "name": "doc-analyst",
+            "description": "文档分析和知识提取专家，负责在知识库中检索和分析文档",
+            "system_prompt": DOC_ANALYST_SUBAGENT_PROMPT,
             # _merge_tool_lists 已合并 main_tools + retriever_tool + extra_tools
-            tools=doc_tools,
-            middleware=safe_middleware,
-        )
+            "tools": doc_tools,
+            "middleware": safe_middleware,
+        }
         subagents.append(doc_subagent)
         logger.debug(f"添加 DocAnalyst 子智能体 (tools={len(doc_tools)}, 含主 agent 工具继承)")
 
     return subagents
 
 
-class _PatchCompositeBackend:
-    def __init__(self, composite):
-        self._composite = composite
+class _SandboxGuardCompositeBackend(CompositeBackend):
+    """继承官方 CompositeBackend，覆写写操作施加 /sandbox/ 写入守卫。
 
-    def __getattr__(self, name):
-        return getattr(self._composite, name)
+    设计说明（deepagents 0.7.5 升级后）：
+    - 不再包装 CompositeBackend（旧 _PatchCompositeBackend）：deepagents 0.7.5 内部通过
+      ``type(backend).delete is not BackendProtocol.delete`` 做类级能力检测，
+      包装对象在类层面没有 delete 方法会抛 AttributeError。
+    - 通过继承官方 CompositeBackend，write/edit/awrite/aedit 覆写守卫，
+      delete/adelete 等其余方法沿用官方实现，能力检测正常。
 
-    @staticmethod
-    def _check_sandbox_path(file_path: str) -> str | None:
+    守卫规则：
+    /sandbox/ 是 Agent 工具区（skills、MCP 工具、第三方依赖等），
+    只允许预定义的工具子目录（_SANDBOX_ALLOWED_DIRS）写入，
+    其他 /sandbox/ 路径一律拒绝，引导 Agent 将研究产出写入 /notes/、/plans/、/reports/。
+    """
+
+    def _check_sandbox_path(self, file_path: str) -> str | None:
         norm = file_path.replace("\\", "/")
         if not norm.startswith("/sandbox/"):
             return None
@@ -314,21 +261,13 @@ class _PatchCompositeBackend:
             f"Allowed sandbox paths: {allowed_list}"
         )
 
-    def _resolve(self, file_path: str):
-        backend, key = self._composite._get_backend_and_key(file_path)
-        return backend, key
-
     def write(self, file_path, content):
         err = self._check_sandbox_path(file_path)
         if err:
             from deepagents.backends.protocol import WriteResult
 
             return WriteResult(error=err, path=None)
-        backend, key = self._resolve(file_path)
-        res = backend.write(key, content)
-        if res.path is not None:
-            object.__setattr__(res, "path", file_path)
-        return res
+        return super().write(file_path, content)
 
     async def awrite(self, file_path, content):
         err = self._check_sandbox_path(file_path)
@@ -336,11 +275,7 @@ class _PatchCompositeBackend:
             from deepagents.backends.protocol import WriteResult
 
             return WriteResult(error=err, path=None)
-        backend, key = self._resolve(file_path)
-        res = await backend.awrite(key, content)
-        if res.path is not None:
-            object.__setattr__(res, "path", file_path)
-        return res
+        return await super().awrite(file_path, content)
 
     def edit(self, file_path, old_string, new_string, replace_all=False):
         err = self._check_sandbox_path(file_path)
@@ -348,11 +283,7 @@ class _PatchCompositeBackend:
             from deepagents.backends.protocol import EditResult
 
             return EditResult(error=err, path=None, occurrences=None)
-        backend, key = self._resolve(file_path)
-        res = backend.edit(key, old_string, new_string, replace_all=replace_all)
-        if res.path is not None:
-            object.__setattr__(res, "path", file_path)
-        return res
+        return super().edit(file_path, old_string, new_string, replace_all=replace_all)
 
     async def aedit(self, file_path, old_string, new_string, replace_all=False):
         err = self._check_sandbox_path(file_path)
@@ -360,11 +291,7 @@ class _PatchCompositeBackend:
             from deepagents.backends.protocol import EditResult
 
             return EditResult(error=err, path=None, occurrences=None)
-        backend, key = self._resolve(file_path)
-        res = await backend.aedit(key, old_string, new_string, replace_all=replace_all)
-        if res.path is not None:
-            object.__setattr__(res, "path", file_path)
-        return res
+        return await super().aedit(file_path, old_string, new_string, replace_all=replace_all)
 
 
 def _get_backend(
@@ -384,14 +311,13 @@ def _get_backend(
 
             if sandbox_dir and os.path.isdir(sandbox_dir):
                 sandbox_backend = FilesystemBackend(root_dir=sandbox_dir, virtual_mode=True)
-                composite = CompositeBackend(
+                composite = _SandboxGuardCompositeBackend(
                     default=fs_backend,
                     routes={"/sandbox/": sandbox_backend},
                     artifacts_root="/sandbox/artifacts",
                 )
-                patched = _PatchCompositeBackend(composite)
                 logger.info(f"CompositeBackend: default={work_dir}, /sandbox/={sandbox_dir}")
-                return patched
+                return composite
 
             return fs_backend
         elif backend_type == "local_shell":
@@ -427,7 +353,7 @@ class DeepAgentBuilder:
         except ImportError:
             from Django_xm.apps.agent_hub.exceptions import FrameworkNotAvailableError
 
-            raise FrameworkNotAvailableError("deepagents 包不可用，请降级到 DEEP_RESEARCH_CUSTOM") from None
+            raise FrameworkNotAvailableError("deepagents 包不可用，深度研究功能无法启动") from None
 
         from Django_xm.apps.agent_hub.middleware import build_middleware
         from Django_xm.apps.agent_hub.model_resolver import resolve_model
@@ -551,28 +477,10 @@ class DeepAgentBuilder:
         if interrupt_on:
             agent_kwargs["interrupt_on"] = interrupt_on
 
-        # 关键修复（缺陷 1）：在 create_deep_agent 调用前设置 checkpointer contextvar
-        # 原因：SubAgentMiddleware.__init__ 在 create_deep_agent 内部执行，
-        # __init__ 调用 _get_subagents() 创建子 agent graph（含 ApprovalMiddleware）。
-        # patched _get_subagents 从 contextvar 读取 checkpointer 注入到子 agent，
-        # 使子 agent 的 interrupt() 不被 Pregel 抑制（is_nested=False）。
-        # 若此处不设置，contextvar 为 None，走 fallback 分支，
-        # 子 agent 无 checkpointer → ApprovalMiddleware 的 interrupt 完全失效。
-        # adapter.astream_research_with_interrupts 中仍保留 set_current_checkpointer 调用，
-        # 用于韧性降级重建路径（_rebuild_with_degraded_tools 在执行期重建 graph）。
-        from Django_xm.apps.agent_hub.builders.subagent_patch import (
-            patch_subagent_middleware,
-            reset_current_checkpointer,
-            set_current_checkpointer,
-        )
-
-        # 确保补丁已应用（幂等，重复调用无副作用）
-        patch_subagent_middleware()
-        _ck_token = set_current_checkpointer(getattr(config, "checkpointer", None))
-        try:
-            graph = create_deep_agent(**agent_kwargs)
-        finally:
-            reset_current_checkpointer(_ck_token)
+        # 创建 deep agent（deepagents 0.7.5 官方机制）：
+        # - checkpointer 通过 create_deep_agent 的 agent_kwargs（config.checkpointer）传入，
+        #   子 agent 中断由父 graph 统一管理，无需 checkpointer contextvar 注入。
+        graph = create_deep_agent(**agent_kwargs)
         logger.info(
             f"DeepAgent 创建成功 "
             f"(tools={len(tools)}, middleware={len(middleware_stack)}, "
@@ -612,8 +520,8 @@ class DeepAgentBuilder:
             config: AgentConfig
             tools: 主 agent 工具列表
             approval_middleware: 主 agent 的 ApprovalMiddleware 实例，
-                将注入到子 agent middleware 栈（subagent_patch 已修复 checkpointer 问题，
-                interrupt 可正常工作，与 Claude Code Task 工具设计对齐）
+                将注入到子 agent middleware 栈（deepagents 0.7.5 原生支持
+                子 agent interrupt 冒泡与恢复，无需 checkpointer 注入）
         """
         if config.subagents:
             logger.debug(f"使用预配置的 {len(config.subagents)} 个 SubAgent")
@@ -623,8 +531,9 @@ class DeepAgentBuilder:
         enable_web_search = tool_config.get("enable_web_search") or tool_config.get("use_web_search", False)
         enable_doc_analysis = tool_config.get("enable_doc_analysis") or tool_config.get("use_doc_analysis", False)
 
-        # 构建子 agent middleware 栈（含 ApprovalMiddleware），即使无 web_search/doc_analysis
-        # 也需要为 general-purpose 子 agent 注入审批机制（见下方 general-purpose 添加逻辑）
+        # 构建子 agent middleware 栈（含 ApprovalMiddleware + 子 agent 官方支持中间件），
+        # 即使无 web_search/doc_analysis 也需要为 general-purpose 子 agent 注入
+        # 审批机制（见下方 general-purpose 添加逻辑）
         subagent_middleware_list: list[AgentMiddleware] = []
         if config.middleware:
             for m in config.middleware:
@@ -637,8 +546,21 @@ class DeepAgentBuilder:
                 subagent_middleware_list.append(approval_middleware)
                 logger.info(
                     "已注入主 agent 的 ApprovalMiddleware 到子 agent middleware 栈"
-                    "（subagent_patch 已启用，interrupt 可正常工作）"
+                    "（0.7.5 原生 interrupt，恢复由父 graph 驱动）"
                 )
+
+        # 子 agent 官方支持中间件（0.7.5 机制，取代旧 subagent_patch）：
+        # - SubAgentNestingMiddleware：注入嵌套层级字段到 state（depth/agent_path/risk_ceiling）
+        # - SubAgentToolEventMiddleware：转发子 agent 工具事件到父 SSE 流
+        from Django_xm.apps.agent_hub.builders.subagent_support import (
+            SubAgentNestingMiddleware,
+            SubAgentToolEventMiddleware,
+        )
+
+        if not any(isinstance(m, SubAgentNestingMiddleware) for m in subagent_middleware_list):
+            subagent_middleware_list.append(SubAgentNestingMiddleware())
+        if not any(isinstance(m, SubAgentToolEventMiddleware) for m in subagent_middleware_list):
+            subagent_middleware_list.append(SubAgentToolEventMiddleware())
 
         if not enable_web_search and not enable_doc_analysis:
             # 即使不启用 web_search/doc_analysis，仍需添加 general-purpose 子 agent
@@ -667,30 +589,23 @@ class DeepAgentBuilder:
         ] or None
 
         # ============================================================
-        # 子 agent 审批机制设计说明（subagent_patch 已启用）
+        # 子 agent 审批机制设计说明（deepagents 0.7.5 官方机制）
         # ============================================================
-        # subagent_patch.py 已在模块加载时应用（见文件顶部 _patch_subagent_middleware），
-        # 修复了原 deepagents SubAgentMiddleware 的两个根本性缺陷：
+        # 0.7.5 升级后，原 subagent_patch.py 的 monkey-patch 不再需要：
+        # - 中断冒泡与恢复：子 agent 内 interrupt() 冒泡到父 graph 的 __interrupt__，
+        #   Command(resume=...) 从父图恢复并自动路由回子 agent 的 interrupt()（原生）。
+        # - 嵌套层级字段（depth/agent_path/risk_ceiling）：SubAgentNestingMiddleware
+        #   在 before_model 写入 state，ApprovalMiddleware 从 state 读取。
+        # - 子 agent 工具事件：SubAgentToolEventMiddleware 经 _on_tool_event 回调
+        #   转发到父 SSE 流（adapter.py 在 config["configurable"] 中注入回调，
+        #   经 langgraph ensure_config 自动传播到子 agent）。
         #
-        # 1. Patch 1（_get_subagents 注入 checkpointer）：
-        #    原实现子 agent 无 checkpointer，interrupt() 要求 checkpointer 才能暂停，
-        #    导致 GraphInterrupt 被子 agent 的 Pregel 吞掉（is_nested=False 时抑制）。
-        #    补丁从 contextvar 获取父 graph 的 checkpointer 并注入到 create_agent。
-        #    缺陷 1 修复：DeepAgentBuilder._build_internal 在调用 create_deep_agent 前
-        #    设置 contextvar，确保构建期间子 agent 能获取 checkpointer。
-        #
-        # 2. Patch 2（_build_task_tool atask 继承 callbacks）：
-        #    原 atask 只继承 configurable，父 graph 看不到子 agent 内部工具调用。
-        #    补丁让 atask 继承父 callbacks + 通过 _on_tool_event 回调转发工具事件。
-        #
-        # 补丁应用后的设计决策（与 Claude Code Task 工具设计对齐）：
+        # 设计决策（与 Claude Code Task 工具设计对齐）：
         # - 子 agent 继承主 agent 的完整工具集（_merge_tool_lists），确保工具能力对等
         # - 子 agent 的 ApprovalMiddleware 与主 agent 共享同一实例，
         #   interrupt 通过 task 工具冒泡到父 graph，由父 graph 的 interrupt 循环处理
-        # - 子 agent 工具调用事件通过 _on_tool_event 回调转发到父 SSE 流
-        #   （adapter.py 在 config["configurable"] 中注入回调）
         # - 审批拒绝/超时后子 agent 收到 error ToolMessage 反馈，调整策略继续
-        # - 缺陷 2 修复：general-purpose 子 agent 在此显式添加（覆盖 create_deep_agent
+        # - general-purpose 子 agent 在此显式添加（覆盖 create_deep_agent
         #   自动添加的无 ApprovalMiddleware 版本），确保所有子 agent 审批入口统一
         # ============================================================
 
@@ -743,16 +658,16 @@ class DeepAgentBuilder:
         # SubAgent.middleware 字段类型为 list[AgentMiddleware]，需将 Sequence 转为 list
         safe_middleware: list[AgentMiddleware] = list(subagent_middleware or [])
         gp_tools = _merge_tool_lists(tools, extra_tools)
-        gp_subagent = SubAgent(
-            name="general-purpose",
-            description=(
+        gp_subagent: SubAgent = {
+            "name": "general-purpose",
+            "description": (
                 "General-purpose agent for researching complex questions, searching "
                 "for files and content, and executing multi-step tasks. When you are "
                 "searching for a keyword or file and are not confident that you will "
                 "find the right match in the first few tries use this agent to perform "
                 "the search for you. This agent has access to all tools as the main agent."
             ),
-            system_prompt=(
+            "system_prompt": (
                 "In order to complete the objective that the user asks of you, you "
                 "have access to a set of tools that you can use to perform operations "
                 "and find information. Use the tools available to you to complete the "
@@ -760,9 +675,9 @@ class DeepAgentBuilder:
                 "is unclear, ask for clarification."
             ),
             # _merge_tool_lists 已合并 main_tools + ApprovalMiddleware 工具
-            tools=gp_tools,
-            middleware=safe_middleware,
-        )
+            "tools": gp_tools,
+            "middleware": safe_middleware,
+        }
         logger.debug(
             f"添加 GeneralPurpose 子智能体 (tools={len(gp_tools) if gp_tools else 0}, "
             f"含主 agent 工具继承 + ApprovalMiddleware 注入)"

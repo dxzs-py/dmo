@@ -120,7 +120,6 @@
       :doc-analysis-file="docAnalysisFile"
       :doc-analysis-content="docAnalysisContent"
       :doc-analysis-loading="docAnalysisLoading"
-      :file-browser-ref="fileBrowserRef"
       @view-task="(val) => emit('view-task', val)"
       @open-continue-dialog="(val) => emit('open-continue-dialog', val)"
       @open-in-chat="emit('open-in-chat')"
@@ -185,11 +184,6 @@ const props = defineProps({
   docAnalysisLoading: {
     type: Boolean,
     default: false,
-  },
-  /** FileBrowser 组件 ref（Ref 对象，透传给 ResearchTaskReport） */
-  fileBrowserRef: {
-    type: Object,
-    required: true,
   },
 })
 

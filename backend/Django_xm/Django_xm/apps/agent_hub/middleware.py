@@ -70,7 +70,6 @@ def _get_agent_type_str(config) -> str:
         "rag": "base",
         "safe_rag": "base",
         "deep_research": "deep_research",
-        "deep_research_custom": "deep_research",
         "web_researcher": "base",
         "doc_analyst": "base",
         "report_writer": "base",

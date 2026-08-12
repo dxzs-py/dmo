@@ -136,7 +136,6 @@ class ApprovalWriteSerializer(serializers.Serializer):
         valid_sources = {
             Approval.SOURCE_CHAT,
             Approval.SOURCE_DEEP_RESEARCH,
-            Approval.SOURCE_LEARNING,
         }
         valid_actions = {Approval.ACTION_CONFIRM, Approval.ACTION_CONFIRM_WITH_INPUT}
 

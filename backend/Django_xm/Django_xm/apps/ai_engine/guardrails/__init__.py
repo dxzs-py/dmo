@@ -48,7 +48,7 @@ def create_standard_guardrails(
     """
     创建标准 Guardrails 中间件栈
 
-    统一 SafeDeepResearchAgent 和 SafeRAGAgent 的 guardrails 初始化逻辑，
+    统一 RAG 与深度研究 agent 的 guardrails 初始化逻辑，
     消除重复代码，确保一致的 ContentFilter 配置。
 
     Args:

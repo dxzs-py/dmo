@@ -1,12 +1,12 @@
 """研究模块共享常量。
 
 抽取自 ``apps/agent_hub/builders/deep_builder.py`` 与
-``apps/research/services/official_deep_agent.py`` 的重复定义
+``apps/research/services/adapter.py`` 的重复定义
 （Task 14.4 + Task 18.2）。
 
 单一来源：所有研究相关工具名集合、沙箱目录等常量在此定义，
 避免两处定义不一致导致行为漂移
-（曾出现 ``_SANDBOX_ALLOWED_DIRS`` 在 deep_builder 与 official_deep_agent 不一致的 bug）。
+（曾出现 ``_SANDBOX_ALLOWED_DIRS`` 在 deep_builder 与 adapter 不一致的 bug）。
 """
 
 from __future__ import annotations

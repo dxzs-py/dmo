@@ -66,7 +66,6 @@
     <div class="files-section">
       <h4>生成的文档</h4>
       <FileBrowser
-        :ref="fileBrowserRef"
         :task-id="task.taskId"
         :api="deepResearchAPI"
       />
@@ -85,7 +84,7 @@ import { ResearchTaskStatus } from '@/types'
 /**
  * 深度研究 - 任务报告
  * 包含：版本链 / 研究报告 Markdown / 文档分析详情 / 生成的文件列表
- * FileBrowser 的 ref 通过 fileBrowserRef prop 透传（view 层级维护）
+ * FileBrowser 内部自管理自动加载（useAutoRefresh），无需外部手动刷新
  * 同时注入 useResearchPolling / useResearchStream 等 composable
  */
 defineProps({
@@ -104,15 +103,10 @@ defineProps({
     type: String,
     default: null,
   },
-  /** 文档分析加载�?*/
+  /** 文档分析加载中 */
   docAnalysisLoading: {
     type: Boolean,
     default: false,
-  },
-  /** FileBrowser 组件 ref（Ref 对象，透传绑定�?*/
-  fileBrowserRef: {
-    type: Object,
-    required: true,
   },
 })
 

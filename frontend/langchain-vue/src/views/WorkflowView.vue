@@ -154,7 +154,6 @@
         <div class="files-section">
           <h4>生成的文件</h4>
           <FileBrowser
-            ref="fileBrowserRef"
             :task-id="execution.threadId"
             :api="workflowAPI"
           />
@@ -210,7 +209,6 @@ const isSubmitting = ref(false)
 const execution = ref(null)
 const showDetail = ref(false)
 const answersForm = reactive({})
-const fileBrowserRef = ref(null)
 const taskListRef = ref(null)
 const currentStepMessage = ref('')
 const autoLoadContent = ref(null)
@@ -307,8 +305,7 @@ const pollExecutionStatus = async () => {
 
   if (currentStep === LearningStep.WAITING_FOR_ANSWERS || currentStep === LearningStep.END || currentStep === LearningStep.COMPLETED) {
     stopPolling()
-    if (fileBrowserRef.value && currentStep !== LearningStep.WAITING_FOR_ANSWERS) {
-      fileBrowserRef.value.loadFiles()
+    if (currentStep !== LearningStep.WAITING_FOR_ANSWERS) {
       autoLoadKeyFile()
     }
     return
@@ -489,9 +486,6 @@ const handleSSEEvent = (data) => {
       if (execution.value && sseData.data) {
         execution.value = { ...execution.value, status: LearningTaskStatus.COMPLETED, ...sseData.data }
       }
-      if (fileBrowserRef.value) {
-        fileBrowserRef.value.loadFiles()
-      }
       autoLoadKeyFile()
       break
     case 'workflow_failed':
@@ -577,13 +571,10 @@ watch(workflowStateFromStore, (newState, oldState) => {
     })
   }
 
-  // 终态处理：完成时加载文件，失败时显示错误
+  // 终态处理：完成时加载关键文件（文件列表由 FileBrowser 自管理自动刷新），失败时显示错误
   if (statusChanged) {
     if (newState.status === LearningTaskStatus.COMPLETED) {
       nextTick(() => {
-        if (fileBrowserRef.value) {
-          fileBrowserRef.value.loadFiles()
-        }
         autoLoadKeyFile()
       })
     } else if (newState.status === LearningTaskStatus.FAILED) {
@@ -621,9 +612,6 @@ const submitAnswers = async () => {
       connectSSE(execution.value.threadId)
     } else {
       nextTick(() => {
-        if (fileBrowserRef.value) {
-          fileBrowserRef.value.loadFiles()
-        }
         autoLoadKeyFile()
       })
     }
@@ -734,11 +722,8 @@ const viewTask = async (selectedTask) => {
         if (freshActive) {
           connectSSE(fresh.threadId)
         } else {
-          // 已完成任务，自动加载文件和资料
+          // 已完成任务，自动加载关键文件（文件列表由 FileBrowser 自管理自动刷新）
           nextTick(() => {
-            if (fileBrowserRef.value) {
-              fileBrowserRef.value.loadFiles()
-            }
             autoLoadKeyFile()
           })
         }

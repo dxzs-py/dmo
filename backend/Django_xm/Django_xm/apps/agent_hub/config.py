@@ -13,7 +13,6 @@ class AgentType(StrEnum):
     RAG = "rag"
     SAFE_RAG = "safe_rag"
     DEEP_RESEARCH = "deep_research"
-    DEEP_RESEARCH_CUSTOM = "deep_research_custom"
     WEB_RESEARCHER = "web_researcher"
     DOC_ANALYST = "doc_analyst"
     REPORT_WRITER = "report_writer"
@@ -22,7 +21,6 @@ class AgentType(StrEnum):
 AGENT_CAPABILITIES_DEFAULT: dict[AgentType, list[str]] = {
     AgentType.BASE: ["context_management", "tool_injection", "guardrails", "rate_limit"],
     AgentType.DEEP_RESEARCH: ["context_management", "tool_injection", "rate_limit"],
-    AgentType.DEEP_RESEARCH_CUSTOM: ["context_management", "tool_injection", "rate_limit"],
     AgentType.RAG: ["context_management", "tool_injection"],
     AgentType.SAFE_RAG: ["context_management", "tool_injection", "guardrails"],
     AgentType.WEB_RESEARCHER: ["rate_limit"],

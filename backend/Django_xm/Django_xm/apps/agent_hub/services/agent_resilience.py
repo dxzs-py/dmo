@@ -485,10 +485,10 @@ class DuplicateToolCallDetector:
             ...
 
     集成说明：
-        - official_deep_agent.py: 在 astream_research_with_interrupts 中，
+        - adapter.py: 在 astream_research_with_interrupts 中，
           对每个 TOOL_CALL_PENDING 事件调用 record()，检测到警告时
           通过 graph.aupdate_state 注入 SystemMessage。
-        - subagent_patch.py: 在 _astream_with_tool_events 中同样集成，
+        - subagent_support.py: 在 SubAgentToolEventMiddleware 中同样集成，
           覆盖子智能体内部的重复调用（子智能体工具调用不冒泡到父 graph）。
     """
 

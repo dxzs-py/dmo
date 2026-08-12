@@ -1,7 +1,7 @@
 """工具事件提取公共模块
 
 从流式消息（AIMessage / AIMessageChunk / ToolMessage）中提取工具调用生命周期事件，
-供 subagent_patch 和 official_deep_agent 复用，消除两处重复且不一致的检测逻辑。
+供 subagent_support 与 adapter 复用，消除多处重复且不一致的检测逻辑。
 
 事件类型（字符串值，与 EventType 枚举一致）：
 - 'tool_call_input_ready': 工具调用参数已就绪（AIMessage 阶段或 ToolMessage 阶段补发）
@@ -16,9 +16,9 @@
 
 来源：
 - 核心提取逻辑（AIMessage/AIMessageChunk 处理 + tool_call_chunks 聚合 + 补发）：
-  subagent_patch.py L394-575
-- TOOL_CALL_FAILED 检测逻辑：official_deep_agent.py L748-776
-  （subagent_patch.py 原本只发 COMPLETED，此处补全 FAILED 分支）
+  subagent_support.py（SubAgentToolEventMiddleware.awrap_tool_call）
+- TOOL_CALL_FAILED 检测逻辑：adapter.py
+  （SubAgentToolEventMiddleware 原本只发 COMPLETED，此处补全 FAILED 分支）
 """
 
 import json
@@ -35,7 +35,7 @@ def extract_tool_events_from_message(
 ) -> list[dict[str, Any]]:
     """从单条流式消息中提取工具事件。
 
-    处理逻辑（与 subagent_patch.py L394-575 一致，并补全 FAILED 分支）：
+    处理逻辑（与 subagent_support.py SubAgentToolEventMiddleware 一致，并补全 FAILED 分支）：
 
     1. AIMessage / AIMessageChunk 含 tool_calls：
        - 将 message 追加到 accumulated_messages
@@ -289,7 +289,7 @@ def extract_tool_events_from_message(
             )
 
         # 检测工具执行状态：status=='error' 或 content 以 'Error' 开头
-        # （来源：official_deep_agent.py L753-756）
+        # （来源：adapter.py TOOL_CALL_FAILED 判定）
         is_error = getattr(message, "status", None) == "error" or (
             isinstance(content, str) and content.startswith("Error")
         )

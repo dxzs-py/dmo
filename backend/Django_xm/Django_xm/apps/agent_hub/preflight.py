@@ -50,13 +50,13 @@ class ExecutionPreflight:
             issues.append(f"LLM 服务不可用: {llm_msg}")
 
         # 2. Redis 连接检查（仅深度研究类型需要）
-        if config.agent_type in (AgentType.DEEP_RESEARCH, AgentType.DEEP_RESEARCH_CUSTOM):
+        if config.agent_type in (AgentType.DEEP_RESEARCH,):
             redis_ok, redis_msg = await self._check_redis_connected()
             if not redis_ok:
                 issues.append(f"Redis 连接失败: {redis_msg}")
 
         # 3. Checkpointer 可用性检查（深度研究需要）
-        if config.agent_type in (AgentType.DEEP_RESEARCH, AgentType.DEEP_RESEARCH_CUSTOM):
+        if config.agent_type in (AgentType.DEEP_RESEARCH,):
             cp_ok, cp_msg = self._check_checkpointer(config)
             if not cp_ok:
                 warnings.append(f"Checkpointer 不可用: {cp_msg}")

@@ -9,5 +9,4 @@
 """
 
 from .base_builder import BaseAgentBuilder  # noqa: F401 — @register_builder(AgentType.BASE, RAG, SAFE_RAG)
-from .custom_builder import CustomWorkflowBuilder  # noqa: F401 — @register_builder(AgentType.DEEP_RESEARCH_CUSTOM)
 from .subagent_builder import SubAgentBuilder  # noqa: F401 — @register_builder(AgentType.WEB_RESEARCHER, DOC_ANALYST, REPORT_WRITER)

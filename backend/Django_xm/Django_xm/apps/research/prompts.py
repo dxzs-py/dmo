@@ -1,7 +1,7 @@
 """研究模块共享 Prompt 常量。
 
 抽取自 ``apps/agent_hub/builders/deep_builder.py`` 与
-``apps/research/services/official_deep_agent.py`` 的重复定义（Task 14.3 / 14.4）。
+``apps/research/services/adapter.py`` 的重复定义（Task 14.3 / 14.4）。
 
 单一来源：所有研究相关 prompt 在此定义，两个实现统一从此处导入，
 避免 prompt 内容漂移（曾出现 ``_SANDBOX_ALLOWED_DIRS`` 在两处不一致的 bug）。

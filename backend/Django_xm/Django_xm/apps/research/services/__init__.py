@@ -4,21 +4,20 @@
 - 官方深度研究智能体（OfficialDeepAgentAdapter）- 基于 deepagents 官方包 create_deep_agent
   * 由 agent_hub.builders.deep_builder.DeepAgentBuilder.build() 直接构造并返回
   * 注入 original_tools / original_config / model，韧性降级 _rebuild_with_degraded_tools 可用
-- 自定义深度研究智能体（DeepResearchAgent）- 基于 LangGraph StateGraph（降级方案）
-- 安全深度研究智能体（SafeDeepResearchAgent）
 - 子智能体（WebResearcher、DocAnalyst、ReportWriter）
 - 任务管理器（TaskManager）
 - 研究工作流（build_research_workflow / compile_research_workflow）
 
 注意：
   原 ``create_research_agent`` 函数已删除（死代码，无调用方）。
+  废弃的 ``DeepResearchAgent``（deep_agent.py）与 ``SafeDeepResearchAgent``（safe_deep_agent.py）
+  已删除（死代码，无调用方）。
   深度研究智能体的创建统一通过 ``agent_hub.create(AgentConfig)`` 入口，
   由 ``DeepAgentBuilder.build()`` 返回 ``OfficialDeepAgentAdapter``。
   调用示例见 ``tasks/deep_research.py``。
 """
 
 from .adapter import OfficialDeepAgentAdapter
-from .deep_agent import DeepResearchAgent, ResearchState
 from .research_workflow import (
     build_research_workflow,
     compile_research_workflow,
@@ -28,7 +27,6 @@ from .research_workflow import (
     search_dispatcher,
     synthesize,
 )
-from .safe_deep_agent import SafeDeepResearchAgent
 from .subagents import (
     DOC_ANALYST_PROMPT,
     REPORT_WRITER_PROMPT,
@@ -41,10 +39,7 @@ __all__ = [
     "DOC_ANALYST_PROMPT",
     "REPORT_WRITER_PROMPT",
     "WEB_RESEARCHER_PROMPT",
-    "DeepResearchAgent",
     "OfficialDeepAgentAdapter",
-    "ResearchState",
-    "SafeDeepResearchAgent",
     "TaskManager",
     "build_research_workflow",
     "compile_research_workflow",
