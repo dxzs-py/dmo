@@ -648,11 +648,11 @@ function createRealtimeSync() {
     try {
       // user 频道事件统一分发到 userCallbacks：
       // session_created/deleted/updated（会话级用户通知）与 task_created /
-      // task_status_changed（任务创建/终态用户通知，深度研究模块据此自动刷新
-      // 任务列表，P8 根因修复）。这些事件后端仅发布到 user 频道
-      // （无 session_id/task_id 顶层路由字段），若不在此分发，
+      // task_status_changed / task_deleted（任务创建/终态/删除用户通知，
+      // 深度研究模块据此自动刷新任务列表，P8 根因修复）。这些事件后端仅
+      // 发布到 user 频道（无 session_id/task_id 顶层路由字段），若不在此分发，
       // subscribeUserEvents 订阅者永远收不到。
-      if (['session_created', 'session_deleted', 'session_updated', 'task_created', 'task_status_changed'].includes(event.type)) {
+      if (['session_created', 'session_deleted', 'session_updated', 'task_created', 'task_status_changed', 'task_deleted'].includes(event.type)) {
         for (const cb of userCallbacks) {
           try {
             await cb(event)

@@ -257,6 +257,7 @@ class DeepChatService:
         max_tokens: int | None = None,
         special_params: dict | None = None,
         continue_task_id: str | None = None,
+        message_id: str | None = None,
     ) -> str:
         """启动深度研究 Celery 任务（不等待结果）
 
@@ -312,6 +313,7 @@ class DeepChatService:
             continue_task_id=continue_task_id,
             publish_to_redis=True,
             session_id=session_id,
+            message_id=message_id,
         )
 
         await _update_celery_task_id_sync(thread_id, celery_result.id)

@@ -166,6 +166,11 @@ export const useApprovalStore = defineStore('approval', () => {
     }
 
     const effectiveSource = isDeepResearch ? 'deep_research' : 'chat'
+    // 独立 deep_research 无会话上下文，sessionId 必须保持 null：
+    // 不得回退到 sessionStore.currentSessionId（聊天残留值），
+    // 否则后续 approval_waiting/processing 等事件会误走 sessionStore 分支，
+    // researchStore 的 toolCall.approval 状态不更新，跨浏览器按钮状态不同步。
+    const entrySessionId = sessionId || (isDeepResearch ? null : sessionStore.currentSessionId)
     // taskId 路由（独立深度研究根因修复）：
     // - 优先事件 payload 内的 taskId（chat 关联场景可能携带）
     // - 回退函数参数 taskId（task 通道事件将 task_id 注入事件顶层，经
@@ -178,7 +183,7 @@ export const useApprovalStore = defineStore('approval', () => {
     pendingApprovals.value.set(toolCallId, {
       source: effectiveSource,
       taskId: effectiveTaskId,
-      sessionId: sessionId || sessionStore.currentSessionId,
+      sessionId: entrySessionId,
       approvalData,
       createdAt: Date.now(),
     })
@@ -217,7 +222,13 @@ export const useApprovalStore = defineStore('approval', () => {
     // 首次处理已删除条目，后续重复到达不应再重复写 store / 重复同步后端。
     if (toolCallId && !existingEntry) return
 
-    const effectiveSessionId = sessionId || existingEntry?.sessionId || sessionStore.currentSessionId
+    // 独立 deep_research 无会话上下文：不使用 currentSessionId 兜底，
+    // 否则会误走 sessionStore 分支（researchStore 状态不更新，跨浏览器不同步）。
+    const effectiveSessionId = sessionId
+      || existingEntry?.sessionId
+      || (source === 'deep_research' || existingEntry?.source === 'deep_research'
+        ? null
+        : sessionStore.currentSessionId)
 
     if (toolCallId) {
       pendingApprovals.value.delete(toolCallId)
@@ -271,7 +282,12 @@ export const useApprovalStore = defineStore('approval', () => {
     // 仅更新 state，保留在 pendingApprovals（审批面板保持显示，按钮禁用）
     existingEntry.approvalData = { ...existingEntry.approvalData, ...data, state: 'processing' }
 
-    const effectiveSessionId = sessionId || existingEntry?.sessionId || sessionStore.currentSessionId
+    // 独立 deep_research 无会话上下文：不使用 currentSessionId 兜底
+    const effectiveSessionId = sessionId
+      || existingEntry?.sessionId
+      || (source === 'deep_research' || existingEntry?.source === 'deep_research'
+        ? null
+        : sessionStore.currentSessionId)
     if (effectiveSessionId) {
       sessionStore.updateToolCallApprovalState(effectiveSessionId, toolCallId, 'processing')
       sessionStore.setApprovalToLastMessage(effectiveSessionId, { ...data, state: 'processing' })
@@ -293,13 +309,18 @@ export const useApprovalStore = defineStore('approval', () => {
     if (!toolCallId) return
 
     const existingEntry = pendingApprovals.value.get(toolCallId)
-    const effectiveSessionId = sessionId || existingEntry?.sessionId || sessionStore.currentSessionId
 
     // P19 修复：waiting 状态应保持 'waiting' 而非覆盖为 'processing'
     // 这样 ToolCallCard 的 isWaitingForSiblings 才能检测到并显示提示文字
     if (existingEntry) {
       existingEntry.approvalData = { ...existingEntry.approvalData, ...data, state: 'waiting' }
     }
+    // 独立 deep_research 无会话上下文：不使用 currentSessionId 兜底
+    const effectiveSessionId = sessionId
+      || existingEntry?.sessionId
+      || (source === 'deep_research' || existingEntry?.source === 'deep_research'
+        ? null
+        : sessionStore.currentSessionId)
     if (effectiveSessionId) {
       sessionStore.updateToolCallApprovalState(effectiveSessionId, toolCallId, 'waiting')
       sessionStore.setApprovalToLastMessage(effectiveSessionId, { ...data, state: 'waiting' })
@@ -336,7 +357,12 @@ export const useApprovalStore = defineStore('approval', () => {
     // 首次处理已删除条目，后续重复到达不应再重复写 store / 重复同步后端。
     if (!existingEntry) return
 
-    const effectiveSessionId = sessionId || existingEntry?.sessionId || sessionStore.currentSessionId
+    // 独立 deep_research 无会话上下文：不使用 currentSessionId 兜底
+    const effectiveSessionId = sessionId
+      || existingEntry?.sessionId
+      || (source === 'deep_research' || existingEntry?.source === 'deep_research'
+        ? null
+        : sessionStore.currentSessionId)
 
     pendingApprovals.value.delete(toolCallId)
 

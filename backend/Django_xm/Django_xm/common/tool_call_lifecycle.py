@@ -263,6 +263,11 @@ class ToolCallContext:
     # 根因修复：原 tool_call_* 事件 payload 不携带 risk_level，非触发浏览器依赖
     # approval_pending 事件获取风险等级，事件丢失时 riskLevel 缺失导致跨浏览器显示不一致
     risk_level: str = ""
+    # 全局递增序号（register 唯一分配点，按 (module, module_id) 独立计数）。
+    # 同一会话/任务内跨 LLM 轮次全局唯一，作为前端跨浏览器工具调用统一排序的
+    # 唯一权威依据（替代跨轮重复的 _index：_index 是 LLM 单轮输出内序号，跨轮
+    # 会重复，排序 key 相等时退化为各浏览器本地 Map 插入顺序，导致顺序不一致）。
+    seq: int = 0
 
 
 def _is_empty(value: Any) -> bool:
@@ -308,6 +313,7 @@ _FIELD_MERGE_POLICY: dict[str, str] = {
     "agent_path":        "fill_empty",
     "risk_ceiling":      "fill_empty",
     "risk_level":        "fill_empty",
+    "seq":               "fill_empty",
 }
 
 
@@ -319,6 +325,31 @@ class ToolCallLifecycleService:
     - 跨模块共享同一份状态机代码
     - parameters/message_id 从 context 透传，杜绝字段缺失
     """
+
+    def _assign_seq(self, module: EventSource, module_id: str) -> int:
+        """为同一 (module, module_id) 内的工具调用分配全局递增序号（跨轮唯一）。
+
+        seq 计数维度按模块实例隔离：chat=session_id、deep_research=task_id，
+        同一会话/任务内工具调用序号全局递增（跨 LLM 轮次不重复）；不同会话/任务
+        互不影响。seq 是前端跨浏览器工具调用统一排序的唯一权威依据。
+
+        Args:
+            module: 业务模块（EventSource）
+            module_id: 模块实例 ID
+
+        Returns:
+            递增序号（从 1 开始）
+        """
+        counter_key = f"tool_call:seq:{module.value}:{module_id}"
+        try:
+            seq = cache.incr(counter_key)
+            if seq == 1:
+                cache.expire(counter_key, _TC_CTX_TTL)
+            return seq
+        except ValueError:
+            # key 不存在：首次分配（INCR 在 Redis key 不存在时由 django cache 抛 ValueError）
+            cache.set(counter_key, 1, _TC_CTX_TTL)
+            return 1
 
     def register(
         self,
@@ -335,6 +366,11 @@ class ToolCallLifecycleService:
         graph_interrupt_id 是例外：作为审批批次标识允许更新为新批次（M16 复用
         interrupt_id 重新发起审批时携带新批次 id，保留旧值会导致后续 WAITING/RUNNING
         事件沿用旧批次指纹，被旧批次 dedup key 误拦截）。
+
+        seq 分配（register 是唯一权威分配点）：existing 与新 ctx 均保证在写回前
+        分配非空 seq。fill_empty 合并策略 + _is_empty 将 int 0 判为空，保证：
+        - 已分配 seq（>0）的条目不会被后续 register 的默认 seq=0 覆盖；
+        - 首次 register 时分配 seq 并持久化，所有下游事件（工具/审批）从 ctx 透传。
 
         Args:
             ctx: 工具调用上下文
@@ -362,6 +398,9 @@ class ToolCallLifecycleService:
                     f"last_event_type={last_event}, 本次注册将被忽略（重复发布入口）"
                 )
                 return
+            # seq 分配：existing 缺失 seq 时补全（register 唯一权威分配点）
+            if _is_empty(existing.get("seq")):
+                existing["seq"] = self._assign_seq(ctx.module, ctx.module_id)
             # 全字段合并：由 _FIELD_MERGE_POLICY 驱动，替代手选字段列表。
             # 每个 ToolCallContext 字段的策略定义在模块级 _FIELD_MERGE_POLICY 中，
             # 新增字段只需在 dataclass 和 policy 各加一行，无需修改合并逻辑。
@@ -387,7 +426,11 @@ class ToolCallLifecycleService:
 
             cache.set(key, existing, _TC_CTX_TTL)
         else:
-            cache.set(key, ctx.__dict__, _TC_CTX_TTL)
+            ctx_dict = dict(ctx.__dict__)
+            # seq 分配：新建上下文首次分配（register 唯一权威分配点）
+            if _is_empty(ctx_dict.get("seq")):
+                ctx_dict["seq"] = self._assign_seq(ctx.module, ctx.module_id)
+            cache.set(key, ctx_dict, _TC_CTX_TTL)
 
     def bind_parameters(self, tool_call_id: str, parameters: dict) -> None:
         """补全工具参数（finalize_tool_calls 参数恢复后调用）。"""
@@ -565,6 +608,10 @@ class ToolCallLifecycleService:
                 # 根因修复：让前端从工具事件直接获取风险等级，不再单一依赖 approval_pending 事件
                 risk_level=_normalize_risk_level(ctx_dict.get("risk_level")),
                 _index=_index if _index is not None else ctx_dict.get("_index"),
+                # seq 透传：从 context 读取，注入到 tool_call_* 事件 payload
+                # 根因修复：seq 为 (module, module_id) 内跨 LLM 轮次全局递增序号，
+                # 前端据此跨浏览器统一排序（替代跨轮重复的 _index）
+                seq=ctx_dict.get("seq") or None,
             )
         except Exception:
             logger.exception(
@@ -637,6 +684,10 @@ class ToolCallLifecycleService:
                 # 根因修复：让前端从工具事件直接获取风险等级，不再单一依赖 approval_pending 事件
                 risk_level=_normalize_risk_level(ctx_dict.get("risk_level")),
                 _index=_index if _index is not None else ctx_dict.get("_index"),
+                # seq 透传：从 context 读取，注入到 tool_call_* 事件 payload
+                # 根因修复：seq 为 (module, module_id) 内跨 LLM 轮次全局递增序号，
+                # 前端据此跨浏览器统一排序（替代跨轮重复的 _index）
+                seq=ctx_dict.get("seq") or None,
             )
         except Exception:
             logger.exception(

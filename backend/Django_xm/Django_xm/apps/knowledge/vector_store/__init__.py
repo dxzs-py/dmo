@@ -41,6 +41,10 @@ from .faiss_backend import FAISSBackend
 from .inmemory_backend import InMemoryBackend
 from .milvus_backend import MilvusBackend
 from .pgvector_backend import PGVectorBackend
+from .pgvector_runtime import (
+    reset_pgvector_cache,
+    warm_up_pgvector_runtime,
+)
 from .pgvector_store import (
     create_pgvector_store,
     delete_pgvector_store,
@@ -64,6 +68,9 @@ __all__ = [
     "get_pgvector_connection_string",
     "list_pgvector_stores",
     "load_pgvector_store",
+    # PGVector 运行时（预热/缓存重置）
+    "reset_pgvector_cache",
+    "warm_up_pgvector_runtime",
     # 向后兼容
     "search_vector_store",
 ]

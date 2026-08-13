@@ -98,6 +98,10 @@ export const createHandleToolCallEvent = (ctx) => {
       // ToolCallCard 优先读 toolCall.riskLevel，回退 approvalData.riskLevel，
       // 避免 approval_pending 事件丢失时跨浏览器风险等级显示不一致
       riskLevel: payload.riskLevel || '',
+      // 跨浏览器统一排序序号：后端 (module, module_id) 内跨 LLM 轮次全局递增序号
+      // （register 分配，事件透传）。仅 number 类型注入，配合 messageOperations
+      // _mergeExistingToolCall 的 seq 保护，防止无 seq 事件覆盖已分配序号
+      ...(typeof payload.seq === 'number' ? { seq: payload.seq } : {}),
     }
 
     const hasMessageId = !!payload.messageId

@@ -101,6 +101,7 @@ def run_research_task(
     continue_task_id: str | None = None,
     publish_to_redis: bool = False,
     session_id: str | None = None,
+    message_id: str = "",
 ):
     tracker = TrackedTask(self)
     if user_id:
@@ -318,6 +319,7 @@ def run_research_task(
                 disable_llm_cache=True,
                 user_id=user_id,
                 chat_session_id=session_id,
+                message_id=message_id,
             )
 
             # 释放异步 Checkpointer 连接

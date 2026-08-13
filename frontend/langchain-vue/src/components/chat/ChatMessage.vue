@@ -230,6 +230,21 @@ const showContinueResearch = computed(() => {
   return false
 })
 
+/**
+ * AiReasoning 的流式状态判定（跨浏览器统一）。
+ *
+ * 触发浏览器通过 SSE 活跃（组件级 isStreaming && isLast）感知，
+ * 非触发浏览器通过 WebSocket stream_event 设置的消息自身状态感知
+ * （streamState=STREAMING / message.isStreaming=true）。
+ * 完成后 streamState=COMPLETED / isStreaming=false，两个浏览器均转为对勾 + 用时。
+ */
+const isReasoningStreaming = computed(() => {
+  if (props.isStreaming && props.isLast) return true
+  if (props.message.isStreaming) return true
+  if (props.message.streamState === StreamState.STREAMING) return true
+  return false
+})
+
 function handleContinueResearch() {
   if (props.message.researchTaskId) {
     emit('continue-research', props.message.researchTaskId)
@@ -374,7 +389,7 @@ function handleMessageClick() {
           v-if="message.reasoning && message.reasoning.content && !message.researchTaskId"
           :content="message.reasoning.content"
           :duration="message.reasoning.duration"
-          :is-streaming="isStreaming && isLast"
+          :is-streaming="isReasoningStreaming"
           :source="message.reasoning.source || 'deep_thinking'"
         />
         <div
@@ -1022,7 +1037,7 @@ function handleMessageClick() {
 }
 
 .tool-calls-queue :deep(.queue-items) {
-  max-height: 300px;
+  max-height: 400px;
 }
 
 .tool-calls-queue :deep(.queue-header) {

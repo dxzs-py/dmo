@@ -131,6 +131,7 @@ async def publish_tool_call(
     risk_ceiling: str | None = None,
     risk_level: str | None = None,
     _index: int | None = None,
+    seq: int | None = None,
 ) -> None:
     """工具调用生命周期事件发布（三模块统一入口）。
 
@@ -159,6 +160,8 @@ async def publish_tool_call(
                     计算）。根因修复：注入到 tool_call_* 事件 payload，让前端从工具
                     事件直接获取风险等级，不再单一依赖 approval_pending 事件路径，
                     避免跨浏览器风险等级显示不一致。
+        seq: (module, module_id) 内跨 LLM 轮次全局递增序号（register 分配）。
+            前端据此跨浏览器统一排序（替代跨轮重复的 _index）；非空才注入 payload。
 
     Raises:
         PayloadValidationError: payload 校验失败时抛出
@@ -201,6 +204,10 @@ async def publish_tool_call(
         payload["risk_level"] = risk_level
     if _index is not None:
         payload["_index"] = _index
+    # seq：跨 LLM 轮次全局递增序号（register 分配），仅非空时注入
+    # 前端据此跨浏览器统一排序（替代跨轮重复的 _index）
+    if seq is not None and seq > 0:
+        payload["seq"] = seq
 
     # 解析频道路由（三模块统一）
     session_id, task_id = _resolve_channels(module, module_id, cross_module_id)

@@ -67,6 +67,7 @@
       <h4>生成的文档</h4>
       <FileBrowser
         :task-id="task.taskId"
+        :task-status="task.status"
         :api="deepResearchAPI"
       />
     </div>
@@ -84,8 +85,7 @@ import { ResearchTaskStatus } from '@/types'
 /**
  * 深度研究 - 任务报告
  * 包含：版本链 / 研究报告 Markdown / 文档分析详情 / 生成的文件列表
- * FileBrowser 内部自管理自动加载（useAutoRefresh），无需外部手动刷新
- * 同时注入 useResearchPolling / useResearchStream 等 composable
+ * FileBrowser 仅在任务终态时加载一次文件列表
  */
 defineProps({
   /** 当前任务对象 */

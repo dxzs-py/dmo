@@ -30,7 +30,7 @@
                   class="kb-search-input"
                   @input="filterKnowledgeBases"
                 />
-                <el-button size="small" @click="refreshKnowledgeBases" :loading="kbLoading">
+                <el-button size="small" :loading="kbLoading" @click="refreshKnowledgeBases">
                   刷新
                 </el-button>
               </div>
@@ -133,11 +133,11 @@
           <el-input
             v-model="fileSearchQuery"
             placeholder="搜索所有研究任务的文件..."
-            @keyup.enter="handleFileSearch"
             clearable
+            @keyup.enter="handleFileSearch"
           >
             <template #append>
-              <el-button @click="handleFileSearch" :loading="fileSearchLoading">搜索</el-button>
+              <el-button :loading="fileSearchLoading" @click="handleFileSearch">搜索</el-button>
             </template>
           </el-input>
           <div v-if="fileSearchResults.length" class="file-search-results">
@@ -475,6 +475,7 @@ const _findDocAnalysisFile = async () => {
     const rootNotes = files.filter(f => f.type === 'file' && f.name?.endsWith('.txt'))
     if (rootNotes.length > 0) return rootNotes[0].relativePath || rootNotes[0].name
   } catch {
+    // 文件列表获取失败时返回 null（无分析文件，由调用方处理）
   }
   return null
 }
@@ -508,7 +509,7 @@ const handleApprove = async (toolCallData) => {
       taskId: task.value?.taskId,
     })
     ElMessage.success('已确认操作')
-  } catch (e) {
+  } catch {
     // 恢复审批状态（executeApproval 内部 catch 已恢复 pendingApprovals，此处同步 session store）
     const sessionStore = useSessionStore()
     const sid = sessionStore.currentSessionId
@@ -534,7 +535,7 @@ const handleReject = async (toolCallData) => {
       taskId: task.value?.taskId,
     })
     ElMessage.info('已拒绝操作')
-  } catch (e) {
+  } catch {
     // 恢复审批状态（executeApproval 内部 catch 已恢复 pendingApprovals，此处同步 session store）
     const sessionStore = useSessionStore()
     const sid = sessionStore.currentSessionId
@@ -815,9 +816,22 @@ let userEventUnsubscribe = null
  * 监听 user 频道任务事件，自动刷新任务列表
  * - task_created：新任务创建，列表出现新行
  * - task_status_changed：任务进入终态（completed/failed），列表状态同步更新
+ * - task_deleted：任务被删除（本浏览器或其他浏览器），列表移除该行；
+ *   若当前详情正是被删除任务，关闭详情视图
  * 解决 P2/P8：深度研究模块任务列表不自动实时更新
  */
 const handleTaskCreated = (event) => {
+  if (event.type === 'task_deleted') {
+    const deletedTaskId = event.payload?.taskId
+    logger.info(`[DeepResearch] 收到 task_deleted 事件，自动刷新任务列表: taskId=${deletedTaskId}`)
+    // 其他浏览器删除当前正在查看的任务时，关闭详情避免展示已删除任务
+    if (deletedTaskId && currentTaskId.value === deletedTaskId) {
+      deleteTask()
+    } else if (taskListRef.value?.refreshTasks) {
+      taskListRef.value.refreshTasks()
+    }
+    return
+  }
   if (event.type !== 'task_created' && event.type !== 'task_status_changed') return
   logger.info(`[DeepResearch] 收到 ${event.type} 事件，自动刷新任务列表`)
   if (taskListRef.value?.refreshTasks) {

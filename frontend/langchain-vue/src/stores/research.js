@@ -16,6 +16,7 @@ import {
   flushPendingApprovalsInMap,
   isTerminalStatus,
   _mergeToolCalls,
+  sortToolCallsForDisplay,
 } from '@/utils/messageOperations'
 
 /**
@@ -136,6 +137,11 @@ export const useResearchStore = defineStore('research', () => {
    * @param {Object} task - task 数据对象
    */
   const _syncToolCalls = (task) => {
+    // 跨浏览器统一排序：seq（(module, module_id) 内跨 LLM 轮次全局递增序号，
+    // 事件透传）优先、_index（LLM 单轮序号）兜底。与 sessionStore 共用
+    // sortToolCallsForDisplay（messageOperations.js 唯一权威排序实现），
+    // 保证深度研究详情与聊天深度研究模式工具调用顺序跨浏览器一致
+    sortToolCallsForDisplay(Array.from(task.toolCallMap.value.values()))
     task.toolCalls.value = Array.from(task.toolCallMap.value.values())
   }
 

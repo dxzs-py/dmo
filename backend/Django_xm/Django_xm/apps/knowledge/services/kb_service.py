@@ -526,13 +526,13 @@ def search_knowledge_base(user, kb_id: str, query: str, top_k: int = 5) -> list[
             from django.db import connections
 
             connections.close_all()
-            # 清理 SQLAlchemy MetaData 缓存（根因：ALTER TABLE 后列类型缓存未更新）
-            try:
-                from langchain_postgres.vectorstores import Base
+            # 统一重置 PGVector 缓存（clear metadata + 重置 _classes + 重建）
+            # 修复旧代码"只 clear metadata 不清 _classes"导致重试仍用旧维度类的缓存不一致
+            from Django_xm.apps.knowledge.vector_store.pgvector_runtime import (
+                reset_pgvector_cache,
+            )
 
-                Base.metadata.clear()
-            except Exception:  # noqa: S110  # cleanup, 缓存清理失败不影响重试主流程
-                pass
+            reset_pgvector_cache(dimension=required_dim)
             # 清理 IndexManager 缓存
             IndexManager._cache.clear()
             vector_store = manager.load_index(user_index_name, embeddings)

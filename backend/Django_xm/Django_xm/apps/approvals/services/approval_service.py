@@ -328,6 +328,14 @@ def build_approval_payload(
     # risk_level 透传（新标准风险等级，优先于 danger_level，前端 ToolCallCard 显示高危红名）
     if approval_extra.get("risk_level"):
         extra_fields["risk_level"] = approval_extra["risk_level"]
+    # seq 透传：从 ToolCallContext 读取（register 唯一分配点）。
+    # 前端审批占位（isSynthetic）据此在 WS 工具事件到达前获得跨浏览器统一排序依据，
+    # 与 tool_call_* 事件 payload 的 seq 保持一致（同一工具调用排序 key 唯一）。
+    _tool_call_id_for_seq = _get("tool_call_id")
+    if _tool_call_id_for_seq:
+        _ctx_for_seq = service.get_context(_tool_call_id_for_seq)
+        if _ctx_for_seq and _ctx_for_seq.get("seq"):
+            extra_fields["seq"] = _ctx_for_seq["seq"]
     # 子 agent 嵌套层级字段透传（Phase E3，前端展示完整调用链路）
     if approval_extra.get("parent_tool_call_id"):
         extra_fields["parent_tool_call_id"] = approval_extra["parent_tool_call_id"]

@@ -89,6 +89,14 @@ class PGVectorBackend(VectorStoreBackend):
         try:
             from langchain_postgres.vectorstores import PGVector as LangChainPGVector
 
+            # 懒预热：首次使用前单线程填充 _classes 缓存，消除线程池并发
+            # 首次初始化竞态（InvalidRequestError: already defined）。
+            # 幂等 + threading.Lock 保护，多线程并发调用仅一次真正预热。
+            from Django_xm.apps.knowledge.vector_store.pgvector_runtime import (
+                warm_up_pgvector_runtime,
+            )
+
+            warm_up_pgvector_runtime()
             return LangChainPGVector
         except ImportError:
             raise ImportError("PGVector 未安装。请运行: pip install langchain-postgres") from None
@@ -176,16 +184,13 @@ class PGVectorBackend(VectorStoreBackend):
                         except Exception:  # noqa: S110  # cleanup, 单个 engine 释放失败不影响其他
                             pass
                 IndexManager._cache.clear()
-                # 刷新 LangChain PGVector 的 SQLAlchemy MetaData 缓存
-                # ALTER TABLE 后 MetaData 仍缓存旧的列类型（如 vector(1024)），
-                # 导致后续查询生成的 SQL 与实际列类型不匹配
-                try:
-                    from langchain_postgres.vectorstores import Base
+                # 统一重置 PGVector 缓存（clear metadata + 重置 _classes + 按新维度重建）
+                # 修复旧代码"只 clear metadata 不清 _classes"导致维度调整后仍返回旧类的缓存不一致
+                from Django_xm.apps.knowledge.vector_store.pgvector_runtime import (
+                    reset_pgvector_cache,
+                )
 
-                    Base.metadata.clear()
-                    logger.info("PGVector SQLAlchemy MetaData 缓存已清理")
-                except Exception as meta_err:
-                    logger.warning(f"清理 MetaData 缓存失败: {meta_err}")
+                reset_pgvector_cache(dimension=new_dimension)
                 logger.info("PGVector 维度调整后已关闭所有数据库连接、释放旧 engine 并清理缓存")
                 return True
         except Exception as e:

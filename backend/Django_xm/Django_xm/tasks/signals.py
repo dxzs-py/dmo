@@ -108,6 +108,15 @@ def on_task_rejected(sender=None, message=None, exc=None, **extra):
 @worker_ready.connect
 def on_worker_ready(sender=None, **extra):
     logger.info("[Celery Signal] Worker 已就绪")
+    try:
+        # PGVector 映射类预热（消除线程池并发首次初始化竞态）
+        from Django_xm.apps.knowledge.vector_store.pgvector_runtime import (
+            warm_up_pgvector_runtime,
+        )
+
+        warm_up_pgvector_runtime()
+    except Exception as e:
+        logger.warning(f"[Celery Signal] PGVector 预热失败(非致命): {e}")
 
 
 @worker_shutting_down.connect

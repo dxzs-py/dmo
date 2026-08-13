@@ -68,12 +68,12 @@ export const useChatDeepResearchStore = defineStore('chatDeepResearch', () => {
   }
 
   /**
-   * 从已加载消息恢复聊天深度研究上下文（页面刷新后 researchTaskId 重建）
-   * 从消息末尾向前找最后一条带 researchTaskId 的 assistant 消息。
+   * 按指定会话消息恢复聊天深度研究上下文（页面刷新 / 会话切换 / 会话删除后调用）
+   * 从消息末尾向前找最后一条带 researchTaskId 的 assistant 消息；
+   * 该会话无深度研究上下文时清空桥接状态（防止旧会话残留污染新会话）。
    * @param {string} sessionId - 聊天会话 ID
    */
   const restoreChatResearchContext = (sessionId) => {
-    if (researchTaskId.value) return
     const sessionStore = useSessionStore()
     const session = sessionStore.sessions.find(s => s.id === sessionId)
     if (!session?.messages) return
@@ -85,6 +85,16 @@ export const useChatDeepResearchStore = defineStore('chatDeepResearch', () => {
         logger.log('[ChatDeepResearch] 已恢复聊天深度研究 researchTaskId:', msg.researchTaskId)
         return
       }
+    }
+    // 当前会话无深度研究上下文：清空桥接状态。
+    // 根因修复：删除深度研究会话 / 切换到普通会话后，残留的 researchTaskId 与
+    // researchContextInfo 会污染代理模式（输入框闪现"🔬 深度研究"标签、请求参数
+    // 泄漏 research_task_id 导致后端错误加载旧研究上下文）。
+    // 按会话重算而非"有值即跳过"，确保切换/删除会话后残留被正确清除。
+    if (researchTaskId.value || researchContextInfo.value) {
+      researchTaskId.value = null
+      researchContextInfo.value = null
+      logger.log('[ChatDeepResearch] 会话无深度研究上下文，已清空桥接状态:', sessionId)
     }
   }
 

@@ -93,7 +93,6 @@ import {
 } from '@element-plus/icons-vue'
 import MarkdownRenderer from '../common/MarkdownRenderer.vue'
 import { useUserStore } from '@/stores/user'
-import { useAutoRefresh } from '@/composables/useAutoRefresh'
 import { logger } from '../../utils/logger'
 
 const props = defineProps({
@@ -105,26 +104,20 @@ const props = defineProps({
     type: Object,
     required: true,
   },
-  /** 是否自动加载并在文件未就绪时轮询（默认开启） */
-  autoRefresh: {
-    type: Boolean,
-    default: true,
-  },
-  /** 轮询间隔（ms） */
-  refreshInterval: {
-    type: Number,
-    default: 3000,
-  },
-  /** 最大轮询次数（0 表示无限，有上限保护需求时设置） */
-  maxRefreshAttempts: {
-    type: Number,
-    default: 60,
+  /**
+   * 任务状态（协议值）：仅在终态（completed/failed）时自动加载文件，
+   * 任务运行中不轮询，避免无意义请求。
+   */
+  taskStatus: {
+    type: String,
+    required: true,
   },
 })
 
 const emit = defineEmits(['refresh'])
 
 const files = ref([])
+const loading = ref(false)
 const previewVisible = ref(false)
 const previewFile = ref(null)
 const previewContent = ref('')
@@ -137,73 +130,41 @@ const isTextFile = computed(() => {
   return ['.md', '.txt', '.json'].includes(ext)
 })
 
-// ── 自动加载：文件列表就绪（非空且连续 3 次无变化）后停止轮询 ──
-let lastSignature = null
-let stableCount = 0
+// ── 文件加载：任务终态（completed/failed）后刷新一次；任务运行中不请求 ──
+const TERMINAL_TASK_STATUSES = ['completed', 'failed']
 
-const getFileSignature = (list) =>
-  list.map(f => `${f.relativePath || f.name}:${f.size ?? ''}`).join('|')
-
-const shouldStopAutoRefresh = (data) => {
-  const list = data.files || []
-  if (list.length === 0) {
-    lastSignature = null
-    stableCount = 0
-    return false
+const fetchFiles = async () => {
+  loading.value = true
+  try {
+    const response = await props.api.getFiles(props.taskId)
+    const data = response.data.data || response.data
+    files.value = data.files || []
+  } catch (error) {
+    logger.error('[FileBrowser] 加载文件失败:', error)
+  } finally {
+    loading.value = false
   }
-  const signature = getFileSignature(list)
-  if (signature === lastSignature) {
-    stableCount += 1
-  } else {
-    lastSignature = signature
-    stableCount = 1
-  }
-  return stableCount >= 3
 }
 
-const fetcher = () =>
-  props.api.getFiles(props.taskId).then(response => response.data.data || response.data)
+/** taskId 切换或任务进入终态时加载一次文件列表 */
+const loadTaskFiles = () => {
+  files.value = []
+  if (TERMINAL_TASK_STATUSES.includes(props.taskStatus)) fetchFiles()
+}
 
-const { loading, refresh, start, stop } = useAutoRefresh(fetcher, {
-  interval: props.refreshInterval,
-  maxAttempts: props.maxRefreshAttempts,
-  shouldStop: shouldStopAutoRefresh,
-  onData: (data) => {
-    files.value = data.files || []
-  },
-  source: 'FileBrowser',
-})
+// taskId 切换（切换任务/执行）或任务进入终态时重新加载文件
+watch(() => props.taskId, loadTaskFiles)
+watch(() => props.taskStatus, loadTaskFiles, { immediate: true })
 
-// taskId 切换（切换任务/执行）时重启自动加载
-watch(
-  () => props.taskId,
-  () => {
-    lastSignature = null
-    stableCount = 0
-    files.value = []
-    stop()
-    if (props.autoRefresh) start()
-  },
-)
-
-// autoRefresh 开关变化时启停
-watch(
-  () => props.autoRefresh,
-  (enabled) => {
-    if (enabled) start()
-    else stop()
-  },
-)
-
-/** 手动刷新（不参与自动轮询计数） */
+/** 手动刷新一次 */
 const refreshFiles = async () => {
-  await refresh()
+  await fetchFiles()
   emit('refresh')
 }
 
 /** 供外部（任务终态等场景）主动触发一次刷新 */
 const loadFiles = async () => {
-  await refresh()
+  await fetchFiles()
 }
 
 const downloadFile = (file) => {

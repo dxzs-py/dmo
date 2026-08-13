@@ -80,35 +80,35 @@
       style="margin-top: 16px;"
     />
 
-    <!-- 工具调用历史 -->
+    <!-- 工具调用历史（容器复用 AiQueue，与聊天模块一致：队列头可折叠 + 内部滚动） -->
     <div v-if="toolCalls.length > 0" class="tool-calls-section">
-      <h4
-        class="section-title tool-calls-title"
-        :class="{ 'is-active': hasActiveToolCalls }"
-        @click="toggleToolCalls"
-      >
-        <el-icon class="toggle-icon" :class="{ 'is-expanded': toolCallsExpanded }">
-          <ArrowRight v-if="!toolCallsExpanded" />
-          <ArrowDown v-else />
-        </el-icon>
+      <h4 class="section-title tool-calls-title">
         工具调用记录
         <span class="tool-calls-count">{{ toolCalls.length }}</span>
       </h4>
-      <TransitionGroup
-        v-show="toolCallsExpanded"
-        name="tool-list"
-        tag="div"
-        class="tool-calls-list"
-      >
+      <TransitionGroup name="tool-list" tag="div" class="tool-calls-list">
+        <AiQueue v-if="toolCalls.length > 1" :items="toolCalls" class="tool-calls-queue">
+          <ToolCallCard
+            v-for="tc in toolCalls"
+            :key="tc.id || tc.toolCallId || Math.random()"
+            :tool-name="tc.name || tc.toolName"
+            :description="tc.description || ''"
+            :status="tc.status"
+            :input="tc.input || tc.parameters"
+            :output="tc.output || tc.result"
+            :tool-call="tc"
+            @approve="(data) => emit('approve', data)"
+            @reject="(data) => emit('reject', data)"
+          />
+        </AiQueue>
         <ToolCallCard
-          v-for="tc in toolCalls"
-          :key="tc.id || tc.toolCallId || Math.random()"
-          :tool-name="tc.name || tc.toolName"
-          :description="tc.description || ''"
-          :status="tc.status"
-          :input="tc.input || tc.parameters"
-          :output="tc.output || tc.result"
-          :tool-call="tc"
+          v-else-if="toolCalls.length === 1"
+          :tool-name="toolCalls[0].name || toolCalls[0].toolName"
+          :description="toolCalls[0].description || ''"
+          :status="toolCalls[0].status"
+          :input="toolCalls[0].input || toolCalls[0].parameters"
+          :output="toolCalls[0].output || toolCalls[0].result"
+          :tool-call="toolCalls[0]"
           @approve="(data) => emit('approve', data)"
           @reject="(data) => emit('reject', data)"
         />
@@ -129,9 +129,9 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
-import { ArrowDown, ArrowRight, ChatDotRound } from '@element-plus/icons-vue'
+import { ChatDotRound } from '@element-plus/icons-vue'
 import ToolCallCard from '@/components/chat/ToolCallCard.vue'
+import AiQueue from '@/components/ai-elements/AiQueue.vue'
 import ResearchTaskReport from './ResearchTaskReport.vue'
 import AiReasoning from '@/components/ai-elements/AiReasoning.vue'
 import { formatDate } from '@/utils/format'
@@ -218,26 +218,6 @@ const getStatusText = (status) => {
   }
   return textMap[status] || status
 }
-
-// 工具调用记录区展开/收回（3.7）
-// 有审批中/执行中（非终态）卡片时强制展开，避免审批组件被意外折叠隐藏
-const toolCallsExpanded = ref(true)
-
-const ACTIVE_TOOL_STATES = new Set(['pending', 'running', 'waiting'])
-
-const hasActiveToolCalls = computed(() =>
-  props.toolCalls.some((tc) => ACTIVE_TOOL_STATES.has(tc.status)),
-)
-
-const toggleToolCalls = () => {
-  if (hasActiveToolCalls.value) return // 有审批中/执行中卡片时不可折叠
-  toolCallsExpanded.value = !toolCallsExpanded.value
-}
-
-// 出现审批中/执行中卡片时强制展开
-watch(hasActiveToolCalls, (active) => {
-  if (active) toolCallsExpanded.value = true
-})
 </script>
 
 <style scoped>
@@ -304,26 +284,7 @@ watch(hasActiveToolCalls, (active) => {
   display: flex;
   align-items: center;
   gap: 6px;
-  cursor: pointer;
-  user-select: none;
   margin-bottom: 12px;
-}
-
-.tool-calls-title:hover {
-  color: var(--el-color-primary);
-}
-
-.tool-calls-title.is-active {
-  color: var(--el-color-primary);
-}
-
-.toggle-icon {
-  font-size: 14px;
-  transition: transform 0.2s ease;
-}
-
-.toggle-icon.is-expanded {
-  transform: rotate(0deg);
 }
 
 .tool-calls-count {
@@ -340,6 +301,11 @@ watch(hasActiveToolCalls, (active) => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* 深度研究工具调用量大（一次可能数十张卡片），队列滚动区使用更大固定高度（聊天模块为 300px） */
+.tool-calls-queue :deep(.queue-items) {
+  max-height: 520px;
 }
 
 @media (max-width: 768px) {

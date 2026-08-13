@@ -87,6 +87,7 @@ class EventType(StrEnum):
 
     # === 任务事件（WebSocket 推送）===
     TASK_CREATED = "task_created"  # 新任务创建（深度研究/工作流），通知列表刷新
+    TASK_DELETED = "task_deleted"  # 任务删除（深度研究/工作流），通知列表刷新
     TASK_STATUS_CHANGED = "task_status_changed"  # 任务状态进入终态（completed/failed），通知列表刷新
     TASK_PROGRESS = "task_progress"  # 后台任务进度（RAG 文档上传等），task 频道实时推送
 

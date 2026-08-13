@@ -395,6 +395,12 @@ export function createMessageVersion(message) {
  */
 function _mergeExistingToolCall(existing, data) {
   const merged = { ...existing, ...data }
+  // seq 保护：仅当 data 显式携带 number 类型 seq 时才保留（后端工具/审批事件
+  // 从 ToolCallContext 透传的全局递增序号，跨浏览器统一排序依据）；data 未携带
+  // seq（如 SSE tool_info）时回退 existing.seq，防止 undefined 覆盖已分配序号
+  if (typeof data.seq !== 'number' && typeof existing.seq === 'number') {
+    merged.seq = existing.seq
+  }
   if (data.parameters && typeof data.parameters === 'object') {
     merged.parameters = { ...existing.parameters, ...data.parameters }
   }
@@ -703,6 +709,12 @@ export function setApprovalToToolCallInMap(toolCallMap, toolCallId, approvalData
     }
     // toolCall 已存在：仅附加 approval，不修改 status（审批态与工具执行态解耦）
     tc.approval = approvalData
+    // seq 补全：审批事件携带的全局递增序号（register 分配，跨浏览器统一排序依据）
+    // 写入条目。SSE tool_info 先到达的占位条目（无 seq）据此补全排序依据，
+    // 与 tool_call_* 事件透传的 seq 保持一致（同一工具调用排序 key 唯一）
+    if (typeof approvalData?.seq === 'number' && typeof tc.seq !== 'number') {
+      tc.seq = approvalData.seq
+    }
     // P30 修复：tool 事件到达时 parameters 可能为空（{}），但审批数据中有完整参数。
     // 当现有条目 parameters 为空对象时，从审批数据回填，确保工具卡片的"输入参数"正确显示
     const approvalParams = approvalData?.parameters || approvalData?.args
@@ -729,6 +741,18 @@ export function setApprovalToToolCallInMap(toolCallMap, toolCallId, approvalData
     status: ToolCallStatus.WAITING,
     approval: approvalData,
     isSynthetic: true,
+  }
+  // 审批事件携带 messageId 时写入 messageBackendId（归属消息定位）：
+  // 聊天深度研究模式的审批事件（approval_pending）可能先于 tool_call_waiting 到达，
+  // 占位条目提前声明归属，保证 _syncMessageToolCalls 能将其挂载到对应消息
+  // （根因修复：工具事件 messageId 缺失时审批占位仍是消息内可见的工具调用）
+  if (approvalData?.messageId) {
+    syntheticToolCall.messageBackendId = String(approvalData.messageId)
+  }
+  // 审批事件携带 seq 时写入（跨浏览器统一排序依据）：审批占位（isSynthetic）
+  // 在真实 tool 事件到达前即可获得与工具事件一致的排序 key
+  if (typeof approvalData?.seq === 'number') {
+    syntheticToolCall.seq = approvalData.seq
   }
   const op = approvalData?.operation || approvalData?.command
   if (op) {
@@ -886,6 +910,33 @@ export function finalizeToolCallsInMap(toolCallMap, messageBackendId) {
     if (changed) finalizedCount++
   }
   return finalizedCount
+}
+
+/**
+ * 工具调用显示排序（跨浏览器统一排序的唯一权威，根因修复）
+ *
+ * 排序 key 优先级：
+ *   1. seq：后端 (module, module_id) 内跨 LLM 轮次全局递增序号（register 分配、
+ *      事件透传），跨轮唯一。不同浏览器对同一批工具调用据此排序完全一致
+ *      （修复跨浏览器顺序不一致：原 _index 为 LLM 单轮序号跨轮重复，相等时
+ *      退化为各浏览器本地 Map 插入顺序，双轨事件浏览器插入时机不同导致错序）。
+ *   2. _index：LLM 单轮输出内序号，仅作同 seq 时兜底（同轮多工具顺序稳定）。
+ *   3. 两者皆无：保持原数组顺序（JS 稳定排序，即 Map 插入顺序兜底）。
+ *
+ * @param {Array} arr - 工具调用数组（原地排序）
+ * @returns {Array} 排序后的数组
+ */
+export function sortToolCallsForDisplay(arr) {
+  if (!Array.isArray(arr) || arr.length <= 1) return arr
+  arr.sort((a, b) => {
+    const as = typeof a?.seq === 'number' ? a.seq : Number.MAX_SAFE_INTEGER
+    const bs = typeof b?.seq === 'number' ? b.seq : Number.MAX_SAFE_INTEGER
+    if (as !== bs) return as - bs
+    const ai = a?._index ?? 999
+    const bi = b?._index ?? 999
+    return ai - bi
+  })
+  return arr
 }
 
 /**

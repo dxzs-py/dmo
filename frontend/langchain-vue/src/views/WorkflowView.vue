@@ -155,6 +155,7 @@
           <h4>生成的文件</h4>
           <FileBrowser
             :task-id="execution.threadId"
+            :task-status="execution.status"
             :api="workflowAPI"
           />
         </div>
@@ -193,7 +194,6 @@ import MarkdownRenderer from '../components/common/MarkdownRenderer.vue'
 import KnowledgeBaseSelector from '../components/common/KnowledgeBaseSelector.vue'
 import AiCheckpoint from '../components/ai-elements/AiCheckpoint.vue'
 import AiNode from '../components/ai-elements/AiNode.vue'
-import AiConnection from '../components/ai-elements/AiConnection.vue'
 import AiEdge from '../components/ai-elements/AiEdge.vue'
 import AiCanvas from '../components/ai-elements/AiCanvas.vue'
 import { formatDate } from '../utils/format'
@@ -400,7 +400,9 @@ const connectSSE = async (threadId) => {
           const parsed = JSON.parse(sseMatch[1])
           errorMsg = parsed.message || parsed.error || errorMsg
         }
-      } catch {}
+      } catch {
+        // SSE 错误体可能不是 JSON，解析失败时保留默认 errorMsg
+      }
       throw new Error(errorMsg)
     }
 
@@ -660,7 +662,9 @@ const _findKeyFile = async () => {
     // 查找根目录下的 .txt 文件
     const rootNotes = files.filter(f => f.type === 'file' && f.name?.endsWith('.txt'))
     if (rootNotes.length > 0) return rootNotes[0].relativePath || rootNotes[0].name
-  } catch {}
+  } catch {
+    // 文件树不可用或未生成时静默跳过，交由调用方处理 null
+  }
   return null
 }
 

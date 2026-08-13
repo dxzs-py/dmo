@@ -210,7 +210,12 @@ export const useChatStore = defineStore('chat', () => {
           specialParams: specialParams,
           temperature: modelConfig.temperature || null,
           maxTokens: modelConfig.maxTokens || null,
-          researchTaskId: currentResearchTaskId || null,
+          // 仅深度研究模式或用户显式携带研究上下文时才发送 researchTaskId。
+          // 根因修复：删除深度研究会话后残留的 researchTaskId 泄漏到代理模式请求，
+          // 导致后端错误加载旧研究上下文注入 prompt（日志：代理请求带 research_task_id）。
+          researchTaskId: (currentMode.value === 'deep-research' || currentResearchContextInfo)
+            ? currentResearchTaskId
+            : null,
           continueTaskId: continueTaskId,
         },
         {

@@ -657,6 +657,9 @@ class ChatService:
                     },
                 }
             # 启动 Celery 任务（不等待结果，Chat SSE 立即返回）
+            # message_id：透传 assistant 消息 ID，深度研究工具事件/审批事件
+            # 依赖它定位到聊天消息（toolCallsMap → message.toolCalls 归属），
+            # 缺失时聊天深度研究模式的工具调用卡片会从消息中消失（根因修复）
             await self._deep_service.start_celery(
                 query=data["message"],
                 session_id=data.get("session_id"),
@@ -672,6 +675,7 @@ class ChatService:
                 max_tokens=data.get("max_tokens"),
                 special_params=data.get("special_params"),
                 continue_task_id=data.get("continue_task_id"),
+                message_id=str(assistant_msg_id) if assistant_msg_id else None,
             )
             # 通知前端 stream_interrupted（触发 sse_generator 广播 WebSocket 事件）
             # 非触发浏览器通过此事件感知深度研究模式切换

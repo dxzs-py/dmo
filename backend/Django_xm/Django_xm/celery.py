@@ -22,7 +22,7 @@ Celery 配置模块
     ├── chat_tasks.py         # 附件生命周期管理
     ├── deep_research.py      # 深度研究
     ├── rag_tasks.py          # RAG 索引操作
-    ├── signals.py            # Celery 信号处理（自动注册，无需 include）
+    ├── signals.py            # Celery 信号处理（须在下方 include 中显式注册才会加载）
     └── workflow_tasks.py     # 工作流执行
 
 队列划分:
@@ -50,6 +50,9 @@ app = Celery(
         "Django_xm.tasks.workflow_tasks",
         "Django_xm.tasks.analytics_tasks",
         "Django_xm.tasks.approval_tasks",
+        # 信号处理：Celery 不会自动发现该模块，须在此显式 include 才会被导入并注册
+        # @worker_ready/@task_* 处理器（否则 worker_ready 预热、任务失败追踪等永不触发）
+        "Django_xm.tasks.signals",
     ],
 )
 

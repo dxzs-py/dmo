@@ -423,6 +423,12 @@ class DeepResearchTaskDeleteView(APIView):
             if should_cleanup:
                 self._cleanup_backend_data(task_id, task_obj.created_by_id)
 
+            # 事务提交后发布 task_deleted 实时事件，通知所有浏览器刷新深度研究任务列表
+            # （与 task_created 对称，实现删除的跨浏览器实时同步）
+            transaction.on_commit(
+                lambda: self._publish_task_deleted(task_id, request.user.id)
+            )
+
             return success_response(
                 data={
                     "status": "success",
@@ -445,6 +451,21 @@ class DeepResearchTaskDeleteView(APIView):
         from Django_xm.apps.research.services.cross_app import _cleanup_research_backend_data
 
         _cleanup_research_backend_data(task_id, user_id)
+
+    @staticmethod
+    def _publish_task_deleted(task_id: str, user_id: int):
+        """发布 task_deleted 实时事件（与 task_created 对称），通知所有浏览器刷新任务列表"""
+        try:
+            from Django_xm.common.realtime_events import publish_event_sync
+            from Django_xm.common.event_schema import EventType
+
+            publish_event_sync(
+                EventType.TASK_DELETED,
+                {"task_id": task_id},
+                user_id=user_id,
+            )
+        except Exception:
+            logger.warning(f"发布 task_deleted 事件失败: task_id={task_id}", exc_info=True)
 
 
 class DeepResearchTaskListView(APIView):

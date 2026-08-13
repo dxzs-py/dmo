@@ -828,10 +828,28 @@ class OfficialDeepAgentAdapter:
         # 1. 注册工具调用上下文（幂等）
         #    - module_id = task_id（深度研究任务 ID）
         #    - cross_module_id = chat_session_id（关联 chat 场景触发双频道广播）
-        #    - message_id 留空：deep_research 模块无关联 chat message，
-        #      若 chat 模块已注册过同 tool_call_id 则由 register 合并补全
+        #    - message_id：chat 关联场景从当前 config 读取 assistant_message_id，
+        #      使工具事件 payload 携带归属消息 ID。前端 toolCallsMap → message.toolCalls
+        #      的归属依赖 messageBackendId，缺失时聊天深度研究模式的工具卡片会消失（根因修复）
         #    - 子 agent 嵌套层级字段：从 evt 提取（仅子 agent 工具事件携带）
         cross_module_id = derive_cross_module_id_from_source("deep_research", self.chat_session_id)
+
+        # 从当前 langgraph 运行上下文读取 assistant_message_id（research_runner
+        # 在 config.configurable 中注入；聊天关联场景非空，独立深度研究为空）
+        _assistant_message_id = ""
+        if self.chat_session_id:
+            try:
+                from langgraph.config import get_config as _get_config
+
+                _cfg = _get_config()
+                if isinstance(_cfg, dict):
+                    _assistant_message_id = (
+                        (_cfg.get("configurable") or {}).get("assistant_message_id") or ""
+                    )
+            except Exception:
+                _assistant_message_id = ""
+        if not _assistant_message_id:
+            _assistant_message_id = getattr(self, "_assistant_message_id", "")
 
         # 提取子 agent 嵌套层级字段（Phase E3）
         # evt 中无对应 key 时使用默认空值（主 agent 场景）
@@ -859,7 +877,7 @@ class OfficialDeepAgentAdapter:
                     tool_name=tool_name,
                     module=EventSource.DEEP_RESEARCH,
                     module_id=self.thread_id,
-                    message_id="",
+                    message_id=_assistant_message_id,
                     parameters=parameters,
                     cross_module_id=cross_module_id,
                     # 子 agent 嵌套层级字段（Phase E3）

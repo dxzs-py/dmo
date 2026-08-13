@@ -36,6 +36,7 @@ import {
   flushPendingApprovalsInMap,
   isTerminalStatus,
   mergeMessageFromBackend,
+  sortToolCallsForDisplay,
 } from '../utils/messageOperations'
 import { StreamState, ToolCallStatus } from '../types'
 
@@ -265,18 +266,12 @@ export const useSessionStore = defineStore('session', () => {
       //  loadSessionDetail → _syncToolCallsMapFromMessages 回填 Map）
       return
     }
-    const isLast = _isLastAssistantMessage(sessionId, targetMsg)
     // 归属规则统一走 _collectToolCallsForMessage
     const arr = _collectToolCallsForMessage(toolCallMap, targetMsg)
-    // 按 LLM 原始生成序号稳定排序（跨浏览器工具顺序一致性保障）
-    // _index 由后端 stream_chunk_processors 在解析 AIMessage.tool_calls 时标注
-    if (arr.length > 1) {
-      arr.sort((a, b) => {
-        const ai = a._index ?? 999
-        const bi = b._index ?? 999
-        return ai - bi
-      })
-    }
+    // 跨浏览器统一排序：seq（(module, module_id) 内跨 LLM 轮次全局递增序号，
+    // 事件透传）优先，_index（LLM 单轮序号）兜底。sortToolCallsForDisplay 是
+    // 唯一权威排序实现（messageOperations.js），sessionStore 与 researchStore 共用
+    sortToolCallsForDisplay(arr)
     targetMsg.toolCalls = arr
     const ver = targetMsg.versions?.[targetMsg.currentVersion]
     if (ver) ver.toolCalls = arr
@@ -626,6 +621,11 @@ export const useSessionStore = defineStore('session', () => {
     if (pendingApprovals.value.has(sessionId)) {
       pendingApprovals.value.delete(sessionId)
       triggerRef(pendingApprovals)
+    }
+    // 清理该会话暂存的 researchTaskId（SSE deep_research 早于消息创建时的暂存区）。
+    // 删除会话后若不清理，残留值可能被后续同 key 复用（会话 ID 复用场景）污染。
+    if (_pendingResearchTaskIds.has(sessionId)) {
+      _pendingResearchTaskIds.delete(sessionId)
     }
     // 清理该会话关联的审批条目（延迟导入避免循环依赖）
     try {
@@ -1637,11 +1637,8 @@ export const useSessionStore = defineStore('session', () => {
       // 归属规则统一走 _collectToolCallsForMessage：仅 messageBackendId 精确匹配
       const arr = _collectToolCallsForMessage(toolCallMap, msg)
       if (arr.length > 0) {
-        arr.sort((a, b) => {
-          const ai = a._index ?? 999
-          const bi = b._index ?? 999
-          return ai - bi
-        })
+        // 跨浏览器统一排序：seq 优先、_index 兜底（与 _syncMessageToolCalls 同一权威实现）
+        sortToolCallsForDisplay(arr)
         msg.toolCalls = arr
         const ver = msg.versions?.[msg.currentVersion]
         if (ver) ver.toolCalls = arr

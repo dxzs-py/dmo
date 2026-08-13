@@ -5025,3 +5025,12 @@ ValueError: At 'error_handler' node, '_route_after_error' branch found unknown t
 [2026-08-12 15:54:52,492: INFO/MainProcess] Task approvals.process_outbox[df872875-c248-408e-83c7-b12338ed60ca] succeeded in 0.031000000002677552s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
 [2026-08-12 15:54:57,465: INFO/MainProcess] Task approvals.process_outbox[54b70966-1545-4c5b-9f86-187da98083fd] received
 [2026-08-12 15:54:57,472: INFO/MainProcess] Task approvals.process_outbox[54b70966-1545-4c5b-9f86-187da98083fd] succeeded in 0.0s: {'processed': 0, 'delivered': 0, 'failed': 0, 'retried': 0}
+[2026-08-12 16:28:12,481: INFO/MainProcess] Connected to redis://127.0.0.1:6379/3
+[2026-08-12 16:28:12,486: INFO/MainProcess] mingle: searching for neighbors
+[2026-08-12 16:28:13,515: INFO/MainProcess] mingle: all alone
+[2026-08-12 16:28:13,541: INFO/MainProcess] celery@dxzs-hhh ready.
+[2026-08-12 16:30:12,121: INFO/MainProcess] Connected to redis://127.0.0.1:6379/3
+[2026-08-12 16:30:12,125: INFO/MainProcess] mingle: searching for neighbors
+[2026-08-12 16:30:13,145: INFO/MainProcess] mingle: all alone
+[2026-08-12 16:30:13,169: INFO/MainProcess] [Celery Signal] Worker 已就绪
+[2026-08-12 16:30:13,719: INFO/MainProcess] celery@dxzs-hhh ready.

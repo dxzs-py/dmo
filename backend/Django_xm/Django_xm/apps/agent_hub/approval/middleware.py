@@ -243,6 +243,9 @@ class ApprovalMiddleware(AgentMiddleware):
 
         # 判断来源：深度研究 agent 的 configurable 含 thread_id（=task_id）
         thread_id = configurable.get("thread_id", "")
+        # assistant_message_id：chat 关联深度研究场景由 research_runner 注入 config，
+        # 工具事件注册携带归属消息 ID（前端 toolCallsMap → message.toolCalls 归属依赖）
+        _assistant_message_id = configurable.get("assistant_message_id") or ""
 
         # 嵌套层级字段（deepagents 0.7.5 机制）：
         # SubAgentNestingMiddleware 写入 state（subagent_depth/path/risk_ceiling），
@@ -313,7 +316,7 @@ class ApprovalMiddleware(AgentMiddleware):
                         tool_name=tool_name,
                         module=module,
                         module_id=module_id,
-                        message_id="",
+                        message_id=_assistant_message_id,
                         parameters=parameters,
                         cross_module_id=cross_module_id,
                         auto_approved=True,
