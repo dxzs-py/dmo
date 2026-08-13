@@ -21,7 +21,7 @@ import {
  * 优先使用注入版本，回退内联实现。注入的函数来自：
  *   - messageHandlers.js：handleMessageAdded / handleMessageUpdated / handleMessagesDeleted
  *     / handleMessageRegenerated / handleMessageRegenerateReverted
- *   - streamStateHandlers.js：handleStreamEvent / handleStreamStarted / handleStreamInterrupted
+ *   - streamStateHandlers.js：handleStreamEvent / handleStreamInterrupted
  *     / handleStreamCompleted / handleStreamFinalized
  *
  * @param {Object} ctx - 依赖上下文（含注入的独立模块函数）
@@ -34,7 +34,6 @@ import {
  * @param {{ process: Function }} ctx.orderedQueue
  *   - 来自 createOrderedQueue，提供有序队列处理能力
  * @param {Set<string>} ctx.streamingSessions - reactive(new Set())，请求浏览器 SSE 活跃会话集合
- * @param {Set<string>} ctx.thinkingSessions - reactive(new Set())，非触发浏览器"正在思考"集合
  * @param {Set<string>} ctx.fullSyncPending - 避免重复触发全量同步的 Set
  * @param {(sessionId: string, options?: Object) => Promise<{backendMessages: Array}|null>} ctx.requestFullSync
  *   - 兜底全量同步函数（由 sync.js 主文件装配后传入）
@@ -55,7 +54,6 @@ export const createHandleSessionEvent = (ctx) => {
     seqDedup,
     orderedQueue,
     streamingSessions,
-    thinkingSessions,
     fullSyncPending,
     requestFullSync,
   } = ctx
@@ -137,6 +135,38 @@ export const createHandleSessionEvent = (ctx) => {
 
     const lastAssistant = getLastAssistantMessage(session)
     return lastAssistant?.streamState || null
+  }
+
+  /**
+   * 应用 stream_reasoning 事件（session 频道，聊天模块深度研究模式的推理内容）
+   *
+   * 深度研究 worker（adapter.py）每次 LLM 节点产生 reasoning_content 时广播
+   * STREAM_REASONING，payload 中携带该节点的完整推理文本。此处写入
+   * ChatMessage.reasoning（duration=0 表示推理进行中，与代理模式 strategy.py
+   * "duration: 0" 语义一致）；推理结束由 handleStreamCompleted 回写 duration。
+   *
+   * 与 task 频道（handleTaskEvent → researchStore.setTaskReasoning）双通道写入，
+   * 分别驱动聊天消息 AiReasoning 与深度研究详情页 AiReasoning。
+   *
+   * @param {string} sessionId
+   * @param {Object} payload - toCamelCase 后：{ source, sourceId, messageId, sessionId, taskId, data: { content } }
+   */
+  const _applyStreamReasoning = (sessionId, payload) => {
+    const content = payload.data?.content || payload.content || ''
+    if (!content) return
+    const session = getSession(sessionStore, sessionId)
+    let targetMsg = null
+    if (payload.messageId) {
+      targetMsg = findMessageById(session, payload.messageId)
+    }
+    if (!targetMsg) {
+      targetMsg = getLastAssistantMessage(session)
+    }
+    if (!targetMsg) {
+      logger.debug(`[Sync] stream_reasoning 未找到目标消息: session=${sessionId}, message=${payload.messageId || '(兜底)'}`)
+      return
+    }
+    targetMsg.reasoning = { content, duration: 0 }
   }
 
   /**
@@ -259,6 +289,13 @@ export const createHandleSessionEvent = (ctx) => {
       case 'stream_event':
         ctx.handleStreamEvent(sessionId, payload)
         break
+      // 深度研究推理内容（stream_reasoning 事件，session 频道）
+      // 聊天模块深度研究模式：Celery worker 每次 LLM 节点产生推理时广播
+      // STREAM_REASONING 到 session + task 双频道。session 频道在此写入
+      // ChatMessage.reasoning（duration=0 表示推理进行中，与代理模式语义一致）。
+      case 'stream_reasoning':
+        _applyStreamReasoning(sessionId, payload)
+        break
       case 'messages_deleted':
         ctx.handleMessagesDeleted(sessionId, payload.deletedMessageIds || payload.ids || [])
         break
@@ -280,9 +317,6 @@ export const createHandleSessionEvent = (ctx) => {
       case 'approval_rejected':
       case 'approval_timeout':
         await ctx.handleApprovalEvent(sessionId, payload, event.type, { source: payload.source })
-        break
-      case 'stream_started':
-        ctx.handleStreamStarted(sessionId, payload)
         break
       case 'stream_interrupted':
         ctx.handleStreamInterrupted(sessionId, payload)

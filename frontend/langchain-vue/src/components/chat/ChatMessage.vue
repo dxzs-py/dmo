@@ -236,12 +236,14 @@ const showContinueResearch = computed(() => {
  * 触发浏览器通过 SSE 活跃（组件级 isStreaming && isLast）感知，
  * 非触发浏览器通过 WebSocket stream_event 设置的消息自身状态感知
  * （streamState=STREAMING / message.isStreaming=true）。
- * 完成后 streamState=COMPLETED / isStreaming=false，两个浏览器均转为对勾 + 用时。
+ * 深度研究模式的推理进行中由 stream_reasoning 事件写入 reasoning.duration=0 感知。
+ * 完成后 duration>0 / streamState=COMPLETED，两个浏览器均转为对勾 + 用时。
  */
 const isReasoningStreaming = computed(() => {
   if (props.isStreaming && props.isLast) return true
   if (props.message.isStreaming) return true
   if (props.message.streamState === StreamState.STREAMING) return true
+  if (props.message.reasoning?.duration === 0) return true
   return false
 })
 
@@ -285,7 +287,7 @@ function handleMessageClick() {
       {
         'is-selected': isSelected,
         'has-metadata': hasMetadata && message.role === 'assistant',
-        'is-streaming': isStreaming && isLast && message.role === 'assistant'
+        'is-streaming': (isStreaming && isLast || message.isStreaming) && message.role === 'assistant'
       }
     ]"
     @click="handleMessageClick"
@@ -386,7 +388,7 @@ function handleMessageClick() {
           <span class="attachment-processing-text">{{ attachmentProcessing.message || '正在处理文档...' }}</span>
         </div>
         <AiReasoning
-          v-if="message.reasoning && message.reasoning.content && !message.researchTaskId"
+          v-if="message.reasoning && message.reasoning.content"
           :content="message.reasoning.content"
           :duration="message.reasoning.duration"
           :is-streaming="isReasoningStreaming"
@@ -478,7 +480,7 @@ function handleMessageClick() {
         </div>
         <div class="deep-research-card-content">
           <div class="deep-research-card-title">
-            {{ _isResearchRunning ? '研究进行中' : '研究已完成' }}
+            {{ _isResearchRunning ? '正在进行深度研究' : '深度研究已完成' }}
           </div>
           <div class="deep-research-card-desc">
             {{ _isResearchRunning ? '点击查看实时进度' : '点击查看详细报告和文件' }}

@@ -306,10 +306,12 @@ const taskToolCalls = computed(() => {
   if (chatSessionId) {
     const sessionStore = useSessionStore()
     const messages = sessionStore.getSessionMessages(chatSessionId)
-    for (const msg of messages) {
-      if (msg.toolCalls && msg.toolCalls.length > 0) {
-        return msg.toolCalls
-      }
+    // 精确匹配当前深度研究任务关联的消息（researchTaskId === taskId），
+    // 而非"第一个带 toolCalls 的消息"——避免同会话其他消息
+    // （如代理模式的工具调用）污染深度研究详情。
+    const researchMsg = [...messages].reverse().find(msg => msg.researchTaskId === currentTask.taskId)
+    if (researchMsg?.toolCalls && researchMsg.toolCalls.length > 0) {
+      return researchMsg.toolCalls
     }
   }
 

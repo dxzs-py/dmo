@@ -150,6 +150,7 @@ def writeback_to_chat_message(
     content: str,
     success: bool,
     chat_session_id: str | None = None,
+    reasoning_content: str | None = None,
 ) -> str | None:
     """将深度研究结果回写到关联的 ChatMessage 并广播 WebSocket 事件。
 
@@ -158,6 +159,9 @@ def writeback_to_chat_message(
         content: 最终报告内容或错误信息
         success: 是否成功
         chat_session_id: 关联的聊天会话 ID（可选，若为 None 则从 ResearchTask/ChatMessage 反查）
+        reasoning_content: 深度研究过程中 LLM 累积的推理内容（深度思考功能）。
+            仅承载模型推理，与"深度研究任务完成态"（由前端研究卡片表达）概念分离；
+            为空/None 时不写 reasoning 字段。
 
     Returns:
         回写的 ChatMessage ID（字符串），失败时返回 None
@@ -234,10 +238,14 @@ def writeback_to_chat_message(
             research_duration = 0
 
         # 更新 reasoning 字段为完成态（与前端 AiReasoning 期望格式一致：{content, duration}）
-        if success:
-            reasoning = {"content": "深度研究已完成", "duration": research_duration}
+        # 概念边界：reasoning 只承载模型推理内容（深度思考功能），
+        # "深度研究任务完成态"由前端研究卡片（正在进行深度研究/深度研究已完成）表达，
+        # 不再将任务状态伪装成模型推理写入 reasoning。
+        # 无推理内容时置 None（cross_app 门面仅在 reasoning 非 None 时更新，保留原值）。
+        if success and reasoning_content and reasoning_content.strip():
+            reasoning = {"content": reasoning_content, "duration": research_duration}
         else:
-            reasoning = {"content": f"深度研究执行失败：{content}", "duration": research_duration}
+            reasoning = None
 
         # 通过门面更新 ChatMessage 字段（content 仅在变更时更新）
         update_chat_message_fields(

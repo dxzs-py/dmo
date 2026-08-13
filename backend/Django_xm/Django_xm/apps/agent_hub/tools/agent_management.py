@@ -367,7 +367,29 @@ class AgentRunTool(BaseTool):
                         )
                     )
 
-                    result = agent.invoke(input_text=task_input)
+                    # LangGraph Pregel.invoke 要求位置参数 input（graph state）：
+                    # 原实现 `agent.invoke(input_text=task_input)` 将输入误作 kwargs，
+                    # 报 "Pregel.invoke() missing 1 required positional argument: 'input'"。
+                    # 与 chat_service 的 agent 模式一致，输入封装为 {"messages": [HumanMessage]}。
+                    from langchain_core.messages import HumanMessage
+
+                    graph_input = {"messages": [HumanMessage(content=task_input)]}
+                    # 子代理 graph 带 checkpointer，invoke 必须提供 configurable.thread_id：
+                    # - 优先继承父任务的 thread_id（深度研究 = research_xxx），保证子代理
+                    #   内部工具审批（ApprovalMiddleware 按 configurable.thread_id 归集
+                    #   source_id）挂到父任务下，前端审批面板可正确路由；
+                    # - 无父 thread_id 时（普通聊天子代理）回退唯一 id，避免 checkpoint 冲突。
+                    _parent_configurable = (parent_config or {}).get("configurable") or {}
+                    _sub_thread_id = (
+                        _parent_configurable.get("thread_id")
+                        or parent_config.get("session_id")
+                        or f"subagent_{agent_id}"
+                    )
+                    invoke_config = {
+                        "configurable": {"thread_id": _sub_thread_id},
+                        "recursion_limit": 500,
+                    }
+                    result = agent.invoke(graph_input, config=invoke_config)
                     result_container["result"] = result
                 finally:
                     # 无论成功失败，都要递减深度
@@ -410,8 +432,26 @@ class AgentRunTool(BaseTool):
             return f"子代理执行失败: {result_container['error']}"
 
         result = result_container["result"]
+        # result 为 LangGraph state（{"messages": [BaseMessage, ...]}），提取最终 AI 回复文本。
+        # 此前 invoke 参数错误（缺 input）从未走到该路径；state dict 不支持 [:] 切片，
+        # 必须提取文本后再截断。
+        response_text = ""
+        if isinstance(result, str):
+            response_text = result
+        elif isinstance(result, dict):
+            messages = result.get("messages", [])
+            for msg in reversed(messages):
+                content = getattr(msg, "content", None)
+                if content:
+                    response_text = str(content)
+                    break
+            if not response_text:
+                response_text = str(result)
+        else:
+            response_text = str(getattr(result, "content", "") or result)
+
         meta["status"] = "completed"
-        meta["result"] = result[:5000] if result else ""
+        meta["result"] = response_text[:5000] if response_text else ""
         meta["completed_at"] = time.time()
         _save_agent_meta(agent_id, meta)
 
@@ -419,7 +459,7 @@ class AgentRunTool(BaseTool):
         if agent_id in self._active_subagents:
             self._active_subagents[agent_id]["status"] = "completed"
 
-        return f"子代理执行完成\n\n结果:\n{result[:3000]}"
+        return f"子代理执行完成\n\n结果:\n{response_text[:3000]}"
 
     async def _arun(self, agent_id: str, input_text: str = "", timeout: int = 60) -> str:
         return self._run(agent_id=agent_id, input_text=input_text, timeout=timeout)

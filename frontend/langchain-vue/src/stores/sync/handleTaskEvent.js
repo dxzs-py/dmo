@@ -87,13 +87,23 @@ export const createHandleTaskEvent = (ctx) => {
         await handleToolCallEvent(null, taskId, payload, event.type, source)
         break
       // 6 个审批事件类型
+      // 路由：task 频道审批事件可能关联 chat 会话（聊天触发的深度研究），
+      // 后端 payload 携带 cross_module_id（= chat_session_id）。将其作为 sessionId
+      // 传入，使审批状态同步更新到消息 toolCalls（详情页展示数据源），
+      // 而非仅更新 pendingApprovals —— 否则详情页审批后展示状态不更新（"卡住"）。
+      // 独立深度研究（无 chat 关联，cross_module_id 为空）仍走 taskId 分支。
       case 'approval_pending':
       case 'approval_processing':
       case 'approval_waiting':
       case 'approval_approved':
       case 'approval_rejected':
       case 'approval_timeout':
-        await handleApprovalEvent(null, payload, event.type, { taskId, source })
+        await handleApprovalEvent(
+          payload.crossModuleId || null,
+          payload,
+          event.type,
+          { taskId, source }
+        )
         break
       case 'stream_completed':
         // 幂等保护：若 researchStore 中该 task 已是终态（completed/failed），跳过

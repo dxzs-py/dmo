@@ -568,6 +568,13 @@ export const useResearchStore = defineStore('research', () => {
 
   /**
    * 设置任务推理内容（来自 stream_reasoning WebSocket 事件）
+   *
+   * 后端 writeback.py 广播的 payload 结构（toCamelCase 后）：
+   * { source, sourceId, messageId, sessionId, taskId, data: { content } }
+   * content 位于 payload.data.content；推理中状态由 task.status 驱动
+   * （ResearchTaskDetail :is-streaming="status === RUNNING/PENDING"），
+   * 此处不写 duration=0，避免任务完成后仍显示"正在思考"。
+   *
    * @param {string} taskId - 研究任务 ID
    * @param {Object} payload - stream_reasoning 事件 payload
    */
@@ -577,7 +584,7 @@ export const useResearchStore = defineStore('research', () => {
     if (!taskRef) return
     const current = taskRef.value || {}
     const reasoning = {
-      content: payload.content || (current.reasoning && current.reasoning.content) || '',
+      content: payload.data?.content || payload.content || '',
       source: payload.source || 'deep_thinking',
       ...(payload.duration !== undefined && { duration: payload.duration }),
     }

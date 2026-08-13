@@ -15,7 +15,7 @@ import { finalizeToolCallsForResearchResult } from './messageIntegrity'
 /**
  * 创建流式状态机处理器
  *
- * 处理 stream_event / stream_started / stream_interrupted /
+ * 处理 stream_event / stream_interrupted /
  * stream_completed / stream_finalized 事件，维护消息的 StreamState 状态转换。
  *
  * @param {Object} ctx - 依赖上下文
@@ -23,7 +23,6 @@ import { finalizeToolCallsForResearchResult } from './messageIntegrity'
  * @param {Object} ctx.approvalStore - approval store 实例
  * @param {Object} ctx.researchStore - research store 实例
  * @param {Set<string>} ctx.streamingSessions - reactive(new Set())，请求浏览器 SSE 活跃会话集合
- * @param {Set<string>} ctx.thinkingSessions - reactive(new Set())，非触发浏览器"正在思考"集合
  * @param {(sessionId: string, options?: Object) => Promise<{backendMessages: Array}|null>} ctx.requestFullSync
  *   - 兜底全量同步函数
  * @param {(message: Object, sessionId?: string) => void} ctx.finalizeToolCalls
@@ -32,7 +31,6 @@ import { finalizeToolCallsForResearchResult } from './messageIntegrity'
  *   - 来自 messageIntegrity，全量同步后完整性校验
  * @returns {{
  *   handleStreamEvent: (sessionId: string, payload: Object) => void,
- *   handleStreamStarted: (sessionId: string, payload: Object) => void,
  *   handleStreamInterrupted: (sessionId: string, payload: Object) => void,
  *   handleStreamCompleted: (sessionId: string, payload: Object) => void,
  *   handleStreamFinalized: (sessionId: string, payload: Object) => Promise<void>,
@@ -44,7 +42,6 @@ export const createStreamStateHandlers = (ctx) => {
     approvalStore,
     researchStore,
     streamingSessions,
-    thinkingSessions,
     requestFullSync,
     finalizeToolCalls,
     verifyMessageIntegrity,
@@ -177,12 +174,16 @@ export const createStreamStateHandlers = (ctx) => {
    * 消息进入 INTERRUPTED 状态，等待 Celery worker 完成后通过 stream_completed
    * （finalized=true，携带 task_id/final_report）回写结果。
    *
+   * 概念边界（区分"深度研究模式"与"深度思考功能"）：
+   * - INTERRUPTED 仅表示"深度研究任务进行中"（模块功能状态），由深度研究卡片
+   *   （ChatMessage `_isResearchRunning`）消费，与"模型是否在推理"无关。
+   * - 不设置 isStreaming / 不标记思考状态：深度研究是后台异步任务，
+   *   不等于模型思考（深度思考），不应触发"正在思考"动画或禁用输入。
+   * - 模型推理过程（深度思考）由独立的 stream_reasoning 事件驱动 AiReasoning。
+   *
    * 处理逻辑（所有浏览器统一）：
-   * - 设置消息的 researchTaskId（让 ChatMessage.reasoningMode='deep-research'，
-   *   AiReasoning 显示"正在进行深度研究"而非"正在思考"）
+   * - 设置消息的 researchTaskId（绑定研究任务，供审批路由 / 研究卡片使用）
    * - 设置消息的 streamState=INTERRUPTED（避免 showContinueResearch 提前显示"继续研究"按钮）
-   * - 设置消息的 isStreaming=true（让 UI 显示思考动画）
-   * - 标记 thinkingSessions（让 ChatView 的 isStreaming=true）
    *
    * 幂等性：
    * - 触发浏览器已通过 SSE deep_research 事件（setDeepResearchTask）完成上述设置，
@@ -195,9 +196,8 @@ export const createStreamStateHandlers = (ctx) => {
   const handleStreamInterrupted = (sessionId, payload) => {
     const session = getSession(sessionStore, sessionId)
     if (!session?.messages) {
-      // 会话未加载，仅标记 thinkingSessions，等会话加载后由后续事件补偿
-      thinkingSessions.add(sessionId)
-      logger.info(`[Sync] stream_interrupted 会话不存在，标记正在思考: session=${sessionId}`)
+      // 会话未加载：研究任务绑定由会话加载后的快照/后续事件补偿，无需标记思考状态
+      logger.info(`[Sync] stream_interrupted 会话未加载: session=${sessionId}`)
       return
     }
 
@@ -218,11 +218,10 @@ export const createStreamStateHandlers = (ctx) => {
 
     if (!targetMsg) {
       logger.warn(`[Sync] stream_interrupted 未找到目标消息: session=${sessionId}, message=${messageId || '(兜底)'}`)
-      thinkingSessions.add(sessionId)
       return
     }
 
-    // 设置 researchTaskId（让 ChatMessage.reasoningMode='deep-research'）
+    // 设置 researchTaskId（绑定深度研究任务）
     if (taskId && !targetMsg.researchTaskId) {
       targetMsg.researchTaskId = taskId
       // 同步到 versions[currentVersion]
@@ -230,94 +229,20 @@ export const createStreamStateHandlers = (ctx) => {
       if (ver) ver.researchTaskId = taskId
     }
 
-    // 设置 streamState=INTERRUPTED（避免 showContinueResearch 提前显示"继续研究"按钮）
-    // 仅在非终态时设置，避免覆盖已完成消息的状态
+    // 设置 streamState=INTERRUPTED（深度研究任务进行中，避免 showContinueResearch
+    // 提前显示"继续研究"按钮）。仅在非终态时设置，避免覆盖已完成消息的状态。
     if (targetMsg.streamState !== StreamState.COMPLETED
         && targetMsg.streamState !== StreamState.ERROR) {
       targetMsg.streamState = StreamState.INTERRUPTED
-      targetMsg.isStreaming = true
       // 同步到 versions[currentVersion]
       const ver = getCurrentVersion(targetMsg)
-      if (ver) {
-        ver.streamState = StreamState.INTERRUPTED
-        ver.isStreaming = true
-      }
+      if (ver) ver.streamState = StreamState.INTERRUPTED
     }
-
-    // 标记 thinkingSessions（让 ChatView 的 isStreaming=true，UI 显示思考动画）
-    thinkingSessions.add(sessionId)
 
     logger.info(
       `[Sync] stream_interrupted 消息进入 INTERRUPTED 状态: session=${sessionId}, ` +
       `message=${messageId || '(兜底)'}, task=${taskId || '(无)'}`
     )
-  }
-
-  /**
-   * 流式输出开始（stream_started 事件）
-   *
-   * 事件来源：后端 research_runner.py 在 execute_research_async 开始时发布，
-   * 通过 WebSocket session 频道广播到所有浏览器。
-   *
-   * 处理逻辑：
-   * - 触发浏览器（streamingSessions 中）：SSE 已在本地管理 isStreaming 状态，跳过。
-   * - 非触发浏览器：标记会话为"正在思考"，设置目标消息 isStreaming=true、streamState=STREAMING，
-   *   使 UI 显示"正在思考"指示器。后续 stream_completed 事件会清理此状态。
-   *
-   * @param {string} sessionId
-   * @param {Object} payload - 包含 task_id、message_id、source 等字段
-   */
-  const handleStreamStarted = (sessionId, payload) => {
-    // 触发浏览器通过 SSE 本地管理 isStreaming 状态，跳过 WebSocket 事件
-    if (streamingSessions.has(sessionId)) {
-      logger.debug(`[Sync] stream_started 跳过（触发浏览器 SSE 活跃）: session=${sessionId}`)
-      return
-    }
-
-    const session = getSession(sessionStore, sessionId)
-    if (!session?.messages) {
-      // 会话不存在时仍标记 thinkingSessions，等会话加载后由 stream_completed 清理
-      thinkingSessions.add(sessionId)
-      logger.info(`[Sync] stream_started 会话不存在，标记正在思考: session=${sessionId}`)
-      return
-    }
-
-    // 定位目标消息（优先按 messageId，兜底最后一条 assistant 消息）
-    const messageId = payload.messageId
-    let targetMsg = null
-    if (messageId) {
-      targetMsg = findMessageById(session, messageId)
-    }
-    if (!targetMsg) {
-      targetMsg = getLastAssistantMessage(session)
-    }
-
-    if (targetMsg) {
-      // 非触发浏览器：标记会话为"正在思考"
-      thinkingSessions.add(sessionId)
-
-      // 深度研究模式：消息处于 INTERRUPTED 状态（触发浏览器 SSE 已结束，由后端 stream_started 广播）
-      // 此时非触发浏览器不应推进 streamState，仅设置 isStreaming=true，
-      // 由 ChatMessage.vue 的 AiReasoning 根据 streamState=INTERRUPTED + researchTaskId
-      // 显示"正在进行深度研究"文案；若覆盖为 STREAMING 会破坏深度研究卡片的运行态展示。
-      if (targetMsg.streamState === StreamState.INTERRUPTED) {
-        targetMsg.isStreaming = true
-        logger.info(`[Sync] stream_started 非触发浏览器标记正在进行深度研究: session=${sessionId}, message=${messageId || '(兜底)'}`)
-        return
-      }
-
-      // 仅在非终态时设置 STREAMING，避免覆盖已完成消息的状态
-      if (targetMsg.streamState !== StreamState.COMPLETED
-          && targetMsg.streamState !== StreamState.ERROR) {
-        targetMsg.isStreaming = true
-        targetMsg.streamState = StreamState.STREAMING
-      }
-      logger.info(`[Sync] stream_started 非触发浏览器标记正在思考: session=${sessionId}, message=${messageId || '(兜底)'}, source=${payload.source || '(none)'}`)
-    } else {
-      // 无目标消息时仍标记 thinkingSessions
-      thinkingSessions.add(sessionId)
-      logger.info(`[Sync] stream_started 未找到目标消息，标记正在思考: session=${sessionId}`)
-    }
   }
 
   /**
@@ -428,8 +353,6 @@ export const createStreamStateHandlers = (ctx) => {
         }
         targetMsg.isStreaming = false
         targetMsg.streamState = StreamState.COMPLETED
-        // 深度研究任务完成，清理非触发浏览器的"正在思考"状态
-        thinkingSessions.delete(sessionId)
 
         // 深度研究任务完成，清理所有工具审批状态
         // 防止研究结束后详情中仍残留审批状态
@@ -547,9 +470,6 @@ export const createStreamStateHandlers = (ctx) => {
       } else {
         logger.info(`[Sync] stream_completed 收到时请求浏览器消息状态为 ${targetMsg.streamState}，不切换: session=${sessionId}`)
       }
-      // F4-B：请求浏览器完成时清理 thinkingSessions，防止深度研究模式下 thinkingSessions
-      // 在 handleStreamCompleted 非请求浏览器分支才被 delete 而遗留
-      thinkingSessions.delete(sessionId)
       return
     }
 
@@ -557,14 +477,6 @@ export const createStreamStateHandlers = (ctx) => {
     if (!finalized) {
       // 后端尚未确认 PATCH 完成：仅标记 FINALIZING，不触发全量同步
       // 真正的全量同步由 stream_finalized 事件触发
-
-      // 深度研究非触发浏览器：stream_completed(finalized=false) 是 SSE 结束事件，
-      // 但 Celery 后台任务仍在执行。保持 STREAMING + isStreaming=true，
-      // 让"正在思考"持续显示，直到 stream_completed(携带 task_id/final_report) 到达。
-      if (thinkingSessions.has(sessionId)) {
-        logger.info(`[Sync] stream_completed(finalized=false) 深度研究非触发浏览器保持正在思考: session=${sessionId}`)
-        return
-      }
 
       if (targetMsg.streamState === StreamState.STREAMING) {
         targetMsg.streamState = StreamState.FINALIZING
@@ -610,8 +522,6 @@ export const createStreamStateHandlers = (ctx) => {
       // toolCalls 最终化统一收敛到 handleStreamFinalized（单一最终化路径）：
       // 非请求浏览器最终化在 stream_finalized 同步完成后执行（含 wasCompleted 场景）
     }
-    // 清理非触发浏览器的"正在思考"状态（finalized=true 表示流式已最终化）
-    thinkingSessions.delete(sessionId)
     // finalized=true 时后端数据已是权威，非 FINALIZING/SYNCING 态均触发全量同步
     // 全量同步完成后，校验 tool_calls 数量和 content 长度（工具卡片 + AI 内容完整性）
     if (targetMsg.streamState !== StreamState.FINALIZING
@@ -645,8 +555,6 @@ export const createStreamStateHandlers = (ctx) => {
    * @param {Object} payload
    */
   const handleStreamFinalized = async (sessionId, payload) => {
-    // 清理非触发浏览器的"正在思考"状态（stream_finalized 事件标志最终化完成）
-    thinkingSessions.delete(sessionId)
     const session = getSession(sessionStore, sessionId)
     if (!session?.messages) return
 
@@ -728,7 +636,6 @@ export const createStreamStateHandlers = (ctx) => {
 
   return {
     handleStreamEvent,
-    handleStreamStarted,
     handleStreamInterrupted,
     handleStreamCompleted,
     handleStreamFinalized,

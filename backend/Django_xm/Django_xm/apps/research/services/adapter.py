@@ -76,6 +76,11 @@ class OfficialDeepAgentAdapter:
         # 实例化时未传入则保持 None，astream_research_with_interrupts 内部按需从 ResearchTask 反查
         self.chat_session_id: str | None = kwargs.get("chat_session_id")
         self._kwargs = kwargs
+        # 累积的 LLM 推理内容（深度思考功能）：
+        # - 每次流式 chunk 追加，广播时发送累积后的完整内容（与代理模式 deep_chat_service 一致），
+        #   避免前端覆盖语义下仅显示最后一个 chunk。
+        # - 任务完成时由 research_runner 携带到 writeback，持久化到 ChatMessage.reasoning。
+        self.accumulated_reasoning: str = ""
 
     def research(
         self, query: str, config: dict[str, Any] | None = None, callbacks: list | None = None
@@ -601,8 +606,11 @@ class OfficialDeepAgentAdapter:
                                     await self._publish_tool_event(evt)
 
                                 # 捕获 LLM thinking/reasoning 内容（AIMessageChunk.additional_kwargs.reasoning_content）
+                                # 累积后广播完整内容：每次 chunk 追加到 accumulated_reasoning，
+                                # 广播 content 为累积后的完整推理文本（前端 AiReasoning 覆盖语义下内容完整）。
                                 thinking_text = extract_thinking_content(msg_obj)
                                 if thinking_text:
+                                    self.accumulated_reasoning = (self.accumulated_reasoning or "") + thinking_text
                                     _configurable = config_arg.get("configurable", {})
                                     _session_id = _configurable.get("chat_session_id") or self.chat_session_id
                                     _message_id = _configurable.get("assistant_message_id")
@@ -616,7 +624,7 @@ class OfficialDeepAgentAdapter:
                                                 session_id=_session_id,
                                                 task_id=self.thread_id,
                                                 message_id=_message_id,
-                                                content=thinking_text,
+                                                content=self.accumulated_reasoning,
                                             )
                                         except Exception:
                                             pass

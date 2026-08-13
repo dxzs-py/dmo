@@ -411,7 +411,19 @@ export const useApprovalStore = defineStore('approval', () => {
 
     const sessionStore = useSessionStore()
     const source = entry?.source || (approvalData.source === 'deep_research' ? 'deep_research' : 'chat')
-    const sessionId = entry?.sessionId || sessionStore.currentSessionId
+    // sessionId 推导优先级：
+    // 1. options.sessionId（调用方显式指定，如 DeepResearchView 详情页）
+    // 2. entry.sessionId（WebSocket 审批事件创建 entry 时携带）
+    // 3. approvalData.crossModuleId / chatSessionId（后端透传的关联会话 ID，
+    //    聊天触发的深度研究 = chat_session_id，避免详情页审批时
+    //    因 currentSessionId 为空/错误导致消息审批状态不更新）
+    // 4. sessionStore.currentSessionId（仅 chat/learning 来源回退；deep_research
+    //    独立模式不回退，避免误用聊天残留会话导致独立任务审批被错误路由到 sessionStore）
+    const sessionId = options.sessionId
+      || entry?.sessionId
+      || approvalData.crossModuleId
+      || approvalData.chatSessionId
+      || (source !== 'deep_research' ? sessionStore.currentSessionId : null)
     const taskId = options.taskId || entry?.taskId || null
 
     // 防重复
@@ -421,12 +433,16 @@ export const useApprovalStore = defineStore('approval', () => {
     }
 
     // 标记为 processing
+    // 数据源归属互斥路由（与 _handleTimeout/_handleProcessing/_handleWaiting/_handleProcessed 对齐）：
+    // - sessionId 存在（chat / learning / 聊天触发的深度研究）→ 数据源是 sessionStore 消息 toolCalls，
+    //   只更新 sessionStore，不调用 researchStore（该任务不存在于 researchStore.tasks，
+    //   详情页 taskToolCalls 同样从 sessionStore 消息读取）
+    // - 仅 taskId（独立深度研究）→ 数据源是 researchStore.tasks，只更新 researchStore
     approvalData.state = 'processing'
     if (sessionId) {
       sessionStore.updateToolCallApprovalState(sessionId, toolCallId, 'processing')
       sessionStore.setApprovalToLastMessage(sessionId, { ...approvalData, state: 'processing' })
-    }
-    if (taskId) {
+    } else if (taskId) {
       try {
         const researchStore = await _getResearchStore()
         researchStore.updateToolCallApprovalState(taskId, toolCallId, 'processing')
@@ -447,11 +463,11 @@ export const useApprovalStore = defineStore('approval', () => {
       // 仅在拒绝时更新状态为 rejected
       // 通过时不设 approved：SSE 流中 tool_result 事件已自行更新状态，
       // 设为 approved 会覆盖"处理中"状态，导致 P1（触发浏览器显示"已确认"而非"处理中"）
+      // 数据源归属互斥路由（与 processing 标记一致）：sessionId 优先，独立深度研究走 taskId
       if (!approved && sessionId) {
         sessionStore.updateToolCallApprovalState(sessionId, toolCallId, 'rejected')
         sessionStore.setApprovalToLastMessage(sessionId, { ...approvalData, state: 'rejected' })
-      }
-      if (!approved && taskId) {
+      } else if (!approved && taskId) {
         try {
           const researchStore = await _getResearchStore()
           researchStore.updateToolCallApprovalState(taskId, toolCallId, 'rejected')
@@ -474,7 +490,7 @@ export const useApprovalStore = defineStore('approval', () => {
         return
       }
       logger.error(`[ApprovalStore] 审批${approved ? '确认' : '拒绝'}失败:`, err)
-      // 恢复审批状态
+      // 恢复审批状态（数据源归属互斥路由，与 processing/rejected 一致）
       pendingApprovals.value.set(toolCallId, {
         source,
         taskId,
@@ -485,8 +501,7 @@ export const useApprovalStore = defineStore('approval', () => {
       if (sessionId) {
         sessionStore.updateToolCallApprovalState(sessionId, toolCallId, 'pending')
         sessionStore.setApprovalToLastMessage(sessionId, { ...approvalData, state: 'pending' })
-      }
-      if (taskId) {
+      } else if (taskId) {
         try {
           const researchStore = await _getResearchStore()
           researchStore.updateToolCallApprovalState(taskId, toolCallId, 'pending')

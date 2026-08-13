@@ -1030,3 +1030,4 @@ logger.js:24 [Realtime] 收到 pong
 logger.js:24 [Realtime] 收到 pong
 logger.js:24 [Realtime] 收到 pong
 logger.js:24 [Realtime] 收到 pong
+简要研究：请对比 REST API 与 GraphQL 在设计理念上的主要差异

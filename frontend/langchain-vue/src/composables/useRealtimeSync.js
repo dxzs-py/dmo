@@ -407,7 +407,7 @@ function createRealtimeSync() {
       // 导致回放的低 seq 事件被 applySessionEvent 的去重逻辑跳过（event.seq <= prevSeq），
       // 或被 _processSessionEventOrdered 当作"过期事件"丢弃（event.seq < expectedSeq）。
       // 必须在发送 subscribe 请求之前重置，确保回放事件到达时去重基线已清零。
-      // 注意：仅重置该 session 的状态，不影响其他会话；不清理 streamingSessions/thinkingSessions。
+      // 注意：仅重置该 session 的状态，不影响其他会话；不清理 streamingSessions。
       if (options.replayFromSeq === 0) {
         // 动态 import（microtask resolve）早于 WebSocket 消息网络往返执行，
         // 时序与原同步调用等价（reset 先于 subscribe 请求生效）

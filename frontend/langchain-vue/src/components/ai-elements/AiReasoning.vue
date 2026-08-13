@@ -53,12 +53,6 @@ const props = defineProps({
     default: 'deep_thinking',
     validator: (v) => ['deep_thinking', 'model_intrinsic'].includes(v)
   },
-  /** UI 上下文模式：'deep-research'=深度研究模式状态，undefined=默认（Agent/深度思考） */
-  mode: {
-    type: String,
-    default: undefined,
-    validator: (v) => v === undefined
-  }
 })
 
 const emit = defineEmits(['open-change'])

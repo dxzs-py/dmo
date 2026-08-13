@@ -22,6 +22,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from asgiref.sync import sync_to_async
+
 from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,7 @@ class ResearchResult:
     usage_data: dict[str, int] | None = None
     model_name: str = ""
     error_message: str = ""
+    reasoning: str = ""
     raw_result: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -146,6 +149,7 @@ def execute_research(
             usage_data=usage_data,
             model_name=model_name,
             error_message=error_message,
+            reasoning=getattr(agent, "accumulated_reasoning", ""),
             raw_result=result,
         )
     finally:
@@ -252,6 +256,24 @@ async def _handle_interrupt_create_and_exit(
                 base_extra=base_extra,
             ),
         }
+
+        # 幂等保护（方案 B）：同一 interrupt_id 已有审批且已决断（非 PENDING）时跳过，
+        # 不重置 state。恢复执行中 agent 可能再次经过已决断 interrupt 的暂停点
+        # （如批次 A 恢复后推进到批次 B 的 interrupt 处暂停），此时若 B 的审批已被
+        # 用户确认（WAITING/PROCESSING/APPROVED 等），request_approval_async 的
+        # update_or_create 会把 state 重置回 PENDING，导致用户确认失效、前端审批
+        # 状态回退。已决断审批保持原状态，由对应批次恢复任务（该批次全部决断后）
+        # 统一 resume 该 interrupt。PENDING 审批（用户未确认）走正常创建/续期路径。
+        _existing = await sync_to_async(
+            lambda: Approval.objects.filter(interrupt_id=interrupt_id).first()
+        )()
+        if _existing is not None and _existing.state != Approval.STATE_PENDING:
+            logger.info(
+                f"[ResearchApproval] 审批已存在且已决断，跳过不重置: "
+                f"interrupt_id={interrupt_id}, tool={tool_name}, "
+                f"state={_existing.state}, task_id={thread_id}"
+            )
+            continue
 
         try:
             await request_approval_async(
@@ -371,6 +393,7 @@ async def execute_research_async(
             usage_data=usage_data,
             model_name=model_name,
             error_message=error_message,
+            reasoning=getattr(agent, "accumulated_reasoning", ""),
             raw_result=result,
         )
     finally:

@@ -386,7 +386,7 @@ watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
             key="messages"
             :messages="messages"
             :is-loading="chatStore.isLoading"
-            :is-streaming="chatStore.isStreaming || syncStore.isThinking(sessionStore.currentSessionId)"
+            :is-streaming="chatStore.isStreaming"
             :selected-message-id="selectedMessage?.id"
             :show-debug="showDebug"
             @regenerate="handleRegenerate"

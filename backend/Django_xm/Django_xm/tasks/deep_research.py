@@ -367,6 +367,7 @@ def run_research_task(
                 message_id = writeback_to_chat_message(
                     thread_id, result.final_report, success=True,
                     chat_session_id=chat_session_id,
+                    reasoning_content=result.reasoning,
                 )
                 broadcast_stream_completed(
                     chat_session_id, thread_id, success=True,
@@ -802,34 +803,18 @@ def research_resume_task(
             }
 
         try:
-            # 1.2 其他批次待审批防护（并行恢复 → 重复审批根因修复）
-            # 场景：write_todos#1/#2 并行确认触发两个 research_resume_task。
-            # 线程 A 恢复时拦截 read_file（Path D 创建 pending 审批）后中断退出并
-            # 释放 thread 锁；线程 B（等待 thread 锁后进入）若继续恢复执行，会从
-            # 同一 checkpoint 重新拦截同一 read_file（DB 仍 pending → 幂等不命中），
-            # 产生重复审批。正确行为：B 检测到"其他批次已有 pending/waiting 审批"
-            # 直接退出，等待该审批决断后由新的恢复任务统一恢复。
-            # 排除本批次（graph_interrupt_id）：本批次未决断走下方决断检查（自愈/重试）。
-            from Django_xm.apps.approvals.models import Approval as _Approval
-
-            _pending_count = _Approval.objects.filter(
-                source=_Approval.SOURCE_DEEP_RESEARCH,
-                source_id=thread_id,
-                state__in=[_Approval.STATE_PENDING, _Approval.STATE_WAITING],
-            ).exclude(extra__graph_interrupt_id=graph_interrupt_id).count()
-            if _pending_count:
-                logger.info(
-                    f"[Resume] 其他批次存在 {_pending_count} 条 pending/waiting 审批，"
-                    f"退出等待（防并行恢复重复审批）: thread_id={thread_id}, "
-                    f"graph_interrupt_id={graph_interrupt_id}"
-                )
-                return {
-                    "status": "skipped",
-                    "reason": "pending_approvals_in_other_batches",
-                    "thread_id": thread_id,
-                }
-
             # 2. 检查同批次所有审批是否已决断
+            # 方案 B（去除跨批次互等死锁）：
+            # - 本批次全部决断后立即恢复本批次 interrupt（Command(resume=本批次决策)），
+            #   不再因其他批次存在 pending/waiting 审批而跳过。
+            # - 其他批次的 interrupt 保持 pending：agent 恢复执行后推进到它们的
+            #   interrupt 处自然再次暂停，等待该批次审批确认后由各自的恢复任务接管，
+            #   形成串行推进，不会死锁。
+            # - 并发安全由 thread 锁（L779）+ 批次锁（L789）双保险保证：
+            #   同一 thread/批次同时只有一个恢复任务执行恢复。
+            # - 防重复审批由三层兜底：middleware 幂等集合（approved 才幂等）、
+            #   request_approval 的 update_or_create（interrupt_id 幂等）、
+            #   已决断审批不重置（_handle_interrupt_create_and_exit 幂等保护）。
             all_resume_values, all_resolved = _collect_batch_decisions(
                 thread_id,
                 graph_interrupt_id,
@@ -1007,6 +992,7 @@ def research_resume_task(
                         message_id = writeback_to_chat_message(
                             thread_id, result.final_report, success=True,
                             chat_session_id=chat_session_id,
+                            reasoning_content=result.reasoning,
                         )
                         broadcast_stream_completed(
                             chat_session_id, thread_id, success=True,

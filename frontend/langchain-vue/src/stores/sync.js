@@ -161,13 +161,6 @@ export const useSyncStore = defineStore('sync', () => {
   const streamingSessions = reactive(new Set())
 
   /**
-   * 非触发浏览器通过 WebSocket stream_started 事件感知"正在思考"的会话集合。
-   * 触发浏览器通过 SSE 本地 isStreaming 状态感知，不依赖此集合。
-   * @type {Set<string>}
-   */
-  const thinkingSessions = reactive(new Set())
-
-  /**
    * 有序队列间隙停滞回调（Task 6：间隙即触发快照校对）
    *
    * 触发时机：orderedQueue 等待 GAP_WAIT_MS 后 expectedSeq 仍缺失（真实乱序/丢包），
@@ -232,13 +225,6 @@ export const useSyncStore = defineStore('sync', () => {
   })
 
   // === 公共方法（与流式生命周期相关） ===
-
-  /**
-   * 判断指定会话是否处于"正在思考"状态（非触发浏览器）
-   * @param {string} sessionId
-   * @returns {boolean}
-   */
-  const isThinking = (sessionId) => thinkingSessions.has(sessionId)
 
   /**
    * 标记会话开始流式输出（由 chat store 在 sendMessage 时调用）
@@ -380,7 +366,6 @@ export const useSyncStore = defineStore('sync', () => {
           approvalStore,
           researchStore,
           streamingSessions,
-          thinkingSessions,
           requestFullSync,
           finalizeToolCalls: integrityHandlers.finalizeToolCallsForCompletedMessage,
           verifyMessageIntegrity: integrityHandlers.verifyMessageIntegrityAfterSync,
@@ -394,7 +379,6 @@ export const useSyncStore = defineStore('sync', () => {
           seqDedup,
           orderedQueue,
           streamingSessions,
-          thinkingSessions,
           fullSyncPending,
           requestFullSync,
           // 注入独立模块函数，handleSessionEvent.js 中优先使用注入版本，回退内联版本
@@ -487,7 +471,7 @@ export const useSyncStore = defineStore('sync', () => {
    * - _sessionEventQueue 该 session 状态：expectedSeq=0、清空 queue、processing=false
    *
    * 注意：
-   * - 仅重置本会话状态，不影响其他会话；不清理 streamingSessions/thinkingSessions。
+   * - 仅重置本会话状态，不影响其他会话；不清理 streamingSessions。
    * - 建议在 subscribeSession(replayFromSeq=0) 之前调用，避免与正在处理的事件队列竞态。
    * - 若 _sessionEventQueue.processing===true 时调用，可能丢失未处理完的事件；
    *   调用方需确保调用时机不在事件处理过程中。
@@ -572,7 +556,6 @@ export const useSyncStore = defineStore('sync', () => {
   )
 
   return {
-    isThinking,
     startStreaming,
     stopStreaming,
     handleRealtimeEvent,
