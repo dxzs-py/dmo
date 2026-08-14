@@ -56,7 +56,6 @@ import time
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
-from django.core.cache import cache
 
 from Django_xm.common.event_schema import (
     EventType,
@@ -123,7 +122,8 @@ _PUBLISH_EVENT_LUA_SCRIPT = None
 
 def _get_publish_event_script(redis_client):
     """懒加载注册 Lua 脚本，失败时返回 None 以回退到 eval。"""
-    global _PUBLISH_EVENT_LUA_SCRIPT
+    # 模块级脚本对象缓存（懒加载）
+    global _PUBLISH_EVENT_LUA_SCRIPT  # noqa: PLW0603
     if _PUBLISH_EVENT_LUA_SCRIPT is None:
         try:
             _PUBLISH_EVENT_LUA_SCRIPT = redis_client.register_script(_PUBLISH_EVENT_LUA)
@@ -579,7 +579,9 @@ def publish_event_sync(
         logger.exception(
             f"[RealtimeEvents] publish_event_sync payload 校验失败，事件未发布: "
             f"event_type={event_type}, session={session_id}, task={task_id}, "
-            f"user={user_id}, payload_keys={list(payload.keys()) if isinstance(payload, dict) else type(payload).__name__}",
+            f"user={user_id}, "
+            f"payload_keys="
+            f"{list(payload.keys()) if isinstance(payload, dict) else type(payload).__name__}",
         )
         raise
     except Exception:
@@ -609,9 +611,8 @@ def get_event_history(channel_type, channel_id, last_seq=None, limit=100):
         events = []
         for item in raw_items:
             try:
-                if isinstance(item, bytes):
-                    item = item.decode("utf-8")
-                event = json.loads(item)
+                raw_item = item.decode("utf-8") if isinstance(item, bytes) else item
+                event = json.loads(raw_item)
                 if last_seq is not None:
                     if event.get("seq", 0) <= last_seq:
                         continue
@@ -661,8 +662,9 @@ def _filter_ghost_session_created(events, user_id):
         return events
 
     try:
-        from Django_xm.apps.chat.models import ChatSession
         from django.db.models import Count
+
+        from Django_xm.apps.chat.models import ChatSession
 
         sessions = list(
             ChatSession.objects.filter(session_id__in=created_ids, user_id=user_id)

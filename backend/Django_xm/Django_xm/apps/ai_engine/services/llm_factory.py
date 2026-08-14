@@ -36,7 +36,6 @@ from ..providers import (
     apply_reasoning_patch_if_needed,
     patch_groq_model,
 )
-from .thinking import is_thinking_enabled
 
 # 从拆分后的模块导入（Task 19）
 from .llm_cache import (
@@ -56,6 +55,7 @@ from .registry_service import (
 from .registry_service import (
     is_provider_available as registry_is_provider_available,
 )
+from .thinking import is_thinking_enabled
 
 logger = get_logger(__name__)
 
@@ -102,9 +102,9 @@ def _apply_special_params(
             param_cfg = registry["special_params"][param_key]
             kwarg_name = param_cfg.get("model_kwarg", param_key)
             pass_mode = param_cfg.get("pass_mode", "model_kwargs")
-            if pass_mode == "top_level":
+            if pass_mode == "top_level":  # noqa: S105 - pass_mode 是参数传递模式标识符，非口令
                 init_kwargs[kwarg_name] = param_value
-            elif pass_mode == "extra_body":
+            elif pass_mode == "extra_body":  # noqa: S105 - 同上，参数传递模式标识符误报
                 extra_body[kwarg_name] = param_value
             else:
                 model_kwargs[kwarg_name] = param_value
@@ -644,7 +644,7 @@ def _ensure_groq_bind_tools_field() -> None:
     注意：Groq 模型并非所有版本都缺少 bind_tools 字段，
     此处仅在确实缺失时做兼容性处理。
     """
-    global _groq_field_patched
+    global _groq_field_patched  # noqa: PLW0603 - 模块级补丁状态标记惰性初始化
     if _groq_field_patched:
         return
 
@@ -746,7 +746,7 @@ def get_helper_model() -> BaseChatModel | None:
     辅助模型用于非主要 Agent 场景（MultiQuery、Map-Reduce、意图分类、压缩等）。
     返回 LazyFallbackChatModel 包装，具备 Circuit Breaker 和自动降级能力。
     """
-    global _helper_model_cache
+    global _helper_model_cache  # noqa: PLW0603 - 模块级单例惰性初始化
     if _helper_model_cache is not None:
         return _helper_model_cache
 

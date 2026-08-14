@@ -205,8 +205,8 @@ watch(() => props.message, () => {
             <div
               v-for="(source, index) in metadata.sources"
               :key="index"
-              class="source-item"
               v-memo="[source.title, source.content, source.href || source.url]"
+              class="source-item"
             >
               <div class="source-index">{{ index + 1 }}</div>
               <div class="source-body">
@@ -263,8 +263,8 @@ watch(() => props.message, () => {
             <div
               v-for="tool in metadata.tools"
               :key="tool.id"
-              class="tool-item"
               v-memo="[tool.name, tool.state, tool.result, tool.error]"
+              class="tool-item"
             >
               <div class="tool-header">
                 <div class="tool-name-row">
@@ -352,11 +352,11 @@ watch(() => props.message, () => {
                   <span class="token-label">输出 Token</span>
                   <span class="token-value">{{ (tokenDetail.llm?.output || 0).toLocaleString() }}</span>
                 </div>
-                <div class="token-item" v-if="tokenDetail.llm?.reasoning">
+                <div v-if="tokenDetail.llm?.reasoning" class="token-item">
                   <span class="token-label">推理 Token</span>
                   <span class="token-value">{{ tokenDetail.llm.reasoning.toLocaleString() }}</span>
                 </div>
-                <div class="token-item" v-if="tokenDetail.llm?.cachedInput">
+                <div v-if="tokenDetail.llm?.cachedInput" class="token-item">
                   <span class="token-label">缓存命中</span>
                   <span class="token-value">{{ tokenDetail.llm.cachedInput.toLocaleString() }}</span>
                 </div>
@@ -372,11 +372,11 @@ watch(() => props.message, () => {
                   <span class="token-label">调用次数</span>
                   <span class="token-value">{{ tokenDetail.tools.count }}</span>
                 </div>
-                <div class="token-item" v-if="tokenDetail.tools.names?.length">
+                <div v-if="tokenDetail.tools.names?.length" class="token-item">
                   <span class="token-label">工具列表</span>
                   <span class="token-value token-names">{{ tokenDetail.tools.names.join(', ') }}</span>
                 </div>
-                <div class="token-item" v-if="tokenDetail.tools.llmTokens?.input || tokenDetail.tools.llmTokens?.output">
+                <div v-if="tokenDetail.tools.llmTokens?.input || tokenDetail.tools.llmTokens?.output" class="token-item">
                   <span class="token-label">工具 LLM Token</span>
                   <span class="token-value">入{{ (tokenDetail.tools.llmTokens.input || 0).toLocaleString() }} / 出{{ (tokenDetail.tools.llmTokens.output || 0).toLocaleString() }}</span>
                 </div>
@@ -388,7 +388,7 @@ watch(() => props.message, () => {
                   <span class="token-label">Embedding Token</span>
                   <span class="token-value">{{ tokenDetail.storage.embeddingTokens.toLocaleString() }}</span>
                 </div>
-                <div class="token-item" v-if="tokenDetail.storage.retrievalDocs">
+                <div v-if="tokenDetail.storage.retrievalDocs" class="token-item">
                   <span class="token-label">检索文档数</span>
                   <span class="token-value">{{ tokenDetail.storage.retrievalDocs }}</span>
                 </div>
@@ -405,11 +405,11 @@ watch(() => props.message, () => {
                   <span class="token-label">输出 Token</span>
                   <span class="token-value">{{ (tokenInfo.output || 0).toLocaleString() }}</span>
                 </div>
-                <div class="token-item" v-if="tokenInfo.reasoning">
+                <div v-if="tokenInfo.reasoning" class="token-item">
                   <span class="token-label">推理 Token</span>
                   <span class="token-value">{{ tokenInfo.reasoning.toLocaleString() }}</span>
                 </div>
-                <div class="token-item" v-if="tokenInfo.cachedInput">
+                <div v-if="tokenInfo.cachedInput" class="token-item">
                   <span class="token-label">缓存命中</span>
                   <span class="token-value">{{ tokenInfo.cachedInput.toLocaleString() }}</span>
                 </div>

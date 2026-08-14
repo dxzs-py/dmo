@@ -2,10 +2,11 @@
 深度模式聊天服务
 
 从 chat_service.py 拆分出的深度研究相关逻辑：
-- 深度研究任务创建与 Celery 启动
+- 深度研究任务创建与执行服务启动信令
 - 无工具回退模式
 """
 
+import asyncio
 import logging
 import time
 import uuid
@@ -13,7 +14,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from asgiref.sync import sync_to_async
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
 from Django_xm.apps.ai_engine.services.cost_tracker import TokenDetailTracker
 from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
@@ -113,14 +114,6 @@ def update_chat_message_research_task_id_async(
         )
 
 
-@sync_to_async(thread_sensitive=True)
-def _update_celery_task_id_sync(thread_id, celery_task_id):
-    """同步更新研究任务的 Celery task ID"""
-    from Django_xm.apps.research.services.cross_app import update_research_task_fields
-
-    update_research_task_fields(thread_id, celery_task_id=celery_task_id)
-
-
 class DeepChatService:
     """深度模式聊天服务"""
 
@@ -200,7 +193,7 @@ class DeepChatService:
         """
         from django.contrib.auth import get_user_model
 
-        from Django_xm.apps.research.services.cross_app import get_research_task_manager, update_research_task_fields
+        from Django_xm.apps.research.services.cross_app import get_research_task_manager
 
         User = get_user_model()
 
@@ -224,7 +217,7 @@ class DeepChatService:
             session_id,
         )
 
-        # B1: 将工具选择写入 ResearchTask DB，确保恢复路径（research_resume_task）
+        # B1: 将工具选择写入 ResearchTask DB，确保执行服务恢复路径
         # 能通过 _build_research_agent_from_task 读取 selected_tools/use_mcp/selected_mcp_servers
         if selected_tools or use_mcp or selected_mcp_servers:
             update_fields = {}
@@ -241,7 +234,7 @@ class DeepChatService:
 
         return thread_id
 
-    async def start_celery(
+    async def start_execution(
         self,
         query: str,
         session_id: str | None = None,
@@ -259,10 +252,10 @@ class DeepChatService:
         continue_task_id: str | None = None,
         message_id: str | None = None,
     ) -> str:
-        """启动深度研究 Celery 任务（不等待结果）
+        """发布深度研究执行启动信令（触发 FastAPI 执行服务，不等待结果）
 
         Chat SSE 在深度研究模式下应"立即返回"——发送 deep_research 事件后立即结束流。
-        研究过程由 Celery worker 异步执行，通过以下两条链路回写：
+        研究过程由 fastapi_service SessionExecutor 协程异步执行，通过以下两条链路回写：
           1. writeback_to_chat_message：回写 final_report 到 ChatMessage（持久化）
           2. broadcast_stream_completed：广播 stream_completed WebSocket 事件（实时通知）
 
@@ -271,7 +264,7 @@ class DeepChatService:
         Returns:
             thread_id: 深度研究任务 ID
         """
-        from Django_xm.tasks.deep_research import run_research_task
+        from Django_xm.apps.fastapi_service.event_bus import SIGNAL_START, publish_signal
 
         thread_id = task_id
 
@@ -287,40 +280,41 @@ class DeepChatService:
         for t in extra_tools or []:
             meta = getattr(t, "metadata", {}) or {}
             t_name = getattr(t, "name", "")
-            # 跳过 retriever_tool，它们由 knowledge_base_ids 在 worker 端重建
+            # 跳过 retriever_tool，它们由 knowledge_base_ids 在执行服务端重建
             if t_name and t_name not in selected_tool_names and not t_name.startswith("knowledge_base_"):
                 selected_tool_names.append(t_name)
             server_name = meta.get("mcp_server_name", "")
             if server_name and server_name not in selected_mcp_servers:
                 selected_mcp_servers.append(server_name)
 
-        celery_result = run_research_task.delay(
-            thread_id=thread_id,
-            query=query,
-            enable_web_search=use_web_search,
-            enable_doc_analysis=retriever_tool is not None,
-            knowledge_base_ids=knowledge_base_ids,
-            user_id=self._chat_service.user_id,
-            use_mcp=use_mcp or bool(selected_mcp_servers),
-            selected_mcp_servers=selected_mcp_servers or None,
-            selected_tools=selected_tool_names or None,
-            provider_id=provider_id,
-            model_name=model_name,
-            enable_deep_thinking=enable_deep_thinking,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            special_params=special_params,
-            continue_task_id=continue_task_id,
-            publish_to_redis=True,
-            session_id=session_id,
-            message_id=message_id,
+        publish_signal(
+            SIGNAL_START,
+            thread_id,
+            {
+                "thread_id": thread_id,
+                "query": query,
+                "user_id": self._chat_service.user_id,
+                "session_id": session_id,
+                "message_id": message_id or "",
+                "publish_to_redis": True,
+                "enable_web_search": use_web_search,
+                "enable_doc_analysis": retriever_tool is not None,
+                "knowledge_base_ids": knowledge_base_ids,
+                "use_mcp": use_mcp or bool(selected_mcp_servers),
+                "selected_mcp_servers": selected_mcp_servers or None,
+                "selected_tools": selected_tool_names or None,
+                "provider_id": provider_id,
+                "model_name": model_name,
+                "enable_deep_thinking": enable_deep_thinking,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "special_params": special_params,
+                "continue_task_id": continue_task_id,
+            },
         )
 
-        await _update_celery_task_id_sync(thread_id, celery_result.id)
-
         logger.info(
-            f"[DeepChat] Celery 深度研究任务已启动: thread_id={thread_id}, "
-            f"celery_task_id={celery_result.id}, session_id={session_id}"
+            f"[DeepChat] 深度研究任务已下发执行服务: thread_id={thread_id}, session_id={session_id}"
         )
         return thread_id
 

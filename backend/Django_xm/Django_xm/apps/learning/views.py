@@ -613,8 +613,13 @@ class WorkflowFileDownloadView(APIView):
             elif file_path.suffix.lower() == ".json":
                 content_type = "application/json"
 
+            # 说明：FileResponse 惰性读取文件，响应关闭时自动关闭句柄，
+            # 若用 with 提前关闭会导致流式读取失败，故保持 Django 官方 open() 模式。
             response = FileResponse(
-                open(file_path, "rb"), content_type=content_type, as_attachment=True, filename=quote(file_path.name)
+                open(file_path, "rb"),  # noqa: SIM115
+                content_type=content_type,
+                as_attachment=True,
+                filename=quote(file_path.name),
             )
             return response
 
@@ -709,7 +714,15 @@ def workflow_stream(request, thread_id):
 
                 current_step = state.get("current_step", "unknown")
                 # 工作流开始事件
-                yield f"data: {json.dumps({'type': 'workflow_step', 'data': {'step': 'start', 'message': '工作流启动中...', 'state': current_step}}, ensure_ascii=False)}\n\n"
+                workflow_step_evt = {
+                    "type": "workflow_step",
+                    "data": {
+                        "step": "start",
+                        "message": "工作流启动中...",
+                        "state": current_step,
+                    },
+                }
+                yield f"data: {json.dumps(workflow_step_evt, ensure_ascii=False)}\n\n"
                 _safe_publish_workflow_event(
                     EventType.WORKFLOW_STEP,
                     thread_id,
@@ -798,7 +811,10 @@ def workflow_stream(request, thread_id):
                                     "payload": event,
                                 },
                             }
-                            yield f"data: {json.dumps(state_update_evt, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
+                            state_payload = json.dumps(
+                                state_update_evt, ensure_ascii=False, cls=_WorkflowJSONEncoder
+                            )
+                            yield f"data: {state_payload}\n\n"
                             _safe_publish_workflow_event(
                                 EventType.WORKFLOW_STATE_UPDATE,
                                 thread_id,

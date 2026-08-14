@@ -165,7 +165,7 @@ _resource_injector: MCPResourceInjector | None = None
 
 
 def get_resource_injector() -> MCPResourceInjector:
-    global _resource_injector
+    global _resource_injector  # noqa: PLW0603  # 模块级单例缓存 lazy init
     if _resource_injector is None:
         _resource_injector = MCPResourceInjector()
     return _resource_injector

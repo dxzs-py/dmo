@@ -58,8 +58,11 @@ from .usage_tracker import (
 )
 
 __all__ = [
+    "FallbackDetectionCallback",
+    "LazyFallbackChatModel",
     "ProjectContext",
     "ProjectContextDetector",
+    "StructuredModelWithFallback",
     "TokenDetailTracker",
     "TokenRecord",
     "TokenUsage",
@@ -81,6 +84,7 @@ __all__ = [
     "get_structured_model_with_fallback",
     "get_structured_output_model",
     "get_tool_usage_guard",
+    "is_connection_error",
     "reset_tool_usage_guard",
     "test_model_connection",
 ]

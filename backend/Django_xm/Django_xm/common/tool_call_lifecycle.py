@@ -173,11 +173,13 @@ def _stable_parameters_digest(parameters: Any) -> str:
         return ""
     try:
         payload = json.dumps(parameters, sort_keys=True, ensure_ascii=False, default=str)
-        return hashlib.md5(payload.encode("utf-8")).hexdigest()[:12]
+        # md5 仅用于参数内容去重指纹（非安全场景），无防碰撞要求
+        return hashlib.md5(payload.encode("utf-8")).hexdigest()[:12]  # noqa: S324
     except Exception:
         # 极端不可序列化场景退化为 repr（仍内容相关、稳定），避免指纹计算中断发布
         try:
-            return hashlib.md5(repr(parameters).encode("utf-8")).hexdigest()[:12]
+            # 同上，非安全去重指纹用途
+            return hashlib.md5(repr(parameters).encode("utf-8")).hexdigest()[:12]  # noqa: S324
         except Exception:
             return ""
 
@@ -263,6 +265,10 @@ class ToolCallContext:
     # 根因修复：原 tool_call_* 事件 payload 不携带 risk_level，非触发浏览器依赖
     # approval_pending 事件获取风险等级，事件丢失时 riskLevel 缺失导致跨浏览器显示不一致
     risk_level: str = ""
+    # 子 agent 角色描述（任务目标，Task 2.4，取自 deep_builder SubAgent 静态
+    # description，仅子 agent 工具事件携带；主 agent 为空）。透传到 tool_call_*
+    # 事件 payload，前端 ToolCallGroup 组头展示任务目标描述。
+    description: str = ""
     # 全局递增序号（register 唯一分配点，按 (module, module_id) 独立计数）。
     # 同一会话/任务内跨 LLM 轮次全局唯一，作为前端跨浏览器工具调用统一排序的
     # 唯一权威依据（替代跨轮重复的 _index：_index 是 LLM 单轮输出内序号，跨轮
@@ -313,6 +319,7 @@ _FIELD_MERGE_POLICY: dict[str, str] = {
     "agent_path":        "fill_empty",
     "risk_ceiling":      "fill_empty",
     "risk_level":        "fill_empty",
+    "description":       "fill_empty",
     "seq":               "fill_empty",
 }
 
@@ -410,11 +417,9 @@ class ToolCallLifecycleService:
                     continue  # 主键跳过
 
                 policy = _FIELD_MERGE_POLICY.get(field_name, "fill_empty")
-                if policy == "keep_existing":
+                if policy in ("keep_existing", "skip"):
                     continue
-                elif policy == "skip":
-                    continue
-                elif policy == "fill_empty":
+                if policy == "fill_empty":
                     if _is_empty(existing.get(field_name)) and not _is_empty(new_val):
                         existing[field_name] = new_val
                 elif policy == "allow_update":
@@ -607,6 +612,8 @@ class ToolCallLifecycleService:
                 # risk_level 透传：从 context 读取，注入到 tool_call_* 事件 payload
                 # 根因修复：让前端从工具事件直接获取风险等级，不再单一依赖 approval_pending 事件
                 risk_level=_normalize_risk_level(ctx_dict.get("risk_level")),
+                # description 透传：子 agent 角色描述（任务目标），仅子 agent 事件携带
+                description=ctx_dict.get("description") or None,
                 _index=_index if _index is not None else ctx_dict.get("_index"),
                 # seq 透传：从 context 读取，注入到 tool_call_* 事件 payload
                 # 根因修复：seq 为 (module, module_id) 内跨 LLM 轮次全局递增序号，
@@ -683,6 +690,8 @@ class ToolCallLifecycleService:
                 # risk_level 透传：从 context 读取，注入到 tool_call_* 事件 payload
                 # 根因修复：让前端从工具事件直接获取风险等级，不再单一依赖 approval_pending 事件
                 risk_level=_normalize_risk_level(ctx_dict.get("risk_level")),
+                # description 透传：子 agent 角色描述（任务目标），仅子 agent 事件携带
+                description=ctx_dict.get("description") or None,
                 _index=_index if _index is not None else ctx_dict.get("_index"),
                 # seq 透传：从 context 读取，注入到 tool_call_* 事件 payload
                 # 根因修复：seq 为 (module, module_id) 内跨 LLM 轮次全局递增序号，
@@ -701,6 +710,31 @@ class ToolCallLifecycleService:
     def get_context(self, tool_call_id: str) -> dict | None:
         """获取工具调用上下文（调试/测试用）。"""
         return cache.get(f"{_TC_CTX_PREFIX}:{tool_call_id}")
+
+    def enrich_entry_seq(self, entry: dict, tool_call_id: str) -> dict:
+        """为工具调用条目补全 seq（所有持久化/重建出口的统一权威补全点）。
+
+        从 ToolCallContext 读取 register 分配的全局递增序号（与 WebSocket
+        tool_call_* 事件透传同一来源），写入 ``entry["seq"]``。所有构建 tool_call
+        条目的出口（sse_generator tool_calls_map、stream_persistence 持久化、
+        approval_service 审批重建与 Approval.extra）统一调用本方法，杜绝各消费点
+        重复内联逻辑导致漏补。context 缺失或 seq 非正整数时保持 entry 不变
+        （由调用方数组顺序兜底）。
+
+        Args:
+            entry: 工具调用条目 dict（原地修改）
+            tool_call_id: 工具调用 ID
+
+        Returns:
+            原 entry（支持链式调用）
+        """
+        if not isinstance(entry, dict):
+            return entry
+        ctx = self.get_context(tool_call_id)
+        seq = (ctx or {}).get("seq")
+        if isinstance(seq, int) and seq > 0:
+            entry["seq"] = seq
+        return entry
 
     def clear_context(self, tool_call_id: str) -> None:
         """清除工具调用上下文（工具进入终态后可调用，释放 Redis 空间）。"""

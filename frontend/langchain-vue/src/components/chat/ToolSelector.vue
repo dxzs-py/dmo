@@ -845,11 +845,12 @@ onMounted(() => {
                   <span v-if="pkg.description" class="tool-desc">{{ pkg.description }}</span>
                 </div>
                 <div class="tool-actions">
-                  <el-button size="small" circle text @click.stop="viewSkillPackageDetail(pkg.name)" title="查看详情">
+                  <el-button size="small" circle text title="查看详情" @click.stop="viewSkillPackageDetail(pkg.name)">
                     <el-icon><View /></el-icon>
                   </el-button>
-                  <el-button v-if="pkg.source !== 'system'" size="small" circle text type="danger"
-                    @click.stop="deleteSkillPackage(pkg.name)" title="删除">
+                  <el-button
+v-if="pkg.source !== 'system'" size="small" circle text type="danger"
+                    title="删除" @click.stop="deleteSkillPackage(pkg.name)">
                     <el-icon><Delete /></el-icon>
                   </el-button>
                   <el-checkbox :model-value="isSkillPackageSelected(pkg.name)" @change="toggleSkillPackage(pkg.name)" />

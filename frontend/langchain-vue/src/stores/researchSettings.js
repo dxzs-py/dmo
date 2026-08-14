@@ -64,7 +64,7 @@ export const useResearchSettingsStore = defineStore('researchSettings', () => {
     initialized = true
     currentProviderId.value = modelStore.currentProviderId
     currentModelName.value = modelStore.currentModelName
-    specialParams.value = { ...(modelStore.specialParams || {}) }
+    specialParams.value = { ...modelStore.specialParams }
     temperature.value = modelStore.temperature
     maxTokens.value = modelStore.maxTokens
   }

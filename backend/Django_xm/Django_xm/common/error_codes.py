@@ -113,7 +113,8 @@ def infer_error_code_from_http_status(http_status: int) -> "ErrorCode":
     Returns:
         对应的 ``ErrorCode`` 枚举成员，默认 ``ErrorCode.SERVER_ERROR``
     """
-    global _HTTP_STATUS_TO_ERROR_CODE
+    # 模块级映射缓存（懒加载构建）
+    global _HTTP_STATUS_TO_ERROR_CODE  # noqa: PLW0603
     if _HTTP_STATUS_TO_ERROR_CODE is None:
         _HTTP_STATUS_TO_ERROR_CODE = {}
         for ec in ErrorCode:

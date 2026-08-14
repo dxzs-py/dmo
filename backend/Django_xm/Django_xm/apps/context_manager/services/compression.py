@@ -387,9 +387,9 @@ class EntityExtractor:
 
         sentences = re.split(r"[。！？.!?]", text)
         for s in sentences:
-            s = s.strip()
-            if 4 <= len(s) <= 40 and not any(w in s for w in ["怎么", "什么", "如何", "为什么"]):
-                entities.append(s)
+            stripped = s.strip()
+            if 4 <= len(stripped) <= 40 and not any(w in stripped for w in ["怎么", "什么", "如何", "为什么"]):
+                entities.append(stripped)
 
         return entities
 

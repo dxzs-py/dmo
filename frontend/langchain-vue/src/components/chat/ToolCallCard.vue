@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed } from 'vue'
-import { ArrowDown, ArrowRight, CircleCheck, Clock, Close, Connection, Loading, MagicStick } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowRight, CircleCheck, Clock, Close, Connection, Loading, MagicStick, Promotion } from '@element-plus/icons-vue'
 import { ToolCallStatus } from '../../types'
 import {
   formatToolParameters,
@@ -33,6 +33,12 @@ const props = defineProps({
   toolCall: {
     type: Object,
     default: null
+  },
+  // 该工具触发了嵌套子代理（异步调用子代理，Task 4.4）：
+  // 与子代理内部工具（isSubagentCall）区分，展示独立视觉样式 + 「子代理」标签
+  isSubagentTrigger: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -305,23 +311,6 @@ const approvalInputValue = ref('')
 
 const isConfirmWithInput = computed(() => approvalData.value?.action === 'confirm_with_input')
 
-// 审批操作展示
-// operationText：优先 approval.operation，回退 approval.command
-const operationText = computed(() => approvalData.value?.operation || approvalData.value?.command || '')
-
-// operationLabel：由 formatToolParameters 返回的 label 决定
-// 所有工具（含后端自定义工具）已注册独立的参数格式化器，不再需要 fallbackMap。
-const operationLabel = computed(() => {
-  const toolName = approvalData.value?.toolName
-  if (!toolName) return '操作'
-  const params = approvalData.value?.parameters
-  const result = formatToolParameters(toolName, params)
-  if (result.label && result.label !== '输入') {
-    return result.label
-  }
-  return '操作'
-})
-
 // approvalArgs：审批面板统一展示所有用户可见参数
 const approvalArgs = computed(() => {
   const args = approvalData.value?.parameters
@@ -331,110 +320,159 @@ const approvalArgs = computed(() => {
     .filter(([key, val]) => val != null && val !== '' && !skipKeys.includes(key) && !key.startsWith('_'))
     .map(([key, val]) => ({ key, value: String(val) }))
 })
+
+// ============================================================
+// hover 浮层（Task 4.3）：展示完整入参与返回详情（未截断的原始值）
+// 与卡片内展示（formatToolParameters/formatToolResult 可能截断）区分：
+// 浮层直接序列化原始 input/output，超长内容在浮层内滚动查看
+// ============================================================
+const hoverInputText = computed(() => {
+  const raw = props.input
+  if (raw === null || raw === undefined || raw === '') return ''
+  if (typeof raw === 'string') return raw
+  try { return JSON.stringify(raw, null, 2) } catch { return String(raw) }
+})
+
+const hoverOutputText = computed(() => {
+  const raw = props.output
+  if (raw === null || raw === undefined || raw === '') return ''
+  if (typeof raw === 'string') return raw
+  try { return JSON.stringify(raw, null, 2) } catch { return String(raw) }
+})
+
+// 无入参/返回内容时禁用浮层（避免空 tooltip）
+const hasHoverContent = computed(() => !!(hoverInputText.value || hoverOutputText.value))
 </script>
 
 <template>
-  <div
-    :class="['tool-call-card', `tool-call-card--${status}`, { 'tool-call-card--skill': isSkillCall, 'tool-call-card--high-risk': isHighRisk, 'tool-call-card--subagent': isSubagentCall }]"
-    :style="approvalBorderColor ? { borderColor: approvalBorderColor } : {}"
+  <el-tooltip
+    placement="top"
+    :show-after="400"
+    :teleported="true"
+    :disabled="!hasHoverContent"
+    popper-class="tool-call-hover-popper"
+    class="tool-call-tooltip-wrapper"
   >
-    <div class="tool-call-header" @click="isExpanded = !isExpanded">
-      <div class="tool-call-left">
-        <el-icon class="status-icon" :class="`status-${status}`">
-          <component :is="isSkillCall ? MagicStick : statusIcon" :class="{ 'is-loading': status === ToolCallStatus.RUNNING }" />
-        </el-icon>
-        <div class="tool-info">
-          <span :class="['tool-name', { 'tool-name--high-risk': isHighRisk }]">{{ toolName }}</span>
-          <!-- 子 agent 嵌套链路展示（Phase E3） -->
-          <el-tag v-if="isSubagentCall" size="small" type="info" effect="plain" class="agent-path-tag">
-            <el-icon class="agent-path-icon"><Connection /></el-icon>
-            {{ agentPathText }}
-            <span v-if="nestingDepth > 0" class="depth-badge">L{{ nestingDepth }}</span>
-          </el-tag>
-          <!-- SAFE 级自动通过徽章（Phase F1） -->
-          <el-tag v-if="isAutoApproved" size="small" type="success" effect="plain">自动通过</el-tag>
-          <!-- 高危风险等级徽章（Phase G2） -->
-          <el-tag v-if="isHighRisk" size="small" type="danger" effect="dark">高危</el-tag>
-          <el-tag v-if="isSkillCall && skillModeLabel" size="small" :type="skillModeLabel === '管线' ? 'primary' : skillModeLabel === '顾问' ? 'success' : 'warning'" effect="plain">{{ skillModeLabel }}</el-tag>
-          <el-tag v-else-if="status === ToolCallStatus.REJECTED" size="small" type="danger">已拒绝</el-tag>
-          <el-tag v-else :type="statusType" size="small">{{ statusText }}</el-tag>
-        </div>
+    <template #content>
+      <div class="tool-call-hover">
+        <div class="tool-call-hover__title">{{ toolName }}</div>
+        <template v-if="hoverInputText">
+          <div class="tool-call-hover__label">输入参数</div>
+          <pre class="tool-call-hover__content">{{ hoverInputText }}</pre>
+        </template>
+        <template v-if="hoverOutputText">
+          <div class="tool-call-hover__label">返回结果</div>
+          <pre class="tool-call-hover__content">{{ hoverOutputText }}</pre>
+        </template>
       </div>
-      <el-icon class="expand-icon" :class="{ 'rotated': isExpanded }">
-        <ArrowDown />
-      </el-icon>
-    </div>
-
-    <div v-if="description" class="tool-call-description">{{ description }}</div>
-
-    <div v-if="isExpanded" class="tool-call-content">
-      <!-- 输入区：按 inputDisplay.displayMode 差异化渲染 -->
-      <div v-if="inputDisplay.displayMode !== 'skip'" class="tool-call-section">
-        <div class="section-title">输入参数</div>
-        <pre :class="inputContentClass">{{ inputDisplay.formatted }}</pre>
-      </div>
-      <!-- Skill hybrid 模式分区渲染 -->
-      <template v-if="hybridSections">
-        <div class="tool-call-section">
-          <div class="section-title">执行结果</div>
-          <pre class="section-content">{{ hybridSections['执行结果'] || '' }}</pre>
-        </div>
-      </template>
-      <template v-else-if="isSkillCall && output && skillModeLabel === '顾问'">
-        <div class="tool-call-section">
-          <div class="section-title">技能确认</div>
-          <div class="section-content">{{ output }}</div>
-        </div>
-      </template>
-      <!-- 普通输出：仅终态展示（防止审批阶段提前渲染 result 字段） -->
-      <template v-else>
-        <div v-if="shouldShowOutput && outputDisplay.displayMode !== 'skip'" class="tool-call-section">
-          <div class="section-title">输出结果</div>
-          <pre :class="outputContentClass">{{ outputDisplay.formatted }}</pre>
-        </div>
-      </template>
-
-      <!-- 审批面板 -->
-      <div v-if="isWaiting || isWaitingForSiblings" class="approval-panel" :class="{ 'approval-panel--high-risk': isHighRisk }">
-        <div class="approval-panel__header">
-          <span class="approval-panel__title">审批确认</span>
-          <el-tag size="small" :type="riskLevelTagType" effect="dark">{{ riskLevelLabel }}</el-tag>
-        </div>
-        <div v-if="isWaitingForSiblings" class="approval-panel__waiting-hint">
-          <el-icon><Clock /></el-icon>
-          <span>本工具已审批，等待其余工具完成审批</span>
-        </div>
-        <div v-if="approvalData.title" class="approval-panel__title-text">{{ approvalData.title }}</div>
-        <div v-if="approvalData.description" class="approval-panel__desc">{{ approvalData.description }}</div>
-        <div v-if="approvalArgs.length > 0 && !isWaitingForSiblings && !isProcessingApproval" class="approval-panel__command">
-          <div v-for="(arg, idx) in approvalArgs" :key="idx" class="approval-panel__arg">
-            <span class="approval-panel__command-label">{{ arg.key }}</span>
-            <pre class="approval-panel__code">{{ arg.value }}</pre>
+    </template>
+    <div
+      :class="['tool-call-card', `tool-call-card--${status}`, { 'tool-call-card--skill': isSkillCall, 'tool-call-card--high-risk': isHighRisk, 'tool-call-card--subagent': isSubagentCall, 'tool-call-card--subagent-trigger': isSubagentTrigger }]"
+      :style="approvalBorderColor ? { borderColor: approvalBorderColor } : {}"
+    >
+      <div class="tool-call-header" @click="isExpanded = !isExpanded">
+        <div class="tool-call-left">
+          <el-icon class="status-icon" :class="`status-${status}`">
+            <component :is="isSkillCall ? MagicStick : statusIcon" :class="{ 'is-loading': status === ToolCallStatus.RUNNING }" />
+          </el-icon>
+          <div class="tool-info">
+            <span :class="['tool-name', { 'tool-name--high-risk': isHighRisk }]">{{ toolName }}</span>
+            <!-- 触发嵌套子代理的工具（异步子代理调用，Task 4.4） -->
+            <el-tag v-if="isSubagentTrigger" size="small" type="warning" effect="plain" class="subagent-trigger-tag">
+              <el-icon class="subagent-trigger-icon"><Promotion /></el-icon>
+              子代理
+            </el-tag>
+            <!-- 子 agent 嵌套链路展示（Phase E3） -->
+            <el-tag v-if="isSubagentCall" size="small" type="info" effect="plain" class="agent-path-tag">
+              <el-icon class="agent-path-icon"><Connection /></el-icon>
+              {{ agentPathText }}
+              <span v-if="nestingDepth > 0" class="depth-badge">L{{ nestingDepth }}</span>
+            </el-tag>
+            <!-- SAFE 级自动通过徽章（Phase F1） -->
+            <el-tag v-if="isAutoApproved" size="small" type="success" effect="plain">自动通过</el-tag>
+            <!-- 高危风险等级徽章（Phase G2） -->
+            <el-tag v-if="isHighRisk" size="small" type="danger" effect="dark">高危</el-tag>
+            <el-tag v-if="isSkillCall && skillModeLabel" size="small" :type="skillModeLabel === '管线' ? 'primary' : skillModeLabel === '顾问' ? 'success' : 'warning'" effect="plain">{{ skillModeLabel }}</el-tag>
+            <el-tag v-else-if="status === ToolCallStatus.REJECTED" size="small" type="danger">已拒绝</el-tag>
+            <el-tag v-else :type="statusType" size="small">{{ statusText }}</el-tag>
           </div>
         </div>
-        <div v-if="isConfirmWithInput && !isWaitingForSiblings && !isProcessingApproval" class="approval-panel__input">
-          <el-input
-            v-model="approvalInputValue"
-            :placeholder="approvalData.inputPlaceholder || '请输入值...'"
-            size="small"
-            clearable
-            @keyup.enter="emit('approve', { ...toolCall, _userInput: approvalInputValue })"
-          />
+        <el-icon class="expand-icon" :class="{ 'rotated': isExpanded }">
+          <ArrowDown />
+        </el-icon>
+      </div>
+
+      <div v-if="description" class="tool-call-description">{{ description }}</div>
+
+      <div v-if="isExpanded" class="tool-call-content">
+        <!-- 输入区：按 inputDisplay.displayMode 差异化渲染 -->
+        <div v-if="inputDisplay.displayMode !== 'skip'" class="tool-call-section">
+          <div class="section-title">输入参数</div>
+          <pre :class="inputContentClass">{{ inputDisplay.formatted }}</pre>
         </div>
-        <div class="approval-panel__actions">
-          <el-button type="danger" size="small" :disabled="isWaitingForSiblings || isProcessingApproval" @click.stop="emit('reject', toolCall)">拒绝</el-button>
-          <el-button
-            type="primary"
-            size="small"
-            :disabled="isWaitingForSiblings || isProcessingApproval"
-            @click.stop="emit('approve', isConfirmWithInput ? { ...toolCall, _userInput: approvalInputValue } : toolCall)"
-          >
-            {{ isConfirmWithInput ? '确认并提交' : '确认执行' }}
-          </el-button>
+        <!-- Skill hybrid 模式分区渲染 -->
+        <template v-if="hybridSections">
+          <div class="tool-call-section">
+            <div class="section-title">执行结果</div>
+            <pre class="section-content">{{ hybridSections['执行结果'] || '' }}</pre>
+          </div>
+        </template>
+        <template v-else-if="isSkillCall && output && skillModeLabel === '顾问'">
+          <div class="tool-call-section">
+            <div class="section-title">技能确认</div>
+            <div class="section-content">{{ output }}</div>
+          </div>
+        </template>
+        <!-- 普通输出：仅终态展示（防止审批阶段提前渲染 result 字段） -->
+        <template v-else>
+          <div v-if="shouldShowOutput && outputDisplay.displayMode !== 'skip'" class="tool-call-section">
+            <div class="section-title">输出结果</div>
+            <pre :class="outputContentClass">{{ outputDisplay.formatted }}</pre>
+          </div>
+        </template>
+
+        <!-- 审批面板 -->
+        <div v-if="isWaiting || isWaitingForSiblings" class="approval-panel" :class="{ 'approval-panel--high-risk': isHighRisk }">
+          <div class="approval-panel__header">
+            <span class="approval-panel__title">审批确认</span>
+            <el-tag size="small" :type="riskLevelTagType" effect="dark">{{ riskLevelLabel }}</el-tag>
+          </div>
+          <div v-if="isWaitingForSiblings" class="approval-panel__waiting-hint">
+            <el-icon><Clock /></el-icon>
+            <span>本工具已审批，等待其余工具完成审批</span>
+          </div>
+          <div v-if="approvalData.title" class="approval-panel__title-text">{{ approvalData.title }}</div>
+          <div v-if="approvalData.description" class="approval-panel__desc">{{ approvalData.description }}</div>
+          <div v-if="approvalArgs.length > 0 && !isWaitingForSiblings && !isProcessingApproval" class="approval-panel__command">
+            <div v-for="(arg, idx) in approvalArgs" :key="idx" class="approval-panel__arg">
+              <span class="approval-panel__command-label">{{ arg.key }}</span>
+              <pre class="approval-panel__code">{{ arg.value }}</pre>
+            </div>
+          </div>
+          <div v-if="isConfirmWithInput && !isWaitingForSiblings && !isProcessingApproval" class="approval-panel__input">
+            <el-input
+              v-model="approvalInputValue"
+              :placeholder="approvalData.inputPlaceholder || '请输入值...'"
+              size="small"
+              clearable
+              @keyup.enter="emit('approve', { ...toolCall, _userInput: approvalInputValue })"
+            />
+          </div>
+          <div class="approval-panel__actions">
+            <el-button type="danger" size="small" :disabled="isWaitingForSiblings || isProcessingApproval" @click.stop="emit('reject', toolCall)">拒绝</el-button>
+            <el-button
+              type="primary"
+              size="small"
+              :disabled="isWaitingForSiblings || isProcessingApproval"
+              @click.stop="emit('approve', isConfirmWithInput ? { ...toolCall, _userInput: approvalInputValue } : toolCall)"
+            >
+              {{ isConfirmWithInput ? '确认并提交' : '确认执行' }}
+            </el-button>
+          </div>
         </div>
       </div>
     </div>
-  </div>
+  </el-tooltip>
 </template>
 
 <style scoped>
@@ -780,5 +818,71 @@ const approvalArgs = computed(() => {
 
 .tool-call-card--subagent {
   border-left-style: dashed;
+}
+
+/* ===== Task 4.4: 触发嵌套子代理的工具（异步子代理调用）独立视觉 ===== */
+.tool-call-card--subagent-trigger {
+  border-left: 3px solid var(--el-color-primary);
+  border-left-style: dashed;
+  background-color: var(--el-color-primary-light-9);
+}
+
+.subagent-trigger-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+}
+
+.subagent-trigger-icon {
+  font-size: 12px;
+}
+</style>
+
+<style>
+/* ===== ToolCallCard hover 浮层（Task 4.3）=====
+ * popper 经 teleport 渲染到 body 下，scoped 样式不生效，使用非 scoped 块。
+ * 浮层展示完整入参与返回详情（未截断原始值），超长内容滚动查看。
+ */
+.tool-call-tooltip-wrapper {
+  display: block;
+  width: 100%;
+}
+
+.tool-call-hover-popper {
+  max-width: 520px;
+}
+
+.tool-call-hover {
+  max-height: 320px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-primary);
+}
+
+.tool-call-hover__title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.tool-call-hover__label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--el-text-color-secondary);
+  margin: 6px 0 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.tool-call-hover__content {
+  margin: 0;
+  padding: 8px 10px;
+  background-color: var(--el-fill-color-light);
+  border-radius: 4px;
+  font-family: 'Courier New', Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 </style>

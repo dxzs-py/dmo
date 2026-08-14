@@ -10,7 +10,7 @@
  */
 import { strict as assert } from 'node:assert'
 import { ToolCallStatus, ApprovalState } from '../../types/index.js'
-import { finalizeToolCallsInMap, addOrUpdateToolCallInLastMessage } from '../messageOperations.js'
+import { finalizeToolCallsInMap, addOrUpdateToolCallInLastMessage, sortToolCallsForDisplay } from '../messageOperations.js'
 
 let passed = 0
 let failed = 0
@@ -260,6 +260,57 @@ test('无审批工具正常推进：pending → waiting', () => {
     status: ToolCallStatus.WAITING,
   })
   assert.equal(sessions[0].messages[0].toolCalls[0].status, ToolCallStatus.WAITING)
+})
+
+console.log('\n=== sortToolCallsForDisplay（seq 主 + 数组兜底） ===')
+
+test('全部条目有 seq → 按 seq 升序排序', () => {
+  const arr = [
+    { id: 'fs_write_file', seq: 3 },
+    { id: 'shell_exec_1', seq: 1 },
+    { id: 'shell_exec_2', seq: 2 },
+  ]
+  sortToolCallsForDisplay(arr)
+  assert.deepEqual(arr.map(t => t.id), ['shell_exec_1', 'shell_exec_2', 'fs_write_file'])
+})
+
+test('全部条目无 seq → 保持原数组顺序（回归修复：不再把无 seq 按 MAX 排后）', () => {
+  const arr = [
+    { id: 'shell_exec_1' },
+    { id: 'shell_exec_2' },
+    { id: 'fs_write_file' },
+  ]
+  sortToolCallsForDisplay(arr)
+  assert.deepEqual(arr.map(t => t.id), ['shell_exec_1', 'shell_exec_2', 'fs_write_file'])
+})
+
+test('部分条目无 seq（混合数据）→ 保持原数组顺序（seq 不完整时无法比较，退回数组兜底）', () => {
+  const arr = [
+    { id: 'shell_exec_1' },
+    { id: 'shell_exec_2' },
+    { id: 'fs_write_file', seq: 3 },
+  ]
+  sortToolCallsForDisplay(arr)
+  assert.deepEqual(arr.map(t => t.id), ['shell_exec_1', 'shell_exec_2', 'fs_write_file'])
+})
+
+test('seq 含非正整数（0/负数）→ 视为无 seq，保持数组顺序', () => {
+  const arr = [
+    { id: 'a', seq: 0 },
+    { id: 'b', seq: -1 },
+    { id: 'c' },
+  ]
+  sortToolCallsForDisplay(arr)
+  assert.deepEqual(arr.map(t => t.id), ['a', 'b', 'c'])
+})
+
+test('空数组与单元素 → 原样返回', () => {
+  const empty = []
+  sortToolCallsForDisplay(empty)
+  assert.deepEqual(empty, [])
+  const single = [{ id: 'x', seq: 5 }]
+  sortToolCallsForDisplay(single)
+  assert.deepEqual(single.map(t => t.id), ['x'])
 })
 
 console.log(`\n结果: ${passed} 通过, ${failed} 失败`)

@@ -20,42 +20,46 @@ import logging
 import time
 from typing import Any
 
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage
 
 # ---------------------------------------------------------------------------
 # 重导出：统一块处理（三模块通用，Chat 模块特有的调用方通过本模块导入以保持兼容）
 # ---------------------------------------------------------------------------
 from .stream_chunk_processors import (
-    _STATE_TO_STATUS,
     _extract_tool_params,
-    _find_tool_call_key_by_index,
     _fix_groq_tool_call,
-    _handle_ai_message_chunk,
-    _handle_tool_message_chunk,
     _map_state_to_status,
-    _migrate_key_if_needed,
     _sync_pending_to_stream_state,
     _try_parse_concatenated_json,
     extract_thinking_content,
     process_stream_chunk,
 )
 
-from .stream_tool_state import (
-    _detect_tool_error,
-    _detect_tool_rejected,
-    _detect_tool_timeout,
-    is_tool_call_failure,
-)
-
-# ---------------------------------------------------------------------------
-# 重导出：工具调用生命周期事件发布（三模块通用）
-# ---------------------------------------------------------------------------
-from .stream_tool_lifecycle import _publish_tool_lifecycle_event, _broadcast_tool_input_ready
+# 重导出契约：外部模块（loop.py / fallback.py / finalizer.py / deep_chat_service.py /
+# chat_resume_generator.py 等）经本模块导入上述名字，列入 __all__ 防止 F401 误删
+__all__ = [
+    "_extract_tool_params",
+    "_fix_groq_tool_call",
+    "_map_state_to_status",
+    "_sync_pending_to_stream_state",
+    "_try_parse_concatenated_json",
+    "build_context_info",
+    "extract_interrupt_ids",
+    "extract_thinking_content",
+    "finalize_tool_calls",
+    "merge_existing_approval_fields",
+    "parse_approval_interrupt",
+    "process_stream_chunk",
+    "sync_usage_from_messages",
+    "update_usage_and_tokens",
+]
 
 # ---------------------------------------------------------------------------
 # 重导出：持久化（聊天/审批恢复共用）
 # ---------------------------------------------------------------------------
-from .stream_persistence import persist_stream_result
+# ---------------------------------------------------------------------------
+# 重导出：工具调用生命周期事件发布（三模块通用）
+# ---------------------------------------------------------------------------
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +202,7 @@ def finalize_tool_calls(
                     tool_id = tool_call.get("id", "")
                     tool_name = tool_call.get("name", "")
 
-                    for key, tc in tool_calls_map.items():
+                    for _, tc in tool_calls_map.items():
                         existing_params = tc.get("parameters", {})
                         if isinstance(existing_params, dict) and existing_params and existing_params != {}:
                             continue

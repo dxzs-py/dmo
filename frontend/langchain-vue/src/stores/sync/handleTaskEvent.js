@@ -125,6 +125,17 @@ export const createHandleTaskEvent = (ctx) => {
           `success=${payload.success !== false}, source=${source}`
         )
         break
+      case 'status_change':
+        // 任务状态实时推送（执行器运行中细粒度状态，Task 4）：
+        // running/awaiting_approval/completed/failed + currentStep/finalReport/error，
+        // 驱动 DeepResearchView / ResearchTaskDetail 状态标签实时刷新。
+        // setTaskStatus 内置终态保护（终态不被滞后非终态覆盖）。
+        researchStore.setTaskStatus(taskId, payload)
+        logger.info(
+          `[Sync] task status_change: taskId=${taskId}, status=${payload.status || 'unknown'}, ` +
+          `currentStep=${payload.currentStep || 'unknown'}, source=${source}`
+        )
+        break
       // 学习工作流（learning 模块）4 个事件类型：统一委托给 onWorkflowEvent 回调
       // - workflow_step：节点执行进度（planner/retrieval/quiz_generator/grading/feedback 等）
       // - workflow_state_update：状态变更（waiting_for_answers / completed 等）

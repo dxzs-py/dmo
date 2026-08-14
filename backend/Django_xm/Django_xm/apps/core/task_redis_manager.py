@@ -187,7 +187,8 @@ _task_manager: TaskManager | None = None
 
 
 def get_task_manager() -> TaskManager:
-    global _task_manager
+    # 模块级单例惰性初始化
+    global _task_manager  # noqa: PLW0603
     if _task_manager is None:
         _task_manager = TaskManager()
     return _task_manager

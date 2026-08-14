@@ -819,7 +819,7 @@ _guard_lock = threading.Lock()
 
 def get_tool_usage_guard() -> ToolUsageGuard:
     """获取 ToolUsageGuard 单例（首次调用时按 settings 初始化）"""
-    global _guard_instance
+    global _guard_instance  # noqa: PLW0603 - 模块级单例惰性初始化
     with _guard_lock:
         if _guard_instance is not None:
             return _guard_instance
@@ -847,6 +847,6 @@ def get_tool_usage_guard() -> ToolUsageGuard:
 
 def reset_tool_usage_guard() -> None:
     """重置单例（供测试）"""
-    global _guard_instance
+    global _guard_instance  # noqa: PLW0603 - 模块级单例重置（供测试）
     with _guard_lock:
         _guard_instance = None

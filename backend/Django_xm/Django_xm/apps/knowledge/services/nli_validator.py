@@ -62,8 +62,9 @@ class HHEMValidator:
         if self._load_failed:
             return False
         try:
-            import torch
-            import transformers
+            # 模型可用性探测：仅检测依赖是否可导入，无需实际引用
+            import torch  # noqa: F401
+            import transformers  # noqa: F401
 
             return True
         except ImportError:
@@ -158,8 +159,9 @@ class ChineseNLIValidator:
         if self._load_failed:
             return False
         try:
-            import torch
-            import transformers
+            # 模型可用性探测：仅检测依赖是否可导入，无需实际引用
+            import torch  # noqa: F401
+            import transformers  # noqa: F401
 
             return True
         except ImportError:
@@ -370,7 +372,8 @@ _nli_lock = threading.Lock()
 
 def get_nli_validator() -> CompositeNLIValidator:
     """获取组合 NLI 验证器单例"""
-    global _nli_instance
+    # 模块级单例缓存，配合 _nli_lock 双重检查锁保证线程安全
+    global _nli_instance  # noqa: PLW0603
     if _nli_instance is None:
         with _nli_lock:
             if _nli_instance is None:

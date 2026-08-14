@@ -180,7 +180,7 @@ export function createAssistantMessage(content = '', extra = {}) {
 export function parseStreamChunk(data) {
   try {
     return typeof data === 'string' ? JSON.parse(data) : data
-  } catch (e) {
+  } catch {
     return null
   }
 }

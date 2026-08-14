@@ -341,8 +341,10 @@ class ConversationGraphExtractor:
 
         prompt = (
             "从以下对话中提取所有实体和关系。\n"
-            "实体类型包括：person, organization, location, technology, concept, document, project, task, preference, event\n"
-            "关系类型包括：related_to, part_of, depends_on, uses, created_by, belongs_to, prefers, mentions, solves, contradicts\n\n"
+            "实体类型包括：person, organization, location, technology, concept, document, project, task, "
+            "preference, event\n"
+            "关系类型包括：related_to, part_of, depends_on, uses, created_by, belongs_to, prefers, "
+            "mentions, solves, contradicts\n\n"
             f"对话内容：\n{conversation_text}\n\n"
             "请提取所有实体和关系，确保源实体和目标实体都在实体列表中。"
         )

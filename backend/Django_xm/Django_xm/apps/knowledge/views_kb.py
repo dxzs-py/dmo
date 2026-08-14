@@ -5,13 +5,13 @@
 视图层只负责请求解析、服务调用、响应构建。
 """
 
-from Django_xm.apps.core.logging_utils import get_logger
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.apps.core.throttling import KnowledgeRateThrottle, MetaRateThrottle
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.responses import (
@@ -317,6 +317,11 @@ class KnowledgeBasesListView(KnowledgeBaseListView):
     throttle_classes = [MetaRateThrottle]
 
 
-@extend_schema_view(get=extend_schema(operation_id="knowledge_knowledge_bases_detail", responses={200: EmptySerializer}))
+@extend_schema_view(
+    get=extend_schema(
+        operation_id="knowledge_knowledge_bases_detail",
+        responses={200: EmptySerializer},
+    )
+)
 class KnowledgeBasesDetailView(KnowledgeBaseDetailView):
     """知识库详情视图，专用于 knowledge-bases/{kb_id}/ 路径，避免 operationId 冲突。"""

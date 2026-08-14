@@ -24,6 +24,7 @@ async def _stream_chat_resume_generator(
     request_data=None,
     graph_interrupt_id=None,
     langgraph_resume_id=None,
+    timeout_resume=False,
 ):
     """聊天审批恢复的异步 SSE 生成器。
 
@@ -52,6 +53,8 @@ async def _stream_chat_resume_generator(
         graph_interrupt_id: 批次 UUID（仅用于日志）；为 None 时回退到 ``approval.interrupt_id``
         langgraph_resume_id: LangGraph 恢复 ID（= ``intr.id``，作为 Command resume KEY）；
                              为 None 时回退到 ``approval.interrupt_id``
+        timeout_resume: 是否超时恢复（Task 5 事件驱动化）。为 True 时 finally 释放
+                        chat 超时恢复流去重锁（resume_approval 已获取）。
 
     Yields:
         SSE 格式字符串（``"data: ...\\n\\n"``）
@@ -173,7 +176,7 @@ async def _stream_chat_resume_generator(
             return
 
         # 校验 interrupt 归属：检查 Agent 的 checkpoint 中是否有该 interrupt_id 的 pending interrupt
-        # 如果没有，说明该 interrupt 属于其他 Agent（如深度研究 Celery 任务），不应由聊天审批 API 处理
+        # 如果没有，说明该 interrupt 属于其他执行上下文（如执行服务中的深度研究 Agent），不应由聊天审批 API 处理
         #
         # P-BE-5 根因修复：子 agent（depth > 0）的 checkpoint 存储在与主 agent 不同的
         # checkpoint_ns 下，aget_state(thread_config) 只查主 namespace，找不到子 agent 的
@@ -321,7 +324,7 @@ async def _stream_chat_resume_generator(
                                 or ""
                             )
 
-                            for graph_intr_id, tool_call_id, approval_data in batch_approval_data:
+                            for _, tool_call_id, approval_data in batch_approval_data:
                                 tool_name = approval_data.get("tool_name", "unknown")
                                 logger.info(
                                     f"[ChatApprovalResume] 检测到新审批: tool={tool_name}, "
@@ -374,12 +377,15 @@ async def _stream_chat_resume_generator(
                                         f"[Approval] DB记录已创建: interrupt_id={tool_call_id}, "
                                         f"session={session_id}"
                                     )
-                                except Exception as e:
-                                    logger.error(
-                                        f"[Approval] DB记录创建失败: interrupt_id={tool_call_id}, error={e}"
+                                except Exception:
+                                    logger.exception(
+                                        f"[Approval] DB记录创建失败: interrupt_id={tool_call_id}, session={session_id}"
                                     )
 
-                                yield f"data: {json.dumps({'type': 'approval', 'data': approval_data}, ensure_ascii=False)}\n\n"
+                                _approval_payload = json.dumps(
+                                    {"type": "approval", "data": approval_data}, ensure_ascii=False
+                                )
+                                yield f"data: {_approval_payload}\n\n"
                                 # P6-b 修复：广播 approval 事件到 WebSocket
                                 await _publish_stream_event(
                                     {"type": "approval", "data": approval_data},
@@ -463,7 +469,11 @@ async def _stream_chat_resume_generator(
                     # 将新增的 tool_call 推送给前端
                     # 确保 message_id 非空：优先取 approval.extra.message_id →
                     # approval.message_id → 消息持久化时写入的 assistant_message_id
-                    _raw_msg_id = (approval.extra or {}).get("message_id", "") or getattr(approval, "message_id", "") or ""
+                    _raw_msg_id = (
+                        (approval.extra or {}).get("message_id", "")
+                        or getattr(approval, "message_id", "")
+                        or ""
+                    )
                     _approval_msg_id = str(_raw_msg_id) if _raw_msg_id else ""
                     for tc in new_tool_calls:
                         tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
@@ -491,7 +501,10 @@ async def _stream_chat_resume_generator(
                                 module=EventSource.CHAT,
                                 module_id=str(session_id or ""),
                             )
-                            yield f"data: {json.dumps({'type': 'tool', 'data': tool_calls_map[tc_id]}, ensure_ascii=False)}\n\n"
+                            _tool_payload = json.dumps(
+                                {"type": "tool", "data": tool_calls_map[tc_id]}, ensure_ascii=False
+                            )
+                            yield f"data: {_tool_payload}\n\n"
                     # 跳过这条 AIMessage 的文本内容处理（tool_calls 消息通常没有文本内容）
                     continue
 
@@ -542,7 +555,8 @@ async def _stream_chat_resume_generator(
         ):
             reasoning_text = accumulated_reasoning["content"].strip()
             logger.info(
-                f"[ChatApprovalResume] 深度思考兜底: content 为空，将推理内容 ({len(reasoning_text)} 字符) 作为主内容发送"
+                f"[ChatApprovalResume] 深度思考兜底: content 为空，将推理内容 "
+                f"({len(reasoning_text)} 字符) 作为主内容发送"
             )
             yield f"data: {json.dumps({'type': 'chunk', 'content': reasoning_text}, ensure_ascii=False)}\n\n"
             current_message_content = reasoning_text
@@ -637,6 +651,24 @@ async def _stream_chat_resume_generator(
                 f"[ChatApprovalResume] complete_approval_async 失败(非致命): "
                 f"interrupt_id={interrupt_id}, err={complete_err}"
             )
+
+        # 释放 chat 超时恢复流去重锁（Task 5）：超时恢复流结束后立即释放，
+        # 允许后续（如页面刷新后的合法重试）再次驱动。TTL 仅兜底。
+        if timeout_resume:
+            try:
+                from Django_xm.apps.approvals.services.approval_service import (
+                    _release_chat_timeout_resume_lock_async,
+                )
+
+                await _release_chat_timeout_resume_lock_async(interrupt_id)
+                logger.info(
+                    f"[ChatApprovalResume] 已释放超时恢复流去重锁: interrupt_id={interrupt_id}"
+                )
+            except Exception as release_err:
+                logger.warning(
+                    f"[ChatApprovalResume] 释放超时恢复锁失败(可忽略): "
+                    f"interrupt_id={interrupt_id}, err={release_err}"
+                )
 
         # 释放异步 Checkpointer 连接池，防止 PostgreSQL 连接泄漏
         try:

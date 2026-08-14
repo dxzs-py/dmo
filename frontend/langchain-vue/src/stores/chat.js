@@ -225,8 +225,8 @@ export const useChatStore = defineStore('chat', () => {
           setPlan: (data) => sessionStore.setPlanToLastMessage(sessionId, data),
           setChainOfThought: (data) => sessionStore.setChainOfThoughtToLastMessage(sessionId, data),
           addToolCall: (data) => sessionStore.addToolCallToLastMessage(sessionId, data),
-          addOrUpdateToolCall: (data) => sessionStore.addOrUpdateToolCallToLastMessage(sessionId, data),
-          updateOrAddToolResult: (data) => sessionStore.updateOrAddToolResultToLastMessage(sessionId, data),
+          addOrUpdateToolCall: (data) => sessionStore.addOrUpdateToolCall(sessionId, data),
+          updateOrAddToolResult: (data) => sessionStore.updateOrAddToolResult(sessionId, data),
           setReasoning: (data) => sessionStore.setReasoningToLastMessage(sessionId, data),
           setSuggestions: (data) => sessionStore.setSuggestionsToLastMessage(sessionId, data),
           setDeepResearchTask: (data) => {

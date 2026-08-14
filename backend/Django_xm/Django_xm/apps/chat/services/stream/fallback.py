@@ -13,7 +13,7 @@ import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
 from Django_xm.apps.ai_engine.models import SystemConfig
 from Django_xm.apps.ai_engine.services.cost_tracker import TokenDetailTracker

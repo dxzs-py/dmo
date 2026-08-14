@@ -93,11 +93,11 @@ class AttentionGuide:
         result = []
         for sentence in sentences:
             if _CRITICAL_KEYWORDS.search(sentence):
-                sentence = sentence.strip()
-                if sentence and not sentence.startswith("!!!重要!!!"):
-                    result.append(f"!!!重要!!! {sentence}")
+                stripped = sentence.strip()
+                if stripped and not stripped.startswith("!!!重要!!!"):
+                    result.append(f"!!!重要!!! {stripped}")
                 else:
-                    result.append(sentence)
+                    result.append(stripped)
             else:
                 result.append(sentence)
         return "".join(result)

@@ -122,7 +122,8 @@ TOOL_USAGE_INSTRUCTIONS = """
 - 需要翻译文本时，使用 translate_text
 - 需要检测语言时，使用 detect_language
 - 用户上传了文件并基于文件提问时，使用 attachment_reader 读取完整文件内容
-- 用户上传了大文件或多文件、只需查找特定信息时，使用 attachment_rag_search 进行向量相似度检索，自动定位最近上传的附件，返回最相关片段
+- 用户上传了大文件或多文件、只需查找特定信息时，使用 attachment_rag_search 进行向量相似度检索，\
+自动定位最近上传的附件，返回最相关片段
 - 需要读取服务器上的文件时，使用 file_reader
 - 需要获取网页内容时，使用 web_fetch
 - 需要管理任务列表时，使用 todo_write 和 todo_read

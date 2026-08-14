@@ -334,12 +334,12 @@ watch(() => props.modelValue, adjustTextareaHeight)
       <div class="input-card" :class="{ 'is-focused': isFocused, 'is-streaming': isStreaming }">
         <Transition name="slide-down">
           <SlashCommandPanel
-            ref="slashCommandPanelRef"
             v-if="showCommandPanel && isSlashCommand"
+            ref="slashCommandPanelRef"
             :filter="commandFilter"
             :selected-index="selectedCommandIndex"
-            @select="handleCommandSelect"
             class="command-panel-inline"
+            @select="handleCommandSelect"
           />
         </Transition>
         <div class="input-content">

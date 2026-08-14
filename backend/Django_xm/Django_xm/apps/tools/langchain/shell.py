@@ -166,7 +166,7 @@ def _kill_process_tree(process: subprocess.Popen, is_windows: bool) -> None:
     try:
         if is_windows:
             # Windows: taskkill /F /T 强制终止整个进程树
-            subprocess.run(
+            subprocess.run(  # noqa: S602, PLW1510  # taskkill 清理 PID 来自 Popen 对象，非用户输入；check=False 设计使然
                 f"taskkill /F /T /PID {process.pid}",
                 shell=True,
                 capture_output=True,
@@ -475,10 +475,11 @@ def _execute_command(
             "errors": "replace",
         }
         if is_windows:
-            process = subprocess.Popen(command, shell=True, **popen_kwargs)
+            # 命令执行工具设计使然（agent shell 工具）：命令经白名单/禁止模式校验，隔离由沙箱与权限保障
+            process = subprocess.Popen(command, shell=True, **popen_kwargs)  # noqa: S602
         else:
-            process = subprocess.Popen(
-                ["bash", "-c", command],
+            process = subprocess.Popen(  # noqa: S603
+                ["bash", "-c", command],  # noqa: S607
                 start_new_session=True,  # 创建新进程组，便于 killpg
                 **popen_kwargs,
             )

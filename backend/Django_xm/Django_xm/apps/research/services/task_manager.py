@@ -28,8 +28,7 @@ class TaskManager:
 
     _instance: ClassVar["TaskManager | None"] = None
     _lock: ClassVar[threading.Lock] = threading.Lock()
-    _cache: dict[str, dict[str, Any]] = {}
-    _threads: dict[str, threading.Thread] = {}
+    # _cache / _threads 为实例属性，在 __new__ 中初始化（避免类级可变默认值）
 
     def __new__(cls):
         if cls._instance is None:
@@ -112,6 +111,10 @@ class TaskManager:
                 task.status = self._map_status(status_data["status"])
             if final_report:
                 task.final_report = final_report
+            error = status_data.get("error") or ""
+            if error:
+                # 模型校验限制 5000 字符，超长截断避免 ValidationError 导致状态丢失
+                task.error_message = str(error)[:5000]
 
             task.save()
             self._invalidate_redis_cache(task_id, task.created_by_id)
@@ -164,7 +167,8 @@ class TaskManager:
         """
         软删除研究任务
         - 设置 is_deleted=True, deleted_at=now
-        - 如果任务仍在运行，撤销 Celery 任务
+        - 深度研究已脱离 Celery（执行由 fastapi_service SessionExecutor 承载），
+          无 Celery 任务可撤销；运行中协程由执行服务侧按状态自愈/终止
         - 磁盘文件/Checkpoint/Store 的清理由调用方通过 cross_app 统一守卫逻辑处理
           （需确认关联聊天也已删除才清理，避免数据不一致）
         """
@@ -180,20 +184,6 @@ class TaskManager:
                 return False
 
             self._invalidate_redis_cache(task_id, task.created_by_id)
-
-            # 如果任务仍在运行，先撤销 Celery 任务
-            if task.celery_task_id and task.status in ("pending", "running"):
-                try:
-                    from celery import current_app
-
-                    current_app.control.revoke(
-                        task.celery_task_id,
-                        terminate=True,
-                        signal="SIGTERM",
-                    )
-                    logger.info(f"已撤销 Celery 任务: {task.celery_task_id} (研究任务: {task_id})")
-                except Exception as e:
-                    logger.warning(f"撤销 Celery 任务失败: {e}")
 
             # 软删除：设置 is_deleted=True, deleted_at=now
             task.soft_delete()
@@ -222,7 +212,8 @@ _task_manager = None
 
 
 def get_task_manager() -> TaskManager:
-    global _task_manager
+    # 模块级单例惰性初始化
+    global _task_manager  # noqa: PLW0603
     if _task_manager is None:
         _task_manager = TaskManager()
     return _task_manager

@@ -114,7 +114,7 @@ class McpToolsView(APIView):
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
         try:
-            from Django_xm.apps.tools.mcp import is_mcp_available
+            from Django_xm.apps.tools.mcp import is_mcp_available  # noqa: F401  # 仅用于导入可用性检测
         except ImportError:
             return success_response(
                 data={
@@ -188,7 +188,7 @@ class McpServerTestView(APIView):
             return error_response(message=f"未找到 MCP Server: {server_name}")
 
         try:
-            from Django_xm.apps.tools.mcp import get_mcp_tools
+            from Django_xm.apps.tools.mcp import get_mcp_tools  # noqa: F401  # 仅用于导入可用性检测
         except ImportError:
             return error_response(message="langchain-mcp-adapters 未安装")
 
@@ -223,7 +223,8 @@ async def _test_mcp_server(server_name, target):
         else:
             url = target.get("url")
             if not url:
-                raise ValueError(f"MCP Server '{server_name}' 缺少 url 配置")
+                # 配置校验异常：保持在此处抛出，由下方 except 统一转为错误响应（与缺失 url 场景的 API 契约一致）
+                raise ValueError(f"MCP Server '{server_name}' 缺少 url 配置")  # noqa: TRY301
             tools = await asyncio.wait_for(
                 get_mcp_tools(
                     server_url=url,

@@ -136,7 +136,10 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
             "messages": [
                 {
                     "role": "assistant",
-                    "content": "\n\nℹ️ 未选择知识库，将使用 AI 内置知识生成学习内容。如需基于专属资料学习，请在启动工作流前选择知识库。",
+                    "content": (
+                        "\n\nℹ️ 未选择知识库，将使用 AI 内置知识生成学习内容。"
+                        "如需基于专属资料学习，请在启动工作流前选择知识库。"
+                    ),
                 }
             ],
             "current_step": "retrieval",
@@ -188,7 +191,10 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
         }
         retrieved_docs.append(retrieved_doc)
 
-    retrieval_summary = f"\n\n📄 已从 {len(knowledge_base_ids)} 个知识库检索到 {len(retrieved_docs)} 个相关文档，将用于生成学习内容和练习题。"
+    retrieval_summary = (
+        f"\n\n📄 已从 {len(knowledge_base_ids)} 个知识库检索到 "
+        f"{len(retrieved_docs)} 个相关文档，将用于生成学习内容和练习题。"
+    )
 
     return {
         "retrieved_docs": retrieved_docs,

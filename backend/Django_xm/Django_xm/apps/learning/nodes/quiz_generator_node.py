@@ -139,7 +139,10 @@ def quiz_generator_node(state: StudyFlowState) -> dict[str, Any]:
 
         logger.info(f"[Quiz Generator Node] 练习题生成成功，共 {len(questions)} 题")
 
-        quiz_display = f"\n\n📝 **练习题已生成**（共 {len(questions)} 题，总分 {quiz['total_points']} 分，建议用时 {quiz['time_limit']} 分钟）\n\n"
+        quiz_display = (
+            f"\n\n📝 **练习题已生成**（共 {len(questions)} 题，"
+            f"总分 {quiz['total_points']} 分，建议用时 {quiz['time_limit']} 分钟）\n\n"
+        )
 
         for i, q in enumerate(questions, 1):
             quiz_display += f"**第 {i} 题** ({q['points']} 分)\n"

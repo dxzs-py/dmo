@@ -288,7 +288,8 @@ _persistence_instance: WorkflowPersistenceService | None = None
 
 def get_persistence_service() -> WorkflowPersistenceService:
     """获取持久化服务单例"""
-    global _persistence_instance
+    # 模块级单例惰性初始化
+    global _persistence_instance  # noqa: PLW0603
     if _persistence_instance is None:
         _persistence_instance = WorkflowPersistenceService()
     return _persistence_instance

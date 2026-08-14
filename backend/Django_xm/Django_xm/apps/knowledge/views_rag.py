@@ -7,7 +7,6 @@ RAG 查询/检索视图
 
 import json
 
-from Django_xm.apps.core.logging_utils import get_logger
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.decorators import api_view, renderer_classes
@@ -20,6 +19,7 @@ from Django_xm.apps.cache_manager.services.cache_service import (
     QueryCacheService,
     VectorSearchCacheService,
 )
+from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.responses import (
     error_response,

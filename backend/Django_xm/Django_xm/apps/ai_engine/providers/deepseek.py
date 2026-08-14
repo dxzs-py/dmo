@@ -20,14 +20,13 @@ def get_provider_config() -> dict[str, Any]:
 
 def apply_reasoning_patch_if_needed() -> None:
     """懒加载应用 reasoning_content 补丁，仅在首次调用时执行"""
-    global _patch_applied
     if _patch_applied:
         return
     apply_reasoning_patch()
 
 
 def apply_reasoning_patch() -> None:
-    global _patch_applied
+    global _patch_applied  # noqa: PLW0603 - 模块级补丁状态标记惰性初始化
     if _patch_applied:
         return
 

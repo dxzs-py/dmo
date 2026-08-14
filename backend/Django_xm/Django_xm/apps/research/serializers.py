@@ -130,7 +130,6 @@ class ResearchTaskSerializer(serializers.ModelSerializer):
             "knowledge_base_ids",
             "research_depth",
             "error_message",
-            "celery_task_id",
             "created_by",
             "created_at",
             "updated_at",
@@ -140,7 +139,34 @@ class ResearchTaskSerializer(serializers.ModelSerializer):
             "version",
             "version_chain",
         ]
-        read_only_fields = ["id", "task_id", "created_at", "updated_at", "celery_task_id", "error_message"]
+        read_only_fields = ["id", "task_id", "created_at", "updated_at", "error_message"]
+
+
+class ResearchRetrySubagentSerializer(serializers.Serializer):
+    """单独重启失败子代理请求序列化器（Task 3）。
+
+    字段：
+        agent_path: 目标子代理完整调用链路（如 ["main", "web-researcher"]）
+        tool_call_id: 失败子代理工具调用 ID（LLM tool_call.id）
+    """
+
+    agent_path = serializers.ListField(
+        child=serializers.CharField(max_length=100),
+        min_length=1,
+        max_length=10,
+        required=True,
+        help_text='目标子代理完整调用链路（如 ["main", "web-researcher"]）',
+    )
+    tool_call_id = serializers.CharField(
+        required=True, allow_blank=False, max_length=200, help_text="失败子代理工具调用 ID"
+    )
+
+    def validate_agent_path(self, value: list[str]) -> list[str]:
+        """校验 agent_path 元素非空（首个元素应为 main，末位为子代理名称）。"""
+        cleaned = [str(item).strip() for item in value]
+        if any(not item for item in cleaned):
+            raise serializers.ValidationError("agent_path 各元素不能为空")
+        return cleaned
 
 
 class ResearchResultSerializer(serializers.Serializer):

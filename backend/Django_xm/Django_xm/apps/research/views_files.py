@@ -98,8 +98,10 @@ class DeepResearchFileDownloadView(APIView):
             elif file_path.suffix.lower() == ".pdf":
                 content_type = "application/pdf"
 
+            # 说明：FileResponse 惰性读取文件，响应关闭时自动关闭句柄，
+            # 若用 with 提前关闭会导致流式读取失败，故保持 Django 官方 open() 模式。
             response = FileResponse(
-                open(file_path, "rb"),
+                open(file_path, "rb"),  # noqa: SIM115
                 content_type=content_type,
                 as_attachment=True,
                 filename=quote(file_path.name),

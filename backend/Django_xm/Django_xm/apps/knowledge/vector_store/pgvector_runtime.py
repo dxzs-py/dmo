@@ -36,8 +36,10 @@ def _current_db_dimension():
             row = cursor.fetchone()
             if not row:
                 return None
+            # row[0] 来自 information_schema.tables，WHERE table_name LIKE 'langchain_pg_embedding'
+            # 无通配符即精确匹配，属固定白名单常量（非用户输入）；PostgreSQL 表名无法参数化
             cursor.execute(
-                f"SELECT vector_dims(embedding) FROM {row[0]} LIMIT 1"
+                f"SELECT vector_dims(embedding) FROM {row[0]} LIMIT 1"  # noqa: S608
             )
             r2 = cursor.fetchone()
             return r2[0] if r2 else None

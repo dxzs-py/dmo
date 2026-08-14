@@ -1,990 +1,108 @@
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_reasoning
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_content_update
- [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_pending 事件: sessionStore=c7385c65-ab20-4f19-af61-153f550f3e82, tool=shell_exec, toolCallId=call_00_RkslKREXbfbLQz7CUXof9274, mappedStatus=pending, isResult=false, messageId=3308, source=chat
- [Sync] 工具调用更新: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, tool=shell_exec, id=call_00_RkslKREXbfbLQz7CUXof9274, eventType=tool_call_pending
- [toSnakeCase] chainOfThought → chain_of_thought
- [toSnakeCase] attachmentIds → attachment_ids
- [toSnakeCase] researchContext → research_context
- [toSnakeCase] currentVersion → current_version
- [toSnakeCase] tokenCount → token_count
- [toSnakeCase] tokenDetail → token_detail
- [toSnakeCase] responseTime → response_time
- [toSnakeCase] researchTaskId → research_task_id
- [toCamelCase] session_id → sessionId
- [Sync] approval_pending streaming → INTERRUPTED: session=c7385c65-ab20-4f19-af61-153f550f3e82, source=chat, graphInterruptId=5c1abcbf489e2dbbbdb6a6d2bb57d502, message=3308
- [Sync] 审批变更: session=c7385c65-ab20-4f19-af61-153f550f3e82, chatSession=c7385c65-ab20-4f19-af61-153f550f3e82, source=chat, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=5c1abcbf489e2dbbbdb6a6d2bb57d502
- [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_waiting 事件: sessionStore=c7385c65-ab20-4f19-af61-153f550f3e82, tool=shell_exec, toolCallId=call_00_RkslKREXbfbLQz7CUXof9274, mappedStatus=waiting, isResult=false, messageId=3308, source=chat
- [Sync] 工具调用更新: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, tool=shell_exec, id=call_00_RkslKREXbfbLQz7CUXof9274, eventType=tool_call_waiting
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 通用事件: eventType=stream_event, seq=undefined
- [toCamelCase] session_id → sessionId
- [Session] 占位 toolCall 已加入 pendingApprovals 队列: sessionId=c7385c65-ab20-4f19-af61-153f550f3e82, toolCallId=call_01_CVR05TFY509ggpd9xyaO3250, pendingIds=call_01_CVR05TFY509ggpd9xyaO3250,call_01_CVR05TFY509ggpd9xyaO3250
- [Sync] 审批变更: session=c7385c65-ab20-4f19-af61-153f550f3e82, chatSession=c7385c65-ab20-4f19-af61-153f550f3e82, source=chat, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=5c1abcbf489e2dbbbdb6a6d2bb57d502
- [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_waiting 事件: sessionStore=c7385c65-ab20-4f19-af61-153f550f3e82, tool=shell_exec, toolCallId=call_01_CVR05TFY509ggpd9xyaO3250, mappedStatus=waiting, isResult=false, messageId=3308, source=chat
- [Session] pending 审批已绑定: sessionId=c7385c65-ab20-4f19-af61-153f550f3e82, toolCallId=call_01_CVR05TFY509ggpd9xyaO3250
- [Sync] 工具调用更新: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, tool=shell_exec, id=call_01_CVR05TFY509ggpd9xyaO3250, eventType=tool_call_waiting
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 通用事件: eventType=stream_event, seq=undefined
- [toCamelCase] session_id → sessionId
- [Sync] stream_interrupted 消息进入 INTERRUPTED 状态: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, task=(无)
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_context
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_content_update
- [toCamelCase] session_id → sessionId
- [Sync] 非请求浏览器 INTERRUPTED 态，跳过 WS message_updated: session=c7385c65-ab20-4f19-af61-153f550f3e82
- [Axios] 响应转换: /chat/messages/3308/ 
-  前: {"code":200,"message":"消息更新成功","data":{"id":3308,"session_id":1613,"role":"assistant","content":"我来","sources":[],"plan":{},"chain_of_thought":[],"tool_calls":[{"id":"call_00_RkslKREXbfbLQz7CUXof9274" 
-  后: {"code":200,"message":"消息更新成功","data":{"id":3308,"sessionId":1613,"role":"assistant","content":"我来","sources":[],"plan":{},"chainOfThought":[],"toolCalls":[{"id":"call_00_RkslKREXbfbLQz7CUXof9274","ar
- [Realtime] 收到 pong
- [Axios] 响应转换: /realtime/snapshot/c7385c65-ab20-4f19-af61-153f550f3e82/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"c7385c65-ab20-4f19-af61-153f550f3e82","session_title":"我来运行这两个命令并保存结果。先执行 `ollama lis...","messages":[{"id":"3307","session_id":"c7385c65-ab20-4f19-a 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"c7385c65-ab20-4f19-af61-153f550f3e82","sessionTitle":"我来运行这两个命令并保存结果。先执行 `ollama lis...","messages":[{"id":"3307","sessionId":"c7385c65-ab20-4f19-af61
- [SnapshotSync] 消息校对完成: session=c7385c65-ab20-4f19-af61-153f550f3e82, count=2
- [SnapshotSync] 快照校对成功: session=c7385c65-ab20-4f19-af61-153f550f3e82
- [toCamelCase] session_id → sessionId
- [Sync] 审批变更: session=c7385c65-ab20-4f19-af61-153f550f3e82, chatSession=c7385c65-ab20-4f19-af61-153f550f3e82, source=chat, tool=shell_exec, eventType=approval_waiting, mappedState=waiting, graphInterruptId=5c1abcbf489e2dbbbdb6a6d2bb57d502
- [toSnakeCase] chainOfThought → chain_of_thought
- [toSnakeCase] attachmentIds → attachment_ids
- [toSnakeCase] researchContext → research_context
- [toSnakeCase] currentVersion → current_version
- [toSnakeCase] tokenCount → token_count
- [toSnakeCase] tokenDetail → token_detail
- [toSnakeCase] responseTime → response_time
- [toSnakeCase] researchTaskId → research_task_id
- [Axios] 响应转换: /chat/messages/3308/ 
-  前: {"code":200,"message":"消息更新成功","data":{"id":3308,"session_id":1613,"role":"assistant","content":"我来运行这两个命令并保存结果。先执行 `ollama list` 和 `ollama ps`：","sources":[],"plan":{},"chain_of_thought":[],"tool_cal 
-  后: {"code":200,"message":"消息更新成功","data":{"id":3308,"sessionId":1613,"role":"assistant","content":"我来运行这两个命令并保存结果。先执行 `ollama list` 和 `ollama ps`：","sources":[],"plan":{},"chainOfThought":[],"toolCalls":
- [toCamelCase] session_id → sessionId
- [Sync] stream_finalized 消息仍处于 INTERRUPTED（审批未恢复），保持: session=c7385c65-ab20-4f19-af61-153f550f3e82
- [Axios] 响应转换: /realtime/snapshot/c7385c65-ab20-4f19-af61-153f550f3e82/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"c7385c65-ab20-4f19-af61-153f550f3e82","session_title":"我来运行这两个命令并保存结果。先执行 `ollama lis...","messages":[{"id":"3307","session_id":"c7385c65-ab20-4f19-a 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"c7385c65-ab20-4f19-af61-153f550f3e82","sessionTitle":"我来运行这两个命令并保存结果。先执行 `ollama lis...","messages":[{"id":"3307","sessionId":"c7385c65-ab20-4f19-af61
- [SnapshotSync] 消息校对完成: session=c7385c65-ab20-4f19-af61-153f550f3e82, count=2
- [SnapshotSync] 快照校对成功: session=c7385c65-ab20-4f19-af61-153f550f3e82
- [toCamelCase] session_id → sessionId
- [Sync] 批量审批 sibling approved/processing，INTERRUPTED → STREAMING: session=c7385c65-ab20-4f19-af61-153f550f3e82, source=chat, graphInterruptId=5c1abcbf489e2dbbbdb6a6d2bb57d502, message=3308, siblings=2
- [Sync] 审批变更: session=c7385c65-ab20-4f19-af61-153f550f3e82, chatSession=c7385c65-ab20-4f19-af61-153f550f3e82, source=chat, tool=shell_exec, eventType=approval_processing, mappedState=processing, graphInterruptId=5c1abcbf489e2dbbbdb6a6d2bb57d502
- [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_running 事件: sessionStore=c7385c65-ab20-4f19-af61-153f550f3e82, tool=shell_exec, toolCallId=call_00_RkslKREXbfbLQz7CUXof9274, mappedStatus=running, isResult=false, messageId=3308, source=chat
- [Sync] 工具调用更新: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, tool=shell_exec, id=call_00_RkslKREXbfbLQz7CUXof9274, eventType=tool_call_running
- [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_completed 事件: sessionStore=c7385c65-ab20-4f19-af61-153f550f3e82, tool=shell_exec, toolCallId=call_01_CVR05TFY509ggpd9xyaO3250, mappedStatus=completed, isResult=true, messageId=3308, source=chat
- [Sync] 工具调用结果: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, tool=shell_exec, id=call_01_CVR05TFY509ggpd9xyaO3250, eventType=tool_call_completed
- [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_completed 事件: sessionStore=c7385c65-ab20-4f19-af61-153f550f3e82, tool=shell_exec, toolCallId=call_00_RkslKREXbfbLQz7CUXof9274, mappedStatus=completed, isResult=true, messageId=3308, source=chat
- [Sync] 工具调用结果: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, tool=shell_exec, id=call_00_RkslKREXbfbLQz7CUXof9274, eventType=tool_call_completed
- [Realtime] 收到 pong
- [Axios] 响应转换: /realtime/snapshot/c7385c65-ab20-4f19-af61-153f550f3e82/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"c7385c65-ab20-4f19-af61-153f550f3e82","session_title":"我来运行这两个命令并保存结果。先执行 `ollama lis...","messages":[{"id":"3307","session_id":"c7385c65-ab20-4f19-a 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"c7385c65-ab20-4f19-af61-153f550f3e82","sessionTitle":"我来运行这两个命令并保存结果。先执行 `ollama lis...","messages":[{"id":"3307","sessionId":"c7385c65-ab20-4f19-af61
- [SnapshotSync] 消息校对完成: session=c7385c65-ab20-4f19-af61-153f550f3e82, count=2
- [SnapshotSync] 工具调用校对完成: session=c7385c65-ab20-4f19-af61-153f550f3e82, count=2
- [SnapshotSync] 审批校对完成: session=c7385c65-ab20-4f19-af61-153f550f3e82, count=2
- [SnapshotSync] 快照校对成功: session=c7385c65-ab20-4f19-af61-153f550f3e82
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_content_update
- [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_pending 事件: sessionStore=c7385c65-ab20-4f19-af61-153f550f3e82, tool=fs_write_file, toolCallId=call_00_9iMWHtEdiWXW8CZ1VNKs9099, mappedStatus=pending, isResult=false, messageId=3308, source=chat
- [Sync] 工具调用更新: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, tool=fs_write_file, id=call_00_9iMWHtEdiWXW8CZ1VNKs9099, eventType=tool_call_pending
- [toSnakeCase] chainOfThought → chain_of_thought
- [toSnakeCase] attachmentIds → attachment_ids
- [toSnakeCase] researchContext → research_context
- [toSnakeCase] currentVersion → current_version
- [toSnakeCase] tokenCount → token_count
- [toSnakeCase] tokenDetail → token_detail
- [toSnakeCase] responseTime → response_time
- [toSnakeCase] researchTaskId → research_task_id
- [Axios] 响应转换: /chat/messages/3308/ 
-  前: {"code":200,"message":"消息更新成功","data":{"id":3308,"session_id":1613,"role":"assistant","content":"两个","sources":[],"plan":{},"chain_of_thought":[],"tool_calls":[{"id":"call_00_RkslKREXbfbLQz7CUXof9274" 
-  后: {"code":200,"message":"消息更新成功","data":{"id":3308,"sessionId":1613,"role":"assistant","content":"两个","sources":[],"plan":{},"chainOfThought":[],"toolCalls":[{"id":"call_00_RkslKREXbfbLQz7CUXof9274","ar
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 缺少 messageId 或 eventType: messageId=undefined, eventType=stream_content_update
- [toCamelCase] session_id → sessionId
- [Sync] approval_pending streaming → INTERRUPTED: session=c7385c65-ab20-4f19-af61-153f550f3e82, source=chat, graphInterruptId=573f0377fe954949807686ac78802a1f, message=3308
- [Sync] 审批变更: session=c7385c65-ab20-4f19-af61-153f550f3e82, chatSession=c7385c65-ab20-4f19-af61-153f550f3e82, source=chat, tool=fs_write_file, eventType=approval_pending, mappedState=pending, graphInterruptId=573f0377fe954949807686ac78802a1f
- [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_waiting 事件: sessionStore=c7385c65-ab20-4f19-af61-153f550f3e82, tool=fs_write_file, toolCallId=call_00_9iMWHtEdiWXW8CZ1VNKs9099, mappedStatus=waiting, isResult=false, messageId=3308, source=chat
- [Sync] 工具调用更新: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, tool=fs_write_file, id=call_00_9iMWHtEdiWXW8CZ1VNKs9099, eventType=tool_call_waiting
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 通用事件: eventType=stream_event, seq=undefined
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_content_update
- [toCamelCase] session_id → sessionId
- [Sync] 非请求浏览器 INTERRUPTED 态，跳过 WS message_updated: session=c7385c65-ab20-4f19-af61-153f550f3e82
- [toCamelCase] session_id → sessionId
- [Sync] 审批变更: session=c7385c65-ab20-4f19-af61-153f550f3e82, chatSession=c7385c65-ab20-4f19-af61-153f550f3e82, source=chat, tool=shell_exec, eventType=approval_approved, mappedState=approved, graphInterruptId=5c1abcbf489e2dbbbdb6a6d2bb57d502
- [toSnakeCase] chainOfThought → chain_of_thought
- [toSnakeCase] attachmentIds → attachment_ids
- [toSnakeCase] researchContext → research_context
- [toSnakeCase] currentVersion → current_version
- [toSnakeCase] tokenCount → token_count
- [toSnakeCase] tokenDetail → token_detail
- [toSnakeCase] responseTime → response_time
- [toSnakeCase] researchTaskId → research_task_id
- [toCamelCase] session_id → sessionId
- [Sync] 审批变更: session=c7385c65-ab20-4f19-af61-153f550f3e82, chatSession=c7385c65-ab20-4f19-af61-153f550f3e82, source=chat, tool=shell_exec, eventType=approval_approved, mappedState=approved, graphInterruptId=5c1abcbf489e2dbbbdb6a6d2bb57d502
- [toCamelCase] session_id → sessionId
- [Sync] stream_finalized 消息仍处于 INTERRUPTED（审批未恢复），保持: session=c7385c65-ab20-4f19-af61-153f550f3e82
- [Axios] 响应转换: /chat/messages/3308/ 
-  前: {"code":200,"message":"消息更新成功","data":{"id":3308,"session_id":1613,"role":"assistant","content":"两个命令都执行成功。现在将结果保存到指定文件：","sources":[],"plan":{},"chain_of_thought":[],"tool_calls":[{"id":"call_00_Rksl 
-  后: {"code":200,"message":"消息更新成功","data":{"id":3308,"sessionId":1613,"role":"assistant","content":"两个命令都执行成功。现在将结果保存到指定文件：","sources":[],"plan":{},"chainOfThought":[],"toolCalls":[{"id":"call_00_RkslKREX
- [Axios] 响应转换: /realtime/snapshot/c7385c65-ab20-4f19-af61-153f550f3e82/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"c7385c65-ab20-4f19-af61-153f550f3e82","session_title":"我来运行这两个命令并保存结果。先执行 `ollama lis...","messages":[{"id":"3307","session_id":"c7385c65-ab20-4f19-a 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"c7385c65-ab20-4f19-af61-153f550f3e82","sessionTitle":"我来运行这两个命令并保存结果。先执行 `ollama lis...","messages":[{"id":"3307","sessionId":"c7385c65-ab20-4f19-af61
- [SnapshotSync] 消息校对完成: session=c7385c65-ab20-4f19-af61-153f550f3e82, count=2
- [SnapshotSync] 工具调用校对完成: session=c7385c65-ab20-4f19-af61-153f550f3e82, count=2
- [SnapshotSync] 审批校对完成: session=c7385c65-ab20-4f19-af61-153f550f3e82, count=2
- [SnapshotSync] 快照校对成功: session=c7385c65-ab20-4f19-af61-153f550f3e82
- [toCamelCase] session_id → sessionId
- [Sync] 批量审批 sibling approved/processing，INTERRUPTED → STREAMING: session=c7385c65-ab20-4f19-af61-153f550f3e82, source=chat, graphInterruptId=573f0377fe954949807686ac78802a1f, message=3308, siblings=1
- [Sync] 审批变更: session=c7385c65-ab20-4f19-af61-153f550f3e82, chatSession=c7385c65-ab20-4f19-af61-153f550f3e82, source=chat, tool=fs_write_file, eventType=approval_processing, mappedState=processing, graphInterruptId=573f0377fe954949807686ac78802a1f
- [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_running 事件: sessionStore=c7385c65-ab20-4f19-af61-153f550f3e82, tool=fs_write_file, toolCallId=call_00_9iMWHtEdiWXW8CZ1VNKs9099, mappedStatus=running, isResult=false, messageId=3308, source=chat
- [Sync] 工具调用更新: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, tool=fs_write_file, id=call_00_9iMWHtEdiWXW8CZ1VNKs9099, eventType=tool_call_running
- [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_completed 事件: sessionStore=c7385c65-ab20-4f19-af61-153f550f3e82, tool=fs_write_file, toolCallId=call_00_9iMWHtEdiWXW8CZ1VNKs9099, mappedStatus=completed, isResult=true, messageId=3308, source=chat
- [Sync] 工具调用结果: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, tool=fs_write_file, id=call_00_9iMWHtEdiWXW8CZ1VNKs9099, eventType=tool_call_completed
- [Axios] 响应转换: /realtime/snapshot/c7385c65-ab20-4f19-af61-153f550f3e82/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"c7385c65-ab20-4f19-af61-153f550f3e82","session_title":"我来运行这两个命令并保存结果。先执行 `ollama lis...","messages":[{"id":"3307","session_id":"c7385c65-ab20-4f19-a 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"c7385c65-ab20-4f19-af61-153f550f3e82","sessionTitle":"我来运行这两个命令并保存结果。先执行 `ollama lis...","messages":[{"id":"3307","sessionId":"c7385c65-ab20-4f19-af61
- [SnapshotSync] 消息校对完成: session=c7385c65-ab20-4f19-af61-153f550f3e82, count=2
- [SnapshotSync] 工具调用校对完成: session=c7385c65-ab20-4f19-af61-153f550f3e82, count=3
- [SnapshotSync] 审批校对完成: session=c7385c65-ab20-4f19-af61-153f550f3e82, count=3
- [SnapshotSync] 快照校对成功: session=c7385c65-ab20-4f19-af61-153f550f3e82
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_content_update
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_content_update
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_content_update
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, type=stream_content_update
- [toCamelCase] session_id → sessionId
- [Sync] 消息更新: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308
- [toCamelCase] session_id → sessionId
- [Sync] 审批变更: session=c7385c65-ab20-4f19-af61-153f550f3e82, chatSession=c7385c65-ab20-4f19-af61-153f550f3e82, source=chat, tool=fs_write_file, eventType=approval_approved, mappedState=approved, graphInterruptId=573f0377fe954949807686ac78802a1f
- [toSnakeCase] chainOfThought → chain_of_thought
- [toSnakeCase] attachmentIds → attachment_ids
- [toSnakeCase] researchContext → research_context
- [toSnakeCase] currentVersion → current_version
- [toSnakeCase] tokenCount → token_count
- [toSnakeCase] tokenDetail → token_detail
- [toSnakeCase] responseTime → response_time
- [toSnakeCase] researchTaskId → research_task_id
- [Axios] 响应转换: /chat/messages/3308/ 
-  前: {"code":200,"message":"消息更新成功","data":{"id":3308,"session_id":1613,"role":"assistant","content":"✅ 已完成！命令结果已保存到 `D:\\programming\\langchain\\langchain_xm\\test_approval25.txt`\n\n**执行摘要：**\n\n📋 **`ol 
-  后: {"code":200,"message":"消息更新成功","data":{"id":3308,"sessionId":1613,"role":"assistant","content":"✅ 已完成！命令结果已保存到 `D:\\programming\\langchain\\langchain_xm\\test_approval25.txt`\n\n**执行摘要：**\n\n📋 **`oll
- [toCamelCase] session_id → sessionId
- [Sync] stream_finalized 非请求浏览器触发全量同步: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308, prevState=streaming
- [Axios] 响应转换: /realtime/snapshot/c7385c65-ab20-4f19-af61-153f550f3e82/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"c7385c65-ab20-4f19-af61-153f550f3e82","session_title":"我来运行这两个命令并保存结果。先执行 `ollama lis...","messages":[{"id":"3307","session_id":"c7385c65-ab20-4f19-a 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"c7385c65-ab20-4f19-af61-153f550f3e82","sessionTitle":"我来运行这两个命令并保存结果。先执行 `ollama lis...","messages":[{"id":"3307","sessionId":"c7385c65-ab20-4f19-af61
- [SnapshotSync] 消息校对完成: session=c7385c65-ab20-4f19-af61-153f550f3e82, count=2
- [SnapshotSync] 工具调用校对完成: session=c7385c65-ab20-4f19-af61-153f550f3e82, count=3
- [SnapshotSync] 审批校对完成: session=c7385c65-ab20-4f19-af61-153f550f3e82, count=3
- [SnapshotSync] 快照校对成功: session=c7385c65-ab20-4f19-af61-153f550f3e82
- [Axios] 响应转换: /chat/sessions/c7385c65-ab20-4f19-af61-153f550f3e82/ 
-  前: {"code":200,"message":"操作成功","data":{"id":1613,"session_id":"c7385c65-ab20-4f19-af61-153f550f3e82","title":"我来运行这两个命令并保存结果。先执行 `ollama lis...","mode":"agent","selected_knowledge_base":null,"selected_k 
-  后: {"code":200,"message":"操作成功","data":{"id":1613,"sessionId":"c7385c65-ab20-4f19-af61-153f550f3e82","title":"我来运行这两个命令并保存结果。先执行 `ollama lis...","mode":"agent","selectedKnowledgeBase":null,"selectedKnowl
- [Session] Loaded detail for session c7385c65-ab20-4f19-af61-153f550f3e82 with 2 messages
- [Sync] 全量同步完成: session=c7385c65-ab20-4f19-af61-153f550f3e82, messages=2, allowContentMerge=true
- [Sync] stream_finalized 非请求浏览器同步后标记 completed: session=c7385c65-ab20-4f19-af61-153f550f3e82, message=3308
- [Axios] 响应转换: /realtime/snapshot/c7385c65-ab20-4f19-af61-153f550f3e82/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"c7385c65-ab20-4f19-af61-153f550f3e82","session_title":"我来运行这两个命令并保存结果。先执行 `ollama lis...","messages":[{"id":"3307","session_id":"c7385c65-ab20-4f19-a 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"c7385c65-ab20-4f19-af61-153f550f3e82","sessionTitle":"我来运行这两个命令并保存结果。先执行 `ollama lis...","messages":[{"id":"3307","sessionId":"c7385c65-ab20-4f19-af61
- [SnapshotSync] 消息校对完成: session=c7385c65-ab20-4f19-af61-153f550f3e82, count=2
- [SnapshotSync] 工具调用校对完成: session=c7385c65-ab20-4f19-af61-153f550f3e82, count=3
- [SnapshotSync] 审批校对完成: session=c7385c65-ab20-4f19-af61-153f550f3e82, count=3
- [SnapshotSync] 快照校对成功: session=c7385c65-ab20-4f19-af61-153f550f3e82
- [Realtime] 收到 pong
- [Sync] session_created 自动切换会话: c7385c65-ab20-4f19-af61-153f550f3e82 -> 7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
- [Realtime] replay barrier 设置 pending: session_7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
- [Sync] 会话创建并自动订阅: 7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
- [Sync] 重置 session seq 状态: 7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
+ [vite] connecting...
+ [vite] connected.
+ [Security] Initializing session store...
+ [Realtime] 已从 localStorage 恢复 lastSeq: 533 条通道
+ [toSnakeCase] pageSize → page_size
+ [toSnakeCase] agentType → agent_type
+ [Realtime] WebSocket 已连接
+ [Realtime] replay barrier 设置 pending: user
+ 🍍 "approval" store installed 🆕
+ 🍍 "research" store installed 🆕
+ 🍍 "workflow" store installed 🆕
+ [Sync] 实时同步 store 已初始化
  [toCamelCase] channel_type → channelType
  [toCamelCase] channel_id → channelId
  [toCamelCase] chunk_index → chunkIndex
  [toCamelCase] chunk_count → chunkCount
- [Realtime] 收到 replay 回包: channel=session:7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, count=0, chunk=1/1
- [Realtime] replay barrier flush 无缓冲事件: session_7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
- [ChatView] WebSocket 取消订阅会话事件: c7385c65-ab20-4f19-af61-153f550f3e82
- [Axios] 响应转换: /chat/project-context/ 
-  前: {"code":200,"message":"操作成功","data":{"project_name":"","project_root":"","languages":[],"frameworks":[],"has_git":false,"git_branch":"","instruction_content":"","directory_structure":"","key_files":[] 
-  后: {"code":200,"message":"操作成功","data":{"projectName":"","projectRoot":"","languages":[],"frameworks":[],"hasGit":false,"gitBranch":"","instructionContent":"","directoryStructure":"","keyFiles":[]}}
- [ChatView] WebSocket 订阅会话事件: 7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
- [toCamelCase] session_id → sessionId
- [Sync] handleMessageAdded 诊断: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, incoming.role=user, incoming.backendId=3309, messagesCount=0, placeholderCount=0, exactMatch=false
- [Sync] 占位合并失败(非触发浏览器正常): session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, role=user, incomingContent=运行 ollama lis 和 ollama pst 并把结果保存到D:\programming\l, placeholderCount=0
- [Sync] 消息新增: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, message=3309
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=1, expected=2
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=1, prev=1
- [toCamelCase] session_id → sessionId
- [Sync] handleMessageAdded 诊断: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, incoming.role=assistant, incoming.backendId=3310, messagesCount=1, placeholderCount=0, exactMatch=false
- [Sync] 占位合并失败(非触发浏览器正常): session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, role=assistant, incomingContent=, placeholderCount=0
- [Sync] 消息新增: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, message=3310
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=2, expected=3
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=2, prev=2
- [Sync] 未处理的 user 事件: task_created
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 设置 streamState=STREAMING: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, message=3310, type=stream_event
- [Sync] stream_event 通用事件: eventType=stream_event, seq=undefined
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=3, expected=4
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=3, prev=3
- [toCamelCase] session_id → sessionId
- [Sync] 消息更新: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, message=3310
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=4, expected=5
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=4, prev=4
- [toCamelCase] session_id → sessionId
- [Sync] stream_interrupted 消息进入 INTERRUPTED 状态: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, message=3310, task=research_f285c9ba587d
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=5, expected=6
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=5, prev=5
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 通用事件: eventType=stream_event, seq=undefined
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=6, expected=7
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=6, prev=6
- [toCamelCase] session_id → sessionId
- [Sync] stream_event 处理: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, message=3310, type=stream_context
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=7, expected=8
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=7, prev=7
- [toCamelCase] session_id → sessionId
- [Sync] 非请求浏览器 INTERRUPTED 态，跳过 WS message_updated: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=8, expected=9
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=8, prev=8
- [toCamelCase] session_id → sessionId
- [Sync] stream_finalized 消息仍处于 INTERRUPTED（审批未恢复），保持: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=9, expected=10
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=9, prev=9
- [Axios] 响应转换: /realtime/snapshot/7162c0d9-d5f9-4547-a4d1-8d4b1ada618e/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","session_title":"新对话 - 代理","messages":[{"id":"3309","session_id":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","sessionTitle":"新对话 - 代理","messages":[{"id":"3309","sessionId":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","role":"us
- [SnapshotSync] 消息校对完成: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, count=2
- [SnapshotSync] 快照校对成功: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
- [Realtime] 收到 pong
- [ChatView] WebSocket 取消订阅会话事件: 7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
- 🍍 "researchSettings" store installed 🆕
- [toSnakeCase] pageSize → page_size
- [toSnakeCase] pageSize → page_size
- [Axios] 响应转换: /research/status/research_f285c9ba587d/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","status":"running","query":"运行 ollama lis 和 ollama pst 并把结果保存到D:\\programming\\langchain\\langchain_xm\\test_approval25.txt","ses 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","status":"running","query":"运行 ollama lis 和 ollama pst 并把结果保存到D:\\programming\\langchain\\langchain_xm\\test_approval25.txt","sess
- [Research] setTaskStatus 首次设置: taskId=research_f285c9ba587d, status=running
- [DeepResearch] 订阅 session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e（关联 chat，task=research_f285c9ba587d 事件由双频道广播）
+ [Realtime] 收到 replay 回包: channel=user:1, count=0, chunk=1/1
+ [Realtime] replay barrier flush 无缓冲事件: user
+ 🍍 "chat" store installed 🆕
+ 🍍 "model" store installed 🆕
+ 🍍 "chatDeepResearch" store installed 🆕
+ 🍍 "tools" store installed 🆕
+ [Axios] 响应转换: /users/info/ 
+  前: {"code":200,"message":"获取成功","data":{"id":1,"username":"daixing","email":"3309201506@qq.com","mobile":null,"avatar":"/media/avatar/1/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE_2026-05-01_172822.png","date_j 
+  后: {"code":200,"message":"获取成功","data":{"id":1,"username":"daixing","email":"3309201506@qq.com","mobile":null,"avatar":"/media/avatar/1/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE_2026-05-01_172822.png","dateJo
+ [Axios] 响应转换: /context/capability-config/ 
+  前: {"code":200,"message":"操作成功","data":{"available_capabilities":["context_management","tool_injection","guardrails","rate_limit","groq_compat"],"default_capabilities":["context_management","tool_injecti 
+  后: {"code":200,"message":"操作成功","data":{"availableCapabilities":["context_management","tool_injection","guardrails","rate_limit","groq_compat"],"defaultCapabilities":["context_management","tool_injection
+ [Axios] 响应转换: /chat/sessions/ 
+  前: {"code":200,"message":"操作成功","data":{"items":[{"user_id":1,"cached_at":"2026-08-14T05:46:27.971307+00:00","id":1640,"session_id":"cf20b49e-9533-4a85-b25e-314c3a48500e","title":"新对话 - 代理","mode":"agent 
+  后: {"code":200,"message":"操作成功","data":{"items":[{"userId":1,"cachedAt":"2026-08-14T05:46:27.971307+00:00","id":1640,"sessionId":"cf20b49e-9533-4a85-b25e-314c3a48500e","title":"新对话 - 代理","mode":"agent","
+ [Session] 新打开页面，定位最新会话: cf20b49e-9533-4a85-b25e-314c3a48500e（忽略 localStorage: cf20b49e-9533-4a85-b25e-314c3a48500e）
+ [Security] Loaded 6 sessions (page 1/1) for user 1
  [Axios] 响应转换: /knowledge/knowledge-bases/ 
   前: {"code":200,"message":"操作成功","data":{"items":[{"id":"msyql","name":"msyql","description":"mysql学习文档","num_documents":404,"chunk_count":404,"created_at":"2026-08-11T07:13:50.361076+00:00","updated_at": 
   后: {"code":200,"message":"操作成功","data":{"items":[{"id":"msyql","name":"msyql","description":"mysql学习文档","numDocuments":404,"chunkCount":404,"createdAt":"2026-08-11T07:13:50.361076+00:00","updatedAt":"202
- [Axios] 响应转换: /research/tasks/ 
-  前: {"code":200,"message":"操作成功","data":{"items":[{"id":455,"task_id":"research_f285c9ba587d","query":"运行 ollama lis 和 ollama pst 并把结果保存到D:\\programming\\langchain\\langchain_xm\\test_approval25.txt","sta 
-  后: {"code":200,"message":"操作成功","data":{"items":[{"id":455,"taskId":"research_f285c9ba587d","query":"运行 ollama lis 和 ollama pst 并把结果保存到D:\\programming\\langchain\\langchain_xm\\test_approval25.txt","stat
- [Axios] 响应转换: /research/tasks/ 
-  前: {"code":200,"message":"操作成功","data":{"items":[{"id":455,"task_id":"research_f285c9ba587d","query":"运行 ollama lis 和 ollama pst 并把结果保存到D:\\programming\\langchain\\langchain_xm\\test_approval25.txt","sta 
-  后: {"code":200,"message":"操作成功","data":{"items":[{"id":455,"taskId":"research_f285c9ba587d","query":"运行 ollama lis 和 ollama pst 并把结果保存到D:\\programming\\langchain\\langchain_xm\\test_approval25.txt","stat
- [toCamelCase] task_id → taskId
- [toCamelCase] task_id → taskId
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_pending 事件: sessionStore=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, tool=todo_write, toolCallId=call_00_zdzSYhKp6iLMmy2ECwOg3663, mappedStatus=pending, isResult=false, messageId=(none), source=deep_research
- [Sync] 工具调用更新: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, message=(兜底), tool=todo_write, id=call_00_zdzSYhKp6iLMmy2ECwOg3663, eventType=tool_call_pending
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=10, expected=11
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=10, prev=10
- [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_failed 事件: sessionStore=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, tool=todo_write, toolCallId=call_00_zdzSYhKp6iLMmy2ECwOg3663, mappedStatus=failed, isResult=true, messageId=(none), source=deep_research
- [Sync] 工具调用结果: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, message=(兜底), tool=todo_write, id=call_00_zdzSYhKp6iLMmy2ECwOg3663, eventType=tool_call_failed
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=11, expected=12
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=11, prev=11
- [toSnakeCase] chainOfThought → chain_of_thought
- [toSnakeCase] attachmentIds → attachment_ids
- [toSnakeCase] researchContext → research_context
- [toSnakeCase] currentVersion → current_version
- [toSnakeCase] tokenCount → token_count
- [toSnakeCase] tokenDetail → token_detail
- [toSnakeCase] responseTime → response_time
- [toSnakeCase] researchTaskId → research_task_id
- [Axios] 响应转换: /chat/messages/3310/ 
-  前: {"code":200,"message":"消息更新成功","data":{"id":3310,"session_id":1614,"role":"assistant","content":"","sources":[],"plan":{},"chain_of_thought":[],"tool_calls":[],"approval":{},"reasoning":{},"suggestion 
-  后: {"code":200,"message":"消息更新成功","data":{"id":3310,"sessionId":1614,"role":"assistant","content":"","sources":[],"plan":{},"chainOfThought":[],"toolCalls":[],"approval":{},"reasoning":{},"suggestions":[
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_pending 事件: sessionStore=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, tool=todo_write, toolCallId=call_00_pGyHLAlmu5eR5ikW3WLR2768, mappedStatus=pending, isResult=false, messageId=(none), source=deep_research
- [Sync] 工具调用更新: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, message=(兜底), tool=todo_write, id=call_00_pGyHLAlmu5eR5ikW3WLR2768, eventType=tool_call_pending
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=12, expected=13
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=12, prev=12
- [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_completed 事件: sessionStore=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, tool=todo_write, toolCallId=call_00_pGyHLAlmu5eR5ikW3WLR2768, mappedStatus=completed, isResult=true, messageId=(none), source=deep_research
- [Sync] 工具调用结果: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, message=(兜底), tool=todo_write, id=call_00_pGyHLAlmu5eR5ikW3WLR2768, eventType=tool_call_completed
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=13, expected=14
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=13, prev=13
- [Axios] 响应转换: /realtime/snapshot/7162c0d9-d5f9-4547-a4d1-8d4b1ada618e/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","session_title":"新对话 - 代理","messages":[{"id":"3309","session_id":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","sessionTitle":"新对话 - 代理","messages":[{"id":"3309","sessionId":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","role":"us
- [SnapshotSync] 消息校对完成: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, count=2
- [SnapshotSync] 快照校对成功: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
- [toCamelCase] session_id → sessionId
- [Session] 占位 toolCall 已加入 pendingApprovals 队列: sessionId=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, toolCallId=call_00_Uhg3nr4ajQuomHrWnW6A7198, pendingIds=call_00_Uhg3nr4ajQuomHrWnW6A7198,call_00_Uhg3nr4ajQuomHrWnW6A7198
- [Sync] 审批变更: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, chatSession=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, source=deep_research, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=3fbe7d58bbb64702b3f67ffdfa86dc5b
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=14, expected=15
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=14, prev=14
- [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_waiting 事件: sessionStore=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, tool=shell_exec, toolCallId=call_00_Uhg3nr4ajQuomHrWnW6A7198, mappedStatus=waiting, isResult=false, messageId=(none), source=deep_research
- [Session] pending 审批已绑定: sessionId=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, toolCallId=call_00_Uhg3nr4ajQuomHrWnW6A7198
- [Sync] 工具调用更新: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, message=(兜底), tool=shell_exec, id=call_00_Uhg3nr4ajQuomHrWnW6A7198, eventType=tool_call_waiting
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=15, expected=16
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=15, prev=15
- [toCamelCase] session_id → sessionId
- [Session] 占位 toolCall 已加入 pendingApprovals 队列: sessionId=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, toolCallId=call_01_XaEHmDKLkV6A9oyO12ix4496, pendingIds=call_01_XaEHmDKLkV6A9oyO12ix4496,call_01_XaEHmDKLkV6A9oyO12ix4496
- [Sync] 审批变更: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, chatSession=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, source=deep_research, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=3fbe7d58bbb64702b3f67ffdfa86dc5b
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=16, expected=17
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=16, prev=16
- [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_waiting 事件: sessionStore=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, tool=shell_exec, toolCallId=call_01_XaEHmDKLkV6A9oyO12ix4496, mappedStatus=waiting, isResult=false, messageId=(none), source=deep_research
- [Session] pending 审批已绑定: sessionId=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, toolCallId=call_01_XaEHmDKLkV6A9oyO12ix4496
- [Sync] 工具调用更新: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, message=(兜底), tool=shell_exec, id=call_01_XaEHmDKLkV6A9oyO12ix4496, eventType=tool_call_waiting
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=17, expected=18
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=17, prev=17
- [Axios] 响应转换: /realtime/snapshot/7162c0d9-d5f9-4547-a4d1-8d4b1ada618e/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","session_title":"新对话 - 代理","messages":[{"id":"3309","session_id":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","sessionTitle":"新对话 - 代理","messages":[{"id":"3309","sessionId":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","role":"us
- [SnapshotSync] 消息校对完成: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, count=2
- [SnapshotSync] 快照校对成功: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [toCamelCase] task_id → taskId
- [Research] setTaskStatus 状态变更: taskId=research_f285c9ba587d, oldStatus=running, newStatus=awaiting_approval
+ [Axios] 响应转换: /tools/skills/ 
+  前: {"code":200,"message":"操作成功","data":{"skills":[{"name":"skill_web_research","description":"网络研究技能：搜索关键词 → 抓取相关网页 → 总结关键信息。适用场景：需要深入了解某个话题。","tool_type":"skill","category":{"code":"general","name":"通用" 
+  后: {"code":200,"message":"操作成功","data":{"skills":[{"name":"skill_web_research","description":"网络研究技能：搜索关键词 → 抓取相关网页 → 总结关键信息。适用场景：需要深入了解某个话题。","toolType":"skill","category":{"code":"general","name":"通用"}
+ [Axios] 响应转换: /tools/mcp/servers/ 
+  前: {"code":200,"message":"操作成功","data":{"servers":[{"name":"postgres","description":"PostgreSQL 数据库操作工具 - 查询 langchain 数据库（可读写）","tool_type":"mcp","category":{"code":"general","name":"通用"},"source":"user 
+  后: {"code":200,"message":"操作成功","data":{"servers":[{"name":"postgres","description":"PostgreSQL 数据库操作工具 - 查询 langchain 数据库（可读写）","toolType":"mcp","category":{"code":"general","name":"通用"},"source":"user"
+ [Axios] 响应转换: /chat/project-context/ 
+  前: {"code":200,"message":"操作成功","data":{"project_name":"","project_root":"","languages":[],"frameworks":[],"has_git":false,"git_branch":"","instruction_content":"","directory_structure":"","key_files":[] 
+  后: {"code":200,"message":"操作成功","data":{"projectName":"","projectRoot":"","languages":[],"frameworks":[],"hasGit":false,"gitBranch":"","instructionContent":"","directoryStructure":"","keyFiles":[]}}
+ [Axios] 响应转换: /chat/sessions/cf20b49e-9533-4a85-b25e-314c3a48500e/ 
+  前: {"code":200,"message":"操作成功","data":{"id":1640,"session_id":"cf20b49e-9533-4a85-b25e-314c3a48500e","title":"新对话 - 代理","mode":"agent","selected_knowledge_base":null,"selected_knowledge_bases":[],"messa 
+  后: {"code":200,"message":"操作成功","data":{"id":1640,"sessionId":"cf20b49e-9533-4a85-b25e-314c3a48500e","title":"新对话 - 代理","mode":"agent","selectedKnowledgeBase":null,"selectedKnowledgeBases":[],"messages":
+ [Session] Loaded detail for session cf20b49e-9533-4a85-b25e-314c3a48500e with 0 messages
+ [Realtime] replay barrier 设置 pending: session_cf20b49e-9533-4a85-b25e-314c3a48500e
+ [ChatView] WebSocket 订阅会话事件: cf20b49e-9533-4a85-b25e-314c3a48500e
+ [toCamelCase] channel_type → channelType
+ [toCamelCase] channel_id → channelId
+ [toCamelCase] chunk_index → chunkIndex
+ [toCamelCase] chunk_count → chunkCount
+ [Realtime] 收到 replay 回包: channel=session:cf20b49e-9533-4a85-b25e-314c3a48500e, count=0, chunk=1/1
+ [Realtime] replay barrier flush 无缓冲事件: session_cf20b49e-9533-4a85-b25e-314c3a48500e
+ [Axios] 响应转换: /realtime/snapshot/cf20b49e-9533-4a85-b25e-314c3a48500e/ 
+  前: {"code":200,"message":"操作成功","data":{"session_id":"cf20b49e-9533-4a85-b25e-314c3a48500e","session_title":"新对话 - 代理","messages":[],"tool_calls":[],"approvals":[]}} 
+  后: {"code":200,"message":"操作成功","data":{"sessionId":"cf20b49e-9533-4a85-b25e-314c3a48500e","sessionTitle":"新对话 - 代理","messages":[],"toolCalls":[],"approvals":[]}}
  [Realtime] 收到 pong
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
+ [Realtime] 收到 pong
  [toCamelCase] session_id → sessionId
- [Sync] 审批变更: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, chatSession=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, source=deep_research, tool=shell_exec, eventType=approval_waiting, mappedState=waiting, graphInterruptId=3fbe7d58bbb64702b3f67ffdfa86dc5b
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=18, expected=19
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=18, prev=18
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
+ [Sync] handleMessageAdded 诊断: session=cf20b49e-9533-4a85-b25e-314c3a48500e, incoming.role=user, incoming.backendId=3369, messagesCount=0, placeholderCount=0, exactMatch=false
+ [Sync] 占位合并失败(非触发浏览器正常): session=cf20b49e-9533-4a85-b25e-314c3a48500e, role=user, incomingContent=运行 ollama lis 和 ollama pst 并把结果保存到D:\programming\l, placeholderCount=0
+ [Sync] 消息新增: session=cf20b49e-9533-4a85-b25e-314c3a48500e, message=3369
  [toCamelCase] session_id → sessionId
- [Sync] stream_finalized 消息仍处于 INTERRUPTED（审批未恢复），保持: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=19, expected=20
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=19, prev=19
- [Axios] 响应转换: /realtime/snapshot/7162c0d9-d5f9-4547-a4d1-8d4b1ada618e/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","session_title":"新对话 - 代理","messages":[{"id":"3309","session_id":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","sessionTitle":"新对话 - 代理","messages":[{"id":"3309","sessionId":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","role":"us
- [SnapshotSync] 消息校对完成: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, count=2
- [SnapshotSync] 快照校对成功: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
+ [Sync] handleMessageAdded 诊断: session=cf20b49e-9533-4a85-b25e-314c3a48500e, incoming.role=assistant, incoming.backendId=3370, messagesCount=1, placeholderCount=0, exactMatch=false
+ [Sync] 占位合并失败(非触发浏览器正常): session=cf20b49e-9533-4a85-b25e-314c3a48500e, role=assistant, incomingContent=, placeholderCount=0
+ [Sync] 消息新增: session=cf20b49e-9533-4a85-b25e-314c3a48500e, message=3370
+ [Realtime] 收到 pong
  [toCamelCase] session_id → sessionId
- [Sync] 审批变更: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, chatSession=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, source=deep_research, tool=shell_exec, eventType=approval_processing, mappedState=processing, graphInterruptId=3fbe7d58bbb64702b3f67ffdfa86dc5b
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=20, expected=21
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=20, prev=20
+ [Sync] stream_event 设置 streamState=STREAMING: session=cf20b49e-9533-4a85-b25e-314c3a48500e, message=3370, type=stream_content_update
+ [Sync] stream_event 处理: session=cf20b49e-9533-4a85-b25e-314c3a48500e, message=3370, type=stream_content_update
  [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_running 事件: sessionStore=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, tool=shell_exec, toolCallId=call_00_Uhg3nr4ajQuomHrWnW6A7198, mappedStatus=running, isResult=false, messageId=(none), source=deep_research
- [Sync] 工具调用更新: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, message=(兜底), tool=shell_exec, id=call_00_Uhg3nr4ajQuomHrWnW6A7198, eventType=tool_call_running
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=21, expected=22
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=21, prev=21
+ [Sync] 收到 tool_call_pending 事件: sessionStore=cf20b49e-9533-4a85-b25e-314c3a48500e, tool=shell_exec, toolCallId=call_00_fKeznblvX6dSlC0r26El1872, mappedStatus=pending, isResult=false, messageId=3370, source=chat
+ [Sync] 工具调用更新: session=cf20b49e-9533-4a85-b25e-314c3a48500e, message=3370, tool=shell_exec, id=call_00_fKeznblvX6dSlC0r26El1872, eventType=tool_call_pending
+ ⚠️ [Vue Warning] Component inside <Transition> renders non-element root node that cannot be animated. Object
  [toCamelCase] session_id → sessionId
- [Sync] 审批变更: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, chatSession=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, source=deep_research, tool=shell_exec, eventType=approval_approved, mappedState=approved, graphInterruptId=3fbe7d58bbb64702b3f67ffdfa86dc5b
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=22, expected=23
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=22, prev=22
+ [Sync] approval_pending streaming → INTERRUPTED: session=cf20b49e-9533-4a85-b25e-314c3a48500e, source=chat, graphInterruptId=e04aa82d3c686ab50d08ae8dfdec2d14, message=3370
+ [Sync] 审批变更: session=cf20b49e-9533-4a85-b25e-314c3a48500e, chatSession=cf20b49e-9533-4a85-b25e-314c3a48500e, source=chat, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=e04aa82d3c686ab50d08ae8dfdec2d14
+ ⚠️ [Vue Warning] Component inside <Transition> renders non-element root node that cannot be animated. Object
  [toCamelCase] session_id → sessionId
- [Sync] stream_finalized 消息仍处于 INTERRUPTED（审批未恢复），保持: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=23, expected=24
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=23, prev=23
+ [Sync] 收到 tool_call_waiting 事件: sessionStore=cf20b49e-9533-4a85-b25e-314c3a48500e, tool=shell_exec, toolCallId=call_00_fKeznblvX6dSlC0r26El1872, mappedStatus=waiting, isResult=false, messageId=3370, source=chat
+ [Sync] 工具调用更新: session=cf20b49e-9533-4a85-b25e-314c3a48500e, message=3370, tool=shell_exec, id=call_00_fKeznblvX6dSlC0r26El1872, eventType=tool_call_waiting
+ ⚠️ [Vue Warning] Component inside <Transition> renders non-element root node that cannot be animated. Object
  [toCamelCase] session_id → sessionId
- [Sync] 审批变更: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, chatSession=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, source=deep_research, tool=shell_exec, eventType=approval_approved, mappedState=approved, graphInterruptId=3fbe7d58bbb64702b3f67ffdfa86dc5b
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=24, expected=25
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=24, prev=24
+ [Sync] stream_event 通用事件: eventType=stream_event, seq=undefined
  [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_completed 事件: sessionStore=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, tool=shell_exec, toolCallId=call_00_Uhg3nr4ajQuomHrWnW6A7198, mappedStatus=completed, isResult=true, messageId=(none), source=deep_research
- [Sync] 工具调用结果: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, message=(兜底), tool=shell_exec, id=call_00_Uhg3nr4ajQuomHrWnW6A7198, eventType=tool_call_completed
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=25, expected=26
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=25, prev=25
+ [Session] 占位 toolCall 已加入 pendingApprovals 队列: sessionId=cf20b49e-9533-4a85-b25e-314c3a48500e, toolCallId=call_01_KdFnEM3GBjv02lbWTeLM6611, pendingIds=call_01_KdFnEM3GBjv02lbWTeLM6611,call_01_KdFnEM3GBjv02lbWTeLM6611
+ [Sync] 审批变更: session=cf20b49e-9533-4a85-b25e-314c3a48500e, chatSession=cf20b49e-9533-4a85-b25e-314c3a48500e, source=chat, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=e04aa82d3c686ab50d08ae8dfdec2d14
  [toCamelCase] session_id → sessionId
- [Sync] 收到 tool_call_completed 事件: sessionStore=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, tool=shell_exec, toolCallId=call_01_XaEHmDKLkV6A9oyO12ix4496, mappedStatus=completed, isResult=true, messageId=(none), source=deep_research
- [Sync] 工具调用结果: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, message=(兜底), tool=shell_exec, id=call_01_XaEHmDKLkV6A9oyO12ix4496, eventType=tool_call_completed
- [Sync] 丢弃过期事件: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=26, expected=27
- [Sync] setSeenSeq 忽略回退 seq: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, seq=26, prev=26
- [toCamelCase] task_id → taskId
- [Research] setTaskStatus 状态变更: taskId=research_f285c9ba587d, oldStatus=awaiting_approval, newStatus=running
- [Axios] 响应转换: /realtime/snapshot/7162c0d9-d5f9-4547-a4d1-8d4b1ada618e/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","session_title":"新对话 - 代理","messages":[{"id":"3309","session_id":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","sessionTitle":"新对话 - 代理","messages":[{"id":"3309","sessionId":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","role":"us
- [SnapshotSync] 消息校对完成: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, count=2
- [SnapshotSync] 工具调用校对完成: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, count=2
- [SnapshotSync] 审批校对完成: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, count=2
- [SnapshotSync] 快照校对成功: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
- [Axios] 响应转换: /realtime/snapshot/7162c0d9-d5f9-4547-a4d1-8d4b1ada618e/ 
-  前: {"code":200,"message":"操作成功","data":{"session_id":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","session_title":"新对话 - 代理","messages":[{"id":"3309","session_id":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","role": 
-  后: {"code":200,"message":"操作成功","data":{"sessionId":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","sessionTitle":"新对话 - 代理","messages":[{"id":"3309","sessionId":"7162c0d9-d5f9-4547-a4d1-8d4b1ada618e","role":"us
- [SnapshotSync] 消息校对完成: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, count=2
- [SnapshotSync] 工具调用校对完成: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, count=2
- [SnapshotSync] 审批校对完成: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, count=2
- [SnapshotSync] 快照校对成功: session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
- [Realtime] 收到 pong
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Realtime] 收到 pong
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Realtime] 收到 pong
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Realtime] 收到 pong
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Realtime] 收到 pong
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Realtime] 收到 pong
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Realtime] 收到 pong
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Realtime] 收到 pong
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Realtime] 收到 pong
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Sync] 会话删除: 7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
- [Realtime] 收到 pong
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
- [Axios] 响应转换: /research/research_f285c9ba587d/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_f285c9ba587d","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_f285c9ba587d","files":[],"total":0}}
-:8080/api/v1/research/research_f285c9ba587d/files/?_t=1786528626588:1  Failed to load resource: the server responded with a status of 404 (Not Found)
- [FileBrowser] 自动刷新失败（第 56 次） 
- [Realtime] 收到 pong
- [toSnakeCase] pageSize → page_size
- [Axios] 响应转换: /research/tasks/ 
-  前: {"code":200,"message":"操作成功","data":{"items":[{"id":454,"task_id":"research_6dc3a61a6997","query":"Redis 的核心数据结构有哪些？请基于知识库进行深度研究","status":"completed","final_report":"# ✅ 深度研究完成\n\n基于知识库文档分析与多源网络检索，已完 
-  后: {"code":200,"message":"操作成功","data":{"items":[{"id":454,"taskId":"research_6dc3a61a6997","query":"Redis 的核心数据结构有哪些？请基于知识库进行深度研究","status":"completed","finalReport":"# ✅ 深度研究完成\n\n基于知识库文档分析与多源网络检索，已完成对
- [Realtime] 收到 pong
-logger.js:24 [Sync] 未处理的 user 事件: task_created
-logger.js:19 [DeepResearch] 收到 task_created 事件，自动刷新任务列表
-sessionTransformers.js:83 [toSnakeCase] pageSize → page_size
-axios.js:73 [Axios] 响应转换: /research/tasks/ 
-  前: {"code":200,"message":"操作成功","data":{"items":[{"id":456,"task_id":"research_c6fe0009c4a9","query":"运行 ollama lis 和 ollama pst 并把结果保存到D:\\programming\\langchain\\langchain_xm\\test_approval25.txt","sta 
-  后: {"code":200,"message":"操作成功","data":{"items":[{"id":456,"taskId":"research_c6fe0009c4a9","query":"运行 ollama lis 和 ollama pst 并把结果保存到D:\\programming\\langchain\\langchain_xm\\test_approval25.txt","stat
-logger.js:24 [Realtime] 收到 pong
-logger.js:19 [Research] setTaskStatus 首次设置: taskId=research_c6fe0009c4a9, status=running
-logger.js:24 [Realtime] replay barrier 设置 pending: task_research_c6fe0009c4a9
-logger.js:19 [DeepResearch] 订阅 task=research_c6fe0009c4a9（无关联 chat session）
-sessionTransformers.js:61 [toCamelCase] channel_type → channelType
-sessionTransformers.js:61 [toCamelCase] channel_id → channelId
-sessionTransformers.js:61 [toCamelCase] chunk_index → chunkIndex
-sessionTransformers.js:61 [toCamelCase] chunk_count → chunkCount
-logger.js:19 [Realtime] 收到 replay 回包: channel=task:research_c6fe0009c4a9, count=4, chunk=1/1
-logger.js:19 [Sync] 审批变更(独立深度研究): taskId=research_c6fe0009c4a9, source=deep_research, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=20054edb772b4d07a5ea038856f2893c
-logger.js:19 [Sync] 收到 tool_call_waiting 事件: researchStore=research_c6fe0009c4a9, tool=shell_exec, toolCallId=call_00_16lo0IXPN9A3k1R2eFsv1305, mappedStatus=waiting, isResult=false, messageId=(none), source=deep_research
-logger.js:19 [Sync] task tool_call_waiting: taskId=research_c6fe0009c4a9, tool=shell_exec, toolCallId=call_00_16lo0IXPN9A3k1R2eFsv1305, mappedStatus=waiting
-logger.js:19 [Sync] 审批变更(独立深度研究): taskId=research_c6fe0009c4a9, source=deep_research, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=20054edb772b4d07a5ea038856f2893c
-logger.js:19 [Sync] 收到 tool_call_waiting 事件: researchStore=research_c6fe0009c4a9, tool=shell_exec, toolCallId=call_01_aIzibvW3FkFj6hhQYvvU3237, mappedStatus=waiting, isResult=false, messageId=(none), source=deep_research
-logger.js:19 [Sync] task tool_call_waiting: taskId=research_c6fe0009c4a9, tool=shell_exec, toolCallId=call_01_aIzibvW3FkFj6hhQYvvU3237, mappedStatus=waiting
-logger.js:24 [Realtime] replay barrier flush 无缓冲事件: task_research_c6fe0009c4a9
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:24 [ApprovalStore] restoreFromSSEHistory: 审批已存在，跳过 call_00_16lo0IXPN9A3k1R2eFsv1305
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:24 [ApprovalStore] restoreFromSSEHistory: 审批已存在，跳过 call_01_aIzibvW3FkFj6hhQYvvU3237
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:19 [Research] setTaskStatus 状态变更: taskId=research_c6fe0009c4a9, oldStatus=running, newStatus=awaiting_approval
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
-sessionTransformers.js:83 [toSnakeCase] sourceId → source_id
-logger.js:19 [SnapshotSync] task=research_c6fe0009c4a9 快照校对完成: 0 个审批记录
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:19 [Sync] 审批变更(独立深度研究): taskId=research_c6fe0009c4a9, source=deep_research, tool=shell_exec, eventType=approval_waiting, mappedState=waiting, graphInterruptId=20054edb772b4d07a5ea038856f2893c
+ [Sync] 收到 tool_call_waiting 事件: sessionStore=cf20b49e-9533-4a85-b25e-314c3a48500e, tool=shell_exec, toolCallId=call_01_KdFnEM3GBjv02lbWTeLM6611, mappedStatus=waiting, isResult=false, messageId=3370, source=chat
+ [Session] pending 审批已绑定: sessionId=cf20b49e-9533-4a85-b25e-314c3a48500e, toolCallId=call_01_KdFnEM3GBjv02lbWTeLM6611
+logger.js:19 [Sync] 工具调用更新: session=cf20b49e-9533-4a85-b25e-314c3a48500e, message=3370, tool=shell_exec, id=call_01_KdFnEM3GBjv02lbWTeLM6611, eventType=tool_call_waiting
+sessionTransformers.js:61 [toCamelCase] session_id → sessionId
+logger.js:24 [Sync] stream_event 通用事件: eventType=stream_event, seq=undefined
+sessionTransformers.js:61 [toCamelCase] session_id → sessionId
+logger.js:19 [Sync] stream_interrupted 消息进入 INTERRUPTED 状态: session=cf20b49e-9533-4a85-b25e-314c3a48500e, message=3370, task=(无)
+sessionTransformers.js:61 [toCamelCase] session_id → sessionId
+logger.js:19 [Sync] stream_event 处理: session=cf20b49e-9533-4a85-b25e-314c3a48500e, message=3370, type=stream_context
+sessionTransformers.js:61 [toCamelCase] session_id → sessionId
+logger.js:19 [Sync] stream_event 处理: session=cf20b49e-9533-4a85-b25e-314c3a48500e, message=3370, type=stream_content_update
+sessionTransformers.js:61 [toCamelCase] session_id → sessionId
+logger.js:24 [Sync] 非请求浏览器 INTERRUPTED 态，跳过 WS message_updated: session=cf20b49e-9533-4a85-b25e-314c3a48500e
 sessionTransformers.js:83 [toSnakeCase] chainOfThought → chain_of_thought
 sessionTransformers.js:83 [toSnakeCase] attachmentIds → attachment_ids
 sessionTransformers.js:83 [toSnakeCase] researchContext → research_context
@@ -993,372 +111,59 @@ sessionTransformers.js:83 [toSnakeCase] tokenCount → token_count
 sessionTransformers.js:83 [toSnakeCase] tokenDetail → token_detail
 sessionTransformers.js:83 [toSnakeCase] responseTime → response_time
 sessionTransformers.js:83 [toSnakeCase] researchTaskId → research_task_id
-axios.js:73 [Axios] 响应转换: /chat/messages/3308/ 
-  前: {"code":200,"message":"消息更新成功","data":{"id":3308,"session_id":1613,"role":"assistant","content":"我来运行这两个命令并保存结果。先执行 `ollama list` 和 `ollama ps`：两个命令都执行成功。现在将结果保存到指定文件：✅ 已完成！命令结果已保存到 `D:\\programming\\ 
-  后: {"code":200,"message":"消息更新成功","data":{"id":3308,"sessionId":1613,"role":"assistant","content":"我来运行这两个命令并保存结果。先执行 `ollama list` 和 `ollama ps`：两个命令都执行成功。现在将结果保存到指定文件：✅ 已完成！命令结果已保存到 `D:\\programming\\l
-sessionTransformers.js:83 [toSnakeCase] sourceId → source_id
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
-logger.js:19 [SnapshotSync] task=research_c6fe0009c4a9 快照校对完成: 0 个审批记录
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:19 [Sync] 审批变更(独立深度研究): taskId=research_c6fe0009c4a9, source=deep_research, tool=shell_exec, eventType=approval_processing, mappedState=processing, graphInterruptId=20054edb772b4d07a5ea038856f2893c
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:19 [Sync] 收到 tool_call_running 事件: researchStore=research_c6fe0009c4a9, tool=shell_exec, toolCallId=call_01_aIzibvW3FkFj6hhQYvvU3237, mappedStatus=running, isResult=false, messageId=(none), source=deep_research
-logger.js:19 [Sync] task tool_call_running: taskId=research_c6fe0009c4a9, tool=shell_exec, toolCallId=call_01_aIzibvW3FkFj6hhQYvvU3237, mappedStatus=running
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:19 [Sync] 审批变更(独立深度研究): taskId=research_c6fe0009c4a9, source=deep_research, tool=shell_exec, eventType=approval_approved, mappedState=approved, graphInterruptId=20054edb772b4d07a5ea038856f2893c
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:19 [Sync] 审批变更(独立深度研究): taskId=research_c6fe0009c4a9, source=deep_research, tool=shell_exec, eventType=approval_approved, mappedState=approved, graphInterruptId=20054edb772b4d07a5ea038856f2893c
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:19 [Research] setTaskStatus 状态变更: taskId=research_c6fe0009c4a9, oldStatus=awaiting_approval, newStatus=running
-sessionTransformers.js:83 [toSnakeCase] sourceId → source_id
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:19 [Sync] 收到 tool_call_completed 事件: researchStore=research_c6fe0009c4a9, tool=shell_exec, toolCallId=call_01_aIzibvW3FkFj6hhQYvvU3237, mappedStatus=completed, isResult=true, messageId=(none), source=deep_research
-logger.js:19 [Sync] task tool_call_completed: taskId=research_c6fe0009c4a9, tool=shell_exec, toolCallId=call_01_aIzibvW3FkFj6hhQYvvU3237, mappedStatus=completed
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:19 [Sync] 收到 tool_call_completed 事件: researchStore=research_c6fe0009c4a9, tool=shell_exec, toolCallId=call_00_16lo0IXPN9A3k1R2eFsv1305, mappedStatus=completed, isResult=true, messageId=(none), source=deep_research
-logger.js:19 [Sync] task tool_call_completed: taskId=research_c6fe0009c4a9, tool=shell_exec, toolCallId=call_00_16lo0IXPN9A3k1R2eFsv1305, mappedStatus=completed
-logger.js:19 [SnapshotSync] task=research_c6fe0009c4a9 快照校对完成: 0 个审批记录
-sessionTransformers.js:83 [toSnakeCase] sourceId → source_id
-logger.js:19 [SnapshotSync] task=research_c6fe0009c4a9 快照校对完成: 0 个审批记录
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
+axios.js:73 [Axios] 响应转换: /chat/messages/3370/ 
+  前: {"code":200,"message":"消息更新成功","data":{"id":3370,"session_id":1640,"role":"assistant","content":"我来执行这两个命令。先说明一下：`ollama lis` 和 `ollama pst` 很可能是 `ollama list`（列出本地模型）和 `ollama ps`（列出正在运行的模型）的笔误，先按您写的 
+  后: {"code":200,"message":"消息更新成功","data":{"id":3370,"sessionId":1640,"role":"assistant","content":"我来执行这两个命令。先说明一下：`ollama lis` 和 `ollama pst` 很可能是 `ollama list`（列出本地模型）和 `ollama ps`（列出正在运行的模型）的笔误，先按您写的原
+axios.js:73 [Axios] 响应转换: /realtime/snapshot/cf20b49e-9533-4a85-b25e-314c3a48500e/ 
+  前: {"code":200,"message":"操作成功","data":{"session_id":"cf20b49e-9533-4a85-b25e-314c3a48500e","session_title":"我来执行这两个命令。先说明一下：`ollama lis` 和...","messages":[{"id":"3369","session_id":"cf20b49e-9533-4a85-b 
+  后: {"code":200,"message":"操作成功","data":{"sessionId":"cf20b49e-9533-4a85-b25e-314c3a48500e","sessionTitle":"我来执行这两个命令。先说明一下：`ollama lis` 和...","messages":[{"id":"3369","sessionId":"cf20b49e-9533-4a85-b25e
+logger.js:19 [SnapshotSync] 消息校对完成: session=cf20b49e-9533-4a85-b25e-314c3a48500e, count=2
+logger.js:19 [SnapshotSync] 快照校对成功: session=cf20b49e-9533-4a85-b25e-314c3a48500e
 logger.js:24 [Realtime] 收到 pong
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
-logger.js:24 [Realtime] 收到 pong
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
 sessionTransformers.js:61 [toCamelCase] session_id → sessionId
-logger.js:19 [Sync] 会话不存在，兜底拉取详情: 7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
+logger.js:19 [Sync] 审批变更: session=cf20b49e-9533-4a85-b25e-314c3a48500e, chatSession=cf20b49e-9533-4a85-b25e-314c3a48500e, source=chat, tool=shell_exec, eventType=approval_waiting, mappedState=waiting, graphInterruptId=e04aa82d3c686ab50d08ae8dfdec2d14
 sessionTransformers.js:61 [toCamelCase] session_id → sessionId
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
-logger.js:24 [Sync] 未处理的 user 事件: task_status_changed
-logger.js:19 [DeepResearch] 收到 task_status_changed 事件，自动刷新任务列表
-:8080/api/v1/chat/sessions/7162c0d9-d5f9-4547-a4d1-8d4b1ada618e/?_t=1786528699654:1  Failed to load resource: the server responded with a status of 404 (Not Found)
-logger.js:15 Failed to load session detail: AxiosError: Request failed with status code 404
-    at settle (axios.js?v=8039668a:1319:7)
-    at XMLHttpRequest.onloadend (axios.js?v=8039668a:1682:7)
-    at Axios.request (axios.js?v=8039668a:2328:41)
-    at async Proxy.loadSessionDetail (session.js:491:24)
-    at async applySessionEvent (handleSessionEvent.js:243:22)
-    at async handleSessionEvent.js:95:7
-    at async Object.process (orderedQueue.js:108:13)
-    at async handleSessionEvent (handleSessionEvent.js:94:5)
-    at async handleRealtimeEvent (sync.js:464:7)
-    at async dispatchEvent (useRealtimeSync.js:673:17)
-    at async WebSocket.onMessage (useRealtimeSync.js:974:7)
-(anonymous) @ logger.js:15
-(anonymous) @ session.js:533
-await in (anonymous)
-wrappedAction @ pinia.js?v=8039668a:5507
-store.<computed> @ pinia.js?v=8039668a:5204
-(anonymous) @ handleSessionEvent.js:243
-(anonymous) @ handleSessionEvent.js:95
-(anonymous) @ orderedQueue.js:108
-(anonymous) @ handleSessionEvent.js:94
-(anonymous) @ sync.js:464
-await in (anonymous)
-(anonymous) @ useRealtimeSync.js:673
-(anonymous) @ useRealtimeSync.js:974
-logger.js:11 [Sync] 无法加载会话详情，丢弃事件: 7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, type=message_updated
-(anonymous) @ logger.js:11
-(anonymous) @ handleSessionEvent.js:245
-await in (anonymous)
-(anonymous) @ handleSessionEvent.js:95
-(anonymous) @ orderedQueue.js:108
-(anonymous) @ handleSessionEvent.js:94
-(anonymous) @ sync.js:464
-await in (anonymous)
-(anonymous) @ useRealtimeSync.js:673
-(anonymous) @ useRealtimeSync.js:974
-logger.js:11 [Sync] 事件跳号触发全量同步(兜底): session=7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, expected=27, got=28, reason=间隙停滞回调未推进基线或后端序列号不连续
-(anonymous) @ logger.js:11
-(anonymous) @ handleSessionEvent.js:229
-(anonymous) @ handleSessionEvent.js:95
-(anonymous) @ orderedQueue.js:108
-await in (anonymous)
-(anonymous) @ handleSessionEvent.js:94
-(anonymous) @ sync.js:464
-await in (anonymous)
-(anonymous) @ useRealtimeSync.js:673
-(anonymous) @ useRealtimeSync.js:974
-logger.js:19 [Sync] 会话不存在，兜底拉取详情: 7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
-:8080/api/v1/chat/sessions/7162c0d9-d5f9-4547-a4d1-8d4b1ada618e/?_t=1786528700285:1  Failed to load resource: the server responded with a status of 404 (Not Found)
-logger.js:15 Failed to load session detail: AxiosError: Request failed with status code 404
-    at settle (axios.js?v=8039668a:1319:7)
-    at XMLHttpRequest.onloadend (axios.js?v=8039668a:1682:7)
-    at Axios.request (axios.js?v=8039668a:2328:41)
-    at async Proxy.loadSessionDetail (session.js:491:24)
-    at async applySessionEvent (handleSessionEvent.js:243:22)
-    at async handleSessionEvent.js:95:7
-    at async Object.process (orderedQueue.js:108:13)
-    at async handleSessionEvent (handleSessionEvent.js:94:5)
-    at async handleRealtimeEvent (sync.js:464:7)
-    at async dispatchEvent (useRealtimeSync.js:673:17)
-    at async WebSocket.onMessage (useRealtimeSync.js:974:7)
-(anonymous) @ logger.js:15
-(anonymous) @ session.js:533
-await in (anonymous)
-wrappedAction @ pinia.js?v=8039668a:5507
-store.<computed> @ pinia.js?v=8039668a:5204
-(anonymous) @ handleSessionEvent.js:243
-(anonymous) @ handleSessionEvent.js:95
-(anonymous) @ orderedQueue.js:108
-await in (anonymous)
-(anonymous) @ handleSessionEvent.js:94
-(anonymous) @ sync.js:464
-await in (anonymous)
-(anonymous) @ useRealtimeSync.js:673
-(anonymous) @ useRealtimeSync.js:974
-logger.js:11 [Sync] 无法加载会话详情，丢弃事件: 7162c0d9-d5f9-4547-a4d1-8d4b1ada618e, type=stream_completed
-(anonymous) @ logger.js:11
-(anonymous) @ handleSessionEvent.js:245
-await in (anonymous)
-(anonymous) @ handleSessionEvent.js:95
-(anonymous) @ orderedQueue.js:108
-await in (anonymous)
-(anonymous) @ handleSessionEvent.js:94
-(anonymous) @ sync.js:464
-await in (anonymous)
-(anonymous) @ useRealtimeSync.js:673
-(anonymous) @ useRealtimeSync.js:974
-:8080/api/v1/chat/sessions/7162c0d9-d5f9-4547-a4d1-8d4b1ada618e/?_t=1786528700288:1  Failed to load resource: the server responded with a status of 404 (Not Found)
-logger.js:15 Failed to load session detail: AxiosError: Request failed with status code 404
-    at settle (axios.js?v=8039668a:1319:7)
-    at XMLHttpRequest.onloadend (axios.js?v=8039668a:1682:7)
-    at Axios.request (axios.js?v=8039668a:2328:41)
-    at async Proxy.loadSessionDetail (session.js:491:24)
-    at async requestFullSync (sync.js:299:20)
-(anonymous) @ logger.js:15
-(anonymous) @ session.js:533
-await in (anonymous)
-wrappedAction @ pinia.js?v=8039668a:5507
-store.<computed> @ pinia.js?v=8039668a:5204
-(anonymous) @ sync.js:299
-await in (anonymous)
-(anonymous) @ handleSessionEvent.js:235
-(anonymous) @ handleSessionEvent.js:95
-(anonymous) @ orderedQueue.js:108
-await in (anonymous)
-(anonymous) @ handleSessionEvent.js:94
-(anonymous) @ sync.js:464
-await in (anonymous)
-(anonymous) @ useRealtimeSync.js:673
-(anonymous) @ useRealtimeSync.js:974
-logger.js:11 [Sync] 全量同步失败，无法加载会话详情: 7162c0d9-d5f9-4547-a4d1-8d4b1ada618e
-(anonymous) @ logger.js:11
-(anonymous) @ sync.js:301
-await in (anonymous)
-(anonymous) @ handleSessionEvent.js:235
-(anonymous) @ handleSessionEvent.js:95
-(anonymous) @ orderedQueue.js:108
-await in (anonymous)
-(anonymous) @ handleSessionEvent.js:94
-(anonymous) @ sync.js:464
-await in (anonymous)
-(anonymous) @ useRealtimeSync.js:673
-(anonymous) @ useRealtimeSync.js:974
+logger.js:19 [Sync] stream_finalized 消息仍处于 INTERRUPTED（审批未恢复），保持: session=cf20b49e-9533-4a85-b25e-314c3a48500e
+axios.js:73 [Axios] 响应转换: /realtime/snapshot/cf20b49e-9533-4a85-b25e-314c3a48500e/ 
+  前: {"code":200,"message":"操作成功","data":{"session_id":"cf20b49e-9533-4a85-b25e-314c3a48500e","session_title":"我来执行这两个命令。先说明一下：`ollama lis` 和...","messages":[{"id":"3369","session_id":"cf20b49e-9533-4a85-b 
+  后: {"code":200,"message":"操作成功","data":{"sessionId":"cf20b49e-9533-4a85-b25e-314c3a48500e","sessionTitle":"我来执行这两个命令。先说明一下：`ollama lis` 和...","messages":[{"id":"3369","sessionId":"cf20b49e-9533-4a85-b25e
+logger.js:19 [SnapshotSync] 消息校对完成: session=cf20b49e-9533-4a85-b25e-314c3a48500e, count=2
+logger.js:19 [SnapshotSync] 快照校对成功: session=cf20b49e-9533-4a85-b25e-314c3a48500e
+sessionTransformers.js:61 [toCamelCase] session_id → sessionId
+logger.js:19 [Sync] 批量审批 sibling approved/processing，INTERRUPTED → STREAMING: session=cf20b49e-9533-4a85-b25e-314c3a48500e, source=chat, graphInterruptId=e04aa82d3c686ab50d08ae8dfdec2d14, message=3370, siblings=2
+logger.js:19 [Sync] 审批变更: session=cf20b49e-9533-4a85-b25e-314c3a48500e, chatSession=cf20b49e-9533-4a85-b25e-314c3a48500e, source=chat, tool=shell_exec, eventType=approval_processing, mappedState=processing, graphInterruptId=e04aa82d3c686ab50d08ae8dfdec2d14
+sessionTransformers.js:61 [toCamelCase] session_id → sessionId
+logger.js:19 [Sync] 收到 tool_call_running 事件: sessionStore=cf20b49e-9533-4a85-b25e-314c3a48500e, tool=shell_exec, toolCallId=call_01_KdFnEM3GBjv02lbWTeLM6611, mappedStatus=running, isResult=false, messageId=3370, source=chat
+logger.js:19 [Sync] 工具调用更新: session=cf20b49e-9533-4a85-b25e-314c3a48500e, message=3370, tool=shell_exec, id=call_01_KdFnEM3GBjv02lbWTeLM6611, eventType=tool_call_running
+sessionTransformers.js:61 [toCamelCase] session_id → sessionId
+logger.js:19 [Sync] 收到 tool_call_completed 事件: sessionStore=cf20b49e-9533-4a85-b25e-314c3a48500e, tool=shell_exec, toolCallId=call_01_KdFnEM3GBjv02lbWTeLM6611, mappedStatus=completed, isResult=true, messageId=3370, source=chat
+logger.js:19 [Sync] 工具调用结果: session=cf20b49e-9533-4a85-b25e-314c3a48500e, message=3370, tool=shell_exec, id=call_01_KdFnEM3GBjv02lbWTeLM6611, eventType=tool_call_completed
+sessionTransformers.js:61 [toCamelCase] session_id → sessionId
+logger.js:19 [Sync] 收到 tool_call_completed 事件: sessionStore=cf20b49e-9533-4a85-b25e-314c3a48500e, tool=shell_exec, toolCallId=call_00_fKeznblvX6dSlC0r26El1872, mappedStatus=completed, isResult=true, messageId=3370, source=chat
+logger.js:19 [Sync] 工具调用结果: session=cf20b49e-9533-4a85-b25e-314c3a48500e, message=3370, tool=shell_exec, id=call_00_fKeznblvX6dSlC0r26El1872, eventType=tool_call_completed
 logger.js:24 [Realtime] 收到 pong
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
+sessionTransformers.js:61 [toCamelCase] session_id → sessionId
+logger.js:19 [Sync] 消息更新: session=cf20b49e-9533-4a85-b25e-314c3a48500e, message=3370
+sessionTransformers.js:61 [toCamelCase] session_id → sessionId
+logger.js:19 [Sync] 审批变更: session=cf20b49e-9533-4a85-b25e-314c3a48500e, chatSession=cf20b49e-9533-4a85-b25e-314c3a48500e, source=chat, tool=shell_exec, eventType=approval_rejected, mappedState=rejected, graphInterruptId=e04aa82d3c686ab50d08ae8dfdec2d14
+sessionTransformers.js:61 [toCamelCase] session_id → sessionId
+logger.js:19 [Sync] 审批变更: session=cf20b49e-9533-4a85-b25e-314c3a48500e, chatSession=cf20b49e-9533-4a85-b25e-314c3a48500e, source=chat, tool=shell_exec, eventType=approval_approved, mappedState=approved, graphInterruptId=e04aa82d3c686ab50d08ae8dfdec2d14
+axios.js:73 [Axios] 响应转换: /realtime/snapshot/cf20b49e-9533-4a85-b25e-314c3a48500e/ 
+  前: {"code":200,"message":"操作成功","data":{"session_id":"cf20b49e-9533-4a85-b25e-314c3a48500e","session_title":"我来执行这两个命令。先说明一下：`ollama lis` 和...","messages":[{"id":"3369","session_id":"cf20b49e-9533-4a85-b 
+  后: {"code":200,"message":"操作成功","data":{"sessionId":"cf20b49e-9533-4a85-b25e-314c3a48500e","sessionTitle":"我来执行这两个命令。先说明一下：`ollama lis` 和...","messages":[{"id":"3369","sessionId":"cf20b49e-9533-4a85-b25e
+logger.js:19 [SnapshotSync] 消息校对完成: session=cf20b49e-9533-4a85-b25e-314c3a48500e, count=2
+logger.js:19 [SnapshotSync] 工具调用校对完成: session=cf20b49e-9533-4a85-b25e-314c3a48500e, count=2
+logger.js:19 [SnapshotSync] 审批校对完成: session=cf20b49e-9533-4a85-b25e-314c3a48500e, count=2
+logger.js:19 [SnapshotSync] 快照校对成功: session=cf20b49e-9533-4a85-b25e-314c3a48500e
+axios.js:73 [Axios] 响应转换: /realtime/snapshot/cf20b49e-9533-4a85-b25e-314c3a48500e/ 
+  前: {"code":200,"message":"操作成功","data":{"session_id":"cf20b49e-9533-4a85-b25e-314c3a48500e","session_title":"我来执行这两个命令。先说明一下：`ollama lis` 和...","messages":[{"id":"3369","session_id":"cf20b49e-9533-4a85-b 
+  后: {"code":200,"message":"操作成功","data":{"sessionId":"cf20b49e-9533-4a85-b25e-314c3a48500e","sessionTitle":"我来执行这两个命令。先说明一下：`ollama lis` 和...","messages":[{"id":"3369","sessionId":"cf20b49e-9533-4a85-b25e
+logger.js:19 [SnapshotSync] 消息校对完成: session=cf20b49e-9533-4a85-b25e-314c3a48500e, count=2
+logger.js:19 [SnapshotSync] 工具调用校对完成: session=cf20b49e-9533-4a85-b25e-314c3a48500e, count=2
+logger.js:19 [SnapshotSync] 审批校对完成: session=cf20b49e-9533-4a85-b25e-314c3a48500e, count=2
+logger.js:19 [SnapshotSync] 快照校对成功: session=cf20b49e-9533-4a85-b25e-314c3a48500e
 logger.js:24 [Realtime] 收到 pong
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_c6fe0009c4a9/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_c6fe0009c4a9","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_c6fe0009c4a9","files":[],"total":0}}
 logger.js:24 [Realtime] 收到 pong
-sessionTransformers.js:83 [toSnakeCase] pageSize → page_size
-axios.js:73 [Axios] 响应转换: /research/tasks/ 
-  前: {"code":200,"message":"操作成功","data":{"items":[{"id":456,"task_id":"research_c6fe0009c4a9","query":"运行 ollama lis 和 ollama pst 并把结果保存到D:\\programming\\langchain\\langchain_xm\\test_approval25.txt","sta 
-  后: {"code":200,"message":"操作成功","data":{"items":[{"id":456,"taskId":"research_c6fe0009c4a9","query":"运行 ollama lis 和 ollama pst 并把结果保存到D:\\programming\\langchain\\langchain_xm\\test_approval25.txt","stat
 logger.js:24 [Realtime] 收到 pong
-logger.js:24 [Sync] 未处理的 user 事件: task_created
-logger.js:19 [DeepResearch] 收到 task_created 事件，自动刷新任务列表
-sessionTransformers.js:83 [toSnakeCase] pageSize → page_size
-axios.js:73 [Axios] 响应转换: /research/tasks/ 
-  前: {"code":200,"message":"操作成功","data":{"items":[{"id":457,"task_id":"research_398a9454a15e","query":"运行 ollama lis 和 ollama pst 并把结果保存到D:\\programming\\langchain\\langchain_xm\\test_approval25.txt","sta 
-  后: {"code":200,"message":"操作成功","data":{"items":[{"id":457,"taskId":"research_398a9454a15e","query":"运行 ollama lis 和 ollama pst 并把结果保存到D:\\programming\\langchain\\langchain_xm\\test_approval25.txt","stat
-logger.js:19 [Research] setTaskStatus 首次设置: taskId=research_398a9454a15e, status=running
-logger.js:24 [Realtime] replay barrier 设置 pending: task_research_398a9454a15e
-logger.js:19 [DeepResearch] 订阅 task=research_398a9454a15e（无关联 chat session）
-sessionTransformers.js:61 [toCamelCase] channel_type → channelType
-sessionTransformers.js:61 [toCamelCase] channel_id → channelId
-sessionTransformers.js:61 [toCamelCase] chunk_index → chunkIndex
-sessionTransformers.js:61 [toCamelCase] chunk_count → chunkCount
-logger.js:19 [Realtime] 收到 replay 回包: channel=task:research_398a9454a15e, count=2, chunk=1/1
-logger.js:19 [Sync] 审批变更(独立深度研究): taskId=research_398a9454a15e, source=deep_research, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=2bbb3973ff784f11bb790a84a1657bfc
-logger.js:19 [Research] 占位 toolCall 已加入 pendingApprovals 队列: taskId=research_398a9454a15e, toolCallId=call_00_DnZxqPiwGQwBfozdemWw0460, pendingIds=call_00_DnZxqPiwGQwBfozdemWw0460,call_00_DnZxqPiwGQwBfozdemWw0460
-logger.js:19 [Sync] 收到 tool_call_waiting 事件: researchStore=research_398a9454a15e, tool=shell_exec, toolCallId=call_00_DnZxqPiwGQwBfozdemWw0460, mappedStatus=waiting, isResult=false, messageId=(none), source=deep_research
-logger.js:19 [Research] pending 审批已绑定: taskId=research_398a9454a15e, toolCallId=call_00_DnZxqPiwGQwBfozdemWw0460
-logger.js:19 [Sync] task tool_call_waiting: taskId=research_398a9454a15e, tool=shell_exec, toolCallId=call_00_DnZxqPiwGQwBfozdemWw0460, mappedStatus=waiting
-logger.js:24 [Realtime] replay barrier flush 无缓冲事件: task_research_398a9454a15e
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:19 [Sync] 审批变更(独立深度研究): taskId=research_398a9454a15e, source=deep_research, tool=shell_exec, eventType=approval_pending, mappedState=pending, graphInterruptId=2bbb3973ff784f11bb790a84a1657bfc
-logger.js:19 [Research] 占位 toolCall 已加入 pendingApprovals 队列: taskId=research_398a9454a15e, toolCallId=call_01_wi8mFspdFcfet6m4U9y04203, pendingIds=call_01_wi8mFspdFcfet6m4U9y04203,call_01_wi8mFspdFcfet6m4U9y04203
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:19 [Sync] 收到 tool_call_waiting 事件: researchStore=research_398a9454a15e, tool=shell_exec, toolCallId=call_01_wi8mFspdFcfet6m4U9y04203, mappedStatus=waiting, isResult=false, messageId=(none), source=deep_research
-logger.js:19 [Research] pending 审批已绑定: taskId=research_398a9454a15e, toolCallId=call_01_wi8mFspdFcfet6m4U9y04203
-logger.js:19 [Sync] task tool_call_waiting: taskId=research_398a9454a15e, tool=shell_exec, toolCallId=call_01_wi8mFspdFcfet6m4U9y04203, mappedStatus=waiting
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:24 [ApprovalStore] restoreFromSSEHistory: 审批已存在，跳过 call_00_DnZxqPiwGQwBfozdemWw0460
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:24 [ApprovalStore] restoreFromSSEHistory: 审批已存在，跳过 call_01_wi8mFspdFcfet6m4U9y04203
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-axios.js:73 [Axios] 响应转换: /research/research_398a9454a15e/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_398a9454a15e","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_398a9454a15e","files":[],"total":0}}
-sessionTransformers.js:83 [toSnakeCase] sourceId → source_id
-logger.js:19 [SnapshotSync] task=research_398a9454a15e 快照校对完成: 0 个审批记录
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:19 [Research] setTaskStatus 状态变更: taskId=research_398a9454a15e, oldStatus=running, newStatus=awaiting_approval
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:19 [Sync] 审批变更(独立深度研究): taskId=research_398a9454a15e, source=deep_research, tool=shell_exec, eventType=approval_waiting, mappedState=waiting, graphInterruptId=2bbb3973ff784f11bb790a84a1657bfc
-axios.js:73 [Axios] 响应转换: /research/research_398a9454a15e/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_398a9454a15e","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_398a9454a15e","files":[],"total":0}}
-sessionTransformers.js:83 [toSnakeCase] sourceId → source_id
-logger.js:19 [SnapshotSync] task=research_398a9454a15e 快照校对完成: 0 个审批记录
-axios.js:73 [Axios] 响应转换: /research/research_398a9454a15e/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_398a9454a15e","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_398a9454a15e","files":[],"total":0}}
-sessionTransformers.js:83 [toSnakeCase] providerId → provider_id
-sessionTransformers.js:83 [toSnakeCase] modelName → model_name
-sessionTransformers.js:83 [toSnakeCase] useDeepThinking → use_deep_thinking
-sessionTransformers.js:83 [toSnakeCase] specialParams → special_params
-sessionTransformers.js:83 [toSnakeCase] maxTokens → max_tokens
-sessionTransformers.js:83 [toSnakeCase] useTools → use_tools
-sessionTransformers.js:83 [toSnakeCase] useWebSearch → use_web_search
-sessionTransformers.js:83 [toSnakeCase] useMcp → use_mcp
-sessionTransformers.js:83 [toSnakeCase] selectedMcpServers → selected_mcp_servers
-sessionTransformers.js:83 [toSnakeCase] selectedTools → selected_tools
-sessionTransformers.js:83 [toSnakeCase] useKnowledgeBase → use_knowledge_base
-sessionTransformers.js:83 [toSnakeCase] selectedKnowledgeBases → selected_knowledge_bases
-logger.js:19 [Sync] 开始流式: c7385c65-ab20-4f19-af61-153f550f3e82
-sessionTransformers.js:83 [toSnakeCase] sessionId → session_id
-sessionTransformers.js:83 [toSnakeCase] messageId → message_id
-logger.js:24 [useStreamFinalizer] 通知后端 stream_finalized: session=c7385c65-ab20-4f19-af61-153f550f3e82, msg=3308
-logger.js:19 [Sync] 结束流式: c7385c65-ab20-4f19-af61-153f550f3e82
-axios.js:73 [Axios] 响应转换: /research/research_398a9454a15e/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_398a9454a15e","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_398a9454a15e","files":[],"total":0}}
-sessionTransformers.js:83 [toSnakeCase] providerId → provider_id
-sessionTransformers.js:83 [toSnakeCase] modelName → model_name
-sessionTransformers.js:83 [toSnakeCase] useDeepThinking → use_deep_thinking
-sessionTransformers.js:83 [toSnakeCase] specialParams → special_params
-sessionTransformers.js:83 [toSnakeCase] maxTokens → max_tokens
-sessionTransformers.js:83 [toSnakeCase] useTools → use_tools
-sessionTransformers.js:83 [toSnakeCase] useWebSearch → use_web_search
-sessionTransformers.js:83 [toSnakeCase] useMcp → use_mcp
-sessionTransformers.js:83 [toSnakeCase] selectedMcpServers → selected_mcp_servers
-sessionTransformers.js:83 [toSnakeCase] selectedTools → selected_tools
-sessionTransformers.js:83 [toSnakeCase] useKnowledgeBase → use_knowledge_base
-sessionTransformers.js:83 [toSnakeCase] selectedKnowledgeBases → selected_knowledge_bases
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:19 [Sync] 审批变更(独立深度研究): taskId=research_398a9454a15e, source=deep_research, tool=shell_exec, eventType=approval_processing, mappedState=processing, graphInterruptId=2bbb3973ff784f11bb790a84a1657bfc
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:19 [Sync] 收到 tool_call_running 事件: researchStore=research_398a9454a15e, tool=shell_exec, toolCallId=call_01_wi8mFspdFcfet6m4U9y04203, mappedStatus=running, isResult=false, messageId=(none), source=deep_research
-logger.js:19 [Sync] task tool_call_running: taskId=research_398a9454a15e, tool=shell_exec, toolCallId=call_01_wi8mFspdFcfet6m4U9y04203, mappedStatus=running
-logger.js:19 [Sync] 开始流式: c7385c65-ab20-4f19-af61-153f550f3e82
-sessionTransformers.js:83 [toSnakeCase] sessionId → session_id
-sessionTransformers.js:83 [toSnakeCase] messageId → message_id
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:19 [Sync] 审批变更(独立深度研究): taskId=research_398a9454a15e, source=deep_research, tool=shell_exec, eventType=approval_approved, mappedState=approved, graphInterruptId=2bbb3973ff784f11bb790a84a1657bfc
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:19 [Sync] 审批变更(独立深度研究): taskId=research_398a9454a15e, source=deep_research, tool=shell_exec, eventType=approval_approved, mappedState=approved, graphInterruptId=2bbb3973ff784f11bb790a84a1657bfc
-logger.js:24 [useStreamFinalizer] 通知后端 stream_finalized: session=c7385c65-ab20-4f19-af61-153f550f3e82, msg=3308
-logger.js:19 [Sync] 结束流式: c7385c65-ab20-4f19-af61-153f550f3e82
-sessionTransformers.js:83 [toSnakeCase] sourceId → source_id
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:19 [Sync] 收到 tool_call_completed 事件: researchStore=research_398a9454a15e, tool=shell_exec, toolCallId=call_00_DnZxqPiwGQwBfozdemWw0460, mappedStatus=completed, isResult=true, messageId=(none), source=deep_research
-logger.js:19 [Sync] task tool_call_completed: taskId=research_398a9454a15e, tool=shell_exec, toolCallId=call_00_DnZxqPiwGQwBfozdemWw0460, mappedStatus=completed
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:19 [Sync] 收到 tool_call_completed 事件: researchStore=research_398a9454a15e, tool=shell_exec, toolCallId=call_01_wi8mFspdFcfet6m4U9y04203, mappedStatus=completed, isResult=true, messageId=(none), source=deep_research
-logger.js:19 [Sync] task tool_call_completed: taskId=research_398a9454a15e, tool=shell_exec, toolCallId=call_01_wi8mFspdFcfet6m4U9y04203, mappedStatus=completed
-sessionTransformers.js:61 [toCamelCase] task_id → taskId
-logger.js:19 [Research] setTaskStatus 状态变更: taskId=research_398a9454a15e, oldStatus=awaiting_approval, newStatus=running
-logger.js:19 [SnapshotSync] task=research_398a9454a15e 快照校对完成: 0 个审批记录
-sessionTransformers.js:83 [toSnakeCase] sourceId → source_id
-logger.js:19 [SnapshotSync] task=research_398a9454a15e 快照校对完成: 0 个审批记录
 logger.js:24 [Realtime] 收到 pong
-axios.js:73 [Axios] 响应转换: /research/research_398a9454a15e/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_398a9454a15e","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_398a9454a15e","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_398a9454a15e/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_398a9454a15e","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_398a9454a15e","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_398a9454a15e/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_398a9454a15e","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_398a9454a15e","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_398a9454a15e/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_398a9454a15e","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_398a9454a15e","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_398a9454a15e/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_398a9454a15e","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_398a9454a15e","files":[],"total":0}}
-Node cannot be found in the current page.
 logger.js:24 [Realtime] 收到 pong
-axios.js:73 [Axios] 响应转换: /research/research_398a9454a15e/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_398a9454a15e","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_398a9454a15e","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_398a9454a15e/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_398a9454a15e","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_398a9454a15e","files":[],"total":0}}
-axios.js:73 [Axios] 响应转换: /research/research_398a9454a15e/files/ 
-  前: {"code":200,"message":"操作成功","data":{"task_id":"research_398a9454a15e","files":[],"total":0}} 
-  后: {"code":200,"message":"操作成功","data":{"taskId":"research_398a9454a15e","files":[],"total":0}}

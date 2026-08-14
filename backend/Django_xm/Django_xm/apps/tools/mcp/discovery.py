@@ -217,7 +217,7 @@ _discovery: MCPServerDiscovery | None = None
 
 
 def get_mcp_discovery() -> MCPServerDiscovery:
-    global _discovery
+    global _discovery  # noqa: PLW0603  # 模块级单例缓存 lazy init
     if _discovery is None:
         _discovery = MCPServerDiscovery()
     return _discovery

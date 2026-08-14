@@ -102,6 +102,16 @@ export const createHandleToolCallEvent = (ctx) => {
       // （register 分配，事件透传）。仅 number 类型注入，配合 messageOperations
       // _mergeExistingToolCall 的 seq 保护，防止无 seq 事件覆盖已分配序号
       ...(typeof payload.seq === 'number' ? { seq: payload.seq } : {}),
+      // 起始/终态时间戳（Task 4.1）：后端工具事件 payload 透传 created_at / completed_at
+      // （协议键，sessionTransformers toCamelCase 后为 createdAt/completedAt）。
+      // 仅 PENDING 起始事件携带 createdAt；仅终态事件（COMPLETED/FAILED/TIMEOUT/REJECTED）
+      // 携带 completedAt。条件展开保证未携带字段不覆盖已有值
+      // （merge 语义：createdAt 只在 PENDING 写入，终态事件不覆盖起始时间）。
+      ...(payload.createdAt ? { createdAt: payload.createdAt } : {}),
+      ...(payload.completedAt ? { completedAt: payload.completedAt } : {}),
+      // 子代理任务目标描述（Task 4.1）：仅子代理工具事件携带（如"网络搜索和信息整理专家…"），
+      // 组级共享。不覆盖语义由 messageOperations 合并层保护（已有值不覆盖）。
+      ...(payload.description ? { description: payload.description } : {}),
     }
 
     const hasMessageId = !!payload.messageId

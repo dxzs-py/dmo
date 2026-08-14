@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from langchain_core.tools import BaseTool
 
@@ -658,7 +658,9 @@ def _instantiate_custom_tool(tool_obj) -> BaseTool | None:
 
     namespace: dict[str, Any] = {}
     try:
-        exec(compile(code, f"<custom_tool:{tool_obj.name}>", "exec"), safe_globals, namespace)
+        # 自定义工具脚本动态加载：已通过 AST 静态检查（_validate_tool_code_safety）与受限命名空间
+        # （白名单 builtins + 受限 __import__ + 白名单模块）双重防护，仅接受数据库中的受信任工具代码
+        exec(compile(code, f"<custom_tool:{tool_obj.name}>", "exec"), safe_globals, namespace)  # noqa: S102
     except Exception as e:
         logger.warning(f"自定义工具 '{tool_obj.name}' 执行失败: {e}")
         return None
@@ -683,6 +685,7 @@ __all__ = [
     "TOOL_TIER_CORE",
     "TOOL_TIER_EXTENDED",
     "TOOL_TIER_STANDARD",
+    "TOOL_VERSION",
     "TRANSLATION_TOOLS",
     "WEATHER_TOOLS",
     "ResearchFileSystem",
@@ -693,9 +696,11 @@ __all__ = [
     "SkillRegistryService",
     "SkillSpec",
     "SkillStep",
+    "StandardToolResult",
     "ToolError",
     "ToolErrorCode",
     "ToolResult",
+    "ToolStatus",
     "attachment_rag_search",
     "attachment_reader",
     "calculator",

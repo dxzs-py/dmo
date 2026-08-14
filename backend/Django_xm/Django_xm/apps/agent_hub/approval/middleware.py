@@ -167,8 +167,8 @@ class ApprovalMiddleware(AgentMiddleware):
                 config = get_config()
                 metadata = config.get("metadata") if isinstance(config, dict) else None
                 agent_name = (metadata or {}).get("lc_agent_name") or ""
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[ApprovalMiddleware] 读取 lc_agent_name 失败(非致命): {e}")
 
             # risk_ceiling 可能是 RiskLevel 枚举或字符串，统一为 RiskLevel
             if risk_ceiling is not None and not isinstance(risk_ceiling, RiskLevel):
@@ -227,8 +227,8 @@ class ApprovalMiddleware(AgentMiddleware):
             _cfg = _get_config()
             if isinstance(_cfg, dict):
                 configurable = _cfg.get("configurable") or {}
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[ApprovalMiddleware] get_config 读取 configurable 失败(非致命): {e}")
         if not configurable:
             try:
                 if hasattr(runtime, "config"):
@@ -273,8 +273,8 @@ class ApprovalMiddleware(AgentMiddleware):
         try:
             _metadata = _get_config().get("metadata") if isinstance(_get_config(), dict) else None
             sub_agent_name = (_metadata or {}).get("lc_agent_name") or ""
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[ApprovalMiddleware] 读取子 agent lc_agent_name 失败(非致命): {e}")
         if not sub_agent_name:
             sub_agent_name = configurable.get("agent_name", "") or ""
 
@@ -336,10 +336,15 @@ class ApprovalMiddleware(AgentMiddleware):
                 # 前端 ToolCallCard 显示"执行中"状态
                 # publish_running=False（无策略工具）：仅注册 ctx 参数，不发布事件
                 if publish_running:
+                    params_value = (
+                        parameters
+                        if (isinstance(parameters, dict) and parameters)
+                        else ({} if isinstance(parameters, dict) else None)
+                    )
                     await service.transition_async(
                         tool_call_id,
                         EventType.TOOL_CALL_RUNNING,
-                        parameters=parameters if (isinstance(parameters, dict) and parameters) else ({} if isinstance(parameters, dict) else None),
+                        parameters=params_value,
                     )
                 # 可观测性指标（F2）：SAFE 级自动通过计数
                 approval_metrics.on_created(RiskLevel.SAFE, auto_approved=True)
@@ -439,16 +444,16 @@ class ApprovalMiddleware(AgentMiddleware):
                 _cfg = _get_config()
                 if isinstance(_cfg, dict):
                     configurable = _cfg.get("configurable") or {}
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[ApprovalMiddleware] get_config 读取 configurable 失败(非致命): {e}")
             if not configurable:
                 try:
                     if hasattr(runtime, "config"):
                         config = runtime.config
                         if isinstance(config, dict):
                             configurable = config.get("configurable") or {}
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[ApprovalMiddleware] runtime.config 读取 configurable 失败(非致命): {e}")
             if configurable:
                 # chat 模块：thread_id == session_id（agent_service.py 注入）
                 # deep_research 模块：chat_session_id 显式注入

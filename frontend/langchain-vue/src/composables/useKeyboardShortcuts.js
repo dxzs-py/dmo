@@ -13,8 +13,8 @@ function handleKeydown(e) {
   // 避免与输入场景冲突（如聊天输入框聚焦时 useChatKeyboard 的 Ctrl+K/Ctrl+B 优先接管）。
   if (isTypingTarget(document.activeElement)) return
 
-  for (const [name, config] of shortcuts) {
-    const { key, ctrl = false, shift = false, alt = false, meta = false, handler, preventDefault = true } = config
+  for (const [, config] of shortcuts) {
+    const { key, ctrl = false, shift = false, alt = false, handler, preventDefault = true } = config
 
     const keyMatch = e.key.toLowerCase() === key.toLowerCase()
     const ctrlMatch = ctrl ? (e.ctrlKey || e.metaKey) : !e.ctrlKey && !e.metaKey

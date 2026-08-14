@@ -150,7 +150,7 @@ const handleToggleSearch = () => {
 
 <template>
   <div class="app-sidebar" :class="{ 'sidebar-collapsed': collapsed }">
-    <div class="sidebar-top" v-if="!collapsed">
+    <div v-if="!collapsed" class="sidebar-top">
       <button class="sidebar-new-chat-btn" @click="handleNewChat">
         <el-icon><Plus /></el-icon>
         <span>新建对话</span>
@@ -170,7 +170,7 @@ const handleToggleSearch = () => {
       />
     </div>
     
-    <div class="sidebar-sessions" v-if="!collapsed && showSessions">
+    <div v-if="!collapsed && showSessions" class="sidebar-sessions">
       <template v-for="(sessions, group) in groupedSessions" :key="group">
         <div class="session-group">
           <div class="session-group-label">{{ timeGroupLabels[group] }}</div>
@@ -197,7 +197,8 @@ const handleToggleSearch = () => {
     
     <div class="sidebar-bottom">
       <div v-if="!collapsed" class="sidebar-nav-items">
-        <button v-for="item in menuItems" :key="item.index" 
+        <button
+v-for="item in menuItems" :key="item.index" 
                 class="sidebar-nav-btn" 
                 :class="{ active: route.path === item.index }"
                 @click="handleMenuSelect(item.index)">
@@ -206,10 +207,11 @@ const handleToggleSearch = () => {
         </button>
       </div>
       <div v-else class="sidebar-collapsed-nav">
-        <button v-for="item in menuItems" :key="item.index" 
-                class="sidebar-nav-btn" 
+        <button
+v-for="item in menuItems" :key="item.index" 
+                v-memo="[route.path === item.index]" 
+                class="sidebar-nav-btn"
                 :class="{ active: route.path === item.index }"
-                v-memo="[route.path === item.index]"
                 @click="handleMenuSelect(item.index)">
           <el-icon><component :is="item.icon" /></el-icon>
         </button>
@@ -217,7 +219,7 @@ const handleToggleSearch = () => {
       
       <!-- Collapsed mode -->
       <div v-if="collapsed" class="sidebar-collapsed-buttons">
-        <button class="sidebar-collapsed-btn" @click="handleNewChat" v-if="showSessions">
+        <button v-if="showSessions" class="sidebar-collapsed-btn" @click="handleNewChat">
           <el-icon><Plus /></el-icon>
         </button>
       </div>

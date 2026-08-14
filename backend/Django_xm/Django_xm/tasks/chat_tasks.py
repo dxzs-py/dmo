@@ -139,35 +139,6 @@ def check_storage_alerts(self):
 
 @shared_task(
     bind=True,
-    name="chat.attachment_full_lifecycle",
-    max_retries=1,
-    soft_time_limit=1800,
-    autoretry_for=(ConnectionError, TimeoutError, OSError),
-    retry_backoff=True,
-    retry_backoff_max=60,
-)
-def attachment_full_lifecycle(self):
-    tracker = TrackedTask(self)
-    tracker.set_task_type("chat_cleanup")
-
-    try:
-        tracker.mark_started()
-
-        check_storage_alerts.delay()
-        index_old_attachments.delay()
-        cleanup_expired_attachments.delay()
-
-        logger.info("[Celery Chat] 完整生命周期管理流程已提交")
-        tracker.mark_success(result={"status": "dispatched"})
-        return {"status": "success", "message": "生命周期任务已全部提交"}
-    except Exception as e:
-        logger.exception("[Celery Chat] 完整生命周期任务失败")
-        tracker.mark_failure(error_message=str(e))
-        return {"status": "error", "error": str(e)}
-
-
-@shared_task(
-    bind=True,
     name="chat.cleanup_checkpoints",
     max_retries=1,
     soft_time_limit=300,

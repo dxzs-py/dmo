@@ -14,16 +14,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from asgiref.sync import sync_to_async
-from django.core.cache import cache
 
 from Django_xm.apps.approvals.models import Approval, ApprovalOutboxEntry
 from Django_xm.apps.approvals.services.approval_constants import (
     APPROVAL_LOCK_PREFIX,
     APPROVAL_LOCK_TTL,
-    PENDING_COUNT_PREFIX,
-    PENDING_COUNT_TTL,
-    RESUME_LOCK_PREFIX,
-    RESUME_LOCK_TTL,
+    CHAT_TIMEOUT_RESUME_LOCK_PREFIX,
+    CHAT_TIMEOUT_RESUME_LOCK_TTL,
 )
 from Django_xm.apps.approvals.services.approval_store import (
     get_approval_history as _get_approval_history_from_store,
@@ -33,44 +30,20 @@ from Django_xm.apps.approvals.services.approval_store import (
     persist_approval_processed,
     persist_approval_state,
 )
+from Django_xm.common.approval_utils import derive_cross_module_id
 from Django_xm.common.event_schema import EventSource, EventType, PayloadValidationError
 from Django_xm.common.observability.approval_metrics import approval_metrics
 from Django_xm.common.realtime_sync import (
     _resolve_channels,
     publish_approval_sync,
 )
-from Django_xm.common.risk_levels import RiskLevel
-from Django_xm.common.approval_utils import derive_cross_module_id
 from Django_xm.common.redis_utils import get_redis_client
+from Django_xm.common.risk_levels import RiskLevel
 from Django_xm.common.tool_call_lifecycle import ToolCallContext, service
 
 logger = logging.getLogger(__name__)
 
 APPROVAL_TIMEOUT_SECONDS = 300
-
-# Lua: 原子 DECR，确保计数器不小于 0。返回递减后的值。
-# KEYS[1] = counter key; ARGV[1] = TTL（仅在 key 仍存在时刷新）
-_LUA_DECR_NON_NEGATIVE = """
-local val = tonumber(redis.call('GET', KEYS[1]) or '0')
-if val <= 0 then
-    return 0
-end
-local result = redis.call('DECR', KEYS[1])
-if result < 0 then
-    redis.call('SET', KEYS[1], 0)
-    return 0
-end
-redis.call('EXPIRE', KEYS[1], ARGV[1])
-return result
-"""
-
-# Lua: 原子 INCR + EXPIRE。返回递增后的值。
-# KEYS[1] = counter key; ARGV[1] = TTL
-_LUA_INCR_WITH_EXPIRE = """
-local result = redis.call('INCR', KEYS[1])
-redis.call('EXPIRE', KEYS[1], ARGV[1])
-return result
-"""
 
 _TEMP_EXTRA_KEYS = ("_resume_value", "_approved", "_timeout")
 
@@ -328,14 +301,11 @@ def build_approval_payload(
     # risk_level 透传（新标准风险等级，优先于 danger_level，前端 ToolCallCard 显示高危红名）
     if approval_extra.get("risk_level"):
         extra_fields["risk_level"] = approval_extra["risk_level"]
-    # seq 透传：从 ToolCallContext 读取（register 唯一分配点）。
-    # 前端审批占位（isSynthetic）据此在 WS 工具事件到达前获得跨浏览器统一排序依据，
-    # 与 tool_call_* 事件 payload 的 seq 保持一致（同一工具调用排序 key 唯一）。
-    _tool_call_id_for_seq = _get("tool_call_id")
-    if _tool_call_id_for_seq:
-        _ctx_for_seq = service.get_context(_tool_call_id_for_seq)
-        if _ctx_for_seq and _ctx_for_seq.get("seq"):
-            extra_fields["seq"] = _ctx_for_seq["seq"]
+    # seq 透传：从 ToolCallContext 读取（register 唯一分配点），统一经
+    # enrich_entry_seq 写入事件 payload。前端审批占位（isSynthetic）据此在 WS
+    # 工具事件到达前获得跨浏览器统一排序依据，与 tool_call_* 事件 payload 的
+    # seq 保持一致（同一工具调用排序 key 唯一）。
+    service.enrich_entry_seq(extra_fields, _get("tool_call_id") or "")
     # 子 agent 嵌套层级字段透传（Phase E3，前端展示完整调用链路）
     if approval_extra.get("parent_tool_call_id"):
         extra_fields["parent_tool_call_id"] = approval_extra["parent_tool_call_id"]
@@ -1073,6 +1043,11 @@ def sync_approval_state_to_chat_message(approval: Approval, state: str) -> bool:
             "input": approval.parameters or {},
             "approval": {},
         }
+        # seq 补齐（持久化链路完整性）：重建项统一经 enrich_entry_seq 从
+        # ToolCallContext 读取 register 分配的全局递增序号（与 tool_call_* 事件
+        # 透传同一来源），确保审批恢复后新追加的 tool_call（如 fs_write_file）
+        # 在 API 快照中也带 seq，前端跨浏览器统一排序依据一致（防刷新后工具调用乱序）。
+        service.enrich_entry_seq(target_tc, tool_call_id)
         tool_calls.append(target_tc)
         logger.info(
             f"[ApprovalService] sync_approval_state_to_chat_message: 已重建缺失 tool_call 项, "
@@ -1206,26 +1181,24 @@ def _release_lock(interrupt_id: str):
 _release_lock_async = sync_to_async(_release_lock)
 
 
-def _is_task_in_terminal_state(task_id: str) -> bool:
+def _acquire_chat_timeout_resume_lock(interrupt_id: str) -> bool:
+    """获取 chat 超时恢复流去重锁（SETNX + TTL，防多浏览器并发驱动同一恢复流）。"""
+    redis_client = get_redis_client()
+    lock_key = f"{CHAT_TIMEOUT_RESUME_LOCK_PREFIX}{interrupt_id}"
+    return bool(redis_client.set(lock_key, "1", nx=True, ex=CHAT_TIMEOUT_RESUME_LOCK_TTL))
+
+
+def _release_chat_timeout_resume_lock(interrupt_id: str):
+    """释放 chat 超时恢复流去重锁（由 _stream_chat_resume_generator finally 调用）。"""
     try:
-        from django.apps import apps as _apps
+        redis_client = get_redis_client()
+        lock_key = f"{CHAT_TIMEOUT_RESUME_LOCK_PREFIX}{interrupt_id}"
+        redis_client.delete(lock_key)
+    except Exception:
+        logger.debug(f"释放 chat 超时恢复锁失败（可忽略，TTL 兜底）: {interrupt_id}")
 
-        ResearchTask = _apps.get_model("research", "ResearchTask")
-        from Django_xm.common.enums import TaskStatus
 
-        terminal_states = {
-            TaskStatus.COMPLETED,
-            TaskStatus.FAILED,
-            TaskStatus.CANCELLED,
-        }
-        return ResearchTask.objects.filter(
-            task_id=task_id,
-            status__in=terminal_states,
-            is_deleted=False,
-        ).exists()
-    except Exception as e:
-        logger.warning(f"[ApprovalService] 检查任务终态失败: task_id={task_id}, err={e}")
-        return False
+_release_chat_timeout_resume_lock_async = sync_to_async(_release_chat_timeout_resume_lock)
 
 
 # ── 公开 API ──────────────────────────────────────────────
@@ -1360,6 +1333,14 @@ def request_approval(
         extra_data["message_id"] = top_message_id
     # 透传 risk_level 和子 agent 嵌套字段到 extra（Phase F1 + E3）
     _merge_passthrough_fields(approval_data, extra_data)
+    # seq 补齐（持久化链路完整性）：从 ToolCallContext 读取 register 分配的全局
+    # 递增序号写入 Approval.extra（统一经 enrich_entry_seq，与 WS 事件透传同一
+    # 来源），使深度研究模块 loadHistory（Approval 为唯一持久化来源）刷新后重建
+    # 的 toolCall 带 seq，跨浏览器统一排序依据一致（防刷新后工具调用乱序）。
+    service.enrich_entry_seq(
+        extra_data,
+        extra_data.get("tool_call_id") or approval_data.get("tool_call_id") or interrupt_id,
+    )
 
     # M4: 创建时设置 expires_at = now + APPROVAL_TIMEOUT_SECONDS
     from django.utils import timezone as _tz
@@ -1406,15 +1387,6 @@ def request_approval(
     # 覆盖 M16 复用 interrupt_id 重新发起审批场景（created=False 时 DB 中可能保留上一次终态）。
     _persist_and_broadcast(approval, Approval.STATE_PENDING)
 
-    # 深度研究场景：Redis 原子递增 pending 计数器
-    if source == Approval.SOURCE_DEEP_RESEARCH:
-        try:
-            redis_client = get_redis_client()
-            counter_key = f"{PENDING_COUNT_PREFIX}{source_id}"
-            redis_client.eval(_LUA_INCR_WITH_EXPIRE, 1, counter_key, PENDING_COUNT_TTL)
-        except Exception as counter_err:
-            logger.warning(f"[ApprovalService] 递增pending计数器失败: source_id={source_id}, err={counter_err}")
-
     logger.info(
         f"[ApprovalService] 发起审批: source={source}, source_id={source_id}, "
         f"interrupt_id={interrupt_id}, tool={approval.tool_name}"
@@ -1447,6 +1419,13 @@ async def request_approval_async(
         extra_data["message_id"] = top_message_id
     # 透传 risk_level 和子 agent 嵌套字段到 extra（Phase F1 + E3）
     _merge_passthrough_fields(approval_data, extra_data)
+    # seq 补齐（持久化链路完整性）：与同步版 request_approval 一致，统一经
+    # enrich_entry_seq 从 ToolCallContext 读取 register 分配的全局递增序号写入
+    # Approval.extra，使深度研究模块 loadHistory 刷新后重建的 toolCall 带 seq。
+    service.enrich_entry_seq(
+        extra_data,
+        extra_data.get("tool_call_id") or approval_data.get("tool_call_id") or interrupt_id,
+    )
 
     # M4: 创建时设置 expires_at = now + APPROVAL_TIMEOUT_SECONDS
     from django.utils import timezone as _tz
@@ -1500,15 +1479,6 @@ async def request_approval_async(
     # 覆盖 M16 复用 interrupt_id 重新发起审批场景。
     await _persist_and_broadcast_async(approval, Approval.STATE_PENDING)
 
-    # 深度研究场景：Redis 原子递增 pending 计数器
-    if source == Approval.SOURCE_DEEP_RESEARCH:
-        try:
-            redis_client = get_redis_client()
-            counter_key = f"{PENDING_COUNT_PREFIX}{source_id}"
-            redis_client.eval(_LUA_INCR_WITH_EXPIRE, 1, counter_key, PENDING_COUNT_TTL)
-        except Exception as counter_err:
-            logger.warning(f"[ApprovalService] 异步递增pending计数器失败: source_id={source_id}, err={counter_err}")
-
     logger.info(
         f"[ApprovalService] 异步发起审批: source={source}, source_id={source_id}, "
         f"interrupt_id={interrupt_id}, tool={approval.tool_name}"
@@ -1521,18 +1491,22 @@ def resume_approval(
     approved: bool,
     user_input: str | None = None,
     approved_by: Any | None = None,
+    timeout_resume: bool = False,
 ) -> dict[str, Any]:
     """将审批从 pending 转为 processing，设置resume_value，广播processing事件。
 
     幂等处理：
     - 审批不存在：返回 not_found=True（调用方决定如何响应）
     - 审批已是终态(approved/rejected/timeout)：返回 idempotent=True
+      （例外：审批为 TIMEOUT 且 timeout_resume=True 时，跳过幂等直接驱动恢复——
+       超时恢复由前端收到 approval_timeout 事件后触发，审批保持终态不复位）
     - 审批已是processing：返回 idempotent=True（正在处理中）
     - 审批锁被其他线程持有：返回 idempotent=True（并发请求）
     - 深度研究场景 SETNX 锁被持有：返回 idempotent=True, state=processing（并发恢复）
 
     Args:
         approved_by: 审批操作用户（User 实例或 None），用于 approved_by 字段持久化。
+        timeout_resume: 超时恢复标记（前端事件驱动触发时置 True）。
     """
     try:
         approval = Approval.objects.get(interrupt_id=interrupt_id)
@@ -1547,6 +1521,44 @@ def resume_approval(
         }
 
     if approval.state in (Approval.STATE_APPROVED, Approval.STATE_REJECTED, Approval.STATE_TIMEOUT):
+        if approval.state == Approval.STATE_TIMEOUT and timeout_resume:
+            # 事件驱动化超时恢复（Task 5）：
+            # 审批已由 timeout_approval 终态化 TIMEOUT 并发布 approval_timeout 事件，
+            # 前端收到后调用 SSE resume 端点。此处跳过幂等，从 extra 读取超时决策值
+            # （TIMEOUT_DECISION，区分"用户拒绝"）直接驱动恢复流。
+            # 不复位审批状态、不广播 approval_processing，保持"已超时"终态展示。
+            #
+            # 并发防护：多浏览器可能同时触发，使用独立恢复流去重锁
+            # （timeout_approval 已持有 APPROVAL_LOCK 至 TTL，不可复用）。
+            # 锁在恢复流 finally（_stream_chat_resume_generator）释放，TTL 兜底。
+            from Django_xm.common.constants import TIMEOUT_DECISION
+
+            if not _acquire_chat_timeout_resume_lock(interrupt_id):
+                logger.info(
+                    f"[ApprovalService] 超时恢复已在处理中，幂等返回: interrupt_id={interrupt_id}"
+                )
+                return {
+                    "approval": approval,
+                    "resume_value": None,
+                    "stream_generator": None,
+                    "idempotent": True,
+                    "state": approval.state,
+                }
+
+            extra_data = approval.extra if isinstance(approval.extra, dict) else {}
+            resume_value = extra_data.get("_resume_value", TIMEOUT_DECISION)
+            logger.info(
+                f"[ApprovalService] 超时恢复(事件驱动): interrupt_id={interrupt_id}, "
+                f"state={approval.state}, source={approval.source}, "
+                f"session={approval.chat_session_id}, resume_value={resume_value}"
+            )
+            return {
+                "approval": approval,
+                "resume_value": resume_value,
+                "stream_generator": None,
+                "idempotent": False,
+                "timeout_resume": True,
+            }
         logger.info(f"[ApprovalService] 审批已终态，幂等返回: interrupt_id={interrupt_id}, state={approval.state}")
         return {
             "approval": approval,
@@ -1564,22 +1576,6 @@ def resume_approval(
             "idempotent": True,
             "state": approval.state,
         }
-
-    # 深度研究场景：SETNX 乐观锁防止并发恢复
-    is_deep_research = approval.source == Approval.SOURCE_DEEP_RESEARCH
-    if is_deep_research:
-        redis_client = get_redis_client()
-        lock_key = f"{RESUME_LOCK_PREFIX}{interrupt_id}"
-        acquired = redis_client.set(lock_key, "1", nx=True, ex=RESUME_LOCK_TTL)
-        if not acquired:
-            logger.info(f"[ApprovalService] 深度研究审批SETNX锁已被持有，幂等返回: interrupt_id={interrupt_id}")
-            return {
-                "approval": approval,
-                "resume_value": None,
-                "stream_generator": None,
-                "idempotent": True,
-                "state": "processing",
-            }
 
     if not _acquire_lock(interrupt_id):
         logger.info(f"[ApprovalService] 审批锁已被持有，幂等返回: interrupt_id={interrupt_id}")
@@ -1783,110 +1779,21 @@ async def complete_approval_async(
     logger.info(f"[ApprovalService] 异步完成审批: interrupt_id={interrupt_id}, state={state}")
 
 
-def _complete_orphan_processing_approvals(task_id: str, force_state: str) -> int:
-    """完成任务中所有残留 processing/waiting 状态的审批。
-
-    当任务已进入终态但仍有 processing/waiting 审批时（极端异常情况），一次性将它们终态化。
-    返回被清理的审批数量。
-
-    修复 Bug 1&6：原仅清理 processing 状态，遗漏 waiting 状态的孤儿审批。
-    waiting 状态可能在批量审批中途任务异常终止时残留，若不清理将永久卡死。
-    """
-    orphan_qs = Approval.objects.filter(
-        source=Approval.SOURCE_DEEP_RESEARCH,
-        source_id=task_id,
-        state__in=[Approval.STATE_PROCESSING, Approval.STATE_WAITING],
-    )
-    count = orphan_qs.count()
-    if count == 0:
-        return 0
-    for a in orphan_qs.iterator():
-        complete_approval(a.interrupt_id, force_state, extra={"skipped": "task_completed"})
-    logger.info(f"[ApprovalService] 清理任务孤儿审批: task={task_id}, count={count}, state={force_state}")
-    return count
-
-
-def check_and_trigger_research_resume(
-    task_id: str, current_interrupt_id: str, current_resume_value: Any
-) -> dict[str, Any]:
-    """检查深度研究任务的批量审批状态，决定是否触发恢复。
-
-    逻辑：
-    1. 若任务已终态：清理所有残留processing审批，返回should_resume=False
-    2. 若仍有pending审批：等待，返回should_resume=False
-    3. 所有pending已处理完：收集所有processing审批的resume_value，返回should_resume=True
-    """
-    if _is_task_in_terminal_state(task_id):
-        _complete_orphan_processing_approvals(task_id, Approval.STATE_APPROVED)
-        return {
-            "should_resume": False,
-            "pending_count": 0,
-            "resume_map": {},
-            "task_terminal": True,
-        }
-
-    pending_count = Approval.objects.filter(
-        source=Approval.SOURCE_DEEP_RESEARCH,
-        source_id=task_id,
-        state=Approval.STATE_PENDING,
-    ).count()
-
-    if pending_count > 0:
-        logger.info(
-            f"[ApprovalService] 批量审批等待中: task_id={task_id}, "
-            f"current={current_interrupt_id}, remaining_pending={pending_count}"
-        )
-        return {
-            "should_resume": False,
-            "pending_count": pending_count,
-            "resume_map": {},
-        }
-
-    processing_approvals = Approval.objects.filter(
-        source=Approval.SOURCE_DEEP_RESEARCH,
-        source_id=task_id,
-        state=Approval.STATE_PROCESSING,
-    )
-
-    resume_map = {}
-    for a in processing_approvals:
-        extra_data = a.extra or {}
-        if isinstance(extra_data, dict):
-            rv = extra_data.get("_resume_value")
-            if rv is not None:
-                resume_map[a.interrupt_id] = rv
-                continue
-        if a.action == Approval.ACTION_CONFIRM_WITH_INPUT:
-            resume_map[a.interrupt_id] = a.user_input if a.user_input is not None else ""
-        else:
-            resume_map[a.interrupt_id] = True
-
-    if current_interrupt_id not in resume_map:
-        resume_map[current_interrupt_id] = current_resume_value
-
-    logger.info(
-        f"[ApprovalService] 批量审批全部处理完成: task_id={task_id}, "
-        f"batch_size={len(resume_map)}, ids={list(resume_map.keys())}"
-    )
-    return {
-        "should_resume": True,
-        "pending_count": 0,
-        "resume_map": resume_map,
-    }
-
-
 def timeout_approval(interrupt_id: str, dispatch_resume: bool = True):
-    """审批超时处理：pending→processing(resume_value=TIMEOUT_DECISION)，然后走批量恢复逻辑。
+    """审批超时处理：pending→processing(resume_value=TIMEOUT_DECISION)→终态 TIMEOUT。
 
     超时后设置 resume_value=TIMEOUT_DECISION（而非 False），让 ApprovalMiddleware
     能区分"用户拒绝"和"审批超时"，注入"工具运行失败：审批超时"的 ToolMessage，
     agent 收到后可调整策略继续执行。
 
+    事件驱动化（Task 5）：审批落库终态 TIMEOUT + 发布 approval_timeout 实时事件后，
+    恢复由前端收到事件触发 SSE resume 端点驱动（chat 来源）；deep_research 来源
+    由执行服务挂起协程轮询 DB 批次决策自驱动。本函数不再派发任何恢复任务。
+
     Args:
         interrupt_id: 审批中断 ID（tool_call_id）
-        dispatch_resume: 是否触发恢复。research_resume_task 批次自愈调用时传 False
-            （仅终态化，不派发恢复任务，避免递归派发），恢复统一由
-            research_resume_task 的批次判定在收集决策后执行。
+        dispatch_resume: 是否触发恢复。自愈/批次判定的内部调用传 False
+            （仅终态化，不进入恢复分支），避免递归触发；事件已统一发布。
     """
     from Django_xm.common.constants import TIMEOUT_DECISION
 
@@ -1926,7 +1833,7 @@ def timeout_approval(interrupt_id: str, dispatch_resume: bool = True):
         _persist_and_broadcast(approval, Approval.STATE_TIMEOUT, extra={"timeout": True})
         # DB 终态化：_persist_and_broadcast 只写 Redis+广播、不更新 DB，
         # 显式将 DB 状态更新为 TIMEOUT，保证 DB 与 Redis/前端语义一致。
-        # research_resume_task 的批次判定（_collect_batch_decisions）以 DB 状态为准，
+        # 执行器 collect_batch_decisions 以 DB 状态为准，
         # DB 停留在 PROCESSING 会把"超时"误判为"已批准"（resolved=True），
         # 且下一次 cleanup 不再扫描（非 pending），造成终态不可达。
         approval.state = Approval.STATE_TIMEOUT
@@ -1941,12 +1848,15 @@ def timeout_approval(interrupt_id: str, dispatch_resume: bool = True):
         )
 
         if approval.source == Approval.SOURCE_CHAT:
-            # chat 场景超时恢复：检查同批次是否还有 pending，全部处理完后触发 Celery 恢复任务
-            # _stream_chat_resume_generator 会通过 Redis Pub/Sub 推送事件给前端（WebSocket）
+            # chat 场景超时恢复（事件驱动化，Task 5）：
+            # 审批已落库终态 TIMEOUT + 发布 approval_timeout 实时事件（见上方统一出口）。
+            # 恢复不再派发 Celery 任务，改由前端收到 approval_timeout 事件后调用
+            # SSE resume 端点驱动 _stream_chat_resume_generator（与用户手动确认同构）。
+            # 同批次完整性由前端触发恢复时后端 _check_batch_and_route 判定。
             graph_interrupt_id = extra_data.get("graph_interrupt_id", "")
 
             if graph_interrupt_id:
-                # 批量审批场景：检查同批次是否还有 pending 审批
+                # 批量审批场景：检查同批次是否还有 pending 审批（仅日志，恢复统一由前端触发）
                 pending_siblings = Approval.objects.filter(
                     extra__graph_interrupt_id=graph_interrupt_id,
                     source=Approval.SOURCE_CHAT,
@@ -1960,106 +1870,39 @@ def timeout_approval(interrupt_id: str, dispatch_resume: bool = True):
                         f"graph_interrupt_id={graph_interrupt_id}, "
                         f"remaining_pending={pending_siblings.count()}"
                     )
-                    return
 
             if not dispatch_resume:
-                # 自愈场景：仅终态化，不触发恢复（由 research_resume_task 批次判定统一恢复）
+                # 自愈场景：仅终态化，不触发恢复（恢复统一由前端 approval_timeout 事件驱动）
                 return
 
-            # 所有同批次审批都已处理完（或无批次），统一走 gateway 路由恢复
+            logger.info(
+                f"[ApprovalService] chat 超时终态化完成，等待前端触发 SSE 恢复: "
+                f"interrupt_id={interrupt_id}, session={approval.chat_session_id}, "
+                f"graph_interrupt_id={graph_interrupt_id or '(none)'}"
+            )
+
+        elif approval.source == Approval.SOURCE_DEEP_RESEARCH:
+            # 事件驱动化：审批已落库终态 TIMEOUT，执行服务挂起协程通过轮询 DB
+            # 批次决策自驱动恢复（collect_batch_decisions 基于 DB 终态判定，无需
+            # Redis 计数/批次锁）。发布 Redis 信令加速唤醒——执行器收到信令后
+            # 重新 collect 校验批次完整性，未全部决断则继续挂起。
+            if not dispatch_resume:
+                # 自愈场景（执行服务批次自愈调用）：仅终态化，不触发恢复，避免重复信令。
+                return
+
             try:
                 from Django_xm.common.approval_gateway import gateway
 
                 gateway.route_timeout(approval, resume_value=TIMEOUT_DECISION)
                 logger.info(
-                    f"[ApprovalService] 超时恢复已路由: interrupt_id={interrupt_id}, "
-                    f"source={approval.source}, session={approval.chat_session_id}"
+                    f"[ApprovalService] 超时恢复已路由(deep_research): "
+                    f"task={approval.source_id}, interrupt_id={interrupt_id}"
                 )
             except Exception:
+                # 信令发布失败不阻断：审批已落库 TIMEOUT 终态，执行器轮询 DB 最终一致
                 logger.exception(
-                    f"[ApprovalService] 超时恢复路由失败: interrupt_id={interrupt_id}",
-                )
-                # 派发失败时回退：将审批标记为 rejected，避免永久卡死
-                try:
-                    complete_approval(
-                        interrupt_id,
-                        Approval.STATE_REJECTED,
-                        extra={"reason": "timeout_dispatch_failed", "timeout": True},
-                    )
-                except Exception:
-                    logger.exception(
-                        f"[ApprovalService] 超时回退完成审批失败: "
-                        f"interrupt_id={interrupt_id}"
-                    )
-
-        elif approval.source == Approval.SOURCE_DEEP_RESEARCH:
-            task_id = approval.source_id
-
-            # 原子递减 pending 计数（Lua 防负数）
-            # 修复：移除 remaining==0 短路 return——计数归零同样走 check_and_trigger，
-            # 由 DB pending_count 决定是否恢复。原逻辑在"单审批超时且计数准确"时
-            # （DECR 后 remaining=0）直接返回，永不触发恢复，任务永久停住。
-            try:
-                redis_client = get_redis_client()
-                counter_key = f"{PENDING_COUNT_PREFIX}{task_id}"
-                remaining = redis_client.eval(_LUA_DECR_NON_NEGATIVE, 1, counter_key, PENDING_COUNT_TTL)
-                logger.info(f"[ApprovalService] 超时递减pending计数: task_id={task_id}, remaining={remaining}")
-            except Exception as counter_err:
-                logger.warning(
-                    f"[ApprovalService] 超时原子计数器操作失败，降级到原有逻辑: task_id={task_id}, err={counter_err}"
-                )
-
-            if not dispatch_resume:
-                # 自愈场景（research_resume_task 批次自愈调用）：仅终态化，不触发恢复，
-                # 避免递归派发 research_resume_task。恢复由 research_resume_task 的
-                # 批次判定在收集决策后统一执行。
-                return
-
-            batch_result = check_and_trigger_research_resume(
-                task_id=task_id,
-                current_interrupt_id=interrupt_id,
-                current_resume_value=TIMEOUT_DECISION,
-            )
-            if batch_result.get("task_terminal"):
-                complete_approval(
-                    interrupt_id, Approval.STATE_REJECTED, extra={"skipped": "task_completed", "timeout": True}
-                )
-                return
-            if batch_result["should_resume"]:
-                # 统一走 gateway 路由恢复（替代原"等待 Chat SSE 恢复"）
-                # deep_research 审批超时与确认/拒绝同属审批决策，统一由 ApprovalGateway 路由
-                # 修复：移除 _acquire_task_resume_lock——该锁只覆盖"派发瞬间"且成功路径不释放，
-                # 造成 TTL(1800s) 内残留、后续超时恢复被跳过（实证"任务锁已被持有，跳过恢复"）。
-                # 并行恢复防护统一由 research_resume_task 内部的 thread 粒度锁保证。
-                try:
-                    from Django_xm.common.approval_gateway import gateway
-
-                    gateway.route_timeout(approval, resume_value=TIMEOUT_DECISION)
-                    logger.info(
-                        f"[ApprovalService] 超时恢复已路由(deep_research): "
-                        f"task={task_id}, interrupt_id={interrupt_id}"
-                    )
-                except Exception:
-                    logger.exception(
-                        f"[ApprovalService] 超时恢复路由失败(deep_research): "
-                        f"task={task_id}, interrupt_id={interrupt_id}"
-                    )
-                    # 派发失败时回退：将审批标记为 rejected
-                    try:
-                        complete_approval(
-                            interrupt_id,
-                            Approval.STATE_REJECTED,
-                            extra={"reason": "timeout_dispatch_failed", "timeout": True},
-                        )
-                    except Exception:
-                        logger.exception(
-                            f"[ApprovalService] 超时回退完成审批失败: "
-                            f"interrupt_id={interrupt_id}"
-                        )
-            else:
-                logger.info(
-                    f"[ApprovalService] 超时后等待其他审批: task_id={task_id}, "
-                    f"remaining_pending={batch_result['pending_count']}"
+                    f"[ApprovalService] 超时恢复路由失败(deep_research): "
+                    f"interrupt_id={interrupt_id}"
                 )
     except Exception:
         logger.exception("[ApprovalService] 超时处理异常")

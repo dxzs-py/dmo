@@ -591,7 +591,7 @@ export function getToolDisplayConfig(toolName) {
       ...displayConfig,
       statusSymbols: {
         ...DEFAULT_DISPLAY_CONFIG.statusSymbols,
-        ...(displayConfig.statusSymbols || {}),
+        ...displayConfig.statusSymbols,
       },
     }
   }

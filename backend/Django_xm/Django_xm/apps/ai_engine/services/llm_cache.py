@@ -47,7 +47,7 @@ def get_llm_cache() -> Any:
     首次调用时惰性创建 langchain_core.caches.InMemoryCache 实例。
     后续调用直接返回缓存的单例（线程安全）。
     """
-    global _llm_cache
+    global _llm_cache  # noqa: PLW0603 - 模块级单例惰性初始化（双检锁模式）
     if _llm_cache is not None:
         return _llm_cache
 
@@ -166,7 +166,7 @@ def get_rate_limiter() -> Any:
 
     返回 None 表示速率限制不可用（langchain-core 版本过低）。
     """
-    global _rate_limiter
+    global _rate_limiter  # noqa: PLW0603 - 模块级单例惰性初始化（双检锁模式）
     if _rate_limiter is not None:
         return _rate_limiter
 

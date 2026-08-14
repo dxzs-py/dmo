@@ -80,39 +80,23 @@
       style="margin-top: 16px;"
     />
 
-    <!-- 工具调用历史（容器复用 AiQueue，与聊天模块一致：队列头可折叠 + 内部滚动） -->
-    <div v-if="toolCalls.length > 0" class="tool-calls-section">
+    <!-- 工具调用历史（子代理分组卡片 + 组内递归工具树，参考 3.md） -->
+    <div v-if="rootGroups.length > 0" class="tool-calls-section">
       <h4 class="section-title tool-calls-title">
         工具调用记录
         <span class="tool-calls-count">{{ toolCalls.length }}</span>
       </h4>
-      <TransitionGroup name="tool-list" tag="div" class="tool-calls-list">
-        <AiQueue v-if="toolCalls.length > 1" :items="toolCalls" class="tool-calls-queue">
-          <ToolCallCard
-            v-for="tc in toolCalls"
-            :key="tc.id || tc.toolCallId || Math.random()"
-            :tool-name="tc.name || tc.toolName"
-            :description="tc.description || ''"
-            :status="tc.status"
-            :input="tc.input || tc.parameters"
-            :output="tc.output || tc.result"
-            :tool-call="tc"
-            @approve="(data) => emit('approve', data)"
-            @reject="(data) => emit('reject', data)"
-          />
-        </AiQueue>
-        <ToolCallCard
-          v-else-if="toolCalls.length === 1"
-          :tool-name="toolCalls[0].name || toolCalls[0].toolName"
-          :description="toolCalls[0].description || ''"
-          :status="toolCalls[0].status"
-          :input="toolCalls[0].input || toolCalls[0].parameters"
-          :output="toolCalls[0].output || toolCalls[0].result"
-          :tool-call="toolCalls[0]"
+      <div class="tool-calls-list">
+        <ToolCallGroup
+          v-for="group in rootGroups"
+          :key="group.key"
+          :group="group"
+          :groups="allGroups"
+          :task-id="task.taskId"
           @approve="(data) => emit('approve', data)"
           @reject="(data) => emit('reject', data)"
         />
-      </TransitionGroup>
+      </div>
     </div>
 
     <ResearchTaskReport
@@ -129,9 +113,10 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import { ChatDotRound } from '@element-plus/icons-vue'
-import ToolCallCard from '@/components/chat/ToolCallCard.vue'
-import AiQueue from '@/components/ai-elements/AiQueue.vue'
+import ToolCallGroup from '@/components/common/ToolCallGroup.vue'
+import { buildAgentGroups, buildRootGroups } from '@/utils/toolCallTree'
 import ResearchTaskReport from './ResearchTaskReport.vue'
 import AiReasoning from '@/components/ai-elements/AiReasoning.vue'
 import { formatDate } from '@/utils/format'
@@ -196,6 +181,11 @@ const emit = defineEmits([
   'approve',
   'reject',
 ])
+
+// 工具调用按 agentPath 分组为子代理容器树（Task 6）
+// allGroups：全部分组（子代理组内嵌查找用）；rootGroups：顶层仅渲染根组，避免子代理组重复展示
+const allGroups = computed(() => buildAgentGroups(props.toolCalls))
+const rootGroups = computed(() => buildRootGroups(props.toolCalls))
 
 const getStatusType = (status) => {
   const typeMap = {
@@ -301,11 +291,6 @@ const getStatusText = (status) => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-
-/* 深度研究工具调用量大（一次可能数十张卡片），队列滚动区使用更大固定高度（聊天模块为 300px） */
-.tool-calls-queue :deep(.queue-items) {
-  max-height: 520px;
 }
 
 @media (max-width: 768px) {

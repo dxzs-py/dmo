@@ -144,7 +144,10 @@ class AttachmentService:
         has_images = len(classified["image_ids"]) > 0
         has_text = len(classified["text_ids"]) > 0
         logger.info(
-            f"[Attachment] build_user_content: ids={attachment_ids}, images={classified['image_ids']}, texts={classified['text_ids']}"
+            "[Attachment] build_user_content: ids=%s, images=%s, texts=%s",
+            attachment_ids,
+            classified["image_ids"],
+            classified["text_ids"],
         )
 
         if has_images and not has_text:
@@ -158,7 +161,8 @@ class AttachmentService:
         names = self._get_attachment_names(attachment_ids)
         names_str = ", ".join(names) if names else f"{len(attachment_ids)}个文件"
         # 构造 "文件名 (id=N)" 标签，供 attachment_reader 工具获取真实附件 ID（LLM 无法从上下文自行推导）
-        id_labels = ", ".join(f"{name} (id={att_id})" for name, att_id in zip(names, attachment_ids))
+        # names 与 attachment_ids 恒等长（_get_attachment_names 逐 id 生成），长度不一致即为 bug
+        id_labels = ", ".join(f"{name} (id={att_id})" for name, att_id in zip(names, attachment_ids, strict=True))
         if self.should_use_rag(attachment_ids):
             hint = (
                 f"用户上传了以下文件：{names_str}\n"

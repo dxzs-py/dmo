@@ -7,7 +7,7 @@
 与深度研究模块的字段语义保持一致：
 - provider_id / model_name / temperature / max_tokens / special_params
 - enable_deep_thinking 由前端转译为 special_params 中的具体参数（如 DeepSeek 的 thinking），
-  后端不再单独处理，与 research_resume_task.py 行为一致。
+  后端不再单独处理，与深度研究执行器行为一致。
 """
 
 from typing import Any

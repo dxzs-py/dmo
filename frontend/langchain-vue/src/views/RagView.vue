@@ -54,9 +54,9 @@
               <el-button 
                 type="danger" 
                 style="margin-left: 10px"
-                @click="handleDeleteIndex"
                 :disabled="!selectedIndexName"
                 :loading="isDeletingIndex"
+                @click="handleDeleteIndex"
               >
                 删除索引
               </el-button>
@@ -93,8 +93,8 @@
               <el-button 
                 type="primary" 
                 :loading="isLoading && !isStreaming" 
-                @click="executeQuery" 
-                :disabled="!selectedIndexName || isStreaming"
+                :disabled="!selectedIndexName || isStreaming" 
+                @click="executeQuery"
               >
                 {{ queryForm.streaming ? '流式查询' : '查询' }}
               </el-button>
@@ -106,8 +106,8 @@
                 停止生成
               </el-button>
               <el-button 
-                @click="clearResult" 
-                :disabled="isLoading"
+                :disabled="isLoading" 
+                @click="clearResult"
               >
                 清除结果
               </el-button>
@@ -150,7 +150,7 @@
             >
               {{ isUploading ? '正在上传并索引...' : '上传并索引' }}
             </el-button>
-            <el-button @click="clearUpload" :disabled="!uploadFiles.length">清除</el-button>
+            <el-button :disabled="!uploadFiles.length" @click="clearUpload">清除</el-button>
           </div>
           <div v-if="isUploading" class="upload-progress">
             <el-progress :percentage="uploadProgress" :status="uploadProgress >= 100 ? 'success' : undefined" />
@@ -160,21 +160,22 @@
         
         <el-divider />
         
-        <div class="files-section" v-if="selectedIndexName">
+        <div v-if="selectedIndexName" class="files-section">
           <h4 class="files-title">
             已上传文件
             <el-button 
               link 
-              @click="loadFiles" 
-              :loading="isLoadingFiles"
+              :loading="isLoadingFiles" 
               style="margin-left: 10px"
+              @click="loadFiles"
             >
               刷新
             </el-button>
           </h4>
           <div v-if="files.length > 0" class="files-list">
-            <div v-for="file in files" :key="file.name" class="file-item"
-                 v-memo="[file.name, file.size, file.uploadedAt, isDeletingFile === file.name]">
+            <div
+v-for="file in files" :key="file.name" v-memo="[file.name, file.size, file.uploadedAt, isDeletingFile === file.name]"
+                 class="file-item">
               <div class="file-info">
                 <span class="file-name">{{ file.name }}</span>
                 <span class="file-meta">
@@ -184,8 +185,8 @@
               <el-button 
                 type="danger" 
                 size="small" 
-                @click="handleDeleteFile(file.name)"
                 :loading="isDeletingFile === file.name"
+                @click="handleDeleteFile(file.name)"
               >
                 删除
               </el-button>
@@ -226,8 +227,8 @@
               <el-collapse-item
                 v-for="(source, index) in result.sources"
                 :key="index"
-                :title="getSourceTitle(source, index)"
                 v-memo="[source.content || source, getSourceTitle(source, index)]"
+                :title="getSourceTitle(source, index)"
               >
                 <p class="source-content">{{ source.content || source }}</p>
               </el-collapse-item>
@@ -248,7 +249,7 @@
       width="500px"
       :close-on-click-modal="false"
     >
-      <el-form :model="createForm" :rules="createRules" ref="createFormRef" label-width="100px">
+      <el-form ref="createFormRef" :model="createForm" :rules="createRules" label-width="100px">
         <el-form-item label="索引名称" prop="name">
           <el-input
             v-model="createForm.name"

@@ -35,10 +35,8 @@ import logging
 import time
 from typing import Any
 
-from django.core.cache import cache
-
-from Django_xm.common.risk_levels import RiskLevel
 from Django_xm.common.redis_utils import get_redis_client
+from Django_xm.common.risk_levels import RiskLevel
 
 logger = logging.getLogger(__name__)
 

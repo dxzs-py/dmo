@@ -18,15 +18,17 @@
     - cleanup_expired_approvals（approval_tasks.py）：Celery 定时扫描，无需修改
 
 注意：
-    超时恢复链路已完成：
-    Celery 扫描超时（cleanup_expired_approvals）→ timeout_approval 设置 TIMEOUT_DECISION →
-    resume_chat_after_timeout Celery 任务派发 → _stream_chat_resume_generator 恢复 LangGraph →
-    middleware 注入超时 ToolMessage → agent 调整策略继续执行。
+    超时恢复链路（事件驱动化，Task 5）：
+    Celery 扫描超时（cleanup_expired_approvals）→ timeout_approval 落库终态
+    TIMEOUT + 发布 approval_timeout 实时事件 →
+    chat 来源：前端收到事件后调用 SSE resume 端点 → _stream_chat_resume_generator
+    恢复 LangGraph（Command(resume=TIMEOUT_DECISION)）→ middleware 注入超时
+    ToolMessage → agent 调整策略继续执行。
+    deep_research 来源：执行服务挂起协程轮询 DB 批次决策自驱动（无需前端）。
 
     关键日志标记（用于排查）：
-    - [ApprovalService] chat 超时恢复任务已派发
-    - [ResumeChatTimeout] 任务被调用
-    - [ResumeChatTimeout] LangGraph 恢复执行完成，agent 已继续
+    - [ApprovalService] 超时恢复(事件驱动)
+    - [ApprovalGateway] chat 超时已终态化，等待前端事件驱动恢复
 """
 
 import logging
@@ -255,7 +257,8 @@ def get_timeout_handler() -> ApprovalTimeoutHandler:
     用于在 middleware 或其他模块中访问进程内超时处理器。
     注意：持久化的超时扫描仍由 Celery 任务 cleanup_expired_approvals 负责。
     """
-    global _global_handler
+    # 模块级单例惰性初始化
+    global _global_handler  # noqa: PLW0603
     if _global_handler is None:
         _global_handler = ApprovalTimeoutHandler()
     return _global_handler

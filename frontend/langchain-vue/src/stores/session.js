@@ -4,7 +4,7 @@ import router from '../router'
 import { chatAPI } from '@/api/chat'
 import { knowledgeAPI } from '@/api/knowledge'
 import { useUserStore } from './user'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { logger } from '../utils/logger'
 import { getModeLabel, getQueryParam } from '../utils/format'
 import {
@@ -23,8 +23,6 @@ import {
   createMessageVersion,
   addOrUpdateToolCallInMessageByIdx,
   updateOrAddToolResultInMessageByIdx,
-  findToolCallById,
-  getInterruptId,
   // Map 版本工具函数（与 researchStore 共用，toolCallMap 作为唯一真相源）
   addOrUpdateToolCallInMap,
   updateOrAddToolResultInMap,
@@ -38,7 +36,7 @@ import {
   mergeMessageFromBackend,
   sortToolCallsForDisplay,
 } from '../utils/messageOperations'
-import { StreamState, ToolCallStatus } from '../types'
+import { StreamState } from '../types'
 
 /** localStorage key：持久化 currentSessionId，防止刷新后丢失（Task 15 P0 修复） */
 const CURRENT_SESSION_ID_KEY = 'lc_current_session_id'
@@ -189,11 +187,13 @@ export const useSessionStore = defineStore('session', () => {
       toolCallsMap.value.set(sessionId, targetMap)
     }
     // 以 API 消息 toolCalls 顺序（= 后端 DB 数组顺序，时间权威）重建 Map 插入顺序。
-    // 根因修复：WebSocket 事件与 API 历史加载并发时，事件先到达会将新工具（如
-    // 审批恢复后的 fs_write_file）插入 Map 开头，而 _index（LLM 单轮序号）被后端
-    // persist 丢弃（_build_persisted_tool_calls 过滤内部字段），前端排序退化为
-    // Map 插入顺序，导致刷新后工具乱序。API 快照是顺序权威，以其为准重建插入顺序；
-    // 已存在条目保留实时动态字段（status/approval），不覆盖。
+    // 根因修复（跨浏览器工具乱序）：WebSocket 事件与 API 历史加载并发时，事件先到达
+    // 会将新工具（如审批恢复后的 fs_write_file）插入 Map 开头；此前 persist 丢弃 seq
+    // 导致刷新后排序依据缺失而乱序。现已由后端补齐 seq（sse_generator /
+    // stream_persistence / approval_service 统一经 enrich_entry_seq 从 ToolCallContext
+    // 写入），API 快照自带 seq，_syncMessageToolCalls 按 seq 稳定排序。此处仍以
+    // API 数组顺序重建 Map 插入顺序作为快照基线；已存在条目保留实时动态字段
+    // （status/approval），不覆盖。
     const orderedEntries = []
     const seenKeys = new Set()
     for (const msg of messages) {
@@ -268,9 +268,9 @@ export const useSessionStore = defineStore('session', () => {
     }
     // 归属规则统一走 _collectToolCallsForMessage
     const arr = _collectToolCallsForMessage(toolCallMap, targetMsg)
-    // 跨浏览器统一排序：seq（(module, module_id) 内跨 LLM 轮次全局递增序号，
-    // 事件透传）优先，_index（LLM 单轮序号）兜底。sortToolCallsForDisplay 是
-    // 唯一权威排序实现（messageOperations.js），sessionStore 与 researchStore 共用
+    // 跨浏览器统一排序：seq（register 分配的 (module, module_id) 内跨 LLM 轮次
+    // 全局递增序号，所有链路统一透传）是唯一排序依据。sortToolCallsForDisplay
+    // 是唯一权威排序实现（messageOperations.js），sessionStore 与 researchStore 共用
     sortToolCallsForDisplay(arr)
     targetMsg.toolCalls = arr
     const ver = targetMsg.versions?.[targetMsg.currentVersion]
@@ -720,9 +720,8 @@ export const useSessionStore = defineStore('session', () => {
    * 刷新待同步队列（供 useStreamFinalizer 流结束后调用）
    * 确保所有 pending 的审批同步、消息同步等操作完成后再最终 PATCH
    * @param {string} sessionId
-   * @param {{ messageIndex?: number }} [options]
    */
-  const flushPendingSync = async (sessionId, { messageIndex } = {}) => {
+  const flushPendingSync = async (sessionId) => {
     await syncLastMessageToBackend(sessionId, { allowCreate: false })
   }
 
@@ -1136,16 +1135,6 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   /**
-   * 添加/更新 toolCall 到最后一条 assistant 消息（兼容旧接口，委托给 addOrUpdateToolCall）
-   *
-   * @param {string} sessionId - 会话 ID
-   * @param {Object} data - 工具事件数据
-   */
-  const addOrUpdateToolCallToLastMessage = (sessionId, data) => {
-    addOrUpdateToolCall(sessionId, data)
-  }
-
-  /**
    * 更新/添加工具结果（对应 SSE tool_result 事件）
    *
    * 委托通用函数 updateOrAddToolResultInMap 处理 toolCallMap 操作（含结果更新、parameters 补充），
@@ -1172,16 +1161,6 @@ export const useSessionStore = defineStore('session', () => {
     triggerRef(toolCallsMap)
     _syncMessageToolCalls(sessionId)
     _debouncedToolSync(sessionId)
-  }
-
-  /**
-   * 更新/添加工具结果到最后一条 assistant 消息（兼容旧接口，委托给 updateOrAddToolResult）
-   *
-   * @param {string} sessionId - 会话 ID
-   * @param {Object} data - 工具结果事件数据
-   */
-  const updateOrAddToolResultToLastMessage = (sessionId, data) => {
-    updateOrAddToolResult(sessionId, data)
   }
 
   /**
@@ -1637,7 +1616,7 @@ export const useSessionStore = defineStore('session', () => {
       // 归属规则统一走 _collectToolCallsForMessage：仅 messageBackendId 精确匹配
       const arr = _collectToolCallsForMessage(toolCallMap, msg)
       if (arr.length > 0) {
-        // 跨浏览器统一排序：seq 优先、_index 兜底（与 _syncMessageToolCalls 同一权威实现）
+        // 跨浏览器统一排序：seq 唯一排序依据（与 _syncMessageToolCalls 同一权威实现）
         sortToolCallsForDisplay(arr)
         msg.toolCalls = arr
         const ver = msg.versions?.[msg.currentVersion]
@@ -1715,10 +1694,8 @@ export const useSessionStore = defineStore('session', () => {
     appendToLastAssistantMessage,
     addToolCallToLastMessage,
     addOrUpdateToolCall,
-    addOrUpdateToolCallToLastMessage,
     syncAllMessageToolCallsFromMap: _syncAllMessageToolCallsFromMap,
     updateOrAddToolResult,
-    updateOrAddToolResultToLastMessage,
     getToolCallById,
     getToolCallsBySession,
     getToolCallsByMessage,

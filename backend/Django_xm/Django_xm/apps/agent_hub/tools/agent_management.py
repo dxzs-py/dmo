@@ -134,7 +134,10 @@ def _get_system_prompt_for_type(agent_type: str, description: str) -> str:
         "explore": f"你是一个信息探索代理。任务描述：{description}\n\n请搜索和分析相关信息，提供全面的发现。",
         "plan": f"你是一个规划代理。任务描述：{description}\n\n请制定详细的执行计划，包括步骤、时间线和资源需求。",
         "verification": f"你是一个验证代理。任务描述：{description}\n\n请仔细检查和验证，确保结果正确和完整。",
-        "code-review": f"你是一个代码审查代理。任务描述：{description}\n\n请分析代码质量、安全性和最佳实践，提供建设性的改进建议。",
+        "code-review": (
+            f"你是一个代码审查代理。任务描述：{description}\n\n"
+            f"请分析代码质量、安全性和最佳实践，提供建设性的改进建议。"
+        ),
         "research": f"你是一个研究代理。任务描述：{description}\n\n请深入研究该主题，提供全面的分析和结论。",
     }
     return prompts.get(agent_type, prompts["general-purpose"])
@@ -343,7 +346,8 @@ class AgentRunTool(BaseTool):
                             # 如果已达最大深度-1，也剥离 agent 工具（双重保险）
                             if current_depth >= MAX_AGENT_DEPTH - 1:
                                 logger.info(
-                                    f"子代理 {agent_id} 接近最大深度({current_depth}/{MAX_AGENT_DEPTH})，已剥离 agent 工具"
+                                    f"子代理 {agent_id} 接近最大深度"
+                                    f"({current_depth}/{MAX_AGENT_DEPTH})，已剥离 agent 工具"
                                 )
 
                             logger.info(f"子代理 {agent_id} 继承父代理工具: {[t.name for t in sub_tools]}")

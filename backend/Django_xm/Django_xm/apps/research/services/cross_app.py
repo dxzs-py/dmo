@@ -127,11 +127,12 @@ def user_owns_research_task(task_id: str, user) -> bool:
 def update_research_task_fields(task_id: str, **fields) -> None:
     """更新研究任务字段（通用更新接口）。
 
-    供 chat 应用在创建/提交深度研究任务时更新 knowledge_base_ids、celery_task_id 等字段。
+    供 chat 应用在创建/提交深度研究任务时更新 knowledge_base_ids、selected_tools、
+    use_mcp、selected_mcp_servers 等执行配置字段。
 
     Args:
         task_id: 研究任务 ID
-        **fields: 任意可更新的模型字段（如 knowledge_base_ids=..., celery_task_id=...）
+        **fields: 任意可更新的模型字段（如 knowledge_base_ids=..., selected_tools=...）
     """
     if not fields:
         return

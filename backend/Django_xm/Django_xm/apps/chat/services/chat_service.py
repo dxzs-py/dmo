@@ -344,7 +344,8 @@ class ChatService:
         msg_preview = data.get("message", "")[:80]
         research_task_id = data.get("research_task_id", "")
         logger.info(
-            f"[StreamChat] 开始处理: mode={mode}, session={session_id}, msg={msg_preview}..., research_task_id={research_task_id or '(无)'}"
+            f"[StreamChat] 开始处理: mode={mode}, session={session_id}, "
+            f"msg={msg_preview}..., research_task_id={research_task_id or '(无)'}"
         )
 
         yield {"type": "start", "message": "开始生成..."}
@@ -589,18 +590,18 @@ class ChatService:
         """为特定模式创建并执行 Agent 流，返回事件流"""
         if mode == "deep-research":
             # 深度研究模式架构（chat SSE 立即返回）：
-            # 1. 创建深度研究任务记录（create_deep_research_task，不启动 Celery）
+            # 1. 创建深度研究任务记录（create_deep_research_task，仅建任务，不启动执行）
             # 2. 发送 deep_research 事件，前端据此：
             #    - 设置 researchTaskId
             #    - 将消息 streamState 转为 INTERRUPTED
             # 3. 更新 ChatMessage 双向关联（research_task_id + message_id）
-            # 4. 启动 Celery 任务（start_celery，不等待结果）
+            # 4. 发布执行启动信令（start_execution → Redis SIGNAL_START，不等待结果）
             # 5. 发送 interrupted 事件（触发 sse_generator 广播 stream_interrupted WebSocket 事件）
             # 6. chat SSE 立即结束（return），不持续等待研究完成
             #
             # 研究结果回写链路（完全独立于 chat SSE）：
-            #   - Celery worker 完成/失败时调用 writeback_to_chat_message 回写 final_report 到 ChatMessage
-            #   - Celery worker 调用 broadcast_stream_completed 广播 WebSocket 事件
+            #   - 执行服务完成/失败时调用 writeback_to_chat_message 回写 final_report 到 ChatMessage
+            #   - 执行服务调用 broadcast_stream_completed 广播 WebSocket 事件
             #   - 前端通过 WebSocket stream_completed 事件回写结果并转 COMPLETED
             #
             # 实时进度同步（跨浏览器）：
@@ -656,11 +657,11 @@ class ChatService:
                         ),
                     },
                 }
-            # 启动 Celery 任务（不等待结果，Chat SSE 立即返回）
+            # 发布执行启动信令（不等待结果，Chat SSE 立即返回）
             # message_id：透传 assistant 消息 ID，深度研究工具事件/审批事件
             # 依赖它定位到聊天消息（toolCallsMap → message.toolCalls 归属），
             # 缺失时聊天深度研究模式的工具调用卡片会从消息中消失（根因修复）
-            await self._deep_service.start_celery(
+            await self._deep_service.start_execution(
                 query=data["message"],
                 session_id=data.get("session_id"),
                 use_web_search=data.get("use_web_search", True),
@@ -689,7 +690,7 @@ class ChatService:
             }
             # 设置 researchTaskId（触发浏览器通过 SSE 设置 lastMessage 的 researchTaskId）
             yield {"type": "research_task_id", "data": {"research_task_id": task_id}}
-            # 立即结束 chat SSE 流，不发送 chunk（最终报告由 Celery worker 通过 WebSocket 回写）
+            # 立即结束 chat SSE 流，不发送 chunk（最终报告由执行服务通过 WebSocket 回写）
             return
 
     async def _get_deep_research_tools(self, data: dict) -> list:
@@ -727,7 +728,10 @@ class ChatService:
                             "original_model": model_name,
                             "actual_provider": actual_provider,
                             "actual_model": actual_model,
-                            "message": f"模型 {provider_id}/{model_name} 不可用，已自动切换到 {actual_provider}/{actual_model}",
+                            "message": (
+                                f"模型 {provider_id}/{model_name} 不可用，"
+                                f"已自动切换到 {actual_provider}/{actual_model}"
+                            ),
                         },
                     }
                     # 自动更新 SystemConfig
@@ -883,7 +887,7 @@ class ChatService:
                     deg_config = {"recursion_limit": 500}
                 degraded_agent_holder["agent"] = deg_agent
                 degraded_agent_holder["config"] = deg_config
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("预创建降级 agent 超时（DEGRADE 将落入 FALLBACK）")
             except Exception as e:
                 logger.warning(f"预创建降级 agent 失败（DEGRADE 将落入 FALLBACK）: {e}")

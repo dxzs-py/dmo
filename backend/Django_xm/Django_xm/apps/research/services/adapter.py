@@ -25,6 +25,8 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from Django_xm.apps.ai_engine.services.thinking import extract_thinking_content
+
 # 子 agent 机制（deepagents 0.7.5 官方，取代旧 subagent_patch monkey-patch）：
 # - 中断冒泡 + Command(resume) 恢复：0.7.5 原生支持，无需 checkpointer contextvar 注入。
 # - 嵌套层级字段（depth/agent_path）：本模块在主 config 注入基础值（depth=0/agent_path=["main"]），
@@ -32,13 +34,26 @@ from langchain_core.messages import HumanMessage, SystemMessage
 # - 子 agent 工具事件：SubAgentToolEventMiddleware 从 configurable 读取本模块注入的
 #   _on_tool_event 回调并转发到父 SSE 流。
 from Django_xm.apps.core.config import get_logger
-from Django_xm.apps.ai_engine.services.thinking import extract_thinking_content
 from Django_xm.apps.research.services.patches import (
     _DeepAgentExecutor,
     _extract_ai_response,
 )
 
 logger = get_logger(__name__)
+
+
+def _assert_non_empty_decision(result) -> None:
+    """审批决策不得为空：空 dict 表示审批创建失败，直接抛错终止任务。
+
+    会话级单执行流语义：on_interrupt 必须返回非空决策（审批批次已创建），
+    空返回意味着审批链路异常，任务无法等待恢复，只能终止。
+    （抽象为模块级函数，避免 astream 循环 try 块内直接 raise 的 TRY301。）
+    """
+    if isinstance(result, dict) and not result:
+        raise RuntimeError(
+            "审批创建失败：on_interrupt 返回空决策，"
+            "无审批批次可等待（任务终止）"
+        )
 
 
 class OfficialDeepAgentAdapter:
@@ -81,6 +96,11 @@ class OfficialDeepAgentAdapter:
         #   避免前端覆盖语义下仅显示最后一个 chunk。
         # - 任务完成时由 research_runner 携带到 writeback，持久化到 ChatMessage.reasoning。
         self.accumulated_reasoning: str = ""
+        # 子代理重试指令队列（SessionExecutor 注入，astream 循环按 chunk 消费）：
+        # 队列元素为 {agent_path, tool_call_id, agent_name, original_args, ...}，
+        # 消费后构造 SystemMessage 经 aupdate_state 注入 graph state 后重入 astream，
+        # 主 agent 收到指令后以原始入参重新调用目标子代理（Task 3 单独重启失败子代理）。
+        self._retry_instruction_queue: asyncio.Queue | None = None
 
     def research(
         self, query: str, config: dict[str, Any] | None = None, callbacks: list | None = None
@@ -204,14 +224,20 @@ class OfficialDeepAgentAdapter:
         使用 graph.astream() + stream_mode=["messages", "updates"] 执行，
         捕获 __interrupt__ 事件，通过 on_interrupt 回调通知外部。
 
-        Path D 双模式：
+        会话级单执行流（执行器模式）：
             - 初始执行（resume_command=None）：graph_input = {"messages": [HumanMessage(content=query)]}
-              on_interrupt 返回非空 dict → Command(resume=...) 恢复（同步审批流）
-              on_interrupt 返回空 dict → 退出信号（Path D：DB 持久化 + Celery 恢复）
+              on_interrupt 返回非空 decisions dict → Command(resume=...) 自动重入恢复
             - 恢复执行（resume_command=Command(resume=...)）：
               graph_input = resume_command，从 checkpoint 恢复 agent 执行
 
         集成韧性模块：重试（指数退避）、降级（减少工具）、回退（无工具直接 LLM 回答）。
+
+        子代理重试指令（Task 3 单独重启失败子代理）：
+        SessionExecutor 通过 ``_retry_instruction_queue`` 注入重试指令，
+        chunk 循环在每轮 messages chunk 后非阻塞消费队列，经
+        ``graph.aupdate_state`` 将 SystemMessage 追加到 graph state 后
+        重入 astream（与重复工具调用警告注入同机制），主 agent 下一轮
+        LLM 调用可见指令并以原始入参重新调用目标子代理。
 
         Args:
             query: 研究查询（resume_command 模式时可为 None）
@@ -219,14 +245,12 @@ class OfficialDeepAgentAdapter:
             callbacks: LangChain 回调列表
             on_interrupt: 审批中断回调，签名 on_interrupt(interrupt_data: dict) -> resume_value
                           interrupt_data 包含 tool_name, interrupt_id, title, description 等
-                          返回值约定：
-                          - 非空 dict {interrupt_id: bool} → 同步恢复（Command(resume=...)）
-                          - 空 dict {} → Path D 退出信号（已创建 Approval DB 记录，worker 退出）
+                          返回非空 dict {langgraph_resume_id: {tool_call_id: bool}} → Command(resume=...)
+                          返回空 dict {} → 审批创建失败，抛出 RuntimeError 终止执行
             resume_command: 恢复模式时传入 Command(resume=...)，None 表示初始执行
 
         Returns:
-            与 research() 方法相同格式的结果字典；
-            Path D 退出时返回 {"success": False, "error": "interrupted", ...}
+            与 research() 方法相同格式的结果字典
         """
         from types import SimpleNamespace
 
@@ -243,7 +267,6 @@ class OfficialDeepAgentAdapter:
         # 注意：工具事件的实际发布由 _publish_tool_event 内部通过
         # service.transition_async 完成（状态机统一入口），此处仅需 EventType
         from Django_xm.apps.tools.tool_event_extractor import extract_tool_events_from_message
-        from Django_xm.common.approval_utils import derive_cross_module_id_from_source
         from Django_xm.common.event_schema import EventType
 
         # resume_command 模式下 query 可能为 None，使用占位符避免 [:50] 切片失败
@@ -340,16 +363,19 @@ class OfficialDeepAgentAdapter:
             # 透传子 agent 嵌套层级字段（Phase E3）
             # 注意：不能使用 `val not in {"", 0}` 判断——agent_path 是 list，
             # list 参与 set 成员测试会抛 `unhashable type: 'list'`。
-            # 改用标量比较（list == "" / list == 0 均安全返回 False）。
+            # 改用 tuple 成员测试（in 逐元素 == 比较，list == "" / list == 0 均安全返回 False）。
             for sub_field in (
                 "parent_tool_call_id",
                 "depth",
                 "agent_name",
                 "agent_path",
                 "risk_ceiling",
+                # description：子 agent 角色描述（任务目标，Task 2.4），
+                # 由 SubAgentToolEventMiddleware 从 nesting 透传，仅子 agent 事件携带
+                "description",
             ):
                 val = kwargs.get(sub_field)
-                if val is None or val == "" or val == 0:
+                if val is None or val in ("", 0):
                     # 空字符串 / 0（depth=0 主 agent）不写入
                     continue
                 evt[sub_field] = val
@@ -414,7 +440,7 @@ class OfficialDeepAgentAdapter:
             config["configurable"]["agent_path"] = ["main"]
 
         try:
-            # Path D 双模式初始化：
+            # 双模式初始化：
             # - resume_command 非空：恢复模式，从 checkpoint 续流（query 可为 None）
             # - resume_command 为 None：初始执行，使用 HumanMessage 包装 query
             if resume_command is not None:
@@ -451,14 +477,10 @@ class OfficialDeepAgentAdapter:
             accumulated_messages: list = []
             # 在循环外定义，避免 loop_fn 闭包捕获每次迭代的重新赋值（B023）
             all_resume_values: dict = {}
-            # Path D 退出信号：on_interrupt 返回空 dict 时置为 True，
-            # 表示已创建 Approval DB 记录，worker 应退出等待 Celery 恢复
-            exit_signal: dict = {"exited": False}
 
             # 外层 interrupt 循环：处理 __interrupt__ 事件 + Command(resume=...) 恢复
             while True:
                 all_resume_values.clear()  # 清空上一轮的审批结果，复用同一 dict 对象
-                exit_signal["exited"] = False  # 重置退出信号
                 ctx.retry_count = 0  # 重置重试计数
 
                 # 定义 loop_fn：核心流式循环（闭包捕获 all_resume_values 等）
@@ -475,6 +497,7 @@ class OfficialDeepAgentAdapter:
                     current_input = graph_input_arg
                     while True:  # 重复工具调用警告注入重入
                         local_pending_warnings: list = []
+                        retry_injected = False
                         async for chunk in self.graph.astream(
                             current_input,
                             config=config_arg,
@@ -520,7 +543,6 @@ class OfficialDeepAgentAdapter:
                                                 if not interrupt_list:
                                                     continue
 
-                                                tool_name = interrupt_list[0]["tool_name"]
                                                 is_batch = len(interrupt_list) > 1
                                                 logger.info(
                                                     f"[OfficialDeepAgent] 审批中断: "
@@ -534,41 +556,51 @@ class OfficialDeepAgentAdapter:
                                                         f"{'(批量)' if is_batch else ''}: "
                                                         f"{len(interrupt_list)} 个工具"
                                                     )
-                                                    timeout_mgr.pause()
-                                                    try:
-                                                        batch_resume = on_interrupt(interrupt_list)
-                                                        if asyncio.iscoroutine(batch_resume):
-                                                            batch_resume = await batch_resume
-                                                    finally:
-                                                        timeout_mgr.resume()
-                                                    # Path D 退出信号检测
-                                                    if isinstance(batch_resume, dict) and not batch_resume:
-                                                        logger.info(
-                                                            "[OfficialDeepAgent] Path D 退出信号: "
-                                                            "已创建审批 DB 记录，worker 退出"
-                                                        )
-                                                        exit_signal["exited"] = True
-                                                        break
+                                                    async def _call_interrupt_handler(interrupts):
+                                                        """调用审批中断回调（暂停超时计时）。
+
+                                                        会话级单执行流：on_interrupt 必须返回非空决策；
+                                                        空 dict 表示审批创建失败，直接抛错终止（不再走
+                                                        Celery 时代"退出等待外部恢复"的 Path D 语义）。
+                                                        """
+                                                        timeout_mgr.pause()
+                                                        try:
+                                                            result = on_interrupt(interrupts)
+                                                            if asyncio.iscoroutine(result):
+                                                                result = await result
+                                                        finally:
+                                                            timeout_mgr.resume()
+                                                        _assert_non_empty_decision(result)
+                                                        return result
+
+                                                    batch_resume = await _call_interrupt_handler(interrupt_list)
                                                     # 按 langgraph_resume_id 分组构造 resume dict
                                                     # Command(resume=...) 的 key 必须是 LangGraph Interrupt.id
                                                     langgraph_id = interrupt_list[0].get("langgraph_resume_id", "")
                                                     if isinstance(batch_resume, dict):
                                                         if langgraph_id:
-                                                            all_resume_values.setdefault(langgraph_id, {}).update(batch_resume)
+                                                            all_resume_values.setdefault(
+                                                                langgraph_id, {}
+                                                            ).update(batch_resume)
                                                         else:
                                                             all_resume_values.update(batch_resume)
+                                                    elif langgraph_id:
+                                                        for bi in interrupt_list:
+                                                            all_resume_values.setdefault(
+                                                                langgraph_id, {}
+                                                            )[bi["interrupt_id"]] = batch_resume
                                                     else:
-                                                        if langgraph_id:
-                                                            for bi in interrupt_list:
-                                                                all_resume_values.setdefault(langgraph_id, {})[bi["interrupt_id"]] = batch_resume
-                                                        else:
-                                                            for bi in interrupt_list:
-                                                                all_resume_values[bi["interrupt_id"]] = batch_resume
+                                                        for bi in interrupt_list:
+                                                            all_resume_values[
+                                                                bi["interrupt_id"]
+                                                            ] = batch_resume
                                                 else:
                                                     langgraph_id = interrupt_list[0].get("langgraph_resume_id", "")
                                                     if langgraph_id:
                                                         for bi in interrupt_list:
-                                                            all_resume_values.setdefault(langgraph_id, {})[bi["interrupt_id"]] = False
+                                                            all_resume_values.setdefault(
+                                                                langgraph_id, {}
+                                                            )[bi["interrupt_id"]] = False
                                                     else:
                                                         for bi in interrupt_list:
                                                             all_resume_values[bi["interrupt_id"]] = False
@@ -626,13 +658,46 @@ class OfficialDeepAgentAdapter:
                                                 message_id=_message_id,
                                                 content=self.accumulated_reasoning,
                                             )
-                                        except Exception:
-                                            pass
+                                        except Exception as e:
+                                            logger.warning(
+                                                f"[OfficialDeepAgent] 广播推理内容失败: "
+                                                f"session={_session_id}, msg={_message_id}, err={e}"
+                                            )
 
                                 # 检测到重复调用：中断当前流以注入警告
                                 # break 退出 async for，由下方 aupdate_state 注入后重入
                                 if local_pending_warnings:
                                     break
+
+                                # 子代理重试指令注入：每轮 messages chunk 后非阻塞消费
+                                # 重试队列，有指令时经 aupdate_state 追加 SystemMessage 到
+                                # graph state 后重入 astream（与重复工具调用警告注入同机制）。
+                                # 注意：审批中断（all_resume_values 非空）时流即将结束，
+                                # 恢复由外层 Command(resume=...) 驱动，若此刻注入会丢失
+                                # 恢复决策 → 跳过本轮，指令在恢复流中继续被消费。
+                                pending_retries = self._drain_retry_instructions()
+                                if pending_retries:
+                                    if all_resume_values:
+                                        logger.info(
+                                            "[OfficialDeepAgent] 存在待恢复审批决策，"
+                                            "重试指令延后到恢复流消费"
+                                        )
+                                    else:
+                                        logger.info(
+                                            f"[OfficialDeepAgent] 注入 {len(pending_retries)} "
+                                            "条子代理重试指令到 agent 状态"
+                                        )
+                                        try:
+                                            await self.graph.aupdate_state(
+                                                config_arg,
+                                                {"messages": pending_retries},
+                                            )
+                                        except Exception as e:
+                                            logger.warning(
+                                                f"[OfficialDeepAgent] 注入子代理重试指令失败: {e}"
+                                            )
+                                        retry_injected = True
+                                        break
 
                         # 重复工具调用警告注入：通过 aupdate_state 追加 SystemMessage
                         # 到 graph state，agent 下一轮 LLM 调用会看到提示并调整策略。
@@ -650,6 +715,10 @@ class OfficialDeepAgentAdapter:
                                 logger.warning(f"[Resilience] 注入重复调用警告失败: {e}")
                             current_input = None  # 从当前 checkpoint 续流
                             continue  # 继续重入 astream（不计入 retry_count）
+                        # 子代理重试指令注入：break 退出 async for 后重入 astream
+                        if retry_injected:
+                            current_input = None  # 从当前 checkpoint 续流
+                            continue
                         break  # astream 正常结束，退出 loop_fn 的 while True
                     # loop_fn 必须是 async generator（AgentExecutor._iter_with_timeout 要求）
                     # yield 一个结束标记，使 loop_fn 成为合法的 async generator
@@ -674,24 +743,6 @@ class OfficialDeepAgentAdapter:
                 # 如果触发回退，返回 fallback 结果
                 if fallback_result is not None:
                     return fallback_result
-
-                # Path D 退出信号优先检查：
-                # on_interrupt 返回空 dict 时 exit_signal["exited"] = True，
-                # 表示已创建 Approval DB 记录，worker 应退出。
-                # research_runner.execute_research_async 检测到 "interrupted" 后
-                # 返回 ResearchResult(success=False)，Celery 任务结束。
-                # 用户审批后由 research_resume_task 从 checkpoint 恢复。
-                if exit_signal["exited"]:
-                    logger.info("[OfficialDeepAgent] Path D 退出: worker 结束，等待 research_resume_task 恢复")
-                    return {
-                        "success": False,
-                        "query": query,
-                        "final_report": None,
-                        "error": "interrupted",
-                        "current_step": "interrupted",
-                        "files": None,
-                        "state_files": None,
-                    }
 
                 # 流结束后检查是否有实时回调收集的审批结果
                 if all_resume_values:
@@ -753,6 +804,65 @@ class OfficialDeepAgentAdapter:
                 "error": error_msg,
             }
 
+    def _drain_retry_instructions(self) -> list[SystemMessage]:
+        """非阻塞消费子代理重试指令队列，构造注入用的 SystemMessage 列表。
+
+        由 astream chunk 循环在每轮 chunk 后调用；队列为空时返回空列表。
+        指令内容携带目标子代理名称/调用链路/原始委派入参，主 agent 收到后
+        以原始入参重新调用目标子代理（Task 3 单独重启失败子代理）。
+
+        Returns:
+            list[SystemMessage]：待注入 graph state 的重试指令消息
+        """
+        if self._retry_instruction_queue is None:
+            return []
+        messages: list[SystemMessage] = []
+        while True:
+            try:
+                instruction = self._retry_instruction_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            messages.append(self._build_retry_system_message(instruction))
+        return messages
+
+    @staticmethod
+    def _build_retry_system_message(instruction: dict) -> SystemMessage:
+        """构造子代理重试指令 SystemMessage。
+
+        Args:
+            instruction: 重试指令 dict，字段：
+                - agent_name: 目标子代理名称（agent_path 末位）
+                - agent_path: 完整调用链路（如 ["main", "web-researcher"]）
+                - tool_call_id: 失败子代理工具调用 ID
+                - original_args: 子代理原始委派入参（task 工具参数）
+
+        Returns:
+            SystemMessage：注入 graph state 的重试指令（主 agent 下一轮 LLM 可见）
+        """
+        import json as _json
+
+        agent_name = instruction.get("agent_name") or ""
+        agent_path = instruction.get("agent_path") or []
+        tool_call_id = instruction.get("tool_call_id") or ""
+        original_args = instruction.get("original_args") or {}
+        path_display = " → ".join(str(p) for p in agent_path) if agent_path else agent_name
+        args_display = ""
+        if isinstance(original_args, dict) and original_args:
+            try:
+                args_display = _json.dumps(original_args, ensure_ascii=False)
+            except (TypeError, ValueError):
+                args_display = str(original_args)
+        content = (
+            "【用户指令：重新执行失败的子代理】\n"
+            f"目标子代理: {agent_name or 'unknown'}\n"
+            f"调用链路: {path_display}\n"
+            f"失败工具调用 ID: {tool_call_id or 'unknown'}\n"
+            f"原始委派参数: {args_display or '（无，请根据当前研究进展重新委派）'}\n"
+            "要求：立即通过 task 工具重新调用该子代理完成同一研究任务，"
+            "执行过程中如遇工具失败请调整策略重试，完成后将结果汇总到最终报告。"
+        )
+        return SystemMessage(content=content)
+
     async def _publish_tool_event(self, evt: dict[str, Any]) -> None:
         """发布单个工具调用生命周期事件到实时频道。
 
@@ -780,7 +890,8 @@ class OfficialDeepAgentAdapter:
                 - parameters: dict
                 - result: str (仅 COMPLETED)
                 - error: str (仅 FAILED)
-                - parent_tool_call_id/depth/agent_name/agent_path/risk_ceiling: 子 agent 嵌套字段（可选）
+                - parent_tool_call_id/depth/agent_name/agent_path/risk_ceiling/description:
+                  子 agent 嵌套字段（可选，description 为任务目标描述）
         """
         from Django_xm.common.approval_utils import derive_cross_module_id_from_source
         from Django_xm.common.event_schema import EventSource, EventType
@@ -799,8 +910,11 @@ class OfficialDeepAgentAdapter:
                 _ctx_params = _ctx.get("parameters") if _ctx else None
                 if isinstance(_ctx_params, dict) and _ctx_params:
                     parameters = _ctx_params
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(
+                    f"[OfficialDeepAgent] 读取 tool_call 参数兜底失败: "
+                    f"tc_id={tool_call_id}, err={e}"
+                )
 
         logger.info(
             f"[OfficialDeepAgent] _publish_tool_event 入口: event_type={event_type}, "
@@ -877,6 +991,8 @@ class OfficialDeepAgentAdapter:
             )
         else:
             sub_risk_ceiling = sub_risk_ceiling_raw or ""
+        # description：子 agent 角色描述（任务目标，Task 2.4），仅子 agent 事件携带
+        sub_description = evt.get("description", "") or ""
 
         try:
             service.register(
@@ -894,6 +1010,7 @@ class OfficialDeepAgentAdapter:
                     agent_name=sub_agent_name,
                     agent_path=sub_agent_path,
                     risk_ceiling=sub_risk_ceiling,
+                    description=sub_description,
                 )
             )
         except Exception as e:

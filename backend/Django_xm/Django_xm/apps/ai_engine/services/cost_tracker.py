@@ -95,7 +95,8 @@ class TokenDetailTracker:
 
         if self._current_record is None:
             self.start_record(model)
-        assert self._current_record is not None  # start_record above guarantees this
+        if self._current_record is None:  # pragma: no cover - start_record 应已初始化
+            raise RuntimeError("TokenDetailTracker 未初始化当前记录（应先调用 start_record）")
 
         usage_meta = metadata.get("usage_metadata", {})
 
@@ -207,7 +208,8 @@ class TokenDetailTracker:
             parts.append(f"工具 调用={detail['tools']['count']}次, Token={detail['tools']['tokens']}")
         if detail["storage"]["embedding_tokens"] > 0:
             parts.append(
-                f"存储 Embedding={detail['storage']['embedding_tokens']}, 检索文档={detail['storage']['retrieval_docs']}"
+                f"存储 Embedding={detail['storage']['embedding_tokens']}, "
+                f"检索文档={detail['storage']['retrieval_docs']}"
             )
         parts.append(f"总调用次数: {summary['record_count']}")
         logger.info(" | ".join(parts))

@@ -226,7 +226,9 @@ class SkillLoader:
         is_valid, msg, frontmatter = self.validate_skill_package(zip_path)
         if not is_valid:
             return False, msg, None
-        assert frontmatter is not None  # validate_skill_package guarantees non-None when is_valid
+        if frontmatter is None:
+            # validate_skill_package 返回 is_valid=True 时 frontmatter 必非 None，此处为防御性检查
+            raise ValueError(f"技能包 '{zip_path}' 校验失败: frontmatter 缺失")
 
         name = frontmatter["name"]
         description = frontmatter.get("description", "")

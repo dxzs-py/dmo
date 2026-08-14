@@ -1,45 +1,95 @@
-logger.js:6 [Security] Initializing session store...
-logger.js:19 [Realtime] 已从 localStorage 恢复 lastSeq: 46 条通道
-logger.js:19 [Realtime] WebSocket 已连接
-pinia.mjs:290 🍍 "approval" store installed 🆕
-pinia.mjs:290 🍍 "research" store installed 🆕
-pinia.mjs:290 🍍 "workflow" store installed 🆕
-logger.js:6 [Sync] 实时同步 store 已初始化
-content_main.js:4962 Immersive Translate ERROR: sync dynamic-i18n error Error: dynamic-i18n version mismatch: expected 6, got 5
-    at M1 (content_main.js:4962:197311)
-error @ content_main.js:4962
-content_main.js:4990 This page uses the built-in LanguageDetector feature. To learn more and leave feedback, see https://learn.microsoft.com/microsoft-edge/web-platform/languagedetector-api
-logger.js:19 [Realtime] 收到 replay 回包: channel=user:1, count=0, chunk=1/1
-logger.js:6 [Session] 新打开页面，定位最新会话: bc3223ff-114e-49f4-b69c-aeb4fa4183d3（忽略 localStorage: bc3223ff-114e-49f4-b69c-aeb4fa4183d3）
-logger.js:6 [Security] Loaded 4 sessions (page 1/1) for user 1
-pinia.mjs:290 🍍 "chat" store installed 🆕
-pinia.mjs:290 🍍 "model" store installed 🆕
-pinia.mjs:290 🍍 "chatDeepResearch" store installed 🆕
-pinia.mjs:290 🍍 "tools" store installed 🆕
-logger.js:6 [Session] Loaded detail for session bc3223ff-114e-49f4-b69c-aeb4fa4183d3 with 2 messages
-ChatView.vue:109 [ChatView] WebSocket 订阅会话事件: bc3223ff-114e-49f4-b69c-aeb4fa4183d3
-logger.js:19 [Realtime] 收到 replay 回包: channel=session:bc3223ff-114e-49f4-b69c-aeb4fa4183d3, count=0, chunk=1/1
-logger.js:19 [Sync] 会话删除: bc3223ff-114e-49f4-b69c-aeb4fa4183d3
-logger.js:6 [Security] Deleted session bc3223ff-114e-49f4-b69c-aeb4fa4183d3 for user 1
-ChatView.vue:116 [ChatView] WebSocket 取消订阅会话事件: bc3223ff-114e-49f4-b69c-aeb4fa4183d3
-ChatView.vue:109 [ChatView] WebSocket 订阅会话事件: 11b2ba20-fe22-49f2-810b-ad0c38cfc769
-logger.js:19 [Realtime] 收到 replay 回包: channel=session:11b2ba20-fe22-49f2-810b-ad0c38cfc769, count=0, chunk=1/1
-logger.js:19 [Sync] 会话删除: 11b2ba20-fe22-49f2-810b-ad0c38cfc769
-logger.js:6 [Security] Deleted session 11b2ba20-fe22-49f2-810b-ad0c38cfc769 for user 1
-ChatView.vue:116 [ChatView] WebSocket 取消订阅会话事件: 11b2ba20-fe22-49f2-810b-ad0c38cfc769
-ChatView.vue:109 [ChatView] WebSocket 订阅会话事件: e2227e83-2472-45a7-b93d-74a9d9ea8363
-logger.js:19 [Realtime] 收到 replay 回包: channel=session:e2227e83-2472-45a7-b93d-74a9d9ea8363, count=0, chunk=1/1
-logger.js:19 [Sync] 会话删除: e2227e83-2472-45a7-b93d-74a9d9ea8363
-logger.js:6 [Security] Deleted session e2227e83-2472-45a7-b93d-74a9d9ea8363 for user 1
-ChatView.vue:116 [ChatView] WebSocket 取消订阅会话事件: e2227e83-2472-45a7-b93d-74a9d9ea8363
-ChatView.vue:109 [ChatView] WebSocket 订阅会话事件: 2da3b8dc-ce72-4c92-b910-340171ee45a3
-logger.js:19 [Realtime] 收到 replay 回包: channel=session:2da3b8dc-ce72-4c92-b910-340171ee45a3, count=0, chunk=1/1
-logger.js:19 [Sync] 会话删除: 2da3b8dc-ce72-4c92-b910-340171ee45a3
-logger.js:6 [Security] Deleted session 2da3b8dc-ce72-4c92-b910-340171ee45a3 for user 1
-ChatView.vue:116 [ChatView] WebSocket 取消订阅会话事件: 2da3b8dc-ce72-4c92-b910-340171ee45a3
-logger.js:15 上传失败: Error: 上传响应缺少任务ID
-    at handleUpload (RagView.vue:709:13)
-(匿名) @ logger.js:15
-logger.js:15 上传失败: Error: 上传响应缺少任务ID
-    at handleUpload (KnowledgeBaseView.vue:191:13)
-(匿名) @ logger.js:15
+(base) PS D:\programming\langchain\langchain_xm> cd D:\programming\langchain\langchain_xm\backend\Django_xm;conda activate langchain_xm;python -m uvicorn Django_xm.apps.fastapi_service.main:app --host 0.0.0.0 --port 8001
+INFO web_duckduckgo 12 ✅ langchain-community DuckDuckGo 搜索工具可用
+DEBUG langsmith_setup 66 LangSmith 追踪未启用 (settings.langsmith_tracing=False, env_api_key_set=False, env_tracing=False)
+INFO registry 25 Registered capability: context_management
+INFO registry 25 Registered capability: tool_injection
+INFO registry 25 Registered capability: guardrails
+INFO registry 25 Registered capability: rate_limit
+INFO registry 25 Registered capability: groq_compat
+INFO setup 16 Default capabilities registered: ['context_management', 'tool_injection', 'guardrails', 'rate_limit', 'groq_compat']
+DEBUG registry 57 扩展工具已注册: agent_create
+DEBUG registry 57 扩展工具已注册: agent_run
+DEBUG registry 57 扩展工具已注册: agent_list
+DEBUG registry 57 扩展工具已注册: agent_cleanup
+INFO:     Started server process [35028]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
+DEBUG realtime_events 405 [RealtimeEvents] publish_event: event_type=status_change, ws_name=status_change, session=499cf7de-ee32-4284-9876-098ad78b9acf, task=research_01d0f7bf309a, user=None, payload_keys=['source', 'source_id', 'status', 'current_step', 'final_report', 'error', 'updated_at', 'cross_module_id', 'event_type']
+DEBUG realtime_events 422 [RealtimeEvents] 发布事件到 session 频道: session=499cf7de-ee32-4284-9876-098ad78b9acf, event_type=status_change, ws_name=status_change
+INFO realtime_events 435 [RealtimeEvents] 发布事件到 task 频道: task=research_01d0f7bf309a, event_type=status_change, ws_name=status_change
+DEBUG realtime_events 203 [RealtimeEvents] 连接池监控(async): session=499cf7de-ee32-4284-9876-098ad78b9acf, type=status_change, seq=9, payload_keys=['source', 'source_id', 'status', 'current_step', 'final_report', 'error', 'updated_at', 'cross_module_id', 'event_type']
+DEBUG realtime_events 252 [RealtimeEvents] 连接池监控(async): task=research_01d0f7bf309a, type=status_change, seq=1, payload_keys=['source', 'source_id', 'status', 'current_step', 'final_report', 'error', 'updated_at', 'cross_module_id', 'event_type']
+INFO realtime_events 267 [RealtimeEvents] 异步发布任务事件: task=research_01d0f7bf309a, type=status_change, seq=1
+DEBUG realtime_events 218 [RealtimeEvents] 异步发布会话事件: session=499cf7de-ee32-4284-9876-098ad78b9acf, type=status_change, seq=9
+DEBUG registry_service 70 异步上下文中访问 registry，缓存未预热，回退到 config.py
+DEBUG registry_service 166 异步上下文中访问 embedding registry，缓存未预热，回退到硬编码
+DEBUG registry_service 39 Registry 缓存预热完成
+ERROR models 32 SystemConfig 缓存预热失败（非致命）
+Traceback (most recent call last):
+  File "D:\programming\langchain\langchain_xm\backend\Django_xm\Django_xm\apps\ai_engine\models.py", line 28, in warmup_system_config_cache
+    for obj in SystemConfig.objects.all():
+  File "D:\Anaconda_envs\envs\langchain_xm\Lib\site-packages\django\db\models\query.py", line 386, in __iter__
+    self._fetch_all()
+  File "D:\Anaconda_envs\envs\langchain_xm\Lib\site-packages\django\db\models\query.py", line 1954, in _fetch_all
+    self._result_cache = list(self._iterable_class(self))
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Anaconda_envs\envs\langchain_xm\Lib\site-packages\django\db\models\query.py", line 93, in __iter__
+    results = compiler.execute_sql(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Anaconda_envs\envs\langchain_xm\Lib\site-packages\django\db\models\sql\compiler.py", line 1621, in execute_sql
+    cursor = self.connection.cursor()
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Anaconda_envs\envs\langchain_xm\Lib\site-packages\django\utils\asyncio.py", line 24, in inner    
+    raise SynchronousOnlyOperation(message)
+django.core.exceptions.SynchronousOnlyOperation: You cannot call this from an async context - use a thread or sync_to_async.
+INFO 2026-08-13 23:08:59,458 - Django_xm.apps.ai_engine.services.checkpointer_factory - 创建异步 PostgreSQL Checkpointer: postgresql://daixing:****@127.0.0.1:5432/langchain
+INFO 2026-08-13 23:08:59,458 - Django_xm.apps.ai_engine.services.checkpointer_factory - 异步 PostgreSQL Checkpointer 创建成功（需 await setup()）
+[SessionExecutor] 执行异常: thread_id=research_01d0f7bf309a
+Traceback (most recent call last):
+  File "D:\programming\langchain\langchain_xm\backend\Django_xm\Django_xm\apps\fastapi_service\session_executor.py", line 101, in run
+    agent = await self._build_agent()
+            ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\programming\langchain\langchain_xm\backend\Django_xm\Django_xm\apps\fastapi_service\session_executor.py", line 559, in _build_agent
+    async_cp = await get_async_checkpointer()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\programming\langchain\langchain_xm\backend\Django_xm\Django_xm\apps\ai_engine\services\checkpointer_factory.py", line 295, in get_async_checkpointer
+    checkpointer = await cm.__aenter__()
+                   ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Anaconda_envs\envs\langchain_xm\Lib\contextlib.py", line 210, in __aenter__
+    return await anext(self.gen)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Anaconda_envs\envs\langchain_xm\Lib\site-packages\langgraph\checkpoint\postgres\aio.py", line 73, in from_conn_string
+    async with await AsyncConnection.connect(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Anaconda_envs\envs\langchain_xm\Lib\site-packages\psycopg\connection_async.py", line 107, in connect
+    raise e.InterfaceError(
+psycopg.InterfaceError: Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by setting 'asyncio.set_event_loop_policy(WindowsSelectorEventLoopPolicy())'  
+[SessionExecutor] 研究失败: thread_id=research_01d0f7bf309a, error=Psycopg cannot use the 'ProactorEventLoop' to run in async mode. Please use a compatible event loop, for instance by setting 'asyncio.set_event_loop_policy(WindowsSelectorEventLoopPolicy())'
+WARNING signals 32 研究任务失败: research_01d0f7bf309a, 错误: None
+DEBUG realtime_events 405 [RealtimeEvents] publish_event: event_type=status_change, ws_name=status_change, session=499cf7de-ee32-4284-9876-098ad78b9acf, task=research_01d0f7bf309a, user=None, payload_keys=['source', 'source_id', 'status', 'current_step', 'final_report', 'error', 'updated_at', 'cross_module_id', 'event_type']
+DEBUG realtime_events 422 [RealtimeEvents] 发布事件到 session 频道: session=499cf7de-ee32-4284-9876-098ad78b9acf, event_type=status_change, ws_name=status_change
+INFO realtime_events 435 [RealtimeEvents] 发布事件到 task 频道: task=research_01d0f7bf309a, event_type=status_change, ws_name=status_change
+DEBUG realtime_events 203 [RealtimeEvents] 连接池监控(async): session=499cf7de-ee32-4284-9876-098ad78b9acf, type=status_change, seq=11, payload_keys=['source', 'source_id', 'status', 'current_step', 'final_report', 'error', 'updated_at', 'cross_module_id', 'event_type']
+DEBUG realtime_events 252 [RealtimeEvents] 连接池监控(async): task=research_01d0f7bf309a, type=status_change, seq=2, payload_keys=['source', 'source_id', 'status', 'current_step', 'final_report', 'error', 'updated_at', 'cross_module_id', 'event_type']
+INFO realtime_events 267 [RealtimeEvents] 异步发布任务事件: task=research_01d0f7bf309a, type=status_change, seq=2
+DEBUG realtime_events 218 [RealtimeEvents] 异步发布会话事件: session=499cf7de-ee32-4284-9876-098ad78b9acf, type=status_change, seq=11
+INFO research_runner 449 研究结果已发布到 Redis: research:result:research_01d0f7bf309a
+[SessionManager] 未知信令类型: kind=result
+INFO writeback 202 [Writeback] 通过 research_task_id 回退查询成功(旧数据): task_id=research_01d0f7bf309a, 建议迁移设置 chat_message_id
+DEBUG realtime_events 405 [RealtimeEvents] publish_event: event_type=message_updated, ws_name=message_updated, session=499cf7de-ee32-4284-9876-098ad78b9acf, task=None, user=None, payload_keys=['message_id', 'session_id', 'content', 'is_streaming', 'research_task_id', 'tool_calls', 'event_type']
+DEBUG realtime_events 422 [RealtimeEvents] 发布事件到 session 频道: session=499cf7de-ee32-4284-9876-098ad78b9acf, event_type=message_updated, ws_name=message_updated
+DEBUG realtime_events 203 [RealtimeEvents] 连接池监控(async): session=499cf7de-ee32-4284-9876-098ad78b9acf, type=message_updated, seq=12, payload_keys=['message_id', 'session_id', 'content', 'is_streaming', 'research_task_id', 'tool_calls', 'event_type']
+DEBUG realtime_events 218 [RealtimeEvents] 异步发布会话事件: session=499cf7de-ee32-4284-9876-098ad78b9acf, type=message_updated, seq=12
+INFO writeback 325 [Writeback] ChatMessage 回写成功: task_id=research_01d0f7bf309a, session=499cf7de-ee32-4284-9876-098ad78b9acf, success=False
+DEBUG realtime_events 405 [RealtimeEvents] publish_event: event_type=stream_completed, ws_name=stream_completed, session=499cf7de-ee32-4284-9876-098ad78b9acf, task=research_01d0f7bf309a, user=None, payload_keys=['source', 'source_id', 'task_id', 'success', 'final_report', 'finalized', 'error', 'message_id', 'event_type']  
+DEBUG realtime_events 422 [RealtimeEvents] 发布事件到 session 频道: session=499cf7de-ee32-4284-9876-098ad78b9acf, event_type=stream_completed, ws_name=stream_completed
+INFO realtime_events 435 [RealtimeEvents] 发布事件到 task 频道: task=research_01d0f7bf309a, event_type=stream_completed, ws_name=stream_completed
+DEBUG realtime_events 203 [RealtimeEvents] 连接池监控(async): session=499cf7de-ee32-4284-9876-098ad78b9acf, type=stream_completed, seq=13, payload_keys=['source', 'source_id', 'task_id', 'success', 'final_report', 'finalized', 'error', 'message_id', 'event_type']
+DEBUG realtime_events 252 [RealtimeEvents] 连接池监控(async): task=research_01d0f7bf309a, type=stream_completed, seq=3, payload_keys=['source', 'source_id', 'task_id', 'success', 'final_report', 'finalized', 'error', 'message_id', 'event_type']
+INFO realtime_events 267 [RealtimeEvents] 异步发布任务事件: task=research_01d0f7bf309a, type=stream_completed, seq=3
+DEBUG realtime_events 218 [RealtimeEvents] 异步发布会话事件: session=499cf7de-ee32-4284-9876-098ad78b9acf, type=stream_completed, seq=13
+DEBUG realtime_events 405 [RealtimeEvents] publish_event: event_type=task_status_changed, ws_name=task_status_changed, session=None, task=None, user=1, payload_keys=['task_id', 'status', 'event_type']
+INFO realtime_events 448 [RealtimeEvents] 发布事件到 user 频道: user=1, event_type=task_status_changed, ws_name=task_status_changed
+DEBUG realtime_events 295 [RealtimeEvents] 连接池监控(async): user=1, type=task_status_changed, seq=141, payload_keys=['task_id', 'status', 'event_type']
+INFO realtime_events 310 [RealtimeEvents] 异步发布用户事件: user=1, type=task_status_changed, seq=141

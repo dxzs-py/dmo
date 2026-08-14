@@ -51,26 +51,29 @@ def _resolve_chat_model(model, streaming: bool = False) -> BaseChatModel:
     return get_chat_model(model_name=model, streaming=streaming)
 
 
-STRICT_RAG_SYSTEM_PROMPT = """你是一个严格基于知识库内容的问答助手。你必须且只能基于下方【检索到的参考资料】来回答用户的问题。
+STRICT_RAG_SYSTEM_PROMPT = (
+    """你是一个严格基于知识库内容的问答助手。你必须且只能基于下方【检索到的参考资料】来回答用户的问题。
 
 ## 核心规则（必须严格遵守）
 
 1. **仅使用参考资料**：你的回答必须且只能基于【检索到的参考资料】中的内容，不得使用你自身的知识储备。
-2. **禁止编造**：如果参考资料中没有包含回答用户问题所需的信息，你必须明确告知用户"根据知识库中的资料，未找到与您问题相关的信息"，不得自行补充或推测。
-3. **忠实引用**：回答时应忠实于参考资料的内容，不得歪曲、夸大或过度解读。
-4. **标注来源**：在回答中应适当标注信息来源于哪个文档。
-5. **综合归纳**：当多条参考资料涉及同一问题时，应综合归纳，提供完整准确的回答。
-
-## 回答格式
-
-- 如果参考资料充分：直接回答问题，在关键信息后标注来源文档名
-- 如果参考资料部分相关：回答相关部分，并明确指出哪些方面知识库中未涵盖
-- 如果参考资料完全不相关：回复"根据知识库中的资料，未找到与您问题相关的信息。知识库主要涵盖以下内容：[简要概括参考资料的主题]"
-
-## 检索到的参考资料
-
-{context}
-"""
+2. **禁止编造**：如果参考资料中没有包含回答用户问题所需的信息，你必须明确告知用户"""
+    '"根据知识库中的资料，未找到与您问题相关的信息"，不得自行补充或推测。\n'
+    "3. **忠实引用**：回答时应忠实于参考资料的内容，不得歪曲、夸大或过度解读。\n"
+    "4. **标注来源**：在回答中应适当标注信息来源于哪个文档。\n"
+    "5. **综合归纳**：当多条参考资料涉及同一问题时，应综合归纳，提供完整准确的回答。\n"
+    "\n"
+    "## 回答格式\n"
+    "\n"
+    "- 如果参考资料充分：直接回答问题，在关键信息后标注来源文档名\n"
+    "- 如果参考资料部分相关：回答相关部分，并明确指出哪些方面知识库中未涵盖\n"
+    '- 如果参考资料完全不相关：回复"根据知识库中的资料，未找到与您问题相关的信息。知识库主要涵盖以下内容：'
+    '[简要概括参考资料的主题]"\n'
+    "\n"
+    "## 检索到的参考资料\n"
+    "\n"
+    "{context}"
+)
 
 STRICT_RAG_QA_PROMPT = """基于以下参考资料回答用户问题。如果参考资料中没有相关信息，请明确说明。
 
@@ -234,7 +237,9 @@ def create_strict_rag_chain(
             "retrieved_docs": docs,
         }
 
-    chain: Runnable[Any, Any] = RunnablePassthrough.assign(context_and_docs=lambda x: retrieve_and_format(x["question"])) | {
+    chain: Runnable[Any, Any] = RunnablePassthrough.assign(
+        context_and_docs=lambda x: retrieve_and_format(x["question"])
+    ) | {
         "answer": (
             lambda x: {
                 "context": x["context_and_docs"]["context"],
@@ -308,7 +313,9 @@ def query_strict_rag(
         try:
             from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
             pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-            docs = pipeline.retrieve_documents_from_retriever(retriever=retriever, query=retrieval_query, vector_store=None)
+            docs = pipeline.retrieve_documents_from_retriever(
+                retriever=retriever, query=retrieval_query, vector_store=None
+            )
         except Exception as e:
             if _is_embedding_error(e):
                 logger.warning(f"向量检索失败，降级到全文关键词检索: {e}")
@@ -426,7 +433,9 @@ async def aquery_strict_rag(
         try:
             from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
             pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-            docs = pipeline.retrieve_documents_from_retriever(retriever=retriever, query=retrieval_query, vector_store=None)
+            docs = pipeline.retrieve_documents_from_retriever(
+                retriever=retriever, query=retrieval_query, vector_store=None
+            )
         except Exception as e:
             if _is_embedding_error(e):
                 logger.warning(f"向量检索失败，降级到全文关键词检索: {e}")
@@ -552,7 +561,9 @@ async def astream_strict_rag(
         try:
             from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
             pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-            docs = pipeline.retrieve_documents_from_retriever(retriever=retriever, query=retrieval_query, vector_store=None)
+            docs = pipeline.retrieve_documents_from_retriever(
+                retriever=retriever, query=retrieval_query, vector_store=None
+            )
         except Exception as e:
             if _is_embedding_error(e):
                 logger.warning(f"向量检索失败，降级到全文关键词检索: {e}")
@@ -678,7 +689,9 @@ def stream_strict_rag(
         try:
             from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
             pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-            docs = pipeline.retrieve_documents_from_retriever(retriever=retriever, query=retrieval_query, vector_store=None)
+            docs = pipeline.retrieve_documents_from_retriever(
+                retriever=retriever, query=retrieval_query, vector_store=None
+            )
         except Exception as e:
             if _is_embedding_error(e):
                 logger.warning(f"向量检索失败，降级到全文关键词检索: {e}")

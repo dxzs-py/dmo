@@ -52,6 +52,10 @@ function _approvalToToolCall(approval) {
     toolName: approval.toolName,
     parameters: approval.parameters || {},
     status: approvalStateToToolStatus(approval.state),
+    // seq 提升到顶层：Approval.extra.seq（创建审批时由后端 enrich_entry_seq 从
+    // ToolCallContext 写入）是跨浏览器统一排序依据，与 WS 工具事件透传的 seq
+    // 同一来源。loadHistory 刷新重建的 toolCall 据此参与 sortToolCallsForDisplay。
+    ...(typeof extra.seq === 'number' && extra.seq > 0 ? { seq: extra.seq } : {}),
     approval: {
       interruptId: approval.interruptId,
       source: approval.source,
@@ -137,10 +141,10 @@ export const useResearchStore = defineStore('research', () => {
    * @param {Object} task - task 数据对象
    */
   const _syncToolCalls = (task) => {
-    // 跨浏览器统一排序：seq（(module, module_id) 内跨 LLM 轮次全局递增序号，
-    // 事件透传）优先、_index（LLM 单轮序号）兜底。与 sessionStore 共用
-    // sortToolCallsForDisplay（messageOperations.js 唯一权威排序实现），
-    // 保证深度研究详情与聊天深度研究模式工具调用顺序跨浏览器一致
+    // 跨浏览器统一排序：seq（register 分配的 (module, module_id) 内跨 LLM 轮次
+    // 全局递增序号，所有链路统一透传，含 Approval.extra 持久化）是唯一排序依据。
+    // 与 sessionStore 共用 sortToolCallsForDisplay（messageOperations.js 唯一权威
+    // 排序实现），保证深度研究详情与聊天深度研究模式工具调用顺序跨浏览器一致
     sortToolCallsForDisplay(Array.from(task.toolCallMap.value.values()))
     task.toolCalls.value = Array.from(task.toolCallMap.value.values())
   }

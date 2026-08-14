@@ -88,10 +88,12 @@ _PROTECTED_APPROVAL_FIELDS = frozenset(
 class ApprovalWriteSerializer(serializers.Serializer):
     """审批写序列化器。
 
-    白名单设计：客户端仅可提交 ``approved`` 与 ``user_input`` 两个字段。
+    白名单设计：客户端仅可提交 ``approved``、``user_input`` 与 ``timeout_resume``。
 
     - ``approved``：是否批准（仅 resume 接口读取；reject 接口忽略并强制 False）
     - ``user_input``：用户输入文本（仅当 approval.action == confirm_with_input 时使用）
+    - ``timeout_resume``：超时恢复标记（前端收到 approval_timeout 事件后触发 SSE
+      resume 时置 True；审批已终态 TIMEOUT 时跳过幂等直接驱动恢复）
 
     其他审批字段（state、parameters、approved_by、source 等）由服务端控制，
     客户端尝试提交 protected 字段会触发 ``to_internal_value`` 显式拒绝（返回 400），
@@ -105,6 +107,7 @@ class ApprovalWriteSerializer(serializers.Serializer):
         allow_blank=True,
         max_length=10000,
     )
+    timeout_resume = serializers.BooleanField(default=False, required=False)
 
     def to_internal_value(self, data):
         """防御性深度：客户端尝试设置 protected 字段时显式拒绝。

@@ -1,7 +1,7 @@
 import logging
 import threading
 from datetime import datetime
-from typing import Optional
+from typing import ClassVar, Optional
 
 from pydantic import BaseModel
 
@@ -20,7 +20,8 @@ class ToolUsageRecord(BaseModel):
 class ToolAnalyticsService:
     _instance: Optional["ToolAnalyticsService"] = None
     _lock = threading.Lock()
-    _records: list[ToolUsageRecord] = []
+    # 类级占位（__new__ 中会重置为实例属性），标注 ClassVar 明确为类级配置
+    _records: ClassVar[list[ToolUsageRecord]] = []
     _max_records: int = 10000
 
     def __new__(cls):

@@ -202,7 +202,7 @@ class LangChainToolManager(BaseToolManager):
 
     def is_system_tool(self, tool_name: str) -> bool:
         """检查 tool_name 是否在内置工具名列表中（带缓存）"""
-        global _system_tool_names
+        global _system_tool_names  # noqa: PLW0603  # 模块级单例缓存 lazy init
         if _system_tool_names is None:
             from Django_xm.apps.tools import get_all_tools
 

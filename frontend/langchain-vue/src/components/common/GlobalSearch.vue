@@ -103,11 +103,11 @@ useKeyboardShortcuts({
 <template>
   <ElDialog
     :model-value="modelValue"
-    @update:model-value="emit('update:modelValue', $event)"
     :show-close="false"
     width="520px"
     top="15vh"
     class="search-dialog"
+    @update:model-value="emit('update:modelValue', $event)"
     @keydown="handleKeydown"
   >
     <div class="search-input-wrapper">
@@ -124,7 +124,7 @@ useKeyboardShortcuts({
       />
       <kbd class="search-hint">ESC</kbd>
     </div>
-    <ElScrollbar max-height="360px" v-if="filteredItems.length">
+    <ElScrollbar v-if="filteredItems.length" max-height="360px">
       <div class="search-results">
         <template v-for="(item, index) in filteredItems" :key="item.type + '-' + (item.sessionId || item.path)">
           <div
@@ -132,9 +132,9 @@ useKeyboardShortcuts({
             class="search-group-label"
           >聊天记录</div>
           <div
+            v-memo="[item.label, item.path, index === selectedIndex]"
             class="search-item"
             :class="{ selected: index === selectedIndex }"
-            v-memo="[item.label, item.path, index === selectedIndex]"
             @click="selectItem(item)"
             @mouseenter="selectedIndex = index"
           >

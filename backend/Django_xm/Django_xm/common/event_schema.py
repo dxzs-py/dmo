@@ -66,7 +66,7 @@ class EventType(StrEnum):
     STREAM_STARTED = "stream_started"  # 流式会话已开始（通知非触发浏览器显示"正在思考"）
     STREAM_COMPLETED = "stream_completed"  # 流式会话已完成（通知所有浏览器更新终态）
     STREAM_FINALIZED = "stream_finalized"  # 流式输出已持久化（非请求浏览器可安全拉取后端数据）
-    STREAM_INTERRUPTED = "stream_interrupted"  # 流被中断（深度研究模式：chat SSE 结束，Celery worker 仍在运行）
+    STREAM_INTERRUPTED = "stream_interrupted"  # 流被中断（深度研究模式：chat SSE 结束，执行服务仍在运行）
     STREAM_REASONING = "stream_reasoning"  # 推理过程
     STREAM_SOURCES = "stream_sources"  # 来源引用
     STREAM_SUGGESTIONS = "stream_suggestions"  # 建议
@@ -90,6 +90,9 @@ class EventType(StrEnum):
     TASK_DELETED = "task_deleted"  # 任务删除（深度研究/工作流），通知列表刷新
     TASK_STATUS_CHANGED = "task_status_changed"  # 任务状态进入终态（completed/failed），通知列表刷新
     TASK_PROGRESS = "task_progress"  # 后台任务进度（RAG 文档上传等），task 频道实时推送
+    TASK_STATUS_CHANGE = "status_change"  # 任务状态实时推送（执行器运行中细粒度状态：
+    # running/awaiting_approval/completed/failed + current_step/final_report/error），
+    # 供任务详情页状态标签与多浏览器实时一致；与 TASK_STATUS_CHANGED（终态列表刷新）互补
 
     # === 学习工作流事件（WebSocket 推送）===
     WORKFLOW_STEP = "workflow_step"  # 工作流节点执行进度
@@ -176,7 +179,18 @@ class ToolCallLifecyclePayload(TypedDict, total=False):
     agent_name: str | None  # 子 agent 名称（如 web-researcher）
     agent_path: list | None  # 完整调用链路（如 ["main", "web-researcher"]）
     risk_ceiling: str | None  # 子 agent 角色风险上限（safe/controlled/high）
-    risk_level: str | None  # 工具调用实际风险等级（safe/controlled/high，由 ApprovalMiddleware 计算，注入到 tool_call_* 事件 payload）
+    # 工具调用实际风险等级（safe/controlled/high），由 ApprovalMiddleware 计算，
+    # 注入到 tool_call_* 事件 payload
+    risk_level: str | None
+    # 时间戳（Task 2.1，snake_case 协议键，前端 toCamelCase 后为 createdAt/completedAt）：
+    # - created_at：起始时间戳（仅 TOOL_CALL_PENDING 事件）
+    # - completed_at：终态时间戳（仅 TOOL_CALL_COMPLETED/FAILED/TIMEOUT/REJECTED 事件）
+    # 供前端 toolCallTree 组统计 min(createdAt)/max(completedAt) 计算组头总耗时
+    created_at: str | None  # PENDING 起始时间戳（ISO 8601）
+    completed_at: str | None  # 终态时间戳（ISO 8601）
+    # description：子 agent 角色描述（任务目标，Task 2.4，取自 deep_builder SubAgent
+    # 静态 description），仅子 agent 工具事件携带，前端 ToolCallGroup 组头展示
+    description: str | None
 
 
 class ApprovalPayload(TypedDict, total=False):

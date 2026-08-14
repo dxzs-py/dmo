@@ -146,6 +146,11 @@ function _updateOrAddToolResultInMessage(message, data) {
     if (data.state !== undefined) updates.state = data.state
     if (data.result !== undefined) updates.result = data.result
     if (data.error !== undefined) updates.error = data.error
+    // 时间戳与子代理描述持久化（Task 4.1）：后端终态事件携带 completedAt、
+    // description（子代理工具事件）时写入；createdAt/description 已有值不覆盖
+    if (data.createdAt !== undefined && !existing.createdAt) updates.createdAt = data.createdAt
+    if (data.completedAt !== undefined) updates.completedAt = data.completedAt
+    if (data.description !== undefined && !existing.description) updates.description = data.description
     // 状态推进统一走状态机（result 模式：显式 status > 事件态映射 > result→COMPLETED > error→FAILED）。
     // 终态不回退 / 非法转换回退由 applyToolCallState 保证（核心层权威化，Task 2）。
     const { status: nextStatus, applied: statusApplied } = applyToolCallState(existing, data, { mode: 'result' })
@@ -155,8 +160,9 @@ function _updateOrAddToolResultInMessage(message, data) {
       if (isTerminalStatus(nextStatus) && existing.approval) {
         updates.approval = null
       }
-      // 进入终态时设置 completedAt（Task 16 P1 修复）
-      if (isTerminalStatus(nextStatus) && !existing.completedAt) {
+      // 进入终态时设置 completedAt（Task 16 P1 修复）：后端时间戳优先，
+      // 事件未携带时用本地时间兜底
+      if (isTerminalStatus(nextStatus) && !existing.completedAt && updates.completedAt === undefined) {
         updates.completedAt = new Date().toISOString()
       }
     }
@@ -181,7 +187,7 @@ function _updateOrAddToolResultInMessage(message, data) {
 /**
  * 匹配缓存的待审批数据到 toolCall（解决审批事件先于 tool 事件到达的时序问题）
  */
-function _matchPendingApprovals(message, data) {
+function _matchPendingApprovals(message) {
   if (!message._pendingApprovals || message._pendingApprovals.length === 0) return
   if (!message.toolCalls || message.toolCalls.length === 0) return
 
@@ -230,8 +236,8 @@ export function addOrUpdateToolCallInLastMessage(sessions, sessionId, data) {
   const ver = result.message.versions?.[result.message.currentVersion]
   if (ver) _addOrUpdateToolCallInMessage(ver, data)
 
-  _matchPendingApprovals(result.message, data)
-  if (ver) _matchPendingApprovals(ver, data)
+  _matchPendingApprovals(result.message)
+  if (ver) _matchPendingApprovals(ver)
 }
 
 /**
@@ -405,7 +411,7 @@ function _mergeExistingToolCall(existing, data) {
     merged.parameters = { ...existing.parameters, ...data.parameters }
   }
   if (data.args && typeof data.args === 'object') {
-    merged.parameters = { ...(merged.parameters || {}), ...data.args }
+    merged.parameters = { ...merged.parameters, ...data.args }
   }
   // 状态推进统一走状态机（add 模式：显式 status > 事件态映射 > state 未命中兜底 pending）。
   // 终态不回退 / 非法转换回退（如 RUNNING 被旧事件回退为 PENDING）由 applyToolCallState 保证
@@ -416,7 +422,16 @@ function _mergeExistingToolCall(existing, data) {
   }
   // 审批数据合并（审批域，与工具执行态解耦；仅附加不推进工具状态）
   if (existing.approval || data.approval) {
-    merged.approval = { ...(existing.approval || {}), ...(data.approval || {}) }
+    merged.approval = { ...existing.approval, ...data.approval }
+  }
+  // 子代理角色描述保护（Task 4.1）：description 只在首次注入时填充，已有值不覆盖
+  if (existing.description) {
+    merged.description = existing.description
+  }
+  // createdAt 保护（Task 4.1）：起始时间只在 PENDING 事件首次写入，
+  // 后续事件（即使携带）不得覆盖已记录的起始时间
+  if (existing.createdAt) {
+    merged.createdAt = existing.createdAt
   }
   // PENDING + 非终态审批保护（P3-7/P3-13/P3-19/P3-21 根因修复）：
   // SSE tool 事件携带 status='running' 会覆盖 WebSocket approval_pending 设置的 pending 状态，
@@ -636,6 +651,11 @@ export function updateOrAddToolResultInMap(toolCallMap, data) {
       if (data.state !== undefined) updates.state = data.state
       if (data.result !== undefined) updates.result = data.result
       if (data.error !== undefined) updates.error = data.error
+      // 时间戳与子代理描述持久化（Task 4.1）：后端终态事件携带 completedAt、
+      // description（子代理工具事件）时写入；createdAt/description 已有值不覆盖
+      if (data.createdAt !== undefined && !existing.createdAt) updates.createdAt = data.createdAt
+      if (data.completedAt !== undefined) updates.completedAt = data.completedAt
+      if (data.description !== undefined && !existing.description) updates.description = data.description
       // 状态推进统一走状态机（result 模式）。终态不回退 / 非法转换回退由
       // applyToolCallState 保证（核心层权威化，Task 2）。
       const { status: nextStatus, applied: statusApplied } = applyToolCallState(existing, data, { mode: 'result' })
@@ -645,8 +665,8 @@ export function updateOrAddToolResultInMap(toolCallMap, data) {
         if (isTerminalStatus(nextStatus) && existing.approval) {
           updates.approval = null
         }
-        // 进入终态时设置 completedAt
-        if (isTerminalStatus(nextStatus) && !existing.completedAt) {
+        // 进入终态时设置 completedAt：后端时间戳优先，事件未携带时用本地时间兜底
+        if (isTerminalStatus(nextStatus) && !existing.completedAt && updates.completedAt === undefined) {
           updates.completedAt = new Date().toISOString()
         }
       }
@@ -915,27 +935,29 @@ export function finalizeToolCallsInMap(toolCallMap, messageBackendId) {
 /**
  * 工具调用显示排序（跨浏览器统一排序的唯一权威，根因修复）
  *
- * 排序 key 优先级：
- *   1. seq：后端 (module, module_id) 内跨 LLM 轮次全局递增序号（register 分配、
- *      事件透传），跨轮唯一。不同浏览器对同一批工具调用据此排序完全一致
- *      （修复跨浏览器顺序不一致：原 _index 为 LLM 单轮序号跨轮重复，相等时
- *      退化为各浏览器本地 Map 插入顺序，双轨事件浏览器插入时机不同导致错序）。
- *   2. _index：LLM 单轮输出内序号，仅作同 seq 时兜底（同轮多工具顺序稳定）。
- *   3. 两者皆无：保持原数组顺序（JS 稳定排序，即 Map 插入顺序兜底）。
+ * seq 主 + 数组兜底：
+ * - 仅当**所有**条目都有有效 seq（正整数）时按 seq 升序排序。seq 是后端
+ *   (module, module_id) 内跨 LLM 轮次全局递增序号（register 分配、事件透传），
+ *   不同浏览器对同一批工具调用据此排序完全一致。
+ * - 任一条目缺 seq（历史数据 / 持久化链路丢弃）时**退化为保持数组顺序**。
+ *   数组顺序 = toolCallsMap 插入顺序 = loadSessionDetail 按后端 API 权威顺序
+ *   重建，是缺失场景下的唯一可靠基准。
+ *
+ * 根因：原实现把缺 seq 条目按 Number.MAX_SAFE_INTEGER 排最后，混合数据
+ * （部分带 seq，如 WebSocket 事件注入的 fs_write_file；部分无 seq，如 API 快照
+ * 的 shell_exec）时，有 seq 的后发工具反而被排到最前，刷新后工具调用乱序。
+ * 混合场景下缺 seq 条目的时间位置未知，seq 无法单独决定整体顺序，必须整体
+ * 退化为数组顺序。_index 分支已删除：toolCall 数据源从不注入 _index，属死代码。
  *
  * @param {Array} arr - 工具调用数组（原地排序）
  * @returns {Array} 排序后的数组
  */
 export function sortToolCallsForDisplay(arr) {
   if (!Array.isArray(arr) || arr.length <= 1) return arr
-  arr.sort((a, b) => {
-    const as = typeof a?.seq === 'number' ? a.seq : Number.MAX_SAFE_INTEGER
-    const bs = typeof b?.seq === 'number' ? b.seq : Number.MAX_SAFE_INTEGER
-    if (as !== bs) return as - bs
-    const ai = a?._index ?? 999
-    const bi = b?._index ?? 999
-    return ai - bi
-  })
+  const hasValidSeq = arr.every(tc => typeof tc?.seq === 'number' && tc.seq > 0)
+  if (hasValidSeq) {
+    arr.sort((a, b) => a.seq - b.seq)
+  }
   return arr
 }
 

@@ -195,16 +195,6 @@ class TrackedTask:
 
 @shared_task(
     bind=True,
-    name="base.debug_task",
-    soft_time_limit=60,
-)
-def debug_task(self):
-    logger.info(f"[Celery] 调试任务执行，请求：{self.request!r}")
-    return {"status": "success", "request": repr(self.request)}
-
-
-@shared_task(
-    bind=True,
     name="base.cleanup_old_task_records",
     max_retries=1,
     soft_time_limit=300,
@@ -242,6 +232,12 @@ def cleanup_old_task_records(self, days: int = 30):
     soft_time_limit=120,
 )
 def check_stale_tasks(self, timeout_minutes: int = 60):
+    """标记 Celery 任务记录中超时的任务为失败。
+
+    注意：深度研究任务已脱离 Celery（执行由 apps/fastapi_service
+    SessionExecutor 承载），其状态机（running/awaiting_approval/failed）
+    由执行服务负责自愈与超时处理，此处不再操作 ResearchTask。
+    """
     from datetime import timedelta
 
     from django.utils import timezone
@@ -267,19 +263,5 @@ def check_stale_tasks(self, timeout_minutes: int = 60):
         logger.info(f"[Celery Base] 标记了 {count} 个超时任务")
     except Exception:
         logger.exception("[Celery Base] 检测超时任务失败")
-
-    try:
-        from Django_xm.apps.research.models import ResearchTask
-
-        research_cutoff = timezone.now() - timedelta(minutes=timeout_minutes)
-        stale_research = ResearchTask.objects.filter(
-            status__in=["pending", "progress"],
-            created_at__lt=research_cutoff,
-        )
-        research_count = stale_research.update(status="failed", updated_at=timezone.now())
-        if research_count > 0:
-            logger.info(f"[Celery Base] 标记了 {research_count} 个超时研究任务为 failed")
-    except Exception:
-        logger.exception("[Celery Base] 检测超时研究任务失败")
 
     return {"status": "success", "marked_stale": count}

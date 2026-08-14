@@ -1,6 +1,3 @@
-from typing import List, Optional
-
-from langchain_core.documents import Document
 from langchain_core.vectorstores import VectorStore
 
 from Django_xm.apps.core.config import get_logger
@@ -55,6 +52,7 @@ from .pgvector_store import (
 from .registry import VectorStoreRegistry
 
 __all__ = [
+    # 向量存储后端
     "ChromaBackend",
     "FAISSBackend",
     "InMemoryBackend",
@@ -68,9 +66,8 @@ __all__ = [
     "get_pgvector_connection_string",
     "list_pgvector_stores",
     "load_pgvector_store",
-    # PGVector 运行时（预热/缓存重置）
+    # PGVector 运行时（预热/缓存重置）与向后兼容
     "reset_pgvector_cache",
-    "warm_up_pgvector_runtime",
-    # 向后兼容
     "search_vector_store",
+    "warm_up_pgvector_runtime",
 ]

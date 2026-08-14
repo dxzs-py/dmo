@@ -2,8 +2,9 @@
 
 职责：
     根据 Approval.source 路由审批恢复请求到正确的执行环境：
-    - chat → SSE 流式恢复（_stream_chat_resume_generator，在 HTTP 请求中执行）
-    - deep_research → 新 Celery 任务恢复（research_resume_task，在 worker 中执行）
+    - chat → SSE 流式恢复（_stream_chat_resume_generator，在 HTTP 请求中执行；
+      超时恢复由前端收到 approval_timeout 事件后触发，见 route_timeout）
+    - deep_research → 发布 Redis 信令唤醒执行服务中的挂起协程（事件驱动）
 
 设计原则：
     1. Gateway 是路由器，不是阻塞器：不做阻塞等待，不持有内存状态
@@ -12,7 +13,7 @@
 
 返回值约定：
     - chat source：返回 SSE async generator（调用方包装为 StreamingHttpResponse）
-    - deep_research source：返回 None（已派发 Celery 任务，调用方返回 JSON 响应）
+    - deep_research source：返回 None（已发布信令，调用方返回 JSON 响应）
     - 未知 source：抛出 ValueError
 
 熔断机制（F3）：
@@ -24,12 +25,12 @@
 
 依赖关系：
     - chat 模块：复用 services.chat_resume_generator._stream_chat_resume_generator（已测试的 SSE 流）
-    - deep_research 模块：派发 tasks.deep_research.research_resume_task（Celery 任务）
+    - deep_research 模块：apps.fastapi_service.event_bus.publish_signal（Redis 信令）
     - 前端：统一调用 POST /api/v1/approvals/{interrupt_id}/resume/，无需 source 分支
 """
 
 import logging
-from typing import Any, cast
+from typing import Any
 
 from Django_xm.apps.approvals.models import Approval
 from Django_xm.common.constants import TIMEOUT_DECISION
@@ -75,7 +76,7 @@ class ApprovalGateway:
     使用方式：
         result = gateway.route_resume(request, approval, resume_value, ...)
         if result is None:
-            # deep_research → Celery 任务已派发，返回 JSON
+            # deep_research → Redis 信令已发布，返回 JSON
             return Response({'status': 'resumed'})
         else:
             # chat → 返回 SSE 流
@@ -92,6 +93,7 @@ class ApprovalGateway:
         graph_interrupt_id: str | None = None,
         langgraph_resume_id: str | None = None,
         approved: bool = True,
+        timeout_resume: bool = False,
         **kwargs,
     ):
         """路由审批恢复请求到正确的执行环境。
@@ -112,7 +114,7 @@ class ApprovalGateway:
 
         Returns:
             - chat source：返回 SSE async generator
-            - deep_research source：返回 None（已派发 Celery 任务）
+            - deep_research source：返回 None（已发布 Redis 信令唤醒执行服务）
 
         Raises:
             CircuitBreakerError: HIGH 级操作数超过滑动窗口阈值
@@ -136,6 +138,7 @@ class ApprovalGateway:
                 graph_interrupt_id=graph_interrupt_id,
                 langgraph_resume_id=langgraph_resume_id,
                 approved=approved,
+                timeout_resume=timeout_resume,
                 **kwargs,
             )
         elif approval.source == Approval.SOURCE_DEEP_RESEARCH:
@@ -215,6 +218,7 @@ class ApprovalGateway:
         graph_interrupt_id: str | None = None,
         langgraph_resume_id: str | None = None,
         approved: bool = True,
+        timeout_resume: bool = False,
         **kwargs,
     ):
         """chat 模块：返回 SSE 生成器（复用 _stream_chat_resume_generator）。
@@ -236,7 +240,7 @@ class ApprovalGateway:
             f"interrupt_id={approval.interrupt_id}, "
             f"graph_interrupt_id={graph_interrupt_id}, "
             f"langgraph_resume_id={langgraph_resume_id}, "
-            f"approved={approved}"
+            f"approved={approved}, timeout_resume={timeout_resume}"
         )
 
         return sse_response(
@@ -249,6 +253,7 @@ class ApprovalGateway:
                     request_data,
                     graph_interrupt_id=graph_interrupt_id,
                     langgraph_resume_id=langgraph_resume_id,
+                    timeout_resume=timeout_resume,
                 )
             )
         )
@@ -263,17 +268,20 @@ class ApprovalGateway:
         approved: bool = True,
         **kwargs,
     ) -> None:
-        """deep_research 模块：派发新 Celery 任务恢复。
+        """deep_research 模块：发布 Redis 信令唤醒执行服务中的挂起协程。
 
-        deep_research 的 agent 在 Celery worker 中运行（长时任务，可能数分钟到数十分钟）。
-        用户审批后，派发 research_resume_task 从 checkpoint 恢复 agent 执行。
-        结果通过 Redis Pub/Sub + WebSocket 推送到前端。
+        深度研究的 agent 在独立 FastAPI 执行服务中运行（单协程，审批时挂起等待）。
+        用户审批后，审批结果已由 approval_service 落库终态，本方法仅发布
+        Redis 信令（research:approval:{thread_id}）即时唤醒对应执行协程；
+        即使信令丢失，执行器挂起时周期性轮询 DB 批次决策，最终一致。
 
         不阻塞 HTTP 请求，立即返回 None（调用方返回 JSON 响应）。
         """
-        from Django_xm.tasks.deep_research import research_resume_task
+        from Django_xm.apps.fastapi_service.event_bus import (
+            SIGNAL_APPROVAL,
+            publish_signal,
+        )
 
-        # 从 approval.extra 提取恢复所需的元数据
         approval_extra = approval.extra if isinstance(approval.extra, dict) else {}
         effective_graph_interrupt_id = graph_interrupt_id or approval_extra.get("graph_interrupt_id", "")
         effective_langgraph_resume_id = (
@@ -281,24 +289,36 @@ class ApprovalGateway:
         )
         message_id = approval_extra.get("message_id", "")
 
+        thread_id = approval.source_id or ""
+        if not thread_id:
+            logger.error(
+                f"[ApprovalGateway] deep_research 审批缺少 source_id，无法路由: "
+                f"interrupt_id={approval.interrupt_id}"
+            )
+            return
+
         logger.info(
-            f"[ApprovalGateway] deep_research 恢复: task_id={approval.source_id}, "
+            f"[ApprovalGateway] deep_research 审批信令: task_id={thread_id}, "
             f"interrupt_id={approval.interrupt_id}, "
             f"graph_interrupt_id={effective_graph_interrupt_id}, "
             f"langgraph_resume_id={effective_langgraph_resume_id}, "
             f"approved={approved}, message_id={message_id}"
         )
 
-        # 派发 Celery 任务恢复 agent 执行
-        research_resume_task.delay(
-            thread_id=approval.source_id,
-            interrupt_id=approval.interrupt_id,
-            langgraph_resume_id=effective_langgraph_resume_id,
-            graph_interrupt_id=effective_graph_interrupt_id,
-            resume_value=resume_value,
-            user_id=cast(int, getattr(approval, "user_id", None)),
-            message_id=message_id,
-            chat_session_id=approval.chat_session_id,
+        publish_signal(
+            SIGNAL_APPROVAL,
+            thread_id,
+            {
+                "thread_id": thread_id,
+                "interrupt_id": approval.interrupt_id,
+                "graph_interrupt_id": effective_graph_interrupt_id,
+                "langgraph_resume_id": effective_langgraph_resume_id,
+                "approved": approved,
+                "resume_value": resume_value,
+                "user_id": getattr(approval, "user_id", None),
+                "message_id": message_id,
+                "chat_session_id": approval.chat_session_id,
+            },
         )
 
     def route_timeout(
@@ -306,29 +326,33 @@ class ApprovalGateway:
         approval: Approval,
         resume_value: Any = None,
     ) -> None:
-        """统一超时恢复路由（后台派发，无 HTTP 请求）。
+        """统一超时恢复路由（后台调用，无 HTTP 请求）。
 
-        确认/拒绝/超时三种审批决策统一通过 ApprovalGateway 路由，
-        超时由 Celery cleanup_expired_approvals 检测并触发，不经过 HTTP 请求路径。
-        按 approval.source 分派到对应 Celery 恢复任务。
+        确认/拒绝/超时三种审批决策统一通过 ApprovalGateway 路由。
+        超时由 Celery cleanup_expired_approvals 检测并触发（timeout_approval）。
+        事件驱动化（Task 5）：本方法不再派发恢复任务——
+        - chat 来源：审批已终态化 + 发布 approval_timeout 事件，恢复由前端触发 SSE resume
+        - deep_research 来源：发布 Redis 信令唤醒执行服务挂起协程（最终一致）
 
         Args:
             approval: Approval 模型实例
             resume_value: 恢复值，默认 TIMEOUT_DECISION
 
         Returns:
-            None（后台派发，无需 SSE 流）
+            None（事件驱动，无需 SSE 流）
         """
         effective_resume_value = resume_value if resume_value is not None else TIMEOUT_DECISION
 
         if approval.source == Approval.SOURCE_CHAT:
-            from Django_xm.tasks.approval_tasks import resume_chat_after_timeout
-
+            # 事件驱动化（Task 5）：chat 超时恢复不再派发 Celery 任务。
+            # 审批已由 approval_service.timeout_approval 落库终态 TIMEOUT 并发布
+            # approval_timeout 实时事件；前端收到后调用 SSE resume 端点（带
+            # timeout_resume=True）驱动 _stream_chat_resume_generator 恢复，与用户
+            # 手动确认/拒绝同构。批次完整性由 resume 端点 _check_batch_and_route 判定。
             logger.info(
-                f"[ApprovalGateway] 超时恢复路由(chat): interrupt_id={approval.interrupt_id}, "
-                f"session={approval.chat_session_id}"
+                f"[ApprovalGateway] chat 超时已终态化，等待前端事件驱动恢复: "
+                f"interrupt_id={approval.interrupt_id}, session={approval.chat_session_id}"
             )
-            resume_chat_after_timeout.delay(approval.interrupt_id)
 
         elif approval.source == Approval.SOURCE_DEEP_RESEARCH:
             self._resume_deep_research(

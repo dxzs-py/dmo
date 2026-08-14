@@ -583,7 +583,7 @@ def get_embeddings_with_fallback(
 
 def reset_embedding_factory() -> None:
     """重置单例缓存（供测试）"""
-    global _embedding_fallback_cache
+    global _embedding_fallback_cache  # noqa: PLW0603 - 模块级测试缓存重置
     with _embedding_fallback_lock:
         _embedding_fallback_cache = {}
 

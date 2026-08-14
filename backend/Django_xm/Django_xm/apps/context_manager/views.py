@@ -187,7 +187,10 @@ class KnowledgeGraphDetailView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(parameters=[KnowledgeGraphDetailRequestSerializer], responses={200: KnowledgeGraphDetailResponseSerializer})
+    @extend_schema(
+        parameters=[KnowledgeGraphDetailRequestSerializer],
+        responses={200: KnowledgeGraphDetailResponseSerializer},
+    )
     def get(self, request):
         req_serializer = KnowledgeGraphDetailRequestSerializer(data=request.query_params)
         if not req_serializer.is_valid():

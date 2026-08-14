@@ -12,8 +12,8 @@ from .models import User
 # 密码复杂度校验正则：至少 8 位，包含大写字母+小写字母+数字+特殊字符
 PASSWORD_COMPLEXITY_PATTERN = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]).{8,}$")
 
-# 特殊字符集（用于错误提示）
-PASSWORD_SPECIAL_CHARS = "!@#$%^&*()_+-=[]{}|;:,.<>?"
+# 特殊字符集（用于错误提示）——仅为密码复杂度校验规则中的特殊字符集合常量，非真实口令
+PASSWORD_SPECIAL_CHARS = "!@#$%^&*()_+-=[]{}|;:,.<>?"  # noqa: S105
 
 
 class MyTokenObtainPairSerializer(TokenObtainPairSerializer):

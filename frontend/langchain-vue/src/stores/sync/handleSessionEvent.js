@@ -18,7 +18,7 @@ import {
  * 创建 session 通道事件处理器（最大模块）
  *
  * 模块关系：本模块通过 ctx 接受 sync.js 注入的独立模块函数（Task 16），
- * 优先使用注入版本，回退内联实现。注入的函数来自：
+ * 仅使用注入版本（无内联实现）。注入的函数来自：
  *   - messageHandlers.js：handleMessageAdded / handleMessageUpdated / handleMessagesDeleted
  *     / handleMessageRegenerated / handleMessageRegenerateReverted
  *   - streamStateHandlers.js：handleStreamEvent / handleStreamInterrupted
@@ -120,13 +120,9 @@ export const createHandleSessionEvent = (ctx) => {
     const session = getSession(sessionStore, sessionId)
     if (!session?.messages) return null
 
-    let messageId = null
-    if (event.type === 'message_updated') {
-      messageId = event.payload?.messageId
-    } else {
-      // tool_call_* / approval_* 等事件统一从 payload.messageId 或 payload.extra.messageId 提取
-      messageId = event.payload?.messageId || event.payload?.extra?.messageId
-    }
+    let messageId = event.type === 'message_updated'
+      ? event.payload?.messageId
+      : (event.payload?.messageId || event.payload?.extra?.messageId)
 
     if (messageId) {
       const msg = findMessageById(session, messageId)
@@ -324,6 +320,19 @@ export const createHandleSessionEvent = (ctx) => {
       case 'stream_completed':
         ctx.handleStreamCompleted(sessionId, payload)
         break
+      case 'status_change':
+        // 聊天关联深度研究任务状态实时推送（session + task 双频道，Task 4）。
+        // task 频道由 handleTaskEvent 处理；此处处理 session 频道冗余路径，
+        // 确保 ChatView 打开时 DeepResearchView 的 taskInfo 也实时更新。
+        // payload.source_id = task_id（DEEP_RESEARCH 来源）。
+        if (payload.sourceId) {
+          researchStore.setTaskStatus(payload.sourceId, payload)
+          logger.info(
+            `[Sync] session status_change(关联研究): taskId=${payload.sourceId}, ` +
+            `status=${payload.status || 'unknown'}, session=${sessionId}`
+          )
+        }
+        break
       case 'stream_finalized':
         await ctx.handleStreamFinalized(sessionId, payload)
         break
@@ -482,7 +491,7 @@ export const createHandleSessionEvent = (ctx) => {
           }
           // count === 0 时所有已决，但无法从 count 推断具体状态，不做额外转换
         } else {
-          // 回退：本地 toolCalls 遍历（低版本兼容）
+          // 后端未注入权威计数（非 APPROVED 或非批次场景）时，本地遍历 toolCalls 计算 sibling 状态
           const hasApprovedOrProcessing = siblingApprovals.some(a =>
             a.approvalState === 'approved' ||
             a.approvalState === 'processing'
@@ -527,11 +536,12 @@ export const createHandleSessionEvent = (ctx) => {
    * 收集同一 graph_interrupt_id 下所有 toolCall 的 approval 状态
    *
    * 优先使用后端返回的 remaining_pending_count（权威计数），避免因不同浏览器
-   * toolCalls 事件到达顺序不一致导致本地计算结果不同。
+   * toolCalls 事件到达顺序不一致导致本地计算结果不同；后端仅在 APPROVED + 批次
+   * 场景注入该字段（approval_service 哨兵 _UNSET），未注入时本地遍历计算。
    *
    * @param {Object} message - 消息对象
    * @param {string} graphInterruptId - LangGraph 的 interrupt_id（同一批审批共享）
-   * @param {number} [remainingPendingCount] - 后端返回的剩余待审批数量（低版本兼容回退到本地计算）
+   * @param {number} [remainingPendingCount] - 后端返回的剩余待审批数量（未注入时本地计算）
    * @returns {number|Array<{toolCallId: string, approvalState: string}>}
    *   当 remainingPendingCount 有效时返回 number，否则返回本地计算的数组
    */
@@ -541,7 +551,7 @@ export const createHandleSessionEvent = (ctx) => {
       return remainingPendingCount
     }
 
-    // 回退：本地遍历 toolCalls 计算（低版本兼容）
+    // 本地遍历 toolCalls 计算 sibling 状态（后端未注入权威计数时）
     if (!message?.toolCalls || !Array.isArray(message.toolCalls) || !graphInterruptId) return []
     const siblings = []
     for (const tc of message.toolCalls) {

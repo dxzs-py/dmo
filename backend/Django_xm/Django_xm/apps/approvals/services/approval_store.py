@@ -9,8 +9,6 @@
 import json
 import logging
 
-from django.core.cache import cache
-
 from Django_xm.apps.approvals.services.approval_constants import (
     APPROVAL_PENDING_PREFIX,
     APPROVAL_PROCESSED_PREFIX,
@@ -135,9 +133,8 @@ def get_approval_history(source_id):
         parsed_items = []  # [(approval_data, interrupt_id_or_None), ...]
         for item in pending_items:
             try:
-                if isinstance(item, bytes):
-                    item = item.decode("utf-8")
-                approval_data = json.loads(item)
+                raw_item = item.decode("utf-8") if isinstance(item, bytes) else item
+                approval_data = json.loads(raw_item)
                 interrupt_id = approval_data.get("interrupt_id")
                 parsed_items.append((approval_data, interrupt_id))
             except (json.JSONDecodeError, UnicodeDecodeError):
@@ -154,15 +151,15 @@ def get_approval_history(source_id):
         result = []
         processed_idx = 0
         for approval_data, interrupt_id in parsed_items:
+            merged = approval_data
             if interrupt_id:
                 raw = processed_results[processed_idx]
                 processed_idx += 1
                 if raw:
-                    if isinstance(raw, bytes):
-                        raw = raw.decode("utf-8")
+                    raw = raw.decode("utf-8") if isinstance(raw, bytes) else raw
                     processed_data = json.loads(raw)
-                    approval_data = {**approval_data, **processed_data}
-            result.append(approval_data)
+                    merged = {**approval_data, **processed_data}
+            result.append(merged)
 
         if result:
             logger.info(f"[ApprovalStore] 读取历史审批: source_id={source_id}, count={len(result)}")

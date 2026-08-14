@@ -30,7 +30,7 @@ from Django_xm.apps.chat.services.stream_helpers import (
 )
 from Django_xm.apps.chat.utils import _lcp_len
 from Django_xm.apps.tools.base import is_approval_interrupt
-from Django_xm.common.event_schema import EventSource, EventType
+from Django_xm.common.event_schema import EventSource
 from Django_xm.common.tool_call_lifecycle import ToolCallContext, service
 
 from .context import StreamContext
@@ -183,7 +183,10 @@ async def run_stream_loop(
     async for event in strategy.on_loop_start(ctx, data):
         yield event
 
-    logger.debug(f"[Loop] astream: input keys={list(graph_input.keys()) if isinstance(graph_input, dict) else type(graph_input).__name__}")
+    logger.debug(
+        f"[Loop] astream: input keys="
+        f"{list(graph_input.keys()) if isinstance(graph_input, dict) else type(graph_input).__name__}"
+    )
     async for chunk in agent.graph.astream(graph_input, config=config, stream_mode=["messages", "updates"]):
         # 多 stream mode 下 chunk 是 (mode_name, data) 元组
         if isinstance(chunk, tuple) and len(chunk) == 2:
@@ -317,8 +320,10 @@ async def _handle_updates_chunk(
                     approval_data=approval_data,
                 )
                 logger.info(f"[Approval] DB记录已创建: interrupt_id={tool_call_id}, session={ctx.session_id}")
-            except Exception as e:
-                logger.error(f"[Approval] DB记录创建失败: interrupt_id={tool_call_id}, error={e}")
+            except Exception:
+                logger.exception(
+                    f"[Approval] DB记录创建失败: interrupt_id={tool_call_id}, session={ctx.session_id}"
+                )
 
             # 标记发生了审批中断（用第一个请求的信息）
             if ctx.interrupt_info is None:

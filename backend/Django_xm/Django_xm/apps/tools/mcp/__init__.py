@@ -43,19 +43,19 @@ import os
 import sys
 from collections.abc import Callable
 from contextlib import contextmanager
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
-from Django_xm.apps.ai_engine.config import settings
 from Django_xm.apps.core.config import get_logger
 
 _devnull_handles: list[Any] = []
 
 
 def _open_devnull():
-    f = open(os.devnull, "w")
+    # devnull 句柄需保持打开供全局 stdout/stderr 替换使用，由 _close_devnull_handles 统一关闭，不能使用 with
+    f = open(os.devnull, "w")  # noqa: SIM115
     _devnull_handles.append(f)
     return f
 
@@ -84,11 +84,12 @@ def _celery_stdio_fix():
     _opened: dict[str, Any] = {}
     try:
         if not hasattr(sys.stdout, "fileno"):
-            f = open(os.devnull, "w")
+            # 句柄需保持打开并替换 sys.stdout，由本函数 finally 中统一关闭，不能使用 with
+            f = open(os.devnull, "w")  # noqa: SIM115
             sys.stdout = f
             _opened["stdout"] = f
         if not hasattr(sys.stderr, "fileno"):
-            f = open(os.devnull, "w")
+            f = open(os.devnull, "w")  # noqa: SIM115
             sys.stderr = f
             _opened["stderr"] = f
         yield
@@ -160,7 +161,7 @@ def _get_mcp_servers_config() -> list[dict[str, Any]]:
 
 def is_mcp_available() -> bool:
     try:
-        import langchain_mcp_adapters
+        import langchain_mcp_adapters  # noqa: F401  # 仅用于可用性检测（ImportError 表示未安装）
 
         return True
     except ImportError:
@@ -309,7 +310,9 @@ async def get_mcp_tools(
         return []
 
     try:
-        from langchain_mcp_adapters.client import MultiServerMCPClient
+        from langchain_mcp_adapters.client import (
+            MultiServerMCPClient,  # noqa: F401  # 延迟导入 + 可用性检测，实际使用在 _get_or_create_client
+        )
 
         if transport == "stdio":
             transport_config: dict[str, Any] = {
@@ -533,8 +536,8 @@ def _apply_interceptors(
         original_name = original_tool.name
         original_description = original_tool.description or ""
 
-        def _make_wrapper(ot, on):
-            @lc_tool(name=on, description=original_description)
+        def _make_wrapper(ot, on, od):
+            @lc_tool(name=on, description=od)
             def wrapped_tool(**kwargs):
                 for interceptor in interceptors:
                     kwargs = interceptor(on, kwargs) or kwargs
@@ -542,7 +545,7 @@ def _apply_interceptors(
 
             return wrapped_tool
 
-        wrapped_tools.append(_make_wrapper(original_tool, original_name))
+        wrapped_tools.append(_make_wrapper(original_tool, original_name, original_description))
 
     return wrapped_tools
 

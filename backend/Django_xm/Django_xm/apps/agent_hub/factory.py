@@ -5,7 +5,7 @@ from typing import Any
 
 from langgraph.graph.state import CompiledStateGraph
 
-from Django_xm.apps.agent_hub.config import AgentConfig, AgentType
+from Django_xm.apps.agent_hub.config import AgentConfig
 from Django_xm.apps.agent_hub.exceptions import AgentCreationError, FrameworkNotAvailableError
 
 logger = logging.getLogger(__name__)
@@ -68,14 +68,15 @@ class AgentFactory:
         # 注意：PreflightCheckError 必须冒泡（不被 except 捕获），其他异常忽略保持向后兼容
         from .exceptions import PreflightCheckError
 
-        try:
+        async def _check_preflight(cfg):
+            """执行预检；失败且快速失败模式时抛 PreflightCheckError（抽象 raise 避免 TRY301）。"""
             from .preflight import ExecutionPreflight
 
             preflight = ExecutionPreflight()
-            result = await preflight.check(config)
+            result = await preflight.check(cfg)
             if not result.passed:
-                config._preflight_issues = result.issues
-                if getattr(config, "fail_fast_on_preflight", False):
+                cfg._preflight_issues = result.issues
+                if getattr(cfg, "fail_fast_on_preflight", False):
                     # 快速失败模式：抛出携带 issues 的 PreflightCheckError，不调用 builder.build
                     raise PreflightCheckError(
                         f"预检未通过，已阻止 agent 创建: {result.issues}",
@@ -85,6 +86,9 @@ class AgentFactory:
             if result.warnings:
                 for w in result.warnings:
                     logger.warning(f"[AgentFactory] 预检警告: {w}")
+
+        try:
+            await _check_preflight(config)
         except PreflightCheckError:
             # 快速失败模式：让 PreflightCheckError 冒泡到调用方
             raise

@@ -3,7 +3,6 @@ Guardrails 模块 - 提供输入输出安全检查和结构化输出功能
 """
 
 from collections.abc import Sequence
-from typing import Optional
 
 from langchain.agents.middleware import AgentMiddleware
 

@@ -29,6 +29,7 @@ from django.http import HttpRequest
 
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.sse_utils import sse_error_event
+from Django_xm.common.tool_call_lifecycle import service as tool_call_service
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +117,8 @@ async def _publish_stream_event(
     # 再 transition_async 发布事件。若上下文缺失直接 transition 会被静默丢弃，
     # 导致非触发浏览器收不到工具结果。
     if event_type_str in _TOOL_EVENT_TYPES:
-        from Django_xm.common.tool_call_lifecycle import service as lifecycle_service, ToolCallContext
+        from Django_xm.common.tool_call_lifecycle import ToolCallContext
+        from Django_xm.common.tool_call_lifecycle import service as lifecycle_service
 
         tool_data = event.get("data", {})
         tool_call_id = tool_data.get("id") or tool_data.get("tool_call_id", "")
@@ -183,7 +185,11 @@ async def _publish_stream_event(
                 target_event_type,
                 result=tool_result,
                 error=tool_error,
-                parameters=tool_parameters if tool_parameters and isinstance(tool_parameters, dict) and tool_parameters else None,
+                parameters=(
+                    tool_parameters
+                    if tool_parameters and isinstance(tool_parameters, dict) and tool_parameters
+                    else None
+                ),
             )
         except Exception as e:
             logger.warning(
@@ -327,7 +333,10 @@ async def generate_chat_stream(ctx: ChatStreamContext) -> AsyncGenerator[str, No
     # ── Phase 1: Init ──
     # 发送附件 ID 和预处理进度事件
     if ctx.original_attachment_ids:
-        yield f"data: {json.dumps({'type': 'attachment_ids', 'data': ctx.original_attachment_ids}, ensure_ascii=False)}\n\n"
+        _attachment_ids_payload = json.dumps(
+            {"type": "attachment_ids", "data": ctx.original_attachment_ids}, ensure_ascii=False
+        )
+        yield f"data: {_attachment_ids_payload}\n\n"
 
     for evt in ctx.pending_progress:
         yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
@@ -463,6 +472,12 @@ async def _stream_events(
                         "state": tc_data.get("state", ""),
                         "status": tc_data.get("status", ""),
                     }
+                    # seq 补齐（持久化链路完整性）：统一经 enrich_entry_seq 从
+                    # ToolCallContext 读取 register 分配的全局递增序号（与 WebSocket
+                    # tool_call_* 事件透传同一来源），使 tool_calls_map →
+                    # _build_persisted_tool_calls 持久化时保留 seq，API 快照与实时
+                    # 事件的排序依据一致（前端跨浏览器统一排序，防刷新乱序）。
+                    tool_call_service.enrich_entry_seq(entry, tc_id)
                     tool_calls_map[tc_id] = entry
                 if tc_data.get("name"):
                     entry["name"] = tc_data["name"]

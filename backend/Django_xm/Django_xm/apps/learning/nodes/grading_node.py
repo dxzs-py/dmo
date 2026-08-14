@@ -96,11 +96,11 @@ def grading_node(state: StudyFlowState) -> dict[str, Any]:
 
                 try:
                     lines = response_text.strip().split("\n")
-                    score_line = next(l for l in lines if "得分" in l or "score" in l.lower())
+                    score_line = next(line for line in lines if "得分" in line or "score" in line.lower())
                     points_earned = int("".join(filter(str.isdigit, score_line)))
                     points_earned = min(max(points_earned, 0), points_possible)
 
-                    feedback_line = [l for l in lines if "评语" in l or "feedback" in l.lower()]
+                    feedback_line = [line for line in lines if "评语" in line or "feedback" in line.lower()]
                     feedback = feedback_line[0].split(":", 1)[1].strip() if feedback_line else response_text
 
                 except Exception as parse_error:

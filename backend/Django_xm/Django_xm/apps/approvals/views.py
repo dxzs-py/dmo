@@ -10,7 +10,7 @@
 Path D 架构：
     所有审批统一走 ApprovalGateway 路由：
     - chat → SSE 流式恢复（_stream_chat_resume_generator，HTTP 请求中执行）
-    - deep_research → Celery 任务恢复（research_resume_task，worker 中执行）
+    - deep_research → Redis 信令唤醒执行服务挂起协程（事件驱动，DB 最终一致）
     前端统一调用 POST /approvals/{interrupt_id}/resume/，无需 source 分支。
 """
 
@@ -123,7 +123,15 @@ def _build_idempotent_data(interrupt_id):
     }
 
 
-def _check_batch_and_route(request, approval, resume_value, approved, interrupt_id, log_prefix="[ApprovalResume]"):
+def _check_batch_and_route(
+    request,
+    approval,
+    resume_value,
+    approved,
+    interrupt_id,
+    log_prefix="[ApprovalResume]",
+    timeout_resume=False,
+):
     """批量审批聚合检查 + Gateway 统一路由（Path D）。
 
     流程：
@@ -134,7 +142,7 @@ def _check_batch_and_route(request, approval, resume_value, approved, interrupt_
        c. 无 → 构建 batch_resume_value={tool_call_id: bool} 字典
     3. 调用 gateway.route_resume() 统一路由：
        - chat → SSE 流式响应（StreamingHttpResponse）
-       - deep_research → Celery 任务恢复（返回 None → JSON 响应）
+       - deep_research → Redis 信令唤醒执行服务（返回 None → JSON 响应）
 
     Returns:
         Response 对象（JSON 或 SSE 流）
@@ -173,11 +181,15 @@ def _check_batch_and_route(request, approval, resume_value, approved, interrupt_
             return _json_response(_build_waiting_data(interrupt_id, approval, approved))
 
         # 所有审批都完成，构建 batch_resume_value
+        # 优先使用 _resume_value（保留"审批超时"=TIMEOUT_DECISION 与"用户拒绝"=False 的语义差异，
+        # 供 ApprovalMiddleware 注入不同的 ToolMessage）；缺失时回退 _approved 布尔。
         batch_resume_value = {}
         for sib in sibling_approvals:
             sib_extra = sib.extra if isinstance(sib.extra, dict) else {}
             sib_tc_id = sib_extra.get("tool_call_id") or sib.interrupt_id
-            if "_approved" in sib_extra:
+            if "_resume_value" in sib_extra:
+                batch_resume_value[sib_tc_id] = sib_extra["_resume_value"]
+            elif "_approved" in sib_extra:
                 batch_resume_value[sib_tc_id] = bool(sib_extra["_approved"])
             else:
                 batch_resume_value[sib_tc_id] = sib.state == Approval.STATE_APPROVED
@@ -189,7 +201,7 @@ def _check_batch_and_route(request, approval, resume_value, approved, interrupt_
             f"resume_value={effective_resume_value}"
         )
 
-    # 统一路由：Gateway 根据 source 路由到 chat SSE 或 deep_research Celery
+    # 统一路由：Gateway 根据 source 路由到 chat SSE 或 deep_research Redis 信令
     # F3 熔断保护：HIGH 级操作超过滑动窗口阈值时，Gateway 抛出 CircuitBreakerError
     try:
         result = gateway.route_resume(
@@ -199,6 +211,7 @@ def _check_batch_and_route(request, approval, resume_value, approved, interrupt_
             graph_interrupt_id=graph_interrupt_id,
             langgraph_resume_id=langgraph_resume_id,
             approved=approved,
+            timeout_resume=timeout_resume,
         )
     except CircuitBreakerError as cb_err:
         # 熔断处理：标记审批为 rejected（circuit_broken），以 rejection 恢复 agent
@@ -233,7 +246,7 @@ def _check_batch_and_route(request, approval, resume_value, approved, interrupt_
         return error_response(code=ErrorCode.VALIDATION_FAILED, message=str(ve))
 
     if result is None:
-        # deep_research → Celery 任务已派发，返回 JSON 响应
+        # deep_research → Redis 信令已发布，返回 JSON 响应
         return _json_response(
             {
                 "code": 0,
@@ -297,7 +310,7 @@ class ApprovalDetailView(BaseApprovalAccessMixin, APIView):
 class ApprovalResumeView(BaseApprovalAccessMixin, APIView):
     """恢复审批：通过 ApprovalGateway 统一路由（Path D）。
 
-    chat → SSE 流式恢复，deep_research → Celery 任务恢复。
+    chat → SSE 流式恢复，deep_research → Redis 信令唤醒执行服务。
     前端无需判断 source，统一调用此端点。
     """
 
@@ -334,6 +347,8 @@ class ApprovalResumeView(BaseApprovalAccessMixin, APIView):
 
         approved = validated.get("approved", True)
         user_input = validated.get("user_input")
+        # 事件驱动化超时恢复标记（前端收到 approval_timeout 事件后触发 SSE resume 时置 True）
+        timeout_resume = validated.get("timeout_resume", False)
 
         try:
             result = approval_service.resume_approval(
@@ -341,6 +356,7 @@ class ApprovalResumeView(BaseApprovalAccessMixin, APIView):
                 approved=approved,
                 user_input=user_input,
                 approved_by=request.user,
+                timeout_resume=timeout_resume,
             )
         except ValueError as e:
             return error_response(code=ErrorCode.VALIDATION_FAILED, message=str(e))
@@ -377,7 +393,7 @@ class ApprovalResumeView(BaseApprovalAccessMixin, APIView):
         if result.get("state") == "waiting":
             return _json_response(_build_waiting_data(interrupt_id, approval, approved))
 
-        # 统一路由：Gateway 根据 source 路由到 chat SSE 或 deep_research Celery
+        # 统一路由：Gateway 根据 source 路由到 chat SSE 或 deep_research Redis 信令
         return _check_batch_and_route(
             request,
             approval,
@@ -385,13 +401,14 @@ class ApprovalResumeView(BaseApprovalAccessMixin, APIView):
             approved,
             interrupt_id,
             log_prefix="[ApprovalResume]",
+            timeout_resume=timeout_resume,
         )
 
 
 class ApprovalRejectView(BaseApprovalAccessMixin, APIView):
     """拒绝审批：通过 ApprovalGateway 统一路由（Path D）。
 
-    chat → SSE 流式恢复，deep_research → Celery 任务恢复。
+    chat → SSE 流式恢复，deep_research → Redis 信令唤醒执行服务。
     """
 
     permission_classes = [IsAuthenticated]
@@ -465,7 +482,7 @@ class ApprovalRejectView(BaseApprovalAccessMixin, APIView):
                 )
             )
 
-        # 统一路由：Gateway 根据 source 路由到 chat SSE 或 deep_research Celery
+        # 统一路由：Gateway 根据 source 路由到 chat SSE 或 deep_research Redis 信令
         return _check_batch_and_route(
             request,
             approval,

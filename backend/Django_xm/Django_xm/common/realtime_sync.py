@@ -50,6 +50,7 @@
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from asgiref.sync import async_to_sync
@@ -132,10 +133,17 @@ async def publish_tool_call(
     risk_level: str | None = None,
     _index: int | None = None,
     seq: int | None = None,
+    description: str | None = None,
 ) -> None:
     """工具调用生命周期事件发布（三模块统一入口）。
 
     所有 TOOL_CALL_* 事件必须通过此函数发布，禁止直接调用 publish_event。
+
+    时间戳（Task 2.1，协议键 snake_case，前端 toCamelCase 后为 createdAt/completedAt）：
+        - TOOL_CALL_PENDING：附加 created_at（起始时间戳，ISO 8601）
+        - TOOL_CALL_COMPLETED / TOOL_CALL_FAILED / TOOL_CALL_TIMEOUT / TOOL_CALL_REJECTED：
+          附加 completed_at（终态时间戳，ISO 8601）
+        供前端 toolCallTree 按组聚合 min(created_at)/max(completed_at) 计算组头总耗时。
 
     Args:
         event_type: 工具调用事件类型（TOOL_CALL_PENDING /
@@ -162,6 +170,8 @@ async def publish_tool_call(
                     避免跨浏览器风险等级显示不一致。
         seq: (module, module_id) 内跨 LLM 轮次全局递增序号（register 分配）。
             前端据此跨浏览器统一排序（替代跨轮重复的 _index）；非空才注入 payload。
+        description: 子 agent 角色描述（任务目标，取自 deep_builder SubAgent 静态
+            description，仅子 agent 工具事件携带；主 agent 不传）。
 
     Raises:
         PayloadValidationError: payload 校验失败时抛出
@@ -208,6 +218,24 @@ async def publish_tool_call(
     # 前端据此跨浏览器统一排序（替代跨轮重复的 _index）
     if seq is not None and seq > 0:
         payload["seq"] = seq
+    # description：子 agent 角色描述（任务目标），仅子 agent 工具事件携带
+    # （主 agent 不传，payload 保持简洁）
+    if description:
+        payload["description"] = description
+    # 时间戳（Task 2.1，统一注入点：所有 TOOL_CALL_* 事件必经此函数）：
+    # - PENDING → created_at（起始时间戳）
+    # - 终态（COMPLETED/FAILED/TIMEOUT/REJECTED）→ completed_at
+    # ISO 8601 字符串，协议键 snake_case，前端 toCamelCase 后为 createdAt/completedAt，
+    # 供 toolCallTree 组统计 min(createdAt)/max(completedAt) 计算组头总耗时
+    if event_type == EventType.TOOL_CALL_PENDING:
+        payload["created_at"] = datetime.now(UTC).isoformat()
+    elif event_type in (
+        EventType.TOOL_CALL_COMPLETED,
+        EventType.TOOL_CALL_FAILED,
+        EventType.TOOL_CALL_TIMEOUT,
+        EventType.TOOL_CALL_REJECTED,
+    ):
+        payload["completed_at"] = datetime.now(UTC).isoformat()
 
     # 解析频道路由（三模块统一）
     session_id, task_id = _resolve_channels(module, module_id, cross_module_id)
@@ -366,4 +394,88 @@ def publish_approval_sync(**kwargs) -> None:
                 f"[RealtimeSync] publish_approval_sync 失败: "
                 f"event_type={kwargs.get('event_type')}, "
                 f"interrupt_id={kwargs.get('interrupt_id')}"
+            )
+
+
+async def publish_task_status(
+    *,
+    task_id: str,
+    status: str,
+    current_step: str = "",
+    final_report: str = "",
+    error: str = "",
+    cross_module_id: str | None = None,
+    extra: dict | None = None,
+) -> None:
+    """任务状态变更事件发布（``status_change``，执行器/任务模块统一入口）。
+
+    执行器（SessionExecutor）状态变更时发布，供任务详情页状态标签实时刷新与
+    多浏览器状态一致（刷新后由 DeepResearchStatusView API 兜底拉取）。
+
+    Payload:
+        task_id/status/current_step/final_report/error/updated_at（+ source/source_id）
+
+    频道路由（复用 _resolve_channels）：
+        - 独立深度研究（无 cross_module_id）→ 仅 task 频道
+        - 聊天关联深度研究（cross_module_id=chat_session_id）→ session + task 双频道
+
+    Args:
+        task_id: 深度研究任务 ID（module_id）
+        status: 任务状态（running/awaiting_approval/completed/failed/pending）
+        current_step: 当前阶段描述（如 research_started / awaiting_approval）
+        final_report: 最终报告（仅 completed 时非空）
+        error: 错误信息（仅 failed 时非空）
+        cross_module_id: 跨模块同步目标 ID（聊天关联场景传 chat_session_id）
+        extra: 追加字段（透传到 payload）
+    """
+    import time
+
+    payload = {
+        "source": EventSource.DEEP_RESEARCH,
+        "source_id": task_id,
+        "status": status,
+        "current_step": current_step or "",
+        "final_report": final_report or "",
+        "error": error or "",
+        "updated_at": time.time(),
+    }
+    if cross_module_id:
+        payload["cross_module_id"] = cross_module_id
+    if extra:
+        payload.update(extra)
+
+    session_id, task_channel_id = _resolve_channels(
+        EventSource.DEEP_RESEARCH, task_id, cross_module_id
+    )
+    try:
+        await publish_event(
+            EventType.TASK_STATUS_CHANGE,
+            payload,
+            session_id=session_id,
+            task_id=task_channel_id,
+        )
+    except PayloadValidationError:
+        logger.exception(
+            f"[RealtimeSync] publish_task_status payload 校验失败: "
+            f"task_id={task_id}, status={status}"
+        )
+        raise
+
+
+def publish_task_status_sync(**kwargs) -> None:
+    """publish_task_status 的同步版本。智能适配 async/sync 上下文（同 publish_*_sync）。"""
+    try:
+        asyncio.get_running_loop()
+        task = asyncio.ensure_future(publish_task_status(**kwargs))
+        _pending_publish_tasks.add(task)
+        task.add_done_callback(_pending_publish_tasks.discard)
+    except RuntimeError:
+        try:
+            async_to_sync(publish_task_status)(**kwargs)
+        except PayloadValidationError:
+            raise
+        except Exception:
+            logger.exception(
+                f"[RealtimeSync] publish_task_status_sync 失败: "
+                f"task_id={kwargs.get('task_id')}, status={kwargs.get('status')}"
             )

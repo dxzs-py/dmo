@@ -8,9 +8,9 @@
       <div
         v-for="(cmd, idx) in filteredCommands"
         :key="cmd.name"
+        v-memo="[cmd.name, cmd.description, cmd.category, idx === selectedIndex]"
         class="command-item"
         :class="{ active: idx === selectedIndex }"
-        v-memo="[cmd.name, cmd.description, cmd.category, idx === selectedIndex]"
         @click="selectCommand(cmd)"
       >
         <div class="command-name">

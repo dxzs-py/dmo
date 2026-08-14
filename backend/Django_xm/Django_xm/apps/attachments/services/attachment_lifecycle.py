@@ -345,7 +345,11 @@ class AttachmentLifecycleService:
         log.save()
 
         logger.info(
-            f"附件入库完成: 处理={files_processed}, 入库={files_indexed}, 跳过={files_skipped}, 空间={space_indexed / 1024 / 1024:.2f}MB"
+            "附件入库完成: 处理=%s, 入库=%s, 跳过=%s, 空间=%.2fMB",
+            files_processed,
+            files_indexed,
+            files_skipped,
+            space_indexed / 1024 / 1024,
         )
         return log
 

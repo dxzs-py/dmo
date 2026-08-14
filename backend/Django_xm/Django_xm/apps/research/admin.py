@@ -19,12 +19,12 @@ class ResearchTaskAdmin(admin.ModelAdmin):
     list_filter = ["status", "research_depth", "enable_web_search", "enable_doc_analysis", "created_at"]
     search_fields = ["task_id", "query", "final_report"]
     ordering = ["-created_at"]
-    readonly_fields = ["task_id", "created_at", "updated_at", "error_message", "celery_task_id"]
+    readonly_fields = ["task_id", "created_at", "updated_at", "error_message"]
 
     fieldsets = (
         ("基本信息", {"fields": ("task_id", "query", "status", "research_depth")}),
         ("配置选项", {"fields": ("enable_web_search", "enable_doc_analysis")}),
-        ("执行信息", {"fields": ("celery_task_id", "created_by", "created_at", "updated_at")}),
+        ("执行信息", {"fields": ("created_by", "created_at", "updated_at")}),
         ("结果", {"fields": ("final_report", "error_message")}),
     )
 

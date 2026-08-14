@@ -64,7 +64,7 @@ class DatabaseConnectionMiddleware:
 
     def _periodic_alert_check(self):
         """周期性检查连接使用率并告警，避免每个请求都查询 pg_stat_activity。"""
-        global _last_alert_check
+        global _last_alert_check  # noqa: PLW0603  # 模块级告警节流缓存
         now = time.time()
         with _alert_lock:
             if now - _last_alert_check >= _ALERT_CHECK_INTERVAL:

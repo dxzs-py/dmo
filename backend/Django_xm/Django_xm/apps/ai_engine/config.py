@@ -161,15 +161,23 @@ class Settings(ProjectSettings):
 
     rag_rerank_top_n: int = Field(default=6, ge=1, le=50, description="RAG Pipeline FlashRank 重排序保留数")
 
-    rag_fulltext_token_threshold: int = Field(default=5000, ge=0, le=100000, description="RAG Pipeline 全文注入 token 阈值")
+    rag_fulltext_token_threshold: int = Field(
+        default=5000, ge=0, le=100000, description="RAG Pipeline 全文注入 token 阈值"
+    )
 
     rag_max_docs_in_result: int = Field(default=10, ge=1, le=50, description="RAG Pipeline 格式化输出最大文档数")
 
-    rag_max_doc_content_length: int = Field(default=800, ge=100, le=10000, description="RAG Pipeline 单文档内容截断长度")
+    rag_max_doc_content_length: int = Field(
+        default=800, ge=100, le=10000, description="RAG Pipeline 单文档内容截断长度"
+    )
 
-    rag_quality_retrieval_threshold: float = Field(default=0.5, ge=0.0, le=1.0, description="RAG Pipeline 检索质量评分阈值")
+    rag_quality_retrieval_threshold: float = Field(
+        default=0.5, ge=0.0, le=1.0, description="RAG Pipeline 检索质量评分阈值"
+    )
 
-    rag_quality_generation_threshold: float = Field(default=0.6, ge=0.0, le=1.0, description="RAG Pipeline 生成质量评分阈值")
+    rag_quality_generation_threshold: float = Field(
+        default=0.6, ge=0.0, le=1.0, description="RAG Pipeline 生成质量评分阈值"
+    )
 
     rag_max_retry_count: int = Field(default=1, ge=0, le=5, description="RAG Pipeline 最大重检索次数")
 
@@ -313,7 +321,7 @@ _settings_lock = threading.Lock()
 
 
 def get_settings() -> Settings:
-    global _settings_instance
+    global _settings_instance  # noqa: PLW0603 - 模块级单例惰性初始化（标准双检锁模式）
     if _settings_instance is None:
         with _settings_lock:
             if _settings_instance is None:

@@ -372,9 +372,10 @@ async function handleClearCache(scope = 'all') {
       </el-button>
     </div>
 
-    <el-row :gutter="20" v-loading="loading">
-      <el-col :xs="24" :sm="12" :md="8" v-for="kb in filteredKBs" :key="kb.id"
-              v-memo="[kb.name, kb.description, kb.chunkCount, kb.updatedAt]">
+    <el-row v-loading="loading" :gutter="20">
+      <el-col
+v-for="kb in filteredKBs" :key="kb.id" v-memo="[kb.name, kb.description, kb.chunkCount, kb.updatedAt]" :xs="24" :sm="12"
+              :md="8">
         <el-card class="kb-card" shadow="hover">
           <template #header>
             <div class="kb-card-header">
@@ -419,20 +420,20 @@ async function handleClearCache(scope = 'all') {
 
     <el-empty v-if="!loading && filteredKBs.length === 0" description="暂无知识库，点击创建" />
 
-    <el-card class="cache-card" shadow="hover" v-loading="cacheLoading">
+    <el-card v-loading="cacheLoading" class="cache-card" shadow="hover">
       <template #header>
         <div class="cache-card-header">
           <span class="card-title">数据库实时监控</span>
           <div class="cache-actions">
             <el-switch
               v-model="cacheAutoRefresh"
-              @change="toggleAutoRefresh"
               active-text="自动刷新"
               inactive-text=""
               style="margin-right: 12px"
+              @change="toggleAutoRefresh"
             />
-            <el-button size="small" @click="loadCacheInfo" :icon="Refresh" :loading="cacheLoading">刷新</el-button>
-            <el-button size="small" type="danger" @click="handleClearCache('all')" :loading="cacheClearLoading">
+            <el-button size="small" :icon="Refresh" :loading="cacheLoading" @click="loadCacheInfo">刷新</el-button>
+            <el-button size="small" type="danger" :loading="cacheClearLoading" @click="handleClearCache('all')">
               清除全部缓存
             </el-button>
           </div>
@@ -441,7 +442,7 @@ async function handleClearCache(scope = 'all') {
       <el-row :gutter="20">
         <!-- PostgreSQL 状态 -->
         <el-col :xs="24" :md="8">
-          <el-descriptions title="PostgreSQL 数据库" :column="2" border v-if="postgresqlStatus">
+          <el-descriptions v-if="postgresqlStatus" title="PostgreSQL 数据库" :column="2" border>
             <el-descriptions-item label="连接状态" :span="2">
               <el-tag :type="postgresqlStatus.connection === 'healthy' ? 'success' : 'danger'" size="small">
                 {{ postgresqlStatus.connection === 'healthy' ? '已连接' : '未连接' }}
@@ -459,7 +460,7 @@ async function handleClearCache(scope = 'all') {
 
         <!-- 向量存储状态 -->
         <el-col :xs="24" :md="8">
-          <el-descriptions title="向量存储" :column="2" border v-if="vectorStoreStatus">
+          <el-descriptions v-if="vectorStoreStatus" title="向量存储" :column="2" border>
             <el-descriptions-item label="连接状态" :span="2">
               <el-tag :type="vectorStoreStatus.connection === 'healthy' ? 'success' : 'danger'" size="small">
                 {{ vectorStoreStatus.connection === 'healthy' ? '正常' : '异常' }}
@@ -479,7 +480,7 @@ async function handleClearCache(scope = 'all') {
 
         <!-- Redis 状态 -->
         <el-col :xs="24" :md="8">
-          <el-descriptions title="Redis 缓存" :column="2" border v-if="cacheHealth">
+          <el-descriptions v-if="cacheHealth" title="Redis 缓存" :column="2" border>
             <el-descriptions-item label="连接状态" :span="2">
               <el-tag :type="cacheHealth.connection === 'healthy' ? 'success' : 'danger'" size="small">
                 {{ cacheHealth.connection === 'healthy' ? '已连接' : '未连接' }}
@@ -489,7 +490,7 @@ async function handleClearCache(scope = 'all') {
             <el-descriptions-item label="内存">{{ cacheHealth.usedMemoryHuman || '-' }}</el-descriptions-item>
             <el-descriptions-item label="客户端">{{ cacheHealth.connectedClients ?? '-' }}</el-descriptions-item>
             <el-descriptions-item label="键数">{{ cacheHealth.totalKeys ?? '-' }}</el-descriptions-item>
-            <el-descriptions-item label="命中率" :span="2" v-if="cacheStats">
+            <el-descriptions-item v-if="cacheStats" label="命中率" :span="2">
               <el-progress
                 :percentage="cacheStats.redisHitRate ?? 0"
                 :stroke-width="10"
@@ -583,8 +584,8 @@ async function handleClearCache(scope = 'all') {
         <div class="upload-status-text">{{ uploadStatusText }}</div>
       </div>
       <template #footer>
-        <el-button @click="uploadDialog = false" :disabled="uploadLoading">取消</el-button>
-        <el-button type="primary" @click="handleUpload" :loading="uploadLoading">
+        <el-button :disabled="uploadLoading" @click="uploadDialog = false">取消</el-button>
+        <el-button type="primary" :loading="uploadLoading" @click="handleUpload">
           {{ uploadLoading ? '正在上传并向量化...' : '上传' }}
         </el-button>
       </template>
@@ -596,7 +597,7 @@ async function handleClearCache(scope = 'all') {
         <el-button :icon="Refresh" @click="openDocuments(currentKB)">刷新</el-button>
       </div>
       <div v-loading="documentsLoading">
-        <el-table :data="documents" style="width: 100%" v-if="documents.length">
+        <el-table v-if="documents.length" :data="documents" style="width: 100%">
           <el-table-column prop="name" label="文件名" />
           <el-table-column prop="size" label="文件大小">
             <template #default="scope">
@@ -626,7 +627,7 @@ async function handleClearCache(scope = 'all') {
           <el-button :icon="Search" :loading="testLoading" @click="handleTestSearch" />
         </template>
       </el-input>
-      <div class="test-results" v-if="testResults.length">
+      <div v-if="testResults.length" class="test-results">
         <div v-for="(result, idx) in testResults" :key="idx" class="test-result-item">
           <div class="result-header">
             <el-tag size="small">相似度: {{ ((1 - result.score) * 100).toFixed(1) }}%</el-tag>

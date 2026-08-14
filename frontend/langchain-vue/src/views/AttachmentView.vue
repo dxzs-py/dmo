@@ -523,7 +523,7 @@ onMounted(() => {
               <el-icon><Histogram /></el-icon>
               存储概览
             </span>
-            <el-button :icon="Refresh" text size="small" @click="loadStats" :loading="statsLoading">
+            <el-button :icon="Refresh" text size="small" :loading="statsLoading" @click="loadStats">
               刷新
             </el-button>
           </div>
@@ -594,16 +594,16 @@ onMounted(() => {
             :icon="Delete"
             type="danger"
             plain
-            @click="handleCleanup('cleanup', true)"
             :loading="cleanupLoading"
+            @click="handleCleanup('cleanup', true)"
           >
             模拟清理
           </el-button>
           <el-button
             :icon="Delete"
             type="danger"
-            @click="handleCleanup('cleanup', false)"
             :loading="cleanupLoading"
+            @click="handleCleanup('cleanup', false)"
           >
             执行清理
           </el-button>
@@ -611,16 +611,16 @@ onMounted(() => {
             :icon="FolderAdd"
             type="warning"
             plain
-            @click="handleCleanup('index', true)"
             :loading="cleanupLoading"
+            @click="handleCleanup('index', true)"
           >
             模拟入库
           </el-button>
           <el-button
             :icon="FolderAdd"
             type="warning"
-            @click="handleCleanup('index', false)"
             :loading="cleanupLoading"
+            @click="handleCleanup('index', false)"
           >
             执行入库
           </el-button>
@@ -659,11 +659,11 @@ onMounted(() => {
             </div>
 
             <el-table
-              :data="attachments"
               v-loading="loading"
-              @selection-change="handleSelectionChange"
+              :data="attachments"
               stripe
               style="width: 100%"
+              @selection-change="handleSelectionChange"
             >
               <el-table-column type="selection" width="40" />
               <el-table-column prop="originalName" label="文件名" min-width="180" show-overflow-tooltip />
@@ -773,11 +773,11 @@ onMounted(() => {
             </div>
 
             <el-table
-              :data="trashedAttachments"
               v-loading="trashLoading"
-              @selection-change="handleTrashSelectionChange"
+              :data="trashedAttachments"
               stripe
               style="width: 100%"
+              @selection-change="handleTrashSelectionChange"
             >
               <el-table-column type="selection" width="40" />
               <el-table-column prop="originalName" label="文件名" min-width="180" show-overflow-tooltip />

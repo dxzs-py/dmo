@@ -43,7 +43,6 @@ class ResearchTask(AuditModel):
         max_length=20, choices=ResearchDepth.choices, default=ResearchDepth.STANDARD, verbose_name="研究深度"
     )
     error_message = models.TextField(blank=True, null=True, verbose_name="错误信息")
-    celery_task_id = models.CharField(max_length=100, blank=True, null=True, verbose_name="Celery任务ID")
     model = models.CharField(max_length=100, blank=True, null=True, verbose_name="使用的模型")
     token_count = models.PositiveIntegerField(default=0, verbose_name="Token 数量")
     token_detail = models.JSONField(default=dict, blank=True, verbose_name="Token 明细")

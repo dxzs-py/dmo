@@ -20,7 +20,6 @@ Pipeline 流程:
 
 from __future__ import annotations
 
-import logging
 import re
 
 from langchain_core.documents import Document
@@ -65,14 +64,14 @@ _STOP_WORDS = {
     "与", "或", "且", "但", "而", "所", "以", "之", "其", "从", "对", "被", "把",
     "向", "让", "给", "用", "能", "将", "该", "可", "已", "还", "又", "再", "才",
     "刚", "正", "只", "没", "非", "更", "最", "太", "多", "少", "大", "小", "新",
-    "旧", "前", "后", "里", "外", "中", "内", "间", "旁", "边", "上", "下", "左",
+    "旧", "前", "后", "里", "外", "中", "内", "间", "旁", "边", "下", "左",
     "右", "东", "西", "南", "北", "年", "月", "日", "时", "分", "秒", "个", "次",
-    "位", "种", "类", "样", "件", "条", "张", "些", "点", "来", "去", "进", "出",
-    "过", "回", "开", "关", "起", "做", "做", "进行", "使用", "通过", "可以",
-    "需要", "能够", "应该", "可能", "已经", "没有", "不是", "因为", "所以",
+    "位", "种", "类", "样", "件", "条", "张", "点", "来", "进", "出",
+    "过", "回", "开", "关", "起", "做", "进行", "使用", "通过", "可以",
+    "需要", "能够", "应该", "可能", "已经", "不是", "因为", "所以",
     "如果", "虽然", "但是", "而且", "或者", "以及", "然后", "接着", "首先",
     "最后", "同时", "此外", "另外", "例如", "比如", "包括", "关于", "对于",
-    "根据", "按照", "除了", "除了", "为了", "由于", "因此", "因而", "于是",
+    "根据", "按照", "除了", "为了", "由于", "因此", "因而", "于是",
     "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
     "have", "has", "had", "do", "does", "did", "will", "would", "could",
     "should", "may", "might", "can", "shall", "to", "of", "in", "for",
@@ -121,15 +120,15 @@ def _extract_keywords(query: str, max_keywords: int = 5) -> list[str]:
     seen: set[str] = set()
 
     for token in raw_tokens:
-        token = token.strip().lower()
-        if not token or len(token) <= 1:
+        cleaned = token.strip().lower()
+        if not cleaned or len(cleaned) <= 1:
             continue
-        if token in _STOP_WORDS:
+        if cleaned in _STOP_WORDS:
             continue
-        if token in seen:
+        if cleaned in seen:
             continue
-        seen.add(token)
-        keywords.append(token)
+        seen.add(cleaned)
+        keywords.append(cleaned)
         if len(keywords) >= max_keywords:
             break
 
@@ -475,7 +474,8 @@ class UnifiedRagPipeline:
         doc_scores: dict = {}
         doc_map: dict = {}
 
-        for retriever, weight in zip(retrievers, weights):
+        # strict=False：KB 加载失败的 retriever 已被跳过，retrievers 长度可能小于 weights
+        for retriever, weight in zip(retrievers, weights, strict=False):
             try:
                 docs = retriever.invoke(query)
             except Exception as e:

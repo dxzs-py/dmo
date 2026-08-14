@@ -1,6 +1,5 @@
 import { apiClient } from './axios'
 import settings from '../config/settings'
-import { useUserStore } from '@/stores/user'
 import { fetchSSE } from '../utils/sse'
 
 function validateChatRequest(data) {

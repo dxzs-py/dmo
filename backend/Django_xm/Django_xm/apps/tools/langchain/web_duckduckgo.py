@@ -112,7 +112,7 @@ duckduckgo_search = DuckDuckGoSearchTool()
 
 def has_duckduckgo_available() -> bool:
     try:
-        from duckduckgo_search import DDGS
+        from duckduckgo_search import DDGS  # noqa: F401  # 仅用于可用性检测（ImportError 表示未安装）
 
         return True
     except ImportError:

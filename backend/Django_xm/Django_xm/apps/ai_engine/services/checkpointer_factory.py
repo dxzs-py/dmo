@@ -48,7 +48,9 @@ def _close_checkpointer(cache_key: str, checkpointer: Any) -> None:
             try:
                 # 尝试在已有事件循环中关闭
                 loop = asyncio.get_running_loop()
-                loop.create_task(cm_ref.__aexit__(None, None, None))
+                # fire-and-forget 关闭任务：保存引用避免被 GC 回收
+                task = loop.create_task(cm_ref.__aexit__(None, None, None))
+                task.add_done_callback(lambda _t: None)
             except RuntimeError:
                 # 没有运行中的事件循环，创建新的来关闭
                 try:

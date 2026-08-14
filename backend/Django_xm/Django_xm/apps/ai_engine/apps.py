@@ -1,11 +1,16 @@
 from django.apps import AppConfig
 
 
-def _warmup_caches(sender, **kwargs):
-    """post_migrate 信号回调：预加载缓存
+def _warmup_caches(sender=None, **kwargs):
+    """预加载缓存：从数据库加载 registry / SystemConfig 到进程内缓存。
 
-    Django 推荐在 post_migrate 而非 AppConfig.ready() 中访问数据库，
-    避免 "Accessing the database during app initialization is discouraged" 警告。
+    同步上下文才能访问 ORM；异步上下文（FastAPI 执行服务 agent 构建）依赖此缓存。
+    预热必须在 ``apps.ready`` 为 True 后执行（否则触发 Django
+    "Accessing the database during app initialization" RuntimeWarning），
+    故统一由各进程入口调用：
+    - Web 进程：asgi.py / wsgi.py 顶层（get_*_application() 之后）
+    - FastAPI 执行服务（8001）：main.py lifespan（sync_to_async）
+    - 迁移后：post_migrate 信号（本模块注册）
     """
     from Django_xm.apps.ai_engine.services.registry_service import warmup_cache
 
@@ -52,8 +57,11 @@ class AiEngineConfig(AppConfig):
 
             setup_langchain_cache(enabled=True)
 
-        # 注册 post_migrate 信号，在数据库迁移完成后预加载缓存
-        # 不在 ready() 中直接调用，避免 Django RuntimeWarning
+        # 缓存预热由各进程入口完成（apps.ready 为 True 后执行，避免 Django
+        # "Accessing the database during app initialization" RuntimeWarning）：
+        # - Web 进程：asgi.py / wsgi.py 顶层
+        # - FastAPI 执行服务（8001）：main.py lifespan（sync_to_async）
+        # post_migrate 仍注册，用于迁移完成后重建缓存。
         from django.db.models.signals import post_migrate
 
         post_migrate.connect(_warmup_caches, sender=self)

@@ -54,7 +54,8 @@ def inject_thinking_params(
     """为指定 provider 注入正确格式的深度思考参数
 
     每个 provider 的深度思考参数格式和传递位置不同：
-    - DeepSeek (langchain_openai.ChatOpenAI): extra_body.thinking={"type":"enabled"}, 移除 temperature/top_p，reasoning_effort 也放入 extra_body
+    - DeepSeek (langchain_openai.ChatOpenAI): extra_body.thinking={"type":"enabled"}, \
+移除 temperature/top_p，reasoning_effort 也放入 extra_body
     - Anthropic (langchain_anthropic.ChatAnthropic): thinking={"type":"enabled","budget_tokens":N} 作为顶层参数
     - Ollama (ChatOllama): reasoning=True (布尔值) 作为顶层参数
     - 其他支持 deep_thinking 的 provider: 仅记录日志

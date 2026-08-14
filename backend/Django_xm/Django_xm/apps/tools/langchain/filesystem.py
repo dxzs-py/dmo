@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from langchain_core.tools import BaseTool
@@ -29,8 +29,6 @@ def get_data_dir() -> str:
                 )
             )
         except (ImportError, AttributeError):
-            from pathlib import Path
-
             base_dir = Path(__file__).resolve().parent.parent.parent.parent.parent
             data_dir = base_dir / "data" / "tools" / "langchain"
             data_dir.mkdir(parents=True, exist_ok=True)

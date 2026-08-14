@@ -14,12 +14,14 @@ import AiTask from '../ai-elements/AiTask.vue'
 import AiImage from '../ai-elements/AiImage.vue'
 import AiControls from '../ai-elements/AiControls.vue'
 import AiQueue from '../ai-elements/AiQueue.vue'
+import ToolCallGroup from '../common/ToolCallGroup.vue'
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
 import { useApprovalStore } from '../../stores/approval'
 import { logger } from '../../utils/logger'
 import { formatFileSize } from '../../utils/format'
 import { deriveDisplayStatus } from '../../utils/toolCallStateMachine'
+import { buildAgentGroups, buildRootGroups } from '../../utils/toolCallTree'
 
 const props = defineProps({
   message: {
@@ -149,6 +151,30 @@ const hasMetadata = computed(() => {
 
 const sourceCount = computed(() => props.message.sources?.length || 0)
 const toolCallCount = computed(() => props.message.toolCalls?.length || 0)
+
+/**
+ * 统一渲染规则（Task 5）：消息 toolCalls 含子代理层级数据时启用 ToolCallGroup 分组树，
+ * 覆盖代理模式（langgraph agent_create/agent_run 子代理）与深度研究模式；
+ * 无子代理的普通工具调用保持 AiQueue + ToolCallCard 平铺。
+ *
+ * 判定：任一工具携带子代理层级信息（agentPath 深度 > 1 或 depth > 0），
+ * 或存在多个 agentPath 分组（多代理并存）时，即视为含子代理层级。
+ */
+const hasSubagentHierarchy = computed(() => {
+  const toolCalls = props.message.toolCalls
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) return false
+  const hasNested = toolCalls.some((tc) =>
+    (Array.isArray(tc.agentPath) && tc.agentPath.length > 1)
+    || (typeof tc.depth === 'number' && tc.depth > 0)
+  )
+  if (hasNested) return true
+  return buildAgentGroups(toolCalls).length > 1
+})
+
+// 分组树数据源（仅含子代理层级时使用，computed 惰性求值）：
+// allGroups 供组内递归查找子代理组，rootGroups 顶层仅渲染根组
+const allGroups = computed(() => buildAgentGroups(props.message.toolCalls || []))
+const rootGroups = computed(() => buildRootGroups(props.message.toolCalls || []))
 
 const formattedTime = computed(() => {
   if (!props.message.timestamp) return ''
@@ -519,7 +545,21 @@ function handleMessageClick() {
             工具调用 ({{ toolCallCount }})
           </span>
         </div>
-        <TransitionGroup name="tool-call" tag="div" class="tool-calls-list">
+        <!-- 分组树（Task 5）：消息 toolCalls 含子代理层级数据（代理模式 / 深度研究模式统一公共展示），
+             审批链路与下方平铺分支同源，复用 handleToolCallApprove / handleToolCallReject -->
+        <div v-if="hasSubagentHierarchy" class="tool-call-groups">
+          <ToolCallGroup
+            v-for="group in rootGroups"
+            :key="group.key"
+            :group="group"
+            :groups="allGroups"
+            :task-id="message.researchTaskId || ''"
+            @approve="(tc) => handleToolCallApprove(tc)"
+            @reject="(tc) => handleToolCallReject(tc)"
+          />
+        </div>
+        <!-- 平铺（无子代理的普通工具调用，保持原展示） -->
+        <TransitionGroup v-else name="tool-call" tag="div" class="tool-calls-list">
           <AiQueue v-if="message.toolCalls && message.toolCalls.length > 1" :items="message.toolCalls" class="tool-calls-queue">
             <ToolCallCard
               v-for="(toolCall, idx) in message.toolCalls"
@@ -1036,6 +1076,13 @@ function handleMessageClick() {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* 分组树容器（Task 5）：ToolCallGroup 自带组间距，此处仅做纵向排列 */
+.tool-call-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .tool-calls-queue :deep(.queue-items) {

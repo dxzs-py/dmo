@@ -47,7 +47,6 @@ class RAGChatService:
         from Django_xm.apps.knowledge.services.cross_app import get_index_manager
         from Django_xm.apps.knowledge.services.embedding_service import get_embeddings
         from Django_xm.apps.knowledge.services.retrieval_service import (
-            SearchType,
             create_multi_query_retriever,
             create_retriever,
         )
@@ -176,7 +175,11 @@ class RAGChatService:
         # 获取检索文档用于评估
         try:
             pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-            retrieved_docs = pipeline.retrieve_documents_from_retriever(retriever=retriever, query=query, vector_store=None)
+            retrieved_docs = pipeline.retrieve_documents_from_retriever(
+                retriever=retriever,
+                query=query,
+                vector_store=None,
+            )
         except Exception as e:
             logger.warning(f"获取检索文档失败: {e}")
             retrieved_docs = []
@@ -205,13 +208,22 @@ class RAGChatService:
             # 创建新检索器并重新查询
             new_retriever = self.get_rag_retriever(selected_kb, k=new_k, search_type=new_search_type)
             if new_retriever:
-                new_result = query_strict_rag(new_retriever, query, k=new_k, collection_name=self._get_user_index_name(selected_kb))
+                new_result = query_strict_rag(
+                    new_retriever,
+                    query,
+                    k=new_k,
+                    collection_name=self._get_user_index_name(selected_kb),
+                )
                 new_answer = new_result.get("answer", "")
 
                 # 重新评估
                 try:
                     pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-                    new_docs = pipeline.retrieve_documents_from_retriever(retriever=new_retriever, query=query, vector_store=None)
+                    new_docs = pipeline.retrieve_documents_from_retriever(
+                        retriever=new_retriever,
+                        query=query,
+                        vector_store=None,
+                    )
                 except Exception:
                     new_docs = []
 

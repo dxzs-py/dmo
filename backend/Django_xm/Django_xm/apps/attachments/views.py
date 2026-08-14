@@ -440,8 +440,14 @@ class StorageAlertDetailView(StorageAlertView):
 
     @extend_schema(operation_id="attachments_admin_storage_alerts_retrieve", responses={200: EmptySerializer})
     def get(self, request, alert_id, *args, **kwargs):
-        return super().get(request, alert_id=alert_id, *args, **kwargs)
+        # alert_id 作为关键字参数传参，置于 *args 展开之后（B026）
+        return super().get(request, *args, alert_id=alert_id, **kwargs)
 
-    @extend_schema(operation_id="attachments_admin_storage_alerts_action", request=EmptySerializer, responses={200: EmptySerializer})
+    @extend_schema(
+        operation_id="attachments_admin_storage_alerts_action",
+        request=EmptySerializer,
+        responses={200: EmptySerializer},
+    )
     def post(self, request, alert_id, *args, **kwargs):
-        return super().post(request, alert_id=alert_id, *args, **kwargs)
+        # alert_id 作为关键字参数传参，置于 *args 展开之后（B026）
+        return super().post(request, *args, alert_id=alert_id, **kwargs)

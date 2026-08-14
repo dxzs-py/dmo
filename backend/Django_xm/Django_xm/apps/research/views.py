@@ -11,14 +11,16 @@ from rest_framework.views import APIView
 from Django_xm.apps.chat.services.cross_app import get_active_session_ids_for_research_task
 from Django_xm.apps.core.services.file_manager import get_file_manager
 from Django_xm.apps.core.throttling import ResearchRateThrottle
+from Django_xm.apps.fastapi_service.event_bus import SIGNAL_START, publish_retry_subagent_signal, publish_signal
 from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.event_schema import EventType
 from Django_xm.common.responses import error_response, not_found_response, success_response
 from Django_xm.common.serializers import EmptySerializer
-from Django_xm.tasks.deep_research import run_research_task
 
 from .models import ResearchTask, ResearchTaskStatus
 from .serializers import (
     ResearchContinueSerializer,
+    ResearchRetrySubagentSerializer,
     ResearchStartSerializer,
     ResearchTaskSerializer,
 )
@@ -27,6 +29,20 @@ from .services.task_manager import get_task_manager, get_task_status
 logger = logging.getLogger(__name__)
 task_manager = get_task_manager()
 file_manager = get_file_manager()
+
+# 子代理工具调用失败终态（lifecycle 上下文 last_event_type / 持久化 status / 审批 state 判定）
+# - lifecycle 事件：tool_call_failed / tool_call_timeout / tool_call_rejected
+# - ChatMessage.tool_calls status：failed / timeout / rejected
+# - Approval.state：rejected / timeout（审批类失败终态）
+_FAILED_TOOL_EVENTS: frozenset[str] = frozenset(
+    {
+        EventType.TOOL_CALL_FAILED.value,
+        EventType.TOOL_CALL_TIMEOUT.value,
+        EventType.TOOL_CALL_REJECTED.value,
+    }
+)
+_FAILED_TOOL_STATUSES: frozenset[str] = frozenset({"failed", "timeout", "rejected"})
+_FAILED_APPROVAL_STATES: frozenset[str] = frozenset({"rejected", "timeout"})
 
 
 class DeepResearchStartView(APIView):
@@ -87,34 +103,37 @@ class DeepResearchStartView(APIView):
             else:
                 estimated_time = "5-10 分钟"
 
-            celery_result = run_research_task.delay(
-                thread_id=thread_id,
-                query=data["query"],
-                enable_web_search=data.get("enable_web_search", True),
-                enable_doc_analysis=data.get("enable_doc_analysis", False),
-                knowledge_base_ids=knowledge_base_ids,
-                user_id=request.user.id,
-                use_mcp=data.get("use_mcp", False),
-                selected_mcp_servers=data.get("selected_mcp_servers", []),
-                selected_tools=data.get("selected_tools", []),
-                provider_id=data.get("provider_id"),
-                model_name=data.get("model_name"),
-                enable_deep_thinking=data.get("enable_deep_thinking", False),
-                temperature=data.get("temperature"),
-                max_tokens=data.get("max_tokens"),
-                special_params=data.get("special_params"),
+            publish_signal(
+                SIGNAL_START,
+                thread_id,
+                {
+                    "thread_id": thread_id,
+                    "query": data["query"],
+                    "user_id": request.user.id,
+                    "session_id": None,
+                    "message_id": "",
+                    "publish_to_redis": False,
+                    "enable_web_search": data.get("enable_web_search", True),
+                    "enable_doc_analysis": data.get("enable_doc_analysis", False),
+                    "knowledge_base_ids": knowledge_base_ids,
+                    "use_mcp": data.get("use_mcp", False),
+                    "selected_mcp_servers": data.get("selected_mcp_servers", []),
+                    "selected_tools": data.get("selected_tools", []),
+                    "provider_id": data.get("provider_id"),
+                    "model_name": data.get("model_name"),
+                    "enable_deep_thinking": data.get("enable_deep_thinking", False),
+                    "temperature": data.get("temperature"),
+                    "max_tokens": data.get("max_tokens"),
+                    "special_params": data.get("special_params"),
+                },
             )
 
-            logger.info(f"研究任务已提交到 Celery 队列：{thread_id} (task_id: {celery_result.id})")
-
-            ResearchTask.objects.filter(task_id=thread_id).update(
-                celery_task_id=celery_result.id,
-            )
+            logger.info(f"研究任务已下发执行服务：{thread_id}")
 
             # 发布 task_created 实时事件，通知所有浏览器刷新深度研究任务列表
             try:
-                from Django_xm.common.realtime_events import publish_event_sync
                 from Django_xm.common.event_schema import EventType
+                from Django_xm.common.realtime_events import publish_event_sync
                 publish_event_sync(
                     EventType.TASK_CREATED,
                     {"task_id": thread_id},
@@ -126,7 +145,6 @@ class DeepResearchStartView(APIView):
             return success_response(
                 data={
                     "task_id": thread_id,
-                    "celery_task_id": celery_result.id,
                     "status": "pending",
                     "query": data["query"],
                     "created_at": timezone.now().isoformat(),
@@ -219,35 +237,37 @@ class DeepResearchContinueView(APIView):
                 )
                 new_task.save()
 
-            celery_result = run_research_task.delay(
-                thread_id=new_thread_id,
-                query=new_query,
-                enable_web_search=new_task.enable_web_search,
-                enable_doc_analysis=new_task.enable_doc_analysis,
-                knowledge_base_ids=new_task.knowledge_base_ids,
-                user_id=request.user.id,
-                use_mcp=new_task.use_mcp,
-                selected_mcp_servers=new_task.selected_mcp_servers,
-                selected_tools=new_task.selected_tools,
-                provider_id=data.get("provider_id"),
-                model_name=data.get("model_name"),
-                enable_deep_thinking=data.get("enable_deep_thinking", False),
-                temperature=data.get("temperature"),
-                max_tokens=data.get("max_tokens"),
-                special_params=data.get("special_params"),
-                continue_task_id=task_id,
+            publish_signal(
+                SIGNAL_START,
+                new_thread_id,
+                {
+                    "thread_id": new_thread_id,
+                    "query": new_query,
+                    "user_id": request.user.id,
+                    "session_id": parent_task.session_id,
+                    "message_id": "",
+                    "publish_to_redis": False,
+                    "enable_web_search": new_task.enable_web_search,
+                    "enable_doc_analysis": new_task.enable_doc_analysis,
+                    "knowledge_base_ids": new_task.knowledge_base_ids,
+                    "use_mcp": new_task.use_mcp,
+                    "selected_mcp_servers": new_task.selected_mcp_servers,
+                    "selected_tools": new_task.selected_tools,
+                    "provider_id": data.get("provider_id"),
+                    "model_name": data.get("model_name"),
+                    "enable_deep_thinking": data.get("enable_deep_thinking", False),
+                    "temperature": data.get("temperature"),
+                    "max_tokens": data.get("max_tokens"),
+                    "special_params": data.get("special_params"),
+                    "continue_task_id": task_id,
+                },
             )
 
-            logger.info(f"续研任务已提交：{new_thread_id} (v{new_version}), 父任务: {task_id}")
-
-            ResearchTask.objects.filter(task_id=new_thread_id).update(
-                celery_task_id=celery_result.id,
-            )
+            logger.info(f"续研任务已下发执行服务：{new_thread_id} (v{new_version}), 父任务: {task_id}")
 
             return success_response(
                 data={
                     "task_id": new_thread_id,
-                    "celery_task_id": celery_result.id,
                     "status": "pending",
                     "query": new_query,
                     "parent_task_id": task_id,
@@ -456,8 +476,8 @@ class DeepResearchTaskDeleteView(APIView):
     def _publish_task_deleted(task_id: str, user_id: int):
         """发布 task_deleted 实时事件（与 task_created 对称），通知所有浏览器刷新任务列表"""
         try:
-            from Django_xm.common.realtime_events import publish_event_sync
             from Django_xm.common.event_schema import EventType
+            from Django_xm.common.realtime_events import publish_event_sync
 
             publish_event_sync(
                 EventType.TASK_DELETED,
@@ -516,3 +536,195 @@ class DeepResearchTaskListView(APIView):
                 message="获取研究任务列表失败，请稍后重试",
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+class DeepResearchRetrySubagentView(APIView):
+    """单独重启失败子代理（Task 3）。
+
+    校验任务归属、目标子代理存在且处于失败状态后，发布 Redis 信令
+    （SIGNAL_RETRY_SUBAGENT），由执行服务向会话注入重试指令：
+    - 会话运行中：直接注入（adapter astream 循环按 chunk 消费并注入 graph state）
+    - 会话已结束/服务重启恢复态：从 checkpoint 恢复会话后注入
+
+    POST /api/v1/research/task/<task_id>/retry-subagent/
+    Body: {"agent_path": ["main", "web-researcher"], "tool_call_id": "call_xxx"}
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=ResearchRetrySubagentSerializer, responses={200: EmptySerializer})
+    def post(self, request, task_id):
+        serializer = ResearchRetrySubagentSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="数据验证失败",
+                data=serializer.errors,
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        data = serializer.validated_data
+        agent_path = data["agent_path"]
+        tool_call_id = data["tool_call_id"]
+
+        try:
+            task = ResearchTask.objects.get(
+                task_id=task_id,
+                created_by=request.user,
+                is_deleted=False,
+            )
+        except ResearchTask.DoesNotExist:
+            return not_found_response(message="研究任务不存在或无权访问")
+
+        if task.status == ResearchTaskStatus.COMPLETED:
+            return error_response(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="研究任务已完成，无法重试失败子代理",
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        subagent_info = self._validate_failed_subagent(task, agent_path, tool_call_id)
+        if subagent_info is None:
+            return error_response(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="目标子代理不存在或未处于失败状态，无法重试",
+                data={"agent_path": agent_path, "tool_call_id": tool_call_id},
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        agent_name = agent_path[-1] if agent_path else ""
+        publish_retry_subagent_signal(
+            task_id,
+            agent_path=agent_path,
+            tool_call_id=tool_call_id,
+            agent_name=agent_name,
+            original_args=subagent_info.get("original_args") or {},
+            user_id=request.user.id,
+            chat_session_id=task.session_id,
+        )
+
+        return success_response(
+            data={
+                "task_id": task_id,
+                "agent_path": agent_path,
+                "tool_call_id": tool_call_id,
+                "status": "retry_scheduled",
+            },
+            message="已提交子代理重试指令",
+        )
+
+    @classmethod
+    def _validate_failed_subagent(cls, task, agent_path: list[str], tool_call_id: str) -> dict | None:
+        """校验目标子代理确实存在且处于失败状态，并尽量恢复原始委派入参。
+
+        数据源优先级（失败状态 + agent_path 归属判定）：
+        1. tool_call_lifecycle Redis 上下文（实时权威，24h TTL）：
+           module_id == task_id、agent_path 一致、last_event_type 为失败终态
+        2. Approval 记录（持久化，审批链路）：extra.tool_call_id 匹配、
+           extra.agent_path 一致、state 为拒绝/超时
+        3. ChatMessage.tool_calls（聊天关联场景持久化）：条目 id/tool_call_id
+           匹配、status 为失败终态
+
+        Args:
+            task: ResearchTask 实例
+            agent_path: 目标子代理完整调用链路
+            tool_call_id: 失败子代理工具调用 ID
+
+        Returns:
+            dict | None：{original_args, failed_tool_name}；未找到失败子代理时返回 None
+        """
+        from django.db.models import Q
+
+        from Django_xm.apps.approvals.models import Approval
+        from Django_xm.common.tool_call_lifecycle import service as lifecycle_service
+
+        # 1. tool_call_lifecycle 上下文（实时权威）
+        ctx = lifecycle_service.get_context(tool_call_id)
+        if ctx and str(ctx.get("module_id", "")) == task.task_id:
+            ctx_path = ctx.get("agent_path") or []
+            if cls._normalize_path(ctx_path) == agent_path and ctx.get("last_event_type") in _FAILED_TOOL_EVENTS:
+                original_args = cls._recover_subagent_original_args(ctx, lifecycle_service)
+                return {
+                    "original_args": original_args,
+                    "failed_tool_name": str(ctx.get("tool_name") or ""),
+                }
+            # 上下文存在但 agent_path / 状态不匹配：目标子代理并非失败态，直接拒绝
+            return None
+
+        # 2. Approval 记录（持久化，审批链路）
+        approval = (
+            Approval.objects.filter(
+                source=Approval.SOURCE_DEEP_RESEARCH,
+                source_id=task.task_id,
+            )
+            .filter(Q(extra__tool_call_id=tool_call_id) | Q(interrupt_id=tool_call_id))
+            .order_by("-created_at")
+            .first()
+        )
+        if approval is not None:
+            extra = approval.extra if isinstance(approval.extra, dict) else {}
+            if cls._normalize_path(extra.get("agent_path")) == agent_path and approval.state in _FAILED_APPROVAL_STATES:
+                return {
+                    "original_args": approval.parameters if isinstance(approval.parameters, dict) else {},
+                    "failed_tool_name": approval.tool_name or "",
+                }
+            return None
+
+        # 3. ChatMessage.tool_calls（聊天关联场景持久化）
+        if task.session_id:
+            from Django_xm.apps.chat.models import ChatMessage
+
+            chat_msg = (
+                ChatMessage.objects.filter(
+                    research_task_id=task.task_id,
+                    role="assistant",
+                    is_deleted=False,
+                )
+                .order_by("-created_at")
+                .first()
+            )
+            if chat_msg is not None:
+                for tc in chat_msg.tool_calls or []:
+                    if not isinstance(tc, dict):
+                        continue
+                    tc_id = tc.get("tool_call_id") or tc.get("id")
+                    if str(tc_id) != tool_call_id:
+                        continue
+                    approval_info = tc.get("approval") if isinstance(tc.get("approval"), dict) else {}
+                    # 条目携带 approval.agent_path 时校验归属（旧数据无此字段则跳过）
+                    entry_path = cls._normalize_path(approval_info.get("agent_path"))
+                    if entry_path and entry_path != agent_path:
+                        return None
+                    if str(tc.get("status") or "") in _FAILED_TOOL_STATUSES:
+                        return {
+                            "original_args": tc.get("parameters")
+                            if isinstance(tc.get("parameters"), dict)
+                            else (tc.get("args") if isinstance(tc.get("args"), dict) else {}),
+                            "failed_tool_name": str(tc.get("name") or ""),
+                        }
+                    return None
+        return None
+
+    @staticmethod
+    def _normalize_path(value) -> list[str]:
+        """将 agent_path 值规范化为字符串列表（None/非 list 返回空列表）。"""
+        if not isinstance(value, (list, tuple)):
+            return []
+        return [str(item) for item in value]
+
+    @staticmethod
+    def _recover_subagent_original_args(ctx: dict, lifecycle_service) -> dict:
+        """恢复子代理原始委派入参（task 工具参数）。
+
+        优先取父级 task 工具调用（子代理内工具事件的 parent_tool_call_id）
+        的 parameters（即主 agent 委派子代理时的原始参数）；父级上下文
+        缺失时回退到失败工具调用自身的 parameters。
+        """
+        parent_id = ctx.get("parent_tool_call_id") or ""
+        if parent_id:
+            parent_ctx = lifecycle_service.get_context(parent_id)
+            parent_params = parent_ctx.get("parameters") if parent_ctx else None
+            if isinstance(parent_params, dict) and parent_params:
+                return parent_params
+        params = ctx.get("parameters")
+        return params if isinstance(params, dict) else {}

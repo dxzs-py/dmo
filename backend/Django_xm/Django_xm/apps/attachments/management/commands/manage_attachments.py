@@ -15,7 +15,10 @@ class Command(BaseCommand):
         parser.add_argument(
             "action",
             choices=["cleanup", "index", "check-storage", "stats", "full", "fix-data"],
-            help="操作: cleanup=清理过期, index=入库旧文件, check-storage=检查存储空间, stats=统计信息, full=完整流程, fix-data=修复数据一致性",
+            help=(
+                "操作: cleanup=清理过期, index=入库旧文件, check-storage=检查存储空间, "
+                "stats=统计信息, full=完整流程, fix-data=修复数据一致性"
+            ),
         )
         parser.add_argument(
             "--dry-run",

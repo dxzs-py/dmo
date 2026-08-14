@@ -241,8 +241,8 @@ class SkillBaseTool(AsyncToolMixin, BaseTool):
             for or_group in or_groups:
                 and_parts = re.split(r"\s+and\s+", or_group)
                 all_true = True
-                for part in and_parts:
-                    part = part.strip()
+                for raw_part in and_parts:
+                    part = raw_part.strip()
                     match = re.match(
                         r'(\w+)\s*(==|!=)\s*("([^"]*)"|\'([^\']*)\'|(\w+))',
                         part,

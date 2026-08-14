@@ -278,8 +278,9 @@ function getCategoryColor(name) {
                   <span class="card-title">使用趋势（近7天）</span>
                 </template>
                 <div class="trend-chart">
-                  <div v-for="item in usageTrend" :key="item.date" class="trend-bar-group"
-                       v-memo="[item.events, item.tokens, item.date, trendMax.events, trendMax.tokens]">
+                  <div
+v-for="item in usageTrend" :key="item.date" v-memo="[item.events, item.tokens, item.date, trendMax.events, trendMax.tokens]"
+                       class="trend-bar-group">
                     <div class="trend-bar-container">
                       <div
                         class="trend-bar events"
@@ -308,8 +309,9 @@ function getCategoryColor(name) {
                   <span class="card-title">模块使用分布</span>
                 </template>
                 <div class="distribution-list">
-                  <div v-for="item in categoryDistribution" :key="item.name" class="distribution-item"
-                       v-memo="[item.name, item.value, item.count]">
+                  <div
+v-for="item in categoryDistribution" :key="item.name" v-memo="[item.name, item.value, item.count]"
+                       class="distribution-item">
                     <div class="distribution-header">
                       <span class="distribution-name">{{ item.name }}</span>
                       <span class="distribution-count">{{ item.count }}次</span>
@@ -333,8 +335,9 @@ function getCategoryColor(name) {
                   <span class="card-title">功能使用排行</span>
                 </template>
                 <div class="feature-list">
-                  <div v-for="(item, index) in featureUsage" :key="item.name" class="feature-item"
-                       v-memo="[item.name, item.value]">
+                  <div
+v-for="(item, index) in featureUsage" :key="item.name" v-memo="[item.name, item.value]"
+                       class="feature-item">
                     <span class="feature-rank" :class="{ 'top3': index < 3 }">{{ index + 1 }}</span>
                     <span class="feature-name">{{ item.name }}</span>
                     <div class="feature-bar-container">
@@ -352,8 +355,9 @@ function getCategoryColor(name) {
                   <span class="card-title">模型使用分布</span>
                 </template>
                 <div class="distribution-list">
-                  <div v-for="item in modelDistribution" :key="item.name" class="distribution-item"
-                       v-memo="[item.name, item.value, item.tokens]">
+                  <div
+v-for="item in modelDistribution" :key="item.name" v-memo="[item.name, item.value, item.tokens]"
+                       class="distribution-item">
                     <div class="distribution-header">
                       <span class="distribution-name">{{ item.name }}</span>
                       <span class="distribution-count">{{ item.value }}次 · {{ formatNumber(item.tokens || 0) }} Token</span>

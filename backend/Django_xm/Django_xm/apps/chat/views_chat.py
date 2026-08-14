@@ -24,9 +24,9 @@ from Django_xm.async_utils import run_async
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.event_schema import EventSource, EventType
 from Django_xm.common.realtime_events import publish_event_sync
-from Django_xm.common.responses import error_response, success_response, validation_error_response
 from Django_xm.common.redis_utils import get_redis_client
-from Django_xm.common.sse_utils import sse_error_event, sse_error_response, sse_response
+from Django_xm.common.responses import error_response, success_response, validation_error_response
+from Django_xm.common.sse_utils import sse_error_response, sse_response
 
 from .models import ChatMessage, ChatSession, MessageRole
 from .serializers import (
@@ -516,8 +516,10 @@ class ChatStreamView(BaseChatAPIView):
                 # 广播 MESSAGE_ADDED 到 WebSocket（强制同步，确保先于 SSE 流到达所有浏览器）
                 try:
                     from asgiref.sync import async_to_sync
-                    from Django_xm.common.event_schema import EventSource, EventType
+
+                    from Django_xm.common.event_schema import EventType
                     from Django_xm.common.realtime_events import publish_event
+
                     from .serializers import ChatMessageSerializer as _MsgSerializer
 
                     for mid in (user_message_id, assistant_message_id):
@@ -617,7 +619,7 @@ class ChatFinalizeView(BaseChatAPIView):
             )
 
         # 发布 STREAM_FINALIZED 事件到 session 频道
-        from Django_xm.common.event_schema import EventSource, EventType, PayloadValidationError
+        from Django_xm.common.event_schema import EventType, PayloadValidationError
         from Django_xm.common.realtime_events import publish_event_sync
 
         payload = {

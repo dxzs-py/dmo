@@ -60,6 +60,16 @@ export const useApprovalStore = defineStore('approval', () => {
   let cleanupTimer = null
 
   /**
+   * 已触发超时恢复的去重键集合（Task 5 事件驱动化）
+   *
+   * key: `${sessionId}:${graphInterruptId}`。
+   * 仅在后端已实际开始恢复（返回 SSE 流 / resumed）时标记；
+   * waiting（批次未决断）不标记，等待后续超时事件再次触发；
+   * 失败不标记，允许重试。
+   */
+  const _timeoutResumeKeys = new Set()
+
+  /**
    * 审批串行执行队列（按 sessionId 隔离）
    *
    * 同一会话的审批恢复流必须串行执行，避免多个 SSE 流并发写入同一会话
@@ -230,6 +240,9 @@ export const useApprovalStore = defineStore('approval', () => {
         ? null
         : sessionStore.currentSessionId)
 
+    // 超时恢复需要完整 approvalData（含 useTools 等配置字段），在删除条目前捕获
+    const approvalData = existingEntry?.approvalData || data
+
     if (toolCallId) {
       pendingApprovals.value.delete(toolCallId)
     }
@@ -257,6 +270,52 @@ export const useApprovalStore = defineStore('approval', () => {
     // 深度研究来源额外提示
     if (source === 'deep_research' || data.source === 'deep_research') {
       ElMessage.warning(`工具 "${data.toolName || '未知'}" 的审批已超时，Agent 将使用其他方式继续`)
+      return
+    }
+
+    // 事件驱动化超时恢复（Task 5）：chat 来源审批超时后，由前端收到 approval_timeout
+    // 事件触发 SSE resume 端点驱动恢复流（与用户手动确认/拒绝同构，不再依赖 Celery）。
+    // 后端 resume 端点会判定批次完整性：批次未决断返回 waiting（等待后续超时事件），
+    // 全部决断后返回 SSE 流驱动 agent 继续执行。
+    if (effectiveSessionId) {
+      _triggerTimeoutResume(approvalData, effectiveSessionId)
+    }
+  }
+
+  /**
+   * 触发 chat 审批超时恢复（Task 5 事件驱动化）
+   *
+   * 复用 SSE resume 端点（POST /approvals/{interrupt_id}/resume/，timeout_resume=true）：
+   * - 后端已把审批终态化 TIMEOUT，resume_approval 跳过幂等直接驱动恢复流；
+   * - 审批状态保持 TIMEOUT 终态展示（不在前端覆盖为 processing/rejected）；
+   * - 同批次其他工具超时事件到达时重复触发，由后端批次完整性判定（waiting）过滤，
+   *   实际恢复流只驱动一次（后端恢复流去重锁 + 本函数去重键）。
+   *
+   * @param {Object} approvalData - 审批数据（含 useTools 等配置）
+   * @param {string} sessionId - chat 会话 ID
+   */
+  const _triggerTimeoutResume = async (approvalData, sessionId) => {
+    const graphInterruptId = approvalData.graphInterruptId || approvalData.extra?.graphInterruptId || ''
+    const interruptId = getInterruptId(approvalData)
+    const dedupKey = `${sessionId}:${graphInterruptId || interruptId || ''}`
+    if (_timeoutResumeKeys.has(dedupKey)) return
+
+    try {
+      await executeApproval(approvalData, false, null, { sessionId, timeoutResume: true })
+      // executeApproval 正常返回：SSE 流已消费完成（agent 恢复执行结束）
+      _timeoutResumeKeys.add(dedupKey)
+    } catch (err) {
+      // waiting：同批次仍有 pending 审批，批次未决断——不标记，后续超时事件会再次触发
+      if (err?.__approvalWaiting) return
+      // 幂等（已被其他浏览器/路径触发）或中断（流被新审批打断）：已实际恢复，标记防重复
+      if (err?.__approvalIdempotent || err?.__approvalInterrupted) {
+        _timeoutResumeKeys.add(dedupKey)
+        return
+      }
+      logger.warn(
+        `[ApprovalStore] 超时恢复触发失败，允许重试: session=${sessionId}, interruptId=${interruptId}`, err
+      )
+      _timeoutResumeKeys.delete(dedupKey)
     }
   }
 
@@ -432,21 +491,28 @@ export const useApprovalStore = defineStore('approval', () => {
       return
     }
 
-    // 标记为 processing
+    // 超时恢复标记（Task 5 事件驱动化）：
+    // 审批已终态 TIMEOUT，前端触发恢复流驱动 agent 继续执行，
+    // 但不重置审批状态为 processing、不覆盖为 rejected（保持"已超时"终态展示）。
+    const timeoutResume = !!options.timeoutResume
+
+    // 标记为 processing（timeoutResume 时跳过——审批已终态，无需本地标记处理中）
     // 数据源归属互斥路由（与 _handleTimeout/_handleProcessing/_handleWaiting/_handleProcessed 对齐）：
     // - sessionId 存在（chat / learning / 聊天触发的深度研究）→ 数据源是 sessionStore 消息 toolCalls，
     //   只更新 sessionStore，不调用 researchStore（该任务不存在于 researchStore.tasks，
     //   详情页 taskToolCalls 同样从 sessionStore 消息读取）
     // - 仅 taskId（独立深度研究）→ 数据源是 researchStore.tasks，只更新 researchStore
-    approvalData.state = 'processing'
-    if (sessionId) {
-      sessionStore.updateToolCallApprovalState(sessionId, toolCallId, 'processing')
-      sessionStore.setApprovalToLastMessage(sessionId, { ...approvalData, state: 'processing' })
-    } else if (taskId) {
-      try {
-        const researchStore = await _getResearchStore()
-        researchStore.updateToolCallApprovalState(taskId, toolCallId, 'processing')
-      } catch (e) { logger.warn('[ApprovalStore] 更新 researchStore processing 失败:', e) }
+    if (!timeoutResume) {
+      approvalData.state = 'processing'
+      if (sessionId) {
+        sessionStore.updateToolCallApprovalState(sessionId, toolCallId, 'processing')
+        sessionStore.setApprovalToLastMessage(sessionId, { ...approvalData, state: 'processing' })
+      } else if (taskId) {
+        try {
+          const researchStore = await _getResearchStore()
+          researchStore.updateToolCallApprovalState(taskId, toolCallId, 'processing')
+        } catch (e) { logger.warn('[ApprovalStore] 更新 researchStore processing 失败:', e) }
+      }
     }
     pendingApprovals.value.delete(toolCallId)
 
@@ -464,10 +530,11 @@ export const useApprovalStore = defineStore('approval', () => {
       // 通过时不设 approved：SSE 流中 tool_result 事件已自行更新状态，
       // 设为 approved 会覆盖"处理中"状态，导致 P1（触发浏览器显示"已确认"而非"处理中"）
       // 数据源归属互斥路由（与 processing 标记一致）：sessionId 优先，独立深度研究走 taskId
-      if (!approved && sessionId) {
+      // timeoutResume 时跳过：审批保持 TIMEOUT 终态（后端恢复流结束会广播终态事件）
+      if (!approved && sessionId && !timeoutResume) {
         sessionStore.updateToolCallApprovalState(sessionId, toolCallId, 'rejected')
         sessionStore.setApprovalToLastMessage(sessionId, { ...approvalData, state: 'rejected' })
-      } else if (!approved && taskId) {
+      } else if (!approved && taskId && !timeoutResume) {
         try {
           const researchStore = await _getResearchStore()
           researchStore.updateToolCallApprovalState(taskId, toolCallId, 'rejected')
@@ -490,6 +557,8 @@ export const useApprovalStore = defineStore('approval', () => {
         return
       }
       logger.error(`[ApprovalStore] 审批${approved ? '确认' : '拒绝'}失败:`, err)
+      // 超时恢复失败：审批已终态 TIMEOUT，不回退为 pending（无意义且会覆盖终态）
+      if (timeoutResume) return
       // 恢复审批状态（数据源归属互斥路由，与 processing/rejected 一致）
       pendingApprovals.value.set(toolCallId, {
         source,
@@ -572,6 +641,8 @@ export const useApprovalStore = defineStore('approval', () => {
       selectedTools: approvalData.selectedTools ?? null,
       useKnowledgeBase: approvalData.useKnowledgeBase ?? false,
       selectedKnowledgeBases: approvalData.selectedKnowledgeBases ?? [],
+      // 事件驱动化超时恢复标记（Task 5）：后端据此跳过 TIMEOUT 终态幂等直接驱动恢复流
+      ...(options.timeoutResume ? { timeoutResume: true } : {}),
     }
     if (approved && approvalData.action === 'confirm_with_input' && userInput !== null) {
       requestBody.userInput = userInput

@@ -77,7 +77,7 @@ class ToolService:
             from Django_xm.apps.tools.langchain.attachment_rag import attachment_rag_search
             from Django_xm.apps.tools.langchain.file_reader import attachment_reader
 
-            existing = set(t.name for t in tools)
+            existing = {t.name for t in tools}
             if attachment_rag_search.name not in existing:
                 tools.append(attachment_rag_search)
                 existing.add(attachment_rag_search.name)

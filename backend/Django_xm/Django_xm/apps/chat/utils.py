@@ -6,7 +6,7 @@
 import json
 import re
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 
 def _needs_completion(text: str) -> bool:

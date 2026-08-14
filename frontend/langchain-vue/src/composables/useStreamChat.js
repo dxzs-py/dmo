@@ -1,4 +1,4 @@
-import { ref, readonly, computed } from 'vue'
+import { ref, readonly } from 'vue'
 import { chatAPI } from '@/api/chat'
 import { readSSEStreamWithEvents } from '../utils/sse'
 import { extractSSEError } from '../utils/apiErrorHandler'
@@ -102,12 +102,6 @@ export function useStreamChat() {
       abortController.value = null
     }
   }
-
-  const streamDuration = computed(() => {
-    if (!streamStartTime.value) return 0
-    const end = isStreaming.value ? Date.now() : (streamStartTime.value + (bytesReceived.value > 0 ? 0 : 0))
-    return Math.max(0, ((isStreaming.value ? Date.now() : streamStartTime.value) - streamStartTime.value) / 1000)
-  })
 
   return {
     isStreaming,

@@ -86,17 +86,20 @@ def _keyword_search_fallback(query: str, collection_name: str, k: int = 4) -> li
 
     try:
         with connections["default"].cursor() as cursor:
+            # 表名来自固定内部函数并经 _quote_identifier 白名单包装（非用户输入），
+            # 查询值（ts_query_str/collection_name/k）已全部 %s 参数化
+            table_clause = (
+                f"FROM {embedding_table_quoted} e "
+                f"JOIN {collection_table_quoted} c ON e.collection_id = c.uuid"
+            )
             cursor.execute(
-                f"""
-                SELECT e.document, e.cmetadata,
-                       ts_rank_cd(to_tsvector('simple', e.document), to_tsquery('simple', %s)) as rank
-                FROM {embedding_table_quoted} e
-                JOIN {collection_table_quoted} c ON e.collection_id = c.uuid
-                WHERE c.name = %s
-                AND to_tsvector('simple', e.document) @@ to_tsquery('simple', %s)
-                ORDER BY rank DESC
-                LIMIT %s
-                """,
+                "SELECT e.document, e.cmetadata, "
+                "ts_rank_cd(to_tsvector('simple', e.document), to_tsquery('simple', %s)) as rank "
+                f"{table_clause} "
+                "WHERE c.name = %s "
+                "AND to_tsvector('simple', e.document) @@ to_tsquery('simple', %s) "
+                "ORDER BY rank DESC "
+                "LIMIT %s",
                 [ts_query_str, collection_name, ts_query_str, k],
             )
 
@@ -426,7 +429,7 @@ class SyncSafeRetrieverTool(BaseTool):
     llm: Any | None = None
     kb_name: str = ""
     kb_description: str = ""
-    collection_names: list[str] = []
+    collection_names: list[str] = Field(default_factory=list)
 
     def _build_kb_context(self) -> str:
         """构建知识库上下文前缀，注入到工具返回结果中"""
@@ -510,8 +513,8 @@ class SyncSafeRetrieverTool(BaseTool):
                 if cleaned:
                     logger.info(f"precise 检索: query='{query[:50]}...', 返回 {len(cleaned)} 个文档 (Pipeline level=0)")
                     return self._build_kb_context() + KB_RESULT_INSTRUCTION + self._format_docs(cleaned)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("precise 检索回退清理失败，进入降级检索: %s", e)
             return self._degrade_knowledge_search(query)
         logger.info(f"precise 检索 Pipeline: query='{query[:50]}...'")
         return self._build_kb_context() + KB_RESULT_INSTRUCTION + result
@@ -540,8 +543,8 @@ class SyncSafeRetrieverTool(BaseTool):
                     combiner = MapReduceDocCombiner(llm=self.llm)
                     combined = combiner.combine_sync(cleaned, query, llm=self.llm)
                     return self._build_kb_context() + KB_RESULT_INSTRUCTION + combined
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("comprehensive 检索回退清理失败，进入降级检索: %s", e)
             return self._degrade_knowledge_search(query)
         logger.info(f"comprehensive 检索 Pipeline: query='{query[:50]}...'")
         return self._build_kb_context() + KB_RESULT_INSTRUCTION + result
@@ -575,8 +578,8 @@ class SyncSafeRetrieverTool(BaseTool):
                     combiner = MapReduceDocCombiner(llm=self.llm)
                     combined = await combiner.combine(cleaned, query, llm=self.llm)
                     return self._build_kb_context() + KB_RESULT_INSTRUCTION + combined
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("comprehensive 异步检索回退清理失败，进入降级检索: %s", e)
             return self._degrade_knowledge_search(query)
         logger.info(f"comprehensive 异步检索 Pipeline: query='{query[:50]}...'")
         return self._build_kb_context() + KB_RESULT_INSTRUCTION + result
@@ -697,7 +700,8 @@ def test_retriever(
 _INTENT_CLASSIFICATION_PROMPT = """分析用户查询的意图类型：
 
 1. precise - 精准查找：需要定位特定文档/数据/事实，答案通常在1-2个文档中。特征：包含具体名称、编号、日期等
-2. comprehensive - 全局分析：需要广泛收集信息，答案分布在多个文档中。特征：包含"所有"、"全部"、"分析"、"总结"、"对比"、"概述"等词
+2. comprehensive - 全局分析：需要广泛收集信息，答案分布在多个文档中。特征：包含"所有"、"全部"、"分析"、"总结"、\
+"对比"、"概述"等词
 
 用户查询: {query}
 
@@ -819,18 +823,22 @@ class QueryIntentClassifier:
             return "precise"
 
 
-_MAP_PROMPT_TEMPLATE = """从以下文档内容中提取与问题相关的核心要点。
+_MAP_PROMPT_TEMPLATE = (
+    """从以下文档内容中提取与问题相关的核心要点。
 
 严格规则（必须遵守）：
 - 必须忠实于文档原文，只提取文档中实际出现的信息，绝不允许编造或推断
 - 提取的每个要点必须保留其领域上下文（如文档讲的是 Redis，要点中必须体现 Redis 而非泛化为"管理"或"技术"）
 - 只提取关键信息和数据，不要保留详细示例、代码片段或配置细节
-- 如果问题是概览性的（如"写了什么"、"有哪些内容"、"总结一下"等），应提取文档的核心主题和要点，不要返回 [NO_RELEVANT_INFO]
-- 只有当文档内容与问题明确无关（如问的是 Redis，文档讲的是完全不同的领域）时，才回复 [NO_RELEVANT_INFO]
-
-文档内容: {doc}
-问题: {question}
-核心要点:"""
+- 如果问题是概览性的（如"写了什么"、"有哪些内容"、"总结一下"等），应提取文档的核心主题和要点，"""
+    "不要返回 [NO_RELEVANT_INFO]\n"
+    "- 只有当文档内容与问题明确无关（如问的是 Redis，文档讲的是完全不同的领域）时，"
+    "才回复 [NO_RELEVANT_INFO]\n"
+    "\n"
+    "文档内容: {doc}\n"
+    "问题: {question}\n"
+    "核心要点:"
+)
 
 _REDUCE_PROMPT_TEMPLATE = """以下是多个文档片段中提取的相关信息，请合并去重，整理为简洁的内容摘要。
 

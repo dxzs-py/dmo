@@ -50,7 +50,8 @@ class ContextManagerSettings(BaseSettings):
     budget_templates: str = Field(
         default="",
         description="自定义 Token 预算模板（JSON 字符串，从环境变量 CONTEXT_BUDGET_TEMPLATES 加载）。"
-        '格式: {"template_name": {"system": 0.15, "memory": 0.10, "tools": 0.10, "history": 0.50, "state": 0.05, "query": 0.10}}',
+        '格式: {"template_name": {"system": 0.15, "memory": 0.10, "tools": 0.10, '
+        '"history": 0.50, "state": 0.05, "query": 0.10}}',
     )
 
     cross_session_max_entries: int = Field(

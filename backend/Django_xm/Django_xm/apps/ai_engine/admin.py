@@ -70,7 +70,10 @@ class AIProviderAdmin(admin.ModelAdmin):
             {
                 "fields": ("special_params", "presets"),
                 "classes": ("collapse",),
-                "description": "special_params 控制模型特殊参数（如 DeepSeek 思考模式），presets 定义预设配置。修改时请参考已有格式。",
+                "description": (
+                    "special_params 控制模型特殊参数（如 DeepSeek 思考模式），"
+                    "presets 定义预设配置。修改时请参考已有格式。"
+                ),
             },
         ),
         (
@@ -161,7 +164,10 @@ class EmbeddingProviderConfigAdmin(admin.ModelAdmin):
             "所属 Provider",
             {
                 "fields": ("provider", "name", "default_model"),
-                "description": "Embedding 与 LLM 属于同一个 Provider，需先创建 LLM Provider。同一 Provider 可挂多个 Embedding 配置。",
+                "description": (
+                    "Embedding 与 LLM 属于同一个 Provider，需先创建 LLM Provider。"
+                    "同一 Provider 可挂多个 Embedding 配置。"
+                ),
             },
         ),
         (
@@ -169,10 +175,14 @@ class EmbeddingProviderConfigAdmin(admin.ModelAdmin):
             {
                 "fields": ("native_max_dimension", "min_dimension"),
                 "description": (
-                    "• <b>native_max_dimension</b>：模型不传 dimensions 时的输出维度（如 nomic-embed-text 768、bge-m3 1024、Qwen3-Embedding-4B 2560）<br>"
-                    "• <b>min_dimension</b>：MRL 截断下限，0 表示不支持截断（固定维度模型填 0）<br>"
-                    "• <b>判断 MRL</b>：min_dimension > 0 且 native_max_dimension > 0 时，前端可调整输出维度（范围 [min, max]）<br>"
-                    "• <b>支持 MRL 的模型</b>：qwen3-embedding / nomic-embed-text / embeddinggemma / OpenAI text-embedding-3-* 等"
+                    "• <b>native_max_dimension</b>：模型不传 dimensions 时的输出维度"
+                    "（如 nomic-embed-text 768、bge-m3 1024、Qwen3-Embedding-4B 2560）<br>"
+                    "• <b>min_dimension</b>：MRL 截断下限，0 表示不支持截断"
+                    "（固定维度模型填 0）<br>"
+                    "• <b>判断 MRL</b>：min_dimension > 0 且 native_max_dimension > 0 时，"
+                    "前端可调整输出维度（范围 [min, max]）<br>"
+                    "• <b>支持 MRL 的模型</b>：qwen3-embedding / nomic-embed-text / "
+                    "embeddinggemma / OpenAI text-embedding-3-* 等"
                 ),
             },
         ),
@@ -181,12 +191,17 @@ class EmbeddingProviderConfigAdmin(admin.ModelAdmin):
             {
                 "fields": ("factory_path", "dimension", "supported_params", "is_enabled", "sort_order"),
                 "description": (
-                    "• <b>工厂函数路径</b>：创建 Embedding 实例的 Python 函数路径，系统通过 importlib 动态调用。更换 Embedding 实现时需修改。<br>"
-                    "• <b>输出维度</b>：模型默认输出维度（<b>非 MRL 截断维度</b>）。MRL 截断由用户在 <b>前端设置</b> 调整，"
-                    "此字段主要作为默认 fallback 与历史索引重建时的兜底值。如需修改默认输出维度（如切换到同系列的另一个 embedding 模型）"
+                    "• <b>工厂函数路径</b>：创建 Embedding 实例的 Python 函数路径，"
+                    "系统通过 importlib 动态调用。更换 Embedding 实现时需修改。<br>"
+                    "• <b>输出维度</b>：模型默认输出维度（<b>非 MRL 截断维度</b>）。"
+                    "MRL 截断由用户在 <b>前端设置</b> 调整，"
+                    "此字段主要作为默认 fallback 与历史索引重建时的兜底值。"
+                    "如需修改默认输出维度（如切换到同系列的另一个 embedding 模型）"
                     "才需要调整这里。<br>"
-                    "• <b>MRL 维度调整</b>：<code>min_dimension</code> / <code>native_max_dimension</code> 定义模型能力范围；"
-                    "用户在 <b>前端设置 → Embedding 配置 → 输出维度</b> 输入框中调整具体数值即可，系统会自动校验范围。"
+                    "• <b>MRL 维度调整</b>：<code>min_dimension</code> / "
+                    "<code>native_max_dimension</code> 定义模型能力范围；"
+                    "用户在 <b>前端设置 → Embedding 配置 → 输出维度</b> 输入框中"
+                    "调整具体数值即可，系统会自动校验范围。"
                 ),
             },
         ),

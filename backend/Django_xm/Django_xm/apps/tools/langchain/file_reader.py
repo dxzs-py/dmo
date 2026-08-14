@@ -290,12 +290,13 @@ def get_attachment_info(attachment_id: int) -> dict[str, Any]:
         from Django_xm.apps.attachments.services.cross_app import get_attachment_by_id
 
         attachment = get_attachment_by_id(attachment_id)
-        if attachment is None:
-            raise ValueError(f"找不到附件 (id={attachment_id})")
     except ValueError:
         raise
     except Exception as e:
         raise ValueError(f"找不到附件 (id={attachment_id}): {e!s}") from e
+
+    if attachment is None:
+        raise ValueError(f"找不到附件 (id={attachment_id})")
 
     file_path = attachment.file.path
     if not os.path.exists(file_path):
@@ -355,12 +356,13 @@ def read_uploaded_attachment(attachment_id: int) -> str:
         from Django_xm.apps.attachments.services.cross_app import get_attachment_by_id
 
         attachment = get_attachment_by_id(attachment_id)
-        if attachment is None:
-            raise ValueError(f"找不到附件 (id={attachment_id})")
     except ValueError:
         raise
     except Exception as e:
         raise ValueError(f"找不到附件 (id={attachment_id}): {e!s}") from e
+
+    if attachment is None:
+        raise ValueError(f"找不到附件 (id={attachment_id})")
 
     file_path = attachment.file.path
     if not os.path.exists(file_path):

@@ -156,7 +156,7 @@ paths:
       description: |-
         拒绝审批：通过 ApprovalGateway 统一路由（Path D）。
 
-        chat → SSE 流式恢复，deep_research → Celery 任务恢复。
+        chat → SSE 流式恢复，deep_research → Redis 信令唤醒执行服务。
       parameters:
       - in: query
         name: format
@@ -203,7 +203,7 @@ paths:
       description: |-
         恢复审批：通过 ApprovalGateway 统一路由（Path D）。
 
-        chat → SSE 流式恢复，deep_research → Celery 任务恢复。
+        chat → SSE 流式恢复，deep_research → Redis 信令唤醒执行服务。
         前端无需判断 source，统一调用此端点。
       parameters:
       - in: query

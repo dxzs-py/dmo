@@ -280,7 +280,9 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
                     "session", session_id, last_seq, limit=EVENT_HISTORY_LIMIT
                 )
                 logger.debug(
-                    f"[RealtimeSync] 回放会话历史: session={session_id}, last_seq={last_seq}, count={len(history)}, limit={EVENT_HISTORY_LIMIT}"
+                    f"[RealtimeSync] 回放会话历史: session={session_id}, "
+                    f"last_seq={last_seq}, count={len(history)}, "
+                    f"limit={EVENT_HISTORY_LIMIT}"
                 )
                 await _send_replay_chunked(self, "session", session_id, history)
             except Exception as e:

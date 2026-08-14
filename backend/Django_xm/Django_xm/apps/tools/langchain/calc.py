@@ -16,7 +16,8 @@ def _safe_eval(expression: str) -> float | int | str:
     if expression.count("(") != expression.count(")"):
         return "错误：括号不匹配"
     try:
-        result = eval(expression)
+        # 数学表达式求值工具：输入已通过正则白名单（仅数字和 +-*/()）严格过滤，仅接受受信任的 agent 调用
+        result = eval(expression)  # noqa: S307
         if isinstance(result, float) and result.is_integer():
             return int(result)
         if isinstance(result, float):

@@ -28,8 +28,8 @@ def warmup_system_config_cache():
         for obj in SystemConfig.objects.all():
             _config_cache[obj.key] = obj.value
         logger.debug(f"SystemConfig 缓存预热完成，共 {len(_config_cache)} 项")
-    except Exception as e:
-        logger.exception(f"SystemConfig 缓存预热失败（非致命）: {e}")
+    except Exception:
+        logger.exception("SystemConfig 缓存预热失败（非致命）")
 
 
 def _is_async_context() -> bool:
@@ -206,12 +206,18 @@ class EmbeddingProviderConfig(models.Model):
     dimension = models.IntegerField(
         default=0,
         verbose_name="输出维度",
-        help_text="模型实际输出维度。仅 MRL 模型（nomic-embed-text / qwen3-embedding / embeddinggemma 等）可调整；非 MRL 模型此字段由原生最大维度锁定，不可修改。",
+        help_text=(
+            "模型实际输出维度。仅 MRL 模型（nomic-embed-text / qwen3-embedding / "
+            "embeddinggemma 等）可调整；非 MRL 模型此字段由原生最大维度锁定，不可修改。"
+        ),
     )
     native_max_dimension = models.IntegerField(
         default=0,
         verbose_name="原生最大维度",
-        help_text="模型不传 dimensions 时的输出维度（如 nomic-embed-text 768、bge-m3 1024、Qwen3-VL-Embedding-2B 2048）。≤ 0 表示未设置。",
+        help_text=(
+            "模型不传 dimensions 时的输出维度（如 nomic-embed-text 768、bge-m3 1024、"
+            "Qwen3-VL-Embedding-2B 2048）。≤ 0 表示未设置。"
+        ),
     )
     min_dimension = models.IntegerField(
         default=0,

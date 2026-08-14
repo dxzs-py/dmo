@@ -21,7 +21,7 @@ _embedding_registry_cache: list[dict[str, Any]] | None = None
 
 def invalidate_cache():
     """清除缓存，下次读取时重新从数据库加载"""
-    global _registry_cache, _embedding_registry_cache
+    global _registry_cache, _embedding_registry_cache  # noqa: PLW0603 - 模块级注册表缓存失效重置
     _registry_cache = None
     _embedding_registry_cache = None
 
@@ -58,19 +58,20 @@ def get_model_registry() -> dict[str, dict[str, Any]]:
     """
     从数据库构建与 config.MODEL_REGISTRY 格式兼容的字典。
 
-    异步安全：如果缓存已预热，直接返回缓存；如果处于异步上下文且缓存为空，
-    回退到 config.py 而非触发 ORM（避免 SynchronousOnlyOperation 错误）。
+    异步安全：缓存由 AppConfig.ready()/post_migrate 在同步上下文预热，异步上下文
+    直接返回缓存。若缓存未预热即被异步上下文访问，抛出 RuntimeError 暴露预热故障。
     """
-    global _registry_cache
+    global _registry_cache  # noqa: PLW0603 - 模块级注册表缓存惰性初始化
     if _registry_cache is not None:
         return _registry_cache
 
-    # 异步上下文中不能直接访问 ORM，回退到 config.py
+    # 异步上下文不能直接访问 ORM。缓存未预热属预热机制失效
+    # （AppConfig.ready()/post_migrate 已保证启动时同步预热），直接暴露问题
+    # 而非静默回退到 config.py 默认值（会掩盖预热故障、导致模型配置失真）。
     if _is_async_context():
-        logger.debug("异步上下文中访问 registry，缓存未预热，回退到 config.py")
-        from Django_xm.apps.ai_engine.config import MODEL_REGISTRY
-
-        return MODEL_REGISTRY
+        raise RuntimeError(
+            "model registry 缓存未预热即被异步上下文访问，请检查 ai_engine AppConfig 预热是否执行"
+        )
 
     from Django_xm.apps.ai_engine.models import AIProvider
 
@@ -155,18 +156,17 @@ def get_embedding_registry() -> list[dict[str, Any]]:
     """
     从数据库构建与 embedding_factory.EMBEDDING_PROVIDER_REGISTRY 格式兼容的列表。
 
-    异步安全：与 get_model_registry() 相同策略，异步上下文中回退到硬编码。
+    异步安全：与 get_model_registry() 相同策略，缓存未预热即被异步上下文访问时抛 RuntimeError。
     """
-    global _embedding_registry_cache
+    global _embedding_registry_cache  # noqa: PLW0603 - 模块级注册表缓存惰性初始化
     if _embedding_registry_cache is not None:
         return _embedding_registry_cache
 
-    # 异步上下文中不能直接访问 ORM
+    # 异步上下文不能直接访问 ORM，同上：暴露预热故障而非回退硬编码
     if _is_async_context():
-        logger.debug("异步上下文中访问 embedding registry，缓存未预热，回退到硬编码")
-        from Django_xm.apps.ai_engine.services.embedding_factory import EMBEDDING_PROVIDER_REGISTRY
-
-        return EMBEDDING_PROVIDER_REGISTRY
+        raise RuntimeError(
+            "embedding registry 缓存未预热即被异步上下文访问，请检查 ai_engine AppConfig 预热是否执行"
+        )
 
     from Django_xm.apps.ai_engine.models import EmbeddingProviderConfig
 

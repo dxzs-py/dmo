@@ -13,6 +13,8 @@
 import logging
 from typing import Any
 
+from Django_xm.common.tool_call_lifecycle import service as tool_call_service
+
 logger = logging.getLogger(__name__)
 
 # 工具调用状态优先级（数值越大越接近终态）。
@@ -39,7 +41,12 @@ def _build_persisted_tool_calls(
     """从 tool_calls_map 构建可持久化到 ``Message.tool_calls`` 的列表。
 
     过滤内部辅助字段（``_index`` / ``_summarized``），仅保留可序列化字段：
-        - id / name / type / state / status / parameters / result / error
+        - id / name / type / state / status / parameters / result / error / seq
+
+    seq（register 分配的全局递增序号）必须保留：前端跨浏览器统一排序的唯一权威
+    依据。若持久化丢弃 seq，API 快照与 WebSocket 事件（透传 seq）的排序依据
+    不一致，刷新后工具调用乱序（fs_write_file 等后发工具因缺 seq 被排到最前）。
+    seq 由 ``sse_generator`` 构建 tool_calls_map 时从 ToolCallContext 补齐。
 
     Args:
         tool_calls_map: 流式累积的 tool_calls_map（key=dedup_key，value=tool_info）
@@ -61,18 +68,26 @@ def _build_persisted_tool_calls(
         if dedup_key in seen_ids:
             continue
         seen_ids.add(dedup_key)
-        persisted.append(
-            {
-                "id": tool_call_id,
-                "name": tool_name,
-                "type": tool_info.get("type", "") or f"tool-call-{tool_name}",
-                "state": tool_info.get("state", "") or "input-available",
-                "status": tool_info.get("status", "") or "pending",
-                "parameters": tool_info.get("parameters") or {},
-                "result": tool_info.get("result"),
-                "error": tool_info.get("error"),
-            }
-        )
+        persisted_entry: dict[str, Any] = {
+            "id": tool_call_id,
+            "name": tool_name,
+            "type": tool_info.get("type", "") or f"tool-call-{tool_name}",
+            "state": tool_info.get("state", "") or "input-available",
+            "status": tool_info.get("status", "") or "pending",
+            "parameters": tool_info.get("parameters") or {},
+            "result": tool_info.get("result"),
+            "error": tool_info.get("error"),
+        }
+        # 保留 seq（register 全局递增序号，前端排序权威依据）：
+        # 1) 快照优先——tool_calls_map 已补过 seq（sse_generator）则直接透传；
+        # 2) 统一兜底——map 未补过的场景（context 过期或非 SSE 构建路径）经
+        #    enrich_entry_seq 从 ToolCallContext 权威源补全，所有持久化出口收敛
+        #    到同一函数，杜绝漏补。
+        _seq = tool_info.get("seq")
+        if isinstance(_seq, int) and _seq > 0:
+            persisted_entry["seq"] = _seq
+        tool_call_service.enrich_entry_seq(persisted_entry, tool_call_id)
+        persisted.append(persisted_entry)
     return persisted
 
 

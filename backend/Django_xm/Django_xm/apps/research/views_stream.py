@@ -57,6 +57,17 @@ def _load_approval_history_from_db(task_id: str) -> list[dict]:
                 "created_at": approval.created_at.isoformat() if approval.created_at else None,
                 "resolved_at": approval.resolved_at.isoformat() if approval.resolved_at else None,
             }
+            # 子 agent 嵌套层级字段透传（Task 4.3）：供刷新后前端重建分组/树形结构
+            if extra.get("parent_tool_call_id"):
+                approval_data["parent_tool_call_id"] = extra["parent_tool_call_id"]
+            if isinstance(extra.get("depth"), int) and extra["depth"] > 0:
+                approval_data["depth"] = extra["depth"]
+            if extra.get("agent_name"):
+                approval_data["agent_name"] = extra["agent_name"]
+            if isinstance(extra.get("agent_path"), list) and extra["agent_path"]:
+                approval_data["agent_path"] = extra["agent_path"]
+            if extra.get("risk_ceiling"):
+                approval_data["risk_ceiling"] = extra["risk_ceiling"]
             if approval.user_input:
                 approval_data["user_input"] = approval.user_input
             result.append(approval_data)
@@ -101,11 +112,20 @@ async def deep_research_stream(request, task_id):
         start_time = loop.time()
         max_duration = 600
 
-        # Path D：从 DB 读取历史审批数据
+        # 从 DB 读取历史审批数据（刷新/新开页面补全审批历史）
         approval_history = await _load_approval_history_from_db(task_id)
         if approval_history:
             for approval_data in approval_history:
-                yield f"data: {json.dumps({'type': 'approval_history', 'data': approval_data, 'task_id': task_id}, ensure_ascii=False, default=str)}\n\n"
+                payload = json.dumps(
+                    {
+                        "type": "approval_history",
+                        "data": approval_data,
+                        "task_id": task_id,
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                )
+                yield f"data: {payload}\n\n"
             logger.info(
                 f"[SSE] 推送 {len(approval_history)} 个历史审批事件, task={task_id}, "
                 f"ids={[a.get('interrupt_id', '?') for a in approval_history]}"

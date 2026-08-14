@@ -314,35 +314,27 @@ CELERY_TASK_DEFAULT_QUEUE = "celery"
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
 CELERY_TASK_ROUTES = {
-    "rag.create_index": {"queue": "rag"},
-    "rag.add_documents": {"queue": "rag"},
-    "rag.delete_index": {"queue": "rag"},
-    "rag.update_index": {"queue": "rag"},
-    "research.run_research": {"queue": "research"},
-    "workflow.execute": {"queue": "workflow"},
+    "rag.upload_documents": {"queue": "rag"},
     "chat.cleanup_expired_attachments": {"queue": "chat"},
     "chat.index_old_attachments": {"queue": "chat"},
     "chat.check_storage_alerts": {"queue": "chat"},
-    "chat.attachment_full_lifecycle": {"queue": "chat"},
     "chat.cleanup_checkpoints": {"queue": "chat"},
     "base.cleanup_old_task_records": {"queue": "celery"},
     "base.check_stale_tasks": {"queue": "celery"},
-    "base.debug_task": {"queue": "celery"},
     "analytics.track_event": {"queue": "celery"},
     "approvals.cleanup_expired_approvals": {"queue": "celery"},
     "approvals.process_outbox": {"queue": "celery"},
-    "approvals.resume_chat_after_timeout": {"queue": "celery"},
 }
 
-ATTACHMENT_DEFAULT_RETENTION_DAYS = int(os.environ.get("ATTACHMENT_DEFAULT_RETENTION_DAYS", 30))
-ATTACHMENT_CLEANUP_HOUR = int(os.environ.get("ATTACHMENT_CLEANUP_HOUR", 3))
+ATTACHMENT_DEFAULT_RETENTION_DAYS = int(os.environ.get("ATTACHMENT_DEFAULT_RETENTION_DAYS", "30"))
+ATTACHMENT_CLEANUP_HOUR = int(os.environ.get("ATTACHMENT_CLEANUP_HOUR", "3"))
 ATTACHMENT_ARCHIVE_ENABLED = os.environ.get("ATTACHMENT_ARCHIVE_ENABLED", "true").lower() == "true"
 ATTACHMENT_ARCHIVE_DIR = PROJECT_ROOT / os.environ.get("ATTACHMENT_ARCHIVE_DIR", "data/archives")
-ATTACHMENT_ARCHIVE_AFTER_DAYS = int(os.environ.get("ATTACHMENT_ARCHIVE_AFTER_DAYS", 60))
-ATTACHMENT_STORAGE_WARNING_THRESHOLD = float(os.environ.get("ATTACHMENT_STORAGE_WARNING_THRESHOLD", 80))
-ATTACHMENT_STORAGE_CRITICAL_THRESHOLD = float(os.environ.get("ATTACHMENT_STORAGE_CRITICAL_THRESHOLD", 95))
+ATTACHMENT_ARCHIVE_AFTER_DAYS = int(os.environ.get("ATTACHMENT_ARCHIVE_AFTER_DAYS", "60"))
+ATTACHMENT_STORAGE_WARNING_THRESHOLD = float(os.environ.get("ATTACHMENT_STORAGE_WARNING_THRESHOLD", "80"))
+ATTACHMENT_STORAGE_CRITICAL_THRESHOLD = float(os.environ.get("ATTACHMENT_STORAGE_CRITICAL_THRESHOLD", "95"))
 ATTACHMENT_DEDUP_ENABLED = os.environ.get("ATTACHMENT_DEDUP_ENABLED", "true").lower() == "true"
-ATTACHMENT_MAX_TOTAL_SIZE_MB = int(os.environ.get("ATTACHMENT_MAX_TOTAL_SIZE_MB", 5120))
+ATTACHMENT_MAX_TOTAL_SIZE_MB = int(os.environ.get("ATTACHMENT_MAX_TOTAL_SIZE_MB", "5120"))
 
 # 归档逻辑未实现，不自动创建空目录；实际实现归档功能时再恢复
 # if ATTACHMENT_ARCHIVE_ENABLED:
@@ -416,3 +408,101 @@ AI_HELPER_MODEL_MAX_TOKENS = 256
 SHELL_EXEC_WHITELIST = None
 # 允许的工作目录（限制命令执行目录范围，None 表示不限制——生产环境必须配置）
 SHELL_EXEC_ALLOWED_DIRS = [DATA_DIR, MEDIA_ROOT]
+
+# ─── 日志配置（公共） ───────────────────────────────────────────────
+# 按服务角色隔离日志文件，避免多进程竞争写同一文件、日志混杂无法按服务区分：
+# - Web/Django 进程（runserver/gunicorn/celery）：django.log（历史默认，SERVICE_ROLE 未设置）
+# - FastAPI 执行服务（8001）：fastapi.log（apps/fastapi_service/main.py 设置 SERVICE_ROLE=fastapi）
+# 注意：prod.py 定义独立 LOGGING（django_prod.log）覆盖本配置，按生产策略另行调整。
+SERVICE_ROLE = os.environ.get("SERVICE_ROLE", "web")
+LOG_FILE_NAME = "fastapi.log" if SERVICE_ROLE == "fastapi" else "django.log"
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {"format": "%(levelname)s %(asctime)s %(module)s %(lineno)d %(message)s"},
+        "simple": {"format": "%(levelname)s %(module)s %(lineno)d %(message)s"},
+    },
+    "filters": {
+        "require_debug_true": {
+            "()": "django.utils.log.RequireDebugTrue",
+        },
+    },
+    "handlers": {
+        "console": {
+            "level": "DEBUG",
+            "filters": ["require_debug_true"],
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+            "stream": "ext://sys.stdout",
+        },
+        "file": {
+            "level": "INFO",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": str(BASE_DIR.parent / "logs" / LOG_FILE_NAME),
+            "maxBytes": 10 * 1024 * 1024,
+            "backupCount": 5,
+            "formatter": "verbose",
+            "encoding": "utf-8",
+        },
+    },
+    "loggers": {
+        "django": {
+            "handlers": ["console", "file"],
+            "propagate": True,
+        },
+        "langchain": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "Django_xm.apps.chat": {
+            "handlers": ["console", "file"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+        "Django_xm.apps.ai_engine": {
+            "handlers": ["console", "file"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+        "Django_xm.apps.approvals": {
+            "handlers": ["console", "file"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+        "Django_xm.apps.agent_hub": {
+            "handlers": ["console", "file"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+        "Django_xm.common": {
+            "handlers": ["console", "file"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+        "Django_xm.apps.context_manager": {
+            "handlers": ["console", "file"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+        "Django_xm.apps.tools": {
+            "handlers": ["console", "file"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+        "Django_xm.apps.research": {
+            "handlers": ["console", "file"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+        # FastAPI 执行服务：DEBUG 完整记录（8001 进程写入 fastapi.log；
+        # Web 进程中该 logger 不产生日志，配置无副作用）
+        "Django_xm.apps.fastapi_service": {
+            "handlers": ["console", "file"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+    },
+}

@@ -156,7 +156,8 @@ class WorkflowService:
         if thread_id in _study_flow_cache:
             del _study_flow_cache[thread_id]
 
-        try:
+        def _find_and_soft_delete():
+            """查询并软删除工作流会话（不存在/无权限时抛 ValueError）。"""
             from ..models import WorkflowSession
 
             qs = WorkflowSession.objects.filter(thread_id=thread_id, is_deleted=False)
@@ -166,6 +167,9 @@ class WorkflowService:
             if not session:
                 raise ValueError("工作流会话不存在或无权访问")
             session.soft_delete()
+
+        try:
+            _find_and_soft_delete()
         except ValueError:
             raise
         except Exception as e:

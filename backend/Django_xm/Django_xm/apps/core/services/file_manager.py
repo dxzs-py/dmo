@@ -4,7 +4,7 @@
 """
 
 import logging
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -310,7 +310,7 @@ _file_manager_instance: FileManagerService | None = None
 
 def get_file_manager() -> FileManagerService:
     """获取文件管理器单例"""
-    global _file_manager_instance
+    global _file_manager_instance  # noqa: PLW0603  # 单例缓存
     if _file_manager_instance is None:
         _file_manager_instance = FileManagerService()
     return _file_manager_instance

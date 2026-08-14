@@ -79,7 +79,7 @@ class DatabaseConnectionManager:
         Args:
             source: 调用来源标识，用于日志追踪
         """
-        global _cleanup_call_count
+        global _cleanup_call_count  # noqa: PLW0603  # 模块级调用计数缓存
         try:
             close_old_connections()
             with _count_lock:

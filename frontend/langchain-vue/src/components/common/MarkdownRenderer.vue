@@ -209,8 +209,8 @@ function handleClick(e) {
   <div
     ref="rendererRef"
     class="markdown-renderer"
-    v-html="renderedContent"
     @click="handleClick"
+    v-html="renderedContent"
   ></div>
   <el-image-viewer
     v-if="previewVisible"

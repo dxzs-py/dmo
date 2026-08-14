@@ -44,7 +44,8 @@ class ProjectSettings(BaseSettings):
     )
 
     # ==================== 服务器配置 ====================
-    server_host: str = Field(default="0.0.0.0", description="服务器监听地址")
+    # 0.0.0.0 为开发服务器监听地址的配置语义（daphne/uvicorn 启动参数），非生产服务绑定
+    server_host: str = Field(default="0.0.0.0", description="服务器监听地址")  # noqa: S104
 
     server_port: int = Field(default=8000, ge=1, le=65535, description="服务器监听端口")
 
@@ -172,7 +173,7 @@ _settings_instance: ProjectSettings | None = None
 
 
 def get_settings() -> ProjectSettings:
-    global _settings_instance
+    global _settings_instance  # noqa: PLW0603  # 单例缓存
     if _settings_instance is None:
         _settings_instance = ProjectSettings()
     return _settings_instance

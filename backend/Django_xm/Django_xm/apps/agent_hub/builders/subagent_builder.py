@@ -51,8 +51,17 @@ class SubAgentBuilder:
 
     def _get_default_prompt(self, config) -> str:
         prompts = {
-            "web_researcher": "You are a web research assistant. Search the web for relevant information on the given topic.",
-            "doc_analyst": "You are a document analysis assistant. Analyze documents and extract key information.",
-            "report_writer": "You are a report writing assistant. Write comprehensive reports based on the provided research findings.",
+            "web_researcher": (
+                "You are a web research assistant. "
+                "Search the web for relevant information on the given topic."
+            ),
+            "doc_analyst": (
+                "You are a document analysis assistant. "
+                "Analyze documents and extract key information."
+            ),
+            "report_writer": (
+                "You are a report writing assistant. "
+                "Write comprehensive reports based on the provided research findings."
+            ),
         }
         return prompts.get(config.agent_type.value, "You are a helpful assistant.")

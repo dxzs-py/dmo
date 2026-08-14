@@ -6,12 +6,11 @@ import shutil
 from collections.abc import Sequence
 from typing import Any
 
-from langchain.agents.middleware import AgentMiddleware
-from langchain_core.tools import BaseTool, StructuredTool
-
 # 官方 CompositeBackend：_SandboxGuardCompositeBackend 以其为基类（模块级导入，
 # 类定义即求值；不能在函数内延迟导入）
-from deepagents.backends import CompositeBackend  # noqa: E402
+from deepagents.backends import CompositeBackend
+from langchain.agents.middleware import AgentMiddleware
+from langchain_core.tools import BaseTool, StructuredTool
 
 from Django_xm.apps.agent_hub.builders._registry import register_builder
 from Django_xm.apps.agent_hub.config import AgentType
@@ -61,6 +60,13 @@ logger = logging.getLogger(__name__)
 # ApprovalMiddleware 从 state（subagent_risk_ceiling）读取后传给 policies.assess_risk。
 _SUBAGENT_RISK_CEILINGS: dict[str, RiskLevel] = {}
 
+# 子 agent 角色描述注册表（任务目标，Task 2.4 单一来源）。
+# 与 _SUBAGENT_RISK_CEILINGS 同模式：SubAgent 静态 description 集中在此定义，
+# _build_subagents / _build_general_purpose_subagent 构建 SubAgent 时引用；
+# SubAgentNestingMiddleware._resolve_description 按子 agent 名称查询后写入 state，
+# 经工具事件透传，供前端分组卡片组头展示任务目标描述。
+_SUBAGENT_DESCRIPTIONS: dict[str, str] = {}
+
 
 def _register_subagent_risk_ceilings():
     """注册子 agent 角色风险上限。
@@ -78,7 +84,26 @@ def _register_subagent_risk_ceilings():
     _SUBAGENT_RISK_CEILINGS["general-purpose"] = RiskLevel.HIGH
 
 
+def _register_subagent_descriptions():
+    """注册子 agent 角色描述（任务目标）。
+
+    在模块加载时调用，与 SubAgent 静态 description 保持单一来源一致
+    （_build_subagents / _build_general_purpose_subagent 引用本注册表构建 SubAgent）。
+    """
+    _SUBAGENT_DESCRIPTIONS.clear()
+    _SUBAGENT_DESCRIPTIONS["web-researcher"] = "网络搜索和信息整理专家，负责从互联网搜索和整理研究信息"
+    _SUBAGENT_DESCRIPTIONS["doc-analyst"] = "文档分析和知识提取专家，负责在知识库中检索和分析文档"
+    _SUBAGENT_DESCRIPTIONS["general-purpose"] = (
+        "General-purpose agent for researching complex questions, searching "
+        "for files and content, and executing multi-step tasks. When you are "
+        "searching for a keyword or file and are not confident that you will "
+        "find the right match in the first few tries use this agent to perform "
+        "the search for you. This agent has access to all tools as the main agent."
+    )
+
+
 _register_subagent_risk_ceilings()
+_register_subagent_descriptions()
 
 
 # 子 agent 机制说明（deepagents 0.7.5 升级后，官方机制取代旧 monkey-patch）：
@@ -190,7 +215,7 @@ def _build_subagents(
             web_tools = _merge_tool_lists(main_tools, [search_tool], extra_tools)
             web_subagent: SubAgent = {
                 "name": "web-researcher",
-                "description": "网络搜索和信息整理专家，负责从互联网搜索和整理研究信息",
+                "description": _SUBAGENT_DESCRIPTIONS["web-researcher"],
                 "system_prompt": WEB_RESEARCHER_SUBAGENT_PROMPT,
                 "tools": web_tools,
                 "middleware": safe_middleware,
@@ -203,7 +228,7 @@ def _build_subagents(
             web_fallback_tools = _merge_tool_lists(main_tools, extra_tools)
             web_subagent = {
                 "name": "web-researcher",
-                "description": "网络搜索和信息整理专家",
+                "description": _SUBAGENT_DESCRIPTIONS["web-researcher"],
                 "system_prompt": WEB_RESEARCHER_SUBAGENT_PROMPT,
                 # SubAgent.tools 字段为 NotRequired[Sequence[...]]，不接受 None。
                 # _merge_tool_lists 已合并 main_tools，空列表与 None 行为等价（key 存在即不继承）。
@@ -218,7 +243,7 @@ def _build_subagents(
         doc_tools = _merge_tool_lists(main_tools, doc_specialized, extra_tools)
         doc_subagent = {
             "name": "doc-analyst",
-            "description": "文档分析和知识提取专家，负责在知识库中检索和分析文档",
+            "description": _SUBAGENT_DESCRIPTIONS["doc-analyst"],
             "system_prompt": DOC_ANALYST_SUBAGENT_PROMPT,
             # _merge_tool_lists 已合并 main_tools + retriever_tool + extra_tools
             "tools": doc_tools,
@@ -305,7 +330,7 @@ def _get_backend(
 
             return StateBackend()
         elif backend_type == "filesystem":
-            from deepagents.backends import CompositeBackend, FilesystemBackend
+            from deepagents.backends import FilesystemBackend
 
             fs_backend = FilesystemBackend(root_dir=work_dir or ".", virtual_mode=True)
 
@@ -437,15 +462,19 @@ class DeepAgentBuilder:
             system_prompt = self._build_system_prompt(config)
             logger.info(f"DeepAgent 使用默认 system_prompt ({len(system_prompt)} 字符)")
         else:
+            has_research_context = "先前研究" in system_prompt
             logger.info(
-                f"DeepAgent 使用自定义 system_prompt ({len(system_prompt)} 字符, 含续研上下文: {'先前研究' in system_prompt})"
+                f"DeepAgent 使用自定义 system_prompt "
+                f"({len(system_prompt)} 字符, 含续研上下文: {has_research_context})"
             )
 
         # 当启用文档分析时，追加知识库检索引导到 system_prompt
         tool_config = config.tool_config or {}
         _enable_doc_analysis = tool_config.get("enable_doc_analysis") or tool_config.get("use_doc_analysis", False)
+        has_doc_suffix = DOC_ANALYSIS_PROMPT_SUFFIX[:30] in system_prompt
         logger.info(
-            f"DeepBuilder tool_config check: enable_doc_analysis={_enable_doc_analysis}, has_suffix={DOC_ANALYSIS_PROMPT_SUFFIX[:30] in system_prompt}"
+            f"DeepBuilder tool_config check: "
+            f"enable_doc_analysis={_enable_doc_analysis}, has_suffix={has_doc_suffix}"
         )
         if _enable_doc_analysis and DOC_ANALYSIS_PROMPT_SUFFIX not in system_prompt:
             system_prompt += DOC_ANALYSIS_PROMPT_SUFFIX
@@ -572,7 +601,7 @@ class DeepAgentBuilder:
             return [gp_subagent], None
 
         # 从 tools 列表中识别已有的 retriever_tool
-        # （deep_research.py 将 retriever_tool 放入了 config.tools 而非 config.retriever）
+        # （执行服务构建 agent 时将 retriever_tool 放入了 config.tools 而非 config.retriever）
         retriever_tool = None
         retriever_tool_name = None
         if tools:
@@ -660,13 +689,7 @@ class DeepAgentBuilder:
         gp_tools = _merge_tool_lists(tools, extra_tools)
         gp_subagent: SubAgent = {
             "name": "general-purpose",
-            "description": (
-                "General-purpose agent for researching complex questions, searching "
-                "for files and content, and executing multi-step tasks. When you are "
-                "searching for a keyword or file and are not confident that you will "
-                "find the right match in the first few tries use this agent to perform "
-                "the search for you. This agent has access to all tools as the main agent."
-            ),
+            "description": _SUBAGENT_DESCRIPTIONS["general-purpose"],
             "system_prompt": (
                 "In order to complete the objective that the user asks of you, you "
                 "have access to a set of tools that you can use to perform operations "

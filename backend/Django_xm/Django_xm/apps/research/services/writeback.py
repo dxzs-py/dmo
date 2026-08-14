@@ -1,6 +1,6 @@
 """深度研究结果回写与广播公共模块。
 
-供 Celery 任务（deep_research.py / research_resume_task.py）共用，
+供执行服务（SessionExecutor）与聊天路径共用，
 负责将深度研究结果回写到关联的 ChatMessage，并广播 stream_completed 事件。
 """
 
@@ -25,7 +25,8 @@ def broadcast_stream_completed(
 ):
     """广播 stream_completed 事件到 session + task 双频道。
 
-    深度研究完成（成功/失败）时由 Celery worker 调用，作为权威完成事件。
+    深度研究完成（成功/失败）时由执行服务（fastapi_service SessionExecutor）调用，
+    作为权威完成事件。
     与聊天 SSE 结束时发布的 stream_completed（finalized=false，无 task_id）不同，
     本事件始终携带 task_id 和 finalized=true，前端据此进入深度研究回写逻辑。
 
@@ -294,7 +295,7 @@ def writeback_to_chat_message(
                         msg_save_fields.append("versions")
 
             if msg_save_fields:
-                msg.save(update_fields=msg_save_fields + ["updated_at"])
+                msg.save(update_fields=[*msg_save_fields, "updated_at"])
 
         # 重新加载 tool_calls 用于广播（确保拿到合并后的最新数据）
         try:

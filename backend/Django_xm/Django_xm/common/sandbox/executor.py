@@ -65,8 +65,9 @@ def _get_sandbox_config() -> dict:
 def _is_docker_available() -> bool:
     """检查 Docker 是否可用（CLI 方式，无额外依赖）。"""
     try:
-        result = subprocess.run(
-            ["docker", "info", "--format", "{{.ServerVersion}}"],
+        # 固定探测命令（docker info），非用户输入；returncode 由调用方显式检查
+        result = subprocess.run(  # noqa: PLW1510
+            ["docker", "info", "--format", "{{.ServerVersion}}"],  # noqa: S607
             capture_output=True,
             text=True,
             timeout=5,
@@ -202,7 +203,8 @@ class SandboxExecutor:
         )
 
         try:
-            result = subprocess.run(
+            # command 作为 docker run 参数传入（非 shell 解释），执行隔离由 Docker 沙箱保障
+            result = subprocess.run(  # noqa: S603, PLW1510
                 docker_cmd,
                 capture_output=True,
                 text=True,
@@ -264,10 +266,11 @@ class SandboxExecutor:
                 "errors": "replace",
             }
             if is_windows:
-                process = subprocess.Popen(command, shell=True, **popen_kwargs)
+                # 本机降级执行 agent 命令（沙箱不可用时的设计使然），隔离由权限与审批保障
+                process = subprocess.Popen(command, shell=True, **popen_kwargs)  # noqa: S602
             else:
-                process = subprocess.Popen(
-                    ["bash", "-c", command],
+                process = subprocess.Popen(  # noqa: S603
+                    ["bash", "-c", command],  # noqa: S607
                     start_new_session=True,
                     **popen_kwargs,
                 )

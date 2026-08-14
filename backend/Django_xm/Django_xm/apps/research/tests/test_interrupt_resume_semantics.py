@@ -1,10 +1,8 @@
-"""LangGraph 多 pending interrupt 逐个恢复语义单元测试（方案 B 验证）。
+"""LangGraph 多 pending interrupt 逐个恢复语义单元测试。
 
 背景
 ----
-深度研究审批恢复（research_resume_task，Path D）在方案 B 中移除了
-"其他批次 pending 防护"，改为"本批次全部决断后立即恢复本批次 interrupt"。
-本测试验证该方案依赖的 LangGraph 1.x 基础语义：
+深度研究审批恢复（会话级单执行流）依赖 LangGraph 1.x 基础语义：
 
 1. 多个 pending interrupt 按产生顺序逐个 ``Command(resume=...)`` 恢复：
    - 已恢复的 interrupt 对应执行路径不重入历史 checkpoint（无重复执行）
