@@ -375,11 +375,73 @@ class ChatService:
         )
         logger.info("流式聊天请求处理完成")
 
+    async def run_agent_session(
+        self,
+        data: dict[str, Any],
+        interrupt_handler,
+        broadcast,
+    ) -> None:
+        """chat agent 单协程执行（FastAPI 执行服务调用，执行与连接解耦）。
+
+        与 process_stream_chat_request 同构，但事件经 broadcast 广播到 WS
+        （不 yield 到 SSE），审批中断经 interrupt_handler 挂起等待信令。
+
+        Args:
+            data: chat 请求数据（含 session_id / _assistant_message_id / message 等）
+            interrupt_handler: 审批中断挂起回调，
+                async fn(graph_interrupt_id, langgraph_resume_id) -> decisions dict
+            broadcast: async fn(event: dict) -> None，将事件广播到 WS
+        """
+        from Django_xm.apps.ai_engine.services.cost_tracker import create_token_detail_tracker
+        from Django_xm.apps.ai_engine.services.usage_tracker import create_usage_tracker
+
+        model_name = data.get("model_name")
+        from Django_xm.apps.ai_engine.config import settings as ai_settings
+
+        tracker_model_id = model_name or ai_settings.openai_model
+        usage_tracker = create_usage_tracker(model_id=tracker_model_id)
+        token_detail_tracker = create_token_detail_tracker()
+        stream_start_time = time.time()
+
+        session_id = data.get("session_id", "N/A")
+        logger.info(
+            f"[ChatExec] 开始执行: mode={data.get('mode', 'agent')}, "
+            f"session={session_id}, msg={data.get('message', '')[:80]}..."
+        )
+
+        await broadcast({"type": "start", "message": "开始生成..."})
+
+        async for event in self._dispatch_by_mode(
+            data,
+            usage_tracker,
+            token_detail_tracker,
+            interrupt_handler=interrupt_handler,
+        ):
+            await broadcast(event)
+
+        context_info = build_context_info(usage_tracker, token_detail_tracker, stream_start_time)
+        await broadcast({"type": "context", "data": context_info})
+        await broadcast({"type": "end", "message": "生成完成"})
+        usage_tracker.log_summary()
+        token_detail_tracker.log_summary()
+
+        session_id_for_update = data.get("session_id")
+        if session_id_for_update is not None:
+            await self._update_last_message_tokens(
+                session_id=session_id_for_update,
+                token_count=usage_tracker.get_total_tokens(),
+                token_detail=token_detail_tracker.get_token_detail(),
+                model=usage_tracker.model_id,
+                response_time=round(time.time() - stream_start_time, 2),
+            )
+        logger.info("[ChatExec] 执行完成")
+
     async def _dispatch_by_mode(
         self,
         data: dict[str, Any],
         usage_tracker,
         token_detail_tracker,
+        interrupt_handler=None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """按模式分发请求：slash 命令 / deep-research / agent"""
         mode = data.get("mode", "agent")
@@ -572,7 +634,9 @@ class ChatService:
                 )
                 data["use_tools"] = has_any_tool_enabled
 
-            async for event in self._process_normal_stream_chat(data, usage_tracker, token_detail_tracker):
+            async for event in self._process_normal_stream_chat(
+                data, usage_tracker, token_detail_tracker, interrupt_handler=interrupt_handler
+            ):
                 yield event
             return
 
@@ -702,6 +766,7 @@ class ChatService:
         data: dict[str, Any],
         usage_tracker,
         token_detail_tracker: TokenDetailTracker | None = None,
+        interrupt_handler=None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
 
@@ -861,6 +926,8 @@ class ChatService:
         # 创建 Approval DB 记录时使用
         ctx.session_id = data.get("session_id", "")
         ctx.message_id = str(data.get("_assistant_message_id") or data.get("message_id", ""))
+        # 暴露 ctx 供执行服务 finalize 阶段读取（落库 content/tool_calls）
+        data["_chat_ctx"] = ctx
 
         # 根据 _enable_deep_thinking 选择策略
         strategy = DeepThinkingStreamStrategy() if data.get("_enable_deep_thinking") else NormalStreamStrategy()
@@ -935,8 +1002,28 @@ class ChatService:
             # - 不可恢复 → FALLBACK（无工具纯对话，由 fallback_service 处理）
             # - soft timeout → 警告一次
             # - hard timeout → FALLBACK
+            # 单协程挂起模式（interrupt_handler 非 None）：run_stream_loop 内部
+            # 在审批中断时挂起等待信令，Command(resume) 重入，AgentExecutor 韧性
+            # 在整个会话生命周期持续生效。
+            if interrupt_handler is not None:
+                async def _loop_fn(_agent, _graph_input, _config, _ctx, _strategy, _data):
+                    async for _event in run_stream_loop(
+                        _agent,
+                        _graph_input,
+                        _config,
+                        _ctx,
+                        _strategy,
+                        _data,
+                        interrupt_handler=interrupt_handler,
+                    ):
+                        yield _event
+
+                loop_fn = _loop_fn
+            else:
+                loop_fn = run_stream_loop
+
             async for event in executor.run(
-                run_stream_loop,
+                loop_fn,
                 agent,
                 graph_input,
                 config,

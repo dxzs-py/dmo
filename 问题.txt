@@ -1,0 +1,32 @@
+# 测试问题记录
+
+## 2026-08-14 拒绝路径测试（chat 模块，session b33becc6-eb3d-41d8-a532-9bbd64b1925f）
+
+测试场景：发送"运行 ollama list 查看当前有哪些模型，然后运行 ollama ps 查看正在运行的模型"，两个 shell_exec 审批均点击"拒绝"。
+
+### 问题1：工具2（ollama ps）被拒绝后前端仍显示"执行中" ✅ 已修复
+- 现象：两个工具都被拒绝（后端日志 state=rejected），但工具2 前端显示"执行中"（跨浏览器 8/9/10 一致）
+- 根因：`resume_approval` 对批次最后一个决断统一广播 PROCESSING，`_persist_and_broadcast` 联动发布 TOOL_CALL_RUNNING；拒绝后终态化 rejected 时 running→rejected 被 tool_call_lifecycle 状态机拦截（非法转换），前端收不到 tool_call_rejected
+- 修复：`approval_service.py` `_persist_and_broadcast`（同步+异步）PROCESSING 分支仅当 `extra._approved is not False` 时发布 RUNNING
+- 复测：✅ 拒绝后两个工具均显示"已拒绝"，不再卡"执行中"
+
+### 问题2：拒绝工具1 后短暂显示"本工具已审批，等待其余工具完成审批" ✅ 已修复
+- 现象：点击工具1"拒绝"后，前端显示"已审批，等待其余工具完成审批"提示（应为"已拒绝"）
+- 修复：后端 broadcast extra_fields 透传 `approved`（拒绝=False）；前端 ToolCallCard `isWaitingForSiblingsRejected` 区分文案
+- 复测：✅ waiting 阶段区分批准/拒绝
+
+### 问题3（观察）：AI 直接告知用户"命令被拒绝"
+- AI 回复"看起来这两个命令的执行被拒绝了...我不会重复发起相同的请求。请问您希望如何处理？"
+- 预期（用户偏好）：拒绝后 agent 应调整策略/找替代方案继续，不直接告知被拒绝
+- 状态：agent 行为，未改（本轮 agent 已给出替代方案引导，行为可接受）
+
+### 问题4：刷新后被拒绝工具显示"失败"而非"已拒绝" ✅ 已修复
+- 现象：两个工具都点"拒绝"后，触发浏览器显示"已拒绝"；但刷新后工具2 显示"失败"，审批面板残留
+- 根因：middleware 注入的拒绝 ToolMessage 带 `status="error"` → `is_error=True` → state="output-error" → 持久化 status=failed（刷新后恢复显示"失败"）
+- 修复：`stream_chunk_processors.py` 状态计算区分 is_timeout/is_rejected（新增 rejected/timeout 状态映射），拒绝/超时不落入 failed
+- 复测：✅ 刷新后两个工具均"已拒绝"+输出结果占位保留，无审批面板残留
+
+### 问题5：被拒绝工具无输出结果区域（新增修复） ✅ 已修复
+- 现象：被拒绝工具只显示"已拒绝"标签，无任何输出
+- 修复：ToolCallCard 输出结果区域对 REJECTED/TIMEOUT 无数据时显示占位反馈"已拒绝执行该工具，Agent 将调整策略继续"
+- 复测：✅ 4 浏览器均显示输出结果占位

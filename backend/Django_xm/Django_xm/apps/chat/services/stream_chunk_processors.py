@@ -82,6 +82,8 @@ _STATE_TO_STATUS = {
     "input-available": "pending",
     "output-available": "completed",
     "output-error": "failed",
+    "rejected": "rejected",
+    "timeout": "timeout",
 }
 
 
@@ -571,7 +573,17 @@ def _handle_tool_message_chunk(
         is_timeout = _detect_tool_timeout(message)
         is_rejected = _detect_tool_rejected(message)
         content_is_error = _detect_tool_error(message.content) if not is_error else False
-        new_state = "output-error" if (is_error or content_is_error) else "output-available"
+        # 状态计算需与事件优先级一致：拒绝/超时 ToolMessage 也带 status="error"
+        # （middleware 注入），若不区分会被映射为 failed，刷新后显示"失败"而非
+        # "已拒绝/已超时"。这里按终态语义单独映射。
+        if is_timeout:
+            new_state = "timeout"
+        elif is_rejected:
+            new_state = "rejected"
+        elif is_error or content_is_error:
+            new_state = "output-error"
+        else:
+            new_state = "output-available"
         tool_info["state"] = new_state
         tool_info["status"] = _map_state_to_status(new_state)
         if is_error or content_is_error:

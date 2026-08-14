@@ -9,7 +9,6 @@
  */
 
 import { apiClient } from '@/api/axios'
-import { fetchSSE } from '@/utils/sse'
 
 /**
  * 查询审批历史
@@ -47,41 +46,24 @@ export function getApprovalDetail(interruptId) {
 }
 
 /**
- * 恢复审批（SSE 流式，统一入口）
+ * 恢复审批（执行与连接解耦后的普通 POST）。
  *
- * 后端 `ApprovalResumeView`：
- * - chat / deep_research / learning source：返回 SSE 流（agent 恢复执行的流式输出）
- * - 批量审批等待（waiting_for_others）：返回 JSON（content-type: application/json）
- * - 幂等响应（已处理审批）：返回 JSON
- * - 错误响应：返回 JSON
- *
- * 前端使用 `fetchSSE` 发起请求，发送 `Accept: text/event-stream`。
- * 后端通过 `renderer_classes = [JSONRenderer, SSERenderer]` 实现 renderer 切换：
- * 非 SSE 场景由后端显式选择 JSONRenderer，确保 content-type 正确。
- *
- * 返回 fetch Response 对象，调用方需使用 `readSSEStream` 消费流，
- * 或先检查 `response.headers.get('content-type')` 区分 SSE / JSON。
+ * 后端 `ApprovalResumeView` 统一返回 JSON：
+ * - `{ status: 'resumed' }`：恢复信令已发布，agent 由 FastAPI 执行服务恢复，
+ *   后续输出经 WebSocket 同步（stream_* / tool_call_* / approval_* / stream_completed）
+ * - `{ status: 'waiting_for_others', state: 'waiting' }`：批量审批等待
+ * - `{ idempotent: true, state }`：审批已被处理（幂等响应）
+ * - 错误响应：{ code, message }
  *
  * @param {string} interruptId - 审批中断 ID
  * @param {{ approved: boolean, user_input?: string, provider_id?: string|null, model_name?: string|null, [key: string]: any }} data - 审批数据
- *   - `approved` / `user_input` 由后端 `ApprovalWriteSerializer` 校验
- *   - 其余字段（provider_id / model_name / use_tools 等）由后端
- *     `_stream_chat_resume_generator` 通过 `request.data` 读取
- *   - `interrupt_id` / `session_id` 由后端从 URL path 与 Approval 模型自动获取，前端无需提交
- * @param {{ signal?: AbortSignal, headers?: Object }} [options] - 额外选项
- * @returns {Promise<Response>} fetch Response 对象
+ * @param {{ signal?: AbortSignal }} [options] - 透传给 apiClient.post 的选项
+ * @returns {Promise} axios response（response.data.data 为上述 JSON data）
  */
-export async function resumeApprovalStream(interruptId, data, options = {}) {
+export function resumeApprovalStream(interruptId, data, options = {}) {
   if (!interruptId) {
-    throw new Error('interruptId 不能为空')
+    return Promise.reject(new Error('interruptId 不能为空'))
   }
-  // 统一使用 /approvals/{interruptId}/resume/ SSE 流式端点
   const url = `/approvals/${interruptId}/resume/`
-  return fetchSSE(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-    signal: options.signal,
-    ...(options.headers ? { headers: options.headers } : {}),
-  })
+  return apiClient.post(url, data, options)
 }

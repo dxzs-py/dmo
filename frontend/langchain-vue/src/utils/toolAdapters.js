@@ -141,6 +141,16 @@ function truncate(str, maxLen) {
   return s.length > maxLen ? s.slice(0, maxLen) + '…' : s
 }
 
+/**
+ * 将多行/含缩进文本压缩为单行（用于工具卡片头部的单行摘要）
+ * 连续空白字符（换行、制表符、多空格）折叠为单个空格
+ * @param {string} str
+ * @returns {string}
+ */
+function collapseToSingleLine(str) {
+  return String(str || '').replace(/\s+/g, ' ').trim()
+}
+
 /** 文件扩展名 → 语法高亮 language 映射 */
 const EXT_LANG_MAP = {
   js: 'javascript', mjs: 'javascript', cjs: 'javascript',
@@ -660,6 +670,41 @@ export function formatToolResult(toolName, result) {
     displayMode: 'text',
     language: 'text',
   }
+}
+
+/**
+ * 生成工具卡片头部的单行摘要（对标 Claude Code / Cursor 的紧凑展示）
+ *
+ * - 参数摘要：复用 formatToolParameters 的 formatted，压缩为单行并截断到 60 字符
+ * - 结果摘要：仅终态（completed/failed）时复用 formatToolResult 的 formatted，
+ *   压缩为单行并截断到 80 字符
+ * - 组合：`{参数摘要}`，终态时追加 ` → {结果摘要}`
+ *
+ * @param {string} toolName - 工具名称
+ * @param {Object|Array|string|null} params - 工具入参
+ * @param {string|Object|null} result - 工具结果
+ * @param {string} status - 工具状态（ToolCallStatus 枚举值）
+ * @returns {string} 单行摘要（无内容时返回空串）
+ */
+export function formatToolSummaryLine(toolName, params, result, status) {
+  const parts = []
+
+  const paramInfo = formatToolParameters(toolName, params)
+  if (paramInfo.formatted && paramInfo.displayMode !== 'skip') {
+    const paramSummary = truncate(collapseToSingleLine(paramInfo.formatted), 60)
+    if (paramSummary) parts.push(paramSummary)
+  }
+
+  const isTerminal = status === 'completed' || status === 'failed'
+  if (isTerminal && result != null && result !== '') {
+    const resultInfo = formatToolResult(toolName, result)
+    if (resultInfo.formatted) {
+      const resultSummary = truncate(collapseToSingleLine(resultInfo.formatted), 80)
+      if (resultSummary) parts.push(resultSummary)
+    }
+  }
+
+  return parts.join(' → ')
 }
 
 /**

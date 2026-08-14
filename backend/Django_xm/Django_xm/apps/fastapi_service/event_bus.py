@@ -1,10 +1,14 @@
 """跨进程信令总线（Django Web ↔ FastAPI 执行服务）。
 
-信令类型（频道 `research:{kind}:{thread_id}`，Redis Pub/Sub）：
+信令类型（频道 `agent:{kind}:{thread_id}`，Redis Pub/Sub）：
 - ``start``: 创建/续研会话（Django → 执行服务）
 - ``approval``: 审批决策 确认/拒绝/超时（Django → 执行服务）
 - ``stop``: 终止会话（Django → 执行服务）
 - ``retry-subagent``: 单独重启失败子代理（Django → 执行服务）
+
+``session_type``（信令 payload 字段）区分会话类型：
+- ``chat``: 聊天 agent 会话（thread_id = chat session_id）
+- ``research``: 深度研究会话（thread_id = research task_id）
 
 设计说明：
 - 审批等决策先落库（DB 为唯一真相源），信令仅用于即时唤醒挂起的执行协程；
@@ -17,11 +21,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-SIGNAL_PREFIX = "research"
+SIGNAL_PREFIX = "agent"
 SIGNAL_START = "start"
 SIGNAL_APPROVAL = "approval"
 SIGNAL_STOP = "stop"
 SIGNAL_RETRY_SUBAGENT = "retry-subagent"
+
+SESSION_TYPE_CHAT = "chat"
+SESSION_TYPE_RESEARCH = "research"
 
 
 def _get_signal_redis_url() -> str:
@@ -87,6 +94,7 @@ def publish_retry_subagent_signal(
         thread_id,
         {
             "thread_id": thread_id,
+            "session_type": SESSION_TYPE_RESEARCH,
             "agent_path": agent_path,
             "tool_call_id": tool_call_id,
             "agent_name": agent_name,

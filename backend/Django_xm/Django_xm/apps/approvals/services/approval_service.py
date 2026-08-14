@@ -19,8 +19,6 @@ from Django_xm.apps.approvals.models import Approval, ApprovalOutboxEntry
 from Django_xm.apps.approvals.services.approval_constants import (
     APPROVAL_LOCK_PREFIX,
     APPROVAL_LOCK_TTL,
-    CHAT_TIMEOUT_RESUME_LOCK_PREFIX,
-    CHAT_TIMEOUT_RESUME_LOCK_TTL,
 )
 from Django_xm.apps.approvals.services.approval_store import (
     get_approval_history as _get_approval_history_from_store,
@@ -323,6 +321,12 @@ def build_approval_payload(
     # 调用方传入的 extra 覆盖默认值（用于 approved_by 等动态字段）
     if extra:
         extra_fields.update(extra)
+    # 已决断标记透传：waiting 状态区分"已批准/已拒绝"
+    # resume_approval 对批次内已决断审批写入 extra._approved（True=批准 / False=拒绝），
+    # 批次其余工具未决断时该审批广播 waiting。前端据此区分"本工具已审批，等待其余"
+    # 与"本工具已拒绝，等待其余"，避免拒绝后仍显示"已审批"误导文案。
+    if "_approved" in approval_extra:
+        extra_fields["approved"] = approval_extra["_approved"]
 
     parameters = _get("parameters")
     params = {
@@ -852,8 +856,15 @@ def _persist_and_broadcast(
             # 审批创建：工具进入"等待审批"状态
             _publish_tool_call_waiting_event(approval)
         elif state == Approval.STATE_PROCESSING:
-            # 审批通过：工具开始执行
-            _publish_tool_call_running_event(approval)
+            # 审批通过：工具开始执行。
+            # 拒绝路径（extra._approved is False）不发布 RUNNING：resume_approval 对
+            # 批次最后一个决断（无论批准/拒绝）统一广播 PROCESSING 以触发 LangGraph 恢复，
+            # 但拒绝的工具并未执行，发布 RUNNING 会导致工具状态卡"执行中"，
+            # 随后拒绝终态化时 running→rejected 被 tool_call_lifecycle 状态机拦截
+            # （非法转换），前端永远收不到 tool_call_rejected 事件。
+            extra_dict = approval.extra if isinstance(approval.extra, dict) else {}
+            if extra_dict.get("_approved") is not False:
+                _publish_tool_call_running_event(approval)
         elif state == Approval.STATE_WAITING:
             # 同批次还有其他 pending：工具保持"等待"状态
             _publish_tool_call_waiting_event(approval)
@@ -1148,7 +1159,11 @@ async def _persist_and_broadcast_async(approval: Approval, state: str, extra: di
     if state == Approval.STATE_PENDING:
         _publish_tool_call_waiting_event(approval)
     elif state == Approval.STATE_PROCESSING:
-        _publish_tool_call_running_event(approval)
+        # 与同步版一致：拒绝路径（extra._approved is False）不发布 RUNNING，
+        # 避免拒绝工具卡"执行中"且 running→rejected 被状态机拦截。
+        extra_dict = approval.extra if isinstance(approval.extra, dict) else {}
+        if extra_dict.get("_approved") is not False:
+            _publish_tool_call_running_event(approval)
     elif state == Approval.STATE_WAITING:
         _publish_tool_call_waiting_event(approval)
 
@@ -1179,26 +1194,6 @@ def _release_lock(interrupt_id: str):
 
 
 _release_lock_async = sync_to_async(_release_lock)
-
-
-def _acquire_chat_timeout_resume_lock(interrupt_id: str) -> bool:
-    """获取 chat 超时恢复流去重锁（SETNX + TTL，防多浏览器并发驱动同一恢复流）。"""
-    redis_client = get_redis_client()
-    lock_key = f"{CHAT_TIMEOUT_RESUME_LOCK_PREFIX}{interrupt_id}"
-    return bool(redis_client.set(lock_key, "1", nx=True, ex=CHAT_TIMEOUT_RESUME_LOCK_TTL))
-
-
-def _release_chat_timeout_resume_lock(interrupt_id: str):
-    """释放 chat 超时恢复流去重锁（由 _stream_chat_resume_generator finally 调用）。"""
-    try:
-        redis_client = get_redis_client()
-        lock_key = f"{CHAT_TIMEOUT_RESUME_LOCK_PREFIX}{interrupt_id}"
-        redis_client.delete(lock_key)
-    except Exception:
-        logger.debug(f"释放 chat 超时恢复锁失败（可忽略，TTL 兜底）: {interrupt_id}")
-
-
-_release_chat_timeout_resume_lock_async = sync_to_async(_release_chat_timeout_resume_lock)
 
 
 # ── 公开 API ──────────────────────────────────────────────
@@ -1491,22 +1486,18 @@ def resume_approval(
     approved: bool,
     user_input: str | None = None,
     approved_by: Any | None = None,
-    timeout_resume: bool = False,
 ) -> dict[str, Any]:
     """将审批从 pending 转为 processing，设置resume_value，广播processing事件。
 
     幂等处理：
     - 审批不存在：返回 not_found=True（调用方决定如何响应）
     - 审批已是终态(approved/rejected/timeout)：返回 idempotent=True
-      （例外：审批为 TIMEOUT 且 timeout_resume=True 时，跳过幂等直接驱动恢复——
-       超时恢复由前端收到 approval_timeout 事件后触发，审批保持终态不复位）
     - 审批已是processing：返回 idempotent=True（正在处理中）
     - 审批锁被其他线程持有：返回 idempotent=True（并发请求）
     - 深度研究场景 SETNX 锁被持有：返回 idempotent=True, state=processing（并发恢复）
 
     Args:
         approved_by: 审批操作用户（User 实例或 None），用于 approved_by 字段持久化。
-        timeout_resume: 超时恢复标记（前端事件驱动触发时置 True）。
     """
     try:
         approval = Approval.objects.get(interrupt_id=interrupt_id)
@@ -1521,44 +1512,6 @@ def resume_approval(
         }
 
     if approval.state in (Approval.STATE_APPROVED, Approval.STATE_REJECTED, Approval.STATE_TIMEOUT):
-        if approval.state == Approval.STATE_TIMEOUT and timeout_resume:
-            # 事件驱动化超时恢复（Task 5）：
-            # 审批已由 timeout_approval 终态化 TIMEOUT 并发布 approval_timeout 事件，
-            # 前端收到后调用 SSE resume 端点。此处跳过幂等，从 extra 读取超时决策值
-            # （TIMEOUT_DECISION，区分"用户拒绝"）直接驱动恢复流。
-            # 不复位审批状态、不广播 approval_processing，保持"已超时"终态展示。
-            #
-            # 并发防护：多浏览器可能同时触发，使用独立恢复流去重锁
-            # （timeout_approval 已持有 APPROVAL_LOCK 至 TTL，不可复用）。
-            # 锁在恢复流 finally（_stream_chat_resume_generator）释放，TTL 兜底。
-            from Django_xm.common.constants import TIMEOUT_DECISION
-
-            if not _acquire_chat_timeout_resume_lock(interrupt_id):
-                logger.info(
-                    f"[ApprovalService] 超时恢复已在处理中，幂等返回: interrupt_id={interrupt_id}"
-                )
-                return {
-                    "approval": approval,
-                    "resume_value": None,
-                    "stream_generator": None,
-                    "idempotent": True,
-                    "state": approval.state,
-                }
-
-            extra_data = approval.extra if isinstance(approval.extra, dict) else {}
-            resume_value = extra_data.get("_resume_value", TIMEOUT_DECISION)
-            logger.info(
-                f"[ApprovalService] 超时恢复(事件驱动): interrupt_id={interrupt_id}, "
-                f"state={approval.state}, source={approval.source}, "
-                f"session={approval.chat_session_id}, resume_value={resume_value}"
-            )
-            return {
-                "approval": approval,
-                "resume_value": resume_value,
-                "stream_generator": None,
-                "idempotent": False,
-                "timeout_resume": True,
-            }
         logger.info(f"[ApprovalService] 审批已终态，幂等返回: interrupt_id={interrupt_id}, state={approval.state}")
         return {
             "approval": approval,
@@ -1786,9 +1739,9 @@ def timeout_approval(interrupt_id: str, dispatch_resume: bool = True):
     能区分"用户拒绝"和"审批超时"，注入"工具运行失败：审批超时"的 ToolMessage，
     agent 收到后可调整策略继续执行。
 
-    事件驱动化（Task 5）：审批落库终态 TIMEOUT + 发布 approval_timeout 实时事件后，
-    恢复由前端收到事件触发 SSE resume 端点驱动（chat 来源）；deep_research 来源
-    由执行服务挂起协程轮询 DB 批次决策自驱动。本函数不再派发任何恢复任务。
+    事件驱动化：审批落库终态 TIMEOUT + 发布 approval_timeout 实时事件后，
+    发布 Redis 信令唤醒执行服务挂起协程（chat / deep_research 同构）；
+    执行器收到信令后重新 collect 校验批次完整性，未全部决断则继续挂起。
 
     Args:
         interrupt_id: 审批中断 ID（tool_call_id）
@@ -1847,63 +1800,23 @@ def timeout_approval(interrupt_id: str, dispatch_resume: bool = True):
             f"source={approval.source}, source_id={approval.source_id}"
         )
 
-        if approval.source == Approval.SOURCE_CHAT:
-            # chat 场景超时恢复（事件驱动化，Task 5）：
-            # 审批已落库终态 TIMEOUT + 发布 approval_timeout 实时事件（见上方统一出口）。
-            # 恢复不再派发 Celery 任务，改由前端收到 approval_timeout 事件后调用
-            # SSE resume 端点驱动 _stream_chat_resume_generator（与用户手动确认同构）。
-            # 同批次完整性由前端触发恢复时后端 _check_batch_and_route 判定。
-            graph_interrupt_id = extra_data.get("graph_interrupt_id", "")
+        if not dispatch_resume:
+            # 自愈/批次判定内部调用：仅终态化，不触发恢复；执行器轮询 DB 最终一致。
+            return
 
-            if graph_interrupt_id:
-                # 批量审批场景：检查同批次是否还有 pending 审批（仅日志，恢复统一由前端触发）
-                pending_siblings = Approval.objects.filter(
-                    extra__graph_interrupt_id=graph_interrupt_id,
-                    source=Approval.SOURCE_CHAT,
-                    state=Approval.STATE_PENDING,
-                ).exclude(interrupt_id=interrupt_id)
+        try:
+            from Django_xm.common.approval_gateway import gateway
 
-                if pending_siblings.exists():
-                    logger.info(
-                        f"[ApprovalService] chat 超时等待同批次其他审批: "
-                        f"interrupt_id={interrupt_id}, "
-                        f"graph_interrupt_id={graph_interrupt_id}, "
-                        f"remaining_pending={pending_siblings.count()}"
-                    )
-
-            if not dispatch_resume:
-                # 自愈场景：仅终态化，不触发恢复（恢复统一由前端 approval_timeout 事件驱动）
-                return
-
+            gateway.route_timeout(approval, resume_value=TIMEOUT_DECISION)
             logger.info(
-                f"[ApprovalService] chat 超时终态化完成，等待前端触发 SSE 恢复: "
-                f"interrupt_id={interrupt_id}, session={approval.chat_session_id}, "
-                f"graph_interrupt_id={graph_interrupt_id or '(none)'}"
+                f"[ApprovalService] 超时恢复已路由: source={approval.source}, "
+                f"source_id={approval.source_id}, interrupt_id={interrupt_id}"
             )
-
-        elif approval.source == Approval.SOURCE_DEEP_RESEARCH:
-            # 事件驱动化：审批已落库终态 TIMEOUT，执行服务挂起协程通过轮询 DB
-            # 批次决策自驱动恢复（collect_batch_decisions 基于 DB 终态判定，无需
-            # Redis 计数/批次锁）。发布 Redis 信令加速唤醒——执行器收到信令后
-            # 重新 collect 校验批次完整性，未全部决断则继续挂起。
-            if not dispatch_resume:
-                # 自愈场景（执行服务批次自愈调用）：仅终态化，不触发恢复，避免重复信令。
-                return
-
-            try:
-                from Django_xm.common.approval_gateway import gateway
-
-                gateway.route_timeout(approval, resume_value=TIMEOUT_DECISION)
-                logger.info(
-                    f"[ApprovalService] 超时恢复已路由(deep_research): "
-                    f"task={approval.source_id}, interrupt_id={interrupt_id}"
-                )
-            except Exception:
-                # 信令发布失败不阻断：审批已落库 TIMEOUT 终态，执行器轮询 DB 最终一致
-                logger.exception(
-                    f"[ApprovalService] 超时恢复路由失败(deep_research): "
-                    f"interrupt_id={interrupt_id}"
-                )
+        except Exception:
+            # 信令发布失败不阻断：审批已落库 TIMEOUT 终态，执行器轮询 DB 最终一致
+            logger.exception(
+                f"[ApprovalService] 超时恢复路由失败: interrupt_id={interrupt_id}"
+            )
     except Exception:
         logger.exception("[ApprovalService] 超时处理异常")
         _release_lock(interrupt_id)

@@ -13,7 +13,6 @@ import { ResearchTaskStatus, StreamState } from '../../types'
 import AiTask from '../ai-elements/AiTask.vue'
 import AiImage from '../ai-elements/AiImage.vue'
 import AiControls from '../ai-elements/AiControls.vue'
-import AiQueue from '../ai-elements/AiQueue.vue'
 import ToolCallGroup from '../common/ToolCallGroup.vue'
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
@@ -155,7 +154,7 @@ const toolCallCount = computed(() => props.message.toolCalls?.length || 0)
 /**
  * 统一渲染规则（Task 5）：消息 toolCalls 含子代理层级数据时启用 ToolCallGroup 分组树，
  * 覆盖代理模式（langgraph agent_create/agent_run 子代理）与深度研究模式；
- * 无子代理的普通工具调用保持 AiQueue + ToolCallCard 平铺。
+ * 无子代理的普通工具调用保持 ToolCallCard 单行摘要平铺。
  *
  * 判定：任一工具携带子代理层级信息（agentPath 深度 > 1 或 depth > 0），
  * 或存在多个 agentPath 分组（多代理并存）时，即视为含子代理层级。
@@ -297,12 +296,6 @@ async function handleDelete() {
 function handleBranchChange(versionIndex) {
   sessionStore.switchMessageVersion(sessionStore.currentSessionId, props.index, versionIndex)
 }
-
-function handleMessageClick() {
-  if (props.message.role === 'assistant' && hasMetadata.value) {
-    emit('click', props.message)
-  }
-}
 </script>
 
 <template>
@@ -316,7 +309,6 @@ function handleMessageClick() {
         'is-streaming': (isStreaming && isLast || message.isStreaming) && message.role === 'assistant'
       }
     ]"
-    @click="handleMessageClick"
   >
     <div class="message-avatar">
       <el-icon v-if="message.role === 'user'" :size="18"><User /></el-icon>
@@ -558,28 +550,16 @@ function handleMessageClick() {
             @reject="(tc) => handleToolCallReject(tc)"
           />
         </div>
-        <!-- 平铺（无子代理的普通工具调用，保持原展示） -->
+        <!-- 平铺（无子代理的普通工具调用，单行摘要展示） -->
         <TransitionGroup v-else name="tool-call" tag="div" class="tool-calls-list">
-          <AiQueue v-if="message.toolCalls && message.toolCalls.length > 1" :items="message.toolCalls" class="tool-calls-queue">
-            <ToolCallCard
-              v-for="(toolCall, idx) in message.toolCalls"
-              :key="toolCall.id || idx"
-              :tool-name="toolCall.name"
-              :input="toolCall.input || toolCall.parameters"
-              :output="toolCall.output || toolCall.result"
-              :status="deriveDisplayStatus(toolCall)"
-              :tool-call="toolCall"
-              @approve="(tc) => handleToolCallApprove(tc)"
-              @reject="(tc) => handleToolCallReject(tc)"
-            />
-          </AiQueue>
           <ToolCallCard
-            v-else-if="message.toolCalls && message.toolCalls.length === 1"
-            :tool-name="message.toolCalls[0].name"
-            :input="message.toolCalls[0].input || message.toolCalls[0].parameters"
-            :output="message.toolCalls[0].output || message.toolCalls[0].result"
-            :status="deriveDisplayStatus(message.toolCalls[0])"
-            :tool-call="message.toolCalls[0]"
+            v-for="(toolCall, idx) in message.toolCalls"
+            :key="toolCall.id || idx"
+            :tool-name="toolCall.name"
+            :input="toolCall.input || toolCall.parameters"
+            :output="toolCall.output || toolCall.result"
+            :status="deriveDisplayStatus(toolCall)"
+            :tool-call="toolCall"
             @approve="(tc) => handleToolCallApprove(tc)"
             @reject="(tc) => handleToolCallReject(tc)"
           />
@@ -667,14 +647,6 @@ function handleMessageClick() {
 
 .message.user {
   flex-direction: row-reverse;
-}
-
-.message.assistant.has-metadata {
-  cursor: pointer;
-}
-
-.message.assistant:hover {
-  background-color: color-mix(in srgb, var(--foreground) 3%, transparent);
 }
 
 .message.is-selected {

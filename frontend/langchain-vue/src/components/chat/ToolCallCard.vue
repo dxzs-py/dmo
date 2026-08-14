@@ -1,11 +1,11 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { ArrowDown, ArrowRight, CircleCheck, Clock, Close, Connection, Loading, MagicStick, Promotion } from '@element-plus/icons-vue'
 import { ToolCallStatus } from '../../types'
 import {
   formatToolParameters,
   formatToolResult,
-  isReadonlyTool,
+  formatToolSummaryLine,
 } from '../../utils/toolAdapters'
 
 const props = defineProps({
@@ -47,14 +47,28 @@ const emit = defineEmits(['approve', 'reject'])
 // 判断是否为 Skill 调用
 const isSkillCall = computed(() => props.toolName.startsWith('skill_'))
 
-// 判断是否为知识库检索工具
-const isKnowledgeBase = computed(() => props.toolName.startsWith('knowledge_base_'))
+// 默认折叠为单行摘要（对标 Claude Code / Cursor）：
+// 审批中（waiting）与运行中（running）工具展开，其余状态折叠
+const isExpanded = ref(
+  props.status === ToolCallStatus.WAITING || props.status === ToolCallStatus.RUNNING
+)
 
-// 判断是否为只读工具（ls/glob/grep 等）：只读工具默认折叠
-const isReadonly = computed(() => isReadonlyTool(props.toolName))
-
-// 知识库工具与只读工具默认折叠；其他默认展开
-const isExpanded = ref((isKnowledgeBase.value || isReadonly.value) ? false : true)
+// 状态驱动展开/折叠：
+// 审批中（waiting）与运行中（running）强制展开（审批面板/执行过程需可见）
+// 进入终态自动折叠为单行摘要（执行过程用户已看到，折叠减少信息噪音）
+// 注意：卡片挂载时 status 可能为 pending，随后事件流更新为 waiting，
+// 因此不能只靠初始值，必须在此处对 waiting/running 也做展开处理
+watch(() => props.status, (newStatus) => {
+  const terminal = newStatus === ToolCallStatus.COMPLETED
+    || newStatus === ToolCallStatus.FAILED
+    || newStatus === ToolCallStatus.REJECTED
+    || newStatus === ToolCallStatus.TIMEOUT
+  if (terminal) {
+    isExpanded.value = false
+  } else if (newStatus === ToolCallStatus.WAITING || newStatus === ToolCallStatus.RUNNING) {
+    isExpanded.value = true
+  }
+})
 
 // Skill 模式标签
 const skillModeLabel = computed(() => {
@@ -228,9 +242,17 @@ const isProcessingApproval = computed(() => approvalData.value?.state === 'proce
 // P21 补充：工具进入终态后不可能还在等待同批——终态时等待审批面板应消失
 const isWaitingForSiblings = computed(() => {
   if (!approvalData.value || approvalData.value.state !== 'waiting') return false
-  // 工具已进入终态：不再显示"等待同批"面板
-  if (props.status === ToolCallStatus.COMPLETED || props.status === ToolCallStatus.FAILED) return false
+  // 工具已进入终态：不再显示"等待同批"面板（P21；拒绝/超时同样适用）
+  if (props.status === ToolCallStatus.COMPLETED
+    || props.status === ToolCallStatus.FAILED
+    || props.status === ToolCallStatus.REJECTED
+    || props.status === ToolCallStatus.TIMEOUT) return false
   return true
+})
+
+// 批量等待时区分"本工具已批准"与"本工具已拒绝"（后端 waiting payload 透传 approved）
+const isWaitingForSiblingsRejected = computed(() => {
+  return isWaitingForSiblings.value && approvalData.value?.approved === false
 })
 
 // riskLevel 是唯一权威风险等级字段（safe/controlled/high）
@@ -321,80 +343,45 @@ const approvalArgs = computed(() => {
     .map(([key, val]) => ({ key, value: String(val) }))
 })
 
-// ============================================================
-// hover 浮层（Task 4.3）：展示完整入参与返回详情（未截断的原始值）
-// 与卡片内展示（formatToolParameters/formatToolResult 可能截断）区分：
-// 浮层直接序列化原始 input/output，超长内容在浮层内滚动查看
-// ============================================================
-const hoverInputText = computed(() => {
-  const raw = props.input
-  if (raw === null || raw === undefined || raw === '') return ''
-  if (typeof raw === 'string') return raw
-  try { return JSON.stringify(raw, null, 2) } catch { return String(raw) }
-})
-
-const hoverOutputText = computed(() => {
-  const raw = props.output
-  if (raw === null || raw === undefined || raw === '') return ''
-  if (typeof raw === 'string') return raw
-  try { return JSON.stringify(raw, null, 2) } catch { return String(raw) }
-})
-
-// 无入参/返回内容时禁用浮层（避免空 tooltip）
-const hasHoverContent = computed(() => !!(hoverInputText.value || hoverOutputText.value))
+// 卡片头部单行摘要（折叠态展示：参数摘要 → 结果摘要）
+const summaryLine = computed(() =>
+  formatToolSummaryLine(props.toolName, props.input, props.output, props.status)
+)
 </script>
 
 <template>
-  <el-tooltip
-    placement="top"
-    :show-after="400"
-    :teleported="true"
-    :disabled="!hasHoverContent"
-    popper-class="tool-call-hover-popper"
-    class="tool-call-tooltip-wrapper"
+  <div
+    :class="['tool-call-card', `tool-call-card--${status}`, { 'tool-call-card--skill': isSkillCall, 'tool-call-card--high-risk': isHighRisk, 'tool-call-card--subagent': isSubagentCall, 'tool-call-card--subagent-trigger': isSubagentTrigger }]"
+    :style="approvalBorderColor ? { borderColor: approvalBorderColor } : {}"
   >
-    <template #content>
-      <div class="tool-call-hover">
-        <div class="tool-call-hover__title">{{ toolName }}</div>
-        <template v-if="hoverInputText">
-          <div class="tool-call-hover__label">输入参数</div>
-          <pre class="tool-call-hover__content">{{ hoverInputText }}</pre>
-        </template>
-        <template v-if="hoverOutputText">
-          <div class="tool-call-hover__label">返回结果</div>
-          <pre class="tool-call-hover__content">{{ hoverOutputText }}</pre>
-        </template>
-      </div>
-    </template>
-    <div
-      :class="['tool-call-card', `tool-call-card--${status}`, { 'tool-call-card--skill': isSkillCall, 'tool-call-card--high-risk': isHighRisk, 'tool-call-card--subagent': isSubagentCall, 'tool-call-card--subagent-trigger': isSubagentTrigger }]"
-      :style="approvalBorderColor ? { borderColor: approvalBorderColor } : {}"
-    >
       <div class="tool-call-header" @click="isExpanded = !isExpanded">
         <div class="tool-call-left">
           <el-icon class="status-icon" :class="`status-${status}`">
             <component :is="isSkillCall ? MagicStick : statusIcon" :class="{ 'is-loading': status === ToolCallStatus.RUNNING }" />
           </el-icon>
           <div class="tool-info">
-            <span :class="['tool-name', { 'tool-name--high-risk': isHighRisk }]">{{ toolName }}</span>
-            <!-- 触发嵌套子代理的工具（异步子代理调用，Task 4.4） -->
-            <el-tag v-if="isSubagentTrigger" size="small" type="warning" effect="plain" class="subagent-trigger-tag">
-              <el-icon class="subagent-trigger-icon"><Promotion /></el-icon>
-              子代理
-            </el-tag>
-            <!-- 子 agent 嵌套链路展示（Phase E3） -->
-            <el-tag v-if="isSubagentCall" size="small" type="info" effect="plain" class="agent-path-tag">
-              <el-icon class="agent-path-icon"><Connection /></el-icon>
-              {{ agentPathText }}
-              <span v-if="nestingDepth > 0" class="depth-badge">L{{ nestingDepth }}</span>
-            </el-tag>
-            <!-- SAFE 级自动通过徽章（Phase F1） -->
-            <el-tag v-if="isAutoApproved" size="small" type="success" effect="plain">自动通过</el-tag>
-            <!-- 高危风险等级徽章（Phase G2） -->
-            <el-tag v-if="isHighRisk" size="small" type="danger" effect="dark">高危</el-tag>
-            <el-tag v-if="isSkillCall && skillModeLabel" size="small" :type="skillModeLabel === '管线' ? 'primary' : skillModeLabel === '顾问' ? 'success' : 'warning'" effect="plain">{{ skillModeLabel }}</el-tag>
-            <el-tag v-else-if="status === ToolCallStatus.REJECTED" size="small" type="danger">已拒绝</el-tag>
-            <el-tag v-else :type="statusType" size="small">{{ statusText }}</el-tag>
+            <div class="tool-info__row">
+              <span :class="['tool-name', { 'tool-name--high-risk': isHighRisk }]">{{ toolName }}</span>
+              <!-- 触发嵌套子代理的工具（异步子代理调用，Task 4.4） -->
+              <el-tag v-if="isSubagentTrigger" size="small" type="warning" effect="plain" class="subagent-trigger-tag">
+                <el-icon class="subagent-trigger-icon"><Promotion /></el-icon>
+                子代理
+              </el-tag>
+              <!-- 子 agent 嵌套链路展示（Phase E3） -->
+              <el-tag v-if="isSubagentCall" size="small" type="info" effect="plain" class="agent-path-tag">
+                <el-icon class="agent-path-icon"><Connection /></el-icon>
+                {{ agentPathText }}
+                <span v-if="nestingDepth > 0" class="depth-badge">L{{ nestingDepth }}</span>
+              </el-tag>
+              <!-- SAFE 级自动通过徽章（Phase F1） -->
+              <el-tag v-if="isAutoApproved" size="small" type="success" effect="plain">自动通过</el-tag>
+              <!-- 高危风险等级徽章（Phase G2） -->
+              <el-tag v-if="isHighRisk" size="small" type="danger" effect="dark">高危</el-tag>
+              <el-tag v-if="isSkillCall && skillModeLabel" size="small" :type="skillModeLabel === '管线' ? 'primary' : skillModeLabel === '顾问' ? 'success' : 'warning'" effect="plain">{{ skillModeLabel }}</el-tag>
+              <el-tag v-else-if="status === ToolCallStatus.REJECTED" size="small" type="danger">已拒绝</el-tag>
+              <el-tag v-else :type="statusType" size="small">{{ statusText }}</el-tag>
+            </div>
+            <div v-if="!isExpanded && summaryLine" class="tool-summary">{{ summaryLine }}</div>
           </div>
         </div>
         <el-icon class="expand-icon" :class="{ 'rotated': isExpanded }">
@@ -425,9 +412,13 @@ const hasHoverContent = computed(() => !!(hoverInputText.value || hoverOutputTex
         </template>
         <!-- 普通输出：仅终态展示（防止审批阶段提前渲染 result 字段） -->
         <template v-else>
-          <div v-if="shouldShowOutput && outputDisplay.displayMode !== 'skip'" class="tool-call-section">
+          <div v-if="shouldShowOutput" class="tool-call-section">
             <div class="section-title">输出结果</div>
-            <pre :class="outputContentClass">{{ outputDisplay.formatted }}</pre>
+            <pre v-if="outputDisplay.displayMode !== 'skip'" :class="outputContentClass">{{ outputDisplay.formatted }}</pre>
+            <!-- 拒绝/超时且无结果数据时给出占位反馈，保证输出结果区域不消失 -->
+            <pre v-else-if="status === ToolCallStatus.REJECTED || status === ToolCallStatus.TIMEOUT" class="section-content section-content--rejected-feedback">
+{{ status === ToolCallStatus.REJECTED ? '已拒绝执行该工具，Agent 将调整策略继续' : '该工具审批超时，未执行' }}
+            </pre>
           </div>
         </template>
 
@@ -439,7 +430,7 @@ const hasHoverContent = computed(() => !!(hoverInputText.value || hoverOutputTex
           </div>
           <div v-if="isWaitingForSiblings" class="approval-panel__waiting-hint">
             <el-icon><Clock /></el-icon>
-            <span>本工具已审批，等待其余工具完成审批</span>
+            <span>{{ isWaitingForSiblingsRejected ? '本工具已拒绝，等待其余工具完成审批' : '本工具已审批，等待其余工具完成审批' }}</span>
           </div>
           <div v-if="approvalData.title" class="approval-panel__title-text">{{ approvalData.title }}</div>
           <div v-if="approvalData.description" class="approval-panel__desc">{{ approvalData.description }}</div>
@@ -472,7 +463,6 @@ const hasHoverContent = computed(() => !!(hoverInputText.value || hoverOutputTex
         </div>
       </div>
     </div>
-  </el-tooltip>
 </template>
 
 <style scoped>
@@ -571,8 +561,27 @@ const hasHoverContent = computed(() => !!(hoverInputText.value || hoverOutputTex
 
 .tool-info {
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tool-info__row {
+  display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.tool-summary {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .tool-name {
@@ -836,53 +845,5 @@ const hasHoverContent = computed(() => !!(hoverInputText.value || hoverOutputTex
 
 .subagent-trigger-icon {
   font-size: 12px;
-}
-</style>
-
-<style>
-/* ===== ToolCallCard hover 浮层（Task 4.3）=====
- * popper 经 teleport 渲染到 body 下，scoped 样式不生效，使用非 scoped 块。
- * 浮层展示完整入参与返回详情（未截断原始值），超长内容滚动查看。
- */
-.tool-call-tooltip-wrapper {
-  display: block;
-  width: 100%;
-}
-
-.tool-call-hover-popper {
-  max-width: 520px;
-}
-
-.tool-call-hover {
-  max-height: 320px;
-  overflow: auto;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--el-text-color-primary);
-}
-
-.tool-call-hover__title {
-  font-weight: 600;
-  margin-bottom: 6px;
-}
-
-.tool-call-hover__label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--el-text-color-secondary);
-  margin: 6px 0 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.tool-call-hover__content {
-  margin: 0;
-  padding: 8px 10px;
-  background-color: var(--el-fill-color-light);
-  border-radius: 4px;
-  font-family: 'Courier New', Consolas, monospace;
-  font-size: 12px;
-  white-space: pre-wrap;
-  word-break: break-all;
 }
 </style>

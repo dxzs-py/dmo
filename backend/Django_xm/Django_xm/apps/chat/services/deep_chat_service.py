@@ -264,7 +264,7 @@ class DeepChatService:
         Returns:
             thread_id: 深度研究任务 ID
         """
-        from Django_xm.apps.fastapi_service.event_bus import SIGNAL_START, publish_signal
+        from Django_xm.apps.fastapi_service.event_bus import SESSION_TYPE_RESEARCH, SIGNAL_START, publish_signal
 
         thread_id = task_id
 
@@ -292,6 +292,7 @@ class DeepChatService:
             thread_id,
             {
                 "thread_id": thread_id,
+                "session_type": SESSION_TYPE_RESEARCH,
                 "query": query,
                 "user_id": self._chat_service.user_id,
                 "session_id": session_id,

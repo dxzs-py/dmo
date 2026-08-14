@@ -18,17 +18,15 @@
     - cleanup_expired_approvals（approval_tasks.py）：Celery 定时扫描，无需修改
 
 注意：
-    超时恢复链路（事件驱动化，Task 5）：
+    超时恢复链路（事件驱动化）：
     Celery 扫描超时（cleanup_expired_approvals）→ timeout_approval 落库终态
-    TIMEOUT + 发布 approval_timeout 实时事件 →
-    chat 来源：前端收到事件后调用 SSE resume 端点 → _stream_chat_resume_generator
-    恢复 LangGraph（Command(resume=TIMEOUT_DECISION)）→ middleware 注入超时
+    TIMEOUT + 发布 approval_timeout 实时事件 → 发布 Redis 信令唤醒执行服务
+    挂起协程（chat / deep_research 同构）→ 执行器重新 collect 批次决策后
+    Command(resume=TIMEOUT_DECISION) 恢复 → middleware 注入超时
     ToolMessage → agent 调整策略继续执行。
-    deep_research 来源：执行服务挂起协程轮询 DB 批次决策自驱动（无需前端）。
 
     关键日志标记（用于排查）：
-    - [ApprovalService] 超时恢复(事件驱动)
-    - [ApprovalGateway] chat 超时已终态化，等待前端事件驱动恢复
+    - [ApprovalService] 超时恢复已路由
 """
 
 import logging

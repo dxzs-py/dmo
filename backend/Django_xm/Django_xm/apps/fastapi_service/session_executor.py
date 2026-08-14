@@ -59,6 +59,7 @@ class SessionExecutor:
         message_id: str = "",
         publish_to_redis: bool = False,
         params: dict[str, Any] | None = None,
+        session_type: str = "research",
     ):
         self.manager = manager
         self.thread_id = thread_id
@@ -67,6 +68,7 @@ class SessionExecutor:
         self.session_id = session_id
         self.message_id = message_id
         self.publish_to_redis = publish_to_redis
+        self.session_type = session_type
         # Agent 构建参数（初始执行时由 start 信令透传；恢复时由 task 组装）
         self.params = params or {}
         self.start_time = time.time()
@@ -93,60 +95,76 @@ class SessionExecutor:
             self._run_task.cancel()
 
     async def run(self) -> None:
-        """单协程完整执行流程，持续运行至会话结束。"""
+        """单协程完整执行流程，持续运行至会话结束（chat / research 分派）。"""
         thread_id = self.thread_id
         try:
-            await _update_task_status(thread_id, {"status": "running", "current_step": "research_started"})
-            await self._publish_status_change("running", current_step="research_started")
-            agent = await self._build_agent()
-
-            # 挂接子代理重试指令队列：adapter astream 循环按 chunk 消费并注入 graph state
-            # （Task 3 单独重启失败子代理：运行中会话由 on_retry_subagent 入队；
-            # 恢复重试场景由下方 params.retry_instruction 预注入）
-            agent._retry_instruction_queue = self._retry_queue
-            retry_instruction = self.params.get("retry_instruction")
-            if retry_instruction:
-                self._retry_queue.put_nowait(retry_instruction)
-                logger.info(
-                    f"[SessionExecutor] 预注入子代理重试指令: thread_id={thread_id}, "
-                    f"tool_call_id={retry_instruction.get('tool_call_id')}"
-                )
-
-            # 恢复模式（服务重启/崩溃自愈）：等待首个已决断批次后从 checkpoint 恢复
-            resume_command = self.params.get("resume_command")
-            query = self.query
-            if self.params.get("resume_mode"):
-                if resume_command is None:
-                    decisions = await self._wait_for_initial_batch()
-                    if decisions:
-                        from langgraph.types import Command
-
-                        resume_command = Command(resume=decisions)
-                query = None  # 恢复模式不发送新 query（checkpoint 已有上下文）
-
-            result = await execute_research_async(
-                agent,
-                query,
-                thread_id,
-                disable_llm_cache=True,
-                user_id=self.user_id,
-                chat_session_id=self.session_id,
-                message_id=self.message_id,
-                resume_command=resume_command,
-                interrupt_handler=self._on_interrupt,
-            )
-            response_time = round(time.time() - self.start_time, 2)
-            await self._handle_result(result, response_time)
+            if self.session_type == "chat":
+                await self._run_chat()
+            else:
+                await self._run_research()
         except asyncio.CancelledError:
             logger.info(f"[SessionExecutor] 执行协程被终止: thread_id={thread_id}")
             raise
         except Exception as exc:
             logger.exception(f"[SessionExecutor] 执行异常: thread_id={thread_id}")
-            await self._handle_failure(str(exc))
+            if self.session_type != "chat":
+                # chat 的失败处理在 chat_executor_core 内部完成（广播 stream_completed）
+                await self._handle_failure(str(exc))
         finally:
             # 统一释放 checkpointer 连接 + 移除会话槽位（崩溃/取消/完成均不泄漏）
             await self._release_checkpointer()
             self.manager.remove_session(thread_id)
+
+    async def _run_research(self) -> None:
+        """深度研究执行核心（单协程，原 run 逻辑）。"""
+        thread_id = self.thread_id
+        await _update_task_status(thread_id, {"status": "running", "current_step": "research_started"})
+        await self._publish_status_change("running", current_step="research_started")
+        agent = await self._build_agent()
+
+        # 挂接子代理重试指令队列：adapter astream 循环按 chunk 消费并注入 graph state
+        # （Task 3 单独重启失败子代理：运行中会话由 on_retry_subagent 入队；
+        # 恢复重试场景由下方 params.retry_instruction 预注入）
+        agent._retry_instruction_queue = self._retry_queue
+        retry_instruction = self.params.get("retry_instruction")
+        if retry_instruction:
+            self._retry_queue.put_nowait(retry_instruction)
+            logger.info(
+                f"[SessionExecutor] 预注入子代理重试指令: thread_id={thread_id}, "
+                f"tool_call_id={retry_instruction.get('tool_call_id')}"
+            )
+
+        # 恢复模式（服务重启/崩溃自愈）：等待首个已决断批次后从 checkpoint 恢复
+        resume_command = self.params.get("resume_command")
+        query = self.query
+        if self.params.get("resume_mode"):
+            if resume_command is None:
+                decisions = await self._wait_for_initial_batch()
+                if decisions:
+                    from langgraph.types import Command
+
+                    resume_command = Command(resume=decisions)
+            query = None  # 恢复模式不发送新 query（checkpoint 已有上下文）
+
+        result = await execute_research_async(
+            agent,
+            query,
+            thread_id,
+            disable_llm_cache=True,
+            user_id=self.user_id,
+            chat_session_id=self.session_id,
+            message_id=self.message_id,
+            resume_command=resume_command,
+            interrupt_handler=self._on_interrupt,
+        )
+        response_time = round(time.time() - self.start_time, 2)
+        await self._handle_result(result, response_time)
+
+    async def _run_chat(self) -> None:
+        """chat agent 执行核心（单协程，挂起 + 信令唤醒）。"""
+        from Django_xm.apps.fastapi_service.chat_executor_core import run_chat_session
+
+        await run_chat_session(self, self.params)
 
     async def _wait_for_initial_batch(self) -> dict:
         """恢复模式：等待首个全部决断的审批批次（服务重启后任务在等审批）。

@@ -131,8 +131,15 @@ def _evolve_tool_call(
     existing_status = str(existing_tc.get("status") or "").lower()
     new_status = str(new_tc.get("status") or "").lower()
 
-    # 终态保护：existing 已是终态 → 保持 existing 全部字段不变（终态不可逆）
+    # 终态保护：existing 已是终态 → 保持 status 不变（终态不可逆），
+    # 但 state/result/error 属数据字段，仍应演进（根因修复：审批服务 B3
+    # 在审批 approved 时提前将 status 映射为 completed 终态，若在此整体
+    # return，工具执行完成后的 result 永远无法落库，刷新/后开浏览器
+    # 快照将缺失工具输出结果）。
     if existing_status in _TOOL_CALL_TERMINAL_STATUSES:
+        for field in ("state", "result", "error"):
+            if field in new_tc and new_tc[field] is not None:
+                evolved[field] = new_tc[field]
         return evolved
 
     # 非终态演进：仅当 new 状态不构成回退时演进 status

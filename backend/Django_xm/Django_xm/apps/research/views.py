@@ -11,7 +11,12 @@ from rest_framework.views import APIView
 from Django_xm.apps.chat.services.cross_app import get_active_session_ids_for_research_task
 from Django_xm.apps.core.services.file_manager import get_file_manager
 from Django_xm.apps.core.throttling import ResearchRateThrottle
-from Django_xm.apps.fastapi_service.event_bus import SIGNAL_START, publish_retry_subagent_signal, publish_signal
+from Django_xm.apps.fastapi_service.event_bus import (
+    SESSION_TYPE_RESEARCH,
+    SIGNAL_START,
+    publish_retry_subagent_signal,
+    publish_signal,
+)
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.event_schema import EventType
 from Django_xm.common.responses import error_response, not_found_response, success_response
@@ -108,6 +113,7 @@ class DeepResearchStartView(APIView):
                 thread_id,
                 {
                     "thread_id": thread_id,
+                    "session_type": SESSION_TYPE_RESEARCH,
                     "query": data["query"],
                     "user_id": request.user.id,
                     "session_id": None,
@@ -242,6 +248,7 @@ class DeepResearchContinueView(APIView):
                 new_thread_id,
                 {
                     "thread_id": new_thread_id,
+                    "session_type": SESSION_TYPE_RESEARCH,
                     "query": new_query,
                     "user_id": request.user.id,
                     "session_id": parent_task.session_id,

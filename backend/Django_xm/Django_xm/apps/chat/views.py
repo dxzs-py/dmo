@@ -13,7 +13,6 @@ from .views_chat import (
     ChatSessionListView,
     ChatStreamView,
     ChatView,
-    SSERenderer,
     log_view_action,
 )
 from .views_command import (
@@ -40,6 +39,5 @@ __all__ = [
     "ChatStreamView",
     "ChatView",
     "ProjectContextView",
-    "SSERenderer",
     "log_view_action",
 ]

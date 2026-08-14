@@ -19,20 +19,20 @@ import { createStreamStateHandlers } from './sync/streamStateHandlers'
  */
 
 /**
- * 架构说明：SSE 与 WebSocket 的职责划分
+ * 架构说明：执行与连接解耦后的 WebSocket 单一事件通道
  *
- * SSE（请求浏览器独占）：
- *   - 流式 chunks、reasoning、sources、suggestions、context —— 请求浏览器的实时数据源
- *   - tool / tool_result 事件仍保留在 SSE 通道（stream_helpers.py 仍 yield），
- *     用于请求浏览器的实时工具调用渲染
+ * 聊天执行由 FastAPI 执行服务单协程运行（chat 与 deep_research 同构），
+ * 前端发送消息为普通 POST（{ status: 'started' }），所有流式/工具/审批事件
+ * 统一经 WebSocket 广播，所有浏览器（含请求浏览器）一致消费，无 SSE 通道。
  *
  * WebSocket（所有浏览器共享）：
  *   - 跨浏览器同步事件（session_created/deleted/updated 等）
  *   - 7 个工具调用事件（tool_call_pending/waiting/running/completed/failed/timeout/rejected）：
- *     所有浏览器（含请求浏览器）均通过 WebSocket 接收工具调用状态
+ *     所有浏览器统一通过 WebSocket 接收工具调用状态
  *   - 6 个审批事件（approval_pending/processing/waiting/approved/rejected/timeout）：
  *     所有浏览器通过 WebSocket 同步审批状态
- *   - message_updated：供非请求浏览器感知消息内容变更
+ *   - message_updated：供所有浏览器感知消息内容变更
+ *   - stream_event / stream_completed / stream_finalized：流式内容与结束/最终化信号
  *   - 4 个学习工作流事件（workflow_step / workflow_state_update / workflow_completed / workflow_failed）：
  *     所有浏览器通过 WebSocket 同步学习工作流进度与状态（Task 23），
  *     由 onWorkflowEvent 回调委托给 workflowStore，WorkflowView watch store 更新 UI
@@ -43,9 +43,11 @@ import { createStreamStateHandlers } from './sync/streamStateHandlers'
  *   通过 _findMatchingToolCall 的 id 精确匹配 + PROTECTED_STATUSES 状态保护
  *   实现幂等合并。
  *
- * 关键规则：请求浏览器在流式期间，以 SSE 为准处理 content/reasoning 等字段，
- * 跳过 WebSocket 中与 SSE 重叠的 message_updated，
- * 避免双通道数据冲突导致"输出到一半被刷新"。
+ * 请求浏览器唯一剩余差异（streamingSessions）：
+ *   请求浏览器在 stream_completed 后由 sendMessage 主流程执行 finalizeStream
+ *   （最终 PATCH + chatFinalize → 后端广播 stream_finalized），因此
+ *   handleStreamCompleted / handleStreamFinalized 对请求浏览器不重复全量同步，
+ *   其余浏览器在 stream_finalized 后统一全量同步并最终化 toolCalls。
  *
  * 模块拆分说明（Task 10）：
  *   主文件仅负责状态初始化、装配各 handler、公共方法、watch 与 return。
@@ -357,7 +359,7 @@ export const useSyncStore = defineStore('sync', () => {
     if (!handlersPromise) {
       handlersPromise = _getStores().then(({ sessionStore, approvalStore, researchStore, workflowStore }) => {
         // Step 1: 创建底层 handler（消息 CRUD + 完整性校验）
-        const messageHandlers = createMessageHandlers({ sessionStore, streamingSessions })
+        const messageHandlers = createMessageHandlers({ sessionStore })
         const integrityHandlers = createMessageIntegrityHandlers({ sessionStore })
 
         // Step 2: 创建流式状态 handler（依赖 messageIntegrity）

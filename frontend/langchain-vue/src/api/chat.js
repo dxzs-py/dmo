@@ -1,6 +1,5 @@
 import { apiClient } from './axios'
 import settings from '../config/settings'
-import { fetchSSE } from '../utils/sse'
 
 function validateChatRequest(data) {
   const errors = []
@@ -33,17 +32,6 @@ function validateChatRequest(data) {
   }
 }
 
-async function createStreamRequest(data, options = {}) {
-  const validation = validateChatRequest(data)
-  if (!validation.valid) throw new Error(validation.errors.join('; '))
-  return fetchSSE('/chat/stream/', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(validation.sanitizedData),
-    signal: options.signal,
-  })
-}
-
 export const chatAPI = {
   sendMessage(data) {
     const validation = validateChatRequest(data)
@@ -51,8 +39,21 @@ export const chatAPI = {
     return apiClient.post('/chat/', validation.sanitizedData)
   },
 
+  /**
+   * 启动聊天执行（执行与连接解耦后的普通 POST）。
+   *
+   * 后端 ChatStreamView 创建消息对 + 广播 MESSAGE_ADDED 后发布 Redis 信令，
+   * agent 由 FastAPI 执行服务单协程运行，执行事件经 WebSocket 统一广播。
+   * 本接口仅返回 { status: 'started', message_id, session_id }，不再返回 SSE 流。
+   *
+   * @param {Object} data - 聊天请求数据（validateChatRequest 校验）
+   * @param {Object} [options] - 透传给 apiClient.post 的选项（如 signal）
+   * @returns {Promise} axios response（data.data.status === 'started'）
+   */
   streamMessage(data, options = {}) {
-    return createStreamRequest(data, options)
+    const validation = validateChatRequest(data)
+    if (!validation.valid) return Promise.reject(new Error(validation.errors.join('; ')))
+    return apiClient.post('/chat/stream/', validation.sanitizedData, options)
   },
 
   getModes() { return apiClient.get('/chat/modes/') },

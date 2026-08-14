@@ -20,7 +20,6 @@ import {
  *
  * @param {Object} ctx - 依赖上下文
  * @param {Object} ctx.sessionStore - session store 实例
- * @param {Set<string>} ctx.streamingSessions - reactive(new Set())，请求浏览器 SSE 活跃会话集合
  * @returns {{
  *   handleMessageAdded: (sessionId: string, messageData: Object) => void,
  *   handleMessageUpdated: (sessionId: string, messageId: string, fields: Object) => void,
@@ -30,7 +29,7 @@ import {
  * }}
  */
 export const createMessageHandlers = (ctx) => {
-  const { sessionStore, streamingSessions } = ctx
+  const { sessionStore } = ctx
 
   /**
    * 新增消息（幂等：已存在则合并）
@@ -167,52 +166,9 @@ export const createMessageHandlers = (ctx) => {
       return
     }
 
-    // SSE 流式期间（触发浏览器），仅处理 tool_calls 字段更新，
-    // 跳过 content/reasoning/sources/suggestions/context（由 SSE 负责）。
-    // 整体跳过 message_updated 会导致 tool_calls 也被跳过，触发浏览器工具卡片缺失，
-    // 因此仅跳过 SSE 负责的字段。
-    if (streamingSessions.has(sessionId)) {
-      if (fields?.message) {
-        // 嵌套结构：仅保留 tool_calls，剔除 SSE 负责的字段后走 mergeMessageFromBackend
-        const filteredMessage = { ...fields.message }
-        delete filteredMessage.content
-        delete filteredMessage.reasoning
-        delete filteredMessage.sources
-        delete filteredMessage.suggestions
-        delete filteredMessage.context
-        // 仅当存在 toolCalls 或用于匹配的 id 时才合并
-        if (filteredMessage.toolCalls !== undefined || filteredMessage.id !== undefined) {
-          const backendMessage = transformBackendMessageToFrontend(filteredMessage)
-          if (backendMessage) {
-            mergeMessageFromBackend(message, backendMessage)
-          }
-        }
-      } else {
-        // 扁平结构：仅提取 toolCalls 字段
-        if (fields?.toolCalls !== undefined) {
-          // 空值保护：后端 toolCalls 为空数组时不覆盖本地审批记录
-          if (Array.isArray(fields.toolCalls) && fields.toolCalls.length === 0
-              && Array.isArray(message.toolCalls) && message.toolCalls.length > 0) {
-            logger.debug(`[Sync] message_updated 流式期间保留本地 toolCalls（后端为空）: message=${messageId}`)
-          } else {
-            // 走 mergeMessageFromBackend 而非 Object.assign，
-            // 确保 mergeToolCalls 的状态优先级保护生效，防止后端滞后快照（status=running）
-            // 覆盖本地高优先级状态（status=completed）
-            mergeMessageFromBackend(message, { toolCalls: fields.toolCalls })
-          }
-        }
-      }
-
-      // 记录已处理的 seq，用于后续去重
-      if (updateSeq) {
-        message._lastUpdateSeq = updateSeq
-      }
-      session.updatedAt = Date.now()
-      logger.info(`[Sync] 消息更新(流式期间仅 toolCalls): session=${sessionId}, message=${messageId}`)
-      return
-    }
-
-    // 非流式期间：保持原有完整合并逻辑
+    // 执行与连接解耦后所有浏览器均通过 WebSocket 接收事件，不再区分触发浏览器，
+    // 统一走完整合并。mergeMessageFromBackend 的保护态 content 覆盖规则
+    // （本地为空或后端更长才覆盖）保证流式期间的 message_updated 不会回退本地更新内容。
     if (fields?.message) {
       const backendMessage = transformBackendMessageToFrontend(fields.message)
       if (backendMessage) {

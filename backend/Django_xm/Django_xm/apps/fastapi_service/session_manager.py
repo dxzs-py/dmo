@@ -26,7 +26,7 @@ from Django_xm.apps.fastapi_service.session_executor import SessionExecutor
 logger = logging.getLogger(__name__)
 
 # 信令订阅模式（Redis PSUBSCRIBE）：只订阅已知信令 kind，
-# 避免误收 research:result:* 频道（研究结果/失败结果频道，供聊天 SSE 订阅，
+# 避免误收 agent:result:* 等非信令频道（研究结果/失败结果频道，供聊天订阅，
 # 不属于跨进程信令，收到会导致 "未知信令类型: kind=result" 告警）
 SIGNAL_PATTERNS = [
     f"{SIGNAL_PREFIX}:{kind}:*"
@@ -38,7 +38,7 @@ DEFAULT_MAX_CONCURRENCY = 20
 
 
 class SessionManager:
-    """深度研究会话调度管理器（FastAPI 执行服务进程内单例）。"""
+    """统一会话调度管理器（FastAPI 执行服务进程内单例，chat/research 共用）。"""
 
     def __init__(self, max_concurrency: int = DEFAULT_MAX_CONCURRENCY):
         self.max_concurrency = max_concurrency
@@ -110,11 +110,13 @@ class SessionManager:
             message_id=payload.get("message_id", ""),
             publish_to_redis=bool(payload.get("publish_to_redis")),
             params=payload,
+            session_type=payload.get("session_type", "research"),
         )
         self._sessions[thread_id] = executor
         executor.start()
         logger.info(
             f"[SessionManager] 会话已启动: thread_id={thread_id}, "
+            f"session_type={payload.get('session_type', 'research')}, "
             f"session_id={payload.get('session_id')}, active={len(self._sessions)}"
         )
 

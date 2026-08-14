@@ -1,5 +1,6 @@
 import { logger } from '@/utils/logger'
 import { StreamState } from '@/types'
+import { ElNotification } from 'element-plus'
 import {
   findMessageById,
   getSession,
@@ -83,8 +84,11 @@ export const createStreamStateHandlers = (ctx) => {
   }
 
   /**
-   * 处理流式事件（非触发浏览器通过 WebSocket 接收）
-   * 触发浏览器跳过此事件（已通过 SSE 实时处理）。
+   * 处理流式事件（WebSocket 通道，所有浏览器统一消费）
+   *
+   * 执行与连接解耦后 chat agent 由执行服务运行，流式事件（content/reasoning/
+   * sources/suggestions/context）经 WebSocket 广播到所有浏览器；请求浏览器不再
+   * 有 SSE 通道，故此处对所有浏览器一致处理，不再跳过。
    * @param {string} sessionId
    * @param {Object} payload - stream_event 事件载荷
    * @param {string} payload.messageId - 消息 ID
@@ -93,12 +97,6 @@ export const createStreamStateHandlers = (ctx) => {
    * @param {number} [payload.seq] - 序列号（幂等保护）
    */
   const handleStreamEvent = (sessionId, payload) => {
-    // 触发浏览器跳过（已通过 SSE 实时处理）
-    if (streamingSessions.has(sessionId)) {
-      logger.debug(`[Sync] stream_event 跳过（触发浏览器 SSE 活跃）: session=${sessionId}`)
-      return
-    }
-
     const { messageId, eventType, data, seq } = payload
     if (!messageId || !eventType) {
       // stream_event 事件在非触发浏览器的 WebSocket 重放中可能无 messageId
@@ -147,12 +145,10 @@ export const createStreamStateHandlers = (ctx) => {
     }
     const field = fieldMap[eventType]
     if (!field) {
-      // 通用 stream_event（approval / deep_research / model_fallback / research_task_id）
-      // SSE 流事件通过 _publish_stream_event → STREAM_EVENT 发布到非触发浏览器。
-      // streamState 已在 L126-133 设为 STREAMING（流存活信号），无消息字段需更新。
-      // 仅更新 seq 做幂等去重，不做字段更新。
-      if (seq) message._lastStreamEventSeq = seq
-      logger.debug(`[Sync] stream_event 通用事件: eventType=${eventType}, seq=${seq}`)
+      // 通用 stream_event（deep_research / research_task_id / model_fallback）
+      // 原 SSE 通道对应回调职责（setDeepResearchTask / setResearchTaskId /
+      // setModelFallback）在执行与连接解耦后统一收敛到本处理器。
+      _handleGenericStreamEvent(sessionId, message, eventType, data, seq)
       return
     }
 
@@ -162,6 +158,82 @@ export const createStreamStateHandlers = (ctx) => {
 
     if (seq) message._lastStreamEventSeq = seq
     logger.info(`[Sync] stream_event 处理: session=${sessionId}, message=${messageId}, type=${eventType}`)
+  }
+
+  /** chatDeepResearch 桥接层模块加载缓存（惰性，避免 sync ↔ chat 业务模块静态循环依赖） */
+  let chatDeepResearchModulePromise = null
+  const _getChatDeepResearch = async () => {
+    if (!chatDeepResearchModulePromise) {
+      chatDeepResearchModulePromise = import('../chatDeepResearch')
+    }
+    const mod = await chatDeepResearchModulePromise
+    return mod.useChatDeepResearchStore()
+  }
+
+  /** model store 模块加载缓存（惰性，避免模块加载期依赖） */
+  let modelStoreModulePromise = null
+  const _getModelStore = async () => {
+    if (!modelStoreModulePromise) {
+      modelStoreModulePromise = import('@/stores/model')
+    }
+    const mod = await modelStoreModulePromise
+    return mod.useModelStore()
+  }
+
+  /**
+   * 通用 stream_event 子类型处理（deep_research / research_task_id / model_fallback）
+   *
+   * 原 SSE 通道的 setDeepResearchTask / setResearchTaskId / setModelFallback 回调
+   * 职责，执行与连接解耦后统一收敛到 WebSocket 通道（所有浏览器一致）：
+   * - deep_research：研究任务创建 → 写入 chatDeepResearch 桥接层 + 消息 researchTaskId
+   * - research_task_id：任务 ID 下发 → 同上
+   * - model_fallback：模型降级提示 + 同步 modelStore 实际使用模型
+   *
+   * @param {string} sessionId
+   * @param {Object} message - 目标消息（已定位）
+   * @param {string} eventType - stream_event 子类型
+   * @param {Object} data - 事件数据
+   * @param {number} [seq]
+   */
+  const _handleGenericStreamEvent = (sessionId, message, eventType, data, seq) => {
+    if (eventType === 'deep_research' || eventType === 'research_task_id') {
+      const taskId = data?.taskId || data?.researchTaskId
+        || (typeof data === 'string' ? data : null)
+        || (data?.data?.taskId || null)
+      if (taskId) {
+        _getChatDeepResearch()
+          .then((bridge) => {
+            if (eventType === 'deep_research') {
+              bridge.setChatDeepResearchTask(data)
+            } else {
+              bridge.setChatResearchTaskId(taskId)
+            }
+          })
+          .catch((e) => logger.warn('[Sync] 更新 chatDeepResearch 桥接层失败:', e))
+        if (!message.researchTaskId) {
+          message.researchTaskId = taskId
+        }
+      }
+    } else if (eventType === 'model_fallback' && data?.message) {
+      ElNotification({
+        title: '模型降级提示',
+        message: data.message,
+        type: 'warning',
+        duration: 8000,
+      })
+      if (data.actualProvider && data.actualModel) {
+        _getModelStore()
+          .then((mStore) => {
+            if (mStore.currentProviderId !== data.actualProvider || mStore.currentModelName !== data.actualModel) {
+              mStore.currentProviderId = data.actualProvider
+              mStore.currentModelName = data.actualModel
+            }
+          })
+          .catch(() => {})
+      }
+    }
+    if (seq) message._lastStreamEventSeq = seq
+    logger.debug(`[Sync] stream_event 通用事件: eventType=${eventType}, seq=${seq}`)
   }
 
   /**
@@ -227,6 +299,19 @@ export const createStreamStateHandlers = (ctx) => {
       // 同步到 versions[currentVersion]
       const ver = getCurrentVersion(targetMsg)
       if (ver) ver.researchTaskId = taskId
+    }
+
+    // 同步 chatDeepResearch 桥接层的 researchTaskId（深度研究审批路由依赖：
+    // 原 SSE 通道由 setDeepResearchTask/setResearchTaskId 回调写入，执行与连接
+    // 解耦后 stream_interrupted 是聊天深度研究模式的权威信号，此处同步写入）。
+    if (taskId) {
+      _getChatDeepResearch()
+        .then((bridge) => {
+          if (!bridge.researchTaskId) {
+            bridge.setChatResearchTaskId(taskId)
+          }
+        })
+        .catch((e) => logger.warn('[Sync] stream_interrupted 更新 chatDeepResearch 桥接层失败:', e))
     }
 
     // 设置 streamState=INTERRUPTED（深度研究任务进行中，避免 showContinueResearch

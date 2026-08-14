@@ -14,19 +14,20 @@ from django.db import models, transaction
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.renderers import BaseRenderer
+from rest_framework.renderers import JSONRenderer
 from rest_framework.views import APIView
 
 from Django_xm.apps.attachments.services.cross_app import soft_delete_session_attachments
 from Django_xm.apps.cache_manager.services.secure_session_cache import SecureSessionCacheService
 from Django_xm.apps.core.throttling import ChatStreamRateThrottle, MetaRateThrottle
+from Django_xm.apps.fastapi_service.event_bus import SESSION_TYPE_CHAT, SIGNAL_START, publish_signal
 from Django_xm.async_utils import run_async
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.event_schema import EventSource, EventType
 from Django_xm.common.realtime_events import publish_event_sync
 from Django_xm.common.redis_utils import get_redis_client
 from Django_xm.common.responses import error_response, success_response, validation_error_response
-from Django_xm.common.sse_utils import sse_error_response, sse_response
+from Django_xm.common.sse_utils import sse_error_response
 
 from .models import ChatMessage, ChatSession, MessageRole
 from .serializers import (
@@ -76,8 +77,10 @@ def _acquire_message_dedup_lock(user_id, client_message_id, ttl=DEDUP_TTL_SECOND
         return True
 
 
-def _safe_publish_session_created(session_id, title, mode, knowledge_bases,
-                                   created_at, updated_at, user_id, session_data):
+def _safe_publish_session_created(
+    session_id, title, mode, knowledge_bases,
+    created_at, updated_at, user_id, session_data,
+):
     """安全发布 SESSION_CREATED 事件（与参考项目 _safe_publish_event_sync 对齐）。
 
     在 transaction.on_commit 回调中调用，确保事务已提交、其他浏览器可查询到该会话。
@@ -365,16 +368,8 @@ class ChatView(BaseChatAPIView):
             )
 
 
-class SSERenderer(BaseRenderer):
-    media_type = "text/event-stream"
-    format = "txt"
-
-    def render(self, data, accepted_media_type=None, renderer_context=None):
-        return data
-
-
 class ChatStreamView(BaseChatAPIView):
-    renderer_classes = [SSERenderer]
+    renderer_classes = [JSONRenderer]
     throttle_classes = [ChatStreamRateThrottle]
 
     @extend_schema(exclude=True)
@@ -393,10 +388,10 @@ class ChatStreamView(BaseChatAPIView):
                 f"[ChatStream] 重复消息请求已拦截: user={request.user.id}, "
                 f"client_message_id={data.get('client_message_id')}"
             )
-            return sse_error_response(
+            return error_response(
+                code=ErrorCode.DUPLICATE_RESOURCE,
                 message="该消息已在处理中，请勿重复发送",
-                status_code=status.HTTP_409_CONFLICT,
-                code=str(int(ErrorCode.DUPLICATE_RESOURCE)),
+                http_status=status.HTTP_409_CONFLICT,
             )
 
         # 持久化知识库选择到会话
@@ -538,20 +533,39 @@ class ChatStreamView(BaseChatAPIView):
             except Exception as e:
                 logger.warning(f"[ChatStream] 创建流式消息失败: {e}")
 
-        # Task 23.1：generate() 闭包拆分为独立模块。
-        # 使用 ASGI 原生事件循环的异步生成器（不再创建 new_event_loop）。
-        # 详见 chat/services/sse_generator.py
-        from .services.sse_generator import ChatStreamContext, generate_chat_stream
+        # 执行与连接解耦：chat agent 交由 FastAPI 执行服务单协程运行，
+        # Django 仅发布 SIGNAL_START 信令后立即返回 JSON（不再返回 SSE）。
+        # 执行事件经 WebSocket 统一广播到触发/非触发浏览器，前端刷新不影响执行。
+        if not session_id:
+            return error_response(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="缺少会话 ID，无法启动聊天执行",
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        ctx = ChatStreamContext(
-            request=request,
-            data=data,
-            original_attachment_ids=original_attachment_ids,
-            pending_progress=pending_progress,
-            assistant_message_id=assistant_message_id,
-            user_message_id=user_message_id,
+        thread_id = session_id
+        publish_signal(
+            SIGNAL_START,
+            thread_id,
+            {
+                **data,
+                "thread_id": thread_id,
+                "session_type": SESSION_TYPE_CHAT,
+                "user_id": request.user.id,
+                "session_id": session_id,
+                "message_id": str(assistant_message_id) if assistant_message_id else "",
+                "publish_to_redis": False,
+            },
         )
-        return sse_response(generate_chat_stream(ctx))
+
+        return success_response(
+            data={
+                "status": "started",
+                "message_id": str(assistant_message_id) if assistant_message_id else None,
+                "session_id": session_id,
+            },
+            message="聊天执行任务已启动",
+        )
 
 
 class ChatModesView(BaseChatAPIView):

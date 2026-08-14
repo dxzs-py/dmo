@@ -88,12 +88,10 @@ _PROTECTED_APPROVAL_FIELDS = frozenset(
 class ApprovalWriteSerializer(serializers.Serializer):
     """审批写序列化器。
 
-    白名单设计：客户端仅可提交 ``approved``、``user_input`` 与 ``timeout_resume``。
+    白名单设计：客户端仅可提交 ``approved`` 与 ``user_input``。
 
     - ``approved``：是否批准（仅 resume 接口读取；reject 接口忽略并强制 False）
     - ``user_input``：用户输入文本（仅当 approval.action == confirm_with_input 时使用）
-    - ``timeout_resume``：超时恢复标记（前端收到 approval_timeout 事件后触发 SSE
-      resume 时置 True；审批已终态 TIMEOUT 时跳过幂等直接驱动恢复）
 
     其他审批字段（state、parameters、approved_by、source 等）由服务端控制，
     客户端尝试提交 protected 字段会触发 ``to_internal_value`` 显式拒绝（返回 400），
@@ -107,7 +105,6 @@ class ApprovalWriteSerializer(serializers.Serializer):
         allow_blank=True,
         max_length=10000,
     )
-    timeout_resume = serializers.BooleanField(default=False, required=False)
 
     def to_internal_value(self, data):
         """防御性深度：客户端尝试设置 protected 字段时显式拒绝。
@@ -147,15 +144,3 @@ class ApprovalWriteSerializer(serializers.Serializer):
         if "action" in attrs and attrs["action"] not in valid_actions:
             raise serializers.ValidationError({"action": "非法的审批动作"})
         return attrs
-
-
-class SSEEventSerializer(serializers.Serializer):
-    """SSE 事件流帧的简化 schema（仅用于 OpenAPI 文档描述）。
-
-    SSE 帧的协议字段（``event``/``data``），``data`` 为 JSON 字符串。
-    OpenAPI 3.0 无法精确表达流式响应，此处以近似结构描述单帧，
-    供前端了解事件载荷字段，实际帧格式以 ``text/event-stream`` 协议为准。
-    """
-
-    event = serializers.CharField(required=False, help_text="事件类型（如 message、error、done）")
-    data = serializers.CharField(help_text="事件数据（JSON 字符串）")

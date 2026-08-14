@@ -29,10 +29,10 @@ export function useChatKeyboard({ onToggleRightPanel, onEscape, inputRef }) {
       return
     }
 
-    // Ctrl/Cmd+B：仅当聊天输入框已聚焦时接管（切换右侧面板），
-    // 未聚焦时放行给全局快捷键（切换侧边栏），避免双重触发。
+    // Ctrl/Cmd+B：切换右侧详情面板（与 ChatHeader 按钮 tooltip「显示详情面板 (Ctrl+B)」一致）。
+    // 不依赖输入框焦点：全局快捷键侧边栏（Ctrl+B）未实际注册，此处直接接管，
+    // 避免用户任意位置按 Ctrl+B 无响应（历史实现仅输入框聚焦时生效，导致快捷键"失灵"）。
     if ((event.ctrlKey || event.metaKey) && event.key === 'b') {
-      if (!isInputFocused) return
       event.preventDefault()
       event.stopImmediatePropagation()
       onToggleRightPanel()

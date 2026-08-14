@@ -33,7 +33,6 @@ import {
  *     useRealtimeSync.lastSeq 与 orderedQueue.expectedSeq 负责，本模块不做）
  * @param {{ process: Function }} ctx.orderedQueue
  *   - 来自 createOrderedQueue，提供有序队列处理能力
- * @param {Set<string>} ctx.streamingSessions - reactive(new Set())，请求浏览器 SSE 活跃会话集合
  * @param {Set<string>} ctx.fullSyncPending - 避免重复触发全量同步的 Set
  * @param {(sessionId: string, options?: Object) => Promise<{backendMessages: Array}|null>} ctx.requestFullSync
  *   - 兜底全量同步函数（由 sync.js 主文件装配后传入）
@@ -53,7 +52,6 @@ export const createHandleSessionEvent = (ctx) => {
     researchStore,
     seqDedup,
     orderedQueue,
-    streamingSessions,
     fullSyncPending,
     requestFullSync,
   } = ctx
@@ -185,19 +183,17 @@ export const createHandleSessionEvent = (ctx) => {
 
     // 目标消息处于 streaming / interrupted / finalizing / syncing 状态时，跳过与 SSE 重叠的
     // WebSocket message_updated 事件，避免滞后快照覆盖本地正在流式追加的最新内容。
-    // 工具调用事件（7 个 tool_call_*）不跳过：SSE 通道仍推送 tool / tool_result 事件
-    // （请求浏览器即时渲染工具卡片），与 WebSocket tool_call_* 事件共用同一幂等写入入口
-    // （addOrUpdateToolCallInMap / updateOrAddToolResultInMap，id/toolCallId 精确匹配），
-    // 双通道重复推送同一工具时幂等合并，无需按流状态跳过（Task 5.1）。
+    // 工具调用事件（7 个 tool_call_*）不跳过：所有浏览器统一经 WebSocket tool_call_* 事件
+    // 写入（addOrUpdateToolCallInMap / updateOrAddToolResultInMap，id/toolCallId 精确匹配），
+    // 重复推送同一工具时幂等合并，无需按流状态跳过（Task 5.1）。
     const targetStreamState = _getTargetMessageStreamState(sessionId, event)
     const earlyPayload = event.payload || event
-    // message_updated 中的内容增长事件：非请求浏览器在 INTERRUPTED 状态下放行
-    // 确保审批中断时保存的 AI 文字内容能同步到浏览器 B
+    // message_updated 中的内容增长事件：INTERRUPTED 状态下放行
+    // 确保审批中断时保存的 AI 文字内容能同步到所有浏览器
     // 支持两种 payload 结构：嵌套（earlyPayload.message.content）和扁平（earlyPayload.content）
     // writeback_to_chat_message 发布的是扁平结构，chat 流式发布的是嵌套结构
     const isContentGrowingUpdate = event.type === 'message_updated'
       && targetStreamState === StreamState.INTERRUPTED
-      && !streamingSessions.has(sessionId)
       && (earlyPayload?.message?.content || earlyPayload?.content)
       && (() => {
         // 获取本地消息内容长度进行比较，后端内容更长时放行
@@ -210,18 +206,14 @@ export const createHandleSessionEvent = (ctx) => {
         const backendLen = (backendContent || '').length
         return backendLen > localLen
       })()
-    // 请求浏览器：不再整体跳过 message_updated，由 handleMessageUpdated 选择性处理
-    // tool_calls 字段（SSE 不推送 tool 事件，触发浏览器需通过 WebSocket message_updated
-    // 获取 tool_calls），仅跳过 content/reasoning 等 SSE 负责的字段。
-    // 非请求浏览器：INTERRUPTED 状态下跳过 message_updated（本地审批状态是最新的），
-    // 但内容增长的 message_updated 必须放行
+    // 执行与连接解耦后所有浏览器统一处理：INTERRUPTED 状态下跳过 message_updated
+    // （本地审批状态是最新的），但内容增长的 message_updated 必须放行
     if (event.type === 'message_updated'
         && targetStreamState
         && PROTECTED_STREAM_STATES.has(targetStreamState)
-        && !streamingSessions.has(sessionId)
         && targetStreamState === StreamState.INTERRUPTED
         && !isContentGrowingUpdate) {
-      logger.debug(`[Sync] 非请求浏览器 INTERRUPTED 态，跳过 WS ${event.type}: session=${sessionId}`)
+      logger.debug(`[Sync] INTERRUPTED 态，跳过 WS ${event.type}: session=${sessionId}`)
       // 仍需更新 seq，避免跳号检测误触发全量同步
       if (typeof event.seq === 'number') {
         seqDedup.setSeenSeq(sessionId, event.seq)
@@ -460,7 +452,10 @@ export const createHandleSessionEvent = (ctx) => {
     //
     // 统一性：所有模块（chat/deep_research/learning/chat_deep_research）的审批事件
     // 均通过此函数处理，replay 和实时推送行为一致。
-    if (mappedState === ApprovalState.PENDING && !streamingSessions.has(sessionId)) {
+    // 执行与连接解耦后所有浏览器均通过 WebSocket 接收事件，不再区分触发浏览器，
+    // 审批挂起时消息统一转为 INTERRUPTED（请求浏览器由 sendMessage 主流程等待，
+    // 审批恢复后经 approval_store 恢复为 STREAMING）。
+    if (mappedState === ApprovalState.PENDING) {
       const targetMsg = _findMessageByIdOrExtra(sessionId, payload) || getLastAssistantMessage(getSession(sessionStore, sessionId))
       if (targetMsg && targetMsg.streamState !== StreamState.INTERRUPTED) {
         const prevState = targetMsg.streamState || 'undefined'
@@ -478,7 +473,7 @@ export const createHandleSessionEvent = (ctx) => {
     if (graphInterruptId) {
       // SubTask 11.2-11.4: 批量审批场景，查询本地 store 中同一批次的 Approval 状态
       const targetMsg = _findMessageByIdOrExtra(sessionId, payload) || getLastAssistantMessage(getSession(sessionStore, sessionId))
-      if (targetMsg?.streamState === StreamState.INTERRUPTED && !streamingSessions.has(sessionId)) {
+      if (targetMsg?.streamState === StreamState.INTERRUPTED) {
         const siblingApprovals = _collectSiblingApprovals(targetMsg, graphInterruptId, payload.remainingPendingCount)
 
         // remaining_pending_count 为权威计数时直接返回 number，> 0 表示仍有待审批 sibling
@@ -520,7 +515,7 @@ export const createHandleSessionEvent = (ctx) => {
           }
         }
       }
-    } else if ((mappedState === ApprovalState.APPROVED || mappedState === ApprovalState.PROCESSING) && !streamingSessions.has(sessionId)) {
+    } else if (mappedState === ApprovalState.APPROVED || mappedState === ApprovalState.PROCESSING) {
       // 非批量 approval_approved / approval_processing：INTERRUPTED → STREAMING
       const targetMsg = _findMessageByIdOrExtra(sessionId, payload) || getLastAssistantMessage(getSession(sessionStore, sessionId))
       if (targetMsg?.streamState === StreamState.INTERRUPTED) {

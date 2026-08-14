@@ -9,14 +9,13 @@
 
 Path D 架构：
     所有审批统一走 ApprovalGateway 路由：
-    - chat → SSE 流式恢复（_stream_chat_resume_generator，HTTP 请求中执行）
-    - deep_research → Redis 信令唤醒执行服务挂起协程（事件驱动，DB 最终一致）
+    - chat / deep_research → Redis 信令唤醒执行服务挂起协程（事件驱动，DB 最终一致）
     前端统一调用 POST /approvals/{interrupt_id}/resume/，无需 source 分支。
 """
 
 import logging
 
-from drf_spectacular.utils import OpenApiResponse, extend_schema
+from drf_spectacular.utils import extend_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
@@ -27,31 +26,18 @@ from Django_xm.apps.approvals.models import Approval
 from Django_xm.apps.approvals.serializers import (
     ApprovalReadSerializer,
     ApprovalWriteSerializer,
-    SSEEventSerializer,
 )
 from Django_xm.apps.approvals.services import approval_service
 from Django_xm.apps.core.throttling import SensitiveOperationRateThrottle
 from Django_xm.common.approval_gateway import CircuitBreakerError, gateway
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.responses import error_response, success_response
-from Django_xm.common.sse_utils import SSERenderer
 
 logger = logging.getLogger(__name__)
 
 
 def _json_response(data, status_code=200):
-    """构造 DRF Response 并显式选择 JSONRenderer。
-
-    解决 ApprovalResumeView/ApprovalRejectView 的混合响应场景：
-    - ``renderer_classes = [JSONRenderer, SSERenderer]`` 允许两种 renderer
-    - 前端调用审批端点使用 fetchSSE，发送 ``Accept: text/event-stream``
-    - DRF 默认按 Accept 头选择 SSERenderer，导致 ``success_response``/``error_response``
-      返回的 JSON 数据被错误渲染为 ``text/event-stream`` content-type
-
-    本函数通过显式设置 ``accepted_renderer``/``accepted_media_type`` 强制使用 JSONRenderer，
-    实现"renderer 切换"：waiting/idempotent/error/success 走 JSONRenderer，
-    SSE 流式响应走 SSERenderer（通过 ``sse_response`` 返回 ``StreamingHttpResponse``）。
-    """
+    """构造 DRF Response 并显式选择 JSONRenderer（审批端点统一 JSON 响应）。"""
     response = Response(data, status=status_code)
     response.accepted_renderer = JSONRenderer()
     response.accepted_media_type = "application/json"
@@ -130,7 +116,6 @@ def _check_batch_and_route(
     approved,
     interrupt_id,
     log_prefix="[ApprovalResume]",
-    timeout_resume=False,
 ):
     """批量审批聚合检查 + Gateway 统一路由（Path D）。
 
@@ -141,11 +126,10 @@ def _check_batch_and_route(
        b. 有 → 返回 waiting JSON 响应（不触发恢复）
        c. 无 → 构建 batch_resume_value={tool_call_id: bool} 字典
     3. 调用 gateway.route_resume() 统一路由：
-       - chat → SSE 流式响应（StreamingHttpResponse）
-       - deep_research → Redis 信令唤醒执行服务（返回 None → JSON 响应）
+       - chat / deep_research → Redis 信令唤醒执行服务（返回 None → JSON 响应）
 
     Returns:
-        Response 对象（JSON 或 SSE 流）
+        Response 对象（JSON）
     """
     approval_extra = getattr(approval, "extra", None) or {}
     if not isinstance(approval_extra, dict):
@@ -201,17 +185,16 @@ def _check_batch_and_route(
             f"resume_value={effective_resume_value}"
         )
 
-    # 统一路由：Gateway 根据 source 路由到 chat SSE 或 deep_research Redis 信令
+    # 统一路由：Gateway 根据 source 路由到 Redis 信令唤醒执行服务
     # F3 熔断保护：HIGH 级操作超过滑动窗口阈值时，Gateway 抛出 CircuitBreakerError
     try:
-        result = gateway.route_resume(
+        gateway.route_resume(
             request,
             approval,
             effective_resume_value,
             graph_interrupt_id=graph_interrupt_id,
             langgraph_resume_id=langgraph_resume_id,
             approved=approved,
-            timeout_resume=timeout_resume,
         )
     except CircuitBreakerError as cb_err:
         # 熔断处理：标记审批为 rejected（circuit_broken），以 rejection 恢复 agent
@@ -224,7 +207,7 @@ def _check_batch_and_route(
         )
         # 2. 以 rejection 恢复 agent（resume_value=False），让 agent 调整策略
         # approved=False 跳过熔断检查，避免递归
-        result = gateway.route_resume(
+        gateway.route_resume(
             request,
             approval,
             False,
@@ -245,24 +228,20 @@ def _check_batch_and_route(
         )
         return error_response(code=ErrorCode.VALIDATION_FAILED, message=str(ve))
 
-    if result is None:
-        # deep_research → Redis 信令已发布，返回 JSON 响应
-        return _json_response(
-            {
-                "code": 0,
-                "message": "研究恢复任务已启动",
-                "data": {
-                    "interrupt_id": interrupt_id,
-                    "source": approval.source,
-                    "status": "resumed",
-                    "graph_interrupt_id": graph_interrupt_id,
-                    "langgraph_resume_id": langgraph_resume_id,
-                },
-            }
-        )
-    else:
-        # chat → SSE 流式响应（StreamingHttpResponse）
-        return result
+    # chat / deep_research 均已发布 Redis 信令，返回 JSON 响应
+    return _json_response(
+        {
+            "code": 0,
+            "message": "审批恢复任务已启动",
+            "data": {
+                "interrupt_id": interrupt_id,
+                "source": approval.source,
+                "status": "resumed",
+                "graph_interrupt_id": graph_interrupt_id,
+                "langgraph_resume_id": langgraph_resume_id,
+            },
+        }
+    )
 
 
 class ApprovalListView(APIView):
@@ -310,23 +289,17 @@ class ApprovalDetailView(BaseApprovalAccessMixin, APIView):
 class ApprovalResumeView(BaseApprovalAccessMixin, APIView):
     """恢复审批：通过 ApprovalGateway 统一路由（Path D）。
 
-    chat → SSE 流式恢复，deep_research → Redis 信令唤醒执行服务。
+    chat / deep_research → Redis 信令唤醒执行服务。
     前端无需判断 source，统一调用此端点。
     """
 
     permission_classes = [IsAuthenticated]
     throttle_classes = [SensitiveOperationRateThrottle]
-    renderer_classes = [JSONRenderer, SSERenderer]
+    renderer_classes = [JSONRenderer]
 
     @extend_schema(
         request=ApprovalWriteSerializer,
-        responses={
-            (200, "application/json"): ApprovalReadSerializer,
-            (200, "text/event-stream"): OpenApiResponse(
-                response=SSEEventSerializer,
-                description="SSE 流式响应（审批恢复事件流）",
-            ),
-        },
+        responses={200: ApprovalReadSerializer},
     )
     def post(self, request, interrupt_id):
         write_serializer = ApprovalWriteSerializer(data=request.data)
@@ -347,8 +320,6 @@ class ApprovalResumeView(BaseApprovalAccessMixin, APIView):
 
         approved = validated.get("approved", True)
         user_input = validated.get("user_input")
-        # 事件驱动化超时恢复标记（前端收到 approval_timeout 事件后触发 SSE resume 时置 True）
-        timeout_resume = validated.get("timeout_resume", False)
 
         try:
             result = approval_service.resume_approval(
@@ -356,7 +327,6 @@ class ApprovalResumeView(BaseApprovalAccessMixin, APIView):
                 approved=approved,
                 user_input=user_input,
                 approved_by=request.user,
-                timeout_resume=timeout_resume,
             )
         except ValueError as e:
             return error_response(code=ErrorCode.VALIDATION_FAILED, message=str(e))
@@ -393,7 +363,7 @@ class ApprovalResumeView(BaseApprovalAccessMixin, APIView):
         if result.get("state") == "waiting":
             return _json_response(_build_waiting_data(interrupt_id, approval, approved))
 
-        # 统一路由：Gateway 根据 source 路由到 chat SSE 或 deep_research Redis 信令
+        # 统一路由：Gateway 根据 source 路由到 Redis 信令唤醒执行服务
         return _check_batch_and_route(
             request,
             approval,
@@ -401,29 +371,22 @@ class ApprovalResumeView(BaseApprovalAccessMixin, APIView):
             approved,
             interrupt_id,
             log_prefix="[ApprovalResume]",
-            timeout_resume=timeout_resume,
         )
 
 
 class ApprovalRejectView(BaseApprovalAccessMixin, APIView):
     """拒绝审批：通过 ApprovalGateway 统一路由（Path D）。
 
-    chat → SSE 流式恢复，deep_research → Redis 信令唤醒执行服务。
+    chat / deep_research → Redis 信令唤醒执行服务。
     """
 
     permission_classes = [IsAuthenticated]
     throttle_classes = [SensitiveOperationRateThrottle]
-    renderer_classes = [JSONRenderer, SSERenderer]
+    renderer_classes = [JSONRenderer]
 
     @extend_schema(
         request=ApprovalWriteSerializer,
-        responses={
-            (200, "application/json"): ApprovalReadSerializer,
-            (200, "text/event-stream"): OpenApiResponse(
-                response=SSEEventSerializer,
-                description="SSE 流式响应（审批拒绝后恢复事件流）",
-            ),
-        },
+        responses={200: ApprovalReadSerializer},
     )
     def post(self, request, interrupt_id):
         write_serializer = ApprovalWriteSerializer(data=request.data)
@@ -482,7 +445,7 @@ class ApprovalRejectView(BaseApprovalAccessMixin, APIView):
                 )
             )
 
-        # 统一路由：Gateway 根据 source 路由到 chat SSE 或 deep_research Redis 信令
+        # 统一路由：Gateway 根据 source 路由到 Redis 信令唤醒执行服务
         return _check_batch_and_route(
             request,
             approval,

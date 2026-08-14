@@ -248,7 +248,7 @@ async def sse_async_heartbeat_generator(async_gen, idle_timeout: float = 30.0):
 
         return sse_response(
             sse_async_heartbeat_generator(
-                chat_resume_generator._stream_chat_resume_generator(...)
+                some_async_event_generator(...)
             )
         )
 

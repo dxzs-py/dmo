@@ -8,7 +8,7 @@ import { useUserStore } from './user'
 import { useApprovalStore } from './approval'
 import { useSyncStore } from './sync'
 import { chatAPI } from '@/api/chat'
-import { ElMessage, ElNotification } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { nanoid } from 'nanoid'
 import { generateId } from '../utils/id'
 import { ChatRequestSchema, validateSchema } from '../utils/validation'
@@ -217,121 +217,7 @@ export const useChatStore = defineStore('chat', () => {
             ? currentResearchTaskId
             : null,
           continueTaskId: continueTaskId,
-        },
-        {
-          appendToLastMessage: (content) => sessionStore.appendToLastMessage(sessionId, content),
-          addSource: (data) => sessionStore.addSourceToLastMessage(sessionId, data),
-          setSources: (data) => sessionStore.setSourcesToLastMessage(sessionId, data),
-          setPlan: (data) => sessionStore.setPlanToLastMessage(sessionId, data),
-          setChainOfThought: (data) => sessionStore.setChainOfThoughtToLastMessage(sessionId, data),
-          addToolCall: (data) => sessionStore.addToolCallToLastMessage(sessionId, data),
-          addOrUpdateToolCall: (data) => sessionStore.addOrUpdateToolCall(sessionId, data),
-          updateOrAddToolResult: (data) => sessionStore.updateOrAddToolResult(sessionId, data),
-          setReasoning: (data) => sessionStore.setReasoningToLastMessage(sessionId, data),
-          setSuggestions: (data) => sessionStore.setSuggestionsToLastMessage(sessionId, data),
-          setDeepResearchTask: (data) => {
-            // 状态迁移至 chatDeepResearch 桥接层（Task 9），
-            // 内部会同步写入 deepResearchTask 与 researchTaskId
-            chatDeepResearch.setChatDeepResearchTask(data)
-            // 深度研究任务创建时立即设置 researchTaskId，确保后续审批能正确路由到研究审批 API
-            if (data?.taskId) {
-              sessionStore.setResearchTaskIdToLastMessage(sessionId, data.taskId)
-            }
-          },
-          setResearchTaskId: (taskId) => {
-            chatDeepResearch.setChatResearchTaskId(taskId)
-            sessionStore.setResearchTaskIdToLastMessage(sessionId, taskId)
-          },
-          setContext: (data) => sessionStore.setContextToLastMessage(sessionId, data),
-          setUsage: (data) => sessionStore.setUsageToLastMessage(sessionId, data),
-          setAttachmentIds: (ids) => sessionStore.setAttachmentIdsToLastUserMessage(sessionId, ids),
-          setAttachmentProcessing: (data) => { attachmentProcessing.value = data },
-          setError: (errorMsg) => {
-            lastStreamError.value = errorMsg
-            logger.error('[ChatStore] 流式错误:', errorMsg)
-          },
-          setModelFallback: (data) => {
-            if (data?.message) {
-              ElNotification({
-                title: '模型降级提示',
-                message: data.message,
-                type: 'warning',
-                duration: 8000,
-              })
-            }
-            // 同步更新 modelStore 为实际使用的模型
-            if (data?.actualProvider && data?.actualModel) {
-              const mStore = useModelStore()
-              if (mStore.currentProviderId !== data.actualProvider || mStore.currentModelName !== data.actualModel) {
-                mStore.currentProviderId = data.actualProvider
-                mStore.currentModelName = data.actualModel
-              }
-            }
-          },
-          setApproval: (data) => {
-            // 保存审批数据时同时保存当前请求的工具配置，审批恢复时使用
-            approvalStore.handleApprovalEvent(data, {
-              source: 'chat',
-              sessionId,
-              taskId: data.taskId || null,
-              baseApproval: {
-                useTools: options.useTools !== false,
-                useWebSearch: options.useWebSearch || false,
-                useMcp: options.useMcp || false,
-                selectedMcpServers: options.selectedMcpServers || null,
-                selectedTools: options.selectedTools || null,
-                useKnowledgeBase: options.useKnowledgeBase || false,
-                selectedKnowledgeBases: sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
-              },
-            })
-          },
-          onRetry: (data) => {
-            const backoffStr = data.backoff != null ? data.backoff.toFixed(1) : '?'
-            const errorCode = data.errorCode || 'unknown'
-            sessionStore.appendToLastMessage(
-              sessionId,
-              `\n\n> 正在重试 (${data.attempt}/${data.max})，${backoffStr}秒后重试... (${errorCode})\n`
-            )
-          },
-          onTimeoutWarning: (data) => {
-            sessionStore.appendToLastMessage(
-              sessionId,
-              `\n\n> ⚠️ 执行时间较长（已 ${data.elapsed}s / 阈值 ${data.limit}s），正在继续执行...\n`
-            )
-          },
-          onApprovalTimeout: (data) => {
-            // 深度研究审批超时：统一由 approval store 处理
-            approvalStore.handleApprovalEvent(data, { source: 'chat', sessionId })
-          },
-          onApprovalProcessed: (data) => {
-            // 审批已在另一端（深度研究模块）处理，统一由 approval store 处理
-            approvalStore.handleApprovalEvent(data, { source: 'chat', sessionId })
-          },
-          onApprovalHistory: (parsed) => {
-            // 历史审批补偿：SSE 重连时后端推送 Redis List 中的历史审批
-            // parsed 结构：{ type: "approval_history", data: {...approval_data...}, taskId: "research_xxx" }
-            const taskId = parsed.taskId || parsed.data?.taskId || chatDeepResearch.researchTaskId || null
-            if (taskId && parsed.data) {
-              approvalStore.restoreFromSSEHistory(parsed.data, taskId, sessionId)
-            }
-          },
-          onToolUsageDedup: (data) => {
-            if (data?.message) {
-              ElMessage.info({ message: data.message, duration: 3000 })
-            }
-          },
-          onToolUsageBlocked: (data) => {
-            if (data?.message) {
-              ElMessage.warning({ message: data.message, duration: 5000 })
-            }
-          },
-          onToolUsageWarning: (data) => {
-            if (data?.severity === 'warn' && data?.message) {
-              ElMessage.warning({ message: data.message, duration: 4000 })
-            }
-          },
-        }
-      )
+        })
 
       if (!result.success && !result.aborted) {
         lastStreamError.value = result.error?.message || '消息发送失败'
@@ -400,10 +286,6 @@ export const useChatStore = defineStore('chat', () => {
     const sid = sessionStore.currentSessionId
     const selectedKnowledgeBaseId = sessionStore.selectedKnowledgeBase?.id || null
     const messages = sessionStore.getSessionMessages(sid)
-    // 惰性获取聊天深度研究桥接层（与 sendMessage 一致）：onApprovalHistory 等
-    // SSE 回调需要读取 researchTaskId。Task 9 解耦后 regenerateMessage 不再直接
-    // 访问 research store，统一经 chatDeepResearch 桥接层读取（修复原作用域未定义的 ReferenceError）
-    const chatDeepResearch = await _getChatDeepResearch()
 
     if (messageIndex < 1 || !messages?.length || messages.length < 2) return
 
@@ -496,96 +378,7 @@ export const useChatStore = defineStore('chat', () => {
           specialParams: regenSpecialParams,
           temperature: modelConfig.temperature || null,
           maxTokens: modelConfig.maxTokens || null,
-        },
-        {
-          appendToLastMessage: (content) => sessionStore.appendToMessage(sid, messageIndex, content),
-          addSource: (data) => sessionStore.addSourceToMessage(sid, messageIndex, data),
-          setSources: (data) => sessionStore.setSourcesToMessage(sid, messageIndex, data),
-          setPlan: (data) => sessionStore.setPlanToMessage(sid, messageIndex, data),
-          setChainOfThought: (data) => sessionStore.setChainOfThoughtToMessage(sid, messageIndex, data),
-          addToolCall: (data) => sessionStore.addToolCallToMessage(sid, messageIndex, data),
-          addOrUpdateToolCall: (data) => sessionStore.addOrUpdateToolCallToMessage(sid, messageIndex, data),
-          updateOrAddToolResult: (data) => sessionStore.updateOrAddToolResultToMessage(sid, messageIndex, data),
-          setReasoning: (data) => sessionStore.setReasoningToMessage(sid, messageIndex, data),
-          setSuggestions: (data) => sessionStore.setSuggestionsToMessage(sid, messageIndex, data),
-          setContext: (data) => sessionStore.setContextToMessage(sid, messageIndex, data),
-          setUsage: (data) => {
-            if (data.model !== undefined) currentMessage.model = data.model
-            if (data.tokenCount !== undefined) currentMessage.tokenCount = data.tokenCount
-            if (data.responseTime !== undefined) currentMessage.responseTime = data.responseTime
-          },
-          setError: (errorMsg) => {
-            lastStreamError.value = errorMsg
-            logger.error('[ChatStore] 重新生成流式错误:', errorMsg)
-          },
-          setApproval: (data) => approvalStore.handleApprovalEvent(data, {
-            source: 'chat',
-            sessionId: sid,
-            taskId: data.taskId || null,
-            baseApproval: {
-              useTools: true,
-              useWebSearch: false,
-              useMcp: false,
-              selectedMcpServers: null,
-              selectedTools: null,
-              useKnowledgeBase: !!selectedKnowledgeBaseId,
-              selectedKnowledgeBases: sessionStore.selectedKnowledgeBases?.map(kb => kb.id) || [],
-            },
-          }),
-          onApprovalTimeout: (data) => {
-            approvalStore.handleApprovalEvent(data, { source: 'chat', sessionId: sid })
-          },
-          onApprovalProcessed: (data) => {
-            approvalStore.handleApprovalEvent(data, { source: 'chat', sessionId: sid })
-          },
-          onApprovalHistory: (data) => {
-            const taskId = data.taskId || chatDeepResearch.researchTaskId || null
-            if (taskId) {
-              approvalStore.restoreFromSSEHistory(data, taskId, sid)
-            }
-          },
-          onRetry: (data) => {
-            const backoffStr = data.backoff != null ? data.backoff.toFixed(1) : '?'
-            const errorCode = data.errorCode || 'unknown'
-            sessionStore.appendToMessage(sid, messageIndex, `\n\n> 正在重试 (${data.attempt}/${data.max})，${backoffStr}秒后重试... (${errorCode})\n`)
-          },
-          onTimeoutWarning: (data) => {
-            sessionStore.appendToMessage(sid, messageIndex, `\n\n> ⚠️ 执行时间较长（已 ${data.elapsed}s / 阈值 ${data.limit}s），正在继续执行...\n`)
-          },
-          setModelFallback: (data) => {
-            if (data?.message) {
-              ElNotification({
-                title: '模型降级提示',
-                message: data.message,
-                type: 'warning',
-                duration: 8000,
-              })
-            }
-            if (data?.actualProvider && data?.actualModel) {
-              const mStore = useModelStore()
-              if (mStore.currentProviderId !== data.actualProvider || mStore.currentModelName !== data.actualModel) {
-                mStore.currentProviderId = data.actualProvider
-                mStore.currentModelName = data.actualModel
-              }
-            }
-          },
-          onToolUsageDedup: (data) => {
-            if (data?.message) {
-              ElMessage.info({ message: data.message, duration: 3000 })
-            }
-          },
-          onToolUsageBlocked: (data) => {
-            if (data?.message) {
-              ElMessage.warning({ message: data.message, duration: 5000 })
-            }
-          },
-          onToolUsageWarning: (data) => {
-            if (data?.severity === 'warn' && data?.message) {
-              ElMessage.warning({ message: data.message, duration: 4000 })
-            }
-          },
-        }
-      )
+        })
 
       if (!result.success && !result.aborted) {
         lastStreamError.value = result.error?.message || '重新生成失败'

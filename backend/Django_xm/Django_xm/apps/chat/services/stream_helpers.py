@@ -35,8 +35,8 @@ from .stream_chunk_processors import (
     process_stream_chunk,
 )
 
-# 重导出契约：外部模块（loop.py / fallback.py / finalizer.py / deep_chat_service.py /
-# chat_resume_generator.py 等）经本模块导入上述名字，列入 __all__ 防止 F401 误删
+# 重导出契约：外部模块（loop.py / fallback.py / finalizer.py / deep_chat_service.py 等）
+# 经本模块导入上述名字，列入 __all__ 防止 F401 误删
 __all__ = [
     "_extract_tool_params",
     "_fix_groq_tool_call",

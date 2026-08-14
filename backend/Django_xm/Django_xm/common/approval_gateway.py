@@ -2,18 +2,16 @@
 
 职责：
     根据 Approval.source 路由审批恢复请求到正确的执行环境：
-    - chat → SSE 流式恢复（_stream_chat_resume_generator，在 HTTP 请求中执行；
-      超时恢复由前端收到 approval_timeout 事件后触发，见 route_timeout）
+    - chat → 发布 Redis 信令唤醒执行服务中的挂起协程（与 deep_research 同构）
     - deep_research → 发布 Redis 信令唤醒执行服务中的挂起协程（事件驱动）
 
 设计原则：
     1. Gateway 是路由器，不是阻塞器：不做阻塞等待，不持有内存状态
     2. DB 为唯一真相源：Approval DB 记录是审批状态的唯一来源
-    3. Redis 仅用于事件发布：通过 publish_approval_sync/publish_tool_call_sync 发布实时事件
+    3. Redis 仅用于信令发布：执行服务挂起协程被唤醒后从 DB 读取批次决策
 
 返回值约定：
-    - chat source：返回 SSE async generator（调用方包装为 StreamingHttpResponse）
-    - deep_research source：返回 None（已发布信令，调用方返回 JSON 响应）
+    - chat / deep_research source：均返回 None（已发布信令，调用方返回 JSON 响应）
     - 未知 source：抛出 ValueError
 
 熔断机制（F3）：
@@ -24,7 +22,7 @@
     - 返回熔断错误响应给前端
 
 依赖关系：
-    - chat 模块：复用 services.chat_resume_generator._stream_chat_resume_generator（已测试的 SSE 流）
+    - chat 模块：apps.fastapi_service.event_bus.publish_signal（Redis 信令）
     - deep_research 模块：apps.fastapi_service.event_bus.publish_signal（Redis 信令）
     - 前端：统一调用 POST /api/v1/approvals/{interrupt_id}/resume/，无需 source 分支
 """
@@ -75,12 +73,8 @@ class ApprovalGateway:
 
     使用方式：
         result = gateway.route_resume(request, approval, resume_value, ...)
-        if result is None:
-            # deep_research → Redis 信令已发布，返回 JSON
-            return Response({'status': 'resumed'})
-        else:
-            # chat → 返回 SSE 流
-            return StreamingHttpResponse(result, content_type='text/event-stream')
+        # chat / deep_research 均返回 None：Redis 信令已发布，调用方返回 JSON
+        return Response({'status': 'resumed'})
     """
 
     def route_resume(
@@ -93,7 +87,6 @@ class ApprovalGateway:
         graph_interrupt_id: str | None = None,
         langgraph_resume_id: str | None = None,
         approved: bool = True,
-        timeout_resume: bool = False,
         **kwargs,
     ):
         """路由审批恢复请求到正确的执行环境。
@@ -103,7 +96,7 @@ class ApprovalGateway:
         熔断时抛出 CircuitBreakerError，调用方负责标记 rejected 并以 rejection 恢复 agent。
 
         Args:
-            request: HTTP 请求对象（chat 路径需要读取 request.data 中的模型/工具配置）
+            request: HTTP 请求对象（保留签名兼容，chat 路径不再读取 request.data）
             approval: Approval 模型实例
             resume_value: 恢复值（True/False/user_input，或批量场景的 {tool_call_id: bool}）
             session_id: 会话 ID（chat 模块用作 thread_id）
@@ -113,8 +106,7 @@ class ApprovalGateway:
             **kwargs: 额外参数（透传到具体执行路径）
 
         Returns:
-            - chat source：返回 SSE async generator
-            - deep_research source：返回 None（已发布 Redis 信令唤醒执行服务）
+            - chat / deep_research source：返回 None（已发布 Redis 信令唤醒执行服务）
 
         Raises:
             CircuitBreakerError: HIGH 级操作数超过滑动窗口阈值
@@ -138,7 +130,6 @@ class ApprovalGateway:
                 graph_interrupt_id=graph_interrupt_id,
                 langgraph_resume_id=langgraph_resume_id,
                 approved=approved,
-                timeout_resume=timeout_resume,
                 **kwargs,
             )
         elif approval.source == Approval.SOURCE_DEEP_RESEARCH:
@@ -218,44 +209,62 @@ class ApprovalGateway:
         graph_interrupt_id: str | None = None,
         langgraph_resume_id: str | None = None,
         approved: bool = True,
-        timeout_resume: bool = False,
         **kwargs,
-    ):
-        """chat 模块：返回 SSE 生成器（复用 _stream_chat_resume_generator）。
+    ) -> None:
+        """chat 模块：发布 Redis 信令唤醒执行服务中的挂起协程。
 
-        chat 模块的 agent 在 HTTP 请求上下文中运行，
-        通过 SSE 流式推送后续输出到前端。
+        chat 的 agent 现在同样在 FastAPI 执行服务单协程运行（与 deep_research 同构），
+        审批决策已由 approval_service 落库终态，本方法仅发布 Redis 信令
+        （agent:approval:{session_id}）即时唤醒对应执行协程；即使信令丢失，
+        执行器挂起时周期性轮询 DB 批次决策，最终一致。
+
+        不阻塞 HTTP 请求，立即返回 None（调用方返回 JSON 响应）。
         """
-        from Django_xm.apps.chat.services.chat_resume_generator import _stream_chat_resume_generator
-        from Django_xm.common.sse_utils import sse_async_heartbeat_generator, sse_response
+        from Django_xm.apps.fastapi_service.event_bus import (
+            SESSION_TYPE_CHAT,
+            SIGNAL_APPROVAL,
+            publish_signal,
+        )
 
         # 会话 ID 优先使用传入参数，回退到 approval.chat_session_id 或 approval.source_id
         effective_session_id = session_id or approval.chat_session_id or approval.source_id
+        if not effective_session_id:
+            logger.error(
+                f"[ApprovalGateway] chat 审批缺少会话 ID，无法路由: "
+                f"interrupt_id={approval.interrupt_id}"
+            )
+            return
 
-        # 提取 request_data（chat 模块需要从中读取模型/工具配置）
-        request_data = dict(request.data) if hasattr(request, "data") else {}
+        approval_extra = approval.extra if isinstance(approval.extra, dict) else {}
+        effective_graph_interrupt_id = graph_interrupt_id or approval_extra.get("graph_interrupt_id", "")
+        effective_langgraph_resume_id = (
+            langgraph_resume_id or approval_extra.get("langgraph_resume_id", "") or approval.interrupt_id
+        )
+        message_id = approval_extra.get("message_id", "")
 
         logger.info(
-            f"[ApprovalGateway] chat 恢复: session={effective_session_id}, "
+            f"[ApprovalGateway] chat 审批信令: session={effective_session_id}, "
             f"interrupt_id={approval.interrupt_id}, "
-            f"graph_interrupt_id={graph_interrupt_id}, "
-            f"langgraph_resume_id={langgraph_resume_id}, "
-            f"approved={approved}, timeout_resume={timeout_resume}"
+            f"graph_interrupt_id={effective_graph_interrupt_id}, "
+            f"langgraph_resume_id={effective_langgraph_resume_id}, "
+            f"approved={approved}"
         )
 
-        return sse_response(
-            sse_async_heartbeat_generator(
-                _stream_chat_resume_generator(
-                    request,
-                    approval,
-                    resume_value,
-                    effective_session_id,
-                    request_data,
-                    graph_interrupt_id=graph_interrupt_id,
-                    langgraph_resume_id=langgraph_resume_id,
-                    timeout_resume=timeout_resume,
-                )
-            )
+        publish_signal(
+            SIGNAL_APPROVAL,
+            effective_session_id,
+            {
+                "thread_id": effective_session_id,
+                "session_type": SESSION_TYPE_CHAT,
+                "interrupt_id": approval.interrupt_id,
+                "graph_interrupt_id": effective_graph_interrupt_id,
+                "langgraph_resume_id": effective_langgraph_resume_id,
+                "approved": approved,
+                "resume_value": resume_value,
+                "user_id": getattr(approval, "user_id", None),
+                "message_id": message_id,
+                "chat_session_id": approval.chat_session_id,
+            },
         )
 
     def _resume_deep_research(
@@ -278,6 +287,7 @@ class ApprovalGateway:
         不阻塞 HTTP 请求，立即返回 None（调用方返回 JSON 响应）。
         """
         from Django_xm.apps.fastapi_service.event_bus import (
+            SESSION_TYPE_RESEARCH,
             SIGNAL_APPROVAL,
             publish_signal,
         )
@@ -310,6 +320,7 @@ class ApprovalGateway:
             thread_id,
             {
                 "thread_id": thread_id,
+                "session_type": SESSION_TYPE_RESEARCH,
                 "interrupt_id": approval.interrupt_id,
                 "graph_interrupt_id": effective_graph_interrupt_id,
                 "langgraph_resume_id": effective_langgraph_resume_id,
@@ -330,9 +341,7 @@ class ApprovalGateway:
 
         确认/拒绝/超时三种审批决策统一通过 ApprovalGateway 路由。
         超时由 Celery cleanup_expired_approvals 检测并触发（timeout_approval）。
-        事件驱动化（Task 5）：本方法不再派发恢复任务——
-        - chat 来源：审批已终态化 + 发布 approval_timeout 事件，恢复由前端触发 SSE resume
-        - deep_research 来源：发布 Redis 信令唤醒执行服务挂起协程（最终一致）
+        - chat / deep_research 来源：发布 Redis 信令唤醒执行服务挂起协程（最终一致）
 
         Args:
             approval: Approval 模型实例
@@ -344,14 +353,13 @@ class ApprovalGateway:
         effective_resume_value = resume_value if resume_value is not None else TIMEOUT_DECISION
 
         if approval.source == Approval.SOURCE_CHAT:
-            # 事件驱动化（Task 5）：chat 超时恢复不再派发 Celery 任务。
-            # 审批已由 approval_service.timeout_approval 落库终态 TIMEOUT 并发布
-            # approval_timeout 实时事件；前端收到后调用 SSE resume 端点（带
-            # timeout_resume=True）驱动 _stream_chat_resume_generator 恢复，与用户
-            # 手动确认/拒绝同构。批次完整性由 resume 端点 _check_batch_and_route 判定。
-            logger.info(
-                f"[ApprovalGateway] chat 超时已终态化，等待前端事件驱动恢复: "
-                f"interrupt_id={approval.interrupt_id}, session={approval.chat_session_id}"
+            self._resume_chat(
+                None,
+                approval,
+                effective_resume_value,
+                graph_interrupt_id=None,
+                langgraph_resume_id=None,
+                approved=False,
             )
 
         elif approval.source == Approval.SOURCE_DEEP_RESEARCH:
