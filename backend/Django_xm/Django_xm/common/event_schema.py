@@ -72,6 +72,7 @@ class EventType(StrEnum):
     STREAM_SUGGESTIONS = "stream_suggestions"  # 建议
     STREAM_CONTEXT = "stream_context"  # 上下文
     STREAM_CONTENT_UPDATE = "stream_content_update"  # 内容更新（节流后的 chunk）
+    STREAM_SUBAGENT_CONTENT = "stream_subagent_content"  # 子代理图层正文/思考更新（Agent 图层嵌套，按 agent_path 归属）
     STREAM_EVENT = "stream_event"  # 流式通用事件（approval/interrupted/model_fallback/research_task_id）
 
     # === 会话/消息事件（WebSocket 推送）===
@@ -84,6 +85,7 @@ class EventType(StrEnum):
     MESSAGES_DELETED = "messages_deleted"  # 批量消息删除
     MESSAGE_REGENERATED = "message_regenerated"  # 消息重新生成（版本归档 + 新版本切换）
     MESSAGE_REGENERATE_REVERTED = "message_regenerate_reverted"  # 重新生成回滚
+    MESSAGE_FINALIZED = "message_finalized"  # 消息版本固化（发送新消息/超时触发，多 Tab 同步）
 
     # === 任务事件（WebSocket 推送）===
     TASK_CREATED = "task_created"  # 新任务创建（深度研究/工作流），通知列表刷新
@@ -315,6 +317,7 @@ _PAYLOAD_TYPE_MAP: dict[EventType, type] = {
     EventType.STREAM_SUGGESTIONS: StreamPayload,
     EventType.STREAM_CONTEXT: StreamPayload,
     EventType.STREAM_CONTENT_UPDATE: StreamPayload,
+    EventType.STREAM_SUBAGENT_CONTENT: StreamPayload,
     EventType.STREAM_INTERRUPTED: StreamPayload,
     EventType.TASK_PROGRESS: TaskProgressPayload,
     # STREAM_STARTED / STREAM_COMPLETED / SESSION_* / MESSAGE_* 事件无固定 payload schema，校验时跳过必填字段检查
@@ -347,6 +350,7 @@ _REQUIRED_FIELDS: dict[EventType, tuple[str, ...]] = {
     EventType.STREAM_SUGGESTIONS: ("source", "source_id", "data"),
     EventType.STREAM_CONTEXT: ("source", "source_id", "data"),
     EventType.STREAM_CONTENT_UPDATE: ("source", "source_id", "data"),
+    EventType.STREAM_SUBAGENT_CONTENT: ("source", "source_id", "data"),
     EventType.STREAM_INTERRUPTED: ("source", "source_id", "data"),
     # STREAM_STARTED / STREAM_COMPLETED / STREAM_FINALIZED：source + source_id 必填（无 data 字段）
     EventType.STREAM_STARTED: ("source", "source_id"),
@@ -383,6 +387,7 @@ _WS_EVENT_NAME_MAP: dict[EventType, str] = {
     EventType.STREAM_SUGGESTIONS: "stream_event",
     EventType.STREAM_CONTEXT: "stream_event",
     EventType.STREAM_CONTENT_UPDATE: "stream_event",
+    EventType.STREAM_SUBAGENT_CONTENT: "stream_subagent_content",
     EventType.STREAM_STARTED: "stream_started",
     EventType.STREAM_COMPLETED: "stream_completed",
     EventType.STREAM_FINALIZED: "stream_finalized",
@@ -396,6 +401,7 @@ _WS_EVENT_NAME_MAP: dict[EventType, str] = {
     EventType.MESSAGES_DELETED: "messages_deleted",
     EventType.MESSAGE_REGENERATED: "message_regenerated",
     EventType.MESSAGE_REGENERATE_REVERTED: "message_regenerate_reverted",
+    EventType.MESSAGE_FINALIZED: "message_finalized",
     EventType.WORKFLOW_STEP: "workflow_step",
     EventType.WORKFLOW_STATE_UPDATE: "workflow_state_update",
     EventType.WORKFLOW_COMPLETED: "workflow_completed",

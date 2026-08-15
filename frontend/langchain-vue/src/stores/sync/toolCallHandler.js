@@ -112,6 +112,16 @@ export const createHandleToolCallEvent = (ctx) => {
       // 子代理任务目标描述（Task 4.1）：仅子代理工具事件携带（如"网络搜索和信息整理专家…"），
       // 组级共享。不覆盖语义由 messageOperations 合并层保护（已有值不覆盖）。
       ...(payload.description ? { description: payload.description } : {}),
+      // position（Agent 图层嵌套规范 D3，按图层局部化）：
+      // 工具调用在该图层自身正文中的字符偏移，后端 tool 事件统一出口注入
+      // （触发该工具调用瞬间该图层已输出 content 长度），首次 PENDING 写入后永久不变。
+      // 条件展开：仅 number 类型注入，undefined 不覆盖已有值（合并层保护）。
+      ...(typeof payload.position === 'number' ? { position: payload.position } : {}),
+      // subagentThreadId（spec D10）：子代理 SSE 定向推送路由标识符。
+      // 主 agent 工具事件为空；子代理工具事件携带（handleSessionEvent/handleTaskEvent
+      // 从事件顶层 subagent_thread_id 注入为 camelCase）。前端据此将工具调用归集到
+      // 对应子代理卡片。
+      ...(payload.subagentThreadId ? { subagentThreadId: payload.subagentThreadId } : {}),
     }
 
     const hasMessageId = !!payload.messageId

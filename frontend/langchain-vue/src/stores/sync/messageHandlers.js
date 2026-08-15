@@ -385,11 +385,60 @@ export const createMessageHandlers = (ctx) => {
     logger.info(`[Sync] 消息重新生成失败回滚: session=${sessionId}, message=${messageId}`)
   }
 
+  /**
+   * 版本固化事件（message_finalized）
+   *
+   * 后端 ChatMessageUpdateView 检测 is_finalized false→true 后广播，前端幂等同步：
+   * 1. 更新消息 isFinalized / currentVersion
+   * 2. 停止该会话固化计时器（其他 Tab 不再重复超时固化）
+   * 3. 不弹出 toast（仅触发固化的 Tab 弹「版本已固化」提示）
+   *
+   * 幂等保护：消息已是 isFinalized 时跳过（多 Tab 同时固化 / WS 重连回放场景）。
+   *
+   * @param {string} sessionId
+   * @param {Object} payload - toCamelCase 后：{ messageId, currentVersion, isFinalized }
+   */
+  const handleMessageFinalized = (sessionId, payload) => {
+    const messageId = payload.messageId
+    if (!messageId) {
+      logger.warn('[Sync] message_finalized 事件缺少 message_id')
+      return
+    }
+    const session = getSession(sessionStore, sessionId)
+    if (!session?.messages) {
+      logger.warn(`[Sync] message_finalized 会话不存在或无消息: ${sessionId}`)
+      return
+    }
+    const message = findMessageById(session, messageId)
+    if (!message) {
+      logger.warn(`[Sync] message_finalized 未找到消息: session=${sessionId}, message=${messageId}`)
+      return
+    }
+
+    // 幂等保护：已固化跳过（多 Tab 并发固化 / 触发浏览器收到自身事件）
+    if (message.isFinalized) {
+      logger.info(`[Sync] message_finalized 幂等跳过（已固化）: session=${sessionId}, message=${messageId}`)
+      return
+    }
+
+    message.isFinalized = true
+    if (typeof payload.currentVersion === 'number' && payload.currentVersion >= 0) {
+      message.currentVersion = payload.currentVersion
+    }
+
+    // 其他 Tab 停止该会话固化计时器，不再重复超时固化
+    sessionStore.clearFinalizeTimer(sessionId)
+
+    session.updatedAt = Date.now()
+    logger.info(`[Sync] 消息版本固化同步: session=${sessionId}, message=${messageId}, currentVersion=${message.currentVersion}`)
+  }
+
   return {
     handleMessageAdded,
     handleMessageUpdated,
     handleMessagesDeleted,
     handleMessageRegenerated,
     handleMessageRegenerateReverted,
+    handleMessageFinalized,
   }
 }

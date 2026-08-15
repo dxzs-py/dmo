@@ -8,6 +8,7 @@ app_name = "chat"
 urlpatterns = [
     path("", views.ChatView.as_view(), name="chat"),
     path("stream/", views.ChatStreamView.as_view(), name="chat_stream"),
+    path("stream/stop/", views.ChatStreamStopView.as_view(), name="chat_stream_stop"),
     path("modes/", views.ChatModesView.as_view(), name="chat_modes"),
     path("sessions/", views.ChatSessionListView.as_view(), name="chat_sessions_list"),
     path("sessions/create/", views.ChatSessionCreateView.as_view(), name="chat_sessions_create"),

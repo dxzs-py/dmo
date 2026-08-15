@@ -1,7 +1,7 @@
 import { ref, computed, watch } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 export function useChatUI() {
   const chatStore = useChatStore()
@@ -53,7 +53,8 @@ export function useChatUI() {
   }
 
   const handleRegenerate = async (index) => {
-    if (chatStore.isLoading) return
+    // 链式删除进行中（Task 7.4）禁止重新生成（store 层亦有守卫，此处 UI 层提前拦截）
+    if (chatStore.isLoading || chatStore.isDeleting) return
     try {
       await chatStore.regenerateMessage(index)
       ElMessage.success('正在重新生成回复...')
@@ -69,22 +70,42 @@ export function useChatUI() {
     const msg = msgs.find(m => m.id === messageId)
     if (!msg) return
 
-    const backendId = msg.backendId
-    if (!backendId) {
+    // 链式删除：定位该消息所属轮次的 user 消息（assistant 消息向前找最近的 user）
+    const msgIdx = msgs.findIndex(m => m.id === messageId)
+    let userMsg = msg
+    if (msg.role === 'assistant') {
+      for (let i = msgIdx; i >= 0; i--) {
+        if (msgs[i].role === 'user') { userMsg = msgs[i]; break }
+      }
+    }
+    const userBackendId = userMsg.backendId
+    if (!userBackendId) {
       ElMessage.warning('消息尚未同步到服务器，请稍后重试')
       return
     }
 
+    // 是否末轮：该 user 消息之后是否还有对话轮次
+    const isLastRound = userMsg === msgs[msgs.length - 1]
+      || (msg.role === 'assistant' && msgIdx === msgs.length - 1)
+
     try {
-      if (msg.role === 'user') {
-        await chatStore.deleteMessagePair(sessionId, backendId, messageId)
-      } else {
-        await chatStore.deleteMessage(backendId, researchTaskId, messageId)
+      if (!isLastRound) {
+        await ElMessageBox.confirm(
+          '删除该轮会同时删除该轮之后全部对话，确认继续吗？',
+          '链式删除确认',
+          {
+            confirmButtonText: '删除',
+            cancelButtonText: '取消',
+            type: 'warning',
+          }
+        )
       }
-      if (selectedMessage.value?.id === messageId) {
+      await chatStore.deleteMessagePair(sessionId, userBackendId, userMsg.id)
+      if (selectedMessage.value?.id === messageId || selectedMessage.value?.id === userMsg.id) {
         selectedMessage.value = null
       }
-    } catch {
+    } catch (e) {
+      if (e === 'cancel' || e === 'close') return
       ElMessage.error('删除失败，请稍后重试')
     }
   }

@@ -479,6 +479,33 @@ class DeepResearchTaskDeleteView(APIView):
 
         _cleanup_research_backend_data(task_id, user_id)
 
+        # D7.4：研究任务删除时上层递归回收子代理（父线程 = task_id，仅终止非终态实例）
+        try:
+            from Django_xm.async_utils import run_async
+
+            from Django_xm.apps.ai_engine.models import SubAgentStatus
+            from Django_xm.apps.ai_engine.subagent_runtime import get_subagent_runtime
+
+            async def _terminate():
+                runtime = get_subagent_runtime()
+                instances = await runtime.list_instances(task_id)
+                for inst in instances:
+                    if inst.status not in (
+                        SubAgentStatus.RUNNING,
+                        SubAgentStatus.INTERRUPTED_PENDING_USER_INPUT,
+                    ):
+                        continue
+                    try:
+                        await runtime.terminate(inst.thread_id)
+                    except Exception:
+                        logger.warning(
+                            f"终止子代理失败（非致命）: thread={inst.thread_id}, task={task_id}"
+                        )
+
+            run_async(_terminate())
+        except Exception:
+            logger.warning(f"回收子代理失败: task={task_id}", exc_info=True)
+
     @staticmethod
     def _publish_task_deleted(task_id: str, user_id: int):
         """发布 task_deleted 实时事件（与 task_created 对称），通知所有浏览器刷新任务列表"""

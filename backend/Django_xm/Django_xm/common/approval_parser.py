@@ -135,5 +135,9 @@ def _build_approval_entry(
         entry["agent_name"] = req["agent_name"]
     if req.get("agent_path"):
         entry["agent_path"] = req["agent_path"]
+    # subagent_thread_id（spec D10）：子代理 SSE 定向推送路由标识符，
+    # 审批事件据此定向到子代理卡片（协议字段，snake_case，不参与 camelCase 转换）
+    if req.get("subagent_thread_id"):
+        entry["subagent_thread_id"] = req["subagent_thread_id"]
 
     return entry

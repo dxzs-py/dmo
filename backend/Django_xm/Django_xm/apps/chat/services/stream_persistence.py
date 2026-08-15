@@ -87,6 +87,14 @@ def _build_persisted_tool_calls(
         if isinstance(_seq, int) and _seq > 0:
             persisted_entry["seq"] = _seq
         tool_call_service.enrich_entry_seq(persisted_entry, tool_call_id)
+        # 保留 position（Agent 图层嵌套规范 D3，图层内联布局恢复依据）：
+        # 与 seq 同策略——tool_calls_map 已含则透传，否则经 enrich_entry_position
+        # 从 ToolCallContext 权威源补全。刷新后前端依据 position 恢复工具卡
+        # 内联位置；缺 position 的工具卡会确定性排在图层末尾（视觉乱序）。
+        _position = tool_info.get("position")
+        if isinstance(_position, int) and _position >= 0:
+            persisted_entry["position"] = _position
+        tool_call_service.enrich_entry_position(persisted_entry, tool_call_id)
         persisted.append(persisted_entry)
     return persisted
 
@@ -127,6 +135,11 @@ def _evolve_tool_call(
     # approval 等审批字段：existing 原样保留；existing 无 approval 而 new 有，以 new 为准
     if "approval" not in evolved and isinstance(new_tc.get("approval"), dict):
         evolved["approval"] = new_tc["approval"]
+
+    # position（Agent 图层嵌套规范 D3）：existing 有则保留（不可变），
+    # existing 无而 new 有时补上（新工具首次落库的场景）
+    if "position" not in evolved and isinstance(new_tc.get("position"), int):
+        evolved["position"] = new_tc["position"]
 
     existing_status = str(existing_tc.get("status") or "").lower()
     new_status = str(new_tc.get("status") or "").lower()
@@ -242,6 +255,7 @@ def _persist_to_db_sync(
     content: str,
     new_tool_calls: list[dict[str, Any]],
     reasoning: dict[str, Any] | None = None,
+    subagent_contents: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     """同步执行所有 DB 操作（供 ``persist_stream_result`` 通过 ``sync_to_async`` 调用）。
 
@@ -329,10 +343,23 @@ def _persist_to_db_sync(
             assistant_msg.reasoning = reasoning
             reasoning_changed = True
 
+    # 子代理图层正文覆盖策略（Agent 图层嵌套规范 Task 1.5）：
+    # 仅当传入非空 subagent_contents 且与已有值不同时覆盖（避免空覆盖清除历史）
+    subagent_contents_changed = False
+    if isinstance(subagent_contents, dict) and subagent_contents:
+        existing_subagent = assistant_msg.subagent_contents or {}
+        if not isinstance(existing_subagent, dict):
+            existing_subagent = {}
+        if subagent_contents != existing_subagent:
+            assistant_msg.subagent_contents = subagent_contents
+            subagent_contents_changed = True
+
     # 仅在有变更时保存
-    if content_changed or tool_calls_changed or reasoning_changed:
+    if content_changed or tool_calls_changed or reasoning_changed or subagent_contents_changed:
         assistant_msg.tool_calls = merged_tool_calls
-        assistant_msg.save(update_fields=["content", "tool_calls", "reasoning", "updated_at"])
+        assistant_msg.save(
+            update_fields=["content", "tool_calls", "reasoning", "subagent_contents", "updated_at"]
+        )
 
     # 刷新会话 updated_at（修复 P0：ChatMessage 持久化未 touch session，
     # ChatSession.updated_at=auto_now 仅在 session.save() 时更新，导致刷新后
@@ -359,6 +386,7 @@ async def persist_stream_result(
     tool_calls_map: dict[str, dict[str, Any]],
     message_id: str | None = None,
     reasoning: dict[str, Any] | None = None,
+    subagent_contents: dict[str, dict[str, Any]] | None = None,
 ) -> str | None:
     """流结束时持久化 AI 回复内容与工具调用到 ``ChatMessage``。
 
@@ -410,7 +438,7 @@ async def persist_stream_result(
     try:
         # ORM 操作通过 sync_to_async 调用，规避 async 上下文限制
         result = await sync_to_async(_persist_to_db_sync, thread_sensitive=True)(
-            session_id, message_id, content, new_tool_calls, reasoning
+            session_id, message_id, content, new_tool_calls, reasoning, subagent_contents
         )
 
         if result is None:

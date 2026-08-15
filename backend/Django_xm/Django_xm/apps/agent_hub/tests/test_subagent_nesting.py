@@ -9,7 +9,7 @@
      并返回含当前/最大深度的错误 AIMessage，真实模型零调用）；
    - 集成验证：create_agent + 真实 SubAgentNestingMiddleware，超限子 agent 正常结束、
      错误消息出现在最终 messages（deepagents task 工具会将其转为 ToolMessage 回传
-     主 agent，与 langgraph agent_create 返回错误 JSON 的语义一致）。
+     主 agent，与超限拒绝派生返回错误语义一致）。
 2. Task 2.4 description 透传：before_model 将子 agent 描述写入 state（subagent_description）；
    SubAgentToolEventMiddleware._forward_event 对 depth>0 事件透传 description，
    主 agent（depth=0）不透传。
@@ -94,7 +94,7 @@ class SubAgentNestingDepthLimitTests(unittest.TestCase):
         self.assertNotIn("subagent_depth_blocked", result)
 
     def test_depth_blocked_message_format(self):
-        """超限错误消息含当前深度与最大深度（与 agent_management 语义一致）。"""
+        """超限错误消息含当前深度与最大深度（与 agent_context.is_max_depth_reached 语义一致）。"""
         message = _build_depth_blocked_message(MAX_AGENT_DEPTH + 1)
         self.assertIn(str(MAX_AGENT_DEPTH), message)
         self.assertIn(f"当前深度={MAX_AGENT_DEPTH + 1}", message)

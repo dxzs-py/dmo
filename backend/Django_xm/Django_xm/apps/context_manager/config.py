@@ -106,7 +106,7 @@ class ContextManagerSettings(BaseSettings):
         default=0.5, ge=0.2, le=0.8, description="参数递进模式检测阈值，参数多样性高于此值视为合理重复"
     )
     loop_multi_call_safe_tools: str = Field(
-        default="fs_write_file,fs_read_file,knowledge_base,shell_exec,agent_run,agent_create,skill_agent-browser,skill_baidu-search",
+        default="fs_write_file,fs_read_file,knowledge_base,shell_exec,spawn_sub_agent,skill_agent-browser,skill_baidu-search",
         description="多调用安全工具列表（逗号分隔，这些工具天然需要多次调用）",
     )
 

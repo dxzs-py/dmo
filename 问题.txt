@@ -1,32 +1,57 @@
 # 测试问题记录
 
-## 2026-08-14 拒绝路径测试（chat 模块，session b33becc6-eb3d-41d8-a532-9bbd64b1925f）
+## 2026-08-15 Agent 图层嵌套 spec 测试（tool-call-inline-content-flow，聊天代理模式）
 
-测试场景：发送"运行 ollama list 查看当前有哪些模型，然后运行 ollama ps 查看正在运行的模型"，两个 shell_exec 审批均点击"拒绝"。
+### 问题0：子代理执行报错 `the connection is closed`（事件循环不一致） ✅ 已修复
+- 现象：agent_run 卡片显示"已完成"，但结果错误文本"子代理执行失败: the connection is closed"，子代理 168ms 空跑（fastapi.log：13:52:33,241 启动 → 33,409 结束）
+- 根因：`AgentRunTool._execute_agent` 用 `run_async()`（内部 `asyncio.run()` 新建事件循环 loop_X 且执行后**立即关闭**）创建子代理 agent → `AsyncPostgresSaver` 的 asyncio.Lock 与 asyncpg 连接池绑定创建时的 loop_X；随后 `asyncio.run(_astream_subagent())` 又新建 **loop_Y** 执行 astream → 使用已随 loop_X 关闭而失效的连接池 → `the connection is closed`
+- 修复：`agent_management.py` `_execute_agent` 显式管理事件循环（`asyncio.new_event_loop()` + `set_event_loop`），把「工具获取 + agent_hub_create + astream + aget_state」全部放入同一 async 函数用 `loop.run_until_complete()` 执行；finally 中先 `release_async_checkpointer()` 释放当前 loop 的 PG 连接池再 `loop.close()`（新增 D1.1 决策）
+- 复测：✅ 子代理真实执行 3.2 秒、调用 shell_exec 工具、结果非 None/非 connection closed
 
-### 问题1：工具2（ollama ps）被拒绝后前端仍显示"执行中" ✅ 已修复
-- 现象：两个工具都被拒绝（后端日志 state=rejected），但工具2 前端显示"执行中"（跨浏览器 8/9/10 一致）
-- 根因：`resume_approval` 对批次最后一个决断统一广播 PROCESSING，`_persist_and_broadcast` 联动发布 TOOL_CALL_RUNNING；拒绝后终态化 rejected 时 running→rejected 被 tool_call_lifecycle 状态机拦截（非法转换），前端收不到 tool_call_rejected
-- 修复：`approval_service.py` `_persist_and_broadcast`（同步+异步）PROCESSING 分支仅当 `extra._approved is not False` 时发布 RUNNING
-- 复测：✅ 拒绝后两个工具均显示"已拒绝"，不再卡"执行中"
+### 问题4：子代理工具审批中断（interrupt）后子代理线程直接结束，结果不完整 ❌ 未修复（需方向决策）
+- 现象：子代理调用 `shell_exec`（带管道 `dir /s /b ... | findstr` 强制审批）→ LangGraph interrupt 暂停 → 子代理执行线程（_execute_agent 独立 loop）**无等待审批后 resume 机制**，`async for` 消费完中断 chunk 即结束 → 子代理"完成"但结果只有开场白"我来帮你探索这个项目目录…"（shell_exec 的 ToolMessage 未产生）→ 主 agent 认为不完整，重试 agent_run
+- 日志链：13:58:14,690 shell_exec SAFE 自动通过 → 13:58:14,692 需要审批（带管道）→ 13:58:14,712 批量发起审批 → 13:58:14,737 子代理执行结束（仅差 25ms）
+- 疑点：日志 `SAFE 审计已注册: module=deep_research, depth=1, agent_name=explore` —— 子代理工具审批被归集到 deep_research module（chat 场景应归 chat module），审批归集 module 推导可能不正确
+- 候选方案：
+  1. 子代理执行期间工具免审批（直接执行，风险：降低人工控制）
+  2. 子代理审批透传父链路 + 子代理线程等待审批状态后 resume（跨线程等待，复杂）
+  3. 子代理遇审批中断返回明确"需审批"状态给主 agent（无法代审批）
+- 状态：待用户决策方向后实现
 
-### 问题2：拒绝工具1 后短暂显示"本工具已审批，等待其余工具完成审批" ✅ 已修复
-- 现象：点击工具1"拒绝"后，前端显示"已审批，等待其余工具完成审批"提示（应为"已拒绝"）
-- 修复：后端 broadcast extra_fields 透传 `approved`（拒绝=False）；前端 ToolCallCard `isWaitingForSiblingsRejected` 区分文案
-- 复测：✅ waiting 阶段区分批准/拒绝
+### 问题1：langgraph 工具链子代理执行报错 `name 'normalized_type' is not defined` ✅ 已修复
+- 现象：聊天代理模式 agent_run 执行子代理失败，AI 回复正文显示"子代理执行失败了（内部错误 name 'normalized_type' is not defined）"，子代理无法启动，无子代理正文流/图层卡片
+- 根因：`AgentRunTool._execute_agent`（agent_management.py）中 `_sub_configurable["agent_name"] = normalized_type` 误引用闭包变量。`normalized_type` 仅存在于 `AgentCreateTool._run` 作用域，`AgentRunTool._run` 中未定义 → NameError（Agent 图层嵌套 Task 1.2 invoke→astream 改造时引入）
+- 修复：`agent_management.py` L412 改为 `_sub_configurable["agent_name"] = agent_type`（meta.type 已在 agent_create 时 _normalize_agent_type）
+- 复测：重启后第一次验证通过（子代理可启动，agent_create/agent_run 均正常）
 
-### 问题3（观察）：AI 直接告知用户"命令被拒绝"
-- AI 回复"看起来这两个命令的执行被拒绝了...我不会重复发起相同的请求。请问您希望如何处理？"
-- 预期（用户偏好）：拒绝后 agent 应调整策略/找替代方案继续，不直接告知被拒绝
-- 状态：agent 行为，未改（本轮 agent 已给出替代方案引导，行为可接受）
+### 问题2：子代理执行成功但结果 None、0.2 秒空跑、无子代理图层/正文流（且可能导致工具乱序） ✅ 已修复
+- 现象：agent_run 卡片显示"已完成"，但结果 "None"，子代理无任何正文流/工具事件转发（fastapi.log：12:05:48,157 启动 → 12:05:48,359 结束，仅 0.2 秒）；主 agent 继续执行（agent_list 检查状态、shell_exec 换策略重试）；用户跨浏览器手动刷新后观察到工具乱序
+- 根因：`AgentRunTool._execute_agent` 的 `_sub_thread_id` 继承父 `configurable.thread_id`（chat 场景 = session_id cd04799c...）。thread_id 是 LangGraph checkpoint 唯一键，子代理是独立 graph（agent_hub_create 新建），与主 agent 共享 thread_id → checkpoint 冲突：子代理 astream 命中/污染主 agent 状态，表现为空跑（结果 None、无正文、无工具）甚至主 agent 后续轮次状态错乱（工具乱序的潜在根因）
+- 修复：
+  1. `agent_management.py`：`_sub_thread_id = f"subagent_{agent_id}"`（独立 checkpoint 键）；新增 `_sub_configurable["approval_thread_id"] = 父 thread_id`（审批归集保持挂回父任务/会话，前端审批面板路由不受影响）
+  2. `middleware.py`（ApprovalMiddleware）：`thread_id = configurable.get("approval_thread_id") or configurable.get("thread_id", "")`（优先读审批归集键，回退 thread_id；deepagents 子代理同 graph 不注入 approval_thread_id，行为不变）
+- 复测：待重启后端后验证（重点：子代理真实执行、子代理正文流/图层出现、工具乱序是否消失）
 
-### 问题4：刷新后被拒绝工具显示"失败"而非"已拒绝" ✅ 已修复
-- 现象：两个工具都点"拒绝"后，触发浏览器显示"已拒绝"；但刷新后工具2 显示"失败"，审批面板残留
-- 根因：middleware 注入的拒绝 ToolMessage 带 `status="error"` → `is_error=True` → state="output-error" → 持久化 status=failed（刷新后恢复显示"失败"）
-- 修复：`stream_chunk_processors.py` 状态计算区分 is_timeout/is_rejected（新增 rejected/timeout 状态映射），拒绝/超时不落入 failed
-- 复测：✅ 刷新后两个工具均"已拒绝"+输出结果占位保留，无审批面板残留
+### 问题3：position 未持久化 → 刷新后工具卡全部排图层末尾（"工具乱序/不内联"根因） ✅ 已修复
+- 现象：流式期间工具卡按 position 内联正常；刷新页面后所有工具卡排在该图层正文末尾（视觉"乱序"），且审批恢复的工具卡也无内联位置
+- 根因：position 只在 WS 事件 payload 透传（前端实时内联），**未持久化**：
+  - `stream_persistence._build_persisted_tool_calls`（tool_calls JSON 落库）字段列表无 position → 刷新后 `transformBackendMessageToFrontend` 恢复的 toolCall 无 position
+  - `Approval.extra`（审批唯一持久化来源）无 position → 审批恢复/loadHistory 重建无 position
+  - 审批事件 payload（前端 isSynthetic 占位）无 position
+- 修复（统一权威补全点，与 seq 同模式）：
+  1. `tool_call_lifecycle.py` 新增 `enrich_entry_position(entry, tool_call_id)`：从 ToolCallContext 读 position（bind_position 写入、keep_existing 不可变）写入 entry
+  2. `stream_persistence._build_persisted_tool_calls` 保留 tool_info.position + enrich_entry_position 兜底；`_evolve_tool_call` 演进保留 position（existing 无而 new 有时补上）
+  3. `approval_service.py` 4 处（审批事件 payload / 重建项 / Approval.extra 同步 / Approval.extra 异步）enrich_entry_seq 后补 enrich_entry_position
+  4. 前端 `messageOperations.setApprovalToToolCallInMap` 已有条目 + isSynthetic 占位补 position；`research.js._approvalToToolCall`（loadHistory）extra.position 提升到顶层
+- 复测：待重启后端后验证（刷新后工具卡保持内联、审批恢复位置正确）
 
-### 问题5：被拒绝工具无输出结果区域（新增修复） ✅ 已修复
-- 现象：被拒绝工具只显示"已拒绝"标签，无任何输出
-- 修复：ToolCallCard 输出结果区域对 REJECTED/TIMEOUT 无数据时显示占位反馈"已拒绝执行该工具，Agent 将调整策略继续"
-- 复测：✅ 4 浏览器均显示输出结果占位
+### 备注：会话列表"3 个重复"为测试选择器误判，非 bug
+- `document.querySelectorAll('[class*=session-item]')` 会匹配 `session-item-content`/`session-item-title` 子元素；实际会话仅 1 个（后端 ChatSession 1 条），无重复渲染
+
+## 2026-08-14 重新生成/版本/链式删除 spec 测试（chat 模块）
+
+### 问题1：非触发浏览器在流式/审批挂起中仍显示"重新生成"按钮 ✅ 已修复
+- 现象：触发浏览器发送命令后审批挂起期间，另一浏览器（未发起请求，chatStore.isLoading=false）末轮 AI 回复仍显示"重新生成"按钮
+- 根因：`ChatMessage.canRegenerate` 仅依赖会话级 props.isLoading（触发浏览器有效），非触发浏览器 isLoading 恒为 false，消息自身 isStreaming=true 未被拦截
+- 修复：`canRegenerate` 增加 `props.message.isStreaming` 检查（消息级状态经 WS 同步，跨浏览器一致）
+- 复测：待验证

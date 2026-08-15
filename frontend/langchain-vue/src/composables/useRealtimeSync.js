@@ -935,12 +935,16 @@ function createRealtimeSync() {
     }
 
     // === 命名边界：snake_case → camelCase ===
-    // 对整体数据递归转换，然后还原 type 为原始 snake_case
-    // （协议路由标识符，如 "session_created"、"tool_result" 非业务数据）
+    // 对整体数据递归转换，然后还原 type 与 subagent_thread_id 为原始 snake_case
+    // （协议路由标识符，如 "session_created"、"tool_result" 非业务数据；
+    //   subagent_thread_id 为子代理 SSE 定向推送路由字段，不参与转换）
     const originalType = rawData.type
     const data = toCamelCase(rawData)
     if (originalType) {
       data.type = originalType
+    }
+    if (rawData.subagent_thread_id) {
+      data.subagent_thread_id = rawData.subagent_thread_id
     }
 
     // 处理服务端历史事件回放回包（支持分块）
@@ -953,8 +957,14 @@ function createRealtimeSync() {
         + `count=${data.count}, chunk=${chunkIdx + 1}/${chunkCount}`
       )
       // replay 事件 bypass barrier，直接处理（isReplay=true）
-      // 每个 evt 已在 data.events 的 toCamelCase 中转换，但需还原其 type
-      for (const evt of data.events) {
+      // 每个 evt 已在 data.events 的 toCamelCase 中转换，但需还原其 type 与
+      // subagent_thread_id（协议路由标识符，snake_case，按原始 events 索引还原）
+      const rawEvents = Array.isArray(rawData.events) ? rawData.events : []
+      for (let i = 0; i < data.events.length; i++) {
+        const evt = data.events[i]
+        if (rawEvents[i]?.subagent_thread_id) {
+          evt.subagent_thread_id = rawEvents[i].subagent_thread_id
+        }
         if (evt.type && typeof evt.seq === 'number') {
           await dispatchEvent(evt, true)
         }

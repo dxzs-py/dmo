@@ -80,6 +80,12 @@ class ChatMessage(AuditModel):
     tool_calls = models.JSONField(default=list, blank=True, verbose_name="工具调用")
     approval = models.JSONField(default=dict, blank=True, null=True, verbose_name="审批数据")
     reasoning = models.JSONField(default=dict, blank=True, null=True, verbose_name="推理")
+    # 子代理图层正文/中间思考（Agent 图层嵌套规范 Task 1.5）：
+    #   key = agent_path 的 ">" 拼接（如 "main>web-researcher"）
+    #   value = {"content": str, "reasoning_content": str}
+    # 由执行层（adapter.subagent_contents / chat data["_subagent_contents"]）在流结束时
+    # 持久化，前端刷新后据此恢复子代理图层正文（与 tool_calls 同为消息级数据）。
+    subagent_contents = models.JSONField(default=dict, blank=True, verbose_name="子代理图层正文")
     suggestions = models.JSONField(default=list, blank=True, null=True, verbose_name="建议问题")
     versions = models.JSONField(default=list, blank=True, null=True, verbose_name="消息版本")
     current_version = models.PositiveIntegerField(
@@ -96,6 +102,11 @@ class ChatMessage(AuditModel):
         default=False,
         verbose_name="是否正在流式输出",
         help_text="标记该消息是否正在进行流式输出，用于前端刷新后判断是否需要恢复",
+    )
+    is_finalized = models.BooleanField(
+        default=False,
+        verbose_name="是否已固化版本",
+        help_text="标记该消息的当前选中版本是否已固化为本轮主消息（发送新消息/超时触发）；固化后禁止重新生成",
     )
 
     class Meta:

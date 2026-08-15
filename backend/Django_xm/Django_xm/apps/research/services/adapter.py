@@ -101,6 +101,17 @@ class OfficialDeepAgentAdapter:
         # 消费后构造 SystemMessage 经 aupdate_state 注入 graph state 后重入 astream，
         # 主 agent 收到指令后以原始入参重新调用目标子代理（Task 3 单独重启失败子代理）。
         self._retry_instruction_queue: asyncio.Queue | None = None
+        # 子代理图层正文/思考累计（Agent 图层嵌套规范 Task 1.5）：
+        #   key = agent_path 的 ">" 拼接（如 "main>web-researcher"）
+        #   value = {"content": str, "reasoning_content": str}
+        # 由 _on_subagent_content 回调（SubAgentContentMiddleware 转发）累积；
+        # 任务完成时由 research_runner 携带到 writeback，持久化到
+        # ChatMessage.subagent_contents，供前端刷新后恢复子代理图层正文。
+        self.subagent_contents: dict[str, dict[str, str]] = {}
+        # 主 agent 图层已输出 content 累计长度（position 注入依据，Task 2.1）：
+        # astream messages 循环中 AIMessageChunk content 追加；工具调用发起点
+        # 读 len(_main_content_len) 作为主 agent 图层 position。
+        self._main_content_len = 0
 
     def research(
         self, query: str, config: dict[str, Any] | None = None, callbacks: list | None = None
@@ -261,7 +272,7 @@ class OfficialDeepAgentAdapter:
             ExecutionTimeoutManager,
             get_resilience_config,
         )
-        from Django_xm.apps.tools.base import is_approval_interrupt
+        from Django_xm.apps.tools.base import is_approval_interrupt, is_subagent_wait_interrupt
 
         # 工具事件提取与发布（与子 agent 事件转发路径一致）
         # 注意：工具事件的实际发布由 _publish_tool_event 内部通过
@@ -373,6 +384,9 @@ class OfficialDeepAgentAdapter:
                 # description：子 agent 角色描述（任务目标，Task 2.4），
                 # 由 SubAgentToolEventMiddleware 从 nesting 透传，仅子 agent 事件携带
                 "description",
+                # subagent_thread_id：子代理 SSE 定向推送路由标识符（spec D10），
+                # 由 SubAgentToolEventMiddleware 从 configurable 透传，仅子 agent 事件携带
+                "subagent_thread_id",
             ):
                 val = kwargs.get(sub_field)
                 if val is None or val in ("", 0):
@@ -382,6 +396,80 @@ class OfficialDeepAgentAdapter:
             await self._publish_tool_event(evt)
 
         config["configurable"]["_on_tool_event"] = _on_tool_event
+
+        # 注入子代理正文/思考回调到 config["configurable"]：
+        # SubAgentContentMiddleware（子 agent middleware）从 configurable 读取此回调，
+        # 在子代理每次模型调用后转发其正文与中间思考到父 SSE 流（Agent 图层嵌套）。
+        # 父 config 经 langgraph ensure_config 自动传播到子 agent。
+        #
+        # 回调签名：
+        #   on_subagent_content(agent_path, content, reasoning_content, agent_name, depth) -> coroutine
+        #
+        # 处理逻辑：
+        # 1. 按 agent_path 累计到 self.subagent_contents（key = ">".join(agent_path)），
+        #    content/reasoning_content 追加式累积（多轮模型调用拼接）；
+        # 2. 发布 STREAM_SUBAGENT_CONTENT WebSocket 事件到 session/task 频道，
+        #    前端按 agent_path 路由到对应子代理图层实时展示；
+        # 3. 事件携带 message_id（chat 关联场景定位归属消息）。
+        async def _on_subagent_content(
+            agent_path,
+            content,
+            reasoning_content,
+            agent_name,
+            depth,
+            subagent_thread_id="",
+        ):
+            """子代理正文/中间思考转发回调（Agent 图层嵌套规范 Task 1）。"""
+            if not isinstance(agent_path, list) or not agent_path:
+                return
+            path_key = ">".join(str(p) for p in agent_path)
+            entry = self.subagent_contents.setdefault(path_key, {"content": "", "reasoning_content": ""})
+            if content:
+                entry["content"] = (entry.get("content") or "") + content
+            if reasoning_content:
+                entry["reasoning_content"] = (entry.get("reasoning_content") or "") + reasoning_content
+            try:
+                from Django_xm.common.event_schema import EventSource, EventType
+                from Django_xm.common.realtime_events import publish_event
+
+                _configurable = getattr(self, "_last_config", None)
+                _cfg = _configurable if isinstance(_configurable, dict) else {}
+                _session_id = (_cfg.get("configurable") or {}).get("chat_session_id") or self.chat_session_id
+                _assistant_message_id = (_cfg.get("configurable") or {}).get("assistant_message_id") or ""
+                if not _assistant_message_id:
+                    _assistant_message_id = getattr(self, "_assistant_message_id", "")
+
+                # 深度研究执行流：session/task 双频道（与工具事件路由一致）
+                await publish_event(
+                    EventType.STREAM_SUBAGENT_CONTENT,
+                    {
+                        "source": EventSource.DEEP_RESEARCH,
+                        "source_id": self.thread_id,
+                        "message_id": _assistant_message_id or None,
+                        "data": {
+                            # agent_path 为协议路由标识符（图层归属），保持 snake_case 原始值，
+                            # 前端 toCamelCase 后还原（见 sessionTransformers 转换边界）
+                            "agent_path": [str(p) for p in agent_path],
+                            "content": content,
+                            "reasoning_content": reasoning_content,
+                            "agent_name": agent_name or "",
+                            "depth": depth,
+                        },
+                    },
+                    session_id=_session_id or None,
+                    task_id=self.thread_id,
+                    subagent_thread_id=subagent_thread_id or None,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[OfficialDeepAgent] 广播子代理正文失败: "
+                    f"agent_path={path_key}, err={e}"
+                )
+
+        config["configurable"]["_on_subagent_content"] = _on_subagent_content
+        # 供 _on_subagent_content / _publish_tool_event 读取运行时 config
+        # （chat_session_id / assistant_message_id 等执行期注入字段）
+        self._last_config = config
 
         resilience_config = get_resilience_config()
         # soft_timeout 仅作警告，hard_timeout 默认 None（不限制）
@@ -477,10 +565,14 @@ class OfficialDeepAgentAdapter:
             accumulated_messages: list = []
             # 在循环外定义，避免 loop_fn 闭包捕获每次迭代的重新赋值（B023）
             all_resume_values: dict = {}
+            # 业务等待挂起（spec D4）：loop_fn 检测到 _subagent_wait interrupt 时写入，
+            # 外层循环据此返回 suspended 结果（不 finalize、不 Command(resume)）。
+            subagent_wait_suspend: dict | None = None
 
             # 外层 interrupt 循环：处理 __interrupt__ 事件 + Command(resume=...) 恢复
             while True:
                 all_resume_values.clear()  # 清空上一轮的审批结果，复用同一 dict 对象
+                subagent_wait_suspend = None  # 每轮重置业务等待挂起标记
                 ctx.retry_count = 0  # 重置重试计数
 
                 # 定义 loop_fn：核心流式循环（闭包捕获 all_resume_values 等）
@@ -494,6 +586,7 @@ class OfficialDeepAgentAdapter:
                     _strategy,
                     _data,
                 ):
+                    nonlocal subagent_wait_suspend
                     current_input = graph_input_arg
                     while True:  # 重复工具调用警告注入重入
                         local_pending_warnings: list = []
@@ -528,6 +621,21 @@ class OfficialDeepAgentAdapter:
                                             else:
                                                 interrupt_value = intr
                                                 interrupt_id = ""
+
+                                            # 业务等待挂起（spec D4）：wait_for_subagent 触发，
+                                            # 非审批 interrupt，不产出审批 UI。记录挂起信息后
+                                            # 退出流，由外层返回 suspended 结果（父协程退出）。
+                                            if is_subagent_wait_interrupt(interrupt_value):
+                                                subagent_wait_suspend = {
+                                                    "subagent_thread_id": interrupt_value.get("subagent_thread_id", ""),
+                                                    "interrupt_id": interrupt_id,
+                                                }
+                                                logger.info(
+                                                    f"[OfficialDeepAgent] 业务等待挂起: "
+                                                    f"subagent={subagent_wait_suspend['subagent_thread_id']}, "
+                                                    f"interrupt_id={interrupt_id}"
+                                                )
+                                                break
 
                                             if is_approval_interrupt(interrupt_value):
                                                 # 使用公共审批中断解析器，统一批量/单工具两种格式
@@ -604,6 +712,9 @@ class OfficialDeepAgentAdapter:
                                                     else:
                                                         for bi in interrupt_list:
                                                             all_resume_values[bi["interrupt_id"]] = False
+                                        if subagent_wait_suspend is not None:
+                                            # 业务等待挂起：退出 async for，外层返回 suspended 结果
+                                            break
                                 continue
 
                             # messages 模式：提取工具调用生命周期事件并发布到实时频道
@@ -664,6 +775,14 @@ class OfficialDeepAgentAdapter:
                                                 f"session={_session_id}, msg={_message_id}, err={e}"
                                             )
 
+                                # 主 agent 图层 content 累计（position 注入依据，Task 2.1）：
+                                # messages 模式 chunk 为主 agent 的模型输出（deepagents 子代理
+                                # 内部输出不进入主 stream），content 追加到 _main_content_len，
+                                # 供主 agent 图层工具调用 position 采集（触发瞬间已输出长度）。
+                                _chunk_content = getattr(msg_obj, "content", None) or ""
+                                if _chunk_content:
+                                    self._main_content_len += len(_chunk_content)
+
                                 # 检测到重复调用：中断当前流以注入警告
                                 # break 退出 async for，由下方 aupdate_state 注入后重入
                                 if local_pending_warnings:
@@ -699,6 +818,9 @@ class OfficialDeepAgentAdapter:
                                         retry_injected = True
                                         break
 
+                        # 业务等待挂起：跳过重复警告/重试注入，直接退出 while True
+                        if subagent_wait_suspend is not None:
+                            break
                         # 重复工具调用警告注入：通过 aupdate_state 追加 SystemMessage
                         # 到 graph state，agent 下一轮 LLM 调用会看到提示并调整策略。
                         # 注入后以 current_input=None 重入 astream，从当前 checkpoint 续流。
@@ -743,6 +865,16 @@ class OfficialDeepAgentAdapter:
                 # 如果触发回退，返回 fallback 结果
                 if fallback_result is not None:
                     return fallback_result
+
+                # 业务等待挂起（spec D4）：父 Graph 暂停，返回 suspended 结果，
+                # 由执行器注册 awaiter 并退出父协程（不 finalize、不 Command(resume)）。
+                if subagent_wait_suspend is not None:
+                    return {
+                        "success": False,
+                        "suspended": True,
+                        "subagent_thread_id": subagent_wait_suspend["subagent_thread_id"],
+                        "interrupt_id": subagent_wait_suspend["interrupt_id"],
+                    }
 
                 # 流结束后检查是否有实时回调收集的审批结果
                 if all_resume_values:
@@ -792,6 +924,10 @@ class OfficialDeepAgentAdapter:
             if executor._current_degradation is not None:
                 result["degraded"] = True
                 result["degradation_level"] = executor._current_degradation.value
+            # Agent 图层嵌套规范 Task 1.5：子代理图层正文/思考携带到结果，
+            # 由 research_runner 透传到 writeback_to_chat_message 落库
+            if self.subagent_contents:
+                result["subagent_contents"] = self.subagent_contents
             return result
 
         except Exception as e:
@@ -993,6 +1129,9 @@ class OfficialDeepAgentAdapter:
             sub_risk_ceiling = sub_risk_ceiling_raw or ""
         # description：子 agent 角色描述（任务目标，Task 2.4），仅子 agent 事件携带
         sub_description = evt.get("description", "") or ""
+        # subagent_thread_id：子代理 SSE 定向推送路由标识符（spec D10），
+        # 由 SubAgentToolEventMiddleware 从 configurable 透传，仅子代理事件携带
+        sub_subagent_thread_id = evt.get("subagent_thread_id", "") or ""
 
         try:
             service.register(
@@ -1011,10 +1150,33 @@ class OfficialDeepAgentAdapter:
                     agent_path=sub_agent_path,
                     risk_ceiling=sub_risk_ceiling,
                     description=sub_description,
+                    # 子代理 SSE 定向推送路由标识符（spec D10）
+                    subagent_thread_id=sub_subagent_thread_id,
                 )
             )
         except Exception as e:
             logger.warning(f"[OfficialDeepAgent] 注册工具调用上下文失败 (tool={tool_name}, tc_id={tool_call_id}): {e}")
+
+        # position 采集（Task 2.1，按图层局部化，单一权威来源）：
+        # - 子代理（depth>0）：position = len(该子代理图层已转发正文 content 长度)
+        # - 主 agent：position = len(主 agent 已输出 content 累计长度)
+        # 经 service.bind_position 写入 context（仅补全空字段），后续状态事件不覆盖
+        # （keep_existing + bind_position 双保险，D3 硬约束）。
+        _position: int | None = None
+        if sub_agent_path and sub_depth > 0:
+            _sub_path_key = ">".join(str(p) for p in sub_agent_path)
+            _sub_entry = self.subagent_contents.get(_sub_path_key) or {}
+            _position = len(_sub_entry.get("content") or "")
+        else:
+            _position = self._main_content_len
+        if _position is not None:
+            try:
+                service.bind_position(tool_call_id, _position)
+            except Exception as e:
+                logger.warning(
+                    f"[OfficialDeepAgent] 绑定 position 失败: tc_id={tool_call_id}, "
+                    f"position={_position}, err={e}"
+                )
 
         # 2. 状态机转换：transition_async 内部 await publish_tool_call，
         #    parameters / message_id / cross_module_id / graph_interrupt_id

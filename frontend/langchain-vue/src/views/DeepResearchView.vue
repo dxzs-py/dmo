@@ -106,6 +106,7 @@
         :progress-message="progressMessage"
         :progress-percentage="progressPercentage"
         :tool-calls="taskToolCalls"
+        :subagent-contents="taskSubagentContents"
         :doc-analysis-file="docAnalysisFile"
         :doc-analysis-content="docAnalysisContent"
         :doc-analysis-loading="docAnalysisLoading"
@@ -317,6 +318,26 @@ const taskToolCalls = computed(() => {
 
   // 回退到 researchStore（独立深度研究任务）
   return researchStore.getToolCalls(currentTask.taskId)
+})
+
+/** 当前任务的子代理图层正文/思考索引（Agent 图层嵌套规范 Task 8.3）：
+ *  与 taskToolCalls 同源（session 消息优先，researchStore 回退），
+ *  保证图层树正文与工具归属一致。 */
+const taskSubagentContents = computed(() => {
+  const currentTask = task.value
+  if (!currentTask?.taskId) return {}
+
+  const chatSessionId = currentTask.sessionId || currentTask.chatSessionId
+  if (chatSessionId) {
+    const sessionStore = useSessionStore()
+    const messages = sessionStore.getSessionMessages(chatSessionId)
+    const researchMsg = [...messages].reverse().find(msg => msg.researchTaskId === currentTask.taskId)
+    if (researchMsg?.subagentContents && typeof researchMsg.subagentContents === 'object') {
+      return researchMsg.subagentContents
+    }
+  }
+
+  return researchStore.getTaskSubagentContents(currentTask.taskId)
 })
 const showTaskDetail = ref(false)
 const taskListRef = ref(null)

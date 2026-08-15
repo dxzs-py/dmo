@@ -134,6 +134,8 @@ async def publish_tool_call(
     _index: int | None = None,
     seq: int | None = None,
     description: str | None = None,
+    position: int | None = None,
+    subagent_thread_id: str | None = None,
 ) -> None:
     """工具调用生命周期事件发布（三模块统一入口）。
 
@@ -172,6 +174,9 @@ async def publish_tool_call(
             前端据此跨浏览器统一排序（替代跨轮重复的 _index）；非空才注入 payload。
         description: 子 agent 角色描述（任务目标，取自 deep_builder SubAgent 静态
             description，仅子 agent 工具事件携带；主 agent 不传）。
+        position: 工具调用在该图层自身正文中的字符偏移（该图层已输出 content 长度）。
+            按图层局部化：每个 agent 图层独立累计，子层正文不计入父层。
+            首次 PENDING 事件写入后永久不变，后续状态事件不覆盖。
 
     Raises:
         PayloadValidationError: payload 校验失败时抛出
@@ -222,6 +227,10 @@ async def publish_tool_call(
     # （主 agent 不传，payload 保持简洁）
     if description:
         payload["description"] = description
+    # position：工具调用在该图层自身正文中的字符偏移（按图层局部化）。
+    # 仅非负整数时注入 payload；首次 PENDING 事件写入后永久不变。
+    if isinstance(position, int) and position >= 0:
+        payload["position"] = position
     # 时间戳（Task 2.1，统一注入点：所有 TOOL_CALL_* 事件必经此函数）：
     # - PENDING → created_at（起始时间戳）
     # - 终态（COMPLETED/FAILED/TIMEOUT/REJECTED）→ completed_at
@@ -246,6 +255,7 @@ async def publish_tool_call(
             payload,
             session_id=session_id,
             task_id=task_id,
+            subagent_thread_id=subagent_thread_id,
         )
     except PayloadValidationError:
         logger.exception(
@@ -305,6 +315,7 @@ async def publish_approval(
     cross_module_id: str | None = None,
     graph_interrupt_id: str | None = None,
     extra_fields: dict | None = None,
+    subagent_thread_id: str | None = None,
 ) -> None:
     """审批事件发布（三模块统一入口）。
 
@@ -355,6 +366,7 @@ async def publish_approval(
             payload,
             session_id=session_id,
             task_id=task_id,
+            subagent_thread_id=subagent_thread_id,
         )
     except PayloadValidationError:
         logger.exception(

@@ -152,6 +152,7 @@ def writeback_to_chat_message(
     success: bool,
     chat_session_id: str | None = None,
     reasoning_content: str | None = None,
+    subagent_contents: dict | None = None,
 ) -> str | None:
     """将深度研究结果回写到关联的 ChatMessage 并广播 WebSocket 事件。
 
@@ -163,6 +164,9 @@ def writeback_to_chat_message(
         reasoning_content: 深度研究过程中 LLM 累积的推理内容（深度思考功能）。
             仅承载模型推理，与"深度研究任务完成态"（由前端研究卡片表达）概念分离；
             为空/None 时不写 reasoning 字段。
+        subagent_contents: 子代理图层正文/中间思考累计（Agent 图层嵌套规范 Task 1.5，
+            adapter.subagent_contents 格式：{agent_path_key: {content, reasoning_content}}）。
+            为空/None 时不写 subagent_contents 字段。
 
     Returns:
         回写的 ChatMessage ID（字符串），失败时返回 None
@@ -293,6 +297,16 @@ def writeback_to_chat_message(
                     msg.versions = versions
                     if "versions" not in msg_save_fields:
                         msg_save_fields.append("versions")
+
+            # Agent 图层嵌套：子代理图层正文/思考落库（仅传入非空且与已有值不同时覆盖）
+            if isinstance(subagent_contents, dict) and subagent_contents:
+                existing_sub = msg.subagent_contents or {}
+                if not isinstance(existing_sub, dict):
+                    existing_sub = {}
+                if subagent_contents != existing_sub:
+                    msg.subagent_contents = subagent_contents
+                    if "subagent_contents" not in msg_save_fields:
+                        msg_save_fields.append("subagent_contents")
 
             if msg_save_fields:
                 msg.save(update_fields=[*msg_save_fields, "updated_at"])

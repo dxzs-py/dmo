@@ -3,13 +3,11 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-from collections.abc import Sequence
 from typing import Any
 
 # 官方 CompositeBackend：_SandboxGuardCompositeBackend 以其为基类（模块级导入，
 # 类定义即求值；不能在函数内延迟导入）
 from deepagents.backends import CompositeBackend
-from langchain.agents.middleware import AgentMiddleware
 from langchain_core.tools import BaseTool, StructuredTool
 
 from Django_xm.apps.agent_hub.builders._registry import register_builder
@@ -17,17 +15,9 @@ from Django_xm.apps.agent_hub.config import AgentType
 from Django_xm.apps.research.prompts import (
     DEEP_RESEARCH_SYSTEM_PROMPT,
     DOC_ANALYSIS_PROMPT_SUFFIX,
-    DOC_ANALYST_SUBAGENT_PROMPT,
-    WEB_RESEARCHER_SUBAGENT_PROMPT,
-)
-from Django_xm.apps.research.services._constants import (
-    RETRIEVER_TOOL_NAME_PREFIXES as _RETRIEVER_TOOL_NAME_PREFIXES,
 )
 from Django_xm.apps.research.services._constants import (
     SANDBOX_ALLOWED_DIRS as _SANDBOX_ALLOWED_DIRS,
-)
-from Django_xm.apps.research.services._constants import (
-    SEARCH_TOOL_NAMES as _SEARCH_TOOL_NAMES,
 )
 
 # OfficialDeepAgentAdapter 位于 research/services/adapter.py，作为 deep agent 的统一适配器
@@ -44,82 +34,8 @@ from Django_xm.apps.research.services._constants import (
 # 能获取完整构建参数重建 graph（根本性修复 af_16 残留：韧性降级失效）。
 from Django_xm.apps.research.services.adapter import OfficialDeepAgentAdapter
 from Django_xm.async_utils import run_async
-from Django_xm.common.risk_levels import RiskLevel
 
 logger = logging.getLogger(__name__)
-
-
-# 子 agent 角色风险上限（RiskLevel）。
-# 设计参考 Claude Code：子 agent 拥有与主 agent 对等的工具权限，
-# 但通过 risk_ceiling 约束角色边界，避免研究型子 agent 执行高危操作。
-#
-# 角色边界约束（非风险降级）：超过 risk_ceiling 的工具调用被拒绝，
-# agent 收到 error ToolMessage 后可调整策略或委派给有权限的 agent。
-#
-# 映射由 SubAgentNestingMiddleware 在 before_model 中按子 agent 名称动态查询，
-# ApprovalMiddleware 从 state（subagent_risk_ceiling）读取后传给 policies.assess_risk。
-_SUBAGENT_RISK_CEILINGS: dict[str, RiskLevel] = {}
-
-# 子 agent 角色描述注册表（任务目标，Task 2.4 单一来源）。
-# 与 _SUBAGENT_RISK_CEILINGS 同模式：SubAgent 静态 description 集中在此定义，
-# _build_subagents / _build_general_purpose_subagent 构建 SubAgent 时引用；
-# SubAgentNestingMiddleware._resolve_description 按子 agent 名称查询后写入 state，
-# 经工具事件透传，供前端分组卡片组头展示任务目标描述。
-_SUBAGENT_DESCRIPTIONS: dict[str, str] = {}
-
-
-def _register_subagent_risk_ceilings():
-    """注册子 agent 角色风险上限。
-
-    在模块加载时调用，将 RiskLevel 枚举值注册到 _SUBAGENT_RISK_CEILINGS。
-    RiskLevel 已在模块顶层导入（common.risk_levels 仅依赖 enum，无循环依赖风险）。
-    """
-    _SUBAGENT_RISK_CEILINGS.clear()
-    # web-researcher / doc-analyst：研究型子 agent，最高 CONTROLLED
-    # （可执行只读 + 常规审批操作，但禁止 HIGH 级如沙箱外写文件）
-    _SUBAGENT_RISK_CEILINGS["web-researcher"] = RiskLevel.CONTROLLED
-    _SUBAGENT_RISK_CEILINGS["doc-analyst"] = RiskLevel.CONTROLLED
-    # general-purpose：通用子 agent，与主 agent 一致不限制
-    # （拥有完整工具权限，可执行 HIGH 级操作，充分发挥能力）
-    _SUBAGENT_RISK_CEILINGS["general-purpose"] = RiskLevel.HIGH
-
-
-def _register_subagent_descriptions():
-    """注册子 agent 角色描述（任务目标）。
-
-    在模块加载时调用，与 SubAgent 静态 description 保持单一来源一致
-    （_build_subagents / _build_general_purpose_subagent 引用本注册表构建 SubAgent）。
-    """
-    _SUBAGENT_DESCRIPTIONS.clear()
-    _SUBAGENT_DESCRIPTIONS["web-researcher"] = "网络搜索和信息整理专家，负责从互联网搜索和整理研究信息"
-    _SUBAGENT_DESCRIPTIONS["doc-analyst"] = "文档分析和知识提取专家，负责在知识库中检索和分析文档"
-    _SUBAGENT_DESCRIPTIONS["general-purpose"] = (
-        "General-purpose agent for researching complex questions, searching "
-        "for files and content, and executing multi-step tasks. When you are "
-        "searching for a keyword or file and are not confident that you will "
-        "find the right match in the first few tries use this agent to perform "
-        "the search for you. This agent has access to all tools as the main agent."
-    )
-
-
-_register_subagent_risk_ceilings()
-_register_subagent_descriptions()
-
-
-# 子 agent 机制说明（deepagents 0.7.5 升级后，官方机制取代旧 monkey-patch）：
-# - 中断冒泡 + Command(resume) 恢复：0.7.5 原生支持，无需注入 checkpointer。
-# - 嵌套层级字段（depth/agent_path/risk_ceiling）：SubAgentNestingMiddleware 注入 state。
-# - 子 agent 工具事件转发：SubAgentToolEventMiddleware（after_model + wrap_tool_call）。
-# - 旧 subagent_patch.py 已删除（详见 .trae/specs 升级记录）。
-# - 旧 _patch_filesystem_backend_windows（\\?\ 前缀补丁）已删除：
-#   0.7.5 官方 FilesystemBackend.__init__ 统一 self.cwd = Path(root_dir).resolve()，
-#   _resolve_path 内部已处理前缀一致性，实测 355 字符路径下 relative_to 正常。
-
-
-def _has_search_tools(extra_tools: list[BaseTool] | None = None) -> bool:
-    if not extra_tools:
-        return False
-    return any(getattr(t, "name", "") in _SEARCH_TOOL_NAMES for t in extra_tools)
 
 
 def _ensure_sync_tool(tool: BaseTool) -> BaseTool:
@@ -142,117 +58,6 @@ def _ensure_sync_tool(tool: BaseTool) -> BaseTool:
         func=_sync_run,
         coroutine=original_coroutine,
     )
-
-
-def _merge_tool_lists(*tool_lists) -> list[BaseTool]:
-    """合并多个工具列表，按工具名去重（保留首次出现的版本）。
-
-    用于子智能体工具合并：主 agent 工具 + 子智能体专用工具 + extra_tools，
-    确保子智能体拥有与主 agent 相同的工具能力（参考 Claude Code Task 工具设计：
-    子 agent 默认继承父 agent 的全部工具，并可追加专用工具）。
-    """
-    seen_names: set = set()
-    merged: list[BaseTool] = []
-    for tools in tool_lists:
-        if not tools:
-            continue
-        for t in tools:
-            name = getattr(t, "name", "") or ""
-            if name and name in seen_names:
-                continue
-            seen_names.add(name)
-            merged.append(t)
-    return merged
-
-
-def _build_subagents(
-    enable_web_search: bool = True,
-    enable_doc_analysis: bool = False,
-    retriever_tool: BaseTool | None = None,
-    extra_tools: list[BaseTool] | None = None,
-    subagent_middleware: Sequence[AgentMiddleware] | None = None,
-    main_tools: list[BaseTool] | None = None,
-) -> list[Any]:
-    """构建 SubAgent 列表。
-
-    子智能体工具权限设计（参考 Claude Code）：
-    - 子智能体继承主 agent 的完整工具集（main_tools），确保能力对等
-    - 在主 agent 工具基础上追加子智能体专用工具（search_tool / retriever_tool）
-    - extra_tools 也合并到子智能体工具集中
-    - 工具按 name 去重，避免重复注册
-
-    deepagents 原生支持 SubAgent 省略 tools 时自动继承主 agent tools
-    （graph.py: `spec.get("tools") if "tools" in spec else tools`），
-    但此处需追加专用工具，因此显式传入合并后的完整工具列表。
-
-    Args:
-        enable_web_search: 是否启用网络搜索子智能体
-        enable_doc_analysis: 是否启用文档分析子智能体
-        retriever_tool: RAG 检索工具（仅 doc-analyst 专用）
-        extra_tools: 额外工具列表（MCP/自定义工具，合并到所有子智能体）
-        subagent_middleware: 子智能体额外中间件
-        main_tools: 主 agent 的完整工具列表，子智能体将继承这些工具
-
-    Returns:
-        SubAgent 列表
-    """
-    from deepagents import SubAgent
-
-    subagents: list[Any] = []
-    # deepagents 内部 spec.get("middleware", []) 在 middleware=None 时返回 None，
-    # 导致 extend 失败，因此必须确保 middleware 不为 None。
-    # SubAgent.middleware 字段类型为 list[AgentMiddleware]，需将 Sequence 转为 list。
-    safe_middleware: list[AgentMiddleware] = list(subagent_middleware or [])
-
-    need_web_researcher = enable_web_search or _has_search_tools(extra_tools)
-
-    if need_web_researcher:
-        try:
-            from Django_xm.apps.tools.langchain.web_search import create_tavily_search_tool
-
-            search_tool = create_tavily_search_tool()
-            # 子智能体继承主 agent 全部工具 + 专用搜索工具 + extra_tools
-            web_tools = _merge_tool_lists(main_tools, [search_tool], extra_tools)
-            web_subagent: SubAgent = {
-                "name": "web-researcher",
-                "description": _SUBAGENT_DESCRIPTIONS["web-researcher"],
-                "system_prompt": WEB_RESEARCHER_SUBAGENT_PROMPT,
-                "tools": web_tools,
-                "middleware": safe_middleware,
-            }
-            subagents.append(web_subagent)
-            logger.debug(f"添加 WebResearcher 子智能体 (tools={len(web_tools)}, 含主 agent 工具继承)")
-        except ValueError:
-            logger.warning("Tavily API Key 未配置，web-researcher 子智能体将使用继承工具")
-            # 无 search_tool 时：继承主 agent 工具 + extra_tools
-            web_fallback_tools = _merge_tool_lists(main_tools, extra_tools)
-            web_subagent = {
-                "name": "web-researcher",
-                "description": _SUBAGENT_DESCRIPTIONS["web-researcher"],
-                "system_prompt": WEB_RESEARCHER_SUBAGENT_PROMPT,
-                # SubAgent.tools 字段为 NotRequired[Sequence[...]]，不接受 None。
-                # _merge_tool_lists 已合并 main_tools，空列表与 None 行为等价（key 存在即不继承）。
-                "tools": web_fallback_tools,
-                "middleware": safe_middleware,
-            }
-            subagents.append(web_subagent)
-
-    if enable_doc_analysis:
-        # doc-analyst 专用 retriever_tool + 继承主 agent 工具 + extra_tools
-        doc_specialized = [retriever_tool] if retriever_tool else []
-        doc_tools = _merge_tool_lists(main_tools, doc_specialized, extra_tools)
-        doc_subagent = {
-            "name": "doc-analyst",
-            "description": _SUBAGENT_DESCRIPTIONS["doc-analyst"],
-            "system_prompt": DOC_ANALYST_SUBAGENT_PROMPT,
-            # _merge_tool_lists 已合并 main_tools + retriever_tool + extra_tools
-            "tools": doc_tools,
-            "middleware": safe_middleware,
-        }
-        subagents.append(doc_subagent)
-        logger.debug(f"添加 DocAnalyst 子智能体 (tools={len(doc_tools)}, 含主 agent 工具继承)")
-
-    return subagents
 
 
 class _SandboxGuardCompositeBackend(CompositeBackend):
@@ -432,19 +237,11 @@ class DeepAgentBuilder:
         else:
             logger.info("deep_research 中间件栈已包含 ApprovalMiddleware（来自 CapabilityRegistry）")
 
-        subagents, retriever_tool_name = self._resolve_subagents(
-            config,
-            tools,
-            approval_middleware=approval_middleware_instance,
-        )
-
-        # 从主 agent 工具列表中移除 retriever_tool，避免主 agent 直接调用
-        # retriever_tool 应由 doc-analyst 子智能体使用，主 agent 通过 task 工具委派
-        if retriever_tool_name:
-            tools = [t for t in tools if getattr(t, "name", "") != retriever_tool_name]
-            logger.info(
-                f"已从主 agent 工具列表中移除 retriever_tool: {retriever_tool_name}，由 doc-analyst 子智能体使用"
-            )
+        # 子代理不再内联到 deepagents graph（废弃阻塞 task 工具），
+        # 统一通过 spawn_sub_agent 工具经 SubAgentRuntime 派生（独立 thread + checkpoint）。
+        # retriever_tool 保留在主 agent 工具集，供 spawn_sub_agent 派生 doc-analyst 时
+        # 由注册表从主 agent 工具中识别。
+        tools = self._ensure_subagent_tools(tools)
 
         backend_type = getattr(config, "backend_type", "filesystem") or "filesystem"
         work_dir = getattr(config, "work_dir", None)
@@ -487,8 +284,6 @@ class DeepAgentBuilder:
         }
         if middleware_stack:
             agent_kwargs["middleware"] = middleware_stack
-        if subagents:
-            agent_kwargs["subagents"] = subagents
         if skills:
             agent_kwargs["skills"] = skills
         if config.memory:
@@ -506,14 +301,15 @@ class DeepAgentBuilder:
         if interrupt_on:
             agent_kwargs["interrupt_on"] = interrupt_on
 
-        # 创建 deep agent（deepagents 0.7.5 官方机制）：
-        # - checkpointer 通过 create_deep_agent 的 agent_kwargs（config.checkpointer）传入，
-        #   子 agent 中断由父 graph 统一管理，无需 checkpointer contextvar 注入。
+        # 禁用 deepagents 自动 general-purpose subagent（阻塞 task 工具），
+        # 深度研究子代理统一走 SubAgentRuntime.spawn + spawn_sub_agent 工具。
+        self._disable_general_purpose_subagent(model)
+
+        # 创建 deep agent（deepagents 0.7.5 官方机制）。
         graph = create_deep_agent(**agent_kwargs)
         logger.info(
             f"DeepAgent 创建成功 "
-            f"(tools={len(tools)}, middleware={len(middleware_stack)}, "
-            f"subagents={len(subagents)}, backend={backend_type})"
+            f"(tools={len(tools)}, middleware={len(middleware_stack)}, backend={backend_type})"
         )
         # 返回 OfficialDeepAgentAdapter（不返回 raw graph），注入韧性降级所需的完整构建元数据：
         # - original_tools / original_config：_rebuild_with_degraded_tools 用降级工具集重建 graph
@@ -537,175 +333,42 @@ class DeepAgentBuilder:
         )
         return adapter
 
-    def _resolve_subagents(
-        self,
-        config,
-        tools: list[BaseTool],
-        approval_middleware: AgentMiddleware | None = None,
-    ) -> tuple:
-        """返回 (subagents, retriever_tool_name) 元组
+    @staticmethod
+    def _ensure_subagent_tools(tools: list[BaseTool]) -> list[BaseTool]:
+        """确保深度研究主 agent 工具集包含子代理工具（spawn + wait）。
 
-        Args:
-            config: AgentConfig
-            tools: 主 agent 工具列表
-            approval_middleware: 主 agent 的 ApprovalMiddleware 实例，
-                将注入到子 agent middleware 栈（deepagents 0.7.5 原生支持
-                子 agent interrupt 冒泡与恢复，无需 checkpointer 注入）
+        CapabilityRegistry 按 tool_tier 注入工具，子代理工具为 extended tier
+        可能未被默认加载，此处显式注入（按名称去重）。
         """
-        if config.subagents:
-            logger.debug(f"使用预配置的 {len(config.subagents)} 个 SubAgent")
-            return config.subagents, None
+        from Django_xm.apps.agent_hub.tools import spawn_sub_agent, wait_for_subagent
 
-        tool_config = config.tool_config or {}
-        enable_web_search = tool_config.get("enable_web_search") or tool_config.get("use_web_search", False)
-        enable_doc_analysis = tool_config.get("enable_doc_analysis") or tool_config.get("use_doc_analysis", False)
+        required = [spawn_sub_agent, wait_for_subagent]
+        existing_names = {getattr(t, "name", "") for t in tools}
+        missing = [t for t in required if t.name not in existing_names]
+        return list(tools) + missing
 
-        # 构建子 agent middleware 栈（含 ApprovalMiddleware + 子 agent 官方支持中间件），
-        # 即使无 web_search/doc_analysis 也需要为 general-purpose 子 agent 注入
-        # 审批机制（见下方 general-purpose 添加逻辑）
-        subagent_middleware_list: list[AgentMiddleware] = []
-        if config.middleware:
-            for m in config.middleware:
-                subagent_middleware_list.append(m)
-        if approval_middleware is not None:
-            already_has = any(
-                m is approval_middleware or isinstance(m, type(approval_middleware)) for m in subagent_middleware_list
-            )
-            if not already_has:
-                subagent_middleware_list.append(approval_middleware)
-                logger.info(
-                    "已注入主 agent 的 ApprovalMiddleware 到子 agent middleware 栈"
-                    "（0.7.5 原生 interrupt，恢复由父 graph 驱动）"
-                )
+    @staticmethod
+    def _disable_general_purpose_subagent(model: Any) -> None:
+        """禁用 deepagents 自动 general-purpose subagent（阻塞 task 工具）。
 
-        # 子 agent 官方支持中间件（0.7.5 机制，取代旧 subagent_patch）：
-        # - SubAgentNestingMiddleware：注入嵌套层级字段到 state（depth/agent_path/risk_ceiling）
-        # - SubAgentToolEventMiddleware：转发子 agent 工具事件到父 SSE 流
-        from Django_xm.apps.agent_hub.builders.subagent_support import (
-            SubAgentNestingMiddleware,
-            SubAgentToolEventMiddleware,
-        )
-
-        if not any(isinstance(m, SubAgentNestingMiddleware) for m in subagent_middleware_list):
-            subagent_middleware_list.append(SubAgentNestingMiddleware())
-        if not any(isinstance(m, SubAgentToolEventMiddleware) for m in subagent_middleware_list):
-            subagent_middleware_list.append(SubAgentToolEventMiddleware())
-
-        if not enable_web_search and not enable_doc_analysis:
-            # 即使不启用 web_search/doc_analysis，仍需添加 general-purpose 子 agent
-            # 避免 create_deep_agent 自动添加无 ApprovalMiddleware 的版本（缺陷 2 修复）
-            gp_subagent = self._build_general_purpose_subagent(
-                tools=tools,
-                subagent_middleware=subagent_middleware_list,
-            )
-            return [gp_subagent], None
-
-        # 从 tools 列表中识别已有的 retriever_tool
-        # （执行服务构建 agent 时将 retriever_tool 放入了 config.tools 而非 config.retriever）
-        retriever_tool = None
-        retriever_tool_name = None
-        if tools:
-            for t in tools:
-                name = getattr(t, "name", "")
-                if any(name.startswith(prefix) or name == prefix for prefix in _RETRIEVER_TOOL_NAME_PREFIXES):
-                    retriever_tool = t
-                    retriever_tool_name = name
-                    logger.info(f"从 tools 列表中识别到 retriever_tool: {name}")
-                    break
-
-        extra_tools = [
-            t for t in tools if isinstance(t, BaseTool) and getattr(t, "name", "") in _SEARCH_TOOL_NAMES
-        ] or None
-
-        # ============================================================
-        # 子 agent 审批机制设计说明（deepagents 0.7.5 官方机制）
-        # ============================================================
-        # 0.7.5 升级后，原 subagent_patch.py 的 monkey-patch 不再需要：
-        # - 中断冒泡与恢复：子 agent 内 interrupt() 冒泡到父 graph 的 __interrupt__，
-        #   Command(resume=...) 从父图恢复并自动路由回子 agent 的 interrupt()（原生）。
-        # - 嵌套层级字段（depth/agent_path/risk_ceiling）：SubAgentNestingMiddleware
-        #   在 before_model 写入 state，ApprovalMiddleware 从 state 读取。
-        # - 子 agent 工具事件：SubAgentToolEventMiddleware 经 _on_tool_event 回调
-        #   转发到父 SSE 流（adapter.py 在 config["configurable"] 中注入回调，
-        #   经 langgraph ensure_config 自动传播到子 agent）。
-        #
-        # 设计决策（与 Claude Code Task 工具设计对齐）：
-        # - 子 agent 继承主 agent 的完整工具集（_merge_tool_lists），确保工具能力对等
-        # - 子 agent 的 ApprovalMiddleware 与主 agent 共享同一实例，
-        #   interrupt 通过 task 工具冒泡到父 graph，由父 graph 的 interrupt 循环处理
-        # - 审批拒绝/超时后子 agent 收到 error ToolMessage 反馈，调整策略继续
-        # - general-purpose 子 agent 在此显式添加（覆盖 create_deep_agent
-        #   自动添加的无 ApprovalMiddleware 版本），确保所有子 agent 审批入口统一
-        # ============================================================
-
-        subagents = _build_subagents(
-            enable_web_search=enable_web_search,
-            enable_doc_analysis=enable_doc_analysis,
-            retriever_tool=retriever_tool,
-            extra_tools=extra_tools,
-            main_tools=tools,
-            subagent_middleware=subagent_middleware_list if subagent_middleware_list else None,
-        )
-
-        # 无条件追加 general-purpose 子 agent（覆盖 create_deep_agent 的自动添加）
-        # 详见 _build_general_purpose_subagent 的设计说明。
-        gp_subagent = self._build_general_purpose_subagent(
-            tools=tools,
-            subagent_middleware=subagent_middleware_list,
-            extra_tools=extra_tools,
-        )
-        subagents.append(gp_subagent)
-
-        return subagents, retriever_tool_name
-
-    def _build_general_purpose_subagent(
-        self,
-        tools: list[BaseTool],
-        subagent_middleware: Sequence[AgentMiddleware] | None = None,
-        extra_tools: list[BaseTool] | None = None,
-    ) -> Any:
-        """构建 general-purpose 子 agent（覆盖 create_deep_agent 的自动添加）
-
-        缺陷 2 根因：create_deep_agent 自动添加的 general-purpose 子 agent 使用其
-        内部硬编码的 middleware 栈（TodoListMiddleware + FilesystemMiddleware +
-        SummarizationMiddleware + PatchToolCallsMiddleware + AnthropicPromptCachingMiddleware），
-        不包含用户通过 agent_kwargs["middleware"] 传入的 middleware_stack
-        （含 ApprovalMiddleware）。后果：general-purpose 子 agent 继承主 agent
-        的全部工具（含 write_file/edit_file/execute 等危险工具），但不经过审批机制，
-        违反安全约束。
-
-        修复：在此显式构建含 ApprovalMiddleware 的 general-purpose SubAgent。
-        create_deep_agent 检测到已存在 name="general-purpose" 的 spec 后，
-        跳过自动添加（graph.py: `not any(spec["name"] == GENERAL_PURPOSE_SUBAGENT["name"]
-        for spec in inline_subagents)`）。
-
-        工具集与主 agent 完全一致（tools + extra_tools），保持 Claude Code 设计原则：
-        子 agent 拥有与主 agent 对等的工具权限。
+        深度研究子代理统一走 SubAgentRuntime.spawn + spawn_sub_agent，
+        deepagents 内置 task 工具（阻塞等待）不再暴露给深度研究主 agent。
         """
-        from deepagents import SubAgent
+        try:
+            from deepagents import GeneralPurposeSubagentProfile, HarnessProfile, register_harness_profile
+            from deepagents._models import get_model_provider
 
-        # SubAgent.middleware 字段类型为 list[AgentMiddleware]，需将 Sequence 转为 list
-        safe_middleware: list[AgentMiddleware] = list(subagent_middleware or [])
-        gp_tools = _merge_tool_lists(tools, extra_tools)
-        gp_subagent: SubAgent = {
-            "name": "general-purpose",
-            "description": _SUBAGENT_DESCRIPTIONS["general-purpose"],
-            "system_prompt": (
-                "In order to complete the objective that the user asks of you, you "
-                "have access to a set of tools that you can use to perform operations "
-                "and find information. Use the tools available to you to complete the "
-                "task. Do not make assumptions about the user's intent - if something "
-                "is unclear, ask for clarification."
-            ),
-            # _merge_tool_lists 已合并 main_tools + ApprovalMiddleware 工具
-            "tools": gp_tools,
-            "middleware": safe_middleware,
-        }
-        logger.debug(
-            f"添加 GeneralPurpose 子智能体 (tools={len(gp_tools) if gp_tools else 0}, "
-            f"含主 agent 工具继承 + ApprovalMiddleware 注入)"
-        )
-        return gp_subagent
+            provider = get_model_provider(model)
+            if not provider:
+                logger.warning("无法解析深度研究模型 provider，跳过禁用 general-purpose subagent")
+                return
+            register_harness_profile(
+                provider,
+                HarnessProfile(general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)),
+            )
+            logger.info(f"已禁用 deepagents general-purpose subagent（task 工具）: provider={provider}")
+        except Exception as e:
+            logger.warning(f"禁用 deepagents general-purpose subagent 失败（非致命）: {e}")
 
     def _resolve_backend(self, config, backend_type: str, work_dir: str | None, sandbox_dir: str | None = None) -> Any:
         if config.backend is not None:

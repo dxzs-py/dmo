@@ -1,3 +1,4 @@
+import { toRaw } from 'vue'
 import { PROTECTED_STREAM_STATES, ToolCallStatus, ApprovalState } from '../types/index.js'
 import {
   applyToolCallState,
@@ -360,14 +361,58 @@ export function appendToMessage(sessions, sessionId, messageIndex, content) {
   if (ver) ver.content = result.message.content
 }
 
+/**
+ * 深拷贝工具调用与子代理图层正文（版本快照隔离，Agent 图层嵌套规范 D1）
+ *
+ * structuredClone 不能克隆含 Proxy 的对象（Vue reactive 代理抛 DataCloneError），
+ * 拷贝前必须 toRaw 解包。历史版本保留独立快照，后续重新生成/审批更新不可变。
+ *
+ * @param {Array|undefined} toolCalls
+ * @param {Object|undefined} subagentContents
+ * @returns {{ toolCalls: Array, subagentContents: Object }}
+ */
+export function cloneVersionSnapshot(toolCalls, subagentContents) {
+  let clonedToolCalls = []
+  if (Array.isArray(toolCalls) && toolCalls.length > 0) {
+    try {
+      clonedToolCalls = structuredClone(toRaw(toolCalls))
+    } catch {
+      // 极端不可克隆场景（含函数/循环引用）降级为浅拷贝 + JSON 深拷贝兜底
+      try {
+        clonedToolCalls = JSON.parse(JSON.stringify(toRaw(toolCalls)))
+      } catch {
+        clonedToolCalls = toRaw(toolCalls).map((tc) => ({ ...tc }))
+      }
+    }
+  }
+  let clonedSubagent = {}
+  if (subagentContents && typeof subagentContents === 'object') {
+    try {
+      clonedSubagent = structuredClone(toRaw(subagentContents))
+    } catch {
+      try {
+        clonedSubagent = JSON.parse(JSON.stringify(toRaw(subagentContents)))
+      } catch {
+        clonedSubagent = { ...toRaw(subagentContents) }
+      }
+    }
+  }
+  return { toolCalls: clonedToolCalls, subagentContents: clonedSubagent }
+}
+
 export function createMessageVersion(message) {
+  const { toolCalls, subagentContents } = cloneVersionSnapshot(
+    message.toolCalls,
+    message.subagentContents,
+  )
   return {
     id: message.id,
     content: message.content,
     sources: message.sources || [],
     plan: message.plan || null,
     chainOfThought: message.chainOfThought || null,
-    toolCalls: message.toolCalls || [],
+    toolCalls,
+    subagentContents,
     reasoning: message.reasoning || null,
     suggestions: message.suggestions || null,
     context: message.context || null,
@@ -427,6 +472,12 @@ function _mergeExistingToolCall(existing, data) {
   // 子代理角色描述保护（Task 4.1）：description 只在首次注入时填充，已有值不覆盖
   if (existing.description) {
     merged.description = existing.description
+  }
+  // position 保护（Agent 图层嵌套规范 D3，按图层局部化）：
+  // position 只在工具首次 PENDING 写入（number 类型），后续事件（undefined 或
+  // 不同值）不得覆盖已有值——工具调用在该图层正文中的位置永久不变。
+  if (typeof data.position !== 'number' && typeof existing.position === 'number') {
+    merged.position = existing.position
   }
   // createdAt 保护（Task 4.1）：起始时间只在 PENDING 事件首次写入，
   // 后续事件（即使携带）不得覆盖已记录的起始时间
@@ -735,6 +786,13 @@ export function setApprovalToToolCallInMap(toolCallMap, toolCallId, approvalData
     if (typeof approvalData?.seq === 'number' && typeof tc.seq !== 'number') {
       tc.seq = approvalData.seq
     }
+    // position 补全（Agent 图层嵌套规范 D3）：审批事件携带的图层内 position
+    // 写入条目。SSE tool_info 先到达的占位条目（无 position）据此补全内联布局
+    // 依据，与 tool_call_* 事件透传的 position 保持一致（刷新后审批恢复的
+    // 工具卡保持内联位置，不排末尾）
+    if (typeof approvalData?.position === 'number' && typeof tc.position !== 'number') {
+      tc.position = approvalData.position
+    }
     // P30 修复：tool 事件到达时 parameters 可能为空（{}），但审批数据中有完整参数。
     // 当现有条目 parameters 为空对象时，从审批数据回填，确保工具卡片的"输入参数"正确显示
     const approvalParams = approvalData?.parameters || approvalData?.args
@@ -773,6 +831,11 @@ export function setApprovalToToolCallInMap(toolCallMap, toolCallId, approvalData
   // 在真实 tool 事件到达前即可获得与工具事件一致的排序 key
   if (typeof approvalData?.seq === 'number') {
     syntheticToolCall.seq = approvalData.seq
+  }
+  // 审批事件携带 position 时写入（Agent 图层嵌套规范 D3）：审批占位
+  // 在真实 tool 事件到达前即可获得图层内联布局依据
+  if (typeof approvalData?.position === 'number') {
+    syntheticToolCall.position = approvalData.position
   }
   const op = approvalData?.operation || approvalData?.command
   if (op) {
@@ -1119,6 +1182,12 @@ export function mergeMessageFromBackend(existingMsg, backendMsg) {
       // 否则保留本地
     }
 
+    // subagentContents 保护：保留本地（流式期间本地更完整，后端 snapshot 可能滞后）
+    // 仅当本地为空时以后端快照兜底（刷新恢复场景）
+    if (backendMsg.subagentContents !== undefined && !existingMsg.subagentContents) {
+      existingMsg.subagentContents = backendMsg.subagentContents
+    }
+
     // sources/suggestions/context：保留本地（流式期间本地更完整）
   } else {
     // 非保护态：后端为准覆盖所有字段
@@ -1127,6 +1196,7 @@ export function mergeMessageFromBackend(existingMsg, backendMsg) {
       existingMsg.toolCalls = _mergeToolCalls(existingMsg.toolCalls || [], backendMsg.toolCalls)
     }
     if (backendMsg.reasoning !== undefined) existingMsg.reasoning = backendMsg.reasoning
+    if (backendMsg.subagentContents !== undefined) existingMsg.subagentContents = backendMsg.subagentContents
     if (backendMsg.sources !== undefined) existingMsg.sources = backendMsg.sources
     if (backendMsg.suggestions !== undefined) existingMsg.suggestions = backendMsg.suggestions
     if (backendMsg.context !== undefined) existingMsg.context = backendMsg.context
@@ -1140,6 +1210,7 @@ export function mergeMessageFromBackend(existingMsg, backendMsg) {
       if (existingMsg[field] !== undefined) ver[field] = existingMsg[field]
     }
     ver.toolCalls = existingMsg.toolCalls
+    ver.subagentContents = existingMsg.subagentContents
     ver.sources = existingMsg.sources
     ver.reasoning = existingMsg.reasoning
     ver.suggestions = existingMsg.suggestions

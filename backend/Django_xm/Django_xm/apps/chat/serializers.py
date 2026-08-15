@@ -114,6 +114,18 @@ class ChatRequestSerializer(serializers.Serializer):
     continue_task_id = serializers.CharField(
         required=False, allow_null=True, max_length=100, help_text="继续研究的任务ID，用于加载先前研究成果"
     )
+    regenerate = serializers.BooleanField(
+        default=False,
+        help_text="是否重新生成：复用已有消息对（不新建 user/assistant），对 assistant 消息追加新版本",
+    )
+    user_message_id = serializers.CharField(
+        required=False, allow_null=True, max_length=100,
+        help_text="重新生成目标用户消息 ID（regenerate=True 时必填）",
+    )
+    assistant_message_id = serializers.CharField(
+        required=False, allow_null=True, max_length=100,
+        help_text="重新生成目标助手消息 ID（regenerate=True 时必填）",
+    )
 
     def validate_message(self, value):
         """验证消息内容"""
@@ -155,6 +167,11 @@ class ChatRequestSerializer(serializers.Serializer):
         """跨字段验证"""
         if attrs.get("streaming") and not attrs.get("message"):
             raise serializers.ValidationError({"message": "流式模式必须提供消息内容"})
+        if attrs.get("regenerate"):
+            if not attrs.get("user_message_id") or not attrs.get("assistant_message_id"):
+                raise serializers.ValidationError(
+                    {"message": "重新生成必须提供 user_message_id 与 assistant_message_id"}
+                )
         return attrs
 
 
@@ -187,7 +204,10 @@ class ChatMessageSerializer(serializers.ModelSerializer):
     session_id = serializers.PrimaryKeyRelatedField(source='session', read_only=True)
     chain_of_thought = serializers.JSONField(read_only=True)
     tool_calls = serializers.JSONField(read_only=True)
-    current_version = serializers.IntegerField(read_only=True)
+    # 子代理图层正文/思考（Agent 图层嵌套规范 Task 1.5，刷新后恢复子代理图层依据）
+    subagent_contents = serializers.JSONField(read_only=True)
+    current_version = serializers.IntegerField(required=False)
+    is_finalized = serializers.BooleanField(required=False)
     created_at = serializers.DateTimeField(read_only=True)
     token_count = serializers.IntegerField(read_only=True)
     token_detail = serializers.JSONField(read_only=True)
@@ -206,9 +226,11 @@ class ChatMessageSerializer(serializers.ModelSerializer):
             "tool_calls",
             "approval",
             "reasoning",
+            "subagent_contents",
             "suggestions",
             "versions",
             "current_version",
+            "is_finalized",
             "attachments",
             "attachment_ids",
             "created_at",

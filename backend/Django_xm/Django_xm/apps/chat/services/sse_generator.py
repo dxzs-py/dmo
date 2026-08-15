@@ -22,6 +22,7 @@ async def _publish_stream_event(
     session_id: str,
     message_id: int | None = None,
     content_state: dict[str, Any] | None = None,
+    subagent_contents: dict[str, dict[str, str]] | None = None,
 ) -> None:
     """将执行事件同步到 WebSocket 会话频道。
 
@@ -35,6 +36,9 @@ async def _publish_stream_event(
         session_id: 会话 ID
         message_id: 消息 ID
         content_state: chunk 节流累积状态
+        subagent_contents: 子代理图层正文累计（{agent_path_key: {content, reasoning_content}}，
+            Agent 图层嵌套规范 Task 1.5）。子代理工具 position 采集依据；None 时子代理
+            工具不注入 position（历史/兜底路径）。
     """
     if not isinstance(event, dict) or not session_id:
         return
@@ -123,6 +127,15 @@ async def _publish_stream_event(
             # parameters 兼容 args 字段：PENDING 指纹去重（Task 1）依赖 parameters 稳定哈希，
             # 若 tool 事件仅携带 args 会导致指纹退化为 no_batch 而失去参数维度区分。
             # 传入 event_type 以启用 register 的 last_event_type 防护（PENDING 状态已推进时拒绝）。
+            # 子 agent 嵌套层级字段（Agent 图层嵌套规范）：tool_data 可能携带
+            # parent_tool_call_id / depth / agent_name / agent_path / description
+            # （SubAgentToolEventMiddleware 转发的子代理工具事件），透传注册。
+            _sub_depth_raw = tool_data.get("depth", 0)
+            if not isinstance(_sub_depth_raw, int) or _sub_depth_raw < 0:
+                _sub_depth_raw = 0
+            _sub_agent_path = tool_data.get("agent_path")
+            if not isinstance(_sub_agent_path, list):
+                _sub_agent_path = []
             lifecycle_service.register(
                 ToolCallContext(
                     tool_call_id=tool_call_id,
@@ -131,9 +144,33 @@ async def _publish_stream_event(
                     module_id=session_id,
                     message_id=str(message_id) if message_id else "",
                     parameters=tool_data.get("parameters") or tool_data.get("args") or {},
+                    parent_tool_call_id=tool_data.get("parent_tool_call_id") or "",
+                    depth=_sub_depth_raw,
+                    agent_name=tool_data.get("agent_name") or "",
+                    agent_path=_sub_agent_path,
+                    description=tool_data.get("description") or "",
                 ),
                 event_type=target_event_type,
             )
+
+            # position 采集（Task 2.1，按图层局部化，单一权威来源）：
+            # - 子代理工具（depth>0）：position = len(该子代理图层已累计正文 content)
+            # - 主 agent 工具：position = len(content_state["content"])（已输出 content 长度）
+            # 经 bind_position 写入 context（仅补全空字段），后续状态事件不覆盖。
+            _position: int | None = None
+            if _sub_agent_path and _sub_depth_raw > 0:
+                _sub_path_key = ">".join(str(p) for p in _sub_agent_path)
+                _sub_entry = (subagent_contents or {}).get(_sub_path_key) or {}
+                _position = len(_sub_entry.get("content") or "")
+            elif content_state is not None:
+                _position = len(content_state.get("content") or "")
+            if _position is not None:
+                try:
+                    lifecycle_service.bind_position(tool_call_id, _position)
+                except Exception:
+                    logger.warning(
+                        f"绑定 position 失败: tool_call_id={tool_call_id}, position={_position}"
+                    )
 
             tool_result = tool_data.get("result")
             tool_error = tool_data.get("error")

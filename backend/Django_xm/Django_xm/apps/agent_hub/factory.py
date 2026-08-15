@@ -64,6 +64,19 @@ class AgentFactory:
         config.validate()
         config.resolve_defaults()
 
+        # checkpointer 统一异步注入（D1/D2）：
+        # resolve_defaults 不再注入同步 get_checkpointer()，此处注入异步 checkpointer，
+        # 确保 agent_hub 创建的 agent（主/子/深度研究）统一用异步实现，
+        # 避免子代理用同步 checkpointer 跑 astream 触发 NotImplementedError。
+        if config.checkpointer is None:
+            from Django_xm.apps.ai_engine.services.checkpointer_factory import get_async_checkpointer
+
+            config.checkpointer = await get_async_checkpointer()
+        # 防御断言（D1）：注入后仍为 None（如 get_async_checkpointer 降级返回 None），
+        # 立即抛明确异常，禁止带着 None checkpointer 进入 astream。
+        if config.checkpointer is None:
+            raise AgentCreationError("checkpointer 注入失败，禁止带着 None checkpointer 进入 astream")
+
         # 执行预检（默认不阻止创建，仅记录问题；fail_fast_on_preflight=True 时抛出 PreflightCheckError）
         # 注意：PreflightCheckError 必须冒泡（不被 except 捕获），其他异常忽略保持向后兼容
         from .exceptions import PreflightCheckError

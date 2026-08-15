@@ -512,6 +512,23 @@ export const createStreamStateHandlers = (ctx) => {
       return
     }
 
+    // Task 9：用户停止生成时执行服务广播 stream_completed(stopped=true)，
+    // 非触发浏览器据此标记 stopped（保留已输出内容、允许固化为本轮主消息）
+    if (payload.data?.stopped) {
+      targetMsg.stopped = true
+      logger.info(`[Sync] stream_completed 携带 stopped 标记: session=${sessionId}, message=${messageId || '(兜底)'}`)
+    }
+    // Task 9：重生成中断广播 incomplete，非触发浏览器同步标记当前版本禁止固化
+    if (payload.data?.incomplete) {
+      const activeVer = targetMsg.versions?.[targetMsg.currentVersion]
+      if (activeVer) {
+        activeVer.incomplete = true
+        activeVer.streamState = StreamState.COMPLETED
+        activeVer.isStreaming = false
+      }
+      logger.info(`[Sync] stream_completed 携带 incomplete 标记（重生成中断，禁止固化）: session=${sessionId}, message=${messageId || '(兜底)'}`)
+    }
+
     // 记录后端 content_length 用于早期可观测性
     // 实际完整性校验由 verifyMessageIntegrityAfterSync 通过后端快照对比完成
     if (typeof payload.contentLength === 'number') {

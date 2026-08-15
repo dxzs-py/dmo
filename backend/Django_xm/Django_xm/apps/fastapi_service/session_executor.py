@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 _BATCH_POLL_INTERVAL = 5
 # sandbox 延迟清理（秒）
 _SANDBOX_CLEANUP_DELAY = 120
+# 停止宽限期（秒）：用户停止后等待执行协程在安全点优雅退出，超时兜底硬取消。
+# 流式 token 输出为毫秒级，安全点（循环迭代/审批挂起）通常远快于此上限。
+_STOP_GRACE_PERIOD = 5
 
 
 async def _update_task_status(thread_id: str, status_data: dict) -> None:
@@ -75,12 +78,22 @@ class SessionExecutor:
         # 挂起等待表：graph_interrupt_id -> asyncio.Event
         self._pending_events: dict[str, asyncio.Event] = {}
         self._run_task: asyncio.Task | None = None
+        # 优雅停止标志（Task 9）：用户停止生成时置位，执行循环在安全点检查并退出，
+        # 保留 LangGraph checkpoint 与已输出内容（区别于 cancel() 硬取消中断执行中途）
+        self._stop_requested = False
         # 子代理重试指令队列（Task 3 单独重启失败子代理）：
         # - 运行中会话：on_retry_subagent 入队，adapter astream 循环按 chunk 消费
         # - 恢复重试场景（会话已结束/服务重启）：params.retry_instruction 预注入队列
         self._retry_queue: asyncio.Queue = asyncio.Queue()
         # 后台清理任务引用（sandbox 延迟清理），防止被 GC 回收
         self._background_tasks: set[asyncio.Task] = set()
+        # 业务等待挂起（spec D4）：父 Graph 等待子代理结果时退出协程（非审批 interrupt）。
+        # 规则：挂起态「保留会话槽 + 不释放 checkpointer」，调度器唤醒后新建协程续跑；
+        # 真正结束（成功/失败/取消）时才释放 checkpointer + 移除会话槽。
+        self._agent = None
+        self._suspended = False
+        self._wait_interrupt_id = ""
+        self._wait_subagent_thread_id = ""
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -90,9 +103,43 @@ class SessionExecutor:
         self._run_task = asyncio.create_task(self.run(), name=f"research-exec-{self.thread_id}")
 
     def stop(self) -> None:
-        """终止执行协程（优雅停机/用户终止）。"""
+        """优雅停止执行协程（Task 9，替代原 cancel() 硬取消）。
+
+        机制：
+        1. 置位停止标志，执行循环在安全点（循环迭代 / 审批挂起）检查并退出；
+        2. 唤醒所有审批挂起等待（asyncio.Event.set），使挂起协程立即退出等待；
+        3. 宽限期（_STOP_GRACE_PERIOD）后若协程仍在运行，兜底硬取消，
+           保证极端场景（LLM 长阻塞）也不会永久悬挂。
+
+        checkpoint 由 LangGraph 在节点执行后自动持久化，已输出内容经
+        finally 落库并广播，均不受优雅停止影响。
+        """
+        self._stop_requested = True
+        for event in list(self._pending_events.values()):
+            event.set()
         if self._run_task and not self._run_task.done():
+            try:
+                loop = self._run_task.get_loop()
+            except Exception:
+                loop = None
+            if loop is not None:
+                loop.call_later(_STOP_GRACE_PERIOD, self._force_cancel_if_still_running)
+            logger.info(
+                f"[SessionExecutor] 优雅停止已请求，等待安全点退出（宽限期 {_STOP_GRACE_PERIOD}s）: "
+                f"thread_id={self.thread_id}"
+            )
+
+    def _force_cancel_if_still_running(self) -> None:
+        """宽限期到后协程仍未退出时的兜底硬取消。"""
+        if self._stop_requested and self._run_task and not self._run_task.done():
             self._run_task.cancel()
+            logger.warning(
+                f"[SessionExecutor] 停止宽限期已到，强制终止执行协程: thread_id={self.thread_id}"
+            )
+
+    def check_stop_requested(self) -> bool:
+        """安全点检查：是否收到停止请求。执行循环在迭代边界调用。"""
+        return self._stop_requested
 
     async def run(self) -> None:
         """单协程完整执行流程，持续运行至会话结束（chat / research 分派）。"""
@@ -111,9 +158,12 @@ class SessionExecutor:
                 # chat 的失败处理在 chat_executor_core 内部完成（广播 stream_completed）
                 await self._handle_failure(str(exc))
         finally:
-            # 统一释放 checkpointer 连接 + 移除会话槽位（崩溃/取消/完成均不泄漏）
-            await self._release_checkpointer()
-            self.manager.remove_session(thread_id)
+            # 挂起态（业务等待子代理）：保留会话槽 + 不释放 checkpointer，
+            # 由调度器唤醒后新建协程续跑并在此真正结束时清理（见 _resume_after_subagent_wait）。
+            # 其余路径（成功/失败/取消/崩溃）统一释放 checkpointer + 移除会话槽。
+            if not self._suspended:
+                await self._release_checkpointer()
+                self.manager.remove_session(thread_id)
 
     async def _run_research(self) -> None:
         """深度研究执行核心（单协程，原 run 逻辑）。"""
@@ -121,6 +171,8 @@ class SessionExecutor:
         await _update_task_status(thread_id, {"status": "running", "current_step": "research_started"})
         await self._publish_status_change("running", current_step="research_started")
         agent = await self._build_agent()
+        # 保存 graph 引用供调度器唤醒时复用（业务等待挂起 → Command(resume) 续跑）
+        self._agent = agent
 
         # 挂接子代理重试指令队列：adapter astream 循环按 chunk 消费并注入 graph state
         # （Task 3 单独重启失败子代理：运行中会话由 on_retry_subagent 入队；
@@ -146,10 +198,19 @@ class SessionExecutor:
                     resume_command = Command(resume=decisions)
             query = None  # 恢复模式不发送新 query（checkpoint 已有上下文）
 
+        await self._execute_and_handle(resume_command, query)
+
+    async def _execute_and_handle(self, resume_command, query) -> None:
+        """执行一轮研究并处理结果（初始执行 / 调度器唤醒续跑共用）。
+
+        结果语义：
+        - 正常完成/失败 → _handle_result 落库广播；
+        - 业务等待挂起（suspended）→ 注册父 awaiter、置挂起态、退出（不 finalize）。
+        """
         result = await execute_research_async(
-            agent,
+            self._agent,
             query,
-            thread_id,
+            self.thread_id,
             disable_llm_cache=True,
             user_id=self.user_id,
             chat_session_id=self.session_id,
@@ -157,8 +218,142 @@ class SessionExecutor:
             resume_command=resume_command,
             interrupt_handler=self._on_interrupt,
         )
+        if result.suspended:
+            await self._handle_suspend(result)
+            return
         response_time = round(time.time() - self.start_time, 2)
         await self._handle_result(result, response_time)
+
+    async def _handle_suspend(self, result) -> None:
+        """业务等待挂起（spec D4）：置挂起态 + 注册父 awaiter，退出协程（不 finalize）。
+
+        固化规则：
+        - 保留会话槽（不调用 manager.remove_session），保持 thread_id 幂等 + 信令可达；
+        - 不释放 checkpointer（graph 复用，恢复时从 checkpoint 续跑）；
+        - 不触发 sandbox 清理（研究未完成）。
+        """
+        from Django_xm.apps.ai_engine.models import SubAgentStatus
+        from Django_xm.apps.ai_engine.subagent_runtime import get_subagent_runtime
+        from Django_xm.apps.ai_engine.subagent_runtime.lifecycle import get_lifecycle_manager
+
+        self._suspended = True
+        self._wait_interrupt_id = result.interrupt_id
+        self._wait_subagent_thread_id = result.subagent_thread_id
+
+        await _update_task_status(
+            self.thread_id, {"status": "running", "current_step": "waiting_subagent"}
+        )
+        await self._publish_status_change("running", current_step="waiting_subagent")
+        logger.info(
+            f"[SessionExecutor] 业务等待挂起: thread_id={self.thread_id}, "
+            f"subagent={result.subagent_thread_id}, interrupt_id={result.interrupt_id}"
+        )
+
+        # 竞态兜底：子代理可能已在「tool 检查 → interrupt 挂起」窗口内终态，
+        # 此时终态回调已错过、awaiter 永不被触发。这里二次检查并立即恢复。
+        instance = await get_subagent_runtime().get_instance(result.subagent_thread_id)
+        if instance is not None and instance.status in (SubAgentStatus.COMPLETED, SubAgentStatus.FAILED):
+            logger.info(
+                f"[SessionExecutor] 子代理已终态，立即恢复: thread_id={self.thread_id}, "
+                f"subagent={result.subagent_thread_id}, status={instance.status}"
+            )
+            asyncio.create_task(
+                self._resume_after_subagent_wait(result.subagent_thread_id, instance.status),
+                name=f"subagent-resume-{self.thread_id}",
+            )
+            return
+
+        get_lifecycle_manager().register_parent_awaiter(
+            self.thread_id, self._make_parent_awaiter()
+        )
+
+    def _make_parent_awaiter(self):
+        """构造父 awaiter（子代理终态回调）。
+
+        子代理终态在其独立线程/事件循环触发（LangGraphAdapter._notify_finished），
+        本 awaiter 用 run_coroutine_threadsafe 将恢复调度回主事件循环（graph/checkpointer
+        所属 loop），不阻塞子代理线程。
+        """
+        loop = asyncio.get_running_loop()
+
+        def _log_future_error(fut) -> None:
+            try:
+                exc = fut.exception()
+            except Exception:
+                exc = None
+            if exc is not None:
+                logger.error(f"[SessionExecutor] 父 Graph 恢复任务异常: {exc}", exc_info=exc)
+
+        async def _awaiter(subagent_thread_id: str, status: str) -> None:
+            fut = asyncio.run_coroutine_threadsafe(
+                self._resume_after_subagent_wait(subagent_thread_id, status),
+                loop,
+            )
+            fut.add_done_callback(_log_future_error)
+
+        return _awaiter
+
+    async def _resume_after_subagent_wait(self, subagent_thread_id: str, status: str) -> None:
+        """调度器唤醒：从 checkpoint 续跑父 Graph（主事件循环新建协程）。
+
+        子代理终态后由生命周期管理器回调；本方法以 Command(resume={interrupt_id:
+        {subagent_thread_id, status, result}}) 恢复父 Graph，最终结束时释放
+        checkpointer + 移除会话槽 + 注销 awaiter。
+        """
+        # 忽略非当前等待子代理的终态回调（父可能同时 spawn 多个，仅等待其中一个）
+        if subagent_thread_id != self._wait_subagent_thread_id:
+            logger.info(
+                f"[SessionExecutor] 忽略非等待子代理终态: thread_id={self.thread_id}, "
+                f"subagent={subagent_thread_id}, waiting={self._wait_subagent_thread_id}"
+            )
+            return
+
+        thread_id = self.thread_id
+        # 用户已停止：不续跑父 Graph，直接清理（释放 checkpointer + 移除会话槽）
+        if self._stop_requested:
+            logger.info(f"[SessionExecutor] 挂起态收到停止请求，放弃续跑: thread_id={thread_id}")
+            self._suspended = False
+            await self._release_checkpointer()
+            self.manager.remove_session(thread_id)
+            from Django_xm.apps.ai_engine.subagent_runtime.lifecycle import get_lifecycle_manager
+
+            get_lifecycle_manager().unregister_parent_awaiter(thread_id)
+            return
+
+        try:
+            self._suspended = False
+            result_text = await self._read_subagent_result(subagent_thread_id)
+            from langgraph.types import Command
+
+            resume_value = {
+                "subagent_thread_id": subagent_thread_id,
+                "status": status,
+                "result": result_text,
+            }
+            resume_command = Command(resume={self._wait_interrupt_id: resume_value})
+            await self._execute_and_handle(resume_command, None)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception(f"[SessionExecutor] 恢复父 Graph 异常: thread_id={thread_id}")
+            await self._handle_failure(str(exc))
+        finally:
+            if not self._suspended:
+                # 真正结束（成功/失败/取消）：释放 checkpointer + 移除会话槽 + 注销 awaiter
+                await self._release_checkpointer()
+                self.manager.remove_session(thread_id)
+                from Django_xm.apps.ai_engine.subagent_runtime.lifecycle import get_lifecycle_manager
+
+                get_lifecycle_manager().unregister_parent_awaiter(thread_id)
+
+    async def _read_subagent_result(self, subagent_thread_id: str) -> str:
+        """读取子代理最终结果预览（result_preview）。"""
+        from Django_xm.apps.ai_engine.subagent_runtime import get_subagent_runtime
+
+        instance = await get_subagent_runtime().get_instance(subagent_thread_id)
+        if instance is None:
+            return ""
+        return instance.result_preview or ""
 
     async def _run_chat(self) -> None:
         """chat agent 执行核心（单协程，挂起 + 信令唤醒）。"""
@@ -254,6 +449,9 @@ class SessionExecutor:
         self._pending_events[graph_interrupt_id] = event
         try:
             while True:
+                # 安全点（Task 9）：收到停止请求立即退出等待，由外层 finally 落库并广播
+                if self._stop_requested:
+                    raise asyncio.CancelledError("用户停止生成")
                 resume_by_interrupt, all_resolved = await sync_to_async(collect_batch_decisions)(
                     self.thread_id, graph_interrupt_id
                 )
@@ -335,7 +533,12 @@ class SessionExecutor:
                 publish_to_redis=self.publish_to_redis,
             )
             await self._publish_status_change("completed", final_report=result.final_report)
-            await self._writeback_and_broadcast(result.final_report, success=True, reasoning_content=result.reasoning)
+            await self._writeback_and_broadcast(
+                result.final_report,
+                success=True,
+                reasoning_content=result.reasoning,
+                subagent_contents=result.subagent_contents,
+            )
             await self._schedule_sandbox_cleanup()
             return
 
@@ -368,7 +571,14 @@ class SessionExecutor:
         except Exception as e:
             logger.debug(f"[SessionExecutor] 发布状态变更事件失败（非致命）: {e}")
 
-    async def _writeback_and_broadcast(self, content: str, *, success: bool, reasoning_content: str = "") -> None:
+    async def _writeback_and_broadcast(
+        self,
+        content: str,
+        *,
+        success: bool,
+        reasoning_content: str = "",
+        subagent_contents: dict | None = None,
+    ) -> None:
         """回写 ChatMessage + 广播 stream_completed（聊天深度研究场景）。"""
         if not self.session_id:
             return
@@ -390,6 +600,7 @@ class SessionExecutor:
                 success=success,
                 chat_session_id=self.session_id,
                 reasoning_content=reasoning_content,
+                subagent_contents=subagent_contents,
             )
             await sync_to_async(broadcast_stream_completed)(
                 self.session_id,

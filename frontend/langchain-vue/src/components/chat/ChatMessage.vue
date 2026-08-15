@@ -1,6 +1,6 @@
 <script setup>
-import { computed, ref } from 'vue'
-import { User, ChatDotRound, Refresh, CopyDocument, Check, InfoFilled, Tools, Search, ArrowRight, Loading, Delete, Document } from '@element-plus/icons-vue'
+import { computed, ref, watch } from 'vue'
+import { User, ChatDotRound, Refresh, CopyDocument, Check, InfoFilled, Search, Loading, Delete } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import MarkdownRenderer from '../common/MarkdownRenderer.vue'
@@ -8,19 +8,24 @@ import ChainOfThought from './ChainOfThought.vue'
 import ToolCallCard from './ToolCallCard.vue'
 import Sources from './Sources.vue'
 import Plan from './Plan.vue'
+import SubAgentCard from './SubAgentCard.vue'
+import SubAgentDetailPanel from './SubAgentDetailPanel.vue'
+import InlineToolCallContent from '../common/InlineToolCallContent.vue'
 import AiReasoning from '../ai-elements/AiReasoning.vue'
 import { ResearchTaskStatus, StreamState } from '../../types'
 import AiTask from '../ai-elements/AiTask.vue'
 import AiImage from '../ai-elements/AiImage.vue'
 import AiControls from '../ai-elements/AiControls.vue'
-import ToolCallGroup from '../common/ToolCallGroup.vue'
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
-import { useApprovalStore } from '../../stores/approval'
 import { logger } from '../../utils/logger'
 import { formatFileSize } from '../../utils/format'
 import { deriveDisplayStatus } from '../../utils/toolCallStateMachine'
-import { buildAgentGroups, buildRootGroups } from '../../utils/toolCallTree'
+import { buildSubagentsFromMessage } from '../../utils/subagentAggregation'
+import { useSubagents } from '../../composables/useSubagents'
+import { resumeSubagent } from '../../api/subagent'
+import { SUBAGENT_STATUS } from '../../utils/subagentStatus'
+import settings from '../../config/settings'
 
 const props = defineProps({
   message: {
@@ -76,22 +81,98 @@ const copied = ref(false)
 const approvalInputValues = ref({})  // Map<toolCallId, inputValue> 每个工具调用独立的输入值
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
-const approvalStore = useApprovalStore()
 const router = useRouter()
 
-// 是否有待审批的操作（审批等待中不应显示上下文统计）
-const hasPendingApprovals = computed(() => approvalStore.pendingApprovals.size > 0)
-
 // 收集所有工具调用级的审批数据
-const toolCallApprovals = computed(() => {
-  if (!props.message.toolCalls || !Array.isArray(props.message.toolCalls)) return []
-  return props.message.toolCalls
-    .filter(tc => tc.approval)
-    .map(tc => ({
-      toolCallId: tc.id,
-      approval: tc.approval,
-      status: tc.status,
-    }))
+// ===== 子代理渲染（spec D10：摘要卡片 + 独立展开，替代 AgentLayerCard 递归）=====
+
+const { getSubagentsByMessage, fetchSubagents } = useSubagents()
+
+// 主 agent 工具调用（subagentThreadId 为空），保留正文内联工具切段能力
+const mainToolCalls = computed(() => {
+  const tcs = Array.isArray(props.message.toolCalls) ? props.message.toolCalls : []
+  return tcs.filter(tc => !tc.subagentThreadId)
+})
+
+// 该消息关联的子代理元数据（按 assistantMessageId 匹配，后端 GET 接口）
+const subagentMetaList = computed(() => {
+  const msgId = props.message.backendId || props.message.id
+  return getSubagentsByMessage(msgId)
+})
+
+// 子代理聚合视图（SubAgentCard 数据源）
+const subagents = computed(() =>
+  buildSubagentsFromMessage(props.message, subagentMetaList.value)
+)
+
+// 展开的子代理 threadId 集合（点击卡片切换）
+const expandedSubagentThreadIds = ref(new Set())
+
+const toggleSubagent = (threadId) => {
+  const next = new Set(expandedSubagentThreadIds.value)
+  if (next.has(threadId)) next.delete(threadId)
+  else next.add(threadId)
+  expandedSubagentThreadIds.value = next
+}
+
+// spec D9：autoExpandPendingConfirm 开启时，仅「等待你的确认」的卡片自动展开（嵌套内层永不自动展开）
+watch(subagents, (list) => {
+  if (!settings.autoExpandPendingConfirm) return
+  const next = new Set(expandedSubagentThreadIds.value)
+  let changed = false
+  for (const sa of list) {
+    if (sa.status === SUBAGENT_STATUS.INTERRUPTED_PENDING_USER_INPUT && !next.has(sa.threadId)) {
+      next.add(sa.threadId)
+      changed = true
+    }
+  }
+  if (changed) expandedSubagentThreadIds.value = next
+})
+
+// 检测 spawn_sub_agent 工具调用，触发子代理元数据拉取（异步增量，后续事件再刷新）
+const hasSpawnTool = computed(() => {
+  const tcs = Array.isArray(props.message.toolCalls) ? props.message.toolCalls : []
+  return tcs.some(tc => tc.name === 'spawn_sub_agent')
+})
+
+watch(hasSpawnTool, (has) => {
+  if (has && sessionStore.currentSessionId) {
+    fetchSubagents(sessionStore.currentSessionId)
+  }
+}, { immediate: true })
+
+// 子代理审批：确认执行（批量决策 dict，经 axios 拦截器转 snake_case）
+async function handleSubagentConfirm({ threadId, request }) {
+  if (!threadId) return
+  const toolCallId = request?.toolCallId || request?.tool_call_id
+  if (!toolCallId) return
+  try {
+    await resumeSubagent(threadId, { [toolCallId]: true })
+  } catch (e) {
+    logger.error('[Subagent] 确认执行失败:', e)
+    ElMessage.error('子代理审批确认失败')
+  }
+}
+
+// 子代理审批：拒绝（批量决策 dict，经 axios 拦截器转 snake_case）
+async function handleSubagentReject({ threadId, request }) {
+  if (!threadId) return
+  const toolCallId = request?.toolCallId || request?.tool_call_id
+  if (!toolCallId) return
+  try {
+    await resumeSubagent(threadId, { [toolCallId]: false })
+  } catch (e) {
+    logger.error('[Subagent] 拒绝失败:', e)
+    ElMessage.error('子代理审批拒绝失败')
+  }
+}
+
+// 审批控件交互约束（Task 6.4）：仅「活跃版本 + 未固化 + 末尾轮次」可交互
+// 已固化消息 / 历史非末尾轮次消息上的审批按钮置灰（跨浏览器一致）
+const approvalDisabled = computed(() => {
+  if (props.message.isFinalized) return true
+  if (!props.isLast) return true
+  return false
 })
 
 // ToolCall 级审批确认：从 ToolCallCard 冒泡上来
@@ -149,31 +230,6 @@ const hasMetadata = computed(() => {
 })
 
 const sourceCount = computed(() => props.message.sources?.length || 0)
-const toolCallCount = computed(() => props.message.toolCalls?.length || 0)
-
-/**
- * 统一渲染规则（Task 5）：消息 toolCalls 含子代理层级数据时启用 ToolCallGroup 分组树，
- * 覆盖代理模式（langgraph agent_create/agent_run 子代理）与深度研究模式；
- * 无子代理的普通工具调用保持 ToolCallCard 单行摘要平铺。
- *
- * 判定：任一工具携带子代理层级信息（agentPath 深度 > 1 或 depth > 0），
- * 或存在多个 agentPath 分组（多代理并存）时，即视为含子代理层级。
- */
-const hasSubagentHierarchy = computed(() => {
-  const toolCalls = props.message.toolCalls
-  if (!Array.isArray(toolCalls) || toolCalls.length === 0) return false
-  const hasNested = toolCalls.some((tc) =>
-    (Array.isArray(tc.agentPath) && tc.agentPath.length > 1)
-    || (typeof tc.depth === 'number' && tc.depth > 0)
-  )
-  if (hasNested) return true
-  return buildAgentGroups(toolCalls).length > 1
-})
-
-// 分组树数据源（仅含子代理层级时使用，computed 惰性求值）：
-// allGroups 供组内递归查找子代理组，rootGroups 顶层仅渲染根组
-const allGroups = computed(() => buildAgentGroups(props.message.toolCalls || []))
-const rootGroups = computed(() => buildRootGroups(props.message.toolCalls || []))
 
 const formattedTime = computed(() => {
   if (!props.message.timestamp) return ''
@@ -222,6 +278,19 @@ async function handleCopy() {
 function handleRegenerate() {
   emit('regenerate', props.index)
 }
+
+// 重新生成仅限末轮 AI 回复：历史轮次禁止，规避修改历史导致后续上下文错乱；
+// 版本已固化后禁止（固化由发送新消息/超时触发，固化后主消息已参与上下文）；
+// 消息自身流式/审批挂起中禁止（跨浏览器一致：非触发浏览器 isLoading 为 false，
+// 必须检查消息级 isStreaming 才能拦截流式与审批挂起中的重新生成）
+const canRegenerate = computed(() => {
+  if (props.message.role !== 'assistant') return false
+  if (!props.isLast) return false
+  if (props.isLoading) return false
+  if (props.message.isStreaming) return false
+  if (props.message.isFinalized) return false
+  return true
+})
 
 const hasResearchTask = computed(() => !!props.message.researchTaskId && !props.message.researchTaskDeleted)
 
@@ -290,7 +359,7 @@ async function handleDelete() {
       type: 'warning',
     })
     emit('delete', { messageId: props.message.id, researchTaskId: props.message.researchTaskId })
-  } catch {}
+  } catch { /* 用户取消删除，静默忽略 */ }
 }
 
 function handleBranchChange(versionIndex) {
@@ -334,6 +403,7 @@ function handleBranchChange(versionIndex) {
           </el-tooltip>
           <el-tooltip content="重新生成" placement="top" :show-after="500">
             <el-button
+              v-if="canRegenerate"
               link
               size="small"
               :icon="Refresh"
@@ -405,38 +475,85 @@ function handleBranchChange(versionIndex) {
           <el-icon class="is-loading" :size="14"><Loading /></el-icon>
           <span class="attachment-processing-text">{{ attachmentProcessing.message || '正在处理文档...' }}</span>
         </div>
+        <!-- 主 agent 思考（单版本与多版本统一：message 顶层为活跃版本权威数据） -->
         <AiReasoning
-          v-if="message.reasoning && message.reasoning.content"
+          v-if="message.reasoning?.content"
           :content="message.reasoning.content"
           :duration="message.reasoning.duration"
           :is-streaming="isReasoningStreaming"
-          :source="message.reasoning.source || 'deep_thinking'"
+          source="deep_thinking"
         />
+
+        <!-- 主 agent 正文 + 主 agent 工具调用（内联切段，spec Task 9 保留） -->
+        <InlineToolCallContent
+          :content="message.content"
+          :tool-calls="mainToolCalls"
+          :citations="message.sources || []"
+          :approval-disabled="approvalDisabled"
+        >
+          <template #tool="{ toolCall, approvalDisabled: disabled }">
+            <ToolCallCard
+              :tool-name="toolCall.name"
+              :input="toolCall.input || toolCall.parameters"
+              :output="toolCall.output || toolCall.result"
+              :status="deriveDisplayStatus(toolCall)"
+              :tool-call="toolCall"
+              :approval-disabled="disabled"
+              :is-subagent-trigger="toolCall.name === 'spawn_sub_agent'"
+              @approve="(tc) => handleToolCallApprove(tc)"
+              @reject="(tc) => handleToolCallReject(tc)"
+            />
+          </template>
+        </InlineToolCallContent>
+
+        <!-- 子代理摘要卡片 + 独立展开面板（spec D10，替代 AgentLayerCard 递归嵌套） -->
+        <template v-for="sa in subagents" :key="sa.threadId">
+          <SubAgentCard
+            :subagent="sa"
+            :expanded="expandedSubagentThreadIds.has(sa.threadId)"
+            @toggle="toggleSubagent(sa.threadId)"
+          />
+          <SubAgentDetailPanel
+            v-if="expandedSubagentThreadIds.has(sa.threadId)"
+            :subagent="sa"
+            :content="sa.content"
+            :reasoning-content="sa.reasoningContent"
+            :tool-calls="sa.toolCalls"
+            @confirm="handleSubagentConfirm"
+            @reject="handleSubagentReject"
+          >
+            <template #tools="{ toolCalls }">
+              <ToolCallCard
+                v-for="tc in toolCalls"
+                :key="tc.id || tc.toolCallId"
+                :tool-name="tc.name"
+                :input="tc.input || tc.parameters"
+                :output="tc.output || tc.result"
+                :status="deriveDisplayStatus(tc)"
+                :tool-call="tc"
+                :approval-disabled="approvalDisabled"
+                @approve="(t) => handleToolCallApprove(t)"
+                @reject="(t) => handleToolCallReject(t)"
+              />
+            </template>
+          </SubAgentDetailPanel>
+        </template>
+
+        <!-- 多版本切换器（仅多版本消息显示） -->
         <div
           v-if="message.versions && message.versions.length > 1"
-          class="message-branch"
+          class="message-branch-selector"
         >
-          <div
-            v-for="(version, vIdx) in message.versions"
+          <span class="branch-label">版本</span>
+          <button
+            v-for="vIdx in message.versions.length"
             :key="vIdx"
-            class="message-branch-content"
-            :class="{ 'is-active': vIdx === (message.currentVersion || 0) }"
+            :class="['branch-btn', { active: (vIdx - 1) === (message.currentVersion || 0) }]"
+            @click="handleBranchChange(vIdx - 1)"
           >
-            <MarkdownRenderer :content="typeof version === 'string' ? version : (version?.content ?? '')" />
-          </div>
-          <div class="message-branch-selector">
-            <span class="branch-label">版本</span>
-            <button
-              v-for="vIdx in message.versions.length"
-              :key="vIdx"
-              :class="['branch-btn', { active: (vIdx - 1) === (message.currentVersion || 0) }]"
-              @click="handleBranchChange(vIdx - 1)"
-            >
-              {{ vIdx }}
-            </button>
-          </div>
+            {{ vIdx }}
+          </button>
         </div>
-        <MarkdownRenderer v-else :content="message.content" :citations="message.sources || []" />
       </div>
 
       <div v-if="message.images && message.images.length > 0" class="message-images">
@@ -530,43 +647,6 @@ function handleBranchChange(versionIndex) {
         />
       </div>
 
-      <div v-if="message.role !== 'user' && message.toolCalls && message.toolCalls.length > 0" class="message-tool-calls">
-        <div class="tool-calls-header">
-          <span class="tool-calls-label">
-            <el-icon :size="14"><Tools /></el-icon>
-            工具调用 ({{ toolCallCount }})
-          </span>
-        </div>
-        <!-- 分组树（Task 5）：消息 toolCalls 含子代理层级数据（代理模式 / 深度研究模式统一公共展示），
-             审批链路与下方平铺分支同源，复用 handleToolCallApprove / handleToolCallReject -->
-        <div v-if="hasSubagentHierarchy" class="tool-call-groups">
-          <ToolCallGroup
-            v-for="group in rootGroups"
-            :key="group.key"
-            :group="group"
-            :groups="allGroups"
-            :task-id="message.researchTaskId || ''"
-            @approve="(tc) => handleToolCallApprove(tc)"
-            @reject="(tc) => handleToolCallReject(tc)"
-          />
-        </div>
-        <!-- 平铺（无子代理的普通工具调用，单行摘要展示） -->
-        <TransitionGroup v-else name="tool-call" tag="div" class="tool-calls-list">
-          <ToolCallCard
-            v-for="(toolCall, idx) in message.toolCalls"
-            :key="toolCall.id || idx"
-            :tool-name="toolCall.name"
-            :input="toolCall.input || toolCall.parameters"
-            :output="toolCall.output || toolCall.result"
-            :status="deriveDisplayStatus(toolCall)"
-            :tool-call="toolCall"
-            @approve="(tc) => handleToolCallApprove(tc)"
-            @reject="(tc) => handleToolCallReject(tc)"
-          />
-        </TransitionGroup>
-      </div>
-
-
       <div v-if="showDebug && message.role === 'assistant'" class="debug-panel">
         <div class="debug-panel-header">
           <span class="debug-panel-title">🐛 调试信息</span>
@@ -625,7 +705,7 @@ function handleBranchChange(versionIndex) {
         <el-button link size="small" :icon="copied ? Check : CopyDocument" @click.stop="handleCopy">
           {{ copied ? '已复制' : '复制' }}
         </el-button>
-        <el-button link size="small" :icon="Refresh" @click.stop="handleRegenerate">
+        <el-button v-if="canRegenerate" link size="small" :icon="Refresh" @click.stop="handleRegenerate">
           重新生成
         </el-button>
         <el-button link size="small" :icon="Delete" class="delete-btn" @click.stop="handleDelete">
@@ -928,8 +1008,7 @@ function handleBranchChange(versionIndex) {
   box-shadow: var(--shadow-sm);
 }
 
-.message-cot,
-.message-tool-calls {
+.message-cot {
   margin-top: 12px;
 }
 
@@ -1028,51 +1107,6 @@ function handleBranchChange(versionIndex) {
   transform: translateY(0);
 }
 
-.tool-calls-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-
-.tool-calls-label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--muted-foreground);
-  font-weight: 500;
-}
-
-.tool-calls-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* 分组树容器（Task 5）：ToolCallGroup 自带组间距，此处仅做纵向排列 */
-.tool-call-groups {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.tool-calls-queue :deep(.queue-items) {
-  max-height: 400px;
-}
-
-.tool-calls-queue :deep(.queue-header) {
-  padding: 8px 12px;
-}
-
-.tool-calls-queue :deep(.queue-title) {
-  font-size: 13px;
-}
-
-.confirm-reject {
-  background-color: var(--el-color-danger) !important;
-}
-
 .message-branch {
   display: flex;
   flex-direction: column;
@@ -1124,15 +1158,6 @@ function handleBranchChange(versionIndex) {
   background: var(--sidebar-primary);
   border-color: var(--sidebar-primary);
   color: white;
-}
-
-.tool-call-enter-active {
-  transition: all 0.3s ease;
-}
-
-.tool-call-enter-from {
-  opacity: 0;
-  transform: translateY(-8px);
 }
 
 .message-context {

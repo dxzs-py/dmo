@@ -32,7 +32,13 @@ const settings = {
     sessionIdPattern: /^[a-f0-9-]{36}$/,
     allowedModes: ['agent', 'deep-research'],
     batchCreateMaxItems: 50,
-  }
+  },
+
+  /**
+   * 子代理「等待你的确认」卡片自动展开开关（默认关闭）。
+   * 开启时：仅状态 = 等待你的确认 的卡片自动展开，其余保持摘要；嵌套内层永不自动展开。
+   */
+  autoExpandPendingConfirm: false
 }
 
 export default settings

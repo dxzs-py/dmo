@@ -68,9 +68,6 @@ class ApprovalMiddleware(AgentMiddleware):
     @staticmethod
     def _default_policies() -> list[Any]:
         from .policies import (
-            AgentCleanupApprovalPolicy,
-            AgentCreateApprovalPolicy,
-            AgentRunApprovalPolicy,
             AttachmentRagSearchApprovalPolicy,
             EditFileApprovalPolicy,
             # deepagents 框架工具审批策略
@@ -84,6 +81,7 @@ class ApprovalMiddleware(AgentMiddleware):
             LsApprovalPolicy,
             ReadFileApprovalPolicy,
             ShellExecApprovalPolicy,
+            SpawnApprovalPolicy,
             TodoWriteApprovalPolicy,
             WebFetchApprovalPolicy,
             WebSearchApprovalPolicy,
@@ -96,10 +94,9 @@ class ApprovalMiddleware(AgentMiddleware):
             FileReaderApprovalPolicy(),
             AttachmentRagSearchApprovalPolicy(),
             FsWriteFileApprovalPolicy(),
-            AgentCleanupApprovalPolicy(),
-            # 其他副作用工具策略（agent_create/agent_run/write_todos）
-            AgentCreateApprovalPolicy(),
-            AgentRunApprovalPolicy(),
+            # 子代理派生工具策略（spawn_sub_agent）
+            SpawnApprovalPolicy(),
+            # 其他副作用工具策略（write_todos）
             TodoWriteApprovalPolicy(),
             # deepagents 框架工具策略
             # execute → 继承 ShellExecApprovalPolicy 黑白名单逻辑
@@ -163,12 +160,16 @@ class ApprovalMiddleware(AgentMiddleware):
             from langgraph.config import get_config
 
             agent_name = ""
+            subagent_thread_id = ""
             try:
                 config = get_config()
                 metadata = config.get("metadata") if isinstance(config, dict) else None
                 agent_name = (metadata or {}).get("lc_agent_name") or ""
+                # subagent_thread_id（spec D10）：子代理 SSE 定向推送路由标识符，
+                # 由 SubAgentRuntime 适配器写入 configurable，审批事件据此定向到子代理卡片
+                subagent_thread_id = (config.get("configurable") or {}).get("subagent_thread_id") or ""
             except Exception as e:
-                logger.debug(f"[ApprovalMiddleware] 读取 lc_agent_name 失败(非致命): {e}")
+                logger.debug(f"[ApprovalMiddleware] 读取 lc_agent_name/subagent_thread_id 失败(非致命): {e}")
 
             # risk_ceiling 可能是 RiskLevel 枚举或字符串，统一为 RiskLevel
             if risk_ceiling is not None and not isinstance(risk_ceiling, RiskLevel):
@@ -184,6 +185,8 @@ class ApprovalMiddleware(AgentMiddleware):
                 "agent_path": agent_path,
                 # 0.7.5 官方机制不提供父 task 工具的 tool_call_id，留空（前端不展示父链路）
                 "parent_tool_call_id": "",
+                # 子代理 SSE 定向推送路由标识符（spec D10）
+                "subagent_thread_id": subagent_thread_id,
             }
         except Exception as e:
             logger.debug(f"[ApprovalMiddleware] 提取 subagent_context 失败(非致命): {e}")
@@ -242,7 +245,10 @@ class ApprovalMiddleware(AgentMiddleware):
                 logger.debug("提取 runtime configurable 失败，使用空字典")
 
         # 判断来源：深度研究 agent 的 configurable 含 thread_id（=task_id）
-        thread_id = configurable.get("thread_id", "")
+        # approval_thread_id（langgraph 工具链子代理注入）：子代理 checkpoint 用独立
+        # thread_id（避免与主 agent 共享 checkpoint），审批归集需挂回父任务/会话，
+        # 故优先读 approval_thread_id（父 thread_id），回退当前 thread_id。
+        thread_id = configurable.get("approval_thread_id") or configurable.get("thread_id", "")
         # assistant_message_id：chat 关联深度研究场景由 research_runner 注入 config，
         # 工具事件注册携带归属消息 ID（前端 toolCallsMap → message.toolCalls 归属依赖）
         _assistant_message_id = configurable.get("assistant_message_id") or ""
@@ -594,6 +600,7 @@ class ApprovalMiddleware(AgentMiddleware):
                 request["depth"] = subagent_context.get("depth", 0)
                 request["agent_name"] = subagent_context.get("agent_name", "")
                 request["agent_path"] = subagent_context.get("agent_path", [])
+                request["subagent_thread_id"] = subagent_context.get("subagent_thread_id", "")
             approval_requests.append(request)
             logger.info(
                 f"[ApprovalMiddleware] 需要审批: tool={tool_name}, "

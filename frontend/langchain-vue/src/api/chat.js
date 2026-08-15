@@ -56,6 +56,17 @@ export const chatAPI = {
     return apiClient.post('/chat/stream/', validation.sanitizedData, options)
   },
 
+  /**
+   * 停止生成（Task 9）：发布 SIGNAL_STOP 信令终止后端 agent 执行。
+   * 请求体 { session_id } 由 axios 拦截器自动转换。
+   * @param {string} sessionId - 会话 ID
+   * @returns {Promise} axios response
+   */
+  stopStreaming(sessionId) {
+    if (!sessionId) return Promise.reject(new Error('会话ID不能为空'))
+    return apiClient.post('/chat/stream/stop/', { sessionId })
+  },
+
   getModes() { return apiClient.get('/chat/modes/') },
 
   getSessions(params = {}) {

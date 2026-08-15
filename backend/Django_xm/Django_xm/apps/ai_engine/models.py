@@ -258,3 +258,52 @@ class EmbeddingProviderConfig(models.Model):
     @property
     def key_attr(self):
         return self.provider.api_key_attr if self.provider else None
+
+
+class SubAgentStatus(models.TextChoices):
+    """子 Agent 全局统一状态枚举（单一权威，SubAgentRuntime 全链路复用）。
+
+    四状态闭环，不引入无生产者的 queued（当前无子 Agent 任务调度器）。
+    """
+
+    RUNNING = "running", "执行中"
+    COMPLETED = "completed", "已完成"
+    FAILED = "failed", "执行失败"
+    INTERRUPTED_PENDING_USER_INPUT = "interrupted_pending_user_input", "等待你的确认"
+
+
+class SubAgentInstance(models.Model):
+    """子 Agent 实例元数据（UI 渲染的唯一数据源）。
+
+    只保存实例元数据（thread_id/父子关系/状态/中断信息/结果预览），
+    不存 graph/prompt/业务配置；业务配置由上层（spawn 工具）传入。
+    checkpoint 由 LangGraph checkpointer 独立持久化（thread_id 为唯一键）。
+    """
+
+    thread_id = models.CharField(max_length=200, unique=True, db_index=True, verbose_name="子代理 thread_id")
+    parent_thread_id = models.CharField(
+        max_length=200, db_index=True, verbose_name="父线程 thread_id", help_text="会话删除时按此字段遍历回收子代理"
+    )
+    status = models.CharField(
+        max_length=50, choices=SubAgentStatus.choices, default=SubAgentStatus.RUNNING, verbose_name="状态"
+    )
+    pending_interrupt_info = models.JSONField(
+        null=True,
+        blank=True,
+        verbose_name="中断信息",
+        help_text="interrupt 审批 payload（批量结构：interrupt_type/interrupt_id/requests:[{tool_call_id/tool_name/args/risk_level/reason}]）",
+    )
+    result_preview = models.TextField(blank=True, default="", verbose_name="结果预览")
+    metadata = models.JSONField(default=dict, blank=True, verbose_name="元数据")
+
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
+
+    class Meta:
+        db_table = "ai_engine_subagent_instance"
+        verbose_name = "子代理实例"
+        verbose_name_plural = "子代理实例"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.thread_id} ({self.status})"

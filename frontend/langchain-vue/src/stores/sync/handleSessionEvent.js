@@ -132,6 +132,76 @@ export const createHandleSessionEvent = (ctx) => {
   }
 
   /**
+   * 应用子代理图层正文/中间思考事件（stream_subagent_content，session 频道）
+   *
+   * spec D10：
+   * - 按 subagentThreadId 写入 message.subagentContents[threadId]（content/reasoningContent 追加累计）；
+   * - 未知 threadId（chunk 先于 spawn 元数据到达）：动态初始化条目（时序竞争防御）；
+   * - 子代理名称/深度从 payload.data 透传（用于摘要卡片展示）。
+   *
+   * @param {string} sessionId
+   * @param {Object} payload - toCamelCase 后：{ source, sourceId, messageId, sessionId, subagentThreadId, data: { agentName, depth, content, reasoningContent } }
+   */
+  const _applySubagentContent = (sessionId, payload) => {
+    const data = payload.data || payload
+    // subagentThreadId：子代理 SSE 定向推送路由标识符（handleSessionEvent 入口
+    // 从事件顶层 subagent_thread_id 注入为 camelCase）。
+    const subagentThreadId = payload.subagentThreadId || data.subagentThreadId || ''
+    if (!subagentThreadId) {
+      logger.debug(`[Sync] stream_subagent_content 缺少 subagentThreadId，丢弃: session=${sessionId}`)
+      return
+    }
+
+    const session = getSession(sessionStore, sessionId)
+    if (!session?.messages) {
+      logger.debug(`[Sync] stream_subagent_content 会话未加载: session=${sessionId}`)
+      return
+    }
+    let targetMsg = null
+    if (payload.messageId) {
+      targetMsg = findMessageById(session, payload.messageId)
+    }
+    if (!targetMsg) {
+      targetMsg = getLastAssistantMessage(session)
+    }
+    if (!targetMsg) return
+
+    const content = data.content || ''
+    const reasoningContent = data.reasoningContent || ''
+    if (!content && !reasoningContent) return
+
+    // 动态初始化条目（chunk 先于 spawn 元数据到达的时序竞争防御）
+    if (!targetMsg.subagentContents || typeof targetMsg.subagentContents !== 'object') {
+      targetMsg.subagentContents = {}
+    }
+    const entry = targetMsg.subagentContents[subagentThreadId] || { content: '', reasoningContent: '' }
+    if (content) entry.content = (entry.content || '') + content
+    if (reasoningContent) entry.reasoningContent = (entry.reasoningContent || '') + reasoningContent
+    if (data.agentName) entry.agentName = data.agentName
+    if (typeof data.depth === 'number') entry.depth = data.depth
+    targetMsg.subagentContents[subagentThreadId] = entry
+
+    // 同步到当前版本快照（与 toolCalls 的版本同步语义一致）
+    const ver = targetMsg.versions?.[targetMsg.currentVersion]
+    if (ver) {
+      if (!ver.subagentContents || typeof ver.subagentContents !== 'object') {
+        ver.subagentContents = {}
+      }
+      const verEntry = ver.subagentContents[subagentThreadId] || { content: '', reasoningContent: '' }
+      if (content) verEntry.content = (verEntry.content || '') + content
+      if (reasoningContent) verEntry.reasoningContent = (verEntry.reasoningContent || '') + reasoningContent
+      if (data.agentName) verEntry.agentName = data.agentName
+      if (typeof data.depth === 'number') verEntry.depth = data.depth
+      ver.subagentContents[subagentThreadId] = verEntry
+    }
+
+    logger.debug(
+      `[Sync] stream_subagent_content 应用: session=${sessionId}, message=${targetMsg.backendId || targetMsg.id}, ` +
+      `threadId=${subagentThreadId}, contentLen=${content.length}, reasoningLen=${reasoningContent.length}`
+    )
+  }
+
+  /**
    * 应用 stream_reasoning 事件（session 频道，聊天模块深度研究模式的推理内容）
    *
    * 深度研究 worker（adapter.py）每次 LLM 节点产生 reasoning_content 时广播
@@ -267,6 +337,14 @@ export const createHandleSessionEvent = (ctx) => {
 
     const payload = event.payload || event
 
+    // subagent_thread_id（spec D10）：事件顶层协议路由标识符（snake_case，不参与
+    // camelCase 转换），由 useRealtimeSync.onMessage 还原后保留在 event 顶层。
+    // 注入 payload.subagentThreadId（camelCase）供下游 toolCallHandler / approval
+    // 归集按子代理 thread 路由，前端其余代码不直接访问 snake_case 键。
+    if (event.subagent_thread_id) {
+      payload.subagentThreadId = event.subagent_thread_id
+    }
+
     switch (event.type) {
       case 'message_added':
         ctx.handleMessageAdded(sessionId, payload.message || payload)
@@ -283,6 +361,14 @@ export const createHandleSessionEvent = (ctx) => {
       // ChatMessage.reasoning（duration=0 表示推理进行中，与代理模式语义一致）。
       case 'stream_reasoning':
         _applyStreamReasoning(sessionId, payload)
+        break
+      // 子代理图层正文/中间思考更新（Agent 图层嵌套规范 Task 1/9）：
+      // 后端 STREAM_SUBAGENT_CONTENT 事件（adapter._on_subagent_content /
+      // chat_service._on_subagent_content），payload.data 携带
+      // agentPath/content/reasoningContent/agentName/depth。
+      // 前端按 agentPath 路由写入 message.subagentContents[pathKey]，实时累计子代理图层正文。
+      case 'stream_subagent_content':
+        _applySubagentContent(sessionId, payload)
         break
       case 'messages_deleted':
         ctx.handleMessagesDeleted(sessionId, payload.deletedMessageIds || payload.ids || [])
@@ -333,6 +419,9 @@ export const createHandleSessionEvent = (ctx) => {
         break
       case 'message_regenerate_reverted':
         ctx.handleMessageRegenerateReverted(sessionId, payload)
+        break
+      case 'message_finalized':
+        ctx.handleMessageFinalized(sessionId, payload)
         break
       default:
         logger.debug(`[Sync] 未处理的 session 事件: ${event.type}`)

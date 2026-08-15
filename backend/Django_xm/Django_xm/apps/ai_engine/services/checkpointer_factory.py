@@ -299,6 +299,27 @@ async def get_async_checkpointer(
                 checkpointer = cm
             if hasattr(checkpointer, "setup"):
                 await checkpointer.setup()
+
+            # Redis 热缓存装饰器（开关控制，D3）：包 AsyncPostgresSaver，PG 写优先。
+            # 仅在 postgres 后端启用；关闭时直接返回裸 AsyncPostgresSaver。
+            if getattr(settings, "checkpointer_redis_cache_enabled", False):
+                from Django_xm.apps.ai_engine.services.redis_async_client import get_async_redis_client
+                from Django_xm.apps.ai_engine.services.redis_cached_checkpointer import RedisCachedCheckpointer
+
+                inner = checkpointer
+                redis_client = get_async_redis_client()
+                checkpointer = RedisCachedCheckpointer(
+                    inner=inner,
+                    redis_client=redis_client,
+                    ttl=getattr(settings, "checkpointer_redis_ttl", 1800),
+                    lock_ttl=getattr(settings, "checkpointer_redis_lock_ttl", 5),
+                )
+                # 更新上下文管理器引用 key：release_async_checkpointer 按 checkpointer 的
+                # id 查找 cm_ref，包装后需把 inner 的 cm_ref 迁移到装饰器 id 下。
+                cm_ref = _context_manager_refs.pop(f"pg_async:{id(inner)}", None)
+                if cm_ref is not None:
+                    _context_manager_refs[f"pg_async:{id(checkpointer)}"] = cm_ref
+
             with _cache_lock:
                 _checkpointer_cache[cache_key] = checkpointer
             return checkpointer
@@ -342,22 +363,28 @@ async def release_async_checkpointer(
 
     with _cache_lock:
         checkpointer = _checkpointer_cache.pop(cache_key, None)
-        if checkpointer is None:
-            return
 
     # 关闭异步上下文管理器，释放连接池
-    cm_ref = _context_manager_refs.pop(f"pg_async:{id(checkpointer)}", None)
-    if cm_ref is not None:
-        try:
-            await cm_ref.__aexit__(None, None, None)
-            logger.debug(f"已释放异步 Checkpointer 连接: {cache_key}")
-        except Exception as e:
-            logger.debug(f"释放异步 Checkpointer 连接失败 ({cache_key}): {e}")
-    elif hasattr(checkpointer, "close"):
-        try:
-            checkpointer.close()
-        except Exception as e:
-            logger.debug(f"关闭异步 Checkpointer 失败 ({cache_key}): {e}")
+    if checkpointer is not None:
+        cm_ref = _context_manager_refs.pop(f"pg_async:{id(checkpointer)}", None)
+        if cm_ref is not None:
+            try:
+                await cm_ref.__aexit__(None, None, None)
+                logger.debug(f"已释放异步 Checkpointer 连接: {cache_key}")
+            except Exception as e:
+                logger.debug(f"释放异步 Checkpointer 连接失败 ({cache_key}): {e}")
+        elif hasattr(checkpointer, "close"):
+            try:
+                checkpointer.close()
+            except Exception as e:
+                logger.debug(f"关闭异步 Checkpointer 失败 ({cache_key}): {e}")
+
+    # 释放 Redis 热缓存客户端连接池（若启用）。Redis 客户端独立于 checkpointer 缓存，
+    # 即使 checkpointer 已释放，仍需关闭（幂等：pop 返回 None 无害）。
+    if getattr(settings, "checkpointer_redis_cache_enabled", False):
+        from Django_xm.apps.ai_engine.services.redis_async_client import release_async_redis_client
+
+        await release_async_redis_client()
 
 
 def _create_sqlite_checkpointer(db_path: str | None = None) -> Any:

@@ -172,7 +172,7 @@ function _mergeConsecutiveAssistantMessages(messages) {
         }
         // 合并其他字段（plan, chainOfThought, reasoning 等）
         for (const field of ['researchTaskId', 'reasoning', 'suggestions', 'sources', 'plan',
-          'chainOfThought', 'model', 'streamState', 'isStreaming', 'researchContext']) {
+          'chainOfThought', 'model', 'streamState', 'isStreaming', 'researchContext', 'subagentContents']) {
           if (!merged[field] && nextMsg[field]) {
             merged[field] = nextMsg[field]
           }
@@ -250,6 +250,7 @@ export function transformBackendMessageToFrontend(msg) {
       plan: v.plan || null,
       chainOfThought: v.chainOfThought || null,
       toolCalls: v.toolCalls || [],
+      subagentContents: v.subagentContents || {},
       reasoning: v.reasoning || null,
       suggestions: v.suggestions || null,
       context: v.context || null,
@@ -262,6 +263,7 @@ export function transformBackendMessageToFrontend(msg) {
       plan: msgObj.plan || null,
       chainOfThought: msgObj.chainOfThought || null,
       toolCalls: msgObj.toolCalls || [],
+      subagentContents: msgObj.subagentContents || {},
       reasoning: msgObj.reasoning || null,
       suggestions: msgObj.suggestions || null,
       context: msgObj.context || null,
@@ -294,6 +296,9 @@ export function transformBackendMessageToFrontend(msg) {
     plan: msgObj.plan || activeVersion.plan || null,
     chainOfThought: msgObj.chainOfThought || activeVersion.chainOfThought || null,
     toolCalls: toolCalls,
+    // 顶层 subagent_contents 是后端持久化权威（persist_stream_result 维护），
+    // versions 快照兜底（消息创建时初始快照）
+    subagentContents: msgObj.subagentContents || activeVersion.subagentContents || {},
     approval: msgObj.approval || null,
     approvalState: msgObj.approval?.state
       || toolCalls.find(tc => tc.approval)?.approval?.state
@@ -306,6 +311,7 @@ export function transformBackendMessageToFrontend(msg) {
     researchContext: msgObj.researchContext || null,
     versions: versions,
     currentVersion: currentVersion,
+    isFinalized: !!msgObj.isFinalized,
     timestamp: msgObj.createdAt ? new Date(msgObj.createdAt).getTime() : Date.now(),
     model: msgObj.model || null,
     tokenCount: msgObj.tokenCount || 0,
@@ -327,6 +333,7 @@ export function transformFrontendMessageToBackend(msg) {
         plan: v.plan || null,
         chainOfThought: v.chainOfThought || null,
         toolCalls: v.toolCalls || [],
+        subagentContents: v.subagentContents || {},
         reasoning: v.reasoning || null,
         suggestions: v.suggestions || null,
         context: v.context || null,
@@ -338,6 +345,7 @@ export function transformFrontendMessageToBackend(msg) {
         plan: msg.plan || null,
         chainOfThought: msg.chainOfThought || null,
         toolCalls: msg.toolCalls || [],
+        subagentContents: msg.subagentContents || {},
         reasoning: msg.reasoning || null,
         suggestions: msg.suggestions || null,
         context: msg.context || null,
@@ -348,6 +356,8 @@ export function transformFrontendMessageToBackend(msg) {
   // （serializers.py），POST/PATCH 均不接收，发送纯属无效负载（spec REMOVED Requirements）。
   // toolCalls 的持久化权威是后端流式/审批事件；versions[].toolCalls 保留用于
   // transformBackendMessageToFrontend 刷新后从 activeVersion 恢复工具调用数据。
+  // subagent_contents 同样为 read_only，顶层不发送；versions[].subagentContents
+  // 用于刷新后从 activeVersion 恢复子代理图层正文快照。
   return {
     role: msg.role,
     content: msg.content,
@@ -363,6 +373,7 @@ export function transformFrontendMessageToBackend(msg) {
     researchContext: msg.researchContext || null,
     versions: backendVersions,
     currentVersion: typeof msg.currentVersion === 'number' ? msg.currentVersion : 0,
+    isFinalized: !!msg.isFinalized,
     model: msg.model || null,
     tokenCount: msg.tokenCount || 0,
     tokenDetail: msg.tokenDetail || {},

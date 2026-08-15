@@ -124,6 +124,18 @@ def is_approval_interrupt(value: Any) -> bool:
     return isinstance(value, dict) and value.get("_approval") is True
 
 
+def is_subagent_wait_interrupt(value: Any) -> bool:
+    """判断 interrupt 值是否为子代理业务等待类型（非审批，仅流程暂停）。
+
+    ``wait_for_subagent`` 工具的 interrupt 值格式为：
+        {"_subagent_wait": True, "subagent_thread_id": "..."}
+
+    与审批中断完全隔离：不产出审批 UI，仅由调度器在子代理终态时
+    以 Command(resume) 唤醒父 Graph。
+    """
+    return isinstance(value, dict) and value.get("_subagent_wait") is True
+
+
 # 工具元数据默认规则（替代原 chat_service.py 中硬编码的 weather_tools / raw_content_tools / knowledge_base_ 前缀）
 _RAW_CONTENT_TOOL_NAMES = frozenset(
     {

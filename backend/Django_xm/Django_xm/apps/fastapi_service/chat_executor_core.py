@@ -123,6 +123,9 @@ async def _wait_for_chat_batch_decision(
     executor._pending_events[graph_interrupt_id] = event
     try:
         while True:
+            # 安全点（Task 9）：收到停止请求立即退出等待，由外层 finally 落库并广播
+            if executor._stop_requested:
+                raise asyncio.CancelledError("用户停止生成")
             decisions, all_resolved = await sync_to_async(_collect_chat_batch_decisions)(
                 session_id, graph_interrupt_id
             )
@@ -166,6 +169,7 @@ async def _persist_chat_tool_calls(data: dict, content_state: dict, session_id: 
             content=final_content,
             tool_calls_map=tool_calls_map,
             message_id=str(message_id),
+            subagent_contents=data.get("_subagent_contents") or None,
         )
     except Exception:
         logger.warning(f"[ChatExec] 落库 content/tool_calls 失败: session={session_id}", exc_info=True)
@@ -196,13 +200,19 @@ async def run_chat_session(executor, params: dict) -> None:
     content_state: dict = {"content": "", "last_broadcast": 0.0}
 
     async def _broadcast(event: dict) -> None:
-        """将执行事件广播到 WS（触发/非触发浏览器统一消费）。"""
+        """将执行事件广播到 WS（触发/非触发浏览器统一消费）。
+
+        subagent_contents：子代理图层正文累计（Agent 图层嵌套规范 Task 1），
+        由 chat_service 在执行期注入 data["_subagent_contents"]，供 tool 事件
+        position 采集（子代理图层正文长度依据）。
+        """
         try:
             await _publish_stream_event(
                 event,
                 session_id,
                 message_id=int(message_id) if message_id else None,
                 content_state=content_state,
+                subagent_contents=data.get("_subagent_contents") or None,
             )
         except Exception as e:
             logger.warning(f"[ChatExec] 广播事件失败: {e}")
@@ -213,16 +223,36 @@ async def run_chat_session(executor, params: dict) -> None:
         修复：审批挂起期间（同批/后续工具待决断）刷新/后开浏览器时，
         已完成工具的 result 必须已持久化，否则输出结果组件缺失。
         """
+        # 安全点（Task 9）：审批到达时已收到停止请求则不再创建审批等待
+        if executor.check_stop_requested():
+            raise asyncio.CancelledError("用户停止生成")
         await _persist_chat_tool_calls(data, content_state, session_id, message_id)
         return await _wait_for_chat_batch_decision(executor, session_id, graph_interrupt_id)
 
+    stopped = False
+    is_regenerate = bool(params.get("regenerate"))
     try:
-        await chat_service.run_agent_session(data, _interrupt_handler, _broadcast)
+        await chat_service.run_agent_session(
+            data,
+            _interrupt_handler,
+            _broadcast,
+            should_stop=executor.check_stop_requested,
+        )
+    except asyncio.CancelledError:
+        # 优雅停止（Task 9）：保留已输出内容 + checkpoint，标记 stopped/incomplete 广播
+        logger.info(f"[ChatExec] chat 会话被用户停止: session={session_id}")
+        stopped = True
     except Exception:
         logger.exception(f"[ChatExec] chat 会话执行异常: session={session_id}")
     finally:
         # 落库 content + tool_calls 终态，并广播 stream_completed（前端最终化）
-        await _finalize_chat_session(chat_service, data, content_state, session_id, message_id)
+        # 重生成中断（regenerate 模式）广播 incomplete（禁止固化为主版本），
+        # 普通发送停止广播 stopped（允许固化）——与前端 _streamKind 语义对齐
+        await _finalize_chat_session(
+            chat_service, data, content_state, session_id, message_id,
+            stopped=stopped,
+            incomplete=(stopped and is_regenerate),
+        )
         try:
             from Django_xm.apps.ai_engine.services.checkpointer_factory import release_async_checkpointer
 
@@ -231,11 +261,25 @@ async def run_chat_session(executor, params: dict) -> None:
             logger.debug("[ChatExec] 释放异步 Checkpointer 连接失败（可忽略）")
 
 
-async def _finalize_chat_session(chat_service, data, content_state, session_id, message_id) -> None:
+async def _finalize_chat_session(
+    chat_service,
+    data,
+    content_state,
+    session_id,
+    message_id,
+    stopped: bool = False,
+    incomplete: bool = False,
+) -> None:
     """执行结束后落库 content/tool_calls 并广播 stream_completed。
 
     复用 stream_persistence.persist_stream_result（唯一持久化入口），
     与旧 _finalize_stream_content 一致。
+
+    Args:
+        stopped: 是否用户主动停止（Task 9）。停止时广播携带 stopped 标记，
+            前端据此保留已输出内容并标记 stopped 状态（普通发送停止允许固化）。
+        incomplete: 是否重生成中断（Task 9）。重生成模式下用户停止产出的
+            半成品版本标记 incomplete，禁止固化为本轮主消息。
     """
     if not session_id or not message_id:
         return
@@ -255,7 +299,8 @@ async def _finalize_chat_session(chat_service, data, content_state, session_id, 
     except Exception:
         logger.warning(f"[ChatExec] 落库失败: session={session_id}", exc_info=True)
 
-    # 广播 stream_completed（触发/非触发浏览器统一最终化）
+    # 广播 stream_completed（触发/非触发浏览器统一最终化）；
+    # 用户停止时携带 stopped/incomplete 标记（Task 9），前端据此标记对应状态
     try:
         from Django_xm.common.event_schema import EventSource, EventType
         from Django_xm.common.realtime_events import publish_event
@@ -266,7 +311,7 @@ async def _finalize_chat_session(chat_service, data, content_state, session_id, 
                 "source": EventSource.CHAT,
                 "source_id": session_id,
                 "message_id": str(message_id) if message_id else None,
-                "data": {"success": True},
+                "data": {"success": True, "stopped": stopped, "incomplete": incomplete},
             },
             session_id=session_id,
         )

@@ -190,6 +190,18 @@ class Settings(ProjectSettings):
     # ==================== Checkpointer 配置 ====================
     checkpointer_backend: str = Field(default="postgres", description="Checkpointer 后端: sqlite/memory/postgres")
 
+    checkpointer_redis_cache_enabled: bool = Field(
+        default=False, description="是否启用 Checkpointer Redis 热缓存（装饰器模式，PG 写优先）"
+    )
+
+    checkpointer_redis_ttl: int = Field(
+        default=1800, ge=60, le=86400, description="Checkpointer Redis 缓存 TTL（秒）"
+    )
+
+    checkpointer_redis_lock_ttl: int = Field(
+        default=5, ge=1, le=60, description="Checkpointer 回源限流锁 TTL（秒）"
+    )
+
     # ==================== Store 配置 ====================
     store_enabled: bool = Field(default=False, description="是否自动注入 Store（长期记忆）到 Agent")
 

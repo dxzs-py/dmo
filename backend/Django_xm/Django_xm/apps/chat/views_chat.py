@@ -20,7 +20,7 @@ from rest_framework.views import APIView
 from Django_xm.apps.attachments.services.cross_app import soft_delete_session_attachments
 from Django_xm.apps.cache_manager.services.secure_session_cache import SecureSessionCacheService
 from Django_xm.apps.core.throttling import ChatStreamRateThrottle, MetaRateThrottle
-from Django_xm.apps.fastapi_service.event_bus import SESSION_TYPE_CHAT, SIGNAL_START, publish_signal
+from Django_xm.apps.fastapi_service.event_bus import SESSION_TYPE_CHAT, SIGNAL_START, SIGNAL_STOP, publish_signal
 from Django_xm.async_utils import run_async
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.event_schema import EventSource, EventType
@@ -77,6 +77,48 @@ def _acquire_message_dedup_lock(user_id, client_message_id, ttl=DEDUP_TTL_SECOND
         return True
 
 
+def _archive_current_version(message):
+    """归档 assistant 消息当前版本到 versions 数组，并追加空版本作为当前流式目标。
+
+    与前端 stores/sync/messageHandlers.js 的 handleMessageRegenerated 镜像对齐：
+    1. versions 为空时用当前字段初始化首个版本快照
+    2. 将当前顶层字段同步到当前版本快照（确保归档前快照最新）
+    3. 追加空版本，current_version 指向它
+    4. 顶层字段清空（流式输出会重新填充），is_streaming 置 True
+
+    返回归档后的版本数量（供广播事件使用）。
+
+    Args:
+        message: ChatMessage 实例（assistant 角色）
+    """
+    versions = list(message.versions) if message.versions else []
+    snapshot = {
+        "content": message.content or "",
+        "sources": message.sources or [],
+        "plan": message.plan or {},
+        "chain_of_thought": message.chain_of_thought or [],
+        "tool_calls": message.tool_calls or [],
+        "reasoning": message.reasoning or None,
+        "suggestions": message.suggestions or [],
+        "model": message.model or "",
+        "created_at": message.created_at.isoformat() if message.created_at else "",
+    }
+    if not versions:
+        versions = [snapshot]
+    else:
+        # 同步当前顶层字段到当前版本快照（versions 已存在时）
+        current = message.current_version if message.current_version is not None else 0
+        if 0 <= current < len(versions):
+            versions[current] = {**versions[current], **snapshot}
+    versions.append({"content": ""})
+    message.versions = versions
+    message.current_version = len(versions) - 1
+    message.content = ""
+    message.is_streaming = True
+    message.save(update_fields=["versions", "current_version", "content", "is_streaming"])
+    return len(versions)
+
+
 def _safe_publish_session_created(
     session_id, title, mode, knowledge_bases,
     created_at, updated_at, user_id, session_data,
@@ -123,6 +165,39 @@ def _safe_publish_session_deleted(session_id, user_id):
         )
     except Exception as e:
         logger.warning(f"广播 SESSION_DELETED 失败: session={session_id}, error={e}")
+
+
+async def _terminate_subagents(parent_thread_id):
+    """递归回收指定父线程下的子代理（spec D7.4）。
+
+    会话/研究任务删除时由上层业务主动调用：遍历所有 parent_thread_id 等于
+    父线程的子代理，仅终止非终态实例（running / interrupted_pending_user_input），
+    避免把已完成/失败子代理误标记为 failed。失败仅记日志，不阻断删除主流程。
+    """
+    try:
+        from Django_xm.apps.ai_engine.models import SubAgentStatus
+        from Django_xm.apps.ai_engine.subagent_runtime import get_subagent_runtime
+
+        runtime = get_subagent_runtime()
+        instances = await runtime.list_instances(parent_thread_id)
+        for inst in instances:
+            if inst.status not in (
+                SubAgentStatus.RUNNING,
+                SubAgentStatus.INTERRUPTED_PENDING_USER_INPUT,
+            ):
+                continue
+            try:
+                await runtime.terminate(inst.thread_id)
+            except Exception:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    f"终止子代理失败（非致命）: thread={inst.thread_id}, parent={parent_thread_id}"
+                )
+    except Exception as e:
+        import logging
+
+        logging.getLogger(__name__).warning(f"回收子代理失败: parent={parent_thread_id}, error={e}")
 
 
 async def _cleanup_checkpoint_messages_async_by_id(session_id, deleted_message_ids):
@@ -457,9 +532,10 @@ class ChatStreamView(BaseChatAPIView):
             except Exception:
                 logger.exception("预加载附件内容失败")
 
-        # ── 预创建消息对 + WebSocket 广播 ──
+        # ── 预创建消息对 / 重新生成复用消息对 + WebSocket 广播 ──
         # 参考项目关键行为：流式输出开始前，先创建用户消息和 assistant 占位消息，
         # 并广播 MESSAGE_ADDED 事件，确保其他浏览器在 tool/approval 事件到达前已有消息可挂载。
+        # 重新生成（regenerate=True）时复用已有消息对，不新建，广播 MESSAGE_REGENERATED。
         assistant_message_id = None
         user_message_id = None
         if session_id:
@@ -467,69 +543,127 @@ class ChatStreamView(BaseChatAPIView):
                 session_obj = ChatSession.objects.get(session_id=session_id)
                 _user = request.user if request.user.is_authenticated else None
 
-                # 1. 创建用户消息
-                user_msg = ChatMessage(
-                    session=session_obj,
-                    role=MessageRole.USER,
-                    content=data.get("message", ""),
-                    created_by=_user,
-                    updated_by=_user,
-                )
-                user_msg.save()
-                user_message_id = user_msg.id
-                if original_attachment_ids:
-                    from Django_xm.apps.attachments.services.cross_app import get_attachment_service
-                    get_attachment_service().link_attachments_to_message(user_msg, original_attachment_ids)
+                if data.get("regenerate"):
+                    # ── 重新生成分支：复用已有消息对，不新建 user/assistant ──
+                    user_msg = ChatMessage.objects.filter(
+                        session=session_obj,
+                        id=data.get("user_message_id"),
+                        role=MessageRole.USER,
+                        is_deleted=False,
+                    ).first()
+                    ai_msg = ChatMessage.objects.filter(
+                        session=session_obj,
+                        id=data.get("assistant_message_id"),
+                        role=MessageRole.ASSISTANT,
+                        is_deleted=False,
+                    ).first()
+                    if not user_msg or not ai_msg:
+                        return error_response(
+                            code=ErrorCode.NOT_FOUND,
+                            message="重新生成的目标消息不存在",
+                            http_status=status.HTTP_404_NOT_FOUND,
+                        )
+                    # 仅允许对最后一轮 AI 回复重新生成（规避修改历史导致上下文错乱）
+                    last_assistant = (
+                        ChatMessage.objects.filter(
+                            session=session_obj,
+                            role=MessageRole.ASSISTANT,
+                            is_deleted=False,
+                        )
+                        .order_by("-id")
+                        .first()
+                    )
+                    if not last_assistant or last_assistant.id != ai_msg.id:
+                        return error_response(
+                            code=ErrorCode.PERMISSION_DENIED,
+                            message="仅支持对最后一轮 AI 回复重新生成",
+                            http_status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    user_message_id = user_msg.id
+                    assistant_message_id = ai_msg.id
+                    # 归档当前版本并追加空版本（与前端 handleMessageRegenerated 镜像幂等）
+                    _archive_current_version(ai_msg)
+                    data["_assistant_message_id"] = str(assistant_message_id)
+                    # 广播 MESSAGE_REGENERATED（前端镜像归档 + 后续流式 chunks 填充新版本）
+                    try:
+                        from asgiref.sync import async_to_sync
 
-                # 2. 清理残留的 is_streaming=True 空 assistant 消息
-                ChatMessage.objects.filter(
-                    session=session_obj,
-                    role=MessageRole.ASSISTANT,
-                    is_deleted=False,
-                    is_streaming=True,
-                    content="",
-                ).update(is_streaming=False)
+                        from Django_xm.common.realtime_events import publish_event
 
-                # 3. 创建 assistant 占位消息
-                ai_msg = ChatMessage(
-                    session=session_obj,
-                    role=MessageRole.ASSISTANT,
-                    content="",
-                    is_streaming=True,
-                    created_by=_user,
-                    updated_by=_user,
-                )
-                ai_msg.save()
-                assistant_message_id = ai_msg.id
-                logger.info(
-                    f"[ChatStream] 创建流式消息对: user={user_msg.id}, assistant={ai_msg.id}"
-                )
-
-                # 将 assistant 占位消息 ID 传递给 chat_service
-                data["_assistant_message_id"] = str(assistant_message_id)
-
-                # 广播 MESSAGE_ADDED 到 WebSocket（强制同步，确保先于 SSE 流到达所有浏览器）
-                try:
-                    from asgiref.sync import async_to_sync
-
-                    from Django_xm.common.event_schema import EventType
-                    from Django_xm.common.realtime_events import publish_event
-
-                    from .serializers import ChatMessageSerializer as _MsgSerializer
-
-                    for mid in (user_message_id, assistant_message_id):
-                        msg = ChatMessage.objects.get(id=mid)
                         async_to_sync(publish_event)(
-                            EventType.MESSAGE_ADDED,
+                            EventType.MESSAGE_REGENERATED,
                             {
                                 "session_id": session_id,
-                                "message_id": str(mid),
-                                "message": _MsgSerializer(msg).data,
+                                "message_id": str(assistant_message_id),
                             },
                             session_id=session_id,
                         )
-                except Exception as broadcast_err:
-                    logger.warning(f"[ChatStream] 广播 MESSAGE_ADDED 失败: {broadcast_err}")
+                    except Exception as broadcast_err:
+                        logger.warning(f"[ChatStream] 广播 MESSAGE_REGENERATED 失败: {broadcast_err}")
+                else:
+                    # 1. 创建用户消息
+                    user_msg = ChatMessage(
+                        session=session_obj,
+                        role=MessageRole.USER,
+                        content=data.get("message", ""),
+                        created_by=_user,
+                        updated_by=_user,
+                    )
+                    user_msg.save()
+                    user_message_id = user_msg.id
+                    if original_attachment_ids:
+                        from Django_xm.apps.attachments.services.cross_app import get_attachment_service
+                        get_attachment_service().link_attachments_to_message(user_msg, original_attachment_ids)
+
+                    # 2. 清理残留的 is_streaming=True 空 assistant 消息
+                    ChatMessage.objects.filter(
+                        session=session_obj,
+                        role=MessageRole.ASSISTANT,
+                        is_deleted=False,
+                        is_streaming=True,
+                        content="",
+                    ).update(is_streaming=False)
+
+                    # 3. 创建 assistant 占位消息
+                    ai_msg = ChatMessage(
+                        session=session_obj,
+                        role=MessageRole.ASSISTANT,
+                        content="",
+                        is_streaming=True,
+                        created_by=_user,
+                        updated_by=_user,
+                    )
+                    ai_msg.save()
+                    assistant_message_id = ai_msg.id
+                    logger.info(
+                        f"[ChatStream] 创建流式消息对: user={user_msg.id}, assistant={ai_msg.id}"
+                    )
+
+                    # 将 assistant 占位消息 ID 传递给 chat_service
+                    data["_assistant_message_id"] = str(assistant_message_id)
+
+                    # 广播 MESSAGE_ADDED 到 WebSocket（强制同步，确保先于 SSE 流到达所有浏览器）
+                    try:
+                        from asgiref.sync import async_to_sync
+
+                        from Django_xm.common.event_schema import EventType
+                        from Django_xm.common.realtime_events import publish_event
+
+                        from .serializers import ChatMessageSerializer as _MsgSerializer
+
+                        for mid in (user_message_id, assistant_message_id):
+                            msg = ChatMessage.objects.get(id=mid)
+                            async_to_sync(publish_event)(
+                                EventType.MESSAGE_ADDED,
+                                {
+                                    "session_id": session_id,
+                                    "message_id": str(mid),
+                                    "message": _MsgSerializer(msg).data,
+                                },
+                                session_id=session_id,
+                            )
+                    except Exception as broadcast_err:
+                        logger.warning(f"[ChatStream] 广播 MESSAGE_ADDED 失败: {broadcast_err}")
             except Exception as e:
                 logger.warning(f"[ChatStream] 创建流式消息失败: {e}")
 
@@ -566,6 +700,42 @@ class ChatStreamView(BaseChatAPIView):
             },
             message="聊天执行任务已启动",
         )
+
+
+class ChatStreamStopView(BaseChatAPIView):
+    """停止生成：发布 SIGNAL_STOP 信令终止后端 agent 执行（Task 9）。
+
+    语义：真正终止 FastAPI 执行服务的执行协程（优雅停止，保留 checkpoint 与
+    已输出内容），而非仅断开前端 SSE。执行协程停止后落库已输出片段并广播
+    stream_completed（携带 stopped 标记），所有浏览器同步最终状态。
+    """
+
+    @extend_schema(exclude=True)
+    @log_view_action
+    def post(self, request):
+        session_id = request.data.get("session_id")
+        if not session_id:
+            return error_response(
+                code=ErrorCode.VALIDATION_FAILED,
+                message="缺少 session_id",
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        session = self.get_session_or_404(session_id, request.user)
+        if not session:
+            return error_response(code=ErrorCode.NOT_FOUND, message="会话不存在", http_status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            publish_signal(SIGNAL_STOP, session_id, {"session_type": SESSION_TYPE_CHAT})
+        except Exception as exc:
+            logger.warning(f"[ChatStreamStop] 发布 SIGNAL_STOP 失败: {exc}")
+            return error_response(
+                code=ErrorCode.INTERNAL_ERROR,
+                message="停止请求发送失败",
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return success_response(data={"stopped": True}, message="停止请求已发送")
 
 
 class ChatModesView(BaseChatAPIView):
@@ -828,6 +998,8 @@ class ChatSessionDetailView(BaseChatAPIView):
             async def _cleanup():
                 await delete_thread_checkpoints(session.session_id)
                 await delete_thread_store_data(request.user.id, session.session_id)
+                # D7.4：会话删除时上层递归回收子代理（仅终止非终态实例）
+                await _terminate_subagents(session.session_id)
 
             run_async(_cleanup())
         except Exception as e:
@@ -1023,6 +1195,15 @@ class ChatMessageDeleteView(BaseChatAPIView):
 
 
 class ChatMessagePairDeleteView(BaseChatAPIView):
+    """链式截断删除：删除第 N 轮及其后全部对话消息（软删除 + checkpoint 重建）。
+
+    会话是顺序链式结构，删除中间轮次会破坏后继依赖（上下文断裂、幻觉），
+    因此删除第 N 轮 user 消息时，级联删除 N 及之后全部消息：
+    - 该 user 消息及其后的所有消息（user/assistant 均含）软删除
+    - 删除后异步重建 checkpoint（仅保留 N 之前消息的上下文）
+    - 广播 MESSAGES_DELETED 供所有浏览器同步移除
+    """
+
     @extend_schema(exclude=True)
     @log_view_action
     @transaction.atomic
@@ -1046,35 +1227,45 @@ class ChatMessagePairDeleteView(BaseChatAPIView):
                 code=ErrorCode.NOT_FOUND, message="用户消息不存在", http_status=status.HTTP_404_NOT_FOUND
             )
 
-        assistant_message = (
+        # 链式截断：删除该 user 消息及其后全部消息（N..末尾），N 之前完整保留
+        deleted_messages = list(
             ChatMessage.objects.filter(
                 session=session,
-                role=MessageRole.ASSISTANT,
                 is_deleted=False,
-                created_at__gt=user_message.created_at,
-            )
-            .order_by("created_at")
-            .first()
+                created_at__gte=user_message.created_at,
+            ).order_by("created_at")
         )
-
-        deleted_messages = [user_message]
-
-        if assistant_message:
-            deleted_messages.append(assistant_message)
+        if not deleted_messages:
+            return success_response(data={"deleted_message_ids": []}, message="无消息可删除")
 
         for msg in deleted_messages:
             msg.soft_delete()
 
         # 事务提交后再重建 checkpoint，否则新线程的数据库连接看不到未提交的 soft_delete
-        session_id = session.session_id
+        session_uuid = session.session_id
         deleted_ids = [m.id for m in deleted_messages]
-        transaction.on_commit(lambda: run_async(_cleanup_checkpoint_messages_async_by_id(session_id, deleted_ids)))
+        transaction.on_commit(
+            lambda: run_async(_cleanup_checkpoint_messages_async_by_id(session_uuid, deleted_ids))
+        )
+
+        # 广播 MESSAGES_DELETED：所有浏览器同步移除被删除消息（含多版本消息对）
+        try:
+            publish_event_sync(
+                EventType.MESSAGES_DELETED,
+                {
+                    "session_id": session_uuid,
+                    "deleted_message_ids": [str(mid) for mid in deleted_ids],
+                },
+                session_id=session_uuid,
+            )
+        except Exception as broadcast_err:
+            logger.warning(f"[ChatStream] 广播 MESSAGES_DELETED 失败: {broadcast_err}")
 
         return success_response(
             data={
-                "deleted_message_ids": [m.id for m in deleted_messages],
+                "deleted_message_ids": deleted_ids,
             },
-            message="消息对删除成功",
+            message="消息链式删除成功",
         )
 
 
@@ -1087,6 +1278,11 @@ class ChatMessageUpdateView(BaseChatAPIView):
         if not message:
             return error_response(code=ErrorCode.NOT_FOUND, message="消息不存在", http_status=status.HTTP_404_NOT_FOUND)
 
+        # 固化检测：is_finalized 由 false→true 时，save 后广播 MESSAGE_FINALIZED
+        # 供所有浏览器同步（其他 Tab 停止固化计时器、禁用重生成、版本切换降级只读）。
+        was_finalized = bool(message.is_finalized)
+        wants_finalize = bool(request.data.get("is_finalized", False))
+
         serializer = ChatMessageSerializer(message, data=request.data, partial=True)
         if not serializer.is_valid():
             return validation_error_response(errors=serializer.errors, message="更新参数错误")
@@ -1094,4 +1290,20 @@ class ChatMessageUpdateView(BaseChatAPIView):
         serializer.save()
         # 重新查询以 prefetch attachments，避免序列化时 N+1
         message = ChatMessage.objects.prefetch_related("attachments").get(pk=message.pk)
+
+        if wants_finalize and not was_finalized and message.is_finalized:
+            try:
+                publish_event_sync(
+                    EventType.MESSAGE_FINALIZED,
+                    {
+                        "session_id": str(message.session.session_id),
+                        "message_id": str(message.id),
+                        "current_version": message.current_version,
+                        "is_finalized": True,
+                    },
+                    session_id=str(message.session.session_id),
+                )
+            except Exception as broadcast_err:
+                logger.warning(f"[ChatMessageUpdate] 广播 MESSAGE_FINALIZED 失败: {broadcast_err}")
+
         return success_response(data=ChatMessageSerializer(message).data, message="消息更新成功")

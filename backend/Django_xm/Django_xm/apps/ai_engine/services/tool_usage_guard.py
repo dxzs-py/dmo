@@ -244,7 +244,7 @@ TOOL_NO_DEDUP: tuple[str, ...] = (
     "get_current_date",
     "project_info",
     "system_status",
-    "agent_list",
+    "spawn_sub_agent",
     "todo_read",  # 读取自身状态，每次都应该返回最新
     "sequentialthinking",  # 思考型工具，每次思考都不同，详见 fingerprint 自身
     "sequential_thinking",

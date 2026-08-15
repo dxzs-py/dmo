@@ -4,11 +4,10 @@
 （高层 → 低层是允许的，低层 → 高层不允许）。
 
 设计动机（Task 15.1）：
-    子代理管理工具（``agent_create`` / ``agent_run`` / ``agent_list`` /
-    ``agent_cleanup``）原位于 ``tools/langchain/agent.py``，但其调用
-    ``agent_hub.create``，违反 ``tools → agent_hub`` 分层。
+    子代理创建工具 ``spawn_sub_agent`` 原位于 ``tools/langchain/agent.py``，
+    但其调用 ``agent_hub.create``，违反 ``tools → agent_hub`` 分层。
     迁入 ``agent_hub/tools/`` 后，需通过注册表让 ``tools.get_all_tools()``
-    仍能发现这些工具。
+    仍能发现该工具。
 
 使用方式：
     # agent_hub/apps.py ready() 中注册（在 agent_hub app 内）

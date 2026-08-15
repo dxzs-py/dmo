@@ -39,6 +39,13 @@ const props = defineProps({
   isSubagentTrigger: {
     type: Boolean,
     default: false
+  },
+  // 审批控件置灰（Agent 图层嵌套规范 Task 6.4）：
+  // 仅「waiting + 活跃版本 + 未固化 + 末尾轮次」可交互，其余场景置灰
+  // （历史版本 / 已固化 / 非末尾轮次消息上的工具审批按钮禁用）
+  approvalDisabled: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -450,11 +457,11 @@ const summaryLine = computed(() =>
             />
           </div>
           <div class="approval-panel__actions">
-            <el-button type="danger" size="small" :disabled="isWaitingForSiblings || isProcessingApproval" @click.stop="emit('reject', toolCall)">拒绝</el-button>
+            <el-button type="danger" size="small" :disabled="isWaitingForSiblings || isProcessingApproval || approvalDisabled" @click.stop="emit('reject', toolCall)">拒绝</el-button>
             <el-button
               type="primary"
               size="small"
-              :disabled="isWaitingForSiblings || isProcessingApproval"
+              :disabled="isWaitingForSiblings || isProcessingApproval || approvalDisabled"
               @click.stop="emit('approve', isConfirmWithInput ? { ...toolCall, _userInput: approvalInputValue } : toolCall)"
             >
               {{ isConfirmWithInput ? '确认并提交' : '确认执行' }}

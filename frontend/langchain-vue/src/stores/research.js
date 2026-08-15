@@ -56,6 +56,10 @@ function _approvalToToolCall(approval) {
     // ToolCallContext 写入）是跨浏览器统一排序依据，与 WS 工具事件透传的 seq
     // 同一来源。loadHistory 刷新重建的 toolCall 据此参与 sortToolCallsForDisplay。
     ...(typeof extra.seq === 'number' && extra.seq > 0 ? { seq: extra.seq } : {}),
+    // position 提升到顶层（Agent 图层嵌套规范 D3）：Approval.extra.position
+    // （后端 enrich_entry_position 写入）是图层内联布局恢复依据，与 WS 工具事件
+    // 透传的 position 同一来源。loadHistory 刷新重建的 toolCall 据此保持内联位置。
+    ...(typeof extra.position === 'number' && extra.position >= 0 ? { position: extra.position } : {}),
     approval: {
       interruptId: approval.interruptId,
       source: approval.source,
@@ -130,9 +134,33 @@ export const useResearchStore = defineStore('research', () => {
         toolCalls: ref([]),
         toolCallMap: ref(new Map()),
         pendingApprovals: ref(new Map()),
+        // 子代理图层正文/中间思考（Agent 图层嵌套规范 Task 1.5）：
+        // key = agentPath 的 ">" 拼接，value = { content, reasoningContent }
+        subagentContents: ref({}),
       }))
     }
     return tasks.value.get(taskId)
+  }
+
+  /**
+   * 更新任务子代理正文/中间思考（spec D10）
+   *
+   * 由 task 频道 stream_subagent_content 事件调用（独立深度研究模式）；
+   * 按 subagentThreadId 聚合（替代旧 agentPath 聚合）；content/reasoningContent 追加累计。
+   *
+   * @param {string} taskId - 研究任务 ID
+   * @param {string} subagentThreadId - 子代理 thread_id
+   * @param {string} content - 本轮子代理正文增量
+   * @param {string} reasoningContent - 本轮子代理中间思考增量
+   */
+  const setTaskSubagentContent = (taskId, subagentThreadId, content, reasoningContent) => {
+    if (!taskId || !subagentThreadId) return
+    const task = _ensureTask(taskId)
+    if (!content && !reasoningContent) return
+    const entry = task.subagentContents.value[subagentThreadId] || { content: '', reasoningContent: '' }
+    if (content) entry.content = (entry.content || '') + content
+    if (reasoningContent) entry.reasoningContent = (entry.reasoningContent || '') + reasoningContent
+    task.subagentContents.value = { ...task.subagentContents.value, [subagentThreadId]: entry }
   }
 
   /**
@@ -477,6 +505,20 @@ export const useResearchStore = defineStore('research', () => {
   }
 
   /**
+   * 获取指定 task 的子代理图层正文/思考索引（Agent 图层嵌套规范 Task 8.3）
+   *
+   * 独立深度研究模式子代理正文的读取入口；聊天触发场景由 session 消息
+   * （message.subagentContents）优先提供，此处为回退来源。
+   *
+   * @param {string} taskId - 研究任务 ID
+   * @returns {Object} { [pathKey]: { content, reasoningContent } }（task 不存在时返回空对象）
+   */
+  const getTaskSubagentContents = (taskId) => {
+    const task = tasks.value.get(taskId)
+    return task ? task.subagentContents.value : {}
+  }
+
+  /**
    * 从后端拉取工具调用历史
    *
    * 工具调用数据的唯一持久化来源是 Approval 模型（source='deep_research', source_id=taskId）。
@@ -604,9 +646,12 @@ export const useResearchStore = defineStore('research', () => {
     updateToolCallApprovalState,     // 与 session.js 对齐：审批状态 + toolCall.status 联动更新
     updateToolCallStatus,
     getToolCalls,
+    getTaskSubagentContents,
     loadHistory,
     clearTask,
     flushPendingApprovals,
+    // 子代理图层正文（Agent 图层嵌套规范 Task 1.5）
+    setTaskSubagentContent,
     // 任务状态管理（统一底层：替代 DeepResearchView 本地 task ref）
     setTaskStatus,
     getTaskStatus,

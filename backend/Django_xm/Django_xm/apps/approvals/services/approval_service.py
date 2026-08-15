@@ -304,6 +304,11 @@ def build_approval_payload(
     # 工具事件到达前获得跨浏览器统一排序依据，与 tool_call_* 事件 payload 的
     # seq 保持一致（同一工具调用排序 key 唯一）。
     service.enrich_entry_seq(extra_fields, _get("tool_call_id") or "")
+    # position 透传（Agent 图层嵌套规范 D3）：从 ToolCallContext 读取图层内
+    # position 写入事件 payload。前端审批占位（isSynthetic）据此在 WS 工具事件
+    # 到达前获得图层内联位置，与 tool_call_* 事件 payload 的 position 一致
+    # （刷新后审批恢复的工具卡保持内联布局，不排末尾）。
+    service.enrich_entry_position(extra_fields, _get("tool_call_id") or "")
     # 子 agent 嵌套层级字段透传（Phase E3，前端展示完整调用链路）
     if approval_extra.get("parent_tool_call_id"):
         extra_fields["parent_tool_call_id"] = approval_extra["parent_tool_call_id"]
@@ -342,6 +347,9 @@ def build_approval_payload(
         "cross_module_id": _get("cross_module_id"),
         "graph_interrupt_id": approval_extra.get("graph_interrupt_id"),
         "extra_fields": extra_fields,
+        # subagent_thread_id：子代理审批事件定向推送路由标识符（spec D10）
+        # 子代理审批记录 extra 中携带，主会话审批为空；publish_approval 据此注入事件顶层
+        "subagent_thread_id": approval_extra.get("subagent_thread_id") or "",
     }
     # remaining_pending_count 由 sync/async 双路径计算后注入（默认 _UNSET 不注入）
     if remaining_pending_count is not _UNSET:
@@ -1059,6 +1067,10 @@ def sync_approval_state_to_chat_message(approval: Approval, state: str) -> bool:
         # 透传同一来源），确保审批恢复后新追加的 tool_call（如 fs_write_file）
         # 在 API 快照中也带 seq，前端跨浏览器统一排序依据一致（防刷新后工具调用乱序）。
         service.enrich_entry_seq(target_tc, tool_call_id)
+        # position 补齐（Agent 图层嵌套规范 D3）：审批恢复后新追加的 tool_call
+        # 在 API 快照中也带 position，前端刷新后图层内联布局恢复依据一致
+        # （防刷新后工具调用排末尾/乱序）。
+        service.enrich_entry_position(target_tc, tool_call_id)
         tool_calls.append(target_tc)
         logger.info(
             f"[ApprovalService] sync_approval_state_to_chat_message: 已重建缺失 tool_call 项, "
@@ -1210,6 +1222,8 @@ _EXTRA_PASSTHROUGH_FIELDS = (
     "agent_path",
     "graph_interrupt_id",
     "langgraph_resume_id",
+    # subagent_thread_id：子代理 SSE 定向推送路由标识符（spec D10）
+    "subagent_thread_id",
 )
 
 
@@ -1336,6 +1350,13 @@ def request_approval(
         extra_data,
         extra_data.get("tool_call_id") or approval_data.get("tool_call_id") or interrupt_id,
     )
+    # position 补齐（Agent 图层嵌套规范 D3）：写入 Approval.extra，使深度研究
+    # 模块 loadHistory（Approval 为唯一持久化来源）刷新后重建的 toolCall 带
+    # position，前端图层内联布局恢复依据一致（防刷新后工具调用排末尾/乱序）。
+    service.enrich_entry_position(
+        extra_data,
+        extra_data.get("tool_call_id") or approval_data.get("tool_call_id") or interrupt_id,
+    )
 
     # M4: 创建时设置 expires_at = now + APPROVAL_TIMEOUT_SECONDS
     from django.utils import timezone as _tz
@@ -1418,6 +1439,13 @@ async def request_approval_async(
     # enrich_entry_seq 从 ToolCallContext 读取 register 分配的全局递增序号写入
     # Approval.extra，使深度研究模块 loadHistory 刷新后重建的 toolCall 带 seq。
     service.enrich_entry_seq(
+        extra_data,
+        extra_data.get("tool_call_id") or approval_data.get("tool_call_id") or interrupt_id,
+    )
+    # position 补齐（Agent 图层嵌套规范 D3）：写入 Approval.extra，使深度研究
+    # 模块 loadHistory（Approval 为唯一持久化来源）刷新后重建的 toolCall 带
+    # position，前端图层内联布局恢复依据一致（防刷新后工具调用排末尾/乱序）。
+    service.enrich_entry_position(
         extra_data,
         extra_data.get("tool_call_id") or approval_data.get("tool_call_id") or interrupt_id,
     )

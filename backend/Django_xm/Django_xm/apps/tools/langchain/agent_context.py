@@ -2,18 +2,17 @@
 子 Agent 工具上下文管理器
 
 在主 Agent 执行期间，保存当前会话的工具配置（工具名列表、联网/MCP 标志），
-供 agent_create / agent_run 工具读取，实现子 Agent 继承父 Agent 的工具集。
+供 ``spawn_sub_agent`` 工具读取，实现子 Agent 继承父 Agent 的工具集。
 
 典型流程：
 1. 主 Agent 开始执行 → set_parent_tool_context(tools, config)
-2. agent_create 被调用 → get_parent_tool_context() → 保存到 agent meta
-3. agent_run 被调用 → 从 meta 读取 → 重新加载工具 → 创建子 Agent
-4. 主 Agent 执行结束 → clear_parent_tool_context()
+2. ``spawn_sub_agent`` 被调用 → get_parent_tool_context() → 继承工具集 / 深度检测
+3. 主 Agent 执行结束 → clear_parent_tool_context()
 
 递归深度控制：
 - 通过 agent_depth 追踪当前嵌套层级
 - 默认最大深度 MAX_AGENT_DEPTH=3（主代理=0，子代理=1，孙代理=2，曾孙代理=3）
-- 超过最大深度时 agent_create 返回错误，阻止无限嵌套
+- 超过最大深度时拒绝派生，阻止无限嵌套
 """
 
 import threading

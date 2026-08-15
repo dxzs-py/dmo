@@ -403,7 +403,7 @@ watchDebounced(() => sessionStore.currentSessionId, async (newId, oldId) => {
         <ChatInput
           ref="chatInputRef"
           v-model="inputMessage"
-          :disabled="chatStore.isLoading"
+          :disabled="chatStore.isLoading || chatStore.isDeleting"
           :loading="chatStore.isLoading"
           :is-streaming="chatStore.isStreaming"
           :use-web-search="useWebSearch"

@@ -68,6 +68,10 @@ def _load_approval_history_from_db(task_id: str) -> list[dict]:
                 approval_data["agent_path"] = extra["agent_path"]
             if extra.get("risk_ceiling"):
                 approval_data["risk_ceiling"] = extra["risk_ceiling"]
+            # subagent_thread_id（spec D10）：子代理审批定向推送路由标识符，
+            # 刷新后前端据此将审批归集到对应子代理卡片
+            if extra.get("subagent_thread_id"):
+                approval_data["subagent_thread_id"] = extra["subagent_thread_id"]
             if approval.user_input:
                 approval_data["user_input"] = approval.user_input
             result.append(approval_data)

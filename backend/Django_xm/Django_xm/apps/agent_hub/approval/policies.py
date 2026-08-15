@@ -252,37 +252,21 @@ class FsWriteFileApprovalPolicy(ApprovalPolicy):
         return "medium"
 
 
-class AgentCleanupApprovalPolicy(ApprovalPolicy):
-    """agent_cleanup 工具审批策略
+class SpawnApprovalPolicy(ApprovalPolicy):
+    """spawn_sub_agent 工具审批策略。
 
-    风险分级（RiskLevel）：
-        - 指定 agent_id（单个清理）→ SAFE（自动通过，仅审计）
-        - 未指定 agent_id（批量清理）→ CONTROLLED（批量操作有风险，需审批）
+    派生子代理有明确副作用（新建执行环境、分配独立 checkpoint），固定 CONTROLLED。
     """
 
-    tool_name = "agent_cleanup"
-    # 清理操作有副作用，但批量才需要审批
+    tool_name = "spawn_sub_agent"
     is_write_operation = True
 
     def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
-        """评估 agent_cleanup 风险等级。
-
-        批量清理（未指定 agent_id）风险较高，需用户审批。
-        单个清理自动通过（仅审计）。
-        """
-        agent_id = args.get("agent_id", "")
-        if not agent_id:
-            return self._apply_subagent_weighting(RiskLevel.CONTROLLED, subagent_context)
-        return RiskLevel.SAFE  # 单个清理，自动通过
+        return self._apply_subagent_weighting(RiskLevel.CONTROLLED, subagent_context)
 
     def assess_danger(self, args: dict) -> str:
-        """旧格式危险等级（兼容 DB 字段 danger_level）。"""
         risk = self.assess_risk(args)
-        if risk == RiskLevel.HIGH:
-            return "high"
-        elif risk == RiskLevel.SAFE:
-            return "low"
-        return "medium"
+        return "medium" if risk == RiskLevel.CONTROLLED else "low"
 
 
 # ── deepagents 框架工具审批策略 ──────────────────────────────────
@@ -399,40 +383,6 @@ class ReadFileApprovalPolicy(FileReaderApprovalPolicy):
 
 
 # ── 其他工具审批策略 ──────────────────────────────────────────────
-
-
-class AgentCreateApprovalPolicy(ApprovalPolicy):
-    """agent_create 工具审批策略。
-
-    创建子 Agent 有明确副作用（新建执行环境、分配资源），固定 CONTROLLED。
-    """
-
-    tool_name = "agent_create"
-    is_write_operation = True
-
-    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
-        return self._apply_subagent_weighting(RiskLevel.CONTROLLED, subagent_context)
-
-    def assess_danger(self, args: dict) -> str:
-        risk = self.assess_risk(args)
-        return "medium" if risk == RiskLevel.CONTROLLED else "low"
-
-
-class AgentRunApprovalPolicy(ApprovalPolicy):
-    """agent_run 工具审批策略。
-
-    运行子 Agent 执行任意任务，有明确副作用，固定 CONTROLLED。
-    """
-
-    tool_name = "agent_run"
-    is_write_operation = True
-
-    def assess_risk(self, args: dict, *, subagent_context: dict | None = None) -> RiskLevel:
-        return self._apply_subagent_weighting(RiskLevel.CONTROLLED, subagent_context)
-
-    def assess_danger(self, args: dict) -> str:
-        risk = self.assess_risk(args)
-        return "medium" if risk == RiskLevel.CONTROLLED else "low"
 
 
 class TodoWriteApprovalPolicy(ApprovalPolicy):

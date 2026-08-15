@@ -53,6 +53,9 @@ def _result(success=True, error_message=""):
         error_message=error_message,
         reasoning="reasoning" if success else "",
         raw_result=None,
+        suspended=False,
+        subagent_thread_id="",
+        interrupt_id="",
     )
 
 

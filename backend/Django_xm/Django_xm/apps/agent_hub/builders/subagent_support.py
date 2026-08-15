@@ -22,16 +22,16 @@ deepagents 0.7.5 升级后，原 ``subagent_patch.py`` 的 monkey-patch 机制�
      经父 config 自动传播（langgraph ensure_config 逐 key merge）到子 agent。
 
 最大嵌套深度（Task 1）：
-- deepagents inline subagent 链路与 langgraph ``agent_create``/``agent_run`` 链路
-  共用同一 ``MAX_AGENT_DEPTH`` 常量（apps/tools/langchain/agent_context.py，=3，
+- deepagents inline subagent 链路与 ``spawn_sub_agent`` 链路共用同一
+  ``MAX_AGENT_DEPTH`` 常量（apps/tools/langchain/agent_context.py，=3，
   语义：主=0/子=1/孙=2/曾孙=3）。
 - ``SubAgentNestingMiddleware.before_model`` 计算 ``subagent_depth = parent_depth + 1``，
   超过 ``MAX_AGENT_DEPTH`` 时写入 ``subagent_depth_blocked=True`` 标记（不抛异常）；
   随后 ``wrap_model_call`` / ``awrap_model_call`` 检查该标记，**拦截子 agent 的模型调用**
   并返回含明确错误（当前深度与最大深度）的 AIMessage。子 agent 因此不执行任何任务，
   正常结束；deepagents task 工具（_return_command_with_state_update）将该 AIMessage
-  文本转为 ToolMessage 回传主 agent——与 langgraph 链路 ``agent_create`` 返回错误 JSON
-  的语义一致：主 agent 收到明确错误后调整策略继续，不产生无限嵌套，也不破坏主 agent
+  文本转为 ToolMessage 回传主 agent——与超限拒绝派生的语义一致：主 agent 收到明确
+  错误后调整策略继续，不产生无限嵌套，也不破坏主 agent
   执行流（不抛异常，避免经 ToolNode 冒泡导致主 graph 失败）。
 
 命名规范：
@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 
 
 def _build_depth_blocked_message(current_depth: int) -> str:
-    """构造子代理嵌套深度超限错误消息（与 agent_management.is_max_depth_reached 语义一致）。"""
+    """构造子代理嵌套深度超限错误消息（与 agent_context.is_max_depth_reached 语义一致）。"""
     return (
         f"已达到最大子代理嵌套深度({MAX_AGENT_DEPTH})，当前深度={current_depth}。"
         f"请直接在当前代理中完成任务，不要创建更多子代理。"
@@ -67,8 +67,8 @@ class SubAgentNestingState(TypedDict, total=False):
         subagent_depth: 嵌套层级（1=一级子 agent，2=二级子 agent）
         subagent_path: 完整调用链路（如 ["main", "general-purpose"]）
         subagent_risk_ceiling: 子 agent 角色风险上限（RiskLevel 字符串值）
-        subagent_description: 子 agent 角色描述（任务目标，取自 deep_builder
-            的 SubAgent 静态 description，供前端组头展示）
+        subagent_description: 子 agent 角色描述（任务目标，取自 subagent_runtime.registry，
+            供前端组头展示）
         subagent_depth_blocked: 深度超限标记（True=超过 MAX_AGENT_DEPTH，
             由 wrap_model_call / awrap_model_call 拦截模型调用）
     """
@@ -103,6 +103,15 @@ def _read_agent_name() -> str:
         return ""
 
 
+def _read_subagent_thread_id() -> str:
+    """读取子代理路由标识符（spec D10 SSE 定向推送）。
+
+    ``subagent_thread_id`` 由 SubAgentRuntime 适配器写入 configurable
+    （LangGraphAdapter._build_configurable），主 agent 无此字段（返回空串）。
+    """
+    return _read_configurable().get("subagent_thread_id") or ""
+
+
 class SubAgentNestingMiddleware(AgentMiddleware):
     """子 agent 嵌套层级注入中间件。
 
@@ -122,39 +131,35 @@ class SubAgentNestingMiddleware(AgentMiddleware):
 
         Args:
             risk_ceiling: 子 agent 角色风险上限（RiskLevel 字符串值）兜底值。
-                before_model 时优先从 deep_builder._SUBAGENT_RISK_CEILINGS
-                按子 agent 名称动态查询（web-researcher/doc-analyst=CONTROLLED，
-                general-purpose=HIGH），查询失败回退到此值。
+                before_model 时优先从 subagent_runtime.registry 按子 agent 名称
+                动态查询（web-researcher/doc-analyst=controlled，
+                general-purpose=high），查询失败回退到此值。
                 共享同一实例也可为不同子 agent 提供正确 ceiling。
         """
         super().__init__()
         self.risk_ceiling = risk_ceiling
 
     def _resolve_risk_ceiling(self, agent_name: str) -> str:
-        """按子 agent 名称解析角色风险上限。"""
+        """按子 agent 名称解析角色风险上限（单一来源：subagent_runtime.registry）。"""
         if agent_name:
             try:
-                from Django_xm.apps.agent_hub.builders.deep_builder import _SUBAGENT_RISK_CEILINGS
+                from Django_xm.apps.ai_engine.subagent_runtime.registry import get_subagent_spec
 
-                ceiling = _SUBAGENT_RISK_CEILINGS.get(agent_name)
-                if ceiling is not None:
-                    return ceiling.value if hasattr(ceiling, "value") else str(ceiling)
+                spec = get_subagent_spec(agent_name)
+                if spec is not None:
+                    return spec.risk_ceiling
             except Exception as exc:
                 logger.debug(f"[SubAgentNesting] 风险上限查询失败(非致命): {exc}")
         return self.risk_ceiling
 
     def _resolve_description(self, agent_name: str) -> str:
-        """按子 agent 名称解析角色描述（任务目标，供前端组头展示）。
-
-        description 单一来源：deep_builder 的 ``_SUBAGENT_DESCRIPTIONS`` 注册表
-        （与 SubAgent 静态 description 一致，如 web-researcher = "网络搜索和信息整理专家…"）。
-        查询失败时返回空串（主 agent / 未知子 agent 不携带 description）。
-        """
+        """按子 agent 名称解析角色描述（单一来源：subagent_runtime.registry）。"""
         if agent_name:
             try:
-                from Django_xm.apps.agent_hub.builders.deep_builder import _SUBAGENT_DESCRIPTIONS
+                from Django_xm.apps.ai_engine.subagent_runtime.registry import get_subagent_spec
 
-                return _SUBAGENT_DESCRIPTIONS.get(agent_name, "") or ""
+                spec = get_subagent_spec(agent_name)
+                return spec.description if spec else ""
             except Exception as exc:
                 logger.debug(f"[SubAgentNesting] 子 agent 描述查询失败(非致命): {exc}")
         return ""
@@ -162,11 +167,11 @@ class SubAgentNestingMiddleware(AgentMiddleware):
     def before_model(self, state: dict[str, Any], runtime) -> dict[str, Any] | None:
         """计算并写入当前子 agent 的嵌套层级字段。
 
-        深度限制（Task 1，与 langgraph agent_create/agent_run 链路共用 MAX_AGENT_DEPTH）：
+        深度限制（Task 1，与 ``spawn_sub_agent`` 派生共用 MAX_AGENT_DEPTH）：
         计算 ``subagent_depth = parent_depth + 1`` 后，若超过 ``MAX_AGENT_DEPTH``（=3，
         主=0/子=1/孙=2/曾孙=3），写入 ``subagent_depth_blocked=True`` 标记（不抛异常，
         避免经 ToolNode 冒泡破坏主 agent 执行流）。随后 wrap_model_call / awrap_model_call
-        检查该标记拦截模型调用并返回明确错误，与 agent_management.is_max_depth_reached
+        检查该标记拦截模型调用并返回明确错误，与 agent_context.is_max_depth_reached
         分支语义一致（主 agent 收到含当前/最大深度的错误后调整策略继续）。
         """
         configurable = _read_configurable()
@@ -178,7 +183,9 @@ class SubAgentNestingMiddleware(AgentMiddleware):
         if not isinstance(parent_path, list):
             parent_path = ["main"]
 
-        agent_name = _read_agent_name()
+        # agent_name 优先从 configurable 读（spawn_sub_agent 派生注入），
+        # 回退 create_agent metadata（deepagents 子代理）。
+        agent_name = configurable.get("agent_name") or _read_agent_name()
         subagent_depth = parent_depth + 1
         child_path = [*parent_path, agent_name] if agent_name else [*parent_path]
         risk_ceiling = self._resolve_risk_ceiling(agent_name)
@@ -211,7 +218,7 @@ class SubAgentNestingMiddleware(AgentMiddleware):
         子 agent 因超限被标记 blocked 后，本钩子截断其执行：模型调用被替换为
         含明确错误（当前深度/最大深度）的 AIMessage（无 tool_calls），子 agent
         因此不执行任何任务并正常结束；deepagents task 工具将该 AIMessage 文本
-        转为 ToolMessage 回传主 agent（与 langgraph agent_create 返回错误 JSON 一致）。
+        转为 ToolMessage 回传主 agent（与超限拒绝派生返回错误语义一致）。
         """
         if request.state.get("subagent_depth_blocked"):
             current_depth = request.state.get("subagent_depth", 0)
@@ -305,6 +312,11 @@ class SubAgentToolEventMiddleware(AgentMiddleware):
             kwargs["risk_ceiling"] = nesting["risk_ceiling"]
         if depth > 0 and nesting.get("description"):
             kwargs["description"] = nesting["description"]
+        # subagent_thread_id（spec D10）：子代理 SSE 定向推送路由标识符，
+        # 从 configurable 读取（SubAgentRuntime 适配器注入），仅子代理非空。
+        subagent_thread_id = _read_subagent_thread_id()
+        if subagent_thread_id:
+            kwargs["subagent_thread_id"] = subagent_thread_id
         try:
             await on_tool_event(event_type, tool_call_id, tool_name, **kwargs)
         except Exception as exc:
@@ -314,7 +326,12 @@ class SubAgentToolEventMiddleware(AgentMiddleware):
             )
 
     async def aafter_model(self, state: dict[str, Any], runtime) -> dict[str, Any] | None:
-        """转发本轮模型产生的工具调用 PENDING 事件。"""
+        """转发本轮模型产生的工具调用 PENDING 事件。
+
+        仅对子代理（depth > 0）转发：主 agent（depth=0/缺失）的工具事件由
+        主执行链路（run_stream_loop._publish_input_ready_events / adapter 主循环）
+        统一发布，本中间件若转发主 agent 事件会导致重复发布。
+        """
         from langchain_core.messages import AIMessage
 
         from Django_xm.common.event_schema import EventType
@@ -333,6 +350,9 @@ class SubAgentToolEventMiddleware(AgentMiddleware):
             return None
 
         nesting = _extract_nesting_from_state(state)
+        # 仅子代理（depth > 0）转发；主 agent 工具事件由主链路发布
+        if not isinstance(nesting.get("depth", 0), int) or nesting.get("depth", 0) <= 0:
+            return None
         agent_name = _read_agent_name()
         if agent_name:
             nesting["agent_name"] = agent_name
@@ -358,7 +378,10 @@ class SubAgentToolEventMiddleware(AgentMiddleware):
         return None
 
     async def awrap_tool_call(self, request, execute):
-        """捕获工具执行结果，转发 COMPLETED / FAILED 事件。"""
+        """捕获工具执行结果，转发 COMPLETED / FAILED 事件。
+
+        仅对子代理（depth > 0）转发；主 agent 工具事件由主链路发布。
+        """
         from Django_xm.common.event_schema import EventType
 
         tc = request.tool_call
@@ -368,6 +391,9 @@ class SubAgentToolEventMiddleware(AgentMiddleware):
 
         on_tool_event = _read_configurable().get("_on_tool_event")
         nesting = _extract_nesting_from_state(request.state)
+        # 仅子代理（depth > 0）转发；主 agent 工具事件由主链路发布
+        if not isinstance(nesting.get("depth", 0), int) or nesting.get("depth", 0) <= 0:
+            return await execute(request)
         agent_name = _read_agent_name()
         if agent_name:
             nesting["agent_name"] = agent_name
@@ -407,3 +433,100 @@ class SubAgentToolEventMiddleware(AgentMiddleware):
                 nesting=nesting,
             )
         return result
+
+
+class SubAgentContentMiddleware(AgentMiddleware):
+    """子代理正文/中间思考流采集中间件（Agent 图层嵌套规范）。
+
+    在子代理每次模型调用后（``aafter_model``）捕获本轮 AIMessage 的正文
+    （``content``）与中间思考（``reasoning_content``），经 configurable 中
+    父执行层注入的 ``_on_subagent_content`` 回调转发到父 SSE/WS 流。
+
+    回调签名（由 adapter.py / chat 执行层注入，async）：
+        on_subagent_content(agent_path, content, reasoning_content, agent_name, depth)
+
+    - 仅 depth > 0（子代理）的图层捕获转发；主 agent（depth=0/缺失）不捕获。
+    - 嵌套层级字段（depth/agent_path/agent_name）取自 state（SubAgentNestingMiddleware
+      在 before_model 写入）。
+    - 前端按 agent_path 路由到对应子代理图层，与工具事件同一归属语义；
+      reasoning 与 content 独立字段透传（前端分别累计展示）。
+    - 与 SubAgentToolEventMiddleware 同机制：父 config 经 langgraph ensure_config
+      自动传播到子 agent，本中间件从 configurable 读取回调。
+    """
+
+    name = "subagent_content"
+    state_schema = SubAgentNestingState
+
+    @staticmethod
+    def _extract_reasoning(msg) -> str:
+        """从 AIMessage 提取中间思考内容（兼容 DeepSeek/Ollama/Anthropic）。"""
+        if msg is None:
+            return ""
+        try:
+            from Django_xm.apps.chat.services.stream_chunk_processors import extract_thinking_content
+
+            return extract_thinking_content(msg) or ""
+        except Exception:
+            pass
+        # 兜底：additional_kwargs.reasoning_content 直接读取
+        try:
+            additional_kwargs = getattr(msg, "additional_kwargs", {}) or {}
+            reasoning = additional_kwargs.get("reasoning_content")
+            if isinstance(reasoning, str):
+                return reasoning
+        except Exception:
+            pass
+        return ""
+
+    async def aafter_model(self, state: dict[str, Any], runtime) -> dict[str, Any] | None:
+        """捕获本轮子代理模型输出的正文与中间思考，转发到父流。"""
+        from langchain_core.messages import AIMessage
+
+        on_subagent_content = _read_configurable().get("_on_subagent_content")
+        if on_subagent_content is None:
+            return None
+
+        nesting = _extract_nesting_from_state(state)
+        depth = nesting.get("depth", 0)
+        # 仅子代理（depth > 0）捕获；主 agent（depth=0/缺失）不捕获
+        if not isinstance(depth, int) or depth <= 0:
+            return None
+        agent_path = nesting.get("agent_path") or []
+        if not agent_path:
+            return None
+
+        messages = state.get("messages", []) or []
+        last_ai_msg = None
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage):
+                last_ai_msg = msg
+                break
+        if last_ai_msg is None:
+            return None
+
+        content = getattr(last_ai_msg, "content", None) or ""
+        reasoning = self._extract_reasoning(last_ai_msg)
+        if not content and not reasoning:
+            return None
+
+        agent_name = _read_agent_name()
+        subagent_thread_id = _read_subagent_thread_id()
+        try:
+            await on_subagent_content(
+                agent_path=agent_path,
+                content=content,
+                reasoning_content=reasoning,
+                agent_name=agent_name,
+                depth=depth,
+                subagent_thread_id=subagent_thread_id,
+            )
+            logger.debug(
+                f"[SubAgentContent] 转发子代理正文: agent={agent_name or agent_path[-1]}, "
+                f"content_len={len(content)}, reasoning_len={len(reasoning)}"
+            )
+        except Exception as exc:
+            logger.warning(
+                f"[SubAgentContent] 子代理正文转发失败: "
+                f"agent={agent_name or agent_path[-1]}, err={exc}"
+            )
+        return None

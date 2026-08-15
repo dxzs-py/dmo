@@ -15,6 +15,7 @@ import { ChatRequestSchema, validateSchema } from '../utils/validation'
 import { logger } from '../utils/logger'
 import { transformFrontendMessageToBackend } from '../utils/sessionTransformers'
 import { getInterruptId } from '../utils/messageOperations'
+import { StreamState } from '../types'
 
 /**
  * 聊天深度研究桥接层模块加载缓存（惰性动态加载）
@@ -34,6 +35,10 @@ const _getChatDeepResearch = async () => {
 
 export const useChatStore = defineStore('chat', () => {
   const isLoading = ref(false)
+  // 链式删除进行中标记（Task 7.4）：删除期间置灰禁用发送/重新生成，
+  // 避免删除与消息写入并发造成上下文错乱；删除完成（HTTP 返回或
+  // messages_deleted 事件处理）后恢复。
+  const isDeleting = ref(false)
   const currentMode = ref('agent')
   const availableModes = ref({
     'agent': '代理',
@@ -47,7 +52,7 @@ export const useChatStore = defineStore('chat', () => {
   const {
     isStreaming,
     abortController,
-    abort: stopStreaming,
+    abort: abortStreamChat,
     streamChat,
     connectionStatus,
     lastError,
@@ -59,16 +64,65 @@ export const useChatStore = defineStore('chat', () => {
   const isReconnecting = computed(() => connectionStatus.value === CONNECTION_STATUS.RECONNECTING)
   const isConnecting = computed(() => connectionStatus.value === CONNECTION_STATUS.CONNECTING)
 
+  // 当前流式类型（Task 9）：区分「普通发送」与「重新生成」，
+  // 用户停止时据此标记 stopped（允许固化）/ incomplete（禁止固化）
+  let _streamKind = null
+
+  /**
+   * 停止生成（Task 9）：三路径终止。
+   * 1. 前端中止：abort waitForStreamEnd / AbortController，立即恢复 UI 交互；
+   * 2. 后端停止：发布 SIGNAL_STOP 信令，终止 FastAPI 执行协程（优雅停止，
+   *    保留 checkpoint 与已输出内容），而非仅断开前端 SSE；
+   * 3. 状态标记：普通发送停止 → 消息标记 stopped（允许固化为主版本）；
+   *    重生成中断 → 当前版本标记 incomplete（禁止固化为主版本）。
+   */
+  const stopStreaming = () => {
+    abortStreamChat()
+    const sessionStore = useSessionStore()
+    const sessionId = sessionStore.currentSessionId
+
+    // 后端停止信令（fire-and-forget，不阻塞 UI 恢复）
+    if (sessionId) {
+      chatAPI.stopStreaming(sessionId).catch(error => {
+        logger.warn('[ChatStore] 后端停止请求失败（前端已中止，等待执行服务自停）:', error?.message || error)
+      })
+    }
+
+    // 本地状态标记（触发浏览器即时反馈；非触发浏览器由后端 stream_completed(stopped) 广播同步）
+    const messages = sessionStore.getSessionMessages(sessionId) || []
+    const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant')
+    if (lastAssistant) {
+      if (_streamKind === 'regenerate') {
+        // 重生成中断：当前版本标记 incomplete，禁止固化为本轮主消息
+        const currentVer = lastAssistant.versions?.[lastAssistant.currentVersion]
+        if (currentVer) {
+          currentVer.incomplete = true
+          currentVer.streamState = StreamState.COMPLETED
+          currentVer.isStreaming = false
+        }
+        lastAssistant.streamState = StreamState.COMPLETED
+      } else {
+        // 普通发送停止：保留已输出内容，标记 stopped（允许固化为主版本）
+        lastAssistant.stopped = true
+        lastAssistant.streamState = StreamState.COMPLETED
+      }
+      lastAssistant.isStreaming = false
+    }
+    _streamKind = null
+  }
+
   const sendMessage = async (message, options = {}) => {
     logger.log('[ChatStore] sendMessage called')
 
     // Task 6.1：入口幂等守卫——置于所有 await 之前。
     // 此前 isLoading 在 createNewSession（await）之后才置 true，await 窗口内
     // 并发调用可同时进入并创建双份 user/assistant 占位消息。
-    if (isLoading.value) {
-      logger.warn('[ChatStore] sendMessage ignored: 已有消息正在发送中 (isLoading)')
+    if (isLoading.value || isDeleting.value) {
+      logger.warn('[ChatStore] sendMessage ignored: 已有消息正在发送中或删除进行中 (isLoading/isDeleting)')
       return
     }
+    // Task 9：记录流式类型，用户停止时标记 stopped（普通发送）
+    _streamKind = 'send'
 
     const sessionStore = useSessionStore()
     const modelStore = useModelStore()
@@ -114,6 +168,15 @@ export const useChatStore = defineStore('chat', () => {
 
     isLoading.value = true
     lastStreamError.value = null
+    // Task 6.2：发送新消息前固化末轮未固化多版本（版本固化触发条件①）。
+    // 将当前选中版本固化为该轮主消息并持久化，后续 LLM 上下文以固化版本为准。
+    // 新会话（无消息）或末轮无多版本时静默跳过；固化失败不阻塞发送（尽力而为，
+    // LangGraph checkpoint 才是服务端上下文的权威来源）。
+    try {
+      await sessionStore.finalizeLatestMessage(sessionId)
+    } catch (finalizeErr) {
+      logger.warn('[ChatStore] 发送前版本固化失败（不阻塞发送）:', finalizeErr)
+    }
     // 通知 syncStore 流式开始，跳过 WebSocket message_updated（避免 SSE 流式内容被快照覆盖）
     const syncStore = useSyncStore()
     syncStore.startStreaming(sessionId)
@@ -275,17 +338,23 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const regenerateMessage = async (messageIndex) => {
-    // Task 6.1：发送类方法入口幂等守卫，防止并发重复生成双流
-    if (isLoading.value) {
-      logger.warn('[ChatStore] regenerateMessage ignored: 已有消息正在发送中 (isLoading)')
+    // Task 6.1：发送类方法入口幂等守卫，防止并发重复生成双流；
+    // 链式删除进行中（Task 7.4）同样拒绝，避免删除与重新生成并发脏写
+    if (isLoading.value || isDeleting.value) {
+      logger.warn('[ChatStore] regenerateMessage ignored: 已有消息正在发送中或删除进行中 (isLoading/isDeleting)')
       return
     }
+    // Task 9：记录流式类型，用户停止时标记 incomplete（重生成中断，禁止固化）
+    _streamKind = 'regenerate'
 
     const sessionStore = useSessionStore()
     const modelStore = useModelStore()
     const sid = sessionStore.currentSessionId
     const selectedKnowledgeBaseId = sessionStore.selectedKnowledgeBase?.id || null
     const messages = sessionStore.getSessionMessages(sid)
+
+    // Task 6.1：点击重新生成属于有效操作，重置版本固化计时器
+    sessionStore.resetFinalizeTimer(sid)
 
     if (messageIndex < 1 || !messages?.length || messages.length < 2) return
 
@@ -326,6 +395,11 @@ export const useChatStore = defineStore('chat', () => {
       reasoning: null,
       suggestions: null,
       context: null,
+      // 与 handleMessageRegenerated 的新版本结构对齐：标记 STREAMING + isStreaming，
+      // 使触发浏览器收到自身 message_regenerated 事件时幂等检查（空 STREAMING 版本）命中，
+      // 避免重复归档产生多余空版本。
+      streamState: StreamState.STREAMING,
+      isStreaming: true,
     })
     currentMessage.currentVersion = currentMessage.versions.length - 1
 
@@ -337,6 +411,8 @@ export const useChatStore = defineStore('chat', () => {
     currentMessage.reasoning = null
     currentMessage.suggestions = null
     currentMessage.context = null
+    currentMessage.streamState = StreamState.STREAMING
+    currentMessage.isStreaming = true
 
     isLoading.value = true
     lastStreamError.value = null
@@ -378,6 +454,10 @@ export const useChatStore = defineStore('chat', () => {
           specialParams: regenSpecialParams,
           temperature: modelConfig.temperature || null,
           maxTokens: modelConfig.maxTokens || null,
+          // 重新生成语义：复用已有消息对（user/assistant 消息 ID），后端不新建消息对
+          regenerate: true,
+          userMessageId: userMessage.backendId || userMessage.id,
+          assistantMessageId: currentMessage.backendId || currentMessage.id,
         })
 
       if (!result.success && !result.aborted) {
@@ -398,6 +478,9 @@ export const useChatStore = defineStore('chat', () => {
       if (result.success && !result.aborted) {
         const { finalizeStream } = useStreamFinalizer()
         await finalizeStream(sid, currentMessage, { messageIndex, allowCreate: false })
+        // Task 6.3：流式结束后末轮存在未固化多版本，重新启动 5 分钟超时固化
+        // 计时器（重新生成完成且用户无有效操作时超时固化当前选中版本）
+        sessionStore.resetFinalizeTimer(sid)
       }
     } finally {
       clearInterval(streamSyncTimer)
@@ -467,9 +550,15 @@ export const useChatStore = defineStore('chat', () => {
 
   const deleteMessagePair = async (sessionId, backendId, frontendId) => {
     const sessionStore = useSessionStore()
-    await chatAPI.deleteMessagePair(sessionId, backendId)
-    sessionStore.removeMessagePairFromSession(sessionId, frontendId || backendId)
-    ElMessage.success('消息已删除')
+    // 删除期间置灰禁用发送/重新生成（Task 7.4），删除完成恢复
+    isDeleting.value = true
+    try {
+      await chatAPI.deleteMessagePair(sessionId, backendId)
+      sessionStore.removeMessagePairFromSession(sessionId, frontendId || backendId)
+      ElMessage.success('消息已删除')
+    } finally {
+      isDeleting.value = false
+    }
   }
 
   /**
@@ -499,6 +588,7 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     isLoading,
+    isDeleting,
     isStreaming,
     currentMode,
     availableModes,

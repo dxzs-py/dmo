@@ -75,6 +75,14 @@ export const createHandleTaskEvent = (ctx) => {
     const payload = event.payload || event
     const source = payload.source || 'deep_research'
 
+    // subagent_thread_id（spec D10）：事件顶层协议路由标识符（snake_case，不参与
+    // camelCase 转换），由 useRealtimeSync.onMessage 还原后保留在 event 顶层。
+    // 注入 payload.subagentThreadId（camelCase）供下游 toolCallHandler / approval
+    // 归集按子代理 thread 路由。
+    if (event.subagent_thread_id) {
+      payload.subagentThreadId = event.subagent_thread_id
+    }
+
     switch (event.type) {
       // 工具调用事件类型（每个 EventType 独立 ws_event_name）
       case 'tool_call_pending':
@@ -160,6 +168,16 @@ export const createHandleTaskEvent = (ctx) => {
       case 'stream_reasoning':
         researchStore.setTaskReasoning(taskId, payload)
         break
+      // 子代理图层正文/中间思考（task 通道，独立深度研究模式）
+      // spec D10：按 subagentThreadId 路由写入 task.subagentContents[threadId]
+      case 'stream_subagent_content': {
+        const data = payload.data || payload
+        const subagentThreadId = payload.subagentThreadId || data.subagentThreadId || ''
+        if (subagentThreadId) {
+          researchStore.setTaskSubagentContent(taskId, subagentThreadId, data.content || '', data.reasoningContent || '')
+        }
+        break
+      }
       default:
         logger.debug(`[Sync] 未处理的 task 事件: ${event.type}`)
     }

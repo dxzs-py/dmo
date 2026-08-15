@@ -191,10 +191,7 @@ _REMOVABLE_TOOL_CATEGORIES = {
             # MCP 工具
             "sequentialthinking",
             # 代理工具
-            "agent_create",
-            "agent_run",
-            "agent_list",
-            "agent_cleanup",
+            "spawn_sub_agent",
             # 翻译工具
             "translate_text",
             "detect_language",

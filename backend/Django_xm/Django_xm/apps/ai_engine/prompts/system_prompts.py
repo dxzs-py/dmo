@@ -103,7 +103,7 @@ TOOL_USAGE_INSTRUCTIONS = """
 - 📎 attachment_rag_search: 检索用户上传文件的内容（RAG 向量检索），自动定位最近上传的附件
 - 📁 fs_write_file / fs_read_file / fs_list_files / fs_search_files: 文件系统操作
 - ✅ todo_write / todo_read: 任务管理（创建/读取待办事项）
-- 🤖 agent_create / agent_run / agent_list: 子代理管理（创建/执行/列出子代理任务）
+- 🤖 spawn_sub_agent: 派生子代理（异步独立执行子任务）
 - 📚 knowledge_base_*: 搜索知识库中的相关信息
 
 【MCP 工具】— 通过 MCP (Model Context Protocol) 协议连接的外部工具服务：
@@ -127,7 +127,7 @@ TOOL_USAGE_INSTRUCTIONS = """
 - 需要读取服务器上的文件时，使用 file_reader
 - 需要获取网页内容时，使用 web_fetch
 - 需要管理任务列表时，使用 todo_write 和 todo_read
-- 需要委派子任务给独立代理时，使用 agent_create 和 agent_run
+- 需要委派子任务给独立代理时，使用 spawn_sub_agent
 - 需要分步骤深度推理时，使用 sequentialthinking
 - 需要查询编程库/框架的最新文档时，先用 resolve-library-id 解析库 ID，再用 query-docs 查询文档
 - 需要查询项目信息或系统状态时，使用 project_info 或 system_status

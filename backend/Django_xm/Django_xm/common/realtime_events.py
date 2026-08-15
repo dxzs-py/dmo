@@ -175,7 +175,7 @@ def _atomic_publish_event(redis_client, channel_type, channel_id, event):
     return int(seq)
 
 
-async def _publish_to_session_async(session_id, event_type, payload):
+async def _publish_to_session_async(session_id, event_type, payload, subagent_thread_id=None):
     """异步实际发布会话事件到 WebSocket + Redis 持久化。
 
     底层实现函数，由 publish_event（异步路径）调用。
@@ -184,6 +184,8 @@ async def _publish_to_session_async(session_id, event_type, payload):
         session_id: 会话 ID
         event_type: 事件类型（ws_event_name 字符串）
         payload: 事件载荷 dict
+        subagent_thread_id: 子代理路由标识符（协议字段，snake_case，不参与
+            camelCase 转换）。非空时注入 event 顶层，前端据此路由到子代理卡片。
     """
     try:
         redis_client = get_redis_client()
@@ -195,6 +197,9 @@ async def _publish_to_session_async(session_id, event_type, payload):
             "payload": payload or {},
             "session_id": session_id,
         }
+        # 子代理定向推送（spec D10）：顶层字段 subagent_thread_id，仅子代理事件携带
+        if subagent_thread_id:
+            event["subagent_thread_id"] = subagent_thread_id
 
         # 原子化生成 seq 并持久化（seq 由 Lua 脚本注入到持久化事件中）
         seq = _atomic_publish_event(redis_client, "session", session_id, event)
@@ -222,7 +227,7 @@ async def _publish_to_session_async(session_id, event_type, payload):
         )
 
 
-async def _publish_to_task_async(task_id, event_type, payload):
+async def _publish_to_task_async(task_id, event_type, payload, subagent_thread_id=None):
     """异步实际发布任务事件到 WebSocket + Redis 持久化。
 
     与 _publish_to_session_async 对齐，区别仅在于 channel_type 为 "task"，
@@ -232,6 +237,8 @@ async def _publish_to_task_async(task_id, event_type, payload):
         task_id: 研究任务 ID（ResearchTask.task_id）
         event_type: 事件类型
         payload: 事件载荷 dict
+        subagent_thread_id: 子代理路由标识符（协议字段，snake_case，不参与
+            camelCase 转换）。非空时注入 event 顶层。
     """
     try:
         redis_client = get_redis_client()
@@ -243,6 +250,9 @@ async def _publish_to_task_async(task_id, event_type, payload):
             "payload": payload or {},
             "task_id": task_id,
         }
+        # 子代理定向推送（spec D10）：顶层字段 subagent_thread_id，仅子代理事件携带
+        if subagent_thread_id:
+            event["subagent_thread_id"] = subagent_thread_id
 
         # 原子化生成 seq 并持久化（seq 由 Lua 脚本注入到持久化事件中）
         # Redis key：realtime:seq:task:{task_id} / realtime:history:task:{task_id}
@@ -318,6 +328,7 @@ async def publish_event(
     session_id: str | None = None,
     task_id: str | None = None,
     user_id: str | None = None,
+    subagent_thread_id: str | None = None,
 ) -> None:
     """统一事件发布接口（唯一入口）。
 
@@ -415,7 +426,7 @@ async def publish_event(
         if session_id:
             channel_tasks.append(
                 _ordered_ensure_future(
-                    _publish_to_session_async(session_id, ws_event_name, payload),
+                    _publish_to_session_async(session_id, ws_event_name, payload, subagent_thread_id),
                     f"session:{session_id}",
                 )
             )
@@ -428,7 +439,7 @@ async def publish_event(
         if task_id:
             channel_tasks.append(
                 _ordered_ensure_future(
-                    _publish_to_task_async(task_id, ws_event_name, payload),
+                    _publish_to_task_async(task_id, ws_event_name, payload, subagent_thread_id),
                     f"task:{task_id}",
                 )
             )
@@ -530,6 +541,7 @@ def publish_event_sync(
     session_id: str | None = None,
     task_id: str | None = None,
     user_id: str | None = None,
+    subagent_thread_id: str | None = None,
 ) -> None:
     """publish_event 的同步版本（智能适配同步/async 上下文）。
 
@@ -558,6 +570,7 @@ def publish_event_sync(
                     session_id=session_id,
                     task_id=task_id,
                     user_id=user_id,
+                    subagent_thread_id=subagent_thread_id,
                 )
             )
             _pending_publish_tasks.add(task)
@@ -570,6 +583,7 @@ def publish_event_sync(
                 session_id=session_id,
                 task_id=task_id,
                 user_id=user_id,
+                subagent_thread_id=subagent_thread_id,
             )
     except PayloadValidationError:
         # payload 校验失败：记录 ERROR 后重新抛出，由调用方决定降级策略

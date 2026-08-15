@@ -43,6 +43,31 @@ class BaseAgentBuilder:
         except Exception as e:
             logger.warning(f"ApprovalMiddleware 注入失败(非致命): {e}")
 
+        # 子 agent 官方支持中间件（Agent 图层嵌套规范，与 deep_builder 子 agent 栈统一）：
+        # - SubAgentNestingMiddleware：注入嵌套层级字段到 state（depth/agent_path/risk_ceiling）。
+        #   主 agent 由执行层在 config.configurable 注入 depth=0/agent_path=["main"]；
+        #   子代理（spawn_sub_agent 派生）在父 config 基础上递增（depth+1/path 追加）。
+        # - SubAgentToolEventMiddleware：转发子代理工具事件（仅 depth>0 转发，主 agent 由主链路发布）。
+        # - SubAgentContentMiddleware：捕获子代理正文/中间思考流（Agent 图层嵌套 Task 1）。
+        # 无 tools 时不挂（无工具即无子代理能力），避免多余开销。
+        if tools:
+            try:
+                from Django_xm.apps.agent_hub.builders.subagent_support import (
+                    SubAgentContentMiddleware,
+                    SubAgentNestingMiddleware,
+                    SubAgentToolEventMiddleware,
+                )
+
+                if not any(isinstance(m, SubAgentNestingMiddleware) for m in middleware_stack):
+                    middleware_stack.append(SubAgentNestingMiddleware())
+                if not any(isinstance(m, SubAgentToolEventMiddleware) for m in middleware_stack):
+                    middleware_stack.append(SubAgentToolEventMiddleware())
+                if not any(isinstance(m, SubAgentContentMiddleware) for m in middleware_stack):
+                    middleware_stack.append(SubAgentContentMiddleware())
+                logger.info("已注入子代理支持中间件到 chat agent 中间件栈")
+            except Exception as e:
+                logger.warning(f"子代理中间件注入失败(非致命): {e}")
+
         # 始终构建默认 system_prompt，再追加自定义内容（如研究上下文）
         system_prompt = await self._build_system_prompt(config, tools=tools)
         if config.system_prompt:

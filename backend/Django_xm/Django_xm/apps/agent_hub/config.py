@@ -129,13 +129,6 @@ class AgentConfig:
             except Exception as e:
                 logger.debug(f"AgentConfig: Store 自动注入跳过: {e}")
 
-        if self.checkpointer is None:
-            try:
-                from Django_xm.apps.ai_engine.services.checkpointer_factory import get_checkpointer
-
-                auto_cp = get_checkpointer()
-                if auto_cp is not None:
-                    self.checkpointer = auto_cp
-                    logger.debug("AgentConfig: 自动注入 Checkpointer")
-            except Exception as e:
-                logger.debug(f"AgentConfig: Checkpointer 自动注入跳过: {e}")
+        # checkpointer 不在此处注入：异步 checkpointer 的获取是异步的，同步方法无法 await。
+        # 统一由 AgentFactory.create()（async）在 resolve_defaults 之后注入，
+        # 避免子代理走同步 get_checkpointer() 后用 astream 触发 NotImplementedError。

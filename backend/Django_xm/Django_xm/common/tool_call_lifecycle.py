@@ -269,11 +269,19 @@ class ToolCallContext:
     # description，仅子 agent 工具事件携带；主 agent 为空）。透传到 tool_call_*
     # 事件 payload，前端 ToolCallGroup 组头展示任务目标描述。
     description: str = ""
+    # 子代理 thread_id（spec D10 SSE 定向推送路由标识符）。子代理工具事件携带，
+    # 主 agent 为空；透传到事件顶层字段（非 payload），前端据此路由到子代理卡片。
+    subagent_thread_id: str = ""
     # 全局递增序号（register 唯一分配点，按 (module, module_id) 独立计数）。
     # 同一会话/任务内跨 LLM 轮次全局唯一，作为前端跨浏览器工具调用统一排序的
     # 唯一权威依据（替代跨轮重复的 _index：_index 是 LLM 单轮输出内序号，跨轮
     # 会重复，排序 key 相等时退化为各浏览器本地 Map 插入顺序，导致顺序不一致）。
     seq: int = 0
+    # position：工具调用在该图层自身正文中的字符偏移（该图层已输出 content 长度）。
+    # 按图层局部化（Agent 图层嵌套规范 D3）：每个 agent 图层独立累计自身正文，
+    # 子层正文不计入父层累计。首次 PENDING 注册时由执行层采集写入，之后永久不变
+    # （后续 content 增长、工具回调返回均禁止改写）——merge 策略 keep_existing 保证。
+    position: int | None = None
 
 
 def _is_empty(value: Any) -> bool:
@@ -320,7 +328,10 @@ _FIELD_MERGE_POLICY: dict[str, str] = {
     "risk_ceiling":      "fill_empty",
     "risk_level":        "fill_empty",
     "description":       "fill_empty",
+    "subagent_thread_id":"fill_empty",
     "seq":               "fill_empty",
+    # position 首次 PENDING 写入后永久不变（后续状态事件、回调返回均不覆盖）
+    "position":          "keep_existing",
 }
 
 
@@ -464,6 +475,23 @@ class ToolCallLifecycleService:
         ctx = cache.get(key) or {}
         if not ctx.get("graph_interrupt_id"):
             ctx["graph_interrupt_id"] = graph_interrupt_id
+            cache.set(key, ctx, _TC_CTX_TTL)
+
+    def bind_position(self, tool_call_id: str, position: int | None) -> None:
+        """补全工具调用的图层内 position（执行层在首次 PENDING 事件前调用）。
+
+        Agent 图层嵌套规范 D3（position 单一权威来源，按图层局部化）：
+        position 取值必须取触发该工具调用瞬间该图层自身已输出 content 长度；
+        一旦写入永久不变（后续 content 增长、工具回调返回均禁止改写）。
+        仅补全空字段（None 不覆盖已有值），配合 _FIELD_MERGE_POLICY 的
+        keep_existing 策略保证 position 不可变。
+        """
+        if position is None or not isinstance(position, int) or position < 0:
+            return
+        key = f"{_TC_CTX_PREFIX}:{tool_call_id}"
+        ctx = cache.get(key) or {}
+        if ctx.get("position") is None:
+            ctx["position"] = position
             cache.set(key, ctx, _TC_CTX_TTL)
 
     def _prepare_transition(
@@ -619,6 +647,11 @@ class ToolCallLifecycleService:
                 # 根因修复：seq 为 (module, module_id) 内跨 LLM 轮次全局递增序号，
                 # 前端据此跨浏览器统一排序（替代跨轮重复的 _index）
                 seq=ctx_dict.get("seq") or None,
+                # position 透传：工具调用在该图层自身正文中的字符偏移（按图层局部化），
+                # 首次 PENDING 写入后永久不变（keep_existing + bind_position 保证）
+                position=ctx_dict.get("position"),
+                # subagent_thread_id 透传：子代理 SSE 定向推送路由标识符（spec D10）
+                subagent_thread_id=ctx_dict.get("subagent_thread_id") or None,
             )
         except Exception:
             logger.exception(
@@ -697,6 +730,11 @@ class ToolCallLifecycleService:
                 # 根因修复：seq 为 (module, module_id) 内跨 LLM 轮次全局递增序号，
                 # 前端据此跨浏览器统一排序（替代跨轮重复的 _index）
                 seq=ctx_dict.get("seq") or None,
+                # position 透传：工具调用在该图层自身正文中的字符偏移（按图层局部化），
+                # 首次 PENDING 写入后永久不变（keep_existing + bind_position 保证）
+                position=ctx_dict.get("position"),
+                # subagent_thread_id 透传：子代理 SSE 定向推送路由标识符（spec D10）
+                subagent_thread_id=ctx_dict.get("subagent_thread_id") or None,
             )
         except Exception:
             logger.exception(
@@ -734,6 +772,32 @@ class ToolCallLifecycleService:
         seq = (ctx or {}).get("seq")
         if isinstance(seq, int) and seq > 0:
             entry["seq"] = seq
+        return entry
+
+    def enrich_entry_position(self, entry: dict, tool_call_id: str) -> dict:
+        """为工具调用条目补全图层内 position（所有持久化/重建出口的统一权威补全点）。
+
+        Agent 图层嵌套规范 D3：position 由执行层在 tool 事件出口经 bind_position
+        写入 ToolCallContext（keep_existing 策略保证不可变），此处从 context 读取
+        写入 ``entry["position"]``，与 WS tool_call_* 事件透传同一来源。
+        所有构建 tool_call 条目的出口（stream_persistence 持久化、approval_service
+        审批重建与 Approval.extra）统一调用本方法，保证刷新后前端可依据 position
+        恢复图层内联布局（缺 position 的工具卡会确定性排在图层末尾，视觉上表现为
+        "工具乱序/不内联"）。
+
+        Args:
+            entry: 工具调用条目 dict（原地修改）
+            tool_call_id: 工具调用 ID
+
+        Returns:
+            原 entry（支持链式调用）
+        """
+        if not isinstance(entry, dict):
+            return entry
+        ctx = self.get_context(tool_call_id)
+        position = (ctx or {}).get("position")
+        if isinstance(position, int) and position >= 0:
+            entry["position"] = position
         return entry
 
     def clear_context(self, tool_call_id: str) -> None:

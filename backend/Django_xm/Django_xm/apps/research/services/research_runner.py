@@ -45,7 +45,13 @@ class ResearchResult:
     model_name: str = ""
     error_message: str = ""
     reasoning: str = ""
+    # 子代理图层正文/思考累计（Agent 图层嵌套规范 Task 1.5，来自 adapter.subagent_contents）
+    subagent_contents: dict[str, dict[str, str]] | None = None
     raw_result: dict[str, Any] | None = None
+    # 业务等待挂起（spec D4，非审批）：父 Graph 等待子代理结果，退出协程待调度器唤醒
+    suspended: bool = False
+    subagent_thread_id: str = ""
+    interrupt_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -228,7 +234,7 @@ async def create_approvals_for_interrupts(
         risk_level = interrupt_data.get("risk_level")
         if risk_level:
             base_extra["risk_level"] = risk_level
-        for field in ("parent_tool_call_id", "depth", "agent_name", "agent_path"):
+        for field in ("parent_tool_call_id", "depth", "agent_name", "agent_path", "subagent_thread_id"):
             val = interrupt_data.get(field)
             if val is not None and val not in ("", []):
                 base_extra[field] = val
@@ -354,6 +360,7 @@ async def execute_research_async(
         success = result.get("success", True)
         final_report = result.get("final_report", "")
         error_message = result.get("error", "") if not success else ""
+        suspended = bool(result.get("suspended", False))
 
         return ResearchResult(
             success=success,
@@ -364,7 +371,11 @@ async def execute_research_async(
             model_name=model_name,
             error_message=error_message,
             reasoning=getattr(agent, "accumulated_reasoning", ""),
+            subagent_contents=result.get("subagent_contents"),
             raw_result=result,
+            suspended=suspended,
+            subagent_thread_id=result.get("subagent_thread_id", ""),
+            interrupt_id=result.get("interrupt_id", ""),
         )
     finally:
         if disable_llm_cache and saved_cache is not None:

@@ -380,6 +380,7 @@ class ChatService:
         data: dict[str, Any],
         interrupt_handler,
         broadcast,
+        should_stop=None,
     ) -> None:
         """chat agent 单协程执行（FastAPI 执行服务调用，执行与连接解耦）。
 
@@ -391,6 +392,9 @@ class ChatService:
             interrupt_handler: 审批中断挂起回调，
                 async fn(graph_interrupt_id, langgraph_resume_id) -> decisions dict
             broadcast: async fn(event: dict) -> None，将事件广播到 WS
+            should_stop: 可选安全点回调（Task 9 优雅停止），
+                async 事件循环每次迭代前检查，返回 True 时终止执行。
+                由执行服务（SessionExecutor._stop_requested）注入。
         """
         from Django_xm.apps.ai_engine.services.cost_tracker import create_token_detail_tracker
         from Django_xm.apps.ai_engine.services.usage_tracker import create_usage_tracker
@@ -417,6 +421,10 @@ class ChatService:
             token_detail_tracker,
             interrupt_handler=interrupt_handler,
         ):
+            # 安全点（Task 9 优雅停止）：迭代边界检查停止标志，
+            # 终止执行并保留已输出内容与 checkpoint（由 finally 落库广播）。
+            if should_stop is not None and should_stop():
+                raise asyncio.CancelledError("用户停止生成")
             await broadcast(event)
 
         context_info = build_context_info(usage_tracker, token_detail_tracker, stream_start_time)
@@ -993,6 +1001,115 @@ class ChatService:
                 expected_model=model_name or "",
             )
             config["callbacks"] = [cb, fb_callback]
+
+            # Agent 图层嵌套规范（Task 1/2）：注入主 agent 层级基础值 + 子代理事件/正文回调
+            # 1) 主 agent configurable 注入 depth=0 / agent_path=["main"]：
+            #    SubAgentNestingMiddleware（base_builder 已挂）在主 agent 读到父值保持主 agent
+            #    语义（depth 不递增）；子代理（spawn_sub_agent 派生）在父 config 基础上递增。
+            # 2) _on_tool_event：子代理工具事件转发（SubAgentToolEventMiddleware 仅 depth>0 转发），
+            #    经 lifecycle_service 发布（与主链路 tool 事件同一唯一真相源）。
+            # 3) _on_subagent_content：子代理正文/中间思考转发（SubAgentContentMiddleware），
+            #    累计到 data["_subagent_contents"]（供 tool position 采集 + 最终落库）并发布
+            #    STREAM_SUBAGENT_CONTENT 事件（前端按 agent_path 路由子代理图层）。
+            if isinstance(config, dict):
+                config.setdefault("configurable", {})
+                if "depth" not in config["configurable"]:
+                    config["configurable"]["depth"] = 0
+                if "agent_path" not in config["configurable"]:
+                    config["configurable"]["agent_path"] = ["main"]
+
+            _subagent_contents: dict[str, dict[str, str]] = {}
+            data["_subagent_contents"] = _subagent_contents
+            _sub_session_id = data.get("session_id", "")
+            _sub_message_id = str(data.get("_assistant_message_id") or data.get("message_id", ""))
+
+            async def _on_subagent_tool_event(event_type, tool_call_id, tool_name, **kwargs):
+                """chat 模式子代理工具事件转发回调（Agent 图层嵌套规范 Task 1.1）。"""
+                from Django_xm.common.event_schema import EventSource, EventType as _ET
+                from Django_xm.common.tool_call_lifecycle import ToolCallContext as _TCC
+                from Django_xm.common.tool_call_lifecycle import service as _tc_service
+
+                if not tool_call_id:
+                    return
+                parameters = kwargs.get("parameters") or {}
+                if not isinstance(parameters, dict):
+                    parameters = {}
+                agent_path = kwargs.get("agent_path") or []
+                depth = kwargs.get("depth", 0)
+                if not isinstance(depth, int) or depth < 0:
+                    depth = 0
+                try:
+                    _tc_service.register(
+                        _TCC(
+                            tool_call_id=tool_call_id,
+                            tool_name=tool_name,
+                            module=EventSource.CHAT,
+                            module_id=_sub_session_id,
+                            message_id=_sub_message_id,
+                            parameters=parameters,
+                            parent_tool_call_id=kwargs.get("parent_tool_call_id") or "",
+                            depth=depth,
+                            agent_name=kwargs.get("agent_name") or "",
+                            agent_path=agent_path if isinstance(agent_path, list) else [],
+                            description=kwargs.get("description") or "",
+                            subagent_thread_id=kwargs.get("subagent_thread_id") or "",
+                        )
+                    )
+                    # position 采集（按图层局部化）：子代理工具 = 该子代理图层已累计正文长度
+                    if isinstance(agent_path, list) and agent_path and depth > 0:
+                        _path_key = ">".join(str(p) for p in agent_path)
+                        _pos = len((_subagent_contents.get(_path_key) or {}).get("content") or "")
+                        _tc_service.bind_position(tool_call_id, _pos)
+                    await _tc_service.transition_async(
+                        tool_call_id,
+                        event_type if isinstance(event_type, _ET) else _ET(event_type),
+                        result=kwargs.get("result"),
+                        error=kwargs.get("error"),
+                        parameters=parameters if parameters else None,
+                    )
+                except Exception as _e:
+                    logger.warning(
+                        f"[ChatExec] 子代理工具事件转发失败: tool={tool_name}, "
+                        f"tc_id={tool_call_id}, err={_e}"
+                    )
+
+            async def _on_subagent_content(agent_path, content, reasoning_content, agent_name, depth, subagent_thread_id=""):
+                """chat 模式子代理正文/中间思考转发回调（Agent 图层嵌套规范 Task 1）。"""
+                if not isinstance(agent_path, list) or not agent_path:
+                    return
+                path_key = ">".join(str(p) for p in agent_path)
+                entry = _subagent_contents.setdefault(path_key, {"content": "", "reasoning_content": ""})
+                if content:
+                    entry["content"] = (entry.get("content") or "") + content
+                if reasoning_content:
+                    entry["reasoning_content"] = (entry.get("reasoning_content") or "") + reasoning_content
+                try:
+                    from Django_xm.common.event_schema import EventSource, EventType
+                    from Django_xm.common.realtime_events import publish_event
+
+                    await publish_event(
+                        EventType.STREAM_SUBAGENT_CONTENT,
+                        {
+                            "source": EventSource.CHAT,
+                            "source_id": _sub_session_id,
+                            "message_id": _sub_message_id or None,
+                            "data": {
+                                "agent_path": [str(p) for p in agent_path],
+                                "content": content,
+                                "reasoning_content": reasoning_content,
+                                "agent_name": agent_name or "",
+                                "depth": depth,
+                            },
+                        },
+                        session_id=_sub_session_id,
+                        subagent_thread_id=subagent_thread_id or None,
+                    )
+                except Exception as _e:
+                    logger.warning(f"[ChatExec] 广播子代理正文失败: agent_path={path_key}, err={_e}")
+
+            if isinstance(config, dict):
+                config["configurable"]["_on_tool_event"] = _on_subagent_tool_event
+                config["configurable"]["_on_subagent_content"] = _on_subagent_content
 
             # 执行 AgentExecutor（带韧性的流式执行）
             # 替代原内联的 retry/timeout/degrade 循环：
