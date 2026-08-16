@@ -120,43 +120,28 @@ class ApprovalMiddleware(AgentMiddleware):
 
     @staticmethod
     def _extract_subagent_context(state: dict | None = None, runtime=None) -> dict | None:
-        """提取子 agent 上下文。
+        """提取子 agent 上下文（主/子判定 spec D1）。
 
-        deepagents 0.7.5 升级后，middleware 钩子的 runtime 参数为标准
-        ``langgraph.runtime.Runtime``（无 config 属性），因此子 agent 上下文
-        不再从 runtime.config.configurable 读取，改为：
+        以 ``configurable.subagent_thread_id`` 非空作为子代理唯一判定：
+        - 主 agent（thread_id 为空）：返回 None（assess_risk 不做加权）。
+        - 真子代理（thread_id 非空）：嵌套层级字段从 state 读取
+          （SubAgentNestingMiddleware.before_model 写入，仅作展示元数据）：
+          - subagent_depth: int，嵌套层级（子代理 ≥1）
+          - subagent_path: list[str]，完整调用链路（如 ["main", "web-researcher"]）
+          - subagent_risk_ceiling: str，子 agent 角色风险上限
 
-        1. state 字段（SubAgentNestingMiddleware.before_model 写入）：
-           - subagent_depth: int，嵌套层级（0=主 agent，1=子 agent）
-           - subagent_path: list[str]，完整调用链路（如 ["main", "web-researcher"]）
-           - subagent_risk_ceiling: str，子 agent 角色风险上限
-        2. get_config().metadata.lc_agent_name：子 agent 名称（create_agent 官方设置）
-        3. configurable.ls_agent_type == "subagent"：子 agent 判定（0.7.5 atask 注入）
-
-        主 agent 的 state 无 subagent_* 字段，返回 None（assess_risk 不做加权）。
+        其余上下文来源：
+        1. get_config().metadata.lc_agent_name：子 agent 名称（create_agent 官方设置）
+        2. subagent_thread_id：子代理 SSE 定向推送路由标识符（SubAgentRuntime 适配器写入）
 
         Args:
             state: 当前 agent state（aafter_model 参数）
             runtime: 兼容旧调用（保留参数，实际不再依赖）
 
         Returns:
-            dict | None: 子 agent 上下文字典；主 agent 返回 None
+            dict | None: 子代理上下文字典；主 agent 返回 None
         """
         try:
-            state = state or {}
-            depth = state.get("subagent_depth", 0)
-            agent_path = state.get("subagent_path")
-            risk_ceiling = state.get("subagent_risk_ceiling")
-
-            if depth == 0 and not agent_path:
-                # 主 agent：无嵌套字段，返回 None
-                return None
-
-            if not isinstance(depth, int) or depth < 0:
-                depth = 0
-            if not isinstance(agent_path, list):
-                agent_path = []
-
             from langgraph.config import get_config
 
             agent_name = ""
@@ -165,11 +150,25 @@ class ApprovalMiddleware(AgentMiddleware):
                 config = get_config()
                 metadata = config.get("metadata") if isinstance(config, dict) else None
                 agent_name = (metadata or {}).get("lc_agent_name") or ""
-                # subagent_thread_id（spec D10）：子代理 SSE 定向推送路由标识符，
-                # 由 SubAgentRuntime 适配器写入 configurable，审批事件据此定向到子代理卡片
+                # subagent_thread_id（spec D1 主/子判定 + D10 定向推送）：
+                # 由 SubAgentRuntime 适配器写入 configurable，主 agent 无此字段
                 subagent_thread_id = (config.get("configurable") or {}).get("subagent_thread_id") or ""
             except Exception as e:
                 logger.debug(f"[ApprovalMiddleware] 读取 lc_agent_name/subagent_thread_id 失败(非致命): {e}")
+
+            # 主 agent（spec D1）：subagent_thread_id 为空，不做风险加权
+            if not subagent_thread_id:
+                return None
+
+            state = state or {}
+            depth = state.get("subagent_depth", 0)
+            agent_path = state.get("subagent_path")
+            risk_ceiling = state.get("subagent_risk_ceiling")
+
+            if not isinstance(depth, int) or depth < 0:
+                depth = 0
+            if not isinstance(agent_path, list):
+                agent_path = []
 
             # risk_ceiling 可能是 RiskLevel 枚举或字符串，统一为 RiskLevel
             if risk_ceiling is not None and not isinstance(risk_ceiling, RiskLevel):
@@ -253,7 +252,11 @@ class ApprovalMiddleware(AgentMiddleware):
         # 工具事件注册携带归属消息 ID（前端 toolCallsMap → message.toolCalls 归属依赖）
         _assistant_message_id = configurable.get("assistant_message_id") or ""
 
-        # 嵌套层级字段（deepagents 0.7.5 机制）：
+        # 主/子判定（spec D1）：subagent_thread_id 非空 ⇔ 子代理
+        # （SubAgentRuntime 适配器写入 configurable；主 agent 无此字段）
+        subagent_thread_id = configurable.get("subagent_thread_id") or ""
+
+        # 嵌套层级字段（仅展示元数据，不参与主/子判定）：
         # SubAgentNestingMiddleware 写入 state（subagent_depth/path/risk_ceiling），
         # 优先从 state 读取，回退 configurable（兼容旧调用方）
         sub_depth = state.get("subagent_depth", 0) if isinstance(state, dict) else 0
@@ -284,8 +287,8 @@ class ApprovalMiddleware(AgentMiddleware):
         if not sub_agent_name:
             sub_agent_name = configurable.get("agent_name", "") or ""
 
-        if thread_id and sub_depth > 0:
-            # 子 agent：沿用父 agent 的来源（通常为 DEEP_RESEARCH）
+        if thread_id and subagent_thread_id:
+            # 子 agent（spec D1：subagent_thread_id 非空）：沿用父 agent 的来源（通常为 DEEP_RESEARCH）
             module = EventSource.DEEP_RESEARCH
             module_id = thread_id
         elif thread_id:
@@ -366,18 +369,27 @@ class ApprovalMiddleware(AgentMiddleware):
                 )
 
     @staticmethod
-    async def _build_idempotent_tc_ids(last_ai_msg) -> set[str]:
-        """构建审批幂等集合（3.5）。
+    async def _build_idempotent_tc_ids(last_ai_msg) -> tuple[set[str], dict[str, str]]:
+        """构建审批幂等集合 + 已决断映射（3.5）。
 
         恢复场景下，checkpoint 旧 AIMessage.tool_calls 中的 tool_call 可能在
         上一轮已审批/已完成（DB Approval 为 approved、ctx last_event_type 为
         completed/failed），这些 tool_call 不再重复拦截。
 
-        只对 approved 幂等：rejected / timeout 是"已决策但未执行"，恢复时
-        必须走 decision_map 分支注入拒绝/超时 ToolMessage（error 反馈），
-        让 ToolNode 跳过执行、LLM 收到反馈后调整策略，而不是直接执行。
-        （拒绝后仍执行工具 = 拒绝失效，日志实证"幂等跳过"把 rejected
-        tool_call 保留执行。）
+        返回 (approved_tc_ids, decided_map)：
+        - approved_tc_ids：已批准执行（approved）或已完成（completed/failed）
+          的 tool_call_id 集合 —— 幂等跳过，保留 tool_call 由 ToolNode 执行
+          （completed/failed 已有 ToolMessage/生命周期，跳过执行）。
+        - decided_map：{tool_call_id: "rejected" | "timeout"} —— 已决断但未执行，
+          恢复时直接注入对应决策 ToolMessage（error 反馈），不再发起新审批，
+          ToolNode 检测到已有 ToolMessage 跳过执行，LLM 收到反馈后调整策略。
+
+        关键（P-TIMEOUT 根因）：rejected/timeout 必须返回"注入 ToolMessage"语义，
+        而不能重新发起审批。LangGraph 审批恢复后 model 节点重放，aafter_model
+        会重新扫描同一 AIMessage.tool_calls；若此时对已决断 tc 再次 interrupt，
+        审批已存在且已决断无法重建 → 批次为空 → on_interrupt 返回空决策 →
+        任务被错误终止。approved 场景靠幂等跳过规避；rejected/timeout 场景
+        必须靠 decided_map 注入决策 ToolMessage 规避（等价幂等 + 反馈注入）。
 
         本方法在 async 上下文（aafter_model）中执行，DB 查询与 cache 读取
         均为同步调用，必须经 sync_to_async 包装，否则 Django 抛
@@ -391,36 +403,60 @@ class ApprovalMiddleware(AgentMiddleware):
 
             _all_tc_ids = [t.get("id", "") for t in last_ai_msg.tool_calls]
 
-            # 仅统计 approved（已批准执行的）；pending/processing/waiting 未决、
-            # rejected/timeout 已决未执行——这些都不幂等，恢复时走 decision_map
-            # 重新投递决策（拒绝/超时注入 error ToolMessage）。
-            _resolved_ids: set[str] = await sync_to_async(
-                lambda: set(
+            # 一次查询所有已决断（approved/rejected/timeout）审批，
+            # 区分幂等跳过（approved）与决策注入（rejected/timeout）。
+            # pending/processing/waiting 未决：不在此列，正常进入审批流程。
+            _resolved_rows: list[tuple[str, str]] = await sync_to_async(
+                lambda: list(
                     _Approval.objects.filter(interrupt_id__in=_all_tc_ids)
-                    .filter(state=_Approval.STATE_APPROVED)
-                    .values_list("interrupt_id", flat=True)
+                    .filter(
+                        state__in=[
+                            _Approval.STATE_APPROVED,
+                            _Approval.STATE_REJECTED,
+                            _Approval.STATE_TIMEOUT,
+                        ]
+                    )
+                    .values_list("interrupt_id", "state")
                 )
             )()
+            _state_map: dict[str, str] = dict(_resolved_rows)
 
-            _idempotent_tc_ids: set[str] = set()
+            _approved_tc_ids: set[str] = set()
+            _decided_map: dict[str, str] = {}
+            for _tid in _all_tc_ids:
+                if _tid not in _state_map:
+                    continue
+                _state = _state_map[_tid]
+                if _state == _Approval.STATE_APPROVED:
+                    _approved_tc_ids.add(_tid)
+                elif _state == _Approval.STATE_REJECTED:
+                    _decided_map[_tid] = "rejected"
+                elif _state == _Approval.STATE_TIMEOUT:
+                    _decided_map[_tid] = "timeout"
+
+            # 生命周期已完成/失败（非审批路径，如 SAFE 工具、已执行工具）：
+            # 幂等跳过，不重复拦截。
             for _t in last_ai_msg.tool_calls:
                 _tid = _t.get("id", "")
                 _ctx = await sync_to_async(_lifecycle_service.get_context)(_tid)
                 _last_evt = _ctx.get("last_event_type") if _ctx else None
-                if _tid in _resolved_ids or _last_evt in (
+                if _tid in _approved_tc_ids:
+                    continue
+                if _last_evt in (
                     _EventType.TOOL_CALL_COMPLETED.value,
                     _EventType.TOOL_CALL_FAILED.value,
                 ):
-                    _idempotent_tc_ids.add(_tid)
-            if _idempotent_tc_ids:
+                    _approved_tc_ids.add(_tid)
+            if _approved_tc_ids or _decided_map:
                 logger.info(
-                    f"[ApprovalMiddleware] 幂等集合: {len(_idempotent_tc_ids)} 个 "
-                    f"tc_id={sorted(_idempotent_tc_ids)}, resolved_ids={sorted(_resolved_ids)}"
+                    f"[ApprovalMiddleware] 幂等集合: approved={len(_approved_tc_ids)} 个 "
+                    f"tc_id={sorted(_approved_tc_ids)}, "
+                    f"decided={len(_decided_map)} 个 map={_decided_map}"
                 )
-            return _idempotent_tc_ids
+            return _approved_tc_ids, _decided_map
         except Exception as _idem_err:
             logger.debug(f"[ApprovalMiddleware] 构建幂等集合失败(非致命): {_idem_err}")
-            return set()
+            return set(), {}
 
     async def aafter_model(self, state, runtime):
         """异步 after_model 钩子：批量拦截工具调用审批
@@ -505,14 +541,21 @@ class ApprovalMiddleware(AgentMiddleware):
         # 用于子 agent 风险加权（assess_risk 的 subagent_context 参数）
         subagent_context = self._extract_subagent_context(state, runtime)
 
-        # 3.5 审批幂等：恢复场景下，checkpoint 旧 AIMessage.tool_calls 中的
-        # 已审批/已完成 tool_call 不再重复拦截（生成新批次审批，导致 L1248 冗余审批、
-        # 恢复后工具未执行）。幂等跳过后 tool_call 保留在 AIMessage.tool_calls 中，
-        # ToolNode 会正常执行（无 ToolMessage 则执行；已有 error ToolMessage 则跳过）。
+        # 3.5 审批幂等 + 已决断映射：恢复场景下，checkpoint 旧 AIMessage.tool_calls
+        # 中的 tool_call 可能已在上一轮决断：
+        # - approved / 已完成：幂等跳过（保留 tool_call 由 ToolNode 正常执行）；
+        # - rejected / timeout：注入决策 ToolMessage（error 反馈）并保留 tool_call
+        #   （ToolNode 检测到已有 ToolMessage 跳过执行），不再发起新审批——
+        #   避免恢复重放时对已决断 tc 二次 interrupt 导致"批次为空 → 任务终止"。
         # 注意：aafter_model 是 async 上下文，DB 查询与 cache 读取必须经 sync_to_async
         # 包装，否则 Django 抛 SynchronousOnlyOperation（日志实证"构建幂等集合失败
         # (非致命): You cannot call this from an async context"），幂等集合恒为空。
-        _idempotent_tc_ids = await self._build_idempotent_tc_ids(last_ai_msg)
+        _approved_tc_ids, _decided_map = await self._build_idempotent_tc_ids(last_ai_msg)
+
+        # 已决断（rejected/timeout）的 tool_call 与对应决策 ToolMessage：
+        # 扫描循环内收集，最终合并到 last_ai_msg.tool_calls / result messages。
+        pre_decided_tool_calls: list[dict] = []
+        pre_decided_messages: list[ToolMessage] = []
 
         for tc in last_ai_msg.tool_calls:
             tool_name = tc.get("name", "")
@@ -522,12 +565,49 @@ class ApprovalMiddleware(AgentMiddleware):
             args = extract_tool_params(tc)
             tc_id = tc.get("id", "")
 
-            if tc_id in _idempotent_tc_ids:
+            if tc_id in _approved_tc_ids:
                 # 幂等跳过：恢复场景已审批/已完成的 tool_call 不再拦截，
                 # 保留在 tool_calls 中由 ToolNode 正常执行
                 logger.info(
                     f"[ApprovalMiddleware] 幂等跳过已审批/已完成 tool_call: "
                     f"tool={tool_name}, tc_id={tc_id}"
+                )
+                continue
+
+            if tc_id in _decided_map:
+                # 已决断未执行（rejected/timeout）：直接注入对应决策 ToolMessage，
+                # 保留 tool_call（ToolNode 检测到已有 ToolMessage 跳过执行），
+                # 不再发起新审批（恢复重放二次 interrupt → 批次为空 → 任务终止）。
+                # LLM 收到 error 反馈后自行调整策略继续任务。
+                _decision = _decided_map[tc_id]
+                if _decision == "timeout":
+                    from .timeout_handler import build_timeout_tool_message
+
+                    pre_decided_messages.append(
+                        build_timeout_tool_message(
+                            tool_call_id=tc_id,
+                            tool_name=tool_name,
+                        )
+                    )
+                else:
+                    _policy = self.policies.get(tool_name)
+                    _operation_desc = _policy.build_operation_desc(args) if _policy else str(args)
+                    pre_decided_messages.append(
+                        ToolMessage(
+                            content=(
+                                f"用户已拒绝执行工具 {tool_name}（操作内容: {_operation_desc}）。"
+                                f"该工具未被执行，请勿重复调用相同参数。"
+                                f"请根据用户意图尝试其他方法、调整参数重新请求，或询问用户是否需要其他帮助。"
+                            ),
+                            tool_call_id=tc_id,
+                            name=tool_name,
+                            status="error",
+                        )
+                    )
+                pre_decided_tool_calls.append(tc)
+                logger.info(
+                    f"[ApprovalMiddleware] 恢复已决断(拒绝/超时)注入 ToolMessage: "
+                    f"tool={tool_name}, tc_id={tc_id}, decision={_decision}"
                 )
                 continue
 
@@ -621,6 +701,15 @@ class ApprovalMiddleware(AgentMiddleware):
             )
 
         if not approval_requests:
+            # 无新增审批请求（如恢复重放时整批 tool_call 均已决断）：
+            # 仍需返回已决断（rejected/timeout）的决策 ToolMessage，
+            # 否则 agent 收不到拒绝/超时反馈（P-TIMEOUT）
+            if pre_decided_messages:
+                logger.info(
+                    f"[ApprovalMiddleware] 无新增审批，返回已决断注入: "
+                    f"{len(pre_decided_messages)} 个 ToolMessage"
+                )
+                return {"messages": [last_ai_msg, *pre_decided_messages]}
             return None  # 无需审批，正常执行
 
         logger.info(
@@ -672,10 +761,17 @@ class ApprovalMiddleware(AgentMiddleware):
 
         timeout_count = 0
 
+        # 已决断（rejected/timeout）的 tool_call_id：本循环跳过（已在扫描循环注入
+        # ToolMessage 并收集到 pre_decided_tool_calls），避免重复追加到 revised_tool_calls
+        pre_decided_tc_ids = {tc.get("id", "") for tc in pre_decided_tool_calls}
+
         for tc in last_ai_msg.tool_calls:
             tc_id = tc.get("id", "")
             tool_name = tc.get("name", "")
             args = tc.get("args", {})
+
+            if tc_id in pre_decided_tc_ids:
+                continue
 
             # 检查是否有审批决策
             if tc_id in decision_map:
@@ -723,19 +819,22 @@ class ApprovalMiddleware(AgentMiddleware):
                 # 无需审批的 tool_call，保留
                 revised_tool_calls.append(tc)
 
-        # 保留所有 tool_calls（包括被拒绝/超时的），让 should_continue 路由到 ToolNode
+        # 保留所有 tool_calls（包括被拒绝/超时/已决断的），让 should_continue 路由到 ToolNode
         # ToolNode 会跳过已有 error ToolMessage 的 tool_call
-        last_ai_msg.tool_calls = revised_tool_calls
+        last_ai_msg.tool_calls = [*pre_decided_tool_calls, *revised_tool_calls]
 
         result: dict = {}
-        if artificial_messages:
-            result["messages"] = [last_ai_msg, *artificial_messages]
+        if artificial_messages or pre_decided_messages:
+            # 已决断（rejected/timeout）的决策 ToolMessage 排在审批决策之前，
+            # 两者均紧跟 AIMessage，供 ToolNode 按 tool_call_id 匹配跳过执行
+            result["messages"] = [last_ai_msg, *pre_decided_messages, *artificial_messages]
         else:
             result["messages"] = [last_ai_msg]
 
         logger.info(
             f"[ApprovalMiddleware] 审批完成: 保留 {len(revised_tool_calls) - rejected_count - timeout_count} 个, "
-            f"拒绝 {rejected_count} 个, 超时 {timeout_count} 个（保留 tool_call 让 ToolNode 跳过）"
+            f"拒绝 {rejected_count} 个, 超时 {timeout_count} 个, "
+            f"已决断注入 {len(pre_decided_messages)} 个（保留 tool_call 让 ToolNode 跳过）"
         )
 
         return result

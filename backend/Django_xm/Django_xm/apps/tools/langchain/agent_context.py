@@ -11,7 +11,8 @@
 
 递归深度控制：
 - 通过 agent_depth 追踪当前嵌套层级
-- 默认最大深度 MAX_AGENT_DEPTH=3（主代理=0，子代理=1，孙代理=2，曾孙代理=3）
+- 最大深度可配置：settings.AGENT_MAX_DEPTH（环境变量 AGENT_MAX_DEPTH），
+  默认 3（主代理=0，子代理=1，孙代理=2，曾孙代理=3）
 - 超过最大深度时拒绝派生，阻止无限嵌套
 """
 
@@ -24,7 +25,26 @@ _context_lock = threading.Lock()
 _context_storage: dict[str, Any] = {}
 
 # 默认最大子代理嵌套深度（0=主代理, 1=子代理, 2=孙代理, 3=曾孙代理）
-MAX_AGENT_DEPTH: int = 3
+_DEFAULT_MAX_AGENT_DEPTH: int = 3
+
+
+def get_max_agent_depth() -> int:
+    """读取最大子代理嵌套深度（lazy 读 settings.AGENT_MAX_DEPTH，兼容非 Django 上下文）。
+
+    Django settings 未配置/读取异常（如独立 unittest 上下文）时回退默认值，
+    保证本模块可在无 Django 环境下被引用。
+    """
+    try:
+        from django.conf import settings
+
+        return int(getattr(settings, "AGENT_MAX_DEPTH", _DEFAULT_MAX_AGENT_DEPTH))
+    except Exception:
+        return _DEFAULT_MAX_AGENT_DEPTH
+
+
+# 模块级常量保留（首次 import 时求值），兼容既有 import（subagent_support / 测试）；
+# 需运行时感知 settings 变更的场景请调用 get_max_agent_depth()。
+MAX_AGENT_DEPTH: int = get_max_agent_depth()
 
 
 def set_parent_tool_context(
@@ -90,7 +110,7 @@ def decrement_agent_depth() -> int:
 def is_max_depth_reached() -> bool:
     """检查是否已达到最大嵌套深度"""
     with _context_lock:
-        return _context_storage.get("agent_depth", 0) >= MAX_AGENT_DEPTH
+        return _context_storage.get("agent_depth", 0) >= get_max_agent_depth()
 
 
 def clear_parent_tool_context() -> None:

@@ -234,7 +234,8 @@ export function validateMessage(msg) {
  * @property {string} parentToolCallId - 父级工具调用 ID（子 agent 场景）
  * @property {number} depth - 嵌套深度（0 = 顶层）
  * @property {string} agentName - 子 agent 名称
- * @property {string[]} agentPath - agent 调用路径链
+ * @property {string[]} [agentPath] - agent 调用路径链（工具事件 payload 已删除该字段，
+ * 仅审批事件数据 approvalData.agentPath 携带，ToolCallCard 展示层级时回退读取）
  * @property {string} riskCeiling - 风险等级上限
  *
  * @see toolCallHandler.js - createHandleToolCallEvent 构建此结构

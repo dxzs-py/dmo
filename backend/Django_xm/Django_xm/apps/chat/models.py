@@ -80,8 +80,8 @@ class ChatMessage(AuditModel):
     tool_calls = models.JSONField(default=list, blank=True, verbose_name="工具调用")
     approval = models.JSONField(default=dict, blank=True, null=True, verbose_name="审批数据")
     reasoning = models.JSONField(default=dict, blank=True, null=True, verbose_name="推理")
-    # 子代理图层正文/中间思考（Agent 图层嵌套规范 Task 1.5）：
-    #   key = agent_path 的 ">" 拼接（如 "main>web-researcher"）
+    # 子代理图层正文/中间思考（spec MODIFIED：按 subagent_thread_id 键累计）：
+    #   key = subagent_thread_id（子代理路由标识符）
     #   value = {"content": str, "reasoning_content": str}
     # 由执行层（adapter.subagent_contents / chat data["_subagent_contents"]）在流结束时
     # 持久化，前端刷新后据此恢复子代理图层正文（与 tool_calls 同为消息级数据）。

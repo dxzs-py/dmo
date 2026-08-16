@@ -30,7 +30,8 @@ from Django_xm.apps.ai_engine.services.thinking import extract_thinking_content
 # 子 agent 机制（deepagents 0.7.5 官方，取代旧 subagent_patch monkey-patch）：
 # - 中断冒泡 + Command(resume) 恢复：0.7.5 原生支持，无需 checkpointer contextvar 注入。
 # - 嵌套层级字段（depth/agent_path）：本模块在主 config 注入基础值（depth=0/agent_path=["main"]），
-#   SubAgentNestingMiddleware 在子 agent 内计算递增值写入 state。
+#   仅服务子代理 state.subagent_depth/subagent_path 展示元数据（SubAgentNestingMiddleware
+#   写入 state）；事件路由与内容累计唯一依据为 subagent_thread_id（spec MODIFIED）。
 # - 子 agent 工具事件：SubAgentToolEventMiddleware 从 configurable 读取本模块注入的
 #   _on_tool_event 回调并转发到父 SSE 流。
 from Django_xm.apps.core.config import get_logger
@@ -101,12 +102,13 @@ class OfficialDeepAgentAdapter:
         # 消费后构造 SystemMessage 经 aupdate_state 注入 graph state 后重入 astream，
         # 主 agent 收到指令后以原始入参重新调用目标子代理（Task 3 单独重启失败子代理）。
         self._retry_instruction_queue: asyncio.Queue | None = None
-        # 子代理图层正文/思考累计（Agent 图层嵌套规范 Task 1.5）：
-        #   key = agent_path 的 ">" 拼接（如 "main>web-researcher"）
+        # 子代理图层正文/思考累计（spec MODIFIED：按 subagent_thread_id 键累计）：
+        #   key = subagent_thread_id（SubAgentRuntime 适配器写入的路由标识符）
         #   value = {"content": str, "reasoning_content": str}
         # 由 _on_subagent_content 回调（SubAgentContentMiddleware 转发）累积；
         # 任务完成时由 research_runner 携带到 writeback，持久化到
-        # ChatMessage.subagent_contents，供前端刷新后恢复子代理图层正文。
+        # ChatMessage.subagent_contents，供前端刷新后恢复子代理图层正文
+        # （前端 subagentContents[subagentThreadId] 对齐）。
         self.subagent_contents: dict[str, dict[str, str]] = {}
         # 主 agent 图层已输出 content 累计长度（position 注入依据，Task 2.1）：
         # astream messages 循环中 AIMessageChunk content 追加；工具调用发起点
@@ -330,7 +332,9 @@ class OfficialDeepAgentAdapter:
         #
         # 回调签名：
         #   on_tool_event(event_type, tool_call_id, tool_name, **kwargs) -> coroutine
-        # kwargs 可能包含 parameters / result / error / depth / agent_path / risk_ceiling
+        # kwargs 可能包含 parameters / result / error / depth / risk_ceiling
+        # （agent_path 不再透传——spec REMOVED：agent_path 从事件 payload 中删除，
+        # 路由唯一依据 subagent_thread_id）
         #
         # 回调内部构造 evt dict 并调用 _publish_tool_event 发布到统一 tool_call_lifecycle.service，
         # 与父 graph 的工具事件发布路径完全一致（service.transition_async）。
@@ -347,10 +351,11 @@ class OfficialDeepAgentAdapter:
 
             子 agent 嵌套层级字段（Phase E3）：
             SubAgentToolEventMiddleware 通过 kwargs 传递
-            depth / agent_path / risk_ceiling（agent_name 由回调自行读取），
+            depth / risk_ceiling（agent_name 由回调自行读取），
             本回调透传到 evt dict，由 _publish_tool_event 注册到 ToolCallContext，
             最终经 transition_async 透传到事件 payload，前端 ToolCallCard 可展示
-            完整调用链路（与父 agent 直接调用的工具行为一致）。
+            嵌套层级（与父 agent 直接调用的工具行为一致）；agent_path 不透传
+            （spec REMOVED：事件 payload 不再携带 agent_path）。
             """
             logger.info(
                 f"[OfficialDeepAgent] _on_tool_event 入口: event_type={event_type}, "
@@ -372,14 +377,13 @@ class OfficialDeepAgentAdapter:
             if "error" in kwargs and kwargs["error"] is not None:
                 evt["error"] = kwargs["error"]
             # 透传子 agent 嵌套层级字段（Phase E3）
-            # 注意：不能使用 `val not in {"", 0}` 判断——agent_path 是 list，
-            # list 参与 set 成员测试会抛 `unhashable type: 'list'`。
-            # 改用 tuple 成员测试（in 逐元素 == 比较，list == "" / list == 0 均安全返回 False）。
+            # 注意：不能使用 `val not in {"", 0}` 判断——list 参与 set 成员测试
+            # 会抛 `unhashable type: 'list'`。改用 tuple 成员测试（in 逐元素 ==
+            # 比较，list == "" / list == 0 均安全返回 False）。
             for sub_field in (
                 "parent_tool_call_id",
                 "depth",
                 "agent_name",
-                "agent_path",
                 "risk_ceiling",
                 # description：子 agent 角色描述（任务目标，Task 2.4），
                 # 由 SubAgentToolEventMiddleware 从 nesting 透传，仅子 agent 事件携带
@@ -403,13 +407,16 @@ class OfficialDeepAgentAdapter:
         # 父 config 经 langgraph ensure_config 自动传播到子 agent。
         #
         # 回调签名：
-        #   on_subagent_content(agent_path, content, reasoning_content, agent_name, depth) -> coroutine
+        #   on_subagent_content(agent_path, content, reasoning_content, agent_name, depth,
+        #                       subagent_thread_id) -> coroutine
+        # （agent_path 仅保留为展示元数据参数；路由与累计唯一依据 subagent_thread_id）
         #
-        # 处理逻辑：
-        # 1. 按 agent_path 累计到 self.subagent_contents（key = ">".join(agent_path)），
-        #    content/reasoning_content 追加式累积（多轮模型调用拼接）；
+        # 处理逻辑（spec MODIFIED：路由收敛）：
+        # 1. 按 subagent_thread_id 累计到 self.subagent_contents（废弃 agent_path
+        #    拼接键），content/reasoning_content 追加式累积（多轮模型调用拼接）；
         # 2. 发布 STREAM_SUBAGENT_CONTENT WebSocket 事件到 session/task 频道，
-        #    前端按 agent_path 路由到对应子代理图层实时展示；
+        #    前端按 subagent_thread_id 路由到对应子代理卡片实时展示
+        #    （data 不携带 agent_path，仅保留 subagent_thread_id 定向路由）；
         # 3. 事件携带 message_id（chat 关联场景定位归属消息）。
         async def _on_subagent_content(
             agent_path,
@@ -419,11 +426,10 @@ class OfficialDeepAgentAdapter:
             depth,
             subagent_thread_id="",
         ):
-            """子代理正文/中间思考转发回调（Agent 图层嵌套规范 Task 1）。"""
-            if not isinstance(agent_path, list) or not agent_path:
+            """子代理正文/中间思考转发回调（spec MODIFIED：按 subagent_thread_id 路由累计）。"""
+            if not subagent_thread_id:
                 return
-            path_key = ">".join(str(p) for p in agent_path)
-            entry = self.subagent_contents.setdefault(path_key, {"content": "", "reasoning_content": ""})
+            entry = self.subagent_contents.setdefault(subagent_thread_id, {"content": "", "reasoning_content": ""})
             if content:
                 entry["content"] = (entry.get("content") or "") + content
             if reasoning_content:
@@ -447,9 +453,9 @@ class OfficialDeepAgentAdapter:
                         "source_id": self.thread_id,
                         "message_id": _assistant_message_id or None,
                         "data": {
-                            # agent_path 为协议路由标识符（图层归属），保持 snake_case 原始值，
-                            # 前端 toCamelCase 后还原（见 sessionTransformers 转换边界）
-                            "agent_path": [str(p) for p in agent_path],
+                            # data 不携带 agent_path（spec MODIFIED：data.agent_path 废弃，
+                            # 路由唯一依据顶层 subagent_thread_id，协议标识符保持
+                            # snake_case，见 sessionTransformers 转换边界）
                             "content": content,
                             "reasoning_content": reasoning_content,
                             "agent_name": agent_name or "",
@@ -463,7 +469,7 @@ class OfficialDeepAgentAdapter:
             except Exception as e:
                 logger.warning(
                     f"[OfficialDeepAgent] 广播子代理正文失败: "
-                    f"agent_path={path_key}, err={e}"
+                    f"subagent_thread_id={subagent_thread_id}, err={e}"
                 )
 
         config["configurable"]["_on_subagent_content"] = _on_subagent_content
@@ -522,6 +528,8 @@ class OfficialDeepAgentAdapter:
         # 主 config 注入嵌套层级基础值（deepagents 0.7.5 官方机制）：
         # 子 agent 经 langgraph ensure_config 自动继承主 configurable；
         # SubAgentNestingMiddleware 在子 agent 内基于这些值计算递增值写入 state。
+        # 该注入仅服务 state 展示元数据（subagent_depth/subagent_path），
+        # 不参与事件路由（spec MODIFIED：路由唯一依据 subagent_thread_id）。
         if "depth" not in config["configurable"]:
             config["configurable"]["depth"] = 0
         if "agent_path" not in config["configurable"]:
@@ -1013,10 +1021,12 @@ class OfficialDeepAgentAdapter:
         - 独立深度研究场景：仅 task 频道
 
         子 agent 嵌套层级字段（Phase E3）：
-        evt 中的 parent_tool_call_id / depth / agent_name / agent_path / risk_ceiling
+        evt 中的 parent_tool_call_id / depth / agent_name / risk_ceiling
         （由 _on_tool_event 从 SubAgentToolEventMiddleware 透传）注册到 ToolCallContext，
         transition_async 从 context 透传到事件 payload，前端 ToolCallCard 可展示
-        完整调用链路。主 agent 直接调用的工具不携带这些字段（evt 中无对应 key）。
+        嵌套层级。主 agent 直接调用的工具不携带这些字段（evt 中无对应 key）。
+        agent_path 不再注册/透传（spec REMOVED：agent_path 从事件 payload 与
+        转发链中删除，路由唯一依据 subagent_thread_id）。
 
         Args:
             evt: extract_tool_events_from_message 返回的事件 dict，字段：
@@ -1026,7 +1036,7 @@ class OfficialDeepAgentAdapter:
                 - parameters: dict
                 - result: str (仅 COMPLETED)
                 - error: str (仅 FAILED)
-                - parent_tool_call_id/depth/agent_name/agent_path/risk_ceiling/description:
+                - parent_tool_call_id/depth/agent_name/risk_ceiling/description:
                   子 agent 嵌套字段（可选，description 为任务目标描述）
         """
         from Django_xm.common.approval_utils import derive_cross_module_id_from_source
@@ -1111,14 +1121,12 @@ class OfficialDeepAgentAdapter:
 
         # 提取子 agent 嵌套层级字段（Phase E3）
         # evt 中无对应 key 时使用默认空值（主 agent 场景）
+        # agent_path 不再提取/注册（spec REMOVED：路由与累计唯一依据 subagent_thread_id）
         sub_parent_tool_call_id = evt.get("parent_tool_call_id", "") or ""
         sub_depth = evt.get("depth", 0)
         if not isinstance(sub_depth, int) or sub_depth < 0:
             sub_depth = 0
         sub_agent_name = evt.get("agent_name", "") or ""
-        sub_agent_path = evt.get("agent_path")
-        if not isinstance(sub_agent_path, list):
-            sub_agent_path = []
         # risk_ceiling 统一转字符串（可能是 RiskLevel 枚举）
         sub_risk_ceiling_raw = evt.get("risk_ceiling")
         if sub_risk_ceiling_raw is not None and not isinstance(sub_risk_ceiling_raw, str):
@@ -1147,7 +1155,6 @@ class OfficialDeepAgentAdapter:
                     parent_tool_call_id=sub_parent_tool_call_id,
                     depth=sub_depth,
                     agent_name=sub_agent_name,
-                    agent_path=sub_agent_path,
                     risk_ceiling=sub_risk_ceiling,
                     description=sub_description,
                     # 子代理 SSE 定向推送路由标识符（spec D10）
@@ -1158,14 +1165,14 @@ class OfficialDeepAgentAdapter:
             logger.warning(f"[OfficialDeepAgent] 注册工具调用上下文失败 (tool={tool_name}, tc_id={tool_call_id}): {e}")
 
         # position 采集（Task 2.1，按图层局部化，单一权威来源）：
-        # - 子代理（depth>0）：position = len(该子代理图层已转发正文 content 长度)
+        # - 子代理（subagent_thread_id 非空，spec D1）：position = len(该子代理图层
+        #   已转发正文 content 长度；subagent_contents 按 subagent_thread_id 键累计)
         # - 主 agent：position = len(主 agent 已输出 content 累计长度)
         # 经 service.bind_position 写入 context（仅补全空字段），后续状态事件不覆盖
         # （keep_existing + bind_position 双保险，D3 硬约束）。
         _position: int | None = None
-        if sub_agent_path and sub_depth > 0:
-            _sub_path_key = ">".join(str(p) for p in sub_agent_path)
-            _sub_entry = self.subagent_contents.get(_sub_path_key) or {}
+        if sub_subagent_thread_id:
+            _sub_entry = self.subagent_contents.get(sub_subagent_thread_id) or {}
             _position = len(_sub_entry.get("content") or "")
         else:
             _position = self._main_content_len

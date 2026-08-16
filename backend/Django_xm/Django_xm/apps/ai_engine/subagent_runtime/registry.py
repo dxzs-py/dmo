@@ -5,7 +5,7 @@
 - ``system_prompt`` 懒加载（``research.prompts`` 为纯常量模块，无循环依赖）
 - 专用工具解析（web-researcher→搜索工具；doc-analyst→检索工具；general-purpose→空）
 
-调用方：``spawn_sub_agent`` 工具（agent_hub.tools.spawn）按 ``agent_name`` 查询注册表，
+调用方：``spawn_sub_agent`` 工具（agent_hub.subagent_tools.spawn）按 ``agent_name`` 查询注册表，
 在主 agent 工具集基础上追加专用工具，并继承角色风险上限。
 """
 

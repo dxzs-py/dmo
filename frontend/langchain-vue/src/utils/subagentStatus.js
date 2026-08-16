@@ -27,8 +27,18 @@ export const SUBAGENT_STATUS_TAG_TYPE = {
   [SUBAGENT_STATUS.FAILED]: 'danger',
 }
 
+/** 状态 → 摘要卡片图标（7.md 设计稿：执行中 ⏳ / 等待确认 ⚠️ / 已完成 ✅ / 失败 ❌） */
+export const SUBAGENT_STATUS_ICON = {
+  [SUBAGENT_STATUS.RUNNING]: '⏳',
+  [SUBAGENT_STATUS.INTERRUPTED_PENDING_USER_INPUT]: '⚠️',
+  [SUBAGENT_STATUS.COMPLETED]: '✅',
+  [SUBAGENT_STATUS.FAILED]: '❌',
+}
+
 export const getSubagentStatusText = (status) => SUBAGENT_STATUS_TEXT[status] || status || ''
 
 export const getSubagentStatusTagType = (status) => SUBAGENT_STATUS_TAG_TYPE[status] || 'info'
+
+export const getSubagentStatusIcon = (status) => SUBAGENT_STATUS_ICON[status] || '•'
 
 export const isPendingUserInput = (status) => status === SUBAGENT_STATUS.INTERRUPTED_PENDING_USER_INPUT

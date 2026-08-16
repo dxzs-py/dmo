@@ -2,6 +2,7 @@ import { toRaw } from 'vue'
 import { PROTECTED_STREAM_STATES, ToolCallStatus, ApprovalState } from '../types/index.js'
 import {
   applyToolCallState,
+  approvalStateToToolStatus,
   isTerminalStatus,
   TERMINAL_STATUSES,
   NON_TERMINAL_STATUSES,
@@ -891,9 +892,13 @@ export function flushPendingApprovalsInMap(pendingMap, toolCallMap, toolCallId) 
  * 审批态与工具执行态解耦：approval.state 驱动审批面板显示/按钮禁用，
  * toolCall.status 由 tool_result 事件驱动（completed/failed）。
  *
- * 本函数仅更新 approval.state，不修改 toolCall.status。
- * 若需同时同步 status（如审批通过后流转到 running/completed），调用方应显式调用
- * updateToolCallStatusInMap。
+ * 终态联动（子代理工具审批拒绝/超时修复）：
+ * - 审批进入 rejected/timeout 终态时，同步推进 toolCall.status 到对应终态。
+ *   原因：被拒绝/超时的工具不会进入 execute 路径，不产生 tool_call 生命周期
+ *   终态事件（主代理由 error ToolMessage → extractor 联动 FAILED，子代理无此路径），
+ *   只能由审批终态驱动 status，否则前端卡片状态永远停留在"待审批/等待中"。
+ * - 走 applyToolCallState 状态机（add 模式）：终态不回退 / 非法转换回退由状态机保证，
+ *   已终态（completed/failed）的工具不受影响。
  *
  * @param {Map} toolCallMap - toolCall Map
  * @param {string} toolCallId - 工具调用 ID
@@ -912,6 +917,14 @@ export function updateApprovalStateInMap(toolCallMap, toolCallId, state, data = 
   // approval 不存在时初始化为空对象后设置 state
   if (!tc.approval) tc.approval = {}
   tc.approval.state = state
+  // 审批终态（拒绝/超时）联动 toolCall.status（子代理工具审批拒绝/超时状态不同步根因修复）
+  if (state === ApprovalState.REJECTED || state === ApprovalState.TIMEOUT) {
+    const targetStatus = approvalStateToToolStatus(state)
+    const { status: nextStatus, applied: statusApplied } = applyToolCallState(tc, { status: targetStatus }, { mode: 'add' })
+    if (statusApplied && nextStatus !== undefined) {
+      tc.status = nextStatus
+    }
+  }
   return true
 }
 

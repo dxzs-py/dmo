@@ -30,8 +30,8 @@
         </div>
       </div>
       <div class="report-content">
-        <!-- 局�?ErrorBoundary：研究报�?Markdown 渲染畸形内容时仅替换报告区，保留审批面板与文件列�?-->
-        <ErrorBoundary :full-screen="false">
+        <!-- 局部 ErrorBoundary：研究报告 Markdown 渲染畸形内容时仅替换报告区，保留审批面板与文件列表 -->
+        <ErrorBoundary>
           <MarkdownRenderer :content="task.finalReport" />
         </ErrorBoundary>
       </div>
@@ -54,7 +54,7 @@
           <span>加载分析详情...</span>
         </div>
         <div v-else-if="docAnalysisContent" class="analysis-content">
-          <ErrorBoundary :full-screen="false">
+          <ErrorBoundary>
             <MarkdownRenderer :content="docAnalysisContent" />
           </ErrorBoundary>
         </div>

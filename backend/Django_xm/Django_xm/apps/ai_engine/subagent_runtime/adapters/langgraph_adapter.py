@@ -21,6 +21,15 @@ from Django_xm.apps.ai_engine.subagent_runtime.runtime import MAX_SUBAGENT_ROUND
 logger = logging.getLogger(__name__)
 
 
+# 子代理 thread_id → 父传入 configurable 引用（含 _on_tool_event / _on_subagent_content
+# 等回调，及 chat_session_id / assistant_message_id）。spawn 时保存、resume 时恢复：
+# resume 重建 graph 后若回调丢失，子代理后续工具事件（PENDING/COMPLETED）将不再转发，
+# 导致前端"运行结果不展示、新审批落入主工具流"。终态（completed/failed）清理。
+# 说明：回调为函数对象不可序列化，故用进程内 registry 而非 DB 字段保存；
+# 服务重启后 registry 为空，resume 回落 instance.metadata 重建（极端场景，主流程不受影响）。
+_configurable_registry: dict[str, dict] = {}
+
+
 class LangGraphAdapter(BaseRuntimeAdapter):
     """对接 LangGraph CompiledStateGraph（BASE agent 工具链 + DeepAgents 独立 graph）。"""
 
@@ -69,6 +78,7 @@ class LangGraphAdapter(BaseRuntimeAdapter):
             loop.run_until_complete(self._execute(instance, agent_config, configurable, resume_payload))
         except Exception:
             logger.exception(f"子代理执行异常: {instance.thread_id}")
+            _configurable_registry.pop(instance.thread_id, None)
             loop.run_until_complete(
                 self.runtime._update_status(instance.thread_id, SubAgentStatus.FAILED)
             )
@@ -94,6 +104,13 @@ class LangGraphAdapter(BaseRuntimeAdapter):
         from Django_xm.apps.agent_hub import create as agent_hub_create
 
         thread_id = instance.thread_id
+        if resume_payload is None:
+            # 首次 spawn：保存父 configurable（含事件回调引用），resume 时复用
+            if configurable:
+                _configurable_registry[thread_id] = configurable
+        elif configurable is None:
+            # resume：从 registry 恢复父 configurable（graph 重建后回调不可丢）
+            configurable = _configurable_registry.get(thread_id)
         run_config = {
             "configurable": self._build_configurable(instance, configurable),
             "recursion_limit": MAX_SUBAGENT_ROUNDS,
@@ -129,6 +146,18 @@ class LangGraphAdapter(BaseRuntimeAdapter):
                 SubAgentStatus.INTERRUPTED_PENDING_USER_INPUT,
                 pending_interrupt_info=pending,
             )
+            # 审批中断（非业务等待）：创建审批 DB 记录 + 发布 approval_pending 事件，
+            # 供前端子代理卡片内工具卡渲染"确认执行/拒绝"控件（spec D9/D10）。
+            # 统一审批链路：子代理与主代理审批共用 /approvals/{interrupt_id}/resume/
+            # 端点，仅 source（chat/deep_research）与 extra.subagent_thread_id 不同；
+            # 前端审批 → gateway 信令（带 subagent_thread_id）→ SessionManager
+            # 子代理分支 → 终态化 + runtime.resume 断点续跑。
+            try:
+                await self._create_approvals_from_interrupts(instance, configurable, state)
+            except Exception:
+                logger.exception(
+                    f"子代理审批创建失败（非致命，状态已挂起）: {thread_id}"
+                )
             logger.info(f"子代理 interrupt 挂起: {thread_id}, interrupt_id={pending.get('interrupt_id')}")
         else:
             result_preview = self._extract_result(state)
@@ -138,6 +167,7 @@ class LangGraphAdapter(BaseRuntimeAdapter):
                 result_preview=result_preview,
             )
             logger.info(f"子代理执行完成: {thread_id}, result_len={len(result_preview)}")
+            _configurable_registry.pop(thread_id, None)
             await self._notify_finished(instance, "completed")
 
     # ── 辅助 ────────────────────────────────────────────────────────────
@@ -161,17 +191,23 @@ class LangGraphAdapter(BaseRuntimeAdapter):
         - ``thread_id``：子代理独立 id（独立 checkpoint）。
         - ``subagent_thread_id``：SSE 定向推送路由标识符（协议字段，snake_case）。
         - 事件转发回调（_on_tool_event / _on_subagent_content）从父 configurable 继承。
+        - ``agent_path``：从父 configurable 继承后追加当前 agent_name（父无则以
+          ``["main"]`` 起始），仅服务 state.subagent_path 展示元数据（嵌套层级），
+          不参与事件路由（路由唯一依据为 subagent_thread_id，spec D1/MODIFIED）。
         - ``risk_ceiling``：子代理角色风险上限（审批中间件读取）。
         """
         meta = instance.metadata or {}
         depth = meta.get("depth", 0)
         agent_name = meta.get("agent_name", "general-purpose")
+        parent_path = (configurable or {}).get("agent_path")
+        if not isinstance(parent_path, list) or not parent_path:
+            parent_path = ["main"]
         cfg: dict = {
             "thread_id": instance.thread_id,
             "subagent_thread_id": instance.thread_id,
             "depth": depth,
             "agent_name": agent_name,
-            "agent_path": ["main", agent_name],
+            "agent_path": [*parent_path, agent_name],
             "risk_ceiling": meta.get("risk_ceiling"),
         }
         if configurable:
@@ -179,6 +215,75 @@ class LangGraphAdapter(BaseRuntimeAdapter):
                 if _key in configurable and configurable[_key] is not None:
                     cfg[_key] = configurable[_key]
         return cfg
+
+    async def _create_approvals_from_interrupts(
+        self, instance: Any, configurable: dict | None, state: Any
+    ) -> None:
+        """子代理审批中断：创建审批 DB 记录 + 发布 approval_pending 事件。
+
+        与主 agent（SessionExecutor._on_interrupt → create_approvals_for_interrupts）
+        使用同一链路（parse_approval_interrupt → request_approval_async），
+        保证审批持久化与实时事件（spec D9/D10 事件单通道发布）一致：
+        - 审批归集到父线程（source_id=parent_thread_id：研究任务或 chat 会话），
+          事件随 task/session 频道推送；
+        - approval.extra 透传 subagent_thread_id，gateway 据此将统一审批端点的
+          恢复信令路由到子代理（而非主会话挂起协程）。
+        """
+        from Django_xm.apps.approvals.models import Approval
+        from Django_xm.apps.research.services.research_runner import create_approvals_for_interrupts
+        from Django_xm.common.approval_parser import parse_approval_interrupt
+
+        interrupt_value = None
+        graph_interrupt_id = ""
+        langgraph_resume_id = ""
+        for task in getattr(state, "tasks", []) or []:
+            for intr in getattr(task, "interrupts", []) or []:
+                value = getattr(intr, "value", None)
+                if not isinstance(value, dict) or not value.get("_approval"):
+                    continue
+                interrupt_value = value
+                langgraph_resume_id = getattr(intr, "id", "") or ""
+                graph_interrupt_id = (value.get("_meta") or {}).get("graph_interrupt_id", "") or langgraph_resume_id
+                break
+            if interrupt_value is not None:
+                break
+        if interrupt_value is None:
+            logger.warning(f"子代理无审批中断可创建: {instance.thread_id}")
+            return
+
+        approval_data_list = parse_approval_interrupt(
+            interrupt_value,
+            graph_interrupt_id=graph_interrupt_id,
+            langgraph_resume_id=langgraph_resume_id,
+        )
+        if not approval_data_list:
+            logger.warning(f"子代理审批解析为空: {instance.thread_id}")
+            return
+
+        meta = instance.metadata or {}
+        # source 语义：父线程为研究任务 → deep_research；否则为 chat 会话。
+        # 统一审批链路下主/子代理仅 source 不同，审批端点/事件/恢复路由完全一致。
+        source = (
+            Approval.SOURCE_DEEP_RESEARCH
+            if instance.parent_thread_id.startswith("research_")
+            else Approval.SOURCE_CHAT
+        )
+        await create_approvals_for_interrupts(
+            approval_data_list,
+            thread_id=instance.parent_thread_id,  # 归集到父线程（研究任务/chat 会话）
+            user_id=meta.get("user_id"),
+            chat_session_id=(configurable or {}).get("chat_session_id"),
+            message_id=(configurable or {}).get("assistant_message_id", "") or "",
+            data=None,
+            source=source,
+        )
+        # 审批自治（对齐 7.md）：子代理审批只与子代理自身状态相关，与父任务状态
+        # 完全解耦。父任务保持 running（waiting_subagent），不切 awaiting_approval；
+        # 前端 SubAgentCard 按子代理自身 interrupted_pending_user_input 判断审批可用性。
+        logger.info(
+            f"子代理审批已创建: subagent={instance.thread_id}, parent={instance.parent_thread_id}, "
+            f"source={source}, count={len(approval_data_list)}, graph_interrupt_id={graph_interrupt_id}"
+        )
 
     @staticmethod
     def _extract_interrupt_info(state: Any) -> dict:

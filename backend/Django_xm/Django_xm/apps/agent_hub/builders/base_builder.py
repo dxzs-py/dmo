@@ -43,12 +43,14 @@ class BaseAgentBuilder:
         except Exception as e:
             logger.warning(f"ApprovalMiddleware 注入失败(非致命): {e}")
 
-        # 子 agent 官方支持中间件（Agent 图层嵌套规范，与 deep_builder 子 agent 栈统一）：
+        # 子 agent 官方支持中间件（与 deep_builder 子 agent 栈统一，
+        # 主/子判定 spec D1：configurable.subagent_thread_id 非空 ⇔ 子代理）：
         # - SubAgentNestingMiddleware：注入嵌套层级字段到 state（depth/agent_path/risk_ceiling）。
-        #   主 agent 由执行层在 config.configurable 注入 depth=0/agent_path=["main"]；
-        #   子代理（spawn_sub_agent 派生）在父 config 基础上递增（depth+1/path 追加）。
-        # - SubAgentToolEventMiddleware：转发子代理工具事件（仅 depth>0 转发，主 agent 由主链路发布）。
-        # - SubAgentContentMiddleware：捕获子代理正文/中间思考流（Agent 图层嵌套 Task 1）。
+        #   主 agent（subagent_thread_id 为空）恒写 subagent_depth=0、不注入子代理语义
+        #   字段；真子代理 subagent_depth=configurable.depth（适配器 spawn 时已算好）。
+        # - SubAgentToolEventMiddleware：仅子代理（subagent_thread_id 非空）转发工具事件，
+        #   主 agent 工具事件由主链路唯一发布与持久化（spec D2 单路径）。
+        # - SubAgentContentMiddleware：仅子代理捕获正文/中间思考流（主 agent 走主通道）。
         # 无 tools 时不挂（无工具即无子代理能力），避免多余开销。
         if tools:
             try:

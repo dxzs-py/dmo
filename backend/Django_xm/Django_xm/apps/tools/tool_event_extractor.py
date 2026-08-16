@@ -288,6 +288,17 @@ def extract_tool_events_from_message(
                 }
             )
 
+        # 审批注入的终态 ToolMessage（超时/拒绝）：其 content 仅为告知 Agent 调整策略，
+        # 对应终态事件（TOOL_CALL_TIMEOUT / TOOL_CALL_REJECTED）已由审批链路发布。
+        # 此类消息虽然 status="error"，但不应再判定为 TOOL_CALL_FAILED——
+        # 否则会尝试发布"终态→终态"的非法状态转换，被 tool_call_lifecycle 状态机
+        # 拦截并产生噪音告警。命中时跳过终态判定，仅保留上面的 PENDING 补发。
+        # 关键字与 chat/services/stream_tool_state.py 的 _detect_tool_timeout /
+        # _detect_tool_rejected 保持一致。
+        approval_final_keywords = ("审批超时", "用户已拒绝")
+        if isinstance(content, str) and any(k in content for k in approval_final_keywords):
+            return events
+
         # 检测工具执行状态：status=='error' 或 content 以 'Error' 开头
         # （来源：adapter.py TOOL_CALL_FAILED 判定）
         is_error = getattr(message, "status", None) == "error" or (

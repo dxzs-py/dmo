@@ -134,8 +134,8 @@ export const useResearchStore = defineStore('research', () => {
         toolCalls: ref([]),
         toolCallMap: ref(new Map()),
         pendingApprovals: ref(new Map()),
-        // 子代理图层正文/中间思考（Agent 图层嵌套规范 Task 1.5）：
-        // key = agentPath 的 ">" 拼接，value = { content, reasoningContent }
+        // 子代理图层正文/中间思考（spec MODIFIED：按 subagentThreadId 键累计）：
+        // key = subagentThreadId，value = { content, reasoningContent }
         subagentContents: ref({}),
       }))
     }

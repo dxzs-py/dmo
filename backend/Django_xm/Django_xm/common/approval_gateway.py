@@ -22,8 +22,8 @@
     - 返回熔断错误响应给前端
 
 依赖关系：
-    - chat 模块：apps.fastapi_service.event_bus.publish_signal（Redis 信令）
-    - deep_research 模块：apps.fastapi_service.event_bus.publish_signal（Redis 信令）
+    - chat 模块：services.fastapi_service.event_bus.publish_signal（Redis 信令）
+    - deep_research 模块：services.fastapi_service.event_bus.publish_signal（Redis 信令）
     - 前端：统一调用 POST /api/v1/approvals/{interrupt_id}/resume/，无需 source 分支
 """
 
@@ -220,7 +220,7 @@ class ApprovalGateway:
 
         不阻塞 HTTP 请求，立即返回 None（调用方返回 JSON 响应）。
         """
-        from Django_xm.apps.fastapi_service.event_bus import (
+        from Django_xm.services.fastapi_service.event_bus import (
             SESSION_TYPE_CHAT,
             SIGNAL_APPROVAL,
             publish_signal,
@@ -241,13 +241,14 @@ class ApprovalGateway:
             langgraph_resume_id or approval_extra.get("langgraph_resume_id", "") or approval.interrupt_id
         )
         message_id = approval_extra.get("message_id", "")
+        subagent_thread_id = approval_extra.get("subagent_thread_id", "")
 
         logger.info(
             f"[ApprovalGateway] chat 审批信令: session={effective_session_id}, "
             f"interrupt_id={approval.interrupt_id}, "
             f"graph_interrupt_id={effective_graph_interrupt_id}, "
             f"langgraph_resume_id={effective_langgraph_resume_id}, "
-            f"approved={approved}"
+            f"approved={approved}, subagent_thread_id={subagent_thread_id or '(main)'}"
         )
 
         publish_signal(
@@ -264,6 +265,9 @@ class ApprovalGateway:
                 "user_id": getattr(approval, "user_id", None),
                 "message_id": message_id,
                 "chat_session_id": approval.chat_session_id,
+                # 子代理审批（统一审批链路，与主 agent 同端点）：恢复目标为子代理
+                # 独立 thread，而非主会话挂起协程（SessionManager 据此路由 runtime.resume）
+                "subagent_thread_id": subagent_thread_id,
             },
         )
 
@@ -286,7 +290,7 @@ class ApprovalGateway:
 
         不阻塞 HTTP 请求，立即返回 None（调用方返回 JSON 响应）。
         """
-        from Django_xm.apps.fastapi_service.event_bus import (
+        from Django_xm.services.fastapi_service.event_bus import (
             SESSION_TYPE_RESEARCH,
             SIGNAL_APPROVAL,
             publish_signal,
@@ -298,6 +302,7 @@ class ApprovalGateway:
             langgraph_resume_id or approval_extra.get("langgraph_resume_id", "") or approval.interrupt_id
         )
         message_id = approval_extra.get("message_id", "")
+        subagent_thread_id = approval_extra.get("subagent_thread_id", "")
 
         thread_id = approval.source_id or ""
         if not thread_id:
@@ -312,7 +317,8 @@ class ApprovalGateway:
             f"interrupt_id={approval.interrupt_id}, "
             f"graph_interrupt_id={effective_graph_interrupt_id}, "
             f"langgraph_resume_id={effective_langgraph_resume_id}, "
-            f"approved={approved}, message_id={message_id}"
+            f"approved={approved}, message_id={message_id}, "
+            f"subagent_thread_id={subagent_thread_id or '(main)'}"
         )
 
         publish_signal(
@@ -329,6 +335,9 @@ class ApprovalGateway:
                 "user_id": getattr(approval, "user_id", None),
                 "message_id": message_id,
                 "chat_session_id": approval.chat_session_id,
+                # 子代理审批（统一审批链路，与主 agent 同端点）：恢复目标为子代理
+                # 独立 thread，而非主会话挂起协程（SessionManager 据此路由 runtime.resume）
+                "subagent_thread_id": subagent_thread_id,
             },
         )
 

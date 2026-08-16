@@ -162,6 +162,13 @@ class SessionExecutor:
             # 由调度器唤醒后新建协程续跑并在此真正结束时清理（见 _resume_after_subagent_wait）。
             # 其余路径（成功/失败/取消/崩溃）统一释放 checkpointer + 移除会话槽。
             if not self._suspended:
+                # 清理父工具上下文，避免污染其他会话（与 chat_service 生命周期对齐）
+                try:
+                    from Django_xm.apps.tools.langchain.agent_context import clear_parent_tool_context
+
+                    clear_parent_tool_context()
+                except Exception:
+                    pass
                 await self._release_checkpointer()
                 self.manager.remove_session(thread_id)
 
@@ -357,7 +364,7 @@ class SessionExecutor:
 
     async def _run_chat(self) -> None:
         """chat agent 执行核心（单协程，挂起 + 信令唤醒）。"""
-        from Django_xm.apps.fastapi_service.chat_executor_core import run_chat_session
+        from Django_xm.services.fastapi_service.chat_executor_core import run_chat_session
 
         await run_chat_session(self, self.params)
 
@@ -785,6 +792,28 @@ class SessionExecutor:
             logger.info("[SessionExecutor] 使用异步 Checkpointer")
 
         agent = await agent_hub_create(config)
+
+        # 设置父工具上下文：spawn_sub_agent 读取此处继承主 agent 工具集与深度思考参数
+        # （深度研究此前未设置 → 子代理仅得基础工具；此处与 chat_service 对齐）
+        try:
+            from Django_xm.apps.tools.langchain.agent_context import set_parent_tool_context
+
+            main_tools = getattr(agent, "original_tools", None) or (tools if tools else None) or []
+            set_parent_tool_context(
+                main_tools,
+                {
+                    "use_web_search": params.get("enable_web_search", True),
+                    "use_mcp": params.get("use_mcp"),
+                    "user_id": self.user_id,
+                    "session_id": thread_id,
+                    "model_name": params.get("model_name"),
+                    "store": params.get("store"),
+                    "enable_deep_thinking": bool(params.get("enable_deep_thinking", False)),
+                },
+            )
+        except Exception as e:
+            logger.warning(f"[SessionExecutor] 设置父工具上下文失败: {e}")
+
         return agent
 
     @staticmethod

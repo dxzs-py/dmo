@@ -56,10 +56,6 @@ export function toCamelCase(obj, _depth = 0) {
   for (const key of Object.keys(obj)) {
     const camelKey = _convertSnakeToCamel(key)
     result[camelKey] = toCamelCase(obj[key], _depth + 1)
-    // 仅在 key 实际发生变化且是顶层（非递归内部）时输出日志
-    if (_depth === 0 && key !== camelKey) {
-      console.debug('[toCamelCase]', key, '→', camelKey)
-    }
   }
   return result
 }
@@ -79,9 +75,6 @@ export function toSnakeCase(obj, _depth = 0) {
   for (const key of Object.keys(obj)) {
     const snakeKey = _camelToSnake(key)
     result[snakeKey] = toSnakeCase(obj[key], _depth + 1)
-    if (_depth === 0 && key !== snakeKey) {
-      console.debug('[toSnakeCase]', key, '→', snakeKey)
-    }
   }
   return result
 }

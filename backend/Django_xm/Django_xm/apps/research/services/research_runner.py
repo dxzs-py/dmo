@@ -176,6 +176,7 @@ async def create_approvals_for_interrupts(
     chat_session_id: str | None = None,
     message_id: str = "",
     data: dict[str, Any] | None = None,
+    source: str | None = None,
 ) -> str:
     """为中断批量创建 Approval DB 记录（审批创建公共逻辑，执行器与 worker 复用）。
 
@@ -187,11 +188,13 @@ async def create_approvals_for_interrupts(
 
     Args:
         interrupts_data: 单个 interrupt dict 或 interrupt dict list
-        thread_id: 研究任务 ID（= approval.source_id）
+        thread_id: 研究任务 ID 或 chat 会话 ID（= approval.source_id）
         user_id: 任务归属用户 ID（用于 approval.user 外键）
         chat_session_id: 关联的 chat 会话 ID（用于跨模块同步事件路由）
         message_id: 关联的 chat message ID（前端用于精确定位消息）
         data: 任务上下文数据（透传到 approval extra）
+        source: 审批来源（默认 deep_research；chat 子代理审批传 chat，
+            统一审批链路下主/子代理仅 source 语义不同，链路完全一致）
 
     Returns:
         str: 批次 ID（graph_interrupt_id），无有效审批时返回空字符串
@@ -271,7 +274,7 @@ async def create_approvals_for_interrupts(
 
         try:
             await request_approval_async(
-                source=Approval.SOURCE_DEEP_RESEARCH,
+                source=source or Approval.SOURCE_DEEP_RESEARCH,
                 source_id=thread_id,
                 interrupt_id=interrupt_id,
                 approval_data=approval_data,
@@ -613,7 +616,12 @@ def collect_batch_decisions(thread_id: str, graph_interrupt_id: str) -> tuple[di
         elif approval.state == Approval.STATE_REJECTED:
             resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = False
         elif approval.state == Approval.STATE_TIMEOUT:
-            resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = False  # 超时视为拒绝
+            # 超时决策标记（TIMEOUT_DECISION）：与拒绝（False）区分，
+            # middleware 据以注入"审批超时"ToolMessage（而非"用户已拒绝"），
+            # agent 收到后调整策略继续任务（P-TIMEOUT）。
+            from Django_xm.common.constants import TIMEOUT_DECISION
+
+            resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = TIMEOUT_DECISION
         else:
             all_resolved = False
 

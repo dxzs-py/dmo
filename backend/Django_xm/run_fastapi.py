@@ -27,7 +27,7 @@ import uvicorn
 
 if __name__ == "__main__":
     uvicorn.run(
-        "Django_xm.apps.fastapi_service.main:app",
+        "Django_xm.services.fastapi_service.main:app",
         host="0.0.0.0",  # noqa: S104  # 部署需求：多浏览器/多设备访问，与原 uvicorn 命令行 --host 0.0.0.0 一致
         port=8001,
         loop="none",  # 关键：绕过 uvicorn 默认 loop_factory（Windows 强制 ProactorEventLoop），

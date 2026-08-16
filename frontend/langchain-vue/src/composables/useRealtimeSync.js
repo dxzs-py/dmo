@@ -836,11 +836,12 @@ function createRealtimeSync() {
     })
     logger.info(`[Realtime] replay barrier flush: ${channelKey}, count=${buffered.length}`)
     bufferedEvents.delete(channelKey)
-    // 逐个 dispatch，bypass barrier（isReplay=true）
-    // 使用 for...of + await 确保顺序执行，避免并发状态覆盖
+    // 逐个 dispatch（bypass barrier：replayPendingChannels 已清除，不会再缓冲）
+    // 注意：此处必须传 isReplay=false —— 缓冲的是 replay 期间到达的"实时"事件，
+    // 不应被打上 isReplay 标记（否则实时审批超时会被当作历史回放而抑制提示）
     for (const evt of buffered) {
       try {
-        await dispatchEvent(evt, true)
+        await dispatchEvent(evt, false)
       } catch (err) {
         logger.error('[Realtime] flush 缓冲事件失败:', err)
       }

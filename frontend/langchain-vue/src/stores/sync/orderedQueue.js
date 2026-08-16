@@ -82,7 +82,6 @@ export const createOrderedQueue = (options = {}) => {
 
     // 已处理或过期的事件直接丢弃（Task 4：丢弃时联动推进调用方基线，防双基线发散）
     if (event.seq < state.expectedSeq) {
-      logger.debug(`[Sync] 丢弃过期事件: session=${sessionId}, seq=${event.seq}, expected=${state.expectedSeq}`)
       if (onDropped) {
         try {
           onDropped(sessionId, event.seq)

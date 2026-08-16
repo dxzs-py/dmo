@@ -6,13 +6,13 @@
 设计动机（Task 15.1）：
     子代理创建工具 ``spawn_sub_agent`` 原位于 ``tools/langchain/agent.py``，
     但其调用 ``agent_hub.create``，违反 ``tools → agent_hub`` 分层。
-    迁入 ``agent_hub/tools/`` 后，需通过注册表让 ``tools.get_all_tools()``
+    迁入 ``agent_hub/subagent_tools/`` 后，需通过注册表让 ``tools.get_all_tools()``
     仍能发现该工具。
 
 使用方式：
     # agent_hub/apps.py ready() 中注册（在 agent_hub app 内）
     from Django_xm.apps.tools.registry import register_extension_tools
-    from .tools import get_agent_tools  # agent_hub app 内的相对导入
+    from .subagent_tools import get_agent_tools  # agent_hub app 内的相对导入
     register_extension_tools(get_agent_tools())
 
     # tools/__init__.py 中查询

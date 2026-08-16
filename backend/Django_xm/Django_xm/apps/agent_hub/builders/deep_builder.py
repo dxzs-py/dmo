@@ -12,6 +12,7 @@ from langchain_core.tools import BaseTool, StructuredTool
 
 from Django_xm.apps.agent_hub.builders._registry import register_builder
 from Django_xm.apps.agent_hub.config import AgentType
+from Django_xm.apps.agent_hub.exceptions import AgentCreationError
 from Django_xm.apps.research.prompts import (
     DEEP_RESEARCH_SYSTEM_PROMPT,
     DOC_ANALYSIS_PROMPT_SUFFIX,
@@ -241,7 +242,8 @@ class DeepAgentBuilder:
         # 统一通过 spawn_sub_agent 工具经 SubAgentRuntime 派生（独立 thread + checkpoint）。
         # retriever_tool 保留在主 agent 工具集，供 spawn_sub_agent 派生 doc-analyst 时
         # 由注册表从主 agent 工具中识别。
-        tools = self._ensure_subagent_tools(tools)
+        # 注入后 fail-fast 断言 spawn/wait 必在工具集内（spec D3），缺失即构建失败。
+        tools = self._inject_and_assert_subagent_tools(tools)
 
         backend_type = getattr(config, "backend_type", "filesystem") or "filesystem"
         work_dir = getattr(config, "work_dir", None)
@@ -334,18 +336,48 @@ class DeepAgentBuilder:
         return adapter
 
     @staticmethod
-    def _ensure_subagent_tools(tools: list[BaseTool]) -> list[BaseTool]:
-        """确保深度研究主 agent 工具集包含子代理工具（spawn + wait）。
+    def _inject_and_assert_subagent_tools(tools: list[BaseTool]) -> list[BaseTool]:
+        """显式注入并断言研究主 agent 工具集包含子代理派生工具（fail-fast）。
 
-        CapabilityRegistry 按 tool_tier 注入工具，子代理工具为 extended tier
-        可能未被默认加载，此处显式注入（按名称去重）。
+        注入来源（唯一）：``agent_hub.subagent_tools``。CapabilityRegistry
+        不注册 spawn/wait（``resolve_tools`` 不保证注入），因此研究主 agent 的
+        ``spawn_sub_agent`` / ``wait_for_subagent`` 在此显式注入（按名称去重）。
+
+        fail-fast 断言（spec fix-deep-research-subagent-activation D3）：
+        注入后最终工具集必须同时包含两个子代理工具，缺失即抛
+        :class:`AgentCreationError` 并携带完整工具集名单——静默缺失会导致主
+        agent 无法派生子代理、研究链路退化为单 agent 直查，必须在构建期暴露。
+        同时打印工具集完整名单，便于日志实证。
+
+        Args:
+            tools: ``resolve_tools`` 解析出的初始工具列表。
+
+        Returns:
+            注入子代理派生工具后的最终工具列表。
+
+        Raises:
+            AgentCreationError: 最终工具集缺失任一必需的子代理派生工具。
         """
-        from Django_xm.apps.agent_hub.tools import spawn_sub_agent, wait_for_subagent
+        from Django_xm.apps.agent_hub.subagent_tools import spawn_sub_agent, wait_for_subagent
 
-        required = [spawn_sub_agent, wait_for_subagent]
+        required_names = ("spawn_sub_agent", "wait_for_subagent")
         existing_names = {getattr(t, "name", "") for t in tools}
-        missing = [t for t in required if t.name not in existing_names]
-        return list(tools) + missing
+        missing_tools = [
+            t for t in (spawn_sub_agent, wait_for_subagent) if t.name not in existing_names
+        ]
+        tools = list(tools) + missing_tools
+
+        tool_names = [getattr(t, "name", "") for t in tools]
+        logger.info(f"研究主 agent 工具集 ({len(tool_names)} 个): {tool_names}")
+
+        missing_names = [name for name in required_names if name not in set(tool_names)]
+        if missing_names:
+            raise AgentCreationError(
+                f"深度研究主 agent 工具集缺失必需的子代理派生工具 {missing_names}，"
+                f"研究链路强制子代理化（spec D3），构建失败；"
+                f"当前工具集 ({len(tool_names)} 个): {tool_names}"
+            )
+        return tools
 
     @staticmethod
     def _disable_general_purpose_subagent(model: Any) -> None:

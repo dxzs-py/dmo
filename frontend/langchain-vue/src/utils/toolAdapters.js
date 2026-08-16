@@ -429,21 +429,21 @@ const internalResultFormatters = {
     }
   },
 
-  /** write_file: 写入状态 */
+  /** write_file: 写入状态（空结果不兜底，避免被拒绝/未执行的工具显示"已写入"误导） */
   write_file: (result) => {
     const text = extractText(result)
     return {
-      formatted: text || '已写入',
+      formatted: text,
       displayMode: 'text',
       language: 'text',
     }
   },
 
-  /** edit_file: 编辑状态 */
+  /** edit_file: 编辑状态（空结果不兜底，语义同上） */
   edit_file: (result) => {
     const text = extractText(result)
     return {
-      formatted: text || '已编辑',
+      formatted: text,
       displayMode: 'text',
       language: 'text',
     }

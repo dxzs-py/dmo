@@ -1,6 +1,7 @@
 import { logger } from '@/utils/logger'
 import { TOOL_CALL_STATUS_MAP, TOOL_CALL_RESULT_STATUSES } from './constants'
 import { getSession, ensureSessionLoaded } from './helpers'
+import { scheduleSubagentsRefresh } from '@/composables/useSubagents'
 
 /**
  * @typedef {import('@/composables/useRealtimeSync').RealtimeEvent} RealtimeEvent
@@ -86,11 +87,12 @@ export const createHandleToolCallEvent = (ctx) => {
       // ToolCallCard 读取 toolCall.isAutoApproved 显示"自动通过"徽章
       isAutoApproved: payload.autoApproved === true,
       // 子 agent 嵌套层级字段（Phase E3）：后端 publish_tool_call payload 携带，
-      // ToolCallCard 读取 toolCall.* 展示完整调用链路（非审批路径也可见）
+      // ToolCallCard 读取 toolCall.* 展示嵌套层级（非审批路径也可见）。
+      // agentPath 不再归集——后端事件 payload 已删除该字段（spec REMOVED，
+      // 路由唯一依据 subagentThreadId；层级展示回退审批数据 approvalData.agentPath）
       parentToolCallId: payload.parentToolCallId || '',
       depth: typeof payload.depth === 'number' && payload.depth > 0 ? payload.depth : 0,
       agentName: payload.agentName || '',
-      agentPath: Array.isArray(payload.agentPath) ? payload.agentPath : [],
       riskCeiling: payload.riskCeiling || '',
       // 工具调用实际风险等级（safe/controlled/high）
       // 根因修复：后端 publish_tool_call payload 携带 risk_level（toCamelCase 后为 riskLevel），
@@ -122,6 +124,13 @@ export const createHandleToolCallEvent = (ctx) => {
       // 从事件顶层 subagent_thread_id 注入为 camelCase）。前端据此将工具调用归集到
       // 对应子代理卡片。
       ...(payload.subagentThreadId ? { subagentThreadId: payload.subagentThreadId } : {}),
+    }
+
+    // 子代理工具事件驱动元数据刷新（spec D10）：事件增量之外重新拉取 GET
+    // /subagents 元数据（agentName/status/resultPreview/pendingInterruptInfo），
+    // 使非触发浏览器（未刷新页面）随事件推进同步更新子代理卡片（双浏览器一致）。
+    if (payload.subagentThreadId && (sessionId || taskId)) {
+      scheduleSubagentsRefresh(sessionId || taskId)
     }
 
     const hasMessageId = !!payload.messageId

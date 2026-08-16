@@ -1,5 +1,65 @@
 # 测试问题记录
 
+## 2026-08-16 深度研究子代理激活修复验证（fix-deep-research-subagent-activation）
+
+### 问题A：spawn_sub_agent 创建子代理报错 `Object of type coroutine is not JSON serializable` ✅ 已修复
+- 现象：深度研究主 agent 已正确派发 spawn_sub_agent（研究计划明确"并行派发两个 general-purpose 子代理"），但工具返回 `{"error": "子代理创建失败: Object of type coroutine is not JSON serializable"}`；SubAgentInstance 表记录数恒为 0
+- 根因：`subagent_runtime/runtime.py` L176 构造 metadata 时 `"risk_ceiling": self._resolve_risk_ceiling(agent_name)` **缺少 await**（该方法是 async def）→ coroutine 对象写入 metadata → Django JSONField 序列化抛 TypeError → `_create_instance` 失败。RuntimeWarning 已明示 `coroutine 'SubAgentRuntime._resolve_risk_ceiling' was never awaited`
+- 修复：`runtime.py` 改为 `await self._resolve_risk_ceiling(agent_name)`
+- 复测：✅ shell 复现成功创建子代理；深度研究任务 4 个子代理全部创建成功（subagent_e0884bd052bf480c 等），状态 running，任务进入执行中
+
+### 问题B：子代理 shell_exec 审批创建后未发布 approval_pending 事件 → 前端无审批按钮 → 子代理永久挂起 ❌ 未修复
+- 现象：子代理执行 shell_exec（uptime/lscpu/df -hT 等非白名单）触发 ApprovalMiddleware `批量发起审批: 3/5 个请求` + `子代理 interrupt 挂起`，但前端深度研究详情页子代理工具卡仅显示"等待中"，**无"确认执行/拒绝"审批控件**；审批事件（approval_pending）从未发布到 task 频道（后端日志中所有 approval_pending 均为主 agent 的 write_file/spawn_sub_agent，无子代理 shell_exec 的）；主 agent 已正确进入 waiting_subagent 挂起等待
+- 根因：`langgraph_adapter._execute`（subagent_runtime）捕获子代理 interrupt 后仅更新 SubAgentInstance 状态为 INTERRUPTED_PENDING_USER_INPUT，**未调用 `create_approvals_for_interrupts`（research_runner）创建审批 DB 记录 + 发布实时事件**，也无审批决策后 resume 子代理的链路（主 agent 走 session_executor._on_interrupt → create_approvals_for_interrupts + _wait_for_batch_decision）
+- 影响：子代理审批不可达 → 卡死（非并行问题，4 子代理独立线程正常，均卡在审批等待）
+- 候选方案：在 langgraph_adapter interrupt 挂起处调用 create_approvals_for_interrupts（thread_id=父任务、携带 subagent_thread_id 到 extra），并打通审批决策 → runtime.resume(instance, decisions) 恢复子代理
+- 状态：待实现
+
+### 问题C：子代理审批归集 module 推导为 deep_research（chat 场景应归 chat module） ❌ 待确认
+- 现象：子代理工具审批 `SAFE 审计已注册: module=deep_research, depth=1, agent_name=general-purpose` —— 审批归集 module 与 chat 场景不一致
+- 注：与问题.txt 问题4 疑点同源；修复 B 时需一并校正 module 推导
+
+## 2026-08-16 顺序化 Agent 流展示 spec（sequential-agent-flow-display）测试
+
+### 问题D：spawn_tool_call_id 为空 → 子代理卡片无法挂到对应 spawn 工具卡后 ✅ 已修复
+- 现象：深度研究任务 spawn_sub_agent 审批通过后，`GET /ai-engine/subagents/` 返回实例 `spawn_tool_call_id=""`，前端子代理卡片只能作为孤儿渲染在工具流末尾，无法顺序挂到 spawn 工具卡后
+- 根因：langchain-core 的 `tool_call_id` 是工具执行的**参数**（ToolNode 注入），不是 `BaseTool` 实例属性。原代码 `getattr(self, "tool_call_id", None)` 恒为 None
+- 修复：`spawn.py` `_arun` 增加 `tool_call_id: Annotated[str, InjectedToolCallId] = None` 参数（LangChain 官方注入机制），透传 `runtime.spawn(spawn_tool_call_id=...)`
+- 复测：需重启 fastapi 后重新触发 spawn 验证
+
+### 问题E：深度研究子代理未继承主 agent 工具（只有基础工具） ✅ 已修复
+- 现象：子代理回复明确"仅配备 get_current_time / get_current_date / calculator，没有 shell_exec"——shell 命令无法执行；与用户预期"子代理集成主 agent 参数和工具"不符
+- 根因：`set_parent_tool_context` 仅在 chat_service 调用；深度研究（session_executor._build_agent）从未设置父工具上下文 → spawn 时 `main_tool_names` 为空 → `_resolve_main_tools` 回退 `get_all_basic_tools()`
+- 修复：`session_executor._build_agent` 构建 agent 后调用 `set_parent_tool_context(agent.original_tools, config)`（含 enable_deep_thinking 继承）；`run()` finally 非挂起路径 `clear_parent_tool_context()`
+- 复测：需重启 fastapi 后重新触发 spawn 验证
+
+### 问题F：两个 spawn 只有一张子代理卡片（元数据刷新时序） ⏳ 部分缓解，待重启后验证
+- 现象：write_file + 2 个 spawn_sub_agent 全部已完成，但详情页只渲染 1 张子代理摘要卡片
+- 疑点：fetchSubagents 仅 taskId 变化时触发；第二个子代理创建晚于首次拉取，且子代理工具事件是否触发 scheduleSubagentsRefresh 待确认。手动刷新页面后两张卡片均正常渲染（数据已落库，纯前端刷新时序问题）
+- 待验证：重启 fastapi 后新任务观察第二子代理创建时是否自动出现
+
+### 问题I：子代理展开内容与主代理区分度低（无卡片边界） ✅ 已修复
+- 现象：点击子代理卡片后，展开面板与主消息视觉几乎一样，看不出哪些信息/工具是子代理的、哪些是主代理的
+- 修复（组件结构重构，展开内容并入卡片内部）：
+  1. `SubAgentCard.vue` 改为总卡片：头部（标题「子代理 N · Ld」+ 状态 + 提示）→ 展开时卡片体内渲染 `SubAgentDetailPanel`（思考 → 正文 + 工具内联 + 嵌套子代理），整体有边框包裹，与主消息明确区分
+  2. `SubAgentDetailPanel.vue` 改为卡片体：移除独立头部（标题/状态由卡片头部承担），只渲染内容；嵌套子代理改为渲染 SubAgentCard（含自身展开内容，递归统一）
+  3. 宿主 `ChatMessage.vue` / `ResearchTaskDetail.vue` 移除兄弟 SubAgentDetailPanel，只渲染 SubAgentCard；审批/展开事件经卡片转发
+  4. 修复 SubAgentCard toggle 未传 threadId 导致无法展开的 bug（emit('toggle', subagent.threadId)）
+- 复测：✅ 双浏览器一致，点击卡片展开后内容在卡片边框内（研究推理→正文→工具），标题「子代理 1 · L1 / 子代理 2 · L1」；单测 14 通过、build 通过
+- 现象：卡片标题直接显示"2. 请执行以下本地命令序列..."，用户看不出是子代理组件（以为是正文）；结果预览全文平铺（1000+ 字符）撑爆卡片
+- 修复：
+  1. `subagentAggregation.js` 视图新增 `order`（全局序号）与 `depth`（递归深度：parentThreadId 指向另一子代理→父深度+1，指向任务/会话→1；环防御）
+  2. `SubAgentCard.vue` / `SubAgentDetailPanel.vue` 标题统一为「子代理 N · Ld：task 摘要」（如"子代理 1 · L1：请执行..."，嵌套显示 L2）
+  3. 预览 3 行截断（CSS line-clamp），完整内容点击展开面板查看
+- 复测：✅ 双浏览器一致显示「子代理 1 · L1 / 子代理 2 · L1」，预览 clientH=70px（3 行）vs 全文 1256px
+
+### 问题G：用户未开启深度思考，子代理仍展示英文推理链 ✅ 已修复（显示层过滤）
+- 现象：思考模式开关关闭，但子代理详情面板仍显示"研究推理"（英文 reasoning，1386 字符，如 "The user wants me to execute a sequence of local commands..."）
+- 根因：model_resolver 已注入 `thinking={"type":"disabled"}`（fastapi.log 确认"已从 provider 配置自动注入 deep_thinking 禁用参数"4 次），但 deepseek-v4-flash API 忽略该参数仍输出 reasoning_content；`SubAgentContentMiddleware._extract_reasoning` 无条件提取 → 前端展示
+- 修复：`spawn.py` 把 `enable_deep_thinking` 写入子代理 configurable；`subagent_support.py` 的 `aafter_model` 在未启用深度思考时 `reasoning=""`（丢弃模型仍输出的推理，用户开启时正常展示）
+- 说明：此为显示层兜底（模型层禁用失败属 provider 限制，思考仍消耗 token 但不展示）
+- 复测：需重启 fastapi 后重新触发 spawn 验证
+
 ## 2026-08-15 Agent 图层嵌套 spec 测试（tool-call-inline-content-flow，聊天代理模式）
 
 ### 问题0：子代理执行报错 `the connection is closed`（事件循环不一致） ✅ 已修复
@@ -55,3 +115,8 @@
 - 根因：`ChatMessage.canRegenerate` 仅依赖会话级 props.isLoading（触发浏览器有效），非触发浏览器 isLoading 恒为 false，消息自身 isStreaming=true 未被拦截
 - 修复：`canRegenerate` 增加 `props.message.isStreaming` 检查（消息级状态经 WS 同步，跨浏览器一致）
 - 复测：待验证
+
+[2026-08-16 11:05] ����о��Ӵ�������ʧ�ܣ�spawn_sub_agent ���� '�Ӵ�������ʧ��: Object of type coroutine is not JSON serializable'
+- �����о����� research_48eca0408125 �� agent ��ȷ�ɷ� spawn_sub_agent��general-purpose x2��������ͨ���� SubAgentRuntime ����ʵ��ʧ��
+- ֤�ݣ�ai_engine_subagent_instance �� count=0��ʵ����δ��������fastapi.log �� spawn.py:158 WARNING���� traceback
+- �ɵ㣺runtime.spawn metadata ���л���JSONField��ʱ coroutine ���룻���� exc_info ���ⶨλ

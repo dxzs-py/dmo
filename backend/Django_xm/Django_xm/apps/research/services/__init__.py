@@ -14,7 +14,7 @@
   已删除（死代码，无调用方）。
   深度研究智能体的创建统一通过 ``agent_hub.create(AgentConfig)`` 入口，
   由 ``DeepAgentBuilder.build()`` 返回 ``OfficialDeepAgentAdapter``。
-  执行统一走执行服务（apps.fastapi_service.session_executor）。
+  执行统一走执行服务（services.fastapi_service.session_executor）。
 """
 
 from .adapter import OfficialDeepAgentAdapter

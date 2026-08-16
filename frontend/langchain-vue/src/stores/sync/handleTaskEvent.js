@@ -110,7 +110,7 @@ export const createHandleTaskEvent = (ctx) => {
           payload.crossModuleId || null,
           payload,
           event.type,
-          { taskId, source }
+          { taskId, source, isReplay: event.isReplay === true }
         )
         break
       case 'stream_completed':

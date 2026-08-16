@@ -20,7 +20,7 @@ from rest_framework.views import APIView
 from Django_xm.apps.attachments.services.cross_app import soft_delete_session_attachments
 from Django_xm.apps.cache_manager.services.secure_session_cache import SecureSessionCacheService
 from Django_xm.apps.core.throttling import ChatStreamRateThrottle, MetaRateThrottle
-from Django_xm.apps.fastapi_service.event_bus import SESSION_TYPE_CHAT, SIGNAL_START, SIGNAL_STOP, publish_signal
+from Django_xm.services.fastapi_service.event_bus import SESSION_TYPE_CHAT, SIGNAL_START, SIGNAL_STOP, publish_signal
 from Django_xm.async_utils import run_async
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.event_schema import EventSource, EventType

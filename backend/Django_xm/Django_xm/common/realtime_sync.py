@@ -128,7 +128,6 @@ async def publish_tool_call(
     parent_tool_call_id: str | None = None,
     depth: int | None = None,
     agent_name: str | None = None,
-    agent_path: list | None = None,
     risk_ceiling: str | None = None,
     risk_level: str | None = None,
     _index: int | None = None,
@@ -162,9 +161,8 @@ async def publish_tool_call(
         error: 错误信息（仅 FAILED 事件）
         auto_approved: SAFE 级自动通过标记（True=无需用户审批，仅审计，前端可显示徽章）
         parent_tool_call_id: 父工具调用 ID（主 agent 调用 task 工具的 tool_call_id）
-        depth: 嵌套层级（0=主 agent，1=一级子 agent）
+        depth: 嵌套层级（0=主 agent，1=一级子 agent；仅展示元数据）
         agent_name: 子 agent 名称（如 web-researcher）
-        agent_path: 完整调用链路（如 ["main", "web-researcher"]）
         risk_ceiling: 子 agent 角色风险上限（safe/controlled/high）
         risk_level: 工具调用实际风险等级（safe/controlled/high，由 ApprovalMiddleware
                     计算）。根因修复：注入到 tool_call_* 事件 payload，让前端从工具
@@ -208,8 +206,6 @@ async def publish_tool_call(
         payload["depth"] = depth
     if agent_name:
         payload["agent_name"] = agent_name
-    if agent_path:
-        payload["agent_path"] = agent_path
     if risk_ceiling:
         payload["risk_ceiling"] = risk_ceiling
     # risk_level：工具调用实际风险等级，注入到所有 tool_call_* 事件 payload

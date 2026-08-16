@@ -7,7 +7,7 @@
 finalize_batch_approvals / execute_research_async 等外部依赖全部 mock，仅验证执行器编排逻辑。
 
 运行（backend/Django_xm 目录，conda env langchain_xm）：
-    python -m unittest Django_xm.apps.fastapi_service.tests.test_session_executor
+    python -m unittest Django_xm.services.fastapi_service.tests.test_session_executor
 """
 
 import asyncio
@@ -22,10 +22,10 @@ import django
 
 django.setup()
 
-from Django_xm.apps.fastapi_service.session_executor import SessionExecutor
-from Django_xm.apps.fastapi_service.session_manager import SessionManager
+from Django_xm.services.fastapi_service.session_executor import SessionExecutor
+from Django_xm.services.fastapi_service.session_manager import SessionManager
 
-_MODULE = "Django_xm.apps.fastapi_service.session_executor"
+_MODULE = "Django_xm.services.fastapi_service.session_executor"
 
 
 def _make_executor(thread_id="t1", **kw):
@@ -292,7 +292,7 @@ class TestSessionManager(unittest.TestCase):
         async def _case():
             manager = self._make_manager()
             with mock.patch(
-                "Django_xm.apps.fastapi_service.session_manager.SessionExecutor"
+                "Django_xm.services.fastapi_service.session_manager.SessionExecutor"
             ) as ex_cls:
                 payload = {"thread_id": "t1", "query": "q", "user_id": 1, "session_id": "s1"}
                 await manager.start_session(payload)
@@ -305,7 +305,7 @@ class TestSessionManager(unittest.TestCase):
         async def _case():
             manager = self._make_manager(max_concurrency=1)
             with mock.patch(
-                "Django_xm.apps.fastapi_service.session_manager.SessionExecutor"
+                "Django_xm.services.fastapi_service.session_manager.SessionExecutor"
             ) as ex_cls:
                 await manager.start_session({"thread_id": "t1", "query": "q"})
                 await manager.start_session({"thread_id": "t2", "query": "q"})
@@ -341,7 +341,7 @@ class TestSessionManager(unittest.TestCase):
             qs.filter.return_value = qs
             qs.__iter__ = lambda self: iter([task])
             with mock.patch(
-                "Django_xm.apps.fastapi_service.session_manager.SessionExecutor"
+                "Django_xm.services.fastapi_service.session_manager.SessionExecutor"
             ) as ex_cls, mock.patch("Django_xm.apps.research.models.ResearchTask.objects", qs):
                 await manager.recover_unfinished()
             assert ex_cls.call_count == 1
@@ -462,7 +462,7 @@ class TestSessionManagerRetryRecovery(unittest.TestCase):
             manager = self._make_manager()
             task = self._make_task(status="failed")
             with mock.patch(
-                "Django_xm.apps.fastapi_service.session_manager.SessionExecutor"
+                "Django_xm.services.fastapi_service.session_manager.SessionExecutor"
             ) as ex_cls, mock.patch(
                 "Django_xm.apps.research.models.ResearchTask.objects.filter"
             ) as filt:
@@ -482,7 +482,7 @@ class TestSessionManagerRetryRecovery(unittest.TestCase):
             manager = self._make_manager()
             task = self._make_task(status="completed")
             with mock.patch(
-                "Django_xm.apps.fastapi_service.session_manager.SessionExecutor"
+                "Django_xm.services.fastapi_service.session_manager.SessionExecutor"
             ) as ex_cls, mock.patch(
                 "Django_xm.apps.research.models.ResearchTask.objects.filter"
             ) as filt:
@@ -507,7 +507,7 @@ class TestSessionManagerRetryRecovery(unittest.TestCase):
 
             release_task = asyncio.create_task(_release())
             with mock.patch(
-                "Django_xm.apps.fastapi_service.session_manager.SessionExecutor"
+                "Django_xm.services.fastapi_service.session_manager.SessionExecutor"
             ) as ex_cls, mock.patch(
                 "Django_xm.apps.research.models.ResearchTask.objects.filter"
             ) as filt:

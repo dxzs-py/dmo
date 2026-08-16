@@ -56,8 +56,14 @@ def _collect_chat_batch_decisions(session_id: str, graph_interrupt_id: str) -> t
             resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = bool(
                 _approved is None or _approved is True
             )
-        elif approval.state in (Approval.STATE_REJECTED, Approval.STATE_TIMEOUT):
+        elif approval.state == Approval.STATE_REJECTED:
             resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = False
+        elif approval.state == Approval.STATE_TIMEOUT:
+            # 超时决策标记（TIMEOUT_DECISION）：与拒绝（False）区分，
+            # middleware 据以注入"审批超时"ToolMessage，agent 调整策略继续（P-TIMEOUT）
+            from Django_xm.common.constants import TIMEOUT_DECISION
+
+            resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = TIMEOUT_DECISION
         else:
             all_resolved = False
 

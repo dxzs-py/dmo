@@ -53,6 +53,22 @@ const props = defineProps({
     default: 'deep_thinking',
     validator: (v) => ['deep_thinking', 'model_intrinsic'].includes(v)
   },
+  /**
+   * 推理区展示文案（spec fix-deep-research D4 三态，由调用方计算传入）：
+   * - 深度研究语境 → "研究推理"
+   * - 深度思考开关开启 → "已深度思考"（配合 showDuration 拼装用时）
+   * - 其余（模型原生 reasoning）→ 中性"思考过程"
+   * 未传时按 source 兜底中性文案，组件内不硬编码"深度思考"品牌词。
+   */
+  reasoningLabel: {
+    type: String,
+    default: ''
+  },
+  /** 是否在完成态追加"（用时 N 秒）"（仅深度思考开关开启时由调用方置 true） */
+  showDuration: {
+    type: Boolean,
+    default: false
+  },
 })
 
 const emit = defineEmits(['open-change'])
@@ -67,17 +83,20 @@ const MS_IN_S = 1000
 
 const isIntrinsic = computed(() => props.source === 'model_intrinsic')
 
+// 展示文案：调用方三态直传优先；未传时按 source 兜底中性文案（禁止"深度思考"字样）
+const displayLabel = computed(() => {
+  if (props.reasoningLabel) return props.reasoningLabel
+  return isIntrinsic.value ? '推理过程' : '思考过程'
+})
+
 const thinkingMessage = computed(() => {
-  if (isIntrinsic.value) {
-    return props.isStreaming ? '推理中' : '推理过程'
-  }
   if (props.isStreaming || duration.value === 0) {
-    return '正在思考'
+    return isIntrinsic.value && !props.reasoningLabel ? '推理中' : '正在思考'
   }
-  if (duration.value === undefined) {
-    return '已深度思考'
+  if (props.showDuration && duration.value !== undefined) {
+    return `${displayLabel.value}（用时 ${duration.value} 秒）`
   }
-  return `已深度思考（用时 ${duration.value} 秒）`
+  return displayLabel.value
 })
 
 function toggleOpen() {

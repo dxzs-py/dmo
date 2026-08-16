@@ -72,7 +72,7 @@ class EventType(StrEnum):
     STREAM_SUGGESTIONS = "stream_suggestions"  # 建议
     STREAM_CONTEXT = "stream_context"  # 上下文
     STREAM_CONTENT_UPDATE = "stream_content_update"  # 内容更新（节流后的 chunk）
-    STREAM_SUBAGENT_CONTENT = "stream_subagent_content"  # 子代理图层正文/思考更新（Agent 图层嵌套，按 agent_path 归属）
+    STREAM_SUBAGENT_CONTENT = "stream_subagent_content"  # 子代理图层正文/思考更新（按顶层 subagent_thread_id 定向路由，spec D10/MODIFIED）
     STREAM_EVENT = "stream_event"  # 流式通用事件（approval/interrupted/model_fallback/research_task_id）
 
     # === 会话/消息事件（WebSocket 推送）===
@@ -175,11 +175,11 @@ class ToolCallLifecyclePayload(TypedDict, total=False):
     cross_module_id: str | None  # 跨模块同步目标 ID（DEEP_RESEARCH 关联 chat 时为 chat_session_id）
     auto_approved: bool | None  # SAFE 级自动通过标记（True=无需用户审批，仅审计）
     # 子 agent 嵌套层级字段（Phase E3，由 subagent_support.py 注入到 configurable，
-    # 经 ToolCallContext 透传到事件 payload，前端 ToolCallCard 展示完整调用链路）
+    # 经 ToolCallContext 透传到事件 payload，前端 ToolCallCard 展示嵌套层级；
+    # agent_path 已从事件 payload 中删除——spec REMOVED，路由唯一依据 subagent_thread_id）
     parent_tool_call_id: str | None  # 父工具调用 ID（主 agent 调用 task 工具的 tool_call_id）
     depth: int | None  # 嵌套层级（0=主 agent，1=一级子 agent）
     agent_name: str | None  # 子 agent 名称（如 web-researcher）
-    agent_path: list | None  # 完整调用链路（如 ["main", "web-researcher"]）
     risk_ceiling: str | None  # 子 agent 角色风险上限（safe/controlled/high）
     # 工具调用实际风险等级（safe/controlled/high），由 ApprovalMiddleware 计算，
     # 注入到 tool_call_* 事件 payload

@@ -157,7 +157,6 @@ export const createStreamStateHandlers = (ctx) => {
     sessionStore.updateMessageFieldByBackendId(sessionId, messageId, field, value)
 
     if (seq) message._lastStreamEventSeq = seq
-    logger.info(`[Sync] stream_event 处理: session=${sessionId}, message=${messageId}, type=${eventType}`)
   }
 
   /** chatDeepResearch 桥接层模块加载缓存（惰性，避免 sync ↔ chat 业务模块静态循环依赖） */

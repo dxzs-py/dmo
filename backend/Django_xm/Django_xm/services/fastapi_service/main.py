@@ -6,7 +6,7 @@
 - 共享 PostgreSQL + Redis
 
 启动：
-    cd backend/Django_xm && uvicorn Django_xm.apps.fastapi_service.main:app --host 0.0.0.0 --port 8001
+    cd backend/Django_xm && uvicorn Django_xm.services.fastapi_service.main:app --host 0.0.0.0 --port 8001
 """
 
 import asyncio
@@ -33,7 +33,7 @@ django.setup()
 
 from fastapi import FastAPI
 
-from Django_xm.apps.fastapi_service.session_manager import SessionManager
+from Django_xm.services.fastapi_service.session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
 

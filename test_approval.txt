@@ -1,3 +1,10 @@
+============================================================
+Ollama 命令执行结果
+执行时间: 2026-08-16 19:28:34
+============================================================
+
+【步骤 1】执行命令: ollama list
+输出:
 NAME                                 ID              SIZE      MODIFIED     
 ornith:latest                        a75697c14589    5.6 GB    4 weeks ago     
 lfm2.5:latest                        9cf756159fc2    5.2 GB    2 months ago    
@@ -5,4 +12,26 @@ dengcao/Qwen3-Embedding-4B:Q5_K_M    7e8c9ad6885b    2.9 GB    2 months ago
 bge-m3:latest                        790764642607    1.2 GB    2 months ago    
 qwen3:8b                             500a1f067a9f    5.2 GB    2 months ago    
 qwen3.5:9b                           6488c96fa5fa    6.6 GB    3 months ago    
-hermes3:8b                           4f6b83f30b62    4.7 GB    3 months ago
+hermes3:8b                           4f6b83f30b62    4.7 GB    3 months ago    
+
+【步骤 2】第一个模型名称: ornith:latest
+
+【步骤 3】执行命令: ollama run ornith:latest "你是谁"
+模型回答:
+我是 Ornith，一个开源的编程助手，专注于帮助您进行代码开发和编程任务。我可以帮您：
+
+- 编写代码
+- 调试问题
+- 解释代码
+- 进行代码重构
+- 回答技术问题
+
+有什么我可以帮您的吗？
+
+【步骤 4】执行命令: ollama ps
+输出:
+NAME             ID              SIZE      PROCESSOR    CONTEXT    UNTIL              
+ornith:latest    a75697c14589    5.3 GB    100% GPU     4096       4 minutes from now    
+
+【步骤 5】结果已保存至本文件: D:\programming\langchain\langchain_xm\test_approval.txt
+============================================================

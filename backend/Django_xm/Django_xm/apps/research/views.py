@@ -11,7 +11,7 @@ from rest_framework.views import APIView
 from Django_xm.apps.chat.services.cross_app import get_active_session_ids_for_research_task
 from Django_xm.apps.core.services.file_manager import get_file_manager
 from Django_xm.apps.core.throttling import ResearchRateThrottle
-from Django_xm.apps.fastapi_service.event_bus import (
+from Django_xm.services.fastapi_service.event_bus import (
     SESSION_TYPE_RESEARCH,
     SIGNAL_START,
     publish_retry_subagent_signal,

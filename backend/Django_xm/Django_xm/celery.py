@@ -28,7 +28,7 @@ Celery 配置模块
     chat      - 附件管理（IO 密集）
 
 注意:
-    深度研究（长任务）已迁移至独立 FastAPI 执行服务（apps/fastapi_service），
+    深度研究（长任务）已迁移至独立 FastAPI 执行服务（services/fastapi_service），
     不再使用 Celery；审批恢复为 Redis 事件驱动，Celery 仅保留短/轻/定时任务。
     学习工作流（workflow.execute）为无触发点死代码，已删除。
 """

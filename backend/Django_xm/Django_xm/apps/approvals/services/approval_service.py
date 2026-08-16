@@ -207,7 +207,7 @@ def build_approval_payload(
     # ── tool：工具调用事件统一参数（原 _extract_tool_call_event_kwargs）──
     if scope == "tool":
         parameters = _get("parameters")
-        return {
+        payload = {
             "tool_call_id": _get("tool_call_id"),
             "tool_name": _get("tool_name") or "unknown",
             "module": _SOURCE_TO_EVENT_SOURCE.get(approval.source, EventSource.CHAT),
@@ -218,6 +218,11 @@ def build_approval_payload(
             "graph_interrupt_id": approval_extra.get("graph_interrupt_id"),
             "risk_level": approval_extra.get("risk_level") or "",
         }
+        # subagent_thread_id 透传：子代理工具事件路由标识（approval.extra 由
+        # create_approvals_for_interrupts 写入），前端据其将工具卡归入子代理面板。
+        if approval_extra.get("subagent_thread_id"):
+            payload["subagent_thread_id"] = approval_extra["subagent_thread_id"]
+        return payload
 
     # ── sync：ChatMessage.tool_calls[].approval 同步字段（原 _build_approval_sync_fields）──
     if scope == "sync":
@@ -399,6 +404,7 @@ def _publish_tool_call_timeout_event(approval: Approval):
                 cross_module_id=kwargs["cross_module_id"],
                 graph_interrupt_id=kwargs["graph_interrupt_id"],
                 risk_level=kwargs.get("risk_level", ""),
+                subagent_thread_id=kwargs.get("subagent_thread_id") or "",
             )
         )
         # 状态机转换并发布事件（内部调用 publish_tool_call_sync）
@@ -449,6 +455,7 @@ def _publish_tool_call_waiting_event(approval: Approval):
                 cross_module_id=kwargs["cross_module_id"],
                 graph_interrupt_id=kwargs["graph_interrupt_id"],
                 risk_level=kwargs.get("risk_level", ""),
+                subagent_thread_id=kwargs.get("subagent_thread_id") or "",
             )
         )
         # 状态机转换并发布事件（内部调用 publish_tool_call_sync）
@@ -496,6 +503,7 @@ def _publish_tool_call_running_event(approval: Approval):
                 cross_module_id=kwargs["cross_module_id"],
                 graph_interrupt_id=kwargs["graph_interrupt_id"],
                 risk_level=kwargs.get("risk_level", ""),
+                subagent_thread_id=kwargs.get("subagent_thread_id") or "",
             )
         )
         # 状态机转换并发布事件（内部调用 publish_tool_call_sync）

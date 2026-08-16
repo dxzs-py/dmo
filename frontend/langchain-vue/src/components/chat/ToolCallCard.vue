@@ -55,9 +55,18 @@ const emit = defineEmits(['approve', 'reject'])
 const isSkillCall = computed(() => props.toolName.startsWith('skill_'))
 
 // 默认折叠为单行摘要（对标 Claude Code / Cursor）：
-// 审批中（waiting）与运行中（running）工具展开，其余状态折叠
+// 审批中（waiting）与运行中（running）工具展开，其余状态折叠。
+// 子代理工具（status=pending + toolCall.approval.state=pending）与主 agent 一致：
+// 审批等待中自动展开，保证"确认执行/拒绝"审批面板直接可见（主/子代理展示统一）。
+const hasActiveApproval = computed(() => {
+  const st = props.toolCall?.approval?.state
+  return st === 'pending' || st === 'waiting' || st === 'processing'
+})
+
 const isExpanded = ref(
-  props.status === ToolCallStatus.WAITING || props.status === ToolCallStatus.RUNNING
+  props.status === ToolCallStatus.WAITING
+    || props.status === ToolCallStatus.RUNNING
+    || hasActiveApproval.value
 )
 
 // 状态驱动展开/折叠：
@@ -73,6 +82,16 @@ watch(() => props.status, (newStatus) => {
   if (terminal) {
     isExpanded.value = false
   } else if (newStatus === ToolCallStatus.WAITING || newStatus === ToolCallStatus.RUNNING) {
+    isExpanded.value = true
+  }
+})
+
+// 审批态驱动展开：approval 进入 pending/waiting/processing 时自动展开
+// （子代理审批事件序列为 tool_call_pending → approval_pending，status 停留在
+// pending 不经过 waiting，仅靠 status watch 无法展开；此处与 status 驱动合并，
+// 保证主/子代理审批面板展示行为完全一致）
+watch(hasActiveApproval, (active) => {
+  if (active) {
     isExpanded.value = true
   }
 })

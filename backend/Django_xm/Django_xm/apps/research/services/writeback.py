@@ -5,6 +5,8 @@
 """
 
 import logging
+import threading
+import time
 
 from django.utils import timezone
 
@@ -12,6 +14,17 @@ from Django_xm.common.event_schema import EventSource, EventType, PayloadValidat
 from Django_xm.common.realtime_events import publish_event_sync
 
 logger = logging.getLogger(__name__)
+
+# stream_reasoning 广播节流（推理逐 chunk 累积广播）：若每个 chunk 都发布，
+# 一次长推理会产生上千事件/会话（seq 5000+），拖慢流式循环并造成前端实时
+# 同步风暴与间隙等待/快照校对风暴。广播内容始终为累积全文（前端 AiReasoning
+# 为覆盖语义），节流仅跳过窗口内的中间广播，内容不丢失；推理结束由
+# broadcast_stream_completed 触发快照同步兜底补齐尾部。
+REASONING_BROADCAST_INTERVAL_SECONDS = 0.2
+
+_reasoning_throttle_lock = threading.Lock()
+# key: (session_id, task_id, message_id) -> [last_broadcast_time, latest_content]
+_reasoning_throttle_state = {}
 
 
 def broadcast_stream_completed(
@@ -25,7 +38,7 @@ def broadcast_stream_completed(
 ):
     """广播 stream_completed 事件到 session + task 双频道。
 
-    深度研究完成（成功/失败）时由执行服务（fastapi_service SessionExecutor）调用，
+    深度研究完成（成功/失败）时由执行服务（services/fastapi_service SessionExecutor）调用，
     作为权威完成事件。
     与聊天 SSE 结束时发布的 stream_completed（finalized=false，无 task_id）不同，
     本事件始终携带 task_id 和 finalized=true，前端据此进入深度研究回写逻辑。
@@ -106,7 +119,7 @@ def broadcast_stream_reasoning(
     message_id: str,
     content: str,
 ):
-    """广播 stream_reasoning 事件到 session + task 双频道。
+    """广播 stream_reasoning 事件到 session + task 双频道（带节流）。
 
     深度研究执行过程中，每当 LLM 产生 reasoning_content（思考链），
     通过 WebSocket 实时推送到前端，供 AiReasoning 组件展示。
@@ -115,12 +128,29 @@ def broadcast_stream_reasoning(
     - session:{session_id} 频道：聊天模块深度研究模式订阅
     - task:{task_id} 频道：DeepResearchView 独立模式订阅
 
+    节流说明：调用方逐 chunk 传入累积全文，若全部发布将产生事件风暴
+    （seq 5000+）。这里按时间窗口节流，窗口内仅记录最新内容，下个窗口
+    补发累积全文；内容不丢失，前端覆盖渲染语义不受影响。
+
     Args:
         session_id: 关联的 chat session ID
         task_id: 深度研究任务 ID
         message_id: 关联的 ChatMessage ID（前端精确定位消息）
-        content: 推理文本内容
+        content: 推理文本内容（累积全文）
     """
+    now = time.monotonic()
+    key = (session_id, task_id, message_id)
+    with _reasoning_throttle_lock:
+        last = _reasoning_throttle_state.get(key)
+        if last is not None and now - last[0] < REASONING_BROADCAST_INTERVAL_SECONDS:
+            last[1] = content  # 节流窗口内仅记录最新内容，下个窗口补发
+            return
+        _reasoning_throttle_state[key] = [now, content]
+    _publish_stream_reasoning(session_id, task_id, message_id, content)
+
+
+def _publish_stream_reasoning(session_id, task_id, message_id, content):
+    """实际发布 stream_reasoning 事件（不节流）。"""
     payload = {
         "source": EventSource.DEEP_RESEARCH,
         "source_id": session_id,
@@ -164,8 +194,9 @@ def writeback_to_chat_message(
         reasoning_content: 深度研究过程中 LLM 累积的推理内容（深度思考功能）。
             仅承载模型推理，与"深度研究任务完成态"（由前端研究卡片表达）概念分离；
             为空/None 时不写 reasoning 字段。
-        subagent_contents: 子代理图层正文/中间思考累计（Agent 图层嵌套规范 Task 1.5，
-            adapter.subagent_contents 格式：{agent_path_key: {content, reasoning_content}}）。
+        subagent_contents: 子代理图层正文/中间思考累计（spec MODIFIED：按
+            subagent_thread_id 键累计，adapter.subagent_contents 格式：
+            {subagent_thread_id: {content, reasoning_content}}）。
             为空/None 时不写 subagent_contents 字段。
 
     Returns:

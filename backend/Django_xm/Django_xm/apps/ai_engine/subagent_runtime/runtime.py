@@ -28,12 +28,26 @@ from Django_xm.apps.ai_engine.subagent_runtime.exceptions import (
 logger = logging.getLogger(__name__)
 
 # 子 Agent 最大嵌套深度（0=主 agent，1=子 agent，2=孙 agent，3=曾孙 agent）。
-# 与 tools.langchain.agent_context.MAX_AGENT_DEPTH 语义一致，但此处独立维护，
+# 与 tools.langchain.agent_context.MAX_AGENT_DEPTH 语义一致（同一配置源
+# settings.AGENT_MAX_DEPTH），但此处独立维护读取逻辑，
 # 避免 ai_engine → tools 的跨 app 反向依赖。
-MAX_SUBAGENT_DEPTH = 3
+MAX_SUBAGENT_DEPTH: int = 3
 
 # 子 Agent 单实例最大轮次（LangGraph recursion_limit，超限抛 GraphRecursionError）。
 MAX_SUBAGENT_ROUNDS = 200
+
+
+def _get_max_subagent_depth() -> int:
+    """读取子 Agent 最大嵌套深度（settings.AGENT_MAX_DEPTH，异常回退默认值）。
+
+    lazy 读取：避免 import 期强依赖 Django settings（如独立 unittest 上下文）。
+    """
+    try:
+        from django.conf import settings
+
+        return int(getattr(settings, "AGENT_MAX_DEPTH", MAX_SUBAGENT_DEPTH))
+    except Exception:
+        return MAX_SUBAGENT_DEPTH
 
 
 class SubAgentRuntime:
@@ -53,7 +67,8 @@ class SubAgentRuntime:
     async def _get_instance(thread_id: str) -> SubAgentInstance | None:
         try:
             return await sync_to_async(
-                lambda: SubAgentInstance.objects.filter(thread_id=thread_id).first()
+                lambda: SubAgentInstance.objects.filter(thread_id=thread_id).first(),
+                thread_sensitive=False,
             )()
         except Exception:
             logger.exception(f"读取子代理实例失败: {thread_id}")
@@ -71,7 +86,8 @@ class SubAgentRuntime:
                 parent_thread_id=parent_thread_id,
                 status=SubAgentStatus.RUNNING,
                 metadata=metadata,
-            )
+            ),
+            thread_sensitive=False,
         )()
 
     @staticmethod
@@ -96,7 +112,7 @@ class SubAgentRuntime:
             except Exception:
                 logger.exception(f"更新子代理状态失败: {thread_id} -> {status}")
 
-        await sync_to_async(_update)()
+        await sync_to_async(_update, thread_sensitive=False)()
 
     # ── 嵌套深度防护 ────────────────────────────────────────────────────
 
@@ -138,6 +154,7 @@ class SubAgentRuntime:
         agent_config: Any,
         task: str,
         configurable: dict | None = None,
+        spawn_tool_call_id: str = "",
     ) -> SubAgentInstance:
         """创建并启动子 Agent（异步非阻塞，立即返回实例）。
 
@@ -146,14 +163,16 @@ class SubAgentRuntime:
             agent_config: 子代理 AgentConfig（工具集/LLM/角色提示已由上层构造）。
             task: 子代理任务描述（作为 HumanMessage 输入）。
             configurable: 子代理 graph 的 configurable（含事件转发回调 / 嵌套层级）。
+            spawn_tool_call_id: 触发派生的 spawn 工具自身 tool_call_id
+                （LangChain BaseTool 执行时注入；前端据此将卡片挂到对应工具卡后）。
 
         Returns:
             SubAgentInstance（thread_id + status=running）。
         """
         depth = await self._resolve_depth(parent_thread_id)
-        if depth > MAX_SUBAGENT_DEPTH:
+        if depth > _get_max_subagent_depth():
             raise SubAgentNestingLimitError(
-                f"子代理嵌套深度超限（max={MAX_SUBAGENT_DEPTH}，当前将达={depth}）"
+                f"子代理嵌套深度超限（max={_get_max_subagent_depth()}，当前将达={depth}）"
             )
 
         thread_id = f"subagent_{uuid.uuid4().hex[:16]}"
@@ -171,10 +190,13 @@ class SubAgentRuntime:
             "user_id": getattr(agent_config, "user_id", None),
             "session_id": getattr(agent_config, "session_id", None),
             "tool_names": [getattr(t, "name", "") for t in (getattr(agent_config, "tools", None) or [])],
-            "risk_ceiling": self._resolve_risk_ceiling(agent_name),
+            "risk_ceiling": await self._resolve_risk_ceiling(agent_name),
             # 关联消息：spawn 工具的父 configurable 携带 assistant_message_id，
             # 前端据此将子代理卡片挂到对应 AI 消息下方（spec D10 前端路由）。
             "assistant_message_id": (configurable or {}).get("assistant_message_id") or "",
+            # 关联工具调用：spawn 工具自身的 tool_call_id（框架执行时注入），
+            # 前端据此将子代理卡片精确关联到触发派生的 tool_call。
+            "spawn_tool_call_id": spawn_tool_call_id or "",
         }
 
         instance = await self._create_instance(
@@ -234,7 +256,8 @@ class SubAgentRuntime:
             return await sync_to_async(
                 lambda: list(
                     SubAgentInstance.objects.filter(parent_thread_id=parent_thread_id).order_by("created_at")
-                )
+                ),
+                thread_sensitive=False,
             )()
         except Exception:
             logger.exception(f"列出子代理失败: {parent_thread_id}")

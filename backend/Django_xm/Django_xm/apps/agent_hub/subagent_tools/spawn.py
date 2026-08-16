@@ -9,18 +9,18 @@
 - 嵌套超限 / 参数非法等异常作为 Tool 错误结果返回，不终止父 graph。
 
 依赖方向（高层 → 低层）：
-- ``agent_hub.tools`` → ``ai_engine.subagent_runtime``（子代理唯一入口 + 注册表）
-- ``agent_hub.tools`` → ``tools``（获取/解析工具集）
-- ``agent_hub.tools`` → ``tools.langchain.agent_context``（继承父上下文）
+- ``agent_hub.subagent_tools`` → ``ai_engine.subagent_runtime``（子代理唯一入口 + 注册表）
+- ``agent_hub.subagent_tools`` → ``tools``（获取/解析工具集）
+- ``agent_hub.subagent_tools`` → ``tools.langchain.agent_context``（继承父上下文）
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Annotated, Any
 
-from langchain_core.tools import BaseTool
+from langchain_core.tools import BaseTool, InjectedToolCallId
 from pydantic import BaseModel, Field
 
 from Django_xm.apps.tools.errors import TOOL_VERSION
@@ -85,7 +85,13 @@ class SpawnSubAgentTool(BaseTool):
     def _run(self, agent_name: str, task: str, tools: list[str] | None = None) -> str:
         return "spawn_sub_agent 需要异步执行，请通过 ainvoke 调用"
 
-    async def _arun(self, agent_name: str, task: str, tools: list[str] | None = None) -> str:
+    async def _arun(
+        self,
+        agent_name: str,
+        task: str,
+        tools: list[str] | None = None,
+        tool_call_id: Annotated[str, InjectedToolCallId] = None,
+    ) -> str:
         """派生子代理（异步非阻塞，立即返回实例元数据）。
 
         异常透传：SubAgentError 等作为字符串错误返回（父 graph 不终止）。
@@ -104,6 +110,18 @@ class SpawnSubAgentTool(BaseTool):
             main_tool_names = parent_ctx.get("tool_names", []) or []
             parent_config = parent_ctx.get("config", {}) or {}
             configurable = dict(self.parent_configurable or {})
+
+            # 自身工具调用 ID：LangChain 通过 InjectedToolCallId 在工具执行时注入
+            # （ToolNode 场景）；直接 ainvoke 等非工具调用上下文时为 None，防御为空串。
+            spawn_tool_call_id = tool_call_id or ""
+
+            # 深度思考继承：读取主 agent 实际生效的深度思考开关
+            # （chat_service 在 set_parent_tool_context 时写入 config.enable_deep_thinking，
+            # 已含模型能力判定），子代理 AgentConfig 对齐继承。
+            enable_deep_thinking = bool(parent_config.get("enable_deep_thinking", False))
+            # 透传到子代理 configurable：SubAgentContentMiddleware 据此在关闭深度思考
+            # 时丢弃模型仍输出的 reasoning（部分模型无法被 thinking=disabled 关闭）。
+            configurable["enable_deep_thinking"] = enable_deep_thinking
 
             # 父 thread_id：优先 RunnableConfig 的 thread_id（主 agent = session_id），
             # 回退父上下文 session_id。
@@ -136,6 +154,8 @@ class SpawnSubAgentTool(BaseTool):
                 session_id=session_id,
                 model_name=model_name,
                 store=store,
+                # 深度思考继承主 agent 实际生效开关（含 provider 禁用注入，见 model_resolver）
+                enable_deep_thinking=enable_deep_thinking,
             )
 
             runtime = get_subagent_runtime()
@@ -144,6 +164,7 @@ class SpawnSubAgentTool(BaseTool):
                 agent_config=agent_config,
                 task=task,
                 configurable=configurable,
+                spawn_tool_call_id=spawn_tool_call_id,
             )
 
             return (
@@ -155,7 +176,11 @@ class SpawnSubAgentTool(BaseTool):
             )
         except Exception as e:
             # 嵌套超限 / 参数非法等：作为 Tool 错误结果返回，不终止父 graph
-            logger.warning(f"spawn_sub_agent 失败: agent_name={agent_name}, err={e}")
+            import traceback
+
+            logger.warning(
+                f"spawn_sub_agent 失败: agent_name={agent_name}, err={e}\n{traceback.format_exc()}"
+            )
             return json.dumps(
                 {"error": f"子代理创建失败: {str(e) or repr(e)}"},
                 ensure_ascii=False,

@@ -234,7 +234,7 @@ def cleanup_old_task_records(self, days: int = 30):
 def check_stale_tasks(self, timeout_minutes: int = 60):
     """标记 Celery 任务记录中超时的任务为失败。
 
-    注意：深度研究任务已脱离 Celery（执行由 apps/fastapi_service
+    注意：深度研究任务已脱离 Celery（执行由 services/fastapi_service
     SessionExecutor 承载），其状态机（running/awaiting_approval/failed）
     由执行服务负责自愈与超时处理，此处不再操作 ResearchTask。
     """

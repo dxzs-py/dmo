@@ -43,7 +43,6 @@ const segments = computed(() =>
     <template v-for="(seg, idx) in segments" :key="idx">
       <MarkdownRenderer
         v-if="seg.type === 'content'"
-        class="inline-content-segment"
         :content="seg.text"
         :citations="citations"
       />

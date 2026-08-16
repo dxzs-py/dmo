@@ -28,11 +28,27 @@ except Exception as e:
 
 # Django Channels 通道层配置（WebSocket 实时同步）
 # dev 环境优先 Redis，不可用时回退 InMemoryChannelLayer
+# Redis 连接池参数说明（本地偶发 "Connection closed by server" 的根治）：
+# - 服务端 redis.windows-service.conf 已配置 timeout 0（不因空闲关闭连接），
+#   断连一般来自 Redis 服务重启等偶发事件，客户端无法阻止，但可自愈。
+# - health_check_interval=30：连接空闲超过 30 秒后，下次取出前发送 PING 校验，
+#   发现死连接自动剔除并重建，避免复用已断开连接导致 ConnectionError。
+# - socket_keepalive=True + socket_connect_timeout：TCP 层保活与连接建立超时。
+#   注意：channels_redis 4.3.0 不支持 set_heartbeat 参数，勿传入（会 TypeError）。
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [os.environ.get("REDIS_URL", app_cfg.redis_url)],
+            "hosts": [
+                {
+                    "address": os.environ.get("REDIS_URL", app_cfg.redis_url),
+                    "socket_keepalive": True,
+                    "health_check_interval": 30,
+                    "socket_connect_timeout": 5,
+                    "socket_timeout": 10,
+                    "retry_on_timeout": True,
+                }
+            ],
             "symmetric_encryption_keys": [SECRET_KEY],
         },
     }

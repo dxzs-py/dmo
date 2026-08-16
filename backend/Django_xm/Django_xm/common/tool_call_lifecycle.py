@@ -381,6 +381,8 @@ class ToolCallLifecycleService:
         auto_approved 一旦为 True 就保持 True（不会被覆盖回 False）。
         子 agent 嵌套层级字段（parent_tool_call_id/depth/agent_name/agent_path/risk_ceiling）
         一旦写入非空值就保持（不被覆盖回空），确保主 agent 与子 agent 场景的字段不互斥。
+        注：agent_path 仅由审批链路（ApprovalMiddleware 审计注册）写入，供 retry
+        归属匹配与展示恢复读取；不再透传到事件 payload（spec REMOVED）。
         graph_interrupt_id 是例外：作为审批批次标识允许更新为新批次（M16 复用
         interrupt_id 重新发起审批时携带新批次 id，保留旧值会导致后续 WAITING/RUNNING
         事件沿用旧批次指纹，被旧批次 dedup key 误拦截）。
@@ -635,7 +637,6 @@ class ToolCallLifecycleService:
                     else None
                 ),
                 agent_name=ctx_dict.get("agent_name") or None,
-                agent_path=ctx_dict.get("agent_path") or None,
                 risk_ceiling=_normalize_risk_ceiling(ctx_dict.get("risk_ceiling")),
                 # risk_level 透传：从 context 读取，注入到 tool_call_* 事件 payload
                 # 根因修复：让前端从工具事件直接获取风险等级，不再单一依赖 approval_pending 事件
@@ -718,7 +719,6 @@ class ToolCallLifecycleService:
                     else None
                 ),
                 agent_name=ctx_dict.get("agent_name") or None,
-                agent_path=ctx_dict.get("agent_path") or None,
                 risk_ceiling=_normalize_risk_ceiling(ctx_dict.get("risk_ceiling")),
                 # risk_level 透传：从 context 读取，注入到 tool_call_* 事件 payload
                 # 根因修复：让前端从工具事件直接获取风险等级，不再单一依赖 approval_pending 事件

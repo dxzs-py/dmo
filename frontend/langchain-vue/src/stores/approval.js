@@ -106,15 +106,17 @@ export const useApprovalStore = defineStore('approval', () => {
    * @param {string} options.source - 事件来源 'chat' | 'deep_research'
    * @param {string} [options.sessionId] - 聊天会话 ID（chat 来源必传）
    * @param {string} [options.taskId] - 深度研究任务 ID（deep_research 来源必传）
+   * @param {boolean} [options.isReplay] - 历史回放标记（useRealtimeSync 注入）：
+   *   回放事件仅用于状态重建，不触发 ElMessage / 消息追加 / 恢复流等副作用
    */
   const handleApprovalEvent = (data, options = {}) => {
-    const { source = 'chat', sessionId, taskId } = options
+    const { source = 'chat', sessionId, taskId, isReplay = false } = options
     const converted = toCamelCase(data)
     const eventType = converted.type || converted.state
 
     // 审批超时
     if (eventType === 'approval_timeout' || converted.state === 'timeout') {
-      _handleTimeout(converted, source, sessionId)
+      _handleTimeout(converted, source, sessionId, isReplay)
       return
     }
 
@@ -134,7 +136,7 @@ export const useApprovalStore = defineStore('approval', () => {
     if (eventType === 'approval_processed'
         || eventType === 'approval_approved'
         || eventType === 'approval_rejected') {
-      _handleProcessed(converted, source, sessionId)
+      _handleProcessed(converted, source, sessionId, taskId)
       return
     }
 
@@ -203,8 +205,15 @@ export const useApprovalStore = defineStore('approval', () => {
 
   /**
    * 审批超时处理
+   *
+   * @param {Object} data - 审批事件数据
+   * @param {string} source - 事件来源 'chat' | 'deep_research'
+   * @param {string|null} sessionId - 聊天会话 ID
+   * @param {boolean} [isReplay=false] - 历史回放标记：回放事件仅用于状态重建，
+   *   跳过 ElMessage / 消息追加 / 恢复流等副作用（否则重新打开页面重复弹超时提示）。
+   *   状态更新（updateToolCallApprovalState 等）仍执行，保证状态重建正确。
    */
-  const _handleTimeout = (data, source, sessionId) => {
+  const _handleTimeout = (data, source, sessionId, isReplay = false) => {
     const sessionStore = useSessionStore()
     const toolCallId = getInterruptId(data)
 
@@ -233,10 +242,13 @@ export const useApprovalStore = defineStore('approval', () => {
 
     // 更新 session store 中的审批状态
     if (effectiveSessionId) {
-      sessionStore.appendToLastMessage(
-        effectiveSessionId,
-        `\n\n> ⏰ 工具 "${data.toolName || '未知'}" 的审批已超时，Agent 将使用其他方式继续\n`
-      )
+      // 回放事件不追加超时提示到消息内容（重新打开页面消息会重复出现超时提示）
+      if (!isReplay) {
+        sessionStore.appendToLastMessage(
+          effectiveSessionId,
+          `\n\n> ⏰ 工具 "${data.toolName || '未知'}" 的审批已超时，Agent 将使用其他方式继续\n`
+        )
+      }
       if (toolCallId) {
         sessionStore.updateToolCallApprovalState(effectiveSessionId, toolCallId, 'timeout')
         sessionStore.setApprovalToLastMessage(effectiveSessionId, { ...data, state: 'timeout' })
@@ -251,11 +263,14 @@ export const useApprovalStore = defineStore('approval', () => {
         .catch((e) => logger.warn('[ApprovalStore] 同步 researchStore timeout 失败:', e))
     }
 
-    // 深度研究来源额外提示
-    if (source === 'deep_research' || data.source === 'deep_research') {
+    // 深度研究来源额外提示（回放事件不弹，避免重新打开页面重复弹超时提示）
+    if (!isReplay && (source === 'deep_research' || data.source === 'deep_research')) {
       ElMessage.warning(`工具 "${data.toolName || '未知'}" 的审批已超时，Agent 将使用其他方式继续`)
       return
     }
+
+    // 回放事件不触发恢复流：历史超时已完成，恢复流应在实时事件路径触发
+    if (isReplay) return
 
     // 事件驱动化超时恢复（Task 5）：chat 来源审批超时后，由前端收到 approval_timeout
     // 事件触发 SSE resume 端点驱动恢复流（与用户手动确认/拒绝同构，不再依赖 Celery）。
@@ -386,7 +401,7 @@ export const useApprovalStore = defineStore('approval', () => {
    *
    * 从 pendingApprovals 移除条目，更新 session store 中的审批状态。
    */
-  const _handleProcessed = (data, source, sessionId) => {
+  const _handleProcessed = (data, source, sessionId, taskId) => {
     const sessionStore = useSessionStore()
     const toolCallId = getInterruptId(data)
     if (!toolCallId) return
@@ -394,11 +409,35 @@ export const useApprovalStore = defineStore('approval', () => {
     // 从 pendingApprovals Map 中获取已有条目的 sessionId（可能比参数中的更准确）
     const existingEntry = pendingApprovals.value.get(toolCallId)
 
-    // 幂等保护（P-FE-7）：pendingApprovals 中已无该审批条目时直接返回。
-    // 同一审批终态事件（approval_processed / approval_approved / approval_rejected）
-    // 可能经 WebSocket / SSE 主聊天流 / 审批恢复流多条路径重复到达，
-    // 首次处理已删除条目，后续重复到达不应再重复写 store / 重复同步后端。
-    if (!existingEntry) return
+    // 确定最终状态：优先使用 data.state，其次 data.approved，默认 rejected
+    const finalState = data.state === 'approved' ? 'approved'
+      : data.state === 'rejected' ? 'rejected'
+      : data.approved ? 'approved' : 'rejected'
+
+    // 幂等保护（P-FE-7）：pendingApprovals 中已无该审批条目时，仅当存在可路由
+    // 的任务/会话上下文才兜底同步终态；否则直接返回。
+    // 例外场景：触发浏览器点击审批时 executeApproval 已提前删除条目（L501），
+    // 终态事件到达时无条目可查——若不兜底，researchStore 中 toolCall.approval.state
+    // 停留 processing，审批面板残留 disabled 按钮，与非触发浏览器（正常更新为
+    // approved、面板消失）不一致（"审批后缺少组件"跨浏览器差异根因）。
+    if (!existingEntry) {
+      const isDeepResearch = source === 'deep_research' || data.source === 'deep_research'
+      if (isDeepResearch && taskId) {
+        _getResearchStore()
+          .then((rs) => rs.updateToolCallApprovalState(taskId, toolCallId, finalState))
+          .catch((e) => logger.warn('[ApprovalStore] 同步 researchStore 终态失败(无条目):', e))
+        return
+      }
+      const fallbackSessionId = data.sessionId
+        || data.chatSessionId
+        || data.crossModuleId
+        || sessionId
+        || sessionStore.currentSessionId
+      if (fallbackSessionId) {
+        sessionStore.updateToolCallApprovalState(fallbackSessionId, toolCallId, finalState)
+      }
+      return
+    }
 
     // 独立 deep_research 无会话上下文：不使用 currentSessionId 兜底
     const effectiveSessionId = sessionId
@@ -409,11 +448,7 @@ export const useApprovalStore = defineStore('approval', () => {
 
     pendingApprovals.value.delete(toolCallId)
 
-    // 确定最终状态：优先使用 data.state，其次 data.approved，默认 rejected
-    const finalState = data.state === 'approved' ? 'approved'
-      : data.state === 'rejected' ? 'rejected'
-      : data.approved ? 'approved' : 'rejected'
-
+    // finalState 已在函数开头（L398）统一计算，此处复用，避免同一作用域重复声明
     // 更新 session store 中的审批状态
     if (effectiveSessionId) {
       sessionStore.updateToolCallApprovalState(effectiveSessionId, toolCallId, finalState)

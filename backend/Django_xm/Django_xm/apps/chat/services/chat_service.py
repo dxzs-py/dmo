@@ -836,6 +836,9 @@ class ChatService:
                 "session_id": data.get("session_id"),
                 "model_name": data.get("model"),
                 "store": data.get("store"),
+                # 深度思考开关（实际生效值，已含模型能力判定）：spawn_sub_agent
+                # 从父上下文读取并继承给子代理 AgentConfig
+                "enable_deep_thinking": data.get("_enable_deep_thinking", False),
             },
         )
 
@@ -1002,15 +1005,19 @@ class ChatService:
             )
             config["callbacks"] = [cb, fb_callback]
 
-            # Agent 图层嵌套规范（Task 1/2）：注入主 agent 层级基础值 + 子代理事件/正文回调
-            # 1) 主 agent configurable 注入 depth=0 / agent_path=["main"]：
-            #    SubAgentNestingMiddleware（base_builder 已挂）在主 agent 读到父值保持主 agent
-            #    语义（depth 不递增）；子代理（spawn_sub_agent 派生）在父 config 基础上递增。
-            # 2) _on_tool_event：子代理工具事件转发（SubAgentToolEventMiddleware 仅 depth>0 转发），
-            #    经 lifecycle_service 发布（与主链路 tool 事件同一唯一真相源）。
-            # 3) _on_subagent_content：子代理正文/中间思考转发（SubAgentContentMiddleware），
-            #    累计到 data["_subagent_contents"]（供 tool position 采集 + 最终落库）并发布
-            #    STREAM_SUBAGENT_CONTENT 事件（前端按 agent_path 路由子代理图层）。
+            # 主/子代理判定与事件路由（fix-deep-research-subagent-activation spec D1/D2）
+            # 1) 主 agent configurable 不注入 subagent_thread_id（子代理唯一判定依据，
+            #    仅 SubAgentRuntime 适配器 spawn 时写入）；depth/agent_path 仅为子代理
+            #    spawn 提供父层级基础值（适配器据此计算绝对深度），主 agent 判定
+            #    不依赖它们（SubAgentNestingMiddleware 恒写主 agent subagent_depth=0）。
+            # 2) _on_tool_event：仅子代理工具事件转发回调（SubAgentToolEventMiddleware
+            #    仅 subagent_thread_id 非空转发）；主 agent 工具事件由主执行链路唯一
+            #    发布与持久化（spec D2 单路径，禁止双路径发布）。
+            # 3) _on_subagent_content：仅子代理正文/思考转发（SubAgentContentMiddleware，
+            #    同 subagent_thread_id 判定），按 subagent_thread_id 键累计到
+            #    data["_subagent_contents"]（供 tool position 采集 + 最终落库，
+            #    spec MODIFIED：废弃 agent_path 累计键）并发布 STREAM_SUBAGENT_CONTENT
+            #    事件（携带 subagent_thread_id 定向路由到子代理卡片）。
             if isinstance(config, dict):
                 config.setdefault("configurable", {})
                 if "depth" not in config["configurable"]:
@@ -1024,7 +1031,11 @@ class ChatService:
             _sub_message_id = str(data.get("_assistant_message_id") or data.get("message_id", ""))
 
             async def _on_subagent_tool_event(event_type, tool_call_id, tool_name, **kwargs):
-                """chat 模式子代理工具事件转发回调（Agent 图层嵌套规范 Task 1.1）。"""
+                """chat 模式子代理工具事件转发回调（spec D1/D2）。
+
+                仅接收真子代理事件（SubAgentToolEventMiddleware 按 subagent_thread_id
+                非空转发）；主 agent 工具事件不经本回调（主链路唯一发布与持久化）。
+                """
                 from Django_xm.common.event_schema import EventSource, EventType as _ET
                 from Django_xm.common.tool_call_lifecycle import ToolCallContext as _TCC
                 from Django_xm.common.tool_call_lifecycle import service as _tc_service
@@ -1034,10 +1045,10 @@ class ChatService:
                 parameters = kwargs.get("parameters") or {}
                 if not isinstance(parameters, dict):
                     parameters = {}
-                agent_path = kwargs.get("agent_path") or []
                 depth = kwargs.get("depth", 0)
                 if not isinstance(depth, int) or depth < 0:
                     depth = 0
+                subagent_thread_id = kwargs.get("subagent_thread_id") or ""
                 try:
                     _tc_service.register(
                         _TCC(
@@ -1050,15 +1061,15 @@ class ChatService:
                             parent_tool_call_id=kwargs.get("parent_tool_call_id") or "",
                             depth=depth,
                             agent_name=kwargs.get("agent_name") or "",
-                            agent_path=agent_path if isinstance(agent_path, list) else [],
                             description=kwargs.get("description") or "",
-                            subagent_thread_id=kwargs.get("subagent_thread_id") or "",
+                            subagent_thread_id=subagent_thread_id,
                         )
                     )
-                    # position 采集（按图层局部化）：子代理工具 = 该子代理图层已累计正文长度
-                    if isinstance(agent_path, list) and agent_path and depth > 0:
-                        _path_key = ">".join(str(p) for p in agent_path)
-                        _pos = len((_subagent_contents.get(_path_key) or {}).get("content") or "")
+                    # position 采集（按图层局部化）：仅真子代理（spec D1：subagent_thread_id
+                    # 非空）执行——子代理工具 = 该子代理图层已累计正文长度
+                    # （_subagent_contents 按 subagent_thread_id 键累计，spec MODIFIED）
+                    if subagent_thread_id:
+                        _pos = len((_subagent_contents.get(subagent_thread_id) or {}).get("content") or "")
                         _tc_service.bind_position(tool_call_id, _pos)
                     await _tc_service.transition_async(
                         tool_call_id,
@@ -1074,11 +1085,14 @@ class ChatService:
                     )
 
             async def _on_subagent_content(agent_path, content, reasoning_content, agent_name, depth, subagent_thread_id=""):
-                """chat 模式子代理正文/中间思考转发回调（Agent 图层嵌套规范 Task 1）。"""
-                if not isinstance(agent_path, list) or not agent_path:
+                """chat 模式子代理正文/中间思考转发回调（spec MODIFIED：D10 路由收敛）。
+
+                累计与路由唯一依据为 ``subagent_thread_id``（agent_path 仅保留为
+                回调展示元数据参数，不进入事件 payload / 累计键）。
+                """
+                if not subagent_thread_id:
                     return
-                path_key = ">".join(str(p) for p in agent_path)
-                entry = _subagent_contents.setdefault(path_key, {"content": "", "reasoning_content": ""})
+                entry = _subagent_contents.setdefault(subagent_thread_id, {"content": "", "reasoning_content": ""})
                 if content:
                     entry["content"] = (entry.get("content") or "") + content
                 if reasoning_content:
@@ -1094,7 +1108,6 @@ class ChatService:
                             "source_id": _sub_session_id,
                             "message_id": _sub_message_id or None,
                             "data": {
-                                "agent_path": [str(p) for p in agent_path],
                                 "content": content,
                                 "reasoning_content": reasoning_content,
                                 "agent_name": agent_name or "",
@@ -1105,7 +1118,9 @@ class ChatService:
                         subagent_thread_id=subagent_thread_id or None,
                     )
                 except Exception as _e:
-                    logger.warning(f"[ChatExec] 广播子代理正文失败: agent_path={path_key}, err={_e}")
+                    logger.warning(
+                        f"[ChatExec] 广播子代理正文失败: subagent_thread_id={subagent_thread_id}, err={_e}"
+                    )
 
             if isinstance(config, dict):
                 config["configurable"]["_on_tool_event"] = _on_subagent_tool_event

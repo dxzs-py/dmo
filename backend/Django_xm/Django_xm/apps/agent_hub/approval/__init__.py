@@ -10,7 +10,6 @@
         ShellExecApprovalPolicy,
         FileReaderApprovalPolicy,
         FsWriteFileApprovalPolicy,
-        AgentCleanupApprovalPolicy,
         ApprovalTimeoutHandler,
         TIMEOUT_DECISION,
     )
@@ -20,7 +19,6 @@
 
 from .middleware import ApprovalMiddleware
 from .policies import (
-    AgentCleanupApprovalPolicy,
     ApprovalPolicy,
     FileReaderApprovalPolicy,
     FsWriteFileApprovalPolicy,
@@ -35,7 +33,6 @@ from .timeout_handler import (
 
 __all__ = [
     "TIMEOUT_DECISION",
-    "AgentCleanupApprovalPolicy",
     "ApprovalMiddleware",
     "ApprovalPolicy",
     "ApprovalTimeoutHandler",

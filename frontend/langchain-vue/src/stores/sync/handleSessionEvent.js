@@ -2,6 +2,7 @@ import { logger } from '@/utils/logger'
 import { toCamelCase } from '@/utils/sessionTransformers'
 import { getEventSessionId } from '@/utils/eventRouting'
 import { StreamState, ApprovalState, PROTECTED_STREAM_STATES } from '@/types'
+import { scheduleSubagentsRefresh } from '@/composables/useSubagents'
 import { APPROVAL_STATE_MAP } from './constants'
 import { createHandleToolCallEvent } from './toolCallHandler'
 import {
@@ -362,11 +363,12 @@ export const createHandleSessionEvent = (ctx) => {
       case 'stream_reasoning':
         _applyStreamReasoning(sessionId, payload)
         break
-      // 子代理图层正文/中间思考更新（Agent 图层嵌套规范 Task 1/9）：
+      // 子代理图层正文/中间思考更新（spec D10/MODIFIED：路由收敛）：
       // 后端 STREAM_SUBAGENT_CONTENT 事件（adapter._on_subagent_content /
       // chat_service._on_subagent_content），payload.data 携带
-      // agentPath/content/reasoningContent/agentName/depth。
-      // 前端按 agentPath 路由写入 message.subagentContents[pathKey]，实时累计子代理图层正文。
+      // content/reasoningContent/agentName/depth（data 不含 agentPath）。
+      // 前端按顶层 subagentThreadId 路由写入 message.subagentContents[threadId]，
+      // 实时累计子代理图层正文。
       case 'stream_subagent_content':
         _applySubagentContent(sessionId, payload)
         break
@@ -390,7 +392,10 @@ export const createHandleSessionEvent = (ctx) => {
       case 'approval_approved':
       case 'approval_rejected':
       case 'approval_timeout':
-        await ctx.handleApprovalEvent(sessionId, payload, event.type, { source: payload.source })
+        await ctx.handleApprovalEvent(sessionId, payload, event.type, {
+          source: payload.source,
+          isReplay: event.isReplay === true,
+        })
         break
       case 'stream_interrupted':
         ctx.handleStreamInterrupted(sessionId, payload)
@@ -481,6 +486,9 @@ export const createHandleSessionEvent = (ctx) => {
     const mappedState = APPROVAL_STATE_MAP[eventType]
     const source = options.source || payload.source || 'chat'
     const taskId = options.taskId || null
+    // isReplay 标记（useRealtimeSync.dispatchEvent 注入）：历史回放事件仅用于状态重建，
+    // 不应触发 ElMessage / appendToLastMessage / 恢复流等副作用（否则重新打开页面重复提示）。
+    const isReplay = options.isReplay === true
     // sessionId 为 schema 必填字段
     const chatSessionId = payload.sessionId
       || payload.chatSessionId
@@ -504,6 +512,22 @@ export const createHandleSessionEvent = (ctx) => {
     if (eventType === 'approval_approved') enrichedPayload.approved = true
     if (eventType === 'approval_rejected') enrichedPayload.approved = false
 
+    // 子代理审批状态变化（pending/approved/rejected/timeout）→ 立即刷新子代理元数据：
+    // SubAgentCard 审批可用性按子代理自身状态判断（审批自治）。pending 到达时后端
+    // SubAgentInstance 状态变为 interrupted_pending_user_input（卡片应显示"等待你的确认"
+    // 且审批按钮可用）；终态后恢复 running。两方向都需要拉取 /subagents 才能反映到卡片，
+    // 不依赖下一个子代理工具事件，消除状态滞后窗口
+    if (
+      payload.subagentThreadId
+      && (eventType === 'approval_pending'
+        || eventType === 'approval_approved'
+        || eventType === 'approval_rejected'
+        || eventType === 'approval_timeout')
+      && (chatSessionId || taskId)
+    ) {
+      scheduleSubagentsRefresh(chatSessionId || taskId)
+    }
+
     if (sessionId) {
       // chat / learning / 关联 deep_research：路由到 approvalStore.handleApprovalEvent
       // 会话不存在或消息为空时必须 await loadSessionDetail 完成，
@@ -518,13 +542,13 @@ export const createHandleSessionEvent = (ctx) => {
           logger.warn(`[Sync] handleApprovalEvent 兜底加载会话失败: ${chatSessionId}`, e)
         }
       }
-      approvalStore.handleApprovalEvent(enrichedPayload, { source, sessionId: chatSessionId })
+      approvalStore.handleApprovalEvent(enrichedPayload, { source, sessionId: chatSessionId, isReplay })
     } else if (taskId) {
       // 独立 deep_research：路由到 approvalStore.handleApprovalEvent（统一入口）
       // sessionId 传 undefined（独立模式），taskId 传实际值。
       // approvalStore.handleApprovalEvent 会根据 payload 中的 session_id 推导 sessionId，
       // 若仍无 sessionId 则识别为独立 deep_research 模式，仅更新 pendingApprovals。
-      approvalStore.handleApprovalEvent(enrichedPayload, { source, taskId })
+      approvalStore.handleApprovalEvent(enrichedPayload, { source, taskId, isReplay })
       logger.info(`[Sync] 审批变更(独立深度研究): taskId=${taskId}, source=${source}, tool=${payload.toolName}, eventType=${eventType}, mappedState=${mappedState}, graphInterruptId=${graphInterruptId || '(none)'}`)
       return
     }

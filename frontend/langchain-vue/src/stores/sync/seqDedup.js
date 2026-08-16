@@ -1,5 +1,3 @@
-import { logger } from '@/utils/logger'
-
 /**
  * 创建 seq 跳号检测基线（Task 4：seq 单一权威）
  *
@@ -43,8 +41,6 @@ export const createSeqDedup = () => {
     const prev = lastSeenSeq.get(sessionId) || 0
     if (seq > prev) {
       lastSeenSeq.set(sessionId, seq)
-    } else {
-      logger.debug(`[Sync] setSeenSeq 忽略回退 seq: session=${sessionId}, seq=${seq}, prev=${prev}`)
     }
   }
 

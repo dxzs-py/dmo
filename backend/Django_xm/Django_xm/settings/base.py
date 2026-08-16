@@ -77,7 +77,7 @@ INSTALLED_APPS = [
     "Django_xm.apps.research.apps.ResearchConfig",
     "Django_xm.apps.realtime.apps.RealtimeConfig",
     "Django_xm.apps.analytics.apps.AnalyticsConfig",
-    "Django_xm.apps.agent_hub",
+    "Django_xm.apps.agent_hub.apps.AgentHubConfig",
 ]
 
 ROOT_URLCONF = "Django_xm.urls"
@@ -401,6 +401,10 @@ AI_HELPER_MODEL_NAME = ""
 AI_HELPER_MODEL_TEMPERATURE = 0.0
 AI_HELPER_MODEL_MAX_TOKENS = 256
 
+# 子代理最大嵌套深度（0=主 agent，1=子 agent，2=孙 agent，3=曾孙 agent）。
+# spawn_sub_agent 派生链路与 deepagents inline 子代理共用；环境变量 AGENT_MAX_DEPTH 可覆盖。
+AGENT_MAX_DEPTH = int(os.environ.get("AGENT_MAX_DEPTH", "3"))
+
 # ── Shell Exec 安全配置 ──────────────────────────────────────────
 # 白名单命令：单一真相源在 Django_xm.apps.tools.langchain.shell.DEFAULT_WHITELIST_COMMANDS，
 # 此处置为 None 使用代码级默认值（含平台过滤）。
@@ -412,7 +416,7 @@ SHELL_EXEC_ALLOWED_DIRS = [DATA_DIR, MEDIA_ROOT]
 # ─── 日志配置（公共） ───────────────────────────────────────────────
 # 按服务角色隔离日志文件，避免多进程竞争写同一文件、日志混杂无法按服务区分：
 # - Web/Django 进程（runserver/gunicorn/celery）：django.log（历史默认，SERVICE_ROLE 未设置）
-# - FastAPI 执行服务（8001）：fastapi.log（apps/fastapi_service/main.py 设置 SERVICE_ROLE=fastapi）
+# - FastAPI 执行服务（8001）：fastapi.log（services/fastapi_service/main.py 设置 SERVICE_ROLE=fastapi）
 # 注意：prod.py 定义独立 LOGGING（django_prod.log）覆盖本配置，按生产策略另行调整。
 SERVICE_ROLE = os.environ.get("SERVICE_ROLE", "web")
 LOG_FILE_NAME = "fastapi.log" if SERVICE_ROLE == "fastapi" else "django.log"
@@ -499,7 +503,7 @@ LOGGING = {
         },
         # FastAPI 执行服务：DEBUG 完整记录（8001 进程写入 fastapi.log；
         # Web 进程中该 logger 不产生日志，配置无副作用）
-        "Django_xm.apps.fastapi_service": {
+        "Django_xm.services.fastapi_service": {
             "handlers": ["console", "file"],
             "level": "DEBUG",
             "propagate": False,

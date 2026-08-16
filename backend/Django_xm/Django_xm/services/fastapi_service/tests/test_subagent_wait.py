@@ -7,7 +7,7 @@ run() finally 挂起态跳过清理（固化规则：保留会话槽 + 不释放
 隔离策略：不触碰真实 DB/Redis/LLM——execute_research_async / runtime / lifecycle 均 mock。
 
 运行（backend/Django_xm 目录，conda env langchain_xm）：
-    python -m unittest Django_xm.apps.fastapi_service.tests.test_subagent_wait
+    python -m unittest Django_xm.services.fastapi_service.tests.test_subagent_wait
 """
 
 import asyncio
@@ -21,10 +21,10 @@ import django
 
 django.setup()
 
-from Django_xm.apps.fastapi_service.session_executor import SessionExecutor
+from Django_xm.services.fastapi_service.session_executor import SessionExecutor
 from Django_xm.apps.tools.base import is_approval_interrupt, is_subagent_wait_interrupt
 
-_MODULE = "Django_xm.apps.fastapi_service.session_executor"
+_MODULE = "Django_xm.services.fastapi_service.session_executor"
 
 
 def _make_executor(thread_id="t1", **kw):
@@ -62,7 +62,7 @@ class TestWaitForSubAgentFormat(unittest.TestCase):
     """wait_for_subagent 结果格式化（纯静态方法）。"""
 
     def test_completed(self):
-        from Django_xm.apps.agent_hub.tools.wait import WaitForSubAgentTool
+        from Django_xm.apps.agent_hub.subagent_tools.wait import WaitForSubAgentTool
 
         out = WaitForSubAgentTool._format_resume_value(
             {"subagent_thread_id": "sub1", "status": "completed", "result": "hello"}
@@ -71,7 +71,7 @@ class TestWaitForSubAgentFormat(unittest.TestCase):
         self.assertIn("hello", out)
 
     def test_failed(self):
-        from Django_xm.apps.agent_hub.tools.wait import WaitForSubAgentTool
+        from Django_xm.apps.agent_hub.subagent_tools.wait import WaitForSubAgentTool
 
         out = WaitForSubAgentTool._format_resume_value(
             {"subagent_thread_id": "sub1", "status": "failed", "result": ""}

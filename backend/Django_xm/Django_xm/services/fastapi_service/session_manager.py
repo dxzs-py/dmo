@@ -13,7 +13,7 @@ import logging
 
 from asgiref.sync import sync_to_async
 
-from Django_xm.apps.fastapi_service.event_bus import (
+from Django_xm.services.fastapi_service.event_bus import (
     SIGNAL_APPROVAL,
     SIGNAL_PREFIX,
     SIGNAL_RETRY_SUBAGENT,
@@ -21,7 +21,7 @@ from Django_xm.apps.fastapi_service.event_bus import (
     SIGNAL_STOP,
     _get_signal_redis_url,
 )
-from Django_xm.apps.fastapi_service.session_executor import SessionExecutor
+from Django_xm.services.fastapi_service.session_executor import SessionExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +136,17 @@ class SessionManager:
             )
 
     def on_approval_signal(self, thread_id: str, payload: dict) -> None:
-        """审批信令路由到对应会话执行器。"""
+        """审批信令路由：子代理审批 → runtime.resume；主 agent 审批 → 唤醒挂起协程。
+
+        子代理与主代理审批共用统一审批端点（/approvals/{interrupt_id}/resume/），
+        仅信令 payload 携带 subagent_thread_id 区分恢复目标（对齐 Trae solo：
+        审批是全局机制，与 agent 层级无关，主/子代理仅展示位置不同）。
+        """
+        subagent_thread_id = payload.get("subagent_thread_id") or ""
+        if subagent_thread_id:
+            asyncio.create_task(self._resume_subagent_from_signal(payload, subagent_thread_id))
+            return
+
         executor = self._sessions.get(thread_id)
         if executor:
             executor.on_approval_signal(payload)
@@ -146,6 +156,61 @@ class SessionManager:
             logger.info(
                 f"[SessionManager] 审批信令到达但会话未激活（DB 最终一致兜底）: "
                 f"thread_id={thread_id}"
+            )
+
+    async def _resume_subagent_from_signal(self, payload: dict, subagent_thread_id: str) -> None:
+        """子代理审批信令：终态化批次审批 + 断点恢复子代理独立 thread。
+
+        与主 agent 恢复同构（_wait_for_batch_decision 唤醒后 finalize + resume）：
+        1. resume_value 已由 views._check_batch_and_route 聚合为批量决策
+           {tool_call_id: bool}（子代理 middleware 批量 interrupt 契约）；
+        2. 终态化批次审批（approved/rejected，按 session_type 走 research/chat
+           版 finalize，middleware 恢复时据此幂等跳过）；
+        3. runtime.resume 重建子代理 graph 并 Command(resume=decisions) 断点续跑，
+           子代理完成后经生命周期回调唤醒父 graph（spec D4）。
+        """
+        from Django_xm.services.fastapi_service.event_bus import (
+            SESSION_TYPE_CHAT,
+            SESSION_TYPE_RESEARCH,
+        )
+
+        from Django_xm.apps.ai_engine.subagent_runtime import get_subagent_runtime
+
+        resume_value = payload.get("resume_value")
+        decisions = resume_value if isinstance(resume_value, dict) else {}
+        parent_thread_id = payload.get("thread_id", "")
+        session_type = payload.get("session_type", "")
+
+        if not decisions:
+            logger.warning(
+                f"[SessionManager] 子代理审批信令缺少批量决策，跳过恢复: "
+                f"subagent={subagent_thread_id}, resume_value={resume_value!r}"
+            )
+            return
+
+        try:
+            if session_type == SESSION_TYPE_CHAT:
+                from Django_xm.services.fastapi_service.chat_executor_core import (
+                    _finalize_chat_batch_approvals,
+                )
+
+                finalize = _finalize_chat_batch_approvals
+            else:
+                from Django_xm.apps.research.services.research_runner import finalize_batch_approvals
+
+                finalize = finalize_batch_approvals
+
+            await sync_to_async(finalize)(decisions, parent_thread_id)
+            await get_subagent_runtime().resume(subagent_thread_id, decisions)
+            logger.info(
+                f"[SessionManager] 子代理审批信令已恢复子代理: "
+                f"subagent={subagent_thread_id}, parent={parent_thread_id}, "
+                f"session_type={session_type or SESSION_TYPE_RESEARCH}, decisions={decisions}"
+            )
+        except Exception:
+            logger.exception(
+                f"[SessionManager] 子代理审批恢复失败: "
+                f"subagent={subagent_thread_id}, parent={parent_thread_id}"
             )
 
     async def on_retry_subagent_signal(self, thread_id: str, payload: dict) -> None:
