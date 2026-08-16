@@ -29,7 +29,7 @@ from Django_xm.apps.chat.services.stream_helpers import (
     process_stream_chunk,
 )
 from Django_xm.apps.chat.utils import _lcp_len
-from Django_xm.apps.tools.base import is_approval_interrupt
+from Django_xm.apps.tools.base import is_approval_interrupt, is_subagent_wait_interrupt
 from Django_xm.common.event_schema import EventSource
 from Django_xm.common.tool_call_lifecycle import ToolCallContext, service
 
@@ -229,6 +229,19 @@ async def run_stream_loop(
                                 all_resume_values.update(decisions)
                         interrupted = True
                         break
+                    # 业务等待挂起（wait_for_subagent，非审批 interrupt）：记录挂起
+                    # 信息后退出流，不产出审批 UI、不 Command(resume)——由执行器
+                    # （SessionExecutor）注册父 awaiter 并在子代理终态时唤醒续跑
+                    # （与 deep_research adapter 的 subagent_wait_suspend 同构，spec D4）。
+                    wait_info = _detect_subagent_wait_suspend(mode_data)
+                    if wait_info:
+                        data["_subagent_wait_suspend"] = wait_info
+                        logger.info(
+                            f"[Loop] 业务等待挂起: subagent={wait_info['subagent_thread_id']}, "
+                            f"interrupt_id={wait_info['interrupt_id']}"
+                        )
+                        interrupted = True
+                        break
                 else:
                     async for event in _handle_updates_chunk(mode_data, ctx, data):
                         yield event
@@ -282,11 +295,38 @@ async def run_stream_loop(
         if not interrupted:
             break
 
+        # 业务等待挂起（wait_for_subagent）：不 Command(resume)，直接退出循环——
+        # 由执行器接管（注册父 awaiter，子代理终态唤醒后以 resume_command 重入）
+        if data.get("_subagent_wait_suspend"):
+            break
+
         # 构造 Command(resume=...) 重入 astream（key = LangGraph Interrupt.id）
         from langgraph.types import Command
 
         current_input = Command(resume=all_resume_values)
         logger.info(f"[Loop] 审批恢复重入: resume_keys={list(all_resume_values.keys())}")
+
+
+def _detect_subagent_wait_suspend(mode_data: Any) -> dict | None:
+    """检测 updates chunk 中的子代理业务等待中断（wait_for_subagent，spec D4）。
+
+    非审批 interrupt：不产出审批 UI，仅返回挂起信息（subagent_thread_id +
+    interrupt_id），供执行器注册父 awaiter 并在子代理终态时 Command(resume) 续跑。
+    与 deep_research adapter 的 is_subagent_wait_interrupt 分支同构。
+    """
+    if not (isinstance(mode_data, dict) and "__interrupt__" in mode_data):
+        return None
+    interrupts = mode_data["__interrupt__"]
+    if not interrupts:
+        return None
+    for intr in interrupts:
+        interrupt_value, _graph_id, langgraph_resume_id = extract_interrupt_ids(intr)
+        if is_subagent_wait_interrupt(interrupt_value):
+            return {
+                "subagent_thread_id": interrupt_value.get("subagent_thread_id", ""),
+                "interrupt_id": langgraph_resume_id,
+            }
+    return None
 
 
 async def _collect_chat_approvals(

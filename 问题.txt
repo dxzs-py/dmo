@@ -1,122 +1,44 @@
 # 测试问题记录
 
-## 2026-08-16 深度研究子代理激活修复验证（fix-deep-research-subagent-activation）
+## 2026-08-16 代理模式子代理审批验证（chat 模块）
 
-### 问题A：spawn_sub_agent 创建子代理报错 `Object of type coroutine is not JSON serializable` ✅ 已修复
-- 现象：深度研究主 agent 已正确派发 spawn_sub_agent（研究计划明确"并行派发两个 general-purpose 子代理"），但工具返回 `{"error": "子代理创建失败: Object of type coroutine is not JSON serializable"}`；SubAgentInstance 表记录数恒为 0
-- 根因：`subagent_runtime/runtime.py` L176 构造 metadata 时 `"risk_ceiling": self._resolve_risk_ceiling(agent_name)` **缺少 await**（该方法是 async def）→ coroutine 对象写入 metadata → Django JSONField 序列化抛 TypeError → `_create_instance` 失败。RuntimeWarning 已明示 `coroutine 'SubAgentRuntime._resolve_risk_ceiling' was never awaited`
-- 修复：`runtime.py` 改为 `await self._resolve_risk_ceiling(agent_name)`
-- 复测：✅ shell 复现成功创建子代理；深度研究任务 4 个子代理全部创建成功（subagent_e0884bd052bf480c 等），状态 running，任务进入执行中
+### 问题F：chat 模块子代理内部工具审批创建失败（缺 chat_session_id）→ 子代理挂起无审批按钮 ✅ 已修复（待重启复测）
+- 现象：chat 代理模式输入"运行 ollama list … 尽量通过子代理完成任务"，主代理 spawn_sub_agent 审批通过后子代理启动，子代理内部 shell_exec（ollama list）审批创建失败：
+  `ERROR [ApprovalService] chat 模块审批缺少 chat_session_id，拒绝创建: interrupt_id=call_00_lea56srIbvZmc0zPzW3v5596, source_id=<chat_session_id>`
+  `ERROR [ResearchApproval] 创建审批 DB 记录失败`
+- 前端表现：子代理卡片展开详情内 shell_exec 显示"等待中"，无"确认执行/拒绝"审批控件；子代理挂起（interrupted_pending_user_input），任务卡住
+- 根因：configurable 源头契约只有 research 链路实现（research_runner.execute_research_async 构建时写入 chat_session_id/assistant_message_id），**chat 代理模式（chat_service.py）构建主会话 configurable 时未写入** → spawn 工具原样继承 → 子代理 configurable 缺 chat_session_id → langgraph_adapter._create_approvals_from_interrupts 取到 None → source=chat 时 request_approval_async 强制校验失败拒绝创建
+- 修复（源头统一契约，无兜底补丁）：
+  1. `apps/chat/services/chat_service.py`（L1128-1133）：构建主会话 configurable 时写入 `chat_session_id=_sub_session_id`、`assistant_message_id=_sub_message_id`，与 research_runner L345-350 模式对齐
+  2. `ai_engine/subagent_runtime/adapters/langgraph_adapter.py`：恢复直接从 configurable 读取（无 parent_thread_id 兜底），并补注释说明各模块源头契约
+- 状态：待重启复测（chat 代理模式 → 子代理 shell_exec 审批控件应出现）
+- 复测结果（2026-08-16 20:29 会话）：✅ 修复生效——spawn 审批通过后，子代理内部 shell_exec/file_reader/fs_write_file 审批控件全部正常出现并逐一通过执行，任务完整走完（ollama list → ollama run ornith:latest "你是谁" → ollama ps → file_reader 预读 → fs_write_file 写入 → file_reader 验证），test_approval.txt 成功写入 2961 字节报告，两浏览器实时同步一致
 
-### 问题B：子代理 shell_exec 审批创建后未发布 approval_pending 事件 → 前端无审批按钮 → 子代理永久挂起 ❌ 未修复
-- 现象：子代理执行 shell_exec（uptime/lscpu/df -hT 等非白名单）触发 ApprovalMiddleware `批量发起审批: 3/5 个请求` + `子代理 interrupt 挂起`，但前端深度研究详情页子代理工具卡仅显示"等待中"，**无"确认执行/拒绝"审批控件**；审批事件（approval_pending）从未发布到 task 频道（后端日志中所有 approval_pending 均为主 agent 的 write_file/spawn_sub_agent，无子代理 shell_exec 的）；主 agent 已正确进入 waiting_subagent 挂起等待
-- 根因：`langgraph_adapter._execute`（subagent_runtime）捕获子代理 interrupt 后仅更新 SubAgentInstance 状态为 INTERRUPTED_PENDING_USER_INPUT，**未调用 `create_approvals_for_interrupts`（research_runner）创建审批 DB 记录 + 发布实时事件**，也无审批决策后 resume 子代理的链路（主 agent 走 session_executor._on_interrupt → create_approvals_for_interrupts + _wait_for_batch_decision）
-- 影响：子代理审批不可达 → 卡死（非并行问题，4 子代理独立线程正常，均卡在审批等待）
-- 候选方案：在 langgraph_adapter interrupt 挂起处调用 create_approvals_for_interrupts（thread_id=父任务、携带 subagent_thread_id 到 extra），并打通审批决策 → runtime.resume(instance, decisions) 恢复子代理
-- 状态：待实现
+### 问题G：子代理最终报告在详情卡片内重复显示两次 ✅ 已修复（待重启复测）
+- 现象：子代理完成后，详情卡片内出现两份完全相同的"📋 执行结果汇总"报告（页面15 uid=200_18~85 与 200_88~155 内容一致，浏览器16 同样重复）。第一份结尾多一个孤立 "✅ "。主消息流中主代理未输出任何总结
+- 根因（与问题H同根）：`SubAgentContentMiddleware.aafter_model`（subagent_support.py）每次模型调用后**无条件转发最后一条 AIMessage 的完整 content**。子代理每次工具审批 interrupt → 用户确认 → Command(resume) 恢复时，LangGraph **重放节点**，aafter_model 对**同一条 AIMessage 再次触发** → 同段文本重复推送；前端 `_applySubagentContent` 纯追加（entry.content += content）→ 重复显示。本次会话子代理共 6 次审批，每轮中间文本均重复
+- 修复（消息级幂等，与 tool_event_extractor 的 seen_tool_call_ids 惯例一致）：
+  1. `subagent_support.py`：middleware 转发时携带 `msg_id`（AIMessage.id，缺失时用 content 确定性哈希）
+  2. `chat_service.py` `_on_subagent_content`：闭包内 `_sent_subagent_msg_keys`（subagent_thread_id → set）按 msg_id 去重，重放消息跳过（闭包随回调对象跨 resume 持续存在）
+  3. `research/services/adapter.py` `_on_subagent_content`：同构幂等（self._sent_subagent_msg_keys），chat/research 统一能力
 
-### 问题C：子代理审批归集 module 推导为 deep_research（chat 场景应归 chat module） ❌ 待确认
-- 现象：子代理工具审批 `SAFE 审计已注册: module=deep_research, depth=1, agent_name=general-purpose` —— 审批归集 module 与 chat 场景不一致
-- 注：与问题.txt 问题4 疑点同源；修复 B 时需一并校正 module 推导
+### 问题H：子代理详情内工具调用/文本时序错乱 ✅ 已修复（与问题G同根，待重启复测）
+- 现象：子代理详情内部分内容不按时间顺序（同段文本重复两遍穿插在工具卡片之间）
+- 根因：与问题G相同——重复推送的文本 append 在新工具卡片之后；且后端 `bind_position` 按累计正文长度绑定 tool position，重复内容使 position 错位 → 工具卡片插错位置
+- 修复：同问题G（幂等去重后 content 不再重复，position 恢复准确）
 
-## 2026-08-16 顺序化 Agent 流展示 spec（sequential-agent-flow-display）测试
-
-### 问题D：spawn_tool_call_id 为空 → 子代理卡片无法挂到对应 spawn 工具卡后 ✅ 已修复
-- 现象：深度研究任务 spawn_sub_agent 审批通过后，`GET /ai-engine/subagents/` 返回实例 `spawn_tool_call_id=""`，前端子代理卡片只能作为孤儿渲染在工具流末尾，无法顺序挂到 spawn 工具卡后
-- 根因：langchain-core 的 `tool_call_id` 是工具执行的**参数**（ToolNode 注入），不是 `BaseTool` 实例属性。原代码 `getattr(self, "tool_call_id", None)` 恒为 None
-- 修复：`spawn.py` `_arun` 增加 `tool_call_id: Annotated[str, InjectedToolCallId] = None` 参数（LangChain 官方注入机制），透传 `runtime.spawn(spawn_tool_call_id=...)`
-- 复测：需重启 fastapi 后重新触发 spawn 验证
-
-### 问题E：深度研究子代理未继承主 agent 工具（只有基础工具） ✅ 已修复
-- 现象：子代理回复明确"仅配备 get_current_time / get_current_date / calculator，没有 shell_exec"——shell 命令无法执行；与用户预期"子代理集成主 agent 参数和工具"不符
-- 根因：`set_parent_tool_context` 仅在 chat_service 调用；深度研究（session_executor._build_agent）从未设置父工具上下文 → spawn 时 `main_tool_names` 为空 → `_resolve_main_tools` 回退 `get_all_basic_tools()`
-- 修复：`session_executor._build_agent` 构建 agent 后调用 `set_parent_tool_context(agent.original_tools, config)`（含 enable_deep_thinking 继承）；`run()` finally 非挂起路径 `clear_parent_tool_context()`
-- 复测：需重启 fastapi 后重新触发 spawn 验证
-
-### 问题F：两个 spawn 只有一张子代理卡片（元数据刷新时序） ⏳ 部分缓解，待重启后验证
-- 现象：write_file + 2 个 spawn_sub_agent 全部已完成，但详情页只渲染 1 张子代理摘要卡片
-- 疑点：fetchSubagents 仅 taskId 变化时触发；第二个子代理创建晚于首次拉取，且子代理工具事件是否触发 scheduleSubagentsRefresh 待确认。手动刷新页面后两张卡片均正常渲染（数据已落库，纯前端刷新时序问题）
-- 待验证：重启 fastapi 后新任务观察第二子代理创建时是否自动出现
-
-### 问题I：子代理展开内容与主代理区分度低（无卡片边界） ✅ 已修复
-- 现象：点击子代理卡片后，展开面板与主消息视觉几乎一样，看不出哪些信息/工具是子代理的、哪些是主代理的
-- 修复（组件结构重构，展开内容并入卡片内部）：
-  1. `SubAgentCard.vue` 改为总卡片：头部（标题「子代理 N · Ld」+ 状态 + 提示）→ 展开时卡片体内渲染 `SubAgentDetailPanel`（思考 → 正文 + 工具内联 + 嵌套子代理），整体有边框包裹，与主消息明确区分
-  2. `SubAgentDetailPanel.vue` 改为卡片体：移除独立头部（标题/状态由卡片头部承担），只渲染内容；嵌套子代理改为渲染 SubAgentCard（含自身展开内容，递归统一）
-  3. 宿主 `ChatMessage.vue` / `ResearchTaskDetail.vue` 移除兄弟 SubAgentDetailPanel，只渲染 SubAgentCard；审批/展开事件经卡片转发
-  4. 修复 SubAgentCard toggle 未传 threadId 导致无法展开的 bug（emit('toggle', subagent.threadId)）
-- 复测：✅ 双浏览器一致，点击卡片展开后内容在卡片边框内（研究推理→正文→工具），标题「子代理 1 · L1 / 子代理 2 · L1」；单测 14 通过、build 通过
-- 现象：卡片标题直接显示"2. 请执行以下本地命令序列..."，用户看不出是子代理组件（以为是正文）；结果预览全文平铺（1000+ 字符）撑爆卡片
-- 修复：
-  1. `subagentAggregation.js` 视图新增 `order`（全局序号）与 `depth`（递归深度：parentThreadId 指向另一子代理→父深度+1，指向任务/会话→1；环防御）
-  2. `SubAgentCard.vue` / `SubAgentDetailPanel.vue` 标题统一为「子代理 N · Ld：task 摘要」（如"子代理 1 · L1：请执行..."，嵌套显示 L2）
-  3. 预览 3 行截断（CSS line-clamp），完整内容点击展开面板查看
-- 复测：✅ 双浏览器一致显示「子代理 1 · L1 / 子代理 2 · L1」，预览 clientH=70px（3 行）vs 全文 1256px
-
-### 问题G：用户未开启深度思考，子代理仍展示英文推理链 ✅ 已修复（显示层过滤）
-- 现象：思考模式开关关闭，但子代理详情面板仍显示"研究推理"（英文 reasoning，1386 字符，如 "The user wants me to execute a sequence of local commands..."）
-- 根因：model_resolver 已注入 `thinking={"type":"disabled"}`（fastapi.log 确认"已从 provider 配置自动注入 deep_thinking 禁用参数"4 次），但 deepseek-v4-flash API 忽略该参数仍输出 reasoning_content；`SubAgentContentMiddleware._extract_reasoning` 无条件提取 → 前端展示
-- 修复：`spawn.py` 把 `enable_deep_thinking` 写入子代理 configurable；`subagent_support.py` 的 `aafter_model` 在未启用深度思考时 `reasoning=""`（丢弃模型仍输出的推理，用户开启时正常展示）
-- 说明：此为显示层兜底（模型层禁用失败属 provider 限制，思考仍消耗 token 但不展示）
-- 复测：需重启 fastapi 后重新触发 spawn 验证
-
-## 2026-08-15 Agent 图层嵌套 spec 测试（tool-call-inline-content-flow，聊天代理模式）
-
-### 问题0：子代理执行报错 `the connection is closed`（事件循环不一致） ✅ 已修复
-- 现象：agent_run 卡片显示"已完成"，但结果错误文本"子代理执行失败: the connection is closed"，子代理 168ms 空跑（fastapi.log：13:52:33,241 启动 → 33,409 结束）
-- 根因：`AgentRunTool._execute_agent` 用 `run_async()`（内部 `asyncio.run()` 新建事件循环 loop_X 且执行后**立即关闭**）创建子代理 agent → `AsyncPostgresSaver` 的 asyncio.Lock 与 asyncpg 连接池绑定创建时的 loop_X；随后 `asyncio.run(_astream_subagent())` 又新建 **loop_Y** 执行 astream → 使用已随 loop_X 关闭而失效的连接池 → `the connection is closed`
-- 修复：`agent_management.py` `_execute_agent` 显式管理事件循环（`asyncio.new_event_loop()` + `set_event_loop`），把「工具获取 + agent_hub_create + astream + aget_state」全部放入同一 async 函数用 `loop.run_until_complete()` 执行；finally 中先 `release_async_checkpointer()` 释放当前 loop 的 PG 连接池再 `loop.close()`（新增 D1.1 决策）
-- 复测：✅ 子代理真实执行 3.2 秒、调用 shell_exec 工具、结果非 None/非 connection closed
-
-### 问题4：子代理工具审批中断（interrupt）后子代理线程直接结束，结果不完整 ❌ 未修复（需方向决策）
-- 现象：子代理调用 `shell_exec`（带管道 `dir /s /b ... | findstr` 强制审批）→ LangGraph interrupt 暂停 → 子代理执行线程（_execute_agent 独立 loop）**无等待审批后 resume 机制**，`async for` 消费完中断 chunk 即结束 → 子代理"完成"但结果只有开场白"我来帮你探索这个项目目录…"（shell_exec 的 ToolMessage 未产生）→ 主 agent 认为不完整，重试 agent_run
-- 日志链：13:58:14,690 shell_exec SAFE 自动通过 → 13:58:14,692 需要审批（带管道）→ 13:58:14,712 批量发起审批 → 13:58:14,737 子代理执行结束（仅差 25ms）
-- 疑点：日志 `SAFE 审计已注册: module=deep_research, depth=1, agent_name=explore` —— 子代理工具审批被归集到 deep_research module（chat 场景应归 chat module），审批归集 module 推导可能不正确
-- 候选方案：
-  1. 子代理执行期间工具免审批（直接执行，风险：降低人工控制）
-  2. 子代理审批透传父链路 + 子代理线程等待审批状态后 resume（跨线程等待，复杂）
-  3. 子代理遇审批中断返回明确"需审批"状态给主 agent（无法代审批）
-- 状态：待用户决策方向后实现
-
-### 问题1：langgraph 工具链子代理执行报错 `name 'normalized_type' is not defined` ✅ 已修复
-- 现象：聊天代理模式 agent_run 执行子代理失败，AI 回复正文显示"子代理执行失败了（内部错误 name 'normalized_type' is not defined）"，子代理无法启动，无子代理正文流/图层卡片
-- 根因：`AgentRunTool._execute_agent`（agent_management.py）中 `_sub_configurable["agent_name"] = normalized_type` 误引用闭包变量。`normalized_type` 仅存在于 `AgentCreateTool._run` 作用域，`AgentRunTool._run` 中未定义 → NameError（Agent 图层嵌套 Task 1.2 invoke→astream 改造时引入）
-- 修复：`agent_management.py` L412 改为 `_sub_configurable["agent_name"] = agent_type`（meta.type 已在 agent_create 时 _normalize_agent_type）
-- 复测：重启后第一次验证通过（子代理可启动，agent_create/agent_run 均正常）
-
-### 问题2：子代理执行成功但结果 None、0.2 秒空跑、无子代理图层/正文流（且可能导致工具乱序） ✅ 已修复
-- 现象：agent_run 卡片显示"已完成"，但结果 "None"，子代理无任何正文流/工具事件转发（fastapi.log：12:05:48,157 启动 → 12:05:48,359 结束，仅 0.2 秒）；主 agent 继续执行（agent_list 检查状态、shell_exec 换策略重试）；用户跨浏览器手动刷新后观察到工具乱序
-- 根因：`AgentRunTool._execute_agent` 的 `_sub_thread_id` 继承父 `configurable.thread_id`（chat 场景 = session_id cd04799c...）。thread_id 是 LangGraph checkpoint 唯一键，子代理是独立 graph（agent_hub_create 新建），与主 agent 共享 thread_id → checkpoint 冲突：子代理 astream 命中/污染主 agent 状态，表现为空跑（结果 None、无正文、无工具）甚至主 agent 后续轮次状态错乱（工具乱序的潜在根因）
-- 修复：
-  1. `agent_management.py`：`_sub_thread_id = f"subagent_{agent_id}"`（独立 checkpoint 键）；新增 `_sub_configurable["approval_thread_id"] = 父 thread_id`（审批归集保持挂回父任务/会话，前端审批面板路由不受影响）
-  2. `middleware.py`（ApprovalMiddleware）：`thread_id = configurable.get("approval_thread_id") or configurable.get("thread_id", "")`（优先读审批归集键，回退 thread_id；deepagents 子代理同 graph 不注入 approval_thread_id，行为不变）
-- 复测：待重启后端后验证（重点：子代理真实执行、子代理正文流/图层出现、工具乱序是否消失）
-
-### 问题3：position 未持久化 → 刷新后工具卡全部排图层末尾（"工具乱序/不内联"根因） ✅ 已修复
-- 现象：流式期间工具卡按 position 内联正常；刷新页面后所有工具卡排在该图层正文末尾（视觉"乱序"），且审批恢复的工具卡也无内联位置
-- 根因：position 只在 WS 事件 payload 透传（前端实时内联），**未持久化**：
-  - `stream_persistence._build_persisted_tool_calls`（tool_calls JSON 落库）字段列表无 position → 刷新后 `transformBackendMessageToFrontend` 恢复的 toolCall 无 position
-  - `Approval.extra`（审批唯一持久化来源）无 position → 审批恢复/loadHistory 重建无 position
-  - 审批事件 payload（前端 isSynthetic 占位）无 position
-- 修复（统一权威补全点，与 seq 同模式）：
-  1. `tool_call_lifecycle.py` 新增 `enrich_entry_position(entry, tool_call_id)`：从 ToolCallContext 读 position（bind_position 写入、keep_existing 不可变）写入 entry
-  2. `stream_persistence._build_persisted_tool_calls` 保留 tool_info.position + enrich_entry_position 兜底；`_evolve_tool_call` 演进保留 position（existing 无而 new 有时补上）
-  3. `approval_service.py` 4 处（审批事件 payload / 重建项 / Approval.extra 同步 / Approval.extra 异步）enrich_entry_seq 后补 enrich_entry_position
-  4. 前端 `messageOperations.setApprovalToToolCallInMap` 已有条目 + isSynthetic 占位补 position；`research.js._approvalToToolCall`（loadHistory）extra.position 提升到顶层
-- 复测：待重启后端后验证（刷新后工具卡保持内联、审批恢复位置正确）
-
-### 备注：会话列表"3 个重复"为测试选择器误判，非 bug
-- `document.querySelectorAll('[class*=session-item]')` 会匹配 `session-item-content`/`session-item-title` 子元素；实际会话仅 1 个（后端 ChatSession 1 条），无重复渲染
-
-## 2026-08-14 重新生成/版本/链式删除 spec 测试（chat 模块）
-
-### 问题1：非触发浏览器在流式/审批挂起中仍显示"重新生成"按钮 ✅ 已修复
-- 现象：触发浏览器发送命令后审批挂起期间，另一浏览器（未发起请求，chatStore.isLoading=false）末轮 AI 回复仍显示"重新生成"按钮
-- 根因：`ChatMessage.canRegenerate` 仅依赖会话级 props.isLoading（触发浏览器有效），非触发浏览器 isLoading 恒为 false，消息自身 isStreaming=true 未被拦截
-- 修复：`canRegenerate` 增加 `props.message.isStreaming` 检查（消息级状态经 WS 同步，跨浏览器一致）
-- 复测：待验证
-
-[2026-08-16 11:05] ����о��Ӵ�������ʧ�ܣ�spawn_sub_agent ���� '�Ӵ�������ʧ��: Object of type coroutine is not JSON serializable'
-- �����о����� research_48eca0408125 �� agent ��ȷ�ɷ� spawn_sub_agent��general-purpose x2��������ͨ���� SubAgentRuntime ����ʵ��ʧ��
-- ֤�ݣ�ai_engine_subagent_instance �� count=0��ʵ����δ��������fastapi.log �� spawn.py:158 WARNING���� traceback
-- �ɵ㣺runtime.spawn metadata ���л���JSONField��ʱ coroutine ���룻���� exc_info ���ⶨλ
+### 问题I：chat 模式 wait_for_subagent 挂起后永不恢复（主代理收不到子代理结果）✅ 已修复（待重启复测）
+- 现象：子代理完成后 wait_for_subagent 卡"等待中"，主代理无最终总结，子代理卡片停"执行中"
+- 决定性日志：`20:33:10,774 子代理执行完成: subagent_6d523f9b4d0f4752, result_len=1350` + `20:33:10,775 lifecycle 60 无父 Graph 等待子代理（已收尾或未注册）`
+- 根因：wait 挂起/唤醒链路只在 research 实现（adapter.py subagent_wait_suspend + SessionExecutor._handle_suspend/_resume_after_subagent_wait），**chat 链路四处全缺**：
+  1. `loop.py run_stream_loop` 只处理审批 interrupt（_collect_chat_approvals），wait interrupt 被忽略 → 主代理协程直接结束
+  2. chat 从未注册 parent awaiter → 子代理完成时 lifecycle 找不到唤醒回调
+  3. chat 恢复路径（Command(resume) 重入）不存在
+  4. chat_service.run_agent_session 开头的"pending interrupt 自动拒绝"清理会误拒恢复场景的 wait interrupt
+- 修复（chat 与 research 同构，spec D4 统一能力）：
+  1. `loop.py`：新增 `_detect_subagent_wait_suspend`（复用 is_subagent_wait_interrupt）→ 写入 `data["_subagent_wait_suspend"]` 后退出流（不 resume）
+  2. `chat_service.py`：run_agent_session 挂起时返回挂起 dict（不发 context/end、不更新 tokens）+ 跳过 finalize_stream；新增 resume_command 恢复模式（graph_input=Command(resume)，跳过 pending interrupt 自动拒绝）
+  3. `chat_executor_core.py`：挂起时调用 `executor._handle_chat_wait_suspend`，finally 条件跳过 finalize/checkpointer 释放
+  4. `session_executor.py`：新增 `_handle_chat_wait_suspend`（置挂起态+竞态二次检查+注册 awaiter，与 research _handle_suspend 同构）；`_resume_after_subagent_wait` 按 session_type 分派（chat→params 注入 resume_command 重跑 _run_chat；research→原逻辑）；chat 恢复失败广播 STREAM_COMPLETED(success=False)（不用 research 专属 _handle_failure）
+- 验证：py_compile 全部通过；test_subagent_nesting.py + test_subagent_wait.py 26 passed；apps/chat 15 passed
+- 状态：待重启 fastapi 复测（预期：子代理完成后主代理自动恢复，wait_for_subagent 转"已完成"，主消息流输出最终总结，报告只显示一次）

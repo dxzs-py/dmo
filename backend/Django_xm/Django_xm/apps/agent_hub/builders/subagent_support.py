@@ -480,7 +480,13 @@ class SubAgentContentMiddleware(AgentMiddleware):
     父执行层注入的 ``_on_subagent_content`` 回调转发到父 SSE/WS 流。
 
     回调签名（由 adapter.py / chat 执行层注入，async）：
-        on_subagent_content(agent_path, content, reasoning_content, agent_name, depth)
+        on_subagent_content(agent_path, content, reasoning_content, agent_name, depth,
+                            subagent_thread_id, msg_id)
+
+    - msg_id：本轮 AIMessage 的唯一 id（无 id 时回退 content 确定性哈希），
+      供回调侧按消息幂等去重——审批 interrupt 恢复时 LangGraph 重放节点，
+      aafter_model 会对同一条 AIMessage 再次触发，回调必须跳过已转发的消息，
+      否则子代理卡片内容重复且 tool_call position 错位（时序错乱根因）。
 
     - 仅子代理（``configurable.subagent_thread_id`` 非空，spec D1）捕获转发；
       主 agent 的正文/思考由主执行链路 ``stream_content_update`` /
@@ -560,6 +566,9 @@ class SubAgentContentMiddleware(AgentMiddleware):
 
         agent_name = _read_agent_name()
         subagent_thread_id = _read_subagent_thread_id()
+        # 消息幂等键：优先 AIMessage.id；缺失时用 content 确定性哈希
+        # （重放消息 content 不变 → 键相同；不同轮次 content 必不同 → 不误伤）
+        msg_key = getattr(last_ai_msg, "id", None) or f"auto:{hash(content)}"
         try:
             await on_subagent_content(
                 agent_path=agent_path,
@@ -568,6 +577,7 @@ class SubAgentContentMiddleware(AgentMiddleware):
                 agent_name=agent_name,
                 depth=depth,
                 subagent_thread_id=subagent_thread_id,
+                msg_id=msg_key,
             )
             logger.debug(
                 f"[SubAgentContent] 转发子代理正文: agent={agent_name or agent_path[-1]}, "

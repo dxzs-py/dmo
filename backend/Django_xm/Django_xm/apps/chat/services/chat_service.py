@@ -427,6 +427,18 @@ class ChatService:
                 raise asyncio.CancelledError("用户停止生成")
             await broadcast(event)
 
+        # 业务等待挂起（wait_for_subagent，spec D4）：会话未结束，仅暂停等待
+        # 子代理终态。不广播 context/end、不更新 tokens（由唤醒恢复后的最终
+        # 结束统一处理），返回挂起信息供执行器注册父 awaiter。
+        wait_suspend = data.get("_subagent_wait_suspend")
+        if wait_suspend:
+            logger.info(
+                f"[ChatExec] 业务等待挂起返回: session={session_id}, "
+                f"subagent={wait_suspend.get('subagent_thread_id')}, "
+                f"interrupt_id={wait_suspend.get('interrupt_id')}"
+            )
+            return dict(wait_suspend)
+
         context_info = build_context_info(usage_tracker, token_detail_tracker, stream_start_time)
         await broadcast({"type": "context", "data": context_info})
         await broadcast({"type": "end", "message": "生成完成"})
@@ -438,7 +450,7 @@ class ChatService:
             await self._update_last_message_tokens(
                 session_id=session_id_for_update,
                 token_count=usage_tracker.get_total_tokens(),
-                token_detail=token_detail_tracker.get_token_detail(),
+                token_detail=usage_tracker.get_token_detail(),
                 model=usage_tracker.model_id,
                 response_time=round(time.time() - stream_start_time, 2),
             )
@@ -875,35 +887,46 @@ class ChatService:
                 mode=data.get("mode", "agent"),
             )
 
-            # 检查 checkpoint 中是否有 pending interrupt，如果有则自动拒绝
-            # 避免用户在有 pending interrupt 时发新消息导致状态损坏
-            try:
-                state = await agent.graph.aget_state(thread_config)
-                if state and state.tasks:
-                    from langgraph.types import Command as LgCommand
-
-                    for task in state.tasks:
-                        if hasattr(task, "interrupts") and task.interrupts:
-                            for intr in task.interrupts:
-                                intr_id = intr.id if hasattr(intr, "id") else ""
-                                if intr_id:
-                                    await agent.graph.ainvoke(
-                                        LgCommand(resume={intr_id: False}),
-                                        config=thread_config,
-                                    )
-                                    logger.info(f"自动拒绝 pending interrupt: {intr_id}（用户发送了新消息）")
-            except Exception as e:
-                logger.warning(f"检查/清理 pending interrupt 失败（非致命）: {e}")
-
-            # Checkpointer 模式：将研究上下文作为 SystemMessage 注入到 human_msg 之前
-            if research_context:
-                from langchain_core.messages import SystemMessage
-
-                research_system_msg = SystemMessage(content=data["_research_system_prompt"])
-                graph_input = {"messages": [research_system_msg, human_msg]}
+            # 业务等待恢复模式（wait_for_subagent 挂起后子代理终态唤醒）：
+            # graph_input 为执行器注入的 Command(resume={interrupt_id: {...}})，
+            # 从 checkpoint 续跑（不发新消息）；必须跳过下方 pending interrupt
+            # 自动拒绝清理——wait interrupt 正处于 pending，误拒会导致
+            # wait_for_subagent 收到非法 resume 值（"子代理结果缺失"）。
+            resume_command = data.get("resume_command")
+            if resume_command is not None:
+                graph_input = resume_command
+                config = thread_config
+                logger.info("[ChatExec] 业务等待恢复模式：以 Command(resume) 续跑（跳过 pending interrupt 清理）")
             else:
-                graph_input = {"messages": [human_msg]}
-            config = thread_config
+                # 检查 checkpoint 中是否有 pending interrupt，如果有则自动拒绝
+                # 避免用户在有 pending interrupt 时发新消息导致状态损坏
+                try:
+                    state = await agent.graph.aget_state(thread_config)
+                    if state and state.tasks:
+                        from langgraph.types import Command as LgCommand
+
+                        for task in state.tasks:
+                            if hasattr(task, "interrupts") and task.interrupts:
+                                for intr in task.interrupts:
+                                    intr_id = intr.id if hasattr(intr, "id") else ""
+                                    if intr_id:
+                                        await agent.graph.ainvoke(
+                                            LgCommand(resume={intr_id: False}),
+                                            config=thread_config,
+                                        )
+                                        logger.info(f"自动拒绝 pending interrupt: {intr_id}（用户发送了新消息）")
+                except Exception as e:
+                    logger.warning(f"检查/清理 pending interrupt 失败（非致命）: {e}")
+
+                # Checkpointer 模式：将研究上下文作为 SystemMessage 注入到 human_msg 之前
+                if research_context:
+                    from langchain_core.messages import SystemMessage
+
+                    research_system_msg = SystemMessage(content=data["_research_system_prompt"])
+                    graph_input = {"messages": [research_system_msg, human_msg]}
+                else:
+                    graph_input = {"messages": [human_msg]}
+                config = thread_config
         else:
             chat_history = data.get("chat_history", [])
             user_message = data.get("message", "")
@@ -1084,14 +1107,30 @@ class ChatService:
                         f"tc_id={tool_call_id}, err={_e}"
                     )
 
-            async def _on_subagent_content(agent_path, content, reasoning_content, agent_name, depth, subagent_thread_id=""):
+            # 子代理消息幂等键集合（按 subagent_thread_id 分组）：审批 interrupt
+            # 恢复时 LangGraph 重放节点，SubAgentContentMiddleware 会对同一条
+            # AIMessage 再次触发回调；跳过已转发的消息，否则子代理卡片内容
+            # 重复且 tool_call position（按累计正文长度绑定）错位。
+            # 闭包集合随回调对象跨多次 resume 持续存在（configurable 持同一引用）。
+            _sent_subagent_msg_keys: dict[str, set] = {}
+
+            async def _on_subagent_content(agent_path, content, reasoning_content, agent_name, depth, subagent_thread_id="", msg_id=""):
                 """chat 模式子代理正文/中间思考转发回调（spec MODIFIED：D10 路由收敛）。
 
                 累计与路由唯一依据为 ``subagent_thread_id``（agent_path 仅保留为
                 回调展示元数据参数，不进入事件 payload / 累计键）。
+                按 ``msg_id`` 幂等：同一 AIMessage 只转发一次（重放去重）。
                 """
                 if not subagent_thread_id:
                     return
+                seen = _sent_subagent_msg_keys.setdefault(subagent_thread_id, set())
+                if msg_id and msg_id in seen:
+                    logger.debug(
+                        f"[ChatExec] 跳过重放子代理正文: subagent_thread_id={subagent_thread_id}, msg_id={msg_id}"
+                    )
+                    return
+                if msg_id:
+                    seen.add(msg_id)
                 entry = _subagent_contents.setdefault(subagent_thread_id, {"content": "", "reasoning_content": ""})
                 if content:
                     entry["content"] = (entry.get("content") or "") + content
@@ -1125,6 +1164,12 @@ class ChatService:
             if isinstance(config, dict):
                 config["configurable"]["_on_tool_event"] = _on_subagent_tool_event
                 config["configurable"]["_on_subagent_content"] = _on_subagent_content
+                # 子代理审批/事件路由必需字段：spawn 工具将父 configurable 继承给子代理，
+                # langgraph_adapter._create_approvals_from_interrupts 从中取 chat_session_id
+                # 创建审批（source=chat 时 request_approval_async 强制校验，缺失即拒绝创建
+                # → 子代理挂起无审批按钮）。assistant_message_id 用于事件路由精确定位消息。
+                config["configurable"]["chat_session_id"] = _sub_session_id
+                config["configurable"]["assistant_message_id"] = _sub_message_id
 
             # 执行 AgentExecutor（带韧性的流式执行）
             # 替代原内联的 retry/timeout/degrade 循环：
@@ -1164,6 +1209,15 @@ class ChatService:
                 data,
             ):
                 yield event
+
+        # 业务等待挂起（wait_for_subagent，spec D4）：跳过 finalize（补全检查/
+        # 建议生成等收尾动作仅属于真正结束的会话）与 parent tool 上下文清理
+        # （挂起态由 SessionExecutor 保留会话槽，恢复后继续使用）。
+        if data.get("_subagent_wait_suspend"):
+            logger.info(
+                f"[ChatExec] 业务等待挂起，跳过 finalize: session={data.get('session_id', '')}"
+            )
+            return
 
         # finalize 阶段：循环后统一处理（由 stream 子包统一实现）
         # 包括：update_usage / LLM fallback 检测 / tool_usage 统计 /

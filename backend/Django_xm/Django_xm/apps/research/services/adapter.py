@@ -408,16 +408,21 @@ class OfficialDeepAgentAdapter:
         #
         # 回调签名：
         #   on_subagent_content(agent_path, content, reasoning_content, agent_name, depth,
-        #                       subagent_thread_id) -> coroutine
+        #                       subagent_thread_id, msg_id) -> coroutine
         # （agent_path 仅保留为展示元数据参数；路由与累计唯一依据 subagent_thread_id）
         #
         # 处理逻辑（spec MODIFIED：路由收敛）：
         # 1. 按 subagent_thread_id 累计到 self.subagent_contents（废弃 agent_path
         #    拼接键），content/reasoning_content 追加式累积（多轮模型调用拼接）；
+        #    按 msg_id 幂等去重——审批 interrupt 恢复时 LangGraph 重放节点，
+        #    同一条 AIMessage 会再次触发回调，跳过已转发消息（防重复 + 防错位）；
         # 2. 发布 STREAM_SUBAGENT_CONTENT WebSocket 事件到 session/task 频道，
         #    前端按 subagent_thread_id 路由到对应子代理卡片实时展示
         #    （data 不携带 agent_path，仅保留 subagent_thread_id 定向路由）；
         # 3. 事件携带 message_id（chat 关联场景定位归属消息）。
+        if not hasattr(self, "_sent_subagent_msg_keys"):
+            self._sent_subagent_msg_keys: dict[str, set] = {}
+
         async def _on_subagent_content(
             agent_path,
             content,
@@ -425,10 +430,20 @@ class OfficialDeepAgentAdapter:
             agent_name,
             depth,
             subagent_thread_id="",
+            msg_id="",
         ):
             """子代理正文/中间思考转发回调（spec MODIFIED：按 subagent_thread_id 路由累计）。"""
             if not subagent_thread_id:
                 return
+            seen = self._sent_subagent_msg_keys.setdefault(subagent_thread_id, set())
+            if msg_id and msg_id in seen:
+                logger.debug(
+                    f"[OfficialDeepAgent] 跳过重放子代理正文: "
+                    f"subagent_thread_id={subagent_thread_id}, msg_id={msg_id}"
+                )
+                return
+            if msg_id:
+                seen.add(msg_id)
             entry = self.subagent_contents.setdefault(subagent_thread_id, {"content": "", "reasoning_content": ""})
             if content:
                 entry["content"] = (entry.get("content") or "") + content

@@ -237,13 +237,20 @@ async def run_chat_session(executor, params: dict) -> None:
 
     stopped = False
     is_regenerate = bool(params.get("regenerate"))
+    wait_suspend = None
     try:
-        await chat_service.run_agent_session(
+        wait_suspend = await chat_service.run_agent_session(
             data,
             _interrupt_handler,
             _broadcast,
             should_stop=executor.check_stop_requested,
         )
+        if wait_suspend:
+            # 业务等待挂起（wait_for_subagent，spec D4）：注册父 awaiter、置挂起态
+            # 后退出本协程（不 finalize、不释放 checkpointer）——子代理终态时由
+            # 生命周期管理器唤醒，以 Command(resume) 新建协程续跑（与 research 同构）。
+            await executor._handle_chat_wait_suspend(wait_suspend)
+            return
     except asyncio.CancelledError:
         # 优雅停止（Task 9）：保留已输出内容 + checkpoint，标记 stopped/incomplete 广播
         logger.info(f"[ChatExec] chat 会话被用户停止: session={session_id}")
@@ -251,20 +258,23 @@ async def run_chat_session(executor, params: dict) -> None:
     except Exception:
         logger.exception(f"[ChatExec] chat 会话执行异常: session={session_id}")
     finally:
-        # 落库 content + tool_calls 终态，并广播 stream_completed（前端最终化）
-        # 重生成中断（regenerate 模式）广播 incomplete（禁止固化为主版本），
-        # 普通发送停止广播 stopped（允许固化）——与前端 _streamKind 语义对齐
-        await _finalize_chat_session(
-            chat_service, data, content_state, session_id, message_id,
-            stopped=stopped,
-            incomplete=(stopped and is_regenerate),
-        )
-        try:
-            from Django_xm.apps.ai_engine.services.checkpointer_factory import release_async_checkpointer
+        # 挂起态不 finalize（会话未结束）：不落库终态、不广播 stream_completed、
+        # 不释放 checkpointer（graph 恢复时从 checkpoint 续跑）
+        if wait_suspend is None and not executor._suspended:
+            # 落库 content + tool_calls 终态，并广播 stream_completed（前端最终化）
+            # 重生成中断（regenerate 模式）广播 incomplete（禁止固化为主版本），
+            # 普通发送停止广播 stopped（允许固化）——与前端 _streamKind 语义对齐
+            await _finalize_chat_session(
+                chat_service, data, content_state, session_id, message_id,
+                stopped=stopped,
+                incomplete=(stopped and is_regenerate),
+            )
+            try:
+                from Django_xm.apps.ai_engine.services.checkpointer_factory import release_async_checkpointer
 
-            await release_async_checkpointer()
-        except Exception:
-            logger.debug("[ChatExec] 释放异步 Checkpointer 连接失败（可忽略）")
+                await release_async_checkpointer()
+            except Exception:
+                logger.debug("[ChatExec] 释放异步 Checkpointer 连接失败（可忽略）")
 
 
 async def _finalize_chat_session(

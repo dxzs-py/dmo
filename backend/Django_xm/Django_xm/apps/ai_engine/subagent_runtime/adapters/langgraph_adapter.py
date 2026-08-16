@@ -268,6 +268,12 @@ class LangGraphAdapter(BaseRuntimeAdapter):
             if instance.parent_thread_id.startswith("research_")
             else Approval.SOURCE_CHAT
         )
+        # chat_session_id / assistant_message_id 由各模块源头写入 configurable 统一契约：
+        # - chat 代理模式：chat_service.py 写入（data.session_id / assistant message id）
+        # - 深度研究模块 + chat 深度研究模式：research_runner.execute_research_async 写入
+        # - 独立深度研究（chat_session_id=None）：source=deep_research，无强制校验
+        # 新模块接入子代理时必须遵循此契约写入 chat_session_id，否则 source=chat 场景
+        # request_approval_async 会显式报错拒绝创建（防呆，不做静默兜底）。
         await create_approvals_for_interrupts(
             approval_data_list,
             thread_id=instance.parent_thread_id,  # 归集到父线程（研究任务/chat 会话）
