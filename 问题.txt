@@ -34,3 +34,68 @@
 - 后端持久化：stream_persistence.py（persist_stream_result / _merge_tool_calls_incremental）
 - 后端聚合：common/tool_call_aggregation.py（aggregate_tool_entry）
 - 后端 position 注入：apps/chat/services/sse_generator.py
+
+---
+
+## 场景：chat 代理模式「并行派发 3 子代理 + wait_for_subagent」重启后复测（3 浏览器：触发/中途刷新/完成后刷新）
+
+### 问题 5（复现）：中途刷新后正文被切段，env-version 子代理的 shell_exec 卡插到主正文中间
+- 会话：9c74c6b1-29a9-4afc-9a99-56578d8156d7，msg 3484，12:05 触发
+- 触发浏览器（页面 3，实时态）渲染正确：正文「3个子代理已成功启动，现在等待它们全部执行完成。」完整显示在 3 个子代理卡之后、wait_for_subagent 之前
+- **中途刷新浏览器（页面 4）渲染错误**：正文被切段为「3个子代理」+ env-version 的两个 shell_exec 审批卡（python --version / node --version）+「已成功启动，现在等待它们全部执行完成。」→ 两个 shell_exec 卡插在主正文中间
+- 根因（DB 实证 msg 3484 tool_calls）：
+  - ollama-list / ollama-ps 的 shell_exec：**有** subagent_thread_id / agent_name / depth，position=0/46（子代理图层局部 position）
+  - env-version 的两个 shell_exec（call_00_IAiL0... / call_01_TsEMlO8...）：**缺** subagent_thread_id / agent_name / depth，position=40（恰好=主正文「我来并行派发...结果。3个子代理」35+5 的切段位置）→ 前端按主图层 position 切段，把这两个卡插进主正文中间
+- 日志证据（fastapi.log 12:06:25）：
+  - L158/L160：`[SubAgentToolEvent] PENDING` 正常转发 env-version 的两个 shell_exec
+  - L159/L161：`persist_stream_result` count=6 且 tool_calls_changed=False —— **PENDING flush 时 subagent_tool_entries 未新增条目**（聚合失败或未写入）
+  - L167/L172：`approval_service 已重建缺失 tool_call 项` —— 因 DB 无此条目，approval 同步重建了**无图层字段**的条目
+- 疑点：env-version 的 shell_exec PENDING 为何没聚合进 `_subagent_tool_entries`（子代理 1/2 的 shell_exec 均正常聚合）？待加日志定位（chat_service._on_subagent_tool_event / aggregate_tool_entry / _flush_subagent_snapshot）
+
+### 问题 6（本次附带）：审批超时后任务卡死（wait_for_subagent 永远等待）
+- 现象：4 个 shell_exec 审批全部超时（测试过程中排查问题耗时过长），Agent 提示「审批已超时，将使用其他方式继续」，但 3 个子代理卡仍显示「等待你的确认」，wait_for_subagent 永远「等待中」，AI 一直「正在输入」
+- 日志证据：L178/L180/L182/L184 `[SessionManager] 子代理审批信令缺少批量决策，跳过恢复: resume_value='_timeout'`
+- 期望：审批超时后子代理能以拒绝/超时结果正常返回父代理，任务继续推进并最终完成（而非永久挂起）
+
+### 本轮已确认修复生效项（相对上一轮）
+- sse_generator PENDING 补发防护 + position 补全已生效：DB 中 spawn×3 position=35、wait_for_subagent 有值；子代理 1/2 的 shell_exec 带图层字段 + 局部 position
+- content 重叠去重生效：content=59 字符无「三个三个」重复
+- 子代理正文实时落库生效：subagent_contents 含 3 个子代理键
+
+---
+
+## 2026-08-17 复测结论（服务重启加载新代码前，12:42 测试会话 d3321217 / msg 3486）
+
+### 问题 5 根因确认（两层）
+- **根因 A（主因，DB 实证 msg 3486）**：`stream_persistence._merge_tool_calls_incremental` 的 **name 降级匹配**
+  - existing 已含首个子代理的 shell_exec（ollama-list）后，后续子代理（ollama-ps / env-version）的同名
+    shell_exec 条目（id 不同）被 `existing_by_name["shell_exec"]` 匹配 → 演进合并（吞掉新条目）而非追加
+    → 聚合条目（带 subagent_thread_id/agent_name/depth）无法落库（persist count 不变、changed=False）
+  - 日志证据：ollama-list PENDING 后 persist count 4→5（聚合成功）；ollama-ps / env-version PENDING 后
+    count 5→5（被 name 匹配吞掉）；随后 `sync_approval_state_to_chat_message: 已重建缺失 tool_call 项`
+  - ollama-ps 最终有图层字段：审批重建（无图层字段）→ 后续主链路 persist 按 **id** 匹配演进补全
+    （_evolve_tool_call 图层字段补全分支）；env-version 审批后无后续 persist → 保持无图层字段
+- **根因 B（兜底缺失，代码实证）**：`approval_service.sync_approval_state_to_chat_message` 重建缺失
+  tool_call 项时只写 id/name/args/parameters/approval + seq/position，**未写 subagent_thread_id /
+  agent_name / depth**（审批 extra 已透传这些字段，create_approvals_for_interrupts 写入）
+- 前端表现（复现确认）：中途刷新浏览器页面4 后，env-version 两个 shell_exec 卡插在主正文中间
+  （"三个"段之后），显示 agent_path "main → env-version-runner → env-version-runner" 但脱离子代理卡
+
+### 问题 5 修复（已实施，待重启验证）
+1. `stream_persistence._merge_tool_calls_incremental`：name 降级匹配仅限 new 条目**无 id** 的旧数据
+   兼容场景；new 有 id 时仅按 id 精确匹配 → 同名工具不再误合并，聚合条目正常追加落库
+2. `approval_service.sync_approval_state_to_chat_message` 重建分支：从 approval.extra 读取
+   subagent_thread_id / agent_name / depth / parent_tool_call_id / agent_path 补齐重建条目图层字段
+
+### 问题 6 根因确认与修复
+- 根因（日志 + DB 实证）：子代理审批超时信令 resume_value='_timeout'（字符串，非批量决策 dict），
+  旧代码 `_resume_subagent_from_signal` 无 collect 回退 → decisions 为空 → "缺少批量决策，跳过恢复"
+  → 子代理永远挂起（interrupted_pending_user_input），wait_for_subagent 永不结束
+- DB 实证（session 9c74c6b1）：子代理审批 extra 均正确落库 graph_interrupt_id（291ccd...等）与
+  subagent_thread_id（subagent_88eac...等），state=timeout → collect_batch_decisions 可收集
+  {tool_call_id: TIMEOUT_DECISION} → 修复链路成立
+- 修复（session_manager._resume_subagent_from_signal，已加载）：resume_value 非 dict 且携带
+  graph_interrupt_id 时回退 collect_batch_decisions 收集批次决策，全部决断后 finalize +
+  runtime.resume 恢复子代理（Agent 收到超时 ToolMessage 调整策略继续）
+- 待验证：审批超时后子代理正常返回、任务继续推进（需 5 分钟超时或手动触发 timeout_approval）
+

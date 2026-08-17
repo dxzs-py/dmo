@@ -395,7 +395,7 @@ class ChatService:
             await self._update_last_message_tokens(
                 session_id=session_id_for_update,
                 token_count=usage_tracker.get_total_tokens(),
-                token_detail=usage_tracker.get_token_detail(),
+                token_detail=token_detail_tracker.get_token_detail(),
                 model=usage_tracker.model_id,
                 response_time=round(time.time() - stream_start_time, 2),
             )
@@ -1033,6 +1033,12 @@ class ChatService:
 
                 _cs_ref = data.get("_content_state_ref") or {}
                 try:
+                    _entries_count = len(_subagent_tool_entries)
+                    _contents_count = len(_subagent_contents)
+                    logger.info(
+                        f"[ChatExec] 子代理快照落库: subagent_tool_entries={_entries_count}, "
+                        f"subagent_contents={_contents_count}, keys={list(_subagent_tool_entries.keys())[:10]}"
+                    )
                     await _persist_chat_tool_calls(data, _cs_ref, _sub_session_id, _sub_message_id)
                 except Exception as _e:
                     logger.debug(f"[ChatExec] 子代理快照落库失败: err={_e}")
@@ -1056,6 +1062,11 @@ class ChatService:
                 if not isinstance(depth, int) or depth < 0:
                     depth = 0
                 subagent_thread_id = kwargs.get("subagent_thread_id") or ""
+                logger.info(
+                    f"[ChatExec] 子代理工具事件到达: event={event_type}, tool={tool_name}, "
+                    f"tc_id={tool_call_id}, subagent_thread_id={subagent_thread_id or '(空)'}, "
+                    f"agent_name={kwargs.get('agent_name') or ''}, depth={depth}"
+                )
                 try:
                     _tc_service.register(
                         _TCC(

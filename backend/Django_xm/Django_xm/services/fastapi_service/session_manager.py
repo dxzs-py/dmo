@@ -186,6 +186,44 @@ class SessionManager:
         decisions = resume_value if isinstance(resume_value, dict) else {}
         parent_thread_id = payload.get("thread_id", "")
         session_type = payload.get("session_type", "")
+        graph_interrupt_id = payload.get("graph_interrupt_id", "") or ""
+
+        from Django_xm.apps.approvals.models import Approval
+        from Django_xm.common.approval_batch import (
+            collect_batch_decisions,
+            finalize_batch_approvals,
+        )
+
+        source = (
+            Approval.SOURCE_CHAT
+            if session_type == SESSION_TYPE_CHAT
+            else Approval.SOURCE_DEEP_RESEARCH
+        )
+
+        # 非 dict 信令（审批超时 resume_value=TIMEOUT_DECISION="_timeout" 字符串）：
+        # 信令只携带单条审批的超时标记，无法直接作为 Command(resume) 决策。
+        # 与主代理审批等待（_wait_for_chat_batch_decision）一致，回退到 DB 批次
+        # 决策收集：超时审批 state=TIMEOUT → {tool_call_id: TIMEOUT_DECISION}，
+        # 全部决断后恢复子代理（Agent 收到超时 ToolMessage 调整策略继续，而非
+        # 永远挂起导致 wait_for_subagent 卡死）。
+        if not decisions and graph_interrupt_id:
+            collected, all_resolved = await sync_to_async(collect_batch_decisions)(
+                source, parent_thread_id, graph_interrupt_id
+            )
+            # collect_batch_decisions 返回嵌套 {langgraph_resume_id: {tool_call_id: decision}}，
+            # 子代理 resume 期望扁平 {tool_call_id: decision}（与 _check_batch_and_route
+            # 构建的 batch_resume_value 同构，runtime.resume → Command(resume={interrupt_id: decisions})）
+            decisions = {}
+            for _nested in collected.values():
+                if isinstance(_nested, dict):
+                    decisions.update(_nested)
+            if not all_resolved or not decisions:
+                logger.warning(
+                    f"[SessionManager] 子代理审批批次未全部决断，暂不恢复: "
+                    f"subagent={subagent_thread_id}, graph_interrupt_id={graph_interrupt_id}, "
+                    f"resume_value={resume_value!r}"
+                )
+                return
 
         if not decisions:
             logger.warning(
@@ -195,14 +233,6 @@ class SessionManager:
             return
 
         try:
-            from Django_xm.apps.approvals.models import Approval
-            from Django_xm.common.approval_batch import finalize_batch_approvals
-
-            source = (
-                Approval.SOURCE_CHAT
-                if session_type == SESSION_TYPE_CHAT
-                else Approval.SOURCE_DEEP_RESEARCH
-            )
             await sync_to_async(finalize_batch_approvals)(decisions, source, parent_thread_id)
             await get_subagent_runtime().resume(subagent_thread_id, decisions)
             logger.info(

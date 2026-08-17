@@ -1070,6 +1070,22 @@ def sync_approval_state_to_chat_message(approval: Approval, state: str) -> bool:
             "input": approval.parameters or {},
             "approval": {},
         }
+        # 图层字段补齐（子代理工具卡归集依据）：approval.extra 透传了
+        # subagent_thread_id / agent_name / depth / parent_tool_call_id /
+        # agent_path（create_approvals_for_interrupts 写入），重建条目据此
+        # 还原图层信息，前端 buildSubagentsFromMessage 按 subagent_thread_id
+        # 归集子代理工具卡，避免刷新后子代理工具卡脱离子代理卡、按主图层
+        # position 切段插入主正文中间（问题 5 修复）。
+        for _layer_field in (
+            "subagent_thread_id",
+            "agent_name",
+            "depth",
+            "parent_tool_call_id",
+            "agent_path",
+        ):
+            _layer_value = approval_extra.get(_layer_field)
+            if _layer_value is not None:
+                target_tc[_layer_field] = _layer_value
         # seq 补齐（持久化链路完整性）：重建项统一经 enrich_entry_seq 从
         # ToolCallContext 读取 register 分配的全局递增序号（与 tool_call_* 事件
         # 透传同一来源），确保审批恢复后新追加的 tool_call（如 fs_write_file）

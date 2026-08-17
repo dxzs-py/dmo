@@ -244,9 +244,13 @@ def _merge_tool_calls_incremental(
             continue
         new_id = new_tc.get("id") or ""
         new_name = new_tc.get("name") or ""
-        # 匹配已存在条目：按 id 优先，name 降级
+        # 匹配已存在条目：优先按 id 精确匹配（聚合/审批条目均含唯一 id）。
+        # name 降级匹配仅限 new 条目无 id 的旧数据兼容场景——若 new 有 id 仍按
+        # name 匹配，会把同名工具（如多个子代理的 shell_exec）误合并进同一条
+        # （演进吞掉新条目），导致子代理工具聚合条目（带图层字段）无法落库，
+        # 刷新后工具卡脱离子代理卡、图层字段丢失。
         matched_idx = existing_by_id.get(new_id) if new_id else None
-        if matched_idx is None and new_name:
+        if matched_idx is None and not new_id and new_name:
             matched_idx = existing_by_name.get(new_name)
         if matched_idx is None:
             merged.append(new_tc)  # 无匹配 → 追加
