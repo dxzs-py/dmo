@@ -37,7 +37,12 @@
       >
         继续研究
       </el-button>
-      <AiOpenInChat label="在聊天中讨论" @click="emit('open-in-chat')" />
+      <!-- 在聊天中讨论：与"继续研究"一致，仅任务完成后可跳转讨论研究结果 -->
+      <AiOpenInChat
+        v-if="task.status === ResearchTaskStatus.COMPLETED"
+        label="在聊天中讨论"
+        @click="emit('open-in-chat')"
+      />
     </div>
 
     <div v-if="docAnalysisFile" class="analysis-section">

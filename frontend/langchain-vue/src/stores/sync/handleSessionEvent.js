@@ -207,11 +207,17 @@ export const createHandleSessionEvent = (ctx) => {
    * ChatMessage.reasoning（duration=0 表示推理进行中，与代理模式 strategy.py
    * "duration: 0" 语义一致）；推理结束由 handleStreamCompleted 回写 duration。
    *
+   * 代理模式（chat agent）深度思考：进行中事件 duration=0，完成事件由
+   * strategy.on_loop_success（finalize_stream 阶段）携带实际思考秒数
+   * （duration>0）发布，此处原样透传（根因修复：此前硬编码 duration:0
+   * 覆盖完成态时长，AiReasoning 的 isStreaming 判定依赖 duration===0，
+   * 时长恒为 0 → 完成后永远"正在思考"闪烁）。
+   *
    * 与 task 频道（handleTaskEvent → researchStore.setTaskReasoning）双通道写入，
    * 分别驱动聊天消息 AiReasoning 与深度研究详情页 AiReasoning。
    *
    * @param {string} sessionId
-   * @param {Object} payload - toCamelCase 后：{ source, sourceId, messageId, sessionId, taskId, data: { content } }
+   * @param {Object} payload - toCamelCase 后：{ source, sourceId, messageId, sessionId, taskId, data: { content, duration, source } }
    */
   const _applyStreamReasoning = (sessionId, payload) => {
     const content = payload.data?.content || payload.content || ''
@@ -228,7 +234,10 @@ export const createHandleSessionEvent = (ctx) => {
       logger.debug(`[Sync] stream_reasoning 未找到目标消息: session=${sessionId}, message=${payload.messageId || '(兜底)'}`)
       return
     }
-    targetMsg.reasoning = { content, duration: 0 }
+    // duration 透传：进行中事件 duration 缺失/0 → 0（"正在思考"）；
+    // 完成事件（strategy.on_loop_success）携带实际思考秒数 → 原样透传。
+    const duration = payload.data?.duration ?? payload.duration ?? 0
+    targetMsg.reasoning = { content, duration }
   }
 
   /**

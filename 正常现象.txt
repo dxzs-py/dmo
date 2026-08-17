@@ -61,5 +61,34 @@ wait_for_subagent 卡：等待中 → 已完成（结果 = 子代理结果摘要
 7. 子代理卡内结果 markdown（表格、代码块）渲染正常。
 8. 消息尾部操作：「复制 / 重新生成 / 删除」，建议追问（💡）。
 
-### 5. 待补充
-- [ ] 深研模式对照差异（重点逐项比对：spawn 顺序、子代理卡顺序、wait 位置）
+### 5. 深研模式对照结果（2026-08-18，与代理模式基准对齐）
+
+**测试环境**：页面 11/12（chat 深研模式触发端 + 同步观察端）、页面 13（独立深研详情页）。
+任务与代理模式一致：「并行派发 2 个子代理：子代理 1 运行 ollama list，子代理 2 运行 ollama ps。等两个子代理都完成后，汇总它们的结果给我」。
+
+**chat 深研模式（聊天内触发，research_518e8f99b25a）实测顺序：**
+
+```
+正文① → todo_write(研究计划) → spawn_sub_agent① → 子代理卡 1 · L1
+→ spawn_sub_agent② → 子代理卡 2 · L1 → 正文②「…现在等待它们完成」
+→ wait_for_subagent（等待中 → 已完成，结果=子代理结果摘要）
+→ 正文③「…让我更新任务状态并生成报告」→ todo_write → todo_write → write_file(汇总报告) → 正文汇总
+```
+
+**逐项对照结论（与代理模式基准完全一致）：**
+1. **wait 卡挂起时立即出现**「等待中」，位置紧跟正文②末尾；子代理完成后流转「已完成」+ 结果。
+2. **子代理卡紧跟各自 spawn 卡**（spawn1→子代理卡1→spawn2→子代理卡2），非集中堆末尾。
+3. **全部工具 position 已绑定**（重启后），正文内联切段正确，工具卡不堆叠末尾。
+4. **seq 连续无跳号**（1-9），跨浏览器排序一致。
+5. 子代理内部 shell_exec 审批需展开子代理卡可见；路径展示 `main → general-purpose → general-purpose L1`。
+6. 子代理结果 markdown（表格、代码块）渲染正常。
+7. 双浏览器（页面 11/12）实时同步一致。
+
+**修复记录（本次对齐）**：
+- 子代理卡排末尾：根因=前端 fetchSubagents 用错 parent_thread_id（深研子代理挂在 research task 下，需传 researchTaskId/sourceId）。
+- wait 卡不出现：根因=middleware 无策略分支不发布 PENDING（wait 挂起走 updates 模式，extractor 无 chunk 可提取）；修复=无策略工具注册 ctx 后立即发布 TOOL_CALL_PENDING。
+- 受控工具（write_file/spawn）无 position：middleware 受控分支统一 register + bind_position（重启后生效）。
+
+**遗留小瑕疵（非阻塞）**：
+- wait 卡显示「自动通过」徽章（无策略工具复用 SAFE 审计标记，语义为「无需审批」，待优化拆分）。
+- 部分模型 spawn 审批参数偶含多余字段（如 command: "general-purpose"，模型幻觉，非代码问题）。

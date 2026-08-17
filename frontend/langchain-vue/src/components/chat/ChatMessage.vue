@@ -350,7 +350,14 @@ const isReasoningStreaming = computed(() => {
   if (props.isStreaming && props.isLast) return true
   if (props.message.isStreaming) return true
   if (props.message.streamState === StreamState.STREAMING) return true
-  if (props.message.reasoning?.duration === 0) return true
+  // duration=0 表示推理进行中（stream_reasoning 事件语义）：仅当消息仍处于活跃
+  // 进行态（深度研究进行中 / 审批挂起 INTERRUPTED）时才视为流式。
+  // 已完成/刷新加载的历史消息（reasoning.duration=0 因后端持久化进行中状态
+  // 遗留）不再因 duration 误判而永久"正在思考"闪烁（根因修复：DB 实测
+  // reasoning.duration=0，刷新后 isReasoningStreaming 恒 true）。
+  if (props.message.reasoning?.duration === 0) {
+    return _isResearchRunning.value || props.message.streamState === StreamState.INTERRUPTED
+  }
   return false
 })
 
@@ -495,7 +502,6 @@ function handleBranchChange(versionIndex) {
           :is-streaming="isReasoningStreaming"
           source="deep_thinking"
           :reasoning-label="reasoningDisplayLabel"
-          :show-duration="deepThinkingActive"
         />
 
         <!-- 主 agent 正文 + 主 agent 工具调用（内联切段，spec Task 9 保留） -->

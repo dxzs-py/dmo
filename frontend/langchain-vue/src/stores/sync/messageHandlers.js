@@ -98,8 +98,7 @@ export const createMessageHandlers = (ctx) => {
         // （非触发浏览器不创建占位消息，直接走"消息新增"分支）
         logger.debug(
           `[Sync] 占位合并失败(非触发浏览器正常): session=${sessionId}, role=${message.role}, ` +
-          `incomingContent=${message.content?.substring(0, 50)}, ` +
-          `placeholderCount=${placeholderCount}`
+          `incomingContent=${message.content?.substring(0, 50)}`
         )
       }
     }

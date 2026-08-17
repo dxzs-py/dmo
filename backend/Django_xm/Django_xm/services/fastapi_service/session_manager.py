@@ -207,23 +207,36 @@ class SessionManager:
         # 全部决断后恢复子代理（Agent 收到超时 ToolMessage 调整策略继续，而非
         # 永远挂起导致 wait_for_subagent 卡死）。
         if not decisions and graph_interrupt_id:
-            collected, all_resolved = await sync_to_async(collect_batch_decisions)(
-                source, parent_thread_id, graph_interrupt_id
-            )
-            # collect_batch_decisions 返回嵌套 {langgraph_resume_id: {tool_call_id: decision}}，
-            # 子代理 resume 期望扁平 {tool_call_id: decision}（与 _check_batch_and_route
-            # 构建的 batch_resume_value 同构，runtime.resume → Command(resume={interrupt_id: decisions})）
+            # 轮询等待批次全部决断（含并发超时场景）：子代理 interrupt 后协程
+            # 退出，没有主 agent 挂起循环的 DB 轮询兜底；多个审批并发超时
+            # 时信令可能先于同批次其它审批终态化到达（竞态），若未决断直接
+            # 放弃则子代理永不恢复 → wait_for_subagent 卡死。故重试直至全部
+            # 决断（与主 agent 挂起循环"轮询 DB 最终一致"语义对齐）。
             decisions = {}
-            for _nested in collected.values():
-                if isinstance(_nested, dict):
-                    decisions.update(_nested)
-            if not all_resolved or not decisions:
-                logger.warning(
-                    f"[SessionManager] 子代理审批批次未全部决断，暂不恢复: "
-                    f"subagent={subagent_thread_id}, graph_interrupt_id={graph_interrupt_id}, "
-                    f"resume_value={resume_value!r}"
+            _collect_attempts = 0
+            _max_collect_attempts = 30  # 30s 内等待批次终态化（自愈/超时处理均已触发）
+            while _collect_attempts < _max_collect_attempts:
+                _collected, _all_resolved = await sync_to_async(collect_batch_decisions)(
+                    source, parent_thread_id, graph_interrupt_id
                 )
-                return
+                # collect_batch_decisions 返回嵌套 {langgraph_resume_id: {tool_call_id: decision}}，
+                # 子代理 resume 期望扁平 {tool_call_id: decision}（与 _check_batch_and_route
+                # 构建的 batch_resume_value 同构，runtime.resume → Command(resume={interrupt_id: decisions})）
+                decisions = {}
+                for _nested in _collected.values():
+                    if isinstance(_nested, dict):
+                        decisions.update(_nested)
+                if _all_resolved and decisions:
+                    break
+                _collect_attempts += 1
+                if _collect_attempts >= _max_collect_attempts:
+                    logger.warning(
+                        f"[SessionManager] 子代理审批批次等待超时仍未全部决断，放弃恢复: "
+                        f"subagent={subagent_thread_id}, graph_interrupt_id={graph_interrupt_id}, "
+                        f"collected={_collected}"
+                    )
+                    return
+                await asyncio.sleep(1.0)
 
         if not decisions:
             logger.warning(

@@ -188,8 +188,28 @@ class _DeepAgentExecutor(AgentExecutor):
                     return
 
                 elif action == ErrorAction.FAIL:
-                    logger.exception(f"[DeepAgentExecutor] 不可恢复错误: {classified.error_code}: {classified.message}")
-                    raise
+                    # 通用基础能力（root cause，与 AgentExecutor.run 同语义）：
+                    # 不可恢复错误不直接终止任务，回退到无工具直接回答让 agent
+                    # 换方法继续；仅明确的基础设施错误（认证/密钥配置，LLM 无法
+                    # 修复）才真正终止（除非用户强制暂停/删除）。
+                    _fail_details = getattr(classified, "details", {}) or {}
+                    if _fail_details.get("auth_error") or classified.error_code in (
+                        "AUTH_ERROR",
+                        "INVALID_API_KEY",
+                        "INVALID_REQUEST",
+                    ):
+                        logger.exception(
+                            f"[DeepAgentExecutor] 基础设施错误，无法由 agent 调整恢复: "
+                            f"{classified.error_code}: {classified.message}"
+                        )
+                        raise
+                    logger.warning(
+                        f"[DeepAgentExecutor] 不可恢复错误转回退（不终止任务，agent 换方法继续）: "
+                        f"{classified.error_code}: {classified.message}"
+                    )
+                    async for fb_event in self._run_fallback():
+                        yield fb_event
+                    return
 
                 else:  # FALLBACK
                     logger.warning(f"[DeepAgentExecutor] 回退: {classified.error_code}")

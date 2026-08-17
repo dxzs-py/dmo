@@ -215,45 +215,28 @@ class ApprovalMiddleware(AgentMiddleware):
         return total
 
     @staticmethod
-    async def _audit_auto_approved_tools(
-        tool_calls: list[dict],
-        chat_session_id: str,
-        state,
-        runtime,
-        *,
-        publish_running: bool = True,
-        publish_pending: bool = False,
-    ) -> None:
-        """SAFE 级自动通过的审计：注册 tool_call_lifecycle + 转换为 TOOL_CALL_RUNNING。
+    def _resolve_execution_context(state, runtime) -> dict:
+        """解析工具执行上下文（module/module_id/cross_module_id/嵌套层级字段）。
 
-        SAFE 级工具调用不进入 interrupt 批次，但仍需注册 tool_call_lifecycle 上下文，
-        让前端 ToolCallCard 显示"执行中"状态，并在工具完成后显示结果。
+        受控分支（aafter_model）与 SAFE/无策略分支（_audit_auto_approved_tools）
+        共用同一套解析逻辑（root cause 修复：此前受控分支直接引用
+        ``_audit_auto_approved_tools`` 作用域内的 ``module`` 等变量，
+        触发 ``name 'module' is not defined``，register+bind_position 静默失败，
+        受控工具 position 缺失）。提取为单一权威解析点，两条分支结果一致。
 
-        通过统一入口 ``service.register`` + ``service.transition_async`` 发布事件，
-        与审批通过后的行为完全一致（仅 auto_approved 标记不同）。
-
-        Args:
-            tool_calls: SAFE 级 tool_call 列表，每项含 tool_call_id/tool_name/args
-            chat_session_id: 会话 ID（事件路由依赖）
-            state: LangGraph state（用于提取 source_id）
-            runtime: 运行时对象（用于提取 configurable）
-            publish_running: 是否发布 TOOL_CALL_RUNNING 事件（SAFE 级工具默认 True）。
-            publish_pending: 无策略工具（3.3）传 True：注册 ctx 参数后发布
-                TOOL_CALL_PENDING。extractor（tool_event_extractor）对流式
-                AIMessageChunk 提取 PENDING，但业务等待挂起（wait_for_subagent）
-                走 updates 模式（interrupt），AIMessageChunk 未产出 → PENDING
-                永远缺失 → wait 卡要等子代理完成、ToolMessage 阶段补发才出现
-                （"等待中"状态失效）。middleware 是所有工具审批的唯一入口，
-                在此统一发布 PENDING 对后续自定义/系统工具一律生效；幂等去重
-                （同 tool_call_id + 同事件类型仅发布一次）保证 extractor 已发布
-                时不重复。
+        Returns:
+            dict: module/module_id/cross_module_id/assistant_message_id/
+                subagent_thread_id/sub_depth/sub_agent_path/sub_risk_ceiling/
+                sub_parent_tool_call_id/sub_agent_name/thread_id/configurable
         """
-        from Django_xm.common.event_schema import EventSource, EventType
-        from Django_xm.common.tool_call_lifecycle import ToolCallContext, service
+        from Django_xm.common.event_schema import EventSource
+        # derive_cross_module_id_from_source 已在模块顶部从 approval_utils 导入，
+        # 此处不得从 realtime_events 重复导入（该模块无此函数，会抛 ImportError
+        # 导致 register+bind_position 静默失败、工具 position 缺失、流式正文乱序）。
 
         # 提取 configurable（deepagents 0.7.5 升级后 runtime 无 config 属性，
         # 优先用 get_config()，回退 runtime）
-        configurable: dict[str, Any] = {}
+        configurable: dict = {}
         try:
             from langgraph.config import get_config as _get_config
 
@@ -281,7 +264,14 @@ class ApprovalMiddleware(AgentMiddleware):
         thread_id = configurable.get("approval_thread_id") or configurable.get("thread_id", "")
         # assistant_message_id：chat 关联深度研究场景由 research_runner 注入 config，
         # 工具事件注册携带归属消息 ID（前端 toolCallsMap → message.toolCalls 归属依赖）
-        _assistant_message_id = configurable.get("assistant_message_id") or ""
+        assistant_message_id = configurable.get("assistant_message_id") or ""
+        # chat_session_id：chat 模块必填，deep_research 关联 chat 时填，learning 为 thread_id
+        chat_session_id = (
+            configurable.get("chat_session_id")
+            or configurable.get("session_id")
+            or configurable.get("thread_id")
+            or ""
+        )
 
         # 主/子判定（spec D1）：subagent_thread_id 非空 ⇔ 子代理
         # （SubAgentRuntime 适配器写入 configurable；主 agent 无此字段）
@@ -323,14 +313,20 @@ class ApprovalMiddleware(AgentMiddleware):
             module = EventSource.DEEP_RESEARCH
             module_id = thread_id
         elif thread_id:
-            # 主 agent：基于 thread_id 与 chat_session_id 是否一致判断来源。
-            # - thread_id != chat_session_id（含 chat_session_id 为空）→ DEEP_RESEARCH
-            #   - 独立深度研究：chat_session_id="" 且 thread_id=task_id，不等
-            #   - 关联深度研究：chat_session_id 与 thread_id(task_id) 不同
-            # - thread_id == chat_session_id → CHAT（纯聊天场景）
-            module = (
-                EventSource.DEEP_RESEARCH if (thread_id != chat_session_id) else EventSource.CHAT
-            )
+            # 主 agent 来源判定（root cause 修复：独立深研任务 configurable 无
+            # chat_session_id，此前 chat_session_id 回退到 thread_id(task_id) 导致
+            # thread_id == chat_session_id → module 误判为 CHAT → wait 事件发到
+            # session 频道而详情页订阅 task 频道，wait 卡挂起期间不出现）：
+            # 1. thread_id 以 "research_" 前缀 → 深度研究任务（独立/关联均覆盖），
+            #    确定性判 DEEP_RESEARCH，不依赖 chat_session_id；
+            # 2. thread_id == chat_session_id → CHAT（纯聊天场景）；
+            # 3. 其余（含 chat_session_id 为空）→ DEEP_RESEARCH。
+            if thread_id.startswith("research_"):
+                module = EventSource.DEEP_RESEARCH
+            elif thread_id != chat_session_id:
+                module = EventSource.DEEP_RESEARCH
+            else:
+                module = EventSource.CHAT
             module_id = thread_id
         else:
             module = EventSource.CHAT
@@ -340,6 +336,75 @@ class ApprovalMiddleware(AgentMiddleware):
         cross_module_id = derive_cross_module_id_from_source(
             "deep_research" if module == EventSource.DEEP_RESEARCH else module.value, chat_session_id
         )
+
+        return {
+            "module": module,
+            "module_id": module_id,
+            "cross_module_id": cross_module_id,
+            "assistant_message_id": assistant_message_id,
+            "subagent_thread_id": subagent_thread_id,
+            "sub_depth": sub_depth,
+            "sub_agent_path": sub_agent_path,
+            "sub_risk_ceiling": sub_risk_ceiling,
+            "sub_parent_tool_call_id": sub_parent_tool_call_id,
+            "sub_agent_name": sub_agent_name,
+            "thread_id": thread_id,
+            "configurable": configurable,
+        }
+
+    @staticmethod
+    async def _audit_auto_approved_tools(
+        tool_calls: list[dict],
+        chat_session_id: str,
+        state,
+        runtime,
+        *,
+        publish_running: bool = True,
+        publish_pending: bool = False,
+    ) -> None:
+        """SAFE 级自动通过的审计：注册 tool_call_lifecycle + 转换为 TOOL_CALL_RUNNING。
+
+        SAFE 级工具调用不进入 interrupt 批次，但仍需注册 tool_call_lifecycle 上下文，
+        让前端 ToolCallCard 显示"执行中"状态，并在工具完成后显示结果。
+
+        通过统一入口 ``service.register`` + ``service.transition_async`` 发布事件，
+        与审批通过后的行为完全一致（仅 auto_approved 标记不同）。
+
+        Args:
+            tool_calls: SAFE 级 tool_call 列表，每项含 tool_call_id/tool_name/args
+            chat_session_id: 会话 ID（事件路由依赖）
+            state: LangGraph state（用于提取 source_id）
+            runtime: 运行时对象（用于提取 configurable）
+            publish_running: 是否发布 TOOL_CALL_RUNNING 事件（SAFE 级工具默认 True）。
+            publish_pending: 无策略工具（3.3）传 True：注册 ctx 参数后发布
+                TOOL_CALL_PENDING。extractor（tool_event_extractor）对流式
+                AIMessageChunk 提取 PENDING，但业务等待挂起（wait_for_subagent）
+                走 updates 模式（interrupt），AIMessageChunk 未产出 → PENDING
+                永远缺失 → wait 卡要等子代理完成、ToolMessage 阶段补发才出现
+                （"等待中"状态失效）。middleware 是所有工具审批的唯一入口，
+                在此统一发布 PENDING 对后续自定义/系统工具一律生效；幂等去重
+                （同 tool_call_id + 同事件类型仅发布一次）保证 extractor 已发布
+                时不重复。
+        """
+        from Django_xm.common.event_schema import EventType
+        from Django_xm.common.tool_call_lifecycle import ToolCallContext, service
+
+        # 统一上下文解析（_resolve_execution_context 单一权威点）：
+        # 与受控分支（aafter_model）共用 module/module_id/cross_module_id/嵌套层级字段，
+        # 保证两条分支事件路由与 position 绑定结果一致。
+        _ctx = ApprovalMiddleware._resolve_execution_context(state, runtime)
+        module = _ctx["module"]
+        module_id = _ctx["module_id"]
+        cross_module_id = _ctx["cross_module_id"]
+        _assistant_message_id = _ctx["assistant_message_id"]
+        subagent_thread_id = _ctx["subagent_thread_id"]
+        sub_depth = _ctx["sub_depth"]
+        sub_agent_path = _ctx["sub_agent_path"]
+        sub_risk_ceiling = _ctx["sub_risk_ceiling"]
+        sub_parent_tool_call_id = _ctx["sub_parent_tool_call_id"]
+        sub_agent_name = _ctx["sub_agent_name"]
+        thread_id = _ctx["thread_id"]
+        configurable = _ctx["configurable"]
 
         for tc_info in tool_calls:
             tool_call_id = tc_info["tool_call_id"]
@@ -371,6 +436,22 @@ class ApprovalMiddleware(AgentMiddleware):
                         risk_level=str(RiskLevel.SAFE.value),
                     )
                 )
+                # position 统一绑定（Agent 图层嵌套规范 D3，root cause 修复）：
+                # 必须优先于事件发布：transition_async 从 ctx 读取 position 透传到
+                # payload，若在发布 PENDING/RUNNING 之后再 bind_position，事件
+                # payload.position 为 None → 前端 toolCall.position 缺失 → 工具卡
+                # 追加末尾（wait_for_subagent 流式乱序实证，刷新后由 DB 重建恢复）。
+                # 与受控分支（register → bind_position → 审批通过后透传）顺序一致。
+                # bind_position keep_existing：extractor 已绑定的 position 不被覆盖。
+                _position = ApprovalMiddleware._compute_layer_position(state)
+                if _position is not None:
+                    try:
+                        service.bind_position(tool_call_id, _position)
+                    except Exception as _pos_err:
+                        logger.debug(
+                            f"[ApprovalMiddleware] 绑定 position 失败(非致命): "
+                            f"tool={tool_name}, tc_id={tool_call_id}, err={_pos_err}"
+                        )
                 # 转换为 TOOL_CALL_RUNNING（auto_approved=True 已写入 context，
                 # transition_async 会从 context 透传到事件 payload）
                 # 前端 ToolCallCard 显示"执行中"状态
@@ -406,23 +487,6 @@ class ApprovalMiddleware(AgentMiddleware):
                         logger.debug(
                             f"[ApprovalMiddleware] 无策略工具发布 PENDING 失败(非致命): "
                             f"tool={tool_name}, tc_id={tool_call_id}, err={_pend_err}"
-                        )
-                # position 统一绑定（Agent 图层嵌套规范 D3，root cause 修复）：
-                # 流式 extractor（process_stream_chunk）依赖 tool_call_chunks 携带完整
-                # args 才能产出 PENDING 事件；部分模型（如 DeepSeek）流式返回工具调用时
-                # args 为空串（实证 args_str=''），extractor 永远无法产出 PENDING →
-                # position 从未绑定、工具卡错位。middleware 是 SAFE/无策略工具的统一
-                # 注册点且能看到完整图层 state，在此统一按图层正文长度绑定 position，
-                # 对主 agent/子代理/自定义工具一律生效，无需逐工具特殊处理。
-                # bind_position keep_existing：extractor 已绑定的 position 不被覆盖。
-                _position = ApprovalMiddleware._compute_layer_position(state)
-                if _position is not None:
-                    try:
-                        service.bind_position(tool_call_id, _position)
-                    except Exception as _pos_err:
-                        logger.debug(
-                            f"[ApprovalMiddleware] 绑定 position 失败(非致命): "
-                            f"tool={tool_name}, tc_id={tool_call_id}, err={_pos_err}"
                         )
                 # 可观测性指标（F2）：SAFE 级自动通过计数
                 approval_metrics.on_created(RiskLevel.SAFE, auto_approved=True)
@@ -768,6 +832,21 @@ class ApprovalMiddleware(AgentMiddleware):
             # register 幂等（fill_empty），extractor 已注册的 ctx 不被覆盖。
             try:
                 from Django_xm.common.tool_call_lifecycle import ToolCallContext, service
+                # 统一上下文解析（_resolve_execution_context 单一权威点）：
+                # module/module_id/cross_module_id 与嵌套层级字段在此解析，
+                # 与 SAFE/无策略分支（_audit_auto_approved_tools）结果一致，
+                # 保证两条分支事件路由与 position 绑定一致。
+                _rctx = ApprovalMiddleware._resolve_execution_context(state, runtime)
+                module = _rctx["module"]
+                module_id = _rctx["module_id"]
+                cross_module_id = _rctx["cross_module_id"]
+                _assistant_message_id = _rctx["assistant_message_id"]
+                sub_parent_tool_call_id = _rctx["sub_parent_tool_call_id"]
+                sub_depth = _rctx["sub_depth"]
+                sub_agent_name = _rctx["sub_agent_name"]
+                sub_agent_path = _rctx["sub_agent_path"]
+                sub_risk_ceiling = _rctx["sub_risk_ceiling"]
+                subagent_thread_id = _rctx["subagent_thread_id"]
                 service.register(
                     ToolCallContext(
                         tool_call_id=tc_id,

@@ -208,8 +208,28 @@ class AgentExecutor:
                     return
 
                 elif action == ErrorAction.FAIL:
-                    logger.exception(f"[AgentExecutor] 不可恢复错误: {classified.error_code}: {classified.message}")
-                    raise
+                    # 通用基础能力（root cause）：不可恢复错误不直接终止任务，
+                    # 回退到无工具纯对话让 agent 换方法继续（与 RETRY 耗尽后
+                    # FALLBACK 同路径）。仅明确的基础设施错误（认证/密钥配置，
+                    # LLM 无法修复，重试必然再次失败）才真正终止。
+                    _fail_details = getattr(classified, "details", {}) or {}
+                    if _fail_details.get("auth_error") or classified.error_code in (
+                        "AUTH_ERROR",
+                        "INVALID_API_KEY",
+                        "INVALID_REQUEST",
+                    ):
+                        logger.exception(
+                            f"[AgentExecutor] 基础设施错误，无法由 agent 调整恢复: "
+                            f"{classified.error_code}: {classified.message}"
+                        )
+                        raise
+                    logger.warning(
+                        f"[AgentExecutor] 不可恢复错误转回退（不终止任务，agent 换方法继续）: "
+                        f"{classified.error_code}: {classified.message}"
+                    )
+                    async for fb_event in self._run_fallback():
+                        yield fb_event
+                    return
 
                 else:  # FALLBACK
                     logger.warning(f"[AgentExecutor] 回退: {classified.error_code}")

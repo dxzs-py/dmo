@@ -89,11 +89,18 @@ export const useApprovalStore = defineStore('approval', () => {
     // then(onFulfilled, onRejected)：前一个无论成功/失败都继续执行下一个
     const next = prev.then(fn, fn)
     _approvalQueues.set(sessionId, next)
-    next.finally(() => {
-      if (_approvalQueues.get(sessionId) === next) {
-        _approvalQueues.delete(sessionId)
-      }
-    })
+    next
+      .finally(() => {
+        if (_approvalQueues.get(sessionId) === next) {
+          _approvalQueues.delete(sessionId)
+        }
+      })
+      .catch(() => {
+        // 队列清理 promise 不参与业务错误传播：next 的 rejection 已由调用方
+        // await/catch 处理（如 waiting_for_others 带 __approvalWaiting 标记的
+        // 正常等待分支）。finally 派生的 promise 必须消费 rejection，
+        // 否则会变成 Unhandled Promise Rejection 污染控制台。
+      })
     return next
   }
 

@@ -366,6 +366,12 @@ class SessionExecutor:
         self._suspended = True
         self._wait_interrupt_id = result.interrupt_id
         self._wait_subagent_thread_ids = list(result.subagent_thread_ids or [])
+        # 新一轮等待开始：清空上一轮残留的子代理终态结果。
+        # 否则 _register_waiter 竞态兜底（len(_pending_subagent_results) >=
+        # len(_wait_subagent_thread_ids)）会被旧残留提前满足，误判"全部子代理
+        # 已终态"并立即恢复父 Graph——导致 wait_for_subagent 未真正等待子代理
+        # （如子代理审批中断未完成），任务提前 completed 而子代理仍在后台运行。
+        self._pending_subagent_results = {}
 
         # 业务等待挂起前落库：adapter 内存态（子代理工具条目 + 图层正文）随协程
         # 退出而销毁，先落库到 DB，保证挂起期间刷新浏览器/服务重启恢复可还原。
@@ -455,6 +461,9 @@ class SessionExecutor:
         self._suspended = True
         self._wait_interrupt_id = interrupt_id
         self._wait_subagent_thread_ids = list(subagent_thread_ids)
+        # 与 _handle_suspend 一致：清空上一轮残留的子代理终态结果，防止
+        # _register_waiter 竞态兜底被旧数据误判"全部已终态"提前恢复父 Graph。
+        self._pending_subagent_results = {}
         logger.info(
             f"[SessionExecutor] chat 业务等待挂起: thread_id={self.thread_id}, "
             f"subagents={subagent_thread_ids}, interrupt_id={interrupt_id}"
