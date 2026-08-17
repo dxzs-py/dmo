@@ -200,7 +200,11 @@ class LangGraphAdapter(BaseRuntimeAdapter):
                 EventType.SUBAGENT_STATUS_CHANGE,
                 {
                     "source": EventSource.CHAT,
-                    "source_id": chat_session_id,
+                    # source_id = 子代理权威父线程 id（instance.parent_thread_id）：
+                    # 代理模式 = chat_session_id；chat 关联深研 = research task_id。
+                    # 前端 scheduleSubagentsRefresh 以此为 parent_thread_id 拉取元数据，
+                    # 用 chat_session_id 在关联深研模式会查空（子代理挂在 research task 下）。
+                    "source_id": instance.parent_thread_id or chat_session_id,
                     "message_id": cfg.get("assistant_message_id") or None,
                     "data": {
                         "status": status,

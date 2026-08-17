@@ -222,6 +222,7 @@ class ApprovalMiddleware(AgentMiddleware):
         runtime,
         *,
         publish_running: bool = True,
+        publish_pending: bool = False,
     ) -> None:
         """SAFE 级自动通过的审计：注册 tool_call_lifecycle + 转换为 TOOL_CALL_RUNNING。
 
@@ -236,9 +237,16 @@ class ApprovalMiddleware(AgentMiddleware):
             chat_session_id: 会话 ID（事件路由依赖）
             state: LangGraph state（用于提取 source_id）
             runtime: 运行时对象（用于提取 configurable）
-            publish_running: 是否发布 TOOL_CALL_RUNNING 事件。无策略工具
-                （3.3）传 False：仅注册 ctx 参数（权威参数源），不发布事件，
-                避免与 extractor 的 PENDING 事件冲突。
+            publish_running: 是否发布 TOOL_CALL_RUNNING 事件（SAFE 级工具默认 True）。
+            publish_pending: 无策略工具（3.3）传 True：注册 ctx 参数后发布
+                TOOL_CALL_PENDING。extractor（tool_event_extractor）对流式
+                AIMessageChunk 提取 PENDING，但业务等待挂起（wait_for_subagent）
+                走 updates 模式（interrupt），AIMessageChunk 未产出 → PENDING
+                永远缺失 → wait 卡要等子代理完成、ToolMessage 阶段补发才出现
+                （"等待中"状态失效）。middleware 是所有工具审批的唯一入口，
+                在此统一发布 PENDING 对后续自定义/系统工具一律生效；幂等去重
+                （同 tool_call_id + 同事件类型仅发布一次）保证 extractor 已发布
+                时不重复。
         """
         from Django_xm.common.event_schema import EventSource, EventType
         from Django_xm.common.tool_call_lifecycle import ToolCallContext, service
@@ -378,6 +386,27 @@ class ApprovalMiddleware(AgentMiddleware):
                         EventType.TOOL_CALL_RUNNING,
                         parameters=params_value,
                     )
+                elif publish_pending:
+                    # 无策略工具（如 wait_for_subagent）：注册 ctx 后立即发布
+                    # TOOL_CALL_PENDING，确保挂起类工具（走 updates 模式 interrupt，
+                    # extractor 无 AIMessageChunk 可提取）的卡片在调用瞬间出现
+                    # （wait 卡"等待中"）。幂等去重保证 extractor 已发布 PENDING 时不重复。
+                    _pending_params = (
+                        parameters
+                        if (isinstance(parameters, dict) and parameters)
+                        else ({} if isinstance(parameters, dict) else None)
+                    )
+                    try:
+                        await service.transition_async(
+                            tool_call_id,
+                            EventType.TOOL_CALL_PENDING,
+                            parameters=_pending_params,
+                        )
+                    except Exception as _pend_err:
+                        logger.debug(
+                            f"[ApprovalMiddleware] 无策略工具发布 PENDING 失败(非致命): "
+                            f"tool={tool_name}, tc_id={tool_call_id}, err={_pend_err}"
+                        )
                 # position 统一绑定（Agent 图层嵌套规范 D3，root cause 修复）：
                 # 流式 extractor（process_stream_chunk）依赖 tool_call_chunks 携带完整
                 # args 才能产出 PENDING 事件；部分模型（如 DeepSeek）流式返回工具调用时
@@ -655,7 +684,11 @@ class ApprovalMiddleware(AgentMiddleware):
             if policy is None:
                 # 3.3 无策略工具：不审批不审计，但注册 ctx（完整参数），
                 # 为 extractor 参数聚合失败的场景提供权威参数源。
-                # 不发布 RUNNING（避免与 extractor 的 PENDING 冲突），仅注册参数。
+                # 不发布 RUNNING（避免与 extractor 的 PENDING 冲突），改为发布
+                # PENDING（publish_pending=True）：挂起类工具（wait_for_subagent）
+                # 走 updates 模式 interrupt，extractor 无 chunk 可提取，PENDING
+                # 缺失导致卡片延迟到完成才出现；统一在 middleware 补发，
+                # 幂等去重保证 extractor 已发布时不重复。
                 if args and isinstance(args, dict):
                     try:
                         await self._audit_auto_approved_tools(
@@ -670,9 +703,10 @@ class ApprovalMiddleware(AgentMiddleware):
                             state,
                             runtime,
                             publish_running=False,
+                            publish_pending=True,
                         )
                         logger.info(
-                            f"[ApprovalMiddleware] 无策略工具已注册 ctx（参数完整）: "
+                            f"[ApprovalMiddleware] 无策略工具已注册 ctx + 发布 PENDING: "
                             f"tool={tool_name}, tc_id={tc_id}"
                         )
                     except Exception as register_err:

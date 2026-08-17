@@ -2,6 +2,7 @@ import { logger } from '@/utils/logger'
 import { toCamelCase } from '@/utils/sessionTransformers'
 import { getEventTaskId } from '@/utils/eventRouting'
 import { ResearchTaskStatus } from '@/types'
+import { scheduleSubagentsRefresh } from '@/composables/useSubagents'
 
 /**
  * @typedef {import('@/composables/useRealtimeSync').RealtimeEvent} RealtimeEvent
@@ -192,6 +193,19 @@ export const createHandleTaskEvent = (ctx) => {
         }
         break
       }
+      // 子代理状态变更（task 通道，独立深度研究模式）：
+      // 与 handleSessionEvent 的 subagent_status_change 分支对称（session 频道
+      // 仅覆盖 chat/learning/关联深研；独立深研只走 task 频道，缺失会导致子代理卡
+      // 状态停留旧值）。父线程 id 取 payload.sourceId（深研=task_id）回退 taskId。
+      case 'subagent_status_change':
+        if (payload.subagentThreadId || event.subagent_thread_id) {
+          logger.info(
+            `[Sync] 子代理状态变更(task): task=${taskId}, subagent=${payload.subagentThreadId || event.subagent_thread_id}, ` +
+            `status=${payload.data?.status || payload.status || '(unknown)'}`
+          )
+          scheduleSubagentsRefresh(payload.sourceId || taskId)
+        }
+        break
       default:
         logger.debug(`[Sync] 未处理的 task 事件: ${event.type}`)
     }
