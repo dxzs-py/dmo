@@ -243,6 +243,7 @@ export const useResearchStore = defineStore('research', () => {
       status: success ? ResearchTaskStatus.COMPLETED : ResearchTaskStatus.FAILED,
     }
     if (data.finalReport !== undefined) patch.finalReport = data.finalReport
+    if (data.content !== undefined) patch.content = data.content
     if (data.error) patch.error = data.error
     if (data.messageId) patch.messageId = data.messageId
     logger.info(

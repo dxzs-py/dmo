@@ -79,10 +79,10 @@ test('position=content 末尾：正文 + 工具段末尾', () => {
 })
 
 // ===== 同 position =====
-test('同 position 多工具：按 seq 连续插入（不重复正文）', () => {
-  const t2 = tool('t2', { position: 3, seq: 2 })
+test('同 position 多工具：按传入顺序连续插入（调用方已按 seq 排序）', () => {
   const t1 = tool('t1', { position: 3, seq: 1 })
-  const segs = splitContentByToolPositions('0123456789', [t2, t1])
+  const t2 = tool('t2', { position: 3, seq: 2 })
+  const segs = splitContentByToolPositions('0123456789', [t1, t2])
   assert.deepEqual(segs, [
     { type: 'content', text: '012' },
     { type: 'tool', toolCall: t1 },
@@ -92,12 +92,12 @@ test('同 position 多工具：按 seq 连续插入（不重复正文）', () =>
 })
 
 // ===== 无 position =====
-test('无 position 工具追加末尾（保持排序后相对顺序）', () => {
+test('无 position 工具追加末尾（保持传入顺序）', () => {
   const t1 = tool('t1', { position: 2 })
   const noPos1 = tool('no1')
   const noPos2 = tool('no2')
   const segs = splitContentByToolPositions('0123456789', [noPos2, t1, noPos1])
-  // 有 position 的在正文内联；无 position 的按排序后稳定顺序追加末尾
+  // 有 position 的在正文内联；无 position 的按传入顺序（seq 顺序）追加末尾
   assert.equal(segs.length, 5)
   assert.deepEqual(segs[1], { type: 'tool', toolCall: t1 })
   assert.deepEqual(segs[3], { type: 'tool', toolCall: noPos2 })
@@ -113,26 +113,28 @@ test('position 超界（> content 长度）：按末尾处理', () => {
   ])
 })
 
-test('超界工具与无 position 工具混合：正文 + 末尾工具段（排序后相对顺序）', () => {
+test('超界工具与无 position 工具混合：正文 + 末尾工具段（保持传入顺序）', () => {
   const over = tool('over', { position: 50 })
   const noPos = tool('noPos')
   const segs = splitContentByToolPositions('abc', [noPos, over])
-  // 排序后 over（有 position）在前；末尾追加保持 sorted 顺序
+  // 无 position / 超界均追加末尾，保持传入顺序（调用方已按 seq 排序）
   assert.deepEqual(segs, [
     { type: 'content', text: 'abc' },
-    { type: 'tool', toolCall: over },
     { type: 'tool', toolCall: noPos },
+    { type: 'tool', toolCall: over },
   ])
 })
 
 // ===== 乱序/重复 position =====
-test('乱序 position：按 position 升序切段（输入乱序不影响输出）', () => {
+test('乱序 position：position 回退（< 游标）工具追加末尾（保持传入顺序）', () => {
   const t5 = tool('t5', { position: 5 })
   const t1 = tool('t1', { position: 1 })
   const t3 = tool('t3', { position: 3 })
   const segs = splitContentByToolPositions('0123456789', [t5, t1, t3])
+  // 传入顺序（seq 已排序）是唯一排序权威；position 乱序属异常输入，
+  // 回退工具追加末尾而非按 position 重排（避免与 seq 排序冲突导致乱序）
   assert.deepEqual(segs.map(s => s.type === 'tool' ? s.toolCall.id : s.text), [
-    '0', 't1', '12', 't3', '34', 't5', '56789',
+    '01234', 't5', '56789', 't1', 't3',
   ])
 })
 

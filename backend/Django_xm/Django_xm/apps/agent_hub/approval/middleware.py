@@ -722,12 +722,45 @@ class ApprovalMiddleware(AgentMiddleware):
                 request["agent_path"] = subagent_context.get("agent_path", [])
                 request["subagent_thread_id"] = subagent_context.get("subagent_thread_id", "")
             # position 统一绑定（Agent 图层嵌套规范 D3，root cause 修复）：
-            # 受控工具与 SAFE/无策略工具同样可能因 extractor 参数不流式而缺 position。
-            # middleware 统一按图层正文长度计算并随审批请求透传，approval_service
-            # 注册 ctx 后绑定（审批 WAITING/RUNNING 事件携带 position，前端内联正确）。
-            _position = self._compute_layer_position(state)
-            if _position is not None:
-                request["position"] = _position
+            # 受控工具与 SAFE/无策略工具统一在 middleware（所有工具审批的唯一入口）
+            # 直接注册 ToolCallContext 并 bind_position 到权威源，对后续自定义工具、
+            # 系统工具扩建一律生效，无需按工具逐个透传。
+            # 下游链路自动受益：
+            #   - approval_service.enrich_entry_position 从 ctx 读取写入 Approval.extra
+            #     （loadHistory 刷新后重建 toolCall 带 position，防排末尾/乱序）；
+            #   - _bind_approval_position 幂等（extra 已有值时不受影响）；
+            #   - tool_call_waiting/running 事件经 transition 从 ctx 透传 position，
+            #     前端图层内联布局正确（不追加末尾）。
+            # register 幂等（fill_empty），extractor 已注册的 ctx 不被覆盖。
+            try:
+                from Django_xm.common.tool_call_lifecycle import ToolCallContext, service
+                service.register(
+                    ToolCallContext(
+                        tool_call_id=tc_id,
+                        tool_name=tool_name,
+                        module=module,
+                        module_id=module_id,
+                        message_id=_assistant_message_id,
+                        parameters=args if isinstance(args, dict) else {},
+                        cross_module_id=cross_module_id,
+                        graph_interrupt_id=graph_interrupt_id,
+                        parent_tool_call_id=sub_parent_tool_call_id,
+                        depth=sub_depth,
+                        agent_name=sub_agent_name,
+                        agent_path=sub_agent_path,
+                        risk_ceiling=sub_risk_ceiling,
+                        subagent_thread_id=subagent_thread_id,
+                        risk_level=risk_level.value,
+                    )
+                )
+                _position = self._compute_layer_position(state)
+                if _position is not None:
+                    service.bind_position(tc_id, _position)
+            except Exception as register_err:
+                logger.warning(
+                    f"[ApprovalMiddleware] 受控工具注册 ctx 失败(非致命): "
+                    f"tool={tool_name}, tc_id={tc_id}, err={register_err}"
+                )
             approval_requests.append(request)
             logger.info(
                 f"[ApprovalMiddleware] 需要审批: tool={tool_name}, "

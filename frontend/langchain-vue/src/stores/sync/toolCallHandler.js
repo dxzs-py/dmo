@@ -129,8 +129,16 @@ export const createHandleToolCallEvent = (ctx) => {
     // 子代理工具事件驱动元数据刷新（spec D10）：事件增量之外重新拉取 GET
     // /subagents 元数据（agentName/status/resultPreview/pendingInterruptInfo），
     // 使非触发浏览器（未刷新页面）随事件推进同步更新子代理卡片（双浏览器一致）。
-    if (payload.subagentThreadId && (sessionId || taskId)) {
-      scheduleSubagentsRefresh(sessionId || taskId)
+    //
+    // 父线程 id 统一取 payload.sourceId（= 模块实例 id：chat=session_id、
+    // deep_research=task_id、learning=thread_id），与 SubAgentInstance.parent_thread_id
+    // 权威一致。chat 关联深研模式的事件走 session 频道（sessionId=chat_session_id），
+    // 仅用 sessionId 会查空（深研子代理挂在 research task 下）。
+    if (payload.subagentThreadId) {
+      const parentThreadId = payload.sourceId || sessionId || taskId
+      if (parentThreadId) {
+        scheduleSubagentsRefresh(parentThreadId)
+      }
     }
 
     const hasMessageId = !!payload.messageId

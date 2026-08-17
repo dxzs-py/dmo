@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from typing import Any
+from typing import Any, Union
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
@@ -90,8 +90,10 @@ def _validate_todos(todos: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 class TodoWriteInput(BaseModel):
-    todos: str = Field(
-        description="JSON格式的任务列表，每个任务包含id/content/status/priority字段，"
+    # 模型对 todos 参数可能传 JSON 字符串、数组或包装对象（{"todos": [...]}），
+    # 统一用 Union 接收后在 _run 内归一化（模型行为不可控，工具层归一化是正解）。
+    todos: Union[str, list, dict] = Field(
+        description="任务列表，支持 JSON 格式字符串或数组，每个任务包含id/content/status/priority字段，"
         '例如:[{"id":1,"content":"完成任务1","status":"pending","priority":"high"}]'
     )
     session_id: str = Field(default="default", description="会话ID，用于隔离不同会话的任务")
@@ -115,14 +117,18 @@ class TodoWriteTool(BaseTool):
     )
     args_schema: type[BaseModel] = TodoWriteInput
 
-    def _run(self, todos: str, session_id: str = "default") -> str:
+    def _run(self, todos: Union[str, list, dict], session_id: str = "default") -> str:
         try:
             if isinstance(todos, str):
                 todo_list = json.loads(todos)
             else:
                 todo_list = todos
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, TypeError):
             return "错误: todos 参数必须是有效的 JSON 格式"
+
+        # 归一化包装对象（模型可能传 {"todos": [...]} 或 {"items": [...]}）
+        if isinstance(todo_list, dict):
+            todo_list = todo_list.get("todos") or todo_list.get("items") or []
 
         if not isinstance(todo_list, list):
             return "错误: todos 必须是数组格式"
@@ -141,7 +147,7 @@ class TodoWriteTool(BaseTool):
             f"- 已完成: {completed}"
         )
 
-    async def _arun(self, todos: str, session_id: str = "default") -> str:
+    async def _arun(self, todos: Union[str, list, dict], session_id: str = "default") -> str:
         return self._run(todos=todos, session_id=session_id)
 
 

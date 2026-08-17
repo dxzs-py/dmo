@@ -429,9 +429,15 @@ export const createStreamStateHandlers = (ctx) => {
             targetMsg.reasoning = { ...targetMsg.reasoning, duration: researchDuration }
           }
         }
-        // 更新消息内容
-        if (payload.success !== false && payload.finalReport) {
-          targetMsg.content = payload.finalReport
+        // 更新消息内容：优先主 agent 累计正文（payload.content，与工具 position
+        // 基准一致），回退 finalReport。直接用 finalReport 覆盖会与 position
+        // （基于 main_content 累计）错位，导致工具卡内联切段乱序。
+        if (payload.success !== false) {
+          if (payload.content) {
+            targetMsg.content = payload.content
+          } else if (payload.finalReport) {
+            targetMsg.content = payload.finalReport
+          }
         } else if (payload.error) {
           targetMsg.content = `深度研究执行失败：${payload.error}`
         }

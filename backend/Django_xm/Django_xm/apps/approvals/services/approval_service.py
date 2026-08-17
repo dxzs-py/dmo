@@ -1389,6 +1389,9 @@ async def request_approval_async(
     if top_message_id and not extra_data.get("message_id"):
         extra_data["message_id"] = top_message_id
     # 透传 risk_level 和子 agent 嵌套字段到 extra（Phase F1 + E3）
+    # 注：position 已含于 _EXTRA_PASSTHROUGH_FIELDS，approval_data 顶层携带
+    # （approval_batch 已透传 middleware 计算的图层内 position）时自动写入 extra，
+    # 供 _bind_approval_position 绑定 ToolCallContext，审批事件携带 position。
     _merge_passthrough_fields(approval_data, extra_data)
     # seq 补齐（持久化链路完整性）：与同步版 request_approval 一致，统一经
     # enrich_entry_seq 从 ToolCallContext 读取 register 分配的全局递增序号写入

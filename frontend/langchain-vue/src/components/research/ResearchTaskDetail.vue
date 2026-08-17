@@ -82,11 +82,13 @@
       style="margin-top: 16px;"
     />
 
-    <!-- 研究过程：工具调用内联切段（渲染结构完全照 ChatMessage，content 传空，
-         深度研究主 agent 无独立过程正文，主输出 final_report 由下方报告组件独立展示） -->
+    <!-- 研究过程：工具调用内联切段（渲染结构完全照 ChatMessage）。
+         content 传主 agent 累计正文（ResearchTask.content，对齐 ChatMessage.content），
+         工具卡按 position 内联到正文流（对齐聊天模块代理模式）；
+         最终报告 final_report 由下方 ResearchTaskReport 独立展示 -->
     <InlineToolCallContent
       v-if="mainToolCalls.length > 0"
-      :content="''"
+      :content="mainContent || task.content || ''"
       :tool-calls="mainToolCalls"
       :approval-disabled="approvalDisabled"
     >
@@ -155,6 +157,7 @@ import SubAgentCard from '@/components/chat/SubAgentCard.vue'
 import ToolCallCard from '@/components/chat/ToolCallCard.vue'
 import InlineToolCallContent from '@/components/common/InlineToolCallContent.vue'
 import { deriveDisplayStatus } from '@/utils/toolCallStateMachine'
+import { sortToolCallsForDisplay } from '@/utils/messageOperations'
 import { buildSubagentsFromMessage, mapSubagentsBySpawnToolCall } from '@/utils/subagentAggregation'
 import { useSubagents, subagentsMetaMap } from '@/composables/useSubagents'
 import { SUBAGENT_STATUS } from '@/utils/subagentStatus'
@@ -178,6 +181,13 @@ const props = defineProps({
   task: {
     type: Object,
     required: true,
+  },
+  /** 主 agent 累计正文（优先于 task.content）：
+   * 聊天触发的深度研究由 DeepResearchView 从 sessionStore 关联消息的 content 注入
+   * （researchStore.taskInfo.content 可能因事件时序缺失，导致 position 切段失效乱序） */
+  mainContent: {
+    type: String,
+    default: '',
   },
   /** 进度提示消息（SSE 推送） */
   progressMessage: {
@@ -237,9 +247,14 @@ const emit = defineEmits([
 const { fetchSubagents } = useSubagents()
 
 // 主 agent 工具调用（subagentThreadId 为空）
-const mainToolCalls = computed(() =>
-  (Array.isArray(props.toolCalls) ? props.toolCalls : []).filter(tc => !tc.subagentThreadId)
-)
+// 统一排序：sortToolCallsForDisplay（seq 升序）为唯一权威排序实现，
+// 与 sessionStore/_syncMessageToolCalls 对齐。源数组可能来自 researchStore 快照合并
+// （合并顺序非 seq），不排序会导致 wait 等工具卡乱序渲染。
+const mainToolCalls = computed(() => {
+  const list = (Array.isArray(props.toolCalls) ? props.toolCalls : []).filter(tc => !tc.subagentThreadId)
+  sortToolCallsForDisplay(list)
+  return list
+})
 
 // 审批控件置灰（统一 chat 语义：任务终态视为固化，其余可交互）
 const approvalDisabled = computed(() =>

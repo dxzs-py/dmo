@@ -1,19 +1,18 @@
 """
-子 Agent 工具上下文管理器
+子 Agent 工具上下文管理器（按会话隔离）
 
 在主 Agent 执行期间，保存当前会话的工具配置（工具名列表、联网/MCP 标志），
 供 ``spawn_sub_agent`` 工具读取，实现子 Agent 继承父 Agent 的工具集。
 
 典型流程：
-1. 主 Agent 开始执行 → set_parent_tool_context(tools, config)
-2. ``spawn_sub_agent`` 被调用 → get_parent_tool_context() → 继承工具集 / 深度检测
-3. 主 Agent 执行结束 → clear_parent_tool_context()
+1. 主 Agent 开始执行 → set_parent_tool_context(thread_id, tools, config)
+2. ``spawn_sub_agent`` 被调用 → get_parent_tool_context(thread_id) → 继承工具集
+3. 主 Agent 执行结束 → clear_parent_tool_context(thread_id)
 
-递归深度控制：
-- 通过 agent_depth 追踪当前嵌套层级
-- 最大深度可配置：settings.AGENT_MAX_DEPTH（环境变量 AGENT_MAX_DEPTH），
-  默认 3（主代理=0，子代理=1，孙代理=2，曾孙代理=3）
-- 超过最大深度时拒绝派生，阻止无限嵌套
+并发安全（根因修复）：上下文按 ``thread_id``（research task id / chat session id）
+维度隔离存储，多会话/多任务并发执行时互不覆盖、互不清空。
+此前为进程级单一全局存储，任意会话结束时 clear 会清空其他会话的父上下文，
+导致并发场景下 spawn 子代理读不到父工具集（如深度研究子代理缺 shell_exec）。
 """
 
 import threading
@@ -22,7 +21,8 @@ from typing import Any
 from langchain_core.tools import BaseTool
 
 _context_lock = threading.Lock()
-_context_storage: dict[str, Any] = {}
+# thread_id -> {tool_names, mcp_servers, config}
+_context_storage: dict[str, dict[str, Any]] = {}
 
 # 默认最大子代理嵌套深度（0=主代理, 1=子代理, 2=孙代理, 3=曾孙代理）
 _DEFAULT_MAX_AGENT_DEPTH: int = 3
@@ -48,6 +48,7 @@ MAX_AGENT_DEPTH: int = get_max_agent_depth()
 
 
 def set_parent_tool_context(
+    thread_id: str,
     tools: list[BaseTool],
     config: dict[str, Any] | None = None,
 ) -> None:
@@ -60,59 +61,23 @@ def set_parent_tool_context(
             mcp_servers.add(server)
 
     with _context_lock:
-        _context_storage["tool_names"] = tool_names
-        _context_storage["mcp_servers"] = list(mcp_servers)
-        _context_storage["config"] = config or {}
-        # 初始化深度：主代理为 0
-        if "agent_depth" not in _context_storage:
-            _context_storage["agent_depth"] = 0
-
-
-def get_parent_tool_context() -> dict[str, Any]:
-    with _context_lock:
-        return {
-            "tool_names": list(_context_storage.get("tool_names", [])),
-            "mcp_servers": list(_context_storage.get("mcp_servers", [])),
-            "config": dict(_context_storage.get("config", {})),
-            "agent_depth": _context_storage.get("agent_depth", 0),
+        _context_storage[thread_id] = {
+            "tool_names": tool_names,
+            "mcp_servers": list(mcp_servers),
+            "config": config or {},
         }
 
 
-def has_parent_tool_context() -> bool:
+def get_parent_tool_context(thread_id: str) -> dict[str, Any]:
     with _context_lock:
-        return bool(_context_storage.get("tool_names"))
+        ctx = _context_storage.get(thread_id, {})
+        return {
+            "tool_names": list(ctx.get("tool_names", [])),
+            "mcp_servers": list(ctx.get("mcp_servers", [])),
+            "config": dict(ctx.get("config", {})),
+        }
 
 
-def get_agent_depth() -> int:
-    """获取当前代理嵌套深度"""
+def clear_parent_tool_context(thread_id: str) -> None:
     with _context_lock:
-        return _context_storage.get("agent_depth", 0)
-
-
-def increment_agent_depth() -> int:
-    """递增代理深度并返回新值，用于子代理启动时设置"""
-    with _context_lock:
-        current = _context_storage.get("agent_depth", 0)
-        new_depth = current + 1
-        _context_storage["agent_depth"] = new_depth
-        return new_depth
-
-
-def decrement_agent_depth() -> int:
-    """递减代理深度并返回新值，用于子代理结束时恢复"""
-    with _context_lock:
-        current = _context_storage.get("agent_depth", 0)
-        new_depth = max(0, current - 1)
-        _context_storage["agent_depth"] = new_depth
-        return new_depth
-
-
-def is_max_depth_reached() -> bool:
-    """检查是否已达到最大嵌套深度"""
-    with _context_lock:
-        return _context_storage.get("agent_depth", 0) >= get_max_agent_depth()
-
-
-def clear_parent_tool_context() -> None:
-    with _context_lock:
-        _context_storage.clear()
+        _context_storage.pop(thread_id, None)

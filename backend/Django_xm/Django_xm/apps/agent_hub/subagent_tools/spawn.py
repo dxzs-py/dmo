@@ -106,10 +106,13 @@ class SpawnSubAgentTool(BaseTool):
             )
             from Django_xm.apps.tools.langchain.agent_context import get_parent_tool_context
 
-            parent_ctx = get_parent_tool_context()
+            configurable = dict(self.parent_configurable or {})
+            # 父 thread_id：优先 RunnableConfig 的 thread_id（主 agent = session_id /
+            # research task id，与 set_parent_tool_context 的 key 一致），回退父上下文 session_id。
+            parent_thread_id = configurable.get("thread_id") or ""
+            parent_ctx = get_parent_tool_context(parent_thread_id)
             main_tool_names = parent_ctx.get("tool_names", []) or []
             parent_config = parent_ctx.get("config", {}) or {}
-            configurable = dict(self.parent_configurable or {})
 
             # 自身工具调用 ID：LangChain 通过 InjectedToolCallId 在工具执行时注入
             # （ToolNode 场景）；直接 ainvoke 等非工具调用上下文时为 None，防御为空串。
@@ -123,9 +126,8 @@ class SpawnSubAgentTool(BaseTool):
             # 时丢弃模型仍输出的 reasoning（部分模型无法被 thinking=disabled 关闭）。
             configurable["enable_deep_thinking"] = enable_deep_thinking
 
-            # 父 thread_id：优先 RunnableConfig 的 thread_id（主 agent = session_id），
-            # 回退父上下文 session_id。
-            parent_thread_id = configurable.get("thread_id") or parent_config.get("session_id") or ""
+            # 父 thread_id 已在读取父上下文前确定（见上），此处回退父上下文 session_id
+            parent_thread_id = parent_thread_id or parent_config.get("session_id") or ""
             user_id = parent_config.get("user_id")
             session_id = parent_config.get("session_id") or parent_thread_id
             model_name = parent_config.get("model_name")

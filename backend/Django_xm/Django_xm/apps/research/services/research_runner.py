@@ -44,6 +44,9 @@ class ResearchResult:
     # 图层字段贯通（subagent_thread_id/agent_name/depth + seq/position），
     # 由 writeback 合并进 ChatMessage.tool_calls（乱序根源修复，与 chat 链路同构）
     subagent_tool_entries: dict[str, dict] | None = None
+    # 主 agent 累计正文（来自 adapter._main_content）：过程信息展示权威源，
+    # 由 writeback 落库到 ChatMessage.content / ResearchTask.content。
+    main_content: str = ""
     raw_result: dict[str, Any] | None = None
     # 业务等待挂起（spec D4，非审批）：父 Graph 等待子代理结果，退出协程待调度器唤醒。
     # 支持批量（fan-out/fan-in）：一次等待多个子代理，全部终态后一次性恢复。
@@ -189,6 +192,7 @@ async def execute_research_async(
             reasoning=getattr(agent, "accumulated_reasoning", ""),
             subagent_contents=result.get("subagent_contents"),
             subagent_tool_entries=result.get("subagent_tool_entries"),
+            main_content=result.get("main_content") or "",
             raw_result=result,
             suspended=suspended,
             subagent_thread_ids=result.get("subagent_thread_ids", []) or [],
@@ -362,6 +366,7 @@ def finalize_research(
                     "status": "completed",
                     "current_step": "completed",
                     "final_report": result.final_report,
+                    "content": result.main_content or "",
                 },
             )
         except Exception as e:

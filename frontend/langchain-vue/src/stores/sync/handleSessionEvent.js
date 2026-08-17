@@ -379,7 +379,9 @@ export const createHandleSessionEvent = (ctx) => {
             `[Sync] 子代理状态变更: session=${sessionId}, subagent=${payload.subagentThreadId || event.subagent_thread_id}, ` +
             `status=${payload.data?.status || payload.status || '(unknown)'}`
           )
-          scheduleSubagentsRefresh(sessionId)
+          // 父线程 id 取 payload.sourceId（深研=task_id，chat/learning=session_id），
+          // 与 toolCallHandler 的拉取口径一致（chat 关联深研子代理挂在 research task 下）
+          scheduleSubagentsRefresh(payload.sourceId || sessionId)
         }
         break
       case 'messages_deleted':
@@ -535,7 +537,9 @@ export const createHandleSessionEvent = (ctx) => {
         || eventType === 'approval_timeout')
       && (chatSessionId || taskId)
     ) {
-      scheduleSubagentsRefresh(chatSessionId || taskId)
+      // 父线程 id 取 payload.sourceId（深研=task_id，chat/learning=session_id），
+      // 与 toolCallHandler 拉取口径一致（chat 关联深研子代理挂在 research task 下）
+      scheduleSubagentsRefresh(payload.sourceId || chatSessionId || taskId)
     }
 
     if (sessionId) {

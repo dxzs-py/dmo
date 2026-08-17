@@ -66,16 +66,6 @@ export const createMessageHandlers = (ctx) => {
       (m.id && m.id?.toString() === message.id?.toString())
     )
 
-    // 诊断日志：占位合并前的状态
-    const placeholderCount = session.messages?.filter(m => !m.backendId).length || 0
-    logger.info(
-      `[Sync] handleMessageAdded 诊断: session=${sessionId}, ` +
-      `incoming.role=${message.role}, incoming.backendId=${message.backendId}, ` +
-      `messagesCount=${session.messages?.length || 0}, ` +
-      `placeholderCount=${placeholderCount}, ` +
-      `exactMatch=${!!existing}`
-    )
-
     if (!existing && message.backendId) {
       for (let i = session.messages.length - 1; i >= 0; i--) {
         const m = session.messages[i]

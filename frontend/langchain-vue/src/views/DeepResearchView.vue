@@ -103,6 +103,7 @@
       <ResearchTaskDetail
         v-if="showTaskDetail && task"
         :task="task"
+        :main-content="taskContent"
         :progress-message="progressMessage"
         :progress-percentage="progressPercentage"
         :tool-calls="taskToolCalls"
@@ -318,6 +319,23 @@ const taskToolCalls = computed(() => {
 
   // 回退到 researchStore（独立深度研究任务）
   return researchStore.getToolCalls(currentTask.taskId)
+})
+
+/** 主 agent 累计正文（与 taskToolCalls 同源，session 消息优先，researchStore 回退）：
+ * 聊天触发的深度研究，正文权威源是关联 ChatMessage.content（实时写入）；
+ * researchStore.taskInfo.content 依赖 task 频道 stream_content_update 事件，
+ * 详情页晚订阅时可能缺失 → position 切段全部退化为"追加末尾"按 position 重排导致乱序。 */
+const taskContent = computed(() => {
+  const currentTask = task.value
+  if (!currentTask?.taskId) return ''
+  const chatSessionId = currentTask.sessionId || currentTask.chatSessionId
+  if (chatSessionId) {
+    const sessionStore = useSessionStore()
+    const messages = sessionStore.getSessionMessages(chatSessionId)
+    const researchMsg = [...messages].reverse().find(msg => msg.researchTaskId === currentTask.taskId)
+    if (researchMsg?.content) return researchMsg.content
+  }
+  return currentTask.content || ''
 })
 
 /** 当前任务的子代理图层正文/思考索引（Agent 图层嵌套规范 Task 8.3）：

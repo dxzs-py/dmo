@@ -35,6 +35,7 @@ def broadcast_stream_completed(
     error: str = "",
     message_id: str | None = None,
     user_id: int | None = None,
+    content: str = "",
 ):
     """广播 stream_completed 事件到 session + task 双频道。
 
@@ -73,6 +74,11 @@ def broadcast_stream_completed(
         payload["error"] = error
     if message_id:
         payload["message_id"] = message_id
+    # 主 agent 累计正文（过程信息权威源，对齐 ChatMessage.content）：
+    # 独立深度研究模块据此在完成事件中直接获得过程正文（无需额外快照请求），
+    # 与 final_report（最终报告，由报告组件展示）语义分离。
+    if content:
+        payload["content"] = content
 
     try:
         # 统一底层：同时发布到 session + task 双频道
@@ -174,6 +180,77 @@ def _publish_stream_reasoning(session_id, task_id, message_id, content):
         )
     except Exception as e:
         logger.debug(f"[Writeback] 广播 STREAM_REASONING 失败: {e}")
+
+
+# stream_content 广播节流（主 agent 正文逐 chunk 累积广播，对齐 chat 链路
+# STREAM_CONTENT_UPDATE 500ms 节流语义）：若每个 chunk 都发布会造成事件风暴。
+# 广播内容始终为累积全文（前端覆盖语义），节流仅跳过窗口内中间广播，内容不丢失；
+# 完成时由 broadcast_stream_completed 携带 content 兜底补齐尾部。
+CONTENT_BROADCAST_INTERVAL_SECONDS = 0.5
+
+_content_throttle_lock = threading.Lock()
+# key: (session_id, task_id, message_id) -> [last_broadcast_time, latest_content]
+_content_throttle_state = {}
+
+
+def broadcast_stream_content(
+    session_id: str | None,
+    task_id: str,
+    message_id: str,
+    content: str,
+):
+    """广播主 agent 累计正文（STREAM_CONTENT_UPDATE）到 session + task 双频道（带节流）。
+
+    深度研究执行过程中主 agent 逐 chunk 输出过程正文，实时推送到前端，使
+    前端 content 非空、``splitContentByToolPositions`` 可按 position 内联工具卡
+    （position 语义依赖 content 非空，否则工具卡堆叠末尾乱序——乱序根因）。
+
+    与 broadcast_stream_reasoning 相同的双频道策略与节流机制：
+    - session:{session_id} 频道：聊天模块深度研究模式订阅（非空时）
+    - task:{task_id} 频道：DeepResearchView 独立模式订阅（始终）
+
+    Args:
+        session_id: 关联的 chat session ID（独立深度研究场景为 None/空）
+        task_id: 深度研究任务 ID（始终非空）
+        message_id: 关联的 ChatMessage ID（独立深度研究场景可为空）
+        content: 主 agent 累计正文全文
+    """
+    now = time.monotonic()
+    key = (session_id or "", task_id, message_id or "")
+    with _content_throttle_lock:
+        last = _content_throttle_state.get(key)
+        if last is not None and now - last[0] < CONTENT_BROADCAST_INTERVAL_SECONDS:
+            last[1] = content  # 节流窗口内仅记录最新内容，下个窗口补发
+            return
+        _content_throttle_state[key] = [now, content]
+    _publish_stream_content(session_id, task_id, message_id, content)
+
+
+def _publish_stream_content(session_id, task_id, message_id, content):
+    """实际发布 stream_content_update 事件（不节流）。"""
+    payload = {
+        "source": EventSource.DEEP_RESEARCH,
+        "source_id": session_id or task_id,
+        "message_id": message_id or None,
+        "session_id": session_id,
+        "task_id": task_id,
+        "data": {"content": content},
+    }
+
+    try:
+        publish_event_sync(
+            EventType.STREAM_CONTENT_UPDATE,
+            payload,
+            session_id=session_id or None,
+            task_id=task_id,
+        )
+    except PayloadValidationError:
+        logger.debug(
+            f"[Writeback] STREAM_CONTENT_UPDATE payload 校验失败，跳过广播: "
+            f"task_id={task_id}, session_id={session_id}",
+        )
+    except Exception as e:
+        logger.debug(f"[Writeback] 广播 STREAM_CONTENT_UPDATE 失败: {e}")
 
 
 def writeback_to_chat_message(
@@ -416,6 +493,7 @@ def persist_research_progress(
     thread_id: str,
     subagent_contents: dict | None = None,
     subagent_tool_entries: dict | None = None,
+    main_content: str | None = None,
 ) -> None:
     """挂起期间将深度研究内存态子代理数据落库（服务重启恢复 / 挂起中刷新的还原依据）。
 
@@ -474,6 +552,10 @@ def persist_research_progress(
             if subagent_contents != existing_sub:
                 research_task.subagent_contents = dict(subagent_contents)
                 save_fields_research.append("subagent_contents")
+        # 主代理累计正文覆盖（非空且更长，避免回退覆盖更完整正文）
+        if main_content and len(main_content) > len(research_task.content or ""):
+            research_task.content = main_content
+            save_fields_research.append("content")
         if save_fields_research:
             research_task.save(update_fields=[*save_fields_research, "updated_at"])
 
@@ -508,6 +590,10 @@ def persist_research_progress(
                 if subagent_contents != existing_sub:
                     msg.subagent_contents = dict(subagent_contents)
                     msg_save_fields.append("subagent_contents")
+            # 主代理累计正文覆盖（非空且更长，chat 深度研究模式挂起中刷新可见）
+            if main_content and len(main_content) > len(msg.content or ""):
+                msg.content = main_content
+                msg_save_fields.append("content")
             if msg_save_fields:
                 msg.save(update_fields=[*msg_save_fields, "updated_at"])
     except Exception:

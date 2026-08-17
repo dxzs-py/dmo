@@ -164,10 +164,24 @@ export const createHandleTaskEvent = (ctx) => {
           )
         }
         break
-      // stream_reasoning：深度研究推理内容（task 通道，独立深度研究模式）
-      case 'stream_reasoning':
-        researchStore.setTaskReasoning(taskId, payload)
+      // stream_event（task 通道）：STREAM_REASONING / STREAM_CONTENT_UPDATE 等流式
+      // 事件共用 ws_event_name="stream_event"（event_schema._WS_EVENT_NAME_MAP），
+      // 必须按 payload.eventType 二次分发（toCamelCase 后 event_type → eventType）。
+      // - stream_reasoning：深度研究推理内容（独立深度研究模式）
+      // - stream_content_update：主 agent 累计正文（position 内联切段依据，content 非空
+      //   工具卡才不堆叠末尾乱序）
+      case 'stream_event': {
+        const streamEventType = payload.eventType || payload.event_type
+        const data = payload.data || payload
+        if (streamEventType === 'stream_content_update') {
+          if (data.content) {
+            researchStore.setTaskStatus(taskId, { content: data.content })
+          }
+        } else if (streamEventType === 'stream_reasoning') {
+          researchStore.setTaskReasoning(taskId, payload)
+        }
         break
+      }
       // 子代理图层正文/中间思考（task 通道，独立深度研究模式）
       // spec D10：按 subagentThreadId 路由写入 task.subagentContents[threadId]
       case 'stream_subagent_content': {

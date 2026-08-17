@@ -324,6 +324,7 @@ class DeepResearchStatusView(APIView):
                     "final_report": task.final_report if task.status == "completed" else "",
                     "tool_calls": task.tool_calls or [],
                     "subagent_contents": task.subagent_contents or {},
+                    "content": task.content or "",
                 }
 
                 if task.status == "completed" and task.final_report:

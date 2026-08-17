@@ -97,10 +97,12 @@ class OfficialDeepAgentAdapter:
         # ChatMessage.subagent_contents，供前端刷新后恢复子代理图层正文
         # （前端 subagentContents[subagentThreadId] 对齐）。
         self.subagent_contents: dict[str, dict[str, str]] = {}
-        # 主 agent 图层已输出 content 累计长度（position 注入依据，Task 2.1）：
-        # astream messages 循环中 AIMessageChunk content 追加；工具调用发起点
-        # 读 len(_main_content_len) 作为主 agent 图层 position。
-        self._main_content_len = 0
+        # 主 agent 图层累计正文（position 注入依据 + 过程信息展示权威源）：
+        # astream messages 循环中 AIMessageChunk content 追加累计（与 chat 模块
+        # content_state 同构）；工具调用发起点读 len(_main_content) 作为主 agent
+        # 图层 position。跨审批 resume / 业务等待挂起持续累计（同一 adapter 复用），
+        # 挂起/完成时随结果落库，供前端刷新后恢复主 agent 过程正文。
+        self._main_content = ""
         # 子代理工具条目会话级聚合（tool_call_id → entry）：落库权威来源。
         # 与 chat 模块 chat_service._subagent_tool_entries 同构——ResearchTask.tool_calls
         # 无写入点、ChatMessage.tool_calls 仅依赖审批重建路径落库会丢失图层字段
@@ -669,13 +671,49 @@ class OfficialDeepAgentAdapter:
                                         f"session={_session_id}, msg={_message_id}, err={e}"
                                     )
 
-                        # 主 agent 图层 content 累计（position 注入依据，Task 2.1）：
-                        # messages 模式 chunk 为主 agent 的模型输出（deepagents 子代理
-                        # 内部输出不进入主 stream），content 追加到 _main_content_len，
-                        # 供主 agent 图层工具调用 position 采集（触发瞬间已输出长度）。
-                        _chunk_content = getattr(msg_obj, "content", None) or ""
-                        if _chunk_content:
-                            self._main_content_len += len(_chunk_content)
+                        # 主 agent 图层累计正文（position 注入依据 + 过程信息权威源）：
+                        # messages 模式 chunk 含 AIMessageChunk（主 agent 模型输出）与
+                        # ToolMessage（工具返回文本）。**仅累计 AIMessageChunk**——
+                        # ToolMessage.content（如 spawn 返回的"子代理已启动..."）若混入
+                        # main_content，会同时污染：① 正文渲染（工具文本重复显示在
+                        # 主消息流）；② position 基准（len(_main_content) 掺入工具文本，
+                        # 与前端最终 content 错位 → 工具卡切段乱序，wait/子代理卡被排末尾）。
+                        # chat 链路同构实现（loop.py 用事件 content 累计，天然仅含 AI 文本）。
+                        from langchain_core.messages import AIMessageChunk
+
+                        _chunk_content = ""
+                        if isinstance(msg_obj, AIMessageChunk):
+                            _chunk_content = getattr(msg_obj, "content", None) or ""
+                            if _chunk_content:
+                                self._main_content += _chunk_content
+                                # 实时广播主 agent 累计正文（对齐 chat 链路 chunk →
+                                # STREAM_CONTENT_UPDATE），使前端 content 非空、
+                                # position 内联工具卡生效（乱序根因修复）。节流由
+                                # broadcast_stream_content 内部处理。
+                                try:
+                                    from Django_xm.apps.research.services.writeback import (
+                                        broadcast_stream_content,
+                                    )
+
+                                    _cfg_for_content = config_arg.get("configurable", {})
+                                    _content_session_id = (
+                                        _cfg_for_content.get("chat_session_id") or self.chat_session_id
+                                    )
+                                    _content_message_id = (
+                                        _cfg_for_content.get("assistant_message_id")
+                                        or getattr(self, "_assistant_message_id", "")
+                                    )
+                                    broadcast_stream_content(
+                                        session_id=_content_session_id,
+                                        task_id=self.thread_id,
+                                        message_id=_content_message_id,
+                                        content=self._main_content,
+                                    )
+                                except Exception as _content_broadcast_err:
+                                    logger.warning(
+                                        f"[OfficialDeepAgent] 广播主 agent 正文失败: "
+                                        f"err={_content_broadcast_err}"
+                                    )
 
                         # 检测到重复调用：中断当前流以注入警告（公共循环据
                         # control.warnings 中断 astream 并注入后重入）
@@ -697,6 +735,13 @@ class OfficialDeepAgentAdapter:
                                 )
                             else:
                                 control.retry_messages.extend(pending_retries)
+
+                        # 公共循环契约：process_chunk 必须是 async generator
+                        # （execution_loop 以 async for 迭代，chat 模块同构）。
+                        # research 工具/推理事件直接发布到实时频道，此处不产出
+                        # 事件，仅以 yield 标记为 async generator 防止协程被误迭代
+                        # （否则 TypeError: got coroutine）。
+                        yield
 
                     # updates 模式处理器（公共循环注入）
                     async def _handle_updates(mode_data, resume_values, suspend_box, control):
@@ -806,6 +851,12 @@ class OfficialDeepAgentAdapter:
                                                 for bi in interrupt_list:
                                                     resume_values[bi["interrupt_id"]] = False
 
+                        # 公共循环契约：handle_updates 必须是 async generator
+                        # （execution_loop 以 async for 迭代）。审批/业务等待处理
+                        # 直接写入 resume_values/suspend_box，此处不产出事件，
+                        # 仅以 yield 标记为 async generator（防 got coroutine）。
+                        yield
+
                     # 注入韧性消息到 graph state（重复调用警告 / 子代理重试指令）
                     async def _inject_state_messages(messages):
                         await self.graph.aupdate_state(config_arg, {"messages": messages})
@@ -911,6 +962,10 @@ class OfficialDeepAgentAdapter:
             if executor._current_degradation is not None:
                 result["degraded"] = True
                 result["degradation_level"] = executor._current_degradation.value
+            # 主 agent 累计正文携带到结果：由 research_runner 透传到 writeback
+            # 落库（ChatMessage.content / ResearchTask.content），供前端刷新后
+            # 恢复主 agent 过程正文（position 内联对齐的权威正文）。
+            result["main_content"] = self._main_content
             # Agent 图层嵌套规范 Task 1.5：子代理图层正文/思考携带到结果，
             # 由 research_runner 透传到 writeback_to_chat_message 落库
             if self.subagent_contents:
@@ -1147,10 +1202,10 @@ class OfficialDeepAgentAdapter:
         except Exception as e:
             logger.warning(f"[OfficialDeepAgent] 注册工具调用上下文失败 (tool={tool_name}, tc_id={tool_call_id}): {e}")
 
-        # position 采集（Task 2.1，按图层局部化，单一权威来源）：
+        # position 采集（按图层局部化，单一权威来源）：
         # - 子代理（subagent_thread_id 非空，spec D1）：position = len(该子代理图层
         #   已转发正文 content 长度；subagent_contents 按 subagent_thread_id 键累计)
-        # - 主 agent：position = len(主 agent 已输出 content 累计长度)
+        # - 主 agent：position = len(主 agent 已输出累计正文 _main_content)
         # 经 service.bind_position 写入 context（仅补全空字段），后续状态事件不覆盖
         # （keep_existing + bind_position 双保险，D3 硬约束）。
         _position: int | None = None
@@ -1158,7 +1213,7 @@ class OfficialDeepAgentAdapter:
             _sub_entry = self.subagent_contents.get(sub_subagent_thread_id) or {}
             _position = len(_sub_entry.get("content") or "")
         else:
-            _position = self._main_content_len
+            _position = len(self._main_content)
         if _position is not None:
             try:
                 service.bind_position(tool_call_id, _position)

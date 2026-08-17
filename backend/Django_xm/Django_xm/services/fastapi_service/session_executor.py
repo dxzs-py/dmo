@@ -167,11 +167,11 @@ class SessionExecutor:
             # 由调度器唤醒后新建协程续跑并在此真正结束时清理（见 _resume_after_subagent_wait）。
             # 其余路径（成功/失败/取消/崩溃）统一释放 checkpointer + 移除会话槽。
             if not self._suspended:
-                # 清理父工具上下文，避免污染其他会话（与 chat_service 生命周期对齐）
+                # 清理父工具上下文（仅本会话的 key，避免清空其他并发会话）
                 try:
                     from Django_xm.apps.tools.langchain.agent_context import clear_parent_tool_context
 
-                    clear_parent_tool_context()
+                    clear_parent_tool_context(thread_id)
                 except Exception:
                     pass
                 await self._release_checkpointer()
@@ -238,6 +238,18 @@ class SessionExecutor:
             return
         subagent_contents = baseline.get("subagent_contents") or {}
         subagent_tool_entries = baseline.get("subagent_tool_entries") or {}
+        main_content = baseline.get("content") or ""
+        if main_content and hasattr(agent, "_main_content"):
+            # 主代理累计正文恢复：position 注入依据（len(_main_content)）+ 最终写回权威源。
+            # 服务重启/审批恢复后新建 adapter 从空开始，若不恢复，恢复轮 position 回退为 0，
+            # 导致工具卡内联位置错乱（工具卡插入正文流头部而非原位置）。
+            current = getattr(agent, "_main_content", "") or ""
+            if len(main_content) > len(current):
+                agent._main_content = main_content
+                logger.info(
+                    f"[SessionExecutor] 恢复基线注入 main_content: thread_id={self.thread_id}, "
+                    f"len={len(main_content)}"
+                )
         if subagent_contents and hasattr(agent, "subagent_contents"):
             merged = dict(getattr(agent, "subagent_contents", {}) or {})
             merged.update(subagent_contents)
@@ -286,6 +298,7 @@ class SessionExecutor:
         return {
             "subagent_contents": dict(subagent_contents),
             "subagent_tool_entries": subagent_tool_entries,
+            "content": task.content or "",
         }
 
     async def _execute_and_handle(self, resume_command, query) -> None:
@@ -316,15 +329,16 @@ class SessionExecutor:
         self,
         subagent_contents: dict | None = None,
         subagent_tool_entries: dict | None = None,
+        main_content: str | None = None,
     ) -> None:
-        """挂起前落库研究内存态（子代理工具条目 + 图层正文）到 DB。
+        """挂起前落库研究内存态（子代理工具条目 + 图层正文 + 主代理累计正文）到 DB。
 
         与 chat 链路 ``_persist_chat_tool_calls`` 同构：审批中断挂起前
         （``_on_interrupt``）与业务等待挂起前（``_handle_suspend``）调用，
-        保证挂起期间刷新浏览器、服务重启恢复后可还原子代理工具卡与图层正文
-        （adapter 内存态随协程/实例销毁而丢失，DB 是唯一可还原源）。
+        保证挂起期间刷新浏览器、服务重启恢复后可还原子代理工具卡、图层正文
+        与主代理累计正文（adapter 内存态随协程/实例销毁而丢失，DB 是唯一可还原源）。
         """
-        if not subagent_contents and not subagent_tool_entries:
+        if not subagent_contents and not subagent_tool_entries and not main_content:
             return
         try:
             from Django_xm.apps.research.services.writeback import persist_research_progress
@@ -333,6 +347,7 @@ class SessionExecutor:
                 self.thread_id,
                 subagent_contents=subagent_contents,
                 subagent_tool_entries=subagent_tool_entries,
+                main_content=main_content,
             )
         except Exception:
             logger.warning(
@@ -358,6 +373,7 @@ class SessionExecutor:
         await self._persist_research_progress(
             getattr(result, "subagent_contents", None),
             getattr(result, "subagent_tool_entries", None),
+            getattr(result, "main_content", "") or None,
         )
 
         await _update_task_status(
@@ -708,6 +724,7 @@ class SessionExecutor:
             await self._persist_research_progress(
                 getattr(agent, "subagent_contents", None),
                 getattr(agent, "_subagent_tool_entries", None),
+                getattr(agent, "_main_content", "") or None,
             )
         # 状态标签实时同步：进入"等待审批"
         await _update_task_status(self.thread_id, {"status": "awaiting_approval", "current_step": "awaiting_approval"})
@@ -815,11 +832,12 @@ class SessionExecutor:
             )
             await self._publish_status_change("completed", final_report=result.final_report)
             await self._writeback_and_broadcast(
-                result.final_report,
+                result.main_content or result.final_report,
                 success=True,
                 reasoning_content=result.reasoning,
                 subagent_contents=result.subagent_contents,
                 subagent_tool_entries=result.subagent_tool_entries,
+                final_report=result.final_report,
             )
             await self._schedule_sandbox_cleanup()
             return
@@ -861,6 +879,7 @@ class SessionExecutor:
         reasoning_content: str = "",
         subagent_contents: dict | None = None,
         subagent_tool_entries: dict | None = None,
+        final_report: str = "",
     ) -> None:
         """回写 ChatMessage + 广播 stream_completed（聊天深度研究场景）。"""
         if not self.session_id:
@@ -890,10 +909,11 @@ class SessionExecutor:
                 self.session_id,
                 self.thread_id,
                 success=success,
-                final_report=content if success else None,
+                final_report=final_report if success else None,
                 error=None if success else content,
                 message_id=message_id,
                 user_id=task.created_by_id,
+                content=content if success else "",
             )
         except Exception as e:
             logger.warning(f"[SessionExecutor] 回写 ChatMessage 失败: {e}")
@@ -1031,11 +1051,32 @@ class SessionExecutor:
             system_prompt = f"{DEEP_RESEARCH_SYSTEM_PROMPT}\n\n---\n\n{research_context}"
 
         # 5. 组装工具列表与 AgentConfig
-        tools = []
-        if retriever_tool:
+        # 三分类组合加载（与 chat 代理模式 ToolService.get_tools 对齐）：
+        #   系统自带（standard 层，visibility=core）+ 按开关（网络搜索，
+        #   visibility=switch）+ 用户选择（selected_tools，visibility=selectable，
+        #   由 extra_tools 加载）+ 文档检索（retriever）。
+        # 三类 visibility 天然不重合；config.tools 必须传「完整组合」，否则
+        # resolve_tools 的显式工具集分支（config.tools 非空即直接返回）会丢失
+        # 系统自带工具——用户选择了任一工具后主 agent 只剩用户选的 + spawn/wait。
+        from Django_xm.apps.tools import get_tools_for_request_async as _get_tools_for_request
+
+        tools = await _get_tools_for_request(
+            use_tools=True,
+            use_web_search=params.get("enable_web_search", True),
+            use_mcp=False,  # MCP 工具由 extra_tools（用户选择类）单独加载
+            user_id=self.user_id,
+            tool_tier="standard",
+        )
+        _names = {getattr(t, "name", "") for t in tools}
+        if retriever_tool and getattr(retriever_tool, "name", "") not in _names:
             tools.append(retriever_tool)
+            _names.add(getattr(retriever_tool, "name", ""))
         if extra_tools:
-            tools.extend(extra_tools)
+            for _t in extra_tools:
+                _n = getattr(_t, "name", "")
+                if _n and _n not in _names:
+                    tools.append(_t)
+                    _names.add(_n)
 
         tool_config = {
             "use_tools": True,
@@ -1071,12 +1112,14 @@ class SessionExecutor:
         agent = await agent_hub_create(config)
 
         # 设置父工具上下文：spawn_sub_agent 读取此处继承主 agent 工具集与深度思考参数
-        # （深度研究此前未设置 → 子代理仅得基础工具；此处与 chat_service 对齐）
+        # （深度研究此前未设置 → 子代理仅得基础工具；此处与 chat_service 对齐。
+        # 按 thread_id 隔离存储，多任务并发互不清空。）
         try:
             from Django_xm.apps.tools.langchain.agent_context import set_parent_tool_context
 
             main_tools = getattr(agent, "original_tools", None) or (tools if tools else None) or []
             set_parent_tool_context(
+                thread_id,
                 main_tools,
                 {
                     "use_web_search": params.get("enable_web_search", True),

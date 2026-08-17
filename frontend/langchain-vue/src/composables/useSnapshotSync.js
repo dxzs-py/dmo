@@ -280,6 +280,23 @@ function createSnapshotSyncInstance({ kind, id }) {
         ) {
           sessionStore.setApprovalToToolCall(id, toolCallId, backendTc.approval)
           reconciledCount++
+        } else if (
+          // position/seq 完整性补齐（Agent 图层嵌套规范 D3）：
+          // 本地条目由 WebSocket 事件注入时可能缺失 position/seq（事件链路掉字段），
+          // 快照是权威补全源。position/seq 首次写入后永久不变（keep_existing），
+          // 用快照补齐缺失字段不会覆盖本地已有值，也不会改动本地更新的状态。
+          (typeof localTc.position !== 'number' && typeof backendTc.position === 'number') ||
+          (typeof localTc.seq !== 'number' && typeof backendTc.seq === 'number')
+        ) {
+          const patch = { messageBackendId: localTc.messageBackendId }
+          if (typeof localTc.position !== 'number' && typeof backendTc.position === 'number') {
+            patch.position = backendTc.position
+          }
+          if (typeof localTc.seq !== 'number' && typeof backendTc.seq === 'number') {
+            patch.seq = backendTc.seq
+          }
+          sessionStore.addOrUpdateToolCall(id, patch)
+          reconciledCount++
         }
       } else {
         // 本地缺失：快照为终态时走 result 路径（updateOrAddToolResult），否则走 add 路径（addOrUpdateToolCall）
@@ -440,6 +457,20 @@ function createSnapshotSyncInstance({ kind, id }) {
       const researchStore = useResearchStore()
       researchStore.setTaskToolCallsFromSnapshot(id, backendToolCalls)
       researchStore.setTaskSubagentContentsFromSnapshot(id, subagentContents)
+      // 主 agent 累计正文（过程信息权威源，对齐 ChatMessage.content）：
+      // 从 status 接口快照同步，供深度研究详情页 InlineToolCallContent 展示过程正文。
+      if (data.content !== undefined) {
+        researchStore.setTaskStatus(id, { content: data.content })
+      }
+      // 来源/关联会话补齐（ResearchTaskSerializer 同规则：session_id 非空 → chat）：
+      // taskInfo.source 决定详情页来源标签；taskInfo.sessionId 决定 taskToolCalls 的
+      // sessionStore 分支（聊天触发的深度研究必须从 session 消息读取工具卡/正文）。
+      if (data.source !== undefined) {
+        researchStore.setTaskStatus(id, { source: data.source })
+      }
+      if (data.sessionId !== undefined) {
+        researchStore.setTaskStatus(id, { sessionId: data.sessionId })
+      }
 
       logger.info(
         `[SnapshotSync] task=${id} 快照校对完成: ${backendToolCalls.length} 个工具调用`

@@ -149,8 +149,13 @@ const hasSpawnTool = computed(() => {
 })
 
 watch(hasSpawnTool, (has) => {
-  if (has && sessionStore.currentSessionId) {
-    fetchSubagents(sessionStore.currentSessionId)
+  if (!has) return
+  // 父线程 id 与后端子代理 parent_thread_id 权威一致：
+  // - 深研模式（聊天内触发）：子代理挂在 research task 下 → researchTaskId
+  // - 代理模式（chat/learning）：子代理挂在会话下 → currentSessionId
+  const parentThreadId = props.message.researchTaskId || sessionStore.currentSessionId
+  if (parentThreadId) {
+    fetchSubagents(parentThreadId)
   }
 }, { immediate: true })
 

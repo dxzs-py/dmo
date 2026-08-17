@@ -785,6 +785,7 @@ class ChatService:
         from Django_xm.apps.tools.langchain.agent_context import clear_parent_tool_context, set_parent_tool_context
 
         set_parent_tool_context(
+            data.get("session_id") or self.thread_id or "",
             tools,
             {
                 "use_web_search": data.get("use_web_search", False),
@@ -1251,7 +1252,7 @@ class ChatService:
         ):
             yield event
 
-        clear_parent_tool_context()
+        clear_parent_tool_context(data.get("session_id") or self.thread_id or "")
 
     async def _finalize_stream_response(
         self,

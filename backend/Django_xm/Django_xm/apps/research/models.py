@@ -67,6 +67,11 @@ class ResearchTask(AuditModel):
         default=dict, blank=True, null=True, verbose_name="子代理正文累计",
         help_text="字典结构，key 为 subagent_thread_id，value 为 {content, reasoning_content}，与 ChatMessage.subagent_contents 格式一致"
     )
+    # 主代理累计正文（过程信息展示权威源，与 ChatMessage.content 语义一致）：
+    # 深度研究主 agent 在多个模型调用轮次中输出的正文累计，供前端详情页
+    # 展示"过程信息"（对齐聊天模块代理模式），并作为工具卡 position 内联的
+    # 权威正文（刷新后恢复）。
+    content = models.TextField(blank=True, default="", verbose_name="主代理过程正文")
 
     class Meta:
         db_table = "research_task"

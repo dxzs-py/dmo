@@ -74,6 +74,15 @@ class TaskManager:
                 "enable_web_search": task.enable_web_search,
                 "enable_doc_analysis": task.enable_doc_analysis,
                 "final_report": task.final_report if task.status == "completed" else "",
+                # 主代理累计正文（过程信息权威源，对齐 ChatMessage.content）：
+                # 详情页打开时快照校对（useSnapshotSync task 分支）据此补全
+                # researchStore.taskInfo.content，保证独立深研模式过程正文实时可见。
+                "content": task.content or "",
+                # 来源推导（与 ResearchTaskSerializer.get_source 同规则）：
+                # 有 session_id 视为聊天触发（chat），否则独立研究（standalone）。
+                # 前端详情页来源标签与 taskToolCalls 的 sessionStore 分支依赖该字段。
+                "source": "chat" if task.session_id else "standalone",
+                "session_id": task.session_id,
             }
 
             self._cache[task_id] = status_data
@@ -111,6 +120,10 @@ class TaskManager:
                 task.status = self._map_status(status_data["status"])
             if final_report:
                 task.final_report = final_report
+            content = status_data.get("content") or ""
+            if content:
+                # 主代理累计正文（过程信息权威源，对齐 ChatMessage.content）
+                task.content = content
             error = status_data.get("error") or ""
             if error:
                 # 模型校验限制 5000 字符，超长截断避免 ValidationError 导致状态丢失
