@@ -121,3 +121,55 @@
 - 本轮正常审批链路全通过；超时恢复路径（session_manager collect 回退）代码已加载，上轮已实时验证：超时后子代理收到 ToolMessage、父代理正常汇总
 - 结论：问题 6 修复生效，任务不再因审批超时永久挂起
 
+---
+
+## 2026-08-17 子代理正文双写修复验证（会话 5f29279f-11f0-4b86-b4ca-737759e09f73 / msg 3530，3 浏览器）
+
+### 场景：chat 代理模式「并行 2 子代理（ollama list / ollama ps）+ wait_for_subagent」实测
+- 触发页 2 → 2×spawn 审批逐个确认 → 2×shell_exec（高危）审批确认 → 子代理完成 → wait_for 恢复 → 父代理汇总
+
+### 修复验证结果（spec: fix-subagent-content-dedup-and-md-render）
+1. **子代理正文单份（核心修复生效）**：
+   - DB 权威（msg 3530 subagent_contents）：subagent_783a8588f68843ef=1248、subagent_c1baaaf980944bd7=426
+   - 顶层与版本快照一致（1248/426，均单份）
+   - live 页 2 展开子代理卡：正文「我来执行 ollama list 命令...」各出现 1 次，无 [段][段] 双写
+   - 刷新页 4 展开子代理卡：正文与 live 一致（单份，头部/尾部完整）
+   - 结论：`_applySubagentContent` 幂等单次追加 + D5 引用收敛修复生效
+2. **畸形表格渲染为 `<table>`（修复生效）**：父代理汇总中 summary1 的畸形表格
+   （表头 4 列/分隔行 `|---|`、`| （空） |` 单列行）现全部渲染为真实表格
+   （模型名称 4 列 / 类型 3 列 / NAME 6 列 / 项目 2 列），不再显示原始 `|` 文本
+3. **深度研究模块核查（代码级）**：
+   - researchStore.setTaskSubagentContent 单 entry 追加、无 version 双写 → 结构上无重复；
+     已统一为新对象追加（防共享引用同类隐患）
+   - DeepResearchView 聊天关联场景读 message.subagentContents → 继承 chat 修复
+   - 深度研究 SSE 不处理 stream_subagent_content → 无 SSE+WS 双通道重复投递
+   - useSnapshotSync._reconcileMessageField 版本同步补齐 subagentContents（同族缺口已修）
+
+### 问题 7（新发现，待确认）：主消息 content 出现两代回复拼接
+- 现象：父代理汇总消息 content 含两代回复：[段1+段2+段3+summary1][段1+段2+段3+summary2]，
+  summary1 表格畸形且结尾截断（"…或者加载模型"），summary2 表格规范且完整
+  （"…或者加载模型测试一下吗？"）
+- 数据实证：DB content 2428 字符；持久化日志 20:46:01 content_len=51 → 20:47:05 content_len=2418 一次性跳变
+- 后端日志：resume 轮 `[ChatExec] 业务等待恢复模式：以 Command(resume) 续跑`（20:46:56）+
+  `Agent 执行完成 - 模型调用: 1, 工具调用: 1`（20:47:01）——单次模型调用却输出两代回复
+- 初步判断：疑似模型行为（deepseek-v4-flash 单次生成内先输出截断草稿再重新生成完整回复），
+  与问题 C（wait_for 结果复述=模型行为）同族；子代理正文通道干净（1248/426 单份），
+  非事件双投递导致
+- 待办：复测确认；若复现且为代码路径（如 resume 流式追加），需在 backend 流式链路定位
+- 注：summary1 的畸形表格已被本轮 normalizeGfmTables 修复覆盖（实测渲染为真实表格）
+
+### 问题 7 复测（20:58 第二轮，会话 ab48e483 / msg 3532）：未复现
+- 同提示词（并行 2 子代理 ollama list/ps + wait_for_subagent）再次触发
+- 结果：DB content = 1086 字符（PostgreSQL length），**单代**（head "我来并行派发两个子代理执行任务。
+  两个子代理已并行启动，现在等待它们执行完成。两个子代理均已执行完成 ✅，以下是汇总结果："，
+  tail "…需要进一步查看某个模型的详细信息（如量化精度、参数量），或启动某个模型吗？😊"），
+  「我来并行派发」仅 1 次，汇总标题（🖥️ Ollama 状态汇总）仅 1 个，无两代拼接
+- 前端显示正常；子代理正文单份（DB subagent_contents：927/1564，顶层=版本）
+- 后端日志：resume 路径与上次一致（[ChatExec] 开始执行 + 业务等待恢复模式 Command(resume)，
+  Agent 执行完成 - 模型调用: 1），但模型本次只输出一代
+- persist 日志 content_len=2049（> DB 1086，口径差异待查，不影响 DB 落库正确性）；
+  对比上次 2418≈DB 2428（两代）——本次日志与 DB 差异较大，值得在后续排查 persist content_len 口径
+- **结论：问题 7 判定为模型偶发行为（deepseek-v4-flash resume 轮偶发输出两代回复），非确定性代码 bug；
+  本次未复现。若后续再复现，可在后端 SSE/astream 层加流式内容快照日志定位**
+
+
