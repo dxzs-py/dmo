@@ -2,7 +2,7 @@
   <div class="ai-node" :class="className">
     <div class="node-header">
       <span class="node-title">{{ title }}</span>
-      <el-tag v-if="status" :type="getStatusType(status)" size="small">
+      <el-tag v-if="status" :type="getTaskStatusTagType(status)" size="small">
         {{ status }}
       </el-tag>
     </div>
@@ -13,6 +13,8 @@
 </template>
 
 <script setup>
+import { getTaskStatusTagType } from '../../utils/researchTaskStatus'
+
 defineProps({
   className: {
     type: String,
@@ -27,16 +29,6 @@ defineProps({
     default: ''
   }
 })
-
-const getStatusType = (status) => {
-  const statusMap = {
-    'pending': 'info',
-    'running': 'warning',
-    'completed': 'success',
-    'failed': 'danger'
-  }
-  return statusMap[status] || 'info'
-}
 </script>
 
 <style scoped>

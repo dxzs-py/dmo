@@ -47,6 +47,43 @@ _merge_tool_calls_incremental = MODULE._merge_tool_calls_incremental
 _persist_to_db_sync = MODULE._persist_to_db_sync
 
 
+class MergeContentOverlapTests(unittest.TestCase):
+    """sse_generator._merge_content_with_overlap 尾部重叠去重测试。
+
+    恢复轮 checkpoint 重生成场景：挂起前 content 尾部与恢复轮首个 chunk 前缀
+    重叠时，直接 ``+=`` 会产生「三个三个」类重复，需去重拼接。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        sse_path = Path(__file__).resolve().parents[1] / "services" / "sse_generator.py"
+        spec = importlib.util.spec_from_file_location("sse_generator_under_test", sse_path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        # staticmethod：避免经实例访问时被绑定为方法（多传 self）
+        cls.merge = staticmethod(module._merge_content_with_overlap)
+
+    def test_normal_append_no_overlap(self):
+        self.assertEqual(self.merge("ABC", "DEF"), "ABCDEF")
+
+    def test_tail_overlap_dedup(self):
+        self.assertEqual(self.merge("汇总结果。三个", "三个子代理全部完成"), "汇总结果。三个子代理全部完成")
+
+    def test_partial_overlap_dedup(self):
+        self.assertEqual(self.merge("AABBCC", "BCCDEF"), "AABBCCDEF")
+
+    def test_full_overlap_keeps_existing(self):
+        self.assertEqual(self.merge("AB", "AB"), "AB")
+
+    def test_empty_chunk_idempotent(self):
+        self.assertEqual(self.merge("AB", ""), "AB")
+
+    def test_empty_existing_returns_chunk(self):
+        self.assertEqual(self.merge("", "CD"), "CD")
+
+
 class MergeToolCallsIncrementalTests(unittest.TestCase):
     """_merge_tool_calls_incremental 字段级状态演进合并测试。"""
 
@@ -240,7 +277,7 @@ class PersistToolCallsChangedTests(unittest.TestCase):
     """_persist_to_db_sync 变更检测测试（sys.modules 注入替身，避免 Django/DB 依赖）。"""
 
     @staticmethod
-    def _install_fakes(existing_tool_calls):
+    def _install_fakes(existing_tool_calls, existing_content=""):
         """构造 ChatSession/ChatMessage/timezone 替身模块并返回。"""
         chat_models = types.ModuleType("Django_xm.apps.chat.models")
         chat_models.ChatSession = type("ChatSession", (), {})
@@ -250,7 +287,7 @@ class PersistToolCallsChangedTests(unittest.TestCase):
         session_fake = SimpleNamespace(pk=1)
         message_fake = SimpleNamespace(
             id=1,
-            content="",
+            content=existing_content,
             tool_calls=list(existing_tool_calls),
             reasoning={},
             save=mock.MagicMock(),
@@ -356,6 +393,59 @@ class PersistToolCallsChangedTests(unittest.TestCase):
         self.assertEqual(result["tool_calls_changed"], True)
         self.assertEqual(result["tool_calls_count"], 2)
         message_fake.save.assert_called_once()
+
+
+class PersistContentAppendTests(unittest.TestCase):
+    """_persist_to_db_sync content 追加保留语义测试（修复流式累积段覆盖）。"""
+
+    def _run(self, existing_content, content):
+        chat_models, tz_module, message_fake = PersistToolCallsChangedTests._install_fakes(
+            [], existing_content
+        )
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "Django_xm.apps.chat.models": chat_models,
+                "django.utils.timezone": tz_module,
+            },
+        ):
+            result = _persist_to_db_sync("sess-1", None, content, [])
+        return result, message_fake
+
+    def test_prefix_content_extends(self):
+        """新内容以已有内容为前缀 → 直接采用新内容（正常流式累积 / 基线到位）。"""
+        result, message_fake = self._run("流式段A", "流式段A总结段B")
+        self.assertEqual(message_fake.content, "流式段A总结段B")
+        self.assertTrue(result["content_changed"])
+
+    def test_non_prefix_longer_content_appends(self):
+        """新内容更长但不含已有前缀（恢复轮从空重建）→ 追加保留历史段。"""
+        result, message_fake = self._run("流式段A", "总结段B内容")
+        self.assertEqual(message_fake.content, "流式段A总结段B内容")
+        self.assertTrue(result["content_changed"])
+
+    def test_shorter_non_prefix_keeps_existing(self):
+        """新内容更短且非前缀 → 保留已有版本（避免覆盖更长版本）。"""
+        result, message_fake = self._run("流式段A", "短")
+        self.assertEqual(message_fake.content, "流式段A")
+        self.assertFalse(result["content_changed"])
+        message_fake.save.assert_not_called()
+
+    def test_overlap_tail_dedup(self):
+        """新内容前缀与已有内容后缀重叠（恢复轮 checkpoint 重生成）→ 去重拼接。"""
+        result, message_fake = self._run("我来并行派发三个子代理分别执行任务，然后汇总结果。三个", "三个子代理全部完成！结果如下：")
+        self.assertEqual(
+            message_fake.content,
+            "我来并行派发三个子代理分别执行任务，然后汇总结果。三个子代理全部完成！结果如下：",
+        )
+        self.assertTrue(result["content_changed"])
+
+    def test_overlap_full_content_keeps_existing(self):
+        """新内容与已有内容完全重叠（仅尾部字符重放）→ 不产生净增长，保留已有。"""
+        result, message_fake = self._run("流式段A三个", "三个")
+        self.assertEqual(message_fake.content, "流式段A三个")
+        self.assertFalse(result["content_changed"])
+        message_fake.save.assert_not_called()
 
 
 if __name__ == "__main__":

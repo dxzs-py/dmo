@@ -28,13 +28,6 @@ REDIS_CHANNEL_PREFIX = "research:result:"
 APPROVAL_TIMEOUT_SECONDS = 300
 
 
-def _find_approval_by_interrupt_id(interrupt_id: str):
-    """按 interrupt_id 查询审批记录（审批创建幂等保护用）。"""
-    from Django_xm.apps.approvals.models import Approval
-
-    return Approval.objects.filter(interrupt_id=interrupt_id).first()
-
-
 @dataclass
 class ResearchResult:
     success: bool
@@ -47,10 +40,15 @@ class ResearchResult:
     reasoning: str = ""
     # 子代理图层正文/思考累计（Agent 图层嵌套规范 Task 1.5，来自 adapter.subagent_contents）
     subagent_contents: dict[str, dict[str, str]] | None = None
+    # 子代理工具条目会话级聚合（tool_call_id → entry，来自 adapter._subagent_tool_entries）：
+    # 图层字段贯通（subagent_thread_id/agent_name/depth + seq/position），
+    # 由 writeback 合并进 ChatMessage.tool_calls（乱序根源修复，与 chat 链路同构）
+    subagent_tool_entries: dict[str, dict] | None = None
     raw_result: dict[str, Any] | None = None
-    # 业务等待挂起（spec D4，非审批）：父 Graph 等待子代理结果，退出协程待调度器唤醒
+    # 业务等待挂起（spec D4，非审批）：父 Graph 等待子代理结果，退出协程待调度器唤醒。
+    # 支持批量（fan-out/fan-in）：一次等待多个子代理，全部终态后一次性恢复。
     suspended: bool = False
-    subagent_thread_id: str = ""
+    subagent_thread_ids: list[str] = None
     interrupt_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -110,191 +108,6 @@ def load_research_context(task_id: str, max_content_length: int = 12000) -> str:
 
         logging.getLogger(__name__).warning(f"加载研究上下文失败: {e}")
         return ""
-
-
-def execute_research(
-    agent,
-    query: str,
-    disable_llm_cache: bool = True,
-) -> ResearchResult:
-    """
-    公共研究执行逻辑
-
-    Args:
-        agent: 已创建的研究智能体
-        query: 研究查询
-        disable_llm_cache: 是否禁用 LLM Cache（避免缓存干扰研究结果）
-
-    Returns:
-        ResearchResult 标准化结果
-    """
-    saved_cache = None
-    if disable_llm_cache:
-        from langchain_core.globals import get_llm_cache, set_llm_cache
-
-        saved_cache = get_llm_cache()
-        set_llm_cache(None)
-
-    try:
-        with TokenUsageCallbackHandler() as cb:
-            result = agent.research(query, callbacks=[cb])
-
-        usage_data = {
-            "prompt_tokens": cb.prompt_tokens,
-            "completion_tokens": cb.completion_tokens,
-            "successful_requests": cb.successful_requests,
-        }
-        model_name = getattr(cb, "_current_model", "") or ""
-
-        success = result.get("success", True)
-        final_report = result.get("final_report", "")
-        error_message = result.get("error", "") if not success else ""
-
-        return ResearchResult(
-            success=success,
-            final_report=final_report,
-            files=result.get("files"),
-            state_files=result.get("state_files"),
-            usage_data=usage_data,
-            model_name=model_name,
-            error_message=error_message,
-            reasoning=getattr(agent, "accumulated_reasoning", ""),
-            raw_result=result,
-        )
-    finally:
-        if disable_llm_cache and saved_cache is not None:
-            from langchain_core.globals import set_llm_cache
-
-            set_llm_cache(saved_cache)
-
-
-async def create_approvals_for_interrupts(
-    interrupts_data,
-    *,
-    thread_id: str,
-    user_id: int | None = None,
-    chat_session_id: str | None = None,
-    message_id: str = "",
-    data: dict[str, Any] | None = None,
-    source: str | None = None,
-) -> str:
-    """为中断批量创建 Approval DB 记录（审批创建公共逻辑，执行器与 worker 复用）。
-
-    与 chat 模块统一：
-    - 共用 request_approval_async 创建 Approval DB 记录（统一持久化）
-    - 共用 build_approval_extra 构建审批元数据
-    - 幂等保护：同一 interrupt_id 已有已决断审批（非 PENDING）时不重置 state，
-      避免恢复执行中 agent 再次经过已决断 interrupt 暂停点时用户决策被覆盖
-
-    Args:
-        interrupts_data: 单个 interrupt dict 或 interrupt dict list
-        thread_id: 研究任务 ID 或 chat 会话 ID（= approval.source_id）
-        user_id: 任务归属用户 ID（用于 approval.user 外键）
-        chat_session_id: 关联的 chat 会话 ID（用于跨模块同步事件路由）
-        message_id: 关联的 chat message ID（前端用于精确定位消息）
-        data: 任务上下文数据（透传到 approval extra）
-        source: 审批来源（默认 deep_research；chat 子代理审批传 chat，
-            统一审批链路下主/子代理仅 source 语义不同，链路完全一致）
-
-    Returns:
-        str: 批次 ID（graph_interrupt_id），无有效审批时返回空字符串
-    """
-    # 兼容：单个 dict 自动包装为 list
-    if isinstance(interrupts_data, dict):
-        interrupts_data = [interrupts_data]
-
-    if not interrupts_data:
-        return ""
-
-    logger.info(
-        f"[ResearchApproval] 收到 {len(interrupts_data)} 个审批请求: "
-        f"tools={[i.get('tool_name', 'unknown') for i in interrupts_data]}, "
-        f"task_id={thread_id}"
-    )
-
-    from Django_xm.apps.approvals.models import Approval
-    from Django_xm.apps.approvals.services.approval_service import request_approval_async
-
-    # 提取批次 ID（graph_interrupt_id）和 langgraph_resume_id
-    first_interrupt = interrupts_data[0] if interrupts_data else {}
-    graph_interrupt_id = first_interrupt.get("graph_interrupt_id", "") or ""
-    # langgraph_resume_id = LangGraph Interrupt.id，作为 Command(resume=...) 的 KEY
-    langgraph_resume_id = first_interrupt.get("langgraph_resume_id", "") or ""
-
-    # 为每个 interrupt 创建 Approval DB 记录
-    for interrupt_data in interrupts_data:
-        interrupt_id = interrupt_data.get("interrupt_id", "")
-        if not interrupt_id:
-            logger.warning(f"[ResearchApproval] 跳过缺少 interrupt_id 的审批请求: {interrupt_data}")
-            continue
-
-        tool_name = interrupt_data.get("tool_name", "unknown")
-        tool_call_id = interrupt_data.get("tool_call_id", "") or interrupt_id
-
-        from Django_xm.apps.approvals.services.approval_service import build_approval_extra
-
-        base_extra: dict[str, Any] = {}
-        risk_level = interrupt_data.get("risk_level")
-        if risk_level:
-            base_extra["risk_level"] = risk_level
-        for field in ("parent_tool_call_id", "depth", "agent_name", "agent_path", "subagent_thread_id"):
-            val = interrupt_data.get(field)
-            if val is not None and val not in ("", []):
-                base_extra[field] = val
-
-        approval_data = {
-            "tool_name": tool_name,
-            "title": interrupt_data.get("title", "确认操作"),
-            "description": interrupt_data.get("description", ""),
-            "operation": interrupt_data.get("operation", ""),
-            "danger_level": interrupt_data.get("danger_level", "medium"),
-            "parameters": interrupt_data.get("parameters", {}) or interrupt_data.get("args", {}) or {},
-            "action": interrupt_data.get("action", Approval.ACTION_CONFIRM),
-            "session_id": chat_session_id,
-            "message_id": message_id,
-            "extra": build_approval_extra(
-                data or {},
-                tool_call_id=tool_call_id,
-                graph_interrupt_id=graph_interrupt_id,
-                langgraph_resume_id=langgraph_resume_id,
-                message_id=message_id,
-                base_extra=base_extra,
-            ),
-        }
-
-        # 幂等保护：同一 interrupt_id 已有已决断审批（非 PENDING）时跳过，不重置 state
-        _existing = await sync_to_async(_find_approval_by_interrupt_id)(interrupt_id)
-        if _existing is not None and _existing.state != Approval.STATE_PENDING:
-            logger.info(
-                f"[ResearchApproval] 审批已存在且已决断，跳过不重置: "
-                f"interrupt_id={interrupt_id}, tool={tool_name}, "
-                f"state={_existing.state}, task_id={thread_id}"
-            )
-            continue
-
-        try:
-            await request_approval_async(
-                source=source or Approval.SOURCE_DEEP_RESEARCH,
-                source_id=thread_id,
-                interrupt_id=interrupt_id,
-                approval_data=approval_data,
-            )
-            logger.info(
-                f"[ResearchApproval] 已创建审批 DB 记录: "
-                f"interrupt_id={interrupt_id}, tool={tool_name}, "
-                f"task_id={thread_id}, risk_level={risk_level or 'controlled'}"
-            )
-        except Exception:
-            logger.exception(
-                f"[ResearchApproval] 创建审批 DB 记录失败: "
-                f"interrupt_id={interrupt_id}, tool={tool_name}, task_id={thread_id}",
-            )
-
-    logger.info(
-        f"[ResearchApproval] 已处理 {len(interrupts_data)} 个审批请求: "
-        f"task_id={thread_id}, graph_interrupt_id={graph_interrupt_id}"
-    )
-    return graph_interrupt_id
 
 
 async def execute_research_async(
@@ -375,9 +188,10 @@ async def execute_research_async(
             error_message=error_message,
             reasoning=getattr(agent, "accumulated_reasoning", ""),
             subagent_contents=result.get("subagent_contents"),
+            subagent_tool_entries=result.get("subagent_tool_entries"),
             raw_result=result,
             suspended=suspended,
-            subagent_thread_id=result.get("subagent_thread_id", ""),
+            subagent_thread_ids=result.get("subagent_thread_ids", []) or [],
             interrupt_id=result.get("interrupt_id", ""),
         )
     finally:
@@ -569,111 +383,9 @@ def finalize_research(
 
 # ---------------------------------------------------------------------------
 # 审批批次决策与执行器恢复辅助
+# （collect_batch_decisions / finalize_batch_approvals 已收敛到
+#   common.approval_batch，仅保留 self_heal_expired_approvals 研究专属）
 # ---------------------------------------------------------------------------
-
-
-def collect_batch_decisions(thread_id: str, graph_interrupt_id: str) -> tuple[dict, bool]:
-    """收集同批次所有审批决策。
-
-    批量 interrupt 场景：一个 interrupt 包含多个工具审批，
-    所有工具审批完成后才能恢复 agent。
-
-    Args:
-        thread_id: 研究任务 ID
-        graph_interrupt_id: 批次 ID
-
-    Returns:
-        (resume_by_interrupt, all_resolved)
-        - resume_by_interrupt: {langgraph_resume_id: {tool_call_id: bool}}
-          Command(resume=...) 的 key 必须是 LangGraph Interrupt.id（langgraph_resume_id）
-        - all_resolved: 是否所有审批都已决断（approved/rejected/timeout）
-    """
-    from Django_xm.apps.approvals.models import Approval
-
-    batch_approvals = Approval.objects.filter(
-        source=Approval.SOURCE_DEEP_RESEARCH,
-        source_id=thread_id,
-        extra__graph_interrupt_id=graph_interrupt_id,
-    )
-
-    resume_by_interrupt: dict[str, dict[str, bool]] = {}
-    all_resolved = True
-
-    for approval in batch_approvals:
-        extra = approval.extra if isinstance(approval.extra, dict) else {}
-        tc_id = extra.get("tool_call_id", approval.interrupt_id)
-        langgraph_id = extra.get("langgraph_resume_id", graph_interrupt_id)
-
-        if approval.state == Approval.STATE_APPROVED:
-            resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = True
-        elif approval.state in (Approval.STATE_PROCESSING, Approval.STATE_WAITING):
-            # PROCESSING/WAITING 实际决策写入 extra._approved（approval_service.resume_approval），
-            # 缺失 _approved（历史兼容）时默认视为确认（True）
-            _approved = extra.get("_approved")
-            resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = bool(
-                _approved is None or _approved is True
-            )
-        elif approval.state == Approval.STATE_REJECTED:
-            resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = False
-        elif approval.state == Approval.STATE_TIMEOUT:
-            # 超时决策标记（TIMEOUT_DECISION）：与拒绝（False）区分，
-            # middleware 据以注入"审批超时"ToolMessage（而非"用户已拒绝"），
-            # agent 收到后调整策略继续任务（P-TIMEOUT）。
-            from Django_xm.common.constants import TIMEOUT_DECISION
-
-            resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = TIMEOUT_DECISION
-        else:
-            all_resolved = False
-
-    return resume_by_interrupt, all_resolved
-
-
-def finalize_batch_approvals(all_resume_values: dict, thread_id: str) -> None:
-    """审批终态化：对批次内所有已决断的审批记录调用 complete_approval。
-
-    Args:
-        all_resume_values: {langgraph_resume_id: {tool_call_id: bool}} 或 {tool_call_id: bool}
-        thread_id: 研究任务 ID（用于日志）
-    """
-    from django.db import models
-
-    from Django_xm.apps.approvals.models import Approval
-    from Django_xm.apps.approvals.services.approval_service import complete_approval
-
-    flat_decisions: dict[str, bool] = {}
-    for key, val in all_resume_values.items():
-        if isinstance(val, dict):
-            flat_decisions.update(val)
-        elif isinstance(val, bool):
-            flat_decisions[key] = val
-
-    for tc_or_int_id, decision in flat_decisions.items():
-        try:
-            approval_qs = Approval.objects.filter(
-                source=Approval.SOURCE_DEEP_RESEARCH,
-                source_id=thread_id,
-            )
-            approval = approval_qs.filter(
-                models.Q(interrupt_id=tc_or_int_id) | models.Q(extra__tool_call_id=tc_or_int_id)
-            ).first()
-
-            if approval is None:
-                logger.debug(
-                    f"[Resume] 审批终态化跳过(未找到记录): tc_id={tc_or_int_id}, task={thread_id}"
-                )
-                continue
-
-            if approval.state in (Approval.STATE_PROCESSING, Approval.STATE_WAITING):
-                final_state = Approval.STATE_APPROVED if decision is True else Approval.STATE_REJECTED
-                complete_approval(approval.interrupt_id, final_state)
-                logger.info(
-                    f"[Resume] 审批终态化: tc_id={tc_or_int_id}, task={thread_id}, state={final_state}"
-                )
-        except Exception:
-            logger.warning(
-                f"[Resume] 审批终态化失败: tc_id={tc_or_int_id}, task={thread_id}",
-                exc_info=True,
-            )
 
 
 def self_heal_expired_approvals(thread_id: str, graph_interrupt_id: str) -> int:

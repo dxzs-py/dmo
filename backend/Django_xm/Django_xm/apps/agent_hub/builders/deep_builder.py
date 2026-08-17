@@ -218,25 +218,11 @@ class DeepAgentBuilder:
 
         middleware_stack = build_middleware(config)
 
-        # 显式注入 ApprovalMiddleware（核心安全组件，不依赖 CapabilityRegistry 可选启用）
-        # 设计原因：
-        # 1. CapabilityRegistry.build_middleware_for_agent 不会为 deep_research 注入 ApprovalMiddleware
-        #    （GuardrailsCapability.is_compatible 只接受 "base" 类型）
-        # 2. 审批机制是核心安全能力，应对所有有工具的 agent 强制启用，与 chat 模块保持统一
-        # 3. 统一三模块（chat / deep_research / learning）的审批入口，确保实时同步行为一致
-        from Django_xm.apps.agent_hub.approval.middleware import ApprovalMiddleware
+        # 显式注入 ApprovalMiddleware（核心安全组件，与 base_builder 共用
+        # ensure_approval_middleware，不依赖 CapabilityRegistry 可选启用）
+        from Django_xm.apps.agent_hub.builders.middleware_utils import ensure_approval_middleware
 
-        approval_middleware_instance: ApprovalMiddleware | None = None
-        for m in middleware_stack:
-            if isinstance(m, ApprovalMiddleware):
-                approval_middleware_instance = m
-                break
-        if approval_middleware_instance is None:
-            approval_middleware_instance = ApprovalMiddleware()
-            middleware_stack.append(approval_middleware_instance)
-            logger.info("已显式注入 ApprovalMiddleware 到 deep_research 中间件栈")
-        else:
-            logger.info("deep_research 中间件栈已包含 ApprovalMiddleware（来自 CapabilityRegistry）")
+        ensure_approval_middleware(middleware_stack)
 
         # 子代理不再内联到 deepagents graph（废弃阻塞 task 工具），
         # 统一通过 spawn_sub_agent 工具经 SubAgentRuntime 派生（独立 thread + checkpoint）。

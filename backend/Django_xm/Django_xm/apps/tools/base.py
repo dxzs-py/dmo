@@ -128,10 +128,10 @@ def is_subagent_wait_interrupt(value: Any) -> bool:
     """判断 interrupt 值是否为子代理业务等待类型（非审批，仅流程暂停）。
 
     ``wait_for_subagent`` 工具的 interrupt 值格式为：
-        {"_subagent_wait": True, "subagent_thread_id": "..."}
+        {"_subagent_wait": True, "subagent_thread_ids": [...]}
 
-    与审批中断完全隔离：不产出审批 UI，仅由调度器在子代理终态时
-    以 Command(resume) 唤醒父 Graph。
+    与审批中断完全隔离：不产出审批 UI，仅由调度器在全部子代理终态时
+    以 Command(resume) 唤醒父 Graph（批量 fan-out/fan-in）。
     """
     return isinstance(value, dict) and value.get("_subagent_wait") is True
 

@@ -54,6 +54,12 @@ class SessionManager:
         """启动：连接 Redis + 订阅信令 + 扫描恢复未完成任务。"""
         import redis.asyncio as redis_async
 
+        # 注册常驻主事件循环：主 loop 上的异步 checkpointer 连接池多会话共享，
+        # 不随单个会话释放（避免一个会话结束关闭其他挂起会话的连接，见问题L）。
+        from Django_xm.apps.ai_engine.services.checkpointer_factory import register_main_loop
+
+        register_main_loop()
+
         self._redis = redis_async.Redis.from_url(_get_signal_redis_url())
         self._pubsub = self._redis.pubsub()
         await self._pubsub.psubscribe(*SIGNAL_PATTERNS)
@@ -189,18 +195,15 @@ class SessionManager:
             return
 
         try:
-            if session_type == SESSION_TYPE_CHAT:
-                from Django_xm.services.fastapi_service.chat_executor_core import (
-                    _finalize_chat_batch_approvals,
-                )
+            from Django_xm.apps.approvals.models import Approval
+            from Django_xm.common.approval_batch import finalize_batch_approvals
 
-                finalize = _finalize_chat_batch_approvals
-            else:
-                from Django_xm.apps.research.services.research_runner import finalize_batch_approvals
-
-                finalize = finalize_batch_approvals
-
-            await sync_to_async(finalize)(decisions, parent_thread_id)
+            source = (
+                Approval.SOURCE_CHAT
+                if session_type == SESSION_TYPE_CHAT
+                else Approval.SOURCE_DEEP_RESEARCH
+            )
+            await sync_to_async(finalize_batch_approvals)(decisions, source, parent_thread_id)
             await get_subagent_runtime().resume(subagent_thread_id, decisions)
             logger.info(
                 f"[SessionManager] 子代理审批信令已恢复子代理: "

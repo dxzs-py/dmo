@@ -63,6 +63,10 @@ class ResearchTask(AuditModel):
         default=list, blank=True, verbose_name="工具调用历史",
         help_text="数组结构，每个元素为工具调用详情对象，与 ChatMessage.tool_calls 格式一致"
     )
+    subagent_contents = models.JSONField(
+        default=dict, blank=True, null=True, verbose_name="子代理正文累计",
+        help_text="字典结构，key 为 subagent_thread_id，value 为 {content, reasoning_content}，与 ChatMessage.subagent_contents 格式一致"
+    )
 
     class Meta:
         db_table = "research_task"

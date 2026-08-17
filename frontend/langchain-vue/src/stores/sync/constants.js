@@ -1,5 +1,5 @@
 import { ToolCallStatus, ApprovalState } from '@/types'
-import { TERMINAL_STATUSES } from '@/utils/toolCallStateMachine'
+import { TERMINAL_STATUSES, NON_TERMINAL_APPROVAL_STATES } from '@/utils/toolCallStateMachine'
 
 /**
  * 事件类型常量（与后端 event_schema.py EventType 枚举对应）
@@ -34,9 +34,8 @@ export const APPROVAL_STATE_MAP = {
  */
 export const TOOL_CALL_RESULT_STATUSES = TERMINAL_STATUSES
 
-/** 非终态审批状态集合（流式完成/深度研究完成时需清理的状态） */
-export const NON_TERMINAL_APPROVAL_STATES = [
-  ApprovalState.PENDING,
-  ApprovalState.PROCESSING,
-  ApprovalState.WAITING,
-]
+/** 非终态审批状态集合（流式完成/深度研究完成时需清理的状态）
+ *  唯一权威在 utils/toolCallStateMachine.js，此处仅 re-export 保持
+ *  messageIntegrity.js 既有导入路径不变。
+ */
+export { NON_TERMINAL_APPROVAL_STATES }

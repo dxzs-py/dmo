@@ -48,7 +48,7 @@ __all__ = [
     "extract_thinking_content",
     "finalize_tool_calls",
     "merge_existing_approval_fields",
-    "parse_approval_interrupt",
+    "parse_approval_interrupt_for_chat",
     "process_stream_chunk",
     "sync_usage_from_messages",
     "update_usage_and_tokens",
@@ -251,7 +251,7 @@ def extract_interrupt_ids(intr: Any) -> tuple:
     return interrupt_value, graph_interrupt_id, langgraph_resume_id
 
 
-def parse_approval_interrupt(
+def parse_approval_interrupt_for_chat(
     interrupt_value: Any,
     graph_interrupt_id: str = "",
     langgraph_resume_id: str = "",

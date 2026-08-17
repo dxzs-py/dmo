@@ -1,44 +1,36 @@
-# 测试问题记录
+# 测试问题记录（spec: unify-tool-call-display-parallel-subagents）
 
-## 2026-08-16 代理模式子代理审批验证（chat 模块）
+## 场景：chat 代理模式「并行派发 2 子代理 + wait_for_subagent 批量等待」实测（4 浏览器）
 
-### 问题F：chat 模块子代理内部工具审批创建失败（缺 chat_session_id）→ 子代理挂起无审批按钮 ✅ 已修复（待重启复测）
-- 现象：chat 代理模式输入"运行 ollama list … 尽量通过子代理完成任务"，主代理 spawn_sub_agent 审批通过后子代理启动，子代理内部 shell_exec（ollama list）审批创建失败：
-  `ERROR [ApprovalService] chat 模块审批缺少 chat_session_id，拒绝创建: interrupt_id=call_00_lea56srIbvZmc0zPzW3v5596, source_id=<chat_session_id>`
-  `ERROR [ResearchApproval] 创建审批 DB 记录失败`
-- 前端表现：子代理卡片展开详情内 shell_exec 显示"等待中"，无"确认执行/拒绝"审批控件；子代理挂起（interrupted_pending_user_input），任务卡住
-- 根因：configurable 源头契约只有 research 链路实现（research_runner.execute_research_async 构建时写入 chat_session_id/assistant_message_id），**chat 代理模式（chat_service.py）构建主会话 configurable 时未写入** → spawn 工具原样继承 → 子代理 configurable 缺 chat_session_id → langgraph_adapter._create_approvals_from_interrupts 取到 None → source=chat 时 request_approval_async 强制校验失败拒绝创建
-- 修复（源头统一契约，无兜底补丁）：
-  1. `apps/chat/services/chat_service.py`（L1128-1133）：构建主会话 configurable 时写入 `chat_session_id=_sub_session_id`、`assistant_message_id=_sub_message_id`，与 research_runner L345-350 模式对齐
-  2. `ai_engine/subagent_runtime/adapters/langgraph_adapter.py`：恢复直接从 configurable 读取（无 parent_thread_id 兜底），并补注释说明各模块源头契约
-- 状态：待重启复测（chat 代理模式 → 子代理 shell_exec 审批控件应出现）
-- 复测结果（2026-08-16 20:29 会话）：✅ 修复生效——spawn 审批通过后，子代理内部 shell_exec/file_reader/fs_write_file 审批控件全部正常出现并逐一通过执行，任务完整走完（ollama list → ollama run ornith:latest "你是谁" → ollama ps → file_reader 预读 → fs_write_file 写入 → file_reader 验证），test_approval.txt 成功写入 2961 字节报告，两浏览器实时同步一致
+### 问题 1（核心）：父代理总结正文渲染位置错乱 —— 总结段插入在子代理 1 与子代理 2 之间
+- 现象：父 agent 最终总结（"两个子代理均已执行完毕，以下是汇总结果：📋 任务汇总..."）被切段渲染为：
+  1. "两个子代理均已执行完毕，以下是汇总结果："（38 字符）渲染在子代理 1 卡之前
+  2. 其余总结（"📋 任务汇总 ✅ 子代理 1... ✅ 子代理 2... 综合结论"）渲染在子代理 1 卡与子代理 2 卡之间
+  3. wait_for_subagent 卡反而在最后
+- 期望：总结应在所有工具卡（含 wait_for_subagent）之后
+- 根因（前端内存数据实证）：
+  - message.content 被持久化/更新为**最终总结段**（1158 字符），流式段1（"好的，我将并行派发..."）不在 content 中
+  - mainToolCalls position 基准不一致：spawn1 pos=38（流式早期值），**spawn2 pos=undefined、wait_for pos=undefined**（position 注入缺失）
+  - splitContentByToolPositions：有 position 的 spawn1 切在 content[0:38]，无 position 的 spawn2/wait_for 追加**末尾**，收尾内容段（剩余总结）排在其前 → 总结段夹在卡1 与卡2 之间
+- 关键数据：msg id=3472 tool_calls = [spawn(38), spawn(undefined), wait_for(undefined), shell_exec×8(sub=None)]，content_len=1158
 
-### 问题G：子代理最终报告在详情卡片内重复显示两次 ✅ 已修复（待重启复测）
-- 现象：子代理完成后，详情卡片内出现两份完全相同的"📋 执行结果汇总"报告（页面15 uid=200_18~85 与 200_88~155 内容一致，浏览器16 同样重复）。第一份结尾多一个孤立 "✅ "。主消息流中主代理未输出任何总结
-- 根因（与问题H同根）：`SubAgentContentMiddleware.aafter_model`（subagent_support.py）每次模型调用后**无条件转发最后一条 AIMessage 的完整 content**。子代理每次工具审批 interrupt → 用户确认 → Command(resume) 恢复时，LangGraph **重放节点**，aafter_model 对**同一条 AIMessage 再次触发** → 同段文本重复推送；前端 `_applySubagentContent` 纯追加（entry.content += content）→ 重复显示。本次会话子代理共 6 次审批，每轮中间文本均重复
-- 修复（消息级幂等，与 tool_event_extractor 的 seen_tool_call_ids 惯例一致）：
-  1. `subagent_support.py`：middleware 转发时携带 `msg_id`（AIMessage.id，缺失时用 content 确定性哈希）
-  2. `chat_service.py` `_on_subagent_content`：闭包内 `_sent_subagent_msg_keys`（subagent_thread_id → set）按 msg_id 去重，重放消息跳过（闭包随回调对象跨 resume 持续存在）
-  3. `research/services/adapter.py` `_on_subagent_content`：同构幂等（self._sent_subagent_msg_keys），chat/research 统一能力
+### 问题 2：刷新后子代理工具卡脱离子代理卡（渲染为独立主代理工具卡）
+- 现象：刷新浏览器后，8 个 shell_exec 工具卡（子代理内部）渲染为消息流中的独立 ToolCallCard，不在子代理卡展开面板内
+- 根因：DB 持久化的 tool_calls 中 8 个 shell_exec 的 **subagent_thread_id 全部为 None**（sub=None）→ 前端 buildSubagentsFromMessage 按 subagentThreadId 归集失败 → 落入 mainToolCalls 渲染为主代理工具卡
+- 疑点：subagent_tool_entries 聚合时含 subagent_thread_id（tool_call_aggregation.py aggregate_tool_entry），持久化合并（stream_persistence.py L451-456 追加）链路中图层字段丢失
 
-### 问题H：子代理详情内工具调用/文本时序错乱 ✅ 已修复（与问题G同根，待重启复测）
-- 现象：子代理详情内部分内容不按时间顺序（同段文本重复两遍穿插在工具卡片之间）
-- 根因：与问题G相同——重复推送的文本 append 在新工具卡片之后；且后端 `bind_position` 按累计正文长度绑定 tool position，重复内容使 position 错位 → 工具卡片插错位置
-- 修复：同问题G（幂等去重后 content 不再重复，position 恢复准确）
+### 问题 3：刷新后执行中的自动通过工具卡（dir /x）完全丢失
+- 现象：dir /x（自动通过、执行中）在刷新后不渲染；python -c（高危待审批）从 Approval 表还原存在
+- 根因：wait_for_subagent 挂起时 _persist_chat_tool_calls 只落库挂起前条目；挂起后子代理内部执行的**自动通过**工具卡（无审批记录、无持久化）无数据源可还原；仅需审批卡（有 Approval 记录）经 enrich_tool_calls_with_approvals 还原
 
-### 问题I：chat 模式 wait_for_subagent 挂起后永不恢复（主代理收不到子代理结果）✅ 已修复（待重启复测）
-- 现象：子代理完成后 wait_for_subagent 卡"等待中"，主代理无最终总结，子代理卡片停"执行中"
-- 决定性日志：`20:33:10,774 子代理执行完成: subagent_6d523f9b4d0f4752, result_len=1350` + `20:33:10,775 lifecycle 60 无父 Graph 等待子代理（已收尾或未注册）`
-- 根因：wait 挂起/唤醒链路只在 research 实现（adapter.py subagent_wait_suspend + SessionExecutor._handle_suspend/_resume_after_subagent_wait），**chat 链路四处全缺**：
-  1. `loop.py run_stream_loop` 只处理审批 interrupt（_collect_chat_approvals），wait interrupt 被忽略 → 主代理协程直接结束
-  2. chat 从未注册 parent awaiter → 子代理完成时 lifecycle 找不到唤醒回调
-  3. chat 恢复路径（Command(resume) 重入）不存在
-  4. chat_service.run_agent_session 开头的"pending interrupt 自动拒绝"清理会误拒恢复场景的 wait interrupt
-- 修复（chat 与 research 同构，spec D4 统一能力）：
-  1. `loop.py`：新增 `_detect_subagent_wait_suspend`（复用 is_subagent_wait_interrupt）→ 写入 `data["_subagent_wait_suspend"]` 后退出流（不 resume）
-  2. `chat_service.py`：run_agent_session 挂起时返回挂起 dict（不发 context/end、不更新 tokens）+ 跳过 finalize_stream；新增 resume_command 恢复模式（graph_input=Command(resume)，跳过 pending interrupt 自动拒绝）
-  3. `chat_executor_core.py`：挂起时调用 `executor._handle_chat_wait_suspend`，finally 条件跳过 finalize/checkpointer 释放
-  4. `session_executor.py`：新增 `_handle_chat_wait_suspend`（置挂起态+竞态二次检查+注册 awaiter，与 research _handle_suspend 同构）；`_resume_after_subagent_wait` 按 session_type 分派（chat→params 注入 resume_command 重跑 _run_chat；research→原逻辑）；chat 恢复失败广播 STREAM_COMPLETED(success=False)（不用 research 专属 _handle_failure）
-- 验证：py_compile 全部通过；test_subagent_nesting.py + test_subagent_wait.py 26 passed；apps/chat 15 passed
-- 状态：待重启 fastapi 复测（预期：子代理完成后主代理自动恢复，wait_for_subagent 转"已完成"，主消息流输出最终总结，报告只显示一次）
+### 问题 4：子代理 1 卡状态未更新（任务完成后仍显示"执行中"）
+- 现象：任务全部完成（子代理 2 已完成、wait_for 已完成）后，子代理 1 卡仍显示"执行中"
+- 疑点：子代理 1（dir-lister）经多次审批 + 自动通过命令，SubAgentInstance.status 或前端推导状态未收敛为已完成；子代理 2（单轮审批）正常
+
+## 相关代码位置
+- 前端切段：frontend/langchain-vue/src/utils/inlineContent.js（splitContentByToolPositions）
+- 前端挂载：ChatMessage.vue（InlineToolCallContent + spawnedSubagentOf + orphans）
+- 前端归集：subagentAggregation.js（buildSubagentsFromMessage）
+- 后端持久化：stream_persistence.py（persist_stream_result / _merge_tool_calls_incremental）
+- 后端聚合：common/tool_call_aggregation.py（aggregate_tool_entry）
+- 后端 position 注入：apps/chat/services/sse_generator.py

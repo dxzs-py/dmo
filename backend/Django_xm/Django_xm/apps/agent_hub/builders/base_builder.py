@@ -31,15 +31,12 @@ class BaseAgentBuilder:
         tools = await resolve_tools(config)
         middleware_stack = build_middleware(config)
 
-        # 显式注入 ApprovalMiddleware（与 deep_builder 保持一致）
+        # 显式注入 ApprovalMiddleware（与 deep_builder 共用 ensure_approval_middleware）
         # 审批机制是核心安全能力，应对所有有工具的 agent 强制启用，与 chat/deep_research/learning 三模块统一
         try:
-            from Django_xm.apps.agent_hub.approval.middleware import ApprovalMiddleware
+            from Django_xm.apps.agent_hub.builders.middleware_utils import ensure_approval_middleware
 
-            has_approval = any(isinstance(m, ApprovalMiddleware) for m in middleware_stack)
-            if not has_approval:
-                middleware_stack.append(ApprovalMiddleware())
-                logger.info("已注入 ApprovalMiddleware 到 chat agent 中间件栈")
+            ensure_approval_middleware(middleware_stack)
         except Exception as e:
             logger.warning(f"ApprovalMiddleware 注入失败(非致命): {e}")
 
@@ -52,6 +49,13 @@ class BaseAgentBuilder:
         #   主 agent 工具事件由主链路唯一发布与持久化（spec D2 单路径）。
         # - SubAgentContentMiddleware：仅子代理捕获正文/中间思考流（主 agent 走主通道）。
         # 无 tools 时不挂（无工具即无子代理能力），避免多余开销。
+        #
+        # ⚠️ 顺序约束（langchain factory 倒序连边：注册 [..., ToolEvent, Content] →
+        # aafter_model 实际执行流 Content → ToolEvent，见 factory.py _add_middleware_edge
+        # 逆序链接）。Content 先转发本轮正文（累计到 subagent_contents）、ToolEvent 后
+        # 发 PENDING，position = PENDING 瞬间已累计正文长度 → 含本轮文本，与"文本在
+        # 前、工具在后"一致。ToolEvent 若排到 Content 之后注册（执行流反转为 ToolEvent
+        # 先），position 将少算本轮文本长度 → 前端内联错位。勿调整此顺序。
         if tools:
             try:
                 from Django_xm.apps.agent_hub.builders.subagent_support import (

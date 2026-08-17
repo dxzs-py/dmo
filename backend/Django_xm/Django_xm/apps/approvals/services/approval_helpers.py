@@ -35,7 +35,7 @@ def build_approval_index_item(apv):
                 action/user_input/source/source_id/chat_session_id/interrupt_id/created_at/expires_at
     - extra JSON：tool_call_id/message_id/graph_interrupt_id/tool_config 等
 
-    与 approval_service._build_approval_extra_fields 输出的字段集合对齐，
+    与 approval_service.build_approval_payload 输出的字段集合对齐，
     确保快照 API 返回的 approval 数据结构与 WebSocket 事件 approval payload 一致，
     非触发浏览器刷新后能拿到完整 UI 展示字段。
 
@@ -138,7 +138,7 @@ def _build_approval_payload_from_index(apv_info):
     确保前端 mergeApprovalNonNull 能正确合并 WebSocket 事件与快照 API 数据，
     避免快照 API 因字段缺失导致前端 approval 字段数不一致。
 
-    与 approval_service._build_approval_extra_fields 输出的字段集合对齐，
+    与 approval_service.build_approval_payload 输出的字段集合对齐，
     确保快照 API 返回的 approval 数据结构与 WebSocket 事件 approval payload 一致。
     供 reconstruct_tool_call_from_approval 与 enrich_tool_calls_with_approvals 复用，
     避免字段构造逻辑重复。
@@ -214,7 +214,7 @@ def reconstruct_tool_call_from_approval(approval_info):
     从索引项重建完整的 tool_call 项，作为统一回退数据源。
 
     approval 字段与 WebSocket 事件 approval payload 结构对齐
-    （approval_service._build_approval_extra_fields），包含
+    （approval_service.build_approval_payload），包含
     state/interrupt_id/tool_call_id/title/description/operation/danger_level/
     action/user_input/tool_name/parameters 等完整 UI 展示字段，
     确保重建的 tool_call 项与实时事件建立的 tool_call 项字段一致。

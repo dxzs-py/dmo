@@ -150,17 +150,11 @@ class ChatService:
             "tool_tier": data.get("tool_tier", TOOL_TIER_STANDARD),
         }
 
-    async def _abuild_user_content(self, data: dict[str, Any]) -> dict[str, Any]:
-        return await self._message_builder.abuild_user_content(data)
-
     def _build_user_content(self, data: dict[str, Any]) -> dict[str, Any]:
         return self._message_builder.build_user_content(data)
 
     async def _acreate_human_message(self, data: dict[str, Any]) -> HumanMessage:
         return await self._message_builder.acreate_human_message(data)
-
-    def _create_human_message(self, data: dict[str, Any]) -> HumanMessage:
-        return self._message_builder.create_human_message(data)
 
     def _load_research_context(
         self, research_task_id: str, user_id: int | None = None, session_id: str | None = None
@@ -326,55 +320,6 @@ class ChatService:
 
         return result
 
-    async def process_stream_chat_request(self, data: dict[str, Any]) -> AsyncGenerator[dict[str, Any], None]:
-        """流式聊天请求入口：初始化追踪器，分发模式，处理响应"""
-        from Django_xm.apps.ai_engine.services.cost_tracker import create_token_detail_tracker
-        from Django_xm.apps.ai_engine.services.usage_tracker import create_usage_tracker
-
-        model_name = data.get("model_name")
-        from Django_xm.apps.ai_engine.config import settings as ai_settings
-
-        tracker_model_id = model_name or ai_settings.openai_model
-        usage_tracker = create_usage_tracker(model_id=tracker_model_id)
-        token_detail_tracker = create_token_detail_tracker()
-        stream_start_time = time.time()
-
-        mode = data.get("mode", "agent")
-        session_id = data.get("session_id", "N/A")
-        msg_preview = data.get("message", "")[:80]
-        research_task_id = data.get("research_task_id", "")
-        logger.info(
-            f"[StreamChat] 开始处理: mode={mode}, session={session_id}, "
-            f"msg={msg_preview}..., research_task_id={research_task_id or '(无)'}"
-        )
-
-        yield {"type": "start", "message": "开始生成..."}
-
-        async for event in self._dispatch_by_mode(
-            data,
-            usage_tracker,
-            token_detail_tracker,
-        ):
-            yield event
-
-        context_info = build_context_info(usage_tracker, token_detail_tracker, stream_start_time)
-        yield {"type": "context", "data": context_info}
-        yield {"type": "end", "message": "生成完成"}
-        usage_tracker.log_summary()
-        token_detail_tracker.log_summary()
-
-        session_id_for_update = data.get("session_id")
-        if session_id_for_update is None:
-            raise ValueError("session_id is required for streaming chat")
-        await self._update_last_message_tokens(
-            session_id=session_id_for_update,
-            token_count=usage_tracker.get_total_tokens(),
-            token_detail=token_detail_tracker.get_token_detail(),
-            model=usage_tracker.model_id,
-            response_time=round(time.time() - stream_start_time, 2),
-        )
-        logger.info("流式聊天请求处理完成")
-
     async def run_agent_session(
         self,
         data: dict[str, Any],
@@ -384,7 +329,7 @@ class ChatService:
     ) -> None:
         """chat agent 单协程执行（FastAPI 执行服务调用，执行与连接解耦）。
 
-        与 process_stream_chat_request 同构，但事件经 broadcast 广播到 WS
+        与旧 SSE 流式入口同构，但事件经 broadcast 广播到 WS
         （不 yield 到 SSE），审批中断经 interrupt_handler 挂起等待信令。
 
         Args:
@@ -434,7 +379,7 @@ class ChatService:
         if wait_suspend:
             logger.info(
                 f"[ChatExec] 业务等待挂起返回: session={session_id}, "
-                f"subagent={wait_suspend.get('subagent_thread_id')}, "
+                f"subagents={wait_suspend.get('subagent_thread_ids')}, "
                 f"interrupt_id={wait_suspend.get('interrupt_id')}"
             )
             return dict(wait_suspend)
@@ -956,6 +901,11 @@ class ChatService:
         # 创建 StreamContext（流式可变状态封装，替代散布的局部变量）
         ctx = StreamContext()
         ctx.init_stream_state(data.get("_stream_state"))
+        # 业务等待恢复模式：以挂起前已持久化的 content 作为 ctx 累积基线，
+        # 使恢复轮最终 content = 基线 + 新段（与 content_state 基线一致），
+        # 最终落库与建议生成均基于完整累积正文。
+        if data.get("resume_content"):
+            ctx.current_message_content = data["resume_content"]
         # P25修复：注入 session_id / message_id，供 _handle_updates_chunk
         # 创建 Approval DB 记录时使用
         ctx.session_id = data.get("session_id", "")
@@ -1049,9 +999,43 @@ class ChatService:
                     config["configurable"]["agent_path"] = ["main"]
 
             _subagent_contents: dict[str, dict[str, str]] = {}
+            # 业务等待恢复模式：以挂起前已持久化的 subagent_contents 作为基线，
+            # 恢复轮在此基础上继续累计（子代理工具 position 采集与最终落库依据）。
+            if data.get("resume_subagent_contents"):
+                _subagent_contents = dict(data["resume_subagent_contents"])
             data["_subagent_contents"] = _subagent_contents
+            # 子代理工具条目会话级聚合（tool_call_id → entry）：落库权威来源。
+            # 主 ctx.tool_calls_map 只含主代理工具，子代理工具若仅依赖审批重建
+            # 路径落库会丢失图层字段（subagent_thread_id 等）且无审批的 SAFE 工具
+            # （fs_list_files 等）完全丢失 → 刷新后子代理卡片归集失败（乱序根源）。
+            # 与 _subagent_contents 同构：闭包跨审批 resume 持续，挂起前由
+            # _persist_chat_tool_calls 落库，恢复轮经增量合并（按 id）不丢历史。
+            _subagent_tool_entries: dict[str, dict] = {}
+            # 业务等待恢复模式：以挂起前已持久化的子代理工具条目作为基线，
+            # 恢复轮经增量合并（按 id）继续演进，避免挂起后新增的自动通过工具卡
+            # （无审批记录）无数据源可落库、子代理工具图层字段丢失。
+            if data.get("resume_subagent_tool_entries"):
+                _subagent_tool_entries = dict(data["resume_subagent_tool_entries"])
+            data["_subagent_tool_entries"] = _subagent_tool_entries
             _sub_session_id = data.get("session_id", "")
             _sub_message_id = str(data.get("_assistant_message_id") or data.get("message_id", ""))
+
+            async def _flush_subagent_snapshot() -> None:
+                """子代理数据实时落库（挂起前基线缺失的兜底修复）。
+
+                业务等待挂起落库（_persist_chat_tool_calls）发生在子代理执行前，
+                _subagent_contents / _subagent_tool_entries 为空；若仅靠挂起/结束
+                落库，子代理正文与图层字段（subagent_thread_id 等）中途丢失，
+                恢复轮从 DB 读不到基线 → 刷新后子代理卡归集失败、子代理工具卡
+                混入主切段乱序。每次子代理工具/正文事件聚合后调用，增量合并幂等。
+                """
+                from Django_xm.services.fastapi_service.chat_executor_core import _persist_chat_tool_calls
+
+                _cs_ref = data.get("_content_state_ref") or {}
+                try:
+                    await _persist_chat_tool_calls(data, _cs_ref, _sub_session_id, _sub_message_id)
+                except Exception as _e:
+                    logger.debug(f"[ChatExec] 子代理快照落库失败: err={_e}")
 
             async def _on_subagent_tool_event(event_type, tool_call_id, tool_name, **kwargs):
                 """chat 模式子代理工具事件转发回调（spec D1/D2）。
@@ -1106,6 +1090,31 @@ class ChatService:
                         f"[ChatExec] 子代理工具事件转发失败: tool={tool_name}, "
                         f"tc_id={tool_call_id}, err={_e}"
                     )
+                    return
+                # 落库条目聚合（图层字段贯通）：复用公共聚合函数（与 research 同构）。
+                # status/parameters/result 随事件演进，终态不可回退（审批 resume
+                # 重放 PENDING 不降级）；seq/position 由 aggregate_tool_entry 从
+                # ToolCallContext 权威源读取。
+                try:
+                    from Django_xm.common.tool_call_aggregation import aggregate_tool_entry
+
+                    aggregate_tool_entry(
+                        _subagent_tool_entries,
+                        tool_call_id,
+                        tool_name,
+                        event_type,
+                        parameters=parameters,
+                        result=kwargs.get("result"),
+                        error=kwargs.get("error"),
+                        subagent_thread_id=subagent_thread_id,
+                        agent_name=kwargs.get("agent_name") or "",
+                        depth=depth,
+                    )
+                    # 实时落库：子代理工具条目含图层字段（subagent_thread_id 等），
+                    # 挂起/恢复轮需从 DB 读到基线，否则刷新后归集失败（乱序根源）。
+                    await _flush_subagent_snapshot()
+                except Exception as _e:
+                    logger.debug(f"[ChatExec] 子代理工具条目聚合失败: tc_id={tool_call_id}, err={_e}")
 
             # 子代理消息幂等键集合（按 subagent_thread_id 分组）：审批 interrupt
             # 恢复时 LangGraph 重放节点，SubAgentContentMiddleware 会对同一条
@@ -1123,19 +1132,26 @@ class ChatService:
                 """
                 if not subagent_thread_id:
                     return
-                seen = _sent_subagent_msg_keys.setdefault(subagent_thread_id, set())
-                if msg_id and msg_id in seen:
+                from Django_xm.common.tool_call_aggregation import merge_subagent_content
+
+                _dup = merge_subagent_content(
+                    _subagent_contents,
+                    subagent_thread_id,
+                    content or "",
+                    reasoning_content or "",
+                    msg_id or "",
+                    _sent_subagent_msg_keys,
+                )
+                logger.info(
+                    f"[ChatExec] 子代理正文回调: subagent={subagent_thread_id}, msg_id={msg_id!r}, "
+                    f"dup={_dup}, seen_count={len(_sent_subagent_msg_keys.get(subagent_thread_id, set()))}, "
+                    f"content_len={len(content or '')}, content_prefix={(content or '')[:24]!r}"
+                )
+                if _dup:
                     logger.debug(
                         f"[ChatExec] 跳过重放子代理正文: subagent_thread_id={subagent_thread_id}, msg_id={msg_id}"
                     )
                     return
-                if msg_id:
-                    seen.add(msg_id)
-                entry = _subagent_contents.setdefault(subagent_thread_id, {"content": "", "reasoning_content": ""})
-                if content:
-                    entry["content"] = (entry.get("content") or "") + content
-                if reasoning_content:
-                    entry["reasoning_content"] = (entry.get("reasoning_content") or "") + reasoning_content
                 try:
                     from Django_xm.common.event_schema import EventSource, EventType
                     from Django_xm.common.realtime_events import publish_event
@@ -1156,6 +1172,9 @@ class ChatService:
                         session_id=_sub_session_id,
                         subagent_thread_id=subagent_thread_id or None,
                     )
+                    # 实时落库子代理正文：挂起/恢复轮需从 DB 读到 subagent_contents 基线，
+                    # 否则刷新后子代理正文丢失（信息错位/跑出卡片）。
+                    await _flush_subagent_snapshot()
                 except Exception as _e:
                     logger.warning(
                         f"[ChatExec] 广播子代理正文失败: subagent_thread_id={subagent_thread_id}, err={_e}"
@@ -1182,22 +1201,23 @@ class ChatService:
             # 单协程挂起模式（interrupt_handler 非 None）：run_stream_loop 内部
             # 在审批中断时挂起等待信令，Command(resume) 重入，AgentExecutor 韧性
             # 在整个会话生命周期持续生效。
-            if interrupt_handler is not None:
-                async def _loop_fn(_agent, _graph_input, _config, _ctx, _strategy, _data):
-                    async for _event in run_stream_loop(
-                        _agent,
-                        _graph_input,
-                        _config,
-                        _ctx,
-                        _strategy,
-                        _data,
-                        interrupt_handler=interrupt_handler,
-                    ):
-                        yield _event
+            # 统一经 run_stream_loop 接入公共执行循环骨架（spec D8），并注入
+            # AgentExecutor 的超时管理器与重复调用检测器（chat 补齐韧性）。
+            async def _loop_fn(_agent, _graph_input, _config, _ctx, _strategy, _data):
+                async for _event in run_stream_loop(
+                    _agent,
+                    _graph_input,
+                    _config,
+                    _ctx,
+                    _strategy,
+                    _data,
+                    interrupt_handler=interrupt_handler,
+                    timeout_mgr=executor.timeout_mgr,
+                    duplicate_detector=executor.duplicate_detector,
+                ):
+                    yield _event
 
-                loop_fn = _loop_fn
-            else:
-                loop_fn = run_stream_loop
+            loop_fn = _loop_fn
 
             async for event in executor.run(
                 loop_fn,

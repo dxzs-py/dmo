@@ -17,12 +17,7 @@ import {
   setLastMessageField,
   addLastMessageFieldItem,
   getMessageByIndex,
-  setMessageField,
-  addMessageFieldItem,
-  appendToMessage,
   createMessageVersion,
-  addOrUpdateToolCallInMessageByIdx,
-  updateOrAddToolResultInMessageByIdx,
   // Map 版本工具函数（与 researchStore 共用，toolCallMap 作为唯一真相源）
   addOrUpdateToolCallInMap,
   updateOrAddToolResultInMap,
@@ -147,9 +142,6 @@ export const useSessionStore = defineStore('session', () => {
   const _setLastField = (sessionId, field, value) => setLastMessageField(sessions.value, sessionId, field, value)
   const _addLastFieldItem = (sessionId, field, item) => addLastMessageFieldItem(sessions.value, sessionId, field, item)
   const _getByIndex = (sessionId, idx) => getMessageByIndex(sessions.value, sessionId, idx)
-  const _setField = (sessionId, idx, field, value) => setMessageField(sessions.value, sessionId, idx, field, value)
-  const _addFieldItem = (sessionId, idx, field, item) => addMessageFieldItem(sessions.value, sessionId, idx, field, item)
-  const _append = (sessionId, idx, content) => appendToMessage(sessions.value, sessionId, idx, content)
 
   /**
    * 获取或创建指定 session 的 toolCallMap
@@ -217,12 +209,26 @@ export const useSessionStore = defineStore('session', () => {
         if (!key || seenKeys.has(key)) continue
         seenKeys.add(key)
         const existing = targetMap.get(key)
-        orderedEntries.push([
-          key,
-          existing
-            ? existing
-            : { ...tc, messageBackendId: msg.backendId?.toString() },
-        ])
+        if (existing) {
+          // position 是不可变字段（Agent 图层嵌套规范 D3），API 快照为权威来源。
+          // 现有条目（WebSocket 事件先写入）缺失 position 时从 API 快照回填
+          // （position=0 是合法值，用 typeof 判断而非真值）；其余动态字段
+          // （status/approval）仍保留实时值不覆盖。
+          if (typeof existing.position !== 'number' && typeof tc.position === 'number') {
+            existing.position = tc.position
+          }
+          // 图层字段回填（spec D1）：子代理卡归集依据 subagentThreadId，事件先写
+          // 入的现有条目缺失时从 API 快照回填（后端实时落库后快照为权威来源）。
+          if (!existing.subagentThreadId && tc.subagentThreadId) {
+            existing.subagentThreadId = tc.subagentThreadId
+          }
+          if (!existing.agentName && tc.agentName) {
+            existing.agentName = tc.agentName
+          }
+          orderedEntries.push([key, existing])
+        } else {
+          orderedEntries.push([key, { ...tc, messageBackendId: msg.backendId?.toString() }])
+        }
       }
     }
     // 保留 API 快照未覆盖的实时条目（WebSocket 刚插入的最新工具），追加末尾
@@ -305,20 +311,6 @@ export const useSessionStore = defineStore('session', () => {
       }
     }
   }
-
-  const addSourceToMessage = (sessionId, messageIndex, source) => _addFieldItem(sessionId, messageIndex, 'sources', source)
-  const setSourcesToMessage = (sessionId, messageIndex, sources) => _setField(sessionId, messageIndex, 'sources', sources)
-  const setPlanToMessage = (sessionId, messageIndex, plan) => _setField(sessionId, messageIndex, 'plan', plan)
-  const setChainOfThoughtToMessage = (sessionId, messageIndex, cot) => _setField(sessionId, messageIndex, 'chainOfThought', cot)
-  const setReasoningToMessage = (sessionId, messageIndex, reasoning) => _setField(sessionId, messageIndex, 'reasoning', reasoning)
-  const setSuggestionsToMessage = (sessionId, messageIndex, suggestions) => _setField(sessionId, messageIndex, 'suggestions', suggestions)
-  const setContextToMessage = (sessionId, messageIndex, context) => _setField(sessionId, messageIndex, 'context', context)
-  const addToolCallToMessage = (sessionId, messageIndex, toolCall) => _addFieldItem(sessionId, messageIndex, 'toolCalls', toolCall)
-  // 数组版入口（按消息索引写入）：仅保留给重新生成 SSE 流等"目标消息非最后一条 assistant"
-  // 的场景（chat.js regenerateMessage 调用）。合并/保护逻辑已与 Map 版共用
-  // _mergeExistingToolCall / _findMatchingToolCall，不再存在双实现漂移（Task 5.5）。
-  const addOrUpdateToolCallToMessage = (sessionId, messageIndex, data) => addOrUpdateToolCallInMessageByIdx(sessions.value, sessionId, messageIndex, data)
-  const updateOrAddToolResultToMessage = (sessionId, messageIndex, data) => updateOrAddToolResultInMessageByIdx(sessions.value, sessionId, messageIndex, data)
 
   const currentSession = computed(() => {
     return sessions.value.find(s => s.id === currentSessionId.value)
@@ -1089,9 +1081,24 @@ export const useSessionStore = defineStore('session', () => {
       const key = tc.toolCallId || tc.id
       if (!key) continue
       const existing = oldMap.get(key)
-      newMap.set(key, existing
+      const merged = existing
         ? { ...tc, ...existing, messageBackendId: msgBackendId }
-        : { ...tc, messageBackendId: msgBackendId })
+        : { ...tc, messageBackendId: msgBackendId }
+      // position 是不可变字段（Agent 图层嵌套规范 D3）：版本快照 tc 为权威基底，
+      // 旧 Map 条目（existing）缺失 position 时不得覆盖快照的 number position
+      // （position=0 是合法值，用 typeof 判断而非真值）。
+      if (typeof merged.position !== 'number' && typeof tc.position === 'number') {
+        merged.position = tc.position
+      }
+      // 图层字段回填（spec D1）：旧 Map 实时条目缺失 subagentThreadId/agentName 时
+      // 从版本快照回填（子代理卡归集依据），避免快照有而实时条目缺时丢失。
+      if (!merged.subagentThreadId && tc.subagentThreadId) {
+        merged.subagentThreadId = tc.subagentThreadId
+      }
+      if (!merged.agentName && tc.agentName) {
+        merged.agentName = tc.agentName
+      }
+      newMap.set(key, merged)
     }
     toolCallsMap.value.set(sessionId, newMap)
     triggerRef(toolCallsMap)
@@ -1909,7 +1916,6 @@ export const useSessionStore = defineStore('session', () => {
     restoreSelectedVersions,
     updateLastMessage,
     appendToLastMessage,
-    appendToMessage: _append,
     addSourceToLastMessage,
     setSourcesToLastMessage,
     setPlanToLastMessage,
@@ -1937,16 +1943,6 @@ export const useSessionStore = defineStore('session', () => {
     syncMessageToolCalls: _syncMessageToolCalls,
     setUsageToLastMessage,
     setAttachmentIdsToLastUserMessage,
-    addSourceToMessage,
-    setSourcesToMessage,
-    setPlanToMessage,
-    setChainOfThoughtToMessage,
-    setReasoningToMessage,
-    setSuggestionsToMessage,
-    setContextToMessage,
-    addToolCallToMessage,
-    addOrUpdateToolCallToMessage,
-    updateOrAddToolResultToMessage,
     getSessionMessages,
     removeMessagesFromIndex,
     clearCurrentSessionMessages,

@@ -30,6 +30,26 @@ _context_manager_refs: dict = {}
 _CACHE_MAXSIZE = 64
 _cache_lock = threading.Lock()
 
+# 常驻主事件循环 id（SessionManager 所在执行循环）：
+# 主 loop 上可并发多个会话共享同一 PG 连接池（cache_key 按 loop_id 隔离），
+# 任一会话结束（尤其被强制终止）都不应关闭整个池——否则其他挂起/运行中会话
+# 恢复重入 astream 时复用已关闭连接崩溃（问题L）。
+# 主 loop 连接池由进程退出时 close_all_checkpointers()（atexit）统一关闭。
+_main_loop_id: int | None = None
+
+
+def register_main_loop() -> None:
+    """注册常驻主事件循环（SessionManager 启动时调用，幂等）。
+
+    主 loop 上的异步 checkpointer 连接池常驻，不随会话释放；
+    子代理等独立一次性 loop（loop_id 不同）仍按原逻辑正常释放。
+    """
+    global _main_loop_id
+    try:
+        _main_loop_id = id(asyncio.get_running_loop())
+    except RuntimeError:
+        _main_loop_id = None
+
 
 def _close_checkpointer(cache_key: str, checkpointer: Any) -> None:
     """安全关闭被 LRU 淘汰的 checkpointer，释放数据库连接"""
@@ -358,6 +378,13 @@ async def release_async_checkpointer(
         loop_id = id(asyncio.get_running_loop())
     except RuntimeError:
         loop_id = 0
+
+    # 主 loop 常驻连接池：不随单个会话释放（多会话共享同一连接池，释放会误关
+    # 其他挂起/运行中会话的连接，导致审批恢复崩溃，见问题L）。由进程退出统一关闭。
+    # 仅一次性 loop（子代理独立线程等，loop_id 与主 loop 不同）按原逻辑释放。
+    if _main_loop_id is not None and loop_id == _main_loop_id:
+        logger.debug("主事件循环 checkpointer 常驻，跳过会话级释放（进程退出统一关闭）")
+        return
 
     cache_key = f"async:{backend}:{db_path or ''}:{connection_string or ''}:loop{loop_id}"
 

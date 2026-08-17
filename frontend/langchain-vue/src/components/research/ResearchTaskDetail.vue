@@ -7,8 +7,8 @@
           <el-tag v-if="progressMessage" type="info" class="progress-message">
             {{ progressMessage }}
           </el-tag>
-          <el-tag :type="getStatusType(task.status)">
-            {{ getStatusText(task.status) }}
+          <el-tag :type="getTaskStatusTagType(task.status)">
+            {{ getTaskStatusText(task.status) }}
           </el-tag>
           <el-button link type="primary" size="small" @click="emit('back')">
             返回列表
@@ -82,63 +82,58 @@
       style="margin-top: 16px;"
     />
 
-    <!-- 工具调用历史（主 agent 工具 + 子代理摘要卡片，spec D10） -->
-    <div v-if="mainToolCalls.length > 0 || subagents.length > 0" class="tool-calls-section">
-      <h4 class="section-title tool-calls-title">
-        工具调用记录
-        <span class="tool-calls-count">{{ mainToolCalls.length }}</span>
-      </h4>
+    <!-- 研究过程：工具调用内联切段（渲染结构完全照 ChatMessage，content 传空，
+         深度研究主 agent 无独立过程正文，主输出 final_report 由下方报告组件独立展示） -->
+    <InlineToolCallContent
+      v-if="mainToolCalls.length > 0"
+      :content="''"
+      :tool-calls="mainToolCalls"
+      :approval-disabled="approvalDisabled"
+    >
+      <template #tool="{ toolCall, approvalDisabled: disabled }">
+        <ToolCallCard
+          :tool-name="toolCall.name"
+          :input="toolCall.input || toolCall.parameters"
+          :output="toolCall.output || toolCall.result"
+          :status="deriveDisplayStatus(toolCall)"
+          :tool-call="toolCall"
+          :approval-disabled="disabled"
+          :is-subagent-trigger="toolCall.name === 'spawn_sub_agent'"
+          @approve="(t) => emit('approve', t)"
+          @reject="(t) => emit('reject', t)"
+        />
 
-      <!-- 主 agent 工具调用（spawn 工具后顺序挂载其派生的子代理）+ 孤儿兜底 -->
-      <div
-        v-if="mainToolCalls.length > 0 || subagentSpawnIndex.orphans.length > 0"
-        class="tool-calls-list"
-      >
-        <template v-for="tc in mainToolCalls" :key="tc.id || tc.toolCallId">
-          <ToolCallCard
-            :tool-name="tc.name"
-            :input="tc.input || tc.parameters"
-            :output="tc.output || tc.result"
-            :status="deriveDisplayStatus(tc)"
-            :tool-call="tc"
-            :approval-disabled="task.status !== ResearchTaskStatus.AWAITING_APPROVAL"
-            :is-subagent-trigger="tc.name === 'spawn_sub_agent'"
-            @approve="(t) => emit('approve', t)"
-            @reject="(t) => emit('reject', t)"
-          />
-
-          <!-- 顺序挂载：spawn 工具之后紧跟其派生的子代理卡片（点击原地展开内容） -->
-          <template v-if="tc.name === 'spawn_sub_agent'">
-            <template v-for="sa in spawnedSubagentOf(tc)" :key="sa.threadId">
-              <SubAgentCard
-                :subagent="sa"
-                :expanded="expandedSubagentThreadIds.has(sa.threadId)"
-                reasoning-label="研究推理"
-                :subagents="subagents"
-                :expanded-thread-ids="expandedSubagentThreadIds"
-                @toggle="toggleSubagent"
-                @approve="(t) => emit('approve', t)"
-                @reject="(t) => emit('reject', t)"
-              />
-            </template>
+        <!-- 顺序挂载：spawn 工具之后紧跟其派生的子代理卡片（点击原地展开内容） -->
+        <template v-if="toolCall.name === 'spawn_sub_agent'">
+          <template v-for="sa in spawnedSubagentOf(toolCall)" :key="sa.threadId">
+            <SubAgentCard
+              :subagent="sa"
+              :expanded="expandedSubagentThreadIds.has(sa.threadId)"
+              reasoning-label="研究推理"
+              :subagents="subagents"
+              :expanded-thread-ids="expandedSubagentThreadIds"
+              @toggle="toggleSubagent"
+              @approve="(t) => emit('approve', t)"
+              @reject="(t) => emit('reject', t)"
+            />
           </template>
         </template>
+      </template>
+    </InlineToolCallContent>
 
-        <!-- 孤儿兜底：无 spawnToolCallId 的子代理在主工具列表末尾渲染 -->
-        <template v-for="sa in subagentSpawnIndex.orphans" :key="sa.threadId">
-          <SubAgentCard
-            :subagent="sa"
-            :expanded="expandedSubagentThreadIds.has(sa.threadId)"
-            reasoning-label="研究推理"
-            :subagents="subagents"
-            :expanded-thread-ids="expandedSubagentThreadIds"
-            @toggle="toggleSubagent"
-            @approve="(t) => emit('approve', t)"
-            @reject="(t) => emit('reject', t)"
-          />
-        </template>
-      </div>
-    </div>
+    <!-- 孤儿兜底：无 spawnToolCallId 的子代理在正文末尾渲染 -->
+    <template v-for="sa in subagentSpawnIndex.orphans" :key="sa.threadId">
+      <SubAgentCard
+        :subagent="sa"
+        :expanded="expandedSubagentThreadIds.has(sa.threadId)"
+        reasoning-label="研究推理"
+        :subagents="subagents"
+        :expanded-thread-ids="expandedSubagentThreadIds"
+        @toggle="toggleSubagent"
+        @approve="(t) => emit('approve', t)"
+        @reject="(t) => emit('reject', t)"
+      />
+    </template>
 
     <ResearchTaskReport
       :task="task"
@@ -158,6 +153,7 @@ import { computed, ref, watch } from 'vue'
 import { ChatDotRound } from '@element-plus/icons-vue'
 import SubAgentCard from '@/components/chat/SubAgentCard.vue'
 import ToolCallCard from '@/components/chat/ToolCallCard.vue'
+import InlineToolCallContent from '@/components/common/InlineToolCallContent.vue'
 import { deriveDisplayStatus } from '@/utils/toolCallStateMachine'
 import { buildSubagentsFromMessage, mapSubagentsBySpawnToolCall } from '@/utils/subagentAggregation'
 import { useSubagents, subagentsMetaMap } from '@/composables/useSubagents'
@@ -166,14 +162,16 @@ import settings from '@/config/settings'
 import ResearchTaskReport from './ResearchTaskReport.vue'
 import AiReasoning from '@/components/ai-elements/AiReasoning.vue'
 import { formatDate } from '@/utils/format'
+import { getTaskStatusText, getTaskStatusTagType } from '@/utils/researchTaskStatus'
+import { isApprovalDisabled } from '@/utils/approvalGate'
 import { ResearchTaskStatus } from '@/types'
 
 /**
  * 深度研究 - 任务详情卡片
  * 包含：任务描述 / 进度条 / 审批面板 / 报告区（嵌入 ResearchTaskReport）
  *
- * 状态展示辅助函数（getStatusType / getStatusText）保留在本组件内，
- * 与 TaskList.vue 中的同名函数职责一致但映射表不同（本组件仅覆盖研究任务状态）。
+ * 任务状态文案 / 标签色统一走 utils/researchTaskStatus.js（getTaskStatusText /
+ * getTaskStatusTagType），与 TaskList.vue / AiNode.vue 共用单一权威。
  */
 const props = defineProps({
   /** 当前任务对象 */
@@ -241,6 +239,15 @@ const { fetchSubagents } = useSubagents()
 // 主 agent 工具调用（subagentThreadId 为空）
 const mainToolCalls = computed(() =>
   (Array.isArray(props.toolCalls) ? props.toolCalls : []).filter(tc => !tc.subagentThreadId)
+)
+
+// 审批控件置灰（统一 chat 语义：任务终态视为固化，其余可交互）
+const approvalDisabled = computed(() =>
+  isApprovalDisabled({
+    isFinalized:
+      props.task?.status === ResearchTaskStatus.COMPLETED ||
+      props.task?.status === ResearchTaskStatus.FAILED,
+  })
 )
 
 // 该任务下子代理元数据列表：从模块级响应式缓存按 parentThreadId 过滤
@@ -314,27 +321,6 @@ watch(
 // → 统一审批端点 /approvals/{interrupt_id}/resume/（gateway 按 extra.
 // subagent_thread_id 路由到子代理恢复）。本组件不做任何审批分支处理。
 
-const getStatusType = (status) => {
-  const typeMap = {
-    [ResearchTaskStatus.PENDING]: 'info',
-    [ResearchTaskStatus.AWAITING_APPROVAL]: 'warning',
-    [ResearchTaskStatus.RUNNING]: 'warning',
-    [ResearchTaskStatus.COMPLETED]: 'success',
-    [ResearchTaskStatus.FAILED]: 'danger',
-  }
-  return typeMap[status] || 'info'
-}
-
-const getStatusText = (status) => {
-  const textMap = {
-    [ResearchTaskStatus.PENDING]: '待执行',
-    [ResearchTaskStatus.AWAITING_APPROVAL]: '等待审批',
-    [ResearchTaskStatus.RUNNING]: '执行中',
-    [ResearchTaskStatus.COMPLETED]: '已完成',
-    [ResearchTaskStatus.FAILED]: '失败',
-  }
-  return textMap[status] || status
-}
 </script>
 
 <style scoped>
@@ -380,44 +366,6 @@ const getStatusText = (status) => {
 .kb-tag {
   margin-right: 6px;
   margin-bottom: 4px;
-}
-
-.approval-section {
-  margin: 16px 0;
-}
-
-.tool-calls-section {
-  margin: 24px 0;
-}
-
-.section-title {
-  margin: 0 0 12px 0;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
-}
-
-.tool-calls-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-
-.tool-calls-count {
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--el-text-color-secondary);
-  background: var(--el-fill-color-light);
-  border-radius: 10px;
-  padding: 0 8px;
-  line-height: 18px;
-}
-
-.tool-calls-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
 }
 
 @media (max-width: 768px) {

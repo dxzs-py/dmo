@@ -65,7 +65,7 @@ class TestWaitForSubAgentFormat(unittest.TestCase):
         from Django_xm.apps.agent_hub.subagent_tools.wait import WaitForSubAgentTool
 
         out = WaitForSubAgentTool._format_resume_value(
-            {"subagent_thread_id": "sub1", "status": "completed", "result": "hello"}
+            {"subagent_results": [{"subagent_thread_id": "sub1", "status": "completed", "result": "hello"}]}
         )
         self.assertIn("已完成", out)
         self.assertIn("hello", out)
@@ -74,7 +74,7 @@ class TestWaitForSubAgentFormat(unittest.TestCase):
         from Django_xm.apps.agent_hub.subagent_tools.wait import WaitForSubAgentTool
 
         out = WaitForSubAgentTool._format_resume_value(
-            {"subagent_thread_id": "sub1", "status": "failed", "result": ""}
+            {"subagent_results": [{"subagent_thread_id": "sub1", "status": "failed", "result": ""}]}
         )
         self.assertIn("失败", out)
 
@@ -85,7 +85,7 @@ class TestHandleSuspend(unittest.TestCase):
     def test_registers_awaiter(self):
         async def _case():
             ex = _make_executor()
-            result = SimpleNamespace(interrupt_id="int1", subagent_thread_id="sub1")
+            result = SimpleNamespace(interrupt_id="int1", subagent_thread_ids=["sub1"])
             runtime = mock.Mock()
             runtime.get_instance = mock.AsyncMock(return_value=SimpleNamespace(status="running"))
             lm = mock.Mock()
@@ -102,7 +102,7 @@ class TestHandleSuspend(unittest.TestCase):
 
             self.assertTrue(ex._suspended)
             self.assertEqual(ex._wait_interrupt_id, "int1")
-            self.assertEqual(ex._wait_subagent_thread_id, "sub1")
+            self.assertEqual(ex._wait_subagent_thread_ids, ["sub1"])
             lm.register_parent_awaiter.assert_called_once_with("t1", make_awaiter.return_value)
 
         asyncio.run(_case())
@@ -114,14 +114,14 @@ class TestResumeAfterSubAgentWait(unittest.TestCase):
     def test_ignores_non_waiting_subagent(self):
         async def _case():
             ex = _make_executor()
-            ex._wait_subagent_thread_id = "sub1"
+            ex._wait_subagent_thread_ids = ["sub1"]
             ex._suspended = True
             with mock.patch.object(
                 SessionExecutor, "_execute_and_handle", new_callable=mock.AsyncMock
             ) as execute, mock.patch.object(
                 SessionExecutor, "_release_checkpointer", new_callable=mock.AsyncMock
             ) as release:
-                await ex._resume_after_subagent_wait("sub2", "completed")
+                await ex._on_subagent_finished("sub2", "completed")
 
             execute.assert_not_awaited()
             release.assert_not_awaited()
@@ -133,28 +133,29 @@ class TestResumeAfterSubAgentWait(unittest.TestCase):
         async def _case():
             ex = _make_executor()
             ex._agent = mock.Mock()
-            ex._wait_subagent_thread_id = "sub1"
+            ex._wait_subagent_thread_ids = ["sub1"]
             ex._wait_interrupt_id = "int1"
             ex._suspended = True
+            ex._pending_subagent_results = {"sub1": {"status": "completed", "result": "result text"}}
             lm = mock.Mock()
             with mock.patch.object(
-                SessionExecutor, "_read_subagent_result", new_callable=mock.AsyncMock, return_value="result text"
-            ), mock.patch.object(
                 SessionExecutor, "_execute_and_handle", new_callable=mock.AsyncMock
             ) as execute, mock.patch.object(
                 SessionExecutor, "_release_checkpointer", new_callable=mock.AsyncMock
             ), mock.patch(
                 "Django_xm.apps.ai_engine.subagent_runtime.lifecycle.get_lifecycle_manager", return_value=lm
             ):
-                await ex._resume_after_subagent_wait("sub1", "completed")
+                await ex._resume_after_subagent_wait()
 
             execute.assert_awaited_once()
-            # Command(resume={interrupt_id: {...}}) 的 interrupt_id 键必须匹配
+            # Command(resume={interrupt_id: {"subagent_results": [...]}}) 的 interrupt_id 键必须匹配
             args, _ = execute.call_args
             resume_cmd = args[0]
             self.assertEqual(list(resume_cmd.resume.keys()), ["int1"])
-            self.assertEqual(resume_cmd.resume["int1"]["status"], "completed")
-            self.assertEqual(resume_cmd.resume["int1"]["result"], "result text")
+            results = resume_cmd.resume["int1"]["subagent_results"]
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["status"], "completed")
+            self.assertEqual(results[0]["result"], "result text")
             ex.manager.remove_session.assert_called_once_with("t1")
             lm.unregister_parent_awaiter.assert_called_once_with("t1")
 

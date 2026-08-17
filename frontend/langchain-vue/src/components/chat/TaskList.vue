@@ -35,8 +35,8 @@
       </el-table-column>
       <el-table-column prop="status" label="状态" width="120">
         <template #default="{ row }">
-          <el-tag :type="getStatusType(row.status)">
-            {{ getStatusText(row.status) }}
+          <el-tag :type="getTaskStatusTagType(row.status)">
+            {{ getTaskStatusText(row.status) }}
           </el-tag>
         </template>
       </el-table-column>
@@ -99,11 +99,12 @@
 
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Search, Refresh, View, Delete, ChatDotRound, RefreshRight } from '@element-plus/icons-vue'
 import { logger } from '../../utils/logger'
 import { confirmDelete } from '../../utils/dialog'
-import { ResearchTaskStatus, LearningStep } from '../../types'
+import { getTaskStatusText, getTaskStatusTagType } from '../../utils/researchTaskStatus'
+import { ResearchTaskStatus } from '../../types'
 
 const props = defineProps({
   moduleType: {
@@ -137,42 +138,6 @@ const formatDate = (dateStr) => {
   if (!dateStr) return '-'
   const date = new Date(dateStr)
   return date.toLocaleString('zh-CN')
-}
-
-const getStatusType = (status) => {
-  const typeMap = {
-    [ResearchTaskStatus.PENDING]: 'info',
-    [ResearchTaskStatus.AWAITING_APPROVAL]: 'warning',
-    [ResearchTaskStatus.RUNNING]: 'warning',
-    [ResearchTaskStatus.COMPLETED]: 'success',
-    [ResearchTaskStatus.FAILED]: 'danger',
-    [LearningStep.WAITING_FOR_ANSWERS]: 'warning',
-    [LearningStep.PLANNER]: 'primary',
-    [LearningStep.RETRIEVAL]: 'primary',
-    [LearningStep.QUIZ_GENERATOR]: 'warning',
-    [LearningStep.GRADING]: 'primary',
-    [LearningStep.FEEDBACK]: 'success',
-    [LearningStep.END]: 'success',
-  }
-  return typeMap[status] || 'info'
-}
-
-const getStatusText = (status) => {
-  const textMap = {
-    [ResearchTaskStatus.PENDING]: '待执行',
-    [ResearchTaskStatus.AWAITING_APPROVAL]: '等待审批',
-    [ResearchTaskStatus.RUNNING]: '执行中',
-    [ResearchTaskStatus.COMPLETED]: '已完成',
-    [ResearchTaskStatus.FAILED]: '失败',
-    [LearningStep.WAITING_FOR_ANSWERS]: '等待答题',
-    [LearningStep.PLANNER]: '生成计划',
-    [LearningStep.RETRIEVAL]: '检索资料',
-    [LearningStep.QUIZ_GENERATOR]: '生成题目',
-    [LearningStep.GRADING]: '评分中',
-    [LearningStep.FEEDBACK]: '生成反馈',
-    [LearningStep.END]: '已结束',
-  }
-  return textMap[status] || status
 }
 
 const loadTasks = async () => {

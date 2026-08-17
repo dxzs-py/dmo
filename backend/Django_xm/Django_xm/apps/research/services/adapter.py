@@ -39,22 +39,9 @@ from Django_xm.apps.research.services.patches import (
     _DeepAgentExecutor,
     _extract_ai_response,
 )
+from Django_xm.common.approval_batch import assert_non_empty_decision
 
 logger = get_logger(__name__)
-
-
-def _assert_non_empty_decision(result) -> None:
-    """审批决策不得为空：空 dict 表示审批创建失败，直接抛错终止任务。
-
-    会话级单执行流语义：on_interrupt 必须返回非空决策（审批批次已创建），
-    空返回意味着审批链路异常，任务无法等待恢复，只能终止。
-    （抽象为模块级函数，避免 astream 循环 try 块内直接 raise 的 TRY301。）
-    """
-    if isinstance(result, dict) and not result:
-        raise RuntimeError(
-            "审批创建失败：on_interrupt 返回空决策，"
-            "无审批批次可等待（任务终止）"
-        )
 
 
 class OfficialDeepAgentAdapter:
@@ -114,6 +101,15 @@ class OfficialDeepAgentAdapter:
         # astream messages 循环中 AIMessageChunk content 追加；工具调用发起点
         # 读 len(_main_content_len) 作为主 agent 图层 position。
         self._main_content_len = 0
+        # 子代理工具条目会话级聚合（tool_call_id → entry）：落库权威来源。
+        # 与 chat 模块 chat_service._subagent_tool_entries 同构——ResearchTask.tool_calls
+        # 无写入点、ChatMessage.tool_calls 仅依赖审批重建路径落库会丢失图层字段
+        # （subagent_thread_id/agent_name/depth）且无审批的 SAFE 工具完全丢失
+        # → 刷新后子代理卡片归集失败（乱序根源）。由 _publish_tool_event
+        # （主/子 agent 工具事件统一入口）聚合，任务完成/挂起时经 research_runner
+        # 携带到 writeback 合并进 ChatMessage.tool_calls。闭包跨审批 resume 持续
+        # （同一 adapter 实例复用），增量合并（按 id）不丢历史。
+        self._subagent_tool_entries: dict[str, dict] = {}
 
     def research(
         self, query: str, config: dict[str, Any] | None = None, callbacks: list | None = None
@@ -281,6 +277,7 @@ class OfficialDeepAgentAdapter:
         # service.transition_async 完成（状态机统一入口），此处仅需 EventType
         from Django_xm.apps.tools.tool_event_extractor import extract_tool_events_from_message
         from Django_xm.common.event_schema import EventType
+        from Django_xm.common.execution_loop import run_astream_loop
 
         # resume_command 模式下 query 可能为 None，使用占位符避免 [:50] 切片失败
         query_display = (query or "(resume)")[:50]
@@ -435,20 +432,21 @@ class OfficialDeepAgentAdapter:
             """子代理正文/中间思考转发回调（spec MODIFIED：按 subagent_thread_id 路由累计）。"""
             if not subagent_thread_id:
                 return
-            seen = self._sent_subagent_msg_keys.setdefault(subagent_thread_id, set())
-            if msg_id and msg_id in seen:
+            from Django_xm.common.tool_call_aggregation import merge_subagent_content
+
+            if merge_subagent_content(
+                self.subagent_contents,
+                subagent_thread_id,
+                content or "",
+                reasoning_content or "",
+                msg_id or "",
+                self._sent_subagent_msg_keys,
+            ):
                 logger.debug(
                     f"[OfficialDeepAgent] 跳过重放子代理正文: "
                     f"subagent_thread_id={subagent_thread_id}, msg_id={msg_id}"
                 )
                 return
-            if msg_id:
-                seen.add(msg_id)
-            entry = self.subagent_contents.setdefault(subagent_thread_id, {"content": "", "reasoning_content": ""})
-            if content:
-                entry["content"] = (entry.get("content") or "") + content
-            if reasoning_content:
-                entry["reasoning_content"] = (entry.get("reasoning_content") or "") + reasoning_content
             try:
                 from Django_xm.common.event_schema import EventSource, EventType
                 from Django_xm.common.realtime_events import publish_event
@@ -599,8 +597,10 @@ class OfficialDeepAgentAdapter:
                 ctx.retry_count = 0  # 重置重试计数
 
                 # 定义 loop_fn：核心流式循环（闭包捕获 all_resume_values 等）
-                # 处理 chunks：updates 模式（interrupt 事件）+ messages 模式（工具事件提取）
-                # 重复工具调用警告在 loop_fn 内部注入并重入 astream（对 AgentExecutor 透明）
+                # 基于公共执行循环骨架 run_astream_loop（spec D8）：
+                # - messages 模式 → _process_chunk（工具事件提取 + 韧性检测）
+                # - updates 模式 → _handle_updates（interrupt 审批 / 业务等待挂起）
+                # - 重复调用警告 / 子代理重试指令注入由公共循环统一承载
                 async def loop_fn(
                     _agent,
                     graph_input_arg,
@@ -610,261 +610,225 @@ class OfficialDeepAgentAdapter:
                     _data,
                 ):
                     nonlocal subagent_wait_suspend
-                    current_input = graph_input_arg
-                    while True:  # 重复工具调用警告注入重入
-                        local_pending_warnings: list = []
-                        retry_injected = False
-                        async for chunk in self.graph.astream(
-                            current_input,
-                            config=config_arg,
-                            stream_mode=["messages", "updates"],
-                        ):
-                            # 检查 soft timeout（仅警告一次）
-                            if timeout_mgr.check_soft_timeout():
-                                logger.warning(f"[Resilience] 深度研究执行超时 (soft): {timeout_mgr.elapsed:.1f}s")
 
-                            # 多 stream mode 下 chunk 是 (mode_name, data) 元组
-                            if isinstance(chunk, tuple) and len(chunk) == 2:
-                                mode_name, mode_data = chunk
-                            else:
-                                mode_name, mode_data = "messages", chunk
+                    # messages 模式 chunk 处理器（公共循环注入）
+                    async def _process_chunk(mode_data, control, resume_values):
+                        # astream 在 messages 模式下产出 (message, metadata) 元组，
+                        # deepagents astream 只产出 AIMessageChunk（非完整 AIMessage），
+                        # 需要复用 tool_event_extractor 公共模块聚合 tool_call_chunks，
+                        # 在 ToolMessage 阶段补发完整 parameters，避免前端显示为 {}。
+                        msg_obj = (
+                            mode_data[0] if isinstance(mode_data, tuple) and len(mode_data) == 2 else mode_data
+                        )
+                        try:
+                            tool_events = extract_tool_events_from_message(
+                                msg_obj,
+                                seen_tool_call_ids,
+                                accumulated_messages,
+                            )
+                        except Exception as e:
+                            logger.warning(f"[OfficialDeepAgent] 工具事件提取失败: {e}")
+                            tool_events = []
 
-                            # 处理 updates stream mode（包含 interrupt 事件）
-                            if mode_name == "updates":
-                                if isinstance(mode_data, dict) and "__interrupt__" in mode_data:
-                                    interrupts = mode_data["__interrupt__"]
-                                    if interrupts:
-                                        for intr in interrupts:
-                                            if isinstance(intr, Interrupt):
-                                                interrupt_value = intr.value
-                                                interrupt_id = intr.id
-                                            elif isinstance(intr, dict):
-                                                interrupt_value = intr.get("value", intr)
-                                                interrupt_id = intr.get("id", "")
-                                            else:
-                                                interrupt_value = intr
-                                                interrupt_id = ""
-
-                                            # 业务等待挂起（spec D4）：wait_for_subagent 触发，
-                                            # 非审批 interrupt，不产出审批 UI。记录挂起信息后
-                                            # 退出流，由外层返回 suspended 结果（父协程退出）。
-                                            if is_subagent_wait_interrupt(interrupt_value):
-                                                subagent_wait_suspend = {
-                                                    "subagent_thread_id": interrupt_value.get("subagent_thread_id", ""),
-                                                    "interrupt_id": interrupt_id,
-                                                }
-                                                logger.info(
-                                                    f"[OfficialDeepAgent] 业务等待挂起: "
-                                                    f"subagent={subagent_wait_suspend['subagent_thread_id']}, "
-                                                    f"interrupt_id={interrupt_id}"
-                                                )
-                                                break
-
-                                            if is_approval_interrupt(interrupt_value):
-                                                # 使用公共审批中断解析器，统一批量/单工具两种格式
-                                                from Django_xm.common.approval_parser import (
-                                                    parse_approval_interrupt as _parse_interrupt,
-                                                )
-
-                                                interrupt_list = _parse_interrupt(
-                                                    interrupt_value,
-                                                    graph_interrupt_id=interrupt_id,
-                                                    langgraph_resume_id=interrupt_id,
-                                                )
-                                                if not interrupt_list:
-                                                    continue
-
-                                                is_batch = len(interrupt_list) > 1
-                                                logger.info(
-                                                    f"[OfficialDeepAgent] 审批中断: "
-                                                    f"{'批量' if is_batch else '单工具'}, "
-                                                    f"{len(interrupt_list)} 个工具, "
-                                                    f"tools={[b['tool_name'] for b in interrupt_list]}"
-                                                )
-                                                if on_interrupt is not None:
-                                                    logger.info(
-                                                        f"[OfficialDeepAgent] 实时通知审批回调"
-                                                        f"{'(批量)' if is_batch else ''}: "
-                                                        f"{len(interrupt_list)} 个工具"
-                                                    )
-                                                    async def _call_interrupt_handler(interrupts):
-                                                        """调用审批中断回调（暂停超时计时）。
-
-                                                        会话级单执行流：on_interrupt 必须返回非空决策；
-                                                        空 dict 表示审批创建失败，直接抛错终止（不再走
-                                                        Celery 时代"退出等待外部恢复"的 Path D 语义）。
-                                                        """
-                                                        timeout_mgr.pause()
-                                                        try:
-                                                            result = on_interrupt(interrupts)
-                                                            if asyncio.iscoroutine(result):
-                                                                result = await result
-                                                        finally:
-                                                            timeout_mgr.resume()
-                                                        _assert_non_empty_decision(result)
-                                                        return result
-
-                                                    batch_resume = await _call_interrupt_handler(interrupt_list)
-                                                    # 按 langgraph_resume_id 分组构造 resume dict
-                                                    # Command(resume=...) 的 key 必须是 LangGraph Interrupt.id
-                                                    langgraph_id = interrupt_list[0].get("langgraph_resume_id", "")
-                                                    if isinstance(batch_resume, dict):
-                                                        if langgraph_id:
-                                                            all_resume_values.setdefault(
-                                                                langgraph_id, {}
-                                                            ).update(batch_resume)
-                                                        else:
-                                                            all_resume_values.update(batch_resume)
-                                                    elif langgraph_id:
-                                                        for bi in interrupt_list:
-                                                            all_resume_values.setdefault(
-                                                                langgraph_id, {}
-                                                            )[bi["interrupt_id"]] = batch_resume
-                                                    else:
-                                                        for bi in interrupt_list:
-                                                            all_resume_values[
-                                                                bi["interrupt_id"]
-                                                            ] = batch_resume
-                                                else:
-                                                    langgraph_id = interrupt_list[0].get("langgraph_resume_id", "")
-                                                    if langgraph_id:
-                                                        for bi in interrupt_list:
-                                                            all_resume_values.setdefault(
-                                                                langgraph_id, {}
-                                                            )[bi["interrupt_id"]] = False
-                                                    else:
-                                                        for bi in interrupt_list:
-                                                            all_resume_values[bi["interrupt_id"]] = False
-                                        if subagent_wait_suspend is not None:
-                                            # 业务等待挂起：退出 async for，外层返回 suspended 结果
-                                            break
-                                continue
-
-                            # messages 模式：提取工具调用生命周期事件并发布到实时频道
-                            # astream 在 messages 模式下产出 (message, metadata) 元组，
-                            # deepagents astream 只产出 AIMessageChunk（非完整 AIMessage），
-                            # 需要复用 tool_event_extractor 公共模块聚合 tool_call_chunks，
-                            # 在 ToolMessage 阶段补发完整 parameters，避免前端显示为 {}。
-                            if mode_name == "messages":
-                                msg_obj = (
-                                    mode_data[0] if isinstance(mode_data, tuple) and len(mode_data) == 2 else mode_data
+                        for evt in tool_events:
+                            # 重复工具调用检测：仅对 PENDING 事件记录，
+                            # 避免对同一 tool_call_id 的 COMPLETED/FAILED 重复计数
+                            if evt.get("event_type") == EventType.TOOL_CALL_PENDING:
+                                warning = duplicate_detector.record(
+                                    evt.get("tool_name", "unknown"),
+                                    evt.get("parameters") or {},
                                 )
+                                if warning is not None:
+                                    control.warnings.append(SystemMessage(content=warning.to_prompt()))
+                            await self._publish_tool_event(evt)
+
+                        # 捕获 LLM thinking/reasoning 内容（AIMessageChunk.additional_kwargs.reasoning_content）
+                        # 累积后广播完整内容：每次 chunk 追加到 accumulated_reasoning，
+                        # 广播 content 为累积后的完整推理文本（前端 AiReasoning 覆盖语义下内容完整）。
+                        thinking_text = extract_thinking_content(msg_obj)
+                        if thinking_text:
+                            self.accumulated_reasoning = (self.accumulated_reasoning or "") + thinking_text
+                            _configurable = config_arg.get("configurable", {})
+                            _session_id = _configurable.get("chat_session_id") or self.chat_session_id
+                            _message_id = _configurable.get("assistant_message_id")
+                            if _session_id and _message_id:
                                 try:
-                                    tool_events = extract_tool_events_from_message(
-                                        msg_obj,
-                                        seen_tool_call_ids,
-                                        accumulated_messages,
+                                    from Django_xm.apps.research.services.writeback import (
+                                        broadcast_stream_reasoning,
+                                    )
+
+                                    broadcast_stream_reasoning(
+                                        session_id=_session_id,
+                                        task_id=self.thread_id,
+                                        message_id=_message_id,
+                                        content=self.accumulated_reasoning,
                                     )
                                 except Exception as e:
-                                    logger.warning(f"[OfficialDeepAgent] 工具事件提取失败: {e}")
-                                    tool_events = []
+                                    logger.warning(
+                                        f"[OfficialDeepAgent] 广播推理内容失败: "
+                                        f"session={_session_id}, msg={_message_id}, err={e}"
+                                    )
 
-                                for evt in tool_events:
-                                    # 重复工具调用检测：仅对 PENDING 事件记录，
-                                    # 避免对同一 tool_call_id 的 COMPLETED/FAILED 重复计数
-                                    if evt.get("event_type") == EventType.TOOL_CALL_PENDING:
-                                        warning = duplicate_detector.record(
-                                            evt.get("tool_name", "unknown"),
-                                            evt.get("parameters") or {},
-                                        )
-                                        if warning is not None:
-                                            local_pending_warnings.append(SystemMessage(content=warning.to_prompt()))
-                                    await self._publish_tool_event(evt)
+                        # 主 agent 图层 content 累计（position 注入依据，Task 2.1）：
+                        # messages 模式 chunk 为主 agent 的模型输出（deepagents 子代理
+                        # 内部输出不进入主 stream），content 追加到 _main_content_len，
+                        # 供主 agent 图层工具调用 position 采集（触发瞬间已输出长度）。
+                        _chunk_content = getattr(msg_obj, "content", None) or ""
+                        if _chunk_content:
+                            self._main_content_len += len(_chunk_content)
 
-                                # 捕获 LLM thinking/reasoning 内容（AIMessageChunk.additional_kwargs.reasoning_content）
-                                # 累积后广播完整内容：每次 chunk 追加到 accumulated_reasoning，
-                                # 广播 content 为累积后的完整推理文本（前端 AiReasoning 覆盖语义下内容完整）。
-                                thinking_text = extract_thinking_content(msg_obj)
-                                if thinking_text:
-                                    self.accumulated_reasoning = (self.accumulated_reasoning or "") + thinking_text
-                                    _configurable = config_arg.get("configurable", {})
-                                    _session_id = _configurable.get("chat_session_id") or self.chat_session_id
-                                    _message_id = _configurable.get("assistant_message_id")
-                                    if _session_id and _message_id:
-                                        try:
-                                            from Django_xm.apps.research.services.writeback import (
-                                                broadcast_stream_reasoning,
-                                            )
+                        # 检测到重复调用：中断当前流以注入警告（公共循环据
+                        # control.warnings 中断 astream 并注入后重入）
+                        if control.warnings:
+                            return
 
-                                            broadcast_stream_reasoning(
-                                                session_id=_session_id,
-                                                task_id=self.thread_id,
-                                                message_id=_message_id,
-                                                content=self.accumulated_reasoning,
-                                            )
-                                        except Exception as e:
-                                            logger.warning(
-                                                f"[OfficialDeepAgent] 广播推理内容失败: "
-                                                f"session={_session_id}, msg={_message_id}, err={e}"
-                                            )
-
-                                # 主 agent 图层 content 累计（position 注入依据，Task 2.1）：
-                                # messages 模式 chunk 为主 agent 的模型输出（deepagents 子代理
-                                # 内部输出不进入主 stream），content 追加到 _main_content_len，
-                                # 供主 agent 图层工具调用 position 采集（触发瞬间已输出长度）。
-                                _chunk_content = getattr(msg_obj, "content", None) or ""
-                                if _chunk_content:
-                                    self._main_content_len += len(_chunk_content)
-
-                                # 检测到重复调用：中断当前流以注入警告
-                                # break 退出 async for，由下方 aupdate_state 注入后重入
-                                if local_pending_warnings:
-                                    break
-
-                                # 子代理重试指令注入：每轮 messages chunk 后非阻塞消费
-                                # 重试队列，有指令时经 aupdate_state 追加 SystemMessage 到
-                                # graph state 后重入 astream（与重复工具调用警告注入同机制）。
-                                # 注意：审批中断（all_resume_values 非空）时流即将结束，
-                                # 恢复由外层 Command(resume=...) 驱动，若此刻注入会丢失
-                                # 恢复决策 → 跳过本轮，指令在恢复流中继续被消费。
-                                pending_retries = self._drain_retry_instructions()
-                                if pending_retries:
-                                    if all_resume_values:
-                                        logger.info(
-                                            "[OfficialDeepAgent] 存在待恢复审批决策，"
-                                            "重试指令延后到恢复流消费"
-                                        )
-                                    else:
-                                        logger.info(
-                                            f"[OfficialDeepAgent] 注入 {len(pending_retries)} "
-                                            "条子代理重试指令到 agent 状态"
-                                        )
-                                        try:
-                                            await self.graph.aupdate_state(
-                                                config_arg,
-                                                {"messages": pending_retries},
-                                            )
-                                        except Exception as e:
-                                            logger.warning(
-                                                f"[OfficialDeepAgent] 注入子代理重试指令失败: {e}"
-                                            )
-                                        retry_injected = True
-                                        break
-
-                        # 业务等待挂起：跳过重复警告/重试注入，直接退出 while True
-                        if subagent_wait_suspend is not None:
-                            break
-                        # 重复工具调用警告注入：通过 aupdate_state 追加 SystemMessage
-                        # 到 graph state，agent 下一轮 LLM 调用会看到提示并调整策略。
-                        # 注入后以 current_input=None 重入 astream，从当前 checkpoint 续流。
-                        if local_pending_warnings:
-                            logger.info(
-                                f"[Resilience] 注入 {len(local_pending_warnings)} 条重复工具调用警告到 agent 状态"
-                            )
-                            try:
-                                await self.graph.aupdate_state(
-                                    config_arg,
-                                    {"messages": local_pending_warnings},
+                        # 子代理重试指令注入：每轮 messages chunk 后非阻塞消费
+                        # 重试队列，有指令时由公共循环经 aupdate_state 追加
+                        # SystemMessage 到 graph state 后重入 astream。
+                        # 注意：审批中断（resume_values 非空）时流即将结束，
+                        # 恢复由外层 Command(resume=...) 驱动，若此刻注入会丢失
+                        # 恢复决策 → 跳过本轮，指令在恢复流中继续被消费。
+                        pending_retries = self._drain_retry_instructions()
+                        if pending_retries:
+                            if resume_values:
+                                logger.info(
+                                    "[OfficialDeepAgent] 存在待恢复审批决策，"
+                                    "重试指令延后到恢复流消费"
                                 )
-                            except Exception as e:
-                                logger.warning(f"[Resilience] 注入重复调用警告失败: {e}")
-                            current_input = None  # 从当前 checkpoint 续流
-                            continue  # 继续重入 astream（不计入 retry_count）
-                        # 子代理重试指令注入：break 退出 async for 后重入 astream
-                        if retry_injected:
-                            current_input = None  # 从当前 checkpoint 续流
-                            continue
-                        break  # astream 正常结束，退出 loop_fn 的 while True
+                            else:
+                                control.retry_messages.extend(pending_retries)
+
+                    # updates 模式处理器（公共循环注入）
+                    async def _handle_updates(mode_data, resume_values, suspend_box, control):
+                        if isinstance(mode_data, dict) and "__interrupt__" in mode_data:
+                            interrupts = mode_data["__interrupt__"]
+                            if interrupts:
+                                for intr in interrupts:
+                                    if isinstance(intr, Interrupt):
+                                        interrupt_value = intr.value
+                                        interrupt_id = intr.id
+                                    elif isinstance(intr, dict):
+                                        interrupt_value = intr.get("value", intr)
+                                        interrupt_id = intr.get("id", "")
+                                    else:
+                                        interrupt_value = intr
+                                        interrupt_id = ""
+
+                                    # 业务等待挂起（spec D4）：wait_for_subagent 触发，
+                                    # 非审批 interrupt，不产出审批 UI。记录挂起信息后
+                                    # 退出流，由外层返回 suspended 结果（父协程退出）。
+                                    if is_subagent_wait_interrupt(interrupt_value):
+                                        _wait_ids = interrupt_value.get("subagent_thread_ids", []) or []
+                                        suspend_box["suspend"] = {
+                                            "subagent_thread_ids": _wait_ids,
+                                            "interrupt_id": interrupt_id,
+                                        }
+                                        logger.info(
+                                            f"[OfficialDeepAgent] 业务等待挂起: "
+                                            f"subagents={_wait_ids}, "
+                                            f"interrupt_id={interrupt_id}"
+                                        )
+                                        return
+
+                                    if is_approval_interrupt(interrupt_value):
+                                        # 使用公共审批中断解析器，统一批量/单工具两种格式
+                                        from Django_xm.common.approval_parser import (
+                                            parse_approval_interrupt as _parse_interrupt,
+                                        )
+
+                                        interrupt_list = _parse_interrupt(
+                                            interrupt_value,
+                                            graph_interrupt_id=interrupt_id,
+                                            langgraph_resume_id=interrupt_id,
+                                        )
+                                        if not interrupt_list:
+                                            continue
+
+                                        is_batch = len(interrupt_list) > 1
+                                        logger.info(
+                                            f"[OfficialDeepAgent] 审批中断: "
+                                            f"{'批量' if is_batch else '单工具'}, "
+                                            f"{len(interrupt_list)} 个工具, "
+                                            f"tools={[b['tool_name'] for b in interrupt_list]}"
+                                        )
+                                        if on_interrupt is not None:
+                                            logger.info(
+                                                f"[OfficialDeepAgent] 实时通知审批回调"
+                                                f"{'(批量)' if is_batch else ''}: "
+                                                f"{len(interrupt_list)} 个工具"
+                                            )
+                                            async def _call_interrupt_handler(interrupts):
+                                                """调用审批中断回调（暂停超时计时）。
+
+                                                会话级单执行流：on_interrupt 必须返回非空决策；
+                                                空 dict 表示审批创建失败，直接抛错终止（不再走
+                                                Celery 时代"退出等待外部恢复"的 Path D 语义）。
+                                                """
+                                                timeout_mgr.pause()
+                                                try:
+                                                    result = on_interrupt(interrupts)
+                                                    if asyncio.iscoroutine(result):
+                                                        result = await result
+                                                finally:
+                                                    timeout_mgr.resume()
+                                                assert_non_empty_decision(result)
+                                                return result
+
+                                            batch_resume = await _call_interrupt_handler(interrupt_list)
+                                            # 按 langgraph_resume_id 分组构造 resume dict
+                                            # Command(resume=...) 的 key 必须是 LangGraph Interrupt.id
+                                            langgraph_id = interrupt_list[0].get("langgraph_resume_id", "")
+                                            if isinstance(batch_resume, dict):
+                                                if langgraph_id:
+                                                    resume_values.setdefault(
+                                                        langgraph_id, {}
+                                                    ).update(batch_resume)
+                                                else:
+                                                    resume_values.update(batch_resume)
+                                            elif langgraph_id:
+                                                for bi in interrupt_list:
+                                                    resume_values.setdefault(
+                                                        langgraph_id, {}
+                                                    )[bi["interrupt_id"]] = batch_resume
+                                            else:
+                                                for bi in interrupt_list:
+                                                    resume_values[
+                                                        bi["interrupt_id"]
+                                                    ] = batch_resume
+                                        else:
+                                            langgraph_id = interrupt_list[0].get("langgraph_resume_id", "")
+                                            if langgraph_id:
+                                                for bi in interrupt_list:
+                                                    resume_values.setdefault(
+                                                        langgraph_id, {}
+                                                    )[bi["interrupt_id"]] = False
+                                            else:
+                                                for bi in interrupt_list:
+                                                    resume_values[bi["interrupt_id"]] = False
+
+                    # 注入韧性消息到 graph state（重复调用警告 / 子代理重试指令）
+                    async def _inject_state_messages(messages):
+                        await self.graph.aupdate_state(config_arg, {"messages": messages})
+
+                    suspend_box: dict = {}
+                    async for _event in run_astream_loop(
+                        graph=self.graph,
+                        graph_input=graph_input_arg,
+                        config=config_arg,
+                        process_chunk=_process_chunk,
+                        handle_updates=_handle_updates,
+                        resume_values=all_resume_values,
+                        suspend_box=suspend_box,
+                        timeout_mgr=timeout_mgr,
+                        check_soft_timeout=True,
+                        inject_state_messages=_inject_state_messages,
+                    ):
+                        # 公共循环不产出事件（research 工具/推理事件直接发布到实时频道）
+                        pass
+
+                    if suspend_box.get("suspend"):
+                        subagent_wait_suspend = suspend_box["suspend"]
+
                     # loop_fn 必须是 async generator（AgentExecutor._iter_with_timeout 要求）
                     # yield 一个结束标记，使 loop_fn 成为合法的 async generator
                     yield {"type": "loop_done"}
@@ -895,7 +859,7 @@ class OfficialDeepAgentAdapter:
                     return {
                         "success": False,
                         "suspended": True,
-                        "subagent_thread_id": subagent_wait_suspend["subagent_thread_id"],
+                        "subagent_thread_ids": subagent_wait_suspend["subagent_thread_ids"],
                         "interrupt_id": subagent_wait_suspend["interrupt_id"],
                     }
 
@@ -951,6 +915,10 @@ class OfficialDeepAgentAdapter:
             # 由 research_runner 透传到 writeback_to_chat_message 落库
             if self.subagent_contents:
                 result["subagent_contents"] = self.subagent_contents
+            # 子代理工具条目聚合携带到结果：由 research_runner 透传到
+            # writeback 合并进 ChatMessage.tool_calls（图层字段贯通，乱序根源修复）
+            if self._subagent_tool_entries:
+                result["subagent_tool_entries"] = self._subagent_tool_entries
             return result
 
         except Exception as e:
@@ -1226,6 +1194,31 @@ class OfficialDeepAgentAdapter:
                 f"[OfficialDeepAgent] 发布工具事件失败 "
                 f"(event={event_type.value}, "
                 f"tool={tool_name}, tc_id={tool_call_id}): {e}"
+            )
+
+        # 落库条目聚合：复用公共聚合函数（与 chat 同构）。status/parameters/result/
+        # error 随事件演进，终态不可回退；图层字段（subagent_thread_id/agent_name/
+        # depth）随事件透传，seq/position 由 aggregate_tool_entry 从 ToolCallContext
+        # 权威源读取（register/bind_position 已写入）。独立 try：transition_async
+        # 失败不阻断聚合，聚合失败仅 debug（非关键路径）。
+        try:
+            from Django_xm.common.tool_call_aggregation import aggregate_tool_entry
+
+            aggregate_tool_entry(
+                self._subagent_tool_entries,
+                tool_call_id,
+                tool_name,
+                event_type,
+                parameters=parameters,
+                result=evt.get("result"),
+                error=evt.get("error"),
+                subagent_thread_id=sub_subagent_thread_id,
+                agent_name=sub_agent_name,
+                depth=sub_depth,
+            )
+        except Exception as _e:
+            logger.debug(
+                f"[OfficialDeepAgent] 子代理工具条目聚合失败: tc_id={tool_call_id}, err={_e}"
             )
 
     async def _rebuild_with_degraded_tools(self, degraded_tools: list[Any]) -> Any | None:

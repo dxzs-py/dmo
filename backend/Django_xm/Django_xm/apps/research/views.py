@@ -322,6 +322,8 @@ class DeepResearchStatusView(APIView):
                     "knowledge_base_ids": task.knowledge_base_ids or [],
                     "current_step": cached_status.get("current_step", "unknown") if cached_status else task.status,
                     "final_report": task.final_report if task.status == "completed" else "",
+                    "tool_calls": task.tool_calls or [],
+                    "subagent_contents": task.subagent_contents or {},
                 }
 
                 if task.status == "completed" and task.final_report:

@@ -27,89 +27,8 @@ logger = logging.getLogger(__name__)
 _CHAT_BATCH_POLL_INTERVAL = 5
 
 
-def _collect_chat_batch_decisions(session_id: str, graph_interrupt_id: str) -> tuple[dict, bool]:
-    """收集 chat 同批次所有审批决策（source=chat）。
-
-    与 deep_research 的 ``collect_batch_decisions`` 同构，仅 source 不同。
-    Command(resume=...) 的 key 必须是 LangGraph Interrupt.id（langgraph_resume_id）。
-    """
-    from Django_xm.apps.approvals.models import Approval
-
-    batch_approvals = Approval.objects.filter(
-        source=Approval.SOURCE_CHAT,
-        source_id=session_id,
-        extra__graph_interrupt_id=graph_interrupt_id,
-    )
-
-    resume_by_interrupt: dict[str, dict[str, bool]] = {}
-    all_resolved = True
-
-    for approval in batch_approvals:
-        extra = approval.extra if isinstance(approval.extra, dict) else {}
-        tc_id = extra.get("tool_call_id", approval.interrupt_id)
-        langgraph_id = extra.get("langgraph_resume_id", graph_interrupt_id)
-
-        if approval.state == Approval.STATE_APPROVED:
-            resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = True
-        elif approval.state in (Approval.STATE_PROCESSING, Approval.STATE_WAITING):
-            _approved = extra.get("_approved")
-            resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = bool(
-                _approved is None or _approved is True
-            )
-        elif approval.state == Approval.STATE_REJECTED:
-            resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = False
-        elif approval.state == Approval.STATE_TIMEOUT:
-            # 超时决策标记（TIMEOUT_DECISION）：与拒绝（False）区分，
-            # middleware 据以注入"审批超时"ToolMessage，agent 调整策略继续（P-TIMEOUT）
-            from Django_xm.common.constants import TIMEOUT_DECISION
-
-            resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = TIMEOUT_DECISION
-        else:
-            all_resolved = False
-
-    return resume_by_interrupt, all_resolved
-
-
-def _finalize_chat_batch_approvals(all_resume_values: dict, session_id: str) -> None:
-    """chat 审批终态化（source=chat），与 deep_research ``finalize_batch_approvals`` 同构。"""
-    from django.db import models
-
-    from Django_xm.apps.approvals.models import Approval
-    from Django_xm.apps.approvals.services.approval_service import complete_approval
-
-    flat_decisions: dict[str, bool] = {}
-    for key, val in all_resume_values.items():
-        if isinstance(val, dict):
-            flat_decisions.update(val)
-        elif isinstance(val, bool):
-            flat_decisions[key] = val
-
-    for tc_or_int_id, decision in flat_decisions.items():
-        try:
-            approval = Approval.objects.filter(
-                source=Approval.SOURCE_CHAT,
-                source_id=session_id,
-            ).filter(
-                models.Q(interrupt_id=tc_or_int_id) | models.Q(extra__tool_call_id=tc_or_int_id)
-            ).first()
-
-            if approval is None:
-                logger.debug(
-                    f"[ChatExec] 审批终态化跳过(未找到记录): tc_id={tc_or_int_id}, session={session_id}"
-                )
-                continue
-
-            if approval.state in (Approval.STATE_PROCESSING, Approval.STATE_WAITING):
-                final_state = Approval.STATE_APPROVED if decision is True else Approval.STATE_REJECTED
-                complete_approval(approval.interrupt_id, final_state)
-                logger.info(
-                    f"[ChatExec] 审批终态化: tc_id={tc_or_int_id}, session={session_id}, state={final_state}"
-                )
-        except Exception:
-            logger.warning(
-                f"[ChatExec] 审批终态化失败: tc_id={tc_or_int_id}, session={session_id}",
-                exc_info=True,
-            )
+# 审批批次决策/终态化已收敛到 common.approval_batch（source 参数区分 chat/research），
+# 由 _wait_for_chat_batch_decision 内 import 调用。
 
 
 async def _wait_for_chat_batch_decision(
@@ -127,13 +46,19 @@ async def _wait_for_chat_batch_decision(
     """
     event = asyncio.Event()
     executor._pending_events[graph_interrupt_id] = event
+    from Django_xm.apps.approvals.models import Approval
+    from Django_xm.common.approval_batch import (
+        collect_batch_decisions,
+        finalize_batch_approvals,
+    )
+
     try:
         while True:
             # 安全点（Task 9）：收到停止请求立即退出等待，由外层 finally 落库并广播
             if executor._stop_requested:
                 raise asyncio.CancelledError("用户停止生成")
-            decisions, all_resolved = await sync_to_async(_collect_chat_batch_decisions)(
-                session_id, graph_interrupt_id
+            decisions, all_resolved = await sync_to_async(collect_batch_decisions)(
+                Approval.SOURCE_CHAT, session_id, graph_interrupt_id
             )
             if all_resolved:
                 break
@@ -149,7 +74,7 @@ async def _wait_for_chat_batch_decision(
         f"[ChatExec] 批次全部决断，恢复执行: session={session_id}, "
         f"graph_interrupt_id={graph_interrupt_id}, decisions={decisions}"
     )
-    await sync_to_async(_finalize_chat_batch_approvals)(decisions, session_id)
+    await sync_to_async(finalize_batch_approvals)(decisions, Approval.SOURCE_CHAT, session_id)
     return decisions
 
 
@@ -176,6 +101,7 @@ async def _persist_chat_tool_calls(data: dict, content_state: dict, session_id: 
             tool_calls_map=tool_calls_map,
             message_id=str(message_id),
             subagent_contents=data.get("_subagent_contents") or None,
+            subagent_tool_entries=data.get("_subagent_tool_entries") or None,
         )
     except Exception:
         logger.warning(f"[ChatExec] 落库 content/tool_calls 失败: session={session_id}", exc_info=True)
@@ -203,7 +129,15 @@ async def run_chat_session(executor, params: dict) -> None:
 
     chat_service = ChatService(user_id=user_id, thread_id=session_id)
 
-    content_state: dict = {"content": "", "last_broadcast": 0.0}
+    # 业务等待恢复模式（wait_for_subagent 挂起后子代理终态唤醒）：以挂起前已持久化的
+    # content 作为累积基线，恢复轮在此之上继续累积（position 注入与最终落库依赖此基线，
+    # 避免 content 从空重建导致历史段被覆盖 / position 注入为 0）。
+    _resume_content = params.get("resume_content") or ""
+    content_state: dict = {"content": _resume_content, "last_broadcast": 0.0}
+    # 引用透传给 chat_service 子代理回调：子代理工具/正文事件聚合时实时落库
+    # （挂起落库发生在子代理执行前，若仅靠挂起/结束落库，子代理正文与图层字段
+    # 中途丢失，恢复轮从 DB 读不到基线 → 刷新后子代理卡归集失败/正文错位）。
+    data["_content_state_ref"] = content_state
 
     async def _broadcast(event: dict) -> None:
         """将执行事件广播到 WS（触发/非触发浏览器统一消费）。
@@ -249,6 +183,9 @@ async def run_chat_session(executor, params: dict) -> None:
             # 业务等待挂起（wait_for_subagent，spec D4）：注册父 awaiter、置挂起态
             # 后退出本协程（不 finalize、不释放 checkpointer）——子代理终态时由
             # 生命周期管理器唤醒，以 Command(resume) 新建协程续跑（与 research 同构）。
+            # 挂起前先落库已执行工具结果（与审批挂起 _interrupt_handler 一致），
+            # 保证挂起期间刷新/后开浏览器子代理工具卡与正文完整可见。
+            await _persist_chat_tool_calls(data, content_state, session_id, message_id)
             await executor._handle_chat_wait_suspend(wait_suspend)
             return
     except asyncio.CancelledError:

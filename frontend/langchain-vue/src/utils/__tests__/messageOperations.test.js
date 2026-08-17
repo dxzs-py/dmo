@@ -10,7 +10,7 @@
  */
 import { strict as assert } from 'node:assert'
 import { ToolCallStatus, ApprovalState } from '../../types/index.js'
-import { finalizeToolCallsInMap, addOrUpdateToolCallInLastMessage, sortToolCallsForDisplay } from '../messageOperations.js'
+import { finalizeToolCallsInMap, sortToolCallsForDisplay, _mergeToolCalls } from '../messageOperations.js'
 
 let passed = 0
 let failed = 0
@@ -181,87 +181,6 @@ test('混合场景：仅审批未放行工具被跳过，其余兜底', () => {
   assert.equal(plain.status, ToolCallStatus.COMPLETED)
 })
 
-// ==================== PENDING 锁死保护（_mergeExistingToolCall 共用实现） ====================
-
-/** 构造含单条 pending 审批工具消息的 sessions */
-function makeSessionWithPendingApprovalTool() {
-  return [{
-    id: 's1',
-    messages: [{
-      id: 'm1',
-      backendId: 100,
-      role: 'assistant',
-      content: '',
-      toolCalls: [{
-        id: 'call_1',
-        toolCallId: 'call_1',
-        name: 'shell_exec',
-        status: ToolCallStatus.PENDING,
-        approval: { state: ApprovalState.PENDING, toolName: 'shell_exec' },
-      }],
-    }],
-  }]
-}
-
-console.log('\n=== PENDING 锁死保护（tool_call_waiting 放行） ===')
-
-test('tool_call_waiting 放行：pending + 审批非终态 → 推进到 waiting（P3-5 类根因修复）', () => {
-  const sessions = makeSessionWithPendingApprovalTool()
-  addOrUpdateToolCallInLastMessage(sessions, 's1', {
-    id: 'call_1',
-    name: 'shell_exec',
-    status: ToolCallStatus.WAITING,
-  })
-  assert.equal(sessions[0].messages[0].toolCalls[0].status, ToolCallStatus.WAITING)
-  // approval 保持非终态（不被覆盖）
-  assert.equal(sessions[0].messages[0].toolCalls[0].approval.state, ApprovalState.PENDING)
-})
-
-test('tool_call_running 仍被拦截：pending + 审批非终态 → 保持 pending（P3-7/P3-19 保护保留）', () => {
-  const sessions = makeSessionWithPendingApprovalTool()
-  addOrUpdateToolCallInLastMessage(sessions, 's1', {
-    id: 'call_1',
-    name: 'shell_exec',
-    status: ToolCallStatus.RUNNING,
-  })
-  assert.equal(sessions[0].messages[0].toolCalls[0].status, ToolCallStatus.PENDING)
-})
-
-test('审批已确认（approved）后 running 放行', () => {
-  const sessions = makeSessionWithPendingApprovalTool()
-  sessions[0].messages[0].toolCalls[0].approval.state = ApprovalState.APPROVED
-  addOrUpdateToolCallInLastMessage(sessions, 's1', {
-    id: 'call_1',
-    name: 'shell_exec',
-    status: ToolCallStatus.RUNNING,
-  })
-  assert.equal(sessions[0].messages[0].toolCalls[0].status, ToolCallStatus.RUNNING)
-})
-
-test('无审批工具正常推进：pending → waiting', () => {
-  const sessions = [{
-    id: 's1',
-    messages: [{
-      id: 'm1',
-      backendId: 100,
-      role: 'assistant',
-      content: '',
-      toolCalls: [{
-        id: 'call_1',
-        toolCallId: 'call_1',
-        name: 'shell_exec',
-        status: ToolCallStatus.PENDING,
-      }],
-    }],
-  }]
-  addOrUpdateToolCallInLastMessage(sessions, 's1', {
-    id: 'call_1',
-    name: 'shell_exec',
-    status: ToolCallStatus.WAITING,
-  })
-  assert.equal(sessions[0].messages[0].toolCalls[0].status, ToolCallStatus.WAITING)
-})
-
 console.log('\n=== sortToolCallsForDisplay（seq 主 + 数组兜底） ===')
 
 test('全部条目有 seq → 按 seq 升序排序', () => {
@@ -311,6 +230,66 @@ test('空数组与单元素 → 原样返回', () => {
   const single = [{ id: 'x', seq: 5 }]
   sortToolCallsForDisplay(single)
   assert.deepEqual(single.map(t => t.id), ['x'])
+})
+
+console.log('\n=== _mergeToolCalls（position 保护 / 同名多工具按 id 匹配） ===')
+
+test('后端缺失 position：保留本地 number position', () => {
+  const local = [{ id: 'spawn_1', name: 'spawn_sub_agent', position: 38 }]
+  const backend = [{ id: 'spawn_1', name: 'spawn_sub_agent' }]
+  const merged = _mergeToolCalls(local, backend)
+  assert.equal(merged[0].position, 38)
+})
+
+test('position=0（本地）不被后端 undefined 覆盖', () => {
+  const local = [{ id: 'wait_1', name: 'wait_for_subagent', position: 0 }]
+  const backend = [{ id: 'wait_1', name: 'wait_for_subagent' }]
+  const merged = _mergeToolCalls(local, backend)
+  assert.equal(merged[0].position, 0)
+})
+
+test('position=0（后端）覆盖本地缺失的 position', () => {
+  const local = [{ id: 'wait_1', name: 'wait_for_subagent' }]
+  const backend = [{ id: 'wait_1', name: 'wait_for_subagent', position: 0 }]
+  const merged = _mergeToolCalls(local, backend)
+  assert.equal(merged[0].position, 0)
+})
+
+test('同名多工具（两个 spawn_sub_agent）按 id 精确匹配，各自 position 不丢失', () => {
+  const local = [
+    { id: 'spawn_1', name: 'spawn_sub_agent', position: 38 },
+    { id: 'spawn_2', name: 'spawn_sub_agent', position: 38 },
+  ]
+  const backend = [
+    { id: 'spawn_1', name: 'spawn_sub_agent', position: 38 },
+    { id: 'spawn_2', name: 'spawn_sub_agent' },
+  ]
+  const merged = _mergeToolCalls(local, backend)
+  const spawn1 = merged.find(t => t.id === 'spawn_1')
+  const spawn2 = merged.find(t => t.id === 'spawn_2')
+  assert.equal(spawn1.position, 38)
+  assert.equal(spawn2.position, 38)
+})
+
+test('后端独有条目 position=0 原样保留（本地为空列表）', () => {
+  const merged = _mergeToolCalls([], [{ id: 'wait_1', name: 'wait_for_subagent', position: 0 }])
+  assert.equal(merged[0].position, 0)
+})
+
+test('后端缺失 subagentThreadId：保留本地事件已写入的图层字段', () => {
+  const local = [{ id: 'sh_1', name: 'shell_exec', subagentThreadId: 'subagent_abc', agentName: 'ollama-list', depth: 1 }]
+  const backend = [{ id: 'sh_1', name: 'shell_exec' }]
+  const merged = _mergeToolCalls(local, backend)
+  assert.equal(merged[0].subagentThreadId, 'subagent_abc')
+  assert.equal(merged[0].agentName, 'ollama-list')
+  assert.equal(merged[0].depth, 1)
+})
+
+test('后端缺失 subagentThreadId 且本地为空字符串：不误回填（空串原样保留）', () => {
+  const local = [{ id: 'sh_1', name: 'shell_exec', subagentThreadId: '' }]
+  const backend = [{ id: 'sh_1', name: 'shell_exec' }]
+  const merged = _mergeToolCalls(local, backend)
+  assert.equal(merged[0].subagentThreadId, '')
 })
 
 console.log(`\n结果: ${passed} 通过, ${failed} 失败`)

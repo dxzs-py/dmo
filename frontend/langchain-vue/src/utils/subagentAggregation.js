@@ -15,6 +15,8 @@
  * 渲染层据此将子代理挂载到对应 spawn 工具调用之后。
  */
 import { SUBAGENT_STATUS } from './subagentStatus.js'
+import { ApprovalState } from '../types/index.js'
+import { TERMINAL_STATUSES } from './toolCallStateMachine.js'
 
 /**
  * 从 toolCalls 兜底推导子代理状态（元数据未拉取到位时的展示兜底）。
@@ -27,13 +29,11 @@ function deriveSubagentStatus(toolCalls) {
   if (!toolCalls || toolCalls.length === 0) return SUBAGENT_STATUS.RUNNING
   const hasPendingApproval = toolCalls.some((tc) => {
     const approvalState = tc.approval?.state
-    return approvalState === 'pending' || approvalState === 'waiting'
+    return approvalState === ApprovalState.PENDING || approvalState === ApprovalState.WAITING
   })
   if (hasPendingApproval) return SUBAGENT_STATUS.INTERRUPTED_PENDING_USER_INPUT
 
-  const allTerminal = toolCalls.every(tc =>
-    ['completed', 'failed', 'rejected', 'timeout'].includes(tc.status)
-  )
+  const allTerminal = toolCalls.every(tc => TERMINAL_STATUSES.has(tc.status))
   if (allTerminal) return SUBAGENT_STATUS.COMPLETED
   return SUBAGENT_STATUS.RUNNING
 }

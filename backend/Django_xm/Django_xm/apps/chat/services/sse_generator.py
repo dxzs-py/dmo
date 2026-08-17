@@ -17,6 +17,29 @@ logger = logging.getLogger(__name__)
 _TOOL_EVENT_TYPES = frozenset({"tool", "tool_result", "tool_usage_dedup", "tool_usage_blocked"})
 
 
+def _merge_content_with_overlap(existing: str, new_chunk: str) -> str:
+    """累积正文并做尾部重叠去重（恢复轮拼接防重复）。
+
+    业务等待挂起（wait_for_subagent）时挂起前 content 已落库（含流式中途的
+    尾部字符），恢复轮 LLM 从 checkpoint 继续生成时会重新输出与该尾部重叠的
+    内容。若直接 ``existing += new_chunk``，会出现「三个三个」类重复。
+
+    规则：取 new_chunk 前缀与 existing 后缀的最大重叠（最长重叠后缀/前缀），
+    拼接时去掉重叠部分。无重叠时退化为普通追加；空 chunk 幂等返回 existing。
+    """
+    if not new_chunk:
+        return existing
+    if not existing:
+        return new_chunk
+    max_overlap = min(len(existing), len(new_chunk))
+    overlap = 0
+    for i in range(max_overlap, 0, -1):
+        if existing[-i:] == new_chunk[:i]:
+            overlap = i
+            break
+    return existing + new_chunk[overlap:]
+
+
 async def _publish_stream_event(
     event: dict[str, Any],
     session_id: str,
@@ -51,7 +74,9 @@ async def _publish_stream_event(
     # ── chunk 事件：累积 + 节流广播 ──
     if event_type_str == "chunk":
         if content_state is not None:
-            content_state["content"] += event.get("content", "")
+            content_state["content"] = _merge_content_with_overlap(
+                content_state.get("content", ""), event.get("content", "")
+            )
             now = time.monotonic()
             if now - content_state.get("last_broadcast", 0) >= 0.5:
                 content_state["last_broadcast"] = now
@@ -115,6 +140,25 @@ async def _publish_stream_event(
                     tool_parameters_ready = tool_data.get("parameters") or tool_data.get("args")
                     if isinstance(tool_parameters_ready, dict) and tool_parameters_ready:
                         lifecycle_service.bind_parameters(tool_call_id, tool_parameters_ready)
+                    # position 补全（与正常发布路径一致）：PENDING 被跳过时不执行
+                    # 下方的 bind_position，会导致 spawn2/3、wait_for_subagent 等
+                    # 同批/后续工具在事件链路缺 position、前端切段错位（正文被插到
+                    # 工具卡之间）。position 独立于事件发布，直接按当前图层正文长度
+                    # 绑定（bind_position keep_existing 幂等，首次值永久不变）。
+                    _sub_thread_id = tool_data.get("subagent_thread_id") or ""
+                    if _sub_thread_id:
+                        _pos = len((subagent_contents or {}).get(_sub_thread_id) or {}).get("content") or ""
+                    elif content_state is not None:
+                        _pos = len(content_state.get("content") or "")
+                    else:
+                        _pos = None
+                    if _pos is not None:
+                        try:
+                            lifecycle_service.bind_position(tool_call_id, _pos)
+                        except Exception:
+                            logger.warning(
+                                f"绑定 position 失败: tool_call_id={tool_call_id}, position={_pos}"
+                            )
                     logger.debug(
                         f"[Sync] PENDING 补发跳过（状态已推进）: tool_call_id={tool_call_id}, "
                         f"last_event_type={_last_event}, event_type_str={event_type_str}"

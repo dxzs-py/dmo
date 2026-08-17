@@ -141,6 +141,13 @@ def _evolve_tool_call(
     if "position" not in evolved and isinstance(new_tc.get("position"), int):
         evolved["position"] = new_tc["position"]
 
+    # 图层字段（subagent_thread_id/agent_name/depth）：existing 有则保留，
+    # existing 无而 new 有时补上——审批重建路径写入的条目缺图层字段，
+    # 经此演进补全，保证刷新后前端按 subagent_thread_id 归集子代理工具卡
+    for _layer_field in ("subagent_thread_id", "agent_name", "depth"):
+        if _layer_field not in evolved and new_tc.get(_layer_field) is not None:
+            evolved[_layer_field] = new_tc[_layer_field]
+
     existing_status = str(existing_tc.get("status") or "").lower()
     new_status = str(new_tc.get("status") or "").lower()
 
@@ -263,8 +270,10 @@ def _persist_to_db_sync(
     async 函数中直接调用 ORM 会被 Django 阻断（"You cannot call this from an async context"）。
 
     合并策略：
-        - ``content``：仅当新内容严格长于已有内容时覆盖（避免覆盖前端更长版本）；
-          已有内容等长或更长时保留前端版本
+        - ``content``：追加保留语义（保留流式累积段）——新内容以已有内容为前缀则
+          直接采用新内容；否则若新内容更长则追加到已有内容之后（保留挂起前流式段，
+          避免业务等待挂起恢复轮从空重建时覆盖历史段）；更短/等长且非前缀扩展时
+          保留已有版本（避免覆盖前端更长版本）
         - ``tool_calls``：增量合并（``_merge_tool_calls_incremental``），
           已匹配条目做字段级状态演进（保留 approval 字段，演进
           status/state/result/error，P3-R2），未匹配的新 tool_call 追加；
@@ -319,12 +328,41 @@ def _persist_to_db_sync(
         logger.warning(f"[persist_stream_result] 找不到助手消息: session_id={session_id}, message_id={message_id}")
         return None
 
-    # 内容覆盖策略：仅当新内容严格长于已有内容时覆盖
+    # 内容合并策略：追加保留 + 尾部重叠去重（修复业务等待挂起恢复后的历史段覆盖/重复）。
+    # - 新内容以已有内容为前缀（正常流式累积 / 恢复基线到位）：直接采用新内容；
+    # - 新内容尾部与已有内容尾部重叠（恢复轮 LLM 从 checkpoint 重新输出，重叠于
+    #   挂起前流式中途的尾部字符，如「…汇总结果。三个」+「三个子代理全部完成…」）：
+    #   按最长重叠去重拼接，避免「三个三个」类重复；
+    # - 新内容更长但无重叠（恢复轮从空重建，缺失挂起前流式段）：追加到已有内容后，
+    #   保留历史段，避免「仅更长覆盖」把挂起前流式段覆盖丢失；
+    # - 新内容更短/相等且非前缀扩展：保留已有版本（避免覆盖前端更长版本）。
     existing_content = assistant_msg.content or ""
     content_changed = False
-    if len(content) > len(existing_content):
-        assistant_msg.content = content
-        content_changed = True
+    if content and content != existing_content:
+        if content.startswith(existing_content):
+            assistant_msg.content = content
+            content_changed = True
+        else:
+            # 尾部重叠检测：content 前缀与 existing 后缀重叠（恢复轮 LLM 从
+            # checkpoint 重生成，重叠于挂起前流式中途的尾部字符）
+            _max_overlap = min(len(existing_content), len(content))
+            _overlap = 0
+            for _i in range(_max_overlap, 0, -1):
+                if existing_content[-_i:] == content[:_i]:
+                    _overlap = _i
+                    break
+            if _overlap > 0:
+                # 去重拼接（不要求 content 更长——恢复轮 content 可能仅含
+                # 重叠尾 + 少量新增）
+                _merged = existing_content + content[_overlap:]
+                if len(_merged) > len(existing_content):
+                    assistant_msg.content = _merged
+                    content_changed = True
+            elif len(content) > len(existing_content):
+                # 无重叠且更长：纯追加保留历史段（恢复轮从空重建，缺失挂起前流式段）
+                assistant_msg.content = existing_content + content
+                content_changed = True
+            # 其余（无重叠且更短/等长）：保留已有版本，避免覆盖前端更长版本
 
     # 增量合并 tool_calls（字段级状态演进，P3-R2）
     existing_tool_calls = assistant_msg.tool_calls or []
@@ -387,6 +425,7 @@ async def persist_stream_result(
     message_id: str | None = None,
     reasoning: dict[str, Any] | None = None,
     subagent_contents: dict[str, dict[str, Any]] | None = None,
+    subagent_tool_entries: dict[str, dict[str, Any]] | None = None,
 ) -> str | None:
     """流结束时持久化 AI 回复内容与工具调用到 ``ChatMessage``。
 
@@ -396,8 +435,9 @@ async def persist_stream_result(
           ``Message.tool_calls``，必须与触发浏览器一致
 
     合并策略：
-        - ``content``：仅当新内容严格长于已有内容时覆盖（避免覆盖前端更长版本）；
-          已有内容等长或更长时保留前端版本
+        - ``content``：追加保留语义（保留流式累积段）——新内容以已有内容为前缀则
+          直接采用新内容；否则若新内容更长则追加到已有内容之后（保留挂起前流式段）；
+          更短/等长且非前缀扩展时保留已有版本
         - ``tool_calls``：增量合并（``_merge_tool_calls_incremental``），
           已匹配条目做字段级状态演进（保留 approval 字段，演进
           status/state/result/error，P3-R2），未匹配的新 tool_call 追加
@@ -434,6 +474,18 @@ async def persist_stream_result(
 
     # 构建持久化的 tool_calls 列表
     new_tool_calls = _build_persisted_tool_calls(tool_calls_map)
+
+    # 子代理工具条目合并（图层字段贯通，刷新后子代理卡片归集依据）：
+    # 主 ctx.tool_calls_map 只含主代理工具；子代理工具由 chat_service
+    # _on_subagent_tool_event 聚合（含 subagent_thread_id/agent_name/depth/
+    # position/seq/status/result）。与主条目按 id 天然去重（_merge_tool_calls_incremental
+    # 增量合并），审批重建路径写入的条目经演进保留图层字段不丢失。
+    if subagent_tool_entries:
+        existing_ids = {tc.get("id") for tc in new_tool_calls if tc.get("id")}
+        for _tc_id, _entry in subagent_tool_entries.items():
+            if not _tc_id or _tc_id in existing_ids:
+                continue
+            new_tool_calls.append(dict(_entry))
 
     try:
         # ORM 操作通过 sync_to_async 调用，规避 async 上下文限制

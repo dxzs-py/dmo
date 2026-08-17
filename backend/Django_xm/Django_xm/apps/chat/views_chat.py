@@ -232,15 +232,22 @@ async def _cleanup_checkpoint_messages_async_by_id(session_id, deleted_message_i
             return
 
         # Step 2: 从数据库中剩余的未删除消息重建 checkpoint
-        # 使用异步 ORM 迭代，避免 sync_to_async + CurrentThreadExecutor 嵌套提交导致的
-        # "You cannot submit onto CurrentThreadExecutor from its own thread" 错误
-        remaining_messages = [
-            msg
-            async for msg in ChatMessage.objects.filter(
-                session__session_id=session_id,
-                is_deleted=False,
-            ).order_by("created_at")
-        ]
+        # 注意：不能使用 async for 遍历 ORM queryset——Django async ORM 内部
+        # 使用 thread_sensitive 的 sync_to_async 提交到主线程 CurrentThreadExecutor，
+        # 而本函数经 transaction.on_commit 回调（即主线程）中的 asyncio.run 执行，
+        # 会触发 "You cannot submit onto CurrentThreadExecutor from its own thread"。
+        # 改为显式 thread_sensitive=False 的 sync_to_async 一次性取回 list。
+        from asgiref.sync import sync_to_async
+
+        remaining_messages = await sync_to_async(
+            lambda: list(
+                ChatMessage.objects.filter(
+                    session__session_id=session_id,
+                    is_deleted=False,
+                ).order_by("created_at")
+            ),
+            thread_sensitive=False,
+        )()
 
         if not remaining_messages:
             logger.info(f"Checkpoint 重建: 无剩余消息，跳过: thread={thread_id}")

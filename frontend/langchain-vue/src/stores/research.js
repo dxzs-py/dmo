@@ -1,9 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, markRaw, triggerRef } from 'vue'
-import { getApprovalHistory } from '@/api/approval'
 import { logger } from '@/utils/logger'
 import { toCamelCase } from '@/utils/sessionTransformers'
-import { approvalStateToToolStatus } from '@/utils/toolCallStateMachine'
 import { ResearchTaskStatus } from '@/types'
 import {
   addOrUpdateToolCallInMap,
@@ -18,66 +16,6 @@ import {
   _mergeToolCalls,
   sortToolCallsForDisplay,
 } from '@/utils/messageOperations'
-
-/**
- * 将 Approval 记录转换为 toolCall 对象
- *
- * 工具调用数据的唯一持久化来源是 Approval 模型（原 ResearchTask.tool_calls 字段已在
- * migration 0009 中移除）。本函数将后端 ApprovalReadSerializer 返回的审批记录
- * 转换为前端 toolCall 结构，供 loadHistory 合并使用。
- *
- * 字段映射：
- * - extra.toolCallId / interrupt_id → toolCall.id / toolCallId
- * - tool_name → toolCall.name
- * - parameters → toolCall.parameters
- * - state → toolCall.status（统一走 approvalStateToToolStatus 近似映射，见 toolCallStateMachine.js；
- *   非终态审批 pending/waiting 映射为 pending/waiting，绝不映射为 running ——
- *   Task 7：修复"待审批/等待同批工具快照恢复后显示执行中"（P3-19 同类根因））
- * - 完整审批记录 → toolCall.approval（含 interrupt_id / state / operation 等）
- *
- * 注意：toolCall.result（工具执行输出）不在 Approval 中持久化，仅通过 SSE 流实时推送。
- * 刷新页面后 result 不可恢复，loadHistory 不填充此字段。
- *
- * @param {Object} approval - ApprovalReadSerializer 返回的审批记录
- * @returns {Object} toolCall 对象
- */
-function _approvalToToolCall(approval) {
-  if (!approval) return null
-  const extra = (approval.extra && typeof approval.extra === 'object') ? approval.extra : {}
-  const toolCallId = extra.toolCallId || approval.interruptId
-  return {
-    id: toolCallId,
-    toolCallId: toolCallId,
-    name: approval.toolName,
-    toolName: approval.toolName,
-    parameters: approval.parameters || {},
-    status: approvalStateToToolStatus(approval.state),
-    // seq 提升到顶层：Approval.extra.seq（创建审批时由后端 enrich_entry_seq 从
-    // ToolCallContext 写入）是跨浏览器统一排序依据，与 WS 工具事件透传的 seq
-    // 同一来源。loadHistory 刷新重建的 toolCall 据此参与 sortToolCallsForDisplay。
-    ...(typeof extra.seq === 'number' && extra.seq > 0 ? { seq: extra.seq } : {}),
-    // position 提升到顶层（Agent 图层嵌套规范 D3）：Approval.extra.position
-    // （后端 enrich_entry_position 写入）是图层内联布局恢复依据，与 WS 工具事件
-    // 透传的 position 同一来源。loadHistory 刷新重建的 toolCall 据此保持内联位置。
-    ...(typeof extra.position === 'number' && extra.position >= 0 ? { position: extra.position } : {}),
-    approval: {
-      interruptId: approval.interruptId,
-      source: approval.source,
-      sourceId: approval.sourceId,
-      state: approval.state,
-      toolName: approval.toolName,
-      title: approval.title,
-      description: approval.description,
-      action: approval.action,
-      operation: approval.operation,
-      parameters: approval.parameters,
-      userInput: approval.userInput,
-      createdAt: approval.createdAt,
-      resolvedAt: approval.resolvedAt,
-      ...extra,
-    },
-  }
-}
 
 /**
  * 任务状态终态集合（不可被非终态覆盖）。
@@ -519,55 +457,64 @@ export const useResearchStore = defineStore('research', () => {
   }
 
   /**
-   * 从后端拉取工具调用历史
+   * 从后端快照合并工具调用（含 result，刷新还原权威来源）
    *
-   * 工具调用数据的唯一持久化来源是 Approval 模型（source='deep_research', source_id=taskId）。
-   * 调用统一审批 API getApprovalHistory 查询，通过 _approvalToToolCall 转换为 toolCall 结构，
-   * 再与本地实时同步数据增量合并。
-   *
-   * 合并策略与 sessionStore.loadSessionDetail 一致：使用 _mergeToolCalls 增量合并，
-   * 保留本地审批中间状态（pending/processing/waiting）和 tool status，避免刷新时丢失实时同步数据。
+   * 数据源为 ResearchTask.tool_calls（后端 status 接口返回，含 result），
+   * 替代原 Approval 历史重建（Approval 不持久化 result，刷新后丢失）。
+   * 合并策略与 sessionStore.loadSessionDetail 一致：_mergeToolCalls 增量合并，
+   * 保留本地审批中间状态与更完整的 result/status。
    *
    * @param {string} taskId - 研究任务 ID
+   * @param {Array} backendToolCalls - 后端 tool_calls 数组（camelCase）
    */
-  const loadHistory = async (taskId) => {
-    if (!taskId) {
-      logger.warn('[Research] loadHistory 无 taskId')
-      return
-    }
+  const setTaskToolCallsFromSnapshot = (taskId, backendToolCalls) => {
+    if (!taskId) return
     const task = _ensureTask(taskId)
-    try {
-      const response = await getApprovalHistory(taskId, { source: 'deep_research' })
-      const approvalList = response.data?.data || []
-      // Approval 记录转换为 toolCall 对象
-      const backendList = approvalList
-        .map(_approvalToToolCall)
-        .filter(Boolean)
+    const existingList = task.toolCalls.value || []
+    const backendList = Array.isArray(backendToolCalls) ? backendToolCalls : []
+    const mergedList = _mergeToolCalls(existingList, backendList)
 
-      // 合并策略：使用 _mergeToolCalls 增量合并（而非全量替换），保留本地审批中间状态
-      // （pending/processing/waiting）和 tool status，避免刷新时丢失实时同步数据。
-      // 与 sessionStore.loadSessionDetail 行为一致：所有模块刷新时统一通过合并而非替换。
-      const existingList = task.toolCalls.value || []
-      const mergedList = _mergeToolCalls(existingList, backendList)
-
-      // 同步更新 toolCallMap：重建 Map 以确保一致性
-      const mergedMap = new Map(mergedList.map(tc => [tc.id || tc.toolCallId, tc]))
-      // 保留 Map 中已有但 mergedList 中不存在的条目（WebSocket 事件写入的高优先级数据）
-      for (const [key, value] of task.toolCallMap.value.entries()) {
-        if (!mergedMap.has(key)) {
-          mergedMap.set(key, value)
-        }
+    // 同步更新 toolCallMap：重建 Map 以确保一致性
+    const mergedMap = new Map(mergedList.map(tc => [tc.id || tc.toolCallId, tc]))
+    // 保留 Map 中已有但 mergedList 中不存在的条目（WebSocket 事件写入的高优先级数据）
+    for (const [key, value] of task.toolCallMap.value.entries()) {
+      if (!mergedMap.has(key)) {
+        mergedMap.set(key, value)
       }
-
-      task.toolCallMap.value = mergedMap
-      task.toolCalls.value = mergedList
-      logger.info(`[Research] 加载工具调用历史(合并): 本地=${existingList.length}, 后端=${backendList.length}, 合并后=${mergedList.length}, taskId=${taskId}`)
-    } catch (e) {
-      logger.warn(`[Research] 加载工具调用历史失败: taskId=${taskId}`, e)
-      // 空值兜底：失败时清空，不报错
-      task.toolCalls.value = []
-      task.toolCallMap.value = new Map()
     }
+
+    task.toolCallMap.value = mergedMap
+    task.toolCalls.value = mergedList
+  }
+
+  /**
+   * 从后端快照合并子代理正文（刷新还原权威来源）
+   *
+   * 数据源为 ResearchTask.subagent_contents（后端 status 接口返回，key=threadId）。
+   * 后端为持久化权威，但本地实时累计更超前时保留本地（快照滞后保护）。
+   *
+   * @param {string} taskId - 研究任务 ID
+   * @param {Object} contents - 后端 subagent_contents（camelCase，key=threadId）
+   */
+  const setTaskSubagentContentsFromSnapshot = (taskId, contents) => {
+    if (!taskId || !contents || typeof contents !== 'object') return
+    const task = _ensureTask(taskId)
+    const merged = { ...task.subagentContents.value }
+    for (const [threadId, entry] of Object.entries(contents)) {
+      if (!entry || typeof entry !== 'object') continue
+      const local = merged[threadId] || {}
+      merged[threadId] = {
+        content: (local.content?.length ?? 0) >= (entry.content?.length ?? 0)
+          ? (local.content || '')
+          : (entry.content || ''),
+        reasoningContent: (local.reasoningContent?.length ?? 0) >= (entry.reasoningContent?.length ?? 0)
+          ? (local.reasoningContent || '')
+          : (entry.reasoningContent || ''),
+        ...(entry.agentName ? { agentName: entry.agentName } : {}),
+        ...(typeof entry.depth === 'number' ? { depth: entry.depth } : {}),
+      }
+    }
+    task.subagentContents.value = merged
   }
 
   /**
@@ -647,7 +594,8 @@ export const useResearchStore = defineStore('research', () => {
     updateToolCallStatus,
     getToolCalls,
     getTaskSubagentContents,
-    loadHistory,
+    setTaskToolCallsFromSnapshot,
+    setTaskSubagentContentsFromSnapshot,
     clearTask,
     flushPendingApprovals,
     // 子代理图层正文（Agent 图层嵌套规范 Task 1.5）

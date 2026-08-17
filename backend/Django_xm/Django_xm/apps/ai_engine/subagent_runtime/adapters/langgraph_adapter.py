@@ -230,7 +230,7 @@ class LangGraphAdapter(BaseRuntimeAdapter):
           恢复信令路由到子代理（而非主会话挂起协程）。
         """
         from Django_xm.apps.approvals.models import Approval
-        from Django_xm.apps.research.services.research_runner import create_approvals_for_interrupts
+        from Django_xm.common.approval_batch import create_approvals_for_interrupts
         from Django_xm.common.approval_parser import parse_approval_interrupt
 
         interrupt_value = None
@@ -276,12 +276,12 @@ class LangGraphAdapter(BaseRuntimeAdapter):
         # request_approval_async 会显式报错拒绝创建（防呆，不做静默兜底）。
         await create_approvals_for_interrupts(
             approval_data_list,
-            thread_id=instance.parent_thread_id,  # 归集到父线程（研究任务/chat 会话）
+            source=source,
+            source_id=instance.parent_thread_id,  # 归集到父线程（研究任务/chat 会话）
             user_id=meta.get("user_id"),
             chat_session_id=(configurable or {}).get("chat_session_id"),
             message_id=(configurable or {}).get("assistant_message_id", "") or "",
             data=None,
-            source=source,
         )
         # 审批自治（对齐 7.md）：子代理审批只与子代理自身状态相关，与父任务状态
         # 完全解耦。父任务保持 running（waiting_subagent），不切 awaiting_approval；

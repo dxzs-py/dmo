@@ -1,33 +1,9 @@
 <template>
   <div class="report-wrapper">
+    <!-- 研究报告（research 特殊展示，独立组件，spec 8.2） -->
     <div v-if="task.finalReport" class="report-section">
-      <div v-if="task.versionChain && task.versionChain.length > 1" class="version-chain">
-        <span v-for="(v, idx) in task.versionChain" :key="v.taskId">
-          <el-tag
-            :type="v.taskId === task.taskId ? 'primary' : 'info'"
-            size="small"
-            class="version-tag"
-            :style="v.taskId === task.taskId ? '' : 'cursor: pointer'"
-            @click="v.taskId !== task.taskId && emit('view-task', { taskId: v.taskId })"
-          >
-            v{{ v.version }}
-          </el-tag>
-          <span v-if="idx < task.versionChain.length - 1" class="version-arrow">&rarr;</span>
-        </span>
-      </div>
       <div class="report-header">
         <h4>研究报告</h4>
-        <div class="report-header-actions">
-          <el-button
-            v-if="task.status === ResearchTaskStatus.COMPLETED"
-            type="success"
-            size="small"
-            @click="emit('open-continue-dialog', task)"
-          >
-            继续研究
-          </el-button>
-          <AiOpenInChat label="在聊天中讨论" @click="emit('open-in-chat')" />
-        </div>
       </div>
       <div class="report-content">
         <!-- 局部 ErrorBoundary：研究报告 Markdown 渲染畸形内容时仅替换报告区，保留审批面板与文件列表 -->
@@ -35,29 +11,56 @@
           <MarkdownRenderer :content="task.finalReport" />
         </ErrorBoundary>
       </div>
+    </div>
 
-      <div v-if="docAnalysisFile" class="analysis-section">
-        <el-divider />
-        <div class="analysis-header">
-          <h4>文档分析详情</h4>
-          <el-button
-            v-if="!docAnalysisContent"
-            size="small"
-            :loading="docAnalysisLoading"
-            @click="emit('load-doc-analysis')"
-          >
-            查看分析依据
-          </el-button>
-        </div>
-        <div v-if="docAnalysisLoading" class="analysis-loading">
-          <el-icon class="is-loading"><Loading /></el-icon>
-          <span>加载分析详情...</span>
-        </div>
-        <div v-else-if="docAnalysisContent" class="analysis-content">
-          <ErrorBoundary>
-            <MarkdownRenderer :content="docAnalysisContent" />
-          </ErrorBoundary>
-        </div>
+    <div v-if="task.versionChain && task.versionChain.length > 1" class="version-chain">
+      <span v-for="(v, idx) in task.versionChain" :key="v.taskId">
+        <el-tag
+          :type="v.taskId === task.taskId ? 'primary' : 'info'"
+          size="small"
+          class="version-tag"
+          :style="v.taskId === task.taskId ? '' : 'cursor: pointer'"
+          @click="v.taskId !== task.taskId && emit('view-task', { taskId: v.taskId })"
+        >
+          v{{ v.version }}
+        </el-tag>
+        <span v-if="idx < task.versionChain.length - 1" class="version-arrow">&rarr;</span>
+      </span>
+    </div>
+
+    <div class="report-actions">
+      <el-button
+        v-if="task.status === ResearchTaskStatus.COMPLETED"
+        type="success"
+        size="small"
+        @click="emit('open-continue-dialog', task)"
+      >
+        继续研究
+      </el-button>
+      <AiOpenInChat label="在聊天中讨论" @click="emit('open-in-chat')" />
+    </div>
+
+    <div v-if="docAnalysisFile" class="analysis-section">
+      <el-divider />
+      <div class="analysis-header">
+        <h4>文档分析详情</h4>
+        <el-button
+          v-if="!docAnalysisContent"
+          size="small"
+          :loading="docAnalysisLoading"
+          @click="emit('load-doc-analysis')"
+        >
+          查看分析依据
+        </el-button>
+      </div>
+      <div v-if="docAnalysisLoading" class="analysis-loading">
+        <el-icon class="is-loading"><Loading /></el-icon>
+        <span>加载分析详情...</span>
+      </div>
+      <div v-else-if="docAnalysisContent" class="analysis-content">
+        <ErrorBoundary>
+          <MarkdownRenderer :content="docAnalysisContent" />
+        </ErrorBoundary>
       </div>
     </div>
 
@@ -83,9 +86,10 @@ import AiOpenInChat from '@/components/ai-elements/AiOpenInChat.vue'
 import { deepResearchAPI } from '@/api/research'
 import { ResearchTaskStatus } from '@/types'
 /**
- * 深度研究 - 任务报告
- * 包含：版本链 / 研究报告 Markdown / 文档分析详情 / 生成的文件列表
- * FileBrowser 仅在任务终态时加载一次文件列表
+ * 深度研究 - 任务结果区
+ * 包含：版本链 / 文档分析详情 / 生成的文件列表
+ * 最终报告（final_report）已内联进 ResearchTaskDetail 的研究过程正文（spec 8.1），
+ * 本组件不再单独渲染报告 Markdown。
  */
 defineProps({
   /** 当前任务对象 */
@@ -132,10 +136,6 @@ const emit = defineEmits([
 
 .report-header h4 {
   margin: 0;
-}
-
-.report-section h4 {
-  margin: 0 0 16px 0;
   font-size: 16px;
   font-weight: 600;
   color: var(--el-text-color-primary);
@@ -145,6 +145,14 @@ const emit = defineEmits([
   padding: 20px;
   background: var(--el-fill-color-lighter);
   border-radius: 4px;
+  margin-bottom: 16px;
+}
+
+.report-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .version-chain {
@@ -162,12 +170,6 @@ const emit = defineEmits([
 .version-arrow {
   color: var(--el-text-color-secondary);
   font-size: 12px;
-}
-
-.report-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 .analysis-section {
@@ -216,14 +218,8 @@ const emit = defineEmits([
   color: var(--el-text-color-primary);
 }
 
-@media (max-width: 768px) {
-  .report-content {
-    padding: 12px;
-  }
-}
-
 @media (max-width: 480px) {
-  .report-header {
+  .report-actions {
     flex-direction: column;
     align-items: flex-start;
     gap: 8px;

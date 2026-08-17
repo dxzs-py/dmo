@@ -126,6 +126,22 @@ export const PROTECTED_STATUSES = new Set([
   ToolCallStatus.WAITING,
 ])
 
+/**
+ * 非终态审批状态集合（唯一权威）
+ *
+ * 用途：流式完成 / 深度研究完成时，识别仍处于"待审批/审批中/审批等待"的
+ * toolCall.approval.state，避免最终化时误标为 COMPLETED（审批按钮随终态消失）。
+ *
+ * 供 messageOperations.js（finalizeToolCallsInMap 兜底）与
+ * stores/sync/constants.js（messageIntegrity 完整性校验）统一引用，
+ * 消除两处重复维护。
+ */
+export const NON_TERMINAL_APPROVAL_STATES = [
+  ApprovalState.PENDING,
+  ApprovalState.PROCESSING,
+  ApprovalState.WAITING,
+]
+
 // ==================== 公共 API ====================
 
 /**

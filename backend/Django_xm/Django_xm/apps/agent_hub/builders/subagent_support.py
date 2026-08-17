@@ -568,7 +568,13 @@ class SubAgentContentMiddleware(AgentMiddleware):
         subagent_thread_id = _read_subagent_thread_id()
         # 消息幂等键：优先 AIMessage.id；缺失时用 content 确定性哈希
         # （重放消息 content 不变 → 键相同；不同轮次 content 必不同 → 不误伤）
-        msg_key = getattr(last_ai_msg, "id", None) or f"auto:{hash(content)}"
+        ai_id = getattr(last_ai_msg, "id", None)
+        msg_key = ai_id or f"auto:{hash(content)}"
+        logger.info(
+            f"[SubAgentContent] 转发子代理正文: agent={agent_name or agent_path[-1]}, "
+            f"subagent={subagent_thread_id}, msg_id={msg_key!r}, ai_id={ai_id!r}, "
+            f"content_len={len(content)}, content_prefix={content[:24]!r}"
+        )
         try:
             await on_subagent_content(
                 agent_path=agent_path,

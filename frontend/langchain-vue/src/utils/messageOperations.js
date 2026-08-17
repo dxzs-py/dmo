@@ -6,47 +6,12 @@ import {
   isTerminalStatus,
   TERMINAL_STATUSES,
   NON_TERMINAL_STATUSES,
+  NON_TERMINAL_APPROVAL_STATES,
 } from './toolCallStateMachine.js'
 
 // 状态机导出（终态判定等）统一收敛到 toolCallStateMachine.js（唯一权威），
 // 此处 re-export 保持既有调用方（session.js / research.js）导入路径不变。
 export { isTerminalStatus }
-
-// ==================== 标准化常量（统一所有模块的工具调用状态判断） ====================
-
-/**
- * 非终态审批状态集合（流式完成/最终化时需清理为终态）
- *
- * 与 stores/sync/constants.js 的 NON_TERMINAL_APPROVAL_STATES 保持一致，
- * 此处内联定义避免 utils → stores 的反向依赖（循环依赖风险）。
- */
-const _NON_TERMINAL_APPROVAL_STATES = [
-  ApprovalState.PENDING,
-  ApprovalState.PROCESSING,
-  ApprovalState.WAITING,
-]
-
-/**
- * 在 toolCall 数组中查找与 data 精确匹配的条目（仅 id / toolCallId 精确匹配）
- *
- * 幂等合并的唯一定位依据：id（或 toolCallId）精确匹配。
- * 禁止 name 回退合并（Task 5.2）：并行调用两个同名工具时，无 id 的 data 若按 name
- * 合并会命中同名的最后一个未完成条目，导致 count 2→1 数据丢失。
- * data 无 id 时一律返回 -1（调用方新建独立条目，语义为"新建待绑定"），
- * 绝不与已有同名工具合并。
- *
- * @param {Array} toolCalls - toolCall 数组
- * @param {Object} data - 工具事件数据
- * @returns {number} 匹配到的索引；-1 表示无匹配（新建）
- */
-function _findMatchingToolCall(toolCalls, data) {
-  if (!toolCalls || toolCalls.length === 0) return -1
-  const targetId = data.id || data.toolCallId
-  if (targetId) {
-    return toolCalls.findIndex(t => t.id === targetId || t.toolCallId === targetId)
-  }
-  return -1
-}
 
 /**
  * 统一的 toolCall 匹配函数（用于审批相关场景）
@@ -126,180 +91,6 @@ export function getInterruptId(approval) {
   return approval?.interruptId || approval?.toolCallId || ''
 }
 
-function _addOrUpdateToolCallInMessage(message, data) {
-  if (!message.toolCalls) message.toolCalls = []
-  const idx = _findMatchingToolCall(message.toolCalls, data)
-  if (idx >= 0) {
-    // 合并逻辑统一委托 _mergeExistingToolCall（与 Map 版共用单一实现，
-    // 消除数组/Map 双实现的 stateMap 推导漂移 —— Task 5.5）
-    message.toolCalls[idx] = _mergeExistingToolCall(message.toolCalls[idx], data)
-  } else {
-    // 新建 toolCall（data 无 id 时也在此新建独立条目，禁止与同名工具合并 —— Task 5.2）
-    message.toolCalls.push(_normalizeNewToolCall(data))
-  }
-}
-
-function _updateOrAddToolResultInMessage(message, data) {
-  if (!message.toolCalls) message.toolCalls = []
-  const idx = _findMatchingToolCall(message.toolCalls, data)
-  if (idx >= 0) {
-    const existing = message.toolCalls[idx]
-    const updates = {}
-    if (data.state !== undefined) updates.state = data.state
-    if (data.result !== undefined) updates.result = data.result
-    if (data.error !== undefined) updates.error = data.error
-    // 时间戳与子代理描述持久化（Task 4.1）：后端终态事件携带 completedAt、
-    // description（子代理工具事件）时写入；createdAt/description 已有值不覆盖
-    if (data.createdAt !== undefined && !existing.createdAt) updates.createdAt = data.createdAt
-    if (data.completedAt !== undefined) updates.completedAt = data.completedAt
-    if (data.description !== undefined && !existing.description) updates.description = data.description
-    // 状态推进统一走状态机（result 模式：显式 status > 事件态映射 > result→COMPLETED > error→FAILED）。
-    // 终态不回退 / 非法转换回退由 applyToolCallState 保证（核心层权威化，Task 2）。
-    const { status: nextStatus, applied: statusApplied } = applyToolCallState(existing, data, { mode: 'result' })
-    if (statusApplied && nextStatus !== undefined) {
-      updates.status = nextStatus
-      // 进入终态时清除审批状态，防止审批组件残留（P21/P22 修复）
-      if (isTerminalStatus(nextStatus) && existing.approval) {
-        updates.approval = null
-      }
-      // 进入终态时设置 completedAt（Task 16 P1 修复）：后端时间戳优先，
-      // 事件未携带时用本地时间兜底
-      if (isTerminalStatus(nextStatus) && !existing.completedAt && updates.completedAt === undefined) {
-        updates.completedAt = new Date().toISOString()
-      }
-    }
-    Object.assign(message.toolCalls[idx], updates)
-  } else {
-    const toolData = { ...data }
-    // 状态推导统一走状态机（result 模式）；兜底默认 pending：与原级联的
-    // else 分支（state→'pending' / 无 state→'pending'）一致
-    const { status: nextStatus, applied: statusApplied } =
-      applyToolCallState(null, toolData, { mode: 'result', fallback: ToolCallStatus.PENDING })
-    if (statusApplied && nextStatus !== undefined) {
-      toolData.status = nextStatus
-      // 终态时设置 completedAt
-      if (isTerminalStatus(nextStatus) && !toolData.completedAt) {
-        toolData.completedAt = new Date().toISOString()
-      }
-    }
-    message.toolCalls.push(toolData)
-  }
-}
-
-/**
- * 匹配缓存的待审批数据到 toolCall（解决审批事件先于 tool 事件到达的时序问题）
- */
-function _matchPendingApprovals(message) {
-  if (!message._pendingApprovals || message._pendingApprovals.length === 0) return
-  if (!message.toolCalls || message.toolCalls.length === 0) return
-
-  const remaining = []
-  for (const { toolCallId, approvalData } of message._pendingApprovals) {
-    const matched = findToolCallById(message.toolCalls, toolCallId, { approvalData, skipApproved: true })
-
-    if (matched) {
-      matched.approval = approvalData
-      // approvalData 用于审批面板显示，toolCall.status 仅由 tool_call_* 事件变更
-      // 匹配成功后，移除对应的合成 toolCall（避免重复渲染）
-      if (matched.isSynthetic !== true) {
-        const syntheticIdx = message.toolCalls.findIndex(
-          t => t.isSynthetic === true && t.id === toolCallId
-        )
-        if (syntheticIdx !== -1) {
-          message.toolCalls.splice(syntheticIdx, 1)
-        }
-      }
-    } else {
-      remaining.push({ toolCallId, approvalData })
-    }
-  }
-
-  if (remaining.length === 0) {
-    delete message._pendingApprovals
-  } else {
-    message._pendingApprovals = remaining
-  }
-}
-
-/**
- * 添加/更新工具调用到最后一条 assistant 消息（add 路径：工具创建/中间态入口）
- *
- * 对应 SSE tool 事件（pending/waiting/running 等中间态）。
- * 终态（completed/failed/timeout）应走 updateOrAddToolResultInLastMessage（result 路径）。
- *
- * @param {Array} sessions - 会话列表
- * @param {string} sessionId - 会话 ID
- * @param {Object} data - 工具事件数据
- */
-export function addOrUpdateToolCallInLastMessage(sessions, sessionId, data) {
-  const result = getLastAssistantMessage(sessions, sessionId)
-  if (!result) return
-  _addOrUpdateToolCallInMessage(result.message, data)
-  const ver = result.message.versions?.[result.message.currentVersion]
-  if (ver) _addOrUpdateToolCallInMessage(ver, data)
-
-  _matchPendingApprovals(result.message)
-  if (ver) _matchPendingApprovals(ver)
-}
-
-/**
- * 更新/添加工具结果到最后一条 assistant 消息（result 路径：工具结果唯一写入入口）
- *
- * 对应 SSE tool_result / WebSocket tool_call_completed/failed/timeout 事件。
- * 允许终态覆盖本地 PENDING（绕过 add 路径的 PENDING+非终态审批锁死保护）。
- * 中间态（pending/waiting/running）应走 addOrUpdateToolCallInLastMessage（add 路径）。
- *
- * @param {Array} sessions - 会话列表
- * @param {string} sessionId - 会话 ID
- * @param {Object} data - 工具结果事件数据
- */
-export function updateOrAddToolResultInLastMessage(sessions, sessionId, data) {
-  const result = getLastAssistantMessage(sessions, sessionId)
-  if (!result) return
-  _updateOrAddToolResultInMessage(result.message, data)
-  const ver = result.message.versions?.[result.message.currentVersion]
-  if (ver) _updateOrAddToolResultInMessage(ver, data)
-}
-
-/**
- * 添加/更新工具调用到指定消息（add 路径：工具创建/中间态入口）
- *
- * 对应 SSE tool 事件（pending/waiting/running 等中间态）。
- * 终态（completed/failed/timeout）应走 updateOrAddToolResultInMessageByIdx（result 路径）。
- *
- * @param {Array} sessions - 会话列表
- * @param {string} sessionId - 会话 ID
- * @param {number} messageIndex - 消息索引
- * @param {Object} data - 工具事件数据
- */
-export function addOrUpdateToolCallInMessageByIdx(sessions, sessionId, messageIndex, data) {
-  const result = getMessageByIndex(sessions, sessionId, messageIndex)
-  if (!result) return
-  _addOrUpdateToolCallInMessage(result.message, data)
-  const ver = result.message.versions?.[result.message.currentVersion]
-  if (ver) _addOrUpdateToolCallInMessage(ver, data)
-}
-
-/**
- * 更新/添加工具结果到指定消息（result 路径：工具结果唯一写入入口）
- *
- * 对应 SSE tool_result / WebSocket tool_call_completed/failed/timeout 事件。
- * 允许终态覆盖本地 PENDING（绕过 add 路径的 PENDING+非终态审批锁死保护）。
- * 中间态（pending/waiting/running）应走 addOrUpdateToolCallInMessageByIdx（add 路径）。
- *
- * @param {Array} sessions - 会话列表
- * @param {string} sessionId - 会话 ID
- * @param {number} messageIndex - 消息索引
- * @param {Object} data - 工具结果事件数据
- */
-export function updateOrAddToolResultInMessageByIdx(sessions, sessionId, messageIndex, data) {
-  const result = getMessageByIndex(sessions, sessionId, messageIndex)
-  if (!result) return
-  _updateOrAddToolResultInMessage(result.message, data)
-  const ver = result.message.versions?.[result.message.currentVersion]
-  if (ver) _updateOrAddToolResultInMessage(ver, data)
-}
-
 export function getLastAssistantMessage(sessions, sessionId) {
   const session = sessions.find(s => s.id === sessionId)
   if (!session || session.messages.length === 0) return null
@@ -332,34 +123,6 @@ export function getMessageByIndex(sessions, sessionId, messageIndex) {
   const session = sessions.find(s => s.id === sessionId)
   if (!session || messageIndex < 0 || messageIndex >= session.messages.length) return null
   return { session, message: session.messages[messageIndex] }
-}
-
-export function setMessageField(sessions, sessionId, messageIndex, field, value) {
-  const result = getMessageByIndex(sessions, sessionId, messageIndex)
-  if (!result) return
-  result.message[field] = value
-  const ver = result.message.versions?.[result.message.currentVersion]
-  if (ver) ver[field] = value
-}
-
-export function addMessageFieldItem(sessions, sessionId, messageIndex, field, item) {
-  const result = getMessageByIndex(sessions, sessionId, messageIndex)
-  if (!result) return
-  if (!result.message[field]) result.message[field] = []
-  result.message[field].push(item)
-  const ver = result.message.versions?.[result.message.currentVersion]
-  if (ver) {
-    if (!ver[field]) ver[field] = []
-    ver[field].push(item)
-  }
-}
-
-export function appendToMessage(sessions, sessionId, messageIndex, content) {
-  const result = getMessageByIndex(sessions, sessionId, messageIndex)
-  if (!result) return
-  result.message.content = (result.message.content || '') + content
-  const ver = result.message.versions?.[result.message.currentVersion]
-  if (ver) ver.content = result.message.content
 }
 
 /**
@@ -496,7 +259,7 @@ function _mergeExistingToolCall(existing, data) {
   // 到达时序不同，一个停在 pending、一个推进到 waiting，导致状态标签与边框显示不一致）。
   if (existing.status === ToolCallStatus.PENDING
       && existing.approval
-      && _NON_TERMINAL_APPROVAL_STATES.includes(existing.approval.state)
+      && NON_TERMINAL_APPROVAL_STATES.includes(existing.approval.state)
       && data.status
       && data.status !== existing.status
       && !isTerminalStatus(data.status)
@@ -1085,6 +848,26 @@ export function _mergeToolCalls(existingList, backendList) {
     if (backend) {
       // 合并：后端数据为主，但保留本地更完整/更超前的状态
       const mergedTc = { ...local, ...backend }
+      // position 保护（Agent 图层嵌套规范 D3）：position 是图层内联布局的不可变字段，
+      // 首次 PENDING 写入后永久不变。后端条目缺失 position（undefined/非 number）时，
+      // 不得覆盖本地已有的 number position（position=0 是合法值，必须用 typeof 判断
+      // 而非真值判断，避免 wait_for_subagent 等 position=0 的工具被误丢）。
+      if (typeof mergedTc.position !== 'number' && typeof local.position === 'number') {
+        mergedTc.position = local.position
+      }
+      // 图层字段保护（spec D1）：subagentThreadId/agentName/depth 决定前端子代理卡
+      // 归集（buildSubagentsFromMessage 按 subagentThreadId 过滤）。后端快照缺失
+      // （undefined/空）时不得覆盖本地事件已写入的图层字段，否则子代理工具卡
+      // 混入主代理切段（position=0 的 shell_exec 渲染到消息最前）导致乱序。
+      if (!mergedTc.subagentThreadId && local.subagentThreadId) {
+        mergedTc.subagentThreadId = local.subagentThreadId
+      }
+      if (!mergedTc.agentName && local.agentName) {
+        mergedTc.agentName = local.agentName
+      }
+      if (typeof mergedTc.depth !== 'number' && typeof local.depth === 'number') {
+        mergedTc.depth = local.depth
+      }
       // 保留本地 result（后端为空/null 时，避免丢失本地已有的结果）
       if (local.result != null && backend.result == null) {
         mergedTc.result = local.result

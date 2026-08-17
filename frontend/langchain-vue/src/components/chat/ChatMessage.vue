@@ -21,6 +21,7 @@ import { useModelStore } from '../../stores/model'
 import { logger } from '../../utils/logger'
 import { formatFileSize } from '../../utils/format'
 import { deriveDisplayStatus } from '../../utils/toolCallStateMachine'
+import { isApprovalDisabled } from '../../utils/approvalGate'
 import { buildSubagentsFromMessage, mapSubagentsBySpawnToolCall } from '../../utils/subagentAggregation'
 import { useSubagents } from '../../composables/useSubagents'
 import { SUBAGENT_STATUS } from '../../utils/subagentStatus'
@@ -158,11 +159,9 @@ watch(hasSpawnTool, (has) => {
 
 // 审批控件交互约束（Task 6.4）：仅「活跃版本 + 未固化 + 末尾轮次」可交互
 // 已固化消息 / 历史非末尾轮次消息上的审批按钮置灰（跨浏览器一致）
-const approvalDisabled = computed(() => {
-  if (props.message.isFinalized) return true
-  if (!props.isLast) return true
-  return false
-})
+const approvalDisabled = computed(() =>
+  isApprovalDisabled({ isFinalized: props.message.isFinalized, isLast: props.isLast })
+)
 
 // ToolCall 级审批确认：从 ToolCallCard 冒泡上来
 function handleToolCallApprove(toolCall) {

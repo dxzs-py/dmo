@@ -86,7 +86,7 @@ class TestWaitForBatchDecision(unittest.TestCase):
                 decisions = await ex._wait_for_batch_decision("g1")
             assert decisions == full
             heal.assert_not_called()
-            fin.assert_called_once_with(full, "t1")
+            fin.assert_called_once_with(full, "deep_research", "t1")
 
         asyncio.run(_case())
 
@@ -203,7 +203,7 @@ class TestWaitForInitialBatch(unittest.TestCase):
             ):
                 decisions = await ex._wait_for_initial_batch()
             assert decisions == full
-            fin.assert_called_once_with(full, "t1")
+            fin.assert_called_once_with(full, "deep_research", "t1")
 
         asyncio.run(_case())
 
@@ -515,6 +515,126 @@ class TestSessionManagerRetryRecovery(unittest.TestCase):
                 await manager.on_retry_subagent_signal("t1", {"tool_call_id": "c1"})
             await release_task
             assert ex_cls.call_count == 1
+
+        asyncio.run(_case())
+
+
+class TestResearchResumeBaseline(unittest.TestCase):
+    """服务重启恢复基线：从 ResearchTask 重建子代理状态并注入新建 adapter。
+
+    覆盖 spec「服务重启恢复场景子代理工具条目丢失」修复：
+    - ``_load_research_resume_baseline`` 从 ``ResearchTask.tool_calls`` 筛选
+      ``subagent_thread_id`` 非空条目重建（key=tool_call_id），主代理工具
+      （无图层字段）被过滤；
+    - ``_inject_research_resume_baseline`` 将基线注入新建 adapter 的空内存态。
+    """
+
+    def test_load_research_resume_baseline_filters_subagent_entries(self):
+        """仅 subagent_thread_id 非空条目进入基线，key=tool_call_id，图层字段保留。"""
+        task = mock.Mock(
+            tool_calls=[
+                {
+                    "id": "c1",
+                    "name": "shell_exec",
+                    "subagent_thread_id": "sa1",
+                    "position": 3,
+                    "status": "completed",
+                    "result": {"output": "ok"},
+                },
+                {"id": "c2", "name": "web_search", "subagent_thread_id": "", "position": 10},
+                {"id": "c3", "name": "shell_exec", "subagent_thread_id": "sa2", "depth": 2},
+                {"id": "c4", "name": "write_file"},
+            ],
+            subagent_contents={
+                "sa1": {"content": "a", "reasoning_content": "r"},
+                "sa2": {"content": "b"},
+            },
+        )
+        qs = mock.Mock()
+        qs.filter.return_value = qs
+        qs.first.return_value = task
+        with mock.patch("Django_xm.apps.research.models.ResearchTask.objects", qs):
+            baseline = SessionExecutor._load_research_resume_baseline("t1")
+
+        self.assertEqual(set(baseline["subagent_tool_entries"].keys()), {"c1", "c3"})
+        self.assertEqual(baseline["subagent_tool_entries"]["c1"]["subagent_thread_id"], "sa1")
+        self.assertEqual(baseline["subagent_tool_entries"]["c1"]["position"], 3)
+        self.assertEqual(baseline["subagent_tool_entries"]["c1"]["status"], "completed")
+        self.assertEqual(baseline["subagent_tool_entries"]["c1"]["result"], {"output": "ok"})
+        self.assertEqual(
+            baseline["subagent_contents"],
+            {"sa1": {"content": "a", "reasoning_content": "r"}, "sa2": {"content": "b"}},
+        )
+
+    def test_load_research_resume_baseline_task_missing(self):
+        """任务不存在 → 空基线（恢复注入直接跳过）。"""
+        qs = mock.Mock()
+        qs.filter.return_value = qs
+        qs.first.return_value = None
+        with mock.patch("Django_xm.apps.research.models.ResearchTask.objects", qs):
+            baseline = SessionExecutor._load_research_resume_baseline("t1")
+        self.assertEqual(baseline, {})
+
+    def test_inject_research_resume_baseline_fills_empty_adapter(self):
+        """基线注入：新建 adapter 的空内存态被 DB 基线填充（key 按 tool_call_id）。"""
+        async def _case():
+            ex = _make_executor()
+            agent = mock.Mock()
+            agent.subagent_contents = {}
+            agent._subagent_tool_entries = {}
+            ex._agent = agent
+            baseline = {
+                "subagent_contents": {"sa1": {"content": "a"}},
+                "subagent_tool_entries": {
+                    "c1": {"id": "c1", "subagent_thread_id": "sa1", "position": 3}
+                },
+            }
+            with mock.patch.object(ex, "_load_research_resume_baseline", return_value=baseline):
+                await ex._inject_research_resume_baseline()
+
+            self.assertEqual(agent.subagent_contents, {"sa1": {"content": "a"}})
+            self.assertEqual(
+                agent._subagent_tool_entries,
+                {"c1": {"id": "c1", "subagent_thread_id": "sa1", "position": 3}},
+            )
+
+        asyncio.run(_case())
+
+    def test_inject_research_resume_baseline_merges_existing(self):
+        """基线注入合并而非覆盖：adapter 已有（恢复轮新产生）条目保留。"""
+        async def _case():
+            ex = _make_executor()
+            agent = mock.Mock()
+            agent.subagent_contents = {"sa2": {"content": "new"}}
+            agent._subagent_tool_entries = {
+                "c9": {"id": "c9", "subagent_thread_id": "sa2", "position": 0}
+            }
+            ex._agent = agent
+            baseline = {
+                "subagent_contents": {"sa1": {"content": "a"}},
+                "subagent_tool_entries": {
+                    "c1": {"id": "c1", "subagent_thread_id": "sa1", "position": 3}
+                },
+            }
+            with mock.patch.object(ex, "_load_research_resume_baseline", return_value=baseline):
+                await ex._inject_research_resume_baseline()
+
+            self.assertEqual(agent.subagent_contents, {"sa2": {"content": "new"}, "sa1": {"content": "a"}})
+            self.assertEqual(
+                set(agent._subagent_tool_entries.keys()), {"c9", "c1"}
+            )
+
+        asyncio.run(_case())
+
+    def test_inject_research_resume_baseline_without_agent(self):
+        """_agent 未构建（异常路径）：注入安全跳过。"""
+        async def _case():
+            ex = _make_executor()
+            ex._agent = None
+            with mock.patch.object(
+                ex, "_load_research_resume_baseline", return_value={"subagent_contents": {}, "subagent_tool_entries": {}}
+            ):
+                await ex._inject_research_resume_baseline()  # 不应抛异常
 
         asyncio.run(_case())
 

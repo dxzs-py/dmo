@@ -379,54 +379,6 @@ class ExecutionTimeoutManager:
             return True
         return False
 
-    async def execute_with_timeout(
-        self,
-        coro,
-        on_soft_timeout: Callable | None = None,
-    ) -> Any:
-        """带超时的执行
-
-        Args:
-            coro: 异步协程
-            on_soft_timeout: soft timeout 回调
-
-        Returns:
-            协程返回值
-
-        Raises:
-            asyncio.TimeoutError: hard timeout 触发
-        """
-        import time
-
-        self._start_time = time.monotonic()
-        self._soft_timeout_triggered = False
-        self._paused_total = 0.0
-        self._pause_start = None
-
-        if self.hard_timeout is None and self.soft_timeout is None:
-            return await coro
-
-        timeout = self.hard_timeout or self.soft_timeout
-
-        try:
-            result = await asyncio.wait_for(coro, timeout=timeout)
-
-            # 检查 soft timeout（执行完成但超过 soft 阈值）
-            if self.check_soft_timeout() and on_soft_timeout:
-                try:
-                    on_soft_timeout(self.elapsed)
-                except Exception:
-                    # 回调失败不应影响执行主流程
-                    logger.debug("on_soft_timeout 回调执行失败", exc_info=True)
-
-            return result
-        except TimeoutError:
-            elapsed = self.elapsed
-            logger.warning(
-                f"[Resilience] 执行超时: elapsed={elapsed:.1f}s, soft={self.soft_timeout}, hard={self.hard_timeout}"
-            )
-            raise
-
 
 # ============================================================================
 # 重复工具调用检测

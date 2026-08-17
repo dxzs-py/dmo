@@ -254,15 +254,19 @@ class AgentExecutor:
                 }
 
             # 审批事件：暂停计时，避免用户思考时间惩罚 agent
+            # yield 期间若上游断开/异常（如 SSE 断开触发 GeneratorExit），
+            # finally 保证恢复计时，防止 pause 泄漏导致同一 executor 在重试/
+            # 降级复用本计时器时 elapsed 持续偏低、超时判定被推迟（边界审查修复）。
             is_approval = isinstance(event, dict) and event.get("type") == "approval"
             if is_approval:
                 self.timeout_mgr.pause()
 
-            yield event
-
-            # 审批处理完毕（外部继续迭代），恢复计时
-            if is_approval:
-                self.timeout_mgr.resume()
+            try:
+                yield event
+            finally:
+                # 审批处理完毕（外部继续迭代），恢复计时
+                if is_approval:
+                    self.timeout_mgr.resume()
 
     async def _run_degrade(
         self,

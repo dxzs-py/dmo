@@ -21,13 +21,16 @@ from asgiref.sync import sync_to_async
 
 from Django_xm.apps.research.services.research_runner import (
     cleanup_research_sandbox,
-    collect_batch_decisions,
-    create_approvals_for_interrupts,
     execute_research_async,
-    finalize_batch_approvals,
     finalize_research,
     publish_research_failure,
     self_heal_expired_approvals,
+)
+from Django_xm.apps.approvals.models import Approval
+from Django_xm.common.approval_batch import (
+    collect_batch_decisions,
+    create_approvals_for_interrupts,
+    finalize_batch_approvals,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,7 +96,9 @@ class SessionExecutor:
         self._agent = None
         self._suspended = False
         self._wait_interrupt_id = ""
-        self._wait_subagent_thread_id = ""
+        # 业务等待挂起（批量 fan-out/fan-in）：一次等待多个子代理，全部终态后恢复
+        self._wait_subagent_thread_ids: list[str] = []
+        self._pending_subagent_results: dict[str, dict] = {}
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -204,8 +209,84 @@ class SessionExecutor:
 
                     resume_command = Command(resume=decisions)
             query = None  # 恢复模式不发送新 query（checkpoint 已有上下文）
+            # 恢复基线注入：新建 adapter 内存态从空开始，挂起前已由
+            # _persist_research_progress 落库的子代理工具条目/图层正文从 DB 恢复，
+            # 避免恢复轮 position 注入为 0、最终 writeback 丢失挂起前子代理工具卡。
+            await self._inject_research_resume_baseline()
 
         await self._execute_and_handle(resume_command, query)
+
+    async def _inject_research_resume_baseline(self) -> None:
+        """服务重启恢复：从 ResearchTask 读取挂起前落库的子代理状态注入 adapter。
+
+        与 chat 链路 ``_inject_chat_resume_baseline`` 同构——业务等待/审批挂起
+        期间已由 ``_persist_research_progress`` 落库到 ``ResearchTask.tool_calls`` /
+        ``subagent_contents``，重启后新建 adapter 从空开始，据此重建
+        ``subagent_contents`` / ``_subagent_tool_entries``（key=tool_call_id），
+        保证恢复轮 position 注入（子代理图层正文长度依据）与最终 writeback
+        （merge_source 聚合）不丢失挂起前的子代理工具条目。
+        """
+        agent = getattr(self, "_agent", None)
+        if agent is None:
+            return
+        try:
+            baseline = await sync_to_async(self._load_research_resume_baseline)(self.thread_id)
+        except Exception:
+            logger.exception(
+                f"[SessionExecutor] 读取研究恢复基线失败: thread_id={self.thread_id}"
+            )
+            return
+        subagent_contents = baseline.get("subagent_contents") or {}
+        subagent_tool_entries = baseline.get("subagent_tool_entries") or {}
+        if subagent_contents and hasattr(agent, "subagent_contents"):
+            merged = dict(getattr(agent, "subagent_contents", {}) or {})
+            merged.update(subagent_contents)
+            agent.subagent_contents = merged
+            logger.info(
+                f"[SessionExecutor] 恢复基线注入 subagent_contents: thread_id={self.thread_id}, "
+                f"entries={len(merged)}"
+            )
+        if subagent_tool_entries and hasattr(agent, "_subagent_tool_entries"):
+            merged = dict(getattr(agent, "_subagent_tool_entries", {}) or {})
+            merged.update(subagent_tool_entries)
+            agent._subagent_tool_entries = merged
+            logger.info(
+                f"[SessionExecutor] 恢复基线注入 subagent_tool_entries: thread_id={self.thread_id}, "
+                f"entries={len(merged)}"
+            )
+
+    @staticmethod
+    def _load_research_resume_baseline(thread_id: str) -> dict:
+        """同步读取研究恢复基线（subagent_contents / 子代理工具条目）。
+
+        子代理工具条目从 ``ResearchTask.tool_calls`` 中筛选 ``subagent_thread_id``
+        非空的条目重建（key=tool_call_id），与 adapter ``_subagent_tool_entries``
+        结构一致（含 subagent_thread_id/agent_name/depth/position/seq/status/result）。
+        """
+        from Django_xm.apps.research.models import ResearchTask
+
+        task = ResearchTask.objects.filter(task_id=thread_id, is_deleted=False).first()
+        if task is None:
+            return {}
+
+        subagent_tool_entries: dict[str, dict] = {}
+        for tc in task.tool_calls or []:
+            if not isinstance(tc, dict):
+                continue
+            if not tc.get("subagent_thread_id"):
+                continue
+            key = tc.get("id") or tc.get("name") or ""
+            if key:
+                subagent_tool_entries[key] = dict(tc)
+
+        subagent_contents = task.subagent_contents or {}
+        if not isinstance(subagent_contents, dict):
+            subagent_contents = {}
+
+        return {
+            "subagent_contents": dict(subagent_contents),
+            "subagent_tool_entries": subagent_tool_entries,
+        }
 
     async def _execute_and_handle(self, resume_command, query) -> None:
         """执行一轮研究并处理结果（初始执行 / 调度器唤醒续跑共用）。
@@ -231,6 +312,34 @@ class SessionExecutor:
         response_time = round(time.time() - self.start_time, 2)
         await self._handle_result(result, response_time)
 
+    async def _persist_research_progress(
+        self,
+        subagent_contents: dict | None = None,
+        subagent_tool_entries: dict | None = None,
+    ) -> None:
+        """挂起前落库研究内存态（子代理工具条目 + 图层正文）到 DB。
+
+        与 chat 链路 ``_persist_chat_tool_calls`` 同构：审批中断挂起前
+        （``_on_interrupt``）与业务等待挂起前（``_handle_suspend``）调用，
+        保证挂起期间刷新浏览器、服务重启恢复后可还原子代理工具卡与图层正文
+        （adapter 内存态随协程/实例销毁而丢失，DB 是唯一可还原源）。
+        """
+        if not subagent_contents and not subagent_tool_entries:
+            return
+        try:
+            from Django_xm.apps.research.services.writeback import persist_research_progress
+
+            await sync_to_async(persist_research_progress)(
+                self.thread_id,
+                subagent_contents=subagent_contents,
+                subagent_tool_entries=subagent_tool_entries,
+            )
+        except Exception:
+            logger.warning(
+                f"[SessionExecutor] 挂起落库研究进度失败: thread_id={self.thread_id}",
+                exc_info=True,
+            )
+
     async def _handle_suspend(self, result) -> None:
         """业务等待挂起（spec D4）：置挂起态 + 注册父 awaiter，退出协程（不 finalize）。
 
@@ -239,13 +348,17 @@ class SessionExecutor:
         - 不释放 checkpointer（graph 复用，恢复时从 checkpoint 续跑）；
         - 不触发 sandbox 清理（研究未完成）。
         """
-        from Django_xm.apps.ai_engine.models import SubAgentStatus
-        from Django_xm.apps.ai_engine.subagent_runtime import get_subagent_runtime
-        from Django_xm.apps.ai_engine.subagent_runtime.lifecycle import get_lifecycle_manager
-
         self._suspended = True
         self._wait_interrupt_id = result.interrupt_id
-        self._wait_subagent_thread_id = result.subagent_thread_id
+        self._wait_subagent_thread_ids = list(result.subagent_thread_ids or [])
+
+        # 业务等待挂起前落库：adapter 内存态（子代理工具条目 + 图层正文）随协程
+        # 退出而销毁，先落库到 DB，保证挂起期间刷新浏览器/服务重启恢复可还原。
+        # getattr 兜底：部分执行路径（测试桩）可能无 subagent 字段。
+        await self._persist_research_progress(
+            getattr(result, "subagent_contents", None),
+            getattr(result, "subagent_tool_entries", None),
+        )
 
         await _update_task_status(
             self.thread_id, {"status": "running", "current_step": "waiting_subagent"}
@@ -253,19 +366,34 @@ class SessionExecutor:
         await self._publish_status_change("running", current_step="waiting_subagent")
         logger.info(
             f"[SessionExecutor] 业务等待挂起: thread_id={self.thread_id}, "
-            f"subagent={result.subagent_thread_id}, interrupt_id={result.interrupt_id}"
+            f"subagents={self._wait_subagent_thread_ids}, interrupt_id={result.interrupt_id}"
         )
+        await self._register_waiter()
 
+    async def _register_waiter(self) -> None:
+        """批量等待：竞态兜底（检查全部子代理）+ 注册父 awaiter。"""
+        from Django_xm.apps.ai_engine.models import SubAgentStatus
+        from Django_xm.apps.ai_engine.subagent_runtime import get_subagent_runtime
+        from Django_xm.apps.ai_engine.subagent_runtime.lifecycle import get_lifecycle_manager
+
+        runtime = get_subagent_runtime()
         # 竞态兜底：子代理可能已在「tool 检查 → interrupt 挂起」窗口内终态，
-        # 此时终态回调已错过、awaiter 永不被触发。这里二次检查并立即恢复。
-        instance = await get_subagent_runtime().get_instance(result.subagent_thread_id)
-        if instance is not None and instance.status in (SubAgentStatus.COMPLETED, SubAgentStatus.FAILED):
+        # 此时终态回调已错过、awaiter 永不被触发。这里二次检查并累积已终态结果。
+        for sid in self._wait_subagent_thread_ids:
+            instance = await runtime.get_instance(sid)
+            if instance is not None and instance.status in (SubAgentStatus.COMPLETED, SubAgentStatus.FAILED):
+                self._pending_subagent_results[sid] = {
+                    "status": instance.status,
+                    "result": instance.result_preview or "",
+                }
+
+        # 全部子代理已终态：立即恢复（不再注册 awaiter）
+        if len(self._pending_subagent_results) >= len(self._wait_subagent_thread_ids):
             logger.info(
-                f"[SessionExecutor] 子代理已终态，立即恢复: thread_id={self.thread_id}, "
-                f"subagent={result.subagent_thread_id}, status={instance.status}"
+                f"[SessionExecutor] 全部子代理已终态，立即恢复: thread_id={self.thread_id}"
             )
             asyncio.create_task(
-                self._resume_after_subagent_wait(result.subagent_thread_id, instance.status),
+                self._resume_after_subagent_wait(),
                 name=f"subagent-resume-{self.thread_id}",
             )
             return
@@ -293,7 +421,7 @@ class SessionExecutor:
 
         async def _awaiter(subagent_thread_id: str, status: str) -> None:
             fut = asyncio.run_coroutine_threadsafe(
-                self._resume_after_subagent_wait(subagent_thread_id, status),
+                self._on_subagent_finished(subagent_thread_id, status),
                 loop,
             )
             fut.add_done_callback(_log_future_error)
@@ -301,62 +429,47 @@ class SessionExecutor:
         return _awaiter
 
     async def _handle_chat_wait_suspend(self, wait_info: dict) -> None:
-        """chat 模式业务等待挂起（wait_for_subagent，spec D4，与 _handle_suspend 同构）。
+        """chat 模式业务等待挂起（批量，与 _handle_suspend 同构）。
 
         与 research 的 _handle_suspend 差异：chat 无 research task 状态更新
         （挂起期间会话保持流式等待态，由唤醒恢复后的最终结束统一收尾）。
-
-        固化规则（同 _handle_suspend）：
-        - 保留会话槽（run() finally 见 _suspended=True 跳过清理）；
-        - 不释放 checkpointer（graph 复用，恢复时从 checkpoint 续跑）。
         """
-        from Django_xm.apps.ai_engine.models import SubAgentStatus
-        from Django_xm.apps.ai_engine.subagent_runtime import get_subagent_runtime
-        from Django_xm.apps.ai_engine.subagent_runtime.lifecycle import get_lifecycle_manager
-
         interrupt_id = wait_info.get("interrupt_id", "")
-        subagent_thread_id = wait_info.get("subagent_thread_id", "")
+        subagent_thread_ids = wait_info.get("subagent_thread_ids", []) or []
         self._suspended = True
         self._wait_interrupt_id = interrupt_id
-        self._wait_subagent_thread_id = subagent_thread_id
+        self._wait_subagent_thread_ids = list(subagent_thread_ids)
         logger.info(
             f"[SessionExecutor] chat 业务等待挂起: thread_id={self.thread_id}, "
-            f"subagent={subagent_thread_id}, interrupt_id={interrupt_id}"
+            f"subagents={subagent_thread_ids}, interrupt_id={interrupt_id}"
         )
+        await self._register_waiter()
 
-        # 竞态兜底：子代理可能已在「tool 检查 → interrupt 挂起」窗口内终态，
-        # 此时终态回调已错过、awaiter 永不被触发。这里二次检查并立即恢复。
-        instance = await get_subagent_runtime().get_instance(subagent_thread_id)
-        if instance is not None and instance.status in (SubAgentStatus.COMPLETED, SubAgentStatus.FAILED):
-            logger.info(
-                f"[SessionExecutor] chat 子代理已终态，立即恢复: thread_id={self.thread_id}, "
-                f"subagent={subagent_thread_id}, status={instance.status}"
-            )
-            asyncio.create_task(
-                self._resume_after_subagent_wait(subagent_thread_id, instance.status),
-                name=f"subagent-resume-{self.thread_id}",
-            )
-            return
-
-        get_lifecycle_manager().register_parent_awaiter(
-            self.thread_id, self._make_parent_awaiter()
-        )
-
-    async def _resume_after_subagent_wait(self, subagent_thread_id: str, status: str) -> None:
-        """调度器唤醒：从 checkpoint 续跑父 Graph（主事件循环新建协程）。
-
-        子代理终态后由生命周期管理器回调；本方法以 Command(resume={interrupt_id:
-        {subagent_thread_id, status, result}}) 恢复父 Graph，最终结束时释放
-        checkpointer + 移除会话槽 + 注销 awaiter。
-        """
-        # 忽略非当前等待子代理的终态回调（父可能同时 spawn 多个，仅等待其中一个）
-        if subagent_thread_id != self._wait_subagent_thread_id:
+    async def _on_subagent_finished(self, subagent_thread_id: str, status: str) -> None:
+        """单个子代理终态回调：累积结果，全部终态后恢复父 Graph（批量 fan-in）。"""
+        if subagent_thread_id not in self._wait_subagent_thread_ids:
             logger.info(
                 f"[SessionExecutor] 忽略非等待子代理终态: thread_id={self.thread_id}, "
-                f"subagent={subagent_thread_id}, waiting={self._wait_subagent_thread_id}"
+                f"subagent={subagent_thread_id}, waiting={self._wait_subagent_thread_ids}"
             )
             return
 
+        result_text = await self._read_subagent_result(subagent_thread_id)
+        self._pending_subagent_results[subagent_thread_id] = {
+            "status": status,
+            "result": result_text,
+        }
+        # 部分终态不恢复：等待全部子代理终态
+        if len(self._pending_subagent_results) < len(self._wait_subagent_thread_ids):
+            return
+        await self._resume_after_subagent_wait()
+
+    async def _resume_after_subagent_wait(self) -> None:
+        """全部子代理终态后恢复父 Graph（批量 fan-in，主事件循环新建协程）。
+
+        以 Command(resume={interrupt_id: {"subagent_results": [...]}}) 恢复父 Graph，
+        最终结束时释放 checkpointer + 移除会话槽 + 注销 awaiter。
+        """
         thread_id = self.thread_id
         # 用户已停止：不续跑父 Graph，直接清理（释放 checkpointer + 移除会话槽）
         if self._stop_requested:
@@ -371,20 +484,25 @@ class SessionExecutor:
 
         try:
             self._suspended = False
-            result_text = await self._read_subagent_result(subagent_thread_id)
             from langgraph.types import Command
 
-            resume_value = {
-                "subagent_thread_id": subagent_thread_id,
-                "status": status,
-                "result": result_text,
-            }
+            subagent_results = [
+                {"subagent_thread_id": sid, "status": r["status"], "result": r["result"]}
+                for sid, r in self._pending_subagent_results.items()
+            ]
+            resume_value = {"subagent_results": subagent_results}
             resume_command = Command(resume={self._wait_interrupt_id: resume_value})
             if self.session_type == "chat":
                 # chat 恢复：以 resume_command 作为 graph_input 重跑 chat 执行链
                 # （run_chat_session → run_agent_session 检测 data["resume_command"]
                 # 后跳过 pending interrupt 清理，从 checkpoint 续跑）。
                 self.params["resume_command"] = resume_command
+                # 业务等待挂起恢复（wait_for_subagent，spec D4）：挂起时父协程退出，
+                # content_state / _subagent_tool_entries / _subagent_contents 随协程销毁。
+                # 恢复前从 DB 读取挂起前已持久化的消息状态作为执行基线注入 params，
+                # 使恢复在基线之上继续累积（避免总结正文覆盖历史段、position 注入为 0、
+                # 子代理工具图层字段 subagent_thread_id 丢失）。
+                await self._inject_chat_resume_baseline()
                 await self._run_chat()
             else:
                 await self._execute_and_handle(resume_command, None)
@@ -431,6 +549,78 @@ class SessionExecutor:
             return ""
         return instance.result_preview or ""
 
+    async def _inject_chat_resume_baseline(self) -> None:
+        """读取挂起前已持久化的消息状态，注入 params 作为 chat 恢复基线。
+
+        业务等待挂起（wait_for_subagent）时父协程退出，content_state /
+        _subagent_tool_entries / _subagent_contents 随协程销毁。恢复前从 DB
+        读取挂起前已落库的 content / tool_calls / subagent_contents，注入
+        params，使恢复轮在此基线之上继续累积（而非从空重建）。
+        """
+        try:
+            baseline = await sync_to_async(self._load_chat_resume_baseline)(
+                self.thread_id, self.message_id
+            )
+        except Exception:
+            logger.exception(
+                f"[SessionExecutor] 读取 chat 恢复基线失败: thread_id={self.thread_id}"
+            )
+            return
+        self.params["resume_content"] = baseline.get("resume_content") or ""
+        self.params["resume_subagent_contents"] = baseline.get("resume_subagent_contents") or {}
+        self.params["resume_subagent_tool_entries"] = baseline.get("resume_subagent_tool_entries") or {}
+
+    @staticmethod
+    def _load_chat_resume_baseline(session_id: str, message_id: str) -> dict:
+        """同步读取 chat 恢复基线（content / subagent_contents / 子代理工具条目）。
+
+        子代理工具条目基线从 ``tool_calls`` 中筛选 ``subagent_thread_id`` 非空的
+        条目重建（key=tool_call_id），与 chat_service 恢复轮的 ``_subagent_tool_entries``
+        结构一致（含 subagent_thread_id/position/seq/status/result 等图层字段）。
+        """
+        from Django_xm.apps.chat.models import ChatMessage, ChatSession
+
+        session = ChatSession.objects.filter(session_id=session_id).first()
+        if session is None:
+            return {}
+
+        assistant_msg = None
+        if message_id:
+            try:
+                assistant_msg = ChatMessage.objects.get(
+                    id=int(message_id), session=session, role="assistant"
+                )
+            except (ChatMessage.DoesNotExist, ValueError, TypeError):
+                assistant_msg = None
+        if assistant_msg is None:
+            assistant_msg = (
+                ChatMessage.objects.filter(session=session, role="assistant")
+                .order_by("-created_at")
+                .first()
+            )
+        if assistant_msg is None:
+            return {}
+
+        subagent_tool_entries: dict[str, dict] = {}
+        for tc in assistant_msg.tool_calls or []:
+            if not isinstance(tc, dict):
+                continue
+            if not tc.get("subagent_thread_id"):
+                continue
+            key = tc.get("id") or tc.get("name") or ""
+            if key:
+                subagent_tool_entries[key] = dict(tc)
+
+        subagent_contents = assistant_msg.subagent_contents or {}
+        if not isinstance(subagent_contents, dict):
+            subagent_contents = {}
+
+        return {
+            "resume_content": assistant_msg.content or "",
+            "resume_subagent_contents": dict(subagent_contents),
+            "resume_subagent_tool_entries": subagent_tool_entries,
+        }
+
     async def _run_chat(self) -> None:
         """chat agent 执行核心（单协程，挂起 + 信令唤醒）。"""
         from Django_xm.services.fastapi_service.chat_executor_core import run_chat_session
@@ -449,9 +639,13 @@ class SessionExecutor:
                 # 任务不存在任何审批批次：从 checkpoint 自然继续（重新触发 pending interrupt 会幂等重建）
                 return {}
             for gid in batch_ids:
-                decisions, all_resolved = await sync_to_async(collect_batch_decisions)(self.thread_id, gid)
+                decisions, all_resolved = await sync_to_async(collect_batch_decisions)(
+                    Approval.SOURCE_DEEP_RESEARCH, self.thread_id, gid
+                )
                 if all_resolved and decisions:
-                    await sync_to_async(finalize_batch_approvals)(decisions, self.thread_id)
+                    await sync_to_async(finalize_batch_approvals)(
+                        decisions, Approval.SOURCE_DEEP_RESEARCH, self.thread_id
+                    )
                     logger.info(
                         f"[SessionExecutor] 恢复首个已决断批次: thread_id={self.thread_id}, "
                         f"graph_interrupt_id={gid}"
@@ -493,7 +687,8 @@ class SessionExecutor:
         """
         graph_interrupt_id = await create_approvals_for_interrupts(
             interrupts_data,
-            thread_id=self.thread_id,
+            source=Approval.SOURCE_DEEP_RESEARCH,
+            source_id=self.thread_id,
             user_id=self.user_id,
             chat_session_id=self.session_id,
             message_id=self.message_id,
@@ -506,6 +701,14 @@ class SessionExecutor:
             f"[SessionExecutor] 审批中断，挂起等待批次决策: "
             f"thread_id={self.thread_id}, graph_interrupt_id={graph_interrupt_id}"
         )
+        # 审批中断挂起前落库：已完成工具结果 + 子代理工具条目/图层正文落库到 DB，
+        # 保证挂起期间刷新浏览器、服务重启恢复时可还原（adapter 内存态非持久化源）。
+        agent = getattr(self, "_agent", None)
+        if agent is not None:
+            await self._persist_research_progress(
+                getattr(agent, "subagent_contents", None),
+                getattr(agent, "_subagent_tool_entries", None),
+            )
         # 状态标签实时同步：进入"等待审批"
         await _update_task_status(self.thread_id, {"status": "awaiting_approval", "current_step": "awaiting_approval"})
         await self._publish_status_change("awaiting_approval", current_step="awaiting_approval")
@@ -529,7 +732,7 @@ class SessionExecutor:
                 if self._stop_requested:
                     raise asyncio.CancelledError("用户停止生成")
                 resume_by_interrupt, all_resolved = await sync_to_async(collect_batch_decisions)(
-                    self.thread_id, graph_interrupt_id
+                    Approval.SOURCE_DEEP_RESEARCH, self.thread_id, graph_interrupt_id
                 )
                 if all_resolved:
                     break
@@ -550,7 +753,9 @@ class SessionExecutor:
             f"thread_id={self.thread_id}, graph_interrupt_id={graph_interrupt_id}, "
             f"decisions={resume_by_interrupt}"
         )
-        await sync_to_async(finalize_batch_approvals)(resume_by_interrupt, self.thread_id)
+        await sync_to_async(finalize_batch_approvals)(
+            resume_by_interrupt, Approval.SOURCE_DEEP_RESEARCH, self.thread_id
+        )
         return resume_by_interrupt
 
     def on_approval_signal(self, payload: dict) -> None:
@@ -614,6 +819,7 @@ class SessionExecutor:
                 success=True,
                 reasoning_content=result.reasoning,
                 subagent_contents=result.subagent_contents,
+                subagent_tool_entries=result.subagent_tool_entries,
             )
             await self._schedule_sandbox_cleanup()
             return
@@ -654,6 +860,7 @@ class SessionExecutor:
         success: bool,
         reasoning_content: str = "",
         subagent_contents: dict | None = None,
+        subagent_tool_entries: dict | None = None,
     ) -> None:
         """回写 ChatMessage + 广播 stream_completed（聊天深度研究场景）。"""
         if not self.session_id:
@@ -677,6 +884,7 @@ class SessionExecutor:
                 chat_session_id=self.session_id,
                 reasoning_content=reasoning_content,
                 subagent_contents=subagent_contents,
+                subagent_tool_entries=subagent_tool_entries,
             )
             await sync_to_async(broadcast_stream_completed)(
                 self.session_id,

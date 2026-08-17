@@ -183,6 +183,7 @@ def writeback_to_chat_message(
     chat_session_id: str | None = None,
     reasoning_content: str | None = None,
     subagent_contents: dict | None = None,
+    subagent_tool_entries: dict | None = None,
 ) -> str | None:
     """将深度研究结果回写到关联的 ChatMessage 并广播 WebSocket 事件。
 
@@ -198,6 +199,11 @@ def writeback_to_chat_message(
             subagent_thread_id 键累计，adapter.subagent_contents 格式：
             {subagent_thread_id: {content, reasoning_content}}）。
             为空/None 时不写 subagent_contents 字段。
+        subagent_tool_entries: 子代理工具条目会话级聚合（tool_call_id → entry，
+            adapter._subagent_tool_entries 格式）。图层字段贯通
+            （subagent_thread_id/agent_name/depth + seq/position），合并进
+            ChatMessage.tool_calls（乱序根源修复，与 chat 链路同构）。
+            为空/None 时不合并。
 
     Returns:
         回写的 ChatMessage ID（字符串），失败时返回 None
@@ -304,19 +310,39 @@ def writeback_to_chat_message(
 
         msg_save_fields = []
         if msg is not None:
-            # B3: 合并 ResearchTask tool_calls
+            # B3: 将 tool_calls（ResearchTask.tool_calls 历史字段 + 本次运行
+            # subagent_tool_entries 聚合）合并到 ChatMessage.tool_calls 顶层，
+            # 确保工具执行的 status/result/error 对快照 API 可见（不在仅 versions 内）。
+            # 乱序根源修复：审批重建路径落库丢失图层字段且无审批 SAFE 工具
+            # 完全丢失，经 _merge_tool_calls_incremental（字段级演进 + 图层字段
+            # 补齐 subagent_thread_id/agent_name/depth）合并后刷新可完整归集子代理工具卡。
+            merge_source: list[dict] = []
             if research_task is not None and research_task.tool_calls:
+                merge_source.extend(tc for tc in research_task.tool_calls if isinstance(tc, dict))
+            if isinstance(subagent_tool_entries, dict):
+                merge_source.extend(
+                    dict(entry) for entry in subagent_tool_entries.values() if isinstance(entry, dict)
+                )
+            if merge_source:
                 from Django_xm.apps.chat.services.stream_persistence import _merge_tool_calls_incremental
 
                 existing_tc = msg.tool_calls or []
-                merged_tc = _merge_tool_calls_incremental(existing_tc, research_task.tool_calls)
+                merged_tc = _merge_tool_calls_incremental(existing_tc, merge_source)
                 if merged_tc != existing_tc:
                     msg.tool_calls = merged_tc
                     msg_save_fields.append("tool_calls")
                     logger.info(
                         f"[Writeback] 已合并 tool_calls: task_id={task_id}, "
-                        f"existing={len(existing_tc)}, merged={len(merged_tc)}"
+                        f"existing={len(existing_tc)}, merged={len(merged_tc)}, "
+                        f"subagent_entries={len(subagent_tool_entries) if isinstance(subagent_tool_entries, dict) else 0}"
                     )
+                # 同步 ResearchTask.tool_calls（迁移 0010 设计意图：tool_calls 记录
+                # 全部工具调用的生命周期状态，作为独立深度研究/后续校验的持久化源）
+                if research_task is not None:
+                    current_rt_tc = research_task.tool_calls or []
+                    if merged_tc != current_rt_tc:
+                        research_task.tool_calls = merged_tc
+                        research_task.save(update_fields=["tool_calls", "updated_at"])
 
             # B5: 同步 versions[0].content（最终报告内容对 API 快照可见）
             versions = msg.versions or []
@@ -338,6 +364,15 @@ def writeback_to_chat_message(
                     msg.subagent_contents = subagent_contents
                     if "subagent_contents" not in msg_save_fields:
                         msg_save_fields.append("subagent_contents")
+
+            # 同步 ResearchTask.subagent_contents（独立深研刷新还原的唯一权威来源）
+            if isinstance(subagent_contents, dict) and subagent_contents and research_task is not None:
+                rt_sub = research_task.subagent_contents or {}
+                if not isinstance(rt_sub, dict):
+                    rt_sub = {}
+                if subagent_contents != rt_sub:
+                    research_task.subagent_contents = subagent_contents
+                    research_task.save(update_fields=["subagent_contents", "updated_at"])
 
             if msg_save_fields:
                 msg.save(update_fields=[*msg_save_fields, "updated_at"])
@@ -375,3 +410,136 @@ def writeback_to_chat_message(
     except Exception:
         logger.exception(f"[Writeback] 回写 ChatMessage 失败: task_id={task_id}")
         return None
+
+
+def persist_research_progress(
+    thread_id: str,
+    subagent_contents: dict | None = None,
+    subagent_tool_entries: dict | None = None,
+) -> None:
+    """挂起期间将深度研究内存态子代理数据落库（服务重启恢复 / 挂起中刷新的还原依据）。
+
+    覆盖场景（与 chat 链路 ``_persist_chat_tool_calls`` 同构）：
+    - 审批中断挂起前（SessionExecutor._on_interrupt）与业务等待挂起前
+      （SessionExecutor._handle_suspend）调用，将 adapter 内存态
+      ``subagent_tool_entries`` / ``subagent_contents`` 落库到
+      ``ResearchTask.tool_calls`` / ``subagent_contents`` 及关联
+      ``ChatMessage.tool_calls`` / ``subagent_contents``，保证：
+        1. 挂起期间刷新浏览器：前端从 DB 快照可读到子代理工具卡与图层正文；
+        2. 服务重启恢复：``_inject_research_resume_baseline`` 从 DB 重建
+           adapter 初始态，恢复轮不丢失挂起前的子代理工具条目。
+    - 合并语义（``_merge_tool_calls_incremental``）：字段级演进，既有条目
+      保留并演进 status/result/图层字段，重复调用幂等（不覆盖历史）。
+
+    Args:
+        thread_id: 深度研究任务 ID
+        subagent_contents: 子代理图层正文累计（adapter.subagent_contents 格式）
+        subagent_tool_entries: 子代理工具条目聚合（tool_call_id → entry，
+            adapter._subagent_tool_entries 格式，含 subagent_thread_id/position/seq）
+    """
+    from Django_xm.apps.chat.services.stream_persistence import _merge_tool_calls_incremental
+
+    merge_source: list[dict] = []
+    if isinstance(subagent_tool_entries, dict):
+        merge_source.extend(
+            dict(entry) for entry in subagent_tool_entries.values() if isinstance(entry, dict)
+        )
+
+    save_fields_research: list[str] = []
+    research_task = None
+    try:
+        from Django_xm.apps.research.models import ResearchTask
+
+        research_task = ResearchTask.objects.filter(task_id=thread_id, is_deleted=False).first()
+    except Exception:
+        logger.warning(f"[Writeback] persist_research_progress 查询 ResearchTask 失败: task_id={thread_id}")
+
+    if research_task is not None:
+        # tool_calls 合并（演进不覆盖）
+        if merge_source:
+            existing_tc = research_task.tool_calls or []
+            merged_tc = _merge_tool_calls_incremental(existing_tc, merge_source)
+            if merged_tc != existing_tc:
+                research_task.tool_calls = merged_tc
+                save_fields_research.append("tool_calls")
+                logger.info(
+                    f"[Writeback] 挂起落库 ResearchTask.tool_calls: task_id={thread_id}, "
+                    f"existing={len(existing_tc)}, merged={len(merged_tc)}"
+                )
+        # subagent_contents 覆盖（非空且不同）
+        if isinstance(subagent_contents, dict) and subagent_contents:
+            existing_sub = research_task.subagent_contents or {}
+            if not isinstance(existing_sub, dict):
+                existing_sub = {}
+            if subagent_contents != existing_sub:
+                research_task.subagent_contents = dict(subagent_contents)
+                save_fields_research.append("subagent_contents")
+        if save_fields_research:
+            research_task.save(update_fields=[*save_fields_research, "updated_at"])
+
+    # 关联 ChatMessage 同步（chat 深度研究模式挂起中刷新可见）
+    chat_session_id = None
+    chat_msg_id = None
+    try:
+        from django.apps import apps
+
+        ChatMessage = apps.get_model("chat", "ChatMessage")
+        msg = None
+        if research_task is not None and getattr(research_task, "chat_message_id", None):
+            msg = ChatMessage.objects.filter(
+                id=research_task.chat_message_id, role="assistant"
+            ).first()
+        if msg is None:
+            msg = ChatMessage.objects.filter(research_task_id=thread_id).first()
+        if msg is not None:
+            chat_session_id = getattr(msg.session, "session_id", None)
+            chat_msg_id = str(msg.id)
+            msg_save_fields: list[str] = []
+            if merge_source:
+                existing_tc = msg.tool_calls or []
+                merged_tc = _merge_tool_calls_incremental(existing_tc, merge_source)
+                if merged_tc != existing_tc:
+                    msg.tool_calls = merged_tc
+                    msg_save_fields.append("tool_calls")
+            if isinstance(subagent_contents, dict) and subagent_contents:
+                existing_sub = msg.subagent_contents or {}
+                if not isinstance(existing_sub, dict):
+                    existing_sub = {}
+                if subagent_contents != existing_sub:
+                    msg.subagent_contents = dict(subagent_contents)
+                    msg_save_fields.append("subagent_contents")
+            if msg_save_fields:
+                msg.save(update_fields=[*msg_save_fields, "updated_at"])
+    except Exception:
+        logger.warning(f"[Writeback] 挂起落库 ChatMessage 失败: task_id={thread_id}", exc_info=True)
+
+    # 广播 MESSAGE_UPDATED（session + task 双频道），通知其他浏览器拉取快照
+    if chat_session_id and chat_msg_id:
+        try:
+            from django.apps import apps
+
+            ChatMessage = apps.get_model("chat", "ChatMessage")
+            try:
+                tool_calls = (
+                    ChatMessage.objects.only("tool_calls").get(id=chat_msg_id).tool_calls or []
+                )
+            except ChatMessage.DoesNotExist:
+                tool_calls = []
+            publish_event_sync(
+                EventType.MESSAGE_UPDATED,
+                {
+                    "message_id": chat_msg_id,
+                    "session_id": chat_session_id,
+                    "research_task_id": thread_id,
+                    "tool_calls": tool_calls,
+                },
+                session_id=chat_session_id,
+                task_id=thread_id,
+            )
+        except PayloadValidationError:
+            logger.exception(
+                f"[Writeback] 挂起落库 MESSAGE_UPDATED payload 校验失败，跳过广播: "
+                f"task_id={thread_id}, message_id={chat_msg_id}",
+            )
+        except Exception as e:
+            logger.warning(f"[Writeback] 挂起落库 MESSAGE_UPDATED 广播失败: task_id={thread_id}, err={e}")

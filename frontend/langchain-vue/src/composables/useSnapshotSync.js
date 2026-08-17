@@ -1,9 +1,8 @@
 import { ref } from 'vue'
 import { getSessionSnapshot } from '@/api/realtime'
-import { getApprovalHistory } from '@/api/approval'
+import { deepResearchAPI } from '@/api/research'
 import { useSessionStore } from '@/stores/session'
 import { useResearchStore } from '@/stores/research'
-import { useApprovalStore } from '@/stores/approval'
 import { logger } from '@/utils/logger'
 import { transformBackendMessageToFrontend, toCamelCase } from '@/utils/sessionTransformers'
 import { _mergeToolCalls } from '@/utils/messageOperations'
@@ -176,8 +175,8 @@ function _reconcileMessageField(localMsg, backendMsg) {
  * 通过 { kind: 'session' | 'task', id } 区分两种校对源：
  * - kind='session'：数据源为 getSessionSnapshot（消息 / toolCalls / 审批），
  *   校对目标为 sessionStore
- * - kind='task'：数据源为 getApprovalHistory（source='deep_research'），
- *   校对目标为 researchStore + approvalStore（深度研究模块跨浏览器同步）
+ * - kind='task'：数据源为 deepResearchAPI.getStatus（tool_calls 含 result +
+ *   subagent_contents），校对目标为 researchStore（深度研究模块跨浏览器同步）
  *
  * 公共框架（isSyncing / debounce / inflight 并发复用）两 kind 共用，
  * 数据获取与校对逻辑在 _performSessionSync / _performTaskSync 内分支。
@@ -420,100 +419,29 @@ function createSnapshotSyncInstance({ kind, id }) {
   /**
    * 执行一次 task 快照校对（深度研究模块专用）
    *
-   * 数据源：工具调用数据的唯一持久化来源是 Approval 模型
-   * （source='deep_research', source_id=taskId）。
-   * 通过统一审批 API getApprovalHistory 查询审批记录，
-   * 从 approval.state 推导 toolCall status。
+   * 数据源：ResearchTask（后端 status 接口返回 tool_calls（含 result）+
+   * subagent_contents），替代原 Approval 历史重建（Approval 不持久化 result，
+   * 刷新后工具结果丢失）。
    *
-   * 优先级保护策略（与 session 校对一致）：
-   *   - tool_call：仅当后端 status 优先级 > 本地时才更新
-   *   - approval：仅当后端 state 优先级 > 本地时才更新
-   *   优先级函数复用 toolCallStateMachine.js 的 getToolCallStatusPriority / 模块级 _approvalStatePriority
+   * 合并策略：researchStore.setTaskToolCallsFromSnapshot /
+   * setTaskSubagentContentsFromSnapshot 内部使用 _mergeToolCalls 增量合并，
+   * 保留本地审批中间状态与更完整的 result/status。
    *
    * @returns {Promise<void>}
    */
   const _performTaskSync = async () => {
     try {
-      // 工具调用数据的唯一持久化来源是 Approval 模型（source='deep_research'）
-      // 通过统一审批 API 查询，替代原 getResearchSnapshot
-      const response = await getApprovalHistory(id, { source: 'deep_research' })
-      const approvalList = response?.data?.data || []
+      const response = await deepResearchAPI.getStatus(id)
+      const data = response?.data?.data || response?.data || {}
+      const backendToolCalls = Array.isArray(data.toolCalls) ? data.toolCalls : []
+      const subagentContents = data.subagentContents || {}
+
       const researchStore = useResearchStore()
-      const approvalStore = useApprovalStore()
-
-      // 获取本地已有工具调用，用于优先级比较
-      const localToolCalls = researchStore.getToolCalls(id)
-      const localToolCallMap = new Map(
-        localToolCalls.map(tc => [
-          tc.id,
-          tc,
-        ])
-      )
-
-      // 遍历审批记录，更新 toolCall 与 approval 状态
-      for (const approval of approvalList) {
-        if (!approval) continue
-        const interruptId = approval.interruptId
-        if (!interruptId) continue
-        const extra = (approval.extra && typeof approval.extra === 'object') ? approval.extra : {}
-        const toolCallId = extra.toolCallId || interruptId
-
-        // 从 approval.state 推导 toolCall status
-        const backendStatus = approval.state === 'rejected' ? ToolCallStatus.REJECTED : (approval.state === 'timeout' ? ToolCallStatus.TIMEOUT : ToolCallStatus.RUNNING)
-
-        // 1. toolCall 状态更新（优先级保护：仅当后端优先级 > 本地时才更新）
-        const localTc = localToolCallMap.get(toolCallId)
-        if (localTc) {
-          const localPriority = getToolCallStatusPriority(localTc.status)
-          const backendPriority = getToolCallStatusPriority(backendStatus)
-          if (backendPriority > localPriority) {
-            const isResultAvailable = backendStatus === ToolCallStatus.COMPLETED
-              || backendStatus === ToolCallStatus.FAILED
-            const data = {
-              id: toolCallId,
-              toolCallId,
-              name: approval.toolName,
-              toolName: approval.toolName,
-              parameters: approval.parameters || {},
-              args: approval.parameters || {},
-              status: backendStatus,
-              result: extra.result,
-              error: extra.error,
-              isInternal: extra.isInternal || false,
-            }
-            if (isResultAvailable || extra.result != null || extra.error) {
-              researchStore.updateOrAddToolResult(id, data)
-            } else {
-              researchStore.addOrUpdateToolCall(id, data)
-            }
-          } else if (
-            // approval 字段完整性检查：本地 approval 为空但后端有 approval 数据时合并
-            // 解决刷新后 API 返回的 tool_calls 不含 approval 字段的问题
-            (!localTc.approval || Object.keys(localTc.approval).length === 0) &&
-            approval && Object.keys(approval).length > 0
-          ) {
-            researchStore.setApprovalToToolCall(id, toolCallId, approval)
-          }
-        }
-
-        // 2. approval 状态更新（优先级保护：仅当后端优先级 > 本地时才更新）
-        // 注意：本地 approval 为空时（_approvalStatePriority(undefined) = -1），
-        // 任何后端状态都会 > -1，从而合并缺失的 approval 数据
-        const localApprovalState = localTc?.approval?.state
-        const localPriority = _approvalStatePriority(localApprovalState)
-        const backendPriority = _approvalStatePriority(approval.state)
-        if (backendPriority > localPriority) {
-          researchStore.setApprovalToToolCall(id, toolCallId, approval)
-          // 同步到 approvalStore（跨模块统一审批状态）
-          approvalStore.updateApprovalState(interruptId, approval.state, {
-            sessionId: approval.chatSessionId,
-            taskId: id,
-          })
-        }
-      }
+      researchStore.setTaskToolCallsFromSnapshot(id, backendToolCalls)
+      researchStore.setTaskSubagentContentsFromSnapshot(id, subagentContents)
 
       logger.info(
-        `[SnapshotSync] task=${id} 快照校对完成: ${approvalList.length} 个审批记录`
+        `[SnapshotSync] task=${id} 快照校对完成: ${backendToolCalls.length} 个工具调用`
       )
     } catch (err) {
       if (err?.response?.status === 429) {
