@@ -159,6 +159,7 @@ function _reconcileMessageField(localMsg, backendMsg) {
       if (localMsg[field] !== undefined) ver[field] = localMsg[field]
     }
     ver.toolCalls = localMsg.toolCalls
+    ver.subagentContents = localMsg.subagentContents
     ver.sources = localMsg.sources
     ver.reasoning = localMsg.reasoning
     ver.suggestions = localMsg.suggestions

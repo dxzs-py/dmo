@@ -1033,12 +1033,6 @@ class ChatService:
 
                 _cs_ref = data.get("_content_state_ref") or {}
                 try:
-                    _entries_count = len(_subagent_tool_entries)
-                    _contents_count = len(_subagent_contents)
-                    logger.info(
-                        f"[ChatExec] 子代理快照落库: subagent_tool_entries={_entries_count}, "
-                        f"subagent_contents={_contents_count}, keys={list(_subagent_tool_entries.keys())[:10]}"
-                    )
                     await _persist_chat_tool_calls(data, _cs_ref, _sub_session_id, _sub_message_id)
                 except Exception as _e:
                     logger.debug(f"[ChatExec] 子代理快照落库失败: err={_e}")
@@ -1062,11 +1056,6 @@ class ChatService:
                 if not isinstance(depth, int) or depth < 0:
                     depth = 0
                 subagent_thread_id = kwargs.get("subagent_thread_id") or ""
-                logger.info(
-                    f"[ChatExec] 子代理工具事件到达: event={event_type}, tool={tool_name}, "
-                    f"tc_id={tool_call_id}, subagent_thread_id={subagent_thread_id or '(空)'}, "
-                    f"agent_name={kwargs.get('agent_name') or ''}, depth={depth}"
-                )
                 try:
                     _tc_service.register(
                         _TCC(
@@ -1152,11 +1141,6 @@ class ChatService:
                     reasoning_content or "",
                     msg_id or "",
                     _sent_subagent_msg_keys,
-                )
-                logger.info(
-                    f"[ChatExec] 子代理正文回调: subagent={subagent_thread_id}, msg_id={msg_id!r}, "
-                    f"dup={_dup}, seen_count={len(_sent_subagent_msg_keys.get(subagent_thread_id, set()))}, "
-                    f"content_len={len(content or '')}, content_prefix={(content or '')[:24]!r}"
                 )
                 if _dup:
                     logger.debug(

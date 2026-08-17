@@ -774,6 +774,34 @@ class ToolCallLifecycleService:
             entry["seq"] = seq
         return entry
 
+    def enrich_entry_parameters(self, entry: dict, tool_call_id: str) -> dict:
+        """为工具调用条目补全参数（流式 extractor 参数缺失时从 ctx 权威源兜底）。
+
+        流式 extractor（process_stream_chunk）依赖 tool_call_chunks 携带完整 args
+        才能将参数写入 tool_calls_map；部分模型（如 DeepSeek）流式返回工具调用时
+        args 为空串（实证 args_str=''），map 条目 parameters 恒为 {}。而
+        ApprovalMiddleware（aafter_model）注册 ToolCallContext 时已持有完整参数
+        （实证 "参数完整"），此处从 context 读取补全——仅当 entry 参数为空时补全，
+        避免覆盖 extractor 已解析的参数。
+
+        Args:
+            entry: 工具调用条目 dict（原地修改）
+            tool_call_id: 工具调用 ID
+
+        Returns:
+            原 entry（支持链式调用）
+        """
+        if not isinstance(entry, dict):
+            return entry
+        existing = entry.get("parameters")
+        if isinstance(existing, dict) and existing:
+            return entry
+        ctx = self.get_context(tool_call_id)
+        ctx_params = (ctx or {}).get("parameters")
+        if isinstance(ctx_params, dict) and ctx_params:
+            entry["parameters"] = ctx_params
+        return entry
+
     def enrich_entry_position(self, entry: dict, tool_call_id: str) -> dict:
         """为工具调用条目补全图层内 position（所有持久化/重建出口的统一权威补全点）。
 

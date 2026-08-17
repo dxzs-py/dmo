@@ -409,9 +409,8 @@ function handleBranchChange(versionIndex) {
               @click.stop="handleCopy"
             />
           </el-tooltip>
-          <el-tooltip content="重新生成" placement="top" :show-after="500">
+          <el-tooltip v-if="canRegenerate" content="重新生成" placement="top" :show-after="500">
             <el-button
-              v-if="canRegenerate"
               link
               size="small"
               :icon="Refresh"

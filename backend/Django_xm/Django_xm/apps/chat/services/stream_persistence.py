@@ -78,6 +78,11 @@ def _build_persisted_tool_calls(
             "result": tool_info.get("result"),
             "error": tool_info.get("error"),
         }
+        # 参数兜底（与 seq/position 同模式）：流式 extractor 参数不流式时
+        # （tool_call_chunks args 为空串）map 条目 parameters 恒为 {}，而
+        # ApprovalMiddleware 注册 ToolCallContext 时已持有完整参数，此处从
+        # ctx 权威源补全（仅当条目参数为空时，不覆盖 extractor 已解析参数）。
+        tool_call_service.enrich_entry_parameters(persisted_entry, tool_call_id)
         # 保留 seq（register 全局递增序号，前端排序权威依据）：
         # 1) 快照优先——tool_calls_map 已补过 seq（sse_generator）则直接透传；
         # 2) 统一兜底——map 未补过的场景（context 过期或非 SSE 构建路径）经

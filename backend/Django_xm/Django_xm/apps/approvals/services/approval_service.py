@@ -377,6 +377,24 @@ def _extract_tool_call_event_kwargs(approval: Approval) -> dict[str, Any]:
     return build_approval_payload(approval, None, "tool")
 
 
+def _bind_approval_position(approval: Approval, tool_call_id: str) -> None:
+    """将 Approval.extra 中的 position 绑定到 ToolCallContext（keep_existing，幂等）。
+
+    position 由 ApprovalMiddleware 在审批请求中携带（Agent 图层嵌套规范 D3），
+    用于流式 extractor 参数不流式（tool_call_chunks args 为空串）时受控工具的
+    position 兜底——保证审批 WAITING/RUNNING/TIMEOUT 事件携带图层内联位置，
+    前端工具卡不排末尾。
+    """
+    try:
+        _pos = (approval.extra or {}).get("position")
+        if isinstance(_pos, int) and _pos >= 0:
+            service.bind_position(tool_call_id, _pos)
+    except Exception as e:
+        logger.warning(
+            f"[ApprovalService] 绑定 position 失败(非致命): tool_call_id={tool_call_id}, err={e}"
+        )
+
+
 def _publish_tool_call_timeout_event(approval: Approval):
     """发布 TOOL_CALL_TIMEOUT 事件（通过 tool_call_lifecycle.service.transition 状态机入口）。
 
@@ -407,6 +425,7 @@ def _publish_tool_call_timeout_event(approval: Approval):
                 subagent_thread_id=kwargs.get("subagent_thread_id") or "",
             )
         )
+        _bind_approval_position(approval, tool_call_id)
         # 状态机转换并发布事件（内部调用 publish_tool_call_sync）
         service.transition(
             tool_call_id,
@@ -458,6 +477,7 @@ def _publish_tool_call_waiting_event(approval: Approval):
                 subagent_thread_id=kwargs.get("subagent_thread_id") or "",
             )
         )
+        _bind_approval_position(approval, tool_call_id)
         # 状态机转换并发布事件（内部调用 publish_tool_call_sync）
         service.transition(
             tool_call_id,
@@ -506,6 +526,7 @@ def _publish_tool_call_running_event(approval: Approval):
                 subagent_thread_id=kwargs.get("subagent_thread_id") or "",
             )
         )
+        _bind_approval_position(approval, tool_call_id)
         # 状态机转换并发布事件（内部调用 publish_tool_call_sync）
         service.transition(
             tool_call_id,
@@ -1248,6 +1269,10 @@ _EXTRA_PASSTHROUGH_FIELDS = (
     "langgraph_resume_id",
     # subagent_thread_id：子代理 SSE 定向推送路由标识符（spec D10）
     "subagent_thread_id",
+    # position：middleware 在审批请求中携带的图层内 position（Agent 图层嵌套规范 D3）。
+    # 透传写入 Approval.extra，approval_service 发布工具事件时绑定到 ToolCallContext，
+    # 审批 WAITING/RUNNING 事件携带 position（受控工具 extractor 参数不流式时兜底）。
+    "position",
 )
 
 

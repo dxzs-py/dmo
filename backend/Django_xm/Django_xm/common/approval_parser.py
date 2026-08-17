@@ -139,5 +139,10 @@ def _build_approval_entry(
     # 审批事件据此定向到子代理卡片（协议字段，snake_case，不参与 camelCase 转换）
     if req.get("subagent_thread_id"):
         entry["subagent_thread_id"] = req["subagent_thread_id"]
+    # position（Agent 图层嵌套规范 D3）：middleware 在审批请求中携带的图层内
+    # position，透传给 approval_service，注册 ToolCallContext 后绑定，
+    # 审批 WAITING/RUNNING 事件据此携带 position（前端工具卡内联布局）。
+    if isinstance(req.get("position"), int) and req["position"] >= 0:
+        entry["position"] = req["position"]
 
     return entry

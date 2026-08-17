@@ -99,3 +99,25 @@
   runtime.resume 恢复子代理（Agent 收到超时 ToolMessage 调整策略继续）
 - 待验证：审批超时后子代理正常返回、任务继续推进（需 5 分钟超时或手动触发 timeout_approval）
 
+---
+
+## 2026-08-17 服务重启后完整复测（3 浏览器：页面3 触发 / 页面4 中途刷新 / 页面5 完成后刷新）
+
+- 会话：f7832504-c68c-4c4f-9786-1459b90dea8c，msg 3502，12:58 触发「3 子代理并行 + wait_for_subagent 批量等待」
+- 工具选择：新建对话需手动选择工具（用户已选好，Agent 工具集 13 个含 spawn_sub_agent / wait_for_subagent / shell_exec）
+- 执行链路：3 个 spawn 审批逐个确认 → 3 子代理启动 → 4 个 shell_exec 审批（ollama list / ollama ps / python --version / node --version）逐个确认 → 子代理执行完成 → wait_for_subagent 恢复 → 父代理汇总（含 fs 结果）→ `[ChatExec] 执行完成`（13:01:43）会话移除，全程无异常
+- 日志证据：`业务等待恢复模式：以 Command(resume) 续跑`（13:01:35）→ `Agent 执行完成 - 模型调用: 1, 工具调用: 1` → `persist_stream_result 持久化成功: content_len=2096, tool_calls_count=8`
+
+### 问题 5 修复验证：通过（DB + 双浏览器刷新实证）
+- DB 实证（msg 3502 tool_calls count=8）：4 个 shell_exec **全部带图层字段**
+  - call_00_2ZVvw... sub=subagent_551bcf2e3f8d4be8 agent=ollama-list-runner depth=1 pos=30
+  - call_00_LSJWL5... sub=subagent_cfd4fe8df4734a4c agent=ollama-ps-runner depth=1 pos=33
+  - call_00_gMCrhP... / call_01_n7rxcf... sub=subagent_83a6e418b4e74936 agent=env-version-runner depth=1 pos=32
+- 中途刷新（页面4，子代理执行中刷新）：正文完整无切段，env-version 两个 shell_exec 卡在子代理 3 卡内（非主正文中间）
+- 完成后刷新（页面5）：完整还原，顺序 = 段1「我将并行派发三个子代理…」→ spawn×3 → 子代理 1/2/3 卡（含各自 shell_exec 结果）→ 段2「三个子代理已成功启动…」→ wait_for_subagent（已完成）→ 段3「三个子代理已全部完成，以下是汇总结果：」+ 汇总报告
+- 结论：stream_persistence 按 id 匹配 + sync_approval_state_to_chat_message 图层字段补齐两处修复生效，问题 5 不再复现
+
+### 问题 6（审批超时恢复）：已确认（上轮手动 timeout_approval 实时验证通过）
+- 本轮正常审批链路全通过；超时恢复路径（session_manager collect 回退）代码已加载，上轮已实时验证：超时后子代理收到 ToolMessage、父代理正常汇总
+- 结论：问题 6 修复生效，任务不再因审批超时永久挂起
+

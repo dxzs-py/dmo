@@ -42,6 +42,29 @@ function _camelToSnake(str) {
 }
 
 /**
+ * 协议标识符保护（值不参与键名转换）：
+ * `subagent_contents` 的对象子键是 subagent_thread_id 协议路由标识符值
+ * （如 `subagent_xxx`，与 toolCalls.subagentThreadId / SSE 事件顶层
+ * subagent_thread_id 同值）。若被 toCamelCase 当作普通键名转换
+ * （`subagent_xxx` → `subagentXxx`），刷新后按 threadId 取正文会失配，
+ * 子代理卡正文丢失（仅触发浏览器实时事件正常）。此处保护子键原样，
+ * 仅递归转换子对象内部字段（content/reasoning_content/agent_name/depth）。
+ *
+ * @param {*} obj - subagent_contents 对象
+ * @returns {*}
+ */
+function _preserveProtocolKeys(obj) {
+  if (obj === null || obj === undefined) return obj
+  if (Array.isArray(obj)) return obj.map(v => _preserveProtocolKeys(v))
+  if (!_isPlainObject(obj)) return obj
+  const result = {}
+  for (const key of Object.keys(obj)) {
+    result[key] = toCamelCase(obj[key], 1)
+  }
+  return result
+}
+
+/**
  * 递归将对象所有键从 snake_case 转为 camelCase
  * 跳过 Date/RegExp/File/Blob/FormData/null/基本类型
  * @param {*} obj
@@ -55,7 +78,10 @@ export function toCamelCase(obj, _depth = 0) {
   const result = {}
   for (const key of Object.keys(obj)) {
     const camelKey = _convertSnakeToCamel(key)
-    result[camelKey] = toCamelCase(obj[key], _depth + 1)
+    // subagent_contents：子键为协议标识符值，保持原样（仅转换内部字段）
+    result[camelKey] = key === 'subagent_contents'
+      ? _preserveProtocolKeys(obj[key])
+      : toCamelCase(obj[key], _depth + 1)
   }
   return result
 }

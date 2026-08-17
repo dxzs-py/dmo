@@ -992,7 +992,9 @@ export function mergeMessageFromBackend(existingMsg, backendMsg) {
       existingMsg.toolCalls = _mergeToolCalls(existingMsg.toolCalls || [], backendMsg.toolCalls)
     }
     if (backendMsg.reasoning !== undefined) existingMsg.reasoning = backendMsg.reasoning
-    if (backendMsg.subagentContents !== undefined) existingMsg.subagentContents = backendMsg.subagentContents
+    if (backendMsg.subagentContents !== undefined) {
+      existingMsg.subagentContents = backendMsg.subagentContents
+    }
     if (backendMsg.sources !== undefined) existingMsg.sources = backendMsg.sources
     if (backendMsg.suggestions !== undefined) existingMsg.suggestions = backendMsg.suggestions
     if (backendMsg.context !== undefined) existingMsg.context = backendMsg.context

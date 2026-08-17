@@ -192,6 +192,29 @@ class ApprovalMiddleware(AgentMiddleware):
             return None
 
     @staticmethod
+    def _compute_layer_position(state: dict | None) -> int | None:
+        """计算当前 agent 图层已输出正文长度（Agent 图层嵌套规范 D3，按图层局部化）。
+
+        position 语义：触发工具调用瞬间该图层自身已输出 content 长度。aafter_model
+        执行时 ``state["messages"]`` 已含本轮完整 AIMessage，对所有 assistant 消息的
+        str content 求和即得该图层累计正文长度，与执行层 content_state 权威值一致
+        （聊天跨 LLM 轮次累计；middleware 运行在哪个图的 aafter_model，state 就是
+        哪个图层——子代理天然按自身图层累计，无需额外区分）。
+
+        Returns:
+            累计正文长度；无法计算（state 缺失 / 无消息）时返回 None（调用方跳过绑定）
+        """
+        msgs = (state or {}).get("messages") if isinstance(state, dict) else None
+        if not msgs:
+            return None
+        total = 0
+        for m in msgs:
+            # 仅累计 assistant 消息的字符串正文（tool_call 轮 content 为空串，不影响求和）
+            if isinstance(m, AIMessage) and isinstance(getattr(m, "content", None), str):
+                total += len(m.content)
+        return total
+
+    @staticmethod
     async def _audit_auto_approved_tools(
         tool_calls: list[dict],
         chat_session_id: str,
@@ -355,6 +378,23 @@ class ApprovalMiddleware(AgentMiddleware):
                         EventType.TOOL_CALL_RUNNING,
                         parameters=params_value,
                     )
+                # position 统一绑定（Agent 图层嵌套规范 D3，root cause 修复）：
+                # 流式 extractor（process_stream_chunk）依赖 tool_call_chunks 携带完整
+                # args 才能产出 PENDING 事件；部分模型（如 DeepSeek）流式返回工具调用时
+                # args 为空串（实证 args_str=''），extractor 永远无法产出 PENDING →
+                # position 从未绑定、工具卡错位。middleware 是 SAFE/无策略工具的统一
+                # 注册点且能看到完整图层 state，在此统一按图层正文长度绑定 position，
+                # 对主 agent/子代理/自定义工具一律生效，无需逐工具特殊处理。
+                # bind_position keep_existing：extractor 已绑定的 position 不被覆盖。
+                _position = ApprovalMiddleware._compute_layer_position(state)
+                if _position is not None:
+                    try:
+                        service.bind_position(tool_call_id, _position)
+                    except Exception as _pos_err:
+                        logger.debug(
+                            f"[ApprovalMiddleware] 绑定 position 失败(非致命): "
+                            f"tool={tool_name}, tc_id={tool_call_id}, err={_pos_err}"
+                        )
                 # 可观测性指标（F2）：SAFE 级自动通过计数
                 approval_metrics.on_created(RiskLevel.SAFE, auto_approved=True)
                 logger.info(
@@ -681,6 +721,13 @@ class ApprovalMiddleware(AgentMiddleware):
                 request["agent_name"] = subagent_context.get("agent_name", "")
                 request["agent_path"] = subagent_context.get("agent_path", [])
                 request["subagent_thread_id"] = subagent_context.get("subagent_thread_id", "")
+            # position 统一绑定（Agent 图层嵌套规范 D3，root cause 修复）：
+            # 受控工具与 SAFE/无策略工具同样可能因 extractor 参数不流式而缺 position。
+            # middleware 统一按图层正文长度计算并随审批请求透传，approval_service
+            # 注册 ctx 后绑定（审批 WAITING/RUNNING 事件携带 position，前端内联正确）。
+            _position = self._compute_layer_position(state)
+            if _position is not None:
+                request["position"] = _position
             approval_requests.append(request)
             logger.info(
                 f"[ApprovalMiddleware] 需要审批: tool={tool_name}, "

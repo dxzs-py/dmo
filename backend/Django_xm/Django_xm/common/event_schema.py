@@ -54,6 +54,12 @@ class EventType(StrEnum):
     TOOL_CALL_TIMEOUT = "tool_call_timeout"  # 审批超时（终态）
     TOOL_CALL_REJECTED = "tool_call_rejected"  # 工具被用户拒绝（终态）
 
+    # === 子代理状态事件（WebSocket 推送）===
+    # 子代理状态变更（running / interrupted_pending_user_input / completed / failed）。
+    # 终态/挂起仅更新 DB 不够——前端实时状态依赖事件驱动刷新子代理元数据，
+    # 缺此事件会导致子代理卡实时状态停留旧值（如已完成仍显示"执行中"），刷新才正常。
+    SUBAGENT_STATUS_CHANGE = "subagent_status_change"
+
     # === 审批事件（WebSocket 推送）===
     APPROVAL_PENDING = "approval_pending"  # 审批请求已创建
     APPROVAL_PROCESSING = "approval_processing"  # 审批正在处理（用户已点击，后端处理中）
@@ -306,6 +312,7 @@ _PAYLOAD_TYPE_MAP: dict[EventType, type] = {
     EventType.TOOL_CALL_FAILED: ToolCallLifecyclePayload,
     EventType.TOOL_CALL_TIMEOUT: ToolCallLifecyclePayload,
     EventType.TOOL_CALL_REJECTED: ToolCallRejectedPayload,
+    EventType.SUBAGENT_STATUS_CHANGE: StreamPayload,
     EventType.APPROVAL_PENDING: ApprovalPayload,
     EventType.APPROVAL_PROCESSING: ApprovalPayload,
     EventType.APPROVAL_WAITING: ApprovalPayload,
@@ -336,6 +343,8 @@ _REQUIRED_FIELDS: dict[EventType, tuple[str, ...]] = {
     EventType.TOOL_CALL_FAILED: ("tool_call_id", "tool_name", "source", "source_id", "parameters", "error"),
     EventType.TOOL_CALL_TIMEOUT: ("tool_call_id", "tool_name", "source", "source_id", "parameters"),
     EventType.TOOL_CALL_REJECTED: ("tool_call_id", "tool_name", "source", "source_id", "parameters"),
+    # 子代理状态事件：source + source_id + data 必填（data 含 status，session_id/task_id 二选一路由）
+    EventType.SUBAGENT_STATUS_CHANGE: ("source", "source_id", "data"),
     # 审批事件：6 个核心字段必填（三模块共享）
     # parameters 必填（审批面板展示用），message_id 可选（learning 模块无 chat message）
     EventType.APPROVAL_PENDING: ("interrupt_id", "tool_call_id", "source", "source_id", "state", "parameters"),
@@ -376,6 +385,7 @@ _WS_EVENT_NAME_MAP: dict[EventType, str] = {
     EventType.TOOL_CALL_FAILED: "tool_call_failed",
     EventType.TOOL_CALL_TIMEOUT: "tool_call_timeout",
     EventType.TOOL_CALL_REJECTED: "tool_call_rejected",
+    EventType.SUBAGENT_STATUS_CHANGE: "subagent_status_change",
     EventType.APPROVAL_PENDING: "approval_pending",
     EventType.APPROVAL_PROCESSING: "approval_processing",
     EventType.APPROVAL_WAITING: "approval_waiting",

@@ -95,10 +95,13 @@ export const useResearchStore = defineStore('research', () => {
     if (!taskId || !subagentThreadId) return
     const task = _ensureTask(taskId)
     if (!content && !reasoningContent) return
+    // 新对象追加（与 chat 模块 _applySubagentContent 修复模式一致，防同类共享引用隐患）：
+    // 从现有 entry 构建新对象，content/reasoningContent 各追加一次后整表替换
     const entry = task.subagentContents.value[subagentThreadId] || { content: '', reasoningContent: '' }
-    if (content) entry.content = (entry.content || '') + content
-    if (reasoningContent) entry.reasoningContent = (entry.reasoningContent || '') + reasoningContent
-    task.subagentContents.value = { ...task.subagentContents.value, [subagentThreadId]: entry }
+    const nextEntry = { ...entry }
+    if (content) nextEntry.content = (nextEntry.content || '') + content
+    if (reasoningContent) nextEntry.reasoningContent = (nextEntry.reasoningContent || '') + reasoningContent
+    task.subagentContents.value = { ...task.subagentContents.value, [subagentThreadId]: nextEntry }
   }
 
   /**

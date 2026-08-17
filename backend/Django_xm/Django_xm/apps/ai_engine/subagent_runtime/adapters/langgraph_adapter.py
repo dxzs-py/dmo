@@ -146,6 +146,8 @@ class LangGraphAdapter(BaseRuntimeAdapter):
                 SubAgentStatus.INTERRUPTED_PENDING_USER_INPUT,
                 pending_interrupt_info=pending,
             )
+            # 子代理状态事件：前端实时刷新子代理卡状态（否则"等待你的确认"滞后）
+            await self._publish_status_event(instance, configurable, SubAgentStatus.INTERRUPTED_PENDING_USER_INPUT)
             # 审批中断（非业务等待）：创建审批 DB 记录 + 发布 approval_pending 事件，
             # 供前端子代理卡片内工具卡渲染"确认执行/拒绝"控件（spec D9/D10）。
             # 统一审批链路：子代理与主代理审批共用 /approvals/{interrupt_id}/resume/
@@ -166,11 +168,57 @@ class LangGraphAdapter(BaseRuntimeAdapter):
                 SubAgentStatus.COMPLETED,
                 result_preview=result_preview,
             )
+            # 子代理状态事件：前端实时刷新子代理卡状态为"已完成"（缺此事件会导致
+            # 子代理卡实时停留"执行中"，仅刷新页面才正常）
+            await self._publish_status_event(instance, configurable, SubAgentStatus.COMPLETED)
             logger.info(f"子代理执行完成: {thread_id}, result_len={len(result_preview)}")
             _configurable_registry.pop(thread_id, None)
             await self._notify_finished(instance, "completed")
 
     # ── 辅助 ────────────────────────────────────────────────────────────
+
+    async def _publish_status_event(self, instance: Any, configurable: dict | None, status: str) -> None:
+        """发布子代理状态变更事件（chat 场景，前端据此实时刷新子代理元数据）。
+
+        子代理状态仅更新 DB 不够：前端实时状态靠事件驱动 scheduleSubagentsRefresh
+        拉取 /subagents，缺事件会停留旧值（如已完成仍显示"执行中"，刷新才正常）。
+        事件发布到父线程频道（chat 场景 session:{chat_session_id}），payload 携带
+        status，前端按顶层 subagent_thread_id 路由刷新该子代理卡。
+
+        仅在 chat 场景（configurable 携带 chat_session_id）发布；research 场景
+        有 task 状态轮询/status_change 通道覆盖，避免事件链路误路由。
+        """
+        try:
+            from Django_xm.common.event_schema import EventSource, EventType
+            from Django_xm.common.realtime_events import publish_event
+
+            cfg = configurable or {}
+            chat_session_id = cfg.get("chat_session_id") or ""
+            if not chat_session_id:
+                return
+            await publish_event(
+                EventType.SUBAGENT_STATUS_CHANGE,
+                {
+                    "source": EventSource.CHAT,
+                    "source_id": chat_session_id,
+                    "message_id": cfg.get("assistant_message_id") or None,
+                    "data": {
+                        "status": status,
+                        "agent_name": (instance.metadata or {}).get("agent_name") or "",
+                    },
+                },
+                session_id=chat_session_id,
+                subagent_thread_id=instance.thread_id,
+            )
+            logger.info(
+                f"子代理状态事件已发布: sub={instance.thread_id}, status={status}, "
+                f"session={chat_session_id}"
+            )
+        except Exception:
+            logger.warning(
+                f"子代理状态事件发布失败（非致命）: sub={instance.thread_id}, status={status}",
+                exc_info=True,
+            )
 
     async def _notify_finished(self, instance: Any, status: str) -> None:
         """子代理终态（completed/failed）触发生命周期回调，唤醒父 Graph（spec D4）。"""

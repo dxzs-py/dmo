@@ -175,25 +175,22 @@ export const createHandleSessionEvent = (ctx) => {
     if (!targetMsg.subagentContents || typeof targetMsg.subagentContents !== 'object') {
       targetMsg.subagentContents = {}
     }
+    // 幂等追加（根因修复）：从现有 entry 构建新对象，content/reasoningContent 各追加
+    // 恰好一次后整体替换。message 与活跃版本按 D5 引用同步（下方收敛），禁止对版本
+    // 二次追加——别名时二者为同一对象，二次追加会把同一 content 追加两次产生逐段双写。
     const entry = targetMsg.subagentContents[subagentThreadId] || { content: '', reasoningContent: '' }
-    if (content) entry.content = (entry.content || '') + content
-    if (reasoningContent) entry.reasoningContent = (entry.reasoningContent || '') + reasoningContent
-    if (data.agentName) entry.agentName = data.agentName
-    if (typeof data.depth === 'number') entry.depth = data.depth
-    targetMsg.subagentContents[subagentThreadId] = entry
+    const nextEntry = { ...entry }
+    if (content) nextEntry.content = (nextEntry.content || '') + content
+    if (reasoningContent) nextEntry.reasoningContent = (nextEntry.reasoningContent || '') + reasoningContent
+    if (data.agentName) nextEntry.agentName = data.agentName
+    if (typeof data.depth === 'number') nextEntry.depth = data.depth
+    targetMsg.subagentContents[subagentThreadId] = nextEntry
 
-    // 同步到当前版本快照（与 toolCalls 的版本同步语义一致）
+    // 活跃版本收敛（D5：message.subagentContents 恒等于活跃版本快照）：
+    // 别名成立时跳过（message 写入即已同步）；别名被破坏时恢复引用，而非二次追加
     const ver = targetMsg.versions?.[targetMsg.currentVersion]
-    if (ver) {
-      if (!ver.subagentContents || typeof ver.subagentContents !== 'object') {
-        ver.subagentContents = {}
-      }
-      const verEntry = ver.subagentContents[subagentThreadId] || { content: '', reasoningContent: '' }
-      if (content) verEntry.content = (verEntry.content || '') + content
-      if (reasoningContent) verEntry.reasoningContent = (verEntry.reasoningContent || '') + reasoningContent
-      if (data.agentName) verEntry.agentName = data.agentName
-      if (typeof data.depth === 'number') verEntry.depth = data.depth
-      ver.subagentContents[subagentThreadId] = verEntry
+    if (ver && ver.subagentContents !== targetMsg.subagentContents) {
+      ver.subagentContents = targetMsg.subagentContents
     }
 
     logger.debug(
@@ -371,6 +368,19 @@ export const createHandleSessionEvent = (ctx) => {
       // 实时累计子代理图层正文。
       case 'stream_subagent_content':
         _applySubagentContent(sessionId, payload)
+        break
+      // 子代理状态变更事件（subagent_status_change，session 频道）：
+      // 后端子代理终态/挂起时发布（langgraph_adapter._publish_status_event），
+      // 前端据此刷新子代理元数据，否则子代理卡实时状态停留旧值
+      // （如已完成仍显示"执行中"，刷新页面才正常——事件驱动的核心补位）。
+      case 'subagent_status_change':
+        if (payload.subagentThreadId || event.subagent_thread_id) {
+          logger.info(
+            `[Sync] 子代理状态变更: session=${sessionId}, subagent=${payload.subagentThreadId || event.subagent_thread_id}, ` +
+            `status=${payload.data?.status || payload.status || '(unknown)'}`
+          )
+          scheduleSubagentsRefresh(sessionId)
+        }
         break
       case 'messages_deleted':
         ctx.handleMessagesDeleted(sessionId, payload.deletedMessageIds || payload.ids || [])

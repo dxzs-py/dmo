@@ -369,8 +369,15 @@ def _handle_ai_message_chunk(
                 tc_args_str = getattr(tc_chunk, "args", "") or ""
                 tc_index = getattr(tc_chunk, "index", None)
 
+            if not tc_id:
+                continue
+
             dedup_key = None
             if tc_id and tc_id in tool_calls_map:
+                if tc_name and tc_name in tool_calls_map and tc_id not in tool_calls_map:
+                    _migrate_key_if_needed(tool_calls_map, tc_name, tc_id)
+                    if tc_name in tool_args_accumulator and tc_id not in tool_args_accumulator:
+                        tool_args_accumulator[tc_id] = tool_args_accumulator.pop(tc_name)
                 dedup_key = tc_id
             elif tc_id:
                 if tc_name and tc_name in tool_calls_map and tc_id not in tool_calls_map:

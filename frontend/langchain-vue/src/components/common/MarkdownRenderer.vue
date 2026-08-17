@@ -3,6 +3,7 @@ import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import hljs from 'highlight.js/lib/core'
+import { normalizeGfmTables } from '@/utils/markdownTable'
 import javascript from 'highlight.js/lib/languages/javascript'
 import python from 'highlight.js/lib/languages/python'
 import json from 'highlight.js/lib/languages/json'
@@ -166,7 +167,9 @@ const renderedContent = computed(() => {
   if (!text || typeof text !== 'string') {
     return ''
   }
-  let rawHtml = marked(text)
+  // 规范化畸形 GFM 表格（列数不一致）后再交由 marked 解析：
+  // 否则 marked 严格 GFM 会整块降级为纯文本段落
+  let rawHtml = marked(normalizeGfmTables(text))
   if (props.citations.length > 0) {
     rawHtml = rawHtml.replace(/\[(\d+)\]/g, (match, num) => {
       const idx = parseInt(num) - 1
