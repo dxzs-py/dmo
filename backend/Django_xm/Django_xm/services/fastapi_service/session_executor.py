@@ -164,16 +164,6 @@ class SessionExecutor:
             # 由调度器唤醒后新建协程续跑并在此真正结束时清理（见 _resume_after_subagent_wait）。
             # 其余路径（成功/失败/取消/崩溃）统一释放 checkpointer + 移除会话槽。
             if not self._suspended:
-                # 清理父工具上下文（仅本会话的 key，避免清空其他并发会话）
-                try:
-                    from Django_xm.apps.tools.langchain.agent_context import clear_parent_tool_context
-
-                    clear_parent_tool_context(thread_id)
-                except Exception:
-                    logger.warning(
-                        f"[SessionExecutor] 清理父工具上下文失败（非致命）: thread_id={thread_id}",
-                        exc_info=True,
-                    )
                 await self._release_checkpointer()
                 self.manager.remove_session(thread_id)
 
@@ -308,8 +298,27 @@ class SessionExecutor:
         - 正常完成/失败 → _handle_result 落库广播；
         - 业务等待挂起（suspended）→ 注册父 awaiter、置挂起态、退出（不 finalize）。
         """
+        agent = self._agent
+        # 主 agent 工具集与运行配置显式透传（spawn_sub_agent 继承 / filesystem 落盘）。
+        # 替代历史 get_parent_tool_context 全局旁路：经 research_runner 注入
+        # configurable，子代理再经 langgraph_adapter 逐层传递。
+        original_tools = getattr(agent, "original_tools", None)
+        parent_tool_names = (
+            [getattr(t, "name", "") for t in original_tools]
+            if isinstance(original_tools, (list, tuple))
+            else []
+        )
+        parent_config = {
+            "use_web_search": bool(self.params.get("enable_web_search", True)),
+            "use_mcp": self.params.get("use_mcp"),
+            "user_id": self.user_id,
+            "session_id": self.thread_id,
+            "model_name": self.params.get("model_name"),
+            "store": self.params.get("store"),
+            "enable_deep_thinking": bool(self.params.get("enable_deep_thinking", False)),
+        }
         result = await execute_research_async(
-            self._agent,
+            agent,
             query,
             self.thread_id,
             disable_llm_cache=True,
@@ -318,6 +327,8 @@ class SessionExecutor:
             message_id=self.message_id,
             resume_command=resume_command,
             interrupt_handler=self._on_interrupt,
+            parent_tool_names=parent_tool_names,
+            parent_config=parent_config,
         )
         if result.suspended:
             await self._handle_suspend(result)
@@ -1119,29 +1130,6 @@ class SessionExecutor:
             logger.info("[SessionExecutor] 使用异步 Checkpointer")
 
         agent = await agent_hub_create(config)
-
-        # 设置父工具上下文：spawn_sub_agent 读取此处继承主 agent 工具集与深度思考参数
-        # （深度研究此前未设置 → 子代理仅得基础工具；此处与 chat_service 对齐。
-        # 按 thread_id 隔离存储，多任务并发互不清空。）
-        try:
-            from Django_xm.apps.tools.langchain.agent_context import set_parent_tool_context
-
-            main_tools = getattr(agent, "original_tools", None) or (tools if tools else None) or []
-            set_parent_tool_context(
-                thread_id,
-                main_tools,
-                {
-                    "use_web_search": params.get("enable_web_search", True),
-                    "use_mcp": params.get("use_mcp"),
-                    "user_id": self.user_id,
-                    "session_id": thread_id,
-                    "model_name": params.get("model_name"),
-                    "store": params.get("store"),
-                    "enable_deep_thinking": bool(params.get("enable_deep_thinking", False)),
-                },
-            )
-        except Exception as e:
-            logger.warning(f"[SessionExecutor] 设置父工具上下文失败: {e}")
 
         return agent
 

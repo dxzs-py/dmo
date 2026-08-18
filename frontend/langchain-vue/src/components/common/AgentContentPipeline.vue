@@ -68,6 +68,13 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  /** 是否渲染孤儿子代理卡（无 spawnToolCallId 的子代理）。仅宿主主层渲染一次：
+   *  孤儿语义属于「主 agent 工具流末尾的兜底」，嵌套面板（SubAgentDetailPanel）
+   *  内不得重复渲染，否则同一孤儿在多层递归中重复出现（渲染错乱/卸载崩溃）。 */
+  showOrphans: {
+    type: Boolean,
+    default: true,
+  },
 })
 
 const emit = defineEmits(['toggle-subagent', 'approve', 'reject'])
@@ -133,17 +140,19 @@ const spawnedSubagentOf = (toolCall) => {
       </template>
     </InlineToolCallContent>
 
-    <!-- 孤儿兜底：无 spawnToolCallId 的子代理在主工具流末尾渲染 -->
-    <template v-for="sa in subagentSpawnIndex.orphans" :key="sa.threadId">
-      <SubAgentCard
-        :subagent="sa"
-        :expanded="expandedThreadIds.has(sa.threadId)"
-        :subagents="subagents"
-        :expanded-thread-ids="expandedThreadIds"
-        @toggle="(threadId) => emit('toggle-subagent', threadId)"
-        @approve="(tc) => emit('approve', tc)"
-        @reject="(tc) => emit('reject', tc)"
-      />
+    <!-- 孤儿兜底：无 spawnToolCallId 的子代理在主工具流末尾渲染（仅宿主主层） -->
+    <template v-if="showOrphans">
+      <template v-for="sa in subagentSpawnIndex.orphans" :key="sa.threadId">
+        <SubAgentCard
+          :subagent="sa"
+          :expanded="expandedThreadIds.has(sa.threadId)"
+          :subagents="subagents"
+          :expanded-thread-ids="expandedThreadIds"
+          @toggle="(threadId) => emit('toggle-subagent', threadId)"
+          @approve="(tc) => emit('approve', tc)"
+          @reject="(tc) => emit('reject', tc)"
+        />
+      </template>
     </template>
   </div>
 </template>

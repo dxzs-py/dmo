@@ -782,24 +782,6 @@ class ChatService:
                 # fallback 检测失败不影响主流程，继续使用原模型
                 logger.debug("检测 LLM 降级失败", exc_info=True)
 
-        from Django_xm.apps.tools.langchain.agent_context import clear_parent_tool_context, set_parent_tool_context
-
-        set_parent_tool_context(
-            data.get("session_id") or self.thread_id or "",
-            tools,
-            {
-                "use_web_search": data.get("use_web_search", False),
-                "use_mcp": data.get("use_mcp", False),
-                "user_id": self.user_id,
-                "session_id": data.get("session_id"),
-                "model_name": data.get("model"),
-                "store": data.get("store"),
-                # 深度思考开关（实际生效值，已含模型能力判定）：spawn_sub_agent
-                # 从父上下文读取并继承给子代理 AgentConfig
-                "enable_deep_thinking": data.get("_enable_deep_thinking", False),
-            },
-        )
-
         tool_config = self._build_tool_config(data)
 
         # 在创建 agent 之前加载研究上下文，以便注入到 system_prompt
@@ -998,6 +980,25 @@ class ChatService:
                     config["configurable"]["depth"] = 0
                 if "agent_path" not in config["configurable"]:
                     config["configurable"]["agent_path"] = ["main"]
+                # 父工具集与运行配置显式注入 configurable（spawn_sub_agent 继承工具集、
+                # filesystem 解析落盘目录）。替代历史 get_parent_tool_context 全局旁路：
+                # 子代理经 langgraph_adapter._build_configurable 写入自身工具集后逐层
+                # 传递，任意深度嵌套不再依赖外部注册时机，也无需注册/清除。
+                config["configurable"]["tool_names"] = [
+                    getattr(t, "name", "") for t in (tools or [])
+                ]
+                config["configurable"]["user_id"] = self.user_id
+                config["configurable"]["session_id"] = data.get("session_id")
+                config["configurable"]["model_name"] = data.get("model")
+                config["configurable"]["store"] = data.get("store")
+                # 深度思考开关（实际生效值，已含模型能力判定）
+                config["configurable"]["enable_deep_thinking"] = bool(
+                    data.get("_enable_deep_thinking", False)
+                )
+                config["configurable"]["use_web_search"] = bool(
+                    data.get("use_web_search", False)
+                )
+                config["configurable"]["use_mcp"] = data.get("use_mcp", False)
 
             _subagent_contents: dict[str, dict[str, str]] = {}
             # 业务等待恢复模式：以挂起前已持久化的 subagent_contents 作为基线，
@@ -1236,8 +1237,8 @@ class ChatService:
                 yield event
 
         # 业务等待挂起（wait_for_subagent，spec D4）：跳过 finalize（补全检查/
-        # 建议生成等收尾动作仅属于真正结束的会话）与 parent tool 上下文清理
-        # （挂起态由 SessionExecutor 保留会话槽，恢复后继续使用）。
+        # 建议生成等收尾动作仅属于真正结束的会话；挂起态由 SessionExecutor
+        # 保留会话槽，恢复后继续使用）。
         if data.get("_subagent_wait_suspend"):
             logger.info(
                 f"[ChatExec] 业务等待挂起，跳过 finalize: session={data.get('session_id', '')}"
@@ -1260,8 +1261,6 @@ class ChatService:
             token_detail_tracker,
         ):
             yield event
-
-        clear_parent_tool_context(data.get("session_id") or self.thread_id or "")
 
 
 class ChatModeService:

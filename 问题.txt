@@ -255,6 +255,32 @@
 - **修复（已改）**：仅累计 `isinstance(msg_obj, AIMessageChunk)` 的 content，跳过 ToolMessage/SystemMessage
 - 状态：待重启 8001 复测验证（当前 research_47d0ee8d2ce7 为旧代码产物）
 
+## 2026-08-18 代理模式嵌套子代理测试（test_nested4.txt，重启后首测，2 浏览器触发/同步）
+
+### 场景：chat 代理模式「A 内派发 B（depth=2 嵌套）+ 双层 wait_for_subagent」实测
+- 提示词：派发子代理 A（web-researcher）→ A 内部再派发子代理 B（general-purpose）执行 ollama list →
+  A 用 wait_for_subagent 等 B → 父代理等 A → 汇总保存 D:\...\test_nested4.txt
+- 会话：8634c76e-4f87-4370-9101-9230784bc8fe / msg 3613-3614，21:46 触发
+- 执行链路（逐个确认）：spawn A → 确认 → A 内 spawn B 审批（按钮正常渲染）→ 确认 → B 的 shell_exec(ollama list)
+  审批（按钮正常渲染）→ 确认 → B 执行完成返回 7 模型结果 → A wait B 显示「等待中」→「已完成」→ A 汇总报告 →
+  父 wait A 显示「等待中」→「已完成」→ file_reader 检查文件 → fs_write_file 保存成功 → 最终总结输出
+- 验证结果（本次修复项全部生效）：
+1. ✅ 嵌套审批按钮渲染（修复生效）：A 内 spawn B 审批卡（main → web-researcher → web-researcher · L1 · 待审批）、
+   B 的 shell_exec 审批卡（main → web-researcher → general-purpose → general-purpose · L2 · 高危 · 待审批）
+   均正常显示「确认执行/拒绝」按钮 —— 此前「审批组件消失」不再复现（频道覆盖 chat_session_id 路由生效）
+2. ✅ wait_for_subagent 状态（修复生效）：A 内 wait B（web-researcher · L1）与父 wait A 均显示「等待中」→
+   「已完成」（结果含完整汇总），全程无「失败」—— GraphInterrupt 类型级放行生效
+3. ✅ 子代理元数据递归拉取（修复生效）：/ai-engine/subagents/ 递归返回 depth=1 A + depth=2 B
+   （subagent_c7ad9eef2770470e parent=subagent_34af4efaf5ce4983），嵌套卡标题/归属正确无错配
+4. ✅ 实时同步：页面 2（非触发浏览器）完整同步全部状态（审批/工具卡/子代理卡/最终总结），无崩溃
+5. ✅ 前端无 error（console 仅 form field id/name 的 issue，与本测试无关）；后端无 FAILED 子代理，
+   `Agent 执行完成 - 模型调用: 3, 工具调用: 3`，fs_write_file 写入成功
+6. ✅ test_nested4.txt 落盘 1379 字节，内容为完整 7 模型汇总报告（Markdown 表格）
+- 备注（非 bug）：父代理保存前先 file_reader 检查目标文件存在性（模型行为）；最终总结文本中
+  路径笔误「D:\programing\...」（模型输出瑕疵，实际写入路径正确）
+
+---
+
 ## 2026-08-18 学习工作流模块测试（任务 #64 / thread study_11f7e4a46597「简单加法计算（我是测试功能）」）
 
 ### 测试方式（Chrome DevTools MCP 实际填写并提交第二轮答案）

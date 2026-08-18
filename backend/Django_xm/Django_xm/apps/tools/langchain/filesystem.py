@@ -272,20 +272,21 @@ class FilesystemContextMixin:
     """从 LangGraph RunnableConfig 捕获会话上下文，解析文件系统目录归属。
 
     范式与 spawn_sub_agent 一致（覆写 invoke/ainvoke 捕获 configurable）：
-    - ``configurable.thread_id``：主 agent = session_id；子代理 = subagent_xxx。
-    - ``configurable.chat_session_id``：chat 场景子代理继承父会话 id。
+    - ``configurable.thread_id``：主 agent = session_id / research task id；子代理 = subagent_xxx。
+    - ``configurable.user_id`` / ``configurable.session_id``：主 agent 由 chat_service /
+      research_runner 写入，子代理由 langgraph_adapter._build_configurable 逐层传递
+      （替代历史 get_parent_tool_context 全局旁路）。
 
     目录归属（``_resolve_filesystem``）：
-    1. 主 agent（thread_id == session_id）→ 从 ``get_parent_tool_context`` 读取
-       user_id/session_id（chat_service 构建时写入）；
-    2. 子代理（thread_id = subagent_xxx）→ 用 chat_session_id 反查父上下文；
-    3. 深研上下文（research_ 前缀）→ research 目录（ResearchFileSystem 内部判定）；
-    4. 兜底：上下文缺失时以 thread_id 建目录（避免崩溃）。
+    1. 主 agent / 子代理 / 深研：统一从 configurable 读取 user_id/session_id；
+    2. 兜底：上下文缺失时以 thread_id 建目录（避免崩溃）。
     """
 
     # 工具为模块级单例，运行时捕获值保存在实例上；LangGraph 工具调用
     # 前总是先 invoke/ainvoke 重新捕获，覆盖前一次残留（与 spawn 工具同模式）
     _captured_thread_id: str = ""
+    _captured_user_id: Any = None
+    _captured_session_id: str = ""
     _captured_chat_session_id: str = ""
 
     def invoke(self, input, config=None, **kwargs) -> Any:
@@ -301,28 +302,15 @@ class FilesystemContextMixin:
             configurable = config.get("configurable", {})
             if isinstance(configurable, dict):
                 self._captured_thread_id = str(configurable.get("thread_id", "") or "")
+                self._captured_user_id = configurable.get("user_id")
+                self._captured_session_id = str(configurable.get("session_id", "") or "")
                 self._captured_chat_session_id = str(configurable.get("chat_session_id", "") or "")
 
     def _resolve_filesystem(self) -> ResearchFileSystem:
         thread_id = self._captured_thread_id or ""
-        user_id: int | None = None
-        session_id: str | None = None
-
-        if thread_id:
-            # 主 agent / 子代理：优先从父工具上下文读取 user_id/session_id
-            from Django_xm.apps.tools.langchain.agent_context import get_parent_tool_context
-
-            ctx = get_parent_tool_context(thread_id)
-            cfg = ctx.get("config") or {}
-            user_id = cfg.get("user_id")
-            session_id = cfg.get("session_id")
-            if not session_id and self._captured_chat_session_id:
-                # 子代理场景：thread_id = subagent_xxx 查不到父上下文，
-                # 用 chat_session_id（父会话 id）反查父上下文补 user_id
-                session_id = self._captured_chat_session_id
-                parent_ctx = get_parent_tool_context(session_id)
-                user_id = user_id or (parent_ctx.get("config") or {}).get("user_id")
-
+        user_id = self._captured_user_id
+        # session_id 缺失（历史/异常场景）回退 chat_session_id，再回退 thread_id
+        session_id = self._captured_session_id or self._captured_chat_session_id or None
         return get_filesystem(thread_id, user_id=user_id, session_id=session_id)
 
 

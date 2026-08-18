@@ -3,15 +3,19 @@
 替代 DeepAgents 阻塞 ``task`` 工具。``spawn_sub_agent`` 内部调用 ``SubAgentRuntime.spawn``：
 
 - 异步非阻塞：立即返回 ``SubAgentInstance``（thread_id + status），父 Agent 不等待结果。
-- 工具集：继承主 agent 全部工具 + 注册表专用工具（按 tool_name 去重），
-  并强制剥离 ``spawn_sub_agent`` 自身（防递归）。
+- 工具集：继承父 agent 全部工具 + 注册表专用工具（按 tool_name 去重），
+  spawn/wait 一并继承——支持嵌套子代理（深度上限 MAX_SUBAGENT_DEPTH=3，
+  超限由 _resolve_depth 抛错作为工具错误返回，不会无限递归；
+  嵌套 wait 由 langgraph_adapter 业务 wait 分支注册父 awaiter 唤醒恢复）。
 - 子 Agent 能力对等：独立 thread_id + 独立 checkpoint；interrupt 归属子 Agent 自身。
 - 嵌套超限 / 参数非法等异常作为 Tool 错误结果返回，不终止父 graph。
 
 依赖方向（高层 → 低层）：
 - ``agent_hub.subagent_tools`` → ``ai_engine.subagent_runtime``（子代理唯一入口 + 注册表）
 - ``agent_hub.subagent_tools`` → ``tools``（获取/解析工具集）
-- ``agent_hub.subagent_tools`` → ``tools.langchain.agent_context``（继承父上下文）
+- 工具集与运行配置经 ``configurable`` 显式传递（主 agent 由 chat_service /
+  research_runner 写入，子代理由 langgraph_adapter._build_configurable 逐层覆盖），
+  无全局旁路。
 """
 
 from __future__ import annotations
@@ -27,11 +31,8 @@ from Django_xm.apps.tools.errors import TOOL_VERSION
 
 logger = logging.getLogger(__name__)
 
-# 子代理创建工具自身名称（剥离时使用，防递归派生）。
+# 子代理创建工具名称。
 SPAWN_TOOL_NAME = "spawn_sub_agent"
-
-# 子代理工具集中需强制剥离的父 Agent 工具（子代理不再派生/等待子代理）。
-_SUBAGENT_STRIP_TOOL_NAMES = frozenset({"spawn_sub_agent", "wait_for_subagent"})
 
 
 class SpawnInput(BaseModel):
@@ -59,7 +60,7 @@ class SpawnSubAgentTool(BaseTool):
         "可用 web-researcher/doc-analyst/general-purpose 命中注册表角色），"
         "task-子代理任务描述（必填，详细说明），"
         "tools-可选追加工具名列表（缺省继承主 agent 全部工具 + 注册表专用工具）。"
-        "边界：子代理有最大嵌套深度限制（最多 3 层）；创建失败返回错误说明，父代理可据此调整策略。"
+        "边界：子代理有最大嵌套深度限制（超限返回错误说明，父代理可据此调整策略）。"
     )
     args_schema: type[BaseModel] = SpawnInput
 
@@ -107,37 +108,38 @@ class SpawnSubAgentTool(BaseTool):
                 resolve_dedicated_tools,
                 resolve_system_prompt,
             )
-            from Django_xm.apps.tools.langchain.agent_context import get_parent_tool_context
 
             configurable = dict(self.parent_configurable or {})
-            # 父 thread_id：优先 RunnableConfig 的 thread_id（主 agent = session_id /
-            # research task id，与 set_parent_tool_context 的 key 一致），回退父上下文 session_id。
+            # 父 thread_id：RunnableConfig 的 thread_id（主 agent = session_id /
+            # research task id；子代理 = subagent_xxx）。
             parent_thread_id = configurable.get("thread_id") or ""
-            parent_ctx = get_parent_tool_context(parent_thread_id)
-            main_tool_names = parent_ctx.get("tool_names", []) or []
-            parent_config = parent_ctx.get("config", {}) or {}
+            # 父 agent 工具集与运行配置：经 configurable 显式逐层传递
+            # （主 agent 由 chat_service / research_runner 写入，子代理由
+            # langgraph_adapter._build_configurable 写入自身工具集后覆盖传递），
+            # 替代历史 get_parent_tool_context 全局旁路——任意深度嵌套继承
+            # 完整工具集，不依赖外部注册时机。
+            main_tool_names = configurable.get("tool_names") or []
 
             # 自身工具调用 ID：LangChain 通过 InjectedToolCallId 在工具执行时注入
             # （ToolNode 场景）；直接 ainvoke 等非工具调用上下文时为 None，防御为空串。
             spawn_tool_call_id = tool_call_id or ""
 
-            # 深度思考继承：读取主 agent 实际生效的深度思考开关
-            # （chat_service 在 set_parent_tool_context 时写入 config.enable_deep_thinking，
+            # 深度思考继承：读取父 agent 实际生效的深度思考开关
+            # （chat_service 在 configurable 写入 enable_deep_thinking，
             # 已含模型能力判定），子代理 AgentConfig 对齐继承。
-            enable_deep_thinking = bool(parent_config.get("enable_deep_thinking", False))
+            enable_deep_thinking = bool(configurable.get("enable_deep_thinking", False))
             # 透传到子代理 configurable：SubAgentContentMiddleware 据此在关闭深度思考
             # 时丢弃模型仍输出的 reasoning（部分模型无法被 thinking=disabled 关闭）。
             configurable["enable_deep_thinking"] = enable_deep_thinking
 
-            # 父 thread_id 已在读取父上下文前确定（见上），此处回退父上下文 session_id
-            parent_thread_id = parent_thread_id or parent_config.get("session_id") or ""
-            user_id = parent_config.get("user_id")
-            session_id = parent_config.get("session_id") or parent_thread_id
-            model_name = parent_config.get("model_name")
-            store = parent_config.get("store")
+            user_id = configurable.get("user_id")
+            session_id = configurable.get("session_id") or parent_thread_id
+            model_name = configurable.get("model_name")
+            store = configurable.get("store")
 
-            # 工具集：继承主 agent 全部工具 + 注册表专用工具 + 显式 tools（去重），
-            # 强制剥离 spawn_sub_agent 自身防递归。
+            # 工具集：继承父 agent 全部工具 + 注册表专用工具 + 显式 tools（去重）。
+            # spawn/wait 一并继承以支持嵌套子代理（深度上限由 _resolve_depth 兜底，
+            # 嵌套 wait 恢复由 langgraph_adapter 业务 wait 分支承担）。
             main_tools = await self._resolve_main_tools(main_tool_names, user_id)
 
             spec = get_subagent_spec(agent_name)
@@ -145,7 +147,6 @@ class SpawnSubAgentTool(BaseTool):
             extra_tools = await self._resolve_extra_tools(tools, user_id) if tools else []
 
             merged = self._merge_tools(main_tools, dedicated_tools, extra_tools)
-            merged = [t for t in merged if getattr(t, "name", "") not in _SUBAGENT_STRIP_TOOL_NAMES]
 
             # system_prompt：注册表角色提示（命中注册表时）；否则空，由 task 作为任务输入。
             system_prompt = resolve_system_prompt(agent_name) if spec else ""
@@ -192,10 +193,11 @@ class SpawnSubAgentTool(BaseTool):
             )
 
     async def _resolve_main_tools(self, main_tool_names: list[str], user_id: int | None) -> list:
-        """继承主 agent 全部工具（按工具名解析）。
+        """继承父 agent 全部工具（按工具名解析）。
 
-        main_tool_names 来自 get_parent_tool_context（主 agent 执行前由
-        set_parent_tool_context 写入）。为空（如深度研究未设置父上下文）时回退基础工具集。
+        main_tool_names 来自父 configurable["tool_names"]（主 agent 由
+        chat_service / research_runner 写入，子代理由 langgraph_adapter
+        逐层传递）。为空（如异常场景）时回退基础工具集。
         """
         if not main_tool_names:
             from Django_xm.apps.tools import get_all_basic_tools

@@ -89,12 +89,13 @@ function collectSpawnEntries(toolCalls) {
 }
 
 /**
- * 解析子代理 task 展示值（回退链：meta.task → spawn 工具 input.task → 空串）。
+ * 解析子代理 task 展示值（回退链：meta.task → spawn 工具 input.task 精确关联 → 空串）。
  *
- * spawn 关联策略（保守不错配）：
- * 1. spawn input 携带 threadId 且与子代理 threadId 相等 → 精确取 task；
- * 2. 无 thread 关联信息但全消息仅一个含 task 的 spawn → 归属唯一，取 task；
- * 3. 多 spawn 且无 thread 关联信息 → 无法判定归属，返回空串（标题回退 agentName）。
+ * 根因修复（嵌套子代理标题错配）：原「唯一 spawn 匹配」回退在存在嵌套子代理时
+ * 会把父级 spawn 的 task 错配给子代理（collectSpawnEntries 仅统计主 agent 工具，
+ * 嵌套 spawn 不在范围内 → withTask 恰好 1 个时误取父 task）。权威来源是后端
+ * GET /subagents 的 meta.task（递归拉取已保证嵌套层级齐全），此处仅保留
+ * spawn input 显式携带 threadId 且精确相等的关联回退，删除唯一匹配兜底。
  *
  * @param {string} metaTask - GET 接口元数据中的 task（后端权威来源）
  * @param {string} threadId - 子代理线程 ID
@@ -104,10 +105,7 @@ function collectSpawnEntries(toolCalls) {
 function resolveSubagentTask(metaTask, threadId, spawnEntries) {
   if (metaTask) return metaTask
   const exact = spawnEntries.find(e => e.threadId && e.threadId === threadId && e.task)
-  if (exact) return exact.task
-  const withTask = spawnEntries.filter(e => e.task)
-  if (withTask.length === 1) return withTask[0].task
-  return ''
+  return exact ? exact.task : ''
 }
 
 /**

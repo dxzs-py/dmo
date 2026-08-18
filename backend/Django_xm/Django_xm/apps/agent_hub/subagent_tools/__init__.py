@@ -8,7 +8,8 @@
 依赖方向（高层 → 低层）：
     - ``agent_hub.subagent_tools`` → ``ai_engine.subagent_runtime``（子代理唯一入口 + 注册表）
     - ``agent_hub.subagent_tools`` → ``tools``（获取/解析工具集）
-    - ``agent_hub.subagent_tools`` → ``tools.langchain.agent_context``（继承父上下文）
+    - 工具集与运行配置经 ``configurable`` 显式传递（主 agent 由 chat_service /
+      research_runner 写入，子代理由 langgraph_adapter._build_configurable 逐层覆盖）
 """
 
 from .spawn import spawn_sub_agent

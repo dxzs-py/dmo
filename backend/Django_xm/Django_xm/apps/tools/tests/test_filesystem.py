@@ -2,10 +2,12 @@
 
 覆盖（spec unify-agent-research-display-architecture 后续决策）：
 1. 默认落点按 用户·会话 分组：data/chat/{user_id}/{session_id}/；
-2. 主 agent：从父工具上下文读取 user_id/session_id（configurable.thread_id == session_id）；
-3. 子代理：thread_id = subagent_xxx，用 chat_session_id 反查父上下文；
-4. 兜底：上下文缺失时以 thread_id 建目录（不崩溃）；
-5. 绝对路径写入不受默认目录影响（直接写指定位置）。
+2. 主 agent / 子代理 / 深研：统一从 configurable 读取 user_id/session_id
+   （主 agent 由 chat_service / research_runner 写入，子代理由
+   langgraph_adapter._build_configurable 逐层传递，替代历史
+   get_parent_tool_context 全局旁路）；
+3. 兜底：上下文缺失时以 thread_id 建目录（不崩溃）；
+4. 绝对路径写入不受默认目录影响（直接写指定位置）。
 
 运行（backend/Django_xm 目录，conda env langchain_xm）：
     python -m unittest Django_xm.apps.tools.tests.test_filesystem
@@ -22,10 +24,6 @@ import django
 
 django.setup()
 
-from Django_xm.apps.tools.langchain.agent_context import (
-    clear_parent_tool_context,
-    set_parent_tool_context,
-)
 from Django_xm.apps.tools.langchain.filesystem import (
     FsListFilesTool,
     FsReadFileTool,
@@ -63,27 +61,25 @@ class TestResearchFileSystemLayout(unittest.TestCase):
 
 
 class TestResolveFilesystemContext(unittest.TestCase):
-    """工具上下文解析：主 agent / 子代理 / 兜底。"""
+    """工具上下文解析：主 agent / 子代理 / 兜底（configurable 显式传递）。"""
 
-    def tearDown(self):
-        clear_parent_tool_context("sess-1")
-        clear_parent_tool_context("subagent_abc")
-
-    def test_main_agent_reads_parent_context(self):
-        # chat_service 构建时 set_parent_tool_context(session_id, tools, config)
-        set_parent_tool_context("sess-1", [], {"user_id": 7, "session_id": "sess-1"})
+    def test_main_agent_reads_configurable(self):
+        # chat_service 构建时 configurable 写入 user_id/session_id
         tool = FsWriteFileTool()
         tool._captured_thread_id = "sess-1"
+        tool._captured_user_id = 7
+        tool._captured_session_id = "sess-1"
         with tempfile.TemporaryDirectory() as tmp, _mock_data_dir(tmp):
             fs = tool._resolve_filesystem()
             self.assertEqual(fs.base_path, Path(tmp) / "chat" / "7" / "sess-1")
 
-    def test_subagent_resolves_via_chat_session_id(self):
-        # 父上下文（主 agent 会话）
-        set_parent_tool_context("sess-1", [], {"user_id": 7, "session_id": "sess-1"})
+    def test_subagent_inherits_configurable(self):
+        # langgraph_adapter._build_configurable 逐层传递 user_id/session_id，
+        # 子代理不再需要 chat_session_id 反查父上下文
         tool = FsReadFileTool()
         tool._captured_thread_id = "subagent_abc"
-        tool._captured_chat_session_id = "sess-1"
+        tool._captured_user_id = 7
+        tool._captured_session_id = "sess-1"
         with tempfile.TemporaryDirectory() as tmp, _mock_data_dir(tmp):
             fs = tool._resolve_filesystem()
             self.assertEqual(fs.base_path, Path(tmp) / "chat" / "7" / "sess-1")
@@ -98,9 +94,18 @@ class TestResolveFilesystemContext(unittest.TestCase):
     def test_capture_configurable(self):
         tool = FsSearchFilesTool()
         tool._capture_configurable(
-            {"configurable": {"thread_id": "sess-1", "chat_session_id": "sess-1"}}
+            {
+                "configurable": {
+                    "thread_id": "subagent_abc",
+                    "user_id": 7,
+                    "session_id": "sess-1",
+                    "chat_session_id": "sess-1",
+                }
+            }
         )
-        self.assertEqual(tool._captured_thread_id, "sess-1")
+        self.assertEqual(tool._captured_thread_id, "subagent_abc")
+        self.assertEqual(tool._captured_user_id, 7)
+        self.assertEqual(tool._captured_session_id, "sess-1")
         self.assertEqual(tool._captured_chat_session_id, "sess-1")
 
 

@@ -1,0 +1,32 @@
+== 子代理 A 汇总结果：ollama list ==
+（来源：子代理 A 派发执行任务，内部等效方案执行命令 `ollama list` 后汇总）
+
+--- `ollama list` 完整输出 ---
+
+NAME                                 ID              SIZE      MODIFIED     
+ornith:latest                        a75697c14589    5.6 GB    4 weeks ago     
+lfm2.5:latest                        9cf756159fc2    5.2 GB    2 months ago    
+dengcao/Qwen3-Embedding-4B:Q5_K_M    7e8c9ad6885b    2.9 GB    2 months ago    
+bge-m3:latest                        790764642607    1.2 GB    2 months ago    
+qwen3:8b                             500a1f067a9f    5.2 GB    2 months ago    
+qwen3.5:9b                           6488c96fa5fa    6.6 GB    3 months ago    
+hermes3:8b                           4f6b83f30b62    4.7 GB    3 months ago
+
+--- 输出解读 ---
+
+本机当前安装有 7 个 Ollama 模型，按用途/特点整理如下：
+
+| 模型 | ID | 大小 | 备注 |
+|------|-----|------|------|
+| ornith:latest | a75697c14589 | 5.6 GB | 最近更新（4 周前） |
+| lfm2.5:latest | 9cf756159fc2 | 5.2 GB | 2 个月前 |
+| dengcao/Qwen3-Embedding-4B:Q5_K_M | 7e8c9ad6885b | 2.9 GB | 嵌入模型（Embedding，Q5_K_M 量化） |
+| bge-m3:latest | 790764642607 | 1.2 GB | 嵌入/检索模型，体积最小 |
+| qwen3:8b | 500a1f067a9f | 5.2 GB | 通义千问 3（8B） |
+| qwen3.5:9b | 6488c96fa5fa | 6.6 GB | 通义千问 3.5（9B），体积最大 |
+| hermes3:8b | 4f6b83f30b62 | 4.7 GB | Hermes 3（8B） |
+
+补充说明：
+- 模型分布以 Qwen 系列为主（3 个生成模型 + 1 个 Embedding 模型），另含 Ornith、LFM 2.5、Hermes 3 各 1 个；
+- 含 2 个嵌入模型（bge-m3、Qwen3-Embedding-4B），适合 RAG 检索场景；
+- 全部模型均在本地可调用，状态正常（命令无报错返回）。

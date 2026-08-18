@@ -70,6 +70,7 @@ const emit = defineEmits(['toggle', 'approve', 'reject'])
       :subagents="subagents"
       :expanded-thread-ids="expandedThreadIds"
       :approval-disabled="approvalDisabled"
+      :show-orphans="false"
       @toggle-subagent="(threadId) => emit('toggle', threadId)"
       @approve="(tc) => emit('approve', tc)"
       @reject="(tc) => emit('reject', tc)"

@@ -355,6 +355,14 @@ async def publish_approval(
 
     # 解析频道路由（三模块统一）
     session_id, task_id = _resolve_channels(module, module_id, cross_module_id)
+    # chat 子代理审批频道修正：source_id 可能是 subagent_xxx（子代理归属），
+    # _resolve_channels 会把事件发到 session:subagent_xxx，前端仅订阅主会话频道
+    # 而收不到（嵌套审批按钮不渲染的根因）。approval.broadcast payload 注入的
+    # chat_session_id 是权威会话路由，覆盖 session 频道（task 频道不受影响）。
+    if module == EventSource.CHAT:
+        chat_session_id = (extra_fields or {}).get("chat_session_id")
+        if chat_session_id:
+            session_id = chat_session_id
 
     try:
         await publish_event(

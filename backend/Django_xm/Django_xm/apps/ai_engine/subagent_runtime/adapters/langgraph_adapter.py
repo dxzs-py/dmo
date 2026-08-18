@@ -112,7 +112,7 @@ class LangGraphAdapter(BaseRuntimeAdapter):
             # resume：从 registry 恢复父 configurable（graph 重建后回调不可丢）
             configurable = _configurable_registry.get(thread_id)
         run_config = {
-            "configurable": self._build_configurable(instance, configurable),
+            "configurable": self._build_configurable(instance, configurable, agent_config),
             "recursion_limit": MAX_SUBAGENT_ROUNDS,
         }
 
@@ -139,7 +139,13 @@ class LangGraphAdapter(BaseRuntimeAdapter):
         # 关键：astream 结束 ≠ 完成，读真实 state 判定
         state = await agent.graph.aget_state(run_config)
         if state is not None and getattr(state, "next", None):
-            # interrupt 挂起：写 pending_interrupt_info，退出协程等外部 resume
+            # 业务等待中断（wait_for_subagent，等待孙代理终态，非用户审批）：
+            # 保持 RUNNING + 注册父 awaiter，孙代理终态时由 lifecycle_manager 唤醒恢复。
+            wait_info = self._detect_subagent_wait_interrupt(state)
+            if wait_info:
+                await self._handle_subagent_wait_suspend(instance, wait_info)
+                return
+            # 审批中断：写 pending_interrupt_info，退出协程等外部 resume
             pending = self._extract_interrupt_info(state)
             await self.runtime._update_status(
                 thread_id,
@@ -237,7 +243,142 @@ class LangGraphAdapter(BaseRuntimeAdapter):
         except Exception:
             logger.exception(f"子代理生命周期回调失败（非致命）: {instance.thread_id}")
 
-    def _build_configurable(self, instance: Any, configurable: dict | None) -> dict:
+    # ── 业务等待挂起（wait_for_subagent，嵌套子代理） ─────────────────────
+    #
+    # 子代理内部可再次 spawn 孙代理并 wait_for_subagent。wait 中断（_subagent_wait）
+    # 与审批中断（_approval）不同：无需用户确认，孙代理终态后自动恢复。
+    # 实现与主 agent（SessionExecutor._register_waiter）同构：
+    # - 保持 RUNNING（子代理确实未完成，前端"执行中"语义准确），
+    #   pending_interrupt_info 记录 wait 中断 id + _subagent_wait 标记（runtime.resume 校验放行）；
+    # - 注册父 awaiter（subagent_thread_id → 回调），孙代理终态时由
+    #   lifecycle_manager.on_subagent_finished 按 parent_thread_id 唤醒；
+    # - 全部孙代理终态 → runtime.resume(thread_id, {"subagent_results": [...]})
+    #   → adapter 以 Command(resume={wait_interrupt_id: payload}) 断点续跑。
+
+    def _detect_subagent_wait_interrupt(self, state: Any) -> dict | None:
+        """检测业务等待中断（wait_for_subagent）。
+
+        Returns:
+            {"subagent_thread_ids": [...], "interrupt_id": LangGraph interrupt id}
+            未命中返回 None。
+        """
+        from Django_xm.apps.tools.base import is_subagent_wait_interrupt
+
+        for task in getattr(state, "tasks", []) or []:
+            for intr in getattr(task, "interrupts", []) or []:
+                value = getattr(intr, "value", None)
+                if is_subagent_wait_interrupt(value):
+                    subagent_thread_ids = value.get("subagent_thread_ids", []) or []
+                    return {
+                        "subagent_thread_ids": list(subagent_thread_ids),
+                        "interrupt_id": getattr(intr, "id", "") or "",
+                    }
+        return None
+
+    async def _handle_subagent_wait_suspend(self, instance: Any, wait_info: dict) -> None:
+        """子代理业务等待挂起：保持 RUNNING + 注册父 awaiter（孙代理终态唤醒）。"""
+        thread_id = instance.thread_id
+        subagent_thread_ids = wait_info["subagent_thread_ids"]
+        interrupt_id = wait_info["interrupt_id"]
+
+        # 挂起信息：RUNNING + _subagent_wait 标记（runtime.resume 校验放行，
+        # Command(resume={interrupt_id: ...}) 使用 interrupt_id 断点续跑）
+        await self.runtime._update_status(
+            thread_id,
+            SubAgentStatus.RUNNING,
+            pending_interrupt_info={
+                "interrupt_id": interrupt_id,
+                "_subagent_wait": True,
+            },
+        )
+        logger.info(
+            f"子代理业务等待挂起: {thread_id}, subagents={subagent_thread_ids}, "
+            f"interrupt_id={interrupt_id}"
+        )
+
+        # 竞态兜底：孙代理可能在「spawn → wait」窗口内已终态（终态回调错过 awaiter），
+        # 注册前二次检查并直接恢复（对齐 SessionExecutor._register_waiter）。
+        results: dict[str, dict] = {}
+        for sid in subagent_thread_ids:
+            inst = await self.runtime.get_instance(sid)
+            if inst is not None and inst.status in (SubAgentStatus.COMPLETED, SubAgentStatus.FAILED):
+                results[sid] = {
+                    "status": inst.status,
+                    "result": inst.result_preview or "",
+                }
+        if len(results) >= len(subagent_thread_ids):
+            logger.info(f"子代理业务等待：孙代理已全部终态，直接恢复: {thread_id}")
+            await self._resume_subagent_after_wait(instance, subagent_thread_ids, results)
+            return
+
+        from Django_xm.apps.ai_engine.subagent_runtime.lifecycle import get_lifecycle_manager
+
+        get_lifecycle_manager().register_parent_awaiter(
+            thread_id, self._make_subagent_wait_awaiter(instance, subagent_thread_ids)
+        )
+
+    def _make_subagent_wait_awaiter(self, instance: Any, subagent_thread_ids: list[str]):
+        """构造父 awaiter（孙代理终态回调）：全部终态后恢复子代理 graph。
+
+        孙代理终态在其独立线程/事件循环触发（_notify_finished），awaiter 在该
+        loop 中被 lifecycle_manager await。恢复（runtime.resume → adapter.resume）
+        自行新建线程执行子代理 graph，不依赖本 loop 存活（子代理挂起协程的 loop
+        在 _run_in_thread 结束时已 close），故直接 await 而非调度回原 loop。
+        累积结果按 key 写入 dict（GIL 原子 + 互不冲突 key），并发安全。
+        """
+        collected: dict[str, dict] = {}
+
+        async def _awaiter(subagent_thread_id: str, status: str) -> None:
+            await self._on_subagent_wait_finished(
+                instance, subagent_thread_ids, collected, subagent_thread_id, status
+            )
+
+        return _awaiter
+
+    async def _on_subagent_wait_finished(
+        self,
+        instance: Any,
+        subagent_thread_ids: list[str],
+        collected: dict[str, dict],
+        subagent_thread_id: str,
+        status: str,
+    ) -> None:
+        """单个孙代理终态回调：累积结果，全部终态后恢复子代理 graph（批量 fan-in）。"""
+        if subagent_thread_id not in subagent_thread_ids:
+            return
+        inst = await self.runtime.get_instance(subagent_thread_id)
+        collected[subagent_thread_id] = {
+            "status": status,
+            "result": (inst.result_preview if inst is not None else "") or "",
+        }
+        if len(collected) < len(subagent_thread_ids):
+            return
+        await self._resume_subagent_after_wait(instance, subagent_thread_ids, collected)
+
+    async def _resume_subagent_after_wait(
+        self, instance: Any, subagent_thread_ids: list[str], results: dict[str, dict]
+    ) -> None:
+        """全部孙代理终态后恢复子代理 graph（runtime.resume → Command(resume) 续跑）。"""
+        thread_id = instance.thread_id
+        from Django_xm.apps.ai_engine.subagent_runtime.lifecycle import get_lifecycle_manager
+
+        get_lifecycle_manager().unregister_parent_awaiter(thread_id)
+        subagent_results = [
+            {
+                "subagent_thread_id": sid,
+                "status": results[sid]["status"],
+                "result": results[sid]["result"],
+            }
+            for sid in subagent_thread_ids
+            if sid in results
+        ]
+        logger.info(f"子代理业务等待恢复: {thread_id}, subagents={subagent_thread_ids}")
+        try:
+            await self.runtime.resume(thread_id, {"subagent_results": subagent_results})
+        except Exception:
+            logger.exception(f"子代理业务等待恢复失败: {thread_id}")
+
+    def _build_configurable(self, instance: Any, configurable: dict | None, agent_config: Any = None) -> dict:
         """构造子代理 configurable。
 
         - ``thread_id``：子代理独立 id（独立 checkpoint）。
@@ -247,6 +388,10 @@ class LangGraphAdapter(BaseRuntimeAdapter):
           ``["main"]`` 起始），仅服务 state.subagent_path 展示元数据（嵌套层级），
           不参与事件路由（路由唯一依据为 subagent_thread_id，spec D1/MODIFIED）。
         - ``risk_ceiling``：子代理角色风险上限（审批中间件读取）。
+        - ``tool_names`` / 运行配置（user_id/session_id/model_name/store/enable_deep_thinking）：
+          工具集与配置经 configurable 显式逐层传递（替代历史 get_parent_tool_context
+          全局旁路）。子代理以自身 AgentConfig.tools 覆盖父 tool_names，故孙代理
+          spawn 时从本 configurable 读取到的即父（=本子代理）的实际工具集。
         """
         meta = instance.metadata or {}
         depth = meta.get("depth", 0)
@@ -266,6 +411,19 @@ class LangGraphAdapter(BaseRuntimeAdapter):
             for _key in ("_on_tool_event", "_on_subagent_content", "chat_session_id", "assistant_message_id"):
                 if _key in configurable and configurable[_key] is not None:
                     cfg[_key] = configurable[_key]
+        if agent_config is not None:
+            cfg["tool_names"] = [
+                getattr(t, "name", "") for t in (getattr(agent_config, "tools", None) or [])
+            ]
+            cfg["user_id"] = getattr(agent_config, "user_id", None)
+            cfg["session_id"] = getattr(agent_config, "session_id", None)
+            cfg["model_name"] = getattr(agent_config, "model_name", None)
+            cfg["store"] = getattr(agent_config, "store", None)
+            cfg["enable_deep_thinking"] = bool(
+                getattr(agent_config, "enable_deep_thinking", False)
+            )
+            cfg["use_web_search"] = (configurable or {}).get("use_web_search", True)
+            cfg["use_mcp"] = (configurable or {}).get("use_mcp")
         return cfg
 
     async def _create_approvals_from_interrupts(
@@ -313,13 +471,18 @@ class LangGraphAdapter(BaseRuntimeAdapter):
             return
 
         meta = instance.metadata or {}
-        # source 语义：父线程为研究任务 → deep_research；否则为 chat 会话。
-        # 统一审批链路下主/子代理仅 source 不同，审批端点/事件/恢复路由完全一致。
+        # 审批归属（source/source_id）用「根线程标识」而非直接父线程：
+        # 嵌套子代理（depth≥2）的直接父是 subagent_xxx，若按其推断会把深研嵌套
+        # 审批误判为 chat（独立深研无 chat_session_id 时事件发到 subagent 频道，
+        # 前端收不到）。configurable.session_id 由各模块源头写入根标识
+        # （chat=会话 id，深研=research task id）并随 spawn 逐层继承，是权威归属。
+        root_session_id = (configurable or {}).get("session_id") or instance.parent_thread_id
         source = (
             Approval.SOURCE_DEEP_RESEARCH
-            if instance.parent_thread_id.startswith("research_")
+            if str(root_session_id).startswith("research_")
             else Approval.SOURCE_CHAT
         )
+        source_id = root_session_id
         # chat_session_id / assistant_message_id 由各模块源头写入 configurable 统一契约：
         # - chat 代理模式：chat_service.py 写入（data.session_id / assistant message id）
         # - 深度研究模块 + chat 深度研究模式：research_runner.execute_research_async 写入
@@ -329,7 +492,7 @@ class LangGraphAdapter(BaseRuntimeAdapter):
         await create_approvals_for_interrupts(
             approval_data_list,
             source=source,
-            source_id=instance.parent_thread_id,  # 归集到父线程（研究任务/chat 会话）
+            source_id=source_id,  # 根线程标识（会话/研究任务），非直接父线程
             user_id=meta.get("user_id"),
             chat_session_id=(configurable or {}).get("chat_session_id"),
             message_id=(configurable or {}).get("assistant_message_id", "") or "",

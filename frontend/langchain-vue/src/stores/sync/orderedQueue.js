@@ -45,6 +45,11 @@ const GAP_WAIT_MS = 400
  *   - 间隙停滞回调（等待 GAP_WAIT_MS 后 expectedSeq 仍缺失，将处理 minSeqInQueue 前调用），
  *     由 sync.js 注入：内部推进 seqDedup 跳号基线（跳过缺失 seq，防误判跳号触发全量同步）、
  *     按流式状态决定是否异步触发快照校对。回调应同步返回（快照校对由调用方异步触发）。
+ * @param {(sessionId: string, seq: number) => void} [options.onProcessed]
+ *   - 事件处理完成后的联动回调，由 sync.js 注入 advanceBaseline 语义：
+ *     本队列是事件序列处理的唯一权威，处理完每个事件即同步推进调用方基线
+ *     （seqDedup/lastSeq），消除 applySessionEvent 提前 return 分支导致的
+ *     双基线发散（否则精确缺 1 个 seq 时 seqDedup 落后 → 跳号误判 → 多余全量同步）。
  * @returns {{
  *   queue: Map<string, {expectedSeq: number, queue: Map<number, {event: Object, processor: Function}>, processing: boolean}>,
  *   process: (sessionId: string, event: Object, handler: (event: Object) => Promise<void>) => Promise<void>,
@@ -52,7 +57,7 @@ const GAP_WAIT_MS = 400
  * }}
  */
 export const createOrderedQueue = (options = {}) => {
-  const { onDropped, onGapStalled } = options
+  const { onDropped, onGapStalled, onProcessed } = options
   // session 通道事件有序队列
   // 所有模块（聊天/深度研究/学习工作流/深度研究模式）的 WebSocket 事件
   // 统一通过此队列按 seq 顺序处理，避免乱序导致状态不一致。
@@ -109,6 +114,13 @@ export const createOrderedQueue = (options = {}) => {
             logger.error(`[Sync] 事件处理失败 seq=${state.expectedSeq}:`, err)
           }
           state.expectedSeq = ev.seq + 1
+          if (onProcessed) {
+            try {
+              onProcessed(sessionId, ev.seq)
+            } catch (err) {
+              logger.warn(`[Sync] onProcessed 联动失败: session=${sessionId}, seq=${ev.seq}, error=${err?.message || err}`)
+            }
+          }
           continue
         }
 
@@ -124,11 +136,13 @@ export const createOrderedQueue = (options = {}) => {
 
         if (minSeqInQueue === Infinity) break
 
-        // 间隙等待：minSeqInQueue > expectedSeq + 1 且 expectedSeq > 0（非首次事件）
-        // WebSocket 事件乱序到达时（如 seq=11 先于 seq=3-10），短暂等待让中间事件到达
-        // 避免直接处理 minSeqInQueue 导致 expectedSeq 跳过中间事件、关键事件被丢弃。
-        // 首次事件（expectedSeq=0）和连续事件（minSeqInQueue == expectedSeq + 1）不等待。
-        if (minSeqInQueue > state.expectedSeq + 1 && state.expectedSeq > 0) {
+        // 间隙等待：expectedSeq 缺失（minSeqInQueue > expectedSeq）即视为间隙——
+        // 包括"精确缺 1 个 seq 且下一个连续"（minSeqInQueue == expectedSeq + 1）的场景。
+        // 此前条件 minSeqInQueue > expectedSeq + 1 会把该场景误判为连续事件直接处理，
+        // 不联动推进 seqDedup 基线 → 下游跳号检测误判（expected=9, got=10）→ 多余全量同步。
+        // 首次事件（expectedSeq=0）和真连续（minSeqInQueue == expectedSeq + 1 且
+        // expectedSeq 已在队列中——已在上面分支处理）不在此列。
+        if (minSeqInQueue > state.expectedSeq && state.expectedSeq > 0) {
           const gapStartSeq = state.expectedSeq
           const awaitedMinSeq = minSeqInQueue
           logger.warn(
@@ -186,6 +200,13 @@ export const createOrderedQueue = (options = {}) => {
           logger.error(`[Sync] 事件处理失败 seq=${minSeqInQueue}:`, err)
         }
         state.expectedSeq = minSeqInQueue + 1
+        if (onProcessed) {
+          try {
+            onProcessed(sessionId, ev.seq)
+          } catch (err) {
+            logger.warn(`[Sync] onProcessed 联动失败: session=${sessionId}, seq=${ev.seq}, error=${err?.message || err}`)
+          }
+        }
       }
     } finally {
       state.processing = false

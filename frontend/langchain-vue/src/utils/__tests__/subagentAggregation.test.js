@@ -92,13 +92,16 @@ test('task 回退：input 为 JSON 字符串时正确解析', () => {
   assert.equal(sa.task, '字符串任务')
 })
 
-test('task 回退：唯一 spawn 无 threadId 时归属唯一子代理', () => {
+test('task 回退：spawn 无 threadId 关联时保守返回空串（不错配）', () => {
+  // 根因修复：原「唯一 spawn 兜底」在存在嵌套子代理时会把父级 spawn 的 task
+  // 错配给子代理（collectSpawnEntries 仅统计主 agent 工具）。权威来源是
+  // meta.task（递归拉取已保证嵌套层级齐全），spawn 回退仅限精确 threadId 关联。
   const message = {
     toolCalls: [spawnTool('spawn-1', { task: '唯一任务' }), subTool('sub-1', 't1')],
     subagentContents: {},
   }
   const [sa] = buildSubagentsFromMessage(message, [{ threadId: 't1' }])
-  assert.equal(sa.task, '唯一任务')
+  assert.equal(sa.task, '')
 })
 
 test('task 回退：多 spawn 无 thread 关联时保守返回空串（不错配）', () => {

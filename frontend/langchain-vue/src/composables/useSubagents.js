@@ -24,8 +24,25 @@ const _refreshQueue = new Set()
 let _refreshTimer = null
 const _REFRESH_DEBOUNCE_MS = 800
 
-async function _fetchSubagents(parentThreadId) {
-  if (!parentThreadId) return []
+/**
+ * 递归拉取父线程下的子代理元数据（含嵌套后代）并合并进缓存。
+ *
+ * 根因修复（嵌套子代理卡渲染错乱/重复/崩溃）：原实现仅按 parent_thread_id
+ * 拉取直接子代理（depth=1）。嵌套子代理（depth≥2，如 A 内 spawn 的 B）的
+ * parent_thread_id 是父级子代理 threadId，不属于主线程查询范围 → meta 缺失
+ * → spawnToolCallId 为空 → 进入 orphans → 标题回退错乱 + 嵌套面板与顶层
+ * 重复渲染同一孤儿卡（v-for 递归）→ 展开/收起时 Vue unmount 崩溃。
+ *
+ * 修复：拉取直接子代理后对其嵌套后代递归拉取（visited 去重防环），
+ * 保证任意深度子代理均有权威 meta（status/task/spawnToolCallId/depth）。
+ *
+ * @param {string} parentThreadId - 父线程 thread_id（session_id / task_id / 父级子代理 threadId）
+ * @param {Set<string>} [visited] - 已拉取线程集合（递归去重）
+ * @returns {Promise<Array>} 本次拉取到的直接子代理列表
+ */
+async function _fetchSubagents(parentThreadId, visited = new Set()) {
+  if (!parentThreadId || visited.has(parentThreadId)) return []
+  visited.add(parentThreadId)
   try {
     const res = await getSubagents(parentThreadId)
     const data = res?.data?.data || res?.data || {}
@@ -37,6 +54,12 @@ async function _fetchSubagents(parentThreadId) {
       }
     }
     subagentsMetaMap.value = map
+    // 递归拉取嵌套后代：子代理的 threadId 作为下一层 parent_thread_id
+    await Promise.all(
+      list
+        .filter((sa) => sa && sa.threadId && sa.threadId !== parentThreadId)
+        .map((sa) => _fetchSubagents(sa.threadId, visited)),
+    )
     return list
   } catch (err) {
     logger.warn(`[Subagents] 拉取子代理列表失败: parent=${parentThreadId}, err=${err?.message || err}`)

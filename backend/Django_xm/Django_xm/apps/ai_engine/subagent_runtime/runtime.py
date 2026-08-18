@@ -217,11 +217,21 @@ class SubAgentRuntime:
         return instance
 
     async def resume(self, subagent_thread_id: str, resume_payload: Any) -> SubAgentInstance:
-        """恢复中断的子 Agent（从 checkpoint 断点续跑）。"""
+        """恢复中断的子 Agent（从 checkpoint 断点续跑）。
+
+        两种可恢复挂起：
+        - 审批中断（status=interrupted_pending_user_input）：resume_payload 为审批决策；
+        - 业务等待挂起（status=running + pending_interrupt_info._subagent_wait=True）：
+          resume_payload 为 {"subagent_results": [...]}，由孙代理终态唤醒恢复
+          （langgraph_adapter 注册的父 awaiter 触发，非用户审批）。
+        """
         instance = await self._get_instance(subagent_thread_id)
         if instance is None:
             raise SubAgentNotFoundError(f"子代理不存在: {subagent_thread_id}")
-        if instance.status != SubAgentStatus.INTERRUPTED_PENDING_USER_INPUT:
+        pending = instance.pending_interrupt_info or {}
+        is_approval_pending = instance.status == SubAgentStatus.INTERRUPTED_PENDING_USER_INPUT
+        is_business_wait = instance.status == SubAgentStatus.RUNNING and bool(pending.get("_subagent_wait"))
+        if not (is_approval_pending or is_business_wait):
             raise SubAgentInvalidStateError(
                 f"子代理状态不允许 resume: {subagent_thread_id} status={instance.status}"
             )

@@ -55,6 +55,7 @@ from typing import Any, NotRequired, TypedDict
 
 from langchain.agents.middleware import AgentMiddleware
 from langgraph.config import get_config
+from langgraph.errors import GraphInterrupt
 
 from Django_xm.apps.tools.langchain.agent_context import MAX_AGENT_DEPTH, get_max_agent_depth
 
@@ -437,6 +438,12 @@ class SubAgentToolEventMiddleware(AgentMiddleware):
 
         try:
             result = await execute(request)
+        except GraphInterrupt:
+            # LangGraph interrupt（wait_for_subagent 业务等待挂起等）：非工具失败，
+            # 放行交由 LangGraph 挂起 checkpoint（父 agent 终态后由调度器唤醒）。
+            # 不得转发 FAILED——否则前端显示"失败"，且恢复时 failed→completed
+            # 被生命周期状态机判为非法转换而拒绝发布（实测 L171 阻止发布）。
+            raise
         except Exception as exc:
             logger.info(
                 f"[SubAgentToolEvent] FAILED: tool={tool_name}, tc_id={tc_id}, "

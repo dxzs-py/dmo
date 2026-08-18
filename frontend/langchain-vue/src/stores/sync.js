@@ -220,10 +220,13 @@ export const useSyncStore = defineStore('sync', () => {
 
   /** session 通道事件有序队列（封装 _sessionEventQueue Map 与 _processSessionEventOrdered）；
    *  仅负责排序与间隙等待；丢弃过期事件时通过 onDropped 联动 advanceBaseline，
-   *  间隙停滞时通过 onGapStalled 联动 handleOrderedQueueGap（推进跳号基线 + 快照校对） */
+   *  间隙停滞时通过 onGapStalled 联动 handleOrderedQueueGap（推进跳号基线 + 快照校对），
+   *  处理完成时通过 onProcessed 联动 advanceBaseline（本队列为序列处理唯一权威，
+   *  处理完即推进 seqDedup/lastSeq 基线，消除双基线发散导致的跳号误判） */
   const orderedQueue = createOrderedQueue({
     onDropped: advanceBaseline,
     onGapStalled: handleOrderedQueueGap,
+    onProcessed: advanceBaseline,
   })
 
   // === 公共方法（与流式生命周期相关） ===

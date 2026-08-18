@@ -192,6 +192,11 @@ def build_approval_payload(
             payload["cross_module_id"] = cross_module_id
         if extra:
             payload.update(extra)
+        # chat_session_id 顶层注入：审批事件的权威会话路由（chat 子代理审批的
+        # source_id 可能是 subagent_xxx，但事件必须发到前端订阅的主会话频道，
+        # publish_approval 据此覆盖 _resolve_channels 的 session 路由）。
+        if approval.chat_session_id:
+            payload.setdefault("chat_session_id", approval.chat_session_id)
         # 顶层提取 message_id / graph_interrupt_id / tool_config 展开（setdefault 语义）
         # message_id 可选：chat/deep_research 模块携带用于前端路由，learning 模块无 chat message 可不传
         if approval_extra.get("message_id") is not None:

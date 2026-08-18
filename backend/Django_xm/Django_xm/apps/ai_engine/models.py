@@ -263,7 +263,9 @@ class EmbeddingProviderConfig(models.Model):
 class SubAgentStatus(models.TextChoices):
     """子 Agent 全局统一状态枚举（单一权威，SubAgentRuntime 全链路复用）。
 
-    四状态闭环，不引入无生产者的 queued（当前无子 Agent 任务调度器）。
+    - RUNNING：执行中（含业务等待挂起期间——子代理等待孙代理结果，
+      由孙代理终态唤醒恢复，非用户审批，见 langgraph_adapter 业务 wait 分支）；
+    - INTERRUPTED_PENDING_USER_INPUT：审批中断，等待用户确认。
     """
 
     RUNNING = "running", "执行中"

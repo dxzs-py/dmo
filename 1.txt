@@ -1,10 +1,163 @@
-api/v1/realtime/snapshot/60316815-3fbd-4a9e-b850-097e1efa87bc/?_t=1787029437205:1  Failed to load resource: the server responded with a status of 404 (Not Found)
-logger.js:15 ❌ [Unhandled Promise Rejection] AxiosError: Request failed with status code 404
-    at settle (axios.js?v=8039668a:1319:7)
-    at XMLHttpRequest.onloadend (axios.js?v=8039668a:1682:7)
-    at Axios.request (axios.js?v=8039668a:2328:41)
+logger.js:15 全局错误捕获: Object
 (anonymous) @ logger.js:15
-chat:1 Uncaught (in promise) AxiosError: Request failed with status code 404
-    at settle (axios.js?v=8039668a:1319:7)
-    at XMLHttpRequest.onloadend (axios.js?v=8039668a:1682:7)
-    at Axios.request (axios.js?v=8039668a:2328:41)
+(anonymous) @ ErrorBoundary.vue:18
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+hook.__weh.hook.__weh @ chunk-IGIFKXF4.js?v=8039668a:5243
+handleError @ chunk-IGIFKXF4.js?v=8039668a:2389
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2353
+flushJobs @ chunk-IGIFKXF4.js?v=8039668a:2559
+Promise.then
+queueFlush @ chunk-IGIFKXF4.js?v=8039668a:2473
+queueJob @ chunk-IGIFKXF4.js?v=8039668a:2468
+effect2.scheduler @ chunk-IGIFKXF4.js?v=8039668a:8417
+trigger @ chunk-IGIFKXF4.js?v=8039668a:535
+endBatch @ chunk-IGIFKXF4.js?v=8039668a:593
+notify @ chunk-IGIFKXF4.js?v=8039668a:855
+trigger @ chunk-IGIFKXF4.js?v=8039668a:829
+set value @ chunk-IGIFKXF4.js?v=8039668a:1743
+(anonymous) @ useSubagentExpansion.js:29
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+emit @ chunk-IGIFKXF4.js?v=8039668a:6604
+(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
+(anonymous) @ AgentContentPipeline.vue:143
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+emit @ chunk-IGIFKXF4.js?v=8039668a:6604
+(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
+(anonymous) @ SubAgentCard.vue:78
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+invoker @ chunk-IGIFKXF4.js?v=8039668a:11519
+logger.js:15 ❌ [Global Error] Object
+(anonymous) @ logger.js:15
+(anonymous) @ useErrorHandler.js:42
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+handleError @ chunk-IGIFKXF4.js?v=8039668a:2398
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2353
+flushJobs @ chunk-IGIFKXF4.js?v=8039668a:2559
+Promise.then
+queueFlush @ chunk-IGIFKXF4.js?v=8039668a:2473
+queueJob @ chunk-IGIFKXF4.js?v=8039668a:2468
+effect2.scheduler @ chunk-IGIFKXF4.js?v=8039668a:8417
+trigger @ chunk-IGIFKXF4.js?v=8039668a:535
+endBatch @ chunk-IGIFKXF4.js?v=8039668a:593
+notify @ chunk-IGIFKXF4.js?v=8039668a:855
+trigger @ chunk-IGIFKXF4.js?v=8039668a:829
+set value @ chunk-IGIFKXF4.js?v=8039668a:1743
+(anonymous) @ useSubagentExpansion.js:29
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+emit @ chunk-IGIFKXF4.js?v=8039668a:6604
+(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
+(anonymous) @ AgentContentPipeline.vue:143
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+emit @ chunk-IGIFKXF4.js?v=8039668a:6604
+(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
+(anonymous) @ SubAgentCard.vue:78
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+invoker @ chunk-IGIFKXF4.js?v=8039668a:11519
+logger.js:29 🔍 错误详情
+logger.js:15 错误对象: TypeError: Cannot read properties of null (reading 'type')
+    at unmountComponent (chunk-IGIFKXF4.js?v=8039668a:8918:18)
+    at unmount (chunk-IGIFKXF4.js?v=8039668a:8821:7)
+    at unmountChildren (chunk-IGIFKXF4.js?v=8039668a:8944:7)
+    at unmount (chunk-IGIFKXF4.js?v=8039668a:8845:9)
+    at unmountComponent (chunk-IGIFKXF4.js?v=8039668a:8930:7)
+    at unmount (chunk-IGIFKXF4.js?v=8039668a:8821:7)
+    at unmountChildren (chunk-IGIFKXF4.js?v=8039668a:8944:7)
+    at unmount (chunk-IGIFKXF4.js?v=8039668a:8845:9)
+    at unmountChildren (chunk-IGIFKXF4.js?v=8039668a:8944:7)
+    at unmount (chunk-IGIFKXF4.js?v=8039668a:8845:9)
+(anonymous) @ logger.js:15
+(anonymous) @ useErrorHandler.js:46
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+handleError @ chunk-IGIFKXF4.js?v=8039668a:2398
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2353
+flushJobs @ chunk-IGIFKXF4.js?v=8039668a:2559
+Promise.then
+queueFlush @ chunk-IGIFKXF4.js?v=8039668a:2473
+queueJob @ chunk-IGIFKXF4.js?v=8039668a:2468
+effect2.scheduler @ chunk-IGIFKXF4.js?v=8039668a:8417
+trigger @ chunk-IGIFKXF4.js?v=8039668a:535
+endBatch @ chunk-IGIFKXF4.js?v=8039668a:593
+notify @ chunk-IGIFKXF4.js?v=8039668a:855
+trigger @ chunk-IGIFKXF4.js?v=8039668a:829
+set value @ chunk-IGIFKXF4.js?v=8039668a:1743
+(anonymous) @ useSubagentExpansion.js:29
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+emit @ chunk-IGIFKXF4.js?v=8039668a:6604
+(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
+(anonymous) @ AgentContentPipeline.vue:143
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+emit @ chunk-IGIFKXF4.js?v=8039668a:6604
+(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
+(anonymous) @ SubAgentCard.vue:78
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+invoker @ chunk-IGIFKXF4.js?v=8039668a:11519
+logger.js:15 组件实例: Proxy(Object)
+(anonymous) @ logger.js:15
+(anonymous) @ useErrorHandler.js:47
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+handleError @ chunk-IGIFKXF4.js?v=8039668a:2398
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2353
+flushJobs @ chunk-IGIFKXF4.js?v=8039668a:2559
+Promise.then
+queueFlush @ chunk-IGIFKXF4.js?v=8039668a:2473
+queueJob @ chunk-IGIFKXF4.js?v=8039668a:2468
+effect2.scheduler @ chunk-IGIFKXF4.js?v=8039668a:8417
+trigger @ chunk-IGIFKXF4.js?v=8039668a:535
+endBatch @ chunk-IGIFKXF4.js?v=8039668a:593
+notify @ chunk-IGIFKXF4.js?v=8039668a:855
+trigger @ chunk-IGIFKXF4.js?v=8039668a:829
+set value @ chunk-IGIFKXF4.js?v=8039668a:1743
+(anonymous) @ useSubagentExpansion.js:29
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+emit @ chunk-IGIFKXF4.js?v=8039668a:6604
+(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
+(anonymous) @ AgentContentPipeline.vue:143
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+emit @ chunk-IGIFKXF4.js?v=8039668a:6604
+(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
+(anonymous) @ SubAgentCard.vue:78
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+invoker @ chunk-IGIFKXF4.js?v=8039668a:11519
+logger.js:15 生命周期: component update
+(anonymous) @ logger.js:15
+(anonymous) @ useErrorHandler.js:48
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+handleError @ chunk-IGIFKXF4.js?v=8039668a:2398
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2353
+flushJobs @ chunk-IGIFKXF4.js?v=8039668a:2559
+Promise.then
+queueFlush @ chunk-IGIFKXF4.js?v=8039668a:2473
+queueJob @ chunk-IGIFKXF4.js?v=8039668a:2468
+effect2.scheduler @ chunk-IGIFKXF4.js?v=8039668a:8417
+trigger @ chunk-IGIFKXF4.js?v=8039668a:535
+endBatch @ chunk-IGIFKXF4.js?v=8039668a:593
+notify @ chunk-IGIFKXF4.js?v=8039668a:855
+trigger @ chunk-IGIFKXF4.js?v=8039668a:829
+set value @ chunk-IGIFKXF4.js?v=8039668a:1743
+(anonymous) @ useSubagentExpansion.js:29
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+emit @ chunk-IGIFKXF4.js?v=8039668a:6604
+(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
+(anonymous) @ AgentContentPipeline.vue:143
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+emit @ chunk-IGIFKXF4.js?v=8039668a:6604
+(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
+(anonymous) @ SubAgentCard.vue:78
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
+callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
+invoker @ chunk-IGIFKXF4.js?v=8039668a:11519

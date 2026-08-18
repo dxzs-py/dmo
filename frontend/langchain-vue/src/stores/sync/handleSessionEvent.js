@@ -255,8 +255,9 @@ export const createHandleSessionEvent = (ctx) => {
     // - 事件级"已见"去重由 useRealtimeSync.lastSeq（决定 replay 起点）+ 本层有序队列
     //   expectedSeq（丢弃 seq < expectedSeq 的重复/过期事件）负责，此处不再做独立去重，
     //   避免双基线发散导致跳号误判。
-    // - 跳号检测见下方（基于 seqDedup 基线，基线由 applySessionEvent 末尾与
-    //   sync.js advanceBaseline 联动推进）。
+    // - 跳号检测见下方（基于 seqDedup 基线；基线推进的唯一权威是有序队列：
+    //   onProcessed/onDropped/onGapStalled 联动 sync.js advanceBaseline，
+    //   本函数不再自行推进，消除精确缺 1 seq 时基线落后导致的跳号误判）。
 
     // 目标消息处于 streaming / interrupted / finalizing / syncing 状态时，跳过与 SSE 重叠的
     // WebSocket message_updated 事件，避免滞后快照覆盖本地正在流式追加的最新内容。
@@ -291,21 +292,18 @@ export const createHandleSessionEvent = (ctx) => {
         && targetStreamState === StreamState.INTERRUPTED
         && !isContentGrowingUpdate) {
       logger.debug(`[Sync] INTERRUPTED 态，跳过 WS ${event.type}: session=${sessionId}`)
-      // 仍需更新 seq，避免跳号检测误触发全量同步
-      if (typeof event.seq === 'number') {
-        seqDedup.setSeenSeq(sessionId, event.seq)
-      }
+      // 基线推进由有序队列 onProcessed 统一承担（本事件已入队处理），无需在此更新
       return
     }
 
-    // 事件序列跳号检测（Task 6 seq 治理后，此路径基本不再因间隙触发）：
-    // seqDedup 基线由三条路径共同推进，保证与有序队列 expectedSeq 收敛一致：
-    // - applySessionEvent 末尾 setSeenSeq（处理成功）
-    // - sync.js advanceBaseline（orderedQueue 丢弃过期事件联动）
-    // - sync.js handleOrderedQueueGap（orderedQueue 间隙停滞联动：处理最小 seq 前
-    //   推进基线到 minSeqInQueue - 1，跳过缺失 seq，避免此处误判跳号）
-    // 间隙场景已由"正常处理最小 seq + 快照校对"兜底（见 orderedQueue.js / sync.js），
-    // 此处 requestFullSync 仅作为最后防线，应对真正的事件丢失
+    // 事件序列跳号检测（Task 6 seq 治理 + orderedQueue 统一基线推进后，
+    // 正常间隙/乱序场景不再触发，仅作真正事件丢失的最后防线）：
+    // seqDedup 基线由有序队列统一推进（唯一权威）：
+    // - onProcessed：处理完成（sync.js advanceBaseline 联动）
+    // - onDropped：丢弃过期事件（sync.js advanceBaseline 联动）
+    // - onGapStalled：间隙停滞（sync.js handleOrderedQueueGap 推进到 minSeqInQueue-1）
+    // 间隙场景已由"间隙等待 + 快照校对"兜底（见 orderedQueue.js / sync.js），
+    // 此处 requestFullSync 仅应对真正的事件丢失
     // （replay 完成后的状态校验失败、处理链异常等显式错误），不再因单次间隙触发。
     const prevSeq = seqDedup.getPrevSeq(sessionId)
     const eventSeq = typeof event.seq === 'number' ? event.seq : prevSeq + 1
@@ -458,11 +456,7 @@ export const createHandleSessionEvent = (ctx) => {
       default:
         logger.debug(`[Sync] 未处理的 session 事件: ${event.type}`)
     }
-
-    // 更新最后处理 seq
-    if (typeof event.seq === 'number') {
-      seqDedup.setSeenSeq(sessionId, event.seq)
-    }
+    // 基线推进由有序队列 onProcessed 统一承担（本事件已入队处理），此处不再自行推进
   }
 
   /**

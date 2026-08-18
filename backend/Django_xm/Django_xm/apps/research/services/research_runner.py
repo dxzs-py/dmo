@@ -109,6 +109,8 @@ async def execute_research_async(
     message_id: str = "",
     resume_command=None,
     interrupt_handler=None,
+    parent_tool_names: list[str] | None = None,
+    parent_config: dict | None = None,
 ) -> ResearchResult:
     """异步研究执行逻辑（会话级单执行流，执行器模式）。
 
@@ -128,6 +130,10 @@ async def execute_research_async(
         resume_command: 恢复模式时传入 Command(resume=...)，None 表示初始执行
         interrupt_handler: 审批中断异步回调（interrupts_data -> decisions dict），
             返回空 dict 表示审批创建失败，由 adapter 抛错终止
+        parent_tool_names: 主 agent 工具集名称列表（spawn_sub_agent 继承工具集，
+            替代历史 get_parent_tool_context 全局旁路，经 configurable 显式传递）
+        parent_config: 主 agent 运行配置（model_name/store/enable_deep_thinking/
+            use_web_search/use_mcp，供子代理 AgentConfig 继承）
 
     Returns:
         ResearchResult 标准化结果
@@ -141,14 +147,19 @@ async def execute_research_async(
 
     try:
         with TokenUsageCallbackHandler() as cb:
+            configurable: dict = {
+                "thread_id": thread_id,
+                "chat_session_id": chat_session_id,
+                "assistant_message_id": message_id,
+                "tool_names": list(parent_tool_names or []),
+                "user_id": user_id,
+                "session_id": thread_id,
+            }
+            if parent_config:
+                configurable.update(parent_config)
             result = await agent.astream_research_with_interrupts(
                 query,
-                config={
-                    "configurable": {
-                        "chat_session_id": chat_session_id,
-                        "assistant_message_id": message_id,
-                    }
-                },
+                config={"configurable": configurable},
                 callbacks=[cb],
                 on_interrupt=interrupt_handler,
                 resume_command=resume_command,

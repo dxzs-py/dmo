@@ -21,6 +21,8 @@ import django
 
 django.setup()
 
+from Django_xm.apps.ai_engine.models import SubAgentStatus
+from Django_xm.apps.ai_engine.subagent_runtime.adapters.langgraph_adapter import LangGraphAdapter
 from Django_xm.apps.tools.base import is_approval_interrupt, is_subagent_wait_interrupt
 from Django_xm.services.fastapi_service.session_executor import SessionExecutor
 
@@ -237,6 +239,363 @@ class TestRunCleanupSuspended(unittest.TestCase):
             release.assert_not_awaited()
 
         asyncio.run(_case())
+
+
+class TestSubAgentNestedWaitAdapter(unittest.TestCase):
+    """子代理嵌套业务等待（langgraph_adapter 业务 wait 分支）。
+
+    覆盖：wait 中断检测（与审批中断隔离）、竞态兜底（孙代理已全终态直接恢复）、
+    awaiter 注册 + 孙代理终态累积恢复（runtime.resume 携带 subagent_results）。
+    """
+
+    @staticmethod
+    def _make_adapter(runtime):
+        return LangGraphAdapter(runtime)
+
+    def test_detect_subagent_wait_interrupt(self):
+        adapter = self._make_adapter(mock.Mock())
+        state = SimpleNamespace(
+            tasks=[
+                SimpleNamespace(
+                    interrupts=[
+                        SimpleNamespace(
+                            value={"_subagent_wait": True, "subagent_thread_ids": ["g1", "g2"]},
+                            id="wait-int-1",
+                        )
+                    ]
+                )
+            ]
+        )
+        info = adapter._detect_subagent_wait_interrupt(state)
+        self.assertEqual(info["subagent_thread_ids"], ["g1", "g2"])
+        self.assertEqual(info["interrupt_id"], "wait-int-1")
+
+    def test_detect_returns_none_for_approval_interrupt(self):
+        adapter = self._make_adapter(mock.Mock())
+        state = SimpleNamespace(
+            tasks=[
+                SimpleNamespace(
+                    interrupts=[
+                        SimpleNamespace(value={"_approval": True, "requests": []}, id="appr-1")
+                    ]
+                )
+            ]
+        )
+        self.assertIsNone(adapter._detect_subagent_wait_interrupt(state))
+
+    def test_wait_suspend_race_all_terminal_resumes_directly(self):
+        """竞态兜底：孙代理在注册 awaiter 前已全部终态 → 直接恢复。"""
+        runtime = mock.Mock()
+        runtime._update_status = mock.AsyncMock()
+        runtime.get_instance = mock.AsyncMock(
+            return_value=SimpleNamespace(status=SubAgentStatus.COMPLETED, result_preview="r1")
+        )
+        runtime.resume = mock.AsyncMock()
+        adapter = self._make_adapter(runtime)
+        instance = SimpleNamespace(thread_id="sub_a", parent_thread_id="s1", metadata={})
+        with mock.patch(
+            "Django_xm.apps.ai_engine.subagent_runtime.lifecycle.get_lifecycle_manager"
+        ) as glm:
+            lm = mock.Mock()
+            glm.return_value = lm
+            asyncio.run(
+                adapter._handle_subagent_wait_suspend(
+                    instance, {"subagent_thread_ids": ["g1"], "interrupt_id": "wait-1"}
+                )
+            )
+        runtime._update_status.assert_awaited_with(
+            "sub_a",
+            SubAgentStatus.RUNNING,
+            pending_interrupt_info={"interrupt_id": "wait-1", "_subagent_wait": True},
+        )
+        runtime.resume.assert_awaited_once()
+        payload = runtime.resume.await_args.args[1]
+        self.assertEqual(
+            payload,
+            {"subagent_results": [{"subagent_thread_id": "g1", "status": "completed", "result": "r1"}]},
+        )
+        lm.register_parent_awaiter.assert_not_called()
+
+    def test_wait_suspend_registers_awaiter_and_resumes(self):
+        """孙代理未终态 → 注册 awaiter；终态后累积结果并恢复。"""
+        runtime = mock.Mock()
+        runtime._update_status = mock.AsyncMock()
+        runtime.get_instance = mock.AsyncMock(
+            return_value=SimpleNamespace(status=SubAgentStatus.RUNNING, result_preview="")
+        )
+        adapter = self._make_adapter(runtime)
+        instance = SimpleNamespace(thread_id="sub_a", parent_thread_id="s1", metadata={})
+        with mock.patch(
+            "Django_xm.apps.ai_engine.subagent_runtime.lifecycle.get_lifecycle_manager"
+        ) as glm:
+            lm = mock.Mock()
+            glm.return_value = lm
+            asyncio.run(
+                adapter._handle_subagent_wait_suspend(
+                    instance, {"subagent_thread_ids": ["g1"], "interrupt_id": "wait-1"}
+                )
+            )
+            self.assertEqual(lm.register_parent_awaiter.call_count, 1)
+            awaiter = lm.register_parent_awaiter.call_args.args[1]
+
+            # 孙代理终态：累积结果并触发恢复（awaiter 内 unregister 落在同一 mock manager）
+            runtime.get_instance = mock.AsyncMock(
+                return_value=SimpleNamespace(status=SubAgentStatus.COMPLETED, result_preview="r2")
+            )
+            runtime.resume = mock.AsyncMock()
+            asyncio.run(awaiter("g1", SubAgentStatus.COMPLETED))
+        runtime.resume.assert_awaited_once_with(
+            "sub_a",
+            {"subagent_results": [{"subagent_thread_id": "g1", "status": "completed", "result": "r2"}]},
+        )
+        lm.unregister_parent_awaiter.assert_called_once_with("sub_a")
+
+
+class TestSubAgentConfigurableContract(unittest.TestCase):
+    """子代理 configurable 契约（嵌套继承闭环，替代全局旁路）。
+
+    ``_build_configurable`` 写入 tool_names（子代理自身 AgentConfig.tools）与
+    运行配置（user_id/session_id/model_name/store/enable_deep_thinking）。
+    孙代理 spawn 时从父（=本子代理）configurable 读取完整工具集，
+    任意深度嵌套逐层覆盖传递，不依赖任何外部注册/清除时序。
+    """
+
+    def _make_adapter(self):
+        return LangGraphAdapter(mock.Mock())
+
+    def test_carries_tools_and_config(self):
+        t1 = SimpleNamespace(name="shell_exec")
+        t2 = SimpleNamespace(name="spawn_sub_agent")
+        agent_config = SimpleNamespace(
+            tools=[t1, t2],
+            user_id=1,
+            session_id="s1",
+            model_name="deepseek",
+            store=None,
+            enable_deep_thinking=True,
+        )
+        instance = SimpleNamespace(
+            thread_id="sub_a",
+            metadata={"depth": 1, "agent_name": "web-researcher", "risk_ceiling": None},
+        )
+        cfg = self._make_adapter()._build_configurable(
+            instance, {"chat_session_id": "s1"}, agent_config
+        )
+        self.assertEqual(cfg["thread_id"], "sub_a")
+        self.assertEqual(cfg["tool_names"], ["shell_exec", "spawn_sub_agent"])
+        self.assertEqual(cfg["user_id"], 1)
+        self.assertEqual(cfg["session_id"], "s1")
+        self.assertEqual(cfg["model_name"], "deepseek")
+        self.assertTrue(cfg["enable_deep_thinking"])
+        self.assertEqual(cfg["agent_path"], ["main", "web-researcher"])
+        self.assertEqual(cfg["chat_session_id"], "s1")
+
+    def test_without_agent_config_skips_tool_contract(self):
+        instance = SimpleNamespace(
+            thread_id="sub_a",
+            metadata={"depth": 1, "agent_name": "general-purpose", "risk_ceiling": None},
+        )
+        callback = mock.AsyncMock()
+        cfg = self._make_adapter()._build_configurable(
+            instance,
+            {"_on_tool_event": callback, "assistant_message_id": "m1"},
+            None,
+        )
+        self.assertIs(cfg["_on_tool_event"], callback)
+        self.assertNotIn("tool_names", cfg)
+
+
+class TestSubAgentToolEventInterruptPassthrough(unittest.TestCase):
+    """awrap_tool_call 对 LangGraph Interrupt 精确放行（不转发 FAILED）。
+
+    业务等待挂起（wait_for_subagent 调 interrupt()）是框架级中断而非工具失败，
+    必须以类型精确捕获放行，避免前端显示"失败"及恢复时 failed→completed
+    非法转换。
+    """
+
+    def test_interrupt_passthrough_no_failed_event(self):
+        from langgraph.errors import GraphInterrupt
+
+        from Django_xm.apps.agent_hub.builders.subagent_support import SubAgentToolEventMiddleware
+
+        mw = SubAgentToolEventMiddleware()
+        mw._forward_event = mock.AsyncMock()
+        request = mock.Mock()
+        request.tool_call = {"name": "wait_for_subagent", "id": "tc1", "args": {}}
+        request.state = mock.Mock()
+
+        async def _execute(_req):
+            raise GraphInterrupt({"_subagent_wait": True, "subagent_thread_ids": ["g1"]})
+
+        with mock.patch(
+            "Django_xm.apps.agent_hub.builders.subagent_support._read_subagent_thread_id",
+            return_value="sub_a",
+        ), mock.patch(
+            "Django_xm.apps.agent_hub.builders.subagent_support._read_agent_name",
+            return_value="web-researcher",
+        ), mock.patch(
+            "Django_xm.apps.agent_hub.builders.subagent_support._read_configurable",
+            return_value={},
+        ):
+            with self.assertRaises(GraphInterrupt):
+                asyncio.run(mw.awrap_tool_call(request, _execute))
+        mw._forward_event.assert_not_awaited()
+
+    def test_real_exception_still_fails(self):
+        from Django_xm.apps.agent_hub.builders.subagent_support import SubAgentToolEventMiddleware
+
+        mw = SubAgentToolEventMiddleware()
+        mw._forward_event = mock.AsyncMock()
+        request = mock.Mock()
+        request.tool_call = {"name": "shell_exec", "id": "tc2", "args": {}}
+        request.state = mock.Mock()
+
+        async def _execute(_req):
+            raise RuntimeError("boom")
+
+        with mock.patch(
+            "Django_xm.apps.agent_hub.builders.subagent_support._read_subagent_thread_id",
+            return_value="sub_a",
+        ), mock.patch(
+            "Django_xm.apps.agent_hub.builders.subagent_support._read_agent_name",
+            return_value="web-researcher",
+        ), mock.patch(
+            "Django_xm.apps.agent_hub.builders.subagent_support._read_configurable",
+            return_value={"_on_tool_event": mock.Mock()},
+        ):
+            with self.assertRaises(RuntimeError):
+                asyncio.run(mw.awrap_tool_call(request, _execute))
+        mw._forward_event.assert_awaited_once()
+
+
+class TestApprovalChannelRouting(unittest.TestCase):
+    """chat 子代理审批频道修正（嵌套审批按钮不渲染的根因）。
+
+    子代理审批的 source_id 是 subagent_xxx（子代理归属），_resolve_channels
+    会把事件发到 session:subagent_xxx 频道，前端仅订阅主会话频道而收不到。
+    修复：publish_approval 对 CHAT 模块用 approval 注入的 chat_session_id
+    覆盖 session 频道，确保嵌套子代理（L2）的审批按钮正常渲染。
+    """
+
+    def _call_publish_approval(self, module_id: str, extra: dict | None):
+        from Django_xm.common.event_schema import EventSource, EventType
+        from Django_xm.common.realtime_sync import publish_approval
+
+        async def run():
+            with mock.patch("Django_xm.common.realtime_sync.publish_event") as pub:
+                await publish_approval(
+                    EventType.APPROVAL_PENDING,
+                    interrupt_id="call_xxx",
+                    tool_call_id="call_xxx",
+                    module=EventSource.CHAT,
+                    module_id=module_id,
+                    state="pending",
+                    tool_name="shell_exec",
+                    message_id="1",
+                    extra_fields=extra or {},
+                )
+                return pub.call_args.kwargs["session_id"]
+
+        return asyncio.run(run())
+
+    def test_subagent_approval_routed_to_main_session_channel(self):
+        # B 的 shell 审批：source_id=subagent_A，须发到主会话频道
+        session_id = self._call_publish_approval(
+            "subagent_110b8c7c0a674400",
+            {"chat_session_id": "6088ecf8-c51f-4892-951d-67cf8f974495"},
+        )
+        self.assertEqual(session_id, "6088ecf8-c51f-4892-951d-67cf8f974495")
+
+    def test_main_session_approval_unchanged(self):
+        # 主会话审批：source_id=主会话，频道保持主会话
+        session_id = self._call_publish_approval(
+            "6088ecf8-c51f-4892-951d-67cf8f974495",
+            {"chat_session_id": "6088ecf8-c51f-4892-951d-67cf8f974495"},
+        )
+        self.assertEqual(session_id, "6088ecf8-c51f-4892-951d-67cf8f974495")
+
+    def test_chat_without_chat_session_id_keeps_module_id(self):
+        # 兼容：无 chat_session_id（历史/异常数据）时回退 module_id
+        session_id = self._call_publish_approval("6088ecf8-c51f-4892-951d-67cf8f974495", {})
+        self.assertEqual(session_id, "6088ecf8-c51f-4892-951d-67cf8f974495")
+
+
+class TestSubagentApprovalAttribution(unittest.TestCase):
+    """子代理审批归属判定（根会话标识，source/source_id 一致归集）。
+
+    嵌套子代理（depth≥2）直接父是 subagent_xxx，按父推断会把深研嵌套审批
+    误判为 chat（独立深研无 chat_session_id 时事件发到 subagent 频道，
+    前端收不到审批按钮）。修复：用 configurable.session_id（各模块源头写入
+    的根标识，chat=会话 id，深研=research task id）判定 source 与 source_id。
+    """
+
+    def _make_interrupt_state(self):
+        return SimpleNamespace(
+            tasks=[
+                SimpleNamespace(
+                    interrupts=[
+                        SimpleNamespace(
+                            value={
+                                "_approval": True,
+                                "requests": [{"tool_call_id": "tc1", "tool_name": "shell_exec"}],
+                            },
+                            id="g1",
+                        )
+                    ]
+                )
+            ]
+        )
+
+    def _call_create(self, configurable: dict | None, parent_thread_id: str):
+        from Django_xm.apps.ai_engine.subagent_runtime.adapters.langgraph_adapter import (
+            LangGraphAdapter,
+        )
+
+        instance = SimpleNamespace(
+            thread_id="subagent_b",
+            parent_thread_id=parent_thread_id,
+            metadata={"depth": 2, "user_id": 1},
+        )
+        adapter = LangGraphAdapter(mock.Mock())
+        with mock.patch(
+            "Django_xm.common.approval_parser.parse_approval_interrupt",
+            return_value=[{"tool_call_id": "tc1", "tool_name": "shell_exec"}],
+        ), mock.patch(
+            "Django_xm.common.approval_batch.create_approvals_for_interrupts"
+        ) as create_approvals:
+            asyncio.run(adapter._create_approvals_from_interrupts(instance, configurable, self._make_interrupt_state()))
+            return create_approvals.call_args.kwargs
+
+    def test_chat_nested_uses_root_session(self):
+        # 代理模式嵌套：根标识=主会话 → source=chat, source_id=主会话
+        kwargs = self._call_create(
+            {"session_id": "main-session", "chat_session_id": "main-session"},
+            "subagent_110b8c7c0a674400",
+        )
+        self.assertEqual(kwargs["source"], "chat")
+        self.assertEqual(kwargs["source_id"], "main-session")
+        self.assertEqual(kwargs["chat_session_id"], "main-session")
+
+    def test_research_nested_uses_root_task(self):
+        # 深研嵌套：根标识=research task id → source=deep_research, source_id=research task id
+        kwargs = self._call_create(
+            {"session_id": "research_task_1", "chat_session_id": "main-session"},
+            "subagent_110b8c7c0a674400",
+        )
+        self.assertEqual(kwargs["source"], "deep_research")
+        self.assertEqual(kwargs["source_id"], "research_task_1")
+
+    def test_research_independent_no_chat_session(self):
+        # 独立深研嵌套（无 chat_session_id）：source=deep_research，事件走 task 频道
+        kwargs = self._call_create({"session_id": "research_task_1"}, "subagent_110b8c7c0a674400")
+        self.assertEqual(kwargs["source"], "deep_research")
+        self.assertEqual(kwargs["source_id"], "research_task_1")
+
+    def test_fallback_to_parent_thread_id(self):
+        # 兼容：无 configurable.session_id 时回退直接父线程
+        kwargs = self._call_create(None, "subagent_110b8c7c0a674400")
+        self.assertEqual(kwargs["source"], "chat")
+        self.assertEqual(kwargs["source_id"], "subagent_110b8c7c0a674400")
 
 
 if __name__ == "__main__":
