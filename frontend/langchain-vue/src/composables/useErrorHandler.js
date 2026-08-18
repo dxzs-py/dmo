@@ -78,7 +78,11 @@ export function setupErrorHandler(app) {
     }
   })
 
-  if (typeof chrome !== 'undefined' && chrome.runtime) {
-    chrome.runtime.lastError = null
+  // 浏览器扩展宿主（如 Chrome 插件注入的 window.chrome）可能残留 runtime.lastError，
+  // 若不清理会导致后续 runtime 调用被误判为失败。仅当存在该 API 时才清理。
+  const hasChromeRuntime =
+    typeof window.chrome !== 'undefined' && typeof window.chrome.runtime !== 'undefined'
+  if (hasChromeRuntime) {
+    window.chrome.runtime.lastError = null
   }
 }

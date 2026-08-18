@@ -15,12 +15,9 @@ import { StreamState } from '@/types'
  * FINALIZING → waitForSyncLock → flushPendingSync → waitForSyncLock →
  * SYNCING → syncLastMessageToBackend → waitForSyncLock → chatFinalize → COMPLETED
  *
- * 审批中断流程：
- * INTERRUPTED → clearToolSyncTimer → clearSyncSignature → stopStreaming
- *
  * 使用方式：
  * ```js
- * const { finalizeStream, markInterrupted } = useStreamFinalizer()
+ * const { finalizeStream } = useStreamFinalizer()
  * // 默认操作最后一条消息
  * await finalizeStream(sessionId, lastMsg, { allowCreate: false })
  * // 操作指定索引消息
@@ -120,36 +117,7 @@ export function useStreamFinalizer() {
     return completed
   }
 
-  /**
-   * 标记消息为中断状态（审批中断场景）
-   *
-   * 流因 approval 事件而结束时调用，不触发最终化。
-   * 保持本地内容不被 WebSocket 快照覆盖，
-   * 等待用户审批后由恢复流重新进入 streaming 并完成最终化。
-   *
-   * 注意：setStreamStateToLastMessage 在 INTERRUPTED 状态下会自动清理
-   * toolSyncTimer 和 syncSignature，但 setStreamStateToMessageByIdx 不会。
-   * 此处统一手动清理，确保两种调用方式行为一致。
-   *
-   * @param {string} sessionId - 会话 ID
-   * @param {{ setStreamState?: (state: string) => void }} [options]
-   * @param {Function} [options.setStreamState] - 自定义状态设置函数，默认使用 setStreamStateToLastMessage
-   */
-  function markInterrupted(sessionId, { setStreamState } = {}) {
-    if (!sessionId) return
-
-    const setState = setStreamState
-      || ((state) => sessionStore.setStreamStateToLastMessage(sessionId, state))
-
-    setState(StreamState.INTERRUPTED)
-    // 统一手动清理，兼容 setStreamStateToMessageByIdx（不会自动清理）
-    sessionStore.clearToolSyncTimer(sessionId)
-    sessionStore.clearSyncSignature(sessionId)
-    syncStore.stopStreaming(sessionId)
-  }
-
   return {
     finalizeStream,
-    markInterrupted,
   }
 }

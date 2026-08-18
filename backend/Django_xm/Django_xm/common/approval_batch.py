@@ -8,12 +8,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from asgiref.sync import sync_to_async
 
 from Django_xm.apps.approvals.models import Approval
 from Django_xm.common.constants import TIMEOUT_DECISION
+
+logger = logging.getLogger(__name__)
 
 
 def _find_approval_by_interrupt_id(interrupt_id: str):
@@ -111,6 +114,11 @@ def finalize_batch_approvals(all_resume_values: dict, source: str, source_id: st
                 complete_approval(approval.interrupt_id, final_state)
         except Exception:
             # 终态化失败不阻断恢复流程（幂等，下次重试可补齐）
+            logger.warning(
+                f"[ApprovalBatch] 终态化审批失败（幂等，下次重试可补齐）: "
+                f"interrupt_id={tc_or_int_id}",
+                exc_info=True,
+            )
             continue
 
 
@@ -209,6 +217,11 @@ async def create_approvals_for_interrupts(
             )
         except Exception:
             # 创建失败不阻断其它审批，由上层决策链兜底
+            logger.warning(
+                f"[ApprovalBatch] 创建审批失败（不阻断其它审批）: "
+                f"interrupt_id={interrupt_id}",
+                exc_info=True,
+            )
             continue
 
     return graph_interrupt_id

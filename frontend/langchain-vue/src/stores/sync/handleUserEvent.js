@@ -15,7 +15,7 @@ import { getEventSessionId } from '@/utils/eventRouting'
  * @param {Object} ctx.realtime - useRealtimeSync 返回的实例
  * @param {(event: RealtimeEvent) => Promise<void>} ctx.handleRealtimeEvent - 统一实时事件处理器
  *   （由 sync.js 主文件装配后传入，避免循环依赖）
- * @returns {{ handleUserEvent: (event: RealtimeEvent) => Promise<void>, applyUserEvent: (event: RealtimeEvent) => Promise<void> }}
+ * @returns {{ handleUserEvent: (event: RealtimeEvent) => Promise<void> }}
  */
 export const createHandleUserEvent = (ctx) => {
   const { sessionStore, realtime, handleRealtimeEvent } = ctx
@@ -127,6 +127,5 @@ export const createHandleUserEvent = (ctx) => {
 
   return {
     handleUserEvent,
-    applyUserEvent,
   }
 }

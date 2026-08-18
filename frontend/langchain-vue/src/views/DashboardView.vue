@@ -1,11 +1,10 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import {
   TrendCharts, DataLine, Coin, Timer,
   Document, Reading, Management, Monitor,
-  Upload, Cpu
+  Cpu
 } from '@element-plus/icons-vue'
 import { dashboardAPI } from '@/api/dashboard'
 import { logger } from '../utils/logger'
@@ -62,7 +61,9 @@ async function trackPageView() {
       path: route.path,
       title: '数据分析',
     })
-  } catch {
+  } catch (err) {
+    // 页面浏览埋点失败不影响仪表盘功能，仅记录
+    logger.debug('[Dashboard] 页面浏览上报失败:', err)
   }
 }
 

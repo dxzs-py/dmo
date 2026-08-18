@@ -208,7 +208,7 @@ class SubAgentRuntime:
         # 启动后台执行（adapter 内部非阻塞，立即返回）
         try:
             await self.adapter.spawn(instance, agent_config, configurable)
-        except Exception as e:
+        except Exception:
             logger.exception(f"子代理启动失败: {thread_id}")
             await self._update_status(thread_id, SubAgentStatus.FAILED)
             # 启动失败仍返回实例（status 由 adapter 或此处更新），不抛异常中断父 graph
@@ -270,7 +270,7 @@ _runtime: SubAgentRuntime | None = None
 
 def get_subagent_runtime() -> SubAgentRuntime:
     """获取进程级 SubAgentRuntime 单例。"""
-    global _runtime
+    global _runtime  # noqa: PLW0603 - 模块级单例惰性初始化
     if _runtime is None:
         _runtime = SubAgentRuntime()
     return _runtime

@@ -20,7 +20,6 @@ from rest_framework.views import APIView
 from Django_xm.apps.attachments.services.cross_app import soft_delete_session_attachments
 from Django_xm.apps.cache_manager.services.secure_session_cache import SecureSessionCacheService
 from Django_xm.apps.core.throttling import ChatStreamRateThrottle, MetaRateThrottle
-from Django_xm.services.fastapi_service.event_bus import SESSION_TYPE_CHAT, SIGNAL_START, SIGNAL_STOP, publish_signal
 from Django_xm.async_utils import run_async
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.event_schema import EventSource, EventType
@@ -28,6 +27,7 @@ from Django_xm.common.realtime_events import publish_event_sync
 from Django_xm.common.redis_utils import get_redis_client
 from Django_xm.common.responses import error_response, success_response, validation_error_response
 from Django_xm.common.sse_utils import sse_error_response
+from Django_xm.services.fastapi_service.event_bus import SESSION_TYPE_CHAT, SIGNAL_START, SIGNAL_STOP, publish_signal
 
 from .models import ChatMessage, ChatSession, MessageRole
 from .serializers import (
@@ -595,7 +595,7 @@ class ChatStreamView(BaseChatAPIView):
                     try:
                         from asgiref.sync import async_to_sync
 
-                        from Django_xm.common.realtime_events import publish_event
+                        from Django_xm.common.realtime_events import EventType, publish_event
 
                         async_to_sync(publish_event)(
                             EventType.MESSAGE_REGENERATED,
@@ -695,7 +695,6 @@ class ChatStreamView(BaseChatAPIView):
                 "user_id": request.user.id,
                 "session_id": session_id,
                 "message_id": str(assistant_message_id) if assistant_message_id else "",
-                "publish_to_redis": False,
             },
         )
 

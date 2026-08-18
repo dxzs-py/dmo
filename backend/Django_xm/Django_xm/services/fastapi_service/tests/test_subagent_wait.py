@@ -21,8 +21,8 @@ import django
 
 django.setup()
 
-from Django_xm.services.fastapi_service.session_executor import SessionExecutor
 from Django_xm.apps.tools.base import is_approval_interrupt, is_subagent_wait_interrupt
+from Django_xm.services.fastapi_service.session_executor import SessionExecutor
 
 _MODULE = "Django_xm.services.fastapi_service.session_executor"
 
@@ -36,7 +36,6 @@ def _make_executor(thread_id="t1", **kw):
         user_id=kw.get("user_id", 1),
         session_id=kw.get("session_id", "s1"),
         message_id=kw.get("message_id", "m1"),
-        publish_to_redis=kw.get("publish_to_redis", False),
         params=kw.get("params", {}),
     )
 
@@ -103,6 +102,63 @@ class TestHandleSuspend(unittest.TestCase):
             self.assertTrue(ex._suspended)
             self.assertEqual(ex._wait_interrupt_id, "int1")
             self.assertEqual(ex._wait_subagent_thread_ids, ["sub1"])
+            lm.register_parent_awaiter.assert_called_once_with("t1", make_awaiter.return_value)
+
+        asyncio.run(_case())
+
+    def test_second_suspend_clears_stale_results(self):
+        """跨多轮 wait 竞态修复：新一轮挂起清空上一轮残留的子代理终态结果，
+        防止 _register_waiter 兜底被旧数据误判"全部已终态"提前恢复父 Graph
+        （根因：残留累积 → len(残留) >= len(新等待列表) 提前满足 → 任务提前
+        completed 而子代理仍在后台运行）。"""
+        async def _case():
+            ex = _make_executor()
+            # 模拟第一轮 wait 的残留（真实场景：跨多轮 wait_for_subagent 累积不清空）
+            ex._pending_subagent_results = {"sub1": {"status": "completed", "result": "old"}}
+            result = SimpleNamespace(interrupt_id="int2", subagent_thread_ids=["sub2"])
+            runtime = mock.Mock()
+            # sub2 仍运行中：若残留未清空，len({sub1}) >= len(["sub2"]) 会误判"全部已终态"
+            runtime.get_instance = mock.AsyncMock(return_value=SimpleNamespace(status="running"))
+            lm = mock.Mock()
+            with mock.patch(f"{_MODULE}._update_task_status", new_callable=mock.AsyncMock), mock.patch.object(
+                SessionExecutor, "_publish_status_change", new_callable=mock.AsyncMock
+            ), mock.patch(
+                "Django_xm.apps.ai_engine.subagent_runtime.get_subagent_runtime", return_value=runtime
+            ), mock.patch(
+                "Django_xm.apps.ai_engine.subagent_runtime.lifecycle.get_lifecycle_manager", return_value=lm
+            ), mock.patch.object(
+                SessionExecutor, "_make_parent_awaiter", return_value=mock.Mock()
+            ) as make_awaiter:
+                await ex._handle_suspend(result)
+
+            # 修复生效断言：残留已清空、未提前恢复、正确注册 awaiter
+            self.assertEqual(ex._pending_subagent_results, {})
+            self.assertEqual(ex._wait_subagent_thread_ids, ["sub2"])
+            lm.register_parent_awaiter.assert_called_once_with("t1", make_awaiter.return_value)
+
+        asyncio.run(_case())
+
+    def test_chat_wait_suspend_clears_stale_results(self):
+        """chat 模式业务等待挂起同样清空残留（与 research 版 _handle_suspend 同构）。"""
+        async def _case():
+            ex = _make_executor()
+            ex._pending_subagent_results = {"sub1": {"status": "completed", "result": "old"}}
+            runtime = mock.Mock()
+            runtime.get_instance = mock.AsyncMock(return_value=SimpleNamespace(status="running"))
+            lm = mock.Mock()
+            with mock.patch(
+                "Django_xm.apps.ai_engine.subagent_runtime.get_subagent_runtime", return_value=runtime
+            ), mock.patch(
+                "Django_xm.apps.ai_engine.subagent_runtime.lifecycle.get_lifecycle_manager", return_value=lm
+            ), mock.patch.object(
+                SessionExecutor, "_make_parent_awaiter", return_value=mock.Mock()
+            ) as make_awaiter:
+                await ex._handle_chat_wait_suspend(
+                    {"interrupt_id": "int2", "subagent_thread_ids": ["sub2"]}
+                )
+
+            self.assertEqual(ex._pending_subagent_results, {})
+            self.assertEqual(ex._wait_subagent_thread_ids, ["sub2"])
             lm.register_parent_awaiter.assert_called_once_with("t1", make_awaiter.return_value)
 
         asyncio.run(_case())

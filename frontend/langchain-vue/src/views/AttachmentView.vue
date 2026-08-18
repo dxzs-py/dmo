@@ -3,7 +3,6 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Delete,
-  Download,
   FolderAdd,
   RefreshRight,
   Search,
@@ -11,7 +10,6 @@ import {
   Warning,
   CircleCheck,
   Timer,
-  Document,
   Histogram,
 } from '@element-plus/icons-vue'
 import { attachmentAPI } from '@/api/attachment'
@@ -246,7 +244,7 @@ const handleIndex = async (row) => {
     } else {
       ElMessage.error(res.data?.message || '入库失败')
     }
-  } catch (e) {
+  } catch {
     ElMessage.error('入库失败')
   }
 }
@@ -261,23 +259,8 @@ const handleUnindex = async (row) => {
     } else {
       ElMessage.error(res.data?.message || '移除失败')
     }
-  } catch (e) {
+  } catch {
     ElMessage.error('移除失败')
-  }
-}
-
-const handleRestore = async (row) => {
-  try {
-    const res = await attachmentAPI.actionAttachment(row.id, 'restore')
-    if (res.data?.code === 200) {
-      ElMessage.success('恢复成功')
-      loadAttachments()
-      loadStats()
-    } else {
-      ElMessage.error(res.data?.message || '恢复失败')
-    }
-  } catch (e) {
-    ElMessage.error('恢复失败')
   }
 }
 
@@ -332,7 +315,7 @@ const handleRestoreFromTrash = async (row) => {
     } else {
       ElMessage.error(res.data?.message || '恢复失败')
     }
-  } catch (e) {
+  } catch {
     ElMessage.error('恢复失败')
   }
 }
@@ -379,7 +362,7 @@ const handleBatchIndex = async () => {
     } else {
       ElMessage.error(res.data?.message || '批量入库失败')
     }
-  } catch (e) {
+  } catch {
     ElMessage.error('批量入库失败')
   }
 }
@@ -442,7 +425,7 @@ const handleBatchRestoreFromTrash = async () => {
     trashSelectedIds.value = []
     loadTrashedAttachments()
     loadStats()
-  } catch (e) {
+  } catch {
     ElMessage.error('批量恢复失败')
   }
 }
@@ -477,7 +460,7 @@ const handleCleanup = async (action, dryRun = false) => {
     } else {
       ElMessage.error(res.data?.message || `${label}失败`)
     }
-  } catch (e) {
+  } catch {
     ElMessage.error(`${label}失败`)
   } finally {
     cleanupLoading.value = false
@@ -494,7 +477,7 @@ const handleAlertAction = async (alertId, action) => {
     } else {
       ElMessage.error(res.data?.message || '操作失败')
     }
-  } catch (e) {
+  } catch {
     ElMessage.error('操作失败')
   }
 }

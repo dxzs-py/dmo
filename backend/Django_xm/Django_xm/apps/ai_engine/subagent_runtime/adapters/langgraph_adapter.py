@@ -94,7 +94,7 @@ class LangGraphAdapter(BaseRuntimeAdapter):
             try:
                 loop.close()
             except Exception:
-                pass
+                logger.warning("关闭子代理事件循环失败（非致命）", exc_info=True)
             asyncio.set_event_loop(None)
 
     async def _execute(self, instance: Any, agent_config: Any, configurable: dict | None, resume_payload: Any) -> None:

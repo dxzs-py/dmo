@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from typing import Any, Union
+from typing import Any
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
@@ -92,7 +92,7 @@ def _validate_todos(todos: list[dict[str, Any]]) -> list[dict[str, Any]]:
 class TodoWriteInput(BaseModel):
     # 模型对 todos 参数可能传 JSON 字符串、数组或包装对象（{"todos": [...]}），
     # 统一用 Union 接收后在 _run 内归一化（模型行为不可控，工具层归一化是正解）。
-    todos: Union[str, list, dict] = Field(
+    todos: str | list | dict = Field(
         description="任务列表，支持 JSON 格式字符串或数组，每个任务包含id/content/status/priority字段，"
         '例如:[{"id":1,"content":"完成任务1","status":"pending","priority":"high"}]'
     )
@@ -117,7 +117,7 @@ class TodoWriteTool(BaseTool):
     )
     args_schema: type[BaseModel] = TodoWriteInput
 
-    def _run(self, todos: Union[str, list, dict], session_id: str = "default") -> str:
+    def _run(self, todos: str | list | dict, session_id: str = "default") -> str:
         try:
             if isinstance(todos, str):
                 todo_list = json.loads(todos)
@@ -147,7 +147,7 @@ class TodoWriteTool(BaseTool):
             f"- 已完成: {completed}"
         )
 
-    async def _arun(self, todos: Union[str, list, dict], session_id: str = "default") -> str:
+    async def _arun(self, todos: str | list | dict, session_id: str = "default") -> str:
         return self._run(todos=todos, session_id=session_id)
 
 

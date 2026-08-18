@@ -1,9 +1,9 @@
 <template>
-  <div class="ai-reasoning" :class="[className, { 'is-streaming': isStreaming }]">
+  <div class="ai-reasoning" :class="{ 'is-streaming': isStreaming }">
     <div class="reasoning-header" @click="toggleOpen">
       <div class="reasoning-header-left">
         <div class="reasoning-indicator">
-          <div v-if="isStreaming && !isIntrinsic" class="thinking-dot"></div>
+          <div v-if="isStreaming" class="thinking-dot"></div>
           <svg v-else class="reasoning-check" viewBox="0 0 16 16" fill="none">
             <path d="M6.5 12L2.5 8L3.56 6.94L6.5 9.88L12.44 3.94L13.5 5L6.5 12Z" fill="currentColor"/>
           </svg>
@@ -44,29 +44,9 @@ const props = defineProps({
     type: Boolean,
     default: true
   },
-  className: {
-    type: String,
-    default: ''
-  },
-  source: {
-    type: String,
-    default: 'deep_thinking',
-    validator: (v) => ['deep_thinking', 'model_intrinsic'].includes(v)
-  },
-  /**
-   * 进行中展示文案的兜底判定（仅"推理中"变体）：调用方未传 reasoningLabel 时，
-   * 模型原生推理（model_intrinsic）显示"推理中"，深度思考显示"正在思考"。
-   * 完成态文案统一为"已思考完成"，不依赖本 prop（见 thinkingMessage）。
-   */
-  reasoningLabel: {
-    type: String,
-    default: ''
-  },
 })
 
-const emit = defineEmits(['open-change'])
-
-const isOpen = ref(props.source === 'model_intrinsic' ? false : props.defaultOpen)
+const isOpen = ref(props.defaultOpen)
 const hasAutoClosed = ref(false)
 const startTime = ref(null)
 const duration = ref(props.duration)
@@ -74,15 +54,14 @@ const duration = ref(props.duration)
 const AUTO_CLOSE_DELAY = 1500
 const MS_IN_S = 1000
 
-const isIntrinsic = computed(() => props.source === 'model_intrinsic')
-
 const thinkingMessage = computed(() => {
-  // 简化策略（用户确认）：进行中显示"正在思考"，完成后统一显示"已思考完成"。
-  // 不再依赖调用方三态文案（reasoningLabel）与 duration 数据是否落库正确：
+  // 固定文案契约（spec unify-agent-research-display-architecture）：
+  // 进行中显示"正在思考"，完成后统一显示"已思考完成"（用时 N 秒）。
+  // 不依赖调用方三态文案（reasoningLabel 已删除）与 duration 数据是否落库正确：
   // 历史/跨浏览器 duration=0 时仍显示明确的完成态，杜绝"思考过程/已深度思考"
   // 文案不统一与"正在思考"永久闪烁问题。
   if (props.isStreaming) {
-    return isIntrinsic.value && !props.reasoningLabel ? '推理中' : '正在思考'
+    return '正在思考'
   }
   if (typeof duration.value === 'number' && duration.value > 0) {
     return `已思考完成（用时 ${duration.value} 秒）`
@@ -92,7 +71,6 @@ const thinkingMessage = computed(() => {
 
 function toggleOpen() {
   isOpen.value = !isOpen.value
-  emit('open-change', isOpen.value)
 }
 
 watch(() => props.isStreaming, (isStreaming) => {

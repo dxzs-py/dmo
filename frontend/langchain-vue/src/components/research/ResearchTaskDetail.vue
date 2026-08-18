@@ -70,72 +70,25 @@
       <p class="progress-hint">深度研究通常需要 5-10 分钟，请耐心等待...</p>
     </div>
 
-    <!-- AI 推理面板（框架接入：绑定 stream_reasoning WebSocket 事件） -->
-    <!-- 深度研究模块推理区文案固定"研究推理"（spec D4：研究语境优先于深度思考开关） -->
-    <AiReasoning
-      v-if="reasoning && reasoning.content"
-      :content="reasoning.content"
-      :duration="reasoning.duration"
-      :is-streaming="task.status === ResearchTaskStatus.RUNNING || task.status === ResearchTaskStatus.PENDING"
-      :source="reasoning.source || 'deep_thinking'"
-      reasoning-label="研究推理"
+    <!-- 统一渲染管线：推理区 → 正文内联工具切段 → orphans 子代理卡
+         （spec unify-agent-research-display-architecture）。content 传主 agent 累计正文
+         （ResearchTask.content，对齐 ChatMessage.content），工具卡按 position 内联到
+         正文流；最终报告 final_report 由下方 ResearchTaskReport 独立展示。
+         原 AiReasoning 的 margin-top:16px 透传到管线根元素，保持与既有展示一致 -->
+    <AgentContentPipeline
       style="margin-top: 16px;"
-    />
-
-    <!-- 研究过程：工具调用内联切段（渲染结构完全照 ChatMessage）。
-         content 传主 agent 累计正文（ResearchTask.content，对齐 ChatMessage.content），
-         工具卡按 position 内联到正文流（对齐聊天模块代理模式）；
-         最终报告 final_report 由下方 ResearchTaskReport 独立展示 -->
-    <InlineToolCallContent
-      v-if="mainToolCalls.length > 0"
       :content="mainContent || task.content || ''"
+      :reasoning-content="reasoning?.content"
+      :reasoning-duration="reasoning?.duration"
+      :is-streaming="task.status === ResearchTaskStatus.RUNNING || task.status === ResearchTaskStatus.PENDING"
       :tool-calls="mainToolCalls"
+      :subagents="subagents"
+      :expanded-thread-ids="expandedThreadIds"
       :approval-disabled="approvalDisabled"
-    >
-      <template #tool="{ toolCall, approvalDisabled: disabled }">
-        <ToolCallCard
-          :tool-name="toolCall.name"
-          :input="toolCall.input || toolCall.parameters"
-          :output="toolCall.output || toolCall.result"
-          :status="deriveDisplayStatus(toolCall)"
-          :tool-call="toolCall"
-          :approval-disabled="disabled"
-          :is-subagent-trigger="toolCall.name === 'spawn_sub_agent'"
-          @approve="(t) => emit('approve', t)"
-          @reject="(t) => emit('reject', t)"
-        />
-
-        <!-- 顺序挂载：spawn 工具之后紧跟其派生的子代理卡片（点击原地展开内容） -->
-        <template v-if="toolCall.name === 'spawn_sub_agent'">
-          <template v-for="sa in spawnedSubagentOf(toolCall)" :key="sa.threadId">
-            <SubAgentCard
-              :subagent="sa"
-              :expanded="expandedSubagentThreadIds.has(sa.threadId)"
-              reasoning-label="研究推理"
-              :subagents="subagents"
-              :expanded-thread-ids="expandedSubagentThreadIds"
-              @toggle="toggleSubagent"
-              @approve="(t) => emit('approve', t)"
-              @reject="(t) => emit('reject', t)"
-            />
-          </template>
-        </template>
-      </template>
-    </InlineToolCallContent>
-
-    <!-- 孤儿兜底：无 spawnToolCallId 的子代理在正文末尾渲染 -->
-    <template v-for="sa in subagentSpawnIndex.orphans" :key="sa.threadId">
-      <SubAgentCard
-        :subagent="sa"
-        :expanded="expandedSubagentThreadIds.has(sa.threadId)"
-        reasoning-label="研究推理"
-        :subagents="subagents"
-        :expanded-thread-ids="expandedSubagentThreadIds"
-        @toggle="toggleSubagent"
-        @approve="(t) => emit('approve', t)"
-        @reject="(t) => emit('reject', t)"
-      />
-    </template>
+      @toggle-subagent="toggleSubagent"
+      @approve="(t) => emit('approve', t)"
+      @reject="(t) => emit('reject', t)"
+    />
 
     <ResearchTaskReport
       :task="task"
@@ -151,19 +104,14 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { ChatDotRound } from '@element-plus/icons-vue'
-import SubAgentCard from '@/components/chat/SubAgentCard.vue'
-import ToolCallCard from '@/components/chat/ToolCallCard.vue'
-import InlineToolCallContent from '@/components/common/InlineToolCallContent.vue'
-import { deriveDisplayStatus } from '@/utils/toolCallStateMachine'
-import { sortToolCallsForDisplay } from '@/utils/messageOperations'
-import { buildSubagentsFromMessage, mapSubagentsBySpawnToolCall } from '@/utils/subagentAggregation'
+import AgentContentPipeline from '@/components/common/AgentContentPipeline.vue'
+import { filterMainToolCalls } from '@/utils/inlineContent'
+import { buildSubagentsFromMessage } from '@/utils/subagentAggregation'
 import { useSubagents, subagentsMetaMap } from '@/composables/useSubagents'
-import { SUBAGENT_STATUS } from '@/utils/subagentStatus'
-import settings from '@/config/settings'
+import { useSubagentExpansion } from '@/composables/useSubagentExpansion'
 import ResearchTaskReport from './ResearchTaskReport.vue'
-import AiReasoning from '@/components/ai-elements/AiReasoning.vue'
 import { formatDate } from '@/utils/format'
 import { getTaskStatusText, getTaskStatusTagType } from '@/utils/researchTaskStatus'
 import { isApprovalDisabled } from '@/utils/approvalGate'
@@ -247,14 +195,10 @@ const emit = defineEmits([
 const { fetchSubagents } = useSubagents()
 
 // 主 agent 工具调用（subagentThreadId 为空）
-// 统一排序：sortToolCallsForDisplay（seq 升序）为唯一权威排序实现，
-// 与 sessionStore/_syncMessageToolCalls 对齐。源数组可能来自 researchStore 快照合并
+// 过滤 + 排序统一走 filterMainToolCalls（seq 升序，唯一权威排序实现，与
+// ChatMessage 收敛一致）。源数组可能来自 researchStore 快照合并
 // （合并顺序非 seq），不排序会导致 wait 等工具卡乱序渲染。
-const mainToolCalls = computed(() => {
-  const list = (Array.isArray(props.toolCalls) ? props.toolCalls : []).filter(tc => !tc.subagentThreadId)
-  sortToolCallsForDisplay(list)
-  return list
-})
+const mainToolCalls = computed(() => filterMainToolCalls(props.toolCalls))
 
 // 审批控件置灰（统一 chat 语义：任务终态视为固化，其余可交互）
 const approvalDisabled = computed(() =>
@@ -275,7 +219,7 @@ const subagentMetaList = computed(() => {
   )
 })
 
-// 子代理聚合视图
+// 子代理聚合视图（spawn 顺序索引与 orphans 兜底已收敛到 AgentContentPipeline 内部）
 const subagents = computed(() =>
   buildSubagentsFromMessage(
     { toolCalls: props.toolCalls, subagentContents: props.subagentContents },
@@ -283,41 +227,9 @@ const subagents = computed(() =>
   )
 )
 
-// spawn 顺序索引：spawnToolCallId → 子代理视图（挂载到对应 spawn 工具之后）；
-// orphans 为无 spawnToolCallId 的孤儿（主工具列表末尾兜底渲染）
-const subagentSpawnIndex = computed(() => mapSubagentsBySpawnToolCall(subagents.value))
-
-/** 取 spawn 工具调用派生的子代理（命中返回单元素数组，未命中返回空数组） */
-const spawnedSubagentOf = (toolCall) => {
-  const id = toolCall?.id || toolCall?.toolCallId
-  if (!id) return []
-  const subagent = subagentSpawnIndex.value.bySpawnToolCallId.get(id)
-  return subagent ? [subagent] : []
-}
-
-// 展开的子代理 threadId 集合
-const expandedSubagentThreadIds = ref(new Set())
-
-const toggleSubagent = (threadId) => {
-  const next = new Set(expandedSubagentThreadIds.value)
-  if (next.has(threadId)) next.delete(threadId)
-  else next.add(threadId)
-  expandedSubagentThreadIds.value = next
-}
-
-// spec D9：autoExpandPendingConfirm 开启时，仅「等待你的确认」的卡片自动展开（嵌套内层永不自动展开）
-watch(subagents, (list) => {
-  if (!settings.autoExpandPendingConfirm) return
-  const next = new Set(expandedSubagentThreadIds.value)
-  let changed = false
-  for (const sa of list) {
-    if (sa.status === SUBAGENT_STATUS.INTERRUPTED_PENDING_USER_INPUT && !next.has(sa.threadId)) {
-      next.add(sa.threadId)
-      changed = true
-    }
-  }
-  if (changed) expandedSubagentThreadIds.value = next
-})
+// 展开状态 + 待审批自动展开（spec unify-agent-research-display-architecture：与
+// ChatMessage 共用 useSubagentExpansion，不再本地重复实现）
+const { expandedThreadIds, toggleSubagent } = useSubagentExpansion(subagents)
 
 // 任务 ID 变化时拉取元数据（幂等合并到模块级缓存；后续子代理工具/审批事件
 // 由 toolCallHandler 触发 scheduleSubagentsRefresh 增量刷新，无需组件轮询）

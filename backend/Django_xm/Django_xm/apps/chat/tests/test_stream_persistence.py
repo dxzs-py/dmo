@@ -433,7 +433,10 @@ class PersistContentAppendTests(unittest.TestCase):
 
     def test_overlap_tail_dedup(self):
         """新内容前缀与已有内容后缀重叠（恢复轮 checkpoint 重生成）→ 去重拼接。"""
-        result, message_fake = self._run("我来并行派发三个子代理分别执行任务，然后汇总结果。三个", "三个子代理全部完成！结果如下：")
+        result, message_fake = self._run(
+            "我来并行派发三个子代理分别执行任务，然后汇总结果。三个",
+            "三个子代理全部完成！结果如下：",
+        )
         self.assertEqual(
             message_fake.content,
             "我来并行派发三个子代理分别执行任务，然后汇总结果。三个子代理全部完成！结果如下：",

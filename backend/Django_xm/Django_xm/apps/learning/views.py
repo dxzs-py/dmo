@@ -7,6 +7,7 @@ import json
 import uuid
 from urllib.parse import quote
 
+from django.db.models import Q
 from django.http import FileResponse, HttpResponse, StreamingHttpResponse
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
@@ -25,8 +26,10 @@ from Django_xm.common.responses import error_response, not_found_response, succe
 from Django_xm.common.serializers import EmptySerializer
 from Django_xm.common.sse_utils import sse_error_event, sse_response
 
-from .models import WorkflowSession
+from .models import WorkflowAttempt, WorkflowQuestion, WorkflowQuestionStatus, WorkflowQuestionType, WorkflowSession
 from .serializers import (
+    WorkflowAttemptSerializer,
+    WorkflowQuestionSerializer,
     WorkflowResponseSerializer,
     WorkflowSessionSerializer,
     WorkflowStartSerializer,
@@ -34,7 +37,7 @@ from .serializers import (
 )
 from .services import WorkflowService
 from .services.resilience import stream_with_resilience
-from .services.study_flow import _get_study_flow, get_workflow_state
+from .services.study_flow import WorkflowAlreadyFinishedError, _get_study_flow, get_workflow_state
 
 
 class SSERenderer(BaseRenderer):
@@ -118,6 +121,13 @@ class WorkflowStartView(APIView):
                 thread_id=serializer.validated_data.get("thread_id"),
                 user_id=request.user.id,
                 knowledge_base_ids=serializer.validated_data.get("knowledge_base_ids"),
+                provider_id=serializer.validated_data.get("provider_id"),
+                model_name=serializer.validated_data.get("model_name"),
+                temperature=serializer.validated_data.get("temperature"),
+                max_tokens=serializer.validated_data.get("max_tokens"),
+                special_params=serializer.validated_data.get("special_params"),
+                enable_deep_thinking=serializer.validated_data.get("use_deep_thinking", False),
+                use_web_search=serializer.validated_data.get("use_web_search", False),
             )
 
             try:
@@ -215,6 +225,13 @@ class WorkflowStartStreamView(APIView):
                     "should_retry": False,
                     "current_step": "start",
                     "thread_id": thread_id,
+                    "provider_id": serializer.validated_data.get("provider_id"),
+                    "model_name": serializer.validated_data.get("model_name"),
+                    "temperature": serializer.validated_data.get("temperature"),
+                    "max_tokens": serializer.validated_data.get("max_tokens"),
+                    "special_params": serializer.validated_data.get("special_params") or {},
+                    "enable_deep_thinking": serializer.validated_data.get("use_deep_thinking", False),
+                    "use_web_search": serializer.validated_data.get("use_web_search", False),
                     "created_at": timezone.now().isoformat(),
                     "updated_at": timezone.now().isoformat(),
                     "error": None,
@@ -394,11 +411,301 @@ class WorkflowSubmitView(APIView):
 
             return success_response(data=result, message="操作成功")
 
+        except WorkflowAlreadyFinishedError as e:
+            # 工作流已结束（已完成/失败/错误态）：返回 409 + 当前阶段
+            return error_response(
+                code=ErrorCode.WORKFLOW_ALREADY_FINISHED,
+                message=str(e),
+                http_status=status.HTTP_409_CONFLICT,
+                data={"current_phase": getattr(e, "current_phase", "")},
+            )
         except Exception as e:
             logger.exception("[API] 提交答案失败：")
             return error_response(
                 code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class WorkflowRestartView(APIView):
+    """继续练习视图"""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: EmptySerializer})
+    def post(self, request, thread_id):
+        try:
+            session = WorkflowSession.objects.filter(
+                thread_id=thread_id, created_by=request.user, is_deleted=False
+            ).first()
+            if not session:
+                return error_response(
+                    code=ErrorCode.NOT_FOUND,
+                    message="工作流会话不存在或无权访问",
+                    http_status=status.HTTP_404_NOT_FOUND,
+                )
+
+            result = WorkflowService.restart_workflow(thread_id=thread_id, user_id=request.user.id)
+
+            return success_response(data=result, message="继续练习已启动")
+        except ValueError as e:
+            return error_response(
+                code=ErrorCode.VALIDATION_FAILED,
+                message=str(e),
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            logger.exception("[API] 继续练习失败：")
+            return error_response(
+                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class WorkflowQuestionListView(APIView):
+    """获取工作流所有题目列表视图"""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: EmptySerializer})
+    def get(self, request, thread_id):
+        try:
+            session = WorkflowSession.objects.filter(
+                thread_id=thread_id, created_by=request.user, is_deleted=False
+            ).first()
+            if not session:
+                return error_response(
+                    code=ErrorCode.NOT_FOUND,
+                    message="工作流会话不存在或无权访问",
+                    http_status=status.HTTP_404_NOT_FOUND,
+                )
+
+            # 通过 root_thread_id 聚合所有相关 session（支持跨会话查看旧轮次题目）
+            root_id = session.root_thread_id or session.thread_id
+            related_sessions = WorkflowSession.objects.filter(
+                Q(thread_id=root_id) | Q(root_thread_id=root_id),
+                created_by=request.user,
+                is_deleted=False,
+            )
+
+            # 支持按 attempt_index 过滤
+            attempt_index = request.query_params.get("attempt_index")
+            queryset = WorkflowQuestion.objects.filter(session__in=related_sessions)
+            if attempt_index is not None:
+                try:
+                    queryset = queryset.filter(attempt_index=int(attempt_index))
+                except ValueError:
+                    pass
+
+            questions = queryset.order_by("attempt_index", "question_index")
+            serializer = WorkflowQuestionSerializer(questions, many=True)
+
+            return success_response(data=serializer.data, message="操作成功")
+        except Exception as e:
+            logger.exception("[API] 获取题目列表失败：")
+            return error_response(
+                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class WorkflowQuestionUpdateView(APIView):
+    """修改单题答案并重新评分视图"""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: EmptySerializer})
+    def put(self, request, thread_id, question_id):
+        try:
+            session = WorkflowSession.objects.filter(
+                thread_id=thread_id, created_by=request.user, is_deleted=False
+            ).first()
+            if not session:
+                return error_response(
+                    code=ErrorCode.NOT_FOUND,
+                    message="工作流会话不存在或无权访问",
+                    http_status=status.HTTP_404_NOT_FOUND,
+                )
+
+            # 通过 root_thread_id 聚合所有相关 session（支持跨会话修改旧轮次题目）
+            root_id = session.root_thread_id or session.thread_id
+            related_sessions = WorkflowSession.objects.filter(
+                Q(thread_id=root_id) | Q(root_thread_id=root_id),
+                created_by=request.user,
+                is_deleted=False,
+            )
+
+            question = WorkflowQuestion.objects.filter(
+                session__in=related_sessions, question_id=question_id
+            ).first()
+            if not question:
+                return error_response(
+                    code=ErrorCode.NOT_FOUND,
+                    message="题目不存在",
+                    http_status=status.HTTP_404_NOT_FOUND,
+                )
+
+            user_answer = request.data.get("user_answer")
+            if user_answer is None:
+                return validation_error_response(
+                    errors={"user_answer": ["该字段为必填项"]},
+                    message="数据验证失败",
+                )
+
+            is_correct, points_earned = _regrade_question(question, user_answer)
+
+            # 更新题目
+            question.user_answer = user_answer
+            question.is_correct = is_correct
+            question.points_earned = points_earned
+            question.scored_at = timezone.now()
+            question.status = WorkflowQuestionStatus.SCORED
+            question.save()
+
+            # 重新计算所属 WorkflowAttempt 的 total_score（跨会话查询该轮次所有题目）
+            attempt = WorkflowAttempt.objects.filter(
+                session__in=related_sessions, attempt_index=question.attempt_index
+            ).first()
+            if attempt:
+                all_questions = WorkflowQuestion.objects.filter(
+                    session__in=related_sessions, attempt_index=question.attempt_index
+                )
+                total_points = sum(q.points for q in all_questions)
+                total_earned = sum(q.points_earned or 0 for q in all_questions)
+                attempt.total_score = int((total_earned / total_points) * 100) if total_points > 0 else 0
+                attempt.save(update_fields=["total_score"])
+
+            serializer = WorkflowQuestionSerializer(question)
+            return success_response(
+                data={
+                    "question": serializer.data,
+                    "attempt_total_score": attempt.total_score if attempt else None,
+                },
+                message="重新评分完成",
+            )
+        except Exception as e:
+            logger.exception("[API] 重新评分失败：")
+            return error_response(
+                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class WorkflowAttemptListView(APIView):
+    """获取工作流练习轮次历史视图"""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: EmptySerializer})
+    def get(self, request, thread_id):
+        try:
+            session = WorkflowSession.objects.filter(
+                thread_id=thread_id, created_by=request.user, is_deleted=False
+            ).first()
+            if not session:
+                return error_response(
+                    code=ErrorCode.NOT_FOUND,
+                    message="工作流会话不存在或无权访问",
+                    http_status=status.HTTP_404_NOT_FOUND,
+                )
+
+            # 通过 root_thread_id 聚合所有相关 session
+            root_id = session.root_thread_id or session.thread_id
+            related_sessions = WorkflowSession.objects.filter(
+                Q(thread_id=root_id) | Q(root_thread_id=root_id),
+                created_by=request.user,
+                is_deleted=False,
+            )
+
+            attempts = WorkflowAttempt.objects.filter(session__in=related_sessions).order_by("attempt_index")
+            serializer = WorkflowAttemptSerializer(attempts, many=True)
+
+            return success_response(data=serializer.data, message="操作成功")
+        except Exception as e:
+            logger.exception("[API] 获取练习轮次历史失败：")
+            return error_response(
+                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+def _regrade_question(question, user_answer: str) -> tuple[bool, int]:
+    """单题重新评分（与 grading_node 的宽松评分规则保持一致）。
+
+    Returns:
+        (is_correct, points_earned)
+    """
+    from .nodes.grading_node import _is_option_index, _normalize_fill
+
+    is_correct = False
+    points_earned = 0
+
+    if question.type == WorkflowQuestionType.MULTIPLE_CHOICE.value:
+        options = question.options or []
+
+        correct_answer_display = question.correct_answer
+        if _is_option_index(question.correct_answer) and options:
+            idx = ord(question.correct_answer.strip().upper()) - ord("A")
+            if 0 <= idx < len(options):
+                correct_answer_display = options[idx]
+
+        user_answer_display = user_answer
+        if _is_option_index(user_answer) and options:
+            idx = ord(user_answer.strip().upper()) - ord("A")
+            if 0 <= idx < len(options):
+                user_answer_display = options[idx]
+
+        is_correct = (
+            user_answer.strip().upper() == question.correct_answer.strip().upper()
+            or user_answer_display.strip() == correct_answer_display.strip()
+        )
+        points_earned = question.points if is_correct else 0
+
+    elif question.type == WorkflowQuestionType.FILL_BLANK.value:
+        normalized_user = _normalize_fill(user_answer)
+        acceptable = [a.strip() for a in question.correct_answer.split("|") if a.strip()]
+        is_correct = any(normalized_user == _normalize_fill(a) for a in acceptable)
+
+        if not is_correct and user_answer.strip():
+            # 归一化不匹配时用辅助模型语义等价判断（LLM 不可用时按错误处理）
+            from Django_xm.apps.ai_engine.services.llm_factory import get_helper_model
+
+            try:
+                from .nodes.grading_node import _judge_fill_blank_semantic
+
+                helper_model = get_helper_model()
+                is_correct = _judge_fill_blank_semantic(
+                    helper_model, question.question, question.correct_answer, user_answer
+                )
+            except Exception as llm_err:
+                logger.warning(
+                    f"[API] 填空题 LLM 语义判断失败，按错误处理: "
+                    f"question_id={question.question_id}, err={llm_err}"
+                )
+                is_correct = False
+
+        points_earned = question.points if is_correct else 0
+
+    elif question.type == WorkflowQuestionType.SHORT_ANSWER.value:
+        from Django_xm.apps.ai_engine.services.llm_factory import get_helper_model
+
+        from .nodes.grading_node import _grade_short_answer
+
+        try:
+            helper_model = get_helper_model()
+            points_earned, _ = _grade_short_answer(
+                helper_model,
+                {"question": question.question, "points": question.points},
+                question.correct_answer,
+                user_answer,
+            )
+        except Exception as llm_err:
+            logger.warning(
+                f"[API] 简答题 LLM 评分失败，按关键词匹配回退: "
+                f"question_id={question.question_id}, err={llm_err}"
+            )
+            keywords = question.correct_answer.lower().split()[:5]
+            matched = sum(1 for kw in keywords if kw in user_answer.lower())
+            points_earned = int((matched / max(len(keywords), 1)) * question.points)
+
+        is_correct = points_earned >= question.points * 0.6
+
+    return is_correct, points_earned
 
 
 class WorkflowStatusView(APIView):

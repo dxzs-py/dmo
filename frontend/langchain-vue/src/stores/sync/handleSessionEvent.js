@@ -327,7 +327,13 @@ export const createHandleSessionEvent = (ctx) => {
           `reason=间隙停滞回调未推进基线或后端序列号不连续`
         )
         fullSyncPending.add(sessionId)
-        requestFullSync(sessionId).finally(() => fullSyncPending.delete(sessionId))
+        // finally 派生 promise 需消费 rejection：requestFullSync 失败（如 404）
+        // 时派生 promise 同步 reject 且无人消费 → Unhandled Promise Rejection
+        requestFullSync(sessionId)
+          .finally(() => fullSyncPending.delete(sessionId))
+          .catch(() => {
+            logger.warn(`[Sync] 兜底全量同步失败: session=${sessionId}`)
+          })
       }
     }
 

@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import Sidebar from './Sidebar.vue'
 
-const props = defineProps({
+defineProps({
   collapse: {
     type: Boolean,
     default: false

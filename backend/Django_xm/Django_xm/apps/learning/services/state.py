@@ -98,6 +98,27 @@ class StudyFlowState(TypedDict):
     thread_id: str
     """会话线程 ID，用于标识唯一的工作流实例"""
 
+    provider_id: str | None
+    """用户选择的模型提供商 ID（openai/deepseek/groq/baidu_qianfan/anthropic）"""
+
+    model_name: str | None
+    """用户选择的模型名称"""
+
+    temperature: float | None
+    """生成温度参数"""
+
+    max_tokens: int | None
+    """最大生成 token 数"""
+
+    special_params: dict[str, Any] | None
+    """提供商专属参数（如 DeepSeek 的 thinking / reasoning_effort）"""
+
+    enable_deep_thinking: bool
+    """是否启用深度思考"""
+
+    use_web_search: bool
+    """是否启用网络查询（retrieval 阶段调用 web_search 工具）"""
+
     created_at: str | None
     """创建时间戳"""
 

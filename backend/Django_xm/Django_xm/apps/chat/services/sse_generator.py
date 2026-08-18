@@ -17,26 +17,45 @@ logger = logging.getLogger(__name__)
 _TOOL_EVENT_TYPES = frozenset({"tool", "tool_result", "tool_usage_dedup", "tool_usage_blocked"})
 
 
-def _merge_content_with_overlap(existing: str, new_chunk: str) -> str:
-    """累积正文并做尾部重叠去重（恢复轮拼接防重复）。
+def find_content_overlap(existing: str, new_chunk: str) -> int:
+    """计算 new_chunk 前缀与 existing 后缀的最长重叠长度（尾部重叠去重核心判定）。
 
     业务等待挂起（wait_for_subagent）时挂起前 content 已落库（含流式中途的
     尾部字符），恢复轮 LLM 从 checkpoint 继续生成时会重新输出与该尾部重叠的
     内容。若直接 ``existing += new_chunk``，会出现「三个三个」类重复。
 
     规则：取 new_chunk 前缀与 existing 后缀的最大重叠（最长重叠后缀/前缀），
-    拼接时去掉重叠部分。无重叠时退化为普通追加；空 chunk 幂等返回 existing。
+    无重叠返回 0。此函数为全项目唯一权威实现，stream_persistence 等
+    持久化链路通过 import 复用，禁止复制实现。
+
+    Args:
+        existing: 已有累计正文
+        new_chunk: 新到达的正文增量
+
+    Returns:
+        int: 最长重叠长度（0 表示无重叠）
+    """
+    if not new_chunk or not existing:
+        return 0
+    max_overlap = min(len(existing), len(new_chunk))
+    for i in range(max_overlap, 0, -1):
+        if existing[-i:] == new_chunk[:i]:
+            return i
+    return 0
+
+
+def _merge_content_with_overlap(existing: str, new_chunk: str) -> str:
+    """累积正文并做尾部重叠去重（恢复轮拼接防重复）。
+
+    重叠判定（find_content_overlap）与拼接逻辑为全项目唯一实现：
+    - 取 new_chunk 前缀与 existing 后缀的最大重叠，拼接时去掉重叠部分；
+    - 无重叠时退化为普通追加；空 chunk 幂等返回 existing。
     """
     if not new_chunk:
         return existing
     if not existing:
         return new_chunk
-    max_overlap = min(len(existing), len(new_chunk))
-    overlap = 0
-    for i in range(max_overlap, 0, -1):
-        if existing[-i:] == new_chunk[:i]:
-            overlap = i
-            break
+    overlap = find_content_overlap(existing, new_chunk)
     return existing + new_chunk[overlap:]
 
 

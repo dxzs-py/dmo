@@ -24,6 +24,13 @@ class WorkflowService:
         thread_id: str | None = None,
         user_id: int | None = None,
         knowledge_base_ids: list | None = None,
+        provider_id: str | None = None,
+        model_name: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        special_params: dict | None = None,
+        enable_deep_thinking: bool = False,
+        use_web_search: bool = False,
     ) -> dict[str, Any]:
         """
         启动新的学习工作流
@@ -33,6 +40,13 @@ class WorkflowService:
             thread_id: 可选的线程ID
             user_id: 可选的用户ID
             knowledge_base_ids: 可选的知识库名称列表（用户选择用于 RAG 检索的学习资料）
+            provider_id: 用户选择的模型提供商 ID
+            model_name: 用户选择的模型名称
+            temperature: 生成温度
+            max_tokens: 最大生成 token 数
+            special_params: 提供商专属参数（如 DeepSeek 的 thinking）
+            enable_deep_thinking: 是否启用深度思考
+            use_web_search: 是否启用网络查询
 
         Returns:
             工作流执行结果
@@ -41,7 +55,19 @@ class WorkflowService:
 
         logger.info(f"[Service] 启动工作流，thread_id={thread_id}")
 
-        result = start_study_flow(user_question, thread_id, user_id, knowledge_base_ids)
+        result = start_study_flow(
+            user_question,
+            thread_id,
+            user_id,
+            knowledge_base_ids,
+            provider_id=provider_id,
+            model_name=model_name,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            special_params=special_params,
+            enable_deep_thinking=enable_deep_thinking,
+            use_web_search=use_web_search,
+        )
 
         logger.info(f"[Service] 工作流启动成功，thread_id={thread_id}")
 
@@ -124,6 +150,25 @@ class WorkflowService:
         """
         logger.info(f"[Service] 查询工作流状态，thread_id={thread_id}")
         return get_workflow_state(thread_id)
+
+    @staticmethod
+    def restart_workflow(thread_id: str, user_id: int | None = None) -> dict[str, Any]:
+        """
+        继续练习：创建新 thread_id，复用学习计划与运行时配置，生成新一轮题目
+
+        Args:
+            thread_id: 旧工作流线程 ID
+            user_id: 用户 ID
+
+        Returns:
+            包含 new_thread_id 的工作流状态字典
+
+        Raises:
+            ValueError: 旧 session 不存在或缺少 learning_plan 时
+        """
+        from .study_flow import restart_quiz
+
+        return restart_quiz(thread_id, user_id)
 
     @staticmethod
     def get_workflow_history(thread_id: str) -> list:

@@ -411,7 +411,8 @@ def writeback_to_chat_message(
                     logger.info(
                         f"[Writeback] 已合并 tool_calls: task_id={task_id}, "
                         f"existing={len(existing_tc)}, merged={len(merged_tc)}, "
-                        f"subagent_entries={len(subagent_tool_entries) if isinstance(subagent_tool_entries, dict) else 0}"
+                        f"subagent_entries="
+                        f"{len(subagent_tool_entries) if isinstance(subagent_tool_entries, dict) else 0}"
                     )
                 # 同步 ResearchTask.tool_calls（迁移 0010 设计意图：tool_calls 记录
                 # 全部工具调用的生命周期状态，作为独立深度研究/后续校验的持久化源）

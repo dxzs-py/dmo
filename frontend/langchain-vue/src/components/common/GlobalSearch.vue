@@ -132,7 +132,6 @@ useKeyboardShortcuts({
             class="search-group-label"
           >聊天记录</div>
           <div
-            v-memo="[item.label, item.path, index === selectedIndex]"
             class="search-item"
             :class="{ selected: index === selectedIndex }"
             @click="selectItem(item)"

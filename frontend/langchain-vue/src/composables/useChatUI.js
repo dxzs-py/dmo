@@ -63,7 +63,7 @@ export function useChatUI() {
     }
   }
 
-  const handleDelete = async ({ messageId, researchTaskId }) => {
+  const handleDelete = async ({ messageId }) => {
     if (!messageId) return
     const sessionId = sessionStore.currentSessionId
     const msgs = sessionStore.getSessionMessages(sessionId) || []

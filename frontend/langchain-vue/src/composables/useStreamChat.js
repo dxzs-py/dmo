@@ -136,9 +136,6 @@ export function useStreamChat() {
   const abortController = ref(null)
   const connectionStatus = ref(CONNECTION_STATUS.DISCONNECTED)
   const lastError = ref(null)
-  const retryCount = ref(0)
-  const streamStartTime = ref(null)
-  const bytesReceived = ref(0)
 
   function abort() {
     if (abortController.value) {
@@ -151,9 +148,6 @@ export function useStreamChat() {
 
   function resetState() {
     lastError.value = null
-    retryCount.value = 0
-    bytesReceived.value = 0
-    streamStartTime.value = null
   }
 
   /**
@@ -174,7 +168,6 @@ export function useStreamChat() {
     isStreaming.value = true
     connectionStatus.value = CONNECTION_STATUS.CONNECTING
     resetState()
-    streamStartTime.value = Date.now()
 
     try {
       const response = await chatAPI.streamMessage(requestData, {
@@ -219,8 +212,5 @@ export function useStreamChat() {
     streamChat,
     connectionStatus: readonly(connectionStatus),
     lastError: readonly(lastError),
-    retryCount: readonly(retryCount),
-    streamStartTime: readonly(streamStartTime),
-    bytesReceived: readonly(bytesReceived),
   }
 }

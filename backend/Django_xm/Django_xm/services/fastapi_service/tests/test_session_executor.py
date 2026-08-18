@@ -37,7 +37,6 @@ def _make_executor(thread_id="t1", **kw):
         user_id=kw.get("user_id", 1),
         session_id=kw.get("session_id", "s1"),
         message_id=kw.get("message_id", "m1"),
-        publish_to_redis=kw.get("publish_to_redis", False),
         params=kw.get("params", {}),
     )
 
@@ -632,7 +631,12 @@ class TestResearchResumeBaseline(unittest.TestCase):
             ex = _make_executor()
             ex._agent = None
             with mock.patch.object(
-                ex, "_load_research_resume_baseline", return_value={"subagent_contents": {}, "subagent_tool_entries": {}}
+                ex,
+                "_load_research_resume_baseline",
+                return_value={
+                    "subagent_contents": {},
+                    "subagent_tool_entries": {},
+                },
             ):
                 await ex._inject_research_resume_baseline()  # 不应抛异常
 

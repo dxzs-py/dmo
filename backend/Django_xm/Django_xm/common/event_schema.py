@@ -78,7 +78,8 @@ class EventType(StrEnum):
     STREAM_SUGGESTIONS = "stream_suggestions"  # 建议
     STREAM_CONTEXT = "stream_context"  # 上下文
     STREAM_CONTENT_UPDATE = "stream_content_update"  # 内容更新（节流后的 chunk）
-    STREAM_SUBAGENT_CONTENT = "stream_subagent_content"  # 子代理图层正文/思考更新（按顶层 subagent_thread_id 定向路由，spec D10/MODIFIED）
+    # 子代理图层正文/思考更新（按顶层 subagent_thread_id 定向路由，spec D10/MODIFIED）
+    STREAM_SUBAGENT_CONTENT = "stream_subagent_content"
     STREAM_EVENT = "stream_event"  # 流式通用事件（approval/interrupted/model_fallback/research_task_id）
 
     # === 会话/消息事件（WebSocket 推送）===

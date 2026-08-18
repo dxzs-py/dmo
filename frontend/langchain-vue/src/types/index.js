@@ -57,6 +57,13 @@ export const LearningStep = {
   FAILED: 'failed',
 }
 
+/** 学习工作流题型（后端 question.type，snake_case 协议值） */
+export const LearningQuestionType = {
+  MULTIPLE_CHOICE: 'multiple_choice',
+  FILL_BLANK: 'fill_blank',
+  SHORT_ANSWER: 'short_answer',
+}
+
 /**
  * 只读工具名称集合
  *

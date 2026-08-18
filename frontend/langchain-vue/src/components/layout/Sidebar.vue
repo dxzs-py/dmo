@@ -1,7 +1,6 @@
 <script setup>
 import { useRouter, useRoute } from 'vue-router'
 import { useSessionStore } from '../../stores/session'
-import { useUserStore } from '../../stores/user'
 import { 
   ChatDotRound, 
   Document, 
@@ -11,7 +10,6 @@ import {
   Plus,
   Close,
   Search,
-  Calendar,
   DataAnalysis,
   FolderOpened,
   Files
@@ -19,6 +17,7 @@ import {
 import { ElMessage } from 'element-plus'
 import { confirmDelete } from '../../utils/dialog'
 import { computed, ref } from 'vue'
+import { logger } from '../../utils/logger'
 
 const props = defineProps({
   // 自定义导航菜单项
@@ -43,12 +42,9 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['update:collapsed'])
-
 const router = useRouter()
 const route = useRoute()
 const sessionStore = useSessionStore()
-const userStore = useUserStore()
 
 const showSearch = ref(false)
 const searchQuery = ref('')
@@ -67,12 +63,6 @@ const defaultMenuItems = [
 
 // 使用自定义菜单或默认菜单
 const menuItems = computed(() => props.menuItems || defaultMenuItems)
-
-const toggleCollapse = () => {
-  if (props.collapsible) {
-    emit('update:collapsed', !props.collapsed)
-  }
-}
 
 const handleMenuSelect = (index) => {
   router.push(index)
@@ -97,7 +87,9 @@ const handleDeleteSession = async (sessionId) => {
     await confirmDelete('确定要删除这个会话吗？')
     await sessionStore.deleteSession(sessionId)
     ElMessage.success('会话已删除')
-  } catch {
+  } catch (err) {
+    // 用户取消删除确认或删除失败时保持现状，仅记录
+    logger.debug('[Sidebar] 删除会话操作被取消或失败:', err)
   }
 }
 

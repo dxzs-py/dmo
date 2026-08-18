@@ -31,7 +31,6 @@ from .subagents import (
     DOC_ANALYST_PROMPT,
     REPORT_WRITER_PROMPT,
     WEB_RESEARCHER_PROMPT,
-    get_subagent_info,
 )
 from .task_manager import TaskManager, get_task_manager, update_task_status
 
@@ -46,7 +45,6 @@ __all__ = [
     "create_research_with_checkpointer",
     "decompose",
     "error_handler",
-    "get_subagent_info",
     "get_task_manager",
     "search_dispatcher",
     "synthesize",

@@ -567,7 +567,10 @@ const executeStreamQuery = async () => {
       try {
         const errBody = await response.json()
         errorMsg = errBody.message || errBody.error || errorMsg
-      } catch {}
+      } catch (err) {
+        // 错误响应体非 JSON 时回退到默认 HTTP 状态描述
+        logger.warn('[RAG] 解析错误响应失败:', err)
+      }
       throw new Error(errorMsg)
     }
 
@@ -747,7 +750,7 @@ const handleCreateIndex = async () => {
   
   try {
     await createFormRef.value.validate()
-  } catch (error) {
+  } catch {
     return
   }
   

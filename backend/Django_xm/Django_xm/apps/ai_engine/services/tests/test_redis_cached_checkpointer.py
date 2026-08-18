@@ -12,7 +12,6 @@
     python -m unittest Django_xm.apps.ai_engine.services.tests.test_redis_cached_checkpointer
 """
 
-import asyncio
 import unittest
 from unittest import mock
 
@@ -112,14 +111,14 @@ class TestRedisCachedCheckpointer(unittest.IsolatedAsyncioTestCase):
         self.assertIn(cp._cache_key("t1", "c1"), redis._store, "PG 写成功后才写 Redis")
 
     async def test_aput_redis_write_failure_does_not_break(self):
-        cp, inner, redis = self._make(redis=_FakeRedis(fail=True))
+        cp, inner, _redis = self._make(redis=_FakeRedis(fail=True))
         checkpoint = _make_tuple().checkpoint
         result = await cp.aput(_PARENT_CFG, checkpoint, {"step": 1}, {})
         self.assertEqual(result, _CFG, "Redis 写失败不影响 PG 结果")
         self.assertEqual(inner.aput_calls, 1)
 
     async def test_aget_tuple_cache_hit_skips_inner(self):
-        cp, inner, redis = self._make()
+        cp, inner, _redis = self._make()
         await cp.aput(_PARENT_CFG, _make_tuple().checkpoint, {"step": 1}, {})
         inner.aget_calls = 0
         t = await cp.aget_tuple(_CFG)
@@ -136,7 +135,7 @@ class TestRedisCachedCheckpointer(unittest.IsolatedAsyncioTestCase):
         self.assertIn(cp._cache_key("t1", "c1"), redis._store, "回源成功后回填缓存")
 
     async def test_aget_tuple_redis_down_falls_back_to_pg(self):
-        cp, inner, redis = self._make(redis=_FakeRedis(fail=True))
+        cp, inner, _redis = self._make(redis=_FakeRedis(fail=True))
         inner.store["c1"] = _make_tuple()
         t = await cp.aget_tuple(_CFG)
         self.assertEqual(inner.aget_calls, 1, "Redis 宕机回源 inner")

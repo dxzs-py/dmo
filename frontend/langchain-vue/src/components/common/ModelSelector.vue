@@ -1,11 +1,11 @@
 <script setup>
 import { ref, computed, onMounted, inject } from 'vue'
-import { ElSelect, ElOption, ElOptionGroup, ElInput, ElSwitch, ElButton, ElTooltip, ElDivider, ElTag, ElSlider, ElInputNumber, ElPopover } from 'element-plus'
-import { Check, Loading, Setting, Connection, Warning, Close } from '@element-plus/icons-vue'
+import { ElSelect, ElOption, ElOptionGroup, ElInput, ElSwitch, ElButton, ElTooltip, ElTag, ElSlider, ElInputNumber, ElPopover } from 'element-plus'
+import { Check, Loading, Setting, Connection, Warning } from '@element-plus/icons-vue'
 import { useModelStore } from '../../stores/model'
 import { ElMessage } from 'element-plus'
 
-const props = defineProps({
+defineProps({
   disabled: {
     type: Boolean,
     default: false

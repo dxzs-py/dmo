@@ -11,16 +11,16 @@ from rest_framework.views import APIView
 from Django_xm.apps.chat.services.cross_app import get_active_session_ids_for_research_task
 from Django_xm.apps.core.services.file_manager import get_file_manager
 from Django_xm.apps.core.throttling import ResearchRateThrottle
+from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.event_schema import EventType
+from Django_xm.common.responses import error_response, not_found_response, success_response
+from Django_xm.common.serializers import EmptySerializer
 from Django_xm.services.fastapi_service.event_bus import (
     SESSION_TYPE_RESEARCH,
     SIGNAL_START,
     publish_retry_subagent_signal,
     publish_signal,
 )
-from Django_xm.common.error_codes import ErrorCode
-from Django_xm.common.event_schema import EventType
-from Django_xm.common.responses import error_response, not_found_response, success_response
-from Django_xm.common.serializers import EmptySerializer
 
 from .models import ResearchTask, ResearchTaskStatus
 from .serializers import (
@@ -118,7 +118,6 @@ class DeepResearchStartView(APIView):
                     "user_id": request.user.id,
                     "session_id": None,
                     "message_id": "",
-                    "publish_to_redis": False,
                     "enable_web_search": data.get("enable_web_search", True),
                     "enable_doc_analysis": data.get("enable_doc_analysis", False),
                     "knowledge_base_ids": knowledge_base_ids,
@@ -253,7 +252,6 @@ class DeepResearchContinueView(APIView):
                     "user_id": request.user.id,
                     "session_id": parent_task.session_id,
                     "message_id": "",
-                    "publish_to_redis": False,
                     "enable_web_search": new_task.enable_web_search,
                     "enable_doc_analysis": new_task.enable_doc_analysis,
                     "knowledge_base_ids": new_task.knowledge_base_ids,
@@ -484,10 +482,9 @@ class DeepResearchTaskDeleteView(APIView):
 
         # D7.4：研究任务删除时上层递归回收子代理（父线程 = task_id，仅终止非终态实例）
         try:
-            from Django_xm.async_utils import run_async
-
             from Django_xm.apps.ai_engine.models import SubAgentStatus
             from Django_xm.apps.ai_engine.subagent_runtime import get_subagent_runtime
+            from Django_xm.async_utils import run_async
 
             async def _terminate():
                 runtime = get_subagent_runtime()

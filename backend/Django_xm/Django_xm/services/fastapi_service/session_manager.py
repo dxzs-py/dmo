@@ -46,6 +46,8 @@ class SessionManager:
         self._redis = None
         self._pubsub = None
         self._subscription_task: asyncio.Task | None = None
+        # 后台任务引用集合（信令触发的恢复协程），防止被 GC 回收
+        self._background_tasks: set[asyncio.Task] = set()
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -114,7 +116,6 @@ class SessionManager:
             user_id=payload.get("user_id"),
             session_id=payload.get("session_id"),
             message_id=payload.get("message_id", ""),
-            publish_to_redis=bool(payload.get("publish_to_redis")),
             params=payload,
             session_type=payload.get("session_type", "research"),
         )
@@ -150,7 +151,13 @@ class SessionManager:
         """
         subagent_thread_id = payload.get("subagent_thread_id") or ""
         if subagent_thread_id:
-            asyncio.create_task(self._resume_subagent_from_signal(payload, subagent_thread_id))
+            task = asyncio.create_task(
+                self._resume_subagent_from_signal(payload, subagent_thread_id),
+                name=f"subagent-resume-signal-{subagent_thread_id}",
+            )
+            # 保存引用防止被 GC 回收；完成后自动从集合移除
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
             return
 
         executor = self._sessions.get(thread_id)
@@ -175,12 +182,11 @@ class SessionManager:
         3. runtime.resume 重建子代理 graph 并 Command(resume=decisions) 断点续跑，
            子代理完成后经生命周期回调唤醒父 graph（spec D4）。
         """
+        from Django_xm.apps.ai_engine.subagent_runtime import get_subagent_runtime
         from Django_xm.services.fastapi_service.event_bus import (
             SESSION_TYPE_CHAT,
             SESSION_TYPE_RESEARCH,
         )
-
-        from Django_xm.apps.ai_engine.subagent_runtime import get_subagent_runtime
 
         resume_value = payload.get("resume_value")
         decisions = resume_value if isinstance(resume_value, dict) else {}
@@ -321,7 +327,6 @@ class SessionManager:
             "user_id": task.created_by_id,
             "session_id": task.session_id,
             "message_id": "",
-            "publish_to_redis": bool(task.session_id),
             "enable_web_search": task.enable_web_search,
             "enable_doc_analysis": task.enable_doc_analysis,
             "knowledge_base_ids": task.knowledge_base_ids,
@@ -418,7 +423,6 @@ class SessionManager:
                 "user_id": task.created_by_id,
                 "session_id": task.session_id,
                 "message_id": "",
-                "publish_to_redis": bool(task.session_id),
                 "enable_web_search": task.enable_web_search,
                 "enable_doc_analysis": task.enable_doc_analysis,
                 "knowledge_base_ids": task.knowledge_base_ids,

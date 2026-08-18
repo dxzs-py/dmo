@@ -102,7 +102,10 @@ export async function extractSSEError(response) {
         const parsed = JSON.parse(sseMatch[1])
         errorMsg = parsed.message || parsed.error || errorMsg
       }
-    } catch {}
+    } catch (err) {
+      // 响应体既非 JSON 也非有效 SSE data 行时，回退到默认 HTTP 状态描述
+      logger.warn('[API] 解析 SSE 错误响应失败:', err)
+    }
   }
   return new Error(errorMsg)
 }

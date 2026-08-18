@@ -5,7 +5,7 @@
 
 from rest_framework import serializers
 
-from .models import WorkflowExecution, WorkflowSession
+from .models import WorkflowAttempt, WorkflowExecution, WorkflowQuestion, WorkflowSession
 
 
 class WorkflowStartSerializer(serializers.Serializer):
@@ -20,6 +20,18 @@ class WorkflowStartSerializer(serializers.Serializer):
         required=False,
         default=list,
         help_text="用户选择的知识库名称列表（原始名称，对应 KnowledgeBaseSelector 的 v-model）",
+    )
+    # ===== 用户运行时模型配置（与深度研究模块 ResearchStartSerializer 字段语义保持一致）=====
+    use_deep_thinking = serializers.BooleanField(default=False, required=False, help_text="是否启用深度思考")
+    use_web_search = serializers.BooleanField(default=False, required=False, help_text="是否启用网络查询")
+    provider_id = serializers.CharField(required=False, allow_null=True, max_length=50, help_text="模型提供商 ID")
+    model_name = serializers.CharField(required=False, allow_null=True, max_length=100, help_text="模型名称")
+    temperature = serializers.FloatField(
+        required=False, allow_null=True, min_value=0, max_value=2, help_text="生成温度"
+    )
+    max_tokens = serializers.IntegerField(required=False, allow_null=True, min_value=1, help_text="最大生成 token 数")
+    special_params = serializers.DictField(
+        required=False, allow_null=True, help_text="模型专属参数（如 thinking、reasoning_effort）"
     )
 
     def validate(self, data):
@@ -137,6 +149,22 @@ class WorkflowExecutionSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["id", "thread_id", "created_at", "updated_at"]
+
+
+class WorkflowQuestionSerializer(serializers.ModelSerializer):
+    """工作流题目序列化器"""
+
+    class Meta:
+        model = WorkflowQuestion
+        fields = "__all__"
+
+
+class WorkflowAttemptSerializer(serializers.ModelSerializer):
+    """工作流练习轮次序列化器"""
+
+    class Meta:
+        model = WorkflowAttempt
+        fields = "__all__"
 
 
 class WorkflowSessionSerializer(serializers.ModelSerializer):

@@ -5,7 +5,7 @@ import { useSessionStore } from '@/stores/session'
 import { useResearchStore } from '@/stores/research'
 import { logger } from '@/utils/logger'
 import { transformBackendMessageToFrontend, toCamelCase } from '@/utils/sessionTransformers'
-import { _mergeToolCalls } from '@/utils/messageOperations'
+import { _mergeToolCalls, NON_CONTENT_FIELDS } from '@/utils/messageOperations'
 import { ToolCallStatus } from '@/types'
 import { getToolCallStatusPriority, TERMINAL_STATUSES } from '@/utils/toolCallStateMachine'
 
@@ -42,12 +42,11 @@ const _TERMINAL_TOOL_CALL_STATUSES = new Set(
 
 /**
  * 快照校对消息状态提升时"始终以后端为准"的非内容字段（后端是元数据权威）
- * 注意：与 messageOperations.js 的 _NON_CONTENT_FIELDS 保持一致，
+ * 统一使用 messageOperations.NON_CONTENT_FIELDS（单一导出，spec Task 6），
  * researchTaskStatus 是研究卡片"进行中/已完成"判定的权威来源（P7 根因修复），
  * 快照校对必须注入，否则实时流式期间消息 researchTaskStatus 恒为 null，
  * 卡片回退 streamState 判定导致"研究已完成"误显。
  */
-const _SNAPSHOT_NON_CONTENT_FIELDS = ['tokenCount', 'responseTime', 'model', 'backendId', 'researchTaskId', 'researchTaskStatus']
 
 /**
  * 按 sessionId 缓存的快照校对实例
@@ -106,7 +105,7 @@ function _reconcileMessageField(localMsg, backendMsg) {
   if (!localMsg || !backendMsg) return
 
   // 非内容字段始终以后端为准（后端是元数据权威）
-  for (const field of _SNAPSHOT_NON_CONTENT_FIELDS) {
+  for (const field of NON_CONTENT_FIELDS) {
     if (backendMsg[field] !== undefined) {
       localMsg[field] = backendMsg[field]
     }
@@ -155,7 +154,7 @@ function _reconcileMessageField(localMsg, backendMsg) {
   const versionIdx = localMsg.currentVersion
   if (localMsg.versions && versionIdx !== undefined && localMsg.versions[versionIdx]) {
     const ver = localMsg.versions[versionIdx]
-    for (const field of _SNAPSHOT_NON_CONTENT_FIELDS) {
+    for (const field of NON_CONTENT_FIELDS) {
       if (localMsg[field] !== undefined) ver[field] = localMsg[field]
     }
     ver.toolCalls = localMsg.toolCalls
@@ -378,8 +377,11 @@ function createSnapshotSyncInstance({ kind, id }) {
         const timer = setTimeout(() => {
           reject(new Error(`Snapshot timeout: ${id}`))
         }, SNAPSHOT_TIMEOUT_MS)
-        // 清理 timer 避免内存泄漏
-        fetchPromise.finally(() => clearTimeout(timer))
+        // 清理 timer 避免内存泄漏；finally 派生 promise 需消费 rejection，
+        // 否则 fetchPromise reject（如 404 会话已删除）时派生 promise 同步
+        // reject 且无人消费 → Unhandled Promise Rejection（与 approval 队列
+        // waiting_for_others 同类 bug）
+        fetchPromise.finally(() => clearTimeout(timer)).catch(() => {})
       })
 
       let resp
@@ -587,15 +589,6 @@ export function useSnapshotSync(sessionId) {
 }
 
 /**
- * 清理指定会话的快照校对实例缓存（会话删除时调用）
- *
- * @param {string} sessionId
- */
-export function clearSnapshotSyncInstance(sessionId) {
-  instanceCache.delete(sessionId)
-}
-
-/**
  * 深度研究任务快照校对 composable（task 通道，v5 M19-c 新增）
  *
  * 按 taskId 缓存实例，debounce 500ms，避免短时间内多次请求快照接口。
@@ -614,13 +607,4 @@ export function useSnapshotSyncByTask(taskId) {
     taskInstanceCache.set(taskId, instance)
   }
   return instance
-}
-
-/**
- * 清理指定任务的快照校对实例缓存（任务删除时调用）
- *
- * @param {string} taskId
- */
-export function clearTaskSnapshotSyncInstance(taskId) {
-  taskInstanceCache.delete(taskId)
 }

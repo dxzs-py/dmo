@@ -291,7 +291,10 @@ class SubAgentInstance(models.Model):
         null=True,
         blank=True,
         verbose_name="中断信息",
-        help_text="interrupt 审批 payload（批量结构：interrupt_type/interrupt_id/requests:[{tool_call_id/tool_name/args/risk_level/reason}]）",
+        help_text=(
+            "interrupt 审批 payload（批量结构：interrupt_type/interrupt_id/"
+            "requests:[{tool_call_id/tool_name/args/risk_level/reason}]）"
+        ),
     )
     result_preview = models.TextField(blank=True, default="", verbose_name="结果预览")
     metadata = models.JSONField(default=dict, blank=True, verbose_name="元数据")

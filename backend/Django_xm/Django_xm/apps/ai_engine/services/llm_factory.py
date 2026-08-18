@@ -902,20 +902,39 @@ def get_structured_model_with_fallback(
     resolved_provider: str = model_provider or getattr(django_settings, "AI_DEFAULT_PROVIDER", "openai")
     resolved_model_name: str = model_name or settings.openai_model
 
+    # 用户运行时专属参数（来自 state，如 DeepSeek 的 thinking / reasoning_effort）
+    special_params = kwargs.pop("special_params", None)
+    thinking_enabled = is_thinking_enabled(special_params, resolved_provider)
+
     structured_models: list[tuple[str, str, Any]] = []
     creation_errors: list[str] = []
 
     # 1. 创建主模型
     try:
-        # DeepSeek thinking 模式与 with_structured_output (tool_choice) 不兼容
-        # 结构化输出场景下，显式禁用 thinking 模式
-        # DeepSeek API 要求格式: {"thinking": {"type": "disabled"}}
-        primary_special_params = None
-        if resolved_provider == "deepseek":
+        if resolved_provider == "deepseek" and thinking_enabled:
+            # DeepSeek thinking mode 与 with_structured_output (tool_choice) 不兼容，
+            # 走 JSON mode：thinking 模型 + response_format={"type": "json_object"} + JsonModeStructuredModel
+            logger.info(
+                f"[LLM Factory] DeepSeek 深度思考 + JSON mode 结构化输出: {resolved_provider}/{resolved_model_name}"
+            )
+            thinking_model = get_chat_model_by_provider(
+                provider_id=resolved_provider,
+                model_name=resolved_model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                streaming=streaming,
+                max_retries=0,
+                special_params=special_params,
+            )
+            primary_structured = JsonModeStructuredModel(
+                thinking_model.bind(response_format={"type": "json_object"}),
+                schema,
+                resolved_provider,
+                resolved_model_name,
+            )
+        elif resolved_provider == "deepseek":
+            # 未启用 thinking：保持原行为，显式禁用 thinking（with_structured_output 路径）
             primary_special_params = {"thinking": {"type": "disabled"}}
-
-        if primary_special_params:
-            # 需要通过 get_chat_model_by_provider 创建（支持 special_params）
             primary_model = get_chat_model_by_provider(
                 provider_id=resolved_provider,
                 model_name=resolved_model_name,
@@ -925,6 +944,19 @@ def get_structured_model_with_fallback(
                 max_retries=0,
                 special_params=primary_special_params,
             )
+            primary_structured = primary_model.with_structured_output(schema)
+        elif special_params:
+            # 其他 provider 且携带 special_params（如 Ollama reasoning）：走 by_provider 以应用特殊参数
+            primary_model = get_chat_model_by_provider(
+                provider_id=resolved_provider,
+                model_name=resolved_model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                streaming=streaming,
+                max_retries=0,
+                special_params=special_params,
+            )
+            primary_structured = primary_model.with_structured_output(schema)
         else:
             primary_model = _create_single_chat_model(
                 model_name=model_name,
@@ -935,7 +967,7 @@ def get_structured_model_with_fallback(
                 max_retries=0,
                 **kwargs,
             )
-        primary_structured = primary_model.with_structured_output(schema)
+            primary_structured = primary_model.with_structured_output(schema)
         structured_models.append((resolved_provider, resolved_model_name, primary_structured))
         logger.debug(f"主模型结构化输出已配置: {resolved_provider}/{resolved_model_name}")
     except Exception as e:

@@ -4,6 +4,7 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import hljs from 'highlight.js/lib/core'
 import { normalizeGfmTables } from '@/utils/markdownTable'
+import { logger } from '@/utils/logger'
 import javascript from 'highlight.js/lib/languages/javascript'
 import python from 'highlight.js/lib/languages/python'
 import json from 'highlight.js/lib/languages/json'
@@ -50,7 +51,10 @@ async function loadExtraLanguage(lang) {
     const mod = await loader()
     hljs.registerLanguage(lang, mod.default)
     loadedExtraLangs.add(lang)
-  } catch {}
+  } catch (err) {
+    // 语言包懒加载失败时降级为无高亮渲染，不影响代码块内容展示
+    logger.warn(`[Markdown] 加载代码高亮语言 "${lang}" 失败:`, err)
+  }
 }
 
 marked.use({
@@ -209,12 +213,19 @@ function handleClick(e) {
 </script>
 
 <template>
+  <!--
+    v-html 使用说明：renderedContent 由 marked 渲染 Markdown 后，
+    经 DOMPurify.sanitize 白名单净化（见脚本 renderedContent 计算属性），
+    原始 AI/用户输入不会直接注入 DOM，此处 v-html 是渲染净化后 HTML 的唯一入口。
+  -->
+  <!-- eslint-disable vue/no-v-html -->
   <div
     ref="rendererRef"
     class="markdown-renderer"
     @click="handleClick"
     v-html="renderedContent"
   ></div>
+  <!-- eslint-enable vue/no-v-html -->
   <el-image-viewer
     v-if="previewVisible"
     :url-list="[previewUrl]"

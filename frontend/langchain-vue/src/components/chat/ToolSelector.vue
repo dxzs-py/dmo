@@ -66,11 +66,6 @@ const mergedSelected = computed(() => [
   ...selectedSkills.value,
 ])
 
-// 可选工具总数（用于统计展示）
-const totalSelectable = computed(() =>
-  selectableLangchainTools.value.length + mcpServers.value.length + skills.value.length + skillPackages.value.length,
-)
-
 function splitModelValue(val) {
   const safeVal = Array.isArray(val) ? val : []
   const langchainNames = new Set(langchainTools.value.map(t => t.name))
@@ -199,22 +194,6 @@ const handleDeleteCustomTool = (tool) => withPopoverLock(async () => {
   }
 })
 
-const handleToggleCustomTool = (tool) => withPopoverLock(async () => {
-  const newStatus = tool.status === 'active' ? 'disabled' : 'active'
-  const label = newStatus === 'active' ? '启用' : '禁用'
-  try {
-    await toolsAPI.toggleCustomTool({ name: tool.name, status: newStatus })
-    ElMessage.success(`工具 "${tool.name}" 已${label}`)
-    if (newStatus === 'disabled') {
-      selectedLangChainTools.value = selectedLangChainTools.value.filter(n => n !== tool.name)
-    }
-    toolsStore.invalidateLangchainTools()
-    fetchLangchainTools()
-  } catch (e) {
-    ElMessage.error(`${label}失败: ` + (e.response?.data?.message || e.message))
-  }
-})
-
 // ── MCP Tab 操作 ──
 const systemMcpServers = computed(() => toolsStore.systemMcpServers)
 const userMcpServers = computed(() => toolsStore.userMcpServers)
@@ -293,22 +272,6 @@ const handleEditSkill = (skill) => {
   showSkillUploadDialog.value = true
 }
 
-const handleToggleMcpServer = (srv) => withPopoverLock(async () => {
-  const newStatus = srv.status === 'active' ? 'disabled' : 'active'
-  const label = newStatus === 'active' ? '启用' : '禁用'
-  try {
-    await toolsAPI.toggleMcpServer({ name: srv.name, status: newStatus })
-    ElMessage.success(`MCP Server "${srv.name}" 已${label}`)
-    if (newStatus === 'disabled') {
-      selectedMcpServers.value = selectedMcpServers.value.filter(n => n !== srv.name)
-    }
-    toolsStore.invalidateMcpServers()
-    fetchMcpServers()
-  } catch (e) {
-    ElMessage.error(`${label}失败: ` + (e.response?.data?.message || e.message))
-  }
-})
-
 // ── Skill Tab 操作 ──
 const systemSkills = computed(() => toolsStore.systemSkills)
 const userSkills = computed(() => toolsStore.userSkills)
@@ -354,22 +317,6 @@ const handleDeleteSkill = (skill) => withPopoverLock(async () => {
   }
 })
 
-const handleToggleSkill = (skill) => withPopoverLock(async () => {
-  const newStatus = skill.status === 'active' ? 'disabled' : 'active'
-  const label = newStatus === 'active' ? '启用' : '禁用'
-  try {
-    await toolsAPI.toggleSkill({ name: skill.name, status: newStatus })
-    ElMessage.success(`技能 "${skill.name}" 已${label}`)
-    if (newStatus === 'disabled') {
-      selectedSkills.value = selectedSkills.value.filter(n => n !== skill.name)
-    }
-    toolsStore.invalidateSkills()
-    fetchSkills()
-  } catch (e) {
-    ElMessage.error(`${label}失败: ` + (e.response?.data?.message || e.message))
-  }
-})
-
 // ── Skill Packages 操作 ──
 const isSkillPackageSelected = (name) => {
   return selectedSkills.value.includes(`skill_${name}`)
@@ -384,21 +331,6 @@ const toggleSkillPackage = (name) => {
     selectedSkills.value = [...selectedSkills.value, toolName]
   }
 }
-
-const toggleSkillPackageStatus = (pkg) => withPopoverLock(async () => {
-  const newStatus = pkg.status === 'active' ? 'disabled' : 'active'
-  try {
-    await toolsAPI.toggleSkillPackage({ name: pkg.name, status: newStatus })
-    ElMessage.success(`技能包 "${pkg.name}" 已${newStatus === 'active' ? '启用' : '禁用'}`)
-    if (newStatus === 'disabled') {
-      const toolName = `skill_${pkg.name}`
-      selectedSkills.value = selectedSkills.value.filter(n => n !== toolName)
-    }
-    fetchSkillPackages(true)
-  } catch (e) {
-    ElMessage.error('操作失败: ' + (e.response?.data?.message || e.message))
-  }
-})
 
 const deleteSkillPackage = (name) => withPopoverLock(async () => {
   try {

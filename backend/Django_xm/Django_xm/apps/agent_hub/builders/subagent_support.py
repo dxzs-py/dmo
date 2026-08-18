@@ -513,7 +513,7 @@ class SubAgentContentMiddleware(AgentMiddleware):
 
             return extract_thinking_content(msg) or ""
         except Exception:
-            pass
+            logger.debug("[SubAgentContent] extract_thinking_content 提取失败（回退兜底路径）", exc_info=True)
         # 兜底：additional_kwargs.reasoning_content 直接读取
         try:
             additional_kwargs = getattr(msg, "additional_kwargs", {}) or {}
@@ -521,7 +521,7 @@ class SubAgentContentMiddleware(AgentMiddleware):
             if isinstance(reasoning, str):
                 return reasoning
         except Exception:
-            pass
+            logger.debug("[SubAgentContent] additional_kwargs 读取失败（返回空思考）", exc_info=True)
         return ""
 
     async def aafter_model(self, state: dict[str, Any], runtime) -> dict[str, Any] | None:

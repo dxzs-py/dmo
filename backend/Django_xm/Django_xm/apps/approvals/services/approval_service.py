@@ -37,6 +37,7 @@ from Django_xm.common.realtime_sync import (
 )
 from Django_xm.common.redis_utils import get_redis_client
 from Django_xm.common.risk_levels import RiskLevel
+from Django_xm.common.tool_call_aggregation import STATE_TO_STATUS
 from Django_xm.common.tool_call_lifecycle import ToolCallContext, service
 
 logger = logging.getLogger(__name__)
@@ -1133,15 +1134,8 @@ def sync_approval_state_to_chat_message(approval: Approval, state: str) -> bool:
 
     # B3: 同步 tool_call 顶层 status 字段（与 approval.state 一致），
     # 确保非审批单页（如深度研究快照）也能拿到工具执行状态。
-    status_mapping = {
-        Approval.STATE_PENDING: "waiting",
-        Approval.STATE_PROCESSING: "running",
-        Approval.STATE_WAITING: "waiting",
-        Approval.STATE_APPROVED: "completed",
-        Approval.STATE_REJECTED: "rejected",
-        Approval.STATE_TIMEOUT: "timeout",
-    }
-    mapped_status = status_mapping.get(state, "")
+    # 映射值源：common.tool_call_aggregation.STATE_TO_STATUS（唯一权威）。
+    mapped_status = STATE_TO_STATUS.get(state, "")
     if mapped_status and target_tc.get("status") != mapped_status:
         target_tc["status"] = mapped_status
         target_changed = True

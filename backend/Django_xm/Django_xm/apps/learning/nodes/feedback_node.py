@@ -5,9 +5,9 @@
 from datetime import UTC, datetime
 from typing import Any
 
-from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
 from Django_xm.apps.core.config import get_logger
 
+from ..services._model_helper import get_chat_model_from_state
 from ..services.state import StudyFlowState
 
 logger = get_logger(__name__)
@@ -32,7 +32,8 @@ def feedback_node(state: StudyFlowState) -> dict[str, Any]:
 
         logger.info(f"[Feedback Node] 当前得分: {score}, 重试次数: {retry_count}")
 
-        model = get_chat_model()
+        # 模型取自 state 中的用户运行时配置（支持深度思考 special_params）
+        model = get_chat_model_from_state(state)
 
         question_scores = score_details.get("question_scores", [])
         wrong_questions = [q for q in question_scores if not q["is_correct"]]

@@ -152,15 +152,24 @@ export async function fetchSSE(url, options = {}) {
                 if (fieldErrors) parts.push(fieldErrors)
               }
               errorMsg = parts.filter(Boolean).join(' - ') || errorMsg
-            } catch {
+            } catch (err) {
+              // 响应体非 JSON 时尝试按 SSE data 行提取错误信息
+              logger.warn('[SSE] 错误响应体解析失败:', err)
               const sseMatch = body.match(/data:\s*(.*)/)
               if (sseMatch) {
-                const parsed = JSON.parse(sseMatch[1])
-                errorMsg = parsed.message || parsed.error || errorMsg
+                try {
+                  const parsed = JSON.parse(sseMatch[1])
+                  errorMsg = parsed.message || parsed.error || errorMsg
+                } catch (sseErr) {
+                  logger.warn('[SSE] 错误响应 SSE 数据解析失败:', sseErr)
+                }
               }
             }
           }
-        } catch {}
+        } catch (err) {
+          // 读取/解析错误响应体失败时回退到默认 HTTP 状态描述
+          logger.warn('[SSE] 读取错误响应内容失败:', err)
+        }
         // Task 6.3：服务端已响应（4xx/5xx）说明请求已被受理处理，
         // 标记 __serverResponse 使 catch 不再重发。
         const serverError = new Error(errorMsg)
@@ -234,7 +243,10 @@ export async function readSSEStream(response, onEvent, signal) {
         try {
           const parsed = JSON.parse(dataStr)
           onEvent(parsed)
-        } catch {}
+        } catch (err) {
+          // 流结束时缓冲区残留的半行数据可能不完整，解析失败仅记录，忽略该残片
+          logger.warn('[SSE] 解析尾部数据失败:', dataStr, err)
+        }
       }
     }
   } finally {

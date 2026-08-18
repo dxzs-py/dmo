@@ -1,9 +1,8 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { useUserStore } from '@/stores/user'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { User, Lock, Phone, Upload } from '@element-plus/icons-vue'
-import { chatAPI } from '@/api/chat'
 import { userAPI } from '@/api/user'
 import { logger } from '../utils/logger'
 
@@ -103,7 +102,7 @@ async function handleAvatarUpload(options) {
       ElMessage.success('头像更新成功')
       await userStore.getUserInfo()
     }
-  } catch (error) {
+  } catch {
     ElMessage.error('头像上传失败')
   } finally {
     avatarUploading.value = false

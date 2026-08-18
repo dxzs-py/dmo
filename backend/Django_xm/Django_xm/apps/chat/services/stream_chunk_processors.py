@@ -3,7 +3,7 @@
 集中处理流式聊天中的消息块（chunk）解析与事件分发：
 - ``_sync_pending_to_stream_state``：将 _pending_content 同步到共享 stream_state
 - ``extract_thinking_content``：统一提取思考内容（兼容 DeepSeek/Ollama/Anthropic）
-- ``_map_state_to_status`` / ``_STATE_TO_STATUS``：工具状态到 status 的映射
+- ``_map_state_to_status``：工具状态到 status 的映射（值源 common.tool_call_aggregation.STATE_TO_STATUS）
 - ``_extract_tool_params`` / ``_fix_groq_tool_call`` / ``_try_parse_concatenated_json``：
     工具参数提取与修复辅助
 - ``_find_tool_call_key_by_index`` / ``_migrate_key_if_needed``：tool_calls_map 键管理
@@ -26,6 +26,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from Django_xm.common.event_schema import EventSource, EventType
+from Django_xm.common.tool_call_aggregation import STATE_TO_STATUS
 
 logger = logging.getLogger(__name__)
 
@@ -78,17 +79,11 @@ def extract_thinking_content(chunk, provider_id: str = "") -> str | None:
 # 确保 SSE tool 事件与 WebSocket tool_call_pending 事件状态一致。
 # 原映射为 "running" 导致触发浏览器显示"执行中"，非触发浏览器显示"待审批"。
 # 实际执行状态由 tool_call_running 事件（SAFE 级自动通过 / 审批通过后）推进。
-_STATE_TO_STATUS = {
-    "input-available": "pending",
-    "output-available": "completed",
-    "output-error": "failed",
-    "rejected": "rejected",
-    "timeout": "timeout",
-}
+# 映射值源：common.tool_call_aggregation.STATE_TO_STATUS（唯一权威）。
 
 
 def _map_state_to_status(state: str) -> str:
-    return _STATE_TO_STATUS.get(state, "pending")
+    return STATE_TO_STATUS.get(state, "pending")
 
 
 def _extract_tool_params(tool_call: dict) -> dict:
@@ -373,13 +368,7 @@ def _handle_ai_message_chunk(
                 continue
 
             dedup_key = None
-            if tc_id and tc_id in tool_calls_map:
-                if tc_name and tc_name in tool_calls_map and tc_id not in tool_calls_map:
-                    _migrate_key_if_needed(tool_calls_map, tc_name, tc_id)
-                    if tc_name in tool_args_accumulator and tc_id not in tool_args_accumulator:
-                        tool_args_accumulator[tc_id] = tool_args_accumulator.pop(tc_name)
-                dedup_key = tc_id
-            elif tc_id:
+            if (tc_id and tc_id in tool_calls_map) or tc_id:
                 if tc_name and tc_name in tool_calls_map and tc_id not in tool_calls_map:
                     _migrate_key_if_needed(tool_calls_map, tc_name, tc_id)
                     if tc_name in tool_args_accumulator and tc_id not in tool_args_accumulator:

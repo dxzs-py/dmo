@@ -11,35 +11,7 @@ from django.apps import apps
 logger = logging.getLogger(__name__)
 
 
-# ── 研究任务 Redis 通道前缀（供 chat 应用订阅研究结果/审批事件） ──────────
-# 定义在 research_runner.py，此处通过 facade 重新导出，
-# 供 chat 应用通过 cross_app 门面访问，避免 chat → research_runner 直接依赖。
-#
-# 使用 __getattr__ 懒加载：research_runner.py 顶层 import token_counter，
-# 若在 app 初始化期间被 eager import 会触发 ai_engine 模块链加载，
-# 此时 approvals 等 app 可能尚未就绪导致 AppRegistryNotReady。
-# __getattr__ 确保 chat 顶层 `from cross_app import REDIS_CHANNEL_PREFIX`
-# 不再在 app 加载阶段触发 research_runner 的加载。
-
-_REDIS_CONSTANTS = {
-    "REDIS_CHANNEL_PREFIX",
-    "REDIS_APPROVAL_PREFIX",
-    "REDIS_APPROVAL_RESPONSE_PREFIX",
-}
-
-
-def __getattr__(name):
-    if name in _REDIS_CONSTANTS:
-        from . import research_runner
-
-        return getattr(research_runner, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
 __all__ = [
-    "REDIS_APPROVAL_PREFIX",  # noqa: F822  懒加载（见 __getattr__）
-    "REDIS_APPROVAL_RESPONSE_PREFIX",  # noqa: F822  懒加载（见 __getattr__）
-    "REDIS_CHANNEL_PREFIX",  # noqa: F822  懒加载（见 __getattr__）
     "cleanup_research_if_both_deleted",
     "get_linked_research_tasks",
     "get_linked_research_tasks_including_deleted",

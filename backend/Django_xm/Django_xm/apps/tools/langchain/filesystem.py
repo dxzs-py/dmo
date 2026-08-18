@@ -2,6 +2,7 @@ import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
@@ -12,27 +13,25 @@ from Django_xm.apps.tools.errors import TOOL_VERSION, StandardToolResult, ToolSt
 logger = logging.getLogger(__name__)
 
 
-def get_data_dir() -> str:
+def _resolve_data_dir() -> str:
+    """解析数据根目录（settings.DATA_DIR，回退 backend 同级 data/）。"""
     try:
         from django.conf import settings as django_settings
 
-        return str(getattr(django_settings, "TOOLS_LANGCHAIN_DIR", django_settings.DATA_DIR / "tools" / "langchain"))  # type: ignore[attr-defined]  # DATA_DIR is a custom Django setting not in stubs
-    except (ImportError, AttributeError):
-        try:
-            from Django_xm.apps.ai_engine.config import settings
-
-            return str(
-                getattr(
-                    settings,
-                    "TOOLS_LANGCHAIN_DIR",
-                    Path(getattr(settings, "data_dir", "data")) / "tools" / "langchain",
-                )
+        return str(
+            getattr(django_settings, "DATA_DIR", None)
+            or os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+                "data",
             )
-        except (ImportError, AttributeError):
-            base_dir = Path(__file__).resolve().parent.parent.parent.parent.parent
-            data_dir = base_dir / "data" / "tools" / "langchain"
-            data_dir.mkdir(parents=True, exist_ok=True)
-            return str(data_dir)
+        )
+    except (ImportError, AttributeError):
+        return str(
+            os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+                "data",
+            )
+        )
 
 
 class ResearchFileSystem:
@@ -40,23 +39,31 @@ class ResearchFileSystem:
         self,
         thread_id: str,
         base_path: str | None = None,
+        user_id: int | None = None,
+        session_id: str | None = None,
     ):
+        """会话文件系统（fs_* 工具共享存储后端）。
+
+        base_path 未显式传入时默认落点 ``{DATA_DIR}/chat/{user_id}/{session_id}``：
+        - 目录标识取自系统上下文（RunnableConfig 注入的 user_id/session_id），
+          而非 LLM 传入参数——LLM 可能传任意值（如任务主题），目录不可控，
+          原默认落点硬编码 ``data/research`` 即由此与代理模式错位；
+        - 深度研究链路不使用本工具（deep_builder 已过滤 fs_*，子代理继承
+          父工具集亦无 fs_*），故无需 research 专属分支。
+        """
         self.thread_id = thread_id
 
         if base_path is None:
-            from django.conf import settings as django_settings
-
-            data_dir = str(
-                getattr(django_settings, "DATA_DIR", None)
-                or os.path.join(
-                    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
-                    "data",
-                )
+            base_path = os.path.join(
+                _resolve_data_dir(),
+                "chat",
+                str(user_id) if user_id is not None else "_",
+                str(session_id) if session_id else str(thread_id),
             )
-            base_path = os.path.join(data_dir, "research")
 
         self.base_path = Path(base_path)
-        self.workspace_path = self.base_path / thread_id
+        # workspace = base（= data/chat/{user}/{session}），不再嵌套 LLM 传入的 thread_id
+        self.workspace_path = self.base_path
         self._workspace_initialized = False
 
     def _ensure_workspace(self) -> None:
@@ -241,10 +248,82 @@ class ResearchFileSystem:
 _filesystem_instances: dict[str, ResearchFileSystem] = {}
 
 
-def get_filesystem(thread_id: str) -> ResearchFileSystem:
-    if thread_id not in _filesystem_instances:
-        _filesystem_instances[thread_id] = ResearchFileSystem(thread_id)
-    return _filesystem_instances[thread_id]
+def get_filesystem(
+    thread_id: str,
+    user_id: int | None = None,
+    session_id: str | None = None,
+) -> ResearchFileSystem:
+    """获取（按 用户·会话 维度隔离的）文件系统实例。
+
+    缓存 key 同时包含 user_id/session_id：同一会话内多工具调用共享实例，
+    不同会话（即使 thread_id 相同）互不串目录。
+    """
+    key = f"{user_id if user_id is not None else '_'}:{session_id or thread_id}:{thread_id}"
+    if key not in _filesystem_instances:
+        _filesystem_instances[key] = ResearchFileSystem(
+            thread_id,
+            user_id=user_id,
+            session_id=session_id,
+        )
+    return _filesystem_instances[key]
+
+
+class FilesystemContextMixin:
+    """从 LangGraph RunnableConfig 捕获会话上下文，解析文件系统目录归属。
+
+    范式与 spawn_sub_agent 一致（覆写 invoke/ainvoke 捕获 configurable）：
+    - ``configurable.thread_id``：主 agent = session_id；子代理 = subagent_xxx。
+    - ``configurable.chat_session_id``：chat 场景子代理继承父会话 id。
+
+    目录归属（``_resolve_filesystem``）：
+    1. 主 agent（thread_id == session_id）→ 从 ``get_parent_tool_context`` 读取
+       user_id/session_id（chat_service 构建时写入）；
+    2. 子代理（thread_id = subagent_xxx）→ 用 chat_session_id 反查父上下文；
+    3. 深研上下文（research_ 前缀）→ research 目录（ResearchFileSystem 内部判定）；
+    4. 兜底：上下文缺失时以 thread_id 建目录（避免崩溃）。
+    """
+
+    # 工具为模块级单例，运行时捕获值保存在实例上；LangGraph 工具调用
+    # 前总是先 invoke/ainvoke 重新捕获，覆盖前一次残留（与 spawn 工具同模式）
+    _captured_thread_id: str = ""
+    _captured_chat_session_id: str = ""
+
+    def invoke(self, input, config=None, **kwargs) -> Any:
+        self._capture_configurable(config)
+        return super().invoke(input, config=config, **kwargs)
+
+    async def ainvoke(self, input, config=None, **kwargs) -> Any:
+        self._capture_configurable(config)
+        return await super().ainvoke(input, config=config, **kwargs)
+
+    def _capture_configurable(self, config) -> None:
+        if isinstance(config, dict):
+            configurable = config.get("configurable", {})
+            if isinstance(configurable, dict):
+                self._captured_thread_id = str(configurable.get("thread_id", "") or "")
+                self._captured_chat_session_id = str(configurable.get("chat_session_id", "") or "")
+
+    def _resolve_filesystem(self) -> ResearchFileSystem:
+        thread_id = self._captured_thread_id or ""
+        user_id: int | None = None
+        session_id: str | None = None
+
+        if thread_id:
+            # 主 agent / 子代理：优先从父工具上下文读取 user_id/session_id
+            from Django_xm.apps.tools.langchain.agent_context import get_parent_tool_context
+
+            ctx = get_parent_tool_context(thread_id)
+            cfg = ctx.get("config") or {}
+            user_id = cfg.get("user_id")
+            session_id = cfg.get("session_id")
+            if not session_id and self._captured_chat_session_id:
+                # 子代理场景：thread_id = subagent_xxx 查不到父上下文，
+                # 用 chat_session_id（父会话 id）反查父上下文补 user_id
+                session_id = self._captured_chat_session_id
+                parent_ctx = get_parent_tool_context(session_id)
+                user_id = user_id or (parent_ctx.get("config") or {}).get("user_id")
+
+        return get_filesystem(thread_id, user_id=user_id, session_id=session_id)
 
 
 class FsWriteFileInput(BaseModel):
@@ -252,43 +331,48 @@ class FsWriteFileInput(BaseModel):
         description="文件路径，支持相对路径（如'plan.md'、'notes/intro.md'）和绝对路径（如'D:\\docs\\report.md'）"
     )
     content: str = Field(description="要写入的内容")
-    thread_id: str = Field(description="线程ID，用于隔离不同研究任务的文件（必填）")
+    thread_id: str = Field(description="线程ID（必填；仅供隔离兼容，实际存储目录由系统会话上下文自动决定）")
 
 
 class FsReadFileInput(BaseModel):
     relative_path: str = Field(description="文件路径，支持相对路径和绝对路径")
-    thread_id: str = Field(description="线程ID（必填）")
+    thread_id: str = Field(description="线程ID（必填；仅供隔离兼容，实际存储目录由系统会话上下文自动决定）")
 
 
 class FsListFilesInput(BaseModel):
     subdirectory: str = Field(default="notes", description="子目录名称（plans/notes/reports/temp）")
-    thread_id: str = Field(description="线程ID（必填）")
+    thread_id: str = Field(description="线程ID（必填；仅供隔离兼容，实际存储目录由系统会话上下文自动决定）")
 
 
 class FsSearchFilesInput(BaseModel):
     keyword: str = Field(description="要搜索的关键词")
-    thread_id: str = Field(description="线程ID（必填）")
+    thread_id: str = Field(description="线程ID（必填；仅供隔离兼容，实际存储目录由系统会话上下文自动决定）")
     subdirectory: str = Field(default="notes", description="要搜索的子目录")
 
 
-class FsWriteFileTool(AsyncToolMixin, BaseTool):
+class FsWriteFileTool(FilesystemContextMixin, AsyncToolMixin, BaseTool):
     """文件写入工具
 
     审批由 ApprovalMiddleware 统一处理：
     - 绝对路径写入触发审批（FsWriteFileApprovalPolicy）
     - 相对路径写入无需审批
     工具层不参与审批判断。
+
+    目录归属（spec unify-agent-research-display-architecture 后续决策）：
+    相对路径默认落 ``data/chat/{user_id}/{session_id}/``（按用户·会话分组，
+    上下文从 RunnableConfig 注入，忽略 LLM 传入的 thread_id 参数——
+    该参数保留仅为兼容工具 schema 与审批展示，不再决定目录路径）。
     """
 
     name: str = "fs_write_file"
     version: str = TOOL_VERSION
     metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "file"})
     description: str = (
-        "写入内容到文件系统中的文件，用于保存研究笔记、计划、报告等。"
-        "适用场景：需要持久化存储中间结果、研究笔记、计划或报告，跨对话保存数据。"
+        "写入内容到文件系统中的文件，用于保存中间结果、笔记、计划、报告等。"
+        "适用场景：需要持久化存储中间结果、笔记、计划或报告，跨对话保存数据。"
         "不适用：读取文件（应使用 fs_read_file）、搜索文件内容（应使用 fs_search_files）。"
         "参数：relative_path-文件路径（支持相对路径如'plan.md'和绝对路径如'D:\\docs\\report.md'，必填），"
-        "content-要写入的文件内容（必填），thread_id-线程ID（用于隔离不同研究任务，必填）。"
+        "content-要写入的文件内容（必填），thread_id-线程ID（必填，系统会话上下文自动决定存储目录，传当前会话标识即可）。"
         "边界：禁止使用'..'路径穿越；相对路径自动根据路径匹配子目录（plans/notes/reports/temp）。"
     )
     args_schema: type[BaseModel] = FsWriteFileInput
@@ -299,8 +383,8 @@ class FsWriteFileTool(AsyncToolMixin, BaseTool):
         审批由 ApprovalMiddleware 统一处理，工具层不参与审批判断。
         绝对路径写入到达此方法时已通过审批。
         """
-        fs = get_filesystem(thread_id)
-        # 相对路径根据文件名匹配子目录（研究文件系统内）
+        fs = self._resolve_filesystem()
+        # 相对路径根据文件名匹配子目录（会话文件系统内）
         subdirectory = "notes"
         if "plans" in relative_path:
             subdirectory = "plans"
@@ -309,21 +393,21 @@ class FsWriteFileTool(AsyncToolMixin, BaseTool):
         return fs.write_file(relative_path, content, subdirectory)
 
 
-class FsReadFileTool(AsyncToolMixin, BaseTool):
+class FsReadFileTool(FilesystemContextMixin, AsyncToolMixin, BaseTool):
     name: str = "fs_read_file"
     version: str = TOOL_VERSION
     metadata: dict = Field(default_factory=lambda: {"tier": "standard", "visibility": "core", "category": "file"})
     description: str = (
-        "读取研究文件系统中指定文件的内容。"
-        "适用场景：需要查看之前保存的文件内容、回顾研究笔记或计划。"
+        "读取会话文件系统中指定文件的内容。"
+        "适用场景：需要查看之前保存的文件内容、回顾笔记或计划。"
         "不适用：写入文件（应使用 fs_write_file）、浏览目录（应使用 fs_list_files）。"
-        "参数：relative_path-相对路径文件名（必填），thread_id-线程ID（必填）。"
+        "参数：relative_path-相对路径文件名（必填），thread_id-线程ID（必填，系统会话上下文自动决定存储目录，传当前会话标识即可）。"
         "边界：禁止使用'..'路径穿越；文件不存在时返回错误提示。"
     )
     args_schema: type[BaseModel] = FsReadFileInput
 
     def _run(self, relative_path: str, thread_id: str) -> str:
-        fs = get_filesystem(thread_id)
+        fs = self._resolve_filesystem()
         result = fs.read_file(relative_path)
         # 判断是否为错误结果
         is_error = result.startswith(("错误", "读取文件失败"))
@@ -335,41 +419,41 @@ class FsReadFileTool(AsyncToolMixin, BaseTool):
         ).to_tool_message()
 
 
-class FsListFilesTool(AsyncToolMixin, BaseTool):
+class FsListFilesTool(FilesystemContextMixin, AsyncToolMixin, BaseTool):
     name: str = "fs_list_files"
     version: str = TOOL_VERSION
     metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "file"})
     description: str = (
-        "列出研究文件系统中指定子目录下的所有文件，显示文件名、大小和修改时间。"
+        "列出会话文件系统中指定子目录下的所有文件，显示文件名、大小和修改时间。"
         "适用场景：需要浏览文件系统中的文件列表、确认文件是否已保存、查看目录结构。"
         "不适用：读取文件内容（应使用 fs_read_file）、搜索文件内容（应使用 fs_search_files）。"
         "参数：subdirectory-子目录名称（plans/notes/reports/temp，默认'notes'），"
-        "thread_id-线程ID（必填）。"
+        "thread_id-线程ID（必填，系统会话上下文自动决定存储目录，传当前会话标识即可）。"
         "边界：目录不存在时返回提示信息。"
     )
     args_schema: type[BaseModel] = FsListFilesInput
 
     def _run(self, thread_id: str, subdirectory: str = "notes") -> str:
-        fs = get_filesystem(thread_id)
+        fs = self._resolve_filesystem()
         return fs.list_files(subdirectory)
 
 
-class FsSearchFilesTool(AsyncToolMixin, BaseTool):
+class FsSearchFilesTool(FilesystemContextMixin, AsyncToolMixin, BaseTool):
     name: str = "fs_search_files"
     version: str = TOOL_VERSION
     metadata: dict = Field(default_factory=lambda: {"tier": "extended", "visibility": "selectable", "category": "file"})
     description: str = (
-        "在研究文件系统中搜索包含指定关键词的文件，返回匹配文件列表。"
+        "在会话文件系统中搜索包含指定关键词的文件，返回匹配文件列表。"
         "适用场景：需要在文件系统中查找包含特定内容的文件、定位相关笔记或报告。"
         "不适用：列出所有文件（应使用 fs_list_files）、读取文件内容（应使用 fs_read_file）。"
         "参数：keyword-要搜索的关键词（必填，不区分大小写），"
-        "subdirectory-要搜索的子目录（默认'notes'），thread_id-线程ID（必填）。"
+        "subdirectory-要搜索的子目录（默认'notes'），thread_id-线程ID（必填，系统会话上下文自动决定存储目录，传当前会话标识即可）。"
         "边界：递归搜索子目录，仅匹配文本文件内容。"
     )
     args_schema: type[BaseModel] = FsSearchFilesInput
 
     def _run(self, keyword: str, thread_id: str, subdirectory: str = "notes") -> str:
-        fs = get_filesystem(thread_id)
+        fs = self._resolve_filesystem()
         return fs.search_files(keyword, subdirectory)
 
 

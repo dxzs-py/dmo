@@ -756,21 +756,6 @@ export const useApprovalStore = defineStore('approval', () => {
   }
 
   /**
-   * 更新审批状态（触发 Vue 响应式更新）
-   * @param {string} interruptId
-   * @param {string} state - 'processing' | 'pending' | 'approved' | 'rejected' | 'timeout'
-   */
-  const updateApprovalState = (interruptId, state) => {
-    const entry = pendingApprovals.value.get(interruptId)
-    if (!entry) return
-    // 重新 set 整个 entry 触发 Vue 响应式
-    pendingApprovals.value.set(interruptId, {
-      ...entry,
-      approvalData: { ...entry.approvalData, state },
-    })
-  }
-
-  /**
    * 从 SSE 历史审批数据恢复（深度研究模块刷新/重连场景）
    * 后端 views_stream.py 在 SSE 连接建立时推送 Redis List 中的历史审批
    * @param {Object} approvalData - 历史审批数据
@@ -838,22 +823,6 @@ export const useApprovalStore = defineStore('approval', () => {
           sessionStore.updateToolCallApprovalState(entry.sessionId, key, 'timeout')
           sessionStore.setApprovalToLastMessage(entry.sessionId, { ...entry.approvalData, state: 'timeout' })
         }
-      }
-    }
-  }
-
-  /**
-   * 按来源清理审批
-   * @param {string} [source] - 不传则清理全部
-   */
-  const clearBySource = (source) => {
-    if (!source) {
-      pendingApprovals.value.clear()
-      return
-    }
-    for (const [key, entry] of pendingApprovals.value.entries()) {
-      if (entry.source === source) {
-        pendingApprovals.value.delete(key)
       }
     }
   }
@@ -932,11 +901,9 @@ export const useApprovalStore = defineStore('approval', () => {
     hasPending,
     handleApprovalEvent,
     executeApproval,
-    updateApprovalState,
     restoreFromSession,
     restoreFromSSEHistory,
     cleanupExpired,
-    clearBySource,
     clearByTaskId,
     clearAll,
     flushPendingBindQueue,

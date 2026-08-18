@@ -19,14 +19,13 @@ from typing import Any
 
 from asgiref.sync import sync_to_async
 
+from Django_xm.apps.approvals.models import Approval
 from Django_xm.apps.research.services.research_runner import (
     cleanup_research_sandbox,
     execute_research_async,
     finalize_research,
-    publish_research_failure,
     self_heal_expired_approvals,
 )
-from Django_xm.apps.approvals.models import Approval
 from Django_xm.common.approval_batch import (
     collect_batch_decisions,
     create_approvals_for_interrupts,
@@ -63,7 +62,6 @@ class SessionExecutor:
         user_id: int | None = None,
         session_id: str | None = None,
         message_id: str = "",
-        publish_to_redis: bool = False,
         params: dict[str, Any] | None = None,
         session_type: str = "research",
     ):
@@ -73,7 +71,6 @@ class SessionExecutor:
         self.user_id = user_id
         self.session_id = session_id
         self.message_id = message_id
-        self.publish_to_redis = publish_to_redis
         self.session_type = session_type
         # Agent 构建参数（初始执行时由 start 信令透传；恢复时由 task 组装）
         self.params = params or {}
@@ -173,7 +170,10 @@ class SessionExecutor:
 
                     clear_parent_tool_context(thread_id)
                 except Exception:
-                    pass
+                    logger.warning(
+                        f"[SessionExecutor] 清理父工具上下文失败（非致命）: thread_id={thread_id}",
+                        exc_info=True,
+                    )
                 await self._release_checkpointer()
                 self.manager.remove_session(thread_id)
 
@@ -414,10 +414,13 @@ class SessionExecutor:
             logger.info(
                 f"[SessionExecutor] 全部子代理已终态，立即恢复: thread_id={self.thread_id}"
             )
-            asyncio.create_task(
+            task = asyncio.create_task(
                 self._resume_after_subagent_wait(),
                 name=f"subagent-resume-{self.thread_id}",
             )
+            # 保存引用防止被 GC 回收；完成后自动从集合移除
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
             return
 
         get_lifecycle_manager().register_parent_awaiter(
@@ -837,7 +840,6 @@ class SessionExecutor:
                 result,
                 response_time,
                 sync_files=True,
-                publish_to_redis=self.publish_to_redis,
             )
             await self._publish_status_change("completed", final_report=result.final_report)
             await self._writeback_and_broadcast(
@@ -861,8 +863,6 @@ class SessionExecutor:
             await self._publish_status_change("failed", error=error_message)
         except Exception:
             logger.exception(f"[SessionExecutor] 更新任务失败状态异常: {thread_id}")
-        if self.publish_to_redis:
-            publish_research_failure(thread_id, error_message)
         await self._writeback_and_broadcast(error_message, success=False)
         await self._schedule_sandbox_cleanup()
 

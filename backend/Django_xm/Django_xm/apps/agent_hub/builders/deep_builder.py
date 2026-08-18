@@ -196,11 +196,11 @@ class DeepAgentBuilder:
 
         # 过滤与 deepagents 内置工具冲突的自定义文件系统工具
         # 原因：deepagents 内置 write_file/read_file 使用 FilesystemBackend(root_dir=work_dir)，
-        # 路径为 data/research/{thread_id}/，完全正确。
-        # 而 fs_write_file 等使用 ResearchFileSystem(base_path=TOOLS_LANGCHAIN_DIR/research)，
-        # thread_id 默认为 "default"，路径为 data/tools/langchain/research/default/，完全错误。
-        # 两套工具功能重复但路径不同，agent 可能调用错误的工具导致文件写入错误目录。
-        # 解决方案：过滤 fs_* 工具，deepagents 内置工具已完全覆盖文件操作需求。
+        # 路径为 data/research/{thread_id}/，语义匹配深研任务目录。
+        # 而 fs_* 工具（ResearchFileSystem）默认落 data/chat/{user_id}/{session_id}/
+        # （按 用户·会话 分组，服务于代理模式），与深研任务目录语义不同。
+        # 两套工具功能重复但路径语义不同，agent 可能调用错误的工具导致文件写入错误目录。
+        # 解决方案：过滤 fs_* 工具，deepagents 内置工具已完全覆盖深研文件操作需求。
         _CONFLICT_TOOL_NAMES = {
             "fs_write_file",
             "fs_read_file",

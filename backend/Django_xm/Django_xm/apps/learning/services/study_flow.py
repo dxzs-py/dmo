@@ -4,6 +4,7 @@
 """
 
 import time
+import uuid
 from collections import OrderedDict
 from typing import Any, Literal
 
@@ -23,6 +24,29 @@ from .state import StudyFlowState
 
 logger = get_logger(__name__)
 persistence_service = get_persistence_service()
+
+# 允许提交答案的步骤（等待答题 / 执行中的中间态）
+_ALLOWED_SUBMIT_STEPS = {
+    "start",
+    "planner",
+    "retrieval",
+    "quiz_generator",
+    "waiting_for_answers",
+    "grading",
+    "feedback",
+}
+
+
+class WorkflowAlreadyFinishedError(Exception):
+    """工作流已结束，无法提交答案。
+
+    Attributes:
+        current_phase: 触发时的当前阶段（用于 409 响应提示）
+    """
+
+    def __init__(self, message: str, current_phase: str = ""):
+        super().__init__(message)
+        self.current_phase = current_phase
 
 
 def should_continue(state: StudyFlowState) -> Literal["retry", "end"]:
@@ -227,6 +251,13 @@ def start_study_flow(
     thread_id: str,
     user_id: int | None = None,
     knowledge_base_ids: list | None = None,
+    provider_id: str | None = None,
+    model_name: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+    special_params: dict | None = None,
+    enable_deep_thinking: bool = False,
+    use_web_search: bool = False,
 ) -> dict:
     logger.info(f"[Study Flow] 启动新的学习工作流，thread_id={thread_id}")
 
@@ -248,6 +279,13 @@ def start_study_flow(
         "should_retry": False,
         "current_step": "start",
         "thread_id": thread_id,
+        "provider_id": provider_id,
+        "model_name": model_name,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "special_params": dict(special_params) if special_params else {},
+        "enable_deep_thinking": enable_deep_thinking,
+        "use_web_search": use_web_search,
         "created_at": timezone.now().isoformat(),
         "updated_at": timezone.now().isoformat(),
         "error": None,
@@ -353,6 +391,14 @@ def submit_answers(thread_id: str, user_answers: dict, user_id: int | None = Non
 
     logger.info(f"[Study Flow] 当前状态: {current_state.values.get('current_step')}")
 
+    # 提交守卫：仅允许在答题/执行中间态提交，工作流已结束（feedback_completed/end/错误态）返回 409
+    current_step = current_state.values.get("current_step", "")
+    if current_step not in _ALLOWED_SUBMIT_STEPS:
+        raise WorkflowAlreadyFinishedError(
+            f"工作流已结束，无法提交答案。当前步骤: {current_step}",
+            current_phase=current_step,
+        )
+
     study_flow.update_state(thread_id, {"user_answers": user_answers, "updated_at": timezone.now().isoformat()})
 
     # 答案已提交，继续执行 grading → feedback 步骤
@@ -421,7 +467,48 @@ def submit_answers(thread_id: str, user_answers: dict, user_id: int | None = Non
         persistence_service.save_workflow_state(thread_id, result, user_id)
         _update_workflow_session_tokens(thread_id, total_tokens, response_time, is_incremental=True)
 
+        # 评分完成后创建 WorkflowAttempt 记录 + 锁定题目（失败不影响主流程）
+        _persist_attempt_and_lock_questions(thread_id, result)
+
     return result
+
+
+def _persist_attempt_and_lock_questions(thread_id: str, result: dict) -> None:
+    """评分完成后创建/更新 WorkflowAttempt 记录，并锁定当前轮次题目（scored -> locked）。"""
+    try:
+        from ..models import WorkflowAttempt, WorkflowQuestion, WorkflowQuestionStatus, WorkflowSession
+
+        session = WorkflowSession.objects.filter(thread_id=thread_id, is_deleted=False).first()
+        if not session:
+            logger.warning(f"[Study Flow] 未找到工作流会话，跳过轮次落库: {thread_id}")
+            return
+
+        attempt_index = result.get("retry_count", 0) or 0
+        score = result.get("score")
+        feedback = result.get("feedback")
+
+        # 创建或更新 WorkflowAttempt 记录（同轮次幂等）
+        WorkflowAttempt.objects.update_or_create(
+            session=session,
+            attempt_index=attempt_index,
+            defaults={
+                "thread_id": thread_id,
+                "total_score": score,
+                "feedback": feedback,
+            },
+        )
+        logger.info(f"[Study Flow] 已创建练习轮次记录: attempt_index={attempt_index}, score={score}")
+
+        # 锁定当前轮次的题目（scored -> locked）
+        locked = WorkflowQuestion.objects.filter(
+            session=session,
+            attempt_index=attempt_index,
+            status=WorkflowQuestionStatus.SCORED,
+        ).update(status=WorkflowQuestionStatus.LOCKED)
+        if locked:
+            logger.info(f"[Study Flow] 已锁定 {attempt_index} 轮次的 {locked} 道题目")
+    except Exception:
+        logger.exception("[Study Flow] 创建 WorkflowAttempt 失败")
 
 
 def get_workflow_state(thread_id: str) -> dict:
@@ -524,3 +611,120 @@ def _update_workflow_session_tokens(
         logger.info(f"[Study Flow] 更新工作流统计: thread_id={thread_id}, tokens={total_tokens}")
     except Exception as e:
         logger.warning(f"[Study Flow] 更新工作流会话 Token 失败: {e}")
+
+
+def restart_quiz(thread_id: str, user_id: int | None = None) -> dict:
+    """继续练习：创建新 thread_id，复用学习计划与运行时配置，生成新一轮题目
+
+    流程：
+    1. 从旧 session 读取 learning_plan、user_question、retry_count 与运行时配置
+    2. 生成新 thread_id，预创建新 WorkflowSession（供 quiz_generator_node 持久化题目）
+    3. 调用 study_flow.invoke() 从 START 正常执行：planner 检测到 learning_plan 跳过
+    4. quiz_generator 生成新题目并持久化为新 attempt_index 的 WorkflowQuestion
+
+    Args:
+        thread_id: 旧工作流线程 ID
+        user_id: 用户 ID（可选）
+
+    Returns:
+        包含 new_thread_id 的工作流状态字典
+
+    Raises:
+        ValueError: 旧 session 不存在或缺少 learning_plan 时
+    """
+    logger.info(f"[Study Flow] 继续练习，旧 thread_id={thread_id}")
+
+    from ..models import WorkflowSession
+
+    # 1. 获取旧 session
+    old_session = WorkflowSession.objects.filter(thread_id=thread_id, is_deleted=False).first()
+    if not old_session:
+        raise ValueError(f"工作流会话不存在: {thread_id}")
+
+    if not old_session.learning_plan:
+        raise ValueError(f"工作流学习计划不存在，无法继续练习: {thread_id}")
+
+    # 2. 生成新 thread_id
+    new_thread_id = f"study_{uuid.uuid4().hex[:12]}"
+    new_retry_count = (old_session.retry_count or 0) + 1
+
+    logger.info(f"[Study Flow] 创建新 thread_id={new_thread_id}, retry_count={new_retry_count}")
+
+    # 3. 预创建新 WorkflowSession（供 quiz_generator_node 持久化题目）
+    # 继承老 session 的用户运行时配置（知识库/模型/深度思考/网络查询），
+    # 保证「继续练习」使用与原练习一致的运行时环境
+    WorkflowSession.objects.create(
+        thread_id=new_thread_id,
+        user_question=old_session.user_question,
+        learning_plan=old_session.learning_plan,
+        retry_count=new_retry_count,
+        current_step="start",
+        created_by_id=user_id,
+        root_thread_id=old_session.root_thread_id or old_session.thread_id,
+        knowledge_base_ids=old_session.knowledge_base_ids or [],
+        provider_id=old_session.provider_id,
+        model_name=old_session.model_name,
+        temperature=old_session.temperature,
+        max_tokens=old_session.max_tokens,
+        special_params=old_session.special_params or {},
+        enable_deep_thinking=old_session.enable_deep_thinking,
+        use_web_search=old_session.use_web_search,
+    )
+
+    # 4. 创建新 StudyFlow 实例
+    study_flow = _get_study_flow(new_thread_id)
+
+    # 5. 构建初始状态（复用旧 session 的 learning_plan 与运行时配置）
+    new_root_thread_id = old_session.root_thread_id or old_session.thread_id
+    initial_state: StudyFlowState = {
+        "messages": [],
+        "user_question": old_session.user_question,
+        "learning_plan": old_session.learning_plan,
+        "retrieved_docs": None,
+        "quiz": None,
+        "user_answers": None,
+        "score": None,
+        "score_details": None,
+        "feedback": None,
+        "retry_count": new_retry_count,
+        "should_retry": False,
+        "current_step": "start",
+        "thread_id": new_thread_id,
+        "root_thread_id": new_root_thread_id,
+        "provider_id": old_session.provider_id,
+        "model_name": old_session.model_name,
+        "temperature": old_session.temperature,
+        "max_tokens": old_session.max_tokens,
+        "special_params": old_session.special_params or {},
+        "enable_deep_thinking": old_session.enable_deep_thinking,
+        "use_web_search": old_session.use_web_search,
+        "created_at": timezone.now().isoformat(),
+        "updated_at": timezone.now().isoformat(),
+        "error": None,
+        "error_node": None,
+        "user_id": old_session.created_by_id,
+    }
+
+    # 6. 执行工作流（planner 会跳过，因为 learning_plan 已存在）
+    config = {
+        "configurable": {"thread_id": new_thread_id},
+        "callbacks": [TokenUsageCallbackHandler()],
+    }
+
+    logger.info("[Study Flow] 开始执行继续练习工作流...")
+    result = study_flow.invoke(initial_state, config)
+
+    logger.info(f"[Study Flow] 继续练习完成，新 thread_id={new_thread_id}, 当前步骤: {result.get('current_step')}")
+
+    # 7. 持久化新 session（更新预创建的 session）
+    persistence_service.save_workflow_state(new_thread_id, result, user_id)
+
+    # 8. 更新旧 session 的 retry_count（用于追踪总练习轮次）
+    old_session.retry_count = new_retry_count
+    old_session.save(update_fields=["retry_count"])
+
+    # 9. 返回结果（包含新 thread_id）
+    result["new_thread_id"] = new_thread_id
+    result["retry_count"] = new_retry_count
+
+    return result

@@ -91,7 +91,8 @@ export const useWorkflowStore = defineStore('workflow', () => {
         `旧 status=${oldStatus}(终态) 不被新 status=${newStatus}(非终态) 覆盖`
       )
       // 保留旧 status，但其他字段可以合并
-      const { status: _ignored, ...otherFields } = fresh
+      const otherFields = { ...fresh }
+      delete otherFields.status
       wfRef.value = { ...current, ...otherFields, status: oldStatus }
       return wfRef.value
     }

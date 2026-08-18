@@ -36,7 +36,7 @@ from Django_xm.apps.chat.services.stream import (
     run_stream_loop,
 )
 
-from ..utils import _needs_completion, convert_chat_history, extract_suggestions
+from ..utils import _needs_completion, convert_chat_history
 from .agent_service import AgentService
 from .chat_message_builder import ChatMessageBuilder
 from .context_service import ContextService
@@ -1044,7 +1044,8 @@ class ChatService:
                 仅接收真子代理事件（SubAgentToolEventMiddleware 按 subagent_thread_id
                 非空转发）；主 agent 工具事件不经本回调（主链路唯一发布与持久化）。
                 """
-                from Django_xm.common.event_schema import EventSource, EventType as _ET
+                from Django_xm.common.event_schema import EventSource
+                from Django_xm.common.event_schema import EventType as _ET
                 from Django_xm.common.tool_call_lifecycle import ToolCallContext as _TCC
                 from Django_xm.common.tool_call_lifecycle import service as _tc_service
 
@@ -1124,7 +1125,15 @@ class ChatService:
             # 闭包集合随回调对象跨多次 resume 持续存在（configurable 持同一引用）。
             _sent_subagent_msg_keys: dict[str, set] = {}
 
-            async def _on_subagent_content(agent_path, content, reasoning_content, agent_name, depth, subagent_thread_id="", msg_id=""):
+            async def _on_subagent_content(
+                agent_path,
+                content,
+                reasoning_content,
+                agent_name,
+                depth,
+                subagent_thread_id="",
+                msg_id="",
+            ):
                 """chat 模式子代理正文/中间思考转发回调（spec MODIFIED：D10 路由收敛）。
 
                 累计与路由唯一依据为 ``subagent_thread_id``（agent_path 仅保留为
@@ -1253,117 +1262,6 @@ class ChatService:
             yield event
 
         clear_parent_tool_context(data.get("session_id") or self.thread_id or "")
-
-    async def _finalize_stream_response(
-        self,
-        all_messages: list,
-        current_message_content: str,
-        tool_calls_map: dict[str, dict],
-        prefer_tool_result: bool,
-        data: dict[str, Any],
-        weather_tool_names: set,
-        model_instance=None,
-    ) -> AsyncGenerator[dict[str, Any], None]:
-        from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
-
-        final_ai_message = None
-        for msg in reversed(all_messages):
-            if isinstance(msg, AIMessage) and isinstance(msg.content, str) and msg.content.strip():
-                final_ai_message = msg
-                break
-
-        # Agent 模式下，_pending_content 已刷新完整内容，跳过 final_ai_message 补发
-        # 避免 current_message_content 与 final_ai_message.content 不完全一致时重复发送
-        mode = data.get("mode", "agent")
-        if final_ai_message and isinstance(final_ai_message.content, str) and mode != "agent":
-            final_content = final_ai_message.content
-            if len(final_content) > len(current_message_content):
-                remaining_content = final_content[len(current_message_content) :]
-                if remaining_content:
-                    yield {"type": "chunk", "content": remaining_content}
-                    current_message_content = final_content
-
-        # 计算 final_ai_message 内容的 strip 长度（用于判断是否需要兜底）
-        # msg.content 类型为 str | list[str | dict]，仅 str 可调用 .strip()
-        final_ai_content = final_ai_message.content if final_ai_message else None
-        final_ai_strip_len = len(final_ai_content.strip()) if isinstance(final_ai_content, str) else 0
-        if (not final_ai_message or not final_ai_content or final_ai_strip_len < 10) and tool_calls_map:
-            weather_tools = ["weather_query", "get_weather_forecast", "get_weather"]
-            for tool_name in weather_tools:
-                for tool_info in tool_calls_map.values():
-                    if (
-                        tool_info.get("name") == tool_name
-                        and tool_info.get("state") == "output-available"
-                        and tool_info.get("result")
-                    ):
-                        result_content = tool_info.get("result", "")
-                        if isinstance(result_content, list):
-                            result_content = str(result_content)
-                        if result_content and result_content not in current_message_content:
-                            yield {"type": "chunk", "content": result_content}
-                        break
-                else:
-                    continue
-                break
-            else:
-                # 排除返回大量原始内容的工具，其结果不应直接作为聊天文本输出
-                raw_content_tools = {"web_fetch", "web_search", "skill_web_research"}
-                for tool_info in tool_calls_map.values():
-                    result = tool_info.get("result")
-                    tool_name = tool_info.get("name", "")
-                    # 知识库检索工具和原始内容工具的结果不应作为聊天文本
-                    is_raw_content = (
-                        tool_name in raw_content_tools
-                        or tool_name.startswith("knowledge_base_")
-                        or tool_info.get("_summarized")
-                    )
-                    if (
-                        tool_info.get("state") == "output-available"
-                        and result
-                        and not is_raw_content
-                        and (isinstance(result, str) and result not in current_message_content)
-                    ):
-                        result_content = result if isinstance(result, str) else str(result)
-                        if result_content:
-                            yield {"type": "chunk", "content": result_content}
-                        break
-
-        # Agent 模式下跳过补全检查：Agent 已生成完整回答，
-        # _needs_completion 的"补全"会触发模型重新生成完整回答，导致内容重复
-        mode = data.get("mode", "agent")
-        if mode != "agent" and not prefer_tool_result and _needs_completion(current_message_content):
-            model = model_instance or get_chat_model()
-            prompt = (
-                f"用户问题：{data['message']}\n\n"
-                f"当前回复（不完整）：{current_message_content}\n\n"
-                "请继续并完整回答上述问题，补充必要的解释或例子，最后给出一句简明结论。"
-            )
-            try:
-                completion = await model.ainvoke([{"role": "user", "content": prompt}])
-                extra = getattr(completion, "content", "")
-                if extra:
-                    yield {"type": "chunk", "content": extra}
-                    current_message_content += extra
-            except Exception:
-                # 补充回复失败不影响主流程，已有不完整回复
-                logger.debug("生成补充回复失败")
-
-        try:
-            model = model_instance or get_chat_model()
-            suggestions_prompt = (
-                "你是一个辅助对话的助手。请根据以下用户问题和最终回复，生成4条简洁、相关、可点击的后续问题建议。\n"
-                "用JSON数组返回，每个元素是不超过30字的中文字符串，不要包含编号或多余文本。\n\n"
-                f"用户问题：{data['message']}\n\n"
-                f"最终回复：{current_message_content}"
-            )
-            completion = await model.ainvoke([{"role": "user", "content": suggestions_prompt}])
-            raw = getattr(completion, "content", "")
-            suggestions = extract_suggestions(raw)
-            if suggestions:
-                yield {"type": "suggestions", "data": suggestions}
-        except Exception:
-            # 建议生成失败不影响主流程
-            logger.debug("生成后续问题建议失败")
 
 
 class ChatModeService:

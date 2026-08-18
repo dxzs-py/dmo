@@ -23,6 +23,7 @@ import logging
 from django.apps import apps
 
 from Django_xm.common.approval_utils import derive_cross_module_id
+from Django_xm.common.tool_call_aggregation import STATE_TO_STATUS
 
 logger = logging.getLogger(__name__)
 
@@ -239,19 +240,11 @@ def reconstruct_tool_call_from_approval(approval_info):
     # 从 extra 中提取 args（如果存在），否则用 parameters
     args = extra.get("args") if extra.get("args") else parameters
 
-    # 根据 approval.state 设置重建项的 status
+    # 根据 approval.state 设置重建项的 status。
+    # 映射值源：common.tool_call_aggregation.STATE_TO_STATUS（唯一权威），
     # 与 enrich_tool_calls_with_approvals 中的 status 注入逻辑对齐，
-    # 确保重建的 tool_call 项也有正确的 status
-    if state in ("pending", "waiting"):
-        reconstructed_status = "waiting"
-    elif state == "processing":
-        reconstructed_status = "running"
-    elif state == "timeout":
-        reconstructed_status = "timeout"
-    elif state == "rejected":
-        reconstructed_status = "rejected"
-    else:
-        reconstructed_status = "pending"
+    # 确保重建的 tool_call 项也有正确的 status。
+    reconstructed_status = STATE_TO_STATUS.get(state, "pending")
 
     approval_payload = _build_approval_payload_from_index(approval_info)
 
@@ -351,13 +344,16 @@ def enrich_tool_calls_with_approvals(tool_calls, session_id, approval_index=None
         # 仅提升非终态 status（pending/空），不覆盖 running/completed/failed/timeout。
         apv_state = apv_info.get("state")
         tc_status = tc.get("status")
-        if apv_state in ("pending", "waiting") and tc_status in (None, "", "pending"):
+        # 目标展示 status 取自唯一权威映射（common.tool_call_aggregation.STATE_TO_STATUS），
+        # 提升条件保持原语义：仅提升非终态 status，不覆盖更高阶段状态。
+        _target_status = STATE_TO_STATUS.get(apv_state)
+        if _target_status == "waiting" and tc_status in (None, "", "pending"):
             tc["status"] = "waiting"
-        elif apv_state == "processing" and tc_status in (None, "", "pending", "waiting"):
+        elif _target_status == "running" and tc_status in (None, "", "pending", "waiting"):
             tc["status"] = "running"
-        elif apv_state == "timeout" and tc_status not in ("completed", "failed"):
+        elif _target_status == "timeout" and tc_status not in ("completed", "failed"):
             tc["status"] = "timeout"
-        elif apv_state == "rejected" and tc_status in (None, "", "pending", "waiting"):
+        elif _target_status == "rejected" and tc_status in (None, "", "pending", "waiting"):
             tc["status"] = "rejected"
 
     # 补全 approval_index 中存在但 tool_calls 中缺失的 tool_call 项

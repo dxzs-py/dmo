@@ -7,9 +7,9 @@ from typing import Any
 from django.utils import timezone
 from pydantic import BaseModel, Field
 
-from Django_xm.apps.ai_engine.services.llm_factory import get_structured_model_with_fallback
 from Django_xm.apps.core.config import get_logger
 
+from ..services._model_helper import get_structured_model_from_state
 from ..services.state import StudyFlowState
 
 logger = get_logger(__name__)
@@ -56,10 +56,8 @@ def quiz_generator_node(state: StudyFlowState) -> dict[str, Any]:
             }
 
         # 结构化输出必须使用非流式模式（流式 + with_structured_output 嵌套结构会返回 None）
-        structured_model = get_structured_model_with_fallback(
-            QuizSchema,
-            streaming=False,
-        )
+        # 模型来自 state 中的用户运行时配置（provider_id/model_name/special_params 等）
+        structured_model = get_structured_model_from_state(state, QuizSchema)
 
         context_parts = []
         if retrieved_docs:
@@ -77,7 +75,7 @@ def quiz_generator_node(state: StudyFlowState) -> dict[str, Any]:
 1. 题目数量：至少5题
 2. 题型分布：
    - 选择题（multiple_choice）：3-4题，提供4个选项
-   - 填空题（fill_blank）：1-2题
+   - 填空题（fill_blank）：1-2题，答案如有多种等价表达方式，用 | 分隔（如 "11|十一"）
    - 简答题（short_answer）：1题
 3. 难度适配：根据学习计划的难度级别出题
 4. 覆盖知识点：题目应覆盖学习计划中的关键知识点
@@ -120,12 +118,22 @@ def quiz_generator_node(state: StudyFlowState) -> dict[str, Any]:
 
         questions = []
         for q in quiz_response.questions:
+            # 对于选择题，如果 LLM 返回的 answer 是选项索引（如 "A"、"B"），转换为选项内容
+            # 这样 quiz.answer 与评分/展示口径统一
+            answer_value = q.answer
+            if q.type == "multiple_choice" and q.options:
+                ans_stripped = answer_value.strip()
+                if len(ans_stripped) == 1 and ans_stripped.upper() in "ABCDEFGH":
+                    idx = ord(ans_stripped.upper()) - ord("A")
+                    if 0 <= idx < len(q.options):
+                        answer_value = q.options[idx]
+
             question = {
                 "id": q.id,
                 "type": q.type,
                 "question": q.question,
                 "options": q.options,
-                "answer": q.answer,
+                "answer": answer_value,
                 "explanation": q.explanation,
                 "points": q.points,
             }
@@ -138,6 +146,9 @@ def quiz_generator_node(state: StudyFlowState) -> dict[str, Any]:
         }
 
         logger.info(f"[Quiz Generator Node] 练习题生成成功，共 {len(questions)} 题")
+
+        # 持久化题目为 WorkflowQuestion 记录（失败不影响主流程，题目仍在 state.quiz 中）
+        _persist_questions(state, questions)
 
         quiz_display = (
             f"\n\n📝 **练习题已生成**（共 {len(questions)} 题，"
@@ -170,3 +181,54 @@ def quiz_generator_node(state: StudyFlowState) -> dict[str, Any]:
             "current_step": "quiz_error",
             "updated_at": timezone.now().isoformat(),
         }
+
+
+def _persist_questions(state: StudyFlowState, questions: list[dict[str, Any]]) -> None:
+    """将生成的题目持久化为 WorkflowQuestion 记录（question_id 形如 q1_r0）。
+
+    同一轮次重复生成时先删除旧题目（防止 restart/重试时重复累积）。
+    """
+    try:
+        from ..models import WorkflowQuestion, WorkflowQuestionStatus, WorkflowSession
+
+        thread_id = state.get("thread_id")
+        attempt_index = state.get("retry_count", 0) or 0
+
+        if not thread_id:
+            return
+
+        session = WorkflowSession.objects.filter(thread_id=thread_id, is_deleted=False).first()
+        if not session:
+            logger.warning(f"[Quiz Generator Node] 未找到工作流会话，跳过题目持久化: {thread_id}")
+            return
+
+        # 先删除该轮次的旧题目（防止 restart/重试时重复生成）
+        WorkflowQuestion.objects.filter(session=session, attempt_index=attempt_index).delete()
+
+        questions_to_create = []
+        for idx, q in enumerate(questions, 1):
+            question_id = f"q{idx}_r{attempt_index}"
+            questions_to_create.append(
+                WorkflowQuestion(
+                    session=session,
+                    question_id=question_id,
+                    attempt_index=attempt_index,
+                    question_index=idx,
+                    type=q["type"],
+                    question=q["question"],
+                    options=q["options"],
+                    correct_answer=q["answer"],
+                    explanation=q["explanation"],
+                    points=q["points"],
+                    status=WorkflowQuestionStatus.PENDING,
+                )
+            )
+
+        if questions_to_create:
+            WorkflowQuestion.objects.bulk_create(questions_to_create)
+            logger.info(
+                f"[Quiz Generator Node] 已持久化 {len(questions_to_create)} 道题目，"
+                f"attempt_index={attempt_index}"
+            )
+    except Exception:
+        logger.exception("[Quiz Generator Node] 题目持久化失败")

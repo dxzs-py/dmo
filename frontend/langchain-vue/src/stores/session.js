@@ -23,7 +23,6 @@ import {
   updateOrAddToolResultInMap,
   setApprovalToToolCallInMap,
   updateApprovalStateInMap,
-  updateToolCallStatusInMap,
   finalizeToolCallsInMap,
   findToolCallInMap,
   flushPendingApprovalsInMap,
@@ -1312,26 +1311,6 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   /**
-   * 添加 toolCall 到最后一条 assistant 消息（同步写入 toolCallMap）
-   *
-   * 与 addOrUpdateToolCall 不同，此方法直接将 toolCall 对象写入 Map（不做合并），
-   * 用于初始化场景（如后端历史加载）。
-   *
-   * @param {string} sessionId - 会话 ID
-   * @param {Object} toolCall - 工具调用对象
-   */
-  const addToolCallToLastMessage = (sessionId, toolCall) => {
-    if (!sessionId || !toolCall) return
-    const toolCallMap = _ensureToolCallsMap(sessionId)
-    if (!toolCallMap) return
-    const key = toolCall.id || toolCall.toolCallId
-    if (!key) return
-    toolCallMap.set(key, toolCall)
-    triggerRef(toolCallsMap)
-    _syncMessageToolCalls(sessionId)
-  }
-
-  /**
    * 创建/更新 toolCall（对应 SSE tool 事件）
    *
    * 委托通用函数 addOrUpdateToolCallInMap 处理 toolCallMap 操作（含 isSynthetic 占位机制、
@@ -1397,88 +1376,6 @@ export const useSessionStore = defineStore('session', () => {
     if (!toolCallMap) return null
     const { toolCall } = findToolCallInMap(toolCallMap, toolCallId)
     return toolCall || null
-  }
-
-  /**
-   * 获取指定 session 的所有工具调用
-   *
-   * @param {string} sessionId - 会话 ID
-   * @returns {Array} 工具调用数组（session 不存在时返回空数组）
-   */
-  const getToolCallsBySession = (sessionId) => {
-    if (!sessionId) return []
-    const toolCallMap = toolCallsMap.value.get(sessionId)
-    if (!toolCallMap) return []
-    return Array.from(toolCallMap.values())
-  }
-
-  /**
-   * 按 messageBackendId 过滤 toolCall
-   *
-   * 用于按消息分组显示工具调用（与 chat 模块的 messages 数组对齐）。
-   *
-   * @param {string} sessionId - 会话 ID
-   * @param {number|string} messageBackendId - 消息后端 ID
-   * @returns {Array} 匹配的 toolCall 数组
-   */
-  const getToolCallsByMessage = (sessionId, messageBackendId) => {
-    if (!sessionId || messageBackendId === undefined || messageBackendId === null) return []
-    const toolCallMap = toolCallsMap.value.get(sessionId)
-    if (!toolCallMap) return []
-    const target = String(messageBackendId)
-    return Array.from(toolCallMap.values()).filter(
-      tc => tc.messageBackendId !== undefined && String(tc.messageBackendId) === target
-    )
-  }
-
-  /**
-   * 在 session 中查找 toolCall
-   *
-   * @param {string} sessionId - 会话 ID
-   * @param {string} toolCallId - 工具调用 ID
-   * @returns {Object|null} toolCall 对象（不存在时返回 null）
-   */
-  const findToolCallInSession = (sessionId, toolCallId) => {
-    return getToolCallById(sessionId, toolCallId)
-  }
-
-  /**
-   * 更新 toolCall 的 status（用于审批通过后设置 running 状态等场景）
-   *
-   * 通过 Map 函数更新 toolCall.status，同步派生 message.toolCalls。
-   *
-   * @param {string} sessionId - 会话 ID
-   * @param {string} toolCallId - 工具调用 ID
-   * @param {string} status - 新的 toolCall.status
-   * @returns {boolean} 是否成功更新
-   */
-  const updateToolCallStatus = (sessionId, toolCallId, status) => {
-    if (!sessionId || !toolCallId) return false
-    const toolCallMap = toolCallsMap.value.get(sessionId)
-    if (!toolCallMap) return false
-
-    // Map 未命中：从 messages 数组回填到 Map，对齐 research.js 行为
-    if (!toolCallMap.has(toolCallId)) {
-      const session = _findSession(sessionId)
-      if (session?.messages) {
-        for (const msg of session.messages) {
-          if (msg.role !== 'assistant' || !Array.isArray(msg.toolCalls)) continue
-          for (const tc of msg.toolCalls) {
-            const key = tc.toolCallId || tc.id
-            if (key && key === toolCallId && !toolCallMap.has(key)) {
-              toolCallMap.set(key, { ...tc, messageBackendId: msg.backendId?.toString() })
-            }
-          }
-        }
-        triggerRef(toolCallsMap)
-      }
-    }
-
-    const updated = updateToolCallStatusInMap(toolCallMap, toolCallId, status)
-    if (!updated) return false
-    triggerRef(toolCallsMap)
-    _syncMessageToolCalls(sessionId)
-    return true
   }
 
   /**
@@ -1928,15 +1825,10 @@ export const useSessionStore = defineStore('session', () => {
     setApprovalToToolCall,
     updateToolCallApprovalState,
     appendToLastAssistantMessage,
-    addToolCallToLastMessage,
     addOrUpdateToolCall,
     syncAllMessageToolCallsFromMap: _syncAllMessageToolCallsFromMap,
     updateOrAddToolResult,
     getToolCallById,
-    getToolCallsBySession,
-    getToolCallsByMessage,
-    findToolCallInSession,
-    updateToolCallStatus,
     finalizeToolCallsInMap: finalizeToolCallsInMapForSession,
     flushPendingApprovals,
     // 同步工具调用到消息（handleSessionEvent 中 message_added 后调用，解决审批组件错位问题）

@@ -16,9 +16,57 @@
               placeholder="请输入您想学习的主题..."
             />
           </el-form-item>
+          <el-form-item label="上传文档">
+            <div class="upload-row">
+              <el-select
+                v-model="uploadTargetKbId"
+                placeholder="选择要上传到的知识库"
+                clearable
+                class="upload-kb-select"
+              >
+                <el-option
+                  v-for="kb in knowledgeBases"
+                  :key="kb.id"
+                  :label="`${kb.name}（${kb.chunkCount || 0} 文档块）`"
+                  :value="kb.id"
+                />
+              </el-select>
+              <el-upload
+                v-model:file-list="uploadFileList"
+                multiple
+                :auto-upload="false"
+                accept=".txt,.md,.pdf,.docx,.doc,.xlsx,.xls,.csv,.pptx"
+                :limit="10"
+              >
+                <el-button>选择文件</el-button>
+              </el-upload>
+              <el-button type="primary" :loading="uploading" :disabled="!uploadTargetKbId || uploadFileList.length === 0" @click="handleUpload">
+                上传文档
+              </el-button>
+            </div>
+            <div v-if="uploadProgress > 0" class="upload-progress">
+              {{ uploadProgress >= 100 ? '上传完成' : `文档处理中 ${uploadProgress}%...` }}
+            </div>
+            <div class="kb-tip">上传后需等待文档处理完成，再在下方勾选对应知识库</div>
+          </el-form-item>
           <el-form-item label="知识库">
             <KnowledgeBaseSelector v-model="workflowForm.knowledgeBaseIds" />
             <div class="kb-tip">不选择知识库时将使用 AI 内置知识生成学习内容</div>
+          </el-form-item>
+          <el-form-item label="模型">
+            <ModelSelector @change="onModelChange" />
+          </el-form-item>
+          <el-form-item label="深度思考">
+            <el-switch
+              :model-value="useDeepThinking"
+              :disabled="!modelSupportsDeepThinking"
+              @change="handleDeepThinkingChange"
+            />
+            <span v-if="!modelSupportsDeepThinking" class="kb-tip">当前模型不支持深度思考</span>
+          </el-form-item>
+          <el-form-item label="网络查询">
+            <el-switch v-model="workflowForm.useWebSearch" />
+            <span class="kb-tip">开启后检索阶段将进行联网搜索，辅助生成学习内容</span>
           </el-form-item>
           <el-form-item>
             <el-button type="primary" :loading="isLoading" @click="startWorkflow">
@@ -109,9 +157,19 @@
           :score="execution.score"
           :feedback="execution.feedback"
           :should-retry="execution.shouldRetry"
+          :score-details="execution.scoreDetails"
+          :can-continue="canContinue"
+          :continuing="isContinuing"
           :get-question-type-text="getQuestionTypeText"
           @submit="submitAnswers"
           @reset="resetWorkflow"
+          @continue="continuePractice"
+        />
+
+        <WorkflowQuestionHistory
+          ref="historyRef"
+          :thread-id="execution.threadId"
+          @score-updated="handleScoreUpdated"
         />
 
         <el-card class="status-card">
@@ -181,35 +239,45 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { workflowAPI } from '@/api/workflow'
 import { readSSEStream } from '../utils/sse'
-import { toCamelCase, convertSnakeToCamel } from '@/utils/sessionTransformers'
+import { toCamelCase } from '@/utils/sessionTransformers'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import TaskList from '../components/chat/TaskList.vue'
 import FileBrowser from '../components/chat/FileBrowser.vue'
 import WorkflowQuiz from '../components/workflow/WorkflowQuiz.vue'
+import WorkflowQuestionHistory from '../components/workflow/WorkflowQuestionHistory.vue'
 import MarkdownRenderer from '../components/common/MarkdownRenderer.vue'
 import KnowledgeBaseSelector from '../components/common/KnowledgeBaseSelector.vue'
+import ModelSelector from '../components/common/ModelSelector.vue'
 import AiCheckpoint from '../components/ai-elements/AiCheckpoint.vue'
 import AiNode from '../components/ai-elements/AiNode.vue'
 import AiEdge from '../components/ai-elements/AiEdge.vue'
 import AiCanvas from '../components/ai-elements/AiCanvas.vue'
+import { knowledgeAPI } from '@/api/knowledge'
+import { buildUploadFormData, trackUploadTask, getUploadErrorMessage } from '@/utils/knowledgeUpload'
+import { useRealtimeSync } from '@/composables/useRealtimeSync'
+import { useModelStore } from '@/stores/model'
 import { formatDate } from '../utils/format'
 import { logger } from '../utils/logger'
 import { useTaskRealtimeSync } from '@/composables/useTaskRealtimeSync'
 import { useWorkflowStore } from '@/stores/workflow'
-import { LearningStep, LearningTaskStatus } from '@/types'
+import { LearningStep, LearningTaskStatus, LearningQuestionType } from '@/types'
 
 const workflowStore = useWorkflowStore()
+const modelStore = useModelStore()
+const realtimeSync = useRealtimeSync()
 
 const isLoading = ref(false)
 const isSubmitting = ref(false)
+const isContinuing = ref(false)
 const execution = ref(null)
 const showDetail = ref(false)
 const answersForm = reactive({})
 const taskListRef = ref(null)
+const historyRef = ref(null)
 const currentStepMessage = ref('')
 const autoLoadContent = ref(null)
 const autoLoadLoading = ref(false)
@@ -221,9 +289,97 @@ const BASE_POLL_INTERVAL = 3000
 const MAX_POLL_INTERVAL = 30000
 const POLL_BACKOFF_FACTOR = 1.5
 
+// ===== 上传文档状态 =====
+const knowledgeBases = ref([])
+const uploadTargetKbId = ref('')
+const uploadFileList = ref([])
+const uploading = ref(false)
+const uploadProgress = ref(0)
+let uploadUnsubscribe = null
+
+/** 加载知识库列表（上传目标下拉选项） */
+const loadKnowledgeBases = async () => {
+  try {
+    const response = await knowledgeAPI.getKnowledgeBases()
+    knowledgeBases.value = response.data?.data?.items || response.data?.data || []
+  } catch (error) {
+    logger.warn('加载知识库列表失败（不影响启动工作流）:', error)
+  }
+}
+
+/** 上传文档到指定知识库（复用知识库模块的统一上传流程） */
+const handleUpload = async () => {
+  if (!uploadTargetKbId.value || uploadFileList.value.length === 0) {
+    ElMessage.warning('请先选择知识库并添加文件')
+    return
+  }
+  uploading.value = true
+  uploadProgress.value = 0
+  try {
+    const formData = buildUploadFormData(uploadFileList.value)
+    const response = await knowledgeAPI.uploadDocuments(uploadTargetKbId.value, formData)
+    const taskId = response.data?.data?.taskId
+    if (!taskId) {
+      throw new Error('上传响应缺少任务 ID')
+    }
+    uploadUnsubscribe = trackUploadTask(realtimeSync, taskId, {
+      onProgress: (progress) => {
+        uploadProgress.value = progress
+      },
+      onSuccess: () => {
+        uploadProgress.value = 100
+        ElMessage.success('文档上传并处理完成')
+        uploadFileList.value = []
+      },
+      onFailure: (errorMsg) => {
+        uploadProgress.value = 0
+        ElMessage.error(errorMsg || '文档处理失败')
+      },
+    })
+  } catch (error) {
+    logger.error('上传文档失败:', error)
+    ElMessage.error(getUploadErrorMessage(error))
+    uploadProgress.value = 0
+  } finally {
+    uploading.value = false
+  }
+}
+
+// ===== 深度思考（复用聊天模块 modelStore 范式）=====
+const useDeepThinking = computed({
+  get: () => modelStore.thinkingEnabled,
+  set: (val) => {
+    const paramCfg = modelStore.currentProviderSpecialParams?.thinking
+    if (!paramCfg) return
+    modelStore.setSpecialParam('thinking', val ? paramCfg.enabledValue : paramCfg.disabledValue)
+  },
+})
+
+const modelSupportsDeepThinking = computed(() => {
+  return modelStore.currentModelCapabilities.includes('deep_thinking')
+})
+
+const onModelChange = ({ providerId, modelName, specialParams }) => {
+  workflowForm.providerId = providerId
+  workflowForm.modelName = modelName
+  workflowForm.specialParams = specialParams
+}
+
+const handleDeepThinkingChange = (val) => {
+  useDeepThinking.value = val
+}
+
+// 工作流已完成（feedback_completed）且未达重试上限时可"继续练习"
+const canContinue = computed(() => {
+  if (!execution.value) return false
+  const step = execution.value.currentStep
+  return step === LearningStep.FEEDBACK_COMPLETED || step === LearningStep.END || step === LearningStep.COMPLETED
+})
+
 const workflowForm = reactive({
   query: '',
   knowledgeBaseIds: [],
+  useWebSearch: false,
 })
 
 const statusOptions = [
@@ -288,9 +444,9 @@ const getStepText = (step) => {
 
 const getQuestionTypeText = (type) => {
   const map = {
-    multipleChoice: '选择题',
-    fillBlank: '填空题',
-    shortAnswer: '简答题',
+    [LearningQuestionType.MULTIPLE_CHOICE]: '选择题',
+    [LearningQuestionType.FILL_BLANK]: '填空题',
+    [LearningQuestionType.SHORT_ANSWER]: '简答题',
   }
   return map[type] || type
 }
@@ -362,7 +518,17 @@ const startWorkflow = async () => {
   currentPollInterval = BASE_POLL_INTERVAL
 
   try {
-    const response = await workflowAPI.start(workflowForm)
+    // 组装启动配置：模型/深度思考/网络查询以 modelStore 当前值为准
+    // （ModelSelector 仅在手动切换模型时 emit change，未切换时表单字段为空，
+    //  深度思考开关改动实时写入 modelStore.specialParams，需取最新值而非表单快照）
+    const payload = {
+      ...workflowForm,
+      providerId: modelStore.currentProviderId,
+      modelName: modelStore.currentModelName,
+      specialParams: modelStore.specialParams,
+      useDeepThinking: useDeepThinking.value,
+    }
+    const response = await workflowAPI.start(payload)
     const result = response.data.data || response.data
     execution.value = result
     showDetail.value = true
@@ -451,9 +617,9 @@ const handleSSEEvent = (data) => {
       // 新格式：{ type: 'workflow_step', data: { step, message } }
       currentStepMessage.value = sseData.data?.message || '工作流启动中...'
       if (execution.value && sseData.data?.step) {
-        // step 值是后端 snake_case 字符串（如 waiting_for_answers），
-        // 需单独转 camelCase：toCamelCase 仅转换键名、不转换字符串值
-        execution.value.currentStep = convertSnakeToCamel(sseData.data.step)
+        // step 为后端 snake_case 协议值（如 waiting_for_answers），
+        // 与 LearningStep 常量一致，保持原值不做键名式转换
+        execution.value.currentStep = sseData.data.step
       }
       break
     case 'workflow_state_update':
@@ -626,6 +792,56 @@ const submitAnswers = async () => {
   }
 }
 
+/** 继续练习：调用后端创建新线程并复用配置生成新一轮题目（同步返回新线程完整状态） */
+const continuePractice = async () => {
+  if (!execution.value?.threadId) return
+  isContinuing.value = true
+  try {
+    const response = await workflowAPI.restart(execution.value.threadId)
+    const data = response.data?.data || response.data
+    const newThreadId = data.newThreadId || data.threadId
+    if (!newThreadId) {
+      throw new Error('继续练习响应缺少新线程 ID')
+    }
+
+    // 清空上一轮答题表单
+    Object.keys(answersForm).forEach(key => delete answersForm[key])
+
+    // 用新线程状态替换 execution（restart 接口同步返回，含 quiz/currentStep）
+    execution.value = { ...data, threadId: newThreadId }
+    showDetail.value = true
+    ElMessage.success('新一轮练习题已生成')
+
+    // 新线程 quiz 初始化答题表单
+    if (data.quiz?.questions?.length && !Object.keys(answersForm).length) {
+      data.quiz.questions.forEach(q => {
+        answersForm[q.id] = ''
+      })
+    }
+
+    // 切换 WebSocket 订阅到新线程（threadId 变化时自动清理旧订阅）
+    subscribeRealtimeForTask(execution.value)
+    // 新线程已完成题目生成（waiting_for_answers 终态），关闭旧连接避免泄漏
+    stopPolling()
+    closeSSE()
+    // 刷新练习历史（新轮次题目与分数）
+    if (historyRef.value) historyRef.value.loadAll()
+  } catch (error) {
+    logger.error('继续练习失败:', error)
+    const msg = error.response?.data?.message || error.message || '继续练习失败，请稍后重试'
+    ElMessage.error(msg)
+  } finally {
+    isContinuing.value = false
+  }
+}
+
+/** 单题修改重新评分后，同步总分到 execution.score（WorkflowQuestionHistory 触发） */
+const handleScoreUpdated = (attemptTotalScore) => {
+  if (attemptTotalScore !== undefined && attemptTotalScore !== null && execution.value) {
+    execution.value.score = attemptTotalScore
+  }
+}
+
 const resetWorkflow = () => {
   // 清理 workflowStore 中对应任务的状态
   if (execution.value?.threadId) {
@@ -763,6 +979,11 @@ onActivated(() => {
   }
 })
 
+// 首次挂载：加载知识库列表供上传目标下拉使用（失败不阻塞页面）
+onMounted(() => {
+  loadKnowledgeBases()
+})
+
 // keep-alive 停用时：清理 SSE、轮询与 WebSocket 订阅，避免后台资源浪费
 onDeactivated(() => {
   stopPolling()
@@ -774,6 +995,10 @@ onUnmounted(() => {
   stopPolling()
   closeSSE()
   clearRealtimeSubscriptions()
+  if (uploadUnsubscribe) {
+    uploadUnsubscribe()
+    uploadUnsubscribe = null
+  }
 })
 </script>
 

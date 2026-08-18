@@ -65,7 +65,10 @@ class ResearchTask(AuditModel):
     )
     subagent_contents = models.JSONField(
         default=dict, blank=True, null=True, verbose_name="子代理正文累计",
-        help_text="字典结构，key 为 subagent_thread_id，value 为 {content, reasoning_content}，与 ChatMessage.subagent_contents 格式一致"
+        help_text=(
+            "字典结构，key 为 subagent_thread_id，value 为 {content, reasoning_content}，"
+            "与 ChatMessage.subagent_contents 格式一致"
+        ),
     )
     # 主代理累计正文（过程信息展示权威源，与 ChatMessage.content 语义一致）：
     # 深度研究主 agent 在多个模型调用轮次中输出的正文累计，供前端详情页

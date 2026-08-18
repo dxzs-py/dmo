@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, onActivated, onUnmounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Plus, Search, Upload, Delete, View, Document, FolderOpened, Edit, Refresh, Download } from '@element-plus/icons-vue'
+import { Plus, Search, Upload, Delete, View, Document, FolderOpened, Edit, Refresh } from '@element-plus/icons-vue'
 import { knowledgeAPI } from '@/api/knowledge'
 import { cacheAPI } from '@/api/cache'
 import { logger } from '../utils/logger'
@@ -106,7 +106,7 @@ async function handleCreate() {
       newKB.value = { name: '', description: '' }
       await loadKnowledgeBases()
     }
-  } catch (error) {
+  } catch {
     ElMessage.error('创建失败')
   }
 }
@@ -157,7 +157,7 @@ async function handleEdit() {
       editDialog.value = false
       await loadKnowledgeBases()
     }
-  } catch (error) {
+  } catch {
     ElMessage.error('更新失败')
   }
 }
@@ -295,7 +295,7 @@ async function handleTestSearch() {
     if (response.data?.code === 200) {
       testResults.value = response.data.data?.results || []
     }
-  } catch (error) {
+  } catch {
     ElMessage.error('检索测试失败')
   } finally {
     testLoading.value = false

@@ -160,7 +160,7 @@ class RedisCachedCheckpointer:
             meta = json.loads(raw.decode("utf-8"))
             data = self._serde.loads_typed((meta["t"], base64.b64decode(meta["d"])))
             return CheckpointTuple(**data)
-        except Exception as e:  # noqa: BLE001 - 缓存读失败降级回源
+        except Exception as e:
             logger.debug(f"[RedisCachedCheckpointer] 缓存读取/反序列化失败，回源 PG: {e}")
             return None
 
@@ -172,7 +172,7 @@ class RedisCachedCheckpointer:
                 {"t": type_str, "d": base64.b64encode(data_bytes).decode("ascii")}
             ).encode("utf-8")
             await self._redis.set(key, payload, ex=self._ttl)
-        except Exception as e:  # noqa: BLE001 - 缓存写失败不影响正确性
+        except Exception as e:
             logger.debug(f"[RedisCachedCheckpointer] 缓存写入失败（忽略）: {e}")
 
     async def _try_acquire_lock(self, key: str) -> bool:
@@ -180,6 +180,6 @@ class RedisCachedCheckpointer:
         try:
             acquired = await self._redis.set(key, "1", nx=True, ex=self._lock_ttl)
             return bool(acquired)
-        except Exception as e:  # noqa: BLE001 - Redis 异常视为抢锁失败，直接回源
+        except Exception as e:
             logger.debug(f"[RedisCachedCheckpointer] 抢锁失败（忽略）: {e}")
             return False

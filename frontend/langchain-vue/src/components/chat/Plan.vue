@@ -138,7 +138,7 @@ const handleStepClick = (step, index) => {
               v-for="(step, index) in steps"
               :key="step.id || index"
               class="plan-step"
-              :class="[`step-${step.status}`, { clickable: step.status === 'pending' || step.status === 'inProgress' }]">}]"
+              :class="[`step-${step.status}`, { clickable: step.status === 'pending' || step.status === 'inProgress' }]"
               @click="handleStepClick(step, index)"
             >
               <div class="step-indicator">

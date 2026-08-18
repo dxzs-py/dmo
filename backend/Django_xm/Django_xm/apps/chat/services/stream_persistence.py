@@ -353,23 +353,25 @@ def _persist_to_db_sync(
             content_changed = True
         else:
             # 尾部重叠检测：content 前缀与 existing 后缀重叠（恢复轮 LLM 从
-            # checkpoint 重生成，重叠于挂起前流式中途的尾部字符）
-            _max_overlap = min(len(existing_content), len(content))
-            _overlap = 0
-            for _i in range(_max_overlap, 0, -1):
-                if existing_content[-_i:] == content[:_i]:
-                    _overlap = _i
-                    break
+            # checkpoint 重生成，重叠于挂起前流式中途的尾部字符）。
+            # 重叠判定与拼接复用 sse_generator 唯一权威实现
+            # （find_content_overlap / _merge_content_with_overlap），禁止本地复制。
+            from Django_xm.apps.chat.services.sse_generator import (
+                _merge_content_with_overlap,
+                find_content_overlap,
+            )
+
+            _overlap = find_content_overlap(existing_content, content)
             if _overlap > 0:
                 # 去重拼接（不要求 content 更长——恢复轮 content 可能仅含
                 # 重叠尾 + 少量新增）
-                _merged = existing_content + content[_overlap:]
+                _merged = _merge_content_with_overlap(existing_content, content)
                 if len(_merged) > len(existing_content):
                     assistant_msg.content = _merged
                     content_changed = True
             elif len(content) > len(existing_content):
                 # 无重叠且更长：纯追加保留历史段（恢复轮从空重建，缺失挂起前流式段）
-                assistant_msg.content = existing_content + content
+                assistant_msg.content = _merge_content_with_overlap(existing_content, content)
                 content_changed = True
             # 其余（无重叠且更短/等长）：保留已有版本，避免覆盖前端更长版本
 

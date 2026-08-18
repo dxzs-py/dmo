@@ -56,8 +56,6 @@ export const useChatStore = defineStore('chat', () => {
     streamChat,
     connectionStatus,
     lastError,
-    retryCount,
-    bytesReceived,
   } = useStreamChat()
 
   const isConnected = computed(() => connectionStatus.value === CONNECTION_STATUS.CONNECTED)
@@ -597,8 +595,6 @@ export const useChatStore = defineStore('chat', () => {
     messageCount,
     connectionStatus,
     lastError,
-    retryCount,
-    bytesReceived,
     isConnected,
     isReconnecting,
     isConnecting,

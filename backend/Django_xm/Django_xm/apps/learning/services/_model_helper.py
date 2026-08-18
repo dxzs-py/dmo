@@ -65,7 +65,8 @@ def get_structured_model_from_state(state: dict[str, Any], schema: Any, **extra:
     """根据 state 中的用户配置构建结构化输出模型
 
     调用 get_structured_model_with_fallback，自动具备 fallback + 重试能力。
-    内部对 DeepSeek 自动使用 JsonModeStructuredModel，避免 thinking + tool_choice 冲突。
+    内部对 DeepSeek 启用深度思考时自动使用 JSON mode（JsonModeStructuredModel），
+    避免 thinking + tool_choice 冲突；未启用时保持原 with_structured_output 路径。
     """
     kwargs = _extract_model_kwargs(state)
     kwargs.update(extra)

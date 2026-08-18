@@ -2,7 +2,7 @@
 深度研究公共执行服务（会话级单执行流）
 
 - 智能体执行（LLM Cache 控制 + Token 追踪）
-- 结果处理（文件同步 + Token 更新 + 状态更新 + Redis 发布）
+- 结果处理（文件同步 + Token 更新 + 状态更新）
 - 审批中断：on_interrupt 挂起等待批次决策，返回非空 decisions dict，
   adapter 自动 Command(resume=...) 重入，单协程持续运行
 
@@ -12,19 +12,15 @@
     - 事件发布：与 chat 模块共用 publish_approval（统一实时同步）
 """
 
-import json
 import logging
 import os
 from dataclasses import dataclass
 from typing import Any
 
-from asgiref.sync import sync_to_async
-
 from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
 
 logger = logging.getLogger(__name__)
 
-REDIS_CHANNEL_PREFIX = "research:result:"
 APPROVAL_TIMEOUT_SECONDS = 300
 
 
@@ -53,17 +49,6 @@ class ResearchResult:
     suspended: bool = False
     subagent_thread_ids: list[str] = None
     interrupt_id: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "success": self.success,
-            "final_report": self.final_report,
-            "files": self.files,
-            "state_files": self.state_files,
-            "usage_data": self.usage_data,
-            "model_name": self.model_name,
-            "error_message": self.error_message,
-        }
 
 
 def load_research_context(task_id: str, max_content_length: int = 12000) -> str:
@@ -247,81 +232,11 @@ def _sync_state_files_to_disk(thread_id: str, result: ResearchResult):
         logger.warning(f"同步状态文件到磁盘失败: {e}")
 
 
-def publish_result_payload(thread_id: str, payload: dict) -> None:
-    """发布研究结果负载到 Redis channel（与聊天 SSE 订阅方同一数据库）。
-
-    聊天模块深度研究模式的 SSE 生成器（deep_chat_service.py 的
-    _wait_for_research_result_streaming）使用 settings.CELERY_BROKER_URL
-    （Redis DB 3）订阅 research:result:{thread_id} 通道。
-    Redis Pub/Sub 按数据库隔离，因此发布方必须使用同一 broker URL
-    （同一 Redis DB），否则订阅方永远收不到消息。发布频率低，单次连接即可。
-
-    Args:
-        thread_id: 研究任务 ID（channel 后缀）
-        payload: 结果负载（业务字段，将连同 thread_id 一并序列化发布）
-    """
-    from django.conf import settings as django_settings
-
-    # 复用 Celery broker 的 Redis 连接串：保证与订阅方（chat SSE）使用同一 Redis DB，
-    # 仅复用配置值，研究执行不依赖 Celery 功能（Pub/Sub 按 DB 隔离，DB 必须一致）
-    broker_url = getattr(django_settings, "CELERY_BROKER_URL", "")
-    if not broker_url:
-        logger.warning("CELERY_BROKER_URL 未配置，无法发布研究结果")
-        return
-
-    try:
-        import redis as redis_lib
-
-        channel = f"{REDIS_CHANNEL_PREFIX}{thread_id}"
-        redis_client = redis_lib.Redis.from_url(broker_url)
-        redis_client.publish(
-            channel,
-            json.dumps({"thread_id": thread_id, **payload}, ensure_ascii=False),
-        )
-        logger.info(f"研究结果已发布到 Redis: {channel}")
-    except Exception as e:
-        logger.warning(f"发布研究结果到 Redis 失败: {e}")
-
-
-def _publish_result_to_redis(thread_id: str, result: ResearchResult, response_time: float):
-    """委托 publish_result_payload 发布成功研究结果（保持调用点不变）。"""
-    publish_result_payload(thread_id, {"response_time": response_time, **result.to_dict()})
-
-
-def publish_research_failure(thread_id: str, error_message: str) -> None:
-    """发布深度研究失败结果到 Redis（供聊天 SSE 及时结束等待）。
-
-    聊天模块深度研究模式的 SSE 生成器订阅 research:result:{thread_id}
-    通道等待研究结果；若终态失败不发布失败结果，SSE 将一直阻塞到
-    超时（前端输入框持续显示运行中）。仅在终态失败时调用，可重试
-    异常或等待审批（interrupted）路径不得调用。
-
-    Args:
-        thread_id: 研究任务 ID
-        error_message: 失败信息（作为 final_report / error 字段）
-    """
-    try:
-        publish_result_payload(
-            thread_id,
-            {
-                "response_time": 0,
-                "success": False,
-                "final_report": error_message,
-                "files": None,
-                "usage_data": None,
-                "error": error_message,
-            },
-        )
-    except Exception as e:
-        logger.warning(f"发布研究失败结果到 Redis 失败: {e}")
-
-
 def finalize_research(
     thread_id: str,
     result: ResearchResult,
     response_time: float,
     sync_files: bool = True,
-    publish_to_redis: bool = False,
 ) -> None:
     """
     公共结果处理逻辑
@@ -331,7 +246,6 @@ def finalize_research(
         result: ResearchResult 执行结果
         response_time: 响应时间（秒）
         sync_files: 是否同步文件到磁盘
-        publish_to_redis: 是否将结果发布到 Redis（供聊天路径订阅）
     """
     if sync_files:
         _sync_state_files_to_disk(thread_id, result)
@@ -354,7 +268,7 @@ def finalize_research(
     except Exception as e:
         logger.warning(f"更新研究任务 Token 数据失败: {e}")
 
-    # 成功时立即更新 DB 状态为 completed（在 publish_to_redis 之前）
+    # 成功时立即更新 DB 状态为 completed
     # 确保 SSE 流读取到的状态是 completed，避免前端显示 progress/running 后收不到 completed 事件
     if result.success:
         try:
@@ -381,9 +295,6 @@ def finalize_research(
             f"输出={result.usage_data.get('completion_tokens', 0)}), "
             f"调用: {result.usage_data.get('successful_requests', 0)}次"
         )
-
-    if publish_to_redis:
-        _publish_result_to_redis(thread_id, result, response_time)
 
 
 # ---------------------------------------------------------------------------

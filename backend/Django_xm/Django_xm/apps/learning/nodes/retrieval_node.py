@@ -101,6 +101,30 @@ def _dedup_by_content(docs: list[Any]) -> list[Any]:
     return result
 
 
+def _run_web_search(query: str) -> list[str]:
+    """调用 web_search 工具执行联网搜索，返回搜索结果文本列表。
+
+    复用聊天模块的 web_search 工具（apps/tools._get_web_search_tools），
+    未配置 TAVILY_API_KEY / 无 duckduckgo-search 时静默降级返回空列表。
+    """
+    try:
+        from Django_xm.apps.tools import _get_web_search_tools
+
+        tools = _get_web_search_tools()
+        results: list[str] = []
+        for tool in tools:
+            result = tool.invoke({"query": query})
+            content = result.content if hasattr(result, "content") else str(result)
+            if content and content not in results:
+                results.append(content)
+        if results:
+            logger.info(f"[Retrieval Node] web_search 返回 {len(results)} 条结果")
+        return results
+    except Exception as e:
+        logger.warning(f"[Retrieval Node] web_search 调用失败: {e}")
+        return []
+
+
 def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
     """文档检索节点
 
@@ -115,6 +139,7 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
     learning_plan = state.get("learning_plan")
     user_id = state.get("user_id")
     knowledge_base_ids = state.get("knowledge_base_ids") or []
+    use_web_search = state.get("use_web_search", False)
 
     if not learning_plan:
         logger.warning("[Retrieval Node] 学习计划不存在，跳过文档检索")
@@ -125,8 +150,31 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
             "updated_at": timezone.now().isoformat(),
         }
 
-    # 未选择知识库：明确跳过 RAG，与"硬编码 test_index"的开发模式彻底解耦
+    topic = learning_plan["topic"]
+    key_points = learning_plan["key_points"]
+
+    # 网络查询：开启时调用 web_search 工具（并入最终检索上下文）
+    web_docs: list[str] = []
+    if use_web_search:
+        web_docs = _run_web_search(topic)
+
+    # 未选择知识库：明确跳过 RAG；若开启网络查询则仅返回联网结果
     if not user_id or not knowledge_base_ids:
+        if web_docs:
+            logger.info(
+                f"[Retrieval Node] 未选择知识库，仅使用网络查询结果 ({len(web_docs)} 条)"
+            )
+            return {
+                "retrieved_docs": _build_web_retrieved_docs(web_docs),
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": "\n\nℹ️ 未选择知识库，已使用网络查询获取学习资料。",
+                    }
+                ],
+                "current_step": "retrieval",
+                "updated_at": timezone.now().isoformat(),
+            }
         logger.info(
             f"[Retrieval Node] 未选择知识库 (user_id={user_id}, kb_count={len(knowledge_base_ids)})，"
             "跳过 RAG 检索，使用 LLM 内置知识生成内容"
@@ -145,9 +193,6 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
             "current_step": "retrieval",
             "updated_at": timezone.now().isoformat(),
         }
-
-    topic = learning_plan["topic"]
-    key_points = learning_plan["key_points"]
 
     main_query = f"{topic}"
     logger.info(f"[Retrieval Node] 主查询: {main_query}, 知识库数量: {len(knowledge_base_ids)}")
@@ -183,6 +228,8 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
     logger.info(f"[Retrieval Node] 最终检索到 {len(all_docs)} 个文档")
 
     retrieved_docs: list[RetrievedDocument] = []
+    # 网络查询结果优先并入
+    retrieved_docs.extend(_build_web_retrieved_docs(web_docs))
     for i, doc in enumerate(all_docs):
         retrieved_doc: RetrievedDocument = {
             "content": doc.page_content,
@@ -202,3 +249,15 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
         "current_step": "retrieval",
         "updated_at": timezone.now().isoformat(),
     }
+
+
+def _build_web_retrieved_docs(web_docs: list[str]) -> list[RetrievedDocument]:
+    """将 web_search 结果转为 RetrievedDocument 列表（source 标注 web_search）。"""
+    return [
+        {
+            "content": content,
+            "metadata": {"source": "web_search"},
+            "relevance_score": 1.0,
+        }
+        for content in web_docs
+    ]

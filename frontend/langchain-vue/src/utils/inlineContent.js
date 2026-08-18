@@ -21,7 +21,37 @@
  * 本模块为纯函数，无 Vue 依赖，可独立单元测试：
  *   node src/utils/__tests__/inlineContent.test.js
  */
-import { getToolCallId } from './agentLayerTree.js'
+import { sortToolCallsForDisplay } from './messageOperations.js'
+
+/**
+ * 提取工具调用 ID（兼容 id / toolCallId 双字段）
+ *
+ * 供 splitContentByToolPositions 复用（原 agentLayerTree.js 单函数模块已并入本文件，
+ * spec unify-agent-research-display-architecture Task 5.7）。
+ *
+ * @param {Object} tc
+ * @returns {string}
+ */
+export function getToolCallId(tc) {
+  if (!tc || typeof tc !== 'object') return ''
+  return tc.id || tc.toolCallId || ''
+}
+
+/**
+ * 过滤主 agent 工具调用并统一排序（spec unify-agent-research-display-architecture）
+ *
+ * 收敛 ChatMessage / ResearchTaskDetail 两处 mainToolCalls 的重复实现，
+ * 消除排序职责不一致（原 ChatMessage 不排序 / ResearchTaskDetail 排序）。
+ * 排序统一走 sortToolCallsForDisplay（seq 升序，唯一权威排序实现）。
+ *
+ * @param {Array} [toolCalls] - 平铺工具调用数组（含主/子代理）
+ * @returns {Array} 主 agent 工具调用数组（已按 seq 排序）
+ */
+export function filterMainToolCalls(toolCalls) {
+  const list = (Array.isArray(toolCalls) ? toolCalls : []).filter(tc => !tc.subagentThreadId)
+  sortToolCallsForDisplay(list)
+  return list
+}
 
 /**
  * 将单图层正文按工具 position 切段
@@ -69,6 +99,3 @@ export function splitContentByToolPositions(content, toolCalls) {
 
   return segments
 }
-
-// getToolCallId re-export（供调用方统一从段内 toolCall 取 id，避免重复实现）
-export { getToolCallId }

@@ -5,27 +5,22 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import MarkdownRenderer from '../common/MarkdownRenderer.vue'
 import ChainOfThought from './ChainOfThought.vue'
-import ToolCallCard from './ToolCallCard.vue'
 import Sources from './Sources.vue'
 import Plan from './Plan.vue'
-import SubAgentCard from './SubAgentCard.vue'
-import InlineToolCallContent from '../common/InlineToolCallContent.vue'
-import AiReasoning from '../ai-elements/AiReasoning.vue'
+import AgentContentPipeline from '../common/AgentContentPipeline.vue'
 import { ResearchTaskStatus, StreamState } from '../../types'
 import AiTask from '../ai-elements/AiTask.vue'
 import AiImage from '../ai-elements/AiImage.vue'
 import AiControls from '../ai-elements/AiControls.vue'
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
-import { useModelStore } from '../../stores/model'
 import { logger } from '../../utils/logger'
 import { formatFileSize } from '../../utils/format'
-import { deriveDisplayStatus } from '../../utils/toolCallStateMachine'
 import { isApprovalDisabled } from '../../utils/approvalGate'
-import { buildSubagentsFromMessage, mapSubagentsBySpawnToolCall } from '../../utils/subagentAggregation'
+import { buildSubagentsFromMessage } from '../../utils/subagentAggregation'
+import { filterMainToolCalls } from '../../utils/inlineContent'
 import { useSubagents } from '../../composables/useSubagents'
-import { SUBAGENT_STATUS } from '../../utils/subagentStatus'
-import settings from '../../config/settings'
+import { useSubagentExpansion } from '../../composables/useSubagentExpansion'
 
 const props = defineProps({
   message: {
@@ -81,7 +76,6 @@ const copied = ref(false)
 const approvalInputValues = ref({})  // Map<toolCallId, inputValue> 每个工具调用独立的输入值
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
-const modelStore = useModelStore()
 const router = useRouter()
 
 // 收集所有工具调用级的审批数据
@@ -89,11 +83,9 @@ const router = useRouter()
 
 const { getSubagentsByMessage, fetchSubagents } = useSubagents()
 
-// 主 agent 工具调用（subagentThreadId 为空），保留正文内联工具切段能力
-const mainToolCalls = computed(() => {
-  const tcs = Array.isArray(props.message.toolCalls) ? props.message.toolCalls : []
-  return tcs.filter(tc => !tc.subagentThreadId)
-})
+// 主 agent 工具调用（subagentThreadId 为空），保留正文内联工具切段能力。
+// 过滤 + 排序统一走 filterMainToolCalls（spec：与 ResearchTaskDetail 收敛一致）
+const mainToolCalls = computed(() => filterMainToolCalls(props.message.toolCalls))
 
 // 该消息关联的子代理元数据（按 assistantMessageId 匹配，后端 GET 接口）
 const subagentMetaList = computed(() => {
@@ -106,41 +98,9 @@ const subagents = computed(() =>
   buildSubagentsFromMessage(props.message, subagentMetaList.value)
 )
 
-// spawn 顺序索引：spawnToolCallId → 子代理视图（挂载到对应 spawn 工具之后）；
-// orphans 为无 spawnToolCallId 的孤儿（主工具流末尾兜底渲染）
-const subagentSpawnIndex = computed(() => mapSubagentsBySpawnToolCall(subagents.value))
-
-/** 取 spawn 工具调用派生的子代理（命中返回单元素数组，未命中返回空数组） */
-const spawnedSubagentOf = (toolCall) => {
-  const id = toolCall?.id || toolCall?.toolCallId
-  if (!id) return []
-  const subagent = subagentSpawnIndex.value.bySpawnToolCallId.get(id)
-  return subagent ? [subagent] : []
-}
-
-// 展开的子代理 threadId 集合（点击卡片切换）
-const expandedSubagentThreadIds = ref(new Set())
-
-const toggleSubagent = (threadId) => {
-  const next = new Set(expandedSubagentThreadIds.value)
-  if (next.has(threadId)) next.delete(threadId)
-  else next.add(threadId)
-  expandedSubagentThreadIds.value = next
-}
-
-// spec D9：autoExpandPendingConfirm 开启时，仅「等待你的确认」的卡片自动展开（嵌套内层永不自动展开）
-watch(subagents, (list) => {
-  if (!settings.autoExpandPendingConfirm) return
-  const next = new Set(expandedSubagentThreadIds.value)
-  let changed = false
-  for (const sa of list) {
-    if (sa.status === SUBAGENT_STATUS.INTERRUPTED_PENDING_USER_INPUT && !next.has(sa.threadId)) {
-      next.add(sa.threadId)
-      changed = true
-    }
-  }
-  if (changed) expandedSubagentThreadIds.value = next
-})
+// 展开状态 + 待审批自动展开（spec unify-agent-research-display-architecture：与
+// ResearchTaskDetail 共用 useSubagentExpansion，不再本地重复实现）
+const { expandedThreadIds, toggleSubagent } = useSubagentExpansion(subagents)
 
 // 检测 spawn_sub_agent 工具调用，触发子代理元数据拉取（异步增量，后续事件再刷新）
 const hasSpawnTool = computed(() => {
@@ -286,26 +246,6 @@ const canRegenerate = computed(() => {
 })
 
 const hasResearchTask = computed(() => !!props.message.researchTaskId && !props.message.researchTaskDeleted)
-
-/**
- * 推理区展示文案三态（spec fix-deep-research-subagent-activation D4）：
- * 1. 深度研究语境（消息关联研究任务 / 会话处于深度研究模式）→ "研究推理"；
- * 2. 深度思考开关开启 → "已深度思考（用时 N 秒）"（用时由 AiReasoning 计时拼装）；
- * 3. 其余（模型原生 reasoning，未开开关）→ 中性"思考过程"，禁止出现"深度思考"字样。
- * 后端 reasoning 采集不变，仅前端展示语义区分。
- */
-const isResearchContext = computed(() => {
-  if (hasResearchTask.value) return true
-  return sessionStore.currentSession?.mode === 'deep-research'
-})
-const deepThinkingActive = computed(() => !isResearchContext.value && modelStore.thinkingEnabled)
-const reasoningDisplayLabel = computed(() => {
-  if (isResearchContext.value) return '研究推理'
-  if (deepThinkingActive.value) return '已深度思考'
-  return '思考过程'
-})
-// 子代理中间思考非"深度思考开关"直接产物：研究语境"研究推理"，其余中性
-const subagentReasoningLabel = computed(() => (isResearchContext.value ? '研究推理' : '思考过程'))
 
 const _isResearchRunning = computed(() => {
   if (!hasResearchTask.value) return false
@@ -494,68 +434,22 @@ function handleBranchChange(versionIndex) {
           <el-icon class="is-loading" :size="14"><Loading /></el-icon>
           <span class="attachment-processing-text">{{ attachmentProcessing.message || '正在处理文档...' }}</span>
         </div>
-        <!-- 主 agent 思考（单版本与多版本统一：message 顶层为活跃版本权威数据） -->
-        <AiReasoning
-          v-if="message.reasoning?.content"
-          :content="message.reasoning.content"
-          :duration="message.reasoning.duration"
-          :is-streaming="isReasoningStreaming"
-          source="deep_thinking"
-          :reasoning-label="reasoningDisplayLabel"
-        />
-
-        <!-- 主 agent 正文 + 主 agent 工具调用（内联切段，spec Task 9 保留） -->
-        <InlineToolCallContent
+        <!-- 统一渲染管线：推理区 → 正文内联工具切段（ToolCallCard + spawn 后
+             SubAgentCard）→ orphans 子代理卡（spec unify-agent-research-display-architecture） -->
+        <AgentContentPipeline
           :content="message.content"
+          :reasoning-content="message.reasoning?.content"
+          :reasoning-duration="message.reasoning?.duration"
+          :is-streaming="isReasoningStreaming"
           :tool-calls="mainToolCalls"
           :citations="message.sources || []"
+          :subagents="subagents"
+          :expanded-thread-ids="expandedThreadIds"
           :approval-disabled="approvalDisabled"
-        >
-          <template #tool="{ toolCall, approvalDisabled: disabled }">
-            <ToolCallCard
-              :tool-name="toolCall.name"
-              :input="toolCall.input || toolCall.parameters"
-              :output="toolCall.output || toolCall.result"
-              :status="deriveDisplayStatus(toolCall)"
-              :tool-call="toolCall"
-              :approval-disabled="disabled"
-              :is-subagent-trigger="toolCall.name === 'spawn_sub_agent'"
-              @approve="(tc) => handleToolCallApprove(tc)"
-              @reject="(tc) => handleToolCallReject(tc)"
-            />
-
-            <!-- 顺序挂载：spawn 工具之后紧跟其派生的子代理卡片（点击原地展开内容）。
-                 子代理审批自治：卡片内部按 subagent.status 判断，不受父消息固化状态影响 -->
-            <template v-if="toolCall.name === 'spawn_sub_agent'">
-              <template v-for="sa in spawnedSubagentOf(toolCall)" :key="sa.threadId">
-                <SubAgentCard
-                  :subagent="sa"
-                  :expanded="expandedSubagentThreadIds.has(sa.threadId)"
-                  :reasoning-label="subagentReasoningLabel"
-                  :subagents="subagents"
-                  :expanded-thread-ids="expandedSubagentThreadIds"
-                  @toggle="toggleSubagent"
-                  @approve="(t) => handleToolCallApprove(t)"
-                  @reject="(t) => handleToolCallReject(t)"
-                />
-              </template>
-            </template>
-          </template>
-        </InlineToolCallContent>
-
-        <!-- 孤儿兜底：无 spawnToolCallId 的子代理在主工具流末尾渲染 -->
-        <template v-for="sa in subagentSpawnIndex.orphans" :key="sa.threadId">
-          <SubAgentCard
-            :subagent="sa"
-            :expanded="expandedSubagentThreadIds.has(sa.threadId)"
-            :reasoning-label="subagentReasoningLabel"
-            :subagents="subagents"
-            :expanded-thread-ids="expandedSubagentThreadIds"
-            @toggle="toggleSubagent"
-            @approve="(t) => handleToolCallApprove(t)"
-            @reject="(t) => handleToolCallReject(t)"
-          />
-        </template>
+          @toggle-subagent="toggleSubagent"
+          @approve="handleToolCallApprove"
+          @reject="handleToolCallReject"
+        />
 
         <!-- 多版本切换器（仅多版本消息显示） -->
         <div

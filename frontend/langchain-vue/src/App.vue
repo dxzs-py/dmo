@@ -1,20 +1,18 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { ElLoading } from 'element-plus'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import AppHeader from './components/layout/AppHeader.vue'
 import GlobalSearch from './components/common/GlobalSearch.vue'
 import ChatQuickAccess from './components/common/ChatQuickAccess.vue'
 import { useThemeStore } from './stores/theme'
-import { useSessionStore } from './stores/session'
 import { useUserStore } from './stores/user'
 import { useLoadingStore } from './stores/loading'
 import { useThrottle } from './composables/useThrottle'
 
 const route = useRoute()
 const themeStore = useThemeStore()
-const sessionStore = useSessionStore()
 const userStore = useUserStore()
 const loadingStore = useLoadingStore()
 const isCollapse = ref(false)

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { FolderOpened, Hide, View, Cpu, Search, MagicStick } from '@element-plus/icons-vue'
 import ModelSelector from '../common/ModelSelector.vue'
 import { useSessionStore } from '../../stores/session'
@@ -43,7 +43,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits({
-  'model-change': (data) => true,
+  'model-change': (_data) => true,
   'update:currentMode': (mode) => typeof mode === 'string',
   'update:useWebSearch': (val) => typeof val === 'boolean',
   'update:useDeepThinking': (val) => typeof val === 'boolean',

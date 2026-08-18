@@ -16,14 +16,20 @@ function _loadToolsFromSession(sessionId) {
   try {
     const raw = sessionStorage.getItem(_toolsStorageKey(sessionId))
     if (raw) return JSON.parse(raw)
-  } catch {}
+  } catch (err) {
+    // sessionStorage 不可用或 JSON 损坏时回退到空配置（默认未选任何工具）
+    logger.debug('[ChatInput] 读取会话工具配置失败:', err)
+  }
   return null
 }
 
 function _saveToolsToSession(sessionId, data) {
   try {
     sessionStorage.setItem(_toolsStorageKey(sessionId), JSON.stringify(data))
-  } catch {}
+  } catch (err) {
+    // sessionStorage 写入失败（如隐私模式/配额满）时仅记录，不影响本次发送
+    logger.debug('[ChatInput] 保存会话工具配置失败:', err)
+  }
 }
 
 export function useChatInput() {

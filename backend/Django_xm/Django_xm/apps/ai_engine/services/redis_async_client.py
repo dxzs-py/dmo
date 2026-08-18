@@ -71,5 +71,5 @@ async def release_async_redis_client() -> None:
         try:
             await client.aclose()
             logger.debug(f"[RedisCachedCheckpointer] 已释放异步 Redis 客户端: loop={loop_id}")
-        except Exception as e:  # noqa: BLE001 - 关闭失败仅记录，不阻塞释放
+        except Exception as e:
             logger.debug(f"[RedisCachedCheckpointer] 释放异步 Redis 客户端失败 ({loop_id}): {e}")

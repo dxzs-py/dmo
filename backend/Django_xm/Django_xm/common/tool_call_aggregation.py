@@ -14,7 +14,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 # 工具事件类型 → 落库条目 status（与前端 toolCallTransition 语义一致）。
 # 覆盖主/子代理所有 tool_call_* 事件，非子代理专属。
@@ -25,6 +26,25 @@ EVENT_STATUS_MAP: dict[str, str] = {
     "tool_call_completed": "completed",
     "tool_call_failed": "failed",
     "tool_call_timeout": "timeout",
+}
+
+# 审批状态 / 工具内部状态 → 展示 status（唯一权威）。
+# 收敛历史四套本地映射（stream_chunk_processors._STATE_TO_STATUS /
+# approval_service.status_mapping / approval_helpers 的审批状态提升逻辑），
+# 各引用方统一 import 本常量，禁止再定义本地映射。
+# 值域与前端 toolCallTransition 语义一致，展示状态字符串为前端契约，不可变更。
+STATE_TO_STATUS: dict[str, str] = {
+    # 审批状态（Approval.state）
+    "pending": "waiting",
+    "waiting": "waiting",
+    "processing": "running",
+    "approved": "completed",
+    "rejected": "rejected",
+    "timeout": "timeout",
+    # 工具内部状态（tool_info.state）
+    "input-available": "pending",
+    "output-available": "completed",
+    "output-error": "failed",
 }
 
 # 终态集合：状态只前进不回退（审批 resume 重放 PENDING 不降级终态）。

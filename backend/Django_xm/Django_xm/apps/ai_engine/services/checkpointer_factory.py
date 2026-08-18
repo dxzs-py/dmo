@@ -44,7 +44,7 @@ def register_main_loop() -> None:
     主 loop 上的异步 checkpointer 连接池常驻，不随会话释放；
     子代理等独立一次性 loop（loop_id 不同）仍按原逻辑正常释放。
     """
-    global _main_loop_id
+    global _main_loop_id  # noqa: PLW0603 - 模块级单例惰性初始化
     try:
         _main_loop_id = id(asyncio.get_running_loop())
     except RuntimeError:

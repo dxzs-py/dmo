@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ _lifecycle_manager: SubAgentLifecycleManager | None = None
 
 def get_lifecycle_manager() -> SubAgentLifecycleManager:
     """获取进程级 SubAgentLifecycleManager 单例。"""
-    global _lifecycle_manager
+    global _lifecycle_manager  # noqa: PLW0603 - 模块级单例惰性初始化
     if _lifecycle_manager is None:
         _lifecycle_manager = SubAgentLifecycleManager()
     return _lifecycle_manager

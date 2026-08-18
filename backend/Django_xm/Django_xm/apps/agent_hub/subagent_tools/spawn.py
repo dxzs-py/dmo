@@ -35,7 +35,9 @@ _SUBAGENT_STRIP_TOOL_NAMES = frozenset({"spawn_sub_agent", "wait_for_subagent"})
 
 
 class SpawnInput(BaseModel):
-    agent_name: str = Field(description="子代理名称/任务名，简短标识（如 web-researcher / doc-analyst / code-reviewer）")
+    agent_name: str = Field(
+        description="子代理名称/任务名，简短标识（如 web-researcher / doc-analyst / code-reviewer）"
+    )
     task: str = Field(description="子代理任务描述，详细说明需要独立完成的工作")
     tools: list[str] = Field(
         default_factory=list,
@@ -53,7 +55,8 @@ class SpawnSubAgentTool(BaseTool):
         "派生一个子代理独立执行指定任务。子代理异步运行，本工具立即返回子代理 thread_id，"
         "父代理不会等待其完成。适用：并行处理子任务、把独立工作委派给专门代理。"
         "不适用：需要立即拿到结果的单步操作（应由父代理直接完成）。"
-        "参数：agent_name-子代理名称（必填，简短标识，可用 web-researcher/doc-analyst/general-purpose 命中注册表角色），"
+        "参数：agent_name-子代理名称（必填，简短标识，"
+        "可用 web-researcher/doc-analyst/general-purpose 命中注册表角色），"
         "task-子代理任务描述（必填，详细说明），"
         "tools-可选追加工具名列表（缺省继承主 agent 全部工具 + 注册表专用工具）。"
         "边界：子代理有最大嵌套深度限制（最多 3 层）；创建失败返回错误说明，父代理可据此调整策略。"
@@ -90,7 +93,7 @@ class SpawnSubAgentTool(BaseTool):
         agent_name: str,
         task: str,
         tools: list[str] | None = None,
-        tool_call_id: Annotated[str, InjectedToolCallId] = None,
+        tool_call_id: Annotated[str | None, InjectedToolCallId] = None,
     ) -> str:
         """派生子代理（异步非阻塞，立即返回实例元数据）。
 

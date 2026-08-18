@@ -7,10 +7,7 @@ import {
   addOrUpdateToolCallInMap,
   updateOrAddToolResultInMap,
   setApprovalToToolCallInMap,
-  findToolCallInMap,
-  findToolCallById,
   updateApprovalStateInMap,
-  updateToolCallStatusInMap,
   flushPendingApprovalsInMap,
   isTerminalStatus,
   _mergeToolCalls,
@@ -184,7 +181,8 @@ export const useResearchStore = defineStore('research', () => {
         `旧 status=${oldStatus}(终态) 不被新 status=${newStatus}(非终态) 覆盖`
       )
       // 保留旧 status，但其他字段可以合并
-      const { status: _ignored, ...otherFields } = fresh
+      const otherFields = { ...fresh }
+      delete otherFields.status
       taskRef.value = { ...current, ...otherFields, status: oldStatus }
       return taskRef.value
     }
@@ -371,68 +369,6 @@ export const useResearchStore = defineStore('research', () => {
   }
 
   /**
-   * 更新 toolCall 的 status（用于深度研究审批通过后设置 running 状态）
-   *
-   * 统一通过 toolCallMap 作为唯一真相源操作。Map 未命中时，先从 task.toolCalls
-   * 数组填充到 Map，再通过 Map 函数更新，避免直接修改 toolCalls 数组导致的竞态问题。
-   *
-   * @param {string} taskId - 研究任务 ID
-   * @param {string} toolCallId - 工具调用 ID
-   * @param {string} status - 新的 toolCall.status
-   * @returns {boolean} 是否成功更新
-   */
-  const updateToolCallStatus = (taskId, toolCallId, status) => {
-    const task = tasks.value.get(taskId)
-    if (!task) {
-      logger.warn(`[Research] updateToolCallStatus: task 不存在, taskId=${taskId}`)
-      return false
-    }
-    const toolCallMap = task.toolCallMap.value
-
-    // 尝试从 Map 查找
-    let { toolCall: target } = findToolCallInMap(toolCallMap, toolCallId)
-
-    // Map 未命中：从 task.toolCalls 数组填充到 Map（单向数据流：数组 → Map）
-    if (!target) {
-      const toolCallsArr = task.toolCalls.value
-      if (toolCallsArr && Array.isArray(toolCallsArr)) {
-        const tc = findToolCallById(toolCallsArr, toolCallId, { skipApproved: false })
-        if (tc) {
-          const writeKey = tc.id || tc.toolCallId || toolCallId
-          toolCallMap.set(writeKey, tc)
-          triggerRef(task.toolCallMap)
-          target = tc
-          logger.info(
-            `[Research] updateToolCallStatus: Map 未命中，从 toolCalls 数组填充到 Map: ` +
-            `taskId=${taskId}, toolCallId=${toolCallId}`
-          )
-        }
-      }
-    }
-
-    if (!target) {
-      logger.warn(
-        `[Research] updateToolCallStatus: 未找到 toolCall, taskId=${taskId}, ` +
-        `toolCallId=${toolCallId}, status=${status}`
-      )
-      return false
-    }
-
-    const oldStatus = target.status
-    const toolName = target.name || target.toolName
-
-    // 统一通过 Map 函数更新 status
-    updateToolCallStatusInMap(toolCallMap, toolCallId, status)
-
-    _syncToolCalls(task)
-    logger.debug(
-      `[Research] updateToolCallStatus: taskId=${taskId}, toolCallId=${toolCallId}, ` +
-      `oldStatus=${oldStatus}, newStatus=${status}, toolName=${toolName}`
-    )
-    return true
-  }
-
-  /**
    * 获取指定 task 的工具调用数组（响应式）
    *
    * 建议在 computed 或模板中使用以获得响应式更新：
@@ -522,22 +458,6 @@ export const useResearchStore = defineStore('research', () => {
   }
 
   /**
-   * 清理指定 task 的全部数据（工具调用 + 任务状态）
-   * @param {string} taskId - 研究任务 ID
-   */
-  const clearTask = (taskId) => {
-    const task = tasks.value.get(taskId)
-    if (!task) return
-    task.toolCalls.value = []
-    task.toolCallMap.value = new Map()
-    task.pendingApprovals.value = new Map()
-    tasks.value.delete(taskId)
-    // 同步清理任务状态（统一底层：taskInfo 与 tasks 生命周期一致）
-    clearTaskInfo(taskId)
-    logger.info(`[Research] 清理 task 数据: taskId=${taskId}`)
-  }
-
-  /**
    * 刷新待绑定的审批数据，将其附加到对应 toolCall
    *
    * 在 addOrUpdateToolCall / updateOrAddToolResult 创建/更新 toolCall 后调用，
@@ -595,12 +515,10 @@ export const useResearchStore = defineStore('research', () => {
     updateOrAddToolResult,
     setApprovalToToolCall,
     updateToolCallApprovalState,     // 与 session.js 对齐：审批状态 + toolCall.status 联动更新
-    updateToolCallStatus,
     getToolCalls,
     getTaskSubagentContents,
     setTaskToolCallsFromSnapshot,
     setTaskSubagentContentsFromSnapshot,
-    clearTask,
     flushPendingApprovals,
     // 子代理图层正文（Agent 图层嵌套规范 Task 1.5）
     setTaskSubagentContent,

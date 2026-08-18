@@ -1,5 +1,4 @@
 <script setup>
-import { useThemeStore } from '../../stores/theme'
 import { useUserStore } from '../../stores/user'
 import { useRouter } from 'vue-router'
 import { User, Setting, SwitchButton, Fold, Expand } from '@element-plus/icons-vue'
@@ -8,7 +7,7 @@ import { confirmLogout } from '../../utils/dialog'
 import ThemeToggle from './ThemeToggle.vue'
 import { computed } from 'vue'
 
-const props = defineProps({
+defineProps({
   sidebarCollapsed: {
     type: Boolean,
     default: true
@@ -17,7 +16,6 @@ const props = defineProps({
 
 const emit = defineEmits(['toggle-sidebar'])
 
-const themeStore = useThemeStore()
 const userStore = useUserStore()
 const router = useRouter()
 

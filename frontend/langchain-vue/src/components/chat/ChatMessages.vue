@@ -63,25 +63,6 @@ const shouldUseVirtualScroll = computed(() => {
   return props.messages.length > props.virtualScrollThreshold
 })
 
-const estimateItemSize = (msgIndex) => {
-  const msg = props.messages[msgIndex]
-  if (!msg) return 200
-  const contentLen = (msg.content || '').length
-
-  // 根据富内容类型调整估算权重
-  let weight = 1
-  if (msg.toolCalls && msg.toolCalls.length > 0) weight = 3
-  else if (msg.sources && msg.sources.length > 0) weight = 2
-  else if (msg.plan && typeof msg.plan === 'object' && Object.keys(msg.plan).length > 0) weight = 2
-  else if (Array.isArray(msg.chainOfThought) && msg.chainOfThought.length > 0) weight = 1.5
-
-  if (contentLen < 50) return Math.round(120 * weight)
-  if (contentLen < 200) return Math.round(180 * weight)
-  if (contentLen < 500) return Math.round(280 * weight)
-  if (contentLen < 1000) return Math.round(400 * weight)
-  return Math.round(500 * weight)
-}
-
 const scrollToBottom = (behavior = 'smooth') => {
   nextTick(() => {
     if (shouldUseVirtualScroll.value && virtualScrollerRef.value?.$el) {

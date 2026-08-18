@@ -321,9 +321,7 @@ class ApprovalMiddleware(AgentMiddleware):
             #    确定性判 DEEP_RESEARCH，不依赖 chat_session_id；
             # 2. thread_id == chat_session_id → CHAT（纯聊天场景）；
             # 3. 其余（含 chat_session_id 为空）→ DEEP_RESEARCH。
-            if thread_id.startswith("research_"):
-                module = EventSource.DEEP_RESEARCH
-            elif thread_id != chat_session_id:
+            if thread_id.startswith("research_") or thread_id != chat_session_id:
                 module = EventSource.DEEP_RESEARCH
             else:
                 module = EventSource.CHAT
@@ -397,14 +395,11 @@ class ApprovalMiddleware(AgentMiddleware):
         module_id = _ctx["module_id"]
         cross_module_id = _ctx["cross_module_id"]
         _assistant_message_id = _ctx["assistant_message_id"]
-        subagent_thread_id = _ctx["subagent_thread_id"]
         sub_depth = _ctx["sub_depth"]
         sub_agent_path = _ctx["sub_agent_path"]
         sub_risk_ceiling = _ctx["sub_risk_ceiling"]
         sub_parent_tool_call_id = _ctx["sub_parent_tool_call_id"]
         sub_agent_name = _ctx["sub_agent_name"]
-        thread_id = _ctx["thread_id"]
-        configurable = _ctx["configurable"]
 
         for tc_info in tool_calls:
             tool_call_id = tc_info["tool_call_id"]

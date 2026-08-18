@@ -53,7 +53,7 @@ import { Loading } from '@element-plus/icons-vue'
 import { knowledgeAPI } from '@/api/knowledge'
 import { logger } from '@/utils/logger'
 
-const props = defineProps({
+defineProps({
   modelValue: {
     type: Array,
     default: () => [],

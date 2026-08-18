@@ -13,7 +13,6 @@ import { computed } from 'vue'
 import { ArrowRight } from '@element-plus/icons-vue'
 import SubAgentDetailPanel from './SubAgentDetailPanel.vue'
 import {
-  getSubagentStatusIcon,
   getSubagentStatusTagType,
   getSubagentStatusText,
   isPendingUserInput,
@@ -30,11 +29,6 @@ const props = defineProps({
   expanded: {
     type: Boolean,
     default: false,
-  },
-  /** 推理区展示文案（父组件按语境传入："研究推理" / "思考过程"） */
-  reasoningLabel: {
-    type: String,
-    default: '',
   },
   /** 全量子代理视图数组（嵌套层挂载数据源，经展开面板递归使用） */
   subagents: {
@@ -62,7 +56,6 @@ const title = computed(() => {
 })
 const statusText = computed(() => getSubagentStatusText(props.subagent.status))
 const statusTagType = computed(() => getSubagentStatusTagType(props.subagent.status))
-const statusIcon = computed(() => getSubagentStatusIcon(props.subagent.status))
 const resultPreview = computed(() => props.subagent.resultPreview || '')
 const needsConfirm = computed(() => isPendingUserInput(props.subagent.status))
 
@@ -112,7 +105,6 @@ const ownApprovalDisabled = computed(() => !isPendingUserInput(props.subagent.st
       v-if="expanded"
       :content="subagent.content"
       :reasoning-content="subagent.reasoningContent"
-      :reasoning-label="reasoningLabel"
       :tool-calls="subagent.toolCalls"
       :approval-disabled="ownApprovalDisabled"
       :subagents="subagents"

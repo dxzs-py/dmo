@@ -100,7 +100,16 @@ class WaitForSubAgentTool(BaseTool):
                 f"wait_for_subagent 收到非法 resume 值: {subagent_thread_ids}, value={resume_value!r}"
             )
             return json.dumps(
-                {"subagent_results": [{"subagent_thread_id": sid, "status": "failed", "result": "子代理结果缺失"} for sid in subagent_thread_ids]},
+                {
+                    "subagent_results": [
+                        {
+                            "subagent_thread_id": sid,
+                            "status": "failed",
+                            "result": "子代理结果缺失",
+                        }
+                        for sid in subagent_thread_ids
+                    ]
+                },
                 ensure_ascii=False,
             )
 

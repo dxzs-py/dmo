@@ -414,14 +414,10 @@ const internalResultFormatters = {
   /** read_file: 文件内容，language 根据扩展名推断 */
   read_file: (result) => {
     const text = extractText(result)
-    let language = 'text'
-    // 优先：result 对象本身携带 file_path，按扩展名推断
-    if (result && typeof result === 'object' && (result.filePath || result.path)) {
-      language = inferLanguageFromPath(result.filePath || result.path)
-    } else {
-      // 回退：根据内容启发式推断
-      language = inferLanguageFromContent(text)
-    }
+    // 优先：result 对象本身携带 file_path，按扩展名推断；否则根据内容启发式推断
+    const language = result && typeof result === 'object' && (result.filePath || result.path)
+      ? inferLanguageFromPath(result.filePath || result.path)
+      : inferLanguageFromContent(text)
     return {
       formatted: text,
       displayMode: 'code',
@@ -529,12 +525,10 @@ const internalResultFormatters = {
   /** file_reader: 文件内容（需要 syntax highlighting） */
   file_reader: (result) => {
     const text = extractText(result)
-    let language = 'text'
-    if (result && typeof result === 'object' && (result.filePath || result.path)) {
-      language = inferLanguageFromPath(result.filePath || result.path)
-    } else {
-      language = inferLanguageFromContent(text)
-    }
+    // 优先：result 对象本身携带 file_path，按扩展名推断；否则根据内容启发式推断
+    const language = result && typeof result === 'object' && (result.filePath || result.path)
+      ? inferLanguageFromPath(result.filePath || result.path)
+      : inferLanguageFromContent(text)
     return { formatted: text, displayMode: 'code', language }
   },
 }

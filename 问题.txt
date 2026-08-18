@@ -255,6 +255,37 @@
 - **修复（已改）**：仅累计 `isinstance(msg_obj, AIMessageChunk)` 的 content，跳过 ToolMessage/SystemMessage
 - 状态：待重启 8001 复测验证（当前 research_47d0ee8d2ce7 为旧代码产物）
 
+## 2026-08-18 学习工作流模块测试（任务 #64 / thread study_11f7e4a46597「简单加法计算（我是测试功能）」）
+
+### 测试方式（Chrome DevTools MCP 实际填写并提交第二轮答案）
+- 选择题 q1-q4：均点击选中**正确答案**（B / C / B / B），radio value 为选项完整文本
+- 填空 q5：「4；11」（与标准答案格式完全一致）→ 答对 20 分
+- 填空 q6：「2和4，2，4」（语义完全正确，仅分隔符逗号≠标准答案中文分号）→ 判错 0 分
+- 简答 q7：「我不会做这道题，随便写的答案。」（随便写）→ 判错 0 分（LLM 反馈"学生未作答"）
+- 结果：**15 分**（仅 q5 答对），触发第 2 次重试
+
+### 问题 A（严重，选择题正常作答必判错）：前端提交选项文本，后端按字母精确匹配
+- 前端 WorkflowQuiz.vue：`<el-radio :value="opt">`（value=选项完整文本，如 "B. 加法是将两个或多个数合并成一个数的运算"）
+- 后端 grading_node.py：`is_correct = user_answer.upper() == correct_answer.upper()`（correct_answer 为字母 "B"/"C"）
+- 实证：本轮 q1-q4 全部点了正确答案仍被判「回答错误。正确答案是：B/C/B/B」；第一轮同样（用户提交 "2和8" 等正确选项文本全部判错）
+- 影响：选择题形同虚设，正确作答必然 0 分
+
+### 问题 B（填空评分严格到格式敏感，语义正确也 0 分）：
+- q6「2和4，2，4」vs 标准「2和4；2；4」——数字和顺序全对，仅分隔符差异即 0 分
+- 第一轮 q5「6+4=10;5+5=10;3+7=10。这三个算式的结果都是10」vs 标准「(1) 10；(2) 10；(3) 10；都是10」——语义全对 0 分；q6「8+6=8+2+4=14」vs「8 + 2 + 4 = 14」仅空格差异 0 分
+- 多空题只有一个输入框，用户无法预知标准答案分隔符格式（两轮标准答案格式还各不相同）
+
+### 问题 C（输入无约束 vs 评分严格，用户反馈的核心）：
+- 填空/简答输入框无任何校验（可空、可随便写，前端不阻止提交）
+- 评分却是精确匹配 / LLM 严格判分 → 随便写必然低分 + 负面反馈 → 死循环重试（当前已到第 2 次重试，上限 3 次）
+
+### 问题 D（LLM 出题选项格式不稳定）：选项文本有时带 "A. " 前缀（第二轮）、有时不带（第一轮），前端无条件加前缀 → 第二轮显示 "A. A. 加法是..." 重复前缀
+
+### 相关代码位置
+- 前端答题组件：frontend/langchain-vue/src/components/workflow/WorkflowQuiz.vue（radio value=opt 文本）
+- 后端评分：backend/Django_xm/Django_xm/apps/learning/nodes/grading_node.py（精确匹配 + LLM 简答评分）
+- 后端出题：backend/Django_xm/Django_xm/apps/learning/nodes/quiz_generator_node.py
+
 ### 问题 19（待复测）：深度研究模式任务 2026-08-18 00:24 复测结果（重启后验证）
 - ✅ 问题 10 修复生效：子代理继承 shell_exec（父上下文 14 工具，日志 [SpawnSubAgent] tool_names(14) 实证），
   子代理真实执行 ollama list / ollama ps 并返回真实输出

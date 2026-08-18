@@ -915,6 +915,17 @@ export function _mergeToolCalls(existingList, backendList) {
 }
 
 /**
+ * 合并/快照校对时"始终以后端为准"的非内容字段（后端是元数据权威）
+ *
+ * 统一合并规则（spec unify-agent-research-display-architecture Task 6）：
+ * mergeMessageFromBackend 与 useSnapshotSync 快照校对共用单一导出，
+ * 消除 messageOperations.js 与 useSnapshotSync.js 的重复定义。
+ * researchTaskStatus 是研究卡片"进行中/已完成"判定的权威来源（P7 根因修复），
+ * 合并/校对必须注入，否则实时流式期间消息 researchTaskStatus 恒为 null。
+ */
+export const NON_CONTENT_FIELDS = ['tokenCount', 'responseTime', 'model', 'backendId', 'researchTaskId', 'researchTaskStatus']
+
+/**
  * 合并本地消息与后端快照消息（快照校对场景）
  *
  * 用于 useSnapshotSync：从后端拉取快照后，将快照消息合并到本地，
@@ -940,10 +951,9 @@ export function mergeMessageFromBackend(existingMsg, backendMsg) {
   if (!backendMsg) return existingMsg
 
   const isProtected = PROTECTED_STREAM_STATES.has(existingMsg.streamState)
-  const _NON_CONTENT_FIELDS = ['tokenCount', 'responseTime', 'model', 'backendId', 'researchTaskId', 'researchTaskStatus']
 
   // 非内容字段始终以后端为准（后端是元数据权威）
-  for (const field of _NON_CONTENT_FIELDS) {
+  for (const field of NON_CONTENT_FIELDS) {
     if (backendMsg[field] !== undefined) {
       existingMsg[field] = backendMsg[field]
     }
@@ -1004,7 +1014,7 @@ export function mergeMessageFromBackend(existingMsg, backendMsg) {
   const versionIdx = existingMsg.currentVersion
   if (existingMsg.versions && versionIdx !== undefined && existingMsg.versions[versionIdx]) {
     const ver = existingMsg.versions[versionIdx]
-    for (const field of _NON_CONTENT_FIELDS) {
+    for (const field of NON_CONTENT_FIELDS) {
       if (existingMsg[field] !== undefined) ver[field] = existingMsg[field]
     }
     ver.toolCalls = existingMsg.toolCalls

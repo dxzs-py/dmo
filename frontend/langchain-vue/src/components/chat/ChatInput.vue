@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch, nextTick, computed } from 'vue'
-import { Promotion, Search, Document, Close, VideoPause, SetUp, Loading, RefreshRight, Check, CircleClose } from '@element-plus/icons-vue'
+import { Promotion, Search, Document, Close, VideoPause, Loading, RefreshRight, Check, CircleClose } from '@element-plus/icons-vue'
 import SlashCommandPanel from '@/components/common/SlashCommandPanel.vue'
 import ToolSelector from '@/components/chat/ToolSelector.vue'
 
