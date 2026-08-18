@@ -1,163 +1,134 @@
-logger.js:15 全局错误捕获: Object
+client:733 [vite] connecting...
+client:827 [vite] connected.
+logger.js:6 [Security] Initializing session store...
+logger.js:19 [Realtime] 已从 localStorage 恢复 lastSeq: 672 条通道
+logger.js:19 [Realtime] WebSocket 已连接
+logger.js:24 [Realtime] replay barrier 设置 pending: user
+pinia.js?v=8039668a:4622 🍍 "approval" store installed 🆕
+pinia.js?v=8039668a:4622 🍍 "research" store installed 🆕
+pinia.js?v=8039668a:4622 🍍 "workflow" store installed 🆕
+logger.js:6 [Sync] 实时同步 store 已初始化
+logger.js:19 [Realtime] 收到 replay 回包: channel=user:1, count=0, chunk=1/1
+logger.js:24 [Realtime] replay barrier flush 无缓冲事件: user
+pinia.js?v=8039668a:4622 🍍 "model" store installed 🆕
+axios.js:73 [Axios] 响应转换: /users/info/ 
+  前: {"code":200,"message":"获取成功","data":{"id":1,"username":"daixing","email":"3309201506@qq.com","mobile":null,"avatar":"/media/avatar/1/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE_2026-05-01_172822.png","date_j 
+  后: {"code":200,"message":"获取成功","data":{"id":1,"username":"daixing","email":"3309201506@qq.com","mobile":null,"avatar":"/media/avatar/1/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE_2026-05-01_172822.png","dateJo
+axios.js:73 [Axios] 响应转换: /chat/sessions/ 
+  前: {"code":200,"message":"操作成功","data":{"items":[{"user_id":1,"cached_at":"2026-08-18T15:41:58.676255+00:00","id":1755,"session_id":"d646c15c-7d51-4f48-a14c-0d45baae8dba","title":"新对话 - 代理","mode":"agent 
+  后: {"code":200,"message":"操作成功","data":{"items":[{"userId":1,"cachedAt":"2026-08-18T15:41:58.676255+00:00","id":1755,"sessionId":"d646c15c-7d51-4f48-a14c-0d45baae8dba","title":"新对话 - 代理","mode":"agent","
+logger.js:6 [Security] Loaded 10 sessions (page 1/1) for user 1
+axios.js:73 [Axios] 响应转换: /context/capability-config/ 
+  前: {"code":200,"message":"操作成功","data":{"available_capabilities":["context_management","tool_injection","guardrails","rate_limit","groq_compat"],"default_capabilities":["context_management","tool_injecti 
+  后: {"code":200,"message":"操作成功","data":{"availableCapabilities":["context_management","tool_injection","guardrails","rate_limit","groq_compat"],"defaultCapabilities":["context_management","tool_injection
+axios.js:73 [Axios] 响应转换: /knowledge/knowledge-bases/ 
+  前: {"code":200,"message":"操作成功","data":{"items":[{"id":"msyql","name":"msyql","description":"mysql学习文档","num_documents":404,"chunk_count":404,"created_at":"2026-08-11T07:13:50.361076+00:00","updated_at": 
+  后: {"code":200,"message":"操作成功","data":{"items":[{"id":"msyql","name":"msyql","description":"mysql学习文档","numDocuments":404,"chunkCount":404,"createdAt":"2026-08-11T07:13:50.361076+00:00","updatedAt":"202
+axios.js:73 [Axios] 响应转换: /knowledge/knowledge-bases/ 
+  前: {"code":200,"message":"操作成功","data":{"items":[{"id":"msyql","name":"msyql","description":"mysql学习文档","num_documents":404,"chunk_count":404,"created_at":"2026-08-11T07:13:50.361076+00:00","updated_at": 
+  后: {"code":200,"message":"操作成功","data":{"items":[{"id":"msyql","name":"msyql","description":"mysql学习文档","numDocuments":404,"chunkCount":404,"createdAt":"2026-08-11T07:13:50.361076+00:00","updatedAt":"202
+axios.js:73 [Axios] 响应转换: /learning/tasks/ 
+  前: {"code":200,"message":"操作成功","data":{"items":[{"id":69,"thread_id":"study_1ca31992edd4","current_step":"feedback_completed","status":"completed","user_question":"MySQL 查询性能优化与索引设计","learning_plan":{"t 
+  后: {"code":200,"message":"操作成功","data":{"items":[{"id":69,"threadId":"study_1ca31992edd4","currentStep":"feedback_completed","status":"completed","userQuestion":"MySQL 查询性能优化与索引设计","learningPlan":{"topic
+logger.js:24 [Realtime] replay barrier 设置 pending: task_study_d97d42c94723
+logger.js:19 [Workflow] 订阅 task=study_d97d42c94723（无关联 chat session）
+api/v1/learning/study_d97d42c94723/attempts/?_t=1787067904009:1  Failed to load resource: the server responded with a status of 404 (Not Found)
+logger.js:15 加载练习历史失败: AxiosError: Request failed with status code 404
+    at settle (axios.js?v=8039668a:1319:7)
+    at XMLHttpRequest.onloadend (axios.js?v=8039668a:1682:7)
+    at Axios.request (axios.js?v=8039668a:2328:41)
+    at async Promise.all (index 0)
+    at async loadAll (WorkflowQuestionHistory.vue:172:39)
 (anonymous) @ logger.js:15
-(anonymous) @ ErrorBoundary.vue:18
+(anonymous) @ WorkflowQuestionHistory.vue:197
+await in (anonymous)
+(anonymous) @ WorkflowQuestionHistory.vue:252
 callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
 callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
-hook.__weh.hook.__weh @ chunk-IGIFKXF4.js?v=8039668a:5243
-handleError @ chunk-IGIFKXF4.js?v=8039668a:2389
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2353
+baseWatchOptions.call @ chunk-IGIFKXF4.js?v=8039668a:3043
+job @ chunk-IGIFKXF4.js?v=8039668a:2081
+flushPreFlushCbs @ chunk-IGIFKXF4.js?v=8039668a:2507
+updateComponentPreRender @ chunk-IGIFKXF4.js?v=8039668a:8433
+componentUpdateFn @ chunk-IGIFKXF4.js?v=8039668a:8352
+run @ chunk-IGIFKXF4.js?v=8039668a:507
+updateComponent @ chunk-IGIFKXF4.js?v=8039668a:8224
+processComponent @ chunk-IGIFKXF4.js?v=8039668a:8158
+patch @ chunk-IGIFKXF4.js?v=8039668a:7644
+patchBlockChildren @ chunk-IGIFKXF4.js?v=8039668a:8017
+processFragment @ chunk-IGIFKXF4.js?v=8039668a:8095
+patch @ chunk-IGIFKXF4.js?v=8039668a:7618
+patchBlockChildren @ chunk-IGIFKXF4.js?v=8039668a:8017
+patchElement @ chunk-IGIFKXF4.js?v=8039668a:7935
+processElement @ chunk-IGIFKXF4.js?v=8039668a:7782
+patch @ chunk-IGIFKXF4.js?v=8039668a:7632
+componentUpdateFn @ chunk-IGIFKXF4.js?v=8039668a:8375
+run @ chunk-IGIFKXF4.js?v=8039668a:507
+runIfDirty @ chunk-IGIFKXF4.js?v=8039668a:545
+callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
 flushJobs @ chunk-IGIFKXF4.js?v=8039668a:2559
 Promise.then
 queueFlush @ chunk-IGIFKXF4.js?v=8039668a:2473
 queueJob @ chunk-IGIFKXF4.js?v=8039668a:2468
-effect2.scheduler @ chunk-IGIFKXF4.js?v=8039668a:8417
+baseWatchOptions.scheduler @ chunk-IGIFKXF4.js?v=8039668a:3055
+effect2.scheduler @ chunk-IGIFKXF4.js?v=8039668a:2097
 trigger @ chunk-IGIFKXF4.js?v=8039668a:535
 endBatch @ chunk-IGIFKXF4.js?v=8039668a:593
-notify @ chunk-IGIFKXF4.js?v=8039668a:855
-trigger @ chunk-IGIFKXF4.js?v=8039668a:829
-set value @ chunk-IGIFKXF4.js?v=8039668a:1743
-(anonymous) @ useSubagentExpansion.js:29
+trigger @ chunk-IGIFKXF4.js?v=8039668a:982
+set @ chunk-IGIFKXF4.js?v=8039668a:1306
+(anonymous) @ WorkflowView.vue:588
+(anonymous) @ WorkflowView.vue:499
+(anonymous) @ sse.js:233
+await in (anonymous)
+(anonymous) @ WorkflowView.vue:497
+await in (anonymous)
+(anonymous) @ WorkflowView.vue:456
 callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
 callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
 emit @ chunk-IGIFKXF4.js?v=8039668a:6604
 (anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
-(anonymous) @ AgentContentPipeline.vue:143
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
-callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
-emit @ chunk-IGIFKXF4.js?v=8039668a:6604
-(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
-(anonymous) @ SubAgentCard.vue:78
+handleClick @ chunk-VIKWBYFT.js?v=8039668a:19542
 callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
 callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
 invoker @ chunk-IGIFKXF4.js?v=8039668a:11519
-logger.js:15 ❌ [Global Error] Object
-(anonymous) @ logger.js:15
-(anonymous) @ useErrorHandler.js:42
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
-handleError @ chunk-IGIFKXF4.js?v=8039668a:2398
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2353
-flushJobs @ chunk-IGIFKXF4.js?v=8039668a:2559
-Promise.then
-queueFlush @ chunk-IGIFKXF4.js?v=8039668a:2473
-queueJob @ chunk-IGIFKXF4.js?v=8039668a:2468
-effect2.scheduler @ chunk-IGIFKXF4.js?v=8039668a:8417
-trigger @ chunk-IGIFKXF4.js?v=8039668a:535
-endBatch @ chunk-IGIFKXF4.js?v=8039668a:593
-notify @ chunk-IGIFKXF4.js?v=8039668a:855
-trigger @ chunk-IGIFKXF4.js?v=8039668a:829
-set value @ chunk-IGIFKXF4.js?v=8039668a:1743
-(anonymous) @ useSubagentExpansion.js:29
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
-callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
-emit @ chunk-IGIFKXF4.js?v=8039668a:6604
-(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
-(anonymous) @ AgentContentPipeline.vue:143
+(anonymous) @ pptr:evaluateHandle;performEvaluation%20(file%3A%2F%2F%2FC%3A%2FUsers%2F33092%2FAppData%2FLocal%2Fnpm-cache%2F_npx%2F15c61037b1978c83%2Fnode_modules%2Fchrome-devtools-mcp%2Fbuild%2Fsrc%2Ftools%2Fscript.js%3A161%3A69):1
+(anonymous) @ pptr:evaluate;performEvaluation%20(file%3A%2F%2F%2FC%3A%2FUsers%2F33092%2FAppData%2FLocal%2Fnpm-cache%2F_npx%2F15c61037b1978c83%2Fnode_modules%2Fchrome-devtools-mcp%2Fbuild%2Fsrc%2Ftools%2Fscript.js%3A162%3A42):3
+api/v1/learning/study_d97d42c94723/questions/?_t=1787067904009:1  Failed to load resource: the server responded with a status of 404 (Not Found)
+logger.js:24 [Realtime] 收到 pong
+logger.js:11 [Realtime] replay barrier 超时，强制 flush: task_study_d97d42c94723
+(anonymous) @ logger.js:11
+(anonymous) @ useRealtimeSync.js:785
+setTimeout
+(anonymous) @ useRealtimeSync.js:784
+(anonymous) @ useRealtimeSync.js:500
+(anonymous) @ useTaskRealtimeSync.js:72
+(anonymous) @ WorkflowView.vue:589
+(anonymous) @ WorkflowView.vue:499
+(anonymous) @ sse.js:233
+await in (anonymous)
+(anonymous) @ WorkflowView.vue:497
+await in (anonymous)
+(anonymous) @ WorkflowView.vue:456
 callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
 callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
 emit @ chunk-IGIFKXF4.js?v=8039668a:6604
 (anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
-(anonymous) @ SubAgentCard.vue:78
+handleClick @ chunk-VIKWBYFT.js?v=8039668a:19542
 callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
 callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
 invoker @ chunk-IGIFKXF4.js?v=8039668a:11519
-logger.js:29 🔍 错误详情
-logger.js:15 错误对象: TypeError: Cannot read properties of null (reading 'type')
-    at unmountComponent (chunk-IGIFKXF4.js?v=8039668a:8918:18)
-    at unmount (chunk-IGIFKXF4.js?v=8039668a:8821:7)
-    at unmountChildren (chunk-IGIFKXF4.js?v=8039668a:8944:7)
-    at unmount (chunk-IGIFKXF4.js?v=8039668a:8845:9)
-    at unmountComponent (chunk-IGIFKXF4.js?v=8039668a:8930:7)
-    at unmount (chunk-IGIFKXF4.js?v=8039668a:8821:7)
-    at unmountChildren (chunk-IGIFKXF4.js?v=8039668a:8944:7)
-    at unmount (chunk-IGIFKXF4.js?v=8039668a:8845:9)
-    at unmountChildren (chunk-IGIFKXF4.js?v=8039668a:8944:7)
-    at unmount (chunk-IGIFKXF4.js?v=8039668a:8845:9)
-(anonymous) @ logger.js:15
-(anonymous) @ useErrorHandler.js:46
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
-handleError @ chunk-IGIFKXF4.js?v=8039668a:2398
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2353
-flushJobs @ chunk-IGIFKXF4.js?v=8039668a:2559
-Promise.then
-queueFlush @ chunk-IGIFKXF4.js?v=8039668a:2473
-queueJob @ chunk-IGIFKXF4.js?v=8039668a:2468
-effect2.scheduler @ chunk-IGIFKXF4.js?v=8039668a:8417
-trigger @ chunk-IGIFKXF4.js?v=8039668a:535
-endBatch @ chunk-IGIFKXF4.js?v=8039668a:593
-notify @ chunk-IGIFKXF4.js?v=8039668a:855
-trigger @ chunk-IGIFKXF4.js?v=8039668a:829
-set value @ chunk-IGIFKXF4.js?v=8039668a:1743
-(anonymous) @ useSubagentExpansion.js:29
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
-callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
-emit @ chunk-IGIFKXF4.js?v=8039668a:6604
-(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
-(anonymous) @ AgentContentPipeline.vue:143
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
-callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
-emit @ chunk-IGIFKXF4.js?v=8039668a:6604
-(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
-(anonymous) @ SubAgentCard.vue:78
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
-callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
-invoker @ chunk-IGIFKXF4.js?v=8039668a:11519
-logger.js:15 组件实例: Proxy(Object)
-(anonymous) @ logger.js:15
-(anonymous) @ useErrorHandler.js:47
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
-handleError @ chunk-IGIFKXF4.js?v=8039668a:2398
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2353
-flushJobs @ chunk-IGIFKXF4.js?v=8039668a:2559
-Promise.then
-queueFlush @ chunk-IGIFKXF4.js?v=8039668a:2473
-queueJob @ chunk-IGIFKXF4.js?v=8039668a:2468
-effect2.scheduler @ chunk-IGIFKXF4.js?v=8039668a:8417
-trigger @ chunk-IGIFKXF4.js?v=8039668a:535
-endBatch @ chunk-IGIFKXF4.js?v=8039668a:593
-notify @ chunk-IGIFKXF4.js?v=8039668a:855
-trigger @ chunk-IGIFKXF4.js?v=8039668a:829
-set value @ chunk-IGIFKXF4.js?v=8039668a:1743
-(anonymous) @ useSubagentExpansion.js:29
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
-callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
-emit @ chunk-IGIFKXF4.js?v=8039668a:6604
-(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
-(anonymous) @ AgentContentPipeline.vue:143
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
-callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
-emit @ chunk-IGIFKXF4.js?v=8039668a:6604
-(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
-(anonymous) @ SubAgentCard.vue:78
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
-callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
-invoker @ chunk-IGIFKXF4.js?v=8039668a:11519
-logger.js:15 生命周期: component update
-(anonymous) @ logger.js:15
-(anonymous) @ useErrorHandler.js:48
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
-handleError @ chunk-IGIFKXF4.js?v=8039668a:2398
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2353
-flushJobs @ chunk-IGIFKXF4.js?v=8039668a:2559
-Promise.then
-queueFlush @ chunk-IGIFKXF4.js?v=8039668a:2473
-queueJob @ chunk-IGIFKXF4.js?v=8039668a:2468
-effect2.scheduler @ chunk-IGIFKXF4.js?v=8039668a:8417
-trigger @ chunk-IGIFKXF4.js?v=8039668a:535
-endBatch @ chunk-IGIFKXF4.js?v=8039668a:593
-notify @ chunk-IGIFKXF4.js?v=8039668a:855
-trigger @ chunk-IGIFKXF4.js?v=8039668a:829
-set value @ chunk-IGIFKXF4.js?v=8039668a:1743
-(anonymous) @ useSubagentExpansion.js:29
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
-callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
-emit @ chunk-IGIFKXF4.js?v=8039668a:6604
-(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
-(anonymous) @ AgentContentPipeline.vue:143
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
-callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
-emit @ chunk-IGIFKXF4.js?v=8039668a:6604
-(anonymous) @ chunk-IGIFKXF4.js?v=8039668a:10484
-(anonymous) @ SubAgentCard.vue:78
-callWithErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2351
-callWithAsyncErrorHandling @ chunk-IGIFKXF4.js?v=8039668a:2358
-invoker @ chunk-IGIFKXF4.js?v=8039668a:11519
+(anonymous) @ pptr:evaluateHandle;performEvaluation%20(file%3A%2F%2F%2FC%3A%2FUsers%2F33092%2FAppData%2FLocal%2Fnpm-cache%2F_npx%2F15c61037b1978c83%2Fnode_modules%2Fchrome-devtools-mcp%2Fbuild%2Fsrc%2Ftools%2Fscript.js%3A161%3A69):1
+(anonymous) @ pptr:evaluate;performEvaluation%20(file%3A%2F%2F%2FC%3A%2FUsers%2F33092%2FAppData%2FLocal%2Fnpm-cache%2F_npx%2F15c61037b1978c83%2Fnode_modules%2Fchrome-devtools-mcp%2Fbuild%2Fsrc%2Ftools%2Fscript.js%3A162%3A42):3
+logger.js:24 [Realtime] replay barrier flush 无缓冲事件: task_study_d97d42c94723
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong
+logger.js:24 [Realtime] 收到 pong

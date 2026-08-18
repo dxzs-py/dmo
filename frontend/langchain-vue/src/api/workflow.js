@@ -4,6 +4,14 @@ import { fetchSSE } from '@/utils/sse'
 
 export const workflowAPI = {
   start(data) { return apiClient.post('/learning/start/', data) },
+  /** SSE 流式启动：请求内逐步执行工作流并实时推送 workflow_step/state_update/completed 事件 */
+  startStream(data, options = {}) {
+    return fetchSSE('/learning/start/stream/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      ...options,
+    })
+  },
   startStreamUrl() { return `${settings.apiBaseUrl}/learning/start/stream/` },
   streamUrl(threadId) { return `${settings.apiBaseUrl}/learning/stream/${threadId}/` },
   getState(threadId) { return apiClient.get(`/learning/status/${threadId}/`) },

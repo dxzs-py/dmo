@@ -397,6 +397,115 @@
   - ✅ 深研详情页（点「查看详情」跳转）任务状态「已完成」、研究总结完整（调度流程/产出文件/核心结果）
 - 结论：问题 20/21 在聊天深研模式（含其详情页 ResearchTaskDetail 链路）验证通过
 
-### 测试 3：独立深度研究模块复测（待补，见下）
+### 测试 3：独立深度研究模块「并行 A1/A2 + 嵌套 B1/B2」复测（research_999f57b5b498，2 浏览器）
+- 触发：独立深研模块表单「深度研究：并行派发 2 个子代理 A1、A2。A1 内部再派发子代理 B1 执行 ollama list；A2 内部再派发子代理 B2 执行 ollama ps...」+ 启用网络搜索
+- 执行链（全部通过）：
+  - ✅ write_file(研究计划) 审批 → 通过
+  - ✅ **同批次 spawn A1/A2 审批：第一个确认后显示「本工具已审批，等待同批次其他工具审批完成后开始执行...」（按钮禁用/等待），第二个确认后批次完整恢复**（两个 spawn 均「已完成」、A1/A2 启动）——**问题 21 在独立深研模块（并行同批次）验证通过**
+  - ✅ A1/A2 卡「子代理 1/2 · L1」；内部 spawn B1/B2 审批（链路 main → A1/A2 → A1/A2 · L1）逐个确认 → 批次恢复
+  - ✅ **B1/B2 卡正确显示「子代理 3/4 · L2」**（嵌套在 A1/A2 内，未跑到主层）——问题 20 在独立深研模块验证通过
+  - ✅ B1 内部 shell_exec(ollama list)、B2 内部 shell_exec(ollama ps) 审批（链路 main → A1 → B1 → B1 · L2）逐个确认 → 均执行完成（list 7 模型 / ps bge-m3 1 模型）
+  - ✅ 主 agent wait_for_subagent 等待 A1/A2 并行完成 → todo_write(6 项全完成) → write_file(研究笔记/最终报告)
+  - ✅ 任务状态「已完成」；总结完整（三级嵌套调度架构图/研究结果/产出文件/核心交叉发现）
+- 刷新后：A1/A2 卡「子代理 1/2 · L1」已完成、详情完整包含 B1/B2 返回结果、wait_for 已完成、无孤儿错误渲染、3 个产出文件
+- 结论：问题 20/21 在独立深研模块（含并行同批次审批）验证通过
+
+### 三路径汇总结论（本轮重启后全面复测）
+- ✅ 聊天代理模式（22:22 并行 2 子代理 + 22:26 嵌套 A→B）：问题 20/21 无复发
+- ✅ 聊天深研模式（22:30 research_0121de4a934b 嵌套 A→B）：问题 20/21 无复发，完成后显示「深度研究已完成」
+- ✅ 独立深研模块（research_999f57b5b498 并行 A1/A2 + 嵌套 B1/B2）：问题 20/21 无复发，同批次审批批次完整恢复
+- 问题 20（嵌套 B 渲染主层/平级）与问题 21（批量审批并发卡 waiting）均为根因级修复，三路径共享受益，无补丁/兜底
+
+## 2026-08-18 学习工作流模块复测（重新完整跑一轮 + 继续练习）
+
+### 测试过程（2 浏览器）
+- 触发：学习工作流「简单加法计算」（thread study_7f68c2002734），7 题（4 选择 + 2 填空 + 1 简答）
+- 答题：4 选择全选对 + 填空「加数；和」「3；2；12」+ 简答凑十过程 → **评分 97 分（简答 17/20）**，三题型评分全部正常（选择题双匹配/填空宽松链已修复生效）
+- 「继续练习」点击 → **restart 正常**：新线程 study_209f56c87537 生成 7 道新题、提示「新一轮练习题已生成」
+
+### 问题 22（根因，最重要）：首次启动题目不落库 → 练习历史空 → 无法修改答案
+- 现象：任务完成后「练习历史」无题目明细、「修改」按钮不存在；DB 实证 WorkflowQuestion=0（两次任务 study_7f68c2002734 / study_5cb7ccf16364 均 0 条）
+- 根因：**start_study_flow（首次启动）在 invoke 前不预创建 WorkflowSession**（仅 restart_quiz 预创建，L653 注释明确「供 quiz_generator_node 持久化题目」）→ quiz_generator_node._persist_questions 中 `WorkflowSession.objects.filter(thread_id=...).first()` 为 None → logger.warning 静默跳过 → 题目永不落库
+- 实证：手动调用 _persist_questions（session 已存在）落库成功 0→7；restart 新线程（预创建 session）落库 7 条；首次启动 0 条
+- 修复：新增 `_ensure_session_created()`（update_or_create 幂等预创建），start_study_flow 在 invoke 前调用，restart_quiz 统一复用
+
+### 问题 23（次因）：root_thread_id=None + knowledge_base_ids 丢失（restart 继承被覆盖）
+- 现象：restart 新线程 session.root_thread_id=None（应为旧 thread_id）、knowledge_base_ids=[]
+- 根因：`_save_to_database` 用 update_or_create + `state.get(...) or []` 全量覆盖；而 **StudyFlowState（state.py）无 root_thread_id 字段**（图状态丢弃该键）、restart initial_state 缺 knowledge_base_ids → 预创建的继承值被覆盖为空/None
+- 修复：① state.py 补 root_thread_id 字段；② restart initial_state 补 knowledge_base_ids；③ `_save_to_database` 改为**部分更新**（_build_session_defaults：状态字段恒更新，配置字段仅 state 显式提供时覆盖），防止覆盖预创建继承值
+
+### 问题 24（前端展示）：完成后进度条全灰 + 「等待答题」标签常驻 + header「工作流启动中...」
+- 现象：完成后 getStepText 显示「工作流已完成」，但进度条 8 步全部 is-pending（无完成状态）、「📝 练习题」卡片常驻「等待答题」标签、header 显示「工作流启动中...」
+- 根因：① workflowSteps 无 FEEDBACK_COMPLETED 且 completedSteps 对 feedback_completed 返回空数组 → 全灰；② WorkflowQuiz「等待答题」标签无条件常驻（且评分后答题表单仍可编辑/提交）；③ workflow_completed 事件未清理 currentStepMessage
+- 修复：① completedSteps 对终态（feedback_completed/end/completed）返回全部步骤；② WorkflowQuiz 答题表单改为 score===null 才显示（评分后收敛到练习历史修改答案），submit shouldRetry 时清空 score 使重试轮重新显示表单；③ workflow_completed 清空 currentStepMessage
+
+### 问题 25（修改答案后详情不同步）：scoreDetails 与最新分数不一致
+- 根因：前端 handleScoreUpdated 只更新 execution.score，不同步 scoreDetails；后端 updateQuestion 只更新题目与 attempt.total_score，未更新 session.score/score_details
+- 修复：① 前端 handleScoreUpdated 改为重新 getState 刷新（score+scoreDetails）；② 后端 updateQuestion 重算后同步更新 session.score 与 score_details（新增 _build_score_details，格式与 grading_node 一致）
+
+### 结论
+- 评分逻辑正常（无需改动）；「继续练习」本身可用；核心问题是**题目不落库导致修改答案/练习历史失效**（问题 22）+ 继承字段被覆盖（问题 23）+ 前端完成态展示（问题 24/25）
+- 全部根因级修复：预创建 session（start 与 restart 统一）、图状态字段补全、持久化部分更新、前端完成态收敛
+- 待回归：重启后端服务后重跑一轮，验证题目落库、修改答案（练习历史）、继续练习、进度条全绿
+
+---
+
+## 2026-08-18 流式启动改造 + 修改答案回归（含选知识库 RAG 验证）
+
+### 场景改造：前端启动改为 SSE 流式（立即进详情 + 步骤条实时推进 + 规划文档即时展示）
+- 前端 `startWorkflow` 不再 `await` 同步 start（阻塞 1-3 分钟），改为 POST /learning/start/stream/ 流式启动：
+  点击后立即以 stub 进入详情页，SSE 事件（workflow_step/state_update/completed）实时驱动
+  execution：步骤条当前步骤 running、之前步骤绿色勾；planner 完成后 learningPlan 卡片即时显示；
+  出题完成后答题表单显示。实测：触发即进详情 → 规划/检索/出题勾绿 → 答题表单出现，全程无长加载。
+
+### 问题 27（分数口径不一致）：修改答案后 112 → 84，与测验结果（state.score=112）不一致
+- 根因：`WorkflowQuestionUpdateView.put` 重算 attempt.total_score 用分母 `sum(q.points)`（=115），
+  而 grading_node 用 `quiz.total_points`（LLM 生成 =100）→ 修改答案后 attempt_total_score=84，
+  与 state.score=112 口径漂移
+- 修复：分母统一取 `target_session.quiz.total_points`（缺失回退求和），与 grading_node 完全一致
+- 验证：q1 改错 84 → 改对后 attempt.total_score=112、练习历史 112 分、测验结果 112 分，三处一致
+
+### 问题 28（修改答案后 status 接口返回旧数据）：答题详情/测验结果不同步
+- 根因：updateQuestion 只更新 session.score/score_details 独立字段，未更新 **内存 LangGraph state**
+  （get_workflow_state 优先读内存）与 session.user_answers → GET status 仍返回旧 user_answers/score/score_details
+- 修复：updateQuestion 重评分后同步：① session.user_answers/score/score_details 字段；
+  ② `_get_cached_study_flow(thread_id).graph.update_state(...)` 更新内存 state（进程重启后由 DB 恢复）
+- 附带：`_build_score_details` question_id 去 `_r{idx}` 后缀（q1_r0 → q1，与 grading_node 口径一致），
+  new_user_answers 键同样对齐 quiz 原 id
+- 验证：修改 q1 答案后 GET status 返回 score=112、correct_count=8、user_answers.q1_r0=最新答案，前端答题详情/测验结果同步
+
+### 问题 29（流式启动 500）：No module named 'Django_xm.apps.learning.study_flow'
+- 根因：`WorkflowStartStreamView.event_stream` 内 `from .study_flow import _get_study_flow` 相对导入
+  解析为 `learning.study_flow`（不存在），实际在 `learning/services/study_flow.py` → 流式启动立即抛异常。
+  该 bug 一直存在，此前前端用同步 start 从未触发
+- 修复：删除错误局部导入（views.py 顶部已从 .services.study_flow 导入 _get_study_flow）
+- 附带：流式启动补 `_ensure_session_created` 预创建 session（与问题 22 同款），保证流式路径题目落库
+  （实测 attempts/questions 由 404 → 200）
+
+### 问题 30（waiting/completed 任务连接 SSE 时被 start 事件覆盖）
+- 根因：`workflow_stream`（GET stream/{id}/）无条件先发 `workflow_step{step:start,"工作流启动中..."}`，
+  把已中断（waiting_for_answers）或已完成任务的 currentStep/stepMessage 覆盖为 start；
+  waiting_state_evt 又缺 message → stepMsg 残留「工作流启动中...」
+- 修复：① 首个步骤事件按 state.current_step 生成（waiting→"等待您提交答案..."，completed→"工作流已完成"，
+  仅运行中才发 start）；② waiting_state_evt 补 message；③ 前端 isWaiting 分支同步 currentStepMessage
+- 附带：两条 SSE 入口（start/stream/ 与 stream/{id}/）在 waiting_for_answers 中断时不再发 workflow_completed
+  （中断 ≠ 完成，避免前端误标 completed）
+
+### 问题 31（完成后生成文件需手动刷新）
+- 根因：FileBrowser 终态集合 `['completed','failed']` 不含 current_step 终态值 feedback_completed/end
+  （WorkflowStatusView 将 current_step 原样返回为 status 字段）→ 完成后不自动加载文件列表
+- 修复：① FileBrowser 终态集合补 feedback_completed/end；② WorkflowView 在 learningPlan 首次生成、
+  waiting_for_answers 中断、workflow_completed 三个时机主动调用 fileBrowserRef.loadFiles()
+- 验证：规划完成后 learning_plan.md 自动出现；评分后 report.md 自动出现，无需手动刷新
+
+### 全链路回归结论（选知识库 msyql，2026-08-18 实测）
+1. 流式启动：立即进详情、步骤条实时推进（规划/检索/出题勾绿）、学习计划卡片即时显示 ✓
+2. 题目落库：attempts/questions 200（不再 404）✓
+3. RAG 生效：retrieved_docs 全部来自 MySQL学习手册.md（索引/优化章节），题目基于所选知识库 ✓
+4. 答题评分：7 题答对 2 题 37 分 → 正确进入重试轮（新题生成、score 清空）✓
+5. 修改答案：q1 改正确答案后 练习历史/测验结果/答题详情 全部同步为 112 分 ✓（问题 27/28 修复生效）
+6. 继续练习：新线程 study_6ecd1c702278、knowledge_base_ids=['msyql'] 继承、root_thread_id 关联、
+   retry_count=1、新题 7 道落库 ✓
+
 
 

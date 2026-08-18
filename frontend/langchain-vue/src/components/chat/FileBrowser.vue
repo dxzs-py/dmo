@@ -130,8 +130,10 @@ const isTextFile = computed(() => {
   return ['.md', '.txt', '.json'].includes(ext)
 })
 
-// ── 文件加载：任务终态（completed/failed）后刷新一次；任务运行中不请求 ──
-const TERMINAL_TASK_STATUSES = ['completed', 'failed']
+// ── 文件加载：任务终态后刷新一次；任务运行中不请求 ──
+// 终态集合覆盖两种来源：任务状态值（completed/failed）与 current_step 终态值
+// （feedback_completed/end，WorkflowStatusView 将 current_step 原样返回为 status 字段）
+const TERMINAL_TASK_STATUSES = ['completed', 'failed', 'feedback_completed', 'end']
 
 const fetchFiles = async () => {
   loading.value = true

@@ -1,6 +1,7 @@
 <template>
   <div>
-    <el-card v-if="quiz" class="quiz-card">
+    <!-- 未评分时展示答题表单；评分后答题入口收敛到「练习历史」的修改答案 -->
+    <el-card v-if="quiz && score === null" class="quiz-card">
       <template #header>
         <div class="card-header">
           <span>📝 练习题</span>

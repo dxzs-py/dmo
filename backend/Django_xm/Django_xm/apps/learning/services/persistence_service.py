@@ -169,36 +169,66 @@ class WorkflowPersistenceService:
 
         _session, created = WorkflowSession.objects.update_or_create(
             thread_id=thread_id,
-            defaults={
-                "created_by": user,
-                "user_question": state.get("user_question", ""),
-                "status": status,
-                "current_step": current_step,
-                "learning_plan": state.get("learning_plan"),
-                "quiz": state.get("quiz"),
-                "user_answers": state.get("user_answers"),
-                "score": state.get("score"),
-                "score_details": state.get("score_details"),
-                "feedback": state.get("feedback") or "",
-                "should_retry": state.get("should_retry", False),
-                "error_message": state.get("error") or state.get("error_message") or "",
-                "retry_count": state.get("retry_count", 0) or 0,
-                "root_thread_id": state.get("root_thread_id"),
-                "knowledge_base_ids": state.get("knowledge_base_ids") or [],
-                "provider_id": state.get("provider_id"),
-                "model_name": state.get("model_name"),
-                "temperature": state.get("temperature"),
-                "max_tokens": state.get("max_tokens"),
-                "special_params": state.get("special_params") or {},
-                "enable_deep_thinking": state.get("enable_deep_thinking", False),
-                "use_web_search": state.get("use_web_search", False),
-            },
+            defaults=self._build_session_defaults(state, user),
         )
 
         if created:
             logger.info(f"[Persistence] 创建新的工作流会话: thread_id={thread_id}")
         else:
             logger.info(f"[Persistence] 更新工作流会话: thread_id={thread_id}")
+
+    @staticmethod
+    def _build_session_defaults(state: dict[str, Any], user) -> dict[str, Any]:
+        """构造 WorkflowSession 更新字段（部分更新策略）。
+
+        状态字段（status/current_step）始终更新；
+        配置字段（knowledge_base_ids/root_thread_id/provider_id 等）仅在 state
+        显式提供时覆盖——避免图状态缺失该键时，把预创建 session 的继承配置
+        覆盖为空/None（首次启动的 root_thread_id、继续练习继承的知识库等）。
+        """
+        current_step = state.get("current_step", "start")
+
+        if current_step in ["completed", "failed", "end", "feedback_completed"]:
+            status = "completed" if current_step in ["completed", "end", "feedback_completed"] else "failed"
+        elif current_step == "waiting_for_answers":
+            status = "waiting_for_answers"
+        elif current_step == "retry":
+            status = "retry"
+        else:
+            status = "running"
+
+        defaults: dict[str, Any] = {
+            "status": status,
+            "current_step": current_step,
+        }
+
+        optional_fields = {
+            "created_by": user,
+            "user_question": state.get("user_question"),
+            "learning_plan": state.get("learning_plan"),
+            "quiz": state.get("quiz"),
+            "user_answers": state.get("user_answers"),
+            "score": state.get("score"),
+            "score_details": state.get("score_details"),
+            "feedback": state.get("feedback") or "",
+            "should_retry": state.get("should_retry", False),
+            "error_message": state.get("error") or state.get("error_message") or "",
+            "retry_count": state.get("retry_count", 0) or 0,
+            "root_thread_id": state.get("root_thread_id"),
+            "knowledge_base_ids": state.get("knowledge_base_ids"),
+            "provider_id": state.get("provider_id"),
+            "model_name": state.get("model_name"),
+            "temperature": state.get("temperature"),
+            "max_tokens": state.get("max_tokens"),
+            "special_params": state.get("special_params"),
+            "enable_deep_thinking": state.get("enable_deep_thinking"),
+            "use_web_search": state.get("use_web_search"),
+        }
+        for field, value in optional_fields.items():
+            if value is not None:
+                defaults[field] = value
+
+        return defaults
 
     def _load_from_database(self, thread_id: str, user_id: int | None = None) -> dict[str, Any] | None:
         """从数据库加载"""

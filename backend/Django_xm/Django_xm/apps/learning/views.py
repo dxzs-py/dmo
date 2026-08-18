@@ -37,7 +37,13 @@ from .serializers import (
 )
 from .services import WorkflowService
 from .services.resilience import stream_with_resilience
-from .services.study_flow import WorkflowAlreadyFinishedError, _get_study_flow, get_workflow_state
+from .services.study_flow import (
+    WorkflowAlreadyFinishedError,
+    _ensure_session_created,
+    _get_cached_study_flow,
+    _get_study_flow,
+    get_workflow_state,
+)
 
 
 class SSERenderer(BaseRenderer):
@@ -204,8 +210,21 @@ class WorkflowStartStreamView(APIView):
                     user_id=user_id,
                 )
 
-
-                from .study_flow import _get_study_flow
+                # 预创建 WorkflowSession（幂等）：quiz_generator_node._persist_questions 依赖
+                # session 记录定位，流式启动若不预创建，题目无法落库（练习历史/修改答案随之失效）
+                _ensure_session_created(
+                    thread_id=thread_id,
+                    user_question=user_question,
+                    user_id=user_id,
+                    knowledge_base_ids=knowledge_base_ids,
+                    provider_id=serializer.validated_data.get("provider_id"),
+                    model_name=serializer.validated_data.get("model_name"),
+                    temperature=serializer.validated_data.get("temperature"),
+                    max_tokens=serializer.validated_data.get("max_tokens"),
+                    special_params=serializer.validated_data.get("special_params"),
+                    enable_deep_thinking=serializer.validated_data.get("use_deep_thinking", False),
+                    use_web_search=serializer.validated_data.get("use_web_search", False),
+                )
 
                 study_flow = _get_study_flow(thread_id)
 
@@ -251,6 +270,7 @@ class WorkflowStartStreamView(APIView):
                 )
 
                 # 使用 stream_with_resilience 替代直接 graph.stream
+                interrupted_at_waiting = False
                 for event in stream_with_resilience(study_flow.graph, initial_state, config, stream_mode="values"):
                     if not event:
                         continue
@@ -303,6 +323,8 @@ class WorkflowStartStreamView(APIView):
                             },
                             user_id=user_id,
                         )
+                        # 等待答题是中断而非完成：不发 workflow_completed，避免前端误标 completed
+                        interrupted_at_waiting = True
                         break
 
                     state_data = {
@@ -327,15 +349,16 @@ class WorkflowStartStreamView(APIView):
                         user_id=user_id,
                     )
 
-                # 工作流完成事件
-                complete_evt = {"type": "workflow_completed", "data": {"thread_id": thread_id}}
-                yield f"data: {json.dumps(complete_evt, ensure_ascii=False)}\n\n"
-                _safe_publish_workflow_event(
-                    EventType.WORKFLOW_COMPLETED,
-                    thread_id,
-                    {"step": "completed"},
-                    user_id=user_id,
-                )
+                # 工作流完成事件（仅在真正完成时发出）
+                if not interrupted_at_waiting:
+                    complete_evt = {"type": "workflow_completed", "data": {"thread_id": thread_id}}
+                    yield f"data: {json.dumps(complete_evt, ensure_ascii=False)}\n\n"
+                    _safe_publish_workflow_event(
+                        EventType.WORKFLOW_COMPLETED,
+                        thread_id,
+                        {"step": "completed"},
+                        user_id=user_id,
+                    )
 
                 try:
                     from .services.persistence_service import get_persistence_service
@@ -567,10 +590,45 @@ class WorkflowQuestionUpdateView(APIView):
                 all_questions = WorkflowQuestion.objects.filter(
                     session__in=related_sessions, attempt_index=question.attempt_index
                 )
-                total_points = sum(q.points for q in all_questions)
                 total_earned = sum(q.points_earned or 0 for q in all_questions)
+                # 与 grading_node 保持同一口径：百分比分母取 quiz.total_points（LLM 生成的满分，
+                # 而非题目 points 之和，避免修改答案后分数口径漂移），缺失时回退求和
+                target_session = attempt.session
+                quiz_total = None
+                if target_session and target_session.quiz:
+                    quiz_total = target_session.quiz.get("total_points")
+                total_points = quiz_total or sum(q.points for q in all_questions)
                 attempt.total_score = int((total_earned / total_points) * 100) if total_points > 0 else 0
                 attempt.save(update_fields=["total_score"])
+
+                # 同步更新所属 session 的 user_answers/score/score_details 与内存 graph state，
+                # 使 status 接口（get_workflow_state 优先读内存 state）返回最新评分，答题详情/测验结果即时一致
+                if target_session:
+                    # 键与 quiz 原 id（q1）对齐（去掉 _r 轮次后缀），与 grading_node 生成的 user_answers 口径一致
+                    new_user_answers = {q.question_id.rsplit("_r", 1)[0]: q.user_answer or "" for q in all_questions}
+                    new_score_details = _build_score_details(all_questions)
+                    target_session.user_answers = new_user_answers
+                    target_session.score = attempt.total_score
+                    target_session.score_details = new_score_details
+                    target_session.save(update_fields=["user_answers", "score", "score_details"])
+
+                    # 同步更新内存 LangGraph state（进程重启后由 DB 恢复，两条路径都必须一致）
+                    try:
+                        study_flow = _get_cached_study_flow(target_session.thread_id)
+                        study_flow.graph.update_state(
+                            config={"configurable": {"thread_id": target_session.thread_id}},
+                            values={
+                                "user_answers": new_user_answers,
+                                "score": attempt.total_score,
+                                "score_details": new_score_details,
+                            },
+                        )
+                        logger.info(
+                            f"[API] 修改答案后已同步内存工作流状态: thread_id={target_session.thread_id}, "
+                            f"score={attempt.total_score}"
+                        )
+                    except Exception as state_err:
+                        logger.warning(f"[API] 更新内存工作流状态失败: {state_err}")
 
             serializer = WorkflowQuestionSerializer(question)
             return success_response(
@@ -622,6 +680,42 @@ class WorkflowAttemptListView(APIView):
             return error_response(
                 code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+def _build_score_details(questions) -> dict:
+    """根据轮次题目集合重建 score_details（与 grading_node 的评分详情格式保持一致）。
+
+    Args:
+        questions: WorkflowQuestion QuerySet（同一轮次）
+
+    Returns:
+        评分详情字典：total_count / correct_count / question_scores
+    """
+    question_scores = []
+    for q in questions:
+        is_correct = bool(q.is_correct)
+        feedback = (
+            "回答正确！"
+            if is_correct
+            else f"回答错误。正确答案是：{q.correct_answer or ''}"
+        )
+        # question_id 形如 "q1_r0"，去掉轮次后缀保持与 grading_node 的评分详情一致（quiz 原 id "q1"）
+        question_scores.append(
+            {
+                "question_id": q.question_id.rsplit("_r", 1)[0],
+                "user_answer": q.user_answer or "",
+                "correct_answer": q.correct_answer or "",
+                "is_correct": is_correct,
+                "points_earned": q.points_earned or 0,
+                "points_possible": q.points or 0,
+                "feedback": feedback,
+            }
+        )
+    return {
+        "total_count": len(question_scores),
+        "correct_count": sum(1 for item in question_scores if item["is_correct"]),
+        "question_scores": question_scores,
+    }
 
 
 def _regrade_question(question, user_answer: str) -> tuple[bool, int]:
@@ -1020,12 +1114,20 @@ def workflow_stream(request, thread_id):
                     return
 
                 current_step = state.get("current_step", "unknown")
-                # 工作流开始事件
+                # 首个步骤事件按真实状态生成：waiting/完成态不得被"start 启动中"覆盖，
+                # 否则前端步骤条回退到 start、stepMessage 残留"工作流启动中..."
+                if current_step == "waiting_for_answers":
+                    initial_step, initial_message = current_step, "等待您提交答案..."
+                elif current_step in ("completed", "end", "feedback_completed"):
+                    initial_step, initial_message = "feedback_completed", "工作流已完成"
+                else:
+                    initial_step, initial_message = "start", "工作流启动中..."
+
                 workflow_step_evt = {
                     "type": "workflow_step",
                     "data": {
-                        "step": "start",
-                        "message": "工作流启动中...",
+                        "step": initial_step,
+                        "message": initial_message,
                         "state": current_step,
                     },
                 }
@@ -1033,7 +1135,7 @@ def workflow_stream(request, thread_id):
                 _safe_publish_workflow_event(
                     EventType.WORKFLOW_STEP,
                     thread_id,
-                    {"step": "start", "message": "工作流启动中...", "state": current_step},
+                    {"step": initial_step, "message": initial_message, "state": current_step},
                     user_id=user.id,
                 )
 
@@ -1043,6 +1145,7 @@ def workflow_stream(request, thread_id):
                         "data": {
                             "step": current_step,
                             "state": "waiting_for_answers",
+                            "message": "等待您提交答案...",
                             "learning_plan": state.get("learning_plan"),
                             "quiz": state.get("quiz"),
                             "current_step": current_step,
@@ -1060,14 +1163,7 @@ def workflow_stream(request, thread_id):
                         },
                         user_id=user.id,
                     )
-                    complete_evt = {"type": "workflow_completed", "data": {"thread_id": thread_id}}
-                    yield f"data: {json.dumps(complete_evt, ensure_ascii=False)}\n\n"
-                    _safe_publish_workflow_event(
-                        EventType.WORKFLOW_COMPLETED,
-                        thread_id,
-                        {"step": current_step},
-                        user_id=user.id,
-                    )
+                    # 等待答题是中断而非完成：不发 workflow_completed，避免前端误标 completed
                     return
 
                 if current_step in ("completed", "end", "feedback_completed"):

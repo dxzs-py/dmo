@@ -109,6 +109,10 @@ defineExpose({
 <style scoped>
 .kb-selector {
   width: 100%;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--el-fill-color-lighter);
 }
 
 .kb-selector-header {
@@ -123,30 +127,28 @@ defineExpose({
 
 .kb-loading,
 .kb-empty {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 16px;
+  padding: 20px;
+  text-align: center;
   color: var(--el-text-color-secondary);
   font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .kb-list {
   max-height: 240px;
   overflow-y: auto;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 4px;
-  padding: 4px;
 }
 
 .kb-item {
-  padding: 4px 8px;
-  border-radius: 4px;
-  transition: background-color 0.2s;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--el-border-color-extra-light);
 }
 
-.kb-item:hover {
-  background-color: var(--el-fill-color-light);
+.kb-item:last-child {
+  border-bottom: none;
 }
 
 .kb-item-content {
@@ -157,6 +159,7 @@ defineExpose({
 
 .kb-name {
   font-weight: 500;
+  font-size: 14px;
   color: var(--el-text-color-primary);
 }
 
@@ -172,11 +175,13 @@ defineExpose({
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 280px;
+  max-width: 300px;
 }
 
 .kb-selected-summary {
   margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--el-border-color-extra-light);
   font-size: 12px;
   color: var(--el-color-primary);
 }

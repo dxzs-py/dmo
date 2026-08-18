@@ -7,7 +7,7 @@
             <span class="page-title">学习工作流</span>
           </div>
         </template>
-        <el-form :model="workflowForm" label-width="100px">
+        <el-form :model="workflowForm" label-width="120px" @submit.prevent>
           <el-form-item label="学习主题">
             <el-input
               v-model="workflowForm.query"
@@ -16,44 +16,14 @@
               placeholder="请输入您想学习的主题..."
             />
           </el-form-item>
-          <el-form-item label="上传文档">
-            <div class="upload-row">
-              <el-select
-                v-model="uploadTargetKbId"
-                placeholder="选择要上传到的知识库"
-                clearable
-                class="upload-kb-select"
-              >
-                <el-option
-                  v-for="kb in knowledgeBases"
-                  :key="kb.id"
-                  :label="`${kb.name}（${kb.chunkCount || 0} 文档块）`"
-                  :value="kb.id"
-                />
-              </el-select>
-              <el-upload
-                v-model:file-list="uploadFileList"
-                multiple
-                :auto-upload="false"
-                accept=".txt,.md,.pdf,.docx,.doc,.xlsx,.xls,.csv,.pptx"
-                :limit="10"
-              >
-                <el-button>选择文件</el-button>
-              </el-upload>
-              <el-button type="primary" :loading="uploading" :disabled="!uploadTargetKbId || uploadFileList.length === 0" @click="handleUpload">
-                上传文档
-              </el-button>
-            </div>
-            <div v-if="uploadProgress > 0" class="upload-progress">
-              {{ uploadProgress >= 100 ? '上传完成' : `文档处理中 ${uploadProgress}%...` }}
-            </div>
-            <div class="kb-tip">上传后需等待文档处理完成，再在下方勾选对应知识库</div>
+          <el-form-item label="启用网络搜索">
+            <el-switch v-model="workflowForm.useWebSearch" />
           </el-form-item>
-          <el-form-item label="知识库">
+          <el-form-item label="选择知识库">
             <KnowledgeBaseSelector v-model="workflowForm.knowledgeBaseIds" />
             <div class="kb-tip">不选择知识库时将使用 AI 内置知识生成学习内容</div>
           </el-form-item>
-          <el-form-item label="模型">
+          <el-form-item label="选择模型">
             <ModelSelector @change="onModelChange" />
           </el-form-item>
           <el-form-item label="深度思考">
@@ -63,10 +33,6 @@
               @change="handleDeepThinkingChange"
             />
             <span v-if="!modelSupportsDeepThinking" class="kb-tip">当前模型不支持深度思考</span>
-          </el-form-item>
-          <el-form-item label="网络查询">
-            <el-switch v-model="workflowForm.useWebSearch" />
-            <span class="kb-tip">开启后检索阶段将进行联网搜索，辅助生成学习内容</span>
           </el-form-item>
           <el-form-item>
             <el-button type="primary" :loading="isLoading" @click="startWorkflow">
@@ -212,6 +178,7 @@
         <div class="files-section">
           <h4>生成的文件</h4>
           <FileBrowser
+            ref="fileBrowserRef"
             :task-id="execution.threadId"
             :task-status="execution.status"
             :api="workflowAPI"
@@ -239,7 +206,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
+import { ref, reactive, computed, watch, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { workflowAPI } from '@/api/workflow'
 import { readSSEStream } from '../utils/sse'
 import { toCamelCase } from '@/utils/sessionTransformers'
@@ -256,9 +223,6 @@ import AiCheckpoint from '../components/ai-elements/AiCheckpoint.vue'
 import AiNode from '../components/ai-elements/AiNode.vue'
 import AiEdge from '../components/ai-elements/AiEdge.vue'
 import AiCanvas from '../components/ai-elements/AiCanvas.vue'
-import { knowledgeAPI } from '@/api/knowledge'
-import { buildUploadFormData, trackUploadTask, getUploadErrorMessage } from '@/utils/knowledgeUpload'
-import { useRealtimeSync } from '@/composables/useRealtimeSync'
 import { useModelStore } from '@/stores/model'
 import { formatDate } from '../utils/format'
 import { logger } from '../utils/logger'
@@ -268,7 +232,6 @@ import { LearningStep, LearningTaskStatus, LearningQuestionType } from '@/types'
 
 const workflowStore = useWorkflowStore()
 const modelStore = useModelStore()
-const realtimeSync = useRealtimeSync()
 
 const isLoading = ref(false)
 const isSubmitting = ref(false)
@@ -278,6 +241,7 @@ const showDetail = ref(false)
 const answersForm = reactive({})
 const taskListRef = ref(null)
 const historyRef = ref(null)
+const fileBrowserRef = ref(null)
 const currentStepMessage = ref('')
 const autoLoadContent = ref(null)
 const autoLoadLoading = ref(false)
@@ -288,62 +252,6 @@ let currentPollInterval = 3000
 const BASE_POLL_INTERVAL = 3000
 const MAX_POLL_INTERVAL = 30000
 const POLL_BACKOFF_FACTOR = 1.5
-
-// ===== 上传文档状态 =====
-const knowledgeBases = ref([])
-const uploadTargetKbId = ref('')
-const uploadFileList = ref([])
-const uploading = ref(false)
-const uploadProgress = ref(0)
-let uploadUnsubscribe = null
-
-/** 加载知识库列表（上传目标下拉选项） */
-const loadKnowledgeBases = async () => {
-  try {
-    const response = await knowledgeAPI.getKnowledgeBases()
-    knowledgeBases.value = response.data?.data?.items || response.data?.data || []
-  } catch (error) {
-    logger.warn('加载知识库列表失败（不影响启动工作流）:', error)
-  }
-}
-
-/** 上传文档到指定知识库（复用知识库模块的统一上传流程） */
-const handleUpload = async () => {
-  if (!uploadTargetKbId.value || uploadFileList.value.length === 0) {
-    ElMessage.warning('请先选择知识库并添加文件')
-    return
-  }
-  uploading.value = true
-  uploadProgress.value = 0
-  try {
-    const formData = buildUploadFormData(uploadFileList.value)
-    const response = await knowledgeAPI.uploadDocuments(uploadTargetKbId.value, formData)
-    const taskId = response.data?.data?.taskId
-    if (!taskId) {
-      throw new Error('上传响应缺少任务 ID')
-    }
-    uploadUnsubscribe = trackUploadTask(realtimeSync, taskId, {
-      onProgress: (progress) => {
-        uploadProgress.value = progress
-      },
-      onSuccess: () => {
-        uploadProgress.value = 100
-        ElMessage.success('文档上传并处理完成')
-        uploadFileList.value = []
-      },
-      onFailure: (errorMsg) => {
-        uploadProgress.value = 0
-        ElMessage.error(errorMsg || '文档处理失败')
-      },
-    })
-  } catch (error) {
-    logger.error('上传文档失败:', error)
-    ElMessage.error(getUploadErrorMessage(error))
-    uploadProgress.value = 0
-  } finally {
-    uploading.value = false
-  }
-}
 
 // ===== 深度思考（复用聊天模块 modelStore 范式）=====
 const useDeepThinking = computed({
@@ -405,7 +313,12 @@ const stepOrder = workflowSteps.map(s => s.key)
 
 const completedSteps = computed(() => {
   if (!execution.value) return []
-  const currentIdx = stepOrder.indexOf(execution.value.currentStep)
+  const step = execution.value.currentStep
+  // 终态（feedback_completed / end / completed）不属于中间步骤，视为全部完成
+  if (step === LearningStep.FEEDBACK_COMPLETED || step === LearningStep.END || step === LearningTaskStatus.COMPLETED) {
+    return [...stepOrder]
+  }
+  const currentIdx = stepOrder.indexOf(step)
   if (currentIdx < 0) return []
   return stepOrder.slice(0, currentIdx)
 })
@@ -513,36 +426,89 @@ const startWorkflow = async () => {
   }
 
   isLoading.value = true
-  execution.value = null
+  // 立即进入详情页：先以本地 stub 展示（thread_id 由后端首个事件回填），
+  // 步骤条/学习计划/题目由 SSE 事件实时推进，不再阻塞等待同步 start 完成
+  showDetail.value = true
+  execution.value = {
+    threadId: '',
+    currentStep: LearningStep.START,
+    status: LearningTaskStatus.RUNNING,
+    userQuestion: workflowForm.query,
+  }
+  currentStepMessage.value = '工作流启动中...'
   Object.keys(answersForm).forEach(key => delete answersForm[key])
   currentPollInterval = BASE_POLL_INTERVAL
+  stopPolling()
+  closeSSE()
+
+  // 组装启动配置：模型/深度思考/网络查询以 modelStore 当前值为准
+  // （ModelSelector 仅在手动切换模型时 emit change，未切换时表单字段为空，
+  //  深度思考开关改动实时写入 modelStore.specialParams，需取最新值而非表单快照）
+  const payload = {
+    ...workflowForm,
+    providerId: modelStore.currentProviderId,
+    modelName: modelStore.currentModelName,
+    specialParams: modelStore.specialParams,
+    useDeepThinking: useDeepThinking.value,
+  }
 
   try {
-    // 组装启动配置：模型/深度思考/网络查询以 modelStore 当前值为准
-    // （ModelSelector 仅在手动切换模型时 emit change，未切换时表单字段为空，
-    //  深度思考开关改动实时写入 modelStore.specialParams，需取最新值而非表单快照）
-    const payload = {
-      ...workflowForm,
-      providerId: modelStore.currentProviderId,
-      modelName: modelStore.currentModelName,
-      specialParams: modelStore.specialParams,
-      useDeepThinking: useDeepThinking.value,
-    }
-    const response = await workflowAPI.start(payload)
-    const result = response.data.data || response.data
-    execution.value = result
-    showDetail.value = true
-    ElMessage.success('工作流已启动')
-
-    stopPolling()
-    // 启动新工作流后立即订阅 WebSocket 实时事件，避免在用户切走再回来前丢失事件
-    subscribeRealtimeForTask(execution.value)
-    connectSSE(result.threadId)
+    await startStreamWithEvents(payload)
   } catch (error) {
     logger.error('启动工作流失败:', error)
-    ElMessage.error('启动工作流失败，请稍后重试')
+    const msg = error.response?.data?.message || error.message || '启动工作流失败，请稍后重试'
+    ElMessage.error(msg)
+    if (execution.value?.threadId) {
+      execution.value.status = LearningTaskStatus.FAILED
+    } else {
+      execution.value = null
+      showDetail.value = false
+    }
   } finally {
     isLoading.value = false
+  }
+}
+
+/** SSE 流式启动：请求内逐步执行工作流，事件由 handleSSEEvent 统一驱动 execution 更新 */
+const startStreamWithEvents = async (payload) => {
+  sseAbortController = new AbortController()
+  sseReaderActive = true
+
+  try {
+    const response = await workflowAPI.startStream(payload, {
+      signal: sseAbortController.signal,
+    })
+
+    if (!response.ok) {
+      let errorMsg = `HTTP ${response.status}`
+      try {
+        const errBody = await response.text()
+        const sseMatch = errBody.match(/data:\s*(.*)/)
+        if (sseMatch) {
+          const parsed = JSON.parse(sseMatch[1])
+          errorMsg = parsed.message || parsed.error || errorMsg
+        }
+      } catch {
+        // SSE 错误体可能不是 JSON，解析失败时保留默认 errorMsg
+      }
+      throw new Error(errorMsg)
+    }
+
+    await readSSEStream(response, (data) => {
+      if (!sseReaderActive) return
+      handleSSEEvent(data)
+    }, sseAbortController.signal)
+
+    // 流正常结束（waiting_for_answers 中断时 handleSSEEvent 已 closeSSE，此处兜底关闭）
+    if (sseReaderActive) closeSSE()
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      return
+    }
+    throw error
+  } finally {
+    sseReaderActive = false
+    sseAbortController = null
   }
 }
 
@@ -614,9 +580,14 @@ const handleSSEEvent = (data) => {
   switch (sseData.type) {
     case 'workflow_step':
       // 学习工作流节点执行进度（原 'start' 和 'step' 合并）
-      // 新格式：{ type: 'workflow_step', data: { step, message } }
+      // 新格式：{ type: 'workflow_step', data: { step, message, thread_id? } }
       currentStepMessage.value = sseData.data?.message || '工作流启动中...'
       if (execution.value && sseData.data?.step) {
+        // 流式启动：首个 start 事件携带后端生成的 thread_id，回填 execution 并订阅实时同步
+        if (sseData.data.threadId && !execution.value.threadId) {
+          execution.value.threadId = sseData.data.threadId
+          subscribeRealtimeForTask(execution.value)
+        }
         // step 为后端 snake_case 协议值（如 waiting_for_answers），
         // 与 LearningStep 常量一致，保持原值不做键名式转换
         execution.value.currentStep = sseData.data.step
@@ -627,7 +598,14 @@ const handleSSEEvent = (data) => {
       if (execution.value && sseData.data) {
         const d = sseData.data
         if (d.currentStep) execution.value.currentStep = d.currentStep
-        if (d.learningPlan) execution.value.learningPlan = d.learningPlan
+        if (d.learningPlan) {
+          const hadPlan = !!execution.value.learningPlan
+          execution.value.learningPlan = d.learningPlan
+          if (!hadPlan) {
+            // 规划完成：learning_plan.md 已生成，自动刷新「生成的文件」，无需手动点击刷新
+            nextTick(() => { fileBrowserRef.value?.loadFiles?.() })
+          }
+        }
         if (d.retrievedDocs) execution.value.retrievedDocs = d.retrievedDocs
         if (d.quiz) execution.value.quiz = d.quiz
         if (d.score !== undefined) execution.value.score = d.score
@@ -639,22 +617,29 @@ const handleSSEEvent = (data) => {
           || d.status === LearningTaskStatus.WAITING_FOR_ANSWERS
         if (isWaiting) {
           execution.value = { ...execution.value, ...d }
+          currentStepMessage.value = d.message || '等待您提交答案...'
           if (d.quiz && !Object.keys(answersForm).length) {
             d.quiz.questions.forEach(q => {
               answersForm[q.id] = ''
             })
           }
           closeSSE()
+          // 等待答题中断后，后端才执行状态持久化（learning_plan.md 落盘），延时刷新文件列表
+          setTimeout(() => { fileBrowserRef.value?.loadFiles?.() }, 800)
         }
       }
       break
     case 'workflow_completed':
       // 学习工作流完成（原 'complete'）
       closeSSE()
+      // 完成态不再展示中间步骤消息（避免「工作流启动中...」残留）
+      currentStepMessage.value = ''
       if (execution.value && sseData.data) {
         execution.value = { ...execution.value, status: LearningTaskStatus.COMPLETED, ...sseData.data }
       }
       autoLoadKeyFile()
+      // 完成后自动刷新文件列表（report.md 等已生成）
+      nextTick(() => { fileBrowserRef.value?.loadFiles?.() })
       break
     case 'workflow_failed':
       // 学习工作流失败（新增）
@@ -775,12 +760,18 @@ const submitAnswers = async () => {
     ElMessage.success('答案已提交')
 
     if (responseData.shouldRetry) {
+      // 进入重试轮：清空上一轮评分结果，使答题表单重新展示
       Object.keys(answersForm).forEach(key => delete answersForm[key])
+      execution.value.score = null
+      execution.value.scoreDetails = null
+      execution.value.feedback = null
       stopPolling()
       connectSSE(execution.value.threadId)
     } else {
       nextTick(() => {
         autoLoadKeyFile()
+        // 评分完成后刷新练习历史（同一线程 threadId 不变，组件 watch 不触发，需主动刷新）
+        historyRef.value?.loadAll?.()
       })
     }
   } catch (error) {
@@ -835,10 +826,21 @@ const continuePractice = async () => {
   }
 }
 
-/** 单题修改重新评分后，同步总分到 execution.score（WorkflowQuestionHistory 触发） */
-const handleScoreUpdated = (attemptTotalScore) => {
-  if (attemptTotalScore !== undefined && attemptTotalScore !== null && execution.value) {
+/** 单题修改重新评分后，同步总分与评分详情到 execution（WorkflowQuestionHistory 触发） */
+const handleScoreUpdated = async (attemptTotalScore) => {
+  if (!execution.value) return
+  if (attemptTotalScore !== undefined && attemptTotalScore !== null) {
     execution.value.score = attemptTotalScore
+  }
+  // 重新拉取权威状态，同步 scoreDetails（答题详情区），避免与最新分数不一致
+  try {
+    const resp = await workflowAPI.getState(execution.value.threadId)
+    const fresh = resp.data?.data || resp.data
+    if (fresh) {
+      execution.value = { ...execution.value, ...fresh }
+    }
+  } catch (error) {
+    logger.warn('刷新评分详情失败:', error)
   }
 }
 
@@ -939,6 +941,7 @@ const viewTask = async (selectedTask) => {
           && fresh.currentStep !== LearningStep.END
           && fresh.currentStep !== LearningStep.COMPLETED
           && fresh.currentStep !== LearningStep.FAILED
+          && fresh.currentStep !== LearningStep.FEEDBACK_COMPLETED
         if (freshActive) {
           connectSSE(fresh.threadId)
         } else {
@@ -979,11 +982,6 @@ onActivated(() => {
   }
 })
 
-// 首次挂载：加载知识库列表供上传目标下拉使用（失败不阻塞页面）
-onMounted(() => {
-  loadKnowledgeBases()
-})
-
 // keep-alive 停用时：清理 SSE、轮询与 WebSocket 订阅，避免后台资源浪费
 onDeactivated(() => {
   stopPolling()
@@ -995,10 +993,6 @@ onUnmounted(() => {
   stopPolling()
   closeSSE()
   clearRealtimeSubscriptions()
-  if (uploadUnsubscribe) {
-    uploadUnsubscribe()
-    uploadUnsubscribe = null
-  }
 })
 </script>
 

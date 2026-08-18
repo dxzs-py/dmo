@@ -98,6 +98,9 @@ class StudyFlowState(TypedDict):
     thread_id: str
     """会话线程 ID，用于标识唯一的工作流实例"""
 
+    root_thread_id: str | None
+    """根线程 ID（继续练习时指向初始线程，用于跨轮次聚合练习历史）"""
+
     provider_id: str | None
     """用户选择的模型提供商 ID（openai/deepseek/groq/baidu_qianfan/anthropic）"""
 

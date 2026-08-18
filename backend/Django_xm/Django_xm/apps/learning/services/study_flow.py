@@ -246,6 +246,51 @@ def _safe_publish(
         logger.warning(f"[Study Flow] publish_event_sync 失败: {event_type}, {e}")
 
 
+def _ensure_session_created(
+    thread_id: str,
+    user_question: str,
+    user_id: int | None,
+    knowledge_base_ids: list | None,
+    provider_id: str | None,
+    model_name: str | None,
+    temperature: float | None,
+    max_tokens: int | None,
+    special_params: dict | None,
+    enable_deep_thinking: bool = False,
+    use_web_search: bool = False,
+    learning_plan: dict | None = None,
+    retry_count: int = 0,
+    root_thread_id: str | None = None,
+) -> None:
+    """预创建 WorkflowSession（幂等），供节点持久化题目等依赖 session 的流程使用。
+
+    必须早于图执行：quiz_generator_node._persist_questions 依赖该记录定位 session，
+    否则题目无法落库（练习历史/修改答案随之失效）。restart_quiz 同样调用此函数。
+    """
+    from ..models import WorkflowSession
+
+    WorkflowSession.objects.update_or_create(
+        thread_id=thread_id,
+        defaults={
+            "user_question": user_question,
+            "learning_plan": learning_plan,
+            "retry_count": retry_count,
+            "current_step": "start",
+            "created_by_id": user_id,
+            "root_thread_id": root_thread_id,
+            "knowledge_base_ids": list(knowledge_base_ids) if knowledge_base_ids else [],
+            "provider_id": provider_id,
+            "model_name": model_name,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "special_params": dict(special_params) if special_params else {},
+            "enable_deep_thinking": enable_deep_thinking,
+            "use_web_search": use_web_search,
+        },
+    )
+    logger.info(f"[Study Flow] 预创建工作流会话: thread_id={thread_id}, retry_count={retry_count}")
+
+
 def start_study_flow(
     user_question: str,
     thread_id: str,
@@ -291,6 +336,23 @@ def start_study_flow(
         "error": None,
         "error_node": None,
     }
+
+    # 预创建 WorkflowSession（幂等，保留已存在 session 的配置字段）：
+    # 必须早于图执行——quiz_generator_node._persist_questions 依赖该记录定位 session，
+    # 否则题目无法落库，练习历史/修改答案随之失效（与 restart_quiz 的预创建保持一致）。
+    _ensure_session_created(
+        thread_id=thread_id,
+        user_question=user_question,
+        user_id=user_id,
+        knowledge_base_ids=initial_state["knowledge_base_ids"],
+        provider_id=provider_id,
+        model_name=model_name,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        special_params=initial_state["special_params"],
+        enable_deep_thinking=enable_deep_thinking,
+        use_web_search=use_web_search,
+    )
 
     cb = TokenUsageCallbackHandler()
 
@@ -653,14 +715,11 @@ def restart_quiz(thread_id: str, user_id: int | None = None) -> dict:
     # 3. 预创建新 WorkflowSession（供 quiz_generator_node 持久化题目）
     # 继承老 session 的用户运行时配置（知识库/模型/深度思考/网络查询），
     # 保证「继续练习」使用与原练习一致的运行时环境
-    WorkflowSession.objects.create(
+    new_root_thread_id = old_session.root_thread_id or old_session.thread_id
+    _ensure_session_created(
         thread_id=new_thread_id,
         user_question=old_session.user_question,
-        learning_plan=old_session.learning_plan,
-        retry_count=new_retry_count,
-        current_step="start",
-        created_by_id=user_id,
-        root_thread_id=old_session.root_thread_id or old_session.thread_id,
+        user_id=user_id,
         knowledge_base_ids=old_session.knowledge_base_ids or [],
         provider_id=old_session.provider_id,
         model_name=old_session.model_name,
@@ -669,13 +728,15 @@ def restart_quiz(thread_id: str, user_id: int | None = None) -> dict:
         special_params=old_session.special_params or {},
         enable_deep_thinking=old_session.enable_deep_thinking,
         use_web_search=old_session.use_web_search,
+        learning_plan=old_session.learning_plan,
+        retry_count=new_retry_count,
+        root_thread_id=new_root_thread_id,
     )
 
     # 4. 创建新 StudyFlow 实例
     study_flow = _get_study_flow(new_thread_id)
 
     # 5. 构建初始状态（复用旧 session 的 learning_plan 与运行时配置）
-    new_root_thread_id = old_session.root_thread_id or old_session.thread_id
     initial_state: StudyFlowState = {
         "messages": [],
         "user_question": old_session.user_question,
@@ -691,6 +752,7 @@ def restart_quiz(thread_id: str, user_id: int | None = None) -> dict:
         "current_step": "start",
         "thread_id": new_thread_id,
         "root_thread_id": new_root_thread_id,
+        "knowledge_base_ids": old_session.knowledge_base_ids or [],
         "provider_id": old_session.provider_id,
         "model_name": old_session.model_name,
         "temperature": old_session.temperature,
