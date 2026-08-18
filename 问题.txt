@@ -281,6 +281,51 @@
 
 ---
 
+## 2026-08-18 深度研究模块嵌套子代理测试（research_45f2d982a9a2，含修复验证）
+
+### 场景：深度研究模块「A 内派发 B（depth=2 嵌套）+ 双层 wait_for_subagent」实测
+- 提示词：子代理 A（web-researcher）→ A 内再派发 B（general-purpose）执行 ollama list → A wait B → 汇总保存
+- 任务：research_45f2d982a9a2，来源「独立研究」
+
+### 问题 20（已修复）：深度研究模块嵌套子代理 B 渲染到主层，与子代理 1（A）平级
+- 现象（用户反馈）：B 显示「子代理 2 · L1：子代理」（应为 L2 + 完整任务描述），与 A 同层级渲染
+- 根因（代码实证）：ResearchTaskDetail.subagentMetaList 按 `parentThreadId === taskId` 过滤，
+  只含直接子代理 A；嵌套 B（parent=subagent_A）被排除。但 buildSubagentsFromMessage 的
+  toolCalls 时序兜底（props.toolCalls 全量扁平含 B 的子代理工具）把 B 加入视图，
+  meta 为空 → task=''/depth 回退 1/spawnToolCallId 空 → B 落入顶层孤儿（L1「子代理」）
+- 对比：代理模式 ChatMessage 按 assistantMessageId 匹配元数据（A/B 均有 assistant_message_id），
+  深研子代理 assistant_message_id 为空，走 parent 链路
+- 修复（ResearchTaskDetail.vue）：subagentMetaList 改为从任务根 BFS 递归收集全部后代子代理
+  （直接 + 嵌套），保证嵌套 meta 齐全，B 经 spawnToolCallId 精确挂载到 A 内部（L2）
+- 验证（修复后刷新）：B 正确显示「子代理 2 · L2：请执行 shell 命令 ollama list...」嵌套在 A 内；
+  B 内部 shell_exec 审批卡（main → web-researcher → general-purpose → general-purpose · L2）
+  正常渲染含「确认执行/拒绝」按钮；B wait A 完成；A 汇总输出完整；无顶层孤儿卡
+
+### 问题 21（已修复）：批量审批并发确认后批次永久卡 waiting（同批次工具不执行）
+- 现象（用户反馈）：点击子代理内「确认执行」提示「本工具已审批，等待同批次其他工具审批完成后开始执行...」，
+  5 个 shell_exec 全部确认后任务卡死（审批面板/工具卡停在 waiting，工具不执行）
+- 根因（日志 + DB 实证）：resume_approval 锁按 interrupt_id（单工具）粒度。同批次 5 个工具
+  并发确认（call_02/03/04 同秒）时各持独立锁，事务隔离下彼此读不到对方未提交的 state 更新
+  → sibling_check 都判定 has_pending=True → 全部置 waiting → 批次无最后确认者触发恢复；
+  且 waiting 后幂等分支（state=waiting 直接返回）不再复查批次 → 永久卡死
+  DB 实证：5 个 approval 全部 state=waiting（gid=a9197a934fa04d3682816de541851d91）
+- 修复（approval_service.py + approval_lifecycle.py，根因级）：
+  1. 锁粒度提升为批次维度（graph_interrupt_id or interrupt_id）：同批次确认串行，
+     最后一个获取锁的请求必然看到兄弟全部落库 → has_pending_siblings=False → processing 恢复
+  2. 锁被持有（并发）时 _acquire_lock_with_retry 短重试（2s），确认请求不被幂等丢弃
+  3. waiting 状态锁内复查批次完整性：批次已完整（无 PENDING 兄弟）→ 升级 processing 恢复，
+     杜绝并发残留 waiting 永久卡死（状态机完整性补全）
+  4. waiting/processing 分支返回前释放批次锁（原实现不释放，靠 TTL 过期，阻塞同批次后续确认）；
+     complete_approval / timeout_approval / approval_lifecycle._finalize_one 锁 key 对称改为批次维度
+- 验证：29 个相关测试全部通过（test_subagent_wait + test_interrupt_resume_semantics）
+
+### 观察项（非本次修复范围）：深研模块主 agent 用 write_file 保存 Windows 绝对路径失败
+- write_file 仅支持 / 开头虚拟路径，D:\...\test_nested_deepresearch.txt 写入失败（工具卡显示「失败」+ 原因），
+  主 agent 派发子代理 C 调查文件系统映射（符合预期自适应行为）；代理模式用 fs_write_file（支持绝对路径）成功
+- 备注：深研/代理两模块工具集差异（write_file vs fs_write_file）导致保存路径能力不同，是否统一待评估
+
+---
+
 ## 2026-08-18 学习工作流模块测试（任务 #64 / thread study_11f7e4a46597「简单加法计算（我是测试功能）」）
 
 ### 测试方式（Chrome DevTools MCP 实际填写并提交第二轮答案）
@@ -321,5 +366,37 @@
 - ❌ 问题 12 复现：todo_write 首次传数组失败（todos: Input should be a valid string）
 - ❌ 问题 18 复现（旧代码产物）：子代理启动文本重复显示 + 子代理卡排末尾
 - 待办：重启 8001 后重新触发，验证问题 9/18 是否随 adapter.py 修复一并解决
+
+---
+
+## 2026-08-18 重启后全面复测（问题 20/21 修复验证，三路径全覆盖）
+
+### 测试 1：聊天代理模式「嵌套 A→B」复测（22:26 会话，2 浏览器）
+- 触发：派发子代理 A（general-purpose），A 内部再派发子代理 B 执行 ollama list，A 用 wait_for_subagent 等 B 完成后返回，主代理汇总
+- 执行链（全部通过）：
+  - ✅ 主代理 spawn A 审批 → 确认后 A 启动（「子代理 1 · L1」）
+  - ✅ A 内部 spawn B 审批卡出现（链路 main → general-purpose → general-purpose · L1）→ 确认后 B 启动
+  - ✅ **B 卡正确显示「子代理 2 · L2」**（嵌套在 A 内，未跑到主层/未与 A 平级）——问题 20 在聊天代理路径验证通过
+  - ✅ B 内部 shell_exec(ollama list) 审批（链路 main → general-purpose ×3 · L2）→ 确认后执行完成（7 模型输出完整）
+  - ✅ A 内部 wait_for_subagent 等待 B → 完成；主代理 wait_for_subagent 等待 A → 完成
+  - ✅ 主代理汇总输出完整（执行链路图 + ollama list 结果表 + 补充说明）
+- 刷新后（页面 2）：A 卡「子代理 1 · L1」已完成、详情完整包含 B 的返回结果、wait_for 已完成、无孤儿错误渲染
+- 结论：问题 20（嵌套 B 渲染主层/平级）在聊天代理模式无复发；问题 21（批次审批卡 waiting）在聊天代理模式已验证通过（22:22 并行 2 子代理测试）
+
+### 测试 2：聊天模块深度研究模式「嵌套 A→B」复测（22:30 会话 research_0121de4a934b，2 浏览器）
+- 触发：聊天页切「🔬 深度研究」模式 → 提示「请进行深度研究：派发子代理 A，A 内部再派发子代理 B 执行 ollama list...」
+- 执行链（全部通过）：
+  - ✅ 深研主 agent todo_write/write_file(研究计划) → 审批通过
+  - ✅ spawn A 审批 → A 启动（「子代理 1 · L1」）；「正在进行深度研究」状态正常
+  - ✅ A 内部 spawn B 审批（链路 main → general-purpose → general-purpose · L1）→ B 启动
+  - ✅ **B 卡正确显示「子代理 2 · L2」**（嵌套在 A 内，未跑到主层）——问题 20 在聊天深研/深研详情链路验证通过
+  - ✅ B 内部 shell_exec(ollama list) 审批（链路 main → general-purpose ×3 · L2）→ 执行完成（7 模型输出完整）
+  - ✅ 所有审批均正常完成，**无批次卡 waiting**——问题 21 在聊天深研链路验证通过
+  - ✅ A 内部 wait_for_subagent 完成 → 主 agent wait 完成 → write_file(研究笔记/最终报告) 完成
+  - ✅ 聊天页状态从「正在进行深度研究」更新为「深度研究已完成」+「查看详情」按钮
+  - ✅ 深研详情页（点「查看详情」跳转）任务状态「已完成」、研究总结完整（调度流程/产出文件/核心结果）
+- 结论：问题 20/21 在聊天深研模式（含其详情页 ResearchTaskDetail 链路）验证通过
+
+### 测试 3：独立深度研究模块复测（待补，见下）
 
 

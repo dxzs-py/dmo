@@ -210,13 +210,32 @@ const approvalDisabled = computed(() =>
 )
 
 // 该任务下子代理元数据列表：从模块级响应式缓存按 parentThreadId 过滤
-// （fetchSubagents / scheduleSubagentsRefresh 刷新后自动更新，双浏览器一致）
+// （fetchSubagents / scheduleSubagentsRefresh 刷新后自动更新，双浏览器一致）。
+// 根因修复（嵌套子代理卡跑到主层/平级）：直接子代理按 parent_thread_id=taskId
+// 关联，但嵌套后代（depth≥2，如 A 内 spawn 的 B）的 parent 是父子代理 threadId，
+// 不在直接过滤范围 → meta 缺失 → buildSubagentsFromMessage 的 toolCalls 时序兜底
+// 仍会把 B 加入视图（props.toolCalls 全量扁平含子代理工具），meta 为空导致
+// task=''/depth 回退 1/spawnToolCallId 空 → B 渲染为顶层孤儿（L1「子代理」）。
+// 修复：从任务根 BFS 收集全部后代（直接子代理 + 递归嵌套），保证嵌套 meta 齐全，
+// 嵌套层经 spawnToolCallId 精确挂载到父子代理内部，不再落入顶层孤儿。
 const subagentMetaList = computed(() => {
   const taskId = props.task?.taskId
   if (!taskId) return []
-  return Object.values(subagentsMetaMap.value).filter(
-    (sa) => sa && sa.parentThreadId === taskId
-  )
+  const all = Object.values(subagentsMetaMap.value)
+  const result = []
+  const queue = [taskId]
+  const visited = new Set([taskId])
+  while (queue.length) {
+    const pid = queue.shift()
+    for (const sa of all) {
+      if (sa && sa.parentThreadId === pid && !visited.has(sa.threadId)) {
+        visited.add(sa.threadId)
+        result.push(sa)
+        queue.push(sa.threadId)
+      }
+    }
+  }
+  return result
 })
 
 // 子代理聚合视图（spawn 顺序索引与 orphans 兜底已收敛到 AgentContentPipeline 内部）

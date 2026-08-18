@@ -1237,16 +1237,34 @@ async def _persist_and_broadcast_async(approval: Approval, state: str, extra: di
     _record_metrics_for_state(approval, state)
 
 
-def _acquire_lock(interrupt_id: str) -> bool:
+def _acquire_lock(lock_key: str) -> bool:
+    """获取审批锁（Redis SET NX）。
+
+    lock_key 为批次维度（graph_interrupt_id）或单审批维度（interrupt_id）。
+    批次级锁是批量审批并发竞态的根因修复：同批次工具确认必须串行，
+    最后一个获取锁的请求才能看到兄弟全部落库并触发批次恢复。
+    """
     redis_client = get_redis_client()
-    lock_key = f"{APPROVAL_LOCK_PREFIX}{interrupt_id}"
-    return bool(redis_client.set(lock_key, "1", nx=True, ex=APPROVAL_LOCK_TTL))
+    full_key = f"{APPROVAL_LOCK_PREFIX}{lock_key}"
+    return bool(redis_client.set(full_key, "1", nx=True, ex=APPROVAL_LOCK_TTL))
 
 
-def _release_lock(interrupt_id: str):
+def _acquire_lock_with_retry(lock_key: str, retries: int = 20, delay: float = 0.1) -> bool:
+    """带短重试的锁获取：并发确认（同批次多个工具同时提交）时，
+    批次锁被他人持有则短暂等待重试，避免确认请求被幂等丢弃导致批次永不完成。"""
+    import time as _time
+
+    for _ in range(retries):
+        if _acquire_lock(lock_key):
+            return True
+        _time.sleep(delay)
+    return False
+
+
+def _release_lock(lock_key: str):
     redis_client = get_redis_client()
-    lock_key = f"{APPROVAL_LOCK_PREFIX}{interrupt_id}"
-    redis_client.delete(lock_key)
+    full_key = f"{APPROVAL_LOCK_PREFIX}{lock_key}"
+    redis_client.delete(full_key)
 
 
 _release_lock_async = sync_to_async(_release_lock)
@@ -1505,7 +1523,7 @@ def resume_approval(
             "idempotent": True,
         }
 
-    if approval.state in (Approval.STATE_PROCESSING, Approval.STATE_WAITING):
+    if approval.state == Approval.STATE_PROCESSING:
         logger.info(f"[ApprovalService] 审批处理中(state={approval.state})，幂等返回: interrupt_id={interrupt_id}")
         return {
             "approval": approval,
@@ -1515,8 +1533,20 @@ def resume_approval(
             "state": approval.state,
         }
 
-    if not _acquire_lock(interrupt_id):
-        logger.info(f"[ApprovalService] 审批锁已被持有，幂等返回: interrupt_id={interrupt_id}")
+    # 批次级锁（批量审批并发竞态根因修复）：锁粒度从单审批（interrupt_id）提升为
+    # 批次（graph_interrupt_id）。原按 interrupt_id 加锁时，同批次多工具并发确认
+    # 各持独立锁，事务隔离下彼此读不到对方未提交的 state 更新 → 都判定"还有 pending
+    # 兄弟" → 全部置 waiting → 批次永不完成（无最后确认者触发恢复）。
+    # 批次锁使同批次确认串行，最后一个获取锁的请求必然看到兄弟全部落库。
+    extra_data = approval.extra or {}
+    if not isinstance(extra_data, dict):
+        extra_data = {}
+    graph_interrupt_id = extra_data.get("graph_interrupt_id")
+    lock_key = graph_interrupt_id or interrupt_id
+
+    # 锁被持有（并发）时短重试而非直接幂等丢弃，保证并发点击的确认请求都能被处理
+    if not _acquire_lock_with_retry(lock_key):
+        logger.info(f"[ApprovalService] 审批锁已被持有，幂等返回: lock_key={lock_key}")
         return {
             "approval": approval,
             "resume_value": None,
@@ -1525,6 +1555,28 @@ def resume_approval(
         }
 
     try:
+        # 获取锁后重读审批（并发下状态可能已变化）
+        try:
+            approval = Approval.objects.get(interrupt_id=interrupt_id)
+        except Approval.DoesNotExist:
+            _release_lock(lock_key)
+            logger.info(f"[ApprovalService] 锁内重读审批不存在: interrupt_id={interrupt_id}")
+            return {
+                "approval": None,
+                "resume_value": None,
+                "stream_generator": None,
+                "idempotent": True,
+                "not_found": True,
+            }
+        if approval.state in (Approval.STATE_APPROVED, Approval.STATE_REJECTED, Approval.STATE_TIMEOUT):
+            _release_lock(lock_key)
+            return {
+                "approval": approval,
+                "resume_value": None,
+                "stream_generator": None,
+                "idempotent": True,
+            }
+
         if not approved:
             resume_value = False
         elif approval.action == Approval.ACTION_CONFIRM_WITH_INPUT:
@@ -1539,6 +1591,43 @@ def resume_approval(
         if not isinstance(extra_data, dict):
             extra_data = {}
         graph_interrupt_id = extra_data.get("graph_interrupt_id")
+
+        # waiting 状态锁内复查（状态机完整性补全）：并发确认时可能有请求在
+        # 兄弟尚未落库时置 waiting，其后无任何请求再检查批次。此处复查：
+        # 批次已完整（无 PENDING 兄弟）→ 升级 processing 并触发恢复，杜绝永久卡 waiting。
+        if approval.state == Approval.STATE_WAITING:
+            has_pending = False
+            if graph_interrupt_id:
+                has_pending = Approval.objects.filter(
+                    extra__graph_interrupt_id=graph_interrupt_id,
+                    state=Approval.STATE_PENDING,
+                ).exists()
+            if has_pending:
+                _release_lock(lock_key)
+                logger.info(
+                    f"[ApprovalService] waiting 复查仍有兄弟 pending，保持等待: "
+                    f"interrupt_id={interrupt_id}, graph_interrupt_id={graph_interrupt_id}"
+                )
+                return {
+                    "approval": approval,
+                    "resume_value": None,
+                    "stream_generator": None,
+                    "idempotent": True,
+                    "state": Approval.STATE_WAITING,
+                }
+            approval.state = Approval.STATE_PROCESSING
+            approval.save(update_fields=["state"])
+            _persist_and_broadcast(approval, Approval.STATE_PROCESSING)
+            _release_lock(lock_key)
+            logger.info(
+                f"[ApprovalService] waiting 复查批次完整，升级 processing 恢复: "
+                f"interrupt_id={interrupt_id}, graph_interrupt_id={graph_interrupt_id}"
+            )
+            return {
+                "approval": approval,
+                "resume_value": extra_data.get("_resume_value", resume_value),
+                "stream_generator": None,
+            }
 
         logger.info(
             f"[ApprovalService] _check_batch: interrupt_id={interrupt_id}, "
@@ -1588,7 +1677,9 @@ def resume_approval(
 
         # waiting 状态：同批次还有其他 pending，不触发恢复流程，直接返回
         # processing 状态：同批次已全部审批完成（或无批次），继续恢复流程
+        # 批次级锁在返回前释放，避免阻塞同批次后续确认请求
         if has_pending_siblings:
+            _release_lock(lock_key)
             return {
                 "approval": approval,
                 "resume_value": resume_value,
@@ -1596,13 +1687,14 @@ def resume_approval(
                 "state": "waiting",
             }
 
+        _release_lock(lock_key)
         return {
             "approval": approval,
             "resume_value": resume_value,
             "stream_generator": None,
         }
     except Exception:
-        _release_lock(interrupt_id)
+        _release_lock(lock_key)
         raise
 
 
@@ -1633,7 +1725,11 @@ def complete_approval(
     approval.save(update_fields=["state", "resolved_at", "extra"])
 
     _persist_and_broadcast(approval, state, extra)
-    _release_lock(interrupt_id)
+    # 锁 key 与 resume_approval 对称：批次维度（graph_interrupt_id）或单审批维度
+    graph_interrupt_id = ""
+    if isinstance(approval.extra, dict):
+        graph_interrupt_id = approval.extra.get("graph_interrupt_id", "")
+    _release_lock(graph_interrupt_id or interrupt_id)
 
     # 统一底层修复（Z1）：sync_approval_state_to_chat_message 已由 _persist_and_broadcast
     # 统一调用（对所有状态包括终态），此处不再重复调用。原实现的显式调用已合并到
@@ -1641,9 +1737,6 @@ def complete_approval(
 
     # 委托 ApprovalLifecycleService 统一终态化同批次 siblings（根因 C 修复）
     # 三模块共享同一份代码，删除散落的 _finalize_waiting_siblings_* 实现
-    graph_interrupt_id = ""
-    if isinstance(approval.extra, dict):
-        graph_interrupt_id = approval.extra.get("graph_interrupt_id", "")
     try:
         from Django_xm.common.approval_lifecycle import service as approval_lifecycle_service
 
@@ -1689,8 +1782,15 @@ def timeout_approval(interrupt_id: str, dispatch_resume: bool = True):
     if approval.state != Approval.STATE_PENDING:
         return
 
-    if not _acquire_lock(interrupt_id):
-        logger.info(f"[ApprovalService] 超时处理跳过: 锁已被持有, interrupt_id={interrupt_id}")
+    # 锁 key 与 resume_approval 对称：批次维度（graph_interrupt_id）或单审批维度
+    extra_data = approval.extra or {}
+    if not isinstance(extra_data, dict):
+        extra_data = {}
+    graph_interrupt_id = extra_data.get("graph_interrupt_id")
+    lock_key = graph_interrupt_id or interrupt_id
+
+    if not _acquire_lock(lock_key):
+        logger.info(f"[ApprovalService] 超时处理跳过: 锁已被持有, lock_key={lock_key}")
         return
 
     try:
@@ -1749,7 +1849,7 @@ def timeout_approval(interrupt_id: str, dispatch_resume: bool = True):
             )
     except Exception:
         logger.exception("[ApprovalService] 超时处理异常")
-        _release_lock(interrupt_id)
+        _release_lock(lock_key)
 
 
 def get_approval_history_by_source(source_id: str) -> list:

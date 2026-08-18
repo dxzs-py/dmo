@@ -162,7 +162,12 @@ class ApprovalLifecycleService:
         # 让前端 ToolCallCard 显示"已超时"（审批事件与工具事件分离）
         if final_state == Approval.STATE_TIMEOUT:
             _publish_tool_call_timeout_event(approval)
-        _release_lock(approval.interrupt_id)
+        # 锁 key 与 approval_service.resume_approval 对称：批次维度（graph_interrupt_id）
+        # 或单审批维度（interrupt_id），保证批次锁在终态化时被正确释放
+        graph_interrupt_id = ""
+        if isinstance(approval.extra, dict):
+            graph_interrupt_id = approval.extra.get("graph_interrupt_id", "")
+        _release_lock(graph_interrupt_id or approval.interrupt_id)
 
         # 注意：不再重复调用 sync_approval_state_to_chat_message ——
         # _persist_and_broadcast 内部已统一调用（含全字段比对幂等检查），
