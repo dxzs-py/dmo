@@ -27,8 +27,13 @@ from langchain_core.exceptions import (
 )
 from langchain_core.tools import ToolException
 
+from Django_xm.apps.core.exceptions import BaseAppError
+from Django_xm.apps.core.logging_utils import get_logger
 
-class LCAgentException(Exception):
+logger = get_logger(__name__)
+
+
+class LCAgentException(BaseAppError):
     """项目级 Agent 异常基类"""
 
     DEFAULT_USER_MESSAGE = "抱歉，处理您的请求时出现错误"
@@ -188,8 +193,8 @@ def classify_exception(exc: Exception) -> LCAgentException:
                 details={"original_type": type(exc).__name__, "recursion_limit": True},
                 recoverable=True,
             )
-    except ImportError:
-        pass
+    except ImportError as e:
+        logger.debug("langgraph 未安装，跳过 GraphRecursionError 分类: %s", e)
 
     try:
         from openai import (
@@ -237,8 +242,8 @@ def classify_exception(exc: Exception) -> LCAgentException:
                 message=f"OpenAI 请求参数错误: {exc}",
                 details={"original_type": type(exc).__name__, "bad_request": True},
             )
-    except ImportError:
-        pass
+    except ImportError as e:
+        logger.debug("openai 未安装，跳过 OpenAI 异常分类: %s", e)
 
     error_msg = str(exc).lower()
 

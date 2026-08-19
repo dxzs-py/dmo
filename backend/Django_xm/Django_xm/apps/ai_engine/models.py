@@ -4,42 +4,35 @@ AI 引擎数据模型
 SystemConfig: 系统配置键值对，持久化 AI 模型选择等设置
 """
 
+import asyncio
 import logging
 
+from django.core.cache import cache
 from django.db import models
 
 logger = logging.getLogger(__name__)
 
-# ─── SystemConfig 缓存 ─────────────────────────────────────────────
-_config_cache: dict = {}
+# ─── SystemConfig 缓存（django-redis，多 worker 共享） ──────────────
+SYSTEM_CONFIG_CACHE_TTL = 3600
 
 
-def invalidate_system_config_cache(key: str | None = None):
-    """清除 SystemConfig 缓存，key=None 时清除全部"""
-    if key is None:
-        _config_cache.clear()
-    else:
-        _config_cache.pop(key, None)
+def _cache_key(key: str) -> str:
+    """构造 SystemConfig 的缓存键"""
+    return f"system_config:{key}"
 
 
-def warmup_system_config_cache():
-    """预加载 SystemConfig 缓存，应在应用启动时（同步上下文）调用"""
+def warmup_system_config_cache() -> None:
+    """将 DB 全量 SystemConfig 写入 Redis 缓存，应在应用启动时（同步上下文）调用
+
+    幂等：重复调用以 DB 当前值为准覆盖；失败非致命（logger.exception）。
+    """
     try:
-        for obj in SystemConfig.objects.all():
-            _config_cache[obj.key] = obj.value
-        logger.debug(f"SystemConfig 缓存预热完成，共 {len(_config_cache)} 项")
+        entries = {obj.key: obj.value for obj in SystemConfig.objects.all()}
+        for key, value in entries.items():
+            cache.set(_cache_key(key), value, SYSTEM_CONFIG_CACHE_TTL)
+        logger.debug(f"SystemConfig 缓存预热完成，共 {len(entries)} 项")
     except Exception:
         logger.exception("SystemConfig 缓存预热失败（非致命）")
-
-
-def _is_async_context() -> bool:
-    """检测当前是否在异步上下文中"""
-    try:
-        import asyncio
-
-        return asyncio.get_running_loop() is not None
-    except RuntimeError:
-        return False
 
 
 class SystemConfig(models.Model):
@@ -68,33 +61,43 @@ class SystemConfig(models.Model):
     def get_value(cls, key: str, default=None):
         """读取配置值，不存在则返回 default
 
-        异步安全：优先走缓存，异步上下文中不触发 ORM。
+        缓存走 django cache（django-redis，多 worker 一致），TTL 3600s。
+        未命中时：同步上下文回源 DB 并回写缓存（记录不存在返回 default，不写缓存）；
+        异步上下文禁止 ORM，记 warning 并返回 default。
         """
-        if key in _config_cache:
-            return _config_cache[key]
-        # 异步上下文中不能直接访问 ORM
-        if _is_async_context():
-            logger.debug(f"异步上下文中读取 SystemConfig({key})，缓存未命中，返回默认值")
+        cache_key = _cache_key(key)
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+        # 内联检测异步上下文（事件循环内禁止同步 ORM）
+        try:
+            asyncio.get_running_loop()
+            in_async_context = True
+        except RuntimeError:
+            in_async_context = False
+        if in_async_context:
+            logger.warning(f"异步上下文中读取 SystemConfig({key}) 缓存未命中，返回默认值")
             return default
         try:
             obj = cls.objects.get(key=key)
-            _config_cache[key] = obj.value
-            return obj.value
         except cls.DoesNotExist:
             return default
+        cache.set(cache_key, obj.value, SYSTEM_CONFIG_CACHE_TTL)
+        return obj.value
 
     @classmethod
-    def set_value(cls, key: str, value: dict) -> "SystemConfig":
-        """写入配置值，存在则更新，不存在则创建。value 为 None 时删除记录"""
+    def set_value(cls, key: str, value: dict) -> "SystemConfig | None":
+        """写入配置值，存在则更新，不存在则创建。value 为 None 时删除记录并清缓存"""
+        cache_key = _cache_key(key)
         if value is None:
             cls.objects.filter(key=key).delete()
-            _config_cache.pop(key, None)
+            cache.delete(cache_key)
             return None
         obj, _created = cls.objects.update_or_create(
             key=key,
             defaults={"value": value},
         )
-        _config_cache[key] = value
+        cache.set(cache_key, value, SYSTEM_CONFIG_CACHE_TTL)
         return obj
 
 

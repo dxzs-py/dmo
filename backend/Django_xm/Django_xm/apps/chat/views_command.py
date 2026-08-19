@@ -104,8 +104,9 @@ class ProjectContextView(APIView):
             result = context.to_dict()
             CacheService.set(cache_key, result, CacheTTL.QUERY_LONG)
             return success_response(data=result)
-        except Exception as e:
+        except Exception:
+            logger.exception("获取项目上下文失败")
             return error_response(
                 code=ErrorCode.INTERNAL_ERROR,
-                message=str(e),
+                message="获取项目上下文失败",
             )

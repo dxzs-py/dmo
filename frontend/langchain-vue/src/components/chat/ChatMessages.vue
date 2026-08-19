@@ -5,7 +5,7 @@ import { RecycleScroller } from 'vue-virtual-scroller'
 import ChatMessage from './ChatMessage.vue'
 import AiShimmer from '../ai-elements/AiShimmer.vue'
 import AiLoader from '../ai-elements/AiLoader.vue'
-import { validateMessage } from '../../types'
+import { validateMessage } from '@/utils/validation'
 
 const props = defineProps({
   messages: {

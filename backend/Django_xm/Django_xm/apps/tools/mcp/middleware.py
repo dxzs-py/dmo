@@ -24,7 +24,7 @@ from Django_xm.apps.analytics.services.tool_analytics import (
     ToolAnalyticsService,
     ToolUsageRecord,
 )
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.apps.tools.errors import (
     ToolErrorCode,
     ToolResult,

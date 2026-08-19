@@ -6,7 +6,7 @@
 import uuid
 from typing import Any
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 from .persistence_service import get_persistence_service
 from .study_flow import _study_flow_cache, get_workflow_history, get_workflow_state, start_study_flow, submit_answers

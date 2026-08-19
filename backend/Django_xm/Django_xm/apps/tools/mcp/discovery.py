@@ -2,7 +2,7 @@ from typing import Any
 
 import httpx
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 # Task 27.3：MCP_SERVERS 配置归属 tools 模块，不再走 Django settings 间接访问
 from Django_xm.apps.tools.mcp.config import get_system_mcp_servers

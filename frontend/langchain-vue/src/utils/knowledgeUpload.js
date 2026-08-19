@@ -5,9 +5,8 @@ import { extractErrorMessage } from './apiErrorHandler'
  * 知识库文档上传公共逻辑
  *
  * 知识库管理模块（KnowledgeBaseView）与 RAG 知识库模块（RagView）共用同一套
- * 上传流程：构造 FormData → 调用后端 upload 接口 → 订阅任务进度 → 终态处理。
- * 后端两个端点（/knowledge/knowledge-bases/{id}/upload/ 与
- * /knowledge/indices/{name}/upload/）指向同一视图（异步 Celery 任务），
+ * 上传流程：构造 FormData → 调用后端上传接口 → 订阅任务进度 → 终态处理。
+ * 后端统一端点 POST /knowledge/knowledge-bases/{id}/documents/（异步 Celery 任务），
  * 此处统一前端行为：WebSocket task 频道实时进度，终态后刷新。
  */
 

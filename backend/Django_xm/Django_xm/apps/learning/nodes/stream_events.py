@@ -12,7 +12,7 @@ graph.invoke / 非 custom 流式模式下 ``get_stream_writer()`` 返回 no-op�
 
 from langgraph.config import get_stream_writer
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

@@ -190,10 +190,10 @@ class DeepResearchGlobalSearchView(APIView):
                 }
             )
 
-        except Exception as e:
+        except Exception:
             logger.exception("搜索文件失败：")
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
-                message=str(e),
+                message="搜索文件失败",
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )

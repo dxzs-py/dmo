@@ -28,7 +28,7 @@ from Django_xm.apps.agent_hub.services.agent_executor import (
     AgentExecutor,
     _HardTimeoutSignaled,
 )
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

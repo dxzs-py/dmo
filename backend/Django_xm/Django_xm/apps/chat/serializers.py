@@ -195,7 +195,41 @@ class ChatResponseSerializer(serializers.Serializer):
 # ==================== 模型序列化器（ModelSerializer） ====================
 
 
+def build_research_task_map(messages) -> dict[str, Any]:
+    """批量构建消息关联研究任务映射（ChatMessageSerializer 序列化契约，dj-04）。
+
+    对消息集中的 research_task_id 去重后执行一次 ResearchTask.all_objects
+    批量查询（含软删除，与原逐条查询的 all_objects 语义一致），返回
+    ``{task_id: ResearchTask 实例}``；消息集无 research_task_id 时返回
+    空映射且不发起查询。
+
+    用法：序列化前调用，经 ``context={"research_task_map": ...}`` 传入
+    ChatMessageSerializer（含 ChatSessionDetailSerializer 嵌套场景——
+    context 会自动向下传播到 messages 子序列化器）。
+    """
+    task_ids = {msg.research_task_id for msg in messages if msg.research_task_id}
+    if not task_ids:
+        return {}
+
+    from django.apps import apps
+
+    ResearchTask = apps.get_model("research", "ResearchTask")
+    return {task.task_id: task for task in ResearchTask.all_objects.filter(task_id__in=task_ids)}
+
+
 class ChatMessageSerializer(serializers.ModelSerializer):
+    """消息序列化器（模型输出 + 创建/更新输入）
+
+    research_task_map 契约（dj-04）：
+    - 实例化用于序列化（读取 ``.data``，含经 ChatSessionDetailSerializer
+      嵌套使用）时，必须经 ``context={"research_task_map": {...}}`` 提供
+      研究任务映射，映射由 :func:`build_research_task_map` 一次批量查询
+      构建（单条消息场景同样构造单元素映射）；缺失映射时
+      research_task_status / research_task_deleted 直接 KeyError 快速
+      失败，不提供逐条查询兜底。
+    - 仅做输入校验（``data=`` 且不读取 ``.data``）的实例传空映射即可。
+    """
+
     attachments = serializers.SerializerMethodField()
     attachment_ids = serializers.SerializerMethodField(method_name='get_attachment_ids')
     research_task_id = serializers.CharField(read_only=True)
@@ -265,35 +299,29 @@ class ChatMessageSerializer(serializers.ModelSerializer):
             return []
 
     def get_research_task_status(self, obj) -> str | None:
-        """返回关联研究任务的权威状态（P7 根因修复）
+        """返回关联研究任务的权威状态（P7 根因修复；dj-04 批量化）
 
         前端刷新后凭该字段判定"研究进行中/已完成"，避免快照不含状态导致误显。
-        必须用 all_objects（默认 objects 过滤了 is_deleted=True）。
+        从 context["research_task_map"] 批量映射读取（调用方经
+        build_research_task_map 一次 all_objects 查询构建，含软删除），
+        消除逐条查询的 N+1；映射缺失时 KeyError 快速失败，禁止逐条查询兜底。
         """
         if not obj.research_task_id:
             return None
-        try:
-            from django.apps import apps
-
-            ResearchTask = apps.get_model("research", "ResearchTask")
-            task = ResearchTask.all_objects.filter(task_id=obj.research_task_id).first()
-            return task.status if task else None
-        except Exception:
-            return None
+        task = self.context["research_task_map"].get(obj.research_task_id)
+        return task.status if task else None
 
     def get_research_task_deleted(self, obj) -> bool | None:
-        """检查关联的研究任务是否已软删除"""
+        """检查关联的研究任务是否已软删除（dj-04 批量化）
+
+        语义与逐条查询版完全一致：任务不存在 → True（视为已删除）；
+        任务存在 → task.is_deleted（软删除可见性由 build_research_task_map
+        的 all_objects 查询保证）。
+        """
         if not obj.research_task_id:
             return None
-        try:
-            from django.apps import apps
-
-            ResearchTask = apps.get_model("research", "ResearchTask")
-            # 必须用 all_objects，默认 objects 过滤了 is_deleted=True
-            task = ResearchTask.all_objects.filter(task_id=obj.research_task_id).first()
-            return task.is_deleted if task else True
-        except Exception:
-            return None
+        task = self.context["research_task_map"].get(obj.research_task_id)
+        return task.is_deleted if task else True
 
     def validate_content(self, value):
         if value and len(value) > 50000:
@@ -376,6 +404,11 @@ class ChatSessionDetailSerializer(serializers.ModelSerializer):
     用途：会话详情页展示，包含完整消息列表
     绑定模型：ChatSession
     注意：messages 字段会触发额外查询，建议配合 prefetch_related('messages') 使用
+
+    research_task_map 契约（dj-04）：嵌套的 messages 子序列化器会自动继承
+    本序列化器的 context，实例化时须传入
+    context={"research_task_map": build_research_task_map(session.messages.all())}，
+    避免子序列化器按消息逐条查询 ResearchTask（N+1）。
     """
 
     messages = ChatMessageSerializer(many=True, read_only=True)

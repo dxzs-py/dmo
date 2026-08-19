@@ -21,7 +21,6 @@ AI 相关配置（LLM/Agent/RAG/Embedding/Guardrails/LangSmith 等）
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 from pydantic import Field, field_validator
@@ -180,23 +179,6 @@ def get_settings() -> ProjectSettings:
 
 
 settings = get_settings()
-
-
-# ==================== 日志工具 ====================
-
-
-def get_logger(name: str) -> logging.Logger:
-    logger = logging.getLogger(name)
-    if logger.handlers:
-        return logger
-    logger.setLevel(getattr(logging, settings.log_level))
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(getattr(logging, settings.log_level))
-    fmt = logging.Formatter("%(levelname)s %(asctime)s - %(name)s - %(message)s")
-    console_handler.setFormatter(fmt)
-    logger.addHandler(console_handler)
-    logger.propagate = False
-    return logger
 
 
 def setup_loguru_logging() -> None:

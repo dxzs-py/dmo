@@ -127,3 +127,23 @@ class SearchResultSerializer(serializers.Serializer):
     content = serializers.CharField()
     metadata = serializers.DictField()
     score = serializers.FloatField(required=False, allow_null=True)
+
+
+class CreateKnowledgeBaseSerializer(serializers.Serializer):
+    """创建知识库请求序列化器（views_kb.KnowledgeBaseListView.post）。"""
+
+    name = serializers.CharField(required=True, max_length=100, help_text="知识库名称")
+    description = serializers.CharField(required=False, allow_blank=True, default="", help_text="知识库描述")
+
+
+class UpdateKnowledgeBaseSerializer(serializers.Serializer):
+    """更新知识库请求序列化器（views_kb.KnowledgeBaseDetailView.patch）。"""
+
+    description = serializers.CharField(required=False, allow_blank=True, help_text="知识库描述")
+
+
+class KnowledgeBaseSearchSerializer(serializers.Serializer):
+    """知识库检索测试请求序列化器（views_kb.KnowledgeBaseSearchView.post）。"""
+
+    query = serializers.CharField(required=True, help_text="检索查询")
+    top_k = serializers.IntegerField(required=False, default=5, min_value=1, max_value=50, help_text="返回结果数量")

@@ -99,6 +99,7 @@
 
 <script setup>
 import { ref, onMounted, computed } from 'vue'
+import { useDebounceFn } from '@vueuse/core'
 import { ElMessage } from 'element-plus'
 import { Search, Refresh, View, Delete, ChatDotRound, RefreshRight } from '@element-plus/icons-vue'
 import { logger } from '../../utils/logger'
@@ -132,7 +133,6 @@ const total = ref(0)
 const totalPages = computed(() => Math.ceil(total.value / pageSize.value))
 const searchQuery = ref('')
 const statusFilter = ref('')
-let searchTimer = null
 
 const formatDate = (dateStr) => {
   if (!dateStr) return '-'
@@ -172,15 +172,12 @@ const refreshTasks = () => {
   emit('refresh')
 }
 
-const debounceSearch = () => {
-  if (searchTimer) {
-    clearTimeout(searchTimer)
-  }
-  searchTimer = setTimeout(() => {
-    currentPage.value = 1
-    loadTasks()
-  }, 300)
-}
+// rd-08：防抖统一 @vueuse useDebounceFn（trailing 语义与原内联实现等价，
+// 且组件卸载时自动清理定时器，修复原实现卸载后仍触发 loadTasks 的泄漏）
+const debounceSearch = useDebounceFn(() => {
+  currentPage.value = 1
+  loadTasks()
+}, 300)
 
 const viewTask = (task) => {
   emit('view-task', task)

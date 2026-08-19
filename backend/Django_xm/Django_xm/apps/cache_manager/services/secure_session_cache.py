@@ -10,6 +10,9 @@ class SecureSessionCacheService:
     CACHE_PREFIX = "user_session"
     SESSION_LIST_KEY = "user_sessions_list"
     TIMEOUT = 3600
+    # 列表索引 key 短 TTL：仅作为 session_id 索引（数据本体在单条 key），
+    # 过期后回源 DB 重建索引，避免长期驻留导致会话增删不同步
+    LIST_TIMEOUT = 120
 
     @classmethod
     def _get_cache_key(cls, user_id, session_id):
@@ -38,7 +41,7 @@ class SecureSessionCacheService:
 
             if session_id not in existing_sessions:
                 existing_sessions.append(session_id)
-                cache.set(sessions_list_key, existing_sessions, timeout=cls.TIMEOUT * 24)
+                cache.set(sessions_list_key, existing_sessions, timeout=cls.LIST_TIMEOUT)
 
             logger.debug(f"Cached session {session_id} for user {user_id}")
             return True
@@ -102,13 +105,42 @@ class SecureSessionCacheService:
 
             if session_id in existing_sessions:
                 existing_sessions.remove(session_id)
-                cache.set(sessions_list_key, existing_sessions, timeout=cls.TIMEOUT * 24)
+                cache.set(sessions_list_key, existing_sessions, timeout=cls.LIST_TIMEOUT)
 
             logger.info(f"Invalidated session {session_id} for user {user_id}")
             return True
 
         except Exception:
             logger.exception("Failed to invalidate session")
+            return False
+
+    @classmethod
+    def invalidate_session_entry(cls, user_id, session_id):
+        """仅失效当前会话的单条缓存 key，不触碰列表索引 key。
+
+        适用于会话更新（如重命名）场景：其它会话缓存与列表索引均保留，
+        避免 post_save 高频触发全量清空导致缓存命中率趋零。
+        """
+        try:
+            cache.delete(cls._get_cache_key(user_id, session_id))
+            logger.info(f"Invalidated session entry {session_id} for user {user_id}")
+            return True
+        except Exception:
+            logger.exception("Failed to invalidate session entry")
+            return False
+
+    @classmethod
+    def invalidate_user_sessions_list(cls, user_id):
+        """仅失效用户的会话列表索引 key，单条会话缓存保留。
+
+        适用于需要列表回源 DB 重建（如重命名影响列表展示）的场景。
+        """
+        try:
+            cache.delete(cls._get_user_sessions_key(user_id))
+            logger.info(f"Invalidated sessions list for user {user_id}")
+            return True
+        except Exception:
+            logger.exception("Failed to invalidate sessions list")
             return False
 
     @classmethod

@@ -1,7 +1,8 @@
 import { useUserStore } from '@/stores/user'
 import settings from '../config/settings'
 import { logger } from './logger'
-import { toSnakeCase } from './sessionTransformers'
+import { toSnakeCase, toCamelCase } from './sessionTransformers'
+import { extractSSEError } from './apiErrorHandler'
 
 const MAX_RETRIES = 3
 const RETRY_BASE_DELAY = 1000
@@ -131,48 +132,11 @@ export async function fetchSSE(url, options = {}) {
       }
 
       if (!response.ok) {
-        let errorMsg = `HTTP ${response.status}`
-        try {
-          const reader = response.body?.getReader()
-          if (reader) {
-            const decoder = new TextDecoder()
-            let body = ''
-            while (true) {
-              const { done, value } = await reader.read()
-              if (done) break
-              body += decoder.decode(value, { stream: true })
-            }
-            try {
-              const parsed = JSON.parse(body)
-              const parts = [parsed.message || parsed.error || '']
-              if (parsed.data && typeof parsed.data === 'object') {
-                const fieldErrors = Object.entries(parsed.data)
-                  .map(([field, msgs]) => `${field}: ${Array.isArray(msgs) ? msgs.join(', ') : msgs}`)
-                  .join('; ')
-                if (fieldErrors) parts.push(fieldErrors)
-              }
-              errorMsg = parts.filter(Boolean).join(' - ') || errorMsg
-            } catch (err) {
-              // 响应体非 JSON 时尝试按 SSE data 行提取错误信息
-              logger.warn('[SSE] 错误响应体解析失败:', err)
-              const sseMatch = body.match(/data:\s*(.*)/)
-              if (sseMatch) {
-                try {
-                  const parsed = JSON.parse(sseMatch[1])
-                  errorMsg = parsed.message || parsed.error || errorMsg
-                } catch (sseErr) {
-                  logger.warn('[SSE] 错误响应 SSE 数据解析失败:', sseErr)
-                }
-              }
-            }
-          }
-        } catch (err) {
-          // 读取/解析错误响应体失败时回退到默认 HTTP 状态描述
-          logger.warn('[SSE] 读取错误响应内容失败:', err)
-        }
+        // rd-06：错误响应解析统一到 apiErrorHandler.extractSSEError
+        // （text() 单次读取 + JSON / SSE data 行回退，格式见其 JSDoc）
+        const serverError = await extractSSEError(response)
         // Task 6.3：服务端已响应（4xx/5xx）说明请求已被受理处理，
         // 标记 __serverResponse 使 catch 不再重发。
-        const serverError = new Error(errorMsg)
         serverError.__serverResponse = true
         throw serverError
       }
@@ -195,6 +159,30 @@ export async function fetchSSE(url, options = {}) {
   }
 
   throw lastError || new Error('SSE 请求失败，已达最大重试次数')
+}
+
+/**
+ * 解析原始事件（snake_case）为前端 camelCase 并路由分发
+ *
+ * 命名边界：对整体对象调用 toCamelCase 递归转换，
+ * 然后将 type 与顶层 subagent_thread_id 还原为后端原始 snake_case
+ * （协议路由标识符，非业务数据）。其余字段均为前端 camelCase。
+ *
+ * @param {*} raw - SSE data 行 / WebSocket message JSON.parse 后的原始事件
+ * @returns {*} 转换后的事件对象（非普通对象经 toCamelCase 透传/数组逐项转换）
+ */
+export function parseProtocolEvent(raw) {
+  const converted = toCamelCase(raw)
+  // 严格判断普通对象（Object.prototype.toString，见 SpecificationRequirements：
+  // 禁止用 typeof 判断，防止 Date/RegExp/null 被误处理）
+  if (Object.prototype.toString.call(raw) !== '[object Object]') return converted
+  if (raw.type) {
+    converted.type = raw.type
+  }
+  if (raw.subagent_thread_id) {
+    converted.subagent_thread_id = raw.subagent_thread_id
+  }
+  return converted
 }
 
 export async function readSSEStream(response, onEvent, signal) {
@@ -230,7 +218,7 @@ export async function readSSEStream(response, onEvent, signal) {
 
         try {
           const parsed = JSON.parse(dataStr)
-          onEvent(parsed)
+          onEvent(parseProtocolEvent(parsed))
         } catch (e) {
           logger.warn('[SSE] 解析数据失败:', dataStr, e)
         }
@@ -242,7 +230,7 @@ export async function readSSEStream(response, onEvent, signal) {
       if (dataStr.trim() && dataStr !== '[DONE]') {
         try {
           const parsed = JSON.parse(dataStr)
-          onEvent(parsed)
+          onEvent(parseProtocolEvent(parsed))
         } catch (err) {
           // 流结束时缓冲区残留的半行数据可能不完整，解析失败仅记录，忽略该残片
           logger.warn('[SSE] 解析尾部数据失败:', dataStr, err)

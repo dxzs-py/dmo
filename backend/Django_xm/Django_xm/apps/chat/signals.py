@@ -26,7 +26,9 @@ def on_session_save(sender, instance, created, **kwargs):
     try:
         from Django_xm.apps.cache_manager.services.secure_session_cache import SecureSessionCacheService
 
-        SecureSessionCacheService.invalidate_all_user_sessions(instance.user_id)
+        # dj-09：仅失效当前会话单条 key，不再全量清空（post_save 含每次更新，
+        # 全量清空会导致缓存命中率趋零；列表索引由短 TTL 自然过期回源）
+        SecureSessionCacheService.invalidate_session_entry(instance.user_id, str(instance.session_id))
     except Exception as e:
         logger.warning(f"会话安全缓存失效失败: {e}")
 
@@ -54,7 +56,8 @@ def on_session_delete(sender, instance, **kwargs):
     try:
         from Django_xm.apps.cache_manager.services.secure_session_cache import SecureSessionCacheService
 
-        SecureSessionCacheService.invalidate_all_user_sessions(instance.user_id)
+        # dj-09：删除场景失效单条 key 并从列表索引 remove，其它会话缓存保留
+        SecureSessionCacheService.invalidate_user_session(instance.user_id, str(instance.session_id))
     except Exception:
         logger.exception("会话安全缓存失效失败")
 

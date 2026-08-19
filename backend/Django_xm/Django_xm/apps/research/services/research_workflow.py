@@ -10,7 +10,7 @@ from langgraph.types import Send
 
 from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
 from Django_xm.apps.ai_engine.workflows.state import WorkflowState
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

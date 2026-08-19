@@ -66,11 +66,16 @@ apiClient.interceptors.response.use(
     // 统一转换响应数据 snake_case → camelCase
     if (response.data) {
       try {
-        const before = JSON.stringify(response.data).slice(0, 200)
-        response.data = toCamelCase(response.data)
-        const after = JSON.stringify(response.data).slice(0, 200)
-        if (before !== after) {
-          console.debug('[Axios] 响应转换:', response.config?.url, '\n  前:', before, '\n  后:', after)
+        if (import.meta.env.DEV) {
+          // 调试比较（cq-10）：双重 stringify 仅限开发环境，生产不承担序列化开销
+          const before = JSON.stringify(response.data).slice(0, 200)
+          response.data = toCamelCase(response.data)
+          const after = JSON.stringify(response.data).slice(0, 200)
+          if (before !== after) {
+            console.debug('[Axios] 响应转换:', response.config?.url, '\n  前:', before, '\n  后:', after)
+          }
+        } else {
+          response.data = toCamelCase(response.data)
         }
       } catch (e) {
         console.warn('[Axios] toCamelCase 转换响应数据失败:', e)

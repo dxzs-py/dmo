@@ -76,11 +76,11 @@ class CacheHealthView(APIView):
                 data=health_info,
                 message="缓存服务正常" if is_healthy else "缓存服务异常",
             )
-        except Exception as e:
+        except Exception:
             logger.exception("缓存健康检查失败")
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
-                message=str(e),
+                message="缓存健康检查失败",
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -128,11 +128,11 @@ class CacheStatsView(APIView):
                 stats["db_size"] = redis_direct_info.get("db_size", 0)
 
             return success_response(data=stats)
-        except Exception as e:
+        except Exception:
             logger.exception("获取缓存统计失败")
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
-                message=str(e),
+                message="获取缓存统计失败",
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -168,34 +168,44 @@ class CacheInvalidateView(APIView):
                 )
 
             return success_response(message=message)
-        except Exception as e:
+        except Exception:
             logger.exception("缓存失效操作失败")
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
-                message=str(e),
+                message="缓存失效操作失败",
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 
 class CacheClearView(APIView):
-    permission_classes = [IsAuthenticated]
+    """缓存清除视图（scope 语义与 CacheInvalidateView 对齐）
+
+    权限按 scope 分派：
+    - query：仅清除当前用户自己的 rag_query 缓存，普通用户可用；
+    - all / model / pattern：影响全局缓存，仅管理员可用。
+    """
+
+    def get_permissions(self):
+        if self.request.data.get("scope") == "query":
+            return [IsAuthenticated()]
+        return [IsAdminUser()]
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
     def post(self, request):
         try:
             pattern = request.data.get("pattern")
-            cache_type = request.data.get("type", "all")
+            scope = request.data.get("scope", "all")
 
             cleared = 0
             if pattern:
                 CacheService.delete_pattern(pattern)
                 cleared = 1
-            elif cache_type == "query":
+            elif scope == "query":
                 user = request.user
                 CacheService.delete_pattern(f"rag_query:user_{user.id}_*")
-            elif cache_type == "model":
+            elif scope == "model":
                 ModelResponseCacheService.invalidate_model_cache(app_cfg.get_openai_config()["model"])
-            else:
+            elif scope == "all":
                 client = get_redis_client()
                 if client:
                     for prefix in CACHE_PREFIX_LABELS:
@@ -208,11 +218,21 @@ class CacheClearView(APIView):
                             if cursor == 0:
                                 break
                 CacheService.reset_stats()
+            else:
+                return error_response(
+                    code=ErrorCode.VALIDATION_FAILED,
+                    message="请指定有效的 scope (all/query/model/pattern)",
+                    http_status=status.HTTP_400_BAD_REQUEST,
+                )
 
             return success_response(data={"cleared": cleared}, message=f"已清除 {cleared} 个缓存键")
-        except Exception as e:
+        except Exception:
             logger.exception("清除缓存失败")
-            return error_response(code=ErrorCode.SERVER_ERROR, message=str(e))
+            return error_response(
+                code=ErrorCode.SERVER_ERROR,
+                message="清除缓存失败",
+                http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 class CacheResetStatsView(APIView):
@@ -223,10 +243,10 @@ class CacheResetStatsView(APIView):
         try:
             CacheService.reset_stats()
             return success_response(message="缓存统计已重置")
-        except Exception as e:
+        except Exception:
             logger.exception("重置缓存统计失败")
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
-                message=str(e),
+                message="重置缓存统计失败",
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )

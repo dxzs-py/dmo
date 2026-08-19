@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onActivated, onUnmounted, onDeactivated, computed } from 'vue'
+import { ref, onActivated, onUnmounted, onDeactivated, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Search, Upload, Delete, View, Document, FolderOpened, Edit, Refresh } from '@element-plus/icons-vue'
 import { knowledgeAPI } from '@/api/knowledge'
@@ -8,10 +8,12 @@ import { logger } from '../utils/logger'
 import { formatFileSize } from '../utils/format'
 import { confirmDelete, confirmAction } from '../utils/dialog'
 import { useSessionStore } from '../stores/session'
+import { useUserStore } from '../stores/user'
 import { useRealtimeSync } from '../composables/useRealtimeSync'
 import { buildUploadFormData, notifyEmbeddingFallback, getUploadErrorMessage, trackUploadTask } from '../utils/knowledgeUpload'
 
 const sessionStore = useSessionStore()
+const userStore = useUserStore()
 const knowledgeBases = ref([])
 const loading = ref(false)
 const searchQuery = ref('')
@@ -49,13 +51,16 @@ const filteredKBs = computed(() => {
   )
 })
 
-onMounted(async () => {
-  await loadKnowledgeBases()
-  await loadCacheInfo()
-})
-
+// keep-alive 首挂 mounted→activated 依次触发，初始化统一收敛 onActivated 单一入口
+// （此前双钩子同帧各调一次 loadKnowledgeBases，接口双发）；
+// loadCacheInfo（缓存状态轮询基础数据）仅首挂需要，由首挂标志区分。
+let isFirstActivate = true
 onActivated(async () => {
   await loadKnowledgeBases()
+  if (isFirstActivate) {
+    isFirstActivate = false
+    await loadCacheInfo()
+  }
 })
 
 const cleanupKnowledgeBaseView = () => {
@@ -436,7 +441,13 @@ v-for="kb in filteredKBs" :key="kb.id" v-memo="[kb.name, kb.description, kb.chun
               @change="toggleAutoRefresh"
             />
             <el-button size="small" :icon="Refresh" :loading="cacheLoading" @click="loadCacheInfo">刷新</el-button>
-            <el-button size="small" type="danger" :loading="cacheClearLoading" @click="handleClearCache('all')">
+            <el-button
+              v-if="userStore.isAdmin"
+              size="small"
+              type="danger"
+              :loading="cacheClearLoading"
+              @click="handleClearCache('all')"
+            >
               清除全部缓存
             </el-button>
           </div>

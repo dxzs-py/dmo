@@ -120,10 +120,11 @@ class ModelSwitchView(APIView):
                 message=str(e),
                 http_status=status.HTTP_400_BAD_REQUEST,
             )
-        except Exception as e:
+        except Exception:
+            logger.exception("模型切换失败")
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
-                message=f"模型切换失败: {e!s}",
+                message="模型切换失败",
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 

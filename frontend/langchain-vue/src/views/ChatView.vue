@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
+import { ref, computed, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { watchDebounced } from '@vueuse/core'
 import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '../stores/chat'
@@ -285,10 +285,9 @@ const initChatView = async () => {
   }
 }
 
-onMounted(initChatView)
-
-// keep-alive 激活（首次挂载后与缓存恢复）时重新执行初始化：
-// 会话定位、WS 订阅、SSE 恢复、流状态检查均幂等，重复调用安全。
+// keep-alive 首挂 mounted→activated 依次触发，初始化统一收敛 onActivated 单一入口
+// （此前双钩子同帧双触发 initChatView，fetchModes/会话详情等接口双发）；
+// 会话定位、WS 订阅、SSE 恢复、流状态检查均幂等，缓存恢复重入安全。
 onActivated(initChatView)
 
 onUnmounted(() => {

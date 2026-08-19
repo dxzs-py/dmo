@@ -258,11 +258,12 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick, provide } from 'vue'
+import { ref, reactive, computed, watch, onUnmounted, onActivated, onDeactivated, provide } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { deepResearchAPI } from '@/api/research'
 import { knowledgeAPI } from '@/api/knowledge'
 import { readSSEStream } from '../utils/sse'
+import { extractSSEError } from '../utils/apiErrorHandler'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import TaskList from '../components/chat/TaskList.vue'
@@ -276,7 +277,7 @@ import { useResearchStore } from '../stores/research'
 import { formatFileSize, getQueryParam } from '../utils/format'
 import { logger } from '../utils/logger'
 import { getInterruptId } from '../utils/messageOperations'
-import { toCamelCase } from '@/utils/sessionTransformers'
+import { useApiTask } from '@/composables/useApiTask'
 import { useTaskRealtimeSync } from '@/composables/useTaskRealtimeSync'
 import { useTaskListRealtimeSync } from '@/composables/useTaskListRealtimeSync'
 import { ResearchTaskStatus } from '@/types'
@@ -289,7 +290,6 @@ provide('modelSettingsStore', researchSettings)
 const approvalStore = useApprovalStore()
 const researchStore = useResearchStore()
 
-const isLoading = ref(false)
 const router = useRouter()
 const route = useRoute()
 const currentTaskId = ref(null)
@@ -364,16 +364,13 @@ const elapsedSeconds = ref(0)
 const showFileSearch = ref(false)
 const fileSearchQuery = ref('')
 const fileSearchResults = ref([])
-const fileSearchLoading = ref(false)
 const fileSearchSearched = ref(false)
 
 const knowledgeBases = ref([])
-const kbLoading = ref(false)
 const kbSearchQuery = ref('')
 const filteredKnowledgeBases = ref([])
 
 const docAnalysisContent = ref(null)
-const docAnalysisLoading = ref(false)
 const docAnalysisFile = ref(null)
 
 const continueDialogVisible = ref(false)
@@ -451,20 +448,26 @@ const onModelChange = ({ providerId, modelName }) => {
   researchForm.modelName = modelName
 }
 
-const refreshKnowledgeBases = async () => {
-  kbLoading.value = true
-  try {
-    const response = await knowledgeAPI.getKnowledgeBases()
-    const data = response.data?.data || response.data
-    knowledgeBases.value = data?.items || []
-    filterKnowledgeBases()
-  } catch (error) {
-    logger.error('加载知识库列表失败:', error)
-    ElMessage.error('加载知识库列表失败')
-  } finally {
-    kbLoading.value = false
+const {
+  run: runRefreshKnowledgeBases,
+  loading: kbLoading,
+} = useApiTask(
+  () => knowledgeAPI.getKnowledgeBases(),
+  {
+    showErrorToast: false,
+    onSuccess: (response) => {
+      const data = response.data?.data || response.data
+      knowledgeBases.value = data?.items || []
+      filterKnowledgeBases()
+    },
+    onError: (error) => {
+      logger.error('加载知识库列表失败:', error)
+      ElMessage.error('加载知识库列表失败')
+    },
   }
-}
+)
+
+const refreshKnowledgeBases = () => runRefreshKnowledgeBases()
 
 const filterKnowledgeBases = () => {
   const query = kbSearchQuery.value.toLowerCase().trim()
@@ -477,30 +480,12 @@ const filterKnowledgeBases = () => {
   }
 }
 
-const loadDocAnalysis = async () => {
-  if (!task.value?.taskId || !task.value?.knowledgeBaseIds?.length) return
-  docAnalysisLoading.value = true
-  try {
-    const file = await _findDocAnalysisFile()
-    if (file) {
-      const response = await deepResearchAPI.getFileContent(task.value.taskId, file)
-      const data = response.data?.data || response.data
-      docAnalysisContent.value = data?.content || data || ''
-      docAnalysisFile.value = file
-    } else {
-      docAnalysisContent.value = null
-    }
-  } catch (error) {
-    logger.warn('加载文档分析详情失败:', error)
-    docAnalysisContent.value = null
-  } finally {
-    docAnalysisLoading.value = false
-  }
-}
-
-const _findDocAnalysisFile = async () => {
-  if (!task.value?.taskId) return null
-  try {
+// 查找任务的分析文件（失败返回 undefined，调用方按 falsy 判断兼容原 null 语义）
+const {
+  run: runFindDocAnalysisFile,
+} = useApiTask(
+  async () => {
+    if (!task.value?.taskId) return null
     const res = await deepResearchAPI.getFiles(task.value.taskId)
     const data = res.data?.data || res.data
     const files = data?.files || data || []
@@ -515,10 +500,41 @@ const _findDocAnalysisFile = async () => {
     if (mdFiles.length > 0) return mdFiles[0].relativePath || mdFiles[0].name
     const rootNotes = files.filter(f => f.type === 'file' && f.name?.endsWith('.txt'))
     if (rootNotes.length > 0) return rootNotes[0].relativePath || rootNotes[0].name
-  } catch {
-    // 文件列表获取失败时返回 null（无分析文件，由调用方处理）
+    return null
+  },
+  {
+    loading: false,
+    showErrorToast: false,
   }
-  return null
+)
+
+const {
+  run: runLoadDocAnalysis,
+  loading: docAnalysisLoading,
+} = useApiTask(
+  async () => {
+    const file = await runFindDocAnalysisFile()
+    if (file) {
+      const response = await deepResearchAPI.getFileContent(task.value.taskId, file)
+      const data = response.data?.data || response.data
+      docAnalysisContent.value = data?.content || data || ''
+      docAnalysisFile.value = file
+    } else {
+      docAnalysisContent.value = null
+    }
+  },
+  {
+    showErrorToast: false,
+    onError: (error) => {
+      logger.warn('加载文档分析详情失败:', error)
+      docAnalysisContent.value = null
+    },
+  }
+)
+
+const loadDocAnalysis = () => {
+  if (!task.value?.taskId || !task.value?.knowledgeBaseIds?.length) return
+  return runLoadDocAnalysis()
 }
 
 const checkDocAnalysisFile = () => {
@@ -535,6 +551,34 @@ const autoLoadDocAnalysis = async () => {
 // 实时审批事件由 WebSocket 处理（syncStore.handleRealtimeEvent），
 // SSE 仅处理 approval_history（初始历史加载），故不再需要本地 handleApprovalEvent 桥接。
 
+/** 审批执行成功标记：executeApproval 从不 rethrow（业务失败内部消化后正常 resolve），
+ * 用显式标记区分 resolve 与 reject（后者仅在 store 内部代码崩溃时发生） */
+const APPROVAL_EXECUTED = 'approval-executed'
+
+const {
+  run: runExecuteApproval,
+  error: approvalError,
+} = useApiTask(
+  async ({ approval, approved, userInput, options }) => {
+    await approvalStore.executeApproval(approval, approved, userInput, options)
+    return APPROVAL_EXECUTED
+  },
+  {
+    loading: false,
+    showErrorToast: false,
+  }
+)
+
+/** 审批执行失败后恢复审批状态（executeApproval 内部 catch 已恢复 pendingApprovals，此处同步 session store） */
+const restoreApprovalState = (approval, interruptId) => {
+  const sessionStore = useSessionStore()
+  const sid = sessionStore.currentSessionId
+  if (sid) {
+    sessionStore.updateToolCallApprovalState(sid, interruptId, 'pending')
+    sessionStore.setApprovalToLastMessage(sid, { ...approval, state: 'pending' })
+  }
+}
+
 // 确认审批（ToolCallCard emit 的参数是 toolCall 对象）
 const handleApprove = async (toolCallData) => {
   const approval = toolCallData.approval || toolCallData
@@ -545,19 +589,16 @@ const handleApprove = async (toolCallData) => {
   const entry = approvalStore.pendingApprovals.get(interruptId)
   if (entry?.approvalData?.state === 'processing') return
 
-  try {
-    await approvalStore.executeApproval(approval, true, userInput, {
-      taskId: task.value?.taskId,
-    })
+  const result = await runExecuteApproval({
+    approval,
+    approved: true,
+    userInput,
+    options: { taskId: task.value?.taskId },
+  })
+  if (result === APPROVAL_EXECUTED) {
     ElMessage.success('已确认操作')
-  } catch {
-    // 恢复审批状态（executeApproval 内部 catch 已恢复 pendingApprovals，此处同步 session store）
-    const sessionStore = useSessionStore()
-    const sid = sessionStore.currentSessionId
-    if (sid) {
-      sessionStore.updateToolCallApprovalState(sid, interruptId, 'pending')
-      sessionStore.setApprovalToLastMessage(sid, { ...approval, state: 'pending' })
-    }
+  } else if (approvalError.value) {
+    restoreApprovalState(approval, interruptId)
     ElMessage.error('确认操作失败')
   }
 }
@@ -571,19 +612,15 @@ const handleReject = async (toolCallData) => {
   const entry = approvalStore.pendingApprovals.get(interruptId)
   if (entry?.approvalData?.state === 'processing') return
 
-  try {
-    await approvalStore.executeApproval(approval, false, null, {
-      taskId: task.value?.taskId,
-    })
+  const result = await runExecuteApproval({
+    approval,
+    approved: false,
+    options: { taskId: task.value?.taskId },
+  })
+  if (result === APPROVAL_EXECUTED) {
     ElMessage.info('已拒绝操作')
-  } catch {
-    // 恢复审批状态（executeApproval 内部 catch 已恢复 pendingApprovals，此处同步 session store）
-    const sessionStore = useSessionStore()
-    const sid = sessionStore.currentSessionId
-    if (sid) {
-      sessionStore.updateToolCallApprovalState(sid, interruptId, 'pending')
-      sessionStore.setApprovalToLastMessage(sid, { ...approval, state: 'pending' })
-    }
+  } else if (approvalError.value) {
+    restoreApprovalState(approval, interruptId)
     ElMessage.error('拒绝操作失败')
   }
 }
@@ -650,21 +687,11 @@ const stopPolling = () => {
   currentPollInterval = BASE_POLL_INTERVAL
 }
 
-const startResearch = async () => {
-  if (!researchForm.query.trim()) {
-    ElMessage.warning('请输入研究主题')
-    return
-  }
-
-  isLoading.value = true
-  currentTaskId.value = null
-  pollCount = 0
-  currentPollInterval = BASE_POLL_INTERVAL
-  elapsedSeconds.value = 0
-  docAnalysisContent.value = null
-  docAnalysisFile.value = null
-
-  try {
+const {
+  run: runStartResearch,
+  loading: startResearchLoading,
+} = useApiTask(
+  async () => {
     const modelConfig = researchSettings.getModelConfig()
     const response = await deepResearchAPI.start({
       query: researchForm.query,
@@ -681,28 +708,48 @@ const startResearch = async () => {
       maxTokens: modelConfig.maxTokens,
       specialParams: modelConfig.specialParams,
     })
-    const taskData = response.data.data || response.data
-    currentTaskId.value = taskData.taskId
-    researchStore.setTaskStatus(currentTaskId.value, taskData, { force: true })
-    showTaskDetail.value = true
-    ElMessage.success('研究任务已启动')
+    return response.data.data || response.data
+  },
+  {
+    showErrorToast: false,
+    onSuccess: (taskData) => {
+      currentTaskId.value = taskData.taskId
+      researchStore.setTaskStatus(currentTaskId.value, taskData, { force: true })
+      showTaskDetail.value = true
+      ElMessage.success('研究任务已启动')
 
-    stopPolling()
-    startElapsedTimer()
-    // 启动新任务后立即订阅 WebSocket 实时事件，避免在用户切走再回来前丢失事件
-    subscribeRealtimeForTask(task.value)
-    connectSSE(task.value.taskId)
-  } catch (error) {
-    logger.error('启动研究任务失败:', error)
-    const detail = error.response?.data?.data || error.response?.data?.message
-    if (detail) {
-      ElMessage.error(detail)
-    } else {
-      ElMessage.error('启动研究任务失败，请稍后重试')
-    }
-  } finally {
-    isLoading.value = false
+      stopPolling()
+      startElapsedTimer()
+      // 启动新任务后立即订阅 WebSocket 实时事件，避免在用户切走再回来前丢失事件
+      subscribeRealtimeForTask(task.value)
+      connectSSE(task.value.taskId)
+    },
+    onError: (error) => {
+      logger.error('启动研究任务失败:', error)
+      const detail = error.response?.data?.data || error.response?.data?.message
+      if (detail) {
+        ElMessage.error(detail)
+      } else {
+        ElMessage.error('启动研究任务失败，请稍后重试')
+      }
+    },
   }
+)
+
+const startResearch = () => {
+  if (!researchForm.query.trim()) {
+    ElMessage.warning('请输入研究主题')
+    return
+  }
+
+  currentTaskId.value = null
+  pollCount = 0
+  currentPollInterval = BASE_POLL_INTERVAL
+  elapsedSeconds.value = 0
+  docAnalysisContent.value = null
+  docAnalysisFile.value = null
+
+  return runStartResearch()
 }
 
 const startElapsedTimer = () => {
@@ -731,16 +778,8 @@ const connectSSE = async (taskId) => {
     })
 
     if (!response.ok) {
-      let errorMsg = `HTTP ${response.status}`
-      try {
-        const errBody = await response.text()
-        const sseMatch = errBody.match(/data:\s*(.*)/)
-        if (sseMatch) {
-          const parsed = JSON.parse(sseMatch[1])
-          errorMsg = parsed.message || parsed.error || errorMsg
-        }
-      } catch { /* ignore parse error */ }
-      throw new Error(errorMsg)
+      // rd-06：错误响应解析统一到 apiErrorHandler.extractSSEError
+      throw await extractSSEError(response)
     }
 
     await readSSEStream(response, (data) => {
@@ -765,16 +804,10 @@ const connectSSE = async (taskId) => {
   }
 }
 
-const handleSSEEvent = (data) => {
-  // 命名边界：对 sseData 整体调用 toCamelCase 递归转换，
-  // 然后将 type 还原为后端原始 snake_case（协议路由标识符，非业务数据）。
-  // case 分支依赖原始 snake_case 值（如 status_change/step_update），
-  // 显式还原后不再隐式依赖 toCamelCase 的实现细节。
-  const sseData = toCamelCase(data)
-  if (data && typeof data === 'object') {
-    sseData.type = data.type
-  }
-
+const handleSSEEvent = (sseData) => {
+  // 命名边界：readSSEStream 已统一调用 parseProtocolEvent 完成转换
+  // （toCamelCase + type 还原为后端原始 snake_case 协议路由标识符），
+  // 消费方只拿已转换对象，case 分支字段访问均为 camelCase。
   switch (sseData.type) {
     case 'connected':
       progressMessage.value = '已连接，等待研究启动...'
@@ -861,6 +894,34 @@ const taskListSync = useTaskListRealtimeSync('DeepResearch', () => taskListRef.v
   },
 })
 
+// viewTask 终态任务兜底刷新：拉取最新任务数据（fresh 可能补充 chat_session_id 等字段）
+const {
+  run: runRefreshTaskStatus,
+} = useApiTask(
+  (taskId) => deepResearchAPI.getStatus(taskId),
+  {
+    loading: false,
+    showErrorToast: false,
+    onSuccess: (resp) => {
+      const fresh = resp.data?.data || resp.data
+      if (fresh) {
+        researchStore.setTaskStatus(currentTaskId.value, fresh)
+        // fresh 可能补充 chat_session_id 字段，重新订阅（幂等：若已订阅同 task+session 则跳过）
+        subscribeRealtimeForTask(task.value)
+        if (fresh.status === ResearchTaskStatus.RUNNING || fresh.status === ResearchTaskStatus.PENDING) {
+          startElapsedTimer()
+          connectSSE(fresh.taskId)
+        } else if (fresh.status === ResearchTaskStatus.COMPLETED) {
+          autoLoadDocAnalysis()
+        }
+      }
+    },
+    onError: (e) => {
+      logger.warn('获取任务最新状态失败:', e)
+    },
+  }
+)
+
 const viewTask = async (selectedTask) => {
   closeSSE()
   stopPolling()
@@ -877,23 +938,7 @@ const viewTask = async (selectedTask) => {
     startElapsedTimer()
     connectSSE(selectedTask.taskId)
   } else if (selectedTask.taskId) {
-    try {
-      const resp = await deepResearchAPI.getStatus(selectedTask.taskId)
-      const fresh = resp.data?.data || resp.data
-      if (fresh) {
-        researchStore.setTaskStatus(currentTaskId.value, fresh)
-        // fresh 可能补充 chat_session_id 字段，重新订阅（幂等：若已订阅同 task+session 则跳过）
-        subscribeRealtimeForTask(task.value)
-        if (fresh.status === ResearchTaskStatus.RUNNING || fresh.status === ResearchTaskStatus.PENDING) {
-          startElapsedTimer()
-          connectSSE(fresh.taskId)
-        } else if (fresh.status === ResearchTaskStatus.COMPLETED) {
-          autoLoadDocAnalysis()
-        }
-      }
-    } catch (e) {
-      logger.warn('获取任务最新状态失败:', e)
-    }
+    await runRefreshTaskStatus(selectedTask.taskId)
   }
 }
 
@@ -941,10 +986,11 @@ watch(continueDialogVisible, (visible) => {
   }
 })
 
-const submitContinueResearch = async () => {
-  if (!continueParentTask.value) return
-  isLoading.value = true
-  try {
+const {
+  run: runSubmitContinueResearch,
+  loading: continueResearchLoading,
+} = useApiTask(
+  async () => {
     const modelConfig = researchSettings.getModelConfig()
     const response = await deepResearchAPI.continueResearch(
       continueParentTask.value.taskId,
@@ -964,25 +1010,37 @@ const submitContinueResearch = async () => {
         specialParams: modelConfig.specialParams,
       }
     )
-    const taskData = response.data.data || response.data
-    currentTaskId.value = taskData.taskId
-    researchStore.setTaskStatus(currentTaskId.value, taskData, { force: true })
-    showTaskDetail.value = true
-    continueDialogVisible.value = false
-    ElMessage.success('续研任务已启动')
-    stopPolling()
-    startElapsedTimer()
-    // 续研任务同样作为新任务启动，立即订阅 WebSocket 实时事件
-    subscribeRealtimeForTask(task.value)
-    connectSSE(task.value.taskId)
-  } catch (error) {
-    logger.error('启动续研任务失败:', error)
-    const detail = error.response?.data?.data || error.response?.data?.message
-    ElMessage.error(detail || '启动续研任务失败')
-  } finally {
-    isLoading.value = false
+    return response.data.data || response.data
+  },
+  {
+    showErrorToast: false,
+    onSuccess: (taskData) => {
+      currentTaskId.value = taskData.taskId
+      researchStore.setTaskStatus(currentTaskId.value, taskData, { force: true })
+      showTaskDetail.value = true
+      continueDialogVisible.value = false
+      ElMessage.success('续研任务已启动')
+      stopPolling()
+      startElapsedTimer()
+      // 续研任务同样作为新任务启动，立即订阅 WebSocket 实时事件
+      subscribeRealtimeForTask(task.value)
+      connectSSE(task.value.taskId)
+    },
+    onError: (error) => {
+      logger.error('启动续研任务失败:', error)
+      const detail = error.response?.data?.data || error.response?.data?.message
+      ElMessage.error(detail || '启动续研任务失败')
+    },
   }
+)
+
+const submitContinueResearch = () => {
+  if (!continueParentTask.value) return
+  return runSubmitContinueResearch()
 }
+
+// 开始研究 / 开始续研按钮共用 loading（原共用 ref，改为两个任务 loading 的合并投影）
+const isLoading = computed(() => startResearchLoading.value || continueResearchLoading.value)
 
 const handleContinueTask = (taskData) => {
   openContinueDialog(taskData)
@@ -1012,62 +1070,96 @@ const openInChat = () => {
   router.push({ path: '/chat', query })
 }
 
-const handleFileSearch = async () => {
-  if (!fileSearchQuery.value.trim()) return
-  fileSearchLoading.value = true
-  fileSearchSearched.value = true
-  try {
-    const response = await deepResearchAPI.searchFiles(fileSearchQuery.value)
-    if (response.data?.code === 200) {
-      fileSearchResults.value = response.data.data?.items || response.data.data?.files || []
-    }
-  } catch (error) {
-    logger.error('文件搜索失败:', error)
-    ElMessage.error('文件搜索失败')
-  } finally {
-    fileSearchLoading.value = false
+const {
+  run: runFileSearch,
+  loading: fileSearchLoading,
+} = useApiTask(
+  (query) => deepResearchAPI.searchFiles(query),
+  {
+    showErrorToast: false,
+    onSuccess: (response) => {
+      if (response.data?.code === 200) {
+        fileSearchResults.value = response.data.data?.items || response.data.data?.files || []
+      }
+    },
+    onError: (error) => {
+      logger.error('文件搜索失败:', error)
+      ElMessage.error('文件搜索失败')
+    },
   }
+)
+
+const handleFileSearch = () => {
+  if (!fileSearchQuery.value.trim()) return
+  fileSearchSearched.value = true
+  return runFileSearch(fileSearchQuery.value)
 }
 
-onMounted(async () => {
+// onActivated 自动选中 URL 指定任务（与当前任务不同时才加载；watch 路由变化复用同一 run）
+const {
+  run: runLoadTaskOnActivate,
+} = useApiTask(
+  (taskId) => deepResearchAPI.getStatus(taskId),
+  {
+    loading: false,
+    showErrorToast: false,
+    onSuccess: (resp) => {
+      const taskData = resp.data?.data || resp.data
+      if (taskData) {
+        viewTask(taskData)
+      }
+    },
+    onError: (e) => {
+      logger.warn('[DeepResearchView] onActivated 加载任务失败:', e)
+    },
+  }
+)
+
+// onActivated 刷新已查看任务的最新状态（终态任务）
+const {
+  run: runRefreshTaskOnActivate,
+} = useApiTask(
+  (taskId) => deepResearchAPI.getStatus(taskId),
+  {
+    loading: false,
+    showErrorToast: false,
+    onSuccess: (resp) => {
+      const fresh = resp.data?.data || resp.data
+      if (fresh) {
+        researchStore.setTaskStatus(currentTaskId.value, fresh)
+        // fresh 可能补充 chat_session_id，重新订阅（幂等）
+        subscribeRealtimeForTask(task.value)
+        // 如果状态变为已完成，自动加载文档分析（文件列表由 FileBrowser 自管理自动刷新）
+        if (fresh.status === ResearchTaskStatus.COMPLETED) {
+          autoLoadDocAnalysis()
+        }
+      }
+    },
+    onError: (e) => {
+      logger.warn('[DeepResearchView] onActivated 刷新任务状态失败:', e)
+    },
+  }
+)
+
+// keep-alive 首挂 mounted→activated 依次触发，初始化统一收敛 onActivated 单一入口
+// （此前 onMounted/onActivated 双钩子同帧双触发 taskListSync.start 与 URL 任务加载，
+// 任务列表与 getStatus 接口双发）；仅首挂需要的逻辑由首挂标志区分。
+let isFirstActivate = true
+onActivated(() => {
   // 订阅 user 频道任务事件（task_created/task_status_changed/task_deleted，公共能力），
   // 附带一次兜底刷新：任务列表首次加载可能在任务创建之前完成
   taskListSync.start()
-
-  // 根因 C：确保独立设置 store 已从全局 modelStore 同步初始模型配置
-  // （ModelSelector 挂载后 loadProviders 完成即同步；此处兜底一次）
-  researchSettings.syncFromModelStore()
-  refreshKnowledgeBases()
-  // 支持从聊天模块跳转，自动选中指定任务
-  const taskId = getQueryParam(route, 'task_id')
-  if (taskId) {
-    try {
-      const resp = await deepResearchAPI.getStatus(taskId)
-      const taskData = resp.data?.data || resp.data
-      if (taskData) {
-        await viewTask(taskData)
-      }
-    } catch (e) {
-      logger.warn('[DeepResearchView] 自动选中任务失败:', e)
-    }
+  if (isFirstActivate) {
+    isFirstActivate = false
+    // 根因 C：确保独立设置 store 已从全局 modelStore 同步初始模型配置
+    // （ModelSelector 挂载后 loadProviders 完成即同步；此处兜底一次）
+    researchSettings.syncFromModelStore()
+    refreshKnowledgeBases()
   }
-})
-
-// keep-alive 激活时：恢复任务列表事件订阅，并检查当前任务状态，必要时重连 SSE 或刷新结果
-onActivated(async () => {
-  taskListSync.start()
   const taskId = getQueryParam(route, 'task_id')
-  // 如果 URL 带有 task_id 且当前没有查看任务，自动加载
+  // 如果 URL 带有 task_id 且当前没有查看任务，自动加载（支持从聊天模块跳转）
   if (taskId && (!task.value || task.value.taskId !== taskId)) {
-    try {
-      const resp = await deepResearchAPI.getStatus(taskId)
-      const taskData = resp.data?.data || resp.data
-      if (taskData) {
-        await viewTask(taskData)
-      }
-    } catch (e) {
-      logger.warn('[DeepResearchView] onActivated 加载任务失败:', e)
-    }
+    runLoadTaskOnActivate(taskId)
     return
   }
 
@@ -1081,21 +1173,7 @@ onActivated(async () => {
       connectSSE(task.value.taskId)
     } else {
       // 任务已完成，刷新最新数据
-      try {
-        const resp = await deepResearchAPI.getStatus(task.value.taskId)
-        const fresh = resp.data?.data || resp.data
-        if (fresh) {
-          researchStore.setTaskStatus(currentTaskId.value, fresh)
-          // fresh 可能补充 chat_session_id，重新订阅（幂等）
-          subscribeRealtimeForTask(task.value)
-          // 如果状态变为已完成，自动加载文档分析（文件列表由 FileBrowser 自管理自动刷新）
-          if (fresh.status === ResearchTaskStatus.COMPLETED) {
-            autoLoadDocAnalysis()
-          }
-        }
-      } catch (e) {
-        logger.warn('[DeepResearchView] onActivated 刷新任务状态失败:', e)
-      }
+      runRefreshTaskOnActivate(task.value.taskId)
     }
   }
 })
@@ -1109,19 +1187,12 @@ onDeactivated(() => {
   taskListSync.stop()
 })
 
-// 监听路由参数变化，支持从聊天页面多次跳转到不同任务
-watch(() => getQueryParam(route, 'task_id'), async (newTaskId) => {
+// 路由参数变化自动加载任务（支持从聊天页面多次跳转到不同任务），
+// 复用 runLoadTaskOnActivate（taskFn 与回调完全等价，原独立定义已合并）
+watch(() => getQueryParam(route, 'task_id'), (newTaskId) => {
   if (!newTaskId) return
   if (task.value && task.value.taskId === newTaskId) return
-  try {
-    const resp = await deepResearchAPI.getStatus(newTaskId)
-    const taskData = resp.data?.data || resp.data
-    if (taskData) {
-      await viewTask(taskData)
-    }
-  } catch (e) {
-    logger.warn('[DeepResearchView] 路由参数变化加载任务失败:', e)
-  }
+  runLoadTaskOnActivate(newTaskId)
 })
 
 // 审批清除后恢复轮询（所有待审批项处理完后，后台可能已完成但前端未刷新）

@@ -22,7 +22,7 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

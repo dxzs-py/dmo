@@ -5,16 +5,15 @@
 归属说明（Task 15.2）：
     原 ``langgraph_integration.py`` 还包含 ``create_mcp_langgraph_agent`` 与
     ``create_langgraph_with_mcp_checkpointer``，它们调用 ``agent_hub.create``
-    创建 Agent，违反 ``tools → agent_hub`` 分层。这两个函数已迁至
-    ``agent_hub/mcp_integration.py``。
+    创建 Agent，违反 ``tools → agent_hub`` 分层。这两个函数已删除，不再提供。
 
     本模块保留 ``load_mcp_tools_for_langgraph``（仅加载工具，不创建 Agent），
-    供 ``agent_hub.mcp_integration`` 与其他调用方使用。
+    供其他调用方使用。
 """
 
 from langchain_core.tools import BaseTool
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

@@ -89,11 +89,6 @@ class ResearchTask(AuditModel):
     def __str__(self):
         return f"ResearchTask({self.task_id}, {self.status})"
 
-    def get_absolute_url(self):
-        from django.urls import reverse
-
-        return reverse("research:status", kwargs={"task_id": self.task_id})
-
     def clean(self):
         super().clean()
         if self.query and len(self.query.strip()) == 0:

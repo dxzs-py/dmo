@@ -220,6 +220,7 @@ class DeepAgentBuilder:
 
         # 显式注入 ApprovalMiddleware（核心安全组件，与 base_builder 共用
         # ensure_approval_middleware，不依赖 CapabilityRegistry 可选启用）
+        # （build_middleware 收敛点已保底，此处为双保险）
         from Django_xm.apps.agent_hub.builders.middleware_utils import ensure_approval_middleware
 
         ensure_approval_middleware(middleware_stack)
@@ -244,7 +245,7 @@ class DeepAgentBuilder:
 
         system_prompt = config.system_prompt
         if system_prompt is None:
-            system_prompt = self._build_system_prompt(config)
+            system_prompt = await self._build_system_prompt(config)
             logger.info(f"DeepAgent 使用默认 system_prompt ({len(system_prompt)} 字符)")
         else:
             has_research_context = "先前研究" in system_prompt
@@ -448,7 +449,27 @@ class DeepAgentBuilder:
         logger.info(f"Skill 已链接到沙箱: {skills_work_dir}")
         return sandbox_skills
 
-    def _build_system_prompt(self, config) -> str:
+    async def _build_system_prompt(self, config) -> str:
+        """构建 deep_research 默认 system_prompt（仅 config.system_prompt 为 None 时调用）。
+
+        动态上下文 opt-in（context_settings.deep_dynamic_context_enabled，默认 False）：
+        开启时优先走 _common.build_dynamic_context_prompt（mode="deep-research"，FULL
+        上下文分区），构建失败（返回 None）自动回退下方静态逻辑；关闭时代码路径与
+        现状完全一致。opt-in 原因：深研 prompt 现为静态 DEEP_RESEARCH_SYSTEM_PROMPT，
+        动态上下文会改变 prompt 基底（prompts.yaml 的 deep-research 模板）与注入内容，
+        需实测验证研究质量后再决定是否默认开启。
+        """
+        from Django_xm.apps.context_manager.config import context_settings
+
+        if context_settings.deep_dynamic_context_enabled:
+            from Django_xm.apps.agent_hub.builders._common import build_dynamic_context_prompt
+
+            dynamic_prompt = await build_dynamic_context_prompt(config, prompt_mode="deep-research")
+            if dynamic_prompt is not None:
+                logger.info(f"DeepAgent 使用动态 system_prompt ({len(dynamic_prompt)} 字符)")
+                return dynamic_prompt
+            logger.warning("DeepAgent 动态提示词构建失败，回退静态 deep-research prompt")
+
         from Django_xm.apps.agent_hub.config import AgentType
 
         if config.agent_type == AgentType.DEEP_RESEARCH:

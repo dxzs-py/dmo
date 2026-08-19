@@ -33,6 +33,7 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
             "id": self.user.id,
             "username": self.user.username,
             "email": self.user.email if self.user.email else "",
+            "is_staff": self.user.is_staff,
             "refresh": str(refresh),
             "access": str(refresh.access_token),
         }
@@ -103,7 +104,7 @@ class UserRegisterSerializer(serializers.ModelSerializer):
 class UserInfoSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["id", "username", "email", "mobile", "avatar", "date_joined"]
+        fields = ["id", "username", "email", "mobile", "avatar", "date_joined", "is_staff"]
 
 
 class ChangePasswordSerializer(serializers.Serializer):

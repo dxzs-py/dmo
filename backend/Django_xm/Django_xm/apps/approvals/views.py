@@ -328,8 +328,11 @@ class ApprovalResumeView(BaseApprovalAccessMixin, APIView):
                 user_input=user_input,
                 approved_by=request.user,
             )
-        except ValueError as e:
-            return error_response(code=ErrorCode.VALIDATION_FAILED, message=str(e))
+        except ValueError:
+            # resume_approval 的 ValueError 均为内部契约错误（payload scope 非法 / 缺 session_id 等），
+            # 细节只进日志，不向客户端回显
+            logger.exception(f"[ApprovalResumeView] resume_approval 内部契约错误: interrupt_id={interrupt_id}")
+            return error_response(code=ErrorCode.VALIDATION_FAILED, message="请求处理失败，请稍后重试")
 
         approval = result["approval"]
 
@@ -410,8 +413,9 @@ class ApprovalRejectView(BaseApprovalAccessMixin, APIView):
                 approved=False,
                 approved_by=request.user,
             )
-        except ValueError as e:
-            return error_response(code=ErrorCode.VALIDATION_FAILED, message=str(e))
+        except ValueError:
+            logger.exception(f"[ApprovalRejectView] resume_approval 内部契约错误: interrupt_id={interrupt_id}")
+            return error_response(code=ErrorCode.VALIDATION_FAILED, message="请求处理失败，请稍后重试")
 
         approval = result["approval"]
         resume_value = result["resume_value"]

@@ -71,9 +71,9 @@ class PostgreSQLStatusView(APIView):
             status_info = DatabaseMonitor.get_postgresql_status()
             cache.set(cache_key, status_info, 30)
             return success_response(data=status_info)
-        except Exception as e:
+        except Exception:
             logger.exception("获取 PostgreSQL 状态失败")
-            return error_response(code=ErrorCode.SERVER_ERROR, message=str(e))
+            return error_response(code=ErrorCode.SERVER_ERROR, message="获取 PostgreSQL 状态失败")
 
 
 class VectorStoreStatusView(APIView):
@@ -96,9 +96,9 @@ class VectorStoreStatusView(APIView):
             status_info = get_status_by_name("vector_store")
             cache.set(cache_key, status_info, 30)
             return success_response(data=status_info)
-        except Exception as e:
+        except Exception:
             logger.exception("获取向量存储状态失败")
-            return error_response(code=ErrorCode.SERVER_ERROR, message=str(e))
+            return error_response(code=ErrorCode.SERVER_ERROR, message="获取向量存储状态失败")
 
 
 class DatabaseOverviewView(APIView):
@@ -120,6 +120,6 @@ class DatabaseOverviewView(APIView):
             overview = DatabaseMonitor.get_database_overview()
             cache.set(cache_key, overview, 30)
             return success_response(data=overview)
-        except Exception as e:
+        except Exception:
             logger.exception("获取数据库总览失败")
-            return error_response(code=ErrorCode.SERVER_ERROR, message=str(e))
+            return error_response(code=ErrorCode.SERVER_ERROR, message="获取数据库总览失败")

@@ -5,9 +5,9 @@
 视图层只负责请求解析、服务调用、响应构建。
 """
 
-from drf_spectacular.utils import extend_schema, extend_schema_view
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
-from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -21,6 +21,12 @@ from Django_xm.common.responses import (
 )
 from Django_xm.common.serializers import EmptySerializer
 
+from .exceptions import KnowledgeBaseAlreadyExistsError
+from .serializers import (
+    CreateKnowledgeBaseSerializer,
+    KnowledgeBaseSearchSerializer,
+    UpdateKnowledgeBaseSerializer,
+)
 from .services.kb_service import (
     create_knowledge_base,
     delete_document,
@@ -64,6 +70,9 @@ def _parse_page_params(request):
 class KnowledgeBaseListView(APIView):
     permission_classes = [IsAuthenticated]
 
+    # 页面加载即请求的只读列表接口，独立 meta 额度（Task 3.2）
+    throttle_classes = [MetaRateThrottle]
+
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
         try:
@@ -71,39 +80,42 @@ class KnowledgeBaseListView(APIView):
             user_indexes = list_knowledge_bases(request.user)
             paginated = _paginate_list(user_indexes, page, page_size)
             return success_response(data=paginated)
-        except Exception as e:
+        except Exception:
             logger.exception("获取知识库列表失败")
             return error_response(
-                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                code=ErrorCode.SERVER_ERROR, message="获取知识库列表失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
+    @extend_schema(request=CreateKnowledgeBaseSerializer, responses={200: EmptySerializer})
     def post(self, request):
-        name = request.data.get("name")
-        description = request.data.get("description", "")
-
-        if not name:
+        serializer = CreateKnowledgeBaseSerializer(data=request.data)
+        if not serializer.is_valid():
+            field, errors = next(iter(serializer.errors.items()))
             return error_response(
-                code=ErrorCode.INVALID_PARAMS, message="知识库名称不能为空", http_status=status.HTTP_400_BAD_REQUEST
+                code=ErrorCode.INVALID_PARAMS,
+                message=f"{field}: {errors[0]}",
+                http_status=status.HTTP_400_BAD_REQUEST,
             )
+        name = serializer.validated_data["name"]
+        description = serializer.validated_data.get("description", "")
 
         try:
             result = create_knowledge_base(request.user, name, description)
-            if result.pop("existing", False):
+            if result.get("existing"):
                 return success_response(data=result, message="知识库已存在")
             return success_response(data=result, message="知识库创建成功")
+        except KnowledgeBaseAlreadyExistsError as e:
+            return error_response(
+                code=ErrorCode.DUPLICATE_RESOURCE, message=str(e), http_status=status.HTTP_409_CONFLICT
+            )
         except ValueError as e:
-            if "已存在" in str(e):
-                return error_response(
-                    code=ErrorCode.DUPLICATE_RESOURCE, message=str(e), http_status=status.HTTP_409_CONFLICT
-                )
             return error_response(
                 code=ErrorCode.INVALID_PARAMS, message=str(e), http_status=status.HTTP_400_BAD_REQUEST
             )
-        except Exception as e:
+        except Exception:
             logger.exception("创建知识库失败")
             return error_response(
-                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                code=ErrorCode.SERVER_ERROR, message="创建知识库失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 
@@ -125,9 +137,17 @@ class KnowledgeBaseDetailView(APIView):
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
+    @extend_schema(request=UpdateKnowledgeBaseSerializer, responses={200: EmptySerializer})
     def patch(self, request, kb_id):
-        description = request.data.get("description", "")
+        serializer = UpdateKnowledgeBaseSerializer(data=request.data)
+        if not serializer.is_valid():
+            field, errors = next(iter(serializer.errors.items()))
+            return error_response(
+                code=ErrorCode.INVALID_PARAMS,
+                message=f"{field}: {errors[0]}",
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
+        description = serializer.validated_data.get("description", "")
 
         try:
             data = update_knowledge_base(request.user, kb_id, description)
@@ -156,6 +176,14 @@ class KnowledgeBaseDetailView(APIView):
 
 class KnowledgeBaseDocumentListView(APIView):
     permission_classes = [IsAuthenticated]
+    # 上传（POST）为重操作，独立 knowledge 额度；GET 列表不受影响
+    throttle_classes = [KnowledgeRateThrottle]
+
+    def get_parsers(self):
+        # POST 上传走 multipart/form；GET 仅读查询参数，JSON 解析即可
+        if self.request.method == "POST":
+            return [MultiPartParser(), FormParser()]
+        return [JSONParser()]
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request, kb_id):
@@ -171,17 +199,11 @@ class KnowledgeBaseDocumentListView(APIView):
             return success_response(data=paginated, headers=headers)
         except FileNotFoundError as e:
             return not_found_response(message=str(e))
-        except Exception as e:
+        except Exception:
             logger.exception("获取文档列表失败")
             return error_response(
-                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                code=ErrorCode.SERVER_ERROR, message="获取文档列表失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-
-class KnowledgeBaseUploadView(APIView):
-    permission_classes = [IsAuthenticated]
-    throttle_classes = [KnowledgeRateThrottle]
-    parser_classes = [MultiPartParser, FormParser]
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
     def post(self, request, kb_id):
@@ -262,15 +284,18 @@ class KnowledgeBaseDocumentDeleteView(APIView):
 class KnowledgeBaseSearchView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
+    @extend_schema(request=KnowledgeBaseSearchSerializer, responses={200: EmptySerializer})
     def post(self, request, kb_id):
-        query = request.data.get("query", "")
-        top_k = request.data.get("top_k", 5)
-
-        if not query:
+        serializer = KnowledgeBaseSearchSerializer(data=request.data)
+        if not serializer.is_valid():
+            field, errors = next(iter(serializer.errors.items()))
             return error_response(
-                code=ErrorCode.INVALID_PARAMS, message="查询内容不能为空", http_status=status.HTTP_400_BAD_REQUEST
+                code=ErrorCode.INVALID_PARAMS,
+                message=f"{field}: {errors[0]}",
+                http_status=status.HTTP_400_BAD_REQUEST,
             )
+        query = serializer.validated_data["query"]
+        top_k = serializer.validated_data.get("top_k", 5)
 
         try:
             results = search_knowledge_base(request.user, kb_id, query, top_k)
@@ -281,47 +306,8 @@ class KnowledgeBaseSearchView(APIView):
             return error_response(
                 code=ErrorCode.INVALID_PARAMS, message=str(e), http_status=status.HTTP_400_BAD_REQUEST
             )
-        except Exception as e:
+        except Exception:
             logger.exception("检索测试失败")
             return error_response(
-                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                code=ErrorCode.SERVER_ERROR, message="检索测试失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-
-# ==================== OpenAPI operationId 隔离子类 ====================
-#
-# KnowledgeBaseListView / KnowledgeBaseDetailView 同时被 indices/ 与
-# knowledge-bases/ 两组 URL 复用，drf_spectacular 对普通 APIView 的 list/detail
-# 无法自动区分，会为同一组 URL 的 list 与 detail 生成相同的 operationId
-# (knowledge_indices_retrieve / knowledge_knowledge_bases_retrieve) 而触发 W001
-# 冲突。这里为四个产生冲突的端点派生子类，仅覆盖 GET 方法的 operationId，
-# 其余方法（POST/PATCH/DELETE）不受影响，stats/、create/ 等非冲突 URL 继续使用原类。
-
-
-@extend_schema_view(get=extend_schema(operation_id="knowledge_indices_list", responses={200: EmptySerializer}))
-class KnowledgeIndexListView(KnowledgeBaseListView):
-    """知识库索引列表视图，专用于 indices/ 路径，避免 operationId 冲突。"""
-
-
-@extend_schema_view(get=extend_schema(operation_id="knowledge_indices_detail", responses={200: EmptySerializer}))
-class KnowledgeIndexDetailView(KnowledgeBaseDetailView):
-    """知识库索引详情视图，专用于 indices/{kb_id}/ 路径，避免 operationId 冲突。"""
-
-
-@extend_schema_view(get=extend_schema(operation_id="knowledge_knowledge_bases_list", responses={200: EmptySerializer}))
-class KnowledgeBasesListView(KnowledgeBaseListView):
-    """知识库列表视图，专用于 knowledge-bases/ 路径，避免 operationId 冲突。"""
-
-    # 页面加载即请求的只读接口，独立 meta 额度（Task 3.2）；
-    # 仅作用于 knowledge-bases/ 路径（indices/ 复用父类不受影响）
-    throttle_classes = [MetaRateThrottle]
-
-
-@extend_schema_view(
-    get=extend_schema(
-        operation_id="knowledge_knowledge_bases_detail",
-        responses={200: EmptySerializer},
-    )
-)
-class KnowledgeBasesDetailView(KnowledgeBaseDetailView):
-    """知识库详情视图，专用于 knowledge-bases/{kb_id}/ 路径，避免 operationId 冲突。"""

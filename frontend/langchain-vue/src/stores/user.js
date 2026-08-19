@@ -20,6 +20,7 @@ export const useUserStore = defineStore('user', () => {
   const userInfo = ref((() => { try { return JSON.parse(localStorage.getItem(USER_INFO_KEY) || '{}') } catch { return {} } })())
   const isLoggedIn = computed(() => !!token.value)
   const username = computed(() => userInfo.value?.username || '')
+  const isAdmin = computed(() => !!userInfo.value?.is_staff)
 
   function setToken(newToken, newRefreshToken = null) {
     token.value = newToken
@@ -54,7 +55,8 @@ export const useUserStore = defineStore('user', () => {
         setUserInfo({
           id: userData.id,
           username: userData.username,
-          email: userData.email
+          email: userData.email,
+          is_staff: userData.is_staff
         })
         return { success: true, message: data.message }
       }
@@ -185,6 +187,7 @@ export const useUserStore = defineStore('user', () => {
     userInfo,
     isLoggedIn,
     username,
+    isAdmin,
     setToken,
     setUserInfo,
     clearUser,

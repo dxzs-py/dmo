@@ -17,7 +17,7 @@ import threading
 import redis.asyncio as redis_async
 
 from Django_xm.apps.ai_engine.config import settings
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

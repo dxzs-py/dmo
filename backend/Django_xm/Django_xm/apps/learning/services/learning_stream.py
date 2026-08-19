@@ -32,7 +32,7 @@ SSE 实时性设计（为什么用"线程泵"而非 astream）：
 import asyncio
 import threading
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.common.event_schema import EventSource, EventType
 from Django_xm.common.realtime_events import publish_event
 
@@ -149,9 +149,11 @@ def pump_sync_events(iterator, loop, queue):
     try:
         for evt in iterator:
             loop.call_soon_threadsafe(queue.put_nowait, evt)
-    except Exception as e:
+    except Exception:
         logger.exception("[Learning Stream] 工作流线程执行失败")
-        loop.call_soon_threadsafe(queue.put_nowait, {"type": "error", "data": {"message": str(e)}})
+        loop.call_soon_threadsafe(
+            queue.put_nowait, {"type": "error", "data": {"message": "工作流执行失败，请稍后重试"}}
+        )
     finally:
         loop.call_soon_threadsafe(queue.put_nowait, None)
 

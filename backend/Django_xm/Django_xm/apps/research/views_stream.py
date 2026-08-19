@@ -185,9 +185,9 @@ async def deep_research_stream(request, task_id):
 
         except asyncio.CancelledError:
             logger.info(f"[API] SSE连接关闭，task_id={task_id}")
-        except Exception as e:
+        except Exception:
             logger.exception("[API] SSE流式输出异常：")
-            yield sse_error_event(code="50001", message=str(e))
+            yield sse_error_event(code="50001", message="深度研究流式输出失败，请稍后重试")
 
     response = sse_response(event_stream())
     return response

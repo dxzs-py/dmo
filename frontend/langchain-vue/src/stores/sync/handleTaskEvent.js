@@ -2,6 +2,7 @@ import { logger } from '@/utils/logger'
 import { toCamelCase } from '@/utils/sessionTransformers'
 import { getEventTaskId } from '@/utils/eventRouting'
 import { ResearchTaskStatus } from '@/types'
+import { TOOL_CALL_EVENT_TYPES, APPROVAL_EVENT_TYPES } from '@/types/realtimeEvents'
 import { scheduleSubagentsRefresh } from '@/composables/useSubagents'
 
 /**
@@ -84,36 +85,29 @@ export const createHandleTaskEvent = (ctx) => {
       payload.subagentThreadId = event.subagent_thread_id
     }
 
+    // rd-05：工具调用 / 审批事件组以 Set.has 提前路由（枚举权威源
+    // types/realtimeEvents.js 的 TOOL_CALL_EVENT_TYPES / APPROVAL_EVENT_TYPES，
+    // 与原手写 13 个 case 字符串一一对应，新增事件类型只需扩展 Set）
+    if (TOOL_CALL_EVENT_TYPES.has(event.type)) {
+      await handleToolCallEvent(null, taskId, payload, event.type, source)
+      return
+    }
+    // 审批事件路由：task 频道审批事件可能关联 chat 会话（聊天触发的深度研究），
+    // 后端 payload 携带 cross_module_id（= chat_session_id）。将其作为 sessionId
+    // 传入，使审批状态同步更新到消息 toolCalls（详情页展示数据源），
+    // 而非仅更新 pendingApprovals —— 否则详情页审批后展示状态不更新（"卡住"）。
+    // 独立深度研究（无 chat 关联，cross_module_id 为空）仍走 taskId 分支。
+    if (APPROVAL_EVENT_TYPES.has(event.type)) {
+      await handleApprovalEvent(
+        payload.crossModuleId || null,
+        payload,
+        event.type,
+        { taskId, source, isReplay: event.isReplay === true }
+      )
+      return
+    }
+
     switch (event.type) {
-      // 工具调用事件类型（每个 EventType 独立 ws_event_name）
-      case 'tool_call_pending':
-      case 'tool_call_waiting':
-      case 'tool_call_rejected':
-      case 'tool_call_running':
-      case 'tool_call_completed':
-      case 'tool_call_failed':
-      case 'tool_call_timeout':
-        await handleToolCallEvent(null, taskId, payload, event.type, source)
-        break
-      // 6 个审批事件类型
-      // 路由：task 频道审批事件可能关联 chat 会话（聊天触发的深度研究），
-      // 后端 payload 携带 cross_module_id（= chat_session_id）。将其作为 sessionId
-      // 传入，使审批状态同步更新到消息 toolCalls（详情页展示数据源），
-      // 而非仅更新 pendingApprovals —— 否则详情页审批后展示状态不更新（"卡住"）。
-      // 独立深度研究（无 chat 关联，cross_module_id 为空）仍走 taskId 分支。
-      case 'approval_pending':
-      case 'approval_processing':
-      case 'approval_waiting':
-      case 'approval_approved':
-      case 'approval_rejected':
-      case 'approval_timeout':
-        await handleApprovalEvent(
-          payload.crossModuleId || null,
-          payload,
-          event.type,
-          { taskId, source, isReplay: event.isReplay === true }
-        )
-        break
       case 'stream_completed':
         // 幂等保护：若 researchStore 中该 task 已是终态（completed/failed），跳过
         // 场景：关联 chat 场景下 session 频道已更新 taskInfo，task 频道的 stream_completed

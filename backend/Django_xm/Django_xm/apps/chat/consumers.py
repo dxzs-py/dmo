@@ -208,13 +208,13 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
 
         try:
             await handler(payload)
-        except Exception as e:
+        except Exception:
             logger.exception(f"[RealtimeSync] 处理动作 {action} 失败")
             await self.send_json(
                 {
                     "type": "error",
                     "code": "50001",
-                    "message": f"处理 {action} 失败: {e!s}",
+                    "message": f"处理 {action} 失败，请稍后重试",
                     "timestamp": time.time(),
                 }
             )
@@ -478,13 +478,13 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
             # 统一底层修复（刷新浏览器同步滞后根因）：
             # 改为分块发送，避免 500 条历史事件序列化后超过 WebSocket 1MB 限制
             await _send_replay_chunked(self, channel_type, channel_id, history)
-        except Exception as e:
+        except Exception:
             logger.exception(f"[RealtimeSync] replay 失败: {channel_type}:{channel_id}")
             await self.send_json(
                 {
                     "type": "error",
                     "code": "50002",
-                    "message": f"replay 失败: {e!s}",
+                    "message": "事件回放失败，请稍后重试",
                     "timestamp": time.time(),
                 }
             )

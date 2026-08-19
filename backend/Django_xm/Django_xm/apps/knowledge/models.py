@@ -43,11 +43,6 @@ class DocumentIndex(AuditModel):
             return f"{self.index_name} (user: {self.user.username})"
         return f"{self.index_name}"
 
-    def get_absolute_url(self):
-        from django.urls import reverse
-
-        return reverse("knowledge:index_detail", kwargs={"name": self.index_name})
-
 
 class Document(BaseModel):
     index = models.ForeignKey(

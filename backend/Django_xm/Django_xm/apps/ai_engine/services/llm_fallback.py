@@ -36,7 +36,7 @@ from langchain_core.messages import BaseMessage
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langchain_core.runnables import RunnableConfig
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 from ..config import HELPER_MODEL_PRIORITY, settings
 from .registry_service import (

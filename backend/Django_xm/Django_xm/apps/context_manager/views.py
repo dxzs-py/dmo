@@ -107,10 +107,11 @@ class TokenBudgetView(APIView):
             }
             resp_serializer = TokenBudgetResponseSerializer(data)
             return success_response(data=resp_serializer.data)
-        except Exception as e:
+        except Exception:
+            logger.exception("获取 Token 预算失败")
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
-                message=f"获取 Token 预算失败: {e!s}",
+                message="获取 Token 预算失败",
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -174,10 +175,11 @@ class ContextCompressView(APIView):
             }
             resp_serializer = ContextCompressResponseSerializer(data)
             return success_response(data=resp_serializer.data, message="上下文压缩完成")
-        except Exception as e:
+        except Exception:
+            logger.exception("上下文压缩失败")
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
-                message=f"上下文压缩失败: {e!s}",
+                message="上下文压缩失败",
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -224,10 +226,11 @@ class KnowledgeGraphDetailView(APIView):
             }
             resp_serializer = KnowledgeGraphDetailResponseSerializer(data)
             return success_response(data=resp_serializer.data)
-        except Exception as e:
+        except Exception:
+            logger.exception("获取知识图谱详情失败")
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
-                message=f"获取知识图谱详情失败: {e!s}",
+                message="获取知识图谱详情失败",
                 http_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 

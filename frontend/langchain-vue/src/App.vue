@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElLoading } from 'element-plus'
+import { useThrottleFn } from '@vueuse/core'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import AppHeader from './components/layout/AppHeader.vue'
 import GlobalSearch from './components/common/GlobalSearch.vue'
@@ -9,7 +10,6 @@ import ChatQuickAccess from './components/common/ChatQuickAccess.vue'
 import { useThemeStore } from './stores/theme'
 import { useUserStore } from './stores/user'
 import { useLoadingStore } from './stores/loading'
-import { useThrottle } from './composables/useThrottle'
 
 const route = useRoute()
 const themeStore = useThemeStore()
@@ -61,10 +61,12 @@ watch(() => route.name, (name) => {
   }
 }, { immediate: true })
 
-const { throttledFn: handleScrollThrottled } = useThrottle((event) => {
+// 滚动节流（rd-08）：useThrottleFn 第三参 trailing=true，
+// 对齐原 useThrottle 的 leading+trailing 语义（间隔外立即执行，间隔内最后一次补触发）
+const handleScrollThrottled = useThrottleFn((event) => {
   const scrollTop = event.target.scrollTop
   isScrolled.value = scrollTop > 0
-}, 100)
+}, 100, true)
 
 onMounted(async () => {
   try {

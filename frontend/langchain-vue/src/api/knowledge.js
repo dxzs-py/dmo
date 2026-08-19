@@ -8,7 +8,7 @@ export const knowledgeAPI = {
   deleteKnowledgeBase(id) { return apiClient.delete(`/knowledge/knowledge-bases/${id}/`) },
   getKnowledgeBaseDetail(id) { return apiClient.get(`/knowledge/knowledge-bases/${id}/`) },
   uploadDocuments(kbId, formData) {
-    return apiClient.post(`/knowledge/knowledge-bases/${kbId}/upload/`, formData, {
+    return apiClient.post(`/knowledge/knowledge-bases/${kbId}/documents/`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
   },
@@ -26,19 +26,15 @@ export const ragAPI = {
       ...options,
     })
   },
-  getIndices() { return apiClient.get('/knowledge/indices/') },
-  createIndex(data) { return apiClient.post('/knowledge/indices/create/', data) },
-  createEmptyIndex(data) { return apiClient.post('/knowledge/indices/create-empty/', data) },
-  getIndexDetail(name) { return apiClient.get(`/knowledge/indices/${name}/`) },
-  deleteIndex(name) { return apiClient.delete(`/knowledge/indices/${name}/delete/`) },
-  getIndexStats(name) { return apiClient.get(`/knowledge/indices/${name}/stats/`) },
+  getIndices() { return apiClient.get('/knowledge/knowledge-bases/') },
+  createIndex(data) { return apiClient.post('/knowledge/knowledge-bases/', data) },
+  deleteIndex(name) { return apiClient.delete(`/knowledge/knowledge-bases/${name}/`) },
   uploadDocuments(name, formData) {
-    return apiClient.post(`/knowledge/indices/${name}/upload/`, formData, {
+    return apiClient.post(`/knowledge/knowledge-bases/${name}/documents/`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
   },
-  getDocuments(name) { return apiClient.get(`/knowledge/indices/${name}/documents/`) },
-  deleteDocument(name, filename) { return apiClient.delete(`/knowledge/indices/${name}/documents/${filename}/`) },
-  addDirectory(name, data) { return apiClient.post(`/knowledge/indices/${name}/add-directory/`, data) },
+  getDocuments(name) { return apiClient.get(`/knowledge/knowledge-bases/${name}/documents/`) },
+  deleteDocument(name, filename) { return apiClient.delete(`/knowledge/knowledge-bases/${name}/documents/${filename}/`) },
   searchDocuments(data) { return apiClient.post('/knowledge/search/', data) },
 }

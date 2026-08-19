@@ -5,31 +5,32 @@ from . import views_mcp
 app_name = "tools"
 
 urlpatterns = [
+    # MCP 只读端点（保留）
     path("mcp/tools/", views_mcp.McpToolsView.as_view(), name="mcp_tools"),
     path("mcp/status/", views_mcp.McpStatusView.as_view(), name="mcp_status"),
-    path("mcp/test/", views_mcp.McpServerTestView.as_view(), name="mcp_test"),
     path("mcp/call-log/", views_mcp.McpToolCallLogView.as_view(), name="mcp_call_log"),
-    path("mcp/servers/", views_mcp.McpServerListView.as_view(), name="mcp_servers"),
-    path("mcp/servers/add/", views_mcp.McpServerAddView.as_view(), name="mcp_servers_add"),
-    path("mcp/servers/update/", views_mcp.McpServerUpdateView.as_view(), name="mcp_servers_update"),
-    path("mcp/servers/delete/", views_mcp.McpServerDeleteView.as_view(), name="mcp_servers_delete"),
-    path("mcp/servers/toggle/", views_mcp.McpServerToggleView.as_view(), name="mcp_servers_toggle"),
+    # MCP Server 资源（显式动作路由须先于 <str:name> 注册，避免被当作资源名吞掉）
     path("mcp/servers/discover/", views_mcp.McpServerDiscoverView.as_view(), name="mcp_servers_discover"),
+    path("mcp/servers/", views_mcp.McpServerView.as_view(), name="mcp_servers"),
+    path("mcp/servers/<str:name>/test/", views_mcp.McpServerTestView.as_view(), name="mcp_server_test"),
+    path("mcp/servers/<str:name>/status/", views_mcp.McpServerStatusView.as_view(), name="mcp_server_status"),
+    path("mcp/servers/<str:name>/", views_mcp.McpServerDetailView.as_view(), name="mcp_server_detail"),
+    # 工具汇总与元数据（保留）
     path("list/", views_mcp.ToolListView.as_view(), name="tools_list"),
     path("meta/", views_mcp.ToolMetaView.as_view(), name="tools_meta"),
-    path("upload/", views_mcp.ToolUploadView.as_view(), name="tools_upload"),
-    path("custom/", views_mcp.CustomToolListView.as_view(), name="custom_tools_list"),
-    path("custom/delete/", views_mcp.CustomToolDeleteView.as_view(), name="custom_tools_delete"),
-    path("custom/toggle/", views_mcp.CustomToolToggleView.as_view(), name="custom_tools_toggle"),
-    path("custom/update/", views_mcp.CustomToolUpdateView.as_view(), name="custom_tools_update"),
-    path("skills/", views_mcp.SkillListView.as_view(), name="skills_list"),
-    path("skills/create/", views_mcp.SkillCreateView.as_view(), name="skills_create"),
-    path("skills/update/", views_mcp.SkillUpdateView.as_view(), name="skills_update"),
-    path("skills/delete/", views_mcp.SkillDeleteView.as_view(), name="skills_delete"),
-    path("skills/toggle/", views_mcp.SkillToggleView.as_view(), name="skills_toggle"),
-    path("skills/packages/", views_mcp.SkillPackageListView.as_view(), name="skill_packages_list"),
-    path("skills/upload/", views_mcp.SkillPackageUploadView.as_view(), name="skill_packages_upload"),
-    path("skills/packages/delete/", views_mcp.SkillPackageDeleteView.as_view(), name="skill_packages_delete"),
-    path("skills/packages/toggle/", views_mcp.SkillPackageToggleView.as_view(), name="skill_packages_toggle"),
-    path("skills/packages/detail/", views_mcp.SkillPackageDetailView.as_view(), name="skill_packages_detail"),
+    # 自定义工具资源
+    path("custom/", views_mcp.CustomToolView.as_view(), name="custom_tools_list"),
+    path("custom/<str:name>/status/", views_mcp.CustomToolStatusView.as_view(), name="custom_tool_status"),
+    path("custom/<str:name>/", views_mcp.CustomToolDetailView.as_view(), name="custom_tool_detail"),
+    # Skill 资源（packages 子资源须先于 <str:name> 注册）
+    path("skills/packages/", views_mcp.SkillPackageView.as_view(), name="skill_packages_list"),
+    path(
+        "skills/packages/<str:name>/status/",
+        views_mcp.SkillPackageStatusView.as_view(),
+        name="skill_package_status",
+    ),
+    path("skills/packages/<str:name>/", views_mcp.SkillPackageDetailView.as_view(), name="skill_package_detail"),
+    path("skills/", views_mcp.SkillView.as_view(), name="skills_list"),
+    path("skills/<str:name>/status/", views_mcp.SkillStatusView.as_view(), name="skill_status"),
+    path("skills/<str:name>/", views_mcp.SkillDetailView.as_view(), name="skill_detail"),
 ]

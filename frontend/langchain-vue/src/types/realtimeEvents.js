@@ -6,22 +6,6 @@
  */
 
 /**
- * 事件来源枚举（与后端 event_schema.py EventSource 枚举 value 对应，用作 source 字段）
- *
- * 注意：值是后端 snake_case 协议标识符（如 'deep_research'），
- * 作为网络传输协议值不参与 toCamelCase 转换，保持原样使用。
- *
- * @enum {string}
- */
-export const EventSource = {
-  CHAT: 'chat',
-  DEEP_RESEARCH: 'deep_research',
-  LEARNING: 'learning',
-  WORKFLOW: 'workflow',
-  AGENT: 'agent',
-}
-
-/**
  * 事件类型枚举（与后端 EventType value 对应，用作 ws_event_name）
  *
  * @enum {string}

@@ -8,7 +8,7 @@ from typing import Any
 
 from django.conf import settings as django_settings
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 from ..config import settings as app_cfg
 
@@ -32,20 +32,6 @@ class TokenUsage:
             "reasoning_tokens": self.reasoning_tokens,
             "cached_input_tokens": self.cached_input_tokens,
         }
-
-
-MODEL_LIMITS = {
-    "gpt-4o": 128000,
-    "gpt-4o-mini": 128000,
-    "gpt-4-turbo": 128000,
-    "gpt-4": 8192,
-    "gpt-3.5-turbo": 16385,
-    "claude-opus-4-20250514": 200000,
-    "claude-sonnet-4-20250514": 200000,
-    "claude-3-5-sonnet-20241022": 200000,
-    "gemini-2.0-flash-exp": 1000000,
-    "gemini-pro": 32768,
-}
 
 
 class UsageTracker:
@@ -93,8 +79,8 @@ class UsageTracker:
         return self.usage.input_tokens + self.usage.output_tokens + self.usage.reasoning_tokens
 
     def get_max_tokens(self) -> int:
-        """获取模型的最大 token 限制"""
-        return MODEL_LIMITS.get(self.model_id, getattr(django_settings, "AI_DEFAULT_MODEL_TOKEN_LIMIT", 128000))
+        """获取模型的最大 token 限制（模型上限统一查询 TokenEstimator 的单一权威表 _MODEL_LIMITS）"""
+        return TokenEstimator.get_model_limit(self.model_id, default=getattr(django_settings, "AI_DEFAULT_MODEL_TOKEN_LIMIT", 128000))
 
     def get_usage_percentage(self) -> float:
         """获取使用百分比"""

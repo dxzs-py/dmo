@@ -80,17 +80,20 @@ def update_chat_message_research_task_id_async(
     if not updated:
         return
     try:
-        from Django_xm.apps.chat.serializers import ChatMessageSerializer
+        from Django_xm.apps.chat.serializers import ChatMessageSerializer, build_research_task_map
         from Django_xm.common.event_schema import EventType
         from Django_xm.common.realtime_events import publish_event_sync
 
         msg = ChatMessage.objects.get(id=assistant_message_id)
+        # ChatMessageSerializer 契约：序列化必须传 research_task_map（单条场景构造单元素映射）
         publish_event_sync(
             EventType.MESSAGE_UPDATED,
             {
                 "session_id": msg.session.session_id,
                 "message_id": str(msg.id),
-                "message": ChatMessageSerializer(msg).data,
+                "message": ChatMessageSerializer(
+                    msg, context={"research_task_map": build_research_task_map([msg])}
+                ).data,
             },
             session_id=msg.session.session_id,
         )

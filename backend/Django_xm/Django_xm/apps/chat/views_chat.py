@@ -38,6 +38,7 @@ from .serializers import (
     ChatSessionDetailSerializer,
     ChatSessionListSerializer,
     ChatSessionUpdateSerializer,
+    build_research_task_map,
 )
 from .services.chat_service import ChatService
 
@@ -429,9 +430,8 @@ class ChatView(BaseChatAPIView):
 
             return success_response(data=result_data, message="操作成功")
 
-        except Exception as e:
-            error_msg = f"处理聊天请求时出错: {e!s}"
-            logger.exception(error_msg)
+        except Exception:
+            logger.exception("处理聊天请求时出错")
 
             return error_response(
                 code=ErrorCode.SERVER_ERROR,
@@ -442,7 +442,7 @@ class ChatView(BaseChatAPIView):
                         "mode": data.get("mode", "agent"),
                         "tools_used": [],
                         "success": False,
-                        "error": str(e),
+                        "error": "处理请求失败，请稍后重试",
                         "session_id": session.session_id if session else None,
                     }
                 ).data,
@@ -657,7 +657,11 @@ class ChatStreamView(BaseChatAPIView):
                         from Django_xm.common.realtime_events import publish_event
 
                         from .serializers import ChatMessageSerializer as _MsgSerializer
+                        from .serializers import build_research_task_map
 
+                        # 新建消息对尚无 research_task_id（映射为空、不发查询）；
+                        # ChatMessageSerializer 契约要求序列化必须传入映射
+                        research_task_map = build_research_task_map([user_msg, ai_msg])
                         for mid in (user_message_id, assistant_message_id):
                             msg = ChatMessage.objects.get(id=mid)
                             async_to_sync(publish_event)(
@@ -665,7 +669,9 @@ class ChatStreamView(BaseChatAPIView):
                                 {
                                     "session_id": session_id,
                                     "message_id": str(mid),
-                                    "message": _MsgSerializer(msg).data,
+                                    "message": _MsgSerializer(
+                                        msg, context={"research_task_map": research_task_map}
+                                    ).data,
                                 },
                                 session_id=session_id,
                             )
@@ -861,19 +867,20 @@ class ChatSessionListView(BaseChatAPIView):
 
                 if sessions_data:
                     sessions_data.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
-                    total = len(sessions_data)
-                    page = 1
-                    start = (page - 1) * page_size
-                    end = start + page_size
-                    paged_items = sessions_data[start:end]
+                    # dj-05：分页语义与 DB 分支 paginate_queryset 完全对齐——
+                    # 同一 Paginator + get_page：page 取自 query_params（缺省 1），
+                    # 非法值回退第 1 页，越界（含 page<1）回退最后一页
+                    paginator = Paginator(sessions_data, page_size)
+                    page_obj = paginator.get_page(request.query_params.get("page", 1))
+                    paged_items = page_obj.object_list
                     logger.info(f"Returning {len(paged_items)} cached sessions for user {user_id}")
                     return success_response(
                         data={
                             "items": paged_items,
-                            "total": total,
-                            "page": page,
+                            "total": paginator.count,
+                            "page": page_obj.number,
                             "page_size": page_size,
-                            "total_pages": (total + page_size - 1) // page_size,
+                            "total_pages": paginator.num_pages,
                         }
                     )
             except Exception as e:
@@ -918,7 +925,10 @@ class ChatSessionCreateView(BaseChatAPIView):
         # prefetch messages + attachments 避免 ChatSessionDetailSerializer N+1
         session = ChatSession.objects.prefetch_related("messages", "messages__attachments").get(pk=session.pk)
 
-        session_data = ChatSessionDetailSerializer(session).data
+        session_data = ChatSessionDetailSerializer(
+            session,
+            context={"research_task_map": build_research_task_map(session.messages.all())},
+        ).data
 
         # P16/P17/P18 修复：广播 SESSION_CREATED 事件
         # - 使用 transaction.on_commit 确保事务提交后再广播（防止其他浏览器查询时会话尚未提交）
@@ -950,7 +960,10 @@ class ChatSessionDetailView(BaseChatAPIView):
         if not session:
             return error_response(code=ErrorCode.NOT_FOUND, message="会话不存在", http_status=status.HTTP_404_NOT_FOUND)
 
-        serializer = ChatSessionDetailSerializer(session)
+        serializer = ChatSessionDetailSerializer(
+            session,
+            context={"research_task_map": build_research_task_map(session.messages.all())},
+        )
         return success_response(data=serializer.data)
 
     @extend_schema(request=ChatSessionUpdateSerializer, responses=ChatSessionDetailSerializer)
@@ -969,9 +982,19 @@ class ChatSessionDetailView(BaseChatAPIView):
 
         serializer.save()
         invalidate_chat_cache(user_id=request.user.id)
+        # dj-09：重命名/更新场景显式失效当前会话单条 key + 列表索引 key，
+        # 保证列表接口即时回源 DB；不再全量清空该用户其它会话缓存
+        SecureSessionCacheService.invalidate_session_entry(request.user.id, str(session.session_id))
+        SecureSessionCacheService.invalidate_user_sessions_list(request.user.id)
         # 重新查询以 prefetch messages + attachments，避免序列化 N+1
         session = ChatSession.objects.prefetch_related("messages", "messages__attachments").get(pk=session.pk)
-        return success_response(data=ChatSessionDetailSerializer(session).data, message="会话更新成功")
+        return success_response(
+            data=ChatSessionDetailSerializer(
+                session,
+                context={"research_task_map": build_research_task_map(session.messages.all())},
+            ).data,
+            message="会话更新成功",
+        )
 
     @extend_schema(exclude=True)
     @log_view_action
@@ -1119,7 +1142,7 @@ class ChatMessageCreateView(BaseChatAPIView):
         if not session:
             return error_response(code=ErrorCode.NOT_FOUND, message="会话不存在", http_status=status.HTTP_404_NOT_FOUND)
 
-        serializer = ChatMessageSerializer(data=request.data)
+        serializer = ChatMessageSerializer(data=request.data, context={"research_task_map": {}})
         if not serializer.is_valid():
             logger.warning(f"消息验证失败: {serializer.errors}, 请求数据: {request.data}")
             return validation_error_response(errors=serializer.errors)
@@ -1135,7 +1158,11 @@ class ChatMessageCreateView(BaseChatAPIView):
         invalidate_chat_cache(user_id=request.user.id)
 
         return success_response(
-            data=ChatMessageSerializer(message).data, message="消息发送成功", http_status=status.HTTP_201_CREATED
+            data=ChatMessageSerializer(
+                message, context={"research_task_map": build_research_task_map([message])}
+            ).data,
+            message="消息发送成功",
+            http_status=status.HTTP_201_CREATED,
         )
 
 
@@ -1158,7 +1185,8 @@ class ChatMessageBatchCreateView(BaseChatAPIView):
         with transaction.atomic():
             for msg_data in messages_data:
                 msg_data["session"] = session.pk
-                serializer = ChatMessageSerializer(data=msg_data)
+                # 仅做输入校验（不读 .data），契约传空映射
+                serializer = ChatMessageSerializer(data=msg_data, context={"research_task_map": {}})
                 if serializer.is_valid():
                     message = serializer.save()
                     created_messages.append(message.pk)
@@ -1167,11 +1195,17 @@ class ChatMessageBatchCreateView(BaseChatAPIView):
         messages_qs = (
             ChatMessage.objects.filter(pk__in=created_messages).prefetch_related("attachments").order_by("created_at")
         )
+        # 物化消息列表：映射构建与序列化共用同一份已预取数据，避免 queryset 二次求值
+        messages = list(messages_qs)
 
         return success_response(
             data={
                 "created_count": len(created_messages),
-                "messages": ChatMessageSerializer(messages_qs, many=True).data,
+                "messages": ChatMessageSerializer(
+                    messages,
+                    many=True,
+                    context={"research_task_map": build_research_task_map(messages)},
+                ).data,
             },
             message=f"批量创建 {len(created_messages)} 条消息成功",
         )
@@ -1289,7 +1323,8 @@ class ChatMessageUpdateView(BaseChatAPIView):
         was_finalized = bool(message.is_finalized)
         wants_finalize = bool(request.data.get("is_finalized", False))
 
-        serializer = ChatMessageSerializer(message, data=request.data, partial=True)
+        # 仅做输入校验（响应在下方用新实例序列化），契约传空映射
+        serializer = ChatMessageSerializer(message, data=request.data, partial=True, context={"research_task_map": {}})
         if not serializer.is_valid():
             return validation_error_response(errors=serializer.errors, message="更新参数错误")
 
@@ -1312,4 +1347,9 @@ class ChatMessageUpdateView(BaseChatAPIView):
             except Exception as broadcast_err:
                 logger.warning(f"[ChatMessageUpdate] 广播 MESSAGE_FINALIZED 失败: {broadcast_err}")
 
-        return success_response(data=ChatMessageSerializer(message).data, message="消息更新成功")
+        return success_response(
+            data=ChatMessageSerializer(
+                message, context={"research_task_map": build_research_task_map([message])}
+            ).data,
+            message="消息更新成功",
+        )

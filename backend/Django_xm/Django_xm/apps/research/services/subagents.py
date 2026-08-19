@@ -12,7 +12,7 @@ SubAgents 子智能体模块
   ``agent_hub.builders.deep_builder`` 的官方 ``create_deep_agent`` 机制构建。
 """
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

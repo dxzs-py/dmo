@@ -22,7 +22,7 @@ from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 from ..config import settings
 from .model_cache import get_cached_model, set_cached_model

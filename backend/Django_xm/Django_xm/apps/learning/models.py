@@ -60,11 +60,6 @@ class WorkflowExecution(AuditModel):
     def __str__(self):
         return f"WorkflowExecution({self.thread_id}, {self.status})"
 
-    def get_absolute_url(self):
-        from django.urls import reverse
-
-        return reverse("learning:status", kwargs={"thread_id": self.thread_id})
-
 
 class WorkflowSession(AuditModel):
     thread_id = models.CharField(max_length=100, unique=True, verbose_name="线程 ID")
@@ -127,11 +122,6 @@ class WorkflowSession(AuditModel):
 
     def __str__(self):
         return f"WorkflowSession({self.thread_id}, {self.status})"
-
-    def get_absolute_url(self):
-        from django.urls import reverse
-
-        return reverse("learning:status", kwargs={"thread_id": self.thread_id})
 
 
 class WorkflowQuestion(models.Model):

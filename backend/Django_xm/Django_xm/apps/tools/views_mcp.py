@@ -169,23 +169,25 @@ class McpStatusView(APIView):
 
 
 class McpServerTestView(APIView):
+    """MCP Server 连接测试（资源动作）
+
+    仅能测试已保存且 status=active 的 Server（含系统级配置），
+    name 经 URL path 传递。
+    """
+
     permission_classes = [IsAuthenticated]
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def post(self, request):
-        server_name = request.data.get("server_name")
-        if not server_name:
-            return error_response(message="请提供 server_name 参数")
-
+    def post(self, request, name):
         servers = _get_merged_mcp_servers(user=request.user)
         target = None
         for srv in servers:
-            if srv.get("name") == server_name:
+            if srv.get("name") == name:
                 target = srv
                 break
 
         if not target:
-            return error_response(message=f"未找到 MCP Server: {server_name}")
+            return error_response(message=f"未找到 MCP Server: {name}")
 
         try:
             from Django_xm.apps.tools.mcp import get_mcp_tools  # noqa: F401  # 仅用于导入可用性检测
@@ -193,11 +195,11 @@ class McpServerTestView(APIView):
             return error_response(message="langchain-mcp-adapters 未安装")
 
         try:
-            data = run_async(_test_mcp_server(server_name, target))
+            data = run_async(_test_mcp_server(name, target))
             return success_response(data=data)
-        except Exception as e:
-            logger.exception(f"MCP Server 连接测试失败 ({server_name})")
-            return error_response(message=f"连接失败: {e!s}")
+        except Exception:
+            logger.exception(f"MCP Server 连接测试失败 ({name})")
+            return error_response(message="连接失败，详细信息请查看服务端日志")
 
 
 async def _test_mcp_server(server_name, target):
@@ -243,12 +245,13 @@ async def _test_mcp_server(server_name, target):
             "tools": [],
             "tool_count": 0,
         }
-    except Exception as e:
+    except Exception:
+        logger.exception(f"MCP Server 连接测试失败 ({server_name})")
         return {
             "server": server_name,
             "transport": transport,
             "connected": False,
-            "error": str(e),
+            "error": "连接失败，详细信息请查看服务端日志",
             "tools": [],
             "tool_count": 0,
         }
@@ -289,12 +292,37 @@ class McpToolCallLogView(APIView):
             return success_response(data={"records": [], "total": 0})
 
 
-class McpServerListView(APIView):
-    """MCP Server 列表视图"""
+class MethodThrottleMixin:
+    """按 HTTP 方法区分限流类的 mixin。
+
+    集合视图合并原"列表 GET 视图 + 写动词 POST 视图"后，两类方法的限流
+    策略不同（如 GET=MetaRateThrottle、POST=SensitiveOperationRateThrottle）。
+    ``throttle_classes_by_method`` 未覆盖的方法回退到 ``APIView.get_throttles``
+    默认实现（类级 ``throttle_classes``，未显式声明时继承全局
+    ``DEFAULT_THROTTLE_CLASSES``），与合并前各独立视图的限流行为一致。
+    """
+
+    throttle_classes_by_method: dict[str, list] = {}
+
+    def get_throttles(self):
+        throttle_classes = self.throttle_classes_by_method.get(self.request.method)
+        if throttle_classes is None:
+            return super().get_throttles()
+        return [throttle() for throttle in throttle_classes]
+
+
+# ---------------------------------------------------------------------------
+# McpServer 资源（GET/POST /mcp/servers/、PUT/DELETE /mcp/servers/{name}/、
+# PATCH /mcp/servers/{name}/status/）
+# ---------------------------------------------------------------------------
+
+
+class McpServerView(MethodThrottleMixin, APIView):
+    """MCP Server 集合视图：GET 列表 / POST 添加用户级 Server"""
 
     permission_classes = [IsAuthenticated]
-    # 页面加载即请求的只读接口，独立 meta 额度（Task 3.2）
-    throttle_classes = [MetaRateThrottle]
+    # GET 列表保留独立 meta 额度（页面加载即请求的只读接口）；POST 沿用全局默认限流
+    throttle_classes_by_method = {"GET": [MetaRateThrottle]}
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
@@ -308,15 +336,9 @@ class McpServerListView(APIView):
             if page is not None:
                 return paginator.get_paginated_response(page)
             return success_response(data={"servers": tools, "total": len(tools)})
-        except Exception as e:
+        except Exception:
             logger.exception("获取 MCP Server 列表失败")
-            return error_response(message=f"获取 MCP Server 列表失败: {e!s}")
-
-
-class McpServerAddView(APIView):
-    """添加用户级 MCP Server 视图"""
-
-    permission_classes = [IsAuthenticated]
+            return error_response(message="获取 MCP Server 列表失败")
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
     def post(self, request):
@@ -336,15 +358,19 @@ class McpServerAddView(APIView):
         return _handle_crud_result(result, result.get("message", "MCP Server 添加成功"))
 
 
-class McpServerUpdateView(APIView):
+class McpServerDetailView(APIView):
+    """MCP Server 资源视图：PUT 更新 / DELETE 删除（name 经 URL path 传递）"""
+
     permission_classes = [IsAuthenticated]
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def post(self, request):
+    def put(self, request, name):
         from Django_xm.apps.tools.managers import McpToolManager
         from Django_xm.apps.tools.serializers import McpServerAddSerializer
 
-        serializer = McpServerAddSerializer(data=request.data)
+        # name 以 path 为准（body 携带 name 时忽略），保持资源标识单一来源
+        data = {**request.data, "name": name}
+        serializer = McpServerAddSerializer(data=data)
         if not serializer.is_valid():
             return error_response(
                 message="数据验证失败",
@@ -356,50 +382,24 @@ class McpServerUpdateView(APIView):
         result = manager.update_server(request.user, serializer.validated_data)
         return _handle_crud_result(result, result.get("message", "MCP Server 更新成功"))
 
-
-class McpServerDeleteView(APIView):
-    """删除用户级 MCP Server 视图"""
-
-    permission_classes = [IsAuthenticated]
-
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def post(self, request):
+    def delete(self, request, name):
         from Django_xm.apps.tools.managers import McpToolManager
-        from Django_xm.apps.tools.serializers import McpServerDeleteSerializer
 
-        serializer = McpServerDeleteSerializer(data=request.data)
-        if not serializer.is_valid():
-            return error_response(
-                message="数据验证失败",
-                code=ErrorCode.VALIDATION_FAILED,
-                data={"details": serializer.errors},
-            )
-
-        name = serializer.validated_data["name"]
         manager = McpToolManager()
         result = manager.delete_user_tool(name, request.user)
         return _handle_crud_result(result, result.get("message", "MCP Server 已删除"))
 
 
-class McpServerToggleView(APIView):
-    """启用/禁用用户级 MCP Server 视图"""
+class McpServerStatusView(APIView):
+    """MCP Server 状态视图：PATCH 启用/禁用（body 可选 status，缺省自动取反）"""
 
     permission_classes = [IsAuthenticated]
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def post(self, request):
+    def patch(self, request, name):
         from Django_xm.apps.tools.managers import McpToolManager
-        from Django_xm.apps.tools.serializers import McpServerDeleteSerializer
 
-        serializer = McpServerDeleteSerializer(data=request.data)
-        if not serializer.is_valid():
-            return error_response(
-                message="数据验证失败",
-                code=ErrorCode.VALIDATION_FAILED,
-                data={"details": serializer.errors},
-            )
-
-        name = serializer.validated_data["name"]
         status = request.data.get("status")
         manager = McpToolManager()
         result = manager.toggle_user_tool(name, request.user, status)
@@ -408,6 +408,39 @@ class McpServerToggleView(APIView):
             result.get("message", "状态切换成功"),
             data={"name": name, "status": result.get("status")},
         )
+
+
+class McpServerDiscoverView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
+    def post(self, request):
+        from Django_xm.apps.tools.serializers import McpServerDiscoverSerializer
+
+        serializer = McpServerDiscoverSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="数据验证失败",
+                code=ErrorCode.VALIDATION_FAILED,
+                data={"details": serializer.errors},
+            )
+        registry_url = serializer.validated_data["registry_url"]
+
+        try:
+            from Django_xm.apps.tools.mcp.discovery import get_mcp_discovery
+
+            discovery = get_mcp_discovery()
+            servers = run_async(discovery.discover_from_registry(registry_url))
+            return success_response(
+                data={
+                    "registry_url": registry_url,
+                    "servers": servers,
+                    "total": len(servers),
+                }
+            )
+        except Exception:
+            logger.exception(f"MCP Server 发现失败 ({registry_url})")
+            return error_response(message="MCP Server 发现失败")
 
 
 class ToolListView(APIView):
@@ -445,9 +478,9 @@ class ToolListView(APIView):
                 if page is not None:
                     return paginator.get_paginated_response(page)
                 return success_response(data={tool_type: tools, "total": len(tools)})
-            except Exception as e:
+            except Exception:
                 logger.exception(f"获取 {tool_type} 工具列表失败")
-                return error_response(message=f"获取工具列表失败: {e!s}")
+                return error_response(message="获取工具列表失败")
 
         result = {}
         total = 0
@@ -471,18 +504,51 @@ class ToolListView(APIView):
         return success_response(data={**result, "total": total})
 
 
-class ToolUploadView(APIView):
-    """自定义工具上传视图
+# ---------------------------------------------------------------------------
+# CustomTool 资源（GET/POST /custom/、PUT/DELETE /custom/{name}/、
+# PATCH /custom/{name}/status/）
+# ---------------------------------------------------------------------------
+
+
+class CustomToolView(MethodThrottleMixin, APIView):
+    """自定义工具集合视图：GET 列表 / POST 上传创建
 
     用户上传的 @tool 装饰器代码保存到数据库，默认审核状态为 pending
     （等待管理员审核通过后才生效，approval_status='approved'）。
     运行时通过受限沙箱动态加载为 BaseTool 实例。
 
-    限流：SensitiveOperationRateThrottle（scope='sensitive'）防止恶意刷上传。
+    限流：POST 上传保留 SensitiveOperationRateThrottle（scope='sensitive'）
+    防止恶意刷上传；GET 列表沿用全局默认限流。
     """
 
     permission_classes = [IsAuthenticated]
-    throttle_classes = [SensitiveOperationRateThrottle]
+    throttle_classes_by_method = {"POST": [SensitiveOperationRateThrottle]}
+
+    @extend_schema(responses={200: EmptySerializer})
+    def get(self, request):
+        from Django_xm.apps.tools.models import CustomTool
+
+        tools = CustomTool.objects.filter(user=request.user).select_related("category")
+        data = [
+            {
+                "id": t.id,
+                "name": t.name,
+                "description": t.description,
+                "tool_type": t.tool_type,
+                "category": _build_user_tool_category_info(t),
+                "source": t.source,
+                "status": t.status,
+                "visibility": "selectable",
+                "tier": "extended",
+                "created_at": t.created_at.isoformat(),
+            }
+            for t in tools
+        ]
+        paginator = StandardPagination()
+        page = paginator.paginate_queryset(data, request)
+        if page is not None:
+            return paginator.get_paginated_response(page)
+        return success_response(data={"tools": data, "total": len(data)})
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
     def post(self, request):
@@ -543,96 +609,23 @@ class ToolUploadView(APIView):
                 },
                 message=f"工具 '{tool_name}' 上传成功，等待管理员审核",
             )
-        except Exception as e:
+        except Exception:
             logger.exception("工具上传失败")
-            return error_response(message=f"工具上传失败: {e!s}")
+            return error_response(message="工具上传失败")
 
 
-class CustomToolListView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(responses={200: EmptySerializer})
-    def get(self, request):
-        from Django_xm.apps.tools.models import CustomTool
-
-        tools = CustomTool.objects.filter(user=request.user).select_related("category")
-        data = [
-            {
-                "id": t.id,
-                "name": t.name,
-                "description": t.description,
-                "tool_type": t.tool_type,
-                "category": _build_user_tool_category_info(t),
-                "source": t.source,
-                "status": t.status,
-                "visibility": "selectable",
-                "tier": "extended",
-                "created_at": t.created_at.isoformat(),
-            }
-            for t in tools
-        ]
-        paginator = StandardPagination()
-        page = paginator.paginate_queryset(data, request)
-        if page is not None:
-            return paginator.get_paginated_response(page)
-        return success_response(data={"tools": data, "total": len(data)})
-
-
-class CustomToolDeleteView(APIView):
-    """删除自定义工具"""
+class CustomToolDetailView(APIView):
+    """自定义工具资源视图：PUT 更新 / DELETE 删除（name 经 URL path 传递）"""
 
     permission_classes = [IsAuthenticated]
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def post(self, request):
-        from Django_xm.apps.tools.managers import LangChainToolManager
-
-        tool_name = request.data.get("name")
-        if not tool_name:
-            return error_response(message="请提供 name 参数")
-
-        manager = LangChainToolManager()
-        result = manager.delete_user_tool(tool_name, request.user)
-        return _handle_crud_result(result, result.get("message", "自定义工具已删除"))
-
-
-class CustomToolToggleView(APIView):
-    """启用/禁用自定义工具"""
-
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def post(self, request):
-        from Django_xm.apps.tools.managers import LangChainToolManager
-
-        tool_name = request.data.get("name")
-        if not tool_name:
-            return error_response(message="请提供 name 参数")
-
-        status = request.data.get("status")
-        manager = LangChainToolManager()
-        result = manager.toggle_user_tool(tool_name, request.user, status)
-        return _handle_crud_result(
-            result,
-            result.get("message", "状态切换成功"),
-            data={"name": tool_name, "status": result.get("status")},
-        )
-
-
-class CustomToolUpdateView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def post(self, request):
+    def put(self, request, name):
         from Django_xm.apps.tools.models import CustomTool, ToolCategory
 
-        tool_name = request.data.get("name")
-        if not tool_name:
-            return error_response(message="请提供 name 参数")
-
-        tool_obj = CustomTool.objects.filter(user=request.user, name=tool_name).first()
+        tool_obj = CustomTool.objects.filter(user=request.user, name=name).first()
         if not tool_obj:
-            return error_response(message=f"未找到自定义工具 '{tool_name}'")
+            return error_response(message=f"未找到自定义工具 '{name}'")
 
         new_code = request.data.get("code")
         new_desc = request.data.get("description")
@@ -642,7 +635,7 @@ class CustomToolUpdateView(APIView):
             if "@tool" not in new_code:
                 return error_response(message="代码必须包含 @tool 装饰器定义的 LangChain 工具")
             try:
-                compile(new_code, f"<tool:{tool_name}>", "exec")
+                compile(new_code, f"<tool:{name}>", "exec")
             except SyntaxError as e:
                 return error_response(message=f"代码语法错误: {e.msg} (行 {e.lineno})")
             tool_obj.code = new_code
@@ -657,61 +650,56 @@ class CustomToolUpdateView(APIView):
                 pass
 
         tool_obj.save()
-        logger.info(f"自定义工具 '{tool_name}' 已更新 (user={request.user.id})")
+        logger.info(f"自定义工具 '{name}' 已更新 (user={request.user.id})")
         return success_response(
             data={
                 "name": tool_obj.name,
                 "description": tool_obj.description,
                 "status": tool_obj.status,
             },
-            message=f"工具 '{tool_name}' 更新成功",
+            message=f"工具 '{name}' 更新成功",
         )
 
+    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
+    def delete(self, request, name):
+        from Django_xm.apps.tools.managers import LangChainToolManager
 
-class McpServerDiscoverView(APIView):
+        manager = LangChainToolManager()
+        result = manager.delete_user_tool(name, request.user)
+        return _handle_crud_result(result, result.get("message", "自定义工具已删除"))
+
+
+class CustomToolStatusView(APIView):
+    """自定义工具状态视图：PATCH 启用/禁用（body 可选 status，缺省自动取反）"""
+
     permission_classes = [IsAuthenticated]
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def post(self, request):
-        from Django_xm.apps.tools.serializers import McpServerDiscoverSerializer
+    def patch(self, request, name):
+        from Django_xm.apps.tools.managers import LangChainToolManager
 
-        serializer = McpServerDiscoverSerializer(data=request.data)
-        if not serializer.is_valid():
-            return error_response(
-                message="数据验证失败",
-                code=ErrorCode.VALIDATION_FAILED,
-                data={"details": serializer.errors},
-            )
-        registry_url = serializer.validated_data["registry_url"]
-
-        try:
-            from Django_xm.apps.tools.mcp.discovery import get_mcp_discovery
-
-            discovery = get_mcp_discovery()
-            servers = run_async(discovery.discover_from_registry(registry_url))
-            return success_response(
-                data={
-                    "registry_url": registry_url,
-                    "servers": servers,
-                    "total": len(servers),
-                }
-            )
-        except Exception as e:
-            logger.exception(f"MCP Server 发现失败 ({registry_url})")
-            return error_response(message=f"发现失败: {e!s}")
+        status = request.data.get("status")
+        manager = LangChainToolManager()
+        result = manager.toggle_user_tool(name, request.user, status)
+        return _handle_crud_result(
+            result,
+            result.get("message", "状态切换成功"),
+            data={"name": name, "status": result.get("status")},
+        )
 
 
 # ---------------------------------------------------------------------------
-# Skills 视图
+# Skill 资源（GET/POST /skills/、PUT/DELETE /skills/{name}/、
+# PATCH /skills/{name}/status/）
 # ---------------------------------------------------------------------------
 
 
-class SkillListView(APIView):
-    """Skill 列表视图"""
+class SkillView(MethodThrottleMixin, APIView):
+    """Skill 集合视图：GET 列表 / POST 创建自定义 Skill"""
 
     permission_classes = [IsAuthenticated]
-    # 页面加载即请求的只读接口，独立 meta 额度（Task 3.2）
-    throttle_classes = [MetaRateThrottle]
+    # GET 列表保留独立 meta 额度（页面加载即请求的只读接口）；POST 沿用全局默认限流
+    throttle_classes_by_method = {"GET": [MetaRateThrottle]}
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
@@ -721,15 +709,9 @@ class SkillListView(APIView):
         try:
             skills = manager.get_tool_info_list(request.user)
             return success_response(data={"skills": skills, "total": len(skills)})
-        except Exception as e:
+        except Exception:
             logger.exception("获取 Skill 列表失败")
-            return error_response(message=f"获取 Skill 列表失败: {e!s}")
-
-
-class SkillCreateView(APIView):
-    """创建自定义 Skill 视图"""
-
-    permission_classes = [IsAuthenticated]
+            return error_response(message="获取 Skill 列表失败")
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
     def post(self, request):
@@ -749,41 +731,19 @@ class SkillCreateView(APIView):
         return _handle_crud_result(result, result.get("message", "Skill 创建成功"))
 
 
-class SkillDeleteView(APIView):
-    """删除自定义 Skill 视图"""
+class SkillDetailView(APIView):
+    """Skill 资源视图：PUT 更新 / DELETE 删除（name 经 URL path 传递）"""
 
     permission_classes = [IsAuthenticated]
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def post(self, request):
-        from Django_xm.apps.tools.managers import SkillToolManager
-        from Django_xm.apps.tools.serializers import SkillDeleteSerializer
-
-        serializer = SkillDeleteSerializer(data=request.data)
-        if not serializer.is_valid():
-            return error_response(
-                message="数据验证失败",
-                code=ErrorCode.VALIDATION_FAILED,
-                data={"details": serializer.errors},
-            )
-
-        name = serializer.validated_data["name"]
-        manager = SkillToolManager()
-        result = manager.delete_user_tool(name, request.user)
-        return _handle_crud_result(result, result.get("message", "Skill 已删除"))
-
-
-class SkillUpdateView(APIView):
-    """更新自定义 Skill 视图"""
-
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def post(self, request):
+    def put(self, request, name):
         from Django_xm.apps.tools.managers import SkillToolManager
         from Django_xm.apps.tools.serializers import SkillCreateSerializer
 
-        serializer = SkillCreateSerializer(data=request.data)
+        # name 以 path 为准（body 携带 name 时忽略），保持资源标识单一来源
+        data = {**request.data, "name": name}
+        serializer = SkillCreateSerializer(data=data)
         if not serializer.is_valid():
             return error_response(
                 message="数据验证失败",
@@ -795,18 +755,29 @@ class SkillUpdateView(APIView):
         result = manager.update_skill(request.user, serializer.validated_data)
         return _handle_crud_result(result, result.get("message", "Skill 更新成功"))
 
+    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
+    def delete(self, request, name):
+        from Django_xm.apps.tools.managers import SkillToolManager
 
-class SkillToggleView(APIView):
-    """切换自定义 Skill 状态视图"""
+        manager = SkillToolManager()
+        result = manager.delete_user_tool(name, request.user)
+        return _handle_crud_result(result, result.get("message", "Skill 已删除"))
+
+
+class SkillStatusView(APIView):
+    """Skill 状态视图：PATCH 启用/禁用（body 可选 status，缺省自动取反）"""
 
     permission_classes = [IsAuthenticated]
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def post(self, request):
+    def patch(self, request, name):
         from Django_xm.apps.tools.managers import SkillToolManager
         from Django_xm.apps.tools.serializers import SkillToggleSerializer
 
-        serializer = SkillToggleSerializer(data=request.data)
+        data = {"name": name}
+        if "status" in request.data:
+            data["status"] = request.data["status"]
+        serializer = SkillToggleSerializer(data=data)
         if not serializer.is_valid():
             return error_response(
                 message="数据验证失败",
@@ -814,7 +785,6 @@ class SkillToggleView(APIView):
                 data={"details": serializer.errors},
             )
 
-        name = serializer.validated_data["name"]
         status = serializer.validated_data.get("status")
         manager = SkillToolManager()
         result = manager.toggle_user_tool(name, request.user, status)
@@ -827,13 +797,17 @@ class SkillToggleView(APIView):
 
 # ============================================================
 # Skill 包管理（Agent Skills 规范）
+# GET/POST /skills/packages/、GET/DELETE /skills/packages/{name}/、
+# PATCH /skills/packages/{name}/status/
 # ============================================================
 
 
-class SkillPackageListView(APIView):
+class SkillPackageView(MethodThrottleMixin, APIView):
+    """Skill 包集合视图：GET 列表 / POST 上传 ZIP 包"""
+
     permission_classes = [IsAuthenticated]
-    # 页面加载即请求的只读接口，独立 meta 额度（Task 3.2）
-    throttle_classes = [MetaRateThrottle]
+    # GET 列表保留独立 meta 额度（页面加载即请求的只读接口）；POST 沿用全局默认限流
+    throttle_classes_by_method = {"GET": [MetaRateThrottle]}
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
@@ -870,15 +844,13 @@ class SkillPackageListView(APIView):
             return paginator.get_paginated_response(page)
         return success_response(data=data)
 
-
-class SkillPackageUploadView(APIView):
-    """上传 Skill 包（ZIP 压缩包）"""
-
-    permission_classes = [IsAuthenticated]
-
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
     def post(self, request):
         from Django_xm.apps.tools.skills.loader import SkillLoader
+        from Django_xm.apps.tools.serializers import (
+            RESOURCE_NAME_ERROR_MESSAGE,
+            RESOURCE_NAME_PATTERN,
+        )
 
         uploaded_file = request.FILES.get("file")
         if not uploaded_file:
@@ -897,6 +869,17 @@ class SkillPackageUploadView(APIView):
 
         try:
             loader = SkillLoader()
+            # name 将作为资源标识符进入 URL path（删除/切换/详情端点），
+            # 上传入口前置校验字符集，拒绝 "/" 等路径不安全字符
+            is_valid, _, frontmatter = loader.validate_skill_package(tmp_path)
+            if is_valid and frontmatter:
+                pkg_name = frontmatter.get("name", "")
+                if not RESOURCE_NAME_PATTERN.match(pkg_name):
+                    return error_response(
+                        message=RESOURCE_NAME_ERROR_MESSAGE,
+                        code=ErrorCode.VALIDATION_FAILED,
+                    )
+
             success, message, metadata = loader.install_skill_package(tmp_path, request.user, source="user")
             if success:
                 return success_response(data=metadata, message=message)
@@ -908,18 +891,30 @@ class SkillPackageUploadView(APIView):
                 os.unlink(tmp_path)
 
 
-class SkillPackageDeleteView(APIView):
-    """删除 Skill 包"""
+class SkillPackageDetailView(APIView):
+    """Skill 包资源视图：GET 查看 SKILL.md 内容 / DELETE 卸载（name 经 URL path 传递）"""
 
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def post(self, request):
+    @extend_schema(responses={200: EmptySerializer})
+    def get(self, request, name):
         from Django_xm.apps.tools.skills.loader import SkillLoader
 
-        name = request.data.get("name")
-        if not name:
-            return error_response(message="请提供 name 参数")
+        loader = SkillLoader()
+        content = loader.activate_skill(name, user_id=request.user.id)
+        if content is None:
+            return error_response(message=f"未找到 Skill '{name}' 或 SKILL.md 不存在")
+
+        return success_response(
+            data={
+                "name": name,
+                "instructions": content,
+            }
+        )
+
+    @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
+    def delete(self, request, name):
+        from Django_xm.apps.tools.skills.loader import SkillLoader
 
         loader = SkillLoader()
         success, message = loader.uninstall_skill_package(name, request.user)
@@ -929,18 +924,14 @@ class SkillPackageDeleteView(APIView):
         return error_response(message=message, http_status=http_status)
 
 
-class SkillPackageToggleView(APIView):
-    """启用/禁用 Skill 包"""
+class SkillPackageStatusView(APIView):
+    """Skill 包状态视图：PATCH 启用/禁用（body 可选 status，缺省自动取反）"""
 
     permission_classes = [IsAuthenticated]
 
     @extend_schema(request=EmptySerializer, responses={200: EmptySerializer})
-    def post(self, request):
+    def patch(self, request, name):
         from Django_xm.apps.tools.models import SkillPackage
-
-        name = request.data.get("name")
-        if not name:
-            return error_response(message="请提供 name 参数")
 
         status = request.data.get("status")
         pkg = SkillPackage.objects.filter(user=request.user, name=name).first()
@@ -955,32 +946,6 @@ class SkillPackageToggleView(APIView):
         pkg.save()
         return success_response(
             data={"name": name, "status": pkg.status}, message=f"Skill '{name}' 状态已更新为 {pkg.status}"
-        )
-
-
-class SkillPackageDetailView(APIView):
-    """查看 Skill 包 SKILL.md 内容"""
-
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(responses={200: EmptySerializer})
-    def get(self, request):
-        from Django_xm.apps.tools.skills.loader import SkillLoader
-
-        name = request.query_params.get("name")
-        if not name:
-            return error_response(message="请提供 name 参数")
-
-        loader = SkillLoader()
-        content = loader.activate_skill(name, user_id=request.user.id)
-        if content is None:
-            return error_response(message=f"未找到 Skill '{name}' 或 SKILL.md 不存在")
-
-        return success_response(
-            data={
-                "name": name,
-                "instructions": content,
-            }
         )
 
 

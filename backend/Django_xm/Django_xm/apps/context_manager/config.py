@@ -43,8 +43,6 @@ class ContextManagerSettings(BaseSettings):
 
     cross_session_enabled: bool = Field(default=True, description="是否启用跨会话上下文复用")
 
-    cross_session_max_context_length: int = Field(default=2000, ge=500, le=10000, description="跨会话上下文最大长度")
-
     long_term_tags: str = Field(default="system,preference,decision", description="长期记忆标记关键词（逗号分隔）")
 
     budget_templates: str = Field(
@@ -108,6 +106,14 @@ class ContextManagerSettings(BaseSettings):
     loop_multi_call_safe_tools: str = Field(
         default="fs_write_file,fs_read_file,knowledge_base,shell_exec,spawn_sub_agent,skill_agent-browser,skill_baidu-search",
         description="多调用安全工具列表（逗号分隔，这些工具天然需要多次调用）",
+    )
+
+    # ── deep_research 动态 prompt 上下文（opt-in） ──
+    deep_dynamic_context_enabled: bool = Field(
+        default=False,
+        description="deep_research 动态 prompt 上下文开关，默认关闭保证行为不变；"
+        "开启后 DeepAgentBuilder 默认 system_prompt 优先走 build_prompt_context 动态构建，"
+        "构建失败自动回退静态 prompt",
     )
 
 

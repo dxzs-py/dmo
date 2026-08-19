@@ -67,25 +67,63 @@ export function extractErrorMessage(error) {
   return ERROR_MESSAGES[error.status] || '未知错误，请稍后重试'
 }
 
+/**
+ * 从 SSE 错误响应中提取错误信息（fetchSSE 与视图层 !response.ok 分支统一入口）
+ *
+ * 根因修复：Response body 只能读取一次，旧实现先 json() 失败后再 text()
+ * 必然得到空串，SSE data 行回退路径实际失效。此处改为 text() 单次读取，
+ * 再依次尝试整体 JSON 解析与 SSE data 行回退解析。
+ *
+ * 提取优先级：message → error；errors 校验详情追加 (...)；
+ * data 对象详情追加 [...]；均无时回退默认 HTTP 状态描述。
+ *
+ * @param {Response} response - fetch Response（status 非 2xx）
+ * @returns {Promise<Error>} 携带提取后错误信息的 Error 实例
+ */
 export async function extractSSEError(response) {
   let errorMsg = `HTTP ${response.status}`
+
+  let text
   try {
-    const errBody = await response.json()
-    if (errBody.message) {
-      errorMsg = errBody.message
-    } else if (errBody.error) {
-      errorMsg = errBody.error
+    text = await response.text()
+  } catch (err) {
+    logger.warn('[API] 读取 SSE 错误响应体失败:', err)
+    return new Error(errorMsg)
+  }
+
+  let parsed = null
+  if (text.trim()) {
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      // 响应体非 JSON 时尝试按 SSE data 行提取错误信息
+      const sseMatch = text.match(/data:\s*(.*)/)
+      if (sseMatch) {
+        try {
+          parsed = JSON.parse(sseMatch[1])
+        } catch (sseErr) {
+          logger.warn('[API] 错误响应 SSE 数据解析失败:', sseErr)
+        }
+      }
     }
-    if (errBody.errors && typeof errBody.errors === 'object') {
-      const validationDetails = Object.entries(errBody.errors)
+  }
+
+  if (parsed && typeof parsed === 'object') {
+    if (parsed.message) {
+      errorMsg = parsed.message
+    } else if (parsed.error) {
+      errorMsg = parsed.error
+    }
+    if (parsed.errors && typeof parsed.errors === 'object') {
+      const validationDetails = Object.entries(parsed.errors)
         .map(([field, messages]) => `${field}: ${Array.isArray(messages) ? messages.join(', ') : messages}`)
         .join('; ')
       if (validationDetails) {
         errorMsg += ` (${validationDetails})`
       }
     }
-    if (errBody.data && typeof errBody.data === 'object' && !Array.isArray(errBody.data)) {
-      const dataStr = Object.values(errBody.data).map(d => {
+    if (parsed.data && typeof parsed.data === 'object' && !Array.isArray(parsed.data)) {
+      const dataStr = Object.values(parsed.data).map(d => {
         if (typeof d === 'string') return d
         if (Array.isArray(d)) return d.join(', ')
         return JSON.stringify(d)
@@ -94,19 +132,8 @@ export async function extractSSEError(response) {
         errorMsg += ` [${dataStr}]`
       }
     }
-  } catch {
-    try {
-      const text = await response.text()
-      const sseMatch = text.match(/data:\s*(.*)/)
-      if (sseMatch) {
-        const parsed = JSON.parse(sseMatch[1])
-        errorMsg = parsed.message || parsed.error || errorMsg
-      }
-    } catch (err) {
-      // 响应体既非 JSON 也非有效 SSE data 行时，回退到默认 HTTP 状态描述
-      logger.warn('[API] 解析 SSE 错误响应失败:', err)
-    }
   }
+
   return new Error(errorMsg)
 }
 

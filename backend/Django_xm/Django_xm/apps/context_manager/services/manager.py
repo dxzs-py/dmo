@@ -40,7 +40,7 @@ from Django_xm.apps.context_manager.services.knowledge_graph import (
     ContextKnowledgeGraph,
 )
 from Django_xm.apps.context_manager.services.token_budget import ContextEfficiencyMetrics, TokenBudgetManager
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
@@ -58,7 +58,6 @@ class ContextManagementConfig:
     knowledge_graph_max_entities: int = 20
 
     cross_session_enabled: bool = True
-    cross_session_max_context_length: int = 2000
 
     model_name: str | None = None
 
@@ -74,7 +73,6 @@ class ContextManagementConfig:
             knowledge_graph_max_hops=context_settings.kg_max_hops,
             knowledge_graph_max_entities=context_settings.kg_max_entities,
             cross_session_enabled=context_settings.cross_session_enabled,
-            cross_session_max_context_length=context_settings.cross_session_max_context_length,
         )
 
 

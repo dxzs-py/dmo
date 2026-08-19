@@ -2,7 +2,6 @@ import { useSyncStore } from '@/stores/sync'
 import { useSessionStore } from '@/stores/session'
 import { useChatDeepResearchStore } from '@/stores/chatDeepResearch'
 import { deepResearchAPI } from '@/api/research'
-import { toCamelCase } from '@/utils/sessionTransformers'
 import { readSSEStream } from '@/utils/sse'
 
 const MAX_SSE_RETRY = 3
@@ -61,17 +60,9 @@ export function useResearchApprovalListener() {
 
       const processChunk = async () => {
         try {
-          await readSSEStream(response, (parsedRaw) => {
-            /**
-             * 解析原始事件（snake_case）为前端 camelCase 并路由分发
-             *
-             * 命名边界：对 parsed 整体调用 toCamelCase 递归转换，
-             * 然后将 type 还原为后端原始 snake_case（协议路由标识符，非业务数据）。
-             */
-            const parsed = toCamelCase(parsedRaw)
-            if (parsedRaw && typeof parsedRaw === 'object') {
-              parsed.type = parsedRaw.type
-            }
+          await readSSEStream(response, (parsed) => {
+            // 命名边界：readSSEStream 已统一调用 parseProtocolEvent 完成转换
+            // （toCamelCase + type 还原为后端原始 snake_case 协议路由标识符）。
             if (parsed.type === 'approval' || parsed.type === 'approval_timeout' || parsed.type === 'approval_processed') {
               // 审批事件经 sync 层转发（视图层收敛），语义与原直调 approvalStore 完全一致
               syncStore.handleApprovalAction('handleApprovalEvent', parsed.data || parsed, {

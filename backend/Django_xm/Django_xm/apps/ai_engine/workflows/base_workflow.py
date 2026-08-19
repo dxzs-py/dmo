@@ -21,7 +21,7 @@ from langgraph.graph import END, START, StateGraph
 
 from Django_xm.apps.ai_engine.prompts.system_prompts import get_system_prompt
 from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 from .state import WorkflowState
 

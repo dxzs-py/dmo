@@ -20,7 +20,7 @@ from rest_framework.renderers import BaseRenderer
 from rest_framework.views import APIView
 
 from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.apps.core.services.file_manager import get_file_manager
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.event_schema import EventSource, EventType
@@ -155,10 +155,10 @@ class WorkflowStartView(APIView):
             response_serializer = WorkflowResponseSerializer(result)
             return success_response(data=response_serializer.data, message="操作成功")
 
-        except Exception as e:
+        except Exception:
             logger.exception("[API] 启动工作流失败：")
             return error_response(
-                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                code=ErrorCode.SERVER_ERROR, message="启动工作流失败，请稍后重试", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 
@@ -341,16 +341,16 @@ class WorkflowStartStreamView(APIView):
                 except Exception as persist_err:
                     logger.warning(f"持久化工作流会话失败: {persist_err}")
 
-            except Exception as e:
+            except Exception:
                 logger.exception("[API] 流式工作流执行失败：")
                 # 工作流失败事件
                 await safe_publish_workflow_event(
                     EventType.WORKFLOW_FAILED,
                     thread_id,
-                    {"step": "planner", "error": str(e)},
+                    {"step": "planner", "error": "工作流执行失败"},
                     user_id=user_id,
                 )
-                yield sse_error_event(code="50001", message=str(e))
+                yield sse_error_event(code="50001", message="工作流执行失败，请稍后重试")
 
         return sse_response(event_stream())
 
@@ -413,10 +413,10 @@ class WorkflowSubmitView(APIView):
                 http_status=status.HTTP_409_CONFLICT,
                 data={"current_phase": getattr(e, "current_phase", "")},
             )
-        except Exception as e:
+        except Exception:
             logger.exception("[API] 提交答案失败：")
             return error_response(
-                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                code=ErrorCode.SERVER_ERROR, message="提交答案失败，请稍后重试", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 
@@ -550,15 +550,15 @@ class WorkflowRestartStreamView(APIView):
                 old_session.retry_count = prepared["new_retry_count"]
                 await sync_to_async(old_session.save)(update_fields=["retry_count"])
 
-            except Exception as e:
+            except Exception:
                 logger.exception("[API] 流式继续练习失败：")
                 await safe_publish_workflow_event(
                     EventType.WORKFLOW_FAILED,
                     new_thread_id,
-                    {"step": "planner", "error": str(e)},
+                    {"step": "planner", "error": "工作流执行失败"},
                     user_id=user_id,
                 )
-                yield sse_error_event(code="50001", message=str(e))
+                yield sse_error_event(code="50001", message="工作流执行失败，请稍后重试")
 
         return sse_response(event_stream())
 
@@ -602,10 +602,10 @@ class WorkflowQuestionListView(APIView):
             serializer = WorkflowQuestionSerializer(questions, many=True)
 
             return success_response(data=serializer.data, message="操作成功")
-        except Exception as e:
+        except Exception:
             logger.exception("[API] 获取题目列表失败：")
             return error_response(
-                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                code=ErrorCode.SERVER_ERROR, message="获取题目列表失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 
@@ -718,10 +718,10 @@ class WorkflowQuestionUpdateView(APIView):
                 },
                 message="重新评分完成",
             )
-        except Exception as e:
+        except Exception:
             logger.exception("[API] 重新评分失败：")
             return error_response(
-                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                code=ErrorCode.SERVER_ERROR, message="重新评分失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 
@@ -755,10 +755,10 @@ class WorkflowAttemptListView(APIView):
             serializer = WorkflowAttemptSerializer(attempts, many=True)
 
             return success_response(data=serializer.data, message="操作成功")
-        except Exception as e:
+        except Exception:
             logger.exception("[API] 获取练习轮次历史失败：")
             return error_response(
-                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                code=ErrorCode.SERVER_ERROR, message="获取练习轮次历史失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 
@@ -930,10 +930,10 @@ class WorkflowStatusView(APIView):
                 }
             )
 
-        except Exception as e:
+        except Exception:
             logger.exception("[API] 查询状态失败：")
             return error_response(
-                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                code=ErrorCode.SERVER_ERROR, message="查询工作流状态失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 
@@ -958,10 +958,10 @@ class WorkflowHistoryView(APIView):
             history = WorkflowService.get_workflow_history(thread_id)
             return success_response(data={"thread_id": thread_id, "history": history})
 
-        except Exception as e:
+        except Exception:
             logger.exception("[API] 查询历史失败：")
             return error_response(
-                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                code=ErrorCode.SERVER_ERROR, message="查询工作流历史失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 
@@ -976,10 +976,10 @@ class WorkflowDeleteView(APIView):
             result = WorkflowService.delete_workflow(thread_id, request.user.id)
             return success_response(data=result, message="操作成功")
 
-        except Exception as e:
+        except Exception:
             logger.exception("[API] 删除工作流失败：")
             return error_response(
-                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                code=ErrorCode.SERVER_ERROR, message="删除工作流失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 
@@ -1017,10 +1017,10 @@ class WorkflowListView(APIView):
                 }
             )
 
-        except Exception as e:
+        except Exception:
             logger.exception("[API] 获取工作流列表失败：")
             return error_response(
-                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                code=ErrorCode.SERVER_ERROR, message="获取工作流列表失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 
@@ -1327,31 +1327,30 @@ def workflow_stream(request, thread_id):
                     await safe_publish_workflow_event(
                         EventType.WORKFLOW_FAILED,
                         thread_id,
-                        {"step": "stream", "error": str(stream_error)},
+                        {"step": "stream", "error": "工作流执行失败"},
                         user_id=user.id,
                     )
-                    yield sse_error_event(code="50001", message=str(stream_error))
+                    yield sse_error_event(code="50001", message="工作流执行失败，请稍后重试")
                     complete_evt = {"type": "workflow_completed", "data": {"thread_id": thread_id}}
                     yield f"data: {json.dumps(complete_evt, ensure_ascii=False)}\n\n"
 
-            except Exception as e:
+            except Exception:
                 logger.exception("[API] 流式输出失败：")
                 await safe_publish_workflow_event(
                     EventType.WORKFLOW_FAILED,
                     thread_id,
-                    {"step": "stream", "error": str(e)},
+                    {"step": "stream", "error": "工作流执行失败"},
                     user_id=user.id if user else None,
                 )
-                yield sse_error_event(code="50001", message=str(e))
+                yield sse_error_event(code="50001", message="工作流执行失败，请稍后重试")
 
         return sse_response(event_stream())
 
-    except Exception as e:
-        error_msg = str(e)
-        logger.exception(f"[API] 流式输出失败：{error_msg}")
+    except Exception:
+        logger.exception("[API] 流式输出失败：")
 
         def error_event():
-            yield sse_error_event(code="50001", message=error_msg)
+            yield sse_error_event(code="50001", message="工作流执行失败，请稍后重试")
 
         return StreamingHttpResponse(
             error_event(), content_type="text/event-stream", status=500, headers={"Cache-Control": "no-cache"}

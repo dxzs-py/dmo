@@ -23,7 +23,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 # resilient_invoker 已从 ai_engine/services 迁移至 agent_hub/services，使用绝对路径导入
 from Django_xm.apps.agent_hub.services.resilient_invoker import ResilientModel
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 from .llm_factory import (
     get_chat_model_by_provider,

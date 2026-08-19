@@ -2,6 +2,7 @@ import { logger } from '@/utils/logger'
 import { toCamelCase } from '@/utils/sessionTransformers'
 import { getEventSessionId } from '@/utils/eventRouting'
 import { StreamState, ApprovalState, PROTECTED_STREAM_STATES } from '@/types'
+import { TOOL_CALL_EVENT_TYPES, APPROVAL_EVENT_TYPES } from '@/types/realtimeEvents'
 import { scheduleSubagentsRefresh } from '@/composables/useSubagents'
 import { APPROVAL_STATE_MAP } from './constants'
 import { createHandleToolCallEvent } from './toolCallHandler'
@@ -356,6 +357,23 @@ export const createHandleSessionEvent = (ctx) => {
       payload.subagentThreadId = event.subagent_thread_id
     }
 
+    // rd-05：工具调用 / 审批事件组以 Set.has 提前路由（枚举权威源
+    // types/realtimeEvents.js 的 TOOL_CALL_EVENT_TYPES / APPROVAL_EVENT_TYPES，
+    // 与原手写 13 个 case 字符串一一对应，新增事件类型只需扩展 Set）
+    if (TOOL_CALL_EVENT_TYPES.has(event.type)) {
+      await handleToolCallEvent(sessionId, null, payload, event.type, payload.source)
+      // 基线推进由有序队列 onProcessed 统一承担（本事件已入队处理），此处不再自行推进
+      return
+    }
+    if (APPROVAL_EVENT_TYPES.has(event.type)) {
+      await ctx.handleApprovalEvent(sessionId, payload, event.type, {
+        source: payload.source,
+        isReplay: event.isReplay === true,
+      })
+      // 基线推进由有序队列 onProcessed 统一承担（本事件已入队处理），此处不再自行推进
+      return
+    }
+
     switch (event.type) {
       case 'message_added':
         ctx.handleMessageAdded(sessionId, payload.message || payload)
@@ -399,28 +417,6 @@ export const createHandleSessionEvent = (ctx) => {
         break
       case 'messages_deleted':
         ctx.handleMessagesDeleted(sessionId, payload.deletedMessageIds || payload.ids || [])
-        break
-      // 工具调用事件类型（每个 EventType 独立 ws_event_name）
-      case 'tool_call_pending':
-      case 'tool_call_waiting':
-      case 'tool_call_rejected':
-      case 'tool_call_running':
-      case 'tool_call_completed':
-      case 'tool_call_failed':
-      case 'tool_call_timeout':
-        await handleToolCallEvent(sessionId, null, payload, event.type, payload.source)
-        break
-      // 6 个审批事件类型（每个 EventType 独立 ws_event_name）
-      case 'approval_pending':
-      case 'approval_processing':
-      case 'approval_waiting':
-      case 'approval_approved':
-      case 'approval_rejected':
-      case 'approval_timeout':
-        await ctx.handleApprovalEvent(sessionId, payload, event.type, {
-          source: payload.source,
-          isReplay: event.isReplay === true,
-        })
         break
       case 'stream_interrupted':
         ctx.handleStreamInterrupted(sessionId, payload)

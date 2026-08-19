@@ -8,6 +8,11 @@
 
 这是行业主流 RAG 架构，确保智能体严格依据知识库内容输出。
 支持检索降级：向量检索失败时自动降级到 PostgreSQL 全文关键词检索。
+
+对外入口（sync/async 双版本共享同一检索与降级内核）：
+- query_strict_rag：同步字典结果
+- stream_strict_rag：同步生成器（SSE 事件流）
+- astream_strict_rag：异步生成器（SSE 事件流）
 """
 
 import asyncio
@@ -16,14 +21,25 @@ from typing import Any
 from langchain_core.documents import Document
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.retrievers import BaseRetriever
-from langchain_core.runnables import Runnable, RunnablePassthrough
 
 from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
+
+# 空结果默认回答与两类降级提示（原三入口逐字重复的字符串收敛为单一权威源）
+NO_RESULT_ANSWER = "根据知识库中的资料，未找到与您问题相关的信息。"
+KB_DEGRADATION_NOTICE = "向量检索未命中，结果由知识库全文/降级检索提供"
+KEYWORD_DEGRADATION_NOTICE = "向量检索服务暂时不可用，结果由关键词检索提供，相关性可能低于正常水平"
+
+STRICT_RAG_QA_PROMPT = """基于以下参考资料回答用户问题。如果参考资料中没有相关信息，请明确说明。
+
+参考资料：
+{context}
+
+用户问题：{question}
+
+回答（仅基于上述参考资料，不得使用自身知识）："""
 
 
 def _resolve_chat_model(model, streaming: bool = False) -> BaseChatModel:
@@ -49,40 +65,6 @@ def _resolve_chat_model(model, streaming: bool = False) -> BaseChatModel:
         provider, model_name = model.split(":", 1)
         return get_chat_model(model_name=model_name, model_provider=provider, streaming=streaming)
     return get_chat_model(model_name=model, streaming=streaming)
-
-
-STRICT_RAG_SYSTEM_PROMPT = (
-    """你是一个严格基于知识库内容的问答助手。你必须且只能基于下方【检索到的参考资料】来回答用户的问题。
-
-## 核心规则（必须严格遵守）
-
-1. **仅使用参考资料**：你的回答必须且只能基于【检索到的参考资料】中的内容，不得使用你自身的知识储备。
-2. **禁止编造**：如果参考资料中没有包含回答用户问题所需的信息，你必须明确告知用户"""
-    '"根据知识库中的资料，未找到与您问题相关的信息"，不得自行补充或推测。\n'
-    "3. **忠实引用**：回答时应忠实于参考资料的内容，不得歪曲、夸大或过度解读。\n"
-    "4. **标注来源**：在回答中应适当标注信息来源于哪个文档。\n"
-    "5. **综合归纳**：当多条参考资料涉及同一问题时，应综合归纳，提供完整准确的回答。\n"
-    "\n"
-    "## 回答格式\n"
-    "\n"
-    "- 如果参考资料充分：直接回答问题，在关键信息后标注来源文档名\n"
-    "- 如果参考资料部分相关：回答相关部分，并明确指出哪些方面知识库中未涵盖\n"
-    '- 如果参考资料完全不相关：回复"根据知识库中的资料，未找到与您问题相关的信息。知识库主要涵盖以下内容：'
-    '[简要概括参考资料的主题]"\n'
-    "\n"
-    "## 检索到的参考资料\n"
-    "\n"
-    "{context}"
-)
-
-STRICT_RAG_QA_PROMPT = """基于以下参考资料回答用户问题。如果参考资料中没有相关信息，请明确说明。
-
-参考资料：
-{context}
-
-用户问题：{question}
-
-回答（仅基于上述参考资料，不得使用自身知识）："""
 
 
 def _format_docs(docs: list[Document]) -> str:
@@ -197,72 +179,202 @@ def _hyde_rewrite_query_sync(query: str, llm: BaseChatModel | None = None) -> st
         return query
 
 
-def create_strict_rag_chain(
-    retriever: BaseRetriever,
-    model: Any | None = None,
-    streaming: bool = False,
-) -> dict[str, Any]:
-    """
-    创建严格 RAG Chain
+def _log_hyde_outcome(query: str, retrieval_query: str) -> None:
+    """HyDE 改写结果日志（改写生效 / 未生效两分支）"""
+    if retrieval_query != query:
+        logger.info(f"HyDE 改写: '{query[:50]}...' -> '{retrieval_query[:50]}...'")
+    else:
+        logger.info("HyDE 改写未生效，使用原始查询")
 
-    标准流程：
-    1. 用户提问 -> 向量检索相关文档
-    2. 将检索结果注入 prompt 上下文
-    3. LLM 仅基于上下文生成回答
+
+def _maybe_rewrite_query(query: str, model: Any | None, use_hyde: bool) -> str:
+    """入口级 HyDE 查询改写（同步）：未启用时原样返回
+
+    调用方传入 BaseChatModel 实例时直接复用；否则传 None 交由
+    _hyde_rewrite_query_sync 内部解析 helper/主模型。
+
+    Args:
+        query: 原始查询
+        model: 入口 model 参数（字符串 / BaseChatModel 实例 / None）
+        use_hyde: 是否启用 HyDE 改写
+
+    Returns:
+        用于检索的改写后查询（或原始查询）
+    """
+    if not use_hyde:
+        return query
+    llm_for_hyde = model if isinstance(model, BaseChatModel) else None
+    retrieval_query = _hyde_rewrite_query_sync(query, llm=llm_for_hyde)
+    _log_hyde_outcome(query, retrieval_query)
+    return retrieval_query
+
+
+async def _amaybe_rewrite_query(query: str, model: Any | None, use_hyde: bool) -> str:
+    """入口级 HyDE 查询改写（异步）：未启用时原样返回
+
+    Args:
+        query: 原始查询
+        model: 入口 model 参数（字符串 / BaseChatModel 实例 / None）
+        use_hyde: 是否启用 HyDE 改写
+
+    Returns:
+        用于检索的改写后查询（或原始查询）
+    """
+    if not use_hyde:
+        return query
+    llm_for_hyde = model if isinstance(model, BaseChatModel) else None
+    retrieval_query = await _hyde_rewrite_query(query, llm=llm_for_hyde)
+    _log_hyde_outcome(query, retrieval_query)
+    return retrieval_query
+
+
+def _retrieve_with_fallback(
+    retriever: BaseRetriever,
+    retrieval_query: str,
+    query: str,
+    k: int,
+    collection_name: str,
+) -> tuple[list[Document], bool]:
+    """初始检索（同步）：embedding 服务故障时降级 PG 全文关键词检索
+
+    向量检索使用 HyDE 改写后的 retrieval_query；
+    降级关键词检索使用原始 query（与原三入口内联实现一致）。
 
     Args:
         retriever: 向量检索器
-        model: LLM 模型（字符串或 BaseChatModel 实例）
-        streaming: 是否流式输出
+        retrieval_query: HyDE 改写后的检索查询
+        query: 原始用户查询（降级检索用）
+        k: 返回文档数量
+        collection_name: 知识库 collection 名称（降级指标记录用）
 
     Returns:
-        包含 chain 和 retriever 的字典
+        (docs, degraded) 二元组，degraded 为 True 表示已走关键词降级
+
+    Raises:
+        Exception: 非 embedding 类异常原样上抛
     """
-    from Django_xm.apps.knowledge.config import get_model_string
+    from Django_xm.apps.knowledge.services.retrieval_service import (
+        _is_embedding_error,
+        _keyword_search_fallback,
+        _record_degradation_metric,
+    )
 
-    logger.info("创建严格 RAG Chain（检索-注入-生成模式）")
+    try:
+        from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
 
-    if model is None:
-        model = get_model_string()
-
-    prompt = ChatPromptTemplate.from_template(STRICT_RAG_QA_PROMPT)
-
-    def retrieve_and_format(query: str) -> dict[str, Any]:
-        """检索并格式化文档"""
-        docs = retriever.invoke(query)
-        context = _format_docs(docs)
-        return {
-            "context": context,
-            "question": query,
-            "retrieved_docs": docs,
-        }
-
-    chain: Runnable[Any, Any] = RunnablePassthrough.assign(
-        context_and_docs=lambda x: retrieve_and_format(x["question"])
-    ) | {
-        "answer": (
-            lambda x: {
-                "context": x["context_and_docs"]["context"],
-                "question": x["context_and_docs"]["question"],
-            }
+        pipeline = UnifiedRagPipeline(scenario="knowledge_base")
+        docs = pipeline.retrieve_documents_from_retriever(
+            retriever=retriever, query=retrieval_query, vector_store=None
         )
-        | prompt
-        | (model if isinstance(model, BaseChatModel) else _get_chat_model(model))
-        | StrOutputParser(),
-        "retrieved_docs": (lambda x: x["context_and_docs"]["retrieved_docs"]),
-    }
-
-    logger.info("严格 RAG Chain 创建成功")
-    return {
-        "chain": chain,
-        "retriever": retriever,
-        "model": model,
-    }
+        return docs, False
+    except Exception as e:
+        if _is_embedding_error(e):
+            logger.warning(f"向量检索失败，降级到全文关键词检索: {e}")
+            if collection_name:
+                _record_degradation_metric(collection_name, e)
+            return _keyword_search_fallback(query, collection_name, k=k), True
+        raise
 
 
-def _get_chat_model(model_string: str):
-    """根据模型字符串获取 ChatModel 实例"""
-    return _resolve_chat_model(model_string, streaming=False)
+async def _aretrieve_with_fallback(
+    retriever: BaseRetriever,
+    retrieval_query: str,
+    query: str,
+    k: int,
+    collection_name: str,
+) -> tuple[list[Document], bool]:
+    """初始检索（异步）：降级关键词检索经 asyncio.to_thread 执行避免阻塞事件循环
+
+    初始 Pipeline 检索保持同步调用（与原实现一致）；
+    向量检索使用 HyDE 改写后的 retrieval_query，降级检索使用原始 query。
+
+    Args:
+        retriever: 向量检索器
+        retrieval_query: HyDE 改写后的检索查询
+        query: 原始用户查询（降级检索用）
+        k: 返回文档数量
+        collection_name: 知识库 collection 名称（降级指标记录用）
+
+    Returns:
+        (docs, degraded) 二元组，degraded 为 True 表示已走关键词降级
+
+    Raises:
+        Exception: 非 embedding 类异常原样上抛
+    """
+    from Django_xm.apps.knowledge.services.retrieval_service import (
+        _is_embedding_error,
+        _keyword_search_fallback,
+        _record_degradation_metric,
+    )
+
+    try:
+        from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
+
+        pipeline = UnifiedRagPipeline(scenario="knowledge_base")
+        docs = pipeline.retrieve_documents_from_retriever(
+            retriever=retriever, query=retrieval_query, vector_store=None
+        )
+        return docs, False
+    except Exception as e:
+        if _is_embedding_error(e):
+            logger.warning(f"向量检索失败，降级到全文关键词检索: {e}")
+            if collection_name:
+                _record_degradation_metric(collection_name, e)
+            docs = await asyncio.to_thread(_keyword_search_fallback, query, collection_name, k)
+            return docs, True
+        raise
+
+
+def _handle_empty_result(query: str, collection_name: str) -> tuple[str, bool]:
+    """无检索结果处理（同步）：加载知识库全量文档走统一降级管道
+
+    Args:
+        query: 原始用户查询
+        collection_name: 知识库 collection 名称
+
+    Returns:
+        (answer, used_kb_pipeline)：used_kb_pipeline 为 True 表示答案来自
+        知识库全量降级管道（调用方应将 degraded 置 True）
+    """
+    from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline, load_kb_documents
+
+    if collection_name:
+        kb_docs, kb_tokens = load_kb_documents([collection_name])
+    else:
+        kb_docs, kb_tokens = [], 0
+    if kb_docs:
+        pipeline = UnifiedRagPipeline(scenario="knowledge_base")
+        return pipeline.search(query, kb_docs, kb_tokens), True
+    return NO_RESULT_ANSWER, False
+
+
+async def _ahandle_empty_result(query: str, collection_name: str) -> tuple[str, bool]:
+    """无检索结果处理（异步）：IO 经 asyncio.to_thread 执行避免阻塞事件循环
+
+    Args:
+        query: 原始用户查询
+        collection_name: 知识库 collection 名称
+
+    Returns:
+        (answer, used_kb_pipeline)：used_kb_pipeline 为 True 表示答案来自
+        知识库全量降级管道（调用方应将 degraded 置 True）
+    """
+    from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline, load_kb_documents
+
+    if collection_name:
+        kb_docs, kb_tokens = await asyncio.to_thread(load_kb_documents, [collection_name])
+    else:
+        kb_docs, kb_tokens = [], 0
+    if kb_docs:
+        pipeline = UnifiedRagPipeline(scenario="knowledge_base")
+        answer = await asyncio.to_thread(pipeline.search, query, kb_docs, kb_tokens)
+        return answer, True
+    return NO_RESULT_ANSWER, False
+
+
+def _is_degraded_result(degraded: bool, docs: list[Document]) -> bool:
+    """降级判定：检索阶段已降级，或任一检索文档自带降级标记"""
+    return degraded or any(doc.metadata.get("degraded") for doc in docs)
 
 
 def query_strict_rag(
@@ -287,82 +399,36 @@ def query_strict_rag(
     Returns:
         包含 answer、sources、retrieved_docs 的字典
     """
-    from Django_xm.apps.knowledge.services.retrieval_service import (
-        _is_embedding_error,
-        _keyword_search_fallback,
-        _record_degradation_metric,
-    )
-
     logger.info(f"严格 RAG 查询: {query[:50]}...")
 
     try:
         # 0. HyDE 查询改写
-        retrieval_query = query
-        if use_hyde:
-            llm_for_hyde = None
-            if model is not None and isinstance(model, BaseChatModel):
-                llm_for_hyde = model
-            retrieval_query = _hyde_rewrite_query_sync(query, llm=llm_for_hyde)
-            if retrieval_query != query:
-                logger.info(f"HyDE 改写: '{query[:50]}...' -> '{retrieval_query[:50]}...'")
-            else:
-                logger.info("HyDE 改写未生效，使用原始查询")
+        retrieval_query = _maybe_rewrite_query(query, model, use_hyde)
 
         # 1. 检索（使用改写后的查询），通过 Pipeline 执行初始检索
-        degraded = False
-        try:
-            from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
-            pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-            docs = pipeline.retrieve_documents_from_retriever(
-                retriever=retriever, query=retrieval_query, vector_store=None
-            )
-        except Exception as e:
-            if _is_embedding_error(e):
-                logger.warning(f"向量检索失败，降级到全文关键词检索: {e}")
-                if collection_name:
-                    _record_degradation_metric(collection_name, e)
-                docs = _keyword_search_fallback(query, collection_name, k=k)
-                degraded = True
-            else:
-                raise
-
+        docs, degraded = _retrieve_with_fallback(retriever, retrieval_query, query, k, collection_name)
         logger.info(f"检索到 {len(docs)} 个文档{' (降级模式)' if degraded else ''}")
 
         # 2. 无检索结果时，加载知识库全量文档走统一降级管道
         if not docs:
-            from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline, load_kb_documents
-
-            if collection_name:
-                kb_docs, kb_tokens = load_kb_documents([collection_name])
-            else:
-                kb_docs, kb_tokens = [], 0
-            if kb_docs:
-                pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-                answer = pipeline.search(query, kb_docs, kb_tokens)
-                degraded = True
-                logger.info("RAG 查询无检索结果，已走知识库降级管道")
-            else:
-                answer = "根据知识库中的资料，未找到与您问题相关的信息。"
-            result = {"answer": answer, "sources": [], "retrieved_docs": [], "success": True}
+            answer, used_kb = _handle_empty_result(query, collection_name)
+            degraded = degraded or used_kb
+            result: dict[str, Any] = {"answer": answer, "sources": [], "retrieved_docs": [], "success": True}
             if degraded:
                 result["degraded"] = True
-                result["degradation_notice"] = "向量检索未命中，结果由知识库全文/降级检索提供"
+                result["degradation_notice"] = KB_DEGRADATION_NOTICE
             logger.info("严格 RAG 查询完成（无检索结果，走知识库降级）")
             return result
 
-        # 3. 构建上下文
-        context = _format_docs(docs)
+        # 3. 构建上下文与 prompt（使用原始查询）
+        prompt_text = STRICT_RAG_QA_PROMPT.format(context=_format_docs(docs), question=query)
 
-        # 4. 构建 prompt（使用原始查询）
-        prompt_text = STRICT_RAG_QA_PROMPT.format(context=context, question=query)
-
-        # 5. 调用 LLM（_resolve_chat_model 已内置 fallback，model=None 时自动读 SystemConfig）
+        # 4. 调用 LLM（_resolve_chat_model 已内置 fallback，model=None 时自动读 SystemConfig）
         llm = _resolve_chat_model(model, streaming=False)
-
         response = llm.invoke([HumanMessage(content=prompt_text)])
         answer = response.content if hasattr(response, "content") else str(response)
 
-        # 6. 提取来源
+        # 5. 提取来源
         sources = _extract_sources(docs)
 
         result = {
@@ -372,136 +438,16 @@ def query_strict_rag(
             "success": True,
         }
 
-        # 7. 降级标记
-        if degraded or any(doc.metadata.get("degraded") for doc in docs):
+        # 6. 降级标记
+        if _is_degraded_result(degraded, docs):
             result["degraded"] = True
-            result["degradation_notice"] = "向量检索服务暂时不可用，结果由关键词检索提供，相关性可能低于正常水平"
+            result["degradation_notice"] = KEYWORD_DEGRADATION_NOTICE
 
         logger.info("严格 RAG 查询完成")
         return result
 
     except Exception:
         logger.exception("严格 RAG 查询失败")
-        raise
-
-
-async def aquery_strict_rag(
-    retriever: BaseRetriever,
-    query: str,
-    model: Any | None = None,
-    k: int = 4,
-    use_hyde: bool = True,
-    collection_name: str = "",
-) -> dict[str, Any]:
-    """
-    严格 RAG 查询（异步）
-
-    Args:
-        retriever: 向量检索器
-        query: 用户查询
-        model: LLM 模型
-        k: 返回文档数量
-        use_hyde: 是否启用 HyDE 查询改写，默认 True
-        collection_name: 知识库 collection 名称，用于检索降级
-
-    Returns:
-        包含 answer、sources、retrieved_docs 的字典
-    """
-    from Django_xm.apps.knowledge.services.retrieval_service import (
-        _is_embedding_error,
-        _keyword_search_fallback,
-        _record_degradation_metric,
-    )
-
-    logger.info(f"异步严格 RAG 查询: {query[:50]}...")
-
-    try:
-        # 0. HyDE 查询改写
-        retrieval_query = query
-        if use_hyde:
-            llm_for_hyde = None
-            if model is not None and isinstance(model, BaseChatModel):
-                llm_for_hyde = model
-            retrieval_query = await _hyde_rewrite_query(query, llm=llm_for_hyde)
-            if retrieval_query != query:
-                logger.info(f"HyDE 改写: '{query[:50]}...' -> '{retrieval_query[:50]}...'")
-            else:
-                logger.info("HyDE 改写未生效，使用原始查询")
-
-        # 1. 检索（使用改写后的查询），通过 Pipeline 执行初始检索
-        degraded = False
-        try:
-            from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
-            pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-            docs = pipeline.retrieve_documents_from_retriever(
-                retriever=retriever, query=retrieval_query, vector_store=None
-            )
-        except Exception as e:
-            if _is_embedding_error(e):
-                logger.warning(f"向量检索失败，降级到全文关键词检索: {e}")
-                if collection_name:
-                    _record_degradation_metric(collection_name, e)
-                docs = await asyncio.to_thread(_keyword_search_fallback, query, collection_name, k)
-                degraded = True
-            else:
-                raise
-
-        logger.info(f"检索到 {len(docs)} 个文档{' (降级模式)' if degraded else ''}")
-
-        # 2. 无检索结果时，加载知识库全量文档走统一降级管道
-        if not docs:
-            from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline, load_kb_documents
-
-            if collection_name:
-                kb_docs, kb_tokens = await asyncio.to_thread(load_kb_documents, [collection_name])
-            else:
-                kb_docs, kb_tokens = [], 0
-            if kb_docs:
-                pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-                answer = await asyncio.to_thread(pipeline.search, query, kb_docs, kb_tokens)
-                degraded = True
-                logger.info("异步 RAG 查询无检索结果，已走知识库降级管道")
-            else:
-                answer = "根据知识库中的资料，未找到与您问题相关的信息。"
-            result = {"answer": answer, "sources": [], "retrieved_docs": [], "success": True}
-            if degraded:
-                result["degraded"] = True
-                result["degradation_notice"] = "向量检索未命中，结果由知识库全文/降级检索提供"
-            logger.info("严格 RAG 查询完成（无检索结果，走知识库降级）")
-            return result
-
-        # 3. 构建上下文
-        context = _format_docs(docs)
-
-        # 4. 构建 prompt（使用原始查询）
-        prompt_text = STRICT_RAG_QA_PROMPT.format(context=context, question=query)
-
-        # 5. 调用 LLM（_resolve_chat_model 已内置 fallback，model=None 时自动读 SystemConfig）
-        llm = _resolve_chat_model(model, streaming=True)
-
-        response = await llm.ainvoke([HumanMessage(content=prompt_text)])
-        answer = response.content if hasattr(response, "content") else str(response)
-
-        # 6. 提取来源
-        sources = _extract_sources(docs)
-
-        result = {
-            "answer": answer,
-            "sources": sources,
-            "retrieved_docs": docs,
-            "success": True,
-        }
-
-        # 7. 降级标记
-        if degraded or any(doc.metadata.get("degraded") for doc in docs):
-            result["degraded"] = True
-            result["degradation_notice"] = "向量检索服务暂时不可用，结果由关键词检索提供，相关性可能低于正常水平"
-
-        logger.info("异步严格 RAG 查询完成")
-        return result
-
-    except Exception:
-        logger.exception("异步严格 RAG 查询失败")
         raise
 
 
@@ -533,76 +479,33 @@ async def astream_strict_rag(
     Yields:
         事件字典，type 为 "chunk"（内容片段）、"sources"（来源信息）、"degradation"（降级提示）、"error"（错误）
     """
-    from Django_xm.apps.knowledge.services.retrieval_service import (
-        _is_embedding_error,
-        _keyword_search_fallback,
-        _record_degradation_metric,
-    )
-
     logger.info(f"严格 RAG 流式查询: {query[:50]}...")
 
     try:
         # 0. HyDE 查询改写
-        retrieval_query = query
         if use_hyde:
             yield {"type": "heartbeat", "message": "正在改写查询..."}
-            llm_for_hyde = None
-            if model is not None and isinstance(model, BaseChatModel):
-                llm_for_hyde = model
-            retrieval_query = await _hyde_rewrite_query(query, llm=llm_for_hyde)
-            if retrieval_query != query:
-                logger.info(f"HyDE 改写: '{query[:50]}...' -> '{retrieval_query[:50]}...'")
-            else:
-                logger.info("HyDE 改写未生效，使用原始查询")
+        retrieval_query = await _amaybe_rewrite_query(query, model, use_hyde)
 
         # 1. 检索（非流式，必须先完成，使用改写后的查询），通过 Pipeline 执行初始检索
         yield {"type": "heartbeat", "message": "正在检索文档..."}
-        degraded = False
-        try:
-            from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
-            pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-            docs = pipeline.retrieve_documents_from_retriever(
-                retriever=retriever, query=retrieval_query, vector_store=None
-            )
-        except Exception as e:
-            if _is_embedding_error(e):
-                logger.warning(f"向量检索失败，降级到全文关键词检索: {e}")
-                if collection_name:
-                    _record_degradation_metric(collection_name, e)
-                docs = await asyncio.to_thread(_keyword_search_fallback, query, collection_name, k)
-                degraded = True
-            else:
-                raise
-
+        docs, degraded = await _aretrieve_with_fallback(retriever, retrieval_query, query, k, collection_name)
         logger.info(f"检索到 {len(docs)} 个文档{' (降级模式)' if degraded else ''}")
 
         # 2. 无检索结果时，加载知识库全量文档走统一降级管道
         if not docs:
-            from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline, load_kb_documents
-
-            if collection_name:
-                kb_docs, kb_tokens = await asyncio.to_thread(load_kb_documents, [collection_name])
-            else:
-                kb_docs, kb_tokens = [], 0
-            if kb_docs:
-                pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-                degraded_text = await asyncio.to_thread(pipeline.search, query, kb_docs, kb_tokens)
-                degraded = True
-            else:
-                degraded_text = "根据知识库中的资料，未找到与您问题相关的信息。"
+            degraded_text, used_kb = await _ahandle_empty_result(query, collection_name)
+            degraded = degraded or used_kb
             yield {"type": "chunk", "content": degraded_text}
             if degraded:
-                yield {"type": "degradation", "message": "向量检索未命中，结果由知识库全文/降级检索提供"}
+                yield {"type": "degradation", "message": KB_DEGRADATION_NOTICE}
             logger.info("严格 RAG 流式查询完成（无检索结果，走知识库降级）")
             return
 
-        # 3. 构建上下文
-        context = _format_docs(docs)
+        # 3. 构建上下文与 prompt（使用原始查询）
+        prompt_text = STRICT_RAG_QA_PROMPT.format(context=_format_docs(docs), question=query)
 
-        # 4. 构建 prompt（使用原始查询）
-        prompt_text = STRICT_RAG_QA_PROMPT.format(context=context, question=query)
-
-        # 5. 流式调用 LLM（_resolve_chat_model 已内置 fallback，model=None 时自动读 SystemConfig）
+        # 4. 流式调用 LLM（_resolve_chat_model 已内置 fallback，model=None 时自动读 SystemConfig）
         yield {"type": "heartbeat", "message": "正在生成回答..."}
         llm = _resolve_chat_model(model, streaming=True)
 
@@ -612,23 +515,20 @@ async def astream_strict_rag(
                 full_response += chunk.content
                 yield {"type": "chunk", "content": chunk.content}
 
-        # 6. 发送降级提示
-        if degraded or any(doc.metadata.get("degraded") for doc in docs):
-            yield {
-                "type": "degradation",
-                "message": "向量检索服务暂时不可用，结果由关键词检索提供，相关性可能低于正常水平",
-            }
+        # 5. 发送降级提示
+        if _is_degraded_result(degraded, docs):
+            yield {"type": "degradation", "message": KEYWORD_DEGRADATION_NOTICE}
 
-        # 7. 发送来源信息
+        # 6. 发送来源信息
         sources = _extract_sources(docs)
         if sources:
             yield {"type": "sources", "data": sources}
 
         logger.info(f"严格 RAG 流式查询完成, total_len={len(full_response)}")
 
-    except Exception as e:
+    except Exception:
         logger.exception("严格 RAG 流式查询失败")
-        yield {"type": "error", "message": str(e)}
+        yield {"type": "error", "message": "严格 RAG 查询失败，请稍后重试"}
 
 
 def stream_strict_rag(
@@ -661,76 +561,33 @@ def stream_strict_rag(
     Yields:
         事件字典，type 为 "chunk"（内容片段）、"sources"（来源信息）、"degradation"（降级提示）、"error"（错误）
     """
-    from Django_xm.apps.knowledge.services.retrieval_service import (
-        _is_embedding_error,
-        _keyword_search_fallback,
-        _record_degradation_metric,
-    )
-
     logger.info(f"严格 RAG 同步流式查询: {query[:50]}...")
 
     try:
         # 0. HyDE 查询改写
-        retrieval_query = query
         if use_hyde:
             yield {"type": "heartbeat", "message": "正在改写查询..."}
-            llm_for_hyde = None
-            if model is not None and isinstance(model, BaseChatModel):
-                llm_for_hyde = model
-            retrieval_query = _hyde_rewrite_query_sync(query, llm=llm_for_hyde)
-            if retrieval_query != query:
-                logger.info(f"HyDE 改写: '{query[:50]}...' -> '{retrieval_query[:50]}...'")
-            else:
-                logger.info("HyDE 改写未生效，使用原始查询")
+        retrieval_query = _maybe_rewrite_query(query, model, use_hyde)
 
         # 1. 检索（同步，使用改写后的查询），通过 Pipeline 执行初始检索
         yield {"type": "heartbeat", "message": "正在检索文档..."}
-        degraded = False
-        try:
-            from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline
-            pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-            docs = pipeline.retrieve_documents_from_retriever(
-                retriever=retriever, query=retrieval_query, vector_store=None
-            )
-        except Exception as e:
-            if _is_embedding_error(e):
-                logger.warning(f"向量检索失败，降级到全文关键词检索: {e}")
-                if collection_name:
-                    _record_degradation_metric(collection_name, e)
-                docs = _keyword_search_fallback(query, collection_name, k=k)
-                degraded = True
-            else:
-                raise
-
+        docs, degraded = _retrieve_with_fallback(retriever, retrieval_query, query, k, collection_name)
         logger.info(f"检索到 {len(docs)} 个文档{' (降级模式)' if degraded else ''}")
 
         # 2. 无检索结果时，加载知识库全量文档走统一降级管道
         if not docs:
-            from Django_xm.apps.knowledge.services.rag_retrieval import UnifiedRagPipeline, load_kb_documents
-
-            if collection_name:
-                kb_docs, kb_tokens = load_kb_documents([collection_name])
-            else:
-                kb_docs, kb_tokens = [], 0
-            if kb_docs:
-                pipeline = UnifiedRagPipeline(scenario="knowledge_base")
-                degraded_text = pipeline.search(query, kb_docs, kb_tokens)
-                degraded = True
-            else:
-                degraded_text = "根据知识库中的资料，未找到与您问题相关的信息。"
+            degraded_text, used_kb = _handle_empty_result(query, collection_name)
+            degraded = degraded or used_kb
             yield {"type": "chunk", "content": degraded_text}
             if degraded:
-                yield {"type": "degradation", "message": "向量检索未命中，结果由知识库全文/降级检索提供"}
+                yield {"type": "degradation", "message": KB_DEGRADATION_NOTICE}
             logger.info("严格 RAG 同步流式查询完成（无检索结果，走知识库降级）")
             return
 
-        # 3. 构建上下文
-        context = _format_docs(docs)
+        # 3. 构建上下文与 prompt（使用原始查询）
+        prompt_text = STRICT_RAG_QA_PROMPT.format(context=_format_docs(docs), question=query)
 
-        # 4. 构建 prompt（使用原始查询）
-        prompt_text = STRICT_RAG_QA_PROMPT.format(context=context, question=query)
-
-        # 5. 流式调用 LLM（_resolve_chat_model 已内置 fallback，model=None 时自动读 SystemConfig）
+        # 4. 流式调用 LLM（_resolve_chat_model 已内置 fallback，model=None 时自动读 SystemConfig）
         yield {"type": "heartbeat", "message": "正在生成回答..."}
         llm = _resolve_chat_model(model, streaming=True)
 
@@ -740,20 +597,17 @@ def stream_strict_rag(
                 full_response += chunk.content
                 yield {"type": "chunk", "content": chunk.content}
 
-        # 6. 发送降级提示
-        if degraded or any(doc.metadata.get("degraded") for doc in docs):
-            yield {
-                "type": "degradation",
-                "message": "向量检索服务暂时不可用，结果由关键词检索提供，相关性可能低于正常水平",
-            }
+        # 5. 发送降级提示
+        if _is_degraded_result(degraded, docs):
+            yield {"type": "degradation", "message": KEYWORD_DEGRADATION_NOTICE}
 
-        # 7. 发送来源信息
+        # 6. 发送来源信息
         sources = _extract_sources(docs)
         if sources:
             yield {"type": "sources", "data": sources}
 
         logger.info(f"严格 RAG 同步流式查询完成, total_len={len(full_response)}")
 
-    except Exception as e:
+    except Exception:
         logger.exception("严格 RAG 同步流式查询失败")
-        yield {"type": "error", "message": str(e)}
+        yield {"type": "error", "message": "严格 RAG 查询失败，请稍后重试"}

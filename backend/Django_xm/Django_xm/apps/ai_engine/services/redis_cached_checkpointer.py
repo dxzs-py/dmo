@@ -21,7 +21,7 @@ from typing import Any
 from langgraph.checkpoint.base import CheckpointTuple
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

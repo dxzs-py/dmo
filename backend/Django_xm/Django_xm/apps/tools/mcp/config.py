@@ -26,7 +26,7 @@ import json
 import os
 from typing import Any
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

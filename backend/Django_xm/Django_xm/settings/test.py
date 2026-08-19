@@ -1,18 +1,18 @@
 """Django settings for Django_xm project - 测试环境配置
 
 继承 base.py 公共配置，覆盖测试环境差异项：
-- SQLite in-memory 数据库：快速、无外部依赖（与现有测试 docstring 描述一致）
-- LocMemCache：进程内字典缓存，避免 Redis 依赖（需真实 Redis 的测试用 redis_client fixture，db=15）
+- PostgreSQL 数据库：直接继承 base.py 配置（docker 容器），贴合实际运行环境；
+  Django 测试运行器自动创建 test_<DB_NAME> 临时库并在结束后销毁，不触碰开发库数据
+- LocMemCache：进程内字典缓存，避免 Redis 依赖
 - InMemoryChannelLayer：Channels 内存传输层，避免 Redis channel layer 依赖
-- Celery EAGER 模式：任务同步执行，便于测试断言
+- Celery EAGER 模式：任务同步执行，便于断言
 - MD5 密码哈希：加速测试（测试不关注密码哈希安全性）
 - DEBUG=False：贴近生产行为
 
 运行方式:
     cd backend/Django_xm
     conda activate langchain_xm
-    python -m pytest                            # 全量测试
-    python -m pytest -m unit                    # 仅单元测试
+    python manage.py test Django_xm.apps --settings=Django_xm.settings.test
     python manage.py check --settings=Django_xm.settings.test
 """
 
@@ -31,20 +31,12 @@ EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 # ── ALLOWED_HOSTS：测试环境放行所有 Host（Django 测试客户端使用 testserver）──
 ALLOWED_HOSTS = ["*"]
 
-# ── 数据库：SQLite in-memory（快速测试，无外部依赖）──────────────
-# base.py 的 PostgreSQL 配置被覆盖；base.py 中对 DB_USER/PASSWORD/NAME 的校验
-# 已在 import 时通过 .env 完成，此处覆盖 DATABASES 不影响校验。
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": ":memory:",
-        # SQLite 默认不支持事务级外键约束，关闭以匹配测试期望
-        "OPTIONS": {},
-    }
-}
+# ── 数据库：PostgreSQL（继承 base.py，贴合实际运行环境）──────────
+# 不覆盖 DATABASES：直接使用 base.py 的 PG 配置（docker 容器）。
+# Django 测试运行器自动创建 test_<DB_NAME> 临时库，测试结束后销毁，不影响开发库；
+# PG 专属迁移（to_tsvector / GIN 索引等）可正常执行，避免 SQLite 方言差异导致的假绿。
 
 # ── 缓存：LocMemCache（无 Redis 依赖，进程内字典）────────────────
-# 需要真实 Redis 的测试使用 conftest.py 的 redis_client fixture（db=15）
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
@@ -57,7 +49,6 @@ CACHES = {
 }
 
 # ── Channels：in-memory channel layer（无 Redis 依赖）────────────
-# 测试中需要真实 Redis pub/sub 的场景用 redis_client fixture + mock channel layer
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels.layers.InMemoryChannelLayer",
@@ -70,8 +61,7 @@ CELERY_TASK_EAGER_PROPAGATES = True
 CELERY_BROKER_URL = "memory://"
 CELERY_RESULT_BACKEND = "cache+memory://"
 # 注意：不覆盖 CELERY_BEAT_SCHEDULE——beat 调度条目仅为配置字典，
-# 测试中无 beat worker 运行（CELERY_TASK_ALWAYS_EAGER=True）不会实际执行，
-# 清空会导致 test_celery_idempotency 中审批清理调度断言失败。
+# 测试中无 beat worker 运行（CELERY_TASK_ALWAYS_EAGER=True）不会实际执行。
 
 # ── 密码哈希：MD5（加速测试，安全性非测试关注）──────────────────
 PASSWORD_HASHERS = [
@@ -157,6 +147,3 @@ SANDBOX_CONFIG = {**SANDBOX_CONFIG, "ENABLED": False}
 
 # ── 静态文件：测试环境使用临时目录（避免污染项目目录）──────────
 STATIC_ROOT = BASE_DIR / "staticfiles_test"
-
-# ── 测试专用标志位（供 conftest/fixtures 识别测试环境）──────────
-IS_TEST_ENV = True

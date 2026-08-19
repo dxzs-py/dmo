@@ -1,33 +1,15 @@
 import { ref, watch } from 'vue'
+import { useDebounceFn } from '@vueuse/core'
 import { useUserStore } from '@/stores/user'
 import settings from '@/config/settings'
 import { logger } from '@/utils/logger'
 import { useSnapshotSync, useSnapshotSyncByTask } from '@/composables/useSnapshotSync'
-import { toSnakeCase, toCamelCase } from '@/utils/sessionTransformers.js'
+import { toSnakeCase } from '@/utils/sessionTransformers.js'
+import { parseProtocolEvent } from '@/utils/sse.js'
 import {
   SNAPSHOT_TRIGGER_EVENTS,
   RealtimeConnectionStatus,
 } from '@/types/realtimeEvents'
-
-/**
- * 简单防抖辅助函数
- * @param {Function} fn
- * @param {number} delay
- * @returns {Function}
- */
-function debounce(fn, delay = 200) {
-  /** @type {number | null} */
-  let timer = null
-  return (...args) => {
-    if (timer) {
-      clearTimeout(timer)
-    }
-    timer = window.setTimeout(() => {
-      timer = null
-      fn(...args)
-    }, delay)
-  }
-}
 
 /**
  * 惰性加载 sync store 模块（消除模块加载期循环依赖，SubTask 11.1）
@@ -255,7 +237,8 @@ function createRealtimeSync() {
     }
   }
 
-  const saveLastSeqDebounced = debounce(persistLastSeq, 200)
+  // rd-08：防抖统一 @vueuse useDebounceFn（trailing 语义与原内联 debounce 等价）
+  const saveLastSeqDebounced = useDebounceFn(persistLastSeq, 200)
 
   /**
    * 推进指定通道的 lastSeq（事件级去重单一权威的唯一写入入口）
@@ -938,17 +921,11 @@ function createRealtimeSync() {
     }
 
     // === 命名边界：snake_case → camelCase ===
-    // 对整体数据递归转换，然后还原 type 与 subagent_thread_id 为原始 snake_case
-    // （协议路由标识符，如 "session_created"、"tool_result" 非业务数据；
-    //   subagent_thread_id 为子代理 SSE 定向推送路由字段，不参与转换）
-    const originalType = rawData.type
-    const data = toCamelCase(rawData)
-    if (originalType) {
-      data.type = originalType
-    }
-    if (rawData.subagent_thread_id) {
-      data.subagent_thread_id = rawData.subagent_thread_id
-    }
+    // parseProtocolEvent 统一入口（utils/sse.js）：整体 toCamelCase 递归转换后，
+    // 还原 type 与顶层 subagent_thread_id 为原始 snake_case（协议路由标识符，
+    // 如 "session_created"、"tool_result" 非业务数据；subagent_thread_id 为
+    // 子代理 SSE 定向推送路由字段，不参与转换）
+    const data = parseProtocolEvent(rawData)
 
     // 处理服务端历史事件回放回包（支持分块）
     if (data.type === 'replay' && Array.isArray(data.events)) {

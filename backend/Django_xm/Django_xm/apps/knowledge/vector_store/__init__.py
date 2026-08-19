@@ -1,6 +1,6 @@
 from langchain_core.vectorstores import VectorStore
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

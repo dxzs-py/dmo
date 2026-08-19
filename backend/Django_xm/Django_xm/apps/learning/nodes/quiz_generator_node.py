@@ -7,7 +7,7 @@ from typing import Any
 from django.utils import timezone
 from pydantic import BaseModel, Field
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 from ..services._model_helper import get_structured_model_from_state
 from ..services.state import StudyFlowState

@@ -73,26 +73,3 @@ class KnowledgeGraphDetailResponseSerializer(serializers.Serializer):
     relations = RelationSerializer(many=True)
     entity_count = serializers.IntegerField()
     relation_count = serializers.IntegerField()
-
-
-class PromptCacheSerializer(serializers.ModelSerializer):
-    """提示缓存序列化器"""
-
-    class Meta:
-        from Django_xm.apps.context_manager.models import PromptCache
-        model = PromptCache
-        fields = [
-            "id",
-            "name",
-            "cache_type",
-            "content",
-            "variables",
-            "description",
-            "is_active",
-            "sort_order",
-            "token_count",
-            "usage_count",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = ["id", "token_count", "usage_count", "created_at", "updated_at"]

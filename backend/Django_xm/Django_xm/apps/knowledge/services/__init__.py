@@ -67,19 +67,13 @@ from .splitters import (
     split_documents,
 )
 from .strict_rag_chain import (
-    STRICT_RAG_QA_PROMPT,
-    STRICT_RAG_SYSTEM_PROMPT,
-    aquery_strict_rag,
     astream_strict_rag,
-    create_strict_rag_chain,
     query_strict_rag,
     stream_strict_rag,
 )
 
 __all__ = [
     "EMBEDDING_CONFIGS",
-    "STRICT_RAG_QA_PROMPT",
-    "STRICT_RAG_SYSTEM_PROMPT",
     "CachedEmbeddings",
     "GenerationMetrics",
     "IndexManager",
@@ -88,7 +82,6 @@ __all__ = [
     "RetrievalMetrics",
     "SearchType",
     "SplitterType",
-    "aquery_strict_rag",
     "astream_strict_rag",
     "create_advanced_retriever",
     "create_knowledge_base",
@@ -98,7 +91,6 @@ __all__ = [
     "create_reranking_retriever",
     "create_retriever",
     "create_retriever_tool",
-    "create_strict_rag_chain",
     "delete_document",
     "delete_knowledge_base",
     "enhance_chunk_metadata",

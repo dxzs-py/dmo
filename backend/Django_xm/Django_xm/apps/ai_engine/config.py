@@ -92,7 +92,6 @@ class Settings(ProjectSettings):
         default={
             "base": ["context_management", "tool_injection", "guardrails", "rate_limit"],
             "deep_research": ["context_management", "tool_injection", "rate_limit"],
-            "learning": ["context_management", "rate_limit"],
         },
         description="各 Agent 类型的默认能力列表",
     )

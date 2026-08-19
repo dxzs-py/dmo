@@ -8,7 +8,7 @@ from langgraph.graph import END, StateGraph
 
 from Django_xm.apps.ai_engine.config import settings
 from Django_xm.apps.ai_engine.services.checkpointer_factory import get_checkpointer
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 from ..nodes import feedback_node, grading_node, planner_node, quiz_generator_node, retrieval_node
 from .resilience import astream_with_resilience, invoke_with_resilience

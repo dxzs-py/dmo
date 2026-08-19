@@ -5,7 +5,7 @@
 from datetime import UTC, datetime
 from typing import Any
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 from ..services._model_helper import get_chat_model_from_state
 from ..services.state import StudyFlowState

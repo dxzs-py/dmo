@@ -206,10 +206,10 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
+import { ref, reactive, computed, watch, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { workflowAPI } from '@/api/workflow'
 import { readSSEStream } from '../utils/sse'
-import { toCamelCase } from '@/utils/sessionTransformers'
+import { extractSSEError } from '../utils/apiErrorHandler'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import TaskList from '../components/chat/TaskList.vue'
@@ -228,14 +228,16 @@ import { formatDate } from '../utils/format'
 import { logger } from '../utils/logger'
 import { useTaskRealtimeSync } from '@/composables/useTaskRealtimeSync'
 import { useTaskListRealtimeSync } from '@/composables/useTaskListRealtimeSync'
+import { useApiTask } from '@/composables/useApiTask'
 import { useWorkflowStore } from '@/stores/workflow'
 import { LearningStep, LearningTaskStatus, LearningQuestionType } from '@/types'
 
 const workflowStore = useWorkflowStore()
 const modelStore = useModelStore()
 
+// isLoading（startWorkflow）与 isContinuing（continuePractice）维持手动管理：
+// 二者与 SSE 流式发起时序强耦合（见 cq-11 盘点表），不迁 useApiTask
 const isLoading = ref(false)
-const isSubmitting = ref(false)
 const isContinuing = ref(false)
 const execution = ref(null)
 const showDetail = ref(false)
@@ -245,7 +247,6 @@ const historyRef = ref(null)
 const fileBrowserRef = ref(null)
 const currentStepMessage = ref('')
 const autoLoadContent = ref(null)
-const autoLoadLoading = ref(false)
 let pollingTimer = null
 let sseAbortController = null
 let sseReaderActive = false
@@ -483,18 +484,8 @@ const _runSSE = async (requestFn) => {
     const response = await requestFn()
 
     if (!response.ok) {
-      let errorMsg = `HTTP ${response.status}`
-      try {
-        const errBody = await response.text()
-        const sseMatch = errBody.match(/data:\s*(.*)/)
-        if (sseMatch) {
-          const parsed = JSON.parse(sseMatch[1])
-          errorMsg = parsed.message || parsed.error || errorMsg
-        }
-      } catch {
-        // SSE 错误体可能不是 JSON，解析失败时保留默认 errorMsg
-      }
-      throw new Error(errorMsg)
+      // rd-06：错误响应解析统一到 apiErrorHandler.extractSSEError
+      throw await extractSSEError(response)
     }
 
     await readSSEStream(response, (data) => {
@@ -536,18 +527,8 @@ const connectSSE = async (threadId) => {
     const response = await workflowAPI.streamFetchRaw(threadId)
 
     if (!response.ok) {
-      let errorMsg = `HTTP ${response.status}`
-      try {
-        const errBody = await response.text()
-        const sseMatch = errBody.match(/data:\s*(.*)/)
-        if (sseMatch) {
-          const parsed = JSON.parse(sseMatch[1])
-          errorMsg = parsed.message || parsed.error || errorMsg
-        }
-      } catch {
-        // SSE 错误体可能不是 JSON，解析失败时保留默认 errorMsg
-      }
-      throw new Error(errorMsg)
+      // rd-06：错误响应解析统一到 apiErrorHandler.extractSSEError
+      throw await extractSSEError(response)
     }
 
     await readSSEStream(response, (data) => {
@@ -578,14 +559,10 @@ const connectSSE = async (threadId) => {
   }
 }
 
-const handleSSEEvent = (data) => {
-  // 命名边界：统一解析——对 sseData 整体调用 toCamelCase 递归转换（含 data 嵌套），
-  // 然后将 type 还原为后端原始 snake_case（协议路由标识符，非业务数据）。
-  // 原散落的 data.data 局部转换（toCamelCase(data.data)）收敛于此一次完成。
-  const sseData = toCamelCase(data)
-  if (data && typeof data === 'object') {
-    sseData.type = data.type
-  }
+const handleSSEEvent = (sseData) => {
+  // 命名边界：readSSEStream 已统一调用 parseProtocolEvent 完成转换
+  // （toCamelCase 递归转换含 data 嵌套 + type 还原为后端原始 snake_case
+  // 协议路由标识符），消费方只拿已转换对象。
 
   // SSE 事件格式：{ type: 'workflow_*', data: { ... } }
   // 与 task WebSocket 频道的 workflow_* 事件类型对齐，便于双路径统一处理
@@ -767,16 +744,8 @@ watch(workflowStateFromStore, (newState, oldState) => {
   )
 })
 
-const submitAnswers = async () => {
-  const hasEmpty = execution.value.quiz.questions.some(q => !answersForm[q.id])
-  if (hasEmpty) {
-    ElMessage.warning('请完成所有题目')
-    return
-  }
-
-  isSubmitting.value = true
-
-  try {
+const { run: runSubmitAnswers, loading: isSubmitting } = useApiTask(
+  async () => {
     const response = await workflowAPI.submitAnswers(execution.value.threadId, answersForm)
     const responseData = response.data.data || response.data
     execution.value = { ...execution.value, ...responseData }
@@ -801,13 +770,25 @@ const submitAnswers = async () => {
         historyRef.value?.loadAll?.()
       })
     }
-  } catch (error) {
-    logger.error('提交答案失败:', error)
-    const msg = error.response?.data?.message || error.message || '提交答案失败，请稍后重试'
-    ElMessage.error(msg)
-  } finally {
-    isSubmitting.value = false
+  },
+  {
+    showErrorToast: false,
+    onError: (error) => {
+      logger.error('提交答案失败:', error)
+      const msg = error.response?.data?.message || error.message || '提交答案失败，请稍后重试'
+      ElMessage.error(msg)
+    },
   }
+)
+
+const submitAnswers = async () => {
+  const hasEmpty = execution.value.quiz.questions.some(q => !answersForm[q.id])
+  if (hasEmpty) {
+    ElMessage.warning('请完成所有题目')
+    return
+  }
+
+  await runSubmitAnswers()
 }
 
 /** 继续练习（流式）：快速创建新线程，SSE 逐步生成新一轮题目（与启动一致体验，不阻塞浏览器） */
@@ -841,6 +822,21 @@ const continuePractice = async () => {
   }
 }
 
+const { run: runRefreshScoreState } = useApiTask(
+  async () => {
+    const resp = await workflowAPI.getState(execution.value.threadId)
+    const fresh = resp.data?.data || resp.data
+    if (fresh) {
+      execution.value = { ...execution.value, ...fresh }
+    }
+  },
+  {
+    loading: false,
+    showErrorToast: false,
+    onError: (error) => logger.warn('刷新评分详情失败:', error),
+  }
+)
+
 /** 单题修改重新评分后，同步总分与评分详情到 execution（WorkflowQuestionHistory 触发） */
 const handleScoreUpdated = async (attemptTotalScore) => {
   if (!execution.value) return
@@ -848,15 +844,7 @@ const handleScoreUpdated = async (attemptTotalScore) => {
     execution.value.score = attemptTotalScore
   }
   // 重新拉取权威状态，同步 scoreDetails（答题详情区），避免与最新分数不一致
-  try {
-    const resp = await workflowAPI.getState(execution.value.threadId)
-    const fresh = resp.data?.data || resp.data
-    if (fresh) {
-      execution.value = { ...execution.value, ...fresh }
-    }
-  } catch (error) {
-    logger.warn('刷新评分详情失败:', error)
-  }
+  await runRefreshScoreState()
 }
 
 const resetWorkflow = () => {
@@ -874,10 +862,13 @@ const resetWorkflow = () => {
   closeSSE()
 }
 
-/** 自动查找并加载学习工作流生成的关键文件 */
-const _findKeyFile = async () => {
-  if (!execution.value?.threadId) return null
-  try {
+/**
+ * 自动查找学习工作流生成的关键文件
+ * 失败返回 undefined（useApiTask 失败语义），未找到返回 null，调用方按 falsy 兼容
+ */
+const { run: runFindKeyFile } = useApiTask(
+  async () => {
+    if (!execution.value?.threadId) return null
     const res = await workflowAPI.getFiles(execution.value.threadId)
     const data = res.data?.data || res.data
     const files = data?.files || data || []
@@ -895,29 +886,71 @@ const _findKeyFile = async () => {
     // 查找根目录下的 .txt 文件
     const rootNotes = files.filter(f => f.type === 'file' && f.name?.endsWith('.txt'))
     if (rootNotes.length > 0) return rootNotes[0].relativePath || rootNotes[0].name
-  } catch {
-    // 文件树不可用或未生成时静默跳过，交由调用方处理 null
+    return null
+  },
+  {
+    loading: false,
+    showErrorToast: false,
   }
-  return null
-}
+)
 
-const autoLoadKeyFile = async () => {
-  if (!execution.value?.threadId) return
-  autoLoadContent.value = null
-  autoLoadLoading.value = true
-  try {
-    const file = await _findKeyFile()
+const { run: runAutoLoadKeyFile, loading: autoLoadLoading } = useApiTask(
+  async () => {
+    const file = await runFindKeyFile()
     if (file) {
       const response = await workflowAPI.getFileContent(execution.value.threadId, file)
       const data = response.data?.data || response.data
       autoLoadContent.value = data?.content || data || ''
     }
-  } catch (error) {
-    logger.warn('自动加载学习资料失败:', error)
-  } finally {
-    autoLoadLoading.value = false
+  },
+  {
+    showErrorToast: false,
+    onError: (error) => logger.warn('自动加载学习资料失败:', error),
   }
+)
+
+/** 自动查找并加载学习工作流生成的关键文件 */
+const autoLoadKeyFile = () => {
+  if (!execution.value?.threadId) return
+  autoLoadContent.value = null
+  return runAutoLoadKeyFile()
 }
+
+const { run: runViewTaskRefresh } = useApiTask(
+  async (selectedTask) => {
+    const resp = await workflowAPI.getState(selectedTask.threadId)
+    const fresh = resp.data?.data || resp.data
+    if (fresh) {
+      execution.value = { ...selectedTask, ...fresh }
+      // fresh 可能补充 chat_session_id 字段，重新订阅（幂等：若已订阅同 task+session 则跳过）
+      subscribeRealtimeForTask(execution.value)
+      const freshActive = fresh.currentStep
+        && fresh.currentStep !== LearningStep.WAITING_FOR_ANSWERS
+        && fresh.currentStep !== LearningStep.END
+        && fresh.currentStep !== LearningStep.COMPLETED
+        && fresh.currentStep !== LearningStep.FAILED
+        && fresh.currentStep !== LearningStep.FEEDBACK_COMPLETED
+      if (freshActive) {
+        connectSSE(fresh.threadId)
+      } else {
+        // 已完成任务，自动加载关键文件（文件列表由 FileBrowser 自管理自动刷新）
+        nextTick(() => {
+          autoLoadKeyFile()
+        })
+      }
+      if (fresh.quiz && !Object.keys(answersForm).length) {
+        fresh.quiz.questions.forEach(q => {
+          answersForm[q.id] = ''
+        })
+      }
+    }
+  },
+  {
+    loading: false,
+    showErrorToast: false,
+    onError: (error) => logger.warn('获取工作流最新状态失败:', error),
+  }
+)
 
 const viewTask = async (selectedTask) => {
   closeSSE()
@@ -944,36 +977,7 @@ const viewTask = async (selectedTask) => {
   if (isActive && selectedTask.threadId) {
     connectSSE(selectedTask.threadId)
   } else if (selectedTask.threadId) {
-    try {
-      const resp = await workflowAPI.getState(selectedTask.threadId)
-      const fresh = resp.data?.data || resp.data
-      if (fresh) {
-        execution.value = { ...selectedTask, ...fresh }
-        // fresh 可能补充 chat_session_id 字段，重新订阅（幂等：若已订阅同 task+session 则跳过）
-        subscribeRealtimeForTask(execution.value)
-        const freshActive = fresh.currentStep
-          && fresh.currentStep !== LearningStep.WAITING_FOR_ANSWERS
-          && fresh.currentStep !== LearningStep.END
-          && fresh.currentStep !== LearningStep.COMPLETED
-          && fresh.currentStep !== LearningStep.FAILED
-          && fresh.currentStep !== LearningStep.FEEDBACK_COMPLETED
-        if (freshActive) {
-          connectSSE(fresh.threadId)
-        } else {
-          // 已完成任务，自动加载关键文件（文件列表由 FileBrowser 自管理自动刷新）
-          nextTick(() => {
-            autoLoadKeyFile()
-          })
-        }
-        if (fresh.quiz && !Object.keys(answersForm).length) {
-          fresh.quiz.questions.forEach(q => {
-            answersForm[q.id] = ''
-          })
-        }
-      }
-    } catch (e) {
-      logger.warn('获取工作流最新状态失败:', e)
-    }
+    await runViewTaskRefresh(selectedTask)
   }
 }
 
@@ -989,15 +993,9 @@ const deleteTask = () => {
   Object.keys(answersForm).forEach(key => delete answersForm[key])
 }
 
-// 首次挂载：注册任务列表实时订阅（user 频道 task_created/task_status_changed/task_deleted）。
-// 与 DeepResearchView 对齐使用 onMounted + onActivated 双钩子：keep-alive 缓存生效时
-// onActivated 在首次挂载后同样触发，双钩子幂等覆盖"重新挂载/缓存恢复"两种路径。
-onMounted(() => {
-  taskListSync.start()
-})
-
-// keep-alive 激活时：恢复 WebSocket 订阅（onDeactivated 时已清理）
-// 首次挂载时 onActivated 也会触发，此时 execution.value 通常为 null，subscribeRealtimeForTask 会安全跳过
+// keep-alive 首挂 mounted→activated 依次触发，初始化统一收敛 onActivated 单一入口
+// （此前双钩子同帧双触发 taskListSync.start，其内置兜底刷新会双发任务列表请求）。
+// 激活时恢复 WebSocket 订阅（onDeactivated 时已清理；首挂 execution 为 null 安全跳过）
 onActivated(() => {
   taskListSync.start()
   if (execution.value && execution.value.threadId) {

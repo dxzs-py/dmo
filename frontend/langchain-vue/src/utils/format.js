@@ -1,7 +1,3 @@
-export function mergeClasses(...classes) {
-  return classes.filter(Boolean).join(' ')
-}
-
 export function formatFileSize(bytes) {
   if (bytes === 0) return '0 B'
   const k = 1024
@@ -37,14 +33,6 @@ export function truncateText(text, maxLength = 50) {
   if (!text) return ''
   if (text.length <= maxLength) return text
   return text.slice(0, maxLength) + '...'
-}
-
-export function truncateMiddle(str, maxLength = 50) {
-  if (!str || str.length <= maxLength) return str
-  const charsToShow = maxLength - 3
-  const prefixLength = Math.ceil(charsToShow / 2)
-  const suffixLength = Math.floor(charsToShow / 2)
-  return str.substring(0, prefixLength) + '...' + str.substring(str.length - suffixLength)
 }
 
 export function getModeLabel(mode) {

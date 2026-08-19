@@ -13,7 +13,7 @@ from langgraph.graph import END, StateGraph
 
 from Django_xm.apps.ai_engine.services.checkpointer_factory import get_checkpointer
 from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.common.event_schema import EventSource, EventType
 from Django_xm.common.realtime_events import publish_event_sync
 

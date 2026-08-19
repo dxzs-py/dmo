@@ -28,7 +28,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import SystemMessage
 from langchain_core.runnables import RunnableConfig
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 from ..config import HELPER_MODEL_PRIORITY, get_model_presets, settings
 from ..providers import (

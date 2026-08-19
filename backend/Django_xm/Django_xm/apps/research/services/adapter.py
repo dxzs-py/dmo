@@ -34,7 +34,7 @@ from Django_xm.apps.ai_engine.services.thinking import extract_thinking_content
 #   写入 state）；事件路由与内容累计唯一依据为 subagent_thread_id（spec MODIFIED）。
 # - 子 agent 工具事件：SubAgentToolEventMiddleware 从 configurable 读取本模块注入的
 #   _on_tool_event 回调并转发到父 SSE 流。
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.apps.research.services.patches import (
     _DeepAgentExecutor,
     _extract_ai_response,

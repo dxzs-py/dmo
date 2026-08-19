@@ -63,6 +63,6 @@ class SuggestionsView(APIView):
 
             return success_response(data={"suggestions": suggestions})
 
-        except Exception as e:
+        except Exception:
             logger.exception("生成建议失败")
-            return error_response(code=ErrorCode.SERVER_ERROR, message=str(e))
+            return error_response(code=ErrorCode.SERVER_ERROR, message="生成建议失败")

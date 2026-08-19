@@ -12,7 +12,6 @@ from rest_framework import status
 from rest_framework.decorators import api_view, renderer_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import BaseRenderer
-from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from Django_xm.apps.cache_manager.services.cache_service import (
@@ -120,10 +119,10 @@ class RAGQueryView(APIView):
                 response_data["degradation_notice"] = result.get("degradation_notice", "")
             return success_response(data=response_data, message="操作成功")
 
-        except Exception as e:
+        except Exception:
             logger.exception("查询失败")
             return error_response(
-                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                code=ErrorCode.SERVER_ERROR, message="查询失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 
@@ -180,10 +179,10 @@ class RAGSearchView(APIView):
 
             return success_response(data=SearchResultSerializer(search_results, many=True).data, message="操作成功")
 
-        except Exception as e:
+        except Exception:
             logger.exception("检索失败")
             return error_response(
-                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                code=ErrorCode.SERVER_ERROR, message="检索失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 
@@ -258,12 +257,14 @@ def rag_query_stream(request):
 
                 logger.info(f"[RAG Chain] 流式生成完成, total_len={len(full_response)}")
                 yield f"data: {json.dumps({'type': 'end', 'message': '生成完成'})}\n\n"
-            except Exception as e:
+            except Exception:
                 logger.exception("[RAG Chain] 流式生成异常")
-                yield sse_error_event(code="50001", message=str(e))
+                yield sse_error_event(code="50001", message="流式生成失败，请稍后重试")
 
         return sse_response(event_stream())
 
-    except Exception as e:
+    except Exception:
         logger.exception("流式查询失败")
-        return Response({"code": 500, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return error_response(
+            code=ErrorCode.SERVER_ERROR, message="流式查询失败", http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

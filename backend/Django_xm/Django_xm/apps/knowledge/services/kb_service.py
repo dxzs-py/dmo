@@ -17,6 +17,7 @@ from Django_xm.apps.cache_manager.services.cache_service import (
 )
 from Django_xm.apps.knowledge.config import settings as app_cfg
 
+from ..exceptions import KnowledgeBaseAlreadyExistsError
 from ..models import Document, DocumentIndex
 from ..views_utils import get_document_type, get_file_extension, get_original_index_name, get_user_index_name
 from .document_service import load_document
@@ -66,7 +67,8 @@ def create_knowledge_base(user, name: str, description: str = "") -> dict[str, A
         包含创建结果的字典，若已存在则返回 existing=True
 
     Raises:
-        ValueError: 知识库名称为空或已存在
+        ValueError: 知识库名称为空
+        KnowledgeBaseAlreadyExistsError: 向量索引已存在（活跃同名知识库）
     """
     if not name:
         raise ValueError("知识库名称不能为空")
@@ -75,7 +77,7 @@ def create_knowledge_base(user, name: str, description: str = "") -> dict[str, A
     manager = IndexManager()
 
     if manager.index_exists(user_index_name):
-        raise ValueError(f"知识库已存在: {name}")
+        raise KnowledgeBaseAlreadyExistsError(f"知识库已存在: {name}", name)
 
     manager.create_empty_index(name=user_index_name, description=description)
 
@@ -410,7 +412,7 @@ def upload_documents(user, kb_id: str, uploaded_files: list) -> dict[str, Any]:
     上传文档到知识库（同步版本）：保存文件、加载文档、分块、向量化、更新索引
 
     由 save_uploaded_files + process_uploaded_documents 组合实现。
-    视图层默认走异步 Celery 任务（见 views_kb.KnowledgeBaseUploadView），
+    视图层默认走异步 Celery 任务（见 views_kb.KnowledgeBaseDocumentListView.post），
     本函数保留供内部/测试同步调用。
 
     Args:

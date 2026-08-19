@@ -46,11 +46,6 @@ class ChatSession(AuditModel):
     def __str__(self):
         return f"ChatSession {self.session_id} - {self.title}"
 
-    def get_absolute_url(self):
-        from django.urls import reverse
-
-        return reverse("chat:chat")
-
     def clean(self):
         super().clean()
         if self.title and len(self.title.strip()) == 0:
@@ -123,11 +118,6 @@ class ChatMessage(AuditModel):
     def __str__(self):
         content_preview = self.content[:50] if self.content else ""
         return f"{self.role}: {content_preview}..."
-
-    def get_absolute_url(self):
-        from django.urls import reverse
-
-        return reverse("chat:chat")
 
     def clean(self):
         super().clean()

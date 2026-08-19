@@ -13,7 +13,7 @@ import json
 
 from langchain_core.language_models import BaseChatModel
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

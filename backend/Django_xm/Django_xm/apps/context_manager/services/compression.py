@@ -20,7 +20,7 @@ from typing import Any, ClassVar
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 try:
     import tiktoken as _tiktoken
@@ -108,6 +108,8 @@ class TokenEstimator:
         "claude-3-5-sonnet-20241022": 200000,
         "deepseek-chat": 128000,
         "deepseek-reasoner": 128000,
+        "gemini-2.0-flash-exp": 1000000,
+        "gemini-pro": 32768,
     }
 
     _MODEL_ENCODING_MAP: ClassVar[dict[str, str]] = {
@@ -280,13 +282,19 @@ class TokenEstimator:
         return total
 
     @classmethod
-    def get_model_limit(cls, model_name: str) -> int:
+    def get_model_limit(cls, model_name: str, default: int = 128000) -> int:
+        """查询模型 token 上限。
+
+        Args:
+            model_name: 模型名称，按子串匹配 _MODEL_LIMITS 条目。
+            default: 未命中或模型名为空时的回退上限。
+        """
         if not model_name:
-            return 128000
+            return default
         for key, limit in cls._MODEL_LIMITS.items():
             if key in model_name:
                 return limit
-        return 128000
+        return default
 
 
 class EntityExtractor:

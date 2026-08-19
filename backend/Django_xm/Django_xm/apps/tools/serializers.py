@@ -1,4 +1,19 @@
+import re
+
 from rest_framework import serializers
+
+# 资源 name 白名单：ASCII 字母 / 数字 / 中文 / 下划线 / 中划线 / 点 / 空格。
+# REST 资源化后 name 作为资源标识符进入 URL path，创建入口必须拒绝
+# "/" 与控制字符等路径不安全字符，防止路由失效与路径注入。
+RESOURCE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9\u4e00-\u9fff_\-. ]+$")
+
+RESOURCE_NAME_ERROR_MESSAGE = "名称仅允许字母、数字、中文、下划线、中划线、点与空格，不能包含斜杠等路径不安全字符"
+
+
+def validate_resource_name(value: str) -> None:
+    """校验资源 name 为路径安全字符串，不合法时抛出 DRF ValidationError。"""
+    if not RESOURCE_NAME_PATTERN.match(value):
+        raise serializers.ValidationError(RESOURCE_NAME_ERROR_MESSAGE)
 
 
 class McpServerAddSerializer(serializers.Serializer):
@@ -17,6 +32,10 @@ class McpServerAddSerializer(serializers.Serializer):
     description = serializers.CharField(max_length=500, required=False, allow_blank=True, default="", help_text="描述")
     category = serializers.CharField(max_length=50, required=False, default="general", help_text="功能分类编码")
 
+    def validate_name(self, value):
+        validate_resource_name(value)
+        return value
+
     def validate(self, data):
         transport = data.get("transport", "sse")
         if transport in ("sse", "http", "websocket") and not data.get("url"):
@@ -26,10 +45,6 @@ class McpServerAddSerializer(serializers.Serializer):
         return data
 
 
-class McpServerDeleteSerializer(serializers.Serializer):
-    name = serializers.CharField(max_length=100, help_text="要删除的 MCP Server 名称")
-
-
 class McpToolUploadSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=100, help_text="工具名称")
     code = serializers.CharField(help_text="工具代码")
@@ -37,6 +52,10 @@ class McpToolUploadSerializer(serializers.Serializer):
         max_length=500, required=False, allow_blank=True, default="", help_text="工具描述"
     )
     category = serializers.CharField(max_length=50, required=False, default="general", help_text="功能分类编码")
+
+    def validate_name(self, value):
+        validate_resource_name(value)
+        return value
 
 
 class McpServerDiscoverSerializer(serializers.Serializer):
@@ -81,13 +100,8 @@ class SkillCreateSerializer(serializers.Serializer):
     def validate_name(self, value):
         if value.startswith("skill_"):
             raise serializers.ValidationError("Skill 名称不能以 skill_ 开头")
+        validate_resource_name(value)
         return value
-
-
-class SkillDeleteSerializer(serializers.Serializer):
-    """删除自定义 Skill 序列化器"""
-
-    name = serializers.CharField(max_length=100, help_text="要删除的 Skill 名称")
 
 
 class SkillToggleSerializer(serializers.Serializer):

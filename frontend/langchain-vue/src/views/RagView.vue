@@ -283,7 +283,7 @@ v-for="file in files" :key="file.name" v-memo="[file.name, file.size, file.uploa
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onActivated, computed, onUnmounted, onDeactivated } from 'vue'
+import { ref, reactive, onActivated, computed, onUnmounted, onDeactivated } from 'vue'
 import { ragAPI } from '@/api/knowledge'
 import { ElMessage, ElNotification } from 'element-plus'
 import { Upload, Document } from '@element-plus/icons-vue'
@@ -291,19 +291,16 @@ import { formatDate, formatFileSize } from '../utils/format'
 import MarkdownRenderer from '../components/common/MarkdownRenderer.vue'
 import { logger } from '../utils/logger'
 import { readSSEStream } from '../utils/sse'
-import { toCamelCase } from '@/utils/sessionTransformers'
+import { extractSSEError } from '../utils/apiErrorHandler'
 import { confirmDelete, confirmAction } from '../utils/dialog'
 import { useSessionStore } from '../stores/session'
 import { useRealtimeSync } from '../composables/useRealtimeSync'
+import { useApiTask } from '../composables/useApiTask'
 import { buildUploadFormData, notifyEmbeddingFallback, getUploadErrorMessage, trackUploadTask } from '../utils/knowledgeUpload'
 
 const sessionStore = useSessionStore()
-const isLoading = ref(false)
-const isLoadingIndexes = ref(false)
+// isDeletingFile（存文件名，标记删除中的行）与 isUploading（成功路径由 WS 回调复位）为手动管理
 const isUploading = ref(false)
-const isCreating = ref(false)
-const isDeletingIndex = ref(false)
-const isLoadingFiles = ref(false)
 const isDeletingFile = ref('')
 const isStreaming = ref(false)
 const result = ref(null)
@@ -366,14 +363,11 @@ const handleIndexChange = (value) => {
   }
 }
 
-const loadFiles = async () => {
-  if (!selectedIndexName.value) return
-  
-  isLoadingFiles.value = true
-  try {
+const { run: runLoadFiles, loading: isLoadingFiles } = useApiTask(
+  async () => {
     const response = await ragAPI.getDocuments(selectedIndexName.value)
     const data = response.data
-    
+
     if (data.code === 200 && data.data) {
       files.value = data.data.items || []
     } else if (data.items) {
@@ -383,61 +377,85 @@ const loadFiles = async () => {
     } else {
       files.value = []
     }
-  } catch (error) {
-    logger.error('获取文件列表失败:', error)
-    ElMessage.error('获取文件列表失败')
-    files.value = []
-  } finally {
-    isLoadingFiles.value = false
+  },
+  {
+    showErrorToast: false,
+    onError: (error) => {
+      logger.error('获取文件列表失败:', error)
+      ElMessage.error('获取文件列表失败')
+      files.value = []
+    },
   }
+)
+
+const loadFiles = () => {
+  if (!selectedIndexName.value) return
+  return runLoadFiles()
 }
 
-const handleDeleteFile = async (filename) => {
-  try {
-    await confirmDelete(`确定要删除文件 "${filename}" 吗？`)
-    
-    isDeletingFile.value = filename
+const { run: runDeleteFile } = useApiTask(
+  async (filename) => {
     await ragAPI.deleteDocument(selectedIndexName.value, filename)
     ElMessage.success('文件删除成功')
     await loadFiles()
     await fetchIndexes()
-  } catch (error) {
-    if (error !== 'cancel') {
+  },
+  {
+    loading: false,
+    showErrorToast: false,
+    onError: (error) => {
       logger.error('删除文件失败:', error)
       ElMessage.error('删除文件失败')
-    }
+    },
+  }
+)
+
+const handleDeleteFile = async (filename) => {
+  try {
+    await confirmDelete(`确定要删除文件 "${filename}" 吗？`)
+  } catch {
+    return
+  }
+  isDeletingFile.value = filename
+  try {
+    await runDeleteFile(filename)
   } finally {
     isDeletingFile.value = ''
   }
 }
 
-const handleDeleteIndex = async () => {
-  try {
-    await confirmDelete(`确定要删除索引 "${selectedIndexName.value}" 吗？此操作不可恢复！`, { confirmButtonText: '确定删除' })
-    
-    isDeletingIndex.value = true
+const { run: runDeleteIndex, loading: isDeletingIndex } = useApiTask(
+  async () => {
     await ragAPI.deleteIndex(selectedIndexName.value)
     ElMessage.success('索引删除成功')
     selectedIndexName.value = ''
     files.value = []
     await fetchIndexes()
     await sessionStore.loadKnowledgeBases()
-  } catch (error) {
-    if (error !== 'cancel') {
+  },
+  {
+    showErrorToast: false,
+    onError: (error) => {
       logger.error('删除索引失败:', error)
       ElMessage.error('删除索引失败')
-    }
-  } finally {
-    isDeletingIndex.value = false
+    },
   }
+)
+
+const handleDeleteIndex = async () => {
+  try {
+    await confirmDelete(`确定要删除索引 "${selectedIndexName.value}" 吗？此操作不可恢复！`, { confirmButtonText: '确定删除' })
+  } catch {
+    return
+  }
+  await runDeleteIndex()
 }
 
-const fetchIndexes = async () => {
-  isLoadingIndexes.value = true
-  try {
+const { run: runFetchIndexes, loading: isLoadingIndexes } = useApiTask(
+  async () => {
     const response = await ragAPI.getIndices()
     const data = response.data
-    
+
     let indexes = []
     if (data.code === 200 && data.data) {
       indexes = Array.isArray(data.data) ? data.data : data.data.items || []
@@ -446,7 +464,7 @@ const fetchIndexes = async () => {
     } else if (Array.isArray(data)) {
       indexes = data
     }
-    
+
     availableIndexes.value = indexes.map(index => ({
       name: index.name,
       description: index.description || '',
@@ -454,18 +472,22 @@ const fetchIndexes = async () => {
       createdAt: index.createdAt,
       updatedAt: index.updatedAt
     })).filter(index => index.name)
-    
+
     if (availableIndexes.value.length > 0 && !selectedIndexName.value) {
       selectedIndexName.value = availableIndexes.value[0].name
       queryForm.indexName = availableIndexes.value[0].name
     }
-  } catch (error) {
-    logger.error('获取索引列表失败:', error)
-    ElMessage.error('获取索引列表失败')
-  } finally {
-    isLoadingIndexes.value = false
+  },
+  {
+    showErrorToast: false,
+    onError: (error) => {
+      logger.error('获取索引列表失败:', error)
+      ElMessage.error('获取索引列表失败')
+    },
   }
-}
+)
+
+const fetchIndexes = () => runFetchIndexes()
 
 const validateQuery = () => {
   if (!selectedIndexName.value) {
@@ -501,46 +523,51 @@ const executeQuery = async () => {
   }
 }
 
+// isLoading 与 executeStreamQuery 共用同一 ref：普通查询由 useApiTask 托管，
+// 流式路径（维持原逻辑不迁）仍手动置位，二者不并发
+const { run: runNormalQuery, loading: isLoading } = useApiTask(
+  () => ragAPI.query({
+    indexName: selectedIndexName.value,
+    query: queryForm.query,
+    k: queryForm.k,
+    returnSources: true
+  }),
+  {
+    showErrorToast: false,
+    onSuccess: (response) => {
+      result.value = response.data.data || response.data
+      ElMessage.success('查询成功')
+    },
+    onError: (error) => {
+      logger.error('查询失败:', error)
+      let errorMsg = '查询失败，请稍后重试'
+
+      if (error.response) {
+        if (error.response.status === 404) {
+          errorMsg = '索引不存在，请检查索引名称'
+        } else if (error.response.status === 500) {
+          errorMsg = '服务器内部错误，请联系管理员'
+        } else if (error.response.data && error.response.data.message) {
+          errorMsg = error.response.data.message
+        } else if (error.response.data && error.response.data.detail) {
+          errorMsg = error.response.data.detail
+        }
+      } else if (error.request) {
+        errorMsg = '网络连接失败，请检查网络设置'
+      }
+
+      errorMessage.value = errorMsg
+      ElMessage.error(errorMsg)
+      result.value = { success: false, error: errorMsg }
+    },
+  }
+)
+
 const executeNormalQuery = async () => {
-  isLoading.value = true
   result.value = null
   errorMessage.value = ''
   streamingAnswer.value = ''
-
-  try {
-    const response = await ragAPI.query({
-      indexName: selectedIndexName.value,
-      query: queryForm.query,
-      k: queryForm.k,
-      returnSources: true
-    })
-    
-    result.value = response.data.data || response.data
-    ElMessage.success('查询成功')
-  } catch (error) {
-    logger.error('查询失败:', error)
-    let errorMsg = '查询失败，请稍后重试'
-    
-    if (error.response) {
-      if (error.response.status === 404) {
-        errorMsg = '索引不存在，请检查索引名称'
-      } else if (error.response.status === 500) {
-        errorMsg = '服务器内部错误，请联系管理员'
-      } else if (error.response.data && error.response.data.message) {
-        errorMsg = error.response.data.message
-      } else if (error.response.data && error.response.data.detail) {
-        errorMsg = error.response.data.detail
-      }
-    } else if (error.request) {
-      errorMsg = '网络连接失败，请检查网络设置'
-    }
-
-    errorMessage.value = errorMsg
-    ElMessage.error(errorMsg)
-    result.value = { success: false, error: errorMsg }
-  } finally {
-    isLoading.value = false
-  }
+  await runNormalQuery()
 }
 
 const executeStreamQuery = async () => {
@@ -563,15 +590,8 @@ const executeStreamQuery = async () => {
     })
 
     if (!response.ok) {
-      let errorMsg = `HTTP ${response.status}`
-      try {
-        const errBody = await response.json()
-        errorMsg = errBody.message || errBody.error || errorMsg
-      } catch (err) {
-        // 错误响应体非 JSON 时回退到默认 HTTP 状态描述
-        logger.warn('[RAG] 解析错误响应失败:', err)
-      }
-      throw new Error(errorMsg)
+      // rd-06：错误响应解析统一到 apiErrorHandler.extractSSEError
+      throw await extractSSEError(response)
     }
 
     await readSSEStream(response, (parsed) => {
@@ -602,10 +622,10 @@ const executeStreamQuery = async () => {
   }
 }
 
-const handleStreamEvent = (data) => {
-  const originalType = data.type
-  const convertedData = toCamelCase(data)
-  convertedData.type = originalType
+const handleStreamEvent = (convertedData) => {
+  // 命名边界：readSSEStream 已统一调用 parseProtocolEvent 完成转换
+  // （toCamelCase + type 还原为后端原始 snake_case 协议路由标识符），
+  // 消费方只拿已转换对象，case 分支字段访问均为 camelCase。
   switch (convertedData.type) {
     case 'start':
       break
@@ -692,6 +712,56 @@ const uploadStatusText = ref('')
 const realtimeSync = useRealtimeSync()
 let cancelUploadTask = null
 
+// 成功路径 isUploading 由 trackUploadTask 的 WS 终态回调复位（非 finally），
+// 故 loading 不托管；onSuccess 仅衔接 WS 订阅，toast 留在 WS 回调内
+const { run: runUpload } = useApiTask(
+  async () => {
+    const formData = buildUploadFormData(uploadFiles.value)
+    const response = await ragAPI.uploadDocuments(selectedIndexName.value, formData)
+    const taskId = response.data?.data?.taskId
+    if (!taskId) {
+      throw new Error('上传响应缺少任务ID')
+    }
+    return taskId
+  },
+  {
+    loading: false,
+    showErrorToast: false,
+    onSuccess: (taskId) => {
+      uploadStatusText.value = '文档已接收，正在后台处理...'
+      cancelUploadTask = trackUploadTask(realtimeSync, taskId, {
+        onProgress: (progress, step) => {
+          uploadProgress.value = progress
+          uploadStatusText.value = step || `处理中 ${progress}%`
+        },
+        onSuccess: (result) => {
+          isUploading.value = false
+          uploadProgress.value = 100
+          uploadStatusText.value = ''
+          ElMessage.success('文件上传并索引成功！')
+          notifyEmbeddingFallback(result)
+          clearUpload()
+          fetchIndexes()
+          loadFiles()
+        },
+        onFailure: (errorMsg) => {
+          isUploading.value = false
+          uploadProgress.value = 0
+          uploadStatusText.value = ''
+          ElMessage.error(errorMsg || '上传处理失败')
+        },
+      })
+    },
+    onError: (error) => {
+      logger.error('上传失败:', error)
+      ElMessage.error(getUploadErrorMessage(error))
+      isUploading.value = false
+      uploadProgress.value = 0
+      uploadStatusText.value = ''
+    },
+  }
+)
+
 const handleUpload = async () => {
   if (!uploadFiles.value.length) {
     ElMessage.warning('请先选择文件')
@@ -705,55 +775,58 @@ const handleUpload = async () => {
   isUploading.value = true
   uploadProgress.value = 0
   uploadStatusText.value = '正在上传文件...'
-  try {
-    const formData = buildUploadFormData(uploadFiles.value)
-    const response = await ragAPI.uploadDocuments(selectedIndexName.value, formData)
-    const taskId = response.data?.data?.taskId
-    if (!taskId) {
-      throw new Error('上传响应缺少任务ID')
-    }
-    // 异步 Celery 任务：订阅 WebSocket task 频道实时进度，终态后刷新列表
-    uploadStatusText.value = '文档已接收，正在后台处理...'
-    cancelUploadTask = trackUploadTask(realtimeSync, taskId, {
-      onProgress: (progress, step) => {
-        uploadProgress.value = progress
-        uploadStatusText.value = step || `处理中 ${progress}%`
-      },
-      onSuccess: (result) => {
-        isUploading.value = false
-        uploadProgress.value = 100
-        uploadStatusText.value = ''
-        ElMessage.success('文件上传并索引成功！')
-        notifyEmbeddingFallback(result)
-        clearUpload()
-        fetchIndexes()
-        loadFiles()
-      },
-      onFailure: (errorMsg) => {
-        isUploading.value = false
-        uploadProgress.value = 0
-        uploadStatusText.value = ''
-        ElMessage.error(errorMsg || '上传处理失败')
-      },
-    })
-  } catch (error) {
-    logger.error('上传失败:', error)
-    ElMessage.error(getUploadErrorMessage(error))
-    isUploading.value = false
-    uploadProgress.value = 0
-    uploadStatusText.value = ''
-  }
+  await runUpload()
 }
+
+const { run: runCreateIndex, loading: isCreating } = useApiTask(
+  async (isIndexExists) => {
+    await ragAPI.createIndex({
+      name: createForm.name,
+      description: createForm.description,
+      overwrite: isIndexExists
+    })
+
+    ElMessage.success(`索引 "${createForm.name}" 创建成功！`)
+    showCreateDialog.value = false
+
+    createForm.name = ''
+    createForm.description = ''
+
+    await fetchIndexes()
+    selectedIndexName.value = createForm.name
+    queryForm.indexName = createForm.name
+    await loadFiles()
+  },
+  {
+    showErrorToast: false,
+    onError: (error) => {
+      logger.error('创建索引失败:', error)
+      let errorMsg = '创建索引失败'
+
+      if (error.response) {
+        if (error.response.status === 409) {
+          errorMsg = error.response.data.message || '索引已存在'
+        } else if (error.response.data && error.response.data.message) {
+          errorMsg = error.response.data.message
+        } else if (error.response.data && error.response.data.detail) {
+          errorMsg = error.response.data.detail
+        }
+      }
+
+      ElMessage.error(errorMsg)
+    },
+  }
+)
 
 const handleCreateIndex = async () => {
   if (!createFormRef.value) return
-  
+
   try {
     await createFormRef.value.validate()
   } catch {
     return
   }
-  
+
   const isIndexExists = availableIndexes.value.some(index => index.name === createForm.name)
   if (isIndexExists) {
     try {
@@ -765,54 +838,22 @@ const handleCreateIndex = async () => {
       return
     }
   }
-  
-  isCreating.value = true
-  try {
-    await ragAPI.createIndex({
-      name: createForm.name,
-      description: createForm.description,
-      overwrite: isIndexExists
-    })
-    
-    ElMessage.success(`索引 "${createForm.name}" 创建成功！`)
-    showCreateDialog.value = false
-    
-    createForm.name = ''
-    createForm.description = ''
-    
-    await fetchIndexes()
-    selectedIndexName.value = createForm.name
-    queryForm.indexName = createForm.name
-    await loadFiles()
-  } catch (error) {
-    logger.error('创建索引失败:', error)
-    let errorMsg = '创建索引失败'
-    
-    if (error.response) {
-      if (error.response.status === 409) {
-        errorMsg = error.response.data.message || '索引已存在'
-      } else if (error.response.data && error.response.data.message) {
-        errorMsg = error.response.data.message
-      } else if (error.response.data && error.response.data.detail) {
-        errorMsg = error.response.data.detail
-      }
-    }
-    
-    ElMessage.error(errorMsg)
-  } finally {
-    isCreating.value = false
-  }
+
+  await runCreateIndex(isIndexExists)
 }
 
-onMounted(async () => {
-  await fetchIndexes()
-  if (selectedIndexName.value) {
-    await loadFiles()
-  }
-})
-
+// keep-alive 首挂 mounted→activated 依次触发，初始化统一收敛 onActivated 单一入口
+// （此前双钩子同帧各调一次 fetchIndexes，indices 接口双发）；
+// loadFiles 仅首挂需要（fetchIndexes 首次确定选中索引后加载其文档），由首挂标志区分。
+let isFirstActivate = true
 onActivated(async () => {
   await fetchIndexes()
+  if (isFirstActivate) {
+    isFirstActivate = false
+    if (selectedIndexName.value) {
+      await loadFiles()
+    }
+  }
 })
 
 const cleanupRagView = () => {

@@ -18,14 +18,21 @@ class AgentType(StrEnum):
     REPORT_WRITER = "report_writer"
 
 
+# 能力默认表（AgentConfig.resolve_defaults 使用）。
+# 注意：子代理运行时统一以 AgentType.BASE 构建（spawn.py / langgraph_adapter.py），
+# WEB_RESEARCHER / DOC_ANALYST / REPORT_WRITER 三个类型当前无构造入口（死路径），
+# 其表项补齐 context_management 仅为防御性对齐 BASE——未来启用死类型时
+# 也有 build_middleware 收敛点保底覆盖，不依赖此表项。
+# 另一份能力默认表在 ai_engine/config.py 的 AGENT_CAPABILITIES_DEFAULT
+# （CapabilityRegistry.get_default_capabilities fallback 使用），双表修改需同步。
 AGENT_CAPABILITIES_DEFAULT: dict[AgentType, list[str]] = {
     AgentType.BASE: ["context_management", "tool_injection", "guardrails", "rate_limit"],
     AgentType.DEEP_RESEARCH: ["context_management", "tool_injection", "rate_limit"],
     AgentType.RAG: ["context_management", "tool_injection"],
     AgentType.SAFE_RAG: ["context_management", "tool_injection", "guardrails"],
-    AgentType.WEB_RESEARCHER: ["rate_limit"],
-    AgentType.DOC_ANALYST: ["rate_limit"],
-    AgentType.REPORT_WRITER: ["rate_limit"],
+    AgentType.WEB_RESEARCHER: ["context_management", "rate_limit"],
+    AgentType.DOC_ANALYST: ["context_management", "rate_limit"],
+    AgentType.REPORT_WRITER: ["context_management", "rate_limit"],
 }
 
 _SUBAGENT_EXCLUSIVE_FIELDS = ("subagents", "skills", "memory", "permissions", "backend")

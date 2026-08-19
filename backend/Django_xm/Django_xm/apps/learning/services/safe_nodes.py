@@ -11,7 +11,7 @@ from Django_xm.apps.ai_engine.guardrails import (
     InputValidator,
     OutputValidator,
 )
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 from .state import StudyFlowState
 

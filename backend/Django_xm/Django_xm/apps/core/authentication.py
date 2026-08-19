@@ -6,7 +6,7 @@ DRF 认证类
 
 from rest_framework.authentication import BaseAuthentication
 
-from Django_xm.apps.core.config import get_logger
+from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
