@@ -11,6 +11,7 @@ from Django_xm.apps.core.config import get_logger
 
 from ..services._model_helper import get_structured_model_from_state
 from ..services.state import StudyFlowState
+from .stream_events import emit_step
 
 logger = get_logger(__name__)
 
@@ -100,6 +101,7 @@ def quiz_generator_node(state: StudyFlowState) -> dict[str, Any]:
 请根据以上信息生成练习题。"""
 
         logger.info("[Quiz Generator Node] 调用 LLM 生成练习题...")
+        emit_step("quiz_generator", "正在生成练习题...")
         quiz_response = structured_model.invoke(
             [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
         )

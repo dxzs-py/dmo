@@ -206,7 +206,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { workflowAPI } from '@/api/workflow'
 import { readSSEStream } from '../utils/sse'
 import { toCamelCase } from '@/utils/sessionTransformers'
@@ -227,6 +227,7 @@ import { useModelStore } from '@/stores/model'
 import { formatDate } from '../utils/format'
 import { logger } from '../utils/logger'
 import { useTaskRealtimeSync } from '@/composables/useTaskRealtimeSync'
+import { useTaskListRealtimeSync } from '@/composables/useTaskListRealtimeSync'
 import { useWorkflowStore } from '@/stores/workflow'
 import { LearningStep, LearningTaskStatus, LearningQuestionType } from '@/types'
 
@@ -469,15 +470,17 @@ const startWorkflow = async () => {
   }
 }
 
-/** SSE 流式启动：请求内逐步执行工作流，事件由 handleSSEEvent 统一驱动 execution 更新 */
-const startStreamWithEvents = async (payload) => {
+/**
+ * 通用 SSE 流式执行：建立 fetch 流并逐事件交给 handleSSEEvent 驱动 execution
+ * @param {() => Promise<Response>} requestFn 发起 SSE 请求的函数（不传 AbortSignal，
+ *   避免 Vite proxy 对带 signal 的 SSE 响应整体缓冲；中断由 readSSEStream 的 signal 控制）
+ */
+const _runSSE = async (requestFn) => {
   sseAbortController = new AbortController()
   sseReaderActive = true
 
   try {
-    const response = await workflowAPI.startStream(payload, {
-      signal: sseAbortController.signal,
-    })
+    const response = await requestFn()
 
     if (!response.ok) {
       let errorMsg = `HTTP ${response.status}`
@@ -512,6 +515,16 @@ const startStreamWithEvents = async (payload) => {
   }
 }
 
+/** SSE 流式启动：请求内逐步执行工作流，事件由 handleSSEEvent 统一驱动 execution 更新 */
+const startStreamWithEvents = (payload) => _runSSE(
+  () => workflowAPI.startStreamRaw(payload)
+)
+
+/** SSE 流式继续练习：快速创建新线程，SSE 逐步生成新一轮题目（与启动一致体验，不阻塞浏览器） */
+const startRestartStream = (threadId) => _runSSE(
+  () => workflowAPI.restartStreamRaw(threadId)
+)
+
 const connectSSE = async (threadId) => {
   closeSSE()
 
@@ -519,9 +532,8 @@ const connectSSE = async (threadId) => {
   sseReaderActive = true
 
   try {
-    const response = await workflowAPI.streamFetch(threadId, {
-      signal: sseAbortController.signal,
-    })
+    // streamFetchRaw：无 signal 直连，避免 Vite proxy 缓冲（token 走 query 参数）
+    const response = await workflowAPI.streamFetchRaw(threadId)
 
     if (!response.ok) {
       let errorMsg = `HTTP ${response.status}`
@@ -669,6 +681,17 @@ const closeSSE = () => {
 
 const { subscribeRealtimeForTask, clearRealtimeSubscriptions } = useTaskRealtimeSync('Workflow', 'threadId')
 
+// 历史任务列表实时同步（user 频道 task_created/task_status_changed/task_deleted，公共能力）：
+// 非触发浏览器的新任务出现、状态更新、删除均自动刷新，无需手动点击刷新
+const taskListSync = useTaskListRealtimeSync('Workflow', () => taskListRef.value, {
+  onTaskDeleted: (payload) => {
+    const deletedTaskId = payload?.taskId
+    if (deletedTaskId && execution.value?.threadId === deletedTaskId) {
+      deleteTask()
+    }
+  },
+})
+
 // ============================================================================
 // WebSocket 事件 → execution.value 同步（workflowStore 监听）
 // - workflowStore 由 sync.js 的 onWorkflowEvent 回调写入（源自 task 频道 4 个 workflow_* 事件）
@@ -757,6 +780,10 @@ const submitAnswers = async () => {
     const response = await workflowAPI.submitAnswers(execution.value.threadId, answersForm)
     const responseData = response.data.data || response.data
     execution.value = { ...execution.value, ...responseData }
+    // 已提交答案，不再停留在"等待您提交答案"状态：
+    // 提交为同步 REST（不走 SSE workflow_completed 分支，currentStepMessage 不会被清空），
+    // 无论终态（feedback_completed）还是重试（新题生成后 SSE 会重新设置），都应清除残留消息
+    currentStepMessage.value = ''
     ElMessage.success('答案已提交')
 
     if (responseData.shouldRetry) {
@@ -783,39 +810,27 @@ const submitAnswers = async () => {
   }
 }
 
-/** 继续练习：调用后端创建新线程并复用配置生成新一轮题目（同步返回新线程完整状态） */
+/** 继续练习（流式）：快速创建新线程，SSE 逐步生成新一轮题目（与启动一致体验，不阻塞浏览器） */
 const continuePractice = async () => {
   if (!execution.value?.threadId) return
   isContinuing.value = true
   try {
-    const response = await workflowAPI.restart(execution.value.threadId)
-    const data = response.data?.data || response.data
-    const newThreadId = data.newThreadId || data.threadId
-    if (!newThreadId) {
-      throw new Error('继续练习响应缺少新线程 ID')
-    }
-
+    const oldThreadId = execution.value.threadId
     // 清空上一轮答题表单
     Object.keys(answersForm).forEach(key => delete answersForm[key])
-
-    // 用新线程状态替换 execution（restart 接口同步返回，含 quiz/currentStep）
-    execution.value = { ...data, threadId: newThreadId }
-    showDetail.value = true
-    ElMessage.success('新一轮练习题已生成')
-
-    // 新线程 quiz 初始化答题表单
-    if (data.quiz?.questions?.length && !Object.keys(answersForm).length) {
-      data.quiz.questions.forEach(q => {
-        answersForm[q.id] = ''
-      })
+    // 以空白 threadId 展示 stub，等待 SSE 首个 start 事件回填新线程 ID（复用 handleSSEEvent 回填逻辑）
+    execution.value = {
+      threadId: '',
+      currentStep: LearningStep.START,
+      status: LearningTaskStatus.RUNNING,
+      userQuestion: execution.value.userQuestion,
     }
-
-    // 切换 WebSocket 订阅到新线程（threadId 变化时自动清理旧订阅）
-    subscribeRealtimeForTask(execution.value)
-    // 新线程已完成题目生成（waiting_for_answers 终态），关闭旧连接避免泄漏
+    currentStepMessage.value = '新一轮练习启动中...'
+    showDetail.value = true
     stopPolling()
     closeSSE()
-    // 刷新练习历史（新轮次题目与分数）
+    await startRestartStream(oldThreadId)
+    // 新线程题目生成（waiting_for_answers 终态）后刷新练习历史（新轮次题目与分数）
     if (historyRef.value) historyRef.value.loadAll()
   } catch (error) {
     logger.error('继续练习失败:', error)
@@ -974,25 +989,35 @@ const deleteTask = () => {
   Object.keys(answersForm).forEach(key => delete answersForm[key])
 }
 
+// 首次挂载：注册任务列表实时订阅（user 频道 task_created/task_status_changed/task_deleted）。
+// 与 DeepResearchView 对齐使用 onMounted + onActivated 双钩子：keep-alive 缓存生效时
+// onActivated 在首次挂载后同样触发，双钩子幂等覆盖"重新挂载/缓存恢复"两种路径。
+onMounted(() => {
+  taskListSync.start()
+})
+
 // keep-alive 激活时：恢复 WebSocket 订阅（onDeactivated 时已清理）
 // 首次挂载时 onActivated 也会触发，此时 execution.value 通常为 null，subscribeRealtimeForTask 会安全跳过
 onActivated(() => {
+  taskListSync.start()
   if (execution.value && execution.value.threadId) {
     subscribeRealtimeForTask(execution.value)
   }
 })
 
-// keep-alive 停用时：清理 SSE、轮询与 WebSocket 订阅，避免后台资源浪费
+// keep-alive 停用时：清理 SSE、轮询、WebSocket 订阅与列表事件监听，避免后台资源浪费
 onDeactivated(() => {
   stopPolling()
   closeSSE()
   clearRealtimeSubscriptions()
+  taskListSync.stop()
 })
 
 onUnmounted(() => {
   stopPolling()
   closeSSE()
   clearRealtimeSubscriptions()
+  taskListSync.stop()
 })
 </script>
 
@@ -1048,8 +1073,17 @@ onUnmounted(() => {
 .progress-steps {
   display: flex;
   align-items: center;
-  gap: 4px;
-  min-width: max-content;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+}
+
+/* AiEdge 固定 100px 宽是溢出主因：改为弹性拉伸填满剩余宽度，8 步不超出容器；
+   极窄视口下仍由 .workflow-progress 的 overflow-x: auto 兜底滚动 */
+.progress-steps :deep(.ai-edge) {
+  flex: 1 1 0;
+  min-width: 4px;
+  width: auto;
 }
 
 .progress-step {

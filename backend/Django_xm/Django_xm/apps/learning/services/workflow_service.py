@@ -152,25 +152,6 @@ class WorkflowService:
         return get_workflow_state(thread_id)
 
     @staticmethod
-    def restart_workflow(thread_id: str, user_id: int | None = None) -> dict[str, Any]:
-        """
-        继续练习：创建新 thread_id，复用学习计划与运行时配置，生成新一轮题目
-
-        Args:
-            thread_id: 旧工作流线程 ID
-            user_id: 用户 ID
-
-        Returns:
-            包含 new_thread_id 的工作流状态字典
-
-        Raises:
-            ValueError: 旧 session 不存在或缺少 learning_plan 时
-        """
-        from .study_flow import restart_quiz
-
-        return restart_quiz(thread_id, user_id)
-
-    @staticmethod
     def get_workflow_history(thread_id: str) -> list:
         """
         获取工作流的执行历史

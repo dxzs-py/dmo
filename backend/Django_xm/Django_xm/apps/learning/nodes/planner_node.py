@@ -15,6 +15,7 @@ from Django_xm.apps.core.config import get_logger
 
 from ..services._model_helper import get_structured_model_from_state
 from ..services.state import StudyFlowState
+from .stream_events import emit_step
 
 logger = get_logger(__name__)
 
@@ -40,6 +41,7 @@ def planner_node(state: StudyFlowState) -> dict[str, Any]:
     """
     user_question = state.get("user_question", "")
     logger.info(f"[Planner Node] 开始生成学习计划，用户问题: {user_question}")
+    emit_step("planner", "正在生成学习计划...")
 
     try:
         # 检测已有 learning_plan，跳过规划（继续练习场景）

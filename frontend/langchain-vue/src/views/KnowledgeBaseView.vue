@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onActivated, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onActivated, onUnmounted, onDeactivated, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Search, Upload, Delete, View, Document, FolderOpened, Edit, Refresh } from '@element-plus/icons-vue'
 import { knowledgeAPI } from '@/api/knowledge'
@@ -58,7 +58,7 @@ onActivated(async () => {
   await loadKnowledgeBases()
 })
 
-onUnmounted(() => {
+const cleanupKnowledgeBaseView = () => {
   if (cacheTimer) {
     clearInterval(cacheTimer)
     cacheTimer = null
@@ -67,7 +67,10 @@ onUnmounted(() => {
     cancelUploadTask()
     cancelUploadTask = null
   }
-})
+}
+onUnmounted(cleanupKnowledgeBaseView)
+// keep-alive 缓存生效后组件停用不卸载（onUnmounted 不触发），停用时显式清理
+onDeactivated(cleanupKnowledgeBaseView)
 
 function toggleAutoRefresh(val) {
   if (cacheTimer) {

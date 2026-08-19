@@ -283,7 +283,7 @@ v-for="file in files" :key="file.name" v-memo="[file.name, file.size, file.uploa
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onActivated, computed, onUnmounted } from 'vue'
+import { ref, reactive, onMounted, onActivated, computed, onUnmounted, onDeactivated } from 'vue'
 import { ragAPI } from '@/api/knowledge'
 import { ElMessage, ElNotification } from 'element-plus'
 import { Upload, Document } from '@element-plus/icons-vue'
@@ -815,13 +815,16 @@ onActivated(async () => {
   await fetchIndexes()
 })
 
-onUnmounted(() => {
+const cleanupRagView = () => {
   stopStreaming()
   if (cancelUploadTask) {
     cancelUploadTask()
     cancelUploadTask = null
   }
-})
+}
+onUnmounted(cleanupRagView)
+// keep-alive 缓存生效后组件停用不卸载（onUnmounted 不触发），停用时显式清理
+onDeactivated(cleanupRagView)
 </script>
 
 <style scoped>

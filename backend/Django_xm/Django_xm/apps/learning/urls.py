@@ -12,7 +12,7 @@ urlpatterns = [
     path("history/<str:thread_id>/", views.WorkflowHistoryView.as_view(), name="history"),
     path("stream/<str:thread_id>/", views.workflow_stream, name="stream"),
     path("task/<str:thread_id>/", views.WorkflowDeleteView.as_view(), name="delete"),
-    path("<str:thread_id>/restart/", views.WorkflowRestartView.as_view(), name="restart"),
+    path("<str:thread_id>/restart/stream/", views.WorkflowRestartStreamView.as_view(), name="restart_stream"),
     path("<str:thread_id>/questions/", views.WorkflowQuestionListView.as_view(), name="questions"),
     path(
         "<str:thread_id>/questions/<str:question_id>/",

@@ -5,7 +5,7 @@
 
 from rest_framework import serializers
 
-from .models import WorkflowAttempt, WorkflowExecution, WorkflowQuestion, WorkflowSession
+from .models import WorkflowAttempt, WorkflowExecution, WorkflowQuestion, WorkflowQuestionStatus, WorkflowSession
 
 
 class WorkflowStartSerializer(serializers.Serializer):
@@ -152,11 +152,25 @@ class WorkflowExecutionSerializer(serializers.ModelSerializer):
 
 
 class WorkflowQuestionSerializer(serializers.ModelSerializer):
-    """工作流题目序列化器"""
+    """工作流题目序列化器
+
+    安全策略：PENDING / ANSWERED（提交前或提交中）的题目不返回标准答案与解析，
+    防止前端从 /questions/ 接口直接读取正确答案作弊；SCORED / LOCKED（已评分）
+    状态才暴露答案字段供结果展示与练习历史使用。
+    """
 
     class Meta:
         model = WorkflowQuestion
         fields = "__all__"
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if instance.status in (WorkflowQuestionStatus.PENDING, WorkflowQuestionStatus.ANSWERED):
+            data.pop("correct_answer", None)
+            data.pop("explanation", None)
+            data.pop("is_correct", None)
+            data.pop("points_earned", None)
+        return data
 
 
 class WorkflowAttemptSerializer(serializers.ModelSerializer):

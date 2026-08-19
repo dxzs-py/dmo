@@ -346,7 +346,9 @@ function createRealtimeSync() {
    */
   const subscribeUserEvents = (callback) => {
     userCallbacks.add(callback)
-    return () => userCallbacks.delete(callback)
+    return () => {
+      userCallbacks.delete(callback)
+    }
   }
 
   /**

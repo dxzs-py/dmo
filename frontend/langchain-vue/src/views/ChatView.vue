@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { watchDebounced } from '@vueuse/core'
 import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '../stores/chat'
@@ -197,7 +197,7 @@ const checkBackendStreamStatus = async () => {
   }
 }
 
-onMounted(async () => {
+const initChatView = async () => {
   chatStore.fetchModes()
 
   // 等待 sessionStore 初始化完成（main.js 中异步调用，可能晚于本组件挂载）：
@@ -283,9 +283,22 @@ onMounted(async () => {
       // 静默失败，sessionStore.initialize() 已处理常规加载
     }
   }
-})
+}
+
+onMounted(initChatView)
+
+// keep-alive 激活（首次挂载后与缓存恢复）时重新执行初始化：
+// 会话定位、WS 订阅、SSE 恢复、流状态检查均幂等，重复调用安全。
+onActivated(initChatView)
 
 onUnmounted(() => {
+  disconnectResearchSSE()
+  unsubscribeFromSessionEvents()
+})
+
+// keep-alive 缓存生效后组件离开路由不卸载（onUnmounted 不触发），
+// 需在停用时显式清理 SSE/WS 订阅，避免后台资源浪费与订阅泄漏
+onDeactivated(() => {
   disconnectResearchSSE()
   unsubscribeFromSessionEvents()
 })

@@ -9,6 +9,7 @@ from Django_xm.apps.core.config import get_logger
 
 from ..services._model_helper import get_chat_model_from_state
 from ..services.state import StudyFlowState
+from .stream_events import emit_step
 
 logger = get_logger(__name__)
 
@@ -63,6 +64,7 @@ def feedback_node(state: StudyFlowState) -> dict[str, Any]:
 请用温暖、鼓励的语气，帮助学生建立信心。字数控制在200字以内。"""
 
         logger.info("[Feedback Node] 调用 LLM 生成个性化反馈...")
+        emit_step("feedback", "正在生成反馈...")
         response = model.invoke([{"role": "user", "content": feedback_prompt}])
         feedback = response.content
 

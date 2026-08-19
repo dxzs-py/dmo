@@ -18,6 +18,7 @@ from Django_xm.apps.core.config import get_logger
 
 from ..services._model_helper import get_chat_model_from_state
 from ..services.state import ScoreDetail, StudyFlowState
+from .stream_events import emit_step
 
 logger = get_logger(__name__)
 
@@ -115,6 +116,7 @@ def grading_node(state: StudyFlowState) -> dict[str, Any]:
     4. 生成详细的评分报告
     """
     logger.info("[Grading Node] 开始评分")
+    emit_step("grading", "正在评分...")
 
     try:
         quiz = state.get("quiz")

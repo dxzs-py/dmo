@@ -40,6 +40,11 @@ export default defineConfig(({ mode }) => {
       host: env.VITE_DEV_HOST || 'localhost',
       port: parseInt(env.VITE_DEV_PORT) || 8080,
       open: env.VITE_DEV_OPEN === 'true',
+      // dev 模式禁用浏览器缓存：
+      // Vite 对模块响应带 ETag + Cache-Control: no-cache，但文件变更后浏览器
+      // 重新验证仍会命中旧 ETag 的 304（Vite ETag 与内容未同步），导致页面
+      // 持续运行旧代码、HMR 失效。no-store 强制每次加载最新源码。
+      headers: isDev ? { 'Cache-Control': 'no-store' } : undefined,
       proxy: {
         '/api': {
           target: env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8000',

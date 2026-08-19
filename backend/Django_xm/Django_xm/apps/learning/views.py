@@ -3,7 +3,9 @@
 使用类视图和服务层实现，遵循项目统一的响应格式规范
 """
 
+import asyncio
 import json
+import threading
 import uuid
 from urllib.parse import quote
 
@@ -11,11 +13,13 @@ from django.db.models import Q
 from django.http import FileResponse, HttpResponse, StreamingHttpResponse
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
+from asgiref.sync import sync_to_async
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import BaseRenderer
 from rest_framework.views import APIView
 
+from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
 from Django_xm.apps.core.config import get_logger
 from Django_xm.apps.core.services.file_manager import get_file_manager
 from Django_xm.common.error_codes import ErrorCode
@@ -36,14 +40,15 @@ from .serializers import (
     WorkflowSubmitSerializer,
 )
 from .services import WorkflowService
-from .services.resilience import stream_with_resilience
 from .services.study_flow import (
     WorkflowAlreadyFinishedError,
     _ensure_session_created,
     _get_cached_study_flow,
     _get_study_flow,
     get_workflow_state,
+    prepare_restart,
 )
+from .services.learning_stream import iter_workflow_events, pump_sync_events, safe_publish_workflow_event
 
 
 class SSERenderer(BaseRenderer):
@@ -66,7 +71,8 @@ def _safe_publish_workflow_event(
 ) -> None:
     """安全发布工作流事件到 task 频道，吞掉异常以避免影响 SSE 主流程。
 
-    用于在 SSE 流式输出时同步推送 WebSocket 事件，使其他浏览器也能收到进度。
+    同步版本：供工作流线程泵的 publish 回调使用（``iter_workflow_events`` 的
+    publish 在专用工作线程内同步调用，不能 await 异步 publish_event）。
     """
     try:
         payload = {
@@ -195,7 +201,26 @@ class WorkflowStartStreamView(APIView):
 
         logger.info(f"[API] 流式启动工作流，thread_id={thread_id}")
 
-        def event_stream():
+        # 预创建 WorkflowSession（幂等）：必须在 SSE 流开始前完成，否则前端收到
+        # start 事件后立即加载 questions/attempts 时会因 session 尚不存在而 404
+        # （"加载练习历史失败"竞态）。quiz_generator_node._persist_questions 也依赖
+        # 该记录定位 session，题目才能落库（练习历史/修改答案随之失效）。
+        # post 为同步方法，直接调用同步 ORM 函数（无 async 生成器限制）。
+        _ensure_session_created(
+            thread_id=thread_id,
+            user_question=user_question,
+            user_id=user_id,
+            knowledge_base_ids=knowledge_base_ids,
+            provider_id=serializer.validated_data.get("provider_id"),
+            model_name=serializer.validated_data.get("model_name"),
+            temperature=serializer.validated_data.get("temperature"),
+            max_tokens=serializer.validated_data.get("max_tokens"),
+            special_params=serializer.validated_data.get("special_params"),
+            enable_deep_thinking=serializer.validated_data.get("use_deep_thinking", False),
+            use_web_search=serializer.validated_data.get("use_web_search", False),
+        )
+
+        async def event_stream():
             try:
                 # 工作流开始事件（统一格式 + 同步推送 WS）
                 start_event = {
@@ -203,30 +228,16 @@ class WorkflowStartStreamView(APIView):
                     "data": {"step": "start", "message": "工作流启动中...", "thread_id": thread_id},
                 }
                 yield f"data: {json.dumps(start_event, ensure_ascii=False)}\n\n"
-                _safe_publish_workflow_event(
+                await safe_publish_workflow_event(
                     EventType.WORKFLOW_STEP,
                     thread_id,
                     {"step": "start", "message": "工作流启动中..."},
                     user_id=user_id,
                 )
 
-                # 预创建 WorkflowSession（幂等）：quiz_generator_node._persist_questions 依赖
-                # session 记录定位，流式启动若不预创建，题目无法落库（练习历史/修改答案随之失效）
-                _ensure_session_created(
-                    thread_id=thread_id,
-                    user_question=user_question,
-                    user_id=user_id,
-                    knowledge_base_ids=knowledge_base_ids,
-                    provider_id=serializer.validated_data.get("provider_id"),
-                    model_name=serializer.validated_data.get("model_name"),
-                    temperature=serializer.validated_data.get("temperature"),
-                    max_tokens=serializer.validated_data.get("max_tokens"),
-                    special_params=serializer.validated_data.get("special_params"),
-                    enable_deep_thinking=serializer.validated_data.get("use_deep_thinking", False),
-                    use_web_search=serializer.validated_data.get("use_web_search", False),
-                )
-
-                study_flow = _get_study_flow(thread_id)
+                # 预创建 WorkflowSession 已在 post 中流开始前完成（避免前端加载
+                # questions/attempts 的 404 竞态），此处直接获取缓存 StudyFlow
+                study_flow = await sync_to_async(_get_study_flow)(thread_id)
 
                 initial_state = {
                     "messages": [],
@@ -262,98 +273,57 @@ class WorkflowStartStreamView(APIView):
                 # planner 步骤事件
                 planner_event = {"type": "workflow_step", "data": {"step": "planner", "message": "正在生成学习计划..."}}
                 yield f"data: {json.dumps(planner_event, ensure_ascii=False)}\n\n"
-                _safe_publish_workflow_event(
+                await safe_publish_workflow_event(
                     EventType.WORKFLOW_STEP,
                     thread_id,
                     {"step": "planner", "message": "正在生成学习计划..."},
                     user_id=user_id,
                 )
 
-                # 使用 stream_with_resilience 替代直接 graph.stream
-                interrupted_at_waiting = False
-                for event in stream_with_resilience(study_flow.graph, initial_state, config, stream_mode="values"):
-                    if not event:
-                        continue
-
-                    current_step = event.get("current_step", "unknown")
-
-                    step_messages = {
-                        "planner": "正在生成学习计划...",
-                        "retrieval": "正在检索相关资料...",
-                        "quiz_generator": "正在生成练习题...",
-                        "waiting_for_answers": "等待您提交答案...",
-                        "grading": "正在评分...",
-                        "feedback": "正在生成反馈...",
-                        "end": "工作流已完成",
-                    }
-
-                    step_message = step_messages.get(current_step, f"当前步骤: {current_step}")
-
-                    step_evt = {"type": "workflow_step", "data": {"step": current_step, "message": step_message}}
-                    yield f"data: {json.dumps(step_evt, ensure_ascii=False)}\n\n"
-                    _safe_publish_workflow_event(
-                        EventType.WORKFLOW_STEP,
-                        thread_id,
-                        {"step": current_step, "message": step_message},
-                        user_id=user_id,
-                    )
-
-                    if current_step == "waiting_for_answers":
-                        waiting_data = {
-                            "type": "workflow_state_update",
-                            "data": {
-                                "step": current_step,
-                                "state": "waiting_for_answers",
-                                "thread_id": thread_id,
-                                "learning_plan": event.get("learning_plan"),
-                                "quiz": event.get("quiz"),
-                                "current_step": current_step,
-                            },
-                        }
-                        yield f"data: {json.dumps(waiting_data, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
-                        _safe_publish_workflow_event(
-                            EventType.WORKFLOW_STATE_UPDATE,
-                            thread_id,
-                            {
-                                "step": current_step,
-                                "state": "waiting_for_answers",
-                                "message": "等待用户提交答案",
-                                "learning_plan": event.get("learning_plan"),
-                                "quiz": event.get("quiz"),
-                            },
+                # 遍历图执行事件流：同步生成器在专用线程执行，事件经 call_soon_threadsafe
+                # 泵入队列（PostgresSaver 持久化 + 事件循环不阻塞，见 pump_sync_events 注释）
+                loop = asyncio.get_running_loop()
+                queue = asyncio.Queue()
+                worker = threading.Thread(
+                    target=pump_sync_events,
+                    args=(
+                        iter_workflow_events(
+                            study_flow,
+                            initial_state,
+                            config,
                             user_id=user_id,
-                        )
+                            thread_id=thread_id,
+                            publish=lambda et, data: _safe_publish_workflow_event(et, thread_id, data, user_id=user_id),
+                        ),
+                        loop,
+                        queue,
+                    ),
+                    daemon=True,
+                    name=f"study-flow-{thread_id[-8:]}",
+                )
+                worker.start()
+
+                interrupted_at_waiting = False
+                while True:
+                    evt = await queue.get()
+                    if evt is None:
+                        break
+                    if evt["type"] == "interrupted":
                         # 等待答题是中断而非完成：不发 workflow_completed，避免前端误标 completed
                         interrupted_at_waiting = True
                         break
-
-                    state_data = {
-                        "type": "workflow_state_update",
-                        "data": {
-                            "step": current_step,
-                            "learning_plan": event.get("learning_plan"),
-                            "retrieved_docs": event.get("retrieved_docs"),
-                            "quiz": event.get("quiz"),
-                        },
-                    }
-                    yield f"data: {json.dumps(state_data, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
-                    _safe_publish_workflow_event(
-                        EventType.WORKFLOW_STATE_UPDATE,
-                        thread_id,
-                        {
-                            "step": current_step,
-                            "learning_plan": event.get("learning_plan"),
-                            "retrieved_docs": event.get("retrieved_docs"),
-                            "quiz": event.get("quiz"),
-                        },
-                        user_id=user_id,
-                    )
+                    if evt["type"] == "error":
+                        error_msg = evt["data"].get("message", "工作流执行失败")
+                        yield sse_error_event(code="50001", message=error_msg)
+                        interrupted_at_waiting = True
+                        break
+                    yield f"data: {json.dumps(evt, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
 
                 # 工作流完成事件（仅在真正完成时发出）
                 if not interrupted_at_waiting:
                     complete_evt = {"type": "workflow_completed", "data": {"thread_id": thread_id}}
                     yield f"data: {json.dumps(complete_evt, ensure_ascii=False)}\n\n"
-                    _safe_publish_workflow_event(
+                    await safe_publish_workflow_event(
                         EventType.WORKFLOW_COMPLETED,
                         thread_id,
                         {"step": "completed"},
@@ -364,8 +334,9 @@ class WorkflowStartStreamView(APIView):
                     from .services.persistence_service import get_persistence_service
 
                     persistence_service = get_persistence_service()
-                    persistence_service.save_workflow_state(
-                        thread_id=thread_id, state=study_flow.graph.get_state(config).values, user_id=user_id
+                    state_values = await sync_to_async(lambda: study_flow.graph.get_state(config).values)()
+                    await sync_to_async(persistence_service.save_workflow_state)(
+                        thread_id=thread_id, state=state_values, user_id=user_id
                     )
                 except Exception as persist_err:
                     logger.warning(f"持久化工作流会话失败: {persist_err}")
@@ -373,7 +344,7 @@ class WorkflowStartStreamView(APIView):
             except Exception as e:
                 logger.exception("[API] 流式工作流执行失败：")
                 # 工作流失败事件
-                _safe_publish_workflow_event(
+                await safe_publish_workflow_event(
                     EventType.WORKFLOW_FAILED,
                     thread_id,
                     {"step": "planner", "error": str(e)},
@@ -449,38 +420,147 @@ class WorkflowSubmitView(APIView):
             )
 
 
-class WorkflowRestartView(APIView):
-    """继续练习视图"""
+class WorkflowRestartStreamView(APIView):
+    """继续练习（流式）视图
+
+    快速创建新线程（不执行 LLM），SSE 逐步生成新一轮练习题，
+    与 start/stream 一致的流式体验：步骤条实时推进、不阻塞浏览器。
+    """
 
     permission_classes = [IsAuthenticated]
+    renderer_classes = [SSERenderer]
 
     @extend_schema(responses={200: EmptySerializer})
     def post(self, request, thread_id):
+        session = WorkflowSession.objects.filter(
+            thread_id=thread_id, created_by=request.user, is_deleted=False
+        ).first()
+        if not session:
+            return not_found_response(message="工作流会话不存在或无权访问")
+
         try:
-            session = WorkflowSession.objects.filter(
-                thread_id=thread_id, created_by=request.user, is_deleted=False
-            ).first()
-            if not session:
-                return error_response(
-                    code=ErrorCode.NOT_FOUND,
-                    message="工作流会话不存在或无权访问",
-                    http_status=status.HTTP_404_NOT_FOUND,
+            prepared = prepare_restart(thread_id=thread_id, user_id=request.user.id)
+        except ValueError as e:
+            return validation_error_response(message=str(e), errors={})
+
+        new_thread_id = prepared["new_thread_id"]
+        user_id = request.user.id
+
+        async def event_stream():
+            try:
+                # 新一轮启动事件（携带新线程 ID，前端据此回填 execution.threadId）
+                start_evt = {
+                    "type": "workflow_step",
+                    "data": {"step": "start", "message": "新一轮练习启动中...", "thread_id": new_thread_id},
+                }
+                yield f"data: {json.dumps(start_evt, ensure_ascii=False)}\n\n"
+                await safe_publish_workflow_event(
+                    EventType.WORKFLOW_STEP,
+                    new_thread_id,
+                    {"step": "start", "message": "新一轮练习启动中..."},
+                    user_id=user_id,
                 )
 
-            result = WorkflowService.restart_workflow(thread_id=thread_id, user_id=request.user.id)
+                # 规划阶段提示（复用已有学习计划，planner 节点会跳过生成）
+                planner_evt = {
+                    "type": "workflow_step",
+                    "data": {"step": "planner", "message": "正在准备学习内容..."},
+                }
+                yield f"data: {json.dumps(planner_evt, ensure_ascii=False)}\n\n"
+                await safe_publish_workflow_event(
+                    EventType.WORKFLOW_STEP,
+                    new_thread_id,
+                    {"step": "planner", "message": "正在准备学习内容..."},
+                    user_id=user_id,
+                )
 
-            return success_response(data=result, message="继续练习已启动")
-        except ValueError as e:
-            return error_response(
-                code=ErrorCode.VALIDATION_FAILED,
-                message=str(e),
-                http_status=status.HTTP_400_BAD_REQUEST,
-            )
-        except Exception as e:
-            logger.exception("[API] 继续练习失败：")
-            return error_response(
-                code=ErrorCode.SERVER_ERROR, message=str(e), http_status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+                # async 生成器内避免同步阻塞：_get_study_flow 经 sync_to_async 入线程池
+                study_flow = await sync_to_async(_get_study_flow)(new_thread_id)
+                config = {
+                    "configurable": {"thread_id": new_thread_id},
+                    "callbacks": [TokenUsageCallbackHandler()],
+                }
+
+                # 遍历图执行事件流：同步生成器在专用线程执行，事件经 call_soon_threadsafe
+                # 泵入队列（PostgresSaver 持久化 + 事件循环不阻塞，见 pump_sync_events 注释）
+                loop = asyncio.get_running_loop()
+                queue = asyncio.Queue()
+                worker = threading.Thread(
+                    target=pump_sync_events,
+                    args=(
+                        iter_workflow_events(
+                            study_flow,
+                            prepared["initial_state"],
+                            config,
+                            user_id=user_id,
+                            thread_id=new_thread_id,
+                            publish=lambda et, data: _safe_publish_workflow_event(
+                                et, new_thread_id, data, user_id=user_id
+                            ),
+                        ),
+                        loop,
+                        queue,
+                    ),
+                    daemon=True,
+                    name=f"study-flow-{new_thread_id[-8:]}",
+                )
+                worker.start()
+
+                interrupted_at_waiting = False
+                while True:
+                    evt = await queue.get()
+                    if evt is None:
+                        break
+                    if evt["type"] == "interrupted":
+                        # 等待答题是中断而非完成：不发 workflow_completed，避免前端误标 completed
+                        interrupted_at_waiting = True
+                        break
+                    if evt["type"] == "error":
+                        error_msg = evt["data"].get("message", "工作流执行失败")
+                        yield sse_error_event(code="50001", message=error_msg)
+                        interrupted_at_waiting = True
+                        break
+                    yield f"data: {json.dumps(evt, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
+
+                # 工作流完成事件（仅在真正完成时发出）
+                if not interrupted_at_waiting:
+                    complete_evt = {"type": "workflow_completed", "data": {"thread_id": new_thread_id}}
+                    yield f"data: {json.dumps(complete_evt, ensure_ascii=False)}\n\n"
+                    await safe_publish_workflow_event(
+                        EventType.WORKFLOW_COMPLETED,
+                        new_thread_id,
+                        {"step": "completed"},
+                        user_id=user_id,
+                    )
+
+                # 持久化新线程状态（ORM 同步调用，sync_to_async 包装）
+                try:
+                    from .services.persistence_service import get_persistence_service
+
+                    persistence_service = get_persistence_service()
+                    state_values = await sync_to_async(lambda: study_flow.graph.get_state(config).values)()
+                    await sync_to_async(persistence_service.save_workflow_state)(
+                        thread_id=new_thread_id, state=state_values, user_id=user_id
+                    )
+                except Exception as persist_err:
+                    logger.warning(f"持久化工作流会话失败: {persist_err}")
+
+                # 更新旧 session 的 retry_count（用于追踪总练习轮次，ORM 写入经 sync_to_async）
+                old_session = prepared["old_session"]
+                old_session.retry_count = prepared["new_retry_count"]
+                await sync_to_async(old_session.save)(update_fields=["retry_count"])
+
+            except Exception as e:
+                logger.exception("[API] 流式继续练习失败：")
+                await safe_publish_workflow_event(
+                    EventType.WORKFLOW_FAILED,
+                    new_thread_id,
+                    {"step": "planner", "error": str(e)},
+                    user_id=user_id,
+                )
+                yield sse_error_event(code="50001", message=str(e))
+
+        return sse_response(event_stream())
 
 
 class WorkflowQuestionListView(APIView):
@@ -1104,10 +1184,11 @@ def workflow_stream(request, thread_id):
 
         logger.info(f"[API] 流式获取工作流，thread_id={thread_id}, user_id={user.id}")
 
-        def event_stream():
+        async def event_stream():
             """生成 SSE 事件流（统一 workflow_* 事件格式，与 EventType 枚举对齐）"""
             try:
-                state = get_workflow_state(thread_id)
+                # async 生成器内禁止同步 ORM，sync_to_async 包装到线程池执行
+                state = await sync_to_async(get_workflow_state)(thread_id)
 
                 if not state:
                     yield sse_error_event(code="40401", message="工作流不存在")
@@ -1132,7 +1213,7 @@ def workflow_stream(request, thread_id):
                     },
                 }
                 yield f"data: {json.dumps(workflow_step_evt, ensure_ascii=False)}\n\n"
-                _safe_publish_workflow_event(
+                await safe_publish_workflow_event(
                     EventType.WORKFLOW_STEP,
                     thread_id,
                     {"step": initial_step, "message": initial_message, "state": current_step},
@@ -1153,7 +1234,7 @@ def workflow_stream(request, thread_id):
                         },
                     }
                     yield f"data: {json.dumps(waiting_state_evt, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
-                    _safe_publish_workflow_event(
+                    await safe_publish_workflow_event(
                         EventType.WORKFLOW_STATE_UPDATE,
                         thread_id,
                         {
@@ -1177,7 +1258,7 @@ def workflow_stream(request, thread_id):
                         },
                     }
                     yield f"data: {json.dumps(completed_state_evt, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
-                    _safe_publish_workflow_event(
+                    await safe_publish_workflow_event(
                         EventType.WORKFLOW_STATE_UPDATE,
                         thread_id,
                         {
@@ -1190,7 +1271,7 @@ def workflow_stream(request, thread_id):
                     )
                     complete_evt = {"type": "workflow_completed", "data": {"thread_id": thread_id}}
                     yield f"data: {json.dumps(complete_evt, ensure_ascii=False)}\n\n"
-                    _safe_publish_workflow_event(
+                    await safe_publish_workflow_event(
                         EventType.WORKFLOW_COMPLETED,
                         thread_id,
                         {"step": current_step},
@@ -1198,75 +1279,52 @@ def workflow_stream(request, thread_id):
                     )
                     return
 
-                study_flow = _get_study_flow(thread_id)
+                study_flow = await sync_to_async(_get_study_flow)(thread_id)
                 config = {"configurable": {"thread_id": thread_id}}
 
                 try:
-                    # 使用 stream_with_resilience 替代直接 graph.stream
-                    for event in stream_with_resilience(study_flow.graph, None, config, stream_mode="values"):
-                        if event:
-                            step = event.get("current_step", "unknown")
-                            state_update_evt = {
-                                "type": "workflow_state_update",
-                                "data": {
-                                    "step": step,
-                                    "state": step,
-                                    "payload": event,
-                                },
-                            }
-                            state_payload = json.dumps(
-                                state_update_evt, ensure_ascii=False, cls=_WorkflowJSONEncoder
-                            )
-                            yield f"data: {state_payload}\n\n"
-                            _safe_publish_workflow_event(
-                                EventType.WORKFLOW_STATE_UPDATE,
-                                thread_id,
-                                {"step": step, "state": step},
+                    # 恢复执行图事件流：同步生成器在专用线程执行，事件经 call_soon_threadsafe
+                    # 泵入队列（PostgresSaver 持久化 + 事件循环不阻塞，见 pump_sync_events 注释）
+                    loop = asyncio.get_running_loop()
+                    queue = asyncio.Queue()
+                    worker = threading.Thread(
+                        target=pump_sync_events,
+                        args=(
+                            iter_workflow_events(
+                                study_flow,
+                                None,
+                                config,
                                 user_id=user.id,
-                            )
-
-                            if step == "waiting_for_answers":
-                                waiting_evt = {
-                                    "type": "workflow_state_update",
-                                    "data": {
-                                        "step": step,
-                                        "state": "waiting_for_answers",
-                                        "message": "等待用户提交答案",
-                                    },
-                                }
-                                yield f"data: {json.dumps(waiting_evt, ensure_ascii=False)}\n\n"
-                                _safe_publish_workflow_event(
-                                    EventType.WORKFLOW_STATE_UPDATE,
-                                    thread_id,
-                                    {
-                                        "step": step,
-                                        "state": "waiting_for_answers",
-                                        "message": "等待用户提交答案",
-                                    },
-                                    user_id=user.id,
-                                )
-                                complete_evt = {"type": "workflow_completed", "data": {"thread_id": thread_id}}
-                                yield f"data: {json.dumps(complete_evt, ensure_ascii=False)}\n\n"
-                                _safe_publish_workflow_event(
-                                    EventType.WORKFLOW_COMPLETED,
-                                    thread_id,
-                                    {"step": step},
-                                    user_id=user.id,
-                                )
-                                return
-
-                    complete_evt = {"type": "workflow_completed", "data": {"thread_id": thread_id}}
-                    yield f"data: {json.dumps(complete_evt, ensure_ascii=False)}\n\n"
-                    _safe_publish_workflow_event(
-                        EventType.WORKFLOW_COMPLETED,
-                        thread_id,
-                        {"step": "completed"},
-                        user_id=user.id,
+                                thread_id=thread_id,
+                                publish=lambda et, data: _safe_publish_workflow_event(
+                                    et, thread_id, data, user_id=user.id
+                                ),
+                            ),
+                            loop,
+                            queue,
+                        ),
+                        daemon=True,
+                        name=f"study-flow-{thread_id[-8:]}",
                     )
+                    worker.start()
+
+                    while True:
+                        evt = await queue.get()
+                        if evt is None:
+                            break
+                        if evt["type"] == "interrupted":
+                            # 重试出题后再次进入等待答题：中断而非完成，不发 workflow_completed，
+                            # 前端 isWaiting 分支会重新初始化答题表单并关闭 SSE
+                            return
+                        if evt["type"] == "error":
+                            error_msg = evt["data"].get("message", "工作流执行失败")
+                            yield sse_error_event(code="50001", message=error_msg)
+                            break
+                        yield f"data: {json.dumps(evt, ensure_ascii=False, cls=_WorkflowJSONEncoder)}\n\n"
 
                 except Exception as stream_error:
                     logger.warning(f"[API] 流式执行失败：{stream_error}")
-                    _safe_publish_workflow_event(
+                    await safe_publish_workflow_event(
                         EventType.WORKFLOW_FAILED,
                         thread_id,
                         {"step": "stream", "error": str(stream_error)},
@@ -1278,7 +1336,7 @@ def workflow_stream(request, thread_id):
 
             except Exception as e:
                 logger.exception("[API] 流式输出失败：")
-                _safe_publish_workflow_event(
+                await safe_publish_workflow_event(
                     EventType.WORKFLOW_FAILED,
                     thread_id,
                     {"step": "stream", "error": str(e)},

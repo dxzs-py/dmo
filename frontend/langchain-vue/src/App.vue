@@ -48,9 +48,16 @@ watch(() => userStore.isLoggedIn, (newVal) => {
   }
 })
 
+// keep-alive 的 include 匹配组件 name（Vue SFC 按文件名推导为 PascalCase，
+// 如 'ChatView'），而 route.name 是 kebab-case（如 'chat'），二者不匹配会导致
+// keep-alive 缓存从未生效、onActivated/onDeactivated 生命周期钩子从不触发。
+// 统一使用路由 meta.keepAliveName（组件真实 name）作为 include 值。
 watch(() => route.name, (name) => {
-  if (name && route.meta.keepAlive && !cachedViews.value.includes(name)) {
-    cachedViews.value.push(name)
+  if (name && route.meta.keepAlive) {
+    const compName = route.meta.keepAliveName || name
+    if (!cachedViews.value.includes(compName)) {
+      cachedViews.value.push(compName)
+    }
   }
 }, { immediate: true })
 

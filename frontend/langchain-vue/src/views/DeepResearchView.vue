@@ -278,7 +278,7 @@ import { logger } from '../utils/logger'
 import { getInterruptId } from '../utils/messageOperations'
 import { toCamelCase } from '@/utils/sessionTransformers'
 import { useTaskRealtimeSync } from '@/composables/useTaskRealtimeSync'
-import { useRealtimeSync } from '@/composables/useRealtimeSync'
+import { useTaskListRealtimeSync } from '@/composables/useTaskListRealtimeSync'
 import { ResearchTaskStatus } from '@/types'
 
 // 根因 C 解耦：深度研究模块使用独立设置 store，
@@ -850,35 +850,16 @@ const closeSSE = () => {
 
 const { subscribeRealtimeForTask, clearRealtimeSubscriptions } = useTaskRealtimeSync('DeepResearch', 'taskId')
 
-const realtimeSync = useRealtimeSync()
-let userEventUnsubscribe = null
-
-/**
- * 监听 user 频道任务事件，自动刷新任务列表
- * - task_created：新任务创建，列表出现新行
- * - task_status_changed：任务进入终态（completed/failed），列表状态同步更新
- * - task_deleted：任务被删除（本浏览器或其他浏览器），列表移除该行；
- *   若当前详情正是被删除任务，关闭详情视图
- * 解决 P2/P8：深度研究模块任务列表不自动实时更新
- */
-const handleTaskCreated = (event) => {
-  if (event.type === 'task_deleted') {
-    const deletedTaskId = event.payload?.taskId
-    logger.info(`[DeepResearch] 收到 task_deleted 事件，自动刷新任务列表: taskId=${deletedTaskId}`)
-    // 其他浏览器删除当前正在查看的任务时，关闭详情避免展示已删除任务
+// 任务列表实时同步（user 频道 task_created/task_status_changed/task_deleted，公共能力）：
+// 新任务出现、状态更新、删除均自动刷新；当前详情被其他浏览器删除时关闭详情视图
+const taskListSync = useTaskListRealtimeSync('DeepResearch', () => taskListRef.value, {
+  onTaskDeleted: (payload) => {
+    const deletedTaskId = payload?.taskId
     if (deletedTaskId && currentTaskId.value === deletedTaskId) {
       deleteTask()
-    } else if (taskListRef.value?.refreshTasks) {
-      taskListRef.value.refreshTasks()
     }
-    return
-  }
-  if (event.type !== 'task_created' && event.type !== 'task_status_changed') return
-  logger.info(`[DeepResearch] 收到 ${event.type} 事件，自动刷新任务列表`)
-  if (taskListRef.value?.refreshTasks) {
-    taskListRef.value.refreshTasks()
-  }
-}
+  },
+})
 
 const viewTask = async (selectedTask) => {
   closeSSE()
@@ -1049,20 +1030,14 @@ const handleFileSearch = async () => {
 }
 
 onMounted(async () => {
-  // 订阅 user 通道 task_created 事件（P2 修复：列表自动刷新）
-  userEventUnsubscribe = realtimeSync.subscribeUserEvents(handleTaskCreated)
+  // 订阅 user 频道任务事件（task_created/task_status_changed/task_deleted，公共能力），
+  // 附带一次兜底刷新：任务列表首次加载可能在任务创建之前完成
+  taskListSync.start()
 
   // 根因 C：确保独立设置 store 已从全局 modelStore 同步初始模型配置
   // （ModelSelector 挂载后 loadProviders 完成即同步；此处兜底一次）
   researchSettings.syncFromModelStore()
   refreshKnowledgeBases()
-  // 任务列表首次加载：TaskList 自身 onMounted 会调用 loadTasks，
-  // 但可能在任务创建之前已完成加载，此处做一次兜底刷新
-  nextTick(() => {
-    if (taskListRef.value?.refreshTasks) {
-      taskListRef.value.refreshTasks()
-    }
-  })
   // 支持从聊天模块跳转，自动选中指定任务
   const taskId = getQueryParam(route, 'task_id')
   if (taskId) {
@@ -1078,8 +1053,9 @@ onMounted(async () => {
   }
 })
 
-// keep-alive 激活时：检查当前任务状态，必要时重连 SSE 或刷新结果
+// keep-alive 激活时：恢复任务列表事件订阅，并检查当前任务状态，必要时重连 SSE 或刷新结果
 onActivated(async () => {
+  taskListSync.start()
   const taskId = getQueryParam(route, 'task_id')
   // 如果 URL 带有 task_id 且当前没有查看任务，自动加载
   if (taskId && (!task.value || task.value.taskId !== taskId)) {
@@ -1121,22 +1097,16 @@ onActivated(async () => {
         logger.warn('[DeepResearchView] onActivated 刷新任务状态失败:', e)
       }
     }
-  } else {
-    // 任务列表视图：自动刷新列表
-    nextTick(() => {
-      if (taskListRef.value?.refreshTasks) {
-        taskListRef.value.refreshTasks()
-      }
-    })
   }
 })
 
-// keep-alive 停用时：清理 SSE、轮询与 WebSocket 订阅，避免后台资源浪费
+// keep-alive 停用时：清理 SSE、轮询、WebSocket 订阅与列表事件监听，避免后台资源浪费
 onDeactivated(() => {
   stopPolling()
   closeSSE()
   stopElapsedTimer()
   clearRealtimeSubscriptions()
+  taskListSync.stop()
 })
 
 // 监听路由参数变化，支持从聊天页面多次跳转到不同任务
@@ -1172,10 +1142,7 @@ onUnmounted(() => {
   closeSSE()
   stopElapsedTimer()
   clearRealtimeSubscriptions()
-  if (userEventUnsubscribe) {
-    userEventUnsubscribe()
-    userEventUnsubscribe = null
-  }
+  taskListSync.stop()
 })
 </script>
 

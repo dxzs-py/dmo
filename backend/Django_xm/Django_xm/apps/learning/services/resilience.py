@@ -241,6 +241,7 @@ async def astream_with_resilience(
     graph,
     inputs: dict[str, Any],
     config: dict[str, Any] | None = None,
+    stream_mode: str | list[str] = "values",
     resilience_config: ResilienceConfig | None = None,
     timeout_manager: ExecutionTimeoutManager | None = None,
 ) -> AsyncGenerator[Any, None]:
@@ -255,6 +256,7 @@ async def astream_with_resilience(
         graph: 编译后的 LangGraph 图
         inputs: 输入状态
         config: LangGraph 调用配置
+        stream_mode: 流式模式（values / updates / messages 或组合列表），默认 "values"
         resilience_config: 韧性配置，None 时从 settings 加载
         timeout_manager: 超时管理器，None 时基于配置新建
 
@@ -268,7 +270,7 @@ async def astream_with_resilience(
     cfg = _ensure_config(resilience_config)
     tm = _ensure_timeout_manager(timeout_manager, cfg)
 
-    async for chunk in graph.astream(inputs, config):
+    async for chunk in graph.astream(inputs, config, stream_mode=stream_mode):
         # 每个 chunk yield 前检查超时
         _check_timeouts(tm)
         yield chunk

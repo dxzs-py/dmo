@@ -339,7 +339,7 @@ def start_study_flow(
 
     # 预创建 WorkflowSession（幂等，保留已存在 session 的配置字段）：
     # 必须早于图执行——quiz_generator_node._persist_questions 依赖该记录定位 session，
-    # 否则题目无法落库，练习历史/修改答案随之失效（与 restart_quiz 的预创建保持一致）。
+    # 否则题目无法落库，练习历史/修改答案随之失效（与 prepare_restart 的预创建保持一致）。
     _ensure_session_created(
         thread_id=thread_id,
         user_question=user_question,
@@ -675,26 +675,29 @@ def _update_workflow_session_tokens(
         logger.warning(f"[Study Flow] 更新工作流会话 Token 失败: {e}")
 
 
-def restart_quiz(thread_id: str, user_id: int | None = None) -> dict:
-    """继续练习：创建新 thread_id，复用学习计划与运行时配置，生成新一轮题目
+def prepare_restart(thread_id: str, user_id: int | None = None) -> dict:
+    """继续练习准备：创建新线程并复用学习计划与运行时配置，返回可流式执行的状态
 
-    流程：
-    1. 从旧 session 读取 learning_plan、user_question、retry_count 与运行时配置
-    2. 生成新 thread_id，预创建新 WorkflowSession（供 quiz_generator_node 持久化题目）
-    3. 调用 study_flow.invoke() 从 START 正常执行：planner 检测到 learning_plan 跳过
-    4. quiz_generator 生成新题目并持久化为新 attempt_index 的 WorkflowQuestion
+    只做"准备"（校验旧 session、生成新 thread_id、预创建新 WorkflowSession、
+    构建 initial_state），**不执行 LLM 调用**；实际执行由调用方（SSE 流式视图）
+    通过 graph.stream 驱动，避免同步阻塞请求。
 
     Args:
         thread_id: 旧工作流线程 ID
         user_id: 用户 ID（可选）
 
     Returns:
-        包含 new_thread_id 的工作流状态字典
+        dict: {
+            "new_thread_id": 新线程 ID,
+            "initial_state": 新线程初始状态（learning_plan 复用旧 session）,
+            "new_retry_count": 新一轮重试次数,
+            "old_session": 旧 WorkflowSession 实例（供流式完成后更新 retry_count）,
+        }
 
     Raises:
         ValueError: 旧 session 不存在或缺少 learning_plan 时
     """
-    logger.info(f"[Study Flow] 继续练习，旧 thread_id={thread_id}")
+    logger.info(f"[Study Flow] 继续练习准备，旧 thread_id={thread_id}")
 
     from ..models import WorkflowSession
 
@@ -733,10 +736,7 @@ def restart_quiz(thread_id: str, user_id: int | None = None) -> dict:
         root_thread_id=new_root_thread_id,
     )
 
-    # 4. 创建新 StudyFlow 实例
-    study_flow = _get_study_flow(new_thread_id)
-
-    # 5. 构建初始状态（复用旧 session 的 learning_plan 与运行时配置）
+    # 4. 构建初始状态（复用旧 session 的 learning_plan 与运行时配置）
     initial_state: StudyFlowState = {
         "messages": [],
         "user_question": old_session.user_question,
@@ -767,26 +767,9 @@ def restart_quiz(thread_id: str, user_id: int | None = None) -> dict:
         "user_id": old_session.created_by_id,
     }
 
-    # 6. 执行工作流（planner 会跳过，因为 learning_plan 已存在）
-    config = {
-        "configurable": {"thread_id": new_thread_id},
-        "callbacks": [TokenUsageCallbackHandler()],
+    return {
+        "new_thread_id": new_thread_id,
+        "initial_state": initial_state,
+        "new_retry_count": new_retry_count,
+        "old_session": old_session,
     }
-
-    logger.info("[Study Flow] 开始执行继续练习工作流...")
-    result = study_flow.invoke(initial_state, config)
-
-    logger.info(f"[Study Flow] 继续练习完成，新 thread_id={new_thread_id}, 当前步骤: {result.get('current_step')}")
-
-    # 7. 持久化新 session（更新预创建的 session）
-    persistence_service.save_workflow_state(new_thread_id, result, user_id)
-
-    # 8. 更新旧 session 的 retry_count（用于追踪总练习轮次）
-    old_session.retry_count = new_retry_count
-    old_session.save(update_fields=["retry_count"])
-
-    # 9. 返回结果（包含新 thread_id）
-    result["new_thread_id"] = new_thread_id
-    result["retry_count"] = new_retry_count
-
-    return result

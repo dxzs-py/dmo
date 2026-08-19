@@ -19,6 +19,7 @@ from Django_xm.apps.knowledge.services.retrieval_service import create_retriever
 from Django_xm.apps.knowledge.views_utils import get_original_index_name
 
 from ..services.state import RetrievedDocument, StudyFlowState
+from .stream_events import emit_step
 
 logger = get_logger(__name__)
 
@@ -135,6 +136,7 @@ def retrieval_node(state: StudyFlowState) -> dict[str, Any]:
     4. 返回最相关的文档列表（未选择知识库时返回空列表）
     """
     logger.info("[Retrieval Node] 开始检索相关文档")
+    emit_step("retrieval", "正在检索相关资料...")
 
     learning_plan = state.get("learning_plan")
     user_id = state.get("user_id")

@@ -22,25 +22,25 @@ const routes = [
     path: '/chat',
     name: 'chat',
     component: () => import('../views/ChatView.vue'),
-    meta: { requiresAuth: true, title: '智能对话', keepAlive: true }
+    meta: { requiresAuth: true, title: '智能对话', keepAlive: true, keepAliveName: 'ChatView' }
   },
   {
     path: '/rag',
     name: 'rag',
     component: () => import('../views/RagView.vue'),
-    meta: { requiresAuth: true, title: 'RAG 检索', keepAlive: true }
+    meta: { requiresAuth: true, title: 'RAG 检索', keepAlive: true, keepAliveName: 'RagView' }
   },
   {
     path: '/workflows',
     name: 'workflows',
     component: () => import('../views/WorkflowView.vue'),
-    meta: { requiresAuth: true, title: '学习工作流', keepAlive: true }
+    meta: { requiresAuth: true, title: '学习工作流', keepAlive: true, keepAliveName: 'WorkflowView' }
   },
   {
     path: '/deep-research',
     name: 'deep-research',
     component: () => import('../views/DeepResearchView.vue'),
-    meta: { requiresAuth: true, title: '深度研究', keepAlive: true }
+    meta: { requiresAuth: true, title: '深度研究', keepAlive: true, keepAliveName: 'DeepResearchView' }
   },
   {
     path: '/profile',
@@ -58,7 +58,7 @@ const routes = [
     path: '/knowledge',
     name: 'knowledge',
     component: () => import('../views/KnowledgeBaseView.vue'),
-    meta: { requiresAuth: true, title: '知识库管理', keepAlive: true }
+    meta: { requiresAuth: true, title: '知识库管理', keepAlive: true, keepAliveName: 'KnowledgeBaseView' }
   },
   {
     path: '/dashboard',
