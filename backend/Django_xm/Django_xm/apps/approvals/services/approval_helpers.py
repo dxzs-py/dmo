@@ -76,7 +76,7 @@ def build_approval_index_item(apv):
         "source_id": apv.source_id,
         "chat_session_id": apv.chat_session_id,
         "cross_module_id": cross_module_id,
-        # 时间字段（ISO 格式，与 _build_payload 一致）
+        # 时间字段（ISO 格式，与 build_approval_payload 一致）
         "created_at": apv.created_at.isoformat().replace("+00:00", "Z") if apv.created_at else None,
         "expires_at": apv.expires_at.isoformat().replace("+00:00", "Z") if apv.expires_at else None,
     }
@@ -87,7 +87,7 @@ def build_approval_index(session_id):
 
     从 Approval 表查询指定会话的所有审批记录，按 tool_call_id 索引。
     tool_call_id 取值优先级：extra.tool_call_id → interrupt_id（与 SnapshotView
-    历史实现一致，与 approval_service._build_payload 中提取逻辑一致）。
+    历史实现一致，与 build_approval_payload 共享映射表提取逻辑一致）。
 
     索引项字段与 WebSocket 事件 approval payload 对齐
     （build_approval_index_item），用于 reconstruct_tool_call_from_approval
@@ -187,7 +187,7 @@ def _build_approval_payload_from_index(apv_info):
         "source_id": apv_info.get("source_id"),
         "chat_session_id": apv_info.get("chat_session_id"),
         "cross_module_id": apv_info.get("cross_module_id"),
-        # === 时间字段（2，ISO 格式，与 _build_payload 一致） ===
+        # === 时间字段（2，ISO 格式，与 build_approval_payload 一致） ===
         "created_at": apv_info.get("created_at"),
         "expires_at": apv_info.get("expires_at"),
         # === 关联字段（2，从 extra 透传到顶层） ===

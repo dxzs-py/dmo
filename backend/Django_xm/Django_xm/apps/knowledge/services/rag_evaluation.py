@@ -50,7 +50,7 @@ EVALUATION_PROMPT = """请评估以下 RAG 系统的生成质量。
 {{"faithfulness": 0.0, "relevance": 0.0, "completeness": 0.0}}"""
 
 
-def _keyword_overlap(query: str, text: str) -> float:
+def keyword_overlap(query: str, text: str) -> float:
     query_tokens = set(query.lower().split())
     text_tokens = set(text.lower().split())
     if not query_tokens:
@@ -151,7 +151,7 @@ class RAGEvaluator:
         response: str,
         source_docs: list[Document],
     ) -> GenerationMetrics:
-        relevance = _keyword_overlap(query, response)
+        relevance = keyword_overlap(query, response)
 
         source_text = " ".join(doc.page_content for doc in source_docs)
         response_tokens = set(response.lower().split())

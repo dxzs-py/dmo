@@ -50,8 +50,8 @@ class TestBatchResumeCompleteness(TestCase):
         # 隔离 Redis/广播副作用：锁可用 + 广播/释放无操作，仅验证批次状态机逻辑
         patchers = [
             mock.patch.object(approval_service, "_acquire_lock_with_retry", return_value=True),
-            mock.patch.object(approval_service, "_release_lock"),
-            mock.patch.object(approval_service, "_persist_and_broadcast"),
+            mock.patch.object(approval_service, "release_lock"),
+            mock.patch.object(approval_service, "persist_and_broadcast"),
         ]
         for p in patchers:
             p.start()

@@ -173,13 +173,10 @@ async def build_dynamic_context_prompt(
         from Django_xm.apps.context_manager.services.manager import create_context_manager
 
         model_name_for_prompt = config.model_name or ""
-        if not model_name_for_prompt and config.model:
-            if isinstance(config.model, str):
-                model_name_for_prompt = config.model
-            else:
-                model_name_for_prompt = (
-                    getattr(config.model, "model_name", None) or getattr(config.model, "model", None) or ""
-                )
+        if not model_name_for_prompt and config.model is not None:
+            model_name_for_prompt = (
+                getattr(config.model, "model_name", None) or getattr(config.model, "model", None) or ""
+            )
 
         if tools_desc is None and tools:
             mcp_section = _build_mcp_tools_section(tools)

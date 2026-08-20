@@ -31,8 +31,8 @@ from Django_xm.apps.approvals.serializers import (
     ApprovalWriteSerializer,
 )
 from Django_xm.apps.approvals.services import approval_service
+from Django_xm.apps.approvals.services.approval_gateway import CircuitBreakerError, gateway
 from Django_xm.apps.core.throttling import SensitiveOperationRateThrottle
-from Django_xm.common.approval_gateway import CircuitBreakerError, gateway
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.pagination import ProjectPagination
 from Django_xm.common.responses import error_response, success_response

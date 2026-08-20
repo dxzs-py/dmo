@@ -16,8 +16,9 @@ import { finalizeToolCallsForResearchResult } from './messageIntegrity'
 /**
  * 创建流式状态机处理器
  *
- * 处理 stream_event / stream_interrupted /
- * stream_completed / stream_finalized 事件，维护消息的 StreamState 状态转换。
+ * 处理 stream_event / stream_reasoning / stream_interrupted /
+ * stream_completed / stream_finalized 事件，维护消息的 StreamState 状态转换
+ * 与推理内容（ChatMessage.reasoning）写入。
  *
  * @param {Object} ctx - 依赖上下文
  * @param {Object} ctx.sessionStore - session store 实例
@@ -32,6 +33,7 @@ import { finalizeToolCallsForResearchResult } from './messageIntegrity'
  *   - 来自 messageIntegrity，全量同步后完整性校验
  * @returns {{
  *   handleStreamEvent: (sessionId: string, payload: Object) => void,
+ *   applyStreamReasoning: (sessionId: string, payload: Object) => void,
  *   handleStreamInterrupted: (sessionId: string, payload: Object) => void,
  *   handleStreamCompleted: (sessionId: string, payload: Object) => void,
  *   handleStreamFinalized: (sessionId: string, payload: Object) => Promise<void>,
@@ -236,6 +238,50 @@ export const createStreamStateHandlers = (ctx) => {
   }
 
   /**
+   * 应用 stream_reasoning 事件（session 频道，聊天模块深度研究模式的推理内容）
+   *
+   * 深度研究 worker（adapter.py）每次 LLM 节点产生 reasoning_content 时广播
+   * STREAM_REASONING，payload 中携带该节点的完整推理文本。此处写入
+   * ChatMessage.reasoning（duration=0 表示推理进行中，与代理模式 strategy.py
+   * "duration: 0" 语义一致）；推理结束由 handleStreamCompleted 回写 duration。
+   *
+   * 代理模式（chat agent）深度思考：进行中事件 duration=0，完成事件由
+   * strategy.on_loop_success（finalize_stream 阶段）携带实际思考秒数
+   * （duration>0）发布，此处原样透传（根因修复：此前硬编码 duration:0
+   * 覆盖完成态时长，AiReasoning 的 isStreaming 判定依赖 duration===0，
+   * 时长恒为 0 → 完成后永远"正在思考"闪烁）。
+   *
+   * 与 task 频道（handleTaskEvent → researchStore.setTaskReasoning）双通道写入，
+   * 分别驱动聊天消息 AiReasoning 与深度研究详情页 AiReasoning。
+   *
+   * 原实现位于 handleSessionEvent.js 内联 _applyStreamReasoning
+   * （C5/cq-04 Task 2 下沉，行为保持）。
+   *
+   * @param {string} sessionId
+   * @param {Object} payload - toCamelCase 后：{ source, sourceId, messageId, sessionId, taskId, data: { content, duration, source } }
+   */
+  const applyStreamReasoning = (sessionId, payload) => {
+    const content = payload.data?.content || payload.content || ''
+    if (!content) return
+    const session = getSession(sessionStore, sessionId)
+    let targetMsg = null
+    if (payload.messageId) {
+      targetMsg = findMessageById(session, payload.messageId)
+    }
+    if (!targetMsg) {
+      targetMsg = getLastAssistantMessage(session)
+    }
+    if (!targetMsg) {
+      logger.debug(`[Sync] stream_reasoning 未找到目标消息: session=${sessionId}, message=${payload.messageId || '(兜底)'}`)
+      return
+    }
+    // duration 透传：进行中事件 duration 缺失/0 → 0（"正在思考"）；
+    // 完成事件（strategy.on_loop_success）携带实际思考秒数 → 原样透传。
+    const duration = payload.data?.duration ?? payload.duration ?? 0
+    targetMsg.reasoning = { content, duration }
+  }
+
+  /**
    * 流式输出被中断（stream_interrupted 事件）
    *
    * 事件来源：后端 views_chat.py 在 chat SSE 发送 deep_research 事件时发布，
@@ -345,10 +391,11 @@ export const createStreamStateHandlers = (ctx) => {
    *    解耦 taskInfo 更新与 task 频道订阅状态，确保 DeepResearchView 未打开时 taskInfo 也实时更新
    *    幂等性：与 handleTaskEvent 的 stream_completed 分支形成双路径，updateTaskFromEvent 使用 force:true 保证一致
    *
-   * 事件语义（新）：
-   * - finalized=false：后端 generator 刚结束，但前端 PATCH 尚未完成。
-   *   非请求浏览器不应触发全量同步（会拿到陈旧 content 覆盖本地）。
-   * - finalized=true 或字段缺失（旧后端兼容）：可安全触发全量同步。
+   * 事件语义（两类 stream_completed 事件）：
+   * - 聊天 SSE 完成事件（chat_executor_core / session_executor 广播）：
+   *   不含 finalized 字段（后端落库先于广播，非请求浏览器可安全全量同步）。
+   * - 深度研究权威完成事件（writeback.broadcast_stream_completed）：
+   *   始终携带 task_id + finalized=true（深研回写专属标记），进入研究结果回写逻辑。
    *
    * @param {string} sessionId
    * @param {Object} payload
@@ -357,13 +404,12 @@ export const createStreamStateHandlers = (ctx) => {
     const session = getSession(sessionStore, sessionId)
     if (!session?.messages) return
 
-    // 深度研究模式下，chat SSE 结束时发布的 stream_completed（finalized !== true）
-    // 不应让前端误判研究完成。当 finalized !== true 且消息处于 INTERRUPTED 状态时，
+    // 深度研究模式下，chat SSE 结束时发布的 stream_completed（无 finalized 字段）
+    // 不应让前端误判研究完成。当消息处于 INTERRUPTED 状态时，
     // 忽略该事件（不更新消息状态，不显示"研究已完成"/"继续研究"按钮），仅由事件队列推进 seq。
     // 真正的研究完成事件由 Celery worker 通过 broadcast_stream_completed 发布
     //（finalized=true，携带 task_id/final_report），届时正常进入下方研究结果回写逻辑。
-    // 普通聊天模式（无 finalized 字段或 finalized=false）消息不会处于 INTERRUPTED 状态，
-    // 不受此判断影响，行为与原有逻辑一致。
+    // 普通聊天模式消息不会处于 INTERRUPTED 状态，不受此判断影响，行为与原有逻辑一致。
     if (payload.finalized !== true) {
       const earlyMessageId = payload.messageId
       let earlyTargetMsg = null
@@ -384,7 +430,7 @@ export const createStreamStateHandlers = (ctx) => {
 
     // === 处理深度研究最终结果 ===
     // 深度研究完成事件由 Celery worker 回写时发布，始终携带 task_id 和 finalized=true，
-    // 与聊天 SSE 结束时的 stream_completed（无 task_id, finalized=false）区分。
+    // 与聊天 SSE 结束时的 stream_completed（无 task_id/finalized 字段）区分。
     // 即使 final_report 为空字符串（AI 回复过短且磁盘文件提取失败），也需进入回写逻辑：
     // 1. 标记消息 COMPLETED + isStreaming=false（解除 FINALIZING 卡死状态）
     // 2. 触发 requestFullSync 从后端拉取 writeback_to_chat_message 已写入的正确内容
@@ -548,29 +594,25 @@ export const createStreamStateHandlers = (ctx) => {
     }
 
     const isRequestBrowser = streamingSessions.has(sessionId)
-    // finalized 字段：false 表示后端尚未确认 PATCH 完成；true 或 undefined（旧后端）表示可安全同步
-    const finalized = payload.finalized !== false
 
     if (isRequestBrowser) {
       // 仅在 onStreamEnd 已完成 PATCH（状态为 SYNCING）时才允许兜底 COMPLETED
       // FINALIZING 状态表示 PATCH 尚未完成，不应绕过
-      if (finalized
-          && targetMsg.streamState === StreamState.SYNCING) {
+      if (targetMsg.streamState === StreamState.SYNCING) {
         targetMsg.streamState = StreamState.COMPLETED
         targetMsg.isStreaming = false
         logger.info(`[Sync] stream_completed 兜底 syncing→completed: session=${sessionId}`)
 
         // toolCalls 最终化统一收敛到 handleStreamFinalized（单一最终化路径）：
         // stream_completed 仅兜底消息状态，toolCalls 由 stream_finalized 幂等最终化
-      } else if (finalized
-                 && targetMsg.streamState === StreamState.FINALIZING) {
+      } else if (targetMsg.streamState === StreamState.FINALIZING) {
         // FINALIZING 状态：PATCH 尚未完成，不兜底，等待 onStreamEnd 完成
         logger.info(`[Sync] stream_completed 收到时请求浏览器处于 finalizing，等待 PATCH 完成: session=${sessionId}`)
       } else if (targetMsg.streamState === StreamState.STREAMING
                  || targetMsg.streamState === StreamState.FINALIZING
                  || targetMsg.streamState === StreamState.SYNCING) {
-        logger.info(`[Sync] stream_completed 收到时请求浏览器消息状态为 ${targetMsg.streamState}，等待本地流程: session=${sessionId}, finalized=${finalized}`)
-      } else if (finalized && targetMsg.streamState === StreamState.COMPLETED) {
+        logger.info(`[Sync] stream_completed 收到时请求浏览器消息状态为 ${targetMsg.streamState}，等待本地流程: session=${sessionId}`)
+      } else if (targetMsg.streamState === StreamState.COMPLETED) {
         // 消息已 COMPLETED：toolCalls 最终化由 handleStreamFinalized 兜底
         // （可能 WebSocket 事件乱序导致 toolCall 未更新，stream_finalized 幂等修正）
         logger.info(`[Sync] stream_completed 请求浏览器消息已 completed，等待 stream_finalized 最终化 toolCalls: session=${sessionId}`)
@@ -580,42 +622,7 @@ export const createStreamStateHandlers = (ctx) => {
       return
     }
 
-    // 非请求浏览器
-    if (!finalized) {
-      // 后端尚未确认 PATCH 完成：仅标记 FINALIZING，不触发全量同步
-      // 真正的全量同步由 stream_finalized 事件触发
-
-      if (targetMsg.streamState === StreamState.STREAMING) {
-        targetMsg.streamState = StreamState.FINALIZING
-        targetMsg.isStreaming = false
-        logger.info(`[Sync] stream_completed(finalized=false) 标记 finalizing，不触发全量同步: session=${sessionId}`)
-
-        // 如果 stream_finalized 15 秒内未到达（请求浏览器 chatFinalize 失败等），
-        // 主动全量同步并标记 COMPLETED，防止永久卡在 FINALIZING
-        const msgId = targetMsg.backendId || targetMsg.id
-        setTimeout(() => {
-          const s = getSession(sessionStore, sessionId)
-          const m = s?.messages?.find(m =>
-            (m.backendId || m.id) === msgId
-          )
-          if (m?.streamState === StreamState.FINALIZING) {
-            logger.warn(`[Sync] FINALIZING 超时(15s)，主动全量同步: session=${sessionId}`)
-            guardedRequestFullSync(sessionId).then((result) => {
-              if (result === null) return
-              if (m.streamState === StreamState.FINALIZING) {
-                m.streamState = StreamState.COMPLETED
-                m.isStreaming = false
-              }
-            })
-          }
-        }, 15000)
-      } else {
-        logger.info(`[Sync] stream_completed(finalized=false) 消息状态 ${targetMsg.streamState}，保持: session=${sessionId}`)
-      }
-      return
-    }
-
-    // finalized=true（或旧后端）：可安全标记 COMPLETED 并触发全量同步
+    // 非请求浏览器：后端 executor 落库先于 stream_completed 广播，可安全标记 COMPLETED 并全量同步
     // INTERRUPTED 是终态（审批超时、用户主动中断等），不应被 stream_completed 覆盖：
     // 审批恢复时由 handleApprovalEvent 先将 INTERRUPTED → STREAMING，
     // 再由后续 stream_completed 自然推进到 COMPLETED；若此刻仍为 INTERRUPTED，
@@ -629,8 +636,8 @@ export const createStreamStateHandlers = (ctx) => {
       // toolCalls 最终化统一收敛到 handleStreamFinalized（单一最终化路径）：
       // 非请求浏览器最终化在 stream_finalized 同步完成后执行（含 wasCompleted 场景）
     }
-    // finalized=true 时后端数据已是权威，非 FINALIZING/SYNCING 态均触发全量同步
-    // 全量同步完成后，校验 tool_calls 数量和 content 长度（工具卡片 + AI 内容完整性）
+    // 后端 executor 落库数据已可用（请求浏览器 PATCH 的权威内容由 stream_finalized 二次同步）
+    // 非 FINALIZING/SYNCING 态均触发全量同步；同步完成后校验 tool_calls 数量和 content 长度
     if (targetMsg.streamState !== StreamState.FINALIZING
         && targetMsg.streamState !== StreamState.SYNCING) {
       const targetMessageId = messageId
@@ -642,7 +649,7 @@ export const createStreamStateHandlers = (ctx) => {
       })
     }
 
-    logger.info(`[Sync] 流式完成: session=${sessionId}, message=${messageId || '(兜底)'}, finalized=${finalized}`)
+    logger.info(`[Sync] 流式完成: session=${sessionId}, message=${messageId || '(兜底)'}`)
   }
 
   /**
@@ -743,6 +750,7 @@ export const createStreamStateHandlers = (ctx) => {
 
   return {
     handleStreamEvent,
+    applyStreamReasoning,
     handleStreamInterrupted,
     handleStreamCompleted,
     handleStreamFinalized,

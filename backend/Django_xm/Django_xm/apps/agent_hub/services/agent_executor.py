@@ -23,6 +23,14 @@
 - 不可恢复 → FALLBACK（无工具纯对话）
 - soft timeout → 警告一次
 - hard timeout → FALLBACK
+
+层次契约（统一降级链路）：
+- 模型级韧性（SDK 重试、候选切换、熔断）唯一归属 LazyFallbackChatModel
+  （ai_engine.services.llm_fallback）；本执行器仅负责 agent 级语义
+  （执行循环重试、工具降级、无工具纯对话回退），不持有任何模型切换逻辑、
+  不创建裸模型。model_instance 必须是经 get_chat_model(enable_fallback=True)
+  产出的包装实例，_run_fallback 复用该实例即自动继承降级能力
+  （主模型已熔断时直接使用候选模型）。
 """
 
 import asyncio
@@ -33,7 +41,7 @@ from typing import Any
 from langchain_core.messages import AIMessage
 from langgraph.errors import GraphRecursionError
 
-from Django_xm.apps.agent_hub.services.agent_resilience import (
+from Django_xm.apps.ai_engine.services.agent_resilience import (
     DegradationLevel,
     DuplicateToolCallDetector,
     DuplicateToolCallWarning,

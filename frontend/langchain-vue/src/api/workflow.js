@@ -1,6 +1,5 @@
 import { apiClient } from './axios'
 import settings from '../config/settings'
-import { fetchSSE } from '@/utils/sse'
 import { useUserStore } from '@/stores/user'
 import { toSnakeCase } from '@/utils/sessionTransformers'
 
@@ -22,15 +21,6 @@ function buildSSEHeaders() {
  * （abort 时 break + reader.releaseLock，后端生成器随之结束）。
  */
 export const workflowAPI = {
-  start(data) { return apiClient.post('/learning/start/', data) },
-  /** SSE 流式启动：请求内逐步执行工作流并实时推送 workflow_step/state_update/completed 事件 */
-  startStream(data, options = {}) {
-    return fetchSSE('/learning/start/stream/', {
-      method: 'POST',
-      body: JSON.stringify(data),
-      ...options,
-    })
-  },
   /** SSE 流式启动（无 signal 直连，避免 Vite proxy 缓冲，供 WorkflowView 使用） */
   startStreamRaw(data) {
     return fetch(`${settings.apiBaseUrl}/learning/start/stream/`, {
@@ -39,8 +29,6 @@ export const workflowAPI = {
       body: JSON.stringify(toSnakeCase(data)),
     })
   },
-  startStreamUrl() { return `${settings.apiBaseUrl}/learning/start/stream/` },
-  streamUrl(threadId) { return `${settings.apiBaseUrl}/learning/stream/${threadId}/` },
   getState(threadId) { return apiClient.get(`/learning/status/${threadId}/`) },
   submitAnswers(threadId, data) { return apiClient.post('/learning/submit/', { threadId: threadId, answers: data }) },
   getTasks(params = {}) { return apiClient.get('/learning/tasks/', { params }) },
@@ -48,13 +36,6 @@ export const workflowAPI = {
   downloadFile(threadId, filename) { return `${settings.apiBaseUrl}/learning/${threadId}/file/download/${filename}` },
   getFileContent(threadId, filename) { return apiClient.get(`/learning/${threadId}/file/content/${filename}/`) },
   deleteTask(threadId) { return apiClient.delete(`/learning/tasks/${threadId}/`) },
-  /** 继续练习（流式）：快速创建新线程，SSE 逐步生成新一轮题目（与 startStream 一致体验） */
-  restartStream(threadId, options = {}) {
-    return fetchSSE(`/learning/${threadId}/restart/stream/`, {
-      method: 'POST',
-      ...options,
-    })
-  },
   /** 继续练习（无 signal 直连，避免 Vite proxy 缓冲，供 WorkflowView 使用） */
   restartStreamRaw(threadId) {
     return fetch(`${settings.apiBaseUrl}/learning/${threadId}/restart/stream/`, {
@@ -70,12 +51,6 @@ export const workflowAPI = {
   },
   /** 练习轮次历史 */
   getAttempts(threadId) { return apiClient.get(`/learning/${threadId}/attempts/`) },
-  streamFetch(threadId, options = {}) {
-    return fetchSSE(`/learning/stream/${threadId}/`, {
-      injectTokenQuery: true,
-      ...options,
-    })
-  },
   /** 监听已有线程进度（无 signal 直连，token 走 query 参数，供 WorkflowView 使用） */
   streamFetchRaw(threadId) {
     const userStore = useUserStore()

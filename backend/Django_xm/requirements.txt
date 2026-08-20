@@ -91,3 +91,6 @@ cryptography>=46.0.6
 asgiref>=3.11.1
 typing_extensions>=4.15.0
 pillow>=12.1.1
+
+# --- 依赖方向契约校验（.importlinter 三契约）---
+import-linter>=2.0

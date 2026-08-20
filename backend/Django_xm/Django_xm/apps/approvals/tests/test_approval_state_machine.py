@@ -12,8 +12,8 @@
 - build_approval_extra：路由 ID setdefault、tool_config / model_config 默认值
 
 mock 策略（与 test_approval_batch_resume.py 一致）：
-- 模块级 patch _acquire_lock_with_retry / _acquire_lock / _release_lock /
-  _persist_and_broadcast / _publish_tool_call_timeout_event，隔离 Redis 与广播副作用
+- 模块级 patch _acquire_lock_with_retry / _acquire_lock / release_lock /
+  persist_and_broadcast / publish_tool_call_timeout_event，隔离 Redis 与广播副作用
 - timeout 的恢复路由 gateway.route_timeout 与 complete 的批次终态化
   approval_lifecycle.service.complete_batch 均为函数内延迟导入，
   patch 其源模块单例属性即可拦截
@@ -46,7 +46,7 @@ from Django_xm.apps.approvals.services.approval_service import (
     resume_approval,
     timeout_approval,
 )
-from Django_xm.common import approval_gateway
+from Django_xm.apps.approvals.services import approval_gateway
 from Django_xm.common.constants import TIMEOUT_DECISION
 
 
@@ -81,15 +81,15 @@ class ResumeApprovalStateMachineTests(TestCase):
     def setUp(self) -> None:
         patchers = [
             mock.patch.object(approval_service, "_acquire_lock_with_retry", return_value=True),
-            mock.patch.object(approval_service, "_release_lock"),
-            mock.patch.object(approval_service, "_persist_and_broadcast"),
+            mock.patch.object(approval_service, "release_lock"),
+            mock.patch.object(approval_service, "persist_and_broadcast"),
         ]
         for p in patchers:
             p.start()
             self.addCleanup(p.stop)
         self.acquire_retry_mock = approval_service._acquire_lock_with_retry
-        self.release_lock_mock = approval_service._release_lock
-        self.pab_mock = approval_service._persist_and_broadcast
+        self.release_lock_mock = approval_service.release_lock
+        self.pab_mock = approval_service.persist_and_broadcast
 
     def test_resume_not_found_returns_idempotent_not_found(self) -> None:
         """审批不存在：返回 not_found=True 的幂等结构，不触碰锁与广播。"""
@@ -223,14 +223,14 @@ class CompleteApprovalTests(TestCase):
 
     def setUp(self) -> None:
         patchers = [
-            mock.patch.object(approval_service, "_release_lock"),
-            mock.patch.object(approval_service, "_persist_and_broadcast"),
+            mock.patch.object(approval_service, "release_lock"),
+            mock.patch.object(approval_service, "persist_and_broadcast"),
         ]
         for p in patchers:
             p.start()
             self.addCleanup(p.stop)
-        self.release_lock_mock = approval_service._release_lock
-        self.pab_mock = approval_service._persist_and_broadcast
+        self.release_lock_mock = approval_service.release_lock
+        self.pab_mock = approval_service.persist_and_broadcast
 
     def test_complete_from_processing_lands_terminal_and_cleans_temp_keys(self) -> None:
         """从 processing 完成：状态/resolved_at 落库，临时键清理，extra 合并，批次锁释放。"""
@@ -252,7 +252,7 @@ class CompleteApprovalTests(TestCase):
         )
 
         with mock.patch(
-            "Django_xm.common.approval_lifecycle.service.complete_batch"
+            "Django_xm.apps.approvals.services.approval_lifecycle.service.complete_batch"
         ) as complete_batch_mock:
             complete_approval("call_c1", Approval.State.APPROVED, extra={"result": "ok"})
 
@@ -278,7 +278,7 @@ class CompleteApprovalTests(TestCase):
         approval = _make_approval("call_c2")
 
         with mock.patch(
-            "Django_xm.common.approval_lifecycle.service.complete_batch"
+            "Django_xm.apps.approvals.services.approval_lifecycle.service.complete_batch"
         ) as complete_batch_mock:
             complete_approval("call_c2", Approval.State.REJECTED)
 
@@ -299,7 +299,7 @@ class CompleteApprovalTests(TestCase):
         """重复完成：幂等，状态保持终态不回退。"""
         approval = _make_approval("call_c3", state=Approval.State.PROCESSING)
 
-        with mock.patch("Django_xm.common.approval_lifecycle.service.complete_batch"):
+        with mock.patch("Django_xm.apps.approvals.services.approval_lifecycle.service.complete_batch"):
             complete_approval("call_c3", Approval.State.APPROVED)
             complete_approval("call_c3", Approval.State.APPROVED)
 
@@ -317,17 +317,19 @@ class TimeoutApprovalTests(TestCase):
     def setUp(self) -> None:
         patchers = [
             mock.patch.object(approval_service, "_acquire_lock", return_value=True),
-            mock.patch.object(approval_service, "_release_lock"),
-            mock.patch.object(approval_service, "_persist_and_broadcast"),
-            mock.patch.object(approval_service, "_publish_tool_call_timeout_event"),
-            mock.patch("Django_xm.common.approval_gateway.gateway.route_timeout"),
+            mock.patch.object(approval_service, "release_lock"),
+            mock.patch.object(approval_service, "persist_and_broadcast"),
+            mock.patch.object(approval_service, "publish_tool_call_timeout_event"),
+            mock.patch(
+                "Django_xm.apps.approvals.services.approval_gateway.gateway.route_timeout"
+            ),
         ]
         for p in patchers:
             p.start()
             self.addCleanup(p.stop)
         self.acquire_lock_mock = approval_service._acquire_lock
-        self.pab_mock = approval_service._persist_and_broadcast
-        self.publish_timeout_mock = approval_service._publish_tool_call_timeout_event
+        self.pab_mock = approval_service.persist_and_broadcast
+        self.publish_timeout_mock = approval_service.publish_tool_call_timeout_event
         self.route_timeout_mock = approval_gateway.gateway.route_timeout
 
     def test_timeout_dispatch_true_persists_and_routes_resume(self) -> None:

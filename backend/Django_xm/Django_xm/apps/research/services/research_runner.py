@@ -311,7 +311,7 @@ def finalize_research(
 # ---------------------------------------------------------------------------
 # 审批批次决策与执行器恢复辅助
 # （collect_batch_decisions / finalize_batch_approvals 已收敛到
-#   common.approval_batch，仅保留 self_heal_expired_approvals 研究专属）
+#   approvals.services.approval_batch，仅保留 self_heal_expired_approvals 研究专属）
 # ---------------------------------------------------------------------------
 
 

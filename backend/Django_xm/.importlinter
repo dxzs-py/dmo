@@ -1,0 +1,26 @@
+[importlinter]
+root_package = Django_xm
+
+[importlinter:contract:common-not-dependent-on-apps]
+name = common 基础层禁止依赖 apps 业务层
+type = forbidden
+source_modules =
+    Django_xm.common
+forbidden_modules =
+    Django_xm.apps
+
+[importlinter:contract:ai-engine-not-dependent-on-agent-hub]
+name = ai_engine 底层引擎禁止依赖 agent_hub 业务层（graph 工厂经注册注入实现依赖倒置）
+type = forbidden
+source_modules =
+    Django_xm.apps.ai_engine
+forbidden_modules =
+    Django_xm.apps.agent_hub
+
+[importlinter:contract:apps-not-dependent-on-services]
+name = apps 业务层禁止依赖 services 执行编排层
+type = forbidden
+source_modules =
+    Django_xm.apps
+forbidden_modules =
+    Django_xm.services

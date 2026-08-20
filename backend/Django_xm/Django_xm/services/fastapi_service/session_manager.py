@@ -13,13 +13,13 @@ import logging
 
 from asgiref.sync import sync_to_async
 
-from Django_xm.services.fastapi_service.event_bus import (
+from Django_xm.common.signal_bus import (
     SIGNAL_APPROVAL,
     SIGNAL_PREFIX,
     SIGNAL_RETRY_SUBAGENT,
     SIGNAL_START,
     SIGNAL_STOP,
-    _get_signal_redis_url,
+    get_signal_redis_url,
 )
 from Django_xm.services.fastapi_service.session_executor import SessionExecutor
 
@@ -62,7 +62,7 @@ class SessionManager:
 
         register_main_loop()
 
-        self._redis = redis_async.Redis.from_url(_get_signal_redis_url())
+        self._redis = redis_async.Redis.from_url(get_signal_redis_url())
         self._pubsub = self._redis.pubsub()
         await self._pubsub.psubscribe(*SIGNAL_PATTERNS)
         self._subscription_task = asyncio.create_task(
@@ -183,7 +183,7 @@ class SessionManager:
            子代理完成后经生命周期回调唤醒父 graph（spec D4）。
         """
         from Django_xm.apps.ai_engine.subagent_runtime import get_subagent_runtime
-        from Django_xm.services.fastapi_service.event_bus import (
+        from Django_xm.common.signal_bus import (
             SESSION_TYPE_CHAT,
             SESSION_TYPE_RESEARCH,
         )
@@ -195,7 +195,7 @@ class SessionManager:
         graph_interrupt_id = payload.get("graph_interrupt_id", "") or ""
 
         from Django_xm.apps.approvals.models import Approval
-        from Django_xm.common.approval_batch import (
+        from Django_xm.apps.approvals.services.approval_batch import (
             collect_batch_decisions,
             finalize_batch_approvals,
         )

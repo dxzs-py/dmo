@@ -179,18 +179,52 @@ class DeepAgentBuilder:
         )
 
     async def _build_internal(self, config) -> Any:
+        """编排深度研究 agent 的完整构建流程。
+
+        流程：deepagents 可用性检查 → 工具解析（含 fs_* 冲突过滤）→
+        middleware 链构建（含子代理工具注入）→ backend/skills 解析 →
+        system_prompt 解析（含文档分析引导）→ create_deep_agent 参数组装 →
+        agent 创建与 OfficialDeepAgentAdapter 包装。
+
+        Args:
+            config: AgentConfig 实例。
+        """
         try:
-            from deepagents import create_deep_agent
+            # 仅做 deepagents 可用性探测（构建期 fail-fast），实际调用在
+            # _create_deep_agent_adapter 内导入
+            from deepagents import create_deep_agent  # noqa: F401
         except ImportError:
             from Django_xm.apps.agent_hub.exceptions import FrameworkNotAvailableError
 
             raise FrameworkNotAvailableError("deepagents 包不可用，深度研究功能无法启动") from None
 
-        from Django_xm.apps.agent_hub.middleware import build_middleware
-        from Django_xm.apps.agent_hub.model_resolver import resolve_model
+        model, tools = await self._resolve_deep_tools(config)
+        middleware_stack, tools = self._build_deep_middleware(config, tools)
+        backend_type, work_dir, backend, skills = self._resolve_deep_runtime(config)
+        system_prompt = await self._resolve_deep_system_prompt(config)
+        agent_kwargs = self._build_deep_agent_kwargs(
+            config, model, tools, middleware_stack, backend, system_prompt, skills
+        )
+        return self._create_deep_agent_adapter(
+            config, model, tools, middleware_stack, agent_kwargs, backend_type, work_dir
+        )
+
+    async def _resolve_deep_tools(self, config) -> tuple[Any, list[BaseTool]]:
+        """解析深度研究 agent 的模型与工具集。
+
+        职责：解析 model/tools、将纯协程 StructuredTool 同步化、
+        过滤与 deepagents 内置文件操作冲突的 fs_* 工具。
+
+        Args:
+            config: AgentConfig 实例。
+
+        Returns:
+            (model, tools) 元组，tools 为过滤冲突工具后的列表。
+        """
         from Django_xm.apps.agent_hub.tool_resolver import resolve_tools
 
-        model = resolve_model(config)
+        # 模型已由 AgentFactory 统一解析并写入 config.model
+        model = config.model
         tools = await resolve_tools(config)
         tools = [_ensure_sync_tool(t) for t in tools]
 
@@ -215,6 +249,22 @@ class DeepAgentBuilder:
                 f"已过滤 {filtered_count} 个冗余文件系统工具 "
                 f"(fs_write_file/fs_read_file 等)，deepagents 内置工具已覆盖文件操作"
             )
+        return model, tools
+
+    def _build_deep_middleware(self, config, tools: list[BaseTool]) -> tuple[list[Any], list[BaseTool]]:
+        """构建深度研究 middleware 链并注入子代理派生工具。
+
+        职责：构建 middleware 栈、显式注入 ApprovalMiddleware（双保险）、
+        调用 _inject_and_assert_subagent_tools 注入并断言 spawn/wait 工具。
+
+        Args:
+            config: AgentConfig 实例。
+            tools: 过滤冲突工具后的工具列表。
+
+        Returns:
+            (middleware_stack, tools) 元组，tools 为注入子代理工具后的最终列表。
+        """
+        from Django_xm.apps.agent_hub.middleware import build_middleware
 
         middleware_stack = build_middleware(config)
 
@@ -231,7 +281,20 @@ class DeepAgentBuilder:
         # 由注册表从主 agent 工具中识别。
         # 注入后 fail-fast 断言 spawn/wait 必在工具集内（spec D3），缺失即构建失败。
         tools = self._inject_and_assert_subagent_tools(tools)
+        return middleware_stack, tools
 
+    def _resolve_deep_runtime(self, config) -> tuple[str, str | None, Any, list[str] | None]:
+        """解析深度研究运行时环境（backend 与 skills）。
+
+        职责：编排 _ensure_work_dir / _resolve_backend / _resolve_skills，
+        解析 backend_type 与 work_dir，并回写 config.work_dir。
+
+        Args:
+            config: AgentConfig 实例。
+
+        Returns:
+            (backend_type, work_dir, backend, skills) 元组。
+        """
         backend_type = getattr(config, "backend_type", "filesystem") or "filesystem"
         work_dir = getattr(config, "work_dir", None)
 
@@ -240,9 +303,22 @@ class DeepAgentBuilder:
         config.work_dir = work_dir
 
         backend = self._resolve_backend(config, backend_type, work_dir, sandbox_dir)
-
         skills = self._resolve_skills(config, backend_type, work_dir)
+        return backend_type, work_dir, backend, skills
 
+    async def _resolve_deep_system_prompt(self, config) -> str:
+        """解析深度研究 system_prompt（含文档分析引导拼接）。
+
+        职责：config.system_prompt 为 None 时构建默认 prompt（自定义时输出
+        续研上下文日志）；启用文档分析（enable_doc_analysis）时追加
+        DOC_ANALYSIS_PROMPT_SUFFIX 知识库检索引导。
+
+        Args:
+            config: AgentConfig 实例。
+
+        Returns:
+            最终 system_prompt 字符串。
+        """
         system_prompt = config.system_prompt
         if system_prompt is None:
             system_prompt = await self._build_system_prompt(config)
@@ -265,7 +341,37 @@ class DeepAgentBuilder:
         if _enable_doc_analysis and DOC_ANALYSIS_PROMPT_SUFFIX not in system_prompt:
             system_prompt += DOC_ANALYSIS_PROMPT_SUFFIX
             logger.info(f"DeepAgent system_prompt 已追加知识库文档分析引导 ({len(system_prompt)} 字符)")
+        return system_prompt
 
+    def _build_deep_agent_kwargs(
+        self,
+        config,
+        model: Any,
+        tools: list[BaseTool],
+        middleware_stack: list[Any],
+        backend: Any,
+        system_prompt: str,
+        skills: list[str] | None,
+    ) -> dict[str, Any]:
+        """组装 create_deep_agent 的关键字参数。
+
+        职责：拼接 model/tools/system_prompt 必选参数，按存在性条件注入
+        middleware/skills/memory/permissions/backend，叠加通用参数
+        （_build_common_agent_kwargs）与 interrupt_on。
+
+        Args:
+            config: AgentConfig 实例。
+            model: 已解析的模型实例。
+            tools: 注入子代理工具后的最终工具列表。
+            middleware_stack: middleware 栈（非空时注入）。
+            backend: 文件系统 backend（None 时不注入）。
+            system_prompt: 最终 system_prompt。
+            skills: skills 目录列表（空或 None 时不注入）。
+
+        Returns:
+            create_deep_agent 的关键字参数字典（同时作为 adapter 的
+            original_config 韧性降级元数据）。
+        """
         agent_kwargs: dict[str, Any] = {
             "model": model,
             "tools": tools,
@@ -289,6 +395,37 @@ class DeepAgentBuilder:
         interrupt_on = getattr(config, "interrupt_on", None)
         if interrupt_on:
             agent_kwargs["interrupt_on"] = interrupt_on
+        return agent_kwargs
+
+    def _create_deep_agent_adapter(
+        self,
+        config,
+        model: Any,
+        tools: list[BaseTool],
+        middleware_stack: list[Any],
+        agent_kwargs: dict[str, Any],
+        backend_type: str,
+        work_dir: str | None,
+    ) -> Any:
+        """创建 deep agent 并包装为 OfficialDeepAgentAdapter。
+
+        职责：禁用 deepagents 自动 general-purpose subagent、调用
+        create_deep_agent 创建 graph、注入完整构建元数据包装
+        OfficialDeepAgentAdapter（韧性降级 _rebuild_with_degraded_tools 所需）。
+
+        Args:
+            config: AgentConfig 实例（取 session_id 作为 thread_id）。
+            model: 已解析的模型实例（adapter 降级直接 LLM 回答用）。
+            tools: 最终工具列表（adapter 的 original_tools）。
+            middleware_stack: middleware 栈（创建成功日志用）。
+            agent_kwargs: create_deep_agent 的关键字参数（adapter 的 original_config）。
+            backend_type: backend 类型名（创建成功日志用）。
+            work_dir: 工作目录（adapter 文件系统根目录）。
+
+        Returns:
+            OfficialDeepAgentAdapter 实例。
+        """
+        from deepagents import create_deep_agent
 
         # 禁用 deepagents 自动 general-purpose subagent（阻塞 task 工具），
         # 深度研究子代理统一走 SubAgentRuntime.spawn + spawn_sub_agent 工具。
@@ -311,7 +448,7 @@ class DeepAgentBuilder:
         # AgentWrapper（仅含 graph + work_dir），original_tools / original_config / model
         # 全部丢失，导致 _rebuild_with_degraded_tools 因 original_config=None 返回 None，
         # 韧性降级完全失效。
-        adapter = OfficialDeepAgentAdapter(
+        return OfficialDeepAgentAdapter(
             graph=graph,
             thread_id=config.session_id or "",
             work_dir=work_dir,
@@ -320,7 +457,6 @@ class DeepAgentBuilder:
             original_config=agent_kwargs,
             chat_session_id=None,
         )
-        return adapter
 
     @staticmethod
     def _inject_and_assert_subagent_tools(tools: list[BaseTool]) -> list[BaseTool]:

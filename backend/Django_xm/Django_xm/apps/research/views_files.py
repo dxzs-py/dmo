@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 
 from Django_xm.apps.core.services.file_manager import get_file_manager
 from Django_xm.common.error_codes import ErrorCode
-from Django_xm.common.permissions import IsAuthenticatedOrQueryParam
+from Django_xm.apps.core.permissions import IsAuthenticatedOrQueryParam
 from Django_xm.common.responses import error_response, not_found_response, success_response
 from Django_xm.common.serializers import EmptySerializer, FileInfoSerializer
 

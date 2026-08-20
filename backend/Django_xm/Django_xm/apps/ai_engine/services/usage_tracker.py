@@ -8,6 +8,7 @@ from typing import Any
 
 from django.conf import settings as django_settings
 
+from Django_xm.apps.context_manager.services.compression import TokenEstimator
 from Django_xm.apps.core.logging_utils import get_logger
 
 from ..config import settings as app_cfg

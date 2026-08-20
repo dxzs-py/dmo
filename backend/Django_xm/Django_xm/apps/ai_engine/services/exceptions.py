@@ -27,7 +27,7 @@ from langchain_core.exceptions import (
 )
 from langchain_core.tools import ToolException
 
-from Django_xm.apps.core.exceptions import BaseAppError
+from Django_xm.common.exceptions import BaseAppError
 from Django_xm.apps.core.logging_utils import get_logger
 
 logger = get_logger(__name__)
@@ -69,11 +69,15 @@ class ModelCallError(LCAgentException):
     DEFAULT_USER_MESSAGE = "模型服务暂时不可用，请稍后重试"
 
     def __init__(self, message: str, model_name: str = "", **kwargs):
+        details = dict(kwargs.pop("details", None) or {})
+        recoverable = kwargs.pop("recoverable", True)
+        user_message = kwargs.pop("user_message", None)
         super().__init__(
             message,
             error_code="MODEL_CALL_ERROR",
-            details={"model_name": model_name, **kwargs},
-            recoverable=True,
+            details={"model_name": model_name, **details, **kwargs},
+            recoverable=recoverable,
+            user_message=user_message,
         )
 
 
@@ -83,11 +87,15 @@ class AgentExecutionError(LCAgentException):
     DEFAULT_USER_MESSAGE = "智能体执行失败，请稍后重试"
 
     def __init__(self, message: str, agent_type: str = "", **kwargs):
+        details = dict(kwargs.pop("details", None) or {})
+        recoverable = kwargs.pop("recoverable", True)
+        user_message = kwargs.pop("user_message", None)
         super().__init__(
             message,
             error_code="AGENT_EXECUTION_ERROR",
-            details={"agent_type": agent_type, **kwargs},
-            recoverable=True,
+            details={"agent_type": agent_type, **details, **kwargs},
+            recoverable=recoverable,
+            user_message=user_message,
         )
 
 
@@ -97,11 +105,15 @@ class RAGRetrievalError(LCAgentException):
     DEFAULT_USER_MESSAGE = "知识检索失败，请稍后重试"
 
     def __init__(self, message: str, index_name: str = "", **kwargs):
+        details = dict(kwargs.pop("details", None) or {})
+        recoverable = kwargs.pop("recoverable", True)
+        user_message = kwargs.pop("user_message", None)
         super().__init__(
             message,
             error_code="RAG_RETRIEVAL_ERROR",
-            details={"index_name": index_name, **kwargs},
-            recoverable=True,
+            details={"index_name": index_name, **details, **kwargs},
+            recoverable=recoverable,
+            user_message=user_message,
         )
 
 
@@ -111,11 +123,15 @@ class GuardrailsValidationError(LCAgentException):
     DEFAULT_USER_MESSAGE = "内容验证未通过，请调整后重试"
 
     def __init__(self, message: str, validation_type: str = "", **kwargs):
+        details = dict(kwargs.pop("details", None) or {})
+        recoverable = kwargs.pop("recoverable", False)
+        user_message = kwargs.pop("user_message", None)
         super().__init__(
             message,
             error_code="GUARDRAILS_VALIDATION_ERROR",
-            details={"validation_type": validation_type, **kwargs},
-            recoverable=False,
+            details={"validation_type": validation_type, **details, **kwargs},
+            recoverable=recoverable,
+            user_message=user_message,
         )
 
 
@@ -139,11 +155,15 @@ class CheckpointError(LCAgentException):
     DEFAULT_USER_MESSAGE = "状态保存失败，请稍后重试"
 
     def __init__(self, message: str, backend: str = "", **kwargs):
+        details = dict(kwargs.pop("details", None) or {})
+        recoverable = kwargs.pop("recoverable", True)
+        user_message = kwargs.pop("user_message", None)
         super().__init__(
             message,
             error_code="CHECKPOINT_ERROR",
-            details={"backend": backend, **kwargs},
-            recoverable=True,
+            details={"backend": backend, **details, **kwargs},
+            recoverable=recoverable,
+            user_message=user_message,
         )
 
 
@@ -210,7 +230,13 @@ def classify_exception(exc: Exception) -> LCAgentException:
             BadRequestError as OpenAIBadRequestError,
         )
         from openai import (
+            PermissionDeniedError as OpenAIPermissionDeniedError,
+        )
+        from openai import (
             RateLimitError as OpenAIRateLimitError,
+        )
+        from openai import (
+            APIStatusError as OpenAIStatusError,
         )
 
         if isinstance(exc, OpenAIRateLimitError):
@@ -241,6 +267,20 @@ def classify_exception(exc: Exception) -> LCAgentException:
             return ModelCallError(
                 message=f"OpenAI 请求参数错误: {exc}",
                 details={"original_type": type(exc).__name__, "bad_request": True},
+            )
+        if isinstance(exc, OpenAIPermissionDeniedError):
+            return ModelCallError(
+                message=f"OpenAI 权限拒绝: {exc}",
+                details={"original_type": type(exc).__name__, "permission_error": True},
+                recoverable=False,
+                user_message="模型服务权限不足，请检查 API Key 权限配置",
+            )
+        if isinstance(exc, OpenAIStatusError) and getattr(exc, "status_code", None) == 402:
+            return ModelCallError(
+                message=f"OpenAI 余额不足: {exc}",
+                details={"original_type": type(exc).__name__, "payment_error": True},
+                recoverable=False,
+                user_message="模型服务余额不足，请检查账户余额或切换模型",
             )
     except ImportError as e:
         logger.debug("openai 未安装，跳过 OpenAI 异常分类: %s", e)

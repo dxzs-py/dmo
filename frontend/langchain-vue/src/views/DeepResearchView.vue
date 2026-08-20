@@ -175,85 +175,13 @@
       </el-card>
     </div>
 
-    <el-dialog v-model="continueDialogVisible" title="继续研究" width="600px" :close-on-click-modal="false">
-      <p style="margin-bottom: 12px; color: var(--el-text-color-secondary)">
-        基于已有研究继续深入探索
-      </p>
-      <el-descriptions :column="1" border size="small" style="margin-bottom: 16px">
-        <el-descriptions-item label="原研究主题">
-          {{ continueParentTask?.query?.substring(0, 100) }}
-        </el-descriptions-item>
-        <el-descriptions-item label="版本">
-          v{{ continueParentTask?.version || 1 }} → v{{ (continueParentTask?.version || 1) + 1 }}
-        </el-descriptions-item>
-      </el-descriptions>
-      <el-form :model="continueForm" label-width="100px" @submit.prevent>
-        <el-form-item label="补充说明">
-          <el-input
-            v-model="continueForm.additionalQuery"
-            type="textarea"
-            :rows="3"
-            placeholder="描述你想继续探索的方向（可选）..."
-          />
-        </el-form-item>
-        <el-form-item label="选择模型">
-          <ModelSelector @change="onContinueModelChange" />
-        </el-form-item>
-        <el-form-item label="深度思考">
-          <el-switch
-            :model-value="useDeepThinking"
-            :disabled="!modelSupportsDeepThinking"
-            @change="useDeepThinking = $event"
-          />
-          <span v-if="!modelSupportsDeepThinking" class="deep-thinking-hint">
-            当前模型不支持深度思考
-          </span>
-        </el-form-item>
-        <el-form-item label="启用网络搜索">
-          <el-switch v-model="continueForm.enableWebSearch" />
-        </el-form-item>
-        <el-form-item label="选择知识库">
-          <div class="kb-selector">
-            <div v-if="filteredKnowledgeBases.length === 0" class="kb-empty">
-              <span>暂无可用知识库</span>
-            </div>
-            <div v-else class="kb-list">
-              <el-checkbox-group v-model="continueForm.knowledgeBaseIds">
-                <div v-for="kb in filteredKnowledgeBases" :key="kb.id" class="kb-item">
-                  <el-checkbox :label="kb.name" :value="kb.id">
-                    <div class="kb-item-content">
-                      <span class="kb-name">{{ kb.name }}</span>
-                      <span class="kb-meta">
-                        <el-tag size="small" type="info">{{ kb.chunkCount || 0 }} 文档块</el-tag>
-                      </span>
-                    </div>
-                  </el-checkbox>
-                </div>
-              </el-checkbox-group>
-            </div>
-          </div>
-        </el-form-item>
-        <el-form-item label="工具选择">
-          <div class="tool-selector-wrapper">
-            <ToolSelector
-              :model-value="continueForm.selectedTools"
-              @update:model-value="(val) => continueForm.selectedTools = val"
-              @update:selected-mcp-servers="(val) => continueForm.selectedMcpServers = val"
-              @update:use-mcp="(val) => continueForm.useMcp = val"
-            />
-            <span v-if="continueForm.selectedTools.length > 0" class="tool-selected-hint">
-              已选择 {{ continueForm.selectedTools.length }} 个工具
-            </span>
-          </div>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="continueDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="isLoading" @click="submitContinueResearch">
-          开始续研
-        </el-button>
-      </template>
-    </el-dialog>
+    <ContinueResearchDialog
+      v-model="continueDialogVisible"
+      :parent-task="continueParentTask"
+      :filtered-knowledge-bases="filteredKnowledgeBases"
+      :submit-loading="isLoading"
+      @submit="submitContinueResearch"
+    />
   </div>
 </template>
 
@@ -261,7 +189,6 @@
 import { ref, reactive, computed, watch, onUnmounted, onActivated, onDeactivated, provide } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { deepResearchAPI } from '@/api/research'
-import { knowledgeAPI } from '@/api/knowledge'
 import { readSSEStream } from '../utils/sse'
 import { extractSSEError } from '../utils/apiErrorHandler'
 import { ElMessage } from 'element-plus'
@@ -270,6 +197,7 @@ import TaskList from '../components/chat/TaskList.vue'
 import ModelSelector from '../components/common/ModelSelector.vue'
 import ToolSelector from '../components/chat/ToolSelector.vue'
 import ResearchTaskDetail from '../components/research/ResearchTaskDetail.vue'
+import ContinueResearchDialog from '../components/research/ContinueResearchDialog.vue'
 import { useResearchSettingsStore } from '../stores/researchSettings'
 import { useSessionStore } from '../stores/session'
 import { useApprovalStore } from '../stores/approval'
@@ -280,6 +208,8 @@ import { getInterruptId } from '../utils/messageOperations'
 import { useApiTask } from '@/composables/useApiTask'
 import { useTaskRealtimeSync } from '@/composables/useTaskRealtimeSync'
 import { useTaskListRealtimeSync } from '@/composables/useTaskListRealtimeSync'
+import { useDeepResearchPolling } from '@/composables/useDeepResearchPolling'
+import { useDeepResearchKnowledge } from '@/composables/useDeepResearchKnowledge'
 import { ResearchTaskStatus } from '@/types'
 
 // 根因 C 解耦：深度研究模块使用独立设置 store，
@@ -360,42 +290,55 @@ const taskSubagentContents = computed(() => {
 const showTaskDetail = ref(false)
 const taskListRef = ref(null)
 const progressMessage = ref('')
-const elapsedSeconds = ref(0)
 const showFileSearch = ref(false)
 const fileSearchQuery = ref('')
 const fileSearchResults = ref([])
 const fileSearchSearched = ref(false)
 
-const knowledgeBases = ref([])
-const kbSearchQuery = ref('')
-const filteredKnowledgeBases = ref([])
-
-const docAnalysisContent = ref(null)
-const docAnalysisFile = ref(null)
+// 知识库加载/过滤与文档分析（useDeepResearchKnowledge，实例安全：
+// useApiTask 托管 loading/error + 代际 token，卸载自动作废 pending）
+const {
+  kbSearchQuery,
+  filteredKnowledgeBases,
+  kbLoading,
+  refreshKnowledgeBases,
+  filterKnowledgeBases,
+  docAnalysisContent,
+  docAnalysisFile,
+  docAnalysisLoading,
+  loadDocAnalysis,
+  checkDocAnalysisFile,
+  autoLoadDocAnalysis,
+} = useDeepResearchKnowledge({ task })
 
 const continueDialogVisible = ref(false)
 const continueParentTask = ref(null)
-const continueForm = reactive({
-  additionalQuery: '',
-  enableWebSearch: true,
-  knowledgeBaseIds: [],
-  providerId: null,
-  modelName: null,
-  useMcp: false,
-  selectedMcpServers: [],
-  selectedTools: [],
-})
 
-let pollingTimer = null
+// SSE 连接状态（视图内管理，委托既有 useTaskRealtimeSync 处理实时事件）
 let sseAbortController = null
 let sseReaderActive = false
-let elapsedTimer = null
-let pollCount = 0
-let currentPollInterval = 3000
-const MAX_POLL_COUNT = 600
-const BASE_POLL_INTERVAL = 3000
-const MAX_POLL_INTERVAL = 30000
-const POLL_BACKOFF_FACTOR = 1.5
+
+// 任务轮询/用时计时（useDeepResearchPolling，实例安全：
+// 无模块级可变状态、卸载自动清理全部 timer；审批恢复轮询 watch 在 composable 内注册）
+const {
+  elapsedSeconds,
+  isTerminalStatus,
+  stopPolling,
+  startPolling,
+  startElapsedTimer,
+  stopElapsedTimer,
+  resetPollingState,
+} = useDeepResearchPolling({
+  task,
+  currentTaskId,
+  setTaskStatus: researchStore.setTaskStatus,
+  getPendingApprovalsSize: () => approvalStore.pendingApprovals.size,
+  // 任务转入终态：文档分析文件清理 + 自动加载（原 pollTaskStatus 终态分支）
+  onTerminal: () => {
+    checkDocAnalysisFile()
+    autoLoadDocAnalysis()
+  },
+})
 
 const progressPercentage = computed(() => {
   if (!task.value) return 0
@@ -446,106 +389,6 @@ const modelSupportsDeepThinking = computed(() => {
 const onModelChange = ({ providerId, modelName }) => {
   researchForm.providerId = providerId
   researchForm.modelName = modelName
-}
-
-const {
-  run: runRefreshKnowledgeBases,
-  loading: kbLoading,
-} = useApiTask(
-  () => knowledgeAPI.getKnowledgeBases(),
-  {
-    showErrorToast: false,
-    onSuccess: (response) => {
-      const data = response.data?.data || response.data
-      knowledgeBases.value = data?.items || []
-      filterKnowledgeBases()
-    },
-    onError: (error) => {
-      logger.error('加载知识库列表失败:', error)
-      ElMessage.error('加载知识库列表失败')
-    },
-  }
-)
-
-const refreshKnowledgeBases = () => runRefreshKnowledgeBases()
-
-const filterKnowledgeBases = () => {
-  const query = kbSearchQuery.value.toLowerCase().trim()
-  if (!query) {
-    filteredKnowledgeBases.value = [...knowledgeBases.value]
-  } else {
-    filteredKnowledgeBases.value = knowledgeBases.value.filter(
-      kb => kb.name?.toLowerCase().includes(query) || kb.description?.toLowerCase().includes(query)
-    )
-  }
-}
-
-// 查找任务的分析文件（失败返回 undefined，调用方按 falsy 判断兼容原 null 语义）
-const {
-  run: runFindDocAnalysisFile,
-} = useApiTask(
-  async () => {
-    if (!task.value?.taskId) return null
-    const res = await deepResearchAPI.getFiles(task.value.taskId)
-    const data = res.data?.data || res.data
-    const files = data?.files || data || []
-    const notesDir = files.find(f => f.name === 'notes' && f.type === 'directory')
-    if (notesDir && notesDir.children) {
-      const mdFile = notesDir.children.find(f => f.name?.endsWith('.md'))
-      if (mdFile) return `notes/${mdFile.name}`
-      const txtFile = notesDir.children.find(f => f.name?.endsWith('.txt'))
-      if (txtFile) return `notes/${txtFile.name}`
-    }
-    const mdFiles = files.filter(f => f.type === 'file' && f.name?.endsWith('.md') && !f.name?.includes('report'))
-    if (mdFiles.length > 0) return mdFiles[0].relativePath || mdFiles[0].name
-    const rootNotes = files.filter(f => f.type === 'file' && f.name?.endsWith('.txt'))
-    if (rootNotes.length > 0) return rootNotes[0].relativePath || rootNotes[0].name
-    return null
-  },
-  {
-    loading: false,
-    showErrorToast: false,
-  }
-)
-
-const {
-  run: runLoadDocAnalysis,
-  loading: docAnalysisLoading,
-} = useApiTask(
-  async () => {
-    const file = await runFindDocAnalysisFile()
-    if (file) {
-      const response = await deepResearchAPI.getFileContent(task.value.taskId, file)
-      const data = response.data?.data || response.data
-      docAnalysisContent.value = data?.content || data || ''
-      docAnalysisFile.value = file
-    } else {
-      docAnalysisContent.value = null
-    }
-  },
-  {
-    showErrorToast: false,
-    onError: (error) => {
-      logger.warn('加载文档分析详情失败:', error)
-      docAnalysisContent.value = null
-    },
-  }
-)
-
-const loadDocAnalysis = () => {
-  if (!task.value?.taskId || !task.value?.knowledgeBaseIds?.length) return
-  return runLoadDocAnalysis()
-}
-
-const checkDocAnalysisFile = () => {
-  docAnalysisFile.value = null
-  docAnalysisContent.value = null
-}
-
-const autoLoadDocAnalysis = async () => {
-  if (!task.value?.taskId) return
-  if (!task.value?.enableDocAnalysis) return
-  await loadDocAnalysis()
 }
 
 // 实时审批事件由 WebSocket 处理（syncStore.handleRealtimeEvent），
@@ -625,68 +468,6 @@ const handleReject = async (toolCallData) => {
   }
 }
 
-const isTerminalStatus = (s) => s === ResearchTaskStatus.COMPLETED || s === ResearchTaskStatus.FAILED
-
-const pollTaskStatus = async () => {
-  if (!task.value || isTerminalStatus(task.value.status)) {
-    stopPolling()
-    return
-  }
-
-  pollCount++
-  if (pollCount >= MAX_POLL_COUNT) {
-    ElMessage.warning('研究任务轮询超时，请刷新页面查看最新状态')
-    stopPolling()
-    return
-  }
-
-  try {
-    const response = await deepResearchAPI.getStatus(task.value.taskId)
-    const responseData = response.data.data || response.data
-    const prevStatus = task.value.status
-    researchStore.setTaskStatus(currentTaskId.value, responseData)
-
-    if (isTerminalStatus(task.value.status)) {
-      stopPolling()
-      stopElapsedTimer()
-      checkDocAnalysisFile()
-      autoLoadDocAnalysis()
-      return
-    }
-
-    if (prevStatus === ResearchTaskStatus.PENDING && task.value.status === ResearchTaskStatus.RUNNING) {
-      currentPollInterval = BASE_POLL_INTERVAL
-    } else {
-      currentPollInterval = Math.min(
-        Math.floor(currentPollInterval * POLL_BACKOFF_FACTOR),
-        MAX_POLL_INTERVAL
-      )
-    }
-
-    pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
-  } catch (error) {
-    logger.error('获取任务状态失败:', error)
-    if (error?.response?.status === 404) {
-      researchStore.setTaskStatus(currentTaskId.value, { status: ResearchTaskStatus.FAILED, errorMessage: '研究任务不存在或已被删除' })
-      stopPolling()
-      return
-    }
-    currentPollInterval = Math.min(
-      Math.floor(currentPollInterval * POLL_BACKOFF_FACTOR),
-      MAX_POLL_INTERVAL
-    )
-    pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
-  }
-}
-
-const stopPolling = () => {
-  if (pollingTimer) {
-    clearTimeout(pollingTimer)
-    pollingTimer = null
-  }
-  currentPollInterval = BASE_POLL_INTERVAL
-}
-
 const {
   run: runStartResearch,
   loading: startResearchLoading,
@@ -743,27 +524,10 @@ const startResearch = () => {
   }
 
   currentTaskId.value = null
-  pollCount = 0
-  currentPollInterval = BASE_POLL_INTERVAL
-  elapsedSeconds.value = 0
-  docAnalysisContent.value = null
-  docAnalysisFile.value = null
+  resetPollingState()
+  checkDocAnalysisFile()
 
   return runStartResearch()
-}
-
-const startElapsedTimer = () => {
-  stopElapsedTimer()
-  elapsedTimer = setInterval(() => {
-    elapsedSeconds.value++
-  }, 1000)
-}
-
-const stopElapsedTimer = () => {
-  if (elapsedTimer) {
-    clearInterval(elapsedTimer)
-    elapsedTimer = null
-  }
 }
 
 const connectSSE = async (taskId) => {
@@ -788,7 +552,7 @@ const connectSSE = async (taskId) => {
     }, sseAbortController.signal)
 
     if (sseReaderActive && task.value && !isTerminalStatus(task.value.status)) {
-      pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
+      startPolling()
     }
   } catch (error) {
     if (error.name === 'AbortError') {
@@ -796,7 +560,7 @@ const connectSSE = async (taskId) => {
     }
     logger.error('SSE连接失败，回退到轮询:', error)
     if (task.value && !isTerminalStatus(task.value.status)) {
-      pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
+      startPolling()
     }
   } finally {
     sseReaderActive = false
@@ -845,13 +609,13 @@ const handleSSEEvent = (sseData) => {
       stopElapsedTimer()
       // SSE 流结束但任务可能尚未完成（如连接超时），启动轮询检查
       if (task.value && !isTerminalStatus(task.value.status)) {
-        pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
+        startPolling()
       }
       break
     case 'timeout':
       progressMessage.value = '连接超时，正在回退到轮询模式...'
       closeSSE()
-      pollingTimer = setTimeout(pollTaskStatus, currentPollInterval)
+      startPolling()
       break
     case 'error':
       ElMessage.error(sseData.message || '研究执行出错')
@@ -955,31 +719,16 @@ const deleteTask = () => {
   }
   currentTaskId.value = null
   showTaskDetail.value = false
-  docAnalysisContent.value = null
-  docAnalysisFile.value = null
+  checkDocAnalysisFile()
 }
 
-const onContinueModelChange = ({ providerId, modelName }) => {
-  continueForm.providerId = providerId
-  continueForm.modelName = modelName
-}
-
+// 打开续研对话框（表单初始化由 ContinueResearchDialog 在 visible 切换时自行完成）
 const openContinueDialog = (taskData) => {
   continueParentTask.value = taskData
-  continueForm.additionalQuery = ''
-  continueForm.enableWebSearch = taskData.enableWebSearch ?? true
-  continueForm.knowledgeBaseIds = taskData.knowledgeBaseIds || []
-  continueForm.providerId = taskData.providerId || null
-  continueForm.modelName = taskData.modelName || null
-  continueForm.useMcp = taskData.useMcp ?? false
-  continueForm.selectedMcpServers = taskData.selectedMcpServers || []
-  continueForm.selectedTools = taskData.selectedTools || []
-  if (continueForm.providerId && continueForm.modelName) {
-    researchSettings.selectProvider(continueForm.providerId, continueForm.modelName)
-  }
   continueDialogVisible.value = true
 }
 
+// 关闭续研对话框时恢复主表单的模型选择（对话框内已切换为父任务模型）
 watch(continueDialogVisible, (visible) => {
   if (!visible && researchForm.providerId && researchForm.modelName) {
     researchSettings.selectProvider(researchForm.providerId, researchForm.modelName)
@@ -990,20 +739,20 @@ const {
   run: runSubmitContinueResearch,
   loading: continueResearchLoading,
 } = useApiTask(
-  async () => {
+  async (formData) => {
     const modelConfig = researchSettings.getModelConfig()
     const response = await deepResearchAPI.continueResearch(
       continueParentTask.value.taskId,
       {
-        additionalQuery: continueForm.additionalQuery,
-        enableWebSearch: continueForm.enableWebSearch,
-        enableDocAnalysis: continueForm.knowledgeBaseIds.length > 0,
-        knowledgeBaseIds: continueForm.knowledgeBaseIds,
-        useMcp: continueForm.useMcp,
-        selectedMcpServers: continueForm.selectedMcpServers,
-        selectedTools: continueForm.selectedTools,
-        providerId: continueForm.providerId || modelConfig.providerId,
-        modelName: continueForm.modelName || modelConfig.modelName,
+        additionalQuery: formData.additionalQuery,
+        enableWebSearch: formData.enableWebSearch,
+        enableDocAnalysis: formData.knowledgeBaseIds.length > 0,
+        knowledgeBaseIds: formData.knowledgeBaseIds,
+        useMcp: formData.useMcp,
+        selectedMcpServers: formData.selectedMcpServers,
+        selectedTools: formData.selectedTools,
+        providerId: formData.providerId || modelConfig.providerId,
+        modelName: formData.modelName || modelConfig.modelName,
         enableDeepThinking: researchSettings.thinkingEnabled,
         temperature: modelConfig.temperature,
         maxTokens: modelConfig.maxTokens,
@@ -1034,9 +783,9 @@ const {
   }
 )
 
-const submitContinueResearch = () => {
+const submitContinueResearch = (formData) => {
   if (!continueParentTask.value) return
-  return runSubmitContinueResearch()
+  return runSubmitContinueResearch(formData)
 }
 
 // 开始研究 / 开始续研按钮共用 loading（原共用 ref，改为两个任务 loading 的合并投影）
@@ -1196,22 +945,14 @@ watch(() => getQueryParam(route, 'task_id'), (newTaskId) => {
 })
 
 // 审批清除后恢复轮询（所有待审批项处理完后，后台可能已完成但前端未刷新）
-let _prevPendingSize = 0
-watch(
-  () => approvalStore.pendingApprovals.size,
-  (newSize) => {
-    if (_prevPendingSize > 0 && newSize === 0 && task.value?.status === ResearchTaskStatus.RUNNING) {
-      logger.info('[DeepResearch] 审批已全部处理，恢复轮询')
-      pollTaskStatus()
-    }
-    _prevPendingSize = newSize
-  }
-)
+// —— watch 已随轮询逻辑迁入 useDeepResearchPolling（getPendingApprovalsSize 注入）
 
 onUnmounted(() => {
+  // 轮询/elapsed 定时器由 useDeepResearchPolling 内部 onUnmounted 自动清理，
+  // 此处显式调用幂等兜底（语义与原视图一致）
   stopPolling()
-  closeSSE()
   stopElapsedTimer()
+  closeSSE()
   clearRealtimeSubscriptions()
   taskListSync.stop()
 })
@@ -1239,7 +980,6 @@ onUnmounted(() => {
   margin-bottom: 20px;
 }
 
-.task-detail-card,
 .task-list-card {
   margin-bottom: 20px;
 }
@@ -1248,63 +988,6 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.progress-message {
-  animation: pulse-opacity 2s ease-in-out infinite;
-}
-
-@keyframes pulse-opacity {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
-}
-
-.progress-section {
-  margin-top: 24px;
-  padding: 16px;
-  background: var(--el-fill-color-lighter);
-  border-radius: 8px;
-}
-
-.progress-hint {
-  margin: 12px 0 0 0;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-  text-align: center;
-}
-
-.report-section {
-  margin-top: 24px;
-}
-
-.report-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-
-.report-header h4 {
-  margin: 0;
-}
-
-.report-section h4 {
-  margin: 0 0 16px 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
-}
-
-.report-content {
-  padding: 20px;
-  background: var(--el-fill-color-lighter);
-  border-radius: 4px;
 }
 
 .kb-selector {
@@ -1385,11 +1068,6 @@ onUnmounted(() => {
   color: var(--el-color-primary);
 }
 
-.kb-tag {
-  margin-right: 6px;
-  margin-bottom: 4px;
-}
-
 .tool-selector-wrapper {
   display: flex;
   align-items: center;
@@ -1405,34 +1083,6 @@ onUnmounted(() => {
   margin-left: 12px;
   font-size: 12px;
   color: var(--el-text-color-secondary);
-}
-
-.analysis-section {
-  margin-top: 8px;
-}
-
-.analysis-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-
-.analysis-header h4 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
-}
-
-.analysis-loading {
-  padding: 20px;
-  text-align: center;
-  color: var(--el-text-color-secondary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
 }
 
 @media (max-width: 1024px) {
@@ -1461,10 +1111,6 @@ onUnmounted(() => {
   .kb-list {
     max-height: 180px;
   }
-
-  .report-content {
-    padding: 12px;
-  }
 }
 
 @media (max-width: 480px) {
@@ -1482,11 +1128,6 @@ onUnmounted(() => {
     gap: 8px;
   }
 
-  .header-actions {
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
   .kb-selector-header {
     flex-direction: column;
   }
@@ -1494,31 +1135,7 @@ onUnmounted(() => {
   .kb-desc {
     max-width: 180px;
   }
-
-  .report-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-  }
 }
-.analysis-content {
-  padding: 16px;
-  background: var(--el-fill-color-lighter);
-  border-radius: 4px;
-  border-left: 3px solid var(--el-color-primary);
-}
-
-.files-section {
-  margin-top: 8px;
-}
-
-.files-section h4 {
-  margin: 0 0 16px 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
-}
-
 .file-search-section {
   margin-bottom: 16px;
   padding: 16px;
@@ -1530,29 +1147,6 @@ onUnmounted(() => {
   margin-top: 12px;
 }
 
-.version-chain {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
-}
-
-.version-tag {
-  cursor: default;
-}
-
-.version-arrow {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-}
-
-.report-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 @media (max-width: 768px) {
   .deep-research-view {
     padding: 12px;
@@ -1562,19 +1156,6 @@ onUnmounted(() => {
     flex-direction: column;
     align-items: flex-start;
     gap: 8px;
-  }
-
-  .header-actions {
-    width: 100%;
-    flex-wrap: wrap;
-  }
-
-  .report-content {
-    padding: 12px;
-  }
-
-  .progress-section {
-    padding: 12px;
   }
 
   .kb-desc {
@@ -1590,9 +1171,5 @@ onUnmounted(() => {
   .page-title {
     font-size: 16px;
   }
-}
-
-.approval-section {
-  margin: 16px 0;
 }
 </style>

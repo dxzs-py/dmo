@@ -20,6 +20,16 @@
 参考：
 - https://docs.langchain.com/oss/python/langchain/fallbacks
 - Claude Code Task 工具的子 agent 设计（主 agent 处理审批，子 agent 专注只读研究）
+
+层次契约（统一降级链路）：
+- 本模块的 LazyFallbackChatModel 是全系统唯一的模型级韧性实现：
+  SDK 层重试（AI_LLM_MAX_RETRIES）→ 永久错误熔断（内联 Circuit Breaker 状态机）
+  → 候选模型切换。
+- AgentExecutor（agent_hub.services.agent_executor）仅负责 agent 级语义
+  （执行循环重试、工具降级、无工具纯对话回退），不持有模型切换逻辑、不创建裸模型；
+  其 _run_fallback 复用本包装实例，自动继承降级能力。
+- 业务 agent 的模型创建唯一入口：get_chat_model(enable_fallback=True)；
+  get_chat_model_by_provider 仅限本模块 factory 回调、连通性测试与管理端接口使用。
 """
 
 from __future__ import annotations
@@ -79,61 +89,6 @@ def suppress_pydantic_serialization_warning():
             category=UserWarning,
         )
         yield
-
-
-# ============== 连接错误判定 ==============
-
-
-def is_connection_error(exc: Exception) -> bool:
-    """判断异常是否为可触发 fallback 的连接/认证类错误
-
-    仅对以下错误触发 fallback，其他错误（如参数错误）不触发：
-    - 401/403 认证/权限错误（余额不足、Key 无效等）
-    - 429 速率限制
-    - 连接超时 / 网络不可达
-    - 502/503 服务不可用
-    """
-    error_type = type(exc).__name__
-    error_module = type(exc).__module__
-
-    # OpenAI SDK 错误
-    if "openai" in error_module:
-        if error_type in (
-            "AuthenticationError",
-            "PermissionDeniedError",
-            "RateLimitError",
-            "APIConnectionError",
-            "APITimeoutError",
-        ):
-            return True
-
-    # Anthropic SDK 错误
-    if "anthropic" in error_module:
-        if error_type in (
-            "AuthenticationError",
-            "PermissionDeniedError",
-            "RateLimitError",
-            "APIConnectionError",
-            "APITimeoutError",
-        ):
-            return True
-
-    # 通用网络错误
-    if error_type in (
-        "ConnectionError",
-        "TimeoutError",
-        "ConnectTimeoutError",
-        "SSLError",
-    ):
-        return True
-
-    # httpx / urllib3 连接错误
-    if "ConnectTimeout" in error_type or "ConnectionError" in error_type:
-        return True
-
-    # HTTP 状态码判断
-    status_code = getattr(exc, "status_code", None) or getattr(exc, "http_status", None)
-    return status_code in (401, 403, 429, 502, 503)
 
 
 # ============== Fallback 候选列表 ==============

@@ -35,7 +35,6 @@ from .llm_fallback import (
     LazyFallbackChatModel,
     StructuredModelWithFallback,
     get_fallback_candidates,
-    is_connection_error,
 )
 from .project_context import (
     ProjectContext,
@@ -84,7 +83,6 @@ __all__ = [
     "get_structured_model_with_fallback",
     "get_structured_output_model",
     "get_tool_usage_guard",
-    "is_connection_error",
     "reset_tool_usage_guard",
     "test_model_connection",
 ]

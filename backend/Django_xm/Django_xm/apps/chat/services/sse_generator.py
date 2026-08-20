@@ -1,7 +1,7 @@
 """chat 流式事件广播辅助（WebSocket 同步）。
 
 执行与连接解耦后，chat agent 由 FastAPI 执行服务单协程运行，SSE 已不再承载
-chat 流。此模块仅保留 ``_publish_stream_event``，将执行事件统一广播到 WebSocket
+chat 流。此模块仅保留 ``publish_stream_event``，将执行事件统一广播到 WebSocket
 会话频道，供触发/非触发浏览器消费。
 """
 
@@ -59,7 +59,7 @@ def _merge_content_with_overlap(existing: str, new_chunk: str) -> str:
     return existing + new_chunk[overlap:]
 
 
-async def _publish_stream_event(
+async def publish_stream_event(
     event: dict[str, Any],
     session_id: str,
     message_id: int | None = None,

@@ -3,6 +3,10 @@
 全系统所有子 Agent 仅允许通过 ``SubAgentRuntime`` 创建/运行/恢复/销毁。
 """
 
+from Django_xm.apps.ai_engine.subagent_runtime.adapters.langgraph_adapter import (
+    set_default_config_factory,
+    set_default_graph_factory,
+)
 from Django_xm.apps.ai_engine.subagent_runtime.lifecycle import (
     SubAgentLifecycleManager,
     get_lifecycle_manager,
@@ -33,4 +37,6 @@ __all__ = [
     "get_subagent_spec",
     "resolve_dedicated_tools",
     "resolve_system_prompt",
+    "set_default_config_factory",
+    "set_default_graph_factory",
 ]

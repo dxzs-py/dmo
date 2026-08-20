@@ -111,7 +111,7 @@ class ApprovalMetrics:
     """审批可观测性指标采集器（模块级单例 approval_metrics）。
 
     所有方法均为故障隔离：Redis 不可用时静默降级，不影响审批主流程。
-    集成点：approval_service._persist_and_broadcast 中按 state 调用对应方法。
+    集成点：approval_service.persist_and_broadcast 中按 state 调用对应方法。
     """
 
     # ================================================================

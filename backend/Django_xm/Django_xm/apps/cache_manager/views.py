@@ -197,7 +197,9 @@ class CacheClearView(APIView):
             scope = request.data.get("scope", "all")
 
             cleared = 0
-            if pattern:
+            if scope == "pattern" and pattern:
+                # pattern 为 scope 值（与 get_permissions 分派及 CacheInvalidateView 语义对齐），
+                # 非旁路参数：普通用户携带 pattern 的 query 请求不会进入此分支（越权修复 dj-01R）
                 CacheService.delete_pattern(pattern)
                 cleared = 1
             elif scope == "query":

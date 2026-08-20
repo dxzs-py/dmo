@@ -208,8 +208,6 @@
 <script setup>
 import { ref, reactive, computed, watch, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { workflowAPI } from '@/api/workflow'
-import { readSSEStream } from '../utils/sse'
-import { extractSSEError } from '../utils/apiErrorHandler'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import TaskList from '../components/chat/TaskList.vue'
@@ -229,31 +227,63 @@ import { logger } from '../utils/logger'
 import { useTaskRealtimeSync } from '@/composables/useTaskRealtimeSync'
 import { useTaskListRealtimeSync } from '@/composables/useTaskListRealtimeSync'
 import { useApiTask } from '@/composables/useApiTask'
+import { useWorkflowPolling } from '@/composables/useWorkflowPolling'
+import { useWorkflowExecution } from '@/composables/useWorkflowExecution'
 import { useWorkflowStore } from '@/stores/workflow'
 import { LearningStep, LearningTaskStatus, LearningQuestionType } from '@/types'
 
 const workflowStore = useWorkflowStore()
 const modelStore = useModelStore()
 
-// isLoading（startWorkflow）与 isContinuing（continuePractice）维持手动管理：
-// 二者与 SSE 流式发起时序强耦合（见 cq-11 盘点表），不迁 useApiTask
-const isLoading = ref(false)
+// isContinuing（continuePractice）维持手动管理：
+// 与 SSE 流式发起时序强耦合（见 cq-11 盘点表），不迁 useApiTask
+// （isLoading 由 useWorkflowExecution 内部同样手动管理并返回）
 const isContinuing = ref(false)
 const execution = ref(null)
-const showDetail = ref(false)
 const answersForm = reactive({})
 const taskListRef = ref(null)
 const historyRef = ref(null)
 const fileBrowserRef = ref(null)
-const currentStepMessage = ref('')
 const autoLoadContent = ref(null)
-let pollingTimer = null
-let sseAbortController = null
-let sseReaderActive = false
-let currentPollInterval = 3000
-const BASE_POLL_INTERVAL = 3000
-const MAX_POLL_INTERVAL = 30000
-const POLL_BACKOFF_FACTOR = 1.5
+
+const workflowForm = reactive({
+  query: '',
+  knowledgeBaseIds: [],
+  useWebSearch: false,
+})
+
+// ============================================================================
+// composables 接线（轮询域 / 执行流域，自本视图原生平迁移，行为逐字保持）：
+// - execution 由视图持有并注入两者：useWorkflowExecution 依赖 polling（SSE 断开
+//   回退轮询），polling 又依赖 execution（读写状态），视图持有以打破初始化环
+// - onTerminal / onWorkflowFinished 均为 autoLoadKeyFile 延迟绑定（定义于下方，
+//   调用均发生在异步轮询/SSE 事件时，届时已初始化）
+// ============================================================================
+const { stopPolling, schedulePolling } = useWorkflowPolling({
+  execution,
+  answersForm,
+  onTerminal: () => autoLoadKeyFile(),
+})
+
+const { subscribeRealtimeForTask, clearRealtimeSubscriptions } = useTaskRealtimeSync('Workflow', 'threadId')
+
+const {
+  isLoading,
+  showDetail,
+  currentStepMessage,
+  startWorkflow,
+  startRestartStream,
+  connectSSE,
+  closeSSE,
+} = useWorkflowExecution({
+  execution,
+  answersForm,
+  workflowForm,
+  fileBrowserRef,
+  onThreadIdAssigned: subscribeRealtimeForTask,
+  onWorkflowFinished: () => autoLoadKeyFile(),
+  polling: { stopPolling, schedulePolling },
+})
 
 // ===== 深度思考（复用聊天模块 modelStore 范式）=====
 const useDeepThinking = computed({
@@ -284,12 +314,6 @@ const canContinue = computed(() => {
   if (!execution.value) return false
   const step = execution.value.currentStep
   return step === LearningStep.FEEDBACK_COMPLETED || step === LearningStep.END || step === LearningStep.COMPLETED
-})
-
-const workflowForm = reactive({
-  query: '',
-  knowledgeBaseIds: [],
-  useWebSearch: false,
 })
 
 const statusOptions = [
@@ -365,298 +389,6 @@ const getQuestionTypeText = (type) => {
   }
   return map[type] || type
 }
-
-const pollExecutionStatus = async () => {
-  if (!execution.value) {
-    stopPolling()
-    return
-  }
-
-  const currentStep = execution.value.currentStep
-
-  if (currentStep === LearningStep.WAITING_FOR_ANSWERS || currentStep === LearningStep.END || currentStep === LearningStep.COMPLETED) {
-    stopPolling()
-    if (currentStep !== LearningStep.WAITING_FOR_ANSWERS) {
-      autoLoadKeyFile()
-    }
-    return
-  }
-
-  try {
-    const response = await workflowAPI.getState(execution.value.threadId)
-    const data = response.data
-    execution.value = { ...execution.value, ...(data.data || data) }
-
-    const responseData = data.data || data
-    if (responseData.quiz && !Object.keys(answersForm).length) {
-      responseData.quiz.questions.forEach(q => {
-        answersForm[q.id] = ''
-      })
-    }
-
-    if (currentStep !== execution.value.currentStep) {
-      currentPollInterval = BASE_POLL_INTERVAL
-    } else {
-      currentPollInterval = Math.min(
-        Math.floor(currentPollInterval * POLL_BACKOFF_FACTOR),
-        MAX_POLL_INTERVAL
-      )
-    }
-    pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
-  } catch (error) {
-    logger.error('获取工作流状态失败:', error)
-    currentPollInterval = Math.min(
-      Math.floor(currentPollInterval * POLL_BACKOFF_FACTOR),
-      MAX_POLL_INTERVAL
-    )
-    pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
-  }
-}
-
-const stopPolling = () => {
-  if (pollingTimer) {
-    clearTimeout(pollingTimer)
-    pollingTimer = null
-  }
-  currentPollInterval = BASE_POLL_INTERVAL
-}
-
-const startWorkflow = async () => {
-  if (!workflowForm.query.trim()) {
-    ElMessage.warning('请输入学习主题')
-    return
-  }
-
-  isLoading.value = true
-  // 立即进入详情页：先以本地 stub 展示（thread_id 由后端首个事件回填），
-  // 步骤条/学习计划/题目由 SSE 事件实时推进，不再阻塞等待同步 start 完成
-  showDetail.value = true
-  execution.value = {
-    threadId: '',
-    currentStep: LearningStep.START,
-    status: LearningTaskStatus.RUNNING,
-    userQuestion: workflowForm.query,
-  }
-  currentStepMessage.value = '工作流启动中...'
-  Object.keys(answersForm).forEach(key => delete answersForm[key])
-  currentPollInterval = BASE_POLL_INTERVAL
-  stopPolling()
-  closeSSE()
-
-  // 组装启动配置：模型/深度思考/网络查询以 modelStore 当前值为准
-  // （ModelSelector 仅在手动切换模型时 emit change，未切换时表单字段为空，
-  //  深度思考开关改动实时写入 modelStore.specialParams，需取最新值而非表单快照）
-  const payload = {
-    ...workflowForm,
-    providerId: modelStore.currentProviderId,
-    modelName: modelStore.currentModelName,
-    specialParams: modelStore.specialParams,
-    useDeepThinking: useDeepThinking.value,
-  }
-
-  try {
-    await startStreamWithEvents(payload)
-  } catch (error) {
-    logger.error('启动工作流失败:', error)
-    const msg = error.response?.data?.message || error.message || '启动工作流失败，请稍后重试'
-    ElMessage.error(msg)
-    if (execution.value?.threadId) {
-      execution.value.status = LearningTaskStatus.FAILED
-    } else {
-      execution.value = null
-      showDetail.value = false
-    }
-  } finally {
-    isLoading.value = false
-  }
-}
-
-/**
- * 通用 SSE 流式执行：建立 fetch 流并逐事件交给 handleSSEEvent 驱动 execution
- * @param {() => Promise<Response>} requestFn 发起 SSE 请求的函数（不传 AbortSignal，
- *   避免 Vite proxy 对带 signal 的 SSE 响应整体缓冲；中断由 readSSEStream 的 signal 控制）
- */
-const _runSSE = async (requestFn) => {
-  sseAbortController = new AbortController()
-  sseReaderActive = true
-
-  try {
-    const response = await requestFn()
-
-    if (!response.ok) {
-      // rd-06：错误响应解析统一到 apiErrorHandler.extractSSEError
-      throw await extractSSEError(response)
-    }
-
-    await readSSEStream(response, (data) => {
-      if (!sseReaderActive) return
-      handleSSEEvent(data)
-    }, sseAbortController.signal)
-
-    // 流正常结束（waiting_for_answers 中断时 handleSSEEvent 已 closeSSE，此处兜底关闭）
-    if (sseReaderActive) closeSSE()
-  } catch (error) {
-    if (error.name === 'AbortError') {
-      return
-    }
-    throw error
-  } finally {
-    sseReaderActive = false
-    sseAbortController = null
-  }
-}
-
-/** SSE 流式启动：请求内逐步执行工作流，事件由 handleSSEEvent 统一驱动 execution 更新 */
-const startStreamWithEvents = (payload) => _runSSE(
-  () => workflowAPI.startStreamRaw(payload)
-)
-
-/** SSE 流式继续练习：快速创建新线程，SSE 逐步生成新一轮题目（与启动一致体验，不阻塞浏览器） */
-const startRestartStream = (threadId) => _runSSE(
-  () => workflowAPI.restartStreamRaw(threadId)
-)
-
-const connectSSE = async (threadId) => {
-  closeSSE()
-
-  sseAbortController = new AbortController()
-  sseReaderActive = true
-
-  try {
-    // streamFetchRaw：无 signal 直连，避免 Vite proxy 缓冲（token 走 query 参数）
-    const response = await workflowAPI.streamFetchRaw(threadId)
-
-    if (!response.ok) {
-      // rd-06：错误响应解析统一到 apiErrorHandler.extractSSEError
-      throw await extractSSEError(response)
-    }
-
-    await readSSEStream(response, (data) => {
-      if (!sseReaderActive) return
-      handleSSEEvent(data)
-    }, sseAbortController.signal)
-
-    if (sseReaderActive && execution.value) {
-      const step = execution.value.currentStep
-      if (step !== LearningStep.WAITING_FOR_ANSWERS && step !== LearningStep.END && step !== LearningStep.COMPLETED) {
-        pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
-      }
-    }
-  } catch (error) {
-    if (error.name === 'AbortError') {
-      return
-    }
-    logger.error('SSE连接失败，回退到轮询:', error)
-    if (execution.value) {
-      const step = execution.value.currentStep
-      if (step !== LearningStep.WAITING_FOR_ANSWERS && step !== LearningStep.END && step !== LearningStep.COMPLETED) {
-        pollingTimer = setTimeout(pollExecutionStatus, currentPollInterval)
-      }
-    }
-  } finally {
-    sseReaderActive = false
-    sseAbortController = null
-  }
-}
-
-const handleSSEEvent = (sseData) => {
-  // 命名边界：readSSEStream 已统一调用 parseProtocolEvent 完成转换
-  // （toCamelCase 递归转换含 data 嵌套 + type 还原为后端原始 snake_case
-  // 协议路由标识符），消费方只拿已转换对象。
-
-  // SSE 事件格式：{ type: 'workflow_*', data: { ... } }
-  // 与 task WebSocket 频道的 workflow_* 事件类型对齐，便于双路径统一处理
-  switch (sseData.type) {
-    case 'workflow_step':
-      // 学习工作流节点执行进度（原 'start' 和 'step' 合并）
-      // 新格式：{ type: 'workflow_step', data: { step, message, thread_id? } }
-      currentStepMessage.value = sseData.data?.message || '工作流启动中...'
-      if (execution.value && sseData.data?.step) {
-        // 流式启动：首个 start 事件携带后端生成的 thread_id，回填 execution 并订阅实时同步
-        if (sseData.data.threadId && !execution.value.threadId) {
-          execution.value.threadId = sseData.data.threadId
-          subscribeRealtimeForTask(execution.value)
-        }
-        // step 为后端 snake_case 协议值（如 waiting_for_answers），
-        // 与 LearningStep 常量一致，保持原值不做键名式转换
-        execution.value.currentStep = sseData.data.step
-      }
-      break
-    case 'workflow_state_update':
-      // 学习工作流状态变更
-      if (execution.value && sseData.data) {
-        const d = sseData.data
-        if (d.currentStep) execution.value.currentStep = d.currentStep
-        if (d.learningPlan) {
-          const hadPlan = !!execution.value.learningPlan
-          execution.value.learningPlan = d.learningPlan
-          if (!hadPlan) {
-            // 规划完成：learning_plan.md 已生成，自动刷新「生成的文件」，无需手动点击刷新
-            nextTick(() => { fileBrowserRef.value?.loadFiles?.() })
-          }
-        }
-        if (d.retrievedDocs) execution.value.retrievedDocs = d.retrievedDocs
-        if (d.quiz) execution.value.quiz = d.quiz
-        if (d.score !== undefined) execution.value.score = d.score
-        if (d.feedback !== undefined) execution.value.feedback = d.feedback
-        if (d.shouldRetry !== undefined) execution.value.shouldRetry = d.shouldRetry
-        // waiting_for_answers 状态：原 'waiting' 行为，关闭 SSE 并初始化答题表单
-        const isWaiting = d.state === LearningStep.WAITING_FOR_ANSWERS
-          || d.currentStep === LearningStep.WAITING_FOR_ANSWERS
-          || d.status === LearningTaskStatus.WAITING_FOR_ANSWERS
-        if (isWaiting) {
-          execution.value = { ...execution.value, ...d }
-          currentStepMessage.value = d.message || '等待您提交答案...'
-          if (d.quiz && !Object.keys(answersForm).length) {
-            d.quiz.questions.forEach(q => {
-              answersForm[q.id] = ''
-            })
-          }
-          closeSSE()
-          // 等待答题中断后，后端才执行状态持久化（learning_plan.md 落盘），延时刷新文件列表
-          setTimeout(() => { fileBrowserRef.value?.loadFiles?.() }, 800)
-        }
-      }
-      break
-    case 'workflow_completed':
-      // 学习工作流完成（原 'complete'）
-      closeSSE()
-      // 完成态不再展示中间步骤消息（避免「工作流启动中...」残留）
-      currentStepMessage.value = ''
-      if (execution.value && sseData.data) {
-        execution.value = { ...execution.value, status: LearningTaskStatus.COMPLETED, ...sseData.data }
-      }
-      autoLoadKeyFile()
-      // 完成后自动刷新文件列表（report.md 等已生成）
-      nextTick(() => { fileBrowserRef.value?.loadFiles?.() })
-      break
-    case 'workflow_failed':
-      // 学习工作流失败（新增）
-      closeSSE()
-      if (execution.value && sseData.data) {
-        execution.value = { ...execution.value, status: LearningTaskStatus.FAILED, ...sseData.data }
-      }
-      ElMessage.error(sseData.data?.error || sseData.data?.message || '工作流执行失败')
-      break
-    case 'stream_error':
-      logger.warn('工作流流式执行异常:', sseData.message || sseData.data?.message)
-      break
-    case 'error':
-      ElMessage.error(sseData.message || sseData.data?.message || '工作流执行出错')
-      closeSSE()
-      break
-  }
-}
-
-const closeSSE = () => {
-  sseReaderActive = false
-  if (sseAbortController) {
-    sseAbortController.abort()
-    sseAbortController = null
-  }
-}
-
-const { subscribeRealtimeForTask, clearRealtimeSubscriptions } = useTaskRealtimeSync('Workflow', 'threadId')
 
 // 历史任务列表实时同步（user 频道 task_created/task_status_changed/task_deleted，公共能力）：
 // 非触发浏览器的新任务出现、状态更新、删除均自动刷新，无需手动点击刷新
@@ -1011,9 +743,10 @@ onDeactivated(() => {
   taskListSync.stop()
 })
 
+// 卸载清理：轮询定时器与 SSE 断开已由 useWorkflowPolling / useWorkflowExecution
+// 内部 onUnmounted 自动接管（注册顺序与原视图显式调用顺序一致），
+// 此处仅清理 WebSocket 订阅与列表事件监听
 onUnmounted(() => {
-  stopPolling()
-  closeSSE()
   clearRealtimeSubscriptions()
   taskListSync.stop()
 })

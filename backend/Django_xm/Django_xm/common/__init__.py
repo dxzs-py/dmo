@@ -9,7 +9,6 @@
 __all__ = [
     "ErrorCode",
     "IsAdmin",
-    "IsAuthenticatedOrQueryParam",
     "api_response",
     "custom_exception_handler",
     "error_response",
@@ -35,7 +34,6 @@ def __getattr__(name):
         "get_client_ip": ".request_utils",
         "get_user_agent": ".request_utils",
         "IsAdmin": ".permissions",
-        "IsAuthenticatedOrQueryParam": ".permissions",
     }
     if name in _MODULE_MAP:
         import importlib

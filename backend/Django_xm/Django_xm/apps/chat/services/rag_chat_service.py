@@ -102,11 +102,11 @@ class RAGChatService:
 
     def _compute_retrieval_quality(self, query: str, docs: list[Document]) -> float:
         """计算检索质量：基于查询与检索文档的关键词重叠度均值"""
-        from Django_xm.apps.knowledge.services.rag_evaluation import _keyword_overlap
+        from Django_xm.apps.knowledge.services.rag_evaluation import keyword_overlap
 
         if not docs:
             return 0.0
-        overlaps = [_keyword_overlap(query, doc.page_content) for doc in docs]
+        overlaps = [keyword_overlap(query, doc.page_content) for doc in docs]
         return sum(overlaps) / len(overlaps)
 
     def _compute_generation_quality(self, evaluation_result) -> float:

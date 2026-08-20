@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from langchain_core.language_models.chat_models import BaseChatModel
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,7 +45,9 @@ _RAG_TYPES = {AgentType.RAG, AgentType.SAFE_RAG}
 @dataclass
 class AgentConfig:
     agent_type: AgentType = AgentType.BASE
-    model: str | Any | None = None
+    # 模型实例仅由 AgentFactory 内部经 resolve_model 写回（输出通道），
+    # 外部传入会被 validate() 拒绝；外部通过 provider_id/model_name 指定模型
+    model: BaseChatModel | None = None
     provider_id: str | None = None
     model_name: str | None = None
     temperature: float | None = None
@@ -92,6 +96,12 @@ class AgentConfig:
 
     def validate(self) -> None:
         from Django_xm.apps.agent_hub.exceptions import ConfigValidationError
+
+        if self.model is not None:
+            raise ConfigValidationError(
+                "AgentConfig.model 由 AgentFactory 内部填充（统一经 get_chat_model 创建带 fallback 的包装实例），"
+                "禁止外部传入模型实例或字符串；请通过 provider_id / model_name 指定模型"
+            )
 
         if self.agent_type in _SIMPLE_AGENT_TYPES:
             for field_name in _SUBAGENT_EXCLUSIVE_FIELDS:

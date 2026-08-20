@@ -30,7 +30,7 @@ from Django_xm.apps.chat.services.stream_helpers import (
 )
 from Django_xm.apps.chat.utils import _lcp_len
 from Django_xm.apps.tools.base import is_approval_interrupt, is_subagent_wait_interrupt
-from Django_xm.common.approval_batch import assert_non_empty_decision
+from Django_xm.apps.approvals.services.approval_batch import assert_non_empty_decision
 from Django_xm.common.event_schema import EventSource
 from Django_xm.common.execution_loop import run_astream_loop
 from Django_xm.common.tool_call_lifecycle import ToolCallContext, service
@@ -142,11 +142,11 @@ def _publish_input_ready_events(
                         parameters=parameters,
                     )
                 )
-                # PENDING 事件由 _publish_stream_event 统一发布（P-BE-1 根因修复）：
+                # PENDING 事件由 publish_stream_event 统一发布（P-BE-1 根因修复）：
                 # 原在此处 sync transition（fire-and-forget）立即设置 dedup_key，
-                # 导致后续 _publish_stream_event 的 async transition_async 被 dedup 跳过，
+                # 导致后续 publish_stream_event 的 async transition_async 被 dedup 跳过，
                 # 事件可能延迟或丢失。register 已注册上下文（含 parameters），
-                # _publish_stream_event 处理 SSE tool 事件时会复用并 await 发布。
+                # publish_stream_event 处理 SSE tool 事件时会复用并 await 发布。
                 seen_tool_call_ids.add(tc_id)
                 _record_duplicate_tool_call(tc_name, parameters, duplicate_detector, warnings)
             except Exception as e:
@@ -181,10 +181,10 @@ def _publish_input_ready_events(
                     parameters=parameters,
                 )
             )
-            # PENDING 事件由 _publish_stream_event 统一发布（P-BE-1 根因修复）：
+            # PENDING 事件由 publish_stream_event 统一发布（P-BE-1 根因修复）：
             # 原在此处 sync transition（fire-and-forget）立即设置 dedup_key，
-            # 导致后续 _publish_stream_event 的 async transition_async 被 dedup 跳过。
-            # register 已注册上下文（含 parameters），_publish_stream_event 会复用。
+            # 导致后续 publish_stream_event 的 async transition_async 被 dedup 跳过。
+            # register 已注册上下文（含 parameters），publish_stream_event 会复用。
             seen_tool_call_ids.add(tool_call_id)
             _record_duplicate_tool_call(tool_name, parameters, duplicate_detector, warnings)
         except Exception as e:

@@ -30,11 +30,34 @@ logger = logging.getLogger(__name__)
 _configurable_registry: dict[str, dict] = {}
 
 
+# 子代理 graph 工厂（依赖倒置）：ai_engine 禁止直接 import agent_hub（反向依赖），
+# 由 agent_hub AppConfig.ready() 调用 set_default_graph_factory 注册 create；
+# 测试/定制运行时可经构造参数 graph_factory 注入实例级工厂。
+_default_graph_factory = None
+# AgentConfig 工厂（resume 重建配置用）：同样由 agent_hub 侧注册，
+# agent_type 由工厂实现侧固定（BASE）。
+_default_config_factory = None
+
+
+def set_default_graph_factory(factory):
+    """注册进程级默认子代理 graph 工厂（agent_hub AppConfig.ready() 调用）。"""
+    global _default_graph_factory  # noqa: PLW0603 - 进程级注册点
+    _default_graph_factory = factory
+
+
+def set_default_config_factory(factory):
+    """注册进程级默认 AgentConfig 工厂（agent_hub AppConfig.ready() 调用）。"""
+    global _default_config_factory  # noqa: PLW0603 - 进程级注册点
+    _default_config_factory = factory
+
+
 class LangGraphAdapter(BaseRuntimeAdapter):
     """对接 LangGraph CompiledStateGraph（BASE agent 工具链 + DeepAgents 独立 graph）。"""
 
-    def __init__(self, runtime: Any):
+    def __init__(self, runtime: Any, graph_factory=None, config_factory=None):
         self.runtime = runtime
+        self._graph_factory = graph_factory
+        self._config_factory = config_factory
 
     # ── 对外契约 ────────────────────────────────────────────────────────
 
@@ -101,8 +124,6 @@ class LangGraphAdapter(BaseRuntimeAdapter):
         from langchain_core.messages import HumanMessage
         from langgraph.types import Command as LgCommand
 
-        from Django_xm.apps.agent_hub import create as agent_hub_create
-
         thread_id = instance.thread_id
         if resume_payload is None:
             # 首次 spawn：保存父 configurable（含事件回调引用），resume 时复用
@@ -116,8 +137,16 @@ class LangGraphAdapter(BaseRuntimeAdapter):
             "recursion_limit": MAX_SUBAGENT_ROUNDS,
         }
 
-        # 创建子代理 graph（独立 thread_id + 独立 checkpoint）
-        agent = await agent_hub_create(agent_config)
+        # 创建子代理 graph（独立 thread_id + 独立 checkpoint）：
+        # 经注入工厂创建（默认由 agent_hub AppConfig.ready() 注册），
+        # 本模块禁止直接 import agent_hub（依赖倒置，避免 ai_engine 反向依赖）。
+        factory = self._graph_factory or _default_graph_factory
+        if factory is None:
+            raise RuntimeError(
+                "子代理 graph 工厂未注册：需在 agent_hub AppConfig.ready() 中调用 "
+                "set_default_graph_factory 注册"
+            )
+        agent = await factory(agent_config)
 
         if resume_payload is None:
             # 首次 spawn：HumanMessage 输入（task 为任务描述，来自 metadata）
@@ -440,7 +469,7 @@ class LangGraphAdapter(BaseRuntimeAdapter):
           恢复信令路由到子代理（而非主会话挂起协程）。
         """
         from Django_xm.apps.approvals.models import Approval
-        from Django_xm.common.approval_batch import create_approvals_for_interrupts
+        from Django_xm.apps.approvals.services.approval_batch import create_approvals_for_interrupts
         from Django_xm.common.approval_parser import parse_approval_interrupt
 
         interrupt_value = None
@@ -561,8 +590,9 @@ class LangGraphAdapter(BaseRuntimeAdapter):
         graph 对象不能跨事件循环复用，resume 必须重新创建 agent。
         工具集按 metadata["tool_names"] 恢复（与 spawn 时一致），
         system_prompt 按 metadata["system_prompt"] 恢复（角色提示）。
+        AgentConfig 经注入工厂构造（agent_type 由工厂实现侧固定 BASE），
+        本模块禁止直接 import agent_hub（依赖倒置）。
         """
-        from Django_xm.apps.agent_hub import AgentConfig, AgentType
         from Django_xm.apps.tools import get_all_basic_tools, get_tools_for_request_async
 
         meta = instance.metadata or {}
@@ -582,8 +612,13 @@ class LangGraphAdapter(BaseRuntimeAdapter):
         else:
             tools = get_all_basic_tools()
 
-        return AgentConfig(
-            agent_type=AgentType.BASE,
+        config_factory = self._config_factory or _default_config_factory
+        if config_factory is None:
+            raise RuntimeError(
+                "子代理 AgentConfig 工厂未注册：需在 agent_hub AppConfig.ready() 中调用 "
+                "set_default_config_factory 注册"
+            )
+        return config_factory(
             name=meta.get("agent_name", "general-purpose"),
             tools=tools,
             system_prompt=meta.get("system_prompt", ""),

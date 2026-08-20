@@ -1,3 +1,13 @@
+/**
+ * 前端类型定义与枚举常量（唯一权威源）
+ *
+ * 结构：枚举常量区（export const 枚举/只读 Set）→ JSDoc 类型区（typedef）。
+ *
+ * 约束：本文件禁止导出工具函数（SpecificationRequirements 规范明文）——
+ * 工具函数归属 utils/；运行时校验统一走 utils/validation.js 的 zod 体系
+ * （其 role 枚举引用本文件 MessageRole，保持单一权威源）。
+ */
+
 export const AgentMode = {
   AGENT: 'agent',
   DEEP_RESEARCH: 'deep-research',

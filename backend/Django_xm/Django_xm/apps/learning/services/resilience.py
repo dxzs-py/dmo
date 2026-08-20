@@ -1,6 +1,6 @@
 """学习工作流韧性组件
 
-提供轻量级重试 + 超时保护，复用 agent_resilience 的原语。
+提供轻量级重试 + 超时保护，复用 ai_engine 韧性基础设施（agent_resilience）的原语。
 不接入 AgentExecutor，因为学习工作流无 tools 概念，
 降级（DEGRADE）和回退（FALLBACK）机制不适用——
 学习工作流的"降级"等价于"重试耗尽后抛出"。
@@ -18,7 +18,7 @@ import time
 from collections.abc import AsyncGenerator, Generator
 from typing import Any
 
-from Django_xm.apps.agent_hub.services.agent_resilience import (
+from Django_xm.apps.ai_engine.services.agent_resilience import (
     ErrorAction,
     ExecutionTimeoutManager,
     ResilienceConfig,

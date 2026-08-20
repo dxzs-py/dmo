@@ -7,7 +7,7 @@
 - updates 模式检测 ``__interrupt__`` → 创建审批（``request_approval_async``）+
   广播 approval 事件 → ``asyncio.Event`` 挂起等待信令；
 - 信令唤醒后从 DB 收集批次决策（source=chat），``Command(resume=...)`` 重入 astream；
-- 执行全程经 ``_publish_stream_event`` 广播 WS（不依赖任何 HTTP 连接）；
+- 执行全程经 ``publish_stream_event`` 广播 WS（不依赖任何 HTTP 连接）；
 - 完成后 finalize + ``persist_stream_result`` 落库 + 广播 stream_completed。
 
 审批终态化在挂起等待后立即完成（按 DB 真实决策），与执行是否成功无关，
@@ -19,7 +19,8 @@ import logging
 
 from asgiref.sync import sync_to_async
 
-from Django_xm.apps.chat.services.sse_generator import _publish_stream_event
+from Django_xm.apps.chat.services.sse_generator import publish_stream_event
+from Django_xm.apps.chat.services.stream_persistence import persist_chat_tool_calls
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 _CHAT_BATCH_POLL_INTERVAL = 5
 
 
-# 审批批次决策/终态化已收敛到 common.approval_batch（source 参数区分 chat/research），
+# 审批批次决策/终态化已收敛到 approvals.services.approval_batch（source 参数区分 chat/research），
 # 由 _wait_for_chat_batch_decision 内 import 调用。
 
 
@@ -47,7 +48,7 @@ async def _wait_for_chat_batch_decision(
     event = asyncio.Event()
     executor._pending_events[graph_interrupt_id] = event
     from Django_xm.apps.approvals.models import Approval
-    from Django_xm.common.approval_batch import (
+    from Django_xm.apps.approvals.services.approval_batch import (
         collect_batch_decisions,
         finalize_batch_approvals,
     )
@@ -76,35 +77,6 @@ async def _wait_for_chat_batch_decision(
     )
     await sync_to_async(finalize_batch_approvals)(decisions, Approval.Source.CHAT, session_id)
     return decisions
-
-
-async def _persist_chat_tool_calls(data: dict, content_state: dict, session_id: str, message_id) -> None:
-    """落库当前 content + tool_calls_map（复用唯一持久化入口 persist_stream_result）。
-
-    供审批中断挂起前（保证已完成工具 result 及时可见）与会话最终结束（finally）共用。
-    """
-    if not session_id or not message_id:
-        return
-    try:
-        from Django_xm.apps.chat.services.stream_persistence import persist_stream_result
-
-        ctx = data.get("_chat_ctx")
-        tool_calls_map = ctx.tool_calls_map if ctx is not None else {}
-        final_content = content_state.get("content", "")
-        if ctx is not None and ctx.current_message_content:
-            final_content = ctx.current_message_content
-
-        await persist_stream_result(
-            session_id=session_id,
-            user_id=None,
-            content=final_content,
-            tool_calls_map=tool_calls_map,
-            message_id=str(message_id),
-            subagent_contents=data.get("_subagent_contents") or None,
-            subagent_tool_entries=data.get("_subagent_tool_entries") or None,
-        )
-    except Exception:
-        logger.warning(f"[ChatExec] 落库 content/tool_calls 失败: session={session_id}", exc_info=True)
 
 
 async def run_chat_session(executor, params: dict) -> None:
@@ -147,7 +119,7 @@ async def run_chat_session(executor, params: dict) -> None:
         position 采集（子代理图层正文长度依据）。
         """
         try:
-            await _publish_stream_event(
+            await publish_stream_event(
                 event,
                 session_id,
                 message_id=int(message_id) if message_id else None,
@@ -166,7 +138,7 @@ async def run_chat_session(executor, params: dict) -> None:
         # 安全点（Task 9）：审批到达时已收到停止请求则不再创建审批等待
         if executor.check_stop_requested():
             raise asyncio.CancelledError("用户停止生成")
-        await _persist_chat_tool_calls(data, content_state, session_id, message_id)
+        await persist_chat_tool_calls(data, content_state, session_id, message_id)
         return await _wait_for_chat_batch_decision(executor, session_id, graph_interrupt_id)
 
     stopped = False
@@ -185,7 +157,7 @@ async def run_chat_session(executor, params: dict) -> None:
             # 生命周期管理器唤醒，以 Command(resume) 新建协程续跑（与 research 同构）。
             # 挂起前先落库已执行工具结果（与审批挂起 _interrupt_handler 一致），
             # 保证挂起期间刷新/后开浏览器子代理工具卡与正文完整可见。
-            await _persist_chat_tool_calls(data, content_state, session_id, message_id)
+            await persist_chat_tool_calls(data, content_state, session_id, message_id)
             await executor._handle_chat_wait_suspend(wait_suspend)
             return
     except asyncio.CancelledError:
@@ -239,7 +211,7 @@ async def _finalize_chat_session(
     try:
         from Django_xm.apps.chat.models import ChatMessage
 
-        await _persist_chat_tool_calls(data, content_state, session_id, message_id)
+        await persist_chat_tool_calls(data, content_state, session_id, message_id)
 
         @sync_to_async
         def _mark_not_streaming():

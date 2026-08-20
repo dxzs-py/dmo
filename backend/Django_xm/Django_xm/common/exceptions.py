@@ -3,6 +3,7 @@
 
 将所有 DRF/Python 异常转换为统一的 {code, message, data/details} 格式。
 本模块是 DRF EXCEPTION_HANDLER 的唯一入口，避免循环依赖。
+同时定义项目级异常统一基类 BaseAppError，供各 app 异常体系继承。
 """
 
 import logging
@@ -27,8 +28,28 @@ from .error_codes import ErrorCode
 logger = logging.getLogger(__name__)
 
 
+class BaseAppError(Exception):
+    """项目级异常统一基类，供各 app 异常体系继承。
+
+    提供最小多态接口（error_code / recoverable / to_dict），
+    子类可通过类属性或实例属性覆盖默认值，也可按需覆盖 to_dict()
+    提供更丰富的结构（如 LCAgentException 额外携带 user_message/details）。
+    """
+
+    error_code: str = "UNEXPECTED_ERROR"
+    recoverable: bool = True
+
+    def to_dict(self) -> dict:
+        """返回异常的最小结构化表示，供统一异常处理器消费。"""
+        return {
+            "error_code": self.error_code,
+            "message": str(self),
+            "recoverable": self.recoverable,
+        }
+
+
 # Agent 异常 error_code → 业务 ErrorCode 映射
-# 用于 _handle_agent_error 中将 LCAgentException.error_code 转换为统一业务错误码
+# 用于 _handle_agent_error 中将 BaseAppError 子类的 error_code 转换为统一业务错误码
 _AGENT_ERROR_CODE_MAP = {
     "RATE_LIMIT_EXCEEDED": ErrorCode.AGENT_RATE_LIMITED,
     "AGENT_EXECUTION_ERROR": ErrorCode.AGENT_EXECUTION_FAILED,
@@ -49,13 +70,8 @@ def custom_exception_handler(exc, context):
     - 成功: { code: 200, message: "操作成功", data: {...} }
     - 错误: { code: 错误码, message: "错误信息", data: {...} }
     """
-    try:
-        from Django_xm.apps.ai_engine.services.exceptions import LCAgentException
-
-        if isinstance(exc, LCAgentException):
-            return _handle_agent_error(exc)
-    except ImportError:
-        pass
+    if isinstance(exc, BaseAppError):
+        return _handle_agent_error(exc)
 
     if isinstance(exc, ValidationError):
         return _handle_validation_error(exc)
@@ -211,8 +227,8 @@ def _handle_auth_error(exc) -> Response:
     )
 
 
-def _handle_agent_error(exc) -> Response:
-    """将 LCAgentException 映射到统一业务错误码
+def _handle_agent_error(exc: BaseAppError) -> Response:
+    """将 BaseAppError 子类（如 LCAgentException）映射到统一业务错误码
 
     根据 exc.error_code 在 _AGENT_ERROR_CODE_MAP 中查找业务错误码；
     未映射的 error_code 回退到 SERVER_ERROR。
@@ -240,7 +256,10 @@ def _handle_agent_error(exc) -> Response:
     return Response(
         {
             "code": int(business_code),
-            "message": exc.user_message or error_data.get("message", "服务器内部错误"),
+            # user_message 为 LCAgentException 及部分子类的扩展属性，
+            # 其余 BaseAppError 子类缺失时回退到 to_dict() 的 message
+            "message": getattr(exc, "user_message", None)
+            or error_data.get("message", "服务器内部错误"),
             "data": {
                 "error_code": error_data.get("error_code"),
                 "recoverable": error_data.get("recoverable", True),

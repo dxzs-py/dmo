@@ -246,9 +246,9 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
             logger.warning(f"[RealtimeSync] 订阅会话失败(无权限): user={self.user_id}, session={session_id}")
             return
 
-        from Django_xm.common.realtime_events import _group_name
+        from Django_xm.common.realtime_events import group_name
 
-        group = _group_name("session", session_id)
+        group = group_name("session", session_id)
         if group not in self.session_groups:
             await self.channel_layer.group_add(group, self.channel_name)
             self.session_groups.add(group)
@@ -304,9 +304,9 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
             )
             return
 
-        from Django_xm.common.realtime_events import _group_name
+        from Django_xm.common.realtime_events import group_name
 
-        group = _group_name("session", session_id)
+        group = group_name("session", session_id)
         if group in self.session_groups:
             await self.channel_layer.group_discard(group, self.channel_name)
             self.session_groups.discard(group)
@@ -351,9 +351,9 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
             )
             return
 
-        from Django_xm.common.realtime_events import _group_name
+        from Django_xm.common.realtime_events import group_name
 
-        group = _group_name("task", task_id)
+        group = group_name("task", task_id)
         if group not in self.task_groups:
             await self.channel_layer.group_add(group, self.channel_name)
             self.task_groups.add(group)
@@ -395,9 +395,9 @@ class RealtimeSyncConsumer(AsyncJsonWebsocketConsumer):
             )
             return
 
-        from Django_xm.common.realtime_events import _group_name
+        from Django_xm.common.realtime_events import group_name
 
-        group = _group_name("task", task_id)
+        group = group_name("task", task_id)
         if group in self.task_groups:
             await self.channel_layer.group_discard(group, self.channel_name)
             self.task_groups.discard(group)

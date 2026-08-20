@@ -4,8 +4,11 @@ from django.test import TestCase
 from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory
 
-from Django_xm.apps.users.models import User
+from django.contrib.auth import get_user_model
+
 from Django_xm.common.pagination import ProjectPagination
+
+User = get_user_model()
 
 
 def _make_request(query_string: str = "") -> Request:

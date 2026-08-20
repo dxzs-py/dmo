@@ -26,7 +26,7 @@ from Django_xm.apps.research.services.research_runner import (
     finalize_research,
     self_heal_expired_approvals,
 )
-from Django_xm.common.approval_batch import (
+from Django_xm.apps.approvals.services.approval_batch import (
     collect_batch_decisions,
     create_approvals_for_interrupts,
     finalize_batch_approvals,
@@ -344,7 +344,7 @@ class SessionExecutor:
     ) -> None:
         """挂起前落库研究内存态（子代理工具条目 + 图层正文 + 主代理累计正文）到 DB。
 
-        与 chat 链路 ``_persist_chat_tool_calls`` 同构：审批中断挂起前
+        与 chat 链路 ``persist_chat_tool_calls`` 同构：审批中断挂起前
         （``_on_interrupt``）与业务等待挂起前（``_handle_suspend``）调用，
         保证挂起期间刷新浏览器、服务重启恢复后可还原子代理工具卡、图层正文
         与主代理累计正文（adapter 内存态随协程/实例销毁而丢失，DB 是唯一可还原源）。

@@ -60,6 +60,35 @@ class CacheClearPermissionMatrixTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         mock_delete.assert_called_once_with(f"rag_query:user_{self.user.id}_*")
 
+    def test_normal_user_query_scope_with_pattern_bypass_blocked(self):
+        """组合绕过（dj-01R 修复）：普通用户 {scope:query, pattern:*} 不得删任意 key。
+
+        修复前 `if pattern:` 优先于 `elif scope == "query"`，普通用户携带 pattern
+        会旁路权限执行 delete_pattern("*")；修复后 pattern 仅作为 scope="pattern"
+        的配套参数，scope=query 请求忽略 pattern 仅删自身前缀。
+        """
+        self.client.force_authenticate(user=self.user)
+        with mock.patch.object(cache_views.CacheService, "delete_pattern", return_value=1) as mock_delete:
+            resp = self.client.post(CLEAR_URL, {"scope": "query", "pattern": "*"}, format="json")
+        self.assertEqual(resp.status_code, 200)
+        # 断言删除的是用户自己的前缀，而非传入的任意 pattern
+        mock_delete.assert_called_once_with(f"rag_query:user_{self.user.id}_*")
+
+    def test_admin_pattern_scope_allowed(self):
+        """管理员 scope=pattern 携带 pattern → 200（pattern 分支可正常使用）。"""
+        self.client.force_authenticate(user=self.admin)
+        with mock.patch.object(cache_views.CacheService, "delete_pattern", return_value=3) as mock_delete:
+            resp = self.client.post(CLEAR_URL, {"scope": "pattern", "pattern": "test:*"}, format="json")
+        self.assertEqual(resp.status_code, 200)
+        mock_delete.assert_called_once_with("test:*")
+        self.assertEqual(resp.json()["data"]["cleared"], 1)
+
+    def test_pattern_scope_missing_pattern_rejected(self):
+        """scope=pattern 但缺 pattern 参数 → 400（配套参数校验）。"""
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.post(CLEAR_URL, {"scope": "pattern"}, format="json")
+        self.assertEqual(resp.status_code, 400)
+
     def test_admin_scope_all_allowed(self):
         """管理员全量清缓存 → 200（Redis 客户端不可用时跳过删除，仍成功）。"""
         self.client.force_authenticate(user=self.admin)

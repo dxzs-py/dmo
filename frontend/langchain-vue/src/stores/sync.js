@@ -263,9 +263,9 @@ export const useSyncStore = defineStore('sync', () => {
    * 保护态消息（STREAMING/INTERRUPTED/FINALIZING/SYNCING/COMPLETED）使用字段级合并，
    * 避免后端快照整体替换本地内容。
    *
-   * 注意：COMPLETED 纳入保护态是为了防止 stream_completed(finalized=false) 触发的
-   * 全量同步覆盖已确认的内容。非请求浏览器的全量同步由 handleStreamFinalized 在
-   * 状态尚未标记为 COMPLETED 时触发，并通过 options.allowContentMerge=true 显式声明
+   * 注意：COMPLETED 纳入保护态是为了防止迟到的全量同步（如乱序的
+   * stream_completed 触发）覆盖已确认的内容。非请求浏览器的权威全量同步由
+   * handleStreamFinalized 触发，并通过 options.allowContentMerge=true 显式声明
    * 允许 content 覆盖（stream_finalized 标志后端 PATCH 已持久化，content 为权威）。
    *
    * @param {string} sessionId

@@ -56,7 +56,7 @@ class _DeepAgentExecutor(AgentExecutor):
 
     相对 AgentExecutor 的差异（Task 18.3）：
     1. run() 使用局部导入的 classify_and_decide / calculate_backoff（兼容测试 patch
-       on agent_resilience.classify_and_decide；AgentExecutor 模块级导入不受 patch 影响）
+       on ai_engine.services.agent_resilience.classify_and_decide；AgentExecutor 模块级导入不受 patch 影响）
     2. _run_degrade 支持 async _rebuild_with_degraded_tools（原 AgentExecutor 仅支持
        sync rebuild_agent_fn；deep agent 的 rebuild 是 async）
     3. _run_degrade 实现多级降级级联：FULL → REDUCED_TOOLS → NO_TOOLS
@@ -103,12 +103,12 @@ class _DeepAgentExecutor(AgentExecutor):
         """带韧性的流式执行（重写以使用局部导入兼容测试 patch）。
 
         逻辑与 AgentExecutor.run 一致，仅将 classify_and_decide / calculate_backoff
-        改为方法内局部导入，使测试 patch（agent_resilience.classify_and_decide）生效。
+        改为方法内局部导入，使测试 patch（ai_engine.services.agent_resilience.classify_and_decide）生效。
         """
         # 局部导入，使测试 patch 生效（AgentExecutor 模块级导入不受 patch 影响）
         from langgraph.errors import GraphRecursionError
 
-        from Django_xm.apps.agent_hub.services.agent_resilience import (
+        from Django_xm.apps.ai_engine.services.agent_resilience import (
             ErrorAction,
             calculate_backoff,
             classify_and_decide,
@@ -237,7 +237,7 @@ class _DeepAgentExecutor(AgentExecutor):
         # 局部导入，使测试 patch 生效
         from langgraph.errors import GraphRecursionError
 
-        from Django_xm.apps.agent_hub.services.agent_resilience import (
+        from Django_xm.apps.ai_engine.services.agent_resilience import (
             DegradationLevel,
             get_degraded_tools,
         )

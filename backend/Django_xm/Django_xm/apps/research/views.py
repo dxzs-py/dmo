@@ -15,7 +15,7 @@ from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.event_schema import EventType
 from Django_xm.common.responses import error_response, not_found_response, success_response
 from Django_xm.common.serializers import EmptySerializer
-from Django_xm.services.fastapi_service.event_bus import (
+from Django_xm.common.signal_bus import (
     SESSION_TYPE_RESEARCH,
     SIGNAL_START,
     publish_retry_subagent_signal,

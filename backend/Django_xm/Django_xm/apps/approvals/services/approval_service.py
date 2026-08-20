@@ -5,7 +5,7 @@
   pending → processing    resume_approval/timeout_approval：用户审批或超时，设置resume_value，广播
   processing → terminal   complete_approval：approved/rejected/timeout，清理临时字段，广播终态，释放锁
 
-所有状态变更必须经过 _persist_and_broadcast 统一持久化，确保DB、Redis、广播三者一致。
+所有状态变更必须经过 persist_and_broadcast 统一持久化，确保DB、Redis、广播三者一致。
 """
 
 import logging
@@ -97,10 +97,9 @@ def build_approval_payload(
 ) -> dict[str, Any]:
     """审批 payload 单一构造入口（四个 scope 共享字段映射表）。
 
-    收敛原四处构造器（_build_payload / _build_approval_extra_fields /
-    _build_approval_sync_fields / _extract_tool_call_event_kwargs），
+    历史上曾分散为四处独立构造器，已全部收敛至此：
     新增字段只需在共享映射表登记一次，四个 scope 按需取子集并应用各自规范化，
-    避免四处逻辑漂移。
+    避免多处逻辑漂移。
 
     共享字段映射表（字段名 → 取值函数）：以 approval / approval.extra / state
     为输入、输出原始值；scope 分支负责各自的字段子集与规范化
@@ -163,7 +162,7 @@ def build_approval_payload(
     def _get(field: str) -> Any:
         return field_getters[field]()
 
-    # ── persist：Redis 持久化 payload（原 _build_payload）──
+    # ── persist：Redis 持久化 payload ──
     if scope == "persist":
         session_id, task_id = _resolve_approval_channels(approval)
         # cross_module_id：仅 DEEP_RESEARCH 关联 chat 时有值，前端用于识别跨模块事件
@@ -210,7 +209,7 @@ def build_approval_payload(
             payload.setdefault("tool_tier", tool_config["tool_tier"])
         return payload
 
-    # ── tool：工具调用事件统一参数（原 _extract_tool_call_event_kwargs）──
+    # ── tool：工具调用事件统一参数 ──
     if scope == "tool":
         parameters = _get("parameters")
         payload = {
@@ -368,21 +367,6 @@ def build_approval_payload(
     return params
 
 
-def _build_payload(approval: Approval, state: str | None = None, extra: dict | None = None) -> dict[str, Any]:
-    """兼容薄包装：Redis 持久化 payload（原独立构造器，已收敛到 build_approval_payload）。"""
-    return build_approval_payload(approval, state, "persist", extra)
-
-
-def _extract_tool_call_event_kwargs(approval: Approval) -> dict[str, Any]:
-    """兼容薄包装：工具调用事件统一参数（原独立构造器，已收敛到 build_approval_payload）。
-
-    所有从 Approval 发布工具调用事件（TIMEOUT/WAITING/RUNNING）的统一参数构造出口，
-    避免旧路径（构造 payload + publish_event_sync）导致的双轨发布。
-    risk_level 等字段的提取逻辑位于 build_approval_payload（tool scope）共享映射表。
-    """
-    return build_approval_payload(approval, None, "tool")
-
-
 def _bind_approval_position(approval: Approval, tool_call_id: str) -> None:
     """将 Approval.extra 中的 position 绑定到 ToolCallContext（keep_existing，幂等）。
 
@@ -401,7 +385,7 @@ def _bind_approval_position(approval: Approval, tool_call_id: str) -> None:
         )
 
 
-def _publish_tool_call_timeout_event(approval: Approval):
+def publish_tool_call_timeout_event(approval: Approval):
     """发布 TOOL_CALL_TIMEOUT 事件（通过 tool_call_lifecycle.service.transition 状态机入口）。
 
     审批超时时，除了发布 APPROVAL_TIMEOUT 更新审批面板，
@@ -411,7 +395,7 @@ def _publish_tool_call_timeout_event(approval: Approval):
     - register：幂等注册上下文（chat 模块可能已注册，不覆盖非空字段）
     - transition：状态机校验 + 去重 + 内部调用 publish_tool_call_sync（底层传输不变）
     """
-    kwargs = _extract_tool_call_event_kwargs(approval)
+    kwargs = build_approval_payload(approval, None, "tool")
     tool_call_id = kwargs["tool_call_id"]
     try:
         # 注册上下文（幂等：已存在时不覆盖非空字段，仅补全空字段）
@@ -463,7 +447,7 @@ def _publish_tool_call_waiting_event(approval: Approval):
     - register：幂等注册上下文（chat 模块可能已注册，不覆盖非空字段）
     - transition：状态机校验 + 去重 + 内部调用 publish_tool_call_sync（底层传输不变）
     """
-    kwargs = _extract_tool_call_event_kwargs(approval)
+    kwargs = build_approval_payload(approval, None, "tool")
     tool_call_id = kwargs["tool_call_id"]
     try:
         # 注册上下文（幂等：已存在时不覆盖非空字段，仅补全空字段）
@@ -512,7 +496,7 @@ def _publish_tool_call_running_event(approval: Approval):
     - register：幂等注册上下文（chat 模块可能已注册，不覆盖非空字段）
     - transition：状态机校验 + 去重 + 内部调用 publish_tool_call_sync（底层传输不变）
     """
-    kwargs = _extract_tool_call_event_kwargs(approval)
+    kwargs = build_approval_payload(approval, None, "tool")
     tool_call_id = kwargs["tool_call_id"]
     try:
         # 注册上下文（幂等：已存在时不覆盖非空字段，仅补全空字段）
@@ -827,7 +811,7 @@ def _approval_created_timestamp(approval: Approval) -> float | None:
 def _record_metrics_for_state(approval: Approval, state: str) -> None:
     """根据审批状态变更累加可观测性指标（F2）。
 
-    集成点：_persist_and_broadcast / _persist_and_broadcast_async 末尾统一调用。
+    集成点：persist_and_broadcast / persist_and_broadcast_async 末尾统一调用。
     故障隔离：approval_metrics 内部已 try/except，此处不额外捕获。
 
     状态映射：
@@ -851,7 +835,7 @@ def _record_metrics_for_state(approval: Approval, state: str) -> None:
         approval_metrics.on_timeout(_approval_created_timestamp(approval))
 
 
-def _persist_and_broadcast(
+def persist_and_broadcast(
     approval: Approval,
     state: str,
     extra: dict | None = None,
@@ -885,7 +869,7 @@ def _persist_and_broadcast(
     is_terminal = state in (Approval.State.APPROVED, Approval.State.REJECTED, Approval.State.TIMEOUT)
 
     if is_terminal:
-        payload = _build_payload(approval, state=state, extra=extra)
+        payload = build_approval_payload(approval, state, "persist", extra)
         persist_approval_processed(approval.interrupt_id, payload)
     else:
         persist_approval_state(approval.interrupt_id, state)
@@ -920,7 +904,7 @@ def _persist_and_broadcast(
         sync_approval_state_to_chat_message(approval, state)
     except Exception as sync_err:
         logger.warning(
-            f"[ApprovalService] _persist_and_broadcast 同步中间态到 ChatMessage 失败(非致命): "
+            f"[ApprovalService] persist_and_broadcast 同步中间态到 ChatMessage 失败(非致命): "
             f"interrupt_id={approval.interrupt_id}, state={state}, err={sync_err}"
         )
 
@@ -928,7 +912,7 @@ def _persist_and_broadcast(
     _record_metrics_for_state(approval, state)
 
 
-def _clean_extra_temp_keys(approval: Approval) -> dict:
+def clean_extra_temp_keys(approval: Approval) -> dict:
     """清理extra中的内部临时字段，返回清理后的extra dict。"""
     extra_data = approval.extra or {}
     if not isinstance(extra_data, dict):
@@ -1188,10 +1172,7 @@ def sync_approval_state_to_chat_message(approval: Approval, state: str) -> bool:
 _sync_approval_state_to_chat_message_async = sync_to_async(sync_approval_state_to_chat_message)
 
 
-_clean_extra_temp_keys_async = sync_to_async(_clean_extra_temp_keys)
-
-
-async def _persist_and_broadcast_async(approval: Approval, state: str, extra: dict | None = None):
+async def persist_and_broadcast_async(approval: Approval, state: str, extra: dict | None = None):
     """异步版统一状态持久化（与同步版保持一致的联动逻辑）。
 
     异步路径下也需要联动发布 TOOL_CALL_WAITING / TOOL_CALL_RUNNING 事件，
@@ -1204,7 +1185,7 @@ async def _persist_and_broadcast_async(approval: Approval, state: str, extra: di
     is_terminal = state in (Approval.State.APPROVED, Approval.State.REJECTED, Approval.State.TIMEOUT)
 
     if is_terminal:
-        payload = _build_payload(approval, state=state, extra=extra)
+        payload = build_approval_payload(approval, state, "persist", extra)
         persist_approval_processed(approval.interrupt_id, payload)
     else:
         persist_approval_state(approval.interrupt_id, state)
@@ -1224,12 +1205,12 @@ async def _persist_and_broadcast_async(approval: Approval, state: str, extra: di
         _publish_tool_call_waiting_event(approval)
 
     # 统一底层修复（Z1 次根因）：对所有状态同步 DB ChatMessage.tool_calls[].approval.state
-    # 与同步版 _persist_and_broadcast 对称，确保异步路径下中间态也回写 DB。
+    # 与同步版 persist_and_broadcast 对称，确保异步路径下中间态也回写 DB。
     try:
         await _sync_approval_state_to_chat_message_async(approval, state)
     except Exception as sync_err:
         logger.warning(
-            f"[ApprovalService] _persist_and_broadcast_async 同步中间态到 ChatMessage 失败(非致命): "
+            f"[ApprovalService] persist_and_broadcast_async 同步中间态到 ChatMessage 失败(非致命): "
             f"interrupt_id={approval.interrupt_id}, state={state}, err={sync_err}"
         )
 
@@ -1261,13 +1242,10 @@ def _acquire_lock_with_retry(lock_key: str, retries: int = 20, delay: float = 0.
     return False
 
 
-def _release_lock(lock_key: str):
+def release_lock(lock_key: str):
     redis_client = get_redis_client()
     full_key = f"{APPROVAL_LOCK_PREFIX}{lock_key}"
     redis_client.delete(full_key)
-
-
-_release_lock_async = sync_to_async(_release_lock)
 
 
 # ── 公开 API ──────────────────────────────────────────────
@@ -1399,7 +1377,7 @@ async def request_approval_async(
             raise ValueError(f"chat 模块审批必须显式传入 session_id，interrupt_id={interrupt_id}")
     else:
         chat_session_id = approval_data.get("session_id")
-    # 将顶层 message_id 合并到 extra，供 _build_payload 提取到广播 payload 顶层
+    # 将顶层 message_id 合并到 extra，供 persist scope 提取到广播 payload 顶层
     # 前端依赖 payload.message_id 精确定位消息（深度研究审批场景）
     extra_data = dict(approval_data.get("extra", {}) or {})
     top_message_id = approval_data.get("message_id")
@@ -1465,17 +1443,17 @@ async def request_approval_async(
     if not created:
         await _reset_timestamps(approval)
 
-    pending_data = _build_payload(approval, state=Approval.State.PENDING)
+    pending_data = build_approval_payload(approval, Approval.State.PENDING, "persist")
     # persist_approval_pending 写入 approval:pending:{source_id}（待处理列表），
-    # 与 _persist_and_broadcast_async 内的 persist_approval_state（approval:processed:{interrupt_id}）不同，
+    # 与 persist_and_broadcast_async 内的 persist_approval_state（approval:processed:{interrupt_id}）不同，
     # 两者职责互补，不可合并。
     persist_approval_pending(source_id, pending_data)
 
-    # 统一发布出口（与 _persist_and_broadcast_async 其他调用方一致，消除双轨发布）：
+    # 统一发布出口（与 persist_and_broadcast_async 其他调用方一致，消除双轨发布）：
     # PENDING 广播 + TOOL_CALL_WAITING 联动（问题 O/P）+ ChatMessage.tool_calls
     # 中间态回写（Z1）+ metrics 采集，全部由统一出口完成。
     # 覆盖 M16 复用 interrupt_id 重新发起审批场景。
-    await _persist_and_broadcast_async(approval, Approval.State.PENDING)
+    await persist_and_broadcast_async(approval, Approval.State.PENDING)
 
     logger.info(
         f"[ApprovalService] 异步发起审批: source={source}, source_id={source_id}, "
@@ -1559,7 +1537,7 @@ def resume_approval(
         try:
             approval = Approval.objects.get(interrupt_id=interrupt_id)
         except Approval.DoesNotExist:
-            _release_lock(lock_key)
+            release_lock(lock_key)
             logger.info(f"[ApprovalService] 锁内重读审批不存在: interrupt_id={interrupt_id}")
             return {
                 "approval": None,
@@ -1569,7 +1547,7 @@ def resume_approval(
                 "not_found": True,
             }
         if approval.state in (Approval.State.APPROVED, Approval.State.REJECTED, Approval.State.TIMEOUT):
-            _release_lock(lock_key)
+            release_lock(lock_key)
             return {
                 "approval": approval,
                 "resume_value": None,
@@ -1603,7 +1581,7 @@ def resume_approval(
                     state=Approval.State.PENDING,
                 ).exists()
             if has_pending:
-                _release_lock(lock_key)
+                release_lock(lock_key)
                 logger.info(
                     f"[ApprovalService] waiting 复查仍有兄弟 pending，保持等待: "
                     f"interrupt_id={interrupt_id}, graph_interrupt_id={graph_interrupt_id}"
@@ -1617,8 +1595,8 @@ def resume_approval(
                 }
             approval.state = Approval.State.PROCESSING
             approval.save(update_fields=["state"])
-            _persist_and_broadcast(approval, Approval.State.PROCESSING)
-            _release_lock(lock_key)
+            persist_and_broadcast(approval, Approval.State.PROCESSING)
+            release_lock(lock_key)
             logger.info(
                 f"[ApprovalService] waiting 复查批次完整，升级 processing 恢复: "
                 f"interrupt_id={interrupt_id}, graph_interrupt_id={graph_interrupt_id}"
@@ -1662,9 +1640,9 @@ def resume_approval(
         approval.extra = extra_data
         approval.save(update_fields=["state", "user_input", "approved_by", "extra"])
 
-        _persist_and_broadcast(approval, broadcast_state)
+        persist_and_broadcast(approval, broadcast_state)
 
-        # TOOL_CALL_WAITING / TOOL_CALL_RUNNING 已由 _persist_and_broadcast 统一联动发布：
+        # TOOL_CALL_WAITING / TOOL_CALL_RUNNING 已由 persist_and_broadcast 统一联动发布：
         # - broadcast_state=WAITING 时发布 TOOL_CALL_WAITING（同批次还有 pending）
         # - broadcast_state=PROCESSING 时发布 TOOL_CALL_RUNNING（工具开始执行）
         # 此处不再重复调用 _publish_tool_call_waiting_event
@@ -1679,7 +1657,7 @@ def resume_approval(
         # processing 状态：同批次已全部审批完成（或无批次），继续恢复流程
         # 批次级锁在返回前释放，避免阻塞同批次后续确认请求
         if has_pending_siblings:
-            _release_lock(lock_key)
+            release_lock(lock_key)
             return {
                 "approval": approval,
                 "resume_value": resume_value,
@@ -1687,14 +1665,14 @@ def resume_approval(
                 "state": "waiting",
             }
 
-        _release_lock(lock_key)
+        release_lock(lock_key)
         return {
             "approval": approval,
             "resume_value": resume_value,
             "stream_generator": None,
         }
     except Exception:
-        _release_lock(lock_key)
+        release_lock(lock_key)
         raise
 
 
@@ -1719,26 +1697,26 @@ def complete_approval(
 
     approval.state = state
     approval.resolved_at = _now()
-    approval.extra = _clean_extra_temp_keys(approval)
+    approval.extra = clean_extra_temp_keys(approval)
     if extra:
         approval.extra.update(extra)
     approval.save(update_fields=["state", "resolved_at", "extra"])
 
-    _persist_and_broadcast(approval, state, extra)
+    persist_and_broadcast(approval, state, extra)
     # 锁 key 与 resume_approval 对称：批次维度（graph_interrupt_id）或单审批维度
     graph_interrupt_id = ""
     if isinstance(approval.extra, dict):
         graph_interrupt_id = approval.extra.get("graph_interrupt_id", "")
-    _release_lock(graph_interrupt_id or interrupt_id)
+    release_lock(graph_interrupt_id or interrupt_id)
 
-    # 统一底层修复（Z1）：sync_approval_state_to_chat_message 已由 _persist_and_broadcast
+    # 统一底层修复（Z1）：sync_approval_state_to_chat_message 已由 persist_and_broadcast
     # 统一调用（对所有状态包括终态），此处不再重复调用。原实现的显式调用已合并到
-    # _persist_and_broadcast 中，避免双重调用与代码冗余，符合"单一数据源"原则。
+    # persist_and_broadcast 中，避免双重调用与代码冗余，符合"单一数据源"原则。
 
     # 委托 ApprovalLifecycleService 统一终态化同批次 siblings（根因 C 修复）
     # 三模块共享同一份代码，删除散落的 _finalize_waiting_siblings_* 实现
     try:
-        from Django_xm.common.approval_lifecycle import service as approval_lifecycle_service
+        from Django_xm.apps.approvals.services.approval_lifecycle import service as approval_lifecycle_service
 
         approval_lifecycle_service.complete_batch(
             graph_interrupt_id,
@@ -1805,16 +1783,16 @@ def timeout_approval(interrupt_id: str, dispatch_resume: bool = True):
         approval.extra = extra_data
         approval.save(update_fields=["state", "extra"])
 
-        # 统一发布出口（与 _persist_and_broadcast 其他调用方一致，消除"绕过统一出口"的
+        # 统一发布出口（与 persist_and_broadcast 其他调用方一致，消除"绕过统一出口"的
         # PROCESSING 联动语义不一致）：
         # 1. 先持久化 PROCESSING（suppress_tool_event=True：仅 Redis 同步 + APPROVAL_PROCESSING
         #    广播，不联动发布 TOOL_CALL_RUNNING，避免前端短暂显示"执行中"再变为"超时"）
-        _persist_and_broadcast(approval, Approval.State.PROCESSING, suppress_tool_event=True)
+        persist_and_broadcast(approval, Approval.State.PROCESSING, suppress_tool_event=True)
 
         # 2. 终态：APPROVAL_TIMEOUT（审批面板显示"审批已超时"）。
         #    Redis 终态持久化、ChatMessage.tool_calls 同步（Z1）与 metrics 均由统一出口完成。
-        _persist_and_broadcast(approval, Approval.State.TIMEOUT, extra={"timeout": True})
-        # DB 终态化：_persist_and_broadcast 只写 Redis+广播、不更新 DB，
+        persist_and_broadcast(approval, Approval.State.TIMEOUT, extra={"timeout": True})
+        # DB 终态化：persist_and_broadcast 只写 Redis+广播、不更新 DB，
         # 显式将 DB 状态更新为 TIMEOUT，保证 DB 与 Redis/前端语义一致。
         # 执行器 collect_batch_decisions 以 DB 状态为准，
         # DB 停留在 PROCESSING 会把"超时"误判为"已批准"（resolved=True），
@@ -1823,7 +1801,7 @@ def timeout_approval(interrupt_id: str, dispatch_resume: bool = True):
         approval.save(update_fields=["state"])
 
         # 工具卡片显示"审批超时"状态（与审批面板分离）
-        _publish_tool_call_timeout_event(approval)
+        publish_tool_call_timeout_event(approval)
 
         logger.info(
             f"[ApprovalService] 审批超时处理(超时): interrupt_id={interrupt_id}, "
@@ -1835,7 +1813,7 @@ def timeout_approval(interrupt_id: str, dispatch_resume: bool = True):
             return
 
         try:
-            from Django_xm.common.approval_gateway import gateway
+            from Django_xm.apps.approvals.services.approval_gateway import gateway
 
             gateway.route_timeout(approval, resume_value=TIMEOUT_DECISION)
             logger.info(
@@ -1849,7 +1827,7 @@ def timeout_approval(interrupt_id: str, dispatch_resume: bool = True):
             )
     except Exception:
         logger.exception("[ApprovalService] 超时处理异常")
-        _release_lock(lock_key)
+        release_lock(lock_key)
 
 
 def get_approval_history_by_source(source_id: str) -> list:

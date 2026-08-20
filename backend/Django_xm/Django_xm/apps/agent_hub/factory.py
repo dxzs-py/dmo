@@ -77,6 +77,13 @@ class AgentFactory:
         if config.checkpointer is None:
             raise AgentCreationError("checkpointer 注入失败，禁止带着 None checkpointer 进入 astream")
 
+        # 统一模型解析（factory 输出通道）：所有 agent 的模型经 resolve_model 创建
+        # （内部走 get_chat_model(enable_fallback=True)，带 SDK 重试 + 候选切换 + 熔断），
+        # 结果写回 config.model 供 preflight / builder / 调用方复用，全程单次创建。
+        from Django_xm.apps.agent_hub.model_resolver import resolve_model
+
+        config.model = resolve_model(config)
+
         # 执行预检（默认不阻止创建，仅记录问题；fail_fast_on_preflight=True 时抛出 PreflightCheckError）
         # 注意：PreflightCheckError 必须冒泡（不被 except 捕获），其他异常忽略保持向后兼容
         from .exceptions import PreflightCheckError

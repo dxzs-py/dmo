@@ -15,13 +15,14 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from typing import Any
 
 from asgiref.sync import sync_to_async
 from langchain_core.messages import AIMessage, HumanMessage
 
 from Django_xm.apps.agent_hub.services.agent_executor import AgentExecutor
-from Django_xm.apps.agent_hub.services.agent_resilience import (
+from Django_xm.apps.ai_engine.services.agent_resilience import (
     DegradationLevel,
     get_degraded_tools,
 )
@@ -48,6 +49,36 @@ from .stream_helpers import (
 from .tool_service import ToolService
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _SubagentStreamState:
+    """子代理流式会话状态（跨回调共享的最小捕获状态包）。
+
+    contents / tool_entries / sent_msg_keys 与 data["_subagent_contents"] 等
+    共享同一 dict 引用，回调间语义与拆分前的局部变量闭包捕获保持一致。
+    """
+
+    session_id: str
+    message_id: str
+    contents: dict[str, dict[str, str]]
+    tool_entries: dict[str, dict]
+    sent_msg_keys: dict[str, set]
+
+
+@dataclass
+class _StreamExecutionPlan:
+    """流式执行计划（阶段间传递的执行要素打包，避免长参数列表）。"""
+
+    agent: Any
+    graph_input: Any
+    config: Any
+    ctx: StreamContext
+    strategy: Any
+    tools: list
+    model_instance: Any
+    provider_id: str | None
+    model_name: str | None
 
 
 class ChatService:
@@ -106,21 +137,15 @@ class ChatService:
         self,
         data: dict[str, Any],
         prompt_mode: str = "agent",
-        model_instance=None,
         tool_config: dict[str, Any] | None = None,
         tools: list | None = None,
     ) -> tuple:
         return await self._agent_service.create_agent_with_memory(
             data,
             prompt_mode,
-            model_instance,
             tool_config=tool_config,
             tools=tools,
         )
-
-    @staticmethod
-    def _resolve_model_instance(data: dict[str, Any], streaming: bool = True):
-        return AgentService.resolve_model_instance(data, streaming)
 
     @staticmethod
     def _resolve_kb_ids(data: dict[str, Any]) -> list[str] | None:
@@ -200,8 +225,25 @@ class ChatService:
         )
 
     async def process_chat_request(self, data: dict[str, Any]) -> dict[str, Any]:
-        from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model, get_model_string
-        from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
+        """处理非流式聊天请求（编排：前置检查 → 上下文准备 → graph 执行 → 补全与缓存写回）"""
+        early_result = self._precheck_chat_request(data)
+        if early_result is not None:
+            return early_result
+
+        tools, tool_config, research_context = await self._prepare_chat_context(data)
+
+        response = await self._invoke_chat_graph(data, tools, tool_config, research_context)
+        response = await self._complete_chat_response(data, response)
+
+        return self._finalize_chat_response(data, response, tools)
+
+    def _precheck_chat_request(self, data: dict[str, Any]) -> dict[str, Any] | None:
+        """前置检查：slash 命令执行、模型响应缓存命中、RAG 模式分流。
+
+        命中任一路径时返回应立即返回给调用方的结果；全部未命中返回 None，
+        由调用方继续正常 agent 处理流程。
+        """
+        from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
         from Django_xm.apps.cache_manager.services.cache_service import ModelResponseCacheService
 
         parsed = parse_command(data.get("message", ""))
@@ -234,6 +276,15 @@ class ChatService:
         if rag_result is not None:
             return rag_result
 
+        return None
+
+    async def _prepare_chat_context(self, data: dict[str, Any]) -> tuple[list, dict[str, Any], str | None]:
+        """准备聊天执行上下文：获取工具集与工具配置，并加载深度研究上下文。
+
+        Returns:
+            (tools, tool_config, research_context) 三元组；research_context 非空时
+            已将 _research_system_prompt / _has_research_context 写回 data。
+        """
         tools = await self._get_tools(data)
         tool_config = self._build_tool_config(data)
 
@@ -248,8 +299,19 @@ class ChatService:
                 f"{research_context}"
             )
             data["_has_research_context"] = True
+        return tools, tool_config, research_context
 
-        agent, thread_config, use_checkpointer = await self._create_agent_with_memory(
+    async def _invoke_chat_graph(
+        self,
+        data: dict[str, Any],
+        tools: list,
+        tool_config: dict[str, Any],
+        research_context: str | None,
+    ) -> str:
+        """创建 agent、构造 graph 输入与调用配置，执行 graph 并提取最终 AI 回复文本。"""
+        from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
+
+        agent, thread_config, use_checkpointer, _agent_config = await self._create_agent_with_memory(
             data,
             prompt_mode=data["mode"],
             tool_config=tool_config,
@@ -260,7 +322,7 @@ class ChatService:
         human_msg = HumanMessage(content=user_content["content"])
 
         if use_checkpointer:
-            _ce_metadata = self._apply_context_engineering_for_checkpointer(
+            self._apply_context_engineering_for_checkpointer(
                 user_message=data.get("message", ""),
                 model_name=data.get("model_name"),
                 mode=data.get("mode", "agent"),
@@ -276,7 +338,7 @@ class ChatService:
             invoke_config = thread_config
         else:
             chat_history = data.get("chat_history", [])
-            chat_history, _ce_metadata = self._apply_context_engineering(
+            chat_history, _ = self._apply_context_engineering(
                 chat_history,
                 data.get("message", ""),
                 mode=data.get("mode", "agent"),
@@ -304,6 +366,12 @@ class ChatService:
             if isinstance(msg, AIMessage):
                 response = msg.content
                 break
+        return response
+
+    async def _complete_chat_response(self, data: dict[str, Any], response: str) -> str:
+        """检查回复完整性：不完整时调用 LLM 继续补全，返回补全后的回复。"""
+        from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
+        from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
 
         if _needs_completion(response):
             model = get_chat_model()
@@ -319,7 +387,14 @@ class ChatService:
                 )
             if getattr(completion, "content", None):
                 response = completion.content
+        return response
 
+    def _finalize_chat_response(self, data: dict[str, Any], response: str, tools: list) -> dict[str, Any]:
+        """构造最终响应结果并写回模型响应缓存。"""
+        from Django_xm.apps.ai_engine.services.llm_factory import get_model_string
+        from Django_xm.apps.cache_manager.services.cache_service import ModelResponseCacheService
+
+        mode = data.get("mode", "agent")
         tool_names = [tool.name for tool in tools]
         logger.info(f"聊天请求处理完成，响应长度: {len(response)} 字符")
 
@@ -423,189 +498,19 @@ class ChatService:
         # 1. 解析 slash 命令
         parsed = parse_command(data.get("message", ""))
         if parsed:
-            command_name, args = parsed
-            context = {
-                "args": args,
-                "user_id": self.user_id,
-                "session_id": data.get("session_id"),
-                "messages": data.get("chat_history", []),
-                "token_info": token_detail_tracker.get_summary(),
-            }
-            cmd_result = execute_command(command_name, context)
-            yield {
-                "type": "command",
-                "data": cmd_result,
-                "content": cmd_result.get("content", ""),
-            }
-            yield {"type": "end", "message": "命令执行完成"}
+            async for event in self._handle_slash_command(data, parsed, token_detail_tracker):
+                yield event
             return
 
         # 2. deep-research 模式 → 多步骤工作流
         if mode == "deep-research":
-            if data.get("use_knowledge_base"):
-                kb_ids = data.get("selected_knowledge_bases") or []
-                single_kb = data.get("selected_knowledge_base")
-                if single_kb and single_kb not in kb_ids:
-                    kb_ids.append(single_kb)
-
-                if kb_ids:
-                    from Django_xm.apps.knowledge.services.retrieval_service import create_retriever_tool
-
-                    kb_info_map = {}
-                    try:
-                        kbs = await self._load_user_knowledge_bases()
-                        kb_info_map = {kb.get("id"): kb for kb in kbs}
-                    except Exception:
-                        # 知识库列表读取失败时回退到使用 kb_id 作为名称
-                        logger.debug("读取知识库列表失败，使用 kb_id 作为名称")
-
-                    for kb_id in kb_ids:
-                        retriever = await sync_to_async(self._rag_service.get_rag_retriever)(
-                            kb_id, retrieval_mode="comprehensive"
-                        )
-                        if retriever:
-                            kb_info = kb_info_map.get(kb_id)
-                            kb_name = kb_id
-                            kb_desc = ""
-                            if kb_info:
-                                kb_name = kb_info.get("name", kb_id)
-                                kb_desc = kb_info.get("description", "")
-
-                            tool_name = f"knowledge_base_{kb_id}".replace("-", "_").replace(" ", "_")
-                            tool_desc = f"搜索知识库「{kb_name}」中的相关信息。"
-                            if kb_desc:
-                                tool_desc += f" 知识库描述: {kb_desc}"
-
-                            retriever_tool = create_retriever_tool(
-                                retriever,
-                                name=tool_name,
-                                description=tool_desc,
-                                retrieval_mode="comprehensive",
-                                kb_name=kb_name,
-                                kb_description=kb_desc,
-                                collection_names=[f"user_{self._rag_service.user_id}_{kb_id}"],
-                            )
-                            data.setdefault("_retriever_tool_list", []).append(retriever_tool)
-
-                    if data.get("_retriever_tool_list"):
-                        data["_retriever_tool"] = data["_retriever_tool_list"][0]
-                elif data.get("selected_knowledge_base"):
-                    single_kb_id = data["selected_knowledge_base"]
-                    retriever = await sync_to_async(self._rag_service.get_rag_retriever)(
-                        single_kb_id, retrieval_mode="comprehensive"
-                    )
-                    if retriever:
-                        from Django_xm.apps.knowledge.services.retrieval_service import create_retriever_tool
-
-                        single_kb_name = single_kb_id
-                        single_kb_desc = ""
-                        try:
-                            kbs = await self._load_user_knowledge_bases()
-                            kb_info = next((kb for kb in kbs if kb.get("id") == single_kb_id), None)
-                            if kb_info:
-                                single_kb_name = kb_info.get("name", single_kb_id)
-                                single_kb_desc = kb_info.get("description", "")
-                        except Exception:
-                            # 知识库信息读取失败时回退到使用 kb_id 作为名称
-                            logger.debug("读取知识库 %s 信息失败", single_kb_id)
-
-                        retriever_tool = create_retriever_tool(
-                            retriever,
-                            retrieval_mode="comprehensive",
-                            kb_name=single_kb_name,
-                            kb_description=single_kb_desc,
-                            collection_names=[f"user_{self._rag_service.user_id}_{single_kb_id}"],
-                        )
-                        data["_retriever_tool"] = retriever_tool
-            # MCP 工具和用户选择工具
-            data["_deep_extra_tools"] = await self._tool_service.get_deep_research_tools(data)
-            if data.get("_retriever_tool_list") and len(data["_retriever_tool_list"]) > 1:
-                data.setdefault("_deep_extra_tools", []).extend(data["_retriever_tool_list"][1:])
-            async for event in self._create_agent_for_mode("deep-research", data, usage_tracker, token_detail_tracker):
+            async for event in self._handle_deep_research_mode(data, usage_tracker, token_detail_tracker):
                 yield event
             return
 
         # 3. agent 模式 → Agent（动态判断是否使用工具）
         if mode == "agent":
-            if data.get("use_knowledge_base"):
-                kb_ids = data.get("selected_knowledge_bases") or []
-                single_kb = data.get("selected_knowledge_base")
-                if single_kb and single_kb not in kb_ids:
-                    kb_ids.append(single_kb)
-
-                for kb_id in kb_ids:
-                    retriever = await sync_to_async(self._rag_service.get_rag_retriever)(
-                        kb_id, retrieval_mode="precise"
-                    )
-                    if retriever:
-                        try:
-                            comprehensive_retriever = await sync_to_async(self._rag_service.get_rag_retriever)(
-                                kb_id, retrieval_mode="comprehensive"
-                            )
-                        except Exception as e:
-                            logger.warning(f"创建 comprehensive 检索器失败: {e}")
-                            comprehensive_retriever = None
-
-                        from Django_xm.apps.ai_engine.services.llm_factory import get_helper_model
-                        from Django_xm.apps.knowledge.services.retrieval_service import create_retriever_tool
-
-                        kb_info = None
-                        try:
-                            kbs = await self._load_user_knowledge_bases()
-                            kb_info = next((kb for kb in kbs if kb.get("id") == kb_id), None)
-                        except Exception:
-                            # 知识库信息读取失败时回退到使用 kb_id 作为名称
-                            logger.debug("读取知识库 %s 信息失败", kb_id)
-
-                        kb_name = kb_id
-                        kb_desc = ""
-                        if kb_info:
-                            kb_name = kb_info.get("name", kb_id)
-                            kb_desc = kb_info.get("description", "")
-
-                        tool_name = f"knowledge_base_{kb_id}".replace("-", "_").replace(" ", "_")
-                        tool_desc = f"搜索知识库「{kb_name}」中的相关信息。"
-                        if kb_desc:
-                            tool_desc += f" 知识库描述: {kb_desc}"
-
-                        retriever_tool = create_retriever_tool(
-                            retriever,
-                            name=tool_name,
-                            description=tool_desc,
-                            retrieval_mode="auto",
-                            comprehensive_retriever=comprehensive_retriever,
-                            llm=get_helper_model(),
-                            kb_name=kb_name,
-                            kb_description=kb_desc,
-                            collection_names=[f"user_{self._rag_service.user_id}_{kb_id}"],
-                        )
-                        data.setdefault("_extra_tools", []).append(retriever_tool)
-
-            # 深度思考叠加
-            if data.get("use_deep_thinking"):
-                from Django_xm.apps.ai_engine.services.llm_factory import model_supports_capability
-
-                provider_id = data.get("provider_id", "")
-                model_name = data.get("model_name", "")
-                if model_supports_capability(provider_id, model_name, "deep_thinking"):
-                    data["_enable_deep_thinking"] = True
-
-            # 动态判断 use_tools：如果用户没有开启任何工具/能力，则不使用工具
-            # 尊重前端显式传递的 use_tools 参数
-            explicit_use_tools = data.get("use_tools")
-            if explicit_use_tools is not None:
-                data["use_tools"] = bool(explicit_use_tools)
-            else:
-                use_web_search = data.get("use_web_search", False)
-                use_mcp = data.get("use_mcp", False)
-                use_knowledge_base = data.get("use_knowledge_base", False)
-                selected_tools = data.get("selected_tools")
-                has_any_tool_enabled = bool(
-                    use_web_search or use_mcp or use_knowledge_base or selected_tools or data.get("_extra_tools")
-                )
-                data["use_tools"] = has_any_tool_enabled
-
-            async for event in self._process_normal_stream_chat(
+            async for event in self._handle_agent_mode(
                 data, usage_tracker, token_detail_tracker, interrupt_handler=interrupt_handler
             ):
                 yield event
@@ -615,6 +520,206 @@ class ChatService:
         async for event in self._process_normal_stream_chat(data, usage_tracker, token_detail_tracker):
             yield event
 
+    async def _handle_slash_command(
+        self,
+        data: dict[str, Any],
+        parsed: tuple,
+        token_detail_tracker,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """slash 命令分支：构建命令上下文并执行命令，产出命令结果与结束事件"""
+        command_name, args = parsed
+        context = {
+            "args": args,
+            "user_id": self.user_id,
+            "session_id": data.get("session_id"),
+            "messages": data.get("chat_history", []),
+            "token_info": token_detail_tracker.get_summary(),
+        }
+        cmd_result = execute_command(command_name, context)
+        yield {
+            "type": "command",
+            "data": cmd_result,
+            "content": cmd_result.get("content", ""),
+        }
+        yield {"type": "end", "message": "命令执行完成"}
+
+    async def _handle_deep_research_mode(
+        self,
+        data: dict[str, Any],
+        usage_tracker,
+        token_detail_tracker,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """deep-research 分支：注入知识库检索工具与深度研究工具后委托模式分发执行"""
+        if data.get("use_knowledge_base"):
+            await self._inject_deep_research_retriever_tools(data)
+
+        # MCP 工具和用户选择工具
+        data["_deep_extra_tools"] = await self._tool_service.get_deep_research_tools(data)
+        if data.get("_retriever_tool_list") and len(data["_retriever_tool_list"]) > 1:
+            data.setdefault("_deep_extra_tools", []).extend(data["_retriever_tool_list"][1:])
+        async for event in self._create_agent_for_mode(
+            "deep-research", data, usage_tracker, token_detail_tracker
+        ):
+            yield event
+
+    async def _inject_deep_research_retriever_tools(self, data: dict[str, Any]) -> None:
+        """deep-research 知识库检索工具注入：为每个选中知识库创建 comprehensive 检索工具
+
+        全部工具追加到 _retriever_tool_list，首个作为主检索器 _retriever_tool，
+        其余由 _handle_deep_research_mode 合并进 _deep_extra_tools。
+        """
+        kb_ids = data.get("selected_knowledge_bases") or []
+        single_kb = data.get("selected_knowledge_base")
+        if single_kb and single_kb not in kb_ids:
+            kb_ids.append(single_kb)
+
+        if not kb_ids:
+            return
+
+        from Django_xm.apps.knowledge.services.retrieval_service import create_retriever_tool
+
+        kb_info_map = {}
+        try:
+            kbs = await self._load_user_knowledge_bases()
+            kb_info_map = {kb.get("id"): kb for kb in kbs}
+        except Exception:
+            # 知识库列表读取失败时回退到使用 kb_id 作为名称
+            logger.debug("读取知识库列表失败，使用 kb_id 作为名称")
+
+        for kb_id in kb_ids:
+            retriever = await sync_to_async(self._rag_service.get_rag_retriever)(
+                kb_id, retrieval_mode="comprehensive"
+            )
+            if retriever:
+                kb_info = kb_info_map.get(kb_id)
+                kb_name = kb_id
+                kb_desc = ""
+                if kb_info:
+                    kb_name = kb_info.get("name", kb_id)
+                    kb_desc = kb_info.get("description", "")
+
+                tool_name = f"knowledge_base_{kb_id}".replace("-", "_").replace(" ", "_")
+                tool_desc = f"搜索知识库「{kb_name}」中的相关信息。"
+                if kb_desc:
+                    tool_desc += f" 知识库描述: {kb_desc}"
+
+                retriever_tool = create_retriever_tool(
+                    retriever,
+                    name=tool_name,
+                    description=tool_desc,
+                    retrieval_mode="comprehensive",
+                    kb_name=kb_name,
+                    kb_description=kb_desc,
+                    collection_names=[f"user_{self._rag_service.user_id}_{kb_id}"],
+                )
+                data.setdefault("_retriever_tool_list", []).append(retriever_tool)
+
+        if data.get("_retriever_tool_list"):
+            data["_retriever_tool"] = data["_retriever_tool_list"][0]
+
+    async def _handle_agent_mode(
+        self,
+        data: dict[str, Any],
+        usage_tracker,
+        token_detail_tracker,
+        interrupt_handler=None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """agent 分支：知识库工具注入、深度思考开关、use_tools 动态判断后委托常规流式聊天"""
+        if data.get("use_knowledge_base"):
+            await self._inject_agent_retriever_tools(data)
+
+        # 深度思考叠加
+        if data.get("use_deep_thinking"):
+            self._apply_deep_thinking_flag(data)
+
+        # 动态判断 use_tools：如果用户没有开启任何工具/能力，则不使用工具
+        self._resolve_use_tools_flag(data)
+
+        async for event in self._process_normal_stream_chat(
+            data, usage_tracker, token_detail_tracker, interrupt_handler=interrupt_handler
+        ):
+            yield event
+
+    async def _inject_agent_retriever_tools(self, data: dict[str, Any]) -> None:
+        """agent 模式知识库检索工具注入：为每个选中知识库创建 auto 检索工具（precise 主检索器 + comprehensive 备用）"""
+        kb_ids = data.get("selected_knowledge_bases") or []
+        single_kb = data.get("selected_knowledge_base")
+        if single_kb and single_kb not in kb_ids:
+            kb_ids.append(single_kb)
+
+        for kb_id in kb_ids:
+            retriever = await sync_to_async(self._rag_service.get_rag_retriever)(
+                kb_id, retrieval_mode="precise"
+            )
+            if retriever:
+                try:
+                    comprehensive_retriever = await sync_to_async(self._rag_service.get_rag_retriever)(
+                        kb_id, retrieval_mode="comprehensive"
+                    )
+                except Exception as e:
+                    logger.warning(f"创建 comprehensive 检索器失败: {e}")
+                    comprehensive_retriever = None
+
+                from Django_xm.apps.ai_engine.services.llm_factory import get_helper_model
+                from Django_xm.apps.knowledge.services.retrieval_service import create_retriever_tool
+
+                kb_info = None
+                try:
+                    kbs = await self._load_user_knowledge_bases()
+                    kb_info = next((kb for kb in kbs if kb.get("id") == kb_id), None)
+                except Exception:
+                    # 知识库信息读取失败时回退到使用 kb_id 作为名称
+                    logger.debug("读取知识库 %s 信息失败", kb_id)
+
+                kb_name = kb_id
+                kb_desc = ""
+                if kb_info:
+                    kb_name = kb_info.get("name", kb_id)
+                    kb_desc = kb_info.get("description", "")
+
+                tool_name = f"knowledge_base_{kb_id}".replace("-", "_").replace(" ", "_")
+                tool_desc = f"搜索知识库「{kb_name}」中的相关信息。"
+                if kb_desc:
+                    tool_desc += f" 知识库描述: {kb_desc}"
+
+                retriever_tool = create_retriever_tool(
+                    retriever,
+                    name=tool_name,
+                    description=tool_desc,
+                    retrieval_mode="auto",
+                    comprehensive_retriever=comprehensive_retriever,
+                    llm=get_helper_model(),
+                    kb_name=kb_name,
+                    kb_description=kb_desc,
+                    collection_names=[f"user_{self._rag_service.user_id}_{kb_id}"],
+                )
+                data.setdefault("_extra_tools", []).append(retriever_tool)
+
+    def _apply_deep_thinking_flag(self, data: dict[str, Any]) -> None:
+        """深度思考开关：模型支持 deep_thinking 能力时设置 _enable_deep_thinking 标志"""
+        from Django_xm.apps.ai_engine.services.llm_factory import model_supports_capability
+
+        provider_id = data.get("provider_id", "")
+        model_name = data.get("model_name", "")
+        if model_supports_capability(provider_id, model_name, "deep_thinking"):
+            data["_enable_deep_thinking"] = True
+
+    def _resolve_use_tools_flag(self, data: dict[str, Any]) -> None:
+        """动态判断 use_tools：优先尊重前端显式传参，否则按各工具/能力开关推断"""
+        # 尊重前端显式传递的 use_tools 参数
+        explicit_use_tools = data.get("use_tools")
+        if explicit_use_tools is not None:
+            data["use_tools"] = bool(explicit_use_tools)
+        else:
+            use_web_search = data.get("use_web_search", False)
+            use_mcp = data.get("use_mcp", False)
+            use_knowledge_base = data.get("use_knowledge_base", False)
+            selected_tools = data.get("selected_tools")
+            has_any_tool_enabled = bool(
+                use_web_search or use_mcp or use_knowledge_base or selected_tools or data.get("_extra_tools")
+            )
+            data["use_tools"] = has_any_tool_enabled
+
     async def _create_agent_for_mode(
         self,
         mode: str,
@@ -622,111 +727,141 @@ class ChatService:
         usage_tracker,
         token_detail_tracker,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """为特定模式创建并执行 Agent 流，返回事件流"""
+        """为特定模式创建并执行 Agent 流，按模式路由分发到对应处理分支"""
         if mode == "deep-research":
-            # 深度研究模式架构（chat SSE 立即返回）：
-            # 1. 创建深度研究任务记录（create_deep_research_task，仅建任务，不启动执行）
-            # 2. 发送 deep_research 事件，前端据此：
-            #    - 设置 researchTaskId
-            #    - 将消息 streamState 转为 INTERRUPTED
-            # 3. 更新 ChatMessage 双向关联（research_task_id + message_id）
-            # 4. 发布执行启动信令（start_execution → Redis SIGNAL_START，不等待结果）
-            # 5. 发送 interrupted 事件（触发 sse_generator 广播 stream_interrupted WebSocket 事件）
-            # 6. chat SSE 立即结束（return），不持续等待研究完成
-            #
-            # 研究结果回写链路（完全独立于 chat SSE）：
-            #   - 执行服务完成/失败时调用 writeback_to_chat_message 回写 final_report 到 ChatMessage
-            #   - 执行服务调用 broadcast_stream_completed 广播 WebSocket 事件
-            #   - 前端通过 WebSocket stream_completed 事件回写结果并转 COMPLETED
-            #
-            # 实时进度同步（跨浏览器）：
-            #   - 审批 / 工具事件通过 WebSocket 统一推送
-            #   - 非触发浏览器通过 stream_interrupted WebSocket 事件感知深度研究模式切换
-            task_id = await self._deep_service.create_deep_research_task(
-                data["message"],
-                session_id=data.get("session_id"),
-                use_web_search=data.get("use_web_search", True),
-                retriever_tool=data.get("_retriever_tool"),
-                task_title=data.get("_original_message"),
-                selected_tools=data.get("selected_tools"),
-                use_mcp=data.get("use_mcp", False),
-                selected_mcp_servers=data.get("selected_mcp_servers"),
-            )
-            # 立即发送 deep_research 事件，让用户可以跳转到深度研究模块查看实时进度
-            yield {
-                "type": "deep_research",
-                "data": {
-                    "task_id": task_id,
-                    "session_id": data.get("session_id", ""),
-                },
-            }
-            # 将 research_task_id 写入 ChatMessage（双向关联），
-            # 确保 sync_approval_state_to_chat_message 和 writeback_to_chat_message 能通过
-            # research_task_id 查找到关联的 ChatMessage。
-            assistant_msg_id = data.get("_assistant_message_id")
-            if assistant_msg_id:
-                try:
-                    assistant_msg_id_int = int(assistant_msg_id)
-                    from Django_xm.apps.chat.services.deep_chat_service import (
-                        update_chat_message_research_task_id_async,
-                    )
-                    await update_chat_message_research_task_id_async(
-                        assistant_msg_id_int, task_id,
-                    )
-                except (ValueError, TypeError):
-                    pass
-            from Django_xm.apps.ai_engine.services.llm_factory import model_supports_capability
+            async for event in self._create_agent_for_deep_research(data):
+                yield event
 
-            # 深度思考参数透传：前端开启时后端不再静默禁用，仅在不支持时发送 warning 提示
-            use_deep_thinking = data.get("use_deep_thinking", False)
-            enable_deep_thinking = use_deep_thinking
-            if use_deep_thinking and not model_supports_capability(
-                data.get("provider_id", ""), data.get("model_name", ""), "deep_thinking"
-            ):
-                yield {
-                    "type": "warning",
-                    "data": {
-                        "message": (
-                            f'模型 {data.get("provider_id", "")}/{data.get("model_name", "")} '
-                            "可能不支持深度思考，将尝试透传参数"
-                        ),
-                    },
-                }
-            # 发布执行启动信令（不等待结果，Chat SSE 立即返回）
-            # message_id：透传 assistant 消息 ID，深度研究工具事件/审批事件
-            # 依赖它定位到聊天消息（toolCallsMap → message.toolCalls 归属），
-            # 缺失时聊天深度研究模式的工具调用卡片会从消息中消失（根因修复）
-            await self._deep_service.start_execution(
-                query=data["message"],
-                session_id=data.get("session_id"),
-                use_web_search=data.get("use_web_search", True),
-                retriever_tool=data.get("_retriever_tool"),
-                extra_tools=data.get("_deep_extra_tools", []),
-                enable_deep_thinking=enable_deep_thinking,
-                provider_id=data.get("provider_id"),
-                model_name=data.get("model_name"),
-                task_id=task_id,
-                knowledge_base_ids=self._resolve_kb_ids(data),
-                temperature=data.get("temperature"),
-                max_tokens=data.get("max_tokens"),
-                special_params=data.get("special_params"),
-                continue_task_id=data.get("continue_task_id"),
-                message_id=str(assistant_msg_id) if assistant_msg_id else None,
-            )
-            # 通知前端 stream_interrupted（触发 sse_generator 广播 WebSocket 事件）
-            # 非触发浏览器通过此事件感知深度研究模式切换
+    async def _create_agent_for_deep_research(self, data: dict[str, Any]) -> AsyncGenerator[dict[str, Any], None]:
+        """深度研究模式处理（chat SSE 立即返回架构）：
+
+        1. 创建深度研究任务记录（create_deep_research_task，仅建任务，不启动执行）
+        2. 发送 deep_research 事件，前端据此：
+           - 设置 researchTaskId
+           - 将消息 streamState 转为 INTERRUPTED
+        3. 更新 ChatMessage 双向关联（research_task_id + message_id）
+        4. 发布执行启动信令（start_execution → Redis SIGNAL_START，不等待结果）
+        5. 发送 interrupted 事件（触发 sse_generator 广播 stream_interrupted WebSocket 事件）
+        6. chat SSE 立即结束（return），不持续等待研究完成
+
+        研究结果回写链路（完全独立于 chat SSE）：
+        - 执行服务完成/失败时调用 writeback_to_chat_message 回写 final_report 到 ChatMessage
+        - 执行服务调用 broadcast_stream_completed 广播 WebSocket 事件
+        - 前端通过 WebSocket stream_completed 事件回写结果并转 COMPLETED
+
+        实时进度同步（跨浏览器）：
+        - 审批 / 工具事件通过 WebSocket 统一推送
+        - 非触发浏览器通过 stream_interrupted WebSocket 事件感知深度研究模式切换
+        """
+        task_id = await self._deep_service.create_deep_research_task(
+            data["message"],
+            session_id=data.get("session_id"),
+            use_web_search=data.get("use_web_search", True),
+            retriever_tool=data.get("_retriever_tool"),
+            task_title=data.get("_original_message"),
+            selected_tools=data.get("selected_tools"),
+            use_mcp=data.get("use_mcp", False),
+            selected_mcp_servers=data.get("selected_mcp_servers"),
+        )
+        # 立即发送 deep_research 事件，让用户可以跳转到深度研究模块查看实时进度
+        yield {
+            "type": "deep_research",
+            "data": {
+                "task_id": task_id,
+                "session_id": data.get("session_id", ""),
+            },
+        }
+        assistant_msg_id = data.get("_assistant_message_id")
+        await self._link_research_task_to_message(assistant_msg_id, task_id)
+
+        # 深度思考参数透传：前端开启时后端不再静默禁用，仅在不支持时发送 warning 提示
+        enable_deep_thinking = data.get("use_deep_thinking", False)
+        async for warning_event in self._warn_if_deep_thinking_unsupported(data):
+            yield warning_event
+
+        await self._start_deep_research_execution(data, task_id, enable_deep_thinking, assistant_msg_id)
+
+        # 通知前端 stream_interrupted（触发 sse_generator 广播 WebSocket 事件）
+        # 非触发浏览器通过此事件感知深度研究模式切换
+        yield {
+            "type": "interrupted",
+            "data": {
+                "task_id": task_id,
+                "message_id": str(assistant_msg_id) if assistant_msg_id else None,
+                "session_id": data.get("session_id", ""),
+            },
+        }
+        # 设置 researchTaskId（触发浏览器通过 SSE 设置 lastMessage 的 researchTaskId）
+        yield {"type": "research_task_id", "data": {"research_task_id": task_id}}
+        # 立即结束 chat SSE 流，不发送 chunk（最终报告由执行服务通过 WebSocket 回写）
+        return
+
+    async def _link_research_task_to_message(self, assistant_msg_id, task_id: str) -> None:
+        """将 research_task_id 写入 ChatMessage（ResearchTask↔ChatSession 双向关联）。
+
+        确保 sync_approval_state_to_chat_message 和 writeback_to_chat_message 能通过
+        research_task_id 查找到关联的 ChatMessage。
+        """
+        if assistant_msg_id:
+            try:
+                assistant_msg_id_int = int(assistant_msg_id)
+                from Django_xm.apps.chat.services.deep_chat_service import (
+                    update_chat_message_research_task_id_async,
+                )
+                await update_chat_message_research_task_id_async(
+                    assistant_msg_id_int, task_id,
+                )
+            except (ValueError, TypeError):
+                pass
+
+    async def _warn_if_deep_thinking_unsupported(self, data: dict[str, Any]) -> AsyncGenerator[dict[str, Any], None]:
+        """深度思考能力检查：模型不支持时 yield warning 事件（参数仍照常透传）。"""
+        from Django_xm.apps.ai_engine.services.llm_factory import model_supports_capability
+
+        use_deep_thinking = data.get("use_deep_thinking", False)
+        if use_deep_thinking and not model_supports_capability(
+            data.get("provider_id", ""), data.get("model_name", ""), "deep_thinking"
+        ):
             yield {
-                "type": "interrupted",
+                "type": "warning",
                 "data": {
-                    "task_id": task_id,
-                    "message_id": str(assistant_msg_id) if assistant_msg_id else None,
-                    "session_id": data.get("session_id", ""),
+                    "message": (
+                        f'模型 {data.get("provider_id", "")}/{data.get("model_name", "")} '
+                        "可能不支持深度思考，将尝试透传参数"
+                    ),
                 },
             }
-            # 设置 researchTaskId（触发浏览器通过 SSE 设置 lastMessage 的 researchTaskId）
-            yield {"type": "research_task_id", "data": {"research_task_id": task_id}}
-            # 立即结束 chat SSE 流，不发送 chunk（最终报告由执行服务通过 WebSocket 回写）
-            return
+
+    async def _start_deep_research_execution(
+        self,
+        data: dict[str, Any],
+        task_id: str,
+        enable_deep_thinking,
+        assistant_msg_id,
+    ) -> None:
+        """发布深度研究执行启动信令（start_execution → Redis SIGNAL_START，不等待结果）。
+
+        message_id：透传 assistant 消息 ID，深度研究工具事件/审批事件
+        依赖它定位到聊天消息（toolCallsMap → message.toolCalls 归属），
+        缺失时聊天深度研究模式的工具调用卡片会从消息中消失（根因修复）。
+        """
+        await self._deep_service.start_execution(
+            query=data["message"],
+            session_id=data.get("session_id"),
+            use_web_search=data.get("use_web_search", True),
+            retriever_tool=data.get("_retriever_tool"),
+            extra_tools=data.get("_deep_extra_tools", []),
+            enable_deep_thinking=enable_deep_thinking,
+            provider_id=data.get("provider_id"),
+            model_name=data.get("model_name"),
+            task_id=task_id,
+            knowledge_base_ids=self._resolve_kb_ids(data),
+            temperature=data.get("temperature"),
+            max_tokens=data.get("max_tokens"),
+            special_params=data.get("special_params"),
+            continue_task_id=data.get("continue_task_id"),
+            message_id=str(assistant_msg_id) if assistant_msg_id else None,
+        )
 
     async def _get_deep_research_tools(self, data: dict) -> list:
         """获取深度研究模式的额外工具（MCP + 用户选择）"""
@@ -739,37 +874,78 @@ class ChatService:
         token_detail_tracker: TokenDetailTracker | None = None,
         interrupt_handler=None,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
-
+        """普通/agent 模式流式聊天：阶段编排（实现拆分至下方私有方法）。"""
         tools = await self._get_tools(data)
-        model_instance = self._resolve_model_instance(data)
+        tool_config, research_context = await self._prepare_stream_tool_and_research(data)
+        agent, graph_input, config, agent_config = await self._build_stream_agent_and_input(
+            data, tool_config, tools, research_context
+        )
+        # 模型已由 AgentFactory 经 get_chat_model(enable_fallback=True) 解析（写入 config.model）；
+        # 此处检测创建级降级（用户所选模型不可用已被提升为 fallback 候选）并向前端发送提示
+        model_instance, provider_id, model_name, fallback_events = (
+            await self._detect_model_creation_fallback(data, agent_config.model)
+        )
+        for _fallback_event in fallback_events:
+            yield _fallback_event
+
+        ctx = self._init_stream_context(data)
+        strategy = DeepThinkingStreamStrategy() if data.get("_enable_deep_thinking") else NormalStreamStrategy()
+        plan = _StreamExecutionPlan(
+            agent=agent, graph_input=graph_input, config=config, ctx=ctx, strategy=strategy,
+            tools=tools, model_instance=model_instance, provider_id=provider_id, model_name=model_name,
+        )
+        degraded_agent_holder = await self._precreate_degraded_agent(data, tool_config, tools)
+        rebuild_agent_fn = self._make_rebuild_agent_fn(degraded_agent_holder)
+        executor = self._build_stream_executor(
+            data, tools, model_instance, rebuild_agent_fn, usage_tracker, token_detail_tracker
+        )
+        cb_holder: dict[str, Any] = {}
+        async for event in self._run_stream_execution(plan, data, executor, interrupt_handler, cb_holder):
+            yield event
+        async for event in self._finalize_stream_or_skip(
+            plan, data, cb_holder, usage_tracker, token_detail_tracker
+        ):
+            yield event
+
+    async def _detect_model_creation_fallback(
+        self, data: dict[str, Any], model_instance
+    ) -> tuple[Any, str | None, str | None, list[dict[str, Any]]]:
+        """检测创建级模型降级：对比用户请求模型与 AgentFactory 实际创建的主模型。
+
+        模型实例由 AgentFactory 统一经 get_chat_model(enable_fallback=True) 创建
+        （用户所选模型不可用时已自动提升 fallback 候选为主模型），本方法仅检测
+        该创建级降级并生成 model_fallback 事件提示前端，不创建任何模型。
+
+        返回 (model_instance, provider_id, model_name, fallback_events)；
+        fallback_events（model_fallback 事件）由主流程按序 yield。
+        """
         provider_id = data.get("provider_id")
         model_name = data.get("model_name")
+        fallback_events: list[dict[str, Any]] = []
 
-        # 检测 LLM 降级：用户选择的模型创建失败，回退到默认模型
-        if model_instance is None and provider_id:
-            from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model
-
+        # 检测创建级降级：用户所选模型不可用，实际主模型已切换为 fallback 候选
+        if model_instance is not None and provider_id:
             try:
-                model_instance = get_chat_model(streaming=True)
                 # LazyFallbackChatModel / RunnableWithFallbacks 包装了底层模型，需要从 .bound 获取
                 bound_model = getattr(model_instance, "bound", model_instance)
                 actual_provider = getattr(bound_model, "_provider_id", None)
                 actual_model = getattr(bound_model, "model_name", None) or getattr(bound_model, "model", None)
                 if actual_provider and actual_provider != provider_id:
-                    yield {
-                        "type": "model_fallback",
-                        "data": {
-                            "original_provider": provider_id,
-                            "original_model": model_name,
-                            "actual_provider": actual_provider,
-                            "actual_model": actual_model,
-                            "message": (
-                                f"模型 {provider_id}/{model_name} 不可用，"
-                                f"已自动切换到 {actual_provider}/{actual_model}"
-                            ),
-                        },
-                    }
+                    fallback_events.append(
+                        {
+                            "type": "model_fallback",
+                            "data": {
+                                "original_provider": provider_id,
+                                "original_model": model_name,
+                                "actual_provider": actual_provider,
+                                "actual_model": actual_model,
+                                "message": (
+                                    f"模型 {provider_id}/{model_name} 不可用，"
+                                    f"已自动切换到 {actual_provider}/{actual_model}"
+                                ),
+                            },
+                        }
+                    )
                     # 自动更新 SystemConfig
                     try:
                         from Django_xm.apps.ai_engine.models import SystemConfig
@@ -788,6 +964,12 @@ class ChatService:
                 # fallback 检测失败不影响主流程，继续使用原模型
                 logger.debug("检测 LLM 降级失败", exc_info=True)
 
+        return model_instance, provider_id, model_name, fallback_events
+
+    async def _prepare_stream_tool_and_research(
+        self, data: dict[str, Any]
+    ) -> tuple[dict[str, Any], Any]:
+        """工具配置与研究上下文准备（研究上下文注入 system_prompt）。"""
         tool_config = self._build_tool_config(data)
 
         # 在创建 agent 之前加载研究上下文，以便注入到 system_prompt
@@ -803,10 +985,23 @@ class ChatService:
             )
             data["_has_research_context"] = True
 
-        agent, thread_config, use_checkpointer = await self._create_agent_with_memory(
+        return tool_config, research_context
+
+    async def _build_stream_agent_and_input(
+        self,
+        data: dict[str, Any],
+        tool_config: dict[str, Any],
+        tools: list,
+        research_context,
+    ) -> tuple[Any, Any, Any, Any]:
+        """Agent 与 graph_input/config 构造（Checkpointer/非 Checkpointer 双分支）。
+
+        返回 (agent, graph_input, config, agent_config)；agent_config.model 为
+        AgentFactory 统一创建的模型包装实例（带 fallback），供调用方复用。
+        """
+        agent, thread_config, use_checkpointer, agent_config = await self._create_agent_with_memory(
             data,
             prompt_mode=data["mode"],
-            model_instance=model_instance,
             tool_config=tool_config,
             tools=tools,
         )
@@ -834,23 +1029,7 @@ class ChatService:
             else:
                 # 检查 checkpoint 中是否有 pending interrupt，如果有则自动拒绝
                 # 避免用户在有 pending interrupt 时发新消息导致状态损坏
-                try:
-                    state = await agent.graph.aget_state(thread_config)
-                    if state and state.tasks:
-                        from langgraph.types import Command as LgCommand
-
-                        for task in state.tasks:
-                            if hasattr(task, "interrupts") and task.interrupts:
-                                for intr in task.interrupts:
-                                    intr_id = intr.id if hasattr(intr, "id") else ""
-                                    if intr_id:
-                                        await agent.graph.ainvoke(
-                                            LgCommand(resume={intr_id: False}),
-                                            config=thread_config,
-                                        )
-                                        logger.info(f"自动拒绝 pending interrupt: {intr_id}（用户发送了新消息）")
-                except Exception as e:
-                    logger.warning(f"检查/清理 pending interrupt 失败（非致命）: {e}")
+                await self._auto_reject_pending_interrupts(agent, thread_config)
 
                 # Checkpointer 模式：将研究上下文作为 SystemMessage 注入到 human_msg 之前
                 if research_context:
@@ -869,7 +1048,7 @@ class ChatService:
             if self._context_service.check_injection(user_message):
                 logger.warning("检测到指令注入尝试，用户输入将被隔离")
 
-            chat_history, _ce_metadata = self._apply_context_engineering(
+            chat_history, _ = self._apply_context_engineering(
                 chat_history,
                 user_message,
                 mode=data.get("mode", "agent"),
@@ -887,7 +1066,30 @@ class ChatService:
             graph_input = {"messages": messages}
             config = {"recursion_limit": 500}
 
-        # 创建 StreamContext（流式可变状态封装，替代散布的局部变量）
+        return agent, graph_input, config, agent_config
+
+    async def _auto_reject_pending_interrupts(self, agent, thread_config) -> None:
+        """检查并自动拒绝 checkpoint 中的 pending interrupt。"""
+        try:
+            state = await agent.graph.aget_state(thread_config)
+            if state and state.tasks:
+                from langgraph.types import Command as LgCommand
+
+                for task in state.tasks:
+                    if hasattr(task, "interrupts") and task.interrupts:
+                        for intr in task.interrupts:
+                            intr_id = intr.id if hasattr(intr, "id") else ""
+                            if intr_id:
+                                await agent.graph.ainvoke(
+                                    LgCommand(resume={intr_id: False}),
+                                    config=thread_config,
+                                )
+                                logger.info(f"自动拒绝 pending interrupt: {intr_id}（用户发送了新消息）")
+        except Exception as e:
+            logger.warning(f"检查/清理 pending interrupt 失败（非致命）: {e}")
+
+    def _init_stream_context(self, data: dict[str, Any]) -> StreamContext:
+        """创建 StreamContext（流式可变状态封装）并注入会话定位字段。"""
         ctx = StreamContext()
         ctx.init_stream_state(data.get("_stream_state"))
         # 业务等待恢复模式：以挂起前已持久化的 content 作为 ctx 累积基线，
@@ -901,23 +1103,28 @@ class ChatService:
         ctx.message_id = str(data.get("_assistant_message_id") or data.get("message_id", ""))
         # 暴露 ctx 供执行服务 finalize 阶段读取（落库 content/tool_calls）
         data["_chat_ctx"] = ctx
+        return ctx
 
-        # 根据 _enable_deep_thinking 选择策略
-        strategy = DeepThinkingStreamStrategy() if data.get("_enable_deep_thinking") else NormalStreamStrategy()
+    async def _precreate_degraded_agent(
+        self,
+        data: dict[str, Any],
+        tool_config: dict[str, Any],
+        tools: list,
+    ) -> dict[str, Any]:
+        """预创建降级 agent（用于 AgentExecutor 的 DEGRADE 分支）。
 
-        # 预创建降级 agent（用于 AgentExecutor 的 DEGRADE 分支）
-        # AgentExecutor.rebuild_agent_fn 是同步回调，无法 await 异步 create_agent_with_memory，
-        # 因此在主事件循环中预创建降级 agent（使用相同的降级工具集），
-        # rebuild_agent_fn 仅返回预创建的实例。若预创建失败，DEGRADE 将落入 FALLBACK。
+        AgentExecutor.rebuild_agent_fn 是同步回调，无法 await 异步 create_agent_with_memory，
+        因此在主事件循环中预创建降级 agent（使用相同的降级工具集），
+        rebuild_agent_fn 仅返回预创建的实例。若预创建失败，DEGRADE 将落入 FALLBACK。
+        """
         degraded_tools_preview = get_degraded_tools(tools, DegradationLevel.REDUCED_TOOLS)
         degraded_agent_holder: dict[str, Any] = {}
         if tools and degraded_tools_preview and len(degraded_tools_preview) < len(tools):
             try:
-                deg_agent, deg_config, _ = await asyncio.wait_for(
+                deg_agent, deg_config, _, _ = await asyncio.wait_for(
                     self._create_agent_with_memory(
                         data,
                         prompt_mode=data["mode"],
-                        model_instance=model_instance,
                         tool_config=tool_config,
                         tools=degraded_tools_preview,
                     ),
@@ -931,6 +1138,10 @@ class ChatService:
                 logger.warning("预创建降级 agent 超时（DEGRADE 将落入 FALLBACK）")
             except Exception as e:
                 logger.warning(f"预创建降级 agent 失败（DEGRADE 将落入 FALLBACK）: {e}")
+        return degraded_agent_holder
+
+    def _make_rebuild_agent_fn(self, degraded_agent_holder: dict[str, Any]):
+        """构造 AgentExecutor 降级回调（闭包仅捕获 degraded_agent_holder）。"""
 
         def rebuild_agent_fn(_degraded_tools: list) -> tuple[Any, dict]:
             """AgentExecutor 降级回调：返回预创建的降级 agent
@@ -943,12 +1154,25 @@ class ChatService:
                 raise RuntimeError("降级 agent 预创建失败或未创建")
             return degraded_agent_holder["agent"], degraded_agent_holder["config"]
 
+        return rebuild_agent_fn
+
+    def _build_stream_executor(
+        self,
+        data: dict[str, Any],
+        tools: list,
+        model_instance,
+        rebuild_agent_fn,
+        usage_tracker,
+        token_detail_tracker,
+    ) -> AgentExecutor:
+        """创建 AgentExecutor（公共执行器，提供重试/降级/超时/回退）。
+
+        替代原内联的 retry/timeout/degrade 循环。
+        """
         # 创建无工具回退服务（AgentExecutor 的 FALLBACK 分支使用）
         fallback_service = FallbackStreamService(self)
 
-        # 创建 AgentExecutor（公共执行器，提供重试/降级/超时/回退）
-        # 替代原内联的 retry/timeout/degrade 循环
-        executor = AgentExecutor(
+        return AgentExecutor(
             fallback_service=fallback_service,
             rebuild_agent_fn=rebuild_agent_fn,
             tools=tools,
@@ -958,14 +1182,27 @@ class ChatService:
             token_detail_tracker=token_detail_tracker,
         )
 
+    async def _run_stream_execution(
+        self,
+        plan: _StreamExecutionPlan,
+        data: dict[str, Any],
+        executor: AgentExecutor,
+        interrupt_handler,
+        cb_holder: dict[str, Any],
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """装配回调并执行 AgentExecutor 流式循环（cb/fb_callback 经 cb_holder 传出供 finalize 复用）。"""
+        from Django_xm.apps.ai_engine.services.token_counter import TokenUsageCallbackHandler
+
         with TokenUsageCallbackHandler() as cb:
             from Django_xm.apps.ai_engine.services.llm_fallback import FallbackDetectionCallback
 
             fb_callback = FallbackDetectionCallback(
-                expected_provider=provider_id or "",
-                expected_model=model_name or "",
+                expected_provider=plan.provider_id or "",
+                expected_model=plan.model_name or "",
             )
-            config["callbacks"] = [cb, fb_callback]
+            plan.config["callbacks"] = [cb, fb_callback]
+            cb_holder["cb"] = cb
+            cb_holder["fb_callback"] = fb_callback
 
             # 主/子代理判定与事件路由（fix-deep-research-subagent-activation spec D1/D2）
             # 1) 主 agent configurable 不注入 subagent_thread_id（子代理唯一判定依据，
@@ -980,227 +1217,9 @@ class ChatService:
             #    data["_subagent_contents"]（供 tool position 采集 + 最终落库，
             #    spec MODIFIED：废弃 agent_path 累计键）并发布 STREAM_SUBAGENT_CONTENT
             #    事件（携带 subagent_thread_id 定向路由到子代理卡片）。
-            if isinstance(config, dict):
-                config.setdefault("configurable", {})
-                if "depth" not in config["configurable"]:
-                    config["configurable"]["depth"] = 0
-                if "agent_path" not in config["configurable"]:
-                    config["configurable"]["agent_path"] = ["main"]
-                # 父工具集与运行配置显式注入 configurable（spawn_sub_agent 继承工具集、
-                # filesystem 解析落盘目录）。替代历史 get_parent_tool_context 全局旁路：
-                # 子代理经 langgraph_adapter._build_configurable 写入自身工具集后逐层
-                # 传递，任意深度嵌套不再依赖外部注册时机，也无需注册/清除。
-                config["configurable"]["tool_names"] = [
-                    getattr(t, "name", "") for t in (tools or [])
-                ]
-                config["configurable"]["user_id"] = self.user_id
-                config["configurable"]["session_id"] = data.get("session_id")
-                config["configurable"]["model_name"] = data.get("model")
-                config["configurable"]["store"] = data.get("store")
-                # 深度思考开关（实际生效值，已含模型能力判定）
-                config["configurable"]["enable_deep_thinking"] = bool(
-                    data.get("_enable_deep_thinking", False)
-                )
-                config["configurable"]["use_web_search"] = bool(
-                    data.get("use_web_search", False)
-                )
-                config["configurable"]["use_mcp"] = data.get("use_mcp", False)
-
-            _subagent_contents: dict[str, dict[str, str]] = {}
-            # 业务等待恢复模式：以挂起前已持久化的 subagent_contents 作为基线，
-            # 恢复轮在此基础上继续累计（子代理工具 position 采集与最终落库依据）。
-            if data.get("resume_subagent_contents"):
-                _subagent_contents = dict(data["resume_subagent_contents"])
-            data["_subagent_contents"] = _subagent_contents
-            # 子代理工具条目会话级聚合（tool_call_id → entry）：落库权威来源。
-            # 主 ctx.tool_calls_map 只含主代理工具，子代理工具若仅依赖审批重建
-            # 路径落库会丢失图层字段（subagent_thread_id 等）且无审批的 SAFE 工具
-            # （fs_list_files 等）完全丢失 → 刷新后子代理卡片归集失败（乱序根源）。
-            # 与 _subagent_contents 同构：闭包跨审批 resume 持续，挂起前由
-            # _persist_chat_tool_calls 落库，恢复轮经增量合并（按 id）不丢历史。
-            _subagent_tool_entries: dict[str, dict] = {}
-            # 业务等待恢复模式：以挂起前已持久化的子代理工具条目作为基线，
-            # 恢复轮经增量合并（按 id）继续演进，避免挂起后新增的自动通过工具卡
-            # （无审批记录）无数据源可落库、子代理工具图层字段丢失。
-            if data.get("resume_subagent_tool_entries"):
-                _subagent_tool_entries = dict(data["resume_subagent_tool_entries"])
-            data["_subagent_tool_entries"] = _subagent_tool_entries
-            _sub_session_id = data.get("session_id", "")
-            _sub_message_id = str(data.get("_assistant_message_id") or data.get("message_id", ""))
-
-            async def _flush_subagent_snapshot() -> None:
-                """子代理数据实时落库（挂起前基线缺失的兜底修复）。
-
-                业务等待挂起落库（_persist_chat_tool_calls）发生在子代理执行前，
-                _subagent_contents / _subagent_tool_entries 为空；若仅靠挂起/结束
-                落库，子代理正文与图层字段（subagent_thread_id 等）中途丢失，
-                恢复轮从 DB 读不到基线 → 刷新后子代理卡归集失败、子代理工具卡
-                混入主切段乱序。每次子代理工具/正文事件聚合后调用，增量合并幂等。
-                """
-                from Django_xm.services.fastapi_service.chat_executor_core import _persist_chat_tool_calls
-
-                _cs_ref = data.get("_content_state_ref") or {}
-                try:
-                    await _persist_chat_tool_calls(data, _cs_ref, _sub_session_id, _sub_message_id)
-                except Exception as _e:
-                    logger.debug(f"[ChatExec] 子代理快照落库失败: err={_e}")
-
-            async def _on_subagent_tool_event(event_type, tool_call_id, tool_name, **kwargs):
-                """chat 模式子代理工具事件转发回调（spec D1/D2）。
-
-                仅接收真子代理事件（SubAgentToolEventMiddleware 按 subagent_thread_id
-                非空转发）；主 agent 工具事件不经本回调（主链路唯一发布与持久化）。
-                """
-                from Django_xm.common.event_schema import EventSource
-                from Django_xm.common.event_schema import EventType as _ET
-                from Django_xm.common.tool_call_lifecycle import ToolCallContext as _TCC
-                from Django_xm.common.tool_call_lifecycle import service as _tc_service
-
-                if not tool_call_id:
-                    return
-                parameters = kwargs.get("parameters") or {}
-                if not isinstance(parameters, dict):
-                    parameters = {}
-                depth = kwargs.get("depth", 0)
-                if not isinstance(depth, int) or depth < 0:
-                    depth = 0
-                subagent_thread_id = kwargs.get("subagent_thread_id") or ""
-                try:
-                    _tc_service.register(
-                        _TCC(
-                            tool_call_id=tool_call_id,
-                            tool_name=tool_name,
-                            module=EventSource.CHAT,
-                            module_id=_sub_session_id,
-                            message_id=_sub_message_id,
-                            parameters=parameters,
-                            parent_tool_call_id=kwargs.get("parent_tool_call_id") or "",
-                            depth=depth,
-                            agent_name=kwargs.get("agent_name") or "",
-                            description=kwargs.get("description") or "",
-                            subagent_thread_id=subagent_thread_id,
-                        )
-                    )
-                    # position 采集（按图层局部化）：仅真子代理（spec D1：subagent_thread_id
-                    # 非空）执行——子代理工具 = 该子代理图层已累计正文长度
-                    # （_subagent_contents 按 subagent_thread_id 键累计，spec MODIFIED）
-                    if subagent_thread_id:
-                        _pos = len((_subagent_contents.get(subagent_thread_id) or {}).get("content") or "")
-                        _tc_service.bind_position(tool_call_id, _pos)
-                    await _tc_service.transition_async(
-                        tool_call_id,
-                        event_type if isinstance(event_type, _ET) else _ET(event_type),
-                        result=kwargs.get("result"),
-                        error=kwargs.get("error"),
-                        parameters=parameters if parameters else None,
-                    )
-                except Exception as _e:
-                    logger.warning(
-                        f"[ChatExec] 子代理工具事件转发失败: tool={tool_name}, "
-                        f"tc_id={tool_call_id}, err={_e}"
-                    )
-                    return
-                # 落库条目聚合（图层字段贯通）：复用公共聚合函数（与 research 同构）。
-                # status/parameters/result 随事件演进，终态不可回退（审批 resume
-                # 重放 PENDING 不降级）；seq/position 由 aggregate_tool_entry 从
-                # ToolCallContext 权威源读取。
-                try:
-                    from Django_xm.common.tool_call_aggregation import aggregate_tool_entry
-
-                    aggregate_tool_entry(
-                        _subagent_tool_entries,
-                        tool_call_id,
-                        tool_name,
-                        event_type,
-                        parameters=parameters,
-                        result=kwargs.get("result"),
-                        error=kwargs.get("error"),
-                        subagent_thread_id=subagent_thread_id,
-                        agent_name=kwargs.get("agent_name") or "",
-                        depth=depth,
-                    )
-                    # 实时落库：子代理工具条目含图层字段（subagent_thread_id 等），
-                    # 挂起/恢复轮需从 DB 读到基线，否则刷新后归集失败（乱序根源）。
-                    await _flush_subagent_snapshot()
-                except Exception as _e:
-                    logger.debug(f"[ChatExec] 子代理工具条目聚合失败: tc_id={tool_call_id}, err={_e}")
-
-            # 子代理消息幂等键集合（按 subagent_thread_id 分组）：审批 interrupt
-            # 恢复时 LangGraph 重放节点，SubAgentContentMiddleware 会对同一条
-            # AIMessage 再次触发回调；跳过已转发的消息，否则子代理卡片内容
-            # 重复且 tool_call position（按累计正文长度绑定）错位。
-            # 闭包集合随回调对象跨多次 resume 持续存在（configurable 持同一引用）。
-            _sent_subagent_msg_keys: dict[str, set] = {}
-
-            async def _on_subagent_content(
-                agent_path,
-                content,
-                reasoning_content,
-                agent_name,
-                depth,
-                subagent_thread_id="",
-                msg_id="",
-            ):
-                """chat 模式子代理正文/中间思考转发回调（spec MODIFIED：D10 路由收敛）。
-
-                累计与路由唯一依据为 ``subagent_thread_id``（agent_path 仅保留为
-                回调展示元数据参数，不进入事件 payload / 累计键）。
-                按 ``msg_id`` 幂等：同一 AIMessage 只转发一次（重放去重）。
-                """
-                if not subagent_thread_id:
-                    return
-                from Django_xm.common.tool_call_aggregation import merge_subagent_content
-
-                _dup = merge_subagent_content(
-                    _subagent_contents,
-                    subagent_thread_id,
-                    content or "",
-                    reasoning_content or "",
-                    msg_id or "",
-                    _sent_subagent_msg_keys,
-                )
-                if _dup:
-                    logger.debug(
-                        f"[ChatExec] 跳过重放子代理正文: subagent_thread_id={subagent_thread_id}, msg_id={msg_id}"
-                    )
-                    return
-                try:
-                    from Django_xm.common.event_schema import EventSource, EventType
-                    from Django_xm.common.realtime_events import publish_event
-
-                    await publish_event(
-                        EventType.STREAM_SUBAGENT_CONTENT,
-                        {
-                            "source": EventSource.CHAT,
-                            "source_id": _sub_session_id,
-                            "message_id": _sub_message_id or None,
-                            "data": {
-                                "content": content,
-                                "reasoning_content": reasoning_content,
-                                "agent_name": agent_name or "",
-                                "depth": depth,
-                            },
-                        },
-                        session_id=_sub_session_id,
-                        subagent_thread_id=subagent_thread_id or None,
-                    )
-                    # 实时落库子代理正文：挂起/恢复轮需从 DB 读到 subagent_contents 基线，
-                    # 否则刷新后子代理正文丢失（信息错位/跑出卡片）。
-                    await _flush_subagent_snapshot()
-                except Exception as _e:
-                    logger.warning(
-                        f"[ChatExec] 广播子代理正文失败: subagent_thread_id={subagent_thread_id}, err={_e}"
-                    )
-
-            if isinstance(config, dict):
-                config["configurable"]["_on_tool_event"] = _on_subagent_tool_event
-                config["configurable"]["_on_subagent_content"] = _on_subagent_content
-                # 子代理审批/事件路由必需字段：spawn 工具将父 configurable 继承给子代理，
-                # langgraph_adapter._create_approvals_from_interrupts 从中取 chat_session_id
-                # 创建审批（source=chat 时 request_approval_async 强制校验，缺失即拒绝创建
-                # → 子代理挂起无审批按钮）。assistant_message_id 用于事件路由精确定位消息。
-                config["configurable"]["chat_session_id"] = _sub_session_id
-                config["configurable"]["assistant_message_id"] = _sub_message_id
+            self._inject_main_agent_configurable(plan.config, data, plan.tools)
+            state = self._init_subagent_stream_state(data)
+            self._wire_subagent_callbacks(plan.config, data, state)
 
             # 执行 AgentExecutor（带韧性的流式执行）
             # 替代原内联的 retry/timeout/degrade 循环：
@@ -1233,15 +1252,324 @@ class ChatService:
 
             async for event in executor.run(
                 loop_fn,
-                agent,
-                graph_input,
-                config,
-                ctx,
-                strategy,
+                plan.agent,
+                plan.graph_input,
+                plan.config,
+                plan.ctx,
+                plan.strategy,
                 data,
             ):
                 yield event
 
+    def _inject_main_agent_configurable(
+        self,
+        config: dict[str, Any],
+        data: dict[str, Any],
+        tools: list,
+    ) -> None:
+        """主 agent configurable 基础字段注入（事件路由判定依据，见上方 spec D1/D2 注释）。"""
+        if isinstance(config, dict):
+            config.setdefault("configurable", {})
+            if "depth" not in config["configurable"]:
+                config["configurable"]["depth"] = 0
+            if "agent_path" not in config["configurable"]:
+                config["configurable"]["agent_path"] = ["main"]
+            # 父工具集与运行配置显式注入 configurable（spawn_sub_agent 继承工具集、
+            # filesystem 解析落盘目录）。替代历史 get_parent_tool_context 全局旁路：
+            # 子代理经 langgraph_adapter._build_configurable 写入自身工具集后逐层
+            # 传递，任意深度嵌套不再依赖外部注册时机，也无需注册/清除。
+            config["configurable"]["tool_names"] = [
+                getattr(t, "name", "") for t in (tools or [])
+            ]
+            config["configurable"]["user_id"] = self.user_id
+            config["configurable"]["session_id"] = data.get("session_id")
+            config["configurable"]["model_name"] = data.get("model")
+            config["configurable"]["store"] = data.get("store")
+            # 深度思考开关（实际生效值，已含模型能力判定）
+            config["configurable"]["enable_deep_thinking"] = bool(
+                data.get("_enable_deep_thinking", False)
+            )
+            config["configurable"]["use_web_search"] = bool(
+                data.get("use_web_search", False)
+            )
+            config["configurable"]["use_mcp"] = data.get("use_mcp", False)
+
+    def _init_subagent_stream_state(self, data: dict[str, Any]) -> _SubagentStreamState:
+        """初始化子代理流式会话状态（含业务等待恢复基线）。"""
+        _subagent_contents: dict[str, dict[str, str]] = {}
+        # 业务等待恢复模式：以挂起前已持久化的 subagent_contents 作为基线，
+        # 恢复轮在此基础上继续累计（子代理工具 position 采集与最终落库依据）。
+        if data.get("resume_subagent_contents"):
+            _subagent_contents = dict(data["resume_subagent_contents"])
+        data["_subagent_contents"] = _subagent_contents
+        # 子代理工具条目会话级聚合（tool_call_id → entry）：落库权威来源。
+        # 主 ctx.tool_calls_map 只含主代理工具，子代理工具若仅依赖审批重建
+        # 路径落库会丢失图层字段（subagent_thread_id 等）且无审批的 SAFE 工具
+        # （fs_list_files 等）完全丢失 → 刷新后子代理卡片归集失败（乱序根源）。
+        # 与 _subagent_contents 同构：闭包跨审批 resume 持续，挂起前由
+        # persist_chat_tool_calls 落库，恢复轮经增量合并（按 id）不丢历史。
+        _subagent_tool_entries: dict[str, dict] = {}
+        # 业务等待恢复模式：以挂起前已持久化的子代理工具条目作为基线，
+        # 恢复轮经增量合并（按 id）继续演进，避免挂起后新增的自动通过工具卡
+        # （无审批记录）无数据源可落库、子代理工具图层字段丢失。
+        if data.get("resume_subagent_tool_entries"):
+            _subagent_tool_entries = dict(data["resume_subagent_tool_entries"])
+        data["_subagent_tool_entries"] = _subagent_tool_entries
+        # 子代理消息幂等键集合（按 subagent_thread_id 分组）：审批 interrupt
+        # 恢复时 LangGraph 重放节点，SubAgentContentMiddleware 会对同一条
+        # AIMessage 再次触发回调；跳过已转发的消息，否则子代理卡片内容
+        # 重复且 tool_call position（按累计正文长度绑定）错位。
+        # 闭包集合随回调对象跨多次 resume 持续存在（configurable 持同一引用）。
+        return _SubagentStreamState(
+            session_id=data.get("session_id", ""),
+            message_id=str(data.get("_assistant_message_id") or data.get("message_id", "")),
+            contents=_subagent_contents,
+            tool_entries=_subagent_tool_entries,
+            sent_msg_keys={},
+        )
+
+    async def _flush_subagent_snapshot(
+        self, data: dict[str, Any], state: _SubagentStreamState
+    ) -> None:
+        """子代理数据实时落库（挂起前基线缺失的兜底修复）。
+
+        业务等待挂起落库（persist_chat_tool_calls）发生在子代理执行前，
+        _subagent_contents / _subagent_tool_entries 为空；若仅靠挂起/结束
+        落库，子代理正文与图层字段（subagent_thread_id 等）中途丢失，
+        恢复轮从 DB 读不到基线 → 刷新后子代理卡归集失败、子代理工具卡
+        混入主切段乱序。每次子代理工具/正文事件聚合后调用，增量合并幂等。
+        """
+        from Django_xm.apps.chat.services.stream_persistence import persist_chat_tool_calls
+
+        _cs_ref = data.get("_content_state_ref") or {}
+        try:
+            await persist_chat_tool_calls(data, _cs_ref, state.session_id, state.message_id)
+        except Exception as _e:
+            logger.debug(f"[ChatExec] 子代理快照落库失败: err={_e}")
+
+    async def _handle_subagent_tool_event(
+        self,
+        data: dict[str, Any],
+        state: _SubagentStreamState,
+        event_type,
+        tool_call_id,
+        tool_name,
+        **kwargs,
+    ) -> None:
+        """chat 模式子代理工具事件转发回调（spec D1/D2）。
+
+        仅接收真子代理事件（SubAgentToolEventMiddleware 按 subagent_thread_id
+        非空转发）；主 agent 工具事件不经本回调（主链路唯一发布与持久化）。
+        """
+        from Django_xm.common.event_schema import EventSource
+        from Django_xm.common.event_schema import EventType as _ET
+        from Django_xm.common.tool_call_lifecycle import ToolCallContext as _TCC
+        from Django_xm.common.tool_call_lifecycle import service as _tc_service
+
+        if not tool_call_id:
+            return
+        parameters = kwargs.get("parameters") or {}
+        if not isinstance(parameters, dict):
+            parameters = {}
+        depth = kwargs.get("depth", 0)
+        if not isinstance(depth, int) or depth < 0:
+            depth = 0
+        subagent_thread_id = kwargs.get("subagent_thread_id") or ""
+        try:
+            _tc_service.register(
+                _TCC(
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    module=EventSource.CHAT,
+                    module_id=state.session_id,
+                    message_id=state.message_id,
+                    parameters=parameters,
+                    parent_tool_call_id=kwargs.get("parent_tool_call_id") or "",
+                    depth=depth,
+                    agent_name=kwargs.get("agent_name") or "",
+                    description=kwargs.get("description") or "",
+                    subagent_thread_id=subagent_thread_id,
+                )
+            )
+            # position 采集（按图层局部化）：仅真子代理（spec D1：subagent_thread_id
+            # 非空）执行——子代理工具 = 该子代理图层已累计正文长度
+            # （_subagent_contents 按 subagent_thread_id 键累计，spec MODIFIED）
+            if subagent_thread_id:
+                _pos = len((state.contents.get(subagent_thread_id) or {}).get("content") or "")
+                _tc_service.bind_position(tool_call_id, _pos)
+            await _tc_service.transition_async(
+                tool_call_id,
+                event_type if isinstance(event_type, _ET) else _ET(event_type),
+                result=kwargs.get("result"),
+                error=kwargs.get("error"),
+                parameters=parameters if parameters else None,
+            )
+        except Exception as _e:
+            logger.warning(
+                f"[ChatExec] 子代理工具事件转发失败: tool={tool_name}, "
+                f"tc_id={tool_call_id}, err={_e}"
+            )
+            return
+        await self._aggregate_subagent_tool_event(
+            data, state, tool_call_id, tool_name, event_type, parameters, kwargs, subagent_thread_id, depth
+        )
+
+    async def _aggregate_subagent_tool_event(
+        self,
+        data: dict[str, Any],
+        state: _SubagentStreamState,
+        tool_call_id,
+        tool_name,
+        event_type,
+        parameters: dict,
+        kwargs: dict,
+        subagent_thread_id: str,
+        depth: int,
+    ) -> None:
+        """子代理工具条目聚合与实时落库。
+
+        落库条目聚合（图层字段贯通）：复用公共聚合函数（与 research 同构）。
+        status/parameters/result 随事件演进，终态不可回退（审批 resume
+        重放 PENDING 不降级）；seq/position 由 aggregate_tool_entry 从
+        ToolCallContext 权威源读取。
+        """
+        try:
+            from Django_xm.common.tool_call_aggregation import aggregate_tool_entry
+
+            aggregate_tool_entry(
+                state.tool_entries,
+                tool_call_id,
+                tool_name,
+                event_type,
+                parameters=parameters,
+                result=kwargs.get("result"),
+                error=kwargs.get("error"),
+                subagent_thread_id=subagent_thread_id,
+                agent_name=kwargs.get("agent_name") or "",
+                depth=depth,
+            )
+            # 实时落库：子代理工具条目含图层字段（subagent_thread_id 等），
+            # 挂起/恢复轮需从 DB 读到基线，否则刷新后归集失败（乱序根源）。
+            await self._flush_subagent_snapshot(data, state)
+        except Exception as _e:
+            logger.debug(f"[ChatExec] 子代理工具条目聚合失败: tc_id={tool_call_id}, err={_e}")
+
+    async def _handle_subagent_content(
+        self,
+        data: dict[str, Any],
+        state: _SubagentStreamState,
+        agent_path,
+        content,
+        reasoning_content,
+        agent_name,
+        depth,
+        subagent_thread_id: str = "",
+        msg_id: str = "",
+    ) -> None:
+        """chat 模式子代理正文/中间思考转发回调（spec MODIFIED：D10 路由收敛）。
+
+        累计与路由唯一依据为 ``subagent_thread_id``（agent_path 仅保留为
+        回调展示元数据参数，不进入事件 payload / 累计键）。
+        按 ``msg_id`` 幂等：同一 AIMessage 只转发一次（重放去重）。
+        """
+        if not subagent_thread_id:
+            return
+        from Django_xm.common.tool_call_aggregation import merge_subagent_content
+
+        _dup = merge_subagent_content(
+            state.contents,
+            subagent_thread_id,
+            content or "",
+            reasoning_content or "",
+            msg_id or "",
+            state.sent_msg_keys,
+        )
+        if _dup:
+            logger.debug(
+                f"[ChatExec] 跳过重放子代理正文: subagent_thread_id={subagent_thread_id}, msg_id={msg_id}"
+            )
+            return
+        try:
+            from Django_xm.common.event_schema import EventSource, EventType
+            from Django_xm.common.realtime_events import publish_event
+
+            await publish_event(
+                EventType.STREAM_SUBAGENT_CONTENT,
+                {
+                    "source": EventSource.CHAT,
+                    "source_id": state.session_id,
+                    "message_id": state.message_id or None,
+                    "data": {
+                        "content": content,
+                        "reasoning_content": reasoning_content,
+                        "agent_name": agent_name or "",
+                        "depth": depth,
+                    },
+                },
+                session_id=state.session_id,
+                subagent_thread_id=subagent_thread_id or None,
+            )
+            # 实时落库子代理正文：挂起/恢复轮需从 DB 读到 subagent_contents 基线，
+            # 否则刷新后子代理正文丢失（信息错位/跑出卡片）。
+            await self._flush_subagent_snapshot(data, state)
+        except Exception as _e:
+            logger.warning(
+                f"[ChatExec] 广播子代理正文失败: subagent_thread_id={subagent_thread_id}, err={_e}"
+            )
+
+    def _wire_subagent_callbacks(
+        self,
+        config: dict[str, Any],
+        data: dict[str, Any],
+        state: _SubagentStreamState,
+    ) -> None:
+        """装配子代理事件回调到 config.configurable（闭包仅捕获 data/state）。"""
+
+        async def _on_subagent_tool_event(event_type, tool_call_id, tool_name, **kwargs):
+            await self._handle_subagent_tool_event(
+                data, state, event_type, tool_call_id, tool_name, **kwargs
+            )
+
+        async def _on_subagent_content(
+            agent_path,
+            content,
+            reasoning_content,
+            agent_name,
+            depth,
+            subagent_thread_id="",
+            msg_id="",
+        ):
+            await self._handle_subagent_content(
+                data,
+                state,
+                agent_path,
+                content,
+                reasoning_content,
+                agent_name,
+                depth,
+                subagent_thread_id,
+                msg_id,
+            )
+
+        if isinstance(config, dict):
+            config["configurable"]["_on_tool_event"] = _on_subagent_tool_event
+            config["configurable"]["_on_subagent_content"] = _on_subagent_content
+            # 子代理审批/事件路由必需字段：spawn 工具将父 configurable 继承给子代理，
+            # langgraph_adapter._create_approvals_from_interrupts 从中取 chat_session_id
+            # 创建审批（source=chat 时 request_approval_async 强制校验，缺失即拒绝创建
+            # → 子代理挂起无审批按钮）。assistant_message_id 用于事件路由精确定位消息。
+            config["configurable"]["chat_session_id"] = state.session_id
+            config["configurable"]["assistant_message_id"] = state.message_id
+
+    async def _finalize_stream_or_skip(
+        self,
+        plan: _StreamExecutionPlan,
+        data: dict[str, Any],
+        cb_holder: dict[str, Any],
+        usage_tracker,
+        token_detail_tracker,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """finalize 收尾：业务等待挂起时跳过，否则委托 finalize_stream。"""
         # 业务等待挂起（wait_for_subagent，spec D4）：跳过 finalize（补全检查/
         # 建议生成等收尾动作仅属于真正结束的会话；挂起态由 SessionExecutor
         # 保留会话槽，恢复后继续使用）。
@@ -1256,13 +1584,13 @@ class ChatService:
         #       审批中断收尾 / _pending_content 刷新 / 深度思考兜底 /
         #       reasoning 完成事件 / finalize_tool_calls / 补发 + 补全检查 + 建议生成
         async for event in finalize_stream(
-            ctx,
+            plan.ctx,
             data,
-            tools,
-            model_instance,
-            strategy,
-            cb,
-            fb_callback,
+            plan.tools,
+            plan.model_instance,
+            plan.strategy,
+            cb_holder["cb"],
+            cb_holder["fb_callback"],
             usage_tracker,
             token_detail_tracker,
         ):

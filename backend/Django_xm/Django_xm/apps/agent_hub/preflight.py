@@ -74,18 +74,13 @@ class ExecutionPreflight:
     async def _check_llm_reachable(self, config) -> tuple[bool, str]:
         """检查 LLM 服务可达性
 
-        轻量级检查：尝试通过 model_resolver 创建模型实例。
-        不发送实际请求，仅验证模型配置和连接参数有效。
+        模型已由 AgentFactory.create() 统一解析到 config.model
+        （get_chat_model(enable_fallback=True)，创建失败会在 factory 阶段直接抛出），
+        此处仅检查解析结果存在。
         """
-        try:
-            from Django_xm.apps.agent_hub.model_resolver import resolve_model
-
-            model = resolve_model(config)
-            if model is not None:
-                return (True, "")
-            return (False, "模型解析返回 None")
-        except Exception as e:
-            return (False, str(e)[:200])
+        if config.model is not None:
+            return (True, "")
+        return (False, "模型解析返回 None")
 
     async def _check_redis_connected(self) -> tuple[bool, str]:
         """检查 Redis 连接"""

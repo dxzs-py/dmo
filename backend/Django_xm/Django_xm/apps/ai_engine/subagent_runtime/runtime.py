@@ -56,10 +56,12 @@ class SubAgentRuntime:
     默认使用 LangGraphAdapter；底层框架可切换，上层无感知。
     """
 
-    def __init__(self, adapter: Any | None = None):
+    def __init__(self, adapter: Any | None = None, graph_factory=None, config_factory=None):
         from Django_xm.apps.ai_engine.subagent_runtime.adapters.langgraph_adapter import LangGraphAdapter
 
-        self.adapter = adapter or LangGraphAdapter(self)
+        self.adapter = adapter or LangGraphAdapter(
+            self, graph_factory=graph_factory, config_factory=config_factory
+        )
 
     # ── 元数据持久化（sync_to_async 包装 ORM） ──────────────────────────
 

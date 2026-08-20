@@ -190,7 +190,7 @@ class RAGSearchView(APIView):
 @api_view(["POST"])
 @renderer_classes([SSERenderer])
 def rag_query_stream(request):
-    from Django_xm.common.permissions import IsAuthenticatedOrQueryParam
+    from Django_xm.apps.core.permissions import IsAuthenticatedOrQueryParam
 
     perm = IsAuthenticatedOrQueryParam()
     if not perm.has_permission(request, rag_query_stream):

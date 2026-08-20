@@ -8,7 +8,7 @@
 - ``_persist_to_db_sync`` 的变更检测：字段级演进（长度不变）必须触发 save
 
 实现说明：
-- ``_merge_tool_calls_incremental`` 为纯函数（模块顶层仅依赖 logging/typing），
+- ``merge_tool_calls_incremental`` 为纯函数（模块顶层仅依赖 logging/typing），
   通过 ``importlib`` 按文件路径直接加载被测模块，规避
   ``services/__init__.py`` 的重型导入链（agent_service 等会触发
   langchain / Django models 导入），使单测无需 Django settings 与数据库。
@@ -43,7 +43,7 @@ def _load_stream_persistence_module():
 
 
 MODULE = _load_stream_persistence_module()
-_merge_tool_calls_incremental = MODULE._merge_tool_calls_incremental
+merge_tool_calls_incremental = MODULE.merge_tool_calls_incremental
 _persist_to_db_sync = MODULE._persist_to_db_sync
 
 
@@ -85,7 +85,7 @@ class MergeContentOverlapTests(unittest.TestCase):
 
 
 class MergeToolCallsIncrementalTests(unittest.TestCase):
-    """_merge_tool_calls_incremental 字段级状态演进合并测试。"""
+    """merge_tool_calls_incremental 字段级状态演进合并测试。"""
 
     def test_pending_to_completed_evolves_with_approval_preserved(self):
         """P3-R2 核心：existing pending + new completed → 演进为 completed，approval 原样保留。"""
@@ -120,7 +120,7 @@ class MergeToolCallsIncrementalTests(unittest.TestCase):
             }
         ]
 
-        merged = _merge_tool_calls_incremental(existing, new)
+        merged = merge_tool_calls_incremental(existing, new)
 
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0]["status"], "completed")
@@ -135,7 +135,7 @@ class MergeToolCallsIncrementalTests(unittest.TestCase):
         existing = [{"id": "call_1", "name": "x", "status": "completed", "result": "done"}]
         new = [{"id": "call_1", "name": "x", "status": "pending", "result": None}]
 
-        merged = _merge_tool_calls_incremental(existing, new)
+        merged = merge_tool_calls_incremental(existing, new)
 
         self.assertEqual(merged[0]["status"], "completed")
         self.assertEqual(merged[0]["result"], "done")
@@ -146,7 +146,7 @@ class MergeToolCallsIncrementalTests(unittest.TestCase):
             with self.subTest(terminal=terminal):
                 existing = [{"id": "c", "name": "x", "status": terminal}]
                 new = [{"id": "c", "name": "x", "status": "pending"}]
-                merged = _merge_tool_calls_incremental(existing, new)
+                merged = merge_tool_calls_incremental(existing, new)
                 self.assertEqual(merged[0]["status"], terminal)
 
     def test_non_terminal_regression_rejected(self):
@@ -154,7 +154,7 @@ class MergeToolCallsIncrementalTests(unittest.TestCase):
         existing = [{"id": "call_1", "name": "x", "status": "running"}]
         new = [{"id": "call_1", "name": "x", "status": "pending"}]
 
-        merged = _merge_tool_calls_incremental(existing, new)
+        merged = merge_tool_calls_incremental(existing, new)
 
         self.assertEqual(merged[0]["status"], "running")
 
@@ -163,7 +163,7 @@ class MergeToolCallsIncrementalTests(unittest.TestCase):
         existing = [{"id": "call_1", "name": "x", "status": "pending"}]
         new = [{"id": "call_1", "name": "x", "status": "running"}]
 
-        merged = _merge_tool_calls_incremental(existing, new)
+        merged = merge_tool_calls_incremental(existing, new)
 
         self.assertEqual(merged[0]["status"], "running")
 
@@ -186,7 +186,7 @@ class MergeToolCallsIncrementalTests(unittest.TestCase):
             }
         ]
 
-        merged = _merge_tool_calls_incremental(existing, new)
+        merged = merge_tool_calls_incremental(existing, new)
 
         self.assertEqual(merged[0]["status"], "completed")
         self.assertEqual(merged[0]["approval"], {"state": "waiting", "approval_id": "a1"})
@@ -203,7 +203,7 @@ class MergeToolCallsIncrementalTests(unittest.TestCase):
             }
         ]
 
-        merged = _merge_tool_calls_incremental(existing, new)
+        merged = merge_tool_calls_incremental(existing, new)
 
         self.assertEqual(merged[0]["approval"], {"state": "approved"})
 
@@ -219,7 +219,7 @@ class MergeToolCallsIncrementalTests(unittest.TestCase):
         ]
         new = [{"id": "call_2", "name": "y", "status": "completed", "result": "ok"}]
 
-        merged = _merge_tool_calls_incremental(existing, new)
+        merged = merge_tool_calls_incremental(existing, new)
 
         self.assertEqual(len(merged), 2)
         self.assertEqual([tc["id"] for tc in merged], ["call_1", "call_2"])
@@ -230,7 +230,7 @@ class MergeToolCallsIncrementalTests(unittest.TestCase):
         existing = [{"id": "call_1", "name": "x", "status": "completed"}]
         new = [{"id": "call_2", "name": "y", "status": "pending"}]
 
-        merged = _merge_tool_calls_incremental(existing, new)
+        merged = merge_tool_calls_incremental(existing, new)
 
         self.assertEqual(len(merged), 2)
         self.assertEqual(merged[0]["id"], "call_1")
@@ -241,7 +241,7 @@ class MergeToolCallsIncrementalTests(unittest.TestCase):
         existing = [{"name": "search_tool", "status": "pending", "approval": {"state": "waiting"}}]
         new = [{"name": "search_tool", "status": "completed", "result": "found"}]
 
-        merged = _merge_tool_calls_incremental(existing, new)
+        merged = merge_tool_calls_incremental(existing, new)
 
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0]["status"], "completed")
@@ -250,9 +250,9 @@ class MergeToolCallsIncrementalTests(unittest.TestCase):
     def test_empty_inputs(self):
         """existing 为空 → 直接返回 new；new 为空 → 直接返回 existing。"""
         new = [{"id": "c", "name": "x", "status": "pending"}]
-        self.assertEqual(_merge_tool_calls_incremental(None, new), new)
+        self.assertEqual(merge_tool_calls_incremental(None, new), new)
         existing = [{"id": "c", "name": "x", "status": "pending"}]
-        self.assertEqual(_merge_tool_calls_incremental(existing, []), existing)
+        self.assertEqual(merge_tool_calls_incremental(existing, []), existing)
 
     def test_inputs_not_mutated(self):
         """入参对象不被修改（演进返回新字典）。"""
@@ -266,7 +266,7 @@ class MergeToolCallsIncrementalTests(unittest.TestCase):
         ]
         new = [{"id": "call_1", "name": "x", "status": "completed", "result": "ok"}]
 
-        _merge_tool_calls_incremental(existing, new)
+        merge_tool_calls_incremental(existing, new)
 
         self.assertEqual(existing[0]["status"], "pending")
         self.assertEqual(existing[0]["approval"]["state"], "approved")

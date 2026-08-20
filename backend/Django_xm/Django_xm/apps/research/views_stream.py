@@ -6,7 +6,7 @@ from asgiref.sync import sync_to_async
 from rest_framework.renderers import BaseRenderer
 from rest_framework.views import APIView
 
-from Django_xm.common.permissions import IsAuthenticatedOrQueryParam
+from Django_xm.apps.core.permissions import IsAuthenticatedOrQueryParam
 from Django_xm.common.sse_utils import authenticate_sse_request, sse_error_event, sse_error_response, sse_response
 
 from .models import ResearchTask

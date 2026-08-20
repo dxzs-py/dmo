@@ -1,4 +1,4 @@
-from Django_xm.apps.core.exceptions import BaseAppError
+from Django_xm.common.exceptions import BaseAppError
 
 
 class AgentHubError(BaseAppError):

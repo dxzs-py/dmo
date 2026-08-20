@@ -391,7 +391,7 @@ def writeback_to_chat_message(
             # subagent_tool_entries 聚合）合并到 ChatMessage.tool_calls 顶层，
             # 确保工具执行的 status/result/error 对快照 API 可见（不在仅 versions 内）。
             # 乱序根源修复：审批重建路径落库丢失图层字段且无审批 SAFE 工具
-            # 完全丢失，经 _merge_tool_calls_incremental（字段级演进 + 图层字段
+            # 完全丢失，经 merge_tool_calls_incremental（字段级演进 + 图层字段
             # 补齐 subagent_thread_id/agent_name/depth）合并后刷新可完整归集子代理工具卡。
             merge_source: list[dict] = []
             if research_task is not None and research_task.tool_calls:
@@ -401,10 +401,10 @@ def writeback_to_chat_message(
                     dict(entry) for entry in subagent_tool_entries.values() if isinstance(entry, dict)
                 )
             if merge_source:
-                from Django_xm.apps.chat.services.stream_persistence import _merge_tool_calls_incremental
+                from Django_xm.apps.chat.services.stream_persistence import merge_tool_calls_incremental
 
                 existing_tc = msg.tool_calls
-                merged_tc = _merge_tool_calls_incremental(existing_tc, merge_source)
+                merged_tc = merge_tool_calls_incremental(existing_tc, merge_source)
                 if merged_tc != existing_tc:
                     msg.tool_calls = merged_tc
                     msg_save_fields.append("tool_calls")
@@ -498,7 +498,7 @@ def persist_research_progress(
 ) -> None:
     """挂起期间将深度研究内存态子代理数据落库（服务重启恢复 / 挂起中刷新的还原依据）。
 
-    覆盖场景（与 chat 链路 ``_persist_chat_tool_calls`` 同构）：
+    覆盖场景（与 chat 链路 ``persist_chat_tool_calls`` 同构）：
     - 审批中断挂起前（SessionExecutor._on_interrupt）与业务等待挂起前
       （SessionExecutor._handle_suspend）调用，将 adapter 内存态
       ``subagent_tool_entries`` / ``subagent_contents`` 落库到
@@ -507,7 +507,7 @@ def persist_research_progress(
         1. 挂起期间刷新浏览器：前端从 DB 快照可读到子代理工具卡与图层正文；
         2. 服务重启恢复：``_inject_research_resume_baseline`` 从 DB 重建
            adapter 初始态，恢复轮不丢失挂起前的子代理工具条目。
-    - 合并语义（``_merge_tool_calls_incremental``）：字段级演进，既有条目
+    - 合并语义（``merge_tool_calls_incremental``）：字段级演进，既有条目
       保留并演进 status/result/图层字段，重复调用幂等（不覆盖历史）。
 
     Args:
@@ -516,7 +516,7 @@ def persist_research_progress(
         subagent_tool_entries: 子代理工具条目聚合（tool_call_id → entry，
             adapter._subagent_tool_entries 格式，含 subagent_thread_id/position/seq）
     """
-    from Django_xm.apps.chat.services.stream_persistence import _merge_tool_calls_incremental
+    from Django_xm.apps.chat.services.stream_persistence import merge_tool_calls_incremental
 
     merge_source: list[dict] = []
     if isinstance(subagent_tool_entries, dict):
@@ -537,7 +537,7 @@ def persist_research_progress(
         # tool_calls 合并（演进不覆盖）
         if merge_source:
             existing_tc = research_task.tool_calls or []
-            merged_tc = _merge_tool_calls_incremental(existing_tc, merge_source)
+            merged_tc = merge_tool_calls_incremental(existing_tc, merge_source)
             if merged_tc != existing_tc:
                 research_task.tool_calls = merged_tc
                 save_fields_research.append("tool_calls")
@@ -580,7 +580,7 @@ def persist_research_progress(
             msg_save_fields: list[str] = []
             if merge_source:
                 existing_tc = msg.tool_calls
-                merged_tc = _merge_tool_calls_incremental(existing_tc, merge_source)
+                merged_tc = merge_tool_calls_incremental(existing_tc, merge_source)
                 if merged_tc != existing_tc:
                     msg.tool_calls = merged_tc
                     msg_save_fields.append("tool_calls")

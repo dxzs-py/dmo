@@ -114,6 +114,8 @@ class MyObtainTokenPairView(CaptchaMixin, TokenObtainPairView):
                 "id": user.id,
                 "username": user.username,
                 "email": user.email,
+                # is_staff 为前端 isAdmin 契约源头（snake_case 正确，camelCase 转换在 axios 层）
+                "is_staff": user.is_staff,
                 "access": serializer.validated_data["access"],
                 "refresh": serializer.validated_data["refresh"],
             },

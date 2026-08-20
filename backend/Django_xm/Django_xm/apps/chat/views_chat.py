@@ -27,7 +27,7 @@ from Django_xm.common.realtime_events import publish_event_sync
 from Django_xm.common.redis_utils import get_redis_client
 from Django_xm.common.responses import error_response, success_response, validation_error_response
 from Django_xm.common.sse_utils import sse_error_response
-from Django_xm.services.fastapi_service.event_bus import SESSION_TYPE_CHAT, SIGNAL_START, SIGNAL_STOP, publish_signal
+from Django_xm.common.signal_bus import SESSION_TYPE_CHAT, SIGNAL_START, SIGNAL_STOP, publish_signal
 
 from .models import ChatMessage, ChatSession, MessageRole
 from .serializers import (

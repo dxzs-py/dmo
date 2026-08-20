@@ -289,7 +289,7 @@ def get_chat_model(
     resolved_provider: str = model_provider or getattr(django_settings, "AI_DEFAULT_PROVIDER", "openai")
     resolved_model_name: str = model_name or settings.openai_model
 
-    # 1. 尝试创建主模型（max_retries=0 快速失败，由 fallback 接管）
+    # 1. 尝试创建主模型（SDK 层按 AI_LLM_MAX_RETRIES 重试，耗尽后异常上抛、由 LazyFallbackChatModel 切换候选）
     primary_model = None
     creation_errors: list[str] = []
 
@@ -300,7 +300,6 @@ def get_chat_model(
             temperature=temperature,
             max_tokens=max_tokens,
             streaming=streaming,
-            max_retries=0,
             **kwargs,
         )
     except Exception as e:
@@ -1014,7 +1013,7 @@ class JsonModeStructuredModel:
     3. 调用模型获取 JSON 字符串响应
     4. 解析 JSON 并用 Pydantic schema 校验，返回 BaseModel 实例
     5. 无效 JSON / 空内容 / schema 校验失败 → 返回 None（触发上层重试）
-    6. 模型调用异常向上传播（由 ResilientModel + ResilientInvoker 统一处理）
+    6. 模型调用异常向上传播（由 LazyFallbackChatModel 统一处理重试/降级）
     """
 
     def __init__(
@@ -1092,7 +1091,7 @@ class JsonModeStructuredModel:
     def invoke(self, input_data: Any, config: RunnableConfig | None = None) -> Any | None:
         """同步调用模型并解析 JSON 输出
 
-        模型调用异常向上传播（不吞没），由 ResilientModel/ResilientInvoker 统一处理重试/降级。
+        模型调用异常向上传播（不吞没），由 LazyFallbackChatModel 统一处理重试/降级。
         """
         messages = self._build_messages(input_data)
         response = self._model.invoke(messages, config=config)

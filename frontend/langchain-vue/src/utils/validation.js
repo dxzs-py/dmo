@@ -1,10 +1,17 @@
 import { z } from 'zod'
 import { MessageRole } from '@/types'
 
+/** 消息对象结构校验（权威 schema）：role 枚举引用 types/index.js 的 MessageRole 单一权威源 */
+export const MessageSchema = z.object({
+  id: z.string().min(1),
+  role: z.enum(Object.values(MessageRole)),
+  content: z.string(),
+})
+
 export const ChatRequestSchema = z.object({
   message: z.string().min(1, '消息内容不能为空'),
   chatHistory: z.array(z.object({
-    role: z.enum(['user', 'assistant', 'system']),
+    role: z.enum(Object.values(MessageRole)),
     content: z.string(),
   })).optional(),
   mode: z.enum(['agent', 'deep-research']).optional(),
@@ -37,14 +44,10 @@ export function validateSchema(schema, data) {
 }
 
 /**
- * 校验消息对象结构是否合法
+ * 校验消息对象结构是否合法（基于 MessageSchema，zod 单一出口）
  * @param {Object} msg - 消息对象
  * @returns {boolean}
  */
 export function validateMessage(msg) {
-  if (!msg || typeof msg !== 'object') return false
-  if (!msg.id || typeof msg.id !== 'string') return false
-  if (!Object.values(MessageRole).includes(msg.role)) return false
-  if (msg.content === undefined || typeof msg.content !== 'string') return false
-  return true
+  return MessageSchema.safeParse(msg).success
 }

@@ -39,7 +39,7 @@ from Django_xm.apps.research.services.patches import (
     _DeepAgentExecutor,
     _extract_ai_response,
 )
-from Django_xm.common.approval_batch import assert_non_empty_decision
+from Django_xm.apps.approvals.services.approval_batch import assert_non_empty_decision
 
 logger = get_logger(__name__)
 
@@ -267,7 +267,7 @@ class OfficialDeepAgentAdapter:
 
         from langgraph.types import Command, Interrupt
 
-        from Django_xm.apps.agent_hub.services.agent_resilience import (
+        from Django_xm.apps.ai_engine.services.agent_resilience import (
             DuplicateToolCallDetector,
             ExecutionTimeoutManager,
             get_resilience_config,

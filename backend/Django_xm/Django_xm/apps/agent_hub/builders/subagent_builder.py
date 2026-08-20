@@ -24,10 +24,10 @@ class SubAgentBuilder:
         from langchain.agents import create_agent
 
         from Django_xm.apps.agent_hub.middleware import build_middleware
-        from Django_xm.apps.agent_hub.model_resolver import resolve_model
         from Django_xm.apps.agent_hub.tool_resolver import resolve_tools
 
-        model = resolve_model(config)
+        # 模型已由 AgentFactory 统一解析并写入 config.model
+        model = config.model
         tools = await resolve_tools(config)
         middleware_stack = build_middleware(config)
 

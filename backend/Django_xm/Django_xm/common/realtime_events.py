@@ -89,7 +89,7 @@ def _history_key(channel_type, channel_id):
     return f"{HISTORY_KEY_PREFIX}:{channel_type}:{channel_id}"
 
 
-def _group_name(channel_type, channel_id):
+def group_name(channel_type, channel_id):
     """生成符合 Channels 规范的 group name（只含 ASCII 字母数字、连字符、下划线、句点，<100 字符）。"""
     base = f"{channel_type}_{channel_id}"
     # 替换冒号、空格等非规范字符为下划线
@@ -101,6 +101,19 @@ def _group_name(channel_type, channel_id):
         suffix = hashlib.md5(safe.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
         safe = f"{safe[:80]}_{suffix}"
     return safe
+
+
+# user 频道历史事件过滤器（依赖反转注册点）：
+# chat app 在 ready() 中通过 set_user_history_filter 注入
+# apps.chat.services.session_history.filter_ghost_session_created，
+# common 基础层不直接依赖业务模型。
+_user_history_filter = None
+
+
+def set_user_history_filter(fn):
+    """注册 user 频道历史事件过滤器（由 chat app 启动时调用）。"""
+    global _user_history_filter  # noqa: PLW0603
+    _user_history_filter = fn
 
 
 # Lua 脚本：原子化 INCR + RPUSH + LTRIM + EXPIRE
@@ -214,7 +227,7 @@ async def _publish_to_session_async(session_id, event_type, payload, subagent_th
         try:
             channel_layer = get_channel_layer()
             await channel_layer.group_send(
-                _group_name("session", session_id),
+                group_name("session", session_id),
                 {"type": "broadcast_event", "event": event},
             )
         except Exception:
@@ -268,7 +281,7 @@ async def _publish_to_task_async(task_id, event_type, payload, subagent_thread_i
         try:
             channel_layer = get_channel_layer()
             await channel_layer.group_send(
-                _group_name("task", task_id),
+                group_name("task", task_id),
                 {"type": "broadcast_event", "event": event},
             )
         except Exception:
@@ -311,7 +324,7 @@ async def _publish_to_user_async(user_id, event_type, payload):
         try:
             channel_layer = get_channel_layer()
             await channel_layer.group_send(
-                _group_name("user", user_id),
+                group_name("user", user_id),
                 {"type": "broadcast_event", "event": event},
             )
         except Exception:
@@ -639,82 +652,13 @@ def get_event_history(channel_type, channel_id, last_seq=None, limit=100):
         # 幽灵会话过滤（仅 user 频道）：历史 session_created 事件以数据库为权威，
         # 数据库中已不存在的会话跳过回放，避免登录全量回放时把已删除会话注入前端列表；
         # 存在的会话用数据库最新字段覆盖事件载荷，防止旧事件标题覆盖正确标题。
-        if channel_type == "user":
-            events = _filter_ghost_session_created(events, channel_id)
+        # 过滤器由 chat app 启动时经 set_user_history_filter 注入（依赖反转）。
+        if channel_type == "user" and _user_history_filter is not None:
+            events = _user_history_filter(events, channel_id)
         return events
     except Exception:
         logger.exception(f"[RealtimeEvents] 读取历史事件失败: {channel_type}:{channel_id}")
         return []
-
-
-def _filter_ghost_session_created(events, user_id):
-    """过滤 user 频道历史事件中的幽灵 session_created。
-
-    对 user 频道的 session_created 历史事件做数据库存在性校验：
-    - 会话在数据库不存在（已删除 / 从未创建）→ 跳过该事件（幽灵会话）。
-    - 会话存在 → 用数据库最新记录覆盖事件 payload 的权威字段
-      （title / updated_at / message_count / mode / selected_knowledge_bases），
-      避免旧事件标题覆盖数据库正确标题。
-
-    Args:
-        events: 已按 seq 升序的历史事件列表
-        user_id: 用户 ID（channel_id）
-
-    Returns:
-        list[dict]: 过滤后的事件列表
-    """
-    # 收集所有 session_created 事件的会话 ID（批量查询，避免 N+1）
-    created_ids = []
-    for event in events:
-        if event.get("type") != "session_created":
-            continue
-        payload = event.get("payload") or {}
-        session_id = payload.get("session_id") or payload.get("id")
-        if session_id:
-            created_ids.append(session_id)
-    if not created_ids:
-        return events
-
-    try:
-        from django.db.models import Count
-
-        from Django_xm.apps.chat.models import ChatSession
-
-        sessions = list(
-            ChatSession.objects.filter(session_id__in=created_ids, user_id=user_id)
-            .annotate(message_count=Count("messages"))
-            .only("session_id", "title", "mode", "updated_at", "selected_knowledge_bases")
-        )
-        session_map = {s.session_id: s for s in sessions}
-    except Exception:
-        # 数据库校验失败时保持原样回放，避免影响实时同步可用性
-        logger.exception("[RealtimeEvents] 幽灵会话过滤数据库查询失败，保持原样回放")
-        return events
-
-    filtered = []
-    for event in events:
-        if event.get("type") != "session_created":
-            filtered.append(event)
-            continue
-        payload = event.get("payload") or {}
-        session_id = payload.get("session_id") or payload.get("id")
-        session = session_map.get(session_id)
-        if session is None:
-            logger.info(
-                f"[RealtimeEvents] 跳过幽灵 session_created: session={session_id}, user={user_id}"
-            )
-            continue
-        # 用数据库最新字段覆盖事件载荷（保持 snake_case 网络键名）
-        new_payload = dict(payload)
-        new_payload["title"] = session.title
-        new_payload["mode"] = session.mode
-        new_payload["message_count"] = getattr(session, "message_count", 0)
-        new_payload["selected_knowledge_bases"] = session.selected_knowledge_bases
-        new_payload["updated_at"] = session.updated_at.isoformat() if session.updated_at else payload.get("updated_at")
-        new_event = dict(event)
-        new_event["payload"] = new_payload
-        filtered.append(new_event)
-    return filtered
 
 
 def get_channel_seq(channel_type, channel_id):

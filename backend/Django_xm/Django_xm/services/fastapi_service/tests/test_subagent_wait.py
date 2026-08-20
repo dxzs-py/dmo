@@ -250,7 +250,7 @@ class TestSubAgentNestedWaitAdapter(unittest.TestCase):
 
     @staticmethod
     def _make_adapter(runtime):
-        return LangGraphAdapter(runtime)
+        return LangGraphAdapter(runtime, graph_factory=mock.AsyncMock())
 
     def test_detect_subagent_wait_interrupt(self):
         adapter = self._make_adapter(mock.Mock())
@@ -361,7 +361,7 @@ class TestSubAgentConfigurableContract(unittest.TestCase):
     """
 
     def _make_adapter(self):
-        return LangGraphAdapter(mock.Mock())
+        return LangGraphAdapter(mock.Mock(), graph_factory=mock.AsyncMock())
 
     def test_carries_tools_and_config(self):
         t1 = SimpleNamespace(name="shell_exec")
@@ -556,12 +556,12 @@ class TestSubagentApprovalAttribution(unittest.TestCase):
             parent_thread_id=parent_thread_id,
             metadata={"depth": 2, "user_id": 1},
         )
-        adapter = LangGraphAdapter(mock.Mock())
+        adapter = LangGraphAdapter(mock.Mock(), graph_factory=mock.AsyncMock())
         with mock.patch(
             "Django_xm.common.approval_parser.parse_approval_interrupt",
             return_value=[{"tool_call_id": "tc1", "tool_name": "shell_exec"}],
         ), mock.patch(
-            "Django_xm.common.approval_batch.create_approvals_for_interrupts"
+            "Django_xm.apps.approvals.services.approval_batch.create_approvals_for_interrupts"
         ) as create_approvals:
             asyncio.run(adapter._create_approvals_from_interrupts(instance, configurable, self._make_interrupt_state()))
             return create_approvals.call_args.kwargs

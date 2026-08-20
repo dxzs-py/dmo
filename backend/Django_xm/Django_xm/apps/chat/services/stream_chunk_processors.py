@@ -602,10 +602,10 @@ def _handle_tool_message_chunk(
                 tool_info["result"] = message.content
             tool_info["error"] = None
 
-        # 标记工具生命周期事件类型，由 _publish_stream_event 统一发布（P-BE-1 根因修复）：
+        # 标记工具生命周期事件类型，由 publish_stream_event 统一发布（P-BE-1 根因修复）：
         # 原代码在此处调用 sync 版 service.transition（fire-and-forget），立即设置 dedup_key，
-        # 导致后续 _publish_stream_event 的 async transition_async 被 dedup 跳过，
-        # 事件可能延迟或丢失。改为仅标记 lifecycle_event 字段，由 _publish_stream_event
+        # 导致后续 publish_stream_event 的 async transition_async 被 dedup 跳过，
+        # 事件可能延迟或丢失。改为仅标记 lifecycle_event 字段，由 publish_stream_event
         # 作为唯一发布出口（await 确保事件可靠广播）。
         # 事件优先级：超时 > 拒绝 > 失败 > 完成（与 test_stream_helpers.py 一致）
         if tool_call_id:

@@ -109,7 +109,7 @@ class ApprovalOutboxEntry(models.Model):
 
     确保审批状态变更（DB save）与事件发布（Redis pub/sub）的最终一致性。
     采用"双写 + 补偿"模式：
-    1. _persist_and_broadcast 中创建 outbox 条目 + 尝试直接发布
+    1. persist_and_broadcast 中创建 outbox 条目 + 尝试直接发布
     2. 直接发布成功 → 标记 delivered（实时性不受影响）
     3. 直接发布失败 → 保持 pending，由 process_approval_outbox Celery 任务重试
 

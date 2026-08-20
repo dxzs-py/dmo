@@ -3,7 +3,6 @@ Agent 管理服务
 
 从 chat_service.py 拆分出的 Agent 创建、配置和生命周期管理逻辑：
 - Agent 创建（含 Checkpointer / Store 注入）
-- 模型实例解析
 - 线程配置构建
 """
 
@@ -48,7 +47,6 @@ class AgentService:
         self,
         data: dict[str, Any],
         prompt_mode: str = "agent",
-        model_instance=None,
         tool_config: dict[str, Any] | None = None,
         tools: list | None = None,
     ) -> tuple:
@@ -84,7 +82,6 @@ class AgentService:
 
         config = AgentConfig(
             agent_type=AgentType.BASE,
-            model=model_instance,
             provider_id=data.get("provider_id"),
             model_name=data.get("model_name"),
             temperature=data.get("temperature"),
@@ -107,44 +104,5 @@ class AgentService:
 
         agent = await agent_hub_create(config)
         thread_config = self.build_thread_config(session_id) if use_checkpointer else None
-        return agent, thread_config, use_checkpointer
-
-    @staticmethod
-    def resolve_model_instance(data: dict[str, Any], streaming: bool = True):
-        from Django_xm.apps.ai_engine.services.llm_factory import get_chat_model_by_provider
-
-        provider_id = data.get("provider_id")
-        model_name = data.get("model_name")
-
-        # 如果前端未传 provider_id，从 SystemConfig 读取默认模型
-        if not provider_id:
-            try:
-                from Django_xm.apps.ai_engine.models import SystemConfig
-
-                default_config = SystemConfig.get_value("default_chat_model", {})
-                if default_config.get("provider_id"):
-                    provider_id = default_config["provider_id"]
-                    if not model_name:
-                        model_name = default_config.get("model_name")
-            except Exception:
-                # 配置读取失败时回退到 None，使用默认 provider
-                logger.debug("读取 default_chat_model 配置失败")
-
-        if not provider_id:
-            return None
-
-        special_params = data.get("special_params")
-        model_temperature = data.get("temperature")
-        model_max_tokens = data.get("max_tokens")
-        try:
-            return get_chat_model_by_provider(
-                provider_id=provider_id,
-                model_name=model_name or None,
-                temperature=float(model_temperature) if model_temperature is not None else None,
-                max_tokens=int(model_max_tokens) if model_max_tokens is not None else None,
-                special_params=special_params or None,
-                streaming=streaming,
-            )
-        except Exception as e:
-            logger.warning(f"模型选择失败(provider={provider_id})，回退默认: {e}")
-            return None
+        # 返回 config：调用方从 config.model 读取 AgentFactory 统一创建的模型包装实例
+        return agent, thread_config, use_checkpointer, config
