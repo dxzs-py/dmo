@@ -321,7 +321,12 @@ TOOLS_SKILLS_DIR = TOOLS_DIR / "skills"
 TOOLS_LANGCHAIN_DIR = TOOLS_DIR / "langchain"
 TOOLS_MCP_DIR = TOOLS_DIR / "mcp"
 
-for directory in [DATA_DIR, UPLOADS_DIR, TOOLS_DIR, TOOLS_SKILLS_DIR, TOOLS_LANGCHAIN_DIR, TOOLS_MCP_DIR, MEDIA_ROOT]:
+# LOGS_DIR / CELERYBEAT_DIR：RotatingFileHandler 与 Celery beat 均不会自动创建父目录，
+# Git 又不跟踪空目录，故在此统一创建，保障克隆后可直接启动。
+LOGS_DIR = BASE_DIR.parent / "logs"
+CELERYBEAT_DIR = PROJECT_ROOT / "data" / "celerybeat"
+
+for directory in [DATA_DIR, UPLOADS_DIR, TOOLS_DIR, TOOLS_SKILLS_DIR, TOOLS_LANGCHAIN_DIR, TOOLS_MCP_DIR, MEDIA_ROOT, LOGS_DIR, CELERYBEAT_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
 
 CELERY_ACCEPT_CONTENT = ["json"]

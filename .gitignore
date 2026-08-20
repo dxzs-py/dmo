@@ -10,6 +10,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.import_linter_cache/
 *.egg-info/
 dist/
 build/
@@ -17,21 +18,20 @@ build/
 # Django
 backend/db.sqlite3
 backend/Django_xm/.env
-backend/Django_xm/logs/*
-backend/Django_xm/media/
-backend/Django_xm/data/media/
+backend/Django_xm/logs/
+backend/Django_xm/data/
+
+# 本地运行时记忆
+memory/
 
 # 运行时生成的数据目录与文件
-backend/Django_xm/data/celerybeat/
-backend/Django_xm/data/uploads/
-backend/Django_xm/data/workflow/
-backend/Django_xm/data/tools/
 **/snapshot.json
 *.pid
 
 # Node
 node_modules/
 coverage/
+.eslintcache
 
 # OS
 .DS_Store
