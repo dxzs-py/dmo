@@ -31,3 +31,7 @@ class CoreConfig(AppConfig):
                 setup_loguru_logging()
             except Exception as exc:
                 logger.warning(f"loguru 配置失败，回退到标准 logging: {exc}")
+
+        # 显式激活 core 信号注册（@receiver 装饰器在模块导入时执行，
+        # 此前依赖其他 app 间接 import 副作用激活，属隐性依赖，dj-17 根因修复）
+        import Django_xm.apps.core.signals  # noqa: F401

@@ -709,7 +709,7 @@ def _filter_ghost_session_created(events, user_id):
         new_payload["title"] = session.title
         new_payload["mode"] = session.mode
         new_payload["message_count"] = getattr(session, "message_count", 0)
-        new_payload["selected_knowledge_bases"] = session.selected_knowledge_bases or []
+        new_payload["selected_knowledge_bases"] = session.selected_knowledge_bases
         new_payload["updated_at"] = session.updated_at.isoformat() if session.updated_at else payload.get("updated_at")
         new_event = dict(event)
         new_event["payload"] = new_payload

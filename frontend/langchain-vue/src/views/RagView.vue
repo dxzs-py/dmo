@@ -22,7 +22,7 @@
                 <el-option
                   v-for="index in availableIndexes"
                   :key="index.name"
-                  :label="`${index.name} (${index.numDocuments} 分段)`"
+                  :label="`${index.name} (${index.chunkCount} 分段)`"
                   :value="index.name"
                 >
                   <div class="index-option">
@@ -30,15 +30,15 @@
                     <el-tag v-if="index.description" type="info" size="small" style="margin-left: 10px">
                       {{ index.description }}
                     </el-tag>
-                    <el-tag 
-                      v-if="index.numDocuments === 0" 
-                      type="warning" 
-                      size="small" 
+                    <el-tag
+                      v-if="index.chunkCount === 0"
+                      type="warning"
+                      size="small"
                       style="margin-left: auto"
                     >
                       空索引
                     </el-tag>
-                    <span v-else class="index-count" style="margin-left: auto">{{ index.numDocuments }} 分段</span>
+                    <span v-else class="index-count" style="margin-left: auto">{{ index.chunkCount }} 分段</span>
                   </div>
                 </el-option>
               </el-select>
@@ -61,7 +61,7 @@
                 删除索引
               </el-button>
             </div>
-            <div v-if="selectedIndexName && selectedIndex.numDocuments === 0" class="empty-index-hint">
+            <div v-if="selectedIndexName && selectedIndex.chunkCount === 0" class="empty-index-hint">
               <el-alert type="warning" :closable="false" size="small">
                 此索引暂无文档，请先在下方上传文档后再进行查询
               </el-alert>
@@ -317,7 +317,7 @@ let abortController = null
 const selectedIndexName = ref('')
 
 const selectedIndex = computed(() => {
-  return availableIndexes.value.find(index => index.name === selectedIndexName.value) || { numDocuments: 0 }
+  return availableIndexes.value.find(index => index.name === selectedIndexName.value) || { chunkCount: 0 }
 })
 
 const queryForm = reactive({
@@ -468,7 +468,7 @@ const { run: runFetchIndexes, loading: isLoadingIndexes } = useApiTask(
     availableIndexes.value = indexes.map(index => ({
       name: index.name,
       description: index.description || '',
-      numDocuments: index.numDocuments || index.chunkCount || 0,
+      chunkCount: index.chunkCount || 0,
       createdAt: index.createdAt,
       updatedAt: index.updatedAt
     })).filter(index => index.name)
@@ -495,7 +495,7 @@ const validateQuery = () => {
     return false
   }
   
-  if (selectedIndex.value.numDocuments === 0) {
+  if (selectedIndex.value.chunkCount === 0) {
     ElMessage.warning('此索引暂无文档，请先上传文档后再查询')
     return false
   }

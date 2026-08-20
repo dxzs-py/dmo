@@ -33,7 +33,7 @@ def _load_approval_history_from_db(task_id: str) -> list[dict]:
         from Django_xm.apps.approvals.models import Approval
 
         approvals = Approval.objects.filter(
-            source=Approval.SOURCE_DEEP_RESEARCH,
+            source=Approval.Source.DEEP_RESEARCH,
             source_id=task_id,
         ).order_by("created_at")
 

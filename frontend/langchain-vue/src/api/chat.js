@@ -130,13 +130,13 @@ export const chatAPI = {
 
   deleteMessage(messageId) {
     if (!messageId) return Promise.reject(new Error('消息ID不能为空'))
-    return apiClient.delete(`/chat/messages/${messageId}/delete/`)
+    return apiClient.delete(`/chat/messages/${messageId}/`)
   },
 
   deleteMessagePair(sessionId, userMessageId) {
     if (!sessionId) return Promise.reject(new Error('会话ID不能为空'))
     if (!userMessageId) return Promise.reject(new Error('用户消息ID不能为空'))
-    return apiClient.delete(`/chat/sessions/${sessionId}/messages/pair/delete/`, { data: { userMessageId } })
+    return apiClient.delete(`/chat/sessions/${sessionId}/messages/pair/${userMessageId}/`)
   },
 
   uploadAttachment(sessionId, file, { onUploadProgress, signal } = {}) {

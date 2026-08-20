@@ -7,13 +7,11 @@ Django 信号处理模块 - 核心自定义信号定义
 自定义信号:
   - cache_invalidated: 缓存失效通知
   - task_status_changed: 任务状态变更通知
-  - index_updated: 索引更新通知
   - ai_data_cleanup_needed: AI 数据（checkpoint/Store）清理通知
 """
 
 import logging
 
-from django.apps import apps
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import Signal, receiver
 
@@ -22,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 cache_invalidated = Signal()
 task_status_changed = Signal()
-index_updated = Signal()
 ai_data_cleanup_needed = Signal()
 
 
@@ -46,24 +43,19 @@ def user_post_delete(sender, instance, **kwargs):
     )
 
 
-try:
-    CeleryTaskRecord = apps.get_model("core", "CeleryTaskRecord")
-
-    @receiver(post_save, sender=CeleryTaskRecord)
-    def celery_task_record_post_save(sender, instance, created, **kwargs):
-        if created:
-            logger.info(f"Celery 任务记录创建: {instance.celery_task_id} ({instance.task_name})")
-        elif instance.status in ("success", "failure", "revoked"):
-            logger.info(
-                f"Celery 任务完成: {instance.celery_task_id} "
-                f"status={instance.status} runtime={instance.runtime_seconds}s"
-            )
-
-        task_status_changed.send(
-            sender=sender,
-            task_id=instance.celery_task_id,
-            status=instance.status,
-            created=created,
+@receiver(post_save, sender="core.CeleryTaskRecord")
+def celery_task_record_post_save(sender, instance, created, **kwargs):
+    if created:
+        logger.info(f"Celery 任务记录创建: {instance.celery_task_id} ({instance.task_name})")
+    elif instance.status in ("success", "failure", "revoked"):
+        logger.info(
+            f"Celery 任务完成: {instance.celery_task_id} "
+            f"status={instance.status} runtime={instance.runtime_seconds}s"
         )
-except Exception as e:
-    logger.debug(f"CeleryTaskRecord 信号注册跳过: {e}")
+
+    task_status_changed.send(
+        sender=sender,
+        task_id=instance.celery_task_id,
+        status=instance.status,
+        created=created,
+    )

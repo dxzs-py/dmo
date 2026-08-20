@@ -50,7 +50,7 @@ def cleanup_expired_approvals(self):
     now = datetime.now(UTC)
     # M5: 使用 expires_at 判断过期；同时兜底处理未回填 expires_at 的历史数据
     expired_qs = Approval.objects.filter(
-        state=Approval.STATE_PENDING,
+        state=Approval.State.PENDING,
     ).filter(
         Q(expires_at__lt=now)
         | Q(expires_at__isnull=True, created_at__lt=now - timedelta(seconds=APPROVAL_TIMEOUT_SECONDS))
@@ -70,7 +70,7 @@ def cleanup_expired_approvals(self):
         try:
             with transaction.atomic():
                 locked = Approval.objects.select_for_update().get(pk=approval.pk)
-                if locked.state != Approval.STATE_PENDING:
+                if locked.state != Approval.State.PENDING:
                     continue
                 approval_service.timeout_approval(locked.interrupt_id)
                 processed += 1
@@ -142,7 +142,7 @@ def process_approval_outbox(self):
     # 查询待投递条目：pending 状态 + (next_retry_at 为空 或 <= now)
     pending_qs = (
         ApprovalOutboxEntry.objects.filter(
-            state=ApprovalOutboxEntry.STATE_PENDING,
+            state=ApprovalOutboxEntry.State.PENDING,
         )
         .filter(Q(next_retry_at__isnull=True) | Q(next_retry_at__lte=now))
         .order_by("created_at")[:OUTBOX_BATCH_SIZE]
@@ -162,7 +162,7 @@ def process_approval_outbox(self):
         try:
             params = _restore_event_enums(entry.payload)
             publish_approval_sync(**params)
-            entry.state = ApprovalOutboxEntry.STATE_DELIVERED
+            entry.state = ApprovalOutboxEntry.State.DELIVERED
             entry.delivered_at = now
             entry.save(update_fields=["state", "delivered_at"])
             delivered += 1
@@ -170,7 +170,7 @@ def process_approval_outbox(self):
             entry.attempts += 1
             entry.error_message = str(e)[:500]
             if entry.attempts >= entry.max_attempts:
-                entry.state = ApprovalOutboxEntry.STATE_FAILED
+                entry.state = ApprovalOutboxEntry.State.FAILED
                 failed += 1
                 logger.exception(
                     f"[ApprovalOutbox] 投递失败(已达最大重试): "

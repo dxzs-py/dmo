@@ -73,6 +73,15 @@ class ChatService:
         self._rag_service = RAGChatService(user_id=user_id, chat_service=self)
         self._deep_service = DeepChatService(self)
 
+    async def _load_user_knowledge_bases(self) -> list[dict]:
+        """加载当前用户的知识库列表（list_knowledge_bases 以 User 实例过滤归属）"""
+        from django.contrib.auth import get_user_model
+
+        from Django_xm.apps.knowledge.services.kb_service import list_knowledge_bases
+
+        user = await sync_to_async(get_user_model().objects.get)(pk=self._rag_service.user_id)
+        return await sync_to_async(list_knowledge_bases)(user)
+
     async def _update_last_message_tokens(
         self,
         session_id: str,
@@ -440,12 +449,11 @@ class ChatService:
                     kb_ids.append(single_kb)
 
                 if kb_ids:
-                    from Django_xm.apps.knowledge.services.kb_service import list_knowledge_bases
                     from Django_xm.apps.knowledge.services.retrieval_service import create_retriever_tool
 
                     kb_info_map = {}
                     try:
-                        kbs = await sync_to_async(list_knowledge_bases)(self._rag_service.user_id)
+                        kbs = await self._load_user_knowledge_bases()
                         kb_info_map = {kb.get("id"): kb for kb in kbs}
                     except Exception:
                         # 知识库列表读取失败时回退到使用 kb_id 作为名称
@@ -487,13 +495,12 @@ class ChatService:
                         single_kb_id, retrieval_mode="comprehensive"
                     )
                     if retriever:
-                        from Django_xm.apps.knowledge.services.kb_service import list_knowledge_bases
                         from Django_xm.apps.knowledge.services.retrieval_service import create_retriever_tool
 
                         single_kb_name = single_kb_id
                         single_kb_desc = ""
                         try:
-                            kbs = await sync_to_async(list_knowledge_bases)(self._rag_service.user_id)
+                            kbs = await self._load_user_knowledge_bases()
                             kb_info = next((kb for kb in kbs if kb.get("id") == single_kb_id), None)
                             if kb_info:
                                 single_kb_name = kb_info.get("name", single_kb_id)
@@ -540,12 +547,11 @@ class ChatService:
                             comprehensive_retriever = None
 
                         from Django_xm.apps.ai_engine.services.llm_factory import get_helper_model
-                        from Django_xm.apps.knowledge.services.kb_service import list_knowledge_bases
                         from Django_xm.apps.knowledge.services.retrieval_service import create_retriever_tool
 
                         kb_info = None
                         try:
-                            kbs = await sync_to_async(list_knowledge_bases)(self._rag_service.user_id)
+                            kbs = await self._load_user_knowledge_bases()
                             kb_info = next((kb for kb in kbs if kb.get("id") == kb_id), None)
                         except Exception:
                             # 知识库信息读取失败时回退到使用 kb_id 作为名称

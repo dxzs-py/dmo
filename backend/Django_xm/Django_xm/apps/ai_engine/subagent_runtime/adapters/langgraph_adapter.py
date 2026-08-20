@@ -478,9 +478,9 @@ class LangGraphAdapter(BaseRuntimeAdapter):
         # （chat=会话 id，深研=research task id）并随 spawn 逐层继承，是权威归属。
         root_session_id = (configurable or {}).get("session_id") or instance.parent_thread_id
         source = (
-            Approval.SOURCE_DEEP_RESEARCH
+            Approval.Source.DEEP_RESEARCH
             if str(root_session_id).startswith("research_")
-            else Approval.SOURCE_CHAT
+            else Approval.Source.CHAT
         )
         source_id = root_session_id
         # chat_session_id / assistant_message_id 由各模块源头写入 configurable 统一契约：

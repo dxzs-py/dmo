@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.db import models
 
-from Django_xm.apps.core.base_models import AuditModel, BaseModel
+from Django_xm.apps.core.base_models import BaseModel
 
 
 class DocumentFileType(models.TextChoices):
@@ -16,61 +16,14 @@ class DocumentFileType(models.TextChoices):
     OTHER = "other", "其他"
 
 
-class DocumentIndex(AuditModel):
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="document_indexes",
-        verbose_name="所属用户",
-        null=True,
-        blank=True,
-    )
-    index_name = models.CharField(max_length=100, verbose_name="索引名称")
-    description = models.TextField(blank=True, verbose_name="描述")
-    document_count = models.IntegerField(default=0, verbose_name="文档数量")
+class IndexMetadata(BaseModel):
+    """知识库索引唯一实体（dj-13：合并原 DocumentIndex 归属/软删除职责）
 
-    class Meta:
-        db_table = "rag_document_index"
-        verbose_name = "文档索引"
-        verbose_name_plural = "文档索引"
-        unique_together = ("user", "index_name")
-        indexes = [
-            models.Index(fields=["user", "-updated_at"]),
-        ]
-
-    def __str__(self):
-        if self.user and hasattr(self.user, "username"):
-            return f"{self.index_name} (user: {self.user.username})"
-        return f"{self.index_name}"
-
-
-class Document(BaseModel):
-    index = models.ForeignKey(
-        DocumentIndex, on_delete=models.CASCADE, related_name="documents", verbose_name="所属索引"
-    )
-    filename = models.CharField(max_length=255, verbose_name="文件名")
-    file_path = models.CharField(max_length=500, verbose_name="文件路径")
-    file_type = models.CharField(
-        max_length=50, choices=DocumentFileType.choices, default=DocumentFileType.OTHER, verbose_name="文件类型"
-    )
-    file_size = models.BigIntegerField(verbose_name="文件大小(字节)")
-    chunk_count = models.IntegerField(default=0, verbose_name="分块数量")
-
-    class Meta:
-        db_table = "rag_document"
-        verbose_name = "文档"
-        verbose_name_plural = "文档"
-        indexes = [
-            models.Index(fields=["index", "-created_at"]),
-            models.Index(fields=["file_type"]),
-        ]
-
-    def __str__(self):
-        return f"{self.filename} ({self.index.index_name})"
-
-
-class IndexMetadata(models.Model):
-    """索引元数据（替代文件系统 metadata.json）"""
+    承载：user 归属、状态机、向量元数据（store_type/embedding/块数镜像）、软删除墓碑。
+    - name 为向量索引全名（如 user_1_test2），全局唯一
+    - num_documents 为向量块数镜像（IndexManager 按向量库 stats 维护）
+    - 文件数不存储，由 Document 表派生查询（单一权威）
+    """
 
     class IndexStatus(models.TextChoices):
         EMPTY = "empty", "空索引"
@@ -95,11 +48,9 @@ class IndexMetadata(models.Model):
     description = models.TextField(blank=True, default="", verbose_name="描述")
     embedding_model = models.CharField(max_length=255, blank=True, default="", verbose_name="Embedding 模型")
     embedding_dimension = models.IntegerField(null=True, blank=True, verbose_name="Embedding 维度")
-    num_documents = models.IntegerField(default=0, verbose_name="文档数量")
+    num_documents = models.IntegerField(default=0, verbose_name="向量块数")
     error_message = models.TextField(blank=True, default="", verbose_name="错误信息")
     metadata_json = models.JSONField(default=dict, blank=True, verbose_name="扩展元数据")
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
-    updated_at = models.DateTimeField(auto_now=True, verbose_name="更新时间")
 
     class Meta:
         db_table = "knowledge_index_metadata"
@@ -107,7 +58,6 @@ class IndexMetadata(models.Model):
         verbose_name_plural = "索引元数据"
         indexes = [
             models.Index(fields=["user", "status"], name="idx_user_status"),
-            models.Index(fields=["name"], name="idx_name"),
         ]
 
     def __str__(self):
@@ -128,3 +78,28 @@ class IndexMetadata(models.Model):
             )
         self.status = new_status
         self.save(update_fields=["status", "updated_at"])
+
+
+class Document(BaseModel):
+    index = models.ForeignKey(
+        IndexMetadata, on_delete=models.CASCADE, related_name="documents", verbose_name="所属索引"
+    )
+    filename = models.CharField(max_length=255, verbose_name="文件名")
+    file_path = models.CharField(max_length=500, verbose_name="文件路径")
+    file_type = models.CharField(
+        max_length=50, choices=DocumentFileType.choices, default=DocumentFileType.OTHER, verbose_name="文件类型"
+    )
+    file_size = models.BigIntegerField(verbose_name="文件大小(字节)")
+    chunk_count = models.IntegerField(default=0, verbose_name="分块数量")
+
+    class Meta:
+        db_table = "rag_document"
+        verbose_name = "文档"
+        verbose_name_plural = "文档"
+        indexes = [
+            models.Index(fields=["index", "-created_at"]),
+            models.Index(fields=["file_type"]),
+        ]
+
+    def __str__(self):
+        return f"{self.filename} ({self.index.name})"

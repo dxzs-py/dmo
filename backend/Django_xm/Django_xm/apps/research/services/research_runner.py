@@ -339,10 +339,10 @@ def self_heal_expired_approvals(thread_id: str, graph_interrupt_id: str) -> int:
     _now = _datetime.now(_UTC)
     _expired_ids = list(
         _Approval.objects.filter(
-            source=_Approval.SOURCE_DEEP_RESEARCH,
+            source=_Approval.Source.DEEP_RESEARCH,
             source_id=thread_id,
             extra__graph_interrupt_id=graph_interrupt_id,
-            state=_Approval.STATE_PENDING,
+            state=_Approval.State.PENDING,
         )
         .filter(
             _Q(expires_at__lt=_now)

@@ -580,7 +580,7 @@ class DeepResearchRetrySubagentView(APIView):
     - 会话运行中：直接注入（adapter astream 循环按 chunk 消费并注入 graph state）
     - 会话已结束/服务重启恢复态：从 checkpoint 恢复会话后注入
 
-    POST /api/v1/research/task/<task_id>/retry-subagent/
+    POST /api/v1/research/tasks/<task_id>/retry-subagent/
     Body: {"agent_path": ["main", "web-researcher"], "tool_call_id": "call_xxx"}
     """
 
@@ -688,7 +688,7 @@ class DeepResearchRetrySubagentView(APIView):
         # 2. Approval 记录（持久化，审批链路）
         approval = (
             Approval.objects.filter(
-                source=Approval.SOURCE_DEEP_RESEARCH,
+                source=Approval.Source.DEEP_RESEARCH,
                 source_id=task.task_id,
             )
             .filter(Q(extra__tool_call_id=tool_call_id) | Q(interrupt_id=tool_call_id))
@@ -718,7 +718,7 @@ class DeepResearchRetrySubagentView(APIView):
                 .first()
             )
             if chat_msg is not None:
-                for tc in chat_msg.tool_calls or []:
+                for tc in chat_msg.tool_calls:
                     if not isinstance(tc, dict):
                         continue
                     tc_id = tc.get("tool_call_id") or tc.get("id")

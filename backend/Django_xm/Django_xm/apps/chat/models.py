@@ -32,7 +32,7 @@ class ChatSession(AuditModel):
     title = models.CharField(max_length=200, default="新对话", verbose_name="会话标题")
     mode = models.CharField(max_length=50, choices=ChatMode.choices, default=ChatMode.AGENT, verbose_name="对话模式")
     selected_knowledge_base = models.CharField(max_length=200, blank=True, null=True, verbose_name="选中的知识库")
-    selected_knowledge_bases = models.JSONField(default=list, blank=True, null=True, verbose_name="选中的知识库列表")
+    selected_knowledge_bases = models.JSONField(default=list, blank=True, verbose_name="选中的知识库列表")
 
     class Meta:
         db_table = "chat_session"
@@ -69,20 +69,20 @@ class ChatMessage(AuditModel):
         max_length=20, choices=MessageRole.choices, default=MessageRole.USER, db_index=True, verbose_name="角色"
     )
     content = models.TextField(blank=True, max_length=50000, verbose_name="内容")
-    sources = models.JSONField(default=list, blank=True, null=True, verbose_name="来源")
-    plan = models.JSONField(default=dict, blank=True, null=True, verbose_name="计划")
-    chain_of_thought = models.JSONField(default=list, blank=True, null=True, verbose_name="思维链")
+    sources = models.JSONField(default=list, blank=True, verbose_name="来源")
+    plan = models.JSONField(default=dict, blank=True, verbose_name="计划")
+    chain_of_thought = models.JSONField(default=list, blank=True, verbose_name="思维链")
     tool_calls = models.JSONField(default=list, blank=True, verbose_name="工具调用")
-    approval = models.JSONField(default=dict, blank=True, null=True, verbose_name="审批数据")
-    reasoning = models.JSONField(default=dict, blank=True, null=True, verbose_name="推理")
+    approval = models.JSONField(default=dict, blank=True, verbose_name="审批数据")
+    reasoning = models.JSONField(default=dict, blank=True, verbose_name="推理")
     # 子代理图层正文/中间思考（spec MODIFIED：按 subagent_thread_id 键累计）：
     #   key = subagent_thread_id（子代理路由标识符）
     #   value = {"content": str, "reasoning_content": str}
     # 由执行层（adapter.subagent_contents / chat data["_subagent_contents"]）在流结束时
     # 持久化，前端刷新后据此恢复子代理图层正文（与 tool_calls 同为消息级数据）。
     subagent_contents = models.JSONField(default=dict, blank=True, verbose_name="子代理图层正文")
-    suggestions = models.JSONField(default=list, blank=True, null=True, verbose_name="建议问题")
-    versions = models.JSONField(default=list, blank=True, null=True, verbose_name="消息版本")
+    suggestions = models.JSONField(default=list, blank=True, verbose_name="建议问题")
+    versions = models.JSONField(default=list, blank=True, verbose_name="消息版本")
     current_version = models.PositiveIntegerField(
         default=0, help_text="当前展示的版本索引，指向 versions 数组的位置", verbose_name="当前版本索引"
     )

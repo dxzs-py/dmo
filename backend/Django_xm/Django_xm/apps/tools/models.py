@@ -38,10 +38,9 @@ class UserToolResource(models.Model):
         USER = "user", "用户上传"
         MARKETPLACE = "marketplace", "市场安装"
 
-    STATUS_CHOICES = [
-        ("active", "已激活"),
-        ("disabled", "已禁用"),
-    ]
+    class ToolStatus(models.TextChoices):
+        ACTIVE = "active", "已激活"
+        DISABLED = "disabled", "已禁用"
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -72,8 +71,8 @@ class UserToolResource(models.Model):
     )
     status = models.CharField(
         max_length=20,
-        choices=STATUS_CHOICES,
-        default="active",
+        choices=ToolStatus.choices,
+        default=ToolStatus.ACTIVE,
         verbose_name="状态",
     )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
@@ -129,17 +128,16 @@ class CustomTool(UserToolResource):
 class McpServerConfig(UserToolResource):
     """用户自定义 MCP Server 配置模型"""
 
-    TRANSPORT_CHOICES = [
-        ("sse", "SSE"),
-        ("stdio", "STDIO"),
-        ("http", "HTTP"),
-        ("websocket", "WebSocket"),
-    ]
+    class Transport(models.TextChoices):
+        SSE = "sse", "SSE"
+        STDIO = "stdio", "STDIO"
+        HTTP = "http", "HTTP"
+        WEBSOCKET = "websocket", "WebSocket"
 
     transport = models.CharField(
         max_length=20,
-        choices=TRANSPORT_CHOICES,
-        default="sse",
+        choices=Transport.choices,
+        default=Transport.SSE,
         verbose_name="传输协议",
     )
     url = models.URLField(blank=True, default="", verbose_name="服务器 URL")
@@ -184,16 +182,15 @@ class McpServerConfig(UserToolResource):
 class SkillConfig(UserToolResource):
     """用户自定义 Skill 配置模型"""
 
-    MODE_CHOICES = [
-        ("pipeline", "管线模式"),
-        ("advisor", "顾问模式"),
-        ("hybrid", "混合模式"),
-    ]
+    class Mode(models.TextChoices):
+        PIPELINE = "pipeline", "管线模式"
+        ADVISOR = "advisor", "顾问模式"
+        HYBRID = "hybrid", "混合模式"
 
     mode = models.CharField(
         max_length=20,
-        choices=MODE_CHOICES,
-        default="pipeline",
+        choices=Mode.choices,
+        default=Mode.PIPELINE,
         verbose_name="执行模式",
     )
     type = models.CharField(max_length=20, default="pipeline", verbose_name="类型")

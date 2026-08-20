@@ -1,7 +1,7 @@
 """
 文档检索节点 (Retrieval Node)
 
-本节点根据用户选择的知识库（DocumentIndex）检索学习资料。
+本节点根据用户选择的知识库（IndexMetadata）检索学习资料。
 - 从 state 读取 user_id 与 knowledge_base_ids（前端 KnowledgeBaseSelector 的 v-model）
 - 每个知识库名称按 `user_{id}_{name}` 规则还原为完整索引名（与 kb_service.get_user_index_name 一致）
 - 对每个知识库独立加载向量库并检索，合并去重后返回

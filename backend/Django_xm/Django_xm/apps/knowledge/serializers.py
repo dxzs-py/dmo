@@ -6,7 +6,7 @@ import re
 
 from rest_framework import serializers
 
-from .models import Document, DocumentIndex
+from .models import Document
 
 # 索引名称校验正则：字母、数字、下划线、连字符、中文
 INDEX_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_\-\u4e00-\u9fa5]+$")
@@ -35,13 +35,6 @@ class IndexNameValidationMixin:
         if not INDEX_NAME_PATTERN.match(value):
             raise serializers.ValidationError("索引名称只能包含字母、数字、下划线、连字符和中文")
         return value
-
-
-class DocumentIndexSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = DocumentIndex
-        fields = ["id", "index_name", "description", "document_count", "created_at", "updated_at"]
-        read_only_fields = ["id", "document_count", "created_at", "updated_at"]
 
 
 class DocumentSerializer(serializers.ModelSerializer):
@@ -100,16 +93,6 @@ class EmptyIndexCreateSerializer(IndexNameValidationMixin, serializers.Serialize
         default="", allow_blank=True, max_length=500, required=False, help_text="索引描述（可选）"
     )
     overwrite = serializers.BooleanField(default=False, required=False, help_text="是否覆盖已存在的索引")
-
-
-class IndexInfoSerializer(serializers.Serializer):
-    name = serializers.CharField()
-    description = serializers.CharField(default="")
-    created_at = serializers.CharField(default="")
-    updated_at = serializers.CharField(default="")
-    num_documents = serializers.IntegerField(default=0)
-    store_type = serializers.CharField(default="pgvector")
-    embedding_model = serializers.CharField(default="")
 
 
 class SearchRequestSerializer(serializers.Serializer):

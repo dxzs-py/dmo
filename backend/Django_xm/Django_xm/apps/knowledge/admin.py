@@ -1,20 +1,6 @@
 from django.contrib import admin
 
-from .models import Document, DocumentIndex, IndexMetadata
-
-
-@admin.register(DocumentIndex)
-class DocumentIndexAdmin(admin.ModelAdmin):
-    list_display = ["index_name", "user", "description_preview", "document_count", "created_at", "updated_at"]
-    list_filter = ["created_at", "updated_at"]
-    search_fields = ["index_name", "description", "user__username"]
-    ordering = ["-created_at"]
-    raw_id_fields = ["user"]
-
-    @admin.display(description="描述")
-    def description_preview(self, obj):
-        return obj.description[:50] + "..." if obj.description and len(obj.description) > 50 else obj.description
-
+from .models import Document, IndexMetadata
 
 
 @admin.register(Document)
@@ -36,7 +22,6 @@ class DocumentAdmin(admin.ModelAdmin):
             return f"{size / (1024 * 1024):.1f} MB"
 
 
-
 @admin.register(IndexMetadata)
 class IndexMetadataAdmin(admin.ModelAdmin):
     list_display = [
@@ -46,11 +31,12 @@ class IndexMetadataAdmin(admin.ModelAdmin):
         "store_type",
         "embedding_model",
         "num_documents",
+        "is_deleted",
         "created_at",
         "updated_at",
     ]
-    list_filter = ["status", "store_type", "created_at"]
-    search_fields = ["name", "description", "embedding_model"]
+    list_filter = ["status", "store_type", "is_deleted", "created_at"]
+    search_fields = ["name", "description", "embedding_model", "user__username"]
     ordering = ["-created_at"]
     raw_id_fields = ["user"]
     readonly_fields = ["created_at", "updated_at"]

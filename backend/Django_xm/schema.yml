@@ -98,6 +98,20 @@ paths:
   /api/v1/approvals/:
     get:
       operationId: approvals_list
+      description: 审批列表（dj-15：真分页 + django-filter，替代 [:100] 硬截断）。
+      parameters:
+      - name: page
+        required: false
+        in: query
+        description: 分页结果集中的页码。
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: 每页返回的结果数量。
+        schema:
+          type: integer
       tags:
       - approvals
       security:
@@ -109,9 +123,7 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/ApprovalRead'
+                $ref: '#/components/schemas/PaginatedApprovalReadList'
           description: ''
   /api/v1/approvals/{interrupt_id}/:
     get:
@@ -156,15 +168,8 @@ paths:
       description: |-
         拒绝审批：通过 ApprovalGateway 统一路由（Path D）。
 
-        chat → SSE 流式恢复，deep_research → Redis 信令唤醒执行服务。
+        chat / deep_research → Redis 信令唤醒执行服务。
       parameters:
-      - in: query
-        name: format
-        schema:
-          type: string
-          enum:
-          - json
-          - txt
       - in: path
         name: interrupt_id
         schema:
@@ -193,9 +198,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApprovalRead'
-            text/event-stream:
-              schema:
-                $ref: '#/components/schemas/SSEEvent'
           description: ''
   /api/v1/approvals/{interrupt_id}/resume/:
     post:
@@ -203,16 +205,9 @@ paths:
       description: |-
         恢复审批：通过 ApprovalGateway 统一路由（Path D）。
 
-        chat → SSE 流式恢复，deep_research → Redis 信令唤醒执行服务。
+        chat / deep_research → Redis 信令唤醒执行服务。
         前端无需判断 source，统一调用此端点。
       parameters:
-      - in: query
-        name: format
-        schema:
-          type: string
-          enum:
-          - json
-          - txt
       - in: path
         name: interrupt_id
         schema:
@@ -241,9 +236,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApprovalRead'
-            text/event-stream:
-              schema:
-                $ref: '#/components/schemas/SSEEvent'
           description: ''
   /api/v1/attachments/admin/:
     get:
@@ -310,6 +302,12 @@ paths:
   /api/v1/cache/clear/:
     post:
       operationId: cache_clear_create
+      description: |-
+        缓存清除视图（scope 语义与 CacheInvalidateView 对齐）
+
+        权限按 scope 分派：
+        - query：仅清除当前用户自己的 rag_query 缓存，普通用户可用；
+        - all / model / pattern：影响全局缓存，仅管理员可用。
       tags:
       - cache
       security:
@@ -398,6 +396,12 @@ paths:
   /api/v1/chat/messages/{message_id}/:
     patch:
       operationId: chat_messages_partial_update
+      description: |-
+        消息资源视图（dj-16 路由规范化）。
+
+        承载 /chat/messages/<message_id>/ 资源路径的全部方法：
+        - PATCH：消息更新（继承 ChatMessageUpdateView.patch）
+        - DELETE：消息软删除（本类实现）
       parameters:
       - in: path
         name: message_id
@@ -612,13 +616,29 @@ paths:
       description: 手动触发上下文压缩
       tags:
       - context
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContextCompressRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ContextCompressRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ContextCompressRequest'
+        required: true
       security:
       - jwtAuth: []
       - cookieAuth: []
       - basicAuth: []
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContextCompressResponse'
+          description: ''
   /api/v1/context/knowledge-graph/:
     delete:
       operationId: context_knowledge_graph_destroy
@@ -629,12 +649,19 @@ paths:
       - cookieAuth: []
       - basicAuth: []
       responses:
-        '204':
+        '200':
           description: No response body
   /api/v1/context/knowledge-graph/detail/:
     get:
       operationId: context_knowledge_graph_detail_retrieve
       description: 获取知识图谱实体和关系详情
+      parameters:
+      - in: query
+        name: session_id
+        schema:
+          type: string
+          minLength: 1
+        description: 会话ID
       tags:
       - context
       security:
@@ -643,7 +670,11 @@ paths:
       - basicAuth: []
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeGraphDetailResponse'
+          description: ''
   /api/v1/context/stats/:
     get:
       operationId: context_stats_retrieve
@@ -655,11 +686,22 @@ paths:
       - basicAuth: []
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContextStats'
+          description: ''
   /api/v1/context/token-budget/:
     get:
       operationId: context_token_budget_retrieve
       description: 获取 Token 预算使用情况
+      parameters:
+      - in: query
+        name: session_id
+        schema:
+          type: string
+          minLength: 1
+        description: 会话ID
       tags:
       - context
       security:
@@ -668,7 +710,11 @@ paths:
       - basicAuth: []
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenBudgetResponse'
+          description: ''
   /api/v1/core/:
     get:
       operationId: core_retrieve
@@ -742,356 +788,6 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/knowledge/async/indices/:
-    post:
-      operationId: knowledge_async_indices_create
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/knowledge/async/indices/{kb_id}/delete/:
-    delete:
-      operationId: knowledge_async_indices_delete_destroy
-      parameters:
-      - in: path
-        name: kb_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '204':
-          description: No response body
-  /api/v1/knowledge/async/indices/{kb_id}/upload/:
-    post:
-      operationId: knowledge_async_indices_upload_create
-      parameters:
-      - in: path
-        name: kb_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/knowledge/indices/:
-    get:
-      operationId: knowledge_indices_retrieve
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-    post:
-      operationId: knowledge_indices_create
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/knowledge/indices/{kb_id}/:
-    get:
-      operationId: knowledge_indices_retrieve_2
-      parameters:
-      - in: path
-        name: kb_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-    patch:
-      operationId: knowledge_indices_partial_update
-      parameters:
-      - in: path
-        name: kb_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-    delete:
-      operationId: knowledge_indices_destroy
-      parameters:
-      - in: path
-        name: kb_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '204':
-          description: No response body
-  /api/v1/knowledge/indices/{kb_id}/add-directory/:
-    post:
-      operationId: knowledge_indices_add_directory_create
-      parameters:
-      - in: path
-        name: kb_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/knowledge/indices/{kb_id}/delete/:
-    get:
-      operationId: knowledge_indices_delete_retrieve
-      parameters:
-      - in: path
-        name: kb_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-    patch:
-      operationId: knowledge_indices_delete_partial_update
-      parameters:
-      - in: path
-        name: kb_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-    delete:
-      operationId: knowledge_indices_delete_destroy
-      parameters:
-      - in: path
-        name: kb_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '204':
-          description: No response body
-  /api/v1/knowledge/indices/{kb_id}/documents/:
-    get:
-      operationId: knowledge_indices_documents_retrieve
-      parameters:
-      - in: path
-        name: kb_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/knowledge/indices/{kb_id}/documents/{filename}/:
-    delete:
-      operationId: knowledge_indices_documents_destroy
-      parameters:
-      - in: path
-        name: filename
-        schema:
-          type: string
-        required: true
-      - in: path
-        name: kb_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '204':
-          description: No response body
-  /api/v1/knowledge/indices/{kb_id}/stats/:
-    get:
-      operationId: knowledge_indices_stats_retrieve
-      parameters:
-      - in: path
-        name: kb_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-    patch:
-      operationId: knowledge_indices_stats_partial_update
-      parameters:
-      - in: path
-        name: kb_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-    delete:
-      operationId: knowledge_indices_stats_destroy
-      parameters:
-      - in: path
-        name: kb_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '204':
-          description: No response body
-  /api/v1/knowledge/indices/{kb_id}/upload/:
-    post:
-      operationId: knowledge_indices_upload_create
-      parameters:
-      - in: path
-        name: kb_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/knowledge/indices/create/:
-    get:
-      operationId: knowledge_indices_create_retrieve
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-    post:
-      operationId: knowledge_indices_create_create
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/knowledge/indices/create-empty/:
-    get:
-      operationId: knowledge_indices_create_empty_retrieve
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-    post:
-      operationId: knowledge_indices_create_empty_create
-      tags:
-      - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
   /api/v1/knowledge/knowledge-bases/:
     get:
       operationId: knowledge_knowledge_bases_retrieve
@@ -1108,6 +804,18 @@ paths:
       operationId: knowledge_knowledge_bases_create
       tags:
       - knowledge
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateKnowledgeBase'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/CreateKnowledgeBase'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CreateKnowledgeBase'
+        required: true
       security:
       - jwtAuth: []
       - cookieAuth: []
@@ -1143,6 +851,17 @@ paths:
         required: true
       tags:
       - knowledge
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedUpdateKnowledgeBase'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedUpdateKnowledgeBase'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedUpdateKnowledgeBase'
       security:
       - jwtAuth: []
       - cookieAuth: []
@@ -1165,11 +884,28 @@ paths:
       - cookieAuth: []
       - basicAuth: []
       responses:
-        '204':
+        '200':
           description: No response body
   /api/v1/knowledge/knowledge-bases/{kb_id}/documents/:
     get:
       operationId: knowledge_knowledge_bases_documents_retrieve
+      parameters:
+      - in: path
+        name: kb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - knowledge
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: knowledge_knowledge_bases_documents_create
       parameters:
       - in: path
         name: kb_id
@@ -1206,7 +942,7 @@ paths:
       - cookieAuth: []
       - basicAuth: []
       responses:
-        '204':
+        '200':
           description: No response body
   /api/v1/knowledge/knowledge-bases/{kb_id}/search/:
     post:
@@ -1219,24 +955,18 @@ paths:
         required: true
       tags:
       - knowledge
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/knowledge/knowledge-bases/{kb_id}/upload/:
-    post:
-      operationId: knowledge_knowledge_bases_upload_create
-      parameters:
-      - in: path
-        name: kb_id
-        schema:
-          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KnowledgeBaseSearch'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/KnowledgeBaseSearch'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/KnowledgeBaseSearch'
         required: true
-      tags:
-      - knowledge
       security:
       - jwtAuth: []
       - cookieAuth: []
@@ -1249,18 +979,46 @@ paths:
       operationId: knowledge_query_create
       tags:
       - knowledge
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RagQuery'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/RagQuery'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RagQuery'
+        required: true
       security:
       - jwtAuth: []
       - cookieAuth: []
       - basicAuth: []
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RagResponse'
+          description: ''
   /api/v1/knowledge/query/stream/:
     post:
       operationId: knowledge_query_stream_create
       tags:
       - knowledge
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RagQuery'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/RagQuery'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RagQuery'
+        required: true
       security:
       - jwtAuth: []
       - cookieAuth: []
@@ -1273,6 +1031,41 @@ paths:
       operationId: knowledge_search_create
       tags:
       - knowledge
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResult'
+          description: ''
+  /api/v1/learning/{thread_id}/attempts/:
+    get:
+      operationId: learning_attempts_retrieve
+      description: 获取工作流练习轮次历史视图
+      parameters:
+      - in: path
+        name: thread_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - learning
       security:
       - jwtAuth: []
       - cookieAuth: []
@@ -1344,6 +1137,72 @@ paths:
       responses:
         '200':
           description: No response body
+  /api/v1/learning/{thread_id}/questions/:
+    get:
+      operationId: learning_questions_retrieve
+      description: 获取工作流所有题目列表视图
+      parameters:
+      - in: path
+        name: thread_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - learning
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/learning/{thread_id}/questions/{question_id}/:
+    put:
+      operationId: learning_questions_update
+      description: 修改单题答案并重新评分视图
+      parameters:
+      - in: path
+        name: question_id
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: thread_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - learning
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/learning/{thread_id}/restart/stream/:
+    post:
+      operationId: learning_restart_stream_create
+      description: |-
+        继续练习（流式）视图
+
+        快速创建新线程（不执行 LLM），SSE 逐步生成新一轮练习题，
+        与 start/stream 一致的流式体验：步骤条实时推进、不阻塞浏览器。
+      parameters:
+      - in: path
+        name: thread_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - learning
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
   /api/v1/learning/history/{thread_id}/:
     get:
       operationId: learning_history_retrieve
@@ -1376,13 +1235,28 @@ paths:
         4. 暂停，等待用户提交答案
       tags:
       - learning
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowStart'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/WorkflowStart'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/WorkflowStart'
       security:
       - jwtAuth: []
       - cookieAuth: []
       - basicAuth: []
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowResponse'
+          description: ''
   /api/v1/learning/start/stream/:
     post:
       operationId: learning_start_stream_create
@@ -1397,6 +1271,17 @@ paths:
         - error: 旧版兼容错误事件
       tags:
       - learning
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowStart'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/WorkflowStart'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/WorkflowStart'
       security:
       - jwtAuth: []
       - cookieAuth: []
@@ -1429,6 +1314,18 @@ paths:
       description: 提交用户答案，继续执行工作流
       tags:
       - learning
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowSubmit'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/WorkflowSubmit'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/WorkflowSubmit'
+        required: true
       security:
       - jwtAuth: []
       - cookieAuth: []
@@ -1436,16 +1333,10 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/learning/task/{thread_id}/:
-    delete:
-      operationId: learning_task_destroy
-      description: 删除工作流视图
-      parameters:
-      - in: path
-        name: thread_id
-        schema:
-          type: string
-        required: true
+  /api/v1/learning/tasks/:
+    get:
+      operationId: learning_tasks_retrieve
+      description: 获取工作流列表视图
       tags:
       - learning
       security:
@@ -1453,12 +1344,18 @@ paths:
       - cookieAuth: []
       - basicAuth: []
       responses:
-        '204':
+        '200':
           description: No response body
-  /api/v1/learning/tasks/:
-    get:
-      operationId: learning_tasks_retrieve
-      description: 获取工作流列表视图
+  /api/v1/learning/tasks/{thread_id}/:
+    delete:
+      operationId: learning_tasks_destroy
+      description: 删除工作流任务视图
+      parameters:
+      - in: path
+        name: thread_id
+        schema:
+          type: string
+        required: true
       tags:
       - learning
       security:
@@ -1543,6 +1440,17 @@ paths:
         required: true
       tags:
       - research
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResearchContinue'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ResearchContinue'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ResearchContinue'
       security:
       - jwtAuth: []
       - cookieAuth: []
@@ -1614,24 +1522,6 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/research/result/{task_id}/:
-    get:
-      operationId: research_result_retrieve
-      parameters:
-      - in: path
-        name: task_id
-        schema:
-          type: string
-        required: true
-      tags:
-      - research
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
   /api/v1/research/results/{task_id}/:
     get:
       operationId: research_results_retrieve
@@ -1667,6 +1557,18 @@ paths:
       operationId: research_start_create
       tags:
       - research
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResearchStart'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ResearchStart'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ResearchStart'
+        required: true
       security:
       - jwtAuth: []
       - cookieAuth: []
@@ -1692,9 +1594,21 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/research/task/{task_id}/:
+  /api/v1/research/tasks/:
+    get:
+      operationId: research_tasks_retrieve
+      tags:
+      - research
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/research/tasks/{task_id}/:
     delete:
-      operationId: research_task_destroy
+      operationId: research_tasks_destroy
       parameters:
       - in: path
         name: task_id
@@ -1708,13 +1622,41 @@ paths:
       - cookieAuth: []
       - basicAuth: []
       responses:
-        '204':
+        '200':
           description: No response body
-  /api/v1/research/tasks/:
-    get:
-      operationId: research_tasks_retrieve
+  /api/v1/research/tasks/{task_id}/retry-subagent/:
+    post:
+      operationId: research_tasks_retry_subagent_create
+      description: |-
+        单独重启失败子代理（Task 3）。
+
+        校验任务归属、目标子代理存在且处于失败状态后，发布 Redis 信令
+        （SIGNAL_RETRY_SUBAGENT），由执行服务向会话注入重试指令：
+        - 会话运行中：直接注入（adapter astream 循环按 chunk 消费并注入 graph state）
+        - 会话已结束/服务重启恢复态：从 checkpoint 恢复会话后注入
+
+        POST /api/v1/research/tasks/<task_id>/retry-subagent/
+        Body: {"agent_path": ["main", "web-researcher"], "tool_call_id": "call_xxx"}
+      parameters:
+      - in: path
+        name: task_id
+        schema:
+          type: string
+        required: true
       tags:
       - research
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResearchRetrySubagent'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ResearchRetrySubagent'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ResearchRetrySubagent'
+        required: true
       security:
       - jwtAuth: []
       - cookieAuth: []
@@ -1725,6 +1667,15 @@ paths:
   /api/v1/tools/custom/:
     get:
       operationId: tools_custom_retrieve
+      description: |-
+        自定义工具集合视图：GET 列表 / POST 上传创建
+
+        用户上传的 @tool 装饰器代码保存到数据库，默认审核状态为 pending
+        （等待管理员审核通过后才生效，approval_status='approved'）。
+        运行时通过受限沙箱动态加载为 BaseTool 实例。
+
+        限流：POST 上传保留 SensitiveOperationRateThrottle（scope='sensitive'）
+        防止恶意刷上传；GET 列表沿用全局默认限流。
       tags:
       - tools
       security:
@@ -1734,10 +1685,17 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/tools/custom/delete/:
     post:
-      operationId: tools_custom_delete_create
-      description: 删除自定义工具
+      operationId: tools_custom_create
+      description: |-
+        自定义工具集合视图：GET 列表 / POST 上传创建
+
+        用户上传的 @tool 装饰器代码保存到数据库，默认审核状态为 pending
+        （等待管理员审核通过后才生效，approval_status='approved'）。
+        运行时通过受限沙箱动态加载为 BaseTool 实例。
+
+        限流：POST 上传保留 SensitiveOperationRateThrottle（scope='sensitive'）
+        防止恶意刷上传；GET 列表沿用全局默认限流。
       tags:
       - tools
       security:
@@ -1747,10 +1705,16 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/tools/custom/toggle/:
-    post:
-      operationId: tools_custom_toggle_create
-      description: 启用/禁用自定义工具
+  /api/v1/tools/custom/{name}/:
+    put:
+      operationId: tools_custom_update
+      description: 自定义工具资源视图：PUT 更新 / DELETE 删除（name 经 URL path 传递）
+      parameters:
+      - in: path
+        name: name
+        schema:
+          type: string
+        required: true
       tags:
       - tools
       security:
@@ -1760,9 +1724,34 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/tools/custom/update/:
-    post:
-      operationId: tools_custom_update_create
+    delete:
+      operationId: tools_custom_destroy
+      description: 自定义工具资源视图：PUT 更新 / DELETE 删除（name 经 URL path 传递）
+      parameters:
+      - in: path
+        name: name
+        schema:
+          type: string
+        required: true
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/custom/{name}/status/:
+    patch:
+      operationId: tools_custom_status_partial_update
+      description: 自定义工具状态视图：PATCH 启用/禁用（body 可选 status，缺省自动取反）
+      parameters:
+      - in: path
+        name: name
+        schema:
+          type: string
+        required: true
       tags:
       - tools
       security:
@@ -1799,7 +1788,7 @@ paths:
   /api/v1/tools/mcp/servers/:
     get:
       operationId: tools_mcp_servers_retrieve
-      description: MCP Server 列表视图
+      description: MCP Server 集合视图：GET 列表 / POST 添加用户级 Server
       tags:
       - tools
       security:
@@ -1809,10 +1798,9 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/tools/mcp/servers/add/:
     post:
-      operationId: tools_mcp_servers_add_create
-      description: 添加用户级 MCP Server 视图
+      operationId: tools_mcp_servers_create
+      description: MCP Server 集合视图：GET 列表 / POST 添加用户级 Server
       tags:
       - tools
       security:
@@ -1822,10 +1810,76 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/tools/mcp/servers/delete/:
+  /api/v1/tools/mcp/servers/{name}/:
+    put:
+      operationId: tools_mcp_servers_update
+      description: MCP Server 资源视图：PUT 更新 / DELETE 删除（name 经 URL path 传递）
+      parameters:
+      - in: path
+        name: name
+        schema:
+          type: string
+        required: true
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: tools_mcp_servers_destroy
+      description: MCP Server 资源视图：PUT 更新 / DELETE 删除（name 经 URL path 传递）
+      parameters:
+      - in: path
+        name: name
+        schema:
+          type: string
+        required: true
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/mcp/servers/{name}/status/:
+    patch:
+      operationId: tools_mcp_servers_status_partial_update
+      description: MCP Server 状态视图：PATCH 启用/禁用（body 可选 status，缺省自动取反）
+      parameters:
+      - in: path
+        name: name
+        schema:
+          type: string
+        required: true
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/mcp/servers/{name}/test/:
     post:
-      operationId: tools_mcp_servers_delete_create
-      description: 删除用户级 MCP Server 视图
+      operationId: tools_mcp_servers_test_create
+      description: |-
+        MCP Server 连接测试（资源动作）
+
+        仅能测试已保存且 status=active 的 Server（含系统级配置），
+        name 经 URL path 传递。
+      parameters:
+      - in: path
+        name: name
+        schema:
+          type: string
+        required: true
       tags:
       - tools
       security:
@@ -1847,46 +1901,9 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/tools/mcp/servers/toggle/:
-    post:
-      operationId: tools_mcp_servers_toggle_create
-      description: 启用/禁用用户级 MCP Server 视图
-      tags:
-      - tools
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/tools/mcp/servers/update/:
-    post:
-      operationId: tools_mcp_servers_update_create
-      tags:
-      - tools
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
   /api/v1/tools/mcp/status/:
     get:
       operationId: tools_mcp_status_retrieve
-      tags:
-      - tools
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/tools/mcp/test/:
-    post:
-      operationId: tools_mcp_test_create
       tags:
       - tools
       security:
@@ -1923,7 +1940,7 @@ paths:
   /api/v1/tools/skills/:
     get:
       operationId: tools_skills_retrieve
-      description: Skill 列表视图
+      description: Skill 集合视图：GET 列表 / POST 创建自定义 Skill
       tags:
       - tools
       security:
@@ -1933,10 +1950,9 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/tools/skills/create/:
     post:
-      operationId: tools_skills_create_create
-      description: 创建自定义 Skill 视图
+      operationId: tools_skills_create
+      description: Skill 集合视图：GET 列表 / POST 创建自定义 Skill
       tags:
       - tools
       security:
@@ -1946,10 +1962,53 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/tools/skills/delete/:
-    post:
-      operationId: tools_skills_delete_create
-      description: 删除自定义 Skill 视图
+  /api/v1/tools/skills/{name}/:
+    put:
+      operationId: tools_skills_update
+      description: Skill 资源视图：PUT 更新 / DELETE 删除（name 经 URL path 传递）
+      parameters:
+      - in: path
+        name: name
+        schema:
+          type: string
+        required: true
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: tools_skills_destroy
+      description: Skill 资源视图：PUT 更新 / DELETE 删除（name 经 URL path 传递）
+      parameters:
+      - in: path
+        name: name
+        schema:
+          type: string
+        required: true
+      tags:
+      - tools
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - basicAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/tools/skills/{name}/status/:
+    patch:
+      operationId: tools_skills_status_partial_update
+      description: Skill 状态视图：PATCH 启用/禁用（body 可选 status，缺省自动取反）
+      parameters:
+      - in: path
+        name: name
+        schema:
+          type: string
+        required: true
       tags:
       - tools
       security:
@@ -1962,6 +2021,7 @@ paths:
   /api/v1/tools/skills/packages/:
     get:
       operationId: tools_skills_packages_retrieve
+      description: Skill 包集合视图：GET 列表 / POST 上传 ZIP 包
       tags:
       - tools
       security:
@@ -1971,10 +2031,9 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/tools/skills/packages/delete/:
     post:
-      operationId: tools_skills_packages_delete_create
-      description: 删除 Skill 包
+      operationId: tools_skills_packages_create
+      description: Skill 包集合视图：GET 列表 / POST 上传 ZIP 包
       tags:
       - tools
       security:
@@ -1984,10 +2043,16 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/tools/skills/packages/detail/:
+  /api/v1/tools/skills/packages/{name}/:
     get:
-      operationId: tools_skills_packages_detail_retrieve
-      description: 查看 Skill 包 SKILL.md 内容
+      operationId: tools_skills_packages_retrieve_2
+      description: Skill 包资源视图：GET 查看 SKILL.md 内容 / DELETE 卸载（name 经 URL path 传递）
+      parameters:
+      - in: path
+        name: name
+        schema:
+          type: string
+        required: true
       tags:
       - tools
       security:
@@ -1997,10 +2062,15 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/tools/skills/packages/toggle/:
-    post:
-      operationId: tools_skills_packages_toggle_create
-      description: 启用/禁用 Skill 包
+    delete:
+      operationId: tools_skills_packages_destroy
+      description: Skill 包资源视图：GET 查看 SKILL.md 内容 / DELETE 卸载（name 经 URL path 传递）
+      parameters:
+      - in: path
+        name: name
+        schema:
+          type: string
+        required: true
       tags:
       - tools
       security:
@@ -2010,56 +2080,16 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/tools/skills/toggle/:
-    post:
-      operationId: tools_skills_toggle_create
-      description: 切换自定义 Skill 状态视图
-      tags:
-      - tools
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/tools/skills/update/:
-    post:
-      operationId: tools_skills_update_create
-      description: 更新自定义 Skill 视图
-      tags:
-      - tools
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/tools/skills/upload/:
-    post:
-      operationId: tools_skills_upload_create
-      description: 上传 Skill 包（ZIP 压缩包）
-      tags:
-      - tools
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      - basicAuth: []
-      responses:
-        '200':
-          description: No response body
-  /api/v1/tools/upload/:
-    post:
-      operationId: tools_upload_create
-      description: |-
-        自定义工具上传视图
-
-        用户上传的 @tool 装饰器代码保存到数据库，默认审核状态为 pending
-        （等待管理员审核通过后才生效，approval_status='approved'）。
-        运行时通过受限沙箱动态加载为 BaseTool 实例。
-
-        限流：SensitiveOperationRateThrottle（scope='sensitive'）防止恶意刷上传。
+  /api/v1/tools/skills/packages/{name}/status/:
+    patch:
+      operationId: tools_skills_packages_status_partial_update
+      description: Skill 包状态视图：PATCH 启用/禁用（body 可选 status，缺省自动取反）
+      parameters:
+      - in: path
+        name: name
+        schema:
+          type: string
+        required: true
       tags:
       - tools
       security:
@@ -2079,7 +2109,7 @@ paths:
       - cookieAuth: []
       - basicAuth: []
       responses:
-        '204':
+        '200':
           description: No response body
   /api/v1/users/avatar/:
     post:
@@ -2435,7 +2465,7 @@ components:
       description: |-
         审批写序列化器。
 
-        白名单设计：客户端仅可提交 ``approved`` 与 ``user_input`` 两个字段。
+        白名单设计：客户端仅可提交 ``approved`` 与 ``user_input``。
 
         - ``approved``：是否批准（仅 resume 接口读取；reject 接口忽略并强制 False）
         - ``user_input``：用户输入文本（仅当 approval.action == confirm_with_input 时使用）
@@ -2464,14 +2494,24 @@ components:
       - username
     ChatMessage:
       type: object
+      description: |-
+        消息序列化器（模型输出 + 创建/更新输入）
+
+        research_task_map 契约（dj-04）：
+        - 实例化用于序列化（读取 ``.data``，含经 ChatSessionDetailSerializer
+          嵌套使用）时，必须经 ``context={"research_task_map": {...}}`` 提供
+          研究任务映射，映射由 :func:`build_research_task_map` 一次批量查询
+          构建（单条消息场景同样构造单元素映射）；缺失映射时
+          research_task_status / research_task_deleted 直接 KeyError 快速
+          失败，不提供逐条查询兜底。
+        - 仅做输入校验（``data=`` 且不读取 ``.data``）的实例传空映射即可。
       properties:
         id:
           type: integer
           readOnly: true
-        session:
+        session_id:
           type: integer
           readOnly: true
-          title: 会话
         role:
           allOf:
           - $ref: '#/components/schemas/ChatMessageRoleEnum'
@@ -2481,46 +2521,40 @@ components:
           title: 内容
           maxLength: 50000
         sources:
-          nullable: true
           title: 来源
         plan:
-          nullable: true
           title: 计划
         chain_of_thought:
-          nullable: true
-          title: 思维链
+          readOnly: true
         tool_calls:
-          nullable: true
-          title: 工具调用
+          readOnly: true
         approval:
-          nullable: true
           title: 审批数据
         reasoning:
-          nullable: true
           title: 推理
+        subagent_contents:
+          readOnly: true
         suggestions:
-          nullable: true
           title: 建议问题
         versions:
-          nullable: true
           title: 消息版本
         current_version:
           type: integer
-          maximum: 2147483647
-          minimum: 0
-          title: 当前版本索引
-          description: 当前展示的版本索引，指向 versions 数组的位置
+        is_finalized:
+          type: boolean
         attachments:
-          type: string
+          type: array
+          items: {}
           readOnly: true
         attachment_ids:
-          type: string
+          type: array
+          items:
+            type: integer
           readOnly: true
         created_at:
           type: string
           format: date-time
           readOnly: true
-          title: 创建时间
         model:
           type: string
           nullable: true
@@ -2528,30 +2562,52 @@ components:
           maxLength: 100
         token_count:
           type: integer
-          maximum: 2147483647
-          minimum: 0
-          title: Token 数量
+          readOnly: true
         token_detail:
-          title: Token 明细
+          readOnly: true
         response_time:
           type: number
           format: double
-          title: 响应时间(秒)
+          readOnly: true
         research_task_id:
           type: string
-          nullable: true
-          title: 关联深度研究任务ID
-          maxLength: 100
-        research_task_deleted:
+          readOnly: true
+        research_task_status:
           type: string
+          nullable: true
+          description: |-
+            返回关联研究任务的权威状态（P7 根因修复；dj-04 批量化）
+
+            前端刷新后凭该字段判定"研究进行中/已完成"，避免快照不含状态导致误显。
+            从 context["research_task_map"] 批量映射读取（调用方经
+            build_research_task_map 一次 all_objects 查询构建，含软删除），
+            消除逐条查询的 N+1；映射缺失时 KeyError 快速失败，禁止逐条查询兜底。
+          readOnly: true
+        research_task_deleted:
+          type: boolean
+          nullable: true
+          description: |-
+            检查关联的研究任务是否已软删除（dj-04 批量化）
+
+            语义与逐条查询版完全一致：任务不存在 → True（视为已删除）；
+            任务存在 → task.is_deleted（软删除可见性由 build_research_task_map
+            的 all_objects 查询保证）。
           readOnly: true
       required:
       - attachment_ids
       - attachments
+      - chain_of_thought
       - created_at
       - id
       - research_task_deleted
-      - session
+      - research_task_id
+      - research_task_status
+      - response_time
+      - session_id
+      - subagent_contents
+      - token_count
+      - token_detail
+      - tool_calls
     ChatMessageRoleEnum:
       enum:
       - user
@@ -2576,6 +2632,10 @@ components:
           description: 用户消息内容，1-10000字符
           maxLength: 10000
           minLength: 1
+        client_message_id:
+          type: string
+          description: 客户端消息幂等ID（可选），同一用户短时间内相同 ID 的重复请求将被去重
+          maxLength: 64
         chat_history:
           type: array
           items:
@@ -2684,6 +2744,20 @@ components:
           nullable: true
           description: 继续研究的任务ID，用于加载先前研究成果
           maxLength: 100
+        regenerate:
+          type: boolean
+          default: false
+          description: 是否重新生成：复用已有消息对（不新建 user/assistant），对 assistant 消息追加新版本
+        user_message_id:
+          type: string
+          nullable: true
+          description: 重新生成目标用户消息 ID（regenerate=True 时必填）
+          maxLength: 100
+        assistant_message_id:
+          type: string
+          nullable: true
+          description: 重新生成目标助手消息 ID（regenerate=True 时必填）
+          maxLength: 100
       required:
       - message
     ChatResponse:
@@ -2735,11 +2809,9 @@ components:
         selected_knowledge_base:
           type: string
           nullable: true
-          title: 选中的知识库
-          maxLength: 200
+          maxLength: 100
         selected_knowledge_bases:
           nullable: true
-          title: 选中的知识库列表
     ChatSessionDetail:
       type: object
       description: |-
@@ -2748,6 +2820,11 @@ components:
         用途：会话详情页展示，包含完整消息列表
         绑定模型：ChatSession
         注意：messages 字段会触发额外查询，建议配合 prefetch_related('messages') 使用
+
+        research_task_map 契约（dj-04）：嵌套的 messages 子序列化器会自动继承
+        本序列化器的 context，实例化时须传入
+        context={"research_task_map": build_research_task_map(session.messages.all())}，
+        避免子序列化器按消息逐条查询 ResearchTask（N+1）。
       properties:
         id:
           type: integer
@@ -2755,7 +2832,6 @@ components:
         session_id:
           type: string
           readOnly: true
-          title: 会话ID
         title:
           type: string
           title: 会话标题
@@ -2766,35 +2842,34 @@ components:
           title: 对话模式
         selected_knowledge_base:
           type: string
+          readOnly: true
           nullable: true
-          title: 选中的知识库
-          maxLength: 200
         selected_knowledge_bases:
+          readOnly: true
           nullable: true
-          title: 选中的知识库列表
         messages:
           type: array
           items:
             $ref: '#/components/schemas/ChatMessage'
           readOnly: true
         message_count:
-          type: string
+          type: integer
           readOnly: true
         created_at:
           type: string
           format: date-time
           readOnly: true
-          title: 创建时间
         updated_at:
           type: string
           format: date-time
           readOnly: true
-          title: 更新时间
       required:
       - created_at
       - id
       - message_count
       - messages
+      - selected_knowledge_base
+      - selected_knowledge_bases
       - session_id
       - updated_at
     ChatSessionList:
@@ -2811,7 +2886,6 @@ components:
         session_id:
           type: string
           readOnly: true
-          title: 会话ID
         title:
           type: string
           title: 会话标题
@@ -2822,12 +2896,11 @@ components:
           title: 对话模式
         selected_knowledge_base:
           type: string
+          readOnly: true
           nullable: true
-          title: 选中的知识库
-          maxLength: 200
         selected_knowledge_bases:
+          readOnly: true
           nullable: true
-          title: 选中的知识库列表
         message_count:
           type: integer
           readOnly: true
@@ -2835,18 +2908,109 @@ components:
           type: string
           format: date-time
           readOnly: true
-          title: 创建时间
         updated_at:
           type: string
           format: date-time
           readOnly: true
-          title: 更新时间
       required:
       - created_at
       - id
       - message_count
+      - selected_knowledge_base
+      - selected_knowledge_bases
       - session_id
       - updated_at
+    ContextCompressRequest:
+      type: object
+      properties:
+        session_id:
+          type: string
+          description: 会话ID
+      required:
+      - session_id
+    ContextCompressResponse:
+      type: object
+      properties:
+        original_tokens:
+          type: integer
+        compressed_tokens:
+          type: integer
+        compression_ratio:
+          type: number
+          format: double
+        messages_removed:
+          type: integer
+      required:
+      - compressed_tokens
+      - compression_ratio
+      - messages_removed
+      - original_tokens
+    ContextStats:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          nullable: true
+        compression_enabled:
+          type: boolean
+        knowledge_graph_enabled:
+          type: boolean
+        cross_session_enabled:
+          type: boolean
+        kg_entity_count:
+          type: integer
+          default: 0
+        kg_relation_count:
+          type: integer
+          default: 0
+      required:
+      - compression_enabled
+      - cross_session_enabled
+      - knowledge_graph_enabled
+      - user_id
+    CreateKnowledgeBase:
+      type: object
+      description: 创建知识库请求序列化器（views_kb.KnowledgeBaseListView.post）。
+      properties:
+        name:
+          type: string
+          description: 知识库名称
+          maxLength: 100
+        description:
+          type: string
+          default: ''
+          description: 知识库描述
+      required:
+      - name
+    Entity:
+      type: object
+      properties:
+        name:
+          type: string
+        entity_type:
+          type: string
+        properties:
+          type: object
+          additionalProperties: {}
+        confidence:
+          type: number
+          format: double
+        first_seen:
+          type: number
+          format: double
+        last_seen:
+          type: number
+          format: double
+        mention_count:
+          type: integer
+      required:
+      - confidence
+      - entity_type
+      - first_seen
+      - last_seen
+      - mention_count
+      - name
+      - properties
     FeatureUse:
       type: object
       properties:
@@ -2858,6 +3022,41 @@ components:
           additionalProperties: {}
       required:
       - feature
+    KnowledgeBaseSearch:
+      type: object
+      description: 知识库检索测试请求序列化器（views_kb.KnowledgeBaseSearchView.post）。
+      properties:
+        query:
+          type: string
+          description: 检索查询
+        top_k:
+          type: integer
+          maximum: 50
+          minimum: 1
+          default: 5
+          description: 返回结果数量
+      required:
+      - query
+    KnowledgeGraphDetailResponse:
+      type: object
+      properties:
+        entities:
+          type: array
+          items:
+            $ref: '#/components/schemas/Entity'
+        relations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Relation'
+        entity_count:
+          type: integer
+        relation_count:
+          type: integer
+      required:
+      - entities
+      - entity_count
+      - relation_count
+      - relations
     Message:
       type: object
       description: 聊天历史消息项 - 用于请求输入中的 chat_history 字段验证
@@ -2927,16 +3126,49 @@ components:
           maxLength: 200
       required:
       - path
+    PaginatedApprovalReadList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApprovalRead'
     PatchedChatMessage:
       type: object
+      description: |-
+        消息序列化器（模型输出 + 创建/更新输入）
+
+        research_task_map 契约（dj-04）：
+        - 实例化用于序列化（读取 ``.data``，含经 ChatSessionDetailSerializer
+          嵌套使用）时，必须经 ``context={"research_task_map": {...}}`` 提供
+          研究任务映射，映射由 :func:`build_research_task_map` 一次批量查询
+          构建（单条消息场景同样构造单元素映射）；缺失映射时
+          research_task_status / research_task_deleted 直接 KeyError 快速
+          失败，不提供逐条查询兜底。
+        - 仅做输入校验（``data=`` 且不读取 ``.data``）的实例传空映射即可。
       properties:
         id:
           type: integer
           readOnly: true
-        session:
+        session_id:
           type: integer
           readOnly: true
-          title: 会话
         role:
           allOf:
           - $ref: '#/components/schemas/ChatMessageRoleEnum'
@@ -2946,46 +3178,40 @@ components:
           title: 内容
           maxLength: 50000
         sources:
-          nullable: true
           title: 来源
         plan:
-          nullable: true
           title: 计划
         chain_of_thought:
-          nullable: true
-          title: 思维链
+          readOnly: true
         tool_calls:
-          nullable: true
-          title: 工具调用
+          readOnly: true
         approval:
-          nullable: true
           title: 审批数据
         reasoning:
-          nullable: true
           title: 推理
+        subagent_contents:
+          readOnly: true
         suggestions:
-          nullable: true
           title: 建议问题
         versions:
-          nullable: true
           title: 消息版本
         current_version:
           type: integer
-          maximum: 2147483647
-          minimum: 0
-          title: 当前版本索引
-          description: 当前展示的版本索引，指向 versions 数组的位置
+        is_finalized:
+          type: boolean
         attachments:
-          type: string
+          type: array
+          items: {}
           readOnly: true
         attachment_ids:
-          type: string
+          type: array
+          items:
+            type: integer
           readOnly: true
         created_at:
           type: string
           format: date-time
           readOnly: true
-          title: 创建时间
         model:
           type: string
           nullable: true
@@ -2993,22 +3219,36 @@ components:
           maxLength: 100
         token_count:
           type: integer
-          maximum: 2147483647
-          minimum: 0
-          title: Token 数量
+          readOnly: true
         token_detail:
-          title: Token 明细
+          readOnly: true
         response_time:
           type: number
           format: double
-          title: 响应时间(秒)
+          readOnly: true
         research_task_id:
           type: string
-          nullable: true
-          title: 关联深度研究任务ID
-          maxLength: 100
-        research_task_deleted:
+          readOnly: true
+        research_task_status:
           type: string
+          nullable: true
+          description: |-
+            返回关联研究任务的权威状态（P7 根因修复；dj-04 批量化）
+
+            前端刷新后凭该字段判定"研究进行中/已完成"，避免快照不含状态导致误显。
+            从 context["research_task_map"] 批量映射读取（调用方经
+            build_research_task_map 一次 all_objects 查询构建，含软删除），
+            消除逐条查询的 N+1；映射缺失时 KeyError 快速失败，禁止逐条查询兜底。
+          readOnly: true
+        research_task_deleted:
+          type: boolean
+          nullable: true
+          description: |-
+            检查关联的研究任务是否已软删除（dj-04 批量化）
+
+            语义与逐条查询版完全一致：任务不存在 → True（视为已删除）；
+            任务存在 → task.is_deleted（软删除可见性由 build_research_task_map
+            的 all_objects 查询保证）。
           readOnly: true
     PatchedChatSessionUpdate:
       type: object
@@ -3026,38 +3266,283 @@ components:
         selected_knowledge_base:
           type: string
           nullable: true
-          title: 选中的知识库
-          maxLength: 200
+          maxLength: 100
         selected_knowledge_bases:
           nullable: true
-          title: 选中的知识库列表
-    SSEEvent:
+    PatchedUpdateKnowledgeBase:
+      type: object
+      description: 更新知识库请求序列化器（views_kb.KnowledgeBaseDetailView.patch）。
+      properties:
+        description:
+          type: string
+          description: 知识库描述
+    RagQuery:
+      type: object
+      description: RAG 查询请求序列化器。
+      properties:
+        index_name:
+          type: string
+          description: 索引名称
+        query:
+          type: string
+          description: 查询问题
+          minLength: 1
+        k:
+          type: integer
+          maximum: 20
+          default: 4
+          description: 返回文档数量（最大 20）
+        return_sources:
+          type: boolean
+          default: true
+          description: 是否返回来源
+      required:
+      - index_name
+      - query
+    RagResponse:
+      type: object
+      description: RAG 查询响应序列化器。
+      properties:
+        answer:
+          type: string
+        sources:
+          type: array
+          items:
+            type: string
+        success:
+          type: boolean
+          default: true
+        error:
+          type: string
+          nullable: true
+      required:
+      - answer
+    Relation:
+      type: object
+      properties:
+        source:
+          type: string
+        target:
+          type: string
+        relation_type:
+          type: string
+        properties:
+          type: object
+          additionalProperties: {}
+        confidence:
+          type: number
+          format: double
+        created_at:
+          type: number
+          format: double
+      required:
+      - confidence
+      - created_at
+      - properties
+      - relation_type
+      - source
+      - target
+    ResearchContinue:
+      type: object
+      properties:
+        additional_query:
+          type: string
+          description: 补充说明（可选，追加到原研究主题后）
+        enable_web_search:
+          type: boolean
+          default: true
+        enable_doc_analysis:
+          type: boolean
+          default: false
+        knowledge_base_ids:
+          type: array
+          items:
+            type: string
+        use_mcp:
+          type: boolean
+          default: false
+        selected_mcp_servers:
+          type: array
+          items:
+            type: string
+        selected_tools:
+          type: array
+          items:
+            type: string
+        provider_id:
+          type: string
+          nullable: true
+        model_name:
+          type: string
+          nullable: true
+        enable_deep_thinking:
+          type: boolean
+          default: false
+        temperature:
+          type: number
+          format: double
+          maximum: 2
+          minimum: 0
+          nullable: true
+        max_tokens:
+          type: integer
+          minimum: 1
+          nullable: true
+        special_params:
+          type: object
+          additionalProperties: {}
+          nullable: true
+    ResearchRetrySubagent:
       type: object
       description: |-
-        SSE 事件流帧的简化 schema（仅用于 OpenAPI 文档描述）。
+        单独重启失败子代理请求序列化器（Task 3）。
 
-        SSE 帧的协议字段（``event``/``data``），``data`` 为 JSON 字符串。
-        OpenAPI 3.0 无法精确表达流式响应，此处以近似结构描述单帧，
-        供前端了解事件载荷字段，实际帧格式以 ``text/event-stream`` 协议为准。
+        字段：
+            agent_path: 目标子代理完整调用链路（如 ["main", "web-researcher"]）
+            tool_call_id: 失败子代理工具调用 ID（LLM tool_call.id）
       properties:
-        event:
+        agent_path:
+          type: array
+          items:
+            type: string
+            maxLength: 100
+          description: 目标子代理完整调用链路（如 ["main", "web-researcher"]）
+          maxItems: 10
+          minItems: 1
+        tool_call_id:
           type: string
-          description: 事件类型（如 message、error、done）
-        data:
-          type: string
-          description: 事件数据（JSON 字符串）
+          description: 失败子代理工具调用 ID
+          maxLength: 200
       required:
-      - data
+      - agent_path
+      - tool_call_id
+    ResearchStart:
+      type: object
+      description: 深度研究启动请求序列化器。
+      properties:
+        query:
+          type: string
+          description: 研究问题（最长 10000 字符）
+          maxLength: 10000
+          minLength: 1
+        thread_id:
+          type: string
+          nullable: true
+          description: 自定义线程 ID（可选）
+        task_id:
+          type: string
+          nullable: true
+          description: 任务 ID（已废弃，使用 thread_id）
+        research_depth:
+          type: string
+          default: standard
+          description: 研究深度：basic / standard / comprehensive
+        enable_web_search:
+          type: boolean
+          default: true
+          description: 是否启用网络搜索
+        enable_doc_analysis:
+          type: boolean
+          default: false
+          description: 是否启用文档分析
+        knowledge_base_ids:
+          type: array
+          items:
+            type: string
+          description: 关联的知识库 ID 列表
+        use_mcp:
+          type: boolean
+          default: false
+          description: 是否启用 MCP 工具
+        selected_mcp_servers:
+          type: array
+          items:
+            type: string
+          description: 选中的 MCP 服务器名称列表
+        selected_tools:
+          type: array
+          items:
+            type: string
+          description: 选中的工具名称列表
+        provider_id:
+          type: string
+          nullable: true
+          description: 模型提供商 ID
+        model_name:
+          type: string
+          nullable: true
+          description: 模型名称
+        enable_deep_thinking:
+          type: boolean
+          default: false
+          description: 是否启用深度思考
+        temperature:
+          type: number
+          format: double
+          maximum: 2
+          minimum: 0
+          nullable: true
+          description: 生成温度
+        max_tokens:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: 最大生成 token 数
+        special_params:
+          type: object
+          additionalProperties: {}
+          nullable: true
+          description: 模型专属参数（如 thinking、reasoning_effort）
+      required:
+      - query
+    SearchRequest:
+      type: object
+      description: 检索请求序列化器。
+      properties:
+        index_name:
+          type: string
+          description: 索引名称
+        query:
+          type: string
+          description: 检索查询
+          minLength: 1
+        k:
+          type: integer
+          maximum: 20
+          default: 4
+          description: 返回文档数量（最大 20）
+        score_threshold:
+          type: number
+          format: double
+          nullable: true
+          description: 相似度阈值
+      required:
+      - index_name
+      - query
+    SearchResult:
+      type: object
+      description: 检索结果序列化器。
+      properties:
+        content:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: {}
+        score:
+          type: number
+          format: double
+          nullable: true
+      required:
+      - content
+      - metadata
     SourceEnum:
       enum:
       - chat
       - deep_research
-      - learning
       type: string
       description: |-
         * `chat` - Chat
         * `deep_research` - Deep Research
-        * `learning` - Learning
     StateEnum:
       enum:
       - pending
@@ -3074,6 +3559,23 @@ components:
         * `approved` - Approved
         * `rejected` - Rejected
         * `timeout` - Timeout
+    TokenBudgetResponse:
+      type: object
+      properties:
+        total_budget:
+          type: integer
+        used:
+          type: integer
+        remaining:
+          type: integer
+        utilization_percent:
+          type: number
+          format: double
+      required:
+      - remaining
+      - total_budget
+      - used
+      - utilization_percent
     TokenRefresh:
       type: object
       properties:
@@ -3169,6 +3671,117 @@ components:
       - password
       - password_confirm
       - username
+    WorkflowResponse:
+      type: object
+      description: 工作流通用响应
+      properties:
+        thread_id:
+          type: string
+        status:
+          type: string
+        message:
+          type: string
+        current_step:
+          type: string
+        learning_plan:
+          type: object
+          additionalProperties: {}
+          nullable: true
+        quiz:
+          type: object
+          additionalProperties: {}
+          nullable: true
+        score:
+          type: integer
+          nullable: true
+        score_details:
+          type: object
+          additionalProperties: {}
+          nullable: true
+        feedback:
+          type: string
+        should_retry:
+          type: boolean
+          default: false
+        error:
+          type: string
+      required:
+      - status
+      - thread_id
+    WorkflowStart:
+      type: object
+      description: 启动工作流请求
+      properties:
+        user_question:
+          type: string
+          description: 用户的学习问题
+          minLength: 1
+        query:
+          type: string
+          description: 用户的学习问题 (别名)
+          minLength: 1
+        workflow_type:
+          type: string
+          description: 工作流类型
+        thread_id:
+          type: string
+          nullable: true
+          description: 可选的线程ID
+        knowledge_base_ids:
+          type: array
+          items:
+            type: string
+            maxLength: 100
+          description: 用户选择的知识库名称列表（原始名称，对应 KnowledgeBaseSelector 的 v-model）
+        use_deep_thinking:
+          type: boolean
+          default: false
+          description: 是否启用深度思考
+        use_web_search:
+          type: boolean
+          default: false
+          description: 是否启用网络查询
+        provider_id:
+          type: string
+          nullable: true
+          description: 模型提供商 ID
+          maxLength: 50
+        model_name:
+          type: string
+          nullable: true
+          description: 模型名称
+          maxLength: 100
+        temperature:
+          type: number
+          format: double
+          maximum: 2
+          minimum: 0
+          nullable: true
+          description: 生成温度
+        max_tokens:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: 最大生成 token 数
+        special_params:
+          type: object
+          additionalProperties: {}
+          nullable: true
+          description: 模型专属参数（如 thinking、reasoning_effort）
+    WorkflowSubmit:
+      type: object
+      description: 提交答案请求
+      properties:
+        thread_id:
+          type: string
+        answers:
+          type: object
+          additionalProperties:
+            type: string
+          description: '用户答案，格式：{question_id: answer}'
+      required:
+      - answers
+      - thread_id
   securitySchemes:
     basicAuth:
       type: http

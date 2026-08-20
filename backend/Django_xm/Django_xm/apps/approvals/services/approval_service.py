@@ -51,18 +51,18 @@ _UNSET = object()
 
 # Approval.state → EventType 映射
 _APPROVAL_STATE_TO_EVENT_TYPE: dict[str, EventType] = {
-    Approval.STATE_PENDING: EventType.APPROVAL_PENDING,
-    Approval.STATE_PROCESSING: EventType.APPROVAL_PROCESSING,
-    Approval.STATE_WAITING: EventType.APPROVAL_WAITING,
-    Approval.STATE_APPROVED: EventType.APPROVAL_APPROVED,
-    Approval.STATE_REJECTED: EventType.APPROVAL_REJECTED,
-    Approval.STATE_TIMEOUT: EventType.APPROVAL_TIMEOUT,
+    Approval.State.PENDING: EventType.APPROVAL_PENDING,
+    Approval.State.PROCESSING: EventType.APPROVAL_PROCESSING,
+    Approval.State.WAITING: EventType.APPROVAL_WAITING,
+    Approval.State.APPROVED: EventType.APPROVAL_APPROVED,
+    Approval.State.REJECTED: EventType.APPROVAL_REJECTED,
+    Approval.State.TIMEOUT: EventType.APPROVAL_TIMEOUT,
 }
 
 # Approval.source 字符串 → EventSource 枚举映射
 _SOURCE_TO_EVENT_SOURCE: dict[str, EventSource] = {
-    Approval.SOURCE_CHAT: EventSource.CHAT,
-    Approval.SOURCE_DEEP_RESEARCH: EventSource.DEEP_RESEARCH,
+    Approval.Source.CHAT: EventSource.CHAT,
+    Approval.Source.DEEP_RESEARCH: EventSource.DEEP_RESEARCH,
 }
 
 
@@ -561,7 +561,7 @@ def _count_remaining_pending(graph_interrupt_id: str, exclude_interrupt_id: str)
     return (
         Approval.objects.filter(
             extra__graph_interrupt_id=graph_interrupt_id,
-            state=Approval.STATE_PENDING,
+            state=Approval.State.PENDING,
         )
         .exclude(interrupt_id=exclude_interrupt_id)
         .count()
@@ -577,7 +577,7 @@ def _remaining_pending_condition(approval: Approval, state: str) -> tuple[str, s
     Returns:
         需要计算时返回 (graph_interrupt_id, interrupt_id)；否则返回 None（不注入字段）。
     """
-    if state != Approval.STATE_APPROVED:
+    if state != Approval.State.APPROVED:
         return None
     approval_extra = approval.extra if isinstance(approval.extra, dict) else {}
     graph_interrupt_id = approval_extra.get("graph_interrupt_id")
@@ -676,7 +676,7 @@ def _create_outbox_entry(approval: Approval, params: dict) -> ApprovalOutboxEntr
             approval=approval,
             event_type=event_type.value if hasattr(event_type, "value") else str(event_type),
             payload=params,
-            state=ApprovalOutboxEntry.STATE_PENDING,
+            state=ApprovalOutboxEntry.State.PENDING,
         )
     except Exception as e:
         logger.warning(
@@ -690,7 +690,7 @@ def _mark_outbox_delivered(outbox_entry: ApprovalOutboxEntry | None) -> None:
     if outbox_entry is None:
         return
     try:
-        outbox_entry.state = ApprovalOutboxEntry.STATE_DELIVERED
+        outbox_entry.state = ApprovalOutboxEntry.State.DELIVERED
         outbox_entry.delivered_at = _now()
         outbox_entry.save(update_fields=["state", "delivered_at"])
     except Exception as e:
@@ -722,7 +722,7 @@ def _broadcast_approval_changed(approval: Approval, state: str, extra: dict | No
         # 数据校验错误不可补偿，标记 outbox 为 failed 并向上抛出
         if outbox_entry is not None:
             try:
-                outbox_entry.state = ApprovalOutboxEntry.STATE_FAILED
+                outbox_entry.state = ApprovalOutboxEntry.State.FAILED
                 outbox_entry.error_message = "PayloadValidationError"
                 outbox_entry.save(update_fields=["state", "error_message"])
             except Exception:
@@ -772,7 +772,7 @@ async def _broadcast_approval_changed_async(approval: Approval, state: str, extr
     except PayloadValidationError:
         if outbox_entry is not None:
             try:
-                outbox_entry.state = ApprovalOutboxEntry.STATE_FAILED
+                outbox_entry.state = ApprovalOutboxEntry.State.FAILED
                 outbox_entry.error_message = "PayloadValidationError"
                 await sync_to_async(outbox_entry.save)(update_fields=["state", "error_message"])
             except Exception:
@@ -837,17 +837,17 @@ def _record_metrics_for_state(approval: Approval, state: str) -> None:
         TIMEOUT → on_timeout（递减 pending + 记录延迟）
         其他状态（PROCESSING/WAITING）→ 不累加（中间态，非终态）
     """
-    if state == Approval.STATE_PENDING:
+    if state == Approval.State.PENDING:
         risk_level = _extract_risk_level(approval)
         approval_metrics.on_created(risk_level)
         # HIGH 级审批创建时记录单会话滑动窗口（供 F3 熔断判定）
         if risk_level == RiskLevel.HIGH and approval.source_id:
             approval_metrics.record_high_risk_for_session(approval.source_id)
-    elif state == Approval.STATE_APPROVED:
+    elif state == Approval.State.APPROVED:
         approval_metrics.on_approved(_approval_created_timestamp(approval))
-    elif state == Approval.STATE_REJECTED:
+    elif state == Approval.State.REJECTED:
         approval_metrics.on_rejected(_approval_created_timestamp(approval))
-    elif state == Approval.STATE_TIMEOUT:
+    elif state == Approval.State.TIMEOUT:
         approval_metrics.on_timeout(_approval_created_timestamp(approval))
 
 
@@ -882,7 +882,7 @@ def _persist_and_broadcast(
     中对终态调用，导致前端 loadSessionDetail 兜底时拿到陈旧 pending 状态而非 waiting。
     修复后：replay 未覆盖的时间窗口内，前端通过 snapshot API 也能拿到正确的中间态。
     """
-    is_terminal = state in (Approval.STATE_APPROVED, Approval.STATE_REJECTED, Approval.STATE_TIMEOUT)
+    is_terminal = state in (Approval.State.APPROVED, Approval.State.REJECTED, Approval.State.TIMEOUT)
 
     if is_terminal:
         payload = _build_payload(approval, state=state, extra=extra)
@@ -895,10 +895,10 @@ def _persist_and_broadcast(
 
     # 工具调用事件联动（让 ToolCallCard 状态与审批面板分离）
     if not suppress_tool_event:
-        if state == Approval.STATE_PENDING:
+        if state == Approval.State.PENDING:
             # 审批创建：工具进入"等待审批"状态
             _publish_tool_call_waiting_event(approval)
-        elif state == Approval.STATE_PROCESSING:
+        elif state == Approval.State.PROCESSING:
             # 审批通过：工具开始执行。
             # 拒绝路径（extra._approved is False）不发布 RUNNING：resume_approval 对
             # 批次最后一个决断（无论批准/拒绝）统一广播 PROCESSING 以触发 LangGraph 恢复，
@@ -908,7 +908,7 @@ def _persist_and_broadcast(
             extra_dict = approval.extra if isinstance(approval.extra, dict) else {}
             if extra_dict.get("_approved") is not False:
                 _publish_tool_call_running_event(approval)
-        elif state == Approval.STATE_WAITING:
+        elif state == Approval.State.WAITING:
             # 同批次还有其他 pending：工具保持"等待"状态
             _publish_tool_call_waiting_event(approval)
 
@@ -1045,7 +1045,7 @@ def sync_approval_state_to_chat_message(approval: Approval, state: str) -> bool:
     # 优先通过 research_task_id 查找（深度研究场景）
     # 回退到 session 内最新的 assistant 消息
     chat_msg = None
-    if approval.source == Approval.SOURCE_DEEP_RESEARCH and approval.source_id:
+    if approval.source == Approval.Source.DEEP_RESEARCH and approval.source_id:
         chat_msg = (
             ChatMessage.objects.filter(
                 research_task_id=approval.source_id,
@@ -1074,7 +1074,7 @@ def sync_approval_state_to_chat_message(approval: Approval, state: str) -> bool:
         )
         return False
 
-    tool_calls = list(chat_msg.tool_calls or [])
+    tool_calls = list(chat_msg.tool_calls)
     target_tc = _match_tool_call_in_list(tool_calls, approval)
     if target_tc is None:
         # 重建缺失的 tool_call 项并追加到 tool_calls
@@ -1150,7 +1150,7 @@ def sync_approval_state_to_chat_message(approval: Approval, state: str) -> bool:
         return False
 
     # 同步更新 versions 中的对应 toolCall（全字段）
-    versions = chat_msg.versions or []
+    versions = chat_msg.versions
     version_updated = False
     if isinstance(versions, list) and versions:
         for ver in versions:
@@ -1201,7 +1201,7 @@ async def _persist_and_broadcast_async(approval: Approval, state: str, extra: di
     与同步版对称，对所有状态（包括非终态）调用 _sync_approval_state_to_chat_message_async，
     使 ChatMessage.tool_calls[].approval.state 反映中间态。
     """
-    is_terminal = state in (Approval.STATE_APPROVED, Approval.STATE_REJECTED, Approval.STATE_TIMEOUT)
+    is_terminal = state in (Approval.State.APPROVED, Approval.State.REJECTED, Approval.State.TIMEOUT)
 
     if is_terminal:
         payload = _build_payload(approval, state=state, extra=extra)
@@ -1212,15 +1212,15 @@ async def _persist_and_broadcast_async(approval: Approval, state: str, extra: di
     await _broadcast_approval_changed_async(approval, state, extra)
 
     # 工具调用事件联动（与同步版一致）
-    if state == Approval.STATE_PENDING:
+    if state == Approval.State.PENDING:
         _publish_tool_call_waiting_event(approval)
-    elif state == Approval.STATE_PROCESSING:
+    elif state == Approval.State.PROCESSING:
         # 与同步版一致：拒绝路径（extra._approved is False）不发布 RUNNING，
         # 避免拒绝工具卡"执行中"且 running→rejected 被状态机拦截。
         extra_dict = approval.extra if isinstance(approval.extra, dict) else {}
         if extra_dict.get("_approved") is not False:
             _publish_tool_call_running_event(approval)
-    elif state == Approval.STATE_WAITING:
+    elif state == Approval.State.WAITING:
         _publish_tool_call_waiting_event(approval)
 
     # 统一底层修复（Z1 次根因）：对所有状态同步 DB ChatMessage.tool_calls[].approval.state
@@ -1389,7 +1389,7 @@ async def request_approval_async(
     approval_data: dict[str, Any],
 ) -> Approval:
     # chat 模块强制要求 chat_session_id（事件路由依赖，M2）
-    if source == Approval.SOURCE_CHAT:
+    if source == Approval.Source.CHAT:
         chat_session_id = approval_data.get("session_id")
         if not chat_session_id:
             logger.error(
@@ -1446,7 +1446,7 @@ async def request_approval_async(
                 "operation": approval_data.get("operation", ""),
                 "danger_level": approval_data.get("danger_level", "medium"),
                 "parameters": approval_data.get("parameters", {}),
-                "state": Approval.STATE_PENDING,
+                "state": Approval.State.PENDING,
                 "user_input": None,
                 "extra": extra_data,
                 "resolved_at": None,
@@ -1465,7 +1465,7 @@ async def request_approval_async(
     if not created:
         await _reset_timestamps(approval)
 
-    pending_data = _build_payload(approval, state=Approval.STATE_PENDING)
+    pending_data = _build_payload(approval, state=Approval.State.PENDING)
     # persist_approval_pending 写入 approval:pending:{source_id}（待处理列表），
     # 与 _persist_and_broadcast_async 内的 persist_approval_state（approval:processed:{interrupt_id}）不同，
     # 两者职责互补，不可合并。
@@ -1475,7 +1475,7 @@ async def request_approval_async(
     # PENDING 广播 + TOOL_CALL_WAITING 联动（问题 O/P）+ ChatMessage.tool_calls
     # 中间态回写（Z1）+ metrics 采集，全部由统一出口完成。
     # 覆盖 M16 复用 interrupt_id 重新发起审批场景。
-    await _persist_and_broadcast_async(approval, Approval.STATE_PENDING)
+    await _persist_and_broadcast_async(approval, Approval.State.PENDING)
 
     logger.info(
         f"[ApprovalService] 异步发起审批: source={source}, source_id={source_id}, "
@@ -1514,7 +1514,7 @@ def resume_approval(
             "not_found": True,
         }
 
-    if approval.state in (Approval.STATE_APPROVED, Approval.STATE_REJECTED, Approval.STATE_TIMEOUT):
+    if approval.state in (Approval.State.APPROVED, Approval.State.REJECTED, Approval.State.TIMEOUT):
         logger.info(f"[ApprovalService] 审批已终态，幂等返回: interrupt_id={interrupt_id}, state={approval.state}")
         return {
             "approval": approval,
@@ -1523,7 +1523,7 @@ def resume_approval(
             "idempotent": True,
         }
 
-    if approval.state == Approval.STATE_PROCESSING:
+    if approval.state == Approval.State.PROCESSING:
         logger.info(f"[ApprovalService] 审批处理中(state={approval.state})，幂等返回: interrupt_id={interrupt_id}")
         return {
             "approval": approval,
@@ -1568,7 +1568,7 @@ def resume_approval(
                 "idempotent": True,
                 "not_found": True,
             }
-        if approval.state in (Approval.STATE_APPROVED, Approval.STATE_REJECTED, Approval.STATE_TIMEOUT):
+        if approval.state in (Approval.State.APPROVED, Approval.State.REJECTED, Approval.State.TIMEOUT):
             _release_lock(lock_key)
             return {
                 "approval": approval,
@@ -1595,12 +1595,12 @@ def resume_approval(
         # waiting 状态锁内复查（状态机完整性补全）：并发确认时可能有请求在
         # 兄弟尚未落库时置 waiting，其后无任何请求再检查批次。此处复查：
         # 批次已完整（无 PENDING 兄弟）→ 升级 processing 并触发恢复，杜绝永久卡 waiting。
-        if approval.state == Approval.STATE_WAITING:
+        if approval.state == Approval.State.WAITING:
             has_pending = False
             if graph_interrupt_id:
                 has_pending = Approval.objects.filter(
                     extra__graph_interrupt_id=graph_interrupt_id,
-                    state=Approval.STATE_PENDING,
+                    state=Approval.State.PENDING,
                 ).exists()
             if has_pending:
                 _release_lock(lock_key)
@@ -1613,11 +1613,11 @@ def resume_approval(
                     "resume_value": None,
                     "stream_generator": None,
                     "idempotent": True,
-                    "state": Approval.STATE_WAITING,
+                    "state": Approval.State.WAITING,
                 }
-            approval.state = Approval.STATE_PROCESSING
+            approval.state = Approval.State.PROCESSING
             approval.save(update_fields=["state"])
-            _persist_and_broadcast(approval, Approval.STATE_PROCESSING)
+            _persist_and_broadcast(approval, Approval.State.PROCESSING)
             _release_lock(lock_key)
             logger.info(
                 f"[ApprovalService] waiting 复查批次完整，升级 processing 恢复: "
@@ -1641,7 +1641,7 @@ def resume_approval(
         if graph_interrupt_id:
             pending_siblings = Approval.objects.filter(
                 extra__graph_interrupt_id=graph_interrupt_id,
-                state=Approval.STATE_PENDING,
+                state=Approval.State.PENDING,
             ).exclude(interrupt_id=interrupt_id)
             has_pending_siblings = pending_siblings.exists()
             logger.info(
@@ -1651,7 +1651,7 @@ def resume_approval(
                 f"has_pending={has_pending_siblings}"
             )
 
-        broadcast_state = Approval.STATE_WAITING if has_pending_siblings else Approval.STATE_PROCESSING
+        broadcast_state = Approval.State.WAITING if has_pending_siblings else Approval.State.PROCESSING
 
         approval.state = broadcast_state
         approval.user_input = user_input
@@ -1779,7 +1779,7 @@ def timeout_approval(interrupt_id: str, dispatch_resume: bool = True):
         logger.warning(f"[ApprovalService] 超时处理失败: 记录不存在, interrupt_id={interrupt_id}")
         return
 
-    if approval.state != Approval.STATE_PENDING:
+    if approval.state != Approval.State.PENDING:
         return
 
     # 锁 key 与 resume_approval 对称：批次维度（graph_interrupt_id）或单审批维度
@@ -1794,7 +1794,7 @@ def timeout_approval(interrupt_id: str, dispatch_resume: bool = True):
         return
 
     try:
-        approval.state = Approval.STATE_PROCESSING
+        approval.state = Approval.State.PROCESSING
         extra_data = approval.extra or {}
         if not isinstance(extra_data, dict):
             extra_data = {}
@@ -1809,17 +1809,17 @@ def timeout_approval(interrupt_id: str, dispatch_resume: bool = True):
         # PROCESSING 联动语义不一致）：
         # 1. 先持久化 PROCESSING（suppress_tool_event=True：仅 Redis 同步 + APPROVAL_PROCESSING
         #    广播，不联动发布 TOOL_CALL_RUNNING，避免前端短暂显示"执行中"再变为"超时"）
-        _persist_and_broadcast(approval, Approval.STATE_PROCESSING, suppress_tool_event=True)
+        _persist_and_broadcast(approval, Approval.State.PROCESSING, suppress_tool_event=True)
 
         # 2. 终态：APPROVAL_TIMEOUT（审批面板显示"审批已超时"）。
         #    Redis 终态持久化、ChatMessage.tool_calls 同步（Z1）与 metrics 均由统一出口完成。
-        _persist_and_broadcast(approval, Approval.STATE_TIMEOUT, extra={"timeout": True})
+        _persist_and_broadcast(approval, Approval.State.TIMEOUT, extra={"timeout": True})
         # DB 终态化：_persist_and_broadcast 只写 Redis+广播、不更新 DB，
         # 显式将 DB 状态更新为 TIMEOUT，保证 DB 与 Redis/前端语义一致。
         # 执行器 collect_batch_decisions 以 DB 状态为准，
         # DB 停留在 PROCESSING 会把"超时"误判为"已批准"（resolved=True），
         # 且下一次 cleanup 不再扫描（非 pending），造成终态不可达。
-        approval.state = Approval.STATE_TIMEOUT
+        approval.state = Approval.State.TIMEOUT
         approval.save(update_fields=["state"])
 
         # 工具卡片显示"审批超时"状态（与审批面板分离）
@@ -1858,7 +1858,7 @@ def get_approval_history_by_source(source_id: str) -> list:
 
 
 def get_pending_approvals(source_id: str | None = None, chat_session_id: str | None = None) -> list:
-    qs = Approval.objects.filter(state=Approval.STATE_PENDING)
+    qs = Approval.objects.filter(state=Approval.State.PENDING)
     if source_id:
         qs = qs.filter(source_id=source_id)
     if chat_session_id:

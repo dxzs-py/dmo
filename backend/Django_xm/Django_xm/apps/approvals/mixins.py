@@ -55,7 +55,7 @@ class BaseApprovalAccessMixin:
             ).exists():
                 return True
 
-        if approval.source == Approval.SOURCE_DEEP_RESEARCH:
+        if approval.source == Approval.Source.DEEP_RESEARCH:
             ResearchTask = _apps.get_model("research", "ResearchTask")
             if ResearchTask.objects.filter(
                 task_id=approval.source_id,

@@ -15,36 +15,28 @@ class Approval(models.Model):
     和 Redis List 中的数据。按 interrupt_id 唯一索引。
     """
 
-    # 审批来源
-    SOURCE_CHAT = "chat"
-    SOURCE_DEEP_RESEARCH = "deep_research"
-    SOURCE_CHOICES = [
-        (SOURCE_CHAT, "Chat"),
-        (SOURCE_DEEP_RESEARCH, "Deep Research"),
-    ]
+    class Source(models.TextChoices):
+        """审批来源"""
 
-    # 审批状态
-    STATE_PENDING = "pending"
-    STATE_PROCESSING = "processing"
-    STATE_WAITING = "waiting"  # 已审批但同批次还有其他 pending（批量审批场景）
-    STATE_APPROVED = "approved"
-    STATE_REJECTED = "rejected"
-    STATE_TIMEOUT = "timeout"
-    STATE_CHOICES = [
-        (STATE_PENDING, "Pending"),
-        (STATE_PROCESSING, "Processing"),
-        (STATE_WAITING, "Waiting"),
-        (STATE_APPROVED, "Approved"),
-        (STATE_REJECTED, "Rejected"),
-        (STATE_TIMEOUT, "Timeout"),
-    ]
+        CHAT = "chat", "Chat"
+        DEEP_RESEARCH = "deep_research", "Deep Research"
 
-    # 审批动作
+    class State(models.TextChoices):
+        """审批状态"""
+
+        PENDING = "pending", "Pending"
+        PROCESSING = "processing", "Processing"
+        WAITING = "waiting", "Waiting"  # 已审批但同批次还有其他 pending（批量审批场景）
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+        TIMEOUT = "timeout", "Timeout"
+
+    # 审批动作（字段无 choices，仅默认值常量）
     ACTION_CONFIRM = "confirm"
     ACTION_CONFIRM_WITH_INPUT = "confirm_with_input"
 
     interrupt_id = models.CharField(max_length=128, unique=True, db_index=True)
-    source = models.CharField(max_length=32, choices=SOURCE_CHOICES)
+    source = models.CharField(max_length=32, choices=Source.choices)
     source_id = models.CharField(max_length=128, db_index=True)  # session_id 或 task_id
     chat_session_id = models.CharField(max_length=128, null=True, blank=True, db_index=True)
     tool_name = models.CharField(max_length=128)
@@ -54,7 +46,7 @@ class Approval(models.Model):
     operation = models.TextField(blank=True, default="")
     danger_level = models.CharField(max_length=32, default="medium")
     parameters = models.JSONField(default=dict, blank=True)
-    state = models.CharField(max_length=32, choices=STATE_CHOICES, default=STATE_PENDING)
+    state = models.CharField(max_length=32, choices=State.choices, default=State.PENDING)
     user_input = models.TextField(null=True, blank=True)
     # 审批归属用户（根本性越权修复：替代通过 chat_session/source_id 跨表反查）
     # 历史数据通过 00XX_add_user_field 迁移回填；剩余 NULL 数据走 _user_owns_approval 三路 fallback
@@ -125,14 +117,12 @@ class ApprovalOutboxEntry(models.Model):
     避免引入 1s 轮询延迟影响审批事件的跨浏览器实时同步。
     """
 
-    STATE_PENDING = "pending"
-    STATE_DELIVERED = "delivered"
-    STATE_FAILED = "failed"
-    STATE_CHOICES = [
-        (STATE_PENDING, "Pending"),
-        (STATE_DELIVERED, "Delivered"),
-        (STATE_FAILED, "Failed"),
-    ]
+    class State(models.TextChoices):
+        """投递状态"""
+
+        PENDING = "pending", "Pending"
+        DELIVERED = "delivered", "Delivered"
+        FAILED = "failed", "Failed"
 
     approval = models.ForeignKey(
         Approval,
@@ -144,8 +134,8 @@ class ApprovalOutboxEntry(models.Model):
     payload = models.JSONField(default=dict, verbose_name="事件载荷")
     state = models.CharField(
         max_length=16,
-        choices=STATE_CHOICES,
-        default=STATE_PENDING,
+        choices=State.choices,
+        default=State.PENDING,
         verbose_name="投递状态",
     )
     attempts = models.IntegerField(default=0, verbose_name="重试次数")

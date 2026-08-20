@@ -47,7 +47,7 @@ export const workflowAPI = {
   getFiles(threadId) { return apiClient.get(`/learning/${threadId}/files/`) },
   downloadFile(threadId, filename) { return `${settings.apiBaseUrl}/learning/${threadId}/file/download/${filename}` },
   getFileContent(threadId, filename) { return apiClient.get(`/learning/${threadId}/file/content/${filename}/`) },
-  deleteTask(threadId) { return apiClient.delete(`/learning/task/${threadId}/`) },
+  deleteTask(threadId) { return apiClient.delete(`/learning/tasks/${threadId}/`) },
   /** 继续练习（流式）：快速创建新线程，SSE 逐步生成新一轮题目（与 startStream 一致体验） */
   restartStream(threadId, options = {}) {
     return fetchSSE(`/learning/${threadId}/restart/stream/`, {

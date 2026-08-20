@@ -20,12 +20,14 @@ urlpatterns = [
         name="chat_messages_batch_create",
     ),
     path("sessions/<str:session_id>/compact/", views.ChatSessionCompactView.as_view(), name="chat_sessions_compact"),
-    path("messages/<int:message_id>/", views.ChatMessageUpdateView.as_view(), name="chat_messages_update"),
-    path("messages/<int:message_id>/delete/", views.ChatMessageDeleteView.as_view(), name="message_delete"),
+    # 消息资源路由：PATCH 更新 / DELETE 删除共用同一视图（ChatMessageDeleteView
+    # 继承 ChatMessageUpdateView，同时承载 patch 与 delete 方法，遵循 tools app
+    # dj-06 资源化路由约定：资源明细路径唯一，方法由视图分发）
+    path("messages/<int:message_id>/", views.ChatMessageDeleteView.as_view(), name="chat_messages_delete"),
     path(
-        "sessions/<str:session_id>/messages/pair/delete/",
+        "sessions/<str:session_id>/messages/pair/<int:user_message_id>/",
         views.ChatMessagePairDeleteView.as_view(),
-        name="message_pair_delete",
+        name="chat_messages_pair_delete",
     ),
     path("commands/", views.ChatCommandsView.as_view(), name="chat_commands"),
     path("commands/execute/", views.ChatCommandExecuteView.as_view(), name="chat_commands_execute"),

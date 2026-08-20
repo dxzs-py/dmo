@@ -14,6 +14,7 @@ from rest_framework.views import APIView
 from Django_xm.apps.core.logging_utils import get_logger
 from Django_xm.apps.core.throttling import KnowledgeRateThrottle, MetaRateThrottle
 from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.pagination import paginate_to_dict
 from Django_xm.common.responses import (
     error_response,
     not_found_response,
@@ -42,31 +43,6 @@ from .services.kb_service import (
 logger = get_logger(__name__)
 
 
-def _paginate_list(items, page, page_size):
-    total = len(items)
-    start = (page - 1) * page_size
-    end = start + page_size
-    return {
-        "items": items[start:end],
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "total_pages": (total + page_size - 1) // page_size if total > 0 else 0,
-    }
-
-
-def _parse_page_params(request):
-    try:
-        page = max(int(request.query_params.get("page", 1)), 1)
-    except (ValueError, TypeError):
-        page = 1
-    try:
-        page_size = max(min(int(request.query_params.get("page_size", 20)), 100), 1)
-    except (ValueError, TypeError):
-        page_size = 20
-    return page, page_size
-
-
 class KnowledgeBaseListView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -76,9 +52,8 @@ class KnowledgeBaseListView(APIView):
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request):
         try:
-            page, page_size = _parse_page_params(request)
             user_indexes = list_knowledge_bases(request.user)
-            paginated = _paginate_list(user_indexes, page, page_size)
+            paginated = paginate_to_dict(user_indexes, request)
             return success_response(data=paginated)
         except Exception:
             logger.exception("获取知识库列表失败")
@@ -178,19 +153,14 @@ class KnowledgeBaseDocumentListView(APIView):
     permission_classes = [IsAuthenticated]
     # 上传（POST）为重操作，独立 knowledge 额度；GET 列表不受影响
     throttle_classes = [KnowledgeRateThrottle]
-
-    def get_parsers(self):
-        # POST 上传走 multipart/form；GET 仅读查询参数，JSON 解析即可
-        if self.request.method == "POST":
-            return [MultiPartParser(), FormParser()]
-        return [JSONParser()]
+    # POST 上传走 multipart/form；GET 无请求体，不受 parser 影响
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     @extend_schema(responses={200: EmptySerializer})
     def get(self, request, kb_id):
         try:
-            page, page_size = _parse_page_params(request)
             files = list_documents(request.user, kb_id)
-            paginated = _paginate_list(files, page, page_size)
+            paginated = paginate_to_dict(files, request)
             headers = {
                 "Cache-Control": "no-cache, no-store, must-revalidate",
                 "Pragma": "no-cache",

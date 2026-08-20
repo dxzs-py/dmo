@@ -19,6 +19,27 @@ class AttachmentStatus(models.TextChoices):
     DELETED = "deleted", "已删除"
 
 
+class CleanupAction(models.TextChoices):
+    CLEANUP = "cleanup", "定时清理"
+    INDEX = "index", "入库"
+    UNINDEX = "unindex", "移除入库"
+    MANUAL_DELETE = "manual_delete", "手动删除"
+    RESTORE = "restore", "恢复"
+    PERMANENT_DELETE = "permanent_delete", "永久删除"
+    RESTORE_FROM_TRASH = "restore_from_trash", "从回收站恢复"
+
+
+class AlertLevel(models.TextChoices):
+    WARNING = "warning", "警告"
+    CRITICAL = "critical", "严重"
+
+
+class AlertStatus(models.TextChoices):
+    ACTIVE = "active", "活跃"
+    ACKNOWLEDGED = "acknowledged", "已确认"
+    RESOLVED = "resolved", "已解决"
+
+
 class ChatAttachment(AuditModel):
     session = models.ForeignKey(
         "chat.ChatSession", on_delete=models.CASCADE, related_name="attachments", verbose_name="会话"
@@ -97,17 +118,9 @@ class ChatAttachment(AuditModel):
 
 
 class AttachmentCleanupLog(BaseModel):
-    ACTION_CHOICES = [
-        ("cleanup", "定时清理"),
-        ("index", "入库"),
-        ("unindex", "移除入库"),
-        ("manual_delete", "手动删除"),
-        ("restore", "恢复"),
-        ("permanent_delete", "永久删除"),
-        ("restore_from_trash", "从回收站恢复"),
-    ]
-
-    action = models.CharField(max_length=20, choices=ACTION_CHOICES, default="cleanup", verbose_name="操作类型")
+    action = models.CharField(
+        max_length=20, choices=CleanupAction.choices, default=CleanupAction.CLEANUP, verbose_name="操作类型"
+    )
     started_at = models.DateTimeField(verbose_name="开始时间")
     finished_at = models.DateTimeField(null=True, blank=True, verbose_name="完成时间")
     files_processed = models.PositiveIntegerField(default=0, verbose_name="处理文件数")
@@ -131,18 +144,10 @@ class AttachmentCleanupLog(BaseModel):
 
 
 class StorageAlert(BaseModel):
-    LEVEL_CHOICES = [
-        ("warning", "警告"),
-        ("critical", "严重"),
-    ]
-    STATUS_CHOICES = [
-        ("active", "活跃"),
-        ("acknowledged", "已确认"),
-        ("resolved", "已解决"),
-    ]
-
-    level = models.CharField(max_length=20, choices=LEVEL_CHOICES, verbose_name="告警级别")
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="active", verbose_name="告警状态")
+    level = models.CharField(max_length=20, choices=AlertLevel.choices, verbose_name="告警级别")
+    status = models.CharField(
+        max_length=20, choices=AlertStatus.choices, default=AlertStatus.ACTIVE, verbose_name="告警状态"
+    )
     storage_path = models.CharField(max_length=500, verbose_name="存储路径")
     total_space = models.PositiveBigIntegerField(verbose_name="总空间(字节)")
     used_space = models.PositiveBigIntegerField(verbose_name="已用空间(字节)")

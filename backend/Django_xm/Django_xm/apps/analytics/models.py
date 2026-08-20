@@ -52,12 +52,12 @@ class UserEvent(BaseModel):
         null=True,
         blank=True,
         related_name="analytics_events",
-        db_index=True,
+        db_index=False,
         verbose_name="用户",
     )
-    event_type = models.CharField(max_length=50, choices=EventType.choices, db_index=True, verbose_name="事件类型")
+    event_type = models.CharField(max_length=50, choices=EventType.choices, verbose_name="事件类型")
     event_category = models.CharField(
-        max_length=20, choices=EventCategory.choices, db_index=True, verbose_name="事件分类"
+        max_length=20, choices=EventCategory.choices, verbose_name="事件分类"
     )
     session_id = models.CharField(max_length=100, blank=True, default="", verbose_name="会话ID")
     resource_id = models.CharField(max_length=100, blank=True, default="", verbose_name="资源ID")
@@ -78,7 +78,6 @@ class UserEvent(BaseModel):
             models.Index(fields=["user", "-created_at"]),
             models.Index(fields=["event_category", "-created_at"]),
             models.Index(fields=["event_type", "-created_at"]),
-            models.Index(fields=["created_at"]),
             models.Index(fields=["event_category", "event_type"]),
         ]
 
@@ -91,6 +90,7 @@ class DailyAggregation(BaseModel):
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="analytics_daily_aggregations",
+        db_index=False,
         verbose_name="用户",
     )
     date = models.DateField(db_index=True, verbose_name="日期")
@@ -119,10 +119,6 @@ class DailyAggregation(BaseModel):
         verbose_name = "每日统计汇总"
         verbose_name_plural = "每日统计汇总"
         unique_together = ("user", "date")
-        indexes = [
-            models.Index(fields=["date"]),
-            models.Index(fields=["user", "-date"]),
-        ]
 
     def __str__(self):
         return f"DailyAggregation({self.user_id}, {self.date})"

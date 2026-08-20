@@ -58,7 +58,7 @@ async def _wait_for_chat_batch_decision(
             if executor._stop_requested:
                 raise asyncio.CancelledError("用户停止生成")
             decisions, all_resolved = await sync_to_async(collect_batch_decisions)(
-                Approval.SOURCE_CHAT, session_id, graph_interrupt_id
+                Approval.Source.CHAT, session_id, graph_interrupt_id
             )
             if all_resolved:
                 break
@@ -74,7 +74,7 @@ async def _wait_for_chat_batch_decision(
         f"[ChatExec] 批次全部决断，恢复执行: session={session_id}, "
         f"graph_interrupt_id={graph_interrupt_id}, decisions={decisions}"
     )
-    await sync_to_async(finalize_batch_approvals)(decisions, Approval.SOURCE_CHAT, session_id)
+    await sync_to_async(finalize_batch_approvals)(decisions, Approval.Source.CHAT, session_id)
     return decisions
 
 

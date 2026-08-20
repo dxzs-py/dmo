@@ -4,33 +4,10 @@
  * 对接后端 /api/v1/approvals/ 端点：
  * - POST /approvals/{interrupt_id}/resume/：恢复审批（chat / deep_research / learning source 均走 SSE 流）
  * - POST /approvals/{interrupt_id}/reject/：拒绝审批
- * - GET /approvals/?source_id=...：查询审批历史
  * - GET /approvals/{interrupt_id}/：查询单条审批
  */
 
 import { apiClient } from '@/api/axios'
-
-/**
- * 查询审批历史
- *
- * 对接后端 GET /approvals/ 端点，支持按 source_id / source / state 组合过滤。
- * 审批记录是工具调用数据的唯一持久化来源（Approval 模型替代了原 ResearchTask.tool_calls 字段）。
- *
- * @param {string} sourceId - 来源 ID（session_id 或 task_id）
- * @param {Object} [options] - 额外过滤选项
- * @param {string} [options.source] - 审批来源过滤（'chat' | 'deep_research' | 'learning'）
- * @param {string} [options.state] - 审批状态过滤（'pending' | 'processing' | 'approved' | 'rejected' | 'timeout' | 'waiting'）
- * @returns {Promise} axios response
- */
-export function getApprovalHistory(sourceId, options = {}) {
-  if (!sourceId) {
-    return Promise.reject(new Error('sourceId 不能为空'))
-  }
-  const params = { sourceId }
-  if (options.source) params.source = options.source
-  if (options.state) params.state = options.state
-  return apiClient.get('/approvals/', { params })
-}
 
 /**
  * 查询单条审批

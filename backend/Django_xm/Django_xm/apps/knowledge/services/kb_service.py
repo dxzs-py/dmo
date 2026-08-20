@@ -11,6 +11,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from django.db.models import Count
+
 from Django_xm.apps.cache_manager.services.cache_service import (
     VectorSearchCacheService,
     invalidate_knowledge_cache,
@@ -18,7 +20,7 @@ from Django_xm.apps.cache_manager.services.cache_service import (
 from Django_xm.apps.knowledge.config import settings as app_cfg
 
 from ..exceptions import KnowledgeBaseAlreadyExistsError
-from ..models import Document, DocumentIndex
+from ..models import Document, IndexMetadata
 from ..views_utils import get_document_type, get_file_extension, get_original_index_name, get_user_index_name
 from .document_service import load_document
 from .embedding_service import get_embeddings
@@ -29,46 +31,61 @@ logger = logging.getLogger(__name__)
 
 
 def list_knowledge_bases(user) -> list[dict[str, Any]]:
-    """获取用户的知识库列表，过滤已删除的索引"""
-    deleted_index_names = set(
-        DocumentIndex.all_objects.filter(user=user, is_deleted=True).values_list("index_name", flat=True)
+    """获取用户的知识库列表（IndexMetadata 单一来源，objects 自动滤软删墓碑）。
+
+    计数语义（dj-13 修正）：document_count=真实文件数（Document 表派生），
+    chunk_count=向量块数（IndexMetadata.num_documents 镜像）。
+    """
+    prefix = f"user_{user.id}_"
+    records = list(
+        IndexMetadata.objects.filter(user=user, name__startswith=prefix).only(
+            "id", "name", "description", "num_documents", "created_at", "updated_at"
+        )
     )
 
-    manager = IndexManager()
-    all_indexes = manager.list_indexes()
+    # 文件数单一权威：Document 表一条聚合查询派生
+    doc_counts = {
+        row["index_id"]: row["cnt"]
+        for row in Document.objects.filter(
+            index_id__in=[record.id for record in records], is_deleted=False
+        ).annotate(cnt=Count("id")).values("index_id", "cnt")
+    }
 
     user_indexes = []
-    for idx_data in all_indexes:
-        name = idx_data.get("name", "")
-        if name.startswith(f"user_{user.id}_"):
-            original_name = get_original_index_name(name)
-            if original_name in deleted_index_names:
-                continue
-            user_indexes.append(
-                {
-                    "id": original_name,
-                    "name": original_name,
-                    "description": idx_data.get("description", ""),
-                    "num_documents": idx_data.get("num_documents", 0),
-                    "chunk_count": idx_data.get("num_documents", 0),
-                    "created_at": idx_data.get("created_at", ""),
-                    "updated_at": idx_data.get("updated_at", ""),
-                }
-            )
+    for record in records:
+        original_name = get_original_index_name(record.name)
+        user_indexes.append(
+            {
+                "id": original_name,
+                "name": original_name,
+                "description": record.description,
+                "document_count": doc_counts.get(record.id, 0),
+                "chunk_count": record.num_documents,
+                "created_at": record.created_at.isoformat() if record.created_at else "",
+                "updated_at": record.updated_at.isoformat() if record.updated_at else "",
+            }
+        )
 
     return user_indexes
 
 
 def create_knowledge_base(user, name: str, description: str = "") -> dict[str, Any]:
     """
-    创建知识库
+    创建知识库（IndexMetadata.all_objects 为查重权威）
+
+    分支语义：
+    - 活跃实体行 → existing=True 透传（幂等创建，不触碰向量索引）
+    - 软删墓碑 → 恢复（is_deleted/deleted_at 复位、status 重置 empty、
+      num_documents 清零、description 更新）+ 重建向量索引，existing=False
+    - 无实体行 + 向量残留 → KnowledgeBaseAlreadyExistsError（异常态，语义保留）
+    - 全新 → 显式落 user 归属后创建向量索引
 
     Returns:
         包含创建结果的字典，若已存在则返回 existing=True
 
     Raises:
         ValueError: 知识库名称为空
-        KnowledgeBaseAlreadyExistsError: 向量索引已存在（活跃同名知识库）
+        KnowledgeBaseAlreadyExistsError: 向量索引残留（无实体行的同名向量集合）
     """
     if not name:
         raise ValueError("知识库名称不能为空")
@@ -76,32 +93,38 @@ def create_knowledge_base(user, name: str, description: str = "") -> dict[str, A
     user_index_name = get_user_index_name(user, name)
     manager = IndexManager()
 
+    existing_meta = IndexMetadata.all_objects.filter(name=user_index_name).first()
+
+    if existing_meta and not existing_meta.is_deleted:
+        # 活跃实体行：existing=True 透传（计数派生，与列表语义一致）
+        return {
+            "id": name,
+            "name": name,
+            "description": existing_meta.description,
+            "document_count": Document.objects.filter(index=existing_meta, is_deleted=False).count(),
+            "chunk_count": existing_meta.num_documents,
+            "existing": True,
+        }
+
+    # 无活跃实体行时校验向量残留（软删墓碑 + 向量删除失败同名重建同样拒绝）
     if manager.index_exists(user_index_name):
         raise KnowledgeBaseAlreadyExistsError(f"知识库已存在: {name}", name)
 
-    manager.create_empty_index(name=user_index_name, description=description)
-
-    existing = DocumentIndex.all_objects.filter(user=user, index_name=name).first()
-    if existing:
-        if existing.is_deleted:
-            existing.is_deleted = False
-            existing.deleted_at = None
-            existing.description = description
-            existing.save()
-            index_obj = existing
-        else:
-            invalidate_knowledge_cache(user_id=user.id)
-            return {
-                "id": name,
-                "name": name,
-                "description": existing.description,
-                "document_count": existing.document_count,
-                "chunk_count": 0,
-                "existing": True,
-            }
+    if existing_meta:
+        # 命中软删墓碑：恢复实体（向量索引已随删除流程清理，此处重建）
+        existing_meta.is_deleted = False
+        existing_meta.deleted_at = None
+        existing_meta.user = user
+        existing_meta.description = description
+        existing_meta.status = IndexMetadata.IndexStatus.EMPTY
+        existing_meta.num_documents = 0
+        existing_meta.save()
     else:
-        index_obj = DocumentIndex(user=user, index_name=name, description=description)
-        index_obj.save()
+        # 全新实体：显式落 user 归属（IndexManager._save_metadata_to_db 无 user 上下文，
+        # 该根源缺陷在此修复；后续 create_empty_index 的 update_or_create 只补元数据）
+        IndexMetadata.objects.create(user=user, name=user_index_name, description=description)
+
+    manager.create_empty_index(name=user_index_name, description=description)
 
     invalidate_knowledge_cache(user_id=user.id)
 
@@ -117,54 +140,48 @@ def create_knowledge_base(user, name: str, description: str = "") -> dict[str, A
 
 def get_knowledge_base_detail(user, kb_id: str) -> dict[str, Any]:
     """
-    获取知识库详情
+    获取知识库详情（IndexMetadata 实体 + 向量库 stats）
 
     Raises:
         FileNotFoundError: 知识库不存在
     """
     user_index_name = get_user_index_name(user, kb_id)
-    manager = IndexManager()
+    index_meta = IndexMetadata.objects.filter(name=user_index_name).first()
 
-    if not manager.index_exists(user_index_name):
+    if not index_meta:
         raise FileNotFoundError(f"知识库不存在: {kb_id}")
 
+    manager = IndexManager()
     stats = manager.get_index_stats(user_index_name)
-    metadata = manager._load_metadata(user_index_name) or {}
 
     return {
         "id": kb_id,
         "name": kb_id,
-        "description": metadata.get("description", ""),
+        "description": index_meta.description,
+        "document_count": Document.objects.filter(index=index_meta, is_deleted=False).count(),
         "chunk_count": stats.get("num_documents", 0),
         "store_type": stats.get("store_type", ""),
         "embedding_model": stats.get("embedding_model", ""),
-        "created_at": metadata.get("created_at", ""),
-        "updated_at": metadata.get("updated_at", ""),
+        "created_at": index_meta.created_at.isoformat() if index_meta.created_at else "",
+        "updated_at": index_meta.updated_at.isoformat() if index_meta.updated_at else "",
     }
 
 
 def update_knowledge_base(user, kb_id: str, description: str) -> dict[str, Any]:
     """
-    更新知识库描述
+    更新知识库描述（IndexMetadata 单点写，pgvector 元数据即库表）
 
     Raises:
         FileNotFoundError: 知识库不存在
     """
     user_index_name = get_user_index_name(user, kb_id)
-    manager = IndexManager()
+    index_meta = IndexMetadata.objects.filter(name=user_index_name).first()
 
-    if not manager.index_exists(user_index_name):
+    if not index_meta:
         raise FileNotFoundError(f"知识库不存在: {kb_id}")
 
-    metadata = manager._load_metadata(user_index_name) or {}
-    metadata["description"] = description
-    metadata["updated_at"] = datetime.now(UTC).isoformat()
-    manager._save_metadata(user_index_name, metadata)
-
-    index_obj = DocumentIndex.objects.filter(user=user, index_name=kb_id).first()
-    if index_obj:
-        index_obj.description = description
-        index_obj.save()
+    index_meta.description = description
+    index_meta.save(update_fields=["description", "updated_at"])
 
     invalidate_knowledge_cache(user_id=user.id)
 
@@ -177,23 +194,22 @@ def update_knowledge_base(user, kb_id: str, description: str) -> dict[str, Any]:
 
 def delete_knowledge_base(user, kb_id: str) -> None:
     """
-    删除知识库，包括向量索引、数据库记录、上传文件和缓存
+    删除知识库：向量索引/上传目录硬删，IndexMetadata 实体与 Document 行软删（墓碑）
 
     Raises:
         FileNotFoundError: 知识库不存在
     """
     user_index_name = get_user_index_name(user, kb_id)
-    manager = IndexManager()
+    index_meta = IndexMetadata.objects.filter(name=user_index_name).first()
 
-    if not manager.index_exists(user_index_name):
+    if not index_meta:
         raise FileNotFoundError(f"知识库不存在: {kb_id}")
 
+    manager = IndexManager()
     manager.delete_index(user_index_name)
 
-    index_obj = DocumentIndex.objects.filter(user=user, index_name=kb_id).first()
-    if index_obj:
-        Document.objects.filter(index=index_obj).update(is_deleted=True)
-        index_obj.soft_delete()
+    Document.objects.filter(index=index_meta).update(is_deleted=True)
+    index_meta.soft_delete()
 
     upload_dir = Path(app_cfg.data_uploads_path) / user_index_name
     if upload_dir.exists() and upload_dir.is_dir():
@@ -312,8 +328,9 @@ def process_uploaded_documents(
     """
     user_index_name = get_user_index_name(user, kb_id)
     manager = IndexManager()
+    index_meta = IndexMetadata.objects.filter(name=user_index_name).first()
 
-    if not manager.index_exists(user_index_name):
+    if not index_meta:
         raise FileNotFoundError(f"知识库不存在: {kb_id}")
 
     upload_dir = Path(app_cfg.data_uploads_path) / user_index_name
@@ -377,22 +394,18 @@ def process_uploaded_documents(
                 except Exception as e:
                     logger.warning(f"Embedding 降级：更新 SystemConfig 失败: {e}")
 
-    index_obj = DocumentIndex.objects.filter(user=user, index_name=kb_id).first()
-    if index_obj:
-        for file_info in saved_files:
-            ext = get_file_extension(file_info["name"])
-            doc_type = get_document_type(ext)
-            doc = Document(
-                index=index_obj,
-                filename=file_info["name"],
-                file_path=str(upload_dir / file_info["name"]),
-                file_type=doc_type,
-                file_size=file_info["size"],
-                chunk_count=len(chunks) // len(saved_files) if saved_files else 0,
-            )
-            doc.save()
-        index_obj.document_count += len(saved_files)
-        index_obj.save()
+    for file_info in saved_files:
+        ext = get_file_extension(file_info["name"])
+        doc_type = get_document_type(ext)
+        doc = Document(
+            index=index_meta,
+            filename=file_info["name"],
+            file_path=str(upload_dir / file_info["name"]),
+            file_type=doc_type,
+            file_size=file_info["size"],
+            chunk_count=len(chunks) // len(saved_files) if saved_files else 0,
+        )
+        doc.save()
 
     invalidate_knowledge_cache(user_id=user.id, user_index_name=user_index_name)
 
@@ -441,8 +454,9 @@ def delete_document(user, kb_id: str, filename: str) -> dict[str, Any]:
     """
     user_index_name = get_user_index_name(user, kb_id)
     manager = IndexManager()
+    index_meta = IndexMetadata.objects.filter(name=user_index_name).first()
 
-    if not manager.index_exists(user_index_name):
+    if not index_meta:
         raise FileNotFoundError(f"知识库不存在: {kb_id}")
 
     upload_dir = Path(app_cfg.data_uploads_path) / user_index_name
@@ -462,22 +476,12 @@ def delete_document(user, kb_id: str, filename: str) -> dict[str, Any]:
     except Exception as ve:
         logger.warning(f"从向量索引中删除文档失败: {ve}")
 
-    index_obj = DocumentIndex.objects.filter(user=user, index_name=kb_id).first()
-    if index_obj:
-        doc = Document.objects.filter(index=index_obj, filename=filename).first()
-        if doc:
-            doc.soft_delete()
-        index_obj.document_count = max(0, index_obj.document_count - 1)
-        index_obj.save()
+    doc = Document.objects.filter(index=index_meta, filename=filename).first()
+    if doc:
+        doc.soft_delete()
 
     file_path.unlink()
     logger.info(f"文件已从磁盘删除: {file_path}")
-
-    metadata = manager._load_metadata(user_index_name) or {}
-    metadata["updated_at"] = datetime.now(UTC).isoformat()
-    if "num_documents" in metadata:
-        metadata["num_documents"] = max(0, metadata["num_documents"] - 1)
-    manager._save_metadata(user_index_name, metadata)
 
     invalidate_knowledge_cache(user_id=user.id, user_index_name=user_index_name)
 
@@ -571,13 +575,11 @@ def rebuild_index_from_source_files(
         provider_id: 可选，指定 embedding provider
         embeddings: 可选，已创建的 Embeddings 实例
     """
-    # 从索引全名提取短名（user_1_test2 → test2）
-    original_name = get_original_index_name(kb_name)
-    index_obj = DocumentIndex.objects.filter(user=user, index_name=original_name).first()
-    if not index_obj:
+    index_meta = IndexMetadata.objects.filter(user=user, name=kb_name).first()
+    if not index_meta:
         raise FileNotFoundError(f"知识库不存在: {kb_name}")
 
-    docs = Document.objects.filter(index=index_obj, is_deleted=False)
+    docs = Document.objects.filter(index=index_meta, is_deleted=False)
 
     # 逐个从原始文件加载文档
     all_documents = []
@@ -611,7 +613,7 @@ def rebuild_index_from_source_files(
         name=kb_name,
         documents=chunks,
         embeddings=embeddings,
-        description=index_obj.description or "",
+        description=index_meta.description or "",
         store_type="pgvector",
         overwrite=True,
     )

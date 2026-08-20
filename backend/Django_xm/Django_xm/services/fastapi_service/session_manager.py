@@ -201,9 +201,9 @@ class SessionManager:
         )
 
         source = (
-            Approval.SOURCE_CHAT
+            Approval.Source.CHAT
             if session_type == SESSION_TYPE_CHAT
-            else Approval.SOURCE_DEEP_RESEARCH
+            else Approval.Source.DEEP_RESEARCH
         )
 
         # 非 dict 信令（审批超时 resume_value=TIMEOUT_DECISION="_timeout" 字符串）：

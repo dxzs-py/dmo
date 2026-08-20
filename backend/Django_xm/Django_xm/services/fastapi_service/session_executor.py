@@ -641,7 +641,7 @@ class SessionExecutor:
             return {}
 
         subagent_tool_entries: dict[str, dict] = {}
-        for tc in assistant_msg.tool_calls or []:
+        for tc in assistant_msg.tool_calls:
             if not isinstance(tc, dict):
                 continue
             if not tc.get("subagent_thread_id"):
@@ -650,7 +650,7 @@ class SessionExecutor:
             if key:
                 subagent_tool_entries[key] = dict(tc)
 
-        subagent_contents = assistant_msg.subagent_contents or {}
+        subagent_contents = assistant_msg.subagent_contents
         if not isinstance(subagent_contents, dict):
             subagent_contents = {}
 
@@ -679,11 +679,11 @@ class SessionExecutor:
                 return {}
             for gid in batch_ids:
                 decisions, all_resolved = await sync_to_async(collect_batch_decisions)(
-                    Approval.SOURCE_DEEP_RESEARCH, self.thread_id, gid
+                    Approval.Source.DEEP_RESEARCH, self.thread_id, gid
                 )
                 if all_resolved and decisions:
                     await sync_to_async(finalize_batch_approvals)(
-                        decisions, Approval.SOURCE_DEEP_RESEARCH, self.thread_id
+                        decisions, Approval.Source.DEEP_RESEARCH, self.thread_id
                     )
                     logger.info(
                         f"[SessionExecutor] 恢复首个已决断批次: thread_id={self.thread_id}, "
@@ -708,7 +708,7 @@ class SessionExecutor:
 
         return list(
             Approval.objects.filter(
-                source=Approval.SOURCE_DEEP_RESEARCH,
+                source=Approval.Source.DEEP_RESEARCH,
                 source_id=thread_id,
             )
             .values_list("extra__graph_interrupt_id", flat=True)
@@ -726,7 +726,7 @@ class SessionExecutor:
         """
         graph_interrupt_id = await create_approvals_for_interrupts(
             interrupts_data,
-            source=Approval.SOURCE_DEEP_RESEARCH,
+            source=Approval.Source.DEEP_RESEARCH,
             source_id=self.thread_id,
             user_id=self.user_id,
             chat_session_id=self.session_id,
@@ -772,7 +772,7 @@ class SessionExecutor:
                 if self._stop_requested:
                     raise asyncio.CancelledError("用户停止生成")
                 resume_by_interrupt, all_resolved = await sync_to_async(collect_batch_decisions)(
-                    Approval.SOURCE_DEEP_RESEARCH, self.thread_id, graph_interrupt_id
+                    Approval.Source.DEEP_RESEARCH, self.thread_id, graph_interrupt_id
                 )
                 if all_resolved:
                     break
@@ -794,7 +794,7 @@ class SessionExecutor:
             f"decisions={resume_by_interrupt}"
         )
         await sync_to_async(finalize_batch_approvals)(
-            resume_by_interrupt, Approval.SOURCE_DEEP_RESEARCH, self.thread_id
+            resume_by_interrupt, Approval.Source.DEEP_RESEARCH, self.thread_id
         )
         return resume_by_interrupt
 

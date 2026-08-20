@@ -1,11 +1,13 @@
 from django.urls import path
 
-from .views import (
+from .views_kb import (
     KnowledgeBaseDetailView,
     KnowledgeBaseDocumentDeleteView,
     KnowledgeBaseDocumentListView,
     KnowledgeBaseListView,
     KnowledgeBaseSearchView,
+)
+from .views_rag import (
     RAGQueryView,
     RAGSearchView,
     rag_query_stream,

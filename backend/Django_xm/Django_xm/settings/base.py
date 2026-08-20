@@ -241,7 +241,7 @@ REST_FRAMEWORK = {
         # 60/min 会被 4 浏览器同时打开瞬间打满，提升至 300/min 匹配设计意图
         "meta": "300/min",
     },
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "DEFAULT_PAGINATION_CLASS": "Django_xm.common.pagination.ProjectPagination",
     "PAGE_SIZE": 20,
     "SEARCH_PARAM": "search",
     "ORDERING_PARAM": "ordering",

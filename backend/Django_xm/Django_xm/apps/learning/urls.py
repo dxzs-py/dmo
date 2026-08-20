@@ -11,7 +11,7 @@ urlpatterns = [
     path("status/<str:thread_id>/", views.WorkflowStatusView.as_view(), name="status"),
     path("history/<str:thread_id>/", views.WorkflowHistoryView.as_view(), name="history"),
     path("stream/<str:thread_id>/", views.workflow_stream, name="stream"),
-    path("task/<str:thread_id>/", views.WorkflowDeleteView.as_view(), name="delete"),
+    path("tasks/<str:thread_id>/", views.WorkflowTaskDeleteView.as_view(), name="tasks_delete"),
     path("<str:thread_id>/restart/stream/", views.WorkflowRestartStreamView.as_view(), name="restart_stream"),
     path("<str:thread_id>/questions/", views.WorkflowQuestionListView.as_view(), name="questions"),
     path(
@@ -20,7 +20,6 @@ urlpatterns = [
         name="question_update",
     ),
     path("<str:thread_id>/attempts/", views.WorkflowAttemptListView.as_view(), name="attempts"),
-    # 新增API
     path("tasks/", views.WorkflowListView.as_view(), name="tasks"),
     path("<str:thread_id>/files/", views.WorkflowFilesListView.as_view(), name="task_files"),
     path(

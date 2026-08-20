@@ -1,12 +1,12 @@
-"""知识库创建/更新/检索校验规范化测试（dj-10）。
+"""知识库创建/更新/检索校验规范化测试（dj-10 + dj-13）。
 
 覆盖：
 - POST 缺 name → 400 INVALID_PARAMS（serializer 统一校验，message 含字段名）
 - POST 活跃同名向量索引 → 409 DUPLICATE_RESOURCE（KnowledgeBaseAlreadyExistsError 语义化分支，
   取代原「已存在」文案嗅探）
-- POST 预置软删除 DB 记录 → 恢复成功 200，DB 记录 is_deleted 复位
+- POST 预置软删除 DB 记录 → 恢复成功 200，IndexMetadata 墓碑复位（num_documents 清零）
 - POST 预置活跃 DB 记录且向量索引缺失 → 200 且 data.existing=True（existing 字段显式透传，
-  不再 pop 消费）
+  不再 pop 消费；document_count 派生 / chunk_count 镜像语义）
 - PATCH 空 body → 200 不报错，服务层收到 description=""
 - search 缺 query / top_k 越界 → 400 INVALID_PARAMS
 
@@ -28,7 +28,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from Django_xm.apps.knowledge import views_kb
-from Django_xm.apps.knowledge.models import DocumentIndex
+from Django_xm.apps.knowledge.models import Document, IndexMetadata
 from Django_xm.common.error_codes import ErrorCode
 
 KNOWLEDGE_BASES_URL = "/api/v1/knowledge/knowledge-bases/"
@@ -64,12 +64,12 @@ class KnowledgeBaseCreateValidationTests(TestCase):
         self.assertEqual(body["message"], "知识库已存在: dup-kb")
 
     def test_post_with_soft_deleted_record_restores(self):
-        """预置软删除 DB 记录 → 恢复路径 200，记录 is_deleted 复位。"""
-        DocumentIndex.all_objects.create(
+        """预置软删除 DB 记录 → 恢复路径 200，墓碑复位且块数镜像清零。"""
+        IndexMetadata.all_objects.create(
             user=self.user,
-            index_name="restore-kb",
+            name=f"user_{self.user.id}_restore-kb",
             description="旧描述",
-            document_count=3,
+            num_documents=3,
             is_deleted=True,
             deleted_at=timezone.now(),
         )
@@ -82,15 +82,27 @@ class KnowledgeBaseCreateValidationTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertFalse(body["data"]["existing"])
-        record = DocumentIndex.all_objects.get(user=self.user, index_name="restore-kb")
+        record = IndexMetadata.all_objects.get(name=f"user_{self.user.id}_restore-kb")
         self.assertFalse(record.is_deleted)
         self.assertIsNone(record.deleted_at)
         self.assertEqual(record.description, "新描述")
-        self.assertEqual(record.document_count, 3)
+        self.assertEqual(record.status, IndexMetadata.IndexStatus.EMPTY)
+        self.assertEqual(record.num_documents, 0)
 
     def test_post_with_active_db_record_returns_existing_true(self):
-        """预置活跃 DB 记录且向量索引缺失 → 200 + data.existing=True 显式透传。"""
-        DocumentIndex.objects.create(user=self.user, index_name="active-kb", description="既有", document_count=2)
+        """预置活跃 DB 记录且向量索引缺失 → 200 + existing=True + 派生计数语义。"""
+        meta = IndexMetadata.objects.create(
+            user=self.user,
+            name=f"user_{self.user.id}_active-kb",
+            description="既有",
+            num_documents=5,
+        )
+        Document.objects.create(
+            index=meta, filename="a.pdf", file_path="/tmp/a.pdf", file_size=10, chunk_count=2
+        )
+        Document.objects.create(
+            index=meta, filename="b.pdf", file_path="/tmp/b.pdf", file_size=10, chunk_count=2, is_deleted=True
+        )
         with (
             mock.patch(f"{_KB_SERVICE}.IndexManager") as manager_cls,
             mock.patch(f"{_KB_SERVICE}.invalidate_knowledge_cache"),
@@ -101,7 +113,8 @@ class KnowledgeBaseCreateValidationTests(TestCase):
         body = resp.json()
         self.assertEqual(body["message"], "知识库已存在")
         self.assertTrue(body["data"]["existing"])
-        self.assertEqual(body["data"]["document_count"], 2)
+        self.assertEqual(body["data"]["document_count"], 1)  # 派生文件数（滤软删 Document）
+        self.assertEqual(body["data"]["chunk_count"], 5)  # 向量块数镜像
 
 
 class KnowledgeBaseUpdateValidationTests(TestCase):

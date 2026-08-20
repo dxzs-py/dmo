@@ -15,8 +15,8 @@ def get_user_document_count(user):
 
 def get_user_index_count(user):
     """获取用户的知识库索引数量"""
-    DocumentIndex = apps.get_model("knowledge", "DocumentIndex")
-    return DocumentIndex.objects.filter(user=user, is_deleted=False).count()
+    IndexMetadata = apps.get_model("knowledge", "IndexMetadata")
+    return IndexMetadata.objects.filter(user=user, is_deleted=False).count()
 
 
 def get_index_manager():

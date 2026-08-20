@@ -403,7 +403,7 @@ def writeback_to_chat_message(
             if merge_source:
                 from Django_xm.apps.chat.services.stream_persistence import _merge_tool_calls_incremental
 
-                existing_tc = msg.tool_calls or []
+                existing_tc = msg.tool_calls
                 merged_tc = _merge_tool_calls_incremental(existing_tc, merge_source)
                 if merged_tc != existing_tc:
                     msg.tool_calls = merged_tc
@@ -423,7 +423,7 @@ def writeback_to_chat_message(
                         research_task.save(update_fields=["tool_calls", "updated_at"])
 
             # B5: 同步 versions[0].content（最终报告内容对 API 快照可见）
-            versions = msg.versions or []
+            versions = msg.versions
             if final_content and versions:
                 ver0 = versions[0] if isinstance(versions[0], dict) else {}
                 if ver0.get("content") != final_content:
@@ -435,7 +435,7 @@ def writeback_to_chat_message(
 
             # Agent 图层嵌套：子代理图层正文/思考落库（仅传入非空且与已有值不同时覆盖）
             if isinstance(subagent_contents, dict) and subagent_contents:
-                existing_sub = msg.subagent_contents or {}
+                existing_sub = msg.subagent_contents
                 if not isinstance(existing_sub, dict):
                     existing_sub = {}
                 if subagent_contents != existing_sub:
@@ -457,7 +457,7 @@ def writeback_to_chat_message(
 
         # 重新加载 tool_calls 用于广播（确保拿到合并后的最新数据）
         try:
-            tool_calls = ChatMessage.objects.only("tool_calls").get(id=chat_msg_id).tool_calls or []
+            tool_calls = ChatMessage.objects.only("tool_calls").get(id=chat_msg_id).tool_calls
         except ChatMessage.DoesNotExist:
             tool_calls = []
 
@@ -579,13 +579,13 @@ def persist_research_progress(
             chat_msg_id = str(msg.id)
             msg_save_fields: list[str] = []
             if merge_source:
-                existing_tc = msg.tool_calls or []
+                existing_tc = msg.tool_calls
                 merged_tc = _merge_tool_calls_incremental(existing_tc, merge_source)
                 if merged_tc != existing_tc:
                     msg.tool_calls = merged_tc
                     msg_save_fields.append("tool_calls")
             if isinstance(subagent_contents, dict) and subagent_contents:
-                existing_sub = msg.subagent_contents or {}
+                existing_sub = msg.subagent_contents
                 if not isinstance(existing_sub, dict):
                     existing_sub = {}
                 if subagent_contents != existing_sub:
@@ -608,7 +608,7 @@ def persist_research_progress(
             ChatMessage = apps.get_model("chat", "ChatMessage")
             try:
                 tool_calls = (
-                    ChatMessage.objects.only("tool_calls").get(id=chat_msg_id).tool_calls or []
+                    ChatMessage.objects.only("tool_calls").get(id=chat_msg_id).tool_calls
                 )
             except ChatMessage.DoesNotExist:
                 tool_calls = []

@@ -52,7 +52,7 @@ from Django_xm.common.constants import TIMEOUT_DECISION
 
 def _make_approval(
     interrupt_id: str,
-    state: str = Approval.STATE_PENDING,
+    state: str = Approval.State.PENDING,
     graph_interrupt_id: str | None = None,
     action: str = Approval.ACTION_CONFIRM,
     source_id: str = "session-1",
@@ -118,12 +118,12 @@ class ResumeApprovalStateMachineTests(TestCase):
 
         # 落库：状态 processing，extra 记录恢复值与决策
         approval.refresh_from_db()
-        self.assertEqual(approval.state, Approval.STATE_PROCESSING)
+        self.assertEqual(approval.state, Approval.State.PROCESSING)
         self.assertIs(approval.extra["_resume_value"], True)
         self.assertIs(approval.extra["_approved"], True)
 
         # 副作用：广播 processing；无批次时锁 key 为 interrupt_id 本身
-        self.pab_mock.assert_called_once_with(approval, Approval.STATE_PROCESSING)
+        self.pab_mock.assert_called_once_with(approval, Approval.State.PROCESSING)
         self.release_lock_mock.assert_called_once_with("call_single_ok")
 
     def test_resume_pending_single_approval_rejected_still_processing(self) -> None:
@@ -134,10 +134,10 @@ class ResumeApprovalStateMachineTests(TestCase):
 
         self.assertIs(result["resume_value"], False)
         approval.refresh_from_db()
-        self.assertEqual(approval.state, Approval.STATE_PROCESSING)
+        self.assertEqual(approval.state, Approval.State.PROCESSING)
         self.assertIs(approval.extra["_resume_value"], False)
         self.assertIs(approval.extra["_approved"], False)
-        self.pab_mock.assert_called_once_with(approval, Approval.STATE_PROCESSING)
+        self.pab_mock.assert_called_once_with(approval, Approval.State.PROCESSING)
 
     def test_resume_confirm_with_input_uses_user_input_as_resume_value(self) -> None:
         """confirm_with_input 动作：resume_value 取 user_input（缺省为空串）并落库。"""
@@ -163,21 +163,21 @@ class ResumeApprovalStateMachineTests(TestCase):
         _make_approval("call_r1", graph_interrupt_id=gid)
 
         result_reject = resume_approval("call_r0", approved=False)
-        self.assertEqual(result_reject["state"], Approval.STATE_WAITING)
+        self.assertEqual(result_reject["state"], Approval.State.WAITING)
         self.assertIs(result_reject["resume_value"], False)
         self.assertEqual(
-            Approval.objects.get(interrupt_id="call_r0").state, Approval.STATE_WAITING
+            Approval.objects.get(interrupt_id="call_r0").state, Approval.State.WAITING
         )
 
         result_last = resume_approval("call_r1", approved=True)
         self.assertNotIn("state", result_last)
         self.assertIs(result_last["resume_value"], True)
         self.assertEqual(
-            Approval.objects.get(interrupt_id="call_r1").state, Approval.STATE_PROCESSING
+            Approval.objects.get(interrupt_id="call_r1").state, Approval.State.PROCESSING
         )
         # 先决断者保持 waiting，等待批次恢复后统一消费
         self.assertEqual(
-            Approval.objects.get(interrupt_id="call_r0").state, Approval.STATE_WAITING
+            Approval.objects.get(interrupt_id="call_r0").state, Approval.State.WAITING
         )
 
         # 批次级锁：两次确认均以 graph_interrupt_id 为锁 key
@@ -187,7 +187,7 @@ class ResumeApprovalStateMachineTests(TestCase):
 
     def test_resume_on_terminal_state_returns_idempotent(self) -> None:
         """终态后重复 resume：幂等返回，不改库、不加锁、不广播。"""
-        for terminal in (Approval.STATE_APPROVED, Approval.STATE_REJECTED, Approval.STATE_TIMEOUT):
+        for terminal in (Approval.State.APPROVED, Approval.State.REJECTED, Approval.State.TIMEOUT):
             with self.subTest(terminal=terminal):
                 approval = _make_approval(f"call_term_{terminal}", state=terminal)
 
@@ -205,15 +205,15 @@ class ResumeApprovalStateMachineTests(TestCase):
 
     def test_resume_on_processing_returns_idempotent_with_state(self) -> None:
         """processing 中重复 resume：幂等返回并携带 state=processing，不进入锁竞争。"""
-        approval = _make_approval("call_processing", state=Approval.STATE_PROCESSING)
+        approval = _make_approval("call_processing", state=Approval.State.PROCESSING)
 
         result = resume_approval("call_processing", approved=True)
 
         self.assertTrue(result["idempotent"])
-        self.assertEqual(result["state"], Approval.STATE_PROCESSING)
+        self.assertEqual(result["state"], Approval.State.PROCESSING)
         self.assertIsNone(result["resume_value"])
         approval.refresh_from_db()
-        self.assertEqual(approval.state, Approval.STATE_PROCESSING)
+        self.assertEqual(approval.state, Approval.State.PROCESSING)
         self.acquire_retry_mock.assert_not_called()
         self.pab_mock.assert_not_called()
 
@@ -240,7 +240,7 @@ class CompleteApprovalTests(TestCase):
             source_id="session-c",
             chat_session_id="cs-session-c",
             tool_name="shell_exec",
-            state=Approval.STATE_PROCESSING,
+            state=Approval.State.PROCESSING,
             action=Approval.ACTION_CONFIRM,
             extra={
                 "graph_interrupt_id": "gid-c",
@@ -254,10 +254,10 @@ class CompleteApprovalTests(TestCase):
         with mock.patch(
             "Django_xm.common.approval_lifecycle.service.complete_batch"
         ) as complete_batch_mock:
-            complete_approval("call_c1", Approval.STATE_APPROVED, extra={"result": "ok"})
+            complete_approval("call_c1", Approval.State.APPROVED, extra={"result": "ok"})
 
         approval.refresh_from_db()
-        self.assertEqual(approval.state, Approval.STATE_APPROVED)
+        self.assertEqual(approval.state, Approval.State.APPROVED)
         self.assertIsNotNone(approval.resolved_at)
         # 临时键清理，业务字段保留，extra 参数合并
         extra = approval.extra
@@ -267,11 +267,11 @@ class CompleteApprovalTests(TestCase):
         self.assertEqual(extra["message_id"], "m-1")
         self.assertEqual(extra["result"], "ok")
 
-        self.pab_mock.assert_called_once_with(approval, Approval.STATE_APPROVED, {"result": "ok"})
+        self.pab_mock.assert_called_once_with(approval, Approval.State.APPROVED, {"result": "ok"})
         # 锁 key 与 resume 对称：批次维度优先
         self.release_lock_mock.assert_called_once_with("gid-c")
         # 同批次 waiting 兄弟终态化委托（graph_interrupt_id, interrupt_id, state）
-        complete_batch_mock.assert_called_once_with("gid-c", "call_c1", Approval.STATE_APPROVED)
+        complete_batch_mock.assert_called_once_with("gid-c", "call_c1", Approval.State.APPROVED)
 
     def test_complete_from_pending_without_batch(self) -> None:
         """从 pending 直接完成（无批次）：同样落终态，锁 key 回退为 interrupt_id。"""
@@ -280,31 +280,31 @@ class CompleteApprovalTests(TestCase):
         with mock.patch(
             "Django_xm.common.approval_lifecycle.service.complete_batch"
         ) as complete_batch_mock:
-            complete_approval("call_c2", Approval.STATE_REJECTED)
+            complete_approval("call_c2", Approval.State.REJECTED)
 
         approval.refresh_from_db()
-        self.assertEqual(approval.state, Approval.STATE_REJECTED)
+        self.assertEqual(approval.state, Approval.State.REJECTED)
         self.assertIsNotNone(approval.resolved_at)
-        self.pab_mock.assert_called_once_with(approval, Approval.STATE_REJECTED, None)
+        self.pab_mock.assert_called_once_with(approval, Approval.State.REJECTED, None)
         self.release_lock_mock.assert_called_once_with("call_c2")
-        complete_batch_mock.assert_called_once_with("", "call_c2", Approval.STATE_REJECTED)
+        complete_batch_mock.assert_called_once_with("", "call_c2", Approval.State.REJECTED)
 
     def test_complete_missing_record_is_silent_noop(self) -> None:
         """记录不存在：静默返回，无任何副作用。"""
-        self.assertIsNone(complete_approval("ghost_call", Approval.STATE_APPROVED))
+        self.assertIsNone(complete_approval("ghost_call", Approval.State.APPROVED))
         self.pab_mock.assert_not_called()
         self.release_lock_mock.assert_not_called()
 
     def test_complete_twice_keeps_terminal_state(self) -> None:
         """重复完成：幂等，状态保持终态不回退。"""
-        approval = _make_approval("call_c3", state=Approval.STATE_PROCESSING)
+        approval = _make_approval("call_c3", state=Approval.State.PROCESSING)
 
         with mock.patch("Django_xm.common.approval_lifecycle.service.complete_batch"):
-            complete_approval("call_c3", Approval.STATE_APPROVED)
-            complete_approval("call_c3", Approval.STATE_APPROVED)
+            complete_approval("call_c3", Approval.State.APPROVED)
+            complete_approval("call_c3", Approval.State.APPROVED)
 
         approval.refresh_from_db()
-        self.assertEqual(approval.state, Approval.STATE_APPROVED)
+        self.assertEqual(approval.state, Approval.State.APPROVED)
 
 
 class TimeoutApprovalTests(TestCase):
@@ -337,7 +337,7 @@ class TimeoutApprovalTests(TestCase):
         timeout_approval("call_t1", dispatch_resume=True)
 
         approval.refresh_from_db()
-        self.assertEqual(approval.state, Approval.STATE_TIMEOUT)
+        self.assertEqual(approval.state, Approval.State.TIMEOUT)
         self.assertEqual(approval.extra["_resume_value"], TIMEOUT_DECISION)
         self.assertIs(approval.extra["_approved"], False)
         self.assertIs(approval.extra["_timeout"], True)
@@ -345,8 +345,8 @@ class TimeoutApprovalTests(TestCase):
         # 中间态 PROCESSING（suppress_tool_event）→ 终态 TIMEOUT（extra={"timeout": True}）
         calls = self.pab_mock.call_args_list
         self.assertEqual(len(calls), 2)
-        self.assertEqual(calls[0], mock.call(approval, Approval.STATE_PROCESSING, suppress_tool_event=True))
-        self.assertEqual(calls[1], mock.call(approval, Approval.STATE_TIMEOUT, extra={"timeout": True}))
+        self.assertEqual(calls[0], mock.call(approval, Approval.State.PROCESSING, suppress_tool_event=True))
+        self.assertEqual(calls[1], mock.call(approval, Approval.State.TIMEOUT, extra={"timeout": True}))
 
         self.publish_timeout_mock.assert_called_once_with(approval)
         self.route_timeout_mock.assert_called_once_with(approval, resume_value=TIMEOUT_DECISION)
@@ -358,19 +358,19 @@ class TimeoutApprovalTests(TestCase):
         timeout_approval("call_t2", dispatch_resume=False)
 
         approval.refresh_from_db()
-        self.assertEqual(approval.state, Approval.STATE_TIMEOUT)
+        self.assertEqual(approval.state, Approval.State.TIMEOUT)
         self.assertEqual(approval.extra["_resume_value"], TIMEOUT_DECISION)
         self.publish_timeout_mock.assert_called_once_with(approval)
         self.route_timeout_mock.assert_not_called()
 
     def test_timeout_non_pending_state_is_noop(self) -> None:
         """非 pending 状态：直接返回，不改库、不加锁、不广播、不路由。"""
-        approval = _make_approval("call_t3", state=Approval.STATE_PROCESSING)
+        approval = _make_approval("call_t3", state=Approval.State.PROCESSING)
 
         timeout_approval("call_t3", dispatch_resume=True)
 
         approval.refresh_from_db()
-        self.assertEqual(approval.state, Approval.STATE_PROCESSING)
+        self.assertEqual(approval.state, Approval.State.PROCESSING)
         self.acquire_lock_mock.assert_not_called()
         self.pab_mock.assert_not_called()
         self.route_timeout_mock.assert_not_called()
@@ -389,7 +389,7 @@ class TimeoutApprovalTests(TestCase):
             timeout_approval("call_t4", dispatch_resume=True)
 
         approval.refresh_from_db()
-        self.assertEqual(approval.state, Approval.STATE_PENDING)
+        self.assertEqual(approval.state, Approval.State.PENDING)
         self.pab_mock.assert_not_called()
         self.route_timeout_mock.assert_not_called()
 
@@ -401,8 +401,8 @@ class ApprovalQueryTests(TestCase):
         """按 source_id 过滤：仅返回该 source 的 pending 记录。"""
         _make_approval("q_p1", source_id="s1")
         _make_approval("q_p2", source_id="s2")
-        _make_approval("q_p3", state=Approval.STATE_APPROVED, source_id="s1")
-        _make_approval("q_p4", state=Approval.STATE_PROCESSING, source_id="s1")
+        _make_approval("q_p3", state=Approval.State.APPROVED, source_id="s1")
+        _make_approval("q_p4", state=Approval.State.PROCESSING, source_id="s1")
 
         result_all = get_pending_approvals()
         self.assertEqual({a.interrupt_id for a in result_all}, {"q_p1", "q_p2"})
@@ -417,7 +417,7 @@ class ApprovalQueryTests(TestCase):
         """按 chat_session_id 过滤：命中该会话的 pending 记录。"""
         _make_approval("q_c1", source_id="s1", chat_session_id="cs-A")
         _make_approval("q_c2", source_id="s2", chat_session_id="cs-B")
-        _make_approval("q_c3", state=Approval.STATE_TIMEOUT, source_id="s1", chat_session_id="cs-A")
+        _make_approval("q_c3", state=Approval.State.TIMEOUT, source_id="s1", chat_session_id="cs-A")
 
         result = get_pending_approvals(chat_session_id="cs-A")
         self.assertEqual([a.interrupt_id for a in result], ["q_c1"])
@@ -428,8 +428,8 @@ class ApprovalQueryTests(TestCase):
     def test_get_approval_history_by_source_delegates_to_store(self) -> None:
         """get_approval_history_by_source：透传 source_id 并原样返回 store 结果。"""
         history = [
-            {"interrupt_id": "h1", "state": Approval.STATE_APPROVED},
-            {"interrupt_id": "h2", "state": Approval.STATE_PENDING},
+            {"interrupt_id": "h1", "state": Approval.State.APPROVED},
+            {"interrupt_id": "h2", "state": Approval.State.PENDING},
         ]
         with mock.patch.object(
             approval_service, "_get_approval_history_from_store", return_value=history

@@ -134,8 +134,8 @@ class ApprovalWriteSerializer(serializers.Serializer):
         但仍校验 attrs 中所有受控字段（防御性深度，防止未来扩展引入漏洞）。
         """
         valid_sources = {
-            Approval.SOURCE_CHAT,
-            Approval.SOURCE_DEEP_RESEARCH,
+            Approval.Source.CHAT,
+            Approval.Source.DEEP_RESEARCH,
         }
         valid_actions = {Approval.ACTION_CONFIRM, Approval.ACTION_CONFIRM_WITH_INPUT}
 

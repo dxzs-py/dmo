@@ -121,7 +121,7 @@ class ApprovalGateway:
         if approved and self._is_high_risk_approval(approval):
             self._check_circuit_breaker(approval)
 
-        if approval.source == Approval.SOURCE_CHAT:
+        if approval.source == Approval.Source.CHAT:
             return self._resume_chat(
                 request,
                 approval,
@@ -132,7 +132,7 @@ class ApprovalGateway:
                 approved=approved,
                 **kwargs,
             )
-        elif approval.source == Approval.SOURCE_DEEP_RESEARCH:
+        elif approval.source == Approval.Source.DEEP_RESEARCH:
             return self._resume_deep_research(
                 approval,
                 resume_value,
@@ -361,7 +361,7 @@ class ApprovalGateway:
         """
         effective_resume_value = resume_value if resume_value is not None else TIMEOUT_DECISION
 
-        if approval.source == Approval.SOURCE_CHAT:
+        if approval.source == Approval.Source.CHAT:
             self._resume_chat(
                 None,
                 approval,
@@ -371,7 +371,7 @@ class ApprovalGateway:
                 approved=False,
             )
 
-        elif approval.source == Approval.SOURCE_DEEP_RESEARCH:
+        elif approval.source == Approval.Source.DEEP_RESEARCH:
             self._resume_deep_research(
                 approval,
                 effective_resume_value,

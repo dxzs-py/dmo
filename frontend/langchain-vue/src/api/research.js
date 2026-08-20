@@ -7,7 +7,7 @@ export const deepResearchAPI = {
   getStatus(taskId) { return apiClient.get(`/research/status/${taskId}/`) },
   getResults(taskId) { return apiClient.get(`/research/results/${taskId}/`) },
   getTasks(params = {}) { return apiClient.get('/research/tasks/', { params }) },
-  deleteTask(taskId, params = {}) { return apiClient.delete(`/research/task/${taskId}/`, { params }) },
+  deleteTask(taskId, params = {}) { return apiClient.delete(`/research/tasks/${taskId}/`, { params }) },
   getFiles(taskId) { return apiClient.get(`/research/${taskId}/files/`) },
   downloadFile(taskId, filename) { return `${settings.apiBaseUrl}/research/${taskId}/file/download/${filename}` },
   getFileContent(taskId, filename) { return apiClient.get(`/research/${taskId}/file/content/${filename}/`) },
@@ -31,7 +31,7 @@ export const deepResearchAPI = {
    * @param {{ agentPath: string[], toolCallId: string }} data - 目标失败子代理的 agentPath 与触发工具调用 ID
    */
   retrySubagent(taskId, data) {
-    return apiClient.post(`/research/task/${taskId}/retry-subagent/`, data)
+    return apiClient.post(`/research/tasks/${taskId}/retry-subagent/`, data)
   },
 }
 

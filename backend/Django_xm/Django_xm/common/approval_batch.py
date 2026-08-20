@@ -34,7 +34,7 @@ def collect_batch_decisions(
     Command(resume=...) 的 key 必须是 LangGraph Interrupt.id（langgraph_resume_id）。
 
     Args:
-        source: 审批来源（``Approval.SOURCE_CHAT`` / ``Approval.SOURCE_DEEP_RESEARCH``）。
+        source: 审批来源（``Approval.Source.CHAT`` / ``Approval.Source.DEEP_RESEARCH``）。
         source_id: 会话/任务 ID（chat=session_id, deep_research=task_id）。
         graph_interrupt_id: 批次 ID。
 
@@ -57,18 +57,18 @@ def collect_batch_decisions(
         tc_id = extra.get("tool_call_id", approval.interrupt_id)
         langgraph_id = extra.get("langgraph_resume_id", graph_interrupt_id)
 
-        if approval.state == Approval.STATE_APPROVED:
+        if approval.state == Approval.State.APPROVED:
             resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = True
-        elif approval.state in (Approval.STATE_PROCESSING, Approval.STATE_WAITING):
+        elif approval.state in (Approval.State.PROCESSING, Approval.State.WAITING):
             # PROCESSING/WAITING 实际决策写入 extra._approved，
             # 缺失 _approved 时默认视为确认（True）
             _approved = extra.get("_approved")
             resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = bool(
                 _approved is None or _approved is True
             )
-        elif approval.state == Approval.STATE_REJECTED:
+        elif approval.state == Approval.State.REJECTED:
             resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = False
-        elif approval.state == Approval.STATE_TIMEOUT:
+        elif approval.state == Approval.State.TIMEOUT:
             # 超时决策标记（TIMEOUT_DECISION）：与拒绝（False）区分，
             # middleware 据以注入"审批超时"ToolMessage，agent 调整策略继续
             resume_by_interrupt.setdefault(langgraph_id, {})[tc_id] = TIMEOUT_DECISION
@@ -83,7 +83,7 @@ def finalize_batch_approvals(all_resume_values: dict, source: str, source_id: st
 
     Args:
         all_resume_values: {langgraph_resume_id: {tool_call_id: bool}} 或 {tool_call_id: bool}。
-        source: 审批来源（``Approval.SOURCE_CHAT`` / ``Approval.SOURCE_DEEP_RESEARCH``）。
+        source: 审批来源（``Approval.Source.CHAT`` / ``Approval.Source.DEEP_RESEARCH``）。
         source_id: 会话/任务 ID。
     """
     from django.db import models
@@ -109,8 +109,8 @@ def finalize_batch_approvals(all_resume_values: dict, source: str, source_id: st
             if approval is None:
                 continue
 
-            if approval.state in (Approval.STATE_PROCESSING, Approval.STATE_WAITING):
-                final_state = Approval.STATE_APPROVED if decision is True else Approval.STATE_REJECTED
+            if approval.state in (Approval.State.PROCESSING, Approval.State.WAITING):
+                final_state = Approval.State.APPROVED if decision is True else Approval.State.REJECTED
                 complete_approval(approval.interrupt_id, final_state)
         except Exception:
             # 终态化失败不阻断恢复流程（幂等，下次重试可补齐）
@@ -142,7 +142,7 @@ async def create_approvals_for_interrupts(
     Args:
         interrupts_data: 单个 interrupt dict 或 interrupt dict list（已解析的
             approval_data 列表，来自 ``common.approval_parser.parse_approval_interrupt``）。
-        source: 审批来源（``Approval.SOURCE_CHAT`` / ``Approval.SOURCE_DEEP_RESEARCH``）。
+        source: 审批来源（``Approval.Source.CHAT`` / ``Approval.Source.DEEP_RESEARCH``）。
         source_id: 审批归属 ID（chat=session_id, deep_research=task_id）。
         user_id: 任务归属用户 ID（approval.user 外键）。
         chat_session_id: 关联 chat 会话 ID（跨模块同步事件路由）。
@@ -205,7 +205,7 @@ async def create_approvals_for_interrupts(
 
         # 幂等保护：同一 interrupt_id 已有已决断审批（非 PENDING）时跳过
         _existing = await sync_to_async(_find_approval_by_interrupt_id)(interrupt_id)
-        if _existing is not None and _existing.state != Approval.STATE_PENDING:
+        if _existing is not None and _existing.state != Approval.State.PENDING:
             continue
 
         try:

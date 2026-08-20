@@ -121,7 +121,7 @@ def on_document_created(sender, instance, created, **kwargs):
             "filename": instance.filename,
             "file_type": instance.file_type,
             "file_size": instance.file_size,
-            "index_name": instance.index.index_name if instance.index else "",
+            "index_name": instance.index.name if instance.index else "",
         },
         ip_address=ip,
         user_agent=ua,
@@ -138,7 +138,7 @@ def on_document_deleted(sender, instance, **kwargs):
         resource_type="document",
         metadata={
             "filename": instance.filename,
-            "index_name": instance.index.index_name if instance.index else "",
+            "index_name": instance.index.name if instance.index else "",
         },
         ip_address=ip,
         user_agent=ua,
@@ -154,8 +154,8 @@ def on_index_created(sender, instance, created, **kwargs):
         event_type=EventType.RAG_INDEX_CREATE,
         event_category=EventCategory.RAG,
         resource_id=str(instance.id),
-        resource_type="document_index",
-        metadata={"index_name": instance.index_name},
+        resource_type="index_metadata",
+        metadata={"index_name": instance.name},
         ip_address=ip,
         user_agent=ua,
     )
@@ -207,7 +207,7 @@ def register_signals():
     ChatMessage = apps.get_model("chat", "ChatMessage")
     ChatAttachment = apps.get_model("attachments", "ChatAttachment")
     Document = apps.get_model("knowledge", "Document")
-    DocumentIndex = apps.get_model("knowledge", "DocumentIndex")
+    IndexMetadata = apps.get_model("knowledge", "IndexMetadata")
     WorkflowSession = apps.get_model("learning", "WorkflowSession")
     ResearchTask = apps.get_model("research", "ResearchTask")
 
@@ -216,6 +216,6 @@ def register_signals():
     post_save.connect(on_chat_attachment_created, sender=ChatAttachment)
     post_save.connect(on_document_created, sender=Document)
     post_delete.connect(on_document_deleted, sender=Document)
-    post_save.connect(on_index_created, sender=DocumentIndex)
+    post_save.connect(on_index_created, sender=IndexMetadata)
     post_save.connect(on_workflow_session_created, sender=WorkflowSession)
     post_save.connect(on_research_task_created, sender=ResearchTask)

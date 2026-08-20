@@ -965,8 +965,8 @@ class WorkflowHistoryView(APIView):
             )
 
 
-class WorkflowDeleteView(APIView):
-    """删除工作流视图"""
+class WorkflowTaskDeleteView(APIView):
+    """删除工作流任务视图"""
 
     permission_classes = [IsAuthenticated]
 

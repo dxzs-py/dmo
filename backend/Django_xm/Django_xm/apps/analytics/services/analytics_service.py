@@ -17,10 +17,10 @@ def _import_models():
     ChatSession = apps.get_model("chat", "ChatSession")
     ChatMessage = apps.get_model("chat", "ChatMessage")
     Document = apps.get_model("knowledge", "Document")
-    DocumentIndex = apps.get_model("knowledge", "DocumentIndex")
+    IndexMetadata = apps.get_model("knowledge", "IndexMetadata")
     WorkflowSession = apps.get_model("learning", "WorkflowSession")
     ResearchTask = apps.get_model("research", "ResearchTask")
-    return ChatSession, ChatMessage, Document, DocumentIndex, WorkflowSession, ResearchTask
+    return ChatSession, ChatMessage, Document, IndexMetadata, WorkflowSession, ResearchTask
 
 
 class AnalyticsService:
@@ -57,7 +57,7 @@ class AnalyticsService:
 
     @classmethod
     def _get_overview_stats(cls, user) -> dict:
-        ChatSession, ChatMessage, Document, _DocumentIndex, WorkflowSession, ResearchTask = _import_models()
+        ChatSession, ChatMessage, Document, _IndexMetadata, WorkflowSession, ResearchTask = _import_models()
 
         chat_sessions = ChatSession.objects.filter(user=user, is_deleted=False).count()
         chat_messages = ChatMessage.objects.filter(session__user=user, session__is_deleted=False)
@@ -170,7 +170,7 @@ class AnalyticsService:
 
     @classmethod
     def _get_category_distribution(cls, user) -> list:
-        ChatSession, _ChatMessage, Document, _DocumentIndex, WorkflowSession, ResearchTask = _import_models()
+        ChatSession, _ChatMessage, Document, _IndexMetadata, WorkflowSession, ResearchTask = _import_models()
 
         items = []
         chat_count = ChatSession.objects.filter(user=user, is_deleted=False).count()
@@ -222,7 +222,7 @@ class AnalyticsService:
 
     @classmethod
     def _get_feature_usage(cls, user) -> list:
-        ChatSession, ChatMessage, Document, DocumentIndex, WorkflowSession, ResearchTask = _import_models()
+        ChatSession, ChatMessage, Document, IndexMetadata, WorkflowSession, ResearchTask = _import_models()
 
         items = []
 
@@ -238,7 +238,7 @@ class AnalyticsService:
         if doc_count > 0:
             items.append({"name": "上传文档", "value": doc_count})
 
-        index_count = DocumentIndex.objects.filter(user=user, is_deleted=False).count()
+        index_count = IndexMetadata.objects.filter(user=user, is_deleted=False).count()
         if index_count > 0:
             items.append({"name": "创建知识库", "value": index_count})
 

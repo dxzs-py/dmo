@@ -15,12 +15,15 @@ Path D 架构：
 
 import logging
 
+from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema
+from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from Django_xm.apps.approvals.filters import ApprovalFilter
 from Django_xm.apps.approvals.mixins import BaseApprovalAccessMixin
 from Django_xm.apps.approvals.models import Approval
 from Django_xm.apps.approvals.serializers import (
@@ -31,6 +34,7 @@ from Django_xm.apps.approvals.services import approval_service
 from Django_xm.apps.core.throttling import SensitiveOperationRateThrottle
 from Django_xm.common.approval_gateway import CircuitBreakerError, gateway
 from Django_xm.common.error_codes import ErrorCode
+from Django_xm.common.pagination import ProjectPagination
 from Django_xm.common.responses import error_response, success_response
 
 logger = logging.getLogger(__name__)
@@ -143,16 +147,16 @@ def _check_batch_and_route(
         # 批量审批场景：检查同一 graph_interrupt_id 下所有审批是否完成
         sibling_approvals = Approval.objects.filter(
             extra__graph_interrupt_id=graph_interrupt_id,
-            source__in=[Approval.SOURCE_CHAT, Approval.SOURCE_DEEP_RESEARCH],
+            source__in=[Approval.Source.CHAT, Approval.Source.DEEP_RESEARCH],
         )
         # pending 定义：仅 pending 状态（用户尚未点击确认/拒绝）
         pending_siblings = sibling_approvals.exclude(
             state__in=[
-                Approval.STATE_PROCESSING,
-                Approval.STATE_WAITING,
-                Approval.STATE_APPROVED,
-                Approval.STATE_REJECTED,
-                Approval.STATE_TIMEOUT,
+                Approval.State.PROCESSING,
+                Approval.State.WAITING,
+                Approval.State.APPROVED,
+                Approval.State.REJECTED,
+                Approval.State.TIMEOUT,
             ]
         )
 
@@ -176,7 +180,7 @@ def _check_batch_and_route(
             elif "_approved" in sib_extra:
                 batch_resume_value[sib_tc_id] = bool(sib_extra["_approved"])
             else:
-                batch_resume_value[sib_tc_id] = sib.state == Approval.STATE_APPROVED
+                batch_resume_value[sib_tc_id] = sib.state == Approval.State.APPROVED
 
         effective_resume_value = batch_resume_value
         logger.info(
@@ -202,7 +206,7 @@ def _check_batch_and_route(
         # 1. 标记审批为 rejected（circuit_broken 原因）
         approval_service.complete_approval(
             interrupt_id=interrupt_id,
-            state=Approval.STATE_REJECTED,
+            state=Approval.State.REJECTED,
             extra={"circuit_broken": True},
         )
         # 2. 以 rejection 恢复 agent（resume_value=False），让 agent 调整策略
@@ -223,7 +227,7 @@ def _check_batch_and_route(
         )
         approval_service.complete_approval(
             interrupt_id=interrupt_id,
-            state=Approval.STATE_REJECTED,
+            state=Approval.State.REJECTED,
             extra={"route_error": str(ve)},
         )
         return error_response(code=ErrorCode.VALIDATION_FAILED, message=str(ve))
@@ -244,32 +248,27 @@ def _check_batch_and_route(
     )
 
 
-class ApprovalListView(APIView):
+class ApprovalListView(generics.ListAPIView):
+    """审批列表（dj-15：真分页 + django-filter，替代 [:100] 硬截断）。"""
+
     permission_classes = [IsAuthenticated]
+    serializer_class = ApprovalReadSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = ApprovalFilter
+    pagination_class = ProjectPagination
 
-    @extend_schema(
-        operation_id="approvals_list",
-        responses={200: ApprovalReadSerializer(many=True)},
-    )
-    def get(self, request):
-        source_id = request.query_params.get("source_id")
-        source = request.query_params.get("source")
-        chat_session_id = request.query_params.get("chat_session_id")
-        state = request.query_params.get("state")
+    @extend_schema(operation_id="approvals_list", responses={200: ApprovalReadSerializer(many=True)})
+    def get(self, request, *args, **kwargs):
+        return self.list(request, *args, **kwargs)
 
-        qs = Approval.objects.filter(user=request.user)
-        if source_id:
-            qs = qs.filter(source_id=source_id)
-        if source:
-            qs = qs.filter(source=source)
-        if chat_session_id:
-            qs = qs.filter(chat_session_id=chat_session_id)
-        if state:
-            qs = qs.filter(state=state)
-
-        qs = qs.order_by("-created_at")[:100]
-        serializer = ApprovalReadSerializer(qs, many=True)
-        return success_response(data=serializer.data)
+    def get_queryset(self):
+        # select_related("approved_by")：序列化器嵌套输出审批人 id/username；
+        # user 字段不参与序列化，无需 join
+        return (
+            Approval.objects.filter(user=self.request.user)
+            .select_related("approved_by")
+            .order_by("-created_at")
+        )
 
 
 class ApprovalDetailView(BaseApprovalAccessMixin, APIView):

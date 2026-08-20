@@ -539,9 +539,9 @@ class ApprovalMiddleware(AgentMiddleware):
                     _Approval.objects.filter(interrupt_id__in=_all_tc_ids)
                     .filter(
                         state__in=[
-                            _Approval.STATE_APPROVED,
-                            _Approval.STATE_REJECTED,
-                            _Approval.STATE_TIMEOUT,
+                            _Approval.State.APPROVED,
+                            _Approval.State.REJECTED,
+                            _Approval.State.TIMEOUT,
                         ]
                     )
                     .values_list("interrupt_id", "state")
@@ -555,11 +555,11 @@ class ApprovalMiddleware(AgentMiddleware):
                 if _tid not in _state_map:
                     continue
                 _state = _state_map[_tid]
-                if _state == _Approval.STATE_APPROVED:
+                if _state == _Approval.State.APPROVED:
                     _approved_tc_ids.add(_tid)
-                elif _state == _Approval.STATE_REJECTED:
+                elif _state == _Approval.State.REJECTED:
                     _decided_map[_tid] = "rejected"
-                elif _state == _Approval.STATE_TIMEOUT:
+                elif _state == _Approval.State.TIMEOUT:
                     _decided_map[_tid] = "timeout"
 
             # 生命周期已完成/失败（非审批路径，如 SAFE 工具、已执行工具）：

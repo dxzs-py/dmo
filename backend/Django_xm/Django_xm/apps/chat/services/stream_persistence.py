@@ -376,7 +376,7 @@ def _persist_to_db_sync(
             # 其余（无重叠且更短/等长）：保留已有版本，避免覆盖前端更长版本
 
     # 增量合并 tool_calls（字段级状态演进，P3-R2）
-    existing_tool_calls = assistant_msg.tool_calls or []
+    existing_tool_calls = assistant_msg.tool_calls
     merged_tool_calls = _merge_tool_calls_incremental(existing_tool_calls, new_tool_calls)
     # 变更检测：深度比较而非仅比较长度——字段级演进（如 pending→completed）
     # 不改变列表长度，若仅按长度判断会漏存（P3-R2 落库的关键一环）
@@ -385,7 +385,7 @@ def _persist_to_db_sync(
     # reasoning 覆盖策略：仅当传入非空 reasoning 且 content 不同时覆盖
     reasoning_changed = False
     if reasoning and reasoning.get("content"):
-        existing_reasoning = assistant_msg.reasoning or {}
+        existing_reasoning = assistant_msg.reasoning
         if not isinstance(existing_reasoning, dict):
             existing_reasoning = {}
         if reasoning.get("content") != existing_reasoning.get("content"):
@@ -396,7 +396,7 @@ def _persist_to_db_sync(
     # 仅当传入非空 subagent_contents 且与已有值不同时覆盖（避免空覆盖清除历史）
     subagent_contents_changed = False
     if isinstance(subagent_contents, dict) and subagent_contents:
-        existing_subagent = assistant_msg.subagent_contents or {}
+        existing_subagent = assistant_msg.subagent_contents
         if not isinstance(existing_subagent, dict):
             existing_subagent = {}
         if subagent_contents != existing_subagent:

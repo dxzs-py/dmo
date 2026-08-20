@@ -382,7 +382,7 @@ async function handleClearCache(scope = 'all') {
 
     <el-row v-loading="loading" :gutter="20">
       <el-col
-v-for="kb in filteredKBs" :key="kb.id" v-memo="[kb.name, kb.description, kb.chunkCount, kb.updatedAt]" :xs="24" :sm="12"
+v-for="kb in filteredKBs" :key="kb.id" v-memo="[kb.name, kb.description, kb.documentCount, kb.chunkCount, kb.updatedAt]" :xs="24" :sm="12"
               :md="8">
         <el-card class="kb-card" shadow="hover">
           <template #header>
@@ -420,6 +420,7 @@ v-for="kb in filteredKBs" :key="kb.id" v-memo="[kb.name, kb.description, kb.chun
           </template>
           <p class="kb-desc">{{ kb.description || '暂无描述' }}</p>
           <div class="kb-stats">
+            <span>{{ kb.documentCount || 0 }} 文档</span>
             <span>{{ kb.chunkCount || 0 }} 分段</span>
           </div>
         </el-card>
@@ -522,7 +523,7 @@ v-for="kb in filteredKBs" :key="kb.id" v-memo="[kb.name, kb.description, kb.chun
         <h4 style="margin-bottom: 12px;">索引详情</h4>
         <el-table :data="vectorStoreStatus.indices" style="width: 100%" size="small">
           <el-table-column prop="originalName" label="索引名称" />
-          <el-table-column prop="numDocuments" label="文档数" width="100" />
+          <el-table-column prop="numDocuments" label="分段数" width="100" />
           <el-table-column prop="sizeHuman" label="大小" width="100" />
           <el-table-column prop="createdAt" label="创建时间" />
           <el-table-column prop="updatedAt" label="更新时间" />

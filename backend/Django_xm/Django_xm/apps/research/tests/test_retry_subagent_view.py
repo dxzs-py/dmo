@@ -42,7 +42,7 @@ def _make_task(status="failed", session_id=None):
 def _post(payload: dict, task_id="t1"):
     """构造已认证的 POST 请求并调用视图，返回 DRF Response。"""
     factory = APIRequestFactory()
-    request = factory.post(f"/api/v1/research/task/{task_id}/retry-subagent/", data=payload, format="json")
+    request = factory.post(f"/api/v1/research/tasks/{task_id}/retry-subagent/", data=payload, format="json")
     force_authenticate(request, user=_make_user())
     return DeepResearchRetrySubagentView.as_view()(request, task_id=task_id)
 

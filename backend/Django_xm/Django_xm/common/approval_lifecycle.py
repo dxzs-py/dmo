@@ -29,9 +29,9 @@ from Django_xm.apps.approvals.services.approval_service import (
 logger = logging.getLogger(__name__)
 
 _TERMINAL_STATES = {
-    Approval.STATE_APPROVED,
-    Approval.STATE_REJECTED,
-    Approval.STATE_TIMEOUT,
+    Approval.State.APPROVED,
+    Approval.State.REJECTED,
+    Approval.State.TIMEOUT,
 }
 
 
@@ -141,9 +141,9 @@ class ApprovalLifecycleService:
         """
         sib_extra = approval.extra if isinstance(approval.extra, dict) else {}
         if sib_extra.get("_timeout"):
-            return Approval.STATE_TIMEOUT
+            return Approval.State.TIMEOUT
         if "_approved" in sib_extra:
-            return Approval.STATE_APPROVED if sib_extra["_approved"] else Approval.STATE_REJECTED
+            return Approval.State.APPROVED if sib_extra["_approved"] else Approval.State.REJECTED
         return trigger_final_state
 
     def _finalize_one(self, approval: Approval, final_state: str) -> None:
@@ -160,7 +160,7 @@ class ApprovalLifecycleService:
         _persist_and_broadcast(approval, final_state)
         # 终态为 timeout 时，额外发布 TOOL_CALL_TIMEOUT 事件
         # 让前端 ToolCallCard 显示"已超时"（审批事件与工具事件分离）
-        if final_state == Approval.STATE_TIMEOUT:
+        if final_state == Approval.State.TIMEOUT:
             _publish_tool_call_timeout_event(approval)
         # 锁 key 与 approval_service.resume_approval 对称：批次维度（graph_interrupt_id）
         # 或单审批维度（interrupt_id），保证批次锁在终态化时被正确释放

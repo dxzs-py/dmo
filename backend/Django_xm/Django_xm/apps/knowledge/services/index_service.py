@@ -572,7 +572,11 @@ class IndexManager:
         return indexes
 
     def delete_index(self, name: str) -> bool:
-        """删除索引"""
+        """删除向量索引与文件系统元数据。
+
+        实体生命周期归 kb_service：IndexMetadata 行不在此删除
+        （知识库删除走软删墓碑，全局索引管理删除实体由调用方负责）。
+        """
         self._cache.remove(name)
         store_type = self._get_store_type(name)
         backend = self._get_backend(store_type)
@@ -585,14 +589,6 @@ class IndexManager:
             # 2. 删除文件系统元数据
             if index_path.exists():
                 shutil.rmtree(index_path)
-
-            # 3. 删除 IndexMetadata 数据库记录
-            try:
-                from Django_xm.apps.knowledge.models import IndexMetadata
-
-                IndexMetadata.objects.filter(name=name).delete()
-            except Exception as e:
-                logger.debug(f"删除 IndexMetadata 记录失败（不影响主流程）: {e}")
 
             if deleted:
                 logger.info(f"索引删除成功: {name}")

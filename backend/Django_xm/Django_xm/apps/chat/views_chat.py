@@ -9,7 +9,6 @@ import time
 from functools import wraps
 
 from django.core.exceptions import ObjectDoesNotExist
-from django.core.paginator import Paginator
 from django.db import models, transaction
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
@@ -23,6 +22,7 @@ from Django_xm.apps.core.throttling import ChatStreamRateThrottle, MetaRateThrot
 from Django_xm.async_utils import run_async
 from Django_xm.common.error_codes import ErrorCode
 from Django_xm.common.event_schema import EventSource, EventType
+from Django_xm.common.pagination import paginate_to_dict
 from Django_xm.common.realtime_events import publish_event_sync
 from Django_xm.common.redis_utils import get_redis_client
 from Django_xm.common.responses import error_response, success_response, validation_error_response
@@ -92,15 +92,15 @@ def _archive_current_version(message):
     Args:
         message: ChatMessage 实例（assistant 角色）
     """
-    versions = list(message.versions) if message.versions else []
+    versions = list(message.versions)
     snapshot = {
         "content": message.content or "",
-        "sources": message.sources or [],
-        "plan": message.plan or {},
-        "chain_of_thought": message.chain_of_thought or [],
-        "tool_calls": message.tool_calls or [],
+        "sources": message.sources,
+        "plan": message.plan,
+        "chain_of_thought": message.chain_of_thought,
+        "tool_calls": message.tool_calls,
         "reasoning": message.reasoning or None,
-        "suggestions": message.suggestions or [],
+        "suggestions": message.suggestions,
         "model": message.model or "",
         "created_at": message.created_at.isoformat() if message.created_at else "",
     }
@@ -343,16 +343,7 @@ class BaseChatAPIView(APIView):
             return None
 
     def paginate_queryset(self, queryset, page_size=20):
-        paginator = Paginator(queryset, page_size)
-        page_number = self.request.query_params.get("page", 1)
-        page_obj = paginator.get_page(page_number)
-        return {
-            "items": page_obj.object_list,
-            "total": paginator.count,
-            "page": page_obj.number,
-            "page_size": page_size,
-            "total_pages": paginator.num_pages,
-        }
+        return paginate_to_dict(queryset, self.request, page_size)
 
 
 class ChatView(BaseChatAPIView):
@@ -868,21 +859,12 @@ class ChatSessionListView(BaseChatAPIView):
                 if sessions_data:
                     sessions_data.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
                     # dj-05：分页语义与 DB 分支 paginate_queryset 完全对齐——
-                    # 同一 Paginator + get_page：page 取自 query_params（缺省 1），
-                    # 非法值回退第 1 页，越界（含 page<1）回退最后一页
-                    paginator = Paginator(sessions_data, page_size)
-                    page_obj = paginator.get_page(request.query_params.get("page", 1))
-                    paged_items = page_obj.object_list
-                    logger.info(f"Returning {len(paged_items)} cached sessions for user {user_id}")
-                    return success_response(
-                        data={
-                            "items": paged_items,
-                            "total": paginator.count,
-                            "page": page_obj.number,
-                            "page_size": page_size,
-                            "total_pages": paginator.num_pages,
-                        }
-                    )
+                    # 两分支共用 paginate_to_dict（ProjectPagination + get_page）：
+                    # page 取自 query_params（缺省 1），非法值/page<1 回退第 1 页，
+                    # 越界回退最后一页
+                    paginated = paginate_to_dict(sessions_data, request, page_size)
+                    logger.info(f"Returning {len(paginated['items'])} cached sessions for user {user_id}")
+                    return success_response(data=paginated)
             except Exception as e:
                 logger.warning(f"Cache read failed, falling back to DB: {e!s}")
 
@@ -937,7 +919,7 @@ class ChatSessionCreateView(BaseChatAPIView):
         _session_id = session.session_id
         _title = session.title
         _mode = session.mode
-        _knowledge_bases = session.selected_knowledge_bases or []
+        _knowledge_bases = session.selected_knowledge_bases
         _created_at = session.created_at
         _updated_at = session.updated_at
         _user_id = request.user.id
@@ -1211,29 +1193,6 @@ class ChatMessageBatchCreateView(BaseChatAPIView):
         )
 
 
-class ChatMessageDeleteView(BaseChatAPIView):
-    @extend_schema(exclude=True)
-    @log_view_action
-    @transaction.atomic
-    def delete(self, request, message_id):
-        message = self.get_message_or_404(message_id, request.user)
-        if not message:
-            return error_response(code=ErrorCode.NOT_FOUND, message="消息不存在", http_status=status.HTTP_404_NOT_FOUND)
-
-        message.soft_delete()
-
-        # 事务提交后再重建 checkpoint，否则新线程的数据库连接看不到未提交的 soft_delete
-        session_id = message.session.session_id
-        transaction.on_commit(lambda: run_async(_cleanup_checkpoint_messages_async_by_id(session_id, [message.id])))
-
-        return success_response(
-            data={
-                "message_id": message_id,
-            },
-            message="消息删除成功",
-        )
-
-
 class ChatMessagePairDeleteView(BaseChatAPIView):
     """链式截断删除：删除第 N 轮及其后全部对话消息（软删除 + checkpoint 重建）。
 
@@ -1247,20 +1206,12 @@ class ChatMessagePairDeleteView(BaseChatAPIView):
     @extend_schema(exclude=True)
     @log_view_action
     @transaction.atomic
-    def delete(self, request, session_id):
+    def delete(self, request, session_id, user_message_id):
         session = self.get_session_or_404(session_id, request.user)
         if not session:
             return error_response(code=ErrorCode.NOT_FOUND, message="会话不存在", http_status=status.HTTP_404_NOT_FOUND)
 
-        user_message_id = request.data.get("user_message_id")
-        if not user_message_id:
-            return error_response(code=ErrorCode.INVALID_PARAMS, message="缺少 user_message_id 参数")
-
-        try:
-            user_message_id = int(user_message_id)
-        except (ValueError, TypeError):
-            return error_response(code=ErrorCode.INVALID_PARAMS, message="user_message_id 必须为数字")
-
+        # user_message_id 由 URL int 转换器注入，类型必为 int，无需 body 传参与校验（dj-16）
         user_message = ChatMessage.objects.filter(id=user_message_id, session=session, is_deleted=False).first()
         if not user_message:
             return error_response(
@@ -1352,4 +1303,34 @@ class ChatMessageUpdateView(BaseChatAPIView):
                 message, context={"research_task_map": build_research_task_map([message])}
             ).data,
             message="消息更新成功",
+        )
+
+
+class ChatMessageDeleteView(ChatMessageUpdateView):
+    """消息资源视图（dj-16 路由规范化）。
+
+    承载 /chat/messages/<message_id>/ 资源路径的全部方法：
+    - PATCH：消息更新（继承 ChatMessageUpdateView.patch）
+    - DELETE：消息软删除（本类实现）
+    """
+
+    @extend_schema(exclude=True)
+    @log_view_action
+    @transaction.atomic
+    def delete(self, request, message_id):
+        message = self.get_message_or_404(message_id, request.user)
+        if not message:
+            return error_response(code=ErrorCode.NOT_FOUND, message="消息不存在", http_status=status.HTTP_404_NOT_FOUND)
+
+        message.soft_delete()
+
+        # 事务提交后再重建 checkpoint，否则新线程的数据库连接看不到未提交的 soft_delete
+        session_id = message.session.session_id
+        transaction.on_commit(lambda: run_async(_cleanup_checkpoint_messages_async_by_id(session_id, [message.id])))
+
+        return success_response(
+            data={
+                "message_id": message_id,
+            },
+            message="消息删除成功",
         )

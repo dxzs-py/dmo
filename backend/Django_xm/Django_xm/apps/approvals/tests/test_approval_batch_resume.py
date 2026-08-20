@@ -28,7 +28,7 @@ from Django_xm.apps.approvals.models import Approval
 from Django_xm.apps.approvals.services import approval_service
 
 
-def _make_approval(interrupt_id, graph_interrupt_id, state=Approval.STATE_PENDING, extra=None):
+def _make_approval(interrupt_id, graph_interrupt_id, state=Approval.State.PENDING, extra=None):
     base = {"graph_interrupt_id": graph_interrupt_id}
     if extra:
         base.update(extra)
@@ -65,10 +65,10 @@ class TestBatchResumeCompleteness(TestCase):
 
         for i in range(4):
             result = approval_service.resume_approval(f"call_{i}", approved=True)
-            self.assertEqual(result["state"], Approval.STATE_WAITING)
+            self.assertEqual(result["state"], Approval.State.WAITING)
             self.assertEqual(
                 Approval.objects.get(interrupt_id=f"call_{i}").state,
-                Approval.STATE_WAITING,
+                Approval.State.WAITING,
             )
 
         result = approval_service.resume_approval("call_4", approved=True)
@@ -78,11 +78,11 @@ class TestBatchResumeCompleteness(TestCase):
         for i in range(4):
             self.assertEqual(
                 Approval.objects.get(interrupt_id=f"call_{i}").state,
-                Approval.STATE_WAITING,
+                Approval.State.WAITING,
             )
         self.assertEqual(
             Approval.objects.get(interrupt_id="call_4").state,
-            Approval.STATE_PROCESSING,
+            Approval.State.PROCESSING,
         )
 
     def test_waiting_recheck_upgrades_when_batch_complete(self):
@@ -94,12 +94,12 @@ class TestBatchResumeCompleteness(TestCase):
         # 模拟并发竞态残留：4 个已决断（processing），1 个 waiting（兄弟落库前误判）
         for i in range(4):
             a = Approval.objects.get(interrupt_id=f"call_{i}")
-            a.state = Approval.STATE_PROCESSING
+            a.state = Approval.State.PROCESSING
             a.extra["_resume_value"] = True
             a.extra["_approved"] = True
             a.save(update_fields=["state", "extra"])
         a = Approval.objects.get(interrupt_id="call_4")
-        a.state = Approval.STATE_WAITING
+        a.state = Approval.State.WAITING
         a.extra["_resume_value"] = True
         a.extra["_approved"] = True
         a.save(update_fields=["state", "extra"])
@@ -109,7 +109,7 @@ class TestBatchResumeCompleteness(TestCase):
         self.assertNotIn("state", result)
         self.assertEqual(
             Approval.objects.get(interrupt_id="call_4").state,
-            Approval.STATE_PROCESSING,
+            Approval.State.PROCESSING,
         )
 
     def test_waiting_recheck_keeps_waiting_when_siblings_pending(self):
@@ -119,14 +119,14 @@ class TestBatchResumeCompleteness(TestCase):
             _make_approval(f"call_{i}", gid)
 
         a = Approval.objects.get(interrupt_id="call_0")
-        a.state = Approval.STATE_WAITING
+        a.state = Approval.State.WAITING
         a.extra["_resume_value"] = True
         a.extra["_approved"] = True
         a.save(update_fields=["state", "extra"])
 
         result = approval_service.resume_approval("call_0", approved=True)
-        self.assertEqual(result["state"], Approval.STATE_WAITING)
+        self.assertEqual(result["state"], Approval.State.WAITING)
         self.assertEqual(
             Approval.objects.get(interrupt_id="call_0").state,
-            Approval.STATE_WAITING,
+            Approval.State.WAITING,
         )
